@@ -14,12 +14,6 @@ was `Ok`, i.e. no operator swallows a child's error. Every modelled arm propagat
 errors with `?`, and `constEval_sound` proves the constant verdict is the runtime
 verdict on every row; this discharges `eliminate_whole_filter`'s and
 `andLoop_drop_true`'s hypotheses (`constTrue_filter`, `andLoop_drop_constTrue`).
-
-| here | there |
-| --- | --- |
-| `evalG look` | `ExprEval::eval_node` with variable lookup `look` (`resolve_var`, eval.rs) |
-| `constEval`  | `ExprEval::constant().eval(.., NO_ROW, None)` — `look` always errors |
-| `constTrue`  | `is_constant_true`'s fast path: `matches!(.., Ok(Value::Bool(true)))` (eliminate_true_filters.rs); the slow path re-runs it on `substitute_params`' tree (`substP`; `constTrue_slow`, parameters modelled as marked variable leaves) |
 -/
 namespace Falkor.Opt
 

@@ -13,12 +13,6 @@ FxHash of the value (`seen: FxHashSet<u64>`), so two distinct values of one grou
 still counted once (`Ops.dedup_collision_drops`, #2780). `dcgIdGo` models the seen-set as exact
 `(group id, value)` membership, so `distinct_by_group_id_exact` is exact relative to that
 abstraction of the per-group value hashing.
-
-| here | there |
-| --- | --- |
-| `insertKey`, `gid` | `groups.entry(key).or_insert_with(.. next_group_id)`; `entry.2` |
-| `dcgIdGo` | the per-row DISTINCT check `value_dedupers.entry((didx, group_id))` (aggregate.rs, eval.rs) |
-| `dcgRef` | the exact per-group semantics (`dedupBy` on the group's own values) |
 -/
 namespace FalkorAggOps.GroupId
 

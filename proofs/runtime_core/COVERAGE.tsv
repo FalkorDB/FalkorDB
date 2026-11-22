@@ -13,7 +13,7 @@ graph/src/runtime/runtime.rs	graph_mut	583	PROVEN	QueryGraph.graphMut: graphMut_
 graph/src/runtime/runtime.rs	publish	600	PROVEN	QueryGraph.publish: publish_ok, publish_refused, publish_write (the write flag stays), publish_inv, publish_twice_panics, publish_read_panics, graph_after_publish, graphMut_after_publish, graph_after_refusal
 graph/src/runtime/runtime.rs	from	125	PROVEN	QueryGraph.QueryGraph.published/.fork: new_published, new_fork (From<Arc<Graph>> / From<Graph> pick the arm)
 graph/src/runtime/runtime.rs	from	119	PROVEN	QueryGraph.QueryGraph.published/.fork: new_published, new_fork (From<Arc<Graph>> / From<Graph> pick the arm)
-graph/src/runtime/runtime.rs	upgrade_to_write	626	PROVEN	QueryGraph.upgradeToWrite: upgrade_spec (the host receives exactly the fork and its answer is returned), upgrade_release (the RefMut temporary leaves no borrow), upgrade_read_panics; replaces Plan.writeEscalation (delegates_spec)
+graph/src/runtime/runtime.rs	upgrade_to_write	626	PROVEN	QueryGraph.upgradeToWrite: upgrade_spec (the host receives exactly the fork and its answer is returned), upgrade_release (the RefMut temporary leaves no borrow), upgrade_read_panics
 graph/src/runtime/runtime.rs	resync_published_indexes	633	PROVEN	Plan.resyncPublished (delegates to Pending, proofs/pending_commit): delegates_spec
 graph/src/runtime/runtime.rs	commit_deferred_indexes	643	PROVEN	Plan.commitDeferred (delegates to Pending): delegates_spec
 graph/src/runtime/runtime.rs	query	649	PROVEN	Query.query_rows, Query.capLoop_flatten, Query.keep_exact, Query.query_write_pulls_all

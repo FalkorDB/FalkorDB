@@ -10,14 +10,6 @@ accumulators) and the ids of the scope *after* it (projected names, and every va
 next clause mints) overlap. Nor did it model that `Row::unbind` clears only the bound bit and
 keeps the value (row.rs), which a later operator still reads.
 
-| here | there |
-| --- | --- |
-| `PItem`, `layoutGo`, `projLayout` | id minting of one projection: `bind_projection` binds every item with `bind_expr` **before** `push_scope` (binder.rs), so the parser's accumulator child `__agg_order_by_placeholder__` (cypher.rs) gets `fresh_var` id = `len` of the pre-projection scope, kept unique under `__agg_placeholder_{id}` (binder.rs); the aliases then get `project_name` ids `0, 1, …` in the new scope (binder.rs); the planner splits them into keys / aggregations in order (planner/mod.rs); a key whose tree is a bare variable records it as `original_var` (aggregate.rs) |
-| `nextId` | the next clause's first new variable: the projection scope holds exactly its aliases (binder `projectItems_keys`), and `fresh_var` mints `len` (binder.rs) |
-| `finishVals` | the emitted row's stored values: `unbind` keeps the value (row.rs), so values = `finishCore` row + outputs |
-| `cell` | what a downstream operator or the reply reads at a slot of the one-row batch: `push_row` marks a column present iff the slot is bound or holds a non-null value (batch.rs), `finish` drops a non-present column (batch.rs), `value_at` returns the stored value (reply.rs `unwrap`s it) |
-| `AV`, `finEv` | the values involved, and `ExprEval::eval` on an aggregate call: read the accumulator child's slot (`value_at(key.id)`, "Variable not found" if absent) and apply the finalizer (eval.rs); `finalize_avg` is `unreachable!` on a non-list accumulator (aggregation.rs) |
-
 The general properties a fixed `next` should satisfy are `OutputsOwnAcc`, `KeysBound` and
 `EmitsOnlyScope` (together `AggRowSpec`); each `bug…` theorem refutes one on the ids the
 binder assigns in the issue's query.
@@ -208,13 +200,6 @@ def items3150 : List (PItem AV) := [.key none, .agg cntF [.const .int]]
 
 theorem layout3150 : projLayout 0 items3150 =
     ([⟨0, none⟩], [(1, .func cntF [.const .int, .var 0])]) := rfl
-
-/-- **History, before #3522 (ca36bfa15): the keys-bound property on the old order** (accumulators
-unbound after the keys were written, `preFinishGroup`). -/
-def PreKeysBound {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Prop :=
-  ∀ k ∈ keys, ∀ v, key k.name = some v →
-    slotAt (preFinishGroup ev keys aggs key acc) k.name = some (some v)
 
 /-- **#3150 fixed by #3522 (ca36bfa15)**: `AggregateOp::next` unbinds the accumulators before it
 writes the keys (aggregate.rs), so on the same ids the null key `x` is bound to `null`

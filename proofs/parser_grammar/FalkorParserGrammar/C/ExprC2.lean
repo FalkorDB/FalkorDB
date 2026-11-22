@@ -193,19 +193,6 @@ def spTypes : Nat → List Nat → P (List Nat)
       spTypes n (acc ++ [t])
     else pure (acc ++ [t])
 
-/-- The edge-filter skipper before #3019 (cypher.rs at 3f4ea8f40): `{` deepens, `}`
-shallows and stops at depth ≤ 0, `]` stops before it; at end of input it
-never stops (the model's budget runs out: `fuel`). No longer used by `shortestP`. -/
-def skipP : Nat → Int → P Unit
-  | 0, _ => fuelP
-  | n + 1, d => do
-    let c ← peek
-    match c with
-    | .lbrace => do next; skipP n (d + 1)
-    | .rbrace => do next; if d - 1 ≤ 0 then pure () else skipP n (d - 1)
-    | .rbrack => pure ()
-    | _ => do next; skipP n d
-
 /-- `Token::Parameter(_) | Token::LBracket` after the range (cypher.rs). -/
 def isFilter : CT → Bool
   | .param _ => true
@@ -274,14 +261,6 @@ def shortestP (pmap : P ET) (F : Nat) : P ET := do
       if d.2.2.2 then fail else do
       let ends := if inc && !out then (dst, src) else (src, dst)
       pure (.node (.shortest d.1 d.2.1 d.2.2.1 (inc || out)) [leaf (.var ends.1), leaf (.var ends.2)])
-
-/-- Before #3019, input ending inside the filter never stopped the skipper (the
-known hang, `skipFilter_eof_diverges`). `shortestP` no longer uses `skipP`: see
-`shortestP_param_eof_err` / `shortestP_map_eof_err`. -/
-theorem skipP_eof : ∀ n (d : Int) (k : Nat), skipP n d ([], k) = .fuel
-  | 0, _, _ => rfl
-  | n + 1, d, k => by
-    simp only [skipP, run_bind, peek, PS.cur, next, PS.adv, List.tail_nil]; exact skipP_eof n d k
 
 /-- **#3019: an unterminated `$p` filter is a syntax error**: `shortestPath((a)-[$p` at
 end of input fails (it used to hang). -/

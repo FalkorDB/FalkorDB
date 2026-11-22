@@ -12,11 +12,6 @@ work here is "args → `apply_module_args` → `Err` ⇒ `Status::Err`" (`graphI
 
 `table` (the `redis_module!` `configurations:` list, `lib.rs`) still registers the
 `graph.*` redis.conf configs; its defaults are checked below.
-
-The earlier module-argument handling (`module_args_as_configuration: true`, redismodule-rs
-`get_*_default_config_value`: the value after the first argument *byte-equal* to the name;
-a bool is `value == "yes"`, plus `graph_init`'s own upper-casing loop) is kept below as
-historical counterexamples (`LoadArgs.fixed3328_counterexamples`).
 -/
 namespace RedisLayer.ModuleInit
 
@@ -48,28 +43,6 @@ def defaultOk : Kind → Bool
   | _ => true
 
 theorem table_defaults_in_range : table.all (fun e => defaultOk e.2) = true := by decide
-
-/-! ## Historical: redismodule-rs `find_config_value` / `get_*_default_config_value` (earlier code) -/
-
-/-- C (`_Config_ParseYesNo`): case-insensitive yes/no, anything else an error. -/
-def cBool (v : String) : Option Bool :=
-  let l := v.toList.map Char.toLower
-  if l == "yes".toList then some true else if l == "no".toList then some false else none
-
-/-! ## Historical: `graph_init`'s argument loop (earlier code) -/
-
-def MAX_INFO_QUERIES_CAP : Int := 1000
-
-inductive Tgt | i64 (n : String) | maxInfo | maxQueued | none
-  deriving DecidableEq
-
-def target (upper : String) : Tgt :=
-  if upper ∈ ["TIMEOUT", "TIMEOUT_DEFAULT", "TIMEOUT_MAX", "RESULTSET_SIZE", "QUERY_MEM_CAPACITY",
-      "DELTA_MAX_PENDING_CHANGES", "EFFECTS_COMPRESSION", "EFFECTS_THRESHOLD", "OMP_THREAD_COUNT"]
-  then .i64 upper
-  else if upper = "MAX_INFO_QUERIES" then .maxInfo
-  else if upper = "MAX_QUEUED_QUERIES" then .maxQueued
-  else .none
 
 /-! ## `graph_init` -/
 

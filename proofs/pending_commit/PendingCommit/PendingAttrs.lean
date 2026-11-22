@@ -175,7 +175,7 @@ def validateProperty : PV → Except PErr Unit
 
 def validate (v : PV) : Bool := (validateProperty v).toBool
 
-/-- Historical `is_valid_property` before #3339 (`is_valid_property` at 4a4f2a72f): lists of any depth. -/
+/-- The shape check without the depth bound (what `is_valid_property` accepted before #3339): lists of any depth. -/
 def isValid : PV → Bool → Bool
   | .null, allowNull => allowNull
   | .bool, _ | .int, _ | .float, _ | .string, _ | .point, _ | .vecf32, _

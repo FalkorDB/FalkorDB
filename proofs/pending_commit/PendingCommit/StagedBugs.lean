@@ -39,20 +39,6 @@ open PA
 committed node carries. -/
 def RemLCommitted (C : Nat → Bool) (s : Labels.St) : Prop := ∀ l, s.remL.contains l = true → C l = true
 
-/-- `remove_node_labels` before #3459 (pending.rs on 3f4ea8f40): every label left
-`set_labels` and was pushed onto `remove_labels`. History for `pre3459_*`. -/
-def removeLabelsPre3459 (s : Labels.St) (ls : List Nat) : Labels.St :=
-  ls.foldl (fun s l => { setL := s.setL.filter (· != l), remL := s.remL ++ [l] }) s
-
-/-- History (#3448, fixed by #3459): `CREATE (n:Foo) REMOVE n:Foo` staged `Foo` in `remove_labels`
-although no committed node carried it. -/
-theorem pre3459_bug3448_remove_of_staged_label :
-    (removeLabelsPre3459 ⟨[0], []⟩ [0]).remL = [0] ∧
-    ¬ RemLCommitted (fun _ => false) (removeLabelsPre3459 ⟨[0], []⟩ [0]) := by
-  refine ⟨by decide, fun h => ?_⟩
-  have := h 0 (by decide)
-  cases this
-
 theorem step_remL_committed (C : Nat → Bool) (s : Labels.St) (op : Labels.Op)
     (hnd : ∀ ls, op = .rem ls → ls.Nodup) (h : RemLCommitted C s) :
     RemLCommitted C (Labels.step C s op) := by

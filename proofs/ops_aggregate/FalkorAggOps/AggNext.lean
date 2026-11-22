@@ -3,13 +3,6 @@ import FalkorAggOps.AggState
 `AggregateOp::next` (aggregate.rs) and the bulk column extractors
 `extract_key_columns` (:794) / `extract_agg_input_columns` (:843).
 
-| here | there |
-| --- | --- |
-| `keyCol`, `extractKeys`   | `extract_key_columns` (aggregate.rs) |
-| `aggCol`, `extractAggs`   | `extract_agg_input_columns` (aggregate.rs) |
-| `finishGroup`             | the per-group closure of `next` (aggregate.rs) |
-| `aggNext`                 | `Iterator::next` (aggregate.rs) after consumption |
-
 `batch.value_at`, `extract_node_ids`, `materialize_node_property_values` and
 `VectorEval::eval_values` are parameters; the expression evaluator (`ExprEval::eval`) is a
 parameter `ev`. Group iteration order is the `HashMap`'s (any list).
@@ -165,15 +158,6 @@ def finishTail (keys : List KeySpec) (aggs : List (Nat × Ex Z)) (key acc1 : Env
   mergeE (keys.foldl (fun a k => match k.orig, key k.name with
     | some o, some v => if aggs.any (·.1 == o) then a else upd a o v
     | _, _ => a) acc1) key
-
-/-- **History, before #3522 (ca36bfa15).** The emitted row's bound slots: `finishCore` (keys
-written), THEN `unbind_agg_accumulators`, then the outputs re-bound. An accumulator sharing a key's
-slot id unbinds the key. -/
-def preFinishGroup {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
-    (aggs : List (Nat × Ex Z)) (key acc : Env Z) : Except E (Env Z) :=
-  match finishCore ev keys aggs key acc with
-  | .error e => .error e
-  | .ok (acc3, outs) => .ok (updAll (aggs.foldl (fun a p => unbindAcc p.2 a) acc3) outs)
 
 /-- The emitted row's **bound** slots on main (aggregate.rs since #3522): evaluate the
 aggregations (:1175-1191), unbind every accumulator FIRST (:1192-1201), then write the key aliases

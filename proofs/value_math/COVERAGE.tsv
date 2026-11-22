@@ -8,7 +8,7 @@ graph/src/runtime/value.rs	get_point_component	463	PROVEN	point_component_case
 graph/src/runtime/value.rs	is_never_equal	1649	PROVEN	isNeverEqual_iff
 graph/src/runtime/value.rs	may_fail_self_match	1672	PROVEN	mayFail_sound
 graph/src/runtime/value.rs	value_nesting_error	76	PROVEN	Nesting.valueNestingError_text (decoder message; decodeValue_refuses_past_cap, decode_nest_deep); the property validator's own message (`validate_list_property`, "Property values can only be nested up to N levels deep") is a different string and its text is not proved
-graph/src/runtime/value.rs	encode	2091	PROVEN	pre3339_decode_encode, decode_encode, stored_roundtrip, encode_map_is_null
+graph/src/runtime/value.rs	encode	2091	PROVEN	decodeUncapped_encode, decode_encode, stored_roundtrip, encode_map_is_null
 graph/src/runtime/value.rs	decode	2177	PROVEN	Nesting.decode (= decodeValue 0): decode_encode, decode_reach, decode_nest_deep, stored_roundtrip
 graph/src/runtime/value.rs	decode_value	2189	PROVEN	Nesting.decodeValue: decodeValue_refuses_past_cap, decodeValue_reach (≤ MAX+1 frames, any input), decodeValue_agrees (= pre-#3339 decoder ∩ within cap), decodeValue_encode/_encode_deep, within_of_depth/not_within_of_depth, readVec_vecBytes (#3339 b080a44c1)
 graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
@@ -20,13 +20,13 @@ graph/src/runtime/functions/math.rs	floor	100	PROVEN	int_rounding_identity, unar
 graph/src/runtime/functions/math.rs	log	114	PROVEN	log_int_nonpos, unary_no_panic
 graph/src/runtime/functions/math.rs	log10	128	PROVEN	unary_no_panic (libm log10 abstract)
 graph/src/runtime/functions/math.rs	random_uuid	143	PROVEN	uuid_shape, uuid_version_nibble, uuid_variant_nibble, hex4_be16, hex8_be32
-graph/src/runtime/functions/math.rs	pow	176	PROVEN	MathFns.pow_fn_in_domain (declared Int|Float|Null args: apply_pow is Ok and equals the pre-#2904 value)
+graph/src/runtime/functions/math.rs	pow	176	PROVEN	MathFns.pow_fn_in_domain (declared Int|Float|Null args: apply_pow is Ok)
 graph/src/runtime/functions/math.rs	rand	186	PROVEN	AggScalar.randFn (Rng structure, rand-crate contract): randFn_range
 graph/src/runtime/functions/math.rs	round	196	PROVEN	int_rounding_identity (Float: libm round, half away from zero, same as C live)
 graph/src/runtime/functions/math.rs	sign	210	PROVEN	sign_float_is_int, sign_float_nan, sign_zero_is_int, sign_float_agrees_int, sign_ret, sign_int (#2906 fixed by #2907 f04c3557a)
 graph/src/runtime/functions/math.rs	sqrt	225	PROVEN	sqrt_float_eq_ieee, sqrt_int_eq_sqrt_float, sqrt_nan_iff, sqrt_nzero
 graph/src/runtime/functions/math.rs	coalesce	314	PROVEN	coalesce_spec, eq_null_iff; coalesce_zero_args_rejected (#2956 fixed 648b41c5c: zero args rejected at validate)
-graph/src/runtime/functions/math.rs	apply_pow	328	PROVEN	MathFns.applyPow (#2904: non-numeric non-null operand is a type error): pow_nonnumeric_base_errors, pow_nonnumeric_exp_errors, pow_bool_errors, pow_null, pow_numeric_unchanged
+graph/src/runtime/functions/math.rs	apply_pow	328	PROVEN	MathFns.applyPow (#2904: non-numeric non-null operand is a type error): pow_nonnumeric_base_errors, pow_nonnumeric_exp_errors, pow_bool_errors, pow_null
 graph/src/runtime/functions/conversion.rs	register	41	PROVEN	ConvReg convSigs: convSigs_lower_nodup, orNull_aliases, orNull_accepts
 graph/src/runtime/functions/conversion.rs	value_to_integer	45	PROVEN	toInteger_int_literal_agrees_c (all signed-digit strings = C strtoll), toInteger_neg_overflow_null (#2955 fixed ac5c27b76), toInteger_int_literals_agree, toInteger_pos_overflow, leading_space, exp_literal, toInteger_nonfinite_diverges
 graph/src/runtime/functions/conversion.rs	value_to_float	104	PROVEN	ConvReg toFloat_ret, toFloat_arms, toFloatArgs_spec, toFloat_unsupported (f64 parse = ConvOps.parseF parameter)

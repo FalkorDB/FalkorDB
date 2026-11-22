@@ -85,11 +85,6 @@ theorem create_2pow61_crashes : resizeForIdOk (1 <<< 61) = false := by
   simp only [resizeForIdOk, matrixNewOk, GB_NMAX]
   decide
 
-/-- And the pre-#2911 guard (`id ≠ u64::MAX`) let it through: the
-id `2^61` is far below `u64::MAX`, so the wrapper never sees the code that would
-have refused it. (`u64::MAX = 2^64 - 1`.) -/
-theorem guard_misses_2pow61 : (1 <<< 61 : Nat) ≠ 2^64 - 1 := by decide
-
 /-! ### `usize → u64` on `.len()` casts
 
 `rows.len() as u64` (matrix.rs, fns `build` etc.). On a 64-bit target `usize` is 64-bit,

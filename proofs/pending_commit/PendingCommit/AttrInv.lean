@@ -19,14 +19,6 @@ code computes it.
 and no created id has a staged *existing* entry (`fresh`). It holds for the empty pending state
 (`pairInv_empty`) and is kept by every operation that touches the maps:
 
-| Rust | here |
-| --- | --- |
-| `set_node_attribute` / `set_relationship_attribute` | `stageOne_inv` (via `rustUpsert_eq`, `Props.upsert_sorted`) |
-| `set_node_attributes` / `set_relationship_attributes` | `stageAll_inv`: **premise** `Sorted attrs`: the doc comment's "sorted by id and unique", checked only by `debug_assert!`. The only callers are `CreateOp`'s template (strictly ascending by construction: ops_apply `CreateAttrs.tplBuild_nodup`, `rank_strict`) and the test-only effects staging; `CREATE (n $map)` is refused by the parser, so the `resolve_map_attrs` path, whose sort would not de-duplicate colliding `ATTRIBUTE_ID_NONE`s, is not reachable (live) |
-| `clear_node_attributes`, `clear_relationship_attributes`, `remove_pending_relationships_for_node`'s `remove` | `clearA_inv` |
-| `created_nodes`, `created_relationship` | `created_inv`: **premise** `ex id = none` — the id was reserved by the id space, so it is not a live entity and has no staged existing attributes (`Snapshot.createRust_Wf`: a reserved id is not live; staging for an existing entity only happens for a live one, `set.rs` skips deleted ones) |
-| `delete_pending_node` | `unwind_inv` (`created.remove(id)`, then the entry of whichever map held it) |
-
 `inv_hdisj` / `inv_huniq` are the two facts in exactly the shape runtime_core's accessor theorems
 take them as hypotheses.
 -/

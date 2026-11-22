@@ -7,18 +7,6 @@ import AlgoUdf.UdfClasses
 runtime when `Runtime::node_differs_from_committed` says the answer can differ, and from
 the committed graph otherwise. Rust source of truth: origin/main 1c0e6c8de.
 
-| here | there |
-| --- | --- |
-| `NodeView`        | a node's labels/attributes as some reader sees them |
-| `Pending`, `overlayLabels`, `overlayAttrs`, `Pending.has` | `Pending::update_node_labels` `runtime/pending.rs`, `update_node_attrs` :638-660, `node_has_changes` :755-775 (a `None` entry is an absent map key) |
-| `RT`, `RT.labels`, `RT.attrs` | `Runtime::get_node_labels` `runtime/runtime.rs` and `get_node_attrs` :1866-1882: a node this query deleted answers from the snapshot taken at the delete (`deleted_nodes`), else committed + pending overlay |
-| `RT.differs`      | `Runtime::node_differs_from_committed` :1772-1785: deleted this query, or `Pending::node_has_changes` |
-| `setNodeLabels`, `setNodeAttrs` | `set_node_labels` `udf/js_classes.rs`, `set_node_attrs` :220 (shared by both branches; `jsNode_eq_helpers`) |
-| `rsJsNode`        | `create_js_node` :134-199: `runtime.filter(differs)` ⇒ runtime view (:157-166), else the committed graph (:167-170) |
-| `rsJsEdge`        | `create_js_edge` :246: `.source`/`.target` via `create_js_node(.., runtime)` (:289-290); `create_js_path` :322 passes the runtime to its nodes (:341) |
-| `type_convert` call | `value_to_js_level` `udf/type_convert.rs`: `Value::Node` → `create_js_node(ctx, id, graph, runtime)` |
-| `specJsNode`      | the contract: read the runtime when one is given, as `labels(n)` / `n.prop` do |
-
 Entry points with no runtime (`getNeighbors` :518, `getNodeById` :576, `iterateNodes` :630,
 `traverse` :863) call `create_js_node(.., None)`: the committed graph, unchanged.
 
@@ -230,7 +218,5 @@ theorem fixed3454_edge_target :
     get (rsJsEdge (some rtAfterDelete) committedAfterDelete 5 1 0 "R" []) "target" =
       some (.obj (jsNode 0 ["P"] [("name", .attr 0)])) :=
   (rs_edge_ok rtAfterDelete 5 1 0 "R" []).2
-
-/-! ## Historical: `create_js_node` reading only the committed graph -/
 
 end AlgoUdf.UdfNodeView

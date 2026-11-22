@@ -1,113 +1,8 @@
 /-
-# runtime_core: Lean 4 model of `graph/src/runtime/runtime.rs`, `runtime/ops/mod.rs` and
-# `runtime/ops/batched_result_emitter.rs`
+# runtime_core: `graph/src/runtime/runtime.rs`, `runtime/ops/mod.rs`, `runtime/ops/batched_result_emitter.rs`
 
-Build: `lake build` (core Lean 4.36, no Mathlib). No `sorry`/`admit`/`axiom`: the
-contracts of the stores underneath (attribute/label name tables, attribute store batch
-read, `lookup_sorted`) are explicit theorem hypotheses. Coverage: `COVERAGE.tsv`.
-Live repro of the confirmed bugs B1/B2 below: `repro_limit.py PORT` (the Rust test file
-`graph/tests/lean_runtime_core.rs` no longer exists on main). `runtime.rs` line numbers are
-pinned to main 256ab4d3f.
-
-| here | there |
-| --- | --- |
-| `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs`), `effective_skip`, `record_cap` |
-| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs`: stop, `trim_to_cap`), `ExpandIntoOp` (`ops/expand_into.rs`: stop, trim), SortOp top-k (`ops/sort.rs`) |
-| `QueryGraph.*` | **current**: `QueryGraph`, `GraphRef`/`Deref`, `Runtime::new`/`graph()`/`graph_mut()`/`publish()`/`upgrade_to_write()` (`runtime.rs`): a published `Arc<Graph>` (read with no borrow) or an owned fork in a `RefCell`; `new_inv`, `graph_published`, `graph_panics_iff`, `graph_same_result`, `graphMut_panics_iff`, `publish_ok`, `publish_refused`, `publish_twice_panics`, `graph_after_publish`, `upgrade_spec` |
-| `Cell.*`      | HISTORY (the earlier cell design; imported by `pending_commit`'s `Hold`, so kept): `Runtime::graph()` / `graph_mut()` / `GraphRef` / `HeldRead` over `Arc<AtomicRefCell<Graph>>`, an atomic_refcell borrow-word model; `graph_deref`, `graph_same_result`, `read_program_same`, `sites_same`, `graph_mut_write_same`, `graph_mut_same_cell`. The code it models no longer exists |
-| `Drop.*` (`DropOrder.lean`) | HISTORY (the earlier cell design): `HeldRead { guard, _owner }` / `Runtime` drop glue, `graph_arc()` (both gone): `held_survives`, `drop_sound`, `held_swapped_unsound`, `g_never_reassigned`, `graph_arc_keeps_g` |
-| `Proto.*`     | HISTORY (the earlier cell design): the read-guard protocol over `MvccGraph`, `QuerySession` and every graph-cell `borrow_mut`: `reader_guard_sound`, `guard_never_excl`, `readNew_never_panics`, `priv_borrows_owner_only`; `writer_reply_race` is a historical counterexample of that design (the cell no longer exists) |
-| `Reuse.*`     | `read_plan_no_update` (a read plan has no updating operator, from `redis_layer`'s `RedisLayer.Ro`), `accessor_unchanged`, `materialize_unchanged` (accessor theorems transfer through `graph()`) |
-| `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs`) |
-| `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs`) |
-| `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs`), `children_to_recurse` |
-| `Accessors.*` | entity accessors `runtime.rs` (attrs, memo, labels, degrees, endpoints/type) |
-| `Accessors.differs*` | #3464 `Runtime::node_differs_from_committed` (`runtime.rs`) + `Pending::node_has_changes` (`pending.rs`): `differs_spec`, `not_differs_labels`, `not_differs_attrs`, `reads_differ_imp_differs` (guard false ⇒ `get_node_labels`/`get_node_attrs` equal the committed graph's; sufficient, not exact: `differs_overapprox`) |
-| `Discharge.*` | proves the store contracts the accessor theorems took as hypotheses, from copies of the `Graph` models in `proofs/graph_queries` (`Attrs.lean`): `reach_nodup`, `reach_cap`, `nameOk_of_reach`, `hc_of_reach`, `hName_of_reach`, `hbg_rfl`; then `materialize_discharged`, `getRelAttribute_discharged`, `materializeRel_discharged`, `materializeNodeProp_discharged`, `materializeRelProp_discharged`, `attrs_agree_discharged`, `relAttrs_agree_discharged`. Left: `hdisj`/`huniq` about `Pending` |
-| `Misc.*`      | `check_timeout`, `check_mem_capacity`, `map_to_index_options` (; required vector keys, fulltext unknown-key refusal, similarity name check), `drain_pending` / `edge_already_used` (`ops/mod.rs`) |
-| (reused)      | `evaluate_id_filter` is proven in `proofs/optimizer_scan` (`OptimizerScan.IdSeek.fold_some`, `go_eq_fold`, `seek_sound`, `empty_graph_seek_none`: no range on a graph with no nodes) |
-
-## Proven (plain English)
-- Budget: the reference budget `need` (Skip adds, Project passes, anything else is a
-  barrier) is sound; any larger cap is sound; `record_cap ≥ need` — hence a sound hard
-  cap — whenever only Projects and at most one Skip sit below the Limit.
-- Budget (bugs): `record_cap` is unsound as a hard cap through `ExpandInto`,
-  through `CondTraverse` (for every limit), and with stacked Skips (concrete witnesses).
-- Emitter: `RowIter.next` spec; `refill_from_cursor` and `drain_pending_entry` specs; the
-  `emit_lazy` loop invariant (packed ++ remaining = remaining before); each batch ≤
-  ceiling ≤ BATCH_SIZE; progress (never `None` while work is left); ceiling stays in
-  [1, 1024] and doubles; `reset` drops all queued work; headline `drive_flatten` /
-  `fresh_drive`: an emitter-driven operator yields exactly the per-row expansions of every
-  input row in order, for any `record_cap` (the soft cap cannot change results).
-- Query: `result_set_size = n ≥ 0` returns exactly the first `n` rows, negative returns
-  all; `keep` never underflows; write queries always pull every batch.
-- RunBatch: the iterative post-order build equals the recursive build (same tree, same
-  first error) for every tree and every `build_batch_op`; the final pop never fails.
-- Accessors: bulk `materialize_node_property_values` = per-row `get_node_attribute` on both
-  paths; `properties(n).k` agrees with `n.k` (deleted snapshot > pending > committed; Null
-  ≡ absent) under the store contracts; attr-id memo returns the table's answer, stays
-  valid and ≤ 32 entries, and survives table growth; `n:L` (`node_has_label_id`) ≡ `L ∈
-  labels(n)` with no disjointness assumption; `node_has_label` by name ≡ name ∈
-  labels(n); label staging keeps add/remove disjoint and last-clause-wins; degrees never
-  underflow and count live committed + created edges.
-- Misc: timeout fires iff now ≥ deadline; mem cap fires iff 0 < cap < usage (usage <
-  2^63); `drain_pending` moves exactly min(|q|, 1024 - |b|) rows in order;
-  `edge_already_used` ≡ ∃ other sibling bound to this edge; vector index options refuse
-  every negative integer, require `dimension` and
-  `similarityFunction` and store the latter lower-cased (`vector_requires_dimension`,
-  `vector_requires_similarity`, `vector_similarity_lowered`), and refuse an
-  unknown similarity name whatever the dimension (`vector_unknown_similarity_refused`,
-  `vector_similarity_known`); fulltext refuses the first key
-  outside `FULLTEXT_OPTIONS` (`fulltextUnknown_none_iff`); phonetic yields only "dm:en" or "".
-
-## CONFIRMED bugs (Rust repro in `graph/tests/lean_runtime_core.rs`, C = `bin/macos-arm64v8-release/falkordb.so`)
-B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs`), but
-    `CondTraverseOp`/`ExpandIntoOp` treat it as a HARD stop (`cond_traverse.rs`,
-    `expand_into.rs`). A traverse feeding another row-reducing traverse stops after
-    LIMIT rows and the answer is lost.
-    `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` (a1→b1, a2⇄b2): Rust [] , C [2].
-    `MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 1` (a1→b1 dead end, a2→b2→c): Rust [], C [30].
-    `... RETURN c.id SKIP 1 LIMIT 1` over 3 chains: Rust [], C [200].
-    Tests `bug_limit_through_expand_into_drops_rows`, `bug_limit_through_two_hops_drops_rows`,
-    `bug_skip_limit_through_two_hops_drops_rows`. Lean `hard_cap_unsound_expandInto`,
-    `hard_cap_unsound_condTraverse`, `hard_cap_unsound_through_traverse`.
-B2. `effective_skip` returns only the FIRST Skip (`runtime.rs`), so stacked Skips
-    under one Limit under-budget the hard cap:
-    `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1`: Rust [], C [20].
-    Test `bug_stacked_skip_under_limit_drops_rows`; Lean `hard_cap_unsound_stacked_skip`.
-    Fix for B1+B2: give hard-cap consumers `need` (`Budget.need_sound`): Skip adds, Project
-    passes, CondTraverse/ExpandInto are barriers; keep the current hint for the soft
-    emitter consumers (proven harmless there: `Emitter.drive_flatten`).
-B3. (shared with C, openCypher violation) SortOp's top-k uses the same walk through
-    CondTraverse: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1`
-    → Rust [], C [] ; expected [20]. Test `bug_sort_topk_through_traverse_drops_rows`.
-    The stacked-Skip Sort variant is issue #2659 (also in C).
-Also seen (known): `Labels added` counts new schema labels (`runtime.rs`) — #2655;
-deleted-id reuse breaks the one-map assumption of `attrs_agree` — #2876
-(`Accessors.reuse_diverges`).
-
-## Suspected, unconfirmed
-- `Accessors.reuse_diverges`: with a node id present in both pending attribute maps,
-  `n.a` falls through `new_nodes_attrs` to `existing_nodes_attrs` while
-  `properties(n)` reads only `new_nodes_attrs` (`pending.rs` vs).
-  Only reachable via id reuse (#2876), where `deleted_nodes` shadows both anyway.
-- `check_mem_capacity`: `usage_fn() as i64` wraps at 2^63 (`Misc.checkMem_wrap`); latent.
-
-## Gaps
-Columnar representation (`GatherItem` lanes, `gather`, selection vectors) is abstracted
-to row lists here (it is proved in `proofs/columnar`, whose theorems the `batched_result_emitter.rs`
-rows now cite); the emitter closure's `Err` path; `build_batch_op` per-variant constructor
-arguments (abstract `mk`); profiling/inspect; `Instant` arithmetic. Open: the four accessors whose
-agreement theorems still assume `hdisj` (a node/relationship id is in at most one of the pending
-`new_*`/`existing_*` attribute maps) and `huniq` (unique keys in each pending list): both are facts
-about `Pending` and the id space (`proofs/pending_commit`, `proofs/id_space`), not about the graph.
-
-## Wave-5 additions
-* `RelAccessors`: relationship reads, pending attribute writes (`setPendingAttr_spec`), typed
-  materialisation, `label_id`, endpoints/type lookups (deleted > pending > committed).
-* `Plan`: `get_variables` (BFS queue; Project/Aggregate end their subtree, existence checks keep only their input), `get_return_names`,
-  `inspect_batch`, `Runtime::new`, delegating accessors, `default_batch`, `run_nested_plan`,
-  `build_batch_op` child popping and SKIP/LIMIT/VHJ checks; `children_to_recurse` spec in RunBatch.
+Models the runtime's graph access, record-cap budget, batched emitter, `run_batch`, entity accessors and result-set cap.
+See README.md for the theorems, open bugs (B1-B3) and gaps; COVERAGE.tsv for the per-fn map.
 -/
 import RuntimeCore.Budget
 import RuntimeCore.Emitter
@@ -118,8 +13,6 @@ import RuntimeCore.Misc
 import RuntimeCore.RelAccessors
 import RuntimeCore.Plan
 import RuntimeCore.Cell
-import RuntimeCore.DropOrder
-import RuntimeCore.Protocol
 import RuntimeCore.Reuse
 import RuntimeCore.QueryGraph
 import RuntimeCore.Discharge

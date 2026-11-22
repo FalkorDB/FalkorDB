@@ -43,7 +43,7 @@ The parser builds expressions on an explicit stack and keeps a *height estimate*
 
 - **For expressions, yes.** `height_sound` proves every estimate is an upper bound, and `guarded_height_le` that a parse which passes `check_depth` builds no tree taller than `MAX_TREE_DEPTH`. `chain_rejected` shows a chain of 256 levels is refused.
 - `nested_depth_bound` proves every `parse_expr` / literal / `CALL {}` / nested `FOREACH` recursion through `Parser::nested` is at most `MAX_NESTING` (100) deep.
-- **The `SET` / `REMOVE` target chain and nested `FOREACH` are guarded too.** The target chain of `parse_update_target` is charged against `MAX_TREE_DEPTH` lookup by lookup (`lookups_reach`, `updateTarget_bounded`; `updateTarget_chain_limit`: a variable takes 254 lookups, 255 is refused), and a nested `FOREACH` goes through `nested` (`foreach_bounded`, `foreach_limit`). The pre-fix models are kept as `pre2900_set_target_unbounded` and `pre2900_foreach_unbounded`.
+- **The `SET` / `REMOVE` target chain and nested `FOREACH` are guarded too.** The target chain of `parse_update_target` is charged against `MAX_TREE_DEPTH` lookup by lookup (`lookups_reach`, `updateTarget_bounded`; `updateTarget_chain_limit`: a variable takes 254 lookups, 255 is refused), and a nested `FOREACH` goes through `nested` (`foreach_bounded`, `foreach_limit`).
 
 ## The headline theorems
 
@@ -86,7 +86,7 @@ There are no CONDITIONAL rows in this project.
 
 | File | What's in it |
 |---|---|
-| `FalkorLexer.lean` | The report header; bytes and boundaries (`splitBytes`, `boundary_iff`); `read_spaces` (`rs`) against the spec (`specSkip`, `rs_agrees_spec`); the token scanners, `getTok` and the loop `lexAll`; `cypher_unescape` (`unescF`) against `specUnescF`; integer literals (`str2int`, `evalLit`, `litExpr`, and `signedLit`, `signedLit_exact`, `neg_run_min_wraps`); the hop cast `asU32`; the height model (`T`, `Reach`, `height_sound`) and `SET` targets; the call-recursion model (`Call`, `runCall`, `foreach_unbounded`) |
+| `FalkorLexer.lean` | Bytes and boundaries (`splitBytes`, `boundary_iff`); `read_spaces` (`rs`) against the spec (`specSkip`, `rs_agrees_spec`); the token scanners, `getTok` and the loop `lexAll`; `cypher_unescape` (`unescF`) against `specUnescF`; integer literals (`str2int`, `evalLit`, `litExpr`, and `signedLit`, `signedLit_exact`, `neg_run_min_wraps`); the hop cast `asU32`; the height model (`T`, `Reach`, `height_sound`) and `SET` targets; the call-recursion model (`Call`, `runCall`, `foreach_unbounded`) |
 | `FalkorLexerExtra.lean` | The rest of `lexer.rs` and `string_escape.rs`: `pos`, `next`, `set_pos`, `current`, `current_str` (`LexSt`), `lex_numeric` (`lexNum`, `intLoop`, `floatLoop`), `err_ctx`/`format_error`, the `Token` `Display` impl (`tokDisplay_injective_punct`), and `cypher_escape` (`esc`, `unesc_escape`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -128,4 +128,4 @@ bash proofs/coverage.sh                # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. The #2900 fix did exactly that for `set_target_unbounded` and `foreach_unbounded`: `updateTarget_bounded` and `foreach_bounded` replace them, with `pre2900_*` history theorems.
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.

@@ -63,7 +63,8 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
 | `unchecked_fork_cannot_write` | In every reachable state a thread with an unchecked fork can neither mutate nor commit | `Mvcc.lean` |
-| `main_operational_complete` | An OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, except the store-to-ticket window (the theorem assumes `owed = false`; see "One remaining window", `store_window_operational_incomplete`) | `Tickets.lean` |
+| `main_operational_complete` | An OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, except the store-to-ticket window (the theorem assumes `owed = false`; see "One remaining window", `store_window_operational_incomplete`) | `Guarded.lean` | Eraser-style locksets: which locks every access to shared state holds (`consistent`, `h1_fork_vs_populate_race`) |
+| `Tickets.lean` |
 | `within_in_time`, `second_call_reports_straggler`, `left_behind_workers_exit` | `threadpool.rs`: named workers; `shutdown_within` returns in time, keeps a stuck worker and reports it on every later call until it exits, and leaks none; one bug stays open (`within_blocks_behind_shutdown`) | `PoolWithin.lean` |
 | `never_stuck_3014`, `main_never_blocks` | The main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
@@ -88,6 +89,9 @@ All reproduced on live servers, Rust against C (scripts in `repro/`).
 |---|---|---|---|
 | #3226 | `bug3226_open_scan_upgrade`, `bug3226_open_scan_unordered`, `bug3226_restore_stall_cycle` (properties `noReacquire`, `LockOrdered`) | A write that commits while its own index scan is still open (`MATCH (n:W) WHERE n.v > 0 WITH n LIMIT 10 SET n.v = n.v + 100000`) takes RediSearch's spec lock as a writer while it holds it as a reader. The server aborts with `attempted to upgrade a spec read lock to a write lock`; C returns 10. The same path takes the GIL while it holds RediSearch's global lock, which makes a wait-for cycle with a `RESTORE` on the main thread. Paths that close the scan before the commit stay ordered (`spec_programs_ordered`). The BGSAVE-child half of the issue (a `pending_slots` mutex inherited across the fork) is not modelled | **Open** |
 
+| `shutdown_within` | `within_blocks_behind_shutdown` (`repro/threadpool_within.rs`, case B) | A `shutdown_within(t)` called while another thread is inside `shutdown` blocks on the `workers` lock for as long as `shutdown`'s `join`, forever if a job never returns, so the time limit does not hold | **Open** |
+| H1 | `Guarded.h1_fork_vs_populate_race` | ForkGC takes only the GIL around `RM_Fork` while background population writes the index under RediSearch's locks but not the GIL, so the child can snapshot a half-written block (`h1_fix_populate_gil`, `h1_fix_gc_spec_lock`: either fix restores a common lock) | **Open** |
+
 Index option validation matches C (`rust_refuses_missing`, `rust_eq_c`, `rust_eq_c_all`) except for one DDL-only difference, pinned by a `#guard`: fulltext `OPTIONS {weight:1.0, foo:true}` is refused (C creates it; `rust_keys_ok_imp_c`).
 
 A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`, `BGSAVE` every 0.3 s) found no partial commit, non-monotonic read, gap, duplicate or lost write, on Rust or C.
@@ -97,8 +101,9 @@ A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`,
 | File | What's in it |
 |---|---|
 | `Mvcc.lean` | The transition system: `S`, `Ev`, `step`, `Reach`, the invariant `Inv`; snapshot isolation, no lost writes, fork-and-commit (`unchecked_fork_cannot_write`), delete and fork exclusion |
-| `Locks.lean` | Lock-order deadlock freedom (`no_cycle`), the `write_loop` hand-off (`drain_no_lost_message`), the queue-overflow deadlock model and its fix (`never_stuck_3014`) |
+| `Locks.lean` | Lock-order deadlock freedom (`no_cycle`), the `write_loop` hand-off (`drain_no_lost_message`), the admission protocol (`never_stuck_3014`) |
 | `Pool.lean` | `threadpool.rs` and `QueueSlot`: `shutdown_drains`, `acquire_bounded`, `release_exactly_once`, `count_eq_live` |
+| `Guarded.lean` | Eraser-style locksets: which locks every access to shared state holds (`consistent`, `h1_fork_vs_populate_race`) |
 | `Tickets.lean` | Index population tickets (`Slots`): counter soundness, `main_operational_complete` |
 | `Search.lean` | `Document::set` with RediSearch as a hypothesis structure, vector and fulltext option parsing: `docSet_vector_sound`, `doc_always_accepted`, `rust_eq_c` |
 | `Knn.lean` | `vector_query_nodes`/`vector_query_edges` with the `k` clamp: `alloc_bounded`, `candidates_topk` |

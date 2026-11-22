@@ -4,15 +4,6 @@ import AlgoUdf.BfsBound
 import AlgoUdf.DfsResult
 /-! # algo.SPpaths / algo.SSpaths entry points and `run_path_algo` dispatch
 
-| here | there (`algo_procedures.rs`) |
-| --- | --- |
-| `present`, `parseSp`   | `parse_sp_config` :2078 (then `parse_common_path_config`, `Config`) |
-| `parseSs`              | `parse_ss_config` :2114 |
-| `toNumeric`            | `to_numeric_value` :2133 over `Marshal.F64` |
-| `algoSp`, `algoSs`     | `algo_sp_paths` :2728, `algo_ss_paths` :2740 (`parse_*_config(args)?` then `run_path_algo`) |
-| `Plan`, `plan`         | `run_path_algo` :2672-2721: Dijkstra fast path, BFS pre-pass, bound seeding, enumeration |
-| `bfsWeight`/`bfsCost`  | the forward folds :2459-2466 (`none` weight = a non-finite sum: `next_weight > NaN/inf` never prunes) |
-
 Theorems:
 * `parseSp_ok`, `parseSp_missing`, `parseSp_not_node`, `parseSs_ok`, `parseSs_missing`.
 * `toNumeric_nat` (exact path weights come back as `Int`), `toNumeric_neg_zero`.

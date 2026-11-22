@@ -12,7 +12,7 @@ MATCH (p:Person) WHERE p.age = 42 RETURN p
 
 Since #2383 the index also serves `IN [...]`, and an `OR` of equalities and `IN` lists on one attribute, as a union of point lookups (`MATCH (p:Person) WHERE p.age IN [30, 40]`).
 
-The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes,versioned,unique,mod}.rs`, the native-index parts of `graph/src/graph/graph.rs` (including `redisearch_fields`, `node_matches`, `relationship_matches`), and the index route of `graph/src/runtime/ops/{node,edge}_by_index_scan.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorNativeIndex.lean`](FalkorNativeIndex.lean). This README explains *what* is proven and *why it matters*.
+The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes,versioned,unique,mod}.rs`, the native-index parts of `graph/src/graph/graph.rs` (including `redisearch_fields`, `node_matches`, `relationship_matches`), and the index route of `graph/src/runtime/ops/{node,edge}_by_index_scan.rs`. The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv) (every Rust fn with its Lean theorem). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -112,6 +112,12 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 | `buildInOneBatch_entry` | The RDB load's one-batch build leaves a `Ready` column holding `from_entries` of the live pairs; CREATE INDEX leaves it `Building` (`createIndex_entry`) | `Ddl.lean` |
 | `nodeAttrsSet_hit`, `nodesDeleted_hit` | An update replaces the old entry; a delete removes every entry | `Writes.lean` |
 | `snapshot_isolated`, `runUnit_spec` | Readers keep their version's index; a commit publishes its staged changes once | `Ddl.lean` |
+| `lookupSel_fromEntries`, `disjunction_agrees`, `combine_or_ok`, `combine_and_ok` | #2453 / #3736 / #3737: list values (a second, array tree), `Selection`, and several attributes: the scan that stands in for a building column keeps exactly what the built column returns | `Numeric.lean`, `Query.lean`, `Scan.lean` |
+| `fit_after_other_batch`, `fit_after_writer`, `commit_swap`, `commit_not_stale` | #3566: an indexer batch commits as a version of its own; the fit against what was published meanwhile | `Batch.lean` |
+| `rebase_inv`, `catchUp_inv`, `insert_inv`, `fit_catchUp_how` | #3567 / #3568: writers rebase onto indexer batches and a batch catches up on writers by Refresh or Insert (conditional on `Frame`, below) | `Rebase.lean`, `Batch.lean` |
+| `memoryUsage_add`, `EN.memoryUsage_ready` | #3569: `GRAPH.MEMORY USAGE` counts every node and edge column (CCH not counted) | `Memory.lean` |
+| `isWellFormed_iff`, `defNew_eq_of_same_members` | #3319: the CCH contract skeleton; every `unimplemented!()` body is an always-panicking function | `Cch.lean` |
+| `topoBuild_correct`, `customize_correct`, `buildCch_correct`, `cch_query_end_to_end` | CCH phases 1-3: `Cch::query` returns a shortest path (over `Nat` weights in rank space) | `CchOrder.lean` to `CchSeq.lean` |
 
 ### How `range_agrees` is proved
 
@@ -159,6 +165,9 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `Scan.lean` | `nodeMatches`, `relationshipMatches`, the filtered scans, `nodeScanOp`/`edgeScanOp`, `redisearchFields` |
 | `Unique.lean` | `nativeUniqueQuery`, `fewest`, `ReadOnce` |
 | `Decline.lean` | `unsupported_by_native_index`'s `describe`, `unionMembers` |
+| `Rows.lean`, `Bridge.lean`, `Online.lean` | `Selection` row lemmas, the `sizing_batch` / `query_range` glue, and the background builder (`online_build.rs`; only `Sizing::batch` is modelled) |
+| `Batch.lean`, `Rebase.lean`, `Memory.lean` | Indexer batch commit and fit (#3566), rebase and catch-up (#3567, #3568), memory usage (#3569) |
+| `Cch.lean`, `CchOrder.lean`, `CchTopo.lean`, `CchMetric.lean`, `CchPaths.lean`, `CchSearch.lean`, `CchRoute.lean`, `CchSmall.lean`, `CchSeq.lean` | The CCH path-index contract skeleton and phases 1-3 |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entry encoding `enc` and the sorted-list lemmas, and [`../core`](../core) for `roundNat`/`bitlen` (IEEE round-to-nearest-even).
@@ -183,6 +192,10 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 - **`HashMap` order.** Iteration order is arbitrary, so theorems about a whole map are stated per key. The `bulk`, `rows` and `product` paths have exact staged-ops theorems (`*_changes`); their per-entry outcome follows from `lastOp_ops` as for the other paths.
 - **Schema.** Attribute names are assumed unique (`attrNames.Nodup`), which the single `attrs_name` dictionary guarantees.
 - **RediSearch.** Under `index-falkordb` nothing reads a Range index from RediSearch. Fulltext and Vector indexes still do (FFI, not modelled here).
+- **Array tuples in `Rebase.lean`.** `refresh` and `indexer_insert` push both kinds (`refresh_array_mem`, `indexerInsert_array_mem`), but the invariant theorems (`Inv`, `refresh_inv`, `catchUp_inv`, `insert_inv`) are stated for the scalar tree only. They are also conditional on `Frame` (outside the written set, the two versions agree on what each entity contributes and where it sits); the unconditional specs carry the COVERAGE rows.
+- **CCH (`cch/`).** Weights are `Nat` (the f64 left-fold structure is not modelled); arcs are pair-indexed and linked to the slot arrays by `arc_via_slots`; the ordering backend is an arbitrary function (its permutation is checked by `invert`); node space and rank space are related by `invert_spec`, not composed into one statement. Not proven: the slot writes of `seed` (`seedA` is its pair-level result).
+- **Counters.** The `u64` generation, commit, version and batch counters are unbounded `Nat`; a wrap at 2^64 is assumed unreachable.
+- **Matrix order and size.** `scanNodes_below_cursor` / `scanEdges_below_cursor` assume the label matrix is iterated in ascending row order and a tensor by `(src, dst)` (hypotheses `hasc` / `G.Ordered`, an assumption about GraphBLAS), `buildInOneBatch_entry` that the entity count fits `usize::MAX` (`G.Fits`), and `nodeFilteredScan_agrees` that ids fit a `u64` (`hlt`). Not proven as one induction: "a `Building` column holds exactly the current tuples of the entities below its cursor" over interleaved batches and units of work; its parts are proven separately. `idx as u16` (attribute ids above 65535) is not modelled.
 - **Scan op details.** The scan ops' label scan (the pattern's labels, `extra_labels`, the edge cache, undirected orientation) belongs to `ops_traverse`; here the scan is the index label's nodes / the type's edges.
 
 ## Build and check

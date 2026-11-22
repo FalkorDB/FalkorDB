@@ -9,15 +9,6 @@ and read back by `read_width(.., DOC_BYTES)` (`aos.rs`, `mod.rs`). `Leaf::doc_la
 reports `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)` (`leaf/mod.rs`) and `from_pairs` sizes AoS as
 `count * (FIELD + DOC_BYTES)` (`leaf/mod.rs`).
 
-| Lean | Rust |
-| --- | --- |
-| `docLeBytes` | `doc_le_bytes` `cow_btree/mod.rs` |
-| `aosEncD`, `aosBuildD` | `AosLeaf::build` `aos.rs` (`None` = the `doc_le_bytes` panic) |
-| `aosCountD`, `aosKeyD`, `aosDocD` | `AosLeaf::count` 18, `key` 23, `doc` 31 |
-| `aosMergeD` | `AosLeaf::merge_batch` 51 |
-| `docLayoutD` | `Leaf::doc_layout` AoS arm `leaf/mod.rs` |
-| `fromPairsD`, `toPairsD` | `Leaf::from_pairs` `leaf/mod.rs` with `aos_size = count * (FIELD + DOC_BYTES)` |
-
 Proven: `docLeBytes_spec` (the assert passes iff `doc < 256^DOC_BYTES`, and then the bytes are
 `le DOC_BYTES doc`), `docLeBytes_lossless` (narrowing is lossless), `aos_roundtripD` and
 `fromPairsD_roundtrip` for every `DOC_BYTES ∈ {1, 2, 4, 8}`, `aosMergeD_spec`, `docLayoutD_spec`,
@@ -307,6 +298,4 @@ theorem asserted_fromSorted_contents (L B D : Nat) (h : constAssert L B D = true
   exact fromSorted_contents L B (by omega) h.1.1.2 (by omega) ps hs hu
 
 theorem docBytesAssert_rejects_3 : docBytesAssert 3 = false := rfl
-/-! ## HISTORICAL: an assert admitting `DOC_BYTES ∉ {1, 2, 4, 8}`, which could not be read -/
-
 end IndexLayer.Leaf

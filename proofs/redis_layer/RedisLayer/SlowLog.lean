@@ -1,17 +1,6 @@
 /-!
 # `src/slow_log.rs` — per-graph slow log
 
-| here | there (`origin/main`) |
-| --- | --- |
-| `boundary`, `slice`   | `str::is_char_boundary`, `str` indexing `&s[..n]` (panics off a char boundary) |
-| `floorCB`             | `str::floor_char_boundary` (std contract: the greatest `x ≤ index` with `is_char_boundary(x)`; `len` when `index ≥ len`) |
-| `prefix`              | `prefix` (`&s[..s.floor_char_boundary(STR_MAX_LEN)]`) |
-| `truncate`            | `truncate` |
-| `hashInput`           | `entry_hash` (hashes `prefix(query)`) |
-| `E`, `add`, `reset`   | `SlowLog::new`, `add`, `reset` |
-| `replyLen`            | `SlowLog::reply` (5-element rows) |
-| `MinCache`, `SlowestKept`, `add` | the `min_latency` cache; the update arm falls through to the recompute |
-
 **Truncation** (W4-redis-1): `entry_hash` and `truncate`
 go through `prefix`, which backs up to `floor_char_boundary(2048)` (a cut at byte 2048
 inside a multi-byte character would panic):
@@ -175,11 +164,6 @@ theorem hashInput_bad (p t : Bytes) (hp : p.length = 2047) :
   rw [show STR_MAX_LEN = 2047 + 1 from rfl, floorB_succ, ite_eq_right (by simp [hb]),
     show (2047 : Nat) = 2046 + 1 from rfl, floorB_succ, ite_eq_left hb']
   simp [hp]
-
-/-! ## Historical: slicing at byte 2048
-
-An earlier version sliced at byte 2048 directly (`query[..min(len, 2048)]` and
-`s[..STR_MAX_LEN]`). Kept as the record of W4-redis-1. -/
 
 /-! ## Entries -/
 

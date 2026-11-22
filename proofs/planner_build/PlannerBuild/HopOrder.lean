@@ -1,15 +1,6 @@
 /-
 # `self_loops_after_binders` (planner/hop_order.rs)
 
-| Lean | Rust |
-| --- | --- |
-| `HopShape`, `touches`, `movable`, `isBinder` | `HopShape` hop_order.rs, the closures `touches` :35, `movable` :31 |
-| `deferP` | the `if` condition :41-46 (`!x.self_loop && touches(x, s.from)` = `isBinder`) |
-| `flush` | the latest-first `for k in (0..deferred.len()).rev()` loop :52-56 |
-| `step` | one iteration of `for (i, (hop, s)) in hops.into_iter().zip(&shapes).enumerate()` :39-58 |
-| `selfLoopsAfterBinders` | `self_loops_after_binders` :25 (early return :32-34, `foldl` = the loop) |
-| `pre3102_loop`, `pre3102_reference` | an earlier loop, kept as `tests::reference` hop_order.rs |
-
 Generic over the hop type `T` and the node type `N` (the planner instantiates `T = QR`,
 `N = (id, scope_id)`, `bound = self.visited.contains`, mod.rs).
 

@@ -1,12 +1,6 @@
 /-
 # EXPLAIN text (mod.rs)
 
-| here | there |
-| --- | --- |
-| `FRel`, `typesStr`, `hopsStr`, `fmtVarLen` | `fmt_var_len_rel` mod.rs |
-| `fmtRelDir`, `fmtRel` | `fmt_rel_with_labels_dir` mod.rs, `fmt_rel_with_labels` mod.rs |
-| `IRK`, `irName`, `irDetail`, `irFmt` | `impl Display for IR` mod.rs |
-
 Strings are built exactly as the `format!` calls do (payload `Display`s are
 parameters: the node/relationship/pattern text is passed in already rendered).
 -/

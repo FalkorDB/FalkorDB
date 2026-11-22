@@ -64,7 +64,7 @@ graph/src/graph/graph.rs	track_edge_index_updates	2115	PROVEN	Attrs.track_eq_ofT
 graph/src/graph/graph.rs	set_node_labels_product	2150	PROVEN	Labels.setLabelsProduct_spec
 graph/src/graph/graph.rs	set_nodes_labels_bulk	2230	PROVEN	Labels.setLabelsBulk_spec
 graph/src/graph/graph.rs	remove_nodes_labels	2276	PROVEN	Labels.removeLabels_spec
-graph/src/graph/graph.rs	get_node_relationships	2400	PROVEN	Queries.nodeRels (#3084 fixed the self-loop-twice bug: incoming half drops src == dest): nodeRels_once (every incident edge of a tensor exactly once, self-loops included), nodeRels_eq_byType, inc_filter_agree; historical pre3084_nodeRels, pre3084_nodeRels_selfloop_twice (fixed by #3084, 5f147f10e)
+graph/src/graph/graph.rs	get_node_relationships	2400	PROVEN	Queries.nodeRels (incoming half drops src == dest): nodeRels_once (every incident edge of a tensor exactly once, self-loops included), nodeRels_eq_byType, inc_filter_agree
 graph/src/graph/graph.rs	relationship_matrices_iter	2477	PROVEN	Queries.inDeg_eq (relMs iteration)
 graph/src/graph/graph.rs	get_node_relationships_by_type	2485	PROVEN	Queries.byType_both_once, byType_out, byType_in; #3084 restructured the matrix selection (all-types walked in place, typed gathered) = selMats unchanged
 graph/src/graph/graph.rs	get_node_indegree	2531	PROVEN	Queries.inDeg_eq

@@ -2,21 +2,6 @@
 # Rows, expressions and the Filter operator
 
 Reference semantics shared by every pass model.
-
-| here | there |
-| --- | --- |
-| `Var`            | `parser::ast::Variable` (`graph/src/parser/ast.rs`) — `(id, scope_id)`; `id` is scope-local |
-| `Val`            | `runtime::value::Value` (only the constructors the passes care about) |
-| `Row`, `Row.get` | a row of the batch env; an unbound column reads as NULL |
-| `Expr`, `eval`   | `ExprEval::eval_node` (`graph/src/runtime/eval.rs`) — `And` at `eval.rs` |
-| `powV`, `subV`, `divV` | `apply_pow` (`math.rs`), `Value` `-` and `/` |
-| `andL`           | the n-ary `ExprIR::And` loop (`eval.rs`), as a right fold of the binary step |
-| `passes`         | per-row verdict of `FilterOp::eval` (`graph/src/runtime/ops/filter.rs`) |
-| `filterRows`     | `FilterOp` over the whole input: any row error fails the query |
-| `cp`             | `CartesianProduct` (`runtime/ops/cartesian_product.rs`) |
-| `extend`         | any per-row expanding operator that keeps its input columns (`Unwind`, `CondTraverse`, `Apply` right side, `ProcedureCall`, …) |
-| `List.take`/`drop` | `Limit` / `Skip` (`runtime/ops/limit.rs`, `skip.rs`) |
-| `List.mergeSort` | `Sort` (stable) |
 -/
 
 namespace Falkor.Opt

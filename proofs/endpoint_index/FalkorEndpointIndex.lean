@@ -1,85 +1,9 @@
 /-
-# The edge-endpoint index answers exactly what the edge set says
+# The edge-endpoint index (`graph/src/graph/endpoint_index.rs`)
 
-A model of `EndpointIndex` (`graph/src/graph/endpoint_index.rs`), the graph-wide
-reverse index `edge_id -> (src, dst)` that every materialised relationship reads,
-and a machine-checked proof that after **any** sequence of `set` / `clear` /
-`prepare` calls — interleaved with the tier promotions they trigger — `get`
-returns precisely what a flat map `Nat → Option (src, dst)` would.
-
-## What it indexes
-
-Edge id → `(src, dst)`. Not node → incident edges, and not the type: the type
-lives in `relationship_type_matrix`, the incidence in the per-type tensors. The
-index holds one slot per edge id ever reserved; a deleted edge is a tombstone
-(both fields = the width's `EMPTY`), and nothing ever shrinks, so there is no
-swap-remove or compaction to get wrong. The only structural rewrite is
-*promotion*: re-encoding a narrow tier into a wider one when a reused id's new
-endpoints no longer fit.
-
-## What is modelled, and where it lives in the tree
-
-| here | there (`graph/src/graph/endpoint_index.rs` unless noted) |
-| --- | --- |
-| `bits`, `EMPTY`, `putF`         | `impl Endpoint for u16 / U24 / u32 / u64` (:83-126) — `put` truncates (`v as u16`, 3 LE bytes, ...) |
-| `decode`                        | `get`'s `if s.vacant() && d.vacant() { None }` (:470) |
-| `rankFor`                       | `EndpointIndex::rank_for` (:393) |
-| `Ix` (`w16 w24 w32 w64`)        | `struct EndpointIndex` (:328); a `Paged<T>` is modelled as its flat slot list (see `Paged` section for the paging lemma) |
-| `Ix.tier`, `Ix.setTier`         | the `match rank { 0 => w16, ..., _ => w64 }` arms of `tier_len` / `with_tier` (:539, :551) |
-| `Ix.withTier`                   | `with_tier` (:551): `get_or_insert_with(Arc::default)` + `Arc::make_mut` + `f` |
-| `growTo`, `putAt`, `vacate`     | `TierOps for Paged<T>`: `grow_to` (:734), `put` (:743), `vacate` (:752) |
-| `Ix.appendRank`                 | `append_rank` (:404) |
-| `Ix.len`, `Ix.tierLen`          | `len` (:414), `tier_len` (:539) |
-| `Ix.get` / `walk`               | `get` (:461) — the `each_tier!` walk subtracting tier lengths |
-| `Ix.locate` / `locAux`          | `locate` (:631) |
-| `widen`, `Ix.promote`           | `promote` (:338) — `from.take()`, empty early-return, re-emitted sentinel |
-| `Ix.ensure`                     | `get_or_insert_with(Arc::default)` inside `raise_to` |
-| `Ix.raiseTo`                    | `raise_to` (:488) |
-| `Ix.set`                        | `set` (:647) — the three `match self.locate(slot)` arms |
-| `Ix.clear`                      | `clear` (:694) |
-| `Ix.prepare`                    | `prepare` (:522) — `reserve_exact` has no semantic effect and is dropped |
-| `Ix.prepareTiers`, `clampStarts` | `prepare_tiers` (:607), its clamp (:612-616) |
-| `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs`; `prepare` at, then `set` per edge), `delete_relationships` (`graph.rs`) and `delete_implicit_edges` (`graph.rs`) via `clear_edge_endpoint` (`graph.rs`), `Graph::restore` (`graph.rs`; `prepare_tiers` at, then `set`) |
-
-## What is proved (all without `sorry`; see `#print axioms` at the end)
-
-* `get_view` — `get` is lookup in the concatenation of the four decoded tiers.
-* `locate_some` / `locate_none` — `locate` names an in-range offset whose tier
-  prefix reconstructs the id, or the id is past the end.
-* `raise1..3`, `raiseTo_spec` — promotion never changes what any id reads
-  (tombstones and gaps included), keeps the width invariant, empties every tier
-  below the target (so it starts at id 0) and leaves the tiers above alone.
-* `view_set` — `set e s d` is "pad with absent slots to `e`, then overwrite `e`",
-  in all three arms (in place, reuse-with-promotion, append / new tier), and
-  preserves the invariant.
-* `view_clear`, `view_prepare`, `view_prepareTiers` — tombstoning, batch sizing
-  and the restore layout.
-* `get_set`, `get_clear`, `get_prepare` — the pointwise spec.
-* `run_refines` — **headline**: for any op sequence whose endpoints are 64-bit
-  and not both `u64::MAX`, `get` after the run equals the reference map.
-* `restore_agrees` — the restore path (`prepare_tiers` then `set` of every edge)
-  yields exactly the edge set, whatever tier boundaries it is given.
-* `clampStarts_mono`, `clampStarts_ordered` — `prepare_tiers` clamps its starts monotone, so no tier
-  size underflows; a no-op on restore's ordered starts.
-* `paged_at`, `ensurePages_spec` — `pages[i / P][i % P]` addresses the flat list
-  under the page-shape invariant, and `ensure_pages` keeps the shape, only
-  appends `EMPTY` slots and covers the requested length.
-* `mem_collect`, `collect_nodup`, `detach_delete_index` — `delete_implicit_edges`'
-  per-type collection is exactly "incident to a deleted node, not explicit",
-  never lists an id twice, and clearing it leaves no stale slot.
-* `u64_max_pair_reads_as_absent` — the one boundary where the spec needs its
-  hypothesis: an edge `(u64::MAX, u64::MAX)` reads back as deleted.
-
-## Companion: `EndpointPaged.lean`
-
-`Arc` sharing, page layout and page-level writes are proved there: `pageMut_spec`
-(a write through one version changes only its page `p`, no other live version, and keeps
-strong counts exact — the `Arc::get_mut`-or-copy of `page_mut`, and equally `make_mut`
-on a tier), `cloneV_spec`, `pushFresh_spec`, `replace_spec` (`regrow`), `fromSlots_spec`
-/ `promote_paged` (page layout of `from_slots`), `flatten_pagePut` / `put_spec` /
-`vacate_spec` / `growTo_spec` (the paged `TierOps` are the flat ones), `reserve_covers`,
-the memory accounting (`bytes_per_edge_bounds`), and `set_*_in_range` (every `put` the
-three `set` arms issue is in range, which the flat `List.set` does not check).
+Models `EndpointIndex` (edge id -> (src, dst), with tier promotion) and proves `get` agrees with a flat map after any
+sequence of `set` / `clear` / `prepare`. `EndpointPaged.lean` models pages and `Arc`s; `EndpointGraph.lean` the bulk `Graph` callers.
+See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
 -/
 
 set_option linter.unusedSimpArgs false

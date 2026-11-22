@@ -14,7 +14,7 @@ are missing), `nodeOnly_*`, `planMatch_join`, `elide_spec`,
 `nodeOnly_bound_filter`, the `stripped` invariant (`bindPath_stripped`, `elide_stripped`,
 `planComp_stripped`, `planMatch_stripped`). `planMatch` = `planFrom` (the component loop)
 on `liftPattern`'s rewritten components, the lifted filters first (`planMatch_nolift`,
-`planMatch_join`, `planMatch_join_nolift`); `q2923_unlifted` / `q2923_lifted`,
+`planMatch_join`, `planMatch_join_nolift`); `q2923_lifted`,
 `q2923_bound_not_lifted`, `lifted_rel_emitted`.
 -/
 namespace PlannerBuild.E
@@ -791,14 +791,6 @@ def bDotV : Ex := .node (.prop "v") [Ex.v v2923b]
 def q2923c : Comp := { nodes := [{ alias := v2923c, attrs := [("v", bDotV)], ptr := 1 }], rels := [] }
 def q2923 : List Comp := [{ nodes := [{ alias := v2923b, ptr := 0 }], rels := [] }, q2923c]
 
-/-- Before #2981 (the components planned as written): `c.v = b.v` is a Filter inside the
-second CartesianProduct branch, where `b` is not bound, so no row passes. -/
-theorem q2923_unlifted :
-    (planFrom ⟨[], []⟩ {} q2923 none []).1 =
-      .cp [.allScan { alias := v2923b, ptr := 0 } [],
-           .filter (andOf [attrEq v2923c ("v", bDotV)]) (.allScan { alias := v2923c, ptr := 1 } [])] := by
-  simp [planFrom, planComp, q2923, q2923c, boundLabelFilters, orderRels, sortRels, leadingWalk, leadOrder, WI.forClause, HopOrder.selfLoopsAfterBinders, nodeOnly, lowerN, lowerInline, lwKey, MSt.bound, withF, scanOf, stripNode, inlineAttrsToFilter, markLabels, v2923b, v2923c, rewriteComp, keepNode, keepAttrs, readsPending, bDotV, nodes, nodesL, Ex.v]
-
 /-- Since #2981 the entry is lifted above the product, where both are bound. -/
 theorem q2923_lifted :
     (planMatch ⟨[], []⟩ {} q2923 none).1 =
@@ -931,7 +923,6 @@ theorem buildPatternSubPlanV_payload (st : MSt) (wi : WI) (comps : List Comp) (a
     (buildPatternSubPlanV st wi comps aa).1 = aa st.visited (planMatch st wi comps none).1 ∧
     (buildPatternSubPlanV st wi comps (fun _ => aa [])).1 =
       (buildPatternSubPlan st wi comps (aa [])).1 := ⟨rfl, rfl, rfl⟩
-
 
 /-! ### #2558: `MATCH (a)-[:R]->(b)-[*]->(c {id: …})` — the walk on the anchored `c` leads -/
 

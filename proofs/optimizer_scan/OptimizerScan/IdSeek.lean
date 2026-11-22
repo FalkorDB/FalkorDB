@@ -13,8 +13,6 @@
 | `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs` (`node_ids.max_id()`, id_space.rs) |
 | `idMax`                    | the loop's initial `max = node_id_bound().saturating_sub(1)`, `runtime/runtime.rs` (`Graph::node_id_bound` → `IdSpace::bound`, id_space.rs) |
 | `seek`                     | `NodeByIdSeekOp::next`: range minus `deleted_nodes`, `runtime/ops/node_by_id_seek.rs` |
-| `pre2979_seek`             | the earlier loop (starts at `max_node_id()`), kept as history |
-| `pre3394_seek`             | the same without the `node_count` check, kept as a stepping stone |
 | `G.wf`                     | `Graph::node_count` is the number of live ids below the id bound (`id_space.rs`) |
 | `labelIdScan`              | `NodeByLabelAndIdScanOp::next`: `get_nodes(labels, min)` ∩ range, `runtime/ops/node_by_label_and_id_scan.rs` |
 | `reference`                | `Filter(id(n) op v)` over `AllNodeScan` — Cypher semantics, what the rewrite must preserve |
@@ -188,24 +186,13 @@ def seek (g : G) (fs : List (V × Op)) (x : Nat) : Option Bool :=
   | .empty => some false
   | .range a b => some (decide (a ≤ x ∧ x ≤ b) && !g.deleted.contains x)
 
-/-- History: the seek before PR #2979, whose loop started at `[0, max_node_id()]`. -/
-def pre2979_seek (g : G) (fs : List (V × Op)) (x : Nat) : Option Bool :=
-  match evalIdFilterMain g.nodeCount (maxNodeId g) fs with
-  | .err _ => none
-  | .empty => some false
-  | .range a b => some (decide (a ≤ x ∧ x ≤ b) && !g.deleted.contains x)
-
-/-- History: `NodeByIdSeekOp` before #3394 (b6567cb97), over the loop alone. -/
-def pre3394_seek (g : G) (fs : List (V × Op)) (x : Nat) : Option Bool :=
-  match evalIdFilter (maxNodeId g) fs with
-  | .err _ => none
-  | .empty => some false
-  | .range a b => some (decide (a ≤ x ∧ x ≤ b) && !g.deleted.contains x)
-
 /-- On a graph with nodes the #3394 check is a no-op. -/
-theorem seek_eq_pre3394 (g : G) (fs : List (V × Op)) (hne : g.nodeCount ≠ 0) (x : Nat) :
-    seek g fs x = pre3394_seek g fs x := by
-  unfold seek pre3394_seek evalIdFilterMain
+theorem seek_nonempty (g : G) (fs : List (V × Op)) (hne : g.nodeCount ≠ 0) (x : Nat) :
+    seek g fs x = (match evalIdFilter (maxNodeId g) fs with
+      | .err _ => none
+      | .empty => some false
+      | .range a b => some (decide (a ≤ x ∧ x ≤ b) && !g.deleted.contains x)) := by
+  unfold seek evalIdFilterMain
   rw [idMax_eq_maxNodeId g hne]
   cases evalIdFilter (maxNodeId g) fs <;> simp [hne]
 
@@ -331,16 +318,16 @@ theorem all_cypher (fs : List (Nat × Op)) (x : Nat) :
     simp only [List.map, List.all_cons, natSat, cypherHolds]
     rw [← ih]; rfl
 
-/-- **PROVEN** (history, before #3394): for a non-empty graph and non-negative integer operands
-the pre-#3394 `NodeByIdSeek` returned exactly the nodes `Filter(id(n) op v …)` over
-`AllNodeScan` would; dropping `nodeCount ≠ 0` gave the phantom node 0 (W2-scan-2). -/
-theorem pre3394_seek_sound (g : G) (fs : List (Nat × Op)) (hne : g.nodeCount ≠ 0)
+/-- For a non-empty graph and non-negative integer operands `NodeByIdSeek` returns exactly the
+nodes `Filter(id(n) op v …)` over `AllNodeScan` would (the non-empty half of `seek_sound`). -/
+theorem seek_sound_nonempty (g : G) (fs : List (Nat × Op)) (hne : g.nodeCount ≠ 0)
     (hsmall : ∀ p ∈ fs, p.1 < 2 ^ 63) (x : Nat) :
-    pre3394_seek g (fs.map (fun p => (V.int p.1, p.2))) x
+    seek g (fs.map (fun p => (V.int p.1, p.2))) x
       = some (reference g (fs.map (fun p => (V.int p.1, p.2))) x) := by
+  rw [seek_nonempty g _ hne]
   have hmax : maxNodeId g = g.bound - 1 := by simp [maxNodeId, hne]
   have hb : 0 < g.bound := by unfold G.bound; omega
-  unfold pre3394_seek evalIdFilter reference G.live
+  unfold evalIdFilter reference G.live
   rw [go_eq_fold fs _ hsmall, all_cypher]
   cases hf : fold (0, maxNodeId g) fs with
   | none =>
@@ -369,8 +356,7 @@ theorem seek_sound (g : G) (hwf : g.wf) (fs : List (Nat × Op))
     cases fold (0, idMax g) fs with
     | none => rfl
     | some r => obtain ⟨a, b⟩ := r; simp [hne]
-  · rw [seek_eq_pre3394 g _ hne]
-    exact pre3394_seek_sound g fs hne hsmall x
+  · exact seek_sound_nonempty g fs hne hsmall x
 
 /-! ### Counterexamples — each reproduced against the real server (see header of
 `OptimizerScan.lean`) -/
@@ -394,8 +380,7 @@ example : reference g5 [(.float 1, .eq)] 1 = true := by decide
 /-- `id(n) = null`: Cypher drops every row; the runtime errors. -/
 example : reference g5 [(.null, .eq)] 1 = false := by decide
 
-/-- A graph that has never held a node (W2-scan-2, #3353). Before #3394 `max_node_id` was 0,
-the range `{0}`, nothing deleted, so `NodeByIdSeek` yielded node 0, which does not exist. -/
+/-- A graph that has never held a node (W2-scan-2, #3353). #3394 made `NodeByIdSeek` empty on it (it once yielded the phantom node 0). -/
 def gEmpty : G := { nodeCount := 0, deleted := [] }
 theorem gEmpty_wf : gEmpty.wf := by simp [G.wf, gEmpty, G.bound]
 example : reference gEmpty [(.int 0, .eq)] 0 = false := by decide
@@ -407,33 +392,12 @@ theorem empty_graph_seek_none (fs : List (V × Op)) (x : Nat) : seek gEmpty fs x
   cases evalIdFilter (idMax gEmpty) fs <;> simp [gEmpty]
 example : seek gEmpty [(.int 0, .eq)] 0 = some false := by decide
 
-/-- …while an emptied graph (every node deleted) was fine even before, because 0 is in
-`deleted`. -/
-example : pre3394_seek { nodeCount := 0, deleted := [0, 1] } [(.int 0, .eq)] 0 = some false := by
-  decide
 example : seek { nodeCount := 0, deleted := [0, 1] } [(.int 0, .eq)] 0 = some false := by decide
 
-/-- **PROVEN** (PR #2979): the new initial bound is invisible on integer operands — the seek
-agrees with the pre-#2979 one on every graph, since the bounds differ only when
-`node_count = 0`, where both return no ids. -/
-theorem seek_eq_pre2979 (g : G) (fs : List (Nat × Op)) (hsmall : ∀ p ∈ fs, p.1 < 2 ^ 63)
-    (x : Nat) :
-    seek g (fs.map (fun p => (V.int p.1, p.2))) x
-      = pre2979_seek g (fs.map (fun p => (V.int p.1, p.2))) x := by
-  by_cases hne : g.nodeCount = 0
-  · unfold seek pre2979_seek evalIdFilterMain evalIdFilter
-    rw [go_eq_fold fs _ hsmall, go_eq_fold fs _ hsmall]
-    cases fold (0, idMax g) fs <;> cases fold (0, maxNodeId g) fs <;> simp [hne]
-  · unfold seek pre2979_seek
-    rw [idMax_eq_maxNodeId g hne]
-
-/-- PR #2979 side effect on an emptied graph (ids 0, 1 handed out, both deleted): the loop now
-starts at `[0, 1]` instead of `[0, 0]`, so `id(n) = 1 AND id(n) = 'x'` reaches the type check
-and errors where it used to return no rows (the error masking below, now narrower). -/
+/-- On an emptied graph (ids 0, 1 handed out, both deleted) the loop starts at `[0, 1]` (PR #2979),
+so `id(n) = 1 AND id(n) = 'x'` reaches the type check and errors. -/
 example : seek { nodeCount := 0, deleted := [0, 1] } [(.int 1, .eq), (.str "x", .eq)] 0 = none := by
   decide
-example : pre2979_seek { nodeCount := 0, deleted := [0, 1] } [(.int 1, .eq), (.str "x", .eq)] 0
-    = some false := by decide
 
 /-- An error in a later conjunct is masked when an earlier one already empties the range
 (`id(n) = 100 AND id(n) = 'x'` returns no rows instead of the type error). Modelled only. -/

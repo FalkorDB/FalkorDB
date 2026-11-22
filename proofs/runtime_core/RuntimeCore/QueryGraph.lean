@@ -3,7 +3,7 @@ import RuntimeCore.Cell
 /-!
 # `Runtime`'s graph: a published `Arc<Graph>` or an owned fork
 
-This replaces the `HeldRead` model (`Cell`, `DropOrder`, `Protocol`, kept as history: they model
+This replaces the `HeldRead` model (`Cell`, kept as history: it models
 `Arc<AtomicRefCell<Graph>>`, which no longer exists). Published versions are `Arc<Graph>` and a
 fork is a plain `Graph`; `Runtime` holds
 

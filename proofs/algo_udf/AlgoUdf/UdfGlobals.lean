@@ -5,17 +5,6 @@ The logic of these functions lives in the JavaScript they `eval` into the
 context; that JavaScript is modelled here. Installing properties on the global
 object is QuickJS (AXIOMATISED: `globals.set(k, v)` makes `k` resolve to `v`).
 
-| here | there |
-| --- | --- |
-| `vRegister`              | `globalThis.__falkor_register` of `setup_validate_globals` :62-72 |
-| `validateGlobals`        | `setup_validate_globals` :45-95 (installs `falkor.register`, a no-op `falkor.log`, then `setup_graph_global` :94) |
-| `collectNames`           | `collect_validate_names` :98-108 (`names_arr.get::<String>`) |
-| `rRegister`              | `__falkor_register` of `setup_runtime_globals` :121-127 |
-| `runtimeGlobals`         | `setup_runtime_globals` :111-158 (`falkor.{register,log}`, then `setup_graph_global` :157) |
-| `graphGlobal`            | `setup_graph_global` :163-197 (`graph.{traverse,getNodeById,iterateNodes,iterateEdges}`) |
-| `collectFuncs`           | `collect_runtime_funcs` :200-227 |
-| `logString`              | `js_value_to_log_string` :229-255 |
-
 Results: validation rejects non-functions and exact duplicate names and
 returns names in registration order (`validate_names_nodup`); at runtime a
 library `L` (non-empty name) registering the same sequence stores exactly the

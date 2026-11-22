@@ -25,11 +25,8 @@ really be joined (more finished): `within_true_all_finished` and `within_in_time
 hold; `within_false_unfinished` is exact for a worker not finished at any later time.
 
 Findings on the code (confirmed live, `repro/threadpool_within.rs`):
-* **FIXED by #3585 (7472d6a8a)** — HISTORICAL: `shutdown_within` after a timed-out
-  `shutdown_within` returned `true` while the straggler still ran
-  (`pre3585_second_call_true_despite_straggler`): the first call drained the handle list, so the
-  second saw an empty list and `all_exited` stayed `true`. Now the stragglers are put back
-  (`*workers = running`), a repeat call waits for them and reports them until they have exited
+* Since #3585 the unfinished handles are put back (`*workers = running`), so a repeat
+  `shutdown_within` waits for a straggler and reports it until it has exited
   (`second_call_reports_straggler`, `second_call_joins_when_returned`; the Rust test
   `shutdown_within_leaves_a_blocked_job_behind` checks both).
 * **BUG (open)** a `shutdown_within(t)` called while another thread is inside `shutdown` blocks on
@@ -144,13 +141,6 @@ def within (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat) :
   let tx := waitLoop ws (start + timeout) next fuel start
   ((drain ws tx).1, tx, (drain ws tx).2.2, (drain ws tx).2.1)
 
-/-- The code before #3585 (HISTORICAL): the unfinished handles were dropped (detached) and
-`workers` left empty. Result: (`all_exited`, exit instant, `workers` afterwards, detached). -/
-def withinPre3585 (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat) :
-    Bool × Nat × List Fin × List Fin :=
-  let tx := waitLoop ws (start + timeout) next fuel start
-  ((drain ws tx).1, tx, [], (drain ws tx).2.2)
-
 /-- **The time limit holds** (on an uncontended lock): the call returns before
 `start + timeout + s`, for any pool and any job behaviour. -/
 theorem within_in_time (ws : List Fin) (start timeout s fuel : Nat) (next : Nat → Nat)
@@ -198,7 +188,7 @@ theorem filter_split {α : Type} (l : List α) (p : α → Bool) :
   | cons x r ih => by_cases hp : p x = true <;> simp [hp] <;> omega
 
 /-- **No worker handle is lost**: every handle is joined or kept, none both, and `workers`
-afterwards holds exactly the kept ones (#3585; before it, they were dropped). -/
+afterwards holds exactly the kept ones (#3585). -/
 theorem within_partition (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat) :
     (within ws start timeout fuel next).2.2.2.length +
       (within ws start timeout fuel next).2.2.1.length = ws.length ∧
@@ -217,33 +207,6 @@ theorem blocked_reported (ws : List Fin) (start timeout fuel : Nat) (next : Nat 
   · rfl
   · rw [List.isEmpty_iff, List.filter_eq_nil_iff] at hb
     have := hb none h
-    simp [Fin.done] at this
-
-/-- **BUG, fixed by #3585 (7472d6a8a), HISTORICAL**: the first call emptied `workers`, so a second
-`shutdown_within` joined nothing and answered `true` although the straggler was still running
-(live repro `repro/threadpool_within.rs`, case A: `first=false second=true`). -/
-theorem pre3585_within_empty_true (start timeout fuel : Nat) (next : Nat → Nat) :
-    (withinPre3585 [] start timeout fuel next).1 = true := by
-  simp [withinPre3585, drain]
-
-theorem pre3585_second_call_true_despite_straggler (ws : List Fin) (start timeout fuel : Nat)
-    (next : Nat → Nat) (start2 timeout2 fuel2 : Nat) (h : none ∈ ws) :
-    (withinPre3585 ws start timeout fuel next).1 = false ∧
-    (withinPre3585 (withinPre3585 ws start timeout fuel next).2.2.1 start2 timeout2 fuel2 next).1 = true ∧
-    (withinPre3585 ws start timeout fuel next).2.2.2 ≠ [] := by
-  refine ⟨?_, ?_, ?_⟩
-  · simp only [withinPre3585, drain]
-    cases hb : (ws.filter fun w => !w.done (waitLoop ws (start + timeout) next fuel start)).isEmpty
-    · rfl
-    · rw [List.isEmpty_iff, List.filter_eq_nil_iff] at hb
-      have := hb none h
-      simp [Fin.done] at this
-  · have : (withinPre3585 ws start timeout fuel next).2.2.1 = [] := rfl
-    rw [this]; exact pre3585_within_empty_true _ _ _ _
-  · intro hd
-    simp only [withinPre3585, drain] at hd
-    rw [List.filter_eq_nil_iff] at hd
-    have := hd none h
     simp [Fin.done] at this
 
 /-- **Fixed (#3585): a repeat call reports the straggler.** A first `shutdown_within` that leaves a

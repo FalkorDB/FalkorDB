@@ -7,15 +7,6 @@ Both were invisible to the model: `IndexerM` recorded the label's stopwords
 but not the ones its RediSearch spec was created with, and the query entry points
 were proven sound against the RS table without ever asking whether that table was
 fully populated.
-
-| Lean | Rust (fb3d516d0) |
-| --- | --- |
-| `Idx.rsStop` (`IndexM.lean`) | the stopword list `create_rs_index` hands to `RediSearch_IndexOptionsSetStopwords` (`mod.rs`); fixed for the spec's lifetime |
-| `StopwordsAgree`, `CreateIndexKeepsStopwords` | the property: what `db.indexes()` / the RDB report (`Index::stopwords` `mod.rs`) is what RediSearch applies |
-| `scenario3166` | `create_index` `indexer.rs` (existing spec: `register_fields` only) and (`set_stopwords` on the metadata) |
-| `incTicket` | `populate_index` taking its ticket: `try_increment_pending` (`mod.rs`) on the published entry (shared `Arc` counters) |
-| `vectorQuery` | `Indexer::vector_query` `indexer.rs` → `Index::vector_query` `mod.rs` (no `is_operational` `mod.rs` check) |
-| `VectorQueryRequiresOperational`, `VectorQueryComplete` | the property: a KNN query refuses until OPERATIONAL (C: "Invalid arguments for procedure") |
 -/
 namespace IndexLayer.Meta
 namespace Ixr
@@ -266,39 +257,6 @@ theorem gated3581_i3382_refused (c n i : Bool) (res : List (Key × Nat)) :
   simp only [Option.map_eq_some_iff, Prod.mk.injEq] at e
   obtain ⟨x, hx, -, hop⟩ := e
   exact gated3581_requires_operational c n i res I3382 "V" "e" x hx hop
-
-/-- **BUG #3382 (gate), fixed by #3581 (aafdc4ae1), HISTORICAL.** `Indexer::vector_query` on its own
-answers `Ok` while the index is under construction, whatever RediSearch returns. Since #3581 its
-callers `Graph::vector_query_nodes`/`_edges` gate it (`gated3581_requires_operational`). -/
-theorem pre3581_vector_query_ignores_operational (res : List (Key × Nat)) :
-    ¬ VectorQueryRequiresOperational (fun I l a => vectorQuery I l a true true true res) := by
-  intro hP
-  have e := i3382_under_construction
-  simp only [Option.map_eq_some_iff, Prod.mk.injEq] at e
-  obtain ⟨x, hx, -, hop⟩ := e
-  obtain ⟨err, he⟩ := hP I3382 "V" "e" x hx hop
-  simp [vectorQuery, route, hx, Iter.vectorField, Idx.hasNul] at he
-
-/-- **BUG #3382 (result), fixed by #3581, HISTORICAL** (the ungated entry point). Three labelled nodes carry a vector and the populate job
-has written none of them yet (the RS table is empty). The empty answer is exactly
-what the RediSearch KNN contract allows for that table (`KnnSpec`), and main returns
-it as `Ok` with 0 rows. Live (port 6640, 200k `:V` nodes): `queryNodes('V','e',3,…)`
-right after `CREATE VECTOR INDEX` → count 0, then 3, while `db.indexes()` reports
-`[Indexing] 0/200000: UNDER CONSTRUCTION`; C (6641) errors
-`Invalid arguments for procedure 'db.idx.vector.queryNodes'` until OPERATIONAL. -/
-theorem pre3581_partial_answer :
-    KnnSpec (fun _ => none) (fun _ => True) 3 [] ∧
-    ¬ VectorQueryComplete [0, 1, 2] 3 (vectorQuery I3382 "V" "e" true true true []) := by
-  refine ⟨⟨by simp, by simp⟩, fun h => ?_⟩
-  have e := i3382_under_construction
-  simp only [Option.map_eq_some_iff, Prod.mk.injEq] at e
-  obtain ⟨x, hx, -, -⟩ := e
-  have hq : vectorQuery I3382 "V" "e" true true true [] = .ok (Iter.vectorQ x.spec true true true []) := by
-    simp [vectorQuery, route, hx, Iter.vectorField, Idx.hasNul]
-  have := h (by decide) _ hq 0 (by simp)
-  revert this
-  unfold Iter.vectorQ
-  split <;> simp [scoredIds, RIter.empty, RIter.new, RIter.items, Iter.drainN]
 
 end Ixr
 end IndexLayer.Meta

@@ -80,6 +80,7 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `fixed3443_eachHopValidated` | Main's `loadRemote` (https_only, no redirects, pinned resolver) makes only https connections to addresses validated for their own host | `LoadCsvRedirect.lean` |
 | `fixed_eachHopValidated` | The general fix shape: with `https_only` and a resolver that validates and pins per request, every hop of any redirect chain is https and goes to an address validated for its own host | `LoadCsvRedirect.lean` |
 | `includePendingMain_exact` | main's `IncludePendingOp` (Phase 1 skipping deleted, label-removed and `extra_nodes`, Phase 2 emitting `extra_nodes`) shows MERGE's node scan each live matching node exactly once, for a non-empty pattern, an uncorrelated scan, and these hypotheses about `Pending`, not discharged here: committed node ids distinct, created ids apart from them, `set_labels`/`remove_labels` keyed uniquely, `set_labels` naming only committed-or-created nodes | `IncludePendingExact.lean` |
+| `finishGroup_keys_bound`, `keysBound_main`, `fixed3522_null_key_bound` | `AggregateOp::next` unbinds the accumulators before it writes the keys (#3522), so every grouping key stays bound, a null key included | `AggNext.lean`, `SlotReuse.lean` |
 
 ### How `vectorized_eq_rowwise` is proved
 
@@ -129,7 +130,7 @@ On main, `Discharge.lean` proves both hypotheses from `value_order` (`hc_main` f
 | `SortCmp.lean` | `OrderedKey` and `HeapEntry` comparators, `compare_row_content`, `tiebreak`, over an abstract value comparison `cv` |
 | `SortKey.lean` | `classify_sort_key`: the typed key column reads back the evaluated key |
 | `AggPlan.lean` | Aggregate operator setup: `subtree_has_aggregate`, `analyze`, `analyze_agg_tree`, `args_for`, `new` |
-| `AggState.lean` | Accumulator zeroing and unbinding, `GroupKey` equality and hash, `hash_u64` |
+| `AggState.lean` | Accumulator zeroing and unbinding, `GroupKey` equality and hash |
 | `AggNext.lean` | Column extraction and the aggregate's `next`: groups finished and emitted in batches |
 | `SlotReuse.lean` | Binder ids for one projection (`projLayout`), what the emitted row stores and what a reader sees (`finishVals`, `cell`), the properties `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`, and the #3375/#3333/#3369/#3368 counterexamples |
 | `Discharge.lean` | Instantiates `SortCmp` and `AggState` with main's `sort_cmp` and hash from `value_order` |

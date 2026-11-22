@@ -11,13 +11,6 @@ graph_persist models main's payload encoders on its graph `G` (entity ids
 about the layout, not about how a slice is found, so the PR can only break them
 by changing the bytes of a payload. It does not:
 
-| here | there (main) |
-| --- | --- |
-| `encRangePR` | `AttributeStore::encode_with_range` (attribute_store.rs) writing `encEnt` per entity |
-| `encRoarPR`  | `Encode for RoaringTreemap::encode_with_range` (serialization.rs): `select(offset)`, `advance_to`, `take(count)` |
-| `encPayloadPR` | `Graph::encode_payload` (graph.rs) with the two above |
-| `encodeGraphPR` | `encode_graph` (encoder/mod.rs) |
-
 * **`encRoarPR_eq`** (claim 3) — the deleted-ids seek writes main's bytes for
   every `count` and `offset` (main: `iter().skip(offset).take(count)` =
   graph_persist `encRoar`), including `offset` past the end.

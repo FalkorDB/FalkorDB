@@ -12,17 +12,6 @@ why redirects must not be followed. `open_csv_records` turns a 3xx reply
 into the error "LOAD CSV does not follow redirects" (:388-399), as C (libcurl
 without `CURLOPT_FOLLOWLOCATION`) does.
 
-| here | there |
-| --- | --- |
-| `Url` | the request URL; `scheme = .https` is `starts_with("https://")`, hosts are names (as `Nat`) |
-| `validateU` | `validate_remote_url` (:81-142) on a parsed URL; `dns` = `to_socket_addrs` |
-| `Cfg` | `ureq::config::Config` (`max_redirects`, `https_only`) |
-| `httpCfgMain` | `http_config` (:224-234) on main: `max_redirects = 0`, `https_only = true` |
-| `pinnedRes` | `PinnedResolver::resolve` (:193-214): `pinned addrs` for every URI |
-| `fetch` | the agent's request loop: resolve, connect, follow a 3xx `Location` while redirects remain; with `https_only` a non-https hop is refused before connecting |
-| `Reply`, `serve` | a 3xx response: its status code and its optional `Location` (`none` = header absent, read as `""`) |
-| `loadRemote` | the remote arm of `open_csv_records` on main (:376-399): the agent, then ANY 3xx answer is the error "LOAD CSV does not follow redirects (HTTP {status} to {location})" |
-
 Property `EachHopValidated`: every connection the fetch makes is an https
 request whose addresses were validated for *that request's* host.
 `fixed3443_eachHopValidated` proves it for
@@ -158,7 +147,7 @@ own host. -/
 def EachHopValidated (dns : Nat → List IP) (conns : List (Url × List IP)) : Prop :=
   ∀ c ∈ conns, c.1.scheme = .https ∧ ∃ as, validateU dns c.1 = .ok as ∧ ∀ a ∈ c.2, a ∈ as
 
-/-! ## Counterexamples with default redirect settings (history) -/
+/-! ## Concrete addresses -/
 
 def ipA : IP := .v4 ⟨140, 82, 112, 3⟩     -- public, first host
 def ipB : IP := .v4 ⟨185, 199, 108, 133⟩  -- public, redirect target

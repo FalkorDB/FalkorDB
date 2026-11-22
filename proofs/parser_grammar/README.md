@@ -150,6 +150,16 @@ The project has no Lake dependencies.
 
 Every function listed is PROVEN. For the functions involved in open bugs (for example `parse_shortest_path_expr`), the row cites both the soundness theorem and the counterexample.
 
+## More clause-level facts
+
+- `add_pattern_relationship` (cypher.rs) replaces five copies of `if !query_graph.add_relationship(..) && clause == Match`; it rejects a repeated alias in every clause (`create_named_path_dup_rel_rejected`, `merge_dup_rel_rejected`). A pattern comprehension collects the first repeat and goes on, and the caller reports it after the speculative attempt succeeded (`pattern_comprehension_repeated_rel_refused`).
+- `parse_relationship_types` is `ident (| :? ident)*`: a bare `:` does not continue the list (`typesP_colon_refused`, `type_colon_refused`); a parenthesised SET/REMOVE target needs a following `.` (`set_paren_target_refused`, `set_paren_needs_dot`).
+- `parse_pattern` records `is_incoming` before `parse_relationship_pattern`, so `(a)<-[*]-(a)` keeps its direction (`aspRel_same_alias`).
+- A WHERE pattern predicate stops before a clause keyword (`PredEndsBeforeClause`, `fixed2502_pred_stops_at_match`, `fixed2502_where_match_split`: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to two clauses). Anonymous entities are `Alias::Anon(N)`, which no identifier equals (`fixed3303_anon_name_distinct`).
+- While a `CYPHER` parameter value goes through the expression fallback, `legacy_signs` is set: `C.legacySigns` models the loop (`legacySigns_runs`, `legacySigns_neg_le`: at most one `-`, `+`, `-` or `+-`). The Rust-side `Parser::new` field is false, and the main sign run is `countSigns` (any run of `+`/`-`, folded by the parity of `-`: `sign_runs`).
+
+More places where Rust follows the grammar and C does not: `1 = 1 = 1` gives Rust true (chained), C false; `WHERE n.x = 0 = true` gives Rust 0 rows, C 1; `1 + 2 IS NULL` gives Rust false, C `1`; `- 1 IS NULL` gives Rust false, C a type error. `true CONTAINS 'c'` and `1 ENDS WITH 1` return null in Rust, where C raises a type error. `SET n.x = 1 SET n.y = n.x` gives Rust 1, C null (C evaluates the folded SETs as one batch). Known and not re-reported: #2605 (`.1e-5`), #2895 (SET chains, FOREACH nesting; see `proofs/lexer`), the lexer findings of #2909.
+
 ## What the model does not cover
 
 - The expression layer's token alphabet has no `CASE`, quantifiers, `reduce`, `shortestPath`, `DISTINCT`, `count(*)`, aggregates, `|`, pattern predicates or pattern comprehensions, and no floats. The clause layer models those.
@@ -159,7 +169,7 @@ Every function listed is PROVEN. For the functions involved in open bugs (for ex
 - The step budget (`fuel`) is the model's. It is not proven that more fuel never changes a result, so parsers and `connected_components` are proven partially correct: nothing is claimed when fuel runs out.
 - Relationship types go through a `HashSet`; the model keeps first-occurrence order, and only membership is observable.
 - Identifier length limits, error messages and error positions are not modelled.
-- The header cites `cypher.rs` line numbers from main at `737dfb5da`; `lean_ci.sh` builds the project but does not check these line numbers against current main, so they may have drifted.
+- `COVERAGE.tsv` is the authoritative Rust line list; docstring cites may point at earlier targets, and `lean_ci.sh` does not check them against current main, so they may have drifted.
 
 ## Build and check
 

@@ -11,7 +11,7 @@ MATCH (p:Person) WHERE p.age >= 30 AND p.age <= 40 RETURN p
 
 the rows the scan returns are a `CowBTree::range` call, and every `SET p.age = …` or `DELETE p` ends in `insert_batch` / `remove_batch` on the tree (`FalkorDbIndex::apply_writes`). How the index uses the tree is proven in [`../native_index`](../native_index).
 
-The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models, at origin/main 1d15bf713) is in the header of [`FalkorCowBTree.lean`](FalkorCowBTree.lean). This README explains *what* is proven and *why it matters*.
+The per-function Lean↔Rust mapping is in `COVERAGE.tsv`. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -101,13 +101,12 @@ No open bugs. Fixed ones are in this file's git history.
 | `Remove.lean` | The underflow contract (`Weak`), `rebalance`, `combine`, `remove_spec` |
 | `Cursor.lean` | The range cursor: `seek_rest`, `next_spec`, `range_spec` |
 | `Snapshot.lean` | Writer operations (`Op`, `applyOps`), `snapshot_isolated`, `insertOne_shares_siblings` |
-| `Bugs.lean` | Historical notes on fixed bugs |
 | `Batch.lean` | The batch paths: routing, `subtract_eq`, `cws`, `stripEmpty`, the shape lemmas |
 | `BatchWF.lean` | `remove_batch`: `muLoop`, `mubF`, `mergeUnderfull`, `removeBatch`, `removeBatchTree`; `Good`, `combine_good`, `muLoop_good`, `removeBatchTree_wf` |
 | `InsertBatchWF.lean` | `mergeWalk_spec`, `MinChain`, `packBranches_chain`, `buildRoot_wf`, `applyBatch_chain`, `insertBatch_wf`, `fromSorted_wf`, `Reachable`, `Reachable_wf` |
 | `Lookup.lean` | Read-side additions: `firstDoc`, `containsKey`, insert/remove return flags |
 | `Extract.lean` | The generic cursor (`Extract`, `DocExtract`, `TupleExtract`) and `heap_bytes` |
-| `BugsBatch.lean` | History note with the Rust repro for a `remove_batch` single-child branch, the same input on main, `removeBatchTree_wf_asserted` |
+| `BatchAssert.lean` | `removeBatchTree_wf_asserted`: `remove_batch` on every configuration the const assert admits |
 | `Assert.lean` | The const assert (`constAssert`, `isReadWidth`) and `remove_spec_asserted` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 

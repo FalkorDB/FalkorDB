@@ -3,12 +3,6 @@ import FalkorTemporal.Constructors
 /-!
 # `get_duration_component` (value.rs): chrono-bounded, unlike every other duration path
 
-| here | there |
-| --- | --- |
-| `chronoK`                 | chrono `Utc.timestamp_opt(t, 0)`: `Single` iff the year is within `MIN_YEAR = -262143 ..= MAX_YEAR = 262142` (`chronoYearOk`, Constructors.lean) |
-| `getDurationComponent`    | `Value::get_duration_component` — `value.rs`, the `if … else if` chain in source order (the C `duration.c` decomposition) |
-| `decomposeDuration`       | `decompose_duration` — `temporal.rs`, what `format_duration`, `Duration ± Duration` and `construct_duration_secs` use (Duration.lean) |
-
 `getDurationComponent` goes through chrono, so a duration whose instant leaves chrono's year range
 yields `null` for years/months/days/hours/minutes/seconds, although `check_date_range` (±`MAX_DATE_YEAR`
 ≈ 2.1·10⁹ years) accepts the duration and `decompose_duration` / `format_duration` handle it.

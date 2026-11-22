@@ -250,8 +250,6 @@ theorem match_last_after_call_rejected (p : QG Alias) (hp : vInlined p = .ok) :
     validate (.query [.call [5] [] [] [] none true, .match_ p none false] false) = .err := by
   simp [validate, vClause, vCall, vNext, procCNI, procFTDrop, hp, V.andThen]
 
-/-! ### History: the CALL arm that skipped the clauses after it (b6567cb97 and earlier) -/
-
 /-- `body_has_return` (cypher.rs). -/
 def bodyHasReturn : IR → Bool
   | .query cs _ => match cs.getLast? with

@@ -2,20 +2,6 @@ import PlannerBuild.Expr
 /-
 # Pattern comprehensions: extraction, hoisting vs nested plans, their sub-plans
 
-| here | there |
-| --- | --- |
-| `PSt` | `Planner` fields `scope_vars` (as lengths), `visited`, `loop_vars`, `pattern_vars`, `nested_plans` (mod.rs); `minted` is a ghost log of `fresh_var` results |
-| `fresh` | `Planner::fresh_var` mod.rs |
-| `EC` | `ExtractedComprehension` mod.rs |
-| `CP` | the IR built for a comprehension (Aggregate / Filter / Apply / PathBuilder / plan_match) |
-| `build`, `buildL` | `build_pattern_comprehension_plan` mod.rs |
-| `interleave` | path components, mod.rs |
-| `hoist` | `hoist_or_nest` mod.rs |
-| `extract`, `extractL` | `extract_pattern_comprehensions` mod.rs |
-| `chainOf`, `extractClause` | `extract_clause_expr_comprehensions` mod.rs / `extract_list_expr_comprehensions` mod.rs |
-| `extractFilter` | `extract_filter_comprehensions` mod.rs |
-| `finish` | `Planner::finish` mod.rs |
-
 `plan_match`'s own plan is abstract (`CP.matchG g visited`); it marks the
 pattern's variables visited (here: `g.vars`); verified-label bookkeeping is in
 PlanMatch.lean.

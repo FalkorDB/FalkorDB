@@ -141,33 +141,6 @@ theorem constraint_creation_diverges :
     cConstraintOK    [.kint 1, .kfloat 1 false] = false := by
   refine ⟨?_, ?_⟩ <;> simp [uniqueCollideRust, uniqueCollideC, keyEmpty, rustFrag, cNumOf, hasDup, rustConstraintOK, cConstraintOK]
 
-/-! ## Enforcement cost: the earlier nested-scan model of `check_node_constraint`
-
-`check_node_constraint` (pending.rs) calls `unique_violated` (pending.rs): the affected
-members' keys go into one set, and each member is answered by an index lookup (`query_for`/`lookup`),
-or the label is scanned once for the whole set when the index cannot answer (the closure over
-`get_label_matrix(label)` at pending.rs). That is O(affected) lookups or
-O(affected + label_size), not the product; it is modelled in `pending_commit`
-(`uniqueViolated_spec`). The definitions below keep the earlier behaviour, which
-rebuilt a `seen` map over **every** entity carrying the label for each affected entity. In one
-write query that creates `n` constrained nodes, `affected = n` and
-`label_size = n`, so the commit does `Θ(n²)` composite-key builds. The C reference probes its
-exact-match index per entity: `Θ(n log n)`. -/
-
-/-- Number of composite-key builds Rust's enforcement performs for a batch that
-creates `n` constrained nodes into a label of final size `n` (each of the `n`
-affected nodes scans all `n`). -/
-def rustEnforceKeyBuilds (n : Nat) : Nat := n * n
-
-/-- The reference does one index probe per affected node. -/
-def cEnforceProbes (n : Nat) : Nat := n
-
-theorem enforcement_is_quadratic (n : Nat) :
-    rustEnforceKeyBuilds n = n * n ∧ cEnforceProbes n = n := ⟨rfl, rfl⟩
-
-/-- concrete blow-up the benchmark saw. -/
-example : rustEnforceKeyBuilds 8000 = 64000000 := by decide
-
 /-! ## MANDATORY enforcement agrees with C (a positive result)
 
 `check_node_constraint`'s Mandatory arm requires every constrained property be

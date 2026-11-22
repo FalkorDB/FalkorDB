@@ -2,7 +2,7 @@
 # Ownership: the `GrB_Matrix` drop protocol as a resource-state model
 
 `Matrix<T>` and `Iter<E>` share one GraphBLAS handle. This file models the drop
-protocol as a small-step machine: the current one and the earlier one (kept as history).
+protocol as a small-step machine.
 
 ## Main: `Arc<Handle>`
 
@@ -32,36 +32,14 @@ as the model's step, not proved.
   freed exactly when the count reaches zero: never a double free, never a leak.
 * `arc_all_drop_frees_once` — `n ≥ 1` owners each dropping once, in whatever
   order the scheduler picks, free it exactly once.
-* `arc_every_interleaving_frees_once` — the six two-owner interleavings all free exactly once.
 * `iter_frees_iterator_before_matrix` — `Iter::drop` frees its
   `GxB_Iterator` before its `Arc<Handle>` field can free the matrix.
 
-## Earlier protocol: `Arc<GrB_Matrix>` + `Arc::get_mut`
-
-```rust
-if let Some(m) = Arc::get_mut(&mut self.m) {   //  <- frees iff last owner
-    GrB_Matrix_free(m);
-}
-// then the Arc itself is dropped, decrementing the strong count
-```
-
-`Arc::get_mut` returns `Some` iff the strong count is 1. So a drop did two
-things: **observe** the count (and free iff it is 1), then **decrement**. Two
-separate atomic operations, no lock across them, so two concurrent drops could both skip the free.
 Main's regression test is `graph/tests/matrix_concurrent_drop.rs`
 `concurrently_dropped_clones_free_the_matrix_once`.
 -/
 
 namespace GBW
-
-/-! ## Earlier protocol (`Arc::get_mut`, history) -/
-
-/-- A single atomic event in the life of a two-owner `GrB_Matrix`. `obs o` is
-owner `o`'s `Arc::get_mut` read; `dec o` is owner `o`'s `Arc` drop. -/
-inductive Ev where
-  | obs (o : Bool)
-  | dec (o : Bool)
-deriving DecidableEq, Repr
 
 /-- Machine state: strong count still live, and how many times
 `GrB_Matrix_free` has run. -/
@@ -69,28 +47,6 @@ structure St where
   count : Nat
   frees : Nat
 deriving DecidableEq, Repr
-
-/-- Earlier-protocol step. An `obs` frees iff it observes count `1` (`Arc::get_mut` =
-`Some`); it does not change the count. A `dec` decrements. -/
-def step (s : St) : Ev → St
-  | .obs _ => { s with frees := if s.count = 1 then s.frees + 1 else s.frees }
-  | .dec _ => { s with count := s.count - 1 }
-
-def run (init : St) (t : List Ev) : St := t.foldl step init
-
-/-- Two owners, count starts at 2, nothing freed yet. -/
-def start : St := { count := 2, frees := 0 }
-
-/-- A trace is a *valid interleaving of two drops* when each owner observes
-exactly once, decrements exactly once, and observes before it decrements. The
-six such traces, enumerated. -/
-def validTraces : List (List Ev) :=
-  [ [.obs true,  .dec true,  .obs false, .dec false]   -- fully serial: A then B
-  , [.obs false, .dec false, .obs true,  .dec true]    -- fully serial: B then A
-  , [.obs true,  .obs false, .dec true,  .dec false]   -- interleaved
-  , [.obs true,  .obs false, .dec false, .dec true]    -- interleaved
-  , [.obs false, .obs true,  .dec false, .dec true]    -- interleaved
-  , [.obs false, .obs true,  .dec true,  .dec false] ] -- interleaved
 
 /-! ## Main protocol: `Arc<Handle>`, free in `Handle::drop` -/
 
@@ -164,21 +120,6 @@ theorem arc_all_drop_frees_once (n : Nat) (hn : 0 < n) :
       some { count := 0, frees := 1 } := by
   obtain ⟨k, rfl⟩ : ∃ k, n = k + 1 := ⟨n - 1, by omega⟩
   exact liveRun_releases k 0
-
-/-- Main's reading of an earlier-protocol two-owner trace: the `Arc::get_mut`
-observation is gone (nothing is observed outside the atomic decrement), and
-each `dec` is one atomic `release`. -/
-def arcOfEv : Ev → St → St
-  | .obs _, s => s
-  | .dec _, s => arcStep s .release
-
-def runArc (init : St) (t : List Ev) : St := t.foldl (fun s e => arcOfEv e s) init
-
-/-- Every one of the six two-owner interleavings —
-including the leaking one — frees exactly once on main. -/
-theorem arc_every_interleaving_frees_once :
-    ∀ t ∈ validTraces, (runArc start t).frees = 1 := by
-  decide
 
 /-- A single owner (the common non-shared case, and every `Iter` over an
 otherwise unshared matrix) frees exactly once. -/

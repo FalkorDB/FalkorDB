@@ -1,17 +1,6 @@
 /-
 CartesianProduct and ValueHashJoin (graph/src/runtime/ops/cartesian_product.rs,
 value_hash_join.rs).
-
-| here | there |
-| --- | --- |
-| `adv`, `orbit`, `allTuples` | `RightSide::advance` (cartesian_product.rs): the odometer |
-| `rsNew`, `rsEmpty`, `rewind` | `RightSide::new` (:80), `is_empty` (:94), `rewind` (:117) |
-| `CpSt.new`, `materialize`, `cpRows` | `CartesianProductOp::new` (:123), `materialize_right` (:144), `next` (:162) |
-| `JT`, `jtEmpty` | `JoinHashTable`, `is_empty` (value_hash_join.rs) |
-| `hashValue`, `keysMatch`, `keyAsI64` | `hash_value` (:118), `keys_match` (:137), `key_as_i64` (:153) |
-| `insertValue`, `promote` | `insert_value` (:176), `promote_int_table` (:196) |
-| `VhjSt.new`, `build`, `fillMatches`, `vhjRows` | `ValueHashJoinOp::new` (:237), `build_hash_table` (:266), `fill_matches` (:352), `next` (:398) |
-| `buildPO`, `fillMatchesPO`, `vhjRowsPO` | the per-origin tables (`per_origin`): one table per `origin_row`, probed with the left row's origin |
 -/
 namespace CartVhj
 

@@ -6,17 +6,6 @@ import RedisLayer.Config
 argument (`to_string_lossy`) to `apply_module_args` (`src/config.rs`); `lib.rs`
 sets `module_args_as_configuration: false`, so redismodule-rs no longer reads them.
 
-| here | there (`origin/main` b080a44c1) |
-| --- | --- |
-| `N`, `N.str`, `parseName`        | the string `match`es on the upper-cased name (`config.rs`, `config_cmd.rs`) |
-| `validateTempFolder`             | `validate_temp_folder` `config.rs` |
-| `validateLoadOnly`               | `validate_load_only` `config.rs` |
-| `validateConfigSet`              | `validate_config_set` `config_cmd.rs` — each arm *is* `Config.validate` |
-| `checkTimeouts`                  | `check_timeout_constraints` `config_cmd.rs` |
-| `rstep`, `loop`, `applyModuleArgs` | `apply_module_args` `config.rs` (loop body, final check, apply) |
-| `LoadArg`, `applyLoadArg`        | `enum LoadArg` `config.rs`, `apply_load_arg` |
-| `cParseInteger`, `cYesNo`, `cSet`, `cLookup`, `cInit` | C `_Config_ParseInteger` (`strtoll`), `_Config_ParseYesNo`, `Config_Option_set`, `Config_Contains_field`, `Config_Init` (`src/configuration/config.c` on `master`) |
-
 `FS` is the file system as both engines see it (libc `access`/`stat`, Rust
 `Path::exists`/`is_dir`/`File::create`): FFI, a hypothesis structure. `ConfigValue::Uint`
 only arises for `MAX_QUEUED_QUERIES`, whose value is positive, so `as_i64` is exact and
@@ -31,8 +20,7 @@ Proven:
   `File::create` in a directory succeeds iff `access(W_OK)` does.
 * `error_applies_nothing`, `ok_applies_each_pair` — every pair is validated before any is
   applied: an error applies nothing; success applies one `apply_load_arg` per pair, in order.
-* `fixed3328_*` — the W4-redis-3 / #3268 cases load as in C;
-  `ModuleInit.pre3328_*` keep the earlier behaviour as historical counterexamples.
+* `fixed3328_*` — the W4-redis-3 / #3268 cases load as in C.
 
 Divergences (both confirmed live, ports 19470, Rust b080a44c1 vs C `master`):
 * `leading_space_divergence` — C's `strtoll` skips leading whitespace, Rust's

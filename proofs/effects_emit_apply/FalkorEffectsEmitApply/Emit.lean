@@ -246,15 +246,6 @@ def effectsCount (p : Pending) : Nat :=
   + (p.removeLabels.map (fun q => q.2.length)).sum
   + p.stagedLabelsRemoved
 
-/-- `effects_count` before #3461 (pending.rs on 343e077f2): the
-    cancelled sets were not summed. History for the `pre3461_*` theorems. -/
-def effectsCountPre3461 (p : Pending) : Nat :=
-  p.createdNodes.length + p.createdRelTypes.length + p.deletedNodes.length
-  + p.deletedRels.length + p.newNodesAttrs.length + p.existingNodesAttrs.length
-  + p.newRelsAttrs.length + p.existingRelsAttrs.length
-  + (p.setLabels.map (fun q => q.2.length)).sum
-  + (p.removeLabels.map (fun q => q.2.length)).sum
-
 def suffixRecs (mk : Nat → Name → Rec) (base : Nat) : List Name → List Rec
   | []      => []
   | n :: ns => mk base n :: suffixRecs mk (base + 1) ns
@@ -304,10 +295,6 @@ def forEachRecord (p : Pending) (g : Schema) : List Rec :=
 /-- `CommitOp` (`runtime/ops/commit.rs`): `if estimated > 0 { buf.build(..) }`. -/
 def commitShips (p : Pending) (g : Schema) : List Rec :=
   if effectsCount p > 0 then forEachRecord p g else []
-
-/-- The gate before #3461, over `effectsCountPre3461`. -/
-def commitShipsPre3461 (p : Pending) (g : Schema) : List Rec :=
-  if effectsCountPre3461 p > 0 then forEachRecord p g else []
 
 /-! ## What the gate drops -/
 
@@ -379,16 +366,6 @@ def pCancelled : Pending :=
 
 def gCancelled : Schema := ⟨["A"], [], ["p"]⟩
 
-/-- History: before #3461 the gate dropped a fully cancelled write (fixed by
-    #3461, f203972c5; now `gate_ships_cancelled`). -/
-theorem pre3461_gate_drops_cancelled :
-    effectsCountPre3461 pCancelled = 0 ∧
-    forEachRecord pCancelled gCancelled =
-      [.addLabel 0 "A", .addAttribute 0 "p", .createNode [0] [], .deleteNode [0] []] ∧
-    commitShipsPre3461 pCancelled gCancelled = [] := by
-  refine ⟨rfl, ?_, rfl⟩
-  decide
-
 /-- **#3461**: the same write now ships its whole stream. -/
 theorem gate_ships_cancelled :
     effectsCount pCancelled = 2 ∧
@@ -434,21 +411,6 @@ def applyAddName (dict : List Name) (id : Nat) (n : Name) : Option (List Name) :
     dictionary is `[L6, K6]`); the replica never saw `L6` and assigns `0`. -/
 theorem next_payload_refused :
     applyAddName [] 1 "K6" = none ∧ applyAddName ["L6"] 1 "K6" = some ["L6", "K6"] := by
-  decide
-
-/-- A cancelled edge of an unregistered type, whose attribute name is new
-    (`CREATE (a)-[:T1 {p4: 1}]->(b) DELETE a, b`): the master's attribute
-    dictionary grows by `p4`, nothing ships, and the next payload that names no
-    attribute is *accepted* — a silent divergence
-    (`cancelled_edge_attribute_is_a_silent_dictionary_divergence`). Here even an
-    un-gated emitter would say nothing about `T1`'s edges, since the type has no
-    id (`emit.rs`), but it would still announce `p4`. -/
-theorem pre3461_cancelled_edge_attr_dropped :
-    let p : Pending := { pCancelled with cancelledNodes := [0, 1], cancelledRels := [("T1", 0)] }
-    let g : Schema := ⟨[], [], ["p4"]⟩
-    effectsCountPre3461 p = 0 ∧ commitShipsPre3461 p g = [] ∧
-    forEachRecord p g = [.addAttribute 0 "p4", .createNode [0, 1] [], .deleteNode [0, 1] []] := by
-  refine ⟨rfl, rfl, ?_⟩
   decide
 
 /-- **#3461**: the same write, with `T1` now registered at commit, ships `T1`,

@@ -81,7 +81,7 @@ Yes, for every list of batches. `concat_obs_eq` proves that the value and the bo
 
 ## Bugs found
 
-The entries below are hazards, none reachable from Cypher today. They are recorded in [`Columnar.lean`](Columnar.lean), not in [`../FINDINGS.md`](../FINDINGS.md).
+The entries below are hazards, none reachable from Cypher today. They are recorded here, not in [`../FINDINGS.md`](../FINDINGS.md).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|

@@ -165,14 +165,6 @@ theorem growStep_small (chunk cap : Nat) (h : nextMul chunk (cap + max (cap / 4)
 #guard growCap 16384 16384 (16384 + 1) (by decide) == 2 * 16384
 #guard growCap 16384 (100 * 16384) (100 * 16384 + 1) (by decide) == 100 * 16384 + 100 * 16384 / 4
 
-/-- Historical (the pre-#2911 step, kept as a counterexample): the step was the *unchecked*
-`(cap + max(cap/4, chunk)).next_multiple_of(chunk)`, wrapping mod `2^64` in release. Near the
-top it wraps *below* `cap` (and stays a chunk multiple, so `u64::MAX - 1` is never reached):
-the loop never ended. -/
-def oldStepWrapped (chunk cap : Nat) : Nat :=
-  nextMul chunk ((cap + max (cap / 4) chunk) % 2 ^ 64) % 2 ^ 64
-#guard oldStepWrapped 16384 (2 ^ 64 - 16384) < 2 ^ 64 - 16384
-
 /-! ## `resize` -/
 
 def resizeNodeMs (g : G V) : G V :=

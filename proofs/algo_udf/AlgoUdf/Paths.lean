@@ -1,15 +1,4 @@
 /-! # algo.SPpaths / algo.SSpaths host-side logic
-
-| here | there (`graph/src/runtime/functions/algo_procedures.rs`) |
-| --- | --- |
-| `Dir`, `farEndpoint`  | `EdgeDirection`, `far_endpoint` :2184 |
-| `Found`, `cmpFound`   | `FoundPath`, `cmp_found_path` :2155 (weights modelled as `Int`: finite weights only) |
-| `record`              | `record_found_path` :2473 |
-| `pathCostRust`        | cost accumulation `edge_numeric_attr(.., cost_prop, 1.0)` in `bfs_find_bound` :2465 and `enumerate_paths` :2587 |
-| `dijkstraCostRust`    | `dijkstra_single_path`'s reported cost, `edge_numeric_attr(.., cost_prop, missing_cost)` with `missing_cost` 1 if `costProp` is configured else 0 (:2372-2375, since #3580) |
-| `pathCostC`           | C `_get_value_or_default(.., SI_LongVal(1))` (proc_sp_paths.c:605) |
-| `nextNode`            | `build_path_batch` :2641 node reconstruction |
-| `useDijkstra`         | `run_path_algo` fast-path guard :2687-2691 |
 -/
 namespace AlgoUdf.Paths
 

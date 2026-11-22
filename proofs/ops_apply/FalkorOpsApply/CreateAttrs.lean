@@ -2,12 +2,6 @@
 CREATE helpers: the attribute template and map-attribute resolution, and label
 resolution (graph/src/runtime/ops/create.rs).
 
-| here | there |
-| --- | --- |
-| `tplSet`, `tplBuild`, `rank`    | `build_attr_template` (create.rs) — the `(id, pos, value)` triples |
-| `resolveMap`                    | `resolve_map_attrs` (create.rs) |
-| `resolveLabels`, `resolvePat`   | `Runtime::resolve_pattern` (create.rs) |
-
 `resolve` (`get_or_create_*_attr_id`) is a pure name→id map here: within one call the
 attribute table only grows and existing names keep their ids (`GocOk` in runtime_core).
 -/

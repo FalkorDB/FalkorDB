@@ -84,15 +84,16 @@ All were reproduced in Rust and against a live server (see [`../FINDINGS.md`](..
 
 One smaller observation, not filed:
 
+- The C module (Redis 8.6.2) aborts on `OPTIONAL MATCH (n:Nope) SET n:L6` (`blocked.c:346 'server.also_propagate.numops == 0'`), with or without a replica. C-side, not investigated.
 - An `example` in `Emit.lean`: `gather_rows`' merge drops a cell if the staged attributes are not sorted. The emitter always sorts them, so this only shows the sort is load-bearing.
 
 ## Files
 
 | File | What's in it |
 |---|---|
-| `FalkorEffectsEmitApply.lean` | Root: the report header (Lean↔Rust table, theorem list, bug write-ups, gaps) |
+| `FalkorEffectsEmitApply.lean` | Root: imports and a short header |
 | `Basic.lean` | The values the emitter moves around, canonical label sets (`sortDedup`), first-appearance `groupBy`, the memo loop and `memoGroup_eq_groupBy` |
-| `Emit.lean` | `gather_rows` (`mergeRow`, `gatherRows`), the record stream `forEachRecord`, `effectsCount`, the commit gate `commitShips`; the W2-effects-1 counterexamples |
+| `Emit.lean` | `gather_rows` (`mergeRow`, `gatherRows`), the record stream `forEachRecord`, `effectsCount`, the commit gate `commitShips`; the W2-effects-1 counterexample (`gate_drops_schema_only`) |
 | `Digests.lean` | `digest_created_edges`, `digest_deleted_edges`, `digest_updates`, `digest_labels`, `digest_cancelled`, column by column |
 | `EmitDDL.lean` | Schema additions (`replayNames_suffix`), `encode_all`, index/constraint DDL buffers and their verification |
 | `Apply.lean` | The apply arms over a simple replica (`Apply.RG`), its well-formedness, and counterexamples for the pre-liveness-check arms |
@@ -138,4 +139,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A fix for W2-effects-1 should turn `gate_drops_cancelled` and its siblings into `pre<PR>_` history and prove that the new gate ships whenever `forEachRecord` is non-empty (the right-hand side of `commitShips_eq_iff`). If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.
+A fix for W2-effects-1 should replace `gate_drops_schema_only` and prove that the new gate ships whenever `forEachRecord` is non-empty (the right-hand side of `commitShips_eq_iff`). If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.

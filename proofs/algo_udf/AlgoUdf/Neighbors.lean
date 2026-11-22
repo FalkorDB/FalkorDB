@@ -1,12 +1,4 @@
 /-! # `node.getNeighbors()` (`graph/src/udf/js_classes.rs`)
-
-| here | there |
-| --- | --- |
-| `nodeRels`       | `Graph::get_node_relationships_by_type(v, &[], direction)` (graph.rs, all types; a self-loop is reported once, from the outgoing half only when that half is enumerated); the edge list stands for the tensors. Same as proofs/graph_queries `nodeRelsByType` / `nodeRels_once` (not imported: that project is not a dependency) |
-| `collectEdges`   | `collect_edges` :183 |
-| `typeFilters`    | `types` parsing in `js_get_neighbors` :419-428 (non-string elements skipped) |
-| `applyTypes`     | the `type_filters` retain :486-493 |
-| `neighborNodes`  | node result with `seen_neighbors` dedup :507-517 |
 -/
 namespace AlgoUdf.Neighbors
 
@@ -59,8 +51,7 @@ theorem collectEdges_nodup (es : List E) (v : Nat) (d : Dir) (h : es.Nodup) :
     simp only [List.mem_filter, beq_iff_eq, bne_iff_ne, ne_eq] at ha hb
     exact hb.2 ha.2
 
-/-- `pre3084_self_loop_twice` (historical): before #3084 the outgoing edges of `a` with a
-self-loop were `[e0, e2, e2]`; now the self-loop is listed once. -/
+/-- A self-loop is listed once (#3084). -/
 theorem fixed3084_self_loop_once :
     let es := [E.mk 0 0 1 "R", E.mk 2 0 0 "R"]
     (collectEdges es 0 .outgoing).map (·.id) = [0, 2] ∧

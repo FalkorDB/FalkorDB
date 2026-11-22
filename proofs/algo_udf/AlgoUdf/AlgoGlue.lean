@@ -2,18 +2,6 @@ import AlgoUdf.MsfFlow
 import AlgoUdf.Config
 import AlgoUdf.Dfs
 /-! # Remaining helpers of `algo_procedures.rs`
-
-| here | there |
-| --- | --- |
-| `newMsg`, `msgToString`  | `new_msg` :101, `msg_to_string` :105 (`CStr::from_ptr`: bytes up to the first NUL) |
-| `Ctx`, `msfScore`        | `MsfWeightCtx`, `msf_score` :144 (attribute lookup as an `Option Attr`) |
-| `indexOp`, `valueOp`     | `msf_scored_edge_index_op` :176, `msf_scored_edge_value_op` :200 (null guard = no write) |
-| `scoreOf`                | `msf_score_of` :266 |
-| `nodeValue`              | `node_value` :474 |
-| `collectNodeIds`         | `collect_node_ids` :498 (label scans AXIOMATISED as `scan`; FxHashSet + `sort_unstable`) |
-| `activeNodes`            | `active_node_set` :522 / `Graph::get_nodes(∅, 0)` (graph.rs) |
-| `Own`, `lifecycle`       | `create_lagraph_graph` :372, `delete_lagraph_graph` :397, `_borrowed` :404, `_maybe_borrowed` :417 under the LAGraph ownership contract |
-| `cmpKey`                 | `cmp_found_path` :2155 (= `Dfs.fpLt`) |
 -/
 namespace AlgoUdf.AlgoGlue
 open AlgoUdf

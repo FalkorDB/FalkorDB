@@ -2,22 +2,6 @@ import FalkorBinder.BindExpr
 import FalkorBinder.Scopes
 /-
 # `bind_ir`: the per-clause checks, CALL {} and CREATE
-
-| here | there |
-| --- | --- |
-| `shortestOk` | allShortestPaths endpoint check, MATCH arm binder.rs |
-| `withOptionalLabels` | OPTIONAL MATCH label save/restore binder.rs |
-| `mergeOk` | MERGE redeclaration checks binder.rs |
-| `deleteOk` | DELETE entity check binder.rs |
-| `returnStarOk` | `RETURN *` check binder.rs |
-| `yieldOk`, `bindYield` | CALL … YIELD validation and binding binder.rs |
-| `relReused`, `recordMatchRels` | MATCH arm's `match_rel_vars` check and record binder.rs |
-| `RC`, `bindIR` | the dispatcher `bind_ir` binder.rs (sub-binders as parameters) |
-| `subqueryReturns`, `bindCallSubquery` | `bind_call_subquery` binder.rs |
-| `pruneMatchRels` | its step 2c for `match_rel_vars` binder.rs |
-| `pruneVarlen` | its step 2c for `varlen_rel_var_ids` binder.rs |
-| `importProjections` | `build_import_projections` binder.rs |
-| `createCheck`, `bindGraphCreate` | `bind_graph_create` binder.rs |
 -/
 namespace FalkorBinder
 

@@ -1,22 +1,6 @@
 import FalkorTemporal.Duration
 /-!
 # Temporal constructors and formatting: totality and injectivity
-
-| here | there |
-| --- | --- |
-| `chronoYearOk`      | chrono 0.4.45 `MIN_YEAR = -262143`, `MAX_YEAR = 262142` (`naive/date/mod.rs`) |
-| `tdDaysOk`          | chrono `TimeDelta::days` panics unless `days * 86400 ∈ [MIN.secs, MAX.secs]` (`time_delta.rs`) |
-| `Outcome`           | `Result<NaiveDate, String>` plus the panic that kills the server |
-| `inRange`, `checkRange` | `check_range` — `temporal.rs` (`None` passes) |
-| `i32Ok`, `u32Ok`    | `i32::try_from` / `u32::try_from` — `temporal.rs` |
-| `checkedAddDays`    | `NaiveDate::checked_add_signed(Duration::days(n))` (`None` ↦ `.err`) |
-| `weekPath`          | `date_from_components`, `week` branch — `temporal.rs` |
-| `quarterPath`       | `date_from_components`, `quarter` branch — `temporal.rs` |
-| `ymdPath`           | `date_from_components`, year/month/day tail — `temporal.rs` |
-| `dateFromComponents`| `date_from_components` — `temporal.rs` |
-| `weekSlice`         | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs` |
-| `sliceOk`, `byteLen` | byte 2 of `rest` is a char boundary / `rest.len()` |
-| (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs`, `push_date` `value.rs` |
 -/
 namespace FalkorTemporal
 

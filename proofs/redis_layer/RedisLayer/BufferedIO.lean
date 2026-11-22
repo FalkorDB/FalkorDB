@@ -3,20 +3,6 @@
 
 Line numbers refer to `origin/main` (`3fec7d7c9`).
 
-| here | there |
-| --- | --- |
-| `le` / `fromLE`               | `u64::to_le_bytes` / `from_le_bytes` (8 bytes), `f32` (4 bytes) |
-| `toU` / `ofU`                 | `i64` two's complement under `to_le_bytes` |
-| `W`, `record`                    | the logical `Writer` calls and their inline record |
-| `W.enc`                       | the logical byte stream (inline record, or `[6] ++ data` for a blob) |
-| `flush`/`accommodate`/`push`  | `BufferedWriter::flush`, `::accommodate` |
-| `write`, `G`                  | `write_unsigned/signed/double/float/buffer`, `finish` |
-| `Rd`, `ensure`, `readTag`, `readBytes` | `BufferedReader::ensure_available`, `read_tag`, `read_bytes` |
-| `readW`                       | `read_unsigned/signed/double/float/buffer` (+ trait shims) |
-| `listSrc`                     | `load_chunk` over `RedisModule_LoadStringBuffer` |
-| `pipeSrc`, `frame`            | `PipeWriter::flush/finish`, `PipeReader::load_chunk` |
-| `vecWrite`                    | `VecWriter` |
-
 The Redis RDB is modelled as the ordered list of buffers `RedisModule_SaveStringBuffer`
 stored; `RedisModule_LoadStringBuffer` hands them back in order (the Redis module API
 contract — the only FFI fact used, and it enters as the definition of `listSrc`, not as an

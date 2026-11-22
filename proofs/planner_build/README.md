@@ -147,6 +147,10 @@ Every function listed is PROVEN. For the functions involved in the open bugs, th
 - The optimizer and batching are other projects ([`../optimizer_rewrites`](../optimizer_rewrites), [`../optimizer_scan`](../optimizer_scan)).
 - Clause meanings thread the graph state one clause at a time (eager), matching the plan's `Commit` and eager operators. Per-row interleaving of reads and writes is not modelled.
 - Sub-plans (the MERGE match branch, FOREACH and `CALL {}` bodies) are hypotheses.
+- The clause plans omit the expression-comprehension Apply chains, SET's multi-`Set` split, LOAD CSV and index DDL (see `Clauses.lean`); `clauseMin` lacks LOAD CSV and the fulltext/vector scan leaves; `patternExprVariables` abstracts the order of variables found only in pattern attribute maps.
+- `expr_to_plan` / `or_expr_to_plan` key `inline_map` by id only, and ids are per scope: `planFilter_correct` needs all patterns of one WHERE to start in one scope and the predicate's ids to be below that scope's length (`Pre`). No query breaking that was found.
+- `utilize_node_by_id` should skip a scan with no parent instead of `unwrap()` (for example a scan at the plan root).
+- Deviations from openCypher and C, not bugs: `SET n.v = 10, n.w = n.v` gives `n.w = 10` (items in order, as openCypher; C uses the old value); `Labels added` counts differ (C counts per node, #2655).
 - Variable ids are compared without scope in a few places (`emit_rel` path membership, `filter_vars`, `connected_components`); these are suspected, not confirmed, issues.
 
 ## Build and check

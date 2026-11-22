@@ -2,19 +2,6 @@ import FalkorTemporal.CalendarLaws
 /-!
 # Durations and date arithmetic
 
-| here | there |
-| --- | --- |
-| `chk`, `chkMul`, `chkAdd` | `i64::checked_*` |
-| `constructDuration`       | `construct_duration_secs` — `temporal.rs` (ends in `check_date_range`) |
-| `decomposeDuration`       | `decompose_duration` — `temporal.rs` (`y - 1970` is i32: `toI32`) |
-| `shiftMonths`             | `shift_months` — `value.rs`, arithmetic only (shared by `+` and `-`) |
-| `addDur` / `addDurRaw`    | `add_duration_to_timestamp` — `value.rs` (checked / the unchecked arithmetic inside it) |
-| `subDur` / `subDurRaw`    | `sub_duration_from_timestamp` — `value.rs` |
-| `shiftMonthsR`            | `shift_months` — `value.rs`, with its `MAX_DATE_YEAR` guard |
-| `checkDateRange`          | `check_date_range` — `temporal.rs` |
-| (not modelled)            | `Add for Value`, `(Duration, Duration)` arm — `value.rs` (`add_slow`): only the `construct_decompose` round-trip it rests on is proved |
-| `timeAddDur` / `timeSubDur` | `Add`/`Sub for Value`, `(Time, Duration)` arms — `add_slow` `value.rs`, `Sub` |
-
 Every Temporal value is one `i64` of seconds; a Duration is "the instant
 1970-01-01 + years/months + days/seconds", so its *components* are recovered by
 decomposing that instant. Both C and Rust use this encoding.

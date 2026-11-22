@@ -10,7 +10,6 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | `IndexType`, `Field`            | `graph/src/index/mod.rs` `IndexType` `Field` `Field::new` `new_with_vector_options` |
 | `arrNames`                      | `mod.rs` `Field::make_arr_names` |
 | `docSet`                        | `mod.rs` `Document::set` (branch for branch; vector arm; temporal arm) |
-| `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
 | `docSetPanics`                  | the `unreachable!()` arm, `mod.rs` |
 | `buildDoc`                      | the per-attribute loop in `graph.rs` `commit_index_kind` / `graph.rs` population `build_doc` |
 | `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs` `Index::add_document`) |
@@ -123,15 +122,6 @@ def docSet (f : Field) (v : Val) : List RSAdd :=
     | .point => [.geo f.name]
     | .null | .map | .node | .rel | .path => []
 
-/-- HISTORICAL (fe619ac5f, before #3087): the vector arm wrote `vec.len() * 4` bytes
-with no dimension check (`if let Value::VecF32(vec) = value { AddFieldVector(..) }`);
-every other arm is as in `docSet` (whose temporal arm is the post-#3076 one; the
-#3087 theorems never involve temporals). Kept only to state what #3087 fixed. -/
-def docSetPre3087 (f : Field) (v : Val) : List RSAdd :=
-  match f.ty, v with
-  | .vector, .vecf32 d => [.vector f.name (d * 4)]
-  | _, _ => docSet f v
-
 /-- **#3076: a temporal value is never written to any RediSearch field**, on any
 index type, so no numeric index query can return it. -/
 theorem docSet_temporal_not_indexed (f : Field) : docSet f .temporal = [] := by
@@ -231,11 +221,6 @@ theorem other_fields_never_dropped (rs : RediSearch) (fv : List (Field × Val))
   simp only [RediSearch.stored, doc_always_accepted rs fv hreg, ↓reduceIte]
   exact List.mem_flatMap.mpr ⟨p, hp, ha⟩
 
-/-- #3087 changed only the vector arm. -/
-theorem docSet_nonvector_eq_pre (f : Field) (v : Val) (h : f.ty ≠ .vector) :
-    docSet f v = docSetPre3087 f v := by
-  cases hty : f.ty <;> cases v <;> simp_all [docSetPre3087]
-
 /-! ### The shapes of the former counterexamples, as correctness theorems
 
 `CREATE INDEX FOR (n:L) ON (n.name)`, a vector index on `n.v`, then
@@ -293,8 +278,6 @@ theorem good_vector_keeps_range_entry (rs : RediSearch)
     · simp [vecF] at hk; subst hk; exact h
   exact ⟨other_fields_never_dropped rs _ hreg (nameF, .str "a") (by simp) _ (by simp [docSet, nameF]),
     other_fields_never_dropped rs _ hreg (vecF, .vecf32 2) (by simp) _ (by simp [docSet, vecF])⟩
-
-/-! ### What an unguarded vector arm would cost (`docSetPre3087`) -/
 
 /-- The fixed `docSet` on those same no-params shapes adds no vector at all. -/
 theorem docSet_noparams_no_vector (f : Field) (hf : f.ty = .vector)

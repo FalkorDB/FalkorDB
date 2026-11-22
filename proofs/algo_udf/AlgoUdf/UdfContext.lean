@@ -5,18 +5,6 @@ import AlgoUdf.UdfClasses
 QuickJS itself (runtime creation, `eval`, function calls) is AXIOMATISED as the
 oracles passed in (`evalLib`, `call`, …); what is modelled is the Rust control
 flow around it.
-
-| here | there |
-| --- | --- |
-| `Caught`, `errMsg`        | `CaughtError`, `caught_error_message` :70-102 |
-| `normNotDefined`          | the `"x is not defined"` → `"'x' is not defined"` rewrite :81-85 |
-| `effTimeout`              | `compute_effective_js_timeout_ms` :130-137 |
-| `validateTimeout`         | the `effective_ms` of `validate_script` :168-172 |
-| `validateScript`          | `validate_script` :158-188 (setup → eval → collect) |
-| `Cache`, `ensureCurrent`  | `JS_STATE`, `ensure_context_current` :191-206 |
-| `rebuild`                 | `rebuild_context` :208-276 |
-| `bridge`                  | `call_udf_bridge` :280-350 (error mapping :325-335; the call runs inside `with_graph` :307, which restores the graph lent before) |
-| `ThreadJsState` drop order | `struct ThreadJsState` :143, `rebuild_context`'s `drop(state.take())` :213 |
 -/
 namespace AlgoUdf.UdfContext
 
@@ -199,9 +187,6 @@ inductive JsField | functions | context | runtime | version
 /-- Declaration order of `ThreadJsState` (= its drop order). -/
 def threadJsStateFields : List JsField := [.functions, .context, .runtime, .version]
 
-/-- The earlier order, kept as a counterexample: `runtime, context, functions, version`. -/
-def threadJsStateFieldsOld : List JsField := [.runtime, .context, .functions, .version]
-
 /-- `a` is dropped strictly before `b`. -/
 abbrev droppedBefore (order : List JsField) (a b : JsField) : Prop :=
   order.idxOf a < order.idxOf b
@@ -211,11 +196,6 @@ theorem threadJsState_drop_safe :
     droppedBefore threadJsStateFields .functions .context ∧
     droppedBefore threadJsStateFields .context .runtime ∧
     droppedBefore threadJsStateFields .functions .runtime := by
-  decide
-
-/-- The old order freed the runtime first (W3-algo-2 at thread exit). -/
-theorem threadJsState_old_drop_unsafe :
-    ¬ droppedBefore threadJsStateFieldsOld .context .runtime := by
   decide
 
 /-! ## call_udf_bridge -/

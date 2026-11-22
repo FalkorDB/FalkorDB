@@ -4,15 +4,6 @@ Registry keys are the
 case-sensitive qualified names, and `load` rejects a qualified name another library
 already owns, compared ignoring ASCII case, as C does.
 
-| here | there |
-| --- | --- |
-| `Lib`                 | `UdfLibrary` :42 (name, qualified `function_names`) |
-| `qual`                | `format!("{name}.{fn_name}")` :102-105 |
-| `load`                | `UdfRepo::load` :94-153 (replace branch :134-139, collision check :118-132) + the caller's `register_udf` loop (`src/commands/udf.rs`); registry key is the qualified name as given (`register_udf` `runtime/functions/mod.rs`, `persistent_funcs` `udf/js_context.rs`) |
-| `collides`            | the `eq_ignore_ascii_case` scan over the other libraries' `function_names` :118-127 |
-| `delete`              | `UdfRepo::delete` :156 + the caller's `unregister_udf` loop (`unregister_udf` :1142) |
-| `Consistent`          | "LIST shows f ⇔ calling f runs f's body" |
-
 `eq_ignore_ascii_case` / `to_ascii_lowercase` is modelled as `asciiLow` (Lean's `Char.toLower` is ASCII-only); Unicode `str::to_lowercase`, which an earlier version of the code used, is not modelled and stays abstract in the historical counterexamples.
 -/
 namespace AlgoUdf.Repo
@@ -91,8 +82,6 @@ theorem foldEq_comm (a b : String) : foldEq a b = foldEq b a := by
 theorem foldEq_refl (a : String) : foldEq a a = true := by
   unfold foldEq; exact beq_self_eq_true _
 
-/-! ## Historical: the earlier case-folding code, kept as counterexamples -/
-
 /-! ## Exact keys, collision check -/
 
 /-- `a` registering `b.c` and `a.b` registering `c` build the same qualified name
@@ -117,7 +106,7 @@ def load (libs : List Lib) (reg : Reg) (l : Lib) (replace : Bool) :
     .ok (d.1 ++ [l],
       l.fns.foldl (fun r f => (qual l.name f, (l.name, f)) :: r.filter (·.1 != qual l.name f)) d.2)
 
-/-- Pre-#3066 counterexamples now error. -/
+/-- Case-folded and dotted name collisions are rejected (#3066). -/
 theorem collision_rejected :
     (load [⟨"Coll", ["f"]⟩] [("Coll.f", ("Coll", "f"))] ⟨"coll", ["f"]⟩ false).toOption.isNone := by
   decide

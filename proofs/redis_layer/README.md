@@ -92,6 +92,7 @@ Yes:
 | `decH_encH`, `decSchema_encSchema` | Graph header and schema blocks round-trip | `Serial.lean`, `SerialProof.lean` |
 | `hashInput_total`, `truncate_total`, `prefix_longest` | The slow log never panics, and keeps the longest prefix of at most 2048 bytes that ends on a character boundary | `SlowLog.lean` |
 | `checkFork_spec`, `current_kept`, `executeWrite_first`, `admit_bounded` | Write sessions: a check succeeds only on a fork of the current version, a `Current` one is never refused as stale; a stale attempt is invisible; the queue never exceeds `MAX_QUEUED_QUERIES` | `QuerySession.lean`, `GraphCore.lean` |
+| `sync_unserved_silent`, `freed_stream_stripped`, `stripAll_covers`, `iterSteps_delete_before_write` | Telemetry is node-local (#3844): replicated or AOF-replayed queries are not logged, no stream reaches a snapshot, freed streams are deleted before any write | `GraphCore.lean`, `TelemetryFreed.lean`, `TelemetryLoop.lean` |
 | `query_accounting`, `other_thread_invisible` | Per-query memory accounting counts exactly the query's own allocations, on its own thread | `Allocator.lean` |
 
 ### How `rust_c_agree_except_schema` is proved
@@ -171,7 +172,9 @@ All `.lean` files except the root are under `RedisLayer/`. The project has no La
 
 - **The Redis module API, libc, the clock and file I/O** are hypotheses (`Compact.Env`, `Bulk.Codec`) or AXIOMATISED, never Lean axioms.
 - **Concurrency** is modelled per operation, or as a single-thread log of events: the telemetry flusher, the write-queue election and GIL nesting are proven as protocols, not under an interleaving semantics.
-- **Number formatting** is abstract. Floats in the compact reply are compared after formatting, which matches C, not as exact values.
+- **Number formatting** is abstract. Compact vector elements use `RedisModule_ReplyWithDouble` (`Env.vfmt`). Glibc prints a NaN with the sign bit set as `-nan`, which `write_f` does not reproduce (`CPf.nan_text` is stated for `nan`).
+- **A refused `open_key_writable(..)?`**: the server's own error text is not modelled.
+- **Compact floats**: floats in the compact reply are compared after formatting, which matches C, not as exact values.
 - **`serializers/encoder` and `decoder`** are proven in `graph_persist`, **`divergence_guard.rs`** in `replication`, and **`redis_type.rs`** in `graph_persist`.
 
 ## Build and check

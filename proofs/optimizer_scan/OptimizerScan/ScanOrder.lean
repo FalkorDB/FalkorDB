@@ -489,12 +489,6 @@ def exFilter : List Nat × ((Nat → Nat) → Bool) := ([2], fun _ => true)
 /-- Honest seed `[b]` (what the Limit child binds): the filter lands after `d→c`, the run
 finds the row. -/
 example : runScoped exE exσ [0] (place [0] exHops [exFilter]).1 = true := by decide
-/-- The pre-#3523 seed `[c, b]`: the filter lands after the first hop, before `c` is bound —
-the row is lost. -/
-example : runScoped exE exσ [0] (place [2, 0] exHops [exFilter]).1 = false := by decide
-/-- …although generate-and-test (all hops and the filter) accepts it. -/
-example : ((place [2, 0] exHops [exFilter]).1.all (fullHolds exE exσ)) = true := by decide
-
 /-- **PROVEN** (#3523): the seed for the kept `Limit` child (binding `b`) is `[b]`, so the pass
 now finds the row of the former counterexample. -/
 theorem initialBound_keeps_row :

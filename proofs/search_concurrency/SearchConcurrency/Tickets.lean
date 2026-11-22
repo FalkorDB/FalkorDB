@@ -13,7 +13,6 @@
 | `batch`                 | `graph/src/graph/graph.rs` `populate_index_batch` (the exits: `is_ticket_current`, `indexer.is_cancelled() || ticket_pending_changes > 1` (the cancelled arm has the shape of the pending arm: release and return), exhausted; `if do_recurse`) |
 | `store`                 | `indexer.rs` `create_index` @ 73077bb4a (fields appended, then `bump_id` if `existing.is_some()`); the model bumps iff the label already has fields, Rust iff the entry exists, which differs only in the window after `drop_index` leaves a 0-field entry until `drop_index_bg` removes it (`graph.rs`, `remove_if_empty`), not modelled |
 | `MState`/`step`/`Reach` | `graph.rs` `Graph::create_index`: `create_index` (store) then `populate_index` (acquire), on the serialized writer |
-| `pre3086_createRange`   | `create_index` @ 1d15bf713 (`indexer.rs`): `register_fields`, no `bump_id` |
 
 The counters are `i32` in Rust; `2^31` outstanding tickets is not reachable (one
 ticket per populate job), so `Nat` is faithful.
@@ -149,15 +148,6 @@ def batch (nb : Nat) (s : PState) (i : Nat) : PState :=
       else
         { s with docs, workers := s.workers.set i { w with cursor := w.cursor + 1 } }
 
-/-- HISTORICAL (1d15bf713, before #3086): `CREATE INDEX` of a range field on a label
-that already has an RS spec: `register_fields` on the shared spec, **no** `bump_id`
-(indexer.rs), then
-`populate_index` acquires a ticket with the *new* field snapshot. -/
-def pre3086_createRange (s : PState) (attr : String) : PState :=
-  let fields := s.fields ++ [attr]
-  { s with fields, slots := inc s.slots s.slots.gen,
-           workers := s.workers ++ [{ gen := s.slots.gen, attrs := fields, cursor := 0 }] }
-
 /-- Every batch carries every field of the index. -/
 def complete (s : PState) : Bool := s.docs.all fun d => s.fields.all (d.contains ·)
 
@@ -165,25 +155,6 @@ def operational (s : PState) : Bool := s.slots.cur = 0
 
 def init (nb : Nat) : PState :=
   { slots := { gen := 1, cur := 0, stale := 0 }, fields := [], docs := List.replicate nb [], workers := [] }
-
-/-- Fix: bump the generation on every schema change (what `recreate_index` already
-does for vector fields), so the older worker fails `is_ticket_current` and the
-newer one owns the index. -/
-def createRangeFixed (s : PState) (attr : String) (g' : Nat) : PState :=
-  let fields := s.fields ++ [attr]
-  let slots := inc (bump s.slots g') g'
-  { s with fields, slots, workers := s.workers ++ [{ gen := g', attrs := fields, cursor := 0 }] }
-
-def fixedTrace : PState :=
-  let s := pre3086_createRange (init 3) "a"
-  let s := batch 3 s 0
-  let s := createRangeFixed s "b" 2
-  let s := batch 3 s 1            -- the order that lost `b` above
-  let s := batch 3 s 0            -- P1: stale ticket → bails
-  let s := batch 3 s 1
-  batch 3 s 1
-
-theorem fixed_trace_complete : operational fixedTrace = true ∧ complete fixedTrace = true := by decide
 
 /-! ## On main (#3086, 73077bb4a): every field addition starts a new generation
 

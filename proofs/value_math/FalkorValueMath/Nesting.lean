@@ -183,25 +183,25 @@ def cappedN (d : Nat) : Option (List (V F) × List (Tok F)) → Option (List (V 
 /-- **Decodes exactly as before below the cap**: `decode_value(r, d)` succeeds with
 `(v, rest)` iff the pre-#3339 decoder does and `v` is `within` the cap at `d`. -/
 theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
-    (decodeValue co fuel d toks).toOption = capped d (pre3339_decode co fuel toks) := by
+    (decodeValue co fuel d toks).toOption = capped d (decodeUncapped co fuel toks) := by
   intro fuel
   induction fuel with
   | zero =>
     intro d toks
-    by_cases h : d > MAX_VALUE_NESTING <;> simp [decodeValue, pre3339_decode, capped, h, Except.toOption]
+    by_cases h : d > MAX_VALUE_NESTING <;> simp [decodeValue, decodeUncapped, capped, h, Except.toOption]
   | succ f ih =>
     intro d toks
     have hN : ∀ n d r, d ≤ MAX_VALUE_NESTING + 1 →
-        (decodeValue.decodeN co f d n r).toOption = cappedN d (pre3339_decode.decodeN co f n r) := by
+        (decodeValue.decodeN co f d n r).toOption = cappedN d (decodeUncapped.decodeN co f n r) := by
       intro n
       induction n with
-      | zero => intro d r _; simp [decodeValue.decodeN, pre3339_decode.decodeN, cappedN, withinL,
+      | zero => intro d r _; simp [decodeValue.decodeN, decodeUncapped.decodeN, cappedN, withinL,
           Except.toOption]
       | succ n ihn =>
         intro d r hd
         have hx := ih d r
-        simp only [decodeValue.decodeN, pre3339_decode.decodeN]
-        rcases hp : pre3339_decode co f r with _ | ⟨x, r'⟩
+        simp only [decodeValue.decodeN, decodeUncapped.decodeN]
+        rcases hp : decodeUncapped co f r with _ | ⟨x, r'⟩
         · rw [hp] at hx
           rcases hdv : decodeValue co f d r with e | ⟨x, r'⟩
           · simp [cappedN, Except.toOption]
@@ -213,7 +213,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
               revert hx; cases decodeValue co f d r <;> simp [Except.toOption]
             rw [hdv]
             have h2 := ihn d r' hd
-            rcases hq' : pre3339_decode.decodeN co f n r' with _ | ⟨xs, r''⟩
+            rcases hq' : decodeUncapped.decodeN co f n r' with _ | ⟨xs, r''⟩
             · rw [hq'] at h2
               rcases hq : decodeValue.decodeN co f d n r' with e | q
               · simp [hq, hq', cappedN, Except.toOption, Except.map]
@@ -233,12 +233,12 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
               revert hx; cases decodeValue co f d r <;> simp [Except.toOption]
             obtain ⟨e, hdv⟩ := hdv
             rw [hdv]
-            rcases hq' : pre3339_decode.decodeN co f n r' with _ | ⟨xs, r''⟩
+            rcases hq' : decodeUncapped.decodeN co f n r' with _ | ⟨xs, r''⟩
             · simp [hq', cappedN, Except.toOption]
             · simp [hq', cappedN, withinL, hw, Except.toOption]
     by_cases hd : d > MAX_VALUE_NESTING
     · rw [decodeValue_refuses_past_cap co _ _ _ hd]
-      cases hp : pre3339_decode co (f + 1) toks with
+      cases hp : decodeUncapped co (f + 1) toks with
       | none => simp [capped, Except.toOption]
       | some p =>
         obtain ⟨v, r⟩ := p
@@ -252,7 +252,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
         cases v with
         | list l => exact absurd rfl (hv l)
         | _ => simp [capped, within, hd']
-      unfold decodeValue pre3339_decode
+      unfold decodeValue decodeUncapped
       rw [ite_eq_right hd]
       split
       · rename_i tag rest
@@ -279,7 +279,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
             cases hq : decodeValue.decodeN co f (d + 1) len r with
             | error e =>
               rw [hq] at this
-              cases hq' : pre3339_decode.decodeN co f len r with
+              cases hq' : decodeUncapped.decodeN co f len r with
               | none => simp [hq', capped, Except.map, Except.toOption]
               | some q =>
                 obtain ⟨l, r'⟩ := q
@@ -293,7 +293,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
             | ok q =>
               obtain ⟨l, r'⟩ := q
               rw [hq] at this
-              cases hq' : pre3339_decode.decodeN co f len r with
+              cases hq' : decodeUncapped.decodeN co f len r with
               | none => rw [hq'] at this; simp [cappedN, Except.toOption] at this
               | some q' =>
                 obtain ⟨l', r''⟩ := q'
@@ -341,7 +341,7 @@ theorem decodeValue_encode (fuel d : Nat) (v : V F) (rest : List (Tok F)) (hs : 
     (hst : Storable v) (hw : within d v = true) :
     decodeValue co fuel d (encode co v ++ rest) = .ok (v, rest) := by
   apply toOption_some
-  rw [decodeValue_agrees, pre3339_decode_encode co fuel v rest hs hst]
+  rw [decodeValue_agrees, decodeUncapped_encode co fuel v rest hs hst]
   simp [capped, hw]
 
 theorem decode_encode (fuel : Nat) (v : V F) (rest : List (Tok F)) (hs : sizeOf v < fuel)

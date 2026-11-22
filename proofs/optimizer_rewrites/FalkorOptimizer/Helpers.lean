@@ -1,22 +1,6 @@
 import FalkorOptimizer.Basic
 /-
 # Syntactic helpers of the optimizer passes
-
-| here | there |
-| --- | --- |
-| `XD`, `X` | `ExprIR<Variable>` payloads / trees (variables, parameters, constants, calls, the rest) |
-| `anyX` | a BFS `walk().any(..)` over an expression |
-| `hasParam` | `expr_has_parameter` eliminate_true_filters.rs |
-| `subst`, `evX` | `substitute_params` eliminate_true_filters.rs; a parameter-aware evaluator |
-| `refsVar` | `expr_references_variable` / `subtree_references_variable` references.rs (a BFS, by `(id, scope)`) |
-| `refsVarId` | `references_var` utilize_node_by_id.rs (`Variable ==` is by id only, ast.rs) |
-| `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs |
-| `countVar` | `extract_count_variable` reduce_count.rs |
-| `isUnnamed`, `attrsEmpty` | `Variable::is_unnamed` ast.rs (`name().is_none()`; `Alias`, `varIsUnnamed`), `rel_attrs_empty` fuse_anonymous_traverse.rs (`node_attrs_empty` removed by #2390) |
-| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
-| `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs |
-| `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs |
-| `VT`, `visT` | `branch_visible_variables` push_filters_down.rs (on the plan tree: `PushPlan.bv`) |
 -/
 namespace Falkor.Opt
 
@@ -376,17 +360,6 @@ reported for routing, and no copy is visible to a later clause. -/
 theorem branchOut_copy_new :
     branchOut true (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [5] ∧
     branchOut false (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [] := ⟨rfl, rfl⟩
-
-/-- Before #3281 (343e077f2): the source (`old`) id of each copy was reported. -/
-def branchOutPre3281 : OutIR → Option (List Nat)
-  | .project es cs => some (es.map Var.id ++ cs.map (·.1.id))
-  | .aggregate ns ps => some (ns.map Var.id ++ ps.map (·.1.id))
-  | .other => none
-
-/-- Historical (fixed by #3281): the parent-scope source id `0` was reported
-instead of the copy's destination `5` (`… WITH 1 AS k ORDER BY c OPTIONAL MATCH …`). -/
-theorem pre3281_branchOut_copy_old :
-    branchOutPre3281 (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
 
 /-! ## `branch_visible_variables` -/
 

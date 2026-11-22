@@ -28,7 +28,7 @@ Under that condition:
 
 The per-row fallback modes are correct for *any* sub-plan, separable or not (`applyPerRow_eq_ref`, `optionalPerRow_eq_ref`).
 
-The planner decides whether to batch with a blacklist of non-separable operators. That blacklist misses `ValueHashJoin`, so the join is made per-origin (`CartVhj.vhjRowsPO`) instead of being excluded by the blacklist; `canBatchApply_admits_vhj` and `vhj_not_separable` show why that is needed.
+The planner decides whether to batch with a blacklist of non-separable operators. That blacklist misses `ValueHashJoin`, so the join is made per-origin (`CartVhj.vhjRowsPO`) instead of being excluded by the blacklist; `canBatchApply_admits_vhj` shows the blacklist admits it, which is why the join must be per-origin (`vhjPO_sepT`).
 
 **2. Does OPTIONAL MATCH keep the input order?**
 
@@ -36,7 +36,7 @@ No, when batched. `optionalBatched_perm_ref` proves the rows are right, but all 
 
 **3. Is MERGE correct?**
 
-Without `SET` clauses, yes, for every batch size, on the non-all-bound path (`allBound = false`; the all-bound shortcut that keeps only the first match is outside `mainMerge_noSet_eq_ref`, and the condition that gates it is proved in `Merge.lean`: `allBoundMain_imp_pre`, `allBound_path_keeps_all`). `rust_eq_ref_noSet` proves Rust's MERGE ends with the same graph and the same next id as the per-row openCypher meaning, and emits the same rows in a possibly different order. `merge_noSet_any_batch_size` is the same statement for a fresh query split into batches of any size. This works because MERGE caches what earlier rows of the batch created, and the proof shows the cache exactly simulates "later rows see earlier rows' creations".
+Without `SET` clauses, yes, for every batch size, on the non-all-bound path (`allBound = false`; the all-bound shortcut that keeps only the first match is outside `mainMerge_noSet_eq_ref`, and the condition that gates it is checked in `MergeEager.lean`: `allBound_path_keeps_all`). Since #3067 `MergeOp::next` matches every input row against the graph as it is before any create, then walks the rows in order; `mainMerge_noSet_eq_ref` proves it ends with the same graph and the same next id as the per-row openCypher meaning and emits exactly the reference's rows in the reference's order. `mainMerge_batch_independent` shows the result does not depend on the batch boundaries. This works because MERGE caches what earlier rows created, and the proof shows the cache exactly simulates "later rows see earlier rows' creations".
 
 With `ON CREATE SET` / `ON MATCH SET`, or with more than one MERGE clause, the theorems above do not apply (see the open MERGE row #3368 below).
 
@@ -66,7 +66,6 @@ Yes:
 | `applyPerRow_eq_ref`, `optionalPerRow_eq_ref` | The per-row fallbacks are right for every sub-plan | `Correlated.lean` |
 | `rowLocal_separable`, `compose_separable` | Row-local operators, and pipelines of them, are separable | `Correlated.lean` |
 | `mainMerge_noSet_eq_ref`, `mainMerge_batch_independent`, `fixed3067_batch_independent` | MERGE (all rows matched before any create) without SET matches openCypher in the same row order, and no result depends on the batching | `MergeEager.lean` |
-| `rust_eq_ref_noSet`, `merge_noSet_any_batch_size` | The per-batch-match model kept as the shared base of `MergeEager.lean` | `Merge.lean` |
 | `run_ok`, `foreach_correct`, `calls_items` | FOREACH is a pass-through that runs its body once per item, in order | `ForEach.lean` |
 | `union_drain` | UNION ALL is the concatenation of its branches | `Union.lean` |
 | `deleteBatch_vars`, `deleteBatchE_ok` | Every deleted variable's entity is gone; the fallible version agrees on success | `Delete.lean`, `DeleteCancel.lean` |
@@ -84,7 +83,7 @@ Yes:
 4. **State the condition.** `Separable f` says `f` on a tagged batch equals the concatenation of `f` on each row alone, re-tagged.
 5. **Prove by rewriting.** Rewrite `f (tag xs 0)` with `Separable`, then `lookup_tagged` shows that looking up each origin in the tagged input finds exactly the row that produced it.
 
-The hypothesis `Separable` is the whole question. It is proven for row-local operators and their pipelines, and refuted for `count(*)` (`count_not_separable`) and for the batched `ValueHashJoin` (`vhj_not_separable`; the join is per-origin, `CartVhj.vhjRowsPO`). For the real child operators of each plan it is not derived from their code; that is why these rows are CONDITIONAL (see [Coverage](#coverage)).
+The hypothesis `Separable` is the whole question. It is proven for row-local operators and their pipelines, and refuted for `count(*)` (`count_not_separable`); the `ValueHashJoin` is per-origin, `CartVhj.vhjRowsPO`, and separable on the batches Apply builds: `vhjPO_sepT`). For the real child operators of each plan it is not derived from their code; that is why these rows are CONDITIONAL (see [Coverage](#coverage)).
 
 ## Bugs found
 
@@ -113,7 +112,7 @@ The per-origin ValueHashJoin removes the known counterexample but does not by it
 | File | What's in it |
 |---|---|
 | `Correlated.lean` | The tagged-batch idiom, `Separable`, batched and per-row Apply, Optional, SemiApply and OR-apply, the ValueHashJoin counterexample and the `can_batch` guards |
-| `Merge.lean` | MERGE on a single-node pattern: the batch phases, the pattern cache, the per-row reference, and worked cases (`cross_clause_keyed`, `per_clause_cache_fixes`, `path_shortcut_off`, `allBound_path_keeps_all`) |
+| `Merge.lean` | MERGE on a single-node pattern: the per-row reference, the pattern cache keyed by `(operator idx, hash)`, `drain_pending` and the cache invariants |
 | `ForEach.lean` | FOREACH: chunking, the pending queue, the body log, `run_ok` |
 | `Union.lean` | UNION ALL as a lazily instantiated concatenation |
 | `CreateAttrs.lean` | CREATE's attribute template, map attributes and label resolution |
@@ -146,12 +145,14 @@ The project has no dependencies beyond Lean core. The id-space `reserve` it call
 ## What the model does not cover
 
 - **Write visibility** (`RowWrites.lean`) is modelled with an abstract graph state and commit; the concrete counterexamples use small graph models (a node count; `(id, serial)` pairs), not the full graph store.
-- **Sub-plans are abstract functions.** Separability of each real operator is a hypothesis, except for the ValueHashJoin model, which is shown non-separable.
+- **Sub-plans are abstract functions.** Separability of each real operator is a hypothesis, except for the per-origin ValueHashJoin model (`vhjPO_sepT`).
 - **MERGE is a single node pattern with one property.** The pattern hash is the key, so hash collisions (#2780) are assumed away. `ON MATCH`/`ON CREATE` are modelled only as updates of that key; relationship patterns and the null-property error are not modelled; the all-bound shortcut is a flag.
 - **`MergeSlot`** models one node pattern, one row per MERGE, no SET; FxHash is taken as injective on the token stream (map key names dropped from the comparison); the aggregation that leaves the value-only slot is restated as the input row, not imported from ops_aggregate.
 - **Output batch sizes** are modelled for FOREACH only. Apply, Optional and MERGE are compared on the flattened row stream.
 - **Errors.** FOREACH and UNION have their error paths modelled, but only the error-free theorems are proven.
 - **Attributes.** `SET`/`REMOVE` assume the committed key list of an entity is complete.
+- **Seen, not Rust bugs.** `FOREACH (i IN 1 | …)` is a type error in Rust (C iterates once; Rust follows openCypher). C returns only the x=1 row of `UNWIND [1,2] AS x CALL { MERGE (n:P {v:1}) ON CREATE SET n.v = 2 RETURN n }`, and gives `m=1, c=2` for `UNWIND [1,2] AS x MERGE (a:E {v:1}) ON MATCH SET a.m = x ON CREATE SET a.c = x` (Rust `m=2, c=1`, as openCypher).
+- **Also seen.** Creating and deleting a node in one query reports no `Nodes created/deleted` statistics (`CREATE (a:D) DELETE a`, also via MERGE); C reports 1/1 (pending/stats code, see `pending_commit`). Writes to a DETACH-deleted relationship are applied and counted (W2-pending-3). Hash-join keys Int/Float near 2^53: `keyAsI64_spec` (W2-rewrites-3).
 
 ## Build and check
 

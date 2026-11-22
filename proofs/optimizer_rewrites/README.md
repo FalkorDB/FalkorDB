@@ -23,7 +23,7 @@ The model gives the plan a reference meaning:
 
 A rewrite is correct if it keeps the multiset of result rows (and their order where ORDER BY applies), and does not make a query that succeeded start to fail.
 
-That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the plan a graph state that `CREATE`/`MERGE` of a bare node change (the node count only; label, relationship and attribute writes are not modelled), and states the stronger `EffectSound`: a rewrite keeps the rows **and** the graph state the query leaves behind (the node count). `run_readonly` proves a write-free plan leaves the graph unchanged, so between write-free plans `EffectSound` reduces to the rows criterion and the earlier theorems carry over; `bug748_rows_only_blind` is a plan where they differ.
+That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the plan a graph state that `CREATE`/`MERGE` of a bare node change (the node count only; label, relationship and attribute writes are not modelled), and states the stronger `EffectSound`: a rewrite keeps the rows **and** the graph state the query leaves behind (the node count). `run_readonly` proves a write-free plan leaves the graph unchanged, so between write-free plans `EffectSound` reduces to the rows criterion and the earlier theorems carry over.
 
 ## The questions this project answers
 
@@ -34,8 +34,8 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 - **Below Sort, yes:** same rows, still sorted (`push_sort_perm`, `push_sort_sorted`).
 - **Below LIMIT or SKIP, no.** It changes which rows the LIMIT keeps (`limit_not_transparent`, `skip_not_transparent`). The exclusion list in `push_filters_down.rs` does not exclude them (`limit_skip_not_excluded`). Rust and C both return the wrong count here, so it is a shared spec bug, not a Rust regression. The only safe case is a conjunct whose verdict is the same on every row (`push_limit_const`).
 - **Routing by variable id and scope is sound** (`routesScoped_sound`): it only pushes where the variable is bound.
-- **Main inherits `branch_visible_variables`, not bare ids** (`fixed3352_plan`, `fixed3352_rows_kept`); routing by bare id is `bug3352_routes_unbound`.
-- **A variable-free conjunct is not pushed into the rows that feed a write** (`pr3582_748_fixed`, `pr3582_997_fixed`).
+- **Main inherits `branch_visible_variables`, not bare ids** (`fixed3352_plan`, `fixed3352_rows_kept`).
+- **A variable-free conjunct is not pushed into the rows that feed a write** (`main_748_fixed`, `main_997_fixed`).
 - **Re-ordering a traversal chain can land an inline filter below the hop that binds its variable** (#2556, in `select_scan_node`): `bug2556_filter_below_binding`.
 
 **2. Is merging two stacked filters exact?**
@@ -115,7 +115,6 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | 4 (W2-rewrites-2) | `id_eq_null_errors` | `id(n) = null`, `= 1.0`, `> 1.5` → "Node ID must be an integer" (C: 0 rows) | **Open** |
 | 5 (W2-rewrites-3) | `hash_join_drops_row` | The hash join drops Int/Float pairs near 2⁵³: 2 rows where C gives 4 | **Open** |
 | 7 | `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | **Open** (PR #2918 not merged) |
-| W6-opt-1 | `filter_pushed_through_boundary` | Push-down gives an OPTIONAL MATCH inside `CALL {}` the outer ids: "Variable n not found" where C returns rows. `fixed_keeps_filter` checks the trial fix | **Open** |
 | #2556 | `bug2556_filter_below_binding`, `bug2556_t_seeded`, `bug2556_plan` (property `KeepsFiltersBound`) | `… WITH collect(x) AS fs UNWIND fs AS f MATCH (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}), (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)`: `select_scan_node` picks `t` as the best endpoint, seeds it into `initial_bound` although the outer `Unwind` child is kept and no scan for `t` is built, and places `t.id = 100` after the first hop, before `t` is bound. Rust 0, C 3 (the issue's query: a type error). Not `push_filters_down` (`bug2556_push_not_cause`); `bug2556_fixed` gives the C plan | **Open** |
 
 Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`).
@@ -135,8 +134,8 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | `References.lean` | The "is this variable read?" oracle (`refsNew`) and the PR #2918 walk |
 | `References2.lean` | The tree walks: ancestors only for the `reduce_*` passes, whole plan for fusion |
 | `Sequence.lean` | `optimize` sequencing, the tree rebuilds (`rebuild_with_hash_joins`), edge-filter absorption |
-| `CallBoundary.lean` | W6-opt-1: push-down across the `CALL {}` entry projection (namespace `Pr2845`) |
-| `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`, `RoutesBound`. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
+| `CallBoundary.lean` | Push-down across the `CALL {}` entry projection (namespace `Pr2845`): the Case-2 walk stops at a two-child `Optional` (#3281) |
+| `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.
@@ -152,6 +151,21 @@ The project has no Lake dependencies.
 
 - **PROVEN:** every production function in the optimizer files this project owns. The five planner helpers in `optimizer/mod.rs` added by the var-length anchor change (#2558: `collect_expr_scoped_variables`, `collect_single_variable_conjuncts`, `walk`, `endpoint_scan_score`, `walk_scans_to_endpoint`) are proven in `planner_build` (`Anchor.lean`), next to the `plan_match` model that uses them.
 - **NOT COVERED:** all test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them.
+
+## Open PRs touching these files
+
+- #2918: `variable_read_outside` for the three `reduce_*` passes (its per-operator oracle is superseded by `references.rs`): modelled as `readOutside` (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
+- #3092: `collect_subtree_variables` stops at Project/Aggregate (their outputs only) instead of `get_variables` of the whole subtree, the same direction as the Apply-left routing of `branch_visible_variables`; `mem_subtreeIds` describes origin/main.
+- #3100: exports `ir_references_variable` for the planner's CP-correlation check (planner bug 2); no change to the oracle itself.
+- #3054: `reduce_expand_into` removes a collapsed (no longer emitted) edge from its siblings' `sibling_edges` uniqueness lists (`forget_sibling_edge`); the emit-flag decision (`refsMain`) is unchanged.
+
+## Suspected, unconfirmed
+
+- `utilize_node_by_id.rs` `optimized_plan.node(idx).parent().unwrap()` panics on a root scan (`root_scan_has_no_parent`); no known query reaches it, since validation rejects `CALL db.labels() YIELD label MATCH (n)` (planner_build `call_then_match_rejected`). Hazard only.
+- Filters on zero-variable conjuncts (`rand() < 0.5`) are pushed into every CP/Apply branch.
+- Pushing into one CP branch evaluates the conjunct even when the other branch is empty, so a query can start to error (`push_cp_left` needs `NoErr`); observed on C (`MATCH (n:P),(m:Missing) WHERE 1/(n.v-n.v)=0`: C errors, Rust 0).
+- `absorb_edge_filters_into_vlt` treats `WHERE r.w = 1` on a var-len list as per-hop (C semantics); unabsorbed Rust errors on `r.w` over a Path, so absorption turns an error into rows; `size(r) = 2` and `all(x IN r …)` are also absorbed per-hop and error on both engines.
+- `MATCH ()-[r]-() RETURN count(r)` counts each edge once on both engines (openCypher: twice).
 
 ## What the model does not cover
 

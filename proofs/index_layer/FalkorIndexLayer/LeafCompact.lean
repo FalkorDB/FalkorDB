@@ -5,16 +5,6 @@ import FalkorIndexLayer.LeafAos
 Page = 14-byte header (`count:u16, min:u64, value_width:u8, distinct_count:u16,
 doc_width:u8`), then the value deltas, then (indexed pages only) the index,
 then the docs.
-
-| Lean | Rust |
-| --- | --- |
-| `header` | `write_compact_header` 72 |
-| `layout` | `CompactLayout::read` 49 |
-| `isIndexed` | `is_indexed` 28 |
-| `packingFits` | `packing_fits` 108 |
-| `cBytes`, `cBuild` | `CompactLeaf::build` |
-| `cCount`, `cKey`, `cDoc`, `cDocLayout` | `count` 126, `key` 131, `doc` 140, `doc_layout` |
-| `cInsert`, `cRemove`, `cMerge` | `splice_insert`, `splice_remove`, `merge` (+ `append_spliced_docs` 91) |
 -/
 namespace IndexLayer.Leaf
 

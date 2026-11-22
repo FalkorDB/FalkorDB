@@ -4,17 +4,6 @@ import FalkorIndexLayer.Maintenance
 # Result iterators, RS handle refcounts, and the query entry points
 (`graph/src/index/mod.rs`, origin/main 3fec7d7c9)
 
-| Lean | Rust |
-| --- | --- |
-| `nextN`, `drainN` | `IndexResultsIter::next` `mod.rs`, `EdgeTripleIter::next` 382, `ScoredEdgeTripleIter::next` 446 (skip keys of the wrong length, decode) |
-| `RIter`, `RIter.empty`, `RIter.next` | `IndexResultsIter::{new,empty,empty_scored}` 277/288/299, `EdgeTripleIter::{new,empty}` 362/370, `ScoredEdgeTripleIter::{new,empty}` 426/434, vector wrappers 498-537 |
-| `decTriple` | `decode_triple` 612 |
-| `RC`, `RC.clone/release/dropSpec` | `OwnedIndex::{from_owned,as_ptr,try_clone,into_raw,drop}` 926-964, `SpecHandle::{new,as_ptr,try_clone_ref,drop}` 980-1010 |
-| `DocLife` | `Document::drop` 641, `add_document` 1893 (`consumed`) |
-| `queryN`, `queryE` | `Index::query` 1677, `Index::query_edges` 1700 |
-| `fulltextQ`, `vectorQ` | `Index::fulltext_query(_edges)` 1718/1747, `vector_query(_edges)` 1784/1846 |
-| `delKey`, `delEdgeKey`, `commitEdge` | `delete_document` 1940, `delete_edge_document` 1957, `Indexer::commit_edge` `indexer.rs` |
-
 RediSearch is a *hypothesis*: `run n` is the list of `(key, score)` pairs the
 results iterator returns for query node `n`, and `RunSpec` states the documented
 LLAPI contract (it returns the keys of exactly the stored documents that match).

@@ -1,17 +1,5 @@
 /-
 LOAD CSV (graph/src/runtime/ops/load_csv.rs).
-
-| here | there |
-| --- | --- |
-| `v4Forbidden`        | `ipv4_is_forbidden` (:48) |
-| `validateRemote`     | `validate_remote_url` (:81) — DNS (`to_socket_addrs`) is the FFI parameter `resolve` |
-| `ER`, `erNew`, `erRead` | `EnforcingReader::new` (:153), `read` (:167) |
-| `pinned`             | `PinnedResolver::resolve` (:195) |
-| `httpConfig`         | `http_config` (:223), a `OnceLock` |
-| `csvNext`            | `CsvRecordIter::next` (:260) |
-| `LcSt.new`           | `LoadCsvOp::new` (:328) |
-| `headerPlan`, `openSource` | `open_csv_records` (:357) |
-| `resolvePath`, `lcRow` | the per-row closure of `LoadCsvOp::next` (:458) |
 -/
 namespace FalkorAggOps.LoadCsv
 

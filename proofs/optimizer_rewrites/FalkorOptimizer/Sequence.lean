@@ -1,15 +1,6 @@
 /-
 # Pass sequencing, tree rebuilds, and edge-filter absorption
 
-| here | there |
-| --- | --- |
-| `passes`, `optimize` | `optimize` optimizer/mod.rs (pass order; NestedPlans recursion) |
-| `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs |
-| `guardHJ`, `T.anyD` | its `!reads_argument_rows(&child)` guard (:84) / `reads_argument_rows` :105-109 |
-| `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs |
-| `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs |
-| `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs |
-
 * `optimize_sound`: if every pass preserves a relation `R` (reflexive,
   transitive), so does `optimize`; `optimize_nested` — each nested plan is
   optimized independently; `passes_order` — the exact order (reduce_var_len_path twice).

@@ -1,8 +1,8 @@
 import FalkorAggOps.AggPlan
 /-
 Aggregate operator state: accumulator zeroing / unbinding, `GroupKey` Eq/Hash,
-`args_for`, `new` (graph/src/runtime/ops/aggregate.rs); `hash_u64` is history.
-Table in `AggPlan.lean`. An environment is `Nat → Option Z` (slot ↦ bound value);
+`args_for`, `new` (graph/src/runtime/ops/aggregate.rs).
+An environment is `Nat → Option Z` (slot ↦ bound value);
 `Row::insert` = `upd`, `Row::unbind` = `clr`.
 -/
 namespace FalkorAggOps.AggPlan
@@ -274,21 +274,6 @@ theorem gkHash_consistent {S : Type} (veq : Z → Z → Bool) (hv : S → Z → 
       simp only [gkHash, List.foldl_cons]
       rw [hc st x y h.1]
       exact ih _ ys h.2
-
-/-! ## `hash_u64` (history: aggregate.rs trait decl, :1258 `impl HashU64 for Row` at ca36bfa15;
-the group id is the insertion index now, see `GroupId.lean`) -/
-
-/-- `FxHasher::default()`, `self.hash(&mut hasher)`, `hasher.finish()`. -/
-def hashU64 {R S : Type} (fxDefault : S) (rowHash : S → R → S) (finish : S → Nat) (r : R) : Nat :=
-  finish (rowHash fxDefault r)
-
-/-- `hash_u64` depends only on the row's `Hash` input: rows feeding the same
-`(key, value)` sequence get the same group id. (It is not injective — the
-collision bug was fixed by #2977.) -/
-theorem hashU64_spec {R S : Type} (d : S) (rh : S → R → S) (fin : S → Nat) (r₁ r₂ : R)
-    (heq : rh d r₁ = rh d r₂) : hashU64 d rh fin r₁ = hashU64 d rh fin r₂ ∧
-    hashU64 d rh fin r₁ = fin (rh d r₁) := by
-  simp [hashU64, heq]
 
 /-! ## `VectorizableAgg::args_for` (aggregate.rs) -/
 

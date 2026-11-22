@@ -1,14 +1,6 @@
 import PlannerBuild.Match
 /-
 # Small plan-tree helpers of planner/mod.rs
-
-| here | there |
-| --- | --- |
-| `subtreeContains` | `subtree_contains` mod.rs |
-| `addArgs` (Stitch.lean) | `add_argument_to_leaves` mod.rs — `addArgs_leaves`, `addArgs_leaf_ev` |
-| `stitchBelow` | `stitch_below_apply_chain` mod.rs — `stitchBelow_get`, `stitchBelow_ev` |
-| `ensureInput` | `ensure_apply_has_input` mod.rs — `ensureInput_ev_local`, `ensureInput_saturates` |
-| `RedOpt`, `isRedundantOptional` | `is_redundant_optional_match` mod.rs — `redundant_optional_identity` |
 -/
 namespace PlannerBuild
 

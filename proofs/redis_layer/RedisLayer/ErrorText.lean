@@ -7,14 +7,6 @@ simple string (`reply_simple_string`) passes through redismodule-rs
 `RedisModule_ReplyWithError` / `RedisModule_ReplyWithSimpleString`, which take a C string and
 frame it as `-<text>\r\n` / `+<text>\r\n` (`Resp.respT`).
 
-| here | there |
-| --- | --- |
-| `scrub`, `legalResp` | `str_as_legal_resp_string` on the `fix/resp-string-bytes` fork branch (main b84473a7f): `s.bytes().map(\r \n NUL → space)`, then `CString::from_vec_unchecked` |
-
-The pre-#3428 version truncated every char to its low byte (`c as u8`); it is kept below as a
-historical counterexample (`é` became the lone byte 0xE9, and a char whose low byte is 0, like
-`一` U+4E00, produced a NUL, so `CString::new(..).unwrap()` panicked). `none` below is that panic.
-
 What is proved for main:
 * `bytesOf_toUTF8`: `bytesOf` (Rust `s.bytes()`) is Lean's UTF-8 encoding `String.toUTF8`.
 * `legalResp_length`: the reply text has exactly the UTF-8 byte length of the message.

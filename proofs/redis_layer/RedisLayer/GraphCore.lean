@@ -1,26 +1,6 @@
 import RedisLayer.Resp
 /-!
 # `src/graph_core.rs` — names, registry, write commit, dispatch decisions
-
-| here | there (`origin/main`) |
-| --- | --- |
-| `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul`, `c_graph_name`, `c_graph_key` |
-| `Reg.*`                     | `register_graph`, `graph_is_registered`, `rename_graph`, `graph_free` (stream queue: `Telemetry.graphFree`) |
-| `keyOfWrite`                | `key_of_write` (#3850/#3851) |
-| `modified`                  | `WriteQueryOk::new` |
-| `sanitise`                  | `ffi::sanitise_error` |
-| `invalidVersionBytes`       | `reply_invalid_graph_version` |
-| `profileDepth`, `profileOps`| `reply_profile` (all ops, plain depth, since #2390) |
-| `isWrite`, `profileDetect`, `admissionKept` | `execute_query` / `execute_profile` write detection and `admission.take()` |
-| `writeSteps`                | `try_query_write`, `finish_write`, `abandon_write`, `commit_and_replicate` |
-| `executeWrite`, `Attempt`   | `execute_query_write` (retry loop, #3290), `WriteAttempt::from` |
-| `WTimeout`, `resolveT`, `runBudget` | `try_query_write` one timeout for all runs (`WriteTimeout`, #3559) |
-| `loopW`, `escalateNext`, `Run` | `execute_query_write` bounded retry (#3559), `MAX_STALE_RETRIES`, `SLOW_STALE_RUN` |
-| `admitQ`, `dispatch`        | `admit`, `query_mut` (#3014) |
-| `syncOutcome`, `logsTelemetry` | `query_sync` (`log_query`, #3844), `dispatch::logs_telemetry` `dispatch.rs`, `profile_sync`, `profile_mut` |
-| `loopExit`                  | `process_write_queued_query` |
-| `EFFECT_COMMAND`            | `CtxSink::replicate` |
-| `TG`                        | `ThreadedGraph::new`, `from_mvcc` (unbounded write channel since #3014) |
 -/
 namespace RedisLayer.GraphCore
 

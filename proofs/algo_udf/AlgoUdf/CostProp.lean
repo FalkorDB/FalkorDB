@@ -6,25 +6,10 @@ merges two different cases: *no `costProp` configured* and *`costProp` configure
 this edge lacks it*. C distinguishes them; `edge_numeric_attr` does not. This file keeps
 the configuration separate.
 
-| here | there |
-| --- | --- |
-| `edgeNumericAttr` | `edge_numeric_attr` `algo_procedures.rs` (`prop.map_or(default, …)`, one `default` for both cases) |
-| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `missing_cost` = 1 if `costProp` is configured else 0 |
-| `rustEnumCost`    | `bfs_find_bound` and `enumerate_paths`, default `1.0` |
-| `cResolve`        | `GraphContext_GetAttributeID` (`proc_sp_paths.c:350`): an unknown name is `ATTRIBUTE_ID_NONE` |
-| `cFastCost`       | C `_sum_path_cost` as run live on the pre-`ae9ef2a73` (#2656) `c.so` build: `ATTRIBUTE_ID_NONE` → 0, else missing → `SI_LongVal(1)`. Current origin/master charges 1 in both cases, so only the configured-`costProp` conjuncts are parity claims against master |
-| `cEnumCost`       | C DFS `GraphEntity_GetNumericPropertyOrDefault(.., cost_prop, SI_LongVal(1))` (`proc_sp_paths.c:633,670`) |
-
 `costProp` is `none` (not configured), `some true` (configured, the attribute name
 exists in the graph) or `some false` (configured, a name no entity has).
 Live (Rust vs C), `A-[:E {weight:1,cost:2}]->B-[:E2 {weight:1}]->C`:
 
-| config | Rust | C |
-| --- | --- | --- |
-| `costProp:'cost'` (fast path) | 3 | 3 |
-| no `costProp` (fast path) | 0 | 0 |
-| `costProp:'nosuch'` (fast path) | 2 (each edge lacks it) | 0 on `c.so`; 2 on newer master (see below) |
-| `costProp:'cost', maxLen:5` (enumeration) | 3 | 3 |
 
 (origin/master's `_sum_path_cost`, since `ae9ef2a73` (#2656), charges 1 even with no `costProp`; the
 configured-but-missing case, which is what the property below states, is 1 in both C

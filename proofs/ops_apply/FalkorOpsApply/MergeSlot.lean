@@ -28,16 +28,6 @@ Where does a value-only slot at a MERGE variable's id come from?  ops_aggregate
 accumulator, unbound but present, at slot 2; `WITH c0, count(*) AS c1` over `c0, r1, b` leaves
 it at slot 3. That row shape is restated here (`row2`, `row3_68`, `row3_69`), not imported.
 
-| here | there |
-| --- | --- |
-| `MV`, `Row`, `Row.get`, `Row.isBound`, `Row.insert`, `Row.unbind` | `Value`, `Row` (row.rs), `get_by_id` (:128), `is_bound_by_id` (:199), `insert_by_id` (:113), `unbind_by_id` (:222) |
-| `Cell`, `Row.ofCells` | a columnar batch row (`Column::Unbound` / bound / `value_only`) and `BatchRow::to_owned_row` (batch.rs) |
-| `MClause`, `nodeOf`, `attrsOf` | a one-node pattern `MERGE (v:L {id: r.id})` |
-| `rustKey` | `compute_merge_pattern_hash` (merge.rs) = `Ctors.mergeHashInput` with `get := Row.get` (FxHash taken as injective on token streams; collisions are FINDINGS 6) |
-| `fixKey` | the same with `get` returning a value only for a slot bound to a node |
-| `matchK` | the match sub-plan (`run_batch(merge_child_idx)`, merge.rs, `match_all`): label scan + property filter |
-| `mergeRowK` | one input row of `MergeOp::next` (merge.rs) with `do_create_fallback` (merge.rs) |
-
 Properties a fix should prove: `KeyFromBoundNodeOnly` (MERGE takes a pattern variable as given
 only when the row binds it to a node) and `MergeBindsOwnNode` (after MERGE the variable is bound
 to a node with the pattern's label and properties). `fixKey_from_bound_node` and
@@ -184,9 +174,6 @@ structure MClause where
   src : Nat
   /-- plan index of this MERGE operator (`MergeOp::idx`): the cache key's first half since #3050 -/
   op : Nat
-
-/-- The cache as it was before #3050: one key space for every MERGE of the query. -/
-def MClause.erase (cl : MClause) : MClause := { cl with op := 0 }
 
 /-- `{id: r.id}` evaluated on the row (`r` = the map at slot `src`). -/
 def MClause.attr (cl : MClause) (r : Row) : MV :=
@@ -335,8 +322,7 @@ theorem fixKey_from_bound_node (cl : MClause) (r : Row) : KeyFromBoundNodeOnly f
         split at hv <;> simp [bind, Except.bind, pure, Except.pure, firstNull, keyVal] at hv
 
 /-- The cache entries a fixed MERGE can hit for this clause's label point at one of this
-clause's nodes (true of a per-clause cache, C's `unique_entities`; the cross-clause sharing is
-the separate `Merge.cross_clause_unbound`). -/
+clause's nodes (true of a per-clause cache, C's `unique_entities`). -/
 def CacheOK (cl : MClause) (st : St) : Prop :=
   ∀ r k pairs, k = fixKey cl r → r.isBound cl.var = false → lookup st.cache (cl.op, k) = some pairs →
     ∃ n ∈ st.g, pairs = [(cl.var, .node n.id)] ∧ n.label = cl.label ∧ n.attr = cl.attr r
@@ -396,14 +382,13 @@ def row3_69 (acc : MV) : Row :=
   Row.ofCells [.bound (.int 1), .bound (.int 1), .bound (.map 12), .valueOnly acc]
 
 /-- Run segments 1 and 2, then the last MERGE on `last`; returns (final state, last outputs). -/
-def run (shared : Bool) (key : MClause → Row → Key) (acc1 : MV) (cl : MClause) (last : Row) :
+def run (key : MClause → Row → Key) (acc1 : MV) (cl : MClause) (last : Row) :
     Except String (St × List Row) :=
-  let adj : MClause → MClause := if shared then MClause.erase else id
-  match mergeRows key (adj clA) st0 [row1] with
+  match mergeRows key clA st0 [row1] with
   | .error e => .error e
-  | .ok (s1, _) => match mergeRows key (adj clB) s1 [row2 acc1] with
+  | .ok (s1, _) => match mergeRows key clB s1 [row2 acc1] with
     | .error e => .error e
-    | .ok (s2, _) => mergeRows key (adj cl) s2 [last]
+    | .ok (s2, _) => mergeRows key cl s2 [last]
 
 def outVar (res : Except String (St × List Row)) (i : Nat) : Option (Option MV) :=
   match res with
@@ -415,30 +400,15 @@ def nodes (res : Except String (St × List Row)) : Option Graph :=
   | .ok (s, _) => some s.g
   | _ => none
 
-/-- The state the last MERGE starts from (after segments 1 and 2). -/
-def before (shared : Bool) (key : MClause → Row → Key) (acc1 : MV) : St :=
-  let adj : MClause → MClause := if shared then MClause.erase else id
-  match mergeRows key (adj clA) st0 [row1] with
-  | .ok (s1, _) => match mergeRows key (adj clB) s1 [row2 acc1] with
-    | .ok (s2, _) => s2
-    | .error _ => st0
-  | .error _ => st0
-
-/-! ### #3368 -/
-
-/-! ### #3369 -/
-
-/-! ## On main (the cache is keyed by `(operator idx, hash)`) -/
-
 /-- **#3368 and #3369 as filed no longer reproduce on main.**  `b`'s and `c`'s MERGEs are
 different operators, so `c`'s lookup of `(op c, hash Int 1)` misses `b`'s entry
 `(op b, hash Int 1)`: `c` gets its own new node (id 2, three nodes), even with the
 unchanged `rustKey`. Model only: the live repros were not re-run on main. -/
 theorem bug3368_filed_repro_fixed_by_3050 :
-    outVar (run false rustKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
-    nodes (run false rustKey (.int 1) clC68 (row3_68 (.int 1))) =
+    outVar (run rustKey (.int 1) clC68 (row3_68 (.int 1))) 2 = some (some (.node 2)) ∧
+    nodes (run rustKey (.int 1) clC68 (row3_68 (.int 1))) =
       some [⟨0, 0, .str 10⟩, ⟨1, 1, .str 11⟩, ⟨2, 2, .str 12⟩] ∧
-    outVar (run false rustKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) := by
+    outVar (run rustKey (.int 1) clC69 (row3_69 (.int 1))) 3 = some (some (.node 2)) := by
   decide
 
 /-- Segment 2's MERGE input for a second `UNWIND` element (`{id:'b2'}` = 13): the same

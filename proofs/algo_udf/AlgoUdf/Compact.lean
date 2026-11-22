@@ -1,18 +1,5 @@
 /-! # Node id ↔ matrix index mapping in the LAGraph-backed procedures
 
-| here | there (`graph/src/runtime/functions/algo_procedures.rs`) |
-| --- | --- |
-| `idx`, `ids`            | `build_compact_adj_from_tensors` :570 / `..._symmetric_...` :636: `sorted_ids` (compact → id) and `id_to_compact` |
-| `compactEdges`          | the tensor loops in the same two functions (edge kept iff both ends are active) |
-| `LagWcc`                | AXIOMATISED spec of `LAGr_ConnectedComponents` / `LAGraph_cdlp` output |
-| `compactToOriginal`     | `compact_to_original` :451-456 : `compact_to_id.map_or(idx, \|m\| m[idx])` |
-| `wccRows`               | algo.WCC result assembly :922-935 (algo.labelPropagation :1343-1356 is identical); component id through `compact_to_original` |
-| `unfilteredRows`        | the `compact_to_id = None` branch of every procedure + `is_node_deleted` skip |
-| `harmonicRows`          | algo.HarmonicCentrality :2848-2860 source vector sized `node_id_bound()` |
-| `pagerankPath`          | algo.pageRank early exits :729-735, `use_unfiltered` :750-752, empty active set :772-774 (older line numbers) |
-| `checkKnown`            | `check_known_labels_and_types` :469 (betweenness :973, labelPropagation :1268, HarmonicCentrality :2759; older line numbers) |
-| `seed0Sources`          | algo.betweenness source sampling with `samplingSeed = 0` :1032-1052 |
-
 LAGraph is not modelled; its output contract is a hypothesis (`LagWcc`), citing
 LAGraph's `LAGr_ConnectedComponents` doc: "component(i) = r where r is the
 representative (smallest index) of i's component, over indices 0..n-1".

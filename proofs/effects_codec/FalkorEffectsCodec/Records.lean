@@ -16,7 +16,7 @@ import FalkorEffectsCodec.Value
 Modelled: `CREATE_NODE`, `UPDATE_NODE`, `DELETE_NODE`, `SET_LABELS`,
 `REMOVE_LABELS`, `CREATE_EDGE`, `DELETE_EDGE`, `ADD_ATTRIBUTE`. Not modelled:
 `UPDATE_EDGE` (same shape as `UPDATE_NODE` with a `u32` in the label slot),
-`ADD_SCHEMA`, and the index/constraint DDL — see `REPORT.md`.
+`ADD_SCHEMA`, and the index/constraint DDL — see `README.md`.
 -/
 
 namespace FalkorCodec

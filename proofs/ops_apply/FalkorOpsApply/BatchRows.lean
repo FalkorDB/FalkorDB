@@ -3,17 +3,6 @@ import FalkorOpsApply.MergeSlot
 /-!
 # The correlated-batch plumbing of `runtime/batch.rs`
 
-| here | there |
-| --- | --- |
-| `Col`, `Bat`, `Bat.cell` | `Column`, `Batch` (columns, `value_only` bitset, `selection`, `origin_rows`), `value_at` / `is_bound_at` |
-| `Bat.originRow`, `Bat.hasOrigins` | `Batch::origin_row` (batch.rs), `has_origins` |
-| `Bat.gather` | `Batch::gather` (batch.rs) |
-| `Bat.intoCompacted` | `Batch::into_compacted` (batch.rs) |
-| `Bat.cloneSeq` | `Batch::clone_active_rows_seq_origin` (batch.rs) |
-| `Bat.mergeOverInput` | `Batch::merge_over_input` (batch.rs) |
-| `setArg`, `OT` | `BatchOp::set_argument_batch` (batch.rs) |
-| `MergeSlot.Row.ofCells` (in `MergeSlot`) | `BatchRow::to_owned_row` (batch.rs) |
-
 Columns are a function from variable id to `Col` (everything past `ncols` is `Unbound`).
 Out-of-range indices are modelled by a default (Rust panics there; callers keep them in range).
 -/

@@ -13,14 +13,6 @@ sound only under std's `Borrow` contract: the borrowed form compares and hashes 
 `NameMap.lean` models the map as a function keyed by the name itself (`M.index : String → Option Nat`);
 this file proves the contract that licenses that, for any hasher on `str`.
 
-| here | there |
-| --- | --- |
-| `Key.s` | `Key.0.as_str()` |
-| `Key.hash` | `Hash for Key` (:27): the hash of the `str` |
-| `Key.borrow` | `Borrow<str> for Key` (:36) |
-| `Key.eq` (`derive(PartialEq, Eq)`) | `Arc<String>: PartialEq` compares the strings |
-| `lookup` | `HashMap<Key, usize>::get(&str)` as a lookup among the entries by `Borrow`ed equality |
-
 * `hash_eq_str_hash` — a key hashes as the `str` it borrows as (what `HashMap::get(&str)` hashes).
 * `borrow_eq_iff` — two keys are equal iff their borrowed `str`s are.
 * `borrow_contract` — equal borrowed forms ⇒ equal keys ⇒ equal hashes: the `Borrow` requirement.

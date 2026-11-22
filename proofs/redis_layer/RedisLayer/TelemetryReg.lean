@@ -188,21 +188,9 @@ theorem enqueue_iff (c q : Bool) (n : Nat) :
     enqueueOk c n q = true ↔ c = true ∧ n < QUEUE_MAX ∧ q = true := by
   simp [enqueueOk, Bool.and_eq_true, decide_eq_true_eq, and_assoc]
 
-namespace Pre3844
-/-- Historical (before #3844): the gate also refused on a replica (`IS_REPLICA`). #3844
-made telemetry node-local, as in C: a replica logs the reads it serves, and replicated or
-replayed commands are left out at dispatch instead (`GraphCore.sync_unserved_silent`). -/
-def enqueueOk (cmdInfo isReplica : Bool) (queued : Nat) (senderUp : Bool) : Bool :=
-  cmdInfo && !isReplica && decide (queued < QUEUE_MAX) && senderUp
-theorem enqueue_replica (c q : Bool) (n : Nat) : enqueueOk c true n q = false := by simp [enqueueOk]
-end Pre3844
-
 /-! ## Flusher batching -/
 
 def FLUSH_BATCH_MAX := 256
-/-- Historical: removed by #3844 (see `Pre3844.capDeferred`). -/
-def DEFERRED_XADD_MAX := 4 * FLUSH_BATCH_MAX
-
 /-- `drain_queued`: move queued entries into `batch` until it holds `FLUSH_BATCH_MAX`;
 `true` iff the channel reported `Disconnected` (empty and closed). -/
 def drain {α} (batch queue : List α) (closed : Bool) : List α × List α × Bool :=
@@ -219,24 +207,6 @@ theorem drain_bound {α} (b q : List α) (c : Bool) (h : b.length ≤ FLUSH_BATC
 theorem drain_conserves {α} (b q : List α) (c : Bool) :
     (drain b q c).1 ++ (drain b q c).2.1 = b ++ q := by
   simp only [drain]; split <;> simp
-
-namespace Pre3844
-/-- Historical (before #3844): entries held back through a replica pause, capped by
-`deferred.drain(..len - DEFERRED_XADD_MAX)`. #3844 removed the pause and the deferred list:
-the batch is bounded by `drain_bound` alone. -/
-def capDeferred {α} (d : List α) : List α :=
-  if d.length > DEFERRED_XADD_MAX then d.drop (d.length - DEFERRED_XADD_MAX) else d
-
-theorem capDeferred_len {α} (d : List α) : (capDeferred d).length ≤ DEFERRED_XADD_MAX := by
-  unfold capDeferred; split
-  · simp; omega
-  · omega
-
-theorem capDeferred_suffix {α} (d : List α) : ∃ p, p ++ capDeferred d = d := by
-  unfold capDeferred; split
-  · exact ⟨d.take (d.length - DEFERRED_XADD_MAX), List.take_append_drop _ _⟩
-  · exact ⟨[], rfl⟩
-end Pre3844
 
 /-! ## Re-keying (`resolve_current_names`) -/
 

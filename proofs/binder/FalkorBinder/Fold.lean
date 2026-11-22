@@ -1,15 +1,6 @@
 /-
 # Bind-time constant folding and call rewrites
 
-| here | there |
-| --- | --- |
-| `Val`, `FD`, `FE`, `insertKV`, `ev` | `Value`, bound `ExprIR` payloads/trees, `OrderMap::insert` (ordermap.rs), runtime eval of constants / `List` / `Map` (eval.rs) |
-| `nodeToValue`, `exprTreeToValue` | `expr_tree_to_value` / `node_to_value` binder.rs |
-| `collectConstArgs` | `collect_constant_args` binder.rs |
-| `foldCall` | the folding step of `bind_expr_node` binder.rs |
-| `rewriteStruct` | `rewrite_struct_constructor` binder.rs |
-| `rewriteRegex` | `rewrite_compiled_regex` binder.rs |
-
 * `nodeToValue_sound`: a tree that folds evaluates to the folded value
   (duplicate map keys: last value wins, first position kept, as at runtime);
   `nodeToValue_complete`: every all-constant List/Map tree folds.

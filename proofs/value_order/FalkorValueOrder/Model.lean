@@ -1,5 +1,5 @@
 import FalkorCore
-/-! Core model of `compare_value`, `PartialEq` and `Hash for Value` (see the report in `FalkorValueOrder.lean`). -/
+/-! Core model of `compare_value`, `PartialEq` and `Hash for Value` (see README.md). -/
 
 namespace ValueOrder
 

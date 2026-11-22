@@ -169,17 +169,17 @@ in, `MATCH (a {v: 1}) MATCH (a)<-[]-(b {v: 0})`), was evaluated before anything 
 
 /-- The chain this branch builds from the seed (the new scan's node and the `Argument`): the
 salvaged filters inside the scan subtree (below the hop), or, when the pruned scan was for another
-node, above the hop. `old := true` is the pre-#2981 placement (always inside). -/
-def leafSteps (old : Bool) (fr : Var) (child : PT) (h : Hop) (pred : List Var → (Nat → Nat) → Bool) :
+node, above the hop (#2981). -/
+def leafSteps (fr : Var) (child : PT) (h : Hop) (pred : List Var → (Nat → Nat) → Bool) :
     List Step :=
-  if !old && isPlannerScan child && (plannerScanAlias child).any (· != fr) then
+  if isPlannerScan child && (plannerScanAlias child).any (· != fr) then
     .hop h :: salvagedSteps child pred
   else salvagedSteps child pred ++ [.hop h]
 
 /-- **PROVEN**: a scan for the same node keeps its filters inside, as before. -/
-theorem leafSteps_same (old : Bool) (fr : Var) (child : PT) (h : Hop) pred
+theorem leafSteps_same (fr : Var) (child : PT) (h : Hop) pred
     (hs : plannerScanAlias child = some fr) :
-    leafSteps old fr child h pred = salvagedSteps child pred ++ [.hop h] := by
+    leafSteps fr child h pred = salvagedSteps child pred ++ [.hop h] := by
   simp [leafSteps, hs]
 
 /-- **PROVEN**: when the pruned scan was for the hop's other endpoint `a` and its filters read only
@@ -187,10 +187,10 @@ theorem leafSteps_same (old : Bool) (fr : Var) (child : PT) (h : Hop) pred
 theorem leafSteps_other_wellScoped (fr a : Var) (child : PT) (h : Hop) pred
     (hs : plannerScanAlias child = some a) (hne : a ≠ fr) (ha : a.1 = h.src ∨ a.1 = h.dst)
     (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ argVars (argumentLeafOf child)) :
-    wellScoped (seedBound fr.1 child) (leafSteps false fr child h pred) := by
+    wellScoped (seedBound fr.1 child) (leafSteps fr child h pred) := by
   have hp : isPlannerScan child = true := by
     have := (plannerScan_agree child).2.1; rw [this, hs]; rfl
-  have e : leafSteps false fr child h pred = [.hop h] ++ salvagedSteps child pred := by
+  have e : leafSteps fr child h pred = [.hop h] ++ salvagedSteps child pred := by
     simp [leafSteps, hp, hs, hne]
   rw [e]
   apply salvaged_wellScoped child _ [.hop h] pred (by simp [wellScoped])
@@ -213,18 +213,14 @@ def E : Store := fun r x y e => r == 0 && x == 11 && y == 10 && e == 12
 def σ : Nat → Nat := fun x => x + 10
 def pred : List Var → (Nat → Nat) → Bool := fun _ σ => (if σ a.1 == 10 then 1 else 0) == 1
 
-/-- **PROVEN** (#2981 fixes the placement): before, the filter on `a` sat inside the scan of `b`, below
-the hop that binds `a` — not well-scoped, and the row generate-and-test keeps is lost; now it sits above
-the hop, and the row is kept. -/
+/-- **PROVEN** (#2981): the filter on `a` sits above the hop that binds `a`, so the placement is
+well-scoped and the row generate-and-test keeps is kept. -/
 theorem fixed2981_filter_above_hop :
-    (leafSteps true bN child hop pred).all (fullHolds E σ) = true ∧
-    ¬ wellScoped (seedBound bN.1 child) (leafSteps true bN child hop pred) ∧
-    runScoped E σ (seedBound bN.1 child) (leafSteps true bN child hop pred) = false ∧
-    wellScoped (seedBound bN.1 child) (leafSteps false bN child hop pred) ∧
-    runScoped E σ (seedBound bN.1 child) (leafSteps false bN child hop pred) = true := by
-  refine ⟨by decide, ?_, by decide, ?_, by decide⟩
-  · simp [leafSteps, wellScoped, salvagedSteps, filtersOf, child, seedBound, a, bN, argVars, argumentLeafOf]
-  · exact leafSteps_other_wellScoped bN a child hop pred (by decide) (by decide) (by decide)
+    (leafSteps bN child hop pred).all (fullHolds E σ) = true ∧
+    wellScoped (seedBound bN.1 child) (leafSteps bN child hop pred) ∧
+    runScoped E σ (seedBound bN.1 child) (leafSteps bN child hop pred) = true := by
+  refine ⟨by decide, ?_, by decide⟩
+  exact leafSteps_other_wellScoped bN a child hop pred (by decide) (by decide) (by decide)
       (by intro vs hvs v hv; simp [filtersOf, child] at hvs; subst hvs; simp at hv; exact Or.inl hv)
 
 end Leaf2981
@@ -241,12 +237,12 @@ discarded planner scan (`if has_planner_scan`); otherwise none are. -/
 and the bare hop otherwise (a transparent child keeps its Filters beneath the new scan). -/
 def leafSteps3594 (hasPlanner : Bool) (fr : Var) (child : PT) (h : Hop)
     (pred : List Var → (Nat → Nat) → Bool) : List Step :=
-  if hasPlanner then leafSteps false fr child h pred else [.hop h]
+  if hasPlanner then leafSteps fr child h pred else [.hop h]
 
 /-- **PROVEN** (#3594): over a planner scan the rewrite is the #2981 one, so `leafSteps_same`,
 `leafSteps_other_wellScoped` and `Leaf2981.fixed2981_filter_above_hop` still describe it. -/
 theorem leafSteps3594_planner (fr : Var) (child : PT) (h : Hop) pred :
-    leafSteps3594 true fr child h pred = leafSteps false fr child h pred := rfl
+    leafSteps3594 true fr child h pred = leafSteps fr child h pred := rfl
 
 /-- **PROVEN** (#3594, `17547791c`): over a transparent child nothing is salvaged, so the chain is
 the bare hop, well-scoped from any seed. -/

@@ -1,12 +1,11 @@
 import FalkorCowBTree.Lookup
-import FalkorCowBTree.Bugs
 
 /-!
 # The const assert of `CowBTree::{default,new,from_sorted}` (`mod.rs`)
 
 The const assert demands `BRANCH_MAX >= 4` and gates `DOC_BYTES` with
 `is_read_width` (`mod.rs`). `Cfg` keeps the weaker `3 ≤ B` that `pack_branches` needs, so that the
-`BRANCH_MAX = 3` configuration (`Bugs.lean`) can still be stated; `constAssert` is the
+`BRANCH_MAX = 3` configuration can still be stated; `constAssert` is the
 assert a configuration must pass to build a tree at all.
 
 * `constAssert_B4`, `asserted_single_child_underfull`: under the assert a branch merged down to one

@@ -10,7 +10,7 @@ This project proves that `IdList` (`graph/src/effects/v3/id_list.rs`) keeps ever
 
 The order matters: the replica pairs the *n*-th id with the *n*-th row of attributes. If ids are reordered, properties land on the wrong entity (the class of #2842). If decoding is not total, a malformed payload can crash the replica.
 
-The full Lean↔Rust mapping is in the header of [`FalkorIdList.lean`](FalkorIdList.lean), in the `file:line` table at the top of `Push.lean` and `Wire.lean`, and in [`REPORT.md`](REPORT.md). This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -80,7 +80,7 @@ No, and that is allowed. `decode ∘ encode` is the identity, but the decoder ac
 
 ## Bugs found
 
-See [`../FINDINGS.md`](../FINDINGS.md) and [`REPORT.md`](REPORT.md) for the repros.
+See [`../FINDINGS.md`](../FINDINGS.md) for the repros.
 
 No open bugs. Fixed ones are in this file's git history. There are no CONDITIONAL rows.
 
@@ -97,7 +97,6 @@ Suspected, not confirmed: a roaring blob with the same high key twice keeps only
 | `CostProps.lean` | Its theorems: `bucketBody_spec`, `addLoop_eq`, `encodedLen_eq`, `collapse_shrinks`, `no_collapse_below_floor` |
 | `PushT.lean` | `push` with the real collapse decision: `pushT_st`, `pushAllT_ok` |
 | `Misc.lean` | `is_empty`, `count`, `to_roaring`, the `PartialEq`s, the `From`s, `Debug` |
-| `REPORT.md` | The long-form report; some counts and the "free Boolean" note predate `Cost`/`PushT`, and the root `.lean` header is current |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The lakefile has no path dependencies.
@@ -119,7 +118,7 @@ Every function is proven.
   - `serialized_size` is the blob length and fits a `u32`;
   - whatever deserializes is a sorted set of `u64`s.
 
-  The actual blob bytes and `optimize()` are not modelled. That `serialized_size()` equals the tally is a hypothesis of `collapse_shrinks`, checked by the Rust test `predicted_matches_roaring`.
+  The actual blob bytes and `optimize()` are not modelled. Trailing bytes inside a blob's stated length are ignored: roaring reads from the slice and stops at its own end. That `serialized_size()` equals the tally is a hypothesis of `collapse_shrinks`, checked by the Rust test `predicted_matches_roaring`.
 - A segment's `u32` length overflowing inside `push` (`*len += 1`) is not modelled: lengths are `Nat`. It needs 2^32 pushes, or a decoded segment of length `u32::MAX` extended by one push. The wire theorems and the two decoded-push theorems therefore assume fewer than 2^32 ids.
 - The cached `len`/`min`/`max` of bitmap segments are derived from the set, so cache maintenance is not checked.
 - `Reader` is a byte list. Allocation bounds inside roaring's deserializer were read, not modelled.

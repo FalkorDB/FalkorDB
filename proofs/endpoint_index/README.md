@@ -13,7 +13,7 @@ Every time the engine materialises a relationship, it reads this index. That hap
 
 To save memory the index keeps four tiers of slots, 16-, 24-, 32- and 64-bit. An edge whose endpoints fit a narrow tier is stored narrow. When a reused id gets endpoints too large for its tier, the tier is *promoted*: re-encoded into a wider one. A deleted edge is a tombstone, both fields set to the tier's all-ones value. Nothing ever shrinks.
 
-The full Lean↔Rust mapping is in the header of [`FalkorEndpointIndex.lean`](FalkorEndpointIndex.lean) (flat model) and [`EndpointPaged.lean`](EndpointPaged.lean) (pages and `Arc`s). This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv); [`EndpointPaged.lean`](EndpointPaged.lean) models pages and `Arc`s. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 

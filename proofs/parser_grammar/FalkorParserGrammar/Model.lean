@@ -462,8 +462,6 @@ def listOp (pe : List Tok → Out) (lhs : RT) (ts : List Tok) : Res RT :=
     | .panic => .panic
     | .fuel => .fuel
 
-/-! ### History: the swallowed slice bound (main 8621212fc) -/
-
 -- `parse_map_projection` (3234-3290), after `{`:
 /-- One item of a map projection: `.*`, `.prop`, `key: expr` or `var`. -/
 def mapProjItem (pe : List Tok → Out) (ts : List Tok) : Res RT :=
@@ -567,8 +565,7 @@ def notFrames (n : Nat) (K : List Frame) : List Frame :=
 
 /-- Level 9 prefix since #3525 (`56d00c3d8`, cypher.rs): any run of `+` and `-`.
 The number of `-` is what counts (`+` is dropped); `legacy_signs` is only set while a
-`CYPHER` parameter value is parsed (see `C.Params`), never on this path. Before #3525 the
-prefix was one optional `+` then one optional `-` (`pre3525_signs`). -/
+`CYPHER` parameter value is parsed (see `C.Params`), never on this path. -/
 def countSigns : List Tok → Nat × List Tok
   | .dash :: r => let p := countSigns r; (p.1 + 1, p.2)
   | .plus :: r => countSigns r
@@ -581,14 +578,6 @@ def signFrames (n : Nat) (K : List Frame) : List Frame :=
   if n = 0 then (9, none) :: K
   else if n % 2 = 1 then (9, some (lf .neg)) :: K
   else (9, some (lf .neg)) :: (9, some (lf .neg)) :: K
-
-/-- Level 9 prefix before #3525 (cypher.rs at `43936bab9`): an optional `+`, then an
-optional `-`. Kept as the historical shape: `- -x` and `-+x` were syntax errors. -/
-def pre3525_signs : List Tok → Bool × List Tok
-  | .plus :: .dash :: r => (true, r)
-  | .plus :: r => (false, r)
-  | .dash :: r => (true, r)
-  | ts => (false, ts)
 
 /-- Level 11 with a tree (2632-2653). `take_out` of a `Paren` child moves
 its children up in its place. -/

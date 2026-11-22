@@ -23,15 +23,6 @@ Open issues #2311, #2727, #2737, #2743, #2744, #2725: one root cause, two places
 OPTIONAL MATCH is Apply-wrapped (`any_visited`, mod.rs), so its rows
 survive, but the path is still missing: `RETURN p` gives null.
 
-| here | there |
-| --- | --- |
-| `MP.pathVars` | the variables a match plan binds as paths: `PathBuilder` entries, a CondVarLenTraverse's elided path (mod.rs) |
-| `BindsAllPaths` | the property: every named path of the pattern is bound by the plan |
-| `compVars` | `QueryGraph::variables` ast.rs (nodes, relationships, paths) |
-| `planMatchArm` | `Planner::plan`'s MATCH arm mod.rs (`joins_components` Apply wrap, `planMatchArm_joined_wrapped`, `planMatchArm_disjoint`) |
-| `MP.toPlan` | the `plan_match` result as an IR tree (operator kinds; payloads dropped) |
-| `Plan.argIsLeaf` | the property: no `Argument` has a child |
-
 Bug theorems: `bug2311_optional_path_null`, `bug2737_optional_path_null`,
 `bug2743_bound_path_drops_rows`, `bug2744_bound_path_unfed_argument`,
 `bug2727_alias_path_drops_rows`, `bug2725_call_then_bound_path_loses_var`.

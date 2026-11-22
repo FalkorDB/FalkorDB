@@ -1,15 +1,6 @@
 /-
 Sort comparators and key classification (graph/src/runtime/ops/sort.rs).
 
-| here | there |
-| --- | --- |
-| `cmpKey`            | `OrderedKey::cmp_key` (sort.rs) |
-| `okEq`/`okPartialCmp`/`okCmp` | `PartialEq`/`PartialOrd`/`Ord for OrderedKey` (sort.rs) |
-| `rowContent`        | `compare_row_content` (sort.rs) |
-| `heapCmp`           | `Ord for HeapEntry` (sort.rs); `heEq` / `hePartialCmp` (:156, :165) |
-| `classifySortKey`   | `classify_sort_key` (sort.rs), `classify_numeric(_, false, Pure)` (batch.rs) |
-| `tiebreak`, `tbCols` | `tiebreak` (sort.rs) |
-
 The value comparison is the parameter `cv : V → V → Ordering`; on main
 it is `Value::sort_cmp`. Its laws (`Lawful`: reflexive, antisymmetric) are hypotheses
 here and are discharged for `sort_cmp` in `Discharge.lean` (`lawful_main`, from

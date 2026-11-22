@@ -130,6 +130,12 @@ No path dependencies.
 - **Formerly MODELLED, now PROVEN:** the two #2781 rows. `resyncEdgeKeys_spec`/`resyncEdgeKeys_disjoint` state exactly what the edge arm of the rollback re-adds and deletes, and `commitEdgeAddKeys_mem` what `commit_edge_index_locked` writes; the rollback property itself stays refuted (`bug2781_rollback_not_restored`, open), and the only positive result for it is the fix shape `resyncEdgesFixed_restores` (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
 - **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`.
 
+## Differential coverage and suspicions
+
+`diff.py` ran 83 predicate shapes over 38 stored values (numbers, ±0, ±inf, NaN, 2^53+1, booleans, strings including empty, whitespace, `\`, `_`, unicode and emoji, lists, temporals, points); `diff2.py` ran 22 maintenance scenarios (SET/REMOVE of a property or label, `SET n = {}`, `+=`, scalar/list type changes, DELETE, id reuse, MERGE, rollback on error, edge SET/DELETE/DETACH DELETE). Every Rust mismatch between the index and the full scan falls into the bugs above. The precision guard, NaN and -0.0 equality, and unicode equality were exact; all maintenance scenarios were consistent.
+
+Suspected, unconfirmed: `Indexer::commit` applies removes after adds, so an id in both sets loses its document (`commit_both_removes`), though no Cypher sequence tried produces both; and `1 IN n.v` over a non-list `n.v` raises a type error in a full scan but returns `[]` or rows through the index (C behaves the same).
+
 ## What the model does not cover
 
 - **Large stored integers.** Integers of 2⁵³ or more are rounded when stored as `f64`; the model takes `i as f64` as exact. The query-side guard is proven ([`../native_index`](../native_index) has a bit-level model with the `i64::MIN` hole).

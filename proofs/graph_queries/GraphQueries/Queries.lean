@@ -31,10 +31,6 @@ of both halves and the outgoing one already produced it). -/
 def nodeRels (g : G V) (n : Nat) : Ten :=
   g.relMs.flatMap (fun t => Ten.out t n ++ (Ten.inc t n).filter (fun e => e.1 != e.2.1))
 
-/-- The pre-#3084 body, kept as a historical counterexample: both halves, unfiltered (a self-loop came out twice). -/
-def pre3084_nodeRels (g : G V) (n : Nat) : Ten :=
-  g.relMs.flatMap (fun t => Ten.out t n ++ Ten.inc t n)
-
 inductive Dir | outgoing | incoming | both deriving DecidableEq
 
 /-- `EdgeDirection::from_str` (graph.rs). -/
@@ -58,13 +54,6 @@ def oneByType (n : Nat) (d : Dir) (t : Ten) : Ten :=
 
 def nodeRelsByType (g : G V) (n : Nat) (types : List String) (d : Dir) : Ten :=
   (selMats g types).flatMap (oneByType n d)
-
-/-- HISTORICAL (the pre-#3084 body): `get_node_relationships` reported a
-self-loop **twice** (once from the outgoing scan, once from the incoming scan). -/
-theorem pre3084_nodeRels_selfloop_twice (t : Ten) (n e : Nat) (hnd : t.Nodup) (hm : (n, n, e) ∈ t) :
-    (Ten.out t n ++ Ten.inc t n).count (n, n, e) = 2 := by
-  simp only [Ten.out, Ten.inc, List.count_append]
-  rw [List.count_filter (by simp), List.count_filter (by simp), hnd.count_of_mem hm]
 
 /-- `get_node_relationships_by_type(.., Both)` reports every incident edge
 exactly once, self-loops included. -/

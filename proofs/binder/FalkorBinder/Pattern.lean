@@ -1,19 +1,17 @@
 import FalkorBinder.Projection
 /-
-# Pattern binding order, and the parser folding MATCH clauses together
+# Pattern binding order
 
 This is the general cause behind issue #2923 (an inline property map that
 references an earlier variable): `MATCH (a)-[r]->(b) MATCH (c:B {v: id(r)*0})`
 fails with "'r' not defined".
 
-* The parser ends a pattern on any token but `,` (cypher.rs); an earlier parser folded
-  consecutive `MATCH` (and `CREATE`) clauses into one pattern and a pattern *predicate*
-  swallowed the next MATCH. `fold` below is that earlier parser, kept for the historical theorems.
+* The parser ends a pattern on any token but `,` (cypher.rs): consecutive `MATCH` (and `CREATE`)
+  clauses stay separate, so the second clause sees the first one's variables.
 * `bind_graph` first defines every named relationship alias (binder.rs), then the nodes
   (1522-1534), then the relationships (1527-1706): a node's attrs see every relationship of the
   pattern, and the planner checks such attrs once all they read is bound
-  (`lift_cross_entity_attrs`). (An earlier `bind_graph` defined all nodes before any relationship,
-  so a node's attrs could only see relationships of *earlier clauses*.)
+  (`lift_cross_entity_attrs`).
 
 C (the reference) binds a pattern element by element in textual order: an
 element's property map sees the scope before the clause, the elements to its
@@ -89,14 +87,12 @@ def rustBind (scope : List Alias) (p : List Elem) : Except String (List Alias) :
 /-- #2923's shape inside one MATCH: `(a)-[r]->(b), (c {v: id(r)})`. -/
 def pRef : List Elem := [.node "a" [], .rel "r" [], .node "b" [], .node "c" ["r"]]
 
-/-- **Fixed by #2981** (pre-#2981 `node_attr_on_rel_rust_rejects`: Rust "'r' not defined"):
-a node's attrs see a relationship of the same MATCH, as in C. -/
+/-- **#2981**: a node's attrs see a relationship of the same MATCH, as in C. -/
 theorem node_attr_on_rel_rust_accepts :
     (rustBind [] pRef).isOk = true ∧ (specBind [] pRef).isOk = true := by
   decide
 
-/-- `(a)-[r]->(b {v: r.w - 2})`: C accepts, and since #2981 Rust too (pre-#2981 `node_attr_on_own_rel`:
-Rust "'r' not defined"). -/
+/-- `(a)-[r]->(b {v: r.w - 2})`: C accepts, and since #2981 Rust too. -/
 theorem node_attr_on_own_rel_accepts :
     (rustBind [] [.node "a" [], .rel "r" [], .node "b" ["r"]]).isOk = true ∧
     (specBind [] [.node "a" [], .rel "r" [], .node "b" ["r"]]).isOk = true := by
@@ -199,23 +195,12 @@ where
         · cases h1; exact mem_grow _ hn
         · cases h1
 
-/-! ## The parser fold (earlier parser) -/
+/-! ## Clause-by-clause scope checking -/
 
 inductive RawClause
   | match_ (p : List Elem) (hasWhere : Bool)
   | with_ (items : List Name)
   deriving Repr, DecidableEq
-
-/-- `parse_pattern`'s loop before #2981 (`if token == *clause { next; continue }`, removed at
-cypher.rs): a MATCH whose pattern was directly followed by `MATCH` absorbed it — WHERE comes after the pattern
-(`parse_match_clause`, cypher.rs), so only a WHERE-less clause
-absorbs; the absorbed clause's own WHERE becomes the merged clause's. -/
-def fold : List RawClause → List RawClause
-  | [] => []
-  | c :: rest =>
-    match c, fold rest with
-    | .match_ p false, .match_ q w :: rest' => .match_ (p ++ q) w :: rest'
-    | c, r => c :: r
 
 /-- Clause-by-clause scope checking with a pattern binder. -/
 def bindClauses (bindPat : List Alias → List Elem → Except String (List Alias))
@@ -227,31 +212,11 @@ def bindClauses (bindPat : List Alias → List Elem → Except String (List Alia
 def q2923 : List RawClause :=
   [.match_ [.node "a" [], .rel "r" [], .node "b" []] false, .match_ [.node "c" ["r"]] false]
 
-/-- **#2923, general cause, fixed by #2981.** The spec accepts, and so does the binder on the
-two clauses as written (the second clause sees `r` from the first), which is what the parser
-hands it since #2981. Before it (`q2923_cause`) the parser folded them into one pattern
-(`fold q2923`), which the nodes-first binder rejected with "'r' not defined"; the relationships-
-first binder of #2981 accepts even the folded pattern. -/
+/-- **#2923** (fixed by #2981): the spec accepts, and so does the binder on the two clauses as
+written (the second clause sees `r` from the first). -/
 theorem q2923_fixed :
     (bindClauses specBind [] q2923).isOk = true ∧
-    (bindClauses rustBind [] q2923).isOk = true ∧
-    (bindClauses rustBind [] (fold q2923)).isOk = true ∧
-    (bindClauses specBind [] (fold q2923)).isOk = true := by
-  decide
-
-/-- The same fold is what makes relationship uniqueness (a per-MATCH rule in
-openCypher) apply across clauses — `MATCH (a)-[r]->(b) MATCH (a)-[s]->(b)`
-gets one uniqueness group — and what turns `OPTIONAL MATCH A MATCH B` into
-`OPTIONAL MATCH A, B`: the fold does not preserve the clause list. -/
-theorem fold_merges :
-    fold [.match_ [.rel "r" []] false, .match_ [.rel "s" []] false] =
-      [.match_ [.rel "r" [], .rel "s" []] false] := by
-  decide
-
-/-- A WHERE (or any other clause) between them keeps the boundary. -/
-theorem fold_keeps_where :
-    fold [.match_ [.rel "r" []] true, .match_ [.rel "s" []] false] =
-      [.match_ [.rel "r" []] true, .match_ [.rel "s" []] false] := by
+    (bindClauses rustBind [] q2923).isOk = true := by
   decide
 
 end FalkorBinder

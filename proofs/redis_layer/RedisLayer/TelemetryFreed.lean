@@ -3,16 +3,6 @@ import RedisLayer.GraphCore
 /-!
 # Telemetry streams kept out of snapshots (#3844, `src/telemetry.rs`, `src/redis_type.rs`)
 
-| here | there |
-| --- | --- |
-| `stripOps`, `stripStream` | `strip_stream` `telemetry.rs` |
-| `FQ.*`             | `FreedGraphStreams::new/push/is_pending/take` |
-| `setFlush`         | `set_flush_in_progress` |
-| `queueFreed`       | `queue_streams_of_freed_graph` |
-| `deleteFreed`      | `delete_streams_of_freed_graphs` |
-| `stripAll`         | `strip_telemetry_streams`, `redis_type.rs` |
-| `graphFree`        | `graph_free`, `graph_core.rs` (registry removal = `GraphCore.free`, then the queue) |
-
 The queue is a mutex-guarded list plus an atomic flag, both changed only under the lock by
 `push`/`take`; each operation is modelled sequentially. The Redis key API (`OpenKey`,
 `KeyType`, `DeleteKey`, `CloseKey`) is recorded as the operations performed.

@@ -6,18 +6,6 @@ lower a flag (`emit_relationship`, `bind_relationship`, `emit_path`) or fuse awa
 intermediate node when no operator reads a variable. They share
 one per-operator oracle, `optimizer/references.rs`.
 
-| here | there (origin/main 8743953a8) |
-| --- | --- |
-| `IR`                 | `planner::IR` (`graph/src/planner/mod.rs`), every expression field abstracted to the variables its BFS finds (`Ex := List Var`) |
-| `IQ`, `IQ.vars`      | `IndexQuery<QueryExpr<Variable>>` (`index/indexer.rs`), its operand expressions |
-| `reads`              | specification: every variable any expression field of the operator mentions |
-| `binds`              | variables an operator binds that the oracle also counts (harmless: only keeps a flag) |
-| `PlanInv`            | the planner's invariant: scans / fixed-length operators carry no inline map, walks only their edge's (proofs/planner_build `E.planMatch_stripped`) |
-| `refsNew`            | `ir_references_variable` (`references.rs`) |
-| `iqLoop`, `iqRefs`   | `index_query_references_variable` (`references.rs`), its explicit stack |
-| `qgRefs`, `setItemsRefs`, `exprRefs`, `subtreeRefs` | `query_graph_references_variable` (:287-300), `set_items_reference_variable` (:302-314), `expr_references_variable` (:317-323), `subtree_references_variable` (:327-334) |
-| `refsPR`             | `ir_references_variable` of PR #2918 (superseded by this oracle; its walk is not merged) |
-
 Theorems: `iqLoop_iff` (the stack loop = "some operand mentions v", at any And/Or depth),
 `refsNew_complete` (under `PlanInv`, every read is seen), `refsNew_sound` (only reads or
 bound variables are reported), `refsPR_complete`, `refsNew_sees_*`; open:

@@ -78,9 +78,12 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 |---|---|---|---|
 | W2-scan-3 | `IndexCex` C4 | A computed constant ≥ 2⁵² (`n.v = 4503599627370495 + 4503599627370495 + 3`): the Filter is dropped and the op falls back to a label scan, returning every node (C: 0) | **Open** |
 | W2-scan-6 (#2972) | `Salvage.premise_fails`, `salvage_loses_row`, `rebuilt_drops_unwind` | The pass prunes a planner scan whole but salvages only its `Filter`s and `Argument` leaf, so an `Unwind`/`WITH` child is lost: `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 0 (C 1); `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 1 (C 2) | **Open**, fix in PR #3099 |
+| W2-scan-7 | `IndexArray.tryPushdown_or_ac_drops_filter`, `Cex C12` | The OR branch of `try_filter_pushdown` keeps no filter for an array-contains disjunct (the same family as #3736, which fixed AND and the single atom): `MATCH (n:L) WHERE 1 IN n.arr OR n.k = 9` on an index over `(arr, k)` also returns `{arr:[true], k:0}`, because Bool and Int share the numeric key. Rust with index and C with index return it; openCypher and Rust without an index do not. Fix: keep the filter whenever an OR branch `is_array_contains` | **Open** |
 | — | `IdSeek.lean` examples on `g5` | `id(n) > -1` returns 0 rows, and non-integer bounds error. Reported as bugs 3–4 of [`../optimizer_rewrites`](../optimizer_rewrites) | **Open** |
 
 The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): a folded `date()` constant returns every node (C3); `IN [.., date()]` drops the item (C9); multi-label AND/OR (C5, C6); Bool/Int conflation (C1, shared with C).
+
+- `evaluate_id_filter` stops at the first empty conjunct, so a type error in a later one is masked: `id(n) = 100 AND id(n) = 'x'` returns 0 rows, swapped it errors (`probe_id_seek_error_order`).
 
 **Hazard, not a confirmed bug:** `utilize_node_by_id` calls `parent().unwrap()` on the scan it rewrites. W4-plan-4's repro (`CALL db.labels() YIELD label MATCH (n)`) is rejected by validation, but the `unwrap` remains. [`../optimizer_rewrites`](../optimizer_rewrites) models it as `root_scan_has_no_parent`.
 
@@ -91,7 +94,7 @@ There are no CONDITIONAL rows in this project.
 | File | What's in it |
 |---|---|
 | `OptimizerScan.lean` | The report header and imports |
-| `IdSeek.lean` | `get_id_filter`, the flip table, `evaluate_id_filter` (`step`, `fold`, `evalIdFilter`, `evalIdFilterMain`), `seek` vs `reference`, `seek_sound`, `pre3394_*` history, the id-seek examples |
+| `IdSeek.lean` | `get_id_filter`, the flip table, `evaluate_id_filter` (`step`, `fold`, `evalIdFilter`, `evalIdFilterMain`), `seek` vs `reference`, `seek_sound`, the id-seek examples |
 | `Index.lean` | The value and node model, index encoding, query nodes (`build`), `utilize_index`'s helpers and rewrite (`utilize`) |
 | `IndexSound.lean` | `sel_*` lemmas for each query node, `trySingle_spec` |
 | `IndexPipeline.lean` | The AND/OR pushdown, `goodF`, and the headline `utilize_sound` |

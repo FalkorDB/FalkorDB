@@ -1,19 +1,6 @@
 import RedisLayer.TelemetryReg
 /-!
 # Telemetry: flusher control flow and the remaining helpers (`src/telemetry.rs`)
-
-| here | there |
-| --- | --- |
-| `nextIds`          | `next_id` (`fetch_add(1)`) |
-| `writable`, `streamOps` | `stream_entries` |
-| `deleteStreamKey`  | `delete_stream` |
-| `runningRow`, `waitingRow` | `running_queries_reply`, `waiting_queries_reply` |
-| `distinctAlive`    | `hold_batch_graphs` |
-| `releaseSpawns`    | `release_batch_graphs` |
-| `keyHolds`         | `key_holds_graph`, `redis_type.rs` (moved there by #3819) |
-| `Flusher`, `start`, `stopped` | `start_flusher_thread`, `shutdown_flusher_thread` |
-| `iter`, `iterSteps` | one iteration of `flusher_loop` (#3844: no role/pause check; freed streams deleted first) |
-| `Pre3844.*`        | historical: the replica/pause branches and `set_is_replica`, removed by #3844 |
 -/
 namespace RedisLayer.Telemetry
 
@@ -216,27 +203,5 @@ theorem iterSteps_delete_before_write (t d a p : Bool) (h : Step.write ∈ iterS
 theorem iterSteps_serves_pending (t a : Bool) :
     Step.deleteFreed ∈ iterSteps t false a true := by
   cases t <;> cases a <;> decide
-
-namespace Pre3844
-/-- Historical (before #3844): the iteration also discarded the batch on a replica and held
-it through a replica pause. -/
-inductive Act
-  | exitNoWrite | skip | discard | hold | write
-  deriving DecidableEq, Repr
-
-def iter (disconnected anyAlive isSlave paused : Bool) : Act :=
-  if disconnected then .exitNoWrite
-  else if !anyAlive then .skip
-  else if isSlave then .discard
-  else if paused then .hold
-  else .write
-
-theorem iter_replica_never_writes (d a p : Bool) : iter d a true p ≠ .write := by
-  unfold iter; split <;> (try split) <;> simp_all
-
-/-- `set_is_replica` (removed by #3844). -/
-def setReplica (_old : Bool) (b : Bool) : Bool := b
-theorem setReplica_eq (o b : Bool) : setReplica o b = b := rfl
-end Pre3844
 
 end RedisLayer.Telemetry

@@ -49,10 +49,6 @@ theorem np_spTypes : ∀ n acc, NP (spTypes n acc)
   | 0, _ => np_fuelP
   | n + 1, acc => by have := np_spTypes n; unfold spTypes; np_go
 
-theorem np_skipP : ∀ n d, NP (skipP n d)
-  | 0, _ => np_fuelP
-  | n + 1, d => by have := np_skipP n; unfold skipP; np_go
-
 theorem np_spRangeP : NP spRangeP := by have := np_hopP; unfold spRangeP; np_go
 
 theorem np_spFilterP (pmap : P ET) (hm : NP pmap) (c : CT) : NP (spFilterP pmap c) := by

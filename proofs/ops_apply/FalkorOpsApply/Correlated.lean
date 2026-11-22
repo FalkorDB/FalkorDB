@@ -27,12 +27,9 @@ and the headline theorems are
   the reference for *every* sub-plan (no separability needed).
 
 The planner guards batching with a *syntactic* blacklist (`apply.rs`,
-`optional.rs`).  `vhj_not_separable` + `canBatchApply_admits_vhj` show the
-blacklist misses `IR::ValueHashJoin`, whose runtime operator
-(`value_hash_join.rs`) joins left and right rows without comparing
-origins; `vhj_batched_16_vs_8` is the concrete counterexample, reproduced live
-(Rust 16 rows, C 8) with
-`UNWIND [1,2] AS x MATCH (a:A),(b:B) WHERE a.v = b.v RETURN count(*)`.
+`optional.rs`).  `canBatchApply_admits_vhj` shows the blacklist misses
+`IR::ValueHashJoin`; the join is made separable by comparing origins (#3035,
+`VhjSep.vhjPO_sepT`).
 -/
 
 namespace Correlated
@@ -351,33 +348,9 @@ theorem compose_separable {α β γ : Type} (f : SubPlan α β) (g : SubPlan β 
 
 /-! ## Non-separable operators and the batching guard -/
 
-/-- `ValueHashJoin` (`value_hash_join.rs`), both sides fed the same
-argument batch (`batch.rs`): the build side is materialised over ALL
-argument rows; each probe row is merged with every build row with an equal key —
-the origin of the merged row is the probe row's (`Row::merge` does not touch
-`origin_row`), and origins are never compared. -/
-def vhj {α a b k : Type} [BEq k] (lhs : α → List a) (rhs : α → List b)
-    (lk : a → k) (rk : b → k) : SubPlan α (a × b) :=
-  fun args =>
-    let right := args.flatMap (fun p => (rhs p.2).map (fun y => (p.1, y)))
-    (args.flatMap (fun p => (lhs p.2).map (fun y => (p.1, y)))).flatMap
-      (fun l => (right.filter (fun r => lk l.2 == rk r.2)).map (fun r => (l.1, (l.2, r.2))))
-
 /-- The live repro's data: two `:A` nodes and two `:B` nodes, all `v = 1`. -/
 def scanA (_ : Nat) : List Nat := [1, 2]
 def scanB (_ : Nat) : List Nat := [1, 2]
-def joinQ : SubPlan Nat (Nat × Nat) := vhj scanA scanB (fun _ => (1 : Nat)) (fun _ => (1 : Nat))
-
-/-- Batched Apply over `UNWIND [1,2] AS x`: 16 rows; per-row reference: 8. -/
-theorem vhj_batched_16_vs_8 :
-    (applyBatched (fun x y => (x, y)) joinQ [1, 2]).length = 16 ∧
-    (applyRef (fun x y => (x, y)) joinQ [1, 2]).length = 8 := by decide
-
-theorem vhj_not_separable : ¬ Separable joinQ := by
-  intro h
-  have := congrArg List.length (h [(0, 1), (1, 2)])
-  revert this; decide
-
 /-- Aggregate (`count(*)` over the argument batch) is not separable either, which
 is why Apply/Optional fall back to per-row mode for it. -/
 def countAll {α : Type} : SubPlan α Nat := fun args => [(0, args.length)]
@@ -406,8 +379,8 @@ def canBatchApply (sub : List IRKind) : Bool :=
 def canBatchOptional (sub : List IRKind) : Bool :=
   !sub.any (fun k => k ∈ [.aggregate, .cartesian])
 
-/-- The guard admits a sub-plan containing `ValueHashJoin`, which is not
-separable: batched mode is then wrong (`vhj_batched_16_vs_8`). -/
+/-- The guard admits a sub-plan containing `ValueHashJoin` (safe since #3035: the join is
+per-origin). -/
 theorem canBatchApply_admits_vhj :
     canBatchApply [.scan, .valueHashJoin, .scan] = true ∧
     canBatchOptional [.scan, .valueHashJoin, .scan] = true := by decide

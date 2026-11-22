@@ -2,16 +2,6 @@ import FalkorBinder.Projection
 import FalkorBinder.Scopes
 /-
 # The scope stack and the label post-pass
-
-| here | there |
-| --- | --- |
-| `BSt` | `Binder` fields `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`, `match_rel_vars`, `retired_scope_vars` (binder.rs) |
-| `BSt.default` | `Default for Binder` binder.rs |
-| `BSt.current`, `BSt.setCurrent` | `current_env` / `current_env_mut` binder.rs |
-| `BSt.push`, `BSt.commit` | `push_scope` / `commit_scope` binder.rs |
-| `sortedScopeVars`, `BSt.scopeVars` | `sorted_scope_vars` binder.rs, `scope_vars` binder.rs |
-| `toSt` | the two innermost scopes as name resolution sees them (Resolve.lean `St`) |
-| `mergedLabels`, `updNode`, `updGraph` | `update_graph_labels` binder.rs |
 -/
 namespace FalkorBinder
 

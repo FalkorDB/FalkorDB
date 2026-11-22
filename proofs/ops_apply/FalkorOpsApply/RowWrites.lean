@@ -13,12 +13,6 @@ is visible to rows `i+1, …`, and every reference a row holds names one entity.
 
 Three Rust behaviours break that, each from one modelled mechanism:
 
-| issue | mechanism (fb3d516d0) | here |
-| --- | --- | --- |
-| #2738 | `ApplyOp::next_batched` (`apply.rs`) runs ONE sub-plan over all rows of the input batch; its `Commit` (`commit.rs`) drains every row before `pending.commit()`, so every row reads the pre-batch graph.  `can_batch` (`apply.rs`) does not blacklist `Create`/`Delete`/`Set`/`Commit`. | `applyBatchedW`, `canBatchApply_admits_write`, `bug2738_batched_call_hides_writes` |
-| #2729 | `CreateOp::next` (`create.rs`) and `DeleteOp::next` (`delete.rs`) stream one batch at a time against the shared `pending`; `create_batch`'s endpoint check (`create.rs`) reads pending deletes made by `delete_batch` for EARLIER batches.  Effects depend on how rows are cut into batches, and the plan inside `CALL {}` cuts them differently from top level. | `pipeline`, `PartitionInvariant`, `bug2729_batch_split_flips_endpoint_check` |
-| #3164 | `next_per_row` (`apply.rs`) commits each row's sub-plan (each `Union` branch has its own `Commit`, `union.rs`); the commit releases a deleted node's id (`Graph::delete_nodes`, `graph.rs`) and the next `create_batch` reclaims it (`IdSpace::reserve`, `id_space.rs`, via `create.rs`).  A row holds only `Value::Node(NodeId)` (`value.rs`), so a later row's stale reference resolves to the new entity. | `NG`, `rustPerRow`, `NoStaleAlias`, `bug3164_stale_ref_deletes_recycled_id` |
-
 The sufficient condition under which batching IS sound for a writing sub-plan
 (`applyBatchedW_eq_ref_of_readIndep`) is stated too, so a fix can prove itself
 against `WriteSeparable`.

@@ -97,7 +97,7 @@ theorem removeOne_some_mem (c : Cfg) : ∀ (h : Nat) (n : Node) (x : E) (n' : No
         cases hres
 
 /-- **`CowBTree::remove` returns `true` iff the tuple was in the tree** (`mod.rs`), for
-    `BRANCH_MAX >= 4` (the range in which `remove` is correct at all; see `Bugs.lean`). -/
+    `BRANCH_MAX >= 4` (the range in which `remove` is correct at all). -/
 theorem removeRet_spec (c : Cfg) (hB4 : 4 ≤ c.B) (h : Nat) (t : Node) (x : E) (hw : TreeWF c h t) (hx : x < HI) :
     (removeRet c h t x).2 = decide (x ∈ toList h t) ∧
     toList (removeRet c h t x).1.2 (removeRet c h t x).1.1 = (toList h t).erase x := by

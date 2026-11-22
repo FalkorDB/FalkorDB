@@ -13,7 +13,7 @@ User-facing behaviour that depends on it:
 - commit-time validation (`Graph::validate`), which refuses a write whose ids do not add up;
 - `GRAPH.EFFECT` replay on a replica, which must refuse records that create an id that is already live, or act on an entity that is not live (#3022).
 
-The full Lean↔Rust mapping (every Lean name next to the `id_space.rs` line it models) is in the header of [`FalkorIdSpace.lean`](FalkorIdSpace.lean). This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -111,7 +111,7 @@ There are no CONDITIONAL rows.
 | `Inv.lean` | The invariant `Inv`, `live_eq`, and preservation by `create`, `cancel`, `reserve` |
 | `Lifecycle.lean` | `release` in a reachable state, `roll_inv`, `lifecycle_fresh` |
 | `Released.lean` | `released`, `taken()`, `released()`, `refuse_not_live` (#3022) |
-| `FalkorIdSpace.lean` | The report header and `#guard` replays of the Rust unit tests at `N = 32` |
+| `FalkorIdSpace.lean` | A short header and `#guard` replays of the Rust unit tests at `N = 32` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The lakefile has no path dependencies. `proofs/graph_queries` depends on this project's results without importing it. Its `IdRust.lean` copies this model into list form to prove the `IdSpaceContract` that `graph.rs` relies on (`rustIdOps_contract`).
@@ -131,7 +131,7 @@ Every function is proven.
 - `u64` arithmetic outside `checked_add` and `live -=` is `Nat` here: `bound()`, `restored`'s sum, `start`'s adds and `live += nodes.len()`. `reserve`'s run end is modelled: it wraps at 2^64 in a release build (`reserve_spec`; a debug build panics), so a space restored with a boundary within `count` of 2^64 (`restored(u64::MAX, ∅)`, one id: `reserve_wraps_example`) gets fewer ids than asked. `reserve_length` takes the end-fits hypothesis; whether an RDB can restore such a boundary is not proven here (a space built through this API stays below `ID_LIMIT`).
 - That callers settle every reservation before `open_batch` is not proven; `roll_inv` covers the verified path.
 - Error messages are modelled only as the variant and its fields.
-- The header's title still cites `e8f8a3017`. `id_space.rs` has had one small change since (#3307), and the `COVERAGE.tsv` line numbers match main.
+- `RoaringTreemap` is modelled by its set semantics (roaring is a pure-Rust crate); mutators return `(state after, result)`, and an `Inconsistent` from the trailing `checked()` leaves the mutated state behind.
 
 ## Build and check
 

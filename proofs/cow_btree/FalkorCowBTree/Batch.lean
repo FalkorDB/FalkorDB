@@ -1,4 +1,4 @@
-import FalkorCowBTree.Bugs
+import FalkorCowBTree.Cursor
 
 /-!
 # The batch paths: routing and `remove_batch`

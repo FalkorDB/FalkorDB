@@ -72,6 +72,8 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 | 5 | `hash_not_consistent_with_eq` | `2⁵³+1 == 2⁵³.0` under `PartialEq`, but the hashes differ | **Open outside grouping** (`GroupKey` uses `sort_cmp`): `ValueHashJoin` hashes `Value` then checks `compare_value`, so `2⁵³+1` and `2⁵³.0` can miss a join match (found by reading the Rust, not reproduced live) |
 | 7 | `fx_row_collision`, `fx_collision_general` | DISTINCT, `count(DISTINCT)` and the MERGE cache keep only the 64-bit Fx hash; a collision is one subtraction away and the second row is dropped | **Present on main** (#2780 closed as not planned) |
 
+Findings 1–3 are laws `compare_value` breaks (`nan_breaks_antisymmetry`, `mixed_numeric_not_transitive`, `map_order_not_transitive`): they stay true in `Model.lean`, but nothing sorts by it, since ORDER BY uses `sort_cmp` (`scMain_total`). `SC.vec_zero_eq_but_hash_differs`: `Value::eq` merges `vecf32([-0.0])`/`vecf32([0.0])` (and the same points) while hashing them apart; `GroupKey::eq` is `sort_cmp`, which keeps them apart.
+
 ### The bug this project missed, and what changed
 
 The first version of the float model had one NaN and one zero. On #2917 a code review found that `GroupKey` equality and `Value::hash` disagreed on vectors containing `-0.0` or a NaN with another payload. The proof didn't catch it for two reasons:

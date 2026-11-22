@@ -11,13 +11,6 @@ predicate). The three operations the PR adds are **definitions** on it, from the
 crate's documented semantics (roaring 0.11.5 `treemap/inherent.rs`,
 `treemap/iter.rs`):
 
-| here | crate |
-| --- | --- |
-| `RSet.elems` | `iter()` — ascending |
-| `RSet.rank x` = `|{d ∈ s | d ≤ x}|` | `rank(x)`: "the number of integers that are <= value" |
-| `RSet.select n` = the `n`-th smallest | `select(n)`: "the `n`th integer in the set or `None` if `n >= len()`" |
-| `RSet.iterFrom a` = the elements `≥ a`, ascending | `let mut it = iter(); it.advance_to(a);` then `next()`…: "the first position where the item has a value >= `n`" |
-
 **Trust.** The roaring crate is trusted to implement this abstraction, at the
 same level as the owners' `contains`/`iter`: no hypothesis is named, and rows
 resting on it are PROVEN. The check against the real crate is the randomized

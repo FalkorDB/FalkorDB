@@ -165,13 +165,6 @@ def accumulateFrom (bound : Bool) (acc : List Name) : List LClause → List Name
 /-- Accumulation for a variable not yet in scope, starting from `acc`. -/
 def accumulate (acc : List Name) (cs : List LClause) : List Name := accumulateFrom false acc cs
 
-/-- Historical (before #3049): CREATE and comprehension labels accumulated unconditionally. -/
-def accumulatePre3049 (acc : List Name) : List LClause → List Name
-  | [] => acc
-  | .match_ ls :: r | .create ls :: r | .comprehension ls :: r =>
-    accumulatePre3049 (acc ++ ls.filter (fun l => !acc.contains l)) r
-  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r => accumulatePre3049 acc r
-
 /-- `update_all_node_labels` writes the accumulation into the *first* MATCH's
 scan. openCypher: that scan carries the labels of the (non-optional) MATCH
 clauses only. -/
@@ -184,16 +177,6 @@ def specScanLabels : List LClause → List Name
 theorem labels_agree_match_only :
     accumulate [] [.match_ ["A"], .optMatch ["B"], .predicate ["C"], .match_ ["D"]] =
       specScanLabels [.match_ ["A"], .optMatch ["B"], .predicate ["C"], .match_ ["D"]] := by
-  decide
-
-/-- **Root cause 5, historical** (before #3049): `MATCH (a) CREATE (a:Z)-[:T]->(:C)` scanned
-`(a:Z)`, and `MATCH (a) RETURN [(a:A)-->(b) | b.v]` scanned `(a:A)`. Fixed by #3049, see
-`labels_leak_fixed`. -/
-theorem pre3049_labels_leak :
-    accumulatePre3049 [] [.match_ [], .create ["Z"]] = ["Z"] ∧
-      specScanLabels [.match_ [], .create ["Z"]] = [] ∧
-    accumulatePre3049 [] [.match_ [], .comprehension ["A"]] = ["A"] ∧
-      specScanLabels [.match_ [], .comprehension ["A"]] = [] := by
   decide
 
 def LClause.isMatch : LClause → Bool

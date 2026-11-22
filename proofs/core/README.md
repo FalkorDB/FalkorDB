@@ -19,7 +19,7 @@ No query feature depends on `core` directly. It matters because the headline the
 
 If a definition in `core` doesn't match the Rust it stands for, every one of those theorems is about the wrong thing.
 
-The module table (what each file contains and which project it came from) is in the header of [`FalkorCore.lean`](FalkorCore.lean). The header calls `core` a **pilot**: it collects what was shared when it was created, and other projects still carry their own copies of some of these definitions.
+The module list is in "Files" below (each module was lifted from `value_order`, `value_math`, `functions_str_list` or `expr_semantics`). `core` is a **pilot**: it collects what was shared when it was created, and other projects still carry their own copies of some of these definitions.
 
 ## The questions this library answers
 
@@ -113,7 +113,7 @@ None. `core` models no Rust function on its own, so it can't find a bug by itsel
 
 | File | What's in it |
 |---|---|
-| `FalkorCore.lean` | Imports every module; the header with the module table and where each piece came from |
+| `FalkorCore.lean` | Imports every module |
 | `Value.lean` | `V F` (the engine `Value`, all 16 variants), `V.order`, `V.name`, `isNull`/`isNum`/`isList` |
 | `Float.lean` | `F`, `F.nkey`, `fpcmp`, `Flag`, `cmpF`, `roundF` (`i as f64`), `bits64`/`bits32`, `asI64`, `diffZero` |
 | `Int64.lean` | `I64MIN`/`I64MAX`, `InI64`, `wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `satI64`, `w` |

@@ -217,15 +217,6 @@ theorem signFrames_length (n : Nat) (K : List Frame) : (signFrames n K).length �
   · simp
   · split <;> simp
 
-/-- `pre3525_sign_sequences` (historical note, fixed by #3525 `56d00c3d8`): before the fix the
-prefix was `pre3525_signs` (an optional `+`, then an optional `-`), so `- -x` and `-+x` were
-syntax errors. The old prefix still has that shape. -/
-theorem pre3525_sign_sequences :
-    pre3525_signs [.dash, .dash, .int 1] = (true, [.dash, .int 1]) ∧
-    pre3525_signs [.dash, .plus, .int 1] = (true, [.plus, .int 1]) ∧
-    pre3525_signs [.plus, .dash, .int 1] = (true, [.int 1]) := by
-  refine ⟨rfl, rfl, rfl⟩
-
 /-- The sign run is consumed whole: after it the next token is not a sign. -/
 theorem countSigns_rest : ∀ ts : List Tok,
     (countSigns ts).2.head? ≠ some .dash ∧ (countSigns ts).2.head? ≠ some .plus

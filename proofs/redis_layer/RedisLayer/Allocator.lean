@@ -7,15 +7,6 @@ unchanged) and, when the calling thread's `TRACKING_ENABLED` is set, adds `layou
 to that thread's `THREAD_ALLOCATED` / `THREAD_DEALLOCATED`. The helpers flip
 the flag, read and reset the counters, and compute the net with `saturating_sub`.
 
-| here | there |
-| --- | --- |
-| `TLS`, `TLS.init`       | the three `thread_local!` cells (; `TRACKING_ENABLED` starts `true`) |
-| `Ev.alloc ok n`         | `GlobalAlloc::alloc`: counted iff the pointer is non-null and tracking is on. #3514 added `#[cfg(test)]` branches that call the system allocator in unit tests (Redis's does not exist there); the counting is unchanged and the model is the non-test build |
-| `Ev.dealloc n`          | `GlobalAlloc::dealloc`: counted iff tracking is on |
-| `Ev.enable/disable/reset` | `enable_tracking`, `disable_tracking`, `reset_counter` |
-| `usage`, `net`          | `current_thread_usage`, `net_thread_usage` |
-| `World`, `World.step`   | one `TLS` per thread: every event touches only its own thread's cells |
-
 `usize` arithmetic: `c.get() + layout.size()` wraps in the release profile (no
 `overflow-checks`), so counters are taken mod `2^64`; `no_wrap` shows wrapping needs more
 than `2^64` bytes of traffic between resets.

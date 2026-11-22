@@ -391,7 +391,7 @@ theorem pct_first_wins (q : Float) (nulls : List (V × Float))
     List.nil_append]
   exact pct_stable p [v.num] (by simp) xs
 
-/-! #### History: the percentile overwritten on every row (aggregation.rs / :253 at 289c201fe) -/
+/-! #### The percentile is taken from the first row -/
 
 /-- The `percentileDisc(x, x/10.0)` repro over x = 1..10: the percentile the
 finalizer sees is row 1's on main (C's); the overwriting model gives row 10's. -/

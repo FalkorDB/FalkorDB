@@ -14,9 +14,8 @@ Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
 * No slot aliasing for plain bodies at runtime (`body_own_unbound`,
   `body_import_value`, `new_scan_scans`).
 * UNION bodies alias binder keys `(scope_id, id)` (`relabel_3027`, `union_branch_label_fixed`).
-* W6-opt-1 (push_filters_down Case 2, see proofs/optimizer_rewrites
-  `filter_pushed_through_boundary`): the pushed read is unbound
-  (`pushed_read_unbound`).
+* W6-opt-1 (push_filters_down Case 2, see proofs/optimizer_rewrites `CallBoundary`): a read
+  pushed onto the body's `Argument` is unbound (`pushed_read_unbound`).
 -/
 namespace FalkorBinder.Pr2845
 

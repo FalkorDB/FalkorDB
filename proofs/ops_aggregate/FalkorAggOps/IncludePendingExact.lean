@@ -8,17 +8,6 @@ lists it is handed. Here the lists are the ones main hands it, for an
 uncorrelated MERGE node scan (`argument_rows` empty, one row per node; the row
 is the node id):
 
-| here | there (a477d9aa3) |
-| --- | --- |
-| `Gc` | the committed graph: live node ids, each node's committed labels |
-| `Pd` | `Pending`'s `created_nodes`, `deleted_nodes`, `set_labels`, `remove_labels` (pending.rs) |
-| `scan` | the wrapped `NodeByLabelScan` over the committed graph |
-| `stage` | `stage_node_labels` (pending.rs), reached by `SetOp` `SetItem::Label` (ops/set.rs) without checking the committed matrix |
-| `deletedNode` | `deleted_node`: inserts into `deleted_nodes`, `set_labels` untouched |
-| `removedFor` | `nodes_with_pending_label_removes` |
-| `pendingWith` | `get_pending_nodes_with_labels(label_ids, g)` (pending.rs): live nodes gaining a pattern label |
-| `includePendingMain` | `IncludePendingOp::next` (include_pending.rs) = `StreamOps.childRows` (skipping deleted, label-removed and `extra_nodes`) then `StreamOps.pendingRows` over `extra_nodes` |
-
 Property `IncludePendingExact`: the emitted node rows are duplicate-free and
 are exactly the live nodes (committed or created, not deleted) whose effective
 labels — `(committed \ remove_labels) ∪ set_labels`, `set_labels` alone for a

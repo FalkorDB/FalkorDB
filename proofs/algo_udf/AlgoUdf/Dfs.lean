@@ -1,18 +1,6 @@
 import AlgoUdf.Graph
 /-! # `enumerate_paths` (algo_procedures.rs) and `record_found_path` with its bound (:2473-2526)
 
-| here | there |
-| --- | --- |
-| `FP`                 | `FoundPath = (Vec<(RelationshipId, NodeId, NodeId)>, f64, f64)` :2144 |
-| `fpLt`               | `cmp_found_path(a, b) == Ordering::Less` :2155 (weight, cost, hops) |
-| `insertSorted`       | `results.insert(results.partition_point(|kept| cmp(kept, found) == Less), found)` :2518-2520 (linear scan; equal to the binary search on the sorted vector the k-branch keeps) |
-| `recordB`            | `record_found_path` :2473, including every `*bound = ..` update |
-| `Frame`              | one depth of the search: `levels[d]`, `nodes[d]`, and (d > 0) `edges[d-1]` with its prefix weight/cost — Rust keeps the three vectors in lock-step (push :2601-2624, pop :2630-2633) |
-| `succsRev`           | `node_successors` :2216 (reversed: `Vec::pop` takes the last) |
-| `step`               | one iteration of the `loop` :2568-2635; `none` = `break` at depth 0 |
-| `DS.log`             | ghost: every path passed to `record_found_path` (proof-only) |
-| `Cfg`                | `PathAlgoConfig` fields read here |
-
 Weights `G.wt` and costs `G.cost` are exact naturals (see `AlgoUdf.Graph`);
 `bound = none` is `f64::INFINITY`; `maxCost` is `Option Nat`.
 

@@ -8,17 +8,6 @@ payload (`QG`, `QueryGraph`) keeps what the planner reads of it: its
 `variables()` (nodes, then relationships, then paths — ast.rs) and the
 variables its inline attribute maps mention (`attrVars`; the attribute trees
 themselves are not re-modelled).
-
-| here | there |
-| --- | --- |
-| `containsInlineVar` | `Planner::contains_inline_var` mod.rs |
-| `hasPatternExpr` | `Planner::has_pattern_expr` mod.rs |
-| `patternExprScope` | `Planner::pattern_expr_scope` mod.rs |
-| `Mode`, `Mode.descend` | `PatternMode`, `PatternMode::descend` mod.rs |
-| `needsExtraction` | `extract_filter_comprehensions::needs_extraction` mod.rs |
-| `inlineAttrsToFilter` | `inline_attrs_to_filter` mod.rs |
-| `hasLabelsFilter` | `has_labels_filter` mod.rs |
-| `patternExprVariables` | `Planner::pattern_expr_variables` mod.rs |
 -/
 namespace PlannerBuild.E
 

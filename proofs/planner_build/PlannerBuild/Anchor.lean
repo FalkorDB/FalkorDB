@@ -2,14 +2,6 @@ import PlannerBuild.Expr
 /-
 # Anchors of a var-length walk (#2558): the optimizer helpers `plan_match` reads
 
-| here | there |
-| --- | --- |
-| `varsOf`, `scopedVars` | `collect_expr_scoped_variables` optimizer/mod.rs (BFS, `(scope_id, id)`) |
-| `singleVarConj`, `singleVarConjL` | `collect_single_variable_conjuncts` optimizer/mod.rs and its `walk` :125-153 |
-| `endpointScanScore` | `endpoint_scan_score` optimizer/mod.rs |
-| `walkScansTo` | `walk_scans_to_endpoint` optimizer/mod.rs |
-| `WI` | what `plan_match` derives from its WHERE: `filter_vars`, `anchor_vars`, `has_pattern_expr` (mod.rs) |
-
 A `HashSet` is modelled by a list (membership is all the planner reads).
 -/
 namespace PlannerBuild.E

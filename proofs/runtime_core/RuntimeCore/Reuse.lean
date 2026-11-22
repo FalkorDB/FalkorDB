@@ -5,7 +5,7 @@ The borrow-free read of a published version is `QueryGraph.graph_published`/`gra
 # Claim 2 premise and claim 5: what is re-used from the owning projects
 
 * **"A read runtime runs no `borrow_mut` site."** Every `borrow_mut` on `runtime.g`
-  (audit in `Protocol`) sits in a SET/CREATE/REMOVE/DELETE/MERGE operator, in `CommitOp`
+  sits in a SET/CREATE/REMOVE/DELETE/MERGE operator, in `CommitOp`
   (refuses `!write`, `ops/commit.rs`) or in index DDL (refuses `!write`,
   `index_ddl.rs`); write procedures are refused on a read runtime
   (`eval.rs`, `ops/procedure_call.rs`). A read runtime is built only for a plan

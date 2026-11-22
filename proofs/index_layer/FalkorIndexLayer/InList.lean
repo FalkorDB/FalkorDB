@@ -5,12 +5,6 @@ import FalkorIndexLayer.Model
 #2383 (and the scan-op refactors after it) keep an `IN` as one `IndexQuery::InList` instead of
 expanding it to `Or(Equal, ..)`. `Model.expandIn`/`canUtilize` still model the expansion; this file
 proves the two shapes the same, so the model needs no change:
-
-| Lean | Rust |
-| --- | --- |
-| `keepItem` | `keep` in `evaluate_index_query`, `node_by_index_scan.rs` (only `Int/Float/String/Bool` members reach the index) |
-| `canUtilizeInList` | the `IndexQuery::InList` arm of `can_utilize_index` (non-empty, every member indexable) |
-| `expandIn` (`Model.lean`) | the `InList { key, list }` that `evaluate_index_query` builds; `Index::build_query_node`'s `InList` arm `index/mod.rs` is a union of `Equal` children, empty list → the empty node |
 -/
 namespace IndexLayer
 

@@ -1,87 +1,11 @@
 /-
 # The Cypher lexer: total, boundary-safe, and where it disagrees with the spec
 
-A model of FalkorDB-rs's hand-written Cypher lexer (`graph/src/parser/lexer.rs`),
-its string-escape decoder (`graph/src/parser/string_escape.rs`), the literal
-handling in the parser (`graph/src/parser/cypher.rs`) and the expression-height
-/ nesting guards added in `e7daadac8` (Rust line numbers re-checked at main `256ab4d3f`, 2026-11-22),
-with machine-checked proofs of:
-
-* **`rs_agrees_spec`** — `read_spaces` skips exactly the openCypher
-  `Comment` run and the four-character subset of `WHITESPACE` that `specSkip`
-  models (space, `\t`, `\r`, `\n`) wherever the spec accepts one; the other `WHITESPACE` characters of Cypher.g4:697-728 (VT, FF,
-  FS, GS, RS, US and the Unicode spaces) are not skipped by `read_spaces` and
-  are outside the theorem (a divergence from the grammar, not modelled); an unterminated `/*` is not skipped (`rs_unterminated_general`);
-  `\r` is whitespace (`rs_crlf`).
-* **`lexAll_total_cover`** — on every input the lexer never slices a `&str` off
-  a char boundary (so never panics), and the whitespace/comment runs and token
-  texts it walks over concatenate back to exactly the input.
-* **`unesc_agrees_spec`** — `cypher_unescape` equals the openCypher
-  `EscapedChar` decoding on every string whose escapes are the spec's
-  lower-case ones (`\\ \' \" \b \f \n \r \t \uXXXX`); a
-  `\u`/`\U` run must be all hex digits (`unesc_plus_rejected`, `hexRun_spec`).
-* **`int_literal_correct`** — an integer literal in any spelling (leading
-  zeros included), negated or not, evaluates to its mathematical
-  value when that is in `i64` range and is rejected otherwise — overflow is
-  never wrapped; `litExpr_min`: the literal `2^63` is accepted only directly
-  negated, never under a postfix operator.
-* **`height_sound`** / **`guarded_height_le`** — every height estimate the
-  parser keeps is an upper bound on the tree it describes, so a parse that
-  passes `check_depth` builds no tree taller than `MAX_TREE_DEPTH`.
-* **`nested_depth_bound`** — every `parse_expr` / `CALL {}` / nested `FOREACH`
-  recursion is at most `MAX_NESTING` deep (`foreach_bounded`); the
-  `SET`/`REMOVE` target chain is bounded too (`updateTarget_bounded`).
-
-and machine-checked *counterexamples* for the places where a property is false
-(each one reproduced against the real Rust in `graph/tests/lean_lexer.rs`):
-
-| theorem | what is wrong |
-| --- | --- |
-| `neg_run_min_wraps`         | `RETURN --9223372036854775808` is `i64::MIN`, not an overflow; matches C (live) |
-| `hop_truncation_bug`        | `*4294967298` is `*2` (`i as u32`) |
-
-## What is modelled, and where it lives in the tree
-
-| here | there |
-| --- | --- |
-| `u8`, `bytes`             | `char::len_utf8`, `str::len` |
-| `splitBytes`              | `&s[..n]` / `&s[n..]` — `none` is the panic "byte index is not a char boundary" |
-| `rs`, `rsSlash`, `rsLine`, `rsBlock` | `Lexer::read_spaces` (lexer.rs) |
-| `strScan`                 | `Lexer::lex_string_literal` (lexer.rs) |
-| `btScan`                  | backtick identifier arm of `get_token` (lexer.rs) |
-| `btpScan`                 | backtick parameter arm (lexer.rs) |
-| `identRun`                | ASCII identifier / plain parameter arms (lexer.rs) |
-| `getTok`                  | `Lexer::get_token` (lexer.rs) |
-| `lexAll`                  | the `Lexer::new` / `Lexer::next` loop (lexer.rs) |
-| `unescF`, `isHexDigit`    | `cypher_unescape` (string_escape.rs), `char::is_ascii_hexdigit` |
-| `fromStrRadix16`          | `u32::from_str_radix(_, 16)` (accepts a leading `+`) |
-| `specUnesc`               | openCypher `EscapedChar` (graph/src/Cypher.g4:553-554) |
-| `str2int`                 | `Lexer::str2number_token`, integer half (lexer.rs) |
-| `level10`, `litExpr`      | level 10's `2^63` guard (cypher.rs) + level 9 |
-| `evalLit`                 | level 9 of `parse_expr_inner` (cypher.rs) + `parse_literal` (cypher.rs) |
-| `asU32`                   | `i as u32` in the var-length hop parser (cypher.rs) |
-| `Frame`, `Op`, `step`     | the `(level, tree, height)` frames of `parse_expr_inner` and `parse_expr_return!` / `parse_operators!` (macro.rs) |
-| `Reach`                   | every frame update of `parse_expr_inner`, each with its `check_depth` |
-| `lookups`, `updateTarget` | `parse_update_target` (cypher.rs, new in #2900), used by `parse_set_items` (3340) and `parse_remove_items` (3457) |
-| `pre2900_setTarget`       | the pre-#2900 property loop of `parse_set_items` / `parse_remove_items`, kept as a historical counterexample |
-| `negFrames`, `applyFrames`, `signedLit`, `evalT` | the level 9 sign run of `parse_expr_inner` (cypher.rs), #3525 |
-| `Call`, `runCall`         | `Parser::nested` (cypher.rs), `parse_expr`, `parse_foreach_clause` (cypher.rs entered directly, 3544 through `nested`) |
-
-## What this does NOT cover
-
-* (Wave 4: `FalkorLexerExtra.lean` models `lex_numeric`'s scan and proves
-  its slices safe, `lexNum_slices_ascii`, plus `pos`, `current_str`,
-  `set_pos`, `err_ctx`, `format_error`, `Display` and `cypher_escape`.)
-* The numeric *scanner* (`lex_numeric`) is abstracted here to "some number of chars
-  ≥ 1": its final length is `str[pos..].chars().take(len).collect().len()`,
-  a char-prefix byte length by construction, and its inner slices
-  (lexer.rs) sit after an ASCII-only prefix
-  (`ascii_boundary`). Its *values* are covered by `str2int`.
-* Floats (`str::parse::<f64>`) are not modelled.
-* Keyword lookup (`phf`) does not affect lengths and is omitted.
-* The height model is over an abstract tree; the "primary adds ≤ 2 levels"
-  premise (`PRIMARY_LEVELS`) is checked constructor by constructor in
-  `primary_levels`, against the tree shapes read off `parse_primary_expr`.
+A model of FalkorDB-rs's Cypher lexer (`graph/src/parser/lexer.rs`), its string-escape
+decoder (`string_escape.rs`), and the literal handling and depth guards of
+`graph/src/parser/cypher.rs`, with proofs that the lexer never panics, reads whitespace,
+comments, escapes and integer literals as openCypher says, and bounds parser recursion.
+See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
 -/
 
 namespace FalkorLexer
@@ -1614,22 +1538,6 @@ theorem chain_rejected : ¬ ∃ e, Reach (chain 256) e := by
   rw [chain_height] at this
   simp [MAX_TREE_DEPTH] at this
 
-/-- `pre2900_setTarget` (historical, fixed by #2900 `8312750b5`): before the fix,
-`parse_set_items` / `parse_remove_items` built the SET/REMOVE target with `parse_property_lookup`
-in a bare `while` loop, outside `Reach`: no estimate, no check. Modelled literally, it accepted
-every length, so the tree the binder then recursed over was unbounded (repro at the time:
-`MATCH (n) SET n.a.a…(5000) = 1` overflowed the binder's stack; C rejects it). -/
-def pre2900_setTarget : Nat → Except String T
-  | 0 => .ok (.mk [])
-  | k + 1 => (pre2900_setTarget k).map fun t => .mk [t]
-
-theorem pre2900_set_target_unbounded (k : Nat) :
-    pre2900_setTarget k = .ok (chain k) ∧ height (chain k) = k + 1 := by
-  refine ⟨?_, chain_height k⟩
-  induction k with
-  | zero => rfl
-  | succ k ih => simp [pre2900_setTarget, ih, chain, Except.map]
-
 /-- The `.prop` chain of `parse_update_target` (cypher.rs, new in #2900): each lookup
 wraps the tree, adds one to the estimate and runs `check_depth`, as the postfix chain of
 `parse_expr_inner` does (`Reach.prop`). `error` is the "too deep" refusal. -/
@@ -1656,7 +1564,7 @@ theorem lookups_reach : ∀ (k : Nat) (t : T) (e : Nat), Reach t e → ∀ t' e'
       exact lookups_reach k _ _ (.prop h hc) t' e' hk
     · simp at hk
 
-/-- **The SET/REMOVE target is bounded** (fixes `pre2900_set_target_unbounded`, #2900): whatever
+/-- **The SET/REMOVE target is bounded** (#2900): whatever
 chain `parse_update_target` accepts on a target the expression parser built is a `Reach` tree,
 so it is no taller than `MAX_TREE_DEPTH`. -/
 theorem updateTarget_bounded {t : T} {e : Nat} (h : Reach t e) (k : Nat) {t' : T} {e' : Nat}
@@ -1776,27 +1684,6 @@ def foreachChain : Nat → Call
 /-- The chain's outermost clause, entered directly. -/
 def foreachClause (n : Nat) : Call := .direct (foreachChain n)
 
-/-- `pre2900_runCall` (historical, fixed by #2900 `8312750b5`): before the fix a nested
-`FOREACH` was entered by a plain call, so the depth passed through unchanged. Only the shapes
-`foreachChain` builds matter here. -/
-def pre2900_runCall : Nat → Call → Bool
-  | _, .leaf => true
-  | d, .expr _ => decide (d < MAX_NESTING)
-  | d, .direct b => pre2900_runCall d b
-  | d, .foreach b => pre2900_runCall d b
-
-/-- `pre2900_foreach_unbounded`: `parse_foreach_clause` never passed through `nested`, so a chain
-was accepted at every depth, with a call stack as deep as the text. Repro at the time: 100 000
-levels aborted the process with a stack overflow (C FalkorDB crashes as well). -/
-theorem pre2900_foreach_unbounded (n : Nat) :
-    pre2900_runCall 0 (foreachChain n) = true ∧ stackDepth (foreachChain n) = n + 1 := by
-  induction n with
-  | zero => simp [foreachChain, pre2900_runCall, stackDepth, stackDepthL, MAX_NESTING]
-  | succ n ih =>
-    obtain ⟨h1, h2⟩ := ih
-    refine ⟨by simpa [foreachChain, pre2900_runCall] using h1, ?_⟩
-    simp [foreachChain, stackDepth, h2]; omega
-
 theorem runCall_foreachChain : ∀ n d : Nat,
     runCall d (foreachChain n) = decide (d + n < MAX_NESTING)
   | 0, d => by
@@ -1814,7 +1701,7 @@ theorem stackDepth_foreachChain : ∀ n : Nat, stackDepth (foreachChain n) = n +
   | 0 => by simp [foreachChain, stackDepth, stackDepthL]
   | n + 1 => by simp [foreachChain, stackDepth, stackDepth_foreachChain n]; omega
 
-/-- **Nested `FOREACH` is bounded** (fixes `pre2900_foreach_unbounded`, #2900): a chain of `n + 1`
+/-- **Nested `FOREACH` is bounded** (#2900): a chain of `n + 1`
 clauses is accepted iff `n < MAX_NESTING`, so an accepted chain has a call stack of at most
 `MAX_NESTING + 1` frames, not one as deep as the text. -/
 theorem foreach_bounded (n : Nat) (h : runCall 0 (foreachClause n) = true) :

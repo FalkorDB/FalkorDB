@@ -144,6 +144,7 @@ Every row gives the full path (bare names such as `list.rs` or `value.rs` matche
 - **External code.** std `str::split`, `str::replace` and `step_by`, the `regex` crate and the Unicode case tables are *specified*, not verified. The regex engine is an abstract span predicate, so the Rust `regex` versus C oniguruma dialect differences aren't modelled.
 - **Comparison.** `compare_value` is abstract here; see [`../value_order`](../value_order).
 - **Graph storage.** `keys`, `labels` and `properties` are proven over an accessor model, not over the real attribute storage.
+- **Float-to-string** differs from C in a way not modelled: `'a' + (0.0/0.0)` is `'aNaN'` in Rust, `'anan'` in C.
 - **`string.join` lengths.** These are modelled in code points; Rust uses bytes, and the identity is the same.
 
 ## Build and check

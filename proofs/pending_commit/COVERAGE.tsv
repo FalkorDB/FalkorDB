@@ -96,7 +96,7 @@ graph/src/runtime/pending.rs	update_node_attrs	668	PROVEN	PS.updA_spec
 graph/src/runtime/pending.rs	stage_node_labels	697	PROVEN	Labels.overlay_eq_ref, Labels.run_disjoint
 graph/src/runtime/pending.rs	set_node_labels	714	PROVEN	Labels.stage
 graph/src/runtime/pending.rs	set_nodes_labels	722	PROVEN	Labels.stage per id
-graph/src/runtime/pending.rs	remove_node_labels	741	PROVEN	Labels.removeOneC/removeLabelsC: removeLabels_closed, removeLabelsC_count (each label counted once, in staged_labels_removed or remove_labels), overlay_eq_ref, removeOp_committed; #3459 (fixes #3448): a removal of an only-staged label just cancels the add: StagedBugs.fixed3448_run_remL_committed, fixed3448_remove_of_staged_label (history pre3459_bug3448_remove_of_staged_label)
+graph/src/runtime/pending.rs	remove_node_labels	741	PROVEN	Labels.removeOneC/removeLabelsC: removeLabels_closed, removeLabelsC_count (each label counted once, in staged_labels_removed or remove_labels), overlay_eq_ref, removeOp_committed; #3459 (fixes #3448): a removal of an only-staged label just cancels the add: StagedBugs.fixed3448_run_remL_committed, fixed3448_remove_of_staged_label
 graph/src/runtime/pending.rs	node_has_label	778	PROVEN	Labels.nodeHas_eq_ref
 graph/src/runtime/pending.rs	node_has_changes	807	PROVEN	PC.nodeHasChanges_spec (true iff id is a key of set_labels/remove_labels/new_nodes_attrs/existing_nodes_attrs), nodeHasChanges_false_labels (Labels.overlay = committed), nodeHasChanges_false_attrs (updA = identity), nodeHasChanges_overapprox (sufficient, not exact; #3464); runtime side RuntimeCore Accessors.not_differs_labels/not_differs_attrs
 graph/src/runtime/pending.rs	has	811	PROVEN	PC.hasKey_eq (the is_empty short-cut changes nothing: hasKey m id = (fget m id).isSome)

@@ -3,155 +3,11 @@ import FalkorStrList.Entity
 import FalkorCore.Int64
 import FalkorCore.Range
 /-
-# String and list functions: totality and spec agreement
+# functions_str_list
 
-A Lean 4 model of FalkorDB-rs's Cypher string and list functions
-(`graph/src/runtime/functions/{string,list,internal}.rs`, eager `range` in
-`math.rs`, and the list/regex/quantifier arms of `graph/src/runtime/eval.rs`),
-checked against the openCypher spec and the C implementation (`master`
-branch, `src/arithmetic/{string,list}_funcs/*.c`, `src/util/strutil.c`).
-Build: `cd proofs/functions_str_list && lake build` (Lean 4.36, core only).
-No `sorry`/`admit`/`axiom`; headline theorems use only `propext`,
-`Quot.sound`, `Classical.choice`. Repros: `graph/tests/lean_functions_str_list.rs`
-(`cargo test -p graph --test lean_functions_str_list -- --nocapture`).
-Coverage per Rust fn: `COVERAGE.tsv`.
-
-## What is modelled
-
-| here | there |
-| --- | --- |
-| `InI64`, `wrap` (proofs/core), `asUsize`, `trunc32` | i64 range (debug panics outside), release wrap, `as usize`, C `(int32_t)` |
-| `getElementIdx`, `getElement` | `ExprIR::GetElement` list arm, `eval.rs` |
-| `sliceStart`, `sliceEnd`, `getElements` | `get_elements`, `eval.rs` |
-| `cGetElement`, `cGetElements` | C `AR_SUBSCRIPT`, `AR_SLICE` (int32 truncation) |
-| `removeSpan`, `listRemove`, `listRemoveSpec` | `remove_span` `list.rs`, `list.remove` `list.rs` (`listRemoveDebug`/`Release`: historical) |
-| `insertNorm` | `list.insert` / `list.insertListElements`, `list.rs`, `list.rs` |
-| `head`, `last`, `tail`, `size`, reverse | `list.rs` |
-| `rangeLen`, `rangeElems`, `range` | eager `range`, `math.rs` |
-| `FalkorCore.rangeIter` (`core/FalkorCore/Range.lean`, shared with expr_semantics) | `RangeIter::next`, `eval.rs`, built at `eval.rs` (debug: checked `+=`) |
-| `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs`; loop `eval.rs` |
-| `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs` (via `list_contains`, `eval.rs`) |
-| `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension`, `eval.rs` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
-| `pre2954_comprehensionRust` | the earlier arm (every source through `eval_iter_expr`'s UNWIND fallback) |
-| `reduceList` | `ExprIR::Reduce`, `eval.rs` |
-| `Str`, `blen` | `String` as code points (`.chars()`), `s.len()` / `strlen` bytes |
-| `substring2`, `substring3`, `cSubstring3` | `substring`, `string.rs`; C `AR_SUBSTRING` |
-| `left`, `right`, `cLeft`, `cRight` | `string.rs`; C `AR_LEFT`, `AR_RIGHT` |
-| `cReverseBytes` | C `AR_REVERSE` (writes each code point's bytes leftwards) |
-| `ltrim`, `rtrim`, `trimRust`, `trimC` | `string.rs`; C `AR_LTRIM`/`AR_RTRIM`/`AR_TRIM` |
-| `splitAux` | std `str::split` contract, used by `split`, `string.rs` |
-| `findFirst`, `cSplit`, `splitC` | C `AR_SPLIT` |
-| `splitRust` | `split`, `string.rs` |
-| `replaceRust`, `cReplaceEmptyBytes` | `replace`, `string.rs` (std `str::replace`); C `AR_REPLACE` |
-| `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs`; C `str_tolower` (utf8proc simple map) |
-| `isMatchRust`, `isMatchSpec` | `internal_regex_matches` `internal.rs`, `RegexFnKind::Matches` `eval.rs` |
-| `spliceLit`, `spliceRepl`, `callSite` | `Regex::replace_all(_, NoExpand(&str))` literal replacement, `string.rs`, `eval.rs`; `Repl.expand` is the default `&str` replacer the call sites no longer use |
-| `joinLen`, `joinStr` | `compute_join_length` / `join_with_preallocate`, `string.rs` |
-| `startsWith` | `internal_starts_with`, `internal.rs` (ends/contains analogous) |
-| `cmpFloatModel` | `compare_floats` `value.rs` as used by `list.sort` `list.rs` |
-
-## Proven (91 theorems in this file; main ones)
-
-* Indexing `l[i]` is total for every i64 (incl. `i64::MIN`), `len+i` cannot
-  overflow, and equals the spec (negative from the end, else null)
-  (`getElement_noOverflow`, `getElement_inBounds`, `getElement_spec`).
-* Slicing `l[a..b]` never panics: after the early return, `0 ≤ s ≤ e ≤ len`
-  (`getElements_bounds`); it equals the clamped spec (`getElements_spec`).
-* `list.remove`: (`remove_span`, saturating end) it equals the spec
-  for all i64 inputs in every build and never panics (`listRemove_eq_spec`,
-  `removeSpan_wf`, `listRemove_huge_count`). Historical: the earlier inline arithmetic
-  matched the spec by accident in release (`listRemoveRelease_eq_spec`) and overflowed in debug.
-* `list.insert*` normalisation can't overflow and yields a valid split point (`insertNorm_safe`).
-* Eager `range`: every element lies between start and end, so no overflow
-  for any i64 arguments (`range_elems_between`, `range_noOverflow`).
-* Quantifiers: `all` = Kleene AND fold, `any` = Kleene OR fold,
-  `none = NOT any`, `single` characterised (`all_is_kand`, `any_is_kor`,
-  `none_is_not_any`, `single_spec`).
-* `IN`: false iff no element compares Equal and none touches NULL (`contains_false_iff`).
-* `substring`: the byte-length guard is harmless (`substring2_spec`,
-  `substring3_spec`); Rust = C on all inputs (`substring3_agrees_C`).
-* `left`/`right`: Rust = C on all inputs (`left_agrees_C`, `right_agrees_C`), spec (`left_right_spec`).
-* `reverse` on strings: C's byte output = UTF-8 of Rust's `chars().rev()` (`reverse_agrees_C`).
-* `trim`: Rust (`ltrim∘rtrim`) = C (`rtrim∘ltrim`) (`trim_agrees_C`); `ltrim_idem`, `ltrim_head`.
-* `toLower`/`toUpper` never error (`toLower_total`) and equal C when the
-  case mapping is simple (`case_agrees_C_if_simple`).
-* `split`: std's scanner = C's find-first algorithm for every non-empty
-  delimiter (`splitAux_eq_cSplit`), and all empty-string branches agree (`split_agrees_C`).
-* `string.join`: when `compute_join_length` succeeds it equals the joined
-  length, so the `debug_assert_eq!` holds (`joinLen_correct`).
-* `size` counts code points, `size ≤ bytes`, additive under `+`.
-
-## CONFIRMED bugs (Rust repro fails; outputs recorded live vs C on ports 18270/18271)
-
-C. **`=~` is unanchored** — `internal_regex_matches` `internal.rs`, `eval.rs`
-   (`Regex::is_match`): `'abc' =~ 'b'` → `true`, `'xabcx' =~ 'abc'` → `true`.
-   openCypher/Neo4j require a whole-string match (→ `false`). C rejects `=~`
-   ("FalkorDB does not currently support =~"). Test `bug_regex_match_unanchored`.
-   Fix: compile `^(?:pat)$` (binder `rewrite_compiled_regex` and runtime path).
-
-## Divergences recorded, not bugs (or C is wrong)
-
-* Case mapping: Rust uses full Unicode mapping, C simple: `toUpper('ß')` Rust
-  `'SS'` (size 2) vs C `'ẞ'`; `toLower('İ')` `'i̇'` vs `'i'`; `toLower('ΑΣ')`
-  final sigma `'ας'` vs `'ασ'`; `toUpper('ﬁ')` `'FI'` vs `'ﬁ'`. Neo4j matches Rust.
-* `string.matchRegEx('ab','(a)|(b)')`: Rust `null` for non-participating
-  groups, C `''` (deliberate per the comment on `regex_captures_list`, `string.rs`).
-* `'a' + (0.0/0.0)`: Rust `'aNaN'`, C `'anan'`.
-* `STARTS WITH`/`ENDS WITH`/`CONTAINS` with a non-string: Rust `null` (openCypher), C error.
-* C bugs: index/slice bounds truncated to int32 (`[1,2,3][4294967296]` → C `1`,
-  `[1,2,3][MIN..MAX]` → C `[1, 2]`) (`cGetElement_truncates`, `cGetElements_truncates`);
-  `replace(s,'',t)` inserts inside multibyte chars → invalid UTF-8
-  (`cReplace_empty_breaks_utf8`); `range(0, 5000000000)` crashed the C server (Rust: "Range too large").
-* Regex dialect: Rust `regex` crate vs C oniguruma Java syntax (no
-  backreferences/lookaround in Rust) — not modelled.
-
-## Gaps / assumptions
-
-* Strings are lists of code points; UTF-8 byte-level facts used are
-  `utf8Size ≥ 1` only. C's byte-wise `strstr`/`strncmp` matching is assumed to
-  coincide with code-point matching for valid UTF-8 (self-synchronisation),
-  which is not proven; `prefix_chars_to_bytes` proves one direction.
-* std `str::split`/`str::replace`/`step_by`, the `regex` crate, and Unicode case
-  tables are specified, not verified; the regex engine is an abstract span predicate.
-* `Value::compare_value` is abstract here (see `proofs/value_order`).
-* `keys`, `labels`, `properties` read graph attribute storage: not covered.
-* `string.join` lengths are modelled as code-point lengths; Rust uses bytes,
-  and the identity is the same.
-
-
-## Wave 5 (`FalkorStrList/Entity.lean`, `FalkorStrList/Misc.lean`)
-
-entity.rs (all 15 fns) over an accessor model (deleted snapshot > pending > committed),
-plus the remaining string.rs / list.rs / internal.rs fns: all PROVEN. House decision
-(deleted entities keep all details): `deleteRel_preserves`, `deleteNode_preserves`,
-`deleteNode_labels_preserved`, `deleteNode_preserves_all`. W4-fn-1 (the DELETE snapshot copied
-the committed labels, so labels staged by SET/REMOVE earlier in the same query were lost) is
-the DELETE snapshot takes `Runtime::staged_label_ids`
-(`ops/delete.rs`), the committed ids with the staged adds and removes applied.
-`deleteNode_labels_preserved` proves the snapshot's labels equal what `labels(n)` / `n:L` showed
-before the DELETE, with `staged_set_kept_after_delete` (`MATCH (n:A) SET n:C DELETE n RETURN
-labels(n), n:C` is `['A','C']|true`) and `staged_remove_kept_after_delete` as the two shapes.
-proofs/pending_commit `stagedLabelIds_eq_overlay` shows `staged_label_ids` is the overlay `pendingLabels` models.
-`DeleteOp`'s snapshot flag is `runtime.inspect || snapshot_required(..)` (`Entity.lean`'s `deleteNode` /
-`deleteRel` are the `snapshot = true` case).
-
-`hasLabels` / `parse_degree_args` errors name the received type (`hasLabels_mismatch_names`,
-`parseDegreeArgs_mismatch_names`, `parseDegreeArgs_examples`); `startNode(null)`/`endNode(null)` = null
-(`startEndNode_null`, `startEndNode_total`). `toLower`/`toUpper` do not reject U+FFFD (`toLower_total`,
-`case_agrees_C_if_simple`). `RangeIter` (exact `remaining` count, signed `step`, advance only while another
-element is due): `rangeIter`, `rangeIter_of_inRange`, `rangeIter_eq_range` (lazy = eager `range`,
-no overflow, every `i64` input), `rangeIter_examples`. `ListComprehension` evaluates a non-literal,
-non-`range` source with `eval_node` (null → null, scalar → type error): `comprehensionRust` over `CSrc`,
-`comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err`,
-`comprehension_literal_range_unchanged`. `Value::name` spells `Edge`/`Vectorf32` and `typeOf` reuses it
-(`Entity.valueName`, `typeName_eq_valueName`). A non-boolean list-comprehension WHERE predicate is a
-type error ("expected Boolean but was <name>") — `comprehensionLoop`, `whereKeep`,
-`comprehensionLoop_nonbool`, `comprehensionFull_noWhere` (historical `pre3270_nonbool_skipped`,
-`pre3270_loop_agrees`). `evalIterExpr` models all three `eval_iter_expr` arms (`evalIterExpr_range`,
-`_lit`, `_other`), `evalCompiledRegex` all three `eval_compiled_regex` kinds with `checkStringOrNull`
-(`regex_*`, `evalCompiledRegex_not_unreachable`; `=~` stays unanchored, bug C).
-Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
-`capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
+String, list, entity and regex scalar functions: `string.rs`, `list.rs`, `entity.rs`, `internal.rs`
+(`graph/src/runtime/functions/`), the list-comprehension arm of `eval.rs` and `RangeIter`.
+See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
 -/
 
 namespace FalkorStrList
@@ -289,35 +145,9 @@ theorem cGetElements_truncates :
 
 The span is computed by `remove_span`, which clamps the
 end with `saturating_add`: `listRemove` / `removeSpan` below model that code.
-`listRemoveDebug` / `listRemoveRelease` are kept as the **historical** model of
-the earlier inline arithmetic (`(normalized + count) as usize`), whose debug
-build overflowed. -/
-
-inductive Out (α : Type) where
-  | ok (l : List α)
-  | panic (msg : String)
-  deriving DecidableEq, Repr
+-/
 
 def removeNorm (len : Nat) (idx : Int) : Int := if idx < 0 then (len : Int) + idx else idx
-
-/-- Historical (pre-#2952) debug build: `(normalized + count)` was a checked add. -/
-def listRemoveDebug (l : List α) (idx count : Int) : Out α :=
-  let len : Int := l.length
-  let n := removeNorm l.length idx
-  if n < 0 ∨ n ≥ len ∨ count ≤ 0 then .ok l
-  else if ¬ InI64 (n + count) then .panic "attempt to add with overflow"
-  else
-    let e := min (n + count).toNat l.length
-    .ok (l.take n.toNat ++ l.drop e)
-
-/-- Historical (pre-#2952) release build: the add wraps, then `as usize`, then `.min(vs.len())`. -/
-def listRemoveRelease (l : List α) (idx count : Int) : List α :=
-  let len : Int := l.length
-  let n := removeNorm l.length idx
-  if n < 0 ∨ n ≥ len ∨ count ≤ 0 then l
-  else
-    let e := min (asUsize (wrap (n + count))) l.length
-    l.take n.toNat ++ l.drop e
 
 /-- Spec (and C): drop `count` elements starting at the normalised index. -/
 def listRemoveSpec (l : List α) (idx count : Int) : List α :=
@@ -326,32 +156,10 @@ def listRemoveSpec (l : List α) (idx count : Int) : List α :=
   if n < 0 ∨ n ≥ len ∨ count ≤ 0 then l
   else l.take n.toNat ++ l.drop (n + count).toNat
 
-/-- …but the release build is right by accident: a wrapped (negative) sum
-becomes `≥ 2^63` under `as usize`, and `.min(len)` clamps it. Proven for every
-list shorter than `i64::MAX` and every `i64` pair. -/
+/-- The normalised index is an `i64` for every list shorter than `i64::MAX` and every `i64` index. -/
 theorem removeNorm_range (len : Nat) (idx : Int) (hl : (len : Int) ≤ I64MAX) (hi : InI64 idx) :
     InI64 (removeNorm len idx) := by
   unfold removeNorm at *; simp only [InI64, I64MAX] at *; split <;> omega
-
-theorem listRemoveRelease_eq_spec (l : List α) (idx count : Int)
-    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
-    listRemoveRelease l idx count = listRemoveSpec l idx count := by
-  have hn := removeNorm_range l.length idx hl hi
-  unfold listRemoveRelease listRemoveSpec
-  simp only []
-  generalize removeNorm l.length idx = n at *
-  simp only [InI64, I64MAX] at *
-  split
-  · rfl
-  · rename_i hg
-    have h0 : 0 ≤ n + count := by omega
-    have h1 : n + count < 18446744073709551616 := by omega
-    rw [asUsize_wrap64 _ h0 h1]
-    congr 1
-    by_cases hle : (n + count).toNat ≤ l.length
-    · rw [Nat.min_eq_left hle]
-    · rw [Nat.min_eq_right (by omega), List.drop_eq_nil_of_le (Nat.le_refl _),
-        List.drop_eq_nil_of_le (by omega)]
 
 /-- `i64::saturating_add`. -/
 def satAdd64 (a b : Int) : Int :=
@@ -423,13 +231,6 @@ theorem listRemove_eq_spec (l : List α) (idx count : Int)
       · rw [Nat.min_eq_right (by omega), List.drop_eq_nil_of_le (Nat.le_refl _),
           List.drop_eq_nil_of_le (by omega)]
     · rw [List.drop_eq_nil_of_le (as := l) (by omega), List.drop_eq_nil_of_le (as := l) (by omega)]
-
-/-- The fix agrees with the old release build wherever that was defined: the
-historical release model already matched the spec (`listRemoveRelease_eq_spec`). -/
-theorem listRemove_eq_preRelease (l : List α) (idx count : Int)
-    (hl : (l.length : Int) ≤ I64MAX) (hi : InI64 idx) (hc : InI64 count) :
-    listRemove l idx count = listRemoveRelease l idx count := by
-  rw [listRemove_eq_spec l idx count hl hi hc, listRemoveRelease_eq_spec l idx count hl hi hc]
 
 /-! ## `list.insert` / `list.insertListElements` normalisation
 (`list.rs`, `list.rs`) -/
@@ -546,11 +347,6 @@ theorem range_noOverflow (start stop step : Int) (h1 : InI64 start) (h2 : InI64 
 theorem range_examples :
     range 0 10 3 = .ok [0, 3, 6, 9] ∧ range 10 0 (-3) = .ok [10, 7, 4, 1] ∧
     range 10 0 I64MIN = .ok [10] ∧ range 1 0 1 = .ok [] := ⟨rfl, rfl, rfl, rfl⟩
-
-/-! ## Lazy `RangeIter::next`, earlier constructor (history)
-
-The earlier constructor stored `step: step.unsigned_abs() as i64`; for `step = i64::MIN` that is
-`i64::MIN` again, and `next` then evaluated `-self.step`, which overflowed. -/
 
 /-! ## Lazy `RangeIter::next` (`eval.rs`)
 
@@ -769,13 +565,6 @@ def CSrc.val : CSrc → Src
 inductive COut where | null | list (l : List Int) | err
   deriving DecidableEq, Repr
 
-/-- `ListComprehension` before #2954 (no WHERE, identity projection): every source
-through `eval_iter_expr`'s UNWIND fallback. Historical. -/
-def pre2954_comprehensionRust : Src → COut
-  | .null => .list []
-  | .scalar i => .list [i]
-  | .list l => .list l
-
 /-- `ListComprehension` on main (no WHERE, identity projection): literal / `range`
 stream, any other source is matched on its evaluated value. -/
 def comprehensionRust : CSrc → COut
@@ -803,17 +592,6 @@ theorem comprehension_null : comprehensionRust (.other .null) = .null := rfl
 /-- `[x IN 5 | x]` is a type error. -/
 theorem comprehension_scalar_err (i : Int) : comprehensionRust (.other (.scalar i)) = .err := rfl
 
-/-- List-valued sources are unchanged by #2954: a literal, a `range`, or any expression
-evaluating to a list gives what the pre-#2954 code gave. -/
-theorem comprehension_literal_range_unchanged (l : List Int) :
-    comprehensionRust (.literal l) = pre2954_comprehensionRust (.list l) ∧
-    comprehensionRust (.range l) = pre2954_comprehensionRust (.list l) ∧
-    comprehensionRust (.other (.list l)) = pre2954_comprehensionRust (.list l) :=
-  ⟨rfl, rfl, rfl⟩
-
-theorem comprehension_agrees_on_lists (l : List Int) :
-    pre2954_comprehensionRust (.list l) = comprehensionSpec (.list l) := rfl
-
 /-! ### The per-element loop of `ListComprehension` (`eval.rs`): WHERE and projection
 
 For each element `row.insert(var, value)`, the predicate `eval_node(child(1))?` must be
@@ -830,11 +608,6 @@ def whereKeep : PV → Except String Bool
   | .t => .ok true
   | .f | .n => .ok false
   | .other nm => .error s!"Type mismatch: expected Boolean but was {nm}"
-
-/-- The same `match` before #3270: `_ => continue`. Historical. -/
-def pre3270WhereKeep : PV → Bool
-  | .t => true
-  | _ => false
 
 /-- The `for value in result` loop, one element at a time, errors propagating with `?`.
 `pred`/`proj` are the element's `eval_node(child(1))` / `eval_node(child(2))`. -/
@@ -855,23 +628,6 @@ def comprehensionLoop {α β : Type} (pred : α → Except String PV) (proj : α
           match comprehensionLoop pred proj xs with
           | .error e => .error e
           | .ok rest => .ok (y :: rest)
-
-/-- The loop before #3270. Historical. -/
-def pre3270ComprehensionLoop {α β : Type} (pred : α → Except String PV)
-    (proj : α → Except String β) : List α → Except String (List β)
-  | [] => .ok []
-  | x :: xs =>
-    match pred x with
-    | .error e => .error e
-    | .ok p =>
-      if pre3270WhereKeep p then
-        match proj x with
-        | .error e => .error e
-        | .ok y =>
-          match pre3270ComprehensionLoop pred proj xs with
-          | .error e => .error e
-          | .ok rest => .ok (y :: rest)
-      else pre3270ComprehensionLoop pred proj xs
 
 section loop
 variable {α β : Type} (pred : α → Except String PV) (proj : α → Except String β)
@@ -910,34 +666,13 @@ theorem comprehensionLoop_true_id (l : List α) :
   | nil => rfl
   | cons x xs ih => simp [comprehensionLoop, whereKeep, ih]
 
-/-- Before #3270 a non-boolean predicate was silently skipped; main raises. The two loops
-agree whenever every predicate result is boolean or null. -/
-theorem pre3270_loop_agrees (l : List α) (h : ∀ x ∈ l, ∀ nm, pred x ≠ .ok (.other nm)) :
-    pre3270ComprehensionLoop pred proj l = comprehensionLoop pred proj l := by
-  induction l with
-  | nil => rfl
-  | cons x xs ih =>
-    have hx := h x (by simp)
-    have ih' := ih (fun y hy => h y (by simp [hy]))
-    simp only [pre3270ComprehensionLoop, comprehensionLoop]
-    cases hp : pred x with
-    | error e => rfl
-    | ok p =>
-      cases p with
-      | t => simp [pre3270WhereKeep, whereKeep, ih']
-      | f => simp [pre3270WhereKeep, whereKeep, ih']
-      | n => simp [pre3270WhereKeep, whereKeep, ih']
-      | other nm => exact absurd hp (hx nm)
-
 end loop
 
-/-- `[x IN [1] WHERE 5 | x]`: the pre-#3270 loop returned `[]`, main raises. -/
-theorem pre3270_nonbool_skipped :
-    pre3270ComprehensionLoop (fun _ => (.ok (.other "Integer") : Except String PV))
-      (fun x => (.ok x : Except String Int)) [1] = .ok [] ∧
+/-- `[x IN [1] WHERE 5 | x]` raises (#3270). -/
+theorem comprehension_nonbool_raises :
     comprehensionLoop (fun _ => (.ok (.other "Integer") : Except String PV))
       (fun x => (.ok x : Except String Int)) [1] =
-      .error "Type mismatch: expected Boolean but was Integer" := ⟨rfl, rfl⟩
+      .error "Type mismatch: expected Boolean but was Integer" := rfl
 
 /-- The whole `ListComprehension` arm: the source dispatch of `comprehensionRust`
 (`none` = the arm pushes `Value::Null`) then the element loop. -/

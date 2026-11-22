@@ -9,14 +9,6 @@ import RedisLayer.GraphCore
 standalone model: they are not constructed as a `GraphCore.Lossy` (the abstract `from_utf8_lossy`
 hypothesis `cGraphName` uses), so `cGraphName_key` does not rest on this decoder and the two are
 not bridged by a theorem.
-
-| here | there (fb3d516d0) |
-| --- | --- |
-| `decF`, `lossy` | `String::from_utf8_lossy` (Rust `core`: each maximal invalid subpart becomes one U+FFFD) |
-| `encCp`, `utf8Bytes` | `str::as_bytes` of the resulting `String` |
-| `storedKey`  | existing graph: the addressed key (`query.rs`); created graph: `c_graph_key` bytes (`query.rs`, `graph_core.rs`) |
-| `rustReplicatedKey` | `key_name` = `key_str.to_string()` (`query.rs`; `RedisString: Display` is `to_string_lossy`, redismodule-rs `redismodule.rs`) or `c_graph_name` (`query.rs`), then `signal_modified_key(ctx, key_name.as_bytes())` (`graph_core.rs`) and `buf.replicate(.., key_name.as_bytes())` (`graph_core.rs`; since #3850/#3851 `key_name` is `key_of_write`'s key, the admitted one unless the graph was renamed: `GraphCore.keyOfWrite_admitted`) |
-| `cReplicatedKey` | C replicates with the command's own `RedisModuleString` (bytes unchanged) |
 -/
 namespace RedisLayer.KeyName
 open RedisLayer.GraphCore

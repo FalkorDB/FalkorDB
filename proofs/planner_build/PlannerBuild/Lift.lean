@@ -8,15 +8,6 @@ relationship, its endpoints), is taken out of the map and becomes a filter in
 `bound_filters`, so it sits above the whole pattern like a `WHERE`. Such an
 edge is put in `lifted_rels`: it must be emitted for the filter to read it.
 
-| here | there |
-| --- | --- |
-| `patVars` | `QueryGraph::variables` (nodes, relationships, paths) over every component |
-| `readsPending` | `split_inline_attrs::reads_pending` mod.rs |
-| `keepAttrs`, `liftItem` | `split_inline_attrs` mod.rs (`seen` = `lowered`-style key `(alias, map)`) |
-| `keepNode`, `keepRel` | the rewritten `QueryNode` / `QueryRelationship` (mod.rs) |
-| `liftItems`, `liftPattern` | `lift_cross_entity_attrs` mod.rs |
-| `attrsReadVisited` | `pattern_attrs_read_visited` mod.rs |
-
 Abstractions (documented, not load-bearing for a theorem here):
 * the lifted filters are listed in component order; Rust walks
   `pattern.relationships()` then `pattern.nodes()` of the whole pattern, which is the

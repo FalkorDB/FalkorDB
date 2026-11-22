@@ -3,21 +3,6 @@ import RedisLayer.QueryArgsSpec
 # Small command handlers (`src/commands/*.rs`, `origin/main`)
 
 Argument handling and reply shapes; key access, locks and replication calls are events.
-
-| here | there |
-| --- | --- |
-| `debugCmd`        | `debug.rs` `graph_debug`, `debug_aux` |
-| `deleteCmd`       | `delete.rs` `graph_delete` |
-| `effectCmd`       | `effect.rs` `graph_effect` |
-| `explainLine`, `explainCmd`, `explainCmdA` | `explain.rs` `explain`, `graph_explain` (flags) |
-| `infoSections`, `formatAvg` | `info.rs` `graph_info`, `format_avg` |
-| `cReplyName`, `replyBytes`, `scanPage`, `scanLoop` | `list.rs` `c_reply_name`, `reply_bytes`, `graph_list` |
-| `memArgs`, `upToNul`, `memTotal`, `cSchemaName` | `memory.rs` `graph_memory` (#3053; PR #3257 C error texts), `memory_report`, `c_schema_name` |
-| `slowlogCmd`      | `slowlog.rs` `graph_slowlog` |
-| `udfCmd`, `udfLoadArgs`, `udfListArgs` | `udf.rs` |
-| `exited`, `exitCode` | `copy.rs` `graph_copy` (`waitpid` status decoding) |
-| `restoreCmd`      | `restore.rs` `graph_restore` |
-| `bulkReply`       | `bulk_insert.rs` `graph_bulk_insert` success reply |
 -/
 namespace RedisLayer.Commands
 

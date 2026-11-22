@@ -12,7 +12,7 @@ the pending deletes the operator sees.
 | `Pending.delNodes` | `Pending::deleted_nodes` (`runtime/pending.rs`), read by `is_node_deleted`; `DETACH DELETE` of a committed node only inserts it here (`runtime/ops/delete.rs`, `pending.rs`) and defers its incident edges to commit (`delete_implicit_edges`, `pending.rs`) |
 | `Pending.delRels`  | `Pending::deleted_relationships`, read by `is_relationship_deleted` (`pending.rs`) |
 | `expandIntoP`      | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs`): no row when `pending.is_node_deleted(src) \|\| is_node_deleted(dst)`; pairs; collapse and emit skip `pending.is_relationship_deleted(id)` and sibling-used edges |
-| `expandIntoPre`    | the same without the endpoint check (the earlier operator, kept as the historical model and the fall-through branch of `expandIntoP`) |
+| `expandIntoRows`   | the pair and edge loop after the endpoint check (the fall-through branch of `expandIntoP`) |
 
 `expandIntoP` with empty `Pending` is literally `CondTraverse.expandInto`
 (`expandIntoP_empty`), so every earlier ExpandInto theorem is the
@@ -26,7 +26,7 @@ is in `deleted_nodes` but the edge `a→b` is not yet in `deleted_relationships`
 The edge is doomed (deleted implicitly at commit), so ExpandInto yields
 no row for a pending-deleted endpoint, and MERGE takes its create branch, which
 refuses a deleted endpoint. Property `LiveExpandInto`: proved for main
-(`expandIntoP_live`); `expandIntoPre` is the historical counterexample (it matches the doomed edge). -/
+(`expandIntoP_live`). -/
 
 namespace OpsTraverse.EIP
 
@@ -38,9 +38,9 @@ structure Pending where
   delRels  : List Nat
 deriving DecidableEq, Repr
 
-/-- `ExpandIntoOp::expand_row` (relationship mode) with `Pending` as it was
-before #3463: no endpoint check. -/
-def expandIntoPre (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
+/-- `ExpandIntoOp::expand_row` (relationship mode) after the endpoint check: the pairs, then
+the edges between them that are not pending-deleted or used by a sibling. -/
+def expandIntoRows (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
     (used : List Nat) : List Nat :=
   let ps := if bidir && src != dst then [(src, dst), (dst, src)] else [(src, dst)]
   ps.flatMap fun q =>
@@ -53,12 +53,12 @@ def expandIntoPre (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
 def expandIntoP (g : Graph) (p : Pending) (bidir emit : Bool) (src dst : Nat)
     (used : List Nat) : List Nat :=
   if p.delNodes.contains src || p.delNodes.contains dst then []
-  else expandIntoPre g p bidir emit src dst used
+  else expandIntoRows g p bidir emit src dst used
 
 /-- With nothing pending, the model is the committed-graph `expandInto`. -/
 theorem expandIntoP_empty (g : Graph) (b em : Bool) (s d : Nat) (u : List Nat) :
     expandIntoP g ⟨[], []⟩ b em s d u = expandInto g b em s d u := by
-  simp [expandIntoP, expandIntoPre, expandInto]
+  simp [expandIntoP, expandIntoRows, expandInto]
 
 /-- An edge is live in the effective graph: not deleted itself, and neither
 endpoint deleted (a deleted node's edges go with it at commit). -/
@@ -70,11 +70,11 @@ def LiveExpandInto
     (op : Graph → Pending → Bool → Bool → Nat → Nat → List Nat → List Nat) : Prop :=
   ∀ g p b em s d u, g.WF → ∀ e ∈ op g p b em s d u, Live g p e
 
-theorem mem_expandIntoPre {g : Graph} {p : Pending} {b em : Bool} {s d e : Nat}
-    {u : List Nat} (h : e ∈ expandIntoPre g p b em s d u) :
+theorem mem_expandIntoRows {g : Graph} {p : Pending} {b em : Bool} {s d e : Nat}
+    {u : List Nat} (h : e ∈ expandIntoRows g p b em s d u) :
     e ∉ p.delRels ∧ e ∉ u ∧ ∃ x ∈ g, x.id = e ∧
       ((x.src = s ∧ x.dst = d) ∨ (x.src = d ∧ x.dst = s)) := by
-  unfold expandIntoPre at h
+  unfold expandIntoRows at h
   simp only [List.mem_flatMap] at h
   obtain ⟨q, hq, he⟩ := h
   have he' : e ∈ (edgesBetween g q.1 q.2).filter fun e =>
@@ -103,7 +103,7 @@ theorem expandIntoP_live : LiveExpandInto expandIntoP := by
   · simp at he
   · rename_i hn
     simp only [Bool.or_eq_true, List.contains_eq_mem, decide_eq_true_eq, not_or] at hn
-    obtain ⟨hdr, _, x, hx, hid, hdir⟩ := mem_expandIntoPre he
+    obtain ⟨hdr, _, x, hx, hid, hdir⟩ := mem_expandIntoRows he
     refine ⟨hdr, fun y hy hyid => ?_⟩
     have : y = x := eq_of_mem_of_id hwf hy hx (hyid.trans hid.symm)
     subst this
@@ -117,7 +117,7 @@ theorem expandIntoP_not_delRel {g : Graph} {p : Pending} {b em : Bool} {s d e : 
   unfold expandIntoP at h
   split at h
   · simp at h
-  · exact (mem_expandIntoPre h).1
+  · exact (mem_expandIntoRows h).1
 
 /-! ## `DETACH DELETE a MERGE (a)-[r:R]->(b)` -/
 

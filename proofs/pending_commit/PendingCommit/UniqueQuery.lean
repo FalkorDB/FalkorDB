@@ -6,12 +6,6 @@ import PendingCommit.UniqueIndex
 `query_for = |values| redisearch_unique_query(indexed, &constraint.properties, values)` and
 `lookup = |query| g.get_indexed_nodes(label, query)` (edges: `get_indexed_edges`).
 
-| Lean | Rust |
-| --- | --- |
-| `Query` (`equal` / `and`) | `IndexQuery::Equal` / `IndexQuery::And` |
-| `redisearchQuery exact indexed props vals` | `redisearch_unique_query(indexed, properties, values)` (:174) |
-| `evalQ ix` | `get_indexed_*` of a query: `Equal` is the index's exact-match set, `And` their intersection |
-
 Results:
 * `redisearchQuery_none_iff` — `None` iff the properties are not all Range-indexed or some
   value is not exactly matchable (`is_value_valid_for_index_lookup`).

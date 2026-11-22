@@ -7,20 +7,6 @@ while the reply is written, and some of the lookups panic when the id is not whe
 code expects it (#3447). This file models the lookups over the three places a relationship id can
 live during a query, and the two ways a reply's id can end up in none of the expected ones.
 
-| here | there (`5e475e6c9`) |
-| --- | --- |
-| `Rel`, `St.graph`, `St.types` | committed edges in `runtime.g` (`edge_endpoints`, `relationship_type_matrix`) and `Graph::relationship_types` (`graph/src/graph/graph.rs`) |
-| `St.deleted` | `runtime.deleted_relationships` (snapshots: src, dst, type *name*) |
-| `St.pending` | `Pending::created_rels_by_type` (`graph/src/runtime/pending.rs`) |
-| `endpoints` | `Runtime::get_relationship_endpoints` (`graph/src/runtime/runtime.rs`): deleted → pending → `Graph::get_relationship_endpoints` (`graph.rs`, `panic!("relationship {} not found")`) |
-| `graphTyId` | `Graph::get_relationship_type_id` (`graph.rs`, `.expect("relationship must have a type in type_matrix")`) |
-| `typeId` | `Graph::get_type_id` (`graph.rs`): position of the name in the registry |
-| `compactRel` | `reply_compact_value`, `Value::Relationship` arm (`src/reply.rs`): endpoints; deleted → `get_type_id(&x.type_name).unwrap()`; else `get_relationship_type_id` |
-| `verboseRel` | `reply_verbose_value`, `Value::Relationship` arm (`src/reply.rs`): endpoints; type name from `Runtime::get_relationship_type` (`runtime.rs`: deleted → pending → graph) |
-| `commitCascade` | `CREATE … DETACH DELETE` of an endpoint: the cascade (`delete.rs` → `Pending::remove_pending_relationships_for_node`, `pending.rs`, drops an emptied type group) snapshots the edge into `deleted_relationships`; `Pending::commit` (`pending.rs`) registers types only through `create_relationships_bulk` over the surviving groups |
-| `recordDelete` | `GRAPH.RECORD` of a top-level `DELETE r`: `DeleteOp::new` (`delete.rs`) snapshots when `runtime.inspect || snapshot_required` (; `snapshot_required` is false under a bare `Commit`); `record_mut` (`src/commands/record.rs`) renders the captured rows after `finish_write` |
-| `recordAbort` | `GRAPH.RECORD` of `CREATE (a)-[r:R]->(b) SET a.x = 1/0`: the error comes before `Commit`, `abandon_write` (`record.rs`), then the rows are rendered anyway with `r` still pending |
-
 `none` is the panic (the server dies). C has no `GRAPH.RECORD`; its compact reply of a
 deleted edge resolves the type by the edge's own schema (issue #3447: C returns the edge).
 -/

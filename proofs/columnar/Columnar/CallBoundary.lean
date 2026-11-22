@@ -137,8 +137,7 @@ theorem projectMerged_eq_main {T C V : Type} (fastCols general : List T → List
 
 /-! ## `BatchedResultEmitter`: the gather guard -/
 
-/-- `start_batch` before (origin/main :590) and after (merged :604-617; the `has_origins()` guard is on :609). -/
-def shouldExpandOld {V : Type} (b : Batch V) : Bool := b.cols.length > 0
+/-- `start_batch` (:604-617; the `has_origins()` guard is on :609). -/
 def shouldExpandNew {V : Type} (b : Batch V) : Bool := b.cols.length > 0 || b.hasOrigins
 
 /-- `finish_batch` (:651-669) for `count = idx.length > 0` packed results

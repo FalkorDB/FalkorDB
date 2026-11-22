@@ -6,15 +6,6 @@ query-lifetime maps **keyed by id** holding what a deleted entity looked like,
 so a later clause can still read it (`DELETE n WITH n RETURN n.v`). Every
 entity read consults them *first*:
 
-| accessor | runtime.rs |
-| --- | --- |
-| `get_node_attribute`                 | :1571 |
-| `materialize_node_property_values`   | :1668 (the vectorised `n.v` path, used by `WHERE`) |
-| `get_node_labels`, `node_has_label_id` | :1787, :1852 |
-| `get_node_attrs` (`properties`, `keys`, `SET x = n`) | :1866 |
-| `get_relationship_attribute` / `_attrs` | :1622, :1884 |
-| `get_relationship_endpoints`, `get_relationship_type` | :1904, :1917 |
-
 A `Value::Node`/`Value::Relationship` carries only the id, and ids freed by a
 committed delete are reissued by the next segment's CREATE (`IdSpace::reserve`,
 recycle bin first). Model: an entity is `(gen, data)` — `data` stands for any
@@ -26,9 +17,6 @@ field one of the accessors above returns — and a handle is `(id, gen)`.
   handle the query holds (live or deleted-by-this-query).
 * `Good` is preserved by delete, commit and a create that does *not* reissue a
   snapshotted id — `deferred_preserves_Good`.
-* With the earlier allocator (`pre3641_createRust`, bin first) `Good` breaks and the
-  read is wrong: `pre3641_rust_reads_dead_entity` is the Lean counterexample, the same
-  trace as `graph/tests/lean_pending_commit.rs` and the Cypher repros.
 
 The model says nothing specific to nodes, attributes or labels: the bug is the
 id-keyed snapshot shadowing a live id, so every accessor above and both entity
@@ -89,19 +77,6 @@ def createRust (s : RS) (d : Nat) : RS × Nat :=
   match avail s with
   | id :: _ => ({ s with live := (id, ⟨s.nextGen, d⟩) :: s.live, bin := s.bin.filter (· != id),
                           nextGen := s.nextGen + 1 }, id)
-  | [] => ({ s with live := (s.fresh, ⟨s.nextGen, d⟩) :: s.live, fresh := s.fresh + 1,
-                     nextGen := s.nextGen + 1 }, s.fresh)
-
-/-- HISTORICAL: `commit` before #3641 (no quarantine). -/
-def pre3641_commit (s : RS) : RS := { s with bin := s.freed ++ s.bin, freed := [] }
-
-/-- HISTORICAL: the allocator before #3641: recycle bin first, whatever freed the id. This is the
-engine that let a `CREATE` of a later segment take an id the same query had deleted
-(#2876, #2759, #3164). -/
-def pre3641_createRust (s : RS) (d : Nat) : RS × Nat :=
-  match s.bin with
-  | id :: rest => ({ s with live := (id, ⟨s.nextGen, d⟩) :: s.live, bin := rest,
-                             nextGen := s.nextGen + 1 }, id)
   | [] => ({ s with live := (s.fresh, ⟨s.nextGen, d⟩) :: s.live, fresh := s.fresh + 1,
                      nextGen := s.nextGen + 1 }, s.fresh)
 
@@ -338,17 +313,5 @@ theorem rust_reads_live_entity :
   refine ⟨by decide, by decide, by decide, ?_⟩
   intro j hj
   revert j; decide
-
-/-- HISTORICAL (**fixed by #3641**, e0d9c2188; #2876, #2759, #3164): with the pre-#3641 allocator
-`m` got id 0; the graph holds `m` (data 2), but the read returns the deleted node (data 1). -/
-theorem pre3641_rust_reads_dead_entity :
-    (trace pre3641_createRust pre3641_commit).2 = 0 ∧
-    find (trace pre3641_createRust pre3641_commit).1.live 0 = some ⟨1, 2⟩ ∧
-    readRt (trace pre3641_createRust pre3641_commit).1 0 = some ⟨0, 1⟩ ∧
-      ¬ Good (trace pre3641_createRust pre3641_commit).1 := by
-  refine ⟨by decide, by decide, by decide, ?_⟩
-  intro h
-  have := h 0 (by decide)
-  revert this; decide
 
 end PendingCommit.Snapshot

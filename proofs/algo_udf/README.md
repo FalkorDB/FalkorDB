@@ -7,7 +7,7 @@ This project covers two parts of the engine that users call directly:
 
 For the path searches it proves the answers are right: the shortest path really is shortest, and the enumeration finds every qualifying path. For the UDF layer it proves values survive the trip into JavaScript and back, and that deep or cyclic values give an error instead of a crash. Along the way it found a dozen places where Rust answers differently from C.
 
-The full Lean↔Rust mapping is in the header of [`AlgoUdf.lean`](AlgoUdf.lean) and in the table at the top of each file. This README explains *what* is proven and *why it matters*.
+The per-function Lean↔Rust map is `COVERAGE.tsv`. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -110,7 +110,7 @@ Shared with C, not reported: `maxIterations`, `samplingSize` and `maxLen` wrap a
 
 | File | What's in it |
 |---|---|
-| `AlgoUdf.lean` | Root: the report header (Lean↔Rust table, assumptions, theorems, bugs, gaps) |
+| `AlgoUdf.lean` | Root: imports and a short header |
 | `Value.lean` | A cut-down `Value`: only the variants the `algo.*` argument parsers inspect |
 | `Config.lean` | Procedure config parsing: `nodeLabels`, `relTypes`, `maxIterations`, `samplingSize`, `maxLen`, `pathCount` |
 | `Compact.lean` | Compact adjacency id↔index maps; WCC, CDLP, pageRank, Harmonic result assembly; betweenness sampling |
@@ -157,6 +157,8 @@ The four AXIOMATISED rows are FFI: `extract_vector_f64`, `extract_vector_i64` an
 - **LAGraph** is trusted: WCC/CDLP output is a dense vector of indices below n, the MSF component vector is dense, and pageRank rejects n = 0. These are hypotheses, not Lean axioms.
 - **QuickJS** behaviour is assumed: `__proto__` never becomes an own key, array-index keys list first, `JS_IsDate`/`JS_IsRegExp` test the internal class, `new Date(ms)` is NaN beyond ±8.64e15 ms.
 - **`Graph::get_node_relationships_by_type`** is modelled (`Neighbors.nodeRels`): outgoing half, then the incoming half without self-loops.
+- **Datetime `ts * 1000`** (type_convert.rs) is unchecked i64 arithmetic; the release profile sets no `overflow-checks`, so it wraps (`Marshal.wrapI64`, `toJs_datetime`); a debug build would panic.
+- **JS globals**: all UDF libraries share one JS global scope (library A's `var shared` is overwritten by library B's), as in C.
 - **Timeouts and memory limits** inside the searches only add an error exit and are not modelled.
 - **QuickJS runtime lifetime** (W3-algo-2) is modelled only as `ThreadJsState`'s field drop order; QuickJS object refcounts are not.
 

@@ -14,14 +14,6 @@ gathered so far are dropped (none runs). The RediSearch `query_for` is
 `redisearch_unique_query` (:174); the native one is `native_unique_query`
 (index/falkordb/unique.rs), which this project does not model.
 
-| Lean | Rust |
-| --- | --- |
-| `EV`, `exactLookup`, `exactLookup_spec` | `is_value_valid_for_index_lookup` (:160) |
-| `gather` | the member loop of `unique_violated` (:235-262): `keys`, `lookups`, `use_index` |
-| `uniqueViolated` | `unique_violated` (:217) |
-| `checkMandatory`, `checkUnique`, `checkNode2`, `checkEdge2` | `check_node_constraint` (:1580), `check_edge_constraint` (:1672) |
-| `UniqueQuery.lean`: `Query`, `redisearchQuery` | `redisearch_unique_query` (:174) |
-
 Modelling:
 * Values are an abstract type `V` with decidable equality; `attr e q = none` is an absent
   or `Null` property (both filtered by Rust before keying). The composite key of `e` is

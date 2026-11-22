@@ -2,21 +2,6 @@
 # `src/telemetry.rs` — stream naming, the query registry, batching and per-graph grouping
 
 Line numbers: `origin/main` (`3fec7d7c9`).
-
-| here | there |
-| --- | --- |
-| `truncate`             | `truncate`, `truncate_arc` |
-| `upToNul`, `streamName`| `graph_core::up_to_nul`, `stream_name` |
-| `hashTag`              | Redis Cluster `keyHashSlot` tag rule (documentation of the key scheme) |
-| `Reg`, `register*` … `snapshot*` | `shard_for`, `register_running` … `snapshot_waiting` |
-| `WE.*`                 | `WaitingEntry::register/promote/drop` |
-| `enqueueOk`            | `enqueue_entry` gates (no role check since #3844) |
-| `drain`                | `drain_queued` |
-| `Pre3844.capDeferred`  | historical: `deferred.drain(..len - DEFERRED_XADD_MAX)` (removed by #3844) |
-| `resolve`              | `resolve_current_names` |
-| `groupOrder`           | `batch.sort_by(graph_name)` + `chunk_by` (`flusher_loop`) |
-| `fieldValues`          | `StreamTemplate::add` value array |
-| `failMsg`              | `StreamTemplate::report_failures` |
 -/
 namespace RedisLayer.Telemetry
 

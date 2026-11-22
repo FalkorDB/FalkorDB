@@ -1,22 +1,6 @@
 import AlgoUdf.Marshal
 import AlgoUdf.AlgoGlue
 /-! # JS object builders and native entry points (`graph/src/udf/js_classes.rs`)
-
-| here | there |
-| --- | --- |
-| `Slot`, `setGraph`, `clearGraph`, `withGraph` | `CURRENT_GRAPH` :147, `with_current_graph` :170 (`clearGraph` is the null slot: `set_current_graph` / `clear_current_graph` were replaced by `with_graph`) |
-| `GState`, `restoreDrop`, `withGraphRun` | `with_graph` :151 and its `Restore` guard's `drop` :158 (lend the graph for one call, restore the one lent before, start a new epoch only when nothing was lent) |
-| `JV`, `Obj`, `set`, `get` | QuickJS values / ordinary objects (AXIOMATISED: `obj.set(k, v)` replaces own key `k`; `"__proto__"` never becomes an own key, cf. `Marshal.objSet`) |
-| `Ent`, `newEntity`, `entityValue`, `nodeIdOf`, `nextEpoch` | `JsEntity` :83-86 (`trace` :93, `constructor` :105), `new_entity_object` :110, `entity_value` :129, `node_id_of` :135, the `CALL_EPOCH` bump in `with_graph` :162-165 (#2976) |
-| `jsNode`                 | `create_js_node` :200 (a `JsEntity` instance holding `Value::Node`; its visible properties below) |
-| `jsEdge`                 | `create_js_edge` :311 (type: runtime, else committed graph, else `""`) |
-| `jsPath`                 | `create_js_path` :385 |
-| `optArg`                 | rquickjs `Opt<Object>`: `None` only for a *missing* argument |
-| `getNeighborsCall`       | the shared method `function(...args) { return h(this, ...args); }` :251 → `js_get_neighbors_entry` :448 |
-| `Exc`, `throwJs`, `entryErr` | `throw_js_error` :599, the `Err` arms of `js_get_neighbors_entry` :456-466 / `js_traverse` |
-| `nodeById`               | `js_get_node_by_id` :609, `js_get_node_by_id_impl` :616 |
-| `iterNodes`, `iterEdges` | `js_iterate_nodes(_impl)` :653, :660, `js_iterate_edges(_impl)` :708, :715 (label matrix / tensor scans AXIOMATISED) |
-| `traverseEntry`          | `js_traverse` :760 (body: `UdfTraverse`; sources via `node_id_of` :821-828, `traverseSources`) |
 -/
 namespace AlgoUdf.UdfClasses
 open AlgoUdf
@@ -343,28 +327,16 @@ def getNeighborsCall (thisNode : Option Nat) (userArgs : List JV) : Except Strin
     | none => .error "getNeighbors must be called on a node"
     | some n => .ok (n, cfg)
 
-/-- Before #2976: `function(config) { return h(this.__falkor_node_id, config); }` always passed
-two arguments, so an omitted config arrived as `undefined`. -/
-def getNeighborsCallPre2976 (nodeId : Nat) (userArgs : List JV) : Except String (Option Obj) :=
-  let config := (userArgs[0]?).getD .undef
-  optArg [.num nodeId, config] 1
-
-/-- Historical (BUG, confirmed live and by `bug_udf_get_neighbors_without_config_throws`; fixed
-by #2976): `node.getNeighbors()` with no argument failed; C returns the neighbours. -/
-theorem pre2976_getNeighbors_no_arg_errors (n : Nat) :
-    getNeighborsCallPre2976 n [] = .error "Error converting from js 'undefined' into type 'object'" := rfl
-
 /-- **Fixed by #2976**: `node.getNeighbors()` with no argument runs with no config (as in C). -/
 theorem getNeighbors_no_arg_ok (n : Nat) : getNeighborsCall (some n) [] = .ok (n, none) := rfl
 
 theorem getNeighbors_with_config (n : Nat) (o : Obj) (rest : List JV) :
     getNeighborsCall (some n) (.obj o :: rest) = .ok (n, some o) := rfl
 
-/-- An explicit `undefined` config is still a conversion error (unchanged by #2976). -/
+/-- An explicit `undefined` config is a conversion error. -/
 theorem getNeighbors_undefined_errors (n : Nat) :
-    getNeighborsCall (some n) [.undef] = .error "Error converting from js 'undefined' into type 'object'" ∧
-    getNeighborsCallPre2976 n [.undef] = .error "Error converting from js 'undefined' into type 'object'" :=
-  ⟨rfl, rfl⟩
+    getNeighborsCall (some n) [.undef] = .error "Error converting from js 'undefined' into type 'object'" :=
+  rfl
 
 /-- Called on anything but a current node entity (`getNeighbors.call({__falkor_node_id: 0})`,
 an edge, a node kept from an earlier call) it is an error, never another node's neighbours. -/

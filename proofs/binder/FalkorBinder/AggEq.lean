@@ -1,17 +1,6 @@
 /-
 # ORDER BY aggregate matching: `replace_agg_subtrees` and `raw_exprs_structurally_equal`
 
-| here | there |
-| --- | --- |
-| `RV`, `RD`, `RE` | raw (pre-bind) `ExprIR<Arc<String>>` payloads and trees |
-| `disc` | `std::mem::discriminant` of the `ExprIR` variant |
-| `constEq` | `constants_equal` binder.rs (`Value` `==` = `compare_value` value.rs) |
-| `isAggPlaceholder` | binder.rs |
-| `exprIrEq` | `expr_ir_eq` binder.rs |
-| `nodesEq` | `nodes_eq` binder.rs |
-| `structEq` | `raw_exprs_structurally_equal` binder.rs |
-| `replaceAgg` | `replace_agg_subtrees` binder.rs |
-
 Floats are opaque codes compared by a parameter `feq` (f64 `==`, so NaN ≠ NaN);
 `fint f = some i` says the float `f` is exactly the `i64` `i` (`fract() == 0`,
 in `[-2^63, 2^63)`, `f as i64 == i`). Other constants (lists, maps, temporals, …)
@@ -22,8 +11,7 @@ are `other ty x`, equal per `oeq ty` within one type and never across types
 * `exprIrEq_exact`, `exprIrEq_exact_any_kind`: exact on every value-compared payload.
 * `const_kinds_distinguished`, `order_by_float_rejected`, `order_by_float_equal`:
   `max(n.v % 3)` does not match `max(n.v % 4.0)`, still matches `max(n.v % 3.0)`
-  (W4-plan-3). The earlier counterexamples are kept as historical
-  `pre3254_const_kinds_conflated` / `pre3254_order_by_wrong_aggregate`.
+  (W4-plan-3).
 * `patterns_by_variant`: graph patterns are still compared by variant only.
 * `replaceAgg_id`: with no matching aggregate the ORDER BY tree is unchanged;
   `matchItem_spec`: every replacement is justified by `structEq`.
@@ -99,19 +87,6 @@ def exprIrEq : RD → RD → Bool
   | .regex k s, .regex l t => k == l && s == t
   | a, b => disc a == disc b
 
-/-- `expr_ir_eq` before #3254 (binder.rs at 24fc0a7): constants of different
-kinds, quantifiers and comprehensions fall back to the discriminant. -/
-def exprIrEqPre3254 : RD → RD → Bool
-  | .var a, .var b => a == b
-  | .func a _, .func b _ => a == b
-  | .const (.str a), .const (.str b) => a == b
-  | .const (.int a), .const (.int b) => a == b
-  | .const (.float a), .const (.float b) => feq a b
-  | .const (.bool a), .const (.bool b) => a == b
-  | .prop a, .prop b => a == b
-  | .param a, .param b => a == b
-  | a, b => disc a == disc b
-
 /- Drop the `__agg_order_by_placeholder__` children everywhere (the index
 filter of `nodes_eq`, applied at every level it recurses to). -/
 mutual
@@ -133,8 +108,6 @@ def eqSL (peq : RD → RD → Bool) : List RE → List RE → Bool
 end
 
 def structEq (a b : RE) : Bool := eqS (exprIrEq feq fint oeq) (strip a) (strip b)
-
-def structEqPre3254 (a b : RE) : Bool := eqS (exprIrEqPre3254 feq) (strip a) (strip b)
 
 /-! ## Equivalence -/
 
@@ -231,15 +204,6 @@ theorem const_kinds_distinguished (i : Int) (f : Nat) (hf : fint f ≠ some i) :
     exprIrEq feq fint oeq (.quant 0 "x") (.quant 1 "x") = false := by
   simp [exprIrEq, constEq, hf]
 
-/-- Historical (fixed by #3254): before it, constants of different kinds — and any
-two `Null`s / lists / maps / quantifiers of different kind — were "equal". -/
-theorem pre3254_const_kinds_conflated (i : Int) (f : Nat) :
-    exprIrEqPre3254 feq (.const (.int i)) (.const (.float f)) = true ∧
-    exprIrEqPre3254 feq (.const .null) (.const (.int i)) = true ∧
-    exprIrEqPre3254 feq (.const (.bool true)) (.const (.int i)) = true ∧
-    exprIrEqPre3254 feq (.const (.str "1")) (.const (.int 1)) = true ∧
-    exprIrEqPre3254 feq (.quant 0 "x") (.quant 1 "x") = true := ⟨rfl, rfl, rfl, rfl, rfl⟩
-
 /-- Graph patterns (`Pattern`, `PatternComprehension`, `NestedPlan`, here `other`)
 are still compared by variant only (deliberately: fresh anonymous names). -/
 theorem patterns_by_variant (t : Nat) : exprIrEq feq fint oeq (.other t) (.other t) = true := by
@@ -262,11 +226,6 @@ theorem order_by_float_equal (f : Nat) (hf : fint f = some 3) :
     structEq feq fint oeq (aggOf (.int 3)) (aggOf (.float f)) = true := by
   simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, placeholder, eqS, eqSL,
     exprIrEq, constEq, disc, hf]
-
-/-- Historical (fixed by #3254): before it, they compared equal, so ORDER BY
-`max(n.v % 4.0)` was replaced by the alias of `max(n.v % 3)`. -/
-theorem pre3254_order_by_wrong_aggregate (f : Nat) :
-    structEqPre3254 feq (aggOf (.int 3)) (aggOf (.float f)) = true := rfl
 
 /-- …while the same aggregate with another Int constant is told apart. -/
 theorem order_by_int_distinguished : structEq feq fint oeq (aggOf (.int 3)) (aggOf (.int 4)) = false := by

@@ -574,29 +574,6 @@ theorem listLitP_eq_ungated (o : Oracle) (hs : o.Safe) (hb : o.Bal) (F : Nat) (h
         exact hrest s2 hnf
   | _ => rfl
 
-/-! ## 5. History: `Oracle.Bal` with a swallowed slice bound, a changed parse -/
-
-/-- An expression parser with the pre-#3041 Rust's swallowed slice bound
-(cypher.rs at 8621212fc): `[1][(1..2]` is accepted,
-consuming a `(` it never closes. Abstracted: on a name it reads the name, on
-anything else it reads up to the next `|`. -/
-def peBad : P ET := fun s =>
-  match s.cur with
-  | .ident v => .ok (leaf (.var v)) s.adv
-  | _ => .ok (leaf .null) (s.1.dropWhile (· != .pipe), s.2)
-
-def oBad : Oracle := ⟨fun _ => peBad, fail, fail, fun _ _ => 0, fun _ => none, fun _ => false⟩
-
-/-- `(a)-->(b) WHERE [1][(1..2] | b]`, the tokens after the `[`. -/
-def badInput : List CT :=
-  [.lparen, .ident 1, .rparen, .dash, .dash, .gt, .lparen, .ident 2, .rparen,
-   .kw .where_, .lbrack, .int 1, .rbrack, .lbrack, .lparen, .int 1, .dotdot, .int 2, .rbrack,
-   .pipe, .ident 2, .rbrack]
-
-def rootOf : R (ET × Bool) → Option (EOp × Bool)
-  | .ok (t, b) _ => some (t.root, b)
-  | _ => none
-
 /-! ## 6. The memo: a failed attempt is never repeated, so failures are linear -/
 
 /-- `PatternComprehensionAttempt` (cypher.rs): `forb` ranges over the

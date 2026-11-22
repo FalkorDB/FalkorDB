@@ -211,23 +211,6 @@ theorem createRsIndex_ok (x : Idx) (label : String) (stop : Option (List String)
   · split at h; · cases h
     cases h; simp
 
-/-- The pre-#3274 statement of `createRsIndex_lang_err`: with NUL-free stopwords
-and language, an unsupported language is always reported, whatever the label. -/
-def LangErrSpec (x : Idx) : Prop :=
-  ∀ (label : String) (stop : Option (List String)) (l : String)
-    (langOk : String → Bool) (fresh : Nat), (stop.getD []).any hasNul = false →
-    hasNul l = false → langOk l = false →
-    createRsIndex x label stop (some l) langOk fresh = .error s!"Language is not supported: {l}"
-
-/-- Counterexample (#3274): the label `CString::new` now runs before the language
-check, so a label with a NUL byte and an unsupported language `x` reports the NUL
-error, not `Language is not supported: x`. -/
-theorem createRsIndex_lang_err_fails (x : Idx) : ¬ LangErrSpec x := by
-  intro h
-  have := h "L\x00" none "x" (fun _ => false) 0 rfl (by decide) rfl
-  simp [createRsIndex, hasNul] at this
-  exact absurd this (by decide)
-
 /-- What still holds on the new code: an unsupported language is reported when
 the stopwords, language and label are all NUL-free. -/
 theorem createRsIndex_lang_err_cleanLabel (x : Idx) (label : String) (stop : Option (List String))

@@ -27,8 +27,7 @@ import PendingCommit.PendingDeg
   the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
   modelled here are unchanged.
 * `effects_count` (:2013) is the documented sum; it counts each
-  cancelled node and relationship twice (`effectsCount_eq_pre`,
-  `effects_counts_cancelled`; history `pre3461_effects_ignores_cancelled`), and
+  cancelled node and relationship twice (`effects_counts_cancelled`), and
   adds `staged_labels_removed` (`effects_counts_staged_removal`).
 * `new`/`default` (:522, :515), `set_schema_baseline` (:547): field-level
   equations.
@@ -428,26 +427,9 @@ def effectsCount (p : PS.P) : Nat :=
     p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
     (p.remL.map (·.2.length)).sum + p.stagedRem
 
-/-- `effects_count` before #3461 (:1958 on 343e077f2): the cancelled sets were not summed. -/
-def effectsCountPre3461 (p : PS.P) : Nat :=
-  p.created.length + p.relTypes.length + p.deletedN.length + p.deletedR.length + p.newN.length +
-    p.existN.length + p.newR.length + p.existR.length + (p.setL.map (·.2.length)).sum +
-    (p.remL.map (·.2.length)).sum
-
-/-- History (fixed by #3461, f203972c5): `CREATE (a) DELETE a` left only
-`cancelled_nodes = {a}` and `effects_count` was 0. -/
-theorem pre3461_effects_ignores_cancelled : effectsCountPre3461 { PS.P0 with cancelledN := [0] } = 0 := rfl
-
-/-- **#3461**: `effects_count` is the old sum plus two per cancelled entity (and, since #3459,
-`staged_labels_removed`), so a segment that cancelled anything has a positive count. -/
-theorem effectsCount_eq_pre (p : PS.P) :
-    effectsCount p =
-      effectsCountPre3461 p + 2 * p.cancelledN.length + 2 * p.cancelledR.length + p.stagedRem := by
-  unfold effectsCount effectsCountPre3461; omega
-
 theorem effects_counts_cancelled (p : PS.P) (h : p.cancelledN ≠ [] ∨ p.cancelledR ≠ []) :
     effectsCount p > 0 := by
-  rw [effectsCount_eq_pre]
+  unfold effectsCount
   rcases h with h | h
   · have := List.length_pos_iff.mpr h; omega
   · have := List.length_pos_iff.mpr h; omega

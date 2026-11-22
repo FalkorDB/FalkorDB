@@ -401,11 +401,10 @@ def keylessGroups {A : Type} (rows : List A) : List (Unit × List A) :=
 
 theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length = 1 := rfl
 
-/-! ## DISTINCT state keyed by a hash (history: distinct.rs, aggregate.rs/:968 at ca36bfa15)
+/-! ## DISTINCT deduplication
 
-The per-group state is keyed by a group id instead; see `GroupId.lean`
-(`distinct_by_group_id_exact`, `fixed2977_collision_example`). The definitions below are the
-earlier hash-keyed model, kept as history. -/
+The per-group state is keyed by a group id; see `GroupId.lean`
+(`distinct_by_group_id_exact`, `fixed2977_collision_example`). -/
 
 /-- Keep the first row of each `key` class (`ValuesDeduper::is_seen`). -/
 def dedupBy {α β : Type} [DecidableEq β] (key : α → β) : List β → List α → List α
@@ -432,27 +431,11 @@ theorem dedup_injective {α β : Type} [DecidableEq α] [DecidableEq β] (h : α
       simp only [List.map_cons] at this
       rw [this]
 
-/-- …and with a collision it drops a row (`#2780`; the grouped-aggregate
-variant below is new). -/
+/-- …and with a collision it drops a row (`#2780`). -/
 theorem dedup_collision_drops :
     dedupBy (fun n : Nat => n % 2) [] [0, 2] = [0] ∧ dedupBy id [] [0, 2] = [0, 2] := by
   decide
 
-/-- Per-group DISTINCT, pre-#2977: the dedup table was keyed by `(distinct node,
-hash(group key row))`, not by the group key (aggregate.rs at ca36bfa15). Two
-groups whose key rows collide shared one `seen` set. -/
-def dcgGo {K : Type} [DecidableEq K] (hk : K → Nat) (k : K) :
-    List (Nat × Nat) → List (K × Nat) → Nat
-  | _, [] => 0
-  | seen, (k', v) :: rs =>
-    if (hk k', v) ∈ seen then dcgGo hk k seen rs
-    else (if k' = k then 1 else 0) + dcgGo hk k ((hk k', v) :: seen) rs
-
-def distinctCountGrouped {K : Type} [DecidableEq K] (hk : K → Nat) (rows : List (K × Nat))
-    (k : K) : Nat :=
-  dcgGo hk k [] rows
-
--- Two distinct keys 0 and 2 that hash alike (hk = · % 2), one value each.
 /-- `count(DISTINCT v)` fed batch by batch, with an optional wipe of the
 (runtime-global) dedup map between batches — what `ApplyOp`'s per-row mode
 does after every subquery (apply.rs). -/
@@ -617,8 +600,6 @@ theorem main_count_lit_list : evalStack (.list [.agg 2, .lit 5]) = .lst [.num 2,
 theorem main_size_singleton_agg : rsize (evalStack (.list [.agg 2])) = some 1 := by
   rw [evalStack_eq_evalRef]; simp [evalRef, rsize]
 
-/-! ### History: an aggregate that returns out of the stack machine (eval.rs at fb3d516d0) -/
-
 /-! ## finalize_percentile_{disc,cont}: index bounds and the NaN comparator -/
 
 /-- `percentileDisc` index `ceil(n·p) − 1` (aggregation.rs) with the
@@ -649,14 +630,6 @@ theorem cont_index_in_bounds (n a b : Nat) (hab : a ≤ b) (hb : 0 < b)
   have : (n - 1) * a < (n - 1) * b := Nat.mul_lt_mul_of_pos_left hlt hn
   have : (n - 1) * a / b < n - 1 := by rw [Nat.div_lt_iff_lt_mul hb]; exact this
   omega
-
-/-- History (e8f8a3017, fixed by #2912 b033aecc6): the percentile sort comparator
-`partial_cmp(..).unwrap_or(Equal)` (then aggregation.rs) with NaN (modelled as
-`none`) was not transitive: 1 ~ NaN ~ 3 but 1 < 3. std's sort panicked on it (and killed a
-live server; `lean_ops_aggregate::bug_percentile_with_nan_panics`). -/
-def pcmpEq : Option Nat → Option Nat → Ordering
-  | some a, some b => compare a b
-  | _, _ => .eq
 
 /-- Main (aggregation.rs): `sort_by(|a, b| sort_cmp_f64(a.get_numeric(),
 b.get_numeric()))` — `partial_cmp`, else NaN (`none`) above every number and equal to itself.

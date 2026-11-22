@@ -2,19 +2,6 @@
 Aggregate operator: expression analysis, accumulator zeroing/unbinding, `GroupKey`,
 `args_for`, `new` (graph/src/runtime/ops/aggregate.rs).
 
-| here | there |
-| --- | --- |
-| `Ex`, `Fn`, `Cst`            | `ExprIR<Variable>` tree (`DynNode`), `GraphFn`, `ExprIR::Constant` |
-| `hasAgg` / `hasAggL`         | `subtree_has_aggregate` (aggregate.rs) |
-| `analyzeAgg`                 | `AggregateOp::analyze_agg_tree` (aggregate.rs) |
-| `analyzeKey`, `analyze`      | `AggregateOp::analyze` (aggregate.rs) |
-| `setZero` / `setZeroL`       | `AggregateOp::set_agg_expr_zero` (aggregate.rs) |
-| `unbindAcc` / `unbindAccL`   | `unbind_agg_accumulators` (aggregate.rs) |
-| `gkEq`, `gkHash`             | `PartialEq` / `Hash for GroupKey` (aggregate.rs) |
-| `hashU64` (history)          | `HashU64::hash_u64` (an earlier `Row` hash; was aggregate.rs/:1258) |
-| `argsFor`                    | `VectorizableAgg::args_for` (aggregate.rs) |
-| `AggSt.new`                  | `AggregateOp::new` (aggregate.rs) |
-
 `is_aggregate()` = `matches!(fn_type, FnType::Aggregation{..})` (functions/mod.rs), and the
 `initial` value lives in that variant, so a function is aggregate iff `init = some z`.
 -/

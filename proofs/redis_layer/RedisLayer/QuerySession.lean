@@ -6,29 +6,12 @@ Single-thread view of one session; the RwLock, the Redis GIL and the per-graph
 Redis — AXIOMATISED rows for `lock_gil`/`release_gil`, which only call
 `RedisModule_ThreadSafeContext{Lock,Unlock}`). Revision: PR #3816 (af228a34f).
 
-| here | there |
-| --- | --- |
-| `Th`, `holdsGil`, `gilAcquire`, `gilDrop` | `holds_gil`, `Gil::acquire`, `Gil::drop`, `hold_gil`, `GIL_CTX` |
-| `S`, `begin`, `beginWriter`   | `QuerySession::begin`, `begin_writer` (main thread only since #3816: `debug_assert!(holds_gil())`) |
-| `beginWriterChecked`          | `begin_writer_checked` (#3559): `begin_with`, then `escalate`; a refusal drops the reader `escalate` re-took |
-| `beginWith`, `readPastGate`, `mayWaitAtGate` | `begin_with`, `read_past_gate`, `may_wait_at_gate`; `WriterGate::is_closed`/`close`/`wait_until_open` are the `gateWait`/`gateClose`/`gateOpen` events |
-| `release`                     | `release_locks`, `Drop` |
-| `withGraph`, `withGraphMut`   | `with_graph`, `with_graph_mut` |
-| `Att`, `pollLoop`, `acquireWrite` | `acquire_write` (#3816): per attempt GIL, check, `try_write_arc_for(slice)`; the gate closes after `GATE_AFTER_SLICES` = 2 misses; one blocking try when the interval is ≤ 0 or the thread already holds the GIL |
-| `authorize`, `World`          | `authorize_write`: registry, then `reauthorize_write` |
-| `escalate`, `upgrade`         | `escalate`, `upgrade_to_write` (and the trait shim) |
-| `reauthorize`                 | `reauthorize_write` |
-| `Version`, `SS`, `writeVersion`, `isStale`, `versionIsCurrent`, `checkFork`, `upgradeS`, `upgradeSt` | #3657: `enum Version`, `write_version`, `is_stale`, `version_is_current`, `is_writer`, `check_fork`, `facts` |
-| `CommitError`, `WriteAbort.ofCommit` | `From<CommitError> for WriteAbort` |
-
 **Write-lock escalation (#3816).** Off the main thread `escalate` waits for the write lock in
 `WRITE_LOCK_POLL_INTERVAL` slices, giving the GIL back between them, and runs the
 registry/role check (`authorize_write`) under each slice's GIL hold, *before* the lock is
 taken. A refusal leaves the session a **reader** again (read lock re-taken), so a second
 `upgrade_to_write` re-runs every check (`upgrade_refused_rechecks`). `escalate_writer` /
-`upgrade_twice` speak of a *successful* escalation; the earlier unconditional forms (a refused
-session stayed a writer, `Pre3816.pre3816_upgrade_twice_skips_checks`) are kept as
-`Pre3816.escalate_writer` / `Pre3816.upgrade_twice` on the earlier model. `upgradeS`/`upgradeSt`
+`upgrade_twice` speak of a *successful* escalation. `upgradeS`/`upgradeSt`
 leave a refused session's `writer` flag false.
 -/
 namespace RedisLayer.QuerySession
@@ -453,7 +436,7 @@ theorem upgrade_unregistered (t : Th) (i : Int) (c : Option (Bool × Bool)) (g :
 
 /-- **A refused upgrade re-checks** (#3816): the session is a reader again, so calling
 `upgrade_to_write` again runs every check again and reports the same refusal while it
-stands — it no longer reports success (cf. `Pre3816.pre3816_upgrade_twice_skips_checks`). -/
+stands. -/
 theorem upgrade_refused_rechecks (s s' : S) (i : Int) (c : Option (Bool × Bool)) (g : Bool)
     (ws : List World) (f : Facts) (h : upgrade s i (⟨false, c, g⟩ :: ws) f = some (some .graphUnregistered, s')) :
     (upgrade s' i (⟨false, c, g⟩ :: ws) f).map (·.1) = some (some .graphUnregistered) := by
@@ -690,64 +673,5 @@ theorem ofCommit_invalid (m : String) : WriteAbort.ofCommit (.invalid m) = .inva
 /-- The two refusals map to different aborts, which the retry loops tell apart. -/
 theorem ofCommit_ne (m : String) : WriteAbort.ofCommit .stale ≠ WriteAbort.ofCommit (.invalid m) := by
   simp [WriteAbort.ofCommit]
-
-/-! ## Historical: the earlier `escalate`
-
-`escalate` took the GIL and then the write lock in one go and recorded writer mode
-*before* `upgrade_to_write` ran the registry/role checks, so a refused session stayed a
-writer and a second `upgrade_to_write` took the already-a-writer early return. -/
-namespace Pre3816
-
-def escalate (s : S) : Bool × S :=
-  match s.mode with
-  | some (.writer _) => (false, s)
-  | m =>
-    let t := dropMode m s.th
-    let (nr, t) := gilAcquire t
-    (true, ⟨some (.writer nr), { t with log := t.log ++ [.writeLock] }⟩)
-
-def upgrade (s : S) (registered : Bool) (ctx : Option (Bool × Bool)) (f : Facts) :
-    Option WriteAbort × S :=
-  let (esc, s) := escalate s
-  if esc then
-    if !registered then (some .graphUnregistered, s) else (reauthorize f ctx, s)
-  else (none, s)
-
-theorem escalate_of_writer (s : S) (nr : Bool) (h : s.mode = some (.writer nr)) : escalate s = (false, s) := by
-  simp [escalate, h]
-
-theorem escalate_mode (s : S) : ∃ nr, (escalate s).2.mode = some (.writer nr) := by
-  unfold escalate
-  split
-  · rename_i nr h; exact ⟨nr, h⟩
-  · exact ⟨_, rfl⟩
-
-/-- Pre-#3816 `escalate_writer`: every escalation, refused or not, left a writer. -/
-theorem escalate_writer (s : S) : withGraphMut (escalate s).2 = true := by
-  obtain ⟨nr, h⟩ := escalate_mode s
-  simp [withGraphMut, h]
-
-theorem upgrade_state (s : S) (r : Bool) (c : Option (Bool × Bool)) (f : Facts) :
-    (upgrade s r c f).2 = (escalate s).2 := by
-  unfold upgrade
-  obtain ⟨e, s'⟩ := escalate s
-  simp only
-  split <;> (try split) <;> rfl
-
-/-- Pre-#3816 `upgrade_twice`: a second upgrade reported success unconditionally. -/
-theorem upgrade_twice (s : S) (r : Bool) (c : Option (Bool × Bool)) (f : Facts) :
-    (upgrade (upgrade s r c f).2 r c f).1 = none := by
-  rw [upgrade_state]
-  obtain ⟨nr, h⟩ := escalate_mode s
-  simp [upgrade, escalate_of_writer _ nr h]
-
-/-- **The hazard #3816 removes**: refused (graph gone), then asked again, the old code
-reported success without checking. Fixed: `upgrade_refused_rechecks`. -/
-theorem pre3816_upgrade_twice_skips_checks (t : Th) (c : Option (Bool × Bool)) (f : Facts) :
-    (upgrade (begin t) false c f).1 = some .graphUnregistered ∧
-      (upgrade (upgrade (begin t) false c f).2 false c f).1 = none :=
-  ⟨by simp [upgrade, escalate, begin], upgrade_twice _ _ _ _⟩
-
-end Pre3816
 
 end RedisLayer.QuerySession

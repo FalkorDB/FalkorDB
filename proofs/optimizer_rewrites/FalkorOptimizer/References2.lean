@@ -1,13 +1,6 @@
 /-
 # Where the oracle is asked: the tree walks of the four passes
 
-| here | there (origin/main 8743953a8) |
-| --- | --- |
-| `Plan`, `Frame`, `Ctx`, `plug` | an `orx_tree` node addressed by a zipper: parents with their other children |
-| `ancestorsRead`      | the `while let Some(parent)` walk of `reduce_expand_into` (`reduce_expand_into.rs`), `reduce_bound_edge` (`reduce_bound_edge.rs`), `reduce_var_len_path` (`reduce_var_len_path.rs`) |
-| `wholeRead`          | `intermediate_unreferenced` (`fuse_anonymous_traverse.rs`: BFS of the *whole* plan) |
-| `readOutside`        | `variable_read_outside` of PR #2918 (parents *and* their other subtrees; not merged) |
-
 Theorems: `anyRead_iff`, `readOutside_iff` (the PR's walk is exactly "some operator outside the
 subtree reads v"), `anyRead_plug` (whole plan = subtree ∪ outside), `wholeRead_covers` (the
 fusion check sees every reader anywhere, hence `fuse_unread_sound` with `refsNew_complete`),

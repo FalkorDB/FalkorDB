@@ -6,8 +6,7 @@ import FalkorOpsApply.Correlated
 compares origins (two args with the same origin would join). The batches Apply/Optional/Merge hand a
 sub-plan are always `tag xs 0` (`clone_active_rows_seq_origin`: distinct sequential origins), so
 the property the batched idiom needs is `SepT`, separability on those batches only. `applyBatched_eq_ref_T`
-shows `SepT` suffices; `vhjPO_sepT` shows the per-origin join has it (`vhj_not_separable` is the earlier
-join, `Correlated.vhj`, which compared no origins).
+shows `SepT` suffices; `vhjPO_sepT` shows the per-origin join has it.
 -/
 namespace VhjSep
 open Correlated
@@ -105,8 +104,7 @@ theorem vhjPO_single [BEq k] (lhs : α → List a) (rhs : α → List b) (lk : a
 
 /-- **PROVEN** (#3035, `ValueHashJoinOp` with `per_origin`): the per-origin join is separable on the
 batches Apply/Optional/Merge hand a sub-plan (`tag xs 0`): its result is the concatenation, in
-argument order, of each row's own join re-tagged with that row's origin. The known counterexample
-`Correlated.vhj_batched_16_vs_8` (16 rows against 8) is the join WITHOUT the origin test. -/
+argument order, of each row's own join re-tagged with that row's origin. -/
 theorem vhjPO_sepT [BEq k] (lhs : α → List a) (rhs : α → List b) (lk : a → k) (rk : b → k) :
     SepT (vhjPO lhs rhs lk rk) := by
   intro xs
@@ -119,7 +117,8 @@ theorem applyBatched_vhjPO [BEq k] (merge : α → (a × b) → γ) (lhs : α �
     applyBatched merge (vhjPO lhs rhs lk rk) xs = applyRef merge (vhjPO lhs rhs lk rk) xs :=
   applyBatched_eq_ref_T merge _ (vhjPO_sepT lhs rhs lk rk) xs
 
-/-- The #3012 repro under the per-origin join: batched = per-row = 8 rows. -/
+/-- The #3012 repro (`UNWIND [1,2] AS x MATCH (a:A),(b:B) WHERE a.v = b.v RETURN count(*)`)
+under the per-origin join: batched = per-row = 8 rows. -/
 theorem vhjPO_16_vs_8_fixed :
     (applyBatched (fun x y => (x, y)) (vhjPO scanA scanB (fun _ => (1 : Nat)) (fun _ => (1 : Nat))) [1, 2]).length = 8 := by
   rw [applyBatched_vhjPO]; decide

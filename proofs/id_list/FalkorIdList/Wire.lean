@@ -21,7 +21,7 @@ The roaring blob is abstract: `Roaring` is a structure of three functions over
 the *set* (as its ascending list), and `RoaringOK` states the two things the
 format relies on — a serialized set deserializes back to itself, and whatever
 deserializes is a set of `u64`s. Nothing is assumed about *which* blobs are
-accepted; see `REPORT.md` for what roaring 0.11.5 actually accepts.
+accepted (what roaring 0.11.5 actually accepts is not modelled).
 
 A Rust `panic!`/arithmetic overflow is `Err.panic`; `readIds_never_panics`
 proves it unreachable.

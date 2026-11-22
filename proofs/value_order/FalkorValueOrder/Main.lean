@@ -2,8 +2,7 @@ import FalkorValueOrder.SortCmp
 /-!
 # Main (4a4f2a72f): `sort_cmp` with `sort_cmp_f32`, and `Hash for Value`
 
-`scF32`, `fkey32`, the hash-consistency proof, the per-shape key claims and the
-`pre14e341_*` counterexamples, stated for this project's `hwords` (Model.lean, main's hash).
+`scF32`, `fkey32`, the hash-consistency proof, and the per-shape key claims, stated for this project's `hwords` (Model.lean, main's hash).
 
 | here | there (origin/main 4a4f2a72f, graph/src/runtime/value.rs) |
 | --- | --- |
@@ -429,52 +428,6 @@ theorem point_nans_one_key (s s' : Bool) (p p' : Nat) (y : F) :
 /-- Signed zeros nested in a list stay apart too. -/
 theorem signed_zeros_apart_nested :
     scMain (.list [.vecf32 [.negZero]]) (.list [.vecf32 [.num 0]]) = .lt := by decide
-
-/-! ## `pre14e341_*`: history
-
-A `sort_cmp_f32` with `sort_cmp_f64`'s order, and vector/point components hashed
-by `to_bits`, would let `sort_cmp`-equal components hash apart. -/
-
-mutual
-def hwordsPre14e341 : V → List UInt64
-  | .null => [0]
-  | .bool b => [1, if b then 1 else 0]
-  | .int i => [2, w i]
-  | .flt f => [2, floatWord f]
-  | .str s => [3, UInt64.ofNat s, 0xff]
-  | .list xs => [4, UInt64.ofNat xs.length] ++ hwordsListPre14e341 xs
-  | .map ks vs => [5, UInt64.ofNat ks.length] ++ hwordsMapPre14e341 ks vs
-  | .node n => [6, UInt64.ofNat n]
-  | .vecf32 xs => [9] ++ xs.map (fun f => UInt64.ofNat (bits32 f))
-  | .point lat lon => [10, UInt64.ofNat (bits32 lat), UInt64.ofNat (bits32 lon)]
-
-def hwordsListPre14e341 : List V → List UInt64
-  | [] => []
-  | x :: xs => hwordsPre14e341 x ++ hwordsListPre14e341 xs
-
-def hwordsMapPre14e341 : List Nat → List V → List UInt64
-  | k :: ks, v :: vs => [UInt64.ofNat k, 0xff] ++ hwordsPre14e341 v ++ hwordsMapPre14e341 ks vs
-  | _, _ => []
-end
-
-def scPre14e341 : V → V → Ordering := sc scF64
-
-def nan2 : F := .nan true (2 ^ 51 - 1)
-
-/-- Two vector NaNs were `sort_cmp`-equal but hashed apart (Rust 2 groups, C 1). -/
-theorem pre14e341_vec_nan_hash_differs :
-    scPre14e341 (.vecf32 [F.qnan]) (.vecf32 [nan2]) = .eq ∧
-    hwordsPre14e341 (.vecf32 [F.qnan]) ≠ hwordsPre14e341 (.vecf32 [nan2]) := by decide
-
-/-- `-0.0`/`0.0` vector components were `sort_cmp`-equal but hashed apart. -/
-theorem pre14e341_vec_zero_eq_but_hash_differs :
-    scPre14e341 (.vecf32 [.negZero]) (.vecf32 [.num 0]) = .eq ∧
-    hwordsPre14e341 (.vecf32 [.negZero]) ≠ hwordsPre14e341 (.vecf32 [.num 0]) := by decide
-
-theorem pre14e341_point_zero_eq_but_hash_differs :
-    scPre14e341 (.point .negZero (.num 0)) (.point (.num 0) (.num 0)) = .eq ∧
-    hwordsPre14e341 (.point .negZero (.num 0)) ≠ hwordsPre14e341 (.point (.num 0) (.num 0)) := by
-  decide
 
 #print axioms scMain_total
 #print axioms main_hash_consistent

@@ -1,25 +1,9 @@
 /-
 # The rest of `lexer.rs` and `string_escape.rs`
 
-`Lexer::pos`, `current`, `current_str`, `set_pos`, `lex_numeric`, `err_ctx`,
-`format_error`, the `Token` `Display` impl, and `cypher_escape`. Line numbers
-are from origin/main (737dfb5da).
-
-* **`posF_boundary`** — `pos(false)` is always a char boundary.
-* **`next_pos_ge`** — after `next()`, `pos(true)` is at or past the old
-  `pos(false)`: the `&str[pos..pos(true)]` slice `parse_named_exprs` takes
-  (cypher.rs) is well-ordered.
-* **`currentStr_ok`** — `current_str` never slices off a boundary.
-* **`lexNum_zero_exp`** — `0e5` is one float literal.
-* **`lexNum_slices_ascii`** — every byte slice `lex_numeric` takes
-  (lexer.rs) sits after an all-ASCII prefix, hence on a
-  char boundary (`ascii_boundary`): `lex_numeric` never panics.
-* **`errCtx_ok`** — `err_ctx`'s window ends are boundaries, in order, so the
-  slice never panics; a short query is quoted whole.
-* **`formatError_prefix`** — `format_error(e)` starts with `e`.
-* **`setPos_next`** — `set_pos(p)` rebuilds exactly the state `next()` builds.
-* **`unesc_escape`** — `cypher_unescape (cypher_escape s) = s` for every `s`.
-* **`tokDisplay_injective_punct`** — punctuation tokens display distinctly.
+`Lexer::pos`, `current`, `current_str`, `set_pos`, `lex_numeric`, `err_ctx`, `format_error`,
+the `Token` `Display` impl and `cypher_escape`: every slice is on a char boundary, `set_pos`
+rebuilds the state `next()` builds, and `cypher_unescape (cypher_escape s) = s`.
 -/
 import FalkorLexer
 

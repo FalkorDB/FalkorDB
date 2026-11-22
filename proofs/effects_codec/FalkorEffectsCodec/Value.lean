@@ -931,7 +931,7 @@ theorem nest_wf (utf8 : Bytes → Bool) : ∀ d, WF utf8 (nest d)
 a value `d` deep from `8d + 4` bytes, for every `d`. The decode itself is
 iterative (`value.rs`), but `Value` is recursive and its `Drop` is not,
 so this is the input that overflows the stack *after* a successful decode —
-see `REPORT.md`, `hostile_deep_nesting_*`. -/
+see `README.md`, `hostile_deep_nesting_*`. -/
 theorem nest_bytes_length : ∀ d,
     ((List.replicate d (w32 T_ARRAY ++ w32 1)).flatten ++ w32 T_NULL).length = 8 * d + 4
   | 0 => rfl

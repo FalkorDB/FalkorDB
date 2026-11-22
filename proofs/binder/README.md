@@ -39,7 +39,7 @@ Every variable id is minted as the **current size of its scope table**. The bind
 openCypher binds a pattern left to right, clause by clause.
 
 - `agree_on_outer_refs` proves the binder's order (all nodes, then all relationships) and textual order accept the same patterns when every inline property map only mentions variables from earlier clauses.
-- **Clauses are not folded.** `MATCH p MATCH q`, `CREATE … CREATE …` and `OPTIONAL MATCH p MATCH q` stay separate, so `MATCH (a)-[r:R]->(b) MATCH (c {v: r.w})` binds (`q2923_fixed`, `match_rel_reused`). `q2923_cause` shows that folding them into one pattern (`fold_merges`) would fail with "'r' not defined" under nodes-first binding (issue #2923).
+- **Clauses are not folded.** `MATCH p MATCH q`, `CREATE … CREATE …` and `OPTIONAL MATCH p MATCH q` stay separate, so `MATCH (a)-[r:R]->(b) MATCH (c {v: r.w})` binds (`q2923_fixed`, `match_rel_reused`). (Issue #2923.)
 
 **5. Are the type checks right?**
 
@@ -89,7 +89,6 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committ
 | W2-binder-5 | `orderBy_leaks` | ORDER BY copies leak past WITH/RETURN: a spurious "already declared", and `RETURN *` returns ORDER BY-only variables | **Open** (PR #3016 not merged) |
 | W2-binder-7 | `defineName_ignores_parent` | A pattern predicate in `WITH … WHERE` rebinds a parent variable as a fresh one: 3 rows where C returns 1 | **Open** (PR #3062 not merged) |
 | W4-plan-2 | `negate_rejected` | `RETURN true AND -null` → Rust "Type mismatch", C `null`; `Length`, `ListComprehension`, `MapProjection` are rejected the same way | **Open** |
-| W6-opt-1 | `pushed_read_unbound` | Filter push-down gives an OPTIONAL MATCH inside `CALL {}` the outer query's ids: "Variable n not found" where C returns rows | **Open** |
 | #1334 | `bug1334_pattern_predicate_declares_var` (property `PatternPredDeclaresNothing`) | A WHERE pattern predicate may mint a new named variable: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds and returns every `n0`; C rejects it (issue #1334; the C error message is not recorded here) | **Open** |
 | #3450 | `bug3450_remove_label_kept_across_with` (property `StampedLabelsHeld`, `RemoveLabels.lean`) | `REMOVE a:A` leaves `A` in the accumulated label set, which `WITH a` copies and `update_all_node_labels` stamps on the next MATCH: `MATCH (a:A) REMOVE a:A WITH a MATCH (a)-[:R]->(b)` gives 0 rows, C 1. The fixed stamp `specStamp` satisfies the property (`specStamp_held`). The issue's CREATE/MERGE back-propagation half does not reproduce | **Open** |
 
@@ -109,7 +108,7 @@ There are no CONDITIONAL rows in this project.
 | `Table.lean` | The scope table `Env`, `Env.Covers`, `freshVar`, `mint_fresh_iff`, `erase_breaks_covers` |
 | `Resolve.lean` | The binder state `St`, `resolve` (`resolve_name`), `visible`, `ensureType`, `defineName`, `projectName` |
 | `Projection.lean` | `bindProjection` (WITH/RETURN), `projectItems`, the ORDER BY and WHERE-copy counterexamples |
-| `Pattern.lean` | Nodes-first `rustBind` vs textual `specBind`, the clause `fold`, `q2923_cause` |
+| `Pattern.lean` | Nodes-first `rustBind` vs textual `specBind` |
 | `Scopes.lean` | `mergeSV`, `foreachRestore`, comprehension cleanup, `callBodyScope`, label accumulation, `unionCheck`, `validateImport` |
 | `RemoveLabels.lean` | #3450: `held` (point-in-time label set, REMOVE clears), `rsStamp`/`specStamp`, property `StampedLabelsHeld` |
 | `Stack.lean` | The scope stack `BSt`, `sortedScopeVars`, label updates (`updNode`) |
@@ -132,6 +131,15 @@ The project has no Lake dependencies.
 | PROVEN | 44 |
 
 Every function in `binder.rs` (and `Planner::fresh_var`) is PROVEN. "PROVEN" here means the function's model has theorems stating what it does; for the functions involved in the bugs above, those theorems include the counterexamples.
+
+## Spec vs C disagreements (not Rust-vs-C bugs)
+
+- `RETURN false AND (1+2)`, `WITH 2 AS x RETURN false AND x`, `false AND size([1])`: Rust `false` (arithmetic, variables and calls are "may be boolean", `arith_accepted`, and AND short-circuits at runtime), C `Type mismatch` (static check). openCypher: type error.
+- `MATCH (a)-[r*1..2]->(c) WITH r WHERE r.w = 1 RETURN count(*)`: Rust `Type mismatch: … but was Path` (the projected `r` is no longer in `varlen_rel_var_ids`), C `1`; without the WITH both return `1`. openCypher rejects `r.w` on a list.
+- `date({year:2020, month:null})`, `duration({days:null})`, `localtime({hour:null})`: Rust treats a null field as absent, C errors. Not caused by `rewrite_struct_constructor` (the map path agrees).
+- Rust follows openCypher and C does not: `MATCH p=(a)-->(b) MATCH (p)` rejected; `reduce(a = 0, a IN …)` rejected; `RETURN [(n)-->(m)|m], m` rejected; within one MATCH `(a)-[r]->(), (a)-[s]->()` enforces r≠s.
+- Both accept what openCypher rejects: `WITH 1 AS a MATCH (a)` (`ensureType_accepts_any_binding`), `WITH n.v AS k WHERE n.v > 0`.
+- #3011 (not in `256ab4d3f`) generalises `replace_agg_subtrees` to `replace_projected_subtrees`, guarded by `is_alias_rewritable`, which admits `Constant(Bool|Int|Float|String)`; `expr_ir_eq` compares constants by value and kind (`const_kinds_distinguished`).
 
 ## What the model does not cover
 

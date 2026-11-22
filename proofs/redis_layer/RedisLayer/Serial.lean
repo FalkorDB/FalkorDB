@@ -6,18 +6,6 @@ Encoders emit the logical `Writer` calls (`BufferedIO.W`); decoders consume them
 `BufferedIO.roundtrip` the reader hands back exactly those calls, so a token-level round
 trip is a byte-level one. Strings are byte lists; `lossy` is `String::from_utf8_lossy`,
 of which we use only that it is the identity on valid UTF-8 (every Rust `String`).
-
-| here | there (`origin/main`) |
-| --- | --- |
-| `nullTerm`, `strip`       | `null_terminated` `:139,:244`, `strip_null_terminator` (and the inline copy in `Header::decode`) |
-| `encH`, `decH`            | `Header::encode`, `Header::decode` |
-| `fromGraph`               | `Header::from_graph` |
-| `encField`, `decField`    | field loop of `encode_schema_index_block`, `decode_index_field` (#3514: one entry may carry several types, `"no"` = phonetic off) |
-| `encIdx`, `encCons`       | `encode_schema_index_block`, `encode_constraint_block` |
-| `decEntry`                | `decode_schema_entry` |
-| `encSchema`, `decSchema`  | `Schema::encode`, `Schema::decode` |
-| `VKS`, `DS`               | `VirtualKeyState::new/clear`, `DecodeState::new/clear` |
-| `schemaFromGraph`         | `Schema::from_graph` |
 -/
 namespace RedisLayer.Serial
 open RedisLayer.BufferedIO (W Bytes)

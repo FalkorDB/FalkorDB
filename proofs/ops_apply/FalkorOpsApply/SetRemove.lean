@@ -1,16 +1,6 @@
 /-
 SET and REMOVE (graph/src/runtime/ops/set.rs, remove.rs).
 
-| here | there |
-| --- | --- |
-| `SetSt.new`, `RemoveSt.new`   | `SetOp::new` (set.rs), `RemoveOp::new` (remove.rs) |
-| `opNext`                      | `SetOp::next` (set.rs), `RemoveOp::next` (remove.rs) |
-| `perRow`                      | `Runtime::set_batch` (set.rs), `Runtime::remove_batch` (remove.rs) |
-| `resolveItems`                | `Runtime::resolve_set_items` (set.rs) |
-| `clearForReplace`                 | `clear_node_attrs_for_replace` (set.rs), `clear_relationship_attrs_for_replace` (set.rs), `Pending::clear_{node,relationship}_attributes` (pending.rs) |
-| `setProp`, `setFrom`, `setAttrItem` | `Runtime::set_inner` (set.rs) |
-| `removeItem`, `removeInner`   | `Runtime::remove` (remove.rs) |
-
 Attribute store of one entity kind: committed `cv e k` and this query's pending writes
 `pv e k` (`some none` = pending null = removal); `get` = `get_{node,relationship}_attribute`
 (pending overrides committed, null = absent). `ckeys e` = the committed keys
@@ -152,13 +142,10 @@ theorem setFrom_merge_keeps (ckeys : E → List K) (s : Store E K V) (e : E)
       exact ih _ (fun q hq => h q (by simp [hq]))
   exact this _ m hk
 
-/-- **History (pre-#3524, fixed by #3524 af45ca776; FINDINGS "#2776, wider").** With `=`, the
-no-clear branch kept a PENDING key the source lacks, e.g. `CREATE (a {x:1}), (b {y:2}) SET a = b`
-(`a.x` survived: Rust `{x:1,y:2}`, C `{y:2}`) and `SET r.w=5 SET r={y:2}` on a relationship. -/
+/-- A store with a pending key the source lacks: `CREATE (a {x:1}), (b {y:2}) SET a = b`. -/
 def demoStore : Store Nat Nat Nat := { cv := fun _ _ => none, pv := fun e k => if e = 0 ∧ k = 0 then some (some 1) else none }
 
-/-- **Fixed by #3524**: the same state and source on main. The staged `x` is gone and only the
-source's `y` remains. -/
+/-- **#3524**: the staged `x` is gone and only the source's `y` remains. -/
 theorem fixed3524_clears_pending :
     get (setFrom (fun _ => []) demoStore 0 true [(1, some 2)]) 0 0 = none ∧
     get (setFrom (fun _ => []) demoStore 0 true [(1, some 2)]) 0 1 = some 2 := by decide

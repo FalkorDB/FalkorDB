@@ -27,19 +27,6 @@ a sub-plan containing one is separable up to permutation only (issue #3070's fam
 
 ## Operator inventory (`build_batch_op`, `runtime.rs`) and the combinator modelling it
 
-| Rust operators | origin handling in the Rust | here |
-| --- | --- | --- |
-| `Argument` | returns the argument batch (`set_argument_batch`, `batch.rs`) | `id` (`Adm.argument`) |
-| `AllNodeScan`/`NodeByLabelScan`, `NodeByIdSeek`, `NodeByLabelAndIdScan`, `NodeBy/EdgeByIndexScan`, `NodeBy/EdgeByFulltextScan`, `NodeBy/EdgeByVectorScan`, `Unwind`, `LoadCsv`, `CondVarLenTraverse`, `AllShortestPaths`, `ExpandInto`, plain `CondTraverse` | all drive `BatchedResultEmitter::emit_lazy` (`batched_result_emitter.rs`): the per-row closure sees one parent row, results are `gather`ed with the parent's origin; memo caches (`edge_type_indices`, `all_edges_cache`) are pure | `expandF g c` (`Adm.expand`) |
-| `ProcedureCall` | `pending_origin = batch.origin_row(source_row)`, `push_merged(.., origin)` (`procedure_call.rs`) | `expandF` |
-| `Filter` | `set_selection` on the child batch (`filter.rs`), origins untouched | `expandF` with `g x = if p x then [x] else []` |
-| `Project`, `PathBuilder` | per-row origin copy (`project.rs`), in-place `write_column` (`path_builder.rs`) | `expandF` with `g x = [h x]` |
-| fused optional `CondTraverse` | matched rows, then ONE NULL-padded batch per seeded child batch (`cond_traverse.rs`) | `optF` (`Adm.optExpand`, permutation only) |
-| `SemiApply`/`AntiSemiApply` | emits the *input* batch with a selection (`semi_apply.rs`): outer origins kept; its own tagging is internal (`clone_active_rows_seq_origin`) | `semiF` (equals `expandF` of a filter, `semiF_eq`) |
-| `OrApplyMultiplexer` | same shape over several branches (`or_apply_multiplexer.rs`) | `orF` (`orF_eq`) |
-| `ValueHashJoin` (per-origin) | build/probe tables keyed by origin, output origin = left row's (`value_hash_join.rs`) | `vhjF` (`Adm.vhj`) |
-| `Apply` in per-row mode | env keeps the outer origin (`apply.rs`, `Row::merge` ignores origins); planner-built `Apply`s inside another plan are pattern-comprehension chains ending in `Aggregate` (`planner/mod.rs`), so `can_batch` is false for them | `perRowF` (`Adm.perRow`) |
-
 NOT separable, with a counterexample theorem each:
 * `Aggregate`, `CartesianProduct`, `Sort`, `Limit`, `Skip`, `Distinct`, `Union`, `Merge`, `Optional`,
   `Apply` (batched): blacklisted by Apply's guard (`applyGuard`); `Correlated.count_not_separable`,

@@ -2,17 +2,6 @@ import FalkorBinder.Resolve
 /-
 # Binding expressions: `bind_expr_node` and its wrappers
 
-| here | there |
-| --- | --- |
-| `NE` / `BE` | raw `ExprIR<Arc<String>>` / bound `ExprIR<Variable>` trees (the variants the binder treats specially) |
-| `reserve` | `fresh_var` + insert under `_quant_{s}_{id}` / `_lc_…` / `_reduce_acc_…` / `_reduce_iter_…` (binder.rs) |
-| `bindNode`, `bindL` | `bind_expr_node` binder.rs |
-| `NE.paren`, `bindNode` on it | the `Paren` early return binder.rs: `(x)` binds to `x`'s tree |
-| `NE.andOr`, `BE.andOr`, `flatB` | `And`/`Or` and the `ExprIR::and_of`/`or_of` return binder.rs, ast.rs |
-| `bindExpr`, `bindExprLocals` | `bind_expr` binder.rs, `bind_expr_with_locals` binder.rs |
-| `bindSetItems` | `bind_set_items` binder.rs |
-| `selfRef` | `check_unbound_self_referential` binder.rs |
-
 `bind_graph` (for pattern predicates / comprehensions) defines each pattern
 name in the current table (`defineName … true`, Pattern.lean has the finer
 node/relationship order). The constant fold and call rewrites are Fold.lean;

@@ -5,9 +5,8 @@ import PlannerBuild.Clauses
 * `query_correct`: if every clause plan implements its clause (the theorems of
   Clauses.lean), the plan `plan_query` stitches evaluates to the openCypher
   clause-sequence semantics `Fₙ ∘ … ∘ F₂ ∘ ⟦c₁⟧`.
-* `selfloop_ignores_chain`: `ExpandInto(scan, res)` never runs `res` — the shape of an earlier
-  planner, kept as a historical counterexample. The planner builds
-  `ExpandInto(Scan(res))` (mod.rs), `selfloop_scan_keeps_chain`.
+* `selfloop_scan_keeps_chain`: the planner builds `ExpandInto(Scan(res))` (mod.rs), so the
+  chain planned so far is the scan's input.
 * `cp_stitch_loses_correlation` / `cp_stitch_sound`: a MATCH plan
   prepended to the next MATCH's CartesianProduct (mod.rs) is
   correct only when no other component reads its variables. The MATCH arm
@@ -15,8 +14,7 @@ import PlannerBuild.Clauses
   (`PathBind.planMatchArm_joined_wrapped`), so it is not stitched this way.
 * A MATCH after a MATCH that binds none of the bound variables is wrapped as a
   one-branch CartesianProduct (`join_as_cartesian_branch`) and the earlier clause becomes
-  its other branch: `disjoint_match_cp`, `disjoint_match_where_cp`, `disjoint_match_sound`
-  (`disjoint_match_unwrapped` is the unwrapped shape, kept as a counterexample).
+  its other branch: `disjoint_match_cp`, `disjoint_match_where_cp`, `disjoint_match_sound`.
 * `where_scan_indistinguishable`: `MATCH (a) WHERE φ MATCH (a)-->(b)`
   stitches into the exact tree shape `is_planner_scan_subtree`
   (optimizer/select_scan_node.rs) treats as prunable. The rebuild carries the spine's
@@ -80,12 +78,6 @@ theorem query_correct (p1 : Plan) (mid : List (Plan × (Rec V → Res V G → Re
     rw [hl q _ r g trivial, ← hmid, nestLoop_correct S mid p1 hm]
 
 /-! ## Self-loop hop after other hops -/
-
-/-- `ExpandInto(scan, res)`: the runtime builds child 0 only. Whatever `res`
-is — every hop of the component planned so far — the result is the same. -/
-theorem selfloop_ignores_chain (s : Nat) (scan res res' : Plan) (r : Rec V) (g : G) :
-    ev S (.node (.hop .expandInto s) [scan, res]) r g =
-      ev S (.node (.hop .expandInto s) [scan, res']) r g := rfl
 
 /-- **#2999 fixed by #3102 (61284ea4f)**: the planner now builds `ExpandInto(Scan(res))`
 (PlanMatch2 `chainRel_selfloop_unbound`): the chain planned so far is the scan's input, and the
@@ -163,14 +155,6 @@ theorem cp_stitch_loses_correlation :
 
 section disjoint
 set_option linter.unusedSimpArgs false
-
-/-- `MATCH (a) MATCH (b)` before #2981: the second scan is stitched *over* the first
-(`Scan_b(Scan_a)`), a shape the scan selection could later re-select and drop. -/
-theorem disjoint_match_unwrapped (s t : Nat) :
-    rustStitch [.node (.scan s) [], .node (.scan t) []] = .node (.scan t) [.node (.scan s) []] := by
-  simp [rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend,
-    descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, firstPass,
-    isApply, clauseMin, applyChain]
 
 /-- Since #2981 the second clause is wrapped (`join_as_cartesian_branch`) and the first one
 becomes the other branch: `CartesianProduct(Scan_a, Scan_b)`. -/

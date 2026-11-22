@@ -2,24 +2,6 @@ import PlannerBuild.Anchor
 /-
 # `plan_match`: per-component operator choice (mod.rs)
 
-| here | there |
-| --- | --- |
-| `QN`, `QR`, `Comp` | `QueryNode`, `QueryRelationship`, a connected component (ast.rs) |
-| `MSt` | `Planner.visited` / `verified_labels` |
-| `markLabels`, `unverified` | `mark_labels_verified` mod.rs, `unverified_labels` mod.rs |
-| `relKey`, `sortRels` | the `sort_by_key` of mod.rs (stable; lead key -1, filter vars by scope) |
-| `emitRel`, `opEmit` | the `emit_rel` closure mod.rs; `emit_rel(r) \|\| edge_pred.is_some()` |
-| `scanOf`, `withF` | `AllNodeScan`/`NodeByLabelScan` choice; optional inline-attribute `Filter` |
-| `LW`, `lowerInline` | `lowered_attrs` mod.rs, `lower_inline_attrs` mod.rs |
-| `stripNode`, `stripRel`, `stripEndpoints` | `strip_node_attrs` mod.rs, `strip_rel_attrs` :644-667, `strip_endpoint_attrs` :673-693 |
-| `opRel`, `edgePred`, `topFilters` | mod.rs (and 2201-2212); the edge Filter :2162-2169 / 2295-2301; both endpoints :2182-2187 / 2310-2315 |
-| `firstOp`/`firstRel`, `chainOp`/`chainRel` | first relationship mod.rs, the others mod.rs |
-| `MP.stripped` | the invariant `optimizer/references.rs` relies on (scan / fixed-length operators carry no inline map) |
-| `nodeOnly` | node-only component mod.rs |
-| `boundLabelFilters` | mod.rs |
-| `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs |
-| `QR.lifted` | `lifted_rels` mod.rs (set by `liftPattern`, Lift.lean) |
-
 Inline maps are lowered once: `lowerInline_once` (a map is lowered at most once —
 the `And(p, p)` duplicate is gone), `lowerInline_two_maps` (two maps on one alias are both
 lowered), `stripNode_spec`/`stripRel_spec`/`stripEndpoints_spec`, `firstRel_lowers_from`/`_to`
@@ -27,7 +9,6 @@ and `chainRel_lowers_from`/`_to` (both endpoints lowered for every operator kind
 not), `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Filter directly
 above an operator that emits every parallel edge), `walk_keeps_edge_attrs`,
 `firstRel_stripped`/`chainRel_stripped`/`planComp_stripped`/`planMatch_stripped`.
-| `buildPatternSubPlan` | `build_pattern_sub_plan` mod.rs |
 
 Expressions and the WHERE (`plan_filter`, FilterPlan.lean) are parameters;
 operators are recorded with the relationship they traverse.
@@ -541,16 +522,5 @@ theorem firstRel_stripped (st : MSt) (c : Comp) (lw : LW) (r : QR) :
     by_cases h4 : r.frm.alias.id = r.to.alias.id <;>
     simp [hb1, hb2, h4, MP.stripped, MP.stripped.strippedL, h1, h2, hs, h3', hk]
 
-/-! ### Historical: lowering without the once-only guard (a9377c636 mod.rs) -/
-
-def attrF (n : QN) : Option Ex := inlineAttrsToFilter n.alias n.attrs
-def relF (r : QR) : Option Ex := inlineAttrsToFilter r.alias r.attrs
-
-/-- `MATCH (a:N) WITH a MATCH (a {x: 1})-[:R*1..2]->(b)`: the bound `a`'s map `{x: 1}`. -/
-def aV : V := ⟨0, 0⟩
 def xOne : Ex := .node (.const (.int 1)) []
-def qVL : QR := { alias := ⟨2, 0⟩, named := false, frm := { alias := aV, attrs := [("x", xOne)], ptr := 7 },
-                  to := { alias := ⟨1, 0⟩, ptr := 0 }, kind := .varLen, ptr := 0 }
-def stA : MSt := { visited := [aV], verified := [] }
-
 end PlannerBuild.E

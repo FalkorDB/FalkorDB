@@ -6,20 +6,6 @@ import RedisLayer.Args
 The four query commands share
 `src/commands/query_args.rs`. Models, line by line:
 
-| here | there |
-| --- | --- |
-| `upToNul`         | `up_to_nul`, `query_args.rs` |
-| `scanFlags`       | the `while let Some(arg) = rest.next()` loop |
-| `parseSchemaHash` | `parse_schema_hash` (#3757) |
-| `checkFormat`     | `flags.format = match (compact, schema)` (#3757: `SCHEMA_HASH requires --compact`) |
-| `parseQueryFlags` | `parse_query_flags` (arity, `MAX_ARGS`) |
-| `QErr.msg`        | `ValkeyError::WrongArity`, `TIMEOUT_ERR`/`VERSION_ERR`/`SCHEMA_ERR`/`SCHEMA_VERBOSE_ERR`/`TIMEOUT_MAX_ERR` |
-| `queryFront`      | `graph_query` `query.rs` |
-| `roQueryFront`    | `graph_ro_query` `ro_query.rs` |
-| `profileFront`    | `graph_profile` `profile.rs` (only `timeout` is used) |
-| `explainFront`    | `graph_explain` `explain.rs` (validated, result dropped) |
-| `cScan`/`cReadFlags` | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`, `master`) |
-
 Arguments are raw byte strings (`Bytes`): `as_slice()` gives the bytes, so a non-UTF-8
 argument is not special. `parse_integer` is `RedisModule_StringToLongLong`, i.e.
 Redis `string2ll` on the whole byte string (`Args.string2ll`). `TIMEOUT_MAX.load` is

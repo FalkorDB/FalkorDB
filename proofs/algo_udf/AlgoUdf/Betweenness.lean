@@ -6,15 +6,6 @@ Extends `Config.samplingSize` and `Compact.seed0Sources` (which only bounded the
 seed-0 path) with the *seeded* draw loop and the C reference, so the C-parity
 defaults and the "one source per requested sample" property can be stated.
 
-| here | there |
-| --- | --- |
-| `Config.samplingSize` (existing) | default `16` at `algo_procedures.rs` |
-| `samplingSeed`  | `samplingSeed` parse `algo_procedures.rs` (absent/null → `0`, `i64 as u64`) |
-| `lcg`, `drawLoop`, `rustSources` | source selection `algo_procedures.rs` (seed 0: `i % n`; else the 64-bit LCG, `(rng >> 33) % n`, *deduplicated through `used`*) |
-| `cDefaultSize`  | C `BETWEENNESS_DEFAULT_SAMPLE_SIZE 32` (`src/procedures/proc_betweenness.c:21`, origin/master d7cf86675) |
-| `cEffSeed`      | C `if(samplingSeed == 0) samplingSeed = (uint32_t)time(NULL)` (`proc_betweenness.c:318-319`) |
-| `xorshift`, `cDraws` | C `_Random_Sources` (`proc_betweenness.c:46-96`) + `simple_rand` (`src/util/simple_rand.h`): exactly `MIN(nvals, samplingSize)` draws, duplicates kept |
-
 C draws positions in `AT`'s index array (one per stored entry); the model keeps the
 draw *count* and the seed handling, which is what the properties are about, and
 abstracts which node a position names.

@@ -7,14 +7,6 @@ This is the default `DOC_BYTES = 8` (16-byte entry) instance, which the rest of 
 use. The general `AosLeaf<DOC_BYTES>` is `LeafAosD.lean`; `aosD8_*` there prove it equals
 this model at `DOC_BYTES = 8`. `aosRead` is the former `AosLeaf::read` helper, inlined into
 `key`/`doc` (same reads).
-
-| Lean | Rust |
-| --- | --- |
-| `lexLe` | `(u64, u64)` tuple `<=` |
-| `aosEnc`, `aosBuild` | `AosLeaf::build` `aos.rs` |
-| `aosCount`, `aosRead`, `aosKey`, `aosDoc` | `count` 18, (`read`, inlined), `key` 23, `doc` 31 |
-| `aosMerge` | `AosLeaf::merge_batch` 51 (via `merge_walk`) |
-| `pairsOf` | `Leaf::iter` / `to_pairs` (`leaf/mod.rs`) |
 -/
 namespace IndexLayer.Leaf
 

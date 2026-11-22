@@ -7,7 +7,7 @@ Plan-shape helpers and constructors of `Runtime` (graph/src/runtime/runtime.rs).
 | `PT`, `returnNames`  | `ReturnNames` trait (:399) and its impl (:402-) |
 | `inspectBatch`       | `Runtime::inspect_batch` (:449) |
 | `RtInit`, `rtNew`    | `Runtime::new` (:471-525; the graph fields are `QueryGraph.new`) |
-| `writeEscalation` (history), `resyncPublished`, `commitDeferred` | `write_escalation()` (gone: `Runtime::upgrade_to_write`, `QueryGraph.upgradeToWrite`, :626), `resync_published_indexes` (:633), `commit_deferred_indexes` (:643) |
+| `resyncPublished`, `commitDeferred` | `resync_published_indexes` (:633), `commit_deferred_indexes` (:643) |
 | `defaultBatch`       | `default_batch` (:699) |
 | `childrenSpec`       | `children_to_recurse` (:787), on `RunBatch.childrenToRecurse` |
 | `runNested`          | `run_nested_plan` (:813) |
@@ -144,23 +144,6 @@ theorem getVariables_sibling (ns ps : List Nat) (kids : List VT) (x : Nat) :
       ns ++ ps ++ [x] := by
   simp [getVariables, expand, nodeVars]
 
-/-- The pre-#3521 walk (`walk::<Bfs>` with `break` at the first `Project`, Aggregate walked
-through, every SemiApply branch walked) over the BFS order, kept as a historical counterexample. -/
-def pre3521_getVariables : List IRK → List Nat
-  | [] => []
-  | k :: ks => match k with
-    | .project ns _ => ns
-    | _ => nodeVars k ++ pre3521_getVariables ks
-
-/-- The pre-#3521 walk reported variables hidden below an `Aggregate` (and dropped the
-sibling after a `Project`): `WITH count(*) AS c` over `MATCH (a)` still reported `a`'s
-id, which a later scope reuses. -/
-theorem pre3521_hidden_reported :
-    pre3521_getVariables [.aggregate [0] [], .scan 0] = [0, 0] ∧
-    getVariables [.node (.aggregate [1] []) [.node (.scan 0) []]] = [1] ∧
-    pre3521_getVariables [.silent, .project [1] [], .scan 2] = [1] := by
-  simp [pre3521_getVariables, getVariables, expand, nodeVars]
-
 /-! ## `get_return_names` (:399-) -/
 
 inductive RK where
@@ -273,9 +256,7 @@ theorem rtNew_spec {P B : Type} (root : PT) (nested : Bool) (kids : List Nat) (w
   refine ⟨rfl, fun h => by simp [rtNew, h], fun h => by simp [rtNew, h], fun h => by simp [rtNew, h],
     fun h => by simp [rtNew, h], rfl, rfl, rfl, rfl, rfl⟩
 
-/-! ## Delegating accessors (`upgrade_to_write` :626, :633, :643) -/
-
-def writeEscalation {W : Type} (w : W) : W := w
+/-! ## Delegating accessors (:633, :643) -/
 
 /-- `resync_published_indexes` / `commit_deferred_indexes` hand the pending store and the
 graph to `Pending`'s routines (proved in proofs/pending_commit; the RediSearch writes are FFI). -/
@@ -283,9 +264,9 @@ def resyncPublished {P G C : Type} (resync : P → C → G → P) (p : P) (commi
   resync p committed g
 def commitDeferred {P G : Type} (commit : P → G → P) (p : P) (g : G) : P := commit p g
 
-theorem delegates_spec {P G C W : Type} (w : W) (rs : P → C → G → P) (cm : P → G → P) (p : P) (c : C) (g : G) :
-    writeEscalation w = w ∧ resyncPublished rs p c g = rs p c g ∧ commitDeferred cm p g = cm p g :=
-  ⟨rfl, rfl, rfl⟩
+theorem delegates_spec {P G C : Type} (rs : P → C → G → P) (cm : P → G → P) (p : P) (c : C) (g : G) :
+    resyncPublished rs p c g = rs p c g ∧ commitDeferred cm p g = cm p g :=
+  ⟨rfl, rfl⟩
 
 /-! ## `default_batch` (:699) -/
 

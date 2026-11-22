@@ -3,8 +3,6 @@ import FalkorCore.Laws
 /-!
 # `Value::sort_cmp` (generic in `sort_cmp_f32`) and its laws
 
-See the report in `FalkorValueOrder.lean` ("Wave 9").
-
 | here | there (origin/main 4a4f2a72f, graph/src/runtime/value.rs) |
 | --- | --- |
 | `scF64`      | `sort_cmp_f64` (:1935) |

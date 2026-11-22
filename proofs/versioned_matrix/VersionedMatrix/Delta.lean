@@ -33,7 +33,7 @@ one the GraphBLAS spec gives it; the justification is the table above.
 
 Pending tuples / `wait` / `resync` / the approximate counters / the row
 filter never change *which* coordinates a layer stores, so they are not in
-the model (see REPORT.md, "modelling gaps"). The fold *policy*
+the model (see README.md, "What the model does not cover"). The fold *policy*
 (`should_fold`, `should_fold_read`, `delta_dominates_base`) is performance
 only: every theorem below quantifies over **all** fold decisions.
 

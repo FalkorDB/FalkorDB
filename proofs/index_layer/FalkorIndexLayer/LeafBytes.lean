@@ -4,16 +4,6 @@
 
 Bytes are `Nat`s (`< 256` where it matters); `le w x` is `x.to_le_bytes()[..w]`
 (for `x < 256^8`), `rd b off w` reads `w` little-endian bytes at `off`.
-
-| Lean | Rust |
-| --- | --- |
-| `le`, `unle`, `rd` | `to_le_bytes()[..w]`, `from_le_bytes` |
-| `readU64` | `read_u64` `cow_btree/mod.rs` |
-| `isReadWidth` | `is_read_width` `cow_btree/mod.rs` |
-| `readWidth` | `read_width` `cow_btree/mod.rs` |
-| `readU16` | `read_u16` `leaf/compact.rs` |
-| `widthFor` | `narrow_int::width_for` via `pow2_bytes_for` `leaf/mod.rs` |
-| `slice` | `&bytes[lo..hi]` |
 -/
 namespace IndexLayer.Leaf
 

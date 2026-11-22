@@ -127,7 +127,7 @@ Recorded but not bugs:
 
 | File | What's in it |
 |---|---|
-| `GraphPersist.lean` | Root: the report header (Lean↔Rust tables, theorems, bugs, live results, gaps) |
+| `GraphPersist.lean` | Root: imports and a short header |
 | `Codec.lean` | The v19 value codec over tagged words; `decOne_encode`, `stripNul_nulTerm`, `tags_distinct` |
 | `Layout.lean` | The first model of the multi-key entity split (`chunkType_covers`), the deleted-id bitmap, the load-side attribute filter |
 | `Constraint.lean` | The UNIQUE key in Rust and C, constraint creation, enforcement cost, MANDATORY |

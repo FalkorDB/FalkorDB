@@ -36,7 +36,6 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 
 - `arc_frees_once`: for any number of owners and any interleaving of clones and drops, the matrix is freed at most once, and it is freed exactly when the last owner is gone. So it is never freed twice and never leaked;
 - `arc_all_drop_frees_once`: `n ≥ 1` owners dropping in any order free it exactly once;
-- `arc_every_interleaving_frees_once`: the six two-owner interleavings all free exactly once;
 - `iter_frees_iterator_before_matrix`: `Iter::drop` frees its `GxB_Iterator` before its `Arc<Handle>` can free the matrix (`detached_iter_frees_only_matrix` covers a detached iterator);
 - `single_owner_frees_once`: a single owner frees once;
 - `dup_independent_ownership`, `dup_copy_drop_leaves_source`: `dup` makes a fresh `Arc<Handle>`; for any schedule of clones and drops on the source and the copy, each of the two matrices is freed at most once and exactly when its own owners are gone, and dropping the copy never touches the source.
@@ -66,7 +65,7 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | `encodeM_no_heap_addresses` | The encoded container header carries no heap address | `Glue.lean` |
 | `edgeCount_no_panic`, `edgeCount_value` | `edge_count` is total and correct while the tensor invariant holds | `Decode.lean` |
 | `decodeCheck_ok_iff`, `decodeCheck_refuses_incomplete`, `decodeCheck_accepts_encoded` | `Tensor::decode` refuses exactly the payloads that break promotion completeness, and accepts every encoded tensor | `Decode.lean` |
-| `arc_frees_once`, `arc_every_interleaving_frees_once` | The matrix is freed exactly once, under any number of owners and any schedule of drops | `Own.lean` |
+| `arc_frees_once`, `arc_all_drop_frees_once` | The matrix is freed exactly once, under any number of owners and any schedule of drops | `Own.lean` |
 | `deltaLmxm_correct`, `deltaLmxm_eff`, `deltaLmxm_spec` | `delta_lmxm` computes `F*(M - DM + DP)` on the pattern; an output a deleted and a live base edge both reach is kept | `DeltaLmxm.lean` |
 | `drain_seek_eq_spec`, `drain_no_duplication` | A row-range scan yields exactly the in-range entries, in order, once | `RowIter.lean` |
 | `create_safe_iff`, `me_dim_is_max` | Which ids and dimensions GraphBLAS accepts | `Index.lean` |
@@ -112,7 +111,7 @@ There are no CONDITIONAL rows.
 |---|---|
 | `GrbInfo.lean` | The `GrB_Info` codes and the three dispositions (`assertPanic`, `debugAssert`, `propagate`) |
 | `Index.lean` | `GrB_Index` casts, `GB_NMAX`, `ME_DIM`; the 2⁶¹ boundary |
-| `Own.lean` | The drop protocol as a small-step machine: main's `Arc<Handle>` for any number of owners, and the older `Arc::get_mut` protocol over every two-owner interleaving |
+| `Own.lean` | The drop protocol as a small-step machine: main's `Arc<Handle>` for any number of owners |
 | `RowIter.lean` | `matrix::Iter` `seek`/`next` over a row range |
 | `Codes.lean` | Each deserialize wrapper's disposition |
 | `Decode.lean` | `edge_count`'s checked arithmetic; the layer-size check; `count_value_eq` and the promotion-completeness check |

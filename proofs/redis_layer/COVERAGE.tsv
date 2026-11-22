@@ -135,8 +135,8 @@ src/query_session.rs	QuerySession::release_locks	338	PROVEN	QuerySession.release
 src/query_session.rs	QuerySession::graph_arc	346	PROVEN	QuerySession.graphArc: graphArc_id
 src/query_session.rs	QuerySession::with_graph	355	PROVEN	QuerySession.withGraph: withGraph_released
 src/query_session.rs	QuerySession::with_graph_mut	371	PROVEN	QuerySession.withGraphMut: escalate_writer (after a successful escalation), escalate_refused_reader (refused: None)
-src/query_session.rs	QuerySession::upgrade_to_write	398	PROVEN	QuerySession.upgrade/upgradeS (#3816: authorize_write per slice before the lock; check_fork last, #3657): upgrade_twice (after success), upgrade_refused_rechecks, upgrade_unregistered, upgrade_state, upgrade_stale, upgradeSt_stale_visible (a Stale report leaves Version::Stale, so is_stale is true for the retry); historical Pre3816.pre3816_upgrade_twice_skips_checks (refused session stayed a writer, fixed by #3816)
-src/query_session.rs	QuerySession::escalate	420	PROVEN	QuerySession.escalate (#3816: refusal re-takes the read lock): escalate_order, escalate_order_slices, escalate_mode, escalate_writer, escalate_refused_reader, writer_holds_gil; historical Pre3816.escalate_mode/escalate_writer
+src/query_session.rs	QuerySession::upgrade_to_write	398	PROVEN	QuerySession.upgrade/upgradeS (#3816: authorize_write per slice before the lock; check_fork last, #3657): upgrade_twice (after success), upgrade_refused_rechecks, upgrade_unregistered, upgrade_state, upgrade_stale, upgradeSt_stale_visible (a Stale report leaves Version::Stale, so is_stale is true for the retry)
+src/query_session.rs	QuerySession::escalate	420	PROVEN	QuerySession.escalate (#3816: refusal re-takes the read lock): escalate_order, escalate_order_slices, escalate_mode, escalate_writer, escalate_refused_reader, writer_holds_gil
 src/query_session.rs	acquire_write	481	PROVEN	QuerySession.acquireWrite/pollLoop (#3816; the world decides per slice whether the lock came and what the check says): pollLoop_spec, acquire_gate_open, acquire_blocking, one_miss_gate_stays_open, escalate_order_slices
 src/query_session.rs	authorize_write	517	PROVEN	QuerySession.authorize (registry, then reauthorize_write): upgrade_unregistered, upgrade_refused_rechecks
 src/query_session.rs	read_past_gate	545	PROVEN	QuerySession.readPastGate: readPastGate_ends_reading, beginWith_open, beginWith_nowait
@@ -156,7 +156,7 @@ src/module_init.rs	pthread_atfork	95	AXIOMATISED	libc pthread_atfork declaration
 src/module_init.rs	on_fork_child	122	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
 src/module_init.rs	sync_deepbind_environ	158	PROVEN	EnvBuild.syncDeepbind: sync_unchanged (NULL dlopen handle, NULL dlsym, or the symbol is this module's own environ: environ untouched, the path CI reaches), sync_installs (otherwise environ becomes a NULL-terminated snapshot of the live array's strings); dlopen/dlsym/dlclose results are the inputs of `Ld`, the libc side being FFI
 graph/src/env_snapshot.rs	leak_deep_copy	22	PROVEN	EnvBuild.leakDeepCopy: copy_null_src, copy_length, copy_terminated (len+1 cells, last NULL), copy_read_back (the copy reads back exactly the source's entries in order), copy_fresh (every string cell allocated fresh), copy_indep (depends on the entries' bytes only, so a later setenv/putenv/free of the source cannot change it); the unsafe pointer reads are the `# Safety` contract (NULL-terminated source)
-src/module_init.rs	graph_init	203	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range; historical pre3328_* (W4-redis-3 / #3268, fixed by #3328)
+src/module_init.rs	graph_init	203	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range
 src/module_init.rs	info_func	494	PROVEN	ModuleInit.infoSections: info_normal
 src/module_init.rs	on_flush	511	PROVEN	ModuleInit.onFlush (#3844 FLUSH_IN_PROGRESS): onFlush_start, onFlush_end
 src/module_init.rs	on_shutdown	525	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
@@ -206,10 +206,10 @@ src/telemetry.rs	hold_batch_graphs	930	PROVEN	Telemetry.distinctAlive: distinctA
 src/telemetry.rs	release_batch_graphs	961	PROVEN	Telemetry.releaseSpawns: releaseSpawns_len
 src/redis_type.rs	key_holds_graph	608	PROVEN	Telemetry.keyHolds: keyHolds_iff (moved from telemetry.rs by #3819; get_value::<_>(&GRAPH_TYPE) = keyValue input)
 src/telemetry.rs	drain_queued	977	PROVEN	Telemetry.drain: drain_bound, drain_conserves
-src/telemetry.rs	enqueue_entry	1038	PROVEN	Telemetry.enqueueOk (no role check since #3844): enqueue_off, enqueue_full, enqueue_iff; historical Pre3844.enqueue_replica
+src/telemetry.rs	enqueue_entry	1038	PROVEN	Telemetry.enqueueOk (no role check since #3844): enqueue_off, enqueue_full, enqueue_iff
 src/telemetry.rs	start_flusher_thread	1080	PROVEN	Telemetry.start: start_idem
 src/telemetry.rs	shutdown_flusher_thread	1133	PROVEN	Telemetry.shutdown/stopped: shutdown_keeps_names_if_parked, shutdown_frees_on_stop, shutdown_closes_sender
-src/telemetry.rs	flusher_loop	1169	PROVEN	Telemetry.iter/iterSteps/groupOrder (#3844: no role/pause branch, freed streams deleted first): iter_disconnected, iter_write_iff, iterSteps_disconnected, iterSteps_delete_before_write, iterSteps_serves_pending, group_keeps_order, drain_bound; historical Pre3844.iter_replica_never_writes, Pre3844.capDeferred_len, Pre3844.capDeferred_suffix
+src/telemetry.rs	flusher_loop	1169	PROVEN	Telemetry.iter/iterSteps/groupOrder (#3844: no role/pause branch, freed streams deleted first): iter_disconnected, iter_write_iff, iterSteps_disconnected, iterSteps_delete_before_write, iterSteps_serves_pending, group_keeps_order, drain_bound
 src/slow_log.rs	prefix	32	PROVEN	SlowLog.strPrefix: prefix_total, prefix_le, prefix_isPrefix, prefix_boundary, prefix_longest, prefix_short, prefix_ascii
 src/slow_log.rs	truncate	38	PROVEN	SlowLog.truncate: truncate_total, truncate_short (W4-redis-1 fixed by #3234 3660a5fc3)
 src/slow_log.rs	entry_hash	51	PROVEN	SlowLog.hashInput: hashInput_total, hashInput_short, hashInput_bad (W4-redis-1 fixed by #3234 3660a5fc3)
@@ -248,7 +248,7 @@ src/commands/bulk_insert.rs	parse_count	697	PROVEN	Bulk.parseCount: parseCount_r
 src/commands/bulk_insert.rs	max_records	733	PROVEN	Bulk.ceiling_sound; phase-loop retry (#3559) = GraphCore.loopW: loopW_bounded, loopW_decided (never rejects honest payloads)
 src/commands/bulk_insert.rs	graph_bulk_insert	747	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_unkeyed_refused, bulk_flushed_refused (worker key_of_write since #3863), bulkArgv_admitted, bulkArgv_renamed (replicated under the live key), bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
 src/commands/config_cmd.rs	config_get_one	59	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
-src/commands/config_cmd.rs	validate_config_set	123	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
+src/commands/config_cmd.rs	validate_config_set	123	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names)
 src/commands/config_cmd.rs	validate_timeout_cross_constraints	216	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
 src/commands/config_cmd.rs	check_timeout_constraints	230	PROVEN	LoadArgs.checkTimeouts: cross_eq (= Config.cross), step_agree (= C's per-field timeout setters on the load path)
 src/commands/config_cmd.rs	apply_config_set	271	PROVEN	Config.apply1 (used by rustSet_inv)

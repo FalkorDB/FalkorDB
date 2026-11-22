@@ -9,7 +9,7 @@ This project proves what `Graph` in `graph/src/graph/graph.rs` and `constraint.r
 - `GRAPH.CONSTRAINT CREATE` / `DROP`;
 - commit-time validation of a write (`Graph::validate`) and `GRAPH.EFFECT` replay.
 
-The full Lean↔Rust mapping (each module next to the `graph.rs` functions it covers) is in the header of [`GraphQueries.lean`](GraphQueries.lean), and every file starts with its own `file:line` table. This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv), and every file starts with its own `file:line` table. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -86,7 +86,7 @@ Each bug was reproduced against a live server and compared with C before it was 
 |---|---|---|---|
 | W4-graph-3 | `cmatches_order_sensitive` | `UNIQUE NODE L (a,b)` then `(b,a)` creates both; C says "Constraint already exists" | **Open** |
 
-Also recorded, not a bug in this project's sense: `CREATE INDEX` on a new label reports `Labels added: 1` in Rust but not in C, because the label is interned before the indexer can refuse.
+Also recorded, not a bug in this project's sense: `CREATE INDEX` on a new label reports `Labels added: 1` in Rust but not in C, because the label is interned before the indexer can refuse. C itself refuses `GRAPH.CONSTRAINT DROP … (b,a)` after reporting `(a,b)` exists. UDF `node.getNeighbors()` with no argument errors in Rust ("Error converting from js 'undefined' into type 'object'") while C answers (`udf/js_classes.rs`, outside this project).
 
 **CONDITIONAL row:** `first_node_with_relationships` rests on `AdjExact` (the adjacency matrix is exactly the union of the relationship tensors). The graph's mutators are designed to keep it, but no theorem here proves they do.
 

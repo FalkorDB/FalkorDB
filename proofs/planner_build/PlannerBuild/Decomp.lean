@@ -9,16 +9,6 @@ synthetic inline variable (id in `ι`, the `inline_map`) stands for its pattern.
 Everything else is an atom (`atom`, a parameter). A row passes a `Filter` iff
 the value is `true` (filter.rs). `tv [] e` is the meaning of the user's WHERE.
 
-| here | there |
-| --- | --- |
-| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs (inline ids minted at mod.rs / 1716-1723) |
-| `FP`, `run` | IR filter operators: `Filter` (filter.rs), `SemiApply`/`AntiSemiApply` (semi_apply.rs), `OrApplyMultiplexer` (or_apply_multiplexer.rs: row passes iff some branch has `has_result ^ is_anti`), `Argument` |
-| `FP.patSub g` | `build_pattern_sub_plan` mod.rs (its rows are `sub g`) |
-| `toPlan` | `expr_to_plan` mod.rs |
-| `orClass`, `orPlan` | `or_expr_to_plan` mod.rs |
-| `andFold`, `andPlan` | `and_expr_to_plan` mod.rs |
-| `planFilter` | `plan_filter` mod.rs (after `extract_filter_comprehensions`) |
-
 Results: `collect_value` / `collect_passes` (the rebuild is exact, also in
 three-valued logic); `toPlan_correct` (the decomposition is exact when atoms
 are two-valued); `planFilter_scalar_correct` (no inline patterns: exact in

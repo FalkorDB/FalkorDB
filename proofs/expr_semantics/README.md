@@ -16,7 +16,7 @@ User-facing behaviour that depends on it:
 - `UNWIND range(…)`;
 - `shortestPath`, whose bidirectional BFS lives in `runtime/eval.rs`.
 
-The Rust is mostly in `graph/src/runtime/eval.rs`, `vector_expr.rs`, `vectorized.rs` and `value.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorExprSemantics.lean`](FalkorExprSemantics.lean). This README explains *what* is proven and *why it matters*.
+The Rust is mostly in `graph/src/runtime/eval.rs`, `vector_expr.rs`, `vectorized.rs` and `value.rs`. The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -101,7 +101,7 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 
 | File | What's in it |
 |---|---|
-| `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^`, `RangeIter`, `sign`, `toInteger`, `coalesce`; bug 4 |
+| `FalkorExprSemantics.lean` | A short header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^`, `RangeIter`, `sign`, `toInteger`, `coalesce`; bug 4 |
 | `EvalSyntax.lean` | The expression tree `E` (every arm a comprehension body can reach), `Ops`, `Fn` (`GraphFn`), the arm helpers |
 | `Eval.lean` | `ExprEval::eval_node` with `eval_compound` / `eval_case` (AND/OR/XOR/NOT/CASE/calls/IN/lists/subscripts/projections, a thunked catch-all), `eval`, `eval_operand` |
 | `Frame.lean` | `E.vars`, `E.funcs`, the frame property `evalNode_frame` |
@@ -137,7 +137,9 @@ Shared foundations (`wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `InI64`, `I64MIN
 - **Value types.** Lists, maps, temporal values, points and vectors are out of scope; they appear as `V.other` or not at all.
 - **Floats.** `f64` is abstract. Nothing here depends on IEEE rounding.
 - **Null bitmaps.** A typed column's null bitmap is an `Option` per row. Rust keeps a placeholder (0 or 0.0) in null rows and masks it afterwards. The wrapping ops can't panic on a placeholder, and the division gate skips null rows, so the two behave the same.
-- **Error text.** Agreement is on success versus error, not on which row's message is reported.
+- **Error text.** Agreement is on success versus error, not on which row's message is reported (the columnar path reports the first error child-major, the per-row path row-major).
+- **List comprehension.** The `ListComprehension` arm of `eval_compound` is not modelled here (it is in `proofs/functions_str_list`, `comprehension_eq_spec`); `evalIter_cases`/`evalIter_list`/`evalIter_range_is_iter` cover `eval_iter_expr`. The aggregate-finalizer arm is in `proofs/ops_aggregate`.
+- **Short-circuit versus C.** Rust short-circuits `AND`/`OR`/`XOR`/`CASE` as the source comments intend, and C evaluates every operand eagerly: `UNWIND [0] AS x RETURN x <> 0 AND 1/x = 1` gives `false` in Rust and `Division by zero` in C (`andOr_error_first`, `and_false_short_circuits`, `case_hit_lazy`). Observed live at main 9212add39.
 - **BFS minimality.** `bfs_sound` proves that the path is a real walk, not that it is a shortest one.
 - **Matrix reads.** Matrix rows in `BFS.lean` are abstract `Nat → List Nat`; the GraphBLAS reads are the FFI boundary.
 

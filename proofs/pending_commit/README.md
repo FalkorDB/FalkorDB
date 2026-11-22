@@ -39,7 +39,7 @@ A `UNIQUE` check looks each affected member's key up through the constraint's in
 
 **6. Does a deleted entity keep reading correctly for the rest of the query?**
 
-**Yes, including when its id is reused.** `sound_under_Good` proves snapshot reads are correct as long as no snapshotted id belongs to a live entity. The allocator skips ids the query itself freed until the version is published (`createRust_preserves_Good`, `rust_reads_live_entity`). The alternative, reissuing freed ids first, would break it: a new node would read the deleted node's data (`rust_reads_dead_entity`, `pre3641_rust_reads_dead_entity`).
+**Yes, including when its id is reused.** `sound_under_Good` proves snapshot reads are correct as long as no snapshotted id belongs to a live entity. The allocator skips ids the query itself freed until the version is published (`createRust_preserves_Good`, `rust_reads_live_entity`). The alternative, reissuing freed ids first, would break it: a new node would read the deleted node's data (`rust_reads_dead_entity`).
 
 ## The headline theorems
 
@@ -57,6 +57,8 @@ A `UNIQUE` check looks each affected member's key up through the constraint's in
 | `uniqueViolated_spec`, `uniqueViolated_agrees` | The index-lookup UNIQUE check is right, and agrees with the old label scan | `UniqueIndex.lean` |
 | `sound_under_Good`, `createRust_preserves_Good` | Snapshot reads are right while no snapshotted id is live; the allocator keeps that | `Snapshot.lean` |
 | `c_eq_rust_plus_cancelled` | C's created/deleted counts = Rust's + the entities created and deleted in the same segment | `Stats.lean` |
+| `nthLive_spec`, `prEncode_eq_main`, `encRoarPR_eq` | `SAVE` finds its first live id by rank/select (`nth_live_id`) and seeks the roaring bitmap instead of skipping; the output equals the earlier windowed encoding for every `count > 0` (`count = 0` is unreachable: `encoder_counts_pos`). The roaring crate is trusted at the `RSet` level (`SaveRoaring.lean`), checked by a randomized scratch test | `SaveNthLive.lean`, `SaveSlice.lean`, `SaveLayout.lean` |
+| `enforce_spec`, `enforce_skips_failed` | `enforce_constraints` skips only FAILED constraints, as C's `Schema_EnforceConstraints`; an UNDER CONSTRUCTION one binds writes | `PendingCommitOp.lean` |
 
 ### How `mergeSpan_correct` is proved
 
@@ -95,7 +97,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `StoreCodec.lean`, `StoreMem.lean` | RDB codec, `trim`, memory accounting: `encode_decode_roundtrip`, `structural_partition` |
 | `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push` |
 | `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_reads_src` |
-| `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `createRust_preserves_Good`, `pre3641_rust_reads_dead_entity` |
+| `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `createRust_preserves_Good` |
 | `Stats.lean` | Write statistics: `c_eq_rust_plus_cancelled`, `cancel_example` |
 | `PendingAttrs.lean`, `PendingState.lean`, `PendingRels.lean`, `PendingDeg.lean`, `PendingDocs.lean` | All of `pending.rs`: validation, staging, reads, created relationships, degrees (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`), `IndexDocs`, `clear`, `effects_count` |
 | `PendingCommitOp.lean` | `Pending::commit` and constraint enforcement: `commit_spec`, `check_spec`, `enforce_spec` |
@@ -103,7 +105,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `PendingCancel.lean`, `CancelRust.lean` | Unwinding a pending node and handing ids back to the graph: `deletePendingNode_spec_rust`, `cancelN_spec` |
 | `CommitOpNext.lean` | `CommitOp::next` with `end_segment`: `commitNext_ok` |
 | `StagedBugs.lean` | Staged label/type state that outlives its entity: the #3447 counterexample, `fixed3453_*`, `deletePendingNode_clears_remL` |
-| `Hold.lean` | Borrow holding: a caller-held `graph_mut()` / `graph()` across `Pending::commit`, `end_segment`, `IndexDocs::commit` equals main's sequential borrows (`commit_same`, `single_mut_same`, `single_rd_same`), on `runtime_core`'s `RuntimeCore.Cell` borrow-word model |
+| `Hold.lean` | Borrows around `Pending::commit`: a write query owns its fork cell, so a held `graph_mut()` panics exactly when `Runtime::graph_mut` does (`holdMut_panics_iff_graphMut`); a published read takes no borrow (`published_read_no_borrow`); after `publish` a held `graph_mut()` panics (`hold_after_publish_panics`), on `runtime_core`'s `RuntimeCore.Cell` borrow-word model |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for the atomic_refcell borrow-word model `RuntimeCore.Cell` that `Hold.lean` runs on; and [`../graph_queries`](../graph_queries), for its model of the graph's id spaces (`GQ.IdS`, `GQ.rCancel`), which `CancelRust.lean` uses to prove the cancel contract instead of assuming it.

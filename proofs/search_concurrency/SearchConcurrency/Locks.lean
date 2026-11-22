@@ -1,5 +1,5 @@
 /-
-# Lock order, the write-loop hand-off, and the bounded-queue deadlock
+# Lock order, the write-loop hand-off, and admission
 
 | here | there |
 | --- | --- |
@@ -14,7 +14,6 @@
 | `rsGlobal`, `rsSpec`, `writerOpenScanProg` | gap closed 2026-10-20 (#3226): RediSearch's global `RWLOCK` and per-spec `rwlock`, held by an index scan from `handleIterCommon` (`deps/RediSearch src/redisearch_api.c:904-905`) to `ResultsIteratorFree` (:1064); `CommitOp::next` (`runtime/ops/commit.rs`, `upgrade_to_write`) commits with the scan open |
 | `Drain`                        | `process_write_queued_query` (`src/graph_core.rs`) `write_loop` flag protocol |
 | `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs`) and write channel (`graph_core.rs`, `unbounded_blocking`), slot released at execution / dequeue |
-| `Pool` (historical)            | before #3014: `bounded_blocking(1024)` pool queue + blocking `spawn` from `query_mut` on the Redis main thread |
 -/
 
 namespace SC.Locks
@@ -355,86 +354,14 @@ def exploreBad : Nat → List D → List D
 theorem recheck_needed :
     (exploreBad 20 [drainInit 2]).any (fun s => terminal s && s.q != 0) = true := by decide +kernel
 
-/-! ## The bounded-queue deadlock model (the pool queue of capacity `cap`; no longer in the code)
-
-Resources that are not locks also block: the pool's job queue (capacity `cap`,
-`threadpool.rs` at ca36bfa15) and a graph's write channel (capacity 1024, `graph_core.rs` then).
-The Redis main thread holds the GIL for every command callback and `spawn`s into
-the pool with a **blocking** send (`threadpool.rs`). A pool worker that has
-started a write escalates and waits for the GIL. So:
-
-  main (holds GIL) ⟶ waits for a pool-queue slot
-  pool-queue slots ⟶ freed only when a worker finishes a job
-  every worker ⟶ waits for the GIL (escalating writer), or on a full write channel
-                  whose only consumer is one of those GIL-waiting workers
-
-`Pool` below is that system with `w` workers and queue capacity `cap`. -/
-
-inductive Job where
-  | write   -- will need the GIL
-deriving DecidableEq, Repr
-
-structure Pool where
-  queue : Nat          -- jobs queued
-  running : Nat        -- workers executing a job (all of them will need the GIL)
-  mainBlocked : Bool   -- main thread stuck in spawn, holding the GIL
-  pendingClients : Nat -- commands not yet dispatched
-deriving DecidableEq, Repr
-
-variable (w cap : Nat)
-
-/-- Events: main dispatches a command (GIL held); a worker picks a job; a running
-worker finishes — which needs the GIL, free only when main is not in a callback. -/
-def poolSucc (s : Pool) : List Pool :=
-  (if s.pendingClients > 0 ∧ ¬ s.mainBlocked then
-    if s.queue < cap then [{ s with queue := s.queue + 1, pendingClients := s.pendingClients - 1 }]
-    else [{ s with mainBlocked := true }] else []) ++
-  (if s.queue > 0 ∧ s.running < w then
-    [{ s with queue := s.queue - 1, running := s.running + 1,
-              mainBlocked := false }]          -- a freed slot unblocks main
-   else []) ++
-  (if s.running > 0 ∧ ¬ s.mainBlocked then [{ s with running := s.running - 1 }] else [])
-
-def stuck (s : Pool) : Bool := (poolSucc w cap s).isEmpty && (s.pendingClients > 0 || s.queue > 0 || s.running > 0)
-
-/-- The adversarial schedule: the clients arrive faster than workers can take the
-GIL. With 1 worker and a 1-slot queue, 3 simultaneous writes reach a state with no
-enabled event: main holds the GIL waiting for queue space, the worker waits for the
-GIL. (Live: 11 workers, cap 1024, 1400 writes on one graph or 3000 over 16 graphs.) -/
-def deadState : Pool := { queue := 1, running := 1, mainBlocked := true, pendingClients := 1 }
-
-/-- The model above is stuck in `deadState` (kept so the pre-#3014 model stays checked). -/
-theorem deadState_stuck : stuck 1 1 deadState = true := by decide
-
-/-- The fix proposed before #3014: `spawn` from the main thread must not block (reject
-with "Max pending queries exceeded", or an unbounded queue as C's thpool has). #3014
-does both; its actual protocol is `succ3014` below. -/
-def poolSuccFixed (s : Pool) : List Pool :=
-  (if s.pendingClients > 0 then
-    if s.queue < cap then [{ s with queue := s.queue + 1, pendingClients := s.pendingClients - 1 }]
-    else [{ s with pendingClients := s.pendingClients - 1 }]   -- rejected with an error
-   else []) ++
-  (if s.queue > 0 ∧ s.running < w then [{ s with queue := s.queue - 1, running := s.running + 1 }] else []) ++
-  (if s.running > 0 then [{ s with running := s.running - 1 }] else [])
-
-theorem fixed_never_stuck (s : Pool) (hw : 0 < w) :
-    (s.pendingClients > 0 ∨ s.queue > 0 ∨ s.running > 0) → poolSuccFixed w cap s ≠ [] := by
-  intro h
-  unfold poolSuccFixed
-  rcases h with h | h | h
-  · simp [h]; split <;> simp
-  · by_cases hr : s.running > 0
-    · simp [hr]
-    · have : s.running < w := by omega
-      simp [h, this]
-  · simp [h]
-
 /-! ## The admission protocol: admission-bounded, nothing blocks the main thread
 
 `admit` (`graph_core.rs`) takes a `QueueSlot` on the main thread or replies "Max
 pending queries exceeded" — it never waits; `spawn` sends into an unbounded queue. A read
 gives its slot back when it starts executing (`admission.take()`), a write carries it into
 the graph's (unbounded) write channel and gives it back when the drainer dequeues it. -/
+
+variable (w cap : Nat)
 
 structure P3014 where
   pending : Nat    -- commands not yet dispatched

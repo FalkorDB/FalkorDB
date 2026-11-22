@@ -379,7 +379,7 @@ theorem rebalance_spec (c : Cfg) (h : Nat) {lo hi : Nat} {seps : List E} {cs : L
 /-! ## `Node::remove_one` -/
 
 /-- **Shape of `Node::remove_one` (`node.rs`)**: the returned node is weak, and full whenever the
-    underflow flag is clear. Needs `BRANCH_MAX >= 4` (see the module doc and `Bugs.lean`). -/
+    underflow flag is clear. Needs `BRANCH_MAX >= 4` (see the module doc). -/
 theorem removeOne_shape (c : Cfg) (hB4 : 4 ≤ c.B) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x : Nat) (n' : Node) (u : Bool),
     WFb c r h n lo hi → removeOne c h n x = some (n', u) →
     Weak c h n' lo hi ∧ (u = false → WFb c r h n' lo hi)

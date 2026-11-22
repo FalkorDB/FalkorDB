@@ -8,12 +8,6 @@ push_filters_down.rs/347/360/423, replace_cartesian_with_hash_join.rs,
 utilize_index.rs), which splices an AND operand into the new AND. This file
 shows that is invisible at run time, errors included.
 
-| here | there |
-| --- | --- |
-| `scL sc` | the `ExprIR::And` (`sc = false`) / `ExprIR::Or` (`sc = true`) loops eval.rs, over the children's results left to right: an error or a non-boolean stops it, `sc` short-circuits, a null is remembered |
-| `T`, `evalT` | a bound expression as `flat` sees it: AND/OR nodes, everything else by its value on the row |
-| `flatT` | `ExprIR::flat` (ast.rs): early return of a lone other operand, splice, identity / single / node |
-
 * `andLoop_eq`: Basic's `andLoop` (the model every pass theorem uses) is `scL false`.
 * `scL_splice`: splicing a nested run of the same connective never changes the loop's result
   (associativity, with errors, nulls and short-circuit).

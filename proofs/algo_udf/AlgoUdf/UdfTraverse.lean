@@ -1,16 +1,6 @@
 import AlgoUdf.Neighbors
 /-! # `graph.traverse` (`js_traverse_impl`, udf/js_classes.rs)
 
-| here | there |
-| --- | --- |
-| `TCfg`              | parsed config :714-750 (`direction`, `types`, `labels`, `returnType`, `maxDepth`; `labelOk n` = the label filter :817-825 for neighbour `n`) |
-| `edgesOf`           | `collect_edges` + the `types` retain :803-812 (`Neighbors.collectEdges`, `applyTypes`) |
-| `TS`                | per-source state: `visited`, `seen_edges` (as `(node, rel)` pairs), `next_frontier`, `edges_to_create` |
-| `visitEdge`         | loop body :814-850 |
-| `level`             | one depth :796-852 |
-| `runLevels`         | `for _ in 0..max_depth` from :788 (deadline checks are an extra `Err` exit, not modelled) |
-| `traverse1`         | one source's inner result array |
-
 Results:
 * `traverse_nodes_nodup` — node results never repeat and never contain the start.
 * `traverse_both_edges_nodup` — `direction:'both'` edge results never repeat a
@@ -299,8 +289,7 @@ def selfLoopGraph : List E := [⟨0, 0, 1, "R"⟩, ⟨1, 0, 0, "R"⟩, ⟨2, 1, 
 
 def cfg1 (retEdges : Bool) : TCfg := ⟨.outgoing, [], fun _ => true, retEdges, 1⟩
 
-/-- `pre3084_traverse_self_loop_twice` (historical; fixed by #3084 5f147f10e): before it, edges mode
-returned the self-loop e1 twice (`[0, 1, 1]`, C: `[1, 0]`). Now it is listed once. -/
+/-- Edges mode lists the self-loop e1 once (#3084). -/
 theorem fixed3084_traverse_self_loop_once :
     ((traverse1 selfLoopGraph (cfg1 true) 0).2.map (·.id)) = [0, 1] := by decide
 

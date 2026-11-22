@@ -3,15 +3,6 @@
 
 Line numbers are from origin/main (5c7af54f2), located by item name.
 
-| Lean | Rust |
-| --- | --- |
-| `IType` | `IndexType` `mod.rs` |
-| `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs` |
-| `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs`, `Hash::hash` `mod.rs` |
-| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs`) |
-| `Idx` | `Index` `mod.rs` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
-| `Idx.*` accessors / mutators | `mod.rs` (each cited below) |
-
 A Rust `HashMap` is modelled as an association list with unique keys; its
 iteration order is unspecified in Rust, so every theorem below is either
 order-independent or about `field_order`, which is the order-carrying list.

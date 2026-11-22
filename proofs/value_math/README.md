@@ -97,15 +97,18 @@ Each bug was confirmed with a Rust repro and live against C (see [`../FINDINGS.m
 | — | `encode_map_is_null` | `Encode<19>` writes a Map, Node, Relationship or Path as `NULL` behind only a `debug_assert!` | Latent: property writes never store those types |
 | — | `within_nest_empty` | The decoder accepts one level more than writers produce (`MAX` arrays around `[]`) | Harmless: still bounded, never stored |
 
-Other live divergences from C are recorded in the header, not as bugs, because Rust is often the better answer:
+Other live divergences from C, not counted as bugs because Rust is often the better answer:
 
 - `MIN / -1` raises an overflow error in Rust (`ValueMath.div_min_neg_one`) and is `MAX` in C. `(2^53+1)/1` is exact in Rust; C divides through a double.
-- `abs(MIN)` errors in Rust. `abs(-0.0)` is `0` in Rust and `-0` in C.
-- Some `+` typing differs. `'a' + {b:1}` is an error in Rust, while C concatenates. `true + 1` is an error in Rust, while C returns a Float.
-- `toJSON` of floats and maps is formatted differently.
-- `toFloat('0.1')` is exact in Rust. C goes through `strtof`, which is a C bug.
-- Rust accepts `p.LATITUDE` case-insensitively.
-- `db.indexes` and `db.constraints` return rows in a different order.
+- `abs(MIN)` errors in Rust, is `MIN` in C. `abs(-0.0)` is `0` in Rust and `-0` in C.
+- Some `+` typing differs. `'a'+date(..)`, `'a'+{b:1}` and `'a'+localtime(..)` are errors in Rust, while C concatenates. `true+1`, `1.5+true`, `duration+1` and `date+1` are errors in Rust, while C returns a Float. `null*'a'` and `'a'/null` are null in Rust, a type error in C. Error texts differ for `-`.
+- `toJSON` differs: `NaN` is `null` (C `nan`), `0.1+0.2` is `0.30000000000000004` (C `0.3`), `1e300` prints 301 digits (C `1e+300`), point JSON `"height": null` vs `"height":null`, map JSON `{"a":[1,…]}` vs `{"a": [1, …]}`; C does not escape `toJSON('a"b')` and errors on temporals and `vecf32` (C bugs). `'a'+(0.0/0)` is `aNaN` (C `anan`).
+- `toFloat('0.1')` is exact in Rust. C goes through `strtof` (`0.100000001490116`, a C bug); `toFloat('16777217')` is exact in Rust (C `16777216`), `toFloat('1e39')` is `1e39` (C null).
+- `toInteger(NaN)` is null (C 0), `toInteger(inf)` is null (C `MAX`). `toStringList([1.5])` is `1.5` (C `1.500000`); `toString(1.0)` is `1.0`, `toString(1e20)` is `1.0E20` (#3609). `toFloatList([' 3'])` and `toIntegerList([' 3'])` are null (C 3).
+- Rust accepts `p.LATITUDE` case-insensitively (C null). `toString(duration('PT0S'))` is `PT0S` (C `P`, a C bug).
+- `db.indexes` and `db.constraints` return the same rows in a different order; `db.indexes` `info` is only `{fields:[{name}]}` (C: full RediSearch info, and edge indexes list `range:_src_id`/`range:_dest_id`). `reducible` differs for hasLabels/length/nodes/relationships. `createNodeIndex` in C's `('L','p')` form is rejected (a known stub), and alone under `GRAPH.QUERY` it fails with a misleading "graph.RO_QUERY is to be executed only on read-only queries" (a lone write procedure is planned as read-only). `db.idx.fulltext.drop` of a missing index errors (C: no-op); `queryNodes(1, 2)` errors (C: empty).
+
+Further latent items: `heap_size`/`amortized_heap_size` charge a `Relationship` 24 bytes it does not own; `Decode<19>` calls `with_capacity(len)` trusting the length; `add_var_len` stores the lowered name where `add` stores the original (error text casing).
 
 This project has no CONDITIONAL rows.
 
@@ -149,7 +152,7 @@ All non-PROVEN rows are in `value.rs`:
 - **MODELLED:** `Point::distance` (proven in `functions_temporal`, `Spatial.lean`), `Value::name` (used by the error-message theorems) and `fmt_json` (only non-finite floats are proven; the rest is `write!` formatting, live-checked against C).
 - **NOT COVERED:** trait method declarations (`order`, `compare_value`, `value_of_type`, `get_type`, `contains`, `fmt_json`); trivial constructors and `clone`; chrono formatting and calendar accessors (`format_datetime`, `get_date_component`, …), which are trusted and live-checked against C; `json_escape` and node JSON writing.
 
-The header's own count ("72 PROVEN, 11 MODELLED, 46 NOT COVERED of 129") predates waves 5 and 6; the numbers above are computed from the current `COVERAGE.tsv`. `bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
+`bash proofs/coverage.sh` counts each function once, in its best bucket across all projects.
 
 ## What the model does not cover
 

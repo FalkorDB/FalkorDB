@@ -1,17 +1,6 @@
 /-
 DELETE (graph/src/runtime/ops/delete.rs).
 
-| here | there |
-| --- | --- |
-| `attrsToMap`               | `node_attrs_to_map` (delete.rs), `rel_attrs_to_map` (:50) |
-| `snapshotRequired`         | `snapshot_required` (delete.rs) |
-| `DeleteSt.new`             | `DeleteOp::new` (delete.rs; `inspect ||`) |
-| `deleteNext`               | `DeleteOp::next` (delete.rs) |
-| `deleteBatch`, `scan`      | `Runtime::delete_batch` (delete.rs) |
-| `delNodesBulk`             | `delete_nodes_bulk` (delete.rs) |
-| `delRelsBulk`              | `delete_relationships_bulk` (delete.rs) |
-| `delEntity`                | `Runtime::delete_entity` (delete.rs) |
-
 State = the id sets the classification reads and writes: pending `created_nodes` (`pc`),
 pending `deleted_nodes` (`pd`), the graph's deleted/recycled node set (`gd`, which
 `delete_pending_node` extends through `Graph::cancel_node_id`), and the same
@@ -477,7 +466,7 @@ theorem deleteNew_inspect_snapshots {C T : Type} (c : C) (t : T) (anc : List Boo
     (DeleteSt.new true c t anc).snapshot = true := by
   simp [DeleteSt.new]
 
-/-- Without `inspect` the decision is the pre-#3462 one. -/
+/-- Without `inspect` the decision is `snapshot_required`. -/
 theorem deleteNew_no_inspect {C T : Type} (c : C) (t : T) (anc : List Bool) :
     (DeleteSt.new false c t anc).snapshot = snapshotRequired anc := by
   simp [DeleteSt.new]

@@ -10,14 +10,6 @@ and the module-load arguments (`config.rs`) write. `CONFIG REWRITE` therefore sa
 that line through the table's range; a value outside it unloads the module and aborts the
 server.
 
-| here | there |
-| --- | --- |
-| `nativeLoad` | Redis `numericParseString` (`string2ll`, no flags) + `numericBoundaryCheck` (inclusive) for a module numeric config |
-| `rewriteVal` | `rewriteConfigNumericalOption`: the stored `long long` as `%lld` |
-| `ModuleInit.table` | `redis_module!` `configurations:` (`lib.rs`) |
-| `Config.validate .vkeyMax` | `GRAPH.CONFIG SET` (`config_cmd.rs`) |
-| `LoadArgs.applyModuleArgs` | the module-load arguments (`config.rs`) |
-
 `VKEY_MAX_ENTITY_COUNT` is registered with range `0..i64::MAX`, as both other paths accept.
 `vkey_rewrite_reloads_config` / `vkey_rewrite_reloads_load`: any value either path accepts
 is written by `CONFIG REWRITE` as a line the next start accepts, reading back the same value.

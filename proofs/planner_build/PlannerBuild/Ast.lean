@@ -1,17 +1,6 @@
 /-
 # parser/ast.rs: variables, pattern graphs, validation
 
-| here | there |
-| --- | --- |
-| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs (with `anon`) |
-| `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs |
-| `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs |
-| `mergeAttrs` | `merge_attr_maps` ast.rs |
-| `addNode`, `mergeNode`, `replaceNode`, `addRel`, `addPath`, `variables`, accessors | ast.rs |
-| `filterVisited` | `filter_visited` ast.rs |
-| `dfs`, `components` | `dfs` ast.rs, `connected_components` ast.rs |
-| `QC`, `innerValidate`, `validateSetItems`, `inlinedOk`, `returnColumns` | `validate` / `inner_validate` / `validate_set_items` / `validate_inlined_properties` / `return_column_names` ast.rs |
-
 * W4-plan-4: `inner_validate`'s procedure-call arm
   (ast.rs) ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
   so the clauses after a CALL are validated (`call_validates_rest`): `CALL db.labels() YIELD

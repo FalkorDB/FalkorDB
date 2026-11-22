@@ -11,7 +11,7 @@ Replication, AOF, and client `GRAPH.EFFECT` all go through this codec. A codec b
 
 What happens *before* encoding (which records a query emits) and *after* decoding (how the replica applies them to the graph) is proven in [`../effects_emit_apply`](../effects_emit_apply). This project is only about bytes.
 
-The full Lean↔Rust mapping is in the header of [`FalkorEffectsCodec.lean`](FalkorEffectsCodec.lean) and in the header table of each file under `FalkorEffectsCodec/`. This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv) and the header table of each file under `FalkorEffectsCodec/`. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -92,7 +92,7 @@ Two findings are modelled but not bugs on main:
 
 | File | What's in it |
 |---|---|
-| `FalkorEffectsCodec.lean` | Root: the report header, imports, `#print axioms` for the headline theorems |
+| `FalkorEffectsCodec.lean` | Root: a short header, imports, `#print axioms` for the headline theorems |
 | `Prim.lean` | `Bytes`, decode errors `DErr`, little-endian integers, `take`, `guardCount`, strings; "never panics" and "only consumes" combinators |
 | `Cursor.lean` | The real `Reader { buf, pos }` (`Rd`) and `EffectWrite`; every method refines the suffix model |
 | `Value.lean` | `Val`, the type tags, `encV`, the iterative `decodeV` with its `owed` count; `decodeV_encV`, `decodeV_safe`, `encV_total`, `capTrace_linear` |

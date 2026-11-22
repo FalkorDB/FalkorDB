@@ -395,19 +395,6 @@ theorem ftArgs_nonstring_empty (w : String) (l q : Option String) (h : l = none 
     ftArgs w l q = .ok none := by
   cases l <;> cases q <;> simp_all [ftArgs]
 
-/-- Historical (pre-#3269): a non-string label/query was an error, C returns empty
-(FINDINGS W5-proc-3). Fixed by #3269 (c23975b98). -/
-def pre3269_ftArgs (what : String) (label query : Option String) : Except String (String × String) :=
-  match label with
-  | none => .error s!"fulltext query expects a string {what}"
-  | some l => match query with
-    | none => .error "fulltext query expects a string query"
-    | some q => .ok (l, q)
-
-theorem pre3269_ftArgs_errors (w : String) :
-    pre3269_ftArgs w none none = .error s!"fulltext query expects a string {w}" ∧
-    ftArgs w none none = .ok none := ⟨rfl, rfl⟩
-
 /-- `NodeByFulltextScanOp::new` (:42) / `EdgeByFulltextScanOp::new` (:47): scored column with the
 operator's record cap; `EdgeByVectorScanOp::new` (:40): scored column, no cap. -/
 def ftNew (ent : Nat) (score : Option Nat) (cap : Option Nat) : VecSt := ⟨ent, score, cap⟩

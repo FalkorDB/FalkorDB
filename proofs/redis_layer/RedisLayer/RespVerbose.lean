@@ -2,17 +2,6 @@ import RedisLayer.RespCompact
 /-!
 # Verbose values, statistics and whole replies (`src/reply.rs`)
 
-| here | there |
-| --- | --- |
-| `wf`                          | `write_f` |
-| `fmtS` / `fmtList` / `fmtMap` | `format_value_to_string` |
-| `encVb`, `specVb`, `pointStr` | `reply_verbose_value` (top-level point) |
-| `statCalls`, `statLines`      | `reply_stats` |
-| `resultCalls`                 | `reply_query` on `(compact, client_schema)` |
-| `ReplyFormat`, `queryCalls`   | `enum ReplyFormat`, `reply_query` (#3757) |
-| `Schema`, `schemaCalls`, `i64OfU64` | `reply_schema` (#3757), `u64::cast_signed` |
-| `E.fmt` (`Compact.Env`)       | `format_g(x, 15)` (libc `snprintf`, AXIOMATISED as an abstract function) |
-
 Number/temporal formatting is abstract (`Fmt`): `{:.6}`, `%.15g`, `Value::format_*`.
 
 **Floats and points.** C prints NaN with `%f` as `nan`; `write_f` prints `nan` (Rust's bare

@@ -21,9 +21,7 @@ killed the server (repro then: `graph/tests/lean_graphblas_wrappers.rs`
 `if info != SUCCESS { return Err(..) }` (vector.rs) and pass the
 expected type (`GrB_BOOL` / `GrB_UINT64`) so a well-formed blob of another type
 is refused too (`GrB_DOMAIN_MISMATCH`). `decodeBlob_never_dies` /
-`decodeU64_never_dies` prove no code kills the process. The pre-#2996
-wrapper-specific counterexamples were removed from this revision (bbee75955);
-they remain available in 17ccc5412 for historical reference.
+`decodeU64_never_dies` prove no code kills the process.
 -/
 
 import GraphblasWrappers.GrbInfo

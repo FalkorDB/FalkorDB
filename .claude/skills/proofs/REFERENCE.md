@@ -33,7 +33,7 @@ names. All projects pin the same toolchain; `lean_ci.sh` builds dependencies fir
 
 ## Faithful models
 
-- Follow the Rust line by line: same branch structure, same names, and a `file:line` cite for each modelled fn.
+- Follow the Rust line by line: same branch structure, same names. Cite the modelled fn by file and name in a docstring (`graph.rs` `Graph::delete_nodes`), never by line number: COVERAGE.tsv holds the line, and line cites in comments go stale on every merge.
 - Model machine integers faithfully where overflow matters: `BitVec 64` or `Int` with Rust's semantics (debug panic vs release wrap, `checked_*`, `wrapping_*`, `as` casts).
 - f64 stays abstract: use a float structure or class with only the laws you need. Never add an `axiom` for it.
 - Where hashing or equality is involved, the float model must represent `-0.0` and NaN sign/payload (and vector/point components, not just a type tag): `to_bits` tells them apart while `==`/`partial_cmp` do not (see value_order `F`).
@@ -64,7 +64,7 @@ non-test fns PROVEN, with 0 unlisted.
 
 - Confirmed means a repro against the real Rust shows it. Compare with C where the semantics are C's (C module: the `falkordb/falkordb-server:edge-c` image, or a local `master` build under `bin/`).
 - In FINDINGS.md, give each bug an id, `file:line`, the repro, the Rust vs C output, the Lean theorem name, and a suggested fix.
-- When main fixes a bug: rename the counterexample to `pre<PR>_…`, add the correctness theorem, and note `fixed by #PR (sha)` in FINDINGS.md.
+- When main fixes a bug: replace the counterexample with the correctness theorem and delete the counterexample and the old-code model (no `pre<PR>_…` history theorems). Delete the bug from FINDINGS.md and the project README; git history keeps them.
 
 ## Live repros
 

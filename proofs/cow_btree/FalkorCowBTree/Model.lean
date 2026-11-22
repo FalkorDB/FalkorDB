@@ -17,7 +17,7 @@ proofs live in the sibling files; this file only *defines*.
   they decode to (`Leaf::to_pairs`). Each Rust fast path (AoS splice, compact
   splice, block-copy merge) computes the *same list* as its slow path
   (decode + edit + `from_pairs`); we model that list once. Encoding fidelity is
-  a modelling gap here (see `FalkorCowBTree.lean`), proven in `proofs/index_layer` — it is covered by the Rust differential
+  a modelling gap here (see README.md), proven in `proofs/index_layer` — it is covered by the Rust differential
   tests, not by this proof.
 * **`Arc` is a persistent value.** `make_private` always clones before it
   mutates (`node.rs`), and leaf buffers are fresh `Arc<[u8]>`s that are

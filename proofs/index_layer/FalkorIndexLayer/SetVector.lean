@@ -23,9 +23,6 @@ never hands RediSearch such a blob, which is what justifies the `ht` hypothesis 
 `Iter.query_eq_scan_filter` (the label's table holds `docOf` of every entity) in the
 presence of vector fields. The end-to-end acceptance theorem over the RediSearch
 contract is `SC.Search.doc_always_accepted` (proofs/search_concurrency).
-
-HISTORICAL: `setVectorPre3087` added every `VecF32` unchecked (W3-conc-3 / #3075, and
-W5-idx-2's no-options shape); kept as the earlier behaviour.
 -/
 namespace IndexLayer.Meta
 
@@ -37,10 +34,6 @@ def setVector (f : Field) (vec : Option Nat) : Option Nat :=
                   then some (len * 4) else none
     | none => none
   else none
-
-/-- HISTORICAL: the arm at fe619ac5f (no dimension check). -/
-def setVectorPre3087 (f : Field) (vec : Option Nat) : Option Nat :=
-  if f.ty = .vector then vec.map (· * 4) else none
 
 /-- **Key property.** For any field options and any value, a vector add has the
 field's own non-zero dimension: never a disagreeing or absent one. -/
@@ -122,16 +115,5 @@ theorem setVector_none_of_noparams {f : Field} {fo : Option TextOpts} {tieredOk 
   | some nb =>
     obtain ⟨m, _, hr', _⟩ := setVector_has_params hs hr
     cases hr'
-
-/-- #3087 changed only which `VecF32` values are added, never adding a new call. -/
-theorem setVector_sub_pre {f : Field} {vec : Option Nat} {nb : Nat}
-    (h : setVector f vec = some nb) : setVectorPre3087 f vec = some nb := by
-  obtain ⟨hty, o, _, _, rfl, rfl⟩ := setVector_sound h
-  simp [setVectorPre3087, hty]
-
-/-! ### HISTORICAL counterexamples (the unchecked add) -/
-
-def vf (vopts : Option VecOpts) : Field :=
-  { name := "vector:v", ty := .vector, options := none, vopts, numArr := none, strArr := none }
 
 end IndexLayer.Meta

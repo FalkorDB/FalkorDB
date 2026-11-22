@@ -4,19 +4,6 @@ import RedisLayer.Telemetry
 import RedisLayer.GraphCore
 /-!
 # Constraint, record, copy, bulk and config-get handlers (`src/commands/*.rs`, `origin/main`)
-
-| here | there |
-| --- | --- |
-| `validIdent`              | `constraint.rs` `is_valid_identifier` |
-| `consArgs`, `string2ll`   | `graph_constraint`, argument parsing; `parse_integer` = `RedisModule_StringToLongLong` = Redis `string2ll` (util.c) |
-| `registerSchema`          | `register_constraint_schema` |
-| `findStatus`              | `find_status` |
-| `settle`, `attempt`       | `settle_constraint`, `attempt_settle` |
-| `applyCons`, `consWorker` | `apply_constraint`; `graph_constraint` pool path (#3819) |
-| `recordShape`             | `record.rs` `record_mut`, `graph_record` |
-| `copyOut`                 | `copy.rs` `graph_copy` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
-| `bulkFlow`, `heldReplicate`, `heldRekey`, `bulkArgv`, `discardCreated`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` (#3863: `discard_created_graph`, `HeldArgs::rekey`, the worker's `key_of_write`; #3559 bounded stale retry escalates to `begin_writer_checked`, a refusal is the same failure path) |
-| `getNames`, `getOne`, `asI64`, `asU64` | `config_cmd.rs` `config_get_one`, `ConfigValue::as_i64/as_u64` |
 -/
 namespace RedisLayer.Commands
 

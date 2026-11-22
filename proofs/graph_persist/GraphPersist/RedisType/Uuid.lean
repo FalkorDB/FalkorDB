@@ -9,7 +9,7 @@ fields: `uuid_fields(t, seq)` prints `t` in the first three fields and
   on sample points, proven here for every `seq`.
 * `uuid_counter_distinct` — **two calls whose counters differ mod 2^48 never share a
   name, whatever the clock reads**; `uuid_same_clock_distinct`,
-  `uuid_regression_pair_distinct` (`(t, seq) = (4, 2)` vs `(5, 3)`, a pair that collided under an earlier `t ^ seq` scheme).
+  `uuid_regression_pair_distinct` (`(t, seq) = (4, 2)` vs `(5, 3)`).
 * `vkeyName_inj`, `vkeyName_ne` — virtual-key names of one graph differ iff their uuids do,
   and none equals the graph's own name; `vkeyName_uuid_counter` — two virtual-key names
   (of any graphs) that are equal came from the same counter mod 2^48, and
@@ -221,7 +221,7 @@ theorem vkeyName_suffix (g u : List Nat) : ∃ p, vkeyName g u = p ++ u := by
   · exact ⟨[123] ++ g ++ [125] ++ g ++ [95], by simp⟩
 
 /-- **Two equal virtual-key names, of any graphs, came from the same counter mod
-2^48**: the uuid is the name's fixed-length tail. (Before #3286 this failed.) -/
+2^48**: the uuid is the name's fixed-length tail. -/
 theorem vkeyName_uuid_counter (g g' : List Nat) (t t' s s' : Nat)
     (h : vkeyName g (uuid t s) = vkeyName g' (uuid t' s')) : s % 2 ^ 48 = s' % 2 ^ 48 := by
   obtain ⟨p, hp⟩ := vkeyName_suffix g (uuid t s)

@@ -1,16 +1,6 @@
 /-
 Constructors and small helpers of the apply-family operators.
 
-| here | there |
-| --- | --- |
-| `mergeChildIdx`, `MergeSt.new` | `MergeOp::new` (merge.rs) |
-| `onceGet`                      | `OnceCell::get_or_init` in `MergeOp::resolve_pattern` (merge.rs), `resolve_on_create_set_items` (:107), `resolve_on_match_set_items` (:112) |
-| `mergeHashInput`, `mergeHash`  | `MergeOp::compute_merge_pattern_hash` (merge.rs) |
-| `semiRight`                    | `SemiApplyOp::new` (semi_apply.rs) |
-| `orBranches`                   | `OrApplyMultiplexerOp::new` (or_apply_multiplexer.rs) |
-| `forEachBody`                  | `ForEachOp::new` (foreach.rs) |
-| `storeArg`                     | `UnionOp::store_argument_batch` (union.rs) |
-
 A plan node is its child-index list (`runtime.plan.node(idx).child(i)`); `child(i)` out of
 range panics (`none`). `num_children() - 1` on 0 children underflows `usize` (debug panic;
 release wraps and `child` panics) — also `none`.

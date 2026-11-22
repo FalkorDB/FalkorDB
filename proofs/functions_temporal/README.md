@@ -82,15 +82,20 @@ Yes:
 
 ## Bugs found
 
-Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). No W2-temporal bug is open; the fixed ones are in this file's git history. The rows below are not open W2-temporal bugs: they are shared with C, suspected, or message-only.
+Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). The first row is an open divergence from C; the others are shared with C, suspected, or message-only.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
+| — | `durComp_null_but_representable`, `bug_duration_component_null` (`DurationComponent.lean`) | `Value::get_duration_component` is chrono-bounded: a duration whose instant leaves chrono's year range (about 260,174 years and up) is accepted by `check_date_range` (up to ~2.1e9 years) and printed by `decompose_duration`, but `.years`/`.days`/… return `null`. `RETURN duration({years: 262000, days: 3}).years` is `null` in Rust, `262000` in C (re-checked live on 256ab4d3f); `years: -1000000` gives `null` in Rust, 0/0/3/6 in C | **Open** (confirmed live) |
 | — | `neg_days_encoding` | `date('2020-03-01') + duration({days:-1})` is 2020-03-02 (spec: 02-29), because negative durations are encoded as an instant before 1970 | Shared with C |
 | — | `civilFromDays_trunc` | `y - 1970` in `i32` inside `decompose_duration` overflows for durations whose year wraps | Suspected, not triggered in release |
 | — | `point_null_lat_msgs` | `point({latitude:null, …})` gives two different error messages for a literal map and a map value | Message only |
 
-The header also records conversion divergences found live: `toString(1.0)` is `"1"` (C `"1.000000"`), `toInteger('1e3')` is 1000 (C `null`), and `toFloat(' 1')` is `null` (C 1). They aren't modelled, since `f64` formatting and parsing are abstract.
+The header also records conversion divergences found live: `toString(1.0)` is `"1"` (C `"1.000000"`), `toInteger('1e3')` is 1000 (C `null`), and `toFloat(' 1')` is `null` (C 1). They aren't modelled, since `f64` formatting and parsing are abstract. More live-only conversion divergences (`conversion.rs` is private): `toString(0.1+0.2)` is `"0.30000000000000004"` (C `"0.300000"`), `toString(0.0/0)` is `"NaN"` (C `"nan"`), `toString(1e300)` differs past 17 digits (`format!("{f}")` vs C `%f`), `toInteger(' 12')` is `null` (C 12), `toFloat('0x10')` is `null` (C 16).
+
+Constructor validation, Rust stricter or looser than C: `duration('P5')` and `duration('P-')` give `PT0S` (C null); `duration('PT1.5S')` gives `PT1S` (C null); `duration({years:200000000})` errors (C `P200000000Y`); `date('2020-01-01') + duration({years:178956970, months:7})` prints "8990-08-01" (year mod 10000; C "178958988-08-01"). C also accepts 2021-02-29 (normalises to 03-01; Rust errors, as the spec says), and C's `date('2021-01-03').dayOfQuarter` is 4 (Rust 3, correct).
+
+Suspected, not confirmed: `ya + yb` in `Duration + Duration` and `shift_months` (`y + years` in i32, `-years` at `i32::MIN`, `days * 86400` in i64) are unchecked and overflow in debug only for year-wrapping durations; `hour: 4294967297` is truncated by `as u32` in `time_from_components` (C does the same).
 
 This project has no CONDITIONAL rows.
 

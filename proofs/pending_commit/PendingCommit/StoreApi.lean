@@ -5,18 +5,6 @@ import PendingCommit.StoreFold
 The store is a `DataBlock` (`D`). Every read below is stated in terms of
 `dread` (the entity's span) and every write in terms of the
 `Store`/`StoreFold` theorems.
-
-| Lean | Rust |
-| --- | --- |
-| `emptyD`, `new_spec` | `AttributeStore::new`/`default`, `DataBlock::default`, `DirPage::default` (:1152, :914) |
-| `newVersion` | `new_version` (:1159), a value copy (`Arc` clone + `make_mut` on write) |
-| `getAttr`, `getAttr_eq` | `get_attr_by_idx` (:1171) |
-| `getBatch` | `get_attrs_by_idx_batch_into` (:1182) |
-| `hasAttrs`, `attrCount`, `attrIds`, `allAttrs` | :1197, :1206, :1226, :1236 |
-| `entityMem` | `entity_memory_usage` (:1215) |
-| `removeAll` | `remove_all` (:1246) |
-| `insertAttrs`, `insertRows` | `insert_attrs` (:1315), `insert_attrs_rows` (:1266) |
-| `importAttrs`, `importResolved` | `import_attrs` (:1351), `import_attrs_resolved` (:1388: stable sort, dedup, drop `ATTRIBUTE_ID_NONE`) |
 -/
 namespace PendingCommit.Content
 open Arena (Slot)
