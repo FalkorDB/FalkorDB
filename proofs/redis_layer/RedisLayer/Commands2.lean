@@ -15,7 +15,7 @@ import RedisLayer.GraphCore
 | `applyCons`, `consWorker` | `apply_constraint` `:599`; `graph_constraint` pool path `:547-585` (#3819) |
 | `recordShape`             | `record.rs` `record_mut` `:44`, `graph_record` `:180` |
 | `copyOut`                 | `copy.rs` `graph_copy` `:27` (`pipe`/`fork`/`_exit`/`waitpid` are libc, AXIOMATISED) |
-| `bulkFlow`, `heldReplicate`, `heldRekey`, `bulkArgv`, `discardCreated`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:247-1125` (#3863: `discard_created_graph` `:296`, `HeldArgs::rekey` `:396`, the worker's `key_of_write` `:1026`) |
+| `bulkFlow`, `heldReplicate`, `heldRekey`, `bulkArgv`, `discardCreated`, `maybeYield`, `publishOps`, `edgeRecords` | `bulk_insert.rs` `:249-1148` (#3863: `discard_created_graph` `:298`, `HeldArgs::rekey` `:398`, the worker's `key_of_write` `:1048`; #3559 bounded stale retry escalates to `begin_writer_checked`, a refusal is the same failure path) |
 | `getNames`, `getOne`, `asI64`, `asU64` | `config_cmd.rs` `config_get_one` `:57`, `ConfigValue::as_i64/as_u64` `:294-306` |
 -/
 namespace RedisLayer.Commands
