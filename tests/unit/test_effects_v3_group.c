@@ -1636,6 +1636,61 @@ void test_effectsV3Group_indexLevelOptionsStatedOnce(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// A STRIPPED RECORD IS STILL SOMETHING TO FOLD INTO
+//
+// Index-level options are stated once per index per payload, so every record
+// for an index after the first has its language and stopwords removed. The
+// block ARRIVING with a field never is - the caller repeats the statement's
+// index-level options on every field's map (proc_fulltext_create_index.c:340
+// onwards). So a fold test that reads language or stopwords compares a
+// stripped candidate against an unstripped arrival and can only say no, for
+// every record after the first, forever: field 3 would not fold into field
+// 2's record even stating exactly what field 2 stated, and would open a third
+// record identical to it but for the name - then a fourth, one per remaining
+// field.
+//
+// Three fields, two distinct weights. Two records is the only answer: 'c'
+// cannot fold into 'a' - 2.0 and 5.0 are different weights, which is what
+// differingFieldOptionsSplit pins - so two records means 'c' went where it
+// belongs, onto 'b'. Compare language or stopwords again and this reads 3.
+void test_effectsV3Group_foldsIntoAStrippedRecord(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	SIValue sw = SIArray_New(1);
+	SIArray_Append(&sw, SI_ConstStringVal("the"));
+
+	// one fulltext statement's three field maps, built the way the proc builds
+	// them: the index-level options on every one of them
+	const double   weight[3] = { 2.0, 5.0, 5.0 };
+	const char    *name[3]   = { "a", "b", "c" };
+	SIValue        m[3];
+
+	for(int i = 0; i < 3; i++) {
+		m[i] = SI_Map(3);
+		Map_Add(&m[i], SI_ConstStringVal("stopwords"), sw);
+		Map_Add(&m[i], SI_ConstStringVal("language"),
+				SI_ConstStringVal("english"));
+		Map_Add(&m[i], SI_ConstStringVal("weight"), SI_DoubleVal(weight[i]));
+	}
+
+	for(int i = 0; i < 3; i++) {
+		EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+				"P", INDEX_FLD_FULLTEXT, 12 + i, name[i], m[i]);
+	}
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+			"'b' and 'c' state the same weight and belong in one record, got "
+			"%u records - 'c' did not fold into the record 'b' opened, because "
+			"that record had its index-level options stripped and 'c' still "
+			"carries them", EffectsV3Grouping_RecordCount(g));
+
+	for(int i = 0; i < 3; i++) {
+		Map_Free(m[i]);
+	}
+	SIArray_Free(sw);  // Map_Add clones it (map.c:157)
+	EffectsV3Grouping_Free(g);
+}
+
 // a drop folds the same way and carries no options at all
 void test_effectsV3Group_dropIndexFoldsWithNoOptions(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
@@ -1768,6 +1823,8 @@ TEST_LIST = {
 		test_effectsV3Group_identicalFieldOptionsFold },
 	{ "EffectsV3Group:indexLevelOptionsStatedOnce",
 		test_effectsV3Group_indexLevelOptionsStatedOnce },
+	{ "EffectsV3Group:foldsIntoAStrippedRecord",
+		test_effectsV3Group_foldsIntoAStrippedRecord },
 	{ "EffectsV3Group:dropIndexFoldsWithNoOptions",
 		test_effectsV3Group_dropIndexFoldsWithNoOptions },
 	{ "EffectsV3Group:differentIndexesNeverFold",

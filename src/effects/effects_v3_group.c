@@ -1308,7 +1308,7 @@ static bool _streq(const char *a, const char *b) {
 	return strcmp(a, b) == 0;
 }
 
-// do two option blocks state THE SAME THING?
+// do two option blocks say the same thing ABOUT THE FIELD?
 //
 // Compared field by field rather than with memcmp: the struct holds pointers
 // and padding, so two blocks that say the same thing rarely have the same
@@ -1316,25 +1316,34 @@ static bool _streq(const char *a, const char *b) {
 // an unstated weight are different statements even though the value slot of
 // the second is also 1.0 by memset.
 //
+// LANGUAGE AND STOPWORDS ARE LEFT OUT ON PURPOSE. They configure the index,
+// not the field, and only the FIRST record for an index carries them - every
+// later one has them stripped, below, because the setters refuse a repeat.
+// Reading them here would therefore ask where a record sits in the payload
+// rather than what it says about the field, and for a stripped record the
+// answer is always no: the candidate has had its language removed while the
+// block arriving still has one. A third field that states exactly what the
+// second did would fail to fold into it and open a record of its own, and so
+// would the fourth, one redundant record per field for the rest of the
+// statement. What makes two fields one record is the field-level half, which
+// is all this reads.
+//
 // 'vector' is the two records' shared field type, already compared by the
 // caller: whether the vector half exists at all is a property of the RECORD -
 // field_type & INDEX_FLD_VECTOR - and the block carries no second copy of it
 // that could disagree
-static bool _options_eq
+static bool _field_options_eq
 (
 	const EffectsV3IndexOptions *a,
 	const EffectsV3IndexOptions *b,
 	bool vector
 ) {
-	if(a->has_language != b->has_language ||
-	   a->has_weight   != b->has_weight   ||
+	if(a->has_weight   != b->has_weight   ||
 	   a->has_nostem   != b->has_nostem   ||
-	   a->has_phonetic != b->has_phonetic ||
-	   a->has_stopwords != b->has_stopwords) {
+	   a->has_phonetic != b->has_phonetic) {
 		return false;
 	}
 
-	if(a->has_language && !_streq(a->language, b->language))  return false;
 	if(a->has_phonetic && !_streq(a->phonetic, b->phonetic))  return false;
 	if(a->has_nostem   && a->nostem != b->nostem)             return false;
 
@@ -1346,13 +1355,6 @@ static bool _options_eq
 		memcpy(&x, &a->weight, sizeof(x));
 		memcpy(&y, &b->weight, sizeof(y));
 		if(x != y) return false;
-	}
-
-	if(a->has_stopwords) {
-		if(a->n_stopwords != b->n_stopwords) return false;
-		for(uint64_t i = 0; i < a->n_stopwords; i++) {
-			if(!_streq(a->stopwords[i], b->stopwords[i])) return false;
-		}
 	}
 
 	if(!vector) {
@@ -1570,7 +1572,7 @@ void EffectsV3Grouping_AddIndexField
 			return;
 		}
 
-		if(_options_eq(&a->create_index.options, &o,
+		if(_field_options_eq(&a->create_index.options, &o,
 				(field_type & INDEX_FLD_VECTOR) != 0)) {
 			_record_append_attr_ref(a, attr_id, attr_name);
 			_options_free(&o);
