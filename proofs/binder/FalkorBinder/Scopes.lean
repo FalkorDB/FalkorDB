@@ -133,24 +133,44 @@ theorem callBody_union_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen true ≠ s := by
   simp [callBodyScope, unionBranchStack]; omega
 
-/-! ## Label accumulation (binder.rs:1356-1360, 122-154) -/
+/-! ## Label accumulation (binder.rs:1525-1530, 220-254; #3049 rollback :1717-1740) -/
 
 inductive LClause
   | match_ (labels : List Name)        -- MATCH (n:L…)
-  | optMatch (labels : List Name)      -- OPTIONAL MATCH (n:L…): saved/restored (binder.rs:338-346)
-  | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs:2090-2092)
-  | create (labels : List Name)        -- CREATE (n:L)-[..]->(): not saved
-  | comprehension (labels : List Name) -- [(n:L)-->() | …]: not saved
+  | optMatch (labels : List Name)      -- OPTIONAL MATCH (n:L…): saved/restored (binder.rs:437-454)
+  | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs:2284-2289)
+  | create (labels : List Name)        -- CREATE (n:L)-[..]->(): `with_node_labels_rolled_back(true, …)` (:552)
+  | comprehension (labels : List Name) -- [(n:L)-->() | …]: `with_node_labels_rolled_back(false, …)` (:2104)
   | remove (labels : List Name)        -- REMOVE n:L…: `bind_ir` QueryIR::Remove (b84473a7f :477-482)
                                        -- binds the items and leaves `node_labels` alone (#3450)
   deriving Repr, DecidableEq
 
-/-- The accumulated label set of one node variable after the clauses. -/
-def accumulate (acc : List Name) : List LClause → List Name
+/-- `acc ∪ ls` as `OrderSet::extend` does it (binder.rs:1528). -/
+def addLabels (acc ls : List Name) : List Name := acc ++ ls.filter (fun l => !acc.contains l)
+
+/-- The accumulated label set of one node variable after the clauses (since #3049).
+`bound`: the variable is already in `current_env()` when the clause runs (bound by an earlier
+MATCH, OPTIONAL MATCH or CREATE). `with_node_labels_rolled_back` (binder.rs:1723-1740) restores
+`node_labels` after a CREATE for every in-scope key and keeps only the entries of nodes the CREATE
+declared itself (`keep_new = true`); after a pattern comprehension it restores everything
+(`keep_new = false`). -/
+def accumulateFrom (bound : Bool) (acc : List Name) : List LClause → List Name
+  | [] => acc
+  | .match_ ls :: r => accumulateFrom true (addLabels acc ls) r
+  | .create ls :: r =>
+    if bound then accumulateFrom true acc r else accumulateFrom true (addLabels acc ls) r
+  | .optMatch _ :: r => accumulateFrom true acc r
+  | .predicate _ :: r | .comprehension _ :: r | .remove _ :: r => accumulateFrom bound acc r
+
+/-- Accumulation for a variable not yet in scope, starting from `acc`. -/
+def accumulate (acc : List Name) (cs : List LClause) : List Name := accumulateFrom false acc cs
+
+/-- Historical (before #3049): CREATE and comprehension labels accumulated unconditionally. -/
+def accumulatePre3049 (acc : List Name) : List LClause → List Name
   | [] => acc
   | .match_ ls :: r | .create ls :: r | .comprehension ls :: r =>
-    accumulate (acc ++ ls.filter (fun l => !acc.contains l)) r
-  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r => accumulate acc r
+    accumulatePre3049 (acc ++ ls.filter (fun l => !acc.contains l)) r
+  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r => accumulatePre3049 acc r
 
 /-- `update_all_node_labels` writes the accumulation into the *first* MATCH's
 scan. openCypher: that scan carries the labels of the (non-optional) MATCH
@@ -166,12 +186,44 @@ theorem labels_agree_match_only :
       specScanLabels [.match_ ["A"], .optMatch ["B"], .predicate ["C"], .match_ ["D"]] := by
   decide
 
-/-- **Root cause 5.** `MATCH (a) CREATE (a:Z)-[:T]->(:C)` scans `(a:Z)`, and
-`MATCH (a) RETURN [(a:A)-->(b) | b.v]` scans `(a:A)`. -/
-theorem labels_leak :
-    accumulate [] [.match_ [], .create ["Z"]] = ["Z"] ∧ specScanLabels [.match_ [], .create ["Z"]] = [] ∧
-    accumulate [] [.match_ [], .comprehension ["A"]] = ["A"] ∧
+/-- **Root cause 5, historical** (before #3049): `MATCH (a) CREATE (a:Z)-[:T]->(:C)` scanned
+`(a:Z)`, and `MATCH (a) RETURN [(a:A)-->(b) | b.v]` scanned `(a:A)`. Fixed by #3049, see
+`labels_leak_fixed`. -/
+theorem pre3049_labels_leak :
+    accumulatePre3049 [] [.match_ [], .create ["Z"]] = ["Z"] ∧
+      specScanLabels [.match_ [], .create ["Z"]] = [] ∧
+    accumulatePre3049 [] [.match_ [], .comprehension ["A"]] = ["A"] ∧
       specScanLabels [.match_ [], .comprehension ["A"]] = [] := by
+  decide
+
+def LClause.isMatch : LClause → Bool
+  | .match_ _ => true
+  | _ => false
+
+/-- Since #3049: once a variable is in scope only its MATCH clauses add to its label set;
+CREATE, OPTIONAL MATCH, predicates, comprehensions and REMOVE leave it alone. -/
+theorem accumulate_bound_match_only (acc : List Name) (cs : List LClause) :
+    accumulateFrom true acc cs = accumulateFrom true acc (cs.filter LClause.isMatch) := by
+  induction cs generalizing acc with
+  | nil => rfl
+  | cons c r ih =>
+    cases c <;> simp [accumulateFrom, LClause.isMatch, List.filter_cons, ih]
+
+/-- The two repros of W2-binder-6 (and the OPTIONAL MATCH one of test21) now scan with the
+spec's labels. -/
+theorem labels_leak_fixed :
+    accumulate [] [.match_ [], .create ["Z"]] = specScanLabels [.match_ [], .create ["Z"]] ∧
+    accumulate [] [.match_ [], .comprehension ["A"]] =
+      specScanLabels [.match_ [], .comprehension ["A"]] ∧
+    accumulate [] [.optMatch [], .create ["Z"]] = [] ∧
+    accumulate [] [.match_ ["A"], .create ["Z"], .comprehension ["B"], .match_ ["D"]] =
+      specScanLabels [.match_ ["A"], .create ["Z"], .comprehension ["B"], .match_ ["D"]] := by
+  decide
+
+/-- A node the CREATE declares itself keeps its labels (`keep_new`), so a later MERGE on it
+still sees them (VariableAlreadyBound check, binder.rs:498/522). -/
+theorem create_new_keeps_labels :
+    accumulate [] [.create ["Z"]] = ["Z"] ∧ accumulate [] [.create ["Z"], .create ["Y"]] = ["Z"] := by
   decide
 
 /-! ## UNION column agreement (binder.rs:267-292) -/
