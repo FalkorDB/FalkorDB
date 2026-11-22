@@ -2588,7 +2588,15 @@ impl Binder {
                         |name| format!("Type mismatch: expected Boolean or Null but was {name}"),
                     ));
                 }
-                if check_shape && !Self::expr_may_return_boolean(child) {
+                // A nested logical operand is checked by the walk below, which
+                // names the offending operand's type.
+                if check_shape
+                    && !matches!(
+                        child.data(),
+                        ExprIR::And | ExprIR::Or | ExprIR::Xor | ExprIR::Not
+                    )
+                    && !Self::expr_may_return_boolean(child)
+                {
                     return Err(String::from("Type mismatch: expected Boolean or Null"));
                 }
             }

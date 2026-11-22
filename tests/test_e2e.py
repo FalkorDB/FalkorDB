@@ -1907,6 +1907,8 @@ def test_boolean_operator_runtime_typed_operands_short_circuit_3293():
     assert query("UNWIND [3] AS x WITH x WHERE false AND x RETURN 1").result_set == []
     # A runtime-typed operand that is evaluated is still checked.
     query_exception("UNWIND [3] AS x RETURN true AND x", "Type mismatch: expected Boolean or Null but was Integer")
+    # A nested logical operand reports its own operand's type.
+    query_exception("RETURN true OR (false AND 1)", "Type mismatch: expected Boolean or Null but was Integer")
 
 
 def test_boolean_operator_filter_contexts_short_circuit_3293():
