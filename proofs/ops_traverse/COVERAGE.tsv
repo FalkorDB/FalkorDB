@@ -76,15 +76,15 @@ graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::new	47	PROV
 graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::next	78	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, ftArgs_ok_iff, ftArgs_nonstring_empty, scans_stream
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::new	40	PROVEN	IndexScan.ftNew/VecSt.new: ftNew_spec
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::next	75	PROVEN	IndexScan.edgeVecRow/vecArgs: edgeVecRow_spec, vecArgs_ok
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	80	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	118	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	267	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
-graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	270	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
-graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	592	PROVEN	IndexScan.edgeRow/orient: edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
-graph/src/runtime/ops/edge_by_index_scan.rs	Bucket::next	69	NOT COVERED	(#3592): not modelled yet
-graph/src/runtime/ops/edge_by_index_scan.rs	Bucket::expr_is_row_invariant	78	NOT COVERED	(#3592): not modelled yet
-graph/src/runtime/ops/edge_by_index_scan.rs	query_is_row_invariant	87	NOT COVERED	(#3592): not modelled yet
-graph/src/runtime/ops/edge_by_index_scan.rs	scan_type	105	NOT COVERED	(#3592): not modelled yet
-graph/src/runtime/ops/edge_by_index_scan.rs	indexed_edges	145	NOT COVERED	(#3592): not modelled yet
-graph/src/runtime/ops/edge_by_index_scan.rs	collect_hits	195	NOT COVERED	(#3592): not modelled yet
-graph/src/runtime/ops/edge_by_index_scan.rs	HitCache::lookup	243	NOT COVERED	(#3592): not modelled yet
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	346	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec (the #3592 hit-cache fields are HitCache::lookup's state, hitLookup)
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	392	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	541	PROVEN	IndexScan.canUseE: canUseE_spec; InList arm (#2383): canUseE_inListV_eq_or
+graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	544	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	592	PROVEN	IndexScan.edgeRowCached/edgeRow/orient: edgeRowCached_eq (#3592 hit cache changes no row), edgeRowCached_sound, edgeRow_sound, orient_mem, orient_length (undirected: both orientations, self-loop once, since #3081 ff3d24ba7), scans_stream
+graph/src/runtime/ops/edge_by_index_scan.rs	Bucket::next	69	PROVEN	IndexScan.hitLookup (bucket walked in order; absent bucket empty): edgeRowCached_eq
+graph/src/runtime/ops/edge_by_index_scan.rs	expr_is_row_invariant	78	NOT COVERED	(#3592) syntactic AST walk (Constant/Parameter/List/Map only); that such an expression evaluates the same on every row needs the evaluator model (expr_semantics), not modelled here; edgeRowCached_eq takes the cache built from the row's own evaluated query
+graph/src/runtime/ops/edge_by_index_scan.rs	query_is_row_invariant	87	NOT COVERED	(#3592) structural recursion over IndexQuery calling expr_is_row_invariant; see that row
+graph/src/runtime/ops/edge_by_index_scan.rs	scan_type	105	PROVEN	IndexScan.edgeRow (`all`: the type's edge list, read once and shared): edgeRow_sound, edgeRowCached_eq
+graph/src/runtime/ops/edge_by_index_scan.rs	indexed_edges	145	PROVEN	IndexScan.edgeRow (`idx`: the index answer, FFI; code moved out of EdgeByIndexScanOp::next by #3592): edgeRow_sound, edgeRowCached_eq
+graph/src/runtime/ops/edge_by_index_scan.rs	collect_hits	195	PROVEN	IndexScan.collectHits: collectHits_sound (= orient, within budget), collectHits_some_iff (refused only over budget)
+graph/src/runtime/ops/edge_by_index_scan.rs	HitCache::lookup	243	PROVEN	IndexScan.hitLookup: edgeRowCached_eq, edgeRowCached_sound

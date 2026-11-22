@@ -369,6 +369,162 @@ theorem orient_length (base : List (Nat × Nat × Nat)) :
     · simp [h]; omega
     · simp [h]; omega
 
+/-! ### Hit cache of a row-invariant edge index query (#3592) -/
+
+/-- `collect_hits` (edge_by_index_scan.rs): the hits oriented as `orient` does, refused (`none`)
+when appending one more would pass `max` (checked before each append). -/
+def collectHitsGo (bidir : Bool) (max : Nat) :
+    List (Nat × Nat × Nat) → List (Nat × Nat × Nat) → Option (List (Nat × Nat × Nat))
+  | acc, [] => some acc
+  | acc, (s, d, e) :: rest =>
+    if acc.length = max then none
+    else if bidir && s != d then
+      if (acc ++ [(s, d, e)]).length = max then none
+      else collectHitsGo bidir max (acc ++ [(s, d, e)] ++ [(d, s, e)]) rest
+    else collectHitsGo bidir max (acc ++ [(s, d, e)]) rest
+
+def collectHits (hits : List (Nat × Nat × Nat)) (bidir : Bool) (max : Nat) :
+    Option (List (Nat × Nat × Nat)) :=
+  collectHitsGo bidir max [] hits
+
+/-- The part of `orient` one hit contributes. -/
+theorem orient_cons (bidir : Bool) (s d e : Nat) (tl : List (Nat × Nat × Nat)) :
+    orient bidir ((s, d, e) :: tl) =
+      (if bidir && s != d then [(s, d, e), (d, s, e)] else [(s, d, e)]) ++ orient bidir tl := by
+  cases bidir
+  · simp [orient]
+  · by_cases h : s = d
+    · subst h; simp [orient]
+    · simp [orient, h]
+
+theorem collectHitsGo_sound (bidir : Bool) (max : Nat) :
+    ∀ (hits acc l : List (Nat × Nat × Nat)), collectHitsGo bidir max acc hits = some l →
+      acc.length ≤ max → l = acc ++ orient bidir hits ∧ l.length ≤ max := by
+  intro hits
+  induction hits with
+  | nil =>
+    intro acc l h hm
+    simp only [collectHitsGo, Option.some.injEq] at h; subst h
+    exact ⟨by cases bidir <;> simp [orient], hm⟩
+  | cons hd tl ih =>
+    intro acc l h hm
+    obtain ⟨s, d, e⟩ := hd
+    rw [orient_cons]
+    simp only [collectHitsGo] at h
+    split at h
+    · simp at h
+    · rename_i h0
+      split at h
+      · rename_i hb
+        split at h
+        · simp at h
+        · rename_i h1
+          simp only [List.length_append, List.length_cons, List.length_nil] at h1
+          obtain ⟨rfl, hl⟩ := ih _ _ h (by simp; omega)
+          exact ⟨by simp [hb], hl⟩
+      · rename_i hb
+        obtain ⟨rfl, hl⟩ := ih _ _ h (by simp; omega)
+        exact ⟨by simp [hb], hl⟩
+
+/-- A kept hit list is exactly what the per-row scan orients (`orient`), within the budget. -/
+theorem collectHits_sound (hits l : List (Nat × Nat × Nat)) (bidir : Bool) (max : Nat)
+    (h : collectHits hits bidir max = some l) : l = orient bidir hits ∧ l.length ≤ max := by
+  obtain ⟨rfl, hl⟩ := collectHitsGo_sound bidir max hits [] l h (by simp)
+  exact ⟨by simp, by simpa using hl⟩
+
+theorem collectHitsGo_fits (bidir : Bool) (max : Nat) :
+    ∀ (hits acc : List (Nat × Nat × Nat)), acc.length + (orient bidir hits).length ≤ max →
+      collectHitsGo bidir max acc hits = some (acc ++ orient bidir hits) := by
+  intro hits
+  induction hits with
+  | nil => intro acc _; cases bidir <;> simp [collectHitsGo, orient]
+  | cons hd tl ih =>
+    intro acc hle
+    obtain ⟨s, d, e⟩ := hd
+    rw [orient_cons] at hle ⊢
+    simp only [collectHitsGo]
+    by_cases hb : (bidir && s != d) = true
+    · simp only [hb, ite_true, List.length_append, List.length_cons, List.length_nil] at hle ⊢
+      rw [ite_eq_right (by omega), ite_eq_right (by simp; omega), ih _ (by simp; omega)]; simp
+    · simp only [hb, Bool.false_eq_true, ite_false, List.length_append, List.length_cons,
+        List.length_nil] at hle ⊢
+      rw [ite_eq_right (by omega), ih _ (by simp; omega)]; simp
+
+/-- `HitCache::lookup`'s endpoint key: the pattern's `from` is the edge's dst when transposed. -/
+def endpointOf (transposed wantFrom : Bool) : Nat × Nat × Nat → Nat
+  | (s, d, _) => if wantFrom == transposed then d else s
+
+/-- `HitCache::lookup` (edge_by_index_scan.rs): streams (`none`) when the query writes, reads the
+row, went over budget, binds no endpoint, or this is the first bound row; else the kept hits'
+bucket of the bound `from` (else `to`) endpoint, which `Bucket::next` walks in order (an absent
+bucket is empty). The by-endpoint `HashMap` keeps each bucket in hit order: it is the filter. -/
+def hitLookup (write rowInv overBudget : Bool) (seen : Nat) (kept : Option (List (Nat × Nat × Nat)))
+    (bFrom bTo : Option Nat) (transposed : Bool) : Option (List (Nat × Nat × Nat)) :=
+  if write || !rowInv || overBudget || (bFrom.isNone && bTo.isNone) || seen == 0 then none
+  else match kept with
+    | none => none
+    | some all =>
+      match bFrom, bTo with
+      | some id, _ => some (all.filter fun h => endpointOf transposed true h == id)
+      | none, some id => some (all.filter fun h => endpointOf transposed false h == id)
+      | none, none => none
+
+/-- `EdgeByIndexScanOp::next` per row since #3592: a usable query first asks the hit cache
+(hits kept = `collect_hits` of the index answer), then filters the bucket as `edgeRow` filters;
+otherwise the per-row scan `edgeRow`. -/
+def edgeRowCached (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat)) (q : IQ V)
+    (bFrom bTo : Option Nat) (sameAlias transposed bidir : Bool)
+    (write rowInv overBudget : Bool) (seen max : Nat) : List (Nat × Nat × Nat) :=
+  match (if canUseE q then hitLookup write rowInv overBudget seen (collectHits (idx q) bidir max)
+      bFrom bTo transposed else none) with
+  | some bucket =>
+    bucket.filter fun (s, d, _) =>
+      let (f, t) := if transposed then (d, s) else (s, d)
+      (bFrom.all (· == f)) && (bTo.all (· == t)) && (!sameAlias || f == t)
+  | none => edgeRow idx all q bFrom bTo sameAlias transposed bidir
+
+/-- **The hit cache changes no row** (#3592): whether a row is served from the kept hits'
+bucket or by re-running the index query, it gets exactly `edgeRow`'s edges, in order (the
+cache is built from the same evaluated query, which `query_is_row_invariant` makes
+row-independent). So `edgeRow_sound`, `orient_mem`, `orient_length` hold for the cached path. -/
+theorem edgeRowCached_eq (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (q : IQ V) (bf bt : Option Nat) (sa tr bd w ri ob : Bool) (seen max : Nat) :
+    edgeRowCached idx all q bf bt sa tr bd w ri ob seen max = edgeRow idx all q bf bt sa tr bd := by
+  unfold edgeRowCached
+  cases hq : canUseE q
+  · simp
+  · simp only [ite_true]
+    by_cases hg : (w || !ri || ob || (bf.isNone && bt.isNone) || seen == 0) = true
+    · simp only [hitLookup, hg, ite_true]
+    · simp only [hitLookup, hg, Bool.false_eq_true, ite_false]
+      cases hk : collectHits (idx q) bd max with
+      | none => rfl
+      | some kept =>
+        obtain ⟨rfl, _⟩ := collectHits_sound _ _ _ _ hk
+        unfold edgeRow
+        cases bf with
+        | some id =>
+          simp only [hq, ite_true, Option.isSome_some, Bool.true_or, List.filter_filter]
+          apply List.filter_congr
+          rintro ⟨s, d, e⟩ _
+          cases tr <;> by_cases h1 : id = s <;> by_cases h2 : id = d <;> simp_all [endpointOf]
+        | none =>
+          cases bt with
+          | none => simp at hg
+          | some id =>
+            simp only [hq, ite_true, Option.isSome_some, Bool.or_true, Bool.true_or, List.filter_filter]
+            apply List.filter_congr
+            rintro ⟨s, d, e⟩ _
+            cases tr <;> by_cases h1 : id = s <;> by_cases h2 : id = d <;> simp_all [endpointOf]
+
+/-- A row served from the cache is sound as `edgeRow_sound` states. -/
+theorem edgeRowCached_sound (idx : IQ V → List (Nat × Nat × Nat)) (all : List (Nat × Nat × Nat))
+    (q : IQ V) (bf bt : Option Nat) (sa tr bd w ri ob : Bool) (seen max : Nat) (s d e : Nat)
+    (h : (s, d, e) ∈ edgeRowCached idx all q bf bt sa tr bd w ri ob seen max) :
+    (∀ x, bf = some x → x = (if tr then d else s)) ∧ (∀ x, bt = some x → x = (if tr then s else d)) ∧
+    (sa = true → (if tr then d else s) = (if tr then s else d)) := by
+  rw [edgeRowCached_eq] at h; exact edgeRow_sound idx all q bf bt sa tr bd s d e h
+
 /-! ## Fulltext scans and the edge vector scan -/
 
 /-- node_by_fulltext_scan.rs / edge_by_fulltext_scan.rs: label and query must be
