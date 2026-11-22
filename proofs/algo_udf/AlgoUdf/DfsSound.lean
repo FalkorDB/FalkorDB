@@ -84,7 +84,7 @@ theorem chain_walk {g : G} {src : Nat} :
 theorem inv_init (g : G) (cfg : Cfg) (b : Option Nat) : Inv g cfg (init g cfg b) := by
   refine ⟨⟨rfl, rfl, rfl, rfl⟩, ⟨?_, trivial⟩, by simp [init], ?_, by simp [init], ?_, by simp [init]⟩
   · intro L hL
-    simp only [init] at hL
+    simp only at hL
     split at hL
     · rename_i h; cases hL
       refine ⟨fun p hp => ?_, Or.inr (by simpa using h)⟩
@@ -93,7 +93,7 @@ theorem inv_init (g : G) (cfg : Cfg) (b : Option Nat) : Inv g cfg (init g cfg b)
   · intro x; simp only [init, List.map_cons, List.map_nil, List.mem_singleton]
     by_cases h : x = cfg.src
     · subst h; simp
-    · simp [upd_ne _ _ _ _ h, h]
+    · simp [h]
   · intro fr hfr; simp [init] at hfr; subst hfr; cases cfg.maxCost <;> simp
 
 theorem nodes_sub {fs : List Frame} {x : Nat} (h : x ∈ fs.reverse.tail.map (·.node)) :

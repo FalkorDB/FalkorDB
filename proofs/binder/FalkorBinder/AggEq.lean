@@ -1,33 +1,26 @@
 /-
 # ORDER BY aggregate matching: `replace_agg_subtrees` and `raw_exprs_structurally_equal`
 
-| here | there |
-| --- | --- |
-| `RV`, `RD`, `RE` | raw (pre-bind) `ExprIR<Arc<String>>` payloads and trees |
-| `disc` | `std::mem::discriminant` of the `ExprIR` variant |
-| `isAggPlaceholder` | binder.rs:2778-2780 |
-| `exprIrEq` | `expr_ir_eq` binder.rs:2665-2683 |
-| `nodesEq` | `nodes_eq` binder.rs:2635-2663 |
-| `structEq` | `raw_exprs_structurally_equal` binder.rs:2627-2684 |
-| `replaceAgg` | `replace_agg_subtrees` binder.rs:2597-2622 |
+Floats are opaque codes compared by a parameter `feq` (f64 `==`, so NaN ≠ NaN);
+`fint f = some i` says the float `f` is exactly the `i64` `i` (`fract() == 0`,
+in `[-2^63, 2^63)`, `f as i64 == i`). Other constants (lists, maps, temporals, …)
+are `other ty x`, equal per `oeq ty` within one type and never across types
+(`Value::order` is injective on types).
 
-Floats are opaque codes compared by a parameter `feq` (f64 `==`, so NaN ≠ NaN).
-
-* `nodesEq_refl` / `nodesEq_symm`: an equivalence when `feq` is.
-* `nodesEq_sound`: equal trees are equal up to placeholders — **only** when no
-  constant pair of different kinds (Int vs Float, Null vs …) and no quantifier
-  /comprehension payloads differ; `const_kinds_conflated` is the counterexample.
-* CONFIRMED bug: `max(n.v % 3)` and `max(n.v % 4.0)` compare equal (the
-  `Constant` fallback compares only the discriminant), so
-  `RETURN n.g AS g, max(n.v % 3) AS m ORDER BY max(n.v % 4.0)` sorts by `m`.
+* `nodesEq_refl` / `nodesEq_symm`: an equivalence when `feq`/`oeq` are.
+* `exprIrEq_exact`, `exprIrEq_exact_any_kind`: exact on every value-compared payload.
+* `const_kinds_distinguished`, `order_by_float_rejected`, `order_by_float_equal`:
+  `max(n.v % 3)` does not match `max(n.v % 4.0)`, still matches `max(n.v % 3.0)`
+  (W4-plan-3).
+* `patterns_by_variant`: graph patterns are still compared by variant only.
 * `replaceAgg_id`: with no matching aggregate the ORDER BY tree is unchanged;
-  `replaceAgg_sound`: every replacement is justified by `structEq`.
+  `matchItem_spec`: every replacement is justified by `structEq`.
 -/
 namespace FalkorBinder.Agg
 
 /-- `Value`s that occur as constants in raw expressions. -/
 inductive RV
-  | null | bool (b : Bool) | int (i : Int) | float (f : Nat) | str (s : String) | other (tag : Nat)
+  | null | bool (b : Bool) | int (i : Int) | float (f : Nat) | str (s : String) | other (ty : Nat) (x : Nat)
   deriving DecidableEq, Repr
 
 inductive RD
@@ -38,8 +31,10 @@ inductive RD
   | param (p : String)
   | quant (kind : Nat) (v : String)
   | listComp (v : String)
-  /-- `ExprIR::AggOrderPlaceholder` (#3016; before, `Variable("__agg_order_by_placeholder__")`) -/
-  | aggPh
+  | case (hasSubject : Bool)
+  | reduce (acc it : String)
+  | shortest (rels : List String) (minHops : Nat) (maxHops : Option Nat) (directed : Bool)
+  | regex (kind : Nat) (src : String)
   | other (tag : Nat)
   deriving DecidableEq, Repr
 
@@ -52,40 +47,44 @@ def RE.d : RE → RD | .node d _ => d
 /-- Variant discriminant: payloads are ignored. -/
 def disc : RD → Nat
   | .var _ => 0 | .func _ _ => 1 | .const _ => 2 | .prop _ => 3 | .param _ => 4
-  | .quant _ _ => 5 | .listComp _ => 6 | .aggPh => 7 | .other t => 8 + t
+  | .quant _ _ => 5 | .listComp _ => 6 | .case _ => 7 | .reduce _ _ => 8
+  | .shortest _ _ _ _ => 9 | .regex _ _ => 10 | .other t => 11 + t
 
 def placeholder : String := "__agg_order_by_placeholder__"
 
-/-- `is_agg_placeholder`: `matches!(node, ExprIR::AggOrderPlaceholder)`. -/
 def isAggPlaceholder : RD → Bool
-  | .aggPh => true
-  | _ => false
-
-theorem isAggPlaceholder_iff (d : RD) : isAggPlaceholder d = true ↔ d = .aggPh := by
-  cases d <;> simp [isAggPlaceholder]
-
-/-- Before #3016 the placeholder was the variable `__agg_order_by_placeholder__`. -/
-def pre3016_isAggPlaceholder : RD → Bool
   | .var v => v == placeholder
   | _ => false
 
-/-- A user variable spelled like the placeholder (backticked) is no longer skipped
-when comparing aggregates; before #3016 it was. -/
-theorem user_var_not_placeholder :
-    isAggPlaceholder (.var placeholder) = false ∧ pre3016_isAggPlaceholder (.var placeholder) = true :=
-  ⟨rfl, by simp [pre3016_isAggPlaceholder]⟩
+theorem isAggPlaceholder_iff (d : RD) : isAggPlaceholder d = true ↔ d = .var placeholder := by
+  cases d <;> simp [isAggPlaceholder]
 
-variable (feq : Nat → Nat → Bool)
+variable (feq : Nat → Nat → Bool) (fint : Nat → Option Int) (oeq : Nat → Nat → Nat → Bool)
+
+/-- `constants_equal`: Int/Float exact, otherwise `Value` equality. -/
+def constEq : RV → RV → Bool
+  | .int i, .float f => fint f == some i
+  | .float f, .int i => fint f == some i
+  | .null, .null => true
+  | .bool a, .bool b => a == b
+  | .int a, .int b => a == b
+  | .float a, .float b => feq a b
+  | .str a, .str b => a == b
+  | .other t a, .other u b => t == u && oeq t a b
+  | _, _ => false
 
 def exprIrEq : RD → RD → Bool
+  | .const a, .const b => constEq feq fint oeq a b
   | .var a, .var b => a == b
+  | .listComp a, .listComp b => a == b
   | .func a _, .func b _ => a == b
-  | .const (.str a), .const (.str b) => a == b
-  | .const (.int a), .const (.int b) => a == b
-  | .const (.float a), .const (.float b) => feq a b
-  | .const (.bool a), .const (.bool b) => a == b
   | .prop a, .prop b => a == b
   | .param a, .param b => a == b
+  | .case a, .case b => a == b
+  | .quant k a, .quant l b => k == l && a == b
+  | .reduce a i, .reduce b j => a == b && i == j
+  | .shortest r mn mx d, .shortest r' mn' mx' d' => r == r' && mn == mn' && mx == mx' && d == d'
+  | .regex k s, .regex l t => k == l && s == t
   | a, b => disc a == disc b
 
 /- Drop the `__agg_order_by_placeholder__` children everywhere (the index
@@ -98,95 +97,139 @@ def stripL : List RE → List RE
   | c :: cs => if isAggPlaceholder c.d then stripL cs else strip c :: stripL cs
 end
 
-/- `nodes_eq` on the stripped trees: same number of children, `expr_ir_eq`
-on the payloads, children pairwise. -/
+/- `nodes_eq` on the stripped trees: same number of children, the payload
+comparison `peq` (`expr_ir_eq`), children pairwise. -/
 mutual
-def eqS : RE → RE → Bool
-  | .node da ca, .node db cb => ca.length == cb.length && exprIrEq feq da db && eqSL ca cb
-def eqSL : List RE → List RE → Bool
-  | a :: as, b :: bs => eqS a b && eqSL as bs
+def eqS (peq : RD → RD → Bool) : RE → RE → Bool
+  | .node da ca, .node db cb => ca.length == cb.length && peq da db && eqSL peq ca cb
+def eqSL (peq : RD → RD → Bool) : List RE → List RE → Bool
+  | a :: as, b :: bs => eqS peq a b && eqSL peq as bs
   | _, _ => true
 end
 
-def structEq (a b : RE) : Bool := eqS feq (strip a) (strip b)
+def structEq (a b : RE) : Bool := eqS (exprIrEq feq fint oeq) (strip a) (strip b)
 
 /-! ## Equivalence -/
 
-theorem exprIrEq_refl (hf : ∀ x, feq x x = true) (d : RD) : exprIrEq feq d d = true := by
+theorem constEq_refl (hf : ∀ x, feq x x = true) (ho : ∀ t x, oeq t x x = true) (v : RV) :
+    constEq feq fint oeq v v = true := by
+  cases v <;> simp [constEq, hf, ho]
+
+theorem exprIrEq_refl (hf : ∀ x, feq x x = true) (ho : ∀ t x, oeq t x x = true) (d : RD) :
+    exprIrEq feq fint oeq d d = true := by
   cases d with
-  | const v => cases v <;> simp [exprIrEq, hf, disc]
+  | const v => simp [exprIrEq, constEq_refl feq fint oeq hf ho]
   | _ => simp [exprIrEq, disc]
 
-theorem exprIrEq_symm (hf : ∀ x y, feq x y = feq y x) (a b : RD) : exprIrEq feq a b = exprIrEq feq b a := by
-  cases a <;> cases b <;> (try rename_i v w; cases v <;> cases w) <;>
-    simp [exprIrEq, disc, hf, eq_comm, Bool.beq_comm] <;> omega
+theorem constEq_symm (hf : ∀ x y, feq x y = feq y x) (ho : ∀ t x y, oeq t x y = oeq t y x) (a b : RV) :
+    constEq feq fint oeq a b = constEq feq fint oeq b a := by
+  cases a <;> cases b <;> simp [constEq, hf, Bool.beq_comm]
+  rename_i t x u y
+  rw [ho]
+  by_cases htu : t = u
+  · subst htu; rfl
+  · have : (t == u) = false := by simp [htu]
+    simp [this]
+
+theorem exprIrEq_symm (hf : ∀ x y, feq x y = feq y x) (ho : ∀ t x y, oeq t x y = oeq t y x) (a b : RD) :
+    exprIrEq feq fint oeq a b = exprIrEq feq fint oeq b a := by
+  cases a <;> cases b <;>
+    simp [exprIrEq, disc, constEq_symm feq fint oeq hf ho, Bool.beq_comm, Bool.and_comm] <;> omega
 
 mutual
-theorem eqS_refl (hf : ∀ x, feq x x = true) : ∀ a, eqS feq a a = true
-  | .node d cs => by simp [eqS, exprIrEq_refl feq hf, eqSL_refl hf cs]
-theorem eqSL_refl (hf : ∀ x, feq x x = true) : ∀ l, eqSL feq l l = true
+theorem eqS_refl (peq : RD → RD → Bool) (hp : ∀ d, peq d d = true) : ∀ a, eqS peq a a = true
+  | .node d cs => by simp [eqS, hp, eqSL_refl peq hp cs]
+theorem eqSL_refl (peq : RD → RD → Bool) (hp : ∀ d, peq d d = true) : ∀ l, eqSL peq l l = true
   | [] => rfl
-  | c :: cs => by simp [eqSL, eqS_refl hf c, eqSL_refl hf cs]
+  | c :: cs => by simp [eqSL, eqS_refl peq hp c, eqSL_refl peq hp cs]
 end
 
-theorem nodesEq_refl (hf : ∀ x, feq x x = true) (a : RE) : structEq feq a a = true := eqS_refl feq hf _
+theorem nodesEq_refl (hf : ∀ x, feq x x = true) (ho : ∀ t x, oeq t x x = true) (a : RE) :
+    structEq feq fint oeq a a = true := eqS_refl _ (exprIrEq_refl feq fint oeq hf ho) _
 
 mutual
-theorem eqS_symm (hf : ∀ x y, feq x y = feq y x) : ∀ a b, eqS feq a b = eqS feq b a
+theorem eqS_symm (peq : RD → RD → Bool) (hp : ∀ a b, peq a b = peq b a) : ∀ a b, eqS peq a b = eqS peq b a
   | .node da ca, .node db cb => by
-    simp only [eqS, exprIrEq_symm feq hf da db, eqSL_symm hf ca cb]
+    simp only [eqS, hp da db, eqSL_symm peq hp ca cb]
     rw [Bool.beq_comm (a := ca.length)]
-theorem eqSL_symm (hf : ∀ x y, feq x y = feq y x) : ∀ a b, eqSL feq a b = eqSL feq b a
+theorem eqSL_symm (peq : RD → RD → Bool) (hp : ∀ a b, peq a b = peq b a) : ∀ a b, eqSL peq a b = eqSL peq b a
   | [], [] => rfl
   | [], _ :: _ => rfl
   | _ :: _, [] => rfl
-  | a :: as, b :: bs => by simp only [eqSL, eqS_symm hf a b, eqSL_symm hf as bs]
+  | a :: as, b :: bs => by simp only [eqSL, eqS_symm peq hp a b, eqSL_symm peq hp as bs]
 end
 
-theorem nodesEq_symm (hf : ∀ x y, feq x y = feq y x) (a b : RE) :
-    structEq feq a b = structEq feq b a := eqS_symm feq hf _ _
+theorem nodesEq_symm (hf : ∀ x y, feq x y = feq y x) (ho : ∀ t x y, oeq t x y = oeq t y x) (a b : RE) :
+    structEq feq fint oeq a b = structEq feq fint oeq b a := eqS_symm _ (exprIrEq_symm feq fint oeq hf ho) _ _
 
 /-! ## What equality means -/
 
 /-- Payloads compared by value (not just by variant). -/
 def exact : RD → Bool
   | .var _ | .prop _ | .param _ => true
-  | .const (.str _) | .const (.int _) | .const (.bool _) => true
+  | .const .null | .const (.str _) | .const (.int _) | .const (.bool _) => true
+  | .quant _ _ | .listComp _ | .case _ | .reduce _ _ | .shortest _ _ _ _ | .regex _ _ => true
   | _ => false
 
 /-- Fine-grained kind: the variant, and for constants the value's type. -/
 def kind : RD → Nat
-  | .const .null => 10 | .const (.bool _) => 11 | .const (.int _) => 12 | .const (.float _) => 13
-  | .const (.str _) => 14 | .const (.other t) => 20 + t
+  | .const .null => 100 | .const (.bool _) => 101 | .const (.int _) => 102 | .const (.float _) => 103
+  | .const (.str _) => 104 | .const (.other t _) => 200 + t
   | d => disc d
 
 /-- Sound on value-compared payloads of the same kind. -/
-theorem exprIrEq_exact (a b : RD) (ha : exact a = true) (hb : exact b = true) (hk : kind a = kind b)
-    (h : exprIrEq feq a b = true) : a = b := by
+theorem exprIrEq_exact (a b : RD) (ha : exact a = true) (hb : exact b = true) (_hk : kind a = kind b)
+    (h : exprIrEq feq fint oeq a b = true) : a = b := by
   cases a <;> cases b <;> (try rename_i v w; cases v <;> cases w) <;>
-    simp_all [exact, exprIrEq, disc, kind]
+    simp_all [exact, exprIrEq, constEq, disc]
 
-/-- Constants of different kinds — and any two `Null`s / lists / maps /
-quantifiers of different kind — are "equal": only the variant is compared. -/
-theorem const_kinds_conflated (i : Int) (f : Nat) : exprIrEq feq (.const (.int i)) (.const (.float f)) = true ∧
-    exprIrEq feq (.const .null) (.const (.int i)) = true ∧
-    exprIrEq feq (.const (.bool true)) (.const (.int i)) = true ∧
-    exprIrEq feq (.const (.str "1")) (.const (.int 1)) = true ∧
-    exprIrEq feq (.quant 0 "x") (.quant 1 "x") = true := ⟨rfl, rfl, rfl, rfl, rfl⟩
+/-- Since #3254 the kind premise is not needed: different kinds never match. -/
+theorem exprIrEq_exact_any_kind (a b : RD) (ha : exact a = true) (hb : exact b = true)
+    (h : exprIrEq feq fint oeq a b = true) : a = b :=
+  exprIrEq_exact feq fint oeq a b ha hb (by
+    cases a <;> cases b <;> (try rename_i v w; cases v <;> cases w) <;>
+      simp_all [exact, exprIrEq, constEq, disc, kind]) h
+
+/-- An Int and a Float constant match exactly when the float is that integer. -/
+theorem int_float_iff (i : Int) (f : Nat) :
+    exprIrEq feq fint oeq (.const (.int i)) (.const (.float f)) = true ↔ fint f = some i := by
+  simp [exprIrEq, constEq]
+
+/-- #3254: constants of different kinds, and quantifiers of different kinds, are told apart. -/
+theorem const_kinds_distinguished (i : Int) (f : Nat) (hf : fint f ≠ some i) :
+    exprIrEq feq fint oeq (.const (.int i)) (.const (.float f)) = false ∧
+    exprIrEq feq fint oeq (.const .null) (.const (.int i)) = false ∧
+    exprIrEq feq fint oeq (.const (.bool true)) (.const (.int i)) = false ∧
+    exprIrEq feq fint oeq (.const (.str "1")) (.const (.int 1)) = false ∧
+    exprIrEq feq fint oeq (.quant 0 "x") (.quant 1 "x") = false := by
+  simp [exprIrEq, constEq, hf]
+
+/-- Graph patterns (`Pattern`, `PatternComprehension`, `NestedPlan`, here `other`)
+are still compared by variant only (deliberately: fresh anonymous names). -/
+theorem patterns_by_variant (t : Nat) : exprIrEq feq fint oeq (.other t) (.other t) = true := by
+  simp [exprIrEq, disc]
 
 /-- `max(n.v % 3)` (with the parser's placeholder) and `max(n.v % 4.0)`. -/
 def aggOf (k : RV) : RE :=
   .node (.func "max" true)
     [.node (.other 20) [.node (.prop "v") [.node (.var "n") []], .node (.const k) []],
-     .node .aggPh []]
+     .node (.var placeholder) []]
 
-/-- The CONFIRMED bug: they compare equal, so ORDER BY `max(n.v % 4.0)` is
-replaced by the alias of `max(n.v % 3)` (binder.rs:2606-2610). C rejects the
-query; Rust sorts by the wrong key. -/
-theorem order_by_wrong_aggregate (f : Nat) : structEq feq (aggOf (.int 3)) (aggOf (.float f)) = true := rfl
+/-- #3254: `max(n.v % 3)` no longer matches `max(n.v % 4.0)` (any float that is not 3). -/
+theorem order_by_float_rejected (f : Nat) (hf : fint f ≠ some 3) :
+    structEq feq fint oeq (aggOf (.int 3)) (aggOf (.float f)) = false := by
+  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, placeholder, eqS, eqSL,
+    exprIrEq, constEq, disc, hf]
+
+/-- …but still matches `max(n.v % 3.0)`, as in C. -/
+theorem order_by_float_equal (f : Nat) (hf : fint f = some 3) :
+    structEq feq fint oeq (aggOf (.int 3)) (aggOf (.float f)) = true := by
+  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, placeholder, eqS, eqSL,
+    exprIrEq, constEq, disc, hf]
 
 /-- …while the same aggregate with another Int constant is told apart. -/
-theorem order_by_int_distinguished : structEq feq (aggOf (.int 3)) (aggOf (.int 4)) = false := rfl
+theorem order_by_int_distinguished : structEq feq fint oeq (aggOf (.int 3)) (aggOf (.int 4)) = false := by
+  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, placeholder, eqS, eqSL, exprIrEq, constEq, disc]
 
 /-! ## `replace_agg_subtrees` -/
 
@@ -194,14 +237,14 @@ theorem order_by_int_distinguished : structEq feq (aggOf (.int 3)) (aggOf (.int 
 abbrev Item := String × RE × Bool
 
 def matchItem (items : List Item) (e : RE) : Option String :=
-  (items.find? fun it => it.2.2 && structEq feq e it.2.1).map Prod.fst
+  (items.find? fun it => it.2.2 && structEq feq fint oeq e it.2.1).map Prod.fst
 
 mutual
 def replaceAgg (items : List Item) : RE → RE
   | .node d cs =>
     match d with
     | .func n true =>
-      match matchItem feq items (.node (.func n true) cs) with
+      match matchItem feq fint oeq items (.node (.func n true) cs) with
       | some nm => .node (.var nm) []
       | none => .node d (replaceAggL items cs)
     | _ => .node d (replaceAggL items cs)
@@ -211,35 +254,35 @@ def replaceAggL (items : List Item) : List RE → List RE
 end
 
 theorem matchItem_none (items : List Item) (e : RE) (h : ∀ it ∈ items, it.2.2 = false) :
-    matchItem feq items e = none := by
+    matchItem feq fint oeq items e = none := by
   unfold matchItem
   rw [List.find?_eq_none.2]; · rfl
   intro it hit; simp [h it hit]
 
 mutual
 /-- No aggregation among the projections: ORDER BY is left as written. -/
-theorem replaceAgg_id (items : List Item) (h : ∀ it ∈ items, it.2.2 = false) : ∀ e, replaceAgg feq items e = e
+theorem replaceAgg_id (items : List Item) (h : ∀ it ∈ items, it.2.2 = false) : ∀ e, replaceAgg feq fint oeq items e = e
   | .node d cs => by
     have ih := replaceAggL_id items h cs
     cases d with
-    | func n a => cases a <;> simp [replaceAgg, ih, matchItem_none feq items _ h]
+    | func n a => cases a <;> simp [replaceAgg, ih, matchItem_none feq fint oeq items _ h]
     | _ => simp [replaceAgg, ih]
-theorem replaceAggL_id (items : List Item) (h : ∀ it ∈ items, it.2.2 = false) : ∀ l, replaceAggL feq items l = l
+theorem replaceAggL_id (items : List Item) (h : ∀ it ∈ items, it.2.2 = false) : ∀ l, replaceAggL feq fint oeq items l = l
   | [] => rfl
   | c :: cs => by simp [replaceAggL, replaceAgg_id items h c, replaceAggL_id items h cs]
 end
 
 /-- An aggregate call matching an item becomes that item's alias (first match). -/
 theorem replaceAgg_root (items : List Item) (n : String) (cs : List RE) (nm : String)
-    (h : matchItem feq items (.node (.func n true) cs) = some nm) :
-    replaceAgg feq items (.node (.func n true) cs) = .node (.var nm) [] := by
+    (h : matchItem feq fint oeq items (.node (.func n true) cs) = some nm) :
+    replaceAgg feq fint oeq items (.node (.func n true) cs) = .node (.var nm) [] := by
   simp [replaceAgg, h]
 
 /-- …and every match is justified by `structEq` against an aggregation item. -/
-theorem matchItem_spec (items : List Item) (e : RE) (nm : String) (h : matchItem feq items e = some nm) :
-    ∃ it ∈ items, it.1 = nm ∧ it.2.2 = true ∧ structEq feq e it.2.1 = true := by
+theorem matchItem_spec (items : List Item) (e : RE) (nm : String) (h : matchItem feq fint oeq items e = some nm) :
+    ∃ it ∈ items, it.1 = nm ∧ it.2.2 = true ∧ structEq feq fint oeq e it.2.1 = true := by
   unfold matchItem at h
-  cases hf : items.find? (fun it => it.2.2 && structEq feq e it.2.1) with
+  cases hf : items.find? (fun it => it.2.2 && structEq feq fint oeq e it.2.1) with
   | none => rw [hf] at h; simp at h
   | some it =>
     rw [hf] at h; simp at h

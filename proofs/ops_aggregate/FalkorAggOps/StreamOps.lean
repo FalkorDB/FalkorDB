@@ -1,12 +1,6 @@
 /-
 Filter, IncludePending and ProcedureCall (graph/src/runtime/ops/filter.rs,
 include_pending.rs, procedure_call.rs).
-
-| here | there |
-| --- | --- |
-| `FilterSt.new`, `Verdict`, `filterEval`, `filterNext` | `FilterOp::new` (filter.rs:39), `eval` (:57), `next` (:121) |
-| `IpSt.new`, `captureArg`, `initPending`, `pendingRows`, `childRows` | `IncludePendingOp::new` (include_pending.rs:53), `capture_argument` (:77), `init_pending_state` (:88), `emit_pending_batch` (:115), `next` (:166) |
-| `pcNew`, `pcReset`, `remap`, `pcRows`, `nextInput` | `ProcedureCallOp::new` (procedure_call.rs:59), `reset_state` (:115), `emit_pending_rows` (:125), `remap_procedure_batch` (:153), `next_input_row` (:192), `next` (:228) |
 -/
 namespace FalkorAggOps.StreamOps
 
@@ -28,7 +22,7 @@ inductive Verdict where
   | bools (mask nulls : List Bool)
   | values (vs : List PV)
 
-/-- filter.rs:57-117 over the active rows: keep `true` rows, drop `false`/`null`, error on the
+/-- filter.rs over the active rows: keep `true` rows, drop `false`/`null`, error on the
 first non-boolean value; `none` = nothing passes (the caller pulls the next batch). -/
 def filterEval (rows : List Nat) (v : Verdict) : Except String (Option (List Nat)) :=
   if rows.isEmpty then .ok none else
@@ -66,9 +60,9 @@ theorem filterEval_empty (v : Verdict) : filterEval [] v = .ok none := rfl
 /-- A non-boolean value on the per-row lane is a type error (C: same message). -/
 theorem filterEval_type_error (r : Nat) (n : String) :
     filterEval [r] (.values [.other n]) = .error s!"Type mismatch: expected Boolean but was {n}" := by
-  simp [filterEval, List.zipIdx, Except.map, List.foldlM, bind, Except.bind]
+  simp [filterEval, List.zipIdx, Except.map, bind, Except.bind]
 
-/-- filter.rs:121-134: skip batches where nothing passes; errors propagate. -/
+/-- filter.rs: skip batches where nothing passes; errors propagate. -/
 def filterNext {B : Type} (eval : B → Except String (Option B)) : List (Except String B) → Option (Except String B) × List (Except String B)
   | [] => (none, [])
   | .error e :: rest => (some (.error e), rest)
@@ -101,12 +95,12 @@ theorem ipNew_spec {N R : Type} (a : Nat) :
     (IpSt.new a : IpSt N R).deleted = none ∧ (IpSt.new a : IpSt N R).argRows = [] ∧
     (IpSt.new a : IpSt N R).childExhausted = false ∧ (IpSt.new a : IpSt N R).cur = none := ⟨rfl, rfl, rfl, rfl⟩
 
-/-- include_pending.rs:72-81: snapshot the argument batch's active rows. -/
+/-- include_pending.rs: snapshot the argument batch's active rows. -/
 def captureArg {N R : Type} (s : IpSt N R) (rows : List R) : IpSt N R := { s with argRows := rows }
 
 theorem captureArg_spec {N R : Type} (s : IpSt N R) (rows : List R) : (captureArg s rows).argRows = rows := rfl
 
-/-- include_pending.rs:88-110: deleted / label-removed snapshots; the nodes carrying ALL the pattern's
+/-- include_pending.rs: deleted / label-removed snapshots; the nodes carrying ALL the pattern's
 labels after the pending changes and gaining one (`get_pending_nodes_with_labels`, #3467) go into the
 skip-set `extra_nodes` — none when some label does not exist yet. `pending_extra` is built later
 (`endChild`). -/
@@ -116,7 +110,7 @@ def initPending {N R : Type} [DecidableEq N] (s : IpSt N R) (labels : List Strin
   { s with deleted := some deleted, removed := some (removedFor ids),
            extra := if ids.length = labels.length then pendingWith ids else [] }
 
-/-- include_pending.rs:211-215: the child is exhausted; the skip-set becomes the emission queue
+/-- include_pending.rs: the child is exhausted; the skip-set becomes the emission queue
 (`std::mem::take`). -/
 def endChild {N R : Type} (s : IpSt N R) : IpSt N R :=
   { s with childExhausted := true, pendingExtra := some s.extra, extra := [] }
@@ -142,12 +136,12 @@ theorem initPending_spec {N R : Type} [DecidableEq N] (s : IpSt N R) (ls : List 
         · simp only [List.filterMap_cons, hx', List.length_cons]; have := ih hx; omega
   simp [Nat.ne_of_lt this]
 
-/-- include_pending.rs:110-159: each pending node crossed with every argument row (one empty row
+/-- include_pending.rs: each pending node crossed with every argument row (one empty row
 when there is no argument), the node bound at the alias; `BATCH_SIZE` chunks, resuming. -/
 def pendingRows {N R : Type} (bind : R → N → R) (empty : R) (args : List R) (nodes : List N) : List R :=
   nodes.flatMap fun n => (if args.isEmpty then [empty] else args).map fun r => bind r n
 
-/-- include_pending.rs:166-224: child rows whose node is deleted, lost the label this query, or is one of the
+/-- include_pending.rs: child rows whose node is deleted, lost the label this query, or is one of the
 nodes Phase 2 emits itself (`extra`, #3467) are dropped; then the pending nodes follow. -/
 def childRows {N R : Type} [DecidableEq N] (nodeOf : R → Option N) (deleted removed extra : List N) (rows : List R) : List R :=
   rows.filter fun r => match nodeOf r with
@@ -177,7 +171,7 @@ theorem includePending_spec {N R : Type} [DecidableEq N] (nodeOf : R → Option 
 
 /-! ## ProcedureCall -/
 
-/-- procedure_call.rs:59-113: refuse a write procedure in a read-only query; each yielded name
+/-- procedure_call.rs: refuse a write procedure in a read-only query; each yielded name
 reads the procedure column of the same name (else its yield position); the yield mask has a bit
 per source position below 32. -/
 structure PcCfg where
@@ -208,7 +202,33 @@ theorem srcPos_named (schema : List String) (ys : List (Nat × Option String)) (
     (srcPosOf schema ys)[i]'(by simp [srcPosOf]; exact hi) = k := by
   simp [srcPosOf, hn, hk]
 
-/-- procedure_call.rs:115-123 -/
+/-- A yield with no name (an unnamed pattern entity has none since #3303: `output.name()` is
+`None`) or a name that is not a procedure column reads the column at its yield position. -/
+theorem srcPos_fallback (schema : List String) (ys : List (Nat × Option String)) (i : Nat) (hi : i < ys.length)
+    (h : ((ys[i]).2.bind fun n => schema.idxOf? n) = none) :
+    (srcPosOf schema ys)[i]'(by simp [srcPosOf]; exact hi) = i := by
+  simp [srcPosOf, List.getElem_zipIdx, h]
+
+theorem maskOf_lt_aux (pos : List Nat) (m : Nat) (hm : m < 2 ^ 32) :
+    pos.foldl (fun m p => if p < 32 then m ||| (1 <<< p) else m) m < 2 ^ 32 := by
+  induction pos generalizing m with
+  | nil => simpa using hm
+  | cons p ps ih =>
+    simp only [List.foldl_cons]
+    apply ih
+    by_cases hp : p < 32
+    · simp only [hp, ite_true]
+      apply Nat.or_lt_two_pow hm
+      rw [Nat.shiftLeft_eq, Nat.one_mul]
+      exact Nat.pow_lt_pow_right (by decide) hp
+    · simpa [hp] using hm
+
+/-- The yield mask fits `yield_mask: u32`: positions at or above 32 contribute no bit (no
+overflowing shift). -/
+theorem maskOf_lt (pos : List Nat) : maskOf pos < 2 ^ 32 :=
+  maskOf_lt_aux pos 0 (by decide)
+
+/-- procedure_call.rs -/
 structure PcSt where
   pendingRow : Option Nat
   pendingIdx : Nat
@@ -219,7 +239,7 @@ structure PcSt where
 def pcReset (_ : PcSt) : PcSt := ⟨none, 0, 0, false, false⟩
 theorem pcReset_spec (s : PcSt) : pcReset s = ⟨none, 0, 0, false, false⟩ := rfl
 
-/-- procedure_call.rs:153-190: each output var gets the procedure column at its source position
+/-- procedure_call.rs: each output var gets the procedure column at its source position
 (a missing/unbound column becomes all-`Null`); the selection is kept. -/
 def remap {V : Type} (cols : List (Option (List V))) (len : Nat) (nul : V) (outVars srcPos : List Nat) :
     List (Nat × List V) :=
@@ -231,7 +251,7 @@ theorem remap_spec {V : Type} (cols : List (Option (List V))) (len : Nat) (nul :
       (ov[k], ((cols[sp[k]]?).bind id).getD (List.replicate len nul)) := by
   simp [remap]
 
-/-- procedure_call.rs:125-151 + :228-300: every input row (in order) is followed by one output
+/-- procedure_call.rs: every input row (in order) is followed by one output
 row per procedure result row, merged over the input row. -/
 def pcRows {R P O : Type} (call : R → Except String (List P)) (merge : R → P → O) : List R → Except String (List O)
   | [] => .ok []
@@ -247,7 +267,7 @@ theorem pcRows_ok {R P O : Type} (call : R → Except String (List P)) (merge : 
   | nil => rfl
   | cons r rs ih => simp [pcRows, hf, ih, bind, Except.bind, pure, Except.pure]
 
-/-- procedure_call.rs:192-226: walk the active rows of the current child batch, then pull the
+/-- procedure_call.rs: walk the active rows of the current child batch, then pull the
 next child batch; a child error is returned; exhaustion is sticky. -/
 def nextInput {B : Type} (active : B → List Nat) : List (Except String B) → List (Except String Nat)
   | [] => []

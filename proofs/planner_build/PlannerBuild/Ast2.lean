@@ -2,14 +2,6 @@ import PlannerBuild.Ast
 /-
 # parser/ast.rs: connected components and the `Display` impls
 
-| here | there |
-| --- | --- |
-| `dfs`, `components` | `QueryGraph::dfs` ast.rs:844-883, `connected_components` ast.rs:823-842 |
-| `exprFmt` | `Display for ExprIR` ast.rs:330-412 |
-| `quantFmt` | `Display for QuantifierType` ast.rs:424-436 |
-| `setItemFmt` | `Display for SetItem` ast.rs:896-923 |
-| `clauseFmt` | `Display for QueryIR` ast.rs:1041-1146 |
-
 `dfs` keeps ONE visited set of ids for nodes, relationships and paths (ids
 only, as `HashSet<u32>`); the fuel bounds the recursion (each call marks a new node).
 -/
@@ -141,7 +133,7 @@ theorem components_cover (g : QG) :
 /-- What `Display for ExprIR` prints for each payload (`render` = the payload's own Display). -/
 inductive EK
   | null | bool (b : String) | int (i : String) | float (f : String) | str (s : String) | otherConst (dbg : String)
-  | list | map | var (v : String) | aggOrderPlaceholder | param (p : String) | length | getElement | getElements | isNode | isRel
+  | list | map | var (v : String) | param (p : String) | length | getElement | getElements | isNode | isRel
   | or | xor | and | not | negate | eq | neq | lt | gt | le | ge | inOp | add | sub | mul | div | pow | modulo
   | distinct | property (p : String) | func (name : String) | quant (q v : String) | listComp (v : String)
   | reduce (a i : String) | patComp | paren | pattern | nested (id : Nat) | shortestPath | mapProjection
@@ -149,8 +141,7 @@ inductive EK
 
 def exprFmt : EK → String
   | .null => "null" | .bool b => b | .int i => i | .float f => f | .str s => s | .otherConst d => "const(" ++ d ++ ")"
-  | .list => "[]" | .map => "{}" | .var v => v | .aggOrderPlaceholder => "__agg_order_by_placeholder__"
-  | .param p => "@" ++ p
+  | .list => "[]" | .map => "{}" | .var v => v | .param p => "@" ++ p
   | .length => "length()" | .getElement => "get_element()" | .getElements => "get_elements()"
   | .isNode => "is_node()" | .isRel => "is_relationship()"
   | .or => "or()" | .xor => "xor()" | .and => "and()" | .not => "not()" | .negate => "-negate()"
@@ -173,9 +164,6 @@ theorem exprFmt_ops_distinct :
   · decide
 
 theorem exprFmt_param (p : String) : exprFmt (.param p) = "@" ++ p := rfl
-/-- #3016: `AggOrderPlaceholder` prints as the variable it replaced (ast.rs:407). -/
-theorem exprFmt_aggOrderPlaceholder :
-    exprFmt .aggOrderPlaceholder = exprFmt (.var "__agg_order_by_placeholder__") := rfl
 theorem exprFmt_func (n : String) : exprFmt (.func n) = n ++ "()" := rfl
 
 inductive QK | all | any | none | single

@@ -8,15 +8,15 @@ are `Nat` (a model `u32` is any `Nat < 2^32`; nothing here depends on it).
 
 | here | there |
 | --- | --- |
-| `Row`            | `struct Row { values: SmallVec<[Value; 4]>, bound: BitSet, origin_row }` (row.rs:65) |
-| `insertById`     | `Row::insert_by_id` (row.rs:113) / `insert` (row.rs:104) |
-| `getById`        | `Row::get_by_id` (row.rs:128), `get` (row.rs:138), `RowView::value_at` (row.rs:231) |
-| `take`           | `Row::take` (row.rs:147) |
-| `unbind`         | `Row::unbind` / `unbind_by_id` (row.rs:160, 222) |
-| `isBound`        | `Row::is_bound_by_id` (row.rs:199) |
-| `merge`          | `Row::merge` (row.rs:209) |
-| `cloneWith`      | `Row::clone_with` (row.rs:187) |
-| `hashed`         | the `(key, value)` sequence fed to the hasher by `Hash for Row` (row.rs:243) |
+| `Row`            | `struct Row { values: SmallVec<[Value; 4]>, bound: BitSet, origin_row }` (row.rs) |
+| `insertById`     | `Row::insert_by_id` (row.rs) / `insert` (row.rs) |
+| `getById`        | `Row::get_by_id` (row.rs), `get` (row.rs), `RowView::value_at` (row.rs) |
+| `take`           | `Row::take` (row.rs) |
+| `unbind`         | `Row::unbind` / `unbind_by_id` (row.rs) |
+| `isBound`        | `Row::is_bound_by_id` (row.rs) |
+| `merge`          | `Row::merge` (row.rs) |
+| `cloneWith`      | `Row::clone_with` (row.rs) |
+| `hashed`         | the `(key, value)` sequence fed to the hasher by `Hash for Row` (row.rs) |
 -/
 namespace FalkorRuntimeDS.RowModel
 open FalkorRuntimeDS.BitSetModel
@@ -29,20 +29,20 @@ structure Row (β : Type) where
 
 def Row.new : Row β := ⟨[], empty⟩
 
-/-- row.rs:113 — `resize_with(idx + 1, || Null)` when too short, then write & mark bound. -/
+/-- row.rs — `resize_with(idx + 1, || Null)` when too short, then write & mark bound. -/
 def insertById (r : Row β) (id : Nat) (v : Option β) : Row β :=
   let vals := if r.values.length ≤ id then r.values ++ List.replicate (id + 1 - r.values.length) none
               else r.values
   { values := vals.set id v, bound := set r.bound id }
 
-/-- row.rs:128 — `None` iff out of range; `Some(Null)` for an in-range padded slot. -/
+/-- row.rs — `None` iff out of range; `Some(Null)` for an in-range padded slot. -/
 def getById (r : Row β) (id : Nat) : Option (Option β) := r.values[id]?
 
 def isBound (r : Row β) (id : Nat) : Bool := test r.bound id
 
 def unbind (r : Row β) (id : Nat) : Row β := { r with bound := clear r.bound id }
 
-/-- row.rs:147 — take the value, leave `Null`; `None` if out of range or already `Null`.
+/-- row.rs — take the value, leave `Null`; `None` if out of range or already `Null`.
 The bound bit is **not** touched. -/
 def take (r : Row β) (id : Nat) : Row β × Option β :=
   match r.values[id]? with
@@ -51,7 +51,7 @@ def take (r : Row β) (id : Nat) : Row β × Option β :=
 
 def cloneWith (r : Row β) (id : Nat) (v : Option β) : Row β := insertById r id v
 
-/-- row.rs:209 — `for id in 0..other.values.len() { if other.bound.test(id) { insert } }`. -/
+/-- row.rs — `for id in 0..other.values.len() { if other.bound.test(id) { insert } }`. -/
 def mergeFrom (self other : Row β) : List Nat → Row β
   | [] => self
   | id :: ids =>
@@ -60,7 +60,7 @@ def mergeFrom (self other : Row β) : List Nat → Row β
 
 def merge (self other : Row β) : Row β := mergeFrom self other (List.range other.values.length)
 
-/-- row.rs:243 — the `(key, value)` pairs hashed: every slot except unbound `Null`s. -/
+/-- row.rs — the `(key, value)` pairs hashed: every slot except unbound `Null`s. -/
 def hashed (r : Row β) : List (Nat × Option β) :=
   (List.range r.values.length).filterMap fun i =>
     match r.values[i]? with
@@ -92,14 +92,14 @@ theorem getById_insertById (r : Row β) (id j : Nat) (v : Option β) :
     · rw [List.getElem?_append]
       by_cases hl : j < r.values.length
       · simp [hl]
-      · simp only [hl, dite_false, ite_false, List.getElem?_replicate]
+      · simp only [hl, ite_false, List.getElem?_replicate]
         by_cases hji : j < id
         · simp [hji]; omega
         · simp [hji]; omega
     · by_cases hl : j < r.values.length
       · simp [hl]
       · have : r.values[j]? = none := by rw [List.getElem?_eq_none_iff]; omega
-        simp [hl, this]; omega
+        simp [hl]; omega
 
 theorem isBound_insertById (r : Row β) (id j : Nat) (v : Option β) :
     isBound (insertById r id v) j = (isBound r j || decide (j = id)) := by
@@ -195,7 +195,7 @@ theorem hashed_pad (r : Row β) (n : Nat)
     rw [List.getElem?_append_right (by omega)]
     have e : r.values.length + k - r.values.length = k := by omega
     have hp := hpad (r.values.length + k) (by omega)
-    simp [e, List.getElem?_replicate, hk, hp]
+    simp [e, hk, hp]
   rw [this, List.append_nil]
   suffices ∀ l : List Nat, (∀ i ∈ l, i < r.values.length) →
       l.filterMap (fun i => match (r.values ++ List.replicate n none)[i]? with
