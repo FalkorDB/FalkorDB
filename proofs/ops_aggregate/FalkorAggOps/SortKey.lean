@@ -1,10 +1,10 @@
 /-
-`classify_sort_key` (sort.rs:203) over `classify_numeric(_, false, FloatLane::Pure)`
-(batch.rs:191). Floats are an opaque type `F` (no arithmetic is done on them).
+`classify_sort_key` (sort.rs) over `classify_numeric(_, false, FloatLane::Pure)`
+(batch.rs). Floats are an opaque type `F` (no arithmetic is done on them).
 
 Proven: the classified key column reads back, row for row, exactly the evaluated key
 with nulls re-inserted (`classifySortKey_get`), so typed-lane comparisons see the same
-values as `Value::sort_cmp` on the `Values` lane (`Column::compare_at`, batch.rs:407).
+values as `Value::sort_cmp` on the `Values` lane (`Column::compare_at`, batch.rs).
 -/
 namespace FalkorAggOps.SortKey
 
@@ -30,7 +30,7 @@ def Col.toValues : Col F → List (SV F)
 def asInt : SV F → Option Int | .int i => some i | _ => none
 def asFloat : SV F → Option F | .float f => some f | _ => none
 
-/-- batch.rs:191-231 with `allow_null = false`, `FloatLane::Pure`: the `all(..)` loops that
+/-- batch.rs with `allow_null = false`, `FloatLane::Pure`: the `all(..)` loops that
 push while testing are `mapM`. -/
 def classifyPure (vs : List (SV F)) : Col F :=
   match vs.mapM asInt with
@@ -75,7 +75,7 @@ theorem classifyPure_lossless (vs : List (SV F)) : (classifyPure vs).toValues = 
     · rename_i fs h; exact mapM_asFloat vs fs h
     · rfl
 
-/-- sort.rs:203-231. `nulls` = the evaluation's `NullBitmap` as a per-row flag list. -/
+/-- sort.rs. `nulls` = the evaluation's `NullBitmap` as a per-row flag list. -/
 def classifySortKey (col : Col F) (nulls : List Bool) : Col F :=
   if nulls.any id then
     .values ((List.range col.toValues.length).map fun i =>

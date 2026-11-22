@@ -1,10 +1,10 @@
 import FalkorExprSemantics.Eval
 /-!
-# The frame property of `ExprEval::eval_node` (eval.rs:340-1134)
+# The frame property of `ExprEval::eval_node` (eval.rs)
 
 `evalNode_frame`: the value of an expression depends on the row only through the ids of the
 `Variable` nodes it contains (`E.vars`) — every arm reads the row through its children, and
-the only leaf that reads it is `Variable` (`resolve_var`, eval.rs:297). Moved here from
+the only leaf that reads it is `Variable` (`resolve_var`, eval.rs). Moved here from
 the review project of PR #3437 (`Discharge.evalNode_frame`) and extended to every arm of the
 2026-10-21 model, the catch-all included (its thunks are the children on the same row).
 -/

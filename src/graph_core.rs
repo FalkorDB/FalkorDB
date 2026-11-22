@@ -62,7 +62,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use valkey_module::logging::{ValkeyLogLevel, log_warning};
 use valkey_module::{
@@ -154,13 +154,11 @@ pub fn register_graph(
     // registry clone; `graph_free` removes entries by pointer identity, so the
     // old value's late `graph_free` cannot take out the new registration.
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
-    // Drop any displaced graph off the main Redis thread. Index::drop ->
-    // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
-    // thread pool when its timer can't be stopped synchronously; that
-    // callback asserts gc->stopped == 1 and aborts under the resulting
-    // race. Moving the drop to a background thread also routes Index::drop
-    // through the GIL-acquiring path, which the synchronous main-thread
-    // drop intentionally skips.
+    // Drop any displaced graph off the main Redis thread, so freeing a large
+    // graph does not stall it. The drop thread holds no GIL: `SpecHandle::drop`
+    // calls `RediSearch_DropIndex` without it (#726), so that call must not touch
+    // the GIL's state. RediSearch hands the GC timer stop to the main thread and
+    // leaves the shared "N/A" error key's refcount alone (#3483).
     if let Some(displaced) = displaced {
         std::thread::spawn(move || drop(displaced));
     }
@@ -774,11 +772,21 @@ pub fn execute_profile(
 /// long-lived `&ThreadedGraph` would be invalidated mid-query; every access here is a
 /// short-lived `session.with_graph` borrow instead.
 ///
-/// Returns `(params_offset, execution_time_ms)` for telemetry.
+/// Returns `(params_offset, execution_time_ms)` for telemetry. The execution time spans
+/// every attempt and the wait for the write lock, as the caller's wall clock does.
 ///
 /// A write that started as a reader and lost its version to a writer that
 /// committed while it was matching ([`QuerySession::is_stale`]) has mutated and
 /// replied nothing, so it is run again from the start on a fresh session.
+///
+/// Retrying is bounded. Every retry loses to the next writer that commits during
+/// its matching window, so under a steady stream of writes it could run forever
+/// while C finishes in one pass. After [`MAX_STALE_RETRIES`] stale runs, or at once
+/// after a stale run that took [`SLOW_STALE_RUN`] or longer, the write runs again
+/// as a writer, holding the write lock from the start like C does, which no one
+/// can make stale. All attempts share one clock and one timeout,
+/// resolved on the first attempt, so `TIMEOUT` and the slow log count from the
+/// first attempt, and a config change during a retry cannot move the deadline.
 #[allow(clippy::too_many_arguments)]
 pub fn execute_query_write(
     session: QuerySession,
@@ -792,9 +800,13 @@ pub fn execute_query_write(
 ) -> Result<(usize, f64), String> {
     let graph = session.graph_arc();
     let facts = session.facts();
+    let started = Instant::now();
+    let mut timeout = WriteTimeout::Unresolved;
+    let mut stale_runs = 0;
     let mut session = session;
     loop {
-        match try_query_write(
+        let attempt_start = Instant::now();
+        let r = try_query_write(
             session,
             ctx,
             key_name,
@@ -802,14 +814,42 @@ pub fn execute_query_write(
             format,
             first_cached,
             per_query_timeout,
+            &mut timeout,
             profile,
-        ) {
-            Err(WriteAttempt::Stale) => session = QuerySession::begin_with(&graph, facts),
+            started,
+        );
+        let wasted = attempt_start.elapsed();
+        match r {
+            Err(WriteAttempt::Stale) => {
+                stale_runs += 1;
+                session = if stale_runs >= MAX_STALE_RETRIES || wasted >= SLOW_STALE_RUN {
+                    QuerySession::begin_writer_checked(&graph, facts).map_err(|e| e.to_string())?
+                } else {
+                    QuerySession::begin_with(&graph, facts)
+                };
+            }
             Err(WriteAttempt::Failed(err)) => return Err(err),
-            Ok(done) => return Ok(done),
+            Ok((params_offset, exec_ms)) => {
+                // The caller's wall clock spans every attempt and the wait for the lock, so
+                // the execution time reported with it does too: only the reply is left to
+                // `wall - exec`, as for a write that ran once.
+                let before_last = attempt_start.duration_since(started).as_secs_f64() * 1000.0;
+                return Ok((params_offset, before_last + exec_ms));
+            }
         }
     }
 }
+
+/// Stale runs a write that began as a reader may lose before it runs as a writer
+/// for the whole query.
+pub const MAX_STALE_RETRIES: u32 = 3;
+
+/// A stale run that took this long is not retried as a reader at all. Rerunning it
+/// as a reader risks losing the same race again for as long as it took here,
+/// while waiting for the write lock costs about one more run. Cheap matches keep
+/// retrying (up to [`MAX_STALE_RETRIES`]), since a retry there is cheaper than
+/// queueing for the lock.
+pub const SLOW_STALE_RUN: Duration = Duration::from_millis(10);
 
 /// Why one run of [`try_query_write`] did not succeed.
 enum WriteAttempt {
@@ -824,7 +864,18 @@ impl From<String> for WriteAttempt {
     }
 }
 
-/// One run of [`execute_query_write`].
+/// The timeout of one write, resolved by its first run and kept for the retries.
+enum WriteTimeout {
+    /// No run has resolved it yet.
+    Unresolved,
+    /// Resolved: the write has no timeout.
+    Unlimited,
+    /// Resolved: the whole write, retries included, has this many milliseconds.
+    Total(u64),
+}
+
+/// One run of [`execute_query_write`]. `timeout` is the write's resolved timeout,
+/// set by the first run and kept for the retries.
 #[allow(
     clippy::too_many_arguments,
     clippy::needless_pass_by_value,
@@ -838,9 +889,10 @@ fn try_query_write(
     format: ReplyFormat,
     first_cached: bool,
     per_query_timeout: Option<i64>,
+    timeout: &mut WriteTimeout,
     profile: bool,
+    wall_start: Instant,
 ) -> Result<(usize, f64), WriteAttempt> {
-    let wall_start = Instant::now();
     let Plan {
         plan,
         parameters,
@@ -853,7 +905,21 @@ fn try_query_write(
         IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
     )));
 
-    let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
+    // The budget is for the whole write, so a retry gets what the earlier runs left.
+    if matches!(timeout, WriteTimeout::Unresolved) {
+        *timeout = compute_effective_timeout(per_query_timeout, true)?
+            .map_or(WriteTimeout::Unlimited, WriteTimeout::Total);
+    }
+    let timeout_ms = match *timeout {
+        WriteTimeout::Total(total) => {
+            let spent = u64::try_from(wall_start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if spent >= total {
+                return Err(WriteAttempt::Failed("Query timed out".to_string()));
+            }
+            Some(total - spent)
+        }
+        WriteTimeout::Unlimited | WriteTimeout::Unresolved => None,
+    };
 
     // The private COW version to build into. Forking takes nothing, so an
     // inline writer is never refused because we are still matching; if one
@@ -1883,8 +1949,7 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // will strip again. Queued, not deleted: the server is part-way through
         // removing this graph's key.
         telemetry::queue_streams_of_freed_graph(names);
-        // Drop off the main Redis thread so Index::drop routes through the
-        // GIL-acquiring path (see register_graph for the rationale).
+        // Drop off the main Redis thread, without the GIL (see register_graph).
         std::thread::spawn(move || {
             drop(boxed);
             drop(removed);

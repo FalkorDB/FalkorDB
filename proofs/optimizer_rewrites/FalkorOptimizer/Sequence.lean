@@ -1,15 +1,6 @@
 /-
 # Pass sequencing, tree rebuilds, and edge-filter absorption
 
-| here | there |
-| --- | --- |
-| `passes`, `optimize` | `optimize` optimizer/mod.rs:207-252 (pass order; NestedPlans recursion) |
-| `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs:80-97 |
-| `guardHJ`, `T.anyD` | its `!reads_argument_rows(&child)` guard (:84) / `reads_argument_rows` :105-109 (#2981) |
-| `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs:389-466 |
-| `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs:58-83 |
-| `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs:90-181 |
-
 * `optimize_sound`: if every pass preserves a relation `R` (reflexive,
   transitive), so does `optimize`; `optimize_nested` — each nested plan is
   optimized independently; `passes_order` — the exact order (reduce_var_len_path twice).
@@ -31,32 +22,22 @@ namespace Falkor.Opt.Seq
 
 inductive Pass
   | reduceCount | reduceExpandInto | reduceVarLenPath | eliminateTrueFilters | selectScanNode
-  | pushFiltersDown | fuseAnonymousTraverse | replaceCartesianWithIndexSeek
-  | replaceCartesianWithHashJoin | absorbEdgeFiltersIntoVlt
+  | pushFiltersDown | fuseAnonymousTraverse | replaceCartesianWithHashJoin | absorbEdgeFiltersIntoVlt
   | utilizeIndex | utilizeNodeById | reorderLabels | fuseOptionalTraverse | reduceBoundEdge
   deriving DecidableEq, Repr
 
-/-- mod.rs:223-245, in order (#3889 adds replace_cartesian_with_index_seek before the hash join). -/
+/-- mod.rs, in order. -/
 def passes : List Pass :=
   [.reduceCount, .reduceExpandInto, .reduceVarLenPath, .eliminateTrueFilters, .selectScanNode,
-   .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithIndexSeek,
-   .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
+   .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
    .reduceVarLenPath, .utilizeIndex, .utilizeNodeById, .reorderLabels, .fuseOptionalTraverse,
    .reduceBoundEdge]
 
 theorem passes_order :
-    passes.length = 16 ∧ passes.count .reduceVarLenPath = 2 ∧
+    passes.length = 15 ∧ passes.count .reduceVarLenPath = 2 ∧
     passes.head? = some .reduceCount ∧ passes.getLast? = some .reduceBoundEdge ∧
-    passes.idxOf .absorbEdgeFiltersIntoVlt < 10 ∧ passes[10]? = some .reduceVarLenPath ∧
-    passes.idxOf .fuseOptionalTraverse = 14 := by decide
-
-/-- #3889: the index-seek rewrite runs once, after push_filters_down and right before the
-hash-join rewrite (so it gets first pick of a CartesianProduct), and before utilize_index. -/
-theorem passes_index_seek_order :
-    passes.count .replaceCartesianWithIndexSeek = 1 ∧
-    passes.idxOf .pushFiltersDown < passes.idxOf .replaceCartesianWithIndexSeek ∧
-    passes.idxOf .replaceCartesianWithIndexSeek + 1 = passes.idxOf .replaceCartesianWithHashJoin ∧
-    passes.idxOf .replaceCartesianWithIndexSeek < passes.idxOf .utilizeIndex := by decide
+    passes.idxOf .absorbEdgeFiltersIntoVlt < 9 ∧ passes[9]? = some .reduceVarLenPath ∧
+    passes.idxOf .fuseOptionalTraverse = 13 := by decide
 
 /-- A plan tree whose root may be `NestedPlans`. -/
 inductive OPlan (P : Type)
@@ -154,7 +135,7 @@ decreasing_by
   · simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; right; omega
   · simp_wf; omega
 
-/-- The local rewrite Rust tries (replace_cartesian_with_hash_join.rs:81-85, #2981): the
+/-- The local rewrite Rust tries (replace_cartesian_with_hash_join.rs, #2981): the
 `try_hash_join_rewrite` step `rw` is attempted only when no node of the CartesianProduct
 `cp` (the Filter's child) is an `Argument` (`reads_argument_rows`, :105-109), i.e. no branch
 is re-run per outer row of an enclosing `Apply`/`Optional`. -/

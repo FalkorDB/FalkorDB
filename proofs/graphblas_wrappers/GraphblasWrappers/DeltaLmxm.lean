@@ -2,11 +2,10 @@ import VersionedMatrix.Delta
 import VersionedMatrix.DeltaProofs
 import VersionedMatrix.Tensor
 /-
-# `Matrix::delta_lmxm` (matrix.rs:1631-1768): `F * (M - DM + DP)` on the pattern
+# `Matrix::delta_lmxm` (matrix.rs): `F * (M - DM + DP)` on the pattern
 
 `delta_lmxm` multiplies a frontier `F` by a versioned matrix's three layers
-(`m` base, `dp` additions, `dm` deletions) without merging them. Since #3492
-(a3a99bdbc) it keeps an output that one deleted base edge reaches but another,
+(`m` base, `dp` additions, `dm` deletions) without merging them. It keeps an output that one deleted base edge reaches but another,
 live one still does.
 
 The GraphBLAS calls are *definitions* here, with the meaning the GraphBLAS spec
@@ -78,30 +77,30 @@ theorem nz_false {X : Pat} (h : nz X = false) (i j : Nat) : X i j = false := by
 theorem nz_true_of {X : Pat} {i j : Nat} (h : X i j = true) : nz X = true :=
   (nz_iff X).2 ⟨i, j, h⟩
 
-/-- `Matrix::delta_lmxm`, branch for branch (matrix.rs:1631-1768). -/
+/-- `Matrix::delta_lmxm`, branch for branch (matrix.rs). -/
 noncomputable def deltaLmxm (n : Nat) (F M DP DM : Pat) : Pat :=
   if (!nz DP && !nz DM) = true then
-    mxmAny n F M                                              -- :1537-1540 hot path: `lmxm(m)`
+    mxmAny n F M                                              -- :1680 hot path: `lmxm(m)`
   else
-    let dmPaths : UMat := mxmCount n F DM                      -- :1559
+    let dmPaths : UMat := mxmCount n F DM                      -- :1703
     let mask : Option UMat := if nz DM = true ∧ nzU dmPaths = true then some dmPaths else none
     let restored : Option Pat :=
       if nz DM = true ∧ nzU dmPaths = true then
-        let mPaths := maskS dmPaths (mxmCount n F M)           -- :1575
-        let live : Pat := selTrue (ewGT mPaths dmPaths)        -- :1586, :1595
+        let mPaths := maskS dmPaths (mxmCount n F M)           -- :1718
+        let live : Pat := selTrue (ewGT mPaths dmPaths)        -- :1728, :1738
         if nz live = true then some live else none
       else none
     let accum : Option Pat :=
       if nz DP = true then
-        let ac := mxmAny n F DP                                -- :1612
+        let ac := mxmAny n F DP                                -- :1760
         if nz ac = true then some ac else none
       else none
-    let main : Pat :=                                          -- :1626, mask `!dm_paths`, replace
+    let main : Pat :=                                          -- :1780, mask `!dm_paths`, replace
       match mask with
       | some mk => fun i j => !(mk i j).isSome && mxmAny n F M i j
       | none => mxmAny n F M
-    let r1 := match restored with | some l => eadd main l | none => main   -- :1650
-    match accum with | some a => eadd r1 a | none => r1                    -- :1653
+    let r1 := match restored with | some l => eadd main l | none => main   -- :1792
+    match accum with | some a => eadd r1 a | none => r1                    -- :1795
 
 /-! ## What it computes, with no assumption about the layers -/
 
@@ -294,10 +293,10 @@ theorem deltaLmxm_tensor (n : Nat) (F : Pat) (st : Nat → Nat → VMTensor.Pair
   unfold VMTensor.effV
   cases hdp : (st k j).dp <;> cases hdm : (st k j).dm <;> cases hm : (st k j).m <;> simp
 
-/-! ## History: before #3492 (a3a99bdbc) -/
+/-! ## Examples: an output a live edge still reaches -/
 
 /-- Node `1 = x`, `2 = y`, `3 = z`; frontier row `0 = {x, y}`; base edges `x→z`, `y→z`
-(`delta_lmxm_keeps_an_output_one_live_edge_still_reaches`, matrix.rs:2065). -/
+(`delta_lmxm_keeps_an_output_one_live_edge_still_reaches`, matrix.rs). -/
 def cxF : Pat := fun i k => decide ((i, k) ∈ [(0, 1), (0, 2)])
 def cxM : Pat := fun k j => decide ((k, j) ∈ [(1, 3), (2, 3)])
 def cxNone : Pat := fun _ _ => false

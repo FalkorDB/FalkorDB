@@ -1,42 +1,42 @@
 import FalkorIdList.PushT
 /-!
-# `IdList`'s accessors and trait impls (`id_list.rs:804-1283`)
+# `IdList`'s accessors and trait impls (`id_list.rs`)
 
 `IdList` is `IdListPush.St` (`segs`, `len`, `run.start`, `run.desc`).
 -/
 namespace IdListMisc
 open IdListPush IdListWire IdListCost Seg
 
-/-- `IdList::is_empty` (`:1114`). -/
+/-- `IdList::is_empty`. -/
 def isEmpty (st : St) : Bool := st.len == 0
 
-/-- `IdList::count` (`:1136`): `u32::try_from(len).expect(..)`; `none` = the panic. -/
+/-- `IdList::count`: `u32::try_from(len).expect(..)`; `none` = the panic. -/
 def count (st : St) : Option Nat := if st.len < 4294967296 then some st.len else none
 
-/-- `PartialEq for IdList` (`:818`): `len == len && iter().eq(iter())`. -/
+/-- `PartialEq for IdList`: `len == len && iter().eq(iter())`. -/
 def eqList (a b : St) : Bool := a.len == b.len && flat a.segs == flat b.segs
 
-/-- `PartialEq<[u64]>` (`:1249`). -/
+/-- `PartialEq<[u64]>`. -/
 def eqSlice (a : St) (o : List Nat) : Bool := a.len == o.length && flat a.segs == o
 
-/-- `PartialEq<[u64; N]>` (`:1258`): `self == other.as_slice()`. -/
+/-- `PartialEq<[u64; N]>`: `self == other.as_slice()`. -/
 def eqArr (a : St) (o : List Nat) : Bool := eqSlice a o
 
-/-- `From<[u64; N]>` (`:1277`) and `From<&[u64]>` (`:1283`): `ids.into_iter().collect()`. -/
+/-- `From<[u64; N]>` and `From<&[u64]>`: `ids.into_iter().collect()`. -/
 def fromIds (R : Roaring) (ids : List Nat) : Option (St × Tally) := pushAllT R St.empty restart ids
 
-/-- `Debug for IdList` (`:804`): `debug_struct("IdList").field("len").field("segments")`.
+/-- `Debug for IdList`: `debug_struct("IdList").field("len").field("segments")`.
 The Lean `Repr` of `Seg` stands in for the derived `Debug` of `Segment`. -/
 def fmt (st : St) : String := s!"IdList \{ len: {st.len}, segments: {repr st.segs} }"
 
-/-- What `to_roaring` (`:1146`) contributes per segment, over the ascending set list. -/
+/-- What `to_roaring` contributes per segment, over the ascending set list. -/
 def addSeg (bm : List Nat) : Seg → List Nat
   | .range b l => insRange b (b + (l - 1)) bm
   | .rdesc b l => insRange (b - (l - 1)) b bm
   | .asc s | .dsc s => insAll bm s          -- `out |= bitmap`
   | .rep i _ => ins i bm
 
-/-- `IdList::to_roaring` (`:1146`). -/
+/-- `IdList::to_roaring`. -/
 def toRoaring (st : St) : List Nat := st.segs.foldl addSeg []
 
 /-! ### Theorems -/

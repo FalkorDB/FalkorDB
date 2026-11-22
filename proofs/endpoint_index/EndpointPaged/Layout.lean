@@ -5,9 +5,9 @@ open Falkor.EndpointIndex
 
 /-! ## `Endpoint` impls and the trait contract -/
 
-/-- `U24::put` (:98): the three low little-endian bytes of `v`. -/
+/-- `U24::put` (:100): the three low little-endian bytes of `v`. -/
 def u24Put (v : Nat) : Nat × Nat × Nat := (v % 256, v / 256 % 256, v / 65536 % 256)
-/-- `U24::get` (:95): `u32::from_le_bytes([b0, b1, b2, 0])`. -/
+/-- `U24::get` (:97): `u32::from_le_bytes([b0, b1, b2, 0])`. -/
 def u24Get (b : Nat × Nat × Nat) : Nat := b.1 + 256 * b.2.1 + 65536 * b.2.2
 
 /-- The byte layout of `U24` is exactly the truncating cast the flat model uses (`putF 1`). -/
@@ -43,15 +43,15 @@ def WF (P : Nat) (fill : α) (g : PG α) : Prop :=
   Shape P g.pages ∧ g.len ≤ g.pages.flatten.length ∧
   g.pages.flatten.drop g.len = List.replicate (g.pages.flatten.length - g.len) fill
 
-/-- `Paged::default` (:165). -/
+/-- `Paged::default` (:167). -/
 def dflt : PG α := ⟨[], 0⟩
-/-- `Paged::len` (:183) and `TierOps::len` (:758). -/
+/-- `Paged::len` (:185) and `TierOps::len` (:760). -/
 def length (g : PG α) : Nat := g.len
-/-- `Paged::is_empty` (:187). -/
+/-- `Paged::is_empty` (:189). -/
 def isEmpty (g : PG α) : Bool := g.len == 0
-/-- `Paged::at` (:192): `pages[at / P][at % P]` (`none` = the index would panic). -/
+/-- `Paged::at` (:194): `pages[at / P][at % P]` (`none` = the index would panic). -/
 def at_ (P : Nat) (g : PG α) (i : Nat) : Option α := (g.pages[i / P]?).bind (·[i % P]?)
-/-- `Paged::iter` (:199): `(0..len).map(at)`. -/
+/-- `Paged::iter` (:201): `(0..len).map()`. -/
 def iter (P : Nat) (g : PG α) : List (Option α) := (List.range g.len).map (g.at_ P)
 
 end PG
@@ -68,7 +68,7 @@ theorem isEmpty_iff (g : PG α) (h : g.len ≤ g.pages.flatten.length) :
   simp only [PG.isEmpty, PG.length, beq_iff_eq] at *
   rw [← List.length_eq_zero_iff, this]
 
-/-- `empty_page` (:178): `slots` copies of `(EMPTY, EMPTY)`. -/
+/-- `empty_page` (:180): `slots` copies of `(EMPTY, EMPTY)`. -/
 def emptyPage (fill : α) (slots : Nat) : List α := List.replicate slots fill
 
 theorem emptyPage_spec (fill : α) (n : Nat) :
@@ -90,9 +90,9 @@ theorem iter_eq (P : Nat) (hP : 0 < P) (fill : α) (g : PG α) (hw : g.WF P fill
 
 /-! ## Memory accounting -/
 
-/-- `allocated_bytes` (:204): page lengths summed, times `size_of::<(T, T)>()`. -/
+/-- `allocated_bytes` (:206): page lengths summed, times `size_of::<(T, T)>()`. -/
 def allocBytes (sz : Nat) (g : PG α) : Nat := (g.pages.map List.length).sum * sz
-/-- `used_bytes` (:213). -/
+/-- `used_bytes` (:215). -/
 def usedBytes (sz : Nat) (g : PG α) : Nat := g.len * sz
 
 theorem allocBytes_eq (sz : Nat) (g : PG α) : allocBytes sz g = g.pages.flatten.length * sz := by
@@ -115,7 +115,7 @@ theorem sz_eq (r : Nat) : sz r = 2 * (bits r / 8) := by
   | 0 | 1 | 2 => decide
   | _ + 3 => simp [sz, bits]
 
-/-- The numerator `bytes_per_edge` (:437) divides by `len()`: used bytes over the four tiers. -/
+/-- The numerator `bytes_per_edge` (:439) divides by `len()`: used bytes over the four tiers. -/
 def bytesOf (ix : Ix) : Nat := ix.tierLen 0 * sz 0 + ix.tierLen 1 * sz 1 + ix.tierLen 2 * sz 2 + ix.tierLen 3 * sz 3
 
 /-- `bytes_per_edge` is between 4 and 16 bytes per stored slot, whatever the tier mix. -/
@@ -130,7 +130,7 @@ theorem bytes_single_tier (ix : Ix) (r : Nat) (hr : r ≤ 3) (h : ∀ k ≤ 3, k
     simp only [bytesOf, Ix.len, sz] at *
     omega
 
-/-- `memory_usage` (:427) over paged tiers: the four `allocated_bytes` summed. -/
+/-- `memory_usage` (:429) over paged tiers: the four `allocated_bytes` summed. -/
 def memUsage (t : List (Nat × PG α)) : Nat := (t.map fun (s, g) => allocBytes s g).sum
 
 theorem memUsage_ge_used (t : List (Nat × PG α)) (h : ∀ p ∈ t, p.2.len ≤ p.2.pages.flatten.length) :
@@ -143,7 +143,7 @@ theorem memUsage_ge_used (t : List (Nat × PG α)) (h : ∀ p ∈ t, p.2.len ≤
     have := ih (fun q hq => h q (by simp [hq]))
     omega
 
-/-- `EndpointIndex::is_empty` (:421): no slot at all, so every id reads absent. -/
+/-- `EndpointIndex::is_empty` (:423): no slot at all, so every id reads absent. -/
 theorem ix_isEmpty (ix : Ix) : ix.len = 0 ↔ view ix = [] := by
   rw [len_view]; exact List.length_eq_zero_iff
 
@@ -152,7 +152,7 @@ theorem ix_isEmpty_get (ix : Ix) (h : ix.len = 0) (i : Nat) : ix.get i = none :=
 
 /-! ## `from_slots` -/
 
-/-- `Paged::from_slots(it, len)` (:234): while `left > 0`, take `min(left, P)` items as
+/-- `Paged::from_slots(it, len)` (:236): while `left > 0`, take `min(left, P)` items as
 one page. -/
 def fromSlots (P : Nat) (hP : 0 < P) (it : List α) (left : Nat) : List (List α) :=
   if _h : left = 0 then [] else
@@ -218,7 +218,7 @@ theorem fromSlots_wf (P : Nat) (hP : 0 < P) (fill : α) (it : List α) (len : Na
   obtain ⟨hs, hf, _, _⟩ := fromSlots_spec P hP len it h
   refine ⟨⟨hs, by simp [hf]; omega, by simp [hf]; omega⟩, by simp [PG.view, hf, List.take_take]⟩
 
-/-- The iterator `promote` (:336) builds: the widened narrow tier, then every slot of
+/-- The iterator `promote` (:338) builds: the widened narrow tier, then every slot of
 `into`; `total = old.len() + into.len()` is exactly its length. -/
 def promoteSlots (a b : Nat) (old into : List Slot) : List Slot := old.map (widen a b) ++ into
 

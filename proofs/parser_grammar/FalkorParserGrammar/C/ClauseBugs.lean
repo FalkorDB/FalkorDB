@@ -12,7 +12,7 @@ namespace FalkorParserGrammar.C
 def q (ts : List CT) : R IR := run (parseP o0 40 40) ts
 
 /-- **`MATCH MATCH (n) RETURN n` is refused** (#3060, `fe619ac5f`: the second
-`optional_match_token!(Match)` is gone, cypher.rs:934-941), as in C. Historical
+`optional_match_token!(Match)` is gone, cypher.rs), as in C. Historical
 (2c874022a, `match_match_accepted`): it was accepted. -/
 theorem match_match_refused :
     (q [.kw .match_, .kw .match_, .lparen, .ident 1, .rparen, .kw .return_, .ident 1]).isOk = false := by
@@ -43,7 +43,7 @@ theorem g4_pattern_part_not_kw_lparen (o : Oracle) (cl : CK) (gs : QG Alias × L
   | asp _ _ he => simp [h2] at he
 
 /-- **`LOAD CSV WITH FROM 'f' AS r` is refused** (#3060: `WITH` must be followed by
-`HEADERS`, cypher.rs:955-958), as in C. Historical (2c874022a, `load_csv_with_from_accepted`). -/
+`HEADERS`, cypher.rs), as in C. Historical (2c874022a, `load_csv_with_from_accepted`). -/
 theorem load_csv_with_from_refused :
     (q [.kw .load, .kw .csv, .kw .with_, .kw .from, .str 1, .kw .as_, .ident 2,
         .kw .return_, .ident 2]).isOk = false := by decide
@@ -79,7 +79,7 @@ theorem call_trailing_comma_refused :
         .kw .return_, .ident 5]).isOk = false := by decide
 
 /-- **`SET (n.x) = 5`, `SET (n) = {..}`, `SET (n) += {..}`, `SET (n):L` and `REMOVE (n):L` are
-refused** (#3300, W4-parse-4; C: syntax error): `expect_property_after_paren` (cypher.rs:3409)
+refused** (#3300, W4-parse-4; C: syntax error): `expect_property_after_paren` (cypher.rs)
 lets a parenthesised target open only a property lookup, `(n).x`. Before it the `=` arm took any
 primary, so `CREATE (n {a:1}) SET (n.x) = 5 RETURN n` set x. `SET (n).x = 5` and
 `REMOVE (n).x` still parse. -/
@@ -110,7 +110,7 @@ theorem pattern_comprehension_repeated_rel_refused :
        .ident 5, .rbrack]).isOk = true := by decide
 
 /-- `DELETE a DETACH DELETE b` is folded into one clause with `detach`
-(cypher.rs:1188-1203); the folded IR is a single DELETE. -/
+(cypher.rs); the folded IR is a single DELETE. -/
 def delShape : Option IR → Option (Nat × Nat × Bool)
   | some (.query cs _) => match cs with
     | [.delete es d] => some (cs.length, es.length, d)
@@ -130,7 +130,7 @@ theorem union_mix_rejected :
 theorem call_implicit_accepted :
     (q [.kw .call, .ident 77, .kw .yield_, .ident 5, .kw .return_, .ident 5]).isOk = true := by decide
 
-/-- A reading clause after an update needs WITH (cypher.rs:845-892), as in C. -/
+/-- A reading clause after an update needs WITH (cypher.rs), as in C. -/
 theorem match_after_create_rejected :
     (q [.kw .create, .lparen, .rparen, .kw .match_, .lparen, .rparen, .kw .return_, .int 1]).isOk =
       false := by decide

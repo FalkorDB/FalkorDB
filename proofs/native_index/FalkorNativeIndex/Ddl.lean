@@ -3,14 +3,14 @@ import FalkorNativeIndex.Query
 set_option linter.unusedSimpArgs false
 
 /-!
-# Index DDL (`graph_writes.rs:396-501`), the graph's index entry points
-# (`graph.rs:3879-3924`, `:4205-4246`), the scan routing (`node_by_index_scan.rs:302`,
-# `edge_by_index_scan.rs:318`), and folded-roots MVCC (`graph.rs:1084`)
+# Index DDL (`graph_writes.rs`), the graph's index entry points
+# (`graph.rs`), the scan routing (`node_by_index_scan.rs`,
+# `edge_by_index_scan.rs`), and folded-roots MVCC (`graph.rs`)
 -/
 
 namespace NI
 
-/-- **Specification** (no Rust counterpart since #2351, whose `build_column`/`collect_*_entries` became
+/-- **Specification** (no Rust counterpart: `build_column`/`collect_*_entries` became
     batches, `Build.lean`): the `(value, id)` pairs of every node of the label matrix that has `attr`. -/
 def collectNodeEntries (g : G) (label attr : String) : List (Value × Nat) :=
   match g.labelNodes label, g.attrId attr with
@@ -44,19 +44,19 @@ structure G.Fits (g : G) : Prop where
   nodes : ∀ label lm, g.labelNodes label = some lm → lm.length ≤ usizeMax
   edges : ∀ label t, g.typeEdges label = some t → t.length ≤ usizeMax
 
-/-- `build_in_one_batch` (`graph_writes.rs:412-424`): create the column `Building`, then one indexer
+/-- `build_in_one_batch` (`graph_writes.rs`): create the column `Building`, then one indexer
     batch with no limit on its size, which reaches the end and flips it `Ready`. -/
 def buildInOneBatch (g : G) (e : EntityType) (label attr : String) : G :=
   let g := { g with idx := g.idx.createBuilding e label attr }
   (g.indexerPrepare (.column e (label, attr)) usizeMax).1
 
-/-- `create_index` (`graph_writes.rs:394-406`): each listed attribute's column created `Building`, its cursor at
+/-- `create_index` (`graph_writes.rs`): each listed attribute's column created `Building`, its cursor at
     the start, for the background builder to fill (`online_build.rs`, the online build, #2355). -/
 def createIndex (g : G) (t : FalkorDbIndex.IndexType) (e : EntityType) (label : String) (attrs : List String) : G :=
   if t = .range then { g with idx := attrs.foldl (fun x a => x.createBuilding e label a) g.idx } else g
 
 /-- Every listed attribute's column built in one unlimited batch each (`build_in_one_batch`): what the RDB load
-    builds for a label's Range fields (`populate`, `graph_writes.rs:492-503`), and what `create_index` did before
+    builds for a label's Range fields (`populate`, `graph_writes.rs`), and what `create_index` did before
     the online build (#2355). -/
 def buildColumns (g : G) (e : EntityType) (label : String) (attrs : List String) : G :=
   attrs.foldl (fun g a => buildInOneBatch g e label a) g
@@ -65,7 +65,7 @@ def buildColumns (g : G) (e : EntityType) (label : String) (attrs : List String)
 structure Field where
   ty : FalkorDbIndex.IndexType
 
-/-- `populate` (`graph_writes.rs:492-503`). -/
+/-- `populate` (`graph_writes.rs`). -/
 def populate (g : G) (e : EntityType) (label : String) (fields : List (String × List Field)) : G :=
   fields.foldl (fun g af => if af.2.any (fun f => f.ty == .range) then buildInOneBatch g e label af.1 else g) g
 
@@ -112,6 +112,48 @@ theorem encodePairs_filterMap (ix : NumericIndex) (f : Nat → Option Value) :
     cases hf : f n with
     | none => simp [hf, encodePairs, List.filterMap_cons]
     | some v => simp [hf, encodePairs, List.filterMap_cons]; cases encodeNumeric v <;> simp
+
+theorem tupleOfArr_numeric (ix : NumericIndex) (f : Nat → Option Value) (n : Nat) :
+    tupleOfArr (.numeric ix) f n = encodeArrayPairs (match f n with | some v => [(v, n)] | none => []) := by
+  unfold tupleOfArr encodeArrayPairs
+  cases f n with
+  | none => simp
+  | some v => cases v <;> simp [arrayKeys]
+
+theorem encodeArrayPairs_filterMap (ix : NumericIndex) (f : Nat → Option Value) :
+    ∀ ids : List Nat, encodeArrayPairs (ids.filterMap (fun n => (f n).map (fun v => (v, n)))) =
+      ids.flatMap (tupleOfArr (.numeric ix) f) := by
+  intro ids
+  induction ids with
+  | nil => simp [encodeArrayPairs]
+  | cons n ns ih =>
+    rw [List.flatMap_cons, ← ih, tupleOfArr_numeric]
+    cases hf : f n with
+    | none => simp [hf, encodeArrayPairs, List.filterMap_cons]
+    | some v => simp [hf, encodeArrayPairs, List.filterMap_cons]
+
+theorem edgeLoop_all_array (budget : Nat) (index : Nat → EncodedTuples → EncodedTuples) (f : Nat → List Nat)
+    (hidx : ∀ e out, (index e out).array = out.array ++ f e) :
+    ∀ (es : List (Nat × Nat × Nat)) (read : Nat) (out : EncodedTuples), read + es.length ≤ budget →
+      (edgeLoop budget index read es out).1.array = out.array ++ es.flatMap (fun e => f e.2.2) := by
+  intro es
+  induction es with
+  | nil => intro read out _; simp [edgeLoop]
+  | cons x es ih =>
+    intro read out hb
+    obtain ⟨s, d, eid⟩ := x
+    simp only [List.length_cons] at hb
+    have hr : read < budget := by omega
+    by_cases h1 : read + 1 = budget
+    · have hes : es = [] := by
+        cases es with
+        | nil => rfl
+        | cons _ _ => simp at hb; omega
+      subst hes
+      simp [edgeLoop, hr, h1, hidx]
+    · have := ih (read + 1) (index eid out) (by omega)
+      simp only [edgeLoop, hr, h1, ite_true, ite_false]
+      rw [this, hidx]; simp [List.append_assoc]
 
 theorem edgeLoop_all (budget : Nat) (index : Nat → EncodedTuples → EncodedTuples) (f : Nat → List Nat)
     (hidx : ∀ e out, (index e out).scalar = out.scalar ++ f e) :
@@ -165,6 +207,25 @@ theorem scanNodes_all (g : G) (hf : g.Fits) (label attr : String) (ix : NumericI
       simp only [collectNodeEntries, hl, ha, EncodedTuples.empty, List.nil_append]
       exact (encodePairs_filterMap ix _ lm).symm
 
+/-- ... and its array tuples are a list value's elements. -/
+theorem scanNodes_all_array (g : G) (hf : g.Fits) (label attr : String) (ix : NumericIndex) :
+    (scanNodes g label attr 0 usizeMax (.numeric ix) EncodedTuples.empty).1.array =
+      encodeArrayPairs (collectNodeEntries g label attr) := by
+  cases hl : g.labelNodes label with
+  | none => simp [scanNodes_missing g label attr 0 usizeMax _ _ (Or.inl hl), collectNodeEntries, hl, encodeArrayPairs, EncodedTuples.empty]
+  | some lm =>
+    cases ha : g.attrId attr with
+    | none => simp [scanNodes_missing g label attr 0 usizeMax _ _ (Or.inr ha), collectNodeEntries, hl, ha, encodeArrayPairs, EncodedTuples.empty]
+    | some idx =>
+      have h1 := scanNodes_tuples_array g label attr 0 usizeMax (.numeric ix) EncodedTuples.empty lm idx hl ha
+      have hlen := hf.nodes label lm hl
+      have hn : nodesFrom lm 0 = lm := by simp [nodesFrom]
+      rw [hn] at h1
+      rw [List.take_of_length_le hlen] at h1
+      rw [h1]
+      simp only [collectNodeEntries, hl, ha, EncodedTuples.empty, List.nil_append]
+      exact (encodeArrayPairs_filterMap ix _ lm).symm
+
 /-- An edge batch from the first pair with a budget that covers the type reads every edge, and ends. -/
 theorem scanEdges_all (g : G) (hf : g.Fits) (label attr : String) (ix : NumericIndex) :
     (scanEdges g label attr 0 0 usizeMax (.numeric ix) EncodedTuples.empty).1.scalar =
@@ -191,6 +252,30 @@ theorem scanEdges_all (g : G) (hf : g.Fits) (label attr : String) (ix : NumericI
       rw [h2]
       simp only [collectEdgeEntries, hl, ha, Option.getD_some, EncodedTuples.empty, List.nil_append]
       rw [encodePairs_filterMap ix _ (t.map (·.2.2)), List.flatMap_map]
+
+theorem scanEdges_all_array (g : G) (hf : g.Fits) (label attr : String) (ix : NumericIndex) :
+    (scanEdges g label attr 0 0 usizeMax (.numeric ix) EncodedTuples.empty).1.array =
+      encodeArrayPairs (collectEdgeEntries g label attr) := by
+  have hcol : g.typeEdges label = none → collectEdgeEntries g label attr = [] := by
+    intro h; unfold collectEdgeEntries; cases g.attrId attr <;> simp [h]
+  cases hl : g.typeEdges label with
+  | none => simp [scanEdges_missing g label attr 0 0 usizeMax _ _ (Or.inl hl), hcol hl, encodeArrayPairs, EncodedTuples.empty]
+  | some t =>
+    cases ha : g.attrId attr with
+    | none => simp [scanEdges_missing g label attr 0 0 usizeMax _ _ (Or.inr ha), collectEdgeEntries, hl, ha, encodeArrayPairs, EncodedTuples.empty]
+    | some idx =>
+      have hlen := hf.edges label t hl
+      have hfilter : t.filter (fun e => decide (0 ≤ e.1)) = t := by simp
+      have hdrop : skipEdges t 0 0 = t := by
+        unfold skipEdges; rw [hfilter]; exact dropWhile_none _ _ (by intro x _; simp [skipP])
+      have h2 := edgeLoop_all_array usizeMax
+        (fun (eid : Nat) (out : EncodedTuples) => pushAttr (.numeric ix) (fun e => g.relAttr e idx) out eid)
+        (tupleOfArr (.numeric ix) (fun e => g.relAttr e idx)) (fun e out => pushAttr_array _ _ _ _) t 0
+        EncodedTuples.empty (by simpa using hlen)
+      simp only [scanEdges, hl, ha, hdrop]
+      rw [h2]
+      simp only [collectEdgeEntries, hl, ha, Option.getD_some, EncodedTuples.empty, List.nil_append]
+      rw [encodeArrayPairs_filterMap ix _ (t.map (·.2.2)), List.flatMap_map]
 
 theorem prepareBatch_building (g : G) (e : EntityType) (k : IndexKey) (budget : Nat) (c : IndexColumn)
     (from_ : BuildCursor) (h : g.idx.entry e k.1 k.2 = some ⟨c, .building from_⟩) :
@@ -229,7 +314,8 @@ theorem sortDedup_idem (l : List Nat) : sortDedup (sortDedup l) = sortDedup l :=
     (the scan reached the end). -/
 theorem scan_all (g : G) (hf : g.Fits) (e : EntityType) (label attr : String) :
     scan g label attr (BuildCursor.new e) usizeMax (.numeric NumericIndex.new) =
-      (⟨sortDedup (encodePairs (collectEntries g e label attr))⟩, none) := by
+      (⟨sortDedup (encodePairs (collectEntries g e label attr)),
+        sortDedup (encodeArrayPairs (collectEntries g e label attr))⟩, none) := by
   cases e with
   | node =>
     obtain ⟨t1, t2⟩ := scanNodes_all g hf label attr NumericIndex.new
@@ -237,14 +323,21 @@ theorem scan_all (g : G) (hf : g.Fits) (e : EntityType) (label attr : String) :
     simp only [t2, Option.map_none]
     congr 1
     unfold EncodedTuples.sortDedup
-    rw [t1]; rfl
+    rw [t1, scanNodes_all_array g hf label attr NumericIndex.new]; rfl
   | relationship =>
     obtain ⟨t1, t2⟩ := scanEdges_all g hf label attr NumericIndex.new
     unfold scan BuildCursor.new
     simp only [t2, Option.map_none]
     congr 1
     unfold EncodedTuples.sortDedup
-    rw [t1]; rfl
+    rw [t1, scanEdges_all_array g hf label attr NumericIndex.new]; rfl
+
+theorem addTree_nil (n : List Nat) : addTree [] n = n := by
+  unfold addTree
+  by_cases h : n.isEmpty = true
+  · have : n = [] := List.isEmpty_iff.1 h
+    subst this; simp
+  · simp [h, tIsEmpty, tFromSorted]
 
 /-- **`build_in_one_batch` builds the column**: afterwards it exists, is `Ready`, and its index is
     `from_entries` of the label's live `(value, id)` pairs (`collect*_entries`), so every theorem about
@@ -261,7 +354,8 @@ theorem buildInOneBatch_entry (g : G) (hf : g.Fits) (e : EntityType) (label attr
       some ⟨.numeric NumericIndex.new, .building (BuildCursor.new e)⟩ := entry_createBuilding _ _ _ _
   have hscan : (IndexColumn.numeric NumericIndex.new).indexerRead { g with idx := g.idx.createBuilding e label attr }
       (e, (label, attr)) (BuildCursor.new e) usizeMax =
-      (⟨sortDedup (encodePairs (collectEntries g e label attr))⟩, none) := scan_all g hf e label attr
+      (⟨sortDedup (encodePairs (collectEntries g e label attr)),
+        sortDedup (encodeArrayPairs (collectEntries g e label attr))⟩, none) := scan_all g hf e label attr
   simp only
   rw [prepareBatch_building _ e (label, attr) usizeMax _ _ h1, hscan]
   show (g.idx.createBuilding e label attr |>.setEntry e (label, attr) _).entry e' l a = _
@@ -273,7 +367,7 @@ theorem buildInOneBatch_entry (g : G) (hf : g.Fits) (e : EntityType) (label attr
     simp only [hh, Option.map_some]
     congr 1
     simp only [IndexColumn.addEncoded, NumericIndex.addEncoded, EncodedTuples.sortDedup, sortDedup_idem,
-      NumericIndex.new, tIsEmpty, List.isEmpty_nil, ite_true, tFromSorted, NumericIndex.fromEntries]
+      NumericIndex.new, NumericIndex.addTrees, addTree_nil, NumericIndex.fromEntries, tFromSorted]
   · rw [ite_eq_right hk, ite_eq_right hk]
     unfold FalkorDbIndex.createBuilding
     rw [entry_insertColumn, ite_eq_right hk]
@@ -429,17 +523,17 @@ theorem populate_eq_buildColumns (g : G) (e : EntityType) (label : String) (fiel
 
 /-! ## The graph's entry points (`graph.rs`) -/
 
-/-- The slice of `IndexDocs` (`index_docs.rs:585-600`) the native index owns. -/
+/-- The slice of `IndexDocs` (`index_docs.rs`) the native index owns. -/
 structure IndexDocs where
   native : PendingIndexWrites
 
-/-- `Graph::apply_index_writes` (`graph.rs:3890-3904`): `apply` with the graph's `place` (a node by its
+/-- `Graph::apply_index_writes` (`graph.rs`): `apply` with the graph's `place` (a node by its
     id, an edge by its endpoints, `None` for an edge this unit deleted). -/
 def applyIndexWrites (g : G) (docs : IndexDocs) : G × IndexDocs :=
   let r := g.idx.apply docs.native g.place
   ({ g with idx := r.1 }, ⟨r.2⟩)
 
-/-- `Graph::commit_index_docs` (`graph.rs:3913-3924`): the native part, then the RediSearch documents
+/-- `Graph::commit_index_docs` (`graph.rs`): the native part, then the RediSearch documents
     (`commit_index` / `commit_edge_index`: the RediSearch C API, AXIOMATISED in index_layer). -/
 def commitIndexDocs (g : G) (docs : IndexDocs) : G × IndexDocs := applyIndexWrites g docs
 
@@ -451,28 +545,28 @@ theorem applyIndexWrites_spec (g : G) (docs : IndexDocs) :
 theorem commitIndexDocs_native (g : G) (docs : IndexDocs) :
     commitIndexDocs g docs = applyIndexWrites g docs := rfl
 
-/-- `Graph::query_index_numeric_nodes` (`graph.rs:4205-4213`): `query_numeric`'s three-way answer,
+/-- `Graph::query_index_numeric_nodes` (`graph.rs`): `query_numeric`'s three-way answer,
     raw docs mapped to `NodeId` (the map is the identity here). -/
-def queryIndexNumericNodes (g : G) (label : String) (q : IndexQuery) : Option (Except ScanFilter (List Nat)) :=
-  (g.idx.queryNumeric .node label q).map (fun a => a.map (fun rows => rows.map id))
+def queryIndexNumericNodes (g : G) (label : String) (q : IndexQuery) : Option (Except (ScanFilter String) (List Nat)) :=
+  (g.idx.queryColumn .node label q).map (fun a => a.map (fun rows => rows.map id))
 
-/-- `Graph::query_index_numeric_edges` (`graph.rs:4223-4246`): endpoints from the `edge_id → (src, dst)`
+/-- `Graph::query_index_numeric_edges` (`graph.rs`): endpoints from the `edge_id → (src, dst)`
     reverse index; an id it does not know (a deleted, not reused edge) is skipped. The map runs on
     `Ok` only, so a `ScanFilter` passes through untouched. -/
 def queryIndexNumericEdges (g : G) (endpoints : Nat → Option (Nat × Nat)) (typeName : String) (q : IndexQuery) :
-    Option (Except ScanFilter (List (Nat × Nat × Nat))) :=
-  (g.idx.queryNumeric .relationship typeName q).map (fun a =>
+    Option (Except (ScanFilter String) (List (Nat × Nat × Nat))) :=
+  (g.idx.queryColumn .relationship typeName q).map (fun a =>
     a.map (fun rows => rows.filterMap (fun eid => (endpoints eid).map (fun sd => (sd.1, sd.2, eid)))))
 
 theorem queryIndexNumericNodes_spec (g : G) (label : String) (q : IndexQuery) :
-    queryIndexNumericNodes g label q = g.idx.queryNumeric .node label q := by
+    queryIndexNumericNodes g label q = g.idx.queryColumn .node label q := by
   unfold queryIndexNumericNodes
-  cases h : g.idx.queryNumeric .node label q with
+  cases h : g.idx.queryColumn .node label q with
   | none => rfl
   | some a => cases a <;> simp [Except.map]
 
 theorem queryIndexNumericEdges_spec (g : G) (ep : Nat → Option (Nat × Nat)) (t : String) (q : IndexQuery)
-    (r : List Nat) (h : g.idx.queryNumeric .relationship t q = some (.ok r)) (s d eid : Nat) :
+    (r : List Nat) (h : g.idx.queryColumn .relationship t q = some (.ok r)) (s d eid : Nat) :
     (∃ out, queryIndexNumericEdges g ep t q = some (.ok out) ∧ (s, d, eid) ∈ out) ↔ eid ∈ r ∧ ep eid = some (s, d) := by
   unfold queryIndexNumericEdges
   rw [h]
@@ -487,18 +581,18 @@ theorem queryIndexNumericEdges_spec (g : G) (ep : Nat → Option (Nat × Nat)) (
 
 /-- A `ScanFilter` (column still building) passes through the edge wrapper unchanged. -/
 theorem queryIndexNumericEdges_scan (g : G) (ep : Nat → Option (Nat × Nat)) (t : String) (q : IndexQuery)
-    (f : ScanFilter) :
-    queryIndexNumericEdges g ep t q = some (.error f) ↔ g.idx.queryNumeric .relationship t q = some (.error f) := by
+    (f : ScanFilter String) :
+    queryIndexNumericEdges g ep t q = some (.error f) ↔ g.idx.queryColumn .relationship t q = some (.error f) := by
   unfold queryIndexNumericEdges
-  cases h : g.idx.queryNumeric .relationship t q with
+  cases h : g.idx.queryColumn .relationship t q with
   | none => simp
   | some a => cases a <;> simp [Except.map]
 
 theorem queryIndexNumericEdges_none (g : G) (ep : Nat → Option (Nat × Nat)) (t : String) (q : IndexQuery) :
-    queryIndexNumericEdges g ep t q = none ↔ g.idx.queryNumeric .relationship t q = none := by
-  unfold queryIndexNumericEdges; cases g.idx.queryNumeric .relationship t q <;> simp
+    queryIndexNumericEdges g ep t q = none ↔ g.idx.queryColumn .relationship t q = none := by
+  unfold queryIndexNumericEdges; cases g.idx.queryColumn .relationship t q <;> simp
 
-/-! ## The scan ops (`node_by_index_scan.rs:302`, `edge_by_index_scan.rs:318`)
+/-! ## The scan ops (`node_by_index_scan.rs`, `edge_by_index_scan.rs`)
 
 Under `index-falkordb` the index branch of `next` is: `can_utilize_index(q)` false → scan (the planner
 kept a filter); else the three-way answer: rows, or the scan the `ScanFilter` describes, or the error
@@ -507,8 +601,8 @@ kept a filter); else the three-way answer: rows, or the scan the `ScanFilter` de
 /-- The index branch of `NodeByIndexScanOp::next` / `EdgeByIndexScanOp::next`. `none` is the
     `Err(unsupported_by_native_index(..))` the op returns; `scanAll` is the op's plain scan (the label,
     or the type's cached edge list); `filtered f` is the scan standing in for a building column. -/
-def scanOp {α} (utilize : Bool) (answer : Option (Except ScanFilter (List α))) (scanAll : List α)
-    (filtered : ScanFilter → List α) : Option (List α) :=
+def scanOp {α} (utilize : Bool) (answer : Option (Except (ScanFilter String) (List α))) (scanAll : List α)
+    (filtered : ScanFilter String → List α) : Option (List α) :=
   if utilize then
     match answer with
     | some (.ok rows) => some rows
@@ -518,13 +612,13 @@ def scanOp {α} (utilize : Bool) (answer : Option (Except ScanFilter (List α)))
 
 /-- **No fallthrough**: an index-shaped predicate is served by rows or by the filtered scan, and fails
     exactly when the native index declines it. -/
-theorem scanOp_spec {α} (answer : Option (Except ScanFilter (List α))) (all : List α) (filt : ScanFilter → List α) :
+theorem scanOp_spec {α} (answer : Option (Except (ScanFilter String) (List α))) (all : List α) (filt : ScanFilter String → List α) :
     scanOp false answer all filt = some all ∧
     (∀ rows, scanOp true (some (.ok rows)) all filt = some rows) ∧
     (∀ f, scanOp true (some (.error f)) all filt = some (filt f)) ∧
     scanOp true none all filt = none := ⟨rfl, fun _ => rfl, fun _ => rfl, rfl⟩
 
-theorem scanOp_none_iff {α} (answer : Option (Except ScanFilter (List α))) (all : List α) (filt : ScanFilter → List α) :
+theorem scanOp_none_iff {α} (answer : Option (Except (ScanFilter String) (List α))) (all : List α) (filt : ScanFilter String → List α) :
     scanOp true answer all filt = none ↔ answer = none := by
   cases answer with
   | none => simp [scanOp]
@@ -539,11 +633,22 @@ theorem nodeScan_native_agrees (g : G) (label key : String) (min max : Option Va
     (hsome : min.isSome ∨ max.isSome) (id : Nat) (hid : id < W) :
     ∃ hit, queryIndexNumericNodes g label (.range key min max a b) = some (.ok hit) ∧
       (id ∈ hit ↔ ∃ v, (v, id) ∈ collectNodeEntries g label key ∧ rangeFilter v min max a b) := by
-  have hk := queryKey_range key min max a b
-    (fun v hv => Or.inr (by obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hmin v hv); simp [hkb]))
-    (fun v hv => Or.inr (by obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hmax v hv); simp [hkb]))
+  have hnum : ∀ v, GoodBound v → isNumericKind v = true := by
+    intro v hv; cases v <;> simp [GoodBound, isNumericKind] at hv ⊢
+  have hnb : (min.toList ++ max.toList).any (fun v => !isNumericKind v && v != Value.null) = false := by
+    simp only [List.any_eq_false, List.mem_append, Option.mem_toList, Option.mem_def]
+    rintro v (hv | hv)
+    · simp [hnum v (hmin v hv)]
+    · simp [hnum v (hmax v hv)]
+  have hnn : (min.toList ++ max.toList).any (fun v => v == Value.null) = false := by
+    simp only [List.any_eq_false, List.mem_append, Option.mem_toList, Option.mem_def]
+    rintro v (hv | hv)
+    · have := hnum v (hmin v hv); cases v <;> simp_all [isNumericKind]
+    · have := hnum v (hmax v hv); cases v <;> simp_all [isNumericKind]
+  have hsel : Selection.of (.range key min max a b) = some (.scalars (rangeKeys min max a b)) := by
+    simp [Selection.of, Selection.ofLeaf, Selection.range, hnb, hnn]
   refine ⟨_, ?_, range_agrees _ hwf min max a b hmin hmax hsome id hid⟩
-  rw [queryIndexNumericNodes_spec, queryNumeric_of_ready _ _ _ _ key hk _ hcol]
+  rw [queryIndexNumericNodes_spec, queryColumn_of_ready _ _ _ _ key (by simp [attrsOf]) _ hcol, hsel]
   rfl
 
 /-- **Once a column is built, a node range scan ≡ label scan + filter on the native route**: the column
@@ -575,19 +680,24 @@ theorem nodeScan_native_inList_agrees (g : G) (label key : String) (items : List
     (hgood : ∀ b ∈ items, GoodBound b) (id : Nat) (hid : id < W) :
     ∃ hit, queryIndexNumericNodes g label (.inList key (some items)) = some (.ok hit) ∧
       (id ∈ hit ↔ ∃ v, (v, id) ∈ collectNodeEntries g label key ∧ ∃ b ∈ items, cmpPred .eq v b = some true) := by
-  have hs : ((NumericIndex.fromEntries (collectNodeEntries g label key)).inList items).isSome = true := by
-    rw [inList_isSome_iff]
-    refine ⟨hne, fun v hv => ?_⟩
-    obtain ⟨kb, hkb, _⟩ := goodBound_enc v (hgood v hv); simp [hkb]
-  obtain ⟨r, hr⟩ := Option.isSome_iff_exists.1 hs
-  refine ⟨r, ?_, inList_agrees _ hwf items hgood r hr id hid⟩
-  rw [queryIndexNumericNodes_spec, queryNumeric_of_ready _ _ _ _ key rfl _ hcol]
-  show Option.map _ (NumericIndex.inList _ items) = _
-  rw [hr]; rfl
+  have hs : (Selection.equalToAny items).isSome = true := by
+    rw [equalToAny_isSome_iff]
+    intro v hv
+    left
+    have := hgood v hv
+    cases v <;> simp [GoodBound, isNumericKind] at this ⊢
+  obtain ⟨sel, hr⟩ := Option.isSome_iff_exists.1 hs
+  have hne' : items.isEmpty = false := by simpa using hne
+  have hof : Selection.of (.inList key (some items)) = some sel := by
+    simp [Selection.of, Selection.ofLeaf, hne', hr]
+  refine ⟨(NumericIndex.fromEntries (collectNodeEntries g label key)).lookupSel sel, ?_,
+    equalToAny_agrees _ hwf items (fun b hb => Or.inl (hgood b hb)) sel hr id hid⟩
+  rw [queryIndexNumericNodes_spec, queryColumn_of_ready _ _ _ _ key (by simp [attrsOf]) _ hcol, hof]
+  rfl
 
 /-! ## Folded-roots MVCC -/
 
-/-- `Graph::new_version` (`graph.rs:1084`): the index is a field of the version and is cloned
+/-- `Graph::new_version` (`graph.rs`): the index is a field of the version and is cloned
     with it (`O(1)` per column: root `Arc` bumps; pages are immutable once built, cow_btree
     `Snapshot.lean`), so as a value the new version's index *is* the old one. -/
 def newVersion (g : G) : G := { g with idx := g.idx }
@@ -613,7 +723,7 @@ def runUnit (committed : G) (u : Unit) : G :=
     (`FalkorCowBTree/Snapshot.lean`), together with `newVersion` cloning the index in `O(1)`. -/
 theorem snapshot_isolated (v : G) (units : List Unit) (e : EntityType) (label : String) (q : IndexQuery) :
     let _later := units.foldl runUnit v
-    v.idx.queryNumeric e label q = v.idx.queryNumeric e label q := rfl
+    v.idx.queryColumn e label q = v.idx.queryColumn e label q := rfl
 
 /-- **The committed index is the applied staged changes**: a successful unit publishes exactly the
     private version's index with its staged changes applied once; a refused one publishes nothing. -/
@@ -628,17 +738,24 @@ theorem newVersion_idx (g : G) : (newVersion g).idx = g.idx := rfl
 
 /-! ## Glue: what each delegating function returns -/
 
-theorem indexColumn_delegates (ix : NumericIndex) (v : Value) (id : Nat) (es : List (Value × Nat)) (sc : List Nat)
+theorem indexColumn_delegates (ix : NumericIndex) (v : Value) (id : Nat) (es : List (Value × Nat))
     (ps : EncodedTuples) :
     (IndexColumn.numeric ix).add v id = .numeric (ix.add v id) ∧
     (IndexColumn.numeric ix).remove v id = .numeric (ix.remove v id) ∧
-    (IndexColumn.numeric ix).addBatch es sc = (.numeric (ix.addBatch es sc).1, (ix.addBatch es sc).2) ∧
-    (IndexColumn.numeric ix).removeBatch es sc = (.numeric (ix.removeBatch es sc).1, (ix.removeBatch es sc).2) ∧
+    (IndexColumn.numeric ix).addBatch es = (.numeric (ix.addBatch es).1, (ix.addBatch es).2) ∧
+    (IndexColumn.numeric ix).removeBatch es = (.numeric (ix.removeBatch es).1, (ix.removeBatch es).2) ∧
     (IndexColumn.numeric ix).addEncoded ps = (.numeric (ix.addEncoded ps).1, (ix.addEncoded ps).2) ∧
     (IndexColumn.numeric ix).removeEncoded ps = (.numeric (ix.removeEncoded ps).1, (ix.removeEncoded ps).2) ∧
     (IndexColumn.numeric ix).isEmpty = ix.isEmpty ∧
-    (IndexColumn.numeric ix).encodeValue v = encodeNumeric v :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    (IndexColumn.numeric ix).storedKeys v = forEachStoredKey v ∧
+    (IndexColumn.numeric ix).pushEncoded v id ps = pushStored v id ps :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- `IndexColumn::encode_value`: the scalar tree and key of a numeric value; nothing for a list, a
+    temporal, a string. -/
+theorem encodeValue_numeric (ix : NumericIndex) (v : Value) :
+    (IndexColumn.numeric ix).encodeValue v =
+      if isNumericKind v then (encodeNumeric v).map (fun k => (KeyKind.scalar, k)) else none := rfl
 
 theorem nodeLabelIdsInto_spec (g : G) (id : Nat) (out : List Nat) : nodeLabelIdsInto g id out = g.nodeLabels id := rfl
 theorem edgeType_spec (g : G) (id : Nat) : edgeType g id = g.typeName (g.relType id) := rfl

@@ -6,12 +6,14 @@ import FalkorBinder.Scopes
 REMOVE, so a label removed between clauses was invisible to the model. Rust source of
 truth: origin/main 5c7af54f2 (the bug found on b84473a7f), `graph/src/planner/binder.rs`.
 
-* `bind_ir` `QueryIR::Remove` (:477-482) binds the items and never touches `node_labels`.
+* `bind_ir` `QueryIR::Remove` binds the items and never touches `node_labels`.
 * `bind_projection` copies the parent variable's label set to the projected child
-  (`WITH a`, :1135-1146 / :1162-1173), so the child starts from `accumulate before`.
-* A later `MATCH (a)…` extends the child's set (`bind_graph` :1360-1366), and
-  `update_all_node_labels` (:122-153, called from `bind` :104) stamps the whole set onto
-  that MATCH's node, turning `(a)` into `(a:A)`.
+  (`WITH a`), so the child starts from `accumulate before`.
+* A later `MATCH (a)…` extends the child's set (`bind_graph`).
+* `update_all_node_labels` is a separate post-pass in `bind`: it walks the finalized IR and
+  stamps the accumulated set (`update_graph_labels`) onto that MATCH's node, turning `(a)`
+  into `(a:A)`. It does not itself do the inheritance through `WITH`; that is
+  `bind_projection`'s, and the MATCH extension is `bind_graph`'s.
 
 `rsStamp before own` is the label set stamped on the node of the first MATCH after the
 `WITH`, `before` the clauses ahead of the `WITH` (as seen by this variable) and `own` the
@@ -36,8 +38,8 @@ def held (acc : List Name) : List LClause → List Name
   | .optMatch _ :: r | .predicate _ :: r | .comprehension _ :: r => held acc r
 
 /-- The label set `update_all_node_labels` stamps on the first MATCH after `WITH`: the
-child inherits `accumulate [] before` (binder.rs:1162-1173) and the MATCH extends it
-(:1360-1366). -/
+child inherits `accumulate [] before` (`bind_projection`, binder.rs) and the MATCH extends it
+(`bind_graph`). -/
 def rsStamp (before : List LClause) (own : List Name) : List Name :=
   accumulate (accumulate [] before) [.match_ own]
 

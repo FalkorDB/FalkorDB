@@ -15,7 +15,7 @@ import RedisLayer.QueryArgsAgree
   `GRAPH.<CMD> key query [--compact] [TIMEOUT ms] [version v] [SCHEMA_HASH h] [--track-memory]`
   (any order, `SCHEMA_HASH` with `--compact`) is accepted with the documented meaning
   (last timeout/version wins).
-* The #3009 regressions: each pre-`557f18868` divergence from C, now agreement.
+* The regressions of the earlier per-command parsers: each divergence from C, now agreement.
 -/
 
 namespace RedisLayer
@@ -392,11 +392,9 @@ theorem parse_documented (tmax : Int) (cmd key q : Bytes) (fs : List Flag)
   · rw [spec_compact fs {} (.inl (hsc hm))] at hc; cases hc
   · cases hm
 
-/-! ## #3009: the pre-`557f18868` divergences, now agreement
+/-! ## The earlier per-command parsers' divergences (`repro_live.py` A1-A6), now agreement
 
-Each was a confirmed live divergence (Rust release vs C `falkordb.so`, `repro_live.py`
-A1-A6) against the per-command loops that `557f18868` deleted. Each is now a theorem
-that Rust's shared parser and C give corresponding answers. -/
+Each theorem states that Rust's shared parser and C give corresponding answers. -/
 
 def pre : List Bytes := [b "GRAPH.QUERY", b "g", b "RETURN 1"]
 def c0 : TCfg := { timeoutMax := 0, timeoutDefault := 0, legacy := 0 }
