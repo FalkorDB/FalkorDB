@@ -23,7 +23,7 @@ The model gives the plan a reference meaning:
 
 A rewrite is correct if it keeps the multiset of result rows (and their order where ORDER BY applies), and does not make a query that succeeded start to fail.
 
-That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the plan a graph state that `CREATE`/`MERGE` of a bare node change (the node count only; label, relationship and attribute writes are not modelled), and states the stronger `EffectSound`: a rewrite keeps the rows **and** the graph state the query leaves behind (the node count). `run_readonly` proves a write-free plan leaves the graph unchanged, so between write-free plans `EffectSound` reduces to the rows criterion and the earlier theorems carry over; #748 and #997 are plans where they differ (`bug748_rows_only_blind`).
+That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the plan a graph state that `CREATE`/`MERGE` of a bare node change (the node count only; label, relationship and attribute writes are not modelled), and states the stronger `EffectSound`: a rewrite keeps the rows **and** the graph state the query leaves behind (the node count). `run_readonly` proves a write-free plan leaves the graph unchanged, so between write-free plans `EffectSound` reduces to the rows criterion and the earlier theorems carry over.
 
 ## The questions this project answers
 
@@ -34,20 +34,20 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 - **Below Sort, yes:** same rows, still sorted (`push_sort_perm`, `push_sort_sorted`).
 - **Below LIMIT or SKIP, no.** It changes which rows the LIMIT keeps (`limit_not_transparent`, `skip_not_transparent`). The exclusion list in `push_filters_down.rs` does not exclude them (`limit_skip_not_excluded`). Rust and C both return the wrong count here, so it is a shared spec bug, not a Rust regression. The only safe case is a conjunct whose verdict is the same on every row (`push_limit_const`).
 - **Routing by variable id and scope is sound** (`routesScoped_sound`): it only pushes where the variable is bound.
-- **Main routes by bare id, not scope** (#3352): `pre3092_bug3352_routes_unbound` and `pre3092_bug3352_slot_collision_drops_match`; the #3352 collision is fixed by #3092 (`bug3352_routes_bound`, `bug3352_fixed_main`).
-- **A variable-free conjunct enters every child, including the rows that feed a write** (#748, #997): `bug748_merge_skipped`, `bug997_create_skipped`.
+- **Main inherits `branch_visible_variables`, not bare ids** (`fixed3352_plan`, `fixed3352_rows_kept`).
+- **A variable-free conjunct is not pushed into the rows that feed a write** (`main_748_fixed`, `main_997_fixed`).
 - **Re-ordering a traversal chain can land an inline filter below the hop that binds its variable** (#2556, in `select_scan_node`): `bug2556_filter_below_binding`.
 
 **2. Is merging two stacked filters exact?**
 
 - **Only if the inner conjunct is evaluated first, and it gives a boolean.** `merge_child_first_row` proves child-first order is exact when the inner conjunct evaluates to `true` or `false` (not NULL, not an error) on the row.
-- **On main, the outer one is evaluated first.** `MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1/(n.v-1) = 0` fails with "Division by zero"; C returns 15 (`merge_order_rust_errors`).
+- **On main, the inner conjunct is evaluated first** (`merge_rust_same`), so `MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1/(n.v-1) = 0` returns 15, as C does.
 
 **3. Is removing an always-true filter exact?**
 
-- **Yes** (`constTrue_filter`, `andLoop_drop_constTrue`, `filter_true`, `filter_and_single`). The plan-time constant evaluator is the runtime `eval_node` with no row, so every variable is an error. `constEval_sound` proves that whenever it returns a value, every row gives that value. This holds because, since #2904, no modelled operator swallows a child's error.
-- Before #2904 that was **false for `^`** (#2902): the `Pow` arm dropped errors with `flat_map`, so `WHERE x ^ true` folded to `true` and its filter was removed. Now `x ^ true` is not constant (`pow_var_not_constTrue`), and at runtime it is C's type error (`pow_true_type_error`).
-- Since #3335 the rebuilt filter goes through `ExprIR::and_of`, which keeps the verdict, errors included (`flat_passes`, `flat_eval`, `scL_splice`).
+- **Yes** (`constTrue_filter`, `andLoop_drop_constTrue`, `filter_true`, `filter_and_single`). The plan-time constant evaluator is the runtime `eval_node` with no row, so every variable is an error. `constEval_sound` proves that whenever it returns a value, every row gives that value. This holds because no modelled operator swallows a child's error.
+- `^` is not constant when an operand is a variable: `x ^ true` is not constant (`pow_var_not_constTrue`), and at runtime it is C's type error (`pow_true_type_error`).
+- The rebuilt filter goes through `ExprIR::and_of`, which keeps the verdict, errors included (`flat_passes`, `flat_eval`, `scL_splice`).
 
 **4. Is the id seek exact?**
 
@@ -61,7 +61,7 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 
 **6. When is a variable "read" by the rest of the plan?**
 
-Several passes collapse an edge, a bound edge or a variable-length path when nobody reads it, using the oracle in `optimizer/references.rs` (added by #2390).
+Several passes collapse an edge, a bound edge or a variable-length path when nobody reads it, using the oracle in `optimizer/references.rs`.
 
 - **Per operator, yes.** `refsNew_complete` proves the oracle reports every read of every IR variant, for plans the planner builds; `refsNew_sound` proves it reports only variables the operator reads or binds (a binder's own variable only keeps a flag on).
 - **For fusion, yes.** Fusion checks the whole plan (`anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound`).
@@ -82,9 +82,10 @@ Several passes collapse an edge, a bound edge or a variable-length path when nob
 |---|---|---|
 | `push_cp_left`, `push_cp_right`, `push_extend`, `push_sort_perm` | Push-down is exact below CP, per-row operators and Sort, for conjuncts that do not error (`NoErr`) | `Basic.lean` |
 | `merge_child_first_row` | Merging stacked filters is exact when the inner conjunct runs first | `Basic.lean` |
+| `merge_rust_same` | The merge (`mergeRust`, child first) gives the stacked outcome when the inner verdict is boolean | `Basic.lean` |
 | `constEval_sound`, `constTrue_filter`, `andLoop_drop_constTrue` | The plan-time constant verdict is the runtime verdict on every row, so removing a constant-true filter or conjunct is exact | `ConstEval.lean` |
 | `flat_passes` | Rebuilding a filter with `and_of` gives the same verdict, errors included | `AndOf.lean` |
-| `refsNew_complete`, `refsNew_sound` | The #2390 "is this variable read?" oracle is exact per operator | `References.lean` |
+| `refsNew_complete`, `refsNew_sound` | The "is this variable read?" oracle is exact per operator | `References.lean` |
 | `fuse_unread_sound` | Fusion's whole-plan check sees every reader | `References2.lean` |
 | `idFilter_correct`, `step_no_wrap` | The id seek is exact for integer bounds in `[0, 2⁶³)` | `Passes.lean` |
 | `vhj_correct` | The hash join equals Filter(=) over CP when key equality is `=` | `Passes.lean` |
@@ -110,22 +111,13 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 | `limit_skip_not_excluded`, `limit_not_transparent`, `skip_not_transparent` | A filter is pushed below LIMIT/SKIP: `… ORDER BY n.v LIMIT 2 MATCH (m:N) WHERE n.v > 1 RETURN count(*)` → 10 (openCypher 5) | **Open**, shared with C |
-| 2 (W2-rewrites-1) | `merge_order_rust_errors` | Filter merge evaluates the outer conjunct first: "Division by zero" where C returns 15 | **Open** (PR #3006 not merged) |
 | 3 (W2-rewrites-2) | `id_gt_neg_empty`, `id_le_neg_all` | `id(n) > -1` → 0 rows (C: 5); `id(n) <= -1` returns every node on both (#2266) | **Open** |
 | 4 (W2-rewrites-2) | `id_eq_null_errors` | `id(n) = null`, `= 1.0`, `> 1.5` → "Node ID must be an integer" (C: 0 rows) | **Open** |
 | 5 (W2-rewrites-3) | `hash_join_drops_row` | The hash join drops Int/Float pairs near 2⁵³: 2 rows where C gives 4 | **Open** |
-| 6 (W2-rewrites-4) | `id_only_routing_unsound` | A filter inside an uncorrelated `CALL {}` was pushed onto the Argument, swapping values (#2557) | No longer reproduces on main (most likely fixed by #2845); the Lean still describes id-only routing |
-| 7 | `refsNew_sees_*` (the per-operator reads the pre-#2390 oracle missed), `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | Per-operator part fixed by #2390; sibling part **open** (PR #2918 not merged) |
-| 8 (W4-plan-4) | `root_scan_has_no_parent` | `CALL db.labels() YIELD label MATCH (n)` makes a scan the plan root; `utilize_node_by_id` calls `parent().unwrap()` on it | **Repro closed by #3297** (validation now rejects the query, main b84473a7f); the `unwrap()` remains as a hazard |
-| W6-opt-1 | `filter_pushed_through_boundary` | Push-down gives an OPTIONAL MATCH inside `CALL {}` the outer ids: "Variable n not found" where C returns rows. `fixed_keeps_filter` checks the trial fix | **Open** |
-| #748 | `bug748_merge_skipped` (property `EffectSound`; `bug748_rows_only_blind`) | `WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0`: the constant `false` is pushed into both Apply branches, so the MERGE never runs. Rust 0 nodes, C 1; with `WITH *` both 1 (`bug748_with_star_control`) | **Open** |
-| #997 | `bug997_create_skipped` (property `EffectSound`; `bug997_rows_only_blind`) | `CALL { CREATE () } UNWIND 0 AS x MATCH () WHERE false RETURN 0`: `false` lands on the Apply's `Argument`, the CREATE never runs. Rust 0 nodes, C 1; the CASE-wrapped `false` reads `x` and stays above the Apply, 1 on both (`bug997_case_control`) | **Open** |
-| #3352 | `pre3092_bug3352_slot_collision_drops_match`, `pre3092_bug3352_routes_unbound` (properties `RowSound`, `RoutesBound`) | `… WITH p, count(r0) AS n OPTIONAL MATCH (r:Rule)-[:SCOPED_TO]->(p) WHERE r.status = 'revoked' …`: Case 2 inherits the bare ids of the whole pre-WITH subtree (through `Aggregate`), id 2 is taken for `r`, the filter lands on the `Argument`. Rust `e = null`, C 123 | **Fixed by #3092** (`bug3352_fixed_main`) |
+| 7 | `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | **Open** (PR #2918 not merged) |
 | #2556 | `bug2556_filter_below_binding`, `bug2556_t_seeded`, `bug2556_plan` (property `KeepsFiltersBound`) | `… WITH collect(x) AS fs UNWIND fs AS f MATCH (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}), (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)`: `select_scan_node` picks `t` as the best endpoint, seeds it into `initial_bound` although the outer `Unwind` child is kept and no scan for `t` is built, and places `t.id = 100` after the first hop, before `t` is bound. Rust 0, C 3 (the issue's query: a type error). Not `push_filters_down` (`bug2556_push_not_cause`); `bug2556_fixed` gives the C plan | **Open** |
 
 Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`).
-
-**Fixed: #2902 (`^` made `eliminate_true_filters` drop a live filter).** `is_constant_true` and `eliminate_true_filters` used to be CONDITIONAL on `hconst`, the assumption that the plan-time constant evaluator agrees with runtime evaluation. That was false for `^` until #2904 (`fd2c76a6c`). `ConstEval.constEval_sound` now proves it for the modelled expression language, which includes `^`, so both rows are PROVEN. The counterexample was removed in bbee75955; the last revision that has them is 17ccc5412.
 
 `refsNew_complete` also assumes `PlanInv`: inline property maps have already been turned into Filters. That is proven in [`../planner_build`](../planner_build) (`planMatch_stripped`), but the two projects are not linked, so here it is a stated assumption.
 
@@ -134,16 +126,16 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | File | What's in it |
 |---|---|
 | `FalkorOptimizer.lean` | The report header and imports |
-| `Basic.lean` | Rows, `Val`, `eval` (three-valued, errors, `^` since #2904), Filter, push-down below CP/extend/Sort/Limit, filter merge, `eliminate_true_filters` |
-| `ConstEval.lean` | The plan-time constant evaluator and its soundness (`constEval_sound`, #2904) |
-| `AndOf.lean` | `ExprIR::and_of` (#3335): splicing an AND into an AND keeps the runtime value |
+| `Basic.lean` | Rows, `Val`, `eval` (three-valued, errors, `^`), Filter, push-down below CP/extend/Sort/Limit, filter merge, `eliminate_true_filters` |
+| `ConstEval.lean` | The plan-time constant evaluator and its soundness (`constEval_sound`) |
+| `AndOf.lean` | `ExprIR::and_of`: splicing an AND into an AND keeps the runtime value |
 | `Helpers.lean` | Syntactic helpers: parameters, variable references, count extraction, fusion preconditions, Project/Aggregate outputs |
 | `Passes.lean` | Fusion, optional fusion, the id seek, `reduce_count`, `reorder_labels`, hash join, push-down routing and the exclusion list |
-| `References.lean` | The "is this variable read?" oracle (`refsNew`), the pre-#2390 oracle and the PR #2918 walk |
+| `References.lean` | The "is this variable read?" oracle (`refsNew`) and the PR #2918 walk |
 | `References2.lean` | The tree walks: ancestors only for the `reduce_*` passes, whole plan for fusion |
 | `Sequence.lean` | `optimize` sequencing, the tree rebuilds (`rebuild_with_hash_joins`), edge-filter absorption |
-| `CallBoundary.lean` | W6-opt-1: push-down across the `CALL {}` entry projection (namespace `Pr2845`) |
-| `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`, `RoutesBound`; #748, #997, #3352. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
+| `CallBoundary.lean` | Push-down across the `CALL {}` entry projection (namespace `Pr2845`): the Case-2 walk stops at a two-child `Optional` (#3281) |
+| `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.
@@ -157,15 +149,30 @@ The project has no Lake dependencies.
 | PROVEN | 38 |
 | NOT COVERED | 42 |
 
-- **PROVEN:** every production function in the optimizer files this project owns.
+- **PROVEN:** every production function in the optimizer files this project owns. The five planner helpers in `optimizer/mod.rs` added by the var-length anchor change (#2558: `collect_expr_scoped_variables`, `collect_single_variable_conjuncts`, `walk`, `endpoint_scan_score`, `walk_scans_to_endpoint`) are proven in `planner_build` (`Anchor.lean`), next to the `plan_match` model that uses them.
 - **NOT COVERED:** all test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them.
+
+## Open PRs touching these files
+
+- #2918: `variable_read_outside` for the three `reduce_*` passes (its per-operator oracle is superseded by `references.rs`): modelled as `readOutside` (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
+- #3092: `collect_subtree_variables` stops at Project/Aggregate (their outputs only) instead of `get_variables` of the whole subtree, the same direction as the Apply-left routing of `branch_visible_variables`; `mem_subtreeIds` describes origin/main.
+- #3100: exports `ir_references_variable` for the planner's CP-correlation check (planner bug 2); no change to the oracle itself.
+- #3054: `reduce_expand_into` removes a collapsed (no longer emitted) edge from its siblings' `sibling_edges` uniqueness lists (`forget_sibling_edge`); the emit-flag decision (`refsMain`) is unchanged.
+
+## Suspected, unconfirmed
+
+- `utilize_node_by_id.rs` `optimized_plan.node(idx).parent().unwrap()` panics on a root scan (`root_scan_has_no_parent`); no known query reaches it, since validation rejects `CALL db.labels() YIELD label MATCH (n)` (planner_build `call_then_match_rejected`). Hazard only.
+- Filters on zero-variable conjuncts (`rand() < 0.5`) are pushed into every CP/Apply branch.
+- Pushing into one CP branch evaluates the conjunct even when the other branch is empty, so a query can start to error (`push_cp_left` needs `NoErr`); observed on C (`MATCH (n:P),(m:Missing) WHERE 1/(n.v-n.v)=0`: C errors, Rust 0).
+- `absorb_edge_filters_into_vlt` treats `WHERE r.w = 1` on a var-len list as per-hop (C semantics); unabsorbed Rust errors on `r.w` over a Path, so absorption turns an error into rows; `size(r) = 2` and `all(x IN r …)` are also absorbed per-hop and error on both engines.
+- `MATCH ()-[r]-() RETURN count(r)` counts each edge once on both engines (openCypher: twice).
 
 ## What the model does not cover
 
 - Row values are a four-constructor `Val`. Floats, lists, maps and nodes are abstract. Hash-join numbers use an explicit `toF`, exact on `[0, 2⁵⁴]`.
 - The Filter operator is vectorized in Rust; the model evaluates row by row. The AND test queries agree with it.
 - Laziness is not modelled: a LIMIT above that stops upstream errors early.
-- Unbound variables read as NULL in the model. In Rust they are resolved by id, which is how bug 6 read the outer `o1`.
+- Unbound variables read as NULL in the model. In Rust they are resolved by id, which is how id-only routing reads the outer `o1`.
 - Tree rewrites (index bookkeeping, `take_out`, `prune`) are modelled as the algebraic identity they perform, not as tree mutations. `rebuild_with_hash_joins` re-processing is bounded by fuel; the Rust relies on each rewrite consuming one conjunct.
 - `absorb_correct` assumes the per-edge reading of an edge-only conjunct. That is C's semantics and Rust's after absorption; openCypher would reject `r.w` on a list.
 - Pushing into one CP branch evaluates the conjunct even when the other branch is empty, so an erroring conjunct can make a query fail. This is outside the push-down theorems; C shows the same behaviour.

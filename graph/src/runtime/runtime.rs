@@ -64,11 +64,11 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
-use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
     cell::{Cell, OnceCell, Ref, RefCell, RefMut},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
@@ -258,136 +258,141 @@ pub trait GetVariables {
 }
 
 impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
+    /// The variables the rows leaving this subtree can carry.
+    ///
+    /// `Project` and `Aggregate` start a fresh environment, so the walk stops
+    /// at them: only what they name survives, which is the output variable of
+    /// each projection and of each `(source, output)` copy. Variable ids
+    /// restart in every scope, so a variable hidden below a `WITH` would
+    /// otherwise pass for the later variable that reuses its id.
     fn get_variables(&self) -> Vec<Variable> {
         let mut vars = vec![];
-        for node in self.walk::<Bfs>() {
-            if push_node_variables(node, &mut vars) {
-                break;
+        let mut queue = VecDeque::from([self.clone()]);
+        while let Some(node) = queue.pop_front() {
+            match node.data() {
+                IR::Optional(variables) => vars.extend(variables.iter().cloned()),
+                IR::ProcedureCall {
+                    yields: named_outputs,
+                    ..
+                } => {
+                    vars.extend(named_outputs.clone());
+                }
+                IR::Unwind { var: variable, .. } => vars.push(variable.clone()),
+                IR::Create(query_graph)
+                | IR::Merge {
+                    pattern: query_graph,
+                    ..
+                } => {
+                    for node in query_graph.nodes() {
+                        vars.push(node.alias.clone());
+                    }
+                    for relationship in query_graph.relationships() {
+                        vars.push(relationship.alias.clone());
+                    }
+                    for path in query_graph.paths() {
+                        vars.push(path.var.clone());
+                    }
+                }
+                IR::ForEach { var, .. } | IR::LoadCsv { var, .. } => {
+                    vars.push(var.clone());
+                }
+                IR::Delete { .. }
+                | IR::Argument(_)
+                | IR::Set(_)
+                | IR::Remove(_)
+                | IR::Filter(_)
+                | IR::CartesianProduct
+                | IR::ValueHashJoin { .. }
+                | IR::Union
+                | IR::NestedPlans
+                | IR::Apply
+                | IR::Sort(_)
+                | IR::Skip(_)
+                | IR::Limit(_)
+                | IR::Distinct
+                | IR::Commit
+                | IR::IncludePending { .. }
+                | IR::CreateIndex { .. }
+                | IR::DropIndex { .. } => {}
+                // Child 0 is the input; the other children are existence
+                // checks whose variables never reach the rows leaving the
+                // operator, and their ids may be reused later.
+                IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => {
+                    queue.extend(node.children().next());
+                    continue;
+                }
+                IR::NodeByLabelScan { node, .. }
+                | IR::AllNodeScan(node)
+                | IR::NodeByIndexScan { node, .. }
+                | IR::NodeByLabelAndIdScan { node, .. }
+                | IR::NodeByIdSeek { node, .. } => {
+                    vars.push(node.alias.clone());
+                }
+                IR::NodeByFulltextScan { node, score, .. }
+                | IR::NodeByVectorScan { node, score, .. } => {
+                    vars.push(node.clone());
+                    if let Some(score) = score {
+                        vars.push(score.clone());
+                    }
+                }
+                IR::EdgeByFulltextScan { edge, score, .. }
+                | IR::EdgeByVectorScan { edge, score, .. } => {
+                    vars.push(edge.clone());
+                    if let Some(score) = score {
+                        vars.push(score.clone());
+                    }
+                }
+                IR::CondTraverse {
+                    relationship: query_relationship,
+                    ..
+                }
+                | IR::EdgeByIndexScan {
+                    relationship: query_relationship,
+                    ..
+                }
+                | IR::AllShortestPaths(query_relationship)
+                | IR::ExpandInto {
+                    relationship: query_relationship,
+                    ..
+                } => {
+                    vars.push(query_relationship.alias.clone());
+                    vars.push(query_relationship.from.alias.clone());
+                    vars.push(query_relationship.to.alias.clone());
+                }
+                IR::CondVarLenTraverse {
+                    relationship: query_relationship,
+                    path_var,
+                    ..
+                } => {
+                    vars.push(query_relationship.alias.clone());
+                    vars.push(query_relationship.from.alias.clone());
+                    vars.push(query_relationship.to.alias.clone());
+                    if let Some(path_var) = path_var {
+                        vars.push(path_var.clone());
+                    }
+                }
+                IR::PathBuilder(query_paths) => {
+                    for path in query_paths {
+                        vars.push(path.var.clone());
+                    }
+                }
+                IR::Aggregate {
+                    names, projections, ..
+                } => {
+                    vars.extend(names.iter().cloned());
+                    vars.extend(projections.iter().map(|(_, v)| v.clone()));
+                    continue;
+                }
+                IR::Project { exprs, copies } => {
+                    vars.extend(exprs.iter().map(|(v, _)| v.clone()));
+                    vars.extend(copies.iter().map(|(_, v)| v.clone()));
+                    continue;
+                }
             }
+            queue.extend(node.children());
         }
         vars
     }
-}
-
-/// Appends the variables `node` itself binds (not those of its children) to
-/// `vars`. Returns `true` for a `Project`, where [`GetVariables`] stops its
-/// walk.
-pub(crate) fn push_node_variables(
-    node: &IR,
-    vars: &mut Vec<Variable>,
-) -> bool {
-    match node {
-        IR::Optional(variables) => vars.extend(variables.iter().cloned()),
-        IR::ProcedureCall {
-            yields: named_outputs,
-            ..
-        } => {
-            vars.extend(named_outputs.clone());
-        }
-        IR::Unwind { var: variable, .. } => vars.push(variable.clone()),
-        IR::Create(query_graph)
-        | IR::Merge {
-            pattern: query_graph,
-            ..
-        } => {
-            for node in query_graph.nodes() {
-                vars.push(node.alias.clone());
-            }
-            for relationship in query_graph.relationships() {
-                vars.push(relationship.alias.clone());
-            }
-            for path in query_graph.paths() {
-                vars.push(path.var.clone());
-            }
-        }
-        IR::ForEach { var, .. } | IR::LoadCsv { var, .. } => {
-            vars.push(var.clone());
-        }
-        IR::Delete { .. }
-        | IR::Argument(_)
-        | IR::Set(_)
-        | IR::Remove(_)
-        | IR::Filter(_)
-        | IR::CartesianProduct
-        | IR::ValueHashJoin { .. }
-        | IR::Union
-        | IR::NestedPlans
-        | IR::Apply
-        | IR::SemiApply
-        | IR::AntiSemiApply
-        | IR::OrApplyMultiplexer(_)
-        | IR::Sort(_)
-        | IR::Skip(_)
-        | IR::Limit(_)
-        | IR::Distinct
-        | IR::Commit
-        | IR::IncludePending { .. }
-        | IR::CreateIndex { .. }
-        | IR::DropIndex { .. } => {}
-        IR::NodeByLabelScan { node, .. }
-        | IR::AllNodeScan(node)
-        | IR::NodeByIndexScan { node, .. }
-        | IR::NodeByLabelAndIdScan { node, .. }
-        | IR::NodeByIdSeek { node, .. } => {
-            vars.push(node.alias.clone());
-        }
-        IR::NodeByFulltextScan { node, score, .. } | IR::NodeByVectorScan { node, score, .. } => {
-            vars.push(node.clone());
-            if let Some(score) = score {
-                vars.push(score.clone());
-            }
-        }
-        IR::EdgeByFulltextScan { edge, score, .. } | IR::EdgeByVectorScan { edge, score, .. } => {
-            vars.push(edge.clone());
-            if let Some(score) = score {
-                vars.push(score.clone());
-            }
-        }
-        IR::CondTraverse {
-            relationship: query_relationship,
-            ..
-        }
-        | IR::EdgeByIndexScan {
-            relationship: query_relationship,
-            ..
-        }
-        | IR::AllShortestPaths(query_relationship)
-        | IR::ExpandInto {
-            relationship: query_relationship,
-            ..
-        } => {
-            vars.push(query_relationship.alias.clone());
-            vars.push(query_relationship.from.alias.clone());
-            vars.push(query_relationship.to.alias.clone());
-        }
-        IR::CondVarLenTraverse {
-            relationship: query_relationship,
-            path_var,
-            ..
-        } => {
-            vars.push(query_relationship.alias.clone());
-            vars.push(query_relationship.from.alias.clone());
-            vars.push(query_relationship.to.alias.clone());
-            if let Some(path_var) = path_var {
-                vars.push(path_var.clone());
-            }
-        }
-        IR::PathBuilder(query_paths) => {
-            for path in query_paths {
-                vars.push(path.var.clone());
-            }
-        }
-        IR::Aggregate {
-            names: variables, ..
-        } => {
-            vars.extend(variables.iter().cloned());
-        }
-        IR::Project { exprs: items, .. } => {
-            vars.extend(items.iter().map(|v| v.0.clone()));
-            return true;
-        }
-    }
-    false
 }
 
 pub(crate) trait ReturnNames {
@@ -1441,8 +1446,14 @@ impl<'a> Runtime<'a> {
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
+        // Bound the seek by where the id space ends, not by `max_node_id`.
+        // `max_node_id` is 0 both when id 0 is the only id and when no id was
+        // ever handed out, so it would make an empty graph seek a node 0 that
+        // does not exist. With an empty id space `max` is 0 here, and the
+        // `node_count() == 0` check below returns no ids once every predicate
+        // has been type-checked.
+        let mut max = self.graph().node_id_bound().saturating_sub(1);
         let mut min = 0u64;
-        let mut max = self.graph().max_node_id();
         for (expr, op) in filter {
             let id = match {
                 let this = &self;
@@ -1491,9 +1502,8 @@ impl<'a> Runtime<'a> {
                 }
             }
         }
-        // `max_node_id()` is 0 both when id 0 is the only id and when no id
-        // was ever handed out, so `min..=max` would seek a node 0 that was
-        // never created.
+        // No live nodes means nothing to seek, including the case where ids
+        // were handed out before but every node has since been deleted.
         if self.graph().node_count() == 0 {
             return Ok(None);
         }
@@ -2140,9 +2150,20 @@ pub fn map_to_index_options(
                 }
             };
             // Required and case-insensitive, as in C (`strcasecmp`); stored
-            // lowercase, the form the rest of the engine matches on.
+            // lowercase, the form the rest of the engine matches on. An
+            // unknown name is refused here, whatever the dimension: the index
+            // build only reads it once the dimension is non-zero. `ip` is a
+            // Rust extension; C knows only euclidean and cosine.
             let similarity_function = match get("similarityFunction") {
-                Some(Value::String(s)) => Some(s.to_ascii_lowercase()),
+                Some(Value::String(s)) => {
+                    let lower = s.to_ascii_lowercase();
+                    if !matches!(lower.as_str(), "euclidean" | "cosine" | "ip") {
+                        return Err(format!(
+                            "Invalid vector index configuration: unknown similarityFunction '{s}', expected 'euclidean', 'cosine' or 'ip'"
+                        ));
+                    }
+                    Some(lower)
+                }
                 None => {
                     return Err(
                         "Invalid vector index configuration: similarityFunction is required".into(),

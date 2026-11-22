@@ -1,17 +1,17 @@
 import SearchConcurrency.Pool
 
 /-
-# `graph/src/threadpool.rs` (main ca36bfa15, #3502): named workers, `shutdown_within`
+# `graph/src/threadpool.rs` (main 256ab4d3f; #3502 named workers, `shutdown_within`)
 
 | Lean | Rust |
 | --- | --- |
-| `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs:79-123` (`builder.name(format!("{name}-{i}"))`, `i in 0..size`); `new` `:67` is `with_names(size, None)`, `named` `:72` is `with_names(size, Some(name))` |
+| `workerName`, `spawnNames` | `ThreadPool::with_names` `threadpool.rs` (`builder.name(format!("{name}-{i}"))`, `i in 0..size`; `set_pool_thread()` first thing in each worker, `Once.setPoolThread`); `new` is `with_names(size, None)`, `named` is `with_names(size, Some(name))` |
 | `Fin`, `Fin.done` | a worker's `JoinHandle`: `is_finished()` (std; AXIOMATISED as a monotone predicate of time, see below) |
-| `waitLoop` | `shutdown_within`'s `while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) { thread::sleep(1ms) }` `:167-169` |
-| `drain` | the `for worker in workers.drain(..)` loop `:171-178`: a finished handle is joined, an unfinished one is dropped (detached) and clears `all_exited` |
-| `within` | `ThreadPool::shutdown_within` `:159-181` (sentinels sent first, `:163-165`) |
-| `holdEnd` | `ThreadPool::shutdown` `:146-153`: holds the `workers` lock across every `join` |
-| `PoolS.shutdownSend`, `PoolS.spawn` (Pool.lean) | the sentinel loop shared by `shutdown` and `shutdown_within`; `spawn` `:124` |
+| `waitLoop` | `shutdown_within`'s `while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) { thread::sleep(1ms) }` |
+| `drain` | `workers.drain(..).partition(JoinHandle::is_finished)`: a finished handle is joined, an unfinished one is kept (`*workers = running`) and the answer is `workers.is_empty()` |
+| `within` | `ThreadPool::shutdown_within` (sentinels sent first) |
+| `holdEnd` | `ThreadPool::shutdown`: holds the `workers` lock across every `join` |
+| `PoolS.shutdownSend`, `PoolS.spawn` (Pool.lean) | the sentinel loop shared by `shutdown` and `shutdown_within`; `spawn` |
 
 OS and std primitives are hypotheses, not axioms: `JoinHandle::is_finished` is
 monotone in time (`Fin.done_mono`, by construction: a worker finishes at one instant or
@@ -24,12 +24,13 @@ loop. A real check runs later, and `is_finished` is monotone, so a worker model-
 really be joined (more finished): `within_true_all_finished` and `within_in_time` still
 hold; `within_false_unfinished` is exact for a worker not finished at any later time.
 
-Findings on the new code (both confirmed live, `repro/threadpool_within.rs`):
-* **BUG** `shutdown_within` after a timed-out `shutdown_within` returns `true` while the
-  straggler still runs (`second_call_true_despite_straggler`): the first call drained the
-  handle list, so the second sees an empty list and `all_exited` stays `true`.
-* **BUG** a `shutdown_within(t)` called while another thread is inside `shutdown` blocks on
-  the `workers` lock for as long as `shutdown`'s `join` (`:149-150`): with a job that never
+Findings on the code (confirmed live, `repro/threadpool_within.rs`):
+* Since #3585 the unfinished handles are put back (`*workers = running`), so a repeat
+  `shutdown_within` waits for a straggler and reports it until it has exited
+  (`second_call_reports_straggler`, `second_call_joins_when_returned`; the Rust test
+  `shutdown_within_leaves_a_blocked_job_behind` checks both).
+* **BUG (open)** a `shutdown_within(t)` called while another thread is inside `shutdown` blocks on
+  the `workers` lock for as long as `shutdown`'s `join`: with a job that never
   returns, never (`within_blocks_behind_shutdown`), so the time limit does not hold.
 * Benign, same as `shutdown`: a job spawned after the sentinels is accepted (send `Ok`, no
   log) and never runs (`late_job_lost`).
@@ -127,16 +128,18 @@ theorem waitLoop_bound (ws : List Fin) (deadline s : Nat) (next : Nat → Nat)
       exact Nat.le_trans h2 (Nat.le_max_right _ _)
     · exact Nat.le_max_left _ _
 
-/-- The drain loop at instant `t`: (`all_exited`, handles joined, handles detached). -/
+/-- `workers.drain(..).partition(JoinHandle::is_finished)` at instant `t`: (`all_exited`, handles
+joined, handles kept). -/
 def drain (ws : List Fin) (t : Nat) : Bool × List Fin × List Fin :=
   ((ws.filter fun w => !w.done t).isEmpty, ws.filter (·.done t), ws.filter fun w => !w.done t)
 
-/-- Result of one `shutdown_within`: (`all_exited`, exit instant, `workers` afterwards,
-detached). The sentinels are sent before the wait (`PoolS.shutdownSend`). -/
+/-- Result of one `shutdown_within` (#3585): (`all_exited`, exit instant, `workers` afterwards,
+joined). The sentinels are sent before the wait (`PoolS.shutdownSend`). The unfinished handles
+are put back (`*workers = running`) and the answer is whether none is left. -/
 def within (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat) :
     Bool × Nat × List Fin × List Fin :=
   let tx := waitLoop ws (start + timeout) next fuel start
-  ((drain ws tx).1, tx, [], (drain ws tx).2.2)
+  ((drain ws tx).1, tx, (drain ws tx).2.2, (drain ws tx).2.1)
 
 /-- **The time limit holds** (on an uncontended lock): the call returns before
 `start + timeout + s`, for any pool and any job behaviour. -/
@@ -184,18 +187,19 @@ theorem filter_split {α : Type} (l : List α) (p : α → Bool) :
   | nil => rfl
   | cons x r ih => by_cases hp : p x = true <;> simp [hp] <;> omega
 
-/-- **No worker handle is lost**: every handle is joined or detached, none both, and
-`workers` is empty afterwards. -/
+/-- **No worker handle is lost**: every handle is joined or kept, none both, and `workers`
+afterwards holds exactly the kept ones (#3585). -/
 theorem within_partition (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat) :
-    (drain ws (within ws start timeout fuel next).2.1).2.1.length +
-      (within ws start timeout fuel next).2.2.2.length = ws.length ∧
-    (within ws start timeout fuel next).2.2.1 = [] := by
+    (within ws start timeout fuel next).2.2.2.length +
+      (within ws start timeout fuel next).2.2.1.length = ws.length ∧
+    (within ws start timeout fuel next).2.2.1 =
+      ws.filter (fun w => !w.done (within ws start timeout fuel next).2.1) := by
   refine ⟨?_, rfl⟩
   simp only [within, drain]
   exact filter_split ws _
 
 /-- A job that has not returned by the exit instant (e.g. blocked for good) always makes
-`shutdown_within` answer `false`, and its handle is detached. -/
+`shutdown_within` answer `false`, and its handle is kept. -/
 theorem blocked_reported (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat)
     (h : none ∈ ws) : (within ws start timeout fuel next).1 = false := by
   simp only [within, drain]
@@ -205,27 +209,28 @@ theorem blocked_reported (ws : List Fin) (start timeout fuel : Nat) (next : Nat 
     have := hb none h
     simp [Fin.done] at this
 
-/-- **BUG (second call)**: the first call emptied `workers`, so a second `shutdown_within`
-joins nothing and answers `true` although the straggler is still running (live repro
-`repro/threadpool_within.rs`, case A: `first=false second=true`). The wait loop is also
-skipped (`all` over an empty list), so the answer is immediate. -/
-theorem within_empty_true (start timeout fuel : Nat) (next : Nat → Nat) :
-    (within [] start timeout fuel next).1 = true := by
-  simp [within, drain]
-
-theorem second_call_true_despite_straggler (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat)
+/-- **Fixed (#3585): a repeat call reports the straggler.** A first `shutdown_within` that leaves a
+job behind (`none ∈ ws`: it has not returned at any instant) puts its handle back, so the second
+call, however long it waits, still sees it unfinished and answers `false`. -/
+theorem second_call_reports_straggler (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat)
     (start2 timeout2 fuel2 : Nat) (h : none ∈ ws) :
     (within ws start timeout fuel next).1 = false ∧
-    (within (within ws start timeout fuel next).2.2.1 start2 timeout2 fuel2 next).1 = true ∧
-    (within ws start timeout fuel next).2.2.2 ≠ [] := by
-  refine ⟨blocked_reported ws start timeout fuel next h, ?_, ?_⟩
-  · have : (within ws start timeout fuel next).2.2.1 = [] := rfl
-    rw [this]; exact within_empty_true _ _ _ _
-  · intro hd
-    simp only [within, drain] at hd
-    rw [List.filter_eq_nil_iff] at hd
-    have := hd none h
-    simp [Fin.done] at this
+    none ∈ (within ws start timeout fuel next).2.2.1 ∧
+    (within (within ws start timeout fuel next).2.2.1 start2 timeout2 fuel2 next).1 = false := by
+  have h1 := blocked_reported ws start timeout fuel next h
+  have hk : none ∈ (within ws start timeout fuel next).2.2.1 := by
+    simp only [within, drain, List.mem_filter]
+    exact ⟨h, by simp [Fin.done]⟩
+  exact ⟨h1, hk, blocked_reported _ _ _ _ _ hk⟩
+
+/-- …and **joins it once its job has returned**: when every handle the first call left behind has
+finished by the second call's deadline, the second call answers `true`. -/
+theorem second_call_joins_when_returned (ws : List Fin) (start timeout fuel : Nat) (next : Nat → Nat)
+    (start2 timeout2 fuel2 : Nat) (h1 : ∀ t, t + 1 ≤ next t) (hf : timeout2 ≤ fuel2)
+    (hall : ∀ w ∈ (within ws start timeout fuel next).2.2.1,
+      ∃ f, w = some f ∧ f ≤ start2 + timeout2) :
+    (within (within ws start timeout fuel next).2.2.1 start2 timeout2 fuel2 next).1 = true :=
+  within_true_all_finished _ start2 timeout2 fuel2 next h1 hf hall
 
 /-! ### Contention with `shutdown`: the `workers` lock -/
 
@@ -308,13 +313,13 @@ theorem run_none_prefix : ∀ (m k : Nat) (e : List Nat) (sz : Nat),
     exact run_none_prefix m k e sz
 
 /-- **No worker leak**: `m` workers are free and `k` are stuck in a job that has not
-returned (the ones `shutdown_within` detaches). The `m + k` sentinels still let the free
+returned (the ones `shutdown_within` leaves behind). The `m + k` sentinels still let the free
 ones run every queued job and exit, and leave exactly `k` sentinels in the queue: one for
 each straggler, which takes it and exits as soon as its job returns (`run k`). So a
-detached worker is never stranded, and no queued job is lost. `run` steps any live worker, stuck ones
+worker left behind is never stranded, and no queued job is lost. `run` steps any live worker, stuck ones
 included, so the model needs a free worker (`0 < m`) whenever jobs are queued: with `m = 0` the `k` stuck
 workers would be counted as available (`_hfree`). -/
-theorem detached_workers_exit (q : List Nat) (m k a : Nat) (e : List Nat) (hn : m + k = a + 1)
+theorem left_behind_workers_exit (q : List Nat) (m k a : Nat) (e : List Nat) (hn : m + k = a + 1)
     (_hfree : 0 < m ∨ q = []) :
     run (q.length + m) ⟨q.map some ++ List.replicate (m + k) none, m + k, e, m + k⟩ =
       ⟨List.replicate k none, k, e ++ q, m + k⟩ ∧

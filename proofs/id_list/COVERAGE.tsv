@@ -40,9 +40,4 @@ graph/src/effects/v3/id_list.rs	IdList::from	1291	PROVEN	Misc.fromIds: from_eq, 
 graph/src/effects/v3/id_list.rs	write_narrow	1297	PROVEN	le n v inside writePair: ofLe_le, decode_writePair
 graph/src/effects/v3/id_list.rs	read_narrow	1311	PROVEN	readU: readU_ok, readU_le, readU_lt
 graph/src/effects/v3/id_list.rs	read_ids	1352	PROVEN	readIds/loop: readIds_encodeIds, readIds_safe, readIds_never_panics, refuses_*
-graph/src/effects/reader.rs	Reader::take	40	PROVEN	take: take_ok, take_append
 graph/src/effects/reader.rs	Reader::u8	99	PROVEN	readU 1: readU_ok, readU_le
-graph/src/effects/reader.rs	Reader::u16	103	PROVEN	readU 2: readU_ok, readU_le
-graph/src/effects/reader.rs	Reader::u32	107	PROVEN	readU 4: readU_ok, readU_le
-graph/src/effects/reader.rs	Reader::u64	111	PROVEN	readU 8: readU_ok, readU_le
-graph/src/narrow_int.rs	width_for	19	PROVEN	IdListWire.widthFor: widthFor_fits, widthFor_cases, widthFor_ge

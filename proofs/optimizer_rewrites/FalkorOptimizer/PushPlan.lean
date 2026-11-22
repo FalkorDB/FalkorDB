@@ -1,35 +1,15 @@
 /-
 # push_filters_down on a plan tree with write effects and scope-blind ids
 
-Gap closed 2026-10-20 (#748, #997, #3352; #2556 in the last section,
-`select_scan_node`'s chain rebuild, property `KeepsFiltersBound`). The push-down theorems in `Basic`
-compare result rows only, on list operators with no graph state, and route by
-`(id, scope)` (`Passes.routesScoped`). Main routes by bare ids collected from a
-whole subtree, and pushes a variable-free conjunct into every child, including
-the left branch of an `Apply` whose right branch writes. This file gives the
-plan a tree, a graph state that writes change, and the routing exactly as Rust
-computes it, so both families are visible.
+`push_filters_down` on a plan tree with a graph state that writes change, routing by bare ids
+exactly as Rust computes it (`Cfg.main`: ids only, write operators excluded, siblings of a
+writing branch locked, #3582 and #3281). The push-down theorems in `Basic` compare result rows
+only, on list operators with no graph state, and route by `(id, scope)`
+(`Passes.routesScoped`). The last section covers #2556 (`select_scan_node`'s chain rebuild,
+property `KeepsFiltersBound`).
 
-| here | there (Rust at fb3d516d0) |
-| --- | --- |
-| `G` | the graph a query sees and writes: node count, labels, edges |
-| `Op` | `IR` (`graph/src/planner/mod.rs:200-300`), the operators these repros use |
-| `run` | the runtime ops, eager: `apply.rs:102-340` (right branch re-run per left row with `Argument` = that row), `optional.rs:91-292` (one null row when the branch is empty), `aggregate.rs:288` (no keys → one row even on empty input), `create.rs:101-160`, `merge.rs:67-300` (match else create), `filter.rs:48-80` (`Basic.filterRows`), `unwind.rs`, `node_by_label_scan.rs`, `cond_traverse.rs` (bound destination) |
-| `gv` | `GetVariables::get_variables` (`runtime/runtime.rs:261-272`): `Aggregate` adds `names` and keeps walking, `Project` adds its outputs and `break`s; what `collect_subtree_variables` reported before #3092 (`Cfg.pre3092`) |
-| `sv` | `collect_subtree_variables` (`optimizer/mod.rs:110-137`, since #3092): `Project`/`Aggregate` add their outputs and are not descended (`Cfg.main`, `Cfg.walk`) |
-| `branchOut` | `branch_output_variables` (`optimizer/push_filters_down.rs:59-66`) |
-| `excluded` | the child exclusion list (`push_filters_down.rs:161-175`) |
-| `pushAt` | one Filter's routing (`push_filters_down.rs:138-364`): grandchild variable sets (:176-185), Case 1 (:196-201), Case 2 inherited (`inh`, :210-244), augmentation of `Argument` subtrees (:247-257), the `all` test over ids (:264-276) |
-| `childInh` | Case 2's ancestor walk, top-down: below an `Apply`'s right child the left subtree's ids, below its left child nothing, below `Merge` nothing (:212-243) |
-| `sweep`, `pushFilters` | the restart loop (:103-370), as a top-down sweep that follows each pushed filter |
-| `Cfg.main` | ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs:92-137`), no write barrier |
-
-The property each bug violates is `EffectSound`: a rewrite keeps the rows
-**and** the graph the query leaves behind. `RowSound` is the old criterion,
-rows only; `bug748_rows_only_blind` / `bug997_rows_only_blind` show it cannot see
-the write that is skipped. `RoutesBound` is the syntactic property behind
-#3352: a pushed conjunct reads only variables, by `(id, scope)`, that are
-available where it lands.
+`EffectSound`: a rewrite keeps the rows **and** the graph the query leaves behind.
+`RowSound` is the weaker criterion, rows only, which cannot see a skipped write.
 
 Write scope: the only write the model performs is creating a bare node (`newNode`,
 from `CREATE ()`/`MERGE ()`), which bumps the node count `G.n`. `G.lbl` and `G.edges` are
@@ -76,7 +56,7 @@ inductive Op where
   /-- `(fr:l)-[e]->(to)` with `to` bound by the input row. -/
   | condTraverse (e fr to : Var) (l : Nat) (c : Op)
   /-- `IR::CondTraverse` as it carries its relationship (`fr`)-[`e`]->(`to`)
-  and `transposed` (`planner/mod.rs:200-300`, `runtime/ops/cond_traverse.rs`):
+  and `transposed` (`planner/mod.rs`, `runtime/ops/cond_traverse.rs`):
   the walk starts from `fr`, read from the input row, and binds `e` and `to`
   (which must carry `to.lbl`). `transposed` reads each stored edge backwards,
   so a pattern edge `a → b` started from `b` is `hop e b a true`. -/
@@ -87,6 +67,10 @@ inductive Op where
   | create (v : Var) (c : Op)
   | merge (v : Var) (c : Op)
   | apply (l r : Op)
+  /-- A two-child `IR::Optional(vs)` (`optional.rs`): its right branch
+  runs per row of its left child (that row is the `Argument`), and a left row
+  with no right row gets `vs` null-padded. -/
+  | optApply (vs : List Var) (l r : Op)
 deriving Repr
 
 /-! ## Semantics -/
@@ -177,6 +161,11 @@ def run (arg : Row) : Op → G → Res
       forRows (fun x g => do
         let (ys, g) ← run x r g
         pure (ys.map (fun y => x ++ y), g)) xs g
+  | .optApply vs l r, g => do
+      let (xs, g) ← run arg l g
+      forRows (fun x g => do
+        let (ys, g) ← run x r g
+        pure (if ys.isEmpty then [x ++ vs.map (fun v => (v, .null))] else ys, g)) xs g
 
 /-! ## The correctness criteria -/
 
@@ -187,8 +176,7 @@ def RowSound (pass : Op → Op) : Prop :=
 
 /-- **The property a plan rewrite must have**: it keeps the result rows *and*
 the graph the query leaves behind (every write still happens, exactly as
-often), or both fail. A fix of #748/#997/#3352 proves this for
-`pushFilters` (with `Cfg.main` replaced by the fixed routing). -/
+often), or both fail. -/
 def EffectSound (pass : Op → Op) : Prop :=
   ∀ op g, Same (run [] (pass op) g) (run [] op g)
 
@@ -204,11 +192,16 @@ theorem EffectSound.rowSound {pass : Op → Op} (h : EffectSound pass) : RowSoun
 child's variable set, and whether a write blocks the push. -/
 structure Cfg where
   eqv : Var → Var → Bool
-  writeBarrier : Bool
-  /-- The subtree variable set (`collect_subtree_variables`). -/
-  walk : Op → List Var
+  /-- #3582: write operators (`Create`, `Commit`, …) join the exclusion list,
+  and a grandchild is locked when a sibling subtree writes (`is_write`,
+  `holds_write`/`locked`, push_filters_down.rs). -/
+  lockSiblings : Bool
 
-/-- `get_variables` (runtime.rs:261-272). -/
+/-- Rust on main (#3582, #3281): ids only, write operators excluded, siblings of a writing
+branch locked; Case 2 inherits `bv` and a two-child `Optional` ends the walk. -/
+def Cfg.main : Cfg := ⟨fun a b => a.id == b.id, true⟩
+
+/-- `get_variables` (runtime.rs). -/
 def gv : Op → List Var
   | .argument | .unit => []
   | .project bs _ => bs.map Prod.fst
@@ -219,49 +212,79 @@ def gv : Op → List Var
   | .optional vs c => vs ++ gv c
   | .aggregate keys cnt c => aggNames keys cnt ++ gv c
   | .apply l r => gv l ++ gv r
+  | .optApply vs l r => vs ++ gv l ++ gv r
 
-/-- `collect_subtree_variables` (mod.rs:110-137, since #3092): a `Project`/`Aggregate`
-reports its outputs and is not descended. -/
-def sv : Op → List Var
-  | .argument | .unit => []
-  | .project bs _ => bs.map Prod.fst
-  | .aggregate keys cnt _ => aggNames keys cnt
-  | .filter _ c | .commit c => sv c
-  | .unwind v _ c | .allNodeScan v c | .labelScan v _ c | .create v c | .merge v c => v :: sv c
-  | .condTraverse e fr to _ c => [e, fr, to] ++ sv c
-  | .hop e fr to _ c => [e, fr.v, to.v] ++ sv c
-  | .optional vs c => vs ++ sv c
-  | .apply l r => sv l ++ sv r
-
-/-- `branch_output_variables` (push_filters_down.rs:59-66). -/
+/-- `branch_output_variables` (push_filters_down.rs); no copies in the model. -/
 def branchOut : Op → Option (List Var)
   | .project bs _ => some (bs.map Prod.fst)
   | .aggregate keys cnt _ => some (aggNames keys cnt)
   | _ => none
 
-/-- Since #3092 `branch_output_variables` of a Project/Aggregate is
-`collect_subtree_variables` of it. -/
-theorem branchOut_eq_sv (k : Op) (h : (branchOut k).isSome) : branchOut k = some (sv k) := by
-  cases k <;> simp_all [branchOut, sv]
+/-- The ids of `xs` that are not ids of `ys` (`HashSet<u32>::difference`). -/
+def idsMinus (xs ys : List Var) : List Var := xs.filter fun v => !ys.any (·.id == v.id)
 
-/-- Rust main (#3092): ids only, no barrier, `collect_subtree_variables` = `sv`. -/
-def Cfg.main : Cfg := ⟨fun a b => a.id == b.id, false, sv⟩
+/-- `branch_visible_variables` (push_filters_down.rs, #3281): an env-resetting
+operator's named outputs (`branch_output_variables(_, false)`: no copies); otherwise
+the variables of the lone operator (`collect_subtree_variables` of a one-node tree, its
+`get_variables` without its children) and, recursively, what its children expose.
+(The model has no `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer`, which expose only
+their first child: `Helpers.visT_semi_first`.) -/
+def bv : Op → List Var
+  | .argument | .unit => []
+  | .project bs _ => bs.map Prod.fst
+  | .aggregate keys cnt _ => aggNames keys cnt
+  | .filter _ c | .commit c => bv c
+  | .unwind v _ c | .allNodeScan v c | .labelScan v _ c | .create v c | .merge v c => v :: bv c
+  | .condTraverse e fr to _ c => [e, fr, to] ++ bv c
+  | .hop e fr to _ c => [e, fr.v, to.v] ++ bv c
+  | .optional vs c => vs ++ bv c
+  | .apply l r => bv l ++ bv r
+  | .optApply vs l r => vs ++ bv l ++ bv r
 
-/-- Rust before #3092: ids only, no barrier, `collect_subtree_variables` = ids of `get_variables`. -/
-def Cfg.pre3092 : Cfg := ⟨fun a b => a.id == b.id, false, gv⟩
+/-- Every id `bv` reports is one `get_variables` reports: Case 2 inherits no more
+than `collect_subtree_variables` would. -/
+theorem bv_sub_gv : ∀ (op : Op), ∀ v ∈ bv op, v ∈ gv op := by
+  intro op
+  induction op with
+  | argument | unit => simp [bv]
+  | project bs c _ => simp [bv, gv]
+  | aggregate k n c _ => intro x hx; simp only [bv] at hx; simp [gv, hx]
+  | filter p c ih => simpa [bv, gv] using ih
+  | commit c ih => simpa [bv, gv] using ih
+  | unwind v xs c ih | allNodeScan v c ih | labelScan v l c ih | create v c ih | merge v c ih =>
+    intro x hx
+    simp only [bv, List.mem_cons] at hx
+    rcases hx with h | h
+    · simp [gv, h]
+    · simp [gv, ih x h]
+  | condTraverse e fr to l c ih | hop e fr to tr c ih | optional vs c ih =>
+    intro x hx
+    simp only [bv, List.mem_append] at hx
+    rcases hx with h | h
+    · simp only [gv, List.mem_append]; exact Or.inl h
+    · simp [gv, ih x h]
+  | apply l r ihl ihr =>
+    intro x hx
+    simp only [bv, List.mem_append] at hx
+    rcases hx with h | h
+    · simp [gv, ihl x h]
+    · simp [gv, ihr x h]
+  | optApply vs l r ihl ihr =>
+    intro x hx
+    simp only [bv, List.mem_append] at hx
+    rcases hx with (h | h) | h
+    · simp [gv, h]
+    · simp [gv, ihl x h]
+    · simp [gv, ihr x h]
 
-/-- A candidate fix: `(id, scope)` matching and no push below an operator whose
-subtree writes (`Merge`/`Create`). -/
-def Cfg.fixed : Cfg := ⟨fun a b => a == b, true, gv⟩
-
-/-- `subtree_contains(…, Argument)` (planner/mod.rs:333). -/
+/-- `subtree_contains(…, Argument)` (planner/mod.rs). -/
 def hasArg : Op → Bool
   | .argument => true
   | .unit => false
   | .project _ c | .filter _ c | .unwind _ _ c | .allNodeScan _ c | .labelScan _ _ c
   | .condTraverse _ _ _ _ c | .hop _ _ _ _ c | .optional _ c | .aggregate _ _ c | .commit c
   | .create _ c | .merge _ c => hasArg c
-  | .apply l r => hasArg l || hasArg r
+  | .apply l r | .optApply _ l r => hasArg l || hasArg r
 
 def hasWrite : Op → Bool
   | .argument | .unit => false
@@ -269,11 +292,18 @@ def hasWrite : Op → Bool
   | .project _ c | .filter _ c | .unwind _ _ c | .allNodeScan _ c | .labelScan _ _ c
   | .condTraverse _ _ _ _ c | .hop _ _ _ _ c | .optional _ c | .aggregate _ _ c | .commit c =>
     hasWrite c
-  | .apply l r => hasWrite l || hasWrite r
+  | .apply l r | .optApply _ l r => hasWrite l || hasWrite r
 
-/-- push_filters_down.rs:161-175 (the kinds that occur here). -/
+/-- push_filters_down.rs before #3582 (the kinds that occur here). -/
 def excluded : Op → Bool
-  | .project _ _ | .aggregate _ _ _ | .merge _ _ | .argument | .optional _ _ => true
+  | .project _ _ | .aggregate _ _ _ | .merge _ _ | .argument | .optional _ _ | .optApply _ _ _ => true
+  | _ => false
+
+/-- `is_write` (push_filters_down.rs), the kinds that occur here; #3582
+adds `Create`/`Commit` (and `Delete`/`Set`/`Remove`/`ForEach`, not modelled)
+to the exclusion list (:188-193). -/
+def isWriteOp : Op → Bool
+  | .create _ _ | .merge _ _ | .commit _ => true
   | _ => false
 
 def kid (c : Op) : List Op := match c with | .unit => [] | c => [c]
@@ -284,7 +314,7 @@ def kids : Op → List Op
   | .project _ c | .filter _ c | .unwind _ _ c | .allNodeScan _ c | .labelScan _ _ c
   | .condTraverse _ _ _ _ c | .hop _ _ _ _ c | .optional _ c | .aggregate _ _ c | .commit c
   | .create _ c | .merge _ c => kid c
-  | .apply l r => [l, r]
+  | .apply l r | .optApply _ l r => [l, r]
 
 /-- Replace the children (same shape). -/
 def setKids (op : Op) (ks : List Op) : Op :=
@@ -302,6 +332,7 @@ def setKids (op : Op) (ks : List Op) : Op :=
   | .create v _, [c] => .create v c
   | .merge v _, [c] => .merge v c
   | .apply _ _, [l, r] => .apply l r
+  | .optApply vs _ _, [l, r] => .optApply vs l r
   | op, _ => op
 
 def isApply : Op → Bool
@@ -309,33 +340,42 @@ def isApply : Op → Bool
   | _ => false
 
 /-- A grandchild's variable set and whether it resets the env (:176-185). -/
-def info (cfg : Cfg) (k : Op) : List Var × Bool :=
+def info (k : Op) : List Var × Bool :=
   match branchOut k with
   | some o => (o, true)
-  | none => (cfg.walk k, false)
+  | none => (gv k, false)
 
 /-- Does the conjunct route into a child with variable set `vs` (:264-276)? -/
 def routes (cfg : Cfg) (p : Expr) (vs : List Var) : Bool :=
   p.vars.all (fun v => vs.any (cfg.eqv v))
 
 /-- The variable set the routing test sees for child `k` (:247-257). -/
-def avail (cfg : Cfg) (inh : List Var) (k : Op) : List Var :=
-  let (vs, reset) := info cfg k
+def avail (inh : List Var) (k : Op) : List Var :=
+  let (vs, reset) := info k
   if !inh.isEmpty && !reset && hasArg k then vs ++ inh else vs
+
+/-- `locked[i]` (push_filters_down.rs): some other grandchild's subtree
+writes (`subtree_contains(…, is_write)`; in the model a `Commit` always wraps a
+`Create`/`Merge`, so `hasWrite` is that test). -/
+def locked (cfg : Cfg) (ks : List Op) (i : Nat) : Bool :=
+  cfg.lockSiblings && (ks.zipIdx.any (fun kj => hasWrite kj.1 && kj.2 != i))
 
 /-- One Filter `p` over `c`, with Case-2 inherited variables `inh`. -/
 def pushAt (cfg : Cfg) (inh : List Var) (p : Expr) (c : Op) : Op :=
   let ks := kids c
-  if excluded c || ks.isEmpty || (cfg.writeBarrier && hasWrite c) then .filter p c else
-  let inh := (if isApply c then ((ks.head?.map (info cfg)).map Prod.fst).getD [] else []) ++ inh
-  let rs := ks.map (fun k => routes cfg p (avail cfg inh k))
+  if excluded c || (cfg.lockSiblings && isWriteOp c) || ks.isEmpty then
+    .filter p c else
+  let inh := (if isApply c then ((ks.head?.map info).map Prod.fst).getD [] else []) ++ inh
+  let rs := ks.zipIdx.map (fun ki => !locked cfg ks ki.2 && routes cfg p (avail inh ki.1))
   if rs.any id then setKids c ((ks.zip rs).map (fun kb => if kb.2 then .filter p kb.1 else kb.1))
   else .filter p c
 
-/-- Case 2, top-down (:212-243). -/
-def childInh (cfg : Cfg) (op : Op) (i : Nat) (inh : List Var) : List Var :=
+/-- Case 2, top-down (:288-341): the Apply's left side contributes `branch_visible_variables`
+(`bv`), and a two-child `Optional` ends the walk like an `Apply` (#3281). -/
+def childInh (op : Op) (i : Nat) (inh : List Var) : List Var :=
   match op with
-  | .apply l _ => if i = 0 then [] else cfg.walk l
+  | .apply l _ => if i = 0 then [] else bv l
+  | .optApply _ l _ => if i = 0 then [] else bv l
   | .merge _ _ => []
   | _ => inh
 
@@ -349,16 +389,10 @@ def sweep (cfg : Cfg) : Nat → List Var → Op → Op
     | .filter p c =>
       match pushAt cfg inh p c with
       | .filter p' c' => .filter p' (sweep cfg fuel inh c')
-      | t => mapKids (fun i k => sweep cfg fuel (childInh cfg t i inh) k) t
-    | op => mapKids (fun i k => sweep cfg fuel (childInh cfg op i inh) k) op
+      | t => mapKids (fun i k => sweep cfg fuel (childInh t i inh) k) t
+    | op => mapKids (fun i k => sweep cfg fuel (childInh op i inh) k) op
 
 def pushFilters (cfg : Cfg) (op : Op) : Op := sweep cfg 64 [] op
-
-/-- The syntactic property behind #3352: a conjunct may land on a child only
-if every variable it reads, by `(id, scope)`, is in the variables actually
-available there. Main routes with `Cfg.main` (ids) against `avail`, which for
-an `Argument` subtree adds every id of the Apply's left subtree. -/
-def RoutesBound (p : Expr) (available : List Var) : Prop := ∀ v ∈ p.vars, v ∈ available
 
 /-! ## #748: `WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0` -/
 
@@ -377,43 +411,17 @@ def apply748 : Op := .apply (.project [(n0, .lit (.int 0))] .unit) body748
 /-- Before the optimizer: `Project(Filter(false, AllNodeScan(Apply(…))))`. -/
 def plan748 : Op := .project [(col, .lit (.int 0))] (.filter fls (.allNodeScan a1 apply748))
 
-/-- The live Rust EXPLAIN: the filter sits on both Apply branches. -/
-def plan748opt : Op :=
-  .project [(col, .lit (.int 0))]
-    (.allNodeScan a1 (.apply (.filter fls (.project [(n0, .lit (.int 0))] .unit)) (.filter fls body748)))
-
-theorem bug748_plan : pushFilters .main plan748 = plan748opt := rfl
-
-/-- **#748.** Before: one node is merged, no rows. After push-down: no node,
-no rows. Rust main creates 0 nodes, C 1 (live, 9d3869aa8). -/
-theorem bug748_merge_skipped :
-    run [] plan748 g0 = .ok ([], ⟨1, [], []⟩) ∧
-    run [] (pushFilters .main plan748) g0 = .ok ([], g0) ∧
-    ¬ EffectSound (pushFilters .main) := by
-  refine ⟨rfl, rfl, fun h => ?_⟩
-  have := h plan748 g0
-  rw [show run [] (pushFilters .main plan748) g0 = .ok ([], g0) from rfl,
-      show run [] plan748 g0 = .ok ([], ⟨1, [], []⟩) from rfl] at this
-  simp [Same, g0] at this
-
-/-- The rows-only criterion holds on this instance: it cannot see the bug. -/
-theorem bug748_rows_only_blind :
-    Same ((run [] (pushFilters .main plan748) g0).map Prod.fst) ((run [] plan748 g0).map Prod.fst) := rfl
-
 /-- `… CALL {…} WITH * MATCH () WHERE false …`: the `Project` stops the push,
 the MERGE runs (live: 1 node on Rust and C). -/
 def plan748star : Op :=
   .project [(col, .lit (.int 0))]
     (.filter fls (.allNodeScan a1 (.project [(n0, .var n0), (n1, .var n1)] apply748)))
 
-theorem bug748_with_star_control :
+theorem with_star_control :
     pushFilters .main plan748star =
       .project [(col, .lit (.int 0))]
         (.allNodeScan a1 (.filter fls (.project [(n0, .var n0), (n1, .var n1)] apply748))) ∧
     run [] (pushFilters .main plan748star) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
-
-theorem bug748_fixed :
-    run [] (pushFilters .fixed plan748) g0 = run [] plan748 g0 := rfl
 
 /-! ## #997: `CALL { CREATE () } UNWIND 0 AS x MATCH () WHERE false RETURN 0` -/
 
@@ -426,49 +434,17 @@ def plan997With (p : Expr) : Op :=
 
 def plan997 : Op := plan997With fls
 
-/-- The live Rust EXPLAIN: `Apply(Filter(Argument), Filter(Aggregate(…)))`. -/
-theorem bug997_plan :
-    pushFilters .main plan997 =
-      .project [(col, .lit (.int 0))]
-        (.allNodeScan a1 (.unwind x [.int 0]
-          (.apply (.filter fls .argument)
-            (.filter fls (.aggregate [] none (.commit (.create c0 (.project [] .argument)))))))) := rfl
-
-/-- **#997.** Before: one node created. After: none. Rust main 0 nodes, C 1 (live). -/
-theorem bug997_create_skipped :
-    run [] plan997 g0 = .ok ([], ⟨1, [], []⟩) ∧
-    run [] (pushFilters .main plan997) g0 = .ok ([], g0) ∧
-    ¬ EffectSound (pushFilters .main) := by
-  refine ⟨rfl, rfl, fun h => ?_⟩
-  have := h plan997 g0
-  rw [show run [] (pushFilters .main plan997) g0 = .ok ([], g0) from rfl,
-      show run [] plan997 g0 = .ok ([], ⟨1, [], []⟩) from rfl] at this
-  simp [Same, g0] at this
-
-theorem bug997_rows_only_blind :
-    Same ((run [] (pushFilters .main plan997) g0).map Prod.fst) ((run [] plan997 g0).map Prod.fst) := rfl
-
 /-- `WHERE (CASE WHEN true THEN false ELSE x END)`: the conjunct reads `x`
-(here `false AND x`, the same verdict). Since #3092 it lands right above the
-`Unwind` that binds `x` (the Apply reports no variables: `Argument`, and the
-`Aggregate`'s empty outputs), not into the Apply, so the CREATE runs: 1 node. -/
+(here `false AND x`, the same verdict). It is pushed below `Unwind` (id 0 of
+`x` collides with the body's `CREATE ()` variable, id 0 of scope 1, as in the
+live EXPLAIN `Unwind → Filter → Apply`), but not into the Apply, so the
+CREATE runs: 1 node on Rust and C (live). -/
 def caseX : Expr := .and fls (.var x)
 
-theorem bug997_case_control :
+theorem case_control :
     pushFilters .main (plan997With caseX) =
-      .project [(col, .lit (.int 0))] (.allNodeScan a1 (.filter caseX (.unwind x [.int 0] apply997))) ∧
-    run [] (pushFilters .main (plan997With caseX)) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
-
-/-- Before #3092: pushed below `Unwind` (id 0 of `x` collided with the body's
-`CREATE ()` variable, id 0 of scope 1, seen through the `Aggregate`; live EXPLAIN
-`Unwind → Filter → Apply`), but not into the Apply: 1 node on Rust and C (live). -/
-theorem pre3092_bug997_case_control :
-    pushFilters .pre3092 (plan997With caseX) =
       .project [(col, .lit (.int 0))] (.allNodeScan a1 (.unwind x [.int 0] (.filter caseX apply997))) ∧
-    run [] (pushFilters .pre3092 (plan997With caseX)) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
-
-theorem bug997_fixed :
-    run [] (pushFilters .fixed plan997) g0 = run [] plan997 g0 := rfl
+    run [] (pushFilters .main (plan997With caseX)) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
 
 /-! ## #3352: OPTIONAL MATCH … WHERE after an aggregating WITH
 
@@ -478,7 +454,7 @@ WITH p, count(r0) AS n
 OPTIONAL MATCH (r:Rule)-[:SCOPED_TO]->(p) WHERE r.status = 'revoked'
 RETURN n, r.decided_at AS e
 ```
-Ids are scope-local (`binder.rs:2257-2268`, id = env length): before the WITH
+Ids are scope-local (`binder.rs`, id = env length): before the WITH
 `p, r0, _anon` are 0, 1, 2 of scope 0; after it `p, n, r, _anon` are 0, 1, 2, 3
 of scope 1. `get_variables` walks through the `Aggregate` into the pre-WITH
 subtree, so Case 2 inherits id 2 and believes `r` is bound at the `Argument`. -/
@@ -508,56 +484,102 @@ def plan3352 : Op :=
   .project [(nOut, .var nV), (eOut, .var r)]
     (.apply agg3352 (.optional [r, e1] (.filter revoked (.condTraverse e1 r p' RULE .argument))))
 
-/-- The live Rust EXPLAIN before #3092: `Optional → Conditional Traverse → Filter → Argument`. -/
-theorem pre3092_bug3352_plan :
-    pushFilters .pre3092 plan3352 =
-      .project [(nOut, .var nV), (eOut, .var r)]
-        (.apply agg3352 (.optional [r, e1] (.condTraverse e1 r p' RULE (.filter revoked .argument)))) := rfl
+/-- **#3352 fixed by #2981.** Before #2981 the live Rust EXPLAIN was `Optional →
+Conditional Traverse → Filter → Argument` (Case 2 inherited `gv agg3352`, which walks
+through the `Aggregate`). Case 2 now inherits `branch_visible_variables` (`bv`), the
+`Aggregate`'s outputs `p, n` only, so the filter on `r` stays above the traverse. -/
+theorem fixed3352_plan : pushFilters .main plan3352 = plan3352 := rfl
 
-/-- Why (before #3092): what the routing test sees at the `Argument` contains id 2 (the
-pre-WITH `_anon` edge), while by `(id, scope)` only `p, n` of scope 1 arrive
-there (the `Aggregate`'s outputs). `RoutesBound` fails. -/
-theorem pre3092_bug3352_routes_unbound :
-    avail .pre3092 (gv agg3352) .argument = gv agg3352 ∧ e0 ∈ gv agg3352 ∧
-    routes .pre3092 revoked (gv agg3352) = true ∧
-    ¬ RoutesBound revoked (aggNames [(p', .var p)] (some (nV, .var r0)) ++ gv .argument) := by
-  refine ⟨rfl, by decide, rfl, ?_⟩
-  intro h
-  have := h r (by simp [revoked, Expr.vars])
-  simp [aggNames, gv, r, p', nV] at this
+/-- What Case 2 inherits now: the outputs of the `Aggregate`, no pre-WITH id. -/
+theorem fixed3352_inherits_outputs :
+    bv agg3352 = [p', nV] ∧ routes .main revoked (bv agg3352) = false := ⟨rfl, rfl⟩
 
-/-- **#3352** (before #3092). Before push-down: `n = 1, e = 1` (the revoked rule; C: `e = 123`).
-After: `n = 1, e = null` (Rust before #3092, live). The graph is unchanged, so this is a
-row difference: `pushFilters .pre3092` is not even `RowSound`. -/
-theorem pre3092_bug3352_slot_collision_drops_match :
+/-- **#3352.** `n = 1, e = 1` (the revoked rule; C: `e = 123`). Before #2981 Rust
+returned `n = 1, e = null`; now the rows are kept. -/
+theorem fixed3352_rows_kept :
     run [] plan3352 g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) ∧
-    run [] (pushFilters .pre3092 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) ∧
-    ¬ RowSound (pushFilters .pre3092) := by
-  refine ⟨rfl, rfl, fun h => ?_⟩
-  have := h plan3352 g3352
-  rw [show run [] (pushFilters .pre3092 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .null)]], g3352) from rfl,
-      show run [] plan3352 g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) from rfl] at this
-  simp [Same, Except.map] at this
+    run [] (pushFilters .main plan3352) g3352 = run [] plan3352 g3352 := ⟨rfl, rfl⟩
 
-/-- Since #3092 `collect_subtree_variables` stops at the `Aggregate`: Case 2 inherits
-only its outputs `p, n` (ids 0, 1), exactly the variables available at the
-`Argument` by `(id, scope)`; `r` (id 2) is not among them, so the conjunct is not routed. -/
-theorem bug3352_routes_bound :
-    avail .main (sv agg3352) .argument = sv agg3352 ∧
-    sv agg3352 = aggNames [(p', .var p)] (some (nV, .var r0)) ++ sv .argument ∧
-    e0 ∉ sv agg3352 ∧ routes .main revoked (sv agg3352) = false := by decide
+/-! ## Write operators excluded, siblings of a write locked
 
-/-- **#3352 fixed by #3092**: the filter stays above the traverse and the revoked
-rule is found (`n = 1, e = 1`). -/
-theorem bug3352_fixed_main :
+`Cfg.main` keeps id-only routing and adds the write lock: the filter lands on the write-bearing
+branch's output, never on the rows that feed it. -/
+
+/-- At an `Apply` whose right branch writes, the left branch is never filtered:
+the Filter either stays or goes onto the right branch only. -/
+theorem main_left_untouched (inh : List Var) (p : Expr) (l r : Op) (hr : hasWrite r = true) :
+    pushAt .main inh p (.apply l r) = .filter p (.apply l r) ∨
+    pushAt .main inh p (.apply l r) = .apply l (.filter p r) := by
+  unfold pushAt
+  simp only [kids, excluded, isWriteOp, Cfg.main, locked, List.zipIdx_cons, List.zipIdx_nil]
+  by_cases h : routes Cfg.main p (avail ((if isApply (.apply l r) then
+      (([l, r].head?.map info).map Prod.fst).getD [] else []) ++ inh) r) = true <;>
+    simp_all [Cfg.main, setKids]
+
+/-- The filter over a write operator itself stays put (`Create`, `Commit`, `Merge`). -/
+theorem main_write_excluded (inh : List Var) (p : Expr) (c : Op) (hc : isWriteOp c = true) :
+    pushAt .main inh p c = .filter p c := by
+  unfold pushAt; simp [hc, Cfg.main]
+
+/-! ## `branch_visible_variables` and a two-child `Optional` ending the walk
+
+`Cfg.main` is the Rust of 21a34f5a3: the write lock, and Case 2 inherits `bv`
+and stops at a two-child `Optional`. One Filter's routing (`pushAt`) is unchanged, so
+every `Cfg.main` theorem about `pushAt` carries over. -/
+
+/-- #3352 stays fixed: the `Aggregate` exposes only `p, n`. -/
+theorem main_3352_fixed :
+    bv agg3352 = [p', nV] ∧ routes .main revoked (bv agg3352) = false ∧
     pushFilters .main plan3352 = plan3352 ∧
     run [] (pushFilters .main plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) :=
-  ⟨rfl, rfl⟩
+  ⟨rfl, rfl, rfl, rfl⟩
 
-/-- Routing by `(id, scope)` keeps the filter above the traverse. -/
-theorem bug3352_fixed :
-    pushFilters .fixed plan3352 = plan3352 ∧
-    run [] (pushFilters .fixed plan3352) g3352 = run [] plan3352 g3352 := ⟨rfl, rfl⟩
+/-- #748 and #997 stay fixed: the writes still run. -/
+theorem main_748_plan :
+    pushFilters .main plan748 =
+      .project [(col, .lit (.int 0))]
+        (.allNodeScan a1 (.apply (.project [(n0, .lit (.int 0))] .unit) (.filter fls body748))) := rfl
+
+theorem main_748_fixed :
+    run [] (pushFilters .main plan748) g0 = .ok ([], ⟨1, [], []⟩) := rfl
+
+theorem main_997_plan :
+    pushFilters .main plan997 =
+      .project [(col, .lit (.int 0))]
+        (.allNodeScan a1 (.unwind x [.int 0]
+          (.apply .argument
+            (.filter fls (.aggregate [] none (.commit (.create c0 (.project [] .argument)))))))) := rfl
+
+theorem main_997_fixed :
+    run [] (pushFilters .main plan997) g0 = .ok ([], ⟨1, [], []⟩) := rfl
+
+theorem main_controls :
+    run [] (pushFilters .main plan748star) g0 = .ok ([], ⟨1, [], []⟩) ∧
+    run [] (pushFilters .main (plan997With caseX)) g0 = .ok ([], ⟨1, [], []⟩) := ⟨rfl, rfl⟩
+
+/-- `MATCH (a) OPTIONAL MATCH (b) WHERE a = 0 RETURN a, b`: the planner emits a
+two-child `Optional([b])` over the scan of `a` and the match of `b` (with an
+`Argument` leaf). Since #3281 the walk stops there and inherits `bv` of the left
+branch (`a`), so `a = 0` lands on the `Argument`; before it the walk passed the
+`Optional` and inherited nothing. Same rows either way. -/
+def aV : Var := ⟨0, 0⟩
+def bV : Var := ⟨1, 0⟩
+def aIs0 : Expr := .eq (.var aV) (.lit (.int 0))
+def planOpt2 : Op := .optApply [bV] (.allNodeScan aV .unit) (.filter aIs0 (.allNodeScan bV .argument))
+def gOpt2 : G := ⟨2, [], []⟩
+
+theorem opt2_walk_stops :
+    pushFilters .main planOpt2 =
+      .optApply [bV] (.allNodeScan aV .unit) (.allNodeScan bV (.filter aIs0 .argument)) ∧
+    run [] (pushFilters .main planOpt2) gOpt2 = run [] planOpt2 gOpt2 ∧
+    run [] planOpt2 gOpt2 =
+      .ok ([[(aV, .int 0), (bV, .int 0)], [(aV, .int 0), (bV, .int 1)], [(aV, .int 1), (bV, .null)]], gOpt2) :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- A variable a lone operator binds again is still visible: `bv` takes the lone
+node's variables (`unwind x` over a `Project` that hides an `x` of the same id). -/
+theorem bv_rebinding_kept :
+    bv (.unwind x [.int 0] (.project [(x, .lit (.int 0))] .unit)) = [x, x] := rfl
 
 /-! ## A general fact the fix can build on -/
 
@@ -577,8 +599,7 @@ theorem forRows_keeps (f : Row → G → Res) (hf : ∀ x g rs g', f x g = .ok (
 
 /-- A plan with no `Create`/`Merge` leaves the graph unchanged, so between
 write-free plans `EffectSound` reduces to the rows criterion: the push-down
-theorems of `Basic` carry over to read-only plans, and the write barrier of
-`Cfg.fixed` only matters where a write is below. -/
+theorems of `Basic` carry over to read-only plans. -/
 theorem run_readonly : ∀ (op : Op) (arg : Row) (g : G) rs g',
     hasWrite op = false → run arg op g = .ok (rs, g') → g' = g := by
   intro op
@@ -587,6 +608,19 @@ theorem run_readonly : ∀ (op : Op) (arg : Row) (g : G) rs g',
     intro arg g rs g' _ h; simp [run] at h; exact h.2.symm
   | create | merge => intro _ _ _ _ hw; simp [hasWrite] at hw
   | apply l r ihl ihr =>
+    intro arg g rs g' hw h
+    simp only [hasWrite, Bool.or_eq_false_iff] at hw
+    simp only [run, bind, Except.bind] at h
+    rcases hl : run arg l g with e | ⟨xs, g1⟩ <;> rw [hl] at h
+    · cases h
+    · try simp only at h
+      rw [forRows_keeps _ (fun x g ys g' hx => by
+          try simp only [bind, Except.bind] at hx
+          rcases hr : run x r g with e | ⟨zs, g2⟩ <;> rw [hr] at hx
+          · cases hx
+          · simp [pure, Except.pure] at hx; rw [← hx.2]; exact ihr x g zs g2 hw.2 hr) xs g1 rs g' h]
+      exact ihl arg g xs g1 hw.1 hl
+  | optApply vs l r ihl ihr =>
     intro arg g rs g' hw h
     simp only [hasWrite, Bool.or_eq_false_iff] at hw
     simp only [run, bind, Except.bind] at h
@@ -619,7 +653,6 @@ theorem run_readonly : ∀ (op : Op) (arg : Row) (g : G) rs g',
          · simp [pure, Except.pure] at h; rw [← h.2]; exact ih arg g xs g1 hw hc)
       | (simp [pure, Except.pure] at h; rw [← h.2]; exact ih arg g xs g1 hw hc)
 
-
 /-! ## #2556: select_scan_node re-orders a chain and lands an inline filter early
 
 ```
@@ -630,12 +663,12 @@ RETURN count(post)
 ```
 The planner emits the chain bottom-up `(post)->(f)`, `(post)->(t:Tag)`,
 `Filter(t.id = 100)`, `(post)->(tag:Tag)` over `Unwind` (the inline-attr
-Filter directly above the hop that binds `t`, `planner/mod.rs:2178-2186`).
-`select_scan_node` then re-orders the chain (`select_scan_node.rs:681-1260`):
+Filter directly above the hop that binds `t`, `planner/mod.rs`).
+`select_scan_node` then re-orders the chain (`select_scan_node.rs`):
 
 * the best endpoint is `t`: `f` scores 3 (bound by `Unwind`), `t` 3
   (filtered 2 + labelled 1), and `t` wins on label cardinality (`f` has no
-  label, so `u64::MAX`) (:849-873, `score_endpoint` :98-132);
+  label, so `u64::MAX`) (:849-873, `score_endpoint` );
 * `best_pos = 1`, so the chain is rebuilt (:1179), on top of the kept outer
   child (`Unwind`, not a planner scan, :947-970);
 * `initial_bound` is `{best} ∪ ids(child)` (:979-990). With the child kept,
@@ -668,7 +701,7 @@ abbrev Hop := Var × Node × Node
 
 def BIG : Nat := 2 ^ 64
 
-/-- `collect_output_aliases` (select_scan_node.rs:391-440), the kinds used
+/-- `collect_output_aliases` (select_scan_node.rs), the kinds used
 here; scans and `Filter` children give no bound vars (:779-795). -/
 def outAliases : Op → List Nat
   | .unwind v _ _ => [v.id]
@@ -781,7 +814,7 @@ def selectChain (cfg : SsCfg) (cnt : Nat → Nat) (above : List Var) (op : Op) :
   | none => op
   | some (bn, pos, _) =>
     if pos = 0 then op else
-    let ib := (if cfg.seedBest then [bn.v.id] else []) ++ (sv child).map Var.id
+    let ib := (if cfg.seedBest then [bn.v.id] else []) ++ (gv child).map Var.id
     match orderHops cnt bv all hops.length ib hops with
     | none => op
     | some ord => (place ord child ib fs).getD op
@@ -809,6 +842,7 @@ def rowVars : Op → List Var
   | .hop e _ to _ c => [e, to.v] ++ rowVars c
   | .optional vs c => vs ++ rowVars c
   | .apply l r => rowVars l ++ rowVars r
+  | .optApply vs l r => vs ++ rowVars l ++ rowVars r
 
 /-- Every `Filter` reads only variables bound below it. -/
 def filtersBound : Op → Bool
@@ -817,7 +851,7 @@ def filtersBound : Op → Bool
   | .project _ c | .unwind _ _ c | .allNodeScan _ c | .labelScan _ _ c | .condTraverse _ _ _ _ c
   | .hop _ _ _ _ c | .optional _ c | .aggregate _ _ c | .commit c | .create _ c | .merge _ c =>
     filtersBound c
-  | .apply l r => filtersBound l && filtersBound r
+  | .apply l r | .optApply _ l r => filtersBound l && filtersBound r
 
 /-- **The property #2556 violates.** A plan rewrite never moves a Filter below
 the operator that binds a variable it reads: every Filter of a plan whose
@@ -891,7 +925,7 @@ theorem bug2556_t_seeded :
     maxByKey (bestKey cnt2556 [fV.id] [] [tV]) (candidates (spine 16 (.hop e7 postN tagN false
       (.filter tFilter (.hop e6 postN tN false (.hop e5 postN fN false child2556))))).1) =
       some (tN, 1, false) ∧
-    outAliases child2556 = [fV.id] ∧ tV.id ∉ (sv child2556).map Var.id := by decide
+    outAliases child2556 = [fV.id] ∧ tV.id ∉ (gv child2556).map Var.id := by decide
 
 /-- **#2556.** The planner's plan has every Filter over a bound variable; after
 `select_scan_node` `t.id = 100` sits below the hop that binds `t`. It reads
@@ -920,5 +954,8 @@ theorem bug2556_fixed :
 /-- `push_filters_down` is not the cause: on the planner's plan it leaves
 `t.id = 100` above `t`'s hop (the only child of that hop binds no `t`, by id). -/
 theorem bug2556_push_not_cause : pushFilters .main plan2556 = plan2556 := rfl
+
+/-- #2556's control is unchanged too. -/
+theorem pr3582_2556_push_not_cause : pushFilters .main plan2556 = plan2556 := rfl
 
 end Falkor.Opt.PushPlan

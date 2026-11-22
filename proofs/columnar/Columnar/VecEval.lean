@@ -2,7 +2,7 @@ import Columnar.Arith
 import FalkorExprSemantics.Frame
 
 /-!
-# `VectorEval::eval` over expr_semantics' expression trees (vector_expr.rs:211-271)
+# `VectorEval::eval` over expr_semantics' expression trees (vector_expr.rs)
 
 `Dispatch.lean` models the tree walk over an abstract `Kind`/`Node`; this module models it over
 proofs/expr_semantics' `E` — the `ExprIR` model whose per-row evaluator is `evalNode`
@@ -39,7 +39,7 @@ variable {Val C : Type}
 def aopOf : FalkorExpr.Eval.Arith → AOp
   | .sub => .sub | .mul => .mul | .div => .div | .rem => .rem
 
-/-- `CmpOp::from_expr_ir` (vectorized.rs:70) on the comparison arms of `E`. -/
+/-- `CmpOp::from_expr_ir` (vectorized.rs) on the comparison arms of `E`. -/
 def cmpOf : FalkorExpr.Eval.CmpOp → CmpOp
   | .lt => .lt | .gt => .gt | .le => .le | .ge => .ge
 
@@ -47,7 +47,7 @@ def isDistinct : E Val → Bool
   | .distinct _ => true
   | _ => false
 
-/-- The `FuncInvocation` guard (vector_expr.rs:253-258) on a non-aggregate call. -/
+/-- The `FuncInvocation` guard (vector_expr.rs) on a non-aggregate call. -/
 def fnGuard (f : Fn Val) (cs : List (E Val)) : Bool :=
   f.structFn.isNone && !f.write && !cs.any isDistinct
 
@@ -69,7 +69,7 @@ structure Arms (Val C : Type) where
 
 variable (A : Arms Val C)
 
-/-- `VectorEval::eval` (vector_expr.rs:211). -/
+/-- `VectorEval::eval` (vector_expr.rs). -/
 noncomputable def eval (e : E Val) (rows : List Nat) : Except String C :=
   let len := rows.length
   -- the recursive evaluator, available on strictly smaller trees
@@ -319,7 +319,7 @@ theorem eval_sound {Scope : Nat → Prop} {Rows : Nat → Prop} {HL : Fn Val →
 termination_by e => sizeOf e
 decreasing_by all_goals simp_wf; omega
 
-/-! ## `eval_values` (vector_expr.rs:285-306) -/
+/-! ## `eval_values` (vector_expr.rs) -/
 
 variable (A)
 

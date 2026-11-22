@@ -1,23 +1,6 @@
 import FalkorOptimizer.Basic
 /-
 # Syntactic helpers of the optimizer passes
-
-| here | there |
-| --- | --- |
-| `XD`, `X` | `ExprIR<Variable>` payloads / trees (variables, parameters, constants, calls, the rest) |
-| `anyX` | a BFS `walk().any(..)` over an expression |
-| `hasParam` | `expr_has_parameter` eliminate_true_filters.rs:75-79 |
-| `subst`, `evX` | `substitute_params` eliminate_true_filters.rs:83-98; a parameter-aware evaluator |
-| `refsVar` | `expr_references_variable` / `subtree_references_variable` references.rs:317-334 (a BFS, by `(id, scope)`) |
-| `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
-| `collectIds` | `collect_expr_variables` optimizer/mod.rs:92-100 |
-| `PT`, `subtreeVars`, `subtreeIds` | `collect_subtree_variables` optimizer/mod.rs:110-137 (#3092: stops at Project/Aggregate, their outputs only) |
-| `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
-| `isAnon`, `attrsEmpty` | `is_anon`, `rel_attrs_empty` fuse_anonymous_traverse.rs:36-51 (`node_attrs_empty` removed by #2390) |
-| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-192 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
-| `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
-| `branchOut` | `branch_output_variables` push_filters_down.rs:59-66 (#3092: `collect_subtree_variables` of a Project/Aggregate) |
-| `OutIR`, `branchOutPre3092`, `subtreeIdsPre3092` | history: both before #3092 (`copies.0`/`projections.0`; ids of `get_variables`) |
 -/
 namespace Falkor.Opt
 
@@ -182,67 +165,11 @@ theorem mem_collectIds (e : X) (i : Nat) : i ∈ collectIds e ↔ ∃ v, XD.var 
   · rintro ⟨d, hd, h⟩; cases d <;> simp at h; exact ⟨_, hd, h⟩
   · rintro ⟨v, hv, rfl⟩; exact ⟨_, hv, rfl⟩
 
-/-- History (before #3092): `collect_subtree_variables` was the ids of what `get_variables` reports. -/
-def subtreeIdsPre3092 (getVars : List Var) : List Nat := getVars.map Var.id
+/-- `collect_subtree_variables`: the ids of what `get_variables` reports. -/
+def subtreeIds (getVars : List Var) : List Nat := getVars.map Var.id
 
-theorem pre3092_mem_subtreeIds (gv : List Var) (i : Nat) : i ∈ subtreeIdsPre3092 gv ↔ ∃ v ∈ gv, v.id = i := by
-  simp [subtreeIdsPre3092]
-
-/-- A plan subtree as `collect_subtree_variables` reads it: `Project` (`exprs`,
-`copies` as `(old, new)` pairs), `Aggregate` (`names`, `projections` as `(old, new)`),
-and every other operator with the variables `push_node_variables` reports for it. -/
-inductive PT
-  | project (es : List Var) (cs : List (Var × Var)) (kids : List PT)
-  | aggregate (ns : List Var) (ps : List (Var × Var)) (kids : List PT)
-  | other (own : List Var) (kids : List PT)
-
-mutual
-/-- `collect_subtree_variables` (mod.rs:110-137): a Project/Aggregate contributes its
-outputs (the *new* side of each copy/projection) and is not descended; every other
-node contributes its own variables and is descended. (Rust uses a stack and a
-`HashSet`; only membership matters.) -/
-def subtreeVars : PT → List Var
-  | .project es cs _ => es ++ cs.map Prod.snd
-  | .aggregate ns ps _ => ns ++ ps.map Prod.snd
-  | .other own kids => own ++ subtreeVarsL kids
-def subtreeVarsL : List PT → List Var
-  | [] => []
-  | t :: ts => subtreeVars t ++ subtreeVarsL ts
-end
-
-def subtreeIds (t : PT) : List Nat := (subtreeVars t).map Var.id
-
-theorem mem_subtreeIds (t : PT) (i : Nat) : i ∈ subtreeIds t ↔ ∃ v ∈ subtreeVars t, v.id = i := by
+theorem mem_subtreeIds (gv : List Var) (i : Nat) : i ∈ subtreeIds gv ↔ ∃ v ∈ gv, v.id = i := by
   simp [subtreeIds]
-
-theorem mem_subtreeVarsL (ts : List PT) (v : Var) : v ∈ subtreeVarsL ts ↔ ∃ t ∈ ts, v ∈ subtreeVars t := by
-  induction ts with
-  | nil => simp [subtreeVarsL]
-  | cons t ts ih => simp [subtreeVarsL, ih]
-
-/-- Below a Project/Aggregate nothing is reported: the children do not matter. -/
-theorem subtreeIds_resets (es : List Var) (cs : List (Var × Var)) (k k' : List PT) :
-    subtreeIds (.project es cs k) = subtreeIds (.project es cs k') ∧
-    subtreeIds (.aggregate es cs k) = subtreeIds (.aggregate es cs k') := ⟨rfl, rfl⟩
-
-/-- Any other node: its own variables and those of every child subtree. -/
-theorem mem_subtreeIds_other (own : List Var) (kids : List PT) (i : Nat) :
-    i ∈ subtreeIds (.other own kids) ↔ (∃ v ∈ own, v.id = i) ∨ ∃ t ∈ kids, i ∈ subtreeIds t := by
-  simp only [mem_subtreeIds, subtreeVars, List.mem_append, mem_subtreeVarsL]
-  constructor
-  · rintro ⟨v, hv | ⟨t, ht, hv⟩, rfl⟩
-    · exact .inl ⟨v, hv, rfl⟩
-    · exact .inr ⟨t, ht, v, hv, rfl⟩
-  · rintro (⟨v, hv, rfl⟩ | ⟨t, ht, v, hv, rfl⟩)
-    · exact ⟨v, .inl hv, rfl⟩
-    · exact ⟨v, .inr ⟨t, ht, hv⟩, rfl⟩
-
-/-- #3092 vs before: an `Aggregate` over a child that binds id 2 (the #3352 shape).
-`get_variables` walked through it (`names` and the child's variables); now only its
-outputs are reported. -/
-theorem subtreeIds_stops_at_aggregate :
-    subtreeIds (.aggregate [⟨0, 1⟩, ⟨1, 1⟩] [] [.other [⟨2, 0⟩] []]) = [0, 1] ∧
-    2 ∈ subtreeIdsPre3092 [⟨0, 1⟩, ⟨1, 1⟩, ⟨2, 0⟩] := by decide
 
 /-! ## `extract_count_variable` -/
 
@@ -262,7 +189,10 @@ theorem countVar_spec (e : X) (i : Nat) :
 
 /-! ## `fuse_anonymous_traverse` preconditions -/
 
-def isAnon (name : Option String) : Bool := name.any (·.startsWith "_anon")
+/-- `Variable::is_unnamed` (ast.rs, #3303): an unnamed pattern entity has no name.
+Before #3303 the test was the `_anon` prefix of the name (`is_anon`), which a user name such
+as `_anon_x` also passed. -/
+def isUnnamed (name : Option String) : Bool := name.isNone
 
 /-- An inline attribute map is "empty" iff it is a `Map` with no entries. -/
 def attrsEmpty : X → Bool
@@ -274,8 +204,36 @@ theorem attrsEmpty_iff (a : X) : attrsEmpty a = true ↔ a = .node .map [] := by
   · intro h; match a, h with | .node .map [], _ => rfl
   · rintro rfl; rfl
 
-theorem isAnon_none : isAnon none = false := rfl
-theorem isAnon_some (n : String) : isAnon (some n) = n.startsWith "_anon" := rfl
+theorem isUnnamed_none : isUnnamed none = true := rfl
+/-- No written name, `_anon…` included, counts as unnamed (#3303). -/
+theorem isUnnamed_some (n : String) : isUnnamed (some n) = false := rfl
+
+/-- `Alias` (ast.rs): a name the query wrote, or a numbered unnamed entity. -/
+inductive Alias
+  | named (n : String)
+  | anon (k : Nat)
+
+/-- `Alias::name` (ast.rs). -/
+def Alias.name : Alias → Option String
+  | .named n => some n
+  | .anon _ => none
+
+/-- `Variable::name` then `Variable::is_unnamed` (`self.name().is_none()`): the variable's
+`alias : Option<Alias>` is `None` for a planner temporary. -/
+def varIsUnnamed (alias : Option Alias) : Bool := (alias.bind Alias.name).isNone
+
+/-- **PROVEN** (`Variable::is_unnamed`, #3303): a variable is unnamed exactly when its alias is
+absent (a planner temporary) or numbered (`Anon`); a written name, `_anon_x` included, never is.
+`isUnnamed` above is the test applied to the name this yields. -/
+theorem varIsUnnamed_iff (a : Option Alias) :
+    varIsUnnamed a = true ↔ (a = none ∨ ∃ k, a = some (.anon k)) := by
+  cases a with
+  | none => simp [varIsUnnamed]
+  | some al => cases al <;> simp [varIsUnnamed, Alias.name]
+
+theorem varIsUnnamed_named (n : String) : varIsUnnamed (some (.named n)) = false := rfl
+
+theorem varIsUnnamed_eq (a : Option Alias) : varIsUnnamed a = isUnnamed (a.bind Alias.name) := rfl
 
 /-- What `can_fuse` reads of a CondTraverse. -/
 structure CT where
@@ -300,10 +258,10 @@ structure CT where
 reference check sees) and added the two edges to the reference check (:181-185). -/
 def canFuse (p c : CT) (unread : Var → Bool) : Bool :=
   p.bind && c.bind && !p.optional && !c.optional && !p.transposed && !c.transposed &&
-  isAnon p.edgeName && isAnon c.edgeName && !p.emit && !c.emit &&
+  isUnnamed p.edgeName && isUnnamed c.edgeName && !p.emit && !c.emit &&
   p.siblings.isEmpty && c.siblings.isEmpty && !p.bidirectional && !c.bidirectional &&
   !p.varLen && !c.varLen && attrsEmpty p.edgeAttrs && attrsEmpty c.edgeAttrs &&
-  p.fromV == c.toV && isAnon p.fromName && p.fromLabels.isEmpty &&
+  p.fromV == c.toV && isUnnamed p.fromName && p.fromLabels.isEmpty &&
   unread p.fromV && unread p.edgeV && unread c.edgeV
 
 /-- Fusion only happens on two plain, storage-direction, anonymous, unfiltered,
@@ -312,8 +270,8 @@ edges — read by no operator of the plan (its inline map, if any, is a Filter t
 it) — the preconditions of `fuse_same_support` (Passes.lean). -/
 theorem canFuse_spec (p c : CT) (u : Var → Bool) (h : canFuse p c u = true) :
     p.optional = false ∧ c.optional = false ∧ p.emit = false ∧ c.emit = false ∧
-    isAnon p.edgeName = true ∧ isAnon c.edgeName = true ∧ p.fromV = c.toV ∧
-    isAnon p.fromName = true ∧ p.fromLabels = [] ∧
+    isUnnamed p.edgeName = true ∧ isUnnamed c.edgeName = true ∧ p.fromV = c.toV ∧
+    isUnnamed p.fromName = true ∧ p.fromLabels = [] ∧
     p.edgeAttrs = .node .map [] ∧ c.edgeAttrs = .node .map [] ∧ p.varLen = false ∧ c.varLen = false ∧
     p.siblings = [] ∧ c.siblings = [] ∧ u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
   simp only [canFuse, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff] at h
@@ -361,60 +319,91 @@ theorem fusedCT_spec (c : CT) : (fusedCT c).optional = true ∧ { fusedCT c with
 
 /-! ## `branch_output_variables` -/
 
-/-- `branch_output_variables` (push_filters_down.rs:59-66, since #3092): a
-Project/Aggregate reports `collect_subtree_variables` of itself; anything else `none`. -/
-def branchOut : PT → Option (List Nat)
-  | t@(.project ..) | t@(.aggregate ..) => some (subtreeIds t)
-  | .other .. => none
-
-/-- Above a Project/Aggregate only its outputs are visible — the *new* variable of
-each copy/projection (project.rs:115, aggregate.rs:716 insert `new_var`); elsewhere
-`none` (the subtree's variables). Ids only — scope is dropped (see `id_only_routing_unsound`). -/
-theorem branchOut_spec (t : PT) :
-    (∀ es cs k, t = .project es cs k → ∀ i, i ∈ (branchOut t).getD [] ↔ ∃ v ∈ es ++ cs.map Prod.snd, v.id = i) ∧
-    (∀ ns ps k, t = .aggregate ns ps k → ∀ i, i ∈ (branchOut t).getD [] ↔ ∃ v ∈ ns ++ ps.map Prod.snd, v.id = i) ∧
-    (∀ own k, t = .other own k → branchOut t = none) := by
-  refine ⟨?_, ?_, ?_⟩
-  · rintro es cs k rfl i; simp [branchOut, mem_subtreeIds, subtreeVars]
-  · rintro ns ps k rfl i; simp [branchOut, mem_subtreeIds, subtreeVars]
-  · rintro own k rfl; rfl
-
-/-- The output contract lives in one place: `branch_output_variables` of a
-Project/Aggregate is `collect_subtree_variables` of it. -/
-theorem branchOut_eq_subtreeIds (t : PT) (h : (branchOut t).isSome) : branchOut t = some (subtreeIds t) := by
-  cases t <;> simp_all [branchOut]
-
-/-- The copy's *new* variable — what the Project actually outputs — is reported
-(fixed by #3092; before it, only the parent-scope id was: `pre3092_branchOut_copy_old`). -/
-theorem branchOut_copy_new :
-    branchOut (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)] []) = some [5] := rfl
-
-/-! ### History: `branch_output_variables` before #3092 -/
-
-/-- `Project.copies` holds `(old, new)` pairs (binder.rs:2234; project.rs:115
-inserts `new_var`); before #3092 `branch_output_variables` read the first component. -/
+/-- `Project.copies` and `Aggregate.projections` hold `(old, new)` pairs
+(binder.rs; project.rs and aggregate.rs write `new_var`). Since
+#3281 `branch_output_variables(node, include_copies)` (push_filters_down.rs)
+reads the second component (the slot the copy is written to), and only when
+`include_copies` (the routing sets, :251); `branch_visible_variables` (:99) passes `false`. -/
 inductive OutIR
   | project (exprs : List Var) (copies : List (Var × Var))
-  | aggregate (names projections : List Var)
+  | aggregate (names : List Var) (projections : List (Var × Var))
   | other
 
-def branchOutPre3092 : OutIR → Option (List Nat)
-  | .project es cs => some (es.map Var.id ++ cs.map (·.1.id))
-  | .aggregate ns ps => some (ns.map Var.id ++ ps.map Var.id)
+def copied (inc : Bool) (cs : List (Var × Var)) : List Nat :=
+  if inc then cs.map (·.2.id) else []
+
+def branchOut (inc : Bool) : OutIR → Option (List Nat)
+  | .project es cs => some (es.map Var.id ++ copied inc cs)
+  | .aggregate ns ps => some (ns.map Var.id ++ copied inc ps)
   | .other => none
 
-theorem pre3092_branchOut_spec (o : OutIR) :
-    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOutPre3092 o).getD [] ↔ ∃ v ∈ es ++ cs.map Prod.fst, v.id = i) ∧
-    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOutPre3092 o).getD [] ↔ ∃ v ∈ ns ++ ps, v.id = i) ∧
-    (o = .other → branchOutPre3092 o = none) := by
+/-- Above a Project/Aggregate only its outputs are visible (the named ones, and
+the copies' destinations when `inc`); elsewhere `none` (the subtree's variables).
+Ids only — scope is dropped (see `id_only_routing_unsound`). -/
+theorem branchOut_spec (inc : Bool) (o : OutIR) :
+    (∀ es cs, o = .project es cs → ∀ i, i ∈ (branchOut inc o).getD [] ↔
+      ∃ v ∈ es ++ (if inc then cs.map Prod.snd else []), v.id = i) ∧
+    (∀ ns ps, o = .aggregate ns ps → ∀ i, i ∈ (branchOut inc o).getD [] ↔
+      ∃ v ∈ ns ++ (if inc then ps.map Prod.snd else []), v.id = i) ∧
+    (o = .other → branchOut inc o = none) := by
   refine ⟨?_, ?_, ?_⟩
-  · rintro es cs rfl i; simp [branchOutPre3092, or_and_right, exists_or]
-  · rintro ns ps rfl i; simp [branchOutPre3092, or_and_right, exists_or]
+  · rintro es cs rfl i
+    cases inc <;> simp [branchOut, copied, or_and_right, exists_or]
+    exact or_congr_right ⟨fun ⟨a, b, h1, h2⟩ => ⟨b, ⟨a, h1⟩, h2⟩, fun ⟨b, ⟨a, h1⟩, h2⟩ => ⟨a, b, h1, h2⟩⟩
+  · rintro ns ps rfl i
+    cases inc <;> simp [branchOut, copied, or_and_right, exists_or]
+    exact or_congr_right ⟨fun ⟨a, b, h1, h2⟩ => ⟨b, ⟨a, h1⟩, h2⟩, fun ⟨b, ⟨a, h1⟩, h2⟩ => ⟨a, b, h1, h2⟩⟩
   · rintro rfl; rfl
 
-/-- Before #3092 the copy's *new* variable was not reported, only the parent-scope id. -/
-theorem pre3092_branchOut_copy_old :
-    branchOutPre3092 (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
+/-- Since #3281 the copy's *new* variable — what the Project actually outputs — is
+reported for routing, and no copy is visible to a later clause. -/
+theorem branchOut_copy_new :
+    branchOut true (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [5] ∧
+    branchOut false (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [] := ⟨rfl, rfl⟩
+
+/-! ## `branch_visible_variables` -/
+
+/-- A plan node as `branch_visible_variables` (push_filters_down.rs) sees it:
+`reset` is a `Project`/`Aggregate` with `branch_output_variables(_, false)` =
+`outs`; `semi` a `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer`; `plain` any
+other operator. `own` is `collect_subtree_variables` of the lone node. -/
+inductive VT where
+  | reset (outs : List Nat) (kids : List VT)
+  | semi (own : List Nat) (kids : List VT)
+  | plain (own : List Nat) (kids : List VT)
+
+mutual
+def visT : VT → List Nat
+  | .reset outs _ => outs
+  | .semi own [] => own
+  | .semi own (k :: _) => own ++ visT k
+  | .plain own ks => own ++ visL ks
+def visL : List VT → List Nat
+  | [] => []
+  | k :: ks => visT k ++ visL ks
+end
+
+/-- A `Project`/`Aggregate` hides everything beneath it. -/
+theorem visT_reset (outs : List Nat) (ks : List VT) : visT (.reset outs ks) = outs := by
+  simp [visT]
+
+/-- A (anti) semi-join or `OrApplyMultiplexer` exposes only its first child:
+the existence sub-plans' variables never count. -/
+theorem visT_semi_first (own : List Nat) (k : VT) (ks ks' : List VT) :
+    visT (.semi own (k :: ks)) = visT (.semi own (k :: ks')) := by
+  simp [visT]
+
+/-- Any other operator exposes its own variables and every child's. -/
+theorem visT_plain (own : List Nat) (ks : List VT) :
+    visT (.plain own ks) = own ++ visL ks := by
+  simp [visT]
+
+/-- `MATCH (x:A:B) WHERE (x)-[:R]->() CALL { OPTIONAL MATCH (n:A:B {id: 3}) … }`
+(the PR's test): the left branch is `SemiApply(Scan x, Traverse(_anon…, Argument))`;
+only `x` (id 0) is visible, not the existence sub-plan's anonymous ids 1, 2. -/
+theorem visT_pattern_predicate :
+    visT (.semi [] [.plain [0] [], .plain [1, 0, 2] [.plain [] []]]) = [0] := by
+  simp [visT, visL]
 
 /-! ## `utilize_node_by_id`'s parent lookup -/
 
@@ -423,7 +412,7 @@ def parentPath : List Nat → Option (List Nat)
   | [] => none
   | p => some p.dropLast
 
-/-- `utilize_node_by_id.rs:118` unwraps the parent of every label/all-node scan;
+/-- `utilize_node_by_id.rs` unwraps the parent of every label/all-node scan;
 a scan at the root (the plan of `CALL … YIELD … MATCH (n)`, which validation lets
 through — planner_build `call_then_match_accepted`) has none: the server panics. -/
 theorem root_scan_has_no_parent : parentPath [] = none := rfl
