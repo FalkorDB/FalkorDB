@@ -1,7 +1,7 @@
 import PendingCommit.PendingState
 /-
 # Created relationships, label scans and degrees in `Pending`
-(pending.rs:902-1200: `remove_pending_relationships_for_node` to `has_created_relationships`). See `PendingState.lean`'s header for the statements.
+(pending.rs: `remove_pending_relationships_for_node` to `has_created_relationships`). See `PendingState.lean`'s header for the statements.
 -/
 namespace PendingCommit.PS
 open PA
@@ -40,13 +40,13 @@ theorem createdRel_spec (p : P) (h : RelInv p) (rid f to t : Nat) (hf : fget p.r
       simp [createdRel]
     rw [e1]
     by_cases hr : r = rid
-    · subst hr; rw [if_pos rfl]
+    · subst hr; rw [ite_eq_left rfl]
       by_cases ht : t' = t
       · subst ht; simp
-      · rw [if_neg ht]; constructor
+      · rw [ite_eq_right ht]; constructor
         · intro e; cases e; exact absurd rfl ht
         · intro hm; exact absurd hm (hfresh t')
-    · rw [if_neg hr, h.1 r t']
+    · rw [ite_eq_right hr, h.1 r t']
       by_cases ht : t' = t
       · subst ht; simp [hr]
       · simp [ht]
@@ -117,9 +117,7 @@ def rmStep (p : P) (x : (Nat × Nat × Nat) × Nat) : P :=
     | none => p.relsByType
   { p with relTypes := frem p.relTypes e.1, relsByType := rb, newR := frem p.newR e.1,
            deletedR := p.deletedR.filter (· != e.1), taken := p.taken.filter (· != e.1),
-           cancelledR := p.cancelledR ++ [(e.1, t, e.2.1, e.2.2)],
-           -- `cancelled_properties += attrs.as_deref().map_or(0, count_set)` (:955, #3030)
-           cancelledP := p.cancelledP + ((fget p.newR e.1).map countSet).getD 0 }
+           cancelledR := p.cancelledR ++ [(e.1, t, e.2.1, e.2.2)] }
 
 def removeRels (p : P) (id : Nat) : P := (collect p id).foldl rmStep p
 
@@ -196,7 +194,7 @@ theorem fget_of_mem {V : Type} : ∀ (m : FMap V), (m.map (·.1)).Nodup → ∀ 
     rcases h with ⟨rfl, rfl⟩ | h
     · simp
     · have : a ≠ t := fun e => hnd.1 (e ▸ List.mem_map_of_mem (f := (·.1)) h)
-      rw [if_neg this]; exact fget_of_mem m hnd.2 t es h
+      rw [ite_eq_right this]; exact fget_of_mem m hnd.2 t es h
 
 theorem mem_of_fget {V : Type} : ∀ (m : FMap V) t es, fget m t = some es → (t, es) ∈ m
   | [], _, _, h => by simp [fget] at h
@@ -293,30 +291,5 @@ theorem removeRels_none_incident (p : P) (h : RelInv p) (hk : (p.relsByType.map 
     (e : Nat × Nat × Nat) (he : e ∈ grp (removeRels p id) t) : incident id e = false := by
   rw [(removeRels_spec p h hk id).2.1 t] at he
   simpa using (List.mem_filter.1 he).2
-
-/-! ## `cancelled_properties` (#3030) -/
-
-/-- What one cascaded relationship adds to `cancelled_properties`: `count_set` of its
-staged `new_relationships_attrs`, 0 when it has none. -/
-def relProps (p : P) (x : (Nat × Nat × Nat) × Nat) : Nat := ((fget p.newR x.1.1).map countSet).getD 0
-
-/-- **`foldl_rmStep_cancelledP`**: the cascade adds exactly `count_set` of every
-cascaded relationship's staged attributes (read before the cascade), each once. -/
-theorem foldl_rmStep_cancelledP : ∀ (L : List ((Nat × Nat × Nat) × Nat)) (p : P), (Rids L).Nodup →
-    (L.foldl rmStep p).cancelledP = p.cancelledP + (L.map (relProps p)).sum
-  | [], p, _ => by simp
-  | x :: L, p, h => by
-    simp only [Rids, List.map_cons, List.nodup_cons] at h
-    simp only [List.foldl_cons, List.map_cons, List.sum_cons]
-    rw [foldl_rmStep_cancelledP L _ h.2]
-    have hm : L.map (relProps (rmStep p x)) = L.map (relProps p) := List.map_congr_left (fun y hy => by
-      have hne : y.1.1 ≠ x.1.1 := fun e => h.1 (e ▸ List.mem_map_of_mem hy)
-      obtain ⟨e, t⟩ := x
-      simp only [relProps, rmStep, fget_frem]
-      rw [if_neg hne])
-    rw [hm]
-    obtain ⟨e, t⟩ := x
-    simp only [rmStep, relProps]
-    omega
 
 end PendingCommit.PS

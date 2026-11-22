@@ -23,7 +23,7 @@ termination_by buf.length
 decreasing_by simp; have : buf.length ≠ 0 := by simpa using h
               omega
 
-/-- `EffectsPayload::describe` (`effects/mod.rs:246`): size line, the format's
+/-- `EffectsPayload::describe` (`effects/mod.rs`): size line, the format's
 own lines for version 3 (`v3lines`), the first 2 KiB as hex, and a tail note. -/
 def describeTop (v3lines : Bytes → List Line) (buf : Bytes) : List DLine :=
   let head := [DLine.size buf.length]
@@ -50,7 +50,7 @@ theorem describeTop_spec (v3lines : Bytes → List Line) (buf : Bytes) :
   · intro h; subst h; rfl
   · unfold describeTop; split <;> simp
 
-/-- `EffectsPayload::apply` (`effects/mod.rs:292`): empty is a no-op, version 3
+/-- `EffectsPayload::apply` (`effects/mod.rs`): empty is a no-op, version 3
 goes to the v3 format, any other version is `UnsupportedVersion`. -/
 def applyTop {G E} (v3apply : G → Bytes → Except E G) (unsupported : Nat → E) (g : G) (buf : Bytes) : Except E G :=
   match buf.head? with
@@ -65,17 +65,17 @@ theorem applyTop_spec {G E} (f : G → Bytes → Except E G) (u : Nat → E) (g 
 
 /-! ### `EffectsBuffer` -/
 
-/-- `std::io::Write for EffectsBuffer` (`:422`, `:430`): append all, report all. -/
+/-- `std::io::Write for EffectsBuffer`: append all, report all. -/
 def ebWrite (buf b : Bytes) : Bytes × Nat := (buf ++ b, b.length)
 def ebFlush (buf : Bytes) : Bytes := buf
-/-- `EffectWrite for EffectsBuffer` (`:436-450`): the same as `Vec<u8>`'s. -/
+/-- `EffectWrite for EffectsBuffer`: the same as `Vec<u8>`'s. -/
 def ebEffectWrite : EffectWrite Bytes := vecWrite
 
 theorem ebWrite_spec (buf b : Bytes) : ebWrite buf b = (buf ++ b, b.length) ∧ ebFlush buf = buf := ⟨rfl, rfl⟩
 theorem eb_is_vec : ebEffectWrite = vecWrite := rfl
 
-/-- `EffectsBuffer::new` / `default` (`:456`, `:464`) = `new_buffer()`;
-`is_empty` (`:473`) = the format's; `build*`/`replicate` delegate (`:484-540`). -/
+/-- `EffectsBuffer::new` / `default` = `new_buffer()`;
+`is_empty` = the format's; `build*`/`replicate` delegate. -/
 def ebNew : Bytes := fmtNewBuffer
 theorem ebNew_isEmpty : fmtIsEmpty ebNew = true := rfl
 theorem ebNew_eq : ebNew = [3, 0] := rfl

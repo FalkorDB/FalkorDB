@@ -1,7 +1,8 @@
 import FalkorTemporal.Pure
 import FalkorTemporal.CalendarLaws
+import FalkorTemporal.PadAux
 /-!
-# Temporal accessors and formatting (value.rs:261-607)
+# Temporal accessors and formatting (value.rs)
 
 chrono's `Utc.timestamp_opt(t, 0)` is modelled by `ChronoDT`: whether it yields
 `LocalResult::Single` (`valid`), and the two derived fields we do not recompute
@@ -42,7 +43,7 @@ def dayOfQuarter (t : Int) : Int :=
   dayOf t - daysFromCivil (yearOf t) ((quarterOf t - 1) * 3 + 1) 1 + 1
 def weekDayIso (t : Int) : Int := let w := K.dowSun (dayOf t); if w = 0 then 7 else w
 
-/-- `get_datetime_component` (value.rs:478), the `if … else if` chain in source order. -/
+/-- `get_datetime_component` (value.rs), the `if … else if` chain in source order. -/
 def getDatetimeComponent (t : Int) (c : String) : Except String (Option Int) :=
   if !K.valid t then .ok none else
   if eqIC c "second" then .ok (some (secondOf t))
@@ -62,7 +63,7 @@ def getDatetimeComponent (t : Int) (c : String) : Except String (Option Int) :=
   else if eqIC c "microsecond" || eqIC c "nanosecond" then .ok (some 0)
   else .error s!"unknown datetime component {c}"
 
-/-- `get_date_component` (value.rs:537). -/
+/-- `get_date_component` (value.rs). -/
 def getDateComponent (t : Int) (c : String) : Except String (Option Int) :=
   if !K.valid t then .ok none else
   if eqIC c "day" then .ok (some (mdayOf t))
@@ -77,7 +78,7 @@ def getDateComponent (t : Int) (c : String) : Except String (Option Int) :=
   else if eqIC c "dayOfQuarter" || eqIC c "quarterDay" then .ok (some (dayOfQuarter t))
   else .error s!"unknown date component {c}"
 
-/-- `get_time_component` (value.rs:585). -/
+/-- `get_time_component` (value.rs). -/
 def getTimeComponent (t : Int) (c : String) : Except String (Option Int) :=
   if !K.valid t then .ok none else
   if eqIC c "second" then .ok (some (secondOf t))
@@ -130,23 +131,14 @@ theorem datetime_unknown (t : Int) (h : K.valid t = true) :
     getDatetimeComponent K t "epochSeconds" = .error "unknown datetime component epochSeconds" := by
   simp [getDatetimeComponent, h, eqIC]; decide
 
-/-! ### `format_datetime` (value.rs:261), `format_date` (:281), `format_time`
+/-! ### `format_datetime` (value.rs), `format_date` (:281), `format_time`
 
-Since #2986/#3575 `format_datetime` and `format_date` no longer go through chrono: they take
+`format_datetime` and `format_date` do not go through chrono: they take
 `div_euclid`/`rem_euclid` of the i64, `civil_from_days_wide` (year kept as i64, so every
 persisted timestamp has its real year) and `push_date`. They are total: no
 `<invalid timestamp>` branch. `format_time` still uses chrono. -/
 
-/-- `{:02}` / `{:04}` of a non-negative number: left-pad with `0` (no truncation). -/
-def pad (w : Nat) (n : Nat) : String :=
-  let s := toString n
-  String.ofList (List.replicate (w - s.length) '0') ++ s
-
-/-- `write_two_digits` (value.rs:853): `v / 10 % 10` and `v % 10` as ASCII digits. -/
-def twoDigits (v : Nat) : String :=
-  String.ofList [Char.ofNat (48 + v / 10 % 10), Char.ofNat (48 + v % 10)]
-
-/-- `push_date` (value.rs:828): years `0..=9999` through `write_two_digits` (4 digits), any
+/-- `push_date` (value.rs): years `0..=9999` through `write_two_digits` (4 digits), any
 other year as `{sign}{:04}` of its magnitude, so no digit is lost and a negative year keeps
 its `-`. -/
 def pushDate (y : Int) (m d : Nat) : String :=
@@ -154,12 +146,12 @@ def pushDate (y : Int) (m d : Nat) : String :=
     twoDigits (y.toNat / 100) ++ twoDigits (y.toNat % 100) ++ "-" ++ twoDigits m ++ "-" ++ twoDigits d
   else (if y < 0 then "-" else "") ++ pad 4 y.natAbs ++ "-" ++ pad 2 m ++ "-" ++ pad 2 d
 
-/-- `format_date` (value.rs:281). `/` is `div_euclid` on a positive divisor. -/
+/-- `format_date` (value.rs). `/` is `div_euclid` on a positive divisor. -/
 def formatDate (t : Int) : String :=
   let (y, m, d) := civilFromDaysI (t / 86400)
   pushDate y m.toNat d.toNat
 
-/-- `format_datetime` (value.rs:261): the date, then `T` and `write_two_digits` of the
+/-- `format_datetime` (value.rs): the date, then `T` and `write_two_digits` of the
 hour, minute, second of `t.rem_euclid(86400)`. -/
 def formatDatetime (t : Int) : String :=
   let (y, m, d) := civilFromDaysI (t / 86400)
@@ -169,10 +161,6 @@ def formatDatetime (t : Int) : String :=
 
 theorem twoDigits_eq_pad (v : Nat) (h : v < 100) : twoDigits v = pad 2 v := by
   revert v h; decide
-
-theorem fourDigits_aux :
-    ∀ a, a < 100 → ∀ b, b < 100 → twoDigits a ++ twoDigits b = pad 4 (a * 100 + b) := by
-  decide +kernel
 
 theorem fourDigits_eq_pad (y : Nat) (h : y ≤ 9999) :
     twoDigits (y / 100) ++ twoDigits (y % 100) = pad 4 y := by
@@ -189,7 +177,7 @@ theorem pushDate_eq (y : Int) (m d : Nat) (hm : m < 100) (hd : d < 100) :
     have e : y.natAbs = y.toNat := by omega
     have h1 : ¬ y < 0 := by omega
     have := fourDigits_eq_pad y.toNat (by omega)
-    rw [e, if_neg h1, ← this, twoDigits_eq_pad m hm, twoDigits_eq_pad d hd]
+    rw [e, ite_eq_right h1, ← this, twoDigits_eq_pad m hm, twoDigits_eq_pad d hd]
     simp [String.append_assoc]
   · rfl
 
@@ -241,7 +229,7 @@ theorem format_wide_years :
 theorem formatDate_wide_distinct :
     pushDate 12345 1 1 ≠ pushDate 2345 1 1 ∧ pushDate (-5) 1 1 ≠ pushDate 5 1 1 := by decide +kernel
 
-/-- `format_time` (value.rs:291), still chrono's validity test. -/
+/-- `format_time` (value.rs), still chrono's validity test. -/
 def formatTime (t : Int) : String :=
   if K.valid t then pad 2 (hourOf t).toNat ++ ":" ++ pad 2 (minuteOf t).toNat ++ ":" ++
     pad 2 (secondOf t).toNat
@@ -252,7 +240,7 @@ theorem pad2_length : ∀ n, n < 100 → (pad 2 n).length = 2 := by decide
 /-- `format_time` of a valid timestamp is exactly `HH:MM:SS` (8 characters). -/
 theorem formatTime_length (t : Int) (h : K.valid t = true) : (formatTime K t).length = 8 := by
   have r := clock_ranges t
-  simp only [formatTime, h, if_true, String.length_append]
+  simp only [formatTime, h, ite_true, String.length_append]
   rw [pad2_length _ (by omega), pad2_length _ (by omega), pad2_length _ (by omega)]
   rfl
 

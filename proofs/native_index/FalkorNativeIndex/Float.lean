@@ -1,6 +1,6 @@
 set_option linter.unusedSimpArgs false
 /-!
-# `f64` at the bit level, and `encode_f64` (`graph/src/index/falkordb/encode.rs:50-55`)
+# `f64` at the bit level, and `encode_f64` (`graph/src/index/falkordb/encode.rs`)
 
 An `f64` is modelled as **its IEEE-754 binary64 encoding** (`f64::to_bits`), a `Nat < 2^64`. This
 represents every value the Rust can hold: both zeros (`0` and `2^63`), every NaN sign and payload,
@@ -17,7 +17,7 @@ exponent‖fraction field orders as the integer it spells; `±0` compare equal; 
 
 namespace NI
 
-/-- `2^63`, the IEEE sign bit `SIGN` (`encode.rs:21`). -/
+/-- `2^63`, the IEEE sign bit `SIGN` (`encode.rs`). -/
 def SIGN : Nat := 9223372036854775808
 /-- `2^64`. -/
 def W : Nat := 18446744073709551616
@@ -46,7 +46,7 @@ def isZero (x : Nat) : Bool := fpcmp x 0 == some .eq
 /-- `u64` `!x`, via `BitVec`. -/
 def u64not (x : Nat) : Nat := (~~~(BitVec.ofNat 64 x)).toNat
 
-/-- `encode_f64` (`encode.rs:50-55`), line by line:
+/-- `encode_f64` (`encode.rs`), line by line:
     `let x = if x == 0.0 { 0.0 } else { x }; let bits = x.to_bits();
      if bits & SIGN == 0 { bits | SIGN } else { !bits }`. -/
 def encodeF64 (x : Nat) : Nat :=
@@ -134,7 +134,7 @@ theorem encodeF64_eq (x : Nat) (hx : x < W) : encodeF64 x = ek x := by
   by_cases hz : x % SIGN = 0
   · have : isZero x = true := (isZero_iff x hx).2 hz
     simp only [this, ite_true, hz]
-    rw [if_pos ((and_sign 0 (by decide)).2 (by decide)), or_sign 0 (by decide)]
+    rw [ite_eq_left ((and_sign 0 (by decide)).2 (by decide)), or_sign 0 (by decide)]
     rfl
   · have : isZero x = false := by
       cases h : isZero x
@@ -142,8 +142,8 @@ theorem encodeF64_eq (x : Nat) (hx : x < W) : encodeF64 x = ek x := by
       · exact absurd ((isZero_iff x hx).1 h) hz
     simp only [this, hz, Bool.false_eq_true, ite_false]
     by_cases hs : x < SIGN
-    · rw [if_pos ((and_sign x hx).2 hs), or_sign x hs, if_pos hs]
-    · rw [if_neg (fun h => hs ((and_sign x hx).1 h)), u64not_eq x hx, if_neg hs]
+    · rw [ite_eq_left ((and_sign x hx).2 hs), or_sign x hs, ite_eq_left hs]
+    · rw [ite_eq_right (fun h => hs ((and_sign x hx).1 h)), u64not_eq x hx, ite_eq_right hs]
 
 /-- Case split of a `u64` encoding into the three closed-form regimes. -/
 theorem ek_cases (x : Nat) :
@@ -180,7 +180,7 @@ theorem cmpN_congr {a b c d : Nat} (h1 : a < b ↔ c < d) (h2 : a = b ↔ c = d)
     · have w : ¬ c = d := fun w => z (h2.2 w)
       simp [x, y, z, w]
 
-/-- **Order preservation and reflection** (`encode.rs:6-11`, `:43-44`): for non-NaN `a`, `b`,
+/-- **Order preservation and reflection** (`encode.rs`): for non-NaN `a`, `b`,
     `f64::partial_cmp a b = Some (encode_f64 a).cmp(&encode_f64 b)`. Equal keys ⇔ IEEE-equal values. -/
 theorem encodeF64_cmp (a b : Nat) (ha : a < W) (hb : b < W) (hna : isNaN a = false) (hnb : isNaN b = false) :
     fpcmp a b = some (cmpN (encodeF64 a) (encodeF64 b)) := by
@@ -209,7 +209,7 @@ theorem encodeF64_inj (a b : Nat) (ha : a < W) (hb : b < W) (hna : isNaN a = fal
   simp only [SIGN, W, INF, iff_true, true_iff, iff_false, false_iff] at * <;>
   first | omega | (constructor <;> intro <;> omega)
 
-/-- The two zeros share a key (`encode.rs:51`, test `zeros_collide`). -/
+/-- The two zeros share a key (`encode.rs`, test `zeros_collide`). -/
 theorem encodeF64_negZero : encodeF64 SIGN = encodeF64 0 := by decide
 
 /-- `-inf` has the least non-NaN key and `+inf` the greatest. -/

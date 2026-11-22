@@ -13,12 +13,6 @@ is visible to rows `i+1, …`, and every reference a row holds names one entity.
 
 Three Rust behaviours break that, each from one modelled mechanism:
 
-| issue | mechanism (fb3d516d0) | here |
-| --- | --- | --- |
-| #2738 | `ApplyOp::next_batched` (`apply.rs:152`) runs ONE sub-plan over all rows of the input batch; its `Commit` (`commit.rs:69`) drains every row before `pending.commit()`, so every row reads the pre-batch graph.  `can_batch` (`apply.rs:119-133`) does not blacklist `Create`/`Delete`/`Set`/`Commit`. | `applyBatchedW`, `canBatchApply_admits_write`, `bug2738_batched_call_hides_writes` |
-| #2729 | `CreateOp::next` (`create.rs:121`) and `DeleteOp::next` (`delete.rs:115`) stream one batch at a time against the shared `pending`; `create_batch`'s endpoint check (`create.rs:259-266`) reads pending deletes made by `delete_batch` for EARLIER batches.  Effects depend on how rows are cut into batches, and the plan inside `CALL {}` cuts them differently from top level. | `pipeline`, `PartitionInvariant`, `bug2729_batch_split_flips_endpoint_check` |
-| #3164 | `next_per_row` (`apply.rs:238`) commits each row's sub-plan (each `Union` branch has its own `Commit`, `union.rs:65-96`); the commit releases a deleted node's id (`Graph::delete_nodes`, `graph.rs:2216`) and the next `create_batch` reclaims it (`IdSpace::reserve`, `id_space.rs:483-498`, via `create.rs:158`).  A row holds only `Value::Node(NodeId)` (`value.rs:220`), so a later row's stale reference resolves to the new entity. | `NG`, `rustPerRow`, `NoStaleAlias`, `bug3164_stale_ref_deletes_recycled_id` |
-
 The sufficient condition under which batching IS sound for a writing sub-plan
 (`applyBatchedW_eq_ref_of_readIndep`) is stated too, so a fix can prove itself
 against `WriteSeparable`.
@@ -34,13 +28,13 @@ open Correlated
   projections: the row-local part, `rowLocal`) produce for argument row `x` against
   the committed graph `g`;
 * `writes y` — what `Create`/`Delete`/`Set` queue in `pending` for output row `y`;
-* `commit g ws` — `CommitOp::next` → `Pending::commit` (`commit.rs:69`, `pending.rs:1228`). -/
+* `commit g ws` — `CommitOp::next` → `Pending::commit` (`commit.rs`, `pending.rs`). -/
 structure WSub (G α β W : Type) where
   read : G → α → List β
   writes : β → List W
   commit : G → List W → G
 
-/-- Batched Apply over a writing sub-plan (`apply.rs:152-232` + `commit.rs:69-90`): ONE
+/-- Batched Apply over a writing sub-plan (`apply.rs` + `commit.rs`): ONE
 sub-plan instance gets the whole argument batch; its reads all see `g`; the blocking
 `Commit` drains every row's writes, then commits them at once. -/
 def applyBatchedW {G α β W : Type} (s : WSub G α β W) (g : G) (xs : List α) :
@@ -50,7 +44,7 @@ def applyBatchedW {G α β W : Type} (s : WSub G α β W) (g : G) (xs : List α)
 
 /-- Reference (openCypher; C's CALL {} with eager write ops): the subquery runs to
 completion, commit included, for each outer row in turn, threading the graph.  This is
-also exactly Rust's per-row mode (`next_per_row`, `apply.rs:238-337`: one sub-plan
+also exactly Rust's per-row mode (`next_per_row`, `apply.rs`: one sub-plan
 instance, hence one `Commit`, per row). -/
 def applyRefW {G α β W : Type} (s : WSub G α β W) : G → List α → List (α × β) × G
   | g, [] => ([], g)
@@ -101,7 +95,7 @@ on a graph with one `:N`.  Plan (live `GRAPH.EXPLAIN`): `Apply(Unwind, Project(C
 Create(NodeByLabelScan(Project(Argument))))))` — no blacklisted operator, so batched.
 State = the number of `:N` nodes. -/
 
-/-- The `can_batch` guard (`apply.rs:119-133`) admits the writing sub-plan above. -/
+/-- The `can_batch` guard (`apply.rs`) admits the writing sub-plan above. -/
 theorem canBatchApply_admits_write :
     canBatchApply [.project, .commit, .create, .scan] = true ∧
     canBatchApply [.project, .commit, .delete, .project] = true ∧
@@ -132,17 +126,17 @@ theorem bug2738_batched_call_hides_writes :
 `CreateOp::next` and `DeleteOp::next` each process ONE batch and pass it on; both write
 the query's shared `pending`.  So for `CREATE (n0)-[:R]->(n0) DETACH DELETE n0` the
 create of batch `k+1` runs after the delete of batch `k`, and `create_batch`'s
-endpoint check (`create.rs:259-266`, `Delete.goneN`) rejects a node an earlier batch
+endpoint check (`create.rs`, `Delete.goneN`) rejects a node an earlier batch
 pending-deleted.  C's Create and Delete are eager (all records, then the next op), so
 for C the split never matters.  The CALL {} form of #2729 plans the MATCH differently
 (`All Node Scan → var-len traverse → Filter` instead of `Filter(All Node Scan) →
 var-len traverse`), which hands the same 25 rows to `Create` in more than one batch.
 The same mechanism, no CALL: `UNWIND range(1,1100) AS x MATCH (n:A {id:1})
 CREATE (n)-[:R]->(n) DETACH DELETE n` errors on Rust (1024 + 76 rows, `BATCH_SIZE`,
-`batch.rs:81`) and succeeds with 1000 rows; C succeeds for both. -/
+`batch.rs`) and succeeds with 1000 rows; C succeeds for both. -/
 
 /-- `create_batch`'s context with the endpoint check reading the live pending-delete
-state (`create.rs:259-262` = `Delete.goneN`). Ids and attributes do not matter here. -/
+state (`create.rs` = `Delete.goneN`). Ids and attributes do not matter here. -/
 def ctxOf (st : Delete.St) : CreateBatch.Ctx Unit Unit Unit where
   reserveN _ n := .ok (List.range n)
   reserveR log n := .ok (List.range' log.length n)
@@ -157,8 +151,8 @@ def dvOf : Option (CreateBatch.Val Unit) → Delete.DV
   | some (.other _) => .other
   | none => .null
 
-/-- One batch through `Create(rel)` then `Delete(var)` (`create.rs:121-136`,
-`delete.rs:115-127`): create against the current pending deletes, then delete. -/
+/-- One batch through `Create(rel)` then `Delete(var)` (`create.rs`,
+`delete.rs`): create against the current pending deletes, then delete. -/
 def step (r : CreateBatch.PRel Unit) (v : Nat) (s : Delete.St × List (CreateBatch.Ev Unit Unit))
     (rows : List (CreateBatch.Row Unit)) :
     Except String (Delete.St × List (CreateBatch.Ev Unit Unit)) := do
@@ -230,7 +224,7 @@ structure NG where
   deriving DecidableEq
 
 /-- `IdSpace::reserve` reclaims a released id before extending the space
-(`id_space.rs:483-498`): the smallest id no live node holds. -/
+(`id_space.rs`): the smallest id no live node holds. -/
 def freshId (g : NG) : Nat :=
   ((List.range (g.live.length + 1)).find? (fun i => !(g.live.map Prod.fst).contains i)).getD
     g.live.length
@@ -251,9 +245,9 @@ def applyOp (g : NG) : Op → NG
                           removed := g.removed ++ g.live.filter (· == e) }
   | .create => { g with live := g.live ++ [(freshId g, g.serial)], serial := g.serial + 1 }
 
-/-- `Pending::commit` (`pending.rs:1228`; deletes via `Graph::delete_nodes`, `graph.rs:2216`,
+/-- `Pending::commit` (`pending.rs`; deletes via `Graph::delete_nodes`, `graph.rs`,
 which releases the id).  The Union's two branch Commits run in branch order
-(`union.rs:65-96`), so the row's ops apply in sequence. -/
+(`union.rs`), so the row's ops apply in sequence. -/
 def commitOps (g : NG) (ws : List Op) : NG := ws.foldl applyOp g
 
 /-- Rust: rows carry the node id; k=1 is the DELETE branch, k=2 the CREATE branch. -/
@@ -272,7 +266,7 @@ def refSub : WSub NG (Nat × Nat) ((Nat × Nat) × Nat) Op where
 def bindIn (g : NG) (id : Nat) : Nat × Nat :=
   ((g.live.find? (·.1 == id)).getD (id, 0))
 
-/-- Rust's per-row Apply (`next_per_row`, `apply.rs:238-337`): one commit per row. -/
+/-- Rust's per-row Apply (`next_per_row`, `apply.rs`): one commit per row. -/
 def rustPerRow (g : NG) (ids : List Nat) : NG := (applyRefW rustSub g ids).2
 
 def refPerRow (g : NG) (ids : List Nat) : NG := (applyRefW refSub g (ids.map (bindIn g))).2

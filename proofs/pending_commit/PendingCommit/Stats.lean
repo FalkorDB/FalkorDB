@@ -1,19 +1,17 @@
 /-
 # `Nodes created` / `Nodes deleted` statistics vs. C
 
-`Pending::commit` (pending.rs:1354) reports
+`Pending::commit` (pending.rs, counters at :1344, :1415) reports
 `nodes_created += created_nodes.len()` and `nodes_deleted += deleted_nodes.len()`.
 A node created and deleted in the same segment is unwound out of
-`created_nodes` by `delete_pending_node` (pending.rs:865, cancel at :901) into
-`cancelled_nodes`. Before #3030 no statistic read it, so it was reported as neither
+`created_nodes` by `delete_pending_node` (pending.rs, cancel at :886) into
+`cancelled_nodes`, which no statistic reads, so it is reported as neither
 created nor deleted. The C engine counts every create and every delete.
 
-`c_eq_rust_plus_cancelled` proves the discrepancy was *exactly* the cancelled
+`c_eq_rust_plus_cancelled` proves the discrepancy is *exactly* the cancelled
 set, for every well-formed segment: adding `cancelled_nodes.len()` to both
-counters is the whole fix. #3030 does exactly that (pending.rs:1362-1370;
-`PC.commit_spec`, `PC.stCancelled_spec`): `rust3030_eq_c`. `cancel_example` is the
-Lean witness of `CREATE (a) DELETE a` (pre-#3030 Rust: nothing; C and #3030:
-`Nodes created: 1, Nodes deleted: 1`, `cancel_example_3030`).
+counters is the whole fix. `cancel_example` is the Lean witness of
+`CREATE (a) DELETE a` (Rust: nothing; C: `Nodes created: 1, Nodes deleted: 1`).
 The same holds for relationships cascaded away with a cancelled node
 (`cancelled_relationships`), and for the properties/labels those entities
 carried — confirmed live, not modelled separately.
@@ -46,7 +44,7 @@ def step (p : P) : Op → P
 
 /-- A CREATE never reuses an id this segment already holds: `IdSpace::reserve`
 excludes its `taken` set (every id the batch created or cancelled) and the
-`issued` set `Pending` lends it (`created_nodes`, create.rs:159) —
+`issued` set `Pending` lends it (`created_nodes`, create.rs) —
 proofs/id_space. -/
 def WF (p : P) : Op → Prop
   | .create id => id ∉ p.created ∧ id ∉ p.cancelled ∧ id ∉ p.deleted
@@ -92,30 +90,10 @@ theorem c_eq_rust_plus_cancelled (ops : List Op) (h : RunWF ⟨[], [], [], 0, 0�
     r.cDeleted = r.deleted.length + r.cancelled.length := by
   exact run_inv ops _ ⟨rfl, rfl⟩ h
 
-/-- `CREATE (a) DELETE a`: the created/deleted sets are empty (pre-#3030 Rust reported
-0/0), C reports 1/1. -/
+/-- `CREATE (a) DELETE a`: Rust reports 0/0, C reports 1/1. -/
 theorem cancel_example :
     let r := run ⟨[], [], [], 0, 0⟩ [.create 0, .delete 0]
     (r.created.length, r.deleted.length) = (0, 0) ∧ (r.cCreated, r.cDeleted) = (1, 1) := by
-  decide
-
-/-- What `Pending::commit` adds since #3030 for this segment's nodes:
-`created_nodes.len() + cancelled_nodes.len()` created, `deleted_nodes.len() +
-cancelled_nodes.len()` deleted (`PC.commit_spec`). -/
-def rust3030 (p : P) : Nat × Nat :=
-  (p.created.length + p.cancelled.length, p.deleted.length + p.cancelled.length)
-
-/-- **`rust3030_eq_c`** (#3030): over any well-formed segment the statistics
-`Pending::commit` now reports are C's. -/
-theorem rust3030_eq_c (ops : List Op) (h : RunWF ⟨[], [], [], 0, 0⟩ ops) :
-    let r := run ⟨[], [], [], 0, 0⟩ ops
-    rust3030 r = (r.cCreated, r.cDeleted) := by
-  obtain ⟨h1, h2⟩ := c_eq_rust_plus_cancelled ops h
-  simp only [rust3030, h1, h2]
-
-/-- `CREATE (a) DELETE a` since #3030: 1/1, as C. -/
-theorem cancel_example_3030 :
-    rust3030 (run ⟨[], [], [], 0, 0⟩ [.create 0, .delete 0]) = (1, 1) := by
   decide
 
 end PendingCommit.Stats

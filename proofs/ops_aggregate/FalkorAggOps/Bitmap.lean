@@ -1,6 +1,6 @@
 import Std.Tactic.BVDecide
 /-
-`NullBitmap` (graph/src/runtime/batch.rs:89-167): bit `i` of word `i / 64`
+`NullBitmap` (graph/src/runtime/batch.rs): bit `i` of word `i / 64`
 is set iff row `i` is null. Words are `u64` = `BitVec 64`; the `Vec<u64>` is
 modelled as a total function `Nat → BitVec 64` (indices ≥ `num_words` are
 never read: every accessor `debug_assert!`s `idx < len`).
@@ -11,25 +11,25 @@ structure Bitmap where
   words : Nat → BitVec 64
   len : Nat
 
-/-- `NullBitmap::none` (batch.rs:98). -/
+/-- `NullBitmap::none` (batch.rs). -/
 def Bitmap.none (len : Nat) : Bitmap := ⟨fun _ => 0, len⟩
 
-/-- `NullBitmap::is_null` (batch.rs:133): `(words[idx/64] >> (idx%64)) & 1 != 0`. -/
+/-- `NullBitmap::is_null` (batch.rs): `(words[idx/64] >> (idx%64)) & 1 != 0`. -/
 def Bitmap.isNull (b : Bitmap) (i : Nat) : Bool :=
   ((b.words (i / 64) >>> (i % 64)) &&& 1) != 0
 
-/-- `NullBitmap::set` (batch.rs:150): `words[idx/64] |= 1 << (idx%64)`. -/
+/-- `NullBitmap::set` (batch.rs): `words[idx/64] |= 1 << (idx%64)`. -/
 def Bitmap.set (b : Bitmap) (i : Nat) : Bitmap :=
   { b with words := fun w => if w = i / 64 then b.words w ||| ((1 : BitVec 64) <<< (i % 64)) else b.words w }
 
-/-- `NullBitmap::clear` (batch.rs:160): `words[idx/64] &= !(1 << (idx%64))`. -/
+/-- `NullBitmap::clear` (batch.rs): `words[idx/64] &= !(1 << (idx%64))`. -/
 def Bitmap.clear (b : Bitmap) (i : Nat) : Bitmap :=
   { b with words := fun w => if w = i / 64 then b.words w &&& ~~~((1 : BitVec 64) <<< (i % 64)) else b.words w }
 
-/-- `NullBitmap::all` (batch.rs:108): `set` every row. -/
+/-- `NullBitmap::all` (batch.rs): `set` every row. -/
 def Bitmap.all (len : Nat) : Bitmap := (List.range len).foldl Bitmap.set (Bitmap.none len)
 
-/-- `NullBitmap::from_values` (batch.rs:118). -/
+/-- `NullBitmap::from_values` (batch.rs). -/
 def Bitmap.fromNulls (nulls : List Bool) : Bitmap :=
   (List.range nulls.length).foldl
     (fun b i => if nulls.getD i false then b.set i else b) (Bitmap.none nulls.length)
@@ -38,11 +38,11 @@ theorem bit_test (w : BitVec 64) (a : Nat) (ha : a < 64) :
     ((w >>> a) &&& 1) != 0 ↔ w.getLsbD a = true := by
   have key : ∀ (v : BitVec 64), (v &&& 1) != 0 ↔ v.getLsbD 0 = true := by
     intro v; simp only [bne_iff_ne, ne_eq]; bv_decide
-  rw [key]; simp [BitVec.getLsbD_ushiftRight]
+  rw [key]; simp
 
 theorem getLsbD_one_shl (a b : Nat) (ha : a < 64) (hb : b < 64) :
     ((1 : BitVec 64) <<< a).getLsbD b = (a == b) := by
-  simp [BitVec.getLsbD_shiftLeft, hb]
+  simp [hb]
   by_cases h : a = b
   · subst h; simp
   · have : b - a ≠ 0 ∨ b < a := by omega
@@ -124,7 +124,7 @@ theorem foldl_setIf_isNull (p : Nat → Bool) (j : Nat) : ∀ (xs : List Nat) (b
     rw [foldl_setIf_isNull p j xs]
     by_cases hx : x = j
     · subst hx
-      cases hp : p x <;> simp [hp, set_isNull]
+      cases hp : p x <;> simp [set_isNull]
     · have e1 : decide (j = x) = false := by simp [Ne.symm hx]
       have e2 : (x == j) = false := by simp [hx]
       cases hp : p x <;> simp [set_isNull, e1, e2, List.mem_cons]

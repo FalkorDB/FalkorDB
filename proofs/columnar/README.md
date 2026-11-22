@@ -1,6 +1,6 @@
 # columnar: the batch layer computes the same thing as row-at-a-time evaluation
 
-The runtime moves rows between operators in *batches*: a set of typed columns, an optional selection vector naming the active rows, and per-row origins. Expressions run *columnar*: one kernel over a whole column instead of one `Value` per row. This project proves that each columnar operation gives the same answer as its row-at-a-time definition. It also records the two places where it does not.
+The runtime moves rows between operators in *batches*: a set of typed columns, an optional selection vector naming the active rows, and per-row origins. Expressions run *columnar*: one kernel over a whole column instead of one `Value` per row. This project proves that each columnar operation gives the same answer as its row-at-a-time definition. It also records the remaining hazards.
 
 User-facing behaviour that depends on it:
 
@@ -34,7 +34,7 @@ Yes:
 Yes, for every lane:
 
 - **Comparisons.** `compareColumns_agree`: `compare_columns` equals the per-row comparison at every row. That holds for the int lane, the float lane, int→float promotion, a flipped constant (`5 < n.x` evaluated as `n.x > 5`), the pairwise lanes and the generic `compare_value` loop. NaN makes every ordering false and `<>` true, as in the per-row path.
-- **Arithmetic.** `arithmetic_agree`: the int and float lanes equal `Value` arithmetic row by row, including the *first* error. A zero divisor sends `/` and `%` to the generic lane, and so does `i64::MIN / -1` for `/` (#3603: `Int / Int` is `checked_div` and raises "integer overflow in division", `div_min_neg_one`, `intStage_min_div_neg_one`, `arithmetic_min_div_neg_one`; `i64::MIN % -1` is still 0, `rem_min_neg_one`). `Int ⊕ Int` never takes the float lane.
+- **Arithmetic.** `arithmetic_agree`: the int and float lanes equal `Value` arithmetic row by row, including the *first* error. A zero divisor sends `/` and `%` to the generic lane, and so does `i64::MIN / -1` for `/` (`Int / Int` is `checked_div` and raises "integer overflow in division", `div_min_neg_one`, `intStage_min_div_neg_one`, `arithmetic_min_div_neg_one`; `i64::MIN % -1` is still 0, `rem_min_neg_one`). `Int ⊕ Int` never takes the float lane.
 - **`CASE`.** `caseCol_agree` gives the same result, and `caseArm_then_only_on_hits` proves the laziness that matters in practice: in `CASE WHEN n.d <> 0 THEN 1 / n.d ELSE 0 END`, the `THEN` is only evaluated on rows whose `WHEN` matched, so the query can't divide by zero.
 - **The rest.** `NOT` (`negate_agree`), scalar function folding (`foldCall_agree`), variable reads (`evalVariable_agree`) and the Filter mask (`filterPass_agree`).
 
@@ -48,7 +48,7 @@ There was a suspicion that ExpandInto's `set_selection(0..remaining)` trim could
 
 **5. Is `Batch::concat` the same as pushing the rows one at a time?**
 
-Yes, for every list of batches, since #3059 (`d2cd1ad01`). `concat_obs_eq` proves that the value and the bound bit at every (row, slot) equal those of the per-row `BatchBuilder` concat, empty batches included (the fallback loop now skips a batch with no active rows, as `concat_typed_column` always did: `empty_batch_ignored`). Row counts and origins also match (`concat_len`, `concat_origins`).
+Yes, for every list of batches. `concat_obs_eq` proves that the value and the bound bit at every (row, slot) equal those of the per-row `BatchBuilder` concat, empty batches included (the fallback loop skips a batch with no active rows, as `concat_typed_column` always did: `empty_batch_ignored`). Row counts and origins also match (`concat_len`, `concat_origins`).
 
 ## The headline theorems
 
@@ -64,13 +64,13 @@ Yes, for every list of batches, since #3059 (`d2cd1ad01`). `concat_obs_eq` prove
 | `emitLazy_spec`, `emitAll_spec` | The emitter outputs the `(row, item)` stream with nothing lost, duplicated or reordered, in non-empty batches of ≤ 1024 rows | `Emitter.lean` |
 | `expandTrim_ok` | ExpandInto's record-cap trim only selects existing rows | `Emitter.lean` |
 | `gather_spec` | Each of the seven `GatherItem` lanes builds row `k` from item `k` | `Gather.lean` |
-| `compareAt_spec` | `Column::compare_at`'s float lane is antisymmetric, NaN included (since #2912) | `BatchMisc.lean` |
+| `compareAt_spec` | `Column::compare_at`'s float lane is antisymmetric, NaN included | `BatchMisc.lean` |
 | `emit_origin_sound` | Every emitted row carries the origin of the parent row it came from (the `CALL {}` record boundary of #2845) | `CallBoundary.lean` |
 
 ### How `eval_sound` is proved
 
 1. **Model the tree.** `Node` is an expression node: a `Kind` (the `ExprIR` variants `eval` inspects) and its children.
-2. **Model the function.** `eval` is `VectorEval::eval`, with its arms in source order and the same guards: the child count, the `CmpOp::from_expr_ir` check, the function-invocation filter and the `hasLabels` attempt. A node no arm accepts goes to `perRow`, which is `eval_per_row`. Since #3335 `Paren` has no arm of its own, because the binder removes every `Paren`.
+2. **Model the function.** `eval` is `VectorEval::eval`, with its arms in source order and the same guards: the child count, the `CmpOp::from_expr_ir` check, the function-invocation filter and the `hasLabels` attempt. A node no arm accepts goes to `perRow`, which is `eval_per_row`. `Paren` has no arm of its own, because the binder removes every `Paren`.
 3. **State what each arm promises.** `Lawful` has one field per arm: given children that are sound, that arm's output column is sound. These fields are what the lane theorems above prove (`compareColumns_agree`, `arithmetic_agree`, `caseCol_agree`, …).
 4. **Induction on the tree.** The proof follows the Rust recursion. Children are smaller, so they are sound by induction, and the arm's `Lawful` field finishes the case.
 
@@ -81,17 +81,13 @@ Yes, for every list of batches, since #3059 (`d2cd1ad01`). `concat_obs_eq` prove
 
 ## Bugs found
 
-Both bugs were confirmed on the real code through the public API and were **latent** (no Cypher query triggered either). Both were fixed by #3059 (`d2cd1ad01`, merged 2026-11-02). They are recorded in [`Columnar.lean`](Columnar.lean), not in [`../FINDINGS.md`](../FINDINGS.md).
+The entries below are hazards, none reachable from Cypher today. They are recorded here, not in [`../FINDINGS.md`](../FINDINGS.md).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `empty_batch_ignored`, `concat_obs_eq` (counterexample `empty_batch_binds` replaced) | `Batch::concat`'s fallback loop set `bound_anywhere` from batches with **no active rows**, so a slot bound only in an empty batch came out bound (`Some(Null)`), where the per-row concat leaves it unbound (`None`) | **Fixed by #3059**: the loop skips `active_len() == 0` batches (`batch.rs:1008-1013`) |
-| 2 | `toOwned_get_eq_view`, `toOwned_trailing_unbound` (counterexample replaced) | `BatchRow::to_owned_row` dropped trailing unbound columns, so `value_at(i)` was `Some(Null)` on the view but `None` on the owned row ("Variable not found") | **Fixed by #3059**: one `Row::push_slot` per column (`batch.rs:1437-1457`), so the owned row answers `value_at` on every slot exactly like the view (`toOwned_get_eq_view`; `Row.pushSlot`, `pushSlots_spec`). Still modelled, not a Rust change: `evalVariable_beyond` (the vectorised `eval_variable` reads Null past the column space where the per-row view errors) |
-| — | removed (17ccc5412) | #2922: LLVM dropped the `cap < BATCH_SIZE` guard of the pack-ceiling `match` on aarch64-apple-darwin, so a cap above a batch came out as the ceiling itself (`miscompiled_differs`). #2973 rewrote it as `cap.clamp(1, BATCH_SIZE)`, which has no guard to drop | Fixed by #2973 (a source-form change; the model is the clamp, the guarded arm is history) |
-| — | `skip_u16_wraps` | Selection vectors are `u16`. Past 65536 rows the cast wraps, a row is lost and another duplicated. Batches are kept small only by the `BATCH_SIZE` caps, which is exactly the guard the LLVM miscompile in #2922 dropped on macOS arm64 (`miscompiled_differs`) | Hazard, not a bug today |
-| — | `finishLen_drops` | A no-alias emitter over a zero-column parent with no origins emits a 0-row batch. Since #2845 a parent that carries origins is gathered (`finishLen_origins_kept`) | Hazard, unreachable: ExpandInto always has columns |
+| — | `skip_u16_wraps` | Selection vectors are `u16`. Past 65536 rows the cast wraps, a row is lost and another duplicated. Batches are kept small only by the `BATCH_SIZE` caps | Hazard, not a bug today |
+| — | `finishLen_drops` | A no-alias emitter over a zero-column parent with no origins emits a 0-row batch. A parent that carries origins is gathered (`finishLen_origins_kept`) | Hazard, unreachable: ExpandInto always has columns |
 | — | `classifyColumn_lossy` | `classify_column` can lose information | Harmless: it has no caller |
-| — | removed (17ccc5412) | Before #2912 the float lane of `compare_at` was `unwrap_or(Less)`, which isn't antisymmetric with NaN (issue #2891) | Fixed by #2912 (`compareAt_spec`) |
 
 One more difference that isn't counted as a bug: columnar `CASE` or `AND` can report a different row's error message than the per-row path. Both paths still raise an error.
 
@@ -103,8 +99,8 @@ This project has no CONDITIONAL rows.
 |---|---|
 | `Column.lean` | `FloatModel`, the engine value (proofs/core `FalkorCore.V F`), `Column` and its typed lanes, `NullBitmap` as a bit list, `classify_*`, `extend_active_slice` |
 | `Batch.lean` | `Batch`, its well-formedness `WF`, selection vectors and their producers (Filter, Limit, Skip), gather, `into_compacted`, `set_column`, `write_column`; `skip_u16_wraps` |
-| `Row.lean` | `Row` (`insert`, `take`, `merge`, `clone_with`) and `BatchRow::value_at`/`to_owned_row`; bug 2 |
-| `Concat.lean` | `Batch::concat` and `concat_typed_column` against the per-row `BatchBuilder`; bug 1 |
+| `Row.lean` | `Row` (`insert`, `take`, `merge`, `clone_with`) and `BatchRow::value_at`/`to_owned_row` |
+| `Concat.lean` | `Batch::concat` and `concat_typed_column` against the per-row `BatchBuilder` |
 | `Emitter.lean` | `BatchedResultEmitter` (`emit_lazy`, the ceiling, `finish_batch` length) and the ExpandInto trim |
 | `Gather.lean` | The `GatherItem` trait proven once (`gather_spec`), then its seven impls; `RowIter` |
 | `VectorExpr.lean` | `CmpOp`, the comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
