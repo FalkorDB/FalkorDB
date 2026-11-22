@@ -1,12 +1,12 @@
 import FalkorIndexLayer.Proofs
 
-/-! # Temporals are not indexed (#3076, e20300436)
+/-! # Temporals are not indexed
 
-`Document::set` now skips `Datetime`/`Date`/`Time`/`Duration` (`mod.rs:796-803`). So a stored temporal
+`Document::set` skips `Datetime`/`Date`/`Time`/`Duration` (`mod.rs`). So a stored temporal
 contributes nothing to its attribute's RediSearch document, and every numeric or scalar index query
 over that attribute is exact for it: the index does not return it, and Cypher's comparison of a
-temporal with a number or string is null (not true). This turns the old counterexample
-(W2-index-5; removed in bbee75955; the last revision that has them is 17ccc5412) into theorems. -/
+temporal with a number or string is null (not true). These are the theorems for
+W2-index-5. -/
 
 namespace IndexLayer
 

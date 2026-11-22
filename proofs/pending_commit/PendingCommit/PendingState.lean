@@ -1,6 +1,6 @@
 import PendingCommit.PendingAttrs
 /-
-# `Pending` bookkeeping (pending.rs:307-1225: `struct Pending` and its accessors)
+# `Pending` bookkeeping (pending.rs: `struct Pending` and its accessors)
 
 The struct with every field as a finite set (`RoaringTreemap`: a duplicate-free
 list) or finite map (`FxHashMap`: `PA.FMap`), and each accessor/mutator as a
@@ -20,7 +20,7 @@ function on it. Relationship type names (`Arc<String>`) are `Nat`s.
   `get_created_relationship_endpoints` answers from the unique entry.
 * degrees: `pendingDeg_spec` (created, not deleted edges); `pending_deleted_*degree` skips edges created
   since the last commit, so it asks the committed graph only for committed ids (`deletedDeg_skips_created`,
-  `fixed2769_created_deleted`, #2769 fixed by #3520).
+  `fixed2769_created_deleted`).
 -/
 namespace PendingCommit.PS
 open PA
@@ -39,7 +39,7 @@ theorem sins_nodup (s : List Nat) (h : s.Nodup) (x : Nat) : (sins s x).Nodup := 
   · exact h
   · rename_i hx; exact List.nodup_cons.2 ⟨hx, h⟩
 
-/-- `struct Pending` (pending.rs:307). Since #2846 it keeps no id boundary
+/-- `struct Pending` (pending.rs). Since #2846 it keeps no id boundary
 (`node_entry`/`rel_entry` are gone): the graph holds the batch.
 `created` (`created_nodes`, :316) is what the allocator must not reissue —
 reserved, not yet recorded by the id space; `taken`

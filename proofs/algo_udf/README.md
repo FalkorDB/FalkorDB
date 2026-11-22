@@ -7,7 +7,7 @@ This project covers two parts of the engine that users call directly:
 
 For the path searches it proves the answers are right: the shortest path really is shortest, and the enumeration finds every qualifying path. For the UDF layer it proves values survive the trip into JavaScript and back, and that deep or cyclic values give an error instead of a crash. Along the way it found a dozen places where Rust answers differently from C.
 
-The full Lean↔Rust mapping is in the header of [`AlgoUdf.lean`](AlgoUdf.lean) and in the table at the top of each file. This README explains *what* is proven and *why it matters*.
+The per-function Lean↔Rust map is `COVERAGE.tsv`. This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -35,32 +35,32 @@ For `pathCount ≥ 2`, `dfs_complete` assumes the bound only tightens as the sea
 
 **3. Do values survive a round trip through a UDF?**
 
-Yes, for every value C round-trips, since #3074, within the limits listed here (an integral float and a `__proto__` key change as in C; datetimes need the JS-Date bound). Take an identity UDF `function id(x) { return x; }`; then `RETURN mylib.id(v)` returns `v`:
+Yes, for every value C round-trips, within the limits listed here (an integral float and a `__proto__` key change as in C; datetimes need the JS-Date bound). Take an identity UDF `function id(x) { return x; }`; then `RETURN mylib.id(v)` returns `v`:
 
 - integers within the i64 range, nodes, relationships, points: `int_roundtrip`, `node_rt`, `rel_rt`, `point_rt`;
 - datetimes whose millisecond value fits a JS `Date` (`|ts * 1000| ≤ 8.64e15`): `datetime_rt`. Beyond that `new Date(ms)` is invalid and the value does not round-trip;
-- floats: `float_rt_iff`, and `-0.0` stays a float since #3074 (`neg_zero_rt`);
-- vectors, including ones holding ±inf since #3074: `vecf32_rt`, `vecf32_inf_rt`;
-- maps with a key named `constructor`: `constructor_key_roundtrips`. Before #3074, `{constructor: {name: 'Date'}}` was taken for a JS `Date` and failed.
+- floats: `float_rt_iff`; `-0.0` stays a float (`neg_zero_rt`);
+- vectors, including ones holding ±inf: `vecf32_rt`, `vecf32_inf_rt`;
+- maps with a key named `constructor`: `constructor_key_roundtrips`.
 
 A few changes are shared with C and are not bugs: an integral float comes back as an integer (`integral_float_becomes_int`), a `__proto__` key is dropped (`proto_key_dropped`), and array-index keys come first (`index_keys_first`).
 
 **4. Can a deep or cyclic value crash the server through a UDF?**
 
-Not since #3336 (security advisory GHSA-frmf-ffvc-mxx5). Before it, `value_to_js`/`js_to_value` recursed with no limit, so a UDF returning a self-containing array (`a = [a]`) overflowed the stack (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now both directions count depth against `MAX_UDF_VALUE_NESTING = 1024`:
+No. `value_to_js`/`js_to_value` count depth against `MAX_UDF_VALUE_NESTING = 1024`, so a UDF returning a self-containing array (`a = [a]`) gives an error, not a stack overflow (security advisory GHSA-frmf-ffvc-mxx5):
 
 - `fromJs_frames`, `toJs_frames`: at most cap + 1 levels are ever used, for any input, cyclic ones included;
 - `fromJs_past_cap`, `toJs_past_cap`: past the cap the result is an error, never an overflow;
-- `fromF_fits_eq_uncapped`, `toF_fits_eq_uncapped` (from `Nesting.run_eq_uncapped`): a value that nests at most `MAX_UDF_VALUE_NESTING` levels converts exactly as it did before #3336, for every stack size;
+- `fromF_fits_eq_uncapped`, `toF_fits_eq_uncapped` (from `Nesting.run_eq_uncapped`): a value that nests at most `MAX_UDF_VALUE_NESTING` levels converts exactly as it would without the cap, for every stack size;
 
 The JavaScript side is modelled over a QuickJS heap, so a value that contains itself is a legal input to these theorems.
 
 **5. Do the algorithm results name the right nodes?**
 
-Yes. The algorithms run on a compact adjacency matrix (index 0..n) and map results back to node ids (`compactEdges_sound`, `harmonic_complete`). Two places used to get the mapping wrong; both are fixed (see [Bugs found](#bugs-found)):
+Yes. The algorithms run on a compact adjacency matrix (index 0..n) and map results back to node ids (`compactEdges_sound`, `harmonic_complete`):
 
-- WCC and CDLP with `nodeLabels` reported a compact index as the component id; `compact_to_original` (#3032) maps it back (`wcc_rows_eq_spec`, `wcc_compact_component_id_member`);
-- HarmonicCentrality sized its vector by node count instead of the id bound; it now uses `node_id_bound()` (#3045; `harmonic_complete`, `unfiltered_keeps_high_ids`).
+- WCC and CDLP with `nodeLabels` report the node id as the component id, mapped back by `compact_to_original` (`wcc_rows_eq_spec`, `wcc_compact_component_id_member`);
+- HarmonicCentrality sizes its vector by `node_id_bound()`, so nodes with high ids survive deletes (`harmonic_complete`, `unfiltered_keeps_high_ids`).
 
 ## The headline theorems
 
@@ -76,7 +76,7 @@ Yes. The algorithms run on a compact adjacency matrix (index 0..n) and map resul
 | `float_rt_iff`, `neg_zero_rt`, `vecf32_inf_rt`, `constructor_key_roundtrips` | Values round-trip through JavaScript | `MarshalThm.lean`, `Marshal.lean` |
 | `traverse_nodes_nodup`, `traverse_both_edges_nodup` | `graph.traverse` never lists a node twice, nor an edge twice in `both` mode | `UdfTraverse.lean` |
 | `deserialize_atomic`, `serialize_roundtrip` | The UDF repository saves and loads as a unit | `UdfRepoOps.lean` |
-| `validate_runtime_same_globals` | Since #3079 the validation context and the runtime context define the same globals, `graph` included | `UdfGlobals.lean` |
+| `validate_runtime_same_globals` | The validation context and the runtime context define the same globals, `graph` included | `UdfGlobals.lean` |
 
 ### How `dijkstra_correct` is proved
 
@@ -93,29 +93,9 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `wcc_rows_eq_spec`, `wcc_compact_component_id_member` | WCC and CDLP with `nodeLabels` returned a compact index as the component id, not a node id | Fixed by #3032 (#3029) |
-| 2 | `harmonic_complete`, `unfiltered_keeps_high_ids` | HarmonicCentrality sized its source vector by node count, not the id bound, so nodes with high ids (after deletes) were dropped | Fixed by #3045 (#3044) |
-| 3 | removed (17ccc5412) | `pageRank` with an unknown label errored (a 0x0 matrix reached LAGraph) | Fixed by #3058 (#3056): `pagerank_unknown_label_empty`, `pagerank_compact_nonempty` |
-| 4 | none (cargo test `bug_betweenness_unknown_label_is_empty_not_error`) | betweenness, labelPropagation and HarmonicCentrality with an unknown `nodeLabels` / `relationshipTypes` entry returned no rows; C errors | Fixed by #3058 (#3056): `Compact.checkKnown_ok_iff`, `checkKnown_unknown_label_errors`, `known_messages` |
-| 5 | removed (17ccc5412) | SPpaths/SSpaths charged a missing cost as 0; C charges 1 per edge, so `maxCost` bounds hops | Fixed by #3113 (`cost_agree`, `cost_default_agrees`); the Dijkstra fast path reports 0 with no `costProp`, as C's does (`dijkstra_cost_no_prop`), and since #3580 charges 1 for a configured one the edge lacks (row 19) |
-| 6 | `forged_node_marker`, `forged_edge_marker` | A UDF result object carrying a forged `__falkor_type` marker is trusted, which panics the reply or creates a dangling edge (W3-algo-1) | **Open** |
-| 7 | removed (17ccc5412) | `-0.0` came back from a UDF as the integer 0 | Fixed by #3074 (`neg_zero_rt`) |
-| 8 | removed (17ccc5412) | A map with a `constructor` key was taken for a `Date` or a `RegExp` | Fixed by #3074 |
-| 9 | removed (17ccc5412) | A vector holding ±inf could not pass through a UDF | Fixed by #3074 (`vecf32_inf_rt`) |
-| 10 | removed (17ccc5412) | The validation context at `GRAPH.UDF LOAD` had no `graph` global | Fixed by #3079 (`graph_global_in_both`) |
-| 11 | removed (17ccc5412) | Unbounded recursion in UDF value conversion overflowed the stack | Fixed by #3336, GHSA-frmf-ffvc-mxx5 (`fromJs_frames`, `toJs_frames`) |
-| 12 | `dotted_collision`; rest removed (17ccc5412) | Library and function names could collide after qualification or case folding, and deleting one library could break another | Fixed by #3066 (#3065): `Repo.collision_rejected`, `dotted_collision_rejected`, `load_preserves_crossFold`, `delete_preserves_after3066`, `case_sensitive` |
-| 13 | `self_loop_twice` | `node.getNeighbors()` lists a self-loop's neighbour twice (W4-graph-2) | **Open** (#3083; PR #3084) |
-| 14 | `traverse_self_loop_twice` | `graph.traverse([a], {returnType:'edges'})` returns a self-loop twice: Rust `[1,0,1]`, C `[1,0]` (W5-udf-1) | **Open** |
 | 15 | `traverse_drops_self_neighbour` | `graph.traverse([a])` leaves `a` out when it is its own neighbour: Rust `[1]`, C `[0,1]` (W5-udf-2) | **Open** |
-| 16 | `getNeighbors_no_arg_errors` | `node.getNeighbors()` with no argument throws "Error converting from js 'undefined'"; C returns the neighbours (W5-udf-3) | **Open** |
 | 17 | `empty_lib_name_mismatch` | `GRAPH.UDF LOAD ""` is accepted, but its functions can never be called (registered as `.f`, stored as `f`); C refuses the empty name (W5-udf-4) | **Open** |
 | 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
-| 19 | `fastpath_missing_cost_one`, `fast_eq_enum` (`CostProp.lean`) | On the Dijkstra fast path a configured `costProp` that an edge lacks used to cost 0; C charges 1 (pathCost 2 vs 3). Property `MissingCostIsOne` now holds on both paths | Fixed by #3580 (#3121) |
-| 20 | `pre3572_one_node_projection_fails` (`LagContract.lean`) | `algo.WCC`/`pageRank` (and betweenness) on a one-node `nodeLabels` projection failed with -1000: the 1×1 compact matrix (and cached transpose) was stored by column, which `LAGraph_CheckGraph` rejects. Property `ProjectionTotal` now holds for every algorithm (`projection_total`, `one_node_projection_ok`) | Fixed by #3572 (#3349) |
-| 21 | removed (17ccc5412) | `create_js_node` read the committed graph, not the query's runtime: after `MATCH (n:P) DELETE n`, `test.inspect_node(n)` saw `labels []`, `name NULL` while `labels(n)` is `[P]`; `r.source` after DETACH DELETE was likewise empty | Fixed by #3464 (#3454): `rs_runtime_first`, `rs_edge_ok`, `fixed3454_deleted_node`, `fixed3454_edge_source`, `RT.not_differs` |
-
-Also found by this project's work, but outside the model: SHUTDOWN after a main-thread UDF aborts, because the QuickJS runtime is freed before its contexts (W3-algo-2, **open**).
 
 Model findings, not confirmed live:
 
@@ -130,15 +110,15 @@ Shared with C, not reported: `maxIterations`, `samplingSize` and `maxLen` wrap a
 
 | File | What's in it |
 |---|---|
-| `AlgoUdf.lean` | Root: the report header (Lean↔Rust table, assumptions, theorems, bugs, gaps) |
+| `AlgoUdf.lean` | Root: imports and a short header |
 | `Value.lean` | A cut-down `Value`: only the variants the `algo.*` argument parsers inspect |
 | `Config.lean` | Procedure config parsing: `nodeLabels`, `relTypes`, `maxIterations`, `samplingSize`, `maxLen`, `pathCount` |
 | `Compact.lean` | Compact adjacency id↔index maps; WCC, CDLP, pageRank, Harmonic result assembly; betweenness sampling |
 | `Paths.lean` | `far_endpoint`, `cmp_found_path`, `record_found_path`, cost sums, the Dijkstra dispatch guard |
 | `Betweenness.lean` | #3380: betweenness `samplingSeed`, the seeded draw loop, and C's sampler and defaults |
-| `CostProp.lean` | #3121: `edge_numeric_attr` with `costProp` configured vs. absent; C's `_sum_path_cost` |
-| `LagContract.lean` | #3349: GraphBLAS storage orientation and `LAGraph_CheckGraph`'s `LAGRAPH_INVALID_GRAPH` outcome |
-| `MsfFlow.lean` | MSF's min-score monoid and component keys; the original-id to compact-id map (#3586: `compactOf_eq`, `denseTable_len`); maxFlow alignment |
+| `CostProp.lean` | `edge_numeric_attr` with `costProp` configured vs. absent; C's `_sum_path_cost` |
+| `LagContract.lean` | GraphBLAS storage orientation and `LAGraph_CheckGraph`'s `LAGRAPH_INVALID_GRAPH` outcome |
+| `MsfFlow.lean` | MSF's min-score monoid and component keys; the original-id to compact-id map (`compactOf_eq`, `denseTable_len`); maxFlow alignment |
 | `Graph.lean` | The graph view for the path searches: `Edge`, weighted `Walk`, hop walks, `node_successors` |
 | `DijkstraModel.lean`, `DijkstraInv.lean`, `Dijkstra.lean` | `dijkstra_single_path`: model, invariant preservation, `dijkstra_correct` |
 | `BfsModel.lean`, `BfsBound.lean` | `bfs_find_bound` and its soundness/completeness |
@@ -147,12 +127,12 @@ Shared with C, not reported: `maxIterations`, `samplingSize` and `maxLen` wrap a
 | `AlgoGlue.lean` | Messages, MSF scoring callbacks, node collection, LAGraph handle ownership |
 | `AlgoBfsReg.lean` | `algo.BFS` result assembly and procedure registration |
 | `Marshal.lean`, `MarshalThm.lean` | `value_to_js`/`js_to_value` over an abstract f64 and QuickJS heap; the round-trip theorems |
-| `Nesting.lean`, `MarshalCap.lean` | #3336: generic depth-bounded recursion, instantiated for both conversion directions |
+| `Nesting.lean`, `MarshalCap.lean` | Generic depth-bounded recursion, instantiated for both conversion directions |
 | `Repo.lean`, `UdfRepoOps.lean` | The UDF repository: load, delete, registry, serialise/deserialise |
 | `Neighbors.lean` | `collect_edges`, `getNeighbors` filters |
 | `UdfTraverse.lean` | `graph.traverse` |
 | `UdfClasses.lean` | The JS `graph`/`node`/`edge`/`path` objects and native entry points |
-| `UdfNodeView.lean` | #3454, fixed by #3464: the runtime vs committed-graph view `create_js_node` reads (`node_differs_from_committed` fast path); property `RuntimeFirstNode` |
+| `UdfNodeView.lean` | The runtime vs committed-graph view `create_js_node` reads (`node_differs_from_committed` fast path); property `RuntimeFirstNode` |
 | `UdfContext.lean` | Error messages, timeouts, script validation, context rebuild, the call bridge |
 | `UdfGlobals.lean` | The JS `falkor.register` bodies, globals, log strings |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -176,9 +156,11 @@ The four AXIOMATISED rows are FFI: `extract_vector_f64`, `extract_vector_i64` an
 - **`pathCount ≥ 2`** completeness assumes `BoundMono`.
 - **LAGraph** is trusted: WCC/CDLP output is a dense vector of indices below n, the MSF component vector is dense, and pageRank rejects n = 0. These are hypotheses, not Lean axioms.
 - **QuickJS** behaviour is assumed: `__proto__` never becomes an own key, array-index keys list first, `JS_IsDate`/`JS_IsRegExp` test the internal class, `new Date(ms)` is NaN beyond ±8.64e15 ms.
-- **`Graph::get_node_relationships`** is assumed to yield out-edges then in-edges, with a self-loop in both.
+- **`Graph::get_node_relationships_by_type`** is modelled (`Neighbors.nodeRels`): outgoing half, then the incoming half without self-loops.
+- **Datetime `ts * 1000`** (type_convert.rs) is unchecked i64 arithmetic; the release profile sets no `overflow-checks`, so it wraps (`Marshal.wrapI64`, `toJs_datetime`); a debug build would panic.
+- **JS globals**: all UDF libraries share one JS global scope (library A's `var shared` is overwritten by library B's), as in C.
 - **Timeouts and memory limits** inside the searches only add an error exit and are not modelled.
-- **QuickJS runtime lifetime** (W3-algo-2) is not modelled.
+- **QuickJS runtime lifetime** (W3-algo-2) is modelled only as `ThreadJsState`'s field drop order; QuickJS object refcounts are not.
 
 ## Build and check
 

@@ -78,7 +78,7 @@ def bTag {α} (tag : α → Nat) (untag : Nat → Except DErr α) (h : ∀ a, un
     intro a bs rest _ e; cases e
     simp only [bind_apply]; rw [u32_w32 (hlt a)]; simp only [h]; rfl
 
-/-- `LabelSet` (`blocks.rs:54-81`). -/
+/-- `LabelSet` (`blocks.rs`). -/
 def bLabels : Blk (List Nat) where
   enc := wLabelSet
   dec := rLabelSet
@@ -91,7 +91,7 @@ def bLabels : Blk (List Nat) where
     rw [ite_eq_right (by simp only [List.length_append, flatMap_w32_length]; omega)]
     simp only; rw [readN_u32 ls hx]
 
-/-- `AttrIds` (`blocks.rs:100-124`). -/
+/-- `AttrIds` (`blocks.rs`). -/
 def bAttrIds : Blk (List Nat) where
   enc := wAttrIds
   dec := rAttrIds
@@ -112,18 +112,18 @@ def bIds (C : IdCodec) (count : Nat) : Blk C.T where
   rt := by intro t bs rest h e; subst h; exact C.roundtrip t bs rest e
 
 /-- `AttrValues` encode / `decode_sized(r, (count, attrs))`. -/
-def bRows (utf8 : Bytes → Bool) (lg : Bool) (I : Bytes → Bool) (count attrs : Nat) : Blk (List Val) where
+def bRows (utf8 I : Bytes → Bool) (count attrs : Nat) : Blk (List Val) where
   enc := encL I
-  dec := rRows utf8 lg count attrs
-  ok rows := rows.length = count * attrs ∧ WFL utf8 lg rows
+  dec := rRows utf8 count attrs
+  ok rows := rows.length = count * attrs ∧ WFL utf8 rows
   rt := by
     intro rows bs rest ⟨hl, hw⟩ e
     have hlen := (encL_len I rows bs e).2
     simp only [rRows, bind_apply, guardCount]
     rw [ite_eq_right (by simp [MIN_VALUE_BYTES]; omega)]
-    simp only; rw [← hl, readN_decodeV utf8 lg I rows bs rest e hw]
+    simp only; rw [← hl, readN_decodeV utf8 I rows bs rest e hw]
 
-/-- `put_opt` (`records.rs:123`) / `take_opt` (`:137`). -/
+/-- `put_opt` (`records.rs`) / `take_opt`. -/
 def bOpt {α} (A : Blk α) : Blk (Option α) where
   enc
     | none => .ok (w8 0)

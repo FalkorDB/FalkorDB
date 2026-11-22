@@ -1,13 +1,13 @@
 import FalkorValueMath.Misc
 /-!
-# Bounded value nesting (#3339, b080a44c1; GHSA-mwvh-8fq5-x2j8)
+# Bounded value nesting
 
 | Lean | Rust |
 | --- | --- |
-| `MAX_VALUE_NESTING`, `valueNestingError` | value.rs:62, `value_nesting_error` :67 |
-| `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs:2166-2233 (the `for _ in 0..len` loop = `decodeN`) |
-| `decode` | `Decode<19>::decode` value.rs:2154 (= `decode_value(r, 0)`) |
-| `isValidProperty`, `validateListProperty`, `validateProperty` | pending.rs:69, :98, :115 (copied from proofs/pending_commit `PA`, here over `V F` so the codec theorems apply) |
+| `MAX_VALUE_NESTING`, `valueNestingError` | value.rs, `value_nesting_error`  |
+| `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs (the `for _ in 0..len` loop = `decodeN`) |
+| `decode` | `Decode<19>::decode` value.rs (= `decode_value(r, 0)`) |
+| `isValidProperty`, `validateListProperty`, `validateProperty` | pending.rs (copied from proofs/pending_commit `PA`, here over `V F` so the codec theorems apply) |
 
 `depth` is the doc-comment's measure (`[]` and `{}` are 1, `[[]]` is 2, a scalar 0).
 `within d v` says that no `decode_value` call made while decoding `v` at depth `d` sees
@@ -16,16 +16,13 @@ import FalkorValueMath.Misc
 * `decodeValue_refuses_past_cap` — past the cap the decoder returns the nesting error
   before reading a token, so the recursion never goes deeper than `MAX + 1` frames
   (`decodeValue_reach`).
-* `decodeValue_agrees` — otherwise it decodes exactly as before #3339: its `Ok` results
-  are the old decoder's results that are `within` the cap, and nothing else.
+* `decodeValue_agrees` — otherwise it decodes exactly as a decoder without a cap: its `Ok` results
+  are that decoder's results that are `within` the cap, and nothing else.
 * `decode_encode` / `decode_encode_deep` — on an encoded value: round-trip iff `within`,
   else the nesting error. `within_of_depth` / `not_within_of_depth` place the cut between
   `depth ≤ MAX` (always loads) and `depth ≥ MAX + 2` (always refused).
 * `validateProperty_depth`, **`stored_roundtrip`** — every value a property write accepts
   has `depth ≤ MAX` and round-trips through the RDB codec (the save/load guarantee).
-* History: before #3339 every nesting decoded, one frame per level, and any depth was
-  storable (the `pre3339_*` counterexamples were removed in bbee75955; the last revision
-  that has them is 17ccc5412).
 -/
 
 namespace ValueMath
@@ -35,7 +32,7 @@ variable {F : Type}
 
 def MAX_VALUE_NESTING : Nat := 4096
 
-/-- `value_nesting_error()` (value.rs:67). -/
+/-- `value_nesting_error()` (value.rs). -/
 def valueNestingError : String :=
   "Value nesting exceeds the maximum depth of " ++ toString MAX_VALUE_NESTING
 
@@ -49,7 +46,7 @@ inductive DErr | nesting | other
 
 variable (co : CodecOps F)
 
-/-- `decode_value(r, depth)` (value.rs:2166): the depth check first, then the old
+/-- `decode_value(r, depth)` (value.rs): the depth check first, then the old
 decoder with `depth + 1` for array elements. -/
 def decodeValue : Nat → Nat → List (Tok F) → Except DErr (V F × List (Tok F))
   | 0, depth, _ => if depth > MAX_VALUE_NESTING then .error .nesting else .error .other
@@ -84,8 +81,8 @@ def decodeValue : Nat → Nat → List (Tok F) → Except DErr (V F × List (Tok
         | .s i :: r => .ok (.date i, r) | _ => .error .other
       else if tag = T_TIME then match rest with
         | .s i :: r => .ok (.time i, r) | _ => .error .other
-      else if tag = T_DURATION then match decDur co rest with
-        | some p => .ok p | none => .error .other
+      else if tag = T_DURATION then match rest with
+        | .s i :: r => .ok (.duration i, r) | _ => .error .other
       else .error .other
     | _ => .error .other
 where
@@ -96,7 +93,7 @@ where
     | .ok (x, r') => (decodeN fuel depth n r').map (fun (xs, r'') => (x :: xs, r''))
     | .error e => .error e
 
-/-- `Decode<19>::decode` (value.rs:2154). -/
+/-- `Decode<19>::decode` (value.rs). -/
 def decode (fuel : Nat) (toks : List (Tok F)) : Except DErr (V F × List (Tok F)) :=
   decodeValue co fuel 0 toks
 
@@ -186,25 +183,25 @@ def cappedN (d : Nat) : Option (List (V F) × List (Tok F)) → Option (List (V 
 /-- **Decodes exactly as before below the cap**: `decode_value(r, d)` succeeds with
 `(v, rest)` iff the pre-#3339 decoder does and `v` is `within` the cap at `d`. -/
 theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
-    (decodeValue co fuel d toks).toOption = capped d (pre3339_decode co fuel toks) := by
+    (decodeValue co fuel d toks).toOption = capped d (decodeUncapped co fuel toks) := by
   intro fuel
   induction fuel with
   | zero =>
     intro d toks
-    by_cases h : d > MAX_VALUE_NESTING <;> simp [decodeValue, pre3339_decode, capped, h, Except.toOption]
+    by_cases h : d > MAX_VALUE_NESTING <;> simp [decodeValue, decodeUncapped, capped, h, Except.toOption]
   | succ f ih =>
     intro d toks
     have hN : ∀ n d r, d ≤ MAX_VALUE_NESTING + 1 →
-        (decodeValue.decodeN co f d n r).toOption = cappedN d (pre3339_decode.decodeN co f n r) := by
+        (decodeValue.decodeN co f d n r).toOption = cappedN d (decodeUncapped.decodeN co f n r) := by
       intro n
       induction n with
-      | zero => intro d r _; simp [decodeValue.decodeN, pre3339_decode.decodeN, cappedN, withinL,
+      | zero => intro d r _; simp [decodeValue.decodeN, decodeUncapped.decodeN, cappedN, withinL,
           Except.toOption]
       | succ n ihn =>
         intro d r hd
         have hx := ih d r
-        simp only [decodeValue.decodeN, pre3339_decode.decodeN]
-        rcases hp : pre3339_decode co f r with _ | ⟨x, r'⟩
+        simp only [decodeValue.decodeN, decodeUncapped.decodeN]
+        rcases hp : decodeUncapped co f r with _ | ⟨x, r'⟩
         · rw [hp] at hx
           rcases hdv : decodeValue co f d r with e | ⟨x, r'⟩
           · simp [cappedN, Except.toOption]
@@ -216,7 +213,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
               revert hx; cases decodeValue co f d r <;> simp [Except.toOption]
             rw [hdv]
             have h2 := ihn d r' hd
-            rcases hq' : pre3339_decode.decodeN co f n r' with _ | ⟨xs, r''⟩
+            rcases hq' : decodeUncapped.decodeN co f n r' with _ | ⟨xs, r''⟩
             · rw [hq'] at h2
               rcases hq : decodeValue.decodeN co f d n r' with e | q
               · simp [hq, hq', cappedN, Except.toOption, Except.map]
@@ -236,12 +233,12 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
               revert hx; cases decodeValue co f d r <;> simp [Except.toOption]
             obtain ⟨e, hdv⟩ := hdv
             rw [hdv]
-            rcases hq' : pre3339_decode.decodeN co f n r' with _ | ⟨xs, r''⟩
+            rcases hq' : decodeUncapped.decodeN co f n r' with _ | ⟨xs, r''⟩
             · simp [hq', cappedN, Except.toOption]
             · simp [hq', cappedN, withinL, hw, Except.toOption]
     by_cases hd : d > MAX_VALUE_NESTING
     · rw [decodeValue_refuses_past_cap co _ _ _ hd]
-      cases hp : pre3339_decode co (f + 1) toks with
+      cases hp : decodeUncapped co (f + 1) toks with
       | none => simp [capped, Except.toOption]
       | some p =>
         obtain ⟨v, r⟩ := p
@@ -255,7 +252,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
         cases v with
         | list l => exact absurd rfl (hv l)
         | _ => simp [capped, within, hd']
-      unfold decodeValue pre3339_decode
+      unfold decodeValue decodeUncapped
       rw [ite_eq_right hd]
       split
       · rename_i tag rest
@@ -282,7 +279,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
             cases hq : decodeValue.decodeN co f (d + 1) len r with
             | error e =>
               rw [hq] at this
-              cases hq' : pre3339_decode.decodeN co f len r with
+              cases hq' : decodeUncapped.decodeN co f len r with
               | none => simp [hq', capped, Except.map, Except.toOption]
               | some q =>
                 obtain ⟨l, r'⟩ := q
@@ -296,7 +293,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
             | ok q =>
               obtain ⟨l, r'⟩ := q
               rw [hq] at this
-              cases hq' : pre3339_decode.decodeN co f len r with
+              cases hq' : decodeUncapped.decodeN co f len r with
               | none => rw [hq'] at this; simp [cappedN, Except.toOption] at this
               | some q' =>
                 obtain ⟨l', r''⟩ := q'
@@ -329,11 +326,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
         · simp only [t11, ite_true]; split <;> simp [Except.toOption, capped, within, hd']
         simp only [t11, ite_false]
         by_cases t12 : tag = T_DURATION
-        · simp only [t12, ite_true]
-          rcases hq : decDur co rest with _ | ⟨v, r⟩
-          · simp [Except.toOption, capped]
-          · obtain ⟨c, rfl⟩ := decDur_some co hq
-            simp [Except.toOption, capped, within, hd']
+        · simp only [t12, ite_true]; split <;> simp [Except.toOption, capped, within, hd']
         simp only [t12, ite_false]
         simp [Except.toOption, capped]
       · simp [Except.toOption, capped]
@@ -345,46 +338,43 @@ theorem toOption_some {α ε : Type} {e : Except ε α} {a : α} (h : e.toOption
 
 /-- **Round-trip below the cap**: a storable value `within` the cap decodes to itself. -/
 theorem decodeValue_encode (fuel d : Nat) (v : V F) (rest : List (Tok F)) (hs : sizeOf v < fuel)
-    (hst : Storable v) (hdr : DurReadable co v) (hw : within d v = true) :
+    (hst : Storable v) (hw : within d v = true) :
     decodeValue co fuel d (encode co v ++ rest) = .ok (v, rest) := by
   apply toOption_some
-  rw [decodeValue_agrees, pre3339_decode_encode co fuel v rest hs hst hdr]
+  rw [decodeValue_agrees, decodeUncapped_encode co fuel v rest hs hst]
   simp [capped, hw]
 
 theorem decode_encode (fuel : Nat) (v : V F) (rest : List (Tok F)) (hs : sizeOf v < fuel)
-    (hst : Storable v) (hdr : DurReadable co v) (hw : within 0 v = true) :
+    (hst : Storable v) (hw : within 0 v = true) :
     decode co fuel (encode co v ++ rest) = .ok (v, rest) :=
-  decodeValue_encode co fuel 0 v rest hs hst hdr hw
+  decodeValue_encode co fuel 0 v rest hs hst hw
 
 /-- **Refused past the cap**: a storable value that is not `within` the cap is the
 nesting error, not some other failure. -/
 theorem decodeValue_encode_deep : ∀ (fuel d : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel →
-    Storable v → DurReadable co v → within d v = false →
-    decodeValue co fuel d (encode co v ++ rest) = .error .nesting := by
+    Storable v → within d v = false → decodeValue co fuel d (encode co v ++ rest) = .error .nesting := by
   intro fuel
   induction fuel with
   | zero => intro d v rest h; omega
   | succ f ih =>
-    intro d v rest hs hst hdr hw
+    intro d v rest hs hst hw
     by_cases hd : d > MAX_VALUE_NESTING
     · exact decodeValue_refuses_past_cap co _ _ _ hd
     have hd' : d ≤ MAX_VALUE_NESTING := by omega
     have hN : ∀ (d' : Nat) (l : List (V F)) (r : List (Tok F)), sizeOf l < f → StorableList l →
-        DurReadableList co l →
         withinL d' l = false → decodeValue.decodeN co f d' l.length (encodeList co l ++ r) = .error .nesting := by
       intro d' l
       induction l with
-      | nil => intro r _ _ _ h; simp [withinL] at h
+      | nil => intro r _ _ h; simp [withinL] at h
       | cons x xs ihl =>
-        intro r hsz hsl hdl hwl
+        intro r hsz hsl hwl
         simp only [StorableList] at hsl
-        simp only [DurReadableList] at hdl
         simp only [encodeList, List.length_cons, List.append_assoc, decodeValue.decodeN]
         by_cases hx : within d' x = true
-        · rw [decodeValue_encode co f d' x _ (by simp at hsz; omega) hsl.1 hdl.1 hx]
+        · rw [decodeValue_encode co f d' x _ (by simp at hsz; omega) hsl.1 hx]
           have hxs : withinL d' xs = false := by simpa [withinL, hx] using hwl
-          simp [ihl r (by simp at hsz; omega) hsl.2 hdl.2 hxs, Except.map]
-        · rw [ih d' x _ (by simp at hsz; omega) hsl.1 hdl.1 (by simpa using hx)]
+          simp [ihl r (by simp at hsz; omega) hsl.2 hxs, Except.map]
+        · rw [ih d' x _ (by simp at hsz; omega) hsl.1 (by simpa using hx)]
     cases v with
     | list l =>
       simp only [Storable] at hst
@@ -392,7 +382,7 @@ theorem decodeValue_encode_deep : ∀ (fuel d : Nat) (v : V F) (rest : List (Tok
       simp only [encode, List.cons_append, List.nil_append]
       unfold decodeValue
       simp [hd, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
-        hN (d + 1) l rest (by simp at hs; omega) hst hdr hwl, Except.map]
+        hN (d + 1) l rest (by simp at hs; omega) hst hwl, Except.map]
     | _ => simp [within, hd'] at hw
 
 /-! ## Depth -/
@@ -509,21 +499,21 @@ theorem within_nest_empty : within 0 (nest MAX_VALUE_NESTING (.list ([] : List (
   refine ⟨?_, hd _⟩
   rw [within_nest]; simp [within, withinL]
 
-/-! ## Property writes (pending.rs:69-131) -/
+/-! ## Property writes (pending.rs) -/
 
-/-- `is_valid_property` (pending.rs:69): a non-list primitive, or NULL when allowed. -/
+/-- `is_valid_property` (pending.rs): a non-list primitive, or NULL when allowed. -/
 def isValidProperty : V F → Bool → Bool
   | .null, allowNull => allowNull
   | .bool _, _ | .int _, _ | .float _, _ | .str _, _ | .point _ _, _ | .vec _, _
   | .datetime _, _ | .date _, _ | .time _, _ | .duration _, _ => true
   | _, _ => false
 
-/-- The two error strings: the nesting message (pending.rs:103) and `INVALID_PROPERTY_MSG`. -/
+/-- The two error strings: the nesting message (pending.rs) and `INVALID_PROPERTY_MSG`. -/
 inductive PErr | nesting | invalid
   deriving DecidableEq
 
 mutual
-/-- The `try_for_each` body of `validate_list_property` (pending.rs:108-112) at nesting
+/-- The `try_for_each` body of `validate_list_property` (pending.rs) at nesting
 `depth`; a nested list is `validate_list_property(inner, depth + 1)`, whose depth check is
 inlined here (`validateListProperty` is the same check around `validateItems`). -/
 def validateItems : Nat → List (V F) → Except PErr Unit
@@ -537,11 +527,11 @@ def validateItem : Nat → V F → Except PErr Unit
   | _, v => if isValidProperty v false then .ok () else .error .invalid
 end
 
-/-- `validate_list_property(items, depth)` (pending.rs:98). -/
+/-- `validate_list_property(items, depth)` (pending.rs). -/
 def validateListProperty (items : List (V F)) (depth : Nat) : Except PErr Unit :=
   if depth > MAX_VALUE_NESTING then .error .nesting else validateItems depth items
 
-/-- `validate_property` (pending.rs:115); `validate_node_property` (:124) and
+/-- `validate_property` (pending.rs); `validate_node_property` (:124) and
 `validate_relationship_property` (:129) are this function. -/
 def validateProperty : V F → Except PErr Unit
   | .list items => validateListProperty items 1
@@ -672,26 +662,9 @@ theorem validateProperty_storable (v : V F) (h : validateProperty v = .ok ()) (h
 /-- **The save/load guarantee**: every value a property write accepts (with vectors
 that fit the u32 dimension) round-trips through `Encode<19>` / `Decode<19>`. -/
 theorem stored_roundtrip (v : V F) (rest : List (Tok F)) (h : validateProperty v = .ok ())
-    (hv : VecsFit v) (hdr : DurReadable co v) :
-    decode co (sizeOf v + 1) (encode co v ++ rest) = .ok (v, rest) :=
-  decode_encode co _ v rest (by omega) (validateProperty_storable v h hv) hdr
+    (hv : VecsFit v) : decode co (sizeOf v + 1) (encode co v ++ rest) = .ok (v, rest) :=
+  decode_encode co _ v rest (by omega) (validateProperty_storable v h hv)
     (within_of_depth (sizeOf v + 1) v 0 (by omega) (by have := validateProperty_depth v h; omega))
-
-/-- **The save/load guarantee at this build's version** (#3610): a reader at encver ≥ 21
-(what `Encode<{ENCODING_VERSION}>` output is read with) gets back every accepted value,
-durations included. -/
-theorem stored_roundtrip_current (v : V F) (rest : List (Tok F)) (h : validateProperty v = .ok ())
-    (hv : VecsFit v) (hver : ENCVER_DURATION_COMPONENTS ≤ co.encver) :
-    decode co (sizeOf v + 1) (encode co v ++ rest) = .ok (v, rest) :=
-  stored_roundtrip co v rest h hv (durReadable_current co hver (sizeOf v + 1) v (by omega))
-
-/-- A pre-#3610 stored duration (one legacy `i64`, reader below encver 21) loads through
-`duration_from_legacy`. -/
-theorem decode_legacy_duration (fuel : Nat) (hver : co.encver < ENCVER_DURATION_COMPONENTS)
-    (x : Int) (c : Dur) (hc : co.fromLegacy x = some c) (rest : List (Tok F)) :
-    decode co (fuel + 1) (.u T_DURATION :: .s x :: rest) = .ok (.duration c, rest) := by
-  simp [decode, decodeValue, MAX_VALUE_NESTING, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN,
-    T_ARRAY, T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME, T_DURATION, decDur_legacy co hver, hc]
 
 /-- `validate_list_property`'s cut on `k` lists around a primitive: accepted iff
 `k ≤ MAX` (the tests `a_property_at_the_cap_is_valid` / `…_past_the_cap_is_refused`). -/
@@ -734,11 +707,7 @@ theorem decode_nest_deep (k : Nat) (hk : k > MAX_VALUE_NESTING) :
     intro k; induction k with
     | zero => trivial
     | succ k ih => exact ⟨ih, trivial⟩
-  have hr : ∀ k, DurReadable co (nest k (.null : V F)) := by
-    intro k; induction k with
-    | zero => trivial
-    | succ k ih => exact ⟨ih, trivial⟩
-  have := decodeValue_encode_deep co (sizeOf (nest k (.null : V F)) + 1) 0 (nest k .null) [] (by omega) (hs k) (hr k)
+  have := decodeValue_encode_deep co (sizeOf (nest k (.null : V F)) + 1) 0 (nest k .null) [] (by omega) (hs k)
     (by rw [within_nest_scalar k _ (by intro l h; cases h)]; simp; omega)
   simpa [decode] using this
 

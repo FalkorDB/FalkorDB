@@ -1,6 +1,6 @@
 import PendingCommit.Content
 /-
-# `Block::merge_span` with contents (attribute_store.rs:636-795)
+# `Block::merge_span` with contents (attribute_store.rs)
 
 `mergeSpanC` takes the same path `merge_span` takes (`old.cap != 0` guards the
 two fast paths, :646/:671), computes the merged list with the path's loop

@@ -1,6 +1,6 @@
 import FalkorExprSemantics.Frame
 /-!
-# The 2026-10-21 arms of `ExprEval` (eval.rs:340-1134): short-circuit and error order
+# The 2026-10-21 arms of `ExprEval` (eval.rs): short-circuit and error order
 
 Theorems about the arms `Eval.lean` gained: `AND`/`OR` stop at the first settling operand and
 never evaluate the rest (`and_false_short_circuits`, `or_true_short_circuits`; live on main:
@@ -35,7 +35,7 @@ theorem andOr_error_first (sc n : Bool) (bad : E V) (e : String) (hbad : evalNod
     (rest : List (E V)) : andOrLoop O ev c env sc n (bad :: rest) = .error e := by
   simp [andOrLoop, hbad, bind, Except.bind]
 
-/-- A non-boolean, non-null operand is a type error naming its type (#3294). -/
+/-- A non-boolean, non-null operand is a type error naming its type. -/
 theorem andOr_mismatch (sc n : Bool) (a : V) (ha : O.boolOf a = none) (rest : List (E V)) :
     andOrLoop O ev c env sc n (.const a :: rest) = .error (boolMismatchMsg O a) := by
   simp [andOrLoop, evalNode, ha, bind, Except.bind]
@@ -135,7 +135,7 @@ theorem case_miss_else (els : E V) (subj : Option (E V)) (sv : Option V)
 /-! ## List literals: last to first -/
 
 /-- **A list literal reports its rightmost failing element's error** (the stack machine
-evaluates the elements last to first, eval.rs:563-578). -/
+evaluates the elements last to first, eval.rs). -/
 theorem list_error_rightmost (a b : E V) (e : String) (hb : evalNode O ev c env b = .error e) :
     evalNode O ev c env (.list [a, b]) = .error e := by
   simp [evalNode, evalRev, hb, bind, Except.bind]
@@ -192,10 +192,10 @@ namespace FalkorExpr.Eval
 
 variable {V : Type}
 
-/-! ## `all_equals` / `all_not_equals` (eval.rs:1713, :1736) -/
+/-! ## `all_equals` / `all_not_equals` (eval.rs) -/
 
 /-- `all_equals` over a lazy iterator of results. `prev` is the **first** element for every
-comparison (it is never reassigned, eval.rs:1717-1729); a compared null answers `null`,
+comparison (it is never reassigned, eval.rs); a compared null answers `null`,
 NaN / disjoint / unequal answer `false` without evaluating the rest. -/
 def allEqLoop (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) (prev : V) :
     List (Unit → Except String V) → Except String V
@@ -230,7 +230,7 @@ def allNotEquals (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool �
   | [] => .error "Eq operator requires at least two arguments"
   | first :: rest => do let prev ← first (); allNeqLoop cmp null bool prev rest
 
-/-- The binary fast path `all_equals([Ok(lhs), Ok(rhs)])` (eval.rs:446-450). -/
+/-- The binary fast path `all_equals([Ok(lhs), Ok(rhs)])` (eval.rs). -/
 theorem allEquals_two (cmp : V → V → Ordering × Flag) (null : V) (bool : Bool → V) (a b : V) :
     allEquals cmp null bool [fun _ => .ok a, fun _ => .ok b] =
       .ok (match (cmp a b).2 with

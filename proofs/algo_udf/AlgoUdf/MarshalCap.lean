@@ -1,23 +1,23 @@
 import AlgoUdf.MarshalThm
 set_option linter.unusedSimpArgs false
 set_option linter.unusedVariables false
-/-! # #3336 (`33a956360`, GHSA-frmf-ffvc-mxx5): UDF value conversion is depth-capped
+/-! # UDF value conversion is depth-capped
 
 Both conversions are instances of `Step` (`Nesting.lean`): `fromStep H` is `js_to_value_level` over
 the QuickJS heap `H`, `toStep` is `value_to_js_at`'s check + `value_to_js_level`.
 
 Main results (`MAX = MAX_UDF_VALUE_NESTING = 1024`):
 * `fromJs_frames`, `toJs_frames`: **`MAX + 1` conversion levels always suffice**, for every input —
-  including a self-containing JS array (`Hself`), which the old code recursed into forever.
+  including a self-containing JS array (`Hself`).
 * `fromJs_past_cap`, `toJs_past_cap`: an input nested past the cap is an `Err`, never an overflow;
   exactly `udf_nesting_error()` for the Rust tests' shapes (`fromJs_nestArr_past`, `self_array_error`,
   `toJs_nestList_past`).
 * `fromJs_needs_all_frames`: the bound is tight (`MAX` frames do not suffice for `MAX` nested arrays);
   the uncapped conversion (`cap = none`) needs `n + 1` frames for `n` nested arrays, which is why
-  the bound is exactly `MAX + 1` (the advisory's 300,000-deep array).
-* `cap_asymmetry_vecf32`: the two caps count differently — `value_to_js` does not count a VecF32 (or
-  Path) leaf as a level, `js_to_value` does, so `MAX` lists around a vecf32 convert into JS but not
-  back.
+  the bound is exactly `MAX + 1`.
+* `cap_asymmetry_vecf32`: the two caps count differently — `value_to_js` does not count a VecF32
+  leaf as a level, `js_to_value` does, so `MAX` lists around a vecf32 convert into JS but not
+  back. (A Path is a leaf both ways: `js_to_value` reads it from the entity class.)
 -/
 namespace AlgoUdf.Marshal
 
@@ -86,142 +86,18 @@ theorem listLoop_mono {α β} (conv conv' : α → R β) (hc : ∀ x, conv x ≠
         have h2 := bind_ok_ne h hcx
         rw [listLoop_mono conv conv' hc xs (bind_ne_none_left h2)]
 
-/-! ## The path loop -/
-
-theorem pathLoop_total (conv : JsV → R RV) : ∀ ns rs : List JsV, (∀ x ∈ ns ++ rs, conv x ≠ none) →
-    pathLoop conv ns rs ≠ none
-  | [], _, _ => fun h => nomatch h
-  | n :: ns, rs, h => by
-    simp only [pathLoop]
-    refine bind_ne_none (h n (by simp)) fun v _ => ?_
-    cases asNode v with
-    | none => exact fun h => nomatch h
-    | some id =>
-      cases rs with
-      | nil =>
-        exact bind_ne_none (pathLoop_total conv ns [] fun y hy => h y (by simp at hy ⊢; simp [hy]))
-          fun _ _ => fun h => nomatch h
-      | cons r rs' =>
-        refine bind_ne_none (h r (by simp)) fun w _ => ?_
-        cases asRel w with
-        | none => exact fun h => nomatch h
-        | some rid =>
-          exact bind_ne_none (pathLoop_total conv ns rs' fun y hy => h y (by
-            simp only [List.mem_append, List.mem_cons] at hy ⊢; rcases hy with h | h <;> simp [h])) fun _ _ => fun h => nomatch h
-
-theorem pathLoop_ext (conv conv' : JsV → R RV) : ∀ ns rs : List JsV, (∀ x ∈ ns ++ rs, conv x = conv' x) →
-    pathLoop conv ns rs = pathLoop conv' ns rs
-  | [], _, _ => rfl
-  | n :: [], [], h => by
-    simp only [pathLoop]; rw [h n (by simp)]
-  | n :: ns, [], h => by
-    simp only [pathLoop]
-    rw [h n (by simp), pathLoop_ext conv conv' ns [] fun y hy => h y (by simp at hy ⊢; simp [hy])]
-  | n :: ns, r :: rs', h => by
-    simp only [pathLoop]
-    rw [h n (by simp), h r (by simp), pathLoop_ext conv conv' ns rs' fun y hy => h y (by
-      simp only [List.mem_append, List.mem_cons] at hy ⊢; rcases hy with h | h <;> simp [h])]
-
-theorem pathLoop_err (conv : JsV → R RV) : ∀ (ns rs : List JsV) (x : JsV) (e : String), rs.length ≤ ns.length →
-    (∀ y ∈ ns ++ rs, conv y ≠ none) → x ∈ ns ++ rs → conv x = R.err e → ∃ e', pathLoop conv ns rs = R.err e'
-  | [], [], x, _, _, _, hx, _ => by simp at hx
-  | [], _ :: _, _, _, hl, _, _, _ => by simp at hl
-  | n :: ns, rs, x, e, hl, hn, hx, he => by
-    have hxn : x = n ∨ x ∈ ns ++ rs := by simpa using hx
-    cases hcn : conv n with
-    | none => exact absurd hcn (hn n (by simp))
-    | some q =>
-      cases q with
-      | error e' => simp only [pathLoop, hcn, R.bind_err]; exact ⟨e', rfl⟩
-      | ok v =>
-        have hxn' : x ≠ n := by rintro rfl; rw [hcn] at he; cases he
-        have hx1 : x ∈ ns ++ rs := hxn.resolve_left hxn'
-        cases hv : asNode v with
-        | none => simp only [pathLoop, hcn, R.bind_ok, hv]; exact ⟨_, rfl⟩
-        | some id =>
-          cases rs with
-          | nil =>
-            obtain ⟨e', he'⟩ := pathLoop_err conv ns [] x e (by simp)
-              (fun y hy => hn y (by simp at hy ⊢; simp [hy])) hx1 he
-            simp only [pathLoop, hcn, R.bind_ok, hv, he', R.bind_err]; exact ⟨e', rfl⟩
-          | cons r rs' =>
-            cases hcr : conv r with
-            | none => exact absurd hcr (hn r (by simp))
-            | some q =>
-              cases q with
-              | error e' => simp only [pathLoop, hcn, R.bind_ok, hv, hcr, R.bind_err]; exact ⟨e', rfl⟩
-              | ok w =>
-                have hxr : x ≠ r := by rintro rfl; rw [hcr] at he; cases he
-                cases hw : asRel w with
-                | none => simp only [pathLoop, hcn, R.bind_ok, hv, hcr, hw]; exact ⟨_, rfl⟩
-                | some rid =>
-                  have hx' : x ∈ ns ++ rs' := by
-                    simp only [List.mem_append, List.mem_cons] at hx1 ⊢
-                    rcases hx1 with h | h | h
-                    · exact Or.inl h
-                    · exact absurd h hxr
-                    · exact Or.inr h
-                  obtain ⟨e', he'⟩ := pathLoop_err conv ns rs' x e (by simp at hl; omega)
-                    (fun y hy => hn y (by simp only [List.mem_append, List.mem_cons] at hy ⊢
-                                          rcases hy with h | h <;> simp [h])) hx' he
-                  simp only [pathLoop, hcn, R.bind_ok, hv, hcr, hw, he', R.bind_err]; exact ⟨e', rfl⟩
-
-theorem pathLoop_mono (conv conv' : JsV → R RV) (hc : ∀ x, conv x ≠ none → conv' x = conv x) :
-    ∀ ns rs : List JsV, pathLoop conv ns rs ≠ none → pathLoop conv' ns rs = pathLoop conv ns rs
-  | [], _, _ => rfl
-  | n :: ns, rs, h => by
-    have hn : conv n ≠ none := by
-      intro h0; apply h; simp only [pathLoop, h0, R.bind_none]
-    cases hcn : conv n with
-    | none => exact absurd hcn hn
-    | some q =>
-      cases q with
-      | error e => simp only [pathLoop, hc n hn, hcn, R.bind_err]
-      | ok v =>
-        cases hv : asNode v with
-        | none => simp only [pathLoop, hc n hn, hcn, R.bind_ok, hv]
-        | some id =>
-          cases rs with
-          | nil =>
-            have h2 : pathLoop conv ns [] ≠ none := by
-              intro h0; apply h; simp only [pathLoop, hcn, R.bind_ok, hv, h0, R.bind_none]
-            simp only [pathLoop, hc n hn, hcn, R.bind_ok, hv, pathLoop_mono conv conv' hc ns [] h2]
-          | cons r rs' =>
-            have hr : conv r ≠ none := by
-              intro h0; apply h; simp only [pathLoop, hcn, R.bind_ok, hv, h0, R.bind_none]
-            cases hcr : conv r with
-            | none => exact absurd hcr hr
-            | some q =>
-              cases q with
-              | error e => simp only [pathLoop, hc n hn, hcn, R.bind_ok, hv, hc r hr, hcr, R.bind_err]
-              | ok w =>
-                cases hw : asRel w with
-                | none => simp only [pathLoop, hc n hn, hcn, R.bind_ok, hv, hc r hr, hcr, hw]
-                | some rid =>
-                  have h3 : pathLoop conv ns rs' ≠ none := by
-                    intro h0; apply h; simp only [pathLoop, hcn, R.bind_ok, hv, hcr, hw, h0, R.bind_none]
-                  simp only [pathLoop, hc n hn, hcn, R.bind_ok, hv, hc r hr, hcr, hw,
-                    pathLoop_mono conv conv' hc ns rs' h3]
-
 /-! ## `js_to_value` as a `Step` -/
 
-/-- The arms that check the depth (array :320, path :361, plain object :443). -/
+/-- The arms that check the depth (array :321, plain object :399). -/
 def needsS : Shape → Bool
   | .done _ => false
   | _ => true
-
-/-- The children a path converts (only once both arrays are read and the counts agree). -/
-def pathKids (H : Heap) (ps : List (List Char × JsV)) : List JsV :=
-  match getArr H ps "nodes", getArr H ps "relationships" with
-  | some ns, some rs => if rs.length = ns.length - 1 then ns ++ rs else []
-  | _, _ => []
 
 /-- The children `js_to_value_level` converts at `depth + 1`. -/
 def kidsS (H : Heap) : Shape → List JsV
   | .done _ => []
   | .list items => items
   | .vec _ => []
-  | .path ps => pathKids H ps
   | .map ps => (keptProps ps).map (·.2)
 
 section
@@ -239,30 +115,12 @@ theorem shape_chk_err (conv : JsV → R RV) (s : Shape) (h : needsS s = true) :
     runShape H true conv s = R.err nestErr := by
   cases s <;> simp [needsS] at h <;> rfl
 
-theorem pathArm_ext (conv conv' : JsV → R RV) (ps : List (List Char × JsV))
-    (h : ∀ x ∈ pathKids H ps, conv x = conv' x) : pathArm H conv ps = pathArm H conv' ps := by
-  unfold pathArm
-  unfold pathKids at h
-  cases hn : getArr H ps "nodes" with
-  | none => rfl
-  | some ns =>
-    cases hr : getArr H ps "relationships" with
-    | none => rfl
-    | some rs =>
-      rw [hn, hr] at h
-      simp only at h ⊢
-      by_cases hl : rs.length = ns.length - 1
-      · simp only [hl, ite_true] at h ⊢
-        rw [pathLoop_ext conv conv' ns rs h]
-      · simp only [hl, ite_false]
-
 theorem shape_ext (b : Bool) (conv conv' : JsV → R RV) (s : Shape) (h : ∀ x ∈ kidsS H s, conv x = conv' x) :
     runShape H b conv s = runShape H b conv' s := by
   cases s with
   | done r => rfl
   | list items => simp only [runShape]; rw [listLoop_ext conv conv' items h]
   | vec items => rfl
-  | path ps => simp only [runShape]; rw [pathArm_ext H conv conv' ps h]
   | map ps => simp only [runShape]; rw [listLoop_ext conv conv' ((keptProps ps).map (fun x : List Char × JsV => x.2)) h]
 
 theorem shape_total (b : Bool) (conv : JsV → R RV) (s : Shape) (h : ∀ x, conv x ≠ none) :
@@ -278,16 +136,6 @@ theorem shape_total (b : Bool) (conv : JsV → R RV) (s : Shape) (h : ∀ x, con
     simp only [runShape]; split
     · exact fun h => nomatch h
     · exact bind_ne_none (listLoop_total conv _ fun x _ => h x) fun _ _ => fun h => nomatch h
-  | path ps =>
-    simp only [runShape]; split
-    · exact fun h => nomatch h
-    · unfold pathArm
-      split
-      · split
-        · exact bind_ne_none (pathLoop_total conv _ _ fun x _ => h x) fun _ _ => fun h => nomatch h
-        · exact fun h => nomatch h
-      · exact fun h => nomatch h
-      · exact fun h => nomatch h
 
 theorem shape_kid_err (conv : JsV → R RV) (s : Shape) (x : JsV) (e : String) (hn : ∀ y, conv y ≠ none)
     (hx : x ∈ kidsS H s) (he : conv x = R.err e) : ∃ e', runShape H false conv s = R.err e' := by
@@ -300,22 +148,6 @@ theorem shape_kid_err (conv : JsV → R RV) (s : Shape) (x : JsV) (e : String) (
   | map ps =>
     obtain ⟨e', he'⟩ := listLoop_err conv ((keptProps ps).map (fun x : List Char × JsV => x.2)) x e (fun y _ => hn y) hx he
     simp only [runShape, Bool.false_eq_true, ite_false, he', R.bind_err]; exact ⟨e', rfl⟩
-  | path ps =>
-    simp only [kidsS, pathKids] at hx
-    simp only [runShape, Bool.false_eq_true, ite_false, pathArm]
-    cases hns : getArr H ps "nodes" with
-    | none => rw [hns] at hx; simp at hx
-    | some ns =>
-      cases hrs : getArr H ps "relationships" with
-      | none => rw [hns, hrs] at hx; simp at hx
-      | some rs =>
-        rw [hns, hrs] at hx
-        simp only at hx ⊢
-        by_cases hl : rs.length = ns.length - 1
-        · simp only [hl, ite_true] at hx ⊢
-          obtain ⟨e', he'⟩ := pathLoop_err conv ns rs x e (by omega) (fun y _ => hn y) hx he
-          rw [he']; exact ⟨e', rfl⟩
-        · simp [hl] at hx
 
 theorem shape_mono (b : Bool) (conv conv' : JsV → R RV) (s : Shape) (h : runShape H b conv s ≠ none)
     (hc : ∀ x, conv x ≠ none → conv' x = conv x) : runShape H b conv' s = runShape H b conv s := by
@@ -334,24 +166,6 @@ theorem shape_mono (b : Bool) (conv conv' : JsV → R RV) (s : Shape) (h : runSh
     · rfl
     · rename_i hb; simp only [hb] at h
       rw [listLoop_mono conv conv' hc _ (bind_ne_none_left h)]
-  | path ps =>
-    simp only [runShape] at h ⊢
-    split
-    · rfl
-    · rename_i hb; simp only [hb] at h
-      unfold pathArm at h ⊢
-      cases hns : getArr H ps "nodes" with
-      | none => rfl
-      | some ns =>
-        cases hrs : getArr H ps "relationships" with
-        | none => rfl
-        | some rs =>
-          rw [hns, hrs] at h
-          simp only at h ⊢
-          by_cases hl : rs.length = ns.length - 1
-          · simp only [hl, ite_true] at h ⊢
-            rw [pathLoop_mono conv conv' hc ns rs (bind_ne_none_left h)]
-          · simp only [hl, ite_false]
 
 /-- **`js_to_value_level` is a `Step`** over the heap `H`. -/
 def fromStep : Step JsV RV where
@@ -455,7 +269,7 @@ theorem toF_eq_run (cap : Option Nat) : ∀ f d v, toF cap f d v = toStep.run ca
 theorem classify_arr_nil (items : List JsV) : classify (.arr items []) = .list items := rfl
 theorem deref_arr (H : Heap) (items ps) : deref H (.arr items ps) = .arr items ps := rfl
 
-/-! ## #3336, `js_to_value` -/
+/-! ## `js_to_value` -/
 
 /-- `v` nests at most `MAX` levels (as `js_to_value` counts them). -/
 def fitsJs (H : Heap) (v : JsV) : Bool := (fromStep H).within MAX v
@@ -569,7 +383,7 @@ theorem fromJs_needs_all_frames (H : Heap) : fromF H (some MAX) MAX 0 (nestArr M
       simp only [fromF, fromLevel, nestArr, deref_arr, classify_arr_nil]
       simp only [runShape, chk, Bool.false_eq_true, ite_false, listLoop, ih f (d + 1) (by omega), R.bind_none]
 
-/-! ## #3336, `value_to_js` -/
+/-! ## `value_to_js` -/
 
 /-- `v` nests at most `MAX` lists / maps. -/
 def fitsV (v : RV) : Bool := toStep.within MAX v
@@ -631,7 +445,7 @@ theorem nestList_rt (n : Nat) (h : n ≤ MAX) : rt (nestList n) := by
 theorem toJs_nestList_past (n : Nat) (h : MAX < n) : toJs (nestList n) = .error nestErr := by
   unfold toJs; rw [toF_nestList_err MAX n (MAX + 1) 0 (by omega) (by omega) (by omega)]; rfl
 
-/-! ## The two caps count a VecF32 / Path leaf differently -/
+/-! ## The two caps count a VecF32 leaf differently -/
 
 /-- `n` single-element lists around `v`, and `n` single-element arrays around `j`. -/
 def wrapL : Nat → RV → RV
@@ -658,8 +472,7 @@ theorem fits_wrap_vec (H : Heap) : ∀ n, (fromStep H).within n (wrapA n vecJs) 
     simp [Step.within, wrapA, deref_arr, classify_arr_nil, kidsS, fits_wrap_vec H n]
 
 /-- FINDING (model; not a crash): `value_to_js` checks only List / Map against the cap, but
-    `js_to_value` also counts the array that carries a VecF32 (and the object that carries a Path)
-    as a level. So `MAX` lists around a vecf32 — a value inside the cap — convert into JS, and the
+    `js_to_value` also counts the array that carries a VecF32 as a level. So `MAX` lists around a vecf32 — a value inside the cap — convert into JS, and the
     unchanged JS value does not convert back: an identity UDF fails on it with
     `udf_nesting_error()`. -/
 theorem cap_asymmetry_vecf32 :

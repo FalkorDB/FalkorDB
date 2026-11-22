@@ -23,7 +23,7 @@ schema, payload directory, then each payload. This file models the encoder
   labels/types/attribute dictionary, indexes and constraints).
 * `truncated_payload_eof` — every truncated payload (cut at a word boundary) makes the
   decoder ask for one more word. On `vec_load_graph` that read is `BufferedReader::
-  from_blob`'s `load_chunk` = `RedisModule_LoadStringBuffer(NULL)` (redis_layer
+  from_slice`'s `load_chunk` = `RedisModule_LoadStringBuffer(NULL)` (redis_layer
   `from_slice_past_end`): #2537 for *every* such cut, not just the empty payload.
 * `multi_key_tiles` / `multi_key_bound` / `multi_key_matrices` — `build_multi_key_payloads`
   splits each entity kind into consecutive slices that tile `[0, total)` in order, no key

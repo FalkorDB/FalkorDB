@@ -1,12 +1,12 @@
 import FalkorEffectsCodec.RecRT
 /-!
-# #2916: the encoder refuses exactly the shapes `read_record` rejects
+# The encoder's shape checks (`write_header`, `check_row_shape`)
 
-Before `2c874022a` `Record::encode` wrote a batch of zero ids and a row block of
-any length; `read_record` refuses the first (`EmptyRecord`) and misreads the
-second (it takes `count × attrs` values, so a longer block's spare value is
-parsed as the next opcode — the wave-1 counterexample, which no longer holds).
-Now `write_header` refuses a zero count and `check_row_shape` a row block that
+This file states what the encoder refuses; it does NOT claim the reader rejects exactly
+those shapes. `read_record` refuses a batch of zero ids (`EmptyRecord`), but it does not
+reject a row block of the wrong length: it consumes `count × attrs` values and leaves a
+longer block's spare value for the next opcode (so it would be misparsed, not refused).
+`write_header` refuses a zero count and `check_row_shape` a row block that
 is not `count × attrs`, so:
 
 * `encRecord_ok_shape` — a record the encoder accepts has ≥ 1 id, the right
@@ -19,9 +19,9 @@ is not `count × attrs`, so:
 -/
 namespace FalkorCodec
 
-variable (C : IdCodec) (utf8 : Bytes → Bool) (lg : Bool) (I : Bytes → Bool)
+variable (C : IdCodec) (utf8 I : Bytes → Bool)
 
-/-- The shape facts `read_record` needs and the encoder now guarantees. -/
+/-- The shape facts `read_record` needs and the encoder guarantees. -/
 def Shape : Record C.T → Prop
   | .createNode ids _ as rows | .updateNode ids _ as rows | .updateEdge ids _ as rows =>
       0 < C.count ids ∧ rows.length = C.count ids * as.length
@@ -42,7 +42,7 @@ theorem thenE_split {x : Except EErr Unit} {y : Except EErr Bytes} {bs : Bytes}
   unfold thenE at h; split at h <;> simp_all
 
 /-- **What the encoder accepts has the shape the reader needs.** -/
-theorem encRecord_ok_shape (r : Record C.T) (bs : Bytes) (h : encRecord C utf8 lg I r = .ok bs) :
+theorem encRecord_ok_shape (r : Record C.T) (bs : Bytes) (h : encRecord C utf8 I r = .ok bs) :
     Shape C r := by
   cases r with
   | createNode ids ls as rows =>
@@ -74,28 +74,28 @@ theorem encRecord_empty_never_ok (r : Record C.T) (bs : Bytes)
       | .createNode ids .. | .updateNode ids .. | .updateEdge ids .. | .createEdge ids ..
       | .deleteEdge ids .. | .deleteNode ids _ | .setLabels ids _ | .removeLabels ids _ => C.count ids = 0
       | _ => False) :
-    encRecord C utf8 lg I r ≠ .ok bs := by
+    encRecord C utf8 I r ≠ .ok bs := by
   intro h
-  have hs := encRecord_ok_shape C utf8 lg I r bs h
+  have hs := encRecord_ok_shape C utf8 I r bs h
   cases r <;> simp only [Shape] at hs h0 <;> omega
 
 /-- …and when nothing else is wrong with it, the refusal is `EmptyRecord`
 (here for the label-shaped records, whose only other check is the count). -/
 theorem encRecord_empty_refused (ids : C.T) (ls : List Nat) (h0 : C.count ids = 0) :
-    encRecord C utf8 lg I (.deleteNode ids ls) = .error .emptyRecord ∧
-    encRecord C utf8 lg I (.setLabels ids ls) = .error .emptyRecord ∧
-    encRecord C utf8 lg I (.removeLabels ids ls) = .error .emptyRecord := by
+    encRecord C utf8 I (.deleteNode ids ls) = .error .emptyRecord ∧
+    encRecord C utf8 I (.setLabels ids ls) = .error .emptyRecord ∧
+    encRecord C utf8 I (.removeLabels ids ls) = .error .emptyRecord := by
   simp [encRecord, batched, idCount, h0, eseq, writeHeader, isBatchable]
 
 /-- A row block that is not `count × attrs` is refused as `RowShapeMismatch`
 (on `CREATE_EDGE`, once its endpoint columns are aligned). -/
 theorem encRecord_rowShape_refused (ids src dst : C.T) (ls as : List Nat) (rel : Nat) (rows : List Val)
     (hr : rows.length ≠ C.count ids * as.length) :
-    encRecord C utf8 lg I (.createNode ids ls as rows) = .error .rowShapeMismatch ∧
-    encRecord C utf8 lg I (.updateNode ids ls as rows) = .error .rowShapeMismatch ∧
-    encRecord C utf8 lg I (.updateEdge ids rel as rows) = .error .rowShapeMismatch ∧
+    encRecord C utf8 I (.createNode ids ls as rows) = .error .rowShapeMismatch ∧
+    encRecord C utf8 I (.updateNode ids ls as rows) = .error .rowShapeMismatch ∧
+    encRecord C utf8 I (.updateEdge ids rel as rows) = .error .rowShapeMismatch ∧
     (checkEndpoints C ids src dst = .ok () →
-      encRecord C utf8 lg I (.createEdge ids rel src dst as rows) = .error .rowShapeMismatch) := by
+      encRecord C utf8 I (.createEdge ids rel src dst as rows) = .error .rowShapeMismatch) := by
   have hc : checkRowShape C ids as rows = .error .rowShapeMismatch := by
     unfold checkRowShape; rw [ite_eq_right (fun e => hr e.symm)]
   refine ⟨?_, ?_, ?_, fun he => ?_⟩
@@ -106,7 +106,7 @@ theorem encRecord_rowShape_refused (ids src dst : C.T) (ls as : List Nat) (rel :
 
 /-- The reader's half: a batchable header with a zero count is `EmptyRecord`. -/
 theorem readRecord_empty (op : Nat) (hop : 1 ≤ op ∧ op ≤ 8) (rest : Bytes) :
-    readRecord C utf8 lg I (w32 op ++ w32 0 ++ rest) = .error (.emptyRecord op) := by
+    readRecord C utf8 I (w32 op ++ w32 0 ++ rest) = .error (.emptyRecord op) := by
   have hb : isBatchable op = true := by simp [isBatchable]; omega
   simp only [readRecord, bind_apply, List.append_assoc]
   rw [u32_w32 (by omega)]
@@ -118,21 +118,21 @@ theorem readRecord_empty (op : Nat) (hop : 1 ≤ op ∧ op ≤ 8) (rest : Bytes)
 /-- The per-value conditions the encoder still does not check (field widths,
 UTF-8, value well-formedness): `RecOk` without its shape half. -/
 def RecWF : Record C.T → Prop
-  | .createNode _ ls as rows | .updateNode _ ls as rows => bLabels.ok ls ∧ bAttrIds.ok as ∧ WFL utf8 lg rows
-  | .updateEdge _ rel as rows | .createEdge _ rel _ _ as rows => bU32.ok rel ∧ bAttrIds.ok as ∧ WFL utf8 lg rows
+  | .createNode _ ls as rows | .updateNode _ ls as rows => bLabels.ok ls ∧ bAttrIds.ok as ∧ WFL utf8 rows
+  | .updateEdge _ rel as rows | .createEdge _ rel _ _ as rows => bU32.ok rel ∧ bAttrIds.ok as ∧ WFL utf8 rows
   | .deleteNode _ ls | .setLabels _ ls | .removeLabels _ ls => bLabels.ok ls
   | .deleteEdge _ rel _ _ => bU32.ok rel
-  | r => RecOk C utf8 lg I r
+  | r => RecOk C utf8 I r
 
-theorem recOk_of (r : Record C.T) (hs : Shape C r) (hw : RecWF C utf8 lg I r) : RecOk C utf8 lg I r := by
+theorem recOk_of (r : Record C.T) (hs : Shape C r) (hw : RecWF C utf8 I r) : RecOk C utf8 I r := by
   cases r <;> simp_all [Shape, RecWF, RecOk, bodyNode, bodyUpdEdge, bodyCrEdge, bodyLabels, bodyDelEdge,
     Blk.seq, bIds, bRows]
 
 /-- **Every record the encoder writes reads back as itself**, whatever follows
 it — with no hypothesis about its shape, which the encoder now enforces. -/
 theorem readRecord_encRecord_wf (r : Record C.T) (bs rest : Bytes)
-    (h : encRecord C utf8 lg I r = .ok bs) (hw : RecWF C utf8 lg I r) :
-    readRecord C utf8 lg I (bs ++ rest) = .ok (r, rest) :=
-  readRecord_encRecord C utf8 lg I r bs rest h (recOk_of C utf8 lg I r (encRecord_ok_shape C utf8 lg I r bs h) hw)
+    (h : encRecord C utf8 I r = .ok bs) (hw : RecWF C utf8 I r) :
+    readRecord C utf8 I (bs ++ rest) = .ok (r, rest) :=
+  readRecord_encRecord C utf8 I r bs rest h (recOk_of C utf8 I r (encRecord_ok_shape C utf8 I r bs h) hw)
 
 end FalkorCodec

@@ -1,6 +1,6 @@
 import RedisLayer.Resp
 /-!
-# `reply_compact_value` as a call stream (`src/reply.rs:145-354`)
+# `reply_compact_value` as a call stream (`src/reply.rs`)
 
 `encC v` is the exact sequence of `RedisModule_Reply*` calls `reply_compact_value` makes
 (tag, then payload; the caller supplies the enclosing `ReplyWithArray(2)`).
@@ -10,17 +10,16 @@ kind, live or deleted entities, postponed label arrays included. With `bytes_of_
 is the RESP byte stream.
 
 Graph-API facts used (not code in `src/`): for a live entity, `get_node_attr_count(id)`
-equals the number of pairs `get_node_all_attrs_by_id(id)` yields (`reply.rs:243` — if not,
+equals the number of pairs `get_node_all_attrs_by_id(id)` yields (`reply.rs` — if not,
 `count_mismatch_breaks` shows the stream desynchronises); for a deleted one the attribute and
-type ids are recovered by name (`get_node_attribute_id` `:224`, `get_type_id` `:260`),
+type ids are recovered by name (`get_node_attribute_id`, `get_type_id`),
 which we take to be the ids themselves. That lookup is partial: `RelLookup.compactRel` models it
-(`get_type_id(..).unwrap()`, `:260`) and `RelLookup.bug3447_compact_cancelled_new_type_panics`
+(`get_type_id(..).unwrap()`) and `RelLookup.bug3447_compact_cancelled_new_type_panics`
 shows it panics on a cascaded edge of a never-registered type (#3447). `compact_emits` is the
 stream *given* the lookups succeed.
 -/
 namespace RedisLayer.Resp
 open RedisLayer.Compact (R Val Env encPair encList encMap encProps)
-open RedisLayer.Temporal (Dur toLegacy)
 
 inductive V (F : Type) where
   | null
@@ -28,7 +27,7 @@ inductive V (F : Type) where
   | int (i : Int)
   | float (x : F)
   | str (s : String)
-  | datetime (t : Int) | date (t : Int) | time (t : Int) | duration (d : Dur)
+  | datetime (t : Int) | date (t : Int) | time (t : Int) | duration (t : Int)
   | list (xs : List (V F))
   | map (kvs : List (String × V F))
   | node (id : Nat) (deleted : Bool) (labels : List Nat) (props : List (Nat × V F))
@@ -54,7 +53,7 @@ def countRels : List (V F) → Nat
   | v :: vs => (if v.isRel then 1 else 0) + countRels vs
 
 mutual
-/-- `reply_compact_value` (`reply.rs:145-354`). -/
+/-- `reply_compact_value` (`reply.rs`). -/
 def encC : V F → List (Call F)
   | .null => [.ll 1, .null]
   | .bool x => [.ll 4, .str (if x then "true" else "false")]
@@ -64,7 +63,7 @@ def encC : V F → List (Call F)
   | .datetime t => [.ll 13, .ll t]
   | .date t => [.ll 14, .ll t]
   | .time t => [.ll 15, .ll t]
-  | .duration d => [.ll 16, .ll (toLegacy d)]   -- `duration_to_legacy(dur)` (#3610)
+  | .duration t => [.ll 16, .ll t]
   | .list xs => [.ll 6, .arr xs.length] ++ encCList xs
   | .map kvs => [.ll 10, .arr (kvs.length * 2)] ++ encCMap kvs
   | .node id del ls ps =>
@@ -107,7 +106,7 @@ def proj : V F → Val F
   | .datetime t => .datetime t
   | .date t => .date t
   | .time t => .time t
-  | .duration d => .duration d
+  | .duration t => .duration t
   | .list xs => .list (projList xs)
   | .map kvs => .map (projMap kvs)
   | .node id _ ls ps => .node id ls (projProps ps)
@@ -186,7 +185,7 @@ theorem compact_emits : ∀ v : V F, Emits E.vfmt (encC E v) (encPair E (proj v)
   | .datetime t => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
   | .date t => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
   | .time t => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
-  | .duration d => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
+  | .duration t => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
   | .list xs => by
     have h := (list_emits xs).array
     rw [list_len] at h

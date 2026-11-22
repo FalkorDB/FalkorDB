@@ -1,4 +1,3 @@
-import RedisLayer.Dur
 /-
 # The v19 RDB value codec: `load (save v) = v`
 
@@ -10,29 +9,20 @@ Here ↔ there:
 
 | Lean | Rust |
 | --- | --- |
-| `Val`                      | `runtime::value::Value` storable variants (value.rs:2084) |
-| `siType`                   | `graphblas::serialization::si_type::*` (serialization.rs:107) |
+| `Val`                      | `runtime::value::Value` storable variants (value.rs) |
+| `siType`                   | `graphblas::serialization::si_type::*` (serialization.rs) |
 | `Tok`, token stream        | `BufferedWriter`/`BufferedReader` type-tagged words (buffered_io.rs) |
-| `Val.encode`/`Val.decode`  | `impl Encode/Decode<21> for Value` (value.rs:2085, :2177) |
-| `decOneAt ev`              | `Value::decode` reading at `r.encver() = ev` (T_DURATION arms value.rs:2254, :2257) |
-| `Roaring.encode/decode`    | `impl Encode/Decode<19> for RoaringTreemap` (serialization.rs:172) |
-| `Span.encode/decode`       | `AttributeStore::encode_with_range` / `decode_with_count` (attribute_store.rs:1425, :1476) |
+| `Val.encode`/`Val.decode`  | `impl Encode/Decode<19> for Value` (value.rs) |
+| `Roaring.encode/decode`    | `impl Encode/Decode<19> for RoaringTreemap` (serialization.rs) |
+| `Span.encode/decode`       | `AttributeStore::encode_with_range` / `decode_with_count` (attribute_store.rs) |
 
 The reader is a *tagged* stream: every word carries its own type tag, so a
 decoder that reads the wrong width still cannot silently succeed — it either
 mismatches a tag or runs off the end. That is what makes the round-trip provable
 without a length oracle.
-
-**#3610 (encoding version 21).** A duration is a `RedisLayer.Temporal.Dur` and is written as its
-three components (`[T_DURATION, months, days, seconds]`, value.rs:2155-2161). A stream below
-version 21 carries one legacy offset, which `decode` turns into a `Dur` with
-`duration_from_legacy` (`decOneAt_legacy`: its legacy offset is the stored integer, so nothing an
-old RDB/blob held changes meaning). `decOne` is the current-version reader (`decOneAt 21`); every
-non-duration arm reads the same at any version (`decOneAt_agree`).
 -/
 
 namespace GraphPersist
-open RedisLayer.Temporal (Dur durNew durNew_self fromLegacy toLegacy FitsI64)
 
 /-- A serialization token: exactly the words a `BufferedWriter` can emit.
 `u`/`s`/`d` are the tagged 8-byte words (TYPE_UNSIGNED/SIGNED/DOUBLE); `bytes`
@@ -51,7 +41,7 @@ inductive Tok where
 
 abbrev Stream := List Tok
 
--- si_type tags (serialization.rs:107). Values are the actual bit constants so
+-- si_type tags (serialization.rs). Values are the actual bit constants so
 -- `#eval` cross-checks against the Rust source.
 namespace siType
 def T_ARRAY     : UInt64 := (1 : UInt64) <<< 3
@@ -84,7 +74,7 @@ inductive Val where
   | vdatetime (t : Int)
   | vdate (t : Int)
   | vtime (t : Int)
-  | vduration (d : Dur)
+  | vduration (t : Int)
   deriving Repr
 
 /-- Append a NUL terminator, matching the writer's `chain(once(0))`. -/
@@ -100,7 +90,7 @@ def stripNul (b : List UInt8) : List UInt8 :=
 theorem stripNul_nulTerm (b : List UInt8) : stripNul (nulTerm b) = b := by
   simp [stripNul, nulTerm]
 
-/-- Encoder: `impl Encode<19> for Value` (value.rs:2084). Each arm writes a tag
+/-- Encoder: `impl Encode<19> for Value` (value.rs). Each arm writes a tag
 `u` then its payload, exactly as the Rust match does. Point widens f32→f64 with
 `f64::from`; here the bits carrier already stands for the widened image. Vector
 writes one BYTES word: `dim` little-endian then each component — modelled as its
@@ -123,10 +113,10 @@ def Val.encode : Val → Stream
   | .vdatetime t  => [.u siType.T_DATETIME, .s t]
   | .vdate t      => [.u siType.T_DATE, .s t]
   | .vtime t      => [.u siType.T_TIME, .s t]
-  | .vduration d  => [.u siType.T_DURATION, .s d.m, .s d.d, .s d.s]
+  | .vduration t  => [.u siType.T_DURATION, .s t]
 
 /-- Decoder over a token stream, returning the value and the remaining stream.
-Mirrors `impl Decode<21> for Value` (value.rs:2177) at the current version: read a tag, branch on it,
+Mirrors `impl Decode<19> for Value` (value.rs): read a tag, branch on it,
 consume exactly what the encoder wrote. -/
 partial def Val.decode : Stream → Option (Val × Stream)
   | .u tag :: rest =>
@@ -179,9 +169,7 @@ partial def Val.decode : Stream → Option (Val × Stream)
       else if tag == siType.T_TIME then
         match rest with | .s v :: r => some (.vtime v, r) | _ => none
       else if tag == siType.T_DURATION then
-        match rest with
-        | .s m :: .s d :: .s sec :: r => (durNew m d sec).map fun x => (.vduration x, r)
-        | _ => none
+        match rest with | .s v :: r => some (.vduration v, r) | _ => none
       else none
   | _ => none
 
@@ -203,21 +191,9 @@ encoder with any suffix left intact. This is the leaf of `load(save v) = v`: a
 node/edge span is a sequence of these, and the deleted-id bitmap and the string
 NUL handling ride on the same tagged words. -/
 
-/-- The `T_DURATION` arms of `Value::decode` (value.rs:2254-2262). -/
-def durArm (ev : Nat) (rest : Stream) : Option (Val × Stream) :=
-  if ev < 21 then
-    -- `duration_from_legacy(read_signed)`; its `Err` is `none`
-    match rest with | .s v :: r => (fromLegacy v).map fun x => (.vduration x, r) | _ => none
-  else
-    -- `Dur::new(read_signed, read_signed, read_signed)`
-    match rest with
-    | .s m :: .s d :: .s sec :: r => (durNew m d sec).map fun x => (.vduration x, r)
-    | _ => none
-
-/-- Total decoder for the scalar (non-container) values of a stream written at encoding version
-`ev` (`r.encver()`). Returns `none` on ARRAY / VECTOR_F32, which `decodeVal` (the partial one)
-handles. Only the duration arm looks at `ev` (value.rs:2254-2262). -/
-def decOneAt (ev : Nat) : Stream → Option (Val × Stream)
+/-- Total decoder for the scalar (non-container) values. Returns `none` on
+ARRAY / VECTOR_F32, which `decodeVal` (the partial one) handles. -/
+def decOne : Stream → Option (Val × Stream)
   | .u tag :: rest =>
       if tag == siType.T_NULL then some (.vnull, rest)
       else if tag == siType.T_BOOL then
@@ -238,32 +214,10 @@ def decOneAt (ev : Nat) : Stream → Option (Val × Stream)
         match rest with | .s v :: r => some (.vdate v, r) | _ => none
       else if tag == siType.T_TIME then
         match rest with | .s v :: r => some (.vtime v, r) | _ => none
-      else if tag == siType.T_DURATION then durArm ev rest
+      else if tag == siType.T_DURATION then
+        match rest with | .s v :: r => some (.vduration v, r) | _ => none
       else none
   | _ => none
-
-/-- The current-version reader (`ENCODING_VERSION = 21`: what `rdb_save` stamps and
-`vec_save_graph` prefixes). -/
-def decOne : Stream → Option (Val × Stream) := decOneAt 21
-
--- `decide` in the proofs below must not try to evaluate the calendar arithmetic.
-attribute [local irreducible] fromLegacy durNew
-
-theorem decOneAt_dur (ev : Nat) (rest : Stream) :
-    decOneAt ev (.u siType.T_DURATION :: rest) = durArm ev rest := by
-  unfold decOneAt
-  have h1 : (siType.T_DURATION == siType.T_NULL) = false := by decide
-  have h2 : (siType.T_DURATION == siType.T_BOOL) = false := by decide
-  have h3 : (siType.T_DURATION == siType.T_INT64) = false := by decide
-  have h4 : (siType.T_DURATION == siType.T_DOUBLE) = false := by decide
-  have h5 : (siType.T_DURATION == siType.T_STRING) = false := by decide
-  have h6 : (siType.T_DURATION == (siType.T_INTERN ||| siType.T_STRING)) = false := by decide
-  have h7 : (siType.T_DURATION == siType.T_POINT) = false := by decide
-  have h8 : (siType.T_DURATION == siType.T_DATETIME) = false := by decide
-  have h9 : (siType.T_DURATION == siType.T_DATE) = false := by decide
-  have h10 : (siType.T_DURATION == siType.T_TIME) = false := by decide
-  simp only [h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, beq_self_eq_true, Bool.false_eq_true,
-    ite_false, ite_true]
 
 /-- Is this a scalar (non-container) value? -/
 def Val.isScalar : Val → Bool
@@ -273,49 +227,22 @@ def Val.isScalar : Val → Bool
 
 /-- **Scalar roundtrip.** For every scalar value and any trailing stream,
 `decOne` reads back exactly the value and returns the untouched suffix. Ten
-constructors, each an arm of `Value::decode` (value.rs:2177); the duration's three
-components come back through `Dur::new` (`durNew_self`). -/
+constructors, each an arm of `Value::decode` (value.rs). -/
 theorem decOne_encode (v : Val) (r : Stream) (h : v.isScalar = true) :
     decOne (v.encode ++ r) = some (v, r) := by
   cases v with
   | vlist _ => simp [Val.isScalar] at h
   | vvec _  => simp [Val.isScalar] at h
-  | vbool b => cases b <;> simp (config := { decide := true }) [Val.encode, decOne, decOneAt]
-  | vstr itn s => cases itn <;> simp (config := { decide := true }) [Val.encode, decOne, decOneAt, stripNul_nulTerm]
-  | vnull => simp (config := { decide := true }) [Val.encode, decOne, decOneAt]
-  | vint i => simp (config := { decide := true }) [Val.encode, decOne, decOneAt]
-  | vfloat b => simp (config := { decide := true }) [Val.encode, decOne, decOneAt]
-  | vpoint la lo => simp (config := { decide := true }) [Val.encode, decOne, decOneAt]
-  | vdatetime t => simp (config := { decide := true }) [Val.encode, decOne, decOneAt]
-  | vdate t => simp (config := { decide := true }) [Val.encode, decOne, decOneAt]
-  | vtime t => simp (config := { decide := true }) [Val.encode, decOne, decOneAt]
-  | vduration t =>
-    simp only [Val.encode, List.cons_append, decOne, decOneAt_dur]
-    unfold durArm
-    simp only [show ¬ (21 < 21) from by decide, ite_false]
-    rw [durNew_self]
-    rfl
-
-/-- **Legacy durations (#3610).** In a stream below version 21 a duration is one `i64` offset `x`;
-it loads (for every `x`) as a `Dur` whose legacy offset — the integer compact replies still
-send — is `x`. -/
-theorem decOneAt_legacy (ev : Nat) (hev : ev < 21) (x : Int) (hx : FitsI64 x) (r : Stream) :
-    ∃ d, decOneAt ev (.u siType.T_DURATION :: .s x :: r) = some (.vduration d, r) ∧
-      toLegacy d = x := by
-  obtain ⟨d, h1, h2⟩ := RedisLayer.Temporal.fromLegacy_toLegacy x hx
-  refine ⟨d, ?_, h2⟩
-  rw [decOneAt_dur]
-  unfold durArm
-  simp only [hev, ite_true]
-  rw [h1]
-  rfl
-
-/-- Away from a duration tag the version is irrelevant: every other arm reads the same words. -/
-theorem decOneAt_agree (ev ev' : Nat) (tag : UInt64) (rest : Stream)
-    (h : tag ≠ siType.T_DURATION) :
-    decOneAt ev (.u tag :: rest) = decOneAt ev' (.u tag :: rest) := by
-  have hf : (tag == siType.T_DURATION) = false := by simpa using h
-  simp only [decOneAt, hf, Bool.false_eq_true, ite_false]
+  | vbool b => cases b <;> simp (config := { decide := true }) [Val.encode, decOne]
+  | vstr itn s => cases itn <;> simp (config := { decide := true }) [Val.encode, decOne, stripNul_nulTerm]
+  | vnull => simp (config := { decide := true }) [Val.encode, decOne]
+  | vint i => simp (config := { decide := true }) [Val.encode, decOne]
+  | vfloat b => simp (config := { decide := true }) [Val.encode, decOne]
+  | vpoint la lo => simp (config := { decide := true }) [Val.encode, decOne]
+  | vdatetime t => simp (config := { decide := true }) [Val.encode, decOne]
+  | vdate t => simp (config := { decide := true }) [Val.encode, decOne]
+  | vtime t => simp (config := { decide := true }) [Val.encode, decOne]
+  | vduration t => simp (config := { decide := true }) [Val.encode, decOne]
 
 /-- Corollary: `encode` is injective on scalars (lossless save at the leaf). -/
 theorem encode_injective_scalar (v w : Val)

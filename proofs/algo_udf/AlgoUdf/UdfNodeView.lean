@@ -1,37 +1,16 @@
 import AlgoUdf.UdfClasses
-/-! # Where a UDF node object reads its labels and attributes from (#3454) — FIXED by #3464
+/-! # Where a UDF node object reads its labels and attributes from 
 
 `UdfClasses.jsNode` takes the labels and attributes as arguments, so the question
-*which view of the graph* `create_js_node` reads them from is modelled here. Before #3464
-`create_js_node` read only the committed graph, so a node deleted (or relabelled) earlier
-in the same query looked different to a UDF than to `labels(n)` / `n.prop`. Now
-`create_js_node(ctx, id, graph, runtime)` (`udf/js_classes.rs:134`) reads through the
+*which view of the graph* `create_js_node` reads them from is modelled here.
+`create_js_node(ctx, id, graph, runtime)` (`udf/js_classes.rs`) reads through the
 runtime when `Runtime::node_differs_from_committed` says the answer can differ, and from
 the committed graph otherwise. Rust source of truth: origin/main 1c0e6c8de.
 
-| here | there |
-| --- | --- |
-| `NodeView`        | a node's labels/attributes as some reader sees them |
-| `Pending`, `overlayLabels`, `overlayAttrs`, `Pending.has` | `Pending::update_node_labels` `runtime/pending.rs:778-793`, `update_node_attrs` :638-660, `node_has_changes` :755-775 (a `None` entry is an absent map key) |
-| `RT`, `RT.labels`, `RT.attrs` | `Runtime::get_node_labels` `runtime/runtime.rs:1787-1799` and `get_node_attrs` :1866-1882: a node this query deleted answers from the snapshot taken at the delete (`deleted_nodes`), else committed + pending overlay |
-| `RT.differs`      | `Runtime::node_differs_from_committed` :1772-1785: deleted this query, or `Pending::node_has_changes` |
-| `setNodeLabels`, `setNodeAttrs` | `set_node_labels` `udf/js_classes.rs:203`, `set_node_attrs` :220 (shared by both branches; `jsNode_eq_helpers`) |
-| `rsJsNode`        | `create_js_node` :134-199: `runtime.filter(differs)` ⇒ runtime view (:157-166), else the committed graph (:167-170) |
-| `rsJsEdge`        | `create_js_edge` :246: `.source`/`.target` via `create_js_node(.., runtime)` (:289-290); `create_js_path` :322 passes the runtime to its nodes (:341) |
-| `type_convert` call | `value_to_js_level` `udf/type_convert.rs:184`: `Value::Node` → `create_js_node(ctx, id, graph, runtime)` |
-| `specJsNode`      | the contract: read the runtime when one is given, as `labels(n)` / `n.prop` do |
+Entry points with no runtime (`getNeighbors` , `getNodeById` , `iterateNodes` ,
+`traverse` ) call `create_js_node(.., None)`: the committed graph, unchanged.
 
-Entry points with no runtime (`getNeighbors` :518, `getNodeById` :576, `iterateNodes` :630,
-`traverse` :863) call `create_js_node(.., None)`: the committed graph, unchanged by #3464.
-
-Live (before the fix; Rust vs C), `CREATE (:P {name:'A'})`, UDF `inspect_node(n) = [n.labels, n.attributes.name]`:
-
-| query | Rust (pre-#3464) | C |
-| --- | --- | --- |
-| `MATCH (n:P) DELETE n RETURN labels(n), n.name, test.inspect_node(n)` | `[P], A, [[], NULL]` | `[], A, [[], A]` |
-| `MATCH (n:P)-[r]->() DETACH DELETE n RETURN test2.src(r)` (`r.source`) | `[[], NULL]` | error (undefined attribute) |
-
-C also loses deleted-node data (differently). The property stated is Rust's own
+C loses deleted-node data (differently). The property stated is Rust's own
 contract, the one `create_js_edge` already follows for the type: a UDF sees the node as
 the query's runtime does, i.e. as `labels(n)` / `n.name` in the same row do.
 -/
@@ -77,15 +56,15 @@ structure RT where
   deleted : Nat → Option (List String × List (String × JV))
   p : Pending
 
-/-- `Runtime::get_node_labels` (runtime.rs:1787). -/
+/-- `Runtime::get_node_labels` (runtime.rs). -/
 def RT.labels (r : RT) (id : Nat) : List String :=
   match r.deleted id with | some s => s.1 | none => overlayLabels r.p id (r.g.labels id)
 
-/-- `Runtime::get_node_attrs` (runtime.rs:1866). -/
+/-- `Runtime::get_node_attrs` (runtime.rs). -/
 def RT.attrs (r : RT) (id : Nat) : List (String × JV) :=
   match r.deleted id with | some s => s.2 | none => overlayAttrs r.p id (r.g.attrs id)
 
-/-- `Runtime::node_differs_from_committed` (runtime.rs:1772). -/
+/-- `Runtime::node_differs_from_committed` (runtime.rs). -/
 def RT.differs (r : RT) (id : Nat) : Bool := (r.deleted id).isSome || r.p.has id
 
 /-- When the runtime reports no difference, the runtime view IS the committed graph:
@@ -102,10 +81,10 @@ theorem RT.not_differs (r : RT) (id : Nat) (h : r.differs id = false) :
     cases hh : r.p.added id <;> simp_all [RT.differs, Pending.has]
   simp [RT.labels, RT.attrs, overlayLabels, overlayAttrs, hd, hs, hr, ha]
 
-/-- `set_node_labels` (js_classes.rs:203): the `labels` array. -/
+/-- `set_node_labels` (js_classes.rs): the `labels` array. -/
 def setNodeLabels (o : Obj) (ls : List String) : Obj := set o "labels" (.arr (ls.map .str))
 
-/-- `set_node_attrs` (js_classes.rs:220): attributes copied onto the node (unless reserved)
+/-- `set_node_attrs` (js_classes.rs): attributes copied onto the node (unless reserved)
 and collected in `attributes`. -/
 def setNodeAttrs (o : Obj) (attrs : List (String × JV)) : Obj :=
   let r := attrLoop (o, []) attrs
@@ -120,7 +99,7 @@ theorem jsNode_eq_helpers (id : Nat) (ls : List String) (attrs : List (String ×
           ls) attrs) "getNeighbors" .fn := rfl
 
 /-- `create_js_node` on main (#3464): through the runtime iff it is given and
-`node_differs_from_committed`, else the committed graph (js_classes.rs:157-170). -/
+`node_differs_from_committed`, else the committed graph (js_classes.rs). -/
 def rsJsNode (rt : Option RT) (g : NodeView) (id : Nat) : Obj :=
   match rt with
   | some r =>
@@ -239,7 +218,5 @@ theorem fixed3454_edge_target :
     get (rsJsEdge (some rtAfterDelete) committedAfterDelete 5 1 0 "R" []) "target" =
       some (.obj (jsNode 0 ["P"] [("name", .attr 0)])) :=
   (rs_edge_ok rtAfterDelete 5 1 0 "R" []).2
-
-/-! ## Historical: `create_js_node` before #3464 (fixed by #3464) -/
 
 end AlgoUdf.UdfNodeView

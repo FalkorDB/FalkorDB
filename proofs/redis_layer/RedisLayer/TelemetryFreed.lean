@@ -3,16 +3,6 @@ import RedisLayer.GraphCore
 /-!
 # Telemetry streams kept out of snapshots (#3844, `src/telemetry.rs`, `src/redis_type.rs`)
 
-| here | there |
-| --- | --- |
-| `stripOps`, `stripStream` | `strip_stream` `telemetry.rs:350` |
-| `FQ.*`             | `FreedGraphStreams::new/push/is_pending/take` `:401-432` |
-| `setFlush`         | `set_flush_in_progress` `:441` |
-| `queueFreed`       | `queue_streams_of_freed_graph` `:475` |
-| `deleteFreed`      | `delete_streams_of_freed_graphs` `:488` |
-| `stripAll`         | `strip_telemetry_streams`, `redis_type.rs:421` |
-| `graphFree`        | `graph_free`, `graph_core.rs:1862` (registry removal = `GraphCore.free`, then the queue) |
-
 The queue is a mutex-guarded list plus an atomic flag, both changed only under the lock by
 `push`/`take`; each operation is modelled sequentially. The Redis key API (`OpenKey`,
 `KeyType`, `DeleteKey`, `CloseKey`) is recorded as the operations performed.
@@ -119,7 +109,7 @@ def deleteFreed (q : FQ) : List (List Char) × FQ := q.take
 theorem deleteFreed_all (q : FQ) (h : q.Inv) :
     (deleteFreed q).1 = q.names ∧ (deleteFreed q).2 = FQ.new := FQ.take_all q h
 
-/-! ## `strip_telemetry_streams` (`redis_type.rs:421`) -/
+/-! ## `strip_telemetry_streams` (`redis_type.rs`) -/
 
 /-- Queued freed graphs first, then every registered key; returns the names stripped. -/
 def stripAll (q : FQ) (reg : GraphCore.Reg) : List (List Char) × FQ :=
@@ -135,7 +125,7 @@ theorem stripAll_covers (q : FQ) (reg : GraphCore.Reg) (h : q.Inv) (n : List Cha
 theorem stripAll_empties (q : FQ) (reg : GraphCore.Reg) (h : q.Inv) : (stripAll q reg).2 = FQ.new :=
   (deleteFreed_all q h).2
 
-/-! ## `graph_free` (`graph_core.rs:1862`) -/
+/-! ## `graph_free` (`graph_core.rs`) -/
 
 /-- The keys the freed graph was registered under. -/
 def freedKeys (r : GraphCore.Reg) (g : Nat) : List (List Char) := (r.filter (·.2 = g)).map (·.1)

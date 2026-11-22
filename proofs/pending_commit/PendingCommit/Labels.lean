@@ -5,25 +5,25 @@
 added (`set_labels`) and removed (`remove_labels`). Maps are per node and nodes
 never interact, so one node is modelled; `C` is the committed label set.
 
-* `stage` — `stage_node_labels` (pending.rs:691): push the labels onto
+* `stage` — `stage_node_labels` (pending.rs): push the labels onto
   `set_labels`, drop them from `remove_labels`.
-* `removeLabels` — `remove_node_labels` (pending.rs:741): per label, drop it
+* `removeLabels` — `remove_node_labels` (pending.rs): per label, drop it
   from `set_labels`; if it was there (`was_staged`) and the committed node lacks
   it (a created node, whose `C` is empty, or `!g.node_has_label_id`), only bump
-  `staged_labels_removed` (#3459, fixes #3448); else push it onto
+  `staged_labels_removed`; else push it onto
   `remove_labels`. `removeLabelsC` is the loop with that counter, `removeLabels`
-  its map half. The REMOVE operator (`ops/remove.rs:128-145`) first filters the
+  its map half. The REMOVE operator (`ops/remove.rs`) first filters the
   labels to those the node currently has (`overlay`) — modelled as `removeOp`.
-* `nodeHas` — `node_has_label` (pending.rs:778): removal first, then add, else
+* `nodeHas` — `node_has_label` (pending.rs): removal first, then add, else
   `None` (ask the matrix).
-* `stagedNodeLabels` — `Pending::staged_node_labels` (pending.rs:826, #3288): the two staged
+* `stagedNodeLabels` — `Pending::staged_node_labels` (pending.rs): the two staged
   lists as they are, `(set_labels, remove_labels)`; `update_node_labels` (:806) is now
   written over it.
-* `stagedLabelIds` — `Runtime::staged_label_ids` (ops/delete.rs:196, #3288): the committed
+* `stagedLabelIds` — `Runtime::staged_label_ids` (ops/delete.rs): the committed
   ids, plus the staged adds, minus the staged removes. The deleted-node snapshot
-  (`delete_nodes_bulk` :306, `delete_entity` :486) is built from it.
+  (`delete_nodes_bulk` , `delete_entity` ) is built from it.
 * `commitLabels` — `set_nodes_labels_bulk` then `remove_nodes_labels`
-  (`Pending::commit`, pending.rs:1387-1403): `(C ∪ set) \ remove`.
+  (`Pending::commit`, pending.rs): `(C ∪ set) \ remove`.
 
 Reference: a label's state is decided by the last clause that mentions it,
 else the committed matrix (`refHas`).
@@ -39,7 +39,7 @@ def stage (s : St) (ls : List Nat) : St :=
   { setL := s.setL ++ ls, remL := s.remL.filter (fun l => !(ls.contains l)) }
 
 /-- One iteration of the `for label in labels` loop in `remove_node_labels`
-(pending.rs:748-767), with `staged_labels_removed` as the `Nat`. `C` is the
+(pending.rs), with `staged_labels_removed` as the `Nat`. `C` is the
 committed label set of the node: `g.node_has_label_id(id, l)`, and empty for a
 node in `created_nodes` (whose `||` short-circuits the matrix). -/
 def removeOneC (C : Nat → Bool) (sc : St × Nat) (l : Nat) : St × Nat :=
@@ -75,7 +75,7 @@ def updateNodeLabels (C : Nat → Bool) (s : St) (l : Nat) : Bool :=
   let (added, removed) := stagedNodeLabels s
   (C l || added.contains l) && !removed.contains l
 
-/-- `Runtime::staged_label_ids` (ops/delete.rs:196): `g.get_node_label_ids(id)` collected into a
+/-- `Runtime::staged_label_ids` (ops/delete.rs): `g.get_node_label_ids(id)` collected into a
 set, then `labels.extend(added)`, then `labels.remove(l)` for each removed label; the same
 staged-label read as `update_node_labels`, so it shares its model. -/
 def stagedLabelIds (C : Nat → Bool) (s : St) (l : Nat) : Bool :=
@@ -158,7 +158,7 @@ theorem fold_remL_sub (C : Nat → Bool) (ls : List Nat) (sc : St × Nat) (l : N
     · exact .inr (by simp at h1 ⊢; exact .inr h1)
 
 /-- **`removeLabels_closed`** (#3459): for the distinct labels REMOVE passes
-(an `OrderSet`, ops/remove.rs:92-100), a label lands in `remove_labels` iff it
+(an `OrderSet`, ops/remove.rs), a label lands in `remove_labels` iff it
 was there, or it is removed now and either the committed node carries it or this
 query had not staged it; every removed label leaves `set_labels`. -/
 theorem removeLabels_closed (C : Nat → Bool) (s : St) (ls : List Nat) (hnd : ls.Nodup) :
@@ -185,7 +185,7 @@ theorem removeLabels_closed (C : Nat → Bool) (s : St) (ls : List Nat) (hnd : l
 
 /-- **`removeLabelsC_count`**: every label passed is counted exactly once,
 either by `staged_labels_removed` or as a `remove_labels` entry — so the
-`Labels removed` statistic (`commit`, pending.rs:1398-1401) is what it was
+`Labels removed` statistic (`commit`, pending.rs) is what it was
 before #3459, when every label was pushed onto `remove_labels`. -/
 theorem removeLabelsC_count (C : Nat → Bool) (s : St) (n : Nat) (ls : List Nat) :
     (removeLabelsC C s n ls).2 + (removeLabelsC C s n ls).1.remL.length = n + s.remL.length + ls.length := by
@@ -319,7 +319,7 @@ theorem deleted_snapshot_examples :
 
 /-- **`removeOp_nodup`**: because REMOVE stages only labels the node currently
 has, `remove_labels` never holds a label twice — so the commit's
-`labels_removed += rows.len()` (pending.rs:1400) counts each removed label once. -/
+`labels_removed += rows.len()` (pending.rs) counts each removed label once. -/
 theorem removeOp_no_dup_push (C : Nat → Bool) (s : St) (ls : List Nat) (l : Nat)
     (h : s.remL.contains l = true) : (ls.filter (overlay C s)).contains l = false := by
   rw [contains_filter]; have hm : l ∈ s.remL := by simpa using h

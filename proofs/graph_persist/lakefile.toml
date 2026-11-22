@@ -3,8 +3,3 @@ defaultTargets = ["GraphPersist"]
 
 [[lean_lib]]
 name = "GraphPersist"
-
-# redis_layer owns the `Dur` model (`RedisLayer.Temporal`, #3610) the value codec encodes.
-[[require]]
-name = "redis-layer"
-path = "../redis_layer"

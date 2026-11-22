@@ -26,7 +26,7 @@ It holds under any destination key name, which is what `RENAME` and `GRAPH.COPY`
 
 The leaves are proven separately:
 
-- `decOne_encode`: every scalar property value comes back as itself, with the bytes after it untouched. That covers null, bool, int, float (bit for bit), string (including interned strings), point, datetime, date, time and duration (three components since #3610; an older stream's single offset loads through `duration_from_legacy`, `decOneAt_legacy`);
+- `decOne_encode`: every scalar property value comes back as itself, with the bytes after it untouched. That covers null, bool, int, float (bit for bit), string (including interned strings), point, datetime, date, time and duration;
 - `roaring_roundtrip`: the deleted-id bitmap round-trips;
 - `stripNul_nulTerm`: NUL-terminated strings round-trip.
 
@@ -62,14 +62,13 @@ Yes:
 
 - `save_main`, `save_vkey`, `save_single`: SAVE writes the graph's own key plus K − 1 virtual keys holding slices `0..K`, with `key_count = K`;
 - `deleteVKeys_spec`: the virtual keys are deleted afterwards;
-- `onPersistence_spec`: BGSAVE never splits a graph; `onPersistence_strip`: every persistence start strips the telemetry streams (#3844);
-- `metaSave_stale`: since #3161 virtual keys have the `graphmeta` type, and a leftover one writes nothing;
+- `onPersistence_spec`: BGSAVE never splits a graph; `onPersistence_strip`: every persistence start strips the telemetry streams;
+- `metaSave_stale`: virtual keys have the `graphmeta` type, and a leftover one writes nothing;
 - `load_main_first`, `load_main_last`: whatever position the graph's own key has in the load order, the registered graph and the key's value end up as the same finished graph.
 
 **6. Are virtual-key names unique?**
 
-- **Before #3286, only as long as the clock moved.** `uuid_v4` mixed the wall clock with a counter, `a = nanos ^ seq`, and printed only `a`. Two calls gave the same name exactly when `t₁ ⊕ s₁ = t₂ ⊕ s₂` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412); counters 2 and 3 at clocks 4 ns and 5 ns collided, and the second virtual key replaced the first one's slice.
-- **On main, yes, within a process.** `uuid_fields` keeps the clock in the first three fields and `seq × odd constant + c` in the last two. `counter_field_bijective` proves the last field is a bijection of `seq` modulo 2^48, and `uuid_counter_distinct` that two calls whose counters differ mod 2^48 never share a name, whatever the clock reads. `vkeyName_uuid_counter` lifts this to the full key names, and `names_vname_inj` discharges the `vname_inj` part of the naming assumption the SAVE theorems take (`VKeys.Names`).
+- **Yes, within a process.** `uuid_fields` keeps the clock in the first three fields and `seq × odd constant + c` in the last two. `counter_field_bijective` proves the last field is a bijection of `seq` modulo 2^48, and `uuid_counter_distinct` that two calls whose counters differ mod 2^48 never share a name, whatever the clock reads. `vkeyName_uuid_counter` lifts this to the full key names, and `names_vname_inj` discharges the `vname_inj` part of the naming assumption the SAVE theorems take (`VKeys.Names`).
 
 **7. Do UNIQUE constraints agree with C?**
 
@@ -87,7 +86,6 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 | Theorem | In plain words | File |
 |---|---|---|
 | `load_encode` | Loading a single-key payload gives exactly the `Graph::restore` arguments of the saved graph, and every truncation is detected | `Persist/RoundTrip.lean` |
-| `vec_blob_rt`, `vec_blob_newer`, `vec_blob_old` | A `GRAPH.RESTORE` blob (version prefix, #3610) loads back to the saved graph; a newer version is refused; an older unprefixed blob loads as before | `Persist/RoundTrip.lean` |
 | `multi_load` | A graph saved across K ≥ 2 keys, loaded in any key order, finalizes once, at the last key, to the same graph | `Persist/MultiLoad3.lean` |
 | `multi_key_tiles`, `multi_key_bound`, `multi_key_all_placed`, `multi_key_matrices` | The multi-key layout puts each entity in exactly one key, in order, within the size limit, with matrices on key 0 only | `Persist/MultiKey.lean` |
 | `decOne_encode` | Every scalar property value round-trips through the v19 codec | `Codec.lean` |
@@ -97,8 +95,8 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 | `save_main`, `save_vkey`, `deleteVKeys_spec`, `onPersistence_spec` | SAVE writes the graph key plus K − 1 virtual keys and deletes them afterwards; BGSAVE never splits | `RedisType/VKeys.lean`, `RedisType/AuxData.lean` |
 | `load_main_first`, `load_main_last` | Whatever the load order, the registered graph is the finished graph | `RedisType/Load.lean` |
 | `aux_roundtrip` | UDF libraries round-trip through the RDB aux fields | `RedisType/AuxData.lean` |
-| `uuid_counter_distinct`, `counter_field_bijective` | Virtual-key names differ whenever their counters differ mod 2^48, whatever the clock (#3286) | `RedisType/Uuid.lean` |
-| `countCheck_in_bounds` | The deleted-id decoder's checks keep every 8-byte read in bounds, whatever `count` the payload claims (#2996) | `Layout.lean` |
+| `uuid_counter_distinct`, `counter_field_bijective` | Virtual-key names differ whenever their counters differ mod 2^48, whatever the clock | `RedisType/Uuid.lean` |
+| `countCheck_in_bounds` | The deleted-id decoder's checks keep every 8-byte read in bounds, whatever `count` the payload claims | `Layout.lean` |
 | `rust_C_unique_disagree`, `constraint_creation_diverges` | Rust's UNIQUE key and C's disagree; creating a constraint over violating data diverges | `Constraint.lean` |
 
 ### How `load_encode` is proved
@@ -117,11 +115,7 @@ All confirmed against live Rust and C servers (see [`../FINDINGS.md`](../FINDING
 |---|---|---|---|
 | 1 | `rust_C_unique_disagree`, `disagreement_two_sided` | The UNIQUE key is type-tagged (`format!("{v:?}")` in `build_composite_key`). `{v:1}` and `{v:1.0}`, `{v:0.0}` and `{v:-0.0}`, `{v:1}` and `{v:true}` are all admitted (C rejects); duplicate lists, points, dates and vectors are rejected (C admits). Same through `SET` and on edges | **Open** (#2774) |
 | 2 | `constraint_creation_diverges` | A consequence of 1: creating a UNIQUE constraint over data that already violates it under C's rules reports OPERATIONAL (C: FAILED) | **Open** |
-| 3 | `enforcement_is_quadratic` | UNIQUE enforcement rebuilt a key map over the whole label for every affected node: `UNWIND range(1,8000) … CREATE` took 212 s (C 2.4 s) | Fixed by #3334 (closes #3330), modelled in [`../pending_commit`](../pending_commit) (`uniqueViolated_spec`). This project's theorem still describes the old scan |
-| 4 | removed (17ccc5412) | RDB-loaded graphs ignored `CACHE_SIZE` and used 25 (W5-rdb-1) | Fixed by #3262 (`cache_size_on_load`) |
 | 5 | none (the crash is inside the Redis module API) | `GRAPH.RESTORE` with a payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer`; a cut inside a record errors cleanly. C crashes on both | **Open** (#2537; external PR #3167) |
-| 6 | removed (17ccc5412) | Two virtual-key names could collide if the clock and counter lined up; a collision lost a virtual key's slice | Fixed by #3286 (`bf11a2774`): `uuid_counter_distinct`, `uuid_regression_pair_distinct` |
-| 7 | removed (17ccc5412) | A payload claiming `2^61` deleted ids passed the length check with an empty buffer (`count * 8` wrapped) and indexed past it | Fixed by #2996 (`d99861124`, closes #2994): `countCheck_in_bounds`. #2996 does not touch the reader, so bug 5 is unaffected |
 
 Recorded but not bugs:
 
@@ -133,7 +127,7 @@ Recorded but not bugs:
 
 | File | What's in it |
 |---|---|
-| `GraphPersist.lean` | Root: the report header (Lean↔Rust tables, theorems, bugs, live results, gaps) |
+| `GraphPersist.lean` | Root: imports and a short header |
 | `Codec.lean` | The v19 value codec over tagged words; `decOne_encode`, `stripNul_nulTerm`, `tags_distinct` |
 | `Layout.lean` | The first model of the multi-key entity split (`chunkType_covers`), the deleted-id bitmap, the load-side attribute filter |
 | `Constraint.lean` | The UNIQUE key in Rust and C, constraint creation, enforcement cost, MANDATORY |
@@ -159,28 +153,25 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 78 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (17), `mvcc_graph.rs` (10), the decoder (9), the encoder (7), `graph.rs` (5), `runtime.rs` (3).
+`COVERAGE.tsv` has 63 rows: `redis_type.rs` (27), `graphblas/serialization.rs` (16), the decoder (9), the encoder (7), `graph.rs` (4).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 50 |
-| MODELLED | 2 |
-| NOT COVERED | 16 |
-| AXIOMATISED | 10 |
+| PROVEN | 54 |
+| AXIOMATISED | 9 |
 
-- **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`, since #3819 moved it); `rebuild_derived_matrices` (GraphBLAS).
-- **MODELLED:** `from_u64` (the payload-directory state tags, exercised by the live round trips) and `MvccGraph::from_graph` (the RDB load path, checked live).
-- **NOT COVERED:** four trait declarations or `unimplemented!` defaults in `serialization.rs`; nine `MvccGraph` functions (`new`, `read`, `fork`, `commit`, `is_stale`, `commit_indexer_batch`, `prepare`, `publish`, `drop`) whose concurrency is not modelled here; and three in `runtime.rs` (`publish` and two `QueryGraph::from` constructors). The validated `commit` is proven in `search_concurrency` and `versioned_matrix`; `bash proofs/coverage.sh` counts each function once, in its best bucket.
+- **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`).
+- **Not rows of this ledger:** the `MvccGraph` functions (`new`, `from_graph`, `read`, `fork`, `commit`, `is_stale`, `prepare`, `publish`, `drop`) are PROVEN rows of [`../versioned_matrix`](../versioned_matrix); this project's `Mvcc.lean` models the load-publish and fork-commit entry points sequentially, which excludes races between writers; those are covered by [`../search_concurrency`](../search_concurrency). `bash proofs/coverage.sh` counts each function once, in its best bucket.
 
 ## What the model does not cover
 
 - **GraphBLAS matrix and tensor (de)serialisation** and RediSearch index creation are trusted (hypotheses or AXIOMATISED).
-- **List and vector property values** are checked by evaluating round trips on nested samples (`#guard_msgs`), not proven; the decoder proof (`decV`) covers scalars. The nesting cap added by #3339 is proven in `value_math` (`stored_roundtrip`).
+- **List and vector property values** are checked by evaluating round trips on nested samples (`#guard_msgs`), not proven; the decoder proof (`decV`) covers scalars. The nesting cap is proven in `value_math` (`stored_roundtrip`).
 - **Floats** are bit patterns; no IEEE reasoning is needed or done.
 - **`MvccGraph` concurrency** is not modelled.
 - **Hostile or malformed RDB payloads** beyond truncation were not attempted.
 - **Header and schema codecs** are hypotheses here, proven in `redis_layer`.
-- **The UNIQUE enforcement path after #3334** (index lookup) is modelled in `pending_commit`, not here.
+- **The UNIQUE enforcement path** (index lookup) is modelled in `pending_commit`, not here.
 
 ## Build and check
 

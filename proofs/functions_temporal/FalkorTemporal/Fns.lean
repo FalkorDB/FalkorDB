@@ -1,6 +1,6 @@
 import FalkorTemporal.Calendar
 /-!
-# Temporal constructor functions (functions/temporal.rs:50-876)
+# Temporal constructor functions (functions/temporal.rs)
 
 Line-by-line models of the field extractors, the string parsers' control flow, the
 `*_pure` / `*_struct_pure` constructors, the clock-reading `*_fn`s and `register`.
@@ -34,11 +34,11 @@ structure Num (F : Type) where
 inductive TV (F : Type) where
   | null | int (i : Int) | float (f : F) | str (s : String)
   | map (kvs : List (String × TV F)) | other (name : String)
-  | date (t : Int) | time (t : Int) | datetime (t : Int) | duration (t : Dur)
+  | date (t : Int) | time (t : Int) | datetime (t : Int) | duration (t : Int)
 
 variable {F : Type} (N : Num F)
 
-/-- `slot_to_int` (temporal.rs:164). -/
+/-- `slot_to_int` (temporal.rs). -/
 def slotToInt : TV F → Option Int
   | .int i => some i
   | .float f => some (N.toI64 f)
@@ -47,7 +47,7 @@ def slotToInt : TV F → Option Int
 /-- `OrderMap::get_str` — first binding of the key (keys are unique in an `OrderMap`). -/
 def getStr (m : List (String × TV F)) (k : String) : Option (TV F) := m.lookup k
 
-/-- `get_int_field` (temporal.rs:50). -/
+/-- `get_int_field` (temporal.rs). -/
 def getIntField (m : List (String × TV F)) (field : String) : Option Int :=
   (getStr m field).bind fun v => match v with
     | .int i => some i
@@ -100,7 +100,7 @@ theorem fromHms_lt (h m s t : Nat) (e : fromHms h m s = some t) : t < 86400 := b
   · cases e; omega
   · cases e
 
-/-- `time_from_components` (temporal.rs:142): `unwrap_or(0) as u32`, then `from_hms_opt`. -/
+/-- `time_from_components` (temporal.rs): `unwrap_or(0) as u32`, then `from_hms_opt`. -/
 def timeFromComponents (hour minute second : Option Int) : Except String Nat :=
   let h := asU32 (hour.getD 0); let m := asU32 (minute.getD 0); let s := asU32 (second.getD 0)
   match fromHms h m s with
@@ -119,7 +119,7 @@ theorem timeFromComponents_ok (h m s : Option Int) (t : Nat)
 /-- The `as u32` truncation: hour `2^32 + 1` is read as hour 1 (C truncates the same way). -/
 example : timeFromComponents (some (2^32 + 1)) none none = .ok 3600 := by rfl
 
-/-- `time_from_map` (temporal.rs:154). -/
+/-- `time_from_map` (temporal.rs). -/
 def timeFromMap (m : List (String × TV F)) : Except String Nat :=
   timeFromComponents (getIntField N m "hour") (getIntField N m "minute") (getIntField N m "second")
 
@@ -132,7 +132,7 @@ theorem timeFromMap_eq_slots (m : List (String × TV F)) :
 abbrev DFC := Option Int → Option Int → Option Int → Option Int → Option Int → Option Int →
   Option Int → Except String Int
 
-/-- `date_from_map` (temporal.rs:130). -/
+/-- `date_from_map` (temporal.rs). -/
 def dateFromMap (dfc : DFC) (m : List (String × TV F)) : Except String Int :=
   dfc (getIntField N m "year") (getIntField N m "month") (getIntField N m "day")
     (getIntField N m "week") (getIntField N m "dayOfWeek") (getIntField N m "quarter")

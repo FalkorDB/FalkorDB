@@ -1,14 +1,6 @@
 {"version": "1.3.0",
  "packagesDir": ".lake/packages",
- "packages":
- [{"type": "path",
-   "scope": "",
-   "name": "«redis-layer»",
-   "manifestFile": "lake-manifest.json",
-   "inherited": false,
-   "dir": "../redis_layer",
-   "copy": false,
-   "configFile": "lakefile.toml"}],
+ "packages": [],
  "name": "«falkor-graph-persist»",
  "lakeDir": ".lake",
  "fixedToolchain": false}

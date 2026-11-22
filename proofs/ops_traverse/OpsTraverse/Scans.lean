@@ -4,9 +4,9 @@ import OpsTraverse.Basic
 
 | here | there |
 | --- | --- |
-| `labelScan`      | `NodeByLabelScanOp::next` (`runtime/ops/node_by_label_scan.rs:77-97`) / `AllNodeScan` (same op with no labels, `runtime/runtime.rs:864-877`): every input row × every node of `get_nodes(labels, 0)` |
-| `idSeek`         | `NodeByIdSeekOp::next` (`runtime/ops/node_by_id_seek.rs:55-84`): `range -= deleted_nodes()` |
-| `labelIdScan`    | `NodeByLabelAndIdScanOp::next` (`runtime/ops/node_by_label_and_id_scan.rs:59-94`): `get_nodes(labels, min).take_while(<= max).filter(range.contains)` |
+| `labelScan`      | `NodeByLabelScanOp::next` (`runtime/ops/node_by_label_scan.rs`) / `AllNodeScan` (same op with no labels, `runtime/runtime.rs`): every input row × every node of `get_nodes(labels, 0)` |
+| `idSeek`         | `NodeByIdSeekOp::next` (`runtime/ops/node_by_id_seek.rs`): `range -= deleted_nodes()` |
+| `labelIdScan`    | `NodeByLabelAndIdScanOp::next` (`runtime/ops/node_by_label_and_id_scan.rs`): `get_nodes(labels, min).take_while(<= max).filter(range.contains)` |
 | `getNodes`       | `Graph::get_nodes(labels, min)` — **boundary**: the label-matrix intersection iterator (GraphBLAS); assumed to enumerate the labelled live nodes `≥ min` in strictly increasing id order (`Sorted` hypothesis) |
 
 `evaluate_id_filter` (the id range computed from the WHERE predicate) is
