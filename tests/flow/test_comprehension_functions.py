@@ -820,11 +820,29 @@ class testComprehensionFunctions(FlowTestsBase):
             ]:
                 try:
                     g.query(query)
-                    self.env.assertTrue(False)
+                    self.env.assertTrue(False, message=f"{query} unexpectedly succeeded")
                 except ResponseError as e:
                     self.env.assertContains(error, str(e))
         finally:
             g.delete()
+
+    def test25b_non_boolean_predicate_over_a_long_list(self):
+        # Long enough (>= 16 elements) to take the columnar path: a predicate
+        # that is neither a boolean nor null is a type error there too, for
+        # the list, `size()` (tally) and quantifier (count) sinks.
+        for query in [
+            "RETURN [x IN range(1, 20) WHERE x | x]",
+            "RETURN [x IN range(1, 20) WHERE x]",
+            "RETURN size([x IN range(1, 20) WHERE x | x])",
+            "WITH range(1, 20) AS l RETURN [x IN l WHERE x + 1 | x]",
+            "WITH range(1, 20) AS l RETURN size([x IN l WHERE x + 1])",
+            "WITH range(1, 20) AS l RETURN all(x IN l WHERE x + 1)",
+        ]:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False, message=f"{query} unexpectedly succeeded")
+            except ResponseError as e:
+                self.env.assertContains("Type mismatch", str(e))
 
     def test26_size_of_comprehension_inside_a_list(self):
         # `size([...])` counts inside a list literal and a function's arguments

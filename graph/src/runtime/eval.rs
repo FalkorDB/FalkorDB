@@ -1642,12 +1642,7 @@ impl<'a> ExprEval<'a> {
                                 Value::Bool(true) => local[0] += 1,
                                 Value::Bool(false) => local[1] += 1,
                                 Value::Null => local[2] += 1,
-                                value => {
-                                    return Err(format!(
-                                        "Type mismatch: expected Boolean but was {}",
-                                        value.name()
-                                    ));
-                                }
+                                _ => unreachable!("checked above: a predicate is boolean or null"),
                             }
                         }
                     }
