@@ -7,7 +7,9 @@
 * `rebuildHJ_id` (no rewrite: a plain copy) and `rebuildHJ_sound` (a
   congruence `R` + sound local rewrites ⇒ the rebuilt tree is `R`-equal);
   `rebuildHJ_guard_sound`, `guardHJ_argument`: the #2981 guard (no rewrite over a
-  CartesianProduct with an `Argument` below) only removes rewrites.
+  CartesianProduct with an `Argument` below) only removes rewrites;
+  `replaceHJ_eq`: the #3468 `has_filter_over_cartesian` skip (`T.hasFOC`) equals
+  the unguarded rebuild (`rebuildHJ_noFOC`: no Filter over a CartesianProduct ⇒ copy).
 * `rebuildCP_*`: identity off the target; at the target the CartesianProduct
   children are permuted (`splitCP_perm`) with the conjunct over the extracted ones.
 * `findVlt_spec`, `absorb_correct`: under the per-edge reading of an edge-only
@@ -168,6 +170,68 @@ theorem guardHJ_argument (isCP isArg : D → Bool) (rw : T D → Option (T D)) (
     (hcp : isCP cd = true) (ha : T.anyD isArg (.node cd ccs) = true) :
     guardHJ isCP isArg rw (.node d [.node cd ccs]) = none := by
   simp [guardHJ, hcp, ha]
+
+/-! ## `has_filter_over_cartesian` (#3468 skip of a no-op rebuild) -/
+
+/-- Is the first child of a node a `CartesianProduct` (`get_child(0)` matches)? -/
+def firstIs (isCP : D → Bool) : List (T D) → Bool
+  | .node cd _ :: _ => isCP cd
+  | [] => false
+
+/-- replace_cartesian_with_hash_join.rs `has_filter_over_cartesian`: some `Filter`
+of the subtree has a `CartesianProduct` as its child 0. -/
+def T.hasFOC (isFilter isCP : D → Bool) : T D → Bool
+  | .node d cs => (isFilter d && firstIs isCP cs) || cs.attach.any fun ⟨c, _⟩ => T.hasFOC isFilter isCP c
+
+/-- `replace_cartesian_with_hash_join` since #3468: rebuild only when the check fires. -/
+def replaceHJ (isFilter isCP : D → Bool) (rw : T D → Option (T D)) (fuel : Nat) (t : T D) : T D :=
+  if T.hasFOC isFilter isCP t then rebuildHJ rw fuel t else t
+
+/-- A rebuild over a tree with no `Filter -> CartesianProduct` is a plain copy, when the
+local rewrite only fires on that shape (the `if let` chain of `rebuild_with_hash_joins`). -/
+theorem rebuildHJ_noFOC (isFilter isCP : D → Bool) (rw : T D → Option (T D))
+    (hshape : ∀ d cs, rw (.node d cs) ≠ none → isFilter d = true ∧ firstIs isCP cs = true) :
+    ∀ fuel t, T.hasFOC isFilter isCP t = false → rebuildHJ rw fuel t = t
+  | 0, t, _ => by rw [rebuildHJ]
+  | fuel + 1, .node d cs, h => by
+    rw [T.hasFOC, Bool.or_eq_false_iff] at h
+    obtain ⟨hroot, hcs⟩ := h
+    have ih : ∀ c ∈ cs, rebuildHJ rw (fuel + 1) c = c := fun c hc =>
+      rebuildHJ_noFOC isFilter isCP rw hshape (fuel + 1) c (by
+        have := hcs
+        simp only [List.any_eq_false] at this
+        simpa using this ⟨c, hc⟩ (List.mem_attach _ _))
+    have hnone : rw (.node d cs) = none := by
+      cases hr : rw (.node d cs) with
+      | none => rfl
+      | some t' =>
+        obtain ⟨h1, h2⟩ := hshape d cs (by rw [hr]; simp)
+        simp [h1, h2] at hroot
+    rw [rebuildHJ, hnone]
+    simp only
+    congr 1
+    rw [List.attach_map_val (f := fun x => rebuildHJ rw (fuel + 1) x), List.map_congr_left ih, List.map_id']
+termination_by fuel t => (fuel, sizeOf t)
+decreasing_by simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; right; omega
+
+/-- **#3468.** Skipping the rebuild when `has_filter_over_cartesian` is false changes
+nothing: the guarded pass equals the unguarded rebuild on every plan. -/
+theorem replaceHJ_eq (isFilter isCP : D → Bool) (rw : T D → Option (T D))
+    (hshape : ∀ d cs, rw (.node d cs) ≠ none → isFilter d = true ∧ firstIs isCP cs = true)
+    (fuel : Nat) (t : T D) : replaceHJ isFilter isCP rw fuel t = rebuildHJ rw fuel t := by
+  unfold replaceHJ
+  split
+  · rfl
+  · next hf => exact (rebuildHJ_noFOC isFilter isCP rw hshape fuel t (by simpa using hf)).symm
+
+/-- The #2981-guarded rewrite has that shape whenever `rw` does. -/
+theorem guardHJ_shape (isFilter isCP isArg : D → Bool) (rw : T D → Option (T D))
+    (hshape : ∀ d cs, rw (.node d cs) ≠ none → isFilter d = true ∧ firstIs isCP cs = true) :
+    ∀ d cs, guardHJ isCP isArg rw (.node d cs) ≠ none → isFilter d = true ∧ firstIs isCP cs = true :=
+  fun d cs h => hshape d cs (fun h' => h (by
+    cases h0 : guardHJ isCP isArg rw (.node d cs) with
+    | none => rfl
+    | some t' => rw [guardHJ_sub isCP isArg rw _ t' h0] at h'; exact absurd h' (by simp)))
 
 /-! ## `rebuild_with_cp_split` -/
 
