@@ -3,3 +3,8 @@ defaultTargets = ["GraphPersist"]
 
 [[lean_lib]]
 name = "GraphPersist"
+
+# Shared foundations (the f64 model `F`, `roundF`, `fpcmp`): proofs/core.
+[[require]]
+name = "falkor-core"
+path = "../core"

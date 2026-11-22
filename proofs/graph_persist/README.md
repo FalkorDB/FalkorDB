@@ -5,7 +5,7 @@ This project proves that FalkorDB's RDB persistence gives back the graph it save
 - **the v19 RDB codec**: property values, the deleted-id bitmaps, the attribute stores, the payload directory, the whole graph payload;
 - **the multi-key layout**: a large graph is saved across several Redis keys (the graph's own key plus *virtual keys*), and Redis may load them back in any order;
 - **`src/redis_type.rs`**: save, load, aux fields (UDF libraries), virtual-key names and their cleanup;
-- **constraints**: how the UNIQUE key is built, and where Rust and C disagree.
+- **constraints**: how the UNIQUE key is built, and that it agrees with C.
 
 `SAVE`/`BGSAVE`, restart, `DEBUG RELOAD`, `GRAPH.COPY`, replica full sync and moving an RDB between the Rust and C engines all depend on this. A bug here loses data or changes it silently on restart.
 
@@ -72,14 +72,14 @@ Yes:
 
 **7. Do UNIQUE constraints agree with C?**
 
-No; see [Bugs found](#bugs-found). Rust builds the UNIQUE key from `format!("{v:?}")`, which includes the value's *type*. C compares *values*. Under `UNIQUE NODE L (v)`:
+Yes: `rust_C_unique_agree`. Rust's key (`build_composite_key`) holds one component per property: a string's bytes, or a number as `f64` (`Bool`, `Int` and `Float` share that domain, `-0.0` reads as `0.0`). Two entities collide under the key iff C calls them duplicates (`buildKey_eq_iff`, `int_float_bool_collide`):
 
 ```cypher
 CREATE (:L {v: 1})
-CREATE (:L {v: 1.0})   // Rust: accepted. C: unique constraint violation
+CREATE (:L {v: 1.0})   // Rust and C: unique constraint violation
 ```
 
-The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes both ways (`disagreement_two_sided`): for duplicate lists, points, dates and vectors, Rust rejects and C accepts. MANDATORY constraints agree with C (`mandatory_agrees`).
+The same holds for `0.0` vs `-0.0` and `1` vs `true`. Values C does not check (lists, points, temporals, vectors, NaN) give the empty key, which never collides (`buildKey_eq_nil_iff`). Creating a constraint over existing data reaches the same status as C (`constraint_creation_agrees`). MANDATORY constraints agree with C (`mandatory_agrees`).
 
 ## The headline theorems
 
@@ -97,7 +97,7 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 | `aux_roundtrip` | UDF libraries round-trip through the RDB aux fields | `RedisType/AuxData.lean` |
 | `uuid_counter_distinct`, `counter_field_bijective` | Virtual-key names differ whenever their counters differ mod 2^48, whatever the clock | `RedisType/Uuid.lean` |
 | `countCheck_in_bounds` | The deleted-id decoder's checks keep every 8-byte read in bounds, whatever `count` the payload claims | `Layout.lean` |
-| `rust_C_unique_disagree`, `constraint_creation_diverges` | Rust's UNIQUE key and C's disagree; creating a constraint over violating data diverges | `Constraint.lean` |
+| `rust_C_unique_agree`, `constraint_creation_agrees` | Rust's UNIQUE key collides exactly when C's duplicate test does; creating a constraint over existing data gives C's status | `Constraint.lean` |
 
 ### How `load_encode` is proved
 
@@ -113,8 +113,6 @@ All confirmed against live Rust and C servers (see [`../FINDINGS.md`](../FINDING
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `rust_C_unique_disagree`, `disagreement_two_sided` | The UNIQUE key is type-tagged (`format!("{v:?}")` in `build_composite_key`). `{v:1}` and `{v:1.0}`, `{v:0.0}` and `{v:-0.0}`, `{v:1}` and `{v:true}` are all admitted (C rejects); duplicate lists, points, dates and vectors are rejected (C admits). Same through `SET` and on edges | **Open** (#2774) |
-| 2 | `constraint_creation_diverges` | A consequence of 1: creating a UNIQUE constraint over data that already violates it under C's rules reports OPERATIONAL (C: FAILED) | **Open** |
 | 5 | none (the crash is inside the Redis module API) | `GRAPH.RESTORE` with a payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer`; a cut inside a record errors cleanly. C crashes on both | **Open** (#2537; external PR #3167) |
 
 Recorded but not bugs:
@@ -149,7 +147,7 @@ Recorded but not bugs:
 | `RedisType/Load.lean` | `graph_rdb_load`, placeholders, `finalize_pending_graphs`, `CACHE_SIZE` on load |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
-The project has no Lake dependencies.
+The project depends on [`../core`](../core) (`FalkorCore.F`, the `f64` model).
 
 ## Coverage
 
@@ -167,7 +165,7 @@ The project has no Lake dependencies.
 
 - **GraphBLAS matrix and tensor (de)serialisation** and RediSearch index creation are trusted (hypotheses or AXIOMATISED).
 - **List and vector property values** are checked by evaluating round trips on nested samples (`#guard_msgs`), not proven; the decoder proof (`decV`) covers scalars. The nesting cap is proven in `value_math` (`stored_roundtrip`).
-- **Floats** are bit patterns; no IEEE reasoning is needed or done.
+- **Floats** are bit patterns in the codec; the UNIQUE key uses `core`'s `f64` model with `to_bits` abstract (`ToBits`).
 - **`MvccGraph` concurrency** is not modelled.
 - **Hostile or malformed RDB payloads** beyond truncation were not attempted.
 - **Header and schema codecs** are hypotheses here, proven in `redis_layer`.
