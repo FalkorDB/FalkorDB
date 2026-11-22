@@ -26,42 +26,42 @@ graph/src/planner/binder.rs	Binder::bind_call_body	972	PROVEN	Scopes.callBody_qu
 graph/src/planner/binder.rs	Binder::build_import_projections	1133	PROVEN	BindIR.importProjections_covers (fresh inner ids), sortProj_spec (sorted by name, permutation); Pr2845.importProj_spec, entry_ids_below
 graph/src/planner/binder.rs	Binder::validate_import_with	1153	PROVEN	validateImport_ok, validateImport_rejects_expr
 graph/src/planner/binder.rs	Binder::bind_projection	1209	PROVEN	bindProjection: projectItems_keys, with_plain, orderBy_leaks, where_copy_removed, where_copy_id_reused, orderBy_old_name_of_projected, agg_orderBy_by_name, agg_orderBy_rejects (the parent-to-child entry is keyed by the projected variable's name, a bare unnamed variable has none; WITH * branch not modelled: its env_copy holds named entries only)
-graph/src/planner/binder.rs	Binder::bind_graph	1481	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_accepts, node_attr_on_own_rel_accepts, node_attr_later_rel, node_attr_later_node_rejected, foldGrow_mono, q2923_fixed, defRels_named_only (#2981 defRels: named relationship aliases defined first; Elem aliases are Table.Alias), rel_attr_forward_node, self_reference_ok; defineName_ignores_parent; merged_occurrences (endpoint shares the node's merged attrs) abstracted: Elem.node carries every occurrence's attrs
-graph/src/planner/binder.rs	Binder::bind_graph_create	1743	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, createCheck_anon, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak_fixed
-graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1868	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct, selfRef_leaf_prop
-graph/src/planner/binder.rs	Binder::bind_set_items	1890	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
-graph/src/planner/binder.rs	Binder::bind_expr	1915	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
-graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1922	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
-graph/src/planner/binder.rs	Binder::bind_expr_node	1936	PROVEN	BindExpr.bindNode: bindNode_covers (pattern-free exprs keep table covering), loop_var_shadows, bind_iterable_outer, reduce_same_name, prop_on_path, exists_pattern, func_arg_mismatch; Scopes.comprehension_cleanup_breaks; Fold.foldCall_sound; #3335: NE.paren/andOr, flatB - bind_paren, prop_on_paren_path, bind_andOr_paren + flatB_assoc, flatB_eq_body, flatB_many, spliceB_other, bindL_append; #3303 pattern arm over Alias (defineAlias, cleanup keeps unnamed entries); PatternPredDeclaresNothing refuted by bug1334_pattern_predicate_declares_var (BUG #1334)
-graph/src/planner/binder.rs	Binder::define_name_in_scope	2348	PROVEN	Resolve.defineName: defineName_reuse, defineName_noreuse, defineName_fresh, defineName_covers, defineName_ignores_parent; ensureType_table
-graph/src/planner/binder.rs	Binder::define_alias_in_scope	2374	PROVEN	Resolve.defineAlias: defineAlias_anon_fresh, defineAlias_anon_reuse, defineAlias_anon_covers, defineAlias_named_anon_spelling, lookupAlias_defineAlias
-graph/src/planner/binder.rs	Binder::lookup_alias	2395	PROVEN	Resolve.lookupAlias: lookupAlias_defineAlias, defineAlias_anon_fresh
-graph/src/planner/binder.rs	Binder::resolve_alias	2407	PROVEN	Resolve.resolveAlias: resolveAlias_of_lookup, defineAlias_anon_fresh (an unnamed entity resolves through the scope that bound it)
-graph/src/planner/binder.rs	Binder::project_name	2421	PROVEN	projectName_new_covers, projectName_present_uncovered
-graph/src/planner/binder.rs	Binder::resolve_name	2435	PROVEN	Resolve.resolveName (resolve + the placeholder arm): resolve_ok_iff, resolve_innermost, resolve_covers, resolveName_other, resolveName_placeholder, resolveName_placeholder_covers
-graph/src/planner/binder.rs	Binder::fresh_var	2493	PROVEN	Table.freshVar, freshAnon: fresh_not_used, mint_new_covers, pushUnnamed_covers, defineAlias_anon_fresh
-graph/src/planner/binder.rs	Binder::ensure_type	2509	PROVEN	ensureType_table, ensureType_accepts_any_binding
-graph/src/planner/binder.rs	Binder::validate_boolean_operands	2530	PROVEN	Types.validate_logical, validate_nonlogical
-graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2534	PROVEN	Types.validate (recursive), validate_logical/nonlogical
-graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2556	PROVEN	Types.mayBool_sound_except; getElement_accepted, getElement_and_validates (#3270: GetElement is runtime-typed), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
-graph/src/planner/binder.rs	Binder::expr_may_return_entity	2624	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
-graph/src/planner/binder.rs	expr_tree_to_value	2697	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
-graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2699	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
-graph/src/planner/binder.rs	collect_constant_args	2729	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
-graph/src/planner/binder.rs	rewrite_struct_constructor	2747	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
-graph/src/planner/binder.rs	rewrite_compiled_regex	2812	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
-graph/src/planner/binder.rs	replace_agg_subtrees	2846	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
-graph/src/planner/binder.rs	raw_exprs_structurally_equal	2895	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_float_rejected, order_by_float_equal, order_by_int_distinguished (W4-plan-3 fixed by #3254)
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	2899	PROVEN	AggEq.isAggPlaceholder_iff
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2903	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2933	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, exprIrEq_exact_any_kind, const_kinds_distinguished, patterns_by_variant
-graph/src/planner/binder.rs	denotes	2984	PROVEN	Resolve.denotes: denotes_freshVar, denotes_freshAnon, denotes_anon_iff, denotes_exclusive (no name denotes an unnamed variable)
-graph/src/planner/binder.rs	sorted_scope_vars	2991	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
-graph/src/planner/binder.rs	merge_scope_vars	2999	PROVEN	mergeSV_ge, mergeSV_covers
-graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1724	PROVEN	Scopes.accumulateFrom (create: keep_new, comprehension: !keep_new): accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels
-graph/src/planner/binder.rs	constants_equal	2880	PROVEN	AggEq.constEq (Int/Float exact via fint, else Value == = compare_value): constEq_refl, constEq_symm, int_float_iff
-graph/src/planner/binder.rs	Binder::validate_order_by_boolean_operands	2551	NOT COVERED	(#3605): not modelled yet
-graph/src/planner/binder.rs	Binder::non_boolean_operand_type	2613	NOT COVERED	(#3605): not modelled yet
-graph/src/planner/binder.rs	Binder::type_name	2642	NOT COVERED	(#3605): not modelled yet
-graph/src/planner/binder.rs	Binder::constant_value	2666	NOT COVERED	(#3605): not modelled yet
-graph/src/planner/binder.rs	Binder::constant_arithmetic	2706	NOT COVERED	(#3605): not modelled yet
+graph/src/planner/binder.rs	Binder::bind_graph	1485	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_accepts, node_attr_on_own_rel_accepts, node_attr_later_rel, node_attr_later_node_rejected, foldGrow_mono, q2923_fixed, defRels_named_only (#2981 defRels: named relationship aliases defined first; Elem aliases are Table.Alias), rel_attr_forward_node, self_reference_ok; defineName_ignores_parent; merged_occurrences (endpoint shares the node's merged attrs) abstracted: Elem.node carries every occurrence's attrs
+graph/src/planner/binder.rs	Binder::bind_graph_create	1747	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, createCheck_anon, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak_fixed
+graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1872	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct, selfRef_leaf_prop
+graph/src/planner/binder.rs	Binder::bind_set_items	1894	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
+graph/src/planner/binder.rs	Binder::bind_expr	1919	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
+graph/src/planner/binder.rs	Binder::bind_expr_with_locals	1926	PROVEN	BindExpr.bindExprLocals (= bind_expr_node with locals)
+graph/src/planner/binder.rs	Binder::bind_expr_node	1940	PROVEN	BindExpr.bindNode: bindNode_covers (pattern-free exprs keep table covering), loop_var_shadows, bind_iterable_outer, reduce_same_name, prop_on_path, exists_pattern, func_arg_mismatch; Scopes.comprehension_cleanup_breaks; Fold.foldCall_sound; #3335: NE.paren/andOr, flatB - bind_paren, prop_on_paren_path, bind_andOr_paren + flatB_assoc, flatB_eq_body, flatB_many, spliceB_other, bindL_append; #3303 pattern arm over Alias (defineAlias, cleanup keeps unnamed entries); #3605 WHERE check = logical root or mayBool (abstract Ctx.mayBool); PatternPredDeclaresNothing refuted by bug1334_pattern_predicate_declares_var (BUG #1334)
+graph/src/planner/binder.rs	Binder::define_name_in_scope	2361	PROVEN	Resolve.defineName: defineName_reuse, defineName_noreuse, defineName_fresh, defineName_covers, defineName_ignores_parent; ensureType_table
+graph/src/planner/binder.rs	Binder::define_alias_in_scope	2387	PROVEN	Resolve.defineAlias: defineAlias_anon_fresh, defineAlias_anon_reuse, defineAlias_anon_covers, defineAlias_named_anon_spelling, lookupAlias_defineAlias
+graph/src/planner/binder.rs	Binder::lookup_alias	2408	PROVEN	Resolve.lookupAlias: lookupAlias_defineAlias, defineAlias_anon_fresh
+graph/src/planner/binder.rs	Binder::resolve_alias	2420	PROVEN	Resolve.resolveAlias: resolveAlias_of_lookup, defineAlias_anon_fresh (an unnamed entity resolves through the scope that bound it)
+graph/src/planner/binder.rs	Binder::project_name	2434	PROVEN	projectName_new_covers, projectName_present_uncovered
+graph/src/planner/binder.rs	Binder::resolve_name	2448	PROVEN	Resolve.resolveName (resolve + the placeholder arm): resolve_ok_iff, resolve_innermost, resolve_covers, resolveName_other, resolveName_placeholder, resolveName_placeholder_covers
+graph/src/planner/binder.rs	Binder::fresh_var	2506	PROVEN	Table.freshVar, freshAnon: fresh_not_used, mint_new_covers, pushUnnamed_covers, defineAlias_anon_fresh
+graph/src/planner/binder.rs	Binder::ensure_type	2522	PROVEN	ensureType_table, ensureType_accepts_any_binding
+graph/src/planner/binder.rs	Binder::validate_boolean_operands	2543	PROVEN	Types.validateProj (= validate false true): validate_logical, validate_nonlogical, operandOk_proj, operandOk_sound_except, arith_const_rejected (#3605), true_and_neg_null_rejected
+graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2559	PROVEN	Types.validate inF shape (recursive; child_in_filter via validateAll): validate_logical, validate_logical_filter, validate_nonlogical, filter_operands_deferred, listComp_projection_checked, filter_value_context_checked (#3293), arith_runtime_accepted, getElement_and_validates
+graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2729	PROVEN	Types.mayBool_sound_except; getElement_accepted, getElement_and_validates (#3270: GetElement is runtime-typed), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
+graph/src/planner/binder.rs	Binder::expr_may_return_entity	2797	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
+graph/src/planner/binder.rs	expr_tree_to_value	2870	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
+graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2872	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
+graph/src/planner/binder.rs	collect_constant_args	2902	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
+graph/src/planner/binder.rs	rewrite_struct_constructor	2920	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
+graph/src/planner/binder.rs	rewrite_compiled_regex	2985	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
+graph/src/planner/binder.rs	replace_agg_subtrees	3019	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
+graph/src/planner/binder.rs	raw_exprs_structurally_equal	3068	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_float_rejected, order_by_float_equal, order_by_int_distinguished (W4-plan-3 fixed by #3254)
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	3072	PROVEN	AggEq.isAggPlaceholder_iff
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	3076	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	3106	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, exprIrEq_exact_any_kind, const_kinds_distinguished, patterns_by_variant
+graph/src/planner/binder.rs	denotes	3157	PROVEN	Resolve.denotes: denotes_freshVar, denotes_freshAnon, denotes_anon_iff, denotes_exclusive (no name denotes an unnamed variable)
+graph/src/planner/binder.rs	sorted_scope_vars	3164	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
+graph/src/planner/binder.rs	merge_scope_vars	3172	PROVEN	mergeSV_ge, mergeSV_covers
+graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1728	PROVEN	Scopes.accumulateFrom (create: keep_new, comprehension: !keep_new): accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels
+graph/src/planner/binder.rs	constants_equal	3053	PROVEN	AggEq.constEq (Int/Float exact via fint, else Value == = compare_value): constEq_refl, constEq_symm, int_float_iff
+graph/src/planner/binder.rs	Binder::validate_order_by_boolean_operands	2551	PROVEN	Types.validateOrderBy (= validate false false, #3605): orderBy_checks, orderBy_func_rejected, orderBy_operand_sound
+graph/src/planner/binder.rs	Binder::non_boolean_operand_type	2613	PROVEN	Types.nonBool (TK.negate/arith carry cv, the kind constant_value computes): nonBool_sound, nonBool_mayBool, arith_const_rejected
+graph/src/planner/binder.rs	Binder::type_name	2642	NOT COVERED	(#3605): error-message spelling only; the models return Ok/Err
+graph/src/planner/binder.rs	Binder::constant_value	2666	NOT COVERED	(#3605): Value evaluation not modelled; abstracted to its result kind (TK.negate/arith cv) in Types.nonBool
+graph/src/planner/binder.rs	Binder::constant_arithmetic	2706	NOT COVERED	(#3605): Value arithmetic (Add/Sub/…/apply_pow) not modelled; abstracted to its result kind (TK.arith cv) in Types.nonBool

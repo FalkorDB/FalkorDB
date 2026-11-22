@@ -114,7 +114,7 @@ There are no CONDITIONAL rows in this project.
 | `Stack.lean` | The scope stack `BSt`, `sortedScopeVars`, label updates (`updNode`) |
 | `BindExpr.lean` | Expression binding (`NE`, `BE`, `bindNode`), comprehension locals, AND/OR flattening, `bindSetItems`, self-reference checks |
 | `BindIR.lean` | Per-clause rules of `bind_ir` (`RC`, `bindIR`): shortestPath, MERGE, YIELD, `CALL {}` subqueries, CREATE |
-| `Types.lean` | `mayBool`, `mayEntity`, `validate` |
+| `Types.lean` | `mayBool`, `mayEntity`, `nonBool`, `validate` (projection, ORDER BY, comprehension predicates) |
 | `Fold.lean` | Constant folding (`nodeToValue`, `foldCall`), struct-constructor and regex rewrites |
 | `AggEq.lean` | `expr_ir_eq` (`exprIrEq`), structural equality, `replaceAgg` |
 | `CallBoundary.lean` | The `CALL {}` entry projection (namespace `Pr2845`) |
@@ -134,7 +134,7 @@ Every function in `binder.rs` (and `Planner::fresh_var`) is PROVEN. "PROVEN" her
 
 ## Spec vs C disagreements (not Rust-vs-C bugs)
 
-- `RETURN false AND (1+2)`, `WITH 2 AS x RETURN false AND x`, `false AND size([1])`: Rust `false` (arithmetic, variables and calls are "may be boolean", `arith_accepted`, and AND short-circuits at runtime), C `Type mismatch` (static check). openCypher: type error.
+- `WITH 2 AS x RETURN false AND x`, `false AND size([1])`: Rust `false` (variables and calls are "may be boolean" and AND short-circuits at runtime), C `Type mismatch` (static check). openCypher: type error. (Constant arithmetic, `false AND (1+2)`, is rejected as in C since #3605: `arith_const_rejected`.)
 - `MATCH (a)-[r*1..2]->(c) WITH r WHERE r.w = 1 RETURN count(*)`: Rust `Type mismatch: … but was Path` (the projected `r` is no longer in `varlen_rel_var_ids`), C `1`; without the WITH both return `1`. openCypher rejects `r.w` on a list.
 - `date({year:2020, month:null})`, `duration({days:null})`, `localtime({hour:null})`: Rust treats a null field as absent, C errors. Not caused by `rewrite_struct_constructor` (the map path agrees).
 - Rust follows openCypher and C does not: `MATCH p=(a)-->(b) MATCH (p)` rejected; `reduce(a = 0, a IN …)` rejected; `RETURN [(n)-->(m)|m], m` rejected; within one MATCH `(a)-[r]->(), (a)-[s]->()` enforces r≠s.
