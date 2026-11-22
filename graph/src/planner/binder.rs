@@ -39,11 +39,6 @@ use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
 use std::sync::Arc;
 
-/// Prefix of the env key that reserves an aggregate's ORDER BY slot. A NUL
-/// cannot appear in an identifier, so no query can name (and so replace) it;
-/// the leading `_` keeps `*` expansion from projecting it.
-const AGG_SLOT_PREFIX: &str = "_\u{0}agg_placeholder_";
-
 /// The variables of one scope.
 ///
 /// Variable ids are dense per scope (a new variable takes id `len()`), so the
@@ -909,7 +904,6 @@ impl Binder {
             for name in subquery_env.keys() {
                 // Filter out internal slot reservations
                 if name.starts_with("_slot_")
-                    || name.starts_with(AGG_SLOT_PREFIX)
                     || name.starts_with("_quant_")
                     || name.starts_with("_lc_")
                     || name.starts_with("_reduce_")
@@ -923,7 +917,6 @@ impl Binder {
             for (name, inner_var) in subquery_env.iter() {
                 // Skip internal slot reservations
                 if name.starts_with("_slot_")
-                    || name.starts_with(AGG_SLOT_PREFIX)
                     || name.starts_with("_quant_")
                     || name.starts_with("_lc_")
                     || name.starts_with("_reduce_")
@@ -1948,13 +1941,12 @@ impl Binder {
                 Ok(tree!(ExprIR::Variable(var)))
             }
             ExprIR::AggOrderByPlaceholder => {
-                // Always a fresh variable, in a slot of its own.
+                // Always a fresh variable, in a slot of its own. It is stored
+                // without a name, so no alias (backquoted or not) can resolve to
+                // it or replace it, and the slot still counts toward the next id.
                 let scope_id = self.env_stack.len() as u32 - 1;
                 let var = self.fresh_var(None, Type::Any, scope_id);
-                // Insert with a unique key so each placeholder occupies its own
-                // slot in the env (keeping env.len() == next available ID).
-                let key = Arc::new(format!("{AGG_SLOT_PREFIX}{}", var.id));
-                self.env_stack[scope_id as usize].insert(key, var.clone());
+                self.env_stack[scope_id as usize].push_unnamed(var.clone());
                 Ok(tree!(ExprIR::Variable(var)))
             }
             ExprIR::Quantifier {
