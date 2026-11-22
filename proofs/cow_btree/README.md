@@ -108,6 +108,8 @@ No open bugs. Fixed ones are in this file's git history.
 | `Extract.lean` | The generic cursor (`Extract`, `DocExtract`, `TupleExtract`) and `heap_bytes` |
 | `BatchAssert.lean` | `removeBatchTree_wf_asserted`: `remove_batch` on every configuration the const assert admits |
 | `Assert.lean` | The const assert (`constAssert`, `isReadWidth`) and `remove_spec_asserted` |
+| `Page.lean` | #3738's page trait: the `u64` `Leaf` as the modelled page; `insert_one` / `insert` passing a list of right pages (`insertOneR`, `insertR`) equal `insertOne` / `insert` (`insertOneR_eq`, `insertR_eq`, `insertOneR_spec`, `insertR_spec`) |
+| `MergeEscape.lean` | #3738's unchanged-borrow escape in `merge_underfull` never fires on the `u64` page (`fill`, `fill_mubF_le`, `combine_two_moves`, `muStep_never_unchanged`, `merge_underfull_next_index`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 No path dependencies. [`../native_index`](../native_index) imports this project's `Model.lean` and `Basic.lean`.
