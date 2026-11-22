@@ -57,7 +57,7 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 **5. Does the hash join return the same rows as the filter it replaces?**
 
 - **When key equality is Cypher `=`, yes** (`vhj_correct`).
-- **Near 2⁵³, no.** The hash key compares integers and floats exactly, while `=` goes through `i as f64`. Two nodes with `x = 9007199254740993` and `x = 9007199254740992.0` give `MATCH (a:L),(b:L) WHERE a.x = b.x RETURN count(*)` → Rust 2, C 4 (`hash_join_drops_row`).
+- **Near 2⁵³, yes.** `=` compares an Int with a Float through `i as f64`; the join keys exactly only below 2⁵³ and otherwise applies `=` itself, so its key test is `=` on numbers (`joinMatch_numEq`, `vhjNum_correct`; the pair `9007199254740993`, `9007199254740992.0` is kept: `hash_join_keeps_row`).
 
 **6. When is a variable "read" by the rest of the plan?**
 
@@ -113,7 +113,6 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | 1 | `limit_skip_not_excluded`, `limit_not_transparent`, `skip_not_transparent` | A filter is pushed below LIMIT/SKIP: `… ORDER BY n.v LIMIT 2 MATCH (m:N) WHERE n.v > 1 RETURN count(*)` → 10 (openCypher 5) | **Open**, shared with C |
 | 3 (W2-rewrites-2) | `id_gt_neg_empty`, `id_le_neg_all` | `id(n) > -1` → 0 rows (C: 5); `id(n) <= -1` returns every node on both (#2266) | **Open** |
 | 4 (W2-rewrites-2) | `id_eq_null_errors` | `id(n) = null`, `= 1.0`, `> 1.5` → "Node ID must be an integer" (C: 0 rows) | **Open** |
-| 5 (W2-rewrites-3) | `hash_join_drops_row` | The hash join drops Int/Float pairs near 2⁵³: 2 rows where C gives 4 | **Open** |
 | 7 | `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | **Open** (PR #2918 not merged) |
 | #2556 | `bug2556_filter_below_binding`, `bug2556_t_seeded`, `bug2556_plan` (property `KeepsFiltersBound`) | `… WITH collect(x) AS fs UNWIND fs AS f MATCH (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}), (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)`: `select_scan_node` picks `t` as the best endpoint, seeds it into `initial_bound` although the outer `Unwind` child is kept and no scan for `t` is built, and places `t.id = 100` after the first hop, before `t` is bound. Rust 0, C 3 (the issue's query: a type error). Not `push_filters_down` (`bug2556_push_not_cause`); `bug2556_fixed` gives the C plan | **Open** |
 
