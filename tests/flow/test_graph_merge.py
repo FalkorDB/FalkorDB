@@ -1016,7 +1016,7 @@ class testGraphMergeFlow():
         Same as test42 but the other endpoint is unbound, so the MERGE pattern
         is a traversal (CondTraverse) rather than an ExpandInto: it must not
         expand out of a node deleted earlier in the query
-        https://github.com/FalkorDB/FalkorDB/issues/3463
+        https://github.com/FalkorDB/FalkorDB/issues/3576 (follow-up of #3463)
         """
 
         queries = ["""MATCH (a:A) DETACH DELETE a
