@@ -413,11 +413,25 @@ theorem describeK_or (cs : List Pred) :
       · rintro ⟨rfl, rfl⟩; exact ⟨rfl, rfl⟩
     · simp [hs]
 
-/-- The #3738 fix of `describe_empty_in_misreported`: `a = 1 OR a IN []` is no longer called "not
-    all-numeric"; with every value indexable it names no value. -/
+/-- `a = 1 OR a IN []` (every value indexable) is a one-attribute union naming no value; before #3738
+    it was called "not all-numeric". -/
 theorem describeK_empty_in (v : Value) (hv : unindexable v = false) :
     describeK (.or [.equal "a" v, .inList "a" (some [])]) = .orOneKey 2 "a" none := by
   simp [describeK, unionMembers, oneKey, Option.filter, unionUnindexable, hv]
+
+/-- `unsupported_by_native_index` (`mod.rs`): what the error names. -/
+structure Unsupported where
+  entity : String
+  label : String
+  shape : DescK
+
+def unsupportedByNativeIndex (entity label : String) (q : Pred) : Unsupported := ⟨entity, label, describeK q⟩
+
+/-- The error carries the entity kind, the label/type and the predicate's shape. -/
+theorem unsupported_spec (entity label : String) (q : Pred) :
+    (unsupportedByNativeIndex entity label q).entity = entity ∧
+    (unsupportedByNativeIndex entity label q).label = label ∧
+    (unsupportedByNativeIndex entity label q).shape = describeK q := ⟨rfl, rfl, rfl⟩
 
 end Tag
 end NI
