@@ -2135,6 +2135,7 @@ def test_vector_scan_kept_under_traverse():
         "(:Q {id: 7, v: [1.0, 0.0]}), (:Q {id: 8, v: [0.0, 1.0]})",
         write=True,
     )
+    common.wait_for_indices_to_sync(common.g)
     call = "CALL db.idx.vector.queryNodes('P', 'emb', 1, vecf32(q.v)) YIELD node "
     cases = [
         ("MATCH (q:Q) " + call + "MATCH (node)-[:R]->(t) RETURN q.id, node.id, t.id", [[7, 1, 10], [8, 2, 20]]),
