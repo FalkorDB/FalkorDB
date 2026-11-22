@@ -24,6 +24,8 @@ are `other ty x`, equal per `oeq ty` within one type and never across types
 * `order_by_projected`, `order_by_shadowed_kept`, `order_by_div_float_kept`,
   `order_by_local_kept`: `RETURN n.v AS k ORDER BY n.v` sorts by `k`; a shadowed
   alias, a constant of another type and a comprehension body are left as written.
+* `order_by_agg_projected`, `order_by_local_agg_kept`: a projected aggregate is
+  read from its alias, except inside a comprehension body (kept, then rejected).
 -/
 namespace FalkorBinder.Agg
 
@@ -482,6 +484,21 @@ theorem order_by_div_float_kept :
 theorem order_by_local_kept :
     replaceProjected c0 [("k", nv, false)] (.node (.listComp "n") [.node (.var "l") [], nv]) =
       .node (.listComp "n") [.node (.var "l") [], nv] := by
+  rfl
+
+/-- `count(n)` with the parser's slot. -/
+def cntN : RE := .node (.func "count" true) [.node (.var "n") [], .node .slot []]
+
+/-- `RETURN count(n) AS c ORDER BY count(n)` sorts by `c`… -/
+theorem order_by_agg_projected : replaceProjected c0 [("c", cntN, true)] cntN = .node (.var "c") [] := by
+  rfl
+
+/-- …but `ORDER BY [x IN l | count(n)]` keeps the aggregate in the body as written (#3011: the
+body is a local scope, left alone even when nothing in it shadows `c`; before #3011 it was
+rewritten to `[x IN l | c]`). Binding then rejects it: "failed to map aggregation expression". -/
+theorem order_by_local_agg_kept :
+    replaceProjected c0 [("c", cntN, true)] (.node (.listComp "x") [.node (.var "l") [], cntN]) =
+      .node (.listComp "x") [.node (.var "l") [], cntN] := by
   rfl
 
 end FalkorBinder.Agg
