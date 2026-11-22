@@ -1719,6 +1719,41 @@ class testMultiDb():
         self.env.assertEqual(con.exists(stream), 1)
         self.assert_alive()
 
+    def test09d_del_of_a_graph_with_a_lossy_twin_leaves_the_twins_stream(self):
+        # The stream of a freed graph is queued for deletion by name, and two keys
+        # that differ in bytes can share a lossy name: freeing the binary-keyed graph
+        # must not take the stream of the UTF-8 one that stays.
+        con = self.con(0)
+        graph_key, twin_key = "d\ufffd".encode(), b"d\xfe"
+        con.execute_command("GRAPH.QUERY", graph_key, "CREATE (:T)")
+        con.execute_command("GRAPH.QUERY", twin_key, "CREATE (:T)")
+        stream = "telemetry{d\ufffd}".encode()
+        self.wait_for_key(con, stream)
+        self.env.assertEqual(con.exists(stream), 1)
+        self.env.assertEqual(con.delete(twin_key), 1)
+        time.sleep(0.5)  # the flusher drains the queue within milliseconds
+        self.env.assertEqual(con.exists(stream), 1)
+        self.assert_alive()
+
+    def test09e_del_then_swapdb_in_one_transaction_deletes_the_stream_it_left(self):
+        # The deletion queued for db0 by `DEL` must follow the SWAPDB that runs
+        # before the queue is drained: it belongs to the stream now in db1.
+        stream = "telemetry{sw}"
+        for db in (0, 1):
+            self.query(db, "sw", "CREATE (:T)")
+            self.wait_for_key(self.con(db), stream)
+        pipe = self.con(0).pipeline(transaction=True)
+        pipe.delete("sw")
+        pipe.swapdb(0, 1)
+        pipe.execute()
+        time.sleep(0.5)
+        # db0 now holds the graph that was in db1, with its stream; db1 holds the
+        # stream the deleted graph left behind, which is the one to go
+        self.env.assertEqual(self.con(0).exists("sw"), 1)
+        self.env.assertEqual(self.con(0).exists(stream), 1)
+        self.env.assertEqual(self.con(1).exists(stream), 0)
+        self.assert_alive()
+
     def test09_move_of_a_key_with_a_lossy_twin_name_leaves_the_graph_stream(self):
         # Key names are bytes, the module's records render them lossily: the
         # plain key b"g\xff" reads "g\ufffd", which is also the (valid UTF-8) name

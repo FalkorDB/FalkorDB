@@ -283,6 +283,23 @@ pub fn registered_location(arc: &Arc<RwLock<ThreadedGraph>>) -> Option<(i32, Str
         .map(|e| (e.db, e.name.clone()))
 }
 
+/// Whether a registered graph of database `db` has the (lossy) name `name`.
+///
+/// A key name is arbitrary bytes and the registry renders it lossily, so two graphs
+/// (`b"g\xff"` and `g\u{fffd}`) can share a name and with it a telemetry stream name.
+/// A stream cannot be told to belong to the graph that moved rather than to the one
+/// that stayed, so cleanup leaves it. Names are compared as the stream is named, cut
+/// at the first NUL (`g` and `g\0tail`, which a `RENAME` can make, share `telemetry{g}`).
+pub fn name_is_shared(
+    db: i32,
+    name: &str,
+) -> bool {
+    GRAPH_REGISTRY
+        .lock()
+        .values()
+        .any(|e| e.db == db && up_to_nul(&e.name) == up_to_nul(name))
+}
+
 /// Move the registry entry of the graph identified by `id` to key `name` of `db`,
 /// returning where it was. `None` for a graph that is not registered.
 pub fn relocate_graph(
@@ -1984,7 +2001,11 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // now, in the same callback, or a save could persist a stream nothing
         // will strip again. Queued, not deleted: the server is part-way through
         // removing this graph's key.
-        if let Some(e) = &removed {
+        // Unless another graph of its database still has that stream: two keys whose
+        // bytes differ can share a lossy name, and the stream is then the survivor's.
+        if let Some(e) = &removed
+            && !name_is_shared(e.db, &e.name)
+        {
             telemetry::queue_streams_of_freed_graph(vec![(e.db, e.name.clone())]);
         }
         // Drop off the main Redis thread, without the GIL: `SpecHandle::drop`

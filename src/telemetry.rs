@@ -428,6 +428,22 @@ impl FreedGraphStreams {
         self.pending.store(true, Ordering::Release);
     }
 
+    /// `SWAPDB a b`: a name queued for database `a` is now in `b`, and the other way
+    /// round. The queued stream goes with its database, like the graph did.
+    fn swap_dbs(
+        &self,
+        a: i32,
+        b: i32,
+    ) {
+        for (db, _) in &mut *self.names.lock() {
+            if *db == a {
+                *db = b;
+            } else if *db == b {
+                *db = a;
+            }
+        }
+    }
+
     /// Whether there may be names to take. One atomic load, no lock.
     fn is_pending(&self) -> bool {
         self.pending.load(Ordering::Acquire)
@@ -489,6 +505,14 @@ pub fn queue_streams_of_freed_graph(names: Vec<(i32, String)>) {
         return;
     }
     FREED_GRAPH_STREAMS.push(names);
+}
+
+/// Re-key the queued stream deletions after `SWAPDB a b`, see [`queue_streams_of_freed_graph`].
+pub fn swap_queued_stream_dbs(
+    a: i32,
+    b: i32,
+) {
+    FREED_GRAPH_STREAMS.swap_dbs(a, b);
 }
 
 /// Delete the telemetry streams queued by [`queue_streams_of_freed_graph`]: one

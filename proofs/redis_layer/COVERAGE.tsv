@@ -194,7 +194,7 @@ src/telemetry.rs	unregister_waiting	602	PROVEN	Telemetry.unregisterWaiting: remo
 src/telemetry.rs	register_waiting	616	PROVEN	Telemetry.registerWaiting: registerWaiting_placed
 src/telemetry.rs	WaitingEntry::register	646	PROVEN	Telemetry.WE: WE.drop_armed
 src/telemetry.rs	WaitingEntry::promote	656	PROVEN	Telemetry.WE.promote: WE.promote_then_drop, WE.promote_twice
-src/telemetry.rs	WaitingEntry::drop	736	PROVEN	Telemetry.WE.drop: WE.drop_armed, WE.promote_then_drop
+src/telemetry.rs	WaitingEntry::drop	760	PROVEN	Telemetry.WE.drop: WE.drop_armed, WE.promote_then_drop
 src/telemetry.rs	transition_waiting_to_running	674	PROVEN	Telemetry.transition: transition_moves, transition_absent, transition_placed
 src/telemetry.rs	snapshot_running	690	PROVEN	Telemetry.snapshotRunning: trySnapshot_unlocked
 src/telemetry.rs	try_snapshot_running	701	PROVEN	Telemetry.trySnapshotRunning: trySnapshot_sub, trySnapshot_unlocked
@@ -306,7 +306,6 @@ src/graph_core.rs	registered_location	292	NOT COVERED	(#3424): not modelled yet
 src/graph_core.rs	relocate_graph	298	NOT COVERED	(#3424): not modelled yet
 src/graph_core.rs	swap_graph_dbs	312	NOT COVERED	(#3424): not modelled yet
 src/module_init.rs	relocate_graph_at_key	697	NOT COVERED	(#3424): not modelled yet
-src/module_init.rs	name_is_shared	730	NOT COVERED	(#3424): not modelled yet
 src/module_init.rs	on_swapdb	741	NOT COVERED	(#3424): not modelled yet
 src/telemetry.rs	strip_stream_in_db	390	NOT COVERED	(#3424): not modelled yet
 src/telemetry.rs	delete_stream_if_stream	539	NOT COVERED	(#3424): not modelled yet
@@ -315,4 +314,7 @@ src/commands/constraint.rs	SelectedDb::of	288	NOT COVERED	(#3424): not modelled 
 src/commands/constraint.rs	SelectedDb::select	296	NOT COVERED	(#3424): not modelled yet
 src/commands/constraint.rs	SelectedDb::drop	307	NOT COVERED	(#3424): not modelled yet
 src/telemetry.rs	RestoreSelectedDb::select	554	NOT COVERED	(#3424): not modelled yet
-src/telemetry.rs	RestoreSelectedDb::drop	568	NOT COVERED	(#3424): not modelled yet
+src/telemetry.rs	RestoreSelectedDb::drop	592	NOT COVERED	(#3424): not modelled yet
+src/graph_core.rs	name_is_shared	293	NOT COVERED	(#3424): not modelled yet
+src/telemetry.rs	FreedGraphStreams::swap_dbs	433	NOT COVERED	(#3424): not modelled yet
+src/telemetry.rs	swap_queued_stream_dbs	511	NOT COVERED	(#3424): not modelled yet

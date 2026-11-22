@@ -33,7 +33,8 @@ use crate::config::{
 #[cfg(feature = "index-falkordb")]
 use crate::graph_core::RedisBuildHost;
 use crate::graph_core::{
-    GRAPH_REGISTRY, ThreadedGraph, graph_id, relocate_graph, selected_db, swap_graph_dbs, up_to_nul,
+    GRAPH_REGISTRY, ThreadedGraph, graph_id, name_is_shared, relocate_graph, selected_db,
+    swap_graph_dbs,
 };
 use crate::redis_type::{GRAPH_TYPE, on_persistence};
 use crate::telemetry;
@@ -721,23 +722,6 @@ unsafe fn relocate_graph_at_key(
     }
 }
 
-/// Whether a registered graph of database `db` has the (lossy) name `name`.
-///
-/// A key name is arbitrary bytes and the registry renders it lossily, so two graphs
-/// (`b"g\xff"` and `g\u{fffd}`) can share a name and with it a telemetry stream name.
-/// A stream cannot be told to belong to the graph that moved rather than to the one
-/// that stayed, so cleanup leaves it. Names are compared as the stream is named, cut
-/// at the first NUL (`g` and `g\0tail`, which a `RENAME` can make, share `telemetry{g}`).
-fn name_is_shared(
-    db: i32,
-    name: &str,
-) -> bool {
-    GRAPH_REGISTRY
-        .lock()
-        .values()
-        .any(|e| e.db == db && up_to_nul(&e.name) == up_to_nul(name))
-}
-
 /// `SWAPDB`: graphs follow their database.
 unsafe extern "C" fn on_swapdb(
     _ctx: *mut RedisModuleCtx,
@@ -750,6 +734,8 @@ unsafe extern "C" fn on_swapdb(
     }
     let info = unsafe { &*data.cast::<raw::RedisModuleSwapDbInfo>() };
     swap_graph_dbs(info.dbnum_first, info.dbnum_second);
+    // Cleanup queued for a graph freed before the swap names the database it left.
+    telemetry::swap_queued_stream_dbs(info.dbnum_first, info.dbnum_second);
 }
 
 /// Keyspace event callback for handling graph key renames.
