@@ -14,7 +14,7 @@ graph/src/planner/binder.rs	Scope::retain	126	PROVEN	Table.Env.retain; Env.retai
 graph/src/planner/binder.rs	Binder::default	171	PROVEN	Stack.default_spec (one empty scope, no parent lookup); #2981 no MATCH relationship aliases yet (BSt.default.matchRels = [])
 graph/src/planner/binder.rs	Binder::bind	197	PROVEN	mergeSV_ge, mergeSV_covers (bind merges live + retired scope_vars)
 graph/src/planner/binder.rs	Binder::scope_vars	212	PROVEN	Stack.scopeVars_lengths (one sorted table per live scope, lengths preserved); sortedScopeVars_spec
-graph/src/planner/binder.rs	Binder::update_all_node_labels	220	PROVEN	accumulate/specScanLabels: labels_agree_match_only, labels_leak (counterexample, bug); REMOVE ignored, RemoveLabels.bug3450_remove_label_kept_across_with (open #3450, property StampedLabelsHeld)
+graph/src/planner/binder.rs	Binder::update_all_node_labels	220	PROVEN	accumulate/specScanLabels: labels_agree_match_only, accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels (#3049; pre3049_labels_leak historical); REMOVE ignored, RemoveLabels.bug3450_remove_label_kept_across_with (open #3450, property StampedLabelsHeld)
 graph/src/planner/binder.rs	Binder::update_graph_labels	258	PROVEN	Stack.updNode_replace (MATCH: accumulated set), updNode_union (OPTIONAL: own labels kept + accumulated added), updNode_none, updNode_idem
 graph/src/planner/binder.rs	Binder::current_env	337	PROVEN	Stack.BSt.current, current_setCurrent
 graph/src/planner/binder.rs	Binder::current_env_mut	343	PROVEN	Stack.current_setCurrent, setCurrent_outer (only the innermost table changes)
@@ -27,7 +27,7 @@ graph/src/planner/binder.rs	Binder::build_import_projections	1132	NOT COVERED	(#
 graph/src/planner/binder.rs	Binder::validate_import_with	1152	PROVEN	validateImport_ok, validateImport_rejects_expr
 graph/src/planner/binder.rs	Binder::bind_projection	1208	NOT COVERED	(#3302): not modelled yet
 graph/src/planner/binder.rs	Binder::bind_graph	1480	PROVEN	rustBind vs specBind: agree_on_outer_refs, node_attr_on_rel_rust_accepts, node_attr_on_own_rel_accepts, node_attr_later_rel, node_attr_later_node_rejected, foldGrow_mono, q2923_fixed, defRels_named_only (#2981 defRels: named relationship aliases defined first; Elem aliases are Table.Alias), rel_attr_forward_node, self_reference_ok; defineName_ignores_parent; merged_occurrences (endpoint shares the node's merged attrs) abstracted: Elem.node carries every occurrence's attrs
-graph/src/planner/binder.rs	Binder::bind_graph_create	1742	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, createCheck_anon, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak
+graph/src/planner/binder.rs	Binder::bind_graph_create	1742	PROVEN	BindIR.createCheck_fresh, createCheck_bare_bound, createCheck_endpoint, createCheck_anon, bindGraphCreate_selfRef; Pattern.fold, Scopes.labels_leak_fixed
 graph/src/planner/binder.rs	Binder::check_unbound_self_referential	1867	PROVEN	BindExpr.checkSelfRef_iff, selfRef_direct, selfRef_leaf_prop
 graph/src/planner/binder.rs	Binder::bind_set_items	1889	PROVEN	BindExpr.bindSetItems_length, bindSetItems_label_unbound (resolve_ok_iff)
 graph/src/planner/binder.rs	Binder::bind_expr	1914	PROVEN	BindExpr.bindExpr_eq (= bind_expr_node with no locals)
@@ -59,4 +59,4 @@ graph/src/planner/binder.rs	denotes	2935	NOT COVERED	(#3302): not modelled yet
 graph/src/planner/binder.rs	sorted_scope_vars	2942	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2950	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/mod.rs	Planner::fresh_var	1018	NOT COVERED	(#3302): not modelled yet
-graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1723	NOT COVERED	(#3049): not modelled yet
+graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1723	PROVEN	Scopes.accumulateFrom (create: keep_new, comprehension: !keep_new): accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels
