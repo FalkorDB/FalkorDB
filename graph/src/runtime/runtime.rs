@@ -64,11 +64,11 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
-use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
     cell::{Cell, OnceCell, Ref, RefCell, RefMut},
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
@@ -258,10 +258,18 @@ pub trait GetVariables {
 }
 
 impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
+    /// The variables the rows leaving this subtree can carry.
+    ///
+    /// `Project` and `Aggregate` start a fresh environment, so the walk stops
+    /// at them: only what they name survives, which is the output variable of
+    /// each projection and of each `(source, output)` copy. Variable ids
+    /// restart in every scope, so a variable hidden below a `WITH` would
+    /// otherwise pass for the later variable that reuses its id.
     fn get_variables(&self) -> Vec<Variable> {
         let mut vars = vec![];
-        for node in self.walk::<Bfs>() {
-            match node {
+        let mut queue = VecDeque::from([self.clone()]);
+        while let Some(node) = queue.pop_front() {
+            match node.data() {
                 IR::Optional(variables) => vars.extend(variables.iter().cloned()),
                 IR::ProcedureCall {
                     yields: named_outputs,
@@ -298,9 +306,6 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Union
                 | IR::NestedPlans
                 | IR::Apply
-                | IR::SemiApply
-                | IR::AntiSemiApply
-                | IR::OrApplyMultiplexer(_)
                 | IR::Sort(_)
                 | IR::Skip(_)
                 | IR::Limit(_)
@@ -309,6 +314,13 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
+                // Child 0 is the input; the other children are existence
+                // checks whose variables never reach the rows leaving the
+                // operator, and their ids may be reused later.
+                IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => {
+                    queue.extend(node.children().next());
+                    continue;
+                }
                 IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
@@ -365,15 +377,19 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     }
                 }
                 IR::Aggregate {
-                    names: variables, ..
+                    names, projections, ..
                 } => {
-                    vars.extend(variables.iter().cloned());
+                    vars.extend(names.iter().cloned());
+                    vars.extend(projections.iter().map(|(_, v)| v.clone()));
+                    continue;
                 }
-                IR::Project { exprs: items, .. } => {
-                    vars.extend(items.iter().map(|v| v.0.clone()));
-                    break;
+                IR::Project { exprs, copies } => {
+                    vars.extend(exprs.iter().map(|(v, _)| v.clone()));
+                    vars.extend(copies.iter().map(|(_, v)| v.clone()));
+                    continue;
                 }
             }
+            queue.extend(node.children());
         }
         vars
     }
@@ -1477,8 +1493,12 @@ impl<'a> Runtime<'a> {
     ) -> Result<Option<RoaringTreemap>, String> {
         // Inclusive bounds, widened to i128 so that any `i64` and any finite
         // float fit; `±inf` saturates, and the `± 1` below saturates with it.
+        // Bound the seek by where the id space ends, not by `max_node_id`,
+        // which is 0 both when id 0 is the only id and when no id was ever
+        // handed out. With an empty id space `max` is 0 here, and the
+        // `node_count() == 0` check below returns no ids.
         let mut min = 0i128;
-        let mut max = i128::from(self.graph().max_node_id());
+        let mut max = i128::from(self.graph().node_id_bound().saturating_sub(1));
         for (expr, op) in filter {
             let value = {
                 let idx = expr.root().idx();
@@ -1510,13 +1530,12 @@ impl<'a> Runtime<'a> {
                 return Ok(None);
             }
         }
-        // `max_node_id()` is 0 both when id 0 is the only id and when no id
-        // was ever handed out, so `min..=max` would seek a node 0 that was
-        // never created.
+        // No live nodes means nothing to seek, including the case where ids
+        // were handed out before but every node has since been deleted.
         if self.graph().node_count() == 0 {
             return Ok(None);
         }
-        // `0 <= min <= max <= max_node_id`, so both fit in a `u64`.
+        // `0 <= min <= max < node_id_bound`, so both fit in a `u64`.
         let mut result = RoaringTreemap::new();
         result.insert_range(min as u64..=max as u64);
         Ok(Some(result))
@@ -2160,9 +2179,20 @@ pub fn map_to_index_options(
                 }
             };
             // Required and case-insensitive, as in C (`strcasecmp`); stored
-            // lowercase, the form the rest of the engine matches on.
+            // lowercase, the form the rest of the engine matches on. An
+            // unknown name is refused here, whatever the dimension: the index
+            // build only reads it once the dimension is non-zero. `ip` is a
+            // Rust extension; C knows only euclidean and cosine.
             let similarity_function = match get("similarityFunction") {
-                Some(Value::String(s)) => Some(s.to_ascii_lowercase()),
+                Some(Value::String(s)) => {
+                    let lower = s.to_ascii_lowercase();
+                    if !matches!(lower.as_str(), "euclidean" | "cosine" | "ip") {
+                        return Err(format!(
+                            "Invalid vector index configuration: unknown similarityFunction '{s}', expected 'euclidean', 'cosine' or 'ip'"
+                        ));
+                    }
+                    Some(lower)
+                }
                 None => {
                     return Err(
                         "Invalid vector index configuration: similarityFunction is required".into(),

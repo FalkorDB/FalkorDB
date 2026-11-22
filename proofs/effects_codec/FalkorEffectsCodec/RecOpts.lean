@@ -1,6 +1,6 @@
 import FalkorEffectsCodec.RecArms
 /-!
-# `IndexFieldOptions` (`records.rs:162` encode_sized, `:217` decode_sized)
+# `IndexFieldOptions` (`records.rs` encode_sized decode_sized)
 -/
 namespace FalkorCodec
 
@@ -23,7 +23,7 @@ def IP : Bytes := [105, 112]
 def COSINE : Bytes := [99, 111, 115, 105, 110, 101]
 def EUCLIDEAN : Bytes := [101, 117, 99, 108, 105, 100, 101, 97, 110]
 
-/-- The similarity-function code the encoder writes (`records.rs:192-200`). -/
+/-- The similarity-function code the encoder writes (`records.rs`). -/
 def simCode (s : Bytes) : Nat := if eqIgnoreCase s IP then 1 else if eqIgnoreCase s COSINE then 2 else 0
 
 def simOfCode (v : Nat) : Except DErr Bytes :=

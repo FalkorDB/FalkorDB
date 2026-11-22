@@ -3,7 +3,7 @@ import GraphPersist.Persist.Reader
 namespace GraphPersist.Persist
 open GraphPersist
 
-/-! ## The deleted-id bitmap (`impl Encode/Decode<19> for RoaringTreemap`, serialization.rs:172-241) -/
+/-! ## The deleted-id bitmap (`impl Encode/Decode<19> for RoaringTreemap`, serialization.rs) -/
 
 /-- `id.to_le_bytes()`. -/
 def le8 (n : Nat) : List UInt8 :=
@@ -54,7 +54,7 @@ theorem decRoar_rt (l : List Nat) (h : ∀ i ∈ l, i < 2 ^ 64) :
     | cons t ts => simp at hl
 
 /-! ## Attribute spans (`AttributeStore::encode_with_range` / `decode_with_count`,
-attribute_store.rs:1425-1503) -/
+attribute_store.rs) -/
 
 abbrev Span := List (Nat × Val)
 /-- An attribute store: entity id ↦ its span (absent = no attributes). -/
@@ -198,7 +198,7 @@ theorem fold_ents (limit : Nat) (hl : limit ≤ 65536) (S : Store) (ids : List N
         have hk : ∀ kv ∈ sp, kv.1 < limit ∧ kv.2.isNull = false :=
           fun kv h => ⟨(hgs.2.2 kv h).1, (hgs.2.2 kv h).2.1⟩
         simp only [applyEnt, Option.getD_some, filterMap_keep limit sp hk hl, insSort_sorted sp hgs.2.1,
-          if_neg hgs.1]
+          ite_eq_right hgs.1]
         funext j; simp
     rw [hstep]
     funext j

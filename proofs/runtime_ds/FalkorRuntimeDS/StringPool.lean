@@ -9,10 +9,10 @@ they are modelled sequentially.
 
 | here | there |
 | --- | --- |
-| `Pool`        | `StringPool { inner: Mutex<HashSet<Arc<String>>> }` (string_pool.rs:13) |
-| `intern`      | `StringPool::intern` (string_pool.rs:28) — hit: clone existing; miss: `Arc::new((*a).clone())` |
-| `isInterned`  | `StringPool::is_interned` (string_pool.rs:42) — lookup by content, then `Arc::ptr_eq` |
-| `prune`       | the `retain(|k| Arc::strong_count(k) > 1)` in `StringPool::stats` (string_pool.rs:54) |
+| `Pool`        | `StringPool { inner: Mutex<HashSet<Arc<String>>> }` (string_pool.rs) |
+| `intern`      | `StringPool::intern` (string_pool.rs) — hit: clone existing; miss: `Arc::new((*a).clone())` |
+| `isInterned`  | `StringPool::is_interned` (string_pool.rs) — lookup by content, then `Arc::ptr_eq` |
+| `prune`       | the `retain(|k| Arc::strong_count(k) > 1)` in `StringPool::stats` (string_pool.rs) |
 | `release`     | dropping an external `Arc` |
 -/
 namespace FalkorRuntimeDS.StringPoolModel
@@ -27,7 +27,7 @@ def lookup (es : List (String × Nat)) (s : String) : Option Nat :=
 
 def bump (f : Nat → Nat) (p : Nat) : Nat → Nat := fun q => if q = p then f q + 1 else f q
 
-/-- string_pool.rs:28 — returns the canonical pointer; the caller now holds one ref. -/
+/-- string_pool.rs — returns the canonical pointer; the caller now holds one ref. -/
 def intern (P : Pool) (s : String) : Pool × Nat :=
   match lookup P.entries s with
   | some p => ({ P with ext := bump P.ext p }, p)
@@ -35,10 +35,10 @@ def intern (P : Pool) (s : String) : Pool × Nat :=
     let p := P.next
     ({ entries := P.entries ++ [(s, p)], next := p + 1, ext := bump P.ext p }, p)
 
-/-- string_pool.rs:42 -/
+/-- string_pool.rs -/
 def isInterned (P : Pool) (p : Nat) (s : String) : Bool := lookup P.entries s == some p
 
-/-- string_pool.rs:54 -/
+/-- string_pool.rs -/
 def prune (P : Pool) : Pool := { P with entries := P.entries.filter (fun e => decide (P.ext e.2 > 0)) }
 
 def release (P : Pool) (p : Nat) : Pool := { P with ext := fun q => if q = p then P.ext q - 1 else P.ext q }

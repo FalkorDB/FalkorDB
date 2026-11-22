@@ -2,11 +2,10 @@ import VersionedMatrix.Delta
 import VersionedMatrix.DeltaProofs
 import VersionedMatrix.Tensor
 /-
-# `Matrix::delta_lmxm` (matrix.rs:1631-1768): `F * (M - DM + DP)` on the pattern
+# `Matrix::delta_lmxm` (matrix.rs): `F * (M - DM + DP)` on the pattern
 
 `delta_lmxm` multiplies a frontier `F` by a versioned matrix's three layers
-(`m` base, `dp` additions, `dm` deletions) without merging them. Since #3492
-(a3a99bdbc) it keeps an output that one deleted base edge reaches but another,
+(`m` base, `dp` additions, `dm` deletions) without merging them. It keeps an output that one deleted base edge reaches but another,
 live one still does.
 
 The GraphBLAS calls are *definitions* here, with the meaning the GraphBLAS spec
@@ -78,30 +77,30 @@ theorem nz_false {X : Pat} (h : nz X = false) (i j : Nat) : X i j = false := by
 theorem nz_true_of {X : Pat} {i j : Nat} (h : X i j = true) : nz X = true :=
   (nz_iff X).2 ⟨i, j, h⟩
 
-/-- `Matrix::delta_lmxm`, branch for branch (matrix.rs:1631-1768). -/
+/-- `Matrix::delta_lmxm`, branch for branch (matrix.rs). -/
 noncomputable def deltaLmxm (n : Nat) (F M DP DM : Pat) : Pat :=
   if (!nz DP && !nz DM) = true then
-    mxmAny n F M                                              -- :1537-1540 hot path: `lmxm(m)`
+    mxmAny n F M                                              -- :1680 hot path: `lmxm(m)`
   else
-    let dmPaths : UMat := mxmCount n F DM                      -- :1559
+    let dmPaths : UMat := mxmCount n F DM                      -- :1703
     let mask : Option UMat := if nz DM = true ∧ nzU dmPaths = true then some dmPaths else none
     let restored : Option Pat :=
       if nz DM = true ∧ nzU dmPaths = true then
-        let mPaths := maskS dmPaths (mxmCount n F M)           -- :1575
-        let live : Pat := selTrue (ewGT mPaths dmPaths)        -- :1586, :1595
+        let mPaths := maskS dmPaths (mxmCount n F M)           -- :1718
+        let live : Pat := selTrue (ewGT mPaths dmPaths)        -- :1728, :1738
         if nz live = true then some live else none
       else none
     let accum : Option Pat :=
       if nz DP = true then
-        let ac := mxmAny n F DP                                -- :1612
+        let ac := mxmAny n F DP                                -- :1760
         if nz ac = true then some ac else none
       else none
-    let main : Pat :=                                          -- :1626, mask `!dm_paths`, replace
+    let main : Pat :=                                          -- :1780, mask `!dm_paths`, replace
       match mask with
       | some mk => fun i j => !(mk i j).isSome && mxmAny n F M i j
       | none => mxmAny n F M
-    let r1 := match restored with | some l => eadd main l | none => main   -- :1650
-    match accum with | some a => eadd r1 a | none => r1                    -- :1653
+    let r1 := match restored with | some l => eadd main l | none => main   -- :1792
+    match accum with | some a => eadd r1 a | none => r1                    -- :1795
 
 /-! ## What it computes, with no assumption about the layers -/
 
@@ -136,20 +135,20 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
       0 < cnt n F DP i j := by
   unfold deltaLmxm
   by_cases hhot : (!nz DP && !nz DM) = true
-  · rw [if_pos hhot]
+  · rw [ite_eq_left hhot]
     simp only [Bool.and_eq_true, Bool.not_eq_true'] at hhot
     have h1 := cnt_zero_of_nz_false (n := n) (F := F) hhot.2 i j
     have h2 := cnt_zero_of_nz_false (n := n) (F := F) hhot.1 i j
     simp only [mxmAny, decide_eq_true_eq]
     omega
-  · rw [if_neg hhot]
+  · rw [ite_eq_right hhot]
     simp only []
     -- value of the optional pieces
     have hacc : opt (if nz DP = true then
           (let ac := mxmAny n F DP; if nz ac = true then some ac else none) else none) i j = true ↔
         0 < cnt n F DP i j := by
       by_cases hd : nz DP = true
-      · simp only [hd, if_true]
+      · simp only [hd, ite_true]
         by_cases ha : nz (mxmAny n F DP) = true
         · simp [ha, opt, mxmAny]
         · have := nz_false (by simpa using ha) i j
@@ -160,7 +159,7 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
         simp [hd', opt, cnt_zero_of_nz_false hd']
     rw [addOpt, Bool.or_eq_true, hacc]
     by_cases hG : (nz DM = true ∧ nzU (mxmCount n F DM) = true)
-    · simp only [hG, and_self, if_true]
+    · simp only [hG, and_self, ite_true]
       have hb := hG
       rw [addOpt, Bool.or_eq_true]
       have hlive : opt (let live := selTrue (ewGT (maskS (mxmCount n F DM) (mxmCount n F M))
@@ -168,7 +167,7 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
           (0 < cnt n F DM i j ∧ cnt n F DM i j < cnt n F M i j) := by
         simp only []
         by_cases hl : nz (selTrue (ewGT (maskS (mxmCount n F DM) (mxmCount n F M)) (mxmCount n F DM))) = true
-        · simp only [hl, if_true, opt, selTrue, ewGT, maskS, mxmCount, beq_iff_eq]
+        · simp only [hl, ite_true, opt, selTrue, ewGT, maskS, mxmCount, beq_iff_eq]
           by_cases hb0 : cnt n F DM i j = 0
           · simp [hb0]
           · by_cases ha0 : cnt n F M i j = 0
@@ -177,16 +176,16 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
         · have hl' : nz (selTrue (ewGT (maskS (mxmCount n F DM) (mxmCount n F M)) (mxmCount n F DM))) = false := by
             simpa using hl
           have := nz_false hl' i j
-          simp only [hl, if_false, opt, Bool.false_eq_true, false_iff, not_and]
+          simp only [hl, ite_false, opt, Bool.false_eq_true, false_iff, not_and]
           intro hb0
-          simp only [selTrue, ewGT, maskS, mxmCount, beq_iff_eq] at this
+          simp only [selTrue, ewGT, maskS, mxmCount] at this
           by_cases ha0 : cnt n F M i j = 0
           · omega
           · intro hlt
-            simp [Nat.pos_iff_ne_zero.1 hb0, ha0, Nat.pos_iff_ne_zero.1 hb0] at this
+            simp [ha0, Nat.pos_iff_ne_zero.1 hb0] at this
             omega
       rw [hlive]
-      simp only [mxmCount, mxmAny, Option.isSome_some, Bool.not_true, Bool.false_and,
+      simp only [mxmCount, mxmAny,
         Bool.and_eq_true, decide_eq_true_eq]
       by_cases hb0 : cnt n F DM i j = 0 <;> simp [hb0] <;> omega
     · have hb0 : cnt n F DM i j = 0 := by
@@ -197,7 +196,7 @@ theorem deltaLmxm_spec (n : Nat) (F M DP DM : Pat) (i j : Nat) :
             · simpa using h3
           exact cnt_zero_of_nzU_false h2 i j
         · exact cnt_zero_of_nz_false (n := n) (F := F) (by simpa using h1) i j
-      simp only [hG, if_false, mxmAny, hb0]
+      simp only [hG, ite_false, mxmAny, hb0]
       simp
 
 /-! ## Correctness: `F * (M - DM + DP)`, given `dm ⊆ m` -/
@@ -209,7 +208,7 @@ theorem len_filter_split (l : List Nat) (p q : Nat → Bool) :
   | nil => simp
   | cons a t ih =>
     by_cases hp : p a = true <;> by_cases hq : q a = true <;>
-      simp [List.filter_cons, hp, hq, ih] <;> omega
+      simp [hp, hq, ih] <;> omega
 
 /-- With `dm ⊆ m`, the paths through `m` split into those through the live entries
 `m ∖ dm` and those through `dm`. -/
@@ -276,7 +275,7 @@ theorem deltaLmxm_eff (n : Nat) (F : Pat) (v : VM) (h : Inv v) (i j : Nat) :
   rw [deltaLmxm_correct n F _ _ _ (fun k j hd => by
     simpa [patOf] using h.dm_m (k, j) (by simpa [patOf] using hd))]
   unfold eff
-  simp only [patOf, decide_eq_true_eq, Bool.not_eq_true', decide_eq_false_iff_not]
+  simp only [patOf, decide_eq_true_eq, decide_eq_false_iff_not]
 
 open VM in
 /-- A `Tensor`'s forward layers (`m`, `dp`, `dm` of a pair-state grid `st`, each pair obeying
@@ -292,12 +291,12 @@ theorem deltaLmxm_tensor (n : Nat) (F : Pat) (st : Nat → Nat → VMTensor.Pair
   apply and_congr_right; intro _
   have hi := h k j
   unfold VMTensor.effV
-  cases hdp : (st k j).dp <;> cases hdm : (st k j).dm <;> cases hm : (st k j).m <;> simp [hdp, hdm, hm]
+  cases hdp : (st k j).dp <;> cases hdm : (st k j).dm <;> cases hm : (st k j).m <;> simp
 
-/-! ## History: before #3492 (a3a99bdbc) -/
+/-! ## Examples: an output a live edge still reaches -/
 
 /-- Node `1 = x`, `2 = y`, `3 = z`; frontier row `0 = {x, y}`; base edges `x→z`, `y→z`
-(`delta_lmxm_keeps_an_output_one_live_edge_still_reaches`, matrix.rs:2065). -/
+(`delta_lmxm_keeps_an_output_one_live_edge_still_reaches`, matrix.rs). -/
 def cxF : Pat := fun i k => decide ((i, k) ∈ [(0, 1), (0, 2)])
 def cxM : Pat := fun k j => decide ((k, j) ∈ [(1, 3), (2, 3)])
 def cxNone : Pat := fun _ _ => false
