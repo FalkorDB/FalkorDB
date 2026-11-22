@@ -1,12 +1,11 @@
 /-
-# `CommitOp::next` (graph/src/runtime/ops/commit.rs:69), after #2846
+# `CommitOp::next` (graph/src/runtime/ops/commit.rs:69)
 
 The first call drains the child (:71-82), then runs, each fallible step
 short-circuiting with `Some(Err(..))`: `Pending::commit` (:85-92), the writer
 upgrade (:96-98), the deferred-index publish (:103), the effects block
-(:105-131), and — new in #2846 — `Pending::end_segment` (:135-143), which both
-resets the segment's mutation log and rolls the graph's id batches (the old
-`clear()` + `open_id_boundaries()` pair). Then the schema baseline (:146-149)
+(:105-131), and `Pending::end_segment` (:135-143), which both
+resets the segment's mutation log and rolls the graph's id batches. Then the schema baseline (:146-149)
 and `results.reverse()` (:151). Every call ends with `results.pop()` (:155).
 
 The runtime is abstract (`S`, with the six steps as functions), batches are `B`.

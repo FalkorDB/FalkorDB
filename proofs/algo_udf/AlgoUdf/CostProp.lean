@@ -1,5 +1,5 @@
 import AlgoUdf.Paths
-/-! # SPpaths/SSpaths: `costProp` configured vs. absent on the edge (#3121) — gap closed 2026-10-20
+/-! # SPpaths/SSpaths: `costProp` configured vs. absent on the edge — gap closed 2026-10-20
 
 `Paths.pathCostRust` / `dijkstraCostRust` take one `Option Int` per edge, where `none`
 merges two different cases: *no `costProp` configured* and *`costProp` configured but
@@ -9,7 +9,7 @@ the configuration separate.
 | here | there |
 | --- | --- |
 | `edgeNumericAttr` | `edge_numeric_attr` `algo_procedures.rs:2167-2180` (`prop.map_or(default, …)`, one `default` for both cases) |
-| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `missing_cost` = 1 if `costProp` is configured else 0 (`:2372-2375`, #3580) |
+| `rustFastCost`    | `dijkstra_single_path`'s reported cost, default `missing_cost` = 1 if `costProp` is configured else 0 (`:2372-2375`) |
 | `rustEnumCost`    | `bfs_find_bound` `:2465` and `enumerate_paths` `:2587`, default `1.0` |
 | `cResolve`        | `GraphContext_GetAttributeID` (`proc_sp_paths.c:350`): an unknown name is `ATTRIBUTE_ID_NONE` |
 | `cFastCost`       | C `_sum_path_cost` as run live on the pre-`ae9ef2a73` (#2656) `c.so` build: `ATTRIBUTE_ID_NONE` → 0, else missing → `SI_LongVal(1)`. Current origin/master charges 1 in both cases, so only the configured-`costProp` conjuncts are parity claims against master |
@@ -17,14 +17,14 @@ the configuration separate.
 
 `costProp` is `none` (not configured), `some true` (configured, the attribute name
 exists in the graph) or `some false` (configured, a name no entity has).
-Live before the fix (Rust 9d3869aa8 vs C), `A-[:E {weight:1,cost:2}]->B-[:E2 {weight:1}]->C`:
+Live (Rust vs C), `A-[:E {weight:1,cost:2}]->B-[:E2 {weight:1}]->C`:
 
-| config | Rust (before #3580) | Rust (now) | C |
-| --- | --- | --- | --- |
-| `costProp:'cost'` (fast path) | 2 | 3 | 3 |
-| no `costProp` (fast path) | 0 | 0 | 0 |
-| `costProp:'nosuch'` (fast path) | 0 | 2 (each edge lacks it) | 0 on `c.so`; 2 on newer master (see below) |
-| `costProp:'cost', maxLen:5` (enumeration) | 3 | 3 | 3 |
+| config | Rust | C |
+| --- | --- | --- |
+| `costProp:'cost'` (fast path) | 3 | 3 |
+| no `costProp` (fast path) | 0 | 0 |
+| `costProp:'nosuch'` (fast path) | 2 (each edge lacks it) | 0 on `c.so`; 2 on newer master (see below) |
+| `costProp:'cost', maxLen:5` (enumeration) | 3 | 3 |
 
 (origin/master's `_sum_path_cost`, since `ae9ef2a73` (#2656), charges 1 even with no `costProp`; the
 configured-but-missing case, which is what the property below states, is 1 in both C

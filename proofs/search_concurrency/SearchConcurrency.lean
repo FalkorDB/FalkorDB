@@ -1,5 +1,5 @@
 /-
-# Search layer and concurrency: models, proofs, six confirmed bugs fixed on main, and open bugs (#3226, `shutdown_within` lock contention)
+# Search layer and concurrency: models, proofs, and open bugs (#3226, `shutdown_within` lock contention)
 
 Project `proofs/search_concurrency`. Modules:
 
@@ -37,13 +37,12 @@ Each module's header has its Lean ↔ Rust `file:line` table. Coverage rows are 
   | `holdEnd` | `ThreadPool::shutdown` `:151` (holds the `workers` lock across `join`) |
 
   `within_in_time`, `within_true_all_finished`, `within_false_unfinished`, `within_partition`,
-  `blocked_reported`, `left_behind_workers_exit`, `late_job_lost`; two confirmed bugs
-  (`repro/threadpool_within.rs`): `pre3585_second_call_true_despite_straggler` (a second
-  `shutdown_within` answered `true` with a worker still running; **fixed by #3585 (7472d6a8a)**,
-  which keeps the stragglers: `second_call_reports_straggler`, `second_call_joins_when_returned`;
-  live case A is now `false`/`false`) and the still **open**
-  `within_blocks_behind_shutdown` (a `shutdown_within` behind a blocking `shutdown` waits on
-  the `workers` lock past its limit, forever if a job never returns; live case B unchanged at 256ab4d3f).
+  `blocked_reported`, `left_behind_workers_exit`, `late_job_lost`; one confirmed bug, still **open**
+  (`repro/threadpool_within.rs`): `within_blocks_behind_shutdown` (a `shutdown_within` behind a blocking
+  `shutdown` waits on the `workers` lock past its limit, forever if a job never returns; live case B
+  at 256ab4d3f). `second_call_reports_straggler`, `second_call_joins_when_returned`: a second
+  `shutdown_within` keeps and reports a straggler (`pre3585_second_call_true_despite_straggler` is the
+  earlier behaviour, kept as a historical counterexample).
 * `Once` — `thread_id.rs` and `storage/registry.rs` set-once globals.
 
 ## Proven (no sorry / admit / axiom)
@@ -59,7 +58,7 @@ escalate, release, mutate, commit, indexer batch, delete, fork):
   lost update; `commit`'s `Stale` refusal is unreachable under the lock).
 * `delete_blocks_writes` — after GRAPH.DELETE no mutate/commit is enabled.
 * `fork_excludes_commit` — fork and delete need the GIL a committing writer holds.
-* #3290/#3657: `one_commit_per_version`, `checkFork_stale`, `checkFork_on_committed`,
+* Forks and commits: `one_commit_per_version`, `checkFork_stale`, `checkFork_on_committed`,
   `inline_write_ok`, `stale_then_rerun`, `unchecked_fork_cannot_write` (every reachable state; `reader_cannot_commit` is its one-trace instance); refused commits
   (`refused_commit_publishes_nothing`, `stale_commit_publishes_nothing`, `commit_publishes`);
   since #3545 the publish is a compare-and-swap (`Ev.swap`): `swap_overtaken_publishes_nothing` (a version
@@ -75,100 +74,43 @@ escalate, release, mutate, commit, indexer batch, delete, fork):
 * `drain_no_lost_message`, `explore_saturated` — exhaustive (2 producers) check of
   the `write_loop` protocol: no message is stranded; `recheck_needed` — without the
   `is_empty` re-check one is.
-* #3014: `inv3014_step` (count = queued, ≤ MAX_QUEUED_QUERIES), `never_stuck_3014`,
-  `main_never_blocks`, `flood_drains` (BUG 1).
-`Pool` (#3014 `QueueSlot`): `acquire_bounded`, `acquire_full`, `release_exactly_once`,
+* Admission: `inv3014_step` (count = queued, ≤ MAX_QUEUED_QUERIES), `never_stuck_3014`,
+  `main_never_blocks`, `flood_drains`.
+`Pool` (`QueueSlot`): `acquire_bounded`, `acquire_full`, `release_exactly_once`,
 `paths_release_once`, `count_eq_live`, `spawn_never_blocks`.
-`Tickets` (re-targeted to 73077bb4a, #3086): `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`,
+`Tickets` (at 73077bb4a): `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`,
 `operational_iff`, `stale_release_isolated`; on main `create_index` bumps the generation
 whenever the label already has an entry (indexer.rs:359-361): `main_operational_complete`
 (key property: over every interleaving of any number of `CREATE INDEX`es on a label and the
 batches of every populate job, an OPERATIONAL index has every field in every batch, outside
 the store→`populate_index` window), via the inductive invariant `MInv` (`reach_inv`);
-`main_lost_order_complete` (the interleaving that lost `b` now completes);
+`main_lost_order_complete` (the interleaving that would lose `b` completes);
 `store_window_operational_incomplete` (that window is real, see Gaps);
-`fixed_trace_complete` (the proposed fix, now shipped).
-`Search` (re-targeted to 8743953a8: #3087 vector guard; #3076 `e20300436` temporals no
-longer indexed — `docSet_temporal_not_indexed`): `docSet_vector_sound` (key property: any
+`fixed_trace_complete` (the shipped `create_index`).
+`Search` (temporals are not indexed — `docSet_temporal_not_indexed`): `docSet_vector_sound` (key property: any
 value, any field options — a vector add always has the field's own non-zero dimension),
 `docSet_good_vector`, `docSet_bad_vector_skipped`, `docSet_noparams_no_vector`,
 `doc_always_accepted`, `other_fields_never_dropped`, `docSet_nonvector_eq_pre`,
 `vector_dim_mismatch_keeps_range_entry`, `dim0_keeps_range_entry`, `noopts_keeps_range_entry`,
 `good_vector_keeps_range_entry`; `fulltext_only_strings`,
 `range_never_vector_or_text`, `parseDimension_int/neg/missing`, `parseSim_missing/lower/ok_lower/unknown`,
-`rust_refuses_missing`, `rust_eq_c` (#3094), `rust_eq_c_all` (PR #3257), `fulltextUnknown_none_iff`, `rust_keys_ok_imp_c`, `metricOf_ok_iff`, `metricOf_toBool`,
+`rust_refuses_missing`, `rust_eq_c`, `rust_eq_c_all`, `fulltextUnknown_none_iff`, `rust_keys_ok_imp_c`, `metricOf_ok_iff`, `metricOf_toBool`,
 `phonetic_false_no_flag`, `phonetic_true_flag`,
 `capped_capacity_ok`, `evalK_accepts_huge`; plus `#guard`s for the option checks.
 
-`Knn` (89d68334a, #3088): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4354`,
+`Knn` (89d68334a): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4354`,
 `:4415`) with `k` clamped to `count.max(1)`: `alloc_bounded` (every buffer and the RediSearch
 `k` ≤ live entity count, for any user `k`), `no_abort_any_k`, `candidates_topk` (clamped
 query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_one_row`
-(the #3085 repro now returns its 1 row, as C), `empty_graph`.
+(a huge `k` returns its 1 row, as C), `empty_graph`.
 
 ## CONFIRMED bugs (all reproduced on live servers, Rust vs C)
 
-1. **FIXED by #3014 (b4634fe4b)** — HISTORICAL (W3-conc-1, 4a4f2a72f): **Server deadlock under >1024 queued queries** (`graph/src/threadpool.rs:59,96`,
-   `src/graph_core.rs:1007`). `spawn` does a *blocking* send into a 1024-slot pool
-   queue from the Redis main thread, which holds the GIL; running workers escalate
-   and wait for the GIL. Permanent hang, 0% CPU, PING times out.
-   `repro/flood.py 18470 1400` (one graph) or `repro/flood2.py 18470 3000 16 "UNWIND
-   range(1,3000) AS x CREATE (:N)" 45` (16 graphs, <1024 each): Rust hangs forever
-   (thread samples: main in `crossfire…send` from `query_mut`, all 11 workers in
-   `upgrade_to_write` waiting for the GIL); C completes 3000/3000 in 13 s.
-   Fixed: unbounded queues bounded by
-   admission (`QueueSlot`), main thread never waits (`never_stuck_3014`). Proposed fix was: never block the main thread in
-   `spawn` (try_send → "Max pending queries exceeded", or unbounded queue like C).
-   A second cycle with one graph: workers block on the full 1024 write channel
-   (`graph_core.rs:545`, `tg.sender.send` `:1082`) while holding a pool worker.
-2. **FIXED by #3086 (73077bb4a)** — HISTORICAL (#3069, 1d15bf713): **Second index on a
-   label was never populated** (`graph/src/graph/graph.rs:637`
-   `ticket_pending_changes > 1` bail + old `index/indexer.rs:319-331` no `bump_id` for
-   non-vector fields). `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes: Rust
-   OPERATIONAL, `MATCH (n:L) WHERE n.b < 300000` via index = 0; C = 300000. Same
-   mechanism loses index entries when writes race population (`repro/poprace.py`:
-   8/8 rounds mismatched on Rust, 0/5 on C; not re-run at 73077bb4a, and it creates one
-   index per round, so its cause may differ). (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `create_index` calls `bump_id` when the
-   entry exists (indexer.rs:359-361), so the older job fails `is_ticket_current` and the
-   new one indexes everything: `main_operational_complete`, `main_lost_order_complete`.
-3. **FIXED by #3087 (49f698d22)** — HISTORICAL (fe619ac5f): a vector of the wrong
-   dimension (or any vector on a `{dimension:0}` / no-options vector field) removed the
-   node from all of its label's indexes (old `mod.rs:723-733` added the blob unchecked;
-   C `src/index/index.c:470-476` skips). `CREATE INDEX (n.name)`, vector index dim 2,
-   `CREATE (:L {name:'a', v:vecf32([1,2,3])})`, `MATCH (n:L) WHERE n.name='a'`: Rust
-   was `[]`, C `a`. (Counterexamples removed in bbee75955; the last revision that has them is 17ccc5412.) Now `mod.rs:730-744` adds the vector only if
-   `vector_options.is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`:
-   `docSet_vector_sound`, `doc_always_accepted`, `other_fields_never_dropped`,
-   `vector_dim_mismatch_keeps_range_entry`, `dim0_keeps_range_entry`, `noopts_keeps_range_entry`.
-4. **FIXED by #3088 (89d68334a)** — HISTORICAL (W3-conc-4 / #3085, 49f698d22): huge `k`
-   killed the server (old `graph.rs:3883,3938` @ 49f698d22 `Vec::with_capacity(k)`). `CALL
-   db.idx.vector.queryNodes('L','v', 1000000000000000, vecf32([1,2]))`: Rust crashed
-   (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `graph.rs:4374,4434` clamp `k` to
-   `node_count().max(1)` / `relationship_count().max(1)` and `:4391,4450` size by results (main 5c7af54f2):
-   `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
-   #3382 (PR #3581): both fns now refuse while the index is not OPERATIONAL (`graph.rs:4380,4447`):
-   `Knn.not_operational_refused`, `ok_imp_operational`.
-5. **FIXED by #3290 (66d4d9d40)** — HISTORICAL (#3093, 4a4f2a72f): **Inline (MULTI/EXEC) write fails with "another write is in progress"**
-   (`src/graph_core.rs:748` slot claimed as a reader, before escalation). A queued
-   write in its match phase + `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC`: Rust
-   replies `another write is in progress, retry the query` and `M` is not created
-   (3/3); C creates it (3/3). `repro/multi_race.py`. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.)
-   Now the queued write forks without the slot and checks it under the write lock (since
-   #3657 there is no slot at all: forking takes nothing and `commit` refuses a stale fork);
-   `inline_write_ok`, `stale_then_rerun`, `one_commit_per_version`.
-
-Option validation (re-checked live at fe619ac5f, Rust release vs C `falkordb.so`, ports 19010/19011).
-Historical (2c874022a, #3091): Rust accepted a vector index without `dimension` or
-`similarityFunction`, rejected `'Euclidean'`, and accepted unknown fulltext keys; C the reverse.
-**Fixed by #3094**: `rust_refuses_missing`, `rust_eq_c` (agrees with C for `dimension > 0`), live:
-all four cases now answer as C. W5-idx-2 (vector index with no OPTIONS half-created on error) is
-also fixed: `index_ddl.rs:61-65` refuses before anything is registered — live, `db.indexes()` lists
-only the range index and `n.v = 1` still finds the node on both servers.
-Fixed by PR #3257 (`rust_eq_c_all`, `parseSim_unknown`): (a) `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust
-created the index (metric only checked for `dimension > 0`, mod.rs:1270-1272), C refuses; now both refuse.
-(since #3087 a vector on that index no longer drops the node: `dim0_keeps_range_entry`).
-Still divergent (live, #guard): (b) fulltext `OPTIONS {weight:1.0, foo:true}` Rust refuses (`unknown option 'foo'`), C creates —
-C refuses only a non-empty map with no known key (`cFulltextKeysOk`; `rust_keys_ok_imp_c`).
+The open ones are #3226 and the `shutdown_within` lock contention (below). Option validation
+(re-checked live at fe619ac5f, Rust release vs C `falkordb.so`, ports 19010/19011) agrees with C
+(`rust_refuses_missing`, `rust_eq_c`, `rust_eq_c_all`, `parseSim_unknown`) except one divergence
+(live, `#guard`): fulltext `OPTIONS {weight:1.0, foo:true}` Rust refuses (`unknown option 'foo'`), C creates
+it — C refuses only a non-empty map with no known key (`cFulltextKeysOk`; `rust_keys_ok_imp_c`).
 (C itself crashed on `CREATE FULLTEXT INDEX … OPTIONS {phonetic:true}`, on `db.indexes()` after `{language:'klingon'}`,
 and on the 1400-write flood — C bugs, noted only.)
 
@@ -181,21 +123,18 @@ never resurrect content; writes racing a delete abort with "graph was deleted or
 replaced". Same on C. (A first run showed "duplicates": redis-py's
 retry-on-timeout re-sent writes — a harness artefact, see the MEMORY note.)
 
-## Re-target to 2c874022a (#2846)
-`MvccGraph::commit` (mvcc_graph.rs:139) now runs `Graph::validate` first and, on a
+## Commit validation and `create_index` generations
+`MvccGraph::commit` (mvcc_graph.rs:139) runs `Graph::validate` first and, on a
 refusal, performs the rollback itself (:148-151). `Mvcc.step` takes `valid` as a
-parameter; every invariant theorem holds for any `valid`; new
-`refused_commit_publishes_nothing` (nothing published or acked, the next writer can
-fork — the property the Rust test `a_refused_commit_publishes_nothing` checks; was
-`refused_commit_releases_slot` before #3657) and `commit_publishes`. `commit_and_replicate` treats a refusal as
+parameter; every invariant theorem holds for any `valid`; `refused_commit_publishes_nothing`
+(nothing published or acked, the next writer can fork — the property the Rust test
+`a_refused_commit_publishes_nothing` checks) and `commit_publishes`. `commit_and_replicate` treats a refusal as
 `unreachable!` (graph_core.rs:1487).
 
-## Re-target to 73077bb4a (#3086, #3033)
-#3086 (issue #3069) bumps the generation in `create_index` whenever the label already has an entry
-(indexer.rs:359-361), fixing BUG 2. `Tickets` keeps the old `create_index` as `pre3086_createRange` and adds
+`create_index` bumps the generation whenever the label already has an entry
+(indexer.rs:359-361). `Tickets` keeps the earlier `create_index` as `pre3086_createRange` and models
 `store`/`acquire`/`step`/`Reach`, the invariant `MInv` (`inv_create`, `inv_populate`, `inv_batch`,
-`reach_inv`) and `main_operational_complete`. indexer.rs lines from `drop_index` on moved +16
-(COVERAGE updated). #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
+`reach_inv`) and `main_operational_complete`.
 
 ## Gaps
 

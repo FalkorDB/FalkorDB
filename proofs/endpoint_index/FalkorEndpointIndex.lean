@@ -38,7 +38,7 @@ endpoints no longer fit.
 | `Ix.set`                        | `set` (:647) — the three `match self.locate(slot)` arms |
 | `Ix.clear`                      | `clear` (:694) |
 | `Ix.prepare`                    | `prepare` (:522) — `reserve_exact` has no semantic effect and is dropped |
-| `Ix.prepareTiers`, `clampStarts` | `prepare_tiers` (:607), its clamp (:612-616, #2905) |
+| `Ix.prepareTiers`, `clampStarts` | `prepare_tiers` (:607), its clamp (:612-616) |
 | `Op`, `run`, `refRun`           | the call sites: `Graph::create_relationships_bulk` (`graph.rs:2710`; `prepare` at `:2777`, then `set` per edge), `delete_relationships` (`graph.rs:2965`) and `delete_implicit_edges` (`graph.rs:3102`) via `clear_edge_endpoint` (`graph.rs:3464`), `Graph::restore` (`graph.rs:900`; `prepare_tiers` at `:958`, then `set`) |
 
 ## What is proved (all without `sorry`; see `#print axioms` at the end)
@@ -59,8 +59,7 @@ endpoints no longer fit.
   and not both `u64::MAX`, `get` after the run equals the reference map.
 * `restore_agrees` — the restore path (`prepare_tiers` then `set` of every edge)
   yields exactly the edge set, whatever tier boundaries it is given.
-* `clampStarts_mono`, `clampStarts_ordered` — #2905 (`1d15bf713`, origin/main this
-  project is checked against): `prepare_tiers` clamps its starts monotone, so no tier
+* `clampStarts_mono`, `clampStarts_ordered` — `prepare_tiers` clamps its starts monotone, so no tier
   size underflows; a no-op on restore's ordered starts.
 * `paged_at`, `ensurePages_spec` — `pages[i / P][i % P]` addresses the flat list
   under the page-shape invariant, and `ensure_pages` keeps the shape, only
@@ -233,7 +232,7 @@ def prepare (ix : Ix) (maxEdgeId maxEndpoint : Nat) : Ix :=
   let want := needed - below
   ix.withTier rank (growTo rank want)
 
-/-- The tier starts `prepare_tiers` uses (:612-616, #2905): clamped monotone,
+/-- The tier starts `prepare_tiers` uses (:612-616): clamped monotone,
 `s1 = starts[0].min(len)`, `s2 = starts[1].clamp(s1, len)`,
 `s3 = starts[2].clamp(s2, len)`. (`x.clamp(lo, hi)` with `lo ≤ hi` is
 `min (max x lo) hi`.) -/
@@ -253,7 +252,7 @@ def prepareTiers (ix : Ix) (s1 s2 s3 len : Nat) : Ix :=
     if rn.2 = 0 then ix else ix.withTier rn.1 (growTo rn.1 rn.2)
   [(0, s1), (1, s2 - s1), (2, s3 - s2), (3, len - s3)].foldl step ix
 
-/-- **#2905: the clamped starts are monotone and within `len`**, whatever the caller
+/-- **The clamped starts are monotone and within `len`**, whatever the caller
 passes, so none of `s2 - s1`, `s3 - s2`, `len - s3` underflows (each is the true
 `usize` difference) and the four tier sizes sum to exactly `len`. -/
 theorem clampStarts_mono (s1 s2 s3 len : Nat) :

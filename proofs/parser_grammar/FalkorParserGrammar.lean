@@ -24,12 +24,11 @@ are in `proofs/lexer`, which this project does not repeat.
   21-token alphabet, model and grammar accept the same inputs with the same
   trees, apart from the documented disagreement classes (`known`). The same
   check was run with `#eval` over all 4.3 million lists of length ≤ 5, with the
-  same result. Since #3041 the slices (`..`) are no longer an exception.
-* **`bounded_bal`** (since #3041): a successful `parse_expr` consumes a
+  same result. The slices (`..`) are not an exception.
+* **`bounded_bal`**: a successful `parse_expr` consumes a
   bracket-balanced run with no top-level `,` on every list of length ≤ 3
   (`#eval`: ≤ 5 over the 21 tokens, ≤ 6 over `x 1 + ( ) [ ] ..`). This is the
-  fragment's `Oracle.Bal`, the premise of `listLitP_eq_ungated` that the
-  swallowed slice bound used to break.
+  fragment's `Oracle.Bal`, the premise of `listLitP_eq_ungated`.
 * Precedence and associativity for arbitrary literals: unary minus binds
   tighter than `^` (`-2^2 = 4`), `^` is left-associative, `- + * / %` fold
   left, chained comparisons desugar to `AND` (`chained_comparison`), `NOT`
@@ -38,76 +37,65 @@ are in `proofs/lexer`, which this project does not repeat.
 * **`parse_deterministic`**: the parse is a function of the input
   (backtracking restores the saved position and anonymous counter).
 
-## Re-target to 256ab4d3f (2026-11-22): #3525, #2900, #3890 (and #3019, #2981, #3303 already in)
+## Sign runs, update targets and variables
 
-* **#3525 (`56d00c3d8`, #2309)** `parse_expr_inner` level 9 reads any run of `+` / `-` (cypher.rs:2211-2250)
+* `parse_expr_inner` level 9 reads any run of `+` / `-` (cypher.rs:2211-2250)
   and folds it by the parity of the `-`: none pushes `(9, None)`, `n` of them push `2 - n % 2`
-  `Negate` frames, as the `NOT` run does. Model: `countSigns`, `signFrames` replace `signs` (kept as
-  `pre3525_signs`); `signFrames_ok` re-proves the no-panic invariant (`parseExpr_no_panic` is unchanged);
-  `sign_runs` replaces `sign_sequences`, `countSigns_rest` says the run is consumed whole; `known` in
-  `BoundedDefs` now lists every pair of adjacent signs, and `bounded_agree` / `bounded_bal` hold on the
+  `Negate` frames, as the `NOT` run does. Model: `countSigns`, `signFrames` (the earlier `signs` is kept as
+  `pre3525_signs`); `signFrames_ok` proves the no-panic invariant (`parseExpr_no_panic` is unchanged);
+  `sign_runs`, `countSigns_rest` (the run is consumed whole); `known` in
+  `BoundedDefs` lists every pair of adjacent signs, and `bounded_agree` / `bounded_bal` hold on the
   same 9,724 lists. A parameter value parsed through the expression fallback sets `legacy_signs`
   (`parse_param_value`, cypher.rs:442-450): `C.legacySigns` models the loop (`legacySigns_runs`,
   `legacySigns_neg_le`: at most one `-`, `+`, `-` or `+-`). The Rust-side `Parser::new` field is false.
-* **#2900** `parse_update_target` (cypher.rs:3394) is the `SET` / `REMOVE` target and `.prop` chain that
-  `parse_set_items` / `parse_remove_items` used to inline. `C.updateTargetP` models it, `setItems` and
+* `parse_update_target` (cypher.rs:3394) is the `SET` / `REMOVE` target and `.prop` chain used by
+  `parse_set_items` / `parse_remove_items`. `C.updateTargetP` models it, `setItems` and
   `removeItems` call it, `GUpdate` / `updateTargetP_sound` carry the grammar side; `setItems_sound`,
-  `removeItems_sound`, `np_setItems`, `np_removeItems` are re-proved with unchanged statements. The depth
+  `removeItems_sound`, `np_setItems`, `np_removeItems`. The depth
   charges (`check_depth` on the target and after every lookup, `nested` on a nested FOREACH) only add
   failures, so soundness is unaffected; they are in `proofs/lexer`.
-* **#3890** `Variable.name` became `Variable.alias: Option<Alias>`; `name`, `is_unnamed`, `as_str`, `fmt`
+* `Variable.alias: Option<Alias>`; `name`, `is_unnamed`, `as_str`, `fmt`
   are derived from it and `filter_visited` keys by `VarKey` (`id`, `scope_id`). `C.Var` is
   `{alias : Option Alias, id, scope}` with `Var.name`, `Var.isUnnamed`, `Var.fmt`, `Var.key`.
 
-## Re-target to 80c776385 (2026-11-02): #3289 and #3300
+## Duplicate relationships and relationship types
 
-Two parser PRs changed the model; all proofs were re-done on the new code.
-* **#3289 (`d15d38a10`)** `add_pattern_relationship` (cypher.rs:1378) replaces five copies of
+* `add_pattern_relationship` (cypher.rs:1378) replaces five copies of
   `if !query_graph.add_relationship(..) && clause == Match` (named path, anonymous path, both
   allShortestPaths arms) and the pattern-comprehension chain. It rejects a repeated alias in every
-  clause (MATCH/MERGE/CREATE messages). `chainA`, `chainN` and `aspLoop` now `fail` whenever
-  `addRel` reports a repeat; `GExt.rust := ⟨false⟩` (no extension left); `relOk_of` lost its
-  clause hypotheses. A pattern comprehension collects the first repeat and goes on
-  (`repeated.get_or_insert`), the caller reports it after the speculative attempt succeeded, so the
-  `Err`-to-fallback of `attempt` cannot swallow it: `pcChain` carries `(graph, repeated)`,
+  clause (MATCH/MERGE/CREATE messages). `chainA`, `chainN` and `aspLoop` `fail` whenever
+  `addRel` reports a repeat; `GExt.rust := ⟨false⟩` (no extension left). A pattern comprehension collects the
+  first repeat and goes on (`repeated.get_or_insert`), the caller reports it after the speculative attempt
+  succeeded, so the `Err`-to-fallback of `attempt` cannot swallow it: `pcChain` carries `(graph, repeated)`,
   `patCompP : P (ET × Bool)`, `listLitRest` fails on a `true` flag, `GPatComp` takes the flag and
-  `GBracket.namedPC/anonPC` require it `false`. `listLitRest_lit` / `listLitP_eq_ungated` /
-  `patCompP_pipe` / the `np_*` proofs are re-proved on the new shape.
+  `GBracket.namedPC/anonPC` require it `false`.
   Theorems: `create_named_path_dup_rel_rejected`, `create_named_path_distinct_rels_ok`,
   `merge_dup_rel_rejected`, `pattern_comprehension_repeated_rel_refused`.
-* **#3300 (`f680bb9f2`)** `parse_relationship_types` (cypher.rs:3057; used by
-  `parse_relationship_pattern` and shortestPath) is `ident (| :? ident)*`: a bare `:` no longer
-  continues the list. `typesP` and `spTypes` are re-modelled, `GTypes` lost its `colon` constructor
-  and `Ext` its `typeColon` field (`typesP_sound` re-proved), `GSpTypes` lost the `:`-only case.
+* `parse_relationship_types` (cypher.rs:3057; used by
+  `parse_relationship_pattern` and shortestPath) is `ident (| :? ident)*`: a bare `:` does not
+  continue the list. `typesP` and `spTypes`; `GTypes` has no `colon` constructor
+  and `Ext` no `typeColon` field (`typesP_sound`), `GSpTypes` has no `:`-only case.
   `expect_property_after_paren` (cypher.rs:3409) makes a parenthesised SET/REMOVE target require a
   following `.`: `expectDotP` in `targetP`, `GTarget.paren` carries `s2.adv.cur = .dot`.
   Theorems: `typesP_colon_refused`, `type_colon_refused`, `set_paren_target_refused`,
   `set_paren_needs_dot`.
-The three old counterexamples (`create_named_path_drops_dup_rel`, `merge_dup_rel_dropped`,
-`type_colon_accepted`, `set_paren_property_accepted`) are gone; W4-parse-2/3/4 are fixed.
 
-## Re-target to ee21013d6: #3112 (same-alias allShortestPaths arrow)
+## Same-alias allShortestPaths arrow
 
-`parse_pattern` now records `is_incoming` (the leading `<`, cypher.rs:1416-1418) before
+`parse_pattern` records `is_incoming` (the leading `<`, cypher.rs:1416-1418) before
 `parse_relationship_pattern`, because `(a)<-[*]-(a)` loses its direction once from/to are swapped
 (both ends share alias `a`). `C.Pattern.aspRel` takes that flag (`asp := rev` when
 `!bidir && (src.alias != la || inc)`), `C.Pattern.aspLoop` passes `c = .lt`, and `GAsp.varLen` carries
 `s.cur = .lt`. `aspRel_same_alias`: with `src.alias = la`, `<-` gives `.rev` and `->` gives `.fwd`.
-`aspLoop_sound`/`aspPart` soundness are unchanged apart from the extra argument. Lines of rows
-after cypher.rs:1413 shifted by +3 (COVERAGE.tsv). Docstring cites elsewhere in this project that
-point past line 1413 are from earlier targets and are not all re-pinned; COVERAGE.tsv is the
-authoritative line list.
+COVERAGE.tsv is the authoritative line list (docstring cites in this project may point at earlier targets).
 
-## Gap closed 2026-10-20: #2502
+## A WHERE pattern predicate stops before a clause keyword
 
 `C.PredicateBugs`: the property `PredEndsBeforeClause` (a WHERE pattern
-predicate stops before a clause keyword) and, since #2981, `fixed2502_pred_stops_at_match`,
-`fixed2502_where_match_split` (pre-#2981 `bug2502_pred_swallows_match`, `bug2502_where_match_merged`): `parse_pattern(&Keyword::Match)` for a predicate
-(cypher.rs:2119 at `fb3d516d0`) continues on `MATCH` (1562-1579), so
-`MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to two
-clauses. Live: Rust `'m' not defined`, C returns the rows (observed by hand during the open-bug
-triage, FINDINGS.md "triage of every open `type:Bug label:rust` issue", Rust main `9d3869aa8` and
-C; there is no `bug_*` Rust test for #2502, so the machine-checked part is the two theorems).
+predicate stops before a clause keyword) and `fixed2502_pred_stops_at_match`,
+`fixed2502_where_match_split` (`bug2502_pred_swallows_match`, `bug2502_where_match_merged` are the
+earlier `parse_pattern(&Keyword::Match)` behaviour, kept as historical counterexamples):
+`MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to two clauses.
 
 ## Disagreements (all CONFIRMED against the Rust)
 
@@ -117,16 +105,14 @@ module with the C module (`bin/macos-arm64v8-release/falkordb.so`).
 
 | Lean | Rust | test |
 | --- | --- | --- |
-| `skipFilter_eof_diverges` | **Fixed by #3019** (now `C.shortestP_param_eof_err`, `C.shortestP_map_eof_err`: `$p` is one token, `{...}` is `parse_map`). Before: `shortestPath((a)-[{` at end of input: the filter-skip loop (cypher.rs:1833-1858 at 3f4ea8f40) never ended; a worker thread spun forever, and 11 such queries stopped all graph queries. C: syntax error. | `bug_shortest_path_filter_skip_loops_forever_at_eof` |
 | — | Pattern predicate in a projection swallows the `,` (2103 → parse_pattern's comma loop 1546-1548). Live: `RETURN (a)-->(b), 1` is a syntax error; `RETURN (a)-->(b), (b)-->(a)` returns ONE column; C returns two. Same root cause as W2-binder-1. | `bug_pattern_predicate_swallows_projection_comma` |
-| `sign_runs` (was `sign_sequences`) | **Fixed by #3525** (`56d00c3d8`, closes #2309): a run of signs parses and folds by the parity of its `-` (`- -1`, `-+1`, `+-1`, `--5`); the grammar (Cypher.g4:345) allows one sign, so this is now a documented extension (`known` in `BoundedDefs`). A `CYPHER` parameter value keeps the one-sign grammar (`legacy_signs`, `C.legacySigns`). Old shape: `pre3525_signs`. | `chained_unary_signs_parse`, `param_of` tests in cypher.rs |
+| `sign_runs` (was `sign_sequences`) | a run of signs parses and folds by the parity of its `-` (`- -1`, `-+1`, `+-1`, `--5`); the grammar (Cypher.g4:345) allows one sign, so this is now a documented extension (`known` in `BoundedDefs`). A `CYPHER` parameter value keeps the one-sign grammar (`legacy_signs`, `C.legacySigns`). Earlier shape: `pre3525_signs`. | `chained_unary_signs_parse`, `param_of` tests in cypher.rs |
 
-### W3-parser-9 fixed by #3104 (`4a4f2a72f`): the pattern-comprehension gate and memo (`C.ListGate`)
+### The pattern-comprehension gate and memo (`C.ListGate`)
 
-Before #3104, backtracking in `parse_list_literal_or_comprehension` was
-exponential: `[(x {k: [(x {k: ...})]})]`, 18 levels (206 bytes) took 49 s (C is
-exponential too: 8 levels > 500 s). Now alternatives 2-3 run only behind a gate
-(`(` or a name, and `list_has_top_level_pipe`) and a memo of failed attempts.
+Alternatives 2-3 of `parse_list_literal_or_comprehension` run only behind a gate
+(`(` or a name, and `list_has_top_level_pipe`) and a memo of failed attempts (otherwise backtracking is
+exponential: `[(x {k: [(x {k: ...})]})]`, 18 levels, 206 bytes, took 49 s; C is exponential too).
 Live (release, port-local, separate stress runs): the four query families of the Rust
 regression test (`nested_pattern_comprehension_attempts_are_not_exponential`, which runs them at
 40 levels) at 80 levels, and a mixed family at 16 levels (1.9 MB), parse in ≤ 0.05 s.
@@ -135,42 +121,40 @@ regression test (`nested_pattern_comprehension_attempts_are_not_exponential`, wh
 | --- | --- |
 | `pipeScan_exact`, `pipeScan_exact0` | the one-counter lookahead equals a kind-matched bracket stack wherever that stack meets no mismatched closer; `pipeScan_mismatch`: `[([)] \| 1]` is where they differ (the parse still rejects it) |
 | `patCompP_pipe` | given `Oracle.Bal` (expression and map parsers consume bracket-balanced runs with no top-level `\|`/`,`), a pattern comprehension that parses implies the gate is open — through `parse_node_pattern` / `parse_relationship_pattern` (`cn_nodeP`, `cn_relP`, …) |
-| `listLitP_eq_ungated` | CONDITIONAL on `Oracle.Bal` and `MemoSound`: the merged parser returns exactly what the pre-#3104 one (`listLitPU`) returned, wherever that one does not run out of model fuel |
-| (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412) | History (fixed by #3041): **`Oracle.Bal` was false for the Rust**: with the swallowed slice bound, `[1][(1..2]` consumed an unclosed `(` that hid the `\|`. CONFIRMED live: `MATCH (a) RETURN [(a)-->(b) WHERE [1][(1..2] \| b]` was a pattern comprehension before #3104 and `Invalid input 'WHERE'` after (C: syntax error, so the new answer is C's). Since #3041 `[1][(1..2]` is refused (`slice_unclosed_paren_refused`) and the fragment satisfies the premise on every input checked (`bounded_bal`); `Oracle.Bal` for the whole expression parser is unproven, not refuted |
+| `listLitP_eq_ungated` | CONDITIONAL on `Oracle.Bal` and `MemoSound`: the merged parser returns exactly what the ungated one (`listLitPU`) returns, wherever that one does not run out of model fuel |
 | `memoRun_sound` | if an attempt's outcome is a function of its key (`AttemptDet`), the memo only holds failing keys (= `MemoSound`). Not discharged: the key omits `anon_counter`, and an attempt can read anonymous aliases (`Alias::Anon(N)` in `parse_pattern`'s duplicate-relationship check); no input was found where the same key recurs with a different counter and outcome |
 | `memoRun_nodup`, `failed_attempts_linear` | each key fails at most once, so any visit list of the abstract `memoRun` model with `pos ≤ n` and depth ≤ `MAX_NESTING` has at most `808·(n+1)` failed attempts (not linked to actual parser runs; the premises on a whole parse are by inspection). Successful attempts are not memoised and not bounded here |
 
-### Fixed by #3041 (`2023af648`, closes #3036) — the slice bound
+### Slice bounds
 
-| Lean (now) | was (8621212fc) | fix |
-| --- | --- | --- |
-| `slice_bound_error_reported`, `listOp_from_err`, `listOp_to_err`, `slice_bounds_omitted` | (counterexample removed in bbee75955; the last revision that has them is 17ccc5412): a failed slice bound became `0` / `i64::MAX`; live `[1,2,3][abs()..2]` → `[1, 2]` (C: arity error), `[1,2,3][1+..2]` → `[1, 2]`, `[(1..2]` accepted | a bound is left out only when `..` / `]` comes where it would start; one that fails to parse is an error (cypher.rs:2136-2165). `bounded_agree` needs no slice exception (length ≤ 5 by `#eval`) |
+`slice_bound_error_reported`, `listOp_from_err`, `listOp_to_err`, `slice_bounds_omitted`: a bound is left out
+only when `..` / `]` comes where it would start; one that fails to parse is an error (cypher.rs:2136-2165);
+`slice_unclosed_paren_refused` (`[1][(1..2]` is refused), so `bounded_agree` needs no slice exception (length ≤ 5 by `#eval`).
 
-### Fixed by #3060 (`fe619ac5f`, closes #3057) — now correctness theorems
+### Correctness theorems
 
-| Lean (now) | was (2c874022a) | fix |
-| --- | --- | --- |
-| `not_not_kept` | `not_not_dropped`: `NOT NOT x` → `x`; live `RETURN NOT NOT 1` → 1 | a run of NOTs folds to one or two (cypher.rs:2218-2228); `not_run_folds` (≥ 3, value-equal) |
-| `is_null_then_predicate` | `is_null_then_predicate_rejected`: `1 IS NULL IN [false]` rejected | level 5 is re-entered after `IS [NOT] NULL` (2435-2438) |
-| `call_trailing_comma_refused`, `C.call_trailing_comma_refused` | `call_trailing_comma`: `abs(-1,)` accepted | `parse_expression_list` only ends at once when empty (2769-2779) |
-| `set_bracket_paren_refused`, `setTarget_only_paren`, `C.set_bracket_target_refused` | `set_bracket_paren_accepted`: `SET [n).x = 5` ran as `n.x` | `reject_unparenthesized_target` (3395) |
-| `C.match_match_refused`, `C.reading_match_at_adv` | `match_match_accepted` | the second `optional_match_token!(Match)` is gone (934-941) |
-| `C.load_csv_with_from_refused`, `C.no_load_with_from` | `load_csv_with_from_accepted` | `WITH` must be followed by `HEADERS` (955-958) |
+* `not_not_kept`, `not_run_folds`: a run of NOTs folds to one or two (cypher.rs:2218-2228); ≥ 3 value-equal.
+* `is_null_then_predicate`: level 5 is re-entered after `IS [NOT] NULL` (2435-2438).
+* `call_trailing_comma_refused`, `C.call_trailing_comma_refused`: `parse_expression_list` only ends at once when empty (2769-2779).
+* `set_bracket_paren_refused`, `setTarget_only_paren`, `C.set_bracket_target_refused`: `reject_unparenthesized_target` (3395).
+* `C.match_match_refused`, `C.reading_match_at_adv`: no second `optional_match_token!(Match)` (934-941).
+* `C.load_csv_with_from_refused`, `C.no_load_with_from`: `WITH` must be followed by `HEADERS` (955-958).
 
-The bounded check (`bounded_agree`) no longer needs the `NOT NOT`, `IS NULL`-then-predicate or
-`,)` exemptions, and the clause relations lost the `matchMatch` / `loadWith` / `trailingComma`
-extension flags (`CExt`); `GArgsE`/`GArgs` now demand an expression after every `,`.
+The bounded check (`bounded_agree`) needs no `NOT NOT`, `IS NULL`-then-predicate or
+`,)` exemptions, and the clause relations have no `matchMatch` / `loadWith` / `trailingComma`
+extension flags (`CExt`); `GArgsE`/`GArgs` demand an expression after every `,`.
 
-### Clause level (wave 4, `C/*`; CONFIRMED live, Rust module vs C module)
+### Clause level (wave 4, `C/*`)
 
-| Lean | Rust | live result |
-| --- | --- | --- |
-| `call_validates_rest`, `call_transparent`, `match_last_after_call_rejected` | **Fixed by #3297** (b774fdfad; main b84473a7f): `inner_validate`'s CALL arm used to return `Ok(())` without validating the clauses after it (ast.rs:1167-1201 at b6567cb97); it now continues with `iter.next().map_or(Ok(()), …)` (ast.rs:1262-1263). | Before the fix `CALL db.labels() YIELD label MATCH (n)` and `CALL db.labels() YIELD label CREATE ()-[r]->() RETURN label` **crashed the server** (panic at planner/optimizer/utilize_node_by_id.rs:118), `... MERGE ()-[:R\|S]->()` created an edge, `... UNWIND [1] AS x` was accepted. C rejects all four; so does main (flow `test_procedures.py`). |
-| `fixed3303_anon_name_distinct` | **Fixed by #3303**: anonymous entities were named `_anon_N`, a name the user can write, and `add_pattern_node` merged the two nodes; they are now `Alias::Anon(N)` (cypher.rs:3064-3075), which no identifier equals. | `CREATE (:A), (:B)` then `MATCH (_anon_0:A), (:B) RETURN count(*)`: Rust was 0, now 1 as in C. |
-| `create_named_path_dup_rel_rejected` | **Fixed by #3289** (`d15d38a10`): every relationship goes through `add_pattern_relationship` (cypher.rs:1378), which rejects a repeated alias in every clause. It was rejected only for MATCH in a named path (cypher.rs:1533-1541 at b02266c2b). | `CREATE p=(a)-[r:R]->(b), q=(c)-[r:R]->(d)` is now "The bound variable 'r' can't be redeclared in a CREATE clause" (was 4 nodes, 1 relationship; C: "Variable `r` already declared"). |
-| `merge_dup_rel_rejected` | **Fixed by #3289**: same, for MERGE (it used to drop the repeat, cypher.rs:1554-1567 at b02266c2b). Pattern comprehensions too: `pattern_comprehension_repeated_rel_refused`. | `MERGE (a)-[r:R]->(b)-[r:R]->(c)` is now "can't be redeclared in a MERGE clause" (was 3 nodes, 1 relationship; C: same error). |
-| `set_paren_target_refused`, `set_paren_needs_dot` | **Fixed by #3300** (`f680bb9f2`): `expect_property_after_paren` (cypher.rs:3409) lets a parenthesised SET/REMOVE target open only `(n).x`. The `=` arm used to take any primary (cypher.rs:3352-3366 at b02266c2b). | `SET (n.x) = 5`, `SET (n) = {..}`, `SET (n):L`, `REMOVE (n):L` are now syntax errors (as in C); `SET (n).x = 5` still works. |
-| `type_colon_refused`, `typesP_colon_refused` | **Fixed by #3300**: `parse_relationship_types` (cypher.rs:3057) continues only on `\|` (with an optional `:` after it). It used to continue on `:` alone (cypher.rs:3068-3078 at b02266c2b). | `[:A:B]` is now a syntax error (as in C); `[:A\|B]` and `[:A\|:B]` still parse; shortestPath types use the same function. |
+* `call_validates_rest`, `call_transparent`, `match_last_after_call_rejected`: `inner_validate`'s CALL arm continues with
+  `iter.next().map_or(Ok(()), …)` (ast.rs:1262-1263), so `CALL db.labels() YIELD label MATCH (n)` and the like are rejected, as in C.
+* `fixed3303_anon_name_distinct`: anonymous entities are `Alias::Anon(N)` (cypher.rs:3064-3075), which no identifier equals
+  (`CREATE (:A), (:B)` then `MATCH (_anon_0:A), (:B) RETURN count(*)` is 1, as in C).
+* `create_named_path_dup_rel_rejected`, `merge_dup_rel_rejected`, `pattern_comprehension_repeated_rel_refused`: every
+  relationship goes through `add_pattern_relationship` (cypher.rs:1378), which rejects a repeated alias in every clause.
+* `set_paren_target_refused`, `set_paren_needs_dot`: `expect_property_after_paren` (cypher.rs:3409) lets a parenthesised
+  SET/REMOVE target open only `(n).x`.
+* `type_colon_refused`, `typesP_colon_refused`: `parse_relationship_types` (cypher.rs:3057) continues only on `|` (with an optional `:` after it).
 
 Out of this project's files but seen while probing: 2000 chained
 `UNWIND [1] AS xN` clauses crash the Rust server (parse, validate and bind
@@ -180,7 +164,7 @@ SETs as one batch).
 
 Known and not re-reported: #2605 (`.1e-5`), W2-binder-1
 (`MATCH p MATCH q` folded; `OPTIONAL MATCH p MATCH q`), #2895 (SET chains,
-FOREACH nesting; fixed by #2900, see `proofs/lexer`), and the lexer findings of #2909 (fixed by #2910, `dba677942`; see `proofs/lexer`).
+FOREACH nesting; see `proofs/lexer`), and the lexer findings of #2909 (see `proofs/lexer`).
 
 ## Places where Rust follows the grammar and C does not
 
@@ -205,8 +189,7 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
   (lines 30-264, 361-426) with its semantic action, and the IR / tree
   returned is the derivation's. Implementation extensions are explicit flags
   (`Ext`, `GExt`, `CExt`): MATCH/CREATE keyword folding,
-  allShortestPaths (`[:A:B]` and dropped duplicate relationship variables were extensions until
-  #3300 and #3289: `Ext` lost `typeColon`, and `GExt.rust = GExt.g4`),
+  allShortestPaths (`GExt.rust = GExt.g4`),
   DELETE/SET/REMOVE folding, a SET/REMOVE target that is not a variable or property,
   implicit CALL, queries without RETURN; plus the
   FalkorDB-only constructs (index DDL, LOAD CSV, FOREACH, CALL {}, reduce,
@@ -218,7 +201,7 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
 * **ast.rs**: `connectedComponents_spec` (components are node-disjoint, made
   of the graph's nodes or relationship endpoints, and cover every node whose
   id is not also a relationship/path id), the `QueryGraph` operations,
-  `validate` (`vClause_simple`; `call_validates_rest`, the CALL fix of #3297), `find_aggregate_name_spec`,
+  `validate` (`vClause_simple`; `call_validates_rest`), `find_aggregate_name_spec`,
   `treeHeight_spec`.
 
 ## Here | there
@@ -231,16 +214,16 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
 | `binStep`, `opTok` | `parse_operators!` (macro.rs:135-168), levels 0,1,2,6,7,8 |
 | `cmpStep`, `lastCmpIsOrdering` | level 4, chained comparisons (2286-2357) |
 | `predStep`, `isLoop` | level 5 (2358-2549) |
-| `countNots`, `notFrames`, `countSigns`, `signFrames` | level 3 / level 9 prefixes (2189-2250; #3525 made the level 9 prefix a run) |
+| `countNots`, `notFrames`, `countSigns`, `signFrames` | level 3 / level 9 prefixes (2189-2250; the level 9 prefix is a run) |
 | `postStep`, `postLoop` | level 10 (2571-2634) |
 | `closeStep` | level 11 (2635-2656) |
 | `primary`, `dotted`, `fnTable`, `exprList` | `parse_primary_expr` (1923-2116), `parse_dotted_ident`, `get_functions`, `parse_expression_list` |
 | `listLit`, `listComp` | `parse_list_literal_or_comprehension`, `parse_list_comprehension` (2818-2876, 2915-2950) |
-| `C.pipeScan`, `C.gateOK`, `C.listLitP`, `C.listLitPU`, `Oracle.seen` | `list_has_top_level_pipe` (2892-2912), the #3104 gate (2845-2878), the merged / pre-#3104 `parse_list_literal_or_comprehension`, `not_pattern_comprehension` |
+| `C.pipeScan`, `C.gateOK`, `C.listLitP`, `C.listLitPU`, `Oracle.seen` | `list_has_top_level_pipe` (2892-2912), the gate (2845-2878), the merged / ungated `parse_list_literal_or_comprehension`, `not_pattern_comprehension` |
 | `listOp` | `parse_list_operator_expression` (2117-2147) |
 | `parseMap`, `mapProj*`, `labels` | `parse_map` (3220), `parse_map_projection` (3252), `parse_labels` (3211) |
-| `skipFilter`, `C.skipP` | `parse_shortest_path_expr`'s filter skipper before #3019 (1833-1858 at 3f4ea8f40); `C.spFilterP` is the filter since #3019 (1833-1843) |
-| `C.updateTargetP`, `targetP`, `dotChain`, `rejectUnparenP`, `expectDotP` | `parse_update_target` (3394, #2900), the target of `parse_set_items` / `parse_remove_items` (3340, 3457), `reject_unparenthesized_target` (3420), `expect_property_after_paren` (3434) |
+| `skipFilter`, `C.skipP` | `parse_shortest_path_expr`'s earlier filter skipper (1833-1858 at 3f4ea8f40; `skipFilter_eof_diverges`, historical); `C.spFilterP` is the current filter (1833-1843) |
+| `C.updateTargetP`, `targetP`, `dotChain`, `rejectUnparenP`, `expectDotP` | `parse_update_target` (3394), the target of `parse_set_items` / `parse_remove_items` (3340, 3457), `reject_unparenthesized_target` (3420), `expect_property_after_paren` (3434) |
 | `G.*` | `oC_Expression` … `oC_Atom` (Cypher.g4:275-560) |
 | `C.CT`, `C.CK`, `C.P`, `tok`/`opt`/`ident`/`tryIdent` | `Token`, `Keyword` (lexer.rs:63-156), the parser, `match_token!` / `optional_match_token!` (macro.rs:51-113), `parse_ident` / `try_parse_ident` |
 | `C.QG`, `addNode`, `mergeNode`, `addRel`, `addPath`, `mergeAttrs` | `QueryGraph` and its methods, `merge_attr_maps` (ast.rs:622-790) |
@@ -257,7 +240,7 @@ Outside this project's scope, seen along the way: `true CONTAINS 'c'` and
 
 * The token alphabet has no `CASE`, quantifiers, `reduce`, `shortestPath`,
   `DISTINCT`, `count(*)`, aggregates, `|`, pattern predicates or pattern
-  comprehensions, and no floats. Without `|` the #3104 gate is always shut,
+  comprehensions, and no floats. Without `|` the gate is always shut,
   so pattern-comprehension attempts are never made (the clause level, `C/*`,
   models them, the gate and the memo).
 * Tree heights, `check_depth` and `nested` are abstracted away (see

@@ -1,7 +1,7 @@
 /-!
 # `GRAPH.BULK` binary format (`src/commands/bulk_insert.rs`)
 
-* `go` / `attach` — `read_property` (`bulk_insert.rs:95-176`, depth cap since #3339 b080a44c1): the explicit-stack reader.
+* `go` / `attach` — `read_property` (`bulk_insert.rs:95-176`, with a depth cap): the explicit-stack reader.
   `go` is the outer `loop` decoding one type byte, `attach` the inner loop that pushes
   a finished value into the innermost open array and pops every array it completes.
   The input is the remaining byte list rather than `(data, idx)`; `idx` is
@@ -11,7 +11,7 @@
 * `records` — the record loop of `process_node_token` (`:419-440`); each record's values
   are read by `PropColumns::read_record`, which consumes one value per header column.
 * `PropColumns.new` / `PropColumns.readRecord` / `keepFirst` — `PropColumns::new`/`read_record`
-  (`:178-235`, #3026 `fb3d516d0`): one entry per attribute, the first non-null in header order.
+  (`:178-235`): one entry per attribute, the first non-null in header order.
 * `parseCount` — `parse_count` (`:647-666`).
 
 `i64::from_ne_bytes`/`to_ne_bytes` and `str::from_utf8` are Rust `core` functions; their
@@ -435,7 +435,7 @@ def slotLen (n : Nat) : Nat := n % 65536
 theorem slot_len_truncates : slotLen 65536 = 0 ∧ slotLen 65537 = 1 ∧ slotLen 65535 = 65535 := by
   decide
 
-/-! ## Header columns: `PropColumns` (#3026, `fb3d516d0`, closes #3024)
+/-! ## Header columns: `PropColumns`
 
 `PropColumns::new` (`bulk_insert.rs:197-210`) and `PropColumns::read_record` (`:218-234`),
 used by `process_node_token` (`:411`, `:433-438`) and `process_edge_token` (`:495`, `:517-522`).

@@ -1,12 +1,9 @@
 import FalkorValueOrder.SortCmp
 /-!
-# Main (4a4f2a72f): `sort_cmp` with #2917's `sort_cmp_f32`, and `Hash for Value`
+# Main (4a4f2a72f): `sort_cmp` with `sort_cmp_f32`, and `Hash for Value`
 
-#2917 (7fdf06a0e) is merged; the files it touched in this area are byte-identical to the
-PR head 14e341cf4. The retired proofs/pr2917_review (its review project) is folded in
-here: `scF32`, `fkey32`, the hash-consistency proof, the per-shape key claims and the
-203f2022c counterexamples (`pre14e341_*`), re-stated for this project's `hwords`
-(Model.lean, now main's hash).
+`scF32`, `fkey32`, the hash-consistency proof, the per-shape key claims and the
+`pre14e341_*` counterexamples, stated for this project's `hwords` (Model.lean, main's hash).
 
 | here | there (origin/main 4a4f2a72f, graph/src/runtime/value.rs) |
 | --- | --- |
@@ -335,7 +332,7 @@ theorem compareRowsAt_eq_scMain (c : Col) (a b : Nat) :
   cases c <;> simp [compareRowsAt, Col.get, scMain, sc, order, V.tag, orderTag, cmpN, cmpI]
 
 /-- `list.sort`'s comparator (functions/list.rs:197) is `sort_cmp`; with `scMain_total`,
-`sort_by` sees a total order (W2-strlist-1 fixed by #2912). Its insertion-sort model: -/
+`sort_by` sees a total order . Its insertion-sort model: -/
 def insertBy (c : V → V → Ordering) (x : V) : List V → List V
   | [] => [x]
   | y :: ys => if c x y = .gt then y :: insertBy c x ys else x :: y :: ys
@@ -399,7 +396,7 @@ theorem listSort_sorted :
     exact insertBy_sorted x (hw x (by simp)) _
       (fun y hy => hw y (by simp [(listSort_perm xs).mem_iff.1 hy])) ih
 
-/-! ## #2917's per-shape key claims (folded in from the retired proofs/pr2917_review) -/
+/-! ## Per-shape key claims -/
 
 /-- Float `-0.0` and `0.0` are one key. -/
 theorem float_signed_zero_one_key :
@@ -433,10 +430,10 @@ theorem point_nans_one_key (s s' : Bool) (p p' : Nat) (y : F) :
 theorem signed_zeros_apart_nested :
     scMain (.list [.vecf32 [.negZero]]) (.list [.vecf32 [.num 0]]) = .lt := by decide
 
-/-! ## The PR at 203f2022c (before its head 14e341cf4): history
+/-! ## `pre14e341_*`: history
 
-`sort_cmp_f32` was main's `sort_cmp_f64` order and vector/point components were hashed
-by `to_bits`, so `sort_cmp`-equal components could hash apart (CodeRabbit on #2917). -/
+A `sort_cmp_f32` with `sort_cmp_f64`'s order, and vector/point components hashed
+by `to_bits`, would let `sort_cmp`-equal components hash apart. -/
 
 mutual
 def hwordsPre14e341 : V → List UInt64

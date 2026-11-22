@@ -1,26 +1,18 @@
 /-
 # IdSpace (`graph/src/graph/id_space.rs`, main @ 256ab4d3f): the state machine, proven
 
-Re-targeted to #3641 (`e0d9c2188`, "never reissue an id the same query freed", issue #3164): a sixth field
-`quarantined` (every id earlier batches of the version freed or cancelled), accumulated by `open_batch`
-(`rolledQuar`), subtracted by `reclaim_ids`/`reserve`, cleared by `end_quarantine`, empty in `new`/`restored`/
-`new_version`. `Quarantine.lean`: `openBatch_quarantines`, `reserve_not_quarantined`, `roll_quarOk`,
-**`rolled_not_reissued`**, and the historical `pre3641_*` counterexamples. `openBatch_eq_newVersion` is now
-`openBatch_eq_rolled` (new_version plus the quarantine); `roll_inv` is stated on `rolled`. `Callers.lean`
-discharges `release`'s `freed ⊆ requested` premise for its three engine call sites (`release_call_sites`).
-
-Re-targeted to #3022 (`18fc277b9`, "refuse GRAPH.EFFECT records that act on entities
-that are not live"): a fifth field `released` (what the open batch freed; set by
-`release`, cleared by `open_batch`, not carried by `new_version`), the accessors
-`taken()`/`released()`, and `refuse_not_live` (= `refuse_recycled` then
-`refuse_undeletable`), which `release` now calls. `Inv` gains `relOk`.
-
-Re-targeted to #2846 (`157d42ec1`, "make IdSpace the id allocation authority"):
-`IdSpace` now *owns* `live` and `recycled` (the entity count and free set that
-used to be `Graph::node_count` / `deleted_nodes`), plus the open batch
-`entry_bound` / `taken`. `IdSpace::at`, `record_created` and `Miscounted` are
-gone; `new`, `restored`, `new_version`, `checked`, `open_batch`, `cancel`,
-`create`, `release` are new.
+`IdSpace` *owns* `live` and `recycled` (the entity count and free set; `Graph` keeps
+neither), plus the open batch `entry_bound` / `taken`. A fifth field `released` is what the open
+batch freed (set by `release`, cleared by `open_batch`, not carried by `new_version`), read through
+`taken()`/`released()`; `refuse_not_live` (= `refuse_recycled` then `refuse_undeletable`) is what
+`release` calls, and `Inv` carries `relOk`. A sixth field `quarantined` is every id earlier batches
+of the version freed or cancelled, accumulated by `open_batch` (`rolledQuar`), subtracted by
+`reclaim_ids`/`reserve`, cleared by `end_quarantine`, empty in `new`/`restored`/`new_version`.
+`Quarantine.lean`: `openBatch_quarantines`, `reserve_not_quarantined`, `roll_quarOk`,
+**`rolled_not_reissued`**, and the `pre3641_*` examples (the model without the quarantine, kept as a
+historical counterexample). `openBatch_eq_rolled` (new_version plus the quarantine); `roll_inv` is
+stated on `rolled`. `Callers.lean` discharges `release`'s `freed ⊆ requested` premise for its three
+engine call sites (`release_call_sites`).
 
 A `RoaringTreemap` is an `IdSet` read over `[0, N)`, `N = 2^64` in the engine
 (`Card.lean`: `cnt n s = |s ∩ [0,n)|` = roaring's `rank(n-1)`, `asc` = `iter()`,
@@ -36,15 +28,15 @@ the mutated state behind, every other refusal returns before any mutation.
 | `IdSpace.new`              | `IdSpace::new` (:280), `Default::default` (:272) |
 | `IdSpace.restored`         | `IdSpace::restored` (:295) |
 | `IdSpace.live/recycled`    | `live` (:312), `recycled` (:318) — field reads |
-| `IdSpace.takenSet/releasedSet` | `taken` (:327), `released` (:333) — field reads (#3022) |
-| `IdSpace.refuseNotLive`    | `refuse_not_live` (:715) (#3022) |
+| `IdSpace.takenSet/releasedSet` | `taken` (:327), `released` (:333) — field reads |
+| `IdSpace.refuseNotLive`    | `refuse_not_live` (:715) |
 | `IdSpace.recycledCount`    | `recycled_count` (:339) |
 | `IdSpace.isFree`           | `is_free` (:345) |
 | `IdSpace.bound`            | `bound` (:359) — `live + recycled.len()` |
 | `IdSpace.maxId`            | `max_id` (:369) |
 | `IdSpace.newVersion`       | `new_version` (:389) |
 | `IdSpace.checked`          | `checked` (:426) — `checked_add`, `unwrap_or(u64::MAX)` |
-| `IdSpace.openBatch`        | `open_batch` (:470) — also `quarantined` (#3164); `end_quarantine` (:378) = `IdSpace.endQuarantine` |
+| `IdSpace.openBatch`        | `open_batch` (:470) — also `quarantined`; `end_quarantine` (:378) = `IdSpace.endQuarantine` |
 | `IdSpace.reserve`          | `reserve` (:516); `allocOk` = `try_reserve_exact` result |
 | `IdSpace.cancel`           | `cancel` (:569) |
 | `IdSpace.refuseRecycled`   | `refuse_recycled` (:590) |
@@ -79,12 +71,12 @@ the mutated state behind, every other refusal returns before any mutation.
   taken ∧ `u64::MAX` never taken. `inv_new`, `inv_restored`, `create_succeeds`/`create_preserves`
   (a create its refusals accept always passes `checked`; needs only `ID_LIMIT < 2^64`), `cancel_succeeds` (iff free ↔ below the
   boundary), `reserve_then_cancel` (every reserved id can be cancelled), `release_succeeds`.
-* **#3164/#3641 (`Quarantine.lean`)**: `endQuarantine_spec`, `quarantined_new/restored/newVersion`, `openBatch_quarantines`
+* **The quarantine (`Quarantine.lean`)**: `endQuarantine_spec`, `quarantined_new/restored/newVersion`, `openBatch_quarantines`
   (adds exactly `released ∪ (taken ∩ recycled)`), `QuarOk` (quarantine below the boundary) with `roll_quarOk`,
   `reserve_not_quarantined`, **`rolled_not_reissued`** (an id the previous batch freed or cancelled is not handed out by
   the next batch of the version), `pre3641_reissues` / `pre3641_cancelled_reissues` (without the quarantine the id comes
-  back; fixed by #3641 `e0d9c2188`) with `post3641_*`. `Callers.lean`: `release_call_sites`, `hsub_same_set`, `hsub_resolved`.
-* **#3022 (`Released.lean`)**: `refuseNotLive_ok`/`refuseNotLive_err` (passes iff `ReleaseOk`; names
+  back; kept as historical counterexamples) with `post3641_*`. `Callers.lean`: `release_call_sites`, `hsub_same_set`, `hsub_resolved`.
+* **`released` (`Released.lean`)**: `refuseNotLive_ok`/`refuseNotLive_err` (passes iff `ReleaseOk`; names
   the lowest free id, else the highest never-allocated one), **`refuseNotLive_live` — it accepts
   exactly live ids**, `live_eq_accepted`; `released_new/restored/newVersion`, `openBatch_clears`
   (empty after `open_batch`), `create_keeps_released`, `cancel_keeps_released`, `release_records`
@@ -114,12 +106,10 @@ the mutated state behind, every other refusal returns before any mutation.
 * That callers (`Graph`, `Pending`, bulk) settle every reservation before `open_batch` (the
   documented precondition) is not proven here; `roll_inv` covers the verified path.
 * Error message strings are not modelled beyond the variant and its fields.
-No confirmed bugs in this file.
-Historical (#2892, fixed by #2911 `fe619ac5f`): at 2c874022a `create` refused only `u64::MAX`, so it
-accepted 2^61 (or `u64::MAX - 1`) as a fresh id and `Graph::grow_for_nodes` then sized the matrices to
-it (assert in `GrB_Matrix_new` / `grow_cap` hang). Now `create` refuses every id `≥ ID_LIMIT =
-GrB_INDEX_MAX` before anything is sized (`create_out_of_range`, `create_spec`), and every id it accepts
-has a matrix row (`< 2^60 - 1`). `grow_cap`'s side is proven in `graph_queries` (`Schema.lean`).
+No open bugs. Fixed ones are in this file's git history.
+`create` refuses every id `≥ ID_LIMIT = GrB_INDEX_MAX` before anything is sized (`create_out_of_range`,
+`create_spec`), and every id it accepts has a matrix row (`< 2^60 - 1`). `grow_cap`'s side is proven in
+`graph_queries` (`Schema.lean`).
 -/
 import FalkorIdSpace.Callers
 
@@ -163,7 +153,7 @@ def g0 : IdSpace := ob IdSpace.new
        R (s1.release 32 (set [1]) (set [1])) == some (.alreadyRecycled 1)
 -- deleting_an_id_never_created_is_refused
 #guard R ((g0.create 32 28 (set [0,1])).1.release 32 (set [7]) (set [7])) == some (.neverCreated 7)
--- an_id_no_matrix_can_hold_is_refused_before_anything_is_sized (#2911; scaled: ID_LIMIT = 28,
+-- an_id_no_matrix_can_hold_is_refused_before_anything_is_sized (scaled: ID_LIMIT = 28,
 -- ids [0, id] for id in ID_LIMIT, ID_LIMIT + 1, u64::MAX - 1): refused naming the id, state untouched
 #guard [28, 29, 30, 31].all fun id =>
   R (g0.create 32 28 (set [0, id])) == some (.idOutOfRange id) && (g0.create 32 28 (set [0, id])).1.live == 0
@@ -179,7 +169,7 @@ def g0 : IdSpace := ob IdSpace.new
 -- release_refuses_a_free_id_it_would_not_have_freed
 #guard R ((IdSpace.restored 32 3 (set [3])).release 32 (set [2,3]) (set [2])) == some (.alreadyRecycled 3)
 
--- #3022: `released` records what the batch freed; `refuse_not_live` refuses a free id
+-- `released` records what the batch freed; `refuse_not_live` refuses a free id
 -- (`AlreadyRecycled`) and a never-allocated one (`NeverCreated`); `ids − released` lets
 -- through what this batch freed; `open_batch` forgets it.
 #guard let s1 := (g0.create 32 28 (set [0,1])).1

@@ -52,13 +52,12 @@ def encodedByteLen (ids : List UInt64) : Nat := ids.length * 8
 theorem encoded_len_mult8 (ids : List UInt64) : encodedByteLen ids % 8 = 0 := by
   simp [encodedByteLen, Nat.mul_mod_left]
 
-/-! ### The count check (`decode_with_count`, serialization.rs:216-244; #2996)
+/-! ### The count check (`decode_with_count`, serialization.rs:216-244)
 
-`count` comes from the payload. Since #2996 (`d99861124`) the expected byte length is
+`count` comes from the payload. The expected byte length is
 `usize::try_from(count).ok().and_then(|c| c.checked_mul(8))`, refusing a count whose
 byte length overflows a 64-bit `usize`; the loop then reads `bytes[i*8..(i+1)*8]`
-for `i < count`. Before, `count as usize * 8` wrapped (release), so `count = 2^61`
-expected `0` bytes, matched an empty buffer and indexed past its end. -/
+for `i < count`. -/
 
 def USIZE : Nat := 2 ^ 64
 

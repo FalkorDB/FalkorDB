@@ -9,17 +9,17 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | --- | --- |
 | `IndexType`, `Field`            | `graph/src/index/mod.rs:97` `IndexType`, `:108` `Field`, `:138` `Field::new`, `:155` `new_with_vector_options` |
 | `arrNames`                      | `mod.rs:122` `Field::make_arr_names` |
-| `docSet`                        | `mod.rs:721-875` `Document::set` (branch for branch; vector arm `:736-748`, #3087; temporal arm `:808`, #3076) |
+| `docSet`                        | `mod.rs:721-875` `Document::set` (branch for branch; vector arm `:736-748`; temporal arm `:808`) |
 | `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
 | `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:873` |
 | `buildDoc`                      | the per-attribute loop in `graph.rs:4043` `commit_index_kind` (`:4070`) / `graph.rs:719` population `build_doc` (`:707`) |
 | `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1918` `Index::add_document`) |
-| `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2052-2065` fulltext unknown-key refusal (#3094) |
-| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2134-2222` `map_to_index_options` (`:2042-2223`), vector branch (PR #3257: name checked at `:2157-2165`) |
+| `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2052-2065` fulltext unknown-key refusal  |
+| `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2134-2222` `map_to_index_options` (`:2042-2223`), vector branch (name checked at `:2157-2165`) |
 | `parsePhonetic`                 | `runtime.rs:2085-2125` phonetic arm |
 | `metricOf`                      | `mod.rs:1285-1299` similarity match in `Index::register_fields` (`:1192`) |
 | `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:120` `eval_vector_args` (k arm) |
-| `withCapacity`                  | Rust std `Vec::with_capacity`; historical use: `graph.rs:3883` / `:3938` `Vec::with_capacity(k)` @ 49f698d22 (removed by #3088; current model in `Knn`) |
+| `withCapacity`                  | Rust std `Vec::with_capacity`; an earlier use was `Vec::with_capacity(k)` with the raw user `k`; current model in `Knn` |
 -/
 
 namespace SC.Search
@@ -112,7 +112,7 @@ def docSet (f : Field) (v : Val) : List RSAdd :=
   | .range => match v with
     | .bool _ | .int _ | .float => [.num f.name]
     | .str _ => [.tag f.name]
-    -- #3076 (`e20300436`): temporals are not indexed (mod.rs:796-803)
+    -- temporals are not indexed (mod.rs:796-803)
     | .temporal => []
     | .list xs =>
       let n := (xs.filter isNumeric).length
@@ -176,7 +176,7 @@ dimension, exactly when `vector_options` is present with `dimension > 0`. Only t
 def Registered (rs : RediSearch) (fv : List (Field × Val)) : Prop :=
   ∀ p ∈ fv, p.1.ty = .vector → ∀ k, p.1.vdim = some k → k ≠ 0 → rs.dimOf p.1.name = some k
 
-/-! ### Key property (#3087): `set` never adds an unindexable vector -/
+/-! ### Key property: `set` never adds an unindexable vector -/
 
 /-- For **any** field options and **any** value, a vector add made by `Document::set`
 names the field itself and carries exactly `k * 4` bytes for the field's own, non-zero
@@ -236,12 +236,11 @@ theorem docSet_nonvector_eq_pre (f : Field) (v : Val) (h : f.ty ≠ .vector) :
     docSet f v = docSetPre3087 f v := by
   cases hty : f.ty <;> cases v <;> simp_all [docSetPre3087]
 
-/-! ### The former counterexamples, now correctness theorems
+/-! ### The shapes of the former counterexamples, as correctness theorems
 
 `CREATE INDEX FOR (n:L) ON (n.name)`, a vector index on `n.v`, then
 `CREATE (:L {name:'a', v:vecf32([1,2,3])})` and `MATCH (n:L) WHERE n.name = 'a'`
-(an index scan). Three index shapes: `{dimension:2}`, `{dimension:0}`, no options
-(W5-idx-2's half-created index). -/
+(an index scan). Three index shapes: `{dimension:2}`, `{dimension:0}`, no options. -/
 
 def nameF : Field := { name := "range:name", ty := .range }
 def vecF : Field := { name := "vector:v", ty := .vector, vdim := some 2 }
@@ -295,7 +294,7 @@ theorem good_vector_keeps_range_entry (rs : RediSearch)
   exact ⟨other_fields_never_dropped rs _ hreg (nameF, .str "a") (by simp) _ (by simp [docSet, nameF]),
     other_fields_never_dropped rs _ hreg (vecF, .vecf32 2) (by simp) _ (by simp [docSet, vecF])⟩
 
-/-! ### HISTORICAL (fe619ac5f): what the unguarded arm cost, fixed by #3087 (49f698d22) -/
+/-! ### What an unguarded vector arm would cost (`docSetPre3087`) -/
 
 /-- The fixed `docSet` on those same no-params shapes adds no vector at all. -/
 theorem docSet_noparams_no_vector (f : Field) (hf : f.ty = .vector)
@@ -321,9 +320,9 @@ theorem range_never_vector_or_text (f : Field) (v : Val) (h : f.ty = .range) :
 
 /-! ## Index options (`map_to_index_options`, runtime.rs:2042-2223, lines at main 256ab4d3f)
 
-#3094 (`fe619ac5f`'s parent series, fixes #3091) made the vector branch require
+The vector branch requires
 `dimension` and `similarityFunction` (lower-casing the latter) and the fulltext
-branch refuse unknown keys — all three as C does. -/
+branch refuses unknown keys — all three as C does. -/
 
 /-- An option value as it arrives in the `OPTIONS {…}` map. -/
 inductive OptVal where
@@ -347,7 +346,7 @@ order, that is not one of `FULLTEXT_OPTIONS`. -/
 def fulltextUnknown (m : Opts) : Option String :=
   (m.find? (fun kv => !fulltextOptions.contains kv.1)).map (·.1)
 
-/-- `dimension` arm (runtime.rs:2135-2152): **required** since #3094 (it used to default to `0`). -/
+/-- `dimension` arm (runtime.rs:2135-2152): **required**. -/
 def parseDimension (m : Opts) : Except String Nat :=
   match get m "dimension" with
   | some (.int n) => if n < 0 then .error "dimension must be a non-negative integer" else .ok n.toNat
@@ -432,12 +431,12 @@ theorem parseDimension_neg (m : Opts) (n : Int) (h : get m "dimension" = some (.
     ∃ e, parseDimension m = .error e := by
   simp [parseDimension, h, hn]
 
-/-- **`dimension` is required** (#3094). -/
+/-- **`dimension` is required**. -/
 theorem parseDimension_missing (m : Opts) (h : get m "dimension" = none) :
     parseDimension m = .error "dimension is required" := by
   simp [parseDimension, h]
 
-/-- **`similarityFunction` is required** (#3094), and stored lower-cased. -/
+/-- **`similarityFunction` is required**, and stored lower-cased. -/
 theorem parseSim_missing (m : Opts) (h : get m "similarityFunction" = none) :
     parseSim m = .error "similarityFunction is required" := by
   simp [parseSim, h]
@@ -496,7 +495,7 @@ theorem metricOf_toBool (s : String) :
       simp only [not_or] at h
       simp [h.1, h.2.1, h.2.2]
 
-/-- **Rust now agrees with C** (#3091 fixed by #3094) on every options map with a
+/-- **Rust agrees with C** on every options map with a
 positive `dimension` and no malformed HNSW key: same required keys, same
 case-insensitive name. -/
 theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → n ≠ 0)
@@ -544,8 +543,8 @@ theorem rust_eq_c (m : Opts) (hd : ∀ n, get m "dimension" = some (.int n) → 
           | _ => simp [parseDimension, parseSim, hg, hs, hneg, bind, Except.bind]
     | _ => simp [parseDimension, hg, bind, Except.bind]
 
--- Executable checks, re-run against fe619ac5f. Historical (2c874022a, #3091): missing `dimension`
--- or `similarityFunction` was accepted by Rust and `'Euclidean'` refused; C the reverse. Now both agree:
+-- Executable checks, re-run against fe619ac5f: Rust and C both refuse a missing `dimension` or
+-- `similarityFunction`, and both accept `'Euclidean'`:
 #guard rustAccepts [("similarityFunction", .str "euclidean")] = false
 #guard cAccepts [("similarityFunction", .str "euclidean")] = false
 #guard rustAccepts [("dimension", .int 2)] = false
@@ -619,8 +618,7 @@ theorem rust_eq_c_all (m : Opts)
           simp at hk; simp [hk]
       | _ => simp [parseDimension, parseSim, hg, hs, bind, Except.bind]
 
--- PR #3257 closes difference (a): `OPTIONS {dimension:0, similarityFunction:'bogus'}` is now
--- refused, as in C (`rust_eq_c_all`).
+-- `OPTIONS {dimension:0, similarityFunction:'bogus'}` is refused, as in C (`rust_eq_c_all`).
 #guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = false
 #guard cAccepts [("dimension", .int 0), ("similarityFunction", .str "bogus")] = false
 #guard rustAccepts [("dimension", .int 0), ("similarityFunction", .str "Cosine")] = true

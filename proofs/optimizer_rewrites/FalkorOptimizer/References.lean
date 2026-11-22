@@ -3,7 +3,7 @@
 
 reduce_expand_into / reduce_bound_edge / reduce_var_len_path / fuse_anonymous_traverse
 lower a flag (`emit_relationship`, `bind_relationship`, `emit_path`) or fuse away an
-intermediate node when no operator reads a variable. Since #2390 (d2c42e032) they share
+intermediate node when no operator reads a variable. They share
 one per-operator oracle, `optimizer/references.rs`.
 
 | here | there (origin/main 8743953a8) |
@@ -12,16 +12,15 @@ one per-operator oracle, `optimizer/references.rs`.
 | `IQ`, `IQ.vars`      | `IndexQuery<QueryExpr<Variable>>` (`index/indexer.rs`), its operand expressions |
 | `reads`              | specification: every variable any expression field of the operator mentions |
 | `binds`              | variables an operator binds that the oracle also counts (harmless: only keeps a flag) |
-| `PlanInv`            | the planner's invariant after #2390: scans / fixed-length operators carry no inline map, walks only their edge's (proofs/planner_build `E.planMatch_stripped`) |
+| `PlanInv`            | the planner's invariant: scans / fixed-length operators carry no inline map, walks only their edge's (proofs/planner_build `E.planMatch_stripped`) |
 | `refsNew`            | `ir_references_variable` (`references.rs:41-198`) |
 | `iqLoop`, `iqRefs`   | `index_query_references_variable` (`references.rs:204-233`), its explicit stack |
 | `qgRefs`, `setItemsRefs`, `exprRefs`, `subtreeRefs` | `query_graph_references_variable` (:287-300), `set_items_reference_variable` (:302-314), `expr_references_variable` (:317-323), `subtree_references_variable` (:327-334) |
-| `refsPR`             | `ir_references_variable` of PR #2918 (superseded by #2390's oracle; its walk is not merged) |
+| `refsPR`             | `ir_references_variable` of PR #2918 (superseded by this oracle; its walk is not merged) |
 
 Theorems: `iqLoop_iff` (the stack loop = "some operand mentions v", at any And/Or depth),
 `refsNew_complete` (under `PlanInv`, every read is seen), `refsNew_sound` (only reads or
-bound variables are reported), `refsPR_complete`; the fixed counterexamples
-(removed in bbee75955; the last revision that has them is 17ccc5412) are replaced by `refsNew_sees_*`; still open:
+bound variables are reported), `refsPR_complete`, `refsNew_sees_*`; open:
 `refsNew_misses_sibling_edges` (W2-traverse-1). The tree walks are in References2.lean.
 -/
 import FalkorOptimizer.Basic
@@ -425,7 +424,7 @@ theorem refsNew_misses_sibling_edges :
   refine ⟨by simp [runtimeReadsIds], rfl, ?_⟩
   simp [PlanInv, sRel, nd]
 
-/-! ## Historical: the oracle at a9377c636 (before #2390) and PR #2918's -/
+/-! ## Historical: the oracle at a9377c636 and PR #2918's -/
 
 /-- `ir_references_variable` of PR #2918 (exhaustive). It also counts a traverse whose own
 alias is `v` (a re-bound edge) — harmless, it only keeps a flag on. -/
@@ -481,7 +480,7 @@ theorem refsPR_complete (ir : IR) (v : Var) (h : v ∈ reads ir) : refsPR ir v =
     | (rcases h with h | h <;> simp_all)
     | skip
 
-/-! ### Counterexamples on a9377c636, **fixed by #2390 (d2c42e032)** (live on 8743953a8 = C) -/
+/-! ### Counterexamples on a9377c636 (the current oracle agrees with C) -/
 
 theorem refsNew_sees_unwind : refsNew (.unwind [r] xV) r = true := by decide
 theorem refsNew_sees_create : refsNew (.create [[r]] []) r = true := by decide

@@ -57,8 +57,7 @@ def emptyIter : List (Nat × Nat) := iterOf emptyMat 0 (2 ^ 64 - 1)
 
 theorem emptyIter_nil : emptyIter = [] := rfl
 
-/-! `attrs_is_static_empty` (formerly cond_traverse.rs:240) was removed by #2390
-(d2c42e032): the planner now lowers every fixed-length traverse's inline attrs to a
+/-! There is no `attrs_is_static_empty` check: the planner lowers every fixed-length traverse's inline attrs to a
 `Filter` above the operator and embeds a stripped pattern (`planner/mod.rs:644`
 `strip_rel_attrs`; proofs/planner_build `E.planMatch_stripped`, `E.firstRel_edge_pred`), so the batched path no
 longer needs to inspect them. -/
@@ -86,7 +85,7 @@ structure CtCfg where
 
 def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : List Bool)
     (child : Option ChildCT) : CtCfg :=
-  -- cond_traverse.rs:401 `rp.from.alias.is_unnamed()` (#3303: no name; was the `_anon` prefix)
+  -- cond_traverse.rs:401 `rp.from.alias.is_unnamed()` (no name)
   let anon := rp.fromName.isNone
   let (dedup, src) :=
     if !emitRel && rp.bidir && anon then

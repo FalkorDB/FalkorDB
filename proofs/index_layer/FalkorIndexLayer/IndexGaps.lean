@@ -1,9 +1,9 @@
 import FalkorIndexLayer.IndexerM
 import FalkorIndexLayer.Iter
 /-
-# Gaps closed 2026-10-20: #3166 (stopwords) and #3382 (vector query before OPERATIONAL)
+# Gaps closed 2026-10-20: #3166 (stopwords, open) and the vector-query gate
 
-Both bugs were invisible to the model: `IndexerM` recorded the label's stopwords
+Both were invisible to the model: `IndexerM` recorded the label's stopwords
 but not the ones its RediSearch spec was created with, and the query entry points
 were proven sound against the RS table without ever asking whether that table was
 fully populated.
@@ -156,7 +156,7 @@ theorem bug3166_violates : ¬ CreateIndexKeepsStopwords E0 := by
       have := hP I1 .fulltext "L" ["name"] 0 opt3166 I2 x hpre h2 hx hx'.1
       rw [hx'.2.1, hx'.2.2] at this; cases this
 
-/-! ## #3382: a vector query answers while the index is UNDER CONSTRUCTION -/
+/-! ## A vector query answers while the index is UNDER CONSTRUCTION -/
 
 /-- `populate_index` taking its ticket for generation `g` on the published entry
 (`try_increment_pending` `mod.rs:2110`; the counters are a shared `Arc`, so the

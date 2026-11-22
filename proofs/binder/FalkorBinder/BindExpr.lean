@@ -7,8 +7,8 @@ import FalkorBinder.Resolve
 | `NE` / `BE` | raw `ExprIR<Arc<String>>` / bound `ExprIR<Variable>` trees (the variants the binder treats specially) |
 | `reserve` | `fresh_var` + insert under `_quant_{s}_{id}` / `_lc_…` / `_reduce_acc_…` / `_reduce_iter_…` (binder.rs:2493-2507, 1796-1799, 1838-1844) |
 | `bindNode`, `bindL` | `bind_expr_node` binder.rs:1936-2346 |
-| `NE.paren`, `bindNode` on it | the `Paren` early return binder.rs:1936-2346 (#3335): `(x)` binds to `x`'s tree |
-| `NE.andOr`, `BE.andOr`, `flatB` | `And`/`Or` and the `ExprIR::and_of`/`or_of` return binder.rs:2334-2335, ast.rs:450-452 (#3335) |
+| `NE.paren`, `bindNode` on it | the `Paren` early return binder.rs:1936-2346: `(x)` binds to `x`'s tree |
+| `NE.andOr`, `BE.andOr`, `flatB` | `And`/`Or` and the `ExprIR::and_of`/`or_of` return binder.rs:2334-2335, ast.rs:450-452 |
 | `bindExpr`, `bindExprLocals` | `bind_expr` binder.rs:1915-1920, `bind_expr_with_locals` binder.rs:1922-1929 |
 | `bindSetItems` | `bind_set_items` binder.rs:1890-1913 |
 | `selfRef` | `check_unbound_self_referential` binder.rs:1868-1888 |
@@ -24,9 +24,9 @@ table covering; only pattern cleanup can break it — `comprehension_cleanup_bre
 `loop_var_shadows`, `reduce_same_name`, `prop_on_path`, `exists_pattern`,
 `func_arg_mismatch`, `bindExpr_eq`, `bindSetItems_*`, `selfRef_iff`.
 
-#3335: `bind_paren` (`(x)` binds exactly like `x`: same tree, same state, same
+`bind_paren` (`(x)` binds exactly like `x`: same tree, same state, same
 errors — so no bound tree holds a `Paren`, which `BE` has no constructor for),
-`prop_on_paren_path` (the `(p).prop` rejection now comes from that, not from a
+`prop_on_paren_path` (the `(p).prop` rejection comes from that, not from a
 look-through in the `Property` arm), `bind_andOr_paren` / `flatB_assoc` (a
 parenthesised run of the same connective binds flat: `(a AND b) AND c` gives
 the bound tree of `a AND b AND c`), `spliceB_other` (a different connective is a
@@ -270,7 +270,7 @@ theorem func_arg_mismatch (st : St) (locals : List Env) (name n : Name) (t : Ty)
     (hh : name ≠ "hasLabels") : bindNode C st locals (.func name [t] [.var n]) = .error "Type mismatch" := by
   simp [bindNode, bindL, hr, hc, hn, hh]
 
-/-! ## #3335: parentheses and AND/OR flattening -/
+/-! ## Parentheses and AND/OR flattening -/
 
 /-- **`(x)` binds exactly like `x`** (binder.rs:2151-2161): same bound tree, same
 state, same errors. -/

@@ -9,7 +9,7 @@ Bytes are `Nat`s (`< 256` where it matters); `le w x` is `x.to_le_bytes()[..w]`
 | --- | --- |
 | `le`, `unle`, `rd` | `to_le_bytes()[..w]`, `from_le_bytes` |
 | `readU64` | `read_u64` `cow_btree/mod.rs:79` |
-| `isReadWidth` | `is_read_width` `cow_btree/mod.rs:88` (#3285) |
+| `isReadWidth` | `is_read_width` `cow_btree/mod.rs:88` |
 | `readWidth` | `read_width` `cow_btree/mod.rs:94` |
 | `readU16` | `read_u16` `leaf/compact.rs:18` |
 | `widthFor` | `narrow_int::width_for` via `pow2_bytes_for` `leaf/mod.rs:42` |

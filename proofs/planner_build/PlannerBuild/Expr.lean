@@ -259,7 +259,7 @@ theorem needs_semi_xor (g : QG) (b : Ex) :
     needsExtraction (.node .xor [.node (.pat g) [], b]) .semiApply = true := by
   simp [needsExtraction, needsExtractionL, Mode.descend, isConn]
 
-/-! ## `ExprIR::and_of` / `or_of` / `flat` (ast.rs:457-483, #3335)
+/-! ## `ExprIR::and_of` / `or_of` / `flat` (ast.rs:457-483)
 
 `flat op operands identity`: an `op` node over `operands`, where an operand whose
 root is `op` itself contributes its children in place (orx_tree `take_out` keeps

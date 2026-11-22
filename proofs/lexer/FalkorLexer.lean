@@ -9,50 +9,36 @@ with machine-checked proofs of:
 
 * **`rs_agrees_spec`** — `read_spaces` skips exactly the openCypher
   `Comment` run and the four-character subset of `WHITESPACE` that `specSkip`
-  models (space, `\t`, `\r`, `\n`) wherever the spec accepts one (since #2908,
-  `dfa326583`); the other `WHITESPACE` characters of Cypher.g4:697-728 (VT, FF,
+  models (space, `\t`, `\r`, `\n`) wherever the spec accepts one; the other `WHITESPACE` characters of Cypher.g4:697-728 (VT, FF,
   FS, GS, RS, US and the Unicode spaces) are not skipped by `read_spaces` and
   are outside the theorem (a divergence from the grammar, not modelled); an unterminated `/*` is not skipped (`rs_unterminated_general`);
-  `\r` is whitespace since #2910 (`rs_crlf`).
+  `\r` is whitespace (`rs_crlf`).
 * **`lexAll_total_cover`** — on every input the lexer never slices a `&str` off
   a char boundary (so never panics), and the whitespace/comment runs and token
   texts it walks over concatenate back to exactly the input.
 * **`unesc_agrees_spec`** — `cypher_unescape` equals the openCypher
   `EscapedChar` decoding on every string whose escapes are the spec's
-  lower-case ones (`\\ \' \" \b \f \n \r \t \uXXXX`); since #2910 a
+  lower-case ones (`\\ \' \" \b \f \n \r \t \uXXXX`); a
   `\u`/`\U` run must be all hex digits (`unesc_plus_rejected`, `hexRun_spec`).
 * **`int_literal_correct`** — an integer literal in any spelling (leading
-  zeros included, since #2910), negated or not, evaluates to its mathematical
+  zeros included), negated or not, evaluates to its mathematical
   value when that is in `i64` range and is rejected otherwise — overflow is
   never wrapped; `litExpr_min`: the literal `2^63` is accepted only directly
-  negated, never under a postfix operator (since #2910).
+  negated, never under a postfix operator.
 * **`height_sound`** / **`guarded_height_le`** — every height estimate the
   parser keeps is an upper bound on the tree it describes, so a parse that
   passes `check_depth` builds no tree taller than `MAX_TREE_DEPTH`.
 * **`nested_depth_bound`** — every `parse_expr` / `CALL {}` / nested `FOREACH`
-  recursion is at most `MAX_NESTING` deep (`foreach_bounded`, since #2900); the
+  recursion is at most `MAX_NESTING` deep (`foreach_bounded`); the
   `SET`/`REMOVE` target chain is bounded too (`updateTarget_bounded`).
 
 and machine-checked *counterexamples* for the places where a property is false
-(each one reproduced against the real Rust in `graph/tests/lean_lexer.rs`). The rows marked
-"removed" are bugs that have since been fixed: their counterexample theorems are no longer
-in the tree (removed in bbee75955; the last revision that has them is 17ccc5412), and the
-fixed behaviour is now a correctness theorem, named in the row:
+(each one reproduced against the real Rust in `graph/tests/lean_lexer.rs`):
 
 | theorem | what is wrong |
 | --- | --- |
-| `pre2908_rs_block_comment_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908 `dfa326583`) `/* ... */` ended at the first `/`, not at `*/` |
-| `pre2908_rs_trailing_slash_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) a lone trailing `/` was skipped as whitespace |
-| `pre2908_rs_unterminated_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2908) an unterminated `/*` was accepted |
-| `pre2900_foreach_unbounded` | (fixed by #2900 `8312750b5`) `FOREACH` nesting bypassed `nested`, so its recursion was unbounded — now `foreach_bounded`, `foreach_limit` |
-| `pre2900_set_target_unbounded` | (fixed by #2900) `SET n.a.a…` / `REMOVE n.a.a…` targets bypassed `check_depth` — now `updateTarget_bounded`, `updateTarget_chain_limit` |
-| `neg_run_min_wraps`         | (since #3525) `RETURN --9223372036854775808` is `i64::MIN`, not an overflow; matches C (live) |
+| `neg_run_min_wraps`         | `RETURN --9223372036854775808` is `i64::MIN`, not an overflow; matches C (live) |
 | `hop_truncation_bug`        | `*4294967298` is `*2` (`i as u32`) |
-| `pre2910_crlf_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910 `dba677942`) `\r` was not whitespace — now `rs_crlf` |
-| `pre2910_zero_exp_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `0e5` lexed as `0` then `e5` — now `lexNum_zero_exp` |
-| `pre2910_min_noncanonical_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `-0x08000000000000000` was rejected — now `min_noncanonical_fixed`, `int_literal_correct` (any spelling) |
-| `pre2910_min_postfix_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `9223372036854775808.x` escaped the overflow check — now `litExpr_min` |
-| `pre2910_unesc_plus_bug` (removed in bbee75955; last held in 17ccc5412) | (fixed by #2910) `\u+041` decoded to `A` — now `unesc_plus_rejected` |
 
 ## What is modelled, and where it lives in the tree
 
@@ -77,9 +63,9 @@ fixed behaviour is now a correctness theorem, named in the row:
 | `Frame`, `Op`, `step`     | the `(level, tree, height)` frames of `parse_expr_inner` and `parse_expr_return!` / `parse_operators!` (macro.rs) |
 | `Reach`                   | every frame update of `parse_expr_inner`, each with its `check_depth` |
 | `lookups`, `updateTarget` | `parse_update_target` (cypher.rs:3394-3416, new in #2900), used by `parse_set_items` (3340) and `parse_remove_items` (3457) |
-| `pre2900_setTarget`       | the property loop of `parse_set_items` / `parse_remove_items` before #2900 |
+| `pre2900_setTarget`       | the pre-#2900 property loop of `parse_set_items` / `parse_remove_items`, kept as a historical counterexample |
 | `negFrames`, `applyFrames`, `signedLit`, `evalT` | the level 9 sign run of `parse_expr_inner` (cypher.rs:2211-2250, 2550-2569), #3525 |
-| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:1035 entered directly, 3544 through `nested` since #2900) |
+| `Call`, `runCall`         | `Parser::nested` (cypher.rs:344-354), `parse_expr`, `parse_foreach_clause` (cypher.rs:1035 entered directly, 3544 through `nested`) |
 
 ## What this does NOT cover
 
@@ -200,7 +186,7 @@ theorem ascii_boundary (cs : List Char) (k : Nat)
 
 /-! ## 2. `read_spaces` (lexer.rs:311-334)
 
-Since #2908 (`dfa326583`) the Rust walks bytes with a cursor `end`:
+The Rust walks bytes with a cursor `end`:
 whitespace advances it, `//` jumps past the next `'\n'` (or to `str.len()`),
 `/*` jumps past the first `*/` after it, and anything else — a lone `/`, an
 unterminated `/*` — `break`s with `end` on that `/`. `end` only ever moves
@@ -444,17 +430,7 @@ theorem rs_agrees_spec : ∀ f : Nat,
         · exact hgen (specSkip.blockSpec.eq_4 _ _ _ _ (by intro _ h _; exact hc h))
             (rsBlock.eq_3 _ _ (by intro _ h _; exact hc h))
 
-/-! ### Before #2908 (historical)
-
-The pre-`dfa326583` `read_spaces` (lexer.rs:314-362 at `8743953a8`) kept a
-one-char lookahead `next` in three states: the outer loop (`top`), inside
-`// ...` (`line`) and inside `/* ...` (`block`). It had three counterexamples
-against `specSkip` (FINDINGS: #2901; `pre2908_rs_block_comment_bug`,
-`pre2908_rs_trailing_slash_bug`, `pre2908_rs_unterminated_bug`), all fixed by #2908
-(`dfa326583`). That model and its counterexamples were removed in bbee75955; the last
-revision that has them is 17ccc5412. -/
-
-/-! ### Now: the three inputs, and the Rust regression tests of #2908 -/
+/-! ### The three inputs, and the Rust regression tests -/
 
 /-- The whole block comment is skipped, `/` inside it included, so
 `RETURN 5 /* a/ -1 //*/` is 5, as in C. -/
@@ -482,7 +458,7 @@ example : rs " /* a/b */ + 1".toList = 11 ∧ rs " /*/ ** / * */ 2 /**/".toList 
     rs " // a /* b\n2".toList = 11 ∧ rs " / 2".toList = 1 := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> simp [rs, rsSlash, rsBlock, rsLine, isWs] <;> decide
 
-/-! ### `\r` is whitespace (#2909, fixed by #2910 `dba677942`) -/
+/-! ### `\r` is whitespace -/
 
 /-- **CRLF is whitespace** (`carriage_return_is_whitespace`): `read_spaces`
 skips a `\r`, alone or before `\n`, exactly as the openCypher `WHITESPACE`

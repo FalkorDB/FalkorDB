@@ -28,7 +28,7 @@ survive, but the path is still missing: `RETURN p` gives null.
 | `MP.pathVars` | the variables a match plan binds as paths: `PathBuilder` entries, a CondVarLenTraverse's elided path (mod.rs:2617-2657) |
 | `BindsAllPaths` | the property: every named path of the pattern is bound by the plan |
 | `compVars` | `QueryGraph::variables` ast.rs:918-924 (nodes, relationships, paths) |
-| `planMatchArm` | `Planner::plan`'s MATCH arm mod.rs:3293-3856 (#2981: `joins_components` Apply wrap, `planMatchArm_joined_wrapped`, `planMatchArm_disjoint`) |
+| `planMatchArm` | `Planner::plan`'s MATCH arm mod.rs:3293-3856 (`joins_components` Apply wrap, `planMatchArm_joined_wrapped`, `planMatchArm_disjoint`) |
 | `MP.toPlan` | the `plan_match` result as an IR tree (operator kinds; payloads dropped) |
 | `Plan.argIsLeaf` | the property: no `Argument` has a child |
 

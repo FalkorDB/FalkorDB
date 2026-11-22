@@ -9,10 +9,8 @@ imports its definitions.
 
 A transition system over the graph versions of one graph key. Every event is one atomic
 step of the Rust code; any enabled event may fire (arbitrary interleaving of threads).
-Merged PR #3436 (25babfe4f), folded from the retired `pr3436_review`; re-targeted to main
-a477d9aa3 for #3657 (fork-and-commit: the MVCC write slot, `MvccGraph::write`/`claim`/`rollback`
-and `QuerySession`'s `release_slot`/`holds_slot` are gone; `S.slot` became `S.cur`). Since
-e30861ea3 a runtime's exclusive borrow of its graph is `graph_mut()` (`Cell.graph_mut_write_same`:
+Under fork-and-commit there is no MVCC write slot (`S.cur` names the thread whose private
+version is current). A runtime's exclusive borrow of its graph is `graph_mut()` (`Cell.graph_mut_write_same`:
 main's `g.borrow_mut()`).
 
 | here | there |
@@ -24,7 +22,7 @@ main's `g.borrow_mut()`).
 | `S.shared`             | live per-access `AtomicRef`s: write runtimes' `graph()`/`g.borrow()` on their own version, and anyone's borrow of *any* published version — `MvccGraph`'s own (`fork :130`, `is_stale :144`, `commit_version :214-296`) and the index-population thread's `indexer.get_graph().borrow()` (`graph.rs:582,609,696,712`): the indexer's graph is set only by `set_indexer_graph`, called with a version being published (`mvcc_graph.rs:294`) or a freshly built one before registration (`redis_type.rs:109,125,771`, `copy.rs:152`, `restore.rs:54`), never with a private fork |
 | `S.excl`               | live `AtomicRefMut`s (every `borrow_mut()` on a graph cell, table below) |
 | `S.priv`               | a thread's private version (`QuerySession.version`'s fork, `query_session.rs:96-120`, or the `tg.graph.fork()` of `effect.rs:63`, `bulk_insert.rs:847`, `constraint.rs:324,522`) |
-| `S.cur`                | the thread whose private version is `Version::Current` (`query_session.rs:108`): forked in writer mode, or checked by `check_fork`; no write slot exists since #3657 |
+| `S.cur`                | the thread whose private version is `Version::Current` (`query_session.rs:108`): forked in writer mode, or checked by `check_fork`; no write slot exists |
 | `S.done`               | a write runtime still alive after its version was published (reply serialization, `graph_core.rs:856-870`) |
 
 | event | Rust |
@@ -37,7 +35,7 @@ main's `g.borrow_mut()`).
 | `readDrop`    | `Runtime` drop: `read_guard` released (`DropOrder`) |
 | `fork t`      | `MvccGraph::fork` (`mvcc_graph.rs:130`), takes nothing: reader mode `write_version` → `Version::Unchecked` (`query_session.rs:211-224`); writer mode → `Version::Current` (`cur := some t`), also `tg.graph.fork()` under `graph.write()` in `effect.rs:63`, `bulk_insert.rs:847`, `constraint.rs:324,522` |
 | `check t`     | `check_fork` → `MvccGraph::is_stale` (`query_session.rs:246-261`, `mvcc_graph.rs:144`), writer mode only (`upgrade_to_write` `:319`); success makes the version `Current`, a stale one goes to `abandon` |
-| `abandon t`   | dropping an uncommitted version with the runtime/session (nothing is released or rolled back since #3657), or a stale fork |
+| `abandon t`   | dropping an uncommitted version with the runtime/session (nothing is released or rolled back), or a stale fork |
 | `mutAcq t c`  | `borrow_mut()` on `t`'s own private version, see the audit table |
 | `mutAcqPub t` | `Pending::resync_published_indexes` (`pending.rs:1789`, `committed.borrow_mut()` `:1838`), reached only from `abandon_write` (`graph_core.rs:1535-1541`) when `session.version_is_current()`, i.e. in writer mode (`cur = some t`) |
 | `publish t c` | `MvccGraph::commit` → `commit_version` (`mvcc_graph.rs:166`, `:214-297`): its `borrow_mut`s `:229,:265,:268,:285` are on `new_graph` *before* `self.graph = new_graph` (`:296`); called under the write lock on a `Current` version (`graph_core.rs:1569`, `bulk_insert.rs:884,1004`, `constraint.rs:329,560`, `effect.rs:81`). `commit_indexer_batch` (`:193`) has no production caller yet and is not modelled |
@@ -719,7 +717,7 @@ not enabled (`rlock` blocks). -/
 theorem resync_excludes_readers :
     run init (resyncTrace ++ [.rlock 3]) = .blocked := by decide
 
-/-- **Pre-existing (main and PR alike; write runtimes are unchanged by #3436).** Writer 1
+/-- **Historical counterexample** (the cell design; the cell no longer exists). Writer 1
 publishes, releases its locks, and serializes its reply through per-access borrows of its
 own — now published — version (`graph_core.rs:855-870`, `release_locks` *before*
 `reply_verbose`). Writer 2 then takes the lock and forks, fails after a `Commit`, and

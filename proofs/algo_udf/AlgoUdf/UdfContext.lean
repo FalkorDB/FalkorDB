@@ -15,8 +15,8 @@ flow around it.
 | `validateScript`          | `validate_script` :158-188 (setup → eval → collect) |
 | `Cache`, `ensureCurrent`  | `JS_STATE`, `ensure_context_current` :191-206 |
 | `rebuild`                 | `rebuild_context` :208-276 |
-| `bridge`                  | `call_udf_bridge` :280-350 (error mapping :325-335; the call runs inside `with_graph` :307, which restores the graph lent before, #2976) |
-| `ThreadJsState` drop order | `struct ThreadJsState` :143, `rebuild_context`'s `drop(state.take())` :213 (#3015) |
+| `bridge`                  | `call_udf_bridge` :280-350 (error mapping :325-335; the call runs inside `with_graph` :307, which restores the graph lent before) |
+| `ThreadJsState` drop order | `struct ThreadJsState` :143, `rebuild_context`'s `drop(state.take())` :213 |
 -/
 namespace AlgoUdf.UdfContext
 
@@ -125,7 +125,7 @@ structure Cache where
 /-- `rebuild_context`: the old state is dropped first (so a failed rebuild
 leaves `None`); every library is evaluated in order, the first failure aborts
 with its formatted message; then each qualified name found in the JS registry
-is cached under its name as registered (`low` = identity since #3066, js_context.rs:261; it was `to_lowercase`). -/
+is cached under its name as registered (`low` = identity, js_context.rs:261). -/
 def rebuild (low : String → String) (libs : List Lib) (evalLib : Lib → Except Caught Unit)
     (raw : List String) (v : Nat) : Except String Cache :=
   match libs.findSome? (fun l => match evalLib l with | .error c => some (l, c) | .ok () => none) with
@@ -165,7 +165,7 @@ theorem ensureCurrent_version (low : String → String) (st : Option Cache) (v :
     · intro h; cases h
 
 /-- Cached keys are exactly the (`low` of the) qualified names the scripts really
-registered; case-sensitive (`low = id`) since #3066. -/
+registered; case-sensitive (`low = id`). -/
 theorem rebuild_keys (low : String → String) (libs : List Lib) (ev : Lib → Except Caught Unit)
     (raw : List String) (v : Nat) (c : Cache) (h : rebuild low libs ev raw v = .ok c) :
     ∀ k, k ∈ c.funcs ↔ ∃ l ∈ libs, ∃ q ∈ l.fns, q ∈ raw ∧ k = low q := by
@@ -186,7 +186,7 @@ theorem rebuild_fail (low : String → String) (l : Lib) (rest : List Lib) (ev :
       .error ("Failed to load UDF library '" ++ l.name ++ "': " ++ String.ofList (errMsg c true)) := by
   simp [rebuild, h]
 
-/-! ## ThreadJsState drop order (W3-algo-2, fixed by #3015)
+/-! ## ThreadJsState drop order (W3-algo-2)
 
 `struct ThreadJsState` (js_context.rs:143-151) has no `Drop` impl, so Rust drops its
 fields in declaration order; `rebuild_context` (`drop(state.take())`, :213) and
@@ -196,10 +196,10 @@ while a context or a persistent function is alive. -/
 inductive JsField | functions | context | runtime | version
   deriving DecidableEq, Repr
 
-/-- Declaration order of `ThreadJsState` since #3015 (= its drop order). -/
+/-- Declaration order of `ThreadJsState` (= its drop order). -/
 def threadJsStateFields : List JsField := [.functions, .context, .runtime, .version]
 
-/-- Before #3015: `runtime, context, functions, version`. -/
+/-- The earlier order, kept as a counterexample: `runtime, context, functions, version`. -/
 def threadJsStateFieldsOld : List JsField := [.runtime, .context, .functions, .version]
 
 /-- `a` is dropped strictly before `b`. -/
@@ -229,8 +229,8 @@ def mapCallErr (msg : List Char) : String :=
     "out of memory"
   else "UDF Exception: " ++ String.ofList msg
 
-/-- `call_udf_bridge`: lookup by exact name (`low = id` since #3066), then convert args, call, convert
-back, all inside `with_graph(&graph, ..)` (#2976; js_context.rs:307-345): the graph is lent to the JS
+/-- `call_udf_bridge`: lookup by exact name (`low = id`), then convert args, call, convert
+back, all inside `with_graph(&graph, ..)` (js_context.rs:307-345): the graph is lent to the JS
 helpers for this call only, and `with_graph` puts back whichever graph was lent before (null for an
 outermost call). Returns the result and the final thread-local state. -/
 def bridge {γ ρ : Type} (low : String → String) (c : Cache) (name : String) (s : UdfClasses.GState γ)

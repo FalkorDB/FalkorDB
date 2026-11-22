@@ -1,5 +1,5 @@
 /-
-**Since #3683** the borrow-free read of a published version is `QueryGraph.graph_published`/`graph_same_result`; the
+The borrow-free read of a published version is `QueryGraph.graph_published`/`graph_same_result`; the
 `borrow_mut` sites below are `Runtime::graph_mut`, which panics without a fork (`QueryGraph.graphMut_read_panics`).
 
 # Claim 2 premise and claim 5: what is re-used from the owning projects

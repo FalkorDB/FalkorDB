@@ -5,14 +5,14 @@ import PlannerBuild.HopOrder
 # `plan_match`: components, bound-label filters, path elision, joining
 
 Continues PlanMatch.lean. Theorems: `chainRel_core` (operator table for the
-later hops — including the self-loop case `ExpandInto(scan, res)` behind bug 4),
+later hops — including the self-loop case `ExpandInto(scan, res)` (see `Match.lean`)),
 `planComp_binds` (every endpoint and edge alias of a component is bound
 afterwards), `boundLabels_spec` (an already-bound endpoint with labels not yet
 enforced gets exactly a `hasLabels(alias, missing)` filter, after which none
 are missing), `nodeOnly_*`, `planMatch_join`, `elide_spec`,
-`buildPatternSubPlan_restores`. #2390: `chainRel_lowers_from`/`_to`, `chainRel_edge_pred`,
+`buildPatternSubPlan_restores`. `chainRel_lowers_from`/`_to`, `chainRel_edge_pred`,
 `nodeOnly_bound_filter`, the `stripped` invariant (`bindPath_stripped`, `elide_stripped`,
-`planComp_stripped`, `planMatch_stripped`). #2981: `planMatch` = `planFrom` (the component loop)
+`planComp_stripped`, `planMatch_stripped`). `planMatch` = `planFrom` (the component loop)
 on `liftPattern`'s rewritten components, the lifted filters first (`planMatch_nolift`,
 `planMatch_join`, `planMatch_join_nolift`); `q2923_unlifted` / `q2923_lifted`,
 `q2923_bound_not_lifted`, `lifted_rel_emitted`.
@@ -313,7 +313,7 @@ def hopShape (r : QR) : HopOrder.HopShape V :=
   { frm := r.frm.alias, to := r.to.alias, selfLoop := r.frm.alias.id == r.to.alias.id,
     fixed := r.kind == .fixed }
 
-/-! ## The promoted walk (#2558, PR #3593: mod.rs:2063-2217) -/
+/-! ## The promoted walk (#2558: mod.rs:2063-2217) -/
 
 /-- `is_constrained` (mod.rs:2067-2069): inline attributes, or a WHERE anchor. -/
 def isConstrained (wi : WI) (n : QN) : Bool := !n.attrs.isEmpty || wi.anchors.contains n.alias

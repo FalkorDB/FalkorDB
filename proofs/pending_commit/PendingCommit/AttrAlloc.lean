@@ -6,8 +6,8 @@ import PendingCommit.Snapshot
 `created_nodes(ids)` (pending.rs:557) adds ids to `created`, which routes later writes to
 `new_nodes_attrs`. `AttrInv.created_inv` keeps the staged maps disjoint provided the id has no entry in
 `existing_nodes_attrs`. The ids come from `IdSpace::reserve` (create.rs:176), modelled by
-`Snapshot.createRust` (`Wf`: a reserved id is neither live nor freed by this segment, nor quarantined,
-#3641). Here the staged-existing map joins that model:
+`Snapshot.createRust` (`Wf`: a reserved id is neither live nor freed by this segment, nor quarantined).
+Here the staged-existing map joins that model:
 
 * `ExLive` — every id with a staged existing entry is a live entity or one this segment deleted
   (`freed`): writes to `existing_*_attrs` only target a live entity, because `SET`/`REMOVE` skip a
@@ -19,9 +19,9 @@ import PendingCommit.Snapshot
 * **`reserved_not_ex`** — under `Wf` and `ExLive` a reserved id has no staged existing entry: the premise of
   `created_inv`, so the staged maps stay disjoint across `CREATE`.
 
-Before #3641 this failed for the same reason #2876 did (a freed id reissued within the query): the id of a node
-deleted in an earlier segment is a *free* id the next segment may take, but the pending maps are cleared at the
-segment end, so even then `ExLive` holds; `reserved_not_ex` needs only `Wf`'s "not freed by this segment".
+The id of a node deleted in an earlier segment is a *free* id the next segment may take, but the pending maps
+are cleared at the segment end, so `ExLive` holds regardless; `reserved_not_ex` needs only `Wf`'s "not freed by
+this segment".
 -/
 namespace PendingCommit.Snapshot
 open PendingCommit.PA

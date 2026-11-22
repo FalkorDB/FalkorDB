@@ -921,7 +921,7 @@ theorem leafScan_keeps_below (to : Var) (labels : List Nat) (kept : List PT) (m 
     (leafScanCore (leafScan to labels kept m)).cs = kept := by
   cases m <;> cases labels <;> simp [leafScan, leafScanCore, PT.cs]
 
-/-! #### History: the rewrite as of #3264 (before #3593) -/
+/-! #### History: the earlier guard set (#3264), kept for `vlLeaf_eq_3264` -/
 
 def vlGuards3264 (c : VLCase) : Bool :=
   !c.expandInto && !c.bidirectional && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan
@@ -1026,18 +1026,16 @@ theorem vl_leaf_never_rebinds_to (gv : PT → List Var) (t : PT) (to : Var)
   have : c.belowMayBindTo = true := by rw [hm]; exact (subtreeMayBind_spec gv t to).2 hb
   simp [vlLeaf, this]
 
-/-! ### CONFIRMED BUG (pre-existing, not fixed by #2390; FIXED by #3264): the leaf rewrite drops a wrapper `Filter`
+/-! ### The leaf rewrite and a wrapper `Filter`
 
 `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2}) RETURN a.v, b.w`: clause 1's
 `Filter(a.v = 1) → AllNodeScan(a)` is stitched in as the var-length traverse's child, which
 `planner_scan_alias` accepts as the planner's scan of `from = a` (it looks through `Filter`). `a`
 scores 2 (filtered, via the downward spine of `collect_filtered_vars`), `b` scores 3 (labelled, its
-lowered `{w:2}` Filter above the traverse), so the leaf rewrite scans `b` and walks backwards — and the
-pruned child took `a.v = 1` with it. Live (Rust built from main's planner, b3582e34a; also on the
-pre-#2390 build 88e92ae25): graph `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` returns
-`[1, 2], [5, 2]`; the right answer (and the fixed-length `-[:R]->` form, which salvages the Filter via
-`filters_of`) is `[1, 2]`. Fix: refuse the leaf rewrite when the wrapper chain holds a `Filter`
-(as the non-leaf path now does), or salvage it with `filters_of` above the traverse. -/
+lowered `{w:2}` Filter above the traverse), so a leaf rewrite that prunes the child scans `b` and walks
+backwards, and the pruned child takes `a.v = 1` with it: graph
+`(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` would return `[1, 2], [5, 2]` instead of `[1, 2]`.
+The current rewrite refuses the leaf rewrite when the wrapper chain holds a `Filter`. -/
 
 def vlBugCase : VLCase :=
   { expandInto := false, bidirectional := false, allShortest := false, sameEnds := false, oneChild := true,
@@ -1046,7 +1044,7 @@ def vlBugCase : VLCase :=
     fromScore := (scoreEndpoint ⟨(0, 0), []⟩ ⟨[(1, 0)], [(1, 0), (0, 0)], []⟩ [] (fun _ => 1)).1,
     toScore := (scoreEndpoint ⟨(1, 0), [7]⟩ ⟨[(1, 0)], [(1, 0), (0, 0)], []⟩ [] (fun _ => 1)).1 }
 
-/-- History (before #3264): the rewrite fired on the repro although the wrapper holds `a.v = 1`. -/
+/-- History: the earlier rewrite (`vlLeafPre`) fired on the repro although the wrapper holds `a.v = 1`. -/
 theorem vl_leaf_fires_over_filter : vlLeafPre vlBugCase = true ∧ vlBugCase.wrapperHasFilter = true := by
   decide
 

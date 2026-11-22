@@ -4,7 +4,7 @@ import FalkorEffectsCodec.RecOpts
 
 `Record` with all fourteen opcodes, `write_header` (`:25`), `check_row_shape`
 (`:872`), `Record::encode` (`:925`), `read_record` (`:619`), and a roundtrip
-theorem for each variant. Since #2916 (`2c874022a`) the encoder refuses the two
+theorem for each variant. The encoder refuses the two
 shapes `read_record` rejects: a batch of zero ids (`EmptyRecord`, in
 `write_header`) and a row block that is not `count × attrs` (`RowShapeMismatch`).
 The ids codec `C` is the abstract `IdCodec`; `IdLink.idListCodec` instantiates it with
@@ -35,7 +35,7 @@ inductive Record (T : Type) where
 def isBatchable (op : Nat) : Bool := 1 ≤ op ∧ op ≤ 8
 
 /-- `write_header` (`records.rs:25`): refuses a count on a non-batchable opcode
-and vice versa, then (#2916) a count of zero. -/
+and vice versa, then a count of zero. -/
 def writeHeader (op : Nat) (count : Option Nat) : Except EErr Bytes :=
   if count.isSome != isBatchable op then .error .headerShapeMismatch
   else if count = some 0 then .error .emptyRecord
@@ -81,7 +81,7 @@ def checkIndex (ft : Nat) (schemas : List Ref) : Except EErr Unit :=
 def thenE (x : Except EErr Unit) (y : Except EErr Bytes) : Except EErr Bytes :=
   match x with | .error e => .error e | .ok () => y
 
-/-- `check_row_shape` (`:872`, #2916): `ids.len().checked_mul(attr_ids.len()) ==
+/-- `check_row_shape` (`:872`): `ids.len().checked_mul(attr_ids.len()) ==
 Some(rows.len())`. An overflowing product cannot equal a `usize` length, so the
 `Nat` equality is the same test. -/
 def checkRowShape (ids : C.T) (attrs : List Nat) (rows : List Val) : Except EErr Unit :=

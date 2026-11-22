@@ -10,7 +10,7 @@ are from origin/main (737dfb5da).
   `pos(false)`: the `&str[pos..pos(true)]` slice `parse_named_exprs` takes
   (cypher.rs:2750) is well-ordered.
 * **`currentStr_ok`** — `current_str` never slices off a boundary.
-* **`lexNum_zero_exp`** — `0e5` is one float literal (#2910).
+* **`lexNum_zero_exp`** — `0e5` is one float literal.
 * **`lexNum_slices_ascii`** — every byte slice `lex_numeric` takes
   (lexer.rs:541, 558, 579, 606, 639) sits after an all-ASCII prefix, hence on a
   char boundary (`ascii_boundary`): `lex_numeric` never panics.
@@ -218,7 +218,7 @@ def numPrefix (cs : List Char) (cur : Char) (it len : Nat) : Option (Option NS) 
         | some d => if isDigitR 10 d then some (some { st0 with it := it + 2, isFloat := true, len := len + 2 }) else none
         | none => none
       else if c = 'e' ∨ c = 'E' then
-        -- #2910 (`dba677942`, lexer.rs:601-610): `0e5`; the sign test slices `str[pos + len..]`
+        -- lexer.rs:601-610: `0e5`; the sign test slices `str[pos + len..]`
         let st := { st0 with it := it + 1, isFloat := true, isE := true, len := len + 1, sl := [len + 1] }
         match cs[len + 1]? with
         | some s => if s = '-' ∨ s = '+' then some (some { st with it := st.it + 1, len := st.len + 1 })
@@ -373,7 +373,7 @@ theorem numPrefix_inv (cs : List Char) (cur : Char) (it : Nat) (hpre : AsciiPre 
           · simp at h
         · simp at h
       split at h
-      · -- `0e…` (#2910): the slice `str[pos + len..]` sits after `0e`
+      · -- `0e…`: the slice `str[pos + len..]` sits after `0e`
         rename_i he
         have h1 : AsciiPre cs (it + 1) :=
           asciiPre_succ hpre hc (by rcases he with rfl | rfl <;> decide)

@@ -9,12 +9,12 @@
 | `asU64`                    | `Value::Int(id) => id as u64`, `runtime/runtime.rs:1428` |
 | `step`                     | one arm of the `match op`, `runtime/runtime.rs:1433-1468` |
 | `evalIdFilter`             | the filter loop of `Runtime::evaluate_id_filter`, `runtime/runtime.rs:1415-1469` |
-| `evalIdFilterMain`         | `Runtime::evaluate_id_filter` on main b84473a7f (#3394): the loop, then `node_count() == 0 → Ok(None)`, `runtime.rs:1470-1479` |
-| `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs:1783-1786` (since #2846 `node_ids.max_id()`, id_space.rs:353 — same arithmetic) |
-| `idMax`                    | PR #2979: the loop's initial `max = node_id_bound().saturating_sub(1)`, `runtime/runtime.rs:1439` (`Graph::node_id_bound` → `IdSpace::bound`, id_space.rs:343) |
+| `evalIdFilterMain`         | `Runtime::evaluate_id_filter` on main: the loop, then `node_count() == 0 → Ok(None)`, `runtime.rs:1470-1479` |
+| `maxNodeId`                | `Graph::max_node_id`, `graph/graph.rs:1783-1786` (`node_ids.max_id()`, id_space.rs:353) |
+| `idMax`                    | the loop's initial `max = node_id_bound().saturating_sub(1)`, `runtime/runtime.rs:1439` (`Graph::node_id_bound` → `IdSpace::bound`, id_space.rs:343) |
 | `seek`                     | `NodeByIdSeekOp::next`: range minus `deleted_nodes`, `runtime/ops/node_by_id_seek.rs:63-73` |
-| `pre2979_seek`             | the same before PR #2979: the loop starts at `max_node_id()` |
-| `pre3394_seek`             | the same before #3394 (b6567cb97): no `node_count` check |
+| `pre2979_seek`             | the earlier loop (starts at `max_node_id()`), kept as history |
+| `pre3394_seek`             | the same without the `node_count` check, kept as a stepping stone |
 | `G.wf`                     | `Graph::node_count` is the number of live ids below the id bound (`id_space.rs`) |
 | `labelIdScan`              | `NodeByLabelAndIdScanOp::next`: `get_nodes(labels, min)` ∩ range, `runtime/ops/node_by_label_and_id_scan.rs:69-82` |
 | `reference`                | `Filter(id(n) op v)` over `AllNodeScan` — Cypher semantics, what the rewrite must preserve |

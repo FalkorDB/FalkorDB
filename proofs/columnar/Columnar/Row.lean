@@ -415,7 +415,7 @@ def viewAt (b : Batch F) (r i : Nat) : Option (V F) :=
   | some v => some v
   | none => if i < b.cols.length then some .null else none
 
-/-- `Row::push_slot` (`row.rs:224`, #3059): append one slot after the last, holding `v`, with the
+/-- `Row::push_slot` (`row.rs:224`): append one slot after the last, holding `v`, with the
 bound bit set to `b` (a `false` leaves the bitmap alone). -/
 def Row.pushSlot (r : Row F) (v : V F) (b : Bool) : Row F :=
   { r with values := r.values ++ [v],
@@ -535,7 +535,7 @@ theorem toOwned_unbound_slot (b : Batch F) (r i : Nat) (hu : (b.column i).isUnbo
     · left; simp [hi]
 
 /-- **The owned snapshot answers `value_at` exactly like the view on every slot**, trailing
-`Unbound` columns included (#3059: `to_owned_row` pushes one slot per column, so an unbound
+`Unbound` columns included (`to_owned_row` pushes one slot per column, so an unbound
 column stays in scope as `Some(Null)` and a slot past the column space is `None`). -/
 theorem toOwned_get_eq_view {b : Batch F} (h : b.WF) {r : Nat} (hr : r ∈ b.active) (i : Nat) :
     (toOwned b r).get i = viewAt b r i := by

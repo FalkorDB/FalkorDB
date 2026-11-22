@@ -215,12 +215,11 @@ theorem wf_setLabels_live (σ : RG) (h : σ.WF) (ids lbls : List Nat)
   have hn : i ∉ ids := fun m => hi (hl i m)
   simp [setLabels, hn, hd]
 
-/-! ## Historical counterexamples: the arms without a liveness check
+/-! ## The seeded replica of the Rust repros
 
-**Fixed by #3022 (`18fc277b9`).** Before it, `UPDATE_NODE`, `SET_LABELS` and
-`DELETE_NODE` reached the store writes above with no liveness check. They now
-`require_live` first (and `DELETE_NODE` refuses a node with relationships):
-`Liveness.lean` models the checked arms, refuses each input below
+`UPDATE_NODE`, `SET_LABELS` and `DELETE_NODE` reach the store writes above with no liveness
+check; `Liveness.lean` models the checked arms (`require_live` first, and `DELETE_NODE`
+refuses a node with relationships), refuses each input there
 (`updates_on_dead_refused`, `delete_with_edges_refused`) and proves the whole
 buffer keeps the replica well formed (`apply_wf`).
 

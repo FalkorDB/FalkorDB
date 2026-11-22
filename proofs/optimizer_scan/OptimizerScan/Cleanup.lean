@@ -221,11 +221,11 @@ theorem nonIdxD_spec (lossyI : Int → Bool) (scan : Option Nat) (d : D) :
   cases d <;> simp [nonIdxD]
   cases scan <;> simp
 
-/-! ## HISTORICAL `index_query_references_var` (removed by #2390) and `prune_all_node_scan_child`
+/-! ## `index_query_references_variable` and `prune_all_node_scan_child`
 
-#2390 replaced the id-only walker below by `references.rs::index_query_references_variable(q, id,
+The walker is `references.rs::index_query_references_variable(q, id,
 scope)`, proven in `proofs/optimizer_rewrites` (`References.iqRefs_iff`: true iff some operand
-mentions the variable `(id, scope)`, at any And/Or depth). `prune_all_node_scan_child` now asks it
+mentions the variable `(id, scope)`, at any And/Or depth). `prune_all_node_scan_child` asks it
 with the child scan's `(id, scope_id)` (`utilize_index.rs:1066-1069`). -/
 
 inductive IQx

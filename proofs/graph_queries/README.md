@@ -43,7 +43,7 @@ Yes. `rebuild_derived_matrices` takes `node_cap = max(node_cap, saved)` before r
 
 **6. Is each relationship reported once?**
 
-`byType_both_once` proves `get_node_relationships_by_type(.., Both)` lists every incident edge exactly once, self-loops included. `get_node_relationships` does not: `nodeRels_selfloop_twice` proves it lists a self-loop twice (open, see below).
+`byType_both_once` proves `get_node_relationships_by_type(.., Both)` lists every incident edge exactly once, self-loops included. So does `get_node_relationships`: `nodeRels_once` proves it lists each incident edge once, and `nodeRels_eq_byType` that it equals the `Both` listing.
 
 **7. Is a constraint identified by its property *set*?**
 
@@ -84,7 +84,6 @@ Each bug was reproduced against a live server and compared with C before it was 
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W4-graph-2 | `nodeRels_selfloop_twice` | `get_node_relationships` lists a self-loop twice; UDF `node.getNeighbors` counts it twice (Rust 2, C 1) | **Open** (last re-checked live at 2c874022a; FINDINGS notes it may be the same as #3083) |
 | W4-graph-3 | `cmatches_order_sensitive` | `UNIQUE NODE L (a,b)` then `(b,a)` creates both; C says "Constraint already exists" | **Open** |
 
 Also recorded, not a bug in this project's sense: `CREATE INDEX` on a new label reports `Labels added: 1` in Rust but not in C, because the label is interned before the indexer can refuse.

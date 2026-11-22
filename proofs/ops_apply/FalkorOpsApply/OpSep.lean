@@ -8,10 +8,10 @@ on the sub-plan (`Separable`/`SepT`).  This file discharges it for the operators
 batched run on a tagged argument list `List (origin × row)` and proving separability composes
 through the operator tree.
 
-## Why `SepT` did not compose, and the fix
+## Why `SepT` does not compose, and `DSep`
 
 After a multi-output operator (a scan, a traverse) the origins repeat, so "a tagged batch with
-distinct sequential origins" no longer describes what the next operator sees.  The fix tracks
+distinct sequential origins" no longer describes what the next operator sees.  `DSep` tracks
 origins instead of requiring them distinct: `DSep b f` says `f` is separable on every argument list
 whose origins are pairwise distinct (`Nodup`).  Only the *argument* of a sub-plan needs distinct
 origins; every operator above it consumes its child's output through a per-row `flatMap` that
@@ -37,7 +37,7 @@ a sub-plan containing one is separable up to permutation only (issue #3070's fam
 | fused optional `CondTraverse` | matched rows, then ONE NULL-padded batch per seeded child batch (`cond_traverse.rs:1441-1451`) | `optF` (`Adm.optExpand`, permutation only) |
 | `SemiApply`/`AntiSemiApply` | emits the *input* batch with a selection (`semi_apply.rs:109`): outer origins kept; its own tagging is internal (`clone_active_rows_seq_origin`) | `semiF` (equals `expandF` of a filter, `semiF_eq`) |
 | `OrApplyMultiplexer` | same shape over several branches (`or_apply_multiplexer.rs:82-129`) | `orF` (`orF_eq`) |
-| `ValueHashJoin` (per-origin since #3035) | build/probe tables keyed by origin, output origin = left row's (`value_hash_join.rs:302,456`) | `vhjF` (`Adm.vhj`) |
+| `ValueHashJoin` (per-origin) | build/probe tables keyed by origin, output origin = left row's (`value_hash_join.rs:302,456`) | `vhjF` (`Adm.vhj`) |
 | `Apply` in per-row mode | env keeps the outer origin (`apply.rs:251-253`, `Row::merge` ignores origins); planner-built `Apply`s inside another plan are pattern-comprehension chains ending in `Aggregate` (`planner/mod.rs:1645-1660`), so `can_batch` is false for them | `perRowF` (`Adm.perRow`) |
 
 NOT separable, with a counterexample theorem each:

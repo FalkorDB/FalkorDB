@@ -5,8 +5,7 @@ import VersionedMatrix.Tensor
 # `Matrix::delta_lmxm` (matrix.rs:1631-1768): `F * (M - DM + DP)` on the pattern
 
 `delta_lmxm` multiplies a frontier `F` by a versioned matrix's three layers
-(`m` base, `dp` additions, `dm` deletions) without merging them. Since #3492
-(a3a99bdbc) it keeps an output that one deleted base edge reaches but another,
+(`m` base, `dp` additions, `dm` deletions) without merging them. It keeps an output that one deleted base edge reaches but another,
 live one still does.
 
 The GraphBLAS calls are *definitions* here, with the meaning the GraphBLAS spec
@@ -294,7 +293,7 @@ theorem deltaLmxm_tensor (n : Nat) (F : Pat) (st : Nat → Nat → VMTensor.Pair
   unfold VMTensor.effV
   cases hdp : (st k j).dp <;> cases hdm : (st k j).dm <;> cases hm : (st k j).m <;> simp
 
-/-! ## History: before #3492 (a3a99bdbc) -/
+/-! ## Examples: an output a live edge still reaches -/
 
 /-- Node `1 = x`, `2 = y`, `3 = z`; frontier row `0 = {x, y}`; base edges `x→z`, `y→z`
 (`delta_lmxm_keeps_an_output_one_live_edge_still_reaches`, matrix.rs:2096). -/

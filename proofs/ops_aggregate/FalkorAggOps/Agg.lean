@@ -391,10 +391,10 @@ theorem pct_first_wins (q : Float) (nulls : List (V × Float))
     List.nil_append]
   exact pct_stable p [v.num] (by simp) xs
 
-/-! #### History: before #3007 (aggregation.rs:539 / :253 at 289c201fe) -/
+/-! #### History: the percentile overwritten on every row (aggregation.rs:539 / :253 at 289c201fe) -/
 
 /-- The `percentileDisc(x, x/10.0)` repro over x = 1..10: the percentile the
-finalizer sees was row 10's before #3007 and is row 1's on main (C's). -/
+finalizer sees is row 1's on main (C's); the overwriting model gives row 10's. -/
 def pctRow (k : Nat) : V × Float := (V.int k, Float.ofNat k / 10.0)
 def pctRepro : List (V × Float) := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map pctRow
 

@@ -1,14 +1,13 @@
 import FalkorCowBTree.Batch
 
 /-!
-# `remove_batch` after #3283 (W7-btree-1 fixed): the model, and `TreeWF` is preserved
+# `remove_batch`: the model, and `TreeWF` is preserved
 
-#3283 (799968a8b) changed `merge_underfull` (`node.rs:155-175`): after each `combine_with_sibling`
-step it calls the new `Node::merge_underfull_below` (`node.rs:563-574`) on every node the combine
+`merge_underfull` (`node.rs:155-175`) calls, after each `combine_with_sibling`
+step, `Node::merge_underfull_below` (`node.rs:563-574`) on every node the combine
 produced (one after a merge, two after a borrow), and then re-examines index `left`. `merge_underfull_below`
-re-runs `merge_underfull` over a produced branch's children when one of them is under-full. That
-repairs the lone-child branch that a combine used to carry one level up untouched (Bug 3,
-`BugsBatch.lean`; its pre-#3283 counterexamples were removed in bbee75955, the last revision that has them is 17ccc5412).
+re-runs `merge_underfull` over a produced branch's children when one of them is under-full, which
+repairs a lone-child branch that a combine would otherwise carry one level up untouched.
 
 ## Model
 
@@ -55,7 +54,7 @@ def Mono (c : Cfg) (h : Nat) (f : Node → Node) : Prop :=
     pair is `(i, i + 1)`, or `(i - 1, i)` when `i` is the last child. -/
 def leftOf (len i : Nat) : Nat := if i + 1 < len then i else i - 1
 
-/-- One body of the #3283 loop (`node.rs:161-173`): `combine_with_sibling` on the pair at `left`, then
+/-- One body of the loop (`node.rs:161-173`): `combine_with_sibling` on the pair at `left`, then
     `merge_underfull_below` (`f`) on the one node a merge leaves, or the two a borrow leaves. -/
 def muStep (c : Cfg) (f : Node → Node) (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
   let li := leftOf cs.length i
@@ -63,7 +62,7 @@ def muStep (c : Cfg) (f : Node → Node) (seps : List E) (cs : List Node) (i : N
   | .one m => (delAt seps li, delAt (setAt cs li (f m)) (li + 1))
   | .two l s r => (setAt seps li s, setAt (setAt cs li (f l)) (li + 1) (f r))
 
-/-- With no repair, the step is exactly `combine_with_sibling` (`cws`, unchanged by #3283). -/
+/-- With no repair, the step is exactly `combine_with_sibling` (`cws`). -/
 theorem muStep_id (c : Cfg) (seps : List E) (cs : List Node) (i : Nat) (h1 : 1 < cs.length) (hi : i < cs.length) :
     muStep c id seps cs i = ((cws c seps cs i).1, (cws c seps cs i).2.1) := by
   unfold muStep cws leftOf
@@ -343,7 +342,7 @@ def mubF (c : Cfg) : (h : Nat) → {f : Node → Node // Mono c h f}
 /-- **`Node::merge_underfull_below`** (`node.rs:563-574`) on a node of height `h`. -/
 def mergeUnderfullBelow (c : Cfg) (h : Nat) (n : Node) : Node := (mubF c h).1 n
 
-/-- **`merge_underfull`** (`node.rs:155-175`, after #3283) on children of height `h`. -/
+/-- **`merge_underfull`** (`node.rs:155-175`) on children of height `h`. -/
 def mergeUnderfull (c : Cfg) (h : Nat) (seps : List E) (cs : List Node) : List E × List Node :=
   muLoop c h (mubF c h).1 (mubF c h).2 seps cs 0
 
@@ -352,7 +351,7 @@ theorem mergeUnderfullBelow_branch (c : Cfg) (h : Nat) (seps : List E) (cs : Lis
       if cs.any (isUnderfull c) then .branch (mergeUnderfull c h seps cs).1 (mergeUnderfull c h seps cs).2
       else .branch seps cs := rfl
 
-/-- `Node::remove_batch` (`node.rs:498-555`), after #3283: the repair is
+/-- `Node::remove_batch` (`node.rs:498-555`): the repair is
     the new `merge_underfull` (line 553). -/
 def removeBatch (c : Cfg) : Nat → Node → List E → Node
   | _, .leaf es, batch => .leaf (subtract es batch)                   -- lines 503-516
@@ -380,7 +379,7 @@ def removeBatchTree (c : Cfg) (h : Nat) (root : Node) (batch : List E) : Option 
 /-! ## The invariant a batch leaves behind -/
 
 /-- A node `remove_batch` may hand to its parent: well-formed, or an under-full branch with a single
-    child that is itself `Good` (the lone-child chain of Bug 3). A branch with two or more children has
+    child that is itself `Good` (the lone-child chain a batch can leave). A branch with two or more children has
     well-formed children. -/
 def Good (c : Cfg) : Nat → Node → Nat → Nat → Prop
   | 0, n, lo, hi => WFb c false 0 n lo hi
@@ -802,7 +801,7 @@ theorem isEmptyNode_eq {n : Node} (he : isEmptyNode n = true) : n = .leaf [] := 
   | leaf es => simp [isEmptyNode] at he; rw [he]
   | branch _ _ => simp [isEmptyNode] at he
 
-/-- **`Node::remove_batch` (`node.rs:498-555`) after #3283**: on a well-formed non-root subtree and a
+/-- **`Node::remove_batch` (`node.rs:498-555`)**: on a well-formed non-root subtree and a
     sorted batch at or above its lower bound, the result is `Good` (or a drained, empty leaf) and holds
     exactly the entries not in the batch. -/
 theorem removeBatch_good (c : Cfg) (hB4 : 4 ≤ c.B) : ∀ (h : Nat) (n : Node) (lo hi : Nat) (batch : List E),
@@ -909,7 +908,7 @@ theorem toList_leafAt0 (p : Node × Nat) : toList (leafAt0 p).2 (leafAt0 p).1 = 
   obtain ⟨n, h⟩ := p
   cases n <;> simp [leafAt0, toList]
 
-/-- **W7-btree-1 fixed (#3283): `CowBTree::remove_batch` (`mod.rs:286`) keeps the tree well-formed.**
+/-- **`CowBTree::remove_batch` (`mod.rs:286`) keeps the tree well-formed.**
     For `BRANCH_MAX >= 4`, on a well-formed tree and a batch sorted as the `assert!` demands, it does
     not panic, the result is `TreeWF`, and it holds exactly the entries not in the batch. -/
 theorem removeBatchTree_wf (c : Cfg) (hB4 : 4 ≤ c.B) (h : Nat) (t : Node) (batch : List E) (hw : TreeWF c h t)
@@ -950,7 +949,7 @@ theorem removeBatchTree_wf (c : Cfg) (hB4 : 4 ≤ c.B) (h : Nat) (t : Node) (bat
       | 0, .branch _ _, hw => simp [TreeWF, WFb] at hw
       | _ + 1, .leaf _, hw => simp [TreeWF, WFb] at hw
 
-/-- **Contents** (the pre-#3283 headline, re-proven on the current model): exactly `List.filter`, sorted. -/
+/-- **Contents** (re-proven on the current model): exactly `List.filter`, sorted. -/
 theorem removeBatchTree_spec (c : Cfg) (hB4 : 4 ≤ c.B) (h : Nat) (t : Node) (batch : List E) (hw : TreeWF c h t)
     (hb : SortedLe batch) :
     ∃ t' h', removeBatchTree c h t batch = some (t', h') ∧

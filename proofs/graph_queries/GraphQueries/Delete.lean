@@ -1,6 +1,6 @@
 import GraphQueries.Queries
 /-
-# Edge creation and deletion; the stale type-matrix width (CONFIRMED BUG, fixed by #3277)
+# Edge creation and deletion; the type-matrix width
 
 | here | there (graph.rs) |
 | --- | --- |
@@ -86,7 +86,7 @@ theorem deleteRels_clears (O : IdSpaceOps) (hC : IdSpaceContract O) (g : G V) (r
         simp [het]
 
 /-- When `relationship_type_matrix` is
-narrower than the type table — exactly what `get_type_id_mut` left behind before #3277 —
+narrower than the type table — the width `get_type_id_mut` once left behind (pre-#3277) —
 the bulk type-matrix removal is a no-op: a deleted edge keeps its type. -/
 theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
     (out : List (Nat × Nat × Nat × Nat))
@@ -100,7 +100,7 @@ theorem deleteRels_stale (O : IdSpaceOps) (g : G V) (rels : List Nat) (r : G V)
     · cases h
     · cases h; simp [Mat.removeMask, Ne.symm hw]
 
-/-- **`type_cleared_after_registration`** (#3277 fixed): registering a type through
+/-- **`type_cleared_after_registration`** registering a type through
 `get_type_id_mut` (constraint creation, a replica's schema record) no longer narrows
 `relationship_type_matrix`, so a later `DELETE` of an edge clears its type entry. -/
 theorem type_cleared_after_registration (O : IdSpaceOps) (hC : IdSpaceContract O) (chunk : Nat)
@@ -285,9 +285,9 @@ def createRelsBulk (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty
     adj := es.foldl (fun m y => m.set y.1 y.2.1) g4.adj
     relType := es.foldl (fun m y => m.set y.2.2 t) g4.relType }
 
-/-- The two shape refusals (new in #2846): `[0, 0]` no longer counts one
-relationship while building two tensor edges, and a short `srcs` no longer
-truncates the zip after every id was counted. -/
+/-- The two shape refusals `[0, 0]` is refused rather than counting one
+relationship while building two tensor edges, and a short `srcs` is refused rather than
+truncating the zip after every id was counted. -/
 theorem createRelsBulk_ragged (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V) (ty : String)
     (srcs dsts ids : List Nat) (h : srcs.length ≠ ids.length ∨ dsts.length ≠ ids.length) :
     createRelsBulk O chunk hc g ty srcs dsts ids = .error "graph: lengths" := by

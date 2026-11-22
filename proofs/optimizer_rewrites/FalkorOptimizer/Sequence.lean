@@ -5,7 +5,7 @@
 | --- | --- |
 | `passes`, `optimize` | `optimize` optimizer/mod.rs:125-168 (pass order; NestedPlans recursion) |
 | `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs:80-97 |
-| `guardHJ`, `T.anyD` | its `!reads_argument_rows(&child)` guard (:84) / `reads_argument_rows` :105-109 (#2981) |
+| `guardHJ`, `T.anyD` | its `!reads_argument_rows(&child)` guard (:84) / `reads_argument_rows` :105-109 |
 | `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs:389-466 |
 | `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs:58-83 |
 | `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs:90-181 |

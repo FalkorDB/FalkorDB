@@ -3,7 +3,7 @@
 
 Model of the "Case 2" inheritance in
 graph/src/planner/optimizer/push_filters_down.rs:207-249 as of 343e077f2
-(`inheritedPre3281`; #3281's walk, push_filters_down.rs:288-341, is `inherited`): from a Filter, walk the ancestors; at the first
+(`inheritedPre3281`; the current walk, push_filters_down.rs:288-341, is `inherited`): from a Filter, walk the ancestors; at the first
 `Apply` whose left child does not contain the Filter, every variable id of
 that left subtree (`collect_subtree_variables`, ids only, `HashSet<u32>`)
 is "inherited"; the walk stops at the first `Apply` (inheriting its left variables, or
@@ -20,7 +20,7 @@ output), not the Apply's left rows. The walk ignores both, so ids of the
 OUTER left branch are believed available at that `Argument`, while the
 runtime row there has the slot unbound (proofs/binder
 `FalkorBinder.Pr2845.body_own_unbound`, `pushed_read_unbound`). W6-opt-1.
-Folded in from the retired proofs/pr2845_review (#2845, eb470521b).
+Folded in from the retired proofs/pr2845_review.
 -/
 namespace Falkor.Opt.Pr2845
 

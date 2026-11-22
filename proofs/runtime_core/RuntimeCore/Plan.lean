@@ -144,17 +144,17 @@ theorem getVariables_sibling (ns ps : List Nat) (kids : List VT) (x : Nat) :
       ns ++ ps ++ [x] := by
   simp [getVariables, expand, nodeVars]
 
-/-- Before #3521 (`walk::<Bfs>` with `break` at the first `Project`, Aggregate walked
-through, every SemiApply branch walked): the walk over the BFS order. Kept as a note. -/
+/-- The pre-#3521 walk (`walk::<Bfs>` with `break` at the first `Project`, Aggregate walked
+through, every SemiApply branch walked) over the BFS order, kept as a historical counterexample. -/
 def pre3521_getVariables : List IRK → List Nat
   | [] => []
   | k :: ks => match k with
     | .project ns _ => ns
     | _ => nodeVars k ++ pre3521_getVariables ks
 
-/-- The old walk reported variables hidden below an `Aggregate` (and dropped the
+/-- The pre-#3521 walk reported variables hidden below an `Aggregate` (and dropped the
 sibling after a `Project`): `WITH count(*) AS c` over `MATCH (a)` still reported `a`'s
-id, which a later scope reuses (#2557). Fixed by #3521. -/
+id, which a later scope reuses. -/
 theorem pre3521_hidden_reported :
     pre3521_getVariables [.aggregate [0] [], .scan 0] = [0, 0] ∧
     getVariables [.node (.aggregate [1] []) [.node (.scan 0) []]] = [1] ∧
@@ -251,7 +251,7 @@ structure RtInit (P B : Type) where
 
 /-- `nested_plans` = the root's children after the first when the root is `NestedPlans`;
 the pending store opens its schema baseline only for a write query (`openWrite` =
-`set_schema_baseline`, runtime.rs:466). Since #2846 it opens no id boundaries: the
+`set_schema_baseline`, runtime.rs:466). It opens no id boundaries: the
 graph's write version carries its own id batch (`IdSpace::new_version`). -/
 def rtNew {P B : Type} (root : PT) (rootIsNested : Bool) (rootKids : List Nat) (write : Bool)
     (pendingNew : P) (openWrite : P → P) (now : Nat) (timeoutMs : Option Nat) : RtInit P B :=

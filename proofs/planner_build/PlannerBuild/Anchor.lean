@@ -1,6 +1,6 @@
 import PlannerBuild.Expr
 /-
-# Anchors of a var-length walk (#2558, PR #3593): the optimizer helpers `plan_match` reads
+# Anchors of a var-length walk (#2558): the optimizer helpers `plan_match` reads
 
 | here | there |
 | --- | --- |

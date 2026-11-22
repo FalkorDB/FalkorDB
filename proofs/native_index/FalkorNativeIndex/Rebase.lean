@@ -5,10 +5,9 @@ set_option linter.unusedVariables false
 /-!
 # Writers rebase onto indexer batches; a batch catches up on writers (#3567, b18530683)
 
-Before #3567 an indexer batch that found a writer had committed meanwhile was discarded
-(`Discarded::Writers`), and a writer whose fork was made before a batch committed published its own
-copy of the building index, without the batch's progress: `MvccGraph::is_stale` compares only the
-data version, which a batch does not move (`FINDINGS.md`, the 2026-11-03 gap). #3567 closes both:
+An indexer batch that finds a writer committed meanwhile is caught up rather than discarded, and a writer
+whose fork was made before a batch committed is rebased onto the batch's progress (`MvccGraph::is_stale`
+compares only the data version, which a batch does not move). Concretely:
 
 * the index keeps, while `Building`, the entities writers changed in it (`Written`: `since_last_indexer_step`,
   `by_this_version`, `versioned.rs:68-81`);
@@ -27,7 +26,7 @@ Both use one function, `IndexColumn::refresh` (`falkordb_index.rs:169`).
 | `G.ver` | the model `G` read as a `Ver` of one column |
 | `rawTuples` | the removes of `refresh` (`:178-199`): the attribute read from `from`, no label check |
 | `entityTuples` | `graph_writes::entity_tuples` (`graph_writes.rs:444`): the label or type is checked per id |
-| `placedBelow` | `placed_below` (before #3568; `refresh` now calls `placed_in(.., None, Some(next), ..)`: `placedIn_none_eq_placedBelow_*`) |
+| `placedBelow` | `placed_below` (`refresh` calls `placed_in(.., None, Some(next), ..)`: `placedIn_none_eq_placedBelow_*`) |
 | `placedIn`, `IndexColumn.indexerInsert`, `catchUpBy` | `placed_in` (`falkordb_index.rs:222`), `indexer_insert` (`:356`), `catch_up_by` (`versioned.rs:209`) (#3568) |
 | `IndexColumn.refresh` | `IndexColumn::refresh` (`:169`), `writer_rebase` (`:326`), `indexer_catch_up` (`:337`) |
 | `Written`, `BS`, `EN` | `Written`, `BuildState<BuildCursor>`, `IndexEntry<IndexColumn>` |
@@ -35,9 +34,9 @@ Both use one function, `IndexColumn::refresh` (`falkordb_index.rs:169`).
 | `overtaken`, `EN.rebase` | `Graph::overtaken` (`:514`), `rebase_index` (`:533`) |
 | `EN.catchUp` | `Graph::catch_up_index` (`:454`) |
 
-The old model (`BuildState.building next`, `SE`) is the *projection* of this one that forgets `written`:
-`EN.proj`. `writerRecord_proj`, `indexerApply_proj` and `publish_proj` show each new operation projects onto
-the old one, so every theorem of `Pending.lean`, `Build.lean` and `Batch.lean` still describes the new code.
+The per-index model (`BuildState.building next`, `SE`) is the *projection* of this one that forgets `written`:
+`EN.proj`. `writerRecord_proj`, `indexerApply_proj` and `publish_proj` show each operation projects onto
+the per-index one, so every theorem of `Pending.lean`, `Build.lean` and `Batch.lean` describes this code too.
 
 Theorems:
 * `refresh_mem`: what the refresh does to the column, exactly (the removed and the added tuples);
@@ -52,7 +51,7 @@ Theorems:
 * `catchUp_spec`, `catchUp_inv`: the same for a batch's copy over the writers' `since` set.
 * `writerRecord_records`: every id a change names is recorded, applied or not.
 * `V.rebased_keeps_data`: a rebase changes no data version (the fork stays current).
-* **The fix of the 2026-11-03 gap** (#3567; no history lemma kept, see FINDINGS): `rebased_commit_keeps_chain`,
+* **A rebased writer keeps the batch chain**: `rebased_commit_keeps_chain`,
   `rebased_batch_fits` (the published copy has the batches' count and the next batch fits).
 
 `Frame` is the one thing assumed: outside `W`, the two versions agree on what each entity contributes and on
@@ -820,7 +819,7 @@ theorem catchUpBy_saturating (written batch : Nat) (hb : batch < W) :
   have : (W : Nat) = 18446744073709551616 := rfl
   omega
 
-/-! ## Entries as the fit sees them: the gap before #3567 and its closure -/
+/-! ## Entries as the fit sees them -/
 
 /-- Whether `ours` was overtaken, as `SE`s: `overtaken` on the projection. -/
 def overtakenSE (ours theirs : SE) : Bool :=
@@ -892,7 +891,7 @@ def BuildCursor.fromId (e : EntityType) (id : Nat) (endpoints : Nat → Option (
   | .node => some (.node id)
   | .relationship => (endpoints id).map (fun p => .edge p.1 p.2)
 
-/-- It is the place the graph gives an entity (`G.place`, the `apply_index_writes` closure before #3567). -/
+/-- It is the place the graph gives an entity (`G.place`, the `apply_index_writes` closure). -/
 theorem fromId_spec (g : G) (e : EntityType) (id : Nat) : BuildCursor.fromId e id g.endpoints = g.place e id := by
   cases e <;> rfl
 

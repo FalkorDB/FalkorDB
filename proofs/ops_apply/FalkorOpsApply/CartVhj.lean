@@ -11,7 +11,7 @@ value_hash_join.rs).
 | `hashValue`, `keysMatch`, `keyAsI64` | `hash_value` (:118), `keys_match` (:137), `key_as_i64` (:153) |
 | `insertValue`, `promote` | `insert_value` (:176), `promote_int_table` (:196) |
 | `VhjSt.new`, `build`, `fillMatches`, `vhjRows` | `ValueHashJoinOp::new` (:237), `build_hash_table` (:266), `fill_matches` (:352), `next` (:398) |
-| `buildPO`, `fillMatchesPO`, `vhjRowsPO` | the per-origin tables (`per_origin`, #3035): one table per `origin_row`, probed with the left row's origin |
+| `buildPO`, `fillMatchesPO`, `vhjRowsPO` | the per-origin tables (`per_origin`): one table per `origin_row`, probed with the left row's origin |
 -/
 namespace CartVhj
 
@@ -423,7 +423,7 @@ theorem vhjRows_spec {L R O : Type} (cv : K → K → Ordering × Bool) (h : K �
     vhjRows cv h t rights merge ((l, none) :: rest) = vhjRows cv h t rights merge rest := by
   simp [vhjRows, hne]
 
-/-! ## Per-origin tables (#3035)
+/-! ## Per-origin tables
 
 `build_hash_table` (:266) keys each right row by `origin = if per_origin { origin_row } else { 0 }`
 and runs the integer-then-value build above on that origin's own pair of tables; an origin

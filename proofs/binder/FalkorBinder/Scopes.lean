@@ -133,7 +133,7 @@ theorem callBody_union_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen true ≠ s := by
   simp [callBodyScope, unionBranchStack]; omega
 
-/-! ## Label accumulation (binder.rs:1523-1535, 220-252; #3049 rollback :1723-1740) -/
+/-! ## Label accumulation (binder.rs:1523-1535, 220-252; rollback :1723-1740) -/
 
 inductive LClause
   | match_ (labels : List Name)        -- MATCH (n:L…)

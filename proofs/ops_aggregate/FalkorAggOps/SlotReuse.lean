@@ -200,7 +200,7 @@ theorem agree3375_one_key :
     slotAt (finishGroup finEv L.1 L.2 (upd env0 0 (.str 0)) (acc3375 (.int 6))) 2 =
       some (some (.int 6)) := by decide
 
-/-! ## #3150 (fixed by #3522): a null key shares its slot with an accumulator -/
+/-! ## A null key shares its slot with an accumulator -/
 
 /-- `RETURN null AS x, count(1) AS n`: the pre-projection scope is empty, so `count`'s
 accumulator is id 0 — the id of `x`. -/

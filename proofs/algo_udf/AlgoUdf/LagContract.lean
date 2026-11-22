@@ -1,13 +1,13 @@
 import AlgoUdf.Compact
-/-! # LAGraph's graph-validity outcome on the compact path (#3349) — gap closed 2026-10-20
+/-! # LAGraph's graph-validity outcome on the compact path — gap closed 2026-10-20
 
-`Compact.LagWcc` (and the `LAGr_PageRank` / `LAGr_Betweenness` assumptions) took LAGraph
+`Compact.LagWcc` (and the `LAGr_PageRank` / `LAGr_Betweenness` assumptions) take LAGraph
 to succeed on every square matrix. It does not: `LAGraph_CheckGraph` rejects a matrix
 held by column with `LAGRAPH_INVALID_GRAPH` (-1000), and GraphBLAS holds every
 `n`-by-1 matrix by column — including the 1-by-1 one the compact builders make for a
 one-node projection. This file adds that outcome to the axiomatised contract.
 
-#3572 fixes it: the compact matrix and the cached transpose are pinned by row
+The compact matrix and the cached transpose are pinned by row
 (`pin_row_major`), so every non-empty projection passes the check (`projection_total`).
 
 | here | there |
@@ -19,7 +19,7 @@ one-node projection. This file adds that outcome to the axiomatised contract.
 | `newCompactBoolMatrix`, `compactBuild` | `new_compact_bool_matrix` `:596` (`GrB_Matrix_new(&m, GrB_BOOL, n, n)` `:600`, then `pin_row_major`), called by `build_compact_adj_from_tensors` `:624` (`:680`) / `..._symmetric_...` `:689` (`:749`), `n` = projection size |
 | `cachedAT`, `cacheTranspose`, `usesAT` | `LAGraph_Cached_AT` (transpose made by `GrB_Matrix_new(ncols, nrows)`); `cache_transpose` `:608` pins `G->AT` by row; called by `algo_pagerank` `:838`, `algo_betweenness` `:1069` (and `algo_maxflow` `:3326`, not on the compact path); `algo_wcc` caches no `AT` |
 | `projectedRun` | `algo_wcc` `:896` (check `:959`), `algo_pagerank` `:777` (check `:856`), `algo_betweenness` `:997` (check `:1111`): `if info != 0 { return Err(format!("… failed: {info}")) }` |
-| `compactBuildPre3572`, `projectedRunPre3572` | the same before #3572: `GrB_Matrix_new` unpinned (1×1 by column) and `LAGraph_Cached_AT` unpinned |
+| `compactBuildPre3572`, `projectedRunPre3572` | the same without the pinning (the pre-#3572 behaviour, kept as a historical counterexample): `GrB_Matrix_new` unpinned (1×1 by column) and `LAGraph_Cached_AT` unpinned |
 
 AXIOMATISED (as definitions, no Lean `axiom`): the two FFI functions above. When the
 check passes, the algorithm returns one entry per compact index (the existing `LagWcc`
@@ -130,7 +130,7 @@ theorem one_node_projection_ok :
     projectedRun .betweenness [0] = .ok 1 :=
   ⟨rfl, rfl, rfl⟩
 
-/-! ### Before #3572 (history): no `pin_row_major` -/
+/-! ### History: no `pin_row_major` (the pre-#3572 behaviour) -/
 
 /-- `GrB_Matrix_new(&compact, GrB_BOOL, n, n)`, unpinned. -/
 def compactBuildPre3572 (n : Nat) : Nat × Nat × Orient := (n, n, newOrient n n)

@@ -66,7 +66,7 @@ def restoreIndex (edges : List (Nat × Nat × Nat)) : Ix :=
     (edges.map fun x => Op.set x.1 x.2.1 x.2.2)
 
 /-- **The starts are ordered and inside `len`**: no tier size `s2 - s1`, `s3 - s2`, `len - s3` underflows
-and the four tiers sum to `len`; `prepare_tiers`' own clamp (#2905) is then a no-op. -/
+and the four tiers sum to `len`; `prepare_tiers`' own clamp is then a no-op. -/
 theorem restoreStarts_ordered (edges : List (Nat × Nat × Nat)) :
     (restoreStarts edges).1 ≤ (restoreStarts edges).2.1 ∧
     (restoreStarts edges).2.1 ≤ (restoreStarts edges).2.2 ∧

@@ -59,13 +59,10 @@ theorem me_dim_wide_constructs : matrixNewOk ME_DIM ME_DIM = true := by
   simp only [matrixNewOk, ME_DIM, GrB_INDEX_MAX, GB_NMAX]
   decide
 
-/-! ### Node-id boundary / bug #2892 (HISTORICAL; fixed by #2911)
+/-! ### Node-id boundary
 
-Before #2911 the id-space create path (`IdSpace::record_created`, no longer a
-symbol) refused only `u64::MAX`, so an id in `(GrB_INDEX_MAX, u64::MAX)` reached
-`mark_nodes_live`, which resizes a matrix to `id + 1`. If `id + 1 > GB_NMAX` the
-resize returns `GrB_INVALID_VALUE`, which the pre-fix code asserted on and
-panicked. On main `IdSpace::create` (id_space.rs, fn `create`) refuses every id
+A node id in `(GrB_INDEX_MAX, u64::MAX)` would make a matrix resize to `id + 1`, and if
+`id + 1 > GB_NMAX` the resize returns `GrB_INVALID_VALUE`. `IdSpace::create` (id_space.rs, fn `create`) refuses every id
 `>= ID_LIMIT` (`= GrB_INDEX_MAX`) with `IdOutOfRange` before any matrix is
 sized; `Matrix::resize` itself only `debug_assert`s the status. The theorems
 below are the arithmetic of the boundary, not a model of any current Rust

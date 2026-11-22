@@ -2,7 +2,7 @@
 # Scope tables and id minting
 
 `Binder.env_stack : Vec<Scope>` (binder.rs:141), a `Scope` being the named variables by name and,
-since #3303, the unnamed pattern entities in a list of their own (`Scope`, binder.rs:42-132). A
+the unnamed pattern entities in a list of their own (`Scope`, binder.rs:42-132). A
 variable's id is minted as the *current size* of its scope's table
 (`fresh_var`, binder.rs:2493-2507; the parent copy in `resolve_name`,
 binder.rs:2435), and the planner mints its own ids the same way, as

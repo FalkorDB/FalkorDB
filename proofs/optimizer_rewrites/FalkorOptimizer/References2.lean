@@ -5,11 +5,11 @@
 | --- | --- |
 | `Plan`, `Frame`, `Ctx`, `plug` | an `orx_tree` node addressed by a zipper: parents with their other children |
 | `ancestorsRead`      | the `while let Some(parent)` walk of `reduce_expand_into` (`reduce_expand_into.rs:36-45`), `reduce_bound_edge` (`reduce_bound_edge.rs:45-54`), `reduce_var_len_path` (`reduce_var_len_path.rs:39-48`) |
-| `wholeRead`          | `intermediate_unreferenced` (`fuse_anonymous_traverse.rs:70-79`, since #2390: BFS of the *whole* plan) |
+| `wholeRead`          | `intermediate_unreferenced` (`fuse_anonymous_traverse.rs:70-79`: BFS of the *whole* plan) |
 | `readOutside`        | `variable_read_outside` of PR #2918 (parents *and* their other subtrees; not merged) |
 
 Theorems: `anyRead_iff`, `readOutside_iff` (the PR's walk is exactly "some operator outside the
-subtree reads v"), `anyRead_plug` (whole plan = subtree ∪ outside), `wholeRead_covers` (#2390's
+subtree reads v"), `anyRead_plug` (whole plan = subtree ∪ outside), `wholeRead_covers` (the
 fusion check sees every reader anywhere, hence `fuse_unread_sound` with `refsNew_complete`),
 `ancestors_le_outside`; still open: `main_misses_call_sibling` (#2896's sibling case: the three
 `reduce_*` passes still walk ancestors only — live `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w }

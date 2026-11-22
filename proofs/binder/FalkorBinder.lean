@@ -5,9 +5,9 @@ A model of `graph/src/planner/binder.rs` (and the id-minting side of
 `graph/src/planner/mod.rs`) and a machine-checked account of its scoping.
 `lake build` succeeds; no `sorry`, `admit` or `axiom`; every theorem depends at
 most on `propext`, `Quot.sound`, `Classical.choice`. 238 theorems. Rust source: origin/main `256ab4d3f`
-(re-targeted across #3335: `(x)` binds to `x`'s tree — `bind_paren` — and AND/OR bind flat via
-`and_of`/`or_of`; #3303: unnamed entities live in the scope's own list and `lookup_anon` finds them;
-#3270: a subscript may be a predicate; #3641: a UNION CALL body skips the outer label pass).
+(`(x)` binds to `x`'s tree — `bind_paren` — and AND/OR bind flat via
+`and_of`/`or_of`; unnamed entities live in the scope's own list and `lookup_anon` finds them;
+a subscript may be a predicate; a UNION CALL body skips the outer label pass).
 
 ## The one invariant that matters
 
@@ -83,70 +83,41 @@ Rust source: origin/main `256ab4d3f`; every line below is read off that tree.
 * `agree_on_outer_refs`: nodes-first binding and textual binding accept the same patterns when property maps only mention earlier-clause variables.
 * `mergeSV_ge`, `mergeSV_covers`: merged scope tables are pointwise at least as long as each input.
 * `foreachRestore_covers`: FOREACH restore keeps every inner id reserved.
-* `callBody_query_disjoint`, `callBody_union_disjoint`: a CALL body's scopes, plain or UNION branch, are disjoint from the live outer scopes (UNION since #3027, d42d121c6).
+* `callBody_query_disjoint`, `callBody_union_disjoint`: a CALL body's scopes, plain or UNION branch, are disjoint from the live outer scopes.
 * `unionCheck_ok_iff`, `validateImport_ok`: UNION column rule and CALL import rule as stated.
 * Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `where_copy_id_reused`,
   `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`,
   `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
-  `pre3049_labels_leak` (fixed by #3049: `labels_leak_fixed`), `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
+  `pre3049_labels_leak` (historical counterexample; `labels_leak_fixed`), `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
 
 * Wave 5 (all binder.rs fns PROVEN): `sortedScopeVars_spec`, `push_toSt`, `updNode_union`/`_idem`;
   `bindNode_covers` (pattern-free expressions keep the table covering), `loop_var_shadows`,
   `bind_iterable_outer`; per-arm `bindIR` theorems (`shortestOk_iff`, `mergeOk_*`, `yieldLoop_ok`,
   `callSubquery_covers`, `importProjections_covers`, `createCheck_*`); `mayBool_sound_except`, `mayEntity_eq`;
   `nodeToValue_sound`/`_complete`, `foldCall_sound`, `rewriteStruct_shape`, `rewriteRegex_spec`;
-  `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`; #3254 `exprIrEq_exact_any_kind`,
-  `const_kinds_distinguished`, `order_by_float_rejected`/`_equal` (bug 9 fixed).
+  `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`; `exprIrEq_exact_any_kind`,
+  `const_kinds_distinguished`, `order_by_float_rejected`/`_equal`.
 * #2845 CALL entry projection (`CallBoundary`, folded in from the retired pr2845_review):
   `Pr2845.bodyNew_entry`, `importProj_spec`, `entry_ids_below`, `body_own_unbound`,
-  `body_import_value`, `union_branch_label_fixed` (#3027), `pushed_read_unbound` (W6-opt-1).
+  `body_import_value`, `union_branch_label_fixed`, `pushed_read_unbound` (W6-opt-1).
 
 ## Confirmed bugs (live Rust vs C repros; the former `graph/tests/lean_binder` test file no longer exists)
-1. **Clause fold** (general cause of #2923): `parse_pattern`'s part separator (parser/cypher.rs `parse_pattern`) folds
-   `MATCH p MATCH q` (and `CREATE`, and `OPTIONAL MATCH p MATCH q`) into one pattern; cypher.rs:2117 parses a
-   WHERE pattern predicate with the same loop, so it swallows a following MATCH. Combined with `bind_graph`
-   binding nodes before relationships (binder.rs:1523 vs 1535; since #2981 named relationships are defined first, `defRels`): `bug_node_attrs_cannot_see_rel_of_previous_match`
-   (#2923; live: `MATCH (a)-[r:R]->(x) MATCH (c:B {v: id(r)*0+r.w})` → Rust "'r' not defined", C 2 rows),
-   `bug_consecutive_create_cannot_see_previous_create` (Rust "'a' not defined", C 1),
-   `bug_pattern_predicate_swallows_next_match` (count 1 vs C 2), `bug_relationship_uniqueness_across_match_clauses`
-   (0 vs 1), `bug_optional_match_swallows_following_match` (row [null] vs spec none; C rejects).
-   Also single-MATCH `(a)-[r]->(b {v: r.w-2})` rejected (C accepts).
-2. **Inline attrs of one component referencing another** are filtered on that component's own scan under the
-   Cartesian product (planner/mod.rs `lower_inline_attrs` :598, applied at :1919, a Filter over the scan since #2390):
-   `bug_inline_attr_referencing_other_component` ([] vs C 2 rows) — #2923's node case. Still present on
-   8743953a8 (live: `MATCH (a:A), (b:B {v: a.v}) RETURN a.v, b.v` → Rust [], C [[1,1],[2,2]]). #2923's
-   relationship repro is the clause fold (item 1), not this scan filter.
 3. **Removed-key id reuse** (binder.rs:1402-1410 WHERE/SKIP/LIMIT copies removed; :2087-2120 / :2273-2297 comprehension/pattern locals; **not reproduced live on 2026-11-22**: `MATCH (n:A) WITH n.v AS k WHERE n.v = 0 MATCH (x)-[]->(y) RETURN k, id(x), id(y)` gives C's `[0,0,1]` — the Lean collision is real at the binder level, the wrong-answer link is unconfirmed):
    `bug_with_where_copy_id_reused_by_next_match` ([] vs [[0,1,0]]), `..._by_pattern_comprehension`,
    `bug_pattern_comprehension_locals_reused` (4 rows vs 3), `bug_where_comprehension_locals_reused`
    (runtime error "Invalid node id for 'to' in relationship pattern").
-4. ~~CALL { UNION } branches start at scope 0~~ **Fixed by #3027** (d42d121c6): each branch's `Binder` now starts with
-   `env_stack: vec![HashMap::new(); outer + 1]` (binder.rs:1051), so its scopes are above the outer ones; since #3641 the outer binder also skips its label pass over a UNION body (`union_body_never_relabelled`)
-   (`callBody_union_disjoint`, `union_branch_label_fixed`); the test `bug_call_union_branch_scopes_alias_outer`
-   passes. Kept as a number so the other items keep theirs.
 5. **ORDER BY copies cross the projection** (the `env_keys_before_filter` snapshot, binder.rs:1385-1410, is after ORDER BY; live 2026-11-22: `MATCH (n:N) WITH n.v AS k ORDER BY n.v RETURN *` → Rust columns `k, n`, C `k`): `bug_order_by_variable_crosses_with`
    (`WITH n.v AS k ORDER BY n.v RETURN n` accepted, `RETURN *` returns `k, n`), `bug_order_by_variable_returned_from_call`
    ("Variable `n` already declared in outer scope"; C returns rows).
-6. ~~Label accumulation leaks~~ **Fixed by #3049** (375532b01): `with_node_labels_rolled_back` (binder.rs:1724) restores `node_labels` after a CREATE (keeping the labels of nodes the CREATE declares) and a pattern comprehension (`pre3049_labels_leak` → `labels_leak_fixed`, `accumulate_bound_match_only`, `create_new_keeps_labels`). Kept as a number so the other items keep theirs.
 7. **Pattern predicate in WITH … WHERE rebinds a parent name** (`define_name_in_scope` :2347 ignores the parent copy that
    pattern comprehensions pre-make at :2068-2085; live 2026-11-22: `CREATE (:A {v:1})-[:R]->(:B), (:C {v:2})`, `MATCH (n) WITH n.v AS k WHERE (n)-->() RETURN k` → Rust `1, 2`, C `1`): `bug_with_where_pattern_predicate_ignores_outer_variable` (3 rows vs 1).
 
 8. **Null-capable unary forms are never accepted as a boolean** (`expr_may_return_boolean` binder.rs:2556 lists
-   `Negate`, `Length`, `ListComprehension`, `MapProjection` as non-boolean, though they can be null). The subscript half
-   (`GetElement`) was **fixed by #3270** (3643a301c): `getElement_accepted`, `pre3270_getElement_rejected`; live Rust now
-   returns `1` / `true` for `MATCH (n:N) WHERE n.flags[0] RETURN count(n)` and `WITH [true] AS l RETURN true AND l[0]`, as C does.
-   Still open (live, Rust vs C, 2026-11-22): `RETURN true AND -null` → Rust `Type mismatch: expected Boolean`, C `null`.
+   `Negate`, `Length`, `ListComprehension`, `MapProjection` as non-boolean, though they can be null). (`GetElement` is accepted: `getElement_accepted`,
+   `pre3270_getElement_rejected` is the earlier behaviour.)
+   Live, Rust vs C, 2026-11-22: `RETURN true AND -null` → Rust `Type mismatch: expected Boolean`, C `null`.
    Lean `negate_rejected` (`mayBool_sound_except`: sound for every other variant). Fix: move the null-capable
    unary/list forms to the "runtime-typed → true" arm.
-9. **ORDER BY aggregate matched to the wrong projection** (FIXED by #3254: constants compared by value,
-   quantifier kinds compared; Lean `const_kinds_distinguished`, `order_by_float_rejected`; history below; `expr_ir_eq` binder.rs:2683 falls back to
-   `discriminant` equality, so every two `Constant`s of different kinds — Int vs Float, Null vs Int,
-   Bool vs Int, String vs Int — and any two quantifiers compare equal): `CREATE (:N {g:1, v:3}), (:N {g:2, v:4})`,
-   `MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m ORDER BY max(n.v % 4.0)` → Rust rows `[1,0],[2,1]`
-   (sorted by `m`; reconfirmed live 2026-11-22), C `failed to map aggregation expression within ORDER BY clause, please use alias`
-   (openCypher order by `max(v % 4.0)` would be `[2,1],[1,0]`); with `% 4` (Int) Rust also rejects.
-   Lean `pre3254_order_by_wrong_aggregate`, `pre3254_const_kinds_conflated`. Fix: compare `Constant` values with
-   type-aware equality (`Value` equality, not discriminant) and compare quantifier kinds.
 
 ## Spec vs C disagreements (not Rust-vs-C bugs)
 * `RETURN false AND (1+2)` / `WITH 2 AS x RETURN false AND x` / `false AND size([1])` → Rust `false`
@@ -163,20 +134,14 @@ Rust source: origin/main `256ab4d3f`; every line below is read off that tree.
 * Both accept what openCypher rejects: `WITH 1 AS a MATCH (a)` (`ensureType_accepts_any_binding`); `WITH n.v AS k WHERE n.v > 0`.
 * Rust over-accepts vs C: `RETURN n.v+1 AS k, count(*) ORDER BY n.v` (`agg_orderBy_by_name`); `(a)-[r {w: b.v}]->(b)` (`rel_attr_forward_node`).
 
-## PRs touching binder.rs (#2981, #3049 merged; #3016, #3062, #3011 not in `256ab4d3f`)
-* #2981 (merged, modelled): `bind_graph` defines named relationships before nodes' inline maps are bound (`defRels`)
-  — `node_attr_on_rel_rust_accepts`, `node_attr_on_own_rel_accepts`, `q2923_fixed` replace
-  `node_attr_on_rel_rust_rejects` / bug 2; a MATCH reusing an earlier MATCH's relationship variable is rejected
-  (`match_rel_reused`, `pruneMatchRels_spec`).
+## PRs touching binder.rs (#3016, #3062, #3011 not in `256ab4d3f`)
 * #3016: keeps hidden scope variables' ids reserved and hides ORDER BY copies — fixes `erase_breaks_covers`,
   `where_copy_id_reused`, `orderBy_leaks` (bugs 3, 5).
-* #3049 (merged, modelled: `accumulateFrom`): CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes bug 6 (`pre3049_labels_leak` → `labels_leak_fixed`, `accumulate_bound_match_only`).
 * #3062: pattern predicates in WITH … WHERE resolve pre-projection names — fixes `defineName_ignores_parent` (bug 7).
 * #3011: generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY
   expressions repeating a projection read its alias), guarded by `is_alias_rewritable`, which admits
-  `Constant(Bool|Int|Float|String)` — exactly the kinds `expr_ir_eq` conflates with each other
-  (`pre3254_const_kinds_conflated`; fixed by #3254). Before #3254, bug 9 would extend to plain expressions, e.g.
-  `RETURN n.v % 3 AS k ORDER BY n.v % 4.0` (sorted by `k`). Fix bug 9 first (or compare constants by value).
+  `Constant(Bool|Int|Float|String)`; `expr_ir_eq` compares constants by value and kind
+  (`const_kinds_distinguished`).
 
 ## Gaps
 Expressions are abstracted to the names they mention (BindExpr's `NE` keeps the variants the binder treats

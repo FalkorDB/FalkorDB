@@ -1,16 +1,14 @@
 import RedisLayer.SerialSchema
 /-!
-# C's index-field layout (#3484, fixed by #3514 `a0ba12950`)
+# C's index-field layout
 
 `decField_encField` proves `decode ∘ encode = id` against **Rust's** encoder, which writes
 one field entry per index type, so its type word always has exactly one type. C writes
 one entry per *attribute* with every type in the bitmask (`IndexField_Init`,
 `_RdbSaveIndexField` in C's `src/serializers/encoder/v20/encode_schema.c`; the loader
-accepts any non-empty subset, `decode_graph_schema.c:127`). Before #3514 the decoder
-kept one type: an attribute with a RANGE and a FULLTEXT (or VECTOR) index
-lost its RANGE index when a C-written RDB loads (#3484, confirmed live: v4.22.2 → 6.0.3 and C
-master → Rust main). **Main now satisfies the property**: `SerialSchema.decField` is the merged
-`decode_index_field` (`src/serializers/mod.rs:637-724`), and the three theorems below hold on it.
+accepts any non-empty subset, `decode_graph_schema.c:127`). `SerialSchema.decField` is
+`decode_index_field` (`src/serializers/mod.rs:637-724`) and decodes every type in the word;
+the three theorems below hold on it.
 
 * `encFieldC` — C's entry for an attribute with the types `r`, `ft`, `v`.
 * `decField_encFieldC` — **main**: every C entry with at least one type decodes to exactly its
@@ -18,9 +16,7 @@ master → Rust main). **Main now satisfies the property**: `SerialSchema.decFie
 * `decField_empty_refused` — a word with no type is refused, as C's `_RdbLoadIndex` does
   (an unknown bit too: `decField_unknown_bit_refused`).
 * `decField_encField` (in `SerialSchema`) — Rust's own single-type entries still decode as before.
-* History (the pre-#3514 decoder and its counterexamples, removed in bbee75955; the last revision that has them is 17ccc5412): C's `"no"` came back
-  as a code, which `phonetic_enabled` read as ON; Rust wrote an empty string for off, and C enables
-  phonetic for any other string than `"no"`; the fix is `encPh_c_on_iff`.
+* `encPh_c_on_iff` — C enables phonetic for any string other than `"no"`, so off is written `"no"`.
 -/
 namespace RedisLayer.Serial
 open RedisLayer.BufferedIO (W Bytes)
@@ -54,9 +50,9 @@ def cFields (r ft v : Bool) (w ns : Nat) (ph : Bytes) (vw : VWords) : List Fld :
   ++ (if v then [⟨.vector, none, none, none,
         some ⟨vw.dim, some vw.m, some vw.efc, some vw.efr, some (simName vw.sc)⟩⟩] else [])
 
-/-! ## History: the pre-#3514 decoder keeps one type -/
+/-! ## History: a decoder that keeps one type -/
 
-/-! ## Main: the merged decoder (`SerialSchema.decField`, FalkorDB#3514) -/
+/-! ## Main: the decoder (`SerialSchema.decField`) -/
 
 /-- **Fixed on main**: every C entry with at least one type decodes to exactly its types. -/
 theorem decField_encFieldC (attr ph : Bytes) (ha : U.valid attr) (hp : U.valid ph)

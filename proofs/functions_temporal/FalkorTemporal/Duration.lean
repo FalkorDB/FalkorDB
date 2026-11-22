@@ -5,15 +5,15 @@ import FalkorTemporal.CalendarLaws
 | here | there |
 | --- | --- |
 | `chk`, `chkMul`, `chkAdd` | `i64::checked_*` |
-| `constructDuration`       | `construct_duration_secs` — `temporal.rs:487` (ends in `check_date_range`, #2746) |
+| `constructDuration`       | `construct_duration_secs` — `temporal.rs:487` (ends in `check_date_range`) |
 | `decomposeDuration`       | `decompose_duration` — `temporal.rs:549` (`y - 1970` is i32: `toI32`) |
-| `shiftMonths`             | `shift_months` — `value.rs:725`, arithmetic only (shared by `+` and `-` since #2984) |
+| `shiftMonths`             | `shift_months` — `value.rs:725`, arithmetic only (shared by `+` and `-`) |
 | `addDur` / `addDurRaw`    | `add_duration_to_timestamp` — `value.rs:701` (checked / the unchecked arithmetic inside it) |
 | `subDur` / `subDurRaw`    | `sub_duration_from_timestamp` — `value.rs:711` |
-| `shiftMonthsR`            | `shift_months` — `value.rs:725`, with its `MAX_DATE_YEAR` guard (#2746) |
+| `shiftMonthsR`            | `shift_months` — `value.rs:725`, with its `MAX_DATE_YEAR` guard |
 | `checkDateRange`          | `check_date_range` — `temporal.rs:541` |
 | (not modelled)            | `Add for Value`, `(Duration, Duration)` arm — `value.rs:1048` (`add_slow`): only the `construct_decompose` round-trip it rests on is proved |
-| `timeAddDur` / `timeSubDur` | `Add`/`Sub for Value`, `(Time, Duration)` arms — `add_slow` `value.rs:1069-1070`, `Sub` `:1111-1112` (since #2985) |
+| `timeAddDur` / `timeSubDur` | `Add`/`Sub for Value`, `(Time, Duration)` arms — `add_slow` `value.rs:1069-1070`, `Sub` `:1111-1112` |
 
 Every Temporal value is one `i64` of seconds; a Duration is "the instant
 1970-01-01 + years/months + days/seconds", so its *components* are recovered by
@@ -33,7 +33,7 @@ theorem chk32_of (x : Int) (h : I32 x) : chk32 x = some x := by
   unfold chk32; unfold I32 at h
   rw [decide_eq_true h.1, decide_eq_true h.2]; rfl
 
-/-! ### `MAX_DATE_YEAR`, `check_date_range` (#2746) -/
+/-! ### `MAX_DATE_YEAR`, `check_date_range` -/
 
 def MAX_DATE_YEAR : Int := 2147481647
 def minDateDays : Int := daysFromCivil (-MAX_DATE_YEAR) 1 1
@@ -257,7 +257,7 @@ theorem subDur_eq_shift (ts dur : Int) :
   rw [e]
   unfold shiftMonths; simp only
 
-/-! ## Range checks (#2746, #3575): `check_date_range`, the `shift_months` guard
+/-! ## Range checks: `check_date_range`, the `shift_months` guard
 
 `MAX_DATE_YEAR = i32::MAX - 2000` (`temporal.rs:523`). `MIN_DATE_DAYS`/`MAX_DATE_DAYS` are
 `days_from_civil(∓MAX_DATE_YEAR, 1 / 12, 1 / 31)` (`temporal.rs:528-529`). -/
@@ -458,7 +458,7 @@ theorem neg_days_encoding :
     addDurRaw (dateTs 2020 3 1) ((constructDuration 0 0 0 (-1) 0 0 0).getD 0) = dateTs 2020 3 2 := by
   decide +kernel
 
-/-! ## `Time ± Duration` (since #2985, `add_slow` `value.rs:1069-1070`, `Sub` `:1111-1112`)
+/-! ## `Time ± Duration` (`add_slow` `value.rs:1069-1070`, `Sub` `:1111-1112`)
 
 `(t.rem_euclid(86400) ± dur.rem_euclid(86400)).rem_euclid(86400)`. Lean's `%` on `Int`
 with a positive divisor is `rem_euclid`. Both sides lie in `[0, 86400)` and their sum or

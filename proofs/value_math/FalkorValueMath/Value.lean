@@ -150,7 +150,7 @@ def div (o : FOps F) : V F → V F → Except String (V F)
   | _, .null => .ok .null
   | .int a, .int b =>
     if b = 0 then .error "Division by zero"
-    else if a = I64MIN ∧ b = -1 then .error "ArgumentError: integer overflow in division"  -- #3603 checked_div
+    else if a = I64MIN ∧ b = -1 then .error "ArgumentError: integer overflow in division"  -- checked_div
     else .ok (.int (wDiv a b))
   | .float a, .float b => .ok (.float (o.div a b))
   | .float a, .int b => .ok (.float (o.div a (o.ofInt b)))

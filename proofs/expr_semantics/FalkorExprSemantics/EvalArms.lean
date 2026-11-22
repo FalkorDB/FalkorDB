@@ -35,7 +35,7 @@ theorem andOr_error_first (sc n : Bool) (bad : E V) (e : String) (hbad : evalNod
     (rest : List (E V)) : andOrLoop O ev c env sc n (bad :: rest) = .error e := by
   simp [andOrLoop, hbad, bind, Except.bind]
 
-/-- A non-boolean, non-null operand is a type error naming its type (#3294). -/
+/-- A non-boolean, non-null operand is a type error naming its type. -/
 theorem andOr_mismatch (sc n : Bool) (a : V) (ha : O.boolOf a = none) (rest : List (E V)) :
     andOrLoop O ev c env sc n (.const a :: rest) = .error (boolMismatchMsg O a) := by
   simp [andOrLoop, evalNode, ha, bind, Except.bind]

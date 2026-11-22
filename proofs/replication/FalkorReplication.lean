@@ -36,10 +36,10 @@ no clock and no plan choice for the two sides to disagree about.
 | --- | --- |
 | `intern`                 | `Graph::get_label_id_mut`, `get_type_id_mut` (`graph/src/graph/graph.rs`) — append-only, id = index |
 | `internCap`              | `add_node_attribute_name` + `AttrNameMap::insert` (`attribute_store.rs`), refusing a new name at 65,535 (`MAX_ATTRIBUTES`); `applyRec` refuses the buffer (`AttributeLimitReached`, `apply.rs:195`): `applyRec_addAttribute_full_refused` |
-| `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1709`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:359`, #2846) — `absIds`, `createOne_refines` |
+| `GState.bound`           | `Graph::node_id_bound` (`graph.rs:1709`) = `IdSpace::bound` = `live + recycled.len()` (`id_space.rs:359`) — `absIds`, `createOne_refines` |
 | `GState.free`            | the recycle bin (a `RoaringTreemap`, hence a set — modelled as a predicate) |
 | `createOne` / `deleteOne`| `Graph::create_nodes` / `delete_nodes`, one node at a time |
-| `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs:516`) — recycled first, then fresh (since #3164 minus the ids an earlier batch of the same version freed: `quarantined`, empty on the first batch of a version, which is the batch this model reserves on) |
+| `idsOf`                  | `IdSpace::reserve` (`graph/src/graph/id_space.rs:516`) — recycled first, then fresh (minus the ids an earlier batch of the same version freed: `quarantined`, empty on the first batch of a version, which is the batch this model reserves on) |
 | `Pending`                | `runtime::pending::Pending` |
 | `commit`                 | `Pending::commit` (`runtime/pending.rs:1367`), driven by `CommitOp::next` (`runtime/ops/commit.rs:69`) |
 | `emit`                   | `EffectsFormat::build` → `for_each_record` (`graph/src/effects/v3/emit.rs`) |
@@ -53,7 +53,7 @@ no clock and no plan choice for the two sides to disagree about.
 | `okDelete`               | the refusals of `IdSpace::release` (`:739`): `refuse_not_live` (`:715`) = `refuse_recycled`, `refuse_undeletable` |
 | `createOne` / `deleteOne` id-space half | `IdSpace::create` / `IdSpace::release` on one id: `createOne_refines`, `deleteOne_refines` (`Faithful.Ids`) |
 | `addLabel`'s id check    | `apply_add_schema` / `verify_id` — the replica re-derives the id and compares |
-| `Batch.verify`           | `IdSpace::verify` (`:773`) via `Graph::validate` — `taken ∩ [entry, ∞) == [entry_bound, entry_bound + created)`; since #2846 the batch lives on the graph, opened by `Graph::new_version` at `bound` (= `{ entry := σ.bound, created := [] }`) |
+| `Batch.verify`           | `IdSpace::verify` (`:773`) via `Graph::validate` — `taken ∩ [entry, ∞) == [entry_bound, entry_bound + created)`; the batch lives on the graph, opened by `Graph::new_version` at `bound` (= `{ entry := σ.bound, created := [] }`) |
 | `PendingWF.disjoint`     | why `digest_cancelled` exists: a node created and deleted in one segment is unwound out of `Pending` and travels as its own create/delete pair |
 | `Replica.resync`         | `divergence_guard::on_failure` → `REPLICAOF NO ONE` + `REPLICAOF <master>` |
 | `Replica.halted`         | the same guard under `LOADING` → `std::process::exit(1)` |
@@ -116,7 +116,7 @@ Lean's three standard axioms.
    the index and constraint DDL, and `digest_cancelled`'s create/delete pair are
    not modelled; `PendingWF.disjoint` assumes the last of those rather than
    deriving it.
-   #3022 (`18fc277b9`) added liveness checks to the apply arms: on the arms
+   The apply arms run liveness checks: on the arms
    modelled here they change nothing — `DELETE_NODE`'s `require_live` is the
    same `refuse_not_live` that `release` (= `okDelete`) already ran, and its
    `NodeHasRelationships` refusal is vacuous in an edge-free graph — so every
@@ -125,16 +125,16 @@ Lean's three standard axioms.
 3. **Transport.** `stepsNode` folds the payloads in order; Redis replication
    supplies that ordering, and `GRAPH.EFFECT` supplies the atomicity by rolling
    the graph back on any error.
-4. **The master's own batch check.** Since #2846 the master verifies its id
+4. **The master's own batch check.** The master verifies its id
    space too (`Pending::end_segment` → `Graph::roll_id_batches`, and
    `MvccGraph::commit` → `Graph::validate`); `commit` here is total. That the
    master's check never refuses a well-formed write is not proven here (the
    replica-side analogue is the `Batch.verify` half of `emit_apply`; the
    id-space half is `proofs/id_space` `roll_inv`/`lifecycle_fresh`).
-   `PendingWF.inLimit` (new with #2911, `fe619ac5f`): every id the master committed is below
+   `PendingWF.inLimit`: every id the master committed is below
    `ID_LIMIT`, because the master's `IdSpace::create` refuses the rest (`proofs/id_space`
-   `create_out_of_range`); the replica's `okCreate` now checks the same bound, so a
-   `GRAPH.EFFECT` naming 2^61 is refused instead of sizing a matrix to it (#2892).
+   `create_out_of_range`); the replica's `okCreate` checks the same bound, so a
+   `GRAPH.EFFECT` naming 2^61 is refused instead of sizing a matrix to it.
 5. **Every modifying write produces a payload.** `commit_and_replicate` logs a
    warning and returns when `wq.modified` is set but `effects_buffer` is `None`;
    the `build_effects` gate is `REPLICATION_CONSUMERS || AOF`, evaluated when the
@@ -144,35 +144,22 @@ Lean's three standard axioms.
    correspondence to review, clause by clause, against the table above — not
    something the proof can establish.
 
-## Re-checked against origin/main `1d15bf713`
-
-#3298 (`2bb51088b`) makes the `CREATE_NODE` arm refuse a repeated id. `okCreate`
-already required `nodupB ids`, so no theorem changes: the conjunct, stricter than the
-Rust until #3298, is now exactly its check (effects_emit_apply `createNode_repeat_refused`).
-
 ## Checking it
 
     cd proofs/replication && lake build
 
 
-## Re-sync to 256ab4d3f (from 43936bab9)
-* **#3164 (`e0d9c2188`)**: `IdSpace::reserve` skips `quarantined` ids (what earlier batches of the same MVCC
+## Notes on the id-space model
+* `IdSpace::reserve` skips `quarantined` ids (what earlier batches of the same MVCC
   version freed or cancelled). `idsOf` models `reserve` on the first batch of a version, where the quarantine is
-  empty; `Faithful.reserveQ` is the new `reserve` and `reserveQ_nil`/`reserveQ_mem` show the first-batch case is
+  empty; `Faithful.reserveQ` is the full `reserve` and `reserveQ_nil`/`reserveQ_mem` show the first-batch case is
   `reserveFresh` and that a later batch still issues only free or fresh ids (all the replica's `okCreate` needs).
-  No theorem here changes: the replica never reserves.
-* **#3446**: the `CREATE_NODE` arm checks the shape on the id count and writes labels in chunks (`effects_emit_apply`
+  The replica never reserves.
+* The `CREATE_NODE` arm checks the shape on the id count and writes labels in chunks (`effects_emit_apply`
   `chunkLoop_eq_write`); `okCreate`'s `rows.length = ids.length * attrIds.length` is that check.
 * `deleteOne_refines_live` discharges `deleteOne_refines`' `1 ≤ live` premise for ids below the entry boundary
-  (`Faithful.Ids.live_pos`), and `IdLink.deleteOne_refines_idspace` (new file, Lake dependency on `proofs/id_space`) discharges it for every live id
+  (`Faithful.Ids.live_pos`), and `IdLink.deleteOne_refines_idspace` (Lake dependency on `proofs/id_space`) discharges it for every live id
   including one this batch created, from id_space's `release_no_underflow`; the `IdSpace::release` row is PROVEN.
-* #3787/#3683/#3471/#3585: clippy-style rewrites (`index_field_flags`, `index_options` by value, `ok_or_else`, `map_or`),
-  `Pending::commit` unchanged in shape, `Graph::delete_nodes` reads `self.schema.labels`: no model change.
-  All pins re-set by function name.
-
-## Re-pinned to 5e475e6c9 (#3436)
-No model change (emit/format take `&Graph`; `Pending::commit` takes `&mut Graph`). Pins shifted
-in `emit.rs`, `format.rs`, `pending.rs`.
 -/
 
 namespace Falkor
@@ -740,18 +727,16 @@ def specsOf (ids labels attrIds : List Nat) (rows : List Val) : List NodeSpec :=
     (fun pr => ⟨pr.1, labels, attrIds.zip pr.2⟩)
 
 /-- `ID_LIMIT` (`id_space.rs:100`) = `GrB_INDEX_MAX` = `2^60 - 1`: `IdSpace::create` refuses
-    any id at or above it (#2911, `fe619ac5f`; `id_space.rs:625`). -/
+    any id at or above it (`id_space.rs:625`). -/
 def idLimit : Nat := 2 ^ 60 - 1
 
 /-- `verify_schema` + `verify_attribute` + `IdSpace::create`'s refusals.
     Note the two id checks are guarded by the recycle bin: an id that is free
     right now is neither live nor a double claim, which is what tells a genuine
-    re-create from a collision. The last conjunct is the `ID_LIMIT` refusal
-    (#2911), which the Rust checks first; a `Bool` conjunction's order is immaterial.
-    `nodupB ids` is the `CREATE_NODE` arm's repeated-id refusal (`apply.rs:226`,
-    #3298 / `2bb51088b`, issue #3247). Before #3298 the Rust had no such check (the
-    list was folded into a set and one node created for two ids), so this conjunct
-    was stricter than the code; it is now exactly the code's check. -/
+    re-create from a collision. The last conjunct is the `ID_LIMIT` refusal,
+    which the Rust checks first; a `Bool` conjunction's order is immaterial.
+    `nodupB ids` is the `CREATE_NODE` arm's repeated-id refusal (`apply.rs:226`;
+    effects_emit_apply `createNode_repeat_refused`). -/
 def okCreate (σ : GState) (b : Batch) (ids labels attrIds : List Nat) (rows : List Val) : Bool :=
   labels.all (fun l => decide (l < σ.labels.length))
   && attrIds.all (fun a => decide (a < σ.attrs.length))
@@ -763,7 +748,7 @@ def okCreate (σ : GState) (b : Batch) (ids labels attrIds : List Nat) (rows : L
   && ids.all (fun i => decide (i < idLimit))
 
 /-- `IdSpace::release`'s refusals: `refuse_not_live` (= `refuse_recycled` +
-`refuse_undeletable`, #3022). -/
+`refuse_undeletable`). -/
 def okDelete (σ : GState) (b : Batch) (ids : List Nat) : Bool :=
   nodupB ids
   && ids.all (fun i => !σ.free i)
@@ -1190,7 +1175,7 @@ structure PendingWF (p : Pending) (σ : GState) : Prop where
   delsLive    : ∀ i ∈ p.dels, σ.liveB i = true
   disjoint    : ∀ i ∈ p.ids, i ∉ p.dels
   /-- The master's own `IdSpace::create` (`Graph::create_nodes`) refused any id at or above
-      `ID_LIMIT` (#2911), so every id a committed `Pending` carries is below it. -/
+      `ID_LIMIT`, so every id a committed `Pending` carries is below it. -/
   inLimit     : ∀ i ∈ p.ids, i < idLimit
 
 /-- **emit and apply agree.** The payload `build` produces from a `Pending`,
@@ -1708,9 +1693,9 @@ theorem emit_refines (p : Pending) (σ : GState) :
       ++ (FalkorEA.memoGroup Prod.snd p.deleted).map deleteRec := by
   simp only [emit, memo_refines_groupBy]
 
-/-! ## The id space the engine keeps (#2846)
+/-! ## The id space the engine keeps
 
-Since #2846 `Graph` holds no counter or bin of its own: `node_id_bound` is
+`Graph` holds no counter or bin of its own: `node_id_bound` is
 `IdSpace::bound` = `live + recycled.len()`, `create_nodes` is `IdSpace::create`
 and `delete_nodes` is `IdSpace::release`. `GState.bound`/`free` are that space
 abstracted (`absIds`), and `createOne`/`deleteOne` move it exactly as those two

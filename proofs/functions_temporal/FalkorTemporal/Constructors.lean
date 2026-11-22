@@ -16,8 +16,7 @@ import FalkorTemporal.Duration
 | `dateFromComponents`| `date_from_components` — `temporal.rs:82` |
 | `weekSlice`         | the `rest.len() <= 2` branch and `rest.split_at_checked(2)` in `parse_week_date` — `temporal.rs:279-289` |
 | `sliceOk`, `byteLen` | byte 2 of `rest` is a char boundary / `rest.len()` |
-| (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs:281`, `push_date` `value.rs:828` (#2986) |
-| pre-#2950 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)         | the same before #2950 (737dfb5da): unchecked `NaiveDate ± TimeDelta`, `&rest[..2]` (history) |
+| (`formatDate` moved to `Components.lean`) | `format_date` — `value.rs:281`, `push_date` `value.rs:828` |
 -/
 namespace FalkorTemporal
 
@@ -47,7 +46,7 @@ theorem jan4_bound (year : Int) (hy : -200000 ≤ year ∧ year ≤ 200000) :
   unfold daysFromCivil; dsimp only; simp only [show ¬ ((1:Int) > 2) by decide, ite_false,
     show (1:Int) ≤ 2 by decide, ite_true]; omega
 
-/-! ## Main (since #2950): every component is range-checked before chrono sees it -/
+/-! ## Main: every component is range-checked before chrono sees it -/
 
 def inRange (v lo hi : Int) : Bool := decide (lo ≤ v) && decide (v ≤ hi)
 

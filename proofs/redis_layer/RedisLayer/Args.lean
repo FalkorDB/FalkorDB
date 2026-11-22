@@ -5,8 +5,7 @@ Shared primitives for the query-command argument models (`QueryArgs.lean`) and
 `GRAPH.CONFIG` (`Config.lean`):
 
 * `string2ll`     — Redis `util.c:string2ll`, which `RedisModule_StringToLongLong`
-  (`RedisString::parse_integer`) calls: what both engines use for `TIMEOUT`/`version`
-  since #3010 (`557f18868`).
+  (`RedisString::parse_integer`) calls: what both engines use for `TIMEOUT`/`version`.
 * `rustParseI64`  — `core::str::parse::<i64>` (`from_str_radix`, radix 10), used by
   `GRAPH.CONFIG SET` (`Config.lean`).
 * `rustTimeout`   — `compute_effective_timeout` (`src/graph_core.rs:886-921`).

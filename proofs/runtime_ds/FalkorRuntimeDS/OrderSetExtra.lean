@@ -7,7 +7,7 @@ Same list model as `OrderSet.lean` (the `Vec<T>` *is* the list).
 | here | there |
 | --- | --- |
 | `emptyS`     | `Default::default` (orderset.rs:27) |
-| `fromVecGo`/`fromVec` | `OrderSet::from_vec` (orderset.rs:42) — since #2905 drops later duplicates in every build, first wins (loop state `acc` = `vec[..i]`) |
+| `fromVecGo`/`fromVec` | `OrderSet::from_vec` (orderset.rs:42) — drops later duplicates in every build, first wins (loop state `acc` = `vec[..i]`) |
 | `iterS`      | `OrderSet::iter` (orderset.rs:77) |
 | `lenS`       | `OrderSet::len` (orderset.rs:82) |
 | `isEmptyS`   | `OrderSet::is_empty` (orderset.rs:87) |
@@ -77,7 +77,7 @@ theorem foldl_insertS_unique (acc l : List α) (h : Nodup (acc ++ l)) :
     rw [ih (acc ++ [x]) (by simpa using h)]
     simp
 
-/-! ### `from_vec` (orderset.rs:42, #2905): drop later duplicates, first wins -/
+/-! ### `from_vec` (orderset.rs:42): drop later duplicates, first wins -/
 
 section FromVec
 variable [EquivBEq α]
@@ -163,7 +163,7 @@ theorem fromVec_sublist (l : List α) : (fromVec l).Sublist l := by
 theorem containsS_fromVec (l : List α) (y : α) : containsS (fromVec l) y = containsS l y := by
   simp [fromVec, containsS_fromVecGo, containsS]
 
-/-- **The #2903 fix.** `remove` after `from_vec` really removes, whatever the
+/-- `remove` after `from_vec` really removes, whatever the
 input: no `Nodup` hypothesis. -/
 theorem containsS_removeS_fromVec (l : List α) (x y : α) :
     containsS (removeS (fromVec l) x) y = (containsS l y && !(x == y)) := by

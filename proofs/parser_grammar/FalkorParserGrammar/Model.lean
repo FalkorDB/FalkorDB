@@ -462,7 +462,7 @@ def listOp (pe : List Tok → Out) (lhs : RT) (ts : List Tok) : Res RT :=
     | .panic => .panic
     | .fuel => .fuel
 
-/-! ### Before #3041 (main 8621212fc), kept as history -/
+/-! ### History: the swallowed slice bound (main 8621212fc) -/
 
 -- `parse_map_projection` (3234-3290), after `{`:
 /-- One item of a map projection: `.*`, `.prop`, `key: expr` or `var`. -/

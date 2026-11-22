@@ -7,10 +7,8 @@ imports its definitions.
 /-
 # Claims 1 and 4: `Runtime::graph()` reads the same `Graph` that `g.borrow()` would
 
-**Merged: PR #3436 (25babfe4f); folded from the retired `pr3436_review`.** The PR branch @ e30861ea3 is the same code as main (`.rs` identical apart from line numbers: `runtime.rs` cites below are current main, ca36bfa15). Branch history: PR #3436, `perf/read-graph-once` @ e30861ea3 (d7d166e82, 896ba73ef, 653f467a9,
-merge of origin/main b97da5a1c = 30f8d7cff, then e30861ea3 "graph()/graph_mut() instead of
-a cell accessor"). Cites are to e30861ea3 unless marked; `pre_e30861e_*` names keep the
-653f467a9 `graph_cell()` theorems as history.
+Cites are to the `graph()`/`graph_mut()` version of `runtime.rs`; the `pre_e30861e_*` names keep the earlier
+`graph_cell()` accessor's theorems as history.
 
 | here | there |
 | --- | --- |

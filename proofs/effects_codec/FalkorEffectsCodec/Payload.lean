@@ -4,11 +4,7 @@ import FalkorEffectsCodec.RecRT
 
 `graph/src/effects/v3/records.rs:1219-1431`.
 
-**#3278 (`dcbd445d1`, issue #3276).** `maybe_compress` used to write both lengths
-`as u32`; a payload of 4 GiB of records or more was framed with a wrapped
-`plain_len`, which the reader takes as the decompress ceiling, so the replica
-refused it and looped on forced resyncs. It
-now declines to compress such a payload (`u32::try_from(..).is_err()`) and builds
+`maybe_compress` declines to compress a payload of 4 GiB of records or more (`u32::try_from(..).is_err()`), and builds
 the prefix through `frame_prefix`, which refuses a length that does not fit
 (`framePrefix_none`). `openPayload_maybeCompress` therefore holds for every
 payload, with no length hypothesis. zstd and crc32 are external C/
@@ -78,7 +74,7 @@ theorem framePrefix_length {p c k : Nat} {b : Bytes} (h : framePrefix p c k = so
 /-- `maybe_compress` (`records.rs:1369`): the new buffer and whether it compressed. -/
 def maybeCompress (Z : Codec) (buf : Bytes) (minBytes : Nat) : Bytes × Bool :=
   if minBytes = 0 ∨ buf.length < 2 ∨ buf.length - 2 < minBytes then (buf, false) else
-  -- `u32::try_from(buf.len() - HEADER).is_err()` (#3278)
+  -- `u32::try_from(buf.len() - HEADER).is_err()` 
   if 2 ^ 32 ≤ buf.length - 2 then (buf, false) else
   if (buf[1]!.toNat &&& FLAG_COMPRESSED) ≠ 0 then (buf, false) else
   match Z.compress (buf.drop 2) with
@@ -127,7 +123,7 @@ theorem openPayload_plain (Z : Codec) (body : Bytes) :
 
 /-- **Compression is transparent**: sealing a fresh buffer — compressed or
 left alone — and opening it gives back exactly the record bytes, for records of
-any length (#3278: a payload too long for the `u32` lengths ships uncompressed). -/
+any length (a payload too long for the `u32` lengths ships uncompressed). -/
 theorem openPayload_maybeCompress (Z : Codec) (hZ : CodecOK Z) (body : Bytes) (m : Nat) :
     openPayload Z (maybeCompress Z (newBuffer ++ body) m).1 = .ok (body, []) := by
   have hl : (newBuffer ++ body).length - 2 = body.length := by simp [newBuffer]

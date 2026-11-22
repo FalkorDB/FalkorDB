@@ -1,6 +1,6 @@
 import FalkorIndexLayer.IndexM
 /-
-# `Document::set`, vector arm (`graph/src/index/mod.rs:731-744`, #3087 @ 49f698d22)
+# `Document::set`, vector arm (`graph/src/index/mod.rs:731-744`)
 
 ```rust
 if field.ty == IndexType::Vector {
@@ -18,15 +18,14 @@ The Range arm is `setRange`/`docOf` (`Model.lean`); a vector field never reaches
 
 RediSearch rejects the whole document when a vector blob is not `dim * 4` bytes or
 the field has no vector params (`RsKind.vector none`, which `registerOne` creates
-for `dimension = 0` or no options). The theorems below show that, since #3087, `set`
+for `dimension = 0` or no options). The theorems below show that `set`
 never hands RediSearch such a blob, which is what justifies the `ht` hypothesis of
 `Iter.query_eq_scan_filter` (the label's table holds `docOf` of every entity) in the
 presence of vector fields. The end-to-end acceptance theorem over the RediSearch
 contract is `SC.Search.doc_always_accepted` (proofs/search_concurrency).
 
-HISTORICAL (fe619ac5f, before #3087): `setVectorPre3087` added every `VecF32`
-unchecked (W3-conc-3 / #3075, and W5-idx-2's no-options shape), fixed by #3087 (49f698d22). The
-`pre3087_*` counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412.
+HISTORICAL: `setVectorPre3087` added every `VecF32` unchecked (W3-conc-3 / #3075, and
+W5-idx-2's no-options shape); kept as the earlier behaviour.
 -/
 namespace IndexLayer.Meta
 
@@ -130,7 +129,7 @@ theorem setVector_sub_pre {f : Field} {vec : Option Nat} {nb : Nat}
   obtain ⟨hty, o, _, _, rfl, rfl⟩ := setVector_sound h
   simp [setVectorPre3087, hty]
 
-/-! ### HISTORICAL counterexamples (fe619ac5f), fixed by #3087 (49f698d22) -/
+/-! ### HISTORICAL counterexamples (the unchecked add) -/
 
 def vf (vopts : Option VecOpts) : Field :=
   { name := "vector:v", ty := .vector, options := none, vopts, numArr := none, strArr := none }

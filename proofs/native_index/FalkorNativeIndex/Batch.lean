@@ -39,7 +39,7 @@ so no theorem here covers a wrap at 2^64. That is an explicit assumption (2^64 c
 not a proven bound.
 
 Theorems: `fit_fresh` (nothing committed since: `Same`), `fit_after_other_batch` (`Swap`),
-`fit_after_writer` (`CatchUp`, #3567: it was `Discarded Writers`), `fit_after_same_batch` (`AnotherBatch`), `fit_after_drop` /
+`fit_after_writer` (`CatchUp`, #3567), `fit_after_same_batch` (`AnotherBatch`), `fit_after_drop` /
 `fit_after_recreate` (`Gone`: a dropped, or dropped and created again, index has another generation),
 `commit_discarded` (nothing published), `commit_same`, `commit_swap` (only the batch's index comes from the
 batch; all else from the published version), `commit_catchUp` (the same, with the batch's index caught up: `Rebase.lean`), `commit_keeps_version` / `commit_not_stale` (a batch commit
@@ -91,7 +91,7 @@ theorem new_commits (i : IndexColumn) (st : BuildState) (g : Nat) :
 theorem written_ready (s : SE) (h : s.en.isBuilding = false) : s.written = 0 := by simp [written, h]
 end SE
 
-/-- `Discarded` (`versioned.rs:224-234`); `Writers` is gone since #3567: a batch catches up on writers. -/
+/-- `Discarded` (`versioned.rs:224-234`); there is no `Writers` case: a batch catches up on writers. -/
 inductive Discarded where
   | gone | anotherBatch
   /-- `CatchUpTooLarge` (`versioned.rs:233`, the online build, #2355): writers committed, and catching up would
@@ -318,7 +318,7 @@ theorem fit_after_other_batch {R : Type} (pub pub' : V R) (p : SE) (hp : pub.ent
   simp [ha.2.2.1, ha.2.2.2, V.batchPublishedSince, hcnt]
 
 /-- A writer committed meanwhile (the data version moved, this index untouched), for a batch with no catch-up limit
-(one at the floor): `CatchUp` (#3567; before it, `Discarded Writers`), by whichever way `catch_up_by` picks (#3568)
+(one at the floor): `CatchUp` (#3567), by whichever way `catch_up_by` picks (#3568)
 from the published copy's `since` count and the batch's length. A batch with a limit: `fit_after_writer_within`,
 `fit_after_writer_too_large`. -/
 theorem fit_after_writer {R : Type} (pub pub' : V R) (p : SE) (hp : pub.entry = some p)

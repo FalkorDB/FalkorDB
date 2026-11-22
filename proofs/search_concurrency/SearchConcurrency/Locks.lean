@@ -355,7 +355,7 @@ def exploreBad : Nat → List D → List D
 theorem recheck_needed :
     (exploreBad 20 [drainInit 2]).any (fun s => terminal s && s.q != 0) = true := by decide +kernel
 
-/-! ## Historical: the bounded-queue deadlock (W3-conc-1, CONFIRMED live; fixed by #3014 b4634fe4b)
+/-! ## The bounded-queue deadlock model (the pool queue of capacity `cap`; no longer in the code)
 
 Resources that are not locks also block: the pool's job queue (capacity `cap`,
 `threadpool.rs:59` at ca36bfa15) and a graph's write channel (capacity 1024, `graph_core.rs:548` then).
@@ -429,7 +429,7 @@ theorem fixed_never_stuck (s : Pool) (hw : 0 < w) :
       simp [h, this]
   · simp [h]
 
-/-! ## The #3014 protocol: admission-bounded, nothing blocks the main thread
+/-! ## The admission protocol: admission-bounded, nothing blocks the main thread
 
 `admit` (`graph_core.rs:1115`) takes a `QueueSlot` on the main thread or replies "Max
 pending queries exceeded" — it never waits; `spawn` sends into an unbounded queue. A read

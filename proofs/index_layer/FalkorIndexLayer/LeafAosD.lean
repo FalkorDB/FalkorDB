@@ -1,7 +1,7 @@
 import FalkorIndexLayer.LeafDispatch
 import FalkorIndexLayer.LeafTree
 /-
-# The narrowable doc width `DOC_BYTES` (#2278, 3597b3a82)
+# The narrowable doc width `DOC_BYTES`
 
 `AosLeaf<DOC_BYTES>` (`cow_btree/leaf/aos.rs`) stores `key:8 + doc:DOC_BYTES` per entry; the doc is
 written by `doc_le_bytes` (`cow_btree/mod.rs:65-74`, `assert!` that the dropped high bytes are zero)
@@ -24,13 +24,11 @@ Proven: `docLeBytes_spec` (the assert passes iff `doc < 256^DOC_BYTES`, and then
 `aosBuildD_length` (`count * (8 + DOC_BYTES)` bytes — the `heap_bytes` leaf term), and that
 `DOC_BYTES = 8` is the old 16-byte model (`aosD8_*`).
 
-FIXED by #3285 (cab3cf192), W7-btree-2: the const asserts (`mod.rs:150-160`, `:172-182`, `:190-200`)
-now gate `DOC_BYTES` with `is_read_width` (`mod.rs:88`), i.e. `DOC_BYTES ∈ {1, 2, 4, 8}`, exactly the
+W7-btree-2: the const asserts (`mod.rs:150-160`, `:172-182`, `:190-200`)
+gate `DOC_BYTES` with `is_read_width` (`mod.rs:88`), i.e. `DOC_BYTES ∈ {1, 2, 4, 8}`, exactly the
 widths `read_width` loads. `docBytesAssert_iff`, `admitted_doc_read`, `admitted_fromPairs_roundtrip`:
-every width a tree can be built with reads its docs back. Before #3285 the assert was
-`1 <= DOC_BYTES <= 8`, so `DOC_BYTES = 3` (5, 6, 7) read every doc wrong (Rust panicked "range end index 16
-out of range for slice of length 11" on the second `insert` of a `CowBTree::<256, 256, 3>`; counterexamples
-removed in bbee75955; the last revision that has them is 17ccc5412); `docBytesAssert_rejects_3`: the old assert admitted 3, the new one does not.
+every width a tree can be built with reads its docs back. `docBytesAssert_rejects_3`: an assert of
+`1 <= DOC_BYTES <= 8` would admit 3 (5, 6, 7), which `read_width` cannot read.
 -/
 namespace IndexLayer.Leaf
 
@@ -273,7 +271,7 @@ theorem fromPairsD_roundtrip (D : Nat) (hD : W D) (ps : List P) (hs : Sorted2 ps
       | exact ⟨_, haos, haosr⟩
   · exact ⟨_, haos, haosr⟩
 
-/-! ## `DOC_BYTES` const assert (#3285, cab3cf192) -/
+/-! ## `DOC_BYTES` const assert -/
 
 /-- The `DOC_BYTES` half of the const asserts (`mod.rs:156-159`, `:178-181`, `:196-199`):
     `is_read_width(DOC_BYTES)`. -/
@@ -310,6 +308,6 @@ theorem asserted_fromSorted_contents (L B D : Nat) (h : constAssert L B D = true
   exact fromSorted_contents L B (by omega) h.1.1.2 (by omega) ps hs hu
 
 theorem docBytesAssert_rejects_3 : docBytesAssert 3 = false := rfl
-/-! ## HISTORICAL (before #3285): `DOC_BYTES ∉ {1, 2, 4, 8}` passed the const assert but could not be read -/
+/-! ## HISTORICAL: an assert admitting `DOC_BYTES ∉ {1, 2, 4, 8}`, which could not be read -/
 
 end IndexLayer.Leaf

@@ -10,7 +10,7 @@ set_option linter.unusedSimpArgs false
 
 namespace NI
 
-/-- **Specification** (no Rust counterpart since #2351, whose `build_column`/`collect_*_entries` became
+/-- **Specification** (no Rust counterpart: `build_column`/`collect_*_entries` became
     batches, `Build.lean`): the `(value, id)` pairs of every node of the label matrix that has `attr`. -/
 def collectNodeEntries (g : G) (label attr : String) : List (Value × Nat) :=
   match g.labelNodes label, g.attrId attr with

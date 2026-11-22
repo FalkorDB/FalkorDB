@@ -1,12 +1,12 @@
 import PendingCommit.PendingCommitOp
 /-
-# UNIQUE constraints enforced by index lookup (#3334, #3547/#2386; pending.rs:61-290 `unique_violated` and helpers, :1580-1700 constraint checks)
+# UNIQUE constraints enforced by index lookup (#3547/#2386; pending.rs:61-290 `unique_violated` and helpers, :1580-1700 constraint checks)
 
-Before #3334 (fixing #3330) a UNIQUE check scanned the whole label (type) once per
-affected member: `PC.check` / `PC.scan_ok` / `PC.check_spec` (kept as the reference
-"label-scan spec"). Now `unique_violated` (:217) gathers the members' composite keys
+A UNIQUE check no longer scans the whole label (type) once per
+affected member (`PC.check` / `PC.scan_ok` / `PC.check_spec` are kept as the reference
+"label-scan spec"); `unique_violated` (:217) gathers the members' composite keys
 (an early `true` on two members sharing one), then looks each key up through an index and
-re-verifies every candidate against the graph. Since #3547 the index is abstracted by two
+re-verifies every candidate against the graph. The index is abstracted by two
 closures: `query_for(values) -> Option<Q>` gives the lookup for one member (or `None`: the
 index cannot answer for it) and `lookup(Q)` runs one. `use_index` starts `true`; one member
 for which `query_for` is `None` sends the whole set to the label scan, and the lookups
@@ -412,7 +412,7 @@ theorem uniqueViolated_agrees (props : List Nat) (members : List Nat) (affected 
     · exact .inr ⟨a, hAff a hfa hca, k, hka, b, hfb, hcb, hkb⟩
     · exact .inl ⟨a, hAff a hfa hca, b, hAff b hfb hcb, hab, k, hka, hkb⟩
 
-/-! ## `check_node_constraint` / `check_edge_constraint` since #3334 -/
+/-! ## `check_node_constraint` / `check_edge_constraint` -/
 
 /-- MANDATORY: every member has every property (the loop moved under the `match`). -/
 def checkMandatory (props affected : List Nat) (member : Nat → Bool) (present : Nat → Nat → Bool) : Bool :=

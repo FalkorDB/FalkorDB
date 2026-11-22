@@ -12,18 +12,15 @@ import FalkorCore.Range
 # Expression evaluation: the columnar path agrees with the per-row path, and
 # where the per-row path itself departs from openCypher / C FalkorDB
 
-**Re-targeted to main 256ab4d3f (from 43936bab9).** Nothing modelled here changed: #3787 only rewrote the
-`Property` arm of `VectorEval::eval` as `map_or_else`, added a `VarKind` bound to `CmpOp::from_expr_ir`,
-made `apply_pow` take `&Value` (same arithmetic, `pow` / `^` call it by reference) and added clippy
-allows on both `eval_case`s. #3609 (`toString(Float)`), #3574 (`duration()` strings) and the
-list-comprehension non-Boolean `WHERE` error (eval.rs:1082-1088) are modelled in
-proofs/value_math, proofs/functions_temporal and proofs/functions_str_list. `FnRegistry.rustNames` was
-re-extracted from the sources: the same 134 names. The rows that were MODELLED / NOT COVERED here but are proved
-in proofs/columnar (every `vector_expr.rs` / `vectorized.rs` fn), proofs/value_math (`math.rs`, `conversion.rs`,
-`init_functions`), proofs/value_order (`order`, `compare_value`, `compare_floats`),
-proofs/functions_str_list (`eval_quantifier`, `get_elements`, `range`) and proofs/optimizer_rewrites
-(`is_constant_true`) now cite those theorems. The only rows left CONDITIONAL are `NeighborIter::new`
-and `new_reversed` (graph-wide adjacency/transpose invariants nobody proves; reason in COVERAGE.tsv).
+Rows covered by other projects: every `vector_expr.rs` / `vectorized.rs` fn is proved in
+proofs/columnar, `math.rs`/`conversion.rs`/`init_functions` in proofs/value_math, `order`/`compare_value`/
+`compare_floats` in proofs/value_order, `eval_quantifier`/`get_elements`/`range` in
+proofs/functions_str_list, `is_constant_true` in proofs/optimizer_rewrites; those rows cite the theorems.
+`toString(Float)`, `duration()` strings and the list-comprehension non-Boolean `WHERE` error
+(eval.rs:1082-1088) are modelled in proofs/value_math, proofs/functions_temporal and
+proofs/functions_str_list. `FnRegistry.rustNames` holds the 134 registered names. The only rows left
+CONDITIONAL are `NeighborIter::new` and `new_reversed` (graph-wide adjacency/transpose invariants nobody
+proves; reason in COVERAGE.tsv).
 
 **2026-10-21 — every arm a list-comprehension body can reach (`Eval.lean`, `Frame.lean`,
 `EvalArms.lean`; `evaluate_param` moved to `EvalParam.lean`).** The expression tree `E` now has
@@ -42,7 +39,7 @@ reported — `list_error_rightmost`, `evalRev_ok`; C reports the same element, c
 subscripts (`getElem`, `getElement_index`), map projections (`projLoop`) and `DISTINCT`. The
 catch-all `compound` (every other arm: `Length`, `Negate`, `Pow`, n-ary operators, binders,
 aggregates, …) now receives its children as **thunks**, so it can be lazy; the eager form it had
-cannot short-circuit (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
+cannot short-circuit.
 `all_equals` / `all_not_equals` are modelled over their lazy iterators (`allEquals`,
 `allNotEquals`: `allEquals_two`, `allNotEquals_two`, `allEquals_stops`). **`evalNode_frame`**:
 evaluation reads the row only through the expression's `Variable` nodes (`E.vars`), for every
@@ -53,42 +50,28 @@ above the extension is unchanged in statement except that the catch-all's type i
 `null XOR 1/x = 1` (Rust `null`) and `CASE WHEN true THEN 1 ELSE 1/x END` (Rust `1`): C evaluates
 every operand / branch eagerly, Rust short-circuits as the source comments intend.
 
-**Re-checked at main 5e475e6c9** (from b84473a7f): nothing modelled changed. `eval.rs` differs only in `eval_shortest_path`
-(`rt.g.borrow()` -> `rt.graph()`, #3436), so every `eval.rs` row keeps its line. #2383 (index), #3055/#3050 (MERGE), #2988
-(`temporal.rs`) are other projects.
+The `ListComprehension` arm of `eval_compound` (null source → null, scalar → type error; list
+literal / `range` still stream through `eval_iter_expr`) is not modelled here (modelled and
+proved in `proofs/functions_str_list`, `comprehension_eq_spec`); `evalIter_cases`/`evalIter_list`/
+`evalIter_range_is_iter` cover `eval_iter_expr`. The aggregate-finalizer arm of `eval_compound` is in
+proofs/ops_aggregate.
 
-**Re-targeted to main b6567cb97** (from 737dfb5da). #2954 (closes #2928) changes the
-`ListComprehension` arm of `eval_compound` (null source → null, scalar → type error; list
-literal / `range` still stream through `eval_iter_expr`): not modelled here (modelled and
-proved in `proofs/functions_str_list`, `comprehension_eq_spec`); `eval_iter_expr` itself is
-unchanged, so `evalIter_cases`/`evalIter_list`/`evalIter_range_is_iter` still hold.
-COVERAGE.tsv eval.rs rows re-pinned (+27 after the arm), value.rs (+2 after `Value::name`).
+`RangeIter` stores the exact element count `remaining` and the signed `step`, and advances only while another
+element is due: `rangeIter` (debug, checked `+=`) / `rangeIterRel` (release); `rangeIter_correct`: for every `i64`
+start/end and nonzero step the caller accepts, it yields exactly the eager range (`rangeList`, and `rangeMath`
+with any fuel ≥ the length) and never overflows; `evalIter_range_is_iter`, `rangeIter_sizeHint_exact`,
+`rangeIter_bounds_examples`, `rangeIter_max_fixed`.
 
-Earlier: re-targeted to main 737dfb5da (from 8621212fc). #2899 (`e63165cb5`, closes #2894):
-`RangeIter` now stores the exact element count `remaining` and the signed `step`, and
-advances only while another element is due — re-modelled as `rangeIter` (debug, checked
-`+=`) / `rangeIterRel` (release); `rangeIter_correct`: for every `i64` start/end and
-nonzero step the caller accepts, it yields exactly the eager range (`rangeList`, and
-`rangeMath` with any fuel ≥ the length) and never overflows; `evalIter_range_is_iter`,
-`rangeIter_sizeHint_exact` (new `size_hint`), `rangeIter_bounds_examples`,
-`rangeIter_max_fixed`. The old model and its counterexamples were removed in bbee75955 (the last revision that has them is 17ccc5412).
-#2950 (temporal.rs) and #3041 (parser) touch nothing modelled here. COVERAGE.tsv
-eval.rs line numbers re-pinned to 737dfb5da.
+`^` propagates operand errors (`?`) and `apply_pow` type-checks its operands
+(`Type mismatch: expected Integer, Float, or Null but was …`): `applyPow`/`powFold`,
+`pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error`, `pow_binary_eq_spec`,
+`pow_agrees_without_errors`.
 
-Earlier: re-targeted to main 8621212fc (from 289c201fe). #2904 (#2902): `^` propagates
-operand errors (`?` instead of `flat_map`) and `apply_pow` type-checks its operands
-(`Type mismatch: expected Integer, Float, or Null but was …`) — `applyPow`/`powFold`
-re-modelled, `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error`,
-`pow_binary_eq_spec`, `pow_agrees_without_errors`; the old model and its counterexamples were removed in bbee75955 (the last revision that has them is 17ccc5412). COVERAGE.tsv line numbers re-pinned to 8621212fc.
-
-Earlier: re-targeted to main 289c201fe (from fb3d516d0). #3294 (#3292): the `AND`/`OR`/`XOR`
-operand type error now names the operand's type like C (`expected Boolean or Null but
+The `AND`/`OR`/`XOR` operand type error names the operand's type like C (`expected Boolean or Null but
 was Integer`) — proven for the per-row path on the scalar subset (`scalarAndOr`, `scalarXor`);
 the columnar `vecAndOr` is `Option`-valued and carries no message, so the columnar wording is
 not verified here (see the error-text caveat below) — `boolMismatch` takes the
-value, `and_or_mismatch_names_type`, `xor_mismatch_names_type`. #2951 (#2945) changes
-only `eval_compound`'s aggregate-finalizer arm, which this project does not model
-(proofs/ops_aggregate does). The `init_functions` name set (`FnRegistry`) is unchanged.
+value, `and_or_mismatch_names_type`, `xor_mismatch_names_type`.
 
 A model of FalkorDB-rs scalar expression semantics and of the columnar
 evaluator (`VectorEval`) that Filter / Project / Aggregate actually run, with
@@ -114,16 +97,9 @@ machine-checked proofs that
 * i64 arithmetic is Rust's wrapping arithmetic, and agrees with mathematical
   arithmetic whenever the mathematical result is in range — `wrap_id`, `add_exact`.
 
-and with counterexamples, each reproduced against the real engine
+and with a counterexample, reproduced against the real engine
 (`graph/tests/lean_expr_semantics.rs`), for
 
-* `^` silently dropping an operand's error — fixed by #2904 (`fd2c76a6c`), now
-  `pow_propagates_error` (the optimizer
-  deleting `WHERE x ^ true` as constant-true is covered too; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412);
-* the lazy `UNWIND range(..)` iterator overflowing after yielding `i64::MAX` — fixed by
-  #2899 (`e63165cb5`), now `rangeIter_correct` (panic in debug, wrong rows and non-termination in release; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412);
-* `sign(<float>)` returning a Float — fixed by #2907 (`f04c3557a`), now
-  `sign_float_is_int`;
 * mixed Int/Float equality not being transitive (`int_float_eq_not_transitive`).
 
 ## What is modelled, and where it lives in the tree
@@ -193,7 +169,7 @@ node sequence is a walk from src to dst over followed edges (invariants `scan_in
 `level_inv`, `search_sound`, `chain_sound`, `chain_total`). Minimality of the BFS is argued
 in the source comment, not proved here.
 
-## Gap closed 2026-10-20
+## Registry coverage
 
 * #2724 (`FnRegistry.lean`): property `CoversC` — every user-callable C built-in (the 104
   non-internal `AR_FuncDesc`s of origin/master `builtin_funcs.c`) resolves in the Rust
@@ -220,8 +196,8 @@ theorem add_exact {a b : Int} (h : InI64 (a + b)) : wAdd a b = a + b := wrap_id 
 
 theorem div_exact {a b : Int} (h : InI64 (Int.tdiv a b)) : wDiv a b = Int.tdiv a b := wrap_id h
 
-/-- `i64::MIN / -1` wraps to `i64::MIN` under `wrapping_div`; `Value`'s `/` no longer uses it:
-since #3603 the scalar and the columnar paths both raise `divOverflow`
+/-- `i64::MIN / -1` wraps to `i64::MIN` under `wrapping_div`; `Value`'s `/` does not use it:
+the scalar and the columnar paths both raise `divOverflow`
 (`min_div_neg_one_error`, `min_div_neg_one_gate`). -/
 theorem min_div_neg_one : wDiv I64MIN (-1) = I64MIN := by decide
 
@@ -326,9 +302,8 @@ def CmpOp.flip : CmpOp → CmpOp
   | .eq => .eq | .neq => .neq | .lt => .gt | .le => .ge | .gt => .lt | .ge => .le
 
 /-- The per-row evaluator (eval.rs): `=` is `all_equals`, `<>` is
-`all_not_equals` (eval.rs:1747; since #2917 7fdf06a0e: null makes it null, disjoint
-types and NaN are unequal, else `ord != Equal` — before, `partial_cmp`, which read a
-map's disjoint `(Equal, Disjoint)` as equal), the orderings are the `Lt/Gt/Le/Ge` arms. -/
+`all_not_equals` (eval.rs:1747: null makes it null, disjoint
+types and NaN are unequal, else `ord != Equal`), the orderings are the `Lt/Gt/Le/Ge` arms. -/
 def evalCmp (op : CmpOp) (a b : V F) : V F :=
   let (o, fl) := compareValue a b
   match op with
@@ -349,7 +324,7 @@ def evalCmp (op : CmpOp) (a b : V F) : V F :=
   | .ge => match fl with
     | .comparedNull | .disjoint => .null | .nan => .bool false | .none => .bool (!oLt o)
 
-/-- `vectorized::compare_values` (vectorized.rs:239; `Neq` arm as #2917): `none` is null. -/
+/-- `vectorized::compare_values` (vectorized.rs:239; `Neq` arm as `all_not_equals`): `none` is null. -/
 def compareValues (a b : V F) (op : CmpOp) : Option Bool :=
   let (o, fl) := compareValue a b
   match op with
@@ -387,9 +362,8 @@ def negB : V F → V F
   | .bool x => .bool (!x)
   | v => v
 
-/-- **`<>` is `NOT (=)`** (since #2917 7fdf06a0e; C's `AR_NE`): for every pair of values,
-`<>` is null exactly when `=` is, and otherwise its negation. Before #2917, a map that
-stopped at a disjoint pair (`{a:1}` vs `{a:'x'}`) made both `false` (value_order counterexample, removed). -/
+/-- **`<>` is `NOT (=)`** (C's `AR_NE`): for every pair of values,
+`<>` is null exactly when `=` is, and otherwise its negation. -/
 theorem neq_eq_not_eq (a b : V F) : evalCmp .neq a b = negB (evalCmp .eq a b) := by
   unfold evalCmp
   obtain ⟨o, fl⟩ := compareValue a b
@@ -468,7 +442,7 @@ def AOp.flt : AOp → F → F → F
 def AOp.isDiv : AOp → Bool
   | .div | .rem => true | _ => false
 
-/-- `i64::MIN / -1` is an error since #3603 (value.rs:1169, `checked_div`). -/
+/-- `i64::MIN / -1` is an error (value.rs:1169, `checked_div`). -/
 def divOverflow : String := "ArgumentError: integer overflow in division"
 
 def typeMismatch : String := "Type mismatch: expected Integer, Float, or Null"
@@ -481,7 +455,7 @@ def vArith (op : AOp) : V F → V F → Except String (V F)
   | _, .null => .ok .null
   | .int a, .int b =>
     if op.isDiv && b == 0 then .error "Division by zero"
-    else if op == .div && a == I64MIN && b == -1 then .error divOverflow   -- #3603 (checked_div)
+    else if op == .div && a == I64MIN && b == -1 then .error divOverflow   -- (checked_div)
     else .ok (.int (op.int a b))
   | .flt a, .flt b => .ok (.flt (op.flt a b))
   | .flt a, .int b => .ok (.flt (op.flt a (FM.ofInt b)))
@@ -552,8 +526,8 @@ def intRow (op : AOp) (x y : Option Int) : Option Int := do
 def fltRow (op : AOp) (x y : Option (Cell F)) : Option F := do
   let x ← x; let y ← y; pure (op.flt x.toF y.toF)
 
-/-- The divide gate (vector_expr.rs:892-902): no non-null row divides by zero and, for `/`
-(#3603), none is `i64::MIN / -1`; either row is left to the scalar path. -/
+/-- The divide gate (vector_expr.rs:892-902): no non-null row divides by zero and, for `/`,
+none is `i64::MIN / -1`; either row is left to the scalar path. -/
 def divGate (op : AOp) (a b : List (Option Int)) : Bool :=
   (List.zip a b).all fun p => match p with
     | (some _, some 0) => false
@@ -680,8 +654,7 @@ theorem fltRow_ok (op : AOp) (x y : Option (Cell F)) (hm : mixedOK x y) :
         | f b => rfl
       | f a => cases q <;> rfl
 
-/-- **Fixed by #3603** (closes #3205, #3242; formerly `i64::MIN / -1` wrapped to `i64::MIN`):
-`Value`'s `/` raises the overflow error, as the columnar path now does. -/
+/-- `i64::MIN / -1` in `Value`'s `/` raises the overflow error, as the columnar path does. -/
 theorem min_div_neg_one_error :
     vArith (F := F) .div (.int I64MIN) (.int (-1)) = .error divOverflow := by
   simp [vArith, AOp.isDiv]
@@ -1013,8 +986,7 @@ def V.name : V F → String
   | .str _ => "String" | .other _ => "Other"
 
 /-- The `AND`/`OR`/`XOR` operand type error (eval.rs:644, :672, :695; vector_expr.rs:456).
-Since #3294 (#3292) it names the operand's type like C — `… but was {ir.name()}`; before,
-it was `expected Bool but was {ir:?}` (the `Debug` dump of the value). -/
+It names the operand's type like C — `… but was {ir.name()}`. -/
 def boolMismatch (v : V F) : String :=
   s!"Type mismatch: expected Boolean or Null but was {v.name}"
 
@@ -1197,7 +1169,7 @@ def scalarXor : List (V F) → Option Bool → Except String (V F)
   | .null :: _, _ => .ok .null
   | v :: _, _ => .error (boolMismatch v)
 
-/-- #3294: a non-Boolean, non-null `AND`/`OR` operand fails with C's message naming its
+/-- A non-Boolean, non-null `AND`/`OR` operand fails with C's message naming its
 type, e.g. `1 AND true` → `Type mismatch: expected Boolean or Null but was Integer`,
 and so does an `XOR` operand. Scalar subset only: `ho` excludes `V.other`, whose `V.name`
 here is the placeholder `"Other"` and not Rust's `List`/`Map`/`Node`/… name. -/
@@ -1521,11 +1493,9 @@ theorem null_in (l : List (V F)) :
     contains .null l = if l = [] then .bool false else .null := by
   unfold contains; rw [containsGo_null]; simp
 
-/-! ## `^`: operand errors propagate and operands are type-checked (#2904)
+/-! ## `^`: operand errors propagate and operands are type-checked
 
-Before #2904 (main 289c201fe) the `Pow` arm folded its children with `flat_map`,
-which drops an `Err` (W-expr bug, issue #2902); that model was removed in bbee75955
-(the last revision that has it is 17ccc5412). -/
+The `Pow` arm folds its children with `?`, so an `Err` operand is never dropped. -/
 
 /-- The `apply_pow` type error (math.rs:328): `… but was {v.name()}`. -/
 def powMismatch (v : V F) : String :=
@@ -1535,7 +1505,7 @@ def V.numOrNull : V F → Bool
   | .null | .int _ | .flt _ => true
   | _ => false
 
-/-- `apply_pow` (math.rs:328, since #2904): a non-numeric, non-null operand (base
+/-- `apply_pow` (math.rs:328): a non-numeric, non-null operand (base
 first) is a type error; else `null` if either side is null; else `powf` of the two
 operands as `f64` (`get_numeric`). -/
 def applyPow (pw : F → F → F) (a b : V F) : Except String (V F) :=
@@ -1555,7 +1525,7 @@ def powStep (pw : F → F → F) (acc v : Except String (V F)) : Except String (
   | .ok _, .error e => .error e
   | .ok x, .ok y => applyPow pw x y
 
-/-- `ExprIR::Pow` in `eval_compound` (eval.rs:828-834, since #2904):
+/-- `ExprIR::Pow` in `eval_compound` (eval.rs:828-834):
 `children.map(eval_node).reduce(|acc, value| apply_pow(acc?, value?))`, then
 `ok_or_else(..)??`. A single child is returned as is. -/
 def powFold (pw : F → F → F) : List (Except String (V F)) → Except String (V F)
@@ -1631,8 +1601,7 @@ theorem pow_bool_type_error (pw : F → F → F) (x : V F) (hx : x.numOrNull = t
 
 /-! ## `UNWIND range(..)`: the eager sequence
 
-Before #2899 (`e63165cb5`) `RangeIter` stored `end`, the step's magnitude and a direction
-flag, and stepped past the last element (that model was removed in bbee75955). -/
+`rangeMath` is the eager sequence. -/
 
 /-- The mathematical sequence, which is what the eager `range()` function
 (math.rs:251, `(start..=end).step_by(step)`) returns. -/
@@ -1642,11 +1611,11 @@ def rangeMath (up : Bool) (stepAbs endv : Int) : Nat → Int → List Int
     if (up && decide (cur > endv)) || (!up && decide (cur < endv)) then []
     else cur :: rangeMath up stepAbs endv fuel (cur + (if up then stepAbs else -stepAbs))
 
-/-! ## `UNWIND range(..)` after #2899: exactly the eager range, never overflows -/
+/-! ## `UNWIND range(..)`: exactly the eager range, never overflows -/
 
 /-! `rangeLen`, `rangeList`, `rangeIter` (debug), `rangeIterRel` (release) and `rangeIter_of_inRange`
 are the shared model in `proofs/core` (`FalkorCore/Range.lean`; `open FalkorCore`): `RangeIter::next`
-after #2899 (`eval.rs:114-127`), `length` as `eval_iter_expr` computes it (`eval.rs:1224-1233`). -/
+(`eval.rs:114-127`), `length` as `eval_iter_expr` computes it (`eval.rs:1224-1233`). -/
 
 /-- Arithmetic facts about the element count `length` the caller computes. -/
 theorem rangeLen_bounds (a e s : Int) (hs : s ≠ 0)
@@ -1723,7 +1692,7 @@ theorem rangeMath_eq (up : Bool) (stepAbs endv : Int) :
     simp only [Bool.not_eq_true] at h0
     rw [h0]; simp only [Bool.false_eq_true, ↓reduceIte, ih]
 
-/-- **#2899 (fixed)**: for every `i64` `start`, `end`, nonzero `step` the
+/-- For every `i64` `start`, `end`, nonzero `step` the
 caller does not reject, the lazy iterator yields exactly the eager range and
 never overflows, in debug and release. -/
 theorem rangeIter_correct (a e s : Int) (ha : InI64 a) (he : InI64 e) (hs : s ≠ 0)
@@ -1775,7 +1744,7 @@ theorem rangeIter_sizeHint_saturates (usizeMax : Nat) (r : Nat) (hr : usizeMax <
 
 /-- The four cases of `range_iter_stops_at_i64_bounds` (eval.rs tests): the last
 element may sit on `i64::MAX`/`i64::MIN`, and a step of `i64::MIN` is fine
-(the pre-#2899 negation is gone). -/
+(no negation of the step). -/
 theorem rangeIter_bounds_examples :
     rangeIter 1 2 (I64MAX - 1) = .ok [I64MAX - 1, I64MAX] ∧
     rangeIter (-1) 2 (I64MIN + 1) = .ok [I64MIN + 1, I64MIN] ∧
@@ -1783,8 +1752,8 @@ theorem rangeIter_bounds_examples :
     rangeIter I64MAX 2 (-1) = .ok [-1, I64MAX - 1] := by
   refine ⟨?_, ?_, ?_, ?_⟩ <;> rfl
 
-/-- **#2894 fixed by #2899**: `UNWIND range(i64::MAX - 1, i64::MAX)` now yields the two
-elements the eager `range()` gives (before #2899 it wrapped). -/
+/-- `UNWIND range(i64::MAX - 1, i64::MAX)` yields the two
+elements the eager `range()` gives. -/
 theorem rangeIter_max_fixed :
     rangeIter 1 (rangeLen (I64MAX - 1) I64MAX 1) (I64MAX - 1) = .ok [I64MAX - 1, I64MAX] ∧
     rangeIter (-1) (rangeLen (I64MIN + 1) I64MIN (-1)) (I64MIN + 1) = .ok [I64MIN + 1, I64MIN] :=
@@ -1827,7 +1796,7 @@ theorem int_float_eq_not_transitive (a b : Int) (f : F) (hab : a ≠ b)
 
 /-! ## `sign`, `toInteger`, `coalesce` -/
 
-/-- `sign` (math.rs:210-219, since #2907 `f04c3557a`): the Float arm is
+/-- `sign` (math.rs:210-219): the Float arm is
 `Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs:214), read
 through `partial_cmp` against `0.0` (`FM.ofInt 0`), so NaN gives `0`. -/
 def signRust : V F → V F
@@ -1835,7 +1804,7 @@ def signRust : V F → V F
   | .flt f => .int ((if fGt f (FM.ofInt 0) then 1 else 0) - (if fLt f (FM.ofInt 0) then 1 else 0))
   | _ => .null
 
-/-- **#2906 fixed** (#2907 `f04c3557a`): `sign` of any Float is an Integer, as in C's
+/-- `sign` of any Float is an Integer, as in C's
 `AR_SIGN` and openCypher. -/
 theorem sign_float_is_int (f : F) : ∃ n, signRust (.flt f) = .int n ∧ (n = 1 ∨ n = -1 ∨ n = 0) := by
   refine ⟨_, rfl, ?_⟩

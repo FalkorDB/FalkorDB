@@ -1,7 +1,7 @@
 import FalkorAggOps.AggPlan
 /-
 Aggregate operator state: accumulator zeroing / unbinding, `GroupKey` Eq/Hash,
-`args_for`, `new` (graph/src/runtime/ops/aggregate.rs); `hash_u64` is history (removed by #2977).
+`args_for`, `new` (graph/src/runtime/ops/aggregate.rs); `hash_u64` is history.
 Table in `AggPlan.lean`. An environment is `Nat → Option Z` (slot ↦ bound value);
 `Row::insert` = `upd`, `Row::unbind` = `clr`.
 -/
@@ -276,7 +276,7 @@ theorem gkHash_consistent {S : Type} (veq : Z → Z → Bool) (hv : S → Z → 
       exact ih _ ys h.2
 
 /-! ## `hash_u64` (history: aggregate.rs:1254 trait decl, :1258 `impl HashU64 for Row` at ca36bfa15;
-removed by #2977, c652e505e: the group id is the insertion index, see `GroupId.lean`) -/
+the group id is the insertion index now, see `GroupId.lean`) -/
 
 /-- `FxHasher::default()`, `self.hash(&mut hasher)`, `hasher.finish()`. -/
 def hashU64 {R S : Type} (fxDefault : S) (rowHash : S → R → S) (finish : S → Nat) (r : R) : Nat :=

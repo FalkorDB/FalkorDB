@@ -1,7 +1,7 @@
 /-
 # `NameMap` — a schema name list; `AttrNameMap` — the graph's attribute-name dictionary
 
-`graph/src/graph/schema.rs:43-216` (#3757): a `NameMap` is one of `Labels`,
+`graph/src/graph/schema.rs:43-216`: a `NameMap` is one of `Labels`,
 `RelationshipTypes`, `PropertyKeys`, each a `NameList` of `names` (id → name), `ids`
 (name → id) and the schema-hash `chain`. `vec`/`index` here are `names`/`ids`. Ids are
 minted only by `get_or_insert` (:168) as `names.len()`, refused once `len() ≥
@@ -15,7 +15,7 @@ capacity()` (:105: `MAX_ATTRIBUTES = 65535` for property keys, else `usize::MAX`
   returned id names `n` (or is `NONE` exactly when the table is full and `n` is
   new), ids already minted keep their names (`getOrCreate_prefix`), and a
   minted id is `< 65535`, so it fits a `u16` exactly (`mint_cast_exact`).
-* `uncapped_aliases_zero` — with the pre-#3757 `as u16` cast and no cap the 65,537th
+* `uncapped_aliases_zero` — with an `as u16` cast and no cap the 65,537th
   name would get id 0; `uncapped_try_from_none` — through `u16::try_from` it is `NONE`.
 * accessors: `len`, `is_empty`, `names`, `get`, `iter`/`into_iter`, `id_of`
   (= `get_index_of`), `Index::index` (a panic is `none`).
@@ -310,7 +310,7 @@ theorem getOrInsert_some (cap : Nat) (m : M) (n : String) (hc : m.vec.length < c
   · rfl
   · rw [ite_eq_right_iff.mpr (fun h => absurd h (by omega))]; rfl
 
-/-! ## The schema-hash chain (#3757, schema.rs:43-216, schema_hash.rs:37-60)
+/-! ## The schema-hash chain (schema.rs:43-216, schema_hash.rs:37-60)
 
 Each list's `chain` is extended (`extend_chain(tag, chain, name)`, abstract `xc` here —
 xxh3, see graph_queries `GQ.SchemaHash.push`) exactly where `names` is pushed

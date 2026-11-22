@@ -1,14 +1,14 @@
 import RedisLayer.ModuleInit
 import RedisLayer.LoadArgs
 /-!
-# `CONFIG REWRITE` and the native `graph.*` configs (#3419)
+# `CONFIG REWRITE` and the native `graph.*` configs
 
 Every integer config in `ModuleInit.table` (`lib.rs:97-116`) is a Redis module numeric
 config backed by the same `RedisGILGuard` that `GRAPH.CONFIG SET` (`config_cmd.rs:286-288`)
 and the module-load arguments (`config.rs:252-283`) write. `CONFIG REWRITE` therefore saves
 `graph.<NAME> <value>` for whatever those paths stored, and on the next start Redis applies
 that line through the table's range; a value outside it unloads the module and aborts the
-server (#3413).
+server.
 
 | here | there |
 | --- | --- |
@@ -18,13 +18,11 @@ server (#3413).
 | `Config.validate .vkeyMax` | `GRAPH.CONFIG SET` (`config_cmd.rs:164-172`) |
 | `LoadArgs.applyModuleArgs` | the module-load arguments (`config.rs:296`) |
 
-**Fixed by #3419 (`8621212fc`, closes #3413):** `VKEY_MAX_ENTITY_COUNT` was registered with
-range `1..1073741824` while both other paths accept every `0..i64::MAX`
-(FalkorDB Cloud's `4611686000000000000`, and `0`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now
+`VKEY_MAX_ENTITY_COUNT` is registered with range `0..i64::MAX`, as both other paths accept.
 `vkey_rewrite_reloads_config` / `vkey_rewrite_reloads_load`: any value either path accepts
 is written by `CONFIG REWRITE` as a line the next start accepts, reading back the same value.
 
-**Same class, still open:** the other integer entries keep ranges narrower than what the
+**Open:** the other integer entries keep ranges narrower than what the
 load arguments or `GRAPH.CONFIG SET` accept (`rewrite_reload_counterexamples`):
 `CACHE_SIZE` (load: any positive; table `≤ 1000`), `THREAD_COUNT` (`≤ 1024`),
 `INDEX_WORKER_THREADS` (`≤ 1024`), `NODE_CREATION_BUFFER` (`≤ 2^30`), `JS_HEAP_SIZE` and
@@ -184,9 +182,9 @@ theorem vkey_rewrite_reloads_load (fs : FS) (td tm : Int) (args : List (List Nat
             exact vkey_rewrite_reloads_config v _ hv
   · simp at hm
 
-/-! ## History and the open cases -/
+/-! ## The open cases -/
 
-/-- **Still open (same class as #3413, not filed)**: values the module-load arguments accept
+/-- **Still open (not filed)**: values the module-load arguments accept
 whose rewritten line the table refuses. `CACHE_SIZE`/`THREAD_COUNT`/`NODE_CREATION_BUFFER`
 and `INDEX_WORKER_THREADS` are load-only (`validateLoadOnly`); `JS_HEAP_SIZE` and `JS_STACK_SIZE` are also settable by
 `GRAPH.CONFIG SET` (the latter checked here through `validateConfigSet`). -/

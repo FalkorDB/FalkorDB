@@ -16,11 +16,9 @@ import FalkorEffectsCodec.Prim
 | `decodeV`          | `impl EffectDecode<3> for Value::decode` (`value.rs:168`) |
 | `propValid`        | `pending::is_valid_property` (`graph/src/runtime/pending.rs:78`) |
 
-**#3267 (`eaa65eeba`).** `read_one`'s array arm now checks the claimed width against
+`read_one`'s array arm checks the claimed width against
 the whole stack, `guard_count(n + owed, MIN_VALUE_BYTES)`, where `owed` counts the
-children the open frames still need after this one. Before, it checked `n` alone and
-every level of `[[[…` could claim the whole remainder (the pre-#3267 counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412: the
-reservations sum to `k (k-1)` elements from `8k` bytes). Now `capTrace_linear`: the
+children the open frames still need after this one. So `capTrace_linear`: the
 capacities one decode reserves sum to at most `remaining / 4`.
 
 Floats: `f64::to_le_bytes`/`from_le_bytes` are the identity on the bit pattern
@@ -96,9 +94,9 @@ inductive EErr where
   | emptyIndexSchemaList
   | idList
   | panic
-  /-- `EncodeError::RowShapeMismatch` (`error.rs:46`, #2916). -/
+  /-- `EncodeError::RowShapeMismatch` (`error.rs:46`). -/
   | rowShapeMismatch
-  /-- `EncodeError::EmptyRecord` (`error.rs:57`, #2916). -/
+  /-- `EncodeError::EmptyRecord` (`error.rs:57`). -/
   | emptyRecord
 deriving Repr, DecidableEq
 
@@ -548,7 +546,7 @@ end
 /-- **`read(write(v)) = v`**, for every value `encV` accepts: the decoder
 consumes exactly the encoding, returns exactly `v` — bit-for-bit, since every
 float is its bit pattern — and leaves `rest` untouched, so the next field
-parses from the right offset. Still true with #3267's tighter guard: an honest
+parses from the right offset. Still true with the whole-stack guard: an honest
 encoding always has the bytes every open frame owes. -/
 theorem decodeV_encV (utf8 I : Bytes → Bool) (v : Val) (bs rest : Bytes)
     (h : encV I v = .ok bs) (hw : WF utf8 v) :
@@ -769,7 +767,7 @@ theorem deliver_ok : ∀ (v : Val) (st : List Frame), FramesOk st →
 
 /-- **The decoder never panics**, on any input whatsoever — neither the
 `*left -= 1` of `value.rs:188`, which would underflow on a frame of zero, nor
-#3267's `owed -= 1` (`value.rs:191`): `owed` is always `owedOf` the stack. -/
+the `owed -= 1` (`value.rs:191`): `owed` is always `owedOf` the stack. -/
 theorem loop_noPanic (utf8 : Bytes → Bool) :
     ∀ fuel st owed r, FramesOk st → owed = owedOf st → loop utf8 fuel st owed r ≠ .error .panic
   | 0, _, _, _, _, _ => by simp [loop]
@@ -963,7 +961,7 @@ def capTrace (utf8 : Bytes → Bool) : Nat → List Frame → Nat → Bytes → 
       | .more st' => if owed = 0 then [] else capTrace utf8 fuel st' (owed - 1) r'
       | _ => []
 
-/-- **#3267: the reservations are linear in the input.** Whatever the bytes, the
+/-- **The reservations are linear in the input.** Whatever the bytes, the
 capacities one decode reserves sum to at most a quarter of what is left once the
 `owed` siblings are set aside: each claim is checked against the bytes no
 ancestor has already claimed. -/

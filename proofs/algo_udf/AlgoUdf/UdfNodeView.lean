@@ -1,10 +1,8 @@
 import AlgoUdf.UdfClasses
-/-! # Where a UDF node object reads its labels and attributes from (#3454) — FIXED by #3464
+/-! # Where a UDF node object reads its labels and attributes from 
 
 `UdfClasses.jsNode` takes the labels and attributes as arguments, so the question
-*which view of the graph* `create_js_node` reads them from is modelled here. Before #3464
-`create_js_node` read only the committed graph, so a node deleted (or relabelled) earlier
-in the same query looked different to a UDF than to `labels(n)` / `n.prop`. Now
+*which view of the graph* `create_js_node` reads them from is modelled here.
 `create_js_node(ctx, id, graph, runtime)` (`udf/js_classes.rs:134`) reads through the
 runtime when `Runtime::node_differs_from_committed` says the answer can differ, and from
 the committed graph otherwise. Rust source of truth: origin/main 1c0e6c8de.
@@ -22,16 +20,9 @@ the committed graph otherwise. Rust source of truth: origin/main 1c0e6c8de.
 | `specJsNode`      | the contract: read the runtime when one is given, as `labels(n)` / `n.prop` do |
 
 Entry points with no runtime (`getNeighbors` :518, `getNodeById` :576, `iterateNodes` :630,
-`traverse` :863) call `create_js_node(.., None)`: the committed graph, unchanged by #3464.
+`traverse` :863) call `create_js_node(.., None)`: the committed graph, unchanged.
 
-Live (before the fix; Rust vs C), `CREATE (:P {name:'A'})`, UDF `inspect_node(n) = [n.labels, n.attributes.name]`:
-
-| query | Rust (pre-#3464) | C |
-| --- | --- | --- |
-| `MATCH (n:P) DELETE n RETURN labels(n), n.name, test.inspect_node(n)` | `[P], A, [[], NULL]` | `[], A, [[], A]` |
-| `MATCH (n:P)-[r]->() DETACH DELETE n RETURN test2.src(r)` (`r.source`) | `[[], NULL]` | error (undefined attribute) |
-
-C also loses deleted-node data (differently). The property stated is Rust's own
+C loses deleted-node data (differently). The property stated is Rust's own
 contract, the one `create_js_edge` already follows for the type: a UDF sees the node as
 the query's runtime does, i.e. as `labels(n)` / `n.name` in the same row do.
 -/
@@ -240,6 +231,6 @@ theorem fixed3454_edge_target :
       some (.obj (jsNode 0 ["P"] [("name", .attr 0)])) :=
   (rs_edge_ok rtAfterDelete 5 1 0 "R" []).2
 
-/-! ## Historical: `create_js_node` before #3464 (fixed by #3464) -/
+/-! ## Historical: `create_js_node` reading only the committed graph -/
 
 end AlgoUdf.UdfNodeView

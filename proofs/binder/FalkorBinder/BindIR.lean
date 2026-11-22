@@ -11,11 +11,11 @@ import FalkorBinder.Scopes
 | `deleteOk` | DELETE entity check binder.rs:585-597 |
 | `returnStarOk` | `RETURN *` check binder.rs:655-663 |
 | `yieldOk`, `bindYield` | CALL … YIELD validation and binding binder.rs:676-787 |
-| `relReused`, `recordMatchRels` | MATCH arm's `match_rel_vars` check and record (#2981) binder.rs:438-468 |
+| `relReused`, `recordMatchRels` | MATCH arm's `match_rel_vars` check and record binder.rs:438-468 |
 | `RC`, `bindIR` | the dispatcher `bind_ir` binder.rs:361-843 (sub-binders as parameters) |
 | `subqueryReturns`, `bindCallSubquery` | `bind_call_subquery` binder.rs:845-939 |
-| `pruneMatchRels` | its step 2c for `match_rel_vars` binder.rs:845-939 (#2981) |
-| `pruneVarlen` | its step 2c for `varlen_rel_var_ids` binder.rs:886-887 (#3891) |
+| `pruneMatchRels` | its step 2c for `match_rel_vars` binder.rs:845-939 |
+| `pruneVarlen` | its step 2c for `varlen_rel_var_ids` binder.rs:886-887 |
 | `importProjections` | `build_import_projections` binder.rs:1133-1151 |
 | `createCheck`, `bindGraphCreate` | `bind_graph_create` binder.rs:1743-1861 |
 -/
@@ -201,7 +201,7 @@ theorem bindYield_hidden (hidden : Nat → Name → Name) (e : Env) (d : Nat) (y
     bindYield false hidden e d y =
       .ok (e.insert (hidden e.length y.1) (freshVar e y.1 .any d), freshVar e y.1 .any d) := rfl
 
-/-! ## MATCH: a relationship variable bound by an earlier MATCH (#2981) -/
+/-! ## MATCH: a relationship variable bound by an earlier MATCH -/
 
 /-- `Alias::name` (ast.rs:97-102): an unnamed pattern entity has none. -/
 def aliasName : Alias → Option Name

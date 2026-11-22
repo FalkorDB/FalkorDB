@@ -1,41 +1,31 @@
 /-
-# `Tensor::decode` and promotion completeness (`edge_count` underflow, #3033)
+# `Tensor::decode` and promotion completeness (`edge_count` underflow)
 
-**Status on main 73077bb4a: FIXED by #3033.** #2996 added a size check of the
-forward layers (below, `checkLayers_*`) and made a corrupt id blob an `Err`
-(`Codes.decodeBlob_never_dies`). #3033 adds the promotion-completeness check:
+`Tensor::decode` checks the size of the forward layers (below, `checkLayers_*`) and makes a corrupt
+id blob an `Err` (`Codes.decodeBlob_never_dies`). It also checks promotion completeness:
 every tensor-section pair must land on a `MULTI_EDGE` forward entry
 (tensor.rs:1645-1649) and the number of `me` pairs with ids must equal the
 number of markers, counted by `Matrix::<u64>::count_value_eq` (matrix.rs:1232,
 `GrB_select` with `GrB_VALUEEQ_UINT64`) (tensor.rs:1630, 1675-1680). The section
 "Promotion completeness on decode" below proves it refuses exactly the payloads
 that break the invariant (`decodeCheck_ok_iff`) and accepts every encoded tensor
-(`decodeCheck_accepts_encoded`). The text that follows is the pre-#3033 state;
-its counterexamples were removed (in 17ccc5412).
+(`decodeCheck_accepts_encoded`).
 
 `Tensor::decode` (tensor.rs:1566) rebuilds the inline forward matrix `m` from the
 on-disk forward layers, then fills the multi-edge store `me` from the tensor
-section (then tensor.rs:1609-1647). Before #3033 it never checked the
-*promotion-completeness* invariant that ties them together:
+section (tensor.rs:1609-1647). The *promotion-completeness* invariant ties them together:
 
 > `eff_get (src,dst) = MULTI_EDGE`  ⟺  row `κ(src,dst)` of `me` is non-empty
 > (tensor.rs module docs; `single_me` / `multi_me` in `proofs/versioned_matrix`).
 
-A crafted payload can put a pair in the tensor section (giving it an `me` row)
-without a matching `MULTI_EDGE` forward entry. Then `edge_count` (tensor.rs:1230),
-which is *checked* precisely because a decoded blob can break an invariant,
-computes `multi` (number of `me` rows) greater than the effective forward
-pattern and the subtraction underflows — a deliberate `panic!`. Reached from the
-very next `Tensor::encode` (BGSAVE / GRAPH.COPY), so a restored graph can no
-longer be saved.
+`edge_count` (tensor.rs:1230) is *checked* precisely because a decoded blob can break an invariant:
+if `multi` (number of `me` rows) exceeded the effective forward
+pattern the subtraction would underflow, a deliberate `panic!`, reached from
+the next `Tensor::encode` (BGSAVE / GRAPH.COPY).
 
 `edge_count`'s identity (tensor.rs:1230):
 `|E| = |m| + |dp| − |dm| − |dp∩m| − multi + |me|`, each step checked.
 
-Confirmed: `bug_tensor_decode_accepts_orphan_me_row_then_edge_count_panics`
-(`graph/tests/lean_graphblas_wrappers.rs`) prints
-`Tensor::edge_count: multi exceeds the effective pattern
-(promotion-completeness is broken). |m|=0 |dp|=0 |dm|=0 |dp∩m|=0 multi=1 |me|=1`.
 -/
 
 namespace GBW
@@ -96,12 +86,12 @@ theorem edgeCount_value (m dp dm shadow multi me : Nat) (h : Wf m dp dm shadow m
   have e1 : dm ≤ m + dp := by omega
   simp only [Option.bind, ite_eq_left h4, ite_eq_left e1, ite_eq_left h2, ite_eq_left h3, ite_eq_left h5]
 
-/-! ## Forward-layer sizes (#2996, tensor.rs:1577-1587)
+/-! ## Forward-layer sizes (tensor.rs:1577-1587)
 
 `Tensor::decode` merges the on-disk delta-plus / delta-minus layers into a base
-built at the forward base's size. Since #2996 it refuses a payload whose
-deltas are not exactly that size; before, a larger delta-plus was merged and
-`m.set` wrote outside `m`. Dims are `(nrows, ncols)`. -/
+built at the forward base's size. It refuses a payload whose
+deltas are not exactly that size (a larger delta-plus would be merged and
+`m.set` would write outside `m`). Dims are `(nrows, ncols)`. -/
 
 abbrev Dims := Nat × Nat
 
@@ -134,7 +124,7 @@ theorem checkLayers_merge_in_bounds_dm (m dp dm : Dims) (h : checkLayers m dp dm
 theorem checkLayers_rejects_main_test : checkLayers (4, 4) (8, 8) (4, 4) ≠ .ok () := by
   rw [Ne, checkLayers_ok_iff]; simp
 
-/-! ## Promotion completeness on decode (#3033, tensor.rs:1604-1680)
+/-! ## Promotion completeness on decode (tensor.rs:1604-1680)
 
 After the forward merge `Tensor::decode` waits `m` (:1623) and counts its
 `MULTI_EDGE` markers with `Matrix::<u64>::count_value_eq` (:1630). Then every
@@ -532,7 +522,7 @@ theorem decodeCheck_accepts_encoded (S : SelectValueEqSpec) (t : TState) (h : t.
       · cases h
       · exact ⟨ids, (mem_encTs t p ids).1 hi⟩
 
-/-! ### main's tests, and the pre-#3033 counterexample -/
+/-! ### main's tests -/
 
 /-- `decode_rejects_edge_ids_for_a_pair_that_is_not_multi_edge`, absent pair
 (7, 9) — an orphan row. -/

@@ -1,6 +1,6 @@
 import RedisLayer.Config
 /-!
-# Module load arguments (`src/config.rs`, #3328 `ded0b7c3f`)
+# Module load arguments (`src/config.rs`)
 
 `graph_init` (`src/module_init.rs:139`) hands every `--loadmodule … NAME VALUE …`
 argument (`to_string_lossy`) to `apply_module_args` (`src/config.rs:296-354`); `lib.rs`
@@ -11,7 +11,7 @@ sets `module_args_as_configuration: false`, so redismodule-rs no longer reads th
 | `N`, `N.str`, `parseName`        | the string `match`es on the upper-cased name (`config.rs:236-247`, `config_cmd.rs:118-198`) |
 | `validateTempFolder`             | `validate_temp_folder` `config.rs:205` |
 | `validateLoadOnly`               | `validate_load_only` `config.rs:223` |
-| `validateConfigSet`              | `validate_config_set` `config_cmd.rs:114` — each arm *is* `Config.validate` (#3021 model) |
+| `validateConfigSet`              | `validate_config_set` `config_cmd.rs:114` — each arm *is* `Config.validate` |
 | `checkTimeouts`                  | `check_timeout_constraints` `config_cmd.rs:220` |
 | `rstep`, `loop`, `applyModuleArgs` | `apply_module_args` `config.rs:296` (loop body `:316-347`, final check `:349-355`, apply `:357-359`) |
 | `LoadArg`, `applyLoadArg`        | `enum LoadArg` `config.rs:185`, `apply_load_arg` `:252` |
@@ -31,8 +31,8 @@ Proven:
   `File::create` in a directory succeeds iff `access(W_OK)` does.
 * `error_applies_nothing`, `ok_applies_each_pair` — every pair is validated before any is
   applied: an error applies nothing; success applies one `apply_load_arg` per pair, in order.
-* `fixed3328_*` — the W4-redis-3 / #3268 counterexamples now load as in C;
-  `ModuleInit.pre3328_*` keep the old behaviour.
+* `fixed3328_*` — the W4-redis-3 / #3268 cases load as in C;
+  `ModuleInit.pre3328_*` keep the earlier behaviour as historical counterexamples.
 
 Divergences (both confirmed live, ports 19470, Rust b080a44c1 vs C `master`):
 * `leading_space_divergence` — C's `strtoll` skips leading whitespace, Rust's
@@ -515,9 +515,9 @@ theorem step_agree (fs : FS) (hfs : FsOk fs) (td tm : Int) (ht : TOk td tm) (n :
     cases e1 : fs.exists_ v <;> cases e2 : fs.isDir v <;> simp [TOk] <;> rw [hfs v e1 e2] <;>
       cases fs.writable v <;> simp <;> omega
 
-/-! ## `check_timeout_constraints` is the #3021 cross check
+/-! ## `check_timeout_constraints` is the cross check
 
-`validate_timeout_cross_constraints` (`config_cmd.rs:206`) now loads the two stored values
+`validate_timeout_cross_constraints` (`config_cmd.rs:206`) loads the two stored values
 and calls `check_timeout_constraints`; `Config.cross` models it. On the names they share
 the two models agree. -/
 
@@ -676,7 +676,7 @@ theorem ok_applies_each_pair (fs : FS) (td tm : Int) (args : List (List Nat)) (v
       · cases h
       · cases h; rw [loop_length fs _ _ _ _ _ _ _ _ hl, pairs_length]
 
-/-! ## The #3268 / W4-redis-3 counterexamples, and what still differs -/
+/-! ## The W4-redis-3 cases, and what still differs -/
 
 /-- A file system where every path is a writable directory (none of these touch it). -/
 def fs0 : FS := ⟨fun _ => true, fun _ => true, fun _ => true, fun _ => true⟩

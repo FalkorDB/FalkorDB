@@ -203,7 +203,7 @@ theorem vltMain_follows_of_ne {g : Graph} {s : Nat} {steps : List (Nat × Nat)}
     rw [hlast]
     exact congrArg (elems ++ ·) (revWalk_reconstructs hwf s steps hl)
 
-/-! ## #3451: the cyclic incoming case -/
+/-! ## The cyclic incoming case -/
 
 /-- The issue's triangle `0→1→2→0`, edge ids = the `w` values 1, 2, 3. -/
 def gTri : Graph := [⟨1, 0, 1⟩, ⟨2, 1, 2⟩, ⟨3, 2, 0⟩]

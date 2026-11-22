@@ -1,5 +1,5 @@
 /-
-# `self_loops_after_binders` (planner/hop_order.rs, #3102 61284ea4f; fixes #2999)
+# `self_loops_after_binders` (planner/hop_order.rs)
 
 | Lean | Rust |
 | --- | --- |
@@ -8,7 +8,7 @@
 | `flush` | the latest-first `for k in (0..deferred.len()).rev()` loop :52-56 |
 | `step` | one iteration of `for (i, (hop, s)) in hops.into_iter().zip(&shapes).enumerate()` :39-58 |
 | `selfLoopsAfterBinders` | `self_loops_after_binders` :25 (early return :32-34, `foldl` = the loop) |
-| `pre3102_loop`, `pre3102_reference` | the loop #3102's first commit used, kept as `tests::reference` hop_order.rs:84-110 |
+| `pre3102_loop`, `pre3102_reference` | an earlier loop, kept as `tests::reference` hop_order.rs:84-110 |
 
 Generic over the hop type `T` and the node type `N` (the planner instantiates `T = QR`,
 `N = (id, scope_id)`, `bound = self.visited.contains`, mod.rs:2218-2227).
@@ -19,8 +19,8 @@ Generic over the hop type `T` and the node type `N` (the planner instantiates `T
 * `deferred_after_binder` — a deferred self-loop comes after the first later hop that binds
   its node (with only other self-loops flushed by that binder between them).
 * `single_pass` — the result is one left fold over the input (each hop is stepped exactly once,
-  `length (zipIdx) = length hops`) — vs. the old loop, which revisits every hop it moves.
-* **`eq_reference`** — it equals the pre-#3102 loop (`pre3102_reference`) whenever a hop flagged
+  `length (zipIdx) = length hops`) — vs. the earlier loop, which revisits every hop it moves.
+* **`eq_reference`** — it equals the earlier loop (`pre3102_reference`) whenever a hop flagged
   `self_loop` has `from = to` (`WF`; in the planner, an alias id names one variable per pattern).
   `wf_needed` shows the premise matters for the generic function.
 * `early_return_sound` — the `!(1..len).any(movable)` fast path returns what the loop would.
@@ -500,7 +500,7 @@ theorem deferred_after_binder (m : Nat) (h : T) (A : List T) (b : T) (C : List T
 
 end
 
-/-! ## The pre-#3102 loop (`tests::reference`) -/
+/-! ## The earlier loop (`tests::reference`) -/
 
 /-- The loop #3102's first commit planned with (hop_order.rs:84-110 keeps it verbatim):
 `remove(i)` the self-loop and `insert(i + j + 1)` it right after its first later binder, then
@@ -680,7 +680,7 @@ theorem skip_touched (shape : T → HopShape N) (bound : N → Bool) : ∀ (P pr
     simp only [List.length_cons, List.append_assoc, List.singleton_append]
     rw [show f + 1 - (P.length + 1) = f - P.length by omega]
 
-/-! ## The new loop equals the old one -/
+/-! ## The loop equals the earlier one -/
 
 section
 variable (hops : List T) (shape : T → HopShape N) (bound : N → Bool)

@@ -105,7 +105,7 @@ theorem distance_self (p : Point F32) (h1 : L.finite (L.toRadF64 p.latitude) = t
 
 section Antipodal
 
-/-! ### #2983: antipodal points (W2-temporal-4)
+/-! ### Antipodal points (W2-temporal-4)
 
 The IEEE facts the NaN argument needs, stated over the same abstract `F`. `le` is IEEE `≤`
 (false whenever an operand is NaN). Each is a property of binary64 and of `f64::clamp`:

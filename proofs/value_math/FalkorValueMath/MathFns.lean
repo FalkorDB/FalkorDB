@@ -107,7 +107,7 @@ def fcGt0 : FC → Bool
 /-- `bool as i64` (`i64::from(b)`). -/
 def b2i (b : Bool) : Int := if b then 1 else 0
 
-/-- `sign` (math.rs:210-219, since #2907 `f04c3557a`): the Float arm is
+/-- `sign` (math.rs:210-219): the Float arm is
 `Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))` (math.rs:214). -/
 def mSign : V FC → Res
   | .int n => .ok (.int (signumI n))
@@ -202,9 +202,9 @@ theorem abs_min_diverges :
     mAbs (.int I64MIN) = .err "ArgumentError: integer overflow in abs()" ∧ cAbs (.int I64MIN) = .ok (.int I64MIN) :=
   ⟨rfl, by simp [cAbs, cAbs_min]⟩
 
-/-! ## `sign` (issue #2906, fixed by #2907 `f04c3557a`) -/
+/-! ## `sign` -/
 
-/-- **#2906 fixed** (#2907 `f04c3557a`): `sign` of every Float is an *Integer* — `1`
+/-- `sign` of every Float is an *Integer* — `1`
 for positive (incl. `+inf`), `-1` for negative (incl. `-inf`), `0` for `±0.0` and NaN —
 matching the declared `Integer | Null` return type and C's `AR_SIGN`. -/
 theorem sign_float_is_int (f : FC) :
@@ -226,9 +226,8 @@ theorem sign_float_agrees_int (n : Int) : mSign (.float (fcOfInt n)) = mSign (.i
     · have : n < 0 := by omega
       simp [h0, hp, this, mSign, fcGt0, fcLt0, b2i, signumI]
 
-/-- **The declared return type now holds** (`ret: Integer | Null`, math.rs:209): every
-validated `sign` call returns a value that `Integer | Null` accepts. Before #2907 a
-non-zero Float argument violated the declared return type. -/
+/-- **The declared return type holds** (`ret: Integer | Null`, math.rs:209): every
+validated `sign` call returns a value that `Integer | Null` accepts. -/
 theorem sign_ret (v : V FC) (h : validateArgsType (.fixed [numArg]) [v] = none) :
     ∃ r, mSign v = .ok r ∧ Accepts r (.union [.int, .null]) := by
   rcases numeric_body_cases v h with ⟨i, rfl⟩ | ⟨f, rfl⟩ | rfl
@@ -337,7 +336,7 @@ theorem uuid_shape (bs : List Nat) (b6 b8 : Fin 256)
   refine ⟨by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout], by simp [uuidLayout],
     by simp [uuidLayout], by simp [uuidLayout, hv], ⟨_, hw.1, hw.2, by simp [uuidLayout]⟩⟩
 
-/-! ## `pow` / `^` (math.rs:328; #2904 fixed issue #2902) -/
+/-! ## `pow` / `^` (math.rs:328) -/
 
 /-- `Value::get_numeric` on a numeric value, at class level (`i as f64`). -/
 def numFC : V FC → FC
@@ -348,7 +347,7 @@ def numFC : V FC → FC
 /-- The type error `apply_pow` raises for a non-numeric, non-null operand. -/
 def powMsg (v : V FC) : String := s!"Type mismatch: expected Integer, Float, or Null but was {v.name}"
 
-/-- `apply_pow` (math.rs:328, since #2904): reject a non-numeric non-null operand
+/-- `apply_pow` (math.rs:328): reject a non-numeric non-null operand
 (base first), then `null` if either side is null, else `powf` of both operands
 converted to `f64` (C's `pow(SI_GET_NUMERIC(base), SI_GET_NUMERIC(exp))`). -/
 def applyPow (powf : FC → FC → FC) (base exponent : V FC) : Res :=
@@ -357,7 +356,7 @@ def applyPow (powf : FC → FC → FC) (base exponent : V FC) : Res :=
   else if base.isNull || exponent.isNull then .ok .null
   else .ok (.float (powf (numFC base) (numFC exponent)))
 
-/-- `apply_pow` before #2904 (main 289c201fe): every non-numeric pair, including
+/-- The earlier `apply_pow` (historical model): every non-numeric pair, including
 `true` or a string, silently became `null`. -/
 def pre2904_applyPow (powf : FC → FC → FC) : V FC → V FC → V FC
   | .int a, .int b => .float (powf (fcOfInt a) (fcOfInt b))
@@ -379,7 +378,7 @@ theorem pow_nonnumeric_exp_errors (powf : FC → FC → FC) (a b : V FC)
     applyPow powf a b = .err (powMsg b) := by
   simp [applyPow, ha, hb, hn]
 
-/-- `true ^ 2` and `2 ^ true` are errors on main, `null` before #2904. -/
+/-- `true ^ 2` and `2 ^ true` are errors on main. -/
 theorem pow_bool_errors (powf : FC → FC → FC) (i : Int) :
     applyPow powf (.bool true) (.int i) = .err "Type mismatch: expected Integer, Float, or Null but was Boolean" ∧
     applyPow powf (.int i) (.bool true) = .err "Type mismatch: expected Integer, Float, or Null but was Boolean" ∧

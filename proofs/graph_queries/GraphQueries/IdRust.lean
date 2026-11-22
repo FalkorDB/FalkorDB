@@ -4,7 +4,7 @@ import GraphQueries.IdContract
 
 `IdContract.lean` states what graph.rs needs from `IdSpace` as the hypothesis
 `IdSpaceContract O`. Here `rustIdOps` models the five mutators of
-`graph/src/graph/id_space.rs` (origin/main `256ab4d3f`; #3641 added `quarantined` and #3471-style `map_or` rewrites to the file, none of which changes what these five mutators do to `IdS`: `open_batch` also folds `released ∪ (taken ∩ recycled)` into `quarantined`, a field outside `IdS`, proofs/id_space `openBatch_quarantines`) line by line over the
+`graph/src/graph/id_space.rs` (origin/main `256ab4d3f`; `quarantined` and `map_or` rewrites in the file do not change what these five mutators do to `IdS`: `open_batch` also folds `released ∪ (taken ∩ recycled)` into `quarantined`, a field outside `IdS`, proofs/id_space `openBatch_quarantines`) line by line over the
 list form of `IdS` (a `RoaringTreemap` is a duplicate-free `List Nat`; `min`/
 `max` are `smin`/`smax`), and `rustIdOps_contract` proves the contract for it.
 So every theorem that takes `(hC : IdSpaceContract O)` holds for the real

@@ -36,14 +36,14 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 
 | here | there |
 | --- | --- |
-| `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`parse_schema_hash`/`up_to_nul`, `src/commands/query_args.rs:56-125` (#3010, `557f18868`; #3757 `SCHEMA_HASH`) |
+| `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`parse_schema_hash`/`up_to_nul`, `src/commands/query_args.rs:56-125` (#3757 `SCHEMA_HASH`) |
 | `QueryArgs.queryFront`/`roQueryFront`/`profileFront`/`explainFront` | `query.rs:44-51`, `ro_query.rs:32-39`, `profile.rs:22`, `explain.rs:64` |
 | `Args.rustParseI64`     | `str::parse::<i64>` (GRAPH.CONFIG) |
 | `Args.string2ll`        | Redis `string2ll` (`RedisModule_StringToLongLong`, `parse_integer`) |
 | `QueryArgs.cReadFlags`  | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`) |
 | `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:1064-1099` |
-| `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:123-212`, `:216-263`, `:271-314`, `:331-412` (as of #3021; #3816 `WRITE_LOCK_POLL_INTERVAL`) |
-| `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:331-358` (#3021) |
+| `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:123-212`, `:216-263`, `:271-314`, `:331-412` (#3816 `WRITE_LOCK_POLL_INTERVAL`) |
+| `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:331-358` |
 | `Config.cSet`           | C `_Config_set` (`cmd_config.c`) |
 | `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_query` (`ReplyFormat::Compact`), `src/reply.rs:152-361`, `:688-747` |
 | `Compact.dec/decReply`  | falkordb-py `query_result.py` `parse_scalar`, `__parse_records` |
@@ -52,7 +52,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs:102-183` |
 | `Bulk.cstr`             | `read_cstring`, `:38-52` |
 | `Bulk.records/readN`    | `process_node_token` record loop, `:438-515` |
-| `Bulk.PropColumns.new/readRecord`, `keepFirst` | `PropColumns::new`/`read_record`, `:204-241` (#3026, `fb3d516d0`) |
+| `Bulk.PropColumns.new/readRecord`, `keepFirst` | `PropColumns::new`/`read_record`, `:204-241` |
 | `Bulk.parseCount`       | `parse_count`, `:697-716` |
 | `Bulk.getOrCreate/slotLen` | `attribute_store.rs:182-189` (`get_or_create`), `:538`, `:549` (`len: n as u16`) |
 
@@ -74,7 +74,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 * `rustTimeout_le_max`, `rustTimeout_pos`, `rustTimeout_exceeds`,
   `rustTimeout_write_pq`, `rustTimeout_rw_uniform`, `rustTimeout_write_ignores_pq` — the
   effective timeout never exceeds TIMEOUT_MAX (under the config invariant), is positive
-  when set, applies to writes exactly as to reads once `timeout_rw` is set (#3000), and
+  when set, applies to writes exactly as to reads once `timeout_rw` is set, and
   ignores the per-query value for writes only under the deprecated TIMEOUT alone.
 * `rustSet_inv` — every successful `GRAPH.CONFIG SET` batch leaves
   `TIMEOUT_DEFAULT ≤ TIMEOUT_MAX` true; `rustSet_timeout_deprecated`; `c_breaks_inv`
@@ -91,50 +91,16 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
   `go`/`attach` totality is Lean's termination proof (each step consumes a byte or pops
   a frame).
 
-## Confirmed divergences from C (all reproduced live: `repro_live.py`)
+## Open divergences from C (reproduced live: `repro_live.py`)
 
-1. **FIXED by #3010 (`557f18868`, issue #3009)** — formerly: a non-UTF-8 flag ended
-   the Rust flag loop (`--compact` dropped); `TIMEOUT -5/+10/010` accepted; RO_QUERY and
-   PROFILE ignored a garbage/missing timeout; `version 4294967296` accepted; no arity cap.
-   Now one parser mirrors C: `nonutf8_keeps_compact`, `timeout_noncanonical_rejected`,
-   `garbage_timeout_rejected`, `version_above_uint_rejected`, `arity_capped`, and the
-   general `rust_c_agree` (since #3757 `rust_c_agree_except_schema`; the unrestricted
-   statement is refuted by `rust_c_agree_refuted`).
-2. **FIXED by #3000 (`2e8172d76`, issue #2998)** — formerly writes ignored the per-query
-   TIMEOUT: with TIMEOUT_MAX = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1`
-   created 300000 nodes on Rust; C times out and creates none
-   (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now `timeout_rw` (`graph_core.rs:893`) applies it:
-   `write_timeout_agrees`, `Args.rustTimeout_write_pq`, `rustTimeout_rw_uniform`.
-3. **FIXED by #3021 (`30b4fb7dc`, issue #3020)** — formerly GRAPH.CONFIG:
-   `VKEY_MAX_ENTITY_COUNT -5` accepted (then read as `as u64`), `CMD_INFO 1/TRUE`
-   accepted, `JS_HEAP_SIZE 5` accepted (C: ≥ 1 MB), `GET x extra` accepted, non-ASCII
-   names case-fold (`tımeout` → TIMEOUT via `to_uppercase`), ASYNC_DELETE reports 0
-   (C 1), error text "Unknown configuration field 'X'". Counterexamples removed in bbee75955; the last revision that has them is 17ccc5412. Now: `fixed3021_counterexamples`, `vkey_ok_nonneg`,
-   `jsheap_ok_ge`, `cmdinfo_ok_iff`, `get_extra_wrong_arity`, `set_pairs_complete`,
-   `dotless_i_not_folded`, `asyncDelete_default_matches_C`, `getOne_unknown_text`.
-4. GRAPH.BULK header naming a property twice (`p,q,p`): Rust stored both span entries
-   (`properties(n)` = `{p: 1, p: 3, q: 2}`, `n.p` = 3); C keeps one (`n.p` = 1).
-   **Fixed by #3063 (`0f45a8685`)**: `import_attrs_resolved` sorts stably, dedups by id
-   (first column wins, as C) and drops `ATTRIBUTE_ID_NONE` — proven in proofs/pending_commit
-   (`Content.normResolved_get`, `resolved_duplicate_fixed`). Since #3026 (`fb3d516d0`,
-   issue #3024) the parse itself keeps one entry per attribute, the first non-null in
-   header order: `Bulk.readRecord_enc`, `keepFirst_nodup`, `keepFirst_find`,
-   `keepFirst_plainRead` (agrees with what #3063 kept).
-5. Verbose format: top-level point `point({latitude: 1.000000, …})` (C: no space after
-   `:`) and NaN in lists `NaN` (C `nan`) — **FIXED by #3043 (`7cde92c1d`, closes #3042)**:
-   `Resp.pointStr_c`, `verbose_point_c`, `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`. Still: a node deleted in the same query keeps
+5. Verbose format: a node deleted in the same query keeps
    its labels (C `[]`, intended), and `CREATE (a:A) DELETE a` reports no `Nodes
    created/deleted` stats.
-6. Minor: several error texts differ (WRONGTYPE, empty key, count mismatch; `GRAPH.MEMORY …
-   SAMPLES -1` Rust `ERR SAMPLES must be a non-negative integer`, C without the `ERR `).
-   **Fixed by #3053** (`fe619ac5f`, live-checked on 19010/19011): `SAMPLES 0` accepted
-   (`memArgs_samples`); `GRAPH.CONSTRAINT` refuses `LABEL`/`EDGE` (`cons_label_refused`,
-   `cons_edge_refused`) and `+1`/`01` counts (`cons_count_noncanonical`, `string2ll`), as C.
 
 Also seen / root cause for known issues: `Slot.len = n as u16` (`attribute_store.rs:598`,
-`:609`) is why 65536 properties vanished (#2539; 65537 keeps one, `slot_len_truncates`) —
-no longer reachable from GRAPH.BULK since #3063 (`0f45a8685`): the resolved span has at most
-65,535 entries (proofs/pending_commit `Content.normResolved_fits`);
+`:609`) is why 65536 properties vanish (#2539; 65537 keeps one, `slot_len_truncates`);
+GRAPH.BULK can no longer reach it (the resolved span has at most
+65,535 entries, proofs/pending_commit `Content.normResolved_fits`), a malformed RDB still can;
 GRAPH.RESTORE `""` SIGSEGV (#2537); createNodeIndex arity (#2540); Labels-added (#2655).
 C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts twice.
 
@@ -144,17 +110,17 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | --- | --- |
 | `BufferedIO.*`, `BufferedReader`, `RoundTrip` | `src/serializers/buffered_io.rs` (all 55 fns) |
 | `Serial`, `SerialSchema`, `SerialEntry`, `SerialProof` | `src/serializers/mod.rs` (header/schema encode+decode; `SerialSchema.decField` = `decode_index_field` `:637-725`, `encField`/`encPh` = field loop `:383-427`) |
-| `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (#3484, fixed by #3514 `a0ba12950`); pre-#3514 counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412) history |
+| `SerialCLayout` | C's multi-type index-field entry vs `decode_index_field` (the pre-#3514 behaviour is kept as a historical counterexample) |
 | `Resp`, `RespCompact`, `RespVerbose` | `src/reply.rs` (call streams, postponed lengths, RESP2 bytes) |
 | `Telemetry`, `TelemetryReg`, `TelemetryLoop`, `TelemetryFreed` | `src/telemetry.rs`; `TelemetryFreed`: the #3844 persistence strip (`strip_stream`, the freed-graph queue, `redis_type.rs` `strip_telemetry_streams`) |
 | `ModuleInit` | `src/module_init.rs`, `src/lib.rs` config table, `src/config.rs` |
-| `ConfigRewrite` | `CONFIG REWRITE` of the `lib.rs:97-116` native configs vs. what `GRAPH.CONFIG SET` / load arguments store (#3419) |
+| `ConfigRewrite` | `CONFIG REWRITE` of the `lib.rs:97-116` native configs vs. what `GRAPH.CONFIG SET` / load arguments store |
 | `QuerySession` | `src/query_session.rs` |
 | `GraphCore` | `src/graph_core.rs` |
 | `Commands`, `Commands2` | `src/commands/*.rs` |
 | `SlowLog` | `src/slow_log.rs` |
-| `RelLookup` | relationship lookups of `src/reply.rs:252-293`, `:472-492` (#3447, #3449; line pins re-targeted to 5e475e6c9) |
-| `EnvBuild` | `sync_deepbind_environ` (`module_init.rs:158`) + `graph::env_snapshot::leak_deep_copy` (`env_snapshot.rs:22`, #3494 #3493) and `RedisBuildHost` (`graph_core.rs:1750-1766`, #3585): `copy_read_back`, `copy_fresh`, `sync_unchanged`, `sync_installs`, `publish_holds`, `publish_log` |
+| `RelLookup` | relationship lookups of `src/reply.rs:252-293`, `:472-492` (#3447) |
+| `EnvBuild` | `sync_deepbind_environ` (`module_init.rs:158`) + `graph::env_snapshot::leak_deep_copy` (`env_snapshot.rs:22`) and `RedisBuildHost` (`graph_core.rs:1750-1766`, #3585): `copy_read_back`, `copy_fresh`, `sync_unchanged`, `sync_installs`, `publish_holds`, `publish_log` |
 
 Headline theorems:
 * `writeAll_flatten` — buffered writes = concatenation of the logical writes for every
@@ -175,7 +141,7 @@ Headline theorems:
   `GraphCore.sync_unserved_silent` (replicated / AOF-replayed queries are not logged),
   `freed_stream_stripped`/`stripAll_covers` (no stream reaches a snapshot); the old replica
   rule is kept as history (`Pre3844.enqueue_replica`, `Pre3844.iter_replica_never_writes`).
-* `LoadArgs.rust_c_same_accept` (#3328) — module-load arguments accepted exactly as C's
+* `LoadArgs.rust_c_same_accept` — module-load arguments accepted exactly as C's
   `Config_Init` (modulo leading whitespace and Rust-only names, both confirmed live; for
   arguments without embedded NUL, since C reads C strings; given `FsOk`, i.e. `File::create`
   agrees with `access(W_OK)`);
@@ -187,51 +153,13 @@ Headline theorems:
   `Pre3816.pre3816_upgrade_twice_skips_checks`), `readPastGate_ends_reading`, `Config.wlpi_ok_nonneg`; `consArgs_ok`, `cons_label_refused`, `cons_count_noncanonical`, `memArgs_samples`; `copy_ok_iff`/`exited_iff`;
   `memTotal_sum`; `sync_is_yield_without_yields`.
 
-New confirmed findings (live, Rust `target/release` vs C `bin/…/falkordb.so`, ports 18820-3):
-8. **Crash — FIXED by #3234 (`3660a5fc3`)**: `src/slow_log.rs` (`entry_hash`, `truncate`)
-   sliced the query at byte 2048; a query > 2048 bytes, slower than 10 ms, with a multi-byte
-   char across byte 2048 panicked and the server exited (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412; repro scratch `slowlog_utf8.py`). Now both cut at
-   `prefix` (`:32`, `floor_char_boundary(2048)`): `SlowLog.hashInput_total`,
-   `truncate_total` (no panic for any string), `prefix_le`/`prefix_isPrefix`/
-   `prefix_boundary`/`prefix_longest` (longest char-boundary prefix ≤ 2048 bytes).
-9. **FIXED by #3252 (`cfe6e7945`)**: an index on an attribute literally named `range:x` (or
-   `vector:x`) was rebuilt on `x` after RDB reload (cab3cf192 `serializers/mod.rs:642-646`;
-   counterexample removed in bbee75955; the last revision that has them is 17ccc5412): Rust `db.indexes()` → `[x]`, C `[range:x]`.
-   Now `decode_index_field` keeps the name verbatim (`field_name_kept`; `decField_encField`
-   round-trips every name).
-9b. **FIXED by #3514 (`a0ba12950`, closes #3484)**: a C-written RDB entry carries every index type
-   of an attribute in one type word; `decode_index_field` kept one, so RANGE was lost next to a
-   FULLTEXT or VECTOR index (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Main decodes every set type (`SerialSchema.decField`;
-   `SerialCLayout.decField_encFieldC`: every C entry decodes to exactly its types;
-   `decField_encField`: Rust's own entries unchanged; `decField_empty_refused`,
-   `decField_unknown_bit_refused`: no type / unknown bit refused as C does). Same PR, phonetic:
-   C's `"no"` (off) read as a code, so every C-loaded fulltext index turned phonetic ON, and we wrote an empty string for off, which C reads as ON
-   (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Now `"no"` reads as off and off is written `"no"`
-   (`decField_c_phonetic_no_off`, `encPh_c_on_iff`; `index_layer` `Meta.TextOpts.phoneticEnabled`).
-10. Module-load args: `CMD_INFO YES` → Rust 0 / C 1; `CMD_INFO garbage` → Rust loads with 0,
-    C refuses to load; `cache_size 10` → Rust ignores (25), C 10; `ASYNC_DELETE yes` → Rust
-    ignores (0), C 1 (FIXED by #3328: counterexamples removed in bbee75955; the last revision that has them is 17ccc5412; now `LoadArgs.fixed3328_counterexamples`; cause:
-    redismodule-rs `find_config_value` is case-sensitive and bools are `== "yes"`).
-11. `GRAPH.BULK` success reply said `relations created`, C `edges created` (FIXED by #3301
-    dd333fe32; now `Commands.bulk_reply_c`).
 Also seen: #2537's root cause is general — any truncated GRAPH.RESTORE payload makes
 `BufferedReader::from_slice` call `RedisModule_LoadStringBuffer(NULL)` (`from_slice_past_end`).
 Model correction: compact vector elements use `RedisModule_ReplyWithDouble` (`Env.vfmt`), not
 `%.15g` (same as C).
 
-## Re-target to 2c874022a (#2846, #3161)
-`MvccGraph::commit` validates; the callers here changed: `graph_effect` folds the
-commit into the apply result (`effectCmd` gains `valid`; `effect_refused_resyncs`),
-`attempt_settle`/`settle_constraint` report `WriteAbort::Invalid` as permanent
-(`attempt_invalid`, `settle_permanent`), `graph_bulk_insert` validates before
-publishing index documents (`bulk_invalid_discards`, `bulk_publish_after_validate`),
-`commit_and_replicate` panics on a refusal (`commitStepsV_refused`); `WriteAbort`
-gains `WriteSlotBusy`/`Invalid` (`writeAbortMsg_invalid`). The bulk token loops lost
-their `IdSpace` parameter only (`processTokens` unchanged).
-
-## Re-target to fb3d516d0 (#3090, #3026; previously 73077bb4a)
-#3090 touches `matrix.rs` (proofs/graphblas_wrappers) and adds `graph/tests/matrix_concurrent_drop.rs`. #3026 adds `PropColumns`
-to `bulk_insert.rs`: `Bulk.PropColumns.new` (`new_spec`: column `i` holds `ids[i]` and the
+## `Bulk.PropColumns`
+`Bulk.PropColumns.new` (`new_spec`: column `i` holds `ids[i]` and the
 index of that attribute among the distinct ones; `slot_inj`: two columns share a slot iff
 they name the same attribute), `Bulk.PropColumns.readRecord` (`readRecord_enc`: whatever
 `filled` the previous record left, one encoded record reads `keepFirst [] (ids.zip vs)` and
@@ -240,18 +168,19 @@ leaves exactly the following bytes). `keepFirst_nodup` (at most one entry per at
 `keepFirst_sublist` (header order kept), `keepFirst_plain_of_nodup`/`readRecord_plain` (no
 repeated name → the plain per-column read), `repeated_header_null_first`.
 
-## Re-target to 8621212fc (#3043, #3419; previously 289c201fe)
-Of the main commits since 289c201fe only `src/reply.rs` (#3043) and `src/lib.rs` (#3419)
-touch `src/`. #3043: `Resp.wf` = `write_f` (`reply.rs:36`, NaN as `nan`) in the float and
-vector leaves of `fmtS`; `Resp.pointStr` (top-level point) without the space after the
+## Verbose-format floats and points
+`Resp.wf` = `write_f` (`reply.rs:36`, NaN as `nan`) in the float and
+vector leaves of `fmtS`; `Resp.pointStr` (top-level point) without a space after the
 colons. Against C's `%f` (hypothesis `CPf`): `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`,
 `pointStr_c`, `verbose_point_c`, `fixed3043_nan_in_list`. Glibc prints a NaN with the sign bit set as `-nan`, which `write_f`
-does not reproduce (`CPf.nan_text` is stated for `nan`). #3419: `ModuleInit.table` gives
-`VKEY_MAX_ENTITY_COUNT` the range `0..i64::MAX`; `ConfigRewrite.vkey_rewrite_reloads_config`
+does not reproduce (`CPf.nan_text` is stated for `nan`).
+
+## `CONFIG REWRITE` ranges
+`ModuleInit.table` gives `VKEY_MAX_ENTITY_COUNT` the range `0..i64::MAX`; `ConfigRewrite.vkey_rewrite_reloads_config`
 / `vkey_rewrite_reloads_load` — any value `GRAPH.CONFIG SET` or a module-load argument
 accepts is written by `CONFIG REWRITE` as a `graph.VKEY_MAX_ENTITY_COUNT` line that the next
-start accepts and reads back exactly (#3413).
-**Same class, open:** `rewrite_reload_counterexamples` — `CACHE_SIZE 1001`,
+start accepts and reads back exactly.
+**Open:** `rewrite_reload_counterexamples` — `CACHE_SIZE 1001`,
 `THREAD_COUNT 1025`, `NODE_CREATION_BUFFER 1073741825` (load arguments) and
 `JS_HEAP_SIZE 4294967297` (load arguments and `GRAPH.CONFIG SET`) are accepted, but the
 rewritten line is outside the table's range (not live-checked).
@@ -263,6 +192,7 @@ OS clock and fd I/O. Concurrency is modelled per operation / single-thread event
 flusher, write-queue election and GIL nesting are proven as protocols, not under an
 interleaving semantics). Floats/number formatting abstract. `serializers/{encoder,decoder}/mod.rs` are proved in `proofs/graph_persist` (`Persist.*`);
 `divergence_guard.rs` in `proofs/replication`.
+The server's own error text when `open_key_writable(..)?` fails (a refusal to open a key) is not modelled.
 
 ## Wave 5: `src/allocator.rs` (`Allocator`)
 
@@ -274,80 +204,33 @@ report exactly the bytes the query's own traffic allocated/freed (below `2^64`) 
 `QUERY_MEM_CAPACITY` check sees only the calling thread), `fresh_thread_counts` (the flag
 starts `true`).
 
-## Gap closed 2026-10-20 (bugs the model missed; both **Open**, live-checked on main 9d3869aa8 vs C)
+## Open bugs the model missed (live-checked on main 9d3869aa8 vs C)
 * #2782 `MultiDb`: keyspace keyed by `(db, key)` over the name-only `GRAPH_REGISTRY`.
-  `bug2782_same_name_other_db_aborts` (db0, db1, db0 → ok, ok, aborted in a release build, where the writer check aborts; a debug build trips the `debug_assert!` in `register_graph` (`graph_core.rs:152`) on the db1 create first; C ok×3), property
+  `bug2782_same_name_other_db_aborts` (db0, db1, db0 → ok, ok, aborted, as the writer check aborts; C ok×3), property
   `KeyspaceRegistered` / `WritesSucceed`; `existing_ok` shows the invariant suffices.
 * #2653 `KeyName`: key names as bytes with a concrete `from_utf8_lossy`.
   `bug2653_nonutf8_key_mangled` (`\xc3(bin` → `\xef\xbf\xbd(bin`, `\xff\xfe` → two U+FFFD),
   property `ReplicatedKeyIsStored` (C satisfies it: `c_ok`; ASCII keys: `ascii_kept`).
 
-## Re-target to b84473a7f (#3428; previously b6567cb97)
-#3428 (closes #3185) touches no `src/` file: it moves `redis-module` to the fork branch
-`fix/resp-string-bytes`, where `Context::str_as_legal_resp_string` (the step every error
+## `ErrorText`
+`Context::str_as_legal_resp_string` (the step every error
 reply and simple-string reply goes through before `RedisModule_ReplyWithError` /
 `…SimpleString`) maps the UTF-8 *bytes* (`\r \n NUL → space`) instead of `c as u8` per char.
-`ErrorText`: `legalResp` (main) — `legalResp_safe` (no CR/LF/NUL, so `from_vec_unchecked`
+`legalResp` (main) — `legalResp_safe` (no CR/LF/NUL, so `from_vec_unchecked`
 is sound and the `-…\r\n` frame of `Resp.respT` holds), `legalResp_length`,
 `legalResp_high_bytes` (every byte ≥ 0x80 kept in place: error text is byte-preserving for
-non-ASCII), `legalResp_clean`, `legalResp_cjk`, `legalResp_latin1`, `bytesOf_toUTF8`;
-before #3428 `一` → NUL → `CString::new(..).unwrap()` panic and `é` → lone 0xE9 (counterexamples
-removed in bbee75955; the last revision that has them is 17ccc5412). `Resp.Call.err s` / `respT (.err s)`
-take `s` to be that already-scrubbed text.
+non-ASCII), `legalResp_clean`, `legalResp_cjk`, `legalResp_latin1`, `bytesOf_toUTF8`.
+`Resp.Call.err s` / `respT (.err s)` take `s` to be that already-scrubbed text.
 
-## Gap closed 2026-10-22 (re-targeted to 5e475e6c9: #3442 and #3449 now **Fixed**)
-* #3442 `SlowLog` (fixed by #3456, closes #3442): on b84473a7f `add`'s `some _` arm
-  (`slow_log.rs:120-132`) kept the stale `minLat` (recompute at `:172-177` on b84473a7f). Main's update arm
-  falls through to the recompute (`slow_log.rs:121-139`, `:162-169`): `SlowLog.add` is that code.
-  Old model and counterexamples removed in bbee75955; the last revision that has them is 17ccc5412 (the issue's trace: Q11 at 25 ms evicted Q2 at 30 ms;
-  properties `MinCache`, `SlowestKept`). On main: `add_minCache` (preserved for every input),
-  `fixed3442_update_keeps_min_cache`, `fixed3442_trace` (Q2 kept, Q11 rejected), and
-  `add_repeat_max` now assumes
-  one entry per hash (`add_nodup`).
-* #3447 `RelLookup` (compact-reply part, still **Open**): the reply's type id of a deleted edge
-  is a *lookup* by name (`reply.rs:260`), which `RespCompact.encC` takes as given.
-  `commitCascade` registers only surviving edge types (`pending.rs:872-873`, `:1242-1251`);
-  `bug3447_compact_cancelled_new_type_panics` (compact `none` = panic, verbose renders;
-  `RegisteredTypes`, `ReplyTotal` fail); `replyTotal_of_registered` — after commit,
-  `RegisteredTypes` makes both encoders total; `s3447_survivor_ok`.
-* #3449 `RelLookup` (fixed by #3462, closes #3449): `recordDelete` and `s3449abort` (pending
-  edge rendered after `abandon_write`, `record.rs:106-132`). On b84473a7f a top-level `DELETE r`
-  was not snapshotted (`delete.rs:69-81,99`) and the verbose reply asked the committed graph for
-  a pending edge's type. #3462 snapshots when `runtime.inspect || snapshot_required`
-  (`delete.rs:99-101`, `snapshot`) and resolves the verbose type through
-  `Runtime::get_relationship_type` (deleted -> pending -> graph, `runtime.rs:1902-1914`,
-  `verboseRel`). Old model and counterexample removed in bbee75955; the last revision that has them is 17ccc5412. On main: `fixed3449_record_snapshot` (`RecordedLive` holds and the
-  row renders from its snapshot), `snapshot_inspect`, `fixed3449_record_abort`,
-  `verboseRelFixed_total` (the verbose encoder is total on every known id). The compact encoder
-  still reads the committed graph for a pending edge's type; `GRAPH.RECORD` renders verbose only.
+## #3447 `RelLookup` (compact-reply part, **Open**)
+The reply's type id of a deleted edge
+is a *lookup* by name (`reply.rs:260`), which `RespCompact.encC` takes as given.
+`commitCascade` registers only surviving edge types (`pending.rs:872-873`, `:1242-1251`);
+`bug3447_compact_cancelled_new_type_panics` (compact `none` = panic, verbose renders;
+`RegisteredTypes`, `ReplyTotal` fail); `replyTotal_of_registered` — after commit,
+`RegisteredTypes` makes both encoders total; `s3447_survivor_ok`. The compact encoder
+still reads the committed graph for a pending edge's type; `GRAPH.RECORD` renders verbose only.
 
-## Re-target to a477d9aa3 (#3657 fork-and-commit)
-The MVCC write slot is gone. `QuerySession`: `Slot`/`claimFork`/`releaseSlot`/`committed`/
-`holdsSlot` are replaced by `Version` (`none | unchecked fv | current | stale`), the infallible
-`writeVersion`, `versionIsCurrent`, `checkFork` (`is_stale` = `ver + 1 ≠ fork.version`) with
-`writeVersion_takes_nothing`, `checkFork_spec`, `checkFork_noop`, `current_kept`,
-`stale_sticky`, `upgrade_stale`; `WriteAbort` loses `WriteSlotBusy` and gains `stale`, with
-`From<CommitError>` as `WriteAbort.ofCommit` (`ofCommit_stale`, `ofCommit_invalid`, `ofCommit_ne`).
-`GraphCore`: `abandonSteps` resyncs only for a current version and releases nothing
-(`failed_no_commit`, `stale_run_silent`, `unescalated_silent`). `Commands`: `effectCmd` lost its
-`slotFree` input; `Commands2`: `attempt` takes `commit`'s refusal instead of a slot flag
-(`attempt_stale`, `attempt_invalid`; the retry arm is `paused | stale`); `bulkFlow` has no
-rollback step. Counterexamples and theorems about the slot are gone with it.
-
-## Re-target to 256ab4d3f (93 commits since 43936bab9, proofs-sync 2026-11-22)
-Most of the layer was already re-modelled by the PR proof bot (#3816/#3819 write-lock slices and writer gate,
-#3850/#3851/#3855/#3863 `key_of_write`, #3559 bounded stale retry, #3757 `SCHEMA_HASH`, #3844 node-local
-telemetry and the persistence strip, #3257 `GRAPH.MEMORY` texts); this pass re-checked every changed row and added:
-`QuerySession.checkFork` is now **PROVEN**: since #3683 `rebase_onto_indexer_batches` returns `()` (it had the one
-`Err(Stale)` arm the old CONDITIONAL hypothesis assumed away), and `fork` is passed by `&mut`; `LoadArgs`/`ModuleInit.table`
-gain `INDEX_BUILD_THREAD_COUNT` (#3585: load argument `1..=1024`, immutable, not settable at run time: `index_build_range`);
-`EnvBuild` (above). `register_graph` lost its `debug_assert!` (Valkey flushes asynchronously, so a name can legitimately be
-registered again before the old value's `graph_free`): `GraphCore.register` already models the displacement, and the
-#2782 debug-build note in the `MultiDb` section below no longer applies (debug and release both take the release path).
-The Valkey migration (#3601: `redis-module` → `valkey-module`, `ValkeyString`/`ValkeyValue`, fallible `open_key_writable`,
-`wrong_type_compat` in `redis_type.rs`/`graph_persist`) and the clippy sweep (#3787) changed no modelled behaviour.
-Not modelled in this project: `open_key_writable(..)?` failing (a server-side refusal to open a key), whose error text is the
-server's own. `ENCODING_VERSION` is 20 (#3793); the header/schema layout proved here is unchanged.
 -/
 #print axioms RedisLayer.Serial.decField_encFieldC
 #print axioms RedisLayer.Serial.decField_encField

@@ -1,12 +1,10 @@
 import FalkorEffectsCodec.RecRT
 /-!
-# #2916: the encoder refuses exactly the shapes `read_record` rejects
+# The encoder refuses exactly the shapes `read_record` rejects
 
-Before `2c874022a` `Record::encode` wrote a batch of zero ids and a row block of
-any length; `read_record` refuses the first (`EmptyRecord`) and misreads the
-second (it takes `count × attrs` values, so a longer block's spare value is
-parsed as the next opcode — the wave-1 counterexample, which no longer holds).
-Now `write_header` refuses a zero count and `check_row_shape` a row block that
+`read_record` refuses a batch of zero ids (`EmptyRecord`) and would misread a
+row block of the wrong length (it takes `count × attrs` values, so a longer block's
+spare value is parsed as the next opcode). `write_header` refuses a zero count and `check_row_shape` a row block that
 is not `count × attrs`, so:
 
 * `encRecord_ok_shape` — a record the encoder accepts has ≥ 1 id, the right
@@ -21,7 +19,7 @@ namespace FalkorCodec
 
 variable (C : IdCodec) (utf8 I : Bytes → Bool)
 
-/-- The shape facts `read_record` needs and the encoder now guarantees. -/
+/-- The shape facts `read_record` needs and the encoder guarantees. -/
 def Shape : Record C.T → Prop
   | .createNode ids _ as rows | .updateNode ids _ as rows | .updateEdge ids _ as rows =>
       0 < C.count ids ∧ rows.length = C.count ids * as.length

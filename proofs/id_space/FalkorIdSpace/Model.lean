@@ -2,9 +2,9 @@ import FalkorIdSpace.Card
 /-!
 # The `IdSpace` state machine (`graph/src/graph/id_space.rs`, main @ e8f8a3017)
 
-Since #2846 (`157d42ec1`) `IdSpace` *owns* the id space: `live` and `recycled`
+`IdSpace` *owns* the id space: `live` and `recycled`
 are the entity count and the free set (`Graph` keeps neither), `entry_bound`
-and `taken` are the open batch. Since #3022 (`18fc277b9`) a fifth field,
+and `taken` are the open batch. A fifth field,
 `released`, records what the open batch freed (outside the count equation;
 cleared with `taken`).
 
@@ -48,7 +48,7 @@ def above (ids : IdSet) (bound : Nat) : Nat :=
   let below := if bound = 0 then 0 else cnt bound ids
   sLen N ids - below
 
-/-- `reclaim_ids` (`id_space.rs:256`, #3164): `free = pool - taken - issued; free -= quarantined`;
+/-- `reclaim_ids` (`id_space.rs:256`): `free = pool - taken - issued; free -= quarantined`;
 `out.extend(free.iter().take(count))`; return the number appended. -/
 def freeOf (pool taken issued quar : IdSet) : IdSet := sDiff (sDiff (sDiff pool taken) issued) quar
 
@@ -62,14 +62,14 @@ structure IdSpace where
   recycled : IdSet
   eb       : Nat
   taken    : IdSet
-  /-- `released` (`:207`, #3022): every id the open batch freed. -/
+  /-- `released` (`:207`): every id the open batch freed. -/
   released : IdSet := fun _ => false
-  /-- `quarantined` (`:219`, #3164/#3641): every id earlier batches of this version freed
+  /-- `quarantined` (`:219`): every id earlier batches of this version freed
   or cancelled; `reserve` skips them until the version is dropped. -/
   quarantined : IdSet := fun _ => false
 
-/-- `IdSpaceError` (`:104`). `Miscounted` is gone (#2846); `Inconsistent` and
-`AlreadyTaken` are new. -/
+/-- `IdSpaceError` (`:104`). There is no `Miscounted`; `Inconsistent` and
+`AlreadyTaken` carry the id-space checks. -/
 inductive IdSpaceError where
   | inconsistent (live recycled bound eb taken expected : Nat)
   | neverCreated (id : Nat)
@@ -113,21 +113,21 @@ def IdSpace.checked (sp : IdSpace) : Except IdSpaceError Unit :=
     else .error (.inconsistent sp.live (sLen N sp.recycled) bound sp.eb taken expected)
   | none => .error (.inconsistent sp.live (sLen N sp.recycled) bound sp.eb taken (umax N))
 
-/-- What `open_batch` adds to `quarantined` (`:470-482`, #3164): `released |= taken & recycled`
+/-- What `open_batch` adds to `quarantined` (`:470-482`): `released |= taken & recycled`
 (a cancelled creation sits in `recycled` without being `released`), then `quarantined` becomes
 `quarantined ∪ released` (the Rust `mem::swap` when `quarantined` is empty is the same union). -/
 def IdSpace.rolledQuar (sp : IdSpace) : IdSet :=
   sUnion sp.quarantined (sUnion sp.released (sInter sp.taken sp.recycled))
 
-/-- `open_batch` (`:470`): `checked()?` then re-anchor, clear `taken` and (since #3022)
-`released`, and (since #3164) move what the batch freed or cancelled into `quarantined`. -/
+/-- `open_batch` (`:470`): `checked()?` then re-anchor, clear `taken` and
+`released`, and move what the batch freed or cancelled into `quarantined`. -/
 def IdSpace.openBatch (sp : IdSpace) : Except IdSpaceError IdSpace :=
   match sp.checked N with
   | .error e => .error e
   | .ok () => .ok { sp with eb := sp.bound N, taken := sEmpty, released := sEmpty,
                             quarantined := sp.rolledQuar }
 
-/-- `end_quarantine` (`:378`, #3164): forget what earlier batches freed. -/
+/-- `end_quarantine` (`:378`): forget what earlier batches freed. -/
 def IdSpace.endQuarantine (sp : IdSpace) : IdSpace := { sp with quarantined := sEmpty }
 
 /-- `reserve` (`:516`), release build. `allocOk` is whether `try_reserve_exact(count)`
@@ -158,9 +158,8 @@ the highest id a batch may create. The model takes it as a parameter `L`; the
 theorems need only `L < N` (it is below `u64::MAX`). -/
 def idLimit : Nat := 2 ^ 60 - 1
 
-/-- `create` (`:582`). Since #2911 (`fe619ac5f`) the first refusal is
-`nodes.max().filter(|&id| id >= ID_LIMIT)` → `IdOutOfRange(id)` (it used to be
-`nodes.contains(u64::MAX)`). -/
+/-- `create` (`:582`). The first refusal is
+`nodes.max().filter(|&id| id >= ID_LIMIT)` → `IdOutOfRange(id)`. -/
 def IdSpace.create (L : Nat) (sp : IdSpace) (nodes : IdSet) : IdSpace × Except IdSpaceError Unit :=
   match (sMax N nodes).filter (· ≥ L) with
   | some id => (sp, .error (.idOutOfRange id))
@@ -186,14 +185,14 @@ def IdSpace.refuseUndeletable (sp : IdSpace) (nodes : IdSet) : Except IdSpaceErr
   | some id => .error (.neverCreated id)
   | none    => .ok ()
 
-/-- `refuse_not_live` (`:679`, #3022): `refuse_recycled(ids)?;
+/-- `refuse_not_live` (`:679`): `refuse_recycled(ids)?;
 refuse_undeletable(ids)`. Changes nothing. -/
 def IdSpace.refuseNotLive (sp : IdSpace) (ids : IdSet) : Except IdSpaceError Unit :=
   match sp.refuseRecycled N ids with
   | .error e => .error e
   | .ok () => sp.refuseUndeletable N ids
 
-/-- `release` (`:703`): since #3022 the two refusals are `refuse_not_live`, and
+/-- `release` (`:703`): the two refusals are `refuse_not_live`, and
 the freed ids are also added to `released`. The `debug_assert!(freed ⊆ requested)` is a hypothesis
 of the theorems, not a branch (it is compiled out of release builds). `live -=
 freed.len()` is `u64`; `release_no_underflow` proves it never wraps in a

@@ -1,21 +1,21 @@
 /-
 # Optimizer rewrites: which passes preserve the query result, and which do not
 
-**Re-synced to main 256ab4d3f (2026-11-22).** `Variable::is_unnamed` is PROVEN (`Helpers.varIsUnnamed_iff`); every production row is PROVEN (the NOT COVERED rows are test/bench code). #3281 (`push_filters_down`, `PushPlan`), #3303, #3890 (`VarKey` refactor: `var.key() == alias.key()` is the `(id, scope_id)` equality the models already use) and #3593 needed no change to a statement. Line pins inside bug histories below keep the revision they were written for; COVERAGE.tsv is authoritative.
+Rust source: origin/main `256ab4d3f`. `Variable::is_unnamed` is PROVEN (`Helpers.varIsUnnamed_iff`); every
+production row is PROVEN (the NOT COVERED rows are test/bench code). The `VarKey` refactor
+(`var.key() == alias.key()` is the `(id, scope_id)` equality the models already use) needed no change to a
+statement. Line pins inside bug histories below keep the revision they were written for; COVERAGE.tsv is authoritative.
 
-**Re-targeted to main 8621212fc.** #2904 (`fd2c76a6c`, closes #2902): `^` propagates
-operand errors and type-checks its operands. `Basic.eval` gains `pow` (`powV`) and
-`Err.notFound`; `sub`/`div` bodies are factored into `subV`/`divV` (same values).
-New `ConstEval`: the plan-time constant evaluator (`evalG` with every variable an
-error) is sound — `constEval_sound` — which discharges `hconst` for
+`^` propagates operand errors and type-checks its operands: `Basic.eval` has `pow` (`powV`) and
+`Err.notFound`; `sub`/`div` bodies are `subV`/`divV`. `ConstEval`: the plan-time constant evaluator
+(`evalG` with every variable an error) is sound — `constEval_sound` — which discharges `hconst` for
 `eliminate_whole_filter` and `htrue` for `andLoop_drop_true`
 (`constTrue_filter`, `andLoop_drop_constTrue`): `is_constant_true` and
-`eliminate_true_filters` move from CONDITIONAL to PROVEN. The other commits since 289c201fe do not touch
-`graph/src/planner/optimizer/`.
+`eliminate_true_filters` are PROVEN.
 
 A Lean 4 model of the optimizer passes in `graph/src/planner/optimizer/`
-(origin/main `0f45a8685`), except `select_scan_node.rs`, `utilize_index.rs` and
-`utilize_node_by_id.rs`'s #2390 changes (another agent's). Of `select_scan_node.rs` only
+(origin/main), except `select_scan_node.rs`, `utilize_index.rs` and
+`utilize_node_by_id.rs`'s scan changes (another agent's). Of `select_scan_node.rs` only
 the #2556 chain-rebuild is modelled here (`PushPlan.selectScan`); the pass itself is in
 `proofs/optimizer_scan`. Each pass is judged against a reference semantics of the IR:
 rows are association lists (`Basic.Row`), expressions follow `eval.rs`
@@ -28,8 +28,8 @@ applies — and does not make a succeeding query fail.
 Files: `Basic` (rows, eval, Filter, push-down, merge, eliminate_true_filters),
 `References` (the "is this variable read?" oracle `optimizer/references.rs` behind
 reduce_expand_into / reduce_bound_edge / reduce_var_len_path / fuse_anonymous_traverse,
-introduced by #2390; also the a9377c636 and PR #2918 oracles), `References2` (the tree walks:
-ancestor-only for the three `reduce_*` passes, whole-plan for fusion since #2390), `Passes` (fusion, optional fusion, node-by-id, reduce_count,
+also the a9377c636 and PR #2918 oracles), `References2` (the tree walks:
+ancestor-only for the three `reduce_*` passes, whole-plan for fusion), `Passes` (fusion, optional fusion, node-by-id, reduce_count,
 reorder_labels, hash join, the push-down routing and exclusion list).
 Each file's header maps its definitions to Rust `file:line`.
 Files (wave 5): `Helpers` (the syntactic helpers: parameters, variable
@@ -38,12 +38,10 @@ references, count extraction, fusion preconditions, Project/Aggregate outputs),
 `PushPlan` (gap closed 2026-10-20: push_filters_down on a plan tree with write
 effects and scope-blind ids; #748, #997, #3352; and select_scan_node's chain
 re-ordering, #2556).
-`AndOf` (#3335: every rebuilt filter goes through `ExprIR::and_of`; splicing an
+`AndOf` (every rebuilt filter goes through `ExprIR::and_of`; splicing an
 AND into an AND keeps the runtime value — `scL_splice`, `flat_eval`, `flat_passes`).
 Build: `lake build` — 162 theorems, no `sorry`/`admit`/`axiom`. Every production row of
-COVERAGE.tsv is PROVEN (the NOT COVERED rows are test/bench code). Rust source: origin/main `0f45a8685` (re-targeted across #2390,
-d2c42e032: `references.rs` added, the four passes switched to it, fusion checks the whole plan;
-#3335: filters rebuilt with `and_of`).
+COVERAGE.tsv is PROVEN (the NOT COVERED rows are test/bench code). The four `reduce_*`/fusion passes use `references.rs`; fusion checks the whole plan; filters are rebuilt with `and_of`.
 
 ## Proven (plain English)
 
@@ -58,15 +56,15 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
 * `merge_child_first_row` — merging stacked filters is exact *if the inner
   conjunct comes first* (and is not NULL).
 * `filter_true`, `andLoop_drop_true`, `filter_and_single`, `eliminate_whole_filter`,
-  and (#2904) `constEval_sound`, `constTrue_filter`, `andLoop_drop_constTrue` —
+  and `constEval_sound`, `constTrue_filter`, `andLoop_drop_constTrue` —
   eliminate_true_filters is exact: the plan-time constant verdict is the runtime
-  verdict on every row (before #2904 false for `^`, #2902).
-* `refsNew_complete` — #2390's `ir_references_variable` (references.rs) sees every read of every
+  verdict on every row.
+* `refsNew_complete` — `ir_references_variable` (references.rs) sees every read of every
   IR variant of a plan the planner built (`PlanInv`: inline maps are Filters —
   proofs/planner_build `planMatch_stripped`); `refsNew_sound` — it reports only reads or
   variables the operator binds; `iqLoop_iff` — the index-query stack loop finds an operand at any
   `And`/`Or` depth; `setItemsRefs_iff`, `exprRefs_iff`.
-* `anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound` — fusion's whole-plan check (since #2390)
+* `anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound` — fusion's whole-plan check
   sees every reader of the intermediate and both edges, inside or outside the hops.
 * `refsPR_complete`, `readOutside_iff`, `pr_keeps_flag_when_read` — PR #2918 (its walk is still
   not merged); `ancestors_le_outside` — the old oracle erred only toward collapsing.
@@ -89,10 +87,10 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
   keeps the rows, under the per-edge reading both engines use);
   `hasParam_iff`, `subst_params`, `evX_subst`; `refsVar_iff`, `refsVarId_iff`,
   `refsVar_le_refsVarId`; `countVar_spec`; `attrsEmpty_iff`, `canFuse_spec`;
-  `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new` (#3281; pre-PR `pre3281_branchOut_copy_old`).
+  `fusable_spec`, `fusedCT_spec`; `branchOut_spec`, `branchOut_copy_new` (historical `pre3281_branchOut_copy_old`).
   W6-opt-1 Case-2 walk (`CallBoundary`, from the retired pr2845_review):
-  `Pr2845.filter_pushed_through_boundary` (pre-#3281 walk `inheritedPre3281`), fix
-  `fixed_keeps_filter`/`fixed_conservative`; #3281's walk (stops at a two-child `Optional`,
+  `Pr2845.filter_pushed_through_boundary` (earlier walk `inheritedPre3281`), fix
+  `fixed_keeps_filter`/`fixed_conservative`; the current walk (stops at a two-child `Optional`,
   inherits `branch_visible_variables`): `keeps_filter_main`, `main_sub_fixed`, `main_eq_fixed`;
   `visT_reset`, `visT_semi_first`, `visT_plain`, `visT_pattern_predicate`; on the plan tree
   (`PushPlan`, `Cfg.pr3281`): `bv_sub_gv`, `bvPre3281_sub_bv`, `bv_rebinding_kept`,
@@ -109,10 +107,6 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
    Shared with C (spec bug). Fix: add `IR::Limit | IR::Skip` to the exclusion list
    (or allow only conjuncts whose vars are all Apply-inherited — `push_limit_const`).
    Tests `bug_filter_pushed_below_limit`, `bug_filter_pushed_below_skip`.
-2. **Filter merge evaluates the pushed (outer) conjunct first** — `push_filters_down.rs:122`
-   `for f in [&filter, &child_filter]`. `MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1/(n.v-1) = 0 RETURN count(*)`
-   → Rust `Division by zero`, C 15. Lean `merge_order_rust_errors`.
-   Fix: `[&child_filter, &filter]` (`merge_child_first_row`). Test `bug_filter_merge_evaluates_outer_conjunct_first`.
 3. **NodeByIdSeek with a negative bound** — `runtime.rs:1319` `id as u64`:
    `MATCH (n) WHERE id(n) > -1 RETURN count(n)` → Rust 0, C 5 (also `>= -5`: both 0,
    `<= -1`: both all = #2266). Lean `id_gt_neg_empty`, `id_le_neg_all`. Fix: clamp
@@ -130,38 +124,17 @@ d2c42e032: `references.rs` added, the four passes switched to it, fusion checks 
    → 4 on both. Lean `hash_join_drops_row` (and `vhj_correct` for when it is safe).
    Root is the Int/Float equality of #2891, but this is the optimizer changing a
    result. Test `bug_hash_join_disagrees_with_filter_on_int_float`.
-6. **(known #2557, new path — no longer reproduces on 8743953a8: Rust = C (1,1)…(5,1);
-   push_filters_down.rs is unchanged by #2390, so most likely #2845's CALL-body entry
-   projection, merged before a9377c636; `id_only_routing_unsound` still describes the id-only
-   routing)** Uncorrelated `CALL {}` filter pushed onto `Argument`:
-   `MATCH (o1:N) CALL { MATCH (q:N) WHERE q.v = 1 RETURN q } RETURN o1.v, q.v`
-   → Rust (1,1),(1,2)…(1,5); C (1,1),(2,1)…(5,1). Scope-blind ids (mod.rs:91-109)
-   plus Apply Case 2 inheritance (push_filters_down.rs:214-261). Lean
-   `id_only_routing_unsound`. Test `known_2557_call_subquery_filter_reads_outer_variable`.
-7. **(known #2896) — per-operator part FIXED by #2390 (d2c42e032), sibling part still open.**
-   a9377c636's `ir_references_variable` missed Unwind/ForEach lists, Create/Merge pattern
-   properties, ProcedureCall args, LoadCsv, Skip/Limit, index-scan queries:
-   `MATCH (a)-[r]->(b) UNWIND [r.w] AS w RETURN w` → Rust [1],[3] of [1],[2],[3];
-   `… CREATE (:C {w: r.w})` created 2 of 3; `FOREACH` likewise; `()-[r*1..1]->() UNWIND r` lost rows.
-   On 8743953a8 all of these match C (live); the surviving evidence is Lean
-   `refsNew_complete` / `refsNew_sees_*`. **Still open**: the three `reduce_*` passes walk
+6. (model only) `id_only_routing_unsound`: push-down routing uses bare ids (mod.rs:91-109) and Apply Case 2
+   inheritance (push_filters_down.rs:214-261); the uncorrelated `CALL {}` repro (known #2557,
+   `MATCH (o1:N) CALL { MATCH (q:N) WHERE q.v = 1 RETURN q } RETURN o1.v, q.v`) no longer reproduces live.
+7. **(known #2896) Sibling readers.** The three `reduce_*` passes walk
    ancestors only, so a reader in a sibling subtree is missed —
    `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3;
    `RETURN [(a)-->(b) | r.w]` → Rust `[1]`, C three rows (Lean `main_misses_call_sibling`);
    and the oracle ignores `sibling_edges` (W2-traverse-1: `MATCH (a)-[r]->(x)<-[s]-(c)
    RETURN count(*)` → Rust 1, C 2; Lean `refsNew_misses_sibling_edges`).
 
-8. **(NEW; still crashes the server on 8743953a8, live) `utilize_node_by_id` panics on a root scan** — `utilize_node_by_id.rs:106`
-   `optimized_plan.node(idx).parent().unwrap()`: `CALL db.labels() YIELD label MATCH (n)`
-   (accepted because `inner_validate` skips everything after a CALL — planner_build bug 6)
-   plans `NodeByLabelScan`/`AllNodeScan` as the root → **Rust server crash**
-   ("called `Option::unwrap()` on a `None` value"); C: `Query cannot conclude with MATCH`.
-   Lean `root_scan_has_no_parent`. Fix: `let Some(parent) = …parent() else { continue }`.
-   Since #3297 (main b84473a7f) validation rejects that query (planner_build
-   `call_then_match_rejected`), so this repro no longer reaches the `unwrap()`; the `unwrap()`
-   itself remains (hazard, no known query reaches it).
-
-## Gap closed 2026-10-20 (#748, #997, #3352) — `PushPlan`
+## `PushPlan`: push-down on a plan tree with writes
 
 The push-down theorems above compare result rows only and route by `(id, scope)`.
 `PushPlan` gives push_filters_down a plan tree with graph state that writes
@@ -170,29 +143,6 @@ walking through `Aggregate`, Case 1/Case 2 inheritance). Property `EffectSound`
 (rows **and** the node count left behind are kept; the only write modelled is creating a bare
 node, labels, relationships and attributes are not written); `RowSound` is the old criterion;
 `RoutesBound` (a pushed conjunct reads only variables available where it lands).
-
-9. **#748 / #997: a constant-false WHERE after `CALL { MERGE/CREATE }` is pushed into
-   the Apply's left branch, so the write never runs** — `push_filters_down.rs:264-276`
-   (`all` over an empty variable set is vacuously true, so the conjunct enters every
-   child, including the rows that feed the write-bearing right branch).
-   `WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0` →
-   Rust 0 nodes, C 1; with `WITH *` both 1. `CALL { CREATE () } UNWIND 0 AS x MATCH ()
-   WHERE false RETURN 0` → Rust 0, C 1; the CASE-wrapped false → 1 on both. Lean
-   `bug748_merge_skipped`, `bug997_create_skipped` (`¬ EffectSound`), `bug748_rows_only_blind`
-   / `bug997_rows_only_blind` (the rows-only criterion holds on them), controls
-   `bug748_with_star_control`, `bug997_case_control`; `bug748_fixed`/`bug997_fixed` for a write barrier.
-   **Fixed by #3582** (write kinds excluded, siblings of a writing branch locked, `Cfg.pr3582`):
-   `pr3582_748_fixed`, `pr3582_997_fixed`, `pr3582_left_untouched`, `pr3582_write_excluded`,
-   `pr3582_controls`; #3352 below is fixed there too by #2981 (`pr3582_3352_fixed`).
-10. **#3352: filter push-down mistakes a pre-WITH variable for `r`** — Case 2
-   (`push_filters_down.rs:233-236`) inherits `collect_subtree_variables` of the Apply's
-   left subtree, and `get_variables` (`runtime.rs:319-323`) walks through `Aggregate`
-   into the pre-WITH plan, so id 2 of scope 0 (the `_anon` edge) is taken for `r`
-   (id 2 of scope 1, `binder.rs:2257-2268`) and `r.status = 'revoked'` lands on the
-   Argument → `n = 1, e = null` (C 123). Lean `bug3352_routes_unbound`
-   (`¬ RoutesBound` under the old `gv` inheritance); **fixed by #2981**: Case 2 inherits
-   `branch_visible_variables` (`bv`), `fixed3352_plan`, `fixed3352_inherits_outputs`, `fixed3352_rows_kept`; `bug3352_fixed`
-   for `(id, scope)` routing; still fixed under #3281 (`pr3281_3352_fixed`). Live: three pre-WITH ids `{0,1,2}` → wrong, two → right.
 
 ## Gap closed 2026-10-20 (#2556) — `PushPlan`, select_scan_node chain re-ordering
 
@@ -230,10 +180,9 @@ binds what it reads).
 
 ## Suspected, unconfirmed
 
-* `branch_output_variables` took `copies.0` as the Project's output, but `copies`
-  is `(old, new)` (binder.rs:2234, project.rs:115). Fixed by #3281: it now reads
-  the destination (`.1`) and only for routing (Lean `branchOut_copy_new`;
-  historical `pre3281_branchOut_copy_old`).
+* `utilize_node_by_id.rs:106` `optimized_plan.node(idx).parent().unwrap()` panics on a root scan
+  (Lean `root_scan_has_no_parent`); no known query reaches it, since validation rejects
+  `CALL db.labels() YIELD label MATCH (n)` (planner_build `call_then_match_rejected`). Hazard only.
 * Filters on zero-variable conjuncts (`rand() < 0.5`) are pushed into every CP/Apply branch.
 * Pushing into one CP branch evaluates the conjunct even when the other branch is
   empty, so a query can start to error (Lean `push_cp_left` needs `NoErr`).
@@ -242,18 +191,11 @@ binds what it reads).
 ## Open PRs touching these files (model = origin/main)
 
 * #2918 — `variable_read_outside` for the three `reduce_*` passes (its per-operator
-  oracle is superseded by #2390's references.rs): modelled as `readOutside`
+  oracle is superseded by references.rs): modelled as `readOutside`
   (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
-* #3006 — `push_filters_down.rs:128` merges `[child_filter, filter]`: the
-  `merge_child_first_row` order (`mergeRust`); fixes bug 2 (`merge_rust_fixed_example`,
-  `merge_rust_same`: stacked outcome whenever the inner verdict is boolean).
-* #2981 (modelled: `PushPlan.bv`, `Sequence.guardHJ`) — `push_filters_down` routes with `branch_visible_variables` (below an
-  env-resetting operator only its outputs survive; ids of the subtree minus its
-  children's) instead of `collect_subtree_variables` for the Apply left side —
-  narrows `id_only_routing_unsound`'s collision window (still ids only).
 * #3092 — `collect_subtree_variables` stops at Project/Aggregate (their outputs
   only) instead of `get_variables` of the whole subtree — same direction as
-  #2981; `mem_subtreeIds` describes origin/main.
+  the Apply-left routing of `branch_visible_variables`; `mem_subtreeIds` describes origin/main.
 * #3100 — exports `ir_references_variable` for the planner's CP-correlation check
   (planner bug 2); no change to the oracle itself (needs a rebase onto references.rs).
 * #3054 — `reduce_expand_into` removes a collapsed (no longer emitted) edge from

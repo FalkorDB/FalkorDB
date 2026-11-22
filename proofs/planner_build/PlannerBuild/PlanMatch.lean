@@ -7,7 +7,7 @@ import PlannerBuild.Anchor
 | `QN`, `QR`, `Comp` | `QueryNode`, `QueryRelationship`, a connected component (ast.rs:632-1033) |
 | `MSt` | `Planner.visited` / `verified_labels` |
 | `markLabels`, `unverified` | `mark_labels_verified` mod.rs:1959-1974, `unverified_labels` mod.rs:1978-1988 |
-| `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1978-1988 (stable; #3593 lead key -1, filter vars by scope) |
+| `relKey`, `sortRels` | the `sort_by_key` of mod.rs:1978-1988 (stable; lead key -1, filter vars by scope) |
 | `emitRel`, `opEmit` | the `emit_rel` closure mod.rs:2320-2327; `emit_rel(r) \|\| edge_pred.is_some()` |
 | `scanOf`, `withF` | `AllNodeScan`/`NodeByLabelScan` choice; optional inline-attribute `Filter` |
 | `LW`, `lowerInline` | `lowered_attrs` mod.rs:2030, `lower_inline_attrs` mod.rs:778-787 |
@@ -18,16 +18,15 @@ import PlannerBuild.Anchor
 | `nodeOnly` | node-only component mod.rs:2228-2315 |
 | `boundLabelFilters` | mod.rs:2048-2059 |
 | `planComp`, `planMatch` | the component loop and the join / WHERE / bound filters mod.rs:1999-2687 |
-| `QR.lifted` | `lifted_rels` mod.rs:2024 (set by `liftPattern`, Lift.lean, #2981) |
+| `QR.lifted` | `lifted_rels` mod.rs:2024 (set by `liftPattern`, Lift.lean) |
 
-Theorems added for #2390 (d2c42e032): `lowerInline_once` (a map is lowered at most once —
+Inline maps are lowered once: `lowerInline_once` (a map is lowered at most once —
 the `And(p, p)` duplicate is gone), `lowerInline_two_maps` (two maps on one alias are both
 lowered), `stripNode_spec`/`stripRel_spec`/`stripEndpoints_spec`, `firstRel_lowers_from`/`_to`
 and `chainRel_lowers_from`/`_to` (both endpoints lowered for every operator kind, bound or
 not), `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Filter directly
 above an operator that emits every parallel edge), `walk_keeps_edge_attrs`,
-`firstRel_stripped`/`chainRel_stripped`/`planComp_stripped`/`planMatch_stripped`, and the
-fixed bug (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
+`firstRel_stripped`/`chainRel_stripped`/`planComp_stripped`/`planMatch_stripped`.
 | `buildPatternSubPlan` | `build_pattern_sub_plan` mod.rs:1226-1237 |
 
 Expressions and the WHERE (`plan_filter`, FilterPlan.lean) are parameters;
@@ -170,7 +169,7 @@ def MP.isCtEi : MP → Bool
   | .expandInto .. | .condTr .. => true
   | _ => false
 
-/-! ## Lowering inline attributes once (#2390, d2c42e032) -/
+/-! ## Lowering inline attributes once -/
 
 /-- `lowered_attrs` (mod.rs:2030): (alias id, scope, attrs-map identity) already lowered. -/
 abbrev LW := List (Nat × Nat × Nat)
@@ -542,7 +541,7 @@ theorem firstRel_stripped (st : MSt) (c : Comp) (lw : LW) (r : QR) :
     by_cases h4 : r.frm.alias.id = r.to.alias.id <;>
     simp [hb1, hb2, h4, MP.stripped, MP.stripped.strippedL, h1, h2, hs, h3', hk]
 
-/-! ### Historical: before #2390 (a9377c636 mod.rs:1890-2048) -/
+/-! ### Historical: lowering without the once-only guard (a9377c636 mod.rs:1890-2048) -/
 
 def attrF (n : QN) : Option Ex := inlineAttrsToFilter n.alias n.attrs
 def relF (r : QR) : Option Ex := inlineAttrsToFilter r.alias r.attrs

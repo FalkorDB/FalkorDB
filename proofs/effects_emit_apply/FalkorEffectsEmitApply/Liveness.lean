@@ -1,17 +1,16 @@
 import FalkorEffectsEmitApply.ApplyHelpers
 import FalkorEffectsEmitApply.Apply
 /-!
-# The apply side after #3022: every record that acts on an entity checks it is live
+# The apply side: every record that acts on an entity checks it is live
 
-Fixed by #3022 (`18fc277b9`; issues #2924, #2978; FINDINGS W2-effects-2/3). The
-node- and edge-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:164`)
-now refuse a record naming an entity this replica does not hold live:
+The node- and edge-facing arms of `apply_record` (`graph/src/effects/v3/apply.rs:164`)
+refuse a record naming an entity this replica does not hold live:
 
 | here | there (`apply.rs`) |
 | --- | --- |
 | `needLive` | `require_live` (`:685`) over `IdSpace::refuse_not_live` (accepts exactly the live ids: `proofs/id_space` `refuseNotLive_live`) |
 | `firstWithRels` | `Graph::first_node_with_relationships` (`graph.rs:2434`; its Rust is proved against this spec in `proofs/graph_queries`) |
-| `applyRec .createNode` | `CreateNode` arm (`:214`) — since #3298 a repeated id is refused (`nodes.len() != ids.count()`, `:226`), then `create_nodes` refuses a live id |
+| `applyRec .createNode` | `CreateNode` arm (`:214`) — a repeated id is refused (`nodes.len() != ids.count()`, `:226`), then `create_nodes` refuses a live id |
 | `applyRec .createEdge` | `CreateEdge` arm (`:291`) — `require_live((src ∪ dst) − released)` (`:318`), then `create_relationships_bulk` refuses a live or repeated id |
 | `applyRec .updateNode` | `UpdateNode` arm (`:346`) — `require_live` (`:352`) |
 | `applyRec .updateEdge` | `UpdateEdge` arm (`:360`) — `require_live` (`:366`) |
@@ -28,8 +27,7 @@ payload strings are not modelled.
 Headline: **`apply_wf`** — from a well-formed replica at a batch boundary, any
 sequence of records that applies, followed by a `validate` that passes, leaves a
 well-formed replica: no dead id carries a label, property or relationship, and
-every relationship's endpoints are live. The pre-#3022 counterexamples
-(historical `pre3022_*` in `Apply.lean`, removed in bbee75955; the last revision that has them is 17ccc5412) are each refused here (`*_refused`).
+every relationship's endpoints are live. The inputs that the unchecked arms in `Apply.lean` accept are each refused here (`*_refused`).
 -/
 
 namespace FalkorEA.Live
@@ -90,7 +88,7 @@ def upd {α} (ids : List Nat) (f : Nat → α) (v : Nat → α) : Nat → α :=
 
 def applyRec (g : G) : Rec → Except AErr G
   | .createNode ids lbls => do
-    -- #3298 (`apply.rs:226`): the id set must be as long as the id list
+    -- (`apply.rs:226`): the id set must be as long as the id list
     if !ids.Nodup then .error (.graph "bulk node create got repeated ids; an id names one node") else
     needDead g.nlive .node ids
     pure { g with nlive := upd ids g.nlive (fun _ => true), labels := upd ids g.labels (fun _ => lbls) }
@@ -386,7 +384,7 @@ theorem apply_wf (g : G) (hw : WF g) (recs : List Rec) (g' : G)
     (h : applyAll g recs = .ok g') (hv : danglingRel g' = none) : WF g' :=
   wf_of_validate g' (applyAll_binv recs g g' (binv_of_wf g hw) h) hv
 
-/-! ## The Rust tests (`apply.rs` `mod tests`, #3022), replayed
+/-! ## The Rust tests (`apply.rs` `mod tests`), replayed
 
 `liveness_setup`: nodes 0, 1, 2 created, edge 0 from 0 to 1, node 2 deleted, then
 a new version (so `released` is empty again). -/
@@ -450,7 +448,7 @@ theorem delete_with_edges_refused :
 theorem detach_delete_applies :
     okDangling (applyAll s0 [.deleteEdge [0], .deleteNode [0, 1]]) = some none := by decide
 
-/-! ## #3298: a repeated id in one `CREATE_NODE` (#3247) -/
+/-! ## A repeated id in one `CREATE_NODE` -/
 
 /-- **On main a repeated id is refused**, whatever the graph. The message is a stand-in for
 Rust's formatted one (`apply.rs:227-232`); only the `.graph` constructor is modelled. -/

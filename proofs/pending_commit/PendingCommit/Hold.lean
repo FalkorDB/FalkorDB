@@ -1,25 +1,23 @@
 /-
-# Re-targeted to #3683 (08616ec29, current main 256ab4d3f)
+# `Hold`: borrows around `Pending::commit` (main 256ab4d3f)
 
-Since #3683 there is no `Arc<AtomicRefCell<Graph>>`: a read query holds a published `Arc<Graph>`
+There is no `Arc<AtomicRefCell<Graph>>`: a read query holds a published `Arc<Graph>`
 (no borrow at all), a write query owns its fork in `Runtime.fork : RefCell<Option<Graph>>`
 (`runtime.rs:583`, `graph_mut` = `fork.borrow_mut()`, `graph()` = `fork.borrow()`), and the
 commit functions below are still called as `&mut self.runtime.graph_mut()` / `&self.runtime.graph()`
 (`ops/commit.rs:89,139,148`, `runtime.rs:617,633`, `index_ddl.rs`). So the theorems below hold with
 the borrow word `E` read as the **fork cell's** word (`RuntimeCore.QG.Rt.forkB`): a `RefCell` is
 `!Sync`, so no other thread can have a borrow out; `E` is only the owner's own outstanding borrows
-from its call stack, which is the same on main-before-#3436 and today (the callers are unchanged).
-What #3683 removed is exactly what the old text had to argue away: the index population thread's
-borrows, since it reads a published `Arc<Graph>` and borrows nothing (`published_read_no_borrow`).
-New here, tying the model to `RuntimeCore.QueryGraph`:
+from its call stack. The index population thread borrows nothing, since it reads a published
+`Arc<Graph>` (`published_read_no_borrow`). Tying the model to `RuntimeCore.QueryGraph`:
 
 * `holdMut_panics_iff_graphMut` — the held `graph_mut()` panics exactly when
   `Runtime::graph_mut` does (a borrow out on the fork cell, or no fork);
 * `published_read_no_borrow` — reading a published version takes no borrow, whatever the fork cell's state;
 * `hold_after_publish_panics` — after `publish` the fork is gone, so a held `graph_mut()` panics.
 
-The rest of this header is the original #3436 argument, kept as history (its "main" is pre-#3436;
-its `AtomicRefCell` words now read `RefCell`).
+The rest of this header is the original borrow argument, kept as history (its "main" predates the
+change to taking `&mut Graph`; its `AtomicRefCell` words now read `RefCell`).
 -/
 /-
 # #3436 (e30861ea3): one borrow held across a call = the old sequential borrows
@@ -210,7 +208,7 @@ theorem empty_body_differs :
     runHoldMut (G := Nat) (.shared 1) 0 [] = .panic ∧ runMain (G := Nat) (.shared 1) 0 [] = .ok 0 :=
   ⟨rfl, rfl⟩
 
-/-! ## Against `RuntimeCore.QG` (the #3683 runtime) -/
+/-! ## Against `RuntimeCore.QG` (the published-`Arc<Graph>` runtime) -/
 
 theorem runFree_not_panic {G : Type} : ∀ (v : G) (ss : List (St G)), runFree v ss ≠ .panic
   | _, [] => by simp [runFree]

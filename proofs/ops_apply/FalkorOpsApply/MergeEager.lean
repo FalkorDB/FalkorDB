@@ -1,13 +1,11 @@
 import FalkorOpsApply.Merge
 /-
-# MERGE matches every input row before it creates anything (#3067, fixes #3039)
+# MERGE matches every input row before it creates anything
 
-`Merge.lean` models `MergeOp::next` as it was at ca36bfa15: the match sub-plan ran once per
-INPUT BATCH, so a row saw the creations (and `ON CREATE SET` rewrites) of earlier batches
-but not of earlier rows of its own batch. That model is kept there as history
-(`rustBatch`/`rustMerge`/`phaseA`).
+`Merge.lean` keeps an earlier `MergeOp::next` (ca36bfa15) as history
+(`rustBatch`/`rustMerge`/`phaseA`): the match sub-plan ran once per INPUT BATCH.
 
-Since #3067 (b47d6d6a3) `MergeOp::match_all` (merge.rs:260-297) first consumes the whole
+`MergeOp::match_all` (merge.rs:260-297) first consumes the whole
 child and runs the match sub-plan for every row, against the graph as it is before any
 creation; `next` (merge.rs:329-441) then walks the matched rows in input order. For each row:
 no match → `do_create_fallback` (cache hit = the node an earlier row created); matches →
@@ -23,7 +21,7 @@ inside the `while`), so the row's matches are emitted in order before the next r
 Theorems: `mainMerge_batch_independent` (the result does not depend on how the input is cut
 into batches), `mainMerge_noSet_eq_ref` (without SET clauses: same graph, same ids and the
 SAME ROW ORDER as the per-row openCypher reference), `fixed3067_batch_independent` (the
-filed repro now gives the same 2 nodes whether rows 1 and 2 share a batch or not, as C).
+filed repro gives the same 2 nodes whether rows 1 and 2 share a batch or not, as C).
 -/
 namespace Merge
 

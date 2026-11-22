@@ -420,7 +420,7 @@ theorem merge_path_last_skips_merge (p k : Nat) (m q y : Plan) (r : Rec V) (g : 
   show forRows (S.step (.pathBuilder k)) (ev S y r g).1 (ev S y r g).2 = _
   exact forRows_path S k _
 
-/-! ### CREATE with a named path (#2829, `eab2722c4`) -/
+/-! ### CREATE with a named path -/
 
 /-- mod.rs:3510-3531: `Create(filtered)`, under a `PathBuilder` of the paths the
 clause itself declares (`filtered.paths()`) when there are any. Before #2829 it was

@@ -21,17 +21,15 @@ Redis — AXIOMATISED rows for `lock_gil`/`release_gil`, which only call
 | `Version`, `SS`, `writeVersion`, `isStale`, `versionIsCurrent`, `checkFork`, `upgradeS`, `upgradeSt` | #3657: `enum Version` `:128`, `write_version` `:260`, `is_stale` `:276`, `version_is_current` `:284`, `is_writer` `:288`, `check_fork` `:300`, `facts` `:225` |
 | `CommitError`, `WriteAbort.ofCommit` | `From<CommitError> for WriteAbort` `:95` |
 
-**#3816 (af228a34f).** Off the main thread `escalate` waits for the write lock in
+**Write-lock escalation (#3816).** Off the main thread `escalate` waits for the write lock in
 `WRITE_LOCK_POLL_INTERVAL` slices, giving the GIL back between them, and runs the
 registry/role check (`authorize_write`) under each slice's GIL hold, *before* the lock is
 taken. A refusal leaves the session a **reader** again (read lock re-taken), so a second
-`upgrade_to_write` re-runs every check (`upgrade_refused_rechecks`); before, the refused
-session stayed a writer and a second call reported success unchecked
-(`Pre3816.pre3816_upgrade_twice_skips_checks`, the hazard `attempt_settle`'s old comment
-warned about). `escalate_writer` / `upgrade_twice` therefore now speak of a *successful*
-escalation; their old unconditional forms are kept as `Pre3816.escalate_writer` /
-`Pre3816.upgrade_twice` on the old model. `upgradeS`/`upgradeSt` already left a refused
-session's `writer` flag false, as the new code does.
+`upgrade_to_write` re-runs every check (`upgrade_refused_rechecks`). `escalate_writer` /
+`upgrade_twice` speak of a *successful* escalation; the earlier unconditional forms (a refused
+session stayed a writer, `Pre3816.pre3816_upgrade_twice_skips_checks`) are kept as
+`Pre3816.escalate_writer` / `Pre3816.upgrade_twice` on the earlier model. `upgradeS`/`upgradeSt`
+leave a refused session's `writer` flag false.
 -/
 namespace RedisLayer.QuerySession
 
@@ -693,7 +691,7 @@ theorem ofCommit_invalid (m : String) : WriteAbort.ofCommit (.invalid m) = .inva
 theorem ofCommit_ne (m : String) : WriteAbort.ofCommit .stale ≠ WriteAbort.ofCommit (.invalid m) := by
   simp [WriteAbort.ofCommit]
 
-/-! ## Historical: before #3816 (dc05fee89)
+/-! ## Historical: the earlier `escalate`
 
 `escalate` took the GIL and then the write lock in one go and recorded writer mode
 *before* `upgrade_to_write` ran the registry/role checks, so a refused session stayed a

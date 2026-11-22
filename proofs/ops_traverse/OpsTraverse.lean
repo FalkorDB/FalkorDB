@@ -37,30 +37,19 @@ import OpsTraverse.BspWire
 /-
 # Traversal operators: CondTraverse, ExpandInto, var-length, scans, allShortestPaths, PathBuilder
 
-**Re-targeted to main ee21013d6** (from e860645bb): #3112 (fixes #3108) flips the allShortestPaths
-edge list to src→dst for cycles too (`all_shortest_paths.rs:283-289`: `if !reverse { path.reverse() }`, no
-`is_cycle` branch). `ASP.asp` drops its `isCycle` case; the W2-traverse-4 counterexamples became
-`directed_cycle_walk_order`, `directed_cycle_is_a_walk` (`0→1→2→0` gives `[0,1,2]`, a directed walk),
-`directed_cycle_reversed_order` (a reversed pattern keeps dst→src) and `pathbuilder_on_cycle` (nodes
-`0,1,2,0`). `AllShortestPathsOp::next` is now at line 309.
-
 **Re-targeted to main e860645bb** (from ca36bfa15): #3492 (a3a99bdbc) streams multi-type traversals
 instead of materialising the union. `UnionIter` (`cond_traverse.rs:245-278`) merges the per-type iterators
 (`UnionStream`: `drain_spec` = strictly ascending, each pair once, exactly the union of the types in the
 row range; `union_stream_eq_merged` = the same pairs in the same order as the merged matrix it replaces;
 heads start empty, `next_new`; each per-type stream ascending by `layerStream_spec`). `delta_lmxm_into` gets a
 `Union` arm: `UnionGlue.deltaInto_eff` (`F*A1 + F*A2 = F*(A1 + A2)` on the pattern) over
-`GBWDelta.deltaLmxm_eff` (graphblas_wrappers: `delta_lmxm` computes `F*(M - DM + DP)`, the #3492 fix of the
-live-path-through-a-deleted-edge bug). `expand_union_row` (:1124): `union_emit_directed_iff`,
+`GBWDelta.deltaLmxm_eff` (graphblas_wrappers: `delta_lmxm` computes `F*(M - DM + DP)`). `expand_union_row` (:1124): `union_emit_directed_iff`,
 `union_emit_bidir_iff`, `union_collapse_directed_keys_nodup`. `delta_lmxm_into`, `build_unrestricted_iter`,
 `build_transposed_iter` are now PROVEN (no FFI rows left in `cond_traverse.rs`); every `cond_traverse.rs` pin
 moved (`expand_row` +151 from `:749`, `process_pairs` +291 from `:944`). The project now depends on graphblas_wrappers and versioned_matrix.
 
-**Re-targeted to main b29a2885c** (from 5e475e6c9): #3463 adds the pending-deleted endpoint
-check to `ExpandIntoOp::expand_row` (`expand_into.rs:158-160`); `expandIntoP` is now the fixed
-model and satisfies `LiveExpandInto` (`expandIntoP_live`); the pre-#3463 counterexamples
-were removed in bbee75955 (the last revision that has them is 17ccc5412); `expand_into.rs` pins after `:158` moved +7. New open item: CondTraverse ignores
-`Pending` (`bug_condTraverse_*`).
+**Open item**: CondTraverse ignores `Pending` (`bug_condTraverse_*`; ExpandInto's `expandIntoP`
+satisfies `LiveExpandInto`, `expandIntoP_live`).
 
 **Re-targeted to main 5e475e6c9** (from b84473a7f). #2383 (index serves `IN [...]` natively): the node and
 edge index scans now hand the evaluated list to the index as ONE `InList` instead of an `Or` of `Equal`s
@@ -156,8 +145,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 * The emitter loops conserve rows and apply LIMIT exactly (`drive_flatten`,
   `capDrive_flatten`); the var-length frame machine yields every frame's items
   (`run_complete`); index scans are sound pre-filters under the RediSearch
-  contract (`scanRow_spec`); edge index scans honour bound endpoints (`edgeRow_sound`) and, since #3081
-  (`ff3d24ba7`), read an undirected pattern both ways round, a self-loop once
+  contract (`scanRow_spec`); edge index scans honour bound endpoints (`edgeRow_sound`) and read an undirected pattern both ways round, a self-loop once
   (`orient_mem`, `orient_length`).
 * PathBuilder's "other endpoint" rule reconstructs any walk's nodes when edge
   ids are unique (`buildNodes_walk`).
@@ -171,7 +159,7 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
   attr-free `processPairs` / `expandInto` are now literal; the batched F·A path lost its
   inline-attr gate (`ctNew_eligible_iff`: it only widened); and a
   var-length walk's absorbed edge filter now raises a type error on a non-boolean value,
-  exactly as `FilterOp` (`edgeVerdict_eq_filterEval`; was a silent skip).
+  exactly as `FilterOp` (`edgeVerdict_eq_filterEval`).
 
 ## Confirmed bugs (Rust repro fails; C and/or openCypher disagree)
 
@@ -200,14 +188,8 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    uniqueness scope): `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)` Rust 2 rows, C 4
    (Cypher 4); `OPTIONAL MATCH (y:Nope) MATCH (z:B) RETURN y, z.id` Rust
    `null|null` (Cypher `null|2`; C rejects the query).
-5. **allShortestPaths on a directed cycle returned the edge list backwards -- FIXED by #3112**
-   (was `all_shortest_paths.rs:284-288`): `0→1→2→0`, `(a)-[*]->(a)` gave rels `[3,2,1]`; now
-   `[1,2,3]`. Lean `directed_cycle_walk_order`, `directed_cycle_is_a_walk`.
-6. **algo.SPpaths / SSpaths default relationship cost 0** -- **FIXED by #3121**
-   (`functions/algo_procedures.rs`: `bfs_find_bound` / `enumerate_paths` charge `1.0` per edge
-   without a `costProp`, as C does). Re-checked live at 256ab4d3f: `SSpaths({sourceNode: a, maxCost: 1})`
-   on `(0)->(1)->(2)` returns the one path of cost 1, Rust = C (before: `[0,1,3]` with cost 0).
-   Left over, not a Rust bug: with a `costProp` that no edge carries and no `maxLen`/`maxCost`
+6. **algo.SPpaths / SSpaths with a `costProp` that no edge carries** (left over from the default-cost
+   fix; not a Rust bug): with a `costProp` that no edge carries and no `maxLen`/`maxCost`
    (so the Dijkstra fast path runs), Rust reports cost = hop count (each edge lacking it costs 1,
    as in the general search) and C reports 0 on its own fast path but the hop count with a `maxLen`
    (live: `{sourceNode: a, targetNode: c, weightProp: 'w', costProp: 'zz'}` Rust 2, C 0; with
@@ -234,20 +216,15 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
    right on every non-cyclic walk (`vltMain_follows_of_ne`); recording the direction
    at plan time fixes it (`vltFix_follows`).
 
-10. **#3452: ExpandInto matched an edge whose endpoint is pending-deleted** — FIXED by
-   #3463 (b29a2885c): `expand_into.rs:158-160` now yields no row when either endpoint
-   is `is_node_deleted`. Property `EIP.LiveExpandInto` is proved for main
-   (`EIP.expandIntoP_live`); the old counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412.
-
-11. **#3463 follow-up: CondTraverse still matches an edge of a pending-deleted node**
+11. **CondTraverse matches an edge of a pending-deleted node**
    (`cond_traverse.rs` never reads `Pending`; `expand_row` `:900`, `process_pairs` `:1235`).
    `MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)` takes the CondTraverse path
    (`x` unbound) and matches the doomed edge. Property `EIP.LiveCondTraverse`; Lean
-   `EIP.bug_condTraverse_main_violates`, `bug_condTraverse_matches_doomed_edge`. Not fixed.
+   `EIP.bug_condTraverse_main_violates`, `bug_condTraverse_matches_doomed_edge`.
 
 Gaps closed 2026-10-22: PathBuilder's `Value::Path` (var-length) branch is modelled
-(`PathVlt.lean`, catches #3451); ExpandInto reads pending deletes (`ExpandIntoPending.lean`,
-catches #3452; `expandIntoP_empty` keeps the earlier theorems as its no-pending case).
+(`PathVlt.lean`, catches #3451); ExpandInto reads pending deletes (`ExpandIntoPending.lean`;
+`expandIntoP_empty` keeps the earlier theorems as its no-pending case).
 
 Gap closed 2026-10-20: operator composition across `WITH` (Aggregate → CondTraverse)
 is now modelled at slot level (`SlotFeed.lean`), which catches #3372.

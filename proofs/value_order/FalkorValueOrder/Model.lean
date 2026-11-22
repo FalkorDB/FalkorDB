@@ -354,7 +354,7 @@ def fIsNaN : V → Bool
   | .flt (.nan _ _) => true
   | _ => false
 
-/-- **Finding 8, fixed by #2917 (7fdf06a0e).** A NaN neither replaces nor is replaced:
+/-- A NaN neither replaces nor is replaced:
 `min([1.0, NaN, 3.0]) = 1.0`; a leading NaN survives (`min([NaN, 1.0]) = NaN`, as C). -/
 theorem min_nan_ignored :
     fNum (minFold [.flt (.num 1), .flt F.qnan, .flt (.num 3)]) = some 1 ∧

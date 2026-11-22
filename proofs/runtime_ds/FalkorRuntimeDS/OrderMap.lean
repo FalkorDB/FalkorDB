@@ -334,7 +334,7 @@ end Eq
 build a duplicate key produces a map for which `==` is not symmetric and
 `remove` leaves the key reachable. (Reproduced against Rust in
 `graph/tests/lean_runtime_ds.rs::ordermap_from_unique_keys_duplicates`.)
-Still so on main 1d15bf713: #2905 documents the contract and keeps the check
+Still so: #2905 documents the contract and keeps the check
 debug-only on purpose (a release check measured 1.2x-5x slower). -/
 
 /-- `a == b` but `b != a`. -/

@@ -9,21 +9,21 @@ their `sel` agree on every node of the graph.
 | --- | --- |
 | `P`, `V`                   | `runtime::value::Value` restricted to Bool / Int / String / temporal / list-of-scalars (strings as `Nat` codes; Float, Point, Map not modelled) |
 | `eq3`, `ord3`, `Op.holds`  | Cypher three-valued `=`/`<`/… as a WHERE predicate (`runtime/value.rs` compare_value, `eval.rs`) — the reference semantics |
-| `Fld`, `enc`, `arrEnc`     | `Document::set`, `index/mod.rs:717-846` (Bool→0/1, Int NUMERIC; temporal not indexed since #3076; String→TAG; list→`:numeric:arr`/`:string:arr`) |
+| `Fld`, `enc`, `arrEnc`     | `Document::set`, `index/mod.rs:717-846` (Bool→0/1, Int NUMERIC; temporal not indexed; String→TAG; list→`:numeric:arr`/`:string:arr`) |
 | `Q`                        | `IndexQuery<Value>` after evaluation, `index/indexer.rs` |
 | `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs:1360-1366` |
 | `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1374-1375` |
 | `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1480-1690` (`null_mut` ↦ `none`) |
 | `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1694`, `graph/graph.rs:4191`) |
 | `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs:251-295` |
-| `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-245` (InList → one `InList` of the scalar items since #2383; an `Or` of `Equal`s before) |
+| `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-245` (InList → one `InList` of the scalar items) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |
 | `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs:547-566` |
 | `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs:357-368` |
 | `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr`, `utilize_index.rs:855-873` |
 | `needsPost`                | `needs_post_filter`, `utilize_index.rs:802-848` |
 | `buildOp`                  | `build_op_query`, `utilize_index.rs:315-355` |
-| `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` (+ `bare_property_of`, #3068) + `extract_attribute_and_expression_from_filter`, `utilize_index.rs:360-379, 400-442, 626-751` |
+| `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` (+ `bare_property_of`) + `extract_attribute_and_expression_from_filter`, `utilize_index.rs:360-379, 400-442, 626-751` |
 | `mergeRange`               | `merge_range_queries`, `utilize_index.rs:481-544` |
 | `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs:727-783` |
 | `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs:973-1046` |
@@ -128,7 +128,7 @@ inductive Q
   | eq (k : Nat) (v : V)
   | range (k : Nat) (lo hi : Option V) (il ih : Bool)
   | contains (k : Nat) (v : V)
-  | inList (k : Nat) (vs : List V)   -- `IndexQuery::InList` (#2383): one attribute, scalar members
+  | inList (k : Nat) (vs : List V)   -- `IndexQuery::InList`: one attribute, scalar members
   | and (qs : List Q)
   | or (qs : List Q)
   deriving Repr
@@ -183,7 +183,7 @@ def build (F : List Nat) : Q → Option (Node → Bool)
         match strB lo, strB hi with
         | some lo', some hi' =>
           -- `build_string_range_node`: equal bounds with an exclusive side select nothing
-          -- (#3072, `index/mod.rs:1437-1441`); both inclusive become an exact token match
+          -- (`index/mod.rs:1437-1441`); both inclusive become an exact token match
           -- (`index/mod.rs:1447-1458`).
           some (fun n =>
             if lo'.isSome ∧ lo' = hi' then (il && ih) && enc (n.prop k) == some (.tag (lo'.getD 0))
@@ -425,7 +425,7 @@ def trySingle (idx : Nat → List Nat) (ls : List Nat) : A → Option (Nat × IQ
       | .prop k => do
         let L ← findLabel idx ls k
         if nestedList r || anyPropR r then none else some (L, .inList k r)
-      | _ => none                -- `bare_property_of` (#3068): the side must be `n.k` itself
+      | _ => none                -- `bare_property_of`: the side must be `n.k` itself
     | false, true => match r with
       | .term (.prop k) => do
         let L ← findLabel idx ls k
@@ -523,7 +523,7 @@ mutual
 def evalIQ : IQ → Q
   | .eq k t => .eq k (evalC t)
   | .range k lo hi il ih => .range k (lo.map evalC) (hi.map evalC) il ih
-  | .inList k r => .inList k ((listVals r).filter isPrim)   -- #2383: kept whole, not an `Or` of `Equal`s
+  | .inList k r => .inList k ((listVals r).filter isPrim)   -- kept whole, not an `Or` of `Equal`s
   | .contains k t => .contains k (evalC t)
   | .and qs => .and (evalIQs qs)
   | .or qs => .or (evalIQs qs)

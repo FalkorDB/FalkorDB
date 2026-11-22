@@ -97,7 +97,6 @@ Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, n
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W3-parser-1 | `skipFilter_eof_diverges` | `RETURN shortestPath((a)-[{` at end of input: the filter-skip loop never ends, a worker spins forever, and 11 such queries stop all graph queries. C: syntax error | **Open** |
 | — | (Rust test only) | A pattern predicate in a projection swallows the `,`: `RETURN (a)-->(b), (b)-->(a)` returns one column (C: two) | **Open** |
 
 Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS xN` clauses crash the Rust server in planning or execution (W4-parse-5); C runs 5000.

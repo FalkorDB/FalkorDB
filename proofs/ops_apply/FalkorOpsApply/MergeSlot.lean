@@ -1,6 +1,6 @@
 import FalkorOpsApply.Ctors
 /-
-# MERGE reads a value-only slot as its node (gap closed 2026-10-20; #3368, #3369)
+# MERGE reads a value-only slot as its node (gap closed 2026-10-20; #3368)
 
 `Merge.lean` treats the merged variable as a clause-level constant (`Clause.var`) and the
 pattern hash as the property key alone, so the row the MERGE receives never influenced the
@@ -428,7 +428,7 @@ def before (shared : Bool) (key : MClause → Row → Key) (acc1 : MV) : St :=
 
 /-! ### #3369 -/
 
-/-! ## On main (#3050 keys the cache by `(operator idx, hash)`) -/
+/-! ## On main (the cache is keyed by `(operator idx, hash)`) -/
 
 /-- **#3368 and #3369 as filed no longer reproduce on main.**  `b`'s and `c`'s MERGEs are
 different operators, so `c`'s lookup of `(op c, hash Int 1)` misses `b`'s entry

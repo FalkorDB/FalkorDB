@@ -1,13 +1,13 @@
 /-!
-# Relationship lookups behind the reply encoders (#3447, #3449)
+# Relationship lookups behind the reply encoders (#3447)
 
 `RespCompact.encC` / `RespVerbose.encVb` take an edge's type id / type name, source and
 destination as given fields. On `origin/main` those fields are *looked up*
 while the reply is written, and some of the lookups panic when the id is not where the
-code expects it (#3447 still; #3449 fixed by #3462, 5e475e6c9). This file models the lookups over the three places a relationship id can
+code expects it (#3447). This file models the lookups over the three places a relationship id can
 live during a query, and the two ways a reply's id can end up in none of the expected ones.
 
-| here | there (`5e475e6c9`; line numbers of #3449's code moved by #3436/#3462) |
+| here | there (`5e475e6c9`) |
 | --- | --- |
 | `Rel`, `St.graph`, `St.types` | committed edges in `runtime.g` (`edge_endpoints`, `relationship_type_matrix`) and `Graph::relationship_types` (`graph/src/graph/graph.rs`) |
 | `St.deleted` | `runtime.deleted_relationships` (snapshots: src, dst, type *name*) |
@@ -16,9 +16,9 @@ live during a query, and the two ways a reply's id can end up in none of the exp
 | `graphTyId` | `Graph::get_relationship_type_id` (`graph.rs:3339-3349`, `.expect("relationship must have a type in type_matrix")`) |
 | `typeId` | `Graph::get_type_id` (`graph.rs:1214`): position of the name in the registry |
 | `compactRel` | `reply_compact_value`, `Value::Relationship` arm (`src/reply.rs:252-293`): endpoints `:253`; deleted → `get_type_id(&x.type_name).unwrap()` `:260`; else `get_relationship_type_id` `:276` |
-| `verboseRel` | `reply_verbose_value`, `Value::Relationship` arm (`src/reply.rs:472-490`): endpoints `:475`; type name from `Runtime::get_relationship_type` (`runtime.rs:1902-1914`: deleted → pending → graph) since #3462 |
+| `verboseRel` | `reply_verbose_value`, `Value::Relationship` arm (`src/reply.rs:472-490`): endpoints `:475`; type name from `Runtime::get_relationship_type` (`runtime.rs:1902-1914`: deleted → pending → graph) |
 | `commitCascade` | `CREATE … DETACH DELETE` of an endpoint: the cascade (`delete.rs:253-265` → `Pending::remove_pending_relationships_for_node`, `pending.rs:839-897`, drops an emptied type group `:872-873`) snapshots the edge into `deleted_relationships`; `Pending::commit` (`pending.rs:1239-1253`) registers types only through `create_relationships_bulk` over the surviving groups |
-| `recordDelete` | `GRAPH.RECORD` of a top-level `DELETE r`: `DeleteOp::new` (`delete.rs:99-101`) snapshots when `runtime.inspect || snapshot_required` (`:69-81`; `snapshot_required` is false under a bare `Commit`; before #3462 only `snapshot_required`); `record_mut` (`src/commands/record.rs:110-140`) renders the captured rows after `finish_write` |
+| `recordDelete` | `GRAPH.RECORD` of a top-level `DELETE r`: `DeleteOp::new` (`delete.rs:99-101`) snapshots when `runtime.inspect || snapshot_required` (`:69-81`; `snapshot_required` is false under a bare `Commit`); `record_mut` (`src/commands/record.rs:110-140`) renders the captured rows after `finish_write` |
 | `recordAbort` | `GRAPH.RECORD` of `CREATE (a)-[r:R]->(b) SET a.x = 1/0`: the error comes before `Commit`, `abandon_write` (`record.rs:106`), then the rows are rendered anyway (`:113-132`) with `r` still pending |
 
 `none` is the panic (the server dies). C has no `GRAPH.RECORD`; its compact reply of a

@@ -142,21 +142,18 @@ theorem constraint_creation_diverges :
     cConstraintOK    [.kint 1, .kfloat 1 false] = false := by
   refine ⟨?_, ?_⟩ <;> simp [uniqueCollideRust, uniqueCollideC, keyEmpty, rustFrag, cNumOf, hasDup, rustConstraintOK, cConstraintOK]
 
-/-! ## Enforcement cost: HISTORICAL model of `check_node_constraint` before #3334
+/-! ## Enforcement cost: the earlier nested-scan model of `check_node_constraint`
 
-**Fixed by #3334 (4ace60ec7, closes #3330).** `check_node_constraint` (pending.rs:1580)
-now calls `unique_violated` (pending.rs:217): the affected members' keys go into one set,
-and each member is answered by an index lookup (`query_for`/`lookup`), or the label is
-scanned once for the whole set when the index cannot answer (the closure over
+`check_node_constraint` (pending.rs:1580) calls `unique_violated` (pending.rs:217): the affected
+members' keys go into one set, and each member is answered by an index lookup (`query_for`/`lookup`),
+or the label is scanned once for the whole set when the index cannot answer (the closure over
 `get_label_matrix(label)` at pending.rs:1634-1642). That is O(affected) lookups or
 O(affected + label_size), not the product; it is modelled in `pending_commit`
-(`uniqueViolated_spec`). The definitions below keep the behaviour before #3334, which
+(`uniqueViolated_spec`). The definitions below keep the earlier behaviour, which
 rebuilt a `seen` map over **every** entity carrying the label for each affected entity. In one
 write query that creates `n` constrained nodes, `affected = n` and
-`label_size = n`, so the commit does `Θ(n²)` composite-key builds. Measured:
-`UNWIND range(1,n) CREATE (:L {v:x})` under a UNIQUE constraint —
-n=2000 → 9.2 s (C 0.05 s), n=8000 → 212 s (C 2.4 s): ~87× C at n=8000 and
-super-linear. The C reference probes its exact-match index per entity: `Θ(n log n)`. -/
+`label_size = n`, so the commit does `Θ(n²)` composite-key builds. The C reference probes its
+exact-match index per entity: `Θ(n log n)`. -/
 
 /-- Number of composite-key builds Rust's enforcement performs for a batch that
 creates `n` constrained nodes into a label of final size `n` (each of the `n`

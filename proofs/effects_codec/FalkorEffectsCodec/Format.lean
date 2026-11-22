@@ -23,7 +23,7 @@ theorem fmtIsEmpty_iff (body : Bytes) : fmtIsEmpty (fmtNewBuffer ++ body) = true
 def fmtReplicate (Z : Codec) (minBytes : Nat) (buf : Bytes) : Bytes := (maybeCompress Z buf minBytes).1
 
 /-- What the replica receives opens to exactly the records the master built
-(any length since #3278). -/
+(any length). -/
 theorem fmtReplicate_transparent (Z : Codec) (hZ : CodecOK Z) (m : Nat) (body : Bytes) :
     openPayload Z (fmtReplicate Z m (fmtNewBuffer ++ body)) = .ok (body, []) :=
   openPayload_maybeCompress Z hZ body m

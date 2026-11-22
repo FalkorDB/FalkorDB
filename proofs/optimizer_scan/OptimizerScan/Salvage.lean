@@ -2,7 +2,7 @@ import OptimizerScan.ScanTree
 import OptimizerScan.ScanOrder
 
 /-
-# Salvaged filters: what `filters_of` hands `select_scan_node` to re-attach (#2390)
+# Salvaged filters: what `filters_of` hands `select_scan_node` to re-attach
 
 `ScanOrder.salvage_wellScoped` takes the premise "every salvaged filter reads only variables
 the new chain binds". This file models where those filters come from, with the variables each
@@ -158,7 +158,7 @@ theorem salvage_loses_row :
   simp [wellScoped, exSteps, salvagedSteps, filtersOf, exChild, seedBound, b, k, argVars,
     argumentLeafOf] at hw
 
-/-! ### The no-swap leaf rewrite (#2981, `select_scan_node.rs:1402-1477`)
+/-! ### The no-swap leaf rewrite (`select_scan_node.rs:1402-1477`)
 
 When the bottom traverse keeps its direction (`effectively_leaf`) and its child is a planner scan,
 the scan is pruned and `make_scan_subtree(from, ..)` scans the traverse's `from`. Before #2981 the

@@ -3,7 +3,7 @@ import RedisLayer.Args
 /-!
 # `parse_query_flags` — the one flag parser of QUERY / RO_QUERY / PROFILE / EXPLAIN
 
-Since #3010 (`557f18868`, fixes #3009) the four query commands share
+The four query commands share
 `src/commands/query_args.rs`. Models, line by line:
 
 | here | there |
@@ -21,7 +21,7 @@ Since #3010 (`557f18868`, fixes #3009) the four query commands share
 | `cScan`/`cReadFlags` | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`, `master`) |
 
 Arguments are raw byte strings (`Bytes`): `as_slice()` gives the bytes, so a non-UTF-8
-argument is no longer special. `parse_integer` is `RedisModule_StringToLongLong`, i.e.
+argument is not special. `parse_integer` is `RedisModule_StringToLongLong`, i.e.
 Redis `string2ll` on the whole byte string (`Args.string2ll`). `TIMEOUT_MAX.load` is
 the parameter `tmax`.
 
@@ -34,8 +34,8 @@ Headline: `rust_c_agree_except_schema` — under the `GRAPH.CONFIG` invariant, R
 fail with the corresponding error or read the same compact flag, version and timeout,
 on every vector Rust does not refuse with one of the two Rust-only `SCHEMA_HASH` errors
 (#3757: a malformed value, or `SCHEMA_HASH` without `--compact`).
-`rust_c_agree_refuted` — the unrestricted `RustCAgree` (true before #3757) no longer
-holds: `SCHEMA_HASH abc` is refused by Rust and skipped by C. `four_commands_share` —
+`rust_c_agree_refuted` — the unrestricted `RustCAgree` does not
+hold: `SCHEMA_HASH abc` is refused by Rust and skipped by C. `four_commands_share` —
 the four commands reject exactly the same vectors and read the same flags.
 -/
 

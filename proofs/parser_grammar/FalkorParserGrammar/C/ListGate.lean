@@ -1,8 +1,8 @@
 /-
-# The pattern-comprehension gate and memo of #3104 (cypher.rs:2818-2912)
+# The pattern-comprehension gate and memo (cypher.rs:2818-2912)
 
-#3104 (`4a4f2a72f`) stops the exponential backtracking of
-`parse_list_literal_or_comprehension` (W3-parser-9) two ways:
+The exponential backtracking of
+`parse_list_literal_or_comprehension` (W3-parser-9) is stopped two ways:
 
 * a **gate**: alternatives 2 and 3 (pattern comprehensions) are only tried
   after `[` when the next token is `(` or a name and `list_has_top_level_pipe`
@@ -20,21 +20,14 @@ What is proved here:
    counter *is* the stack depth. On mismatched input the two can differ
    (`pipeScan_mismatch`), which only decides what is tried first.
 2. **The gate and memo do not change the parse** (`listLitP_eq_ungated`):
-   `listLitP` (merged) and `listLitPU` (before #3104) return the same result
+   `listLitP` (merged) and `listLitPU` (ungated) return the same result
    on every state where the old parser does not run out of model fuel,
    *provided* (a) the expression and map parsers only ever consume
    bracket-balanced token runs with no top-level `|` or `,` (`Oracle.Bal`),
    and (b) the memo only holds attempts that fail (`MemoSound`).
    (a) is what makes a successful pattern comprehension imply an open gate
    (`patCompP_pipe`, through `parse_node_pattern` / `parse_relationship_pattern`).
-   **(a) was false for the Rust expression parser before #3041**: a failed
-   slice bound was swallowed, so
-   `[1][(1..2]` was accepted while consuming an unmatched `(`.
-   The resulting counterexample (removed in bbee75955; the last revision that has them is 17ccc5412):
-   `[(a)-->(b) WHERE [1][(1..2] | b]` was a pattern comprehension before #3104
-   and a syntax error after it (CONFIRMED live, see the project header).
-   #3041 (`2023af648`) makes a failed bound an error, which removes that
-   counterexample: `[1][(1..2]` is refused (`slice_unclosed_paren_refused`) and
+   A failed slice bound is an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`) and
    the expression fragment of `Model.lean` consumes balanced runs on every
    input checked (`bounded_bal`). (a) is not proved for the whole Rust
    expression parser (the oracle covers CASE, comprehensions, maps, ... that
@@ -581,7 +574,7 @@ theorem listLitP_eq_ungated (o : Oracle) (hs : o.Safe) (hb : o.Bal) (F : Nat) (h
         exact hrest s2 hnf
   | _ => rfl
 
-/-! ## 5. History: `Oracle.Bal` failed for the Rust before #3041, a changed parse -/
+/-! ## 5. History: `Oracle.Bal` with a swallowed slice bound, a changed parse -/
 
 /-- An expression parser with the pre-#3041 Rust's swallowed slice bound
 (cypher.rs:2136-2156 at 8621212fc): `[1][(1..2]` is accepted,

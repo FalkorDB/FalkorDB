@@ -9,8 +9,7 @@ runtime/ops/project.rs `eval` :54-147, and
 runtime/ops/batched_result_emitter.rs `start_batch` :604, `finish_batch` :651.
 Columns are abstracted to their bound/unbound shape plus values (`Option
 (List V)`, `none` = `Column::Unbound`) — the only thing these functions
-inspect, the value-level laws being this project's. Folded in from the
-retired proofs/pr2845_review.
+inspect, the value-level laws being this project's.
 -/
 namespace Columnar.Pr2845
 

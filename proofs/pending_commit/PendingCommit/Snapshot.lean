@@ -1,5 +1,5 @@
 /-
-# Deleted-entity snapshots vs. id reuse (#2876 and its other shapes)
+# Deleted-entity snapshots vs. id reuse
 
 `Runtime::deleted_nodes` / `deleted_relationships` (runtime.rs:193/:195) are
 query-lifetime maps **keyed by id** holding what a deleted entity looked like,
@@ -25,10 +25,9 @@ field one of the accessors above returns — and a handle is `(id, gen)`.
 * `sound_under_Good`: under `Good`, `readRt` returns the right entity for every
   handle the query holds (live or deleted-by-this-query).
 * `Good` is preserved by delete, commit and a create that does *not* reissue a
-  snapshotted id (`createDeferred`, the fix proposed in #2876) —
-  `deferred_preserves_Good`.
-* With the engine's allocator (`createRust`, bin first) `Good` breaks and the
-  read is wrong: `rust_reads_dead_entity` is the Lean counterexample, the same
+  snapshotted id — `deferred_preserves_Good`.
+* With the earlier allocator (`pre3641_createRust`, bin first) `Good` breaks and the
+  read is wrong: `pre3641_rust_reads_dead_entity` is the Lean counterexample, the same
   trace as `graph/tests/lean_pending_commit.rs` and the Cypher repros.
 
 The model says nothing specific to nodes, attributes or labels: the bug is the

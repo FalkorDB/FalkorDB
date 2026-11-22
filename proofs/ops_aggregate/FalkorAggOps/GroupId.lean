@@ -1,13 +1,11 @@
 import FalkorAggOps.Ops
 /-
-# Per-group DISTINCT state is keyed by a group id (#2977, fixes #2969)
+# Per-group DISTINCT state is keyed by a group id
 
-Before c652e505e the dedup table `Runtime::value_dedupers` was keyed `(distinct node,
-hash(group key row))` (`hash_u64`, aggregate.rs:1267 at ca36bfa15), so two groups whose key rows
-collided in FxHash shared one seen-set (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now `GroupMap`'s value carries the group's id
+The dedup table `Runtime::value_dedupers` is keyed `(distinct node, group id)`; `GroupMap`'s value carries the group's id
 (aggregate.rs `GroupMap`, :65): `groups.len()` at insertion (`next_group_id`, :709 vectorized, :970 per-row,
 `0` for the keyless pre-insert :533-540, :891-898), and both paths read it back (`entry.2`, :728,
-:976) as the key. The `hash_u64` trait and its `Row` impl were removed.
+:976) as the key.
 
 Scope: this separates GROUPS (two groups never share a seen-set). It does not make the value
 dedup exact: inside one group `ValuesDeduper::is_seen` (value.rs) still stores only the 64-bit

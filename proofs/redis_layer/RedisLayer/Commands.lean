@@ -528,9 +528,9 @@ theorem bulk_reply_c (n e : Nat) : bulkReply n e = cBulkReply n e := rfl
 
 /-! ## GRAPH.PROFILE / GRAPH.EXPLAIN flags (`QueryArgs.profileFront`, `explainFront`)
 
-Since `557f18868` (#3010) both go through `parse_query_flags` (`profile.rs:22`,
-`explain.rs:64`). Historical: PROFILE used its own loop that silently dropped a garbage
-timeout (`profile_timeout_garbage`, now `profile_timeout_garbage_rejected`), and EXPLAIN
+Both go through `parse_query_flags` (`profile.rs:22`,
+`explain.rs:64`). An earlier PROFILE loop silently dropped a garbage
+timeout (historical `profile_timeout_garbage`, now `profile_timeout_garbage_rejected`), and EXPLAIN
 validated no flags at all. -/
 
 theorem profile_timeout_parsed :

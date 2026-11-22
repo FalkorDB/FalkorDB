@@ -15,14 +15,6 @@ mvcc_graph.rs is PROVEN; see COVERAGE.tsv):
 - `TensorBlocks`/`TensorOps`/`TensorResize` whole-tensor model: me blocks,
                widening, multi_pairs, degrees (no `unreachable!`), fold/dup/wait,
                encode's MSB values, `Iter::new/seek`.
-- **W4-matrix-1, fixed by #3250 (history):** `Tensor::resize` shrink never trimmed `me`
-  (0f45a8685 tensor.rs:814-828; counterexample removed in bbee75955; the last revision that has them is 17ccc5412); repro then
-  `cargo test -p graph --test lean_versioned_matrix tensor_shrink_keeps_orphan_me_rows`
-  → after shrink `iter_edges` = [(0,0,3),(5,5,1),(5,5,2)], `edge_count` = 2
-  (expected [(0,0,3)], 1); after grow + re-add (5,5,9): `get` = [9] but
-  `iter_edges` also yields 1,2 and `edge_count` = 3 (expected 2). Not reachable
-  from Cypher: the only shrink caller, `rebuild_derived_matrices`, keeps
-  `node_cap` ≥ every node id.
 
 Re-sync to 256ab4d3f (from 43936bab9): no model change; the 24 CHANGED rows are behaviour-preserving.
 `should_fold`, `should_fold_read`, `fold_balance`, `delta_dominates_base`, `compound_key(_inverse)` became
@@ -38,30 +30,21 @@ by function name. `VersionedMatrix::count_in_rows` is now PROVEN: `CountRows.vmC
 well-formedness-indexed `LayerCountOn P`, and `proofs/graphblas_wrappers` `CountLink.vmCountInRows_linked` supplies
 `Matrix::count_in_rows` as the counter (the old `LayerCount`/`vmCountInRows_spec` statements are unchanged).
 
-Folded from `pr3438_review` (#3438, merged as 2b6902217): `TensorSave` models `Encode for Tensor`'s
+`TensorSave` models `Encode for Tensor`'s
 fast path (tensor.rs:1472-1561): with `dp`/`dm` empty and no multi-edge id it writes the committed `m`
 and two empty matrices instead of rebuilding. `fast_base_eq` (same pattern and values as the rebuild,
-and the rebuild's `multi` list is empty, from `AllInv`/`BlkInv`), `encPR_eq_encMain` (the pre-#3438
+and the rebuild's `multi` list is empty, from `AllInv`/`BlkInv`), `encPR_eq_encMain` (the earlier
 rebuild is `encMain`), `encode_one_state` (check, write and `edge_count` read one state),
 `decode_same` (FFI hypothesis `MatrixRT`). The fast path passes the shared committed `m` itself to
 `Matrix::encode`, so it depends on graphblas_wrappers `EncodeDup.pr_self_never_unloaded`. Live: 16
 fast-path tensors decode as the rebuild (15 byte-identical).
 
 
-Re-target to main 73077bb4a (#3033, #3086): no model change here. #3033 makes
-`Tensor::decode` (tensor.rs:1553) refuse a payload that breaks promotion
-completeness (`single_me`/`multi_me`); proved in graphblas_wrappers
-(`Decode.decodeCheck_ok_iff`, `decodeCheck_accepts_encoded`). tensor.rs fns after
-decode moved +20 lines; the `mvcc_graph.rs` rows were re-pointed to the post-#3290
-lines (new :89, commit :186, rollback :268, drop :274; #3290's `fork`/`claim` are
-covered by other projects; #3290 left `write`'s semantics and `commit`/`rollback`/`drop`
-unchanged, so `sstep` stands).
-
-Re-target to main 1d15bf713 (#3250, #2905): `Tensor::resize` (tensor.rs:823) never
+Re-target to main 1d15bf713 (#2905): `Tensor::resize` (tensor.rs:823) never
 shrinks; `resizeT` clamps to `max` and keeps every pair state and `me` row:
 `resizeT_eq`, `resizeT_edges` (no entry dropped), `resizeT_allInv`, `resizeT_blkInv`,
-`resizeT_hasMultiEdge`, `resizeT_dims`; new accessors `Tensor::nrows`/`ncols`
-(`nrowsT_resizeT`). `Cow` gained a debug-only `branched` flag (#2905); the release
+`resizeT_hasMultiEdge`, `resizeT_dims`; accessors `Tensor::nrows`/`ncols`
+(`nrowsT_resizeT`). `Cow` has a debug-only `branched` flag (#2905); the release
 model here is unchanged, the debug model is in `runtime_ds` (`CowModel.dbg_*`).
 `old_write_leaks_into_new_version` stays as the documented release-build contract.
 

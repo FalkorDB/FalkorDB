@@ -3,7 +3,7 @@
 
 | here | there |
 | --- | --- |
-| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:236-238 (#3303 adds `anon`) |
+| `AV`, `AV.fmt`, `AV.eqv`, `AV.hashKey`, `AV.asStr` | `Variable` Display/PartialEq/Hash/`as_str` ast.rs:236-238 (with `anon`) |
 | `QN`, `QR`, `QP`, `QG` | `QueryNode`, `QueryRelationship`, `QueryPath`, `QueryGraph` ast.rs:632-1033 |
 | `fmtNode`, `fmtRel`, `fmtGraph` | their `Display` ast.rs:637-647, 700-722, 801-815 |
 | `mergeAttrs` | `merge_attr_maps` ast.rs:824-839 |
@@ -12,16 +12,13 @@
 | `dfs`, `components` | `dfs` ast.rs:1001-1033, `connected_components` ast.rs:980-999 |
 | `QC`, `innerValidate`, `validateSetItems`, `inlinedOk`, `returnColumns` | `validate` / `inner_validate` / `validate_set_items` / `validate_inlined_properties` / `return_column_names` ast.rs:1535-1557 |
 
-* FIXED by #3297 (W4-plan-4; main b84473a7f): `inner_validate`'s procedure-call arm
-  (ast.rs:1316-1492) now ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
+* W4-plan-4: `inner_validate`'s procedure-call arm
+  (ast.rs:1316-1492) ends with `iter.next().map_or(Ok(()), |first| first.inner_validate(iter))`,
   so the clauses after a CALL are validated (`call_validates_rest`): `CALL db.labels() YIELD
   label MATCH (n)`, `… UNWIND [1] AS x` and `… CREATE (a)-[:R|S]->(b)` are rejected as in C
   (`call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
-  History: before #3297 the arm returned `Ok(())`; `CALL db.labels() YIELD label MATCH (n)` then reached the
-  optimizer with a scan at the plan root (`utilize_node_by_id.rs` `parent().unwrap()`).
-* FIXED by #3291 (608b62542): a query ending in `WITH` is rejected (`with_last_rejected`,
-  `MATCH (n) WITH n`: "Query cannot conclude with WITH …"), as in C and openCypher. Before, the
-  `With`/`Return` arm accepted it and the query returned rows.
+* A query ending in `WITH` is rejected (`with_last_rejected`,
+  `MATCH (n) WITH n`: "Query cannot conclude with WITH …"), as in C and openCypher.
 * `validate_ends`: away from those, a query cannot end in MATCH / UNWIND / a
   returning subquery.
 -/

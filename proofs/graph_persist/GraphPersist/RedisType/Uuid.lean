@@ -1,6 +1,6 @@
 /-! # `uuid_v4` / `uuid_fields` (redis_type.rs:790-830) and virtual-key names (:463-468)
 
-**Since #3286 (`bf11a2774`)** `uuid_v4` keeps the clock and the counter in separate
+`uuid_v4` keeps the clock and the counter in separate
 fields: `uuid_fields(t, seq)` prints `t` in the first three fields and
 `b = seq * 6364136223846793005 + 1442695040888963407` (wrapping) in the last two.
 
@@ -9,15 +9,13 @@ fields: `uuid_fields(t, seq)` prints `t` in the first three fields and
   on sample points, proven here for every `seq`.
 * `uuid_counter_distinct` — **two calls whose counters differ mod 2^48 never share a
   name, whatever the clock reads**; `uuid_same_clock_distinct`,
-  `uuid_regression_pair_distinct` (`(t, seq) = (4, 2)` vs `(5, 3)`, the old collision).
+  `uuid_regression_pair_distinct` (`(t, seq) = (4, 2)` vs `(5, 3)`, a pair that collided under an earlier `t ^ seq` scheme).
 * `vkeyName_inj`, `vkeyName_ne` — virtual-key names of one graph differ iff their uuids do,
   and none equals the graph's own name; `vkeyName_uuid_counter` — two virtual-key names
   (of any graphs) that are equal came from the same counter mod 2^48, and
   `names_vname_inj` discharges `VKeys.Names.vname_inj` for any naming that hands each
   `(graph, slot)` its own counter value; `sameFields_iff`, `const_check_holds` — `same_fields`
   and the `const _` block's assertions, for every clock reading.
-
-Before #3286, `a = (nanos as u64) ^ seq` fed all five fields (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 -/
 namespace GraphPersist.RedisType
 
@@ -76,7 +74,7 @@ theorem low48 (a : Nat) : ((mixB a % 2 ^ 48 + 2 ^ 48 - INC % 2 ^ 48) * MINV) % 2
 theorem xor_lt (x y : Nat) (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) : x ^^^ y < 2 ^ 64 :=
   Nat.xor_lt_two_pow hx hy
 
-/-! ## On main: `uuid_fields` (#3286) -/
+/-! ## On main: `uuid_fields` -/
 
 /-- `uuid_fields(t, seq)` (redis_type.rs:812-830): `[a >> 32, (a >> 16) & 0xFFFF,
 a & 0xFFF, 0x8000 | (b & 0x3FFF), b & 0xFFFF_FFFF_FFFF]` with `a = t`,

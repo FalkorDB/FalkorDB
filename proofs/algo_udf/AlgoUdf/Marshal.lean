@@ -7,13 +7,13 @@ import AlgoUdf.Nesting
 | `JsV`, `Heap`, `deref` | the QuickJS values `js_to_value` distinguishes; an array/object may also be a `ref` into the QuickJS heap, so shared and *cyclic* values (`a.push(a)`) are representable |
 | `objSet`, `jsKeys`    | AXIOMATISED QuickJS object semantics (ECMA-262 §10.1.9 [[Set]] through the `Object.prototype.__proto__` accessor, §10.1.11 OrdinaryOwnPropertyKeys: array-index keys first, ascending) |
 | `JsKind`              | the object's internal class, as `JS_IsDate` / `JS_IsRegExp` test it (QuickJS FFI, AXIOMATISED by construction). `date ms` / `regexp s` carry the value Rust then obtains by *calling the object's `getTime` / `toString` properties* (`obj.get("getTime")`, :370-396): those calls are an ORACLE here, so a Date or RegExp whose `getTime` / `toString` the script overrides (an own property) is outside the model: Rust returns whatever the override returns (or an `Err` if it is not a function / not a number), the model returns the internal time value / source |
-| `ctorName`            | historical only: `obj.get("constructor").name`, the pre-#3074 test |
+| `ctorName`            | historical only: `obj.get("constructor").name`, the earlier Date/RegExp test |
 | `RV`                  | `runtime::value::Value` (all variants; Path as node/rel id lists) |
 | `MAX`, `nestErr`, `chk` (`Nesting.lean`) | `MAX_UDF_VALUE_NESTING` :68, `udf_nesting_error` :88, `depth >= MAX_UDF_VALUE_NESTING` |
 | `toLevel`, `toStep`, `toF` | `value_to_js_level` :125-250, `value_to_js_at` :111-122 (`f` = stack frames) |
 | `toJs`                | `value_to_js` :98 (= `value_to_js_at(.., 0)`) |
 | `classify`, `classifyObj`, `runShape`, `fromLevel`, `fromStep`, `fromF` | `js_to_value_level` :271-425 (dispatch / recursive arms; array :321, entity class :352, plain object :399), `js_to_value_at` :263-268 |
-| `JsV.ent`             | an instance of `js_classes::JsEntity` (#2976): `entity_value` reads the entity back, only in the call that made it |
+| `JsV.ent`             | an instance of `js_classes::JsEntity` `entity_value` reads the entity back, only in the call that made it |
 | `fromJs`              | `js_to_value` :253 (= `js_to_value_at(.., 0)`) |
 | `esc`, `unesc`        | key escaping :172-178 / :414-417 |
 
@@ -75,7 +75,7 @@ inductive JsV where
   | sym
   | arr (items : List JsV) (props : List (List Char × JsV))
   | obj (props : List (List Char × JsV)) (kind : JsKind)
-  /-- an instance of the Rust class `JsEntity` (js_classes.rs :84-136, #2976): what
+  /-- an instance of the Rust class `JsEntity` (js_classes.rs :84-136): what
   `create_js_node` / `create_js_edge` / `create_js_path` return. `props` are its visible own
   properties, `v` the entity in its class data, `current` whether its epoch is the current
   call's (`entity_value` :129 returns `Some v` exactly then) -/
@@ -215,7 +215,7 @@ def fromObjWith (ps : List (List Char × JsV)) (kind : JsKind) (props : Except S
   | .plain => do let kv ← props; pure (.map kv)
 
 /-- vecf32 arm (:325-337): every element converts (`arr.get::<f64>`, then `as f32`;
-the abstract `F64` already stands for the f32 value), inf / NaN included since #3074. -/
+the abstract `F64` already stands for the f32 value), inf / NaN included. -/
 def fromVec : List JsV → Except String RV
   | [] => .ok (.vecf32 [])
   | .num f :: xs => do
@@ -238,8 +238,8 @@ inductive Shape where
   | map (ps : List (List Char × JsV))
 
 /-- A non-array object that is not a current entity (:356-424): a `"point"` marker, else Date /
-    RegExp by internal class, else a map. Since #2976 a `"node"` / `"edge"` / `"path"` marker on a
-    plain object no longer makes it an entity. -/
+    RegExp by internal class, else a map. A `"node"` / `"edge"` / `"path"` marker on a
+    plain object does not make it an entity. -/
 def classifyObj (ps : List (List Char × JsV)) (kind : JsKind) : Shape :=
   if tag ps = some "point" then
     .done (match (get ps "latitude".toList).bind numOf, (get ps "longitude".toList).bind numOf with

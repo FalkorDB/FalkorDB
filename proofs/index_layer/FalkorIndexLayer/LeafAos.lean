@@ -4,8 +4,8 @@ import FalkorIndexLayer.LeafMerge
 # `AosLeaf<8>` (`cow_btree/leaf/aos.rs`, origin/main 8743953a8) and the `(key, doc)` order
 
 This is the default `DOC_BYTES = 8` (16-byte entry) instance, which the rest of the `Leaf*` modules
-use. The general `AosLeaf<DOC_BYTES>` (#2278) is `LeafAosD.lean`; `aosD8_*` there prove it equals
-this model at `DOC_BYTES = 8`. `aosRead` is the old `AosLeaf::read` helper, inlined by #2278 into
+use. The general `AosLeaf<DOC_BYTES>` is `LeafAosD.lean`; `aosD8_*` there prove it equals
+this model at `DOC_BYTES = 8`. `aosRead` is the former `AosLeaf::read` helper, inlined into
 `key`/`doc` (same reads).
 
 | Lean | Rust |

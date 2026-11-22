@@ -7,7 +7,7 @@ imports its definitions.
 /-
 # Claim 3: the `'static` guard never outlives the cell it borrows
 
-Merged PR #3436 (25babfe4f), folded from the retired `pr3436_review`. Cites: current main (= PR branch @ e30861ea3, `runtime.rs` re-cited) unless marked. Since 653f467a9 the
+Cites: `runtime.rs` of the `graph()`/`graph_mut()` version unless marked. The
 guard lives in `HeldRead { guard, _owner }` (`runtime.rs:115-118`): `new` clones `g` into
 `_owner` and borrows through it (`:476-491`). The soundness argument therefore rests on
 `HeldRead`'s own `Arc`, not on `Runtime`'s field order.

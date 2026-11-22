@@ -2,8 +2,8 @@ import PlannerBuild.AndOf
 /-
 # `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` (mod.rs:1802-1843)
 
-Since #3335 the binder removes every `Paren` (binder.rs:2150-2160), so
-`expr_to_plan` no longer unwraps one: a `Paren` is not a connective here
+The binder removes every `Paren` (binder.rs:2150-2160), so
+`expr_to_plan` does not unwrap one: a `Paren` is not a connective here
 (`wfI` admits inline variables only under AND/OR/NOT) and is planned like any
 other scalar. The scalar conjunction is `ExprIR::and_of` (`scalarFilter`).
 

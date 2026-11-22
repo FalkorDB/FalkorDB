@@ -96,7 +96,6 @@ Each bug was confirmed with a Rust repro and live against C (see [`../FINDINGS.m
 | — | `isAggregate_case_sensitive` | `Functions::is_aggregate("COUNT")` is false although `count` is registered, because it doesn't lowercase | Latent: no caller today |
 | — | `encode_map_is_null` | `Encode<19>` writes a Map, Node, Relationship or Path as `NULL` behind only a `debug_assert!` | Latent: property writes never store those types |
 | — | `within_nest_empty` | The decoder accepts one level more than writers produce (`MAX` arrays around `[]`) | Harmless: still bounded, never stored |
-| — | `union_order_visible` | `dbms.functions()` prints union types in declaration order (`Point or Null`), while C uses its own order (`Null or Point`) | Divergence from C, open |
 
 Other live divergences from C are recorded in the header, not as bugs, because Rust is often the better answer:
 

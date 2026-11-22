@@ -6,18 +6,14 @@ This is the general cause behind issue #2923 (an inline property map that
 references an earlier variable): `MATCH (a)-[r]->(b) MATCH (c:B {v: id(r)*0})`
 fails with "'r' not defined".
 
-* Before #2981 the parser folded consecutive `MATCH` (and `CREATE`) clauses
-  into one pattern (`if token == *clause { next; continue }`), and a pattern
-  *predicate*, parsed with the same routine, swallowed the next MATCH. #2981
-  ends the pattern on any token but `,` (cypher.rs:1581-1587): `fold` below is
-  the pre-#2981 parser, kept for the historical theorems.
-* Before #2981 `bind_graph` defined and bound **all nodes** (with their inline
-  attrs) before **any relationship**, so a node's attrs could only see
-  relationships of *earlier clauses*. Since #2981 it first defines every named
-  relationship alias (binder.rs:1498-1512), then the nodes (1522-1534), then
-  the relationships (1527-1706): a node's attrs see every relationship of the
+* The parser ends a pattern on any token but `,` (cypher.rs:1581-1587); an earlier parser folded
+  consecutive `MATCH` (and `CREATE`) clauses into one pattern and a pattern *predicate*
+  swallowed the next MATCH. `fold` below is that earlier parser, kept for the historical theorems.
+* `bind_graph` first defines every named relationship alias (binder.rs:1498-1512), then the nodes
+  (1522-1534), then the relationships (1527-1706): a node's attrs see every relationship of the
   pattern, and the planner checks such attrs once all they read is bound
-  (`lift_cross_entity_attrs`).
+  (`lift_cross_entity_attrs`). (An earlier `bind_graph` defined all nodes before any relationship,
+  so a node's attrs could only see relationships of *earlier clauses*.)
 
 C (the reference) binds a pattern element by element in textual order: an
 element's property map sees the scope before the clause, the elements to its
@@ -204,7 +200,7 @@ where
         · cases h1; exact mem_grow _ hn
         · cases h1
 
-/-! ## The parser fold (pre-#2981) -/
+/-! ## The parser fold (earlier parser) -/
 
 inductive RawClause
   | match_ (p : List Elem) (hasWhere : Bool)

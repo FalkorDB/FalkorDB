@@ -1,6 +1,6 @@
 import FalkorOptimizer.Basic
 /-
-# The plan-time constant evaluator is sound (since #2904)
+# The plan-time constant evaluator is sound
 
 `eliminate_true_filters` removes a `Filter` (or one `AND` conjunct) when
 `is_constant_true` holds: `ExprEval::constant().eval(..)` — the *same* `eval_node`
@@ -10,9 +10,7 @@ as at runtime, run with no row and no runtime — returns `Ok(Bool(true))`
 function calls (`self.rt()?`, eval.rs:278-282).
 
 Soundness needs: whenever an operator's result is `Ok`, every child it consulted
-was `Ok`, i.e. no operator swallows a child's error. Before #2904 the `Pow` arm
-did (`flat_map` over `Result`), so `WHERE x ^ true` was folded to `true`
-(#2902). Since #2904 every modelled arm propagates
+was `Ok`, i.e. no operator swallows a child's error. Every modelled arm propagates
 errors with `?`, and `constEval_sound` proves the constant verdict is the runtime
 verdict on every row; this discharges `eliminate_whole_filter`'s and
 `andLoop_drop_true`'s hypotheses (`constTrue_filter`, `andLoop_drop_constTrue`).

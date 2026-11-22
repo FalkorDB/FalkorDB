@@ -1,8 +1,8 @@
 import FalkorOptimizer.Basic
 /-
-# `ExprIR::and_of` / `or_of` keep the runtime value (ast.rs:342-380, #3335)
+# `ExprIR::and_of` / `or_of` keep the runtime value (ast.rs:342-380)
 
-Every filter rebuilt by the optimizer passes since #3335 goes through
+Every filter rebuilt by the optimizer passes goes through
 `ExprIR::and_of` (absorb_edge_filters_into_vlt.rs:139/145, eliminate_true_filters.rs:135,
 push_filters_down.rs:130/347/360/423, replace_cartesian_with_hash_join.rs:208,
 utilize_index.rs:1008), which splices an AND operand into the new AND. This file
@@ -18,8 +18,7 @@ shows that is invisible at run time, errors included.
 * `scL_splice`: splicing a nested run of the same connective never changes the loop's result
   (associativity, with errors, nulls and short-circuit).
 * `flat_eval`: `flat` evaluates like the unflattened node whenever more than one operand is left;
-  `flat_single`, `flat_single_same`: the lone-operand cases return the operand itself (the
-  pre-#3335 `remaining.len() == 1` branch).
+  `flat_single`, `flat_single_same`: the lone-operand cases return the operand itself.
 * `flat_passes`: as a Filter predicate, `and_of xs` keeps / drops / errors on a row exactly as
   `AND(xs)` does — unconditionally (a lone non-boolean operand is a type error either way).
 -/

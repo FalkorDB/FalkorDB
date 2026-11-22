@@ -24,9 +24,8 @@ index's documents in its own (approximate-distance) order, at most `count` of th
 because every indexed document is a live entity, and `query k = ranked.take k`.
 Floats are abstract (`FloatOps`).
 
-HISTORICAL (W3-conc-4 / #3085, fixed by #3088 at 89d68334a): before the fix both fns did
-`Vec::with_capacity(k)` with the raw user `k` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now
-every buffer is bounded by the live entity count: `alloc_bounded`, `no_abort_any_k`.
+Every buffer is bounded by the live entity count, not by the raw user `k`: `alloc_bounded`,
+`no_abort_any_k`.
 -/
 
 namespace SC.Knn

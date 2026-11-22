@@ -4,7 +4,7 @@ import AlgoUdf.AlgoGlue
 
 | here | there |
 | --- | --- |
-| `Slot`, `setGraph`, `clearGraph`, `withGraph` | `CURRENT_GRAPH` :147, `with_current_graph` :170 (`clearGraph` is the null slot: `set_current_graph` / `clear_current_graph` were replaced by `with_graph`, #2976) |
+| `Slot`, `setGraph`, `clearGraph`, `withGraph` | `CURRENT_GRAPH` :147, `with_current_graph` :170 (`clearGraph` is the null slot: `set_current_graph` / `clear_current_graph` were replaced by `with_graph`) |
 | `GState`, `restoreDrop`, `withGraphRun` | `with_graph` :151 and its `Restore` guard's `drop` :158 (lend the graph for one call, restore the one lent before, start a new epoch only when nothing was lent) |
 | `JV`, `Obj`, `set`, `get` | QuickJS values / ordinary objects (AXIOMATISED: `obj.set(k, v)` replaces own key `k`; `"__proto__"` never becomes an own key, cf. `Marshal.objSet`) |
 | `Ent`, `newEntity`, `entityValue`, `nodeIdOf`, `nextEpoch` | `JsEntity` :83-86 (`trace` :93, `constructor` :105), `new_entity_object` :110, `entity_value` :129, `node_id_of` :135, the `CALL_EPOCH` bump in `with_graph` :162-165 (#2976) |
@@ -131,7 +131,7 @@ theorem jsNode_markers (id : Nat) (labels : List String) (attrs : List (String �
   · rw [get_set_ne _ _ _ _ (by decide), get_set_ne _ _ _ _ (by decide), attrLoop_keeps _ (by decide)]
     repeat (first | rw [get_set_same _ _ _ (by decide)] | rw [get_set_ne _ _ _ _ (by decide)])
 
-/-! ## Entity objects (`JsEntity`, #2976) -/
+/-! ## Entity objects (`JsEntity`) -/
 
 /-- The class data of a `JsEntity` instance (:83-86): the entity and the epoch it was made in. -/
 structure Ent where
@@ -164,7 +164,7 @@ def nodeIdOf (epochNow : Nat) (o : Option Ent) : Option Nat :=
 new epoch (`wrapping_add`: the wrap after 2^64 calls is not modelled). -/
 def nextEpoch (prevLent : Bool) (epoch : Nat) : Nat := if prevLent then epoch else epoch + 1
 
-/-! ## `with_graph` and its restore guard (#2976)
+/-! ## `with_graph` and its restore guard
 
 `with_graph` (js_classes.rs:151) swaps `CURRENT_GRAPH` for the new graph, bumps `CALL_EPOCH` when
 the slot was null (an outermost call), and returns `f()` while a `Restore` guard puts the
@@ -255,7 +255,7 @@ theorem nodeIdOf_spec (e id : Nat) (v : Marshal.RV) :
     nodeIdOf (nextEpoch false e) (some (newEntity e v)) = none ∧ nodeIdOf e none = none := by
   refine ⟨?_, ?_, ?_, rfl⟩ <;> simp [nodeIdOf, entityValue, newEntity, nextEpoch]
 
-/-- `js_traverse_impl`'s source collection (js_classes.rs:821-828, #2976): every element of the
+/-- `js_traverse_impl`'s source collection (js_classes.rs:821-828): every element of the
 `nodes` array must be a current node entity, else `"Node ID error: traverse expects an array of
 nodes"` (a plain object copying `__falkor_node_id` no longer passes). -/
 def traverseSources (epochNow : Nat) (objs : List (Option Ent)) : Except String (List Nat) :=
@@ -332,7 +332,7 @@ def optArg (args : List JV) (i : Nat) : Except String (Option Obj) :=
   | some _ => .error "Error converting from js value into type 'object'"
 
 /-- `node.getNeighbors(...)` goes through `(h) => function(...args) { return h(this, ...args); }`
-(:251, #2976), so the user's arguments reach `js_get_neighbors_entry` :448 as given, after `this`:
+(:251), so the user's arguments reach `js_get_neighbors_entry` :448 as given, after `this`:
 `config` is the user's first argument (`optArg userArgs 0`), missing when omitted. rquickjs
 converts the parameters before the body runs, then the body needs `this` to be a current node
 entity (`thisNode = nodeIdOf …`, :453-455). Returns `(node id, config)`. -/

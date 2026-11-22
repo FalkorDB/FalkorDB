@@ -35,14 +35,14 @@ def floatOp : AOp → F → F → F
   | .add => FloatModel.add | .sub => FloatModel.sub | .mul => FloatModel.mul
   | .div => FloatModel.div | .rem => FloatModel.rem
 
-/-- The error `Value / Value` raises for `i64::MIN / -1` (`value.rs:1163-1167`, `checked_div`, #3603). -/
+/-- The error `Value / Value` raises for `i64::MIN / -1` (`value.rs:1163-1167`, `checked_div`). -/
 def divOverflow : String := "ArgumentError: integer overflow in division"
 
 /-- The one `Int / Int` quotient that is not an `i64`. -/
 def minDivNegOne (a b : Int) : Bool := a == -2 ^ 63 && b == -1
 
 /-- `Value` arithmetic: nulls propagate, `Int + - *` wrap, `Int / Int` is `checked_div` (zero divisor
-and `i64::MIN / -1` error, #3603), `Int % Int` is `wrapping_rem` (zero divisor errors,
+and `i64::MIN / -1` error), `Int % Int` is `wrapping_rem` (zero divisor errors,
 `i64::MIN % -1 = 0`), mixed numerics promote the int with `as f64`. -/
 def valueArith (other : AOp → V F → V F → Except String (V F)) (op : AOp) : V F → V F → Except String (V F)
   | .null, _ => .ok .null
@@ -77,7 +77,7 @@ def floatOperand (c : EC F) : Bool :=
   | _ => false
 
 /-- The int lane (`vector_expr.rs:887-923`). `/` and `%` take it only when no divisor is zero, and `/`
-also only when no non-null row is `i64::MIN / -1` (#3603: that row is left to the generic lane,
+also only when no non-null row is `i64::MIN / -1` (that row is left to the generic lane,
 which raises the overflow error). -/
 def intStage (op : AOp) (lhs rhs : EC F) (len : Nat) : Option (EC F) :=
   let nulls := unionNulls lhs rhs len
@@ -350,7 +350,7 @@ theorem arithmetic_agree (other : AOp → V F → V F → Except String (V F)) (
     | some c => exact ok_agree other op lhs rhs c len (floatStage_agree other op lhs rhs c len hl hr hf)
     | none => exact genericStage_agree other op lhs rhs len
 
-/-! ### #3603: `i64::MIN / -1` is an error, `i64::MIN % -1` stays 0 -/
+/-! ### `i64::MIN / -1` is an error, `i64::MIN % -1` stays 0 -/
 
 /-- **PROVEN** (`value.rs:1163-1167`): `Int / Int` is `checked_div`, so the one unrepresentable
 quotient raises the overflow error instead of wrapping (formerly `wrap (tdiv MIN -1) = MIN`). -/

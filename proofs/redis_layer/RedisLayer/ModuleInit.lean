@@ -1,7 +1,7 @@
 /-!
 # Module load: configuration table and event handlers (`src/module_init.rs`, `src/lib.rs`)
 
-Since #3328 (`ded0b7c3f`) load-time configuration has one source: `graph_init`
+Load-time configuration has one source: `graph_init`
 (`module_init.rs:139`) collects the arguments (`to_string_lossy`) and calls
 `config::apply_module_args`, refusing the load (`Status::Err`) on any error
 (`:163-168`); `lib.rs` sets `module_args_as_configuration: false`, so redismodule-rs no
@@ -14,15 +14,10 @@ work here is "args → `apply_module_args` → `Err` ⇒ `Status::Err`" (`graphI
 `table` (the `redis_module!` `configurations:` list, `lib.rs:97-116`) still registers the
 `graph.*` redis.conf configs; its defaults are checked below.
 
-**Historical (before #3328, 4a4f2a72f) — W4-redis-3 / #3268, fixed by #3328 (`ded0b7c3f`).**
-The table was also fed the module arguments (`module_args_as_configuration: true`,
-redismodule-rs `get_*_default_config_value`: the value after the first argument
-*byte-equal* to the name; a bool is `value == "yes"`), and `graph_init` had its own
-upper-casing loop for the atomics. Confirmed live then (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412):
-`CMD_INFO YES` → Rust 0, C 1; `CMD_INFO garbage` loaded with 0,
-C refuses; `cache_size 10` ignored;
-`ASYNC_DELETE yes` ignored. All four now load as in C
-(`LoadArgs.fixed3328_counterexamples`, re-checked live on b080a44c1).
+The earlier module-argument handling (`module_args_as_configuration: true`, redismodule-rs
+`get_*_default_config_value`: the value after the first argument *byte-equal* to the name;
+a bool is `value == "yes"`, plus `graph_init`'s own upper-casing loop) is kept below as
+historical counterexamples (`LoadArgs.fixed3328_counterexamples`).
 -/
 namespace RedisLayer.ModuleInit
 
@@ -55,14 +50,14 @@ def defaultOk : Kind → Bool
 
 theorem table_defaults_in_range : table.all (fun e => defaultOk e.2) = true := by decide
 
-/-! ## Historical: redismodule-rs `find_config_value` / `get_*_default_config_value` (before #3328) -/
+/-! ## Historical: redismodule-rs `find_config_value` / `get_*_default_config_value` (earlier code) -/
 
 /-- C (`_Config_ParseYesNo`): case-insensitive yes/no, anything else an error. -/
 def cBool (v : String) : Option Bool :=
   let l := v.toList.map Char.toLower
   if l == "yes".toList then some true else if l == "no".toList then some false else none
 
-/-! ## Historical: `graph_init`'s argument loop (old `:154-223`, removed by #3328) -/
+/-! ## Historical: `graph_init`'s argument loop (earlier code, `:154-223`) -/
 
 def MAX_INFO_QUERIES_CAP : Int := 1000
 
@@ -77,7 +72,7 @@ def target (upper : String) : Tgt :=
   else if upper = "MAX_QUEUED_QUERIES" then .maxQueued
   else .none
 
-/-! ## `graph_init` since #3328 -/
+/-! ## `graph_init` -/
 
 /-- `graph_init`'s argument step (`module_init.rs:159-168`): any `apply_module_args`
 error is logged and refuses the load; otherwise initialisation continues. -/

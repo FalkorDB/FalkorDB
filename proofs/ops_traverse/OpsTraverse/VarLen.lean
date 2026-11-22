@@ -207,9 +207,8 @@ theorem no_sibling_uniqueness : ([0], 3) ∈ varLen [⟨0, 3, 3⟩] false 3 1 1 
 
 /-! ## Absorbed WHERE edge filter: per-edge verdict (`cond_var_len_traverse.rs:282-308`)
 
-#2390 (d2c42e032) made a non-boolean, non-null verdict a type error, exactly as
-`FilterOp` answers it (`filter.rs:95-101`; proofs/ops_aggregate `StreamOps.filterEval`).
-Before it, `Ok(_) => continue` silently dropped the edge. -/
+A non-boolean, non-null verdict is a type error, exactly as
+`FilterOp` answers it (`filter.rs:95-101`; proofs/ops_aggregate `StreamOps.filterEval`). -/
 
 /-- An evaluated predicate value (`Value` restricted to what the match distinguishes). -/
 inductive PV where

@@ -27,22 +27,6 @@ this header and the module headers re-pinned to HEAD; every `value.rs` NOT COVER
 (trait declarations, constructors, JSON wrappers, chrono accessors) now points at the proof
 that covers it in `proofs/value_order` or `proofs/functions_temporal`.
 
-**Re-targeted to main 8621212fc** (from 289c201fe). #2904 (closes #2902): `apply_pow`
-returns `Result` and rejects a non-numeric, non-null operand (base first) with
-`Type mismatch: expected Integer, Float, or Null but was <type>` — `applyPow` now returns
-`Res`; `pow_nonnumeric_base_errors`, `pow_nonnumeric_exp_errors`, `pow_bool_errors`,
-`pow_null`, `pow_numeric_unchanged`, `pow_fn_in_domain`; old model `pre2904_applyPow` (MathFns). #3007 (closes #2980): the scalar
-`percentile` step stores the percentile only while nothing is collected —
-`percentile_first_row`, `percentile_keeps`; old counterexample removed (in 17ccc5412). #2984 adds `shift_months` to value.rs (row points to
-proofs/functions_temporal). COVERAGE.tsv line numbers re-pinned to 8621212fc.
-
-Earlier: re-targeted to main 289c201fe (from fb3d516d0). #2985 (#2933): `Time ± Duration`
-keeps only the time of day, `(t mod 86400 ± dur mod 86400) mod 86400`, and can no longer
-fail — `timeAddDur`/`timeSubDur` replace the `addTs`/`subTs` parameters in those arms;
-`add_time_dur_in_day`, `sub_time_dur_in_day`, `time_sub_add_dur`, `time_add_whole_days`,
-`time_add_dur_mod`. #2983 (`Point::distance` clamps `a` to `[0, 1]`) is modelled in
-proofs/functions_temporal. 
-
 Lean 4 (core only) models of `graph/src/runtime/value.rs` (arithmetic, formatting,
 memory accounting, attribute access, self-comparison, v19 codec),
 `functions/math.rs`, `functions/conversion.rs` and `functions/mod.rs` (arity, argument
@@ -76,7 +60,11 @@ Int64: `div_rem_identity` ((a/b)*b + a%b = a for i64, wrapping), `wDiv_exact`,
 Value: null propagation for all five operators, `mul_ok_iff`/`div_ok_iff`/`rem_ok_iff`
 (exact error conditions), `lookup_omExtend` (map `+` is a right-biased merge),
 `nodup_omExtend` (no duplicate keys), `keys_omInsert`, list append/prepend laws,
-temporal `+ Duration` symmetric. CArith: `mul_agree_on_numeric`, `add_agree_str_scalar`,
+temporal `+ Duration` symmetric; `Time ± Duration` keeps only the time of day (`add_time_dur_in_day`, `sub_time_dur_in_day`,
+`time_sub_add_dur`, `time_add_whole_days`, `time_add_dur_mod`); `apply_pow` rejects a non-numeric, non-null operand, base first
+(`pow_nonnumeric_base_errors`, `pow_nonnumeric_exp_errors`, `pow_bool_errors`, `pow_null`, `pow_numeric_unchanged`,
+`pow_fn_in_domain`; `pre2904_applyPow` in MathFns is the earlier model, kept as history); the scalar `percentile` step stores
+the percentile only while nothing is collected (`percentile_first_row`, `percentile_keeps`). CArith: `mul_agree_on_numeric`, `add_agree_str_scalar`,
 `add_agree_list` (for a declared-type operand), `add_agree_int_int`, `add_agree_float` (Rust = C on the shared domain).
 TypeCheck: **`valueOfType_none_iff`** (`value_of_type` returns None iff the clean
 acceptance spec holds), **`validateArgsType_go_none`**, `validate_fixed_iff`,
@@ -91,37 +79,28 @@ arms are dead after validation), `sqrt_float_eq_ieee`, `sqrt_nan_iff`,
 `pre3339_decode_encode` (v19 codec roundtrip, old decoder), `readVec_vecBytes`,
 **`heap_le_amortized`**, `shares_le`, `fmtDuration_fields`.
 
-## #3339 value nesting (Nesting.lean; b080a44c1, GHSA-mwvh-8fq5-x2j8, issue #2722)
+## Value nesting (Nesting.lean)
 
 `decodeValue_refuses_past_cap` (a call past `MAX_VALUE_NESTING` reads nothing and returns the
 nesting error), **`decode_reach`** (whatever the input, no `decode_value` call is made deeper
-than `MAX + 1`), **`decodeValue_agrees`** (otherwise exactly the pre-#3339 decoder: `Ok` iff
-the old decoder succeeds with a value `within` the cap), `decode_encode` /
+than `MAX + 1`), **`decodeValue_agrees`** (otherwise exactly the decoder without a cap: `Ok` iff
+it succeeds with a value `within` the cap), `decode_encode` /
 `decodeValue_encode_deep` (on encoded storable values: round-trip iff `within`, else the
 nesting error), `within_of_depth` / `not_within_of_depth` (depth ≤ MAX always loads, ≥ MAX+2
 never), **`validateProperty_depth`** (every accepted property has depth ≤ MAX), **`stored_roundtrip`**
 (every accepted property — vectors < 2³² — saves and loads back), `validateProperty_nest`.
-`decode_nest_deep` is a current theorem: the decoder refuses depth past the cap. History: before #3339 any depth was decoded and storable; the `pre3339_isValid_any_depth` and `pre3339_decode_any_depth` counterexamples were removed in bbee75955 (the last revision that has them is 17ccc5412).
+`decode_nest_deep` is a current theorem: the decoder refuses depth past the cap.
 Note (`within_nest_empty`): the decoder's cut is one level more lenient than the writers' —
 `MAX` arrays around `[]` (depth MAX+1) decode; harmless (still bounded, never stored).
 `GRAPH.BULKINSERT`'s bound (bulk_insert.rs:132) is in proofs/redis_layer (`Bulk`).
 
 ## Confirmed bugs (Rust repro + live Rust vs C)
 
-1. **FIXED — `toInteger` clamped out-of-range negatives to i64::MIN** (#2955; fixed by
-   `ac5c27b76`, PR #2989, conversion.rs:53-59): `toInteger('-9223372036854775809')` …
-   `'-9223372036854776832'` returned -9223372036854775808 (C null). Now an integer-only
-   string that fails `parse::<i64>` is null without the f64 retry. Proved:
-   `toInteger_neg_overflow_null` (the historical window, now null in Rust and C) and the
-   general `toInteger_int_literal_agrees_c` (every `[+-]?digits+` string: Rust = C strtoll).
-2. **FIXED — `coalesce()` accepted with zero arguments** (#2956; fixed by `648b41c5c`,
-   PR #2990, mod.rs:813-819): built-in var-length functions now require ≥ 1 argument with
-   C's message; UDFs still take any count. Proved: `coalesce_zero_args_rejected`,
-   `validate_varLength` (iff), `udf_zero_args_ok`.
+No open confirmed bugs. Fixed ones are in this file's git history. The latent ones are under Suspicions.
 
 ## Divergences from C (live; Rust often the better answer — decide per case)
 
-- `MIN / -1`: was Rust MIN, C MAX; Rust now errors (#3603, `ValueMath.div_min_neg_one`); `(2^53+1)/1` Rust exact, C 2^53 (C divides through double).
+- `MIN / -1`: Rust errors (`ValueMath.div_min_neg_one`), C MAX; `(2^53+1)/1` Rust exact, C 2^53 (C divides through double).
 - `abs(MIN)` Rust error, C MIN; `abs(-0.0)` Rust 0, C -0.
 - `+` typing: `'a'+date(..)`, `'a'+{b:1}`, `'a'+localtime(..)` Rust error, C concatenates;
   `true+1`, `1.5+true`, `duration+1`, `date+1` Rust error, C Float; `null*'a'`, `'a'/null`
@@ -136,9 +115,6 @@ Note (`within_nest_empty`): the decoder's cut is one level more lenient than the
   '1.5' vs '1.500000' (PR #3609: `toString(1.0)` '1.0', `toString(1e20)` '1.0E20'); `toFloatList([' 3'])`/`toIntegerList([' 3'])` null vs 3.
 - `p.LATITUDE` Rust 1.5, C null (Rust component names are ASCII case-insensitive).
 - `toString(duration('PT0S'))` 'PT0S' vs C 'P' (C bug).
-- Fixed: `sign(-2.5)` Float (#2906) — fixed by #2907 (`f04c3557a`): `sign_float_is_int`
-  (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
-- Fixed: `^` not type-checked (#2902) — fixed by #2904 (counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
 - Also seen (known):
   `toString(1.0)` '1', `toInteger('1e3')`, leading whitespace (functions_temporal).
 
@@ -169,21 +145,20 @@ f64 ops and the RNG are structures (`Lower`, `FM`, `Rng`). Highlights: `add_spec
 `setStructFn_spec`, `canReturnEntity_sound/complete`, `version_mono`,
 `udf_uninit_noop`, `collect_fold`, `count_fold`, `sum_fold`, `avg_count`,
 `stdev_collects`, `percentile_collects`, `finalize_divisors`, `randFn_range`.
-## Re-target to main 1c0e6c8de (#3066, #3280)
+## Union display and UDF names
 
-- **#3280 fixed** `dbms.functions` union spelling: `type_to_dbms_string` now flattens
-  (`collect_dbms_types`, procedures.rs:705), sorts by `DBMS_TYPE_ORDER` and dedups. The
-  divergence theorem `union_order_visible` is replaced by `union_order_is_c` (the member
+- `dbms.functions` union spelling: `type_to_dbms_string` flattens
+  (`collect_dbms_types`, procedures.rs:705), sorts by `DBMS_TYPE_ORDER` and dedups.
+  `union_order_is_c` (the member
   list is strictly increasing in C's type order with exactly the collected members),
   `canon_eq_of`, `union_perm_invariant` (declaration order irrelevant), and the concrete rows
   `union_point_null` (`Null or Point`), `union_tofloat` (`String, Integer, Float, or Null`),
-  `union_nested`, `union_any`. The old model was removed (in 17ccc5412).
-- **#3066 fixed** UDF names are case-sensitive: `register_udf`/`unregister_udf`
+  `union_nested`, `union_any`.
+- UDF names are case-sensitive: `register_udf`/`unregister_udf`
   (mod.rs:1131/:1142) and the `Functions::get` UDF fallback (:1048) key by the exact name.
-  `Registry.udf_case_sensitive` and `TypeCheck.regGet_udf_case_sensitive` replace the
-  lowercasing assumptions; `regGet_lower` is replaced by `regGet_builtin_ci` (built-ins stay
-  case-insensitive). `dbms_functions` still drops a UDF whose lowercase name equals a
-  built-in's (`keepUdf`, unchanged).
+  `Registry.udf_case_sensitive` and `TypeCheck.regGet_udf_case_sensitive`; built-ins stay
+  case-insensitive (`regGet_builtin_ci`). `dbms_functions` drops a UDF whose lowercase name equals a
+  built-in's (`keepUdf`).
 
 ## Wave 6 (`Trig.lean`, `Procedures.lean`, `ConvReg.lean`, `IndexDdl.lean`)
 

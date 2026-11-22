@@ -25,13 +25,13 @@ variable {V : Type}
 
 /-! ## Incident edges -/
 
-/-- `get_node_relationships` (graph.rs:2390), since #3084 (`5f147f10e`): per tensor the outgoing
+/-- `get_node_relationships` (graph.rs:2390): per tensor the outgoing
 half, then the incoming half minus its self-loops (`src != dest`; a self-loop is on the diagonal
 of both halves and the outgoing one already produced it). -/
 def nodeRels (g : G V) (n : Nat) : Ten :=
   g.relMs.flatMap (fun t => Ten.out t n ++ (Ten.inc t n).filter (fun e => e.1 != e.2.1))
 
-/-- The body before #3084: both halves, unfiltered (a self-loop came out twice). -/
+/-- The pre-#3084 body, kept as a historical counterexample: both halves, unfiltered (a self-loop came out twice). -/
 def pre3084_nodeRels (g : G V) (n : Nat) : Ten :=
   g.relMs.flatMap (fun t => Ten.out t n ++ Ten.inc t n)
 
@@ -59,7 +59,7 @@ def oneByType (n : Nat) (d : Dir) (t : Ten) : Ten :=
 def nodeRelsByType (g : G V) (n : Nat) (types : List String) (d : Dir) : Ten :=
   (selMats g types).flatMap (oneByType n d)
 
-/-- HISTORICAL (fixed by #3084, `5f147f10e`): before it, `get_node_relationships` reported a
+/-- HISTORICAL (the pre-#3084 body): `get_node_relationships` reported a
 self-loop **twice** (once from the outgoing scan, once from the incoming scan). -/
 theorem pre3084_nodeRels_selfloop_twice (t : Ten) (n e : Nat) (hnd : t.Nodup) (hm : (n, n, e) ∈ t) :
     (Ten.out t n ++ Ten.inc t n).count (n, n, e) = 2 := by
@@ -91,8 +91,8 @@ theorem inc_filter_agree (t : Ten) (n : Nat) :
   simp only [Ten.inc, List.mem_filter, beq_iff_eq] at he
   rw [he.2]
 
-/-- **Fixed by #3084.** `get_node_relationships` reports every incident edge of one tensor exactly
-once, a self-loop included (the bug `pre3084_nodeRels_selfloop_twice` is gone). -/
+/-- `get_node_relationships` reports every incident edge of one tensor exactly
+once, a self-loop included. -/
 theorem nodeRels_once (t : Ten) (n : Nat) (x : Nat × Nat × Nat) (hnd : t.Nodup) (hm : x ∈ t)
     (hi : x.1 = n ∨ x.2.1 = n) :
     (Ten.out t n ++ (Ten.inc t n).filter (fun e => e.1 != e.2.1)).count x = 1 := by

@@ -19,11 +19,10 @@ answer and the `is_bound_at` bit.
 | `concatCol` | one column of `Batch::concat` (`batch.rs:995-999`) |
 | `concatOrigins` | the origin loop (`batch.rs:1051-1060`) |
 
-Result: equal for every list of batches (`concat_obs_eq`). Since #3059 the fallback loop
-skips a batch with no active rows (`batch.rs:1008-1012`), as `concat_typed_column` always did,
-so an empty batch that binds a slot no longer makes `concat` bind it
-(`empty_batch_ignored`; before #3059 it came out bound, `Some(Null)`, where the per-row
-definition left it unbound).
+Result: equal for every list of batches (`concat_obs_eq`). The fallback loop
+skips a batch with no active rows (`batch.rs:1008-1012`), as `concat_typed_column` always does,
+so an empty batch that binds a slot does not make `concat` bind it
+(`empty_batch_ignored`).
 -/
 
 namespace Columnar
@@ -367,7 +366,7 @@ theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat)
     rw [this]; simp [hpos]
 
 /-- **`concat` = per-row concat** (every slot, every row: value and bound bit), for any list
-of well-formed batches, empty ones included (#3059). -/
+of well-formed batches, empty ones included. -/
 theorem concat_obs_eq {bs : List (Batch F)} (hw : ∀ b ∈ bs, b.WF)
     (i k : Nat) : colObs (concatCol bs i) k = colObs (builderCol (perRowRows bs) i) k := by
   rw [concatCol_obs_generic hw]
@@ -396,9 +395,9 @@ theorem concat_origins (bs : List (Batch F)) :
   | some o => rfl
   | none => simp only [pushSlots_origin]
 
-/-- **Empty batches no longer bind a slot** (#3059): a batch whose rows are all filtered out
+/-- **Empty batches do not bind a slot**: a batch whose rows are all filtered out
 but which binds slot 1 leaves `concat` reporting slot 1 unbound (`None`), as the per-row
-concat does (before #3059 `concat` made it bound, reading `Some(Null)`). -/
+concat does. -/
 theorem empty_batch_ignored (s : V F) :
     let a : Batch F := { len := 1, sel := none, cols := [.ints [1]], origins := none,
                          vo := fun _ => false }

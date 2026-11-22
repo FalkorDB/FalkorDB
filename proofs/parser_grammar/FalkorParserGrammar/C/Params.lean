@@ -474,7 +474,7 @@ theorem np_paramsP (evp : ET → Option LV) (n : Nat) : ∀ f acc, NP (paramsP o
 
 end
 
-/-! ## `legacy_signs` (#3525, cypher.rs:223-226, 2212-2236)
+/-! ## `legacy_signs` (cypher.rs:223-226, 2212-2236)
 
 While a `CYPHER` parameter value goes through the expression fallback, `legacy_signs` is set
 and a run of signs is limited to what the grammar took before runs parsed: `+`, `-` or `+-`.

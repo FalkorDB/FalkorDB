@@ -29,7 +29,7 @@ inductive V (F : Type) where
 
 variable {F : Type}
 
-/-- `Value::name` (value.rs:1399; C's `SIType_ToString` spellings since #2954). -/
+/-- `Value::name` (value.rs:1399; C's `SIType_ToString` spellings). -/
 def V.name : V F → String
   | .null => "Null" | .bool _ => "Boolean" | .int _ => "Integer" | .float _ => "Float"
   | .str _ => "String" | .list _ => "List" | .map _ => "Map" | .node _ => "Node"

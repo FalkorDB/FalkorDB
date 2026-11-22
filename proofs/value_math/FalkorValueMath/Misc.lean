@@ -10,7 +10,7 @@ import FalkorValueMath.Conversion
 | `getAttr`, `pointComponent`, `durationComponentPre` | `get_attr` :439, `get_point_component` :458, `get_duration_component` :608 (pre-chrono part) |
 | `partialCmp` | `PartialOrd for Value` :1788 |
 | `getNumeric` | `Value::get_numeric` :246 |
-| `Tok`, `encode`, `pre3339_decode` | `Encode<19> for Value` :2068; `Decode<19>` before #3339 (current: Nesting.lean) |
+| `Tok`, `encode`, `pre3339_decode` | `Encode<19> for Value` :2068; the uncapped `Decode<19>` (current: Nesting.lean) |
 | `Deduper` | `ValuesDeduper` :1853-1896 |
 | `jsonFloat` | `DisplayJson` Float arm :1591 |
 -/
@@ -267,7 +267,7 @@ def partialCmp (fc : FloatCmp F) (a b : V F) : Option Ordering :=
 theorem partialCmp_null (fc : FloatCmp F) (a : V F) : partialCmp fc .null a = none := by
   cases a <;> simp [partialCmp, cmpV]
 
-/-! `Point::validate` was removed in #3301: `point()` checks NaN and range in `point_from_map_entries`
+/-! There is no `Point::validate`: `point()` checks NaN and range in `point_from_map_entries`
 (`proofs/functions_temporal` `SpatialFns.pointFromMapEntries`). -/
 
 /-! ## JSON of a Float (value.rs:1700) -/
@@ -293,7 +293,7 @@ theorem dedup_second_seen (seen : List Nat) (h : Nat) :
 theorem dedup_first_unseen (seen : List Nat) (h : Nat) (hn : h ∉ seen) : (dedupStep seen h).1 = false := by
   simp [dedupStep, hn]
 
-/-! ## v19 value codec (`Encode<19>` value.rs:2091; `Decode<19>` before #3339 — the current
+/-! ## v19 value codec (`Encode<19>` value.rs:2091; the uncapped `Decode<19>` — the current
 decoder `decode_value` value.rs:2189 is `decodeValue` in Nesting.lean) -/
 
 def T_NULL : Nat := 2 ^ 15
@@ -370,7 +370,7 @@ def readVec (bytes : List Nat) : Option (List F) :=
   if body.length < 4 * dim then none
   else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
 
-/- Historical `Decode<19>` before #3339 (b080a44c1; value.rs:2131 at 4a4f2a72f): no depth
+/- Historical uncapped `Decode<19>` (value.rs:2131 at 4a4f2a72f): no depth
 bound, so `GRAPH.RESTORE` input recursed once per `T_ARRAY` header. Fuel bounds the nesting.
 The current decoder is `decodeValue` (Nesting.lean). -/
 def pre3339_decode : Nat → List (Tok F) → Option (V F × List (Tok F))

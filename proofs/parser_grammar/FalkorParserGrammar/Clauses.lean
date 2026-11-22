@@ -48,13 +48,12 @@ theorem skipFilter_prefix_diverges (n : Nat) (d : Int) :
 ```rust
 let (mut expr, recurse) = self.parse_primary_expr(false)?;
 if recurse {
-    self.reject_unparenthesized_target(&expr)?;     // #3060
+    self.reject_unparenthesized_target(&expr)?;
     expr = self.parse_expr(false)?; match_token!(self.lexer, RParen);
-    self.expect_property_after_paren()?;            // #3300: the `)` must be followed by `.`
+    self.expect_property_after_paren()?;            // the `)` must be followed by `.`
 }
 ```
-`recurse` is also `true` for a list literal `[` (2880-2884); since #3060
-(`fe619ac5f`) `reject_unparenthesized_target` (3395-3402) refuses any root but
+`recurse` is also `true` for a list literal `[` (2880-2884); `reject_unparenthesized_target` (3395-3402) refuses any root but
 `Paren` before the `)` is demanded. -/
 
 /-- `reject_unparenthesized_target` (3395): `Ok` iff the root is `ExprIR::Paren`. -/

@@ -5,7 +5,7 @@ DELETE (graph/src/runtime/ops/delete.rs).
 | --- | --- |
 | `attrsToMap`               | `node_attrs_to_map` (delete.rs:39), `rel_attrs_to_map` (:50) |
 | `snapshotRequired`         | `snapshot_required` (delete.rs:70) |
-| `DeleteSt.new`             | `DeleteOp::new` (delete.rs:94; `inspect ||` since #3462) |
+| `DeleteSt.new`             | `DeleteOp::new` (delete.rs:94; `inspect ||`) |
 | `deleteNext`               | `DeleteOp::next` (delete.rs:116) |
 | `deleteBatch`, `scan`      | `Runtime::delete_batch` (delete.rs:130) |
 | `delNodesBulk`             | `delete_nodes_bulk` (delete.rs:213) |
@@ -14,7 +14,7 @@ DELETE (graph/src/runtime/ops/delete.rs).
 
 State = the id sets the classification reads and writes: pending `created_nodes` (`pc`),
 pending `deleted_nodes` (`pd`), the graph's deleted/recycled node set (`gd`, which
-`delete_pending_node` extends through `Graph::cancel_node_id` since #2846), and the same
+`delete_pending_node` extends through `Graph::cancel_node_id`), and the same
 three for relationships. This file is the model with every id-space cancel accepted;
 DeleteCancel.lean has the fallible versions and proves them equal to these on success. Snapshot records
 (`deleted_nodes`/`deleted_relationships` maps) only serve later reads and are not modelled.

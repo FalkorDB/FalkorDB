@@ -61,7 +61,7 @@ def okAt (l : List Tok) : Bool := agreeB (parseAll 400 l) (G.all 200 l) || known
 
 `C.ListGate`'s premise `Oracle.Bal` says `parse_expr` only succeeds by consuming
 a bracket-balanced run with no top-level `,` (or `|`, which this alphabet lacks).
-Before #3041 it was false (`x[(..2]` consumed an unclosed `(`). Here it is checked on the fragment. -/
+Here it is checked on the fragment. -/
 
 /-- Depth scan: never below 0, ends at 0, no `,` at depth 0. -/
 def balRun : Nat → List Tok → Bool

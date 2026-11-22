@@ -11,7 +11,7 @@ proofs live in the sibling files; this file only *defines*.
   lexicographically. We encode it as `key * 2^64 + doc`; `enc_lt_iff` (in
   `Basic.lean`) proves this is an order isomorphism onto `[0, 2^128)`, so every
   `<`/`<=` on tuples in the Rust is exactly `<`/`<=` on the encoding. The
-  sentinel `(u64::MAX, u64::MAX)` that `apply_batch` used before #2278 is `TOP = 2^128 - 1`.
+  sentinel `(u64::MAX, u64::MAX)` `(u64::MAX, u64::MAX)` is `TOP = 2^128 - 1`.
 * **Leaf pages are sorted lists.** The three byte encodings (`AosLeaf`,
   `CompactLeaf`, `CompactIndexedLeaf`) are abstracted to the list of entries
   they decode to (`Leaf::to_pairs`). Each Rust fast path (AoS splice, compact
@@ -47,11 +47,11 @@ def enc (k d : Nat) : E := k * W + d
 def keyOf (e : E) : Nat := e / W
 /-- The doc half of an entry (what `RangeIter` yields). -/
 def docOf (e : E) : Nat := e % W
-/-- `(u64::MAX, u64::MAX)` — the old `child_upper` sentinel of `apply_batch` (removed by #2278). -/
+/-- `(u64::MAX, u64::MAX)` — the former `child_upper` sentinel of `apply_batch`. -/
 def TOP : E := enc (W - 1) (W - 1)
 
 /-- The const-generic parameters. `hB : 3 ≤ B` is what `pack_branches` needs; the const assert
-    (`mod.rs:151-160`) demands `4 ≤ B` since #2897 — `Assert.constAssert`, `Cfg.ofAssert` — and the
+    (`mod.rs:151-160`) demands `4 ≤ B` — `Assert.constAssert`, `Cfg.ofAssert` — and the
     weaker bound here only lets the historical `BRANCH_MAX = 3` counterexample be stated. -/
 structure Cfg where
   L : Nat
@@ -276,7 +276,7 @@ def buildRoot (c : Cfg) : Nat → Nat → List Node → Node × Nat
   | 0, h, n :: _ => (n, h)   -- fuel exhausted: unreachable (see `buildRoot_fuel`)
 
 /-- The routing sweep of `apply_batch` (`node.rs:284-304`) and `remove_batch` (`node.rs:524-536`),
-    since #2278 (3597b3a82): the **last** child takes the rest of the batch outright
+    the **last** child takes the rest of the batch outright
     (`node.rs:294-295`); every other child takes the prefix of the remaining batch strictly below its
     own separator `seps[child_idx]` (`node.rs:297-300`). (`getD 0` is the out-of-bounds panic of
     `seps[child_idx]`, unreachable when `seps.len() == children.len() - 1`.) -/

@@ -10,11 +10,10 @@ Sort comparators and key classification (graph/src/runtime/ops/sort.rs).
 | `classifySortKey`   | `classify_sort_key` (sort.rs:203), `classify_numeric(_, false, Pure)` (batch.rs:191) |
 | `tiebreak`, `tbCols` | `tiebreak` (sort.rs:237) |
 
-The value comparison is the parameter `cv : V → V → Ordering`; on main (#2912 b033aecc6)
+The value comparison is the parameter `cv : V → V → Ordering`; on main
 it is `Value::sort_cmp`. Its laws (`Lawful`: reflexive, antisymmetric) are hypotheses
 here and are discharged for `sort_cmp` in `Discharge.lean` (`lawful_main`, from
-proofs/value_order `Main.scMain_total`). Before #2912 `cv` was `compare_value(..).0`,
-for which `Lawful` is false (known #2891).
+proofs/value_order `Main.scMain_total`). `compare_value(..).0` is not lawful (known #2891).
 -/
 namespace FalkorAggOps.SortCmp
 

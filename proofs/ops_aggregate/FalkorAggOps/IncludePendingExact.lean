@@ -1,6 +1,6 @@
 import FalkorAggOps.StreamOps
 /-
-# IncludePending composed with `Pending` (#3453, fixed by #3467)
+# IncludePending composed with `Pending`
 
 `StreamOps.includePending_spec` proves Phase 1 (`childRows`) and Phase 2
 (`pendingRows`) of `IncludePendingOp` separately, each against whatever node
@@ -22,15 +22,14 @@ is the node id):
 Property `IncludePendingExact`: the emitted node rows are duplicate-free and
 are exactly the live nodes (committed or created, not deleted) whose effective
 labels — `(committed \ remove_labels) ∪ set_labels`, `set_labels` alone for a
-created node — contain the pattern. On b84473a7f the three live repros refuted it
-(#3453); #3467 made `get_pending_nodes_with_labels` return exactly the live nodes
-that gain a pattern label and made Phase 1 skip them, and `includePendingMain_exact`
+created node — contain the pattern. `get_pending_nodes_with_labels` returns exactly the live nodes
+that gain a pattern label and Phase 1 skips them, and `includePendingMain_exact`
 proves the property for main: for every non-empty pattern, given the pending maps
 are keyed uniquely (`FxHashMap`) and name only committed-or-created nodes (a deleted node may still
 appear in `set_labels`), the committed node ids are distinct and created ids are apart from them.
 Those are hypotheses about `Pending`/the committed graph (other code), not discharged here, and the
-composition covers an uncorrelated scan only (`argument_rows` empty). The three repros are
-`fixed3453_deleted_node`, `fixed3453_duplicate_row`, `fixed3453_split_multilabel`.
+composition covers an uncorrelated scan only (`argument_rows` empty). The three live repros of the
+earlier code are now `fixed3453_deleted_node`, `fixed3453_duplicate_row`, `fixed3453_split_multilabel`.
 -/
 namespace FalkorAggOps.IncludePendingExact
 open FalkorAggOps.StreamOps

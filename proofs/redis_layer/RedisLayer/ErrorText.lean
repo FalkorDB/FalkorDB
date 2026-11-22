@@ -1,5 +1,5 @@
 /-!
-# Error and simple-string reply text (`str_as_legal_resp_string`, #3428)
+# Error and simple-string reply text (`str_as_legal_resp_string`)
 
 Every error the module replies with (`RedisError` → `Context::reply_error_string`) and every
 simple string (`reply_simple_string`) passes through redismodule-rs
@@ -9,12 +9,11 @@ frame it as `-<text>\r\n` / `+<text>\r\n` (`Resp.respT`).
 
 | here | there |
 | --- | --- |
-| `scrub`, `legalResp` | `str_as_legal_resp_string` on the `fix/resp-string-bytes` fork branch (#3428, main b84473a7f): `s.bytes().map(\r \n NUL → space)`, then `CString::from_vec_unchecked` |
+| `scrub`, `legalResp` | `str_as_legal_resp_string` on the `fix/resp-string-bytes` fork branch (main b84473a7f): `s.bytes().map(\r \n NUL → space)`, then `CString::from_vec_unchecked` |
 
-Before #3428 every char was truncated to its low byte (`c as u8`), so non-ASCII text was
-garbled (`é` U+00E9 became the lone byte 0xE9, not UTF-8) and any char whose low byte is 0
-(`一` U+4E00, `Ā` U+0100, …) produced a NUL, so `CString::new(..).unwrap()` panicked and took
-the server down (#3185). `none` below is that panic.
+The pre-#3428 version truncated every char to its low byte (`c as u8`); it is kept below as a
+historical counterexample (`é` became the lone byte 0xE9, and a char whose low byte is 0, like
+`一` U+4E00, produced a NUL, so `CString::new(..).unwrap()` panicked). `none` below is that panic.
 
 What is proved for main:
 * `bytesOf_toUTF8`: `bytesOf` (Rust `s.bytes()`) is Lean's UTF-8 encoding `String.toUTF8`.
@@ -83,7 +82,7 @@ theorem legalResp_clean (s : String) (h : ∀ b ∈ bytesOf s, b ≠ 13 ∧ b �
   obtain ⟨h1, h2, h3⟩ := h b hb
   simp [scrub, h1, h2, h3]
 
-/-! ### History: before #3428 (b6567cb97) -/
+/-! ### History: the byte-truncating version -/
 
 /-- **PROVEN** (#3428): main sends `一` as its UTF-8 bytes. -/
 theorem legalResp_cjk : legalResp "一" = [0xE4, 0xB8, 0x80] := by decide

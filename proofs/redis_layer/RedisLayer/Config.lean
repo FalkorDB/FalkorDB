@@ -4,11 +4,10 @@ import RedisLayer.Args
 
 * `validate` — `validate_config_set` (`config_cmd.rs:114-202`), the integer/boolean
   configs that change behaviour (TIMEOUT family, RESULTSET_SIZE, MAX_QUEUED_QUERIES,
-  VKEY_MAX_ENTITY_COUNT, MAX_INFO_QUERIES, JS sizes, CMD_INFO), as of #3021
-  (30b4fb7dc).
+  VKEY_MAX_ENTITY_COUNT, MAX_INFO_QUERIES, JS sizes, CMD_INFO), .
 * `dispatch` — the arity / sub-command / name-folding head of `graph_config`
-  (`config_cmd.rs:318-353`, #3021).
-* `cross` — `validate_timeout_cross_constraints` (`config_cmd.rs:206`), which since #3328 loads the
+  (`config_cmd.rs:318-353`).
+* `cross` — `validate_timeout_cross_constraints` (`config_cmd.rs:206`), which loads the
   stored values and calls `check_timeout_constraints` (`:220`); `LoadArgs.cross_eq` proves the two agree.
 * `apply1` — `apply_config_set` (`config_cmd.rs:261-301`).
 * `rustSet` — the `SET` arm of `graph_config` (`config_cmd.rs:318-390`): validate all,
@@ -211,10 +210,7 @@ theorem c_breaks_inv :
   refine ⟨⟨_, rfl, ?_⟩, by decide⟩
   unfold TInv; decide
 
-/-! ## Per-field validators: the pre-#3021 divergences (historical) and the fix
-
-Before #3021 these were divergences from C, all confirmed live; #3021 (30b4fb7dc,
-issue #3020) fixed each one (the original counterexamples were removed in bbee75955; the last revision that has them is 17ccc5412). -/
+/-! ## Per-field validators agree with C -/
 
 /-- `MAX_INFO_QUERIES` is clamped, not rejected, as in C. -/
 theorem maxinfo_clamped : validate .maxInfo (b "5000") = .ok 1000 := by decide
@@ -277,11 +273,11 @@ theorem cmdinfo_ok_iff (v : List Nat) (x : Int) :
       simp only [h2', Bool.false_eq_true, ite_false, false_and, iff_false]
       intro h; cases h
 
-/-! ## `graph_config` head (`config_cmd.rs:318-353`, #3021)
+/-! ## `graph_config` head (`config_cmd.rs:318-353`)
 
 `argc` counts `GRAPH.CONFIG` itself. Sub-command and names fold with
-`to_ascii_uppercase` (`upA`); before #3021 they used Unicode `to_uppercase`, which
-mapped a dotless `ı` (U+0131) onto `I`, so `tımeout` named `TIMEOUT`. -/
+`to_ascii_uppercase` (`upA`), so a dotless `ı` (U+0131) is not folded onto `I`
+(`tımeout` does not name `TIMEOUT`). -/
 
 /-- `u8::to_ascii_uppercase`, per code point. -/
 def upperA (c : Nat) : Nat := if 97 ≤ c ∧ c ≤ 122 then c - 32 else c

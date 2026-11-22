@@ -65,8 +65,8 @@ def seqE (xs : List (Except EErr Bytes)) : Except EErr Bytes :=
     | .error e, _ => .error e
     | _, .error e => .error e) (.ok [])
 
-/-- `records.rs:956-968`: `check_row_shape` (#2916), header `opcode · count`
-from `ids.count()` (`write_header` refuses a zero count since #2916), then the
+/-- `records.rs:956-968`: `check_row_shape`, header `opcode · count`
+from `ids.count()` (`write_header` refuses a zero count), then the
 blocks. Both conditions the decoder needs are now checked here. -/
 def encRec : Rec C.T → Except EErr Bytes
   | .createNode ids ls as rows =>
@@ -151,7 +151,7 @@ theorem encRec_createNode (ids : C.T) (ls as : List Nat) (rows : List Val) (idb 
   simp [encRec, seqE, wLabelSet, wAttrIds, wRows, hl, ha, hid, hrb, h1, h2]
 
 /-- **The encoder refuses exactly the two shapes the reader cannot take**
-(#2916): a row block that is not `count × attrs`, and a record with no ids. -/
+a row block that is not `count × attrs`, and a record with no ids. -/
 theorem encRec_refuses_shape (ids : C.T) (ls as : List Nat) (rows : List Val) :
     (rows.length ≠ C.count ids * as.length →
       encRec C I (.createNode ids ls as rows) = .error .rowShapeMismatch) ∧
@@ -162,9 +162,8 @@ theorem encRec_refuses_shape (ids : C.T) (ls as : List Nat) (rows : List Val) :
   · have : rows.length = 0 := by rw [h, h0]; simp
     simp [encRec, h0, this]
 
-/-- **Record roundtrip for `CREATE_NODE`.** `hc` and `hrows` are now the
-encoder's own checks (`encRec_createNode` needs them to produce these bytes);
-before #2916 they were conditions only the reader enforced. -/
+/-- **Record roundtrip for `CREATE_NODE`.** `hc` and `hrows` are the
+encoder's own checks (`encRec_createNode` needs them to produce these bytes). -/
 theorem readRec_createNode (ids : C.T) (ls as : List Nat) (rows : List Val) (idb rb rest : Bytes)
     (hl : ls.length < 2 ^ 16) (ha : as.length < 2 ^ 16)
     (hid : C.enc ids = .ok idb) (hrb : encL I rows = .ok rb)
@@ -269,9 +268,9 @@ def isOk {α} : Except DErr α → Bool
   | .ok _ => true
   | .error _ => false
 
--- The wave-1 counterexample (a CREATE_NODE with one id, one attribute and
--- **two** rows was written, and its spare row's tag `T_INT64 = 0x2000` was then
--- read as the next opcode) no longer holds: #2916 (`2c874022a`) refuses it.
+-- The wave-1 case (a CREATE_NODE with one id, one attribute and
+-- **two** rows, whose spare row's tag `T_INT64 = 0x2000` would be read as the
+-- next opcode) is refused by the encoder.
 def eerr {α} : Except EErr α → Option EErr | .error e => some e | .ok _ => none
 #guard eerr (encToy (.createNode 7 [] [0] [.int 1, .int 2])) == some .rowShapeMismatch
 #guard eerr (encToy (.createNode 7 [] [0, 1] [.int 1])) == some .rowShapeMismatch

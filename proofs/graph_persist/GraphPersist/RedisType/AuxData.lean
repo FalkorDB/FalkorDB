@@ -9,9 +9,9 @@ Source: origin/main `5c7af54f2` (line numbers re-pinned there).
 | `auxSave`               | `graph_aux_save` (:272-290) |
 | `auxLoad`               | `graph_aux_load` (:293-334) |
 | `metaAuxLoad`           | `graphmeta_aux_load` (:981-991) |
-| `Sub`, `onPersistence`  | `on_persistence` (:384-413; strips telemetry at every start since #3844) |
+| `Sub`, `onPersistence`  | `on_persistence` (:384-413; strips telemetry at every start) |
 | `preFork`               | `pre_fork_prepare` (:360-370) |
-| `metaFree`              | `graphmeta_free` (:971-977); `graphmeta_rdb_save` is `VKeys.metaSave` since #3161 |
+| `metaFree`              | `graphmeta_free` (:971-977); `graphmeta_rdb_save` is `VKeys.metaSave` |
 
 Names and scripts are byte strings; `String::from_utf8_lossy` is the identity on the UTF-8
 the module itself writes (a Rust `String`), so it is not modelled further.

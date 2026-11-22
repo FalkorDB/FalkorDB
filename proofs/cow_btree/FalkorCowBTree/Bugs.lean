@@ -1,29 +1,14 @@
 import FalkorCowBTree.Cursor
 
 /-!
-# Historical bug notes: Bug 1 (#2278) and Bug 2 (#2897), both fixed; their counterexample theorems were removed (bbee75955)
+# The `BRANCH_MAX = 3` configuration
+
+`CowBTree::<2, 3>` no longer compiles (`Assert.lean`: `constAssert_rejects_B3`, and
+`remove_spec_asserted` for every configuration the assert admits). `c23` and a well-formed tree on it
+are kept for those statements.
 -/
 
 namespace CowBTree
-
-/-! ## Bug 1 (historical, FIXED by #2278, 3597b3a82): `insert_batch` dropped `(u64::MAX, u64::MAX)`
-
-Before #2278 `apply_batch` gave the last child the upper bound `TOP = (u64::MAX, u64::MAX)` and kept a
-batch entry for a child only while `entry < upper`. `TOP < TOP` is false, so `TOP` was routed to *no*
-child, and the sweep simply ended — the entry was lost. The old sweep and its counterexamples were removed in bbee75955 (last revision that has them: 17ccc5412);
-`route_keeps_all` / `route_routes_TOP` (`Batch.lean`) prove the fix. -/
-
-/-! ## Bug 2 (historical, FIXED by #2897, 7b60f28db): with `BRANCH_MAX = 3` remove broke the tree
-
-Before #2897 (the revision before 7b60f28db) the const assert only demanded `BRANCH_MAX >= 3`. The
-underflow flag of a branch is `children < BRANCH_MAX / 2 = 1` (`Branch::is_underfull`, `node.rs:212`): a
-branch merged down to ONE child is not reported, so its parent never repairs it. Its lone child then cannot
-rebalance (the `children.len() < 2` guard of `Branch::rebalance`, `node.rs:227`) and drains to an empty
-non-root leaf. `is_empty()` then lies, and a later `insert_batch` hits `Node::min` on the empty leaf
-(out-of-bounds panic, `leaf.key(0)`, `node.rs:249`) or the single-child `debug_assert` (`node.rs:71`).
-The `pre2897_b3_*` counterexamples (removed in bbee75955; the last revision that has them is 17ccc5412)
-replayed it on `CowBTree::<2, 3>`, which no longer compiles (`Assert.lean`: `constAssert_rejects_B3`, and
-`remove_spec_asserted` for every configuration the assert admits). -/
 
 def c23 : Cfg := ⟨2, 3, by decide, by decide⟩
 

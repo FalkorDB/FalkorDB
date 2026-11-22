@@ -6,8 +6,8 @@ namespace IdSpaceModel
 /-- The interval `[a, b)` as an `IdSet`. -/
 def ival (a b : Nat) : IdSet := fun i => decide (a â‰¤ i) && decide (i < b)
 
-/-- The hole test on a set `T` that lies at or above `eb` (the pre-#2846
-`verify`, whose `created` was exactly this set). -/
+/-- The hole test on a set `T` that lies at or above `eb` (`verify`'s
+test when `created` is exactly this set). -/
 def holeOn (N eb : Nat) (T : IdSet) : Option Nat :=
   match sMin N T, sMax N T with
   | some lo, some hi =>
@@ -139,7 +139,7 @@ theorem verify_no_underflow (N : Nat) (sp : IdSpace) (lo hi : Nat) (hb : sp.eb â
 /-! ### `open_batch` -/
 
 /-- `open_batch` refuses exactly when `checked` does (and then changes
-nothing); otherwise it re-anchors at `bound` with an empty ledger, and (#3164) the ids the
+nothing); otherwise it re-anchors at `bound` with an empty ledger, and the ids the
 batch freed or cancelled join `quarantined`. -/
 theorem openBatch_spec (N : Nat) (sp : IdSpace) :
     sp.openBatch N = (match sp.checked N with
@@ -153,12 +153,11 @@ theorem openBatch_ok (N : Nat) (sp : IdSpace) (h : sp.checked N = .ok ()) :
   simp [IdSpace.openBatch, h]
 
 /-- The next batch of the same version: `new_version`'s space (nothing carried) plus the
-quarantine this batch's frees and cancels add (#3164). -/
+quarantine this batch's frees and cancels add. -/
 def IdSpace.rolled (N : Nat) (sp : IdSpace) : IdSpace :=
   { sp.newVersion N with quarantined := sp.rolledQuar }
 
-/-- An opened batch is the `new_version` space, plus the quarantine (#3164; before it, equal to
-`new_version` outright: `pre3641_openBatch_eq_newVersion` in `Quarantine.lean`). -/
+/-- An opened batch is the `new_version` space, plus the quarantine. -/
 theorem openBatch_eq_rolled (N : Nat) (sp : IdSpace) (h : sp.checked N = .ok ()) :
     sp.openBatch N = .ok (sp.rolled N) := by
   rw [openBatch_ok N sp h]; rfl

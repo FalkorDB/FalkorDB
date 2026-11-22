@@ -16,7 +16,7 @@ import FalkorCowBTree.InsertBatchWF
 import FalkorCowBTree.Assert
 
 /-!
-# `cow_btree`: Lean 4 model and proofs (re-targeted to origin/main 1d15bf713: #3283 799968a8b; earlier #2897 7b60f28db, #3285 cab3cf192)
+# `cow_btree`: Lean 4 model and proofs
 
 Targets `graph/src/index/falkordb/data_structures/cow_btree/{mod,node,cursor}.rs` and the list-level
 behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`, `compact.rs`,
@@ -32,7 +32,7 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
 | `removeBatchTree`, `removeBatch`, `subtract`, `stripEmpty` (`BatchWF.lean`, `Batch.lean`) | `mod.rs:286`, `node.rs:498-555`, `:180` |
 | `mergeUnderfull` = `muLoop`/`muStep`/`leftOf`, `mergeUnderfullBelow` = `mubF`/`mubBody` (`BatchWF.lean`) | `node.rs:155-175` (`merge_underfull`), `:563-574` (`merge_underfull_below`) |
 | `isUnderfull`, `branchUnderfull`, `isEmptyNode` | `node.rs:576`, `:212`, `:585` |
-| `route`, `applyBatch`, `insertBatch` | `node.rs:284-304` (old `:194-206`), `:259`, `mod.rs:241` |
+| `route`, `applyBatch`, `insertBatch` | `node.rs:284-304`, `:259`, `mod.rs:241` |
 | `packBranches`, `buildRoot`, `fromSorted`, `mergeWalk`, `mergeBatch`, `chunks` | `node.rs:56`, `:90`, `mod.rs:190`, `leaf/mod.rs:50`/`:97`, `:471` |
 | `Cursor.new`/`seek`, `descendLeft`, `advanceLeaf`, `wholeOf` | `cursor.rs:82-116`, `:140`, `:160`, `:129` |
 | `Cursor.next`, `Cursor.nextWith`, `Extract`, `DocExtract`, `TupleExtract` | `cursor.rs:181-207`, `:16-53` |
@@ -46,11 +46,11 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
   `Reachable_wf_asserted` — `new`/`default`, `from_sorted`, then any sequence of `insert`, `remove`,
   `insert_batch`, `remove_batch` keeps `TreeWF` (`BRANCH_MAX >= 4`, the const assert). So the content
   specs below hold for every tree a caller holds; nothing rests on an unproven invariant any more.
-- `insert_spec`, `remove_spec` (`BRANCH_MAX >= 4`, discharged by the const assert since #2897:
+- `insert_spec`, `remove_spec` (`BRANCH_MAX >= 4`, discharged by the const assert:
   `remove_spec_asserted`): the invariant `TreeWF` is kept and the entries are
   sorted-set insert / `List.erase`; `insertRet_spec`, `removeRet_spec`: the `bool` returns are
   "was absent" / "was present"; `removeOne_flag`: `remove_one`'s flag is `Node::is_underfull`.
-- `removeBatchTree_wf` (#3283, `BatchWF.lean`): `remove_batch` keeps `TreeWF` and leaves exactly
+- `removeBatchTree_wf` (`BatchWF.lean`): `remove_batch` keeps `TreeWF` and leaves exactly
   `List.filter (∉ batch)`; `removeBatchTree_spec`, `removeBatchTree_unsorted` (the `assert!` panic).
   Behind it: `Good` (well-formed, or an under-full lone-child chain), `combine_good`, `mubF_spec`,
   `muLoop_good` (with a termination proof by a lexicographic measure, `muStep_dec`), `stripEmpty_good`,
@@ -64,24 +64,16 @@ behaviour of `leaf/mod.rs`. The byte encodings of the leaf pages (`leaf/aos.rs`,
   exactly the entries with key in `[lo, hi]`, in `(key, doc)` order.
 - `firstDoc_spec`, `firstDoc_eq_point`, `containsKey_spec`: point lookup = head of the filter of the
   sorted multiset (the nearest-right-subtree fallback is right, `minOpt_head`).
-- `route_keeps_all`, `route_routes_TOP`, `route_TOP_example`: the batch sweep loses nothing (Bug 1 fixed).
+- `route_keeps_all`, `route_routes_TOP`, `route_TOP_example`: the batch sweep loses nothing.
 - `subtract_eq`, `stripEmpty_content`, `cws_content`, `route_content`, `rebalance_eq_cws`, `muStep_id`
-  (the #3283 loop body is `combine_with_sibling` plus the repair).
+  (the loop body is `combine_with_sibling` plus the repair).
 - `heapBytes_eq`, `heapSum_split`, `leafBytes_stride`, `heapBytes_aos`: `heap_bytes` counts every page
   once; with AoS leaves it is `entries * (8 + DOC_BYTES)` plus the branch vectors.
 - `snapshot_isolated`, `snapshot_reads_committed`, `insertOne_shares_siblings` (`Snapshot.lean`).
 
 ## Bugs
-1. FIXED by #2278 (3597b3a82): `insert_batch` dropped `(u64::MAX, u64::MAX)` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) (W1 #13, #2893 / PR #2897).
-2. FIXED by #2897 (7b60f28db): `BRANCH_MAX = 3` passed the const assert but broke `remove` (and
-   `remove_batch`) (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412) (W1 #13). The assert now requires
-   `BRANCH_MAX >= 4`: `constAssert_rejects_B3`, `asserted_single_child_underfull`, and
-   `remove_spec_asserted` / `removeRet_spec_asserted` (no `4 ≤ B` premise left) in `Assert.lean`.
-3. FIXED by #3283 (799968a8b, issue #3237, W7-btree-1): `remove_batch` left a single-child non-root
-   branch at any `BRANCH_MAX >= 4`; one later `remove` then left an empty non-root leaf and
-   `insert_batch` panicked in `Node::min`. (Counterexamples removed in bbee75955; the last revision that has them is 17ccc5412.)
-   (`BugsBatch.lean`, with the Rust repro, now the test `remove_batch_never_leaves_a_single_child_branch`). On main:
-   `removeBatchTree_wf`, `removeBatchTree_wf_asserted`, `rb_remove_batch_fixed`, `rb_then_remove_fixed`.
+
+No open bugs. Fixed ones are in this file's git history.
 
 ## Gaps
 - `heap_bytes`: `Vec` capacities are parameters (any value); the `Arc` headers (16 B per page) and the

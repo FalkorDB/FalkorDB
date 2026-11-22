@@ -11,9 +11,8 @@ import PendingCommit.ContentCompact
 * `validate_spec`, `validate_depth`, `validate_nest` — `is_valid_property` (:79),
   `validate_list_property` (:108), `validate_property` (:125), `validate_*` (:134, :139):
   scalars, `String`, `Point`, `VecF32`, temporal values, and lists whose elements are
-  (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep (#3339,
-  b080a44c1); `Null` only at top level. Every accepted value was valid before (`isValid`, the
-  pre-#3339 check) and has depth ≤ 4096. (Same as C on
+  (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep;
+  `Null` only at top level. Every accepted value is `isValid` (the check without the depth bound) and has depth ≤ 4096. (Same as C on
   live servers: `[[1]]` accepted, `[1, null]`, maps and lists of maps rejected.)
 * `flatten_spec` — `flatten_label_map` (:61) emits parallel arrays whose zip
   is every `(node, label)` pair, total length = Σ labels.

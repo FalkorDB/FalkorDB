@@ -16,7 +16,7 @@ The store is a `DataBlock` (`D`). Every read below is stated in terms of
 | `entityMem` | `entity_memory_usage` (:1215) |
 | `removeAll` | `remove_all` (:1246) |
 | `insertAttrs`, `insertRows` | `insert_attrs` (:1315), `insert_attrs_rows` (:1266) |
-| `importAttrs`, `importResolved` | `import_attrs` (:1351), `import_attrs_resolved` (:1388, post-#3063: stable sort, dedup, drop `ATTRIBUTE_ID_NONE`) |
+| `importAttrs`, `importResolved` | `import_attrs` (:1351), `import_attrs_resolved` (:1388: stable sort, dedup, drop `ATTRIBUTE_ID_NONE`) |
 -/
 namespace PendingCommit.Content
 open Arena (Slot)
@@ -198,7 +198,7 @@ theorem importAttrs_spec (d : D) (h : SInv d) (m : List (Nat × List Entry)) (hn
 def sortById (es : List Entry) : List Entry := es.mergeSort (fun a b => a.1 ≤ b.1)
 
 
-/-! ## `import_attrs_resolved` since #3063 (0f45a8685, :1388)
+/-! ## `import_attrs_resolved` (:1388)
 
 `sort_by_key` (stable), `dedup_by_key` (of each run of one id keep the first), pop a
 trailing `ATTRIBUTE_ID_NONE` (= 65535), skip if empty, `set_span`. -/

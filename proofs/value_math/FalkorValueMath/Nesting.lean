@@ -1,6 +1,6 @@
 import FalkorValueMath.Misc
 /-!
-# Bounded value nesting (#3339, b080a44c1; GHSA-mwvh-8fq5-x2j8)
+# Bounded value nesting
 
 | Lean | Rust |
 | --- | --- |
@@ -16,16 +16,13 @@ import FalkorValueMath.Misc
 * `decodeValue_refuses_past_cap` — past the cap the decoder returns the nesting error
   before reading a token, so the recursion never goes deeper than `MAX + 1` frames
   (`decodeValue_reach`).
-* `decodeValue_agrees` — otherwise it decodes exactly as before #3339: its `Ok` results
-  are the old decoder's results that are `within` the cap, and nothing else.
+* `decodeValue_agrees` — otherwise it decodes exactly as a decoder without a cap: its `Ok` results
+  are that decoder's results that are `within` the cap, and nothing else.
 * `decode_encode` / `decode_encode_deep` — on an encoded value: round-trip iff `within`,
   else the nesting error. `within_of_depth` / `not_within_of_depth` place the cut between
   `depth ≤ MAX` (always loads) and `depth ≥ MAX + 2` (always refused).
 * `validateProperty_depth`, **`stored_roundtrip`** — every value a property write accepts
   has `depth ≤ MAX` and round-trips through the RDB codec (the save/load guarantee).
-* History: before #3339 every nesting decoded, one frame per level, and any depth was
-  storable (the `pre3339_*` counterexamples were removed in bbee75955; the last revision
-  that has them is 17ccc5412).
 -/
 
 namespace ValueMath

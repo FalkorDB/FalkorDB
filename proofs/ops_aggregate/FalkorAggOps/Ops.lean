@@ -403,9 +403,9 @@ theorem keyless_one_row {A : Type} (rows : List A) : (keylessGroups rows).length
 
 /-! ## DISTINCT state keyed by a hash (history: distinct.rs:79, aggregate.rs:724/:968 at ca36bfa15)
 
-#2977 (c652e505e) keys the per-group state by a group id instead; see `GroupId.lean`
+The per-group state is keyed by a group id instead; see `GroupId.lean`
 (`distinct_by_group_id_exact`, `fixed2977_collision_example`). The definitions below are the
-pre-#2977 model (its counterexample was removed in bbee75955; the last revision that has them is 17ccc5412). -/
+earlier hash-keyed model, kept as history. -/
 
 /-- Keep the first row of each `key` class (`ValuesDeduper::is_seen`). -/
 def dedupBy {α β : Type} [DecidableEq β] (key : α → β) : List β → List α → List α
@@ -491,12 +491,9 @@ theorem distinct_fold_clear_overcounts :
     (dedupBy id [] [1, 0, 1, 0, 1, 0]).length = 2 := by
   decide
 
-/-! ## eval.rs:886-893 — an aggregate's finalized value is pushed (#2951)
+/-! ## eval.rs:886-893 — an aggregate's finalized value is pushed
 
-Re-targeted to 289c201fe. Before #2951 (0912f4500, closes #2945, FINDINGS
-W2-agg-5) the `FuncInvocation` arm of `ExprEval::eval_compound` ran
-`return match finalize { … }` (eval.rs:877 at fb3d516d0), leaving the whole
-stack machine with that one value; that model was removed (in 17ccc5412). On main the arm pushes the finalized value and
+The `FuncInvocation` arm of `ExprEval::eval_compound` pushes the finalized value and
 `continue`s (eval.rs:883-893 at 289c201fe), so any enclosing frame, e.g. the
 list literal `[min(x), max(x)]`, still runs. -/
 
@@ -620,7 +617,7 @@ theorem main_count_lit_list : evalStack (.list [.agg 2, .lit 5]) = .lst [.num 2,
 theorem main_size_singleton_agg : rsize (evalStack (.list [.agg 2])) = some 1 := by
   rw [evalStack_eq_evalRef]; simp [evalRef, rsize]
 
-/-! ### History: before #2951 (eval.rs:877 at fb3d516d0) -/
+/-! ### History: an aggregate that returns out of the stack machine (eval.rs:877 at fb3d516d0) -/
 
 /-! ## finalize_percentile_{disc,cont}: index bounds and the NaN comparator -/
 

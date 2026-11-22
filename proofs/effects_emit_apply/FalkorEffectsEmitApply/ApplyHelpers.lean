@@ -5,9 +5,9 @@ import FalkorEffectsEmitApply.Digests
 | here | there (`graph/src/effects/v3/apply.rs`) |
 | --- | --- |
 | `AErr`, `ofString` | `ApplyError`, `From<String>` (`:43`) |
-| `idSpaceErrorMap`, `fromNodeOp` | `id_space_error_map` (`:117`), `From<NodeOpError>` (`:102`) (was `node_op`, #2846) |
+| `idSpaceErrorMap`, `fromNodeOp` | `id_space_error_map` (`:117`), `From<NodeOpError>` (`:102`) |
 | `validateG` | `Graph::validate` → `verify_id_batches`, `verify_created_relationships` (`graph.rs:1631,1679,1646`), as `apply_effects` consumes it |
-| `requireLive` | `require_live` (`:685`, #3022) |
+| `requireLive` | `require_live` (`:685`) |
 | `verifyId` | `verify_id` (`:586`) |
 | `resolved`, `verifySchema`, `verifyAttribute` | `:607`, `:575`, `:595` |
 | `applyAddSchema` | `apply_add_schema` (`:560`) — get-or-create, then `verify_id` |
@@ -44,7 +44,7 @@ def ofString (s : String) : AErr := .graph s
 theorem ofString_spec (s : String) : ofString s = .graph s := rfl
 
 /-- `IdSpaceError` (`graph/id_space.rs:92`, main @ 2c874022a), as `apply.rs`
-consumes it. `Miscounted` is gone; `Inconsistent` and `AlreadyTaken` are new (#2846). -/
+consumes it. `Miscounted` is gone; `Inconsistent` and `AlreadyTaken` are the id-space arms. -/
 inductive IdSpaceErr where
   | inconsistent (live recycled bound entry taken expected : Nat)
   | neverCreated (id : Nat)

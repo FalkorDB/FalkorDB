@@ -21,8 +21,8 @@ are `other ty x`, equal per `oeq ty` within one type and never across types
 * `nodesEq_refl` / `nodesEq_symm`: an equivalence when `feq`/`oeq` are.
 * `exprIrEq_exact`, `exprIrEq_exact_any_kind`: exact on every value-compared payload.
 * `const_kinds_distinguished`, `order_by_float_rejected`, `order_by_float_equal`:
-  #3254 fixed W4-plan-3 — `max(n.v % 3)` no longer matches `max(n.v % 4.0)`,
-  still matches `max(n.v % 3.0)`. The pre-#3254 counterexamples are kept as
+  `max(n.v % 3)` does not match `max(n.v % 4.0)`, still matches `max(n.v % 3.0)`
+  (W4-plan-3). The earlier counterexamples are kept as historical
   `pre3254_const_kinds_conflated` / `pre3254_order_by_wrong_aggregate`.
 * `patterns_by_variant`: graph patterns are still compared by variant only.
 * `replaceAgg_id`: with no matching aggregate the ORDER BY tree is unchanged;

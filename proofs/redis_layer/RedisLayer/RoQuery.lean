@@ -18,7 +18,7 @@ The write detection is split over three places, all modelled here:
    (`runtime/eval.rs:964`, `:984` — `!rt.write && func.write`) and index DDL
    (`runtime/index_ddl.rs:38`, `:94`).
 
-Since #3683 `Runtime::new` takes no `write` flag: a plan on the read path gets a published
+`Runtime::new` takes no `write` flag: a plan on the read path gets a published
 `Arc<Graph>` (`QueryGraph::Published`, `graph_core.rs:665-711`), whose runtime has `write = fork.is_some() = false`
 (`proofs/runtime_core` `QueryGraph.new_write_iff`).
 -/

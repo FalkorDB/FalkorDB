@@ -6,24 +6,10 @@ import FalkorValueOrder.Main
 /-
 # Value order: what `compare_value` promises, and where it breaks
 
-**Re-synced to main 256ab4d3f** (from 43936bab9): #3861 adds a `List(Any)` skip to
-`value_of_type` (modelled in proofs/value_math `vot_list_any`), `sort_cmp_f64` becomes
-`unwrap_or_else`, `f32_hash_bits` `const fn`, `compare_vecf32` gains an `#[allow]` (all
-behaviour-preserving). Cites re-pinned (value.rs +4 after `get_type`, +2 after `sort_cmp_f64`,
-+6 after `compare_vecf32`); the former NOT COVERED / MODELLED rows (temporal, arithmetic,
-memory accounting, codec, vectorized.rs kernels) point at the projects that prove them.
-
-**Re-targeted to main 8621212fc** (from 289c201fe, before that fb3d516d0): no
-change to `compare_value`, `sort_cmp`, `PartialEq` or `Hash`. #2984 moves the
-date ± duration month shift into a new `shift_months` and #3007 edits only
-`percentile_batch` (both outside this model; earlier #2983/#2985 edited
-`Point::distance` and `Time ± Duration`); COVERAGE.tsv line numbers re-pinned.
-
-**Re-targeted to main b6567cb97**: #2954 (closes #2928) renames two `Value::name`
-spellings to C's `SIType_ToString` — `Relationship` → `Edge`, `VecF32` → `Vectorf32` —
-and `typeOf()` now returns `name()`. `W.name` updated; `name_eq_iff_order_eq` still
-holds (names stay distinct per variant). No change to comparison, equality or hashing;
-value.rs rows re-pinned (+2 after `Value::name`).
+**Re-synced to main 256ab4d3f**: #3861 adds a `List(Any)` skip to
+`value_of_type` (modelled in proofs/value_math `vot_list_any`); cites re-pinned; the former NOT
+COVERED / MODELLED rows (temporal, arithmetic, memory accounting, codec, vectorized.rs kernels)
+point at the projects that prove them.
 
 A model of FalkorDB-rs's value comparison (`Value::compare_value`), equality
 (`PartialEq for Value`), hashing (`Hash for Value` fed to `FxHasher`) and the
@@ -47,8 +33,8 @@ what does not.
 | `St`, `step`, `listLoop`, `listFinish` | `Value::compare_list` (`value.rs:1446`) — the four counters, line by line |
 | `keysCmp`, `mapVals`     | `Value::compare_map` (`value.rs:1519`), maps held with keys already sorted |
 | `eqV`                    | `impl PartialEq for Value` (`value.rs:1256`) — `compare_value(..).0 == Equal` |
-| `sortCmp`                | `compare_value(..).0`, the ORDER BY comparator *before* #2912; main sorts by `Main.scMain` (`OrderedKey::cmp_key` `ops/sort.rs:76`, `Column::compare_at` `batch.rs:399`: `Main.cmpKey`, `Main.compareAt`) |
-| `evalEq`, `evalNeq`      | `compare_values` `CmpOp::Eq`/`Neq` (`runtime/vectorized.rs:239`; `Neq` as #2917) |
+| `sortCmp`                | `compare_value(..).0`, the old ORDER BY comparator (kept as history); main sorts by `Main.scMain` (`OrderedKey::cmp_key` `ops/sort.rs:76`, `Column::compare_at` `batch.rs:399`: `Main.cmpKey`, `Main.compareAt`) |
+| `evalEq`, `evalNeq`      | `compare_values` `CmpOp::Eq`/`Neq` (`runtime/vectorized.rs:239`) |
 | `hwords`, `floatWord`, `f32HashBits` | `impl Hash for Value` (`value.rs:861`) as the word stream it feeds a `Hasher`; `f32_hash_bits` (`:1961`) |
 | `fxAdd`, `fxFinish`, `fx`| `rustc_hash::FxHasher` 2.1.3 (`add_to_hash`, `finish` = `rotate_left(26)`) |
 | `rowHash`                | `DistinctOp::next` (`ops/distinct.rs:62`), `ValuesDeduper::is_seen` (`value.rs:2061`) |
@@ -56,41 +42,30 @@ what does not.
 
 ## Findings (each one reproduced against the real engine, see REPORT.md)
 
-Status on main: 1–3 are still facts about `compare_value` (the theorems `nan_breaks_antisymmetry`,
-`mixed_numeric_not_transitive`, `map_order_not_transitive` remain in `Model.lean`), but nothing sorts by it
-any more (#2912 b033aecc6: `sort_cmp`, `Main.scMain_total`), so the ORDER BY panics are fixed. Only the
-separate counterexamples for finding 4 and finding 8 and the other pre-#2912 sort-comparator theorems were
-removed (bbee75955; the last revision that has them is 17ccc5412). 4, 6 and 8 are fixed by #2917
-(7fdf06a0e). 5 is fixed for grouping only (`GroupKey::eq` is `sort_cmp`); `Value`'s own `Hash`/`PartialEq`
-still disagree and the value hash join uses them (see finding 5), so it is open outside grouping. 7 is open.
+Status on main: 1–3 are facts about `compare_value` (the theorems `nan_breaks_antisymmetry`,
+`mixed_numeric_not_transitive`, `map_order_not_transitive` remain in `Model.lean`), but nothing sorts by it:
+ORDER BY uses `sort_cmp` (`Main.scMain_total`). 5 is closed for grouping only (`GroupKey::eq` is `sort_cmp`);
+`Value`'s own `Hash`/`PartialEq` still disagree and the value hash join uses them (see finding 5), so it is
+open outside grouping. 7 is open.
 
 1. `nan_breaks_antisymmetry` — NaN is `Less` than 1.0 *and* 1.0 is `Less` than
-   NaN. Before #2912, `slice::sort_by` (Rust ≥ 1.81) detected this in ORDER BY
-   and panicked, killing `redis-server`.
+   NaN, so `compare_value` is not a sound `slice::sort_by` comparator.
 2. `mixed_numeric_not_transitive` — `2^53 = 2^53.0 = 2^53+1` but `2^53 < 2^53+1`.
-   Same (pre-#2912) panic from `ORDER BY` over a mixed int/float column near 2^53.
 3. `map_order_not_transitive` — `compare_map` answers `Equal` at the first value
-   pair that is disjoint or null, without looking further. Same (pre-#2912) panic.
-4. Map `<>` (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were
-   both `false`. Fixed by #2917: `map_neq_true`, `evalNeq_not_evalEq` (`<>` = NOT `=`).
+   pair that is disjoint or null, without looking further.
 5. `hash_not_consistent_with_eq` — `2^53+1 == 2^53.0` but their hashes differ.
-   Fixed for grouping: `GroupKey` hashes/compares by `sort_cmp`, and main's hash agrees with `sort_cmp`
-   (`Main.main_hash_consistent`). **Still open outside grouping**: `Value`'s own `Hash` and `PartialEq`
+   Grouping is not affected: `GroupKey` hashes/compares by `sort_cmp`, and main's hash agrees with `sort_cmp`
+   (`Main.main_hash_consistent`). **Open outside grouping**: `Value`'s own `Hash` and `PartialEq`
    (`compare_value`) remain inconsistent, and `ValueHashJoin` (`ops/value_hash_join.rs`) hashes `Value`
    (`hash_value`, and the `i64`-keyed `key_as_i64` fast path) and then checks `keys_match`
    (`compare_value`): `Int(2^53+1)` and `Float(2^53)` compare equal (`compare_floats(i as f64, f)`) but hash
    to different buckets, so the join can miss a match that `=` in a filter finds. Found by reading the
    Rust; not reproduced against a live server.
-6. `nan_eq_irreflexive` — `NaN != NaN` under `PartialEq`; before #2917 grouping
-   used it, so every NaN row became its own group. `GroupKey::eq` is now `sort_cmp`
-   (NaN equal to NaN, `Main.main_nans_one_key`).
 7. `fx_row_collision`, `fx_collision_general` — DISTINCT, `count(DISTINCT)` and
    the MERGE pattern cache keep *only* the 64-bit Fx hash. Fx is linear, so a
    collision is one subtraction away: rows `(a, b)` and `(a+1, b - K²)` always
    collide, and the second one is silently dropped (or, for MERGE, never
    created).
-8. `min` over NaN (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — `min([1.0, NaN, 3.0])` was `3.0`. Fixed by #2917:
-   `min_nan_ignored` (1.0; a leading NaN survives, as C).
 
 ## What is proved to hold
 
@@ -109,15 +84,12 @@ still disagree and the value hash join uses them (see finding 5), so it is open 
   elements to lists — so lists are not where ORDER BY goes wrong; maps are.
 * Main (Main.lean): `scMain_total` (`sort_cmp` is a total preorder), `cmpKey_total`,
   `compareAt_eq_scMain`, `compareRowsAt_eq_scMain`, `listSort_perm`, `listSort_sorted`, `main_hash_consistent`
-  (`sort_cmp`-equal ⇒ equal hash words), `main_nans_one_key`, `signed_zeros_apart`.
+  (`sort_cmp`-equal ⇒ equal hash words), `main_nans_one_key`, `signed_zeros_apart`, `min_nan_ignored`.
 
 ## Gaps (what the model does NOT cover)
 
 * Non-integral floats are `frac lo r` (between `lo` and `lo+1`, ranked by `r`);
-  their `to_bits` is some function of the value, not the IEEE layout. (Until
-  2026-10-11 floats were only NaN or integral, with no `-0.0` and one NaN: that
-  hid the #2917 vector/point hash bug — see the "Wave 9" section of
-  `git show 5261abd4f:proofs/FINDINGS.md`.)
+  their `to_bits` is some function of the value, not the IEEE layout.
 * Strings are `Nat`s compared numerically (Rust: byte order; any total order
   gives the same laws). Their hash words are abstracted.
 * Path, Relationship and the temporals appear only as `Tag`s for the type order;
@@ -145,42 +117,31 @@ structure (no axioms). Theorems: `clone_eq`, `name_eq_iff_order_eq`, `valueOfTyp
 `DeletedRelationship.new_injective`, `fmt_float_nonfinite`, `fmt_list`,
 `writeNodeJson_includeType`, `fmtS_entityFree`, `writeNodeJson_depth`.
 
-## Re-target to 4a4f2a72f (2026-10-12): #2912 b033aecc6, #2917 7fdf06a0e merged
+## Main model (`Main.lean`)
 
 * Model.lean: `hwords` is main's hash (Float NaN → one word, f32 components via
-  `f32_hash_bits`); the old one was removed (in 17ccc5412). `evalNeq` and `minFold` follow #2917.
-* Main.lean (new): `scF32` (main's `sort_cmp_f32`, `-0.0 < 0.0`, copied from pr2917_review),
-  `scMain = sc scF32` with `scMain_total`; `main_hash_consistent` (pr2917_review's
-  `hashPR_consistent`, re-proved on this `hwords`); `cmpKey`/`compareAt`/`compareRowsAt`/
+  `f32_hash_bits`). `evalNeq` and `minFold` follow main.
+* Main.lean: `scF32` (main's `sort_cmp_f32`, `-0.0 < 0.0`),
+  `scMain = sc scF32` with `scMain_total`; `main_hash_consistent`; `cmpKey`/`compareAt`/`compareRowsAt`/
   `listSort` for ORDER BY, typed lanes and `list.sort`.
-* SortCmp.lean: the b033aecc6 `sort_cmp` model and its hash counterexamples were removed
-  (in 17ccc5412; fixed: W9-hash-1).
 * COVERAGE: rows for `sort_cmp`, `sort_cmp_map`, `sort_cmp_f64`, `sort_cmp_f32`,
-  `f32_hash_bits`, `sort_cmp_int_float`, `compare_rows_at`, `list_sort`; `cmp_key` now cites
-  the correctness theorem (it used to count the refutation `sortCmp_not_antisymmetric` as
-  PROVEN).
+  `f32_hash_bits`, `sort_cmp_int_float`, `compare_rows_at`, `list_sort`.
 
-## Wave 9 (2026-10-11): extended floats, vector/point contents, #2912 `sort_cmp`
+## Wave 9: extended floats, vector/point contents, `sort_cmp`
 
 Model.lean: `F` gained NaN sign/payload, `-0.0`, fractions and ±inf; `V` gained
 `vecf32`/`point` contents with `compare_vecf32` and the Point arm of `compare_value`, and
-`hwords` their hash arms (`to_bits` per component). Every earlier theorem still holds
-(`F.qnan` is the old `nan`).
+`hwords` their hash arms (`to_bits` per component).
 
-| here | there (value.rs at b033aecc6; since 4a4f2a72f see Main.lean) |
+| here | there (value.rs at b033aecc6; see Main.lean for the current lines) |
 | --- | --- |
 | proofs/core `FalkorCore/Laws.lean`: `Lw`, `thn`, `lexA`, `zipNe`, `cmp3_lw` | generic comparator laws (shared core; `F`, `fpcmp`, `cmpI`, bit layouts also live in `FalkorCore`, re-exported by Model.lean) |
 | `SC.scF64`, `SC.scIntFloat`, `SC.sc` | `sort_cmp_f64` (:1888, also `sort_cmp_f32` :1900), `sort_cmp_int_float` (:1914), `Value::sort_cmp` (:1526), `sort_cmp_map` (:1563) |
 
 * `SC.scF64_key`, `SC.scIntFloat_key` — the float and Int/Float arms order by a numeric key
   (NaN on top, `-0.0 = 0.0`, no rounding for any `i64`).
-* **`SC.sc_laws`** (then `scMain_total`) — #2912's `sort_cmp` is a total preorder on every
+* **`SC.sc_laws`** (then `scMain_total`) — `sort_cmp` is a total preorder on every
   well-formed value, nested lists/maps/vectors/points included (generic in `sort_cmp_f32`).
-* **Refuted at b033aecc6** (fixed by #2917, see Main.lean) — `sort_cmp`-equal ⇒ hash-equal
-  (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412): `NaN` vs `-NaN`, vector and point NaN / signed zero.
-  The Float NaN half was observable then through hash-only DISTINCT: `UNWIND [0.0/0.0,
-  -(0.0/0.0)] AS x RETURN count(DISTINCT x)` was 2, 1 in C (FINDINGS W9-hash-1); main: 1 (`Main.main_nans_one_key`).
 * `SC.vec_zero_eq_but_hash_differs` — `Value::eq` merges `vecf32([-0.0])`/`vecf32([0.0])` and
-  the same points while hashing them apart; before #2917 that was `GroupKey`'s equality (a
-  `HashMap` contract violation). Main's `GroupKey::eq` is `sort_cmp`, which keeps them apart.
+  the same points while hashing them apart. `GroupKey::eq` is `sort_cmp`, which keeps them apart.
 -/

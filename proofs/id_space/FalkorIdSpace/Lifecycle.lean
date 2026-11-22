@@ -65,7 +65,7 @@ theorem release_refused (N : Nat) (sp : IdSpace) (requested freed : IdSet)
 /-! ### Rolling a batch (`Graph::roll_id_batches` = `verify` then `open_batch`) -/
 
 /-- **A batch that verifies rolls into a reachable one**: `open_batch` succeeds,
-equals `rolled` (`new_version` plus the #3164 quarantine) (what the next MVCC version forks with), and satisfies the
+equals `rolled` (`new_version` plus the quarantine) (what the next MVCC version forks with), and satisfies the
 invariant — every free id is now below the new boundary. -/
 theorem roll_inv (N : Nat) (sp : IdSpace) (h : Inv N sp) (hv : sp.verify N = .ok ()) :
     sp.openBatch N = .ok (sp.rolled N) ∧ Inv N (sp.rolled N) := by

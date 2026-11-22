@@ -156,7 +156,7 @@ theorem writeHeader_spec (op : Nat) (c : Option Nat) :
   · simp_all
   · split <;> simp_all
 
-/-- …and, of a correctly shaped header, exactly a zero count (#2916). -/
+/-- …and, of a correctly shaped header, exactly a zero count. -/
 theorem writeHeader_empty (op : Nat) (c : Option Nat) (hs : c.isSome = isBatchable op) :
     (writeHeader op c = .error .emptyRecord ↔ c = some 0) := by
   unfold writeHeader; simp only [hs, bne_self_eq_false, Bool.false_eq_true, ite_false]

@@ -1,11 +1,11 @@
 import RuntimeCore.Cell
 
 /-!
-# `Runtime`'s graph since #3683: a published `Arc<Graph>` or an owned fork
+# `Runtime`'s graph: a published `Arc<Graph>` or an owned fork
 
-Re-target of the `HeldRead` model (`Cell`, `DropOrder`, `Protocol`, kept as history: they model
-`Arc<AtomicRefCell<Graph>>`, which no longer exists). Since `08616ec29` (#3683, "published versions
-are `Arc<Graph>`; a fork is a plain `Graph`") `Runtime` holds
+This replaces the `HeldRead` model (`Cell`, `DropOrder`, `Protocol`, kept as history: they model
+`Arc<AtomicRefCell<Graph>>`, which no longer exists). Published versions are `Arc<Graph>` and a
+fork is a plain `Graph`; `Runtime` holds
 
 * `published : OnceCell<Arc<Graph>>` — a read query's version from the start, a write query's once
   `publish` ran. Nothing can change a published version, so reading it takes no borrow;
@@ -27,7 +27,7 @@ so `Cell.B`/`borrow`/`borrowMut` are reused.
 
 Proven: `new` gives a read runtime a published graph and no fork, a write runtime the reverse, and
 never both (`new_inv`, `publish_inv`); reading a published graph never panics and touches no state
-(`graph_published`, `read_graph_total` — the point of #3683); a fork is read through a borrow
+(`graph_published`, `read_graph_total` — the point of the design); a fork is read through a borrow
 (`graph_fork`) and `graph()` panics exactly when the version is unpublished and the fork is
 exclusively borrowed or refused (`graph_panics_iff`); `graph_mut` panics exactly without a fork or
 with any borrow out (`graphMut_panics_iff`), so always on a read runtime (`graphMut_read_panics`);
@@ -176,7 +176,7 @@ theorem deref_spec {G : Type} (g : G) :
 /-! ### `graph` -/
 
 /-- A published version is read with no borrow and no state change, whatever the fork cell's state:
-the borrow counter that every concurrent reader used to write (#3436's motivation) is gone. -/
+the borrow counter that every concurrent reader used to write is gone. -/
 theorem graph_published {G : Type} (rt : Rt G) (g : G) (h : rt.published = some g) :
     graph rt = .ok (.published g, rt) := by
   simp [graph, h]

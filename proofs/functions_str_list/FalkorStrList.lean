@@ -24,15 +24,15 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `getElementIdx`, `getElement` | `ExprIR::GetElement` list arm, `eval.rs:588-600` |
 | `sliceStart`, `sliceEnd`, `getElements` | `get_elements`, `eval.rs:1785-1815` |
 | `cGetElement`, `cGetElements` | C `AR_SUBSCRIPT`, `AR_SLICE` (int32 truncation) |
-| `removeSpan`, `listRemove`, `listRemoveSpec` | `remove_span` `list.rs:38-51`, `list.remove` `list.rs:162-186` (`listRemoveDebug`/`Release`: pre-#2952, historical) |
+| `removeSpan`, `listRemove`, `listRemoveSpec` | `remove_span` `list.rs:38-51`, `list.remove` `list.rs:162-186` (`listRemoveDebug`/`Release`: historical) |
 | `insertNorm` | `list.insert` / `list.insertListElements`, `list.rs:231-269`, `list.rs:282-330` |
 | `head`, `last`, `tail`, `size`, reverse | `list.rs:61-150` |
 | `rangeLen`, `rangeElems`, `range` | eager `range`, `math.rs:251-308` |
-| `FalkorCore.rangeIter` (`core/FalkorCore/Range.lean`, shared with expr_semantics) | `RangeIter::next` after #2899, `eval.rs:112-128`, built at `eval.rs:1274-1279` (debug: checked `+=`) |
+| `FalkorCore.rangeIter` (`core/FalkorCore/Range.lean`, shared with expr_semantics) | `RangeIter::next`, `eval.rs:112-128`, built at `eval.rs:1274-1279` (debug: checked `+=`) |
 | `evalQuantifier`, `quant`, `kand`/`kor`/`knot` | `eval_quantifier`, `eval.rs:1675-1721`; loop `eval.rs:1007-1045` |
 | `containsLoop`, `contains` | `Contains for ThinVec<Value>`, `value.rs:1880-1903` (via `list_contains`, `eval.rs:1771`) |
-| `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension` after #2954, `eval.rs:1046-1094` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
-| `pre2954_comprehensionRust` | the same arm before #2954 (every source through `eval_iter_expr`'s UNWIND fallback) |
+| `comprehensionRust` / `comprehensionSpec` | `ExprIR::ListComprehension`, `eval.rs:1046-1094` (literal/`range` source via `eval_iter_expr`, else `eval_node`) |
+| `pre2954_comprehensionRust` | the earlier arm (every source through `eval_iter_expr`'s UNWIND fallback) |
 | `reduceList` | `ExprIR::Reduce`, `eval.rs:1096-1122` |
 | `Str`, `blen` | `String` as code points (`.chars()`), `s.len()` / `strlen` bytes |
 | `substring2`, `substring3`, `cSubstring3` | `substring`, `string.rs:55-97`; C `AR_SUBSTRING` |
@@ -45,7 +45,7 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 | `replaceRust`, `cReplaceEmptyBytes` | `replace`, `string.rs:175-189` (std `str::replace`); C `AR_REPLACE` |
 | `caseRust`, `caseC` | `toLower`/`toUpper`, `string.rs:139-165`; C `str_tolower` (utf8proc simple map) |
 | `isMatchRust`, `isMatchSpec` | `internal_regex_matches` `internal.rs:107-119`, `RegexFnKind::Matches` `eval.rs:1335` |
-| `spliceLit`, `spliceRepl`, `callSite` | `Regex::replace_all(_, NoExpand(&str))` literal replacement (#3604), `string.rs:454`, `eval.rs:1360`; `Repl.expand` is the default `&str` replacer the call sites no longer use |
+| `spliceLit`, `spliceRepl`, `callSite` | `Regex::replace_all(_, NoExpand(&str))` literal replacement, `string.rs:454`, `eval.rs:1360`; `Repl.expand` is the default `&str` replacer the call sites no longer use |
 | `joinLen`, `joinStr` | `compute_join_length` / `join_with_preallocate`, `string.rs:309-371` |
 | `startsWith` | `internal_starts_with`, `internal.rs:39-47` (ends/contains analogous) |
 | `cmpFloatModel` | `compare_floats` `value.rs:1919` as used by `list.sort` `list.rs:210` |
@@ -57,11 +57,10 @@ Coverage per Rust fn: `COVERAGE.tsv`.
   (`getElement_noOverflow`, `getElement_inBounds`, `getElement_spec`).
 * Slicing `l[a..b]` never panics: after the early return, `0 ≤ s ≤ e ≤ len`
   (`getElements_bounds`); it equals the clamped spec (`getElements_spec`).
-* `list.remove`: since #2952 (`remove_span`, saturating end) it equals the spec
+* `list.remove`: (`remove_span`, saturating end) it equals the spec
   for all i64 inputs in every build and never panics (`listRemove_eq_spec`,
-  `removeSpan_wf`, `listRemove_huge_count`). Historical: before #2952 release
-  matched the spec by accident (`listRemoveRelease_eq_spec`) and debug
-  overflowed.
+  `removeSpan_wf`, `listRemove_huge_count`). Historical: the earlier inline arithmetic
+  matched the spec by accident in release (`listRemoveRelease_eq_spec`) and overflowed in debug.
 * `list.insert*` normalisation can't overflow and yields a valid split point (`insertNorm_safe`).
 * Eager `range`: every element lies between start and end, so no overflow
   for any i64 arguments (`range_elems_between`, `range_noOverflow`).
@@ -74,7 +73,7 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 * `left`/`right`: Rust = C on all inputs (`left_agrees_C`, `right_agrees_C`), spec (`left_right_spec`).
 * `reverse` on strings: C's byte output = UTF-8 of Rust's `chars().rev()` (`reverse_agrees_C`).
 * `trim`: Rust (`ltrim∘rtrim`) = C (`rtrim∘ltrim`) (`trim_agrees_C`); `ltrim_idem`, `ltrim_head`.
-* `toLower`/`toUpper` never error since #2953 (`toLower_total`) and equal C when the
+* `toLower`/`toUpper` never error (`toLower_total`) and equal C when the
   case mapping is simple (`case_agrees_C_if_simple`).
 * `split`: std's scanner = C's find-first algorithm for every non-empty
   delimiter (`splitAux_eq_cSplit`), and all empty-string branches agree (`split_agrees_C`).
@@ -84,42 +83,11 @@ Coverage per Rust fn: `COVERAGE.tsv`.
 
 ## CONFIRMED bugs (Rust repro fails; outputs recorded live vs C on ports 18270/18271)
 
-A. **`list.sort` panics on NaN — FIXED by #2912 (b033aecc6).** Was: `list.rs:213` (pre-#2912 line)
-   (`sort_by` with `compare_value`): NaN is `Less` both ways, so std's sort panicked
-   and killed the server. Query:
-   `WITH [x IN range(1,40) | CASE WHEN x % 3 = 0 THEN 0.0/0.0 ELSE toFloat(x % 7) END] AS l RETURN size(list.sort(l))`
-   (C 40). Main sorts by `Value::sort_cmp` (`list.rs:210`), a total preorder
-   (proofs/value_order `Main.scMain_total`); the float arm is modelled here
-   (`listSort_float_cmp_antisymmetric`).
-B. **`list.remove` count overflow — FIXED by #2952 (07e712944).** Was: the
-   inline `(normalized + count)`: `list.remove([1,2,3], 1, 9223372036854775807)`
-   panicked in debug ("attempt to add with overflow"); release returned `[1]`
-   by accident (proved). C `[1]`. Test `bug_list_remove_count_overflow`.
-   The fix (`remove_span`, `saturating_add`) is modelled and proved correct
-   (`listRemove_eq_spec`).
 C. **`=~` is unanchored** — `internal_regex_matches` `internal.rs:107-119`, `eval.rs:1335`
    (`Regex::is_match`): `'abc' =~ 'b'` → `true`, `'xabcx' =~ 'abc'` → `true`.
    openCypher/Neo4j require a whole-string match (→ `false`). C rejects `=~`
    ("FalkorDB does not currently support =~"). Test `bug_regex_match_unanchored`.
    Fix: compile `^(?:pat)$` (binder `rewrite_compiled_regex` and runtime path).
-D. **`toLower`/`toUpper` rejected valid strings containing U+FFFD — FIXED by
-   #2953 (e7eb853b1).** Was: `toLower('A�')` → error "Invalid UTF8 string";
-   C → `'a�'`. A Rust `String` is always valid UTF-8, so the check could only
-   misfire. Test `bug_case_map_rejects_replacement_char`. The fix deleted the
-   check: main maps every string (`toLower_total`, `toLower_accepts_replacement`)
-   and equals C whenever the mapping is simple (`case_agrees_C_if_simple`).
-E. **`string.replaceRegEx` expanded `$` references** — FIXED by #3604 (53d694496): both call
-   sites now pass `regex::NoExpand(repl)`, so `replaceRegEx('abc','b','$0x')` → `'a$0xc'`, as in C
-   (`replaceRegex_literal`, `spliceLit_single`).
-   Fix: `regex::NoExpand(repl)`.
-F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
-   #2928).** Was: every source went through `eval_iter_expr`'s UNWIND fallback, so
-   `[x IN null | x]` → `[]` (C `null`), `[x IN 5 | x]` → `[5]` (C type error);
-   Main streams only a list
-   literal or `range(..)` and evaluates any other source with `eval_node`: List
-   iterates, Null gives null, anything else errors "Type mismatch: expected List or
-   Null but was <name>" (`comprehension_eq_spec`, `comprehension_null`,
-   `comprehension_scalar_err`, `comprehensionSourceCheck_err` in `Entity.lean`).
 
 ## Divergences recorded, not bugs (or C is wrong)
 
@@ -136,14 +104,6 @@ F. **List comprehension over null / scalar — FIXED by #2954 (b6567cb97, closes
   (`cReplace_empty_breaks_utf8`); `range(0, 5000000000)` crashed the C server (Rust: "Range too large").
 * Regex dialect: Rust `regex` crate vs C oniguruma Java syntax (no
   backreferences/lookaround in Rust) — not modelled.
-
-## Unconfirmed / variants of known issues
-
-* (fixed by #2899) `RangeIter` with `step = i64::MIN`: `step.unsigned_abs() as i64`
-  was `i64::MIN` and `-self.step` overflowed — debug panic "attempt to negate with
-  overflow" for `UNWIND range(10, 0, -9223372036854775808)`; release was correct
-  (`[10]`). Variant of #2894; now
-  `rangeIter_eq_range` / `rangeIter_examples`.
 
 ## Gaps / assumptions
 
@@ -166,53 +126,30 @@ plus the remaining string.rs / list.rs / internal.rs fns: all PROVEN. House deci
 (deleted entities keep all details): `deleteRel_preserves`, `deleteNode_preserves`,
 `deleteNode_labels_preserved`, `deleteNode_preserves_all`. W4-fn-1 (the DELETE snapshot copied
 the committed labels, so labels staged by SET/REMOVE earlier in the same query were lost) is
-**fixed by #3288** (`7fd3c12a0`, closes #3245): the snapshot takes `Runtime::staged_label_ids`
+the DELETE snapshot takes `Runtime::staged_label_ids`
 (`ops/delete.rs:196`), the committed ids with the staged adds and removes applied.
 `deleteNode_labels_preserved` proves the snapshot's labels equal what `labels(n)` / `n:L` showed
 before the DELETE, with `staged_set_kept_after_delete` (`MATCH (n:A) SET n:C DELETE n RETURN
-labels(n), n:C` is `['A','C']|true`) and `staged_remove_kept_after_delete` as the two shapes
-(the pre-fix counterexample `labels_lost_after_delete` is gone). proofs/pending_commit
-`stagedLabelIds_eq_overlay` shows `staged_label_ids` is the overlay `pendingLabels` models.
-Earlier re-check at 5e475e6c9: #3436 only swapped `rt.g.borrow()` for `rt.graph()` (borrow plumbing); #3462 made
-`DeleteOp`'s snapshot flag `runtime.inspect || snapshot_required(..)` (`Entity.lean`'s `deleteNode` /
-`deleteRel` are the `snapshot = true` case); #2988 is `temporal.rs` (functions_temporal).
+labels(n), n:C` is `['A','C']|true`) and `staged_remove_kept_after_delete` as the two shapes.
+proofs/pending_commit `stagedLabelIds_eq_overlay` shows `staged_label_ids` is the overlay `pendingLabels` models.
+`DeleteOp`'s snapshot flag is `runtime.inspect || snapshot_required(..)` (`Entity.lean`'s `deleteNode` /
+`deleteRel` are the `snapshot = true` case).
 
-Re-targeted to e8f8a3017: #3127 (`d739765e1`) received-type names in the `hasLabels` /
-`parse_degree_args` errors (`hasLabels_mismatch_names`, `parseDegreeArgs_mismatch_names`,
-`parseDegreeArgs_examples`); #3132 (`58d7c2c49`) `startNode(null)`/`endNode(null)` = null
-(`startEndNode_null`, `startEndNode_total`); house-decision theorems unchanged and still true.
-Re-targeted to 289c201fe: #2953 (`e7eb853b1`) removed the U+FFFD rejection from
-`toLower`/`toUpper` (bug D fixed; `toLower_total`, `case_agrees_C_if_simple`); COVERAGE.tsv line numbers re-pinned
-(string.rs −4/−16 after the deletion; the eval.rs shift was +13 after #3294/#2951, and every pin has
-since been regenerated by name). The eval.rs
-changes of #3294 (AND/OR/XOR error text) and #2951 (aggregate inside a list
-literal) touch no arm modelled here.
-Re-targeted to 8621212fc: no modelled function changed. #2904 (`fd2c76a6c`, `^` in eval.rs
-and `apply_pow` in math.rs), #2984 (`5986f4df1`, value.rs date − duration), #3007, #3043 and
-#3419 touch no row of this project; value.rs rows re-pinned (+7 after the import block,
-`add_slow` :961, `Contains::contains` impl :1867).
-Re-targeted to 737dfb5da: #2899 (`e63165cb5`, closes #2894) rewrote `RangeIter` (exact
-`remaining` count, signed `step`, advance only while another element is due): the
-`i64::MIN` negation variant is gone;
-new model `rangeIter`, `rangeIter_of_inRange`, `rangeIter_eq_range` (lazy = eager `range`,
-no overflow, every `i64` input), `rangeIter_examples`. #3041 (`2023af648`) only changes how
-the parser reads a slice bound — `get_elements` (eval.rs) is unchanged — and #2950
-(temporal.rs) touches nothing here. eval.rs rows re-pinned (+3 to +10 after #2899).
-Re-targeted to b6567cb97: #2954 (closes #2928) fixes bug F — `ListComprehension` now
-evaluates a non-literal, non-`range` source with `eval_node` (null → null, scalar → type
-error). New `comprehensionRust` over `CSrc`, `comprehension_eq_spec`, `comprehension_null`,
-`comprehension_scalar_err`, `comprehension_literal_range_unchanged`. `Value::name` now
-spells `Edge`/`Vectorf32` and `typeOf` reuses it (`Entity.valueName`,
-`typeName_eq_valueName`). eval.rs rows re-pinned (+27 after the arm), entity.rs (−18
-after `type_of`), value.rs (+2 after `Value::name`).
-Re-targeted to main 256ab4d3f (from 43936bab9): #3270 (3643a301c) makes a non-boolean
-list-comprehension WHERE predicate a type error ("expected Boolean but was <name>"; it was
-skipped) — `comprehensionLoop`, `whereKeep`, `comprehensionLoop_nonbool`, `pre3270_nonbool_skipped`,
-`pre3270_loop_agrees`, `comprehensionFull_noWhere`. New `evalIterExpr` models all three
-`eval_iter_expr` arms (`evalIterExpr_range`, `_lit`, `_other`), `evalCompiledRegex` all three
-`eval_compiled_regex` kinds with `checkStringOrNull` (`regex_*`, `evalCompiledRegex_not_unreachable`;
-`=~` stays unanchored, bug C). `string.rs` only widened `regex_captures_list` to `pub`. eval.rs and
-value.rs cites re-pinned (+4 / +10 in eval.rs, +4 after `get_type` in value.rs).
+`hasLabels` / `parse_degree_args` errors name the received type (`hasLabels_mismatch_names`,
+`parseDegreeArgs_mismatch_names`, `parseDegreeArgs_examples`); `startNode(null)`/`endNode(null)` = null
+(`startEndNode_null`, `startEndNode_total`). `toLower`/`toUpper` do not reject U+FFFD (`toLower_total`,
+`case_agrees_C_if_simple`). `RangeIter` (exact `remaining` count, signed `step`, advance only while another
+element is due): `rangeIter`, `rangeIter_of_inRange`, `rangeIter_eq_range` (lazy = eager `range`,
+no overflow, every `i64` input), `rangeIter_examples`. `ListComprehension` evaluates a non-literal,
+non-`range` source with `eval_node` (null → null, scalar → type error): `comprehensionRust` over `CSrc`,
+`comprehension_eq_spec`, `comprehension_null`, `comprehension_scalar_err`,
+`comprehension_literal_range_unchanged`. `Value::name` spells `Edge`/`Vectorf32` and `typeOf` reuses it
+(`Entity.valueName`, `typeName_eq_valueName`). A non-boolean list-comprehension WHERE predicate is a
+type error ("expected Boolean but was <name>") — `comprehensionLoop`, `whereKeep`,
+`comprehensionLoop_nonbool`, `comprehensionFull_noWhere` (historical `pre3270_nonbool_skipped`,
+`pre3270_loop_agrees`). `evalIterExpr` models all three `eval_iter_expr` arms (`evalIterExpr_range`,
+`_lit`, `_other`), `evalCompiledRegex` all three `eval_compiled_regex` kinds with `checkStringOrNull`
+(`regex_*`, `evalCompiledRegex_not_unreachable`; `=~` stays unanchored, bug C).
 Others: `hasLabels_all`, `parseDegreeArgs_forms`, `strReplace_self`, `toStringVec_err`,
 `capturesList_shape`, `listSort_perm`, `listDedup_spec`, `internalIsNull_spec`.
 -/
@@ -350,10 +287,10 @@ theorem cGetElements_truncates :
 
 /-! ## `list.remove(l, idx, count)` (`list.rs:162-186`, `remove_span` `list.rs:38-51`)
 
-Since #2952 (07e712944) the span is computed by `remove_span`, which clamps the
+The span is computed by `remove_span`, which clamps the
 end with `saturating_add`: `listRemove` / `removeSpan` below model that code.
 `listRemoveDebug` / `listRemoveRelease` are kept as the **historical** model of
-the pre-#2952 inline arithmetic (`(normalized + count) as usize`), whose debug
+the earlier inline arithmetic (`(normalized + count) as usize`), whose debug
 build overflowed. -/
 
 inductive Out (α : Type) where
@@ -610,13 +547,12 @@ theorem range_examples :
     range 0 10 3 = .ok [0, 3, 6, 9] ∧ range 10 0 (-3) = .ok [10, 7, 4, 1] ∧
     range 10 0 I64MIN = .ok [10] ∧ range 1 0 1 = .ok [] := ⟨rfl, rfl, rfl, rfl⟩
 
-/-! ## Lazy `RangeIter::next` before #2899 (history)
+/-! ## Lazy `RangeIter::next`, earlier constructor (history)
 
-Before #2899 the constructor stored `step: step.unsigned_abs() as i64` (`RangeIter` constructor at
-8621212fc); for `step = i64::MIN` that is `i64::MIN` again, and `next` then evaluated
-`-self.step`, which overflowed before the (#2894) `+=`. -/
+The earlier constructor stored `step: step.unsigned_abs() as i64`; for `step = i64::MIN` that is
+`i64::MIN` again, and `next` then evaluated `-self.step`, which overflowed. -/
 
-/-! ## Lazy `RangeIter::next` after #2899 (`eval.rs:112-128`)
+/-! ## Lazy `RangeIter::next` (`eval.rs:112-128`)
 
 The iterator model `rangeIter` (debug build, checked `+=`) and `rangeIter_of_inRange` are in
 `proofs/core` (`FalkorCore/Range.lean`), shared with `expr_semantics`. -/
@@ -808,11 +744,10 @@ theorem contains_nil (cmp : α → Ordering × Dis) : contains cmp [] = .f := rf
 
 /-! ## Comprehension / reduce / quantifier sources
 
-Since #2954 (b6567cb97) `[x IN src ...]` (`eval.rs:1046-1094`) streams a list literal or
+`[x IN src ...]` (`eval.rs:1046-1094`) streams a list literal or
 `range(..)` through `eval_iter_expr` (`eval.rs:1237`) and evaluates any other source with
-`eval_node`: `List` iterates, `Null` gives `null`, anything else is a type error. Before,
-every source went through `eval_iter_expr`, whose fallback arm is UNWIND's (`Null` → no
-rows, scalar → one row). Quantifiers (`eval.rs:1007-1045`) and `reduce` already returned
+`eval_node`: `List` iterates, `Null` gives `null`, anything else is a type error (an
+earlier version sent every source through `eval_iter_expr`, whose fallback arm is UNWIND's). Quantifiers (`eval.rs:1007-1045`) and `reduce` already returned
 `Null` for a null source and raised for a scalar, as does C. -/
 
 inductive Src where | null | scalar (i : Int) | list (l : List Int)
@@ -882,8 +817,8 @@ theorem comprehension_agrees_on_lists (l : List Int) :
 /-! ### The per-element loop of `ListComprehension` (`eval.rs:1078-1094`): WHERE and projection
 
 For each element `row.insert(var, value)`, the predicate `eval_node(child(1))?` must be
-`true` (keep), `false` or `null` (skip); any other value is a type error since #3270
-(3643a301c; before it every non-`true` result was skipped by `_ => continue`). A kept
+`true` (keep), `false` or `null` (skip); any other value is a type error
+(an earlier version skipped every non-`true` result by `_ => continue`). A kept
 element is projected by `eval_node(child(2))?`, and the first `Err` ends the loop. -/
 
 /-- What a WHERE predicate evaluates to: a boolean outcome, or any other value (`Value::name`). -/
@@ -1529,8 +1464,7 @@ theorem replace_examples :
 applies the final-sigma rule); C uses utf8proc's *simple* one-to-one mapping.
 C errors only on invalid byte sequences, which a Rust `String` cannot contain.
 
-Before #2953 (e7eb853b1) Rust errored whenever U+FFFD occurred;
-main maps every string (`caseRust`). -/
+Rust maps every string (`caseRust`; an earlier version errored whenever U+FFFD occurred). -/
 
 /-- Main (`string.rs:142`, `:158`): `s.to_lowercase()` / `s.to_uppercase()`. -/
 def caseRust (full : Char → Str) (s : Str) : SOut := .ok (s.flatMap full)
@@ -1596,7 +1530,7 @@ theorem regexMatches_unanchored :
 
 /-! ### `string.replaceRegEx` replacement (`string.rs:454`, `eval.rs:1360`)
 
-Fixed by #3604 (53d694496, closes #2929): both call sites pass `NoExpand(repl)` to
+Both call sites pass `NoExpand(repl)` to
 `Regex::replace_all`, so the replacement is inserted verbatim (`$n`, `$name`, `${name}` are
 not interpreted), like C. `NoExpand::replace_append` appends the string unchanged. Model:
 each matched span `[i, j)` of the text is replaced by the replacement as it is. -/
@@ -1617,8 +1551,7 @@ theorem spliceLit_single (r t : Str) (i j : Nat) :
 
 /-! The two replacers of `Regex::replace_all`. A plain `&str` replacement is *expanded*: `$name`
 (the longest run of letters, digits and `_`) is the capture group of that name or number, `$$`
-is `$`, and an unknown group is empty; `NoExpand` is appended unchanged. This is what bug E
-was: both call sites passed a `&str`. The model covers the `$name` and `$$` forms (not the
+is `$`, and an unknown group is empty; `NoExpand` is appended unchanged. Passing a `&str` instead is the expanding behaviour. The model covers the `$name` and `$$` forms (not the
 `${name}` form) with the capture lookup `cap` abstract. -/
 
 inductive Repl where
@@ -1914,9 +1847,8 @@ theorem startsWith_empty (s : Str) : startsWith (.str s) (.str []) = .t := by
 
 /-! ### `list.sort` (`list.rs:197`, comparator `:210`)
 
-Before #2912: `sort_by(|a, b| a.compare_value(b).0)`; for floats `compare_floats`
-returns `Less` whenever `partial_cmp` is `None`. Main (b033aecc6):
-`sort_by(Value::sort_cmp)`, whose float arm `sort_cmp_f64` (`value.rs:1935`) puts NaN
+`sort_by(Value::sort_cmp)` (an earlier `sort_by(|a, b| a.compare_value(b).0)` used `compare_floats`,
+which returns `Less` whenever `partial_cmp` is `None`), whose float arm `sort_cmp_f64` (`value.rs:1935`) puts NaN
 above every number and equal to itself. -/
 
 def cmpFloatModel (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
@@ -1927,7 +1859,7 @@ else `a.is_nan().cmp(&b.is_nan())`. -/
 def sortCmpF64Model (aNaN bNaN : Bool) (o : Ordering) : Ordering :=
   if aNaN || bNaN then compare aNaN bNaN else o
 
-/-- **Bug A fixed.** Main's float comparator is antisymmetric (swapping the operands,
+/-- Main's float comparator is antisymmetric (swapping the operands,
 whose `partial_cmp` swaps too, reverses the answer) and NaN is equal to NaN and above
 every number. The whole of `sort_cmp` is a total preorder: proofs/value_order
 `Main.scMain_total`. -/

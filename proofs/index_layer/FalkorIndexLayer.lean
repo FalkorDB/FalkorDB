@@ -32,7 +32,7 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 | `edgeKey` | `Document::new_edge` `mod.rs:685`, `decode_triple` `mod.rs:613`, `delete_edge_document` `mod.rs:1957` |
 | `intLosesPrecision` | `mod.rs:1382` `int_loses_f64_precision` |
 | `setRange`, `docOf` | `Document::set` `mod.rs:721` (Range field arm), field names `mod.rs:122` |
-| `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:736-748` (#3087 dimension guard) |
+| `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:736-748` (dimension guard) |
 | `valueToNumeric` | `mod.rs:1368` |
 | `buildNumRange` | `mod.rs:1387` `build_numeric_range_node` |
 | `buildStrRange` | `mod.rs:1430` `build_string_range_node` |
@@ -42,7 +42,7 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 | `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:315 build_op_query` |
 | `Table.add/del`, `commit` | `add_document` `mod.rs:1918` (ADD_REPLACE), `delete_document` `mod.rs:1940`, `Indexer::commit` `indexer.rs:749` |
 | `Slots.inc/dec/bump/countFor` | `mod.rs:2122/2140/1053/2162`, `indexer.rs:661-737` |
-| `TextOpts.phoneticEnabled`, `PHONETIC_OFF` (`Meta.lean`) | `TextIndexOptions::phonetic_enabled` `text_index_options.rs:48`, `PHONETIC_OFF` `:41`; used by `register_fields` `mod.rs:1260` (#3514) |
+| `TextOpts.phoneticEnabled`, `PHONETIC_OFF` (`Meta.lean`) | `TextIndexOptions::phonetic_enabled` `text_index_options.rs:48`, `PHONETIC_OFF` `:41`; used by `register_fields` `mod.rs:1260` |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
 Axiomatised boundary. `rsMatch`/`rsStore` state the documented LLAPI
@@ -69,8 +69,8 @@ Query exactness (index hits = full scan plus the Cypher filter):
 - `ENum.le_le_iff_eq`, `inNum_point`, `rsMatch_union`, `rsMatch_inter`: RS node algebra.
 - `equal_exact`: `n.k = literal` is exact for stored Int, Float or non-empty String.
 - `inList_exact`: `n.k IN [scalar literals]` is exact under the same conditions.
-- `numRange_exact`: numeric `<,<=,>,>=` and two-sided ranges are exact for every stored number, ±inf included since #3081 (`numRange_exact_fin`: the earlier finite/NaN form).
-- `strRange_exact` (`Strings.lean`): string ranges are exact when no string has a byte ≤ 0x20, `\` or `_` and stored strings are non-empty (since #3072 equal bounds need no premise). `lexLt_irrefl`, `lexLt_asymm`, `lexLt_total`, `tagEnc_id` support it.
+- `numRange_exact`: numeric `<,<=,>,>=` and two-sided ranges are exact for every stored number, ±inf included (`numRange_exact_fin`: the finite/NaN form).
+- `strRange_exact` (`Strings.lean`): string ranges are exact when no string has a byte ≤ 0x20, `\` or `_` and stored strings are non-empty (equal bounds need no premise). `lexLt_irrefl`, `lexLt_asymm`, `lexLt_total`, `tagEnc_id` support it.
 
 Maintenance and tickets (`Maintenance.lean`):
 - `foldl_add_lookup`, `foldl_del_lookup`, `commit_lookup`: exactly what `Indexer::commit` leaves for each id.
@@ -104,14 +104,6 @@ scan.
    - `WHERE n.x = 1 AND n.y = 2` → `[]`. `WHERE n.y = 2 OR n.x = 1` loses rows. `{x:1, y:2}` → `[]`.
    - C returns the rows.
    - Fix: merge only conjuncts and disjuncts whose label matches the first one. Leave the rest in the post-filter, and bail on OR.
-5. FIXED by #3076 (e20300436) (old `mod.rs:797`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
-   - Query: `n.v > 0` matched a stored date: `['int']` → `['date','int']`. C: `['int']`.
-   - Now temporals are not indexed (`mod.rs:803`): `Temporal.temporal_not_indexed`,
-     `temporal_numRange_exact`, `temporal_equal_exact`, `fixed3076_temporal_in_numeric_range`.
-6. FIXED by #3072 (1c9994e37) (old `mod.rs:1434`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
-   - Query: `n.v > 'a' AND n.v < 'a'`: Rust `[]` → `['a']`. C: `[]`.
-   - Now an exclusive side with equal bounds is the empty node (`mod.rs:1433-1438`):
-     `fixed3072_exclusive_equal_bounds`, and `strRange_exact` lost its equal-bounds premise.
 7. `bug_string_range_order` / `_gt`, `tagEnc_not_monotone` (`mod.rs:565` used by `mod.rs:1457`).
    - The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong in both directions.
    - `n.v < 'JohnA'` with `'John Smith'` stored: `['js']` → `[]`. `n.v > 'a!'` with `'a b'` stored: `[]` → `['ab']`.
@@ -120,13 +112,7 @@ scan.
 8. `bug_bool_eq_int` (`mod.rs:760,1360`).
    - Query: `n.v = 1` also returns `v = true`, and `n.v = true` returns `v = 1`: `['int']` → `['bool','int']`.
    - C has the same bug.
-9. FIXED by #3081 (ff3d24ba7) (old `mod.rs:1388,1395`; counterexample removed in bbee75955; the last revision that has them is 17ccc5412).
-   - An absent bound became ±inf with an exclusive flag, so `n.v > 0`, `n.v >= 1.0/0.0` and `n.v <= -1.0/0.0` missed stored ±inf: `['-inf','inf']` → `[]`. C has the same bug.
-   - Now an absent bound is inclusive (`mod.rs:1402-1403`): `fixed3081_open_bound_includes_inf`, and `numRange_exact` covers stored ±inf.
 10. `bug_empty_string_not_indexed`: `n.v = ''` → `[]`, and `n.v < 'a'` misses `''`. C has the same bug. Fix: an INDEXEMPTY equivalent, or a sentinel encoding for the empty string.
-11. FIXED by #3081 (ff3d24ba7). Edge index scan with an undirected pattern (`runtime/ops/edge_by_index_scan.rs`; outside the model, found by the differential run).
-    - Query: `MATCH ()-[r:R]-() WHERE r.v >= 1` returned each edge once instead of twice: `['e','e']` → `['e']`. C has the same bug.
-    - Now proved in `ops_traverse` (`IndexScan.orient_mem`, `orient_length`).
 12. Geo radius near the poles (RediSearch geohash is limited to |lat| ≤ 85.05).
     - Points at latitude 89.99: the full scan finds 21, the index finds 0.
     - C has the same bug. This is outside the axiomatised boundary; the fix would be to keep the distance filter and fall back beyond |lat| > 85.05.
@@ -165,7 +151,7 @@ New modules, all `sorry`-free:
 - `Meta`, `IndexM`: `Field` and the `Index` metadata (field map as an association list,
   `field_order` invariant `Inv` preserved by insert/remove/add/retain), RS spec lifecycle
   (`create_rs_index`, `register_fields`, `recreate_index`) with FFI results as parameters.
-- `IndexerM`: `Indexer` (create/drop/remove_if_empty (#3856: `removeIfEmpty_spec`, `removeIfEmpty_keeps_filled`, `dropIndex_removeIfEmpty_erases`)/lookups/vector metadata/index_info/progress/
+- `IndexerM`: `Indexer` (create/drop/remove_if_empty (`removeIfEmpty_spec`, `removeIfEmpty_keeps_filled`, `dropIndex_removeIfEmpty_erases`)/lookups/vector metadata/index_info/progress/
   cancel/graph slot/recreate). `createIndex_validates`, `createIndex_ok`, `dropIndex_spec`
   (a well-formed entry never keeps an empty field list), `indexInfo_spec` (sorted permutation).
 - `Iter`: result iterators (`drain_next`), RS refcounting (`RC.not_freed`: no use-after-free
@@ -187,96 +173,56 @@ every range query on `n.s` is built against the fulltext field `s` instead of `r
 `MATCH (n:L) WHERE n.s = 'foo'` Rust `[]`, C `[2]`; `n.s > 'c'` Rust `[]`, C `[1],[2]`;
 `(n:L {s:'bar'})` Rust `[]`, C `[3]`; `n.s IN ['foo','bar']` Rust `[]`, C `[2],[3]`
 (live, ports 18850 Rust / 18851 C). Fix: pick the field with `ty == IndexType::Range`.
-Suspected, unconfirmed: `create_rs_index` returns `Err` on a NUL in a stopword/language/label
-after `RediSearch_CreateIndexOptions` without `RediSearch_FreeIndexOptions` (leak only).
-#3274 fixes that leak by running every `CString::new` (stopwords, language, label) before
-the options block is allocated and freeing it on the unsupported-language return. Side
-effect: the label NUL check now precedes the unsupported-language check, so
-`createRsIndex_lang_err` is false on the new code (`createRsIndex_lang_err_fails`; label
+`create_rs_index` runs every `CString::new` (stopwords, language, label) before the options block is
+allocated and frees it on the unsupported-language return. The label NUL check precedes the
+unsupported-language check, so `createRsIndex_lang_err` is false (`createRsIndex_lang_err_fails`; label
 ``L\0`` with `language: 'x'` reports the NUL error instead of `Language is not supported: x`);
 `createRsIndex_lang_err_cleanLabel` proves the message for NUL-free labels.
 
-## Re-target to 49f698d22 (#3087)
-`Document::set` now adds a `VecF32` only if
+## `SetVector`
+`Document::set` adds a `VecF32` only if
 `vector_options.is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`
-(`mod.rs:730-744`); every later line of `mod.rs` moved by +12 (all citations updated).
-`SetVector.lean`: `setVector_sound` (key property: for any options and value, a vector add
+(`mod.rs:730-744`). `SetVector.lean`: `setVector_sound` (key property: for any options and value, a vector add
 carries the field's own non-zero dimension), `setVector_good`, `setVector_wrong_dim`,
 `setVector_noparams`, `setVector_has_params` / `setVector_none_of_noparams` (link to
 `registerOne`: an add only ever targets a field registered *with* params), `setVector_sub_pre`.
 This discharges, for vector fields, the `ht` premise of `query_eq_scan_filter` (the RS table
-holds `docOf` of every entity: a vector can no longer make RediSearch reject the document).
-Fixed by #3087 (W3-conc-3 / #3075 and the W5-idx-2 no-options shape; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412).
+holds `docOf` of every entity: a vector cannot make RediSearch reject the document).
 
-## Re-target to 8743953a8 (#3072, #3076, #2278)
-- `index/mod.rs`: #3076 dropped the temporal arm of `Document::set` (one line shorter from `mod.rs:797`)
-  and #3072 added the equal-bounds guard (10 lines at `mod.rs:1430`); every citation is updated.
-  W2-index-5 (bug 5) and W2-index-6 (bug 6) are fixed: their counterexamples were removed (in 17ccc5412); the correctness theorems are above.
-- `cow_btree` (#2278): `AosLeaf` is generic over `DOC_BYTES`. `LeafAosD.lean` models `doc_le_bytes`
-  (`docLeBytes_spec`: the assert passes iff the doc fits; `docLeBytes_lossless`), the D-wide page
-  (`aos_roundtripD`, `aosMergeD_spec`, `docLayoutD_spec`, `aosBuildD_length`, `fromPairsD_roundtrip`
-  for every `DOC_BYTES ∈ {1, 2, 4, 8}`) and proves it is the old model at 8 (`aosD8_*`, `fromPairsD8`).
-  NEW BUG 14 (latent: no production `CowBTree` yet): the const assert admits `DOC_BYTES ∈ 1..=8`,
-  but `read_width` (`cow_btree/mod.rs:88-102`) reads 8 bytes for any width outside {1, 2, 4, 8}, so
-  `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (FIXED by #3285, see below; counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
-  `insert` ("range end index 16 out of range for slice of length 11", `mod.rs:99`). Fix: assert
-  `DOC_BYTES ∈ {1, 2, 4, 8}`.
-- Still present: bugs 1-4, 7-13 (code unchanged at the cited lines).
+## `LeafAosD` (`cow_btree`: `AosLeaf` generic over `DOC_BYTES`)
+`LeafAosD.lean` models `doc_le_bytes`
+(`docLeBytes_spec`: the assert passes iff the doc fits; `docLeBytes_lossless`), the D-wide page
+(`aos_roundtripD`, `aosMergeD_spec`, `docLayoutD_spec`, `aosBuildD_length`, `fromPairsD_roundtrip`
+for every `DOC_BYTES ∈ {1, 2, 4, 8}`) and proves it is the width-8 model at 8 (`aosD8_*`, `fromPairsD8`).
+`is_read_width` (`cow_btree/mod.rs:88`, `LeafBytes.isReadWidth`) gates `DOC_BYTES` in the const asserts:
+`readWidth_admitted` (`read_width` loads exactly `w` bytes on
+every admitted width), `isReadWidth_upto16`, `docBytesAssert_iff`, `admitted_doc_read`,
+`admitted_fromPairs_roundtrip`, `docBytesAssert_rejects_3` (the old and new asserts differ on exactly 3/5/6/7), and
+`asserted_fromSorted_contents` (`from_sorted` under the full const assert `constAssert`).
+`proofs/cow_btree` also proves that `from_sorted`, `insert_batch` and `remove_batch` build
+well-formed trees (`fromSorted_wf`, `insertBatch_wf`, `removeBatchTree_wf`), which this project's
+tree-level contents theorems (`Leaf.fromSorted_contents`, `Leaf.insertBatch_contents`) complement.
 
-## Re-target to e8f8a3017 (#3081)
-- `index/mod.rs`: #3081 (ff3d24ba7) makes an absent numeric bound inclusive (4 lines at
-  `mod.rs:1400`; later citations +4). Bug 9 is fixed (`fixed3081_open_bound_includes_inf`; `numRange_exact` drops its finite-only premise). Bug 11
-  (undirected edge-index scan once) is fixed in `edge_by_index_scan.rs`, proved in `ops_traverse`.
-- Still present: bugs 1-4, 7, 8, 10, 12, 13.
+## `create_index` bumps the generation
+`indexer.rs` adds `bump_id` at the end of `create_index` when the
+label already had an entry (`indexer.rs:357-359`, after every fallible step).
+`IndexerM.build` ends with `regen` (`Env.regenTo` is the next `NEXT_INDEX_ID`):
+`createIndex_regen` (the stored entry has
+id = generation = `regenTo`, current pending 0, and total pending is conserved: every earlier
+ticket is stale, so the old job's release stays balanced), `createIndex_old_ticket_stale`
+(`is_ticket_current` holds for exactly the new generation), `createIndex_new_entry` (a new label is not
+bumped). The protocol-level consequence (an OPERATIONAL index never misses a field) is
+`SC.Tickets.main_operational_complete` in `proofs/search_concurrency`.
 
-## Re-target to cab3cf192 (#2897, #3285)
-- `cow_btree/mod.rs`: #3285 (cab3cf192) adds `is_read_width` (`mod.rs:88`, `LeafBytes.isReadWidth`) and
-  gates `DOC_BYTES` with it in the const asserts; #2897 (7b60f28db) raises the `BRANCH_MAX` bound to 4.
-  Every later line of `mod.rs` moved (+6 to `read_width` :94, +17 from `default` :150); citations updated.
-  Bug 14 (W7-btree-2) is FIXED by #3285: `readWidth_admitted` (`read_width` loads exactly `w` bytes on
-  every admitted width), `isReadWidth_upto16`, `docBytesAssert_iff`, `admitted_doc_read`,
-  `admitted_fromPairs_roundtrip`, `docBytesAssert_rejects_3` (the old and new asserts differ on exactly 3/5/6/7), and
-  `asserted_fromSorted_contents` (`from_sorted` under the full const assert `constAssert`).
-- Still present: bugs 1-4, 7, 8, 10, 12, 13.
+## Phonetic option
+`TextIndexOptions::phonetic_enabled` (`text_index_options.rs:48`) is what `register_fields` asks
+(`mod.rs:1245`): C's `"no"` (`PHONETIC_OFF`, written on every fulltext field C did not enable) is off,
+like absent and empty. Modelled as `Meta.TextOpts.phoneticEnabled`; `registerOne_text` is stated on it.
+`phoneticEnabled_off_spellings` (the Rust unit test), `phoneticEnabled_code`, `phoneticEnabled_iff_ne_no`,
+`fixed3514_phonetic_no_is_off`. The RDB side is in `proofs/redis_layer` (`SerialSchema.decField`).
 
-## Re-target to 1d15bf713 (#3283 and the rest of the 0f45a8685..1d15bf713 range)
-- Only `cow_btree/node.rs` changed among the files this project models: #3283 (799968a8b) rewrites
-  `merge_underfull` and adds `Node::merge_underfull_below` (both proven in `proofs/cow_btree`,
-  `BatchWF.lean`). `pack_branches` (:56), `build_root` (:90) and `make_private` are unchanged;
-  `make_private` moved :565 → :595 (COVERAGE updated). `index/mod.rs`, `indexer.rs` and the leaf files
-  are untouched, so every theorem and bug status above stands.
-- `proofs/cow_btree` now also proves that `from_sorted`, `insert_batch` and `remove_batch` build
-  well-formed trees (`fromSorted_wf`, `insertBatch_wf`, `removeBatchTree_wf`), which this project's
-  tree-level contents theorems (`Leaf.fromSorted_contents`, `Leaf.insertBatch_contents`) complement.
-- Still present: bugs 1-4, 7, 8, 10, 12, 13.
-
-## Re-target to 73077bb4a (#3086, #3033)
-- `indexer.rs`: #3086 (73077bb4a, issue #3069) adds `bump_id` at the end of `create_index` when the
-  label already had an entry (`indexer.rs:357-359`, after every fallible step); every function from
-  `drop_index` on moved +16 lines (COVERAGE updated). `IndexerM.build` now ends with `regen`
-  (`Env.regenTo` is the next `NEXT_INDEX_ID`). New: `createIndex_regen` (the stored entry has
-  id = generation = `regenTo`, current pending 0, and total pending is conserved: every earlier
-  ticket is now stale, so the old job's release stays balanced), `createIndex_old_ticket_stale`
-  (`is_ticket_current` holds for exactly the new generation; `is_ticket_current` is now PROVEN, was
-  MODELLED), `createIndex_new_entry` (a new label is not bumped). `createIndex_ok` and
-  `bug_range_after_fulltext` re-proved unchanged. The protocol-level consequence (an OPERATIONAL index
-  never misses a field) is `SC.Tickets.main_operational_complete` in `proofs/search_concurrency`.
-- #3033 touches only `graphblas/tensor.rs`/`matrix.rs`, outside this project.
-
-## Re-target to a0ba12950 (#3514)
-- #3514 (fix #3484, phonetic part) adds `TextIndexOptions::phonetic_enabled` (`text_index_options.rs:48`)
-  and `register_fields` now asks it (`mod.rs:1245`) instead of "any non-empty code": C's `"no"`
-  (`PHONETIC_OFF`, written on every fulltext field C did not enable) is off, like absent and empty.
-  Modelled as `Meta.TextOpts.phoneticEnabled`; `registerOne_text` re-proved on it. Proved
-  `phoneticEnabled_off_spellings` (the Rust unit test), `phoneticEnabled_code`, `phoneticEnabled_iff_ne_no`.
-  Before it a C-written RDB turned phonetic on for every fulltext index (counterexamples removed; in
-  17ccc5412); `fixed3514_phonetic_no_is_off` proves the fix.
-  The RDB side of the same PR is in `proofs/redis_layer` (`SerialSchema.decField`).
-
-- Still present: bugs 1-4, 7, 8, 10, 12, 13.
-
-## Gap closed 2026-10-20 (#3166, #3382, #2781; proofs cite fb3d516d0, repros on main 9d3869aa8)
-Three open bugs the proofs missed, each now a stated property and a counterexample
+## Open: stopwords and edge-index rollback (#3166, #2781; proofs cite fb3d516d0, repros on main 9d3869aa8)
+Two open bugs the proofs missed, each a stated property and a counterexample
 matching the live repro (ports 6640 Rust / 6641 C):
 - #3166 (`IndexGaps.lean`). `Idx.rsStop` records the stopwords the RediSearch spec was
   created with (`mod.rs:1119-1133`); `register_fields` never changes them. Property
@@ -286,13 +232,6 @@ matching the live repro (ports 6640 Rust / 6641 C):
   the existing spec (`indexer.rs:300-313`) and records `['router']` (`:341-343`); Rust
   matches 'router' (1 row), C does not (0). `createIndex_fresh_stopwords_agree`: the
   new-label path agrees.
-- #3382 (`IndexGaps.lean`), **FIXED by #3581 (aafdc4ae1)**. `Ixr.vectorQuery` (`indexer.rs:560` →
-  `mod.rs:1809`) has no `is_operational` gate. Property `VectorQueryRequiresOperational` /
-  `VectorQueryComplete`. HISTORICAL: `pre3581_vector_query_ignores_operational`, `pre3581_partial_answer`:
-  under construction, the ungated query answered `Ok` with 0 rows (a KnnSpec-legal answer from a
-  half-built table); live 0 then 3 rows, C "Invalid arguments for procedure". Now
-  `Graph::vector_query_nodes`/`_edges` gate it (`graph.rs:4408,4476`): `gated3581_requires_operational`,
-  `gated3581_i3382_refused`, `vectorQueryGuarded_eq_isOperational`.
 - #2781 (`EdgeResync.lean`). The edge arm of `resync_published_indexes`
   (`pending.rs:1872-1880`) with `commit_edge_index_locked`'s re-resolved key
   (`graph.rs:3988-4063`), documents keyed by `(src, dst, id)`. Property
@@ -300,29 +239,20 @@ matching the live repro (ports 6640 Rust / 6641 C):
   the orphan `(c, d, 0)` survives beside `(a, b, 0)`, as in the live index scan.
   `resyncEdgesFixed_restores` proves the fix (delete the private key when endpoints changed).
 
-## Re-pinned to 5e475e6c9 (#3436, #2383)
-Re-pin only. `Pending::resync_published_indexes` moved to `pending.rs:1789` (at origin/main 5c7af54f2; `pending.rs:1844` at 256ab4d3f). #2383 (the native
-index serves `IN [...]` as an InList union of point lookups) changes `falkordb/falkordb_index.rs`
-and `falkordb/numeric.rs`, which belong to `native_index`. It also rewrote the `IN` path in
-`runtime/ops/node_by_index_scan.rs` (the `InList` arm and `can_utilize_index`), which is what `expandIn`,
-`indexable` and `canUtilize` in the table above model.
+## Vector queries and `InList`
+`Graph::vector_query_nodes`/`_edges` gate vector queries on `is_operational` (`graph.rs:4408,4476`):
+`gated3581_requires_operational`, `gated3581_i3382_refused`, `vectorQueryGuarded_eq_isOperational`
+(`Ixr.vectorQuery` itself has no gate: `Property VectorQueryRequiresOperational` / `VectorQueryComplete`;
+historical `pre3581_vector_query_ignores_operational`, `pre3581_partial_answer`).
+The `InList` arm (`InList.lean`): `expandIn_eq_filter`, `canUtilize_or`,
+`canUtilizeInList_eq_or`, `scan_inlist_faithful` prove the `InList` shape (members filtered by
+`keep`, utilized iff non-empty and every member indexable) the same as the `Or` of `Equal`s that
+`expandIn`/`canUtilize` model. The native index serves `IN [...]` as an InList union of point
+lookups (`proofs/native_index`); under the optional `index-falkordb` feature (off in the shipped
+`.so`) a Range index is answered by the native index instead, so this project's range theorems
+describe the default build. `resync_published_indexes` and `commit_edge_index_locked` are PROVEN by
+their membership theorems in `EdgeResync.lean` (the #2781 rollback property stays refuted).
 
-## Re-targeted to 256ab4d3f
-- The `InList` arm re-checked (`InList.lean`): `expandIn_eq_filter`, `canUtilize_or`,
-  `canUtilizeInList_eq_or`, `scan_inlist_faithful` prove the `InList` shape (members filtered by
-  `keep`, utilized iff non-empty and every member indexable) the same as the `Or` of `Equal`s that
-  `expandIn`/`canUtilize` model, so the model is unchanged.
-- #3274 (`create_rs_index` options leak, `Meta.Idx.createRsIndex_*`), #3856 (`Indexer::remove_if_empty`),
-  #3581 (`Indexer::is_operational`, `IndexGaps`), #3683 (`Arc<Graph>` slot in `Indexer`): modelled in
-  place. #2453/#3736/#3737 (native index columns) and #3068 (planner `IN` pushdown) leave `mod.rs`'s
-  RediSearch range path untouched; under the optional `index-falkordb` feature (off in the shipped
-  `.so`) a Range index is answered by the native index instead (`proofs/native_index`), so this
-  project's range theorems describe the default build.
-- Live (release module built from this tree, redis 8.6; C = local `master` build): `repro.py`
-  gives the same result as before for bugs 1-4, 7, 8, 12 and 13 (still present); #3081 and #3072
-  stay fixed. Cites in this header and in the module tables now match 256ab4d3f.
-- Both MODELLED rows (`resync_published_indexes`, `commit_edge_index_locked`) are now PROVEN by
-  their membership theorems in `EdgeResync.lean` (the #2781 rollback property stays refuted).
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs

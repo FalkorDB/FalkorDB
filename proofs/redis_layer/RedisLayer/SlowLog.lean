@@ -10,13 +10,11 @@
 | `hashInput`           | `entry_hash` `:51` (hashes `prefix(query)`, `:58`) |
 | `E`, `add`, `reset`   | `SlowLog::new` `:81`, `add` `:97`, `reset` `:171` |
 | `replyLen`            | `SlowLog::reply` `:181` (5-element rows) |
-| `MinCache`, `SlowestKept`, `add` | #3442 (fixed by #3456): the `min_latency` cache (`:77`, `:114`, `:162-169`); main's update arm `:121-139` falls through to the recompute (b84473a7f returned early there) |
+| `MinCache`, `SlowestKept`, `add` | the `min_latency` cache (`:77`, `:114`, `:162-169`); the update arm `:121-139` falls through to the recompute |
 
-**Fixed crash** (W4-redis-1, fixed by #3234 `3660a5fc3`): `entry_hash` and `truncate`
-used to cut the query at *byte* 2048, so a query longer than 2048 bytes with a multi-byte
-character across byte 2048 panicked (counterexamples removed in bbee75955; the last
-revision that has them is 17ccc5412). Both now
-go through `prefix`, which backs up to `floor_char_boundary(2048)`:
+**Truncation** (W4-redis-1): `entry_hash` and `truncate`
+go through `prefix`, which backs up to `floor_char_boundary(2048)` (a cut at byte 2048
+inside a multi-byte character would panic):
 `hashInput_total`/`truncate_total` (never panics, for every byte string),
 `prefix_le`/`prefix_isPrefix`/`prefix_boundary`/`prefix_longest` (the cut is the longest
 char-boundary prefix of at most 2048 bytes), `prefix_short` (≤ 2048 bytes: untouched).
@@ -178,9 +176,9 @@ theorem hashInput_bad (p t : Bytes) (hp : p.length = 2047) :
     show (2047 : Nat) = 2046 + 1 from rfl, floorB_succ, ite_eq_left hb']
   simp [hp]
 
-/-! ## Historical: before #3234 (`3660a5fc3`)
+/-! ## Historical: slicing at byte 2048
 
-The old code sliced at byte 2048 directly (`query[..min(len, 2048)]` and
+An earlier version sliced at byte 2048 directly (`query[..min(len, 2048)]` and
 `s[..STR_MAX_LEN]`). Kept as the record of W4-redis-1. -/
 
 /-! ## Entries -/
@@ -336,15 +334,11 @@ theorem reset_empty (s : SL) : (reset s).entries = [] := rfl
 def replyLen (s : SL) : List Nat := s.entries.map fun _ => 5
 theorem replyLen_len (s : SL) : (replyLen s).length = s.entries.length := by simp [replyLen]
 
-/-! ## Gap closed: #3442 (fixed by #3456) — the update arm left `min_latency` stale
+/-! ## The update arm keeps `min_latency` fresh
 
-On b84473a7f `SlowLog::add`'s existing-entry branch (`src/slow_log.rs:120-132`) raised the
-entry's latency and `return`ed before the recompute at `:172-177`, leaving `minLat` alone. Once the cached minimum was below the real
-one, the pre-check at `:114` admitted a query faster than every retained entry and the
-replace path evicted the real fastest entry. C (`SlowLog_Add`) sends the update path through
-`cleanup`, which recomputes the minimum. #3456 makes the branch fall through to the recompute
-(`:120-139`, `:178`); `add` above is that main code. The refutations were removed in bbee75955 (the last revision that has them is
-17ccc5412); `add_minCache` and `fixed3442_trace` prove the fix on main. -/
+`SlowLog::add`'s existing-entry branch (`src/slow_log.rs:120-139`) raises the entry's latency and
+falls through to the recompute (`:178`), as C (`SlowLog_Add`) does through `cleanup`; `add` above
+is that code. `add_minCache` and `fixed3442_trace` state the property. -/
 
 /-- Cache invariant: a non-empty log caches the minimum of its latencies. -/
 def MinCache (s : SL) : Prop := s.entries ≠ [] → s.minLat = minOf s.entries

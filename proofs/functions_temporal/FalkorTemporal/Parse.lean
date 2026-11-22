@@ -178,7 +178,7 @@ theorem parseTime_ok (s : String) (t : Nat) (h : parseTime C s = .ok t) : t < 86
       obtain ⟨_, -, h⟩ := bind_ok h; exact hms_ok _ _ _ _ _ h
     · cases h
 
-/-! ## #3125 (`1ea868116`): the compact forms reject non-digits -/
+/-! ## The compact forms reject non-digits -/
 
 theorem digitsOnly_of_allDigits (s : String) (h : allDigits s = true) : digitsOnly s = s := by
   unfold digitsOnly
@@ -338,7 +338,7 @@ theorem parseDuration_noP (s : String) (h : s.startsWith "P" = false) :
     parseDuration C s = .error s!"Duration string must start with 'P': {s}" := by
   simp [parseDuration, h]
 
-/-! ### #3574 (e0a34e480, closes #3117): a trailing number with no unit is an error -/
+/-! ### A trailing number with no unit is an error -/
 
 /-- Date part ends while the number buffer is non-empty (`P5`, `P1Y5`, `P-`): error. Before
 #3574 the buffer was silently dropped and `duration('P5')` was the zero duration. -/
@@ -363,7 +363,7 @@ theorem parseDuration_P5 :
   simp [dateLoop, Char.isDigit]
   rfl
 
-/-! ### #2987: the week/day accumulator never wraps -/
+/-! ### The week/day accumulator never wraps -/
 
 /-- `W` with a week count whose `n * 7` leaves i64 is an error, not a wrap
 (W2-temporal-8 fixed). -/

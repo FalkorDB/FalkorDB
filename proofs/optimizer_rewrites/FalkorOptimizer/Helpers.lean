@@ -12,11 +12,11 @@ import FalkorOptimizer.Basic
 | `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
 | `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
 | `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
-| `isUnnamed`, `attrsEmpty` | `Variable::is_unnamed` ast.rs:231 (#3303: `name().is_none()`, replacing the `_anon` prefix test `is_anon`; `Alias`, `varIsUnnamed`), `rel_attrs_empty` fuse_anonymous_traverse.rs:37-47 (`node_attrs_empty` removed by #2390) |
+| `isUnnamed`, `attrsEmpty` | `Variable::is_unnamed` ast.rs:231 (`name().is_none()`; `Alias`, `varIsUnnamed`), `rel_attrs_empty` fuse_anonymous_traverse.rs:37-47 (`node_attrs_empty` removed by #2390) |
 | `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:78-187 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
 | `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
 | `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-92 |
-| `VT`, `visT` | `branch_visible_variables` push_filters_down.rs:99-119 (#3281; on the plan tree: `PushPlan.bv`) |
+| `VT`, `visT` | `branch_visible_variables` push_filters_down.rs:99-119 (on the plan tree: `PushPlan.bv`) |
 -/
 namespace Falkor.Opt
 
@@ -388,7 +388,7 @@ instead of the copy's destination `5` (`… WITH 1 AS k ORDER BY c OPTIONAL MATC
 theorem pre3281_branchOut_copy_old :
     branchOutPre3281 (.project [] [(⟨0, 0⟩, ⟨5, 1⟩)]) = some [0] := rfl
 
-/-! ## `branch_visible_variables` (#3281) -/
+/-! ## `branch_visible_variables` -/
 
 /-- A plan node as `branch_visible_variables` (push_filters_down.rs:99-119) sees it:
 `reset` is a `Project`/`Aggregate` with `branch_output_variables(_, false)` =

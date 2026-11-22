@@ -133,7 +133,7 @@ theorem datetime_unknown (t : Int) (h : K.valid t = true) :
 
 /-! ### `format_datetime` (value.rs:261), `format_date` (:281), `format_time`
 
-Since #2986/#3575 `format_datetime` and `format_date` no longer go through chrono: they take
+`format_datetime` and `format_date` do not go through chrono: they take
 `div_euclid`/`rem_euclid` of the i64, `civil_from_days_wide` (year kept as i64, so every
 persisted timestamp has its real year) and `push_date`. They are total: no
 `<invalid timestamp>` branch. `format_time` still uses chrono. -/

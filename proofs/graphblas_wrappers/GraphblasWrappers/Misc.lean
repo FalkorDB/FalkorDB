@@ -11,12 +11,9 @@ namespace GBW
 /-! ## `Matrix::grown` (matrix.rs:742) and `resize` (tensor.rs:821)
 
 `grown` asserts `nrows ≥ r0 && ncols ≥ c0` (matrix.rs:748-751) — it cannot shrink,
-because `GrB_Matrix_resize` on smaller dims drops entries. Since #3250
-`Tensor::resize` (tensor.rs:821) never shrinks: it clamps each target to
+because `GrB_Matrix_resize` on smaller dims drops entries. `Tensor::resize` (tensor.rs:821) never shrinks: it clamps each target to
 `max(target, current)` (:832-833) and re-emits each layer with `grown`, whose
-precondition therefore always holds (`resize_clamp_grownOk`). Before #3250 it
-branched: shrink took a flush + straight `resize` path, grow re-emitted each
-layer. -/
+precondition therefore always holds (`resize_clamp_grownOk`). -/
 
 /-- The `grown` precondition (matrix.rs:748-751). -/
 def grownOk (r0 c0 nrows ncols : Nat) : Bool := decide (nrows ≥ r0 ∧ ncols ≥ c0)

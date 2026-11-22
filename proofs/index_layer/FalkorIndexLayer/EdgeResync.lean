@@ -1,6 +1,6 @@
 import FalkorIndexLayer.Iter
 /-
-# Gap closed 2026-10-20 (#2781): rolling back edge-index documents
+# Gap closed 2026-10-20 (#2781, open): rolling back edge-index documents
 
 Edge documents are keyed `(src, dst, edge_id)` (`Document::new_edge` `mod.rs:685`,
 `ETable` here), but the rollback of a failed multi-`Commit` query decides each

@@ -51,7 +51,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
 | `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-787`), ExpandInto trim (`expand_into.rs:285-294`) |
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
-| `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` (`/` is `checked_div` since #3603: `i64::MIN / -1` errors and the int lane refuses it; `%` still wraps to 0) |
+| `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` (`/` is `checked_div`: `i64::MIN / -1` errors and the int lane refuses it; `%` still wraps to 0) |
 | `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |
 
 ## 2026-10-21: `VectorEval` is `ExprEval`, row by row, over the full engine value
@@ -110,38 +110,23 @@ Lean↔Rust tables are in each file's header; per-function buckets in
   promotion, flipped constant, pairwise, generic); `CmpOp::flip` sound (ints;
   floats via IEEE antisymmetry); NaN makes orderings false and `<>` true.
 * `union_nulls` exact except (Values, non-null constant), which no typed lane sees.
-* Arithmetic lanes = `Value` arithmetic row by row, including the first error (and #3603's `i64::MIN / -1` overflow error: `arithmetic_min_div_neg_one`)
+* Arithmetic lanes = `Value` arithmetic row by row, including the first error (and the `i64::MIN / -1` overflow error: `arithmetic_min_div_neg_one`)
   (zero divisors fall to the generic lane; `Int ⊕ Int` never takes the float lane).
 * NOT, CASE (incl. laziness: THEN only on matched rows; value-form test =
   `compare_value == (Equal, None)`), scalar function folding, `eval_variable`
   (in the column space), and the Filter mask agree with the per-row evaluator.
 * `Row::insert_by_id` / `take` / `merge` (overlay of bound slots only);
-  `to_owned_row` agrees with `BatchRow::value_at` on every slot (`toOwned_get_eq_view`, #3059) and
+  `to_owned_row` agrees with `BatchRow::value_at` on every slot (`toOwned_get_eq_view`) and
   `Batch::concat` equals the per-row concat for every list of batches (`concat_obs_eq`).
 
 ## Findings
-Both were confirmed on the real code (pub API; no Cypher trigger found, so latent) and are
-**fixed by #3059** (`d2cd1ad01`), whose tests are `concat_ignores_bindings_of_empty_batch` and
-`to_owned_row_keeps_trailing_unbound_slots_in_scope`:
-1. `Batch::concat` (`batch.rs:1008-1015` before the fix) took `bound_anywhere` from batches with
-   no active rows: a slot bound only in an empty batch came out bound (`Some(Null)`) where the
-   per-row definition leaves it unbound (`None`). Now the fallback loop skips `active_len() == 0`
-   batches (`batch.rs:1008-1013`), as `concat_typed_column` does. Lean `empty_batch_ignored`;
-   `concat_obs_eq` no longer needs every batch non-empty (`concatGeneric` skips empty batches).
-2. `BatchRow::to_owned_row` dropped trailing Unbound columns, so `view.value_at(i) = Some(Null)`
-   but `to_owned_row().value_at(i) = None` ("Variable not found" in `resolve_var`). Now it builds
-   the owned row with `Row::with_capacity` and one `Row::push_slot` per column (`Unbound` is an
-   unbound `Null`, a value-only column keeps its value unbound). Lean `Row.pushSlot`, `pushSlots_spec`,
-   `toOwned_get_eq_view` (the owned row's `value_at` equals the view's on every slot),
-   `toOwned_trailing_unbound`. What remains: `eval_variable` reads Null beyond the column space where
-   the per-row view errors (`evalVariable_beyond`). 12 OPTIONAL/CALL/comprehension queries tried: all correct.
+No open confirmed findings; fixed ones are in this file's git history.
 
 Hazards (not bugs today): selection `u16` casts need `len ≤ 65536`, guaranteed
-only by `BATCH_SIZE` caps — exactly the guard #2922's miscompile drops (this
-build inlines it correctly: `probe_capped_unwind_batch_sizes` sees 1024-row
+only by `BATCH_SIZE` caps (`probe_capped_unwind_batch_sizes` sees 1024-row
 batches; `agrees_skip_selection_large_cap` passes); no-alias emitter over a
 zero-column parent with no origins emits a 0-row batch (`finishLen_drops`;
-unreachable, ExpandInto always has columns; since #2845 a parent carrying origins is
+unreachable, ExpandInto always has columns; a parent carrying origins is
 gathered, `finishLen_origins_kept`); `classify_column` lossy (no caller); columnar CASE/AND may
 report a different row's error message than the per-row path (both error).
 
@@ -157,32 +142,28 @@ proofs/ops_aggregate.
 * `Gather`: the `GatherItem` trait proved ONCE (`gather_spec`: for a lawful lane, finishing the
   pushed items sets column `cols b [i]` to `xs.map (val b i)`), then each of the 7 impls shown
   lawful (`giNode_lawful` … `giValue_lawful`); `RowIter`; emitter constructors.
-* `BatchMisc`: the rest of batch.rs — column helpers (`compareAt_spec`: since #2912 the float
-  lane is `sort_cmp_f64`, antisymmetric with NaN; the old `unwrap_or(Less)` lane was known #2891), builder push paths and merge plan, constructors/accessors,
+* `BatchMisc`: the rest of batch.rs — column helpers (`compareAt_spec`: the float
+  lane is `sort_cmp_f64`, antisymmetric with NaN), builder push paths and merge plan, constructors/accessors,
   `merge_over_input`, `clone_active_rows_seq_origin`, `size_hint`, `set_argument_batch`
   (every Argument leaf gets the batch, emitter-backed nodes reset), `inspect_context`, `BatchOp::next`.
 
-## Re-target to 5e475e6c9 (#2973, #3436)
-* #2973 (closes #2922) rewrites `BatchedResultEmitter::with_binding`'s ceiling from the guarded arm
-  `Some(cap) if cap < BATCH_SIZE => cap.max(1)` to `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1,
+## Re-target to 5e475e6c9 (#3436)
+* `BatchedResultEmitter::with_binding`'s ceiling is `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1,
   BATCH_SIZE))` (batched_result_emitter.rs:562), plus two `debug_assert!`s (`pack_ceiling` in `[1,
-  BATCH_SIZE]` in `with_binding`, `<= BATCH_SIZE` in `start_batch`). The #2922 miscompile (LLVM 21-23.1.0 on
-  aarch64-apple-darwin dropped the guard) is a compiler bug, so the source semantics did not change:
-  `Emitter.withBinding` is now the clamp;
-  `withBinding_le_batch` (the debug-asserted range) and `miscompiled_differs` are unchanged. The `u16`
-  selection hazard (`skip_u16_wraps`) keeps its premise that the ceiling is capped, now stated without a
-  guard to drop.
+  BATCH_SIZE]` in `with_binding`, `<= BATCH_SIZE` in `start_batch`): `Emitter.withBinding` is the clamp;
+  `withBinding_le_batch` (the debug-asserted range) and `miscompiled_differs`. The `u16`
+  selection hazard (`skip_u16_wraps`) keeps its premise that the ceiling is capped.
 * #3436 swaps `rt.g.borrow()` for `rt.graph()` and inserts the `graph`/`graph_mut`/`graph_arc`/`HeldRead`
   block in runtime.rs: `materialize_*` rows re-pinned (:1654, :1668, :1716, :1728), emitter rows shifted
   by 3-4 (`seed` :578 … `new_without_alias` :784). `matNode_eq` / `matRel_eq` read the same graph.
 
-## Re-target to 4a4f2a72f (#2912 b033aecc6, #2917 7fdf06a0e)
+## Re-target to 4a4f2a72f
 * `Column::compare_at` (batch.rs:401): Floats lane `sort_cmp_f64` (`sortCmpF64`, NaN via
   `x != x`), `cv` = `Value::sort_cmp`: `compareAt_spec` now proves the float lane antisymmetric
   for every pair.
   `compare_rows_at` (:1281) takes `cv = sort_cmp`. Full order laws: proofs/value_order
   `Main.scMain_total`, `Main.compareAt_eq_scMain`.
-* `compare_values` (vectorized.rs:239) `Neq`: NaN/disjoint are `true` (#2917).
+* `compare_values` (vectorized.rs:239) `Neq`: NaN/disjoint are `true`.
 
 ## Re-target to a9377c636 (#2845)
 * `BatchMisc.rowsOnly` (`Batch::rows_only`, batch.rs:853): `rowsOnly_spec` (len rows, no
@@ -192,23 +173,11 @@ proofs/ops_aggregate.
   `has_origins` arm of `start_batch`. The per-row origin argument is in
   `CallBoundary.lean` (`Pr2845.emit_origin_sound`, folded in from the retired pr2845_review).
 
-## Re-target to 80c776385 (2026-11-02): #3059
-
-#3059 (`d2cd1ad01`, "keep columnar unbound-slot semantics in `Batch::concat` and
-`to_owned_row`") fixed both latent findings. `Row.lean`: `Row.pushSlot` (`Row::push_slot`,
-`row.rs:224`), `slotOf`/`pushSlots` (the loop of `to_owned_row`), `toOwned` rebuilt on them,
-`pushSlots_spec`, `toOwned_unbound_slot` re-proved, new `toOwned_get_eq_view`; the old counterexample
-`toOwned_trailing_unbound` now states the fixed behaviour. `Concat.lean`: `concatGeneric`'s
-`boundAny` requires `0 < b.activeLen`, `perRow_anyBound`/`perRow_present`/`concat_obs_eq` lost the
-"every batch non-empty" hypothesis, `empty_batch_binds` became `empty_batch_ignored`.
-
-## Re-target to 289c201fe
-Re-checked at origin/main `289c201fe`. Only #3294 (`2db1f22df`) touches a file here: the
-generic AND/OR path of `eval_and_or` (`vector_expr.rs:456-459`) now reports
-"Type mismatch: expected Boolean or Null but was <type>" (C's text). That row is covered by
-proofs/functions_temporal `VExpr.colEval_eq`, which keeps errors abstract, so no model or
-theorem changes. COVERAGE.tsv `vector_expr.rs` lines after `:456` re-cited (+3); `batch.rs`,
-`row.rs`, `vectorized.rs` and `batched_result_emitter.rs` are unchanged.
+## Row and concat
+`Row.lean`: `Row.pushSlot` (`Row::push_slot`, `row.rs:224`), `slotOf`/`pushSlots` (the loop of `to_owned_row`),
+`pushSlots_spec`, `toOwned_unbound_slot`, `toOwned_get_eq_view`, `toOwned_trailing_unbound`. `Concat.lean`:
+`concatGeneric`'s `boundAny` requires `0 < b.activeLen`; `concat_obs_eq` holds with empty batches, and
+`empty_batch_ignored` states that an empty batch binds nothing.
 
 ## Wave 6 (`Dispatch`)
 Re-checked at origin/main `0f45a8685`: #3335 (`b8321be81`) removed `VectorEval::eval`'s

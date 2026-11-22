@@ -333,7 +333,7 @@ theorem place_wellScoped : ∀ (placed B : List Nat) (hs : List Hop) fs,
       · exact Or.inr (Or.inr (Or.inl h1))
       · exact Or.inr (Or.inr (Or.inr (hpl v h1)))
 
-/-! #### Salvaged filters (#2390): re-attached above the re-ordered hops
+/-! #### Salvaged filters: re-attached above the re-ordered hops
 
 When `select_scan_node` discards a planner scan subtree, `filters_of` takes the `Filter`s off its
 spine (`select_scan_node.rs:958`, `:1114`, `:1315`). On a swap they go back *above* the re-ordered
@@ -395,10 +395,10 @@ theorem boundAfter_hop : ∀ (B : List Nat) (steps : List Step) (h : Hop), Step.
     · cases he
     · exact boundAfter_hop B rest h hm
 
-/-! #### The seed bound set `initial_bound` (`select_scan_node.rs:983-986`, #3523)
+/-! #### The seed bound set `initial_bound` (`select_scan_node.rs:983-986`)
 
 `best_node` is bound only by the scan built for it (`make_scan_subtree`, used only when
-`existing_child` is `None`, line 1198). Since #3523 the seed is `{best_node}` without a kept
+`existing_child` is `None`, line 1198). The seed is `{best_node}` without a kept
 child and exactly the kept child's variables (`collect_subtree_variables`) with one. -/
 
 /-- `initial_bound`: `child = some vs` is a kept child binding `vs`. -/
@@ -418,9 +418,9 @@ theorem initialBound_wellScoped (best : Nat) (child : Option (List Nat)) (B : Li
   | none => intro v hv; simp [initialBound] at hv; subst hv; exact hbest rfl
   | some vs => intro v hv; exact hchild vs rfl v hv
 
-/-! #### The outer subtree beneath the new scan (#3594, `select_scan_node.rs:1198-1224`)
+/-! #### The outer subtree beneath the new scan (`select_scan_node.rs:1198-1224`)
 
-When the new scan carries `preserved_argument` (an `Argument` leaf, or since #3594 a whole outer
+When the new scan carries `preserved_argument` (an `Argument` leaf, or a whole outer
 `Unwind`/`Project` subtree that binds none of the chain's variables), the seed also takes the ids
 that subtree binds (`collect_subtree_variables` plus every operator's `collect_output_aliases`),
 less, when the subtree is a transparent row source, every id of the chain's relationships and
@@ -468,13 +468,13 @@ theorem initialBoundOuter_wellScoped (best : Nat) (child preserved : Option (Lis
     | none => simp at hv
     | some o => exact houter o rfl v (by simpa using hv)
 
-/-! #### Former counterexample: the dishonest initial bound set (CONFIRMED bug, fixed by #3523)
+/-! #### Counterexample: the dishonest initial bound set
 
-Before #3523, `select_scan_node.rs:979-986` seeded `initial_bound` with `best_node.alias.id` *and* the
-variables of an existing (outer-context) child. When that child is kept, no scan for
+A seed holding `best_node.alias.id` *and* the variables of an existing (outer-context) child is
+dishonest: when that child is kept, no scan for
 `best_node` is built (`subtree = existing_child.clone().unwrap_or_else(..)`, line 1198), so
-`best_node` is not bound — yet its inline-attribute Filter is placed as soon as the first hop
-runs. Query (C returns 1, Rust 0):
+`best_node` is not bound, yet its inline-attribute Filter is placed as soon as the first hop
+runs. Query (C returns 1):
 `MATCH (b:A) WITH b LIMIT 1 MATCH (b)<-[]-(d)-[:R]->(c {v:1})-[:R]->(z) RETURN count(*)`.
 Variables: b=0, d=1, c=2, z=3, edges 10, 11, 12. -/
 

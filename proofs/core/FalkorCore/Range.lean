@@ -1,10 +1,10 @@
 import FalkorCore.Int64
 
 /-!
-# Lazy `UNWIND range(..)`: `RangeIter` after #2899 (`graph/src/runtime/eval.rs:112-133`)
+# Lazy `UNWIND range(..)`: `RangeIter` (`graph/src/runtime/eval.rs:112-133`)
 
 One model of what `functions_str_list` (eager `range`, `math.rs:251`) and `expr_semantics`
-(`eval_iter_expr`, `RangeIter::next`) each used to carry. `eval_iter_expr` (`eval.rs:1237-1281`)
+(`eval_iter_expr`, `RangeIter::next`) each carried. `eval_iter_expr` (`eval.rs:1237-1281`)
 builds `RangeIter { current: start, step, remaining: length }` with the signed `step` and
 `length = |end - start| / |step| + 1` (`rangeLen`, computed in `i128`, so exact). `next` yields
 `current`, decrements `remaining` and advances `current += step` only while `remaining > 0`.
@@ -35,7 +35,7 @@ theorem rangeLen_eq_cases (a e s : Int) :
 def rangeList (a s : Int) (n : Nat) : List Int :=
   (List.range n).map fun (k : Nat) => a + (k : Int) * s
 
-/-- `RangeIter::next` after #2899, debug build (checked `+=`): `remaining` counts the elements
+/-- `RangeIter::next`, debug build (checked `+=`): `remaining` counts the elements
 still due and `current` advances only while another one is. -/
 def rangeIter (step : Int) : Nat → Int → Except String (List Int)
   | 0, _ => .ok []

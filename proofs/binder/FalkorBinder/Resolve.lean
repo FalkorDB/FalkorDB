@@ -230,7 +230,7 @@ theorem defineName_covers (e : Env) (d : Nat) (n : Name) (ty : Ty) (b : Bool) (h
       · have := (Env.has_iff_find e n).1 hh; simp [hf] at this
     exact mint_new_covers hc hn _ _ _
 
-/-! ## Aliases of pattern entities (#3303) -/
+/-! ## Aliases of pattern entities -/
 
 /-- `Binder::define_alias_in_scope` (binder.rs:2374-2392): a name is `define_name_in_scope`d; an
 unnamed entity reuses the `lookup_anon` hit of the current scope, else gets a nameless variable

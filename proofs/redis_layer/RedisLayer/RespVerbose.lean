@@ -4,9 +4,9 @@ import RedisLayer.RespCompact
 
 | here | there |
 | --- | --- |
-| `wf`                          | `write_f` `:36-45` (#3043) |
+| `wf`                          | `write_f` `:36-45` |
 | `fmtS` / `fmtList` / `fmtMap` | `format_value_to_string` `:49-111` |
-| `encVb`, `specVb`, `pointStr` | `reply_verbose_value` `:364-546` (top-level point `:536-545`, #3043) |
+| `encVb`, `specVb`, `pointStr` | `reply_verbose_value` `:364-546` (top-level point `:536-545`) |
 | `statCalls`, `statLines`      | `reply_stats` `:548-635` |
 | `resultCalls`                 | `reply_query` `:688-747` on `(compact, client_schema)` (`:694-697`) |
 | `ReplyFormat`, `queryCalls`   | `enum ReplyFormat` `:672-685`, `reply_query` `:688-747` (#3757) |
@@ -15,11 +15,10 @@ import RedisLayer.RespCompact
 
 Number/temporal formatting is abstract (`Fmt`): `{:.6}`, `%.15g`, `Value::format_*`.
 
-**#3043 (`7cde92c1d`, closes #3042).** C prints NaN with `%f` as `nan`; Rust's `{:.6}` spells
-it `NaN`, so a NaN inside a list or vector printed `[NaN]` (C `[nan]`). `write_f` now prints
-`nan`. C's top-level verbose point is `point({latitude:%f, longitude:%f})`
+**Floats and points.** C prints NaN with `%f` as `nan`; `write_f` prints `nan` (Rust's bare
+`{:.6}` would spell it `NaN`). C's top-level verbose point is `point({latitude:%f, longitude:%f})`
 (`resultset_replyverbose.c:239`), without the space after the colons that the nested
-`SIValue_ToString` form has (`value.c:504`); the top-level form now matches. Against C's
+`SIValue_ToString` form has (`value.c:504`); the top-level form matches. Against C's
 `%f` (`CPf`, a hypothesis about libc): `wf_c`, `fmtS_floats_c`, `fmtS_vec_c`, `pointStr_c`.
 -/
 namespace RedisLayer.Resp
@@ -535,7 +534,7 @@ theorem query_schema_noreturn (fmt : ReplyFormat) (sc : Schema) (client : Nat)
       [.arr [.arr ((statLines M st version).map R.bulk), schemaR sc client]] := by
   subst h; exact noreturn_schema_reply E M true rows st version sc client
 
-/-! ## Agreement with C's `%f` (#3043) -/
+/-! ## Agreement with C's `%f` -/
 
 /-- C's `%f` (glibc / Apple libc `printf`), as a hypothesis: it agrees with Rust's `{:.6}` on
 every non-NaN value (finite values and `inf`/`-inf`), and prints NaN as `nan`. The second
@@ -587,7 +586,7 @@ theorem verbose_point_c (E : Env F) (H : CPf M) (a o : F) (ha : M.nan a = false)
     (ho : M.nan o = false) : specVb E M (.point a o) = .bulk (cPointStr H.cf a o) := by
   simp [specVb, pointStr_c M H a o ha ho]
 
-/-! ### History: before #3043 (`289c201fe`) -/
+/-! ### History: the bare `{:.6}` NaN spelling -/
 
 /-- And on main the same NaN prints as C does. -/
 theorem fixed3043_nan_in_list (x : F) (hn : M.nan x = true) :

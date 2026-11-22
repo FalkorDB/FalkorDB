@@ -1,5 +1,5 @@
 import FalkorIdSpace.Lifecycle
-/-! # `released`, `taken()`, `released()` and `refuse_not_live` (#3022, `18fc277b9`)
+/-! # `released`, `taken()`, `released()` and `refuse_not_live`
 
 `released` is per-batch state: every id the open batch freed, whether or not a
 later create reclaimed it. It is cleared by `open_batch` and not carried by

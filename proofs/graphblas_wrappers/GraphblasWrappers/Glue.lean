@@ -7,7 +7,7 @@
 | `addOp`/`applyOp` | `EWiseAdd::add_op` (matrix.rs:275, impls :279 bool, :287 u64) |
 | `newMatrix`       | `MatrixType::new_matrix` (:298, impls :305, :314) |
 | `Desc`/`descOf`   | `enum Descriptor` (:232) / `From<Descriptor> for GrB_Descriptor` (:323) |
-| `encodeM`/`scrub` | `Encode<19> for Matrix` (:528), header pointers nulled (:554-565, #3097) |
+| `encodeM`/`scrub` | `Encode<19> for Matrix` (:528), header pointers nulled (:554-565) |
 | `MatH.inner`/`isSynced` | `inner` (:762) / `is_synced` (:874) |
 | `sparsityName`    | `sparsity_status` (:1183) |
 | `posB`/`posU`     | `IterExtract::pos` (:1826, impls :1843 bool, :1863 u64) |
@@ -146,7 +146,7 @@ struct bytes then the five component vectors `x, h, p, i, b`, and loads the
 container back. The C spec relied on (`GxB_unload`/`GxB_load` are inverse, and
 leave/restore the matrix contents) is the hypothesis `UnloadLoad`.
 
-Since #3097 (matrix.rs:554-565) the header is written from a copy whose
+The header (matrix.rs:554-565) is written from a copy whose
 pointer fields (`p, h, b, i, x, vector_future[11], Y, matrix_future[15],
 void_future[16]`) are nulled, so a DUMP / GRAPH.COPY / RDB payload carries no
 heap address of this process. A header is a list of fields, each a pointer or

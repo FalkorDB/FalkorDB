@@ -228,7 +228,7 @@ theorem commitEdgeDocs_mem (tn : Ten) (ids : List Nat) (s d e : Nat) (hnd : (tn.
         simp [this, ih hnd.2 hm']
 
 /-- The "no such index" text (graph.rs:4159-4176): `:L` when no attribute is named
-(`db.idx.fulltext.drop('L')`, #3280, as C), else `:L(a, b)`. -/
+(`db.idx.fulltext.drop('L')`, as C), else `:L(a, b)`. -/
 def noSuchIndexMsg (label : String) (attrs : List String) : String :=
   let attrList := ", ".intercalate attrs
   let a := if attrList = "" then "" else "(" ++ attrList ++ ")"
@@ -249,7 +249,7 @@ theorem dropIndex_protects (dependsOn : String → Bool) (fieldsOfType : List St
   unfold dropIndex
   rw [ite_eq_left (List.any_eq_true.2 ⟨a, ha, hd⟩)]
 
-/-- **#3280 (fixed)**: dropping an index that does not exist (no constraint in the way)
+/-- Dropping an index that does not exist (no constraint in the way)
 reports `Unable to drop index on :L: no such index.` when no attribute was named, as C. -/
 theorem dropIndex_none_noattr (dependsOn : String → Bool) (fieldsOfType : List String)
     (label : String) (h : fieldsOfType.any dependsOn = false) :

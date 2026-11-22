@@ -9,7 +9,7 @@ Reference semantics shared by every pass model.
 | `Val`            | `runtime::value::Value` (only the constructors the passes care about) |
 | `Row`, `Row.get` | a row of the batch env; an unbound column reads as NULL |
 | `Expr`, `eval`   | `ExprEval::eval_node` (`graph/src/runtime/eval.rs`) — `And` at `eval.rs:674` |
-| `powV`, `subV`, `divV` | `apply_pow` (`math.rs:328`, #2904), `Value` `-` and `/` |
+| `powV`, `subV`, `divV` | `apply_pow` (`math.rs:328`), `Value` `-` and `/` |
 | `andL`           | the n-ary `ExprIR::And` loop (`eval.rs:674-699`), as a right fold of the binary step |
 | `passes`         | per-row verdict of `FilterOp::eval` (`graph/src/runtime/ops/filter.rs:48-80`) |
 | `filterRows`     | `FilterOp` over the whole input: any row error fails the query |
@@ -413,9 +413,7 @@ theorem skip_not_transparent :
 
 /-! ## Filter merging (push_filters_down.rs:113-140)
 
-Stacked `Filter(outer p) → Filter(inner q)` is merged into one `AND`. Before #3006
-the Rust code listed the *outer* conjuncts first (`for f in [&filter, &child_filter]`);
-since #3006 it lists the *child* (inner) conjuncts first
+Stacked `Filter(outer p) → Filter(inner q)` is merged into one `AND`. The Rust code lists the *child* (inner) conjuncts first
 (`for f in [&child_filter, &filter]`, line 128): `mergeRust`.
 -/
 

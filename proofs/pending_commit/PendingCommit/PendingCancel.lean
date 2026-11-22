@@ -1,12 +1,11 @@
 import PendingCommit.PendingDocs
 /-
-# Unwinding a pending node, paired with the graph's id space (#2846)
+# Unwinding a pending node, paired with the graph's id space
 
-Since #2846 `delete_pending_node` (pending.rs:851) and
+`delete_pending_node` (pending.rs:851) and
 `remove_pending_relationships_for_node` (:902) take `g: &mut Graph` and hand
 every unwound id back through `Graph::cancel_node_id` /
-`cancel_relationship_id` (graph.rs:1549/:1562) themselves, instead of
-leaving `ops/delete.rs` to call `return_*_id` afterwards. Each call is `?`:
+`cancel_relationship_id` (graph.rs:1549/:1562) themselves. Each call is `?`:
 the first refusal aborts the unwind.
 
 The graph is abstract here (`Gr`); what is needed of its cancel is the

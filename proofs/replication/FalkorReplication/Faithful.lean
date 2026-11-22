@@ -3,7 +3,7 @@
 
 From proofs/effects_emit_apply (`ApplyHelpers.lean`: `intern`, `verifyId`,
 `applyAddSchema`) and proofs/id_space (`IdSpace::reserve` on a fresh batch, and
-since #2846 the `live`/`recycled` half of `IdSpace` that `Graph` reads its
+the `live`/`recycled` half of `IdSpace` that `Graph` reads its
 boundary from), restated over lists so this project stays standalone.
 `FalkorReplication.lean` proves the abstract `applyRec`/`idsOf`/`createOne`/
 `deleteOne`/`GState.bound` equal to these.
@@ -69,7 +69,7 @@ def reserveFresh (bound : Nat) (bin : List Nat) (count : Nat) : List Nat :=
   let reclaimed := bin.take count
   reclaimed ++ List.range' (bound + 0) (count - reclaimed.length)
 
-/-- `IdSpace::reserve` since #3164 (`e0d9c2188`, `id_space.rs:516`): `reclaim_ids` also skips the
+/-- `IdSpace::reserve` (`id_space.rs:516`): `reclaim_ids` also skips the
 `quarantined` ids — what earlier batches of this version freed or cancelled (`open_batch`, `:470`). The
 fresh ids above the boundary are unchanged. -/
 def reserveQ (bound : Nat) (bin quarantined : List Nat) (count : Nat) : List Nat :=
@@ -94,8 +94,8 @@ theorem reserveQ_mem (bound : Nat) (bin q : List Nat) (count i : Nat)
     exact (List.mem_filter.1 (List.mem_of_mem_take h)).1
   · right; omega
 
-/-- The half of the node `IdSpace` (`id_space.rs:164`) that `Graph` reads since
-#2846: `live` and `recycled` (a set, here a duplicate-free list). -/
+/-- The half of the node `IdSpace` (`id_space.rs:164`) that `Graph` reads:
+`live` and `recycled` (a set, here a duplicate-free list). -/
 structure Ids where
   live : Nat
   bin  : List Nat

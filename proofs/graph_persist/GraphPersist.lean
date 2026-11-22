@@ -20,7 +20,7 @@ Coverage per Rust fn: `COVERAGE.tsv`. Repro: `graph/tests/lean_graph_persist.rs`
 | `Constraint.rustFrag`, `uniqueCollideRust` | `Graph::build_composite_key` `format!("{v:?}")` (graph.rs:4771), `check_node_constraint`/`check_edge_constraint` (pending.rs:1580,1672) |
 | `Constraint.uniqueCollideC` | C `EnforceUniqueEntity` (observed behaviour) |
 | `Constraint.hasDup`, `rustConstraintOK` | `validate_unique_constraint` (graph.rs:4715) via `create_constraint` (graph.rs:4500) |
-| `Constraint.rustEnforceKeyBuilds` | HISTORICAL: the nested scan in `check_node_constraint` before #3334; now `unique_violated` (pending.rs:217) |
+| `Constraint.rustEnforceKeyBuilds` | the nested scan in `check_node_constraint` (the earlier enforcement, kept as a historical model; `unique_violated`, pending.rs:217, replaces it) |
 
 ## Proven (headline)
 
@@ -34,7 +34,7 @@ Coverage per Rust fn: `COVERAGE.tsv`. Repro: `graph/tests/lean_graph_persist.rs`
   `oob_id_dropped`, `good_attr_kept` — load never binds an out-of-dictionary or
   NULL attribute, and keeps every good one.
 * `rust_C_unique_disagree`, `disagreement_two_sided`,
-  `constraint_creation_diverges`, `mandatory_agrees`, `enforcement_is_quadratic`.
+  `constraint_creation_diverges`, `mandatory_agrees`, `enforcement_is_quadratic` (the earlier nested-scan enforcement).
 
 ## Live round-trip results (DEBUG RELOAD, SAVE+restart, and cross-engine
 Rust→C / C→Rust, each with and without VKEY_MAX_ENTITY_COUNT=2/3)
@@ -62,12 +62,6 @@ vanish on reload — is identical in C (both write only operational ones).
    `(:M {v:0.0}),(:M {v:-0.0})`, `(:K {v:1}),(:K {v:true})` + range indexes +
    `GRAPH.CONSTRAINT CREATE g UNIQUE NODE <X> PROPERTIES 1 v` →
    `db.constraints()` Rust: all OPERATIONAL; C: all FAILED.
-3. **FIXED by #3334 (4ace60ec7)** — HISTORICAL: **UNIQUE enforcement was Θ(n²) per write query** (`check_node_constraint` rebuilt
-   a `seen` map over the whole label for every affected node; now `unique_violated`, pending.rs:217).
-   `UNWIND range(1,n) AS x CREATE (:L {v:x})` under UNIQUE: n=2000 Rust 9.2 s vs
-   C 0.047 s; n=8000 Rust 212 s vs C 2.4 s (machine loaded; ratio, not absolute,
-   is the point). Fix: build the label's key set once per constraint per commit,
-   or probe the supporting range index like C.
 
 ## Unconfirmed / notes
 
@@ -118,18 +112,14 @@ Headline theorems:
   load order, the registered `Arc` and the key's value coincide and hold the finished graph;
   no virtual key is registered; placeholders are dropped.
 * `aux_roundtrip` — UDF libraries round-trip through the aux fields (one NUL stripped).
-* `uuid_counter_distinct`, `counter_field_bijective`, `uuid_regression_pair_distinct` — since
-  #3286 virtual-key names differ whenever their counters differ mod 2^48, whatever the clock;
+* `uuid_counter_distinct`, `counter_field_bijective`, `uuid_regression_pair_distinct` —
+  virtual-key names differ whenever their counters differ mod 2^48, whatever the clock;
   `vkeyName_uuid_counter`, `names_vname_inj` (discharges `Names.vname_inj`), `const_check_holds`
   (`same_fields`: the Rust compile-time check holds for every clock).
-* `countCheck_in_bounds`, `countCheck_own` — #2996's deleted-id count check.
+* `countCheck_in_bounds`, `countCheck_own` — the deleted-id count check.
 
 Confirmed live (Rust release build of origin/main vs C `bin/macos-arm64v8-release/falkordb.so`,
 ports 18910/18911, `CACHE_SIZE 1`):
-4. **FIXED by #3262 (`361f62ac1`)** — formerly RDB-loaded graphs ignored `CACHE_SIZE`
-   (`DEFAULT_CACHE_SIZE = 25`; after `DEBUG RELOAD` Rust
-   `Cached execution: 1`, C `0`). Now every load passes `io_cache_size(rdb)`
-   (`redis_type.rs:69`, the configured value): `cache_size_on_load`.
 5. **#2537 generalised**: `GRAPH.RESTORE k <payload>` crashes Rust (SIGSEGV in
    `RM_LoadStringBuffer` via `load_string_buffer`) for any payload cut at a record boundary,
    e.g. one complete name record `\x00` + `le64(2)` + `g\0`; a cut *inside* a record returns
@@ -137,18 +127,7 @@ ports 18910/18911, `CACHE_SIZE 1`):
    Re-checked at 2c874022a: **still present** (Rust SIGSEGV in `RM_LoadStringBuffer` via
    `BufferedReader::ensure_available`; C also dies).
 
-## Re-target to origin/main 1d15bf713 (from 0f45a8685)
-* **#3286 (`bf11a2774`)** — `uuid_v4` prints `uuid_fields(t, seq)`: clock and counter in
-  separate fields. `Uuid.lean` models `uuidFields`/`uuid` anew; the old `t ^ seq` model and
-  its theorems were removed as pre-#3286 counterexamples (see bbee75955; the last revision that has them is 17ccc5412). Bug 6 fixed.
-* **#2996 (`d99861124`)** — `RoaringTreemap::decode_with_count` refuses a count whose byte
-  length overflows (`Layout.countCheck`). Bug 5 (#2537, `RM_LoadStringBuffer`) is in
-  `buffered_io.rs`, which #2996 does not touch: still open.
-* **#3250** — `rebuild_derived_matrices` now takes `node_cap = max(node_cap, saved dims)`;
-  its row stays AXIOMATISED here (GraphBLAS) and is proven in `graph_queries`
-  (`rebuild_never_shrinks`).
-
-## Re-target to 2c874022a (#3161 virtual keys as `graphmeta`, #2846 IdSpace)
+## Virtual keys as `graphmeta`, and `IdSpace`
 * `save_key_slice` (redis_type.rs:210) is `saveKeySlice`; `graph_rdb_save` (:185) is
   `rdbSave = saveKeySlice.getD whole` (same `save_main`/`save_vkey`/`save_single`);
   `graphmeta_rdb_save` (:881) is `metaSave = saveKeySlice` — it now writes the slice
@@ -156,7 +135,7 @@ ports 18910/18911, `CACHE_SIZE 1`):
   (`metaSave_stale`); `create_virtual_keys` types virtual keys `graphmeta` (`vkeyType`).
   Live (Rust 2c874022a, `VKEY_MAX_ENTITY_COUNT 10`, 100 nodes → 11 keys): Rust
   `DEBUG RELOAD` keeps `count 100, sum 5050`; the same RDB loaded by C keeps `g` in
-  `GRAPH.LIST` with 100 nodes (the #3160 symptom is gone).
+  `GRAPH.LIST` with 100 nodes.
 * `Graph::restore` now builds `IdSpace::restored(count, deleted)`; caps unchanged
   (proved in proofs/graph_queries `restore_ids`). `MvccGraph` rows here stay NOT
   COVERED/MODELLED; the validated `commit` is proved in proofs/search_concurrency

@@ -1,6 +1,6 @@
 import GraphQueries.IdContract
 /-
-# Id spaces, construction and versioning (graph.rs after #2846)
+# Id spaces, construction and versioning
 
 `Graph` keeps two `IdSpace`s (`node_ids`/`relationship_ids`, graph.rs:429/432)
 and no counter of its own. `nodeIds g`/`relIds g` reassemble one from `G`'s
@@ -462,8 +462,7 @@ theorem clampTiers_mono (len s0 s1 s2 : Nat) :
 
 /-- `NameMap::from_names` (schema.rs:76-91, #3757) builds the label (and type) index by
 `ids.entry(name).or_insert(id)` over `names.iter().enumerate()`: a name listed twice keeps
-its first position. (Before #3757 `node_labels_index` was `collect()`ed into a map, so the
-last position won.) -/
+its first position. -/
 def fromNamesIdx : List String → Nat → (String → Option Nat) → (String → Option Nat)
   | [], _, m => m
   | a :: l, i, m =>
@@ -573,10 +572,10 @@ theorem rebuildRelType_complete (g : G V) (h : TInv g) (t e s d : Nat) (ht : t <
     simp [hin, he, ht]
     exact ⟨t, by unfold TInv at h; omega, s, d, e, hm, rfl, rfl⟩
 
-/-! ### Node half of `rebuild_derived_matrices` (#3250, `2eacf0ece`; issue #3246)
+/-! ### Node half of `rebuild_derived_matrices` `node_cap.max(saved)`
 
 Decoded matrices keep the saving server's `node_cap` (up to 25% past the highest id
-under `grow_cap`), while `restore` sets `node_cap` from that id. Since #3250 the rebuild
+under `grow_cap`), while `restore` sets `node_cap` from that id. The rebuild
 takes `node_cap.max(saved)` before `resize_node_matrices`, so a load never shrinks a
 node matrix. Tensor dimensions are not modelled on `Ten`; the tensor half
 (`Tensor::resize` never shrinks) is proven in `versioned_matrix`. -/
@@ -596,7 +595,7 @@ def savedDim (g : G V) : Nat :=
 /-- `self.node_cap = self.node_cap.max(saved); self.resize_node_matrices()`. -/
 def rebuildNodeMs (g : G V) : G V := resizeNodeMs { g with nodeCap := max g.nodeCap (savedDim g) }
 
-/-- **A load never shrinks a node matrix** (#3250): the node cap only grows, and
+/-- **A load never shrinks a node matrix**: the node cap only grows, and
 the adjacency matrix, `node_labels` and every label matrix end at least as large as
 they were decoded. -/
 theorem rebuild_never_shrinks (g : G V) :

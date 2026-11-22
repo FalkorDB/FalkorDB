@@ -10,7 +10,7 @@ import FalkorParserGrammar.C.Core
 
 namespace FalkorParserGrammar.C
 
-/-! ## `Variable` and `VarKey` (ast.rs:152-262, #3302, #3890) -/
+/-! ## `Variable` and `VarKey` (ast.rs:152-262) -/
 
 /-- `Variable { alias, id, scope_id, ty }`; the type is irrelevant here. `alias` is what the
 query called it: a written name, or the parser's number for an unnamed pattern entity; `none` for

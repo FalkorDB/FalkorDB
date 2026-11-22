@@ -5,7 +5,7 @@ CREATE execution: `Runtime::create_batch` (create.rs:139), `CreateOp::new` (:102
 A batch = its active rows (`Nat → Option Val`, slot ↦ value); `write_column(alias, vals)`
 writes `vals[k]` into active row `k` (`write_scatter`, columnar `write_column` theorem).
 `Pending` is an event log. FFI-free parameters: the id-space `reserve` (proved in
-proofs/id_space: `n` fresh ids). Since #2846 it is the *graph's* batch that answers —
+proofs/id_space: `n` fresh ids). It is the *graph's* batch that answers —
 `g.node_id_space().reserve(n, &pending.created_nodes)` (create.rs:158) and
 `g.relationship_id_space().reserve(n, &pending.taken_relationship_ids)` (:280) — and the
 query lends only what it still holds (`reserveN`/`reserveR` read the log: the created,

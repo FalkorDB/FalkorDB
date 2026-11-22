@@ -1,7 +1,7 @@
 /-
 # push_filters_down on a plan tree with write effects and scope-blind ids
 
-Gap closed 2026-10-20 (#748, #997, #3352; #2556 in the last section,
+Gap closed 2026-10-20 (#2556 in the last section,
 `select_scan_node`'s chain rebuild, property `KeepsFiltersBound`). The push-down theorems in `Basic`
 compare result rows only, on list operators with no graph state, and route by
 `(id, scope)` (`Passes.routesScoped`). Main routes by bare ids collected from a
@@ -17,16 +17,16 @@ computes it, so both families are visible.
 | `run` | the runtime ops, eager: `apply.rs:102-340` (right branch re-run per left row with `Argument` = that row), `optional.rs:91-292` (one null row when the branch is empty), `aggregate.rs:288` (no keys → one row even on empty input), `create.rs:101-160`, `merge.rs:67-300` (match else create), `filter.rs:48-80` (`Basic.filterRows`), `unwind.rs`, `node_by_label_scan.rs`, `cond_traverse.rs` (bound destination) |
 | `gv` | `GetVariables::get_variables` (`runtime/runtime.rs:212-330`): `Aggregate` adds `names` and keeps walking, `Project` adds its outputs and `break`s |
 | `branchOut` | `branch_output_variables` (`optimizer/push_filters_down.rs:59-92`; the model's `Project`/`Aggregate` carry no copies, so `include_copies` makes no difference) |
-| `excluded` | the child exclusion list (`push_filters_down.rs:181-200`; before #3582 without the write kinds) |
-| `isWriteOp`, `locked` | `is_write` (:86-99) and `holds_write`/`locked` (:213-223, used at :306), #3582 (`Cfg.pr3582`) |
+| `excluded` | the child exclusion list (`push_filters_down.rs:181-200`) |
+| `isWriteOp`, `locked` | `is_write` (:86-99) and `holds_write`/`locked` (:213-223, used at :306), `Cfg.pr3582` |
 | `pushAt` | one Filter's routing (`push_filters_down.rs:138-364`): grandchild variable sets (:176-185), Case 1 (:196-201), Case 2 inherited (`inh`, :210-244), augmentation of `Argument` subtrees (:247-257), the `all` test over ids (:264-276) |
-| `childInh` | Case 2's ancestor walk, top-down (:288-341): below an `Apply`'s right child the left branch's visible ids (`bv`, `branch_visible_variables` :99-119, #3281; before it `bvPre3281`, #2981), below its left child nothing, below `Merge` nothing; since #3281 (`Cfg.walk3281`) a two-child `Optional` (`optApply`) ends the walk like an `Apply` |
+| `childInh` | Case 2's ancestor walk, top-down (:288-341): below an `Apply`'s right child the left branch's visible ids (`bv`, `branch_visible_variables` :99-119; the earlier `bvPre3281` is kept as history), below its left child nothing, below `Merge` nothing; with `Cfg.walk3281` a two-child `Optional` (`optApply`) ends the walk like an `Apply` |
 | `sweep`, `pushFilters` | the restart loop (:103-370), as a top-down sweep that follows each pushed filter |
-| `Cfg.main` | before #3582: ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs:92-110`), no write barrier |
-| `Cfg.pr3281` | Rust at 21a34f5a3 (#3281): `Cfg.pr3582` with the new walk and `bv` |
-| `Cfg.pr3582` | Rust at 7c04fa598 (#3582): ids only, write kinds excluded, siblings of a writing branch locked; the CP split's `!holds_write` guard (:322) is not modelled (no CP split here) |
+| `Cfg.main` | ids only (`collect_expr_variables`/`collect_subtree_variables`, `optimizer/mod.rs:92-110`), no write barrier |
+| `Cfg.pr3281` | Rust at 21a34f5a3: `Cfg.pr3582` with the new walk and `bv` |
+| `Cfg.pr3582` | Rust at 7c04fa598: ids only, write kinds excluded, siblings of a writing branch locked; the CP split's `!holds_write` guard (:322) is not modelled (no CP split here) |
 
-The property each bug violates is `EffectSound`: a rewrite keeps the rows
+The property the old behaviour violates is `EffectSound`: a rewrite keeps the rows
 **and** the graph the query leaves behind. `RowSound` is the old criterion,
 rows only; `bug748_rows_only_blind` / `bug997_rows_only_blind` show it cannot see
 the write that is skipped. `RoutesBound` is the syntactic property behind
@@ -711,12 +711,11 @@ theorem bug3352_fixed :
     pushFilters .fixed plan3352 = plan3352 ∧
     run [] (pushFilters .fixed plan3352) g3352 = run [] plan3352 g3352 := ⟨rfl, rfl⟩
 
-/-! ## #3582: write operators excluded, siblings of a write locked
+/-! ## Write operators excluded, siblings of a write locked
 
-The PR keeps main's id-only routing (`Cfg.pr3582`) and adds the write lock.
-#748 and #997 are fixed: the filter lands on the write-bearing branch's output,
-never on the rows that feed it. #3352 is a routing bug with no write, untouched by the lock;
-#2981 fixes it (`pr3582_3352_fixed`). -/
+`Cfg.pr3582` keeps id-only routing and adds the write lock: the filter lands on the write-bearing
+branch's output, never on the rows that feed it. #3352 is a routing bug with no write, untouched by the
+lock (`pr3582_3352_fixed`). -/
 
 /-- At an `Apply` whose right branch writes, the left branch is never filtered:
 the Filter either stays or goes onto the right branch only. -/
@@ -771,11 +770,11 @@ theorem pr3582_3352_fixed :
     run [] (pushFilters .pr3582 plan3352) g3352 = .ok ([[(nOut, .int 1), (eOut, .int 1)]], g3352) :=
   ⟨rfl, rfl, rfl⟩
 
-/-! ## #3281: the new `branch_visible_variables` and a two-child `Optional` ends the walk
+/-! ## `branch_visible_variables` and a two-child `Optional` ending the walk
 
-`Cfg.pr3281` is the Rust of 21a34f5a3: #3582's lock, and Case 2 inherits the new `bv`
+`Cfg.pr3281` is the Rust of 21a34f5a3: the write lock, and Case 2 inherits `bv`
 and stops at a two-child `Optional`. One Filter's routing (`pushAt`) is unchanged, so
-every #3582 theorem about `pushAt` carries over. -/
+every `Cfg.pr3582` theorem about `pushAt` carries over. -/
 
 theorem pushAt_walk_irrel (cfg : Cfg) (b : Bool) :
     pushAt { cfg with walk3281 := b } = pushAt cfg := rfl

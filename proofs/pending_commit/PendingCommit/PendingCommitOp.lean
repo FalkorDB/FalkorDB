@@ -8,26 +8,26 @@ import RuntimeCore.Accessors
   staged label sets, then "created ⇒ no committed label", then the matrix; when
   created nodes carry no committed labels (fresh ids; reclaimed ids carry
   tombstones) that is exactly `Labels.overlay`, the query's own view.
-* `scan_ok` — the `seen` map scan of a UNIQUE check as it was before #3334
+* `scan_ok` — the `seen` map scan of a UNIQUE check, the label-scan reference
   (cab3cf192 :1412-1429, :1485-1502): passes iff no two distinct entities with a full
   composite key share it.
 * `checkNode_spec`, `check_spec` — `check_node_constraint` /
-  `check_edge_constraint` before #3334: MANDATORY passes iff every affected member
+  `check_edge_constraint` as the label-scan reference: MANDATORY passes iff every affected member
   has every property; UNIQUE iff, when some affected member participates, the
   label's (type's) scan passes. Membership of an edge created in this batch
-  comes from `created_rel_types`. **Since #3334 (4ace60ec7)** UNIQUE goes through
-  `unique_violated` (index lookup per member, `query_for`/`lookup` since #3547): `UniqueIndex.lean`, whose
+  comes from `created_rel_types`. UNIQUE goes through
+  `unique_violated` (index lookup per member, `query_for`/`lookup`): `UniqueIndex.lean`, whose
   `uniqueViolated_agrees` shows it equals this label-scan spec under the
   constraint's pre-commit invariant; `check` stays as that reference spec, and
   `UQ.checkMandatory_eq_old` shows MANDATORY is unchanged.
 * `affected_spec`, `enforce_spec` — `enforce_constraints` (:1500): affected =
   (created ∪ staged-attr ∪ staged-label nodes) \ deleted, edges likewise; the
-  query fails iff some constraint that is not FAILED (OPERATIONAL or, since
-  #3854, UNDER CONSTRUCTION) has a failing check (`enforce_operational`,
+  query fails iff some constraint that is not FAILED (OPERATIONAL or
+  UNDER CONSTRUCTION) has a failing check (`enforce_operational`,
   `enforce_underConstruction`, `enforce_skips_failed`).
 * `commit_spec` — `Pending::commit` (:1367), graph operations uninterpreted
   (`GOps`): the statistics it adds are `|created_nodes|`,
-  `|created_rel_types|`, `staged_labels_removed + Σ|remove_labels|` (#3459), the attribute writers' counts,
+  `|created_rel_types|`, `staged_labels_removed + Σ|remove_labels|`, the attribute writers' counts,
   `|deleted_nodes|` and the implicit + actually-deleted explicit edges;
   `deleted_relationships` becomes the implicit ∪ actually-deleted edges, the
   explicit set is handed to both deleters, and the batch's index documents are
@@ -556,7 +556,7 @@ theorem stCancelTypes_mono (o : GOps G) (reg : G → Nat → Prop)
   | nil => exact h
   | cons t ts ih => exact ih { c with g := o.registerType c.g t } (hmono _ _ _ h)
 
-/-! ## `node_has_changes` (#3464, pending.rs:784)
+/-! ## `node_has_changes` (pending.rs:784)
 
 The O(1) guard the runtime uses to skip building the `get_node_labels` /
 `get_node_attrs` copies: true iff the node is a key of one of the four staged maps

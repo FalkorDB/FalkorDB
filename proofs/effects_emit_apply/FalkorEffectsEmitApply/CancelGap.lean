@@ -1,48 +1,46 @@
 import FalkorEffectsEmitApply.Emit
 import FalkorEffectsEmitApply.Liveness
 /-!
-# Emit then apply, with cancellation: replica divergences #3447 (open) and #3448 (fixed by #3459)
+# Emit then apply, with cancellation: replica divergences
 
 `Emit.forEachRecord` (`for_each_record`, emit.rs:323-375 on 5e475e6c9) and
 `Live.applyAll` (the checked arms of `apply_record`) were proven separately;
 nothing related what the master emits to what a replica *at the master's
-pre-segment state* accepts. Two properties, both refuted on main:
+pre-segment state* accepts. Two properties:
 
-* **`RelIdsCovered`** (#3447) — every relationship id the master allocated in
+* **`RelIdsCovered`** — every relationship id the master allocated in
   the segment (created or cancelled) is named by some `CREATE_EDGE`, so the
   replica's relationship `IdSpace` ends with the same contiguous range
   (`IdSpace::verify`, id_space.rs:773-821, refuses a hole above the entry
   bound). `digest_cancelled` (emit.rs:451) skips a cancelled edge whose type has
-  no id, and a type whose every edge was cascaded away is never registered
-  (`Pending::commit` registers only `created_rels_by_type` keys via
-  `create_relationships_bulk` → `get_type_id_mut`, pending.rs:1236-1249 (then; now `Pending::commit`, pending.rs:1367),
-  graph.rs:2710/:1346; proofs/pending_commit `bug3447_cascade_drops_type_key`).
-  `pre3461_bug3447_cancelled_edge_id_gap` (fixed by #3461, which registers every
-  cancelled type at commit: `relIdsCovered_after_commit`): live repro `CREATE ()-[:EXISTING]->()` then
+  no id, so `Pending::commit` (pending.rs:1367) must register every cancelled type
+  (`relIdsCovered_after_commit`; proofs/pending_commit `bug3447_cascade_drops_type_key`).
+  `pre3461_bug3447_cancelled_edge_id_gap` is the historical counterexample over the
+  commit that registered only `created_rels_by_type` keys: live repro `CREATE ()-[:EXISTING]->()` then
   `CREATE (a)-[r1:NEW_TYPE]->(b), (c)-[r2:EXISTING]->(d) DETACH DELETE a`; the
   payload carries `CreateEdge{ids:[2]}` and nothing for 1, the replica's verify
   refuses (`verifyRange`), the master's passes. `relIdsCovered_of_registered`:
   with every created and cancelled type registered, the property holds for every
   `Pending`.
-* **`ReplayApplies`** (#3448) — the emitted stream, translated to apply records
+* **`ReplayApplies`** — the emitted stream, translated to apply records
   (`toLive`), applies on the replica. `digest_labels(&p.remove_labels, None, …)`
   (emit.rs:370) runs before `digest_cancelled` (:374) and does not skip created
-  or cancelled nodes; `delete_pending_node` keeps the node's `remove_labels`
-  (before #3459; proofs/pending_commit `fixed3448_cancelled_node_clears_remL` now); the
+  or cancelled nodes, so `delete_pending_node` must clear the node's `remove_labels`
+  (proofs/pending_commit `fixed3448_cancelled_node_clears_remL`); the
   `RemoveLabels` arm calls `require_live` (apply.rs:387-388).
   `bug3448_removeLabels_before_create_refused`: `CREATE (n:Foo) REMOVE n:Foo
-  DELETE n` emits `AddLabel Foo, RemoveLabels [0], CreateNode [0], DeleteNode [0]`,
-  refused with `NotLive node 0`; without the stale entry the same segment applies
-  (`agree3448_without_stale_remL`). *Fixed by #3459*: `remove_node_labels` no
-  longer stages a removal of a label that was only staged, and `delete_pending_node`
-  clears `remove_labels`; the segment is now `p3459` and replays
+  DELETE n` with the stale entry emits `AddLabel Foo, RemoveLabels [0], CreateNode [0], DeleteNode [0]`,
+  refused with `NotLive node 0`; without it the same segment applies
+  (`agree3448_without_stale_remL`). `remove_node_labels` does not
+  stage a removal of a label that was only staged, and `delete_pending_node`
+  clears `remove_labels`; the segment is `p3459` and replays
   (`fixed3448_replay_applies`). `bug3448_removeLabels_before_create_refused` stays as
-  the emitter's behaviour on the pre-#3459 `Pending`.
+  the emitter's behaviour on the old `Pending`, a historical counterexample.
 -/
 namespace FalkorEA.CancelGap
 open FalkorEA
 
-/-! ## #3447: relationship ids -/
+/-! ## Relationship ids -/
 
 /-- `IdSpace::verify` (id_space.rs:773-821), the hole half: the ids taken at or
 above `entry` are exactly `[entry, entry + k)`. -/
@@ -219,7 +217,7 @@ theorem fixed3447_cancelled_edge_id_gap :
     verifyRange 1 ([0] ++ edgeIds (forEachRecord pGap ⟨[], typesAfterCommit ["EXISTING"] pGap, []⟩)) = true :=
   ⟨by decide, relIdsCovered_after_commit _ _ _ _, by decide⟩
 
-/-! ## #3448: a label removal on a cancelled node -/
+/-! ## A label removal on a cancelled node -/
 
 /-- Opcode records as apply records (`apply_record`, apply.rs); schema records
 touch no entity (their own checks are `applyAddSchema_eq_applyAddName`); an

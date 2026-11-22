@@ -18,10 +18,7 @@ Theorems: the pending list stays sorted/unique under any sequence of writes
 and reads back the last write; commit then stores exactly what the query read
 (read-your-writes survives commit), for existing and for new entities.
 
-The last section models `SET n = m` (`clear_*_attrs_for_replace`, `ops/set.rs:125-148`, and the source arms of `set_inner`, set.rs:151). Before #3524
-(af45ca776) only the *Map* source cleared the staged attributes; the Node and Relationship
-sources, and every relationship-target `SET r = …`, kept attributes staged earlier in the same
-query (#2776). Now every branch
+The last section models `SET n = m` (`clear_*_attrs_for_replace`, `ops/set.rs:125-148`, and the source arms of `set_inner`, set.rs:151). Every branch
 calls `clear_{node,relationship}_attrs_for_replace` (`replaceFrom`); `replace_reads_src`
 and `fixed3524_replace_clears_staged` are the correctness theorems.
 -/
@@ -197,7 +194,7 @@ theorem read_your_writes_new (ws : List Entry) (k : Nat) :
 non-null staged pairs (attribute_store.rs:1371). -/
 theorem commitNew_count (pend : List Entry) : (commitNew pend).length = refSet pend := rfl
 
-/-! ## `SET n = m`: replace clears the staged attributes (#2776, fixed by #3524) -/
+/-! ## `SET n = m`: replace clears the staged attributes -/
 
 /-- `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace`
 (ops/set.rs:125-148) then the source's entries (the node-target and relationship-target arms of

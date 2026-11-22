@@ -1,9 +1,9 @@
 import FalkorOpsApply.Delete
 /-
-DELETE after #2846: the unwinds can fail.
+DELETE: the unwinds can fail.
 
 `delete_pending_node(id, g)?` (delete.rs:430-434) and
-`remove_pending_relationships_for_node(id, g)?` (:276-280, :471-475) now hand the
+`remove_pending_relationships_for_node(id, g)?` (:276-280, :471-475) hand the
 unwound ids back to the graph's id space themselves and propagate its refusal
 (`Graph::cancel_*_id`, graph.rs:1549/:1562) with `?`. The two hooks are:
 

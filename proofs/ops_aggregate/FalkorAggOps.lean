@@ -25,22 +25,22 @@ Repros: the `bug_*` / `agrees_*` Rust tests named below live in `graph/tests/lea
 which is kept locally and NOT committed (see README); the bug entries below are also reproduced as
 Cypher against a live server. Run locally with
 `cargo test -p graph --test lean_ops_aggregate -- --nocapture` (the `bug_*` tests for open findings
-fail, the 3 `agrees_*` pass; `bug_list_literal_of_aggregates_collapses` passes since #2951).
+fail, the 3 `agrees_*` pass; `bug_list_literal_of_aggregates_collapses` passes).
 
 ## Model (here | there, all under graph/src/runtime/)
 | Lean | Rust |
 |---|---|
 | `skipFold`, `rowDriver`, `batchDriver` | kernels' null-skipping loop; `run_agg_expr` ops/aggregate.rs:998 / `fold` :243; keyless fast path `consume_input_vectorized` :523-694 |
 | `countBatch`/`countStarBatch`, `sumBatch`, `collectBatch`, `mmBatch`, `avgBatch`+`aboutToOverflow`+`finalizeAvg`, `stdevBatch`+`finalizeStdev`, `pctFold` | functions/aggregation.rs:350, :394, :371, :421/:498, :451/:338/:599, :565/:683, :531 (8621212fc) |
-| `maxScalar` | aggregation.rs:119 (scalar max body; NaN comparisons ignored since #2917) |
+| `maxScalar` | aggregation.rs:119 (scalar max body; NaN comparisons ignored) |
 | `limitOp`, `skipOp` | ops/limit.rs:52, ops/skip.rs:50 |
 | `ins`/`isort`, `rustStep`, `semStep` | ops/sort.rs:302 `build_full_sort`, :403 `build_top_k`, :504 `next` (cap = k+s) |
 | `project_flatten`, `unwindOne`/`chunks` | ops/project.rs:54, ops/unwind.rs:90 + batched emitter |
 | `groupInsert`/`groupAll`/`lookupG`, `keylessGroups` | ops/aggregate.rs `GroupMap` :65, per-row :710/:972, keyless pre-insert :533-540/:891-898 |
 | `dedupBy`, `distinctCountBatches` | ops/distinct.rs:62; apply.rs:283 dedupers clear |
-| `GroupId.insertKey`/`gid`/`dcgIdGo` (history `dcgGo`/`distinctCountGrouped`: key hash, removed by #2977) | DISTINCT key (node, group id), the id = insertion index (`next_group_id` aggregate.rs:709/:970, `entry.2` :728/:976, `value_dedupers` :746, eval.rs:854) |
-| `evalStack` (`compile`/`run`) vs `evalRef` | eval.rs:883-893 `eval_compound` aggregate arm pushes and `continue`s (289c201fe); the old model was the `return match finalize` at eval.rs:886-889 before #2951 (removed in bbee75955; the last revision that has them is 17ccc5412) |
-| `finishEval`/`finishTail`/`finishGroup` (`preFinishGroup`) | `AggregateOp::next` per-group closure aggregate.rs:1162-1228: combined :1163-1174, outputs :1175-1191, accumulators unbound :1192-1201 BEFORE the key aliases/key row :1202-1217 (#3522; the old order's counterexample was removed in bbee75955; the last revision that has them is 17ccc5412), outputs re-bound :1218-1226 |
+| `GroupId.insertKey`/`gid`/`dcgIdGo` (history `dcgGo`/`distinctCountGrouped`: key hash) | DISTINCT key (node, group id), the id = insertion index (`next_group_id` aggregate.rs:709/:970, `entry.2` :728/:976, `value_dedupers` :746, eval.rs:854) |
+| `evalStack` (`compile`/`run`) vs `evalRef` | eval.rs:883-893 `eval_compound` aggregate arm pushes and `continue`s (289c201fe) |
+| `finishEval`/`finishTail`/`finishGroup` (`preFinishGroup`) | `AggregateOp::next` per-group closure aggregate.rs:1162-1228: combined :1163-1174, outputs :1175-1191, accumulators unbound :1192-1201 BEFORE the key aliases/key row :1202-1217 (the earlier order is `preFinishGroup`), outputs re-bound :1218-1226 |
 | `Bitmap` | batch.rs:89-167 `NullBitmap` (`BitVec 64` words) |
 A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = `List (List α)`.
 
@@ -54,11 +54,11 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
   value_order's `cmpV`, `maxV_spec` states what it returns, and on NaN-free non-null scalars the three
   premises are proved (`anti_scalar`, `nanFlag_scalar`, `nullFlag_scalar`), giving `maxV_eq_batch`. A
   list with a nested NaN breaks them (`compare_list` drops the flag); `maxScalar_eq_batch_nan` checks
-  one flagged scalar NaN (#2917 made both ignore NaN comparisons). The scalar body is dead code
+  one flagged scalar NaN (both ignore NaN comparisons). The scalar body is dead code
   (`batch_agg` is always preferred); `max_batch` is covered by `minmax_hom`.
 * `finalizeStdev_small/_big`, `finalizeStdevp_*` (divisors n-1 / n), `avgStep_switch_iff`
   (`about_to_overflow` drives the incremental-averaging switch), `StreamOps.pcNew_spec`,
-  `srcPos_fallback`, `maskOf_lt` (procedure_call.rs:59, #3303: an unnamed yield reads its yield position).
+  `srcPos_fallback`, `maskOf_lt` (procedure_call.rs:59: an unnamed yield reads its yield position).
 * Rows for batch.rs (columnar lanes, `proofs/columnar`) and for the scalar aggregate bodies
   (`proofs/value_math` `AggScalar`) are not repeated in `COVERAGE.tsv`: they are `#` comments there, the
   functions are PROVEN by those projects.
@@ -75,42 +75,6 @@ A batch = its list of ACTIVE rows (`active_indices`, batch.rs:1204); a stream = 
 1. apply.rs:283 clears runtime-global `value_dedupers` after each CALL{} run, wiping an outer
    aggregate's DISTINCT state per batch. `UNWIND range(1,3000) AS i CALL { WITH i RETURN i % 2 AS v
    LIMIT 1 } RETURN count(DISTINCT v)` C 2, Rust 6. Test `bug_count_distinct_across_call_subquery_overcounts`.
-2. **FIXED by #2977 (c652e505e; closes #2969), `GroupId.distinct_by_group_id_exact`.** Was: aggregate.rs:724/:968 at ca36bfa15: per-group DISTINCT keyed by FxHash of the group key, so colliding groups
-   share one seen-set (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Keys [0,0] and [1,-1452335207727870361]: C c=1,1; Rust c=1,0.
-   (Related to FINDINGS #6 but a different site.) Test `bug_grouped_count_distinct_shares_state_on_group_hash_collision`.
-3. **FIXED by #2912 (b033aecc6).** Was: aggregation.rs:615/:645 sorted with
-   `partial_cmp().unwrap_or(Equal)`, not transitive with NaN (counterexample removed in bbee75955; the last revision that has them is 17ccc5412),
-   so std sort panicked and the server crashed (C returns nan). Main sorts by `sort_cmp_f64`
-   (:625/:651), a total preorder (`pctCmp_total`). Test `bug_percentile_with_nan_panics`.
-4. **FIXED by #3007 (1d3b029e1, closes #2980).** Was: aggregation.rs:539 (and :253) at 289c201fe
-   overwrote the percentile on every row, so the last one won (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). `percentileDisc(x, x/10.0)` over 1..10: C 1, Rust 10. Main stores it only
-   while the collected list is empty (aggregation.rs:552-555, :257-260): `pct_first_wins`,
-   `pct_stable`, `pct_repro_first_row`. Test `bug_percentile_row_dependent_argument_last_wins`;
-   main's flow test `test_row_dependent_percentile_uses_first_row`.
-5. **FIXED by #2951 (0912f4500, closes #2945).** Was: eval.rs:886-889 (before #2951) an aggregate inside a list literal
-   `return`ed out of the stack machine (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). `[min(x),max(x)]` C [1,2], Rust 2; `[count(x),5]` C [2,5], Rust 2;
-   `size([count(x)])` C 1, Rust type error. Main pushes the result and `continue`s (eval.rs:883-893):
-   `evalStack_eq_evalRef`, `evalStack_list_of_aggs`, `main_min_max_list`, `main_count_lit_list`,
-   `main_size_singleton_agg`. Test `bug_list_literal_of_aggregates_collapses`.
-
-**Re-target to 256ab4d3f (2026-11-22).** Since 43936bab9 the Rust of this project changed only cosmetically
-(`filter::eval(&self)`, `percentile_batch` let-else, `commit.rs`) and `ProcedureCallOp::new` reads
-`output.name()` (#3303; `srcPosOf` already took `Option String`). New: `MaxScalar.lean` instantiates
-`maxScalar_eq_batch` for `Value` (the `max` row is PROVEN, no longer CONDITIONAL); `finalizeStdev_*`,
-`finalizeStdevp_*`, `avgStep_switch_iff`, `pcNew` theorems close the MODELLED / NOT COVERED rows. #3035
-(`op.per_origin = batch.len() > 1` in `set_argument_batch`) is a `batch.rs` row owned by `proofs/columnar`.
-
-**Re-target to 8621212fc (2026-10-20): W2-agg-4 fixed by #3007.** `pctStep` now stores the
-row's percentile only while no value has been collected, as aggregation.rs:552-555 does at
-8621212fc; `pct_first_wins` proves the aggregate's percentile is the first non-null row's (leading
-nulls skipped) and `pct_stable` that no later row changes it. The old overwrite model and its counterexample were removed in bbee75955 (the last revision that has them is 17ccc5412).
-COVERAGE.tsv aggregation.rs lines re-pinned (+3/+6 after :254/:549).
-
-**Re-target to 289c201fe (2026-10-20): W2-agg-5 fixed by #2951.** `evalStack` is now a postfix
-stack machine (`compile`, `run`, `step`) whose aggregate leaf pushes its finalized value, as
-eval.rs:883-893 does at 289c201fe; `evalStack_eq_evalRef` proves it equals the recursive reference
-on every modeled expression (aggregate leaves, literals, lists), and `evalStack_list_of_aggs` that a list literal of finalized aggregates yields
-one element per item. The old `return` model and its counterexample were removed in bbee75955 (the last revision that has them is 17ccc5412).
 
 ## Gaps / assumptions
 Sort order inside `SortCmp` is a parameter `cv`; on main it is `Value::sort_cmp`, whose laws are
@@ -121,27 +85,24 @@ Floats: no IEEE reasoning in the aggregates; the avg/sum/stdev overflow behaviou
 builders, classify_*, concat, gather) are not modelled. The scalar aggregate bodies are dead code
 because `batch_agg` is always preferred.
 
-**CONDITIONAL rows discharged (re-target to 4a4f2a72f, 2026-10-12).** `gkHash_consistent`
-(`GroupKey::hash`) took "`Value`'s Hash agrees with the key equality" as `hc`; #2917 (7fdf06a0e)
-made `GroupKey::eq` `sort_cmp == Equal` (aggregate.rs:99) and canonicalised NaN/f32 hashing, and
+`gkHash_consistent` (`GroupKey::hash`) takes "`Value`'s Hash agrees with the key equality" as `hc`;
+`GroupKey::eq` is `sort_cmp == Equal` (aggregate.rs:99) with NaN/f32 hashing canonicalised, and
 `Discharge.hc_main` proves `hc` from value_order `Main.main_hash_consistent`
 (`gk_hash_consistent_main`; `veqMain_equiv`: the key equality is an equivalence).
-`cmpKey_lawful`/`heapCmp_swap`/`heapCmp_refl` took `Lawful cv`; with #2912 (b033aecc6) `cv` is
+`cmpKey_lawful`/`heapCmp_swap`/`heapCmp_refl` take `Lawful cv`; `cv` is
 `sort_cmp` and `Discharge.lawful_main` proves it from value_order `Main.scMain_total`
 (`cmpKey_lawful_main`, `cmpKey_trans_main`, `heapCmp_main`). The sort.rs `cmp_key`/`cmp`/`cmp`
-and aggregate.rs `hash` rows are PROVEN again. New fn `tiebreak` (sort.rs:237):
+and aggregate.rs `hash` rows are PROVEN. Also `tiebreak` (sort.rs:237):
 `tiebreak_strict`, `tiebreak_swap`.
 
-## Re-target to ca36bfa15: #3150 is fixed (#3522)
-`AggregateOp::next` now unbinds the accumulators (aggregate.rs:1192-1201) before it writes the key
-aliases and the key row (:1202-1217), so a null key sharing an accumulator's slot id stays bound.
-`finishGroup` is that order (`finishEval`, then unbind, then `finishTail`, then the outputs); the old
-order is `preFinishGroup` (with
-`PreKeysBound`); its counterexample was removed in bbee75955 (the last revision that has them is 17ccc5412). New: `fixed3522_null_key_bound` (`RETURN null AS x, count(1)`),
+## `AggregateOp::next` unbinds accumulators before it writes the keys
+`finishGroup` is `finishEval`, then unbind (aggregate.rs:1192-1201), then `finishTail` (the key
+aliases and the key row, :1202-1217), then the outputs, so a null key sharing an accumulator's slot id stays bound.
+The earlier order is `preFinishGroup` (with `PreKeysBound`), kept as a historical counterexample.
+`fixed3522_null_key_bound` (`RETURN null AS x, count(1)`),
 `keysBound_swap_3522` (`WITH 1 AS a, 2 AS b RETURN b AS x, a AS y, count(*)`), and the general
 `finishGroup_keys_bound`/`keysBound_main`: for any keys/accumulators/evaluator, with no key name an
-output name and the group evaluating, `KeysBound` holds on main. COVERAGE.tsv line pins refreshed
-(`unbind_agg_accumulators` :1251; `hash_u64` was removed by #2977).
+output name and the group evaluating, `KeysBound` holds on main (`unbind_agg_accumulators` :1251).
 
 ## Gap closed 2026-10-20: binder slot ids across an aggregating WITH/RETURN (`SlotReuse.lean`)
 The aggregate model kept outputs, accumulators and pre-projection aliases in separate abstract
@@ -173,38 +134,18 @@ leak for a one-child aggregate (`one_child_not_unbound`); output bindings win (`
 `next` emits every group once, 1024 per batch (`drain_all`); an accepted LOAD CSV URL only reaches
 public addresses (`validateRemote_spec`) and never more than the byte limit (`erRun_le`); `file://`
 paths stay inside the import folder (`resolvePath_spec`).
-Fixed by #2912 (b033aecc6): ORDER BY over floats with NaN crashed the server (float lane
-`unwrap_or(Less)`); main's lane is `sort_cmp_f64` (sort.rs:364; proofs/columnar `compareAt_spec`).
-## Re-target to 5e475e6c9: #3443 is fixed (#3458)
-`http_config` (load_csv.rs:223-234) now sets `https_only(true)` and `max_redirects(0)`, and
-`open_csv_records` (:357-) turns a 3xx reply into the error "LOAD CSV does not follow redirects"
-(:388-399), as C does. `LoadCsvRedirect.httpCfgMain` is that config and `loadRemote` that arm;
-the old config/arm and their refutations were removed in bbee75955 (the last revision that has them is 17ccc5412). New:
-`fixed3443_eachHopValidated` (main's `loadRemote` satisfies `EachHopValidated` for every DNS
-answer and server) and `fixed3443_redirect_is_error`; `noRedirect_single` now holds for either
-`https_only`. #3436/#3462 only shift line pins (load_csv.rs `next` 260/458, `new` 328).
+ORDER BY over floats with NaN: the float lane is `sort_cmp_f64` (sort.rs:364; proofs/columnar `compareAt_spec`).
 
-## Gaps closed 2026-10-22 (#3443, #3453; b84473a7f)
-**#3443 (`LoadCsvRedirect.lean`).** `LoadCsv.lean` treated a remote LOAD CSV as one request to the
-validated URL. The ureq 3.4.2 agent (load_csv.rs:369-378) follows redirects: `http_config` (:217-225)
-sets only timeouts, so `max_redirects = 10`, `https_only = false`; `PinnedResolver::resolve`
-(:193-214) ignores the URI. `fetch` models the request loop. Property `EachHopValidated` (every
-connection is https, to an address validated for its own host) is refuted:
-`bug3443_redirect_uses_first_host_ip` (cross-host redirect connects to the first host's IP; live: TLS
-name mismatch), `bug3443_redirect_downgrades_to_http` (live: `http status: 400`). Fix property:
-`fixed_eachHopValidated` (https_only + per-request validate-and-pin, any server, any budget);
-`noRedirect_single` (C: no redirects followed). `pinned_spec`/`httpConfig_spec` stand but cover only the
-address bound / OnceLock idempotence (COVERAGE reasons say so). `V4`/`IP` now derive `DecidableEq`.
-**#3453 (`IncludePendingExact.lean`).** `includePending_spec` proved each phase against whatever lists
-it is handed; composed with `get_pending_nodes_with_labels` (pending.rs:1040-1055: `set_labels` only,
-no deleted filter), `deleted_node` (:772, keeps `set_labels`) and `stage_node_labels` (:661, reached
-from set.rs:403 without a committed-label check), property `IncludePendingExact` (duplicate-free, exactly
-the live nodes whose effective labels contain the pattern) is refuted by the three live repros:
-`bug3453_yields_deleted_node`, `bug3453_duplicate_row`, `bug3453_misses_split_multilabel`. Fix property:
-`includePendingFixed_exact` (Phase 2 filtered by liveness/effective labels, minus Phase 1's nodes).
-**Fixed by #3467 (a477d9aa3)**: `get_pending_nodes_with_labels(label_ids, g)` returns the live nodes that gain a
-pattern label, and Phase 1 skips them (`extra_nodes`). `IncludePendingExact.lean` now models that code
+## LOAD CSV redirects and IncludePending (`LoadCsvRedirect.lean`, `IncludePendingExact.lean`)
+**`LoadCsvRedirect.lean`.** `fetch` models the agent's request loop. `http_config` (load_csv.rs:223-234) sets
+`https_only(true)` and `max_redirects(0)`, and `open_csv_records` (:357-) turns a 3xx reply into the error
+"LOAD CSV does not follow redirects" (:388-399), as C does. `httpCfgMain` is that config and `loadRemote` that arm:
+`fixed3443_eachHopValidated` (`loadRemote` satisfies `EachHopValidated` for every DNS answer and server),
+`fixed3443_redirect_is_error`, `noRedirect_single`. `pinned_spec`/`httpConfig_spec` cover only the
+address bound / OnceLock idempotence (COVERAGE reasons say so).
+**`IncludePendingExact.lean`.** `get_pending_nodes_with_labels(label_ids, g)` returns the live nodes that gain a
+pattern label, and Phase 1 skips them (`extra_nodes`). The file models that code
 (`pendingWith g`, `includePendingMain` with `childRows … extra`, `StreamOps.endChild`) and proves
-`includePendingMain_exact`; the refutations are replaced by `fixed3453_deleted_node`, `fixed3453_duplicate_row`,
+`includePendingMain_exact`; `fixed3453_deleted_node`, `fixed3453_duplicate_row`,
 `fixed3453_split_multilabel`.
 -/

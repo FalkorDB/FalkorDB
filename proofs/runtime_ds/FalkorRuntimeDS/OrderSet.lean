@@ -7,7 +7,7 @@ and returns the old one, keeping its slot.
 
 | here | there |
 | --- | --- |
-| `List α`        | `struct OrderSet<T> { vec: Vec<T> }` (orderset.rs:22); `from_vec` (orderset.rs:42) drops later duplicates since #2905 (`OrderSetExtra.fromVec`) |
+| `List α`        | `struct OrderSet<T> { vec: Vec<T> }` (orderset.rs:22); `from_vec` (orderset.rs:42) drops later duplicates (`OrderSetExtra.fromVec`) |
 | `insertS`       | `OrderSet::insert` (orderset.rs:54) |
 | `removeS`       | `OrderSet::remove` (orderset.rs:68) — `position` then `Vec::remove` |
 | `containsS`     | `OrderSet::contains` (orderset.rs:91) |
@@ -237,10 +237,7 @@ end Props
 /-! ## Counterexamples
 
 * `containsS_removeS` needs `Nodup`: with a duplicate, `remove` drops only the
-  first copy. Before #2905 `from_vec` did not deduplicate, so it could build
-  such a set (counterexample removed in bbee75955; the last revision that has them is 17ccc5412; Rust then:
-  `graph/tests/lean_runtime_ds.rs::orderset_from_vec_duplicates`). Since #2905
-  it drops later duplicates in every build (`OrderSetExtra.fromVec_nodup`,
+  first copy. `from_vec` drops later duplicates in every build (`OrderSetExtra.fromVec_nodup`,
   `containsS_removeS_fromVec`), so every constructor yields a `Nodup` list.
 * The derived `PartialEq` is list equality, so `{a, b} ≠ {b, a}` — unlike
   `OrderMap`, whose `==` ignores order (`OrderMapModel.eqM_iff_perm`). -/

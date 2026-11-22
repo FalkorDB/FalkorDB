@@ -1,16 +1,15 @@
 import FalkorCowBTree.Bugs
 
 /-!
-# The batch paths after #2278 (3597b3a82): routing fix and `remove_batch`
+# The batch paths: routing and `remove_batch`
 
-* `route_keeps_all`, `route_routes_TOP`, `route_TOP_example` — the new sweep (last child takes the
-  rest) loses nothing; in particular `(u64::MAX, u64::MAX)` now reaches the last child (Bug 1 fixed).
+* `route_keeps_all`, `route_routes_TOP`, `route_TOP_example` — the sweep (last child takes the
+  rest) loses nothing; in particular `(u64::MAX, u64::MAX)` reaches the last child.
 * `subtract_eq` — the leaf survivor walk of `remove_batch` (`node.rs:502-514`) is `List.filter`.
 * `combine_with_sibling` (`cws`), `strip_empty`, `Node::is_underfull`, `Branch::is_underfull`,
   `Node::is_empty_node` — modelled line by line, with `rebalance_eq_cws` (the single-key repair is
-  exactly one `combine_with_sibling` step). Unchanged by #3283.
-* The pre-#3283 models of `merge_underfull` / `remove_batch` (contents right, shape not) were removed
-  (in 17ccc5412). The current model and its `TreeWF` proof are in `BatchWF.lean`.
+  exactly one `combine_with_sibling` step).
+* The model of `merge_underfull` / `remove_batch` and its `TreeWF` proof are in `BatchWF.lean`.
 -/
 
 namespace CowBTree
@@ -117,7 +116,7 @@ def subtract : List E → List E → List E
     if bs'.head? = some p then subtract ps bs'                         -- lines 495-497
     else p :: subtract ps bs'                                          -- line 498
 
-/-! ## The routing sweep (fix of Bug 1) -/
+/-! ## The routing sweep -/
 
 /-- **The new sweep loses nothing**: the slices handed to the children concatenate back to the batch. -/
 theorem route_keeps_all : ∀ (seps : List E) (cs : List Node) (batch : List E), cs ≠ [] →
@@ -130,7 +129,7 @@ theorem route_keeps_all : ∀ (seps : List E) (cs : List Node) (batch : List E),
     have := List.take_append_drop (batch.takeWhile (fun e => decide (e < seps.head?.getD 0))).length batch
     rwa [take_takeWhile_length] at this
 
-/-- **Bug 1 is fixed** (#2278, 3597b3a82): every batch entry — `TOP = (u64::MAX, u64::MAX)` included —
+/-- **The sweep loses nothing**: every batch entry — `TOP = (u64::MAX, u64::MAX)` included —
     is handed to some child. -/
 theorem route_routes_TOP (seps : List E) (cs : List Node) (batch : List E) (hcs : cs ≠ []) (hT : TOP ∈ batch) :
     ∃ p ∈ route seps cs batch, TOP ∈ p.2 := by

@@ -16,9 +16,9 @@ a heap of handles: `Cow = { h : handle, dup : Bool }`, `Clone` copies `h`,
 | `derefMut`     | `DerefMut` (cow.rs:134) — `if dup { inner = inner.dup(); dup = false }` |
 | `write`        | `derefMut` followed by an in-place mutation of the handle |
 | `replace`      | `Cow::replace` (cow.rs:112) — a freshly built inner, `dup: false` |
-| `DCow`/`dNewVersion`/`dDerefMut`/`dWrite`/`dReplace` | the same functions in a debug build, with the #2905 `branched: Arc<AtomicBool>` flag (cow.rs:69, 101, 117-120, 138-148) |
+| `DCow`/`dNewVersion`/`dDerefMut`/`dWrite`/`dReplace` | the same functions in a debug build, with the `branched: Arc<AtomicBool>` flag (cow.rs:69, 101, 117-120, 138-148) |
 
-The release model (`Cow`, `derefMut`, ...) is unchanged by #2905: every
+The release model (`Cow`, `derefMut`, ...) is unchanged by the debug flag: every
 `#[cfg(debug_assertions)]` line is erased in release. `dbg_agrees_with_release`
 proves the debug model is the release one plus a panic.
 -/
@@ -149,7 +149,7 @@ theorem release_clone_write_leaks :
     let v2 := newVersion v1
     read (write H alias (fun _ => 99)).1 v2 = 99 := by decide
 
-/-! ## Debug builds: the `branched` flag (#2905)
+/-! ## Debug builds: the `branched` flag
 
 Each `Cow` carries `branched: Arc<AtomicBool>`, a cell `b` in a second heap
 `F`. `clone` shares the cell; `new_version` sets the source's cell and gives

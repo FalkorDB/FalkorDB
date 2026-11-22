@@ -1,25 +1,17 @@
 /-
-# #2502: a WHERE pattern predicate swallows the next MATCH clause
+# A WHERE pattern predicate must end before the next MATCH clause (#2502)
 
-Gap closed 2026-10-20. The models below were already faithful (`parenArm`,
-`patternP`, `sepP`), but no property said where a pattern predicate must end,
-so the bug went unnoticed. Citations are at main `fb3d516d0`
-(`graph/src/parser/cypher.rs`):
+Gap closed 2026-10-20. The models below were faithful (`parenArm`,
+`patternP`, `sepP`), but no property said where a pattern predicate must end. Citations are at
+main `fb3d516d0` (`graph/src/parser/cypher.rs`):
 
 * `parse_where` (1214-1231) calls `parse_expr(true)`; its primary
   `parse_primary_expr` takes the `(` arm (2114-2128), which tries
   `self.parse_pattern(&Keyword::Match)` (2119) — modelled by `parenArm`
   (`C.Primary`).
-* `parse_pattern`'s part separator (1562-1579) continues on `,` **and on the
-  clause's own keyword** (`if token == *clause { self.lexer.next(); continue; }`),
-  modelled by `sepP` (`C.Pattern`). Called with `Keyword::Match` for a
-  *predicate*, it therefore eats a following `MATCH` keyword and folds the next
-  clause's pattern into the predicate.
-
-Live (release, ports 6670/6671, on `CREATE (a:A)-[:Q]->(:B), (a)-[:R]->(:M {v:1}),
-(a)-[:R]->(:M {v:2})`): `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m.v`
-gives Rust `'m' not defined`, C rows 1, 2; with `RETURN count(*)` and `(a:A)`,
-Rust 1 (the R traversal sits inside the Semi Apply), C 2.
+* `parse_pattern`'s part separator continues only on `,` (the earlier separator also continued on the
+  clause's own keyword, `sepP` / `C.Pattern`, which made a predicate eat a following `MATCH`
+  keyword and fold the next clause's pattern into the predicate).
 -/
 import FalkorParserGrammar.C.Index
 import FalkorParserGrammar.C.Primary

@@ -10,16 +10,16 @@ never interact, so one node is modelled; `C` is the committed label set.
 * `removeLabels` — `remove_node_labels` (pending.rs:741): per label, drop it
   from `set_labels`; if it was there (`was_staged`) and the committed node lacks
   it (a created node, whose `C` is empty, or `!g.node_has_label_id`), only bump
-  `staged_labels_removed` (#3459, fixes #3448); else push it onto
+  `staged_labels_removed`; else push it onto
   `remove_labels`. `removeLabelsC` is the loop with that counter, `removeLabels`
   its map half. The REMOVE operator (`ops/remove.rs:128-145`) first filters the
   labels to those the node currently has (`overlay`) — modelled as `removeOp`.
 * `nodeHas` — `node_has_label` (pending.rs:778): removal first, then add, else
   `None` (ask the matrix).
-* `stagedNodeLabels` — `Pending::staged_node_labels` (pending.rs:826, #3288): the two staged
+* `stagedNodeLabels` — `Pending::staged_node_labels` (pending.rs:826): the two staged
   lists as they are, `(set_labels, remove_labels)`; `update_node_labels` (:806) is now
   written over it.
-* `stagedLabelIds` — `Runtime::staged_label_ids` (ops/delete.rs:196, #3288): the committed
+* `stagedLabelIds` — `Runtime::staged_label_ids` (ops/delete.rs:196): the committed
   ids, plus the staged adds, minus the staged removes. The deleted-node snapshot
   (`delete_nodes_bulk` :306, `delete_entity` :486) is built from it.
 * `commitLabels` — `set_nodes_labels_bulk` then `remove_nodes_labels`

@@ -1,7 +1,7 @@
 import PendingCommit.PendingDeg
 /-
 # `IndexDocs`, the deferred/published document logs, `clear`, `effects_count`,
-# constructors and `end_segment` (pending.rs `impl IndexDocs` :409-507, constructors :510-560, deferred-index methods and `end_segment` :1771-1978; the `IndexDocs` struct itself now lives in `index/index_docs.rs:27`, #3307)
+# constructors and `end_segment` (pending.rs `impl IndexDocs` :409-507, constructors :510-560, deferred-index methods and `end_segment` :1771-1978; the `IndexDocs` struct itself now lives in `index/index_docs.rs:27`)
 
 * `IndexDocs::is_empty`/`absorb`/`merge`/`ids_by_slot` (:413-471): per slot,
   `absorb` and `merge` make `self` the union (`absorb_spec`, `merge_spec`;
@@ -16,23 +16,22 @@ import PendingCommit.PendingDeg
   iff the committed version still has it, otherwise removed (edges: removed
   with the private version's endpoints, dropped if neither version has the
   edge); `published` is emptied (`resync_spec`).
-* `end_segment` (:1885, was `clear` before #2846): both branches (background
+* `end_segment` (:1885): both branches (background
   drop or in place) give the same state — every per-commit field empty,
   `published`, `deferred_docs` and the schema baseline untouched
   (`clear_spec`) — and the graph's id batches are rolled in the same call
   (`endSegment_spec`).
-* #3307: `IndexDocs` also carries the native index's staged changes (`native`, feature
+* `IndexDocs` also carries the native index's staged changes (`native`, feature
   `index-falkordb`). `absorb` only `debug_assert!`s it is empty (`Pending::commit` applies
   it first, `apply_index_writes` call :1465, defined graph.rs:3889) and never touches it; `end_segment` clears it with
   the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
   modelled here are unchanged.
-* `effects_count` (:2013) is the documented sum; since #3461 it counts each
+* `effects_count` (:2013) is the documented sum; it counts each
   cancelled node and relationship twice (`effectsCount_eq_pre`,
-  `effects_counts_cancelled`; history `pre3461_effects_ignores_cancelled`), and since
-  #3459 adds `staged_labels_removed` (`effects_counts_staged_removal`).
+  `effects_counts_cancelled`; history `pre3461_effects_ignores_cancelled`), and
+  adds `staged_labels_removed` (`effects_counts_staged_removal`).
 * `new`/`default` (:522, :515), `set_schema_baseline` (:547): field-level
-  equations. (`node_id_space`, `rel_id_space`, `issued_*`,
-  `open_id_boundaries` were removed by #2846.)
+  equations.
 -/
 namespace PendingCommit.PD
 open PA PS

@@ -9,8 +9,8 @@
 | `validate` | `validate_boolean_operands` / `_impl` binder.rs:2530-2532 |
 | `canBN`, `canEnt` | reference: can the expression *evaluate* (without error) to a Bool/Null, to an entity/Null |
 
-`TE` is a *bound* tree, and since #3335 no bound tree holds a `Paren`
-(`BindExpr.bind_paren`; `BE` has no such constructor): both checks now hit
+`TE` is a *bound* tree, and no bound tree holds a `Paren`
+(`BindExpr.bind_paren`; `BE` has no such constructor): both checks hit
 `unreachable!` on one, so `TK` has no `paren` and
 `Distinct` is the one transparent wrapper.
 
@@ -21,9 +21,9 @@ expression that can produce a boolean or null.
 
 * `mayBool_sound_except`: sound for every variant except `Negate`, `Length`,
   `ListComprehension`, `MapProjection` (all can yield `null`).
-* `getElement_accepted` — #3270 (3643a301c) moved `GetElement` to the "runtime-typed → true" arm:
-  `MATCH (n:N) WHERE n.flags[0] RETURN count(n)` and `WITH [true] AS l RETURN true AND l[0]` now
-  bind, as in C. The old rejection is kept as `pre3270_getElement_rejected` (historical).
+* `getElement_accepted` — `GetElement` is in the "runtime-typed → true" arm:
+  `MATCH (n:N) WHERE n.flags[0] RETURN count(n)` and `WITH [true] AS l RETURN true AND l[0]`
+  bind, as in C. The earlier rejection is kept as `pre3270_getElement_rejected` (historical).
 * `arith_accepted`: `Add`/`Sub`/… are accepted as possibly boolean (they can
   be null), so `RETURN false AND (1+2)` returns `false` (runtime short-circuit)
   where C rejects it statically ("Type mismatch") — deviation, not a wrong answer.

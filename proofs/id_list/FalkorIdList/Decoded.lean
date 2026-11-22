@@ -1,8 +1,8 @@
 import FalkorIdList.Wire
-/-! # Pushing onto a decoded `IdList` keeps every id in order (#2920)
+/-! # Pushing onto a decoded `IdList` keeps every id in order
 
-`from_segments` (`id_list.rs:1183`) adopts decoded segments verbatim and, since
-#2920 (`2ef102ae0`), starts the run *after* all of them. `Inv` (the builder's
+`from_segments` (`id_list.rs:1183`) adopts decoded segments verbatim and
+starts the run *after* all of them. `Inv` (the builder's
 invariant) need not hold there — the last decoded segment may be a range outside
 the run — so this file carries a second invariant, `DInv`, for "the run is empty
 and starts past the decoded segments; a direction, if claimed, belongs to the
@@ -298,11 +298,10 @@ theorem pushAll_dinv : ∀ (cs : List Bool) (st : St) (xs : List Nat), (DInv st 
     · rw [hf2, hf1]; simp
     · rw [hl2, hl1]; simp; omega
 
-/-- **#2920's correctness theorem.** Pushing any `xs` onto a decoded list (any
+/-- **Correctness theorem.** Pushing any `xs` onto a decoded list (any
 well-formed segments, whatever the last one is) yields exactly the decoded ids
 followed by `xs`, with `len` counting all of them, for every sequence of collapse
-decisions — no reorder, no `assert!`. (Before #2920 `from_segments` started the run at 0 and a push could
-reorder; the pre-fix model was removed in bbee75955, last present at 17ccc5412.)
+decisions — no reorder, no `assert!`.
 
 The model counts lengths in `Nat`; Rust's `*len += 1` on a `u32` segment length is not modelled, so the
 statement is scoped to `hlen`: no segment (hence no id count) reaches 2^32. A decoded segment of length

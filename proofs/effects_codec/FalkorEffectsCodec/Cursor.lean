@@ -30,7 +30,7 @@ def Rd.take (r : Rd) (n : Nat) : Except DErr (Bytes × Rd) :=
   if r.remaining < n then .error (.eof n r.remaining)
   else .ok ((r.buf.drop r.pos).take n, { r with pos := r.pos + n })
 
-/-- `Reader::guard_count` (`:70`, `const fn` since #3787): `count.saturating_mul(min as u64) > remaining as u64`. -/
+/-- `Reader::guard_count` (`:70`, a `const fn`): `count.saturating_mul(min as u64) > remaining as u64`. -/
 def Rd.guardCount (r : Rd) (count minEach : Nat) : Except DErr Nat :=
   let need := min (count * minEach) (2 ^ 64 - 1)
   if need > r.remaining then .error (.implausible count r.remaining) else .ok count
@@ -54,7 +54,7 @@ def chunks (k : Nat) : Nat → Bytes → List Bytes
   | 0, _ => []
   | n + 1, bs => bs.take k :: chunks k n (bs.drop k)
 
-/-- `Reader::take_n` (`:138`): guard, take `n*W` in one go, then split it into `W`-byte chunks (`as_chunks::<W>().0.iter()` since #3787, was `chunks_exact(W)`: the slice is exactly `n*W` long, so the same chunks and no remainder). -/
+/-- `Reader::take_n` (`:138`): guard, take `n*W` in one go, then split it into `W`-byte chunks (`as_chunks::<W>().0.iter()`: the slice is exactly `n*W` long, so no remainder). -/
 def Rd.takeN {α} (r : Rd) (k count : Nat) (fromLe : Bytes → α) : Except DErr (List α × Rd) :=
   match r.guardCount count k with
   | .error e => .error e

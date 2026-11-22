@@ -1,6 +1,6 @@
 /-! # UDF library registry (`graph/src/udf/repository.rs`)
 
-Re-targeted to origin/main 1c0e6c8de (#3066, fixes #3065): registry keys are the
+Registry keys are the
 case-sensitive qualified names, and `load` rejects a qualified name another library
 already owns, compared ignoring ASCII case, as C does.
 
@@ -13,7 +13,7 @@ already owns, compared ignoring ASCII case, as C does.
 | `delete`              | `UdfRepo::delete` :156 + the caller's `unregister_udf` loop (`unregister_udf` :1142) |
 | `Consistent`          | "LIST shows f ⇔ calling f runs f's body" |
 
-`eq_ignore_ascii_case` / `to_ascii_lowercase` is modelled as `asciiLow` (Lean's `Char.toLower` is ASCII-only); Unicode `str::to_lowercase`, which the pre-#3066 code used, is not modelled and stays abstract in the historical counterexamples.
+`eq_ignore_ascii_case` / `to_ascii_lowercase` is modelled as `asciiLow` (Lean's `Char.toLower` is ASCII-only); Unicode `str::to_lowercase`, which an earlier version of the code used, is not modelled and stays abstract in the historical counterexamples.
 -/
 namespace AlgoUdf.Repo
 
@@ -91,9 +91,9 @@ theorem foldEq_comm (a b : String) : foldEq a b = foldEq b a := by
 theorem foldEq_refl (a : String) : foldEq a a = true := by
   unfold foldEq; exact beq_self_eq_true _
 
-/-! ## Historical: the code before #3066 (fixed by #3066) -/
+/-! ## Historical: the earlier case-folding code, kept as counterexamples -/
 
-/-! ## After #3066: exact keys, collision check -/
+/-! ## Exact keys, collision check -/
 
 /-- `a` registering `b.c` and `a.b` registering `c` build the same qualified name
 `a.b.c`: the reason the check compares qualified names, not (library, function) pairs. -/

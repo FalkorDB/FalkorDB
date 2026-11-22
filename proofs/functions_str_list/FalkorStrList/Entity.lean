@@ -4,14 +4,11 @@
 The runtime accessors entity.rs calls (`runtime.rs`, `get_node_labels` :1787 to `get_node_outdegree_by_type` :1983) are modelled with the order
 they use: **deleted-entity snapshot > pending (this query's writes) > committed graph**.
 `deleteNode` / `deleteRel` model the snapshot the DELETE operator takes
-(`staged_label_ids` `ops/delete.rs:196-209`, `delete_nodes_bulk` `:213`, `delete_entity` `:415`; #3462 `5e475e6c9` makes the DeleteOp snapshot flag `runtime.inspect || snapshot_required(..)` — `deleteNode`/`deleteRel` below are the `snapshot = true` case).
+(`staged_label_ids` `ops/delete.rs:196-209`, `delete_nodes_bulk` `:213`, `delete_entity` `:415`; the DeleteOp snapshot flag is `runtime.inspect || snapshot_required(..)` — `deleteNode`/`deleteRel` below are the `snapshot = true` case).
 
 House decision (2026-09-25): a deleted entity keeps returning *all* its details for the rest
 of the query. `deleteRel_preserves`, `deleteNode_preserves` and `deleteNode_labels_preserved`
-prove it for every accessor, node labels included. Labels were the one exception until #3288
-(`7fd3c12a0`, fixes #3245): the snapshot used to copy the *committed* label ids
-(`g.get_node_label_ids(id)`), so labels staged by `SET`/`REMOVE` earlier in the same query were
-lost; it now takes `Runtime::staged_label_ids` (`ops/delete.rs:196`: the committed ids with the
+prove it for every accessor, node labels included. The snapshot takes `Runtime::staged_label_ids` (`ops/delete.rs:196`: the committed ids with the
 query's staged adds and removes applied — the same view `get_node_labels` gives a live node;
 proofs/pending_commit `stagedLabelIds_eq_overlay`), which `pendingLabels` models.
 -/

@@ -10,50 +10,30 @@ Modules (each file's header has its Lean ↔ Rust table):
   once); blocks for ints, strings, `LabelSet`, `AttrIds`, ids, rows, `put_opt`/`take_opt`, counted lists.
 * `RecArms`, `RecOpts` — tags, `index_type_of`, `IndexFields`, `IndexSchemas` (encoder sorts by id),
   constraint props, `IndexFieldOptions` (`bSim_lossy`: the similarity name is normalised — also seen).
-* `RecShape` — **#2916 (`2c874022a`)**: the encoder now refuses exactly the shapes `read_record` rejects
+* `RecShape` — the encoder refuses exactly the shapes `read_record` rejects
   (`encRecord_ok_shape`, `encRecord_rowShape_refused`, `encRecord_empty_refused`, `readRecord_empty`), so
   `readRecord_encRecord_wf`: every record the encoder writes reads back with no shape hypothesis. The wave-1
-  counterexample (a spare row read as the next opcode, `Records.lean`) is now a refusal `#guard`.
+  case (a spare row read as the next opcode, `Records.lean`) is a refusal `#guard`.
 * `RecFull`, `RecRT` — **all fifteen `Record` constructors** (fourteen opcodes: `ADD_SCHEMA` has separate label and relationship-type constructors), `write_header`, `check_row_shape`, `Record::encode`, `read_record`;
   `readRecord_encRecord`: every record round-trips whatever follows it (UPDATE_EDGE, ADD_SCHEMA, index and
   constraint DDL included); `checkEndpoints_ok`, `checkIndex_ok`, `writeHeader_spec`, `relType_rt`.
 * `Payload` — `open_payload`, `maybe_compress`, `frame_prefix`, `Records::next`: `openPayload_maybeCompress`
-  (compression is transparent for records of any length since #3278, zstd/crc32 as the `CodecOK` hypothesis),
+  (compression is transparent for records of any length, zstd/crc32 as the `CodecOK` hypothesis),
   `maybeCompress_shrinks`, `framePrefix_none`, `records_concat`.
 * `Format`, `ModRs` — `format.rs` (`describe_spec`, `build_ok`, `fmtReplicate_transparent`), `effects/mod.rs`
   (`describeTop_spec`, `applyTop_spec`, `EffectsBuffer`), `v3/mod.rs` tags/`seal`, `payload.rs`, `announce.rs`,
   `LocalName`.
 
-Re-targeted to origin/main `1d15bf713` (from `0f45a8685`):
-* **#3267 (`eaa65eeba`)** — `Value::decode` bounds a list's width against the whole stack (`owed`).
-  `decodeV`/`readOne`/`loop` now carry `owed`; `decodeV_encV` and `decodeV_safe` re-proved (the
-  `owed -= 1` never underflows: `owed = owedOf st`), new `capTrace_linear`/`decode_reserves_linear`
-  (reservations ≤ remaining / 4), `hostile_refused_second_level`.
-* **#3278 (`dcbd445d1`, #3276)** — `maybe_compress` refuses a frame whose lengths overflow `u32`.
-  `openPayload_maybeCompress`, `fmtReplicate_transparent`, `seal_transparent` lose their `< 2^32`
-  hypothesis; new `framePrefix_*`.
-
 Gaps: zstd/crc32 are hypotheses (`CodecOK`).
-`staging.rs`/`test_aux.rs` are `#[cfg(test)]` modules (`mod staging;`/`mod test_aux;` in `v3/mod.rs`): test helpers, not engine code, so they carry no COVERAGE rows (their 22 NOT COVERED rows were deleted at the 256ab4d3f re-sync; `coverage.sh` excludes test fns from its denominators).
-Bugs: #2914 (encoder wrote records its reader rejects) — **fixed by #2916 (`2c874022a`)**, now theorems;
-quadratic list reservation — **fixed by #3267**; ≥ 4 GiB compressed frame — **fixed by #3278**.
+`staging.rs`/`test_aux.rs` are `#[cfg(test)]` modules (`mod staging;`/`mod test_aux;` in `v3/mod.rs`): test helpers, not engine code, so they carry no COVERAGE rows (`coverage.sh` excludes test fns from its denominators).
+Bugs: no open bugs. Fixed ones are in this file's git history.
 
-## Re-sync to 256ab4d3f (from 43936bab9)
-* `IdLink` (new) discharges the last hypothesis: `idListCodec ρ hρ : IdCodec` is built from `proofs/id_list`
+## `IdLink`
+* `IdLink` discharges the last hypothesis: `idListCodec ρ hρ : IdCodec` is built from `proofs/id_list`
   (`IdListWire.encodeIds`/`readIds`, a Lake path dependency), so `records_concat_idList` (`Payload::records` /
-  `Records::next` over the real IdList codec) is PROVEN; the two former CONDITIONAL rows are PROVEN. The only
+  `Records::next` over the real IdList codec) is PROVEN. The only
   assumption left is `RoaringOK ρ`, the `roaring` crate's serialize/deserialize contract (an external library,
-  as in id_list). New: `encodeIds_bytes` (every byte the encoder writes is a byte), `idDec_roundtrip`, `idDec_good`.
-* No model change for the 17 CHANGED rows: #3787 (clippy) made `guard_count` a `const fn`, `Reader::take_n` read
-  `as_chunks::<W>().0.iter()` instead of `chunks_exact(W)` (the slice is exactly `n*W` long, so the same chunks),
-  `field_type_bits` takes `rest.isolate_lowest_one()` instead of `rest & rest.wrapping_neg()` (the same lowest set
-  bit, `setBits_spec`), `Record::encode`/`Value::encode` match on `Self::`, `LocalName::fmt` uses `map_or`.
-  #3446/#3447 touched `apply.rs`/`emit.rs` only (project `effects_emit_apply`). All line cites re-pinned.
-
-## Re-pinned to 5e475e6c9 (#3436)
-No model change. `graph/src/effects/mod.rs` and `v3/format.rs` build entry points take `&Graph`
-instead of `&AtomicRefCell<Graph>` (a read query borrows its graph once, #3436); every
-`COVERAGE.tsv` row is re-pinned (mod.rs -1 line from the removed import, format.rs -2).
+  as in id_list). Also: `encodeIds_bytes` (every byte the encoder writes is a byte), `idDec_roundtrip`, `idDec_good`.
 -/
 import FalkorEffectsCodec.Prim
 import FalkorEffectsCodec.Value

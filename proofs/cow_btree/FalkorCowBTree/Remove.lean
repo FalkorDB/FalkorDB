@@ -8,10 +8,9 @@ The contract that makes remove work is the **underflow flag**: `remove_one` retu
 `Some(true)` the node may be *weak* (an empty leaf, or a branch with a single child) and the parent
 must repair it (`rebalance`). The flag is computed as `count < LEAF_MAX / 2` for a leaf and
 `children < BRANCH_MAX / 2` for a branch (`node.rs:212`, reported at `:488`). A weak branch has one child, so the
-contract needs `1 < BRANCH_MAX / 2`, i.e. **`BRANCH_MAX >= 4`**, which the const assert demands since
-#2897 (`mod.rs:152-155`; `Assert.remove_spec_asserted`). Before it the assert only demanded 3; `Bugs.lean`
-describes the contract (and the tree) breaking there; the counterexample theorems were removed in
-bbee75955 (`Assert.constAssert_rejects_B3` records that `BRANCH_MAX = 3` is now rejected).
+contract needs `1 < BRANCH_MAX / 2`, i.e. **`BRANCH_MAX >= 4`**, which the const assert demands
+(`mod.rs:152-155`; `Assert.remove_spec_asserted`). `Assert.constAssert_rejects_B3` records
+that `BRANCH_MAX = 3` is rejected.
 -/
 
 namespace CowBTree

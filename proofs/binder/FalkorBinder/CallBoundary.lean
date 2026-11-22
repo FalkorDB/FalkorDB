@@ -1,13 +1,11 @@
 import FalkorBinder.Resolve
 /-
-# CALL {} entry projection as a record boundary (#2845, eb470521b)
+# CALL {} entry projection as a record boundary
 
 Folded in from the retired proofs/pr2845_review. Model of `bind_call_body`
 (graph/src/planner/binder.rs:971-1126) and `build_import_projections`
 (binder.rs:1133-1151); scope tables, `freshVar`, `mint_fresh_iff`,
-`projectName` are this project's (Table.lean, Resolve.lean). Counterexamples
-on main before #2845 (da6f808c3) were removed in bbee75955 (the last revision that has them is
-17ccc5412) (fixed by #2845, eb470521b; closes #2601, #2602).
+`projectName` are this project's (Table.lean, Resolve.lean).
 
 * Every CALL body gets an entry projection (`bodyNew_entry`, `bodyNew_empty`,
   `branchNew_entry`), unchanged when something is imported (`bodyNew_eq_old`).
@@ -15,7 +13,7 @@ on main before #2845 (da6f808c3) were removed in bbee75955 (the last revision th
   `entry_ids_below`); body scope disjoint from outer scopes (`body_scope_disjoint`).
 * No slot aliasing for plain bodies at runtime (`body_own_unbound`,
   `body_import_value`, `new_scan_scans`).
-* UNION bodies alias binder keys `(scope_id, id)` (fixed by #3027: `relabel_3027`, `union_branch_label_fixed`).
+* UNION bodies alias binder keys `(scope_id, id)` (`relabel_3027`, `union_branch_label_fixed`).
 * W6-opt-1 (push_filters_down Case 2, see proofs/optimizer_rewrites
   `filter_pushed_through_boundary`): the pushed read is unbound
   (`pushed_read_unbound`).

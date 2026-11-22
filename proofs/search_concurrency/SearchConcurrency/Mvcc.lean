@@ -31,7 +31,7 @@ write lock), so the module needs no lock; what it must still catch is a fork tha
 commit overtook, which `is_stale` finds before anything unversioned is published
 (`check_fork`) and `commit` finds again as `CommitError::Stale`. A version made under the
 write lock is `Current`: no commit can come between its fork and its own commit
-(`current_not_stale`). #3290's retry (a queued write forks as a reader, finds its fork
+(`current_not_stale`). The retry (a queued write forks as a reader, finds its fork
 stale, re-runs on top of the inline write) is `stale_then_rerun`.
 
 Transactions are lists of abstract writes; a version is the list of all writes it
@@ -577,7 +577,7 @@ holds no `Current` version, so `commit` is refused (an instance of `unchecked_fo
 theorem reader_cannot_commit : ∀ t, ((step (fun _ => true) init (.forkW 1)).bind (step (fun _ => true) · (.commit t))).isNone := by
   intro t; simp [step, init, dropT, Option.bind]
 
-/-! ## The MULTI write while a queued write matches (#3093, fixed by #3290)
+/-! ## The MULTI write while a queued write matches
 
 Queued write `1` forks as a reader and matches; an inline writer `0` (`MULTI`/`EXEC`,
 `query_sync` → `begin_writer`, main thread, GIL and write lock) runs in that window. -/

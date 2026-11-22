@@ -1,5 +1,5 @@
 import FalkorIdSpace.Released
-/-! # The quarantine (#3164, fixed by #3641 `e0d9c2188`)
+/-! # The quarantine
 
 A write query is many batches over one MVCC version. A row it still carries may name an
 entity an earlier batch deleted (a `CALL {}` body commits once per input row), so reissuing that
@@ -15,7 +15,7 @@ back (`taken ∩ recycled`, a cancelled creation); `open_batch` accumulates it, 
 * `roll_quarOk` — a verified roll keeps `QuarOk`.
 * **`rolled_not_reissued`** — an id the previous batch freed or cancelled is never handed out
   by the next batch of the same version.
-* `pre3641_*` — the model without the quarantine reissues (fixed by #3641, `e0d9c2188`).
+* `pre3641_*` — the model without the quarantine reissues (the pre-#3641 behaviour, kept as a historical counterexample).
 -/
 namespace IdSpaceModel
 
@@ -98,7 +98,7 @@ theorem reserve_not_quarantined (N : Nat) (sp : IdSpace) (hN : 0 < N) (hq : Quar
     · have := hq x hlt hqx; omega
 
 /-- **An id the previous batch freed or cancelled is not reissued by the next batch of the same
-version** (#3164): roll a verified batch, reserve in the new one. -/
+version**: roll a verified batch, reserve in the new one. -/
 theorem rolled_not_reissued (N : Nat) (sp : IdSpace) (hN : 0 < N) (h : Inv N sp)
     (hq : QuarOk N sp) (hv : sp.verify N = .ok ()) (count : Nat) (issued : IdSet) (ids : List Nat)
     (hr : (sp.rolled N).reserve N true count issued = .ok ids) :
@@ -111,7 +111,7 @@ theorem rolled_not_reissued (N : Nat) (sp : IdSpace) (hN : 0 < N) (h : Inv N sp)
     rcases hbad with a | a | ⟨a, b⟩ <;> simp [*]
   rw [this] at hnq; cases hnq
 
-/-! ### Before #3641: the id came back -/
+/-! ### Without the quarantine (pre-#3641): the id came back -/
 
 section Pre3641
 /-- the root file's test helpers (universe N = 32), local to this module. -/
@@ -128,16 +128,15 @@ previous one freed — a `CALL {}` row still holding node 0 would `DELETE` the n
 theorem pre3641_reissues :
     resv (pre3641_s1.newVersion 32 |>.reserve 32 true 1 (set [])) = some [0] := by decide
 
-/-- after #3641 (`open_batch` quarantines it): fresh id 3, not the freed 0. -/
+/-- with the quarantine (`open_batch` quarantines it): fresh id 3, not the freed 0. -/
 theorem post3641_not_reissued :
     resv ((ob pre3641_s1).reserve 32 true 1 (set [])) = some [3] := by decide
 
-/-- the rolled space carries the freed id in its quarantine; `new_version` (what `open_batch` used
-to be) does not. -/
+/-- the rolled space carries the freed id in its quarantine; `new_version` does not. -/
 theorem pre3641_openBatch_quarantines :
     ((pre3641_s1.openBatch 32).toOption.map (·.quarantined 0)) = some true := by decide
 
-/-- the cancelled-creation variant (the second #3164 test): 0 reserved and cancelled, then rolled. -/
+/-- the cancelled-creation variant (the second test): 0 reserved and cancelled, then rolled. -/
 def pre3641_c1 : IdSpace :=
   (((ob (IdSpace.restored 32 0 (set []))).cancel 32 0).1)
 

@@ -1,9 +1,9 @@
 /-
 # MERGE — `graph/src/runtime/ops/merge.rs`
 
-**History model.** `rustBatch`/`rustMerge`/`phaseA` below are `MergeOp::next` as of ca36bfa15:
-the match sub-plan ran once per input batch. #3067 (b47d6d6a3, closes #3039) made it match
-every row first; the current model is `MergeEager.lean` (`mainMerge`, `mainMerge_noSet_eq_ref`,
+**History model.** `rustBatch`/`rustMerge`/`phaseA` below are an earlier `MergeOp::next` (ca36bfa15):
+the match sub-plan ran once per input batch. The current `MergeOp::next` matches
+every row first; its model is `MergeEager.lean` (`mainMerge`, `mainMerge_noSet_eq_ref`,
 `fixed3067_batch_independent`). `phaseB` is still `drain_pending`, `createFallback` still
 `do_create_fallback`, and the definitions/lemmas here (`Clause`, `J`, `G`, `refMerge`) are
 shared. Line cites in this header are to ca36bfa15.
@@ -38,18 +38,10 @@ Theorems:
   for every batch size: same final graph, same next id, and the emitted rows are
   a permutation of the reference's (the within-batch cache exactly simulates the
   visibility of earlier rows' creations).
-* Batch dependence (fixed by #3067; counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — with `ON CREATE SET` touching the merged property the
-  result depends on `BATCH_SIZE`: rows that straddle a batch boundary see the
-  earlier row's creation, rows inside one batch do not. CONFIRMED live.
-* Cross-clause cache (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — before #3050 the cache was keyed by the hash
-  only and shared by all MERGE clauses of the query: a second clause whose
-  pattern hashes equal bound the FIRST clause's variable id and left its own
-  unbound ("Variable b not found"). Fixed on main: the key is `(operator idx,
-  hash)` (`Clause.op`); `cross_clause_keyed` proves the second clause creates and
+* Cross-clause cache — the key is `(operator idx, hash)` (`Clause.op`);
+  `cross_clause_keyed` proves a second clause whose pattern hash is equal creates and
   binds its own node.
-* All-bound shortcut (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — before #3055 the all-bound shortcut returned one
-  row where the reference returns one per match (visible through a path variable).
-  Fixed on main: `allBoundMain` is off for a relationship exposed by a path;
+* All-bound shortcut — `allBoundMain` is off for a relationship exposed by a path;
   `allBound_path_keeps_all` proves it emits the reference rows.
 -/
 
@@ -516,7 +508,7 @@ theorem per_clause_cache_fixes :
     (rustMerge clB false { afterA with out := [], cache := [] } [[()]]).out = [((), some 1)] := by
   decide
 
-/-! ### The all-bound shortcut (#3040, fixed by #3055) -/
+/-! ### The all-bound shortcut -/
 
 /-- A relationship of the MERGE pattern, as `MergeOp::next` sees it: named (`!alias.is_unnamed()` since #3303; before it a
 `_anon_*` name), already bound in the input row, exposed by a path variable. -/

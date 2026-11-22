@@ -8,7 +8,7 @@
 | `componentKeys`       | MSF grouping :1890-1912 (component key = compact rep; isolated fallback keyed by *original* id) |
 | `flowAlign`           | maxFlow identity-compaction :3091-3151 and flow read-back :3292-3346 |
 | `superFresh`          | super source/sink ids `base_dim`, `base_dim + multi_srcs` :3096-3097 (identity compaction) and :3167-3168 (dense compaction) |
-| `buildTbl`, `denseTable`, `compactOf`, `bsearch` | the original-id → compact-id map and `compact_of` :1452-1465 (#3586) |
+| `buildTbl`, `denseTable`, `compactOf`, `bsearch` | the original-id → compact-id map and `compact_of` :1452-1465 |
 
 GraphBLAS requires a monoid's operator to be associative and commutative with
 an identity (GrB spec §3.5, `GrB_Monoid_new`); `keepMin` is that operator.
@@ -89,7 +89,7 @@ theorem msf_fallback_key_space_mixed :
     componentKeys [0, 5] (fun i => if i = 0 then some 0 else none) = [(0, 0), (5, 5)] := by
   decide
 
-/-! ## MSF original-id → compact-id map (#3586, fixes #3444) -/
+/-! ## MSF original-id → compact-id map -/
 
 /-- The dense table `map[orig] = compact` filled by the loop at :1454-1457:
 `buildTbl ids 0 (replicate (max_id + 1) none)` (`u64::MAX` = `none`). -/

@@ -1,6 +1,6 @@
 import GraphQueries.Attrs
 /-
-# The `IdSpace` contract graph.rs relies on (since #2846)
+# The `IdSpace` contract graph.rs relies on
 
 `IdSpace` (graph/src/graph/id_space.rs) is proved in proofs/id_space, which
 this project does not own. What graph.rs needs from it is stated here as the
@@ -23,7 +23,7 @@ def ins (l : List Nat) (x : Nat) : List Nat := if x ∈ l then l else l ++ [x]
 def union (a b : List Nat) : List Nat := a ++ b.filter (fun x => x ∉ a)
 def diff (a b : List Nat) : List Nat := a.filter (fun x => x ∉ b)
 
-/-- `struct IdSpace` (id_space.rs:164; since #3641 it also carries `quarantined`, which `reserve` skips and `end_quarantine` clears, proofs/id_space — not part of `IdS`, graph.rs never reads it). -/
+/-- `struct IdSpace` (id_space.rs:164; it also carries `quarantined`, which `reserve` skips and `end_quarantine` clears, proofs/id_space — not part of `IdS`, graph.rs never reads it). -/
 structure IdS where
   live : Nat
   recycled : List Nat
@@ -55,7 +55,7 @@ structure IdSpaceOps where
   release : IdS → List Nat → List Nat → Option IdS
   /-- `cancel` (id_space.rs:569). -/
   cancel : IdS → Nat → Option IdS
-  /-- `open_batch` (id_space.rs:470; since #3641 it also folds `released ∪ (taken ∩ recycled)` into `quarantined`, which is outside `IdS`). -/
+  /-- `open_batch` (id_space.rs:470; it also folds `released ∪ (taken ∩ recycled)` into `quarantined`, which is outside `IdS`). -/
   openBatch : IdS → Option IdS
   /-- `verify` (id_space.rs:773): `true` = `Ok(())`. -/
   verify : IdS → Bool
@@ -80,7 +80,7 @@ structure IdSpaceContract (O : IdSpaceOps) : Prop where
   `AlreadyLive`): the in-batch double create is refused. -/
   create_refuses_taken : ∀ s ns n, n ∈ ns → n ∉ s.recycled → n ∈ s.taken →
     O.create s ns = none
-  /-- #2911 (`fe619ac5f`): `nodes.max().filter(|&id| id >= ID_LIMIT)` (id_space.rs:625);
+  /-- `nodes.max().filter(|&id| id >= ID_LIMIT)` (id_space.rs:625);
   `ID_LIMIT = GrB_INDEX_MAX = 2^60 - 1` (id_space.rs:100). Proven in proofs/id_space as
   `create_out_of_range`. -/
   create_refuses_limit : ∀ s ns n, n ∈ ns → 2 ^ 60 - 1 ≤ n → O.create s ns = none

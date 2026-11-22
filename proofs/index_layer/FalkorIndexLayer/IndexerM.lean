@@ -1,7 +1,7 @@
 import FalkorIndexLayer.IndexM
 import FalkorIndexLayer.Proofs
 /-
-# `Indexer` (`graph/src/index/indexer.rs`, origin/main 3fec7d7c9; `create_index` re-targeted to 73077bb4a, #3086)
+# `Indexer` (`graph/src/index/indexer.rs`, origin/main 3fec7d7c9)
 
 The `ArcSwap<HashMap<label, Arc<Index>>>` is `map : AMap Idx`; a store is a
 functional update (readers see either the old or the new map, which is what
@@ -607,7 +607,7 @@ theorem recreate_spec (E : Env) (I I' : Ixr) (l : String) (h : I.recreate E l = 
     exact ⟨y, by simp [AMap.get_upd], s, by rw [f, Idx.cloneForUpdate_eq], i⟩
   · next hx => cases h; exact ⟨fun _ _ => rfl, fun x h => by rw [h] at hx; cases hx⟩
 
-/-! ## #3086 (73077bb4a): adding a field to an existing entry starts a new generation -/
+/-! ## Adding a field to an existing entry starts a new generation -/
 
 /-- `is_ticket_current` (`indexer.rs:717`). -/
 def isTicketCurrent (I : Ixr) (tk : Ticket) : Bool :=

@@ -1,6 +1,6 @@
 import PlannerBuild.PlanMatch
 /-
-# Lifting cross-entity inline attributes (#2981, mod.rs:581-751)
+# Lifting cross-entity inline attributes (mod.rs:581-751)
 
 `plan_match` first rewrites the pattern: an inline-attribute entry whose value
 reads a variable the pattern binds, other than the entity itself (and, for a

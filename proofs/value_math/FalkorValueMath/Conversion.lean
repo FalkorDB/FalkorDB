@@ -100,7 +100,7 @@ def rustToIntegerStr (f64Val : List Char → Option Int) (s : List Char) : Optio
   match parseI64 s with                                           -- :51
   | some i => some i
   | none =>
-    if allDigits (stripSign s) then none else                     -- :56-59 (#2989)
+    if allDigits (stripSign s) then none else                     -- :56-59
     match f64Val s with                                           -- :60-73
     | some fl => if fl ≥ TWO63 ∨ fl < -TWO63 then none else some fl
     | none => none

@@ -134,16 +134,13 @@ theorem edge_utilize_sound (eidx : Nat → List Nat) (opq : Nat → Node → Boo
     edgeScanSel eidx opq T' f bf bt tr same e = edgeRefSel eidx opq T' f bf bt tr same e := by
   simp only [edgeScanSel, edgeRefSel, utilize_sound eidx T' opq f hf e.ent he]
 
-/-! ## HISTORICAL: the inline-attribute path (`(n:L {k: v})`), removed by #2390 (d2c42e032)
+/-! ## No inline-attribute path (`(n:L {k: v})`)
 
-Until #2390 `try_index_rewrite` had a second path for patterns carrying inline attributes. #2390
-removed it (with `IndexSubject::inline_attrs`): the planner now lowers inline attributes to an
-`IR::Filter` and strips them from the pattern, so they reach the index through the filter path.
-Unchecked historical note: the removed inline rewrite (`get_inline_attr_index` 721,
-`needs_inline_post_filter` 897, `apply_inline_rewrite` 1038, all at a9377c636, the last revision that
-has them) was meant to be the same as `utilize` of the equivalent filter `n.k = v`. The theorem that
-stated this (`pre2390_applyInline_eq_utilize`) was deleted with the pre-#2390 model, so nothing in
-this project checks the claim any more; it is context only. -/
+`try_index_rewrite` has no second path for patterns carrying inline attributes: the planner lowers
+inline attributes to an `IR::Filter` and strips them from the pattern, so they reach the index
+through the filter path. Unchecked note: the old inline rewrite (`get_inline_attr_index`,
+`needs_inline_post_filter`, `apply_inline_rewrite`) was meant to be the same as `utilize` of the
+equivalent filter `n.k = v`; nothing in this project checks that claim, it is context only. -/
 
 /-! ## `distance()` scans -/
 

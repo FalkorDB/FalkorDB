@@ -1,12 +1,12 @@
 import FalkorOpsApply.Correlated
 /-
-# The per-origin `ValueHashJoin` (#3035) is separable on the batches Apply builds
+# The per-origin `ValueHashJoin` is separable on the batches Apply builds
 
 `Correlated.Separable` quantifies over every argument list, so it cannot hold of a join that
 compares origins (two args with the same origin would join). The batches Apply/Optional/Merge hand a
 sub-plan are always `tag xs 0` (`clone_active_rows_seq_origin`: distinct sequential origins), so
 the property the batched idiom needs is `SepT`, separability on those batches only. `applyBatched_eq_ref_T`
-shows `SepT` suffices; `vhjPO_sepT` shows the #3035 join has it (`vhj_not_separable` is the pre-#3035
+shows `SepT` suffices; `vhjPO_sepT` shows the per-origin join has it (`vhj_not_separable` is the earlier
 join, `Correlated.vhj`, which compared no origins).
 -/
 namespace VhjSep

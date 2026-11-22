@@ -10,7 +10,7 @@ gathers the parent columns by the packed parent rows.
 
 | here | there |
 | --- | --- |
-| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-570`; the clamp is `:562`) — since #2973 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`; #2922 was an LLVM miscompile of the guarded `match` it replaced on aarch64-apple-darwin |
+| `withBinding` | `BatchedResultEmitter::with_binding` (`batched_result_emitter.rs:553-570`; the clamp is `:562`) — `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))` |
 | `grow` | `pack_ceiling.saturating_mul(2).min(BATCH_SIZE)` (`:744`) |
 | `drain` | `drain_pending_entry` (`:622-647`) |
 | `packRows` | the `while count < pack_ceiling` loop with `refill_from_cursor` (`:676-717`, `:738-743`) |
@@ -26,7 +26,7 @@ open FalkorCore (V)
 
 def BATCH_SIZE : Nat := 1024
 
-/-- `with_binding` since #2973 (`batched_result_emitter.rs:562`):
+/-- `with_binding` (`batched_result_emitter.rs:562`):
 `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`. -/
 def withBinding (recordCap : Option Nat) : Nat :=
   match recordCap with
@@ -36,8 +36,8 @@ def withBinding (recordCap : Option Nat) : Nat :=
 /-- The doubling after each `emit_lazy`. -/
 def grow (c : Nat) : Nat := min (c * 2) BATCH_SIZE
 
-/-- **The ceiling is always in `[1, BATCH_SIZE]`** (in the source; #2922's
-miscompiled binary yields `cap` itself for `cap ≥ BATCH_SIZE`). -/
+/-- **The ceiling is always in `[1, BATCH_SIZE]`** (in the source; the
+miscompiled form below yields `cap` itself for `cap ≥ BATCH_SIZE`). -/
 theorem withBinding_le_batch (rc : Option Nat) : 1 ≤ withBinding rc ∧ withBinding rc ≤ BATCH_SIZE := by
   cases rc with
   | none => simp [withBinding, BATCH_SIZE]
@@ -49,7 +49,7 @@ theorem grow_bounds {c : Nat} (h : 1 ≤ c ∧ c ≤ BATCH_SIZE) : 1 ≤ grow c 
 /-- A lowered ceiling reaches `BATCH_SIZE` again (here: 10 → … → 1024 in 7 steps). -/
 theorem grow_reaches : Nat.repeat grow 7 (withBinding (some 10)) = BATCH_SIZE := by decide
 
-/-- The miscompile's effect on the pre-#2973 form, for the record: the guard dropped, `cap` passes
+/-- The effect of dropping the guard of the earlier `match` form, kept as a historical model: `cap` passes
 through. The clamp form has no guard to drop. -/
 def withBindingMiscompiled (recordCap : Option Nat) : Nat :=
   match recordCap with
@@ -288,7 +288,7 @@ def expandTrim (cap produced n : Nat) : Option (List Nat) × Nat :=
   else (none, produced + n)
 
 /-- **The trim suspicion is refuted**: the emitted batch is dense with `n` rows,
-`n ≤ BATCH_SIZE` (or, under the #2922 miscompile, the first batch has
+`n ≤ BATCH_SIZE` (or, under the miscompiled form, the first batch has
 `n ≤ cap = remaining` so the trim does not fire). Whenever the trim fires, every
 selected index is `< n` and survives the `u16` cast, the selection is the first
 `remaining` rows, and `produced` never exceeds `cap`. -/

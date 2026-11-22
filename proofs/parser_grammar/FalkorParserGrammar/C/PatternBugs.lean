@@ -1,10 +1,10 @@
 /-
-# Pattern-level bugs and the theorems that pin their fixes
+# Pattern-level counterexamples and the theorems that pin the correct behaviour
 
-No bug here is still open. `fixed3303_anon_name_distinct` pins the fix of W4-parse-1 (a written
-`_anon_0` merged with an unnamed node, fixed by #3303's `Alias`). The #3289 and #3300 theorems pin
-the fixed, correct behaviour (a repeated relationship
-alias and `[:A:B]` are now refused, as in C); `create_named_path_distinct_rels_ok` and
+No bug here is open. `fixed3303_anon_name_distinct` pins W4-parse-1 (a written
+`_anon_0` is not merged with an unnamed node: anonymous entities are `Alias::Anon`). The
+theorems pin the correct behaviour (a repeated relationship
+alias and `[:A:B]` are refused, as in C); `create_named_path_distinct_rels_ok` and
 `create_anon_path_dup_rel_rejected` are the unchanged controls.
 -/
 import FalkorParserGrammar.C.PatternG2

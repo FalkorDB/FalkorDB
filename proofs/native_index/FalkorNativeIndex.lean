@@ -33,7 +33,7 @@ import FalkorNativeIndex.CchSeq
 /-!
 # `native_index`: the FalkorDB native numeric index (#2350 ec2448f32, #3307 18836a355)
 
-Targets the worktree at origin/main 256ab4d3f (re-targeted from 43936bab9). New since then, all modelled here:
+Targets origin/main 256ab4d3f. Modelled:
 #2453 `6b5a31c04` (list values: a second tree per column, the array tree, holding a list's numeric elements; a
 tuple is `(kind, key, doc)`; `ArrayContains` and `And` queries are served), #3736 `ea64405dd` (a Range column
 that answers with a `Selection`: `range.rs`), #3737 `a6a53fd72` (a union or conjunction across attributes is one
@@ -45,7 +45,7 @@ element); `EncodedTuples`/`NumericIndex` have two trees; `IndexWrite` has a `kin
 `(kind, key, id)`; `queryNumeric`/`keysOf`/`unionKeys` are replaced by `Selection.of`/`queryColumn`
 (`describe_or_reason_sound`, `unionKeys_served` are gone: a union across attributes is now served, so
 "spanning" is no longer a decline of the single-column union). `Rebase.lean`/`Batch.lean` model the scalar tree's
-tuples (their array tuples are not modelled: see Gaps). Earlier targets: 43936bab9 (re-targeted from 5c7af54f2): #3568 `bdcabd96d`, a batch that writers overtook refreshes or inserts, by cost: `Batch.lean`, `Rebase.lean`; #3569 `65654bc23`, `GRAPH.MEMORY USAGE` counts the native index: `Memory.lean`; and before (see git history).
+tuples (their array tuples are not modelled: see Gaps). Also #3568 `bdcabd96d` (a batch that writers overtook refreshes or inserts, by cost: `Batch.lean`, `Rebase.lean`) and #3569 `65654bc23` (`GRAPH.MEMORY USAGE` counts the native index: `Memory.lean`).
 Files: `graph/src/index/falkordb/{encode,numeric,range,falkordb_index,versioned,pending_writes,graph_writes,unique,mod,online_build}.rs`, the native-index parts of `graph/src/graph/graph.rs` and the index route of `runtime/ops/{node,edge}_by_index_scan.rs::next`.
 
 ## Lean ↔ Rust
@@ -106,23 +106,22 @@ Files: `graph/src/index/falkordb/{encode,numeric,range,falkordb_index,versioned,
   `createIndex_entry`, `createIndex_not_ready` (it serves no reads until its build is over).
 - **#3566, an indexer batch commits as a version of its own** (`Batch.lean`): the fit of a batch built on a
   build version against what was published meanwhile: `fit_fresh` (nothing committed: `Same`),
-  `fit_after_other_batch` (`Swap`), `fit_after_writer` (`CatchUp` since #3567; it was `Discarded Writers`), `fit_after_same_batch`
+  `fit_after_other_batch` (`Swap`), `fit_after_writer` (`CatchUp`, #3567), `fit_after_same_batch`
   (`AnotherBatch`), `fit_after_drop` / `fit_after_recreate` (`Gone`; a re-created index has the next
   generation); the commit: `commit_discarded` (nothing published), `commit_same`, `commit_swap` (only the
   batch's index comes from the batch), `commit_invalid`, `commit_batches` (+1 per publish),
   `commit_keeps_version` / `commit_not_stale` (the data version never moves, so a writer's fork is not made
   stale). The model is on the one index the batch is about; the rest of the graph is opaque.
 - **#3567, writers rebase onto indexer batches; a batch catches up on writers** (`Rebase.lean`, `Batch.lean`):
-  closes the gap recorded at a477d9aa3 ("`is_stale` compares only the data version"). `refresh_mem`,
+  `is_stale` compares only the data version, so a writer's fork is rebased onto the batches and a batch catches up on writers. `refresh_mem`,
   `entityTuples_spec`, `placedBelow_mem`: what `IndexColumn::refresh` does, exactly; `refresh_inv`: a column
   holding exactly the tuples of the entities its version puts in it still does after a refresh over a set
   outside which the two versions agree (`Frame`); `rebase_progress` (a rebased fork has the published copy's
   generation, commit count and cursor: the batches' progress is kept), `rebase_keeps_writes`,
   `rebase_index_spec`, `rebase_inv`, `catchUp_spec`, `catchUp_inv`, `insert_inv` (the Insert path, #3568), `fit_catchUp_how`, `commit_catchUp`, `commit_catchUp_refresh`/`_insert`, `V.rebased_keeps_data`
   (no data version change, so a rebased fork is not stale); `writerRecord_proj`/`indexerApply_proj`/
-  `publish_proj` (the pre-#3567 model is the projection of the new one), `writerRecord_records` (every change's
-  entity is recorded). The gap #3567 closed (an unrebased writer's commit published the *older* commit count, so the
-  next batch was judged `AnotherBatch`; model-only, not reproduced live; see FINDINGS) is covered by
+  `publish_proj` (each operation projects onto the per-index model), `writerRecord_records` (every change's
+  entity is recorded). A rebased writer's commit keeps the commit count, so the next batch is not judged `AnotherBatch`:
   `rebased_commit_keeps_chain` and `rebased_batch_fits`. `Frame` (outside the
   written set, the two versions agree on what each entity contributes and where it sits) is assumed: the three
   invariant theorems (`refresh_inv`, `rebase_inv`, `catchUp_inv`, `insert_inv`) are conditional on it, the rows rest on the unconditional specs.
@@ -158,8 +157,6 @@ Files: `graph/src/index/falkordb/{encode,numeric,range,falkordb_index,versioned,
   `equalCandidates_some` / `_none` / `_complete`, `rows_mem`, `nativeUniqueQuery_some` / `_none_iff`,
   `fewest_eq_minRow` / `fewest_mem` / `fewest_minimal`, `readOnce_first` / `_repeat` / `_twice` /
   `_skip_sound`, `rows_eq_of_id_eq`; `unsupported_spec`, `describe_or`, `describe_or_reason_sound`.
-  Removed: `indexOnlyWrites_spec` (`index_only_writes` is gone), `scanRoute_spec` (there is no RediSearch
-  branch), `unionOf_mem` (`union_of` is `lookup`: `lookup_keys_mem`).
 - **#3307, apply once per unit of work** (`Pending.lean`): `sortLog_filter` (stable sort keeps each
   tuple's history), `lwwGo_spec`, `lastWriteWins_spec` (keeps exactly each tuple's last change),
   `writerRecord_eq_sequential` (collapsed `remove_batch`+`insert_batch` = applying every staged change
@@ -219,8 +216,8 @@ Files: `graph/src/index/falkordb/{encode,numeric,range,falkordb_index,versioned,
   passes none).
 - **Array tuples in `Rebase.lean`**: `refresh` and `indexer_insert` push both kinds (`refresh_array_mem`, `indexerInsert_array_mem`); the invariant theorems (`Inv`, `refresh_inv`, `catchUp_inv`, `insert_inv`) are stated for the scalar tree only (their array analogues are not proven).
 - **CCH (`cch/`)**: Phases 1-3 are proven over `Nat` weights in rank space. `CchOrder.lean` (`row_iff`: the chordal rows are exactly the fill-in), `CchTopo.lean` (the loop with its linked lists, `invert_spec`, `downRows_spec`, `arcSlot_spec`, `fromOrder_*`, `ndOrder_*` for an arbitrary backend, `topoBuild_correct`), `CchMetric.lean` (`customize_correct`, `unpack_correct`), `CchPaths.lean` (up-down paths: `valley`, `updown_complete`/`updown_sound`), `CchSearch.lean` (chain, `relaxFrom`, the DP invariant `DPInv`/`dp_step`, the climb `loop_inv`, `query_core`, `shared_spec`), `CchRoute.lean` (`arcsUp_spec`, `unpack_fwd/bwd`, `eraseLoops_spec`, `query_correct`, `cch_query_end_to_end`: **`Cch::query` returns a shortest path**), `CchSmall.lean` (`gallopTo_spec`, `validate_spec`, `entries_mem`, `backendCsr_spec`, `arc_via_slots`, `queryWrap_spec`), `CchSeq.lean` (`relax_sequential`, `buildCch_correct`). Scope: pair-indexed arcs linked to the slot arrays by `arc_via_slots`; weights `Nat` (the f64 left-fold structure is not modelled); the ordering backend is an arbitrary function (its permutation is checked by `invert`); node-space and rank-space are related by `invert_spec`, not composed into one statement. Not proven: the slot writes of `seed` (`seedA` is its pair-level result).
-- **CowBTree contract** (`Tree.lean`): the tree is its content list, each op its content spec. No longer a
-  hypothesis: since #3283 (799968a8b, W7-btree-1 fixed) cow_btree proves every reachable tree is
+- **CowBTree contract** (`Tree.lean`): the tree is its content list, each op its content spec. Not a
+  hypothesis: cow_btree proves every reachable tree is
   `TreeWF` (`Reachable_wf_asserted`: `from_sorted`, `insert`, `remove`, `insert_batch`, `remove_batch`)
   and `Contract.lean` proves each op equals its `t*` model there. The 13 tree rows moved from
   CONDITIONAL to PROVEN.
@@ -236,7 +233,7 @@ Files: `graph/src/index/falkordb/{encode,numeric,range,falkordb_index,versioned,
   GraphBLAS iteration order, taken as the hypothesis `hasc` / `G.Ordered`, not proven here), and `buildInOneBatch_entry` that the entity count fits `usize::MAX`
   (`G.Fits`). Not proven: the global invariant "a `Building` column holds exactly the current tuples of the
   entities below its cursor" as an induction over interleaved batches and units of work; its parts are
-  proven separately (since #3567 also `Rebase.refresh_inv`/`rebase_inv`/`catchUp_inv`, conditional on `Frame`) (`writerRecord_eq_sequential` + `stateLog_*` for writes, `scan*_below_cursor` +
+  proven separately (also `Rebase.refresh_inv`/`rebase_inv`/`catchUp_inv`, conditional on `Frame`) (`writerRecord_eq_sequential` + `stateLog_*` for writes, `scan*_below_cursor` +
   `prepareBatch_building` for batches). `idx as u16` (attribute ids above 65535) is not modelled, as before.
 - Schema: attribute names unique (`attrNames.Nodup`: the single `attrs_name` dictionary). The graph's
   mutation of its own stores (`insert_attrs`, label matrix, `remove_all`) is modelled by other
