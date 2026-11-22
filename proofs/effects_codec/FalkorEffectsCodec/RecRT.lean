@@ -156,7 +156,7 @@ theorem writeHeader_spec (op : Nat) (c : Option Nat) :
   · simp_all
   · split <;> simp_all
 
-/-- …and, of a correctly shaped header, exactly a zero count (#2916). -/
+/-- …and, of a correctly shaped header, exactly a zero count. -/
 theorem writeHeader_empty (op : Nat) (c : Option Nat) (hs : c.isSome = isBatchable op) :
     (writeHeader op c = .error .emptyRecord ↔ c = some 0) := by
   unfold writeHeader; simp only [hs, bne_self_eq_false, Bool.false_eq_true, ite_false]
@@ -172,7 +172,7 @@ theorem checkIndex_ok (ft : Nat) (schemas : List Ref) :
     checkIndex ft schemas = .ok () ↔ ((∃ k, indexTypeOf ft = .ok k) ∧ schemas ≠ []) := by
   unfold checkIndex; split <;> rename_i h <;> simp [h]
 
-/-- `RelType` (`blocks.rs:29`/`:39`): `schema_id` / `u32`. -/
+/-- `RelType` (`blocks.rs`): `schema_id` / `u32`. -/
 theorem relType_rt (v : Nat) (hv : v < 2 ^ 32) (rest : Bytes) :
     bU32.dec ((schemaId vecWrite [] v) ++ rest) = .ok (v, rest) := by
   simp [schemaId, vecWrite]; exact u32_w32 hv rest

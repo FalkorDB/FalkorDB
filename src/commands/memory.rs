@@ -75,8 +75,7 @@ fn memory_report(
     samples: usize,
 ) -> ValkeyValue {
     // L1-read for exactly the sampling pass, through a session: the index sizes come
-    // from RediSearch FFI (`RediSearch_MemUsage`), and a session is what publishes the
-    // lock mode that the GIL lock-order assertion reads (#726).
+    // from RediSearch FFI (`RediSearch_MemUsage`, which takes no lock and needs no GIL).
     let report = {
         let session = QuerySession::begin(graph);
         session.with_graph(|tg| tg.graph.read().memory_usage_report(samples))
@@ -197,11 +196,14 @@ pub fn graph_memory(
     }
 
     // First arg must be "USAGE"
+    // Error texts are C's, byte for byte (`Graph_Memory` in cmd_memory.c).
     let subcmd = args.next_arg()?;
-    if !subcmd.to_string_lossy().eq_ignore_ascii_case("USAGE") {
-        return Err(ValkeyError::Str(
-            "ERR unknown subcommand. Try GRAPH.MEMORY USAGE <key> [SAMPLES <count>]",
-        ));
+    let subcmd = subcmd.to_string_lossy();
+    if !subcmd.eq_ignore_ascii_case("USAGE") {
+        return Err(ValkeyError::String(format!(
+            "ERR unknown subcommand '{}'. expecting GRAPH.MEMORY USAGE <key>",
+            up_to_nul(&subcmd)
+        )));
     }
 
     let key_name = args.next_arg()?;
@@ -209,8 +211,12 @@ pub fn graph_memory(
     // Parse optional SAMPLES <count>
     let samples: usize = if arg_count == 4 {
         let samples_kw = args.next_arg()?;
-        if !samples_kw.to_string_lossy().eq_ignore_ascii_case("SAMPLES") {
-            return Err(ValkeyError::Str("ERR expected SAMPLES keyword"));
+        let samples_kw = samples_kw.to_string_lossy();
+        if !samples_kw.eq_ignore_ascii_case("SAMPLES") {
+            return Err(ValkeyError::String(format!(
+                "ERR unknown subcommand '{}'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>",
+                up_to_nul(&samples_kw)
+            )));
         }
         // Any non-negative count, as C's `RedisModule_StringToULongLong`; 0 is
         // accepted and, like any count, clamped to 1..=10000 by
@@ -219,7 +225,7 @@ pub fn graph_memory(
         count_str
             .to_string_lossy()
             .parse::<u64>()
-            .map_err(|_| ValkeyError::Str("ERR SAMPLES must be a non-negative integer"))?
+            .map_err(|_| ValkeyError::Str("SAMPLES must be a non-negative integer"))?
             .try_into()
             .unwrap_or(usize::MAX)
     } else {

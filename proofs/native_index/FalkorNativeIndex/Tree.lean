@@ -13,17 +13,15 @@ entry list and each operation *is* its proven content spec. `enc`/`keyOf`/`docOf
 
 | here | Rust | proven contents |
 | --- | --- | --- |
-| `tInsert` | `CowBTree::insert` (`cow_btree/mod.rs:220`) | cow_btree `insert_spec` (= `sins`) |
-| `tRemove` | `CowBTree::remove` (`:260`) | cow_btree `remove_spec` (= `List.erase`) |
-| `tInsertBatch` | `CowBTree::insert_batch` (`:241`) | cow_btree `insertBatch_wf`, index_layer `Leaf.insertBatch_contents` (= union) |
-| `tRemoveBatch` | `CowBTree::remove_batch` (`:286`) | cow_btree `removeBatchTree_wf` (= `List.filter`) |
-| `tRange` | `CowBTree::range` / `point` (`:314`, `:324`) | cow_btree `range_spec`, `rangeDocs_spec` |
-| `tFromSorted` | `CowBTree::from_sorted` (`:190`) | cow_btree `fromSorted_wf`, index_layer (contents = input) |
+| `tInsert` | `CowBTree::insert` (`cow_btree/mod.rs`) | cow_btree `insert_spec` (= `sins`) |
+| `tRemove` | `CowBTree::remove` | cow_btree `remove_spec` (= `List.erase`) |
+| `tInsertBatch` | `CowBTree::insert_batch` | cow_btree `insertBatch_wf`, index_layer `Leaf.insertBatch_contents` (= union) |
+| `tRemoveBatch` | `CowBTree::remove_batch` | cow_btree `removeBatchTree_wf` (= `List.filter`) |
+| `tRange` | `CowBTree::range` / `point` | cow_btree `range_spec`, `rangeDocs_spec` |
+| `tFromSorted` | `CowBTree::from_sorted` | cow_btree `fromSorted_wf`, index_layer (contents = input) |
 
-**The hypothesis these specs need, discharged.** They are proven under cow_btree's `TreeWF`. Before
-#3283 `remove_batch` did not preserve it (cow_btree Bug 3 = FINDINGS W7-btree-1;
-counterexample removed in bbee75955; the last revision that has them is 17ccc5412), so the numeric-index rows that read through the tree were
-CONDITIONAL. #3283 (799968a8b) fixed it, and cow_btree now proves every tree the API can build is
+**The hypothesis these specs need, discharged.** They are proven under cow_btree's `TreeWF`, and
+cow_btree proves every tree the API can build is
 well-formed (`Reachable_wf_asserted`, from `removeBatchTree_wf`, `insertBatch_wf`, `fromSorted_wf`,
 `insert_spec`, `remove_spec`; `BRANCH_MAX >= 4` is the const assert). `Contract.lean` proves each
 operation equals its model above on every such tree, so those rows are PROVEN.
@@ -85,7 +83,7 @@ theorem sortDedup_spec (l : List Nat) : Sorted (sortDedup l) ∧ ∀ e, e ∈ so
 theorem sortDedup_unique (l s : List Nat) (hs : Sorted s) (hm : ∀ e, e ∈ s ↔ e ∈ l) : s = sortDedup l :=
   sorted_ext hs (sortDedup_spec l).1 (fun e => by rw [hm, (sortDedup_spec l).2])
 
-/-- `lo > hi` scans nothing (`NumericIndex::empty`, `numeric.rs:424-426`). -/
+/-- `lo > hi` scans nothing (`NumericIndex::empty`, `numeric.rs`). -/
 theorem tRange_empty (t : List Nat) : tRange t 1 0 = [] := by
   simp only [tRange]
   rw [List.filter_eq_nil_iff.2 (fun a _ => by simp; omega)]

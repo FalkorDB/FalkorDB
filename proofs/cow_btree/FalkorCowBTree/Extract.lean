@@ -3,9 +3,9 @@ import FalkorCowBTree.Lookup
 /-!
 # The generic cursor (`Extract`, #2278) and `heap_bytes`
 
-`RangeIter` became generic over an `Extract` (`cursor.rs:16-53`): `DocExtract` yields the doc
+`RangeIter` became generic over an `Extract` (`cursor.rs`): `DocExtract` yields the doc
 (`range`, `point`), `TupleExtract` the `(key, doc)` pair (`range_tuples`). `next` now reads the key
-only when the extract needs it or the leaf is a boundary leaf (`cursor.rs:187-195`). We model that
+only when the extract needs it or the leaf is a boundary leaf (`cursor.rs`). We model that
 `next` (`Cursor.nextWith`) and prove it yields `make(keyOf e, docOf e)` for exactly the entries the
 old `Cursor.next` (and hence `range_spec`) yields.
 -/
@@ -14,15 +14,15 @@ namespace CowBTree
 
 /-! ## `Extract` -/
 
-/-- The `Extract` trait (`cursor.rs:16-24`): `NEEDS_KEY` and `make`. -/
+/-- The `Extract` trait (`cursor.rs`): `NEEDS_KEY` and `make`. -/
 structure Extract (α : Type) where
   needsKey : Bool
   make : Nat → Nat → α
 
-/-- `DocExtract` (`cursor.rs:27-39`): `NEEDS_KEY = false`, `make(_key, doc) = doc`. -/
+/-- `DocExtract` (`cursor.rs`): `NEEDS_KEY = false`, `make(_key, doc) = doc`. -/
 def DocExtract : Extract Nat := ⟨false, fun _ d => d⟩
 
-/-- `TupleExtract` (`cursor.rs:41-53`): `NEEDS_KEY = true`, `make(key, doc) = (key, doc)`. -/
+/-- `TupleExtract` (`cursor.rs`): `NEEDS_KEY = true`, `make(key, doc) = (key, doc)`. -/
 def TupleExtract : Extract (Nat × Nat) := ⟨true, fun k d => (k, d)⟩
 
 /-- The contract `NEEDS_KEY = false` relies on: `make` ignores the key. -/
@@ -33,7 +33,7 @@ theorem TupleExtract_make (k d : Nat) : TupleExtract.make k d = (k, d) := rfl
 theorem DocExtract_lawful : DocExtract.Lawful := fun _ _ _ _ => rfl
 theorem TupleExtract_lawful : TupleExtract.Lawful := fun h => by simp [TupleExtract] at h
 
-/-- `Iterator::next` for `RangeIter<.., E>` (`cursor.rs:181-207`). -/
+/-- `Iterator::next` for `RangeIter<.., E>` (`cursor.rs`). -/
 def Cursor.nextWith {α} (ex : Extract α) (cur : Cursor) : Option (α × Cursor) :=
   match hl : cur.leaf with
   | none => none                                                    -- line 183
@@ -125,14 +125,14 @@ theorem rangeWith_spec {α} (ex : Extract α) (hex : ex.Lawful) (c : Cfg) (h : N
   unfold rangeWith
   rw [takeWith_eq ex hex, ← range, range_spec c h root lo hi n hw hn]
 
-/-- **`CowBTree::range` / `point` (`mod.rs:366`, `:376`)** as the Rust yields them: the docs. -/
+/-- **`CowBTree::range` / `point` (`mod.rs`)** as the Rust yields them: the docs. -/
 theorem rangeDocs_spec (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : TreeWF c h root)
     (hn : (toList h root).length ≤ n) :
     rangeWith DocExtract h root lo hi n =
       ((toList h root).filter (fun e => decide (lo ≤ keyOf e ∧ keyOf e ≤ hi))).map docOf :=
   rangeWith_spec DocExtract DocExtract_lawful c h root lo hi n hw hn
 
-/-- **`CowBTree::range_tuples` (`mod.rs:460`)**: the `(key, doc)` pairs of exactly the entries with key
+/-- **`CowBTree::range_tuples` (`mod.rs`)**: the `(key, doc)` pairs of exactly the entries with key
     in `[lo, hi]`, in order. -/
 theorem rangeTuples_spec (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : TreeWF c h root)
     (hn : (toList h root).length ≤ n) :
@@ -152,7 +152,7 @@ theorem rangeTuples_enc (c : Cfg) (h : Nat) (root : Node) (lo hi n : Nat) (hw : 
   simp only [Function.comp, enc, keyOf, docOf, id]
   exact Nat.div_add_mod' e W
 
-/-! ## `heap_bytes` (`mod.rs:314-334`) -/
+/-! ## `heap_bytes` (`mod.rs`) -/
 
 /-- What `heap_bytes` reads off each page: a leaf's blob length (`leaf.raw().len()`, fixed by the byte
     encoding — `proofs/index_layer` proves it per format), a branch's two `Vec` capacities (not part of
@@ -164,19 +164,18 @@ structure Mem where
   sepSize : Nat := 16
   nodeSize : Nat
 
-/-- One branch's own bytes (`mod.rs:325-326`). -/
+/-- One branch's own bytes (`mod.rs`). -/
 def Mem.branch (m : Mem) (seps : List E) (cs : List Node) : Nat :=
   m.sepCap seps cs * m.sepSize + m.childCap seps cs * m.nodeSize
 
-/-- The nested `walk` of `heap_bytes` (`mod.rs:314-334`), accumulator-passing as in the Rust. -/
+/-- The nested `walk` of `heap_bytes` (`mod.rs`), accumulator-passing as in the Rust. -/
 def heapWalk (m : Mem) : Nat → Node → Nat → Nat
-  | _, .leaf es, acc => acc + m.raw es                                          -- `mod.rs:320`
+  | _, .leaf es, acc => acc + m.raw es                                          -- `mod.rs`
   | 0, .branch _ _, acc => acc
   | h + 1, .branch seps cs, acc =>
-    cs.foldl (fun a ch => heapWalk m h ch a) (acc + m.branch seps cs)          -- `mod.rs:325-327`
+    cs.foldl (fun a ch => heapWalk m h ch a) (acc + m.branch seps cs)          -- `mod.rs`
 
-/-- `CowBTree::heap_bytes` (`mod.rs:314`). Its leaf arm is `Page::heap_bytes`, for the `u64` page the
-    blob's length (`leaf/mod.rs:610-612`, `Page.lean`). -/
+/-- `CowBTree::heap_bytes` (`mod.rs`). -/
 def heapBytes (m : Mem) (h : Nat) (root : Node) : Nat := heapWalk m h root 0
 
 /-- The closed form: every page contributes its own bytes once. -/

@@ -6,11 +6,11 @@ import OptimizerScan.IndexPipeline
 | here | there |
 | --- | --- |
 | `QNode`, `QRel`, `IRs` | `QueryNode`, `QueryRelationship`, the `IR` variants the pass matches |
-| `nAlias`/`nLabels`/`nIndexed`/`nMatch`/`nBuild` | `impl IndexSubject for Arc<QueryNode>` `utilize_index.rs:151-216` |
-| `eAlias`/`eLabels`/`eIndexed`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs:218-310` |
-| `endpointOK`, `edgeScanSel`, `edgeRefSel` | `EdgeByIndexScanOp::next` `runtime/ops/edge_by_index_scan.rs:330-380` (bound-endpoint filter), `CondTraverse` + `Filter` |
-| `distScan`, `pointSel`, `funcScan` | `try_distance_index_scan` 390 (generic over the subject; `try_single_filter_scan` 650 calls it for nodes and edges alike), `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs:1545`) |
-| `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs:56,293,98` |
+| `nAlias`/`nLabels`/`nIndexed`/`nMatch`/`nBuild` | `impl IndexSubject for Arc<QueryNode>` `utilize_index.rs` |
+| `eAlias`/`eLabels`/`eIndexed`/`eFunc`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs` |
+| `endpointOK`, `edgeScanSel`, `edgeRefSel` | `EdgeByIndexScanOp::next` `runtime/ops/edge_by_index_scan.rs` (bound-endpoint filter), `CondTraverse` + `Filter` |
+| `distScan`, `pointSel` | `try_distance_index_scan` 421, `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs`) |
+| `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs` |
 -/
 namespace OptimizerScan.Index
 
@@ -48,20 +48,8 @@ def eAlias (r : QRel) : Nat := r.alias
 def eLabels (r : QRel) : List Nat := r.types
 /-- `graph.is_edge_indexed(type, attr, Range)`. -/
 def eIndexed (eidx : Nat → List Nat) (T' k : Nat) : Bool := k ∈ eidx T'
-/-- `try_distance_index_scan<T: Clone>`: once the `distance` shape is accepted
-(`distScan`), the scan targets the subject it was given, a node label or a
-relationship type alike. Before this change the edge instance's hook returned
-`None`, so an edge `distance()` filter never reached the edge index. -/
-def funcScan {S : Type} (s : S) (L : Nat) (q : IQ) (accepted : Bool) : Option (S × Nat × IQ) :=
-  if accepted then some (s, L, q) else none
-
-/-- **PROVEN**: an accepted `distance()` filter becomes a scan on the same
-subject, for an edge exactly as for a node. -/
-theorem funcScan_subject {S : Type} (s : S) (L : Nat) (q : IQ) :
-    funcScan s L q true = some (s, L, q) ∧ funcScan s L q false = none := ⟨rfl, rfl⟩
-
-theorem funcScan_edge (r : QRel) (L : Nat) (q : IQ) :
-    funcScan r L q true = some (r, L, q) := rfl
+/-- `try_func_scan` for edges: no `distance()` path. -/
+def eFunc (_r : QRel) : Option (QRel × Nat × IQ) := none
 def eMatch : IRs → Option (QRel × Bool)
   | .condTraverse r tr sib =>
     if r.types.length ≠ 1 then none
@@ -73,8 +61,8 @@ def eBuild (r : QRel) (q : IQ) (tr : Bool) : IRs := .edgeByIndexScan r q tr
 theorem subject_accessors (n : QNode) (r : QRel) (idx : Nat → List Nat) (L k : Nat) :
     nAlias n = n.alias ∧ nLabels n = n.labels ∧ (nIndexed idx L k = true ↔ k ∈ idx L) ∧
     eAlias r = r.alias ∧ eLabels r = r.types ∧ (eIndexed idx L k = true ↔ k ∈ idx L) ∧
-    nBuild n L = IRs.nodeByIndexScan n L := by
-  refine ⟨rfl, rfl, by simp [nIndexed], rfl, rfl, by simp [eIndexed], rfl⟩
+    eFunc r = none ∧ nBuild n L = IRs.nodeByIndexScan n L := by
+  refine ⟨rfl, rfl, by simp [nIndexed], rfl, rfl, by simp [eIndexed], rfl, rfl⟩
 
 
 /-- `match_scan_source` (node): a `NodeByLabelScan` with at least one label. -/
@@ -118,7 +106,7 @@ structure EdgeE where
   dst : Nat
   ent : Node
 
-/-- The bound-endpoint filter of `EdgeByIndexScanOp` (`edge_by_index_scan.rs:338-372`),
+/-- The bound-endpoint filter of `EdgeByIndexScanOp` (`edge_by_index_scan.rs`),
 which is also what `CondTraverse` enforces for bound endpoints. -/
 def endpointOK (bf bt : Option Nat) (tr same : Bool) (e : EdgeE) : Bool :=
   let ft := if tr then (e.dst, e.src) else (e.src, e.dst)
@@ -146,16 +134,13 @@ theorem edge_utilize_sound (eidx : Nat → List Nat) (opq : Nat → Node → Boo
     edgeScanSel eidx opq T' f bf bt tr same e = edgeRefSel eidx opq T' f bf bt tr same e := by
   simp only [edgeScanSel, edgeRefSel, utilize_sound eidx T' opq f hf e.ent he]
 
-/-! ## HISTORICAL: the inline-attribute path (`(n:L {k: v})`), removed by #2390 (d2c42e032)
+/-! ## No inline-attribute path (`(n:L {k: v})`)
 
-Until #2390 `try_index_rewrite` had a second path for patterns carrying inline attributes. #2390
-removed it (with `IndexSubject::inline_attrs`): the planner now lowers inline attributes to an
-`IR::Filter` and strips them from the pattern, so they reach the index through the filter path.
-Unchecked historical note: the removed inline rewrite (`get_inline_attr_index` 721,
-`needs_inline_post_filter` 897, `apply_inline_rewrite` 1038, all at a9377c636, the last revision that
-has them) was meant to be the same as `utilize` of the equivalent filter `n.k = v`. The theorem that
-stated this (`pre2390_applyInline_eq_utilize`) was deleted with the pre-#2390 model, so nothing in
-this project checks the claim any more; it is context only. -/
+`try_index_rewrite` has no second path for patterns carrying inline attributes: the planner lowers
+inline attributes to an `IR::Filter` and strips them from the pattern, so they reach the index
+through the filter path. Unchecked note: the old inline rewrite (`get_inline_attr_index`,
+`needs_inline_post_filter`, `apply_inline_rewrite`) was meant to be the same as `utilize` of the
+equivalent filter `n.k = v`; nothing in this project checks that claim, it is context only. -/
 
 /-! ## `distance()` scans -/
 
@@ -203,11 +188,11 @@ theorem distance_keeps_filter (t : T) : nonIdxT (.abs t) = true := rfl
 
 /-! ## `NodeByIndexScanOp` -/
 
-/-- `NodeByIndexScanOp::new` (`node_by_index_scan.rs:66-70`). -/
+/-- `NodeByIndexScanOp::new` (`node_by_index_scan.rs`). -/
 def extraLabels (ls : List Nat) : Option (List Nat) := if ls.length > 1 then some ls.tail else none
 
 /-- `evaluate_index_query` with its error: `InList` over a non-list value is
-`Err("IN operator requires a list")` (`node_by_index_scan.rs:241`). -/
+`Err("IN operator requires a list")` (`node_by_index_scan.rs`). -/
 def evalIQE (q : IQ) : Except String Q :=
   match q with
   | .inList _ (.term t) => match evalC t with
@@ -215,7 +200,7 @@ def evalIQE (q : IQ) : Except String Q :=
     | _ => .error "IN operator requires a list"
   | _ => .ok (evalIQ q)
 
-/-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs:308-335`):
+/-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs`):
 index when `can_utilize_index`, else `get_nodes(labels)`, then the extra labels. -/
 def scanRow (idx : Nat → List Nat) (ls : List Nat) (L : Nat) (q : IQ) (n : Node) : Bool :=
   let qv := evalIQ q

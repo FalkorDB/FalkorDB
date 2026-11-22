@@ -1,22 +1,13 @@
 import FalkorIndexLayer.LeafDispatch
 import FalkorIndexLayer.LeafTree
 /-
-# The narrowable doc width `DOC_BYTES` (#2278, 3597b3a82)
+# The narrowable doc width `DOC_BYTES`
 
 `AosLeaf<DOC_BYTES>` (`cow_btree/leaf/aos.rs`) stores `key:8 + doc:DOC_BYTES` per entry; the doc is
-written by `doc_le_bytes` (`cow_btree/mod.rs:71-80`, `assert!` that the dropped high bytes are zero)
-and read back by `read_width(.., DOC_BYTES)` (`aos.rs:31-36`, `mod.rs:94-110`). `Leaf::doc_layout`
-reports `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)` (`leaf/mod.rs:214-220`) and `from_pairs` sizes AoS as
-`count * (FIELD + DOC_BYTES)` (`leaf/mod.rs:288`).
-
-| Lean | Rust |
-| --- | --- |
-| `docLeBytes` | `doc_le_bytes` `cow_btree/mod.rs:71` |
-| `aosEncD`, `aosBuildD` | `AosLeaf::build` `aos.rs:39` (`None` = the `doc_le_bytes` panic) |
-| `aosCountD`, `aosKeyD`, `aosDocD` | `AosLeaf::count` 18, `key` 23, `doc` 31 |
-| `aosMergeD` | `AosLeaf::merge_batch` 51 |
-| `docLayoutD` | `Leaf::doc_layout` AoS arm `leaf/mod.rs:216` |
-| `fromPairsD`, `toPairsD` | `Leaf::from_pairs` `leaf/mod.rs:261` with `aos_size = count * (FIELD + DOC_BYTES)` |
+written by `doc_le_bytes` (`cow_btree/mod.rs`, `assert!` that the dropped high bytes are zero)
+and read back by `read_width(.., DOC_BYTES)` (`aos.rs`, `mod.rs`). `Leaf::doc_layout`
+reports `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)` (`leaf/mod.rs`) and `from_pairs` sizes AoS as
+`count * (FIELD + DOC_BYTES)` (`leaf/mod.rs`).
 
 Proven: `docLeBytes_spec` (the assert passes iff `doc < 256^DOC_BYTES`, and then the bytes are
 `le DOC_BYTES doc`), `docLeBytes_lossless` (narrowing is lossless), `aos_roundtripD` and
@@ -24,19 +15,20 @@ Proven: `docLeBytes_spec` (the assert passes iff `doc < 256^DOC_BYTES`, and then
 `aosBuildD_length` (`count * (8 + DOC_BYTES)` bytes — the `heap_bytes` leaf term), and that
 `DOC_BYTES = 8` is the old 16-byte model (`aosD8_*`).
 
-FIXED by #3285 (cab3cf192), W7-btree-2: the const asserts (`mod.rs:150-160`, `:172-182`, `:190-200`)
-now gate `DOC_BYTES` with `is_read_width` (`mod.rs:88`), i.e. `DOC_BYTES ∈ {1, 2, 4, 8}`, exactly the
+W7-btree-2: the const asserts (`mod.rs`)
+gate `DOC_BYTES` with `is_read_width` (`mod.rs`), i.e. `DOC_BYTES ∈ {1, 2, 4, 8}`, exactly the
 widths `read_width` loads. `docBytesAssert_iff`, `admitted_doc_read`, `admitted_fromPairs_roundtrip`:
-every width a tree can be built with reads its docs back. Before #3285 the assert was
-`1 <= DOC_BYTES <= 8`, so `DOC_BYTES = 3` (5, 6, 7) read every doc wrong (Rust panicked "range end index 16
-out of range for slice of length 11" on the second `insert` of a `CowBTree::<256, 256, 3>`; counterexamples
-removed in bbee75955; the last revision that has them is 17ccc5412); `docBytesAssert_rejects_3`: the old assert admitted 3, the new one does not.
+every width a tree can be built with reads its docs back at the single-page level.
+`admitted_fromPairs_roundtrip` is proved for sorted input, docs that fit the width and at most
+256 entries (one page); `asserted_fromSorted_contents` does not compose it with the tree model
+(`fromSorted` ignores `D`), so there is no tree-level doc round trip here. `docBytesAssert_rejects_3`: an assert of
+`1 <= DOC_BYTES <= 8` would admit 3 (5, 6, 7), which `read_width` cannot read.
 -/
 namespace IndexLayer.Leaf
 
 /-! ## `doc_le_bytes` -/
 
-/-- `doc_le_bytes::<D>(doc)` (`cow_btree/mod.rs:71-80`): `none` is the `assert!` panic. -/
+/-- `doc_le_bytes::<D>(doc)` (`cow_btree/mod.rs`): `none` is the `assert!` panic. -/
 def docLeBytes (D d : Nat) : Option (List Nat) :=
   if ((le 8 d).drop D).all (· == 0) then some ((le 8 d).take D) else none
 
@@ -90,7 +82,7 @@ theorem aosEncD_len (D : Nat) (p : P) : (aosEncD D p).length = 8 + D := by simp 
 /-- The docs fit the configured width (the precondition of every `doc_le_bytes`). -/
 def DocsFit (D : Nat) (ps : List P) : Prop := ∀ p ∈ ps, p.2 < 256 ^ D
 
-/-- `AosLeaf::<D>::build` (`aos.rs:39-46`): `none` is the `doc_le_bytes` panic. -/
+/-- `AosLeaf::<D>::build` (`aos.rs`): `none` is the `doc_le_bytes` panic. -/
 def aosBuildD (D : Nat) (ps : List P) : Option (List Nat) :=
   (ps.mapM (fun p => (docLeBytes D p.2).map (fun db => le 8 p.1 ++ db))).map List.flatten
 
@@ -131,11 +123,11 @@ theorem aosBuildD_none (D : Nat) (hD : D ≤ 8) (ps : List P) (p : P) (hp : p �
 theorem aosBuildD_length (D : Nat) (ps : List P) : (ps.flatMap (aosEncD D)).length = ps.length * (8 + D) :=
   length_flatMap_const _ _ (aosEncD_len D) ps
 
-/-- `AosLeaf::count` (`aos.rs:18`): `len / STRIDE`, `STRIDE = FIELD + DOC_BYTES`. -/
+/-- `AosLeaf::count` (`aos.rs`): `len / STRIDE`, `STRIDE = FIELD + DOC_BYTES`. -/
 def aosCountD (D : Nat) (b : List Nat) : Nat := b.length / (8 + D)
-/-- `AosLeaf::key` (`aos.rs:23`). -/
+/-- `AosLeaf::key` (`aos.rs`). -/
 def aosKeyD (D : Nat) (b : List Nat) (i : Nat) : Nat := readU64 b ((8 + D) * i)
-/-- `AosLeaf::doc` (`aos.rs:31`): `read_width(.., STRIDE * i + FIELD, DOC_BYTES)`. -/
+/-- `AosLeaf::doc` (`aos.rs`): `read_width(.., STRIDE * i + FIELD, DOC_BYTES)`. -/
 def aosDocD (D : Nat) (b : List Nat) (i : Nat) : Nat := readWidth b ((8 + D) * i + 8) D
 def aosPairsD (D : Nat) (b : List Nat) : List P := pairsOf (aosCountD D b) (aosKeyD D b) (aosDocD D b)
 
@@ -169,7 +161,7 @@ theorem aos_roundtripD (D : Nat) (hD : W D) (ps : List P) (hu : AllU64 ps) (hf :
   refine ⟨hc, hkd, ?_⟩
   unfold aosPairsD; rw [hc]; exact pairsOf_eq ps _ _ hkd
 
-/-- `AosLeaf::merge_batch` (`aos.rs:51-66`): the `merge_walk` emissions, each re-encoded through
+/-- `AosLeaf::merge_batch` (`aos.rs`): the `merge_walk` emissions, each re-encoded through
     `doc_le_bytes` (`none` = its panic). -/
 def aosMergeD (D : Nat) (b : List Nat) (batch : List P) : Option (List Nat) :=
   aosBuildD D ((mergeW lexLe (aosPairsD D b) batch none).map (·.1))
@@ -180,10 +172,10 @@ theorem aosMergeD_spec (D : Nat) (hD : W D) (ps batch : List P) (hu : AllU64 ps)
   unfold aosMergeD
   rw [(aos_roundtripD D hD ps hu hf).2.2, mergeW_fst lexLe ps batch none]
 
-/-- `Leaf::doc_layout`'s AoS arm (`leaf/mod.rs:216`): `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)`. -/
+/-- `Leaf::doc_layout`'s AoS arm (`leaf/mod.rs`): `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)`. -/
 def docLayoutD (D : Nat) : Nat × Nat × Nat := (8, 8 + D, D)
 
-/-- The cursor's cached layout reads exactly `AosLeaf::doc` (`cursor.rs:197-200`). -/
+/-- The cursor's cached layout reads exactly `AosLeaf::doc` (`cursor.rs`). -/
 theorem docLayoutD_spec (D : Nat) (b : List Nat) (i : Nat) :
     aosDocD D b i = readWidth b ((docLayoutD D).1 + i * (docLayoutD D).2.1) (docLayoutD D).2.2 := by
   simp only [aosDocD, docLayoutD]; congr 1; rw [Nat.mul_comm]; omega
@@ -204,7 +196,7 @@ theorem aosD8_layout : docLayoutD 8 = (8, 16, 8) := rfl
 
 /-! ## `from_pairs` with the AoS size `count * (8 + DOC_BYTES)` -/
 
-/-- `Leaf::<_, D>::from_pairs` (`leaf/mod.rs:261-313`); `none` is a `doc_le_bytes` panic in the AoS arm. -/
+/-- `Leaf::<_, D>::from_pairs` (`leaf/mod.rs`); `none` is a `doc_le_bytes` panic in the AoS arm. -/
 def fromPairsD (D : Nat) (ps : List P) : Option LeafV :=
   match ps.getLast? , ps.head? with
   | some last, some first =>
@@ -273,9 +265,9 @@ theorem fromPairsD_roundtrip (D : Nat) (hD : W D) (ps : List P) (hs : Sorted2 ps
       | exact ⟨_, haos, haosr⟩
   · exact ⟨_, haos, haosr⟩
 
-/-! ## `DOC_BYTES` const assert (#3285, cab3cf192) -/
+/-! ## `DOC_BYTES` const assert -/
 
-/-- The `DOC_BYTES` half of the const asserts (`mod.rs:156-159`, `:178-181`, `:196-199`):
+/-- The `DOC_BYTES` half of the const asserts (`mod.rs`):
     `is_read_width(DOC_BYTES)`. -/
 def docBytesAssert (D : Nat) : Bool := isReadWidth D
 
@@ -294,11 +286,10 @@ theorem admitted_fromPairs_roundtrip (D : Nat) (hD : docBytesAssert D = true) (p
     ∃ l, fromPairsD D ps = some l ∧ toPairsD D l = ps :=
   fromPairsD_roundtrip D ((isReadWidth_iff D).1 hD) ps hs hu hf hn
 
-/-- The whole const assert of `CowBTree::{default,new,from_sorted}` (`mod.rs:150-160`, `:172-182`,
-    `:190-200`; #2897 raised `BRANCH_MAX` to `>= 4`, #3285 gated `DOC_BYTES` with `is_read_width`). -/
+/-- The whole const assert of `CowBTree::{default,new,from_sorted}` (`mod.rs`; #2897 raised `BRANCH_MAX` to `>= 4`, #3285 gated `DOC_BYTES` with `is_read_width`). -/
 def constAssert (L B D : Nat) : Bool := 2 ≤ L && L ≤ 256 && 4 ≤ B && docBytesAssert D
 
-/-- **`CowBTree::from_sorted` under its const assert** (`mod.rs:190`): every tree the assert lets
+/-- **`CowBTree::from_sorted` under its const assert** (`mod.rs`): every tree the assert lets
     through holds exactly its (sorted, unique) input whose docs fit `DOC_BYTES` (`DocsFit D ps`) — no
     extra premise left on `LEAF_MAX`/`BRANCH_MAX`. `fromSorted` itself ignores `D`; the Rust does not: a doc
     `>= 256^DOC_BYTES` makes `from_pairs` fall back to the AoS page and `doc_le_bytes` panics (`fromPairsD`
@@ -310,6 +301,4 @@ theorem asserted_fromSorted_contents (L B D : Nat) (h : constAssert L B D = true
   exact fromSorted_contents L B (by omega) h.1.1.2 (by omega) ps hs hu
 
 theorem docBytesAssert_rejects_3 : docBytesAssert 3 = false := rfl
-/-! ## HISTORICAL (before #3285): `DOC_BYTES ∉ {1, 2, 4, 8}` passed the const assert but could not be read -/
-
 end IndexLayer.Leaf

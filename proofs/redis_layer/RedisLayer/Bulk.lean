@@ -1,18 +1,17 @@
 /-!
 # `GRAPH.BULK` binary format (`src/commands/bulk_insert.rs`)
 
-* `go` / `attach` — `read_property` (`bulk_insert.rs:95-176`, depth cap since #3339 b080a44c1): the explicit-stack reader.
+* `go` / `attach` — `read_property` (`bulk_insert.rs`, with a depth cap): the explicit-stack reader.
   `go` is the outer `loop` decoding one type byte, `attach` the inner loop that pushes
   a finished value into the innermost open array and pops every array it completes.
   The input is the remaining byte list rather than `(data, idx)`; `idx` is
   `data.length - rest.length`.
-* `cstr` — `read_cstring` (`:31-45`), `readNe` — `read_u32_ne`/`read_u64_ne`/`read_i64_ne`/
-  `read_f64_ne` (`:47-93`): every one bounds-checks before indexing (`readNe_ok`).
-* `records` — the record loop of `process_node_token` (`:419-440`); each record's values
+* `cstr` — `read_cstring`, `readNe` — `read_u32_ne`/`read_u64_ne`/`read_i64_ne`/
+  `read_f64_ne`: every one bounds-checks before indexing (`readNe_ok`).
+* `records` — the record loop of `process_node_token`; each record's values
   are read by `PropColumns::read_record`, which consumes one value per header column.
-* `PropColumns.new` / `PropColumns.readRecord` / `keepFirst` — `PropColumns::new`/`read_record`
-  (`:178-235`, #3026 `fb3d516d0`): one entry per attribute, the first non-null in header order.
-* `parseCount` — `parse_count` (`:647-666`).
+* `PropColumns.new` / `PropColumns.readRecord` / `keepFirst` — `PropColumns::new`/`read_record`: one entry per attribute, the first non-null in header order.
+* `parseCount` — `parse_count`.
 
 `i64::from_ne_bytes`/`to_ne_bytes` and `str::from_utf8` are Rust `core` functions; their
 specification is taken as the hypothesis structure `Codec` (bytes ↔ value, 8 bytes wide;
@@ -48,16 +47,15 @@ inductive BV where
 
 inductive BErr where
   | eof | unterminated | badUtf8 | negLen | unknownType
-  | tooDeep   -- `value_nesting_error()` (#3339, `bulk_insert.rs:132-134`)
+  | tooDeep   -- `value_nesting_error()` (#3339, `bulk_insert.rs`)
   deriving DecidableEq, Repr
 
-/-- `MAX_VALUE_NESTING` (`graph/src/runtime/value.rs:62`). -/
+/-- `MAX_VALUE_NESTING` (`graph/src/runtime/value.rs`). -/
 def MAX_VALUE_NESTING : Nat := 4096
 
 variable (C : Codec)
 
-/-- `read_u32_ne` (`:47`, `w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (`:59`, `:71`,
-`:83`, `w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
+/-- `read_u32_ne` (`w = 4`), `read_u64_ne`/`read_i64_ne`/`read_f64_ne` (`w = 8`): bounds check `*idx + w > data.len()`, then `from_ne_bytes` of
 `data[*idx..*idx + w]` (`dec`: the core decoder, any total function) and `*idx += w`. -/
 def readNe {α : Type} (w : Nat) (dec : List Nat → α) (data : List Nat) (idx : Nat) :
     Except BErr (α × Nat) :=
@@ -131,7 +129,7 @@ def go : List Nat → List Frame → Except BErr (BV × List Nat)
         have := cstr_len r s r' h
         if C.utf8ok s then attach (.str s) r' st else .error .badUtf8
     else if t = 5 then
-      -- `stack.len() >= MAX_VALUE_NESTING` (#3339, `:132`), before the length is read
+      -- `stack.len() >= MAX_VALUE_NESTING` (#3339), before the length is read
       if st.length ≥ MAX_VALUE_NESTING then .error .tooDeep
       else if r.length < 8 then .error .eof
       else
@@ -297,7 +295,7 @@ theorem enc_len_pos (v : BV) : 1 ≤ (enc C v).length := by
 /-! ## Records of a node token -/
 
 /-- `process_node_token`'s loop: `while idx < data.len()`, read `P` properties per
-record (`read_record`, `:433-438`; which values it keeps is `keepFirst`, below). -/
+record (`read_record`; which values it keeps is `keepFirst`, below). -/
 def readN : Nat → List Nat → Except BErr (List BV × List Nat)
   | 0, r => .ok ([], r)
   | n + 1, r =>
@@ -341,7 +339,7 @@ theorem encRec_ne_nil (vs : List BV) (hP : vs ≠ []) : encRec C vs ≠ [] := by
 /-- **A node token imports exactly the records it encodes**: for a header with `P ≥ 1`
 properties and a body that is the concatenation of `rs` (each with `P` values), the
 record loop returns `rs`, in order — so with `node_count = rs.length` every record gets
-exactly one reserved id and none is left over (the `node_id_cursor` check at `:420`). -/
+exactly one reserved id and none is left over (the `node_id_cursor` check ). -/
 theorem records_enc (P : Nat) (hP : 1 ≤ P) (rs : List (List BV))
     (hlen : ∀ vs ∈ rs, vs.length = P) (hwf : ∀ vs ∈ rs, ∀ v ∈ vs, wf C v)
     (hdep : ∀ vs ∈ rs, ∀ v ∈ vs, depth v ≤ MAX_VALUE_NESTING) (fuel : Nat)
@@ -373,7 +371,7 @@ theorem encRec_len (vs : List BV) : vs.length ≤ (encRec C vs).length := by
     have e : encRec C (v :: vs) = enc C v ++ encRec C vs := by simp [encRec]
     rw [e, List.length_append, List.length_cons]; omega
 
-/-- The `max_records` ceiling (`bulk_insert.rs:683-695`) never rejects an honest
+/-- The `max_records` ceiling (`bulk_insert.rs`) never rejects an honest
 payload: `P` properties cost at least `P` bytes per record. -/
 theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.length = P) :
     rs.length * P ≤ (rs.flatMap (encRec C)).length := by
@@ -385,7 +383,7 @@ theorem ceiling_sound (P : Nat) (rs : List (List BV)) (hlen : ∀ vs ∈ rs, vs.
     have := encRec_len C vs
     rw [List.flatMap_cons, List.length_append, List.length_cons, Nat.succ_mul]; omega
 
-/-! ## `parse_count` (`bulk_insert.rs:647-666`) -/
+/-! ## `parse_count` (`bulk_insert.rs`) -/
 
 def parseCount (s : List Nat) : Option Nat :=
   if s = [] then none
@@ -403,14 +401,14 @@ theorem parseCount_rejects :
 
 /-! ## Attribute resolution: where the imported entity differs from the encoded one -/
 
-/-- `get_or_create` (`graph/src/graph/attribute_store.rs:224-238`) over a dictionary
+/-- `get_or_create` (`graph/src/graph/attribute_store.rs`) over a dictionary
 modelled as a list of names. -/
 def getOrCreate (dict : List (List Nat)) (name : List Nat) : List (List Nat) × Nat :=
   match dict.idxOf? name with
   | some i => (dict, i)
   | none => if dict.length ≥ 65535 then (dict, 65535) else (dict ++ [name], dict.length)
 
-/-- The attribute ids a header resolves to (`process_node_token`, `:406-410`). -/
+/-- The attribute ids a header resolves to (`process_node_token`). -/
 def resolve : List (List Nat) → List (List Nat) → List Nat
   | _, [] => []
   | d, n :: ns => let (d', i) := getOrCreate d n; i :: resolve d' ns
@@ -424,7 +422,7 @@ pending_commit `Content.normResolved_get`, `resolved_duplicate_fixed`), and sinc
 (`readRecord_enc`, `keepFirst_nodup`). -/
 theorem duplicate_header_ids : resolve [] [[112], [113], [112]] = [0, 1, 0] := by decide
 
-/-- `Slot.len` is a `u16` written as `n as u16` (`attribute_store.rs:598`, `:609-610`).
+/-- `Slot.len` is a `u16` written as `n as u16` (`attribute_store.rs`).
 Before #3063 a record with 65536 non-null properties got `len = 0`: every property was
 silently dropped (confirmed live via `GRAPH.BULK`, `size(keys(n)) = 0`; 65537 kept 1).
 The cast is unchanged, but since #3063 (`0f45a8685`) the span `GRAPH.BULK` hands to
@@ -435,10 +433,10 @@ def slotLen (n : Nat) : Nat := n % 65536
 theorem slot_len_truncates : slotLen 65536 = 0 ∧ slotLen 65537 = 1 ∧ slotLen 65535 = 65535 := by
   decide
 
-/-! ## Header columns: `PropColumns` (#3026, `fb3d516d0`, closes #3024)
+/-! ## Header columns: `PropColumns`
 
-`PropColumns::new` (`bulk_insert.rs:197-210`) and `PropColumns::read_record` (`:218-234`),
-used by `process_node_token` (`:411`, `:433-438`) and `process_edge_token` (`:495`, `:517-522`).
+`PropColumns::new` (`bulk_insert.rs`) and `PropColumns::read_record`,
+used by `process_node_token` and `process_edge_token`.
 Attribute ids are `Nat` (Rust `u16`). The `HashMap<u16, usize>` from attribute to slot is
 modelled by its key list in insertion order: `entry(a).or_insert(slots.len())` gives a new key
 the next index, so a key's slot is its index in that list (`slotOf`). -/

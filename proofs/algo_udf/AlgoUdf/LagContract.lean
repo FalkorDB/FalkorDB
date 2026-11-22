@@ -1,19 +1,14 @@
 import AlgoUdf.Compact
-/-! # LAGraph's graph-validity outcome on the compact path (#3349) — gap closed 2026-10-20
+/-! # LAGraph's graph-validity outcome on the compact path — gap closed 2026-10-20
 
-`Compact.LagWcc` (and the `LAGr_PageRank` / `LAGr_Betweenness` assumptions) took LAGraph
+`Compact.LagWcc` (and the `LAGr_PageRank` / `LAGr_Betweenness` assumptions) take LAGraph
 to succeed on every square matrix. It does not: `LAGraph_CheckGraph` rejects a matrix
 held by column with `LAGRAPH_INVALID_GRAPH` (-1000), and GraphBLAS holds every
 `n`-by-1 matrix by column — including the 1-by-1 one the compact builders make for a
 one-node projection. This file adds that outcome to the axiomatised contract.
 
-| here | there |
-| --- | --- |
-| `newOrient`   | GraphBLAS `GxB_Matrix_new_arena` (`deps/GraphBLAS` ea79e35, `Source/matrix/GxB_Matrix_new_arena.c:89-101`): `ncols == 1` → by column; `nrows == 1` → by row; else the global format (by row) |
-| `checkGraph`  | `LAGraph_CheckGraph` (`deps/LAGraph` d01064d, `src/utility/LAGraph_CheckGraph.c:46-56`): non-square or not `GrB_ROWMAJOR` → `LAGRAPH_INVALID_GRAPH` |
-| `Algo`, `checks` | `LAGr_ConnectedComponents` → `LG_CC_FastSV6/7` (`CheckGraph` at :263/:279), `LAGr_PageRank` (:76), `LAGr_Betweenness` (:131) check; `LAGraph_cdlp` does not |
-| `compactBuild` | `build_compact_adj_from_tensors` `:581` / `..._symmetric_...` `:647` (`GrB_Matrix_new` at `:638` / `:708`): `GrB_Matrix_new(&compact, GrB_BOOL, n, n)` with `n` = projection size |
-| `projectedRun` | `algo_wcc` `:855` (check `:916`), `algo_pagerank` `:736` (check `:813`), `algo_betweenness` `:956` (check `:1068`): `if info != 0 { return Err(format!("… failed: {info}")) }` — no special case for `n = 1` |
+The compact matrix and the cached transpose are pinned by row
+(`pin_row_major`), so every non-empty projection passes the check (`projection_total`).
 
 AXIOMATISED (as definitions, no Lean `axiom`): the two FFI functions above. When the
 check passes, the algorithm returns one entry per compact index (the existing `LagWcc`
@@ -35,6 +30,14 @@ def checkGraph (nrows ncols : Nat) (o : Orient) : Int :=
   if nrows ≠ ncols then LAGRAPH_INVALID_GRAPH
   else if o = .byCol then LAGRAPH_INVALID_GRAPH else 0
 
+/-- `LAGraph_CheckGraph` on `G->A` and, when cached, `G->AT` (both must be held by row). -/
+def checkGraphAT (a : Nat × Nat × Orient) (at? : Option (Nat × Nat × Orient)) : Int :=
+  let ia := checkGraph a.1 a.2.1 a.2.2
+  if ia ≠ 0 then ia else
+  match at? with
+  | none => 0
+  | some t => checkGraph t.1 t.2.1 t.2.2
+
 inductive Algo | wcc | pagerank | betweenness | cdlp deriving DecidableEq
 
 /-- Whether the algorithm validates the graph first. -/
@@ -48,14 +51,33 @@ def Algo.name : Algo → String
   | .betweenness => "LAGr_Betweenness"
   | .cdlp => "LAGraph_cdlp"
 
-/-- The compact matrix for a projection of `n` nodes: `n × n`, orientation from
-`GrB_Matrix_new`. -/
-def compactBuild (n : Nat) : Nat × Nat × Orient := (n, n, newOrient n n)
+/-- `pin_row_major`: after the orientation hint the matrix is held by row. -/
+def pinRowMajor (_ : Orient) : Orient := .byRow
+
+/-- `new_compact_bool_matrix n`: `GrB_Matrix_new(n, n)` then `pin_row_major`. -/
+def newCompactBoolMatrix (n : Nat) : Nat × Nat × Orient := (n, n, pinRowMajor (newOrient n n))
+
+/-- The compact matrix for a projection of `n` nodes (both builders). -/
+def compactBuild (n : Nat) : Nat × Nat × Orient := newCompactBoolMatrix n
+
+/-- `LAGraph_Cached_AT` on an `r × c` matrix: a fresh `c × r` `GrB_Matrix_new`. -/
+def cachedAT (a : Nat × Nat × Orient) : Nat × Nat × Orient :=
+  (a.2.1, a.1, newOrient a.2.1 a.1)
+
+/-- `cache_transpose`: `LAGraph_Cached_AT`, then `pin_row_major(G->AT)`. -/
+def cacheTranspose (a : Nat × Nat × Orient) : Nat × Nat × Orient :=
+  let t := cachedAT a
+  (t.1, t.2.1, pinRowMajor t.2.2)
+
+/-- Whether the caller caches `G->AT` before the run (pageRank, betweenness). -/
+def usesAT : Algo → Bool
+  | .pagerank | .betweenness => true
+  | _ => false
 
 /-- The LAGraph call's return code on the compact matrix. -/
 def lagInfo (a : Algo) (n : Nat) : Int :=
-  let (r, c, o) := compactBuild n
-  if checks a then checkGraph r c o else 0
+  let m := compactBuild n
+  if checks a then checkGraphAT m (if usesAT a then some (cacheTranspose m) else none) else 0
 
 /-- The procedure on a projection `ids` (non-empty; the empty case is handled earlier):
 `Err` on a non-zero code, else one row per projected node. -/
@@ -69,35 +91,38 @@ row per projected node. -/
 def ProjectionTotal (run : List Nat → Except String Nat) : Prop :=
   ∀ ids : List Nat, ids ≠ [] → run ids = .ok ids.length
 
-/-- The contract is honest about square matrices of size ≥ 2: they pass. -/
-theorem lagInfo_two_le (a : Algo) (n : Nat) (h : 2 ≤ n) : lagInfo a n = 0 := by
-  have h1 : n ≠ 1 := by omega
-  cases a <;> simp [lagInfo, compactBuild, checks, checkGraph, newOrient, h1]
+theorem compactBuild_byRow (n : Nat) : compactBuild n = (n, n, .byRow) := rfl
 
-theorem projectedRun_two_le (a : Algo) (ids : List Nat) (h : 2 ≤ ids.length) :
+theorem lagInfo_zero (a : Algo) (n : Nat) : lagInfo a n = 0 := by
+  cases a <;> simp [lagInfo, compactBuild, newCompactBoolMatrix, pinRowMajor, checks, usesAT,
+    checkGraphAT, checkGraph, cacheTranspose, cachedAT]
+
+/-- The contract is honest about square matrices of size ≥ 2: they pass. -/
+theorem lagInfo_two_le (a : Algo) (n : Nat) (_h : 2 ≤ n) : lagInfo a n = 0 := lagInfo_zero a n
+
+theorem projectedRun_two_le (a : Algo) (ids : List Nat) (_h : 2 ≤ ids.length) :
     projectedRun a ids = .ok ids.length := by
-  simp [projectedRun, lagInfo_two_le a _ h]
+  simp [projectedRun, lagInfo_zero]
+
+/-- **#3349 fixed by #3572**: every algorithm answers every non-empty projection,
+including a one-node one. -/
+theorem projection_total (a : Algo) : ProjectionTotal (projectedRun a) := by
+  intro ids _; simp [projectedRun, lagInfo_zero]
 
 /-- CDLP does not run `LAGraph_CheckGraph`, so it satisfies the property (live: Rust
 `algo.labelPropagation({nodeLabels:['Node']})` returns `a, 0`). -/
-theorem cdlp_total : ProjectionTotal (projectedRun .cdlp) := by
-  intro ids _; simp [projectedRun, lagInfo, checks]
+theorem cdlp_total : ProjectionTotal (projectedRun .cdlp) := projection_total .cdlp
 
-/-- **BUG #3349**: a one-node projection makes a 1×1 matrix, which GraphBLAS holds by
-column, so `LAGraph_CheckGraph` returns -1000 and the Rust caller returns the error.
-Live: `algo.WCC({nodeLabels:['Node']})` → "LAGr_ConnectedComponents failed: -1000",
-`algo.pageRank('Node', null)` → "LAGr_PageRank failed: -1000" (and
-`algo.betweenness({nodeLabels:['Node']})` → "LAGr_Betweenness failed: -1000"); C answers
-all three. -/
-theorem bug3349_one_node_projection_fails :
-    projectedRun .wcc [0] = .error "LAGr_ConnectedComponents failed: -1000" ∧
-    projectedRun .pagerank [0] = .error "LAGr_PageRank failed: -1000" ∧
-    projectedRun .betweenness [0] = .error "LAGr_Betweenness failed: -1000" ∧
-    ¬ ProjectionTotal (projectedRun .wcc) ∧ ¬ ProjectionTotal (projectedRun .pagerank) := by
-  have hw : projectedRun .wcc [0] = .error "LAGr_ConnectedComponents failed: -1000" := rfl
-  have hp : projectedRun .pagerank [0] = .error "LAGr_PageRank failed: -1000" := rfl
-  refine ⟨hw, hp, rfl, fun h => ?_, fun h => ?_⟩
-  · have := h [0] (by simp); rw [hw] at this; cases this
-  · have := h [0] (by simp); rw [hp] at this; cases this
+/-- The one-node projection is answered with one row (#3572; was `-1000`). -/
+theorem one_node_projection_ok :
+    projectedRun .wcc [0] = .ok 1 ∧ projectedRun .pagerank [0] = .ok 1 ∧
+    projectedRun .betweenness [0] = .ok 1 :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- Pinning only `G->A` would not have been enough: the cached 1×1 transpose is held by
+column too, so pageRank and betweenness would still fail (why `cache_transpose` exists). -/
+theorem at_unpinned_still_fails :
+    checkGraphAT (compactBuild 1) (some (cachedAT (compactBuild 1))) = LAGRAPH_INVALID_GRAPH :=
+  rfl
 
 end AlgoUdf.LagContract

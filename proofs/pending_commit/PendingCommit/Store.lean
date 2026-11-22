@@ -1,6 +1,6 @@
 import PendingCommit.ContentCompact
 /-
-# `DataBlock`: the two-level radix directory (attribute_store.rs:896-1145)
+# `DataBlock`: the two-level radix directory (attribute_store.rs)
 
 `root[bi / 64] → DirPage.blocks[bi % 64] → Block`, `bi = id >> 6`, slot
 `id & 63`. Copy-on-write (`Arc::make_mut`) gives *value* semantics: a writer's

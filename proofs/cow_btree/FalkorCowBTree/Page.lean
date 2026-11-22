@@ -2,22 +2,22 @@ import FalkorCowBTree.Insert
 import FalkorCowBTree.Lookup
 
 /-!
-# One tree for every key type (#3742): the page trait
+# One tree for every key type (#3738): the page trait
 
-Since #3742 the tree layer (`node.rs`, `mod.rs`) is generic over its leaf page
+Since #3738 the tree layer (`node.rs`, `mod.rs`) is generic over its leaf page
 (`page.rs`), so the `u64` tree (`CowBTree<L, B, D>`, the `Leaf` page) and the string tree (`StrTree`,
 the `StrLeaf` page) share it. Each step the tree used to do on a leaf itself is now a `Page` method,
-and the `u64` `Leaf`'s implementation of each (`leaf/mod.rs:508-614`) is the former inline code:
+and the `u64` `Leaf`'s implementation of each is the former inline code:
 
-| Rust (since #3742) | `<Leaf as Page>` impl | model (unchanged) |
+| Rust (since #3738) | `<Leaf as Page>` impl | model (unchanged) |
 |---|---|---|
-| `Node::min` leaf arm (`node.rs:233`), `leaf.min()` | `(key(0), doc(0))`, `leaf/mod.rs:528` | `minOpt` |
-| `Node::combine` leaf arm (`node.rs:381-383`, `combine(..).map(Self::Leaf)`, `page.rs:90`) | AoS concat (`aos_combine`, `leaf/mod.rs:633`) or rebuild, `leaf/mod.rs:588` | `combine` |
-| `Node::remove_batch` leaf arm (`node.rs:452`) | survivor walk, `leaf/mod.rs:567-582` | `removeBatch` / `subtract` |
-| `Node::is_underfull` leaf arm (`node.rs:512`) | `count < LEAF_MAX / 2`, `leaf/mod.rs:532` | `isUnderfull` |
-| `build_root`, `remove_batch` empty node | `Page::empty`, `Leaf::from_pairs(&[])`, `leaf/mod.rs:513` | `.leaf []` |
-| `PageTree::from_sorted` (`mod.rs:199`) | `Page::build`, `chunks(LEAF_MAX)`, `leaf/mod.rs:519` | `fromSorted` |
-| `PageTree::heap_bytes` leaf arm (`mod.rs:320`) | `raw().len()`, `leaf/mod.rs:610` | `heapBytes` |
+| `Node::min` leaf arm, `leaf.min()` | `(key(0), doc(0))`, `leaf/mod.rs` | `minOpt` |
+| `Node::combine` leaf arm (`node.rs`, `combine(..).map(Self::Leaf)`, `page.rs`) | AoS concat (`aos_combine`, `leaf/mod.rs`) or rebuild, `leaf/mod.rs` | `combine` |
+| `Node::remove_batch` leaf arm | survivor walk, `leaf/mod.rs` | `removeBatch` / `subtract` |
+| `Node::is_underfull` leaf arm | `count < LEAF_MAX / 2`, `leaf/mod.rs` | `isUnderfull` |
+| `build_root`, `remove_batch` empty node | `Page::empty`, `Leaf::from_pairs(&[])`, `leaf/mod.rs` | `.leaf []` |
+| `PageTree::from_sorted` | `Page::build`, `chunks(LEAF_MAX)`, `leaf/mod.rs` | `fromSorted` |
+| `PageTree::heap_bytes` leaf arm | `raw().len()`, `leaf/mod.rs` | `heapBytes` |
 
 So those definitions model the generic code at the `u64` page as they modelled the code before it.
 
@@ -25,14 +25,14 @@ One step changed shape: a page split may now hand back **several** right pages (
 a page's byte budget gets a page of its own), so `Node::insert_one` passes a *list* of right siblings
 up, inserting them with a loop, and `CowBTree::insert` builds a root over the list. This file models
 that code (`insertOneR`, `insertR`) and proves it equal to `insertOne` / `insert` for the `u64` page,
-whose split always hands back exactly one right page (`leaf/mod.rs:543-546`). Every theorem about
+whose split always hands back exactly one right page. Every theorem about
 `insertOne` / `insert` / `insertRet` therefore holds of the code as it is now (`insertR_spec`,
 `insertOneR_spec`).
 -/
 
 namespace CowBTree
 
-/-- The loop `for (k, x) in xs.enumerate() { v.insert(i + k, x) }` (`node.rs:339-341`): each element
+/-- The loop `for (k, x) in xs.enumerate() { v.insert(i + k, x) }`: each element
     inserted one past the one before it. -/
 def insEach {α} (l : List α) (i : Nat) : List α → List α
   | [] => l
@@ -40,9 +40,9 @@ def insEach {α} (l : List α) (i : Nat) : List α → List α
 
 theorem insEach_single {α} (l : List α) (i : Nat) (x : α) : insEach l i [x] = insAt l i x := rfl
 
-/-- `Node::insert_one` (`node.rs:305`) since #3742: a split hands up the list of right siblings,
-    each with the separator before it (`Split { rights }`, `node.rs:32`). The `u64` page's split is
-    `<Leaf as Page>::insert` (`leaf/mod.rs:536-549`): `Leaf::insert`'s `LeafInsert::Split` with its one
+/-- `Node::insert_one` since #3738: a split hands up the list of right siblings,
+    each with the separator before it (`Split { rights }`, `node.rs`). The `u64` page's split is
+    `<Leaf as Page>::insert`: `Leaf::insert`'s `LeafInsert::Split` with its one
     right page wrapped in a list. -/
 def insertOneR (c : Cfg) : Nat → Node → E → Node × Option (List (E × Node))
   | _, .leaf es, x =>
@@ -52,21 +52,21 @@ def insertOneR (c : Cfg) : Nat → Node → E → Node × Option (List (E × Nod
     | some (.split l s r) => (.leaf l, some [(s, .leaf r)])
   | 0, n@(.branch _ _), _ => (n, none)
   | h + 1, .branch seps cs, x =>
-    let i := childIndex seps x                                      -- node.rs:333
-    match insertOneR c h (cs.getD i default) x with                 -- node.rs:334
-    | (c', none) => (.branch seps (setAt cs i c'), none)            -- node.rs:336
+    let i := childIndex seps x
+    match insertOneR c h (cs.getD i default) x with
+    | (c', none) => (.branch seps (setAt cs i c'), none)
     | (c', some rs) =>
-      let seps' := insEach seps i (rs.map Prod.fst)                 -- node.rs:339-340
-      let cs' := insEach (setAt cs i c') (i + 1) (rs.map Prod.snd)  -- node.rs:341
-      if cs'.length ≤ c.B then (.branch seps' cs', none)            -- node.rs:345
+      let seps' := insEach seps i (rs.map Prod.fst)
+      let cs' := insEach (setAt cs i c') (i + 1) (rs.map Prod.snd)
+      if cs'.length ≤ c.B then (.branch seps' cs', none)
       else
-        let mid := cs'.length / 2                                   -- node.rs:350
-        let ls := seps'.take mid                                    -- node.rs:352
-        (.branch ls.dropLast (cs'.take mid),                        -- node.rs:353
+        let mid := cs'.length / 2
+        let ls := seps'.take mid
+        (.branch ls.dropLast (cs'.take mid),
          some [(ls.getLast?.getD 0, .branch (seps'.drop mid) (cs'.drop mid))])
 
-/-- `CowBTree::insert` (`mod.rs:220`) since #3742: a root split stacks the old root and its right
-    siblings under a new root (`mod.rs:229-235`): one branch when they fit `BRANCH_MAX`, else
+/-- `CowBTree::insert` since #3738: a root split stacks the old root and its right
+    siblings under a new root: one branch when they fit `BRANCH_MAX`, else
     `build_root` over them. -/
 def insertR (c : Cfg) (h : Nat) (root : Node) (x : E) : Node × Nat :=
   match insertOneR c h root x with

@@ -14,12 +14,12 @@ support `ps` of pairs, each with its `PairSt`, plus the list of `me` blocks
 | `cloneT`        | `impl Clone` (:324) |
 | `meBlock`       | `me_block` (:365) |
 | `meBlockMut`    | `me_block_mut` (:378) |
-| `widenMe`       | `widen_me_for_id` (:403) |
-| `countRows`     | the row-counting loop of `multi_pairs_in` (:1394-1401) |
-| `multiPairsIn`/`multiPairs` | :1380 / :1372 |
-| `hasMultiEdge`  | :1409 |
-| `block0`/`blocksAll` | `edge_versioned_block_0` (:1189) / `edge_versioned_all` (:1196) |
-| `fwdM`/`fwdDp`/`fwdDm`/`matrixT` | `fwd_m`/`fwd_dp`/`fwd_dm` :1035-1048 |
+| `widenMe`       | `widen_me_for_id` (:402) |
+| `countRows`     | the row-counting loop of `multi_pairs_in` (:1393-1400) |
+| `multiPairsIn`/`multiPairs` | :1379 / :1371 |
+| `hasMultiEdge`  | :1408 |
+| `block0`/`blocksAll` | `edge_versioned_block_0` (:1188) / `edge_versioned_all` (:1195) |
+| `fwdM`/`fwdDp`/`fwdDm`/`matrixT` | `fwd_m`/`fwd_dp`/`fwd_dm`  |
 -/
 namespace VMTensorOps
 open VMTensor
@@ -76,7 +76,7 @@ def meBlockMut (t : TT) (b : Blk) : TT :=
   if b ∈ names t then t
   else { t with me := t.me ++ [⟨b, (t.me.headD ⟨(0,0), 0, true⟩).ncols, true⟩] }
 
-/-- `widen_me_for_id` (:403). -/
+/-- `widen_me_for_id` (:402). -/
 def widenMe (t : TT) (maxId : Nat) : TT :=
   if maxId < (t.me.headD ⟨(0,0), 0, true⟩).ncols then t
   else { t with me := t.me.map (fun e => { e with ncols := ME_DIM }) }
@@ -166,7 +166,7 @@ theorem widenMe_st (t : TT) (maxId : Nat) : (widenMe t maxId).st = t.st := by
 
 /-! ## `multi_pairs` -/
 
-/-- The loop of `multi_pairs_in` (:1394-1401) over `me.iter(0, MAX)`. -/
+/-- The loop of `multi_pairs_in` (:1393-1400) over `me.iter(0, MAX)`. -/
 def countRows : List (Nat × Nat) → Option Nat → Nat → Nat
   | [], _, n => n
   | (k, _) :: xs, last, n => if last = some k then countRows xs last n else countRows xs (some k) (n + 1)
@@ -198,7 +198,7 @@ theorem countRows_groups : ∀ (gs : List (Nat × List Nat)) (last : Option Nat)
       (by intro g hg h; injection h with h; exact hpw.1 g.1 (List.mem_map_of_mem hg) h)]
     simp; omega
 
-/-- `multi_pairs_in` (:1380): `0` on an empty block, the hypersparse vector
+/-- `multi_pairs_in` (:1379): `0` on an empty block, the hypersparse vector
 count (`GxB_Matrix_Iterator`-free `hyper_vector_count`, = number of non-empty
 rows) when both deltas are empty, the counting loop otherwise. Both paths
 are given the block's effective entries, grouped by row key. -/
@@ -236,7 +236,7 @@ theorem multiPairs_eq (blocks : List (List (Nat × List Nat) × Bool))
 /-- The ids a block holds: the `me` rows of its pairs. -/
 def blkIds (t : TT) (b : Blk) : List Nat := (t.ps.filter (blkOf · == b)).flatMap (fun p => (t.st p).me)
 
-/-- `has_multi_edge` (:1409). -/
+/-- `has_multi_edge` (:1408). -/
 def hasMultiEdge (t : TT) : Bool := t.me.any (fun e => (blkIds t e.blk).length != 0)
 
 theorem hasMultiEdge_iff {t : TT} (h : BlkInv t) :

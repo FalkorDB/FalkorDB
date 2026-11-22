@@ -4,19 +4,19 @@ import GraphQueries.Index
 
 | here | there |
 | --- | --- |
-| `ctStr`, `csStr` | `Display for ConstraintType` / `ConstraintStatus` (constraint.rs:14,34) |
-| `cnew`           | `Constraint::new` (constraint.rs:60), `NEXT_CONSTRAINT_ID` counter |
-| `cmatches`       | `Constraint::matches` (constraint.rs:79) |
-| `addRaw`         | `add_constraint_raw` (graph.rs:4555) |
-| `upsert`         | `upsert_constraint_raw` (graph.rs:4571) |
-| `entityCount`    | `get_constraint_entity_count` (graph.rs:4593) |
-| `validate`       | `validate_constraint` (graph.rs:4605) |
-| `validatePending`| `validate_pending_constraints` (graph.rs:4616) |
-| `computePending` | `compute_pending_constraint_results` (graph.rs:4645) |
-| `applyResults`   | `apply_constraint_validation_results` (graph.rs:4657), ids unique |
-| `dropC`          | `drop_constraint` (graph.rs:4790) — `swap_remove` |
-| `hasSupporting`  | `has_supporting_index` (graph.rs:4813) |
-| `dependsOn`      | `constraint_depends_on_index` (graph.rs:4832) |
+| `ctStr`, `csStr` | `Display for ConstraintType` / `ConstraintStatus` (constraint.rs) |
+| `cnew`           | `Constraint::new` (constraint.rs), `NEXT_CONSTRAINT_ID` counter |
+| `cmatches`       | `Constraint::matches` (constraint.rs) |
+| `addRaw`         | `add_constraint_raw` (graph.rs) |
+| `upsert`         | `upsert_constraint_raw` (graph.rs) |
+| `entityCount`    | `get_constraint_entity_count` (graph.rs) |
+| `validate`       | `validate_constraint` (graph.rs) |
+| `validatePending`| `validate_pending_constraints` (graph.rs) |
+| `computePending` | `compute_pending_constraint_results` (graph.rs) |
+| `applyResults`   | `apply_constraint_validation_results` (graph.rs), ids unique |
+| `dropC`          | `drop_constraint` (graph.rs) — `swap_remove` |
+| `hasSupporting`  | `has_supporting_index` (graph.rs) |
+| `dependsOn`      | `constraint_depends_on_index` (graph.rs) |
 -/
 namespace GQ
 variable {V : Type}

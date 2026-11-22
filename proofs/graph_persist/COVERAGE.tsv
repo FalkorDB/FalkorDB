@@ -7,13 +7,12 @@ graph/src/graph/graphblas/serialization.rs	read_unsigned	56	AXIOMATISED	trait me
 graph/src/graph/graphblas/serialization.rs	read_signed	57	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
 graph/src/graph/graphblas/serialization.rs	read_double	58	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
 graph/src/graph/graphblas/serialization.rs	read_buffer	59	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
-graph/src/graph/graphblas/serialization.rs	encode	34	NOT COVERED	trait default declaration
-graph/src/graph/graphblas/serialization.rs	encode_with_range	40	NOT COVERED	trait default (unimplemented!)
-graph/src/graph/graphblas/serialization.rs	decode	64	NOT COVERED	trait declaration
-graph/src/graph/graphblas/serialization.rs	decode_with_count	76	NOT COVERED	trait default (unimplemented!)
-graph/src/graph/graphblas/serialization.rs	from_u64	150	MODELLED	payload directory state tags (Persist.St.ofU, CchIndices = 10, Final = 11): St.ofU_toU; exercised via live roundtrip
+graph/src/graph/graphblas/serialization.rs	encode	34	PROVEN	Traits.encode_call (the required method: a call through the trait runs the implementor's; implementors are rows 15/16)
+graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	Traits.encode_with_range_default_panics (the default is unimplemented!(): panics whatever the arguments, writes nothing), encode_with_range_override
+graph/src/graph/graphblas/serialization.rs	decode	64	PROVEN	Traits.decode_call (the required method: a call through the trait runs the implementor's; implementors are rows 17/18)
+graph/src/graph/graphblas/serialization.rs	decode_with_count	76	PROVEN	Traits.decode_with_count_default_panics (unimplemented!(): panics whatever the arguments, reads nothing), decode_with_count_override
+graph/src/graph/graphblas/serialization.rs	from_u64	150	PROVEN	Persist.St.ofU_iff (from_u64 v = Some s iff s as u64 = v), St.ofU_none (v >= 12 refused: CchIndices = 10, Final = 11 are the last tags), St.ofU_toU
 graph/src/graph/graphblas/serialization.rs	encode	178	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
-graph/src/graph/graphblas/serialization.rs	encode_with_range	185	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip; #3438's select/advance_to/take seek = skip/take: PendingCommit SaveLayout.encRoarP
 graph/src/graph/graphblas/serialization.rs	decode	206	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
 graph/src/graph/graphblas/serialization.rs	decode_with_count	227	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
 src/redis_type.rs	io_cache_size	72	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
@@ -42,22 +41,11 @@ src/redis_type.rs	graphmeta_rdb_load	985	PROVEN	RedisType.metaLoad: metaLoad_spe
 src/redis_type.rs	graphmeta_rdb_save	1010	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
 src/redis_type.rs	graphmeta_free	1022	PROVEN	RedisType.metaFree: metaFree_spec
 src/redis_type.rs	graphmeta_aux_load	1032	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
-graph/src/graph/mvcc_graph.rs	new	104	NOT COVERED	constructor
-graph/src/graph/mvcc_graph.rs	from_graph	116	MODELLED	RDB load path, live
-graph/src/graph/mvcc_graph.rs	read	127	NOT COVERED	Arc clone
-graph/src/graph/mvcc_graph.rs	fork	139	NOT COVERED	private version, takes nothing (proofs/versioned_matrix, proofs/search_concurrency cover it)
-graph/src/graph/mvcc_graph.rs	commit	202	NOT COVERED	schema_version bump/concurrency not modelled (publish/refusal: proofs/search_concurrency, proofs/versioned_matrix)
-graph/src/graph/mvcc_graph.rs	is_stale	153	NOT COVERED	version-number comparison (proofs/search_concurrency Mvcc.checkFork_stale)
-graph/src/graph/mvcc_graph.rs	commit_indexer_batch	256	NOT COVERED	proofs/search_concurrency Mvcc.batch_keeps_forks; fit decision in native_index
-graph/src/graph/mvcc_graph.rs	prepare	287	NOT COVERED	(the checks and last changes of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
-graph/src/graph/mvcc_graph.rs	publish	347	NOT COVERED	(the compare-and-swap and set_indexer_graph of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
-graph/src/graph/mvcc_graph.rs	drop	363	NOT COVERED	cancel indexing
 src/redis_type.rs	wrong_type_compat	933	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
-graph/src/graph/graph.rs	rebuild_derived_matrices	986	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
-graph/src/graph/graph.rs	create_constraint	4559	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
-graph/src/graph/graph.rs	validate_mandatory_constraint	4734	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4773	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4828	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+graph/src/graph/graph.rs	create_constraint	4622	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4797	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4836	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4891	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
 src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip
@@ -74,6 +62,3 @@ src/serializers/decoder/mod.rs	rebuild_indexes	410	PROVEN	Persist.Indexes.rebuil
 src/serializers/decoder/mod.rs	pipe_load_graph	471	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
 src/serializers/decoder/mod.rs	vec_load_graph	486	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
 src/serializers/decoder/mod.rs	load_graph_from_reader	496	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
-graph/src/runtime/runtime.rs	publish	600	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
-graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
-graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor
