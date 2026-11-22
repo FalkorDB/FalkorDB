@@ -244,7 +244,8 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEqual(res.relationships_deleted, 1)
         self.env.assertEqual(res.properties_set, 1)
 
-        # nothing was left behind
+        # only the last sub-case's two nodes remain: every other entity was
+        # created and deleted within its query, and the graph was reset between
         res = self.graph.query("MATCH (n) RETURN count(n)")
         self.env.assertEqual(res.result_set, [[2]])
 

@@ -70,6 +70,8 @@ Feature: Delete4 - Delete clause interoperation with other clauses
       | -nodes         | 3 |
       | -relationships | 2 |
 
+  # Skipped (#2966): the scenario expects no side effects, but C and Rust both
+  # report the node created and deleted within one query (+nodes 1, -nodes 1).
   @skip
   Scenario: [3] Create and delete in same query
     Given an empty graph
