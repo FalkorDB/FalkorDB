@@ -1576,6 +1576,17 @@ class testIndexScanFlow():
              "WHERE p.nts <> 0 AND p.ts > e.q / e.d RETURN count(*)")
         self.env.assertEqual(g.query(q).result_set, [[0]])
 
+        # A disjunction is evaluated whole by the index query, so a failing
+        # disjunct is not moved: every `H` node matches the first disjunct,
+        # which short-circuits the division.
+        g.create_node_range_index('H', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 599) AS i CREATE (:H {ts: 1})")
+        q = ("UNWIND [{sid: 1, pts: 1, q: 5, d: 0}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:H) "
+             "WHERE p.ts = e.pts OR p.ts > e.q / e.d RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[600]])
+
         g.delete()
 
     def test_36_scalar_array_scalar_round_trip(self):

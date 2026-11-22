@@ -174,7 +174,8 @@ fn try_seek_rewrite(
         let (moved, rest): (Vec<_>, Vec<_>) = moved.into_iter().partition(|c| {
             if has_non_deterministic(c)
                 || reads_node_bare(c, p)
-                || (!chain_filters.is_empty() && may_fail(c))
+                || ((!chain_filters.is_empty() || matches!(c.root().data(), ExprIR::Or))
+                    && may_fail(c))
             {
                 return false;
             }
