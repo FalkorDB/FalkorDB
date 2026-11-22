@@ -128,17 +128,18 @@ size_t EffectsV3Seg_EncodedLen
 	switch(s->kind) {
 		case EFFECTS_V3_SEG_RANGE_ASCENDING:
 		case EFFECTS_V3_SEG_RANGE_DESCENDING:
-			return 1
+			return EFFECTS_V3_SEG_HEADER_BYTES
 				+ EffectsV3_WidthFor(s->range.base)
 				+ EffectsV3_WidthFor(s->range.len);
 		case EFFECTS_V3_SEG_REPEAT:
-			return 1
+			return EFFECTS_V3_SEG_HEADER_BYTES
 				+ EffectsV3_WidthFor(s->repeat.id)
 				+ EffectsV3_WidthFor(s->repeat.count);
 		case EFFECTS_V3_SEG_SET_ASCENDING:
 		case EFFECTS_V3_SEG_SET_DESCENDING:
 			// header byte, u32 length prefix, then the blob itself
-			return 1 + 4
+			return EFFECTS_V3_SEG_HEADER_BYTES
+				+ EFFECTS_V3_SEG_BLOB_LEN_BYTES
 				+ roaring64_bitmap_portable_size_in_bytes(s->bitmap.bitmap);
 	}
 	return 0;  // unreachable: the switch is exhaustive

@@ -67,6 +67,13 @@
 #define EFFECTS_V3_SEG_DESCENDING   0x40
 #define EFFECTS_V3_SEG_RESERVED     0x80
 
+// every segment opens with exactly one header byte, whatever its kind
+#define EFFECTS_V3_SEG_HEADER_BYTES 1
+
+// a Set segment's blob is preceded by a u32 byte length - fixed width, not one
+// of the per-value widths the header's two width codes select
+#define EFFECTS_V3_SEG_BLOB_LEN_BYTES 4
+
 // a segment's kind and direction, as one closed set
 //
 // Direction is a separate bit on the wire and is folded in here so the

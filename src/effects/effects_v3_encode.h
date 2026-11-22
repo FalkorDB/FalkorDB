@@ -12,10 +12,17 @@
 
 // v3 wire writers for the shared blocks
 //
-// Everything here writes LITTLE-ENDIAN explicitly, byte at a time, rather than
-// copying an integer's storage the way v2's packed structs do - which is correct
-// only while both engines run little-endian. The widths are per value anyway, so
-// there is no native type to copy from.
+// The INTEGER writers here write LITTLE-ENDIAN explicitly, byte at a time, by
+// shifting bytes out of the value rather than copying the integer's storage the
+// way v2's packed structs do. v2's form is the one that holds only while both
+// engines run little-endian; shifting gives the same bytes on either. The
+// widths are per value anyway, so there is no native type to copy from.
+//
+// NOT the whole record: EffectsV3_EncodeRecord writes its attribute values and
+// name blocks through the v2 codec, which copies native storage
+// (EffectsBuffer_WriteSIValue, effects.c:155-185). A v3 payload is portable in
+// its framing and not in its values, so a big-endian host would still diverge.
+// Fixing that belongs with the v2 codec, not here.
 
 // the segment header's field positions come from effects_v3.h
 

@@ -6,7 +6,7 @@
 #pragma once
 
 #include "effects_v3.h"
-#include "../util/roaring.h"
+#include "../util/roaring_include.h"
 
 #include <stdbool.h>
 #include <stdint.h>

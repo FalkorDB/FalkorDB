@@ -17,8 +17,17 @@ void EffectsV3_WriteUint
 	uint64_t v,         // value
 	uint8_t width       // 1, 2, 4 or 8 bytes
 ) {
-	ASSERT(width == 1 || width == 2 || width == 4 || width == 8);
+	// RELEASE_ASSERT, NOT ASSERT: the only thing between a width over 8 and a
+	// write past 'buf' is this line, and ASSERT compiles out of a release build
+	// (RG.h, gated on RG_DEBUG). Every width in the tree today comes from a
+	// two-bit wire field or a sizeof, so no caller can reach it - but that is a
+	// fact about the call sites, not about this function
+	RELEASE_ASSERT(width == 1 || width == 2 || width == 4 || width == 8);
 
+	// SHIFTED OUT OF THE VALUE, not copied from its storage. This is what makes
+	// the encoding little-endian on any host: `memcpy(buf, &v, width)` would
+	// write the host's byte order and take the low bytes only by accident of
+	// running little-endian, and on a big-endian host would write the high ones
 	unsigned char buf[8];
 	for(uint8_t i = 0; i < width; i++) {
 		buf[i] = (unsigned char)(v >> (8 * i));
@@ -58,7 +67,7 @@ void EffectsV3_EncodeSegment
 			header |= (uint8_t)(vwc << EFFECTS_V3_SEG_VWIDTH_SHIFT);
 			header |= (uint8_t)(cwc << EFFECTS_V3_SEG_CWIDTH_SHIFT);
 
-			EffectsBytes_Write(out, &header, 1);
+			EffectsBytes_Write(out, &header, sizeof(header));
 
 			// base is the FIRST id: the lowest ascending, the highest
 			// descending. Written as it stands rather than as the set's
@@ -78,7 +87,7 @@ void EffectsV3_EncodeSegment
 			header |= (uint8_t)(s->repeat.count_width
 					<< EFFECTS_V3_SEG_CWIDTH_SHIFT);
 
-			EffectsBytes_Write(out, &header, 1);
+			EffectsBytes_Write(out, &header, sizeof(header));
 			EffectsV3_WriteUint(out, s->repeat.id,
 					EFFECTS_V3_WIDTH_BYTES(s->repeat.value_width));
 			EffectsV3_WriteUint(out, s->repeat.count,
@@ -97,11 +106,14 @@ void EffectsV3_EncodeSegment
 			// header bits stay clear
 			header |= EFFECTS_V3_WIRE_SEG_SET;
 			if(desc) header |= EFFECTS_V3_SEG_DESCENDING;
-			EffectsBytes_Write(out, &header, 1);
+			EffectsBytes_Write(out, &header, sizeof(header));
 
 			// serialized when the list was converted, or read off the wire;
 			// either way written back verbatim
-			EffectsV3_WriteUint(out, n, 4);
+			//
+			// the same constant EffectsV3Seg_EncodedLen sizes this with: the
+			// two have to agree or the segment is mis-sized
+			EffectsV3_WriteUint(out, n, EFFECTS_V3_SEG_BLOB_LEN_BYTES);
 			EffectsBytes_Write(out, blob, n);
 			break;
 		}
@@ -133,6 +145,15 @@ static void _write_label_set
 	EffectsV3_WriteUint(out, n, sizeof(uint16_t));
 
 	for(uint16_t i = 0; i < n; i++) {
+		// THROUGH uint32_t BECAUSE LabelID IS SIGNED (an `int`, node.h): a
+		// bare (uint64_t) sign-extends, and the intermediate cast makes the
+		// truncation to the field's width explicit rather than implicit.
+		//
+		// It changes no bytes. WriteUint writes exactly 'width' of them, so
+		// the sign extension lands in bytes 4-7 and is never written - a
+		// LabelID of -1 goes out as ff ff ff ff either way. The cast states
+		// the intent; it is not load-bearing for the wire. The attribute ids
+		// below need no such cast: AttributeID is a uint16_t
 		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)labels[i],
 				sizeof(LabelID));
 	}
@@ -211,15 +232,11 @@ static void _write_values
 		return;
 	}
 
-	size_t n = EffectsBytes_Len(raw);
-	if(n == 0) {
+	if(EffectsBytes_IsEmpty(raw)) {
 		return;
 	}
 
-	unsigned char *buf = rm_malloc(n);
-	EffectsBytes_CopyInto(raw, buf);
-	EffectsBytes_Write(out, buf, n);
-	rm_free(buf);
+	EffectsBytes_Append(out, raw);
 }
 
 static void _encode_record
@@ -396,7 +413,7 @@ static void _write_attr_refs
 (
 	const EffectsV3AttrRef *attrs,  // the (id, name) pairs
 	uint16_t n,                     // how many
-	size_t count_width,             // 2 for an index, 1 for a constraint
+	uint8_t count_width,            // 2 for an index, 1 for a constraint
 	EffectsBytes *out               // sink
 ) {
 	// A TRUNCATED COUNT IS NOT A SHORT LIST: the loop below writes all n pairs

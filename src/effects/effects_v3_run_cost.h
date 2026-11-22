@@ -35,7 +35,12 @@ typedef struct {
 	// distinguishes an empty run from one whose open bucket starts at zero
 	bool started;
 
-	size_t   closed_bitmaps;  // 2^32 slices the run has moved past
+	// BYTES, not a count: what the 2^32 slices the run has moved past already
+	// cost, key and header and body together. The name reads as a tally and
+	// does not mean one - _freeze_bitmap adds a size here, and the total adds
+	// it straight into a byte figure
+	size_t   closed_bitmaps;
+
 	uint64_t bitmap_key;      // the slice being filled: id >> 32
 
 	// finished buckets in it; closed_has_run selects the header flavour
