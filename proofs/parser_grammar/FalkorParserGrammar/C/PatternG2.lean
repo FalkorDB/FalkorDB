@@ -30,10 +30,11 @@ inductive GChainA (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
 /-- The same for a named path `p = ...`: the path's variables are collected
 and the path is added at the end. -/
 inductive GChainN (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (p : Nat) :
-    QNode Alias → List Alias → QG Alias × List Alias → PS → QG Alias × List Alias → PS → Prop
-  | nil {left vars gs s} : GChainN o x y cl p left vars gs s ((gs.1.addPath ⟨.named p, vars⟩).2, gs.2) s
+    QNode Alias → List Alias × List Bool → QG Alias × List Alias → PS → QG Alias × List Alias → PS → Prop
+  | nil {left vars gs s} :
+      GChainN o x y cl p left vars gs s ((gs.1.addPath (QPath.new (.named p) vars.1 vars.2)).2, gs.2) s
   | cons {left vars gs s rr s1 out s'} : GRel o x left s rr s1 → RelOk y gs.1 rr.1 →
-      GChainN o x y cl p rr.2 (vars ++ [rr.1.alias, rr.2.alias])
+      GChainN o x y cl p rr.2 (vars.1 ++ [rr.1.alias, rr.2.alias], vars.2 ++ [rr.1.wIn])
         (addPatNode cl ((gs.1.addRel rr.1).2, gs.2) rr.2) s1 out s' →
       GChainN o x y cl p left vars gs s out s'
 
@@ -79,19 +80,20 @@ theorem chainN_sound (o : Oracle) (F : Nat) (cl : CK) (p : Nat) :
 
 /-- The allShortestPaths relationship loop (extension `asp`). -/
 inductive GAsp (o : Oracle) (x : Ext) (y : GExt) (cl : CK) (la : Alias) :
-    QNode Alias → Bool → List Alias → QG Alias × List Alias → PS →
-      Bool × List Alias × (QG Alias × List Alias) → PS → Prop
+    QNode Alias → Bool → List Alias × List Bool → QG Alias × List Alias → PS →
+      Bool × (List Alias × List Bool) × (QG Alias × List Alias) → PS → Prop
   | nil {prev found vars gs s} : GAsp o x y cl la prev found vars gs s (found, vars, gs) s
   | varLen {prev found vars gs s rr s1 out s'} : GRel o x prev s rr s1 →
       (rr.1.minH.isSome || rr.1.maxH.isSome) = true → found = false →
       minTooBig rr.1 = false →
-      RelOk y gs.1 (aspRel rr.1 la (decide (s.cur = .lt))) →
-      GAsp o x y cl la rr.2 true (vars ++ [(aspRel rr.1 la (decide (s.cur = .lt))).alias, rr.2.alias])
-        (addPatNode cl ((gs.1.addRel (aspRel rr.1 la (decide (s.cur = .lt)))).2, gs.2) rr.2) s1 out s' →
+      RelOk y gs.1 (aspRel rr.1 la rr.1.wIn) →
+      GAsp o x y cl la rr.2 true
+        (vars.1 ++ [(aspRel rr.1 la rr.1.wIn).alias, rr.2.alias], vars.2 ++ [rr.1.wIn])
+        (addPatNode cl ((gs.1.addRel (aspRel rr.1 la rr.1.wIn)).2, gs.2) rr.2) s1 out s' →
       GAsp o x y cl la prev found vars gs s out s'
   | fixed {prev found vars gs s rr s1 out s'} : GRel o x prev s rr s1 →
       (rr.1.minH.isSome || rr.1.maxH.isSome) = false → RelOk y gs.1 rr.1 →
-      GAsp o x y cl la rr.2 found (vars ++ [rr.1.alias, rr.2.alias])
+      GAsp o x y cl la rr.2 found (vars.1 ++ [rr.1.alias, rr.2.alias], vars.2 ++ [rr.1.wIn])
         (addPatNode cl ((gs.1.addRel rr.1).2, gs.2) rr.2) s1 out s' →
       GAsp o x y cl la prev found vars gs s out s'
 
@@ -132,15 +134,15 @@ inductive GPart (o : Oracle) (x : Ext) (y : GExt) (cl : CK) :
       GChainA o x y cl left (addPatNode cl gs left) s1 out s' → GPart o x y cl gs s (.sep, out) s'
   | named {gs s p left s1 out s'} : identOf s.cur = some p → s.adv.cur = .eq →
       GNode o s.adv.adv left s1 →
-      GChainN o x y cl p left [left.alias] (addPatNode cl gs left) s1 out s' →
+      GChainN o x y cl p left ([left.alias], []) (addPatNode cl gs left) s1 out s' →
       GPart o x y cl gs s (.sep, out) s'
   | asp {gs s p left s1 res s2 e} : x.asp = true → identOf s.cur = some p → s.adv.cur = .eq →
       identOf s.adv.adv.cur = some nmAllShortest → s.adv.adv.adv.cur = .lparen →
       GNode o s.adv.adv.adv.adv left s1 → (s1.cur = .dash ∨ s1.cur = .lt) →
-      GAsp o x y cl left.alias left false [left.alias] (addPatNode cl gs left) s1 res s2 →
+      GAsp o x y cl left.alias left false ([left.alias], []) (addPatNode cl gs left) s1 res s2 →
       res.1 = true → s2.cur = .rparen →
       (e = PEnd.cont ∧ s2.adv.cur = .comma ∨ e = .stop) →
-      GPart o x y cl gs s (e, ((res.2.2.1.addPath ⟨.named p, res.2.1⟩).2, res.2.2.2))
+      GPart o x y cl gs s (e, ((res.2.2.1.addPath (QPath.new (.named p) res.2.1.1 res.2.1.2)).2, res.2.2.2))
         (if e = .cont then s2.adv.adv else s2.adv)
 
 theorem partP_sound (o : Oracle) (F : Nat) (cl : CK) (gs : QG Alias × List Alias) (s : PS) r s'
@@ -176,7 +178,7 @@ theorem partP_sound (o : Oracle) (F : Nat) (cl : CK) (gs : QG Alias × List Alia
             obtain ⟨hr, rfl⟩ := tok_ok h9
             peel h => c s10 h10
             obtain ⟨hc0, hs⟩ := peek_ok h10; subst hc0; subst s10
-            have ga := aspLoop_sound o F cl left.alias F left false [left.alias] _ _ _ _ h8
+            have ga := aspLoop_sound o F cl left.alias F left false ([left.alias], []) _ _ _ _ h8
             have gn := nodeP_sound o F _ _ _ h6
             have hd : s6.cur = .dash ∨ s6.cur = .lt := by revert hdash; cases s6.cur <;> simp
             have hres' : res.1 = true := by simpa using hres

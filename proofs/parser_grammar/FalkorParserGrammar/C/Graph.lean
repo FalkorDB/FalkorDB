@@ -103,10 +103,14 @@ structure QRel (V : Type) where
   minH : Option Nat
   maxH : Option Nat
   asp : ASP
+  /-- `written_incoming`: written `<-` (from/to stored swapped), #3460. -/
+  wIn : Bool
 
 structure QPath (V : Type) where
   var : V
   vars : List V
+  /-- `incoming`: per relationship of the path, in pattern order, whether it was written `<-` (#3460). -/
+  incoming : List Bool
 
 /-- `QueryNode::new` (ast.rs). -/
 def QNode.new {V} (alias : V) (labels : List Nat) (attrs : ET) : QNode V := ⟨alias, labels, attrs⟩
@@ -114,19 +118,37 @@ theorem QNode.new_spec {V} (a : V) (l : List Nat) (t : ET) :
     (QNode.new a l t).alias = a ∧ (QNode.new a l t).labels = l ∧ (QNode.new a l t).attrs = t :=
   ⟨rfl, rfl, rfl⟩
 
-/-- `QueryRelationship::new` (ast.rs): `all_shortest_paths = No`. -/
+/-- `QueryRelationship::new` (ast.rs): `all_shortest_paths = No`, `written_incoming = false`. -/
 def QRel.new {V} (alias : V) (types : List Nat) (attrs : ET) (src dst : QNode V) (bidir : Bool)
-    (minH maxH : Option Nat) : QRel V := ⟨alias, types, attrs, src, dst, bidir, minH, maxH, .no⟩
+    (minH maxH : Option Nat) : QRel V := ⟨alias, types, attrs, src, dst, bidir, minH, maxH, .no, false⟩
 theorem QRel.new_spec {V} (a : V) ts t (s d : QNode V) b mn mx :
     let r := QRel.new a ts t s d b mn mx
     r.alias = a ∧ r.types = ts ∧ r.src.alias = s.alias ∧ r.dst.alias = d.alias ∧ r.bidir = b ∧
-      r.minH = mn ∧ r.maxH = mx ∧ r.asp = .no :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+      r.minH = mn ∧ r.maxH = mx ∧ r.asp = .no ∧ r.wIn = false :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `QueryPath::new` (ast.rs). -/
-def QPath.new {V} (var : V) (vars : List V) : QPath V := ⟨var, vars⟩
-theorem QPath.new_spec {V} (v : V) (vs : List V) :
-    (QPath.new v vs).var = v ∧ (QPath.new v vs).vars = vs := ⟨rfl, rfl⟩
+def QPath.new {V} (var : V) (vars : List V) (incoming : List Bool) : QPath V := ⟨var, vars, incoming⟩
+theorem QPath.new_spec {V} (v : V) (vs : List V) (inc : List Bool) :
+    (QPath.new v vs inc).var = v ∧ (QPath.new v vs inc).vars = vs ∧
+      (QPath.new v vs inc).incoming = inc := ⟨rfl, rfl, rfl⟩
+
+/-- `QueryPath::is_incoming` (ast.rs): whether the relationship at `vars[i]` was
+written `<-`: `incoming.get(i / 2).copied().unwrap_or(false)`. -/
+def QPath.isIncoming {V} (p : QPath V) (i : Nat) : Bool := (p.incoming[i / 2]?).getD false
+
+/-- `vars` is node, rel, node, …: the `k`-th relationship sits at `2k+1` and reads
+the `k`-th flag. -/
+theorem QPath.isIncoming_rel {V} (p : QPath V) (k : Nat) :
+    p.isIncoming (2 * k + 1) = (p.incoming[k]?).getD false := by
+  have : (2 * k + 1) / 2 = k := by omega
+  simp [QPath.isIncoming, this]
+
+/-- Past the recorded flags (a node index of the last node, or a path without
+flags) the answer is `false`. -/
+theorem QPath.isIncoming_out {V} (p : QPath V) (i : Nat) (h : p.incoming.length ≤ i / 2) :
+    p.isIncoming i = false := by
+  simp [QPath.isIncoming, List.getElem?_eq_none h]
 
 /-! ## `QueryGraph` (ast.rs) -/
 

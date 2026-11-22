@@ -21,21 +21,22 @@ def fresh (st : PSt) (s : Nat) : V × PSt :=
                                minted := st.minted ++ [⟨st.lens s, s⟩] })
 
 inductive EC
-  | mk (var : V) (g : QG) (wh : Option Ex) (res : Ex) (path : Option (V × List V)) (nested : List EC)
+  | mk (var : V) (g : QG) (wh : Option Ex) (res : Ex) (path : Option (V × List V × List Bool))
+      (nested : List EC)
 
 def EC.var : EC → V | .mk v .. => v
 
 inductive CP
   | matchG (g : QG) (visited : List V)
-  | path (pv : V) (comps : List V) (c : CP)
+  | path (pv : V) (comps : List V) (incoming : List Bool) (c : CP)
   | apply (x s : CP)
   | filter (e : Ex) (c : CP)
   | agg (var acc : V) (res : Ex) (c : CP)
   | applyIn (s : CP)
   | nestedPlans (main : CP) (ns : List CP)
 
-def withPath : Option (V × List V) → CP → CP
-  | some (pv, cs), c => .path pv cs c
+def withPath : Option (V × List V × List Bool) → CP → CP
+  | some (pv, cs, inc), c => .path pv cs inc c
   | none, c => c
 
 def withFilter : Option Ex → CP → CP
@@ -58,11 +59,16 @@ def buildL (st : PSt) (sub : CP) : List EC → CP × PSt
     buildL p.2 (.apply sub p.1) is
 end
 
-/-- Path components: node, rel, node, rel, …, node (mod.rs). -/
-def interleave : List V → List V → List V
-  | [], _ => []
-  | n :: ns, r :: rs => n :: r :: interleave ns rs
-  | n :: ns, [] => n :: interleave ns []
+/-- The end a relationship's walk starts from / arrives at, in the direction it was
+written (an incoming one is stored with `from`/`to` swapped). -/
+def ERel.start (r : ERel) : V := if r.wIn then r.to else r.frm
+def ERel.stop (r : ERel) : V := if r.wIn then r.frm else r.to
+
+/-- Path components (mod.rs, #3460): node, rel, node, rel, …, node, walking the
+relationships (not the deduplicated `graph.nodes()`), each in its written direction. -/
+def pathComps : List ERel → List V
+  | [] => []
+  | r :: rs => r.start :: (r :: rs).flatMap fun x => [x.alias, x.stop]
 
 def isLCQ : D → Bool
   | .listComp _ | .quant _ => true
@@ -113,7 +119,7 @@ def extract (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) : Ex → Ex × PSt 
         let a := fresh st sc
         let b := fresh a.2 sc
         let h := hoist b.2 acc (.node d cs)
-          (.mk a.1 g none (Ex.v b.1) (some (b.1, interleave g.nodes g.rels)) [])
+          (.mk a.1 g none (Ex.v b.1) (some (b.1, pathComps g.rels, g.rels.map (·.wIn))) [])
         (if m = .exists_ then gt0 h.1 else h.1, h.2.1, h.2.2)
     | _ =>
       let x := extractL sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs

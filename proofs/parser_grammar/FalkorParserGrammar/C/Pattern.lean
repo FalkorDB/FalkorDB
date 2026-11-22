@@ -115,7 +115,8 @@ def detailP (o : Oracle) (F : Nat) (clause : CK) : P (Alias × List Nat × ET ×
 
 /-- `parse_relationship_pattern` (cypher.rs). Rust collects the
 types through a `HashSet`, so their order is unspecified; the model keeps
-first-occurrence order (only membership is observable downstream). -/
+first-occurrence order (only membership is observable downstream). The flag Rust
+also returns (`is_incoming && !is_outgoing`, #3460) is the relationship's `wIn`. -/
 def relP (o : Oracle) (F : Nat) (clause : CK) (src : QNode Alias) : P (QRel Alias × QNode Alias) := do
   let inc ← opt .lt
   tok .dash
@@ -131,8 +132,16 @@ def relP (o : Oracle) (F : Nat) (clause : CK) (src : QNode Alias) : P (QRel Alia
   if inc == out then
     if clause = .create then fail
     else pure (QRel.new d.1 d.2.1 d.2.2.1 src dst true mn mx, dst)
-  else if inc then pure (QRel.new d.1 d.2.1 d.2.2.1 dst src false mn mx, dst)
+  else if inc then pure ({ QRel.new d.1 d.2.1 d.2.2.1 dst src false mn mx with wIn := true }, dst)
   else pure (QRel.new d.1 d.2.1 d.2.2.1 src dst false mn mx, dst)
+
+/-- The relationship `relP` builds is `written_incoming` exactly when it was written
+`<-...-` (not `<-...->`), the flag `parse_relationship_pattern` also returns (#3460). -/
+theorem relP_wIn {V} (a : V) ts t (src dst : QNode V) mn mx (inc out : Bool) :
+    (if inc == out then QRel.new a ts t src dst true mn mx
+      else if inc then { QRel.new a ts t dst src false mn mx with wIn := true }
+      else QRel.new a ts t src dst false mn mx).wIn = (inc && !out) := by
+  cases inc <;> cases out <;> rfl
 
 /-- `add_pattern_node` (cypher.rs). -/
 def addPatNode (clause : CK) (gs : QG Alias × List Alias) (n : QNode Alias) : QG Alias × List Alias :=
@@ -155,8 +164,9 @@ def chainA (o : Oracle) (F : Nat) (clause : CK) : Nat → QNode Alias → QG Ali
     else pure gs
 
 /-- The named-path chain (cypher.rs). A repeated relationship variable is an error in
-every clause (#3289; it was MATCH only). -/
-def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Alias → List Alias →
+every clause (#3289; it was MATCH only). `vars` carries the path's variables and its
+`incoming` flags (#3460). -/
+def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Alias → List Alias × List Bool →
     QG Alias × List Alias → P (QG Alias × List Alias)
   | 0, _, _, _ => fuelP
   | n + 1, left, vars, gs => do
@@ -167,8 +177,8 @@ def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Alias 
       if !ag.1 then fail
       else
         let gs' := addPatNode clause (ag.2, gs.2) rr.2
-        chainN o F clause p n rr.2 (vars ++ [rr.1.alias, rr.2.alias]) gs'
-    else pure (((gs.1.addPath ⟨.named p, vars⟩).2), gs.2)
+        chainN o F clause p n rr.2 (vars.1 ++ [rr.1.alias, rr.2.alias], vars.2 ++ [rr.1.wIn]) gs'
+    else pure (((gs.1.addPath (QPath.new (.named p) vars.1 vars.2)).2), gs.2)
 
 /-- Identifier ids of `shortestPath` / `allShortestPaths` (compared
 case-insensitively at cypher.rs; case folding is lexical). -/
@@ -190,12 +200,19 @@ theorem aspRel_same_alias (r : QRel Alias) (la : Alias) (hd : r.bidir = false)
     (aspRel r la true).asp = .rev ∧ (aspRel r la false).asp = .fwd := by
   simp [aspRel, hd, hs]
 
+/-- The rebuilt relationship comes from `QueryRelationship::new`, so its
+`written_incoming` is `false`; the path's `incoming` list keeps the arrow. -/
+theorem aspRel_wIn (r : QRel Alias) (la : Alias) (inc : Bool) : (aspRel r la inc).wIn = false := rfl
+
 /-- `if let Some(min) = relationship.min_hops && min > 1` (cypher.rs). -/
 def minTooBig (r : QRel Alias) : Bool := match r.minH with | some m => decide (m > 1) | none => false
 
-/-- The allShortestPaths relationship loop (cypher.rs). -/
+/-- The allShortestPaths relationship loop (cypher.rs). `vars` carries the path's
+variables and its `incoming` flags (#3460); `inc` of `aspRel` is the flag
+`parse_relationship_pattern` returns (`rr.1.wIn`). -/
 def aspLoop (o : Oracle) (F : Nat) (clause : CK) (leftAlias : Alias) : Nat → QNode Alias → Bool →
-    List Alias → QG Alias × List Alias → P (Bool × List Alias × (QG Alias × List Alias))
+    List Alias × List Bool → QG Alias × List Alias →
+      P (Bool × (List Alias × List Bool) × (QG Alias × List Alias))
   | 0, _, _, _, _ => fuelP
   | n + 1, prev, found, vars, gs => do
     let c ← peek
@@ -206,18 +223,18 @@ def aspLoop (o : Oracle) (F : Nat) (clause : CK) (leftAlias : Alias) : Nat → Q
         if found then fail
         else if minTooBig r then fail
         else
-          let r' := aspRel r leftAlias (decide (c = .lt))
+          let r' := aspRel r leftAlias r.wIn
           let ag := gs.1.addRel r'
           if !ag.1 then fail
           else
             let gs' := addPatNode clause (ag.2, gs.2) rr.2
-            aspLoop o F clause leftAlias n rr.2 true (vars ++ [r'.alias, rr.2.alias]) gs'
+            aspLoop o F clause leftAlias n rr.2 true (vars.1 ++ [r'.alias, rr.2.alias], vars.2 ++ [r.wIn]) gs'
       else
         let ag := gs.1.addRel r
         if !ag.1 then fail
         else
           let gs' := addPatNode clause (ag.2, gs.2) rr.2
-          aspLoop o F clause leftAlias n rr.2 found (vars ++ [r.alias, rr.2.alias]) gs'
+          aspLoop o F clause leftAlias n rr.2 found (vars.1 ++ [r.alias, rr.2.alias], vars.2 ++ [r.wIn]) gs'
     else pure (found, vars, gs)
 
 /-- How one pattern part ends: `break` out of the loop, `continue` straight
@@ -235,10 +252,10 @@ def aspPart (o : Oracle) (F : Nat) (clause : CK) (p : Nat) (gs : QG Alias × Lis
   let gs := addPatNode clause gs left
   let c ← peek
   if !(c = .dash ∨ c = .lt) then fail else do
-  let res ← aspLoop o F clause left.alias F left false [left.alias] gs
+  let res ← aspLoop o F clause left.alias F left false ([left.alias], []) gs
   if !res.1 then fail else do
   tok .rparen
-  let gs := (((res.2.2.1.addPath ⟨.named p, res.2.1⟩).2), res.2.2.2)
+  let gs := (((res.2.2.1.addPath (QPath.new (.named p) res.2.1.1 res.2.1.2)).2), res.2.2.2)
   let c ← peek
   if c = .comma then do next; pure (.cont, gs) else pure (.stop, gs)
 
@@ -254,7 +271,7 @@ def partP (o : Oracle) (F : Nat) (clause : CK) (gs : QG Alias × List Alias) :
     else if identOf c = some nmAllShortest then aspPart o F clause p gs
     else do
       let left ← nodeP o F
-      let gs' ← chainN o F clause p F left [left.alias] (addPatNode clause gs left)
+      let gs' ← chainN o F clause p F left ([left.alias], []) (addPatNode clause gs left)
       pure (.sep, gs')
   | none => do
     let left ← nodeP o F

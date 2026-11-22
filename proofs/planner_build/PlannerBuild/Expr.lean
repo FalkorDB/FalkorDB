@@ -17,6 +17,15 @@ structure V where
   scope : Nat
   deriving DecidableEq, Repr
 
+/-- A relationship of the pattern as a comprehension's path reads it: its endpoints as
+stored (`from`/`to`, swapped for `<-`) and `written_incoming` (#3460). -/
+structure ERel where
+  frm : V
+  alias : V
+  to : V
+  wIn : Bool := false
+  deriving DecidableEq, Repr
+
 /-- `QueryGraph`: identity, `variables()` in order, variables read by its inline maps. -/
 structure QG where
   gid : Nat
@@ -24,8 +33,8 @@ structure QG where
   attrVars : List V := []
   /-- node aliases, in pattern order -/
   nodes : List V := []
-  /-- relationship aliases, in pattern order -/
-  rels : List V := []
+  /-- relationships, in pattern order -/
+  rels : List ERel := []
   deriving DecidableEq, Repr
 
 inductive C
