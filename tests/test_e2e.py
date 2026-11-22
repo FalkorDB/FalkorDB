@@ -523,6 +523,21 @@ def test_collapsed_hops_cannot_reuse_an_edge_a_sibling_bound():
     assert res.result_set == [[1]]
 
 
+def test_multi_type_collapsed_hop_cannot_reuse_a_sibling_edge():
+    # `[:R|T]` spans several tensors, so a collapsed hop cannot be flagged for
+    # its siblings; it keeps every edge instead. Over one R and one T edge,
+    # three hops need three distinct edges and there are only two.
+    query("CREATE (a:N)-[:R]->(x:N), (a)-[:T]->(x)", write=True)
+    res = query("MATCH (a)-[c:R]->(x), (a)-[t:R|T]->(x), (a)-[d:T]->(x) RETURN count(*)")
+    assert res.result_set == [[0]]
+    res = query(
+        "MATCH (a)-[c:R]->(x), (a)-[t:R|T]->(x), (a)-[d:T]->(x) RETURN id(c), id(t), id(d)"
+    )
+    assert res.result_set == []
+    res = query("MATCH (a)-[c:R]->(x), (a)-[t:R|T]->(x) RETURN count(*)")
+    assert res.result_set == [[1]]
+
+
 def test_collapsed_edge_uniqueness_is_scoped_to_its_union_branch():
     # The branches of a UNION reuse alias ids; collapsing `r` and `s` in one
     # branch must not relax the uniqueness the other branch applies to them.

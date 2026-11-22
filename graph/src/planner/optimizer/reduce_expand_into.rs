@@ -35,17 +35,25 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
             IR::ExpandInto {
                 emit_relationship: true,
                 relationship,
+                sibling_edges,
                 ..
             }
             | IR::CondTraverse {
                 emit_relationship: true,
                 relationship,
+                sibling_edges,
                 ..
             } => (
                 relationship.alias.key(),
                 match relationship.types.len() {
                     0 => Some(COLLAPSED_SIBLING_ANY_TYPE),
                     1 => Some(COLLAPSED_SIBLING),
+                    // A hop over several (not all) types cannot be flagged: the
+                    // runtime has no way to tell which tensors it spans, so a
+                    // third hop cannot tell that two siblings already hold the
+                    // pair's edges. With three or more hops it keeps emitting
+                    // every edge instead of collapsing.
+                    _ if sibling_edges.len() > 2 => continue,
                     _ => None,
                 },
             ),
