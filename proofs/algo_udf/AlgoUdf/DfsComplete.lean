@@ -145,17 +145,17 @@ theorem step_skip {g : G} {cfg : Cfg} {st : DS} {fr : Frame} {below : List Frame
     step g cfg st = some { st with frames := { fr with lv := some rest } :: below } := by
   unfold step; rw [hfs]; dsimp only; rw [hlv]; dsimp only
   by_cases hon : st.onPath x = true
-  · rw [if_pos hon]
-  · rw [if_neg hon]
+  · rw [ite_eq_left hon]
+  · rw [ite_eq_right hon]
     rcases hskip with h | h | ⟨c, hc, h⟩
     · exact absurd h hon
     · rw [h]
     · rw [hc]; dsimp only
       rcases h with h | h
-      · rw [if_pos h]
+      · rw [ite_eq_left h]
       · by_cases hb : st.bound.any (· < fr.pw + c) = true
-        · rw [if_pos hb]
-        · rw [if_neg hb, if_pos h]
+        · rw [ite_eq_left hb]
+        · rw [ite_eq_right hb, ite_eq_left h]
 
 theorem step_push {g : G} {cfg : Cfg} {st : DS} {fr : Frame} {below : List Frame} {r : Rel} {x c : Nat}
     {rest : List (Rel × Nat)} (hfs : st.frames = fr :: below) (hlv : fr.lv = some ((r, x) :: rest))
@@ -177,8 +177,8 @@ theorem step_push {g : G} {cfg : Cfg} {st : DS} {fr : Frame} {below : List Frame
           st.log ++ [⟨pathOf ({ fr with lv := some rest } :: below) ++ [r], fr.pw + c, fr.pc + g.cost r.2.2⟩]
         else st.log⟩ := by
   unfold step; rw [hfs]; dsimp only; rw [hlv]; dsimp only
-  rw [if_neg (by rw [hon]; simp), hw]; dsimp only
-  rw [if_neg (by rw [hb]; simp), if_neg (by rw [hmc]; simp)]
+  rw [ite_eq_right (by rw [hon]; simp), hw]; dsimp only
+  rw [ite_eq_right (by rw [hb]; simp), ite_eq_right (by rw [hmc]; simp)]
 
 /-- Split a qualifying extension on its first pending successor. -/
 theorem Ext.cons_split {g : G} {cfg : Cfg} {p : Rel × Nat} {rest : List (Rel × Nat)} {pw pc d vis es W C}

@@ -136,6 +136,8 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `graph.rs:4375,4434` clamp `k` to
    `node_count().max(1)` / `relationship_count().max(1)` and `:4391,4450` size by results (main 5c7af54f2):
    `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
+   #3382 (PR #3581): both fns now refuse while the index is not OPERATIONAL (`graph.rs:4381,4447`):
+   `Knn.not_operational_refused`, `ok_imp_operational`.
 5. **FIXED by #3290 (66d4d9d40)** — HISTORICAL (#3093, 4a4f2a72f): **Inline (MULTI/EXEC) write fails with "another write is in progress"**
    (`src/graph_core.rs:748` slot claimed as a reader, before escalation). A queued
    write in its match phase + `MULTI; GRAPH.QUERY g "CREATE (:M)"; EXEC`: Rust
@@ -152,10 +154,9 @@ Historical (2c874022a, #3091): Rust accepted a vector index without `dimension` 
 all four cases now answer as C. W5-idx-2 (vector index with no OPTIONS half-created on error) is
 also fixed: `index_ddl.rs:61-65` refuses before anything is registered — live, `db.indexes()` lists
 only the range index and `n.v = 1` still finds the node on both servers.
-Formerly divergent, **fixed by #3257**: (a) `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust
-created the index (metric only checked for `dimension > 0`, mod.rs:1270-1272), C refuses; the
-name is now checked at parse time (`parseSim_unknown`), so Rust agrees with C on every dimension
-(`rust_eq_c_all`). Still divergent (live, #guard):
+Still divergent (live, #guards): (a) `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust
+creates the index (metric only checked for `dimension > 0`, mod.rs:1270-1272), C refuses;
+(since #3087 a vector on that index no longer drops the node: `dim0_keeps_range_entry`);
 (b) fulltext `OPTIONS {weight:1.0, foo:true}` Rust refuses (`unknown option 'foo'`), C creates —
 C refuses only a non-empty map with no known key (`cFulltextKeysOk`; `rust_keys_ok_imp_c`).
 (C itself crashed on `CREATE FULLTEXT INDEX … OPTIONS {phonetic:true}`, on `db.indexes()` after `{language:'klingon'}`,
@@ -237,6 +238,7 @@ import SearchConcurrency.Knn
 #print axioms SC.Tickets.main_operational_complete
 #print axioms SC.Knn.alloc_bounded
 #print axioms SC.Knn.rows_length_topk
+#print axioms SC.Knn.not_operational_refused
 #print axioms SC.Mvcc.one_commit_per_version
 #print axioms SC.Mvcc.checkFork_on_committed
 #print axioms SC.Pool.release_exactly_once

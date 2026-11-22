@@ -325,8 +325,8 @@ theorem push_cp_left (p : Expr) (xs ys : List Row) (hc : Covers p xs) :
     have hx : ∀ y, passB p (x ++ y) = passB p x :=
       fun y => passB_append_left p x y (hc x (by simp))
     cases h : passB p x
-    · simp [List.filter_map, hx, h, Function.comp_def, List.filter_eq_self.mpr]
-    · simp [List.filter_map, hx, h, Function.comp_def, List.filter_eq_self.mpr]
+    · simp [List.filter_map, hx, h, Function.comp_def]
+    · simp [hx, h, List.filter_eq_self.mpr]
 
 /-- **push_filters_down, CP right child**: needs the other branch not to bind
 any variable the conjunct reads (rows of distinct branches are disjoint). -/
@@ -345,7 +345,7 @@ theorem push_cp_right (p : Expr) (xs ys : List Row)
     congr 1
     apply List.filter_congr
     intro y _
-    simp [Function.comp_def, passB_append_right p x y (hdis x (by simp))]
+    simp [passB_append_right p x y (hdis x (by simp))]
 
 /-- **push_filters_down through a per-row operator** (Unwind, CondTraverse,
 Apply, ProcedureCall …): conjunct covered by the input. -/
@@ -361,8 +361,8 @@ theorem push_extend (p : Expr) (g : Row → List Row) (xs : List Row) (hc : Cove
     have hx : ∀ y, passB p (x ++ y) = passB p x :=
       fun y => passB_append_left p x y (hc x (by simp))
     cases h : passB p x
-    · simp [List.filter_map, hx, h, Function.comp_def, List.filter_eq_self.mpr]
-    · simp [List.filter_map, hx, h, Function.comp_def, List.filter_eq_self.mpr]
+    · simp [List.filter_map, hx, h, Function.comp_def]
+    · simp [hx, h, List.filter_eq_self.mpr]
 
 /-- Pushing below `Sort` keeps the multiset … -/
 theorem push_sort_perm (p : Expr) (le : Row → Row → Bool) (xs : List Row) :
@@ -413,8 +413,10 @@ theorem skip_not_transparent :
 
 /-! ## Filter merging (push_filters_down.rs:113-140)
 
-Stacked `Filter(outer p) → Filter(inner q)` is merged into one `AND`. The Rust code
-lists the *outer* conjuncts first (`for f in [&filter, &child_filter]`, line 122).
+Stacked `Filter(outer p) → Filter(inner q)` is merged into one `AND`. Before #3006
+the Rust code listed the *outer* conjuncts first (`for f in [&filter, &child_filter]`);
+since #3006 it lists the *child* (inner) conjuncts first
+(`for f in [&child_filter, &filter]`, line 128): `mergeRust`.
 -/
 
 def stacked (p q : Expr) (xs : List Row) : Except Err (List Row) :=
@@ -441,6 +443,44 @@ theorem merge_child_first_row (p q : Expr) (r : Row) (b : Bool) (hq : eval r q =
   · rfl
   · simp only [bind, Except.bind]
     split <;> simp_all
+
+/-- The merged filter built by push_filters_down.rs:127-137 since #3006: the child's
+conjuncts, then the outer ones (`and_of` flattening is `AndOf.flat_passes`). -/
+def mergeRust (p q : Expr) : Expr := .and q p
+
+/-- #3006 on the counterexample of `merge_order_rust_errors`: the merged filter now
+returns what the stacked filters return. -/
+theorem merge_rust_fixed_example :
+    filterRows (mergeRust pOuter qInner) [rowV 1, rowV 3] = stacked pOuter qInner [rowV 1, rowV 3] :=
+  rfl
+
+/-- #3006: on rows where the inner (child) filter yields a boolean, the merged
+filter has the stacked outcome (same rows, or both fail). -/
+theorem merge_rust_same (p q : Expr) (xs : List Row)
+    (hq : ∀ r ∈ xs, ∃ b, eval r q = .ok (.bool b)) :
+    Same (stacked p q xs) (filterRows (mergeRust p q) xs) := by
+  induction xs with
+  | nil => simp [stacked, filterRows, Same, bind, Except.bind]
+  | cons r rs ih =>
+    have ih := ih (fun r' h' => hq r' (by simp [h']))
+    obtain ⟨b, hb⟩ := hq r (by simp)
+    have hm := merge_child_first_row p q r b hb
+    simp only [mergeRust] at ih ⊢
+    have hpq : passes q r = .ok b := by simp [passes, hb]
+    rw [hpq] at hm
+    cases b with
+    | false =>
+      have hm' : passes (.and q p) r = .ok false := hm.symm
+      simp only [stacked, filterRows, hpq, hm', bind, Except.bind, pure, Except.pure] at ih ⊢
+      cases h1 : filterRows q rs <;> cases h2 : filterRows (.and q p) rs <;>
+        simp_all [Same]
+    | true =>
+      have hm' : passes (.and q p) r = passes p r := by
+        rw [← hm]; simp [bind, Except.bind]
+      simp only [stacked, filterRows, hpq, hm', bind, Except.bind, pure, Except.pure] at ih ⊢
+      cases hp : passes p r <;> cases h1 : filterRows q rs <;>
+        cases h2 : filterRows (.and q p) rs <;> simp_all [Same, filterRows] <;>
+        (rename_i a _ _; cases h3 : filterRows p a <;> simp_all [bind, Except.bind, Functor.map, Except.map])
 
 /-! ## eliminate_true_filters -/
 

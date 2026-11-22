@@ -7,7 +7,7 @@
 | `asI64`, `checkMem`  | `Runtime::check_mem_capacity`, `runtime/runtime.rs:540-548` (`usage_fn() as i64`) |
 | `drainPending`       | `drain_pending`, `runtime/ops/mod.rs:127-139` |
 | `edgeAlreadyUsed`    | `edge_already_used`, `runtime/ops/mod.rs:155-172` |
-| `natOpt`, `knownSims`, `vectorOptions` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs:2113-2201` |
+| `natOpt`, `vectorOptions` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs:2100-2178` |
 | `fulltextUnknown`    | the unknown-key refusal of the `IndexType::Fulltext` arm, `runtime.rs:2021-2030` |
 | `phonetic`           | the `phonetic` key of the `IndexType::Fulltext` arm, `runtime.rs:2051-2067` |
 -/
@@ -44,7 +44,7 @@ usage exceeds a positive capacity; capacity `≤ 0` or no usage function disable
 theorem checkMem_spec (cap : Int) (u : Nat) (hu : u < 2 ^ 63) :
     checkMem cap (some u) = true ↔ 0 < cap ∧ cap < u := by
   have h1 : u % 2 ^ 64 = u := Nat.mod_eq_of_lt (by omega)
-  simp only [checkMem, asI64, h1, if_pos hu, Bool.and_eq_true, decide_eq_true_eq]
+  simp only [checkMem, asI64, h1, ite_eq_left hu, Bool.and_eq_true, decide_eq_true_eq]
 
 theorem checkMem_disabled (cap : Int) (usage : Option Nat) (h : cap ≤ 0 ∨ usage = none) :
     checkMem cap usage = false := by
@@ -176,22 +176,16 @@ structure VecOpts where
   efConstruction : Option Nat
   efRuntime : Option Nat
 
-/-- The similarity names the vector arm accepts (`runtime.rs:2139`, #3257). -/
-def knownSims : List String := ["euclidean", "cosine", "ip"]
-
-/-- The `IndexType::Vector` arm (`runtime.rs:2113-2201`, #3094 / `fe619ac5f`): `dimension`
-and `similarityFunction` are **required** (they used to default to 0 / `None`), the
-similarity name is stored as `to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only),
-and since #3257 a name outside `knownSims` is refused whatever the dimension. -/
+/-- The `IndexType::Vector` arm (`runtime.rs:2100-2178`, #3094 / `fe619ac5f`): `dimension`
+and `similarityFunction` are **required** (they used to default to 0 / `None`), and the
+similarity name is stored as `to_ascii_lowercase()` (Lean's `String.toLower` is ASCII-only). -/
 def vectorOptions (get : String → Option V) : Except String VecOpts := do
   let d ← match get "dimension" with
     | some (.int n) => if n < 0 then throw "dimension: negative" else pure n.toNat
     | none => throw "dimension is required"
     | some _ => throw "dimension: not an integer"
   let sf ← match get "similarityFunction" with
-    | some (.str s) =>
-      if knownSims.contains s.toLower then pure (some s.toLower)
-      else throw s!"unknown similarityFunction '{s}'"
+    | some (.str s) => pure (some s.toLower)
     | none => throw "similarityFunction is required"
     | some _ => throw "similarityFunction must be a string"
   let m ← natOpt "M" (get "M")
@@ -234,7 +228,7 @@ theorem vector_similarity_lowered (get : String → Option V) (o : VecOpts)
         · revert h
           cases natOpt "M" (get "M") <;> cases natOpt "efConstruction" (get "efConstruction") <;>
             cases natOpt "efRuntime" (get "efRuntime") <;> simp
-          all_goals (split <;> simp <;> intro h <;> rw [← h])
+          intro h; rw [← h]
       | _ =>
         cases dv <;> simp [hd, hs, bind, Except.bind, throw, throwThe, MonadExceptOf.throw, pure, Except.pure] at h
         all_goals (split at h <;> simp at h)

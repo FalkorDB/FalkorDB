@@ -213,9 +213,11 @@ def dropIndex (I : Ixr) (label : String) (attrs : List String) (t : IType) (tota
     let x'' := if removed then x'.setProgress 0 total else x'
     (some (before - x''.indexCount, x''.indexCount), { I with map := I.map.upd label x'' })
 
-/-- `Indexer::remove` (`indexer.rs:411`). -/
-def remove (I : Ixr) (label : String) : Ixr :=
-  if (I.map.get label).isSome then { I with map := I.map.erase label } else I
+/-- `Indexer::remove_if_empty` (`indexer.rs:433`, #3856; was `remove`): erase the
+entry only while it still has no fields (`index_count() == 0`), since a
+`CREATE INDEX` may have re-filled it before the background drop ran. -/
+def removeIfEmpty (I : Ixr) (label : String) : Ixr :=
+  if (I.map.get label).any (·.indexCount == 0) then { I with map := I.map.erase label } else I
 
 def hasFieldForLabel (I : Ixr) (l a : String) (t : IType) : Bool :=
   match I.map.get l with | some x => x.hasFieldWithType a t | none => false
@@ -463,15 +465,40 @@ theorem dropIndex_spec (I : Ixr) (l : String) (as : List String) (t : IType) (to
     repeat' split
     all_goals first | exact key _ _ | (intro a gs hg; exact key _ _ a gs (by simpa [Idx.setProgress] using hg))
 
-theorem remove_spec (I : Ixr) (l l' : String) :
-    (I.remove l).map.get l' = if l' = l then none else I.map.get l' := by
-  unfold remove; split
-  · exact AMap.get_erase _ _ _
-  · next h =>
-    have h' : I.map.get l = none := by cases hg : I.map.get l <;> simp_all
-    by_cases hl : l' = l
-    · subst hl; simp [h']
-    · simp [hl]
+/-- **PROVEN** (`remove_if_empty`): a fieldless entry for `l` is erased, every
+other entry (and a filled entry for `l`) is untouched. -/
+theorem removeIfEmpty_spec (I : Ixr) (l l' : String) :
+    (I.removeIfEmpty l).map.get l' =
+      if l' = l ∧ (I.map.get l).any (·.indexCount == 0) then none else I.map.get l' := by
+  unfold removeIfEmpty; split
+  · next h => rw [AMap.get_erase]; by_cases hl : l' = l <;> simp [hl, h]
+  · next h => simp [h]
+
+/-- **PROVEN** (#3856): an entry a racing `CREATE INDEX` re-filled survives. -/
+theorem removeIfEmpty_keeps_filled (I : Ixr) (l : String) (x : Idx)
+    (hx : I.map.get l = some x) (hn : x.indexCount ≠ 0) :
+    (I.removeIfEmpty l).map.get l = some x := by
+  rw [removeIfEmpty_spec]; simp [hx, hn]
+
+/-- **PROVEN**: the old `remove_spec` contract still holds on the path
+`drop_index` → `drop_index_bg` with no interleaving: `drop_index` reported
+`remaining = 0`, so the entry is fieldless and `remove_if_empty` erases it. -/
+theorem dropIndex_removeIfEmpty_erases (I : Ixr) (l l' : String) (as : List String) (t : IType) (tot d : Nat)
+    (h : (I.dropIndex l as t tot).1 = some (d, 0)) :
+    ((I.dropIndex l as t tot).2.removeIfEmpty l).map.get l' =
+      if l' = l then none else I.map.get l' := by
+  have hs := dropIndex_spec I l as t tot
+  rw [removeIfEmpty_spec]
+  by_cases hl : l' = l
+  · subst hl
+    have hz : ((I.dropIndex l' as t tot).2.map.get l').any (·.indexCount == 0) = true := by
+      unfold dropIndex at h ⊢; split
+      · next h0 => simp [h0] at h
+      · next x0 h0 =>
+        simp only [h0, Option.some.injEq, Prod.mk.injEq] at h
+        simp only [AMap.get_upd, ite_true, Option.any_some, beq_iff_eq]; exact h.2
+    simp [hz]
+  · simp [hl, hs.2.1 l' hl]
 
 theorem lookups (I : Ixr) (l a : String) (t : IType) :
     I.hasFieldForLabel l a t = (I.map.get l).any (·.hasFieldWithType a t) ∧

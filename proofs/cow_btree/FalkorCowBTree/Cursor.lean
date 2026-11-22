@@ -186,12 +186,12 @@ theorem take_spec : ∀ (n : Nat) (cur : Cursor), Inv cur → cur.take n = (out 
 theorem dropWhile_all {α} (p : α → Bool) : ∀ (l : List α), (∀ x ∈ l, p x = true) → l.dropWhile p = []
   | [], _ => rfl
   | a :: l, h => by
-    rw [List.dropWhile_cons, if_pos (h a List.mem_cons_self)]
+    rw [List.dropWhile_cons, ite_eq_left (h a List.mem_cons_self)]
     exact dropWhile_all p l (fun x hx => h x (List.mem_cons_of_mem _ hx))
 
 theorem dropWhile_none {α} (p : α → Bool) : ∀ (l : List α), (∀ x ∈ l, p x = false) → l.dropWhile p = l
   | [], _ => rfl
-  | a :: l, h => by rw [List.dropWhile_cons, if_neg (by simp [h a List.mem_cons_self])]
+  | a :: l, h => by rw [List.dropWhile_cons, ite_eq_right (by simp [h a List.mem_cons_self])]
 
 theorem dropWhile_route {α} (p : α → Bool) (A M C : List α) (hA : ∀ x ∈ A, p x = true) (hC : ∀ x ∈ C, p x = false) :
     (A ++ M ++ C).dropWhile p = M.dropWhile p ++ C := by
@@ -279,7 +279,7 @@ theorem new_inv_rest (c : Cfg) (h : Nat) (root : Node) (lo hi : Nat) (hw : TreeW
   have hs := TreeWF_sorted hw
   simp only [restStack, List.map_nil, List.flatten_nil, List.append_nil] at hr
   have hsr : Sorted ((toList h root).dropWhile (keyLt lo)) := Sorted.sublist (List.dropWhile_sublist _) hs
-  simp only [Cursor.new, Inv, rest, restStack, List.map_nil, List.flatten_nil, List.append_nil]
+  simp only [Cursor.new, Inv, rest, restStack]
   refine ⟨⟨?_, fun hwh => ?_⟩, ?_, trivial⟩
   · rw [hr]; exact hsr
   · apply wholeOf_sound _ _ _ _ hwh

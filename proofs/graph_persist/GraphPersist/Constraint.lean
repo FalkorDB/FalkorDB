@@ -50,7 +50,7 @@ def rustFrag : KVal → List Int
   | .kint i       => [1, i]                     -- Debug tag Int(..)
   | .kfloat w nz  => [2, w, if nz then 1 else 0]  -- Float(..): -0.0 and 0.0 distinct
   | .kbool b      => [3, if b then 1 else 0]   -- Bool(..)
-  | .kstr s       => 4 :: s.data.map (fun c => (c.toNat : Int))
+  | .kstr s       => 4 :: s.toList.map (fun c => (c.toNat : Int))
   | .klist xs     => 5 :: (xs.length : Int) :: xs.flatMap rustFrag
 
 /-- A single-property key is empty (entity does not participate) iff the value is
