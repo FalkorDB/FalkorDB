@@ -37,13 +37,14 @@ theorem mergeSV_covers (a b : List (List Var)) (s i : Nat)
     (h : i < lenAt a s ∨ i < lenAt b s) : i < lenAt (mergeSV a b) s := by
   have := mergeSV_ge a b s; omega
 
-/-! ## FOREACH restore (binder.rs:678-709) -/
+/-! ## FOREACH restore (binder.rs:775-796) -/
 
 /-- The restored table: the saved outer table plus every inner entry whose
-id the outer table does not hold, re-keyed `_foreach_{scope}_{id}`. -/
+id the outer table does not hold, re-keyed `_foreach_{scope}_{id}` — or, for a nameless
+variable, pushed unnamed (#3303). -/
 def foreachRestore (saved inner : Env) (scope : Nat) : Env :=
   saved ++ (inner.filter (fun p => !(saved.ids.contains p.2.id))).map
-    (fun p => (s!"_foreach_{scope}_{p.2.id}", p.2))
+    (fun p => if p.2.name.isNone then (Key.un, p.2) else (Key.nm s!"_foreach_{scope}_{p.2.id}", p.2))
 
 /-- When the body only *added* entries, each minted at or above the outer
 size (`inner = saved ++ added`), the restored table holds exactly the inner
@@ -70,7 +71,9 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
     omega
   have hids : (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
     simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
-    simp [Env.ids, List.map_map, Function.comp_def]
+    simp only [Env.ids, List.map_append, List.map_map, Function.comp_def]
+    congr 1
+    apply List.map_congr_left; intro p _; split <;> rfl
   have hlen : (foreachRestore saved (saved ++ added) scope).length = (saved ++ added).length := by
     simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
     simp
@@ -83,11 +86,11 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
 comprehension's sub-plan uses; the cleanup then keeps only the names that
-were there before (and `_anon*`). -/
+were there before (unnamed entries stay, #3303). -/
 def compScope : Env :=
-  [("n", ⟨"n", 0, 0, .node⟩), ("m", ⟨"m", 1, 0, .node⟩), ("r", ⟨"r", 2, 0, .rel⟩)]
+  [("n", ⟨"n", 0, 0, .node, none⟩), ("m", ⟨"m", 1, 0, .node, none⟩), ("r", ⟨"r", 2, 0, .rel, none⟩)]
 
-def compCleaned : Env := compScope.retain (fun k => k == "n" || k.startsWith "_anon")
+def compCleaned : Env := compScope.retain (fun k => k == "n")
 
 /-- **Root cause 2 (comprehensions).** The cleaned table has size 1 while
 ids 1 and 2 are still in the IR: the planner's first two fresh ids in scope

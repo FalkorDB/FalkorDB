@@ -10,7 +10,7 @@ import OptimizerScan.EdgeInline
 | `hasPropOf`, `hasAnyProp`, `nestedListE` | `subtree_has_property_of` 547, `subtree_has_any_property` 569, `list_has_nested_list` 582 |
 | `nonIdxD` | `is_non_indexable_subexpr` 855 |
 | `IQx` | `IndexQuery<QueryExpr<Variable>>`; the old `index_query_references_var` (1123 at a9377c636) was replaced by `references.rs::index_query_references_variable` (proven in `proofs/optimizer_rewrites`, `References.iqRefs_iff`, by `(id, scope)`) |
-| `rowsWithScan`, `prune_sound` | `prune_all_node_scan_child` 1055 |
+| `rowsWithScan`, `prune_sound`, `rowsWithScanOver`, `rowsPruned`, `prune_sound_rows` | `prune_all_node_scan_child` 1092 (#3594: the scan's children are re-attached, 1113-1124) |
 | `hasLabelsFilter`, `isHasLabelsFor`, `addToLabels` | `build_has_labels_filter` 71, `is_has_labels_for` 1142, `add_to_labels_filter` 1084 |
 | `untilStable` | `rewrite_until_stable` 881 |
 | `governingFilter`, `matchScanWithFilter` | `governing_filter` 920, `match_scan_with_filter` 942 |
@@ -283,12 +283,35 @@ theorem prune_sound (N : List Nat) (E : List Ed) (hN : N.Nodup) (hcov : ∀ e �
     List.map_congr_left (fun n _ => by
       simp only [Function.comp]
       by_cases h : e.src = n
-      · rw [if_pos h, List.count_filter (by simp [h])]
-      · rw [if_neg h]; exact List.count_eq_zero.mpr (by simp [h]))
+      · rw [ite_eq_left h, List.count_filter (by simp [h])]
+      · rw [ite_eq_right h]; exact List.count_eq_zero.mpr (by simp [h]))
   rw [hm, sum_ite_single _ _ N hN]
   by_cases he : e ∈ E
-  · rw [if_pos (hcov e he)]
+  · rw [ite_eq_left (hcov e he)]
   · rw [List.count_eq_zero.mpr he]; simp
+
+/-- Rows of `EdgeByIndexScan` over `AllNodeScan(from) → below`: per row `r` of the subtree `below`
+the node scan runs (and binds `from`), and the edge scan emits the index edges whose `from` is that node. -/
+def rowsWithScanOver {R : Type} (rows : List R) (N : List Nat) (E : List Ed) : List (R × Ed) :=
+  rows.flatMap (fun r => (rowsWithScan N E).map (fun e => (r, e)))
+
+/-- Rows after `prune_all_node_scan_child` (#3594): the scan's children are re-attached beneath the
+edge scan, which emits every index edge once per row they supply. -/
+def rowsPruned {R : Type} (rows : List R) (E : List Ed) : List (R × Ed) :=
+  rows.flatMap (fun r => E.map (fun e => (r, e)))
+
+/-- **PROVEN** (#3594, `prune_all_node_scan_child` with a non-leaf scan, `utilize_index.rs:1113-1122`):
+dropping only the `AllNodeScan` and re-attaching what was beneath it (the rows an earlier `UNWIND`/`WITH`
+supplies) keeps the row multiset, under `prune_sound`'s premises. A leaf scan is `rows = [()]`. -/
+theorem prune_sound_rows {R : Type} (rows : List R) (N : List Nat) (E : List Ed) (hN : N.Nodup)
+    (hcov : ∀ e ∈ E, e.src ∈ N) :
+    (rowsWithScanOver rows N E).Perm (rowsPruned rows E) := by
+  unfold rowsWithScanOver rowsPruned
+  induction rows with
+  | nil => exact List.Perm.refl _
+  | cons r rows ih =>
+    simp only [List.flatMap_cons]
+    exact List.Perm.append ((prune_sound N E hN hcov).map _) ih
 
 /-! ## Endpoint label filter -/
 
@@ -491,7 +514,7 @@ theorem idxScan_filter_sound (idx : Nat → List Nat) (opq : Nat → Node → Bo
   · cases hsc : (Plan.idxScan [L] L' q).sel idx opq n
     · -- the index scan rejects `n` although `f` holds: the reference rejects it too
       rw [hfv] at hu
-      simp only [Bool.false_and, Bool.and_true]
+      simp only [Bool.and_true]
       have hF : ∀ X, Plan.sel idx opq (.filter X (.idxScan [L] L' q)) n =
           ((Plan.idxScan [L] L' q).sel idx opq n && evalF opq n X) := fun X => rfl
       split at hu <;> (try split at hu) <;> (simp only [hF, hsc, Bool.false_and, Bool.and_true] at hu; exact hu)

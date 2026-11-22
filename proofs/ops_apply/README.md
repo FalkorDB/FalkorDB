@@ -28,7 +28,7 @@ Under that condition:
 
 The per-row fallback modes are correct for *any* sub-plan, separable or not (`applyPerRow_eq_ref`, `optionalPerRow_eq_ref`).
 
-The planner decides whether to batch with a blacklist of non-separable operators. That blacklist misses `ValueHashJoin` (`canBatchApply_admits_vhj`, `vhj_not_separable`), which is bug W2-apply-1.
+The planner decides whether to batch with a blacklist of non-separable operators. That blacklist misses `ValueHashJoin` (`canBatchApply_admits_vhj`, `vhj_not_separable`), which was bug W2-apply-1. It is now fixed not by the blacklist but by making the join per-origin (#3035, `CartVhj.vhjRowsPO`); those two theorems describe the pre-fix join and stay as the historical counterexample.
 
 **2. Does OPTIONAL MATCH keep the input order?**
 
@@ -92,7 +92,7 @@ Every bug was reproduced against a live server and compared with C before it was
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-apply-1 | `vhj_batched_16_vs_8`, `canBatchApply_admits_vhj` | A ValueHashJoin inside a batched Apply or Optional joins rows that came from different outer rows: the `can_batch` blacklists (`apply.rs:119-133`, `optional.rs:104-106`) miss it. `UNWIND [1,2] AS x MATCH (a:A),(b:B) WHERE a.v = b.v RETURN count(*)` over 2 `A` and 2 `B`: Rust 16, C 8 | **Open** |
+| W2-apply-1 | `vhj_batched_16_vs_8`, `canBatchApply_admits_vhj` | A ValueHashJoin inside a batched Apply or Optional joins rows that came from different outer rows: the `can_batch` blacklists (`apply.rs:119-133`, `optional.rs:104-106`) miss it. `UNWIND [1,2] AS x MATCH (a:A),(b:B) WHERE a.v = b.v RETURN count(*)` over 2 `A` and 2 `B`: Rust 16, C 8 | **FIXED** by #3035 (closes #3012): per-origin hash tables |
 | W2-apply-2 | removed (17ccc5412), `cross_clause_keyed` | `merge_pattern_cache` was shared by every MERGE clause of the query. `MERGE (a:M {v:1}) ON CREATE SET a.v = 2 MERGE (b:M {v:1}) RETURN a.v, b.v` failed with "Variable b not found" and rolled back; C returns `2, 1`. In a `UNION ALL` it gave wrong results | **Fixed** (#3050, closes #3038): the key is `(operator idx, hash)`; `cross_clause_keyed` proves the second clause creates and binds its own node |
 | W2-apply-3 | removed (17ccc5412), `fixed3067_batch_independent` | **Fixed by #3067 (b47d6d6a3, closes #3039): `match_all` (`merge.rs:260`) matches every row before any create.** Was: MERGE's result depends on `BATCH_SIZE` (`merge.rs:313-343` at ca36bfa15): the match runs once per batch, so a row sees earlier rows' creations only across a batch boundary. With `ON CREATE SET` changing the merged property, two such rows in one batch create 2 nodes and the same rows 1024 apart create 1. C creates 2 either way (it matches every row before creating anything); the per-row openCypher meaning creates 1 | **Fixed** (#3067, closes #3039) |
 | W2-apply-4 | removed (17ccc5412), `allBound_path_keeps_all`, `allBoundMain_imp_pre`, `path_shortcut_off` | The all-bound shortcut kept only the first match. In `MATCH (a:A),(b:B) MERGE p=(a)-[:R]->(b) RETURN count(p)` both nodes are bound and the relationship is anonymous (not bound) but exposed by the path `p`; the old condition (`preAllBound`: every *named* relationship bound, anonymous ones ignored) fired, so with two parallel `:R` edges Rust returned 1, C 2 | **Fixed** (#3055, closes #3040): the condition (`allBoundMain`) now also requires an unbound anonymous relationship not to be exposed by a path variable, which turns the shortcut off for that shape; `allBound_path_keeps_all` proves the reference rows |
@@ -108,11 +108,11 @@ Every bug was reproduced against a live server and compared with C before it was
 
 Six rows rest on the hypothesis that the sub-plan is separable (four directly, and the two `next` dispatchers through `next_batched`):
 
-- `ApplyOp::next_batched` and `OptionalOp::next_batched`: the hypothesis is **false** for a sub-plan containing a ValueHashJoin (W2-apply-1). For every other sub-plan the planner lets through, it is believed true but not proven.
+- `ApplyOp::next_batched` and `OptionalOp::next_batched`: the known counterexample (a ValueHashJoin, W2-apply-1) is fixed by #3035 (the join is per-origin). For every other sub-plan the planner lets through, it is believed true but not proven.
 - `ApplyOp::next` and `OptionalOp::next`: a one-line dispatch on `can_batch` to `next_batched` or `next_per_row`; no dispatch theorem, so they inherit the CONDITIONAL status of `next_batched`.
 - `SemiApplyOp::next` and `OrApplyMultiplexerOp::next`: the planner only feeds them pattern sub-plans, which should be separable, but this is not proven.
 
-Fixing W2-apply-1 (adding `IR::ValueHashJoin` to both blacklists) removes the known counterexample but does not by itself turn these rows PROVEN: that needs a proof that every operator the blacklist admits is separable.
+Fixing W2-apply-1 (per-origin ValueHashJoin, #3035) removes the known counterexample but does not by itself turn these rows PROVEN: that needs a proof that every operator the blacklist admits is separable.
 
 Re-targeted to main 5e475e6c9: #3050 and #3055 fix W2-apply-2 and W2-apply-4 (the old refutations were removed in bbee75955, the last revision that has them being 17ccc5412, and the fixed behaviour is proved on the new model), #3050 also removes the cross-operator cache sharing behind #3368/#3369 as filed (a same-operator collision of equal leftovers remains, model only), #3462 adds `inspect` to `DeleteSt.new`, #3436 only shifts lines.
 

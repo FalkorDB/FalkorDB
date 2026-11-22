@@ -180,9 +180,9 @@ theorem get_filter_nonnull (l : List Entry) (hl : Sorted l) (k : Nat) :
         rw [List.filter_cons, hp]
         simp only [Bool.false_eq_true, ite_false]
         rw [ih, hnone]; simp [get, hv, normQ]
-      | inl i => simp [List.filter_cons, hv, Val.isNull, get, normQ]
-      | heap s => simp [List.filter_cons, hv, Val.isNull, get, normQ]
-    · cases hv : e.2.isNull <;> simp [List.filter_cons, hv, get, hk, ih]
+      | inl i => simp [hv, Val.isNull, get, normQ]
+      | heap s => simp [hv, Val.isNull, get, normQ]
+    · cases hv : e.2.isNull <;> simp [hv, get, hk, ih]
 
 /-- **`read_your_writes_new`**: for an entity created in this query (no stored
 span — a reclaimed id's attributes were cleared by `delete_nodes`'
@@ -263,7 +263,7 @@ theorem replace_reads_src (stored src : List Entry) (k : Nat) :
   cases hF : src.foldl (fun r w => if w.1 = k then some w.2 else r) none with
   | some v => simp
   | none =>
-    cases hs : (get stored k).isSome <;> simp [hs, normQ]
+    cases hs : (get stored k).isSome <;> simp [normQ]
     · cases h : get stored k <;> simp_all
 
 end PendingCommit

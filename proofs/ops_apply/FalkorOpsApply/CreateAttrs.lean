@@ -68,12 +68,12 @@ theorem tplSet_lookup (t : List (Nat × E)) (p : Nat × E) (i : Nat) :
     · simp only [hq, ite_true]
       by_cases hi : p.1 = i
       · simp [lookup, hi]
-      · simp [lookup, hi, List.find?_cons, hq]
+      · simp [lookup, hi, hq]
     · simp only [hq, ite_false]
       unfold lookup at ih ⊢
       by_cases hqi : q.1 = i
       · have : p.1 ≠ i := fun h => hq (hqi.trans h.symm)
-        simp [List.find?_cons, hqi, this]
+        simp [hqi, this]
       · have hb : (q.1 == i) = false := by simp [hqi]
         simp only [List.find?_cons, hb]
         exact ih

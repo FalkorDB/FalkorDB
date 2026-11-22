@@ -224,7 +224,7 @@ theorem q_step {L : List Nat} (hL : L.Nodup) {pre : List Nat} {st : Plan × List
   · obtain ⟨hP, hdel⟩ := qm h2
     obtain ⟨P, del⟩ := st
     simp only at hP hdel; subst hP
-    simp only [planStep]; rw [if_pos hin]
+    simp only [planStep]; rw [ite_eq_left hin]
     generalize hE : (rem L pre).erase id = E at hstep
     refine ⟨ps', ?_, ?_, ?_⟩ <;> simp only [hstep]
     · intro h2'

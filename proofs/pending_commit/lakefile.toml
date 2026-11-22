@@ -13,3 +13,9 @@ path = "../graph_queries"
 [[require]]
 name = "falkor-runtime-core"
 path = "../runtime_core"
+
+# graph_persist's RDB layout (`GraphPersist.Persist.encPayload`, `load_encode`, `multi_load`) that
+# `SaveLayout` runs #3438's slice encoders inside (graph_persist requires nothing: no cycle).
+[[require]]
+name = "falkor-graph-persist"
+path = "../graph_persist"

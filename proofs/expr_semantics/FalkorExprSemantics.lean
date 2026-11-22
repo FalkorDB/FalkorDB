@@ -33,7 +33,7 @@ cannot short-circuit (counterexample removed in bbee75955; the last revision tha
 `all_equals` / `all_not_equals` are modelled over their lazy iterators (`allEquals`,
 `allNotEquals`: `allEquals_two`, `allNotEquals_two`, `allEquals_stops`). **`evalNode_frame`**:
 evaluation reads the row only through the expression's `Variable` nodes (`E.vars`), for every
-arm (moved here from pr3437_review). `E.funcs` lists the functions a tree calls. Every theorem
+arm (moved here from the review project of PR #3437). `E.funcs` lists the functions a tree calls. Every theorem
 above the extension is unchanged in statement except that the catch-all's type is now
 `Compound V`. Live (main 9212add39 vs C): `UNWIND [0] AS x RETURN x <> 0 AND 1/x = 1` → Rust
 `false`, C `Division by zero`; likewise `false AND 1/x = 1`, `true OR 1/x = 1`,
@@ -229,7 +229,7 @@ theorem neg_eq_sub_zero {x : Int} (hx : InI64 x) (hne : x ≠ I64MIN) :
   simp only [hne, ↓reduceIte]
   rw [wrap_id]
   · simp
-  · simp only [InI64, I64MIN, I64MAX] at *; omega
+  · simp only [InI64, I64MIN] at *; omega
 
 /-! ## f64, abstractly -/
 
@@ -696,11 +696,11 @@ theorem divGate_spec (op : AOp) (a b : List (Option Int)) (hg : divGate op a b =
     | some y =>
       refine ⟨fun z hz h0 => ?_, fun hop x' y' hx hy => ?_⟩
       · simp at hz h0; subst h0
-        simp [Option.some.injEq] at this
+        simp at this
       · simp at hx hy; subst hx; subst hy; subst hop
         rintro ⟨h1, h2⟩; subst h1; subst h2
         have h0 : ¬ ((-1 : Int) = 0) := by decide
-        simp [h0] at this
+        simp at this
 
 /-- **The columnar arithmetic is the per-row `Value` arithmetic**: same rows,
 same values, and an error exactly when (and with exactly the message) the

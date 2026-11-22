@@ -321,8 +321,8 @@ theorem checkAttrShape_ok (bound n attrIds nRows) :
       have hp := (firstNotAsc_none _).mp hn
       simp only
       by_cases hr : nRows ≠ n * attrIds.length
-      · rw [if_pos hr]; simp only [reduceCtorEq, false_iff, not_and]; intro _ _ h; exact hr h
-      · rw [if_neg hr]; simp only [true_iff]; exact ⟨hall, hp, by omega⟩
+      · rw [ite_eq_left hr]; simp only [reduceCtorEq, false_iff, not_and]; intro _ _ h; exact hr h
+      · rw [ite_eq_right hr]; simp only [true_iff]; exact ⟨hall, hp, by omega⟩
 
 /-- `attr_map` (`:764`): check, then `id ↦ [(attr_id, rows[row*w + col])]`.
 `FxHashMap::insert` keeps the last write for a repeated id. -/

@@ -21,8 +21,8 @@ kind (`NodeOpError::node`/`relationship`, graph.rs:382/391) as `Except String`.
 | `verifyCreatedRels`, `nodeLive` | `verify_created_relationships` :1646 (#3022) |
 | `growForNodes` | `grow_for_nodes` :1765 |
 | `createNodes` | `create_nodes` :1746 |
-| `newG` | `Graph::new` :882 |
-| `restoreCaps`, `clampTiers`, `collectIdx` | `Graph::restore` :927 (id spaces :993-994, caps :1000-1001, tier clamp :978-981, `node_labels_index` :1016) |
+| `newG` | `Graph::new` :858 |
+| `restoreCaps`, `clampTiers`, `fromNamesIdx` | `Graph::restore` :900 (id spaces :966-967, caps :973-974, tier clamp :951-955, `NameMap::from_names` :987-991, #3757) |
 | `newVersion` | `new_version` :1084 |
 | `rebuildRelType` | `rebuild_derived_matrices` :1040 (type-matrix half; `rebuild_backward` is a GraphBLAS transpose) |
 -/
@@ -460,35 +460,55 @@ theorem clampTiers_mono (len s0 s1 s2 : Nat) :
     r.1 ≤ r.2.1 ∧ r.2.1 ≤ r.2.2 ∧ r.2.2 ≤ len := by
   simp only [clampTiers]; omega
 
-/-- `node_labels.iter().enumerate().map(..).collect()` into a map: later
-entries overwrite earlier ones. -/
-def collectIdx : List String → Nat → (String → Option Nat) → (String → Option Nat)
+/-- `NameMap::from_names` (schema.rs:76-91, #3757) builds the label (and type) index by
+`ids.entry(name).or_insert(id)` over `names.iter().enumerate()`: a name listed twice keeps
+its first position. (Before #3757 `node_labels_index` was `collect()`ed into a map, so the
+last position won.) -/
+def fromNamesIdx : List String → Nat → (String → Option Nat) → (String → Option Nat)
   | [], _, m => m
-  | a :: l, i, m => collectIdx l (i + 1) (fun t => if t = a then some i else m t)
+  | a :: l, i, m =>
+    fromNamesIdx l (i + 1) (if (m a).isSome then m else fun t => if t = a then some i else m t)
 
-theorem collectIdx_spec : ∀ (l : List String) (i : Nat) (m : String → Option Nat) (s : String),
-    l.Nodup → collectIdx l i m s = if s ∈ l then (idx l s).map (· + i) else m s
-  | [], _, _, _, _ => by simp [collectIdx]
-  | a :: l, i, m, s, hn => by
-    have ⟨ha, hl⟩ := List.nodup_cons.1 hn
-    rw [collectIdx, collectIdx_spec l (i + 1) _ s hl]
-    by_cases hs : s ∈ l
-    · have hsa : s ≠ a := fun h => ha (h ▸ hs)
-      simp only [hs, ite_true, List.mem_cons, or_true, idx, Ne.symm hsa, ite_false,
-        Option.map_map]
-      congr 1; funext x; simp [Function.comp]; omega
-    · by_cases hsa : s = a
-      · subst hsa; simp [idx]; intro h; exact absurd h hs
-      · simp [hs, hsa]
+theorem orInsert_idx (p : List String) (m : String → Option Nat) (a : String)
+    (hm : ∀ t, m t = idx p t) (t : String) :
+    (if (m a).isSome then m else fun t => if t = a then some p.length else m t) t =
+      idx (p ++ [a]) t := by
+  rw [idx_append, ← hm t]
+  by_cases hs : (m a).isSome = true
+  · simp only [hs, ↓reduceIte]
+    cases hmt : m t with
+    | some i => rfl
+    | none =>
+      by_cases ha : a = t
+      · subst ha; simp [hmt] at hs
+      · simp [ha]
+  · simp only [hs, Bool.false_eq_true, ↓reduceIte]
+    have hma : m a = none := by simpa using hs
+    by_cases ha : t = a
+    · subst ha; simp [hma]
+    · have : a ≠ t := fun e => ha e.symm
+      cases hmt : m t <;> simp [ha, this]
+
+theorem fromNamesIdx_spec : ∀ (l p : List String) (m : String → Option Nat),
+    (∀ t, m t = idx p t) → ∀ s, fromNamesIdx l p.length m s = idx (p ++ l) s
+  | [], p, m, hm, s => by simpa [fromNamesIdx] using hm s
+  | a :: l, p, m, hm, s => by
+    have := fromNamesIdx_spec l (p ++ [a]) _ (orInsert_idx p m a hm) s
+    simpa [fromNamesIdx] using this
+
+/-- **`restore_LInv_any`** (#3757): `restore` re-establishes the label-table invariant
+(`labelsIndex = idx labels`, first position) from *any* decoded label list, duplicates
+included. -/
+theorem restore_LInv_any (labels : List String) (s : String) :
+    fromNamesIdx labels 0 (fun _ => none) s = idx labels s := by
+  have := fromNamesIdx_spec labels [] (fun _ => none) (fun t => by simp [idx]) s
+  simpa using this
 
 /-- `restore` re-establishes the label-table invariant from a duplicate-free
 decoded label list. -/
-theorem restore_LInv (labels : List String) (h : labels.Nodup) (s : String) :
-    collectIdx labels 0 (fun _ => none) s = idx labels s := by
-  rw [collectIdx_spec labels 0 _ s h]
-  split
-  · simp
-  · rename_i hs; exact ((idx_none labels s).2 hs).symm
+theorem restore_LInv (labels : List String) (_h : labels.Nodup) (s : String) :
+    fromNamesIdx labels 0 (fun _ => none) s = idx labels s :=
+  restore_LInv_any labels s
 
 /-- `restore`'s endpoint index: every decoded edge is resolvable, provided
 edge ids are unique (they are: one tensor entry per id). -/

@@ -6,21 +6,27 @@ open GraphPersist
 /-! ## Payload directory (`EncodeState`, serialization.rs:120-158) -/
 
 inductive St where
-  | init | nodes | delNodes | edges | delEdges | schema | labelsM | relM | adj | lblsM | final
+  | init | nodes | delNodes | edges | delEdges | schema | labelsM | relM | adj | lblsM | cch | final
   deriving DecidableEq, Repr
 
 def St.toU : St → Nat
   | .init => 0 | .nodes => 1 | .delNodes => 2 | .edges => 3 | .delEdges => 4 | .schema => 5
-  | .labelsM => 6 | .relM => 7 | .adj => 8 | .lblsM => 9 | .final => 10
+  | .labelsM => 6 | .relM => 7 | .adj => 8 | .lblsM => 9 | .cch => 10 | .final => 11
 
-/-- `EncodeState::from_u64` (:145). -/
+/-- `EncodeState::from_u64` (:150). -/
 def St.ofU : Nat → Option St
   | 0 => some .init | 1 => some .nodes | 2 => some .delNodes | 3 => some .edges
   | 4 => some .delEdges | 5 => some .schema | 6 => some .labelsM | 7 => some .relM
-  | 8 => some .adj | 9 => some .lblsM | 10 => some .final | _ => none
+  | 8 => some .adj | 9 => some .lblsM | 10 => some .cch | 11 => some .final | _ => none
 
 theorem St.ofU_toU (s : St) : St.ofU s.toU = some s := by cases s <;> rfl
 theorem St.toU_lt (s : St) : s.toU < 2 ^ 64 := by cases s <;> decide
+
+/-- The states `decode_payload_directory` (decoder/mod.rs:48) accepts: all but
+`CchIndices` (no CCH index in this module), `Init` and `Final` (never saved). -/
+def St.accepted : St → Bool
+  | .init | .cch | .final => false
+  | _ => true
 
 /-- `PayloadEntry` (:160). -/
 structure Entry where
@@ -33,33 +39,55 @@ structure Entry where
 def encDir (es : List Entry) : Stream :=
   encU es.length ++ es.flatMap fun e => encU e.st.toU ++ encU e.count
 
-/-- The directory loop of `rdb_load_graph` (:58-66) / `load_graph_from_reader` (:447-455):
-both words are read before the state is checked. -/
+/-- The directory loop of `decode_payload_directory` (decoder/mod.rs:48-72), which
+`rdb_load_graph` (:128) and `load_graph_from_reader` (:509) call: both words are read
+before the state is checked, and an unknown, `CchIndices`, `Init` or `Final` state fails. -/
 def decDirEntry : Dec (St × Nat) :=
   readU.bind fun s => readU.bind fun c =>
     match St.ofU s with
-    | some st => Dec.pure (st, c)
+    | some st => if st.accepted then Dec.pure (st, c) else Dec.fail
     | none => Dec.fail
 
 def decDir : Dec (List (St × Nat)) := readU.bind fun n => rep decDirEntry n
 
-theorem decDir_rt (es : List Entry) (hn : es.length < 2 ^ 64) (hc : ∀ e ∈ es, e.count < 2 ^ 64) :
+/-- Every directory the encoder writes reads back (`build_payloads` lists only accepted
+states; `buildPayloads_accepted`, `EntryOK.accepted`). -/
+theorem decDir_rt (es : List Entry) (hn : es.length < 2 ^ 64) (hc : ∀ e ∈ es, e.count < 2 ^ 64)
+    (hs : ∀ e ∈ es, e.st.accepted = true) :
     RT decDir (encDir es) (es.map fun e => (e.st, e.count)) := by
-  have hent : ∀ e : Entry, e.count < 2 ^ 64 →
+  have hent : ∀ e : Entry, e.count < 2 ^ 64 → e.st.accepted = true →
       RT decDirEntry (encU e.st.toU ++ encU e.count) (e.st, e.count) := by
-    intro e he
+    intro e he ha
     have := RT_bind (readU_rt _ (St.toU_lt e.st))
       (f := fun s => readU.bind fun c => match St.ofU s with
-        | some st => Dec.pure (st, c) | none => Dec.fail)
+        | some st => if st.accepted then Dec.pure (st, c) else Dec.fail | none => Dec.fail)
       (RT_bind (readU_rt _ he) (f := fun c => match St.ofU e.st.toU with
-        | some st => Dec.pure (st, c) | none => Dec.fail)
-        (by rw [St.ofU_toU]; exact RT_pure _))
+        | some st => if st.accepted then Dec.pure (st, c) else Dec.fail | none => Dec.fail)
+        (by rw [St.ofU_toU]; simp only [ha, ite_true]; exact RT_pure _))
     simpa [decDirEntry] using this
   have hrep := RT_rep decDirEntry (fun p : St × Nat => encU p.1.toU ++ encU p.2)
-    (fun p => p.2 < 2 ^ 64) (fun p hp => by simpa using hent ⟨p.1, p.2, 0⟩ hp)
-    (es.map fun e => (e.st, e.count)) (by intro p hp; obtain ⟨e, he, rfl⟩ := List.mem_map.1 hp; exact hc e he)
+    (fun p => p.2 < 2 ^ 64 ∧ p.1.accepted = true) (fun p hp => by simpa using hent ⟨p.1, p.2, 0⟩ hp.1 hp.2)
+    (es.map fun e => (e.st, e.count))
+    (by intro p hp; obtain ⟨e, he, rfl⟩ := List.mem_map.1 hp; exact ⟨hc e he, hs e he⟩)
   have := RT_bind (readU_rt es.length hn) (f := fun n => rep decDirEntry n) (by simpa using hrep)
   simpa [decDir, encDir, List.flatMap_map] using this
+
+/-- #3793: a directory entry naming `CchIndices`, `Init` or `Final` is refused once its two
+words are read, before any payload; before, 10 read as `Final` and its payload was skipped
+unread, misaligning the stream. -/
+theorem decDirEntry_refuses (st : St) (hs : st.accepted = false) (c : Nat) (hc : c < 2 ^ 64)
+    (r : Stream) : decDirEntry (encU st.toU ++ encU c ++ r) = .err := by
+  have h1 := (readU_rt _ (St.toU_lt st)).1 (encU c ++ r)
+  have h2 := (readU_rt _ hc).1 r
+  simp only [decDirEntry, Dec.bind, List.append_assoc, h1, h2, St.ofU_toU, hs]
+  rfl
+
+/-- …in particular a v20 key listing a CCH index payload (tag 10) fails at its directory. -/
+theorem decDir_refuses_cch (c : Nat) (hc : c < 2 ^ 64) (r : Stream) :
+    decDir (encU 1 ++ (encU St.cch.toU ++ encU c ++ r)) = .err := by
+  have h1 := (readU_rt 1 (by decide)).1 (encU St.cch.toU ++ encU c ++ r)
+  have h2 := decDirEntry_refuses .cch rfl c hc r
+  simp only [decDir, Dec.bind, h1, rep, h2]
 
 /-! ## Indexed matrix lists (`LabelsMatrices` / `RelationMatrices` arms of `encode_payload`) -/
 

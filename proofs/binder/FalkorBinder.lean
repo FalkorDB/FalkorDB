@@ -52,7 +52,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | `defineName`, `ensureType` | `define_name_in_scope` :2160, `ensure_type` :2276 |
 | `projectName` | `project_name` :2182 |
 | `bindProjection`, `projectItems` | `bind_projection` :1064-1306 (non-`*` form) |
-| `rustBind` / `specBind`, `Elem`, `split` | `bind_graph` :1333 (nodes 1356, then rels 1373) / C's textual order |
+| `rustBind` / `specBind`, `defRels`, `Elem`, `split` | `bind_graph` :1470 (named rels 1493, nodes 1511, then rels 1527) / C's textual order |
 | `fold`, `bindClauses` | `parse_pattern` part separator parser/cypher.rs:1565-1582 (and :2117 for predicates) |
 | `mergeSV`, `lenAt` | `merge_scope_vars` :2711, `Binder::bind` :99 |
 | `foreachRestore` | FOREACH arm of `bind_ir` :673-709 |
@@ -63,11 +63,11 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 | `unionCheck` | UNION arm :267-294 |
 | `validateImport` | `validate_import_with` :1008 |
 | `BSt`, `sortedScopeVars`, `updNode` (Stack.lean) | `env_stack` & co., `default` :74, `scope_vars` :114, `current_env(_mut)` :239/245, `push_scope` :251, `commit_scope` :256, `sorted_scope_vars` :2703, `update_graph_labels` :160 |
-| `NE`/`BE`, `bindNode`, `bindSetItems`, `selfRef` (BindExpr.lean) | `bind_expr_node` :1751, `bind_expr(_with_locals)` :1730/1737, `bind_set_items` :1705, `check_unbound_self_referential` :1687 |
+| `NE`/`BE`, `bindNode`, `bindSetItems`, `selfRef` (BindExpr.lean) | `bind_expr_node` :1751, `bind_expr(_with_locals)` :1730/1737, `bind_set_items` :1705, `check_unbound_self_referential` :1777 |
 | `RC`, `bindIR`, `shortestOk`, `mergeOk`, `yieldLoop`, `bindYield`, `bindCallSubquery`, `importProjections`, `createCheck` (BindIR.lean) | `bind_ir` :262, `bind_call_subquery` :716, `build_import_projections` :984, `bind_graph_create` :1562 |
 | `mayBool`, `mayEntity`, `validate` (Types.lean) | `expr_may_return_boolean` :2323, `expr_may_return_entity` :2392, `validate_boolean_operands(_impl)` :2297/2301 |
 | `nodeToValue`, `collectConstArgs`, `foldCall`, `rewriteStruct`, `rewriteRegex` (Fold.lean) | `expr_tree_to_value` :2465, `collect_constant_args` :2497, folding :2124, `rewrite_struct_constructor` :2515, `rewrite_compiled_regex` :2580 |
-| `constEq`/`intFloatEq`, `exprIrEq`, `strip`/`eqS`, `structEq`, `replaceAgg` (AggEq.lean) | `constants_equal` :2643, `expr_ir_eq` :2699, `nodes_eq` :2669, `raw_exprs_structurally_equal` :2661, `replace_agg_subtrees` :2613 |
+| `exprIrEq`, `strip`/`eqS`, `structEq`, `replaceAgg` (AggEq.lean) | `expr_ir_eq` :2682, `nodes_eq` :2652, `raw_exprs_structurally_equal` :2644, `replace_agg_subtrees` :2614 |
 
 ## Proven (one line each)
 * `fresh_not_used`, `mint_new_covers`, `reinsert_covers`: minting under a new key is fresh and keeps the table covering.
@@ -84,8 +84,8 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * `callBody_query_disjoint`, `callBody_union_disjoint`: a CALL body's scopes, plain or UNION branch, are disjoint from the live outer scopes (UNION since #3027, d42d121c6).
 * `unionCheck_ok_iff`, `validateImport_ok`: UNION column rule and CALL import rule as stated.
 * Counterexample theorems (each backs a confirmed bug below): `erase_breaks_covers`, `where_copy_id_reused`,
-  `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`, `node_attr_on_rel_rust_rejects`,
-  `node_attr_on_own_rel`, `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
+  `comprehension_cleanup_breaks`, `orderBy_leaks`, `defineName_ignores_parent`,
+  `rel_attr_forward_node`, `q2923_cause`, `fold_merges`,
   `labels_leak`, `agg_orderBy_by_name`, `projectName_present_uncovered` (guarded, no bug).
 
 * Wave 5 (all binder.rs fns PROVEN): `sortedScopeVars_spec`, `push_toSt`, `updNode_union`/`_idem`;
@@ -93,8 +93,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
   `bind_iterable_outer`; per-arm `bindIR` theorems (`shortestOk_iff`, `mergeOk_*`, `yieldLoop_ok`,
   `callSubquery_covers`, `importProjections_covers`, `createCheck_*`); `mayBool_sound_except`, `mayEntity_eq`;
   `nodeToValue_sound`/`_complete`, `foldCall_sound`, `rewriteStruct_shape`, `rewriteRegex_spec`;
-  `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`; since #3254 `intFloatEq_iff`,
-  `exprIrEq_int_float`, `const_kinds_distinguished`, `order_by_other_aggregate_rejected`, `order_by_int_float_same`.
+  `nodesEq_refl`/`_symm`, `exprIrEq_exact`, `replaceAgg_id`/`_root`.
 * #2845 CALL entry projection (`CallBoundary`, folded in from the retired pr2845_review):
   `Pr2845.bodyNew_entry`, `importProj_spec`, `entry_ids_below`, `body_own_unbound`,
   `body_import_value`, `union_branch_label_fixed` (#3027), `pushed_read_unbound` (W6-opt-1).
@@ -140,13 +139,13 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
    `RETURN true AND -null` → Rust error, C `null`. Lean `getElement_rejected`, `negate_rejected`
    (`mayBool_sound_except`: sound for every other variant). Fix: move `GetElement` (and the null-capable
    unary/list forms) to the "runtime-typed → true" arm.
-9. **ORDER BY aggregate matched to the wrong projection** (FIXED by #3254, history `pre3254_*`; was `expr_ir_eq` binder.rs:2682 falls back to
+9. **ORDER BY aggregate matched to the wrong projection** (NEW, `expr_ir_eq` binder.rs:2682 falls back to
    `discriminant` equality, so every two `Constant`s of different kinds — Int vs Float, Null vs Int,
    Bool vs Int, String vs Int — and any two quantifiers compare equal): `CREATE (:N {g:1, v:3}), (:N {g:2, v:4})`,
    `MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m ORDER BY max(n.v % 4.0)` → Rust rows `[1,0],[2,1]`
    (sorted by `m`), C `failed to map aggregation expression within ORDER BY clause, please use alias`
    (openCypher order by `max(v % 4.0)` would be `[2,1],[1,0]`); with `% 4` (Int) Rust also rejects.
-   Lean `pre3254_order_by_wrong_aggregate`, `pre3254_const_kinds_conflated`; fixed: `const_kinds_distinguished`. Fix: compare `Constant` values with
+   Lean `order_by_wrong_aggregate`, `const_kinds_conflated`. Fix: compare `Constant` values with
    type-aware equality (`Value` equality, not discriminant) and compare quantifier kinds.
 
 ## Spec vs C disagreements (not Rust-vs-C bugs)
@@ -165,8 +164,10 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * Rust over-accepts vs C: `RETURN n.v+1 AS k, count(*) ORDER BY n.v` (`agg_orderBy_by_name`); `(a)-[r {w: b.v}]->(b)` (`rel_attr_forward_node`).
 
 ## Open PRs touching binder.rs (model = origin/main)
-* #2981: `bind_graph` defines named relationships before nodes' inline maps are bound and splits inline maps
-  reading pending pattern variables (`split_inline_attrs`) — removes `node_attr_on_rel_rust_rejects` / bug 2.
+* #2981 (modelled): `bind_graph` defines named relationships before nodes' inline maps are bound (`defRels`)
+  — `node_attr_on_rel_rust_accepts`, `node_attr_on_own_rel_accepts`, `q2923_fixed` replace
+  `node_attr_on_rel_rust_rejects` / bug 2; a MATCH reusing an earlier MATCH's relationship variable is rejected
+  (`match_rel_reused`, `pruneMatchRels_spec`).
 * #3016: keeps hidden scope variables' ids reserved and hides ORDER BY copies — fixes `erase_breaks_covers`,
   `where_copy_id_reused`, `orderBy_leaks` (bugs 3, 5).
 * #3049: CREATE and pattern-comprehension labels stay out of the MATCH label set — fixes `labels_leak` (bug 6).
@@ -174,7 +175,7 @@ proofs/planner_build `RemoveVerified`; the issue's CREATE/MERGE half does not re
 * #3011: generalises `replace_agg_subtrees` to `replace_projected_subtrees` (non-aggregate ORDER BY
   expressions repeating a projection read its alias), guarded by `is_alias_rewritable`, which admits
   `Constant(Bool|Int|Float|String)` — exactly the kinds `expr_ir_eq` conflates with each other
-  (`pre3254_const_kinds_conflated`; fixed by #3254). With it, bug 9 would extend to plain expressions, e.g.
+  (`const_kinds_conflated`). With it, bug 9 would extend to plain expressions, e.g.
   `RETURN n.v % 3 AS k ORDER BY n.v % 4.0` (sorted by `k`). Fix bug 9 first (or compare constants by value).
 
 ## Gaps

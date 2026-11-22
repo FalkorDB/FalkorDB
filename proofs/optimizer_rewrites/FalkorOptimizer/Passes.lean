@@ -13,7 +13,7 @@
 | `labelScanOk`, `reorder` | `NodeByLabelScan` label test and `reorder_labels` (`optimizer/reorder_labels.rs:16-47`) stable sort by label id |
 | `vhj`, `cpEq`          | `ValueHashJoin` (`runtime/ops/value_hash_join.rs`, `key_as_i64` l.153) vs `Filter(=)` over `CartesianProduct` (`replace_cartesian_with_hash_join.rs:101-217`) |
 | `toF`                  | `i as f64` in `Value::compare_value` for Int vs Float, exact in `[0, 2^54]` |
-| `excludedChild`        | the operator list at `push_filters_down.rs:165-178` |
+| `excludedChild`        | the operator list at `push_filters_down.rs:181-200` |
 -/
 import FalkorOptimizer.Basic
 
@@ -196,12 +196,12 @@ theorem idFilter_correct (maxId : Nat) (fs : List (Int × IdOp))
     cases hst : step lo hi (wrap c) op with
     | none =>
       rw [hst] at hs
-      simp only [hst, inRange] at hs ⊢
+      simp only [inRange] at hs ⊢
       rw [← Bool.and_assoc, ← hs, Bool.false_and]
     | some st =>
       obtain ⟨lo', hi'⟩ := st
       rw [hst] at hs
-      simp only [hst]
+      simp only
       rw [ih (fun p hp => hfs p (by simp [hp])) lo' hi']
       simp only [inRange] at hs
       rw [hs, Bool.and_assoc]
@@ -324,14 +324,18 @@ theorem hash_join_drops_row :
 inductive Kind where
   | project | aggregate | merge | argument | includePending | semiApply | antiSemiApply
   | orApplyMultiplexer | optional
+  | create | delete | set | remove | commit | forEach
   | limit | skip | sort | distinct | cartesianProduct | apply | unwind | condTraverse
   | other
 deriving DecidableEq, Repr
 
-/-- push_filters_down.rs:165-178: children the filter may *not* look through. -/
+/-- push_filters_down.rs:181-200: children the filter may *not* look through
+(#3582 adds the write operators `Create`, `Delete`, `Set`, `Remove`, `Commit`,
+`ForEach`). -/
 def excludedChild : Kind → Bool
   | .project | .aggregate | .merge | .argument | .includePending | .semiApply | .antiSemiApply
-  | .orApplyMultiplexer | .optional => true
+  | .orApplyMultiplexer | .optional
+  | .create | .delete | .set | .remove | .commit | .forEach => true
   | _ => false
 
 /-- The operators that are transparent for a row filter (the theorems

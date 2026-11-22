@@ -99,6 +99,10 @@ Headline theorems:
   of `G` (counts, deleted-id sets, both attribute stores, all matrices, schema, indexes,
   constraints), **and** every word-boundary truncation reads past the end
   (`truncated_payload_eof`, `empty_payload_eof`).
+* #3793 (encoding v20): `decode_payload_directory` refuses `CchIndices` (tag 10), `Init`
+  and `Final` (now 11) before any payload (`decDirEntry_refuses`, `decDir_refuses_cch`),
+  which no encoded directory lists (`buildPayloads_accepted`, `EntryOK.accepted`);
+  `rdb_load_graph` loads only versions 19 and 20 (`key_rt_ver`, `rdbLoad_refuses`).
 * `multi_key_tiles`, `multi_key_bound`, `multi_key_all_placed`, `multi_key_matrices` — the
   multi-key layout tiles each entity kind once, in order, ≤ `vkey_max` per key, matrices on
   key 0 only.
@@ -109,7 +113,7 @@ Headline theorems:
 * `rebuild_calls`, `rebuild_entity`, `rebuild_meta_first` — index replay.
 * `save_main`, `save_vkey`, `save_single`, `createdKeys_spec`, `deleteVKeys_spec` — SAVE
   writes the graph's key + `K - 1` virtual keys with slices `0..K`, `key_count = K`, and
-  deletes exactly those virtual keys afterwards; `onPersistence_spec` (BGSAVE never splits).
+  deletes exactly those virtual keys afterwards; `onPersistence_spec` (BGSAVE never splits); `onPersistence_strip` (#3844: every persistence start strips the telemetry streams).
 * `load_main_last`, `load_main_first` — whatever the position of the graph's own key in the
   load order, the registered `Arc` and the key's value coincide and hold the finished graph;
   no virtual key is registered; placeholders are dropped.

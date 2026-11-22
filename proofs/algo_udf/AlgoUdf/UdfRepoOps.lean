@@ -56,7 +56,7 @@ def list (s : RSt) (filter : Option Str) (withCode : Bool) : List (Str × List S
 theorem isPrefixOf_append (p s : Str) : p.isPrefixOf (p ++ s) = true := by
   induction p with
   | nil => rfl
-  | cons c t ih => simp [List.isPrefixOf, ih]
+  | cons c t ih => simp [ih]
 
 /-- `list` shows the raw names a library registered. -/
 theorem strip_qual (n f : Str) : strip (n ++ ['.']) (qual n f) = f := by

@@ -15,8 +15,9 @@ Modelled as a recursive DFS; the engine uses an explicit stack, which changes
 only the *order* of emissions (it pops the last pushed neighbour first), not
 the multiset. Destination id / label filters and edge-attribute / WHERE
 filters are pure post-filters on each candidate and are not modelled; the
-reversed traversal (`reversed`, `:543`) is the same DFS on the transposed
-direction.
+reversed traversal (`reversed`, `:571`) is the same DFS on the transposed
+direction, and for an undirected walk (reversed since #3593) the same DFS from
+the other end: `varLen_bidir_reverse_iff`.
 -/
 
 namespace OpsTraverse.VarLen
@@ -49,10 +50,10 @@ theorem dfs_sound {g : Graph} {b : Bool} {minH : Nat} :
     obtain ⟨⟨e, n⟩, hp, hm⟩ := h
     by_cases hu : e ∈ used
     · simp [hu] at hm
-    · simp only [hu, if_false, List.mem_append] at hm
+    · simp only [hu, ite_false, List.mem_append] at hm
       rcases hm with hm | hm
       · by_cases hmin : minH ≤ depth + 1
-        · simp only [hmin, if_true, List.mem_singleton, Prod.mk.injEq] at hm
+        · simp only [hmin, ite_true, List.mem_singleton, Prod.mk.injEq] at hm
           obtain ⟨rfl, rfl⟩ := hm
           refine ⟨[e], rfl, by simp, Walk.cons hp (Walk.nil _), ?_, by simp, by simpa using hmin,
             by simp⟩
@@ -84,7 +85,7 @@ theorem dfs_complete {g : Graph} {b : Bool} {minH : Nat} :
         simp only [dfs, List.mem_flatMap]
         refine ⟨(e, n), hp, ?_⟩
         have hu : e ∉ used := hfresh e (List.mem_cons_self ..)
-        simp only [hu, if_false, List.mem_append]
+        simp only [hu, ite_false, List.mem_append]
         cases es with
         | nil =>
           cases hw'
@@ -115,7 +116,7 @@ theorem varLen_sound {g : Graph} {b : Bool} {start minH maxH : Nat} {es : List N
   simp only [varLen, List.mem_append] at h
   rcases h with h | h
   · by_cases h0 : minH = 0
-    · rw [if_pos h0] at h
+    · rw [ite_eq_left h0] at h
       simp only [List.mem_singleton, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
       exact ⟨Walk.nil _, by simp, by simp [h0], by simp⟩
@@ -145,6 +146,43 @@ theorem varLen_iff {g : Graph} {b : Bool} {start minH maxH : Nat} {es : List Nat
     (es, d) ∈ varLen g b start minH maxH ↔
       Walk g b start es d ∧ es.Nodup ∧ minH ≤ es.length ∧ es.length ≤ maxH :=
   ⟨varLen_sound, fun ⟨hw, hnd, h1, h2⟩ => varLen_complete hw hnd h1 h2⟩
+
+/-- An undirected step can be taken backwards. -/
+theorem step_bidir_symm {g : Graph} {s n e : Nat} (h : (e, n) ∈ step g true s) :
+    (e, s) ∈ step g true n := by
+  rw [mem_step] at h ⊢
+  obtain ⟨x, hx, hid, h⟩ := h
+  refine ⟨x, hx, hid, ?_⟩
+  rcases h with ⟨h1, h2⟩ | ⟨_, h2, h3, h4⟩
+  · by_cases hn : x.src = n
+    · exact Or.inl ⟨hn, by omega⟩
+    · exact Or.inr ⟨rfl, hn, h2, h1⟩
+  · exact Or.inl ⟨h4, h3⟩
+
+theorem Walk.snoc {g : Graph} {b : Bool} {s m n e : Nat} {es : List Nat}
+    (hw : Walk g b s es m) (h : (e, n) ∈ step g b m) : Walk g b s (es ++ [e]) n := by
+  induction hw with
+  | nil => exact .cons h (.nil _)
+  | cons hs _ ih => exact .cons hs (ih h)
+
+/-- An undirected walk read backwards is an undirected walk. -/
+theorem Walk.reverse_bidir {g : Graph} {s d : Nat} {es : List Nat} (hw : Walk g true s es d) :
+    Walk g true d es.reverse s := by
+  induction hw with
+  | nil => exact .nil _
+  | cons hs _ ih => simpa using ih.snoc (step_bidir_symm hs)
+
+/-- **PROVEN** (#3593: `expand_row` reverses an undirected walk too): from the bound `to`, the
+undirected DFS finds exactly the trails of the forward walk, read backwards, ending at `from`. -/
+theorem varLen_bidir_reverse_iff {g : Graph} {s d minH maxH : Nat} {es : List Nat} :
+    (es, d) ∈ varLen g true s minH maxH ↔ (es.reverse, s) ∈ varLen g true d minH maxH := by
+  rw [varLen_iff, varLen_iff, List.length_reverse]
+  have hn : es.reverse.Nodup ↔ es.Nodup := by
+    simp only [List.Nodup, List.pairwise_reverse]
+    exact ⟨fun h => h.imp Ne.symm, fun h => h.imp Ne.symm⟩
+  constructor
+  · rintro ⟨hw, h1, h2⟩; exact ⟨hw.reverse_bidir, hn.2 h1, h2⟩
+  · rintro ⟨hw, h1, h2⟩; exact ⟨by simpa using hw.reverse_bidir, hn.1 h1, h2⟩
 
 /-- `*0..0` yields exactly the start node. -/
 theorem zero_zero (g : Graph) (b : Bool) (s : Nat) : varLen g b s 0 0 = [([], s)] := by

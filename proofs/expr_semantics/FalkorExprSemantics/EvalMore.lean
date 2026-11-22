@@ -295,7 +295,7 @@ theorem lookup_map_set (m : List (String × V)) (k : String) (v : V)
   | cons p ps ih =>
     obtain ⟨a, b⟩ := p
     by_cases e : a = k
-    · subst e; simp [List.lookup]
+    · subst e; simp
     · have hb : (k == a) = false := by simp [Ne.symm e]
       simp only [List.any_cons, e, decide_false, Bool.false_or] at h
       simp only [List.map_cons, e, ite_false, List.lookup, hb]
@@ -304,7 +304,7 @@ theorem lookup_map_set (m : List (String × V)) (k : String) (v : V)
 theorem lookup_append_new (m : List (String × V)) (k : String) (v : V)
     (h : m.any (fun p => decide (p.1 = k)) = false) : (m ++ [(k, v)]).lookup k = some v := by
   induction m with
-  | nil => simp [List.lookup]
+  | nil => simp
   | cons p ps ih =>
     obtain ⟨a, b⟩ := p
     have e : a ≠ k := by intro e; simp [e] at h

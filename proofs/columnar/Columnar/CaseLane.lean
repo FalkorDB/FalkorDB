@@ -278,11 +278,11 @@ theorem armLoop_sound (hrows : ∀ r ∈ rows, Rows r) (subject : Option (EC F))
             intro h2; obtain ⟨wv', hm', hc'⟩ := (hs2 p).1 h2
             rw [huniq p wv wv' hm hm'] at hc; simp [hc] at hc'
           refine ⟨fun h2 => absurd h2 hnot2, fun _ => ?_⟩
-          rw [hR, if_pos hc]; exact (hfill p).2 hin1
+          rw [hR, ite_eq_left hc]; exact (hfill p).2 hin1
         · simp only [Bool.not_eq_true] at hc
           have hin2 : p ∈ (splitHits rt subject (pairsOf wc.get st.unclaimed 0)).2 := (hs2 p).2 ⟨wv, hm, hc⟩
           refine ⟨fun _ => ?_, fun h2 => absurd hin2 h2⟩
-          rw [hR, if_neg (by simp [hc])]
+          rw [hR, ite_eq_right (by simp [hc])]
       · have hnot1 : p ∉ (splitHits rt subject (pairsOf wc.get st.unclaimed 0)).1 :=
           fun h1 => hu (hsub1.subset h1)
         have hnot2 : p ∉ (splitHits rt subject (pairsOf wc.get st.unclaimed 0)).2 :=
