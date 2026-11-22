@@ -14,7 +14,8 @@ open IndexLayer (Slots)
 /-- A field registered on the RS spec by `RediSearch_CreateField`. -/
 inductive RsKind
   | noneTag                          -- `NONE_INDEXABLE_FIELDS` (TAG, sep `\x01`, case-sensitive)
-  | rangeMain                        -- NUMERIC|GEO|TAG, sep `\x01`, case-sensitive
+  | rangeMain                        -- NUMERIC|TAG, sep `\x01`, case-sensitive
+  | geo                              -- GEO (`geo_name`, #2975)
   | numArr                           -- NUMERIC
   | strArr                           -- TAG, sep `\x01`, case-sensitive
   | text (weight : Nat) (nostem phonetic : Bool)
@@ -97,7 +98,8 @@ the result of `VecSimTieredParams_Init` + `VectorFieldSetParams` (FFI). -/
 def registerOne (fo : Option TextOpts) (tieredOk : Bool) (f : Field) : Except String (List RsReg) :=
   match f.ty with
   | .range =>
-    .ok ([⟨f.name, .rangeMain⟩] ++ (f.numArr.map (fun n => [⟨n, .numArr⟩])).getD [] ++
+    .ok ([⟨f.name, .rangeMain⟩] ++ (f.geoName.map (fun n => [⟨n, .geo⟩])).getD [] ++
+         (f.numArr.map (fun n => [⟨n, .numArr⟩])).getD [] ++
          (f.strArr.map (fun n => [⟨n, .strArr⟩])).getD [])
   | .fulltext =>
     let eo := fo.or f.options
@@ -224,11 +226,13 @@ theorem metricOf_ok (sim : Option String) (m : String) (h : metricOf sim = .ok m
   unfold metricOf at h; split at h <;> simp_all
 
 /-- `register_fields` on a Range field registers the main field and both array
-sub-fields — exactly the three RS fields `Model.Sub` (`main`, `numArr`, `strArr`)
+sub-fields and the geo sub-field — exactly the four RS fields `Model.Sub` (`main`, `geo`, `numArr`,
+`strArr`)
 reads and writes. -/
 theorem registerOne_range (fo : Option TextOpts) (tk : Bool) (n : String) (o : Option TextOpts) :
     registerOne fo tk (Field.new n .range o) =
-      .ok [⟨n, .rangeMain⟩, ⟨n ++ ":numeric:arr", .numArr⟩, ⟨n ++ ":string:arr", .strArr⟩] := by
+      .ok [⟨n, .rangeMain⟩, ⟨n ++ ":geo", .geo⟩, ⟨n ++ ":numeric:arr", .numArr⟩,
+        ⟨n ++ ":string:arr", .strArr⟩] := by
   simp [registerOne, Field.new, makeArrNames]
 
 /-- Fulltext: the per-call options win over the field's own, weight defaults to

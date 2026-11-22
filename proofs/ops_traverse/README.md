@@ -97,7 +97,6 @@ Every bug was reproduced against a live server and compared with C before it was
 | #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4; C's 4 is the figure from the issue report, not re-run here); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
 | #3451 | `bug3451_main_violates`, `bug3451_cycle_not_reversed` | PathBuilder infers a var-length segment's direction by comparing its first node with the previous path node (`path_builder.rs:102-110`); on a cycle they are equal, so an incoming `(a)<-[:R*3..3]-(a)` on `0→1→2→0` comes out `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]` (C: `[0,2,1,0]`/`[1,2,3]`: right nodes, but its relationship list is also in the wrong order). Property `PathFollowsPattern`; main is right on non-cyclic walks (`vltMain_follows_of_ne`), the plan-time direction flag fixes it (`vltFix_follows`) | **Open** |
 | W2-traverse-11 | `EIP.bug_condTraverse_matches_doomed_edge`, `bug_condTraverse_main_violates` (property `LiveCondTraverse`) | `cond_traverse.rs` never reads `Pending`, so with one endpoint unbound (`MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)`) CondTraverse matches the doomed edge of a pending-deleted node; ExpandInto does not (`expandIntoP_live`) | **Open** |
-| W2-index-3 | `IndexScan.evalIQ_inList` | `IN [date, 2]` on an indexed property drops the non-scalar member before the index is asked | **Open** |
 
 ### Shared with C, not filed as Rust bugs
 
@@ -134,13 +133,13 @@ The project imports `proofs/graphblas_wrappers` and `proofs/versioned_matrix` (t
 
 ## Coverage
 
-Line numbers are pinned to main 5e475e6c9. No traversal operator changed since fb3d516d0; #2383 changed the index scans (a list now reaches the index as one `InList`, `canUse_inListV_eq_or`), #3436 only replaced `g.borrow()` with `graph()`, and #2899 / #2954 shifted the `eval.rs` rows.
+Line numbers are pinned to main 5e475e6c9. No traversal operator changed since fb3d516d0; #2383 changed the index scans (a list now reaches the index as one `InList`, `canUse_inListV_eq_or`), #2975 moved their `can_utilize_index` to `IndexQuery::can_be_served` and kept every non-null `IN` member (W2-index-3 fixed, `fixed2975_inList_keeps_item`), #3436 only replaced `g.borrow()` with `graph()`, and #2899 / #2954 shifted the `eval.rs` rows.
 
-`COVERAGE.tsv` has 84 rows:
+`COVERAGE.tsv` has 82 rows (two of them, `IndexQuery::can_be_served` and its `is_indexable`, in `index/mod.rs` since #2975):
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 84 |
+| PROVEN | 82 |
 
 Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled). The rest:
 
