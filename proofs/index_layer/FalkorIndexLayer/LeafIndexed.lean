@@ -4,16 +4,6 @@ import FalkorIndexLayer.LeafCompact
 
 Page = header, `distinct_count` value deltas, a one-byte slot index per entry,
 then the docs. Entry `i` is `(min + values[index[i]], docs[i])`.
-
-| Lean | Rust |
-| --- | --- |
-| `ciBytes`, `ciDecode` | the page layout; `key`/`doc` |
-| `ciIndexOffset`, `ciDistinct` | `index_offset`, `distinct_count` |
-| `ciKey`, `ciDoc`, `ciDocLayout`, `ciCount` | `key`, `doc`, `doc_layout`, `count` |
-| `runs`, `ciBuild` | `CompactIndexedLeaf::build` |
-| `distinctSlot` | `distinct_slot` |
-| `ciInsertOk`, `ciInsertErr` | `splice_insert` (`Ok` / `Err` arms) |
-| `ciRemove` | `splice_remove` |
 -/
 namespace IndexLayer.Leaf
 

@@ -3,7 +3,7 @@ ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 # build/runtime/Dockerfile (build/check-server-pins.sh enforces it).
 ARG SERVER=redis
 ARG REDIS_VERSION=8.10.2
-ARG VALKEY_VERSION=9.1.2
+ARG VALKEY_VERSION=9.2.0
 
 # Stage 1: the ASAN-instrumented server, built from source. Not
 # build/build-server.sh: that builds the release flavour. Both servers'
@@ -209,6 +209,7 @@ RUN /usr/lib/llvm-23/bin/llvm-symbolizer --version
 
 WORKDIR ${FALKORDB_HOME}
 
+COPY LICENSE LICENSE-SSPL LICENSE-AGPL /usr/local/share/licenses/falkordb/
 COPY ./build/runtime/run.sh        ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh  ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh

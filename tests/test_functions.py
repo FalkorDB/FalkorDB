@@ -320,3 +320,19 @@ def test_temporal_map_components_are_validated():
         ("RETURN toString(duration({days: $p}))", "P1DT12H"),
     ]:
         assert r(query, {"p": 1.5}) == text, query
+
+
+def test_list_argument_type_check_is_not_per_row_linear():
+    """A function taking `List<Any>` (size, head, last, ...) must not walk the
+    list to type-check it: every element is accepted, and the walk made each
+    call O(len), so reading one large list variable per row was quadratic.
+    100k elements x 100k rows took tens of seconds before the fix and
+    milliseconds after; the 10s ceiling is generous. The ceiling is the query's
+    own TIMEOUT, so a regression fails at 10s instead of running to the end."""
+    for expr in ["size(ns)", "head(ns)", "last(ns)"]:
+        q = f"WITH range(0, 99999) AS ns UNWIND range(0, 99999) AS i RETURN count({expr})"
+        try:
+            res = common.g.query(q, timeout=10_000)
+        except ResponseError as e:
+            raise AssertionError(f"{expr} per row is quadratic: {e}") from e
+        assert res.result_set == [[100000]], q

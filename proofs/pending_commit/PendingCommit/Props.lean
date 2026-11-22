@@ -3,25 +3,22 @@
 
 `graph/src/runtime/pending.rs` and `graph/src/runtime/runtime.rs`.
 
-* `upsert` — `Pending::set_node_attribute` (pending.rs:595):
+* `upsert` — `Pending::set_node_attribute` (pending.rs):
   `binary_search_by_key`, overwrite on `Ok`, `insert` on `Err`.
-* `readQ` — `Runtime::get_node_attribute_no_delete_check` (runtime.rs:1591):
+* `readQ` — `Runtime::get_node_attribute_no_delete_check` (runtime.rs):
   the pending value first (`Some(Null)` for a staged removal), then the store.
   The evaluator reads `Some(Null)` and `None` both as `null`, so `normQ` folds
   them.
 * `commitExisting` — `Graph::set_nodes_attributes` → `insert_attrs` →
-  `merge_span` (pending.rs:1390, graph.rs:1861/:1871, attribute_store.rs:1315).
-* `commitNew` — `import_node_attrs` → `import_attrs` (pending.rs:1381,
-  graph.rs:1898, attribute_store.rs:1351): drop nulls, `set_span`.
+  `merge_span` (pending.rs, graph.rs, attribute_store.rs).
+* `commitNew` — `import_node_attrs` → `import_attrs` (pending.rs,
+  graph.rs, attribute_store.rs): drop nulls, `set_span`.
 
 Theorems: the pending list stays sorted/unique under any sequence of writes
 and reads back the last write; commit then stores exactly what the query read
 (read-your-writes survives commit), for existing and for new entities.
 
-The last section models `SET n = m` (`clear_*_attrs_for_replace`, `ops/set.rs:125-148`, and the source arms of `set_inner`, set.rs:151). Before #3524
-(af45ca776) only the *Map* source cleared the staged attributes; the Node and Relationship
-sources, and every relationship-target `SET r = …`, kept attributes staged earlier in the same
-query (#2776). Now every branch
+The last section models `SET n = m` (`clear_*_attrs_for_replace`, `ops/set.rs`, and the source arms of `set_inner`, set.rs). Every branch
 calls `clear_{node,relationship}_attrs_for_replace` (`replaceFrom`); `replace_reads_src`
 and `fixed3524_replace_clears_staged` are the correctness theorems.
 -/
@@ -180,9 +177,9 @@ theorem get_filter_nonnull (l : List Entry) (hl : Sorted l) (k : Nat) :
         rw [List.filter_cons, hp]
         simp only [Bool.false_eq_true, ite_false]
         rw [ih, hnone]; simp [get, hv, normQ]
-      | inl i => simp [List.filter_cons, hv, Val.isNull, get, normQ]
-      | heap s => simp [List.filter_cons, hv, Val.isNull, get, normQ]
-    · cases hv : e.2.isNull <;> simp [List.filter_cons, hv, get, hk, ih]
+      | inl i => simp [hv, Val.isNull, get, normQ]
+      | heap s => simp [hv, Val.isNull, get, normQ]
+    · cases hv : e.2.isNull <;> simp [hv, get, hk, ih]
 
 /-- **`read_your_writes_new`**: for an entity created in this query (no stored
 span — a reclaimed id's attributes were cleared by `delete_nodes`'
@@ -194,15 +191,15 @@ theorem read_your_writes_new (ws : List Entry) (k : Nat) :
   cases get (stageAll ws) k <;> rfl
 
 /-- `import_attrs`' count is `properties_set` for created entities: the
-non-null staged pairs (attribute_store.rs:1371). -/
+non-null staged pairs (attribute_store.rs). -/
 theorem commitNew_count (pend : List Entry) : (commitNew pend).length = refSet pend := rfl
 
-/-! ## `SET n = m`: replace clears the staged attributes (#2776, fixed by #3524) -/
+/-! ## `SET n = m`: replace clears the staged attributes -/
 
 /-- `clear_node_attrs_for_replace` / `clear_relationship_attrs_for_replace`
-(ops/set.rs:125-148) then the source's entries (the node-target and relationship-target arms of
-`set_inner`, set.rs:151; any source kind): clear the staged attributes (`clear_*_attributes`,
-pending.rs:615/:623), stage `null` for every *committed* key, then stage the entries. The
+(ops/set.rs) then the source's entries (the node-target and relationship-target arms of
+`set_inner`, set.rs; any source kind): clear the staged attributes (`clear_*_attributes`,
+pending.rs), stage `null` for every *committed* key, then stage the entries. The
 staged list `pend` is dropped by the clear, so it is not an argument. -/
 def replaceFrom (stored src : List Entry) : List Entry :=
   let p1 := stored.foldl (fun p e => upsert p e.1 .null) []
@@ -263,7 +260,7 @@ theorem replace_reads_src (stored src : List Entry) (k : Nat) :
   cases hF : src.foldl (fun r w => if w.1 = k then some w.2 else r) none with
   | some v => simp
   | none =>
-    cases hs : (get stored k).isSome <;> simp [hs, normQ]
+    cases hs : (get stored k).isSome <;> simp [normQ]
     · cases h : get stored k <;> simp_all
 
 end PendingCommit

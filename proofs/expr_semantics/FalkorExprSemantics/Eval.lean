@@ -1,6 +1,6 @@
 import FalkorExprSemantics.EvalSyntax
 /-!
-# `ExprEval::eval_node` (eval.rs:340-1134): the evaluator over `E`
+# `ExprEval::eval_node` (eval.rs): the evaluator over `E`
 
 The tree `E`, the operations `Ops`, the function record `Fn` and the non-recursive helpers of
 the arms are in `EvalSyntax.lean`; this module is the mutually recursive evaluator and its
@@ -11,7 +11,7 @@ namespace FalkorExpr.Eval
 variable {V : Type} (O : Ops V)
 
 mutual
-/-- `eval_node` (eval.rs:340) with `eval_compound` (:535) and `eval_case` (:495): the arms in
+/-- `eval_node` (eval.rs) with `eval_compound` (:535) and `eval_case` (:495): the arms in
 source order. -/
 def evalNode (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) : E V → Except String V
   | .const v => .ok v
@@ -71,7 +71,7 @@ def evalNode (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) : E 
     let _ ← ev.rt
     match f.structFn with
     | some sf =>
-      if f.structSlots ≠ 0 ∧ cs.length = f.structSlots + (if f.structMasked then 1 else 0) then do
+      if f.structSlots ≠ 0 ∧ cs.length = f.structSlots then do
         let slots ← evalSlots ev c env cs
         sf slots
       else do
@@ -104,7 +104,7 @@ def evalNode (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) : E 
     let _ ← ev.rt
     let vs ← evalList ev c env cs
     .ok (O.distinct vs)
-/-- Map literal children: each must be a `Constant(String)` key node (eval.rs:359-368). -/
+/-- Map literal children: each must be a `Constant(String)` key node (eval.rs). -/
 def evalKeys (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) :
     List (E V) → Except String (List (String × V))
   | [] => .ok []
@@ -128,7 +128,7 @@ def evalThunks (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) :
     List (E V) → List (Unit → Except String V)
   | [] => []
   | ch :: cs => (fun _ => evalNode ev c env ch) :: evalThunks ev c env cs
-/-- A list literal's elements (eval.rs:563-578): pushed in order onto the work stack, so
+/-- A list literal's elements (eval.rs): pushed in order onto the work stack, so
 evaluated **last to first**; the first error met (the rightmost) wins. -/
 def evalRev (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) :
     List (E V) → Except String (List V)
@@ -137,7 +137,7 @@ def evalRev (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) :
     let r ← evalRev ev c env cs
     let v ← evalNode ev c env ch
     .ok (v :: r)
-/-- `Or` (eval.rs:639-666, `sc = true`) / `And` (:690-717, `sc = false`): children in order,
+/-- `Or` (eval.rs, `sc = true`) / `And` (:690-717, `sc = false`): children in order,
 the first `Bool(sc)` settles it (later children are not evaluated), `Null` is remembered,
 anything else is a type error. -/
 def andOrLoop (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (sc seenNull : Bool) :
@@ -149,7 +149,7 @@ def andOrLoop (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (sc
     | some (some b) => if b = sc then .ok (O.bool sc) else andOrLoop ev c env sc seenNull cs
     | some none => andOrLoop ev c env sc true cs
     | none => .error (boolMismatchMsg O v)
-/-- `Xor` (eval.rs:667-689): a `Null` child settles it as `Null`. -/
+/-- `Xor` (eval.rs): a `Null` child settles it as `Null`. -/
 def xorLoop (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (last : Option Bool) :
     List (E V) → Except String V
   | [] => .ok (O.bool (last.getD false))
@@ -159,12 +159,12 @@ def xorLoop (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (last
     | some (some b) => xorLoop ev c env (some (match last with | none => b | some l => logicalXor l b)) cs
     | some none => .ok O.null
     | none => .error (boolMismatchMsg O v)
-/-- `eval_case`'s subject (eval.rs:501-505). -/
+/-- `eval_case`'s subject (eval.rs). -/
 def evalSubj (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) :
     Option (E V) → Except String (Option V)
   | none => .ok none
   | some s => do let v ← evalNode ev c env s; .ok (some v)
-/-- `eval_case`'s arm loop (eval.rs:508-523, `while i + 1 < num_arms`): `none` = no arm
+/-- `eval_case`'s arm loop (eval.rs, `while i + 1 < num_arms`): `none` = no arm
 matched (then `ELSE`); a `THEN` is evaluated only for the arm that matched. -/
 def evalArms (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (sv : Option V) :
     List (E V) → Except String (Option V)
@@ -173,9 +173,8 @@ def evalArms (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (sv 
     if caseHit O sv wv then do let v ← evalNode ev c env t; .ok (some v)
     else evalArms ev c env sv rest
   | _ => .ok none
-/-- The struct-constructor slots (eval.rs:938-946): `Constant(Null)` children are left
-`Null`; since #3607 other constants (incl. the presence mask) are cloned without dispatch,
-which is `evalNode` of `.const v` (= `.ok v`), so the model is unchanged. -/
+/-- The struct-constructor slots (eval.rs): `Constant(Null)` children are not
+evaluated. -/
 def evalSlots (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) :
     List (E V) → Except String (List V)
   | [] => .ok []
@@ -183,7 +182,7 @@ def evalSlots (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) :
     let v ← if isNullConst O ch then .ok O.null else evalNode ev c env ch
     let r ← evalSlots ev c env cs
     .ok (v :: r)
-/-- `eval_map_projection`'s item loop (eval.rs:1600-1655), as the insert sequence. -/
+/-- `eval_map_projection`'s item loop (eval.rs), as the insert sequence. -/
 def projLoop (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (b : V) :
     List (E V) → Except String (List (String × V))
   | [] => .ok []
@@ -198,7 +197,7 @@ def projLoop (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (b :
   | _ :: _ => .error projUnhandled
 end
 
-/-- `eval_operand` (eval.rs:316): leaves inline, else `eval_node`. -/
+/-- `eval_operand` (eval.rs): leaves inline, else `eval_node`. -/
 def evalOperand (ev : Ev V) (compound : Compound V)
     (env : Option (Nat → Option V)) : E V → Except String V
   | .const v => .ok v
@@ -210,7 +209,7 @@ theorem evalOperand_eq (ev : Ev V) (c : Compound V) (env : Option (Nat → Optio
     evalOperand O ev c env e = evalNode O ev c env e := by
   cases e <;> rfl
 
-/-- `eval` (eval.rs:299): resolve the root once, then `eval_node`. Trees are given by
+/-- `eval` (eval.rs): resolve the root once, then `eval_node`. Trees are given by
 their root here, so `eval` is `eval_node` of the root. -/
 def eval (ev : Ev V) (c : Compound V) (env : Option (Nat → Option V)) (root : E V) :
     Except String V := evalNode O ev c env root
