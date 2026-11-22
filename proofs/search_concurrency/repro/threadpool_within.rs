@@ -1,7 +1,9 @@
-// Repro for the two shutdown_within bugs (proofs/search_concurrency PoolWithin.lean).
+// Repro for the two shutdown_within bugs (A fixed by #3585, B open) (proofs/search_concurrency PoolWithin.lean).
 // Run: new cargo crate (edition 2024; crossfire =3.1.19, once_cell =1.21.4, parking_lot =0.13.0),
 // copy graph/src/threadpool.rs to src/threadpool.rs and this file to src/main.rs; cargo run.
 // Output at main ca36bfa15: A: first=false second=true ; B: Err(Timeout) after 3 s for a 50 ms limit.
+// Output at main 256ab4d3f (needs a stub `mod thread_id { pub(crate) fn set_pool_thread() {} pub fn is_pool_thread() -> bool { false } }`
+// next to `mod threadpool;`): A: first=false second=false (fixed by #3585) ; B: Err(Timeout) after 3 s, still open.
 
 #[allow(dead_code)]
 mod threadpool;

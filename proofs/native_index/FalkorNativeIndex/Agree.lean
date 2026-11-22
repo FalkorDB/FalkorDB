@@ -2,7 +2,7 @@ import FalkorNativeIndex.Value
 set_option linter.unusedSimpArgs false
 
 /-!
-# The Filter agrees with the encoded keys (`encode.rs:152-246`, the "no post-filter" contract)
+# The Filter agrees with the encoded keys (`encode.rs`, the "no post-filter" contract)
 
 `Node By Index Scan` answers `Equal` / `Range` with **no post-filter**, so the key order must
 decide each comparison exactly as the evaluator does. Proven (`filter_iff_key`): for every data
@@ -12,8 +12,8 @@ and its key satisfies `<op>` against the bound's key. `Bool` is excluded on both
 
 Refuted (counterexamples):
 * `bool_divergence` — a `Bool` and a number share a key, the evaluator never equates them. Pinned in
-  the Rust (`encode.rs:248-294`) as the engine-wide behaviour C and the RediSearch path share.
-* `i64min_hole` — the precision guard (`int_loses_f64_precision`, `index/mod.rs:1371`) admits
+  the Rust (`encode.rs`) as the engine-wide behaviour C and the RediSearch path share.
+* `i64min_hole` — the precision guard (`int_loses_f64_precision`, `index/mod.rs`) admits
   `i64::MIN` (its `unsigned_abs` is `2^63`, outside the mask), but `i64::MIN + 1 … i64::MIN + 512`
   round to the same `f64`: `n.v > -9223372036854775808` misses them, `=` returns them.
 -/
@@ -134,11 +134,12 @@ theorem filter_iff_key (op : Op) (d b : Value) (hd : d.WF) (hnb : NotBool d) (hb
   | datetime _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
   | time _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
   | duration _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
+  | list _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
   | other _ => cases b <;> simp [GoodBound] at hb <;> cases op <;> simp [cmpPred, compareValue, encodeNumeric]
 
 /-! ## Counterexamples -/
 
-/-- **Bool divergence** (pinned in `encode.rs:272-294`, shared with C and the RediSearch path):
+/-- **Bool divergence** (pinned in `encode.rs`, shared with C and the RediSearch path):
     `true` and `1` get one key, but `true = 1` is `false` in the Filter. -/
 theorem bool_divergence :
     encodeNumeric (.bool true) = encodeNumeric (.int 1) ∧ cmpPred .eq (.bool true) (.int 1) = some false := by
@@ -177,7 +178,7 @@ theorem negZero_agrees :
 theorem nan_unindexed (x : Nat) (h : isNaN x = true) : encodeNumeric (.float x) = none := by
   simp [encodeNumeric_float, h]
 
-/-- Temporals are not indexed (`encode.rs:34-38`). -/
+/-- Temporals are not indexed (`encode.rs`). -/
 theorem temporal_unindexed (i : Int) :
     encodeNumeric (.date i) = none ∧ encodeNumeric (.datetime i) = none ∧
     encodeNumeric (.time i) = none ∧ encodeNumeric (.duration i) = none := by

@@ -1,17 +1,6 @@
 import AlgoUdf.Repo
 /-! # `UdfRepo` bookkeeping (`graph/src/udf/repository.rs`) and the singleton (`udf/mod.rs`)
 
-| here | there |
-| --- | --- |
-| `RLib`, `RSt`        | `UdfLibrary` :42-48, `UdfRepo { inner, version }` :56-64 (the `RwLock` serialises writers; each op is atomic) |
-| `rnew`               | `UdfRepo::new` :74 / `Default::default` :67 |
-| `rversion`, `bump`   | `version` :83, `bump_version` :89 |
-| `flush`              | `flush` :157-167 |
-| `strip`, `list`      | `list` :170-202 (`strip_prefix(&format!("{}.", lib.name)).unwrap_or(qn)`) |
-| `getAll`, `serialize`| `get_all_libraries` :205, `serialize` :211 |
-| `deserialize`        | `deserialize` :226-264 (validate all into `staged`, then swap) |
-| `Once`, `initRepo`, `getRepo` | `UDF_REPO: OnceLock`, `init_udf_repo` (mod.rs:59), `get_udf_repo` (mod.rs:63; `none` = the `expect` panic) |
-
 Strings are `List Char`; `validate` is `js_context::validate_script` (QuickJS,
 AXIOMATISED as a function of the code).
 -/
@@ -56,7 +45,7 @@ def list (s : RSt) (filter : Option Str) (withCode : Bool) : List (Str × List S
 theorem isPrefixOf_append (p s : Str) : p.isPrefixOf (p ++ s) = true := by
   induction p with
   | nil => rfl
-  | cons c t ih => simp [List.isPrefixOf, ih]
+  | cons c t ih => simp [ih]
 
 /-- `list` shows the raw names a library registered. -/
 theorem strip_qual (n f : Str) : strip (n ++ ['.']) (qual n f) = f := by

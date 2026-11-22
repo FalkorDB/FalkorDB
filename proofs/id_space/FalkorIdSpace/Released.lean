@@ -1,5 +1,5 @@
 import FalkorIdSpace.Lifecycle
-/-! # `released`, `taken()`, `released()` and `refuse_not_live` (#3022, `18fc277b9`)
+/-! # `released`, `taken()`, `released()` and `refuse_not_live`
 
 `released` is per-batch state: every id the open batch freed, whether or not a
 later create reclaimed it. It is cleared by `open_batch` and not carried by
@@ -9,7 +9,7 @@ acts on an entity rather than creating or freeing it.
 -/
 namespace IdSpaceModel
 
-/-- `taken()` (`:311`) and `released()` (`:317`) return the fields. -/
+/-- `taken()` and `released()` return the fields. -/
 theorem takenSet_eq (sp : IdSpace) : sp.takenSet = sp.taken := rfl
 theorem releasedSet_eq (sp : IdSpace) : sp.releasedSet = sp.released := rfl
 
@@ -87,7 +87,7 @@ theorem live_eq_accepted (N : Nat) (sp : IdSpace) (h : Inv N sp) :
 
 /-! ### The batch exemption the effects path takes
 
-`apply_record`'s `CreateEdge` checks `(src ∪ dst) − released` (`apply.rs:276`).
+`apply_record`'s `CreateEdge` checks `(src ∪ dst) − released` (`apply.rs`).
 In a reachable state that admits exactly the endpoints that are live now, or
 that this batch released — and a released id was live *in this batch*: below
 the entry boundary or taken by it (`Inv.relOk`). Never an id that was never

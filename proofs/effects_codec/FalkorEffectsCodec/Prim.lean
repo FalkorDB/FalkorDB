@@ -4,14 +4,14 @@
 | here | there |
 | --- | --- |
 | `Bytes`            | `&[u8]` / `Vec<u8>` |
-| `le k n`           | `to_le_bytes` for a `k`-byte integer (`writer.rs:45-80`, `EffectWrite::u8..f64`, `schema_id`) |
-| `unle`             | `from_le_bytes` (`reader.rs:109-135`) |
-| `R α`              | a `&mut Reader` method returning `Result<α, DecodeError>`; the state is `buf[pos..]` (`reader.rs:12`) |
-| `take`             | `Reader::take` (`reader.rs:42`) |
-| `rdU k`            | `take_array::<k>` + `from_le_bytes` (`reader.rs:103-135`) |
-| `guardCount`       | `Reader::guard_count` (`reader.rs:72`) |
-| `wString`          | `EffectWrite::string` (`writer.rs:158`) |
-| `rString`          | `Reader::string` (`reader.rs:165`) |
+| `le k n`           | `to_le_bytes` for a `k`-byte integer (`writer.rs`, `EffectWrite::u8..f64`, `schema_id`) |
+| `unle`             | `from_le_bytes` (`reader.rs`) |
+| `R α`              | a `&mut Reader` method returning `Result<α, DecodeError>`; the state is `buf[pos..]` (`reader.rs`) |
+| `take`             | `Reader::take` (`reader.rs`) |
+| `rdU k`            | `take_array::<k>` + `from_le_bytes` (`reader.rs`) |
+| `guardCount`       | `Reader::guard_count` (`reader.rs`) |
+| `wString`          | `EffectWrite::string` (`writer.rs`) |
+| `rString`          | `Reader::string` (`reader.rs`) |
 
 The reader state is the *unconsumed suffix* of the buffer. `pos` never appears:
 `remaining() = buf.len() - pos` is `r.length`, and `rest()` is `r` itself.
@@ -23,7 +23,7 @@ namespace FalkorCodec
 
 abbrev Bytes := List UInt8
 
-/-- Decode errors (`graph/src/effects/error.rs:118-240`), only the ones this
+/-- Decode errors (`graph/src/effects/error.rs`), only the ones this
 codec can raise, plus `panic` for any Rust panic and `outOfFuel` for the
 modelling device in `Value.lean` (proved unreachable). -/
 inductive DErr where
@@ -116,7 +116,7 @@ theorem unle_lt (bs : Bytes) : unle bs < 2 ^ (8 * bs.length) := by
 
 /-! ## The cursor -/
 
-/-- `Reader::take` (`reader.rs:42-55`). The check precedes the slice
+/-- `Reader::take` (`reader.rs`). The check precedes the slice
 `&self.buf[self.pos..self.pos + n]`, which is the only way it could panic. -/
 def take (n : Nat) : R Bytes := fun r =>
   if r.length < n then .error (.eof n r.length) else .ok (r.take n, r.drop n)
@@ -131,7 +131,7 @@ def u16 : R Nat := rdU 2
 def u32 : R Nat := rdU 4
 def u64 : R Nat := rdU 8
 
-/-- `Reader::guard_count` (`reader.rs:72-85`). The Rust multiplies with
+/-- `Reader::guard_count` (`reader.rs`). The Rust multiplies with
 `saturating_mul` in `u64`; since `remaining() < 2^64`, `sat(count*min) >
 remaining` iff `count*min > remaining` over `Nat`, so this is exact. -/
 def guardCount (count minEach : Nat) : R Nat := fun r =>
@@ -166,8 +166,8 @@ theorem u64_w64 {n : Nat} (h : n < 2 ^ 64) (rest : Bytes) :
 
 /-! ## Strings
 
-`EffectWrite::string` (`writer.rs:158-165`): `u64 (len + 1)`, the bytes, a NUL.
-`Reader::string` (`reader.rs:165-181`): reject `len == 0`, `take(len)`, split
+`EffectWrite::string` (`writer.rs`): `u64 (len + 1)`, the bytes, a NUL.
+`Reader::string` (`reader.rs`): reject `len == 0`, `take(len)`, split
 off the last byte, which must be `0`, then `String::from_utf8`.
 
 UTF-8 validity is a parameter: Rust `String`s are valid by construction, so the

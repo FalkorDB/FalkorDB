@@ -27,30 +27,30 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 **2. Does each clause's plan implement that clause?**
 
 - **For every clause kind, yes, in the positions the proof covers.** Each theorem holds for *any* input plan placed at the clause's insertion point. The clause theorems are `unwind_correct`, `create_correct`, `set_correct`, `remove_correct`, `delete_correct`, `proc_correct`, `project_correct`, `foreach_correct`, `call_correct`, `unit_call_correct`, `optional_correct`, `optional_apply_correct`, `match_bound_correct`, `union_correct`, `merge_loop_correct`, `merge_first_correct`, `create_loop_correct` and `create_first_correct`.
-- **MERGE or CREATE with a named path as the last clause, no.** The first insertion-point walk does not step over `PathBuilder`, so `Merge`/`Create` never runs. `MATCH (a:A) MERGE p=(a)-[:T]->(x:X)` fails with "Variable _anon_0 not found"; C creates the edge (`pre3101_merge_path_last_misplaced`, `pre3101_create_path_last_misplaced`). Adding `RETURN …` after it works. Fixed by #3101: `merge_path_first_correct`, `create_path_first_correct`, `body_merge_path_fill`.
+- **MERGE or CREATE with a named path as the last clause, no.** The first insertion-point walk does not step over `PathBuilder`, so `Merge`/`Create` never runs. `MATCH (a:A) MERGE p=(a)-[:T]->(x:X)` fails with "Variable ? not found"; C creates the edge (`merge_path_last_misplaced`, `create_path_last_misplaced`). Adding `RETURN …` after it works.
 
 **3. Is a `MATCH … WHERE` correlated with the next `MATCH`?**
 
 - **When the next MATCH is one connected pattern, yes.**
-- **When it has several components, no.** The previous clause is prepended to the Cartesian product as a plain branch, so the component that mentions its variable re-binds it instead of reading it. `MATCH (a) WHERE a.v = 0 MATCH (a)-[:R]->(b), (c:C) RETURN a.v, b.v, c.v` → Rust `[1,0,7]`, C `[]` (`cp_stitch_loses_correlation`). `cp_stitch_sound` proves the prepend is right when no other component reads the variables.
+- **When it has several components, yes.** The MATCH arm Apply-wraps a multi-component MATCH that reads a bound variable (`joins_components`, `planMatchArm_joined_wrapped`), so the component that mentions the earlier variable reads it instead of re-binding it (`MATCH (a) WHERE a.v = 0 MATCH (a)-[:R]->(b), (c:C)` gives `[]` on both Rust and C). A disjoint MATCH becomes a one-branch Cartesian product below its WHERE (`disjoint_match_cp`, `disjoint_match_sound`). The unwrapped stitching stays as the counterexample `cp_stitch_loses_correlation`.
 
 **4. Is `WHERE` with pattern predicates planned correctly?**
 
 - **Rebuilding the predicate is exact.** `collect_value` and `collect_passes` prove that replacing each pattern with a placeholder variable keeps the three-valued truth value.
 - **With two-valued atoms, the operator tree is exact.** `toPlan_correct` proves SemiApply / AntiSemiApply / OrApplyMultiplexer / Filter keep exactly the rows where the predicate is `true`, given that the non-pattern atoms are never null.
 - **With a null atom under `NOT`, no.** `NOT c` is planned as an anti-join against the rows where `c` is *true*, so it keeps rows where `c` is false **or null**. `MATCH (a:N) WHERE NOT (a.v > 1 OR (a)-->()) RETURN count(a)` → Rust 2, C 1 (`toPlan_not_null_bug`).
-- Since #3335 AND/OR are built flat through `ExprIR::and_of`/`or_of` (`tv_andOf`, `tv_orOf`).
+- AND/OR are built flat through `ExprIR::and_of`/`or_of` (`tv_andOf`, `tv_orOf`).
 
 **5. Are `MATCH` patterns planned with the right hops?**
 
-- `sortRels_spec`: hops are sorted fixed-length, then variable-length, then shortest-path, as a stable permutation. `planComp_binds`: each component binds its variables.
-- **Self-loops, fixed by #3102.** Before it, `MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)` dropped the first hop (`[null,2,3]`; C `[1,2,3]`). Now `self_loops_after_binders` places a self-loop after the hop that binds its node: `selfLoops_perm`, `deferred_after_binder`, and `eq_reference` (equals the pre-#3102 loop whenever a self-loop really has `from = to`).
-- **Inline property maps, since #2390, are lowered once.** `lowerInline_once` proves there is one Filter per (alias, map). `planMatch_stripped` proves no scan or fixed-length operator carries an inline map afterwards; [`../optimizer_rewrites`](../optimizer_rewrites) relies on that.
+- `sortRels_spec`: hops are sorted fixed-length, then variable-length, then shortest-path, as a stable permutation; with the promoted walk (`leadingWalk_spec`) it sorts first (`sortRels_lead_first`) and the rest follow outward from it (`leadOrder_spec`). `planComp_binds`: each component binds its variables.
+- **Self-loops.** `MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)` keeps every hop. `self_loops_after_binders` places a self-loop after the hop that binds its node: `selfLoops_perm`, `deferred_after_binder`, and `eq_reference` (equals the original loop whenever a self-loop really has `from = to`).
+- **Inline property maps are lowered once.** `lowerInline_once` proves there is one Filter per (alias, map). `planMatch_stripped` proves no scan or fixed-length operator carries an inline map afterwards; [`../optimizer_rewrites`](../optimizer_rewrites) relies on that.
 
 **6. What does validation let through?**
 
-- **Too much after a procedure CALL — fixed by #3297.** `inner_validate` used to return `Ok(())` at a `CALL` without checking the clauses after it, so `CALL db.labels() YIELD label CREATE (a)-[:R|S]->(b)` created an edge with two types. On main b84473a7f the clauses after a CALL are validated (`call_validates_rest`, `call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
-- **A final `WITH` — fixed by #3291.** `MATCH (n) WITH n` used to return rows; it is now rejected as in C and openCypher (`with_last_rejected`).
+- **The clauses after a procedure CALL are validated** (`call_validates_rest`, `call_then_match_rejected`, `call_then_unwind_rejected`, `call_then_create_multi_type_rejected`).
+- **A final `WITH` is rejected**, as in C and openCypher (`with_last_rejected`).
 
 ## The headline theorems
 
@@ -65,9 +65,9 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 | `toPlan_correct` | The SemiApply/AntiSemiApply/OrApplyMultiplexer/Filter tree keeps exactly the rows where WHERE is true (two-valued atoms) | `ToPlan.lean` |
 | `planFilter_correct` | `plan_filter` end to end, for a WHERE without pattern comprehensions | `Filter.lean` |
 | `extract_fresh`, `hoist_spec` | Pattern-comprehension extraction mints fresh variables; hoisting is sound exactly when no loop variable is read | `Nested.lean` |
-| `selfLoops_perm`, `deferred_after_binder`, `eq_reference` | #3102's hop order keeps every hop and places a self-loop after its binder | `HopOrder.lean` |
+| `selfLoops_perm`, `deferred_after_binder`, `eq_reference` | The hop order keeps every hop and places a self-loop after its binder | `HopOrder.lean` |
 | `lowerInline_once`, `planMatch_stripped` | Inline maps become one Filter each, and no operator keeps one | `PlanMatch.lean`, `PlanMatch2.lean` |
-| `rebuild_keeps_where` | The previous MATCH's WHERE survives the scan rebuild (since #2390) | `Match.lean` |
+| `rebuild_keeps_where` | The previous MATCH's WHERE survives the scan rebuild | `Match.lean` |
 
 ### How `query_correct` is proved
 
@@ -84,14 +84,9 @@ Each bug was checked live, Rust release module vs C module, and has a Rust repro
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `pre3101_merge_path_last_misplaced`, `pre3101_merge_path_last_skips_merge` | MERGE with a named path as the last clause (of a query, a `CALL {}` body or a FOREACH body) never runs: "Variable _anon_0 not found" | **Fixed** by #3101 (`merge_path_first_correct`, `body_merge_path_fill`) |
-| 2 | `cp_stitch_shape`, `cp_stitch_loses_correlation` | A `MATCH … WHERE` followed by a multi-component MATCH is cross-joined, not correlated: Rust `[1,0,7]`, C `[]` | **Open** (PR #3100 not merged) |
-| 3 | removed (17ccc5412) | The previous MATCH's WHERE was dropped when the next MATCH traversed from its variable; `… DELETE b` deleted data C does not | Fixed by #2390 (`rebuild_keeps_where`) |
-| 4 | `selfloop_ignores_chain` (still in `Match.lean`; its `pre3102_chainOp_selfloop_unbound` counterexample was removed in 17ccc5412) | A self-loop hop after other hops dropped them: `[null,2,3]` vs C `[1,2,3]` | Fixed by #3102 (#2999; `chainRel_selfloop_unbound`, `selfloop_scan_keeps_chain`) |
+| 1 | `merge_path_last_misplaced`, `merge_path_last_skips_merge` | MERGE with a named path as the last clause (of a query, a `CALL {}` body or a FOREACH body) never runs: "Variable ? not found" | **Open** (PR #3101 not merged; reconfirmed live 2026-11-22) |
 | 5 (W4-plan-1) | `toPlan_not_null_bug` | `NOT (complex)` with an inline pattern keeps null rows: Rust 2, C 1 | **Open** |
-| 6 (W4-plan-4) | `call_validates_rest`, `call_then_match_rejected` | Nothing after a procedure CALL was validated; `CALL db.labels() YIELD label MATCH (n)` reached a `parent().unwrap()` in `utilize_node_by_id` | **Fixed by #3297** (b774fdfad); the `unwrap()` in `utilize_node_by_id` remains as a hazard |
-| 7 (W4-plan-5) | `with_last_rejected` | A query could end with WITH; C and openCypher reject it | **Fixed by #3291** (608b62542) |
-| 8 (W8-plan-1) | `pre3101_create_path_last_misplaced`, `pre3101_create_path_last_skips_create` | Regression from #2829: CREATE with a named path as the last clause, after another clause, never runs | **Fixed** by #3101 (`create_path_first_correct`) |
+| 8 (W8-plan-1) | `create_path_last_misplaced`, `create_path_last_skips_create` | Regression from #2829: CREATE with a named path as the last clause, after another clause, never runs | **Open** (PR #3101 not merged; covers bugs 1 and 8; reconfirmed live 2026-11-22) |
 | #2311 | `bug2311_optional_path_null` | `MATCH (n0:P) OPTIONAL MATCH p0=(n0) RETURN n0.id, p0`: Rust `1, null`, C `1, [(0)]`. The bound node-only branch never builds the path (`BindsAllPaths` fails) | **Open** |
 | #2737 | `bug2737_optional_path_null` | `MATCH (n1:X) OPTIONAL MATCH p6 = (n1) RETURN p6`: Rust `null`, C `[(0)]`. Same cause as #2311 | **Open** |
 | #2743 | `bug2743_bound_path_drops_rows` | `MATCH (n0:V) WITH * MATCH p0=(n0) RETURN count(*)`: Rust 0, C 1. No path, and the plan is not Apply-wrapped, so the earlier clauses land under an `Argument` that never runs them (`argIsLeaf` fails) | **Open** |
@@ -100,7 +95,7 @@ Each bug was checked live, Rust release module vs C module, and has a Rust repro
 | #2725 | `bug2725_call_then_bound_path_loses_var` | `MATCH (n0) CALL db.labels() YIELD label MATCH (n0), p0=(n0) RETURN …`: Rust `Variable n0 not found`, C `1, A, [(0)]`. Plan `Project(Argument(ProcedureCall(Scan)))`: one empty row | **Open** |
 | #3450 | `bug3450_remove_keeps_verified_label` (property `RemoveKeepsVerifiedSound`, `RemoveVerified.lean`) | `REMOVE a:A` leaves `A` in `verified_labels`, `WITH` carries it, and the next MATCH skips the `hasLabels` check on the bound `a`: `MATCH (a:A), (b:B) REMOVE a:A WITH a, b MATCH (a:A)-[:R]->(b)` returns 1 row `[] [B]`, C 0. `specRemove_sound`, `project_sound` prove the fixed REMOVE and the WITH carry keep `VerifiedSound` | **Open** |
 
-Also: `where_scan_indistinguishable` shows why bug 3 happened (a planner-built `Filter` over a scan looks the same as the shape the optimizer rebuilds). `planFilter_correct` assumes all patterns of one WHERE start in one scope, because the planner keys inline patterns by variable id only; no query breaking that was found.
+Also: `where_scan_indistinguishable` shows that a planner-built `Filter` over a scan looks the same as the shape the optimizer rebuilds. `planFilter_correct` assumes all patterns of one WHERE start in one scope, because the planner keys inline patterns by variable id only; no query breaking that was found.
 
 The six issues #2311 … #2725 share two root causes, each a general theorem in `PathBind.lean`: `nodeOnly_bound_no_paths` (the already-bound node-only branch of `plan_match`, mod.rs:1915-1962, never adds a `PathBuilder`) and `planMatchArm_path_unwrapped` (the MATCH arm's `all_visited`, mod.rs:3067, counts the new path variable, so the plan is not wrapped in `Apply`). The properties a fix must prove are `BindsAllPaths` (every named path of the pattern is bound by the plan; `unbound_path_built` shows the unbound case already does) and `Plan.argIsLeaf` (no `Argument` has a child).
 
@@ -121,10 +116,10 @@ There are no CONDITIONAL rows in this project.
 | `Decomp.lean` | Three-valued WHERE (`tv`) and `collect_patterns_and_rebuild` (`collect`) |
 | `ToPlan.lean` | `expr_to_plan` (`toPlan`), `toPlan_correct`, `toPlan_not_null_bug` |
 | `Filter.lean`, `FilterPlan.lean` | `plan_filter` end to end |
-| `AndOf.lean` | `ExprIR::and_of`/`or_of` flattening (#3335) |
+| `AndOf.lean` | `ExprIR::and_of`/`or_of` flattening |
 | `Nested.lean`, `Nested2.lean` | Pattern-comprehension extraction and hoisting |
 | `PlanMatch.lean`, `PlanMatch2.lean` | `plan_match`: hop operators, sorting, label filters, path elision, inline-map lowering |
-| `HopOrder.lean` | `self_loops_after_binders` (#3102) and the old loop |
+| `HopOrder.lean` | `self_loops_after_binders` and the old loop |
 | `Misc.lean`, `Rename.lean`, `Fmt.lean` | Plan-tree helpers, `rename_projection_outputs`, EXPLAIN text |
 | `Ast.lean`, `Ast2.lean` | `parser/ast.rs`: variables, query graphs, connected components, validation, `Display` |
 | `PathBind.lean` | Named paths over an already-bound node: `BindsAllPaths`, `planMatchArm` (the MATCH arm), `Plan.argIsLeaf`, bugs #2311, #2727, #2737, #2743, #2744, #2725 |
@@ -152,6 +147,10 @@ Every function listed is PROVEN. For the functions involved in the open bugs, th
 - The optimizer and batching are other projects ([`../optimizer_rewrites`](../optimizer_rewrites), [`../optimizer_scan`](../optimizer_scan)).
 - Clause meanings thread the graph state one clause at a time (eager), matching the plan's `Commit` and eager operators. Per-row interleaving of reads and writes is not modelled.
 - Sub-plans (the MERGE match branch, FOREACH and `CALL {}` bodies) are hypotheses.
+- The clause plans omit the expression-comprehension Apply chains, SET's multi-`Set` split, LOAD CSV and index DDL (see `Clauses.lean`); `clauseMin` lacks LOAD CSV and the fulltext/vector scan leaves; `patternExprVariables` abstracts the order of variables found only in pattern attribute maps.
+- `expr_to_plan` / `or_expr_to_plan` key `inline_map` by id only, and ids are per scope: `planFilter_correct` needs all patterns of one WHERE to start in one scope and the predicate's ids to be below that scope's length (`Pre`). No query breaking that was found.
+- `utilize_node_by_id` should skip a scan with no parent instead of `unwrap()` (for example a scan at the plan root).
+- Deviations from openCypher and C, not bugs: `SET n.v = 10, n.w = n.v` gives `n.w = 10` (items in order, as openCypher; C uses the old value); `Labels added` counts differ (C counts per node, #2655).
 - Variable ids are compared without scope in a few places (`emit_rel` path membership, `filter_vars`, `connected_components`); these are suspected, not confirmed, issues.
 
 ## Build and check
