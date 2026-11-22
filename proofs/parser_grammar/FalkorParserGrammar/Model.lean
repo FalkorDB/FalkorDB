@@ -328,7 +328,7 @@ def exprItems (pe : List Tok → Out) (fuel : Nat) (acc : List RT) (ts : List To
 
 /-- `parse_expression_list(ZeroOrMoreClosedBy(RParen))` (2763-2790). #3060 (`fe619ac5f`):
 only an *empty* list may end at once (`if !is_end_token(current) { loop {..} }`), so
-`f(1)` is an error; it used to re-test the end token after every `,`. -/
+`f(1,)` is an error; it used to re-test the end token after every `,`. -/
 def exprList (pe : List Tok → Out) (fuel : Nat) (acc : List RT) (ts : List Tok) :
     Res (List RT) :=
   if cur ts = .rparen then .ok acc (adv ts) else exprItems pe fuel acc ts

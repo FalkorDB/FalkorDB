@@ -8,7 +8,7 @@ namespace FalkorParserGrammar.C
 
 /-- An argument list after `(` (`oC_FunctionInvocation`'s arguments):
 `( oC_Expression ( ',' oC_Expression )* )? ')'`. Since #3060 a `,` is always followed by an
-expression; before it the `close` case could follow `more`, i.e. `f(1)` was derivable here. -/
+expression; before it the `close` case could follow `more`, i.e. `f(1,)` was derivable here. -/
 inductive GItemsE (pe : PE) : PS → List ET → List ET → PS → Prop
   | last {s acc e s1} : pe s = .ok e s1 → s1.cur = .rparen → GItemsE pe s acc (acc ++ [e]) s1.adv
   | more {s acc e s1 out s'} : pe s = .ok e s1 → s1.cur = .comma →

@@ -146,7 +146,7 @@ def exprItemsR (o : Oracle) : Nat → List ET → P (List ET)
     else do tok .rparen; pure (acc ++ [e])
 
 /-- `parse_expression_list(ZeroOrMoreClosedBy(RParen))` (cypher.rs). #3060: only an
-empty list ends at once; after `,` an expression must follow (`f(1)` is an error). -/
+empty list ends at once; after `,` an expression must follow (`f(1,)` is an error). -/
 def exprListR (o : Oracle) (n : Nat) (acc : List ET) : P (List ET) := do
   let c ← peek
   if c = .rparen then do next; pure acc

@@ -52,7 +52,7 @@ def idxMore (nkey : Nat) : Nat → List Nat → P (List Nat)
       idxMore nkey n (acc ++ [a])
     else pure acc
 
-/-- `ident (ident)*` of the old syntax `ON :L(a, b)` (cypher.rs). -/
+/-- `ident (, ident)*` of the old syntax `ON :L(a, b)` (cypher.rs). -/
 def identList : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
