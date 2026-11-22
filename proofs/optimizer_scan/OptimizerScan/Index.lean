@@ -26,6 +26,7 @@ their `sel` agree on every node of the graph.
 | `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` (+ `bare_property_of`) + `extract_attribute_and_expression_from_filter`, `utilize_index.rs` |
 | `mergeRange`               | `merge_range_queries`, `utilize_index.rs` |
 | `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs` |
+| `canSeek`                  | `can_seek_index`, `utilize_index.rs` |
 | `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs` |
 | `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index or label-scan fallback, then extra labels), `node_by_index_scan.rs` |
 -/
@@ -507,6 +508,14 @@ def tryPushdown (idx : Nat → List Nat) (ls : List Nat) : F → Option (Nat × 
     match trySingle idx ls a with
     | some (L, q) => some (L, q, if isArrayContains a then [a] else [])
     | none => none
+
+/-- `can_seek_index` (`utilize_index.rs`, #3889): `try_filter_pushdown(..).is_some()`. -/
+def canSeek (idx : Nat → List Nat) (ls : List Nat) (f : F) : Bool := (tryPushdown idx ls f).isSome
+
+/-- **PROVEN**: `can_seek_index` holds exactly when `try_filter_pushdown` yields a rewrite. -/
+theorem canSeek_iff (idx : Nat → List Nat) (ls : List Nat) (f : F) :
+    canSeek idx ls f = true ↔ ∃ r, tryPushdown idx ls f = some r := by
+  unfold canSeek; cases tryPushdown idx ls f <;> simp
 
 /-! ## Plans and their semantics -/
 
