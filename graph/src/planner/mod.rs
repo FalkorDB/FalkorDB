@@ -966,15 +966,19 @@ const LEVELS_PER_CP_BRANCH: usize = 3;
 
 /// The tallest `plan` can be once the optimizer has rewritten it.
 ///
-/// A pass can make a plan far taller than it came in: a wide `CartesianProduct`
+/// A pass can make a plan far taller than it came in. A wide `CartesianProduct`
 /// of N connected patterns becomes a chain of nested levels, one set per
-/// branch, and the passes after it recurse once per level. Only a
-/// `CartesianProduct` branch deepens a plan this way, so the bound is the
-/// input's height plus [`LEVELS_PER_CP_BRANCH`] levels for each branch of the
-/// `CartesianProduct`s on the deepest root-to-leaf path. Sibling subtrees (the
-/// branches of a `UNION`, the sub-plans of an `Apply`) are independent, so only
-/// the worst of them counts, and a plan that is wide for any other reason stays
-/// as short as it is. The walk is iterative.
+/// branch, and the passes after it recurse once per level. A `Filter` over an
+/// `AND` of K conjuncts is split by `push_filters_down` into up to K filters,
+/// one per operator that binds what a conjunct reads (`MATCH (a)-->(b)-->(c)
+/// WHERE a.v > 0 AND b.v > 0 AND c.v > 0` doubles its height). Nothing else
+/// deepens a plan, so the bound is the input's height plus
+/// [`LEVELS_PER_CP_BRANCH`] levels for each branch of the `CartesianProduct`s
+/// and one level for each conjunct after the first of the `Filter`s on the
+/// deepest root-to-leaf path. Sibling subtrees (the branches of a `UNION`, the
+/// sub-plans of an `Apply`) are independent, so only the worst of them counts,
+/// and a plan that is wide for any other reason stays as short as it is. The
+/// walk is iterative.
 fn optimizer_depth_bound(plan: &DynTree<IR>) -> usize {
     // Pre-order (by pop), so every node comes after its parent; `parent[i]` is
     // the position of node `i`'s parent.
@@ -987,10 +991,18 @@ fn optimizer_depth_bound(plan: &DynTree<IR>) -> usize {
         let n = node.num_children();
         let pos = extra.len();
         parent.push(parent_pos);
-        extra.push(if matches!(node.data(), IR::CartesianProduct) {
-            LEVELS_PER_CP_BRANCH * n
-        } else {
-            0
+        extra.push(match node.data() {
+            IR::CartesianProduct => LEVELS_PER_CP_BRANCH * n,
+            // Splits like `push_filters_down` does: the children of a top-level `And`.
+            IR::Filter(expr) => {
+                let root = expr.root();
+                if matches!(root.data(), ExprIR::And) {
+                    root.num_children().saturating_sub(1)
+                } else {
+                    0
+                }
+            }
+            _ => 0,
         });
         leaf.push(n == 0);
         for i in 0..n {
@@ -4088,5 +4100,67 @@ mod stack_tests {
         let plan = wide_plan(IR::CartesianProduct, MAX_PLAN_DEPTH);
         let err = Planner::check_depth(&plan).unwrap_err();
         assert!(err.starts_with(TOO_DEEP), "{err}");
+    }
+
+    /// The optimized height of a query's plan next to the bound computed from
+    /// the plan the optimizer starts from.
+    fn bound_and_height(query: &str) -> (usize, usize) {
+        use crate::graph::graph::Graph;
+        use crate::graph::graphblas::test_init::ensure_init;
+        use crate::parser::cypher::Parser;
+        use crate::planner::binder::Binder;
+        use crate::planner::optimizer::optimize;
+        use crate::runtime::functions::init_functions;
+        use std::collections::HashMap;
+
+        ensure_init();
+        let _ = init_functions();
+        let graph = Graph::new(64, 64, 0, 0, "bound");
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let mut planner = Planner::new(scope_vars);
+        let plan = planner.plan(ir);
+        let plan = planner.finish(plan);
+        let optimized = optimize(&plan, &graph, &HashMap::new());
+        (optimizer_depth_bound(&plan), optimized.root().height())
+    }
+
+    #[test]
+    fn optimizer_bound_covers_a_filter_on_every_node_of_a_chain() {
+        // `push_filters_down` splits the one WHERE filter into one per node,
+        // interleaving them with the traversals: about twice the height. The
+        // optimizer also adds the scan the planner leaves out under the
+        // chain, one level the bound does not count (the per-level stack
+        // budget has far more room than that).
+        for n in [5usize, 20, 80] {
+            let chain = (0..n)
+                .map(|i| format!("(a{i})-->"))
+                .collect::<Vec<_>>()
+                .concat();
+            let all = (0..=n)
+                .map(|i| format!("a{i}.v > 0"))
+                .collect::<Vec<_>>()
+                .join(" AND ");
+            let (bound, height) =
+                bound_and_height(&format!("MATCH {chain}(a{n}) WHERE {all} RETURN a{n}"));
+            assert!(
+                height >= 2 * n,
+                "n={n}: the filters are no longer split, so this test checks nothing ({height})"
+            );
+            assert!(
+                bound + 1 >= height,
+                "n={n}: bound {bound} < optimized height {height} - 1"
+            );
+
+            // One conjunct stays one filter: the bound adds nothing for it.
+            let (bound, height) =
+                bound_and_height(&format!("MATCH {chain}(a{n}) WHERE a0.v > 0 RETURN a{n}"));
+            assert!(
+                bound + 1 >= height && height <= n + 3,
+                "n={n}: {bound} / {height}"
+            );
+        }
     }
 }
