@@ -30,7 +30,7 @@ use super::references::variable_read_outside;
 pub(super) fn reduce_bound_edge(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
     for idx in indices {
-        let (alias_id, alias_scope_id) = match plan.node(idx).data() {
+        let alias = match plan.node(idx).data() {
             // A fused chain binds no edge at all, so there is nothing to
             // reduce; `chain` non-empty already suppresses the lookup.
             IR::CondTraverse {
@@ -38,11 +38,11 @@ pub(super) fn reduce_bound_edge(plan: &mut DynTree<IR>) {
                 relationship,
                 chain,
                 ..
-            } if chain.is_empty() => (relationship.alias.id, relationship.alias.scope_id),
+            } if chain.is_empty() => relationship.alias.key(),
             _ => continue,
         };
 
-        if !variable_read_outside(plan, idx, alias_id, alias_scope_id)
+        if !variable_read_outside(plan, idx, alias)
             && let IR::CondTraverse {
                 bind_relationship, ..
             } = plan.node_mut(idx).data_mut()

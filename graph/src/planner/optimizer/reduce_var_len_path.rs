@@ -29,16 +29,16 @@ use super::references::variable_read_outside;
 pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
     for idx in indices {
-        let (alias_id, alias_scope_id) = match plan.node(idx).data() {
+        let alias = match plan.node(idx).data() {
             IR::CondVarLenTraverse {
                 emit_path: true,
                 relationship,
                 ..
-            } => (relationship.alias.id, relationship.alias.scope_id),
+            } => relationship.alias.key(),
             _ => continue,
         };
 
-        if !variable_read_outside(plan, idx, alias_id, alias_scope_id)
+        if !variable_read_outside(plan, idx, alias)
             && let IR::CondVarLenTraverse { emit_path, .. } = plan.node_mut(idx).data_mut()
         {
             *emit_path = false;

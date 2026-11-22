@@ -6,23 +6,11 @@ Encoders emit the logical `Writer` calls (`BufferedIO.W`); decoders consume them
 `BufferedIO.roundtrip` the reader hands back exactly those calls, so a token-level round
 trip is a byte-level one. Strings are byte lists; `lossy` is `String::from_utf8_lossy`,
 of which we use only that it is the identity on valid UTF-8 (every Rust `String`).
-
-| here | there (`origin/main`) |
-| --- | --- |
-| `nullTerm`, `strip`       | `null_terminated` `:139,:244`, `strip_null_terminator` `:252` (and the inline copy in `Header::decode` `:166-170`) |
-| `encH`, `decH`            | `Header::encode` `:135-161`, `Header::decode` `:164-199` |
-| `fromGraph`               | `Header::from_graph` `:212-232` |
-| `encField`, `decField`    | field loop of `encode_schema_index_block` `:383-427`, `decode_index_field` `:637-724` (#3514: one entry may carry several types, `"no"` = phonetic off) |
-| `encIdx`, `encCons`       | `encode_schema_index_block` `:337-422`, `encode_constraint_block` `:439-464` |
-| `decEntry`                | `decode_schema_entry` `:529-619` |
-| `encSchema`, `decSchema`  | `Schema::encode` `:260-331`, `Schema::decode` `:466-527` |
-| `VKS`, `DS`               | `VirtualKeyState::new/clear` `:38-48`, `DecodeState::new/clear` `:100-115` |
-| `schemaFromGraph`         | `Schema::from_graph` `:702-718` |
 -/
 namespace RedisLayer.Serial
 open RedisLayer.BufferedIO (W Bytes)
 
-/-- `PHONETIC_OFF` = `"no"` (`text_index_options.rs:41`), C's code for phonetic off. -/
+/-- `PHONETIC_OFF` = `"no"` (`text_index_options.rs`), C's code for phonetic off. -/
 def PHON_OFF : Bytes := [110, 111]
 
 /-- What we use of `String::from_utf8_lossy`. -/
@@ -154,7 +142,7 @@ theorem decH_flag_nonzero (n : Nat) (hn : n ≠ 0) (ts : List W) :
     (Dec.bind rdU fun f => pure' (decide (f ≠ 0))) (.u n :: ts) = some (true, ts) := by
   simp [Dec.bind, rdU, pure', hn]
 
-/-! ## Global decode/encode state (`:26-116`) -/
+/-! ## Global decode/encode state -/
 
 structure VKS (V G : Type) where
   vkeyMap : List (Bytes × V)

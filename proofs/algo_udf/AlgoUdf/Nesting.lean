@@ -1,10 +1,10 @@
-/-! # Depth-capped recursion with an explicit stack (`graph/src/udf/type_convert.rs`, #3336)
+/-! # Depth-capped recursion with an explicit stack (`graph/src/udf/type_convert.rs`)
 
-Both UDF conversions (`value_to_js_at` :110 / `js_to_value_at` :262) have the same shape: one
+Both UDF conversions (`value_to_js_at`  / `js_to_value_at` ) have the same shape: one
 conversion level runs `step (depth >= MAX_UDF_VALUE_NESTING) (convert children at depth + 1) v`.
 `Step` abstracts that shape; `Step.run cap f d v` runs it at depth `d` with `f` stack frames left
-(`none` = the stack ran out, i.e. the abort #3336 fixes). `cap = some c` is the code after #3336,
-`cap = none` the unbounded code before it (no depth check).
+(`none` = the stack ran out, i.e. a process abort). `cap = some c` is the current code,
+`cap = none` an unbounded variant (no depth check).
 
 `R α := Option (Except String α)`: `none` is a stack overflow (it aborts the process at once, so it
 short-circuits like an error but is not one).
@@ -37,12 +37,12 @@ def Rget {α} : R α → Except String α
   | some r => r
   | none => .error "stack overflow"
 
-/-- `MAX_UDF_VALUE_NESTING` (`type_convert.rs:67`). -/
+/-- `MAX_UDF_VALUE_NESTING` (`type_convert.rs`). -/
 def MAX : Nat := 1024
-/-- `udf_nesting_error()` (`type_convert.rs:87-89`). -/
+/-- `udf_nesting_error()` (`type_convert.rs`). -/
 def nestErr : String := "UDF value nesting exceeds the maximum depth of 1024"
 
-/-- `depth >= MAX_UDF_VALUE_NESTING`; `none` = no check (before #3336). -/
+/-- `depth >= MAX_UDF_VALUE_NESTING`; `none` = no check (unbounded variant). -/
 def chk : Option Nat → Nat → Bool
   | some c, d => decide (c ≤ d)
   | none, _ => false
