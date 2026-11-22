@@ -50,7 +50,9 @@ pub(in crate::planner) fn ir_references_variable(
                 .any(|(_, expr)| expr_references_variable(expr, key, traverser))
                 || copies.iter().any(|(v, _)| v.key() == key)
         }
-        IR::Filter(expr) | IR::Skip(expr) | IR::Limit(expr) => expr_references_variable(expr, key, traverser),
+        IR::Filter(expr) | IR::Skip(expr) | IR::Limit(expr) => {
+            expr_references_variable(expr, key, traverser)
+        }
         IR::Sort(exprs) => exprs
             .iter()
             .any(|(expr, _)| expr_references_variable(expr, key, traverser)),
@@ -78,9 +80,9 @@ pub(in crate::planner) fn ir_references_variable(
         IR::Unwind { expr: list, var } | IR::ForEach { list, var } => {
             expr_references_variable(list, key, traverser) || var.key() == key
         }
-        IR::Delete { exprs, .. } | IR::Remove(exprs) => {
-            exprs.iter().any(|expr| expr_references_variable(expr, key, traverser))
-        }
+        IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
+            .iter()
+            .any(|expr| expr_references_variable(expr, key, traverser)),
         IR::Set(items) => set_items_reference_variable(items, key, traverser),
         // The pattern's property expressions are read too:
         // `MERGE (x {w: e.w})` reads `e`, as `CREATE` does below.
@@ -94,11 +96,12 @@ pub(in crate::planner) fn ir_references_variable(
                 || set_items_reference_variable(on_match, key, traverser)
         }
         IR::ValueHashJoin { lhs_exp, rhs_exp } => {
-            expr_references_variable(lhs_exp, key, traverser) || expr_references_variable(rhs_exp, key, traverser)
+            expr_references_variable(lhs_exp, key, traverser)
+                || expr_references_variable(rhs_exp, key, traverser)
         }
-        IR::ProcedureCall { args, .. } => {
-            args.iter().any(|expr| expr_references_variable(expr, key, traverser))
-        }
+        IR::ProcedureCall { args, .. } => args
+            .iter()
+            .any(|expr| expr_references_variable(expr, key, traverser)),
         // Predicates relocated out of a Filter by an optimizer pass.
         IR::NodeByIndexScan { query, .. } | IR::EdgeByIndexScan { query, .. } => {
             index_query_references_variable(query, key, traverser)
@@ -121,10 +124,13 @@ pub(in crate::planner) fn ir_references_variable(
                     .is_some_and(|f| expr_references_variable(f, key, traverser))
                 || path_var.as_ref().is_some_and(|v| v.key() == key)
         }
-        IR::AllShortestPaths(relationship) => expr_references_variable(&relationship.attrs, key, traverser),
+        IR::AllShortestPaths(relationship) => {
+            expr_references_variable(&relationship.attrs, key, traverser)
+        }
         IR::NodeByFulltextScan { label, query, .. }
         | IR::EdgeByFulltextScan { label, query, .. } => {
-            expr_references_variable(label, key, traverser) || expr_references_variable(query, key, traverser)
+            expr_references_variable(label, key, traverser)
+                || expr_references_variable(query, key, traverser)
         }
         IR::NodeByVectorScan {
             label,
@@ -149,7 +155,10 @@ pub(in crate::planner) fn ir_references_variable(
             file_path,
             delimiter,
             ..
-        } => expr_references_variable(file_path, key, traverser) || expr_references_variable(delimiter, key, traverser),
+        } => {
+            expr_references_variable(file_path, key, traverser)
+                || expr_references_variable(delimiter, key, traverser)
+        }
         // Constructor patterns: `CREATE (n {p: x})` reads `x`.
         IR::Create(pattern) => query_graph_references_variable(pattern, key, traverser),
         // Structural or variable-free: they bind and route rows, and hold no
@@ -238,7 +247,8 @@ fn set_items_reference_variable(
 ) -> bool {
     items.iter().any(|item| match item {
         SetItem::Attribute { target, value, .. } => {
-            expr_references_variable(target, key, traverser) || expr_references_variable(value, key, traverser)
+            expr_references_variable(target, key, traverser)
+                || expr_references_variable(value, key, traverser)
         }
         SetItem::Label { var, .. } => var.key() == key,
     })
@@ -312,12 +322,24 @@ mod tests {
                 IndexQuery::And(vec![eq(var(3, 0)), eq(var(7, 1))]),
             ]),
         ]);
-        assert!(index_query_references_variable(&deep, key(7, 1), &mut Traversal.bfs()));
-        assert!(index_query_references_variable(&deep, key(1, 0), &mut Traversal.bfs()));
+        assert!(index_query_references_variable(
+            &deep,
+            key(7, 1),
+            &mut Traversal.bfs()
+        ));
+        assert!(index_query_references_variable(
+            &deep,
+            key(1, 0),
+            &mut Traversal.bfs()
+        ));
         assert!(
             !index_query_references_variable(&deep, key(7, 0), &mut Traversal.bfs()),
             "same id, other scope"
         );
-        assert!(!index_query_references_variable(&deep, key(9, 0), &mut Traversal.bfs()));
+        assert!(!index_query_references_variable(
+            &deep,
+            key(9, 0),
+            &mut Traversal.bfs()
+        ));
     }
 }
