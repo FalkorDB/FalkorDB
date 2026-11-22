@@ -60,14 +60,8 @@ fn get_id_filter(
     ) && let ExprIR::FuncInvocation(inner_func) = filter.child(0).data()
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(0).child(0).data()
-        && var.id == node_alias.id
-        && var.scope_id == node_alias.scope_id
-        && !subtree_references_variable(
-            &filter.child(1),
-            node_alias.id,
-            node_alias.scope_id,
-            traverser,
-        )
+        && var.key() == node_alias.key()
+        && !subtree_references_variable(&filter.child(1), node_alias.key(), traverser)
     {
         Some((
             Arc::new(filter.child(1).clone_as_tree()),
@@ -79,14 +73,8 @@ fn get_id_filter(
     ) && let ExprIR::FuncInvocation(inner_func) = filter.child(1).data()
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(1).child(0).data()
-        && var.id == node_alias.id
-        && var.scope_id == node_alias.scope_id
-        && !subtree_references_variable(
-            &filter.child(0),
-            node_alias.id,
-            node_alias.scope_id,
-            traverser,
-        )
+        && var.key() == node_alias.key()
+        && !subtree_references_variable(&filter.child(0), node_alias.key(), traverser)
     {
         let op = match filter.data() {
             ExprIR::Eq => ExprIR::Eq,

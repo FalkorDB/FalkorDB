@@ -1,19 +1,5 @@
 /-
 # The remaining passes
-
-| here | there |
-| --- | --- |
-| `out`, `travCollapsed` | `CondTraverse` with `emit_relationship = false` (`runtime/ops/cond_traverse.rs`): one row per distinct `(src, dst)` |
-| `unfused`, `fused`     | two chained anonymous CTs vs the fused `F·A1·A2` chain (`optimizer/fuse_anonymous_traverse.rs:194-287`) |
-| `optionalOp`, `optCT`  | `Optional` (`runtime/ops/optional.rs`) vs `CondTraverse{optional: true}` (`fuse_optional_traverse.rs:105-156`) |
-| `IdOp`, `step`, `idFilter` | `Runtime::evaluate_id_filter` (`graph/src/runtime/runtime.rs:1309-1363`), the operator `utilize_node_by_id` (`optimizer/utilize_node_by_id.rs:107-155`) introduces |
-| `wrap`                 | Rust `id as u64` on an `i64` (two's-complement reinterpretation) |
-| `flip`                 | the operator flip in `get_id_filter` (`utilize_node_by_id.rs:77-84`) |
-| `reduceCount`          | `reduce_count` (`optimizer/reduce_count.rs:54-189`): count read from the graph at *plan* time |
-| `labelScanOk`, `reorder` | `NodeByLabelScan` label test and `reorder_labels` (`optimizer/reorder_labels.rs:16-47`) stable sort by label id |
-| `vhj`, `cpEq`          | `ValueHashJoin` (`runtime/ops/value_hash_join.rs`, `key_as_i64` l.153) vs `Filter(=)` over `CartesianProduct` (`replace_cartesian_with_hash_join.rs:101-217`) |
-| `toF`                  | `i as f64` in `Value::compare_value` for Int vs Float, exact in `[0, 2^54]` |
-| `excludedChild`        | the operator list at `push_filters_down.rs:165-178` |
 -/
 import FalkorOptimizer.Basic
 
@@ -124,7 +110,7 @@ theorem flip_holds (op : IdOp) (n c : Int) : op.flip.holds n c = op.holdsRev c n
 /-- Rust `id as u64`. -/
 def wrap (i : Int) : Nat := (i % 2 ^ 64).toNat
 
-/-- One iteration of the `for (expr, op) in filter` loop (runtime.rs:1326-1360). -/
+/-- One iteration of the `for (expr, op) in filter` loop (runtime.rs). -/
 def step (lo hi c : Nat) : IdOp → Option (Nat × Nat)
   | .eq => if c < lo ∨ c > hi then none else some (c, c)
   | .gt => if c ≥ hi then none else some (max lo (c + 1), hi)
@@ -196,12 +182,12 @@ theorem idFilter_correct (maxId : Nat) (fs : List (Int × IdOp))
     cases hst : step lo hi (wrap c) op with
     | none =>
       rw [hst] at hs
-      simp only [hst, inRange] at hs ⊢
+      simp only [inRange] at hs ⊢
       rw [← Bool.and_assoc, ← hs, Bool.false_and]
     | some st =>
       obtain ⟨lo', hi'⟩ := st
       rw [hst] at hs
-      simp only [hst]
+      simp only
       rw [ih (fun p hp => hfs p (by simp [hp])) lo' hi']
       simp only [inRange] at hs
       rw [hs, Bool.and_assoc]
@@ -324,14 +310,18 @@ theorem hash_join_drops_row :
 inductive Kind where
   | project | aggregate | merge | argument | includePending | semiApply | antiSemiApply
   | orApplyMultiplexer | optional
+  | create | delete | set | remove | commit | forEach
   | limit | skip | sort | distinct | cartesianProduct | apply | unwind | condTraverse
   | other
 deriving DecidableEq, Repr
 
-/-- push_filters_down.rs:165-178: children the filter may *not* look through. -/
+/-- push_filters_down.rs: children the filter may *not* look through
+(#3582 adds the write operators `Create`, `Delete`, `Set`, `Remove`, `Commit`,
+`ForEach`). -/
 def excludedChild : Kind → Bool
   | .project | .aggregate | .merge | .argument | .includePending | .semiApply | .antiSemiApply
-  | .orApplyMultiplexer | .optional => true
+  | .orApplyMultiplexer | .optional
+  | .create | .delete | .set | .remove | .commit | .forEach => true
   | _ => false
 
 /-- The operators that are transparent for a row filter (the theorems
@@ -346,8 +336,8 @@ theorem limit_skip_not_excluded :
     excludedChild .limit = false ∧ transparent .limit = false ∧
     excludedChild .skip = false ∧ transparent .skip = false := by decide
 
-/-- Routing test `conj_vars ⊆ child_vars` (push_filters_down.rs:268-280) over
-bare ids (`collect_expr_variables`, `collect_subtree_variables`, mod.rs:91-109). -/
+/-- Routing test `conj_vars ⊆ child_vars` (push_filters_down.rs) over
+bare ids (`collect_expr_variables`, `collect_subtree_variables`, mod.rs). -/
 def routesIdOnly (conj : List Var) (child : List Var) : Bool :=
   conj.all (fun v => (child.map Var.id).contains v.id)
 
@@ -360,7 +350,7 @@ theorem routesScoped_sound (conj child : List Var) (h : routesScoped conj child 
 
 /-- `MATCH (o1:P) CALL { MATCH (q:P) WHERE q.v = 1 RETURN q }`: `q = (0, 1)` is
 routed onto the `Argument` that only carries the outer `o1 = (0, 0)` (inherited
-via Case 2, push_filters_down.rs:214-261). Known root cause (#2557). -/
+via Case 2, push_filters_down.rs). Known root cause (#2557). -/
 theorem id_only_routing_unsound :
     routesIdOnly [⟨0, 1⟩] [⟨0, 0⟩] = true ∧ routesScoped [⟨0, 1⟩] [⟨0, 0⟩] = false := by decide
 

@@ -407,7 +407,7 @@ theorem get_eff_disagree_without_inv :
     get v (0,0) = false ∧ eff v (0,0) := by
   simp [get, eff]
 
-/-- The materialized logical matrix (`extract`, :773). -/
+/-- The materialized logical matrix (`extract`, :780). -/
 def effList (v : VM) : List Pair := v.m.filter (fun p => !(decide (p ∈ v.dm))) ++ v.dp
 
 theorem mem_effList {v : VM} (p : Pair) : p ∈ effList v ↔ eff v p := by
@@ -423,7 +423,7 @@ theorem len_filter_mem {m d : Layer} (hm : m.Nodup) (hd : d.Nodup) (hsub : ∀ p
   refine (List.perm_ext_iff_of_nodup (nodup_filter hm _) hd).2 ?_
   intro a; rw [mem_filter_dec]; exact ⟨fun h => h.2, fun h => ⟨hsub a h, h⟩⟩
 
-/-- **`nvals`** (:793): `|m| + |dp| − |dm|` is the size of the logical matrix,
+/-- **`nvals`** (:800): `|m| + |dp| − |dm|` is the size of the logical matrix,
 and the `u64` subtraction cannot underflow (`|dm| ≤ |m|`). -/
 theorem nvals_eq {v : VM} (h : Inv v) :
     v.dm.length ≤ v.m.length ∧

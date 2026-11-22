@@ -26,33 +26,33 @@ theorem maxId_spec (N : Nat) (sp : IdSpace) :
   refine ⟨rfl, fun h => ?_⟩
   unfold IdSpace.bound; omega
 
-/-- `pool - taken - issued` is "in the pool, taken by nobody, issued to nobody". -/
-theorem freeOf_spec (pool taken issued : IdSet) (i : Nat) :
-    freeOf pool taken issued i = (pool i && !taken i && !issued i) := by
+/-- `pool - taken - issued - quarantined` is "in the pool, taken by nobody, issued to nobody, not quarantined". -/
+theorem freeOf_spec (pool taken issued quar : IdSet) (i : Nat) :
+    freeOf pool taken issued quar i = (pool i && !taken i && !issued i && !quar i) := by
   simp [freeOf, sDiff]
 
 theorem mem_free {pool taken issued : IdSet} {i : Nat} :
-    freeOf pool taken issued i = true ↔ pool i = true ∧ taken i = false ∧ issued i = false := by
+    freeOf pool taken issued quar i = true ↔ pool i = true ∧ taken i = false ∧ issued i = false ∧ quar i = false := by
   rw [freeOf_spec]; simp [Bool.and_assoc]
 
 /-- `reclaim_ids` appends the `count` lowest free ids and returns how many it
 appended: `min(count, |free|)`. -/
-theorem reclaimIds_spec (N : Nat) (pool taken issued : IdSet) (count : Nat) (out : List Nat) :
-    reclaimIds N pool taken issued count out =
-      (out ++ (asc N (freeOf pool taken issued)).take count,
-       min count (cnt N (freeOf pool taken issued))) := by
+theorem reclaimIds_spec (N : Nat) (pool taken issued quar : IdSet) (count : Nat) (out : List Nat) :
+    reclaimIds N pool taken issued quar count out =
+      (out ++ (asc N (freeOf pool taken issued quar)).take count,
+       min count (cnt N (freeOf pool taken issued quar))) := by
   simp [reclaimIds, asc_length]
 
 /-- Every reclaimed id was in the pool and is neither taken nor issued. -/
-theorem reclaimed_free (N : Nat) (pool taken issued : IdSet) (count : Nat) :
-    ∀ x ∈ (asc N (freeOf pool taken issued)).take count,
-      x < N ∧ pool x = true ∧ taken x = false ∧ issued x = false := by
+theorem reclaimed_free (N : Nat) (pool taken issued quar : IdSet) (count : Nat) :
+    ∀ x ∈ (asc N (freeOf pool taken issued quar)).take count,
+      x < N ∧ pool x = true ∧ taken x = false ∧ issued x = false ∧ quar x = false := by
   intro x hx
   have := mem_asc.mp (List.mem_of_mem_take hx)
   exact ⟨this.1, mem_free.mp this.2⟩
 
-theorem reclaimed_sorted (N : Nat) (pool taken issued : IdSet) (count : Nat) :
-    ((asc N (freeOf pool taken issued)).take count).Pairwise (· < ·) :=
+theorem reclaimed_sorted (N : Nat) (pool taken issued quar : IdSet) (count : Nat) :
+    ((asc N (freeOf pool taken issued quar)).take count).Pairwise (· < ·) :=
   (asc_sorted N _).sublist (List.take_sublist _ _)
 
 /-- The fresh run starts at `entry_bound + |taken ≥ eb| + |issued ≥ eb|`. -/
@@ -64,20 +64,20 @@ ids followed by the fresh run `start..start + (count - reclaimed)`, whose end is
 (release build): exact, with no premise about the bounds. -/
 theorem reserve_spec (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet) :
     sp.reserve N true count issued =
-      .ok ((asc N (freeOf sp.recycled sp.taken issued)).take count ++
+      .ok ((asc N (freeOf sp.recycled sp.taken issued sp.quarantined)).take count ++
            List.range' (sp.start N issued)
-             ((sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) % N
+             ((sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued sp.quarantined)))) % N
                - sp.start N issued)) := by
   simp [IdSpace.reserve, reclaimIds_spec, IdSpace.start]
 
 /-- When the end of the run fits in a `u64` (`start + (count - reclaimed) < N`) nothing wraps: the run is
 `[start, start + (count - reclaimed))`. -/
 theorem reserve_spec_nowrap (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet)
-    (hfit : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued))) < N) :
+    (hfit : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued sp.quarantined))) < N) :
     sp.reserve N true count issued =
-      .ok ((asc N (freeOf sp.recycled sp.taken issued)).take count ++
+      .ok ((asc N (freeOf sp.recycled sp.taken issued sp.quarantined)).take count ++
            List.range' (sp.start N issued)
-             (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) := by
+             (count - min count (cnt N (freeOf sp.recycled sp.taken issued sp.quarantined)))) := by
   rw [reserve_spec, Nat.mod_eq_of_lt hfit]
   congr 3
   omega
@@ -88,15 +88,15 @@ ids, fewer than `count` when it reclaimed fewer. (A debug build panics on the ad
 from a space whose boundary is within `count - reclaimed` of `2^64`: `reserve_wraps_example`. -/
 theorem reserve_wraps (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet)
     (hstart : sp.start N issued < N) (hcount : count < N)
-    (hwrap : N ≤ sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) :
-    sp.reserve N true count issued = .ok ((asc N (freeOf sp.recycled sp.taken issued)).take count) := by
+    (hwrap : N ≤ sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued sp.quarantined)))) :
+    sp.reserve N true count issued = .ok ((asc N (freeOf sp.recycled sp.taken issued sp.quarantined)).take count) := by
   rw [reserve_spec]
-  have h1 : (sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued)))) % N
-      = sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued))) - N := by
+  have h1 : (sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued sp.quarantined)))) % N
+      = sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued sp.quarantined))) - N := by
     rw [Nat.mod_eq_sub_mod hwrap]
     exact Nat.mod_eq_of_lt (by omega)
   rw [h1]
-  have : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued))) - N
+  have : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued sp.quarantined))) - N
       - sp.start N issued = 0 := by omega
   rw [this]; simp
 
@@ -111,7 +111,7 @@ theorem reserve_alloc_fail (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSe
 /-- It hands out exactly `count` ids when the end of the run fits in a `u64` (`reserve_wraps` is the case it
 does not). -/
 theorem reserve_length (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet) (ids : List Nat)
-    (hfit : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued))) < N)
+    (hfit : sp.start N issued + (count - min count (cnt N (freeOf sp.recycled sp.taken issued sp.quarantined))) < N)
     (h : sp.reserve N true count issued = .ok ids) : ids.length = count := by
   rw [reserve_spec_nowrap N sp count issued hfit] at h
   cases h
@@ -132,8 +132,8 @@ theorem reserve_fresh (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet) (i
     (∀ x ∈ ids, (sp.recycled x = true ∧ x < sp.eb) ∨ (sp.start N issued ≤ x)) := by
   rw [reserve_spec] at h
   cases h
-  have hrec := reclaimed_free N sp.recycled sp.taken issued count
-  have hlo : ∀ x ∈ (asc N (freeOf sp.recycled sp.taken issued)).take count, x < sp.eb := by
+  have hrec := reclaimed_free N sp.recycled sp.taken issued sp.quarantined count
+  have hlo : ∀ x ∈ (asc N (freeOf sp.recycled sp.taken issued sp.quarantined)).take count, x < sp.eb := by
     intro x hx
     obtain ⟨hxN, hp, ht, _⟩ := hrec x hx
     rcases hbin x hxN hp with h | h
@@ -142,14 +142,14 @@ theorem reserve_fresh (N : Nat) (sp : IdSpace) (count : Nat) (issued : IdSet) (i
   have hge : sp.eb ≤ sp.start N issued := by unfold IdSpace.start; omega
   refine ⟨?_, ?_, ?_⟩
   · rw [List.nodup_append]
-    refine ⟨(reclaimed_sorted N _ _ _ _).imp (fun h => Nat.ne_of_lt h), List.nodup_range', ?_⟩
+    refine ⟨(reclaimed_sorted N _ _ _ _ _).imp (fun h => Nat.ne_of_lt h), List.nodup_range', ?_⟩
     intro a ha b hb e
     have := hlo a ha
     have := (List.mem_range'_1.mp hb).1
     omega
   · intro x hx
     rcases List.mem_append.mp hx with hx | hx
-    · exact ⟨(hrec x hx).2.2.1, (hrec x hx).2.2.2⟩
+    · exact ⟨(hrec x hx).2.2.1, (hrec x hx).2.2.2.1⟩
     · have hxs := (List.mem_range'_1.mp hx).1
       constructor
       · cases hsx : sp.taken x with

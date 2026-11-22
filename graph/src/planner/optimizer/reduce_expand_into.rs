@@ -22,7 +22,7 @@ pub(super) fn reduce_expand_into(
 ) {
     let indices: Vec<_> = plan.root().indices_with(traverser).collect();
     for idx in indices {
-        let (edge_id, edge_scope_id) = match plan.node(idx).data() {
+        let edge = match plan.node(idx).data() {
             IR::ExpandInto {
                 emit_relationship: true,
                 relationship,
@@ -32,7 +32,7 @@ pub(super) fn reduce_expand_into(
                 emit_relationship: true,
                 relationship,
                 ..
-            } => (relationship.alias.id, relationship.alias.scope_id),
+            } => relationship.alias.key(),
             _ => continue,
         };
 
@@ -40,7 +40,7 @@ pub(super) fn reduce_expand_into(
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), edge_id, edge_scope_id, traverser) {
+            if ir_references_variable(parent.data(), edge, traverser) {
                 referenced = true;
                 break;
             }
