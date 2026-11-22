@@ -3,7 +3,7 @@ from index_utils import *
 import re
 import random
 from collections import Counter
-from redis import ResponseError
+from redis.exceptions import ResponseError
 
 GRAPH_ID = "TraversalConstruction"
 

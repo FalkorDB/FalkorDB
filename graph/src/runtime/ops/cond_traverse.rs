@@ -371,7 +371,7 @@ fn build_transposed_union_iter(
 impl<'a> CondTraverseOp<'a> {
     /// Forgets the (source, destination) pairs already emitted by the
     /// bidirectional dedup, for a new argument batch.
-    pub fn clear_bidir_dedup(&mut self) {
+    pub(crate) fn clear_bidir_dedup(&self) {
         if let Some(dedup) = &self.bidir_dedup {
             dedup.borrow_mut().clear();
         }

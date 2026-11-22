@@ -713,11 +713,12 @@ impl<'a> Runtime<'a> {
         idx: NodeIdx<Dyn<IR>>,
         through_traverse: bool,
     ) -> Option<usize> {
-        let count = |expr: &QueryExpr<Variable>| match super::eval::ExprEval::from_runtime(self)
+        let eval = super::eval::ExprEval::from_runtime(self);
+        let count = |expr: &QueryExpr<Variable>| match eval
             .eval(expr, expr.root().idx(), super::eval::NO_ROW, None)
             .ok()?
         {
-            Value::Int(n) if n >= 0 => Some(n as usize),
+            Value::Int(n) => usize::try_from(n).ok(),
             _ => None,
         };
         let mut skip = 0usize;
