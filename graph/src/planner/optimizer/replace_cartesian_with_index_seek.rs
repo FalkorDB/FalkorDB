@@ -43,7 +43,7 @@ use crate::{
 
 use super::super::IR;
 use super::eliminate_true_filters::substitute_params;
-use super::utilize_index::can_seek_index;
+use super::utilize_index::{can_seek_index, seek_index_label};
 use super::{collect_expr_variables, collect_subtree_variables};
 
 /// What one index lookup costs, in nodes of a label scan. Measured on a 1M-node
@@ -158,6 +158,38 @@ fn try_seek_rewrite(
         if moved.is_empty() {
             continue;
         }
+        // A branch filter that is not deterministic would run once per input
+        // row instead of once per scanned node.
+        if chain_filters.iter().any(|f| has_non_deterministic(f)) {
+            continue;
+        }
+        // Only the conjuncts one index serves are moved onto the scan; all
+        // must use the same label's index, as `utilize_index` merges them
+        // into one lookup. A key that is not deterministic would be evaluated
+        // by the scan and again by its retained filter, and a key that reads
+        // the scanned node itself cannot be evaluated before the scan. The
+        // other cross-branch conjuncts stay above the branch's own filters,
+        // where the hash-join plan evaluated them.
+        let mut seek_label: Option<Arc<String>> = None;
+        let (moved, rest): (Vec<_>, Vec<_>) = moved.into_iter().partition(|c| {
+            if has_non_deterministic(c) || reads_node_bare(c, p) {
+                return false;
+            }
+            let Some(label) = seek_index_label(&scan_node, c, graph) else {
+                return false;
+            };
+            match &seek_label {
+                None => {
+                    seek_label = Some(label);
+                    true
+                }
+                Some(first) => *first == label,
+            }
+        });
+        if moved.is_empty() {
+            continue;
+        }
+        let kept: Vec<_> = kept.into_iter().chain(rest).collect();
         let moved_filter = if moved.len() == 1 {
             moved[0].clone()
         } else {
@@ -243,9 +275,12 @@ fn estimate_rows(
         IR::NodeByLabelScan { node: n } => {
             // `utilize_index` runs after this pass: a scan under a filter it
             // will serve from an index is a lookup, not a scan.
+            // A range lookup can return the whole label, so only an
+            // equality counts as one row per input row.
             if let Some(parent) = node.parent()
                 && let IR::Filter(f) = parent.data()
                 && can_seek_index(n, f, graph)
+                && has_equality(f)
             {
                 return inputs();
             }
@@ -290,4 +325,36 @@ fn unwound_len(expr: &DynTree<ExprIR<Variable>>) -> Option<usize> {
         }
         _ => None,
     }
+}
+
+/// Whether an equality is among the conjuncts of `filter`.
+fn has_equality(filter: &QueryExpr<Variable>) -> bool {
+    let root = filter.root();
+    match root.data() {
+        ExprIR::Eq => true,
+        ExprIR::And => root.children().any(|c| matches!(c.data(), ExprIR::Eq)),
+        _ => false,
+    }
+}
+
+/// Whether `expr` calls a function whose result can differ between calls.
+fn has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
+    expr.root()
+        .walk::<orx_tree::Bfs>()
+        .any(|data| matches!(data, ExprIR::FuncInvocation(f) if f.non_deterministic))
+}
+
+/// Whether `expr` reads the node `p` other than through a property access
+/// (`id(p)`, `p` itself): a seek key must not depend on the scanned node.
+fn reads_node_bare(
+    expr: &DynTree<ExprIR<Variable>>,
+    p: u32,
+) -> bool {
+    expr.root().indices::<orx_tree::Bfs>().any(|idx| {
+        let node = expr.node(idx);
+        matches!(node.data(), ExprIR::Variable(v) if v.id == p)
+            && !node
+                .parent()
+                .is_some_and(|parent| matches!(parent.data(), ExprIR::Property(_)))
+    })
 }

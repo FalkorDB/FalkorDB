@@ -1509,6 +1509,59 @@ class testIndexScanFlow():
 
         g.delete()
 
+    def test_45a_unwind_then_match_seek_keeps_guards_and_unsafe_keys_out(self):
+        # The per-row seek of `test_45` only takes what an index can serve
+        # from the outer row. Everything else about the join stays where the
+        # hash-join plan evaluated it.
+        g = self.db.select_graph('unwind_match_seek_guards')
+        g.create_node_range_index('Sensor', 'id')
+        g.create_node_range_index('Reading', 'ts')
+        g.create_node_range_index('A', 'a')
+        g.create_node_range_index('B', 'b')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 9) AS i CREATE (:Sensor {id: i})")
+        g.query("UNWIND range(0, 1999) AS i CREATE (:Reading {ts: i, nts: i})")
+        g.query("CREATE (:A:B {a: 1, b: 2}), (:A {a: 1}), (:B {b: 2})")
+
+        # A guard on the scanned node runs before a conjunct that would fail
+        # without it: node ts=0 has nts=0, and `10 / 0` is an error.
+        q = ("UNWIND [{sid: 1, pts: 0, q: 10}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts AND p.nts <> 0 AND e.q / p.nts > 0 RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+
+        # A key that reads the scanned node cannot be evaluated before the scan.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts + id(p) * 0 RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # A key that is not deterministic would be evaluated twice.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts + toInteger(rand() * 0) RETURN s.id, p.ts ORDER BY s.id")
+        # only `s` is read from an index
+        self.env.assertEqual(str(g.explain(q)).count('Node By Index Scan'), 1)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # A filter on the scanned branch that is not deterministic runs per
+        # outer row after the rewrite, so the branch is left alone.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts AND p.nts + toInteger(rand() * 0) >= 0 "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertEqual(str(g.explain(q)).count('Node By Index Scan'), 1)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # Two conjuncts served by indexes of different labels: one lookup can
+        # use only one of them, and the other must still be checked.
+        q = ("UNWIND [{sid: 1, a: 1, b: 2}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:A:B) "
+             "WHERE p.a = e.a AND p.b = e.b RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+
+        g.delete()
+
     def test_36_scalar_array_scalar_round_trip(self):
         # A property changing kind — scalar -> array -> scalar — must re-index
         # cleanly each time.

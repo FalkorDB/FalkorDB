@@ -820,6 +820,16 @@ pub(super) fn can_seek_index(
     try_filter_pushdown(node, filter, graph).is_some()
 }
 
+/// The label whose range index `utilize_index` would serve `filter` from, a
+/// predicate on `node`; `None` when no index serves it.
+pub(super) fn seek_index_label(
+    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    filter: &DynTree<ExprIR<Variable>>,
+    graph: &Graph,
+) -> Option<Arc<String>> {
+    try_filter_pushdown(node, filter, graph).map(|(label, _, _)| label)
+}
+
 /// Whether `filter` is `value IN subject.prop` (array-contains): a predicate the index answers
 /// with possible false positives — a numeric key is shared by `1` and `true`, and an element it
 /// cannot index is not in its array tree at all — so its filter is always kept.
