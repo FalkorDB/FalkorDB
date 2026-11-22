@@ -55,6 +55,7 @@ Yes:
 - CREATE binds one fresh node per active row and logs it (`createNode_spec`); relationships take each row's endpoints and refuse deleted ones (`createRel_spec`, `createRel_gone`).
 - DELETE leaves every bound node and relationship gone (`deleteBatch_vars`, `delNodesBulk_spec`, `delRelsBulk_spec`). The id-space unwinds can fail; `deleteBatchE_ok` proves the fallible model equals the infallible one when they succeed, and `delNodeE_refusedP`/`delNodeE_refusedC` prove a refusal becomes the operator's error.
 - `SET e = src` leaves exactly the source's keys, for every target and source shape (`setFrom_replace`, `setAttrItem_replace_shapes`).
+- SET and REMOVE skip a relationship the query deleted, including one cascaded by `DETACH DELETE` (`fixedW2p3_set_deleted_rel`, `fixedW2p3_remove_deleted_rel`).
 
 ## The headline theorems
 
@@ -150,7 +151,7 @@ The project has no dependencies beyond Lean core. The id-space `reserve` it call
 - **Errors.** FOREACH and UNION have their error paths modelled, but only the error-free theorems are proven.
 - **Attributes.** `SET`/`REMOVE` assume the committed key list of an entity is complete.
 - **Seen, not Rust bugs.** `FOREACH (i IN 1 | …)` is a type error in Rust (C iterates once; Rust follows openCypher). C returns only the x=1 row of `UNWIND [1,2] AS x CALL { MERGE (n:P {v:1}) ON CREATE SET n.v = 2 RETURN n }`, and gives `m=1, c=2` for `UNWIND [1,2] AS x MERGE (a:E {v:1}) ON MATCH SET a.m = x ON CREATE SET a.c = x` (Rust `m=2, c=1`, as openCypher).
-- **Also seen.** Creating and deleting a node in one query reports no `Nodes created/deleted` statistics (`CREATE (a:D) DELETE a`, also via MERGE); C reports 1/1 (pending/stats code, see `pending_commit`). Writes to a DETACH-deleted relationship are applied and counted (W2-pending-3). Hash-join keys Int/Float near 2^53: `keyAsI64_spec` (W2-rewrites-3).
+- **Also seen.** Creating and deleting a node in one query reports no `Nodes created/deleted` statistics (`CREATE (a:D) DELETE a`, also via MERGE); C reports 1/1 (pending/stats code, see `pending_commit`). Hash-join keys Int/Float near 2^53: `keyAsI64_spec` (W2-rewrites-3).
 
 ## Build and check
 

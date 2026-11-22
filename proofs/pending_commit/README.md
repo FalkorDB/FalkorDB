@@ -75,7 +75,6 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | W2-pending-2 | `cancel_example`, `c_eq_rust_plus_cancelled` | Entities created and deleted in the same segment vanish from the statistics: `CREATE (a:L {v:1, w:2}) DELETE a` reports only `Labels added`; C reports `Nodes created: 1, Properties set: 2, Nodes deleted: 1` | **Open** |
-| W2-pending-3 | (no Lean theorem; found while modelling) | Writes to a deleted relationship are applied and counted: `REMOVE r.v` after `DELETE r`, and `SET r.v` after a `DETACH DELETE` cascade | **Open** |
 | setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | **Open**, not reproduced |
 | #3447 | `bug3447_cascade_drops_type_key` (property `CancelledTypeRegistered`) | A pending edge of a new type cascaded by `DETACH DELETE` empties its `created_rels_by_type` group, which is dropped, so commit never registers the type; the replica then sees an id gap (effects_emit_apply) | **Open** (#3447) |
 
