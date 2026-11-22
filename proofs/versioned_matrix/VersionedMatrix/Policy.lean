@@ -1,5 +1,5 @@
 /-
-# Fold policy (`versioned_matrix.rs:141-201`)
+# Fold policy (`versioned_matrix.rs`)
 
 | here | there |
 | --- | --- |
@@ -90,7 +90,7 @@ theorem foldBalance_exact {d tx base k : Nat} (hd : d < 2 ^ 32) (hk : k * tx ≤
   · rintro ⟨⟨a, b⟩, c⟩; exact ⟨a, b, by omega⟩
   · rintro ⟨a, b, c⟩; exact ⟨⟨a, b⟩, by omega⟩
 
-/-! Concrete checks mirroring the unit tests (:1535-1616). -/
+/-! Concrete checks mirroring the unit tests (:1543-1624). -/
 example : shouldFoldRead 286 1 (10 ^ 9) = false := by decide
 example : shouldFoldRead 287 1 (10 ^ 9) = true := by decide
 example : shouldFold 4528 1 (10 ^ 9) = true := by decide

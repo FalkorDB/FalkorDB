@@ -1,25 +1,15 @@
 /-
 Constructors and small helpers of the apply-family operators.
 
-| here | there |
-| --- | --- |
-| `mergeChildIdx`, `MergeSt.new` | `MergeOp::new` (merge.rs:71) |
-| `onceGet`                      | `OnceCell::get_or_init` in `MergeOp::resolve_pattern` (merge.rs:102), `resolve_on_create_set_items` (:107), `resolve_on_match_set_items` (:112) |
-| `mergeHashInput`, `mergeHash`  | `MergeOp::compute_merge_pattern_hash` (merge.rs:184) |
-| `semiRight`                    | `SemiApplyOp::new` (semi_apply.rs:45) |
-| `orBranches`                   | `OrApplyMultiplexerOp::new` (or_apply_multiplexer.rs:46) |
-| `forEachBody`                  | `ForEachOp::new` (foreach.rs:57) |
-| `storeArg`                     | `UnionOp::store_argument_batch` (union.rs:57) |
-
 A plan node is its child-index list (`runtime.plan.node(idx).child(i)`); `child(i)` out of
 range panics (`none`). `num_children() - 1` on 0 children underflows `usize` (debug panic;
 release wraps and `child` panics) — also `none`.
 -/
 namespace Ctors
 
-/-! ## `MergeOp::new` (merge.rs:71) -/
+/-! ## `MergeOp::new` (merge.rs) -/
 
-/-- merge.rs:79-83 -/
+/-- merge.rs -/
 def mergeChildIdx {I : Type} (children : List I) : Option I :=
   if children.length = 1 then children[0]? else children[1]?
 
@@ -59,7 +49,7 @@ theorem mergeNew_spec {C I P S A : Type} (c : C) (children : List I) (p : P) (oc
     obtain ⟨m, hm, rfl⟩ := h
     exact ⟨fun h' => absurd h' h1, fun _ => hm, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-! ## `OnceCell::get_or_init` memo (merge.rs:102, :107, :112) -/
+/-! ## `OnceCell::get_or_init` memo (merge.rs) -/
 
 def onceGet {A : Type} (init : Unit → A) : Option A → A × Option A
   | some a => (a, some a)
@@ -80,7 +70,7 @@ theorem onceGet_from_new {A : Type} (init : Unit → A) (n : Nat) :
   | zero => rfl
   | succ n ih => simp only [Nat.repeat, ih]; split <;> rfl
 
-/-! ## `compute_merge_pattern_hash` (merge.rs:184) -/
+/-! ## `compute_merge_pattern_hash` (merge.rs) -/
 
 /-- What gets fed to the `FxHasher`, in order. -/
 inductive Tok (V L T : Type) where
@@ -100,7 +90,7 @@ structure PRel (T E : Type) where
   dst : Nat
   attrs : E
 
-/-- First null-valued key of a map, if any (merge.rs:204-210 / :233-239). -/
+/-- First null-valued key of a map, if any (merge.rs). -/
 def firstNull {V : Type} : List (String × Option V) → Option String
   | [] => none
   | (k, none) :: _ => some k
@@ -181,12 +171,12 @@ theorem mergeHash_spec {V L T E S : Type} (d : S) (h : S → Tok V L T → S) (f
 
 /-! ## `SemiApplyOp::new`, `OrApplyMultiplexerOp::new`, `ForEachOp::new` -/
 
-/-- semi_apply.rs:51: the sub-plan is child 1. -/
+/-- semi_apply.rs: the sub-plan is child 1. -/
 def semiRight {I : Type} (children : List I) : Option I := children[1]?
 
 theorem semiRight_spec {I : Type} (a b : I) (rest : List I) : semiRight (a :: b :: rest) = some b := rfl
 
-/-- or_apply_multiplexer.rs:52-57: branches = children `1..=n-1`, in order. -/
+/-- or_apply_multiplexer.rs: branches = children `1..=n-1`, in order. -/
 def orBranches {I : Type} (children : List I) : Option (List I) :=
   if children.length = 0 then none
   else (List.range' 1 (children.length - 1)).mapM fun i => children[i]?
@@ -213,7 +203,7 @@ theorem orBranches_spec {I : Type} (children : List I) (h : children ≠ []) :
       simp only [List.append_assoc, List.singleton_append] at h2
       simp [h1, h2]
 
-/-- foreach.rs:66-67: the body sub-plan is the last child. -/
+/-- foreach.rs: the body sub-plan is the last child. -/
 def forEachBody {I : Type} (children : List I) : Option I :=
   if children.length = 0 then none else children[children.length - 1]?
 
@@ -223,7 +213,7 @@ theorem forEachBody_spec {I : Type} (children : List I) : forEachBody children =
   | zero => simp [List.eq_nil_of_length_eq_zero h]
   | succ n => simp [List.getLast?_eq_getElem?, h]
 
-/-! ## `UnionOp::store_argument_batch` (union.rs:57) -/
+/-! ## `UnionOp::store_argument_batch` (union.rs) -/
 
 /-- A batch = its rows and optional selection; `into_compacted` = the active rows, densely. -/
 def compact {R : Type} (rows : List R) (sel : Option (List Nat)) : List R :=

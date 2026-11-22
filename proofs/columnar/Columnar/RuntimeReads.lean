@@ -11,11 +11,11 @@ definitions, so the agreement needs no premise.
 
 | here | there |
 | --- | --- |
-| `St` | the state a read sees: `Runtime.deleted_{nodes,relationships}` (association lists: `get` = `lookup`, `is_empty` = `[]`), whether `Pending.{new,existing}_*_attrs` are empty (`pendingN`/`pendingR` are the map lookups of `Pending::get_*_attribute`), the committed stores' `get_attr_by_idx` (`byIdxN`/`byIdxR`, attribute_store.rs:1171), and attribute-id resolution `node_attr_id`/`rel_attr_id` (runtime.rs:1544-1569: memoized `Graph::get_node_attr_id` / `get_rel_attr_id` = `attrs_name.get_index_of(attr) as u16`, graph.rs:1988 / :2006; the memo answers the lookup, proofs/runtime_core `attrIdM_correct`) |
-| `pendGetN` / `pendGetR` | `Pending::get_node_attribute` / `get_relationship_attribute` (pending.rs:614-630, :963-979): `None` unless `has_*_attrs()` (:603-611) |
-| `getNodeAttribute` | `Runtime::get_node_attribute` + `_no_delete_check` (runtime.rs:1571-1587, `_no_delete_check` :1591-1602) |
-| `getRelAttribute` | `Runtime::get_relationship_attribute` (runtime.rs:1622-1647); its committed fallback `g.get_relationship_attribute(id, attr)` is `attr_by_name` (graph.rs:3574: `get_index_of(attr)? as u16`, then `get_attr_by_idx`) |
-| `matNode` / `matRel` | `materialize_{node,relationship}_property_values` (runtime.rs:1668-1710, :1728-1770); the hot path's `get_{node,relationship}_attributes_by_idx` (graph.rs:2671, :3514) is `get_attrs_by_idx_batch_into` (attribute_store.rs:1182-1193), the same lookup per key with `Null` as default |
+| `St` | the state a read sees: `Runtime.deleted_{nodes,relationships}` (association lists: `get` = `lookup`, `is_empty` = `[]`), whether `Pending.{new,existing}_*_attrs` are empty (`pendingN`/`pendingR` are the map lookups of `Pending::get_*_attribute`), the committed stores' `get_attr_by_idx` (`byIdxN`/`byIdxR`, attribute_store.rs), and attribute-id resolution `node_attr_id`/`rel_attr_id` (runtime.rs: memoized `Graph::get_node_attr_id` / `get_rel_attr_id` = `attrs_name.get_index_of(attr) as u16`, graph.rs; the memo answers the lookup, proofs/runtime_core `attrIdM_correct`) |
+| `pendGetN` / `pendGetR` | `Pending::get_node_attribute` / `get_relationship_attribute` (pending.rs): `None` unless `has_*_attrs()` (:603-611) |
+| `getNodeAttribute` | `Runtime::get_node_attribute` + `_no_delete_check` (runtime.rs, `_no_delete_check` ) |
+| `getRelAttribute` | `Runtime::get_relationship_attribute` (runtime.rs); its committed fallback `g.get_relationship_attribute(id, attr)` is `attr_by_name` (graph.rs: `get_index_of(attr)? as u16`, then `get_attr_by_idx`) |
+| `matNode` / `matRel` | `materialize_{node,relationship}_property_values` (runtime.rs); the hot path's `get_{node,relationship}_attributes_by_idx` (graph.rs) is `get_attrs_by_idx_batch_into` (attribute_store.rs), the same lookup per key with `Null` as default |
 
 **`matNode_eq`**, **`matRel_eq`**: the bulk read is, id for id, the per-row read (or `Null`),
 on the read-only fast path and on the deleted / pending path alike; **`propReads`**: the
@@ -38,7 +38,7 @@ structure St (F : Type) where
   pendRelsEmpty : Bool
   pendingN : Nat → Nat → Option (V F)   -- the map lookups of `Pending::get_node_attribute`
   pendingR : Nat → Nat → Option (V F)
-  /-- `node_attrs.get_attr_by_idx(key, idx)` = `data.get(key)?.get(idx)` (attribute_store.rs:1171) -/
+  /-- `node_attrs.get_attr_by_idx(key, idx)` = `data.get(key)?.get(idx)` (attribute_store.rs) -/
   byIdxN : Nat → Nat → Option (V F)
   byIdxR : Nat → Nat → Option (V F)
 
@@ -47,14 +47,14 @@ variable (s : St F)
 def byIdxN (id i : Nat) : Option (V F) := s.byIdxN id i
 def byIdxR (id i : Nat) : Option (V F) := s.byIdxR id i
 
-/-- `has_node_attrs()` / `has_relationship_attrs()` (pending.rs:603-611). -/
+/-- `has_node_attrs()` / `has_relationship_attrs()` (pending.rs). -/
 def hasNodeAttrs : Bool := !s.pendNodesEmpty
 def hasRelAttrs : Bool := !s.pendRelsEmpty
 
 def pendGetN (id i : Nat) : Option (V F) := if !hasNodeAttrs s then none else s.pendingN id i
 def pendGetR (id i : Nat) : Option (V F) := if !hasRelAttrs s then none else s.pendingR id i
 
-/-- `get_node_attribute_no_delete_check` (runtime.rs:1591). -/
+/-- `get_node_attribute_no_delete_check` (runtime.rs). -/
 def noDeleteN (id : Nat) (a : String) : Option (V F) :=
   match s.attrId a with
   | none => none
@@ -62,13 +62,13 @@ def noDeleteN (id : Nat) (a : String) : Option (V F) :=
     | some v => some v
     | none => byIdxN s id i
 
-/-- `Runtime::get_node_attribute` (runtime.rs:1571). -/
+/-- `Runtime::get_node_attribute` (runtime.rs). -/
 def getNodeAttribute (id : Nat) (a : String) : Option (V F) :=
   match (if s.delNodes.isEmpty then none else s.delNodes.lookup id) with
   | some attrs => attrs.lookup a
   | none => noDeleteN s id a
 
-/-- `Runtime::get_relationship_attribute` (runtime.rs:1622). -/
+/-- `Runtime::get_relationship_attribute` (runtime.rs). -/
 def getRelAttribute (id : Nat) (a : String) : Option (V F) :=
   match (if s.delRels.isEmpty then none else s.delRels.lookup id) with
   | some attrs => attrs.lookup a
@@ -77,7 +77,7 @@ def getRelAttribute (id : Nat) (a : String) : Option (V F) :=
     | some v => some v
     | none => (s.attrId a).bind (byIdxR s id)   -- `g.get_relationship_attribute(id, attr)`
 
-/-- `materialize_node_property_values` (runtime.rs:1668). -/
+/-- `materialize_node_property_values` (runtime.rs). -/
 def matNode (ids : List Nat) (a : String) : List (V F) :=
   if s.delNodes.isEmpty && !hasNodeAttrs s then
     match s.attrId a with
@@ -90,7 +90,7 @@ def matNode (ids : List Nat) (a : String) : List (V F) :=
         | none => byIdxN s id i).getD .null
     | some attrs => (attrs.lookup a).getD .null
 
-/-- `materialize_relationship_property_values` (runtime.rs:1728). -/
+/-- `materialize_relationship_property_values` (runtime.rs). -/
 def matRel (ids : List Nat) (a : String) : List (V F) :=
   if s.delRels.isEmpty && !hasRelAttrs s then
     match s.attrId a with
@@ -156,9 +156,9 @@ theorem matRel_eq (ids : List Nat) (a : String) :
     · simp only [Bool.false_eq_true, ite_false]
       cases s.delRels.lookup id with
       | some attrs => rfl
-      | none => cases hai : s.attrId a <;> simp [hai] <;> split <;> simp_all
+      | none => cases hai : s.attrId a <;> simp <;> split <;> simp_all
     · simp only [ite_true, lookup_nil_isEmpty s.delRels he id]
-      cases hai : s.attrId a <;> simp [hai] <;> split <;> simp_all
+      cases hai : s.attrId a <;> simp <;> split <;> simp_all
 
 /-! ## The runtime built from the state -/
 
@@ -175,7 +175,7 @@ theorem propReads (rt : RT F) : Columnar.CoreBridge.PropReads (rtOf s rt) where
   matNode ids a := matNode_eq s ids a
   matRel ids a := matRel_eq s ids a
 
-/-- `materialize_node_property` (runtime.rs:1654): `classify_column` of the values. -/
+/-- `materialize_node_property` (runtime.rs): `classify_column` of the values. -/
 def matNodeCol [FloatModel F] (ids : List Nat) (a : String) : Column F × Bits := classifyColumn (matNode s ids a)
 def matRelCol [FloatModel F] (ids : List Nat) (a : String) : Column F × Bits := classifyColumn (matRel s ids a)
 

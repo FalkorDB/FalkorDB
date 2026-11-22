@@ -12,7 +12,7 @@ the constructors only move them into the struct.
 
 namespace FalkorAggOps
 
-/-! ## LimitOp::new (ops/limit.rs:32) -/
+/-! ## LimitOp::new (ops/limit.rs) -/
 
 structure LimitSt (R C I : Type) where
   runtime : R
@@ -20,7 +20,7 @@ structure LimitSt (R C I : Type) where
   remaining : Nat
   idx : I
 
-/-- limit.rs:32-44: `remaining: limit`. -/
+/-- limit.rs: `remaining: limit`. -/
 def LimitSt.new {R C I : Type} (runtime : R) (child : C) (limit : Nat) (idx : I) : LimitSt R C I :=
   { runtime, child, remaining := limit, idx }
 
@@ -32,7 +32,7 @@ theorem limit_new_spec {R C I α : Type} (r : R) (c : C) (k : Nat) (i : I) (bs :
     (limitOp s.remaining bs).flatten = bs.flatten.take k :=
   ⟨rfl, rfl, rfl, rfl, limitOp_spec k bs⟩
 
-/-! ## SkipOp::new (ops/skip.rs:32) -/
+/-! ## SkipOp::new (ops/skip.rs) -/
 
 structure SkipSt (R C I : Type) where
   runtime : R
@@ -40,7 +40,7 @@ structure SkipSt (R C I : Type) where
   remainingSkip : Nat
   idx : I
 
-/-- skip.rs:32-44: `remaining_skip: skip`. -/
+/-- skip.rs: `remaining_skip: skip`. -/
 def SkipSt.new {R C I : Type} (runtime : R) (child : C) (skip : Nat) (idx : I) : SkipSt R C I :=
   { runtime, child, remainingSkip := skip, idx }
 
@@ -50,7 +50,7 @@ theorem skip_new_spec {R C I α : Type} (r : R) (c : C) (k : Nat) (i : I) (bs : 
     (skipOp s.remainingSkip bs).flatten = bs.flatten.drop k :=
   ⟨rfl, rfl, rfl, rfl, skipOp_spec k bs⟩
 
-/-! ## DistinctOp::new (ops/distinct.rs:42) -/
+/-! ## DistinctOp::new (ops/distinct.rs) -/
 
 /-- `ValuesDeduper::with_capacity(1024)`: capacity is a sizing hint only; the
 seen-set starts empty. -/
@@ -75,7 +75,7 @@ theorem distinct_new_spec {R C I α H : Type} [DecidableEq α] [DecidableEq H] (
   show dedupBy h [] xs = dedupBy id [] xs
   simpa using dedup_injective h inj [] xs
 
-/-! ## ProjectOp::new (ops/project.rs:33) -/
+/-! ## ProjectOp::new (ops/project.rs) -/
 
 structure ProjectSt (R C T P I : Type) where
   runtime : R
@@ -91,13 +91,13 @@ def ProjectSt.new {R C T P I : Type} (runtime : R) (child : C) (trees : T) (cfp 
 theorem project_new_spec {R C T P I : Type} (r : R) (c : C) (t : T) (p : P) (i : I) :
     ProjectSt.new r c t p i = ⟨r, c, t, p, i⟩ := rfl
 
-/-! ## UnwindOp::new (ops/unwind.rs:64) and `BatchedResultEmitter::with_binding`
-(ops/batched_result_emitter.rs:553) -/
+/-! ## UnwindOp::new (ops/unwind.rs) and `BatchedResultEmitter::with_binding`
+(ops/batched_result_emitter.rs) -/
 
-/-- `BATCH_SIZE` (batch.rs:81). -/
+/-- `BATCH_SIZE` (batch.rs). -/
 def BATCH_SIZE : Nat := 1024
 
-/-- batched_result_emitter.rs:557-560. -/
+/-- batched_result_emitter.rs. -/
 def packCeiling (recordCap : Option Nat) : Nat :=
   match recordCap with
   | some cap => if cap < BATCH_SIZE then max cap 1 else BATCH_SIZE
@@ -111,8 +111,8 @@ theorem packCeiling_bounds (cap : Option Nat) :
   | some k =>
     simp only
     by_cases h : k < 1024
-    · simp only [h, if_true]; omega
-    · simp only [h, if_false]; omega
+    · simp only [h, ite_true]; omega
+    · simp only [h, ite_false]; omega
 
 structure EmitterSt (B : Type) where
   binding : B
@@ -150,7 +150,7 @@ theorem unwind_new_spec {R C L I B : Type} (r : R) (c : C) (l : L) (b : B) (cap 
   · intro k hk hlt e; subst e; simp [UnwindSt.new, packCeiling, hlt]; omega
   · intro e; subst e; rfl
 
-/-! ## SortOp::new (ops/sort.rs:249) -/
+/-! ## SortOp::new (ops/sort.rs) -/
 
 structure SortSt (R C T I Bt : Type) where
   runtime : R
@@ -176,7 +176,7 @@ theorem sort_new_spec {R C T I Bt : Type} (r : R) (c : C) (t : T) (i : I) (lim :
     st.limit = lim ∧ st.skip = s ∧ st.runtime = r ∧ st.trees = t ∧ st.idx = i :=
   ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-! ## CommitOp::new (ops/commit.rs:45) -/
+/-! ## CommitOp::new (ops/commit.rs) -/
 
 structure CommitSt (R C I Bt : Type) where
   runtime : R
@@ -185,7 +185,7 @@ structure CommitSt (R C I Bt : Type) where
   idx : I
   isRoot : Bool
 
-/-- commit.rs:45-66: refuse a read-only runtime, otherwise record whether the
+/-- commit.rs: refuse a read-only runtime, otherwise record whether the
 op is the plan root (`plan.node(idx).parent().is_none()`). -/
 def CommitSt.new {R C I Bt : Type} (runtime : R) (write : Bool) (hasParent : Bool) (child : C)
     (idx : I) : Except String (CommitSt R C I Bt) :=
