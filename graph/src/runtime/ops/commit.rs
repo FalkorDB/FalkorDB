@@ -108,11 +108,12 @@ impl<'a> Iterator for CommitOp<'a> {
                     // Not gated on `effects_count`. The emitter is the only
                     // thing that knows what a commit implies: a write that
                     // only registers a name (`OPTIONAL MATCH (n:Nope) SET
-                    // n:L`) or only cancels entities (`CREATE (a) DELETE a`)
-                    // counts zero there, yet moves the schema and the id
-                    // space, and a replica that is not told refuses the next
-                    // payload. What the emitter wrote is the answer; a buffer
-                    // left empty is dropped by `take_effects_buffer`.
+                    // n:L`) counts zero there, yet moves the schema, and a
+                    // replica that is not told refuses the next payload
+                    // (cancelled entities are counted, but the names they
+                    // register are schema additions the count cannot see).
+                    // What the emitter wrote is the answer; a buffer left
+                    // empty is dropped by `take_effects_buffer`.
                     let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
                     let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
                     // A refusal here means the emitter built a record this

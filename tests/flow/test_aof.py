@@ -76,12 +76,12 @@ class testAOFReplay():
     def test02_cancelled_write_survives_aof_replay(self):
         # A write whose every entity is created and deleted in the same query
         # (`CREATE (a:A {p:1}) DELETE a`) still registers `A` and `p` and moves
-        # the node id space. It used to put nothing in the AOF: the commit only
-        # built a payload when `Pending::effects_count` was non-zero, and that
-        # count does not include cancelled entities. The next write's payload
-        # then announced label `B` at id 1 to a replay that would assign it 0,
-        # the replay refused it, and a refused payload during AOF load shuts the
-        # server down.
+        # the node id space. `Pending::effects_count` does count the cancelled
+        # entity, but not the schema additions (`A`, `p`, and `L6` below), so a
+        # write holding only those put nothing in the AOF. The next write's
+        # payload then announced label `B` at id 1 to a replay that would
+        # assign it 0, the replay refused it, and a refused payload during AOF
+        # load shuts the server down.
         self.conn.flushall()
         self.conn.config_set("appendonly", "no")
         self.conn.config_set("appendonly", "yes")
@@ -99,3 +99,7 @@ class testAOFReplay():
         self.env.assertEqual(result.result_set, [[0, ["B"], 2]])
         result = graph.query("CALL db.labels() YIELD label RETURN collect(label)")
         self.env.assertEqual(result.result_set, [[["A", "L6", "B"]]])
+        # The cancelled write's property key `p` came back too, ahead of `q`.
+        result = graph.query(
+            "CALL db.propertyKeys() YIELD propertyKey RETURN collect(propertyKey)")
+        self.env.assertEqual(result.result_set, [[["p", "q"]]])

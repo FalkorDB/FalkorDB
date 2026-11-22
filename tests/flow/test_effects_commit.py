@@ -222,8 +222,9 @@ class testEffects_04_NothingSurvives(_EffectsBase):
     and `p` and hands out (then recycles) node id 0; `OPTIONAL MATCH (n:Nope)
     SET n:L` registers `L` and touches nothing. Both used to ship no payload
     at all: the commit only built one when `Pending::effects_count` was
-    non-zero, and that count includes neither cancelled entities nor newly
-    registered names. The replica then refused the next payload's
+    non-zero, and that count includes cancelled entities but not the names a
+    write registers (`A`, `p`, `L`), so a write holding only schema additions
+    built nothing. The replica then refused the next payload's
     `ADD_SCHEMA` (it would number the label differently) and was forced into
     a full resync — or, for a cancelled edge attribute, silently kept a
     shorter attribute dictionary than its primary.
