@@ -1,7 +1,7 @@
 import FalkorIndexLayer.IndexerM
 import FalkorIndexLayer.Iter
 /-
-# Gaps closed 2026-10-20: #3166 (stopwords, open) and the vector-query gate
+# Gaps closed 2026-10-20: #3166 (stopwords, fixed by #3680) and the vector-query gate
 
 Both were invisible to the model: `IndexerM` recorded the label's stopwords
 but not the ones its RediSearch spec was created with, and the query entry points
@@ -12,7 +12,7 @@ namespace IndexLayer.Meta
 namespace Ixr
 open IndexLayer.Iter (RIter Key scoredIds KnnSpec)
 
-/-! ## #3166: stopwords recorded but never applied -/
+/-! ## #3166: stopwords recorded but never applied (fixed by #3680) -/
 
 /-- **Property (#3166).** An index that has a live RediSearch spec reports the
 stopword list that spec was created with: `Index::stopwords` (shown by
@@ -25,9 +25,9 @@ instance (x : Idx) : Decidable (StopwordsAgree x) := by unfold StopwordsAgree; i
 leaves the label's entry in agreement whenever it was in agreement before. -/
 def CreateIndexKeepsStopwords (E : Env) : Prop :=
   ∀ (I : Ixr) (t : IType) (l : String) (as : List String) (tot : Nat) (o : Option IdxOptions)
-    (I' : Ixr) (x : Idx),
+    (owes : Bool) (I' : Ixr) (x : Idx),
     (∀ y, I.map.get l = some y → StopwordsAgree y) →
-    createIndex E I t l as tot o = .ok I' → I'.map.get l = some x → StopwordsAgree x
+    createIndex E I t l as tot o owes = .ok I' → I'.map.get l = some x → StopwordsAgree x
 
 theorem addAttrs_stop (t : IType) (fo : Option TextOpts) (vo : Option VecOpts) :
     ∀ (as : List String) (x : Idx) (nf : AMap (List Field)) (y : Idx) (nf' : AMap (List Field)),
@@ -60,45 +60,80 @@ theorem registerFields_stop (x : Idx) (m : AMap (List Field)) (fo : Option TextO
     y.rsStop = x.rsStop ∧ y.stopwords = x.stopwords := by
   unfold Idx.registerFields at h; split at h <;> cases h; exact ⟨rfl, rfl⟩
 
+theorem registerAllFields_stop (x : Idx) (tk : Bool) (y : Idx) (h : x.registerAllFields tk = .ok y) :
+    y.rsStop = x.rsStop ∧ y.stopwords = x.stopwords := by
+  unfold Idx.registerAllFields at h; split at h <;> cases h; exact ⟨rfl, rfl⟩
+
+/-- #3680: an explicit stopword list is always recorded (the spec was just built with it). -/
 theorem finish_stop (t : IType) (l : Option String) (s : Option (List String)) (n : Nat) (x : Idx) :
     (finish t l s n x).rsStop = x.rsStop ∧
-    (finish t l s n x).stopwords = if s.isSome && x.stopwords.isNone then s else x.stopwords := by
+    (finish t l s n x).stopwords = if s.isSome then s else x.stopwords := by
   simp only [finish]; repeat' split
   all_goals simp_all [Idx.setLanguage, Idx.setStopwords, Idx.setProgress]
 
-/-- What a fix can keep: on a label with no entry yet, `create_index` creates the
-spec with the same stopwords it records, so the two agree. The bug below is the
-other path: a spec that already exists. -/
-theorem createIndex_fresh_stopwords_agree (E : Env) (I : Ixr) (t : IType) (l : String)
-    (as : List String) (tot : Nat) (o : Option IdxOptions) (I' : Ixr) (x : Idx)
-    (hnew : I.map.get l = none) (h : createIndex E I t l as tot o = .ok I')
-    (hx : I'.map.get l = some x) : StopwordsAgree x := by
-  intro _
+theorem x0Of_stop (E : Env) (ex : Option Idx) (share : Bool) :
+    (x0Of E ex share).stopwords = (ex.bind (·.stopwords)) ∧
+    (share = true → ∀ y, ex = some y → (x0Of E ex share).rsStop = y.rsStop) := by
+  cases ex with
+  | none => simp [x0Of, Idx.default]
+  | some y => cases share <;> simp [x0Of, Idx.forkForDdl, Idx.bumpId]
+
+/-- **#3166 fixed by #3680.** `create_index` keeps the stopwords the label reports equal
+to the ones its spec applies: a statement with a stopword list builds a fresh spec with
+it (`shareSpec` is false), and a statement that shares the spec records no new list. -/
+theorem createIndex_keeps_stopwords (E : Env) : CreateIndexKeepsStopwords E := by
+  intro I t l as tot o owes I' x hpre h hx _
   unfold createIndex at h
   simp only at h
   split at h; · cases h
   split at h; · cases h
   unfold build at h
-  simp only [hnew] at h
+  simp only at h
   split at h; · cases h
   next x1 nf hr1 =>
-  obtain ⟨st1, rs1, sp1⟩ := addAttrs_stop t _ _ as _ [] x1 nf hr1
+  obtain ⟨st1, rs1, -⟩ := addAttrs_stop t _ _ as _ [] x1 nf hr1
   split at h; · cases h
   next x2 hx2 =>
   cases h
   simp only [AMap.get_upd, ite_true, Option.some.injEq] at hx
   subst hx
-  have hd : (Idx.default E.freshId).stopwords = none ∧ (Idx.default E.freshId).spec = none := ⟨rfl, rfl⟩
-  have hrs : x1.hasRsIndex = false := by simp [Idx.hasRsIndex, sp1, hd.2]
-  unfold specStep at hx2
-  simp only [hrs, Bool.false_eq_true, ite_false] at hx2
-  split at hx2; · cases hx2
-  next x' hx' =>
-  obtain ⟨c1, c2⟩ := createRsIndex_stop _ _ _ _ _ _ _ hx'
-  obtain ⟨r1, r2⟩ := registerFields_stop _ _ _ _ _ hx2
+  obtain ⟨-, -, -, -, -, os, ors⟩ := owe_fields owes (finish t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2)
   obtain ⟨f1, f2⟩ := finish_stop t (optParts E.lower o).1 (optParts E.lower o).2.1 tot x2
-  simp only [regen, Option.isSome_none, Bool.false_eq_true, ite_false, f1, f2, r1, r2, c1, c2, st1, hd.1]
-  cases (optParts E.lower o).2.1 <;> simp
+  rw [os, ors, f1, f2]
+  generalize hsh : shareSpec owes (I.map.get l) t (optParts E.lower o).1 (optParts E.lower o).2.1 = sh at hr1 hx2 st1 rs1
+  unfold specStep at hx2
+  cases sh with
+  | true =>
+    obtain ⟨-, -, -, hst, hr⟩ := shareSpec_rs _ _ _ _ _ hsh
+    simp only [ite_true] at hx2; cases hx2
+    cases hex : I.map.get l with
+    | none => rw [hex] at hr; cases hr
+    | some y =>
+      have hy := hpre y hex
+      rw [hex] at hr st1
+      have hrs : y.hasRsIndex = true := by simpa [Idx.hasRsIndex] using hr
+      obtain ⟨-, hr0⟩ := x0Of_stop E (some y) true
+      have := hr0 rfl y rfl
+      rw [hex] at rs1
+      simp only [Idx.deferFields, hst, Option.isSome_none, Bool.false_eq_true, ite_false]
+      rw [rs1, this, st1, (x0Of_stop E (some y) true).1]
+      exact hy hrs
+  | false =>
+    simp only [Bool.false_eq_true, ite_false] at hx2
+    split at hx2; · cases hx2
+    next x' hx' =>
+    obtain ⟨c1, c2⟩ := createRsIndex_stop _ _ _ _ _ _ _ hx'
+    obtain ⟨r1, r2⟩ := registerAllFields_stop _ _ _ hx2
+    rw [r1, r2, c1, c2]
+    cases (optParts E.lower o).2.1 <;> simp
+
+/-- On a label with no entry yet, `create_index` creates the spec with the same
+stopwords it records, so the two agree. -/
+theorem createIndex_fresh_stopwords_agree (E : Env) (I : Ixr) (t : IType) (l : String)
+    (as : List String) (tot : Nat) (o : Option IdxOptions) (owes : Bool) (I' : Ixr) (x : Idx)
+    (hnew : I.map.get l = none) (h : createIndex E I t l as tot o owes = .ok I')
+    (hx : I'.map.get l = some x) : StopwordsAgree x :=
+  createIndex_keeps_stopwords E I t l as tot o owes I' x (fun y hy => by rw [hnew] at hy; cases hy) h hx
 
 /-- The live repro: `CREATE INDEX FOR (n:L) ON (n.id)`, then
 `CREATE FULLTEXT INDEX FOR (n:L) ON (n.name) OPTIONS {stopwords: ['router']}`.
@@ -110,55 +145,24 @@ def obs3166 (r : Except String Ixr) : Option (Bool × Option (List String) × Op
 
 def opt3166 : Option IdxOptions := some (.text { stopwords := some ["router"] })
 
-def step1_3166 : Except String Ixr := createIndex E0 I0 .range "L" ["id"] 0 none
+def step1_3166 : Except String Ixr := createIndex E0 I0 .range "L" ["id"] 0 none true
 def step2_3166 : Except String Ixr :=
   match step1_3166 with
-  | .ok I1 => createIndex E0 I1 .fulltext "L" ["name"] 0 opt3166
+  | .ok I1 => createIndex E0 I1 .fulltext "L" ["name"] 0 opt3166 true
   | .error e => .error e
 
-/-- **BUG #3166.** Both `CREATE`s succeed; the label reports stopwords `['router']`
-but its RediSearch spec was created (by the range index) with RediSearch's default
-list, and the second call only registers the new field on it (`indexer.rs`).
-Live (port 6640 Rust main 9d3869aa8 / 6641 C): `db.idx.fulltext.queryNodes('L', 'router')`
-→ Rust 1 row, C 0; `db.indexes()` reports `[router]` on both. -/
-theorem bug3166_stopwords_not_applied :
+/-- **#3166 fixed (#3680).** Before #3680 the second call only registered the new field
+on the range index's spec (created with RediSearch's default list) and the label
+reported `['router']` while 'router' still matched (Rust 1 row, C 0). Now the second
+call builds a fresh spec with `['router']`, and the label reports the same list. -/
+theorem fix3166_stopwords_applied :
     obs3166 step1_3166 = some (true, none, none) ∧
-    obs3166 step2_3166 = some (true, none, some ["router"]) := by decide
-
-theorem bug3166_violates : ¬ CreateIndexKeepsStopwords E0 := by
-  intro hP
-  obtain ⟨e1, e2⟩ := bug3166_stopwords_not_applied
-  unfold step2_3166 at e2
-  cases h1 : step1_3166 with
-  | error e => rw [h1] at e1; cases e1
-  | ok I1 =>
-    rw [h1] at e1 e2
-    simp only at e2
-    cases h2 : createIndex E0 I1 .fulltext "L" ["name"] 0 opt3166 with
-    | error e => rw [h2] at e2; cases e2
-    | ok I2 =>
-      rw [h2] at e2
-      simp only [obs3166, Option.map_eq_some_iff] at e1 e2
-      obtain ⟨y, hy, hy'⟩ := e1
-      obtain ⟨x, hx, hx'⟩ := e2
-      simp only [Prod.mk.injEq] at hy' hx'
-      have hpre : ∀ y', I1.map.get "L" = some y' → StopwordsAgree y' := by
-        intro y' hy2; rw [hy] at hy2; cases hy2; intro _; rw [hy'.2.1, hy'.2.2]
-      have := hP I1 .fulltext "L" ["name"] 0 opt3166 I2 x hpre h2 hx hx'.1
-      rw [hx'.2.1, hx'.2.2] at this; cases this
+    obs3166 step2_3166 = some (true, some ["router"], some ["router"]) := by decide
 
 /-! ## A vector query answers while the index is UNDER CONSTRUCTION -/
 
-/-- `populate_index` taking its ticket for generation `g` on the published entry
-(`try_increment_pending` `mod.rs`; the counters are a shared `Arc`, so the
-published index itself changes, as in `updateProgress`). -/
-def incTicket (I : Ixr) (l : String) (g : Nat) : Ixr :=
-  match I.map.get l with
-  | some x => { I with map := I.map.upd l { x with slots := x.slots.inc g } }
-  | none => I
-
-/-- `Indexer::vector_query` (`indexer.rs`) → `Index::vector_query`
-(`mod.rs`): route by label (no index ⇒ `Ok(empty)`), `CString::new` of
+/-- `Indexer::vector_query` (`indexer.rs:541-553`) → `Index::vector_query`
+(`mod.rs:1798-1853`): route by label (no index ⇒ `Ok(empty)`), `CString::new` of
 `vector:{field}` (NUL ⇒ `Err`), then `Iter.vectorQ` with the FFI outcomes
 `cloneOk` (`try_clone_ref`), `nodeOk` (`CreateVecSimNode`), `iterOk`
 (`GetResultsIterator`) and RediSearch's answer `res`. Nothing consults
@@ -236,11 +240,12 @@ theorem gated3581_requires_operational (c n i : Bool) (res : List (Key × Nat)) 
   refine ⟨"Invalid arguments for procedure", ?_⟩
   simp [gated3581, isOperational_some I l x hx, hop]
 
-/-- `CREATE VECTOR INDEX FOR (n:V) ON (n.e) OPTIONS {dimension:2, similarityFunction:'euclidean'}`,
-then `populate_index` takes its ticket for the entry's generation. -/
+/-- `CREATE VECTOR INDEX FOR (n:V) ON (n.e) OPTIONS {dimension:2, similarityFunction:'euclidean'}`:
+since #3680 the statement itself leaves the entry owing its population (one ticket of its
+generation, taken over by the job the publisher starts). -/
 def I3382 : Ixr :=
-  match createIndex E0 I0 .vector "V" ["e"] 3 (some (.vector ⟨2, some "euclidean"⟩)) with
-  | .ok I1 => incTicket I1 "V" ((I1.map.get "V").map (·.slots.gen) |>.getD 0)
+  match createIndex E0 I0 .vector "V" ["e"] 3 (some (.vector ⟨2, some "euclidean"⟩)) true with
+  | .ok I1 => I1
   | .error _ => I0
 
 /-- The state of the live repro: the index exists, has a spec, and is not

@@ -6,11 +6,11 @@ graph/src/threadpool.rs	spawn	129	PROVEN	Pool.spawn_never_blocks, spawn_after_ex
 graph/src/threadpool.rs	shutdown	151	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit); PoolWithin.within_blocks_behind_shutdown / holdEnd_ge (holds the `workers` lock across every join: BUG, a concurrent shutdown_within is not bounded)
 graph/src/threadpool.rs	shutdown_within	167	PROVEN	PoolWithin.waitLoop_exit, waitLoop_bound, within_in_time (returns before start+timeout+s), within_true_all_finished, within_false_unfinished, blocked_reported, within_partition (no handle lost: joined or kept, `*workers = running`), left_behind_workers_exit (no worker leak); #3585 keeps the stragglers: second_call_reports_straggler, second_call_joins_when_returned; sleep/is_finished are hypotheses on std (monotone, sleep in [1,s]); BUG (open) within_blocks_behind_shutdown (case B, still Err(Timeout) at 256ab4d3f)
 graph/src/threadpool.rs	spawn	191	PROVEN	Pool.global_spec (gSpawn: panics uninitialised, else ThreadPool::spawn)
-graph/src/threadpool.rs	init_thread_pool	207	PROVEN	Pool.global_spec (init: Ok once, then Err)
+graph/src/threadpool.rs	init_thread_pool	230	PROVEN	Pool.global_spec (init: Ok once, then Err)
 graph/src/threadpool.rs	shutdown	239	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
-graph/src/threadpool.rs	try_acquire	245	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
-graph/src/threadpool.rs	try_acquire_in	249	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
-graph/src/threadpool.rs	drop	265	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
+graph/src/threadpool.rs	try_acquire	268	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
+graph/src/threadpool.rs	try_acquire_in	272	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
+graph/src/threadpool.rs	drop	288	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
 graph/src/locks.rs	upgrade_to_write	56	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order); takes the fork as `&mut Graph` since #3578 (the host checks it: Session.checkFork)
 graph/src/thread_id.rs	set_main_thread	15	PROVEN	Once.thread_id_spec
 graph/src/thread_id.rs	is_main_thread	23	PROVEN	Once.thread_id_spec
@@ -39,13 +39,13 @@ src/commands/delete.rs	graph_delete	37	PROVEN	Mvcc Ev.delete on main thread with
 graph/src/index/mod.rs	new	138	PROVEN	Search.Field.new_spec (name/type kept, vdim none, arrNames as new_with_vector_options), Field.new_arr (array sub-fields iff Range)
 graph/src/index/mod.rs	new_with_vector_options	155	PROVEN	Search.Field.new_spec (vdim = some dimension), Field.new_arr
 graph/src/index/mod.rs	set	721	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; counterexample removed in bbee75955; the last revision that has them is 17ccc5412), docSet_temporal_not_indexed, fulltext_only_strings, range_never_vector_or_text
-graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.store (73077bb4a: bump_id when the label has fields; Rust bumps whenever the entry exists, which also covers the window after drop_index leaves a 0-field entry until drop_index_bg removes it: not modelled, an extra bump only makes older tickets stale); main_operational_complete, main_lost_order_complete (BUG 2, fixed by #3086; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
-graph/src/index/indexer.rs	acquire_population_snapshot	661	PROVEN	Tickets.acquire / inc_inv; Worker.attrs snapshot (main_operational_complete)
-graph/src/index/indexer.rs	ticket_pending_changes	729	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
-graph/src/graph/graph.rs	populate_index_batch	577	PROVEN	Tickets.batch; inv_batch, main_operational_complete
+graph/src/index/indexer.rs	create_index	262	PROVEN	Tickets.store (#3680: fresh entry, new generation, the creation ticket counted at once by owe_population; the store is the publish of the version): inv_create, operational_complete_always, store_window_fixed
+graph/src/index/indexer.rs	acquire_population_snapshot	797	PROVEN	Slots.inc (Tickets.inc_inv); Worker.attrs snapshot (main_operational_complete)
+graph/src/index/indexer.rs	ticket_pending_changes	863	PROVEN	Tickets.batch >1 bail: never fires for a live worker on main (inv_batch)
+graph/src/graph/graph.rs	populate_index_batch	593	PROVEN	Tickets.batch (#3680: the batch reads the committed version's entry; its ticket was counted at create, Tickets.acquire adds the worker): inv_batch, main_operational_complete, operational_complete_always
 graph/src/graph/graph.rs	vector_query_nodes	4399	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row (#3088 clamp) (#3085; counterexample removed in bbee75955; the last revision that has them is 17ccc5412); #3382 gate (opOk): not_operational_refused, ok_imp_operational
 graph/src/graph/graph.rs	vector_query_edges	4466	PROVEN	Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk (vectorQueryEdges, relationship_count clamp); #3382 gate (opOk): not_operational_refused, ok_imp_operational
 graph/src/runtime/runtime.rs	map_to_index_options	2042	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, parseSim_ok_lower, parseSim_unknown, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), rust_eq_c_all (PR #3257, dimension 0 too), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/commit.rs	next	69	PROVEN	lock path only (#3226): Session.commitNext_closed_scan (scan dropped before the commit: ordered, no re-acquire), commitNext_open_scan (= Locks.bug3226_open_scan_upgrade, bug3226_open_scan_unordered: with the scan still open the escalation at :96 -> commit_deferred_indexes -> Indexer::commit -> RediSearch_IndexAddDocument re-takes the spec read lock it holds; OPEN, issue #3226 still open at 256ab4d3f), commitNext_escalates_in_order
 # Online index build (#2355): fns the background builder added, not modelled yet.
-graph/src/threadpool.rs	try_spawn	210	NOT COVERED	(#3680): not modelled yet
+graph/src/threadpool.rs	try_spawn	210	PROVEN	Pool.gTrySpawn: trySpawn_spec (#3680: no pool ⇒ the job back as Err, else spawn)

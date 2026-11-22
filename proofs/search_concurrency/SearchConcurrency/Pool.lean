@@ -110,6 +110,17 @@ theorem global_spec (n j : Nat) (p : PoolS) :
     gShutdown none = none ∧ (match gSpawn (some p) j with | .ok g => g = some (p.spawn j) | .panic => False) := by
   refine ⟨rfl, rfl, trivial, rfl, rfl⟩
 
+/-- `try_spawn` (`threadpool.rs`, #3680): `spawn` when the pool exists, else the job back
+as `Err` for the caller to run (no panic). -/
+def gTrySpawn (g : Global) (j : Nat) : Except Nat Global :=
+  match g with | none => .error j | some p => .ok (some (p.spawn j))
+
+/-- `try_spawn` never panics: uninitialised it hands the job back, otherwise it is `spawn`. -/
+theorem trySpawn_spec (j : Nat) (p : PoolS) :
+    gTrySpawn none j = .error j ∧ gTrySpawn (some p) j = .ok (some (p.spawn j)) ∧
+    (match gSpawn (some p) j with | .ok g => gTrySpawn (some p) j = .ok g | .panic => False) :=
+  ⟨rfl, rfl, rfl⟩
+
 /-! ## `QueueSlot::try_acquire_in`
 
 `let mut n = counter.load(); while n < max { match counter.compare_exchange_weak(n, n + 1)
