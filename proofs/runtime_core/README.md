@@ -66,7 +66,7 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 | `query_rows`, `query_write_pulls_all` | `resultset_size` keeps exactly the first `n` rows; a write query always drains the root operator (every batch plus the terminating `next()`), so a root `CommitOp` always runs | `Query.lean` |
 | `graph_deref`, `graph_same_result`, `graph_mut_write_same` | #3436's `Runtime::graph()`, `graph_mut()`, `GraphRef`, `Deref` on an atomic_refcell borrow-word model: the rewrite changes no result and no borrow-word effect | `Cell.lean` |
 | `held_survives`, `drop_sound`, `g_never_reassigned` | `HeldRead` / `Runtime` drop order, `graph_arc()`, `g` never reassigned | `DropOrder.lean` |
-| `reader_guard_sound`, `priv_borrows_owner_only` | The read-guard protocol over `MvccGraph` and `QuerySession`; the open #3439 `writer_reply_race` | `Protocol.lean` |
+| `reader_guard_sound`, `priv_borrows_owner_only` | The read-guard protocol over `MvccGraph` and `QuerySession` | `Protocol.lean` |
 | `read_plan_no_update`, `accessor_unchanged`, `materialize_unchanged` | A read plan has no updating operator (from `redis_layer`'s `RedisLayer.Ro`), so the accessor theorems transfer through `graph()` | `Reuse.lean` |
 | `attrs_agree`, `materialize_eq` | `properties(n).k`, `n.k` and the bulk column read agree | `Accessors.lean` |
 | `hasLabelId_iff`, `hasLabel_iff` | `n:L` is exactly `L ∈ labels(n)`, by id or by name | `Accessors.lean` |
@@ -92,17 +92,9 @@ Each bug has a Rust repro test (`graph/tests/lean_runtime_core.rs`, run locally 
 | B1 (W3-runtime-1) | `hard_cap_unsound_expandInto`, `hard_cap_unsound_condTraverse`, `hard_cap_unsound_through_traverse` | `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:699-702`), which then use it as a hard stop. `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` returns `[]` (C: `[2]`) | **Open** (walk unchanged at 0f45a8685) |
 | B2 (W3-runtime-2) | `hard_cap_unsound_stacked_skip` | `effective_skip` returns only the first `SKIP`. `MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1` returns `[]` (C: `[20]`) | **Open**. The proposed fix for B1 and B2 is to give hard-cap consumers `need` and keep `record_cap` for the emitter |
 | B3 | *(same shape as B1; no separate theorem)* | SortOp's top-k uses the same walk: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1` returns `[]`; expected `[20]` | **Open**, shared with C. The stacked-SKIP Sort variant is #2659 |
-| — | `reuse_diverges` | With a node id in both pending attribute maps, `n.a` and `properties(n)` disagree. Only reachable through deleted-id reuse | Part of open #2876 (W2-pending-1) |
 | — | `checkMem_wrap` | `usage_fn() as i64` wraps at 2⁶³, so the memory cap never fires past 8 EiB | Latent |
 
-**CONDITIONAL rows (9).** The attribute accessors are proven under contracts of the graph stores that this project doesn't model:
-
-- `hc`: the committed "all attributes" listing agrees with the by-index read;
-- `hbg`: the batch read equals the per-id read;
-- `hName`: the by-name relationship read equals `attr_id` followed by the by-index read;
-- `hdisj`: a node is in at most one pending attribute map.
-
-`hdisj` is **false under #2876** (`reuse_diverges`). These rows are `get_node_attribute`, `get_node_attribute_no_delete_check`, `get_relationship_attribute`, `materialize_node_property(_values)`, `materialize_relationship_property(_values)`, `get_node_attrs` and `get_relationship_attrs`. `expr_semantics`' `eval_batch` rows depend on `materialize_eq`, so they are CONDITIONAL too.
+**CONDITIONAL rows (4).** `get_node_attribute`, `get_node_attribute_no_delete_check`, `get_node_attrs` and `get_relationship_attrs` are proven under two facts about the pending attribute maps: `hdisj` (a node is in at most one pending attribute map) and `huniq` (each staged list has distinct keys). `proofs/pending_commit` proves both for every reachable `Pending` state (`PendingCommit/AttrInv.lean` `PA.inv_hdisj`, `PA.inv_huniq`; `AccessorBridge.lean` instantiates these accessors' theorems with them). The rows stay CONDITIONAL because that proof assumes SET/REMOVE only stage attributes on a live entity, the deleted-entity guard `proofs/ops_apply` proves, and the two are not linked. The store contracts `hc`, `hbg` and `hName` are discharged in `Discharge.lean`.
 
 ## Files
 
@@ -114,7 +106,7 @@ Each bug has a Rust repro test (`graph/tests/lean_runtime_core.rs`, run locally 
 | `RunBatch.lean` | `run_batch`'s iterative post-order build against the recursive build; `children_to_recurse` |
 | `Cell.lean` | `Runtime::graph()` / `graph_mut()` / `GraphRef` / `Deref` / `HeldRead` on an atomic_refcell borrow-word model |
 | `DropOrder.lean` | `HeldRead` / `Runtime` drop glue, `graph_arc()`, `g` never reassigned |
-| `Protocol.lean` | The read-guard protocol over `MvccGraph` and `QuerySession`; open bug #3439 |
+| `Protocol.lean` | The read-guard protocol over `MvccGraph` and `QuerySession` |
 | `Reuse.lean` | Accessor theorems reused through `graph()` for read plans (needs `redis_layer`) |
 | `Accessors.lean` | Node attribute reads (deleted > pending > committed), the attr-id memo, labels and label staging, degrees |
 | `RelAccessors.lean` | Relationship attribute reads, typed materialisation, `label_id`, endpoints and type, pending attribute writes |

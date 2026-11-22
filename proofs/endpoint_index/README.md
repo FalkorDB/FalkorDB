@@ -39,7 +39,7 @@ No. `raiseTo_spec` proves `raise_to` changes no answer: live pairs, tombstones a
 
 `restore_agrees` proves `Graph::restore`'s path (`prepare_tiers` with any tier boundaries, then `set` for every edge) gives exactly the restored edge set. `EndpointGraph.lean` models the whole function: `restoreIndex_get` for the starts the first scan computes, `restoreStarts_ordered` (ordered, within `len`), `restore_ids_lt_len` (no edge id past the allocated length), `restore_tier1_start` (an edge that needs a wider tier starts at or past that tier, so restore never promotes), and the scalar fields (`capOf_spec`, `restoredFields_spec`: capacities at least the id bound and 64, `schema_version`, version 0, empty indexers).
 
-Since #2905 `prepare_tiers` clamps the tier starts monotone itself (`clampStarts`). `clampStarts_mono` proves the tier sizes then never underflow and sum to the slot count, whatever the caller passes; `clampStarts_ordered` that the clamp changes nothing for the ordered starts `restore` already computes. Before #2905 only a `debug_assert!` guarded the order (the Rust test's `[10, 5, 0]` would subtract 10 from 5; counterexample removed in bbee75955; the last revision that has them is 17ccc5412). `restore` never passed such starts, so this was an unchecked contract rather than a reachable bug.
+`prepare_tiers` clamps the tier starts monotone itself (`clampStarts`). `clampStarts_mono` proves the tier sizes then never underflow and sum to the slot count, whatever the caller passes; `clampStarts_ordered` that the clamp changes nothing for the ordered starts `restore` already computes.
 
 **4. Does `DETACH DELETE` leave stale endpoints?**
 
@@ -83,7 +83,7 @@ Tiers are split into pages held by `Arc`s, so a new MVCC version shares pages un
 
 ## Bugs found
 
-None. The one boundary the spec needs, an edge whose endpoints are both `u64::MAX`, is unreachable (above), and is documented in `endpoint_index.rs` only for the narrow tiers. The unchecked `prepare_tiers` order contract (#2903) was hardened by #2905.
+None. The one boundary the spec needs, an edge whose endpoints are both `u64::MAX`, is unreachable (above), and is documented in `endpoint_index.rs` only for the narrow tiers.
 
 There are no CONDITIONAL rows.
 

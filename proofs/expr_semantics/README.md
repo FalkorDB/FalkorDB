@@ -30,7 +30,7 @@ Yes, for every lane this project models:
 - **`AND`/`OR` with row narrowing:** the per-row short-circuit fold on every row (`andOr_agrees`);
 - **`CASE`:** each `WHEN`, `THEN` and `ELSE` runs for exactly the rows the per-row path runs it for (`case_agrees`, `case_match_agrees`). So `CASE WHEN n.d <> 0 THEN 1 / n.d ELSE 0 END` can't divide by zero on either path.
 
-Agreement is on success versus error, not on the error *message*. The columnar path reports the first error child by child, while the per-row path reports it row by row. Since #3294 both paths word an `AND`/`OR` type error the same way in the Rust, but the model proves that wording only for the per-row path (`boolMismatch`), and the two paths may report it for different rows.
+Agreement is on success versus error, not on the error *message*. The columnar path reports the first error child by child, while the per-row path reports it row by row. Both paths word an `AND`/`OR` type error the same way in the Rust, but the model proves that wording only for the per-row path (`boolMismatch`), and the two paths may report it for different rows.
 
 **2. Is the logic openCypher's three-valued logic?**
 
@@ -39,8 +39,8 @@ Yes:
 - `AND`, `OR` and `XOR` are Kleene logic (`and_kleene`, `or_kleene`, `xor_kleene`);
 - De Morgan holds (`deMorgan_and`, `deMorgan_or`);
 - `x IN list` is Kleene "any" of `x = element` for scalars (`contains_is_kleene_any`), so `1 IN [2, null]` is `null` and not `false`;
-- `<>` is exactly `NOT (=)` (`neq_eq_not_eq`), since #2917;
-- a non-Boolean, non-null `AND`/`OR`/`XOR` operand fails with C's message naming its type, `Type mismatch: expected Boolean or Null but was Integer` (`and_or_mismatch_names_type`, `xor_mismatch_names_type`, on the scalar subset), since #3294. Only the per-row path's wording is proven; the columnar `vecAndOr` is modelled without a message.
+- `<>` is exactly `NOT (=)` (`neq_eq_not_eq`);
+- a non-Boolean, non-null `AND`/`OR`/`XOR` operand fails with C's message naming its type, `Type mismatch: expected Boolean or Null but was Integer` (`and_or_mismatch_names_type`, `xor_mismatch_names_type`, on the scalar subset). Only the per-row path's wording is proven; the columnar `vecAndOr` is modelled without a message.
 
 **3. What does integer arithmetic do at the edges?**
 
@@ -64,11 +64,11 @@ No. `bfs_sound` proves that whenever the bidirectional BFS meets, the `expect("B
 | `arith_agrees` | Columnar `+ - * / %` equals `Value` arithmetic, values and errors | `FalkorExprSemantics.lean` |
 | `andOr_agrees` | Columnar `AND`/`OR` with row narrowing is the per-row short-circuit fold | `FalkorExprSemantics.lean` |
 | `case_agrees`, `case_match_agrees` | Columnar `CASE` evaluates the same arms on the same rows | `FalkorExprSemantics.lean` |
-| `neq_eq_not_eq` | `<>` is `NOT (=)` for every pair of values (#2917) | `FalkorExprSemantics.lean` |
+| `neq_eq_not_eq` | `<>` is `NOT (=)` for every pair of values | `FalkorExprSemantics.lean` |
 | `contains_is_kleene_any`, `and_kleene`, `or_kleene`, `xor_kleene` | `IN`, `AND`, `OR`, `XOR` are three-valued logic | `FalkorExprSemantics.lean` |
 | `add_exact`, `neg_vs_sub_zero` | Wrapping arithmetic is exact in range; `-x` and `0 - x` differ only at `i64::MIN` | `FalkorExprSemantics.lean` |
-| `sign_float_is_int` | `sign()` of a Float is an Integer in {-1, 0, 1} (#2907) | `FalkorExprSemantics.lean` |
-| `rangeIter_correct`, `evalIter_range_is_iter` | For every `i64` start/end and nonzero step, the lazy `UNWIND range()` iterator yields exactly the eager `range()` list and never overflows, in debug and release (#2899) | `FalkorExprSemantics.lean` |
+| `sign_float_is_int` | `sign()` of a Float is an Integer in {-1, 0, 1} | `FalkorExprSemantics.lean` |
+| `rangeIter_correct`, `evalIter_range_is_iter` | For every `i64` start/end and nonzero step, the lazy `UNWIND range()` iterator yields exactly the eager `range()` list and never overflows, in debug and release | `FalkorExprSemantics.lean` |
 | `bfs_sound` | `shortestPath`'s BFS never hits its parent-chain panic and returns a real walk from source to destination | `BFS.lean` |
 | `evalOperand_eq`, `evalBatch_eq_perRow` | The inline leaf path and the bulk property path equal the full per-row evaluator | `Eval.lean`, `EvalMore.lean` |
 
@@ -88,9 +88,6 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | removed in bbee75955 (last revision: 17ccc5412) | `^` dropped an operand's error: `2 ^ (1/0)` returned `2`, unpowered. In the optimizer's constant evaluator every variable is an error, so `WHERE x ^ true` folded to `true` and the Filter was deleted: every row came back although `x ^ true` was `null` | Fixed by #2904 (`fd2c76a6c`, issue #2902): `pow_propagates_error`, `pow_constant_not_true`, `pow_bool_type_error` (`x ^ true` is now C's type error), `pow_binary_eq_spec`, `pow_agrees_without_errors`. The optimizer side is proven sound in [`../optimizer_rewrites`](../optimizer_rewrites) (`ConstEval.constEval_sound`) |
-| 2 | removed in bbee75955 (last revision: 17ccc5412) | `UNWIND range(i64::MAX - 1, i64::MAX)` yielded `MAX-1, MAX, MIN, MIN+1, …` and never stopped in release, and panicked on overflow in debug. The eager `range()` gives the two elements | Fixed by #2899 (`e63165cb5`, issue #2894): `rangeIter_correct` (all inputs), `rangeIter_max_fixed`, `rangeIter_bounds_examples` |
-| 3 | removed in bbee75955 (last revision: 17ccc5412) | `sign(-2.5)` returned a Float | Fixed by #2907 (`sign_float_is_int`) |
 | 4 | `int_float_eq_not_transitive` | Whenever two distinct integers round to the same `f64`, `=` stops being transitive: `2^53+1 = 2^53.0` and `2^53 = 2^53.0`, yet `2^53+1 <> 2^53` | Harmless: C promotes the same way (Neo4j compares exactly). `ORDER BY` no longer depends on it since #2912 (see `value_order`) |
 | 5 | `bug2724_prev_missing` (`FnRegistry.lean`) | `prev()` is a documented, user-callable C function but is not registered in Rust ("Unknown function 'prev'"). Property `CoversC` (every non-internal C built-in resolves); `covers_all_but_prev` shows it is the only gap | **Open** (#2724) |
 | — | `toInteger_float_vs_string` | `toInteger(1e30)` saturates to `i64::MAX`, while `toInteger('1e30')` returns `null` | Noted difference, not filed |
@@ -104,7 +101,7 @@ Each bug was reproduced against the real engine (see [`../FINDINGS.md`](../FINDI
 
 | File | What's in it |
 |---|---|
-| `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^`, `RangeIter`, `sign`, `toInteger`, `coalesce`; bugs 1–4 |
+| `FalkorExprSemantics.lean` | The report header, i64 helpers, the scalar `V F` and `compare_value`, the per-row evaluator, every columnar lane and its agreement theorem, three-valued logic, `IN`, `^`, `RangeIter`, `sign`, `toInteger`, `coalesce`; bug 4 |
 | `EvalSyntax.lean` | The expression tree `E` (every arm a comprehension body can reach), `Ops`, `Fn` (`GraphFn`), the arm helpers |
 | `Eval.lean` | `ExprEval::eval_node` with `eval_compound` / `eval_case` (AND/OR/XOR/NOT/CASE/calls/IN/lists/subscripts/projections, a thunked catch-all), `eval`, `eval_operand` |
 | `Frame.lean` | `E.vars`, `E.funcs`, the frame property `evalNode_frame` |

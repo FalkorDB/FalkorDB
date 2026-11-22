@@ -25,16 +25,13 @@ Rust's `slice::sort_by` requires the comparator to be a *total order*:
 
 Since Rust 1.81 the sort checks this while it runs, and it panics, killing `redis-server`, when it catches the comparator contradicting itself.
 
-The project answers the question both ways:
-
-- **Before #2912, no.** The old `compare_value` broke all three laws, and Lean found the inputs (see [Bugs found](#bugs-found)).
-- **On main, yes.** `Value::sort_cmp` is proven to be a total order on every value Rust can build. That includes nested lists, maps, vectors and points.
+The answer is yes: `Value::sort_cmp` is proven to be a total order on every value Rust can build. That includes nested lists, maps, vectors and points.
 
 **2. Do "equal" and "same hash" agree?**
 
 Grouping (`GroupKey`) puts rows in a `HashMap`. The `HashMap` contract is that equal keys have equal hashes. If two keys compare equal but hash differently, the same group appears twice.
 
-`main_hash_consistent` proves the contract holds on main: if `sort_cmp` says equal, the hash words are equal. Before #2917 this was false for vectors and points containing `-0.0` or NaN.
+`main_hash_consistent` proves the contract holds on main: if `sort_cmp` says equal, the hash words are equal.
 
 **3. Does DISTINCT keep exactly one row per value?**
 
@@ -72,15 +69,8 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `nan_breaks_antisymmetry` | NaN < 1.0 **and** 1.0 < NaN under `compare_value`. `ORDER BY` over stored NaNs (21+ rows) panicked and killed the server | Fixed by #2912: ORDER BY now sorts by `sort_cmp`. The `compare_value` theorem remains; only the ORDER BY sort-comparator counterexample theorems were removed (bbee75955; the last revision that has them is 17ccc5412) |
-| 2 | `mixed_numeric_not_transitive` | `2⁵³ = 2⁵³.0 = 2⁵³+1` but `2⁵³ < 2⁵³+1`: ints were rounded through `f64`. Same panic | Fixed by #2912 |
-| 3 | `map_order_not_transitive` | `compare_map` returned `Equal` at the first mixed-type value pair, which creates a cycle. Same panic | Fixed by #2912 |
-| 4 | removed (17ccc5412) | `{a:1} = {a:'x'}` and `{a:1} <> {a:'x'}` were both false | Fixed by #2917 |
-| 5 | `hash_not_consistent_with_eq` | `2⁵³+1 == 2⁵³.0` under `PartialEq`, but the hashes differ | Fixed for grouping (`GroupKey` uses `sort_cmp`). **Open outside grouping**: `ValueHashJoin` hashes `Value` then checks `compare_value`, so `2⁵³+1` and `2⁵³.0` can miss a join match (found by reading the Rust, not reproduced live) |
-| 6 | `nan_eq_irreflexive` | `NaN != NaN`, so each NaN row became its own group | Fixed by #2917 (`main_nans_one_key`) |
+| 5 | `hash_not_consistent_with_eq` | `2⁵³+1 == 2⁵³.0` under `PartialEq`, but the hashes differ | **Open outside grouping** (`GroupKey` uses `sort_cmp`): `ValueHashJoin` hashes `Value` then checks `compare_value`, so `2⁵³+1` and `2⁵³.0` can miss a join match (found by reading the Rust, not reproduced live) |
 | 7 | `fx_row_collision`, `fx_collision_general` | DISTINCT, `count(DISTINCT)` and the MERGE cache keep only the 64-bit Fx hash; a collision is one subtraction away and the second row is dropped | **Present on main** (#2780 closed as not planned) |
-| 8 | removed (17ccc5412) | `min([1.0, NaN, 3.0])` returned 3.0 | Fixed by #2917 (`min_nan_ignored`) |
-| W9-hash-1 | removed (17ccc5412) | `count(DISTINCT x)` over `[NaN, -NaN]` was 2 (C: 1) | Fixed by #2917 |
 
 ### The bug this project missed, and what changed
 
@@ -99,7 +89,7 @@ Since then:
 
 | File | What's in it |
 |---|---|
-| `Model.lean` | `V`, the type order (`Tag`, `orderTag`), the pre-#2912 `compare_value`, `compare_list`/`compare_map`, `PartialEq`, `Hash`, FxHasher; counterexamples 1–8 |
+| `Model.lean` | `V`, the type order (`Tag`, `orderTag`), the `compare_value` model, `compare_list`/`compare_map`, `PartialEq`, `Hash`, FxHasher; counterexamples |
 | `SortCmp.lean` | `sort_cmp` (`SC.sc`), well-formedness `wf`, and the induction `sc_laws` |
 | `Main.lean` | `sort_cmp` as on main (`scMain`), its total order, the sort call sites, hash consistency, NaN and signed-zero theorems |
 | `Glue.lean` | Small `value.rs` glue: `clone`, `get_type`, `name`, `DeletedNode::new`, the deduper |

@@ -7,7 +7,7 @@ This project proves what the engine does when it computes with values. It covers
 - how function arguments are type-checked before a function body runs;
 - the function registry, the scalar aggregation bodies and the built-in procedures (`db.labels`, `dbms.functions`, …).
 
-It also covers value memory accounting, the v19 value codec, and the nesting cap that #3339 put on stored values. Throughout, Rust is compared with C FalkorDB on the inputs where both have an answer.
+It also covers value memory accounting, the v19 value codec, and the nesting cap on stored values. Throughout, Rust is compared with C FalkorDB on the inputs where both have an answer.
 
 User-facing behaviour that depends on it:
 
@@ -36,18 +36,18 @@ Not through the nine modelled unary numeric functions (`unaryFns`: `abs`, `ceil`
 
 **2. What do `/` and `%` do on integers?**
 
-`+`, `-`, `*` wrap, as in a Rust release build. The wrapping model `wDiv`/`wRem` agrees with exact arithmetic (`wDiv_exact` excludes `i64::MIN / -1`, `wRem_exact`), and the real `Value` `/` raises an overflow error on `i64::MIN / -1` instead of wrapping (#3603: `ValueMath.div_min_neg_one`, `div_int_ok`). The division identity `(a / b) * b + a % b = a` always holds (`div_rem_identity`). Every operator propagates null, and each one has an exact error condition. For example, `mul_ok_iff` says `*` fails exactly when a non-null operand isn't a number. Map `+` is a right-biased merge: `{a:1} + {a:2}` is `{a:2}` (`lookup_omExtend`), and the result never has duplicate keys (`nodup_omExtend`).
+`+`, `-`, `*` wrap, as in a Rust release build. The wrapping model `wDiv`/`wRem` agrees with exact arithmetic (`wDiv_exact` excludes `i64::MIN / -1`, `wRem_exact`), and the real `Value` `/` raises an overflow error on `i64::MIN / -1` instead of wrapping (`ValueMath.div_min_neg_one`, `div_int_ok`). The division identity `(a / b) * b + a % b = a` always holds (`div_rem_identity`). Every operator propagates null, and each one has an exact error condition. For example, `mul_ok_iff` says `*` fails exactly when a non-null operand isn't a number. Map `+` is a right-biased merge: `{a:1} + {a:2}` is `{a:2}` (`lookup_omExtend`), and the result never has duplicate keys (`nodup_omExtend`).
 
 **3. Does `toInteger('…')` agree with C?**
 
-On every integer literal it does: an optional sign followed by ASCII digits, of any length. `toInteger_int_literal_agrees_c` proves that Rust's answer equals C's `strtoll` branch, whatever the `f64` parser does. In range both return the value, and out of range both return `null`. Before #2989, Rust clamped `toInteger('-9223372036854775809')` to `i64::MIN`; `toInteger_neg_overflow_null` covers that window.
+On every integer literal it does: an optional sign followed by ASCII digits, of any length. `toInteger_int_literal_agrees_c` proves that Rust's answer equals C's `strtoll` branch, whatever the `f64` parser does. In range both return the value, and out of range both return `null`. `toInteger_neg_overflow_null` covers the window just below `i64::MIN`, e.g. `toInteger('-9223372036854775809')`.
 
 **4. Can a stored value be nested deep enough to crash the server on load?**
 
-No, since #3339:
+No:
 
 - `decode_reach`: whatever the input, the RDB/`RESTORE` decoder never recurses deeper than `MAX_VALUE_NESTING + 1`;
-- `decodeValue_agrees`: below the cap, the decoder accepts exactly what the pre-#3339 decoder accepted;
+- `decodeValue_agrees`: below the cap, the decoder accepts exactly what the uncapped decoder accepted;
 - `validateProperty_depth`: every value a property write accepts is within the cap;
 - `stored_roundtrip`: every accepted value saves and loads back unchanged, for vectors under 2³² dimensions.
 
@@ -68,11 +68,11 @@ The divergences that remain are listed under [Bugs found](#bugs-found).
 | `mul_ok_iff`, `div_ok_iff`, `rem_ok_iff` | The exact conditions under which `*`, `/`, `%` return an error | `Value.lean` |
 | `lookup_omExtend`, `nodup_omExtend` | Map `+` is a right-biased merge with no duplicate keys | `Value.lean` |
 | `mul_agree_on_numeric`, `add_agree_int_int` | Rust `+` and `*` equal C's on the inputs both accept | `CArith.lean` |
-| `toInteger_int_literal_agrees_c` | `toInteger` on any integer string equals C's `strtoll` (#2989) | `Conversion.lean` |
-| `coalesce_zero_args_rejected` | `coalesce()` with no arguments is an arity error, as in C (#2990) | `TypeCheck.lean` |
+| `toInteger_int_literal_agrees_c` | `toInteger` on any integer string equals C's `strtoll` | `Conversion.lean` |
+| `coalesce_zero_args_rejected` | `coalesce()` with no arguments is an arity error, as in C | `TypeCheck.lean` |
 | `mayFail_sound` | The `may_fail_self_match` pre-filter is sound: when it says "can't fail", `v = v` is conclusively true | `SelfCompare.lean` |
 | `chunked_eq_firstDiff` | The 16-lane vector comparison finds the same first difference as an element-by-element scan | `SelfCompare.lean` |
-| `decode_reach`, `decodeValue_agrees`, `stored_roundtrip` | Decoding is depth-bounded, unchanged below the cap, and every accepted property round-trips (#3339) | `Nesting.lean` |
+| `decode_reach`, `decodeValue_agrees`, `stored_roundtrip` | Decoding is depth-bounded, unchanged below the cap, and every accepted property round-trips | `Nesting.lean` |
 | `heap_le_amortized` | For unshared values, the amortized memory figure is at least the plain heap size | `Misc.lean` |
 | `registerAll_ok` | Registering the built-ins never panics when the lowered names are distinct | `Registry.lean` |
 | `unary_rust_eq_c` | Every unary trig function equals C's | `Trig.lean` |
@@ -93,12 +93,6 @@ Each bug was confirmed with a Rust repro and live against C (see [`../FINDINGS.m
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 | `toInteger_neg_overflow_null` | `toInteger('-9223372036854775809')` and the strings just below it returned `i64::MIN` (C: `null`) | Fixed by #2989 (closes #2955) |
-| 2 | `coalesce_zero_args_rejected` | `coalesce()` with zero arguments was accepted and returned `null` (C: arity error). Same for `indegree`/`outdegree` | Fixed by #2990 (closes #2956) |
-| 3 | removed (17ccc5412) | Stored values had no nesting limit, so a deeply nested value could overflow the stack on load (GHSA-mwvh-8fq5-x2j8, #2722) | Fixed by #3339 (`decode_reach`, `stored_roundtrip`) |
-| 4 | removed (17ccc5412) | `sign(-2.5)` returned a Float | Fixed by #2907 |
-| 5 | removed (17ccc5412) | `^` with a non-numeric operand (`true ^ 2`, `2 ^ 'a'`) returned `null` instead of a type error (C: `Type mismatch: expected Integer, Float, or Null but was Boolean`) | Fixed by #2904 (closes #2902): `pow_nonnumeric_base_errors`, `pow_nonnumeric_exp_errors`, `pow_bool_errors`; numeric results unchanged (`pow_numeric_unchanged`), `pow()` never hits the error on its declared domain (`pow_fn_in_domain`) |
-| 6 | removed (17ccc5412) | `percentileDisc`/`percentileCont` with a row-dependent percentile used the *last non-null* row's percentile (C: the first non-null row's) | Fixed by #3007 (closes #2980): `percentile_first_row`, `percentile_keeps` |
 | — | `isAggregate_case_sensitive` | `Functions::is_aggregate("COUNT")` is false although `count` is registered, because it doesn't lowercase | Latent: no caller today |
 | — | `encode_map_is_null` | `Encode<19>` writes a Map, Node, Relationship or Path as `NULL` behind only a `debug_assert!` | Latent: property writes never store those types |
 | — | `within_nest_empty` | The decoder accepts one level more than writers produce (`MAX` arrays around `[]`) | Harmless: still bounded, never stored |
@@ -106,7 +100,7 @@ Each bug was confirmed with a Rust repro and live against C (see [`../FINDINGS.m
 
 Other live divergences from C are recorded in the header, not as bugs, because Rust is often the better answer:
 
-- `MIN / -1` was `MIN` in Rust and `MAX` in C; Rust now raises an overflow error (#3603, `ValueMath.div_min_neg_one`). `(2^53+1)/1` is exact in Rust; C divides through a double.
+- `MIN / -1` raises an overflow error in Rust (`ValueMath.div_min_neg_one`) and is `MAX` in C. `(2^53+1)/1` is exact in Rust; C divides through a double.
 - `abs(MIN)` errors in Rust. `abs(-0.0)` is `0` in Rust and `-0` in C.
 - Some `+` typing differs. `'a' + {b:1}` is an error in Rust, while C concatenates. `true + 1` is an error in Rust, while C returns a Float.
 - `toJSON` of floats and maps is formatted differently.
@@ -129,8 +123,8 @@ This project has no CONDITIONAL rows.
 | `Conversion.lean` | `toInteger`/`toFloat`/`toString`/`toBoolean` and list forms, integer parsing against C `strtoll` |
 | `ConvReg.lean` | The rest of `conversion.rs` (registration and wrappers) |
 | `SelfCompare.lean` | `compare_value` on lists and maps, the chunked vector scan, `may_fail_self_match`, `is_never_equal` |
-| `Misc.lean` | Duration formatting, heap-size accounting, attribute and point/duration accessors, the v19 codec before #3339, JSON floats |
-| `Nesting.lean` | #3339: `MAX_VALUE_NESTING`, the capped decoder, property validation, round-trip |
+| `Misc.lean` | Duration formatting, heap-size accounting, attribute and point/duration accessors, the uncapped v19 codec, JSON floats |
+| `Nesting.lean` | `MAX_VALUE_NESTING`, the capped decoder, property validation, round-trip |
 | `Registry.lean` | `functions/mod.rs` dispatch, `GraphFn` constructors, `add*`, `init_functions`, the UDF registry and version counter |
 | `AggScalar.lean` | The scalar aggregation bodies (`count`, `sum`, `avg`, `collect`, `stDev`, `percentile*`) and `rand` |
 | `Procedures.lean` | `procedures.rs`, `path.rs` and `entity_type.rs`: YIELD shapes, `dbms.procedures`/`dbms.functions` ordering, `db.meta.stats` |
@@ -163,7 +157,7 @@ The header's own count ("72 PROVEN, 11 MODELLED, 46 NOT COVERED of 129") predate
 - **Floats.** `f64` is abstract (`FOps`, the `FC` classes, `FloatCmp` laws). libm `exp`, `ln`, `log10`, `floor`, `ceil` and `round` are parameters, so their results are trusted.
 - **Parsing.** `f64::from_str` is modelled only by its grammar and its integer-literal rounding, not by the value it returns.
 - **Trusted libraries.** Chrono calendar accessors and formatting, `json_escape`, the RNG behind `rand`, the QuickJS UDF bridge and registry locking.
-- **Temporal helpers.** These are parameters here; they are proven in [`../functions_temporal`](../functions_temporal). The exception is `Time ± Duration`, which since #2985 no longer calls them: `timeAddDur`/`timeSubDur` model it directly, and `add_time_dur_in_day`, `sub_time_dur_in_day`, `time_sub_add_dur`, `time_add_whole_days` prove it never fails, always lands in `[0, 86400)`, and ignores whole days.
+- **Temporal helpers.** These are parameters here; they are proven in [`../functions_temporal`](../functions_temporal). The exception is `Time ± Duration`, which no longer calls them: `timeAddDur`/`timeSubDur` model it directly, and `add_time_dur_in_day`, `sub_time_dur_in_day`, `time_sub_add_dur`, `time_add_whole_days` prove it never fails, always lands in `[0, 86400)`, and ignores whole days.
 - **Ordering and hashing.** Value ordering, equality and hashing are proven in `value_order`, not here.
 - **Memory accounting.** `heap_size` charges a `Relationship` 24 bytes it doesn't own; the model records this but doesn't treat it as wrong.
 

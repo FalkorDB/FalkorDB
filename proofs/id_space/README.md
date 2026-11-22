@@ -31,7 +31,7 @@ Yes. `verify_ok_iff` proves `verify` passes exactly when two things hold:
 With respect to their refusals, yes. Once the refusals pass, both apply the whole batch and then run a final consistency check (`checked`); that check can still return `Inconsistent`, and the mutation is kept in that case (`create_spec`, `release_spec` state the new space and the `checked` result together).
 
 - `create_spec` proves `create` either passes all its refusals and applies the whole batch (returning the trailing `checked` result), or changes nothing and returns `AlreadyLive` or `IdOutOfRange`.
-- `create_out_of_range` proves an id `≥ ID_LIMIT` (`GrB_INDEX_MAX`) is refused before anything is sized; this is the #2892 fix in #2911.
+- `create_out_of_range` proves an id `≥ ID_LIMIT` (`GrB_INDEX_MAX`) is refused before anything is sized.
 - `release_spec` proves the same refusal-level all-or-nothing for `release`, judged over every *requested* id. A free id gives `AlreadyRecycled` and a never-created one gives `NeverCreated`.
 
 **3. Can the live count underflow?**
@@ -94,9 +94,7 @@ No (#3022). `refuseNotLive_live` proves `refuse_not_live` accepts exactly the li
 
 ## Bugs found
 
-No confirmed bugs in the current `id_space.rs`.
-
-Historical: #2892 (fixed by #2911). Before the fix, `create` refused only `u64::MAX`. A `GRAPH.EFFECT` with id 2^61 asserted in `GrB_Matrix_new`, and `u64::MAX - 1` made `grow_cap` hang. Now `create` refuses every id `≥ ID_LIMIT = GrB_INDEX_MAX` before anything is sized (`create_out_of_range`). `grow_cap`'s side is proven in `proofs/graph_queries` (`growCap_le_max`).
+No open bugs. Fixed ones are in this file's git history.
 
 There are no CONDITIONAL rows.
 

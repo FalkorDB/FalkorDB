@@ -45,7 +45,7 @@ Every class of IEEE value that ordering or hashing can distinguish. `F` has six 
 - `frac lo r`: a non-integral finite value strictly between `lo` and `lo + 1`, where `r` orders the ones that share `lo`;
 - `negInf` and `posInf`.
 
-The same `F` models `f64` (Float) and `f32` (VecF32 and Point components); only the bit layout differs. The model was extended on 2026-10-11. Before that it was `nan | num`, which is why `value_order` missed the #2917 hash bug on `-0.0` and NaN payloads (see [`../value_order/README.md`](../value_order/README.md)).
+The same `F` models `f64` (Float) and `f32` (VecF32 and Point components); only the bit layout differs.
 
 On top of `F`:
 
@@ -117,7 +117,7 @@ None. `core` models no Rust function on its own, so it can't find a bug by itsel
 | `Value.lean` | `V F` (the engine `Value`, all 16 variants), `V.order`, `V.name`, `isNull`/`isNum`/`isList` |
 | `Float.lean` | `F`, `F.nkey`, `fpcmp`, `Flag`, `cmpF`, `roundF` (`i as f64`), `bits64`/`bits32`, `asI64`, `diffZero` |
 | `Int64.lean` | `I64MIN`/`I64MAX`, `InI64`, `wrap`, `wAdd`/`wSub`/`wMul`/`wDiv`/`wRem`, `satI64`, `w` |
-| `Range.lean` | `rangeLen`, `rangeList`, `rangeIter` / `rangeIterRel` (the lazy `UNWIND range()` iterator after #2899, debug and release build), `rangeIter_of_inRange` |
+| `Range.lean` | `rangeLen`, `rangeList`, `rangeIter` / `rangeIterRel` (the lazy `UNWIND range()` iterator, debug and release build), `rangeIter_of_inRange` |
 | `Order.lean` | `cmpI`, `cmpN`, `cmpB` (`Ord::cmp` on `i64`/`usize`/`bool`), `cmp3`, and their swap/transitivity lemmas |
 | `Laws.lean` | `Lw`, `thn`, `lexA`, `zipNe` and their laws; `cmp3_lw` |
 | `COVERAGE.tsv` | Header only: `core` owns no Rust functions |

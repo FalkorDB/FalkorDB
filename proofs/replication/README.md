@@ -68,7 +68,7 @@ No: `no_spurious_resync`. If the replica is in sync and the write is well formed
 - no id is both created and deleted in the same write (`disjoint`);
 - every id is below `ID_LIMIT` (`inLimit`, from #2911).
 
-`disjoint` is an assumption, not a derived fact. In the engine, a node created and deleted in one query is unwound out of `Pending`, and `digest_cancelled` is the emitter path that can ship it as a separate create/delete pair; today the effects-count gate drops a write that only cancels entities before `digest_cancelled` runs, so that path is suppressed for cancel-only writes (W2-effects-1). The model does not include `digest_cancelled`. See [What the model does not cover](#what-the-model-does-not-cover): that is where W2-effects-1 lives.
+`disjoint` is an assumption, not a derived fact. In the engine, a node created and deleted in one query is unwound out of `Pending`, and `digest_cancelled` is the emitter path that can ship it as a separate create/delete pair. The model does not include `digest_cancelled`. See [What the model does not cover](#what-the-model-does-not-cover) for the open schema-only gap (W2-effects-1).
 
 ## The headline theorems
 
@@ -99,7 +99,7 @@ No: `no_spurious_resync`. If the replica is in sync and the write is well formed
 
 This project found no bugs in the Rust. It did find a bug in its own first draft (the boundary, step 6 above).
 
-One open bug sits exactly in its assumptions: **W2-effects-1**, a write that only registers a name or only cancels entities ships no payload (see [`../effects_emit_apply`](../effects_emit_apply)). The model here has no cancelled pairs and assumes every modifying write produces a payload, so `emit_apply` neither proves nor refutes it.
+One open bug sits exactly in its assumptions: **W2-effects-1**, a write that only registers a name ships no payload (see [`../effects_emit_apply`](../effects_emit_apply)). The model here assumes every modifying write produces a payload, so `emit_apply` neither proves nor refutes it.
 
 ## Files
 
@@ -131,7 +131,7 @@ The lakefile requires [`../effects_emit_apply`](../effects_emit_apply) as a path
 ## What the model does not cover
 
 - **Only nodes and schema.** `Record` here has schema registration, node create and node delete. Edges, `UPDATE_NODE`/`UPDATE_EDGE`, `SET_LABELS`/`REMOVE_LABELS`, index and constraint DDL, and `digest_cancelled`'s create/delete pairs are not modelled. The liveness checks #3022 added to those arms are proven separately in `effects_emit_apply` (`apply_wf`); on the arms modelled here they change nothing.
-- **Cancelled entities and schema-only writes.** `PendingWF.disjoint` assumes them away, and assumption 5 in the header assumes every modifying write produces a payload. W2-effects-1 shows that assumption is false today for writes whose only effect is a cancelled pair or a new name.
+- **Cancelled entities and schema-only writes.** `PendingWF.disjoint` assumes them away, and assumption 5 in the header assumes every modifying write produces a payload. W2-effects-1 shows that assumption is false today for writes whose only effect is a new name.
 - **Bytes.** This model works on `Record`, not bytes. The byte codec is proven in `effects_codec` (`readRecord_encRecord_wf`); the two are not linked by a theorem. (The header's "what is still assumed" item 1 predates that project.)
 - **Transport.** Redis replication delivers payloads in order; `GRAPH.EFFECT` is atomic because the graph is rolled back on any error. Both are taken as given.
 - **The master's own id check.** Since #2846 the master also verifies its id space at commit. That it never refuses a well-formed write is not proven here (the id-space half is in `id_space`).

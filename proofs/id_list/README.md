@@ -39,8 +39,7 @@ This is a guarantee about the modelled decoder, not about every malformed real p
 
 **4. Is it safe to push onto a decoded list?**
 
-- **Before #2920, no.** `from_segments` started the run at the last decoded segment. A later collapse could read a descending range back ascending (decoded `[10,9,8]` plus `20,22` came back `[8,9,10,20,22]`) or hit the `assert!`.
-- **On main, yes.** `decoded_then_pushed_keeps_order` proves pushing any ids onto any well-formed decoded list gives the decoded ids followed by the new ones. `readIds_then_pushed_keeps_order` proves the same end to end from the wire. Both assume the total id count stays below 2^32 (the `u32` segment length is not modelled; see "What the model does not cover").
+Yes. `decoded_then_pushed_keeps_order` proves pushing any ids onto any well-formed decoded list gives the decoded ids followed by the new ones. `readIds_then_pushed_keeps_order` proves the same end to end from the wire. Both assume the total id count stays below 2^32 (the `u32` segment length is not modelled; see "What the model does not cover").
 
 **5. Does collapsing to a bitmap actually save space?**
 
@@ -60,7 +59,7 @@ No, and that is allowed. `decode ∘ encode` is the identity, but the decoder ac
 | `push_encode_decode` | Build, encode, decode gives back the pushed ids | `Wire.lean` |
 | `readIds_encodeIds`, `decode_encodeSeg` | Decoding an encoded list returns its segments and stops exactly at its end | `Wire.lean` |
 | `readIds_never_panics`, `readIds_safe` | No input panics the decoder; what it accepts is well-formed, totals `count`, and was read in bounds | `Wire.lean` |
-| `decoded_then_pushed_keeps_order` | Pushing onto a decoded list keeps every id in order (#2920) | `Decoded.lean` |
+| `decoded_then_pushed_keeps_order` | Pushing onto a decoded list keeps every id in order | `Decoded.lean` |
 | `collapse_shrinks` | When the bitmap is chosen, it is smaller than the ranges it replaces | `CostProps.lean` |
 | `toRoaring_spec`, `eqList_iff` | `to_roaring` is exactly the id set; `==` compares ids, not segmentation | `Misc.lean` |
 
@@ -83,11 +82,7 @@ No, and that is allowed. `decode ∘ encode` is the identity, but the decoder ac
 
 See [`../FINDINGS.md`](../FINDINGS.md) and [`REPORT.md`](REPORT.md) for the repros.
 
-| # | Theorem (counterexample) | What it means | Status |
-|---|---|---|---|
-| 1 | removed (17ccc5412) | Pushing onto a decoded `IdList` reordered ids (decoded `[10,9,8]` + `20,22,…` → `[8,9,10,20,22,…]`) or panicked on a decoded `Repeat`. Latent: no production path pushed onto a decoded list | Fixed by #2920 (closes #2919; `decoded_then_pushed_keeps_order`) |
-
-There are no open bugs and no CONDITIONAL rows.
+No open bugs. Fixed ones are in this file's git history. There are no CONDITIONAL rows.
 
 Suspected, not confirmed: a roaring blob with the same high key twice keeps only the last partition in roaring-rs. CRoaring may keep the first, so the two engines could decode the same bytes differently. This has not been checked against the C module.
 
@@ -95,8 +90,8 @@ Suspected, not confirmed: a roaring blob with the same high key twice keeps only
 
 | File | What's in it |
 |---|---|
-| `Push.lean` | `Seg`, `St`, `push`, `collapse`, `from_segments`; the invariant `Inv`, `push_ok`, `pushAll_ok`, `fromIter_iter` (the pre-#2920 counterexamples were removed in bbee75955) |
-| `Decoded.lean` | The decoded-list invariant `DInv` and `decoded_then_pushed_keeps_order` (#2920) |
+| `Push.lean` | `Seg`, `St`, `push`, `collapse`, `from_segments`; the invariant `Inv`, `push_ok`, `pushAll_ok`, `fromIter_iter` |
+| `Decoded.lean` | The decoded-list invariant `DInv` and `decoded_then_pushed_keeps_order` |
 | `Wire.lean` | The byte format: narrow integers, headers, `Segment::encode`/`decode`, `read_ids`; round trip, safety, refusals, non-canonical inputs |
 | `Cost.lean` | The collapse arithmetic: `bucket_body`, `bitmap_header`, `Run` and its tally, `encoded_len` |
 | `CostProps.lean` | Its theorems: `bucketBody_spec`, `addLoop_eq`, `encodedLen_eq`, `collapse_shrinks`, `no_collapse_below_floor` |
