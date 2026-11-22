@@ -11,7 +11,8 @@ Theorems: `reserve_covers` / `bindNode_covers` (every reservation keeps the
 table covering; only pattern cleanup can break it — `comprehension_cleanup_breaks`),
 `bind_iterable_outer` (a comprehension's list is bound before its variable),
 `loop_var_shadows`, `reduce_same_name`, `prop_on_path`, `exists_pattern`,
-`func_arg_mismatch`, `bindExpr_eq`, `bindSetItems_*`, `selfRef_iff`.
+`exists_pattern_arg`, `func_arg_mismatch`, `bindExpr_eq`, `bindSetItems_*`, `selfRef_iff`,
+`pattern_predicate_declares_nothing` (#1334: a pattern predicate names only visible variables).
 
 `bind_paren` (`(x)` binds exactly like `x`: same tree, same state, same
 errors — so no bound tree holds a `Paren`, which `BE` has no constructor for),
@@ -115,6 +116,25 @@ def flatB (o : Bool) (bs : List BE) : BE :=
     | _ => b
   | _ => body
 
+/-- The `exists()` argument test (binder.rs `bind_expr_node`, before the arguments are bound):
+the argument, looked through its parentheses, is a traversal pattern. -/
+def patArg : NE → Bool
+  | .pattern _ => true
+  | .paren (c :: _) => patArg c
+  | _ => false
+
+/-- The pattern-predicate name check (binder.rs `bind_expr_node`, `ExprIR::Pattern` arm, #1334):
+every named alias is resolved as a variable reference is (`resolve_name`; a parent-scope name is
+copied in), the ORDER BY placeholder is rejected outright; unnamed entities are skipped. -/
+def checkPatNames (st : St) (locals : List Env) : List Alias → Except String St
+  | [] => .ok st
+  | .anon _ :: as => checkPatNames st locals as
+  | .named n :: as =>
+    if n = "__agg_order_by_placeholder__" then .error s!"'{n}' not defined"
+    else match resolve st locals n with
+      | .error e => .error e
+      | .ok (st1, _) => checkPatNames st1 locals as
+
 mutual
 def bindNode (st : St) (locals : List Env) : NE → Except String (BE × St)
   | .var n => match resolve st locals n with
@@ -145,11 +165,13 @@ def bindNode (st : St) (locals : List Env) : NE → Except String (BE × St)
   | .reduce acc it cs =>
     if acc = it then .error s!"Variable `{acc}` already declared"
     else bindReduce st locals acc it cs
-  | .pattern vars =>
-    let outer := st.cur.keys
-    match bindNames { st with cur := injectLocals st.cur locals } vars with
+  | .pattern vars => match checkPatNames st locals vars with
     | .error e => .error e
-    | .ok (st1, vs) => .ok (.pattern vs, { st1 with cur := cleanup outer st1.cur })
+    | .ok st0 =>
+      let outer := st0.cur.keys
+      match bindNames { st0 with cur := injectLocals st0.cur locals } vars with
+      | .error e => .error e
+      | .ok (st1, vs) => .ok (.pattern vs, { st1 with cur := cleanup outer st1.cur })
   | .patComp vars cs =>
     let outer := st.cur.keys
     match bindNames { st with cur := injectLocals st.cur locals } vars with
@@ -165,12 +187,13 @@ def bindNode (st : St) (locals : List Env) : NE → Except String (BE × St)
                     .error "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path"
                   else .ok (.prop k bs, st1)
       | none => .ok (.prop k bs, st1)
-  | .func name tys cs => match bindL st locals cs with
+  | .func name tys cs =>
+    if name = "exists" ∧ cs.any patArg then
+      .error "Invalid input: traversal patterns are not allowed as arguments to exists()"
+    else match bindL st locals cs with
     | .error e => .error e
     | .ok (bs, st1) =>
-      if name = "exists" ∧ bs.any (fun b => match b with | .pattern _ => true | _ => false) then
-        .error "Invalid input: traversal patterns are not allowed as arguments to exists()"
-      else if name ≠ "hasLabels" ∧ ((tys.zip bs).any fun tb => match tb.2 with
+      if name ≠ "hasLabels" ∧ ((tys.zip bs).any fun tb => match tb.2 with
           | .var v => !C.compat v.ty tb.1
           | _ => false) then .error "Type mismatch"
       else .ok (.func name bs, st1)
@@ -249,15 +272,24 @@ theorem prop_on_path (st : St) (locals : List Env) (k : Name) (n : Name) (v : Va
 theorem exists_pattern (st : St) (locals : List Env) (vars : List Alias) (bp : BE) (st1 : St)
     (h : bindNode C st locals (.pattern vars) = .ok (bp, st1)) (hp : ∃ vs, bp = .pattern vs) :
     ∃ e, bindNode C st locals (.func "exists" [] [.pattern vars]) = .error e := by
-  obtain ⟨vs, rfl⟩ := hp
-  simp [bindNode, bindL] at h ⊢
-  rw [h]; simp
+  simp [bindNode, patArg]
+
+/-- `exists()` on a traversal pattern, however parenthesised, is rejected before any argument is
+bound: the error is the same whatever the arguments are (`exists(((p)-->()))` included). -/
+theorem exists_pattern_arg (st : St) (locals : List Env) (tys : List Ty) (cs : List NE)
+    (h : cs.any patArg = true) :
+    bindNode C st locals (.func "exists" tys cs) =
+      .error "Invalid input: traversal patterns are not allowed as arguments to exists()" := by
+  simp only [bindNode]; simp [h]
+
+theorem patArg_paren (c : NE) (cs : List NE) : patArg (.paren (c :: cs)) = patArg c := by
+  simp [patArg]
 
 /-- A variable argument of an incompatible declared type is rejected (except `hasLabels`). -/
 theorem func_arg_mismatch (st : St) (locals : List Env) (name n : Name) (t : Ty) (v : Var) (st1 : St)
     (hr : resolve st locals n = .ok (st1, v)) (hc : C.compat v.ty t = false) (hn : name ≠ "exists")
     (hh : name ≠ "hasLabels") : bindNode C st locals (.func name [t] [.var n]) = .error "Type mismatch" := by
-  simp [bindNode, bindL, hr, hc, hn, hh]
+  simp [bindNode, bindL, hr, hc, hn, hh, patArg]
 
 /-! ## Parentheses and AND/OR flattening -/
 
@@ -471,14 +503,14 @@ theorem bindNode_covers (hk : KeysFresh C) : ∀ (st : St) (locals : List Env) (
   | st, locals, .func n tys cs, hc, hp, b, st', h => by
     simp only [patFree] at hp
     simp only [bindNode] at h
-    cases h1 : bindL C st locals cs with
-    | error e => rw [h1] at h; simp at h
-    | ok p =>
-      rw [h1] at h; simp only at h
-      have c1 := bindL_covers hk st locals cs hc hp p.1 p.2 h1
-      split at h
-      · simp at h
-      · split at h
+    split at h
+    · simp at h
+    · cases h1 : bindL C st locals cs with
+      | error e => rw [h1] at h; simp at h
+      | ok p =>
+        rw [h1] at h; simp only at h
+        have c1 := bindL_covers hk st locals cs hc hp p.1 p.2 h1
+        split at h
         · simp at h
         · simp at h; rw [← h.2]; exact c1
   | st, locals, .paren cs, hc, hp, b, st', h => by
@@ -654,21 +686,74 @@ theorem selfRef_leaf_prop (a b k : Name) (n : Nat) :
   simp [checkSelfRef, selfRef, selfRefL]
 
 
-/-! ## #1334: a pattern predicate may declare a new variable (gap closed 2026-10-20)
+/-! ## #1334: a pattern predicate declares nothing
 
-The `ExprIR::Pattern` arm of `bind_expr_node` (binder.rs) binds the predicate with
-`bind_graph(&pattern, false)`, which `define_name_in_scope`s every alias (`allow_reuse`), minting
-a fresh variable for a name that is not in scope; the cleanup then only hides it again. Nothing
-checks that a *named* alias already existed, so `WHERE () -- (n1)` with no `n1` in scope binds
-and runs as "some edge exists anywhere". -/
+The `ExprIR::Pattern` arm of `bind_expr_node` (binder.rs) resolves every named alias of the
+predicate (`checkPatNames`) before `bind_graph`, so a name visible nowhere is "not defined"
+instead of being minted fresh and cleaned up (issue #1334, fixed by #3528). -/
 
-/-- **A pattern predicate declares nothing** (openCypher; C rejects it, issue #1334; the
-exact C error message is not recorded here): whenever `bind_expr_node` accepts a pattern predicate, every named
-(`Alias.named`) variable in it was already visible where the predicate stands. A fix proves
-this by rejecting the pattern otherwise. -/
+/-- **A pattern predicate declares nothing** (openCypher; C rejects it, issue #1334): whenever
+`bind_expr_node` accepts a pattern predicate, every named (`Alias.named`) variable in it was
+already visible where the predicate stands. -/
 def PatternPredDeclaresNothing (st : St) (locals : List Env) (vars : List Alias) : Prop :=
   ∀ r, bindNode C st locals (.pattern vars) = .ok r →
     ∀ n, .named n ∈ vars → visible st locals n
+
+/-- `resolve_name` only ever adds a name that was already visible: whatever is visible after it
+was visible before. -/
+theorem resolve_visible_back (st : St) (locals : List Env) (n m : Name) (st1 : St) (v : Var)
+    (h : resolve st locals n = .ok (st1, v)) (hm : visible st1 locals m) : visible st locals m := by
+  by_cases hmn : m = n
+  · subst hmn; exact (resolve_ok_iff st locals m).1 ⟨_, h⟩
+  · unfold resolve at h
+    cases h1 : lookupLocals locals n <;> simp [h1] at h
+    · cases h2 : st.cur.find? n <;> simp [h2] at h
+      · cases h3 : st.useParent <;> simp [h3] at h
+        cases h4 : st.p2c.find? n <;> simp [h4] at h
+        · cases h5 : st.cfp.lookup n <;> simp [h5] at h
+          · cases h6 : st.parent.find? n <;> simp [h6] at h
+            obtain ⟨rfl, -⟩ := h
+            unfold visible at hm ⊢
+            rw [Env.insert_new_eq (find_none_has _ _ h2)] at hm
+            have hb : (m == n) = false := by simp [hmn]
+            have hd : decide (m = n) = false := by simp [hmn]
+            simp [hd, Env.find?, List.lookup_append, List.lookup, hb, h3] at hm ⊢
+            exact hm
+          · first | (rw [h.1] at hm; exact hm) | (rw [← h.1] at hm; exact hm)
+        · first | (rw [h.1] at hm; exact hm) | (rw [← h.1] at hm; exact hm)
+      · first | (rw [h.1] at hm; exact hm) | (rw [← h.1] at hm; exact hm)
+    · first | (rw [h.1] at hm; exact hm) | (rw [← h.1] at hm; exact hm)
+
+theorem checkPatNames_visible (locals : List Env) : ∀ (st : St) (vars : List Alias) (st' : St),
+    checkPatNames st locals vars = .ok st' → ∀ n, .named n ∈ vars → visible st locals n
+  | st, [], _, _, n, hn => by simp at hn
+  | st, .anon k :: as, st', h, n, hn => by
+    simp only [checkPatNames] at h
+    simp at hn
+    exact checkPatNames_visible locals st as st' h n hn
+  | st, .named a :: as, st', h, n, hn => by
+    simp only [checkPatNames] at h
+    split at h
+    · simp at h
+    · cases hr : resolve st locals a with
+      | error e => rw [hr] at h; simp at h
+      | ok p =>
+        rw [hr] at h; simp only at h
+        simp at hn
+        rcases hn with rfl | hn
+        · exact (resolve_ok_iff st locals n).1 ⟨_, hr⟩
+        · exact resolve_visible_back st locals a n p.1 p.2 hr
+            (checkPatNames_visible locals p.1 as st' h n hn)
+
+/-- **#1334 fixed**: `bind_expr_node` accepts a pattern predicate only when all its named
+variables are already visible. -/
+theorem pattern_predicate_declares_nothing (st : St) (locals : List Env) (vars : List Alias) :
+    PatternPredDeclaresNothing C st locals vars := by
+  intro r h n hn
+  simp only [bindNode] at h
+  cases hc : checkPatNames st locals vars with
+  | error e => rw [hc] at h; simp at h
+  | ok st0 => exact checkPatNames_visible locals st vars st0 hc n hn
 
 /-- The binder state while `MATCH (n0) WITH * WHERE …` binds its WHERE: the projection scope
 `{n0}` (scope 1), the parent `{n0}`, `use_parent_scope` set; `WITH *` adds nothing to
@@ -677,22 +762,17 @@ def st1334 : St :=
   { cur := [("n0", ⟨"n0", 0, 1, .node, none⟩)], parent := [("n0", ⟨"n0", 0, 0, .node, none⟩)],
     depth := 1, useParent := true, p2c := [], cfp := [] }
 
-/-- **#1334**: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds — `n1` is minted fresh (id 2,
-after the anonymous node's 1) and cleaned up — although `n1` is visible nowhere. Live: Rust main
-returns 2 rows on a 2-node graph with an edge; C errors. -/
-theorem bug1334_pattern_predicate_declares_var :
-    bindNode C st1334 [] (.pattern [.anon 0, .named "n1"]) =
-      .ok (.pattern [⟨none, 1, 1, .any, some 0⟩, ⟨"n1", 2, 1, .any, none⟩],
-           { st1334 with cur := [("n0", ⟨"n0", 0, 1, .node, none⟩), (.un, ⟨none, 1, 1, .any, some 0⟩)] }) ∧
-    ¬ visible st1334 [] "n1" ∧
-    ¬ PatternPredDeclaresNothing C st1334 [] [.anon 0, .named "n1"] := by
-  have hb : bindNode C st1334 [] (.pattern [.anon 0, .named "n1"]) =
-      .ok (.pattern [⟨none, 1, 1, .any, some 0⟩, ⟨"n1", 2, 1, .any, none⟩],
-           { st1334 with cur := [("n0", ⟨"n0", 0, 1, .node, none⟩), (.un, ⟨none, 1, 1, .any, some 0⟩)] }) := by
-    simp (config := { decide := true }) [bindNode, st1334, injectLocals, bindNames, defineAlias,
-      defineName, Env.find?, freshVar, freshAnon, Env.insert, Env.has, Env.pushUnnamed, Env.keys, Env.lookupAnon, Env.unnamed,
-      cleanup, Env.retain, List.lookup, List.filter, List.filterMap]
-  have hv : ¬ visible st1334 [] "n1" := by unfold visible; decide
-  exact ⟨hb, hv, fun h => hv (h _ hb "n1" (by simp))⟩
+/-- `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` is rejected: `'n1' not defined` (as in C). -/
+theorem pattern1334_undeclared_rejected :
+    bindNode C st1334 [] (.pattern [.anon 0, .named "n1"]) = .error "'n1' not defined" := by
+  simp (config := { decide := true }) [bindNode, checkPatNames, resolve, st1334, lookupLocals,
+    Env.find?, List.lookup]
+
+/-- The ORDER BY placeholder, which `resolve_name` always mints, is undefined in a pattern
+predicate too. -/
+theorem pattern_placeholder_rejected (st : St) (locals : List Env) (vars : List Alias) :
+    bindNode C st locals (.pattern (.named "__agg_order_by_placeholder__" :: vars)) =
+      .error "'__agg_order_by_placeholder__' not defined" := by
+  simp [bindNode, checkPatNames]; decide
 
 end FalkorBinder
