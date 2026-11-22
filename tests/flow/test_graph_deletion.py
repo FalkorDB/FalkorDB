@@ -1640,14 +1640,20 @@ class testMultiDb():
         finally:
             self.conn.execute_command("GRAPH.CONFIG", "SET", "VKEY_MAX_ENTITY_COUNT", vkey_max)
 
+    @staticmethod
+    def wait_for_key(con, key, timeout=10):
+        # Telemetry is flushed by a background thread: poll for the stream rather
+        # than sleep for a guessed time, on the one connection the caller has.
+        deadline = time.time() + timeout
+        while not con.exists(key) and time.time() < deadline:
+            time.sleep(0.05)
+
     def test07_move_takes_the_telemetry_stream_with_the_graph(self):
         # The stream is named after the graph and sits in its database: moving the
         # graph leaves none behind, so a new graph of the name starts its own.
         self.query(0, "mv", "CREATE (:Moved)")
         stream = "telemetry{mv}"
-        deadline = time.time() + 10
-        while not self.con(0).exists(stream) and time.time() < deadline:
-            time.sleep(0.05)
+        self.wait_for_key(self.con(0), stream)
         self.env.assertEqual(self.con(0).exists(stream), 1)
 
         self.env.assertEqual(self.con(0).move("mv", 1), True)
@@ -1656,9 +1662,7 @@ class testMultiDb():
 
         self.query(0, "mv", "CREATE (:Fresh)")
         # Before any further query: each one logs an entry of its own.
-        deadline = time.time() + 10
-        while self.con(0).exists(stream) == 0 and time.time() < deadline:
-            time.sleep(0.05)
+        self.wait_for_key(self.con(0), stream)
         self.env.assertEqual(self.con(0).xlen(stream), 1)
         self.env.assertEqual(self.scalar(0, "mv", "MATCH (n:Moved) RETURN count(n)"), 0)
         self.assert_alive()
@@ -1677,9 +1681,7 @@ class testMultiDb():
         con = self.con(0)
         self.query(0, "ns", "CREATE (:T)")
         stream = "telemetry{ns}"
-        deadline = time.time() + 10
-        while not con.exists(stream) and time.time() < deadline:
-            time.sleep(0.05)
+        self.wait_for_key(con, stream)
         con.delete(stream)
         con.set(stream, "keep")
         self.env.assertEqual(con.move("ns", 1), True)
@@ -1695,11 +1697,25 @@ class testMultiDb():
         con.execute_command("GRAPH.QUERY", graph_key, "CREATE (:T)")
         con.execute_command("GRAPH.QUERY", twin_key, "CREATE (:T)")
         stream = "telemetry{t\ufffd}".encode()
-        deadline = time.time() + 10
-        while not con.exists(stream) and time.time() < deadline:
-            time.sleep(0.05)
+        self.wait_for_key(con, stream)
         self.env.assertEqual(con.exists(stream), 1)
         self.env.assertEqual(con.move(twin_key, 1), True)
+        self.env.assertEqual(con.exists(stream), 1)
+        self.assert_alive()
+
+    def test09c_move_of_a_graph_with_a_nul_prefix_twin_leaves_the_twins_stream(self):
+        # A stream is named after the graph's name up to its first NUL, so the graphs
+        # `g` and `g\0tail` (the second made by RENAME) share `telemetry{g}`. Moving
+        # the second must not delete the history of the one that stayed.
+        con = self.con(0)
+        con.execute_command("GRAPH.QUERY", "nulg", "CREATE (:T)")
+        con.execute_command("GRAPH.QUERY", "nulsrc", "CREATE (:T)")
+        stream = "telemetry{nulg}"
+        self.wait_for_key(con, stream)
+        self.env.assertEqual(con.exists(stream), 1)
+        # keep the stream name of `nulg` for the renamed graph: its name is cut at the NUL
+        self.env.assertEqual(con.rename("nulsrc", b"nulg\x00tail"), True)
+        self.env.assertEqual(con.move(b"nulg\x00tail", 1), True)
         self.env.assertEqual(con.exists(stream), 1)
         self.assert_alive()
 
@@ -1712,9 +1728,7 @@ class testMultiDb():
         graph_key, plain_key = "g\ufffd".encode(), b"g\xff"
         con.execute_command("GRAPH.QUERY", graph_key, "CREATE (:T)")
         stream = "telemetry{g\ufffd}".encode()
-        deadline = time.time() + 10
-        while not con.exists(stream) and time.time() < deadline:
-            time.sleep(0.05)
+        self.wait_for_key(con, stream)
         self.env.assertEqual(con.exists(stream), 1)
 
         con.set(plain_key, "value")
@@ -1738,9 +1752,7 @@ class testMultiDb():
     def test11_rename_of_a_graph_takes_its_telemetry_stream(self):
         self.query(0, "old", "CREATE (:R)")
         stream = "telemetry{old}"
-        deadline = time.time() + 10
-        while not self.con(0).exists(stream) and time.time() < deadline:
-            time.sleep(0.05)
+        self.wait_for_key(self.con(0), stream)
         self.env.assertEqual(self.con(0).exists(stream), 1)
         self.env.assertEqual(self.con(0).rename("old", "new"), True)
         self.env.assertEqual(self.con(0).exists(stream), 0)

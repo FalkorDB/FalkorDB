@@ -392,17 +392,7 @@ pub fn strip_stream_in_db(
     db: i32,
     graph_name: &str,
 ) -> bool {
-    unsafe {
-        let orig = raw::RedisModule_GetSelectedDb.expect("RedisModule_GetSelectedDb")(ctx);
-        if raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(ctx, db)
-            != raw::REDISMODULE_OK as i32
-        {
-            return false;
-        }
-        let stripped = strip_stream(ctx, graph_name);
-        raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(ctx, orig);
-        stripped
-    }
+    RestoreSelectedDb::select(ctx, db).is_some_and(|_restore| strip_stream(ctx, graph_name))
 }
 
 /// Keys of graphs that have been freed and whose telemetry streams are still to be
@@ -545,12 +535,38 @@ pub fn delete_stream_if_stream(
         ctx.get_raw(),
         key.as_bytes(),
     )];
+    let args = args.iter().collect::<Vec<_>>();
     let is_stream = matches!(
-        ctx.call("TYPE", args.iter().collect::<Vec<_>>().as_slice()),
+        ctx.call("TYPE", args.as_slice()),
         Ok(ValkeyValue::SimpleString(t) | ValkeyValue::BulkString(t)) if t == "stream"
     );
     if is_stream {
-        let _ = ctx.call("DEL", args.iter().collect::<Vec<_>>().as_slice());
+        let _ = ctx.call("DEL", args.as_slice());
+    }
+}
+
+/// Puts `ctx` back on the database it had selected when this was made, when dropped.
+struct RestoreSelectedDb(*mut raw::RedisModuleCtx, i32);
+
+impl RestoreSelectedDb {
+    /// Select `db` on `ctx`, or `None` when the server refuses it (the context is
+    /// then still on its own database, and nothing is to be restored).
+    fn select(
+        ctx: *mut raw::RedisModuleCtx,
+        db: i32,
+    ) -> Option<Self> {
+        unsafe {
+            let orig = raw::RedisModule_GetSelectedDb.expect("RedisModule_GetSelectedDb")(ctx);
+            (raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(ctx, db)
+                == raw::REDISMODULE_OK as i32)
+                .then_some(Self(ctx, orig))
+        }
+    }
+}
+
+impl Drop for RestoreSelectedDb {
+    fn drop(&mut self) {
+        unsafe { raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(self.0, self.1) };
     }
 }
 
@@ -563,12 +579,8 @@ pub unsafe fn delete_stream_in_db(
     db: i32,
     graph_name: &str,
 ) {
-    unsafe {
-        let orig = raw::RedisModule_GetSelectedDb.unwrap()(ctx.get_raw());
-        if raw::RedisModule_SelectDb.unwrap()(ctx.get_raw(), db) == raw::REDISMODULE_OK as i32 {
-            delete_stream_if_stream(ctx, graph_name);
-            raw::RedisModule_SelectDb.unwrap()(ctx.get_raw(), orig);
-        }
+    if let Some(_restore) = RestoreSelectedDb::select(ctx.get_raw(), db) {
+        delete_stream_if_stream(ctx, graph_name);
     }
 }
 

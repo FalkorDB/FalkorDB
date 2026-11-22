@@ -80,8 +80,9 @@ unsafe fn io_db(rdb: *mut RedisModuleIO) -> i32 {
     unsafe { raw::RedisModule_GetDbIdFromIO.unwrap()(rdb) }
 }
 
-/// Switches `ctx` back to the database it had selected when dropped, so a panic in the
-/// code that ran in between does not leave the module context on another database.
+/// Switches `ctx` back to the database it had selected when dropped, on every return
+/// path of the scope that holds it. (Not on a panic: the module's panic hook exits the
+/// process, so no unwinding reaches the guard.)
 struct RestoreDb {
     ctx: *mut RedisModuleCtx,
     db: i32,

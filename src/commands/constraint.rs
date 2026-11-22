@@ -4,7 +4,7 @@ use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{
         BlockedClient, CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph,
-        registered_db,
+        registered_location, selected_db,
     },
     redis_type::{GRAPH_TYPE, key_holds_graph, wrong_type_compat},
 };
@@ -278,6 +278,37 @@ pub fn settle_constraint(
     unsafe { ffi::free_thread_safe_context(ctx.ctx) };
 }
 
+/// Puts a context back on the database it had selected when this was made, when dropped.
+struct SelectedDb<'a> {
+    ctx: &'a Context,
+    original: i32,
+}
+
+impl<'a> SelectedDb<'a> {
+    fn of(ctx: &'a Context) -> Self {
+        Self {
+            ctx,
+            original: selected_db(ctx),
+        }
+    }
+
+    /// Select `db` on the context; whether the server accepted it.
+    fn select(
+        &self,
+        db: i32,
+    ) -> bool {
+        unsafe {
+            raw::RedisModule_SelectDb.unwrap()(self.ctx.ctx, db) == raw::REDISMODULE_OK as i32
+        }
+    }
+}
+
+impl Drop for SelectedDb<'_> {
+    fn drop(&mut self) {
+        self.select(self.original);
+    }
+}
+
 /// One attempt at the two-phase settle. Takes a fresh session each time, so
 /// every attempt validates the graph as it is then, and a refused session —
 /// back to a reader if escalation refused it, still a writer if its commit was
@@ -311,14 +342,29 @@ fn attempt_settle(
     // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
     // shape as bulk_insert's Phase 2.
     session.upgrade_to_write(None)?;
-    // Announce into the graph's own database. This context is detached, so it
-    // starts out in database 0, and a replicated command applies to the database
-    // its context has selected: a graph anywhere else had its settled status sent
-    // to the same key name in database 0 (#2782). Read here, with the GIL held
-    // from `upgrade_to_write`, so a `MOVE` or `SWAPDB` cannot move it in between.
-    if let Some(db) = registered_db(graph) {
-        unsafe { raw::RedisModule_SelectDb.unwrap()(ctx.ctx, db) };
+    // Announce into the graph's own database, under the key it is at now. This
+    // context is detached, so it starts out in database 0, and a replicated command
+    // applies to the database its context has selected: a graph anywhere else had
+    // its settled status sent to the same key name in database 0 (#2782). Read
+    // here, with the GIL held from `upgrade_to_write`, so a `MOVE`, `SWAPDB` or
+    // `RENAME` cannot move it in between. `key` is where the command found the
+    // graph when validation began, so it is replaced by the registered name when it
+    // no longer holds the graph there (a lossy name never replaces a key that still
+    // does). The context's database is put back when this attempt ends, whatever
+    // the next attempt finds.
+    let restore_db = SelectedDb::of(ctx);
+    let mut announce_key = key;
+    let registered_name;
+    if let Some((db, name)) = registered_location(graph)
+        && restore_db.select(db)
+        && !key_holds_graph(ctx, key, graph)
+    {
+        registered_name = name;
+        if key_holds_graph(ctx, registered_name.as_bytes(), graph) {
+            announce_key = registered_name.as_bytes();
+        }
     }
+    let key = announce_key;
     // A refusal from `commit` comes back as the `WriteAbort` it maps to, not
     // flattened: the retry loop treats a stale version (retry) and an invalid
     // one (permanent) as opposites. Answering one bool for refusals once made

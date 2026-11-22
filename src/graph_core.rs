@@ -275,9 +275,12 @@ pub fn key_of_write(
     }
 }
 
-/// The database `arc` is registered in, if it is registered.
-pub fn registered_db(arc: &Arc<RwLock<ThreadedGraph>>) -> Option<i32> {
-    GRAPH_REGISTRY.lock().get(&graph_id(arc)).map(|e| e.db)
+/// The database and key name `arc` is registered under, if it is registered.
+pub fn registered_location(arc: &Arc<RwLock<ThreadedGraph>>) -> Option<(i32, String)> {
+    GRAPH_REGISTRY
+        .lock()
+        .get(&graph_id(arc))
+        .map(|e| (e.db, e.name.clone()))
 }
 
 /// Move the registry entry of the graph identified by `id` to key `name` of `db`,

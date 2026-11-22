@@ -33,7 +33,7 @@ use crate::config::{
 #[cfg(feature = "index-falkordb")]
 use crate::graph_core::RedisBuildHost;
 use crate::graph_core::{
-    GRAPH_REGISTRY, ThreadedGraph, graph_id, relocate_graph, selected_db, swap_graph_dbs,
+    GRAPH_REGISTRY, ThreadedGraph, graph_id, relocate_graph, selected_db, swap_graph_dbs, up_to_nul,
 };
 use crate::redis_type::{GRAPH_TYPE, on_persistence};
 use crate::telemetry;
@@ -726,7 +726,8 @@ unsafe fn relocate_graph_at_key(
 /// A key name is arbitrary bytes and the registry renders it lossily, so two graphs
 /// (`b"g\xff"` and `g\u{fffd}`) can share a name and with it a telemetry stream name.
 /// A stream cannot be told to belong to the graph that moved rather than to the one
-/// that stayed, so cleanup leaves it.
+/// that stayed, so cleanup leaves it. Names are compared as the stream is named, cut
+/// at the first NUL (`g` and `g\0tail`, which a `RENAME` can make, share `telemetry{g}`).
 fn name_is_shared(
     db: i32,
     name: &str,
@@ -734,7 +735,7 @@ fn name_is_shared(
     GRAPH_REGISTRY
         .lock()
         .values()
-        .any(|e| e.db == db && e.name == name)
+        .any(|e| e.db == db && up_to_nul(&e.name) == up_to_nul(name))
 }
 
 /// `SWAPDB`: graphs follow their database.
