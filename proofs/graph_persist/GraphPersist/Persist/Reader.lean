@@ -97,7 +97,7 @@ theorem readU_rt (n : Nat) (h : n < 2 ^ 64) : RT readU (encU n) n := by
       obtain ⟨rfl, h2⟩ := hpq
       exact absurd h2.2 hq
 
-/-! ## Scalar values (`impl Decode<19> for Value`, value.rs:2170) -/
+/-! ## Scalar values (`impl Decode<19> for Value`, value.rs) -/
 
 /-- The tags `decOne` recognises that carry payload words (every scalar tag but NULL). -/
 def payloadTags : List UInt64 :=

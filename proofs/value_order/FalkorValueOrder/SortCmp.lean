@@ -1,17 +1,15 @@
 import FalkorValueOrder.Model
 import FalkorCore.Laws
 /-!
-# `Value::sort_cmp` (#2912 b033aecc6, generic in `sort_cmp_f32`) and its laws
-
-See the report in `FalkorValueOrder.lean` ("Wave 9").
+# `Value::sort_cmp` (generic in `sort_cmp_f32`) and its laws
 
 | here | there (origin/main 4a4f2a72f, graph/src/runtime/value.rs) |
 | --- | --- |
-| `scF64`      | `sort_cmp_f64` (:1891) |
-| `c32` parameter | `sort_cmp_f32` (:1905): main's is `Main.scF32` |
-| `scIntFloat` | `sort_cmp_int_float` (:1931) |
-| `sc`, `scList`, `scVals` | `Value::sort_cmp` (:1529), `sort_cmp_map` (:1566) |
-| `hwords` | `Hash for Value` (:823), in Model.lean |
+| `scF64`      | `sort_cmp_f64` (:1935) |
+| `c32` parameter | `sort_cmp_f32` (:1947): main's is `Main.scF32` |
+| `scIntFloat` | `sort_cmp_int_float` (:1973) |
+| `sc`, `scList`, `scVals` | `Value::sort_cmp` (:1573), `sort_cmp_map` (:1610) |
+| `hwords` | `Hash for Value` (:861), in Model.lean |
 -/
 namespace ValueOrder.SC
 open FalkorCore ValueOrder FalkorCore.Laws
@@ -32,7 +30,7 @@ def isSignNeg : F → Bool
 /-- The key `sort_cmp_f64` orders by: the numeric position, NaN above all. -/
 def fkey (f : F) : Nat × Int × Nat := f.nkey.getD (3, 0, 0)
 
-/-- `sort_cmp_f64` (value.rs:1931): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
+/-- `sort_cmp_f64` (value.rs): `partial_cmp`, else `a.is_nan().cmp(&b.is_nan())`. -/
 def scF64 (a b : F) : Ordering :=
   match fpcmp a b with
   | some o => o
@@ -62,7 +60,7 @@ def fracCmp : Ordering → Ordering
   | .lt => .gt
   | .eq => .eq
 
-/-- `sort_cmp_int_float` (value.rs:1971). -/
+/-- `sort_cmp_int_float` (value.rs). -/
 def scIntFloat (i : Int) (f : F) : Ordering :=
   if isNaN f || fge f (.num P63) then .lt
   else if fltF f (.num (-P63)) then .gt
@@ -215,7 +213,7 @@ theorem scIntFloat_key (i : Int) (lo : I64MIN ≤ i) (hi : i ≤ I64MAX) (f : F)
 /-! ## `Value::sort_cmp` -/
 
 mutual
-/-- `Value::sort_cmp` (value.rs:1569), arm by arm; `c32` is `sort_cmp_f32`. -/
+/-- `Value::sort_cmp` (value.rs), arm by arm; `c32` is `sort_cmp_f32`. -/
 def sc (c32 : F → F → Ordering) : V → V → Ordering
   | .bool a, .bool b => cmpB a b
   | .int a, .int b => cmpI a b
@@ -600,20 +598,16 @@ theorem scF64_lw : Laws.Lw scF64 := by
 
 theorem scF64_refl (x : F) : scF64 x x = .eq := by rw [scF64_key]; exact Laws.cmp3_refl _
 
-/-! ## History (b033aecc6, before #2917): `sort_cmp`-equal did not imply `hash`-equal
+/-! ## `sort_cmp`-equal and `hash`-equal
 
-At #2912 nothing paired `sort_cmp` with `Hash` yet, but hash-only DISTINCT already split
-`NaN`/`-NaN` (FINDINGS W9-hash-1). #2917 (7fdf06a0e) made `GroupKey::eq` `sort_cmp`, gave
-the Float hash one NaN word, hashed f32 components by `f32_hash_bits`, and ordered `-0.0`
-before `0.0` in `sort_cmp_f32`; main is consistent (`Main.main_hash_consistent`). -/
+Main's `Hash` agrees with `sort_cmp` (`Main.main_hash_consistent`). -/
 
 /-- A NaN with another payload/sign (`-(0.0/0.0)` vs `f64::NAN`, say). -/
 def nan2 : F := .nan true (2 ^ 51 - 1)
 
 /-- `Value::eq` (`compare_value(..).0 == Equal`) merges signed zeros in vectors and points
-while the hash keeps them apart, on main too. Harmless since #2917: `GroupKey::eq` is
-`sort_cmp` (which keeps them apart, `Main.signed_zeros_apart`); before #2917 `GroupKey::eq`
-was `Value::eq`, a `HashMap` contract violation. -/
+while the hash keeps them apart, on main too. Harmless: `GroupKey::eq` is
+`sort_cmp` (which keeps them apart, `Main.signed_zeros_apart`). -/
 theorem vec_zero_eq_but_hash_differs :
     eqV (.vecf32 [.negZero]) (.vecf32 [.num 0]) = true ∧
     hwords (.vecf32 [.negZero]) ≠ hwords (.vecf32 [.num 0]) ∧

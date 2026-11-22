@@ -1,6 +1,6 @@
 import GraphblasWrappers.Glue
 /-
-# `Encode<19> for Matrix<T>` unloads a private `dup()` (matrix.rs:527-582, #3438)
+# `Encode<19> for Matrix<T>` unloads a private `dup()` (matrix.rs, #3438)
 
 ```rust
 let copy = self.dup();                                     // GrB_Matrix_dup (+ hyper-hash opt-out)
@@ -37,8 +37,8 @@ double free, unload of an emptied matrix, or allocating over a live handle.
 * **`pr_self_never_unloaded`** — every state along the PR's encode has `self`
   full with its original content: a lock-free reader of `self` sees the same
   matrix before, during and after.
-* **main empties `self`** (counterexample removed in bbee75955; the last revision that has them is 17ccc5412) — main's sequence passes through a state where
-  `self` is emptied (the #3434 window), then restores it. Confirmed live:
+* **main's earlier encoder empties `self`** — its sequence passes through a state where
+  `self` is emptied, then restores it. Confirmed live:
   `lean3438_matrix_encode_dup_vs_main` reads `self.nvals()` between main's
   unload and load — 0 for a 300-entry matrix; after the PR's encode `self`
   still iterates the same 300 entries.

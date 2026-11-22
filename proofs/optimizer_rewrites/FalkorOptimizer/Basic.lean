@@ -2,21 +2,6 @@
 # Rows, expressions and the Filter operator
 
 Reference semantics shared by every pass model.
-
-| here | there |
-| --- | --- |
-| `Var`            | `parser::ast::Variable` (`graph/src/parser/ast.rs:92`) — `(id, scope_id)`; `id` is scope-local |
-| `Val`            | `runtime::value::Value` (only the constructors the passes care about) |
-| `Row`, `Row.get` | a row of the batch env; an unbound column reads as NULL |
-| `Expr`, `eval`   | `ExprEval::eval_node` (`graph/src/runtime/eval.rs`) — `And` at `eval.rs:674` |
-| `powV`, `subV`, `divV` | `apply_pow` (`math.rs:328`, #2904), `Value` `-` and `/` |
-| `andL`           | the n-ary `ExprIR::And` loop (`eval.rs:674-699`), as a right fold of the binary step |
-| `passes`         | per-row verdict of `FilterOp::eval` (`graph/src/runtime/ops/filter.rs:48-80`) |
-| `filterRows`     | `FilterOp` over the whole input: any row error fails the query |
-| `cp`             | `CartesianProduct` (`runtime/ops/cartesian_product.rs`) |
-| `extend`         | any per-row expanding operator that keeps its input columns (`Unwind`, `CondTraverse`, `Apply` right side, `ProcedureCall`, …) |
-| `List.take`/`drop` | `Limit` / `Skip` (`runtime/ops/limit.rs`, `skip.rs`) |
-| `List.mergeSort` | `Sort` (stable) |
 -/
 
 namespace Falkor.Opt
@@ -38,7 +23,7 @@ inductive Err where
   | typeMismatch
   /-- `Variable … not found` / `not a constant expression`: what the plan-time
   constant evaluator (`ExprEval::constant()`, no env, no runtime) returns for any
-  non-constant leaf (eval.rs:278-293). -/
+  non-constant leaf (eval.rs). -/
   | notFound
 deriving DecidableEq, Repr
 
@@ -63,7 +48,7 @@ inductive Expr where
   | div (a b : Expr)
   /-- one step of the `ExprIR::And` loop: `and a rest` -/
   | and (a b : Expr)
-  /-- `a ^ b` (`ExprIR::Pow`, eval.rs:828-834, since #2904) -/
+  /-- `a ^ b` (`ExprIR::Pow`, eval.rs, since #2904) -/
   | pow (a b : Expr)
 deriving Repr
 
@@ -89,7 +74,7 @@ def notV : Val → Val
   | .bool b => .bool (!b)
   | v => v
 
-/-- The `ExprIR::And` step (eval.rs:674): evaluate left; `false` short-circuits,
+/-- The `ExprIR::And` step (eval.rs): evaluate left; `false` short-circuits,
 an error propagates immediately (`?`), `null` is remembered, a non-boolean is a
 type error. -/
 def andStep (a : Except Err Val) (rest : Unit → Except Err Val) : Except Err Val :=
@@ -112,7 +97,7 @@ instance : Inhabited Val := ⟨.null⟩
 
 opaque powNum : Int → Int → Val
 
-/-- `apply_pow` (math.rs:328, since #2904): a non-numeric non-null operand is a
+/-- `apply_pow` (math.rs, since #2904): a non-numeric non-null operand is a
 type error (base checked first), a null operand gives null, else `powf`. -/
 def powV : Val → Val → Except Err Val
   | .bool _, _ | .str _, _ => .error .typeMismatch
@@ -150,7 +135,7 @@ def andL : List Expr → Expr
   | [] => .lit (.bool true)
   | c :: cs => .and c (andL cs)
 
-/-- The literal loop of eval.rs:674-699, for comparison with `andL`. -/
+/-- The literal loop of eval.rs, for comparison with `andL`. -/
 def andLoop (r : Row) : List Expr → Bool → Except Err Val
   | [], isNull => .ok (if isNull then .null else .bool true)
   | c :: cs, isNull =>
@@ -214,7 +199,7 @@ theorem eval_andL (r : Row) (cs : List Expr) : eval r (andL cs) = andLoop r cs f
         · cases b <;> rfl
     · rfl
 
-/-- FilterOp per-row verdict (filter.rs:48-80): `true` keeps, `false`/`null`
+/-- FilterOp per-row verdict (filter.rs): `true` keeps, `false`/`null`
 drop, anything else is "expected Boolean". -/
 def passes (p : Expr) (r : Row) : Except Err Bool :=
   match eval r p with
@@ -394,7 +379,7 @@ theorem push_limit_const (p : Expr) (n : Nat) (xs : List Row) (b : Bool)
     · simp only [↓reduceIte]; rw [List.filter_eq_self]; intro x hx; simp [hc x hx]
   rw [h1, h2]; cases b <;> simp
 
-/-! ### Counterexamples: LIMIT / SKIP are not transparent (push_filters_down.rs:165-178
+/-! ### Counterexamples: LIMIT / SKIP are not transparent (push_filters_down.rs
 does not exclude them). -/
 
 def vN : Var := ⟨0, 0⟩
@@ -411,18 +396,20 @@ theorem skip_not_transparent :
     ([rowV 1, rowV 5].drop 1).filter (passB (.eq (.var vN) (.lit (.int 5)))) ≠
     ([rowV 1, rowV 5].filter (passB (.eq (.var vN) (.lit (.int 5))))).drop 1 := by decide
 
-/-! ## Filter merging (push_filters_down.rs:113-140)
+/-! ## Filter merging (push_filters_down.rs)
 
-Stacked `Filter(outer p) → Filter(inner q)` is merged into one `AND`. The Rust code
-lists the *outer* conjuncts first (`for f in [&filter, &child_filter]`, line 122).
+Stacked `Filter(outer p) → Filter(inner q)` is merged into one `AND`. The Rust code lists the *child* (inner) conjuncts first
+(`for f in [&child_filter, &filter]`, since #3006): `mergeRust`.
 -/
 
 def stacked (p q : Expr) (xs : List Row) : Except Err (List Row) :=
   filterRows q xs >>= filterRows p
 
 /-- The two orders give different outcomes on a concrete row: the query
-`MATCH (n) WHERE n.v <> 1 MATCH (m) WHERE 1/(n.v-1) = 0` — Rust merges to
-`AND(1/(n.v-1)=0, n.v<>1)` and fails with division by zero, C returns rows. -/
+`MATCH (n) WHERE n.v <> 1 MATCH (m) WHERE 1/(n.v-1) = 0`. HISTORICAL (pre-#3006): Rust then merged
+outer-first to `AND(1/(n.v-1)=0, n.v<>1)` and failed with division by zero, while C returned rows.
+Rust now merges child-first (`mergeRust`, `merge_rust_fixed_example`) and no longer fails here;
+the theorem keeps only the order-sensitivity of the two `AND` spellings. -/
 def qInner : Expr := .neq (.var vN) (.lit (.int 1))
 def pOuter : Expr := .eq (.div (.lit (.int 1)) (.sub (.var vN) (.lit (.int 1)))) (.lit (.int 0))
 
@@ -442,6 +429,44 @@ theorem merge_child_first_row (p q : Expr) (r : Row) (b : Bool) (hq : eval r q =
   · simp only [bind, Except.bind]
     split <;> simp_all
 
+/-- The merged filter built by push_filters_down.rs since #3006: the child's
+conjuncts, then the outer ones (`and_of` flattening is `AndOf.flat_passes`). -/
+def mergeRust (p q : Expr) : Expr := .and q p
+
+/-- #3006 on the counterexample of `merge_order_rust_errors`: the merged filter now
+returns what the stacked filters return. -/
+theorem merge_rust_fixed_example :
+    filterRows (mergeRust pOuter qInner) [rowV 1, rowV 3] = stacked pOuter qInner [rowV 1, rowV 3] :=
+  rfl
+
+/-- #3006: on rows where the inner (child) filter yields a boolean, the merged
+filter has the stacked outcome (same rows, or both fail). -/
+theorem merge_rust_same (p q : Expr) (xs : List Row)
+    (hq : ∀ r ∈ xs, ∃ b, eval r q = .ok (.bool b)) :
+    Same (stacked p q xs) (filterRows (mergeRust p q) xs) := by
+  induction xs with
+  | nil => simp [stacked, filterRows, Same, bind, Except.bind]
+  | cons r rs ih =>
+    have ih := ih (fun r' h' => hq r' (by simp [h']))
+    obtain ⟨b, hb⟩ := hq r (by simp)
+    have hm := merge_child_first_row p q r b hb
+    simp only [mergeRust] at ih ⊢
+    have hpq : passes q r = .ok b := by simp [passes, hb]
+    rw [hpq] at hm
+    cases b with
+    | false =>
+      have hm' : passes (.and q p) r = .ok false := hm.symm
+      simp only [stacked, filterRows, hpq, hm', bind, Except.bind, pure, Except.pure] at ih ⊢
+      cases h1 : filterRows q rs <;> cases h2 : filterRows (.and q p) rs <;>
+        simp_all [Same]
+    | true =>
+      have hm' : passes (.and q p) r = passes p r := by
+        rw [← hm]; simp [bind, Except.bind]
+      simp only [stacked, filterRows, hpq, hm', bind, Except.bind, pure, Except.pure] at ih ⊢
+      cases hp : passes p r <;> cases h1 : filterRows q rs <;>
+        cases h2 : filterRows (.and q p) rs <;> simp_all [Same, filterRows] <;>
+        (rename_i a _ _; cases h3 : filterRows p a <;> simp_all [bind, Except.bind, Functor.map, Except.map])
+
 /-! ## eliminate_true_filters -/
 
 theorem filter_true (xs : List Row) : filterRows (.lit (.bool true)) xs = .ok xs := by
@@ -450,7 +475,7 @@ theorem filter_true (xs : List Row) : filterRows (.lit (.bool true)) xs = .ok xs
   | cons r rs ih => simp [filterRows, passes, eval, ih, bind, Except.bind, pure, Except.pure]
 
 /-- Dropping conjuncts that evaluate to `true` on the row leaves the AND loop's
-result unchanged (eliminate_true_filters.rs:123-143). -/
+result unchanged (eliminate_true_filters.rs). -/
 theorem andLoop_drop_true (r : Row) (keep : Expr → Bool) (cs : List Expr)
     (htrue : ∀ c ∈ cs, keep c = false → eval r c = .ok (.bool true)) (n : Bool) :
     andLoop r (cs.filter keep) n = andLoop r cs n := by

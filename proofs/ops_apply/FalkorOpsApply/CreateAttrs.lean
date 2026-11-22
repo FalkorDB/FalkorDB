@@ -2,12 +2,6 @@
 CREATE helpers: the attribute template and map-attribute resolution, and label
 resolution (graph/src/runtime/ops/create.rs).
 
-| here | there |
-| --- | --- |
-| `tplSet`, `tplBuild`, `rank`    | `build_attr_template` (create.rs:55) — the `(id, pos, value)` triples |
-| `resolveMap`                    | `resolve_map_attrs` (create.rs:84) |
-| `resolveLabels`, `resolvePat`   | `Runtime::resolve_pattern` (create.rs:353) |
-
 `resolve` (`get_or_create_*_attr_id`) is a pure name→id map here: within one call the
 attribute table only grows and existing names keep their ids (`GocOk` in runtime_core).
 -/
@@ -15,10 +9,10 @@ namespace CreateAttrs
 
 variable {K E : Type}
 
-/-! ## `build_attr_template` (create.rs:55-80) -/
+/-! ## `build_attr_template` (create.rs) -/
 
-/-- create.rs:72-76: `template.iter_mut().find(|(k,..)| *k == id)` replaces the first entry
-with that id, else pushes. (Shape guard create.rs:61-70: a non-`Map` root or a non-string
+/-- create.rs: `template.iter_mut().find(|(k,..)| *k == id)` replaces the first entry
+with that id, else pushes. (Shape guard create.rs: a non-`Map` root or a non-string
 key returns `None` — the caller's slow path.) -/
 def tplSet : List (Nat × E) → Nat × E → List (Nat × E)
   | [], p => [p]
@@ -104,7 +98,7 @@ theorem tplBuild_lookup (resolve : K → Nat) (entries : List (K × E)) (i : Nat
   | nil => intro t; rfl
   | cons x xs ih => intro t; simp only [List.foldl_cons]; rw [ih, tplSet_lookup]
 
-/-- create.rs:77-80: `pos` = index in the id-sorted order = number of smaller ids. -/
+/-- create.rs: `pos` = index in the id-sorted order = number of smaller ids. -/
 def rank (ids : List Nat) (id : Nat) : Nat := ids.countP (· < id)
 
 theorem rank_cons (x : Nat) (xs : List Nat) (a : Nat) :
@@ -147,7 +141,7 @@ theorem rank_lt (l : List Nat) (a : Nat) (ha : a ∈ l) : rank l a < l.length :=
     · have := ih ha'
       by_cases hx : x < a <;> simp only [hx, ite_true, ite_false] <;> omega
 
-/-! ## `resolve_map_attrs` (create.rs:84) -/
+/-! ## `resolve_map_attrs` (create.rs) -/
 
 /-- `(resolve(k), v)` per entry, then `sort_unstable_by_key(id)`; ids of a map's distinct keys
 are distinct, so the sorted order is unique and equals the stable merge sort. -/
@@ -164,7 +158,7 @@ theorem resolveMap_spec (resolve : K → Nat) (m : List (K × E)) :
   simp only [decide_eq_true_eq] at this
   exact this
 
-/-! ## `Runtime::resolve_pattern` (create.rs:353) -/
+/-! ## `Runtime::resolve_pattern` (create.rs) -/
 
 /-- `labels.iter().map(|l| g.get_label_id_mut(l)).collect()`, threading the label table. -/
 def resolveLabels {Tb : Type} (goc : Tb → String → Nat × Tb) : Tb → List String → List Nat × Tb

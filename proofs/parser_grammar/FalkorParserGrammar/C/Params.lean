@@ -1,14 +1,15 @@
 /-
 # Query parameters and the parser's small helpers
-# (cypher.rs:155-374, 376-530)
+# (cypher.rs)
 -/
 import FalkorParserGrammar.C.ClausesNP
 import FalkorParserGrammar.C.ExprC4
 import FalkorParserGrammar.C.Oracle0
+import FalkorParserGrammar.Model
 
 namespace FalkorParserGrammar.C
 
-/-! ## Error classification (cypher.rs:131-170, 290-295) -/
+/-! ## Error classification (cypher.rs) -/
 
 /-- `PARAM_VALUE_ERRORS` / `is_param_value_error`: membership in the list. -/
 def paramValueErrors : List String :=
@@ -29,14 +30,14 @@ theorem isPrefixOf_append_self (a b : List Char) : a.isPrefixOf (a ++ b) = true 
   | nil => rfl
   | cons x a ih => simp [ih]
 /-- Every `too_deep` message is recognised by `is_too_deep` (so it survives
-the parameter-error summary, cypher.rs:401-407). `format_error` wraps the
+the parameter-error summary, cypher.rs). `format_error` wraps the
 message; that wrapper is `proofs/lexer`'s `format_error`, which keeps the
 message as a prefix. -/
 theorem isTooDeep_tooDeep (n : Nat) : isTooDeep (tooDeep n) = true := by
   simp only [isTooDeep, tooDeep, String.toList_append, List.append_assoc]
   exact isPrefixOf_append_self _ _
 
-/-! ## `ExpressionListType::is_end_token` (cypher.rs:175-183) -/
+/-! ## `ExpressionListType::is_end_token` (cypher.rs) -/
 
 inductive ELT | oneOrMore | closedBy (t : CT)
 def ELT.isEnd : ELT → CT → Bool
@@ -46,7 +47,7 @@ theorem ELT.isEnd_spec (e : ELT) (c : CT) :
     e.isEnd c = true ↔ ∃ t, e = .closedBy t ∧ c = t := by
   cases e <;> simp [ELT.isEnd]
 
-/-! ## Parser state (cypher.rs:277-374) -/
+/-! ## Parser state (cypher.rs) -/
 
 /-- `Parser::new`: the counter starts at 0 (and depth / heights at 0, the
 pattern-comprehension flag unset). -/
@@ -78,7 +79,7 @@ def heightL : List ET → Nat
   | c :: cs => max (height c) (heightL cs)
 end
 
-/-- `tree_height` (cypher.rs:330-338): the explicit stack of (node, depth),
+/-- `tree_height` (cypher.rs): the explicit stack of (node, depth),
 with a budget. -/
 def thLoop : Nat → List (ET × Nat) → Nat → Option Nat
   | 0, _, _ => none
@@ -138,7 +139,7 @@ theorem treeHeight_spec (f : Nat) (t : ET) (r : Nat) (h : treeHeight f t = some 
   have := thLoop_spec f [(t, 1)] 0 r (by simp) h
   simp [pendMax] at this; omega
 
-/-! ## Literal parameters (cypher.rs:376-530) -/
+/-! ## Literal parameters (cypher.rs) -/
 
 /-- `Value` as far as literals go. -/
 inductive LV
@@ -148,12 +149,12 @@ inductive LV
 
 def minI64 : Int := -9223372036854775808
 
-/-- `OrderMap::insert` (ordermap.rs:76-89): replace in place, else append. -/
+/-- `OrderMap::insert` (ordermap.rs): replace in place, else append. -/
 def omInsert {α} (k : Nat) (v : α) : List (Nat × α) → List (Nat × α)
   | [] => [(k, v)]
   | (k', v') :: rest => if k' = k then (k, v) :: rest else (k', v') :: omInsert k v rest
 
-/-- Negation of a literal (cypher.rs:447-458); `Value::Float(-f)` is kept
+/-- Negation of a literal (cypher.rs); `Value::Float(-f)` is kept
 abstract. -/
 def negLit : LV → Option LV
   | .int i => if i = minI64 then some (.int minI64) else some (.int (-i))
@@ -161,7 +162,7 @@ def negLit : LV → Option LV
   | _ => some .null
 
 mutual
-/-- `parse_literal` (cypher.rs:445-469). -/
+/-- `parse_literal` (cypher.rs). -/
 def litP : Nat → P LV
   | 0 => fuelP
   | n + 1 => do
@@ -176,7 +177,7 @@ def litP : Nat → P LV
       match v with
       | .int i => if i = minI64 then fail else pure v
       | _ => pure v
-/-- `parse_unsigned_literal` (cypher.rs:471-497). -/
+/-- `parse_unsigned_literal` (cypher.rs). -/
 def ulitP : Nat → P LV
   | 0 => fuelP
   | n + 1 => do
@@ -191,7 +192,7 @@ def ulitP : Nat → P LV
     | .lbrack => listLitV n
     | .lbrace => mapLitV n
     | _ => fail
-/-- `parse_literal_list` (cypher.rs:499-512). -/
+/-- `parse_literal_list` (cypher.rs). -/
 def listLitV : Nat → P LV
   | 0 => fuelP
   | n + 1 => do
@@ -206,7 +207,7 @@ def listItems : Nat → List LV → P LV
     if e then pure (.list (acc ++ [v])) else do
       tok .comma
       listItems n (acc ++ [v])
-/-- `parse_literal_map` (cypher.rs:514-530). -/
+/-- `parse_literal_map` (cypher.rs). -/
 def mapLitV : Nat → P LV
   | 0 => fuelP
   | n + 1 => do
@@ -378,7 +379,7 @@ theorem lit_sound : ∀ n,
         simp only [ite_true] at h
         obtain ⟨rfl, rfl⟩ := pure_ok h; exact ⟨_, rfl, .last hk hcol gl hr⟩
 
-/-! ## `parse_param_value` and `parse_parameters` (cypher.rs:376-443) -/
+/-! ## `parse_param_value` and `parse_parameters` (cypher.rs) -/
 
 /-- The fast path is taken iff a literal parses and is followed by an
 identifier (the next `name=` or the query) or the end. -/
@@ -403,14 +404,14 @@ where
     | some v => pure v
     | none => fail
 
-/-- The `CYPHER` identifier (cypher.rs:385, not a keyword). -/
+/-- The `CYPHER` identifier (cypher.rs, not a keyword). -/
 def nmCypher : Nat := 6000002
 
 /-- `insert` into the parameter `HashMap`: a repeated name keeps the last value. -/
 def hmInsert {α} (k : Nat) (v : α) (m : List (Nat × α)) : List (Nat × α) :=
   (m.filter (fun p => p.1 != k)) ++ [(k, v)]
 
-/-- The inner `while let Some(id) = try_parse_ident()` (cypher.rs:388-410). -/
+/-- The inner `while let Some(id) = try_parse_ident()` (cypher.rs). -/
 def paramPairs (o : Oracle) (evp : ET → Option LV) (n : Nat) :
     Nat → List (Nat × LV) → P (List (Nat × LV))
   | 0, _ => fuelP
@@ -426,7 +427,7 @@ def paramPairs (o : Oracle) (evp : ET → Option LV) (n : Nat) :
         let v ← paramValueP o evp n
         paramPairs o evp n f (hmInsert id v acc)
 
-/-- `parse_parameters` (cypher.rs:376-415): the parameters and the rest of
+/-- `parse_parameters` (cypher.rs): the parameters and the rest of
 the query (here: the remaining tokens). -/
 def paramsP (o : Oracle) (evp : ET → Option LV) (n : Nat) :
     Nat → List (Nat × LV) → P (List (Nat × LV))
@@ -472,6 +473,58 @@ theorem np_paramsP (evp : ET → Option LV) (n : Nat) : ∀ f acc, NP (paramsP o
     unfold paramsP; np_go
 
 end
+
+/-! ## `legacy_signs` (cypher.rs)
+
+While a `CYPHER` parameter value goes through the expression fallback, `legacy_signs` is set
+and a run of signs is limited to what the grammar took before runs parsed: `+`, `-` or `+-`.
+The expression oracle in `paramValueP` is abstract; this is the one place where its sign
+prefix differs from `countSigns` (the `legacy_signs = false` path). -/
+
+/-- The sign loop with `legacy_signs` set: `.none` is the "Invalid input" error, which fires
+on a `+` or `-` after a `-`, or on a second `+`. Otherwise it returns the `-` count and the rest. -/
+def legacySigns : Nat → Nat → List Tok → Option (Nat × List Tok)
+  | neg, plus, .dash :: r => if neg > 0 then none else legacySigns (neg + 1) plus r
+  | neg, plus, .plus :: r => if neg > 0 ∨ plus > 0 then none else legacySigns neg (plus + 1) r
+  | neg, _, ts => some (neg, ts)
+
+/-- The accepted legacy runs are exactly the empty run, `+`, `-` and `+-`; a run of
+two or more of one sign, `-+`, and anything longer is refused (`--1`, `---1`, `-+-1`, `++1`
+in the Rust test `malformed_params_name_the_parameter`'s neighbour `param_of`). -/
+theorem legacySigns_runs :
+    legacySigns 0 0 [.int 1] = some (0, [.int 1]) ∧
+    legacySigns 0 0 [.plus, .int 1] = some (0, [.int 1]) ∧
+    legacySigns 0 0 [.dash, .int 1] = some (1, [.int 1]) ∧
+    legacySigns 0 0 [.plus, .dash, .int 1] = some (1, [.int 1]) ∧
+    legacySigns 0 0 [.dash, .dash, .int 1] = none ∧
+    legacySigns 0 0 [.dash, .dash, .dash, .int 1] = none ∧
+    legacySigns 0 0 [.dash, .plus, .dash, .int 1] = none ∧
+    legacySigns 0 0 [.plus, .plus, .int 1] = none ∧
+    legacySigns 0 0 [.plus, .dash, .dash, .int 1] = none := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Whatever token list, a legacy-accepted run has at most one `-`. -/
+theorem legacySigns_neg_le (ts : List Tok) : ∀ neg plus r, legacySigns neg plus ts = some r →
+    neg ≤ 1 → r.1 ≤ 1 := by
+  induction ts with
+  | nil => intro neg plus r h hn; simp [legacySigns] at h; subst h; exact hn
+  | cons t rest ih =>
+    intro neg plus r h hn
+    by_cases hd : t = .dash
+    · subst hd
+      simp only [legacySigns] at h
+      split at h
+      · simp at h
+      · exact ih _ _ _ h (by omega)
+    · by_cases hp : t = .plus
+      · subst hp
+        simp only [legacySigns] at h
+        split at h
+        · simp at h
+        · exact ih _ _ _ h hn
+      · have : legacySigns neg plus (t :: rest) = some (neg, t :: rest) := by
+          unfold legacySigns; split <;> simp_all
+        rw [this] at h; cases h; exact hn
 
 /-- `CYPHER a=1 MATCH ...`: the pair loop stops at `MATCH` (no `=` follows)
 and leaves it for the query. -/

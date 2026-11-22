@@ -1,6 +1,6 @@
 /-
 # Patterns: `parse_labels`, `parse_node_pattern`, `parse_relationship_pattern`,
-# `add_pattern_node`, `parse_pattern` (cypher.rs:1359-1581, 3016-3214)
+# `add_pattern_node`, `parse_pattern` (cypher.rs)
 -/
 import FalkorParserGrammar.C.Graph
 
@@ -9,7 +9,7 @@ namespace FalkorParserGrammar.C
 def fuelP {α} : P α := fun _ => .fuel
 @[simp] theorem run_fuelP {α} (s : PS) : (fuelP : P α) s = .fuel := rfl
 
-/-- `Parser::next_unnamed` (cypher.rs:3064-3069, #3303): `Alias::Anon(anon_counter)`, then
+/-- `Parser::next_unnamed` (cypher.rs, #3303): `Alias::Anon(anon_counter)`, then
 `anon_counter += 1`. The `u32` increment cannot overflow on any query Redis accepts (4·10⁹
 anonymous entities). -/
 def anonFresh : P Alias := fun s => .ok (.anon s.2) (s.1, s.2 + 1)
@@ -20,7 +20,7 @@ def asU32 (i : Int) : Nat := (i % 4294967296).toNat
 /-- `OrderSet::insert` / `HashSet::insert`: append if absent. -/
 def sins (l : Nat) (acc : List Nat) : List Nat := if l ∈ acc then acc else acc ++ [l]
 
-/-- `parse_labels` (cypher.rs:3207-3214). -/
+/-- `parse_labels` (cypher.rs). -/
 def labelsP : Nat → List Nat → P (List Nat)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -31,8 +31,7 @@ def labelsP : Nat → List Nat → P (List Nat)
       labelsP n (sins l acc)
     else pure acc
 
-/-- The property part of a node / relationship pattern (cypher.rs:3042-3049,
-3143-3150): `$param`, an inline map (`parse_inline_properties`, i.e.
+/-- The property part of a node / relationship pattern (cypher.rs): `$param`, an inline map (`parse_inline_properties`, i.e.
 `parse_map` with pattern comprehensions forbidden, which only adds
 errors), or the empty map. -/
 def propsP (o : Oracle) : P ET := do
@@ -42,13 +41,13 @@ def propsP (o : Oracle) : P ET := do
   | .lbrace => o.pmap
   | _ => pure (leaf .map)
 
-/-- `Parser::parse_alias_or_unnamed` (cypher.rs:3071-3075, #3303):
+/-- `Parser::parse_alias_or_unnamed` (cypher.rs, #3303):
 `try_parse_ident().map_or_else(|| next_unnamed(), Alias::Named)`. -/
 def aliasOr : Option Nat → P Alias
   | some v => pure (.named v)
   | none => anonFresh
 
-/-- `parse_node_pattern` (cypher.rs:3032-3055). -/
+/-- `parse_node_pattern` (cypher.rs). -/
 def nodeP (o : Oracle) (F : Nat) : P (QNode Alias) := do
   tok .lparen
   let a ← tryIdent
@@ -58,7 +57,7 @@ def nodeP (o : Oracle) (F : Nat) : P (QNode Alias) := do
   tok .rparen
   pure ⟨alias, ls, attrs⟩
 
-/-- The relationship-type list (`parse_relationship_types`, cypher.rs:3057-3064, #3300): a name, then
+/-- The relationship-type list (`parse_relationship_types`, cypher.rs, #3300): a name, then
 while there is a `|` an optional `:` (the legacy `A|:B`) and another name. A bare `:` between
 two names (`A:B`) is not a separator: it is left for the caller (`detailP`), which accepts
 only `*`, a property map or `$param`, or `]` there, so `[:A:B]` is a syntax error. -/
@@ -72,14 +71,14 @@ def typesP : Nat → List Nat → P (List Nat)
       typesP n (sins t acc)
     else pure (sins t acc)
 
-/-- An optional integer hop bound (cypher.rs:3094-3099, 3101-3106). -/
+/-- An optional integer hop bound (cypher.rs). -/
 def hopP : P (Option Int) := do
   let c ← peek
   match c with
   | .int i => do next; pure (some i)
   | _ => pure none
 
-/-- The `*`-range (cypher.rs:3093-3118). -/
+/-- The `*`-range (cypher.rs). -/
 def varLenP : P (Option (Nat × Option Nat)) := do
   let st ← opt .star
   if st then do
@@ -93,7 +92,7 @@ def varLenP : P (Option (Nat × Option Nat)) := do
       | none => pure (some (1, none))
   else pure none
 
-/-- `[*1..1]` / `[*1]` collapse to a single hop (cypher.rs:3126-3132). -/
+/-- `[*1..1]` / `[*1]` collapse to a single hop (cypher.rs). -/
 def normVL (vl : Option (Nat × Option Nat)) : Option (Nat × Option Nat) :=
   if vl = some (1, some 1) then none else vl
 
@@ -101,7 +100,7 @@ def badRange : Option (Nat × Option Nat) → Bool
   | some (mn, some mx) => decide (mn > mx)
   | _ => false
 
-/-- The bracketed detail `[ ... ]` after `-[` (cypher.rs:3081-3152). -/
+/-- The bracketed detail `[ ... ]` after `-[` (cypher.rs). -/
 def detailP (o : Oracle) (F : Nat) (clause : CK) : P (Alias × List Nat × ET × Option (Nat × Option Nat)) := do
   let a ← tryIdent
   let alias ← aliasOr a
@@ -114,7 +113,7 @@ def detailP (o : Oracle) (F : Nat) (clause : CK) : P (Alias × List Nat × ET ×
   tok .rbrack
   pure (alias, types, attrs, normVL vl0)
 
-/-- `parse_relationship_pattern` (cypher.rs:3067-3205). Rust collects the
+/-- `parse_relationship_pattern` (cypher.rs). Rust collects the
 types through a `HashSet`, so their order is unspecified; the model keeps
 first-occurrence order (only membership is observable downstream). -/
 def relP (o : Oracle) (F : Nat) (clause : CK) (src : QNode Alias) : P (QRel Alias × QNode Alias) := do
@@ -135,13 +134,13 @@ def relP (o : Oracle) (F : Nat) (clause : CK) (src : QNode Alias) : P (QRel Alia
   else if inc then pure (QRel.new d.1 d.2.1 d.2.2.1 dst src false mn mx, dst)
   else pure (QRel.new d.1 d.2.1 d.2.2.1 src dst false mn mx, dst)
 
-/-- `add_pattern_node` (cypher.rs:1359-1370). -/
+/-- `add_pattern_node` (cypher.rs). -/
 def addPatNode (clause : CK) (gs : QG Alias × List Alias) (n : QNode Alias) : QG Alias × List Alias :=
   if n.alias ∈ gs.2 then (if clause = .match_ then gs.1.mergeNode n else gs.1, gs.2)
   else ((gs.1.addNode n).2, gs.2 ++ [n.alias])
 
-/-- The anonymous-path chain (cypher.rs:1559-1561). Every relationship goes through
-`add_pattern_relationship` (cypher.rs:1378), which rejects an alias the pattern already holds
+/-- The anonymous-path chain (cypher.rs). Every relationship goes through
+`add_pattern_relationship` (cypher.rs), which rejects an alias the pattern already holds
 whatever the clause (#3289); before it only MATCH and CREATE did. -/
 def chainA (o : Oracle) (F : Nat) (clause : CK) : Nat → QNode Alias → QG Alias × List Alias →
     P (QG Alias × List Alias)
@@ -155,7 +154,7 @@ def chainA (o : Oracle) (F : Nat) (clause : CK) : Nat → QNode Alias → QG Ali
       else chainA o F clause n rr.2 (addPatNode clause (ag.2, gs.2) rr.2)
     else pure gs
 
-/-- The named-path chain (cypher.rs:1535-1545). A repeated relationship variable is an error in
+/-- The named-path chain (cypher.rs). A repeated relationship variable is an error in
 every clause (#3289; it was MATCH only). -/
 def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Alias → List Alias →
     QG Alias × List Alias → P (QG Alias × List Alias)
@@ -172,12 +171,12 @@ def chainN (o : Oracle) (F : Nat) (clause : CK) (p : Nat) : Nat → QNode Alias 
     else pure (((gs.1.addPath ⟨.named p, vars⟩).2), gs.2)
 
 /-- Identifier ids of `shortestPath` / `allShortestPaths` (compared
-case-insensitively at cypher.rs:1384, 1389; case folding is lexical). -/
+case-insensitively at cypher.rs; case folding is lexical). -/
 def nmShortest : Nat := 4000001
 def nmAllShortest : Nat := 4000002
 
-/-- The rebuilt allShortestPaths relationship (cypher.rs:1444-1460). `inc` is whether the
-relationship began with `<` (`is_incoming`, cypher.rs:1416-1418, #3112): once from/to are
+/-- The rebuilt allShortestPaths relationship (cypher.rs). `inc` is whether the
+relationship began with `<` (`is_incoming`, cypher.rs, #3112): once from/to are
 swapped a same-alias `(a)<-[*]-(a)` has `src.alias = la`, so the arrow is what marks it
 reversed. -/
 def aspRel (r : QRel Alias) (la : Alias) (inc : Bool) : QRel Alias :=
@@ -191,10 +190,10 @@ theorem aspRel_same_alias (r : QRel Alias) (la : Alias) (hd : r.bidir = false)
     (aspRel r la true).asp = .rev ∧ (aspRel r la false).asp = .fwd := by
   simp [aspRel, hd, hs]
 
-/-- `if let Some(min) = relationship.min_hops && min > 1` (cypher.rs:1433-1440). -/
+/-- `if let Some(min) = relationship.min_hops && min > 1` (cypher.rs). -/
 def minTooBig (r : QRel Alias) : Bool := match r.minH with | some m => decide (m > 1) | none => false
 
-/-- The allShortestPaths relationship loop (cypher.rs:1410-1495). -/
+/-- The allShortestPaths relationship loop (cypher.rs). -/
 def aspLoop (o : Oracle) (F : Nat) (clause : CK) (leftAlias : Alias) : Nat → QNode Alias → Bool →
     List Alias → QG Alias × List Alias → P (Bool × List Alias × (QG Alias × List Alias))
   | 0, _, _, _, _ => fuelP
@@ -227,7 +226,7 @@ separator check. -/
 inductive PEnd | stop | cont | sep
   deriving DecidableEq
 
-/-- `p = allShortestPaths(...)` (cypher.rs:1389-1513), after `p =`. -/
+/-- `p = allShortestPaths(...)` (cypher.rs), after `p =`. -/
 def aspPart (o : Oracle) (F : Nat) (clause : CK) (p : Nat) (gs : QG Alias × List Alias) :
     P (PEnd × (QG Alias × List Alias)) := do
   next
@@ -243,7 +242,7 @@ def aspPart (o : Oracle) (F : Nat) (clause : CK) (p : Nat) (gs : QG Alias × Lis
   let c ← peek
   if c = .comma then do next; pure (.cont, gs) else pure (.stop, gs)
 
-/-- One pattern part (cypher.rs:1379-1565). -/
+/-- One pattern part (cypher.rs). -/
 def partP (o : Oracle) (F : Nat) (clause : CK) (gs : QG Alias × List Alias) :
     P (PEnd × (QG Alias × List Alias)) := do
   let a ← tryIdent
@@ -262,18 +261,17 @@ def partP (o : Oracle) (F : Nat) (clause : CK) (gs : QG Alias × List Alias) :
     let gs' ← chainA o F clause F left (addPatNode clause gs left)
     pure (.sep, gs')
 
-/-- The part separator (cypher.rs:1567-1580): MERGE takes one part; `,`
-continues; *the clause's own keyword also continues* (folding
-`MATCH a MATCH b` into one pattern). -/
+/-- The part separator (cypher.rs): MERGE takes one part; `,`
+continues; anything else ends the pattern. Since #2981 the clause's own
+keyword ends it too (`MATCH a MATCH b` is two clauses, no longer folded). -/
 def sepP (clause : CK) : P Bool := do
   if clause = .merge then pure false else do
   let c ← peek
   match c with
   | .comma => do next; pure true
-  | .kw k => if k = clause then do next; pure true else pure false
   | _ => pure false
 
-/-- `parse_pattern` (cypher.rs:1372-1582). -/
+/-- `parse_pattern` (cypher.rs). -/
 def patternLoop (o : Oracle) (F : Nat) (clause : CK) : Nat → QG Alias × List Alias → P (QG Alias)
   | 0, _ => fuelP
   | n + 1, gs => do

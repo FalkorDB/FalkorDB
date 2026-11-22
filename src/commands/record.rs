@@ -98,7 +98,22 @@ fn record_mut(
         // or how a failed one is undone.
         match &outcome {
             Err(_) => abandon_write(&session, &runtime),
-            Ok(result) => finish_write(&session, ctx, key_name, &runtime, &result.stats),
+            Ok(result) => {
+                // Refused because no key holds the graph any more: undone like a
+                // failed write. Every operator succeeded, so the trace alone would
+                // read as a committed write; end it with `GRAPH.QUERY`'s error on
+                // the root, as when the same refusal comes at escalation (the
+                // write is then an `Err` outcome whose error the root records).
+                if let Err(abort) = finish_write(&session, ctx, key_name, &runtime, &result.stats) {
+                    abandon_write(&session, &runtime);
+                    if let Some(root) = plan.root().indices::<Bfs>().next() {
+                        runtime
+                            .record
+                            .borrow_mut()
+                            .push((root, Err(abort.to_string())));
+                    }
+                }
+            }
         }
     }
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();
@@ -180,7 +195,7 @@ pub fn graph_record(
     // C ends the query at its first NUL byte; see `up_to_nul`.
     let query = up_to_nul(args.next_str()?);
 
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
 
     // `key_name` is the key the graph lives at, not C's name for it — see `graph_query`.
     // An existing graph is at the key the command named; one created here lands at the
@@ -197,7 +212,7 @@ pub fn graph_record(
             &name,
         )));
         // Stored under C's key, as GRAPH.QUERY does — see `c_graph_key`.
-        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
         create_key
             .set_value(&GRAPH_TYPE, graph.clone())
             .map_err(wrong_type_compat)?;

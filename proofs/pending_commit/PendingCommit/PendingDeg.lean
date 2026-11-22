@@ -1,12 +1,12 @@
 import PendingCommit.PendingRels
 /-
-# Degrees and label scans over `Pending` (pending.rs:1114-1340)
+# Degrees and label scans over `Pending` (pending.rs)
 
 * `pendingDeg_spec` — `pending_indegree` / `pending_outdegree`: with type
   names, the sum over the listed types of the matching created edges of that
   type that are not pending-deleted (a name listed twice is counted twice; the
   callers dedupe, `functions/entity.rs` `parse_degree_args`); without, all such
-  created edges. Since #3520 (9ffa9ab04) an edge created and deleted in the
+  created edges. An edge created and deleted in the
   query segment (since the last commit) is not counted (`pendingDeg_skips_deleted`).
 * `deletedDeg_some` / `deletedDeg_none` — `pending_deleted_*degree` count the
   deleted edges with the right endpoint (and type) that are *committed*: an
@@ -14,10 +14,9 @@ import PendingCommit.PendingRels
   so `Graph::get_relationship_endpoints` (which panics for an id the committed
   graph does not have) is only asked for committed ids (`deletedDeg_some`).
   `fixed2769_created_deleted`: after `CREATE (a)-[r:R]->(b) DELETE r` the
-  degrees are 0 and nothing panics — #2769, fixed by #3520.
+  degrees are 0 and nothing panics (#2769).
 * `pendingWithLabels_spec`, `withLabelRemoves_spec` —
-  `get_pending_nodes_with_labels` (:1114, now taking the graph, #3467
-  a477d9aa3): every created node when no label is given, else the *live*
+  `get_pending_nodes_with_labels` (:1114, taking the graph): every created node when no label is given, else the *live*
   nodes (not pending-deleted) that gain a pattern label: each pattern label is
   either committed (the node is not created, the label is not staged for
   removal, the graph has it) or staged, and at least one is only staged. And
@@ -146,7 +145,7 @@ theorem deletedDeg_skips_created (p : P) (ep : Nat → Option (Nat × Nat)) (ty 
     intro r hr; simp [h r hr]
   rw [this]; rfl
 
-def P0 : P := ⟨[], [], [], [], [], [], [], [], [], [], [], [], [], []⟩
+def P0 : P := ⟨[], [], [], [], [], [], [], [], [], [], [], [], [], [], 0⟩
 
 /-- **`fixed2769_created_deleted`** (#2769, fixed by #3520): create edge 0 between nodes 0 and 1 in this
 batch, delete it, ask for `indegree(1)`: no panic (the committed graph is not asked about edge 0), the

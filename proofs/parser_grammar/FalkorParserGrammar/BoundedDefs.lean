@@ -27,7 +27,7 @@ def lists : Nat → List (List Tok)
   | n + 1 => lists n ++ ((lists n).filter (·.length == n)).flatMap (fun l => alpha.map (fun t => l ++ [t]))
 
 /-- Keywords read as identifiers (Rust's `parse_primary_expr` catch-all,
-cypher.rs:1989, accepts any keyword as a variable name). -/
+cypher.rs, accepts any keyword as a variable name). -/
 def asIdents (l : List Tok) : List Tok :=
   l.map fun t => match t with
     | .kw .and_ => .ident 90 | .kw .in_ => .ident 91 | .kw .contains => .ident 92
@@ -40,7 +40,7 @@ check now proves those agree with the grammar. -/
 def known (l : List Tok) : Bool :=
   let pairs := l.zip (l.drop 1)
   pairs.any (fun (x, y) =>
-      (x == .plus && y == .dash) ||                                   -- `+-x` (sign_sequences)
+      ((x == .plus || x == .dash) && (y == .plus || y == .dash)) ||    -- a run of signs (sign_runs)
       (x == .kw .not_ && (y == .kw .in_ || y == .kw .contains))) ||   -- `x NOT IN y` extension
     -- a run of ≥ 3 NOTs folds by parity (not_run_folds); none fits in 3 tokens with an operand
     (l.zip (l.drop 1) |>.zip (l.drop 2) |>.any (fun ((x, y), z) =>
@@ -61,7 +61,7 @@ def okAt (l : List Tok) : Bool := agreeB (parseAll 400 l) (G.all 200 l) || known
 
 `C.ListGate`'s premise `Oracle.Bal` says `parse_expr` only succeeds by consuming
 a bracket-balanced run with no top-level `,` (or `|`, which this alphabet lacks).
-Before #3041 it was false (`x[(..2]` consumed an unclosed `(`). Here it is checked on the fragment. -/
+Here it is checked on the fragment. -/
 
 /-- Depth scan: never below 0, ends at 0, no `,` at depth 0. -/
 def balRun : Nat → List Tok → Bool

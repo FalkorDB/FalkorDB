@@ -2,7 +2,7 @@
 # `parse_expr_inner` never panics
 
 The four panic sites of `parse_expr_inner` are
-`children().last().unwrap()` (cypher.rs:2323, 2328), `child(0)` of a
+`children().last().unwrap()` (cypher.rs), `child(0)` of a
 `Negate` (2549) and of a `Paren` (2636), and the two `unreachable!()`
 (2652, 2655). They are all safe because of one stack invariant:
 
@@ -468,6 +468,26 @@ theorem notFrames_ok {K : List Frame} (hK : ∀ f ∈ K, FrameOK f) (n : Nat) :
       · exact frameOK_some (by omega) (almost_leaf _)
       · exact hK f hf
 
+theorem signFrames_ok {K : List Frame} (hK : ∀ f ∈ K, FrameOK f) (n : Nat) :
+    ∀ f ∈ signFrames n K, FrameOK f := by
+  intro f hf
+  unfold signFrames at hf
+  split at hf
+  · simp only [List.mem_cons] at hf
+    rcases hf with rfl | hf
+    · exact frameOK_none (by omega)
+    · exact hK f hf
+  · split at hf
+    · simp only [List.mem_cons] at hf
+      rcases hf with rfl | hf
+      · exact frameOK_some (by omega) (almost_leaf _)
+      · exact hK f hf
+    · simp only [List.mem_cons] at hf
+      rcases hf with rfl | rfl | hf
+      · exact frameOK_some (by omega) (almost_leaf _)
+      · exact frameOK_some (by omega) (almost_leaf _)
+      · exact hK f hf
+
 theorem step_ok {pe : List Tok → Out} (hpe : PeOK pe) (n : Nat) {K : List Frame} (hK : Inv K)
     (ts : List Tok) : StOK (step pe n K ts) := by
   obtain ⟨hne, hK, htop⟩ := hK
@@ -493,13 +513,11 @@ theorem step_ok {pe : List Tok → Out} (hpe : PeOK pe) (n : Nat) {K : List Fram
         · exact notFrames_ok hK' _ f hf
       · split
         · refine ⟨by simp, ?_, trivial⟩
-          apply frames_ok (F := [(10, none), (9, _)]) _ hK'
           intro f hf
-          simp only [List.mem_cons, List.not_mem_nil, or_false] at hf
-          rcases hf with rfl | rfl
+          simp only [List.mem_cons] at hf
+          rcases hf with rfl | hf
           · exact frameOK_none (by omega)
-          · refine ⟨by omega, ?_⟩
-            intro e he; split at he <;> simp at he; subst he; exact almost_leaf _
+          · exact signFrames_ok hK' _ f hf
         · have hp := primary_ok hpe n ts
           revert hp
           cases primary pe n ts with
