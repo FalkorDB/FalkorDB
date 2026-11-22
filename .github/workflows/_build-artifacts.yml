@@ -292,6 +292,18 @@ jobs:
             # Outputs are captured before matching: `docker exec ... | grep -q`
             # under pipefail reports 141 when grep exits early.
             wait_pong smoke
+            if [[ -f LICENSE-SSPL && -f LICENSE-AGPL && -f LICENSE-ELASTIC ]]; then
+              for license in LICENSE LICENSE-SSPL LICENSE-AGPL LICENSE-ELASTIC; do
+                docker exec smoke cat "/usr/local/share/licenses/falkordb/$license" | cmp - "$license"
+              done
+            elif [[ ! -e LICENSE-SSPL && ! -L LICENSE-SSPL &&
+                    ! -e LICENSE-AGPL && ! -L LICENSE-AGPL &&
+                    ! -e LICENSE-ELASTIC && ! -L LICENSE-ELASTIC ]] \
+              && grep -qx ' *Server Side Public License' LICENSE; then
+              echo "Historical tagged tree predates image license files."
+            else
+              echo "::error::checked-out tree has an incomplete license set"; exit 1
+            fi
             MODULES=$(docker exec smoke redis-cli MODULE LIST)
             if ! grep -qx graph <<<"$MODULES"; then echo "::error::the graph module is not loaded in $IMAGE"; exit 1; fi
             GOT=$(docker exec smoke redis-cli GRAPH.QUERY smoke "UNWIND range(1, 10) AS x RETURN sum(x)" | sed -n 2p)
