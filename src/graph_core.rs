@@ -154,13 +154,11 @@ pub fn register_graph(
     // registry clone; `graph_free` removes entries by pointer identity, so the
     // old value's late `graph_free` cannot take out the new registration.
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
-    // Drop any displaced graph off the main Redis thread. Index::drop ->
-    // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
-    // thread pool when its timer can't be stopped synchronously; that
-    // callback asserts gc->stopped == 1 and aborts under the resulting
-    // race. Moving the drop to a background thread also routes Index::drop
-    // through the GIL-acquiring path, which the synchronous main-thread
-    // drop intentionally skips.
+    // Drop any displaced graph off the main Redis thread, so freeing a large
+    // graph does not stall it. The drop thread holds no GIL: `SpecHandle::drop`
+    // calls `RediSearch_DropIndex` without it (#726), so that call must not touch
+    // the GIL's state. RediSearch hands the GC timer stop to the main thread and
+    // leaves the shared "N/A" error key's refcount alone (#3483).
     if let Some(displaced) = displaced {
         std::thread::spawn(move || drop(displaced));
     }
@@ -1951,8 +1949,7 @@ pub unsafe extern "C" fn graph_free(value: *mut c_void) {
         // will strip again. Queued, not deleted: the server is part-way through
         // removing this graph's key.
         telemetry::queue_streams_of_freed_graph(names);
-        // Drop off the main Redis thread so Index::drop routes through the
-        // GIL-acquiring path (see register_graph for the rationale).
+        // Drop off the main Redis thread, without the GIL (see register_graph).
         std::thread::spawn(move || {
             drop(boxed);
             drop(removed);
