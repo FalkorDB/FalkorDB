@@ -42,7 +42,7 @@ graph/src/runtime/value.rs	Sub::sub	1084	PROVEN	vArith .sub: arith_agrees, neg_v
 graph/src/runtime/value.rs	Mul::mul	1130	PROVEN	vArith .mul: arith_agrees (scalar subset)
 graph/src/runtime/value.rs	Div::div	1159	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
 graph/src/runtime/value.rs	Rem::rem	1189	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
-graph/src/runtime/value.rs	OrderedEnum::order	1219	PROVEN	V.order here (scalar subset); full 16-variant table: proofs/value_order orderTag: order_injective, no_tag_between_int_and_float, null_not_greatest
+graph/src/runtime/value.rs	OrderedEnum::order	1221	PROVEN	V.order here (scalar subset); full 16-variant table: proofs/value_order orderTag: order_injective, no_tag_between_int_and_float, null_not_greatest
 graph/src/runtime/value.rs	CompareValue::compare_value	1250	PROVEN	compareValue here (scalar subset, abstract f64); full table: proofs/value_order cmpV (cmp_sane_eq_key, nan_breaks_antisymmetry, mixed_numeric_not_transitive) and Glue partialCmpVia_none_iff
 graph/src/runtime/value.rs	compare_floats	1919	PROVEN	compareFloats_flag, cf_ne here; proofs/value_order cmpF: nan_breaks_antisymmetry, proofs/value_math cmpFloats
 graph/src/runtime/functions/math.rs	range	251	PROVEN	rangeMath here (spec of rangeIter_correct); argument validation: proofs/functions_str_list range_elems_between, range_noOverflow

@@ -4,13 +4,13 @@ graph/src/runtime/value.rs	DeletedNode::new	101	PROVEN	Glue.DeletedNode.new: new
 graph/src/runtime/value.rs	DeletedRelationship::new	119	PROVEN	Glue.DeletedRelationship.new: new_fields, new_injective (snapshot keeps src/dst/type/attrs)
 graph/src/runtime/value.rs	Value::clone	225	PROVEN	Glue.W.clone (all 16 arms): clone_eq
 graph/src/runtime/value.rs	Hash::hash	862	PROVEN	hwords/floatWord/f32HashBits (main since #2917 7fdf06a0e; Fx stream): Main.main_hash_consistent (sort_cmp-equal => equal words, every wf value), Main.main_nans_one_key (W9-hash-1 fixed), Main.float_nans_one_key, float_signed_zero_one_key, vec_nans_one_key, point_nans_one_key (#2917 claims), sane_hash_consistent, hash_not_consistent_with_eq (vs Value::eq: harmless for grouping since GroupKey uses sort_cmp, but OPEN for ValueHashJoin, which hashes Value then compare_value: finding 5, 2^53+1 vs 2^53.0 can miss a join match); counterexamples removed (17ccc5412); Str words abstracted; Path/Rel/temporal arms not modelled
-graph/src/runtime/value.rs	OrderedEnum::order	1215	PROVEN	Glue.OrderedEnum class: orderedEnum_order_eq, order_null_gt
+graph/src/runtime/value.rs	OrderedEnum::order	1217	PROVEN	Glue.OrderedEnum class: orderedEnum_order_eq, order_null_gt
 graph/src/runtime/value.rs	PartialEq::eq	1257	PROVEN	eqV: nan_eq_irreflexive, hash_not_consistent_with_eq, cmp_sane_eq_key (Value::eq is not an equivalence; GroupKey::eq no longer uses it since #2917)
 graph/src/runtime/value.rs	CompareValue::compare_value	1266	PROVEN	cmpV: cmp_sane_eq_key, sane_refl/sane_swap/sane_le_trans; nan_breaks_antisymmetry, mixed_numeric_not_transitive (compare_value is not a total order; sorting no longer uses it since #2912); Str=Nat; Path/Rel/temporal arms not modelled
 graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1316	PROVEN	Glue.ValueTypeOf class / W.valueOfType: valueTypeOf_eq, valueOfType_any, valueOfType_self
 graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1323	PROVEN	Glue.W.valueOfType: valueTypeOf_eq, valueOfType_self, valueOfType_any; full arm model incl. the List(Any) skip (#3861): proofs/value_math TypeCheck.valueOfType: valueOfType_none_iff, vot_list_any, vot_list_list
-graph/src/runtime/value.rs	ValueGetType::get_type	1369	PROVEN	Glue.ValueGetType class / W.getType: valueGetType_eq, getType_concrete
-graph/src/runtime/value.rs	ValueGetType::get_type	1373	PROVEN	Glue.W.getType: valueGetType_eq, getType_concrete; proofs/value_math TypeCheck.getType
+graph/src/runtime/value.rs	ValueGetType::get_type	1371	PROVEN	Glue.ValueGetType class / W.getType: valueGetType_eq, getType_concrete
+graph/src/runtime/value.rs	ValueGetType::get_type	1375	PROVEN	Glue.W.getType: valueGetType_eq, getType_concrete; proofs/value_math TypeCheck.getType
 graph/src/runtime/value.rs	Value::name	1399	PROVEN	Glue.W.name (Edge/Vectorf32 since #2954): name_eq_iff_order_eq (name is a bijective function of the variant)
 graph/src/runtime/value.rs	Value::to_json_string	1421	PROVEN	Json.toJsonString: toJsonString_eq
 graph/src/runtime/value.rs	fmt	1431	PROVEN	Json.jsonWrapperFmt: jsonWrapperFmt_eq
