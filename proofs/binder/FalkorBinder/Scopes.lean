@@ -4,7 +4,7 @@ import FalkorBinder.Pattern
 -/
 namespace FalkorBinder
 
-/-! ## `merge_scope_vars` (binder.rs:2694-2706) -/
+/-! ## `merge_scope_vars` (binder.rs) -/
 
 /-- Per scope, keep the longer table. Equal to the Rust loop: resizing with
 empty tables and then replacing index `i < other.len()` when `other[i]` is
@@ -37,13 +37,14 @@ theorem mergeSV_covers (a b : List (List Var)) (s i : Nat)
     (h : i < lenAt a s ∨ i < lenAt b s) : i < lenAt (mergeSV a b) s := by
   have := mergeSV_ge a b s; omega
 
-/-! ## FOREACH restore (binder.rs:678-709) -/
+/-! ## FOREACH restore (binder.rs) -/
 
 /-- The restored table: the saved outer table plus every inner entry whose
-id the outer table does not hold, re-keyed `_foreach_{scope}_{id}`. -/
+id the outer table does not hold, re-keyed `_foreach_{scope}_{id}` — or, for a nameless
+variable, pushed unnamed (#3303). -/
 def foreachRestore (saved inner : Env) (scope : Nat) : Env :=
   saved ++ (inner.filter (fun p => !(saved.ids.contains p.2.id))).map
-    (fun p => (s!"_foreach_{scope}_{p.2.id}", p.2))
+    (fun p => if p.2.name.isNone then (Key.un, p.2) else (Key.nm s!"_foreach_{scope}_{p.2.id}", p.2))
 
 /-- When the body only *added* entries, each minted at or above the outer
 size (`inner = saved ++ added`), the restored table holds exactly the inner
@@ -70,7 +71,9 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
     omega
   have hids : (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
     simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
-    simp [Env.ids, List.map_map, Function.comp_def]
+    simp only [Env.ids, List.map_append, List.map_map, Function.comp_def]
+    congr 1
+    apply List.map_congr_left; intro p _; split <;> rfl
   have hlen : (foreachRestore saved (saved ++ added) scope).length = (saved ++ added).length := by
     simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
     simp
@@ -78,49 +81,37 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
   intro i hmem
   rw [hids] at hmem; rw [hlen]; exact hi i hmem
 
-/-! ## Pattern comprehension / pattern predicate cleanup (binder.rs:1922-1923, 2107-2108) -/
+/-! ## Pattern comprehension / pattern predicate cleanup (binder.rs) -/
 
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
-comprehension's sub-plan uses. -/
+comprehension's sub-plan uses; the cleanup then keeps only the names that
+were there before (unnamed entries stay, #3303). -/
 def compScope : Env :=
-  [("n", ⟨"n", 0, 0, .node⟩), ("m", ⟨"m", 1, 0, .node⟩), ("r", ⟨"r", 2, 0, .rel⟩)]
+  [("n", ⟨"n", 0, 0, .node, none⟩), ("m", ⟨"m", 1, 0, .node, none⟩), ("r", ⟨"r", 2, 0, .rel, none⟩)]
 
-/-- The cleanup before #3062 kept only the names that were there before (and `_anon*`). -/
-def compCleaned : Env := compScope.retain (fun k => k == "n" || k.startsWith "_anon")
+def compCleaned : Env := compScope.retain (fun k => k == "n")
 
-/-- **Root cause 2 (comprehensions)**, history (343e077f2, fixed by #3062). The cleaned table had
-size 1 while ids 1 and 2 were still in the IR: the planner's first two fresh ids in scope
+/-- **Root cause 2 (comprehensions).** The cleaned table has size 1 while
+ids 1 and 2 are still in the IR: the planner's first two fresh ids in scope
 0 — or the next binder variable (`x`, `y` of a following `MATCH (x)-->(y)`)
-— were exactly `m`'s and `r`'s. `mint_fresh_iff` says that is a collision. -/
-theorem pre3062_comprehension_cleanup_breaks :
+— are exactly `m`'s and `r`'s. `mint_fresh_iff` says that is a collision. -/
+theorem comprehension_cleanup_breaks :
     compScope.Covers ∧ compCleaned.length = 1 ∧
     ¬ (∀ i ∈ compScope.ids, i < compCleaned.length) := by
   refine ⟨?_, by decide, ?_⟩
   · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
   · intro h; exact absurd (h 1 (by decide)) (by decide)
 
-/-- **#3062**: the cleanup now re-keys `m` and `r` (`hide_new_names`): the table keeps size 3, so
-every id the comprehension's sub-plan uses stays below `len()` and the next ids minted are 3, 4, …
-(`hideCleanup_covers` for every table). -/
-theorem comprehension_hide_keeps :
-    (compScope.hideNew ["n"]).Covers ∧ (compScope.hideNew ["n"]).length = 3 ∧
-    ∀ i ∈ compScope.ids, i < (compScope.hideNew ["n"]).length := by
-  have hd : compScope.Distinct := by unfold Env.Distinct; decide
-  have hc : compScope.Covers := by
-    intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
-  obtain ⟨c, l⟩ := Env.hideNew_covers ["n"] compScope hd hc
-  refine ⟨c, l, fun i hi => by rw [l]; exact hc i hi⟩
-
-/-! ## `CALL { … UNION … }` scope numbering (`bind_call_body`, binder.rs:824-925) -/
+/-! ## `CALL { … UNION … }` scope numbering (`bind_call_body`, binder.rs) -/
 
 /-- The `env_stack` of a plain CALL body: the `outerLen` live outer scopes (only their number
 matters here) with the body's own scope pushed on top (`self.env_stack.push(HashMap::new())`,
-binder.rs:845). -/
+binder.rs). -/
 def queryBodyStack (outerLen : Nat) : List Env := List.replicate outerLen [] ++ [[]]
 
 /-- The `env_stack` of a UNION branch's own `Binder` since #3027:
-`vec![HashMap::new(); self.env_stack.len() + 1]` (binder.rs:903), the outer scopes as empty
+`vec![HashMap::new(); self.env_stack.len() + 1]` (binder.rs), the outer scopes as empty
 placeholders and one more on top. (Before #3027 it was a one-scope stack, so the branch's first
 scope had the id of outer scope 0.) -/
 def unionBranchStack (outerLen : Nat) : List Env := List.replicate (outerLen + 1) []
@@ -142,32 +133,37 @@ theorem callBody_union_disjoint (outerLen : Nat) (s : Nat) (h : s < outerLen) :
     callBodyScope outerLen true ≠ s := by
   simp [callBodyScope, unionBranchStack]; omega
 
-/-! ## Label accumulation (binder.rs:1356-1360, 122-154) -/
+/-! ## Label accumulation (binder.rs; the rollback in `with_node_labels_rolled_back`) -/
 
 inductive LClause
   | match_ (labels : List Name)        -- MATCH (n:L…)
-  | optMatch (labels : List Name)      -- OPTIONAL MATCH (n:L…): saved/restored (binder.rs:338-346)
-  | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs:2090-2092)
-  | create (labels : List Name)        -- CREATE (n:L)-[..]->(): not saved
-  | comprehension (labels : List Name) -- [(n:L)-->() | …]: saved/restored since #3062 (binder.rs:1908-1910)
+  | optMatch (labels : List Name)      -- OPTIONAL MATCH (n:L…): saved/restored (binder.rs)
+  | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs)
+  | create (labels : List Name)        -- CREATE (n:L)-[..]->(): `with_node_labels_rolled_back(true, …)` (:552)
+  | comprehension (labels : List Name) -- [(n:L)-->() | …]: `with_node_labels_rolled_back(false, …)` (:2104)
   | remove (labels : List Name)        -- REMOVE n:L…: `bind_ir` QueryIR::Remove (b84473a7f :477-482)
                                        -- binds the items and leaves `node_labels` alone (#3450)
   deriving Repr, DecidableEq
 
-/-- The accumulated label set of one node variable after the clauses. -/
-def accumulate (acc : List Name) : List LClause → List Name
-  | [] => acc
-  | .match_ ls :: r | .create ls :: r =>
-    accumulate (acc ++ ls.filter (fun l => !acc.contains l)) r
-  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r | .comprehension _ :: r => accumulate acc r
+/-- `acc ∪ ls` as `OrderSet::extend` does it (binder.rs). -/
+def addLabels (acc ls : List Name) : List Name := acc ++ ls.filter (fun l => !acc.contains l)
 
-/-- Before #3062 (343e077f2): a pattern comprehension's `bind_graph` was not wrapped in the
-`node_labels` save/restore, so its labels accumulated. -/
-def accumulatePre3062 (acc : List Name) : List LClause → List Name
+/-- The accumulated label set of one node variable after the clauses (since #3049).
+`bound`: the variable is already in `current_env()` when the clause runs (bound by an earlier
+MATCH, OPTIONAL MATCH or CREATE). `with_node_labels_rolled_back` (binder.rs) restores
+`node_labels` after a CREATE for every in-scope key and keeps only the entries of nodes the CREATE
+declared itself (`keep_new = true`); after a pattern comprehension it restores everything
+(`keep_new = false`). -/
+def accumulateFrom (bound : Bool) (acc : List Name) : List LClause → List Name
   | [] => acc
-  | .match_ ls :: r | .create ls :: r | .comprehension ls :: r =>
-    accumulatePre3062 (acc ++ ls.filter (fun l => !acc.contains l)) r
-  | .optMatch _ :: r | .predicate _ :: r | .remove _ :: r => accumulatePre3062 acc r
+  | .match_ ls :: r => accumulateFrom true (addLabels acc ls) r
+  | .create ls :: r =>
+    if bound then accumulateFrom true acc r else accumulateFrom true (addLabels acc ls) r
+  | .optMatch _ :: r => accumulateFrom true acc r
+  | .predicate _ :: r | .comprehension _ :: r | .remove _ :: r => accumulateFrom bound acc r
+
+/-- Accumulation for a variable not yet in scope, starting from `acc`. -/
+def accumulate (acc : List Name) (cs : List LClause) : List Name := accumulateFrom false acc cs
 
 /-- `update_all_node_labels` writes the accumulation into the *first* MATCH's
 scan. openCypher: that scan carries the labels of the (non-optional) MATCH
@@ -183,27 +179,37 @@ theorem labels_agree_match_only :
       specScanLabels [.match_ ["A"], .optMatch ["B"], .predicate ["C"], .match_ ["D"]] := by
   decide
 
-/-- **Root cause 5.** `MATCH (a) CREATE (a:Z)-[:T]->(:C)` scans `(a:Z)`. -/
-theorem labels_leak :
-    accumulate [] [.match_ [], .create ["Z"]] = ["Z"] ∧ specScanLabels [.match_ [], .create ["Z"]] = [] := by
+def LClause.isMatch : LClause → Bool
+  | .match_ _ => true
+  | _ => false
+
+/-- Since #3049: once a variable is in scope only its MATCH clauses add to its label set;
+CREATE, OPTIONAL MATCH, predicates, comprehensions and REMOVE leave it alone. -/
+theorem accumulate_bound_match_only (acc : List Name) (cs : List LClause) :
+    accumulateFrom true acc cs = accumulateFrom true acc (cs.filter LClause.isMatch) := by
+  induction cs generalizing acc with
+  | nil => rfl
+  | cons c r ih =>
+    cases c <;> simp [accumulateFrom, LClause.isMatch, List.filter_cons, ih]
+
+/-- The two repros of W2-binder-6 (and the OPTIONAL MATCH one of test21) now scan with the
+spec's labels. -/
+theorem labels_leak_fixed :
+    accumulate [] [.match_ [], .create ["Z"]] = specScanLabels [.match_ [], .create ["Z"]] ∧
+    accumulate [] [.match_ [], .comprehension ["A"]] =
+      specScanLabels [.match_ [], .comprehension ["A"]] ∧
+    accumulate [] [.optMatch [], .create ["Z"]] = [] ∧
+    accumulate [] [.match_ ["A"], .create ["Z"], .comprehension ["B"], .match_ ["D"]] =
+      specScanLabels [.match_ ["A"], .create ["Z"], .comprehension ["B"], .match_ ["D"]] := by
   decide
 
-/-- **#3062 fixes the comprehension half of root cause 5**: `MATCH (a) RETURN [(a:A)-->(b) | b.v]`
-scans `(a)`, as specified. -/
-theorem comprehension_labels_restored :
-    accumulate [] [.match_ [], .comprehension ["A"]] = [] ∧
-      accumulate [] [.match_ [], .comprehension ["A"]] = specScanLabels [.match_ [], .comprehension ["A"]] := by
+/-- A node the CREATE declares itself keeps its labels (`keep_new`), so a later MERGE on it
+still sees them (VariableAlreadyBound check, binder.rs). -/
+theorem create_new_keeps_labels :
+    accumulate [] [.create ["Z"]] = ["Z"] ∧ accumulate [] [.create ["Z"], .create ["Y"]] = ["Z"] := by
   decide
 
-/-- History (343e077f2, comprehension half fixed by #3062): `MATCH (a) CREATE (a:Z)-[:T]->(:C)`
-scanned `(a:Z)`, and `MATCH (a) RETURN [(a:A)-->(b) | b.v]` scanned `(a:A)`. -/
-theorem pre3062_labels_leak :
-    accumulatePre3062 [] [.match_ [], .create ["Z"]] = ["Z"] ∧ specScanLabels [.match_ [], .create ["Z"]] = [] ∧
-    accumulatePre3062 [] [.match_ [], .comprehension ["A"]] = ["A"] ∧
-      specScanLabels [.match_ [], .comprehension ["A"]] = [] := by
-  decide
-
-/-! ## UNION column agreement (binder.rs:267-292) -/
+/-! ## UNION column agreement (binder.rs) -/
 
 def unionCheck : List (List Name) → Except String Unit
   | [] => .ok ()
@@ -223,7 +229,7 @@ theorem unionCheck_ok_iff (first : List Name) (rest : List (List Name)) :
   · rename_i h; simp only [reduceCtorEq, false_iff]; intro hall; apply h
     rw [List.all_eq_true]; intro c hc; simp [hall c hc]
 
-/-! ## CALL {} import WITH (binder.rs:1003-1056) -/
+/-! ## CALL {} import WITH (binder.rs) -/
 
 structure ImportItem where
   alias : Name

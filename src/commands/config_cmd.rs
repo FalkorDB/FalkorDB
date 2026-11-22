@@ -15,7 +15,8 @@
 //!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
 //!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
 //!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE,
-//!   CMD_INFO, MAX_INFO_QUERIES, ASYNC_DELETE, DELAY_INDEXING
+//!   CMD_INFO, MAX_INFO_QUERIES, ASYNC_DELETE, DELAY_INDEXING,
+//!   WRITE_LOCK_POLL_INTERVAL
 //!
 //! Read-only (SET returns an error):
 //!   THREAD_COUNT, INDEX_WORKER_THREADS, OMP_THREAD_COUNT, CACHE_SIZE,
@@ -23,8 +24,8 @@
 //!
 //! ASYNC_DELETE and DELAY_INDEXING are settable, as they are in C, but nothing in
 //! this engine reads either one yet: graph teardown is always off-thread (see
-//! `graph_core::graph_free`, which cannot free inline — `Index::drop` takes the GIL,
-//! which the main thread already holds while the free callback runs), and the
+//! `graph_core::graph_free`, which hands the free to a spawned thread so a large
+//! graph does not stall the main thread), and the
 //! decoders always build indexes eagerly. So `SET` on them records a value and
 //! changes no behaviour; C reads both.
 //!
@@ -42,7 +43,8 @@ use crate::config::{
     CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
     EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
     MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
-    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    TIMEOUT_DEFAULT, TIMEOUT_MAX, WRITE_LOCK_POLL_INTERVAL, get_thread_count,
+    normalize_node_creation_buffer,
 };
 use std::sync::atomic::Ordering;
 use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
@@ -106,6 +108,9 @@ fn config_get_one(
         "TEMP_FOLDER" => ValkeyValue::BulkString((*CONFIGURATION_TEMP_FOLDER.lock(ctx)).clone()),
         "JS_HEAP_SIZE" => ValkeyValue::Integer(*CONFIGURATION_JS_HEAP_SIZE.lock(ctx)),
         "JS_STACK_SIZE" => ValkeyValue::Integer(*CONFIGURATION_JS_STACK_SIZE.lock(ctx)),
+        "WRITE_LOCK_POLL_INTERVAL" => {
+            ValkeyValue::Integer(WRITE_LOCK_POLL_INTERVAL.load(Ordering::Relaxed))
+        }
         _ => return Err(UNKNOWN_FIELD.to_string()),
     };
     Ok(ValkeyValue::Array(vec![
@@ -127,7 +132,8 @@ pub fn validate_config_set(
         | "QUERY_MEM_CAPACITY"
         | "DELTA_MAX_PENDING_CHANGES"
         | "EFFECTS_COMPRESSION"
-        | "EFFECTS_THRESHOLD" => {
+        | "EFFECTS_THRESHOLD"
+        | "WRITE_LOCK_POLL_INTERVAL" => {
             let v: i64 = value
                 .parse()
                 .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
@@ -282,6 +288,9 @@ pub fn apply_config_set(
             EFFECTS_THRESHOLD_DEPRECATED.store(val.as_i64(), Ordering::Relaxed);
         }
         "ASYNC_DELETE" => ASYNC_DELETE.store(val.as_i64(), Ordering::Relaxed),
+        "WRITE_LOCK_POLL_INTERVAL" => {
+            WRITE_LOCK_POLL_INTERVAL.store(val.as_i64(), Ordering::Relaxed);
+        }
         "CMD_INFO" => CONFIGURATION_CMD_INFO.store(val.as_i64() != 0, Ordering::Relaxed),
         "MAX_INFO_QUERIES" => MAX_INFO_QUERIES.store(val.as_i64(), Ordering::Relaxed),
         "DELAY_INDEXING" => {

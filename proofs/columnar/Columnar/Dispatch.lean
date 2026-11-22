@@ -1,5 +1,5 @@
 /-!
-# `VectorEval` dispatch and its leaves (`runtime/vector_expr.rs`, `vectorized.rs:70`)
+# `VectorEval` dispatch and its leaves (`runtime/vector_expr.rs`, `vectorized.rs`)
 (origin/main 3fec7d7c9)
 
 The operator lanes (`eval_and_or`, `eval_case`, `eval_function`, `arithmetic`,
@@ -10,8 +10,8 @@ the tree walk around them:
 | Lean | Rust |
 | --- | --- |
 | `Kind`, `Node` | the `ExprIR` variants `eval` inspects, with children |
-| `fromExprIR` | `CmpOp::from_expr_ir` (vectorized.rs:70) |
-| `Arms`, `eval` | `VectorEval::eval` (vector_expr.rs:211-271) — arms in source order, guards included; since #3335 (b8321be81) `Paren` has no arm of its own (the binder removes every `Paren`) and falls to `eval_per_row` |
+| `fromExprIR` | `CmpOp::from_expr_ir` (vectorized.rs) |
+| `Arms`, `eval` | `VectorEval::eval` (vector_expr.rs) — arms in source order, guards included; since #3335 (b8321be81) `Paren` has no arm of its own (the binder removes every `Paren`) and falls to `eval_per_row` |
 | `evalValues` | `eval_values` (:286) |
 | `propertyValues` | `property_values` (:357) |
 | `hasLabels` | `eval_has_labels` (:642) |
