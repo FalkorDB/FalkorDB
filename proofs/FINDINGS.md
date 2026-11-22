@@ -101,9 +101,7 @@ A bug is **confirmed** only if a repro against the real Rust shows it, and it is
 - Lean-only, not confirmed live (the malformed-RDB path): `set_span` stores `n as u16` (`attribute_store.rs:538`, `:549-550`), so 65,536+ entries per entity wrap in a malformed RDB.
 - Unconfirmed (model only): the RDB loader takes the adjacency matrix, label matrices and `node_labels_matrix` from the file (`decoder/mod.rs:286,363,558`; `Graph::restore`, `graph.rs:907`) without checking them against the relation tensors, so a corrupt RDB can break the invariants `first_node_with_relationships` and the constraint checks rely on (why those rows stay CONDITIONAL). C also loads them from the file (not re-checked).
 - **GraphBLAS / matrices**:
-  - unconfirmed follow-up to #3033: `Tensor::decode` still accepts a multi-edge pair with exactly one id, or one edge id under two pairs (`edge_count` stays consistent; `PairPlan` assumes >= 2 ids);
-  - `Matrix::decode` leaks 5 blocks per matrix (fix pending in #3080 (open));
-  - unverified follow-up to #3097: `Matrix::decode` still copies the header's reserved `*_future` pointer arrays from the payload; safe only if GraphBLAS never reads or frees them.
+  - unconfirmed follow-up to #3033: `Tensor::decode` still accepts a multi-edge pair with exactly one id, or one edge id under two pairs (`edge_count` stays consistent; `PairPlan` assumes >= 2 ids).
 - **#2898**: the `versioned_matrix::Iter` lifetime (needs a design choice; no PR). Latent: `vector::Iter` can outlive its vector (the same class).
 - A duplicate roaring high key in an IdList bitmap: roaring-rs keeps the last partition, and CRoaring may keep the first (unconfirmed).
 

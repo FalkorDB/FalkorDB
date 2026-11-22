@@ -20,3 +20,4 @@ import GraphblasWrappers.Bulk
 import GraphblasWrappers.DeltaLmxm
 import GraphblasWrappers.CountLink
 import GraphblasWrappers.EncodeDup
+import GraphblasWrappers.MatrixDecode
