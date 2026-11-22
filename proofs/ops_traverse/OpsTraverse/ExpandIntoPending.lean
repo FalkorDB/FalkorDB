@@ -26,7 +26,8 @@ is in `deleted_nodes` but the edge `a→b` is not yet in `deleted_relationships`
 The edge is doomed (deleted implicitly at commit), so ExpandInto yields
 no row for a pending-deleted endpoint, and MERGE takes its create branch, which
 refuses a deleted endpoint. Property `LiveExpandInto`: proved for main
-(`expandIntoP_live`). -/
+(`expandIntoP_live`). The CondTraverse path of the same query (one endpoint
+unbound) is `CondTraversePending.lean`. -/
 
 namespace OpsTraverse.EIP
 
@@ -132,43 +133,5 @@ def pDetach : Pending := ⟨[0], []⟩
 theorem main_3463_empty : expandIntoP gAB1 pDetach false true 0 1 [] = [] := by decide
 
 theorem main_3463_empty_dst : expandIntoP gAB1 ⟨[1], []⟩ false true 0 1 [] = [] := by decide
-
-/-! ## Open: the CondTraverse path of the same query
-
-`CondTraverseOp` (one endpoint unbound, e.g. `DETACH DELETE a MERGE (a)-[r:R]->(x:B)`)
-never reads `Pending`: `cond_traverse.rs` has no `is_node_deleted` /
-`is_relationship_deleted` call at all (`expand_row`, `process_pairs`
-read the relationship matrices only). So its model is `CondTraverse.expandRow`
-unchanged, and it still matches the doomed edge of a pending-deleted `a` (and the
-edge of an explicitly `DELETE`d `r`, and an edge into a pending-deleted target).
-Expected: no match (the pending-deleted endpoint is gone), so MERGE takes its
-create branch, which refuses a deleted endpoint, exactly as ExpandInto
-does. Not fixed in Rust here. -/
-
-/-- `CondTraverseOp::expand_row` with `Pending`: it ignores `Pending`, so this is
-`expandRow`. Rows are `(from, to, edge)`. -/
-def condTraverseP (g : Graph) (_p : Pending) (bidir emit : Bool) (r : RowIn) :
-    List (Nat × Nat × Nat) :=
-  expandRow g bidir emit r
-
-/-- Property: CondTraverse only matches edges of the effective graph. -/
-def LiveCondTraverse
-    (op : Graph → Pending → Bool → Bool → RowIn → List (Nat × Nat × Nat)) : Prop :=
-  ∀ g p b em r, g.WF → ∀ x ∈ op g p b em r, Live g p x.2.2
-
-/-- `a = 0` bound, `x` unbound. -/
-def rowA : RowIn := ⟨some 0, none, []⟩
-
-/-- `MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)`: CondTraverse returns the
-doomed edge `0 -> 1`. -/
-theorem bug_condTraverse_matches_doomed_edge :
-    condTraverseP gAB1 pDetach false true rowA = [(0, 1, 0)] := by decide
-
-/-- **Main's CondTraverse violates `LiveCondTraverse`.** -/
-theorem bug_condTraverse_main_violates : ¬ LiveCondTraverse condTraverseP := by
-  intro h
-  have := h gAB1 pDetach false true rowA (by unfold Graph.WF; decide) (0, 1, 0)
-    (by rw [bug_condTraverse_matches_doomed_edge]; simp)
-  exact (this.2 ⟨0, 0, 1⟩ (by simp [gAB1]) rfl).1 (by simp [pDetach])
 
 end OpsTraverse.EIP
