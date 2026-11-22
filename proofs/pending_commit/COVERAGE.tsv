@@ -1,6 +1,6 @@
 file	function	line	bucket	lean_name_or_reason
 graph/src/runtime/ops/commit.rs	new	45	PROVEN	CommitOpNext.commitNew: commit_new_ro (RO runtime refused), commit_new_write, commit_new_ok_iff; proofs/ops_aggregate CommitSt.new
-graph/src/runtime/ops/delete.rs	staged_label_ids	196	PROVEN	Labels.stagedLabelIds_eq_overlay, stagedLabelIds_run, deleted_snapshot_examples (#3288: committed ids with the staged adds/removes applied = the live view; fixes W4-fn-1 / #3245)
+graph/src/runtime/ops/delete.rs	staged_label_ids	234	PROVEN	Labels.stagedLabelIds_eq_overlay, stagedLabelIds_run, deleted_snapshot_examples (#3288: committed ids with the staged adds/removes applied = the live view; fixes W4-fn-1 / #3245)
 graph/src/graph/graph.rs	set_nodes_attributes	1864	PROVEN	via insert_attrs: Span.mergeSpan_correct
 graph/src/graph/graph.rs	import_node_attrs	1901	PROVEN	via import_attrs: Props.read_your_writes_new
 graph/src/graph/graph.rs	import_relationship_attrs	2064	PROVEN	via import_attrs: Props.read_your_writes_new

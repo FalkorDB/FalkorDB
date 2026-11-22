@@ -365,14 +365,21 @@ inductive IRKind
   | scan | traverse | filter | project | unwind | pathBuilder | semiApply | orApply
   | aggregate | cartesian | valueHashJoin | optional | apply | merge | union
   | sort | limit | skip | distinct
-  /- The writing operators (`IR::Create`, `IR::Delete`, `IR::Set`/`IR::Remove`, `IR::Commit`,
-  `planner/mod.rs`); none is on the `can_batch` blacklist (see RowWrites.lean). -/
+  /- The writing operators (`IR::Create`, `IR::Delete`, `IR::Set`, `IR::Remove`, `IR::Commit`,
+  `IR::ForEach`, `IR::CreateIndex`/`IR::DropIndex`, a `ProcedureCall` whose `func.write`,
+  `planner/mod.rs`); all on the `can_batch` blacklist since #2968 (see RowWrites.lean). -/
   | create | delete | setProps | commit
+  | remove | forEach | createIndex | dropIndex | writeProc
   deriving DecidableEq, Repr
 
-/-- `ApplyOp::new`'s `can_batch` (`apply.rs`). -/
+/-- The writing kinds `can_batch` blacklists (#2968, fixes #2738). -/
+def writeKinds : List IRKind :=
+  [.writeProc, .create, .setProps, .remove, .delete, .forEach, .createIndex, .dropIndex, .commit]
+
+/-- `ApplyOp::new`'s `can_batch` (`apply.rs`): no writing operator (#2968) and none of the
+non-separable read operators. -/
 def canBatchApply (sub : List IRKind) : Bool :=
-  !sub.any (fun k => k ∈ [.aggregate, .cartesian, .optional, .apply, .merge, .union,
+  !sub.any (fun k => k ∈ writeKinds ++ [.aggregate, .cartesian, .optional, .apply, .merge, .union,
                           .sort, .limit, .skip, .distinct])
 
 /-- `OptionalOp::new`'s `can_batch` (`optional.rs`). -/

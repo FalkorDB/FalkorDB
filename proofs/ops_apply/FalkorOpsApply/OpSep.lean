@@ -33,9 +33,10 @@ NOT separable, with a counterexample theorem each:
   `limitF_not_separable`.
 * anonymous-bidirectional chained `CondTraverse` (`bidir_dedup`, `cond_traverse.rs`):
   `dedupF_not_separable` (**known bug #3106**, confirmed live: see the report; also wrong at top level).
-* the writing operators (`Create`, `Delete`, `Set`, `Remove`, `Commit`, `ForEach`): admitted by the
-  guard, rows are not row-local in effect: `RowWrites.bug2738_batched_call_hides_writes` (**known bug
-  #2738**, fix pending in #2968).
+* the writing operators (`Create`, `Delete`, `Set`, `Remove`, `Commit`, `ForEach`, `CreateIndex`,
+  `DropIndex`, a write `ProcedureCall`): their rows are not row-local in effect, so since #2968 (fixes
+  #2738) Apply's guard blacklists them and a writing sub-plan runs per row
+  (`RowWrites.applyW_write_eq_ref`).
 
 `Optional`'s guard is wider than Apply's: it blacklists only `Aggregate` and `CartesianProduct`.  The
 extra kinds it admits (`Sort`, `Limit`, `Skip`, `Distinct`, `Union`, `Merge`, `Apply`, `Optional`)
@@ -46,8 +47,8 @@ of one path pattern.  That planner-output fact is not machine-checked here (`opt
 lists the kinds); every kind the real shapes contain is covered by `Adm`.
 
 That last sentence is the undischarged hypothesis of the CONDITIONAL rows: `guard_admits_classified` gives each
-admitted kind a verdict, but admitted writes and bidirectional dedup have no `Adm` constructor, and nothing proves
-the planner's sub-plans are `Adm` trees.
+admitted kind a verdict, but bidirectional dedup has no `Adm` constructor, and nothing proves the planner's
+sub-plans are `Adm` trees.
 -/
 namespace OpSep
 open Correlated VhjSep
@@ -660,10 +661,15 @@ inductive IRv
   | filter | cartesianProduct | valueHashJoin | apply | semiApply | antiSemiApply
   | orApplyMultiplexer | loadCsv | sort | skip | limit | aggregate | project | distinct
   | nestedPlans | union | commit | forEach | createIndex | dropIndex
+  /-- `IR::ProcedureCall { func, .. }` with `func.write` (`db.idx.fulltext.createNodeIndex`). -/
+  | procedureCallWrite
   deriving DecidableEq, Repr
 
-/-- `ApplyOp::new`'s blacklist (`apply.rs`). -/
+/-- `ApplyOp::new`'s blacklist (`apply.rs`): every writing operator since #2968, and the
+non-separable read operators. -/
 def applyBlacklisted : IRv → Bool
+  | .procedureCallWrite | .create | .set | .remove | .delete | .forEach | .createIndex
+  | .dropIndex | .commit => true
   | .aggregate | .cartesianProduct | .optional | .apply | .merge | .union | .sort | .limit
   | .skip | .distinct => true
   | _ => false
@@ -679,7 +685,6 @@ inductive Verdict
   | bug (issue : Nat)
   | guarded        -- on Apply's blacklist
   | mergeOnly      -- appears only under `Merge` (`planner/mod.rs`)
-  | ddl            -- standalone index command, never inside a sub-plan
   deriving DecidableEq, Repr
 
 def verdict : IRv → Verdict
@@ -691,9 +696,9 @@ def verdict : IRv → Verdict
   | .nestedPlans => .exact
   | .condTraverseOptional => .permOnly
   | .condTraverseBidirDedup => .bug 3106
-  | .create | .delete | .set | .remove | .commit | .forEach => .bug 2738
   | .includePending => .mergeOnly
-  | .createIndex | .dropIndex => .ddl
+  | .create | .delete | .set | .remove | .commit | .forEach | .createIndex | .dropIndex
+  | .procedureCallWrite => .guarded
   | .aggregate | .cartesianProduct | .optional | .apply | .merge | .union | .sort | .limit
   | .skip | .distinct => .guarded
 
@@ -703,18 +708,20 @@ theorem applyGuard_iff_guarded (k : IRv) : applyBlacklisted k = true ↔ verdict
   cases k <;> decide
 
 /-- The kinds `OptionalOp` admits beyond Apply's guard (the planner never puts them in an
-optional sub-plan; see the header). -/
+optional sub-plan, whose body is `plan_match` output: no clause there writes; see the header). -/
 theorem optionalExtra_kinds (k : IRv) (h1 : optionalBlacklisted k = false)
     (h2 : applyBlacklisted k = true) :
     k = .optional ∨ k = .apply ∨ k = .merge ∨ k = .union ∨ k = .sort ∨ k = .limit ∨ k = .skip
-      ∨ k = .distinct := by
+      ∨ k = .distinct ∨ k = .create ∨ k = .delete ∨ k = .set ∨ k = .remove ∨ k = .commit
+      ∨ k = .forEach ∨ k = .createIndex ∨ k = .dropIndex ∨ k = .procedureCallWrite := by
   cases k <;> simp_all [optionalBlacklisted, applyBlacklisted]
 
 /-- Every kind the guard admits is covered: modelled exactly, up to permutation, or classified
-as a confirmed bug with its issue number. -/
+as a confirmed bug with its issue number. Since #2968 no writing operator is admitted (no
+`bug 2738` verdict is left). -/
 theorem guard_admits_classified (k : IRv) (h : applyBlacklisted k = false) :
-    verdict k = .exact ∨ verdict k = .permOnly ∨ verdict k = .bug 3106 ∨ verdict k = .bug 2738
-      ∨ verdict k = .mergeOnly ∨ verdict k = .ddl := by
+    verdict k = .exact ∨ verdict k = .permOnly ∨ verdict k = .bug 3106
+      ∨ verdict k = .mergeOnly := by
   cases k <;> simp_all [applyBlacklisted, verdict]
 
 /-! ## What is NOT separable (counterexamples) -/

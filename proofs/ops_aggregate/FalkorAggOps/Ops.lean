@@ -436,48 +436,104 @@ theorem dedup_collision_drops :
     dedupBy (fun n : Nat => n % 2) [] [0, 2] = [0] ∧ dedupBy id [] [0, 2] = [0, 2] := by
   decide
 
-/-! ## DISTINCT across batches: OPEN bug #2779 (current behaviour, not a superseded model)
+/-! ## DISTINCT across batches: the per-row CALL {} reset is scoped (#2968, fixes #2779)
 
-`distinctCountBatches`, `distinct_one_batch` and `distinct_fold_clear_overcounts` describe
-`ApplyOp`'s current per-subquery clear of the runtime-wide dedup map (`apply.rs`), tracked as
-W2-agg-1 in the README and in COVERAGE.tsv. -/
+`Runtime::value_dedupers` is keyed `(distinct node, group id)` and shared by the whole query.
+After each per-row run of a CALL {} body, `ApplyOp::next_per_row` (apply.rs) now removes only
+the body's own entries: `(node, gid)` for each `Distinct` node of the sub-plan
+(`sub_plan_distincts`) and `gid < aggregate_group_counts[node]` (the largest `groups.len()`
+the body's aggregate reached, recorded by `consume_input_*`, aggregate.rs).  Entries are
+modelled as `(node, group id, value)`. -/
 
-/-- `count(DISTINCT v)` fed batch by batch, with an optional wipe of the
-(runtime-global) dedup map between batches — what `ApplyOp`'s per-row mode
-does after every subquery (apply.rs). -/
-def distinctCountBatches (clear : Bool) : List Nat → List (List Nat) → Nat
+abbrev Entry := Nat × Nat × Nat
+
+/-- The per-row reset: drop `(node, gid, _)` with `node ∈ subs ∧ gid < cnt node`. -/
+def scopedClear (subs : List Nat) (cnt : Nat → Nat) (m : List Entry) : List Entry :=
+  m.filter fun e => !(subs.contains e.1 && decide (e.2.1 < cnt e.1))
+
+/-- The values seen by group 0 of distinct node `o`. -/
+def seenOf (o : Nat) (m : List Entry) : List Nat :=
+  (m.filter fun e => e.1 == o && e.2.1 == 0).map (·.2.2)
+
+/-- An outer keyless `count(DISTINCT v)` (distinct node `o`, group 0) fed batch by batch,
+with the scoped reset of the CALL {} below it run between batches. -/
+def distinctCountScoped (o : Nat) (subs : List Nat) (cnt : Nat → Nat) :
+    List Entry → List (List Nat) → Nat
   | _, [] => 0
-  | seen, b :: bs =>
-    let d := dedupBy id seen b
-    d.length + distinctCountBatches clear (if clear then [] else (d.reverse ++ seen)) bs
+  | m, b :: bs =>
+    let d := dedupBy id (seenOf o m) b
+    d.length + distinctCountScoped o subs cnt (scopedClear subs cnt (d.reverse.map (o, 0, ·) ++ m)) bs
 
-theorem dedup_seen_mono (seen xs : List Nat) :
-    ∀ y, y ∈ seen → y ∉ dedupBy id seen xs := by
-  induction xs generalizing seen with
-  | nil => intro y _; simp [dedupBy]
+theorem dedupBy_append (seen a b : List Nat) :
+    dedupBy id seen (a ++ b) = dedupBy id seen a ++ dedupBy id ((dedupBy id seen a).reverse ++ seen) b := by
+  induction a generalizing seen with
+  | nil => rfl
   | cons x xs ih =>
-    intro y hy
-    simp only [dedupBy, id]
+    simp only [List.cons_append, dedupBy, id]
     split
-    · exact ih seen y hy
-    · rename_i hx
-      intro hm
-      cases List.mem_cons.mp hm with
-      | inl e => subst e; exact hx hy
-      | inr e => exact ih (x :: seen) y (List.mem_cons_of_mem _ hy) e
+    · exact ih seen
+    · rw [ih (x :: seen)]; simp
 
-/-- Correct for a single batch — the bug needs a batch boundary. -/
-theorem distinct_one_batch (b : List Nat) :
-    distinctCountBatches true [] [b] = (dedupBy id [] b).length := by
-  simp [distinctCountBatches]
+theorem seenOf_append (o : Nat) (a m : List Entry) : seenOf o (a ++ m) = seenOf o a ++ seenOf o m := by
+  simp [seenOf, List.filter_append]
 
-/-- Counterexample (#2779, confirmed by
-`lean_ops_aggregate::bug_count_distinct_across_call_subquery_overcounts`:
-3000 rows = 3 batches, `count(DISTINCT i % 2)` = 6, C = 2). -/
-theorem distinct_fold_clear_overcounts :
-    distinctCountBatches true [] [[1, 0], [1, 0], [1, 0]] = 6 ∧
-    distinctCountBatches false [] [[1, 0], [1, 0], [1, 0]] = 2 ∧
-    (dedupBy id [] [1, 0, 1, 0, 1, 0]).length = 2 := by
+theorem seenOf_tag (o : Nat) (d : List Nat) : seenOf o (d.map (o, 0, ·)) = d := by
+  induction d with
+  | nil => rfl
+  | cons x xs ih => simp only [seenOf, List.map_cons, List.filter_cons] at ih ⊢; simp [ih]
+
+/-- The reset never touches a distinct node outside the sub-plan. -/
+theorem seenOf_scopedClear (o : Nat) (subs : List Nat) (cnt : Nat → Nat) (m : List Entry)
+    (ho : o ∉ subs) : seenOf o (scopedClear subs cnt m) = seenOf o m := by
+  unfold seenOf scopedClear
+  rw [List.filter_filter]
+  congr 1
+  apply List.filter_congr
+  intro e _
+  by_cases h : e.1 = o
+  · subst h; simp [ho]
+  · simp [h]
+
+/-- After the reset no entry of the sub-plan's distinct nodes with a group id below the
+recorded count survives: the next row's body starts from an empty dedup state. -/
+theorem scopedClear_clears (subs : List Nat) (cnt : Nat → Nat) (m : List Entry) (e : Entry)
+    (he : e ∈ scopedClear subs cnt m) (hs : e.1 ∈ subs) : cnt e.1 ≤ e.2.1 := by
+  simp only [scopedClear, List.mem_filter, Bool.not_eq_true', Bool.and_eq_false_iff,
+    decide_eq_false_iff_not, Nat.not_lt] at he
+  rcases he.2 with h | h
+  · have := List.contains_iff_mem.mpr hs; rw [this] at h; cases h
+  · exact h
+
+/-- Every other entry is kept. -/
+theorem scopedClear_keeps (subs : List Nat) (cnt : Nat → Nat) (m : List Entry) (e : Entry)
+    (he : e ∈ m) (hs : e.1 ∉ subs ∨ cnt e.1 ≤ e.2.1) : e ∈ scopedClear subs cnt m := by
+  simp only [scopedClear, List.mem_filter]
+  refine ⟨he, ?_⟩
+  rcases hs with h | h
+  · simp [h]
+  · simp [Nat.not_lt.mpr h]
+
+theorem distinctCountScoped_go (o : Nat) (subs : List Nat) (cnt : Nat → Nat) (ho : o ∉ subs)
+    (m : List Entry) (bs : List (List Nat)) :
+    distinctCountScoped o subs cnt m bs = (dedupBy id (seenOf o m) bs.flatten).length := by
+  induction bs generalizing m with
+  | nil => rfl
+  | cons b bs ih =>
+    simp only [distinctCountScoped, List.flatten_cons, dedupBy_append, List.length_append, ih,
+      seenOf_scopedClear o subs cnt _ ho, seenOf_append]
+    rw [seenOf_tag]
+
+/-- **#2779 / W2-agg-1 fixed**: an outer `count(DISTINCT)` whose distinct node is not inside
+the CALL {} counts exactly as over the whole input in one batch, however the rows are
+batched. -/
+theorem distinct_scoped_clear_exact (o : Nat) (subs : List Nat) (cnt : Nat → Nat) (ho : o ∉ subs)
+    (bs : List (List Nat)) :
+    distinctCountScoped o subs cnt [] bs = (dedupBy id [] bs.flatten).length :=
+  distinctCountScoped_go o subs cnt ho [] bs
+
+/-- #2779's query: 3 batches of `[1, 0]` give 2 (C: 2; before #2968: 6). -/
+theorem fixed2779_example :
+    distinctCountScoped 0 [1] (fun _ => 1) [] [[1, 0], [1, 0], [1, 0]] = 2 := by
   decide
 
 /-! ## eval.rs — an aggregate's finalized value is pushed

@@ -448,27 +448,46 @@ structure DeleteSt (C T : Type) where
   child : C
   trees : T
   snapshot : Bool
+  /-- #2968: drain the child before deleting anything (see `eagerOf`). -/
+  eager : Bool
+
+/-- The plan-node kinds `DeleteOp::new`'s `eager` test distinguishes (`subtree_contains` over
+the subtree rooted at the Delete, delete.rs): the writing ones, and everything else. -/
+inductive SubKind
+  | create | merge | set | remove | forEach | other
+  deriving DecidableEq, Repr
+
+/-- delete.rs (#2968): eager iff the subtree holds `Create`, `Merge`, `Set`, `Remove` or
+`ForEach`. -/
+def eagerOf (sub : List SubKind) : Bool := sub.any (· != .other)
 
 /-- delete.rs: since #3462 `snapshot = runtime.inspect || snapshot_required(..)`:
 `GRAPH.RECORD` reads the rows every operator produced, so it snapshots even when no
-operator above DELETE reads them. -/
-def DeleteSt.new {C T : Type} (inspect : Bool) (child : C) (trees : T) (ancestorsCommit : List Bool) :
-    DeleteSt C T :=
-  { child, trees, snapshot := inspect || snapshotRequired ancestorsCommit }
+operator above DELETE reads them. Since #2968 `eager` = `eagerOf` of the subtree. -/
+def DeleteSt.new {C T : Type} (inspect : Bool) (child : C) (trees : T) (ancestorsCommit : List Bool)
+    (sub : List SubKind) : DeleteSt C T :=
+  { child, trees, snapshot := inspect || snapshotRequired ancestorsCommit, eager := eagerOf sub }
 
-theorem deleteNew_spec {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool) :
-    (DeleteSt.new i c t anc).snapshot = (i || anc.any (!·)) ∧ (DeleteSt.new i c t anc).child = c := by
+theorem deleteNew_spec {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool) (sub : List SubKind) :
+    (DeleteSt.new i c t anc sub).snapshot = (i || anc.any (!·)) ∧ (DeleteSt.new i c t anc sub).child = c := by
   exact ⟨by simp [DeleteSt.new, snapshotRequired_spec], rfl⟩
+
+/-- #2968: the Delete is eager exactly when a writing operator is below it; a read-only child
+(`MATCH (n) DELETE n`) streams. -/
+theorem deleteNew_eager_iff {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool)
+    (sub : List SubKind) :
+    (DeleteSt.new i c t anc sub).eager = true ↔ ∃ k ∈ sub, k ≠ .other := by
+  simp [DeleteSt.new, eagerOf]
 
 /-- #3462: under `GRAPH.RECORD` the snapshot is always on, even when every ancestor is a
 `Commit` (the case that skipped it before). -/
-theorem deleteNew_inspect_snapshots {C T : Type} (c : C) (t : T) (anc : List Bool) :
-    (DeleteSt.new true c t anc).snapshot = true := by
+theorem deleteNew_inspect_snapshots {C T : Type} (c : C) (t : T) (anc : List Bool) (sub : List SubKind) :
+    (DeleteSt.new true c t anc sub).snapshot = true := by
   simp [DeleteSt.new]
 
 /-- Without `inspect` the decision is `snapshot_required`. -/
-theorem deleteNew_no_inspect {C T : Type} (c : C) (t : T) (anc : List Bool) :
-    (DeleteSt.new false c t anc).snapshot = snapshotRequired anc := by
+theorem deleteNew_no_inspect {C T : Type} (c : C) (t : T) (anc : List Bool) (sub : List SubKind) :
+    (DeleteSt.new false c t anc sub).snapshot = snapshotRequired anc := by
   simp [DeleteSt.new]
 
 /-- delete.rs: one child batch, `delete_batch`, pass the batch (or error) on. -/
@@ -482,5 +501,39 @@ theorem deleteNext_spec {B : Type} (del : B → Except String Unit) (x : Option 
   cases x with
   | none => rfl
   | some eb => cases eb <;> rfl
+
+/-- `DeleteOp::next` in eager mode (delete.rs, #2968), as the whole output stream: the first
+call drains the child (its first error is returned, nothing deleted), then runs
+`delete_batch` on every drained batch in order (threading the runtime's pending state `σ`,
+stopping at the first error), then replays the batches unchanged. -/
+def deleteEager {σ B : Type} (del : σ → B → Except String σ) (s : σ) (child : List (Except String B)) :
+    Except String (σ × List B) := do
+  let bs ← child.mapM id
+  let s' ← bs.foldlM del s
+  pure (s', bs)
+
+/-- **Eager DELETE** (#2968): on success the output is the child's batches unchanged and the
+state is every batch's `delete_batch`, in order; a child error is returned before any
+`delete_batch` runs (whatever `del` would do). -/
+theorem deleteEager_spec {σ B : Type} (del : σ → B → Except String σ) (s : σ) (bs : List B) :
+    deleteEager del s (bs.map .ok) = (bs.foldlM del s).map (·, bs) := by
+  have : (bs.map (Except.ok : B → Except String B)).mapM id = .ok bs := by
+    induction bs with
+    | nil => rfl
+    | cons b bs ih => simp only [List.map_cons, List.mapM_cons, ih]; rfl
+  simp only [deleteEager, this, bind, Except.bind]
+  cases bs.foldlM del s <;> rfl
+
+theorem deleteEager_child_error {σ B : Type} (del del' : σ → B → Except String σ) (s : σ)
+    (pre : List B) (e : String) (rest : List (Except String B)) :
+    deleteEager del s (pre.map .ok ++ .error e :: rest) = .error e ∧
+    deleteEager del' s (pre.map .ok ++ .error e :: rest) = .error e := by
+  have : ∀ (pre : List B), (pre.map (Except.ok : B → Except String B) ++ .error e :: rest).mapM id
+      = (.error e : Except String (List B)) := by
+    intro pre
+    induction pre with
+    | nil => rfl
+    | cons b bs ih => simp only [List.map_cons, List.cons_append, List.mapM_cons, ih]; rfl
+  simp [deleteEager, this, bind, Except.bind]
 
 end Delete
