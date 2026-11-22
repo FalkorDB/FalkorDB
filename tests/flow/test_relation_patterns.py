@@ -498,7 +498,7 @@ class testRelationPattern(FlowTestsBase):
     # The parallel-edge counts and pending-delta structures a traversal reuses
     # must follow writes: the fused count, the unfused named count and the
     # edge total agree after every kind of change.
-    def test24_counts_follow_writes(self):
+    def test21_counts_follow_writes(self):
         g = self.db.select_graph("counts_follow_writes")
         g.query("UNWIND range(0, 9) AS i CREATE (:W {i: i})")
         g.query("MATCH (a:W), (b:W) WHERE b.i = (a.i + 1) % 10 CREATE (a)-[:R]->(b)")
@@ -531,7 +531,7 @@ class testRelationPattern(FlowTestsBase):
     # A LIMIT must still return rows when the first sources have no match and
     # when a later traverse drops what an earlier one produced (a label check, a
     # uniqueness check): no cap may be pushed below an operator that can drop.
-    def test25_limit_under_dropping_traverses(self):
+    def test22_limit_under_dropping_traverses(self):
         g = self.db.select_graph("limit_dropping")
         # 300 isolated sources first, then chains whose only D is far away
         g.query("UNWIND range(1, 300) AS i CREATE (:S {id: i})")
@@ -558,7 +558,7 @@ class testRelationPattern(FlowTestsBase):
     # no uniqueness. Edge id 0 here is the U edge; the two T edges, compared by
     # node, bind no real id, and the U traverse used to reject its edge as
     # "already used" against their placeholder 0.
-    def test21_disjoint_type_edge_is_not_compared_to_the_others(self):
+    def test23_disjoint_type_edge_is_not_compared_to_the_others(self):
         g = self.db.select_graph("disjoint_type_edge")
         g.query("CREATE (a:A {id: 1}), (b:B {id: 2}), (c:C {id: 3})")
         g.query("MATCH (b:B), (c:C) CREATE (b)-[:U]->(c)")
@@ -571,7 +571,7 @@ class testRelationPattern(FlowTestsBase):
     # A traverse the planner transposed (it starts at the pattern's `to`) runs
     # as one product over the backward adjacency: parallel edges, several types
     # (one of them unknown), labels at both ends, and writes after the load.
-    def test22_backward_batched_traverse(self):
+    def test24_backward_batched_traverse(self):
         g = self.db.select_graph("backward_batched")
         g.query("UNWIND range(0, 5) AS i CREATE (:L {id: i})")
         g.query("MATCH (a:L), (b:L) WHERE b.id = (a.id + 1) % 6 CREATE (a)-[:R]->(b), (a)-[:R]->(b)")
@@ -612,7 +612,7 @@ class testRelationPattern(FlowTestsBase):
 
     # Undirected anonymous hops over disjoint types are not deduplicated by
     # (source, destination): each pair of edges is its own path.
-    def test23_undirected_disjoint_types_count_every_edge_pair(self):
+    def test25_undirected_disjoint_types_count_every_edge_pair(self):
         g = self.db.select_graph("undirected_disjoint")
         g.query("CREATE (n0:P {id: 0}), (n1:P {id: 1}), (n2:P {id: 2}), "
                 "(n2)-[:T]->(n0), (n2)-[:T]->(n0), (n0)-[:R]->(n0), (n0)-[:R]->(n1)")

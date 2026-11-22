@@ -1102,7 +1102,7 @@ impl<T> Matrix<T> {
     }
 
     /// The pattern of `self` outside the pattern of `mask`, as a `bool` matrix;
-    /// `None` when `self` is empty. `O(nvals)`, so callers cache it.
+    /// `None` when that is empty. `O(nvals)`, so callers cache it.
     #[must_use]
     pub fn pattern_outside<TM>(
         &self,
@@ -1125,7 +1125,8 @@ impl<T> Matrix<T> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         out.has_pending.store(true, Ordering::Relaxed);
-        Some(out)
+        out.wait();
+        (out.nvals() > 0).then_some(out)
     }
 
     /// `self = self * b` over the `ANY_PAIR_BOOL` semiring. Accepts a matrix
@@ -1417,8 +1418,8 @@ impl Matrix<u64> {
     /// reachable over one edge of `b`. So an entry of the result is the exact
     /// number of paths, where [`Matrix::lmxm`] over `ANY_PAIR` only records that
     /// one exists. `b` may be of any element type; only its pattern is read, one
-    /// edge per entry. `first_hop` says every entry of `self` is 1, which lets
-    /// `PAIR` stand in for `FIRST`. Parallel edges are not in `b`'s pattern: see
+    /// edge per entry. When `excess` is `None` every entry of `self` is 1, which
+    /// lets `PAIR` stand in for `FIRST`. Parallel edges are not in `b`'s pattern: see
     /// [`Self::add_counted_product`].
     fn count_product<TB>(
         &self,

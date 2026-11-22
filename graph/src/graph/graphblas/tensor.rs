@@ -940,8 +940,8 @@ impl Tensor {
     /// decision `wait_fwd` latched) or by `fold_latched`, so calling this on
     /// every write is a single atomic load in the common case.
     pub fn flush(&mut self) {
-        self.derived = Arc::default();
         if self.needs_flush.load(Ordering::Relaxed) {
+            self.derived = Arc::default();
             // The layers may be shared with the committed snapshot and carry
             // pending work; nvals/eWiseAdd/select below materialize it (a
             // mutation), so wait first under the readers' lock.
