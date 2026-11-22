@@ -4,7 +4,7 @@ Index and vector scans (graph/src/runtime/ops/node_by_index_scan.rs, node_by_vec
 
 | here | there |
 | --- | --- |
-| `IQ`, `evalIQ`        | `IndexQuery`, `NodeByIndexScanOp::evaluate_index_query` (node_by_index_scan.rs) |
+| `IQ`, `evalIQF`, `evalIQ` | `IndexQuery`, `NodeByIndexScanOp::evaluate_index_query` (node_by_index_scan.rs); `evalIQ` = the default build |
 | `indexable`, `canUse` | `can_utilize_index` (:250) and its inner `is_indexable` (:253) |
 | `extraLabels`, `IxSt.new` | `NodeByIndexScanOp::new` (:56) |
 | `scanRow`             | the per-row closure of `NodeByIndexScanOp::next` (:293) |
@@ -40,9 +40,21 @@ def isScalar : V → Bool
   | .int _ | .float | .str _ | .bool _ => true
   | _ => false
 
-/-- node_by_index_scan.rs. `ev` = `ExprEval::eval` on the row; `asList` = the
+/-- The `keep` closure of the `InList` arm: a scalar, and under `index-falkordb` (#2527, its geo
+kind) a point too. -/
+def keepF (flag : Bool) (v : V) : Bool := isScalar v || (flag && v == .point)
+
+/-- The members of an evaluated `IN` list that reach the index. Under `index-falkordb` (#2527) a member
+no kind holds (not kept, not `NULL`) keeps the list whole (`unservable`), so `can_utilize_index`
+falls back to a scan; otherwise a list all kept is passed as is, else filtered to its kept members. -/
+def inListItems (flag : Bool) (items : List V) : List V :=
+  if (flag && items.any (fun v => !keepF flag v && v != .null)) || items.all (keepF flag) then items
+  else items.filter (keepF flag)
+
+/-- node_by_index_scan.rs / edge_by_index_scan.rs `evaluate_index_query`; `flag` =
+`cfg!(feature = "index-falkordb")`. `ev` = `ExprEval::eval` on the row; `asList` = the
 `Value::List` match of the `InList` arm. -/
-def evalIQ {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V))) :
+def evalIQF {E : Type} (flag : Bool) (ev : E → Except String V) (asList : E → Except String (Option (List V))) :
     IQ E → Except String (IQ V)
   | .eq k v => do pure (.eq k (← ev v))
   | .range k lo hi a b => do
@@ -55,13 +67,25 @@ def evalIQ {E : Type} (ev : E → Except String V) (asList : E → Except String
   | .arr k v => do pure (.arr k (← ev v))
   | .inList k l => do
     match ← asList l with
-    | some items => pure (.inListV k (items.filter isScalar))
+    | some items => pure (.inListV k (inListItems flag items))
     | none => throw "IN operator requires a list"
   | .inListV k items => pure (.inListV k items)
 where
   evalL ev asList : List (IQ E) → Except String (List (IQ V))
   | [] => pure []
-  | q :: qs => do let a ← evalIQ ev asList q; let b ← evalL ev asList qs; pure (a :: b)
+  | q :: qs => do let a ← evalIQF flag ev asList q; let b ← evalL ev asList qs; pure (a :: b)
+
+/-- The default build (no `index-falkordb`): `cfg!` is `false`. -/
+abbrev evalIQ {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V))) :
+    IQ E → Except String (IQ V) := evalIQF false ev asList
+
+/-- Without the flag the arm keeps exactly the scalar members, in order (as before #2527). -/
+theorem inListItems_false (items : List V) : inListItems false items = items.filter isScalar := by
+  have hk : keepF false = isScalar := by funext v; simp [keepF]
+  simp only [inListItems, hk, Bool.false_and, Bool.false_or]
+  split
+  · rename_i h; exact (List.filter_eq_self.2 (by simpa using h)).symm
+  · rfl
 
 /-- `Index::int_loses_f64_precision` (index/mod.rs): `i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0`
 (conservative: any |i| ≥ 2^52 except 2^63 falls back). -/
@@ -109,7 +133,7 @@ a non-scalar item — date, array — is dropped before the index is asked. -/
 theorem evalIQ_inList {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V)))
     (k : String) (l : E) (items : List V) (h : asList l = .ok (some items)) :
     evalIQ ev asList (.inList k l) = .ok (.inListV k (items.filter isScalar)) := by
-  simp [evalIQ, h, bind, Except.bind, pure, Except.pure]
+  simp [evalIQ, evalIQF, h, inListItems_false, bind, Except.bind, pure, Except.pure]
 
 /-- **#2383 keeps the fallback rule.** A list reaches the index iff its members, as an `Or` of
 `Equal`s, would have (the Rust test `in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members`):
@@ -126,13 +150,55 @@ theorem canUse_inList_nonlist (k : String) (v : V) : canUse (.inList k v) = fals
 theorem evalIQ_inList_err {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V)))
     (k : String) (l : E) (h : asList l = .ok none) :
     evalIQ ev asList (.inList k l) = .error "IN operator requires a list" := by
-  simp [evalIQ, h, bind, Except.bind, throw, throwThe, MonadExceptOf.throw]
+  simp [evalIQ, evalIQF, h, bind, Except.bind, throw, throwThe, MonadExceptOf.throw]
 
 /-- Every leaf expression is evaluated in place; the query shape is kept. -/
 theorem evalIQ_eq {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V)))
     (k : String) (e : E) (v : V) (h : ev e = .ok v) :
     evalIQ ev asList (.eq k e) = .ok (.eq k v) ∧ evalIQ ev asList (.arr k e) = .ok (.arr k v) := by
-  simp [evalIQ, h, bind, Except.bind, pure, Except.pure]
+  simp [evalIQ, evalIQF, h, bind, Except.bind, pure, Except.pure]
+
+/-! ### Under `index-falkordb` (#2527) -/
+
+/-- With the flag, the `IN` arm passes `inListItems true` of the evaluated list. -/
+theorem evalIQF_inList_flag {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V)))
+    (k : String) (l : E) (items : List V) (h : asList l = .ok (some items)) :
+    evalIQF true ev asList (.inList k l) = .ok (.inListV k (inListItems true items)) := by
+  simp [evalIQF, h, bind, Except.bind, pure, Except.pure]
+
+/-- **W2-index-3 does not arise under `index-falkordb`.** A member no kind holds (a date, a list, a
+map) keeps the list whole, so `can_utilize_index` declines and the scan falls back to the label scan
+under the kept Filter: no row holding that member is lost. -/
+theorem inListItems_flag_unservable (k : String) (items : List V) (v : V) (hv : v ∈ items)
+    (hk : keepF true v = false) (hn : v ≠ .null) :
+    inListItems true items = items ∧ canUse (.inListV k (inListItems true items)) = false := by
+  have hany : items.any (fun v => !keepF true v && v != .null) = true :=
+    List.any_eq_true.2 ⟨v, hv, by simp [hk, hn]⟩
+  have hi : inListItems true items = items := by simp [inListItems, hany]
+  refine ⟨hi, ?_⟩
+  rw [hi]
+  have hind : indexable v = false := by
+    cases v <;> simp_all [keepF, isScalar, indexable]
+  simp only [canUse, Bool.and_eq_false_iff]
+  right
+  exact List.all_eq_false.2 ⟨v, hv, by simp [hind]⟩
+
+/-- The W2-index-3 list `IN [date(..), 2]`: the default build sends `[2]` to the index, the flag
+build keeps the list whole and falls back. -/
+theorem w2index3_flag (k : String) :
+    inListItems false [.other, .int 2] = [.int 2] ∧ canUse (.inListV k [.int 2]) = true ∧
+    inListItems true [.other, .int 2] = [.other, .int 2] ∧
+    canUse (.inListV k (inListItems true [.other, .int 2])) = false := by
+  refine ⟨by decide, rfl, by decide, rfl⟩
+
+/-- Under the flag a point member reaches the index (the geo kind holds it); a `NULL` member is
+dropped when the rest is servable, and a list of only `NULL`s empties and falls back. -/
+theorem inListItems_flag_point_null (k : String) :
+    inListItems true [.point, .int 1] = [.point, .int 1] ∧
+    inListItems false [.point, .int 1] = [.int 1] ∧
+    inListItems true [.null, .int 1] = [.int 1] ∧
+    canUse (.inListV k (inListItems true [.null])) = false := by
+  refine ⟨by decide, by decide, by decide, rfl⟩
 
 /-! ## `new` and the per-row node set -/
 
