@@ -62,3 +62,6 @@ graph/src/planner/binder.rs	constants_equal	2880	PROVEN	AggEq.constEq (Int/Float
 graph/src/planner/binder.rs	Binder::import_parent_names	2352	NOT COVERED	(#3062): not modelled yet
 graph/src/planner/binder.rs	Binder::hide_new_names	2388	NOT COVERED	(#3062): not modelled yet
 graph/src/planner/binder.rs	Binder::hide_names	2401	NOT COVERED	(#3062): not modelled yet
+graph/src/planner/binder.rs	Scope::insert_alias	132	NOT COVERED	(#3062): not modelled yet
+graph/src/planner/binder.rs	Scope::remove_alias	143	NOT COVERED	(#3062): not modelled yet
+graph/src/planner/binder.rs	Binder::drop_aliases	2423	NOT COVERED	(#3062): not modelled yet

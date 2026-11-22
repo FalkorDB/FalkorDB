@@ -48,6 +48,10 @@ use std::sync::Arc;
 struct Scope {
     named: HashMap<Arc<String>, Variable>,
     unnamed: Vec<Variable>,
+    /// How many of `named`'s entries are second names for a variable another
+    /// entry already holds (see `Binder::import_parent_names`); they take no
+    /// id of their own.
+    aliased: usize,
 }
 
 impl Scope {
@@ -120,7 +124,29 @@ impl Scope {
     }
 
     fn len(&self) -> usize {
-        self.named.len() + self.unnamed.len()
+        self.named.len() + self.unnamed.len() - self.aliased
+    }
+
+    /// Enters `name` as a second name for `var`, which the scope already
+    /// holds under another name.
+    fn insert_alias(
+        &mut self,
+        name: Arc<String>,
+        var: Variable,
+    ) {
+        if self.named.insert(name, var).is_none() {
+            self.aliased += 1;
+        }
+    }
+
+    /// Removes a name entered by `insert_alias`.
+    fn remove_alias(
+        &mut self,
+        name: &Arc<String>,
+    ) {
+        if self.named.remove(name).is_some() {
+            self.aliased -= 1;
+        }
     }
 }
 
@@ -2096,7 +2122,7 @@ impl Binder {
                 // Unnamed variables stay: their IDs must be visible to
                 // scope_vars so the planner can avoid ID collisions.
                 self.hide_new_names(&outer_scope_names);
-                self.hide_names(&aliases);
+                self.drop_aliases(&aliases);
 
                 let mut new_tree =
                     DynTree::new(ExprIR::PatternComprehension(Box::new(bound_graph)));
@@ -2281,7 +2307,7 @@ impl Binder {
                         // the outer scope.  Unnamed variables stay, since their
                         // IDs must remain visible in scope_vars.
                         self.hide_new_names(&outer_scope_names);
-                        self.hide_names(&aliases);
+                        self.drop_aliases(&aliases);
 
                         ExprIR::Pattern(Box::new(result?))
                     }
@@ -2363,7 +2389,7 @@ impl Binder {
             if let Ok(var) = self.resolve_name(&name, locals)
                 && !self.current_env().contains_key(&name)
             {
-                self.current_env_mut().insert(name.clone(), var);
+                self.current_env_mut().insert_alias(name.clone(), var);
                 aliases.push(name);
             }
         }
@@ -2388,6 +2414,19 @@ impl Binder {
             .cloned()
             .collect();
         self.hide_names(&names);
+    }
+
+    /// Removes the entries `import_parent_names` added for a renamed parent
+    /// variable (`WITH n AS m`). The variable stays in scope under its new name,
+    /// so its id is still held and the entry is dropped outright; re-keying it
+    /// would list the variable twice.
+    fn drop_aliases(
+        &mut self,
+        aliases: &[Arc<String>],
+    ) {
+        for name in aliases {
+            self.current_env_mut().remove_alias(name);
+        }
     }
 
     fn hide_names(
@@ -3227,6 +3266,7 @@ mod tests {
             "MATCH (a) FOREACH (x IN [1] | MERGE p = (a)-[:R]->()) WITH a MATCH ()-[]->() RETURN a",
             "MATCH (a) OPTIONAL MATCH (a)-[]->()-[]->() RETURN a",
             "MATCH (a:A) WITH a MATCH (a)-[]->() WITH a MATCH ()-[]->(a) RETURN a",
+            "MATCH (n) WITH n AS m WHERE (n)-[]->() RETURN m",
         ];
         for query in queries {
             let mut parser = Parser::new(query);
