@@ -14,12 +14,11 @@ row iff the sub-plan run on it is non-empty / empty; `OrApplyMultiplexer`
 keeps it iff some branch `i` has `has_result ^ anti_flags[i]`
 (or_apply_multiplexer.rs).
 
-* `toPlan_correct`: with two-valued atoms, the plan keeps exactly the rows on
-  which the predicate is `true` (`tv ι e`).
-* `toPlan_not_null_bug`: without that hypothesis it is false — `NOT (x OR p)`
-  with `x` null and no `p` match keeps the row (mod.rs plans
-  `NOT(complex)` as `AntiSemiApply(input, plan(complex))`, which inverts
-  "not true", not "false"). CONFIRMED Rust vs C (see PlannerBuild.lean).
+* `toPlan_correct3`: the plan keeps exactly the rows on which the predicate
+  is `true` (`tv ι e`), in three-valued logic. Since #3260 a `NOT` over
+  `AND`/`OR`/`NOT` is pushed down to the leaves (`pushNot`, `push_not_down`)
+  before planning, so no anti-join inverts a predicate that can be null.
+  `toPlan_correct` is the two-valued form the callers use.
 -/
 namespace PlannerBuild.E
 
@@ -64,6 +63,65 @@ def scalarFilter (xs : List Ex) (inp : FP) : FP :=
   | [] => inp
   | xs => .filter (andOf xs) inp
 
+/- `Planner::push_not_down` (mod.rs): the negation of `c` with the `NOT`
+moved onto its operands, when `c` (under any `Paren`) is `AND`/`OR`/`NOT`. -/
+mutual
+def pushNot : Ex → Option Ex
+  | .node .paren (c :: _) => pushNot c
+  | .node .not (c :: _) => some c
+  | .node .and cs => some (.node .or (negL cs))
+  | .node .or cs => some (.node .and (negL cs))
+  | _ => none
+/-- `negate` in `push_not_down`, over the operands. -/
+def negL : List Ex → List Ex
+  | [] => []
+  | c :: cs => (pushNot c).getD (.node .not [c]) :: negL cs
+end
+
+/- Termination measure for `expr_to_plan` (a `NOT` weighs twice its operand). -/
+mutual
+def msz : Ex → Nat
+  | .node .not cs => 2 * mszL cs - 1
+  | .node _ cs => mszL cs + 1
+def mszL : List Ex → Nat
+  | [] => 0
+  | c :: cs => msz c + mszL cs + 1
+end
+
+theorem msz_not (cs : List Ex) : msz (.node .not cs) = 2 * mszL cs - 1 := by simp [msz]
+theorem msz_other (d : D) (cs : List Ex) (h : d ≠ .not) : msz (.node d cs) = mszL cs + 1 := by
+  cases d <;> simp_all [msz]
+
+mutual
+theorem pushNot_msz : ∀ c n, pushNot c = some n → msz n ≤ 2 * msz c
+  | .node d cs, n, h => by
+    cases d <;> (try simp [pushNot] at h)
+    case and => subst h; have := negL_msz cs; simp only [msz_other .or _ (by decide), msz_other .and _ (by decide)]; omega
+    case or => subst h; have := negL_msz cs; simp only [msz_other .or _ (by decide), msz_other .and _ (by decide)]; omega
+    case not =>
+      match cs, h with
+      | c :: rest, h =>
+        simp only [pushNot, Option.some.injEq] at h; subst h
+        simp only [msz_not, mszL]; omega
+    case paren =>
+      match cs, h with
+      | c :: rest, h =>
+        simp only [pushNot] at h
+        have := pushNot_msz c n h
+        simp only [msz_other .paren _ (by decide), mszL]; omega
+theorem negL_msz : ∀ cs, mszL (negL cs) ≤ 2 * mszL cs
+  | [] => by simp [negL, mszL]
+  | c :: cs => by
+    have ih := negL_msz cs
+    simp only [negL, mszL]
+    cases h : pushNot c with
+    | none => simp only [Option.getD_none, msz_not, mszL]; omega
+    | some n => have := pushNot_msz c n h; simp only [Option.getD_some]; omega
+end
+
+theorem msz_pos_lt (c : Ex) (cs : List Ex) : msz c < mszL (c :: cs) := by simp [mszL]; omega
+theorem mszL_lt_tail (c : Ex) (cs : List Ex) : mszL cs < mszL (c :: cs) := by simp only [mszL]; omega
+
 mutual
 def toPlan (ι : List (Nat × QG)) : Ex → FP → FP
   | .node d cs, inp =>
@@ -78,8 +136,16 @@ def toPlan (ι : List (Nat × QG)) : Ex → FP → FP
                 inp ((orClass ι cs).1 ++ (orClass ι cs).2.map Prod.fst)
             | .and, cs => andFold ι cs (scalarFilter
                 (cs.filter (fun c => !containsInlineVar (keysOf ι) c && !isTT c)) inp)
-            | .not, c :: _ => .anti inp (toPlan ι c .arg)
+            | .not, c :: _ => match _h : pushNot c with
+              | some n => toPlan ι n inp
+              | none => .anti inp (toPlan ι c .arg)
             | d, cs => .filter (.node d cs) inp
+termination_by e _ => msz e
+decreasing_by
+  all_goals first
+    | (simp only [msz_other .or _ (by decide), msz_other .and _ (by decide)]; omega)
+    | (have := pushNot_msz _ _ ‹pushNot _ = some _›; simp only [msz_not, mszL]; omega)
+    | (simp only [msz_not, mszL]; omega)
 /-- `or_expr_to_plan`'s branch classification (mod.rs): scalar
 branches, and (plan, anti) branches, each in child order. -/
 def orClass (ι : List (Nat × QG)) : List Ex → List FP × List (FP × Bool)
@@ -92,10 +158,14 @@ def orClass (ι : List (Nat × QG)) : List Ex → List FP × List (FP × Bool)
       | none =>
         if containsInlineVar (keysOf ι) c = false then (.filter c .arg :: (orClass ι cs).1, (orClass ι cs).2)
         else ((orClass ι cs).1, (toPlan ι c .arg, false) :: (orClass ι cs).2)
+termination_by cs => mszL cs
+decreasing_by all_goals first | exact mszL_lt_tail _ _ | exact msz_pos_lt _ _
 /-- `and_expr_to_plan`'s loop over the non-scalar conjuncts (mod.rs). -/
 def andFold (ι : List (Nat × QG)) : List Ex → FP → FP
   | [], p => p
   | c :: cs, p => andFold ι cs (if containsInlineVar (keysOf ι) c then toPlan ι c p else p)
+termination_by cs _ => mszL cs
+decreasing_by all_goals first | exact mszL_lt_tail _ _ | exact msz_pos_lt _ _
 end
 
 /-- The body of `expr_to_plan` (mod.rs), by connective. -/
@@ -112,33 +182,18 @@ def toPlanGen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) : FP :=
         | .and => andFold ι cs (scalarFilter
             (cs.filter (fun c => !containsInlineVar (keysOf ι) c && !isTT c)) inp)
         | .not => match cs with
-          | c :: _ => .anti inp (toPlan ι c .arg)
+          | c :: _ => match _h : pushNot c with
+            | some n => toPlan ι n inp
+            | none => .anti inp (toPlan ι c .arg)
           | [] => .filter (.node .not []) inp
         | _ => .filter (.node d cs) inp
 
 theorem toPlan_gen (ι : List (Nat × QG)) (d : D) (cs : List Ex) (inp : FP) :
     toPlan ι (.node d cs) inp = toPlanGen ι d cs inp := by
-  cases d <;> (try cases cs) <;> first | rfl | (simp only [toPlan, toPlanGen]; done)
+  rw [toPlan.eq_def]
+  cases d <;> (try cases cs) <;> first | rfl | (simp only [toPlanGen]; done)
 
-/-! ## The three-valued counterexample (CONFIRMED bug) -/
-
-namespace Cex
-def g : QG := ⟨0, [⟨0, 0⟩], [], [], []⟩
-def ι : List (Nat × QG) := [(7, g)]
-/-- `NOT (x OR p)`: `x` an atom (say `a.v > 1`), `p` the inline pattern id 7. -/
-def e : Ex := .node .not [.node .or [.node (.other 0) [], Ex.v ⟨7, 0⟩]]
-def at0 : Ex → Unit → Option Bool := fun _ _ => none   -- `a.v` is null
-def sub0 : QG → Unit → List Unit := fun _ _ => []       -- no `(a)-->()` match
-end Cex
-
-/-- openCypher: `NOT (null OR false)` is null, so the row is filtered out; the
-plan keeps it. -/
-theorem toPlan_not_null_bug :
-    tv Cex.at0 Cex.sub0 Cex.ι Cex.e () = none ∧
-    run Cex.at0 Cex.sub0 Cex.ι (fun r => [r]) (toPlan Cex.ι Cex.e .input) () = [()] := by
-  constructor <;> rfl
-
-/-! ## Correctness with two-valued atoms -/
+/-! ## Correctness -/
 
 mutual
 /-- Inline variables occur only where `expr_to_plan` takes the predicate apart. -/
@@ -324,6 +379,176 @@ theorem wfI_nonconn (d : D) (cs : List Ex) (hd : isConn d = false)
   simp only [wfI, h1, h2, h3, Option.isSome_none, Bool.not_true, Bool.false_or] at hw
   cases d <;> simp_all [isConn]
 
+/-! ## `push_not_down` is the three-valued negation -/
+
+omit H2
+
+theorem not3_not3 (x : Option Bool) : not3 (not3 x) = x := by
+  cases x with
+  | none => rfl
+  | some b => cases b <;> rfl
+
+mutual
+theorem pushNot_tv : ∀ (c n : Ex) (y : R), shapeOK c = true → pushNot c = some n →
+    tv atom sub ι n y = not3 (tv atom sub ι c y)
+  | .node d cs, n, y, hs, h => by
+    cases d <;> (try simp [pushNot] at h)
+    case and =>
+      subst h
+      simp only [tv]
+      rw [negL_tv cs y (shapeL_of _ _ rfl hs), not3_and3]
+    case or =>
+      subst h
+      simp only [tv]
+      rw [negL_tv cs y (shapeL_of _ _ rfl hs), not3_or3]
+    case not =>
+      obtain ⟨c, rfl, -⟩ := shape_one .not cs (Or.inl rfl) hs
+      simp only [pushNot, Option.some.injEq] at h; subst h
+      simp only [tv, not3_not3]
+    case paren =>
+      obtain ⟨c, rfl, hsc⟩ := shape_one .paren cs (Or.inr rfl) hs
+      simp only [pushNot] at h
+      simp only [tv]
+      exact pushNot_tv c n y hsc h
+theorem negL_tv : ∀ (cs : List Ex) (y : R), shapeOKL cs = true →
+    tvL atom sub ι (negL cs) y = (tvL atom sub ι cs y).map not3
+  | [], _, _ => rfl
+  | c :: cs, y, hs => by
+    simp only [shapeOKL, Bool.and_eq_true] at hs
+    simp only [negL, tvL, List.map_cons]
+    rw [negL_tv cs y hs.2]
+    cases h : pushNot c with
+    | none => simp [tv]
+    | some n => simp only [Option.getD_some, pushNot_tv c n y hs.1 h]
+end
+
+mutual
+theorem pushNot_shape : ∀ (c n : Ex), shapeOK c = true → pushNot c = some n → shapeOK n = true
+  | .node d cs, n, hs, h => by
+    cases d <;> (try simp [pushNot] at h)
+    case and => subst h; simpa [shapeOK] using negL_shape cs (shapeL_of _ _ rfl hs)
+    case or => subst h; simpa [shapeOK] using negL_shape cs (shapeL_of _ _ rfl hs)
+    case not =>
+      obtain ⟨c, rfl, hsc⟩ := shape_one .not cs (Or.inl rfl) hs
+      simp only [pushNot, Option.some.injEq] at h; subst h
+      exact hsc
+    case paren =>
+      obtain ⟨c, rfl, hsc⟩ := shape_one .paren cs (Or.inr rfl) hs
+      simp only [pushNot] at h
+      exact pushNot_shape c n hsc h
+theorem negL_shape : ∀ (cs : List Ex), shapeOKL cs = true → shapeOKL (negL cs) = true
+  | [], _ => rfl
+  | c :: cs, hs => by
+    simp only [shapeOKL, Bool.and_eq_true] at hs
+    simp only [negL, shapeOKL, negL_shape cs hs.2, Bool.and_true]
+    cases h : pushNot c with
+    | none => simp [shapeOK, shapeOKL, hs.1]
+    | some n => exact pushNot_shape c n hs.1 h
+end
+
+section
+variable (p : D → Bool) (hp : p .not = false ∧ p .or = false ∧ p .and = false)
+include hp
+
+mutual
+theorem pushNot_any : ∀ (c n : Ex), pushNot c = some n → anyN p n = true → anyN p c = true
+  | .node d cs, n, h, ha => by
+    cases d <;> (try simp [pushNot] at h)
+    case and =>
+      subst h
+      simp only [anyN, hp.2.1, hp.2.2, Bool.false_or] at ha ⊢
+      exact negL_any cs ha
+    case or =>
+      subst h
+      simp only [anyN, hp.2.1, hp.2.2, Bool.false_or] at ha ⊢
+      exact negL_any cs ha
+    case not =>
+      match cs, h with
+      | c :: rest, h =>
+        simp only [pushNot, Option.some.injEq] at h; subst h
+        simp [anyN, anyL, ha]
+    case paren =>
+      match cs, h with
+      | c :: rest, h =>
+        simp only [pushNot] at h
+        simp [anyN, anyL, pushNot_any c n h ha]
+theorem negL_any : ∀ (cs : List Ex), anyL p (negL cs) = true → anyL p cs = true
+  | [], ha => ha
+  | c :: cs, ha => by
+    simp only [negL, anyL, Bool.or_eq_true] at ha ⊢
+    rcases ha with ha | ha
+    · left
+      cases h : pushNot c with
+      | none => simpa [h, anyN, anyL, hp.1] using ha
+      | some n => rw [h] at ha; exact pushNot_any c n h ha
+    · exact Or.inr (negL_any cs ha)
+end
+end
+
+theorem pushNot_noInl (c n : Ex) (h : pushNot c = some n)
+    (hc : containsInlineVar (keysOf ι) c = false) : containsInlineVar (keysOf ι) n = false := by
+  cases hn : containsInlineVar (keysOf ι) n with
+  | false => rfl
+  | true =>
+    have := pushNot_any (isInl (keysOf ι)) ⟨rfl, rfl, rfl⟩ c n h hn
+    unfold containsInlineVar at hc; rw [hc] at this; exact absurd this (by decide)
+
+mutual
+theorem pushNot_wfI : ∀ (c n : Ex), shapeOK c = true → wfI ι c = true → pushNot c = some n →
+    wfI ι n = true
+  | .node d cs, n, hs, hw, h => by
+    cases h3 : containsInlineVar (keysOf ι) (.node d cs) with
+    | false => exact wfI_noInl ι n (pushNot_noInl ι _ n h h3)
+    | true =>
+      cases d <;> (try simp [pushNot] at h)
+      case and =>
+        subst h
+        have hw' := wfI_conn ι .and cs rfl rfl rfl h3 hw
+        have := negL_wfI cs (shapeL_of _ _ rfl hs) hw'
+        simp [wfI, this]
+      case or =>
+        subst h
+        have hw' := wfI_conn ι .or cs rfl rfl rfl h3 hw
+        have := negL_wfI cs (shapeL_of _ _ rfl hs) hw'
+        simp [wfI, this]
+      case not =>
+        obtain ⟨c, rfl, -⟩ := shape_one .not cs (Or.inl rfl) hs
+        simp only [pushNot, Option.some.injEq] at h; subst h
+        cases h2 : notInl ι (.node .not [c]) with
+        | some g =>
+          simp only [notInl] at h2
+          cases c; simp [wfI, h2]
+        | none =>
+          have := wfI_conn ι .not [c] rfl rfl h2 h3 hw
+          simpa [wfIL] using this
+      case paren =>
+        exact (wfI_nonconn ι .paren cs rfl rfl rfl h3 hw).elim
+theorem negL_wfI : ∀ (cs : List Ex), shapeOKL cs = true → wfIL ι cs = true → wfIL ι (negL cs) = true
+  | [], _, _ => rfl
+  | c :: cs, hs, hw => by
+    simp only [shapeOKL, Bool.and_eq_true] at hs
+    simp only [wfIL, Bool.and_eq_true] at hw
+    simp only [negL, wfIL, negL_wfI cs hs.2 hw.2, Bool.and_true]
+    cases h : pushNot c with
+    | none => simp [wfI, wfIL, hw.1]
+    | some n => exact pushNot_wfI c n hs.1 hw.1 h
+end
+
+/-- `push_not_down` succeeds on every connective `NOT` operand that `wfI` admits,
+so the `AntiSemiApply(input, plan(c))` fallback is never taken on one. -/
+theorem pushNot_total (c : Ex) (hs : shapeOK c = true) (hw : wfI ι c = true)
+    (h1 : inlVar ι c = none) (h3 : containsInlineVar (keysOf ι) c = true) (hp : pushNot c = none) :
+    False := by
+  cases c with
+  | node d cs =>
+    cases d <;> (try simp [pushNot] at hp)
+    case not =>
+      obtain ⟨c, rfl, -⟩ := shape_one .not cs (Or.inl rfl) hs
+      simp [pushNot] at hp
+    all_goals first
+      | exact wfI_nonconn ι _ cs rfl h1 (notInl_none ι _ _ (by decide)) h3 hw
+      | exact wfI_nonconn ι _ cs rfl h1 rfl h3 hw
+
 variable (hTT : ∀ c y, isTT c = true → atom c y = some true) (up : R → List R)
 include hTT
 
@@ -358,7 +583,9 @@ theorem and_split (cs : List Ex) (y : R) :
       simpa using this
 
 mutual
-theorem toPlan_correct : ∀ (e : Ex) (inp : FP) (r : R), shapeOK e = true → wfI ι e = true →
+/-- The plan keeps exactly the rows on which the predicate is `true`, in
+three-valued logic (null atoms allowed). -/
+theorem toPlan_correct3 : ∀ (e : Ex) (inp : FP) (r : R), shapeOK e = true → wfI ι e = true →
     run atom sub ι up (toPlan ι e inp) r =
       (run atom sub ι up inp r).filter (fun y => passes (tv atom sub ι e y))
   | .node d cs, inp, r, hs, hw => by
@@ -394,18 +621,33 @@ theorem toPlan_correct : ∀ (e : Ex) (inp : FP) (r : R), shapeOK e = true → w
             rw [andFold_correct _ _ r (shapeL_of _ _ rfl hs) hw',
               scalarFilter_correct atom sub ι up (fun y => hTT tt y rfl), filter_filter']
             congr 1; funext y
-            rw [and_split atom sub ι H2 hTT cs y]
+            rw [and_split atom sub ι hTT cs y]
             simp only [tv, passes_and3, tvL_map, List.all_map]; rfl
           case not =>
             obtain ⟨c, rfl, hsc⟩ := shape_one .not cs (Or.inl rfl) hs
             have hw' := wfI_conn ι .not [c] rfl h1 h2 h3 hw
             simp only [wfIL, Bool.and_true] at hw'
-            simp only [run]
-            congr 1; funext y
-            rw [toPlan_correct c .arg y hsc hw']
-            simp only [run, tv, passes_not3 atom sub ι H2]
-            cases hp : passes (tv atom sub ι c y) <;> simp [List.filter, hp]
+            dsimp only
+            split
+            next n hp =>
+              rw [toPlan_correct3 n inp r (pushNot_shape c n hsc hp) (pushNot_wfI ι c n hsc hw' hp)]
+              congr 1; funext y
+              rw [pushNot_tv atom sub ι c n y hsc hp]
+              simp only [tv]
+            next hp =>
+              have h1' : inlVar ι c = none := by simpa [notInl] using h2
+              have h3' : containsInlineVar (keysOf ι) c = true := by
+                simpa [containsInlineVar, anyN, anyL, isInl] using h3
+              exact (pushNot_total ι c hsc hw' h1' h3' hp).elim
           all_goals exact (wfI_nonconn ι _ cs rfl h1 h2 h3 hw).elim
+termination_by e _ _ _ _ => msz e
+decreasing_by
+  all_goals subst_vars
+  all_goals first
+    | exact mszL_lt_tail _ _
+    | exact msz_pos_lt _ _
+    | (simp only [msz_other .or _ (by decide), msz_other .and _ (by decide)]; omega)
+    | (have := pushNot_msz _ _ ‹pushNot _ = some _›; simp only [msz_not, mszL]; omega)
 theorem orClass_correct : ∀ (cs : List Ex) (y : R), shapeOKL cs = true → wfIL ι cs = true →
     (anyBr atom sub ι up ((orClass ι cs).1.map (fun _ => false)) (orClass ι cs).1 y ||
       anyBr atom sub ι up ((orClass ι cs).2.map Prod.snd) ((orClass ι cs).2.map Prod.fst) y) =
@@ -442,11 +684,19 @@ theorem orClass_correct : ∀ (cs : List Ex) (y : R), shapeOKL cs = true → wfI
           cases passes (tv atom sub ι c y) <;> cases A <;> cases B <;> rfl
         | true =>
           simp only [orClass, h1, h2, h3, Bool.true_eq_false, ↓reduceIte, List.map_cons, anyBr]
-          rw [toPlan_correct c .arg y hs.1 hw.1]
+          rw [toPlan_correct3 c .arg y hs.1 hw.1]
           simp only [run]
           generalize anyBr atom sub ι up ((orClass ι cs).1.map (fun _ => false)) (orClass ι cs).1 y = A
           generalize anyBr atom sub ι up ((orClass ι cs).2.map Prod.snd) ((orClass ι cs).2.map Prod.fst) y = B
           cases hp : passes (tv atom sub ι c y) <;> cases A <;> cases B <;> simp [List.filter, hp]
+termination_by cs _ _ _ => mszL cs
+decreasing_by
+  all_goals subst_vars
+  all_goals first
+    | exact mszL_lt_tail _ _
+    | exact msz_pos_lt _ _
+    | (simp only [msz_other .or _ (by decide), msz_other .and _ (by decide)]; omega)
+    | (have := pushNot_msz _ _ ‹pushNot _ = some _›; simp only [msz_not, mszL]; omega)
 theorem andFold_correct : ∀ (cs : List Ex) (p : FP) (r : R), shapeOKL cs = true → wfIL ι cs = true →
     run atom sub ι up (andFold ι cs p) r =
       (run atom sub ι up p r).filter
@@ -463,8 +713,23 @@ theorem andFold_correct : ∀ (cs : List Ex) (p : FP) (r : R), shapeOKL cs = tru
     | false => simp [h]
     | true =>
       simp only [↓reduceIte]
-      rw [toPlan_correct c p r hs.1 hw.1, filter_filter']
+      rw [toPlan_correct3 c p r hs.1 hw.1, filter_filter']
       simp [h]
+termination_by cs _ _ _ _ => mszL cs
+decreasing_by
+  all_goals subst_vars
+  all_goals first
+    | exact mszL_lt_tail _ _
+    | exact msz_pos_lt _ _
+    | (simp only [msz_other .or _ (by decide), msz_other .and _ (by decide)]; omega)
+    | (have := pushNot_msz _ _ ‹pushNot _ = some _›; simp only [msz_not, mszL]; omega)
 end
+
+include H2 in
+/-- The form `plan_filter`'s proofs use (`toPlan_correct3` needs no `H2`). -/
+theorem toPlan_correct : ∀ (e : Ex) (inp : FP) (r : R), shapeOK e = true → wfI ι e = true →
+    run atom sub ι up (toPlan ι e inp) r =
+      (run atom sub ι up inp r).filter (fun y => passes (tv atom sub ι e y)) :=
+  toPlan_correct3 atom sub ι hTT up
 
 end PlannerBuild.E
