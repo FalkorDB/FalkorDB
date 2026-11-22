@@ -65,7 +65,7 @@ A column is created `Building` (`create_building`) and filled by indexer batches
 - `queryNumeric_range_served`, `nodeScanOp_range_served`, `edgeScanOp_range_served`: a `Range` (bounds `Null` or encodable) on an existing column is never declined, so it is rows or a scan;
 - `queryNumeric_null_equal`: `= null` holds for nothing and is answered with no rows, not declined as a value no column indexes (#2386);
 - `nodeFilteredScan_agrees`, `edgeFilteredScan_agrees` (`node_matches` / `relationship_matches`): **the scan that stands in for a building column keeps exactly the ids the built column returns for the same keys**, because both use one `KeySet` (`lookup_fromEntries`). `nodeScan_building_agrees` / `edgeScan_building_agrees` state it for the whole read: if `query_numeric` answers with a `ScanFilter`, the scan equals what the column `CREATE INDEX` would build answers. The planner drops a predicate it hands to an index scan, so this filter is the only check the scanned rows get.
-- `describe` / `unsupportedByNativeIndex` (`Decline.lean`): the error names the entity, label and predicate shape. The three union reasons are decided by the flattened members (`describe_or`) and the "spanning" and "non-member" reasons are always real declines (`describe_or_reason_sound`). One cosmetic inexactness: `a = 1 OR a IN []` is described as "not all-numeric" (`describe_empty_in_misreported`).
+- `describeK` / `unsupportedByNativeIndex` (`Tag.lean`): the error names the entity, label and predicate shape (`unsupported_spec`). The three union reasons are decided by the flattened members (`describeK_or`); a decline names the operand whose type no kind holds (`describeK_equal`, `describeK_inList`, `describeK_range_named`), and `a = 1 OR a IN []` is a one-attribute union naming no value (`describeK_empty_in`).
 
 **4d. Who feeds RediSearch now? (`redisearch_fields`)**
 
@@ -164,7 +164,11 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `Ddl.lean` | `createIndex`, `populate`, `buildInOneBatch`, `queryIndexNumericNodes/Edges`, `scanOp`, `nodeScan_native_agrees`, `snapshot_isolated`, `runUnit_spec` |
 | `Scan.lean` | `nodeMatches`, `relationshipMatches`, the filtered scans, `nodeScanOp`/`edgeScanOp`, `redisearchFields` |
 | `Unique.lean` | `nativeUniqueQuery`, `fewest`, `ReadOnce` |
-| `Decline.lean` | `unsupported_by_native_index`'s `describe`, `unionMembers` |
+| `Decline.lean` | `Pred`, `unionMembers`, `oneKey` (read by `Tag.describeK`) |
+| `Tag.lean` | #3738's tag (string) kind: `encodeValueK`, the four-kind `EncodedTuples` (`et_spec`), `lastWriteWinsT` over `(kind, ColumnKey, id)`, `describeK` |
+| `TagSel.lean` | #3738's `Selection` with a string share (`StrSel`, `Scalars`, `SelT`): on numbers every builder and `lookup` is the old `Selection` (`matchesT_lift`, `equalT_numeric`, `rangeT_numeric`, `lookupT_lift`); on strings Cypher's semantics (`equalT_string_matches`, `rangeT_string_matches`, `rangeT_mixed`, `andT_matches`, `conjunctionT_matches`) |
+| `RangeKinds.lean` | #3738's `RangeIndex { numeric, tag }`: `new`, `for_each_stored_key`, `push_encoded`, `add_encoded`, `remove_encoded`, `is_empty`, `memory_usage` are the old numeric model on the numeric share plus the tag kind's own (`pushEncoded_num`, `addEncoded_numeric`, `isEmpty_iff`, `memoryUsage_kinds`); the tag trees are parameters |
+| `DistinctDisjoint.lean` | #3738's `DistinctIter` `dedupe` flag: on (`new`) it is `distinctGo` (`distinctGoD_true`); off (`disjoint`, the kinds of one column) it yields the chained streams (`distinctGoD_false_spec`), which is the deduplicated union when no doc occurs twice (`chainRem_disjoint`, `chainRem_initial`) |
 | `Rows.lean`, `Bridge.lean`, `Online.lean` | `Selection` row lemmas, the `sizing_batch` / `query_range` glue, and the background builder (`online_build.rs`: a job reads a snapshot and publishes against the entry published at publish time, `publish_stale` / `publish_valid`) |
 | `Batch.lean`, `Rebase.lean`, `Memory.lean` | Indexer batch commit and fit (#3566), rebase and catch-up (#3567, #3568), memory usage (#3569) |
 | `Cch.lean`, `CchOrder.lean`, `CchTopo.lean`, `CchMetric.lean`, `CchPaths.lean`, `CchSearch.lean`, `CchRoute.lean`, `CchSmall.lean`, `CchSeq.lean` | The CCH path-index contract skeleton and phases 1-3 |

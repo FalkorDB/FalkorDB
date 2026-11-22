@@ -11,13 +11,13 @@
 //! [`FalkorDbIndex`](super::falkordb_index::FalkorDbIndex).
 
 use std::ops::{Index, IndexMut};
-#[cfg(test)]
 use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
+use super::data_structures::cow_btree::StrRanges;
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
-use super::encode::{self, KeyKind, encode_numeric};
+use super::encode::{self, ColumnKey, KeyKind, encode_numeric};
 use super::range::RangeKind;
 use crate::runtime::value::Value;
 
@@ -31,7 +31,7 @@ const BRANCH_MAX: usize = 256;
 /// to justify it — not a default to inherit.
 const DOC_BYTES: usize = 8;
 
-type Tree = CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
+pub(super) type Tree = CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 
 /// Lazy iterator of matching entity ids, yielded in `(value, id)` order.
 type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
@@ -52,9 +52,13 @@ pub enum DocIter {
     /// An already-materialised doc set — an intersection, which cannot be produced lazily from
     /// value-ordered streams. Distinct by construction.
     Set(std::collections::hash_set::IntoIter<u64>),
-    /// Several streams chained, each doc yielded once — a union across columns, where a doc may
-    /// satisfy several members.
+    /// Several streams chained: a union across columns, where a doc may satisfy several members
+    /// and is yielded once (a set of the docs yielded so far is kept), or the kinds of one
+    /// column, whose streams share no doc and keep nothing ([`DistinctIter::disjoint`]).
     Distinct(DistinctIter),
+    /// A tag tree's key ranges, one cursor after another ([`StrRanges`]). Boxed: inline it is the
+    /// largest variant, and the size it adds to every `DocIter` measurably slows numeric scans.
+    Strings(Box<StrRanges>),
 }
 
 impl Iterator for DocIter {
@@ -66,6 +70,7 @@ impl Iterator for DocIter {
             Self::Many(it) => it.next(),
             Self::Set(it) => it.next(),
             Self::Distinct(it) => it.next(),
+            Self::Strings(it) => it.next(),
         }
     }
 }
@@ -73,12 +78,15 @@ impl Iterator for DocIter {
 /// Doc streams read one after another, each doc yielded once.
 ///
 /// **Lazy**: a stream is read only once the ones before it are exhausted, so a `LIMIT` stops the
-/// union early. The set holds the docs yielded so far, which is what deduplication needs — a doc
-/// matching several members is one row in Cypher — and nothing it has not yielded.
+/// union early. Unless the streams are known to be disjoint ([`DistinctIter::disjoint`]), a set
+/// holds the docs yielded so far, which is what deduplication needs — a doc matching several
+/// members is one row in Cypher — and nothing it has not yielded.
 pub struct DistinctIter {
     streams: std::vec::IntoIter<DocIter>,
     current: Option<Box<DocIter>>,
     seen: FxHashSet<u64>,
+    /// Whether a doc is remembered and skipped when a later stream repeats it.
+    dedupe: bool,
 }
 
 impl DistinctIter {
@@ -89,6 +97,16 @@ impl DistinctIter {
             streams: streams.into_iter(),
             current: None,
             seen: FxHashSet::default(),
+            dedupe: true,
+        }
+    }
+
+    /// `streams` read in order and known to hold no doc in common: chained, with nothing retained.
+    #[must_use]
+    pub(super) fn disjoint(streams: Vec<DocIter>) -> Self {
+        Self {
+            dedupe: false,
+            ..Self::new(streams)
         }
     }
 }
@@ -100,7 +118,7 @@ impl Iterator for DistinctIter {
         loop {
             if let Some(current) = self.current.as_mut() {
                 for doc in current.by_ref() {
-                    if self.seen.insert(doc) {
+                    if !self.dedupe || self.seen.insert(doc) {
                         return Some(doc);
                     }
                 }
@@ -240,9 +258,14 @@ impl Iterator for UnionIter {
 /// Indexed by the kind (`tuples[KeyKind::Array]`), so a tuple always goes back into the tree it
 /// came from. A flat list would lose which tree each tuple belongs in, and a kind stored on every
 /// tuple would cost 8 more bytes per tuple for what the position already says.
+///
+/// The tag kinds' tuples are carried by their **string** ([`tags`](Self::tags)), the key a tag tree
+/// stores. Their `u64` shares stay empty.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct EncodedTuples {
     by_kind: [Vec<(u64, u64)>; KeyKind::ALL.len()],
+    /// `(string, doc)` tuples of [`KeyKind::Tag`] and [`KeyKind::TagArray`], in that order.
+    tags: [Vec<(Arc<String>, u64)>; 2],
 }
 
 impl Index<KeyKind> for EncodedTuples {
@@ -274,25 +297,76 @@ impl EncodedTuples {
         tuples
     }
 
-    /// Whether there are no tuples of either kind.
+    /// The `(string, doc)` tuples of tag kind `kind`.
+    #[must_use]
+    pub fn tags(
+        &self,
+        kind: KeyKind,
+    ) -> &Vec<(Arc<String>, u64)> {
+        &self.tags[Self::tag_slot(kind)]
+    }
+
+    /// Add the tuple `(key, doc)` to the tuples of `kind`.
+    pub fn push(
+        &mut self,
+        kind: KeyKind,
+        key: ColumnKey,
+        doc: u64,
+    ) {
+        match (kind, key) {
+            (KeyKind::Scalar | KeyKind::Array, ColumnKey::Encoded(key)) => {
+                self[kind].push((key, doc));
+            }
+            (KeyKind::Tag | KeyKind::TagArray, ColumnKey::Tag(s)) => {
+                self.tags[Self::tag_slot(kind)].push((s, doc));
+            }
+            _ => unreachable!("a key of the kind's own type"),
+        }
+    }
+
+    fn tag_slot(kind: KeyKind) -> usize {
+        match kind {
+            KeyKind::Tag => 0,
+            KeyKind::TagArray => 1,
+            _ => unreachable!("only the tag kinds are carried by string"),
+        }
+    }
+
+    /// Whether there are no tuples of any kind.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.by_kind.iter().all(Vec::is_empty)
+        self.by_kind.iter().all(Vec::is_empty) && self.tags.iter().all(Vec::is_empty)
     }
 
     /// How many tuples there are, of every kind.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.by_kind.iter().map(Vec::len).sum()
+        self.by_kind.iter().map(Vec::len).sum::<usize>()
+            + self.tags.iter().map(Vec::len).sum::<usize>()
     }
 
     /// Empty the tuples, keeping their capacity for reuse.
     pub fn clear(&mut self) {
         self.by_kind.iter_mut().for_each(Vec::clear);
+        self.tags.iter_mut().for_each(Vec::clear);
     }
 
-    /// Sort each kind's tuples ascending and drop duplicates: the **sorted and unique** shape a
-    /// tree's bulk build requires.
+    /// Keep only the tuples of the docs `keep` accepts, of every kind.
+    pub fn retain_docs(
+        &mut self,
+        mut keep: impl FnMut(u64) -> bool,
+    ) {
+        for tuples in &mut self.by_kind {
+            tuples.retain(|&(_, doc)| keep(doc));
+        }
+        for tuples in &mut self.tags {
+            tuples.retain(|&(_, doc)| keep(doc));
+        }
+    }
+
+    /// Sort each kind's `u64` tuples ascending and drop duplicates: the **sorted and unique** shape
+    /// a tree's bulk build requires. The tag tuples are left alone: the tag kind sorts them as its
+    /// keys.
     pub fn sort_dedup(&mut self) {
         for tuples in &mut self.by_kind {
             tuples.sort_unstable();
@@ -330,13 +404,16 @@ impl NumericIndex {
     const TREES: [KeyKind; 2] = [KeyKind::Scalar, KeyKind::Array];
 
     /// The tree holding keys of `kind`, to change.
-    const fn tree_mut(
+    fn tree_mut(
         &mut self,
         kind: KeyKind,
     ) -> &mut Tree {
         match kind {
             KeyKind::Scalar => &mut self.tree,
             KeyKind::Array => &mut self.array_tree,
+            KeyKind::Tag | KeyKind::TagArray => {
+                unreachable!("the numeric kind holds only numeric trees")
+            }
         }
     }
 
@@ -421,15 +498,16 @@ impl NumericIndex {
 
 impl RangeKind for NumericIndex {
     type Keys = KeySet;
+    type Element = u64;
 
     /// A scalar is stored under its key in the scalar tree, and a list under each numeric
     /// element's key in the array tree ([`encode::for_each_stored_key`]).
     fn for_each_stored_key(
         &self,
         value: &Value,
-        emit: impl FnMut(KeyKind, u64),
+        mut emit: impl FnMut(KeyKind, ColumnKey),
     ) {
-        encode::for_each_stored_key(value, emit);
+        encode::for_each_stored_key(value, |kind, key| emit(kind, ColumnKey::Encoded(key)));
     }
 
     /// Tuples are never re-encoded: re-encoding a decoded key would be a second trip through a
@@ -440,16 +518,7 @@ impl RangeKind for NumericIndex {
         tuples: &EncodedTuples,
     ) {
         for kind in Self::TREES {
-            let tuples = &tuples[kind];
-            if tuples.is_empty() {
-                continue;
-            }
-            let tree = self.tree_mut(kind);
-            if tree.is_empty() {
-                *tree = Tree::from_sorted(tuples);
-            } else {
-                tree.insert_batch(tuples);
-            }
+            add_sorted(self.tree_mut(kind), &tuples[kind]);
         }
     }
 
@@ -458,9 +527,7 @@ impl RangeKind for NumericIndex {
         tuples: &EncodedTuples,
     ) {
         for kind in Self::TREES {
-            if !tuples[kind].is_empty() {
-                self.tree_mut(kind).remove_batch(&tuples[kind]);
-            }
+            remove_sorted(self.tree_mut(kind), &tuples[kind]);
         }
     }
 
@@ -479,19 +546,7 @@ impl RangeKind for NumericIndex {
         &self,
         keys: KeySet,
     ) -> DocIter {
-        match keys {
-            // `lo > hi` yields nothing.
-            KeySet::Empty => DocIter::One(self.tree.range(1, 0)),
-            KeySet::Point(key) => DocIter::One(self.tree.point(key)),
-            KeySet::Range(lo, hi) => DocIter::One(self.tree.range(lo, hi)),
-            // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so
-            // every member is answered from the same version however late its cursor is created.
-            KeySet::Keys(keys) => DocIter::Many(UnionIter {
-                tree: self.tree.clone(),
-                keys: keys.into_iter(),
-                current: None,
-            }),
-        }
+        docs_in(&self.tree, keys)
     }
 
     /// A point lookup into the array tree, so each matching doc is reached through one key and
@@ -504,9 +559,9 @@ impl RangeKind for NumericIndex {
     /// approximate where the scalar tree may not.
     fn lists_holding(
         &self,
-        key: u64,
+        key: &u64,
     ) -> DocIter {
-        DocIter::One(self.array_tree.point(key))
+        docs_in(&self.array_tree, KeySet::Point(*key))
     }
 
     fn is_scalar_in(
@@ -517,10 +572,57 @@ impl RangeKind for NumericIndex {
     }
 
     fn is_list_holding(
-        key: u64,
+        key: &u64,
         value: &Value,
     ) -> bool {
-        stores(value, KeyKind::Array, |stored| stored == key)
+        stores(value, KeyKind::Array, |stored| stored == *key)
+    }
+}
+
+/// The docs under `keys` in `tree`: one cursor for an empty set, a point or a window, and a lazy
+/// chain of point cursors for a set of keys. Every kind's trees are read this way.
+pub(super) fn docs_in(
+    tree: &Tree,
+    keys: KeySet,
+) -> DocIter {
+    match keys {
+        // `lo > hi` yields nothing.
+        KeySet::Empty => DocIter::One(tree.range(1, 0)),
+        KeySet::Point(key) => DocIter::One(tree.point(key)),
+        KeySet::Range(lo, hi) => DocIter::One(tree.range(lo, hi)),
+        // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so every
+        // member is answered from the same version however late its cursor is created.
+        KeySet::Keys(keys) => DocIter::Many(UnionIter {
+            tree: tree.clone(),
+            keys: keys.into_iter(),
+            current: None,
+        }),
+    }
+}
+
+/// Add sorted, unique `tuples` to `tree`. Into an empty tree they are bulk-built, bottom-up, rather
+/// than merged in.
+pub(super) fn add_sorted(
+    tree: &mut Tree,
+    tuples: &[(u64, u64)],
+) {
+    if tuples.is_empty() {
+        return;
+    }
+    if tree.is_empty() {
+        *tree = Tree::from_sorted(tuples);
+    } else {
+        tree.insert_batch(tuples);
+    }
+}
+
+/// Remove sorted, unique `tuples` from `tree`.
+pub(super) fn remove_sorted(
+    tree: &mut Tree,
+    tuples: &[(u64, u64)],
+) {
+    if !tuples.is_empty() {
+        tree.remove_batch(tuples);
     }
 }
 
@@ -547,6 +649,7 @@ mod tests {
     use super::super::range::RangeIndex;
     use super::*;
     use crate::index::IndexQuery;
+    use std::iter::once;
 
     /// A union across columns reads its streams one after another and yields each doc once,
     /// holding only what it has yielded: `LIMIT 1` reads one row of the first stream.
@@ -734,7 +837,7 @@ mod tests {
         // A bound of a type no kind holds is declined, not answered "no rows".
         assert!(
             idx.query(&range(
-                Some(Value::String(Arc::new("a".to_string()))),
+                Some(Value::List(Arc::new(once(Value::Int(1)).collect()))),
                 None,
                 true,
                 true
@@ -889,10 +992,13 @@ mod tests {
         assert!(
             idx.query(&in_list(
                 &attr,
-                [Value::Int(10), Value::String(Arc::new("a".to_string()))]
+                [
+                    Value::Int(10),
+                    Value::List(Arc::new(once(Value::Int(1)).collect()))
+                ]
             ))
             .is_none(),
-            "a mixed list must fall back rather than drop the non-numeric value"
+            "a list with a value no kind holds must fall back rather than drop that value"
         );
         assert!(
             idx.query(&in_list(&attr, Vec::new())).is_none(),
@@ -939,7 +1045,10 @@ mod tests {
                 eq(10),
                 in_list(
                     &attr,
-                    [Value::Int(20), Value::String(Arc::new("a".to_string()))]
+                    [
+                        Value::Int(20),
+                        Value::List(Arc::new(once(Value::Int(1)).collect()))
+                    ]
                 ),
             ]))
             .is_none(),
@@ -1422,7 +1531,7 @@ mod tests {
                 eq("a", 1),
                 IndexQuery::Equal {
                     key: Arc::new("a".to_string()),
-                    value: Value::String(Arc::new("x".to_string())),
+                    value: Value::List(Arc::new(once(Value::Int(1)).collect())),
                 },
             ]))
             .is_none(),

@@ -29,6 +29,10 @@ import FalkorNativeIndex.CchSearch
 import FalkorNativeIndex.CchRoute
 import FalkorNativeIndex.CchSmall
 import FalkorNativeIndex.CchSeq
+import FalkorNativeIndex.Tag
+import FalkorNativeIndex.TagSel
+import FalkorNativeIndex.RangeKinds
+import FalkorNativeIndex.DistinctDisjoint
 
 /-
 # `native_index`: the FalkorDB native numeric index (`graph/src/index/falkordb/**`)
