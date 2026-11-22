@@ -1602,19 +1602,6 @@ impl<'a> Runtime<'a> {
         Some(id)
     }
 
-    /// Whether this query has staged a node attribute write that the graph, and so every index,
-    /// does not see yet.
-    #[must_use]
-    pub fn has_pending_node_attrs(&self) -> bool {
-        self.pending.borrow().has_node_attrs()
-    }
-
-    /// [`Self::has_pending_node_attrs`] for relationship attributes.
-    #[must_use]
-    pub fn has_pending_relationship_attrs(&self) -> bool {
-        self.pending.borrow().has_relationship_attrs()
-    }
-
     /// The attribute ids `query` reads, each resolved once: a scan evaluating the query on every
     /// node would otherwise look the names up per row. `None` for a name no node has.
     #[must_use]

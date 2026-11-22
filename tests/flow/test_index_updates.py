@@ -572,6 +572,7 @@ class testIndexUpdatesFlow(FlowTestsBase):
             if indexed:
                 create_node_range_index(g, 'PD', 'v')
                 create_node_range_index(g, 'PD', 'loc', sync=True)
+                create_node_range_index(g, 'PD', 'a', sync=True)
             g.query(data)
             try:
                 result = g.query(query).result_set
@@ -583,6 +584,14 @@ class testIndexUpdatesFlow(FlowTestsBase):
         expected = outcome('distance_operand_truth', False)
         self.env.assertContains("Type mismatch", str(expected))
         self.env.assertEqual(outcome('distance_operand_index', True), expected)
+
+        # A row the scan's own predicate rejects (here a missing `v`) must not hide another
+        # conjunct's error: `1 IN n.a` over a property that is not a list is a type error.
+        query = ("MATCH (n:PD) WHERE n.v = date('2020-01-01') AND 1 IN n.a RETURN count(n)")
+        data = "CREATE (:PD {a: 3}), (:PD {v: date('2020-01-01'), a: []})"
+        expected = outcome('array_operand_truth', False)
+        self.env.assertContains("Type mismatch", str(expected))
+        self.env.assertEqual(outcome('array_operand_index', True), expected)
 
 class testNativeOnlyFeedFlow(FlowTestsBase):
     # The native index is the only Range index, so nothing may also feed Range fields to

@@ -327,7 +327,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 // attribute with no column in this version), whose filter the planner dropped.
                 let g = self.runtime.graph();
                 let served: Option<Box<dyn Iterator<Item = NodeId>>> =
-                    if Self::can_utilize_index(&q) && !self.runtime.has_pending_node_attrs() {
+                    if Self::can_utilize_index(&q) {
                         match g.query_index_nodes(self.index, &q) {
                             Some(Ok(rows)) => Some(Box::new(rows)),
                             // The column exists and will serve this once its build reaches every

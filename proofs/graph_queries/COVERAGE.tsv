@@ -1,11 +1,11 @@
 file	function	line	bucket	lean_name_or_reason
 # Online index build (#2355): fns the background builder added, not modelled yet.
 graph/src/graph/graph.rs	from_str	216	PROVEN	Queries.dirOfStr_spec
-graph/src/graph/graph.rs	from	227	PROVEN	Accessors newtype identity (LabelId.0)
-graph/src/graph/graph.rs	from	233	PROVEN	Accessors newtype identity (TypeId.0)
-graph/src/graph/graph.rs	from	239	PROVEN	Accessors.nodeId_roundtrip
-graph/src/graph/graph.rs	from	231	PROVEN	Accessors.nodeId_roundtrip
-graph/src/graph/graph.rs	from	231	PROVEN	Accessors.nodeId_roundtrip (RelId)
+graph/src/graph/graph.rs	from	201	PROVEN	Accessors newtype identity (LabelId.0)
+graph/src/graph/graph.rs	from	207	PROVEN	Accessors newtype identity (TypeId.0)
+graph/src/graph/graph.rs	from	213	PROVEN	Accessors.nodeId_roundtrip
+graph/src/graph/graph.rs	from	219	PROVEN	Accessors.nodeId_roundtrip
+graph/src/graph/graph.rs	from	225	PROVEN	Accessors.nodeId_roundtrip (RelId)
 graph/src/graph/graph.rs	from	231	PROVEN	Accessors.nodeId_roundtrip (RelId)
 graph/src/graph/graph.rs	new	238	PROVEN	Accessors.planNew_spec
 graph/src/graph/graph.rs	from	376	PROVEN	Accessors.nodeOpErrorOf_spec
@@ -188,7 +188,3 @@ graph/src/graph/schema_hash.rs	schema_hash	65	PROVEN	SchemaHash.schemaHash (wrap
 graph/src/graph/graph.rs	schema_hash	1242	PROVEN	SchemaHash.graphSchemaHash: graphSchemaHash_eq (= listsHash labels types attrs under Inv + NameMap.ChainInv), restore_same_hash; Inv kept by newGC_inv, restoreGC_inv, newVersionGC_inv, internLabelC_inv, registerRelTypeC_inv
 graph/src/graph/graph.rs	schema	1234	PROVEN	SchemaHash.GC (the schema's label/type chains with the graph's lists): graphSchemaHash_eq; Accessors.labelById_getLabelId, typeById_getTypeId (names via schema)
 graph/src/graph/schema.rs	hash	245	PROVEN	SchemaHash.schemaHash over the three NameMap chains (Schema::hash): graphSchemaHash_eq, empty_hash, schemaHash_lt
-graph/src/graph/graph.rs	usize::from	201	NOT COVERED	(#3751): not modelled yet
-graph/src/graph/graph.rs	usize::from	207	NOT COVERED	(#3751): not modelled yet
-graph/src/graph/graph.rs	NodeId::from	213	NOT COVERED	(#3751): not modelled yet
-graph/src/graph/graph.rs	u64::from	219	NOT COVERED	(#3751): not modelled yet

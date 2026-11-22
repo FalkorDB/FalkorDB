@@ -369,39 +369,35 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // What the index answers, or `None` for a scan that checks the predicate itself:
                 // a value no index lookup answers exactly, or a shape the native index declines.
                 // Mirrors `NodeByIndexScanOp`.
-                let served: Option<Box<dyn Iterator<Item = EdgeRow>>> = if Self::can_utilize_index(
-                    &q,
-                ) && !self
-                    .runtime
-                    .has_pending_relationship_attrs()
-                {
-                    let g = self.runtime.graph();
-                    // Served by the native index's columns, endpoints recovered from the graph's
-                    // reverse index.
-                    match g.query_index_edges(label, &q) {
-                        Some(Ok(rows)) => Some(Box::new(rows)),
-                        // Still building: scan the type for what the column will answer,
-                        // checking the predicate the planner dropped.
-                        Some(Err(scan_filter)) => Some(
-                            // Resolved once per scan. No edge holds a name the graph has never
-                            // seen.
-                            match scan_filter.resolve(|attr| {
-                                g.get_relationship_attribute_id(attr)
-                                    .map(|attr| attr as u16)
-                            }) {
-                                Some(scan_filter) => {
-                                    Box::new(scan_type().filter(move |&(_, _, edge)| {
-                                        runtime.graph().relationship_matches(edge, &scan_filter)
-                                    }))
-                                }
-                                None => Box::new(std::iter::empty()),
-                            },
-                        ),
-                        None => None,
-                    }
-                } else {
-                    None
-                };
+                let served: Option<Box<dyn Iterator<Item = EdgeRow>>> =
+                    if Self::can_utilize_index(&q) {
+                        let g = self.runtime.graph();
+                        // Served by the native index's columns, endpoints recovered from the graph's
+                        // reverse index.
+                        match g.query_index_edges(label, &q) {
+                            Some(Ok(rows)) => Some(Box::new(rows)),
+                            // Still building: scan the type for what the column will answer,
+                            // checking the predicate the planner dropped.
+                            Some(Err(scan_filter)) => Some(
+                                // Resolved once per scan. No edge holds a name the graph has never
+                                // seen.
+                                match scan_filter.resolve(|attr| {
+                                    g.get_relationship_attribute_id(attr)
+                                        .map(|attr| attr as u16)
+                                }) {
+                                    Some(scan_filter) => {
+                                        Box::new(scan_type().filter(move |&(_, _, edge)| {
+                                            runtime.graph().relationship_matches(edge, &scan_filter)
+                                        }))
+                                    }
+                                    None => Box::new(std::iter::empty()),
+                                },
+                            ),
+                            None => None,
+                        }
+                    } else {
+                        None
+                    };
                 let base: Box<dyn Iterator<Item = EdgeRow>> =
                     served.unwrap_or_else(|| {
                         let attrs = runtime.resolve_relationship_query_attrs(&q);

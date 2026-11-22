@@ -255,6 +255,38 @@ impl IndexQuery<Value> {
         &self,
         get: &mut impl FnMut(&Arc<String>) -> Option<Value>,
     ) -> bool {
+        // An entity some conjunct or disjunct would raise a type error on is kept whatever the
+        // others say: the unindexed filter evaluates every member, so it raises too, and the
+        // retained filter (the planner always keeps these) has to be the one to do it.
+        self.raises(get) || self.holds_values(get)
+    }
+
+    /// Whether a point query or an array-contains in this query reads an operand the retained
+    /// filter rejects with a type error: a property or centre that is neither a point nor null
+    /// for `distance()`, a property that is neither a list nor null for `value IN property`.
+    fn raises(
+        &self,
+        get: &mut impl FnMut(&Arc<String>) -> Option<Value>,
+    ) -> bool {
+        match self {
+            Self::And(children) | Self::Or(children) => children.iter().any(|c| c.raises(get)),
+            Self::Point { key, point, .. } => {
+                let property = get(key);
+                !matches!(property, Some(Value::Null) | None)
+                    && !matches!(point, Value::Null)
+                    && !matches!((property, point), (Some(Value::Point(_)), Value::Point(_)))
+            }
+            Self::ArrayContains { key, .. } => {
+                !matches!(get(key), Some(Value::List(_) | Value::Null) | None)
+            }
+            Self::Equal { .. } | Self::Range { .. } | Self::InList { .. } => false,
+        }
+    }
+
+    fn holds_values(
+        &self,
+        get: &mut impl FnMut(&Arc<String>) -> Option<Value>,
+    ) -> bool {
         use crate::runtime::eval::{all_equals, list_contains};
         use crate::runtime::value::{CompareValue, DisjointOrNull};
         use std::cmp::Ordering;
@@ -286,8 +318,8 @@ impl IndexQuery<Value> {
                 });
                 above && below
             }),
-            Self::And(children) => children.iter().all(|c| c.holds(get)),
-            Self::Or(children) => children.iter().any(|c| c.holds(get)),
+            Self::And(children) => children.iter().all(|c| c.holds_values(get)),
+            Self::Or(children) => children.iter().any(|c| c.holds_values(get)),
             Self::Point { key, point, radius } => {
                 // An operand `distance()` rejects (a property or a centre that is neither a
                 // point nor null) is kept, so the retained filter raises the type error an
