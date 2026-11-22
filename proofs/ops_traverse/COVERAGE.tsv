@@ -73,9 +73,9 @@ graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::new	47	PROVEN	I
 graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::next	83	PROVEN	IndexScan.vecRow: vecRow_spec, scans_stream
 graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	IndexScan.vecArgs: vecArgs_ok, vecArgs_bad_k
 graph/src/runtime/ops/node_by_fulltext_scan.rs	NodeByFulltextScanOp::new	42	PROVEN	IndexScan.ftNew: ftNew_spec
-graph/src/runtime/ops/node_by_fulltext_scan.rs	NodeByFulltextScanOp::next	73	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, scans_stream
+graph/src/runtime/ops/node_by_fulltext_scan.rs	NodeByFulltextScanOp::next	73	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, ftArgs_ok_iff, ftArgs_nonstring_empty, scans_stream
 graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::new	47	PROVEN	IndexScan.ftNew: ftNew_spec
-graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::next	78	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, scans_stream
+graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::next	78	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, ftArgs_ok_iff, ftArgs_nonstring_empty, scans_stream
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::new	40	PROVEN	IndexScan.ftNew/VecSt.new: ftNew_spec
 graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::next	75	PROVEN	IndexScan.edgeVecRow/vecArgs: edgeVecRow_spec, vecArgs_ok
 graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	80	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec

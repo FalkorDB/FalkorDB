@@ -155,7 +155,7 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W5-proc-1..3** (procedures, live vs C):
   - a lone `CALL db.idx.fulltext.createNodeIndex({label:'W'})` under GRAPH.QUERY fails with a misleading "graph.RO_QUERY is to be executed only on read-only queries" (`procedure_call.rs:67`);
   - `db.idx.fulltext.drop` on a missing index errors (C does nothing);
-  - `db.idx.fulltext.queryNodes(1,2)` errors (C returns empty).
+  - `db.idx.fulltext.queryNodes(1,2)` errors (C returns empty). (*fixed by #3269, c23975b98; now `ops_traverse` `IndexScan.ftArgs_nonstring_empty`; old model `pre3269_ftArgs`*)
   - Output differences: `db.indexes` and `db.constraints` row order; `db.indexes` `info` holds only field names (C returns full RediSearch info and `_src_id`/`_dest_id` for edge indexes).
 - **W5-udf-2** — `graph.traverse([a])` leaves `a` out when it is its own neighbour, because the start node is pre-marked visited (`js_classes.rs:744`): Rust `[1]`, C `[0,1]`.
 - **W5-udf-3** — `node.getNeighbors()` with no argument throws "Error converting from js 'undefined'" (`js_classes.rs:195`, `:352`); C returns the neighbours.
