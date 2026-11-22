@@ -45,10 +45,10 @@ graph/src/graph/graph.rs	delete_relationships	2965	PROVEN	see proofs/graph_queri
 graph/src/graph/graph.rs	delete_implicit_edges	3102	PROVEN	see proofs/graph_queries Delete.collectImplicit_mem, deleteImplicit_no_dangling, deleteImplicit_freed (tensor: proofs/versioned_matrix)
 graph/src/graph/graph.rs	get_or_create_node_attr_id	1982	PROVEN	see proofs/graph_queries Attrs.getOrCreate_spec, getOrCreate_cap; here NameMap.getOrCreate_spec
 graph/src/graph/graph.rs	get_or_create_rel_attr_id	2057	PROVEN	see proofs/graph_queries Attrs.getOrCreate_spec; here NameMap.getOrCreate_spec
-graph/src/graph/graph.rs	commit_index	3954	PROVEN	see proofs/graph_queries Index.commitDocs_noop, commitDocs_every_id; the documents come from PD (PendingDocs) here
-graph/src/graph/graph.rs	commit_edge_index	3977	PROVEN	see proofs/graph_queries Index.commitEdgeDocs_mem
-graph/src/graph/graph.rs	commit_edge_index_locked	3989	PROVEN	see proofs/graph_queries Index.commitEdgeDocs_mem
-graph/src/graph/graph.rs	commit_index_kind	4070	PROVEN	see proofs/graph_queries Index.commitDocs_noop, commitDocs_every_id
+graph/src/graph/graph.rs	commit_index	3953	PROVEN	see proofs/graph_queries Index.commitDocs_noop, commitDocs_every_id; the documents come from PD (PendingDocs) here
+graph/src/graph/graph.rs	commit_edge_index	3976	PROVEN	see proofs/graph_queries Index.commitEdgeDocs_mem
+graph/src/graph/graph.rs	commit_edge_index_locked	3988	PROVEN	see proofs/graph_queries Index.commitEdgeDocs_mem
+graph/src/graph/graph.rs	commit_index_kind	4069	PROVEN	see proofs/graph_queries Index.commitDocs_noop, commitDocs_every_id
 graph/src/graph/attribute_store.rs	get_index_of	143	PROVEN	NameMap.getIndexOf = idOf: accessors
 graph/src/graph/attribute_store.rs	insert	155	PROVEN	NameMap.insert (= getOrInsert MAX, #3757): insert_wf; schema-hash key chain: insertC_inv, insertC_model
 graph/src/graph/attribute_store.rs	get_or_create	182	PROVEN	NameMap.getOrCreate (getOrInsert MAX, then u16::try_from, else NONE; #3757): getOrCreate_spec, getOrCreate_wf, getOrCreate_prefix, mint_cast_exact, uncapped_try_from_none; schema-hash key chain: getOrCreateC_inv, getOrCreateC_model

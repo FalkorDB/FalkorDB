@@ -13,7 +13,7 @@ Proved: each metric's exact composition (`euclidean = sqrt ∘ l2sq`, `inner_pro
 exactly when the metric is unknown or the lengths differ. The callers do not report either
 reason: `vec.euclideanDistance` / `vec.cosineDistance` (`spatial.rs:146-190`) check the lengths
 first and raise the dimension-mismatch error themselves (their `unwrap_or` is unreachable),
-and the vector KNN paths (`graph.rs:4398`, `:4457`) silently skip an entity whose `distance`
+and the vector KNN paths (`graph.rs:4397`, `:4457`) silently skip an entity whose `distance`
 is `None` (an unknown metric or a length mismatch).
 -/
 

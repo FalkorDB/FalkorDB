@@ -9,7 +9,7 @@
   (refuses `!write`, `ops/commit.rs:50`) or in index DDL (refuses `!write`,
   `index_ddl.rs:38,94`); write procedures are refused on a read runtime
   (`eval.rs:959,979`, `ops/procedure_call.rs:67`). A read runtime is built only for a plan
-  with no `Commit`/`CreateIndex`/`DropIndex` (`graph_core.rs:609-633`, `:687-698`,
+  with no `Commit`/`CreateIndex`/`DropIndex` (`graph_core.rs:607-631`, `:687-698`,
   `record.rs:67-83`). `redis_layer`'s `RedisLayer.Ro` models the parser's `write` flag and
   the planner's `Commit` insertion (`cypher.rs:780-926`, `planner/mod.rs:2522-2524`,
   `:2853-2856`); here we prove from it that such a plan contains no updating operator

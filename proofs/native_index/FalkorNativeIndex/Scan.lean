@@ -4,7 +4,7 @@ set_option linter.unusedSimpArgs false
 /-!
 # The scan that stands in for a building column, and who feeds RediSearch (#3547, #2386)
 
-* `Graph::node_matches` / `relationship_matches` (`graph.rs:4230`, `:4244`) and the filtered scans
+* `Graph::node_matches` / `relationship_matches` (`graph.rs:4229`, `:4244`) and the filtered scans
   the two scan ops run on `Some(Err(scan_filter))` (`node_by_index_scan.rs:~330`,
   `edge_by_index_scan.rs:~370`): the scan keeps **exactly what the built column would answer**
   (`nodeFilteredScan_agrees`, `edgeFilteredScan_agrees`). The planner removes a predicate it hands
@@ -150,12 +150,12 @@ theorem matches_resolve {A B : Type} (f : ScanFilter A) (r : A → Option B) (vo
 
 /-! ## `node_matches`, `relationship_matches` -/
 
-/-- `Graph::node_matches` (`graph.rs:4296-4302`): `scan_filter.matches(|&attr| get_node_attribute_by_idx(id, attr))`
+/-- `Graph::node_matches` (`graph.rs:4295-4301`): `scan_filter.matches(|&attr| get_node_attribute_by_idx(id, attr))`
     on a filter whose attributes are the graph's ids. -/
 def G.nodeMatches (g : G) (id : Nat) (f : ScanFilter Nat) : Bool :=
   f.matches (fun attr => g.nodeAttr id attr)
 
-/-- `Graph::relationship_matches` (`graph.rs:4308-4314`). -/
+/-- `Graph::relationship_matches` (`graph.rs:4307-4313`). -/
 def G.relationshipMatches (g : G) (id : Nat) (f : ScanFilter Nat) : Bool :=
   f.matches (fun attr => g.relAttr id attr)
 

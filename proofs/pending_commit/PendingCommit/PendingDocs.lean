@@ -23,7 +23,7 @@ import PendingCommit.PendingDeg
   (`endSegment_spec`).
 * #3307: `IndexDocs` also carries the native index's staged changes (`native`, feature
   `index-falkordb`). `absorb` only `debug_assert!`s it is empty (`Pending::commit` applies
-  it first, `apply_index_writes` call :1465, defined graph.rs:3890) and never touches it; `end_segment` clears it with
+  it first, `apply_index_writes` call :1465, defined graph.rs:3889) and never touches it; `end_segment` clears it with
   the four RediSearch maps. Its semantics are proofs/index_layer's; the RediSearch fields
   modelled here are unchanged.
 * `effects_count` (:2013) is the documented sum; since #3461 it counts each

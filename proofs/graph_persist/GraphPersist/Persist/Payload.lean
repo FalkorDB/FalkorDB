@@ -218,7 +218,7 @@ still writes one — never reached: every payload entry has `count > 0`). -/
 def encRange (S : Store) (ids : List Nat) (count off : Nat) : Stream :=
   ((ids.drop off).take (max count 1)).flatMap (encEnt S)
 
-/-- `Graph::encode_payload` (graph.rs:5093-5146). -/
+/-- `Graph::encode_payload` (graph.rs:5092-5145). -/
 def encPayload (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (e : Entry) : Stream :=
   match e.st with
   | .nodes => encRange g.nodes (live g.nodeCount g.delNodes) e.count e.offset

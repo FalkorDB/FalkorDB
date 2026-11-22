@@ -9,11 +9,11 @@
 | `inlineWriterProg`             | `QuerySession::begin_writer` (`:205`): GIL, W |
 | `retryWriterProg`              | `QuerySession::begin_writer_checked` (`:235`, #3559) from `execute_query_write`'s / `graph_bulk_insert`'s retry: `begin_with`, then `escalate`; `authorize_write`'s registry check runs under each slice's GIL |
 | `populateProg`                 | `populate_index_batch` (`graph.rs:577`): indexer lock only |
-| `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3954`): GIL, W, indexer |
+| `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3953`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:360`): GIL (main), registry mutex |
 | `rsGlobal`, `rsSpec`, `writerOpenScanProg` | gap closed 2026-10-20 (#3226): RediSearch's global `RWLOCK` and per-spec `rwlock`, held by an index scan from `handleIterCommon` (`deps/RediSearch src/redisearch_api.c:904-905`) to `ResultsIteratorFree` (:1064); `CommitOp::next` (`runtime/ops/commit.rs:96`, `upgrade_to_write`) commits with the scan open |
 | `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1769`) `write_loop` flag protocol |
-| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1117`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:70`) and write channel (`graph_core.rs:607`, `unbounded_blocking`), slot released at execution / dequeue |
+| `P3014`, `succ3014`            | since #3014 (b4634fe4b): `admit` (`graph_core.rs:1115`, `QueueSlot::try_acquire`), unbounded pool queue (`threadpool.rs:70`) and write channel (`graph_core.rs:605`, `unbounded_blocking`), slot released at execution / dequeue |
 | `Pool` (historical)            | before #3014: `bounded_blocking(1024)` pool queue + blocking `spawn` from `query_mut` on the Redis main thread |
 -/
 
@@ -143,7 +143,7 @@ and so do `RediSearch_CreateField` / `CreateIndex` (`redisearch_api.c:164`, …)
 RDB-load (`RESTORE`) path, which runs on the main thread under the GIL.
 
 They rank above the indexer lock: populate and commit take the indexer lock first and
-then call into RediSearch (`graph.rs:3967` `commit_index_locked`). -/
+then call into RediSearch (`graph.rs:3966` `commit_index_locked`). -/
 
 def rsGlobal : Nat := 4
 def rsSpec : Nat := 5
@@ -250,7 +250,7 @@ The index scan is opened in reader mode (`graphR`, then `handleIterCommon` takes
 `rsGlobal` and `rsSpec` as a reader). `LIMIT` stops pulling but the scan op, and so its
 results iterator, lives until the plan drops. `CommitOp::next` (`commit.rs:96`) then
 escalates (`query_session.rs:398`, `escalate` `:420`: drop R, take the GIL, take W),
-`commit_deferred_indexes` takes the indexer lock (`pending.rs:1898` → `graph.rs:3954`),
+`commit_deferred_indexes` takes the indexer lock (`pending.rs:1898` → `graph.rs:3953`),
 and `Indexer::commit` → `RediSearch_IndexAddDocument` takes `rsGlobal` and `rsSpec` as
 a writer while the same thread still holds them as a reader. -/
 def writerOpenScanProg : List Op :=
@@ -431,7 +431,7 @@ theorem fixed_never_stuck (s : Pool) (hw : 0 < w) :
 
 /-! ## The #3014 protocol: admission-bounded, nothing blocks the main thread
 
-`admit` (`graph_core.rs:1117`) takes a `QueueSlot` on the main thread or replies "Max
+`admit` (`graph_core.rs:1115`) takes a `QueueSlot` on the main thread or replies "Max
 pending queries exceeded" — it never waits; `spawn` sends into an unbounded queue. A read
 gives its slot back when it starts executing (`admission.take()`), a write carries it into
 the graph's (unbounded) write channel and gives it back when the drainer dequeues it. -/

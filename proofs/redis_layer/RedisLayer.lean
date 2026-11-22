@@ -37,7 +37,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | here | there |
 | --- | --- |
 | `QueryArgs.parseQueryFlags`/`scanFlags`/`upToNul` | `parse_query_flags`/`parse_schema_hash`/`up_to_nul`, `src/commands/query_args.rs:56-125` (#3010, `557f18868`; #3757 `SCHEMA_HASH`) |
-| `QueryArgs.queryFront`/`roQueryFront`/`profileFront`/`explainFront` | `query.rs:44-51`, `ro_query.rs:32-39`, `profile.rs:22`, `explain.rs:65` |
+| `QueryArgs.queryFront`/`roQueryFront`/`profileFront`/`explainFront` | `query.rs:44-51`, `ro_query.rs:32-39`, `profile.rs:22`, `explain.rs:64` |
 | `Args.rustParseI64`     | `str::parse::<i64>` (GRAPH.CONFIG) |
 | `Args.string2ll`        | Redis `string2ll` (`RedisModule_StringToLongLong`, `parse_integer`) |
 | `QueryArgs.cReadFlags`  | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`) |
@@ -48,7 +48,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Compact.encPair/encV/encReply` | `reply_compact_value` / `reply_query` (`ReplyFormat::Compact`), `src/reply.rs:152-361`, `:688-747` |
 | `Compact.dec/decReply`  | falkordb-py `query_result.py` `parse_scalar`, `__parse_records` |
 | `Ro.plan`               | parser `write` flag (`graph/src/parser/cypher.rs:806-938`) + Commit insertion (`planner/mod.rs:2806`, `:3166`) |
-| `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:657-668`; guards `runtime/eval.rs:964,984` |
+| `Ro.isWritePlan/roQuery/runRead` | `execute_query`, `graph_core.rs:655-666`; guards `runtime/eval.rs:964,984` |
 | `Bulk.go/attach`        | `read_property`, `src/commands/bulk_insert.rs:102-183` |
 | `Bulk.cstr`             | `read_cstring`, `:38-52` |
 | `Bulk.records/readN`    | `process_node_token` record loop, `:438-515` |
@@ -103,7 +103,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 2. **FIXED by #3000 (`2e8172d76`, issue #2998)** — formerly writes ignored the per-query
    TIMEOUT: with TIMEOUT_MAX = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1`
    created 300000 nodes on Rust; C times out and creates none
-   (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now `timeout_rw` (`graph_core.rs:895`) applies it:
+   (counterexample removed in bbee75955; the last revision that has them is 17ccc5412). Now `timeout_rw` (`graph_core.rs:893`) applies it:
    `write_timeout_agrees`, `Args.rustTimeout_write_pq`, `rustTimeout_rw_uniform`.
 3. **FIXED by #3021 (`30b4fb7dc`, issue #3020)** — formerly GRAPH.CONFIG:
    `VKEY_MAX_ENTITY_COUNT -5` accepted (then read as `as u64`), `CMD_INFO 1/TRUE`
@@ -154,7 +154,7 @@ C-side bugs found on the way: C crashes on malformed bulk tokens; `L:L` counts t
 | `Commands`, `Commands2` | `src/commands/*.rs` |
 | `SlowLog` | `src/slow_log.rs` |
 | `RelLookup` | relationship lookups of `src/reply.rs:252-293`, `:472-492` (#3447, #3449; line pins re-targeted to 5e475e6c9) |
-| `EnvBuild` | `sync_deepbind_environ` (`module_init.rs:158`) + `graph::env_snapshot::leak_deep_copy` (`env_snapshot.rs:22`, #3494 #3493) and `RedisBuildHost` (`graph_core.rs:1752-1768`, #3585): `copy_read_back`, `copy_fresh`, `sync_unchanged`, `sync_installs`, `publish_holds`, `publish_log` |
+| `EnvBuild` | `sync_deepbind_environ` (`module_init.rs:158`) + `graph::env_snapshot::leak_deep_copy` (`env_snapshot.rs:22`, #3494 #3493) and `RedisBuildHost` (`graph_core.rs:1750-1766`, #3585): `copy_read_back`, `copy_fresh`, `sync_unchanged`, `sync_installs`, `publish_holds`, `publish_log` |
 
 Headline theorems:
 * `writeAll_flatten` — buffered writes = concatenation of the logical writes for every

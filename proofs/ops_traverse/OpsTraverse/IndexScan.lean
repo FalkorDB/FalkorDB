@@ -63,7 +63,7 @@ where
   | [] => pure []
   | q :: qs => do let a ← evalIQ ev asList q; let b ← evalL ev asList qs; pure (a :: b)
 
-/-- `Index::int_loses_f64_precision` (index/mod.rs:1359): `i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0`
+/-- `Index::int_loses_f64_precision` (index/mod.rs:1362): `i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0`
 (conservative: any |i| ≥ 2^52 except 2^63 falls back). -/
 def losesPrecision (i : Int) : Bool := (i.natAbs &&& 0x7FF0000000000000) != 0
 

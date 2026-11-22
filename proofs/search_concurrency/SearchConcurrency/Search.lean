@@ -12,7 +12,7 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | `docSet`                        | `mod.rs:721-875` `Document::set` (branch for branch; vector arm `:736-748`, #3087; temporal arm `:808`, #3076) |
 | `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
 | `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:873` |
-| `buildDoc`                      | the per-attribute loop in `graph.rs:4044` `commit_index_kind` (`:4070`) / `graph.rs:719` population `build_doc` (`:707`) |
+| `buildDoc`                      | the per-attribute loop in `graph.rs:4043` `commit_index_kind` (`:4070`) / `graph.rs:719` population `build_doc` (`:707`) |
 | `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1918` `Index::add_document`) |
 | `fulltextUnknown`               | `graph/src/runtime/runtime.rs:2052-2065` fulltext unknown-key refusal (#3094) |
 | `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:2134-2222` `map_to_index_options` (`:2042-2223`), vector branch (PR #3257: name checked at `:2157-2165`) |

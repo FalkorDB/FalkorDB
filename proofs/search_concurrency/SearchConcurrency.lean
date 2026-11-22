@@ -100,7 +100,7 @@ value, any field options — a vector add always has the field's own non-zero di
 `phonetic_false_no_flag`, `phonetic_true_flag`,
 `capped_capacity_ok`, `evalK_accepts_huge`; plus `#guard`s for the option checks.
 
-`Knn` (89d68334a, #3088): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4355`,
+`Knn` (89d68334a, #3088): `vector_query_nodes` / `vector_query_edges` (`graph.rs:4354`,
 `:4415`) with `k` clamped to `count.max(1)`: `alloc_bounded` (every buffer and the RediSearch
 `k` ≤ live entity count, for any user `k`), `no_abort_any_k`, `candidates_topk` (clamped
 query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_one_row`
@@ -120,7 +120,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    admission (`QueueSlot`), main thread never waits (`never_stuck_3014`). Proposed fix was: never block the main thread in
    `spawn` (try_send → "Max pending queries exceeded", or unbounded queue like C).
    A second cycle with one graph: workers block on the full 1024 write channel
-   (`graph_core.rs:547`, `tg.sender.send` `:1082`) while holding a pool worker.
+   (`graph_core.rs:545`, `tg.sender.send` `:1082`) while holding a pool worker.
 2. **FIXED by #3086 (73077bb4a)** — HISTORICAL (#3069, 1d15bf713): **Second index on a
    label was never populated** (`graph/src/graph/graph.rs:637`
    `ticket_pending_changes > 1` bail + old `index/indexer.rs:319-331` no `bump_id` for
@@ -143,10 +143,10 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
 4. **FIXED by #3088 (89d68334a)** — HISTORICAL (W3-conc-4 / #3085, 49f698d22): huge `k`
    killed the server (old `graph.rs:3883,3938` @ 49f698d22 `Vec::with_capacity(k)`). `CALL
    db.idx.vector.queryNodes('L','v', 1000000000000000, vecf32([1,2]))`: Rust crashed
-   (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `graph.rs:4375,4434` clamp `k` to
+   (SIGSEGV in the OOM path); C returns the 1 row. (Counterexample removed in bbee75955; the last revision that has them is 17ccc5412.) Now `graph.rs:4374,4434` clamp `k` to
    `node_count().max(1)` / `relationship_count().max(1)` and `:4391,4450` size by results (main 5c7af54f2):
    `Knn.alloc_bounded`, `no_abort_any_k`, `candidates_topk`, `huge_k_one_row`.
-   #3382 (PR #3581): both fns now refuse while the index is not OPERATIONAL (`graph.rs:4381,4447`):
+   #3382 (PR #3581): both fns now refuse while the index is not OPERATIONAL (`graph.rs:4380,4447`):
    `Knn.not_operational_refused`, `ok_imp_operational`.
 5. **FIXED by #3290 (66d4d9d40)** — HISTORICAL (#3093, 4a4f2a72f): **Inline (MULTI/EXEC) write fails with "another write is in progress"**
    (`src/graph_core.rs:748` slot claimed as a reader, before escalation). A queued
@@ -188,7 +188,7 @@ parameter; every invariant theorem holds for any `valid`; new
 `refused_commit_publishes_nothing` (nothing published or acked, the next writer can
 fork — the property the Rust test `a_refused_commit_publishes_nothing` checks; was
 `refused_commit_releases_slot` before #3657) and `commit_publishes`. `commit_and_replicate` treats a refusal as
-`unreachable!` (graph_core.rs:1489).
+`unreachable!` (graph_core.rs:1487).
 
 ## Re-target to 73077bb4a (#3086, #3033)
 #3086 (issue #3069) bumps the generation in `create_index` whenever the label already has an entry

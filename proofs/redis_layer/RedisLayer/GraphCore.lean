@@ -232,7 +232,7 @@ inductive Step | commit | signal | replicate | warnNoEffects | resync | release 
 def commitSteps (mod : Bool) (hasBuf : Bool) : List Step :=
   [.commit, .signal] ++ (if !mod then [] else if hasBuf then [.replicate] else [.warnNoEffects])
 
-/-- `commit_and_replicate` (graph_core.rs:1619) since #2846: `MvccGraph::commit` validates
+/-- `commit_and_replicate` (graph_core.rs:1617) since #2846: `MvccGraph::commit` validates
 (and since #3657 refuses a stale fork too: `unreachable!` in `current_not_stale`, see
 SearchConcurrency `Mvcc`), and a refusal here is `unreachable!()` — the panic step. The
 argument it rests on: every write query ends its last segment through

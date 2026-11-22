@@ -73,7 +73,7 @@ instance instDecEqExcept {ε α : Type} [DecidableEq ε] [DecidableEq α] :
   | .ok _, .error _ => isFalse (by intro e; cases e)
   | .error _, .ok _ => isFalse (by intro e; cases e)
 
-/-! ## `compute_effective_timeout` (`graph_core.rs:886-923`) -/
+/-! ## `compute_effective_timeout` (`graph_core.rs:884-921`) -/
 
 structure TCfg where
   timeoutMax : Int
@@ -85,11 +85,11 @@ inductive TErr where
   | exceedsMax
   deriving DecidableEq, Repr
 
-/-- C's `timeout_rw` (`graph_core.rs:895`): the new-style configs make timeouts apply
+/-- C's `timeout_rw` (`graph_core.rs:893`): the new-style configs make timeouts apply
 to writes too. -/
 def timeoutRw (c : TCfg) : Bool := decide (c.timeoutMax > 0 ∨ c.timeoutDefault > 0)
 
-/-- The global fallback (`graph_core.rs:907-920`). -/
+/-- The global fallback (`graph_core.rs:905-918`). -/
 def fallback (c : TCfg) (isWrite : Bool) : Except TErr (Option Nat) :=
   if c.timeoutDefault > 0 then .ok (some c.timeoutDefault.toNat)
   else if c.timeoutMax > 0 then .ok (some c.timeoutMax.toNat)

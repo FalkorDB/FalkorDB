@@ -17,7 +17,7 @@ Since #3010 (`557f18868`, fixes #3009) the four query commands share
 | `queryFront`      | `graph_query` `query.rs:46-51` |
 | `roQueryFront`    | `graph_ro_query` `ro_query.rs:34-39` |
 | `profileFront`    | `graph_profile` `profile.rs:22` (only `timeout` is used) |
-| `explainFront`    | `graph_explain` `explain.rs:65` (validated, result dropped) |
+| `explainFront`    | `graph_explain` `explain.rs:64` (validated, result dropped) |
 | `cScan`/`cReadFlags` | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`, `master`) |
 
 Arguments are raw byte strings (`Bytes`): `as_slice()` gives the bytes, so a non-UTF-8

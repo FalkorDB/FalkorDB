@@ -420,7 +420,7 @@ theorem bulkArgv_renamed (a l c k : String) (rest : List String) :
 
 /-- The publish step of `graph_bulk_insert` (`g.commit_index_docs(&mut docs)`, :830 / :952;
 `BulkIndexDocs::publish` before #3307): bulk only adds, so `node_removes`/`edge_removes` are
-empty and `commit_index_docs` (graph.rs:3785, `GQ.commitIndexDocs` in proofs/graph_queries)
+empty and `commit_index_docs` (graph.rs:3784, `GQ.commitIndexDocs` in proofs/graph_queries)
 applies the native index's remainder, then commits each non-empty RediSearch batch.
 Each token already applied its native changes (`apply_index_writes` in
 `process_node_token` :405 / `process_edge_token` :480). -/

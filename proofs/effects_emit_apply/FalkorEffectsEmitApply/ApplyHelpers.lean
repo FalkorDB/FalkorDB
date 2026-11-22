@@ -402,7 +402,7 @@ spaces verified, refusals through `From<NodeOpError>`), then commit the index
 docs. Graph steps are parameters. Since #2846 the batch lives on the graph
 rather than in a local `BufferOps`. Since #3307 `D` is the whole `IndexDocs` (the
 graph's write methods fill the part they produce, including the native index's
-staged `native`) and `commit` is `g.commit_index_docs(&mut docs)` (`:92`; `Graph::commit_index_docs`, graph.rs:3913,
+staged `native`) and `commit` is `g.commit_index_docs(&mut docs)` (`:92`; `Graph::commit_index_docs`, graph.rs:3912,
 `GQ.commitIndexDocs` in proofs/graph_queries): native apply, then the RediSearch node
 and edge documents. -/
 def applyEffects {G R D} (openP : Except AErr (List R)) (applyRec : G → D → R → Except AErr (G × D))

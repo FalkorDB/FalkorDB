@@ -15,7 +15,7 @@ by changing the bytes of a payload. It does not:
 | --- | --- |
 | `encRangePR` | `AttributeStore::encode_with_range` (attribute_store.rs:1427) writing `encEnt` per entity |
 | `encRoarPR`  | `Encode for RoaringTreemap::encode_with_range` (serialization.rs:180-197): `select(offset)`, `advance_to`, `take(count)` |
-| `encPayloadPR` | `Graph::encode_payload` (graph.rs:5173-5226) with the two above |
+| `encPayloadPR` | `Graph::encode_payload` (graph.rs:5172-5225) with the two above |
 | `encodeGraphPR` | `encode_graph` (encoder/mod.rs:68-88) |
 
 * **`encRoarPR_eq`** (claim 3) — the deleted-ids seek writes main's bytes for

@@ -40,60 +40,60 @@ graph/src/index/mod.rs	as_ptr	935	PROVEN	Iter.RC (transient handle; not_freed wh
 graph/src/index/mod.rs	try_clone	941	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
 graph/src/index/mod.rs	into_raw	948	PROVEN	Iter.RC.into_raw_needed, dropSpec_inv
 graph/src/index/mod.rs	drop	956	PROVEN	Iter.RC.release_inv, RC.not_freed
-graph/src/index/mod.rs	new	984	PROVEN	Iter.RC.create_inv (SpecHandle)
-graph/src/index/mod.rs	as_ptr	989	PROVEN	Iter.RC.not_freed
-graph/src/index/mod.rs	try_clone_ref	995	PROVEN	Iter.RC.clone_inv, clone_after_drop
-graph/src/index/mod.rs	drop	1001	PROVEN	Iter.RC.dropSpec_inv, into_raw_needed
-graph/src/index/mod.rs	default	1018	PROVEN	Meta.Idx.default_spec, default_inv
-graph/src/index/mod.rs	id	1044	PROVEN	Meta.Idx.idOf_spec
-graph/src/index/mod.rs	bump_id	1053	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump; Meta.Idx.bumpId via Ixr.regen (createIndex_regen)
-graph/src/index/mod.rs	clone_for_update	1072	PROVEN	Meta.Idx.cloneForUpdate_eq
-graph/src/index/mod.rs	has_rs_index	1092	PROVEN	Meta.Idx.hasRsIndex_spec
-graph/src/index/mod.rs	rs_ptr	1099	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
-graph/src/index/mod.rs	create_rs_index	1105	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err_cleanLabel (FFI create = fresh handle; #3274 counterexample createRsIndex_lang_err_fails: label NUL now reported before unsupported language); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
-graph/src/index/mod.rs	register_fields	1192	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text
+graph/src/index/mod.rs	new	986	PROVEN	Iter.RC.create_inv (SpecHandle)
+graph/src/index/mod.rs	as_ptr	991	PROVEN	Iter.RC.not_freed
+graph/src/index/mod.rs	try_clone_ref	997	PROVEN	Iter.RC.clone_inv, clone_after_drop
+graph/src/index/mod.rs	drop	1003	PROVEN	Iter.RC.dropSpec_inv, into_raw_needed
+graph/src/index/mod.rs	default	1021	PROVEN	Meta.Idx.default_spec, default_inv
+graph/src/index/mod.rs	id	1047	PROVEN	Meta.Idx.idOf_spec
+graph/src/index/mod.rs	bump_id	1056	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump; Meta.Idx.bumpId via Ixr.regen (createIndex_regen)
+graph/src/index/mod.rs	clone_for_update	1075	PROVEN	Meta.Idx.cloneForUpdate_eq
+graph/src/index/mod.rs	has_rs_index	1095	PROVEN	Meta.Idx.hasRsIndex_spec
+graph/src/index/mod.rs	rs_ptr	1102	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
+graph/src/index/mod.rs	create_rs_index	1108	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err_cleanLabel (FFI create = fresh handle; #3274 counterexample createRsIndex_lang_err_fails: label NUL now reported before unsupported language); #3166 gap: records the spec's stopword list as Idx.rsStop (IndexGaps.createRsIndex_stop)
+graph/src/index/mod.rs	register_fields	1195	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok; never changes the spec's stopwords (IndexGaps.registerFields_stop); fulltext phonetic flag = TextOpts.phoneticEnabled since #3514 (a0ba12950): registerOne_text
 graph/src/index/text_index_options.rs	phonetic_enabled	48	PROVEN	Meta.TextOpts.phoneticEnabled: phoneticEnabled_off_spellings, phoneticEnabled_code, phoneticEnabled_iff_ne_no; fixed3514_phonetic_no_is_off (#3514)
-graph/src/index/mod.rs	value_to_numeric	1368	PROVEN	valueToNumeric; equal_exact, numRange_exact
-graph/src/index/mod.rs	int_loses_f64_precision	1382	PROVEN	intLosesPrecision; intLosesPrecision_sound
-graph/src/index/mod.rs	build_numeric_range_node	1387	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf
-graph/src/index/mod.rs	build_string_range_node	1430	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no equal-bounds premise since #3072), fixed3072_exclusive_equal_bounds, bug_string_range_order
-graph/src/index/mod.rs	build_query_node	1488	PROVEN	buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_point_equality, bug_multilabel_and/or
-graph/src/index/mod.rs	query	1702	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
-graph/src/index/mod.rs	query_edges	1725	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
-graph/src/index/mod.rs	fulltext_query	1743	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
-graph/src/index/mod.rs	fulltext_query_edges	1772	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
-graph/src/index/mod.rs	vector_query	1809	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
-graph/src/index/mod.rs	vector_query_edges	1871	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
-graph/src/index/mod.rs	add_document	1918	PROVEN	Table.add; commit_lookup, commit_preserves_inv
-graph/src/index/mod.rs	delete_document	1940	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
-graph/src/index/mod.rs	delete_edge_document	1957	PROVEN	Iter.delEdgeKey_spec
-graph/src/index/mod.rs	has_fulltext_field	1980	PROVEN	Meta.Idx.hasFulltextField_iff
-graph/src/index/mod.rs	contains_field	1988	PROVEN	Meta.Idx.containsField_iff
-graph/src/index/mod.rs	has_field_with_type	1997	PROVEN	Meta.Idx.hasFieldWithType_iff
-graph/src/index/mod.rs	get_fields	2009	PROVEN	Meta.Idx.getFields_spec
-graph/src/index/mod.rs	add_field_to_existing	2017	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
-graph/src/index/mod.rs	insert_field	2028	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
-graph/src/index/mod.rs	remove_field	2040	PROVEN	Meta.Idx.removeField_spec, removeField_inv
-graph/src/index/mod.rs	retain_fields	2052	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
-graph/src/index/mod.rs	is_empty	2064	PROVEN	Meta.Idx.isEmpty_iff
-graph/src/index/mod.rs	field_keys	2070	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
-graph/src/index/mod.rs	fields	2076	PROVEN	Meta.Idx.accessors
-graph/src/index/mod.rs	field_order	2082	PROVEN	Meta.Idx.accessors, Inv
-graph/src/index/mod.rs	all_fields	2087	PROVEN	Meta.Idx.allFields_mem
-graph/src/index/mod.rs	is_operational	2095	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
-graph/src/index/mod.rs	set_progress	2100	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	progress	2111	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	increment_pending_for_generation	2122	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2140	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
-graph/src/index/mod.rs	pending_count_for_generation	2162	PROVEN	Slots.countFor; bump_fresh
-graph/src/index/mod.rs	pending_count	2176	PROVEN	Slots.countFor s.gen; bump_fresh
-graph/src/index/mod.rs	language	2184	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	set_language	2189	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	stopwords	2200	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	set_stopwords	2205	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	memory_usage	2216	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
-graph/src/index/mod.rs	index_count	2226	PROVEN	Meta.Idx.indexCount_eq
-graph/src/index/mod.rs	recreate_index	2230	PROVEN	Meta.Idx.recreateIndex_ok
+graph/src/index/mod.rs	value_to_numeric	1371	PROVEN	valueToNumeric; equal_exact, numRange_exact
+graph/src/index/mod.rs	int_loses_f64_precision	1385	PROVEN	intLosesPrecision; intLosesPrecision_sound
+graph/src/index/mod.rs	build_numeric_range_node	1390	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf
+graph/src/index/mod.rs	build_string_range_node	1433	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no equal-bounds premise since #3072), fixed3072_exclusive_equal_bounds, bug_string_range_order
+graph/src/index/mod.rs	build_query_node	1491	PROVEN	buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_point_equality, bug_multilabel_and/or
+graph/src/index/mod.rs	query	1705	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
+graph/src/index/mod.rs	query_edges	1728	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
+graph/src/index/mod.rs	fulltext_query	1746	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
+graph/src/index/mod.rs	fulltext_query_edges	1775	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
+graph/src/index/mod.rs	vector_query	1812	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
+graph/src/index/mod.rs	vector_query_edges	1874	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
+graph/src/index/mod.rs	add_document	1921	PROVEN	Table.add; commit_lookup, commit_preserves_inv
+graph/src/index/mod.rs	delete_document	1943	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
+graph/src/index/mod.rs	delete_edge_document	1960	PROVEN	Iter.delEdgeKey_spec
+graph/src/index/mod.rs	has_fulltext_field	1983	PROVEN	Meta.Idx.hasFulltextField_iff
+graph/src/index/mod.rs	contains_field	1991	PROVEN	Meta.Idx.containsField_iff
+graph/src/index/mod.rs	has_field_with_type	2000	PROVEN	Meta.Idx.hasFieldWithType_iff
+graph/src/index/mod.rs	get_fields	2012	PROVEN	Meta.Idx.getFields_spec
+graph/src/index/mod.rs	add_field_to_existing	2020	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
+graph/src/index/mod.rs	insert_field	2031	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
+graph/src/index/mod.rs	remove_field	2043	PROVEN	Meta.Idx.removeField_spec, removeField_inv
+graph/src/index/mod.rs	retain_fields	2055	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
+graph/src/index/mod.rs	is_empty	2067	PROVEN	Meta.Idx.isEmpty_iff
+graph/src/index/mod.rs	field_keys	2073	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
+graph/src/index/mod.rs	fields	2079	PROVEN	Meta.Idx.accessors
+graph/src/index/mod.rs	field_order	2085	PROVEN	Meta.Idx.accessors, Inv
+graph/src/index/mod.rs	all_fields	2090	PROVEN	Meta.Idx.allFields_mem
+graph/src/index/mod.rs	is_operational	2098	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
+graph/src/index/mod.rs	set_progress	2103	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	progress	2114	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	increment_pending_for_generation	2125	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2143	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
+graph/src/index/mod.rs	pending_count_for_generation	2165	PROVEN	Slots.countFor; bump_fresh
+graph/src/index/mod.rs	pending_count	2179	PROVEN	Slots.countFor s.gen; bump_fresh
+graph/src/index/mod.rs	language	2187	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_language	2192	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	stopwords	2203	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_stopwords	2208	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	memory_usage	2219	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
+graph/src/index/mod.rs	index_count	2229	PROVEN	Meta.Idx.indexCount_eq
+graph/src/index/mod.rs	recreate_index	2233	PROVEN	Meta.Idx.recreateIndex_ok
 graph/src/index/indexer.rs	generation_id	89	PROVEN	Meta.Ticket.accessors
 graph/src/index/indexer.rs	label	94	PROVEN	Meta.Ticket.accessors
 graph/src/index/indexer.rs	language	102	PROVEN	Meta.IdxOptions.spec
@@ -281,4 +281,4 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	splic
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	merge	283	PROVEN	Leaf.ciMerge_spec, slotOf_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	block_copy_merge	370	PROVEN	Leaf.ciBcm_spec, bcmL_eq_merge, bcmL_spec
 graph/src/runtime/pending.rs	resync_published_indexes	1844	PROVEN	edge arm keyed by (src, dst, id): EdgeResync.resyncEdgeKeys_spec (re-add iff live in committed under the committed endpoints; delete iff gone from committed and known to private, under the private endpoints), resyncEdgeKeys_disjoint, resyncEdges; the property RollbackRestoresEdgeIndex is refuted by bug2781_rollback_not_restored / bug2781_orphan_edge_doc (OPEN, #2781 still open at 256ab4d3f); fix shape resyncEdgesFixed_restores (node arm and full spec: proofs/pending_commit)
-graph/src/graph/graph.rs	commit_edge_index_locked	3989	PROVEN	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.commitEdgeAddKeys_mem, commitEdgeAddKeys_missing (= resyncEdgeKeys .1); also proofs/graph_queries Index.commitEdgeDocs_mem
+graph/src/graph/graph.rs	commit_edge_index_locked	3988	PROVEN	re-add key re-resolved from the committed tensor, missing ids skipped: EdgeResync.commitEdgeAddKeys_mem, commitEdgeAddKeys_missing (= resyncEdgeKeys .1); also proofs/graph_queries Index.commitEdgeDocs_mem

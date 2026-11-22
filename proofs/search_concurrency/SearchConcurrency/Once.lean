@@ -31,7 +31,7 @@ theorem thread_id_spec (t1 t2 : Nat) (b v : Bool) :
   simp [isMainThread, setMainThread, setOnce]; exact h
 
 /-- `POOL_THREAD` (#3816): a thread-local `Cell<bool>`, `false` on every new thread;
-`set_pool_thread` (`thread_id.rs:39`) sets it on the calling thread only, `is_pool_thread`
+`set_pool_thread` (`thread_id.rs:37`) sets it on the calling thread only, `is_pool_thread`
 (`:50`) reads it. Threads are indices into the per-thread cells. -/
 def setPoolThread (cells : Nat → Bool) (me : Nat) : Nat → Bool := fun t => if t = me then true else cells t
 def isPoolThread (cells : Nat → Bool) (me : Nat) : Bool := cells me

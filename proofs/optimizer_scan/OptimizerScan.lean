@@ -36,7 +36,7 @@ shifts line pins (`Runtime::graph()`); `evaluate_id_filter` moved to `runtime.rs
 | `IdSeek.maxNodeId`, `seek` (`pre3394_seek` before #3394) | `graph/graph.rs:1785` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:55-84` (`range -= deleted_nodes()` at :67) |
 | `IdSeek.idMax` (`pre2979_seek` before PR #2979) | `runtime/runtime.rs:1455`: the loop starts at `node_id_bound().saturating_sub(1)`; `seek_eq_pre2979` |
 | `Index.enc`, `arrEnc` | `index/mod.rs:717-845` (`Document::set`) |
-| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1477-1687`, `Index::query` 1690 |
+| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1480-1690`, `Index::query` 1690 |
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:100-300` |
 | `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:360-381, 569-621, 816-920` |
 | `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-358, 624-733, 503-566` |

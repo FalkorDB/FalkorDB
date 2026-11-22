@@ -13,7 +13,7 @@ and its key satisfies `<op>` against the bound's key. `Bool` is excluded on both
 Refuted (counterexamples):
 * `bool_divergence` — a `Bool` and a number share a key, the evaluator never equates them. Pinned in
   the Rust (`encode.rs:248-294`) as the engine-wide behaviour C and the RediSearch path share.
-* `i64min_hole` — the precision guard (`int_loses_f64_precision`, `index/mod.rs:1371`) admits
+* `i64min_hole` — the precision guard (`int_loses_f64_precision`, `index/mod.rs:1374`) admits
   `i64::MIN` (its `unsigned_abs` is `2^63`, outside the mask), but `i64::MIN + 1 … i64::MIN + 512`
   round to the same `f64`: `n.v > -9223372036854775808` misses them, `=` returns them.
 -/

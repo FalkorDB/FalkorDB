@@ -474,7 +474,7 @@ def Table.del (t : Table) (id : Nat) : Table := fun j => if j = id then none els
 
 /-- `Indexer::commit`: all adds of the label first, then all removes
 (`indexer.rs:749-777`). Documents are built from the *committed* graph
-(`graph.rs:4070` `commit_index_kind`, `doc.set` `:4103`). -/
+(`graph.rs:4069` `commit_index_kind`, `doc.set` `:4103`). -/
 def commit (t : Table) (build : Nat → Doc) (adds removes : List Nat) : Table :=
   removes.foldl Table.del (adds.foldl (fun t id => t.add id (build id)) t)
 

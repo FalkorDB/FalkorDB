@@ -50,7 +50,7 @@ pre-#3438 statement; every `file:line` cite in these four files was re-read agai
 | `SaveRoaring` | roaring 0.11.5 `rank`/`select`/`advance_to` as definitions on `RSet` (the owners' abstraction) | `RSet.rank_spec`, `select_spec`, `iterFrom_spec` |
 | `SaveNthLive` | `nth_live_id` :1485 | `nthLive_spec`, `nthLive_drop`, `nthLive_empty_deleted`, `nthLive_past_end`, `bsearch_spec`, `mid_bounds`, `rank_le`, `liveThrough_no_overflow` |
 | `SaveSlice` | `encode_with_range` :1427 | `prEncode_spec`, `prEncode_eq_main` (= pre-#3438 `Content.encode` for `count > 0`), `count_zero_differs` / `count_zero_witness`, `pr_encode_decode_roundtrip`, `walk_spec` |
-| `SaveLayout` | serialization.rs:180, `Graph::encode_payload` graph.rs:5173, `encode_graph` encoder/mod.rs:68 | `encRoarPR_eq` (every `count`/`offset`), `encoder_counts_pos` (`count = 0` unreachable), `chunk_concat`, `encodeGraphPR_eq`, `load_encode_pr`, `multi_load_pr` |
+| `SaveLayout` | serialization.rs:180, `Graph::encode_payload` graph.rs:5172, `encode_graph` encoder/mod.rs:68 | `encRoarPR_eq` (every `count`/`offset`), `encoder_counts_pos` (`count = 0` unreachable), `chunk_concat`, `encodeGraphPR_eq`, `load_encode_pr`, `multi_load_pr` |
 
 `SaveLayout` needs graph_persist's layout, so pending_commit now requires `../graph_persist`
 (graph_persist requires nothing: no cycle; pending_commit already sat above it for `SaveSlice`).

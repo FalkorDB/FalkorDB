@@ -302,7 +302,7 @@ structure GOps (G : Type) where
   deleteNodes : G → List Nat → Option G
   implicitEdges : G → List Nat → List Nat → Option (G × List Nat)
   deleteRels : G → List Nat → Option (G × List Nat)
-  /-- `Graph::apply_index_writes` (graph.rs:3890): applies the staged native-index changes
+  /-- `Graph::apply_index_writes` (graph.rs:3889): applies the staged native-index changes
   (`index_docs.native`) to this version; a no-op without `index-falkordb`. Its semantics are
   proofs/index_layer's. -/
   applyIndexWrites : G → G

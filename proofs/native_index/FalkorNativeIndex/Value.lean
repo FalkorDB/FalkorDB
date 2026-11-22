@@ -118,7 +118,7 @@ def keyPred (op : Op) (k kb : Nat) : Bool :=
   match op with
   | .lt => k < kb | .gt => kb < k | .le => k ≤ kb | .ge => kb ≤ k | .eq => k == kb
 
-/-- `int_loses_f64_precision` (`index/mod.rs:1371-1373`): `i.unsigned_abs() & 0x7FF0…0 != 0`. -/
+/-- `int_loses_f64_precision` (`index/mod.rs:1374-1376`): `i.unsigned_abs() & 0x7FF0…0 != 0`. -/
 def intLosesPrecision (i : Int) : Bool := i.natAbs &&& 0x7FF0000000000000 != 0
 
 /-! ## The precision guard -/

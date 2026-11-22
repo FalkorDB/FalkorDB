@@ -177,7 +177,7 @@ theorem commitDocs_every_id (adds rems : List (Nat × List Nat)) (names : List S
   · cases h
     exact ⟨_, _, List.mem_map.2 ⟨_, hs, rfl⟩, _, List.mem_map.2 ⟨id, hi, rfl⟩⟩
 
-/-- `commit_index_docs` (graph.rs:3913): first `apply_index_writes` (the native index's
+/-- `commit_index_docs` (graph.rs:3912): first `apply_index_writes` (the native index's
 staged `docs.native`, a no-op without `index-falkordb`; its semantics belong to
 proofs/index_layer), then the RediSearch node documents iff `node_adds`/`node_removes` is
 non-empty, then the edge documents iff `edge_adds`/`edge_removes` is non-empty. The ops
@@ -227,7 +227,7 @@ theorem commitEdgeDocs_mem (tn : Ten) (ids : List Nat) (s d e : Nat) (hnd : (tn.
       · have : y.2.2 ≠ e := fun h => hnd.1 (h ▸ List.mem_map_of_mem hm')
         simp [this, ih hnd.2 hm']
 
-/-- The "no such index" text (graph.rs:4160-4177): `:L` when no attribute is named
+/-- The "no such index" text (graph.rs:4159-4176): `:L` when no attribute is named
 (`db.idx.fulltext.drop('L')`, #3280, as C), else `:L(a, b)`. -/
 def noSuchIndexMsg (label : String) (attrs : List String) : String :=
   let attrList := ", ".intercalate attrs
@@ -281,7 +281,7 @@ structure BuildInfo where
   progress : Nat
   total : Nat
 
-/-- `native_build_total` (graph.rs:4587): the label's `nvals` / the type's `edge_count`; a name
+/-- `native_build_total` (graph.rs:4586): the label's `nvals` / the type's `edge_count`; a name
 without a matrix counts 0. -/
 def nativeBuildTotal (g : G V) (isNode : Bool) (label : String) : Nat :=
   if isNode then ((getLabelMat g label).map (·.ents.length)).getD 0
@@ -298,7 +298,7 @@ def nbStep (acc : Option (Int × Nat)) (a : Bool × Option Nat) : Option (Int ×
 
 def nbFold (attrs : List (Bool × Option Nat)) : Option (Int × Nat) := attrs.foldl nbStep none
 
-/-- `add_native_build` (graph.rs:4551). -/
+/-- `add_native_build` (graph.rs:4550). -/
 def addNativeBuild (g : G V) (isNode : Bool) (label : String) (attrs : List (Bool × Option Nat))
     (info : BuildInfo) : BuildInfo :=
   match nbFold attrs with

@@ -7,16 +7,16 @@ import GraphQueries.Index
 | `ctStr`, `csStr` | `Display for ConstraintType` / `ConstraintStatus` (constraint.rs:14,34) |
 | `cnew`           | `Constraint::new` (constraint.rs:60), `NEXT_CONSTRAINT_ID` counter |
 | `cmatches`       | `Constraint::matches` (constraint.rs:79) |
-| `addRaw`         | `add_constraint_raw` (graph.rs:4555) |
-| `upsert`         | `upsert_constraint_raw` (graph.rs:4571) |
-| `entityCount`    | `get_constraint_entity_count` (graph.rs:4593) |
-| `validate`       | `validate_constraint` (graph.rs:4605) |
-| `validatePending`| `validate_pending_constraints` (graph.rs:4616) |
-| `computePending` | `compute_pending_constraint_results` (graph.rs:4645) |
-| `applyResults`   | `apply_constraint_validation_results` (graph.rs:4657), ids unique |
-| `dropC`          | `drop_constraint` (graph.rs:4790) — `swap_remove` |
-| `hasSupporting`  | `has_supporting_index` (graph.rs:4813) |
-| `dependsOn`      | `constraint_depends_on_index` (graph.rs:4832) |
+| `addRaw`         | `add_constraint_raw` (graph.rs:4554) |
+| `upsert`         | `upsert_constraint_raw` (graph.rs:4570) |
+| `entityCount`    | `get_constraint_entity_count` (graph.rs:4592) |
+| `validate`       | `validate_constraint` (graph.rs:4604) |
+| `validatePending`| `validate_pending_constraints` (graph.rs:4615) |
+| `computePending` | `compute_pending_constraint_results` (graph.rs:4644) |
+| `applyResults`   | `apply_constraint_validation_results` (graph.rs:4656), ids unique |
+| `dropC`          | `drop_constraint` (graph.rs:4789) — `swap_remove` |
+| `hasSupporting`  | `has_supporting_index` (graph.rs:4812) |
+| `dependsOn`      | `constraint_depends_on_index` (graph.rs:4831) |
 -/
 namespace GQ
 variable {V : Type}

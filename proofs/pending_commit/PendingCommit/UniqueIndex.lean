@@ -25,7 +25,7 @@ gathered so far are dropped (none runs). The RediSearch `query_for` is
 Modelling:
 * Values are an abstract type `V` with decidable equality; `attr e q = none` is an absent
   or `Null` property (both filtered by Rust before keying). The composite key of `e` is
-  `key e = props.mapM (attr e)`: `Graph::build_composite_key` (graph.rs:4772) returns the
+  `key e = props.mapM (attr e)`: `Graph::build_composite_key` (graph.rs:4771) returns the
   empty byte string iff a property is null/absent, and otherwise the `Debug` rendering of
   each value followed by `'|'`. Key equality is therefore equality of the derived `Debug`
   renderings, and `V` is to be read as the set of those renderings (`V` equality = key

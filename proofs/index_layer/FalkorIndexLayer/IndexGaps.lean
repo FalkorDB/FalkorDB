@@ -221,7 +221,7 @@ theorem isOperational_some (I : Ixr) (l : String) (x : Idx) (h : I.map.get l = s
     isOperational I l = operational x := by
   simp [isOperational, route, h]
 
-/-- PR #3581's gate in `Graph::vector_query_nodes`/`_edges` (`graph.rs:4409,4476`):
+/-- PR #3581's gate in `Graph::vector_query_nodes`/`_edges` (`graph.rs:4408,4476`):
 `if !indexer.is_operational(label) { Err } else indexer.vector_query ..` is exactly the
 fix shape `vectorQueryGuarded`, so it satisfies `VectorQueryRequiresOperational`. -/
 theorem vectorQueryGuarded_eq_isOperational (I : Ixr) (l a : String) (c n i : Bool)
@@ -233,7 +233,7 @@ theorem vectorQueryGuarded_eq_isOperational (I : Ixr) (l a : String) (c n i : Bo
   cases route I l <;> simp
 
 /-- **Fixed (#3581): the entry point on main, `Graph::vector_query_nodes`/`_edges`**
-(`graph.rs:4409,4476`): `if !indexer.is_operational(label) { Err } else indexer.vector_query ..`.
+(`graph.rs:4408,4476`): `if !indexer.is_operational(label) { Err } else indexer.vector_query ..`.
 It refuses a label whose index is not OPERATIONAL, for every FFI outcome and every RediSearch
 answer. -/
 def gated3581 (I : Ixr) (l a : String) (c n i : Bool) (res : List (Key × Nat)) : Except String RIter :=

@@ -179,7 +179,7 @@ New modules, all `sorry`-free:
   size heuristic picks, `merge_batch` fast paths = slow path = `merge_sorted`, plus
   `partition_point`, gallop, `pack_branches`/`build_root`/`from_sorted`/`insert_batch`.
 
-NEW CONFIRMED BUG 13 (`index/mod.rs:1409,1438,1496,1508,1566,1627`, `queryField` /
+NEW CONFIRMED BUG 13 (`index/mod.rs:1412,1438,1496,1508,1566,1627`, `queryField` /
 `IndexerM.bug_range_after_fulltext`): `build_query_node` targets
 `self.fields.get(key).and_then(|f| f.first())` — the attribute's *first* field whatever its
 type. After `CREATE FULLTEXT INDEX FOR (n:L) ON (n.s)` then `CREATE INDEX FOR (n:L) ON (n.s)`,
@@ -291,11 +291,11 @@ matching the live repro (ports 6640 Rust / 6641 C):
   `VectorQueryComplete`. HISTORICAL: `pre3581_vector_query_ignores_operational`, `pre3581_partial_answer`:
   under construction, the ungated query answered `Ok` with 0 rows (a KnnSpec-legal answer from a
   half-built table); live 0 then 3 rows, C "Invalid arguments for procedure". Now
-  `Graph::vector_query_nodes`/`_edges` gate it (`graph.rs:4409,4476`): `gated3581_requires_operational`,
+  `Graph::vector_query_nodes`/`_edges` gate it (`graph.rs:4408,4476`): `gated3581_requires_operational`,
   `gated3581_i3382_refused`, `vectorQueryGuarded_eq_isOperational`.
 - #2781 (`EdgeResync.lean`). The edge arm of `resync_published_indexes`
   (`pending.rs:1872-1880`) with `commit_edge_index_locked`'s re-resolved key
-  (`graph.rs:3989-4064`), documents keyed by `(src, dst, id)`. Property
+  (`graph.rs:3988-4063`), documents keyed by `(src, dst, id)`. Property
   `RollbackRestoresEdgeIndex`. `bug2781_orphan_edge_doc`, `bug2781_rollback_not_restored`:
   the orphan `(c, d, 0)` survives beside `(a, b, 0)`, as in the live index scan.
   `resyncEdgesFixed_restores` proves the fix (delete the private key when endpoints changed).

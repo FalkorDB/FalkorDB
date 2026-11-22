@@ -134,53 +134,53 @@ graph/src/graph/graph.rs	get_relationship_all_attrs_by_id	3677	PROVEN	Accessors.
 graph/src/graph/graph.rs	get_relationship_attr_count	3686	PROVEN	Accessors.getRelAttrCount_eq
 graph/src/graph/graph.rs	create_index	3693	PROVEN	Index.createIndex_node_spec
 graph/src/graph/graph.rs	create_index_sync	3740	PROVEN	Index.createIndex_node_spec (same state effect, no spawn)
-graph/src/graph/graph.rs	populate_indexes_sync	3787	PROVEN	Index.syncDocs_mem
-graph/src/graph/graph.rs	index_locks	3892	AXIOMATISED	clones of the indexers' parking_lot mutexes
-graph/src/graph/graph.rs	commit_index_docs	3940	PROVEN	Index.commitIndexDocs: commitIndexDocs_skip, commitIndexDocs_native_first, commitIndexDocs_empty (apply_index_writes = native index, proofs/index_layer; commit_index/commit_edge_index = commitDocs/commitEdgeDocs)
-graph/src/graph/graph.rs	commit_index	3954	PROVEN	Index.commitDocs_noop, commitDocs_every_id (takes lock, = commit_index_kind)
-graph/src/graph/graph.rs	commit_index_locked	3967	PROVEN	Index.commitDocs_every_id
-graph/src/graph/graph.rs	commit_edge_index	3977	PROVEN	Index.commitEdgeDocs_mem (takes lock)
-graph/src/graph/graph.rs	commit_edge_index_locked	3989	PROVEN	Index.commitEdgeDocs_mem
-graph/src/graph/graph.rs	commit_index_kind	4070	PROVEN	Index.commitDocs_noop, commitDocs_every_id
-graph/src/graph/graph.rs	drop_index	4121	PROVEN	Index.dropIndex_protects, Index.dropIndex_none_noattr, Constraints.drop_blocked
-graph/src/graph/graph.rs	is_indexed	4219	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation (index-falkordb: a Range lookup is the native column is_ready, #3585, proofs/native_index)
-graph/src/graph/graph.rs	get_indexed_nodes	4232	AXIOMATISED	RediSearch Indexer::query, ids wrapped (Accessors.nodeId_roundtrip)
-graph/src/graph/graph.rs	is_edge_indexed	4318	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation (index-falkordb: a Range lookup is the native column is_ready, #3585, proofs/native_index)
-graph/src/graph/graph.rs	get_indexed_edges	4333	AXIOMATISED	RediSearch Indexer::query_edges delegation
-graph/src/graph/graph.rs	get_all_edges	4348	PROVEN	Queries.allEdges_unknown
-graph/src/graph/graph.rs	fulltext_query_nodes	4361	AXIOMATISED	RediSearch fulltext_query delegation
-graph/src/graph/graph.rs	fulltext_query_edges	4376	AXIOMATISED	RediSearch fulltext_query_edges delegation
-graph/src/graph/graph.rs	vector_query_nodes	4400	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row, not_operational_refused (#3088 clamp, #3085, #3382 gate)
-graph/src/graph/graph.rs	vector_query_edges	4467	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, not_operational_refused (vectorQueryEdges, relationship_count clamp, #3382 gate)
-graph/src/graph/graph.rs	index_info	4527	PROVEN	Index.indexInfo_length (default build); with index-falkordb each info also goes through add_native_build: Index.addNativeBuild_none / _pending / _progress_le
-graph/src/graph/graph.rs	constraints	4606	PROVEN	Constraints.two_phase_eq (constraints projection)
-graph/src/graph/graph.rs	constraints_mut	4610	PROVEN	Constraints.upsert_twice (constraints_mut projection)
-graph/src/graph/graph.rs	create_constraint	4623	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
-graph/src/graph/graph.rs	add_constraint_raw	4677	PROVEN	Accessors.addRaw_spec
-graph/src/graph/graph.rs	upsert_constraint_raw	4693	PROVEN	Constraints.upsert_twice
-graph/src/graph/graph.rs	get_constraint_entity_count	4715	PROVEN	Constraints.entityCount, Schema.labelNodeCount_eq
-graph/src/graph/graph.rs	validate_constraint	4727	PROVEN	Constraints.validate / two_phase_eq
-graph/src/graph/graph.rs	validate_pending_constraints	4738	PROVEN	Constraints.two_phase_eq
-graph/src/graph/graph.rs	compute_pending_constraint_results	4767	PROVEN	Constraints.lookup_compute, two_phase_eq
-graph/src/graph/graph.rs	apply_constraint_validation_results	4779	PROVEN	Constraints.two_phase_eq
-graph/src/graph/graph.rs	validate_mandatory_constraint	4798	PROVEN	see proofs/graph_persist Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4837	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4892	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
-graph/src/graph/graph.rs	drop_constraint	4910	PROVEN	Constraints.dropC_length, swapRemove_length
-graph/src/graph/graph.rs	has_supporting_index	4933	PROVEN	Constraints.hasSupporting_nil
-graph/src/graph/graph.rs	constraint_depends_on_index	4952	PROVEN	Constraints.drop_blocked
-graph/src/graph/graph.rs	cancel_indexing	4971	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
-graph/src/graph/graph.rs	set_indexer_graph	4979	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
-graph/src/graph/graph.rs	build_adjacency_matrix	4991	PROVEN	Queries.adjMatrix_single
-graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	5019	PROVEN	Queries.symAdj_symm
-graph/src/graph/graph.rs	memory_usage_report	5035	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
-graph/src/graph/graph.rs	estimate_entity_attr_size	5205	PROVEN	Accessors.estimateSize_eq
-graph/src/graph/graph.rs	encode_payload	5214	PROVEN	Index.encodeOp_nodes
-graph/src/graph/graph.rs	get_node_attribute_names	5271	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	get_relationship_attribute_names	5277	PROVEN	Accessors.node_rel_same_id
-graph/src/graph/graph.rs	add_node_attribute_name	5283	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
-graph/src/graph/graph.rs	add_rel_attribute_name	5295	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
-graph/src/graph/graph.rs	build_global_attrs	5313	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	populate_indexes_sync	3786	PROVEN	Index.syncDocs_mem
+graph/src/graph/graph.rs	index_locks	3891	AXIOMATISED	clones of the indexers' parking_lot mutexes
+graph/src/graph/graph.rs	commit_index_docs	3939	PROVEN	Index.commitIndexDocs: commitIndexDocs_skip, commitIndexDocs_native_first, commitIndexDocs_empty (apply_index_writes = native index, proofs/index_layer; commit_index/commit_edge_index = commitDocs/commitEdgeDocs)
+graph/src/graph/graph.rs	commit_index	3953	PROVEN	Index.commitDocs_noop, commitDocs_every_id (takes lock, = commit_index_kind)
+graph/src/graph/graph.rs	commit_index_locked	3966	PROVEN	Index.commitDocs_every_id
+graph/src/graph/graph.rs	commit_edge_index	3976	PROVEN	Index.commitEdgeDocs_mem (takes lock)
+graph/src/graph/graph.rs	commit_edge_index_locked	3988	PROVEN	Index.commitEdgeDocs_mem
+graph/src/graph/graph.rs	commit_index_kind	4069	PROVEN	Index.commitDocs_noop, commitDocs_every_id
+graph/src/graph/graph.rs	drop_index	4120	PROVEN	Index.dropIndex_protects, Index.dropIndex_none_noattr, Constraints.drop_blocked
+graph/src/graph/graph.rs	is_indexed	4218	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation (index-falkordb: a Range lookup is the native column is_ready, #3585, proofs/native_index)
+graph/src/graph/graph.rs	get_indexed_nodes	4231	AXIOMATISED	RediSearch Indexer::query, ids wrapped (Accessors.nodeId_roundtrip)
+graph/src/graph/graph.rs	is_edge_indexed	4317	AXIOMATISED	RediSearch Indexer::is_label_indexed delegation (index-falkordb: a Range lookup is the native column is_ready, #3585, proofs/native_index)
+graph/src/graph/graph.rs	get_indexed_edges	4332	AXIOMATISED	RediSearch Indexer::query_edges delegation
+graph/src/graph/graph.rs	get_all_edges	4347	PROVEN	Queries.allEdges_unknown
+graph/src/graph/graph.rs	fulltext_query_nodes	4360	AXIOMATISED	RediSearch fulltext_query delegation
+graph/src/graph/graph.rs	fulltext_query_edges	4375	AXIOMATISED	RediSearch fulltext_query_edges delegation
+graph/src/graph/graph.rs	vector_query_nodes	4399	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, huge_k_one_row, not_operational_refused (#3088 clamp, #3085, #3382 gate)
+graph/src/graph/graph.rs	vector_query_edges	4466	PROVEN	see proofs/search_concurrency Knn.alloc_bounded, no_abort_any_k, candidates_topk, rows_length_topk, not_operational_refused (vectorQueryEdges, relationship_count clamp, #3382 gate)
+graph/src/graph/graph.rs	index_info	4526	PROVEN	Index.indexInfo_length (default build); with index-falkordb each info also goes through add_native_build: Index.addNativeBuild_none / _pending / _progress_le
+graph/src/graph/graph.rs	constraints	4605	PROVEN	Constraints.two_phase_eq (constraints projection)
+graph/src/graph/graph.rs	constraints_mut	4609	PROVEN	Constraints.upsert_twice (constraints_mut projection)
+graph/src/graph/graph.rs	create_constraint	4622	PROVEN	see proofs/graph_persist Constraint.constraint_creation_diverges; Constraints.cmatches_iff
+graph/src/graph/graph.rs	add_constraint_raw	4676	PROVEN	Accessors.addRaw_spec
+graph/src/graph/graph.rs	upsert_constraint_raw	4692	PROVEN	Constraints.upsert_twice
+graph/src/graph/graph.rs	get_constraint_entity_count	4714	PROVEN	Constraints.entityCount, Schema.labelNodeCount_eq
+graph/src/graph/graph.rs	validate_constraint	4726	PROVEN	Constraints.validate / two_phase_eq
+graph/src/graph/graph.rs	validate_pending_constraints	4737	PROVEN	Constraints.two_phase_eq
+graph/src/graph/graph.rs	compute_pending_constraint_results	4766	PROVEN	Constraints.lookup_compute, two_phase_eq
+graph/src/graph/graph.rs	apply_constraint_validation_results	4778	PROVEN	Constraints.two_phase_eq
+graph/src/graph/graph.rs	validate_mandatory_constraint	4797	PROVEN	see proofs/graph_persist Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4836	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4891	PROVEN	see proofs/graph_persist Constraint.rust_C_unique_disagree
+graph/src/graph/graph.rs	drop_constraint	4909	PROVEN	Constraints.dropC_length, swapRemove_length
+graph/src/graph/graph.rs	has_supporting_index	4932	PROVEN	Constraints.hasSupporting_nil
+graph/src/graph/graph.rs	constraint_depends_on_index	4951	PROVEN	Constraints.drop_blocked
+graph/src/graph/graph.rs	cancel_indexing	4970	AXIOMATISED	RediSearch Indexer::cancel (atomic flag)
+graph/src/graph/graph.rs	set_indexer_graph	4978	AXIOMATISED	Indexer::set_graph (mutex-guarded Arc publish)
+graph/src/graph/graph.rs	build_adjacency_matrix	4990	PROVEN	Queries.adjMatrix_single
+graph/src/graph/graph.rs	build_symmetric_adjacency_matrix	5018	PROVEN	Queries.symAdj_symm
+graph/src/graph/graph.rs	memory_usage_report	5034	PROVEN	Index.labelPass_total, memEstimate_exact, unlabeled_le
+graph/src/graph/graph.rs	estimate_entity_attr_size	5204	PROVEN	Accessors.estimateSize_eq
+graph/src/graph/graph.rs	encode_payload	5213	PROVEN	Index.encodeOp_nodes
+graph/src/graph/graph.rs	get_node_attribute_names	5270	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	get_relationship_attribute_names	5276	PROVEN	Accessors.node_rel_same_id
+graph/src/graph/graph.rs	add_node_attribute_name	5282	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	add_rel_attribute_name	5294	PROVEN	Attrs.addNodeAttrName_eq_insert, nmInsert_cap
+graph/src/graph/graph.rs	build_global_attrs	5312	PROVEN	Accessors.node_rel_same_id
 graph/src/graph/constraint.rs	fmt	14	PROVEN	Constraints.str_spec
 graph/src/graph/constraint.rs	fmt	34	PROVEN	Constraints.str_spec
 graph/src/graph/constraint.rs	new	60	PROVEN	Constraints.cnew_fresh
@@ -199,8 +199,8 @@ graph/src/graph/graph.rs	relationship_id_space	1701	PROVEN	Ids.openRelSpace_eq
 graph/src/graph/graph.rs	grow_for_nodes	1767	PROVEN	Ids.growForNodes_spec
 graph/src/graph/graph.rs	first_node_with_relationships	2434	CONDITIONAL	FirstRel.firstNodeWithRels: firstNodeWithRels_spec (= lowest node of the set with a relationship either way; GraphBLAS mxv/iterator spec as hypothesis BulkOps, AdjExact), probe_iff, find_takeWhile (#3022) || CONDITIONAL on AdjExact (adjacency = union of relation tensors; the graph.rs mutators' invariant, not proven preserved) || Why it stays CONDITIONAL (re-attempted): AdjExact must hold of every graph, including one loaded from an RDB. `src/serializers/decoder/mod.rs` (:286, :363, :558) decodes the adjacency matrix with `VersionedMatrix::decode` and `Graph::restore` (graph.rs:907) takes it as is: nothing compares it with the relation tensors, so a corrupt or hand-edited RDB that drops a pair breaks AdjExact (model-level finding, not reproduced live: the matrix is a serialised GraphBLAS blob). The mutators' preservation (create_relationships_bulk, delete_relationships, delete_implicit_edges, incl. `Mat.set`'s silent no-op for an endpoint past the dimension) is not mechanised either
 graph/src/graph/graph.rs	edge_has_type_id	1335	PROVEN	Schema.edgeHasTypeId_iff (#3567: the matrix read edge_has_type used inline); edgeHasType_iff
-graph/src/graph/graph.rs	Graph::add_native_build	4551	PROVEN	Index.addNativeBuild (index-falkordb, #3585): addNativeBuild_none, addNativeBuild_pending, addNativeBuild_progress_le, addNativeBuild_progress_min, nbFold_cols; building_read is proofs/native_index
-graph/src/graph/graph.rs	Graph::native_build_total	4587	PROVEN	Index.nativeBuildTotal (nvals of the label matrix / edge_count of the tensor, 0 when absent): addNativeBuild_pending, addNativeBuild_progress_le
+graph/src/graph/graph.rs	Graph::add_native_build	4550	PROVEN	Index.addNativeBuild (index-falkordb, #3585): addNativeBuild_none, addNativeBuild_pending, addNativeBuild_progress_le, addNativeBuild_progress_min, nbFold_cols; building_read is proofs/native_index
+graph/src/graph/graph.rs	Graph::native_build_total	4586	PROVEN	Index.nativeBuildTotal (nvals of the label matrix / edge_count of the tensor, 0 when absent): addNativeBuild_pending, addNativeBuild_progress_le
 graph/src/graph/graph.rs	end_id_quarantine	1068	PROVEN	Ids.endIdQuarantine (#3641): endIdQuarantine_id (IdSpace::end_quarantine empties only `quarantined`, outside IdS: proofs/id_space IdSpace.endQuarantine_spec)
 graph/src/graph/graph.rs	finish_version	1054	PROVEN	Ids.finishVersion (= endIdQuarantine ∘ trimAttrStores, #3641): finishVersion_id (neither changes the logical graph)
 graph/src/graph/schema_hash.rs	extend_chain	37	PROVEN	SchemaHash.push (xxh3_64 over tag ‖ h ‖ len ‖ name, streamed; xxh3 an abstract parameter): chainOf_snoc (push_matches_of), internLabelC_inv, registerRelTypeC_inv

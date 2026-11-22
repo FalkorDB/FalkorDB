@@ -265,7 +265,7 @@ def MB : Nat := 2^20
 /-- `up_to_nul` (`graph_core.rs:92`): the text before the first NUL, as C's `%s` prints it. -/
 def upToNul (s : String) : String := String.ofList (s.toList.takeWhile (· ≠ '\x00'))
 
-/-- `graph_memory` argument handling (`memory.rs:185-234`): arity 2 or 4, `USAGE`, optional
+/-- `graph_memory` argument handling (`memory.rs:184-233`): arity 2 or 4, `USAGE`, optional
 `SAMPLES n` with any non-negative `n` (#3053, `fe619ac5f`: `parse::<u64>`, `try_into` →
 `unwrap_or(usize::MAX)`, the identity on 64-bit), default 100. `parse` is `str::parse::<u64>`.
 The clamp to `1..=10000` happens later, in `memory_usage_report`. Since PR #3257 the error
@@ -529,7 +529,7 @@ theorem bulk_reply_c (n e : Nat) : bulkReply n e = cBulkReply n e := rfl
 /-! ## GRAPH.PROFILE / GRAPH.EXPLAIN flags (`QueryArgs.profileFront`, `explainFront`)
 
 Since `557f18868` (#3010) both go through `parse_query_flags` (`profile.rs:22`,
-`explain.rs:65`). Historical: PROFILE used its own loop that silently dropped a garbage
+`explain.rs:64`). Historical: PROFILE used its own loop that silently dropped a garbage
 timeout (`profile_timeout_garbage`, now `profile_timeout_garbage_rejected`), and EXPLAIN
 validated no flags at all. -/
 
@@ -540,7 +540,7 @@ theorem profile_timeout_garbage_rejected :
 theorem profile_other_args_ignored :
     profileFront 0 (pre ++ [b "--compact"]) = .ok none := by decide
 
-/-- `graph_explain` (`explain.rs:60-102`): the flags are checked first, then the key. -/
+/-- `graph_explain` (`explain.rs:59-101`): the flags are checked first, then the key. -/
 def explainCmdA (tmax : Int) (args : List Bytes) (isGraph inline : Bool) : Except QErr ExOut :=
   (explainFront tmax args).map fun _ => explainCmd isGraph inline
 

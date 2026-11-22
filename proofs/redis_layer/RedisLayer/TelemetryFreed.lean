@@ -11,7 +11,7 @@ import RedisLayer.GraphCore
 | `queueFreed`       | `queue_streams_of_freed_graph` `:475` |
 | `deleteFreed`      | `delete_streams_of_freed_graphs` `:488` |
 | `stripAll`         | `strip_telemetry_streams`, `redis_type.rs:421` |
-| `graphFree`        | `graph_free`, `graph_core.rs:1862` (registry removal = `GraphCore.free`, then the queue) |
+| `graphFree`        | `graph_free`, `graph_core.rs:1860` (registry removal = `GraphCore.free`, then the queue) |
 
 The queue is a mutex-guarded list plus an atomic flag, both changed only under the lock by
 `push`/`take`; each operation is modelled sequentially. The Redis key API (`OpenKey`,
@@ -135,7 +135,7 @@ theorem stripAll_covers (q : FQ) (reg : GraphCore.Reg) (h : q.Inv) (n : List Cha
 theorem stripAll_empties (q : FQ) (reg : GraphCore.Reg) (h : q.Inv) : (stripAll q reg).2 = FQ.new :=
   (deleteFreed_all q h).2
 
-/-! ## `graph_free` (`graph_core.rs:1862`) -/
+/-! ## `graph_free` (`graph_core.rs:1860`) -/
 
 /-- The keys the freed graph was registered under. -/
 def freedKeys (r : GraphCore.Reg) (g : Nat) : List (List Char) := (r.filter (·.2 = g)).map (·.1)

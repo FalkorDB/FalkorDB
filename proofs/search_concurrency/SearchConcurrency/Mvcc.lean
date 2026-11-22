@@ -22,7 +22,7 @@ Since #3657 (34a708cfa) there is no write slot: a writer forks a private version
 | `Ev.batch`                 | `MvccGraph::commit_indexer_batch` (`mvcc_graph.rs:262`) → `prepare(.., false)` (`:293`) then `publish`: publishes a version at the *same* data version (`new_build_version`), changes no data, bumps `batches_published` (`S.bver`) and installs a new published pointer (`S.pid`). Its own swap is atomic here and enabled at any time (it may run without the global lock, the adversarial case for a writer's swap); its CAS refusal is native_index `Batch.commit_cas_stale` |
 | `S.gil`, `Ev.escalate`     | `QuerySession::escalate` (`query_session.rs:420`): drop read lock, then `acquire_write` (`:481`): `Gil::acquire`, the write lock (#3816: in GIL-free slices off the main thread; a missed slice changes no state here, so it is not an event) |
 | `S.registered`             | `GRAPH_REGISTRY` membership (`graph_core.rs:142`, `graph_is_registered` `:190`; `Glue.registerGraph`, `renameGraph`) |
-| `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs:37`) → `graph_free` (`graph_core.rs:1930`), main thread, GIL held |
+| `Ev.delete`                | `GRAPH.DELETE` (`src/commands/delete.rs:37`) → `graph_free` (`graph_core.rs:1928`), main thread, GIL held |
 | `Ev.fork`                  | BGSAVE `fork()` on the main thread with the GIL (`redis_type.rs:360` `pre_fork_prepare`, `module_init.rs:122` `on_fork_child`) |
 
 **#3657 (34a708cfa).** `MvccGraph::write`/`claim`/`rollback` and the `AtomicBool` are gone.

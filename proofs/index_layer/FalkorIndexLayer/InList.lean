@@ -10,7 +10,7 @@ proves the two shapes the same, so the model needs no change:
 | --- | --- |
 | `keepItem` | `keep` in `evaluate_index_query`, `node_by_index_scan.rs:226-231` (only `Int/Float/String/Bool` members reach the index) |
 | `canUtilizeInList` | the `IndexQuery::InList` arm of `can_utilize_index`, `:279-282` (non-empty, every member indexable) |
-| `expandIn` (`Model.lean`) | the `InList { key, list }` that `evaluate_index_query` builds `:216-246`; `Index::build_query_node`'s `InList` arm `index/mod.rs:1607-1624` is a union of `Equal` children, empty list → the empty node |
+| `expandIn` (`Model.lean`) | the `InList { key, list }` that `evaluate_index_query` builds `:216-246`; `Index::build_query_node`'s `InList` arm `index/mod.rs:1610-1627` is a union of `Equal` children, empty list → the empty node |
 -/
 namespace IndexLayer
 

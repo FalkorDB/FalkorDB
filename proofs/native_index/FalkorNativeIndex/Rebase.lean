@@ -884,7 +884,7 @@ theorem rebased_batch_fits {R : Type} (work : EncodedTuples) (fork pub prepared 
 
 /-! ## The smaller functions around them -/
 
-/-- `BuildCursor::from_id` (`falkordb_index.rs:437-448`) and `Graph::build_place` (`graph.rs:3876`, which passes
+/-- `BuildCursor::from_id` (`falkordb_index.rs:437-448`) and `Graph::build_place` (`graph.rs:3875`, which passes
     its `edge_endpoints`): a node by its id, an edge by its endpoints, `None` for an edge the version does not
     have. -/
 def BuildCursor.fromId (e : EntityType) (id : Nat) (endpoints : Nat → Option (Nat × Nat)) : Option BuildCursor :=

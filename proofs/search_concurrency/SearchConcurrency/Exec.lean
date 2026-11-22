@@ -8,7 +8,7 @@ Companion of `Glue` (names, registry). Pure models of the parts of `graph_core.r
 
 | Lean | Rust (origin/main 256ab4d3f) |
 | --- | --- |
-| `Tg.new`, `Tg.fromMvcc`        | `ThreadedGraph::new` `graph_core.rs:603`, `from_mvcc` `:620` |
+| `Tg.new`, `Tg.fromMvcc`        | `ThreadedGraph::new` `graph_core.rs:601`, `from_mvcc` `:620` |
 | `WStats.modified`              | `WriteQueryOk::new` `:306` (the `modified` predicate `:314-325`) |
 | `isWritePlan`, `execQuery`     | `execute_query` `:639` (`is_write` `:652-658`, `admission.take()` `:677`) |
 | `execProfile`                  | `execute_profile` `:721` |

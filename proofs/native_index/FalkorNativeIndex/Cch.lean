@@ -75,7 +75,7 @@ def indexCchIndex {X Cch : Type} (_ : X) (_ : Def) : Res (Option Cch) := unimpl
 def indexCchDefs {X : Type} (_ : X) : Res (List Def) := unimpl
 /-- `FalkorDbIndex::drop_cch` (`:987`, #3212). -/
 def indexDropCch {X : Type} (_ : X) (_ : Def) : Res Unit := unimpl
-/-- `Graph::create_cch_index` (`graph.rs:5225`, #3212). -/
+/-- `Graph::create_cch_index` (`graph.rs:5224`, #3212). -/
 def graphCreateCchIndex {G : Type} (_ : G) (_ : Def) : Res Unit := unimpl
 /-- `Graph::rebuild_cch_indexes` (`:5274`, #3212). -/
 def graphRebuildCchIndexes {G : Type} (_ : G) : Res Unit := unimpl

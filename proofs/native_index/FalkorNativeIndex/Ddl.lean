@@ -4,7 +4,7 @@ set_option linter.unusedSimpArgs false
 
 /-!
 # Index DDL (`graph_writes.rs:396-501`), the graph's index entry points
-# (`graph.rs:3879-3924`, `:4205-4246`), the scan routing (`node_by_index_scan.rs:302`,
+# (`graph.rs:3878-3923`, `:4205-4246`), the scan routing (`node_by_index_scan.rs:302`,
 # `edge_by_index_scan.rs:318`), and folded-roots MVCC (`graph.rs:1084`)
 -/
 
@@ -527,13 +527,13 @@ theorem populate_eq_buildColumns (g : G) (e : EntityType) (label : String) (fiel
 structure IndexDocs where
   native : PendingIndexWrites
 
-/-- `Graph::apply_index_writes` (`graph.rs:3890-3904`): `apply` with the graph's `place` (a node by its
+/-- `Graph::apply_index_writes` (`graph.rs:3889-3903`): `apply` with the graph's `place` (a node by its
     id, an edge by its endpoints, `None` for an edge this unit deleted). -/
 def applyIndexWrites (g : G) (docs : IndexDocs) : G × IndexDocs :=
   let r := g.idx.apply docs.native g.place
   ({ g with idx := r.1 }, ⟨r.2⟩)
 
-/-- `Graph::commit_index_docs` (`graph.rs:3913-3924`): the native part, then the RediSearch documents
+/-- `Graph::commit_index_docs` (`graph.rs:3912-3923`): the native part, then the RediSearch documents
     (`commit_index` / `commit_edge_index`: the RediSearch C API, AXIOMATISED in index_layer). -/
 def commitIndexDocs (g : G) (docs : IndexDocs) : G × IndexDocs := applyIndexWrites g docs
 
@@ -545,12 +545,12 @@ theorem applyIndexWrites_spec (g : G) (docs : IndexDocs) :
 theorem commitIndexDocs_native (g : G) (docs : IndexDocs) :
     commitIndexDocs g docs = applyIndexWrites g docs := rfl
 
-/-- `Graph::query_index_numeric_nodes` (`graph.rs:4205-4213`): `query_numeric`'s three-way answer,
+/-- `Graph::query_index_numeric_nodes` (`graph.rs:4204-4212`): `query_numeric`'s three-way answer,
     raw docs mapped to `NodeId` (the map is the identity here). -/
 def queryIndexNumericNodes (g : G) (label : String) (q : IndexQuery) : Option (Except (ScanFilter String) (List Nat)) :=
   (g.idx.queryColumn .node label q).map (fun a => a.map (fun rows => rows.map id))
 
-/-- `Graph::query_index_numeric_edges` (`graph.rs:4223-4246`): endpoints from the `edge_id → (src, dst)`
+/-- `Graph::query_index_numeric_edges` (`graph.rs:4222-4245`): endpoints from the `edge_id → (src, dst)`
     reverse index; an id it does not know (a deleted, not reused edge) is skipped. The map runs on
     `Ok` only, so a `ScanFilter` passes through untouched. -/
 def queryIndexNumericEdges (g : G) (endpoints : Nat → Option (Nat × Nat)) (typeName : String) (q : IndexQuery) :

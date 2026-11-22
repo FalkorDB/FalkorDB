@@ -440,7 +440,7 @@ theorem scan_kind (g : G) (label attr : String) (from_ : BuildCursor) (entities 
 
 theorem kind_new (e : EntityType) : BuildCursor.OfKind e (BuildCursor.new e) := by cases e <;> trivial
 
-/-- The place the graph gives an entity (`Graph::build_place`, `graph.rs:3879-3885`): a node by
+/-- The place the graph gives an entity (`Graph::build_place`, `graph.rs:3878-3884`): a node by
     its id, an edge by its endpoints, which an edge deleted in this unit no longer has. -/
 def G.place (g : G) : EntityType → Nat → Option BuildCursor
   | .node, id => some (.node id)
