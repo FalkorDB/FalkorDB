@@ -331,6 +331,88 @@ theorem validate_nonlogical (k : TK) (cs : List TE) (inF shape : Bool) (hk : isL
     validate inF shape (.node k cs) = validateAll false (predScope k) shape 0 cs := by
   simp [validate, hk]
 
+/-! ## The literal shape check
+
+`validate_boolean_operands_impl` skips `expr_may_return_boolean` for an operand
+that is itself a logical node (binder.rs: "A nested logical operand is checked by
+the walk below"). `validateLit` is that literal reading; `validateLit_eq` shows it
+is the same function as `validate`, whose `operandOk` applies `mayBool` to every
+operand: a logical operand is walked with `in_filter = false`, and its own operand
+checks already imply `mayBool` of it. -/
+
+def isLogicalNode : TE → Bool
+  | .node k _ => isLogical k
+
+def operandOkLit (shape : Bool) (c : TE) : Bool :=
+  !nonBool c &&
+  (shape || match c with | .node (.func rb _) _ => rb | _ => true) &&
+  (!shape || isLogicalNode c || mayBool c)
+
+def operandsOkLit (shape : Bool) : List TE → Bool
+  | [] => true
+  | c :: cs => operandOkLit shape c && operandsOkLit shape cs
+
+mutual
+def validateLit (inF shape : Bool) : TE → Bool
+  | .node k cs => (!isLogical k || inF || operandsOkLit shape cs) &&
+      validateAllLit (isLogical k && inF) (predScope k) shape 0 cs
+def validateAllLit (lf ps shape : Bool) : Nat → List TE → Bool
+  | _, [] => true
+  | i, c :: cs => validateLit (lf || (ps && i == 1)) shape c && validateAllLit lf ps shape (i + 1) cs
+end
+
+theorem operandsOk_mayBoolAll : ∀ cs, operandsOk true cs = true → mayBoolAll cs = true
+  | [], _ => rfl
+  | c :: cs, h => by
+    simp only [operandsOk, operandOk, Bool.and_eq_true] at h
+    simp only [mayBoolAll, Bool.and_eq_true]
+    exact ⟨by simpa using h.1.2, operandsOk_mayBoolAll cs h.2⟩
+
+/-- A logical node that validates outside a filter may return a boolean. -/
+theorem validate_logical_mayBool (k : TK) (cs : List TE) (hk : isLogical k = true)
+    (h : validate false true (.node k cs) = true) : mayBool (.node k cs) = true := by
+  simp only [validate, hk, Bool.not_true, Bool.false_or, Bool.and_eq_true] at h
+  have hm := operandsOk_mayBoolAll cs h.1
+  cases k <;> simp_all [isLogical, mayBool]
+
+theorem operandOk_lit (shape : Bool) (c : TE) (h : validate false shape c = true) :
+    operandOkLit shape c = operandOk shape c := by
+  match c with
+  | .node k cs =>
+    cases shape
+    · simp [operandOkLit, operandOk]
+    · cases hk : isLogical k
+      · simp [operandOkLit, operandOk, isLogicalNode, hk]
+      · simp [operandOkLit, operandOk, isLogicalNode, hk, validate_logical_mayBool k cs hk h]
+
+theorem operandsOk_lit (shape : Bool) : ∀ (i : Nat) (cs : List TE),
+    validateAll false false shape i cs = true → operandsOkLit shape cs = operandsOk shape cs
+  | _, [], _ => rfl
+  | i, c :: cs, h => by
+    simp only [validateAll, Bool.false_or, Bool.false_and, Bool.and_eq_true] at h
+    simp only [operandsOkLit, operandsOk, operandOk_lit shape c h.1, operandsOk_lit shape (i + 1) cs h.2]
+
+mutual
+/-- The literal reading of `validate_boolean_operands_impl` is `validate`. -/
+theorem validateLit_eq : ∀ (inF shape : Bool) (e : TE), validateLit inF shape e = validate inF shape e
+  | inF, shape, .node k cs => by
+    rw [validateLit, validate, validateAllLit_eq]
+    cases hk : isLogical k
+    · simp
+    · cases inF
+      · have hp : predScope k = false := by cases k <;> simp_all [isLogical, predScope]
+        cases hv : validateAll (true && false) (predScope k) shape 0 cs
+        · simp
+        · simp only [Bool.true_and, hp] at hv
+          simp [hp, operandsOk_lit shape 0 cs hv]
+      · simp
+theorem validateAllLit_eq : ∀ (lf ps shape : Bool) (i : Nat) (cs : List TE),
+    validateAllLit lf ps shape i cs = validateAll lf ps shape i cs
+  | _, _, _, _, [] => rfl
+  | lf, ps, shape, i, c :: cs => by
+    rw [validateAllLit, validateAll, validateLit_eq, validateAllLit_eq]
+end
+
 /-! ## Entities (DELETE operands) -/
 
 mutual

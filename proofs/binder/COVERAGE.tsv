@@ -42,26 +42,26 @@ graph/src/planner/binder.rs	Binder::resolve_name	2448	PROVEN	Resolve.resolveName
 graph/src/planner/binder.rs	Binder::fresh_var	2506	PROVEN	Table.freshVar, freshAnon: fresh_not_used, mint_new_covers, pushUnnamed_covers, defineAlias_anon_fresh
 graph/src/planner/binder.rs	Binder::ensure_type	2522	PROVEN	ensureType_table, ensureType_accepts_any_binding
 graph/src/planner/binder.rs	Binder::validate_boolean_operands	2543	PROVEN	Types.validateProj (= validate false true): validate_logical, validate_nonlogical, operandOk_proj, operandOk_sound_except, arith_const_rejected (#3605), true_and_neg_null_rejected
-graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2559	PROVEN	Types.validate inF shape (recursive; child_in_filter via validateAll): validate_logical, validate_logical_filter, validate_nonlogical, filter_operands_deferred, listComp_projection_checked, filter_value_context_checked (#3293), arith_runtime_accepted, getElement_and_validates
-graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2736	PROVEN	Types.mayBool_sound_except; getElement_accepted, getElement_and_validates (#3270: GetElement is runtime-typed), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
-graph/src/planner/binder.rs	Binder::expr_may_return_entity	2804	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
-graph/src/planner/binder.rs	expr_tree_to_value	2877	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
-graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2879	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
-graph/src/planner/binder.rs	collect_constant_args	2909	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
-graph/src/planner/binder.rs	rewrite_struct_constructor	2927	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
-graph/src/planner/binder.rs	rewrite_compiled_regex	2992	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
-graph/src/planner/binder.rs	replace_agg_subtrees	3026	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
-graph/src/planner/binder.rs	raw_exprs_structurally_equal	3075	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_float_rejected, order_by_float_equal, order_by_int_distinguished (W4-plan-3 fixed by #3254)
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	3079	PROVEN	AggEq.isAggPlaceholder_iff
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	3083	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
-graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	3113	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, exprIrEq_exact_any_kind, const_kinds_distinguished, patterns_by_variant
-graph/src/planner/binder.rs	denotes	3164	PROVEN	Resolve.denotes: denotes_freshVar, denotes_freshAnon, denotes_anon_iff, denotes_exclusive (no name denotes an unnamed variable)
-graph/src/planner/binder.rs	sorted_scope_vars	3171	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
-graph/src/planner/binder.rs	merge_scope_vars	3179	PROVEN	mergeSV_ge, mergeSV_covers
+graph/src/planner/binder.rs	Binder::validate_boolean_operands_impl	2559	PROVEN	Types.validate inF shape (recursive; child_in_filter via validateAll; literal shape check that skips logical operands = validateLit, validateLit_eq): validate_logical, validate_logical_filter, validate_nonlogical, filter_operands_deferred, listComp_projection_checked, filter_value_context_checked (#3293), arith_runtime_accepted, getElement_and_validates
+graph/src/planner/binder.rs	Binder::expr_may_return_boolean	2737	PROVEN	Types.mayBool_sound_except; getElement_accepted, getElement_and_validates (#3270: GetElement is runtime-typed), negate_rejected, arith_accepted; Paren arm is unreachable! since #3335 (bound trees have none: BindExpr.bind_paren, TK has no paren)
+graph/src/planner/binder.rs	Binder::expr_may_return_entity	2805	PROVEN	Types.mayEntity_eq (= reference canEnt); Paren arm unreachable! since #3335 (TK has no paren)
+graph/src/planner/binder.rs	expr_tree_to_value	2878	PROVEN	Fold.exprTreeToValue = nodeToValue: nodeToValue_sound, nodeToValue_complete, fold_dup_key
+graph/src/planner/binder.rs	expr_tree_to_value::node_to_value	2880	PROVEN	Fold.nodeToValue_sound (folded value = runtime value), nodeToValue_complete
+graph/src/planner/binder.rs	collect_constant_args	2910	PROVEN	Fold.collectConstArgs_spec, foldCall_sound
+graph/src/planner/binder.rs	rewrite_struct_constructor	2928	PROVEN	Fold.rewriteStruct_shape, rewriteStruct_slots, rewriteStruct_unknown
+graph/src/planner/binder.rs	rewrite_compiled_regex	2993	PROVEN	Fold.rewriteRegex_spec, rewriteRegex_bad
+graph/src/planner/binder.rs	replace_agg_subtrees	3027	PROVEN	AggEq.replaceAgg_id, replaceAgg_root, matchItem_spec
+graph/src/planner/binder.rs	raw_exprs_structurally_equal	3076	PROVEN	AggEq.structEq: nodesEq_refl, nodesEq_symm, order_by_float_rejected, order_by_float_equal, order_by_int_distinguished (W4-plan-3 fixed by #3254)
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::is_agg_placeholder	3080	PROVEN	AggEq.isAggPlaceholder_iff
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	3084	PROVEN	AggEq.eqS/strip (placeholder filter at every level), eqS_refl, eqS_symm
+graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	3114	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, exprIrEq_exact_any_kind, const_kinds_distinguished, patterns_by_variant
+graph/src/planner/binder.rs	denotes	3165	PROVEN	Resolve.denotes: denotes_freshVar, denotes_freshAnon, denotes_anon_iff, denotes_exclusive (no name denotes an unnamed variable)
+graph/src/planner/binder.rs	sorted_scope_vars	3172	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
+graph/src/planner/binder.rs	merge_scope_vars	3180	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1728	PROVEN	Scopes.accumulateFrom (create: keep_new, comprehension: !keep_new): accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels
-graph/src/planner/binder.rs	constants_equal	3060	PROVEN	AggEq.constEq (Int/Float exact via fint, else Value == = compare_value): constEq_refl, constEq_symm, int_float_iff
+graph/src/planner/binder.rs	constants_equal	3061	PROVEN	AggEq.constEq (Int/Float exact via fint, else Value == = compare_value): constEq_refl, constEq_symm, int_float_iff
 graph/src/planner/binder.rs	Binder::validate_order_by_boolean_operands	2551	PROVEN	Types.validateOrderBy (= validate false false, #3605): orderBy_checks, orderBy_func_rejected, orderBy_operand_sound
-graph/src/planner/binder.rs	Binder::non_boolean_operand_type	2620	PROVEN	Types.nonBool (TK.negate/arith carry cv, the kind constant_value computes): nonBool_sound, nonBool_mayBool, arith_const_rejected
-graph/src/planner/binder.rs	Binder::type_name	2649	NOT COVERED	(#3605): error-message spelling only; the models return Ok/Err
-graph/src/planner/binder.rs	Binder::constant_value	2673	NOT COVERED	(#3605): Value evaluation not modelled; abstracted to its result kind (TK.negate/arith cv) in Types.nonBool
-graph/src/planner/binder.rs	Binder::constant_arithmetic	2713	NOT COVERED	(#3605): Value arithmetic (Add/Sub/…/apply_pow) not modelled; abstracted to its result kind (TK.arith cv) in Types.nonBool
+graph/src/planner/binder.rs	Binder::non_boolean_operand_type	2621	PROVEN	Types.nonBool (TK.negate/arith carry cv, the kind constant_value computes): nonBool_sound, nonBool_mayBool, arith_const_rejected
+graph/src/planner/binder.rs	Binder::type_name	2650	NOT COVERED	(#3605): error-message spelling only; the models return Ok/Err
+graph/src/planner/binder.rs	Binder::constant_value	2674	NOT COVERED	(#3605): Value evaluation not modelled; abstracted to its result kind (TK.negate/arith cv) in Types.nonBool
+graph/src/planner/binder.rs	Binder::constant_arithmetic	2714	NOT COVERED	(#3605): Value arithmetic (Add/Sub/…/apply_pow) not modelled; abstracted to its result kind (TK.arith cv) in Types.nonBool
