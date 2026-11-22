@@ -250,7 +250,9 @@ class testEffects_01_Shapes(_EffectsBase):
 
         res = m.query("CREATE (a)-[:R]->(b) DETACH DELETE a "
                       "WITH b CREATE (b)-[:S]->(:X)")
-        self.env.assertEqual(res.relationships_created, 1)
+        # the cancelled :R counts too, as in C (#2966); one edge remains
+        self.env.assertEqual(res.relationships_created, 2)
+        self.env.assertEqual(res.relationships_deleted, 1)
         self.wait_for_replica_offset()
 
         q = "MATCH ()-[r]->() RETURN type(r), ID(r)"
