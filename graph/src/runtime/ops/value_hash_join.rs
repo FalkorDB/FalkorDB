@@ -255,14 +255,19 @@ const INT_KEY_LIMIT: u64 = 1 << f64::MANTISSA_DIGITS;
 /// because `=` is not transitive across `Int` and `Float` above 2^53 —
 /// `2^53` and `2^53.0` are equal, and so are `2^53.0` and `2^53 + 1`, but not
 /// `2^53` and `2^53 + 1`. So an `Int` and a `Float` (at any depth of a list or
-/// map) never share an entry.
+/// map) share an entry only below 2^53, where `=` is exact.
 fn same_build_key(
     a: &Value,
     b: &Value,
 ) -> bool {
     match (a, b) {
         (Value::Int(x), Value::Int(y)) => x == y,
-        (Value::Int(_), Value::Float(_)) | (Value::Float(_), Value::Int(_)) => false,
+        // Below 2^53 the int is exactly an `f64`, so `=` is exact and
+        // transitive there and the pair can share an entry (`Int(1)` and
+        // `Float(1.0)` keep one bucket entry, not two).
+        (Value::Int(n), Value::Float(_)) | (Value::Float(_), Value::Int(n)) => {
+            n.unsigned_abs() < INT_KEY_LIMIT && keys_match(a, b)
+        }
         (Value::List(x), Value::List(y)) | (Value::Path(x), Value::Path(y)) => {
             x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| same_build_key(a, b))
         }
