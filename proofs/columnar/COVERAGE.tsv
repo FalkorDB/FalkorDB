@@ -107,4 +107,4 @@ graph/src/runtime/runtime.rs	materialize_node_property_exact	1706	PROVEN	IntLane
 graph/src/graph/graph.rs	Graph::get_node_int_attributes_by_idx	2702	PROVEN	IntLane.intBatch (forward of get_int_attrs_by_idx_batch_into, NodeId as u64): intBatch_sound, matNodeExact_eq (#3437)
 graph/src/graph/attribute_store.rs	AttributeStore::get_int_attrs_by_idx_batch_into	1126	PROVEN	IntLane.intBatch (Tag::Int payload, Tag::Null/absent = on_null + 0, other tag = false): intBatch_sound (= classify_numeric int lane + NullBitmap::from_values of the get_attrs_by_idx_batch_into values; #3437)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
-graph/src/runtime/ops/batched_result_emitter.rs	RowIter::size_hint	488	NOT COVERED	(#3437): forwards the inner iterator's size_hint; used only to size a buffer, not modelled
+graph/src/runtime/ops/batched_result_emitter.rs	RowIter::size_hint	488	PROVEN	Gather.rowIterSizeHint (#3437; Many/Spread forward the inner hint): rowIterSizeHint_exact (exact = remaining rowIterList length when the inner hints are), rowIterSizeHint_one_next
