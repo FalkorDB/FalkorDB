@@ -1,16 +1,10 @@
 import PendingCommit.UniqueIndex
 /-
-# `redisearch_unique_query` (pending.rs:174) and the RediSearch `(query_for, lookup)` pair
+# `redisearch_unique_query` (pending.rs) and the RediSearch `(query_for, lookup)` pair
 
 `check_node_constraint` / `check_edge_constraint` without `index-falkordb` build
 `query_for = |values| redisearch_unique_query(indexed, &constraint.properties, values)` and
 `lookup = |query| g.get_indexed_nodes(label, query)` (edges: `get_indexed_edges`).
-
-| Lean | Rust |
-| --- | --- |
-| `Query` (`equal` / `and`) | `IndexQuery::Equal` / `IndexQuery::And` |
-| `redisearchQuery exact indexed props vals` | `redisearch_unique_query(indexed, properties, values)` (:174) |
-| `evalQ ix` | `get_indexed_*` of a query: `Equal` is the index's exact-match set, `And` their intersection |
 
 Results:
 * `redisearchQuery_none_iff` — `None` iff the properties are not all Range-indexed or some
@@ -56,7 +50,7 @@ theorem redisearchQuery_and (exact : V → Bool) (props : List Nat) (vals : List
     (hn : (props.zip vals).length ≠ 1) (hv : vals.all exact = true) :
     redisearchQuery exact true props vals = some (.and (props.zip vals)) := by
   unfold redisearchQuery
-  rw [if_neg (by simp [hv])]
+  rw [ite_eq_right (by simp [hv])]
   congr 1
   split
   · rename_i k v h; rw [h] at hn; simp at hn

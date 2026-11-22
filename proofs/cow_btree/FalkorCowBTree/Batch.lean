@@ -1,45 +1,42 @@
-import FalkorCowBTree.Bugs
+import FalkorCowBTree.Cursor
 
 /-!
-# The batch paths after #2278 (3597b3a82): routing fix and `remove_batch`
+# The batch paths: routing and `remove_batch`
 
-* `route_keeps_all`, `route_routes_TOP`, `route_TOP_example` — the new sweep (last child takes the
-  rest) loses nothing; in particular `(u64::MAX, u64::MAX)` now reaches the last child (Bug 1 fixed).
-* `subtract_eq` — the leaf survivor walk of `remove_batch` (`leaf/mod.rs:567-582`) is `List.filter`.
+* `route_keeps_all`, `route_routes_TOP`, `route_TOP_example` — the sweep (last child takes the
+  rest) loses nothing; in particular `(u64::MAX, u64::MAX)` reaches the last child.
+* `subtract_eq` — the leaf survivor walk of `remove_batch` (`node.rs`) is `List.filter`.
 * `combine_with_sibling` (`cws`), `strip_empty`, `Node::is_underfull`, `Branch::is_underfull`,
   `Node::is_empty_node` — modelled line by line, with `rebalance_eq_cws` (the single-key repair is
-  exactly one `combine_with_sibling` step). Unchanged by #3283.
-* The pre-#3283 models of `merge_underfull` / `remove_batch` (contents right, shape not) were removed
-  (in 17ccc5412). The current model and its `TreeWF` proof are in `BatchWF.lean`.
+  exactly one `combine_with_sibling` step).
+* The model of `merge_underfull` / `remove_batch` and its `TreeWF` proof are in `BatchWF.lean`.
 -/
 
 namespace CowBTree
 
 /-! ## Model -/
 
-/-- `Node::is_underfull` (`node.rs:510`), reporting through `Branch::is_underfull` (`node.rs:198`). Its
-    leaf arm is `Page::is_underfull`, for the `u64` page `count < LEAF_MAX / 2` (`leaf/mod.rs:532-534`,
-    `Page.lean`). -/
+/-- `Node::is_underfull` (`node.rs`), reporting through `Branch::is_underfull` (`node.rs`). -/
 def isUnderfull (c : Cfg) : Node → Bool
   | .leaf es => decide (es.length < c.L / 2)
   | .branch _ cs => decide (cs.length < c.B / 2)
 
-/-- `Branch::is_underfull` (`node.rs:198`): `children.len() < BRANCH_MAX / 2`. -/
+/-- `Branch::is_underfull` (`node.rs`): `children.len() < BRANCH_MAX / 2`. -/
 def branchUnderfull (c : Cfg) (cs : List Node) : Bool := decide (cs.length < c.B / 2)
 
-/-- `Node::is_empty_node` (`node.rs:519`): a leaf with `count() == 0`. -/
+/-- `Node::is_empty_node` (`node.rs`): a leaf with `count() == 0`. -/
 def isEmptyNode : Node → Bool
   | .leaf es => es.isEmpty
   | .branch _ _ => false
 
-/-- `combine_with_sibling` (`node.rs:100-127`): pair child `ci` with its right neighbour (its left one
+/-- `combine_with_sibling` (`node.rs`): pair child `ci` with its right neighbour (its left one
     when it is the last), combine, and return the new `(seps, children)` and the index to examine next. -/
 def cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) : List E × List Node × Nat :=
-  let li := if ci + 1 < cs.length then ci else ci - 1          -- lines 106-110
+  let li := if ci + 1 < cs.length then ci else ci - 1          -- lines 119-123
   let ri := if ci + 1 < cs.length then ci + 1 else ci
   match combine c (cs.getD li default) (seps.getD li 0) (cs.getD ri default) with
-  | .one m => (delAt seps li, delAt (setAt cs li m) ri, li)       -- lines 112-117
-  | .two l s r => (setAt seps li s, setAt (setAt cs li l) ri r, ri) -- lines 119-124
+  | .one m => (delAt seps li, delAt (setAt cs li m) ri, li)       -- lines 125-130
+  | .two l s r => (setAt seps li s, setAt (setAt cs li l) ri r, ri) -- lines 132-137
 
 /-- The `.two` arm of `combine` always hands back a right node that is *not* under-full. -/
 theorem combine_two_not_uf (c : Cfg) (a b : Node) (sep : E) :
@@ -96,13 +93,13 @@ theorem cws_measure (c : Cfg) (seps : List E) (cs : List Node) (i : Nat) (h1 : 1
       simp only [Bool.false_eq_true, and_false, ↓reduceIte]
       omega
 
-/-- `strip_empty` (`node.rs:167-182`): drop every empty child, and with it the near separator
+/-- `strip_empty` (`node.rs`): drop every empty child, and with it the near separator
     (`seps[i]`, or the trailing one for the last child). -/
 def stripEmpty (seps : List E) (cs : List Node) (i : Nat) : List E × List Node :=
   if hi : i < cs.length then
-    if isEmptyNode (cs.getD i default) then                                       -- line 159
-      stripEmpty (if seps.isEmpty then seps else delAt seps (min i (seps.length - 1)))  -- lines 160-162
-        (delAt cs i) i                                                            -- line 163
+    if isEmptyNode (cs.getD i default) then                                       -- line 172
+      stripEmpty (if seps.isEmpty then seps else delAt seps (min i (seps.length - 1)))  -- lines 173-175
+        (delAt cs i) i                                                            -- line 176
     else stripEmpty seps cs (i + 1)
   else (seps, cs)
 termination_by cs.length - i
@@ -110,16 +107,16 @@ decreasing_by
   · simp only [delAt, List.length_append, List.length_take, List.length_drop]; omega
   · omega
 
-/-- The leaf arm of `Node::remove_batch` (`leaf/mod.rs:567-582`): the survivor merge-walk. `bs` is the
+/-- The leaf arm of `Node::remove_batch` (`node.rs`): the survivor merge-walk. `bs` is the
     unconsumed batch suffix (`batch[bi..]`), which persists across entries. -/
 def subtract : List E → List E → List E
   | [], _ => []
   | p :: ps, bs =>
-    let bs' := bs.dropWhile (fun b => decide (b < p))                 -- lines 452-454
-    if bs'.head? = some p then subtract ps bs'                         -- lines 455-457
-    else p :: subtract ps bs'                                          -- line 458
+    let bs' := bs.dropWhile (fun b => decide (b < p))                 -- lines 492-494
+    if bs'.head? = some p then subtract ps bs'                         -- lines 495-497
+    else p :: subtract ps bs'                                          -- line 498
 
-/-! ## The routing sweep (fix of Bug 1) -/
+/-! ## The routing sweep -/
 
 /-- **The new sweep loses nothing**: the slices handed to the children concatenate back to the batch. -/
 theorem route_keeps_all : ∀ (seps : List E) (cs : List Node) (batch : List E), cs ≠ [] →
@@ -132,7 +129,7 @@ theorem route_keeps_all : ∀ (seps : List E) (cs : List Node) (batch : List E),
     have := List.take_append_drop (batch.takeWhile (fun e => decide (e < seps.head?.getD 0))).length batch
     rwa [take_takeWhile_length] at this
 
-/-- **Bug 1 is fixed** (#2278, 3597b3a82): every batch entry — `TOP = (u64::MAX, u64::MAX)` included —
+/-- **The sweep loses nothing**: every batch entry — `TOP = (u64::MAX, u64::MAX)` included —
     is handed to some child. -/
 theorem route_routes_TOP (seps : List E) (cs : List Node) (batch : List E) (hcs : cs ≠ []) (hT : TOP ∈ batch) :
     ∃ p ∈ route seps cs batch, TOP ∈ p.2 := by
@@ -227,7 +224,7 @@ theorem subtract_eq : ∀ (es bs : List E), Sorted es → SortedLe bs →
 
 /-! ## `Branch::rebalance` is one `combine_with_sibling` step -/
 
-/-- The #2278 refactor of `Branch::rebalance` (`node.rs:205-219`) into `combine_with_sibling` keeps it
+/-- The #2278 refactor of `Branch::rebalance` (`node.rs`) into `combine_with_sibling` keeps it
     the same function: the old model `rebalance` is the new code's first two components. -/
 theorem rebalance_eq_cws (c : Cfg) (seps : List E) (cs : List Node) (ci : Nat) :
     rebalance c seps cs ci = if cs.length < 2 then (seps, cs) else ((cws c seps cs ci).1, (cws c seps cs ci).2.1) := by
@@ -380,7 +377,7 @@ theorem stripEmpty_content (h : Nat) : ∀ (seps : List E) (cs : List Node) (i :
   intro seps cs i
   induction seps, cs, i using stripEmpty.induct with
   | case1 seps cs i hi he ih =>
-    rw [stripEmpty, dif_pos hi, if_pos he]
+    rw [stripEmpty, dite_eq_left hi, ite_eq_left he]
     simp only [dite_eq_ite] at ih
     obtain ⟨ih1, ih2⟩ := ih
     have hsp := split_at cs i hi
@@ -402,7 +399,7 @@ theorem stripEmpty_content (h : Nat) : ∀ (seps : List E) (cs : List Node) (i :
         · exact List.mem_of_mem_take hk
         · exact List.mem_of_mem_drop hk
   | case2 seps cs i hi he ih =>
-    rw [stripEmpty, dif_pos hi, if_neg he]
+    rw [stripEmpty, dite_eq_left hi, ite_eq_right he]
     obtain ⟨ih1, ih2⟩ := ih
     refine ⟨ih1, fun k hk => ?_⟩
     rcases ih2 k hk with hk | hk
@@ -414,7 +411,7 @@ theorem stripEmpty_content (h : Nat) : ∀ (seps : List E) (cs : List Node) (i :
         exact Or.inr ⟨List.getElem_mem _, by simpa using he⟩
     · exact Or.inr hk
   | case3 seps cs i hi =>
-    rw [stripEmpty, dif_neg hi]
+    rw [stripEmpty, dite_eq_right hi]
     refine ⟨rfl, fun k hk => Or.inl ?_⟩
     rwa [List.take_of_length_le (by omega)]
 

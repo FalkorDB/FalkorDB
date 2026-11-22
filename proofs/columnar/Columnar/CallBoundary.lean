@@ -2,15 +2,14 @@
 # #2845 (eb470521b), columnar side: `rows_only`, `has_origins`, the empty-projection
 # fast path and the emitter's gather guard
 
-Model of the merged (now origin/main a9377c636) graph/src/runtime/batch.rs (`rows_only` :853,
-`gather` :897-918, `concat` :979-1053, `origin_row` :1298, `has_origins`
-:1312, `BatchBuilder::push_row_with` :577, `BatchBuilder::finish` :750-797),
-runtime/ops/project.rs `eval` :54-147, and
-runtime/ops/batched_result_emitter.rs `start_batch` :604, `finish_batch` :651.
+Model of the merged (now origin/main a9377c636) graph/src/runtime/batch.rs (`rows_only` ,
+`gather` , `concat` , `origin_row` , `has_origins`
+, `BatchBuilder::push_row_with` , `BatchBuilder::finish` ),
+runtime/ops/project.rs `eval` , and
+runtime/ops/batched_result_emitter.rs `start_batch` , `finish_batch` :651.
 Columns are abstracted to their bound/unbound shape plus values (`Option
 (List V)`, `none` = `Column::Unbound`) — the only thing these functions
-inspect, the value-level laws being this project's. Folded in from the
-retired proofs/pr2845_review.
+inspect, the value-level laws being this project's.
 -/
 namespace Columnar.Pr2845
 
@@ -87,11 +86,11 @@ def builderFinishEmptyRows {V : Type} (origins : List Nat) : Batch V :=
   else ⟨origins.length, none, [], if origins.any (· != 0) then some origins else none⟩
 
 /-- origin/main's path for `trees = [] ∧ copy_from_parent = []`: one empty
-`Row` per active row with `origin_row = batch.origin_row(row)` (project.rs:111-129). -/
+`Row` per active row with `origin_row = batch.origin_row(row)` (project.rs). -/
 def projectEmptyGeneral {V : Type} (b : Batch V) : Batch V :=
   builderFinishEmptyRows (b.active.map b.originRow)
 
-/-- The PR's fast path (project.rs:98-105). -/
+/-- The PR's fast path (project.rs). -/
 def projectEmptyFast {V : Type} (b : Batch V) : Batch V :=
   let os := b.active.map b.originRow
   let out : Batch V := rowsOnly b.active.length
@@ -138,8 +137,7 @@ theorem projectMerged_eq_main {T C V : Type} (fastCols general : List T → List
 
 /-! ## `BatchedResultEmitter`: the gather guard -/
 
-/-- `start_batch` before (origin/main :590) and after (merged :604-617; the `has_origins()` guard is on :609). -/
-def shouldExpandOld {V : Type} (b : Batch V) : Bool := b.cols.length > 0
+/-- `start_batch` (:604-617; the `has_origins()` guard is on :609). -/
 def shouldExpandNew {V : Type} (b : Batch V) : Bool := b.cols.length > 0 || b.hasOrigins
 
 /-- `finish_batch` (:651-669) for `count = idx.length > 0` packed results
@@ -193,14 +191,14 @@ theorem emit_len {V : Type} [Inhabited V] (p : Batch V) (idx : List Nat) (lane :
 
 /-- Residual (unchanged from proofs/columnar `finishLen_drops`): a no-alias
 emitter over a parent with no column AND no origin yields 0 rows. Its one
-user, ExpandInto (expand_into.rs:95), always has both endpoint columns. -/
+user, ExpandInto (expand_into.rs), always has both endpoint columns. -/
 theorem emit_len_residual :
     (finishBatch (V := Nat) (shouldExpandNew (rowsOnly 3 : Batch Nat)) (rowsOnly 3) [0, 1, 2] none).len = 0 := by
   decide
 
 /-! ## `Batch::concat` over columnless batches -/
 
-/-- `concat` :979-1053, restricted to batches with no columns (what the
+/-- `concat` , restricted to batches with no columns (what the
 empty entry projection and its consumers produce): `total` rows, no
 columns, origins concatenated over active rows, kept iff some is non-zero. -/
 def concatColless {V : Type} (bs : List (Batch V)) : Batch V :=

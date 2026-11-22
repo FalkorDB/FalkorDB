@@ -9,9 +9,9 @@ Source: origin/main `5c7af54f2` (line numbers re-pinned there).
 | `auxSave`               | `graph_aux_save` (:272-290) |
 | `auxLoad`               | `graph_aux_load` (:293-334) |
 | `metaAuxLoad`           | `graphmeta_aux_load` (:981-991) |
-| `Sub`, `onPersistence`  | `on_persistence` (:375-400) |
-| `preFork`               | `pre_fork_prepare` (:357-368) |
-| `metaFree`              | `graphmeta_free` (:971-977); `graphmeta_rdb_save` is `VKeys.metaSave` since #3161 |
+| `Sub`, `onPersistence`  | `on_persistence` (:384-413; strips telemetry at every start) |
+| `preFork`               | `pre_fork_prepare` (:360-370) |
+| `metaFree`              | `graphmeta_free` (:971-977); `graphmeta_rdb_save` is `VKeys.metaSave` |
 
 Names and scripts are byte strings; `String::from_utf8_lossy` is the identity on the UTF-8
 the module itself writes (a Rust `String`), so it is not modelled further.
@@ -136,35 +136,49 @@ theorem metaAuxLoad_spec (w : When) (n : Nat) (r : List It) :
 
 /-- The `REDISMODULE_SUBEVENT_PERSISTENCE_*` cases `on_persistence` distinguishes. -/
 inductive Sub where
-  | rdbStart       -- BGSAVE fork child
+  | rdbStart       -- BGSAVE / diskless-sync fork child
   | syncRdbStart   -- SAVE / DEBUG RELOAD
+  | aofStart       -- AOF rewrite fork child
+  | syncAofStart   -- synchronous AOF rewrite
   | ended
   | failed
   | other
   deriving DecidableEq, Repr
 
+/-- `stripTelemetry` is `strip_telemetry_streams` (#3844): delete the queued
+streams of freed graphs, then the stream of every registered graph. -/
 inductive Act where
   | createVKeys
+  | stripTelemetry
   | deleteVKeys
-  | nothing
   deriving DecidableEq, Repr
 
-/-- `on_persistence` (:375). -/
-def onPersistence : Sub → Act
-  | .syncRdbStart => .createVKeys
-  | .rdbStart => .nothing
-  | .ended | .failed => .deleteVKeys
-  | .other => .nothing
+/-- `on_persistence` (:384): the actions it takes, in order. -/
+def onPersistence : Sub → List Act
+  | .syncRdbStart => [.createVKeys, .stripTelemetry]
+  | .rdbStart | .aofStart | .syncAofStart => [.stripTelemetry]
+  | .ended | .failed => [.deleteVKeys]
+  | .other => []
 
 /-- Virtual keys exist only around a synchronous save: a BGSAVE child never allocates them
 (so a BGSAVE always writes every graph as a single key), and every end of a save — success
 or failure — removes them. -/
 theorem onPersistence_spec (s : Sub) :
-    (onPersistence s = .createVKeys ↔ s = .syncRdbStart) ∧
-    (onPersistence s = .deleteVKeys ↔ s = .ended ∨ s = .failed) := by
+    (.createVKeys ∈ onPersistence s ↔ s = .syncRdbStart) ∧
+    (.deleteVKeys ∈ onPersistence s ↔ s = .ended ∨ s = .failed) := by
   cases s <;> simp [onPersistence]
 
-/-- `pre_fork_prepare` (:357): only on the main thread, wait on every registered graph. -/
+/-- #3844: every kind of persistence start (C's `_IsEventPersistenceStart`) strips the
+telemetry streams before the snapshot is written, and nothing else does. -/
+theorem onPersistence_strip (s : Sub) :
+    (.stripTelemetry ∈ onPersistence s ↔
+      s = .rdbStart ∨ s = .syncRdbStart ∨ s = .aofStart ∨ s = .syncAofStart) := by
+  cases s <;> simp [onPersistence]
+
+/-- A `SAVE` creates the virtual keys first, then strips. -/
+theorem onPersistence_sync_order : onPersistence .syncRdbStart = [.createVKeys, .stripTelemetry] := rfl
+
+/-- `pre_fork_prepare` (:360): only on the main thread, wait on every registered graph. -/
 def preFork {Gr : Type} (isMain : Bool) (registry : List Gr) : List Gr :=
   if isMain then registry else []
 

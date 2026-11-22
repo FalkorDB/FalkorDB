@@ -3,7 +3,7 @@ name = "graph"
 version = "0.1.0"
 edition = "2024"
 description = "Core of the database"
-license = "SSPL-1.0"
+license = "SSPL-1.0 OR AGPL-3.0-only"
 repository = "https://github.com/FalkorDB/FalkorDB"
 readme = "../README.md"
 keywords = ["graph", "database"]
@@ -69,6 +69,9 @@ simsimd = "6.5"
 smallvec = "1.15.2"
 thin-vec = "0.2.18"
 thiserror = "2"
+# The schema hash (`graph::schema_hash`) is XXH3-64, a fixed algorithm, so every
+# server computes the same value. `golden_values` there pins it.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = { version = "0.14.0", default-features = false, features = ["arrays", "legacy", "zdict_builder"] }
 crc32fast = "1.4"
 # Geometry for the native geo kind (`index::falkordb::geo`): haversine destination

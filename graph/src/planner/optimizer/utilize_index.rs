@@ -321,6 +321,28 @@ fn build_op_query(
     }
 }
 
+/// The attribute name when the subtree at `idx` is exactly `alias.attr`
+/// (a property access directly on the variable), `None` for any other
+/// shape that merely contains such a property.
+fn bare_property_of(
+    tree: &DynTree<ExprIR<Variable>>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    alias: &Variable,
+) -> Option<Arc<String>> {
+    let mut node = tree.node(idx);
+    while matches!(node.data(), ExprIR::Paren) {
+        node = node.get_child(0)?;
+    }
+    let ExprIR::Property(attr) = node.data() else {
+        return None;
+    };
+    // `Variable` equality is by id only; ids repeat across scopes.
+    match node.get_child(0).map(|c| c.data()) {
+        Some(ExprIR::Variable(v)) if v.key() == alias.key() => Some(attr.clone()),
+        _ => None,
+    }
+}
+
 fn extract_attribute_from_subtree(
     tree: &DynTree<ExprIR<Variable>>,
     root_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -591,7 +613,10 @@ fn try_in_filter_scan<T: IndexSubject>(
         _ => return None,
     };
 
-    let attr = extract_attribute_from_subtree(filter, attr_side)?;
+    // The index side must be the scanned property itself. `abs(n.a) IN
+    // [1]` or `2 IN [n.a, n.b]` only *contain* `n.a`; pushing them as
+    // `n.a IN [...]` or as an array-contains on `n.a` selects other rows.
+    let attr = bare_property_of(filter, attr_side, subject.alias())?;
     let label = subject
         .all_labels()
         .find(|l| T::is_indexed(graph, l, &attr, IndexType::Range))?
@@ -1044,12 +1069,23 @@ fn prune_all_node_scan_child(
     let IR::AllNodeScan(child_node) = child.data() else {
         return false;
     };
-    let (child_alias_id, child_scope_id) = (child_node.alias.id, child_node.alias.scope_id);
     let child_idx = child.idx();
     // Safety: don't drop the scan that binds the child alias if the
     // edge-index query still depends on it.
-    if index_query_references_variable(&query, child_alias_id, child_scope_id) {
+    if index_query_references_variable(&query, child_node.alias.key()) {
         return false;
+    }
+    // The scan may sit on rows an earlier clause supplies (an `UNWIND`, a
+    // `WITH`); those rows still have to reach the edge scan, so what is beneath
+    // the scan stays and only the scan goes.
+    let below: Vec<DynTree<IR>> = plan
+        .node(child_idx)
+        .children()
+        .map(|c| c.clone_as_tree())
+        .collect();
+    // Reattach before pruning: `prune` can reclaim memory and invalidate `idx`.
+    for t in below {
+        plan.node_mut(idx).push_child_tree(t);
     }
     plan.node_mut(child_idx).prune();
     true

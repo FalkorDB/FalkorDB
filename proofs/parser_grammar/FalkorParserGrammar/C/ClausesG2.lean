@@ -10,8 +10,7 @@ section
 variable (o : Oracle) (x : CExt)
 
 /-- What `parse_primary_expr` promises about `recurse`: it is set only after
-consuming `(` — with a `Paren` tree — or `[` — with a list tree (cypher.rs:2113-2127,
-2880-2884). The expression model's `primary` satisfies it (`lf .paren` / `lf .list`). -/
+consuming `(` — with a `Paren` tree — or `[` — with a list tree (cypher.rs). The expression model's `primary` satisfies it (`lf .paren` / `lf .list`). -/
 def Oracle.PPRec (o : Oracle) : Prop :=
   ∀ s t s', o.pp s = .ok (t, true) s' →
     (s.cur = .lparen ∧ t.root = .paren) ∨ (s.cur = .lbrack ∧ t.root = .list)
@@ -77,6 +76,26 @@ theorem dotChain_sound : ∀ (n : Nat) t (s : PS) t' s', dotChain n t s = .ok t'
       exact .cons ‹_› hp (dotChain_sound n _ _ _ _ h)
     · obtain ⟨rfl, rfl⟩ := pure_ok h; exact .nil
 
+/-- `parse_update_target`: a target and, if a `.prop` chain follows, the chain applied to it. -/
+inductive GUpdate : PS → ET → Bool → PS → Prop
+  | plain {s t s1} : GTarget o s t s1 → s1.cur ≠ .dot → GUpdate s t false s1
+  | dots {s t s1 t' s2} : GTarget o s t s1 → s1.cur = .dot → GDots s1 t t' s2 →
+      GUpdate s t' true s2
+
+theorem updateTargetP_sound (hpp : o.PPRec) (F : Nat) (s : PS) r s'
+    (h : updateTargetP o F s = .ok r s') : GUpdate o s r.1 r.2 s' := by
+  unfold updateTargetP at h
+  peel h => t s1 h1
+  have gt := targetP_sound o hpp _ _ _ h1
+  peel h => c s2 h2
+  obtain ⟨hc0, hs⟩ := peek_ok h2; subst hc0; subst s2
+  split at h
+  · peel h => t' s3 h3
+    obtain ⟨rfl, rfl⟩ := pure_ok h
+    exact .dots gt ‹_› (dotChain_sound _ _ _ _ _ h3)
+  · obtain ⟨rfl, rfl⟩ := pure_ok h
+    exact .plain gt ‹_›
+
 /-- `oC_SetItem` (Cypher.g4:116-121). -/
 inductive GSetItem : PS → SetItem → PS → Prop
   | prop {s t s1 t' s2 v s3} : GTarget o s t s1 → s1.cur = .dot → GDots s1 t t' s2 →
@@ -98,42 +117,50 @@ theorem setItems_sound (hpp : o.PPRec) (F : Nat) : ∀ (n : Nat) acc (s : PS) ou
   | 0, _, _, _, _, h => by simp [setItems] at h
   | n + 1, acc, s, out, s', h => by
     unfold setItems at h
-    peel h => t s1 h1
-    have gt := targetP_sound o hpp _ _ _ h1
-    peel h => c s2 h2
-    obtain ⟨hc0, hs⟩ := peek_ok h2; subst hc0; subst s2
+    peel h => r s1 h1
+    have gu := updateTargetP_sound o hpp F _ _ _ h1
+    obtain ⟨t, hasp⟩ := r
+    dsimp only at gu
     peel h => it s3 h3
     have gi : GSetItem o CExt.rust s it s3 := by
-      split at h3
-      · peel h3 => t' s4 h4
-        peel h3 => u s5 h5
-        obtain ⟨he, rfl⟩ := tok_ok h5
-        peel h3 => v s6 h6
-        obtain ⟨rfl, rfl⟩ := pure_ok h3
-        exact .prop gt ‹_› (dotChain_sound _ _ _ _ _ h4) he h6
-      · split at h3
-        · rename_i _ hcol
-          generalize hr : t.root = r at h3
-          cases r <;> dsimp only at h3
-          case var v =>
-            peel h3 => ls s4 h4
-            obtain ⟨rfl, rfl⟩ := pure_ok h3
-            exact .label gt hr hcol (labelsP_sound _ _ _ _ _ h4)
-          all_goals simp at h3
-        · peel h3 => eq s4 h4
-          cases eq
-          · have := (opt_eq h4).2 rfl; subst s4
-            simp only [Bool.false_eq_true, ite_false] at h3
-            peel h3 => u s5 h5
-            obtain ⟨hp, rfl⟩ := tok_ok h5
-            peel h3 => v s6 h6
-            obtain ⟨rfl, rfl⟩ := pure_ok h3
-            exact .merge gt (.inr rfl) hp h6
-          · obtain ⟨he, rfl⟩ := (opt_eq h4).1 rfl
-            simp only [ite_true] at h3
-            peel h3 => v s6 h6
-            obtain ⟨rfl, rfl⟩ := pure_ok h3
-            exact .assign gt (.inr rfl) he h6
+      dsimp only at h3
+      cases hasp
+      · simp only [Bool.false_eq_true, ite_false] at h3
+        cases gu with
+        | plain gt hne =>
+          peel h3 => c s2 h2
+          obtain ⟨hc0, hs⟩ := peek_ok h2; subst hc0; subst s2
+          split at h3
+          · rename_i hcol
+            generalize hr : t.root = r at h3
+            cases r <;> dsimp only at h3
+            case var v =>
+              peel h3 => ls s4 h4
+              obtain ⟨rfl, rfl⟩ := pure_ok h3
+              exact .label gt hr hcol (labelsP_sound _ _ _ _ _ h4)
+            all_goals simp at h3
+          · peel h3 => eq s4 h4
+            cases eq
+            · have := (opt_eq h4).2 rfl; subst s4
+              simp only [Bool.false_eq_true, ite_false] at h3
+              peel h3 => u s5 h5
+              obtain ⟨hp, rfl⟩ := tok_ok h5
+              peel h3 => v s6 h6
+              obtain ⟨rfl, rfl⟩ := pure_ok h3
+              exact .merge gt (.inr rfl) hp h6
+            · obtain ⟨he, rfl⟩ := (opt_eq h4).1 rfl
+              simp only [ite_true] at h3
+              peel h3 => v s6 h6
+              obtain ⟨rfl, rfl⟩ := pure_ok h3
+              exact .assign gt (.inr rfl) he h6
+      · simp only [ite_true] at h3
+        cases gu with
+        | dots gt hd gd =>
+          peel h3 => u s5 h5
+          obtain ⟨he, rfl⟩ := tok_ok h5
+          peel h3 => v s6 h6
+          obtain ⟨rfl, rfl⟩ := pure_ok h3
+          exact .prop gt hd gd he h6
     peel h => more s4 h4
     cases more
     · have := (opt_eq h4).2 rfl; subst s4
@@ -187,19 +214,29 @@ theorem removeItems_sound (hpp : o.PPRec) (F : Nat) : ∀ (n : Nat) acc (s : PS)
   | 0, _, _, _, _, h => by simp [removeItems] at h
   | n + 1, acc, s, out, s', h => by
     unfold removeItems at h
-    peel h => t s1 h1
-    have gt := targetP_sound o hpp _ _ _ h1
-    peel h => c s2 h2
-    obtain ⟨hc0, hs⟩ := peek_ok h2; subst hc0; subst s2
+    peel h => r s1 h1
+    have gu := updateTargetP_sound o hpp F _ _ _ h1
+    obtain ⟨t, hasp⟩ := r
+    dsimp only at gu
     peel h => it s3 h3
     have gi : GRemoveItem o CExt.rust s it s3 := by
-      split at h3
-      · exact .prop gt ‹_› (dotChain_sound _ _ _ _ _ h3)
-      · split at h3
-        · peel h3 => ls s4 h4
+      dsimp only at h3
+      cases hasp
+      · simp only [Bool.false_eq_true, ite_false] at h3
+        cases gu with
+        | plain gt hne =>
+          peel h3 => c s2 h2
+          obtain ⟨hc0, hs⟩ := peek_ok h2; subst hc0; subst s2
+          split at h3
+          · peel h3 => ls s4 h4
+            obtain ⟨rfl, rfl⟩ := pure_ok h3
+            exact .label gt (.inr rfl) ‹_› (labelsP_sound _ _ _ _ _ h4)
+          · simp at h3
+      · simp only [ite_true] at h3
+        cases gu with
+        | dots gt hd gd =>
           obtain ⟨rfl, rfl⟩ := pure_ok h3
-          exact .label gt (.inr rfl) ‹_› (labelsP_sound _ _ _ _ _ h4)
-        · simp at h3
+          exact .prop gt hd gd
     peel h => more s4 h4
     cases more
     · have := (opt_eq h4).2 rfl; subst s4
