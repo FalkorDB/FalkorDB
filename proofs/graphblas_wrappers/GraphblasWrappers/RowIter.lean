@@ -1,15 +1,14 @@
 /-
 # `matrix::Iter`: row-range iteration is exactly the entries in range, once each
 
-Model of `Matrix::Iter` (matrix.rs:1618-1770) — `seek`, `next`, and the two
+Model of `Matrix::Iter` (matrix.rs) — `seek`, `next`, and the two
 `GxB_rowIterator_*` drive loops.
 
 The underlying `GxB_rowIterator` is axiomatised (it is C). Its documented
 contract (GraphBLAS.h:7796-7990) is: attached to a matrix, `seekRow(r)` /
 `nextRow()` move to the first *stored* entry on row `≥ r` (empty rows may be
 skipped; on sparse storage `seekRow` lands on an empty row and returns
-`GrB_NO_VALUE`, which the Rust loop then walks past — matrix.rs:1726-1730,
-1715-1719), and `nextCol()` walks the stored entries within a row in ascending
+`GrB_NO_VALUE`, which the Rust loop then walks past — matrix.rs), and `nextCol()` walks the stored entries within a row in ascending
 column order, returning `GrB_NO_VALUE` at the row's end. `getRowIndex()` returns
 the current row, or `nrows` when exhausted.
 
@@ -25,7 +24,7 @@ namespace GBW
 /-- A stored entry `(row, col)`. -/
 abbrev Entry := Nat × Nat
 
-/-- `depleted` is set (matrix.rs:1732-1733, 1764-1765) when there is no current
+/-- `depleted` is set (matrix.rs) when there is no current
 entry or the current row exceeds `max_row`. -/
 def depletedFor : List Entry → Nat → Bool
   | [], _ => true
@@ -33,13 +32,13 @@ def depletedFor : List Entry → Nat → Bool
 
 /-- Drive loop over the remaining stored entries: `next()` yields the head
 unless depleted, then advances and recomputes `depleted`. Structural on the
-list. Mirrors matrix.rs:1746-1769. -/
+list. Mirrors matrix.rs. -/
 def drainL : List Entry → Nat → Bool → List Entry
   | [], _, _ => []
   | e :: rest, maxRow, depleted =>
       if depleted then [] else e :: drainL rest maxRow (depletedFor rest maxRow)
 
-/-- `seek(min_row, max_row)` (matrix.rs:1713): skip stored entries on rows below
+/-- `seek(min_row, max_row)` (matrix.rs): skip stored entries on rows below
 `min_row`, then drive to exhaustion. -/
 def drainSeek (entries : List Entry) (minRow maxRow : Nat) : List Entry :=
   let rem := entries.filter (fun e => decide (e.1 ≥ minRow))
@@ -87,7 +86,7 @@ theorem filter_over_max (maxRow : Nat) :
     intro hs hall
     have ha : a.1 > maxRow := hall a (by simp)
     have hbad : (decide (a.1 ≤ maxRow)) = false := by rw [decide_eq_false_iff_not]; omega
-    simp only [List.filter_cons, hbad, if_false]
+    simp only [List.filter_cons, hbad]
     exact ih (rowSorted_tail hs) (fun e he => hall e (List.mem_cons.mpr (Or.inr he)))
 
 /-- The drive loop over a row-sorted remaining list yields exactly its entries
@@ -108,8 +107,8 @@ theorem drainL_eq_filter :
         simp only [depletedFor, decide_eq_false_iff_not]; omega
       have h2 : (e :: rest).filter (fun e => decide (e.1 ≤ maxRow))
               = e :: rest.filter (fun e => decide (e.1 ≤ maxRow)) := by
-        simp [List.filter_cons, he]
-      rw [drainL, h1, if_neg (by simp), h2, key]
+        simp [he]
+      rw [drainL, h1, ite_eq_right (by simp), h2, key]
     · have h1 : depletedFor (e :: rest) maxRow = true := by
         simp only [depletedFor, decide_eq_true_eq]; omega
       have h2 : (e :: rest).filter (fun e => decide (e.1 ≤ maxRow)) = [] := by
@@ -118,7 +117,7 @@ theorem drainL_eq_filter :
         rcases List.mem_cons.mp hf with h | h
         · subst h; omega
         · have := rowSorted_head_min hs f h; omega
-      rw [drainL, h1, if_pos (by simp), h2]
+      rw [drainL, h1, ite_eq_left (by simp), h2]
 
 /-- `filter` preserves the `rowSorted` shape. -/
 theorem rowSorted_filter (p : Entry → Bool) :
@@ -130,7 +129,7 @@ theorem rowSorted_filter (p : Entry → Bool) :
     intro h
     rw [List.filter_cons]
     by_cases hp : p a
-    · rw [if_pos hp]
+    · rw [ite_eq_left hp]
       have htail := ih (rowSorted_tail h)
       -- prepend a: a.1 ≤ every remaining row
       cases hfl : t.filter p with
@@ -140,7 +139,7 @@ theorem rowSorted_filter (p : Entry → Bool) :
         have hc : c ∈ t.filter p := by rw [hfl]; simp
         have hcmem : c ∈ t := (List.mem_filter.mp hc).1
         exact rowSorted_head_min h c hcmem
-    · rw [if_neg hp]; exact ih (rowSorted_tail h)
+    · rw [ite_eq_right hp]; exact ih (rowSorted_tail h)
 
 /-- **Row iteration is its specification.** For a row-sorted stored-entry list,
 `seek` then drain yields exactly the entries with `minRow ≤ row ≤ maxRow`, in
@@ -154,7 +153,7 @@ theorem drain_seek_eq_spec (entries : List Entry) (minRow maxRow : Nat)
   apply List.filter_congr
   intro e _
   by_cases h1 : minRow ≤ e.1 <;> by_cases h2 : e.1 ≤ maxRow <;>
-    simp [h1, h2, Bool.and_eq_true, decide_eq_true_eq] <;> omega
+    simp [h1, h2] <;> omega
 
 /-- Corollary: **exactly once**. No entry in range is dropped or repeated —
 `drain` is the filtered sublist, so per-entry counts match one-for-one. -/
@@ -165,7 +164,7 @@ theorem drain_no_duplication (entries : List Entry) (minRow maxRow : Nat)
   rw [drain_seek_eq_spec entries minRow maxRow hsorted]
 
 /-- Empty matrix yields nothing — the `detached`/depleted fast paths
-(matrix.rs:1677). -/
+(matrix.rs). -/
 theorem drain_empty_matrix (minRow maxRow : Nat) :
     drainSeek [] minRow maxRow = [] := by
   simp [drainSeek, drainL, depletedFor]

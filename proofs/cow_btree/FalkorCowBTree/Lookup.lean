@@ -19,18 +19,18 @@ namespace CowBTree
 
 /-! ## `insert` / `remove` report whether they changed the tree -/
 
-/-- The `inserted` half of `Node::insert_one`'s `(bool, Option<Split>)` (`node.rs:321-379`):
+/-- The `inserted` half of `Node::insert_one`'s `(bool, Option<Split>)` (`node.rs`):
     `false` iff the leaf found the tuple already present (line 329); a branch forwards its child's. -/
 def insertFlag (c : Cfg) : Nat → Node → E → Bool
   | _, .leaf es, x => (leafInsert c es x).isSome
   | 0, .branch _ _, _ => false
   | h + 1, .branch seps cs, x => insertFlag c h (cs.getD (childIndex seps x) default) x
 
-/-- `CowBTree::insert` (`mod.rs:223-238`): the new tree and the returned `inserted`. -/
+/-- `CowBTree::insert` (`mod.rs`): the new tree and the returned `inserted`. -/
 def insertRet (c : Cfg) (h : Nat) (root : Node) (x : E) : (Node × Nat) × Bool :=
   (insert c h root x, insertFlag c h root x)
 
-/-- `CowBTree::remove` (`mod.rs:260-279`): the new tree and the returned `removed`
+/-- `CowBTree::remove` (`mod.rs`): the new tree and the returned `removed`
     (`self.root.remove_one(..).is_some()`, line 247). -/
 def removeRet (c : Cfg) (h : Nat) (root : Node) (x : E) : (Node × Nat) × Bool :=
   (remove c h root x, (removeOne c h root x).isSome)
@@ -67,7 +67,7 @@ theorem insertFlag_spec (c : Cfg) : ∀ (h : Nat) (r : Bool) (n : Node) (lo hi x
       · have := out2 x h1; omega
     · intro hn h1; exact hn (Or.inr (Or.inl h1))
 
-/-- **`CowBTree::insert` returns `true` iff the tuple was not in the tree** (`mod.rs:223`). -/
+/-- **`CowBTree::insert` returns `true` iff the tuple was not in the tree** (`mod.rs`). -/
 theorem insertRet_spec (c : Cfg) (h : Nat) (t : Node) (x : E) (hw : TreeWF c h t) (hx : x < HI) :
     (insertRet c h t x).2 = decide (x ∉ toList h t) ∧
     toList (insertRet c h t x).1.2 (insertRet c h t x).1.1 = sins x (toList h t) :=
@@ -96,8 +96,8 @@ theorem removeOne_some_mem (c : Cfg) : ∀ (h : Nat) (n : Node) (x : E) (n' : No
         rw [List.getD_eq_getElem?_getD, List.getElem?_eq_none (by omega), Option.getD_none, hd] at hres
         cases hres
 
-/-- **`CowBTree::remove` returns `true` iff the tuple was in the tree** (`mod.rs:260`), for
-    `BRANCH_MAX >= 4` (the range in which `remove` is correct at all; see `Bugs.lean`). -/
+/-- **`CowBTree::remove` returns `true` iff the tuple was in the tree** (`mod.rs`), for
+    `BRANCH_MAX >= 4` (the range in which `remove` is correct at all). -/
 theorem removeRet_spec (c : Cfg) (hB4 : 4 ≤ c.B) (h : Nat) (t : Node) (x : E) (hw : TreeWF c h t) (hx : x < HI) :
     (removeRet c h t x).2 = decide (x ∈ toList h t) ∧
     toList (removeRet c h t x).1.2 (removeRet c h t x).1.1 = (toList h t).erase x := by
@@ -116,7 +116,7 @@ theorem isUnderfull_leaf (c : Cfg) (es : List E) : isUnderfull c (.leaf es) = de
 theorem isUnderfull_branch (c : Cfg) (seps : List E) (cs : List Node) :
     isUnderfull c (.branch seps cs) = branchUnderfull c cs := rfl
 
-/-- Since #2278 `Node::remove_one` reports `Some(branch.is_underfull())` (`node.rs:488`), and a leaf's
+/-- Since #2278 `Node::remove_one` reports `Some(branch.is_underfull())` (`node.rs`), and a leaf's
     `new_count < LEAF_MAX / 2`: in both arms the flag is exactly `Node::is_underfull` of the node it
     hands back. -/
 theorem removeOne_flag (c : Cfg) : ∀ (h : Nat) (n : Node) (x : E) (n' : Node) (u : Bool),
@@ -144,7 +144,7 @@ theorem removeOne_flag (c : Cfg) : ∀ (h : Nat) (n : Node) (x : E) (n' : Node) 
 
 /-! ## `first_doc` / `contains_key` -/
 
-/-- `CowBTree::first_doc`'s loop (`mod.rs:357-400`). `rs` is `right_subtree` with its (ghost) height;
+/-- `CowBTree::first_doc`'s loop (`mod.rs`). `rs` is `right_subtree` with its (ghost) height;
     `minOpt = none` is `Node::min`'s panic on an empty subtree (unreachable on a well-formed tree). -/
 def firstDocGo (k : Nat) : Nat → Node → Option (Nat × Node) → Option Nat
   | _, .leaf es, rs =>
@@ -159,10 +159,10 @@ def firstDocGo (k : Nat) : Nat → Node → Option (Nat × Node) → Option Nat
     let rs' := if ci + 1 < cs.length then some (h, cs.getD (ci + 1) default) else rs  -- lines 376-380
     firstDocGo k h (cs.getD ci default) rs'                               -- line 381
 
-/-- `CowBTree::first_doc` (`mod.rs:357`). -/
+/-- `CowBTree::first_doc` (`mod.rs`). -/
 def firstDoc (h : Nat) (root : Node) (k : Nat) : Option Nat := firstDocGo k h root none
 
-/-- `CowBTree::contains_key` (`mod.rs:343`). -/
+/-- `CowBTree::contains_key` (`mod.rs`). -/
 def containsKey (h : Nat) (root : Node) (k : Nat) : Bool := (firstDoc h root k).isSome
 
 theorem minOpt_head {c : Cfg} : ∀ {r : Bool} {h : Nat} {n : Node} {lo hi : Nat}, WFb c r h n lo hi →
@@ -305,7 +305,7 @@ theorem firstDocGo_spec (c : Cfg) (k : Nat) : ∀ (h : Nat) (r : Bool) (n : Node
         rw [List.drop_of_length_le (by omega)]
         simpa using hrs
 
-/-- **`CowBTree::first_doc` (`mod.rs:357`)**: the doc of the first entry with key `k` in `(key, doc)`
+/-- **`CowBTree::first_doc` (`mod.rs`)**: the doc of the first entry with key `k` in `(key, doc)`
     order (the smallest doc under `k`), or `None` — on every well-formed tree. -/
 theorem firstDoc_spec (c : Cfg) (h : Nat) (root : Node) (k : Nat) (hw : TreeWF c h root) (hk : k < W) :
     firstDoc h root k = ((toList h root).find? (fun e => decide (keyOf e = k))).map docOf := by
@@ -317,7 +317,7 @@ theorem find?_eq_head?_filter {α} (p : α → Bool) : ∀ (l : List α), l.find
   | [] => rfl
   | a :: l => by
     by_cases hp : p a = true
-    · simp [List.find?_cons, List.filter_cons, hp]
+    · simp [hp]
     · simp only [List.find?_cons, List.filter_cons, hp, Bool.false_eq_true, ↓reduceIte]
       exact find?_eq_head?_filter p l
 
@@ -328,7 +328,7 @@ theorem firstDoc_eq_point (c : Cfg) (h : Nat) (root : Node) (k n : Nat) (hw : Tr
     firstDoc h root k = (range h root k k n).head?.map docOf := by
   rw [firstDoc_spec c h root k hw hk, point_spec c h root k n hw hn, find?_eq_head?_filter]
 
-/-- **`CowBTree::contains_key` (`mod.rs:343`)**: some entry has key `k`. -/
+/-- **`CowBTree::contains_key` (`mod.rs`)**: some entry has key `k`. -/
 theorem containsKey_spec (c : Cfg) (h : Nat) (root : Node) (k : Nat) (hw : TreeWF c h root) (hk : k < W) :
     containsKey h root k = (toList h root).any (fun e => decide (keyOf e = k)) := by
   unfold containsKey

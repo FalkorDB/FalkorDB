@@ -1,25 +1,12 @@
 /-
 DELETE (graph/src/runtime/ops/delete.rs).
 
-| here | there |
-| --- | --- |
-| `attrsToMap`               | `node_attrs_to_map` (delete.rs:39), `rel_attrs_to_map` (:50) |
-| `snapshotRequired`         | `snapshot_required` (delete.rs:70) |
-| `DeleteSt.new`             | `DeleteOp::new` (delete.rs:94; `inspect ||` since #3462) |
-| `deleteNext`               | `DeleteOp::next` (delete.rs:116) |
-| `deleteBatch`, `scan`      | `Runtime::delete_batch` (delete.rs:130) |
-| `delNodesBulk`             | `delete_nodes_bulk` (delete.rs:213) |
-| `delRelsBulk`              | `delete_relationships_bulk` (delete.rs:319) |
-| `delEntity`                | `Runtime::delete_entity` (delete.rs:415) |
-
 State = the id sets the classification reads and writes: pending `created_nodes` (`pc`),
 pending `deleted_nodes` (`pd`), the graph's deleted/recycled node set (`gd`, which
-`delete_pending_node` extends through `Graph::cancel_node_id` since #2846), and the same
+`delete_pending_node` extends through `Graph::cancel_node_id`), and the same
 three for relationships. This file is the model with every id-space cancel accepted;
 DeleteCancel.lean has the fallible versions and proves them equal to these on success. Snapshot records
-(`deleted_nodes`/`deleted_relationships` maps) only serve later reads and are not modelled;
-since #3051 every relationship snapshot goes through `record_deleted_relationship`, which also
-clears the id's reissued mark (pending_commit `Snapshot.delR`, runtime_core `RelAccessors.recordDel`).
+(`deleted_nodes`/`deleted_relationships` maps) only serve later reads and are not modelled.
 -/
 namespace Delete
 
@@ -48,7 +35,7 @@ inductive DV where
 
 def mismatch : String := "Delete type mismatch, expecting either Node or Relationship."
 
-/-- `delete_entity` (delete.rs:415): node arm :421-493, relationship :494-519, path :520-524, null :525, error :526-530.
+/-- `delete_entity` (delete.rs): node arm :421-493, relationship :494-519, path :520-524, null :525, error :526-530.
 A pending-created node is un-created and its id recycled (`delete_pending_node`, which
 calls `cancel_node_id`); a committed live node is pending-deleted. -/
 def delNode (st : St) (id : Nat) : St :=
@@ -120,9 +107,9 @@ theorem delEntity_spec (st : St) :
   · simp [delEntity, Except.map, delNode_gone]
   · simp [delEntity, Except.map, delRel_gone]
 
-/-! ## `delete_nodes_bulk` (delete.rs:213) -/
+/-! ## `delete_nodes_bulk` (delete.rs) -/
 
-/-- The classification loop (delete.rs:218-229): skip pending-deleted, delete pending-created
+/-- The classification loop (delete.rs): skip pending-deleted, delete pending-created
 now, collect live committed ones. -/
 def bulkScan : List Nat → St × List Nat → St × List Nat
   | [], acc => acc
@@ -132,7 +119,7 @@ def bulkScan : List Nat → St × List Nat → St × List Nat
     else if !st.gd id then bulkScan ids (st, com ++ [id])
     else bulkScan ids (st, com)
 
-/-- delete.rs:268-297 (the cascade and `deleted_node` marking): every collected id is pending-deleted. -/
+/-- delete.rs (the cascade and `deleted_node` marking): every collected id is pending-deleted. -/
 def delNodesBulk (st : St) (ids : List Nat) : St :=
   let (st1, com) := bulkScan ids (st, [])
   { st1 with pd := fun j => com.contains j || st1.pd j }
@@ -206,9 +193,9 @@ theorem delNodesBulk_spec (st : St) (ids : List Nat) :
     · exact Or.inl (by simp [h])
     · exact Or.inr h
 
-/-! ## `delete_relationships_bulk` (delete.rs:319) -/
+/-! ## `delete_relationships_bulk` (delete.rs) -/
 
-/-- delete.rs:328-346: deduplicate with `seen`, skip pending-deleted, split pending-created
+/-- delete.rs: deduplicate with `seen`, skip pending-deleted, split pending-created
 from live committed. -/
 def relScan (st : St) : List Nat → List Nat → List Nat × List Nat → List Nat × List Nat
   | [], _, acc => acc
@@ -336,9 +323,9 @@ theorem delRelsBulk_spec (st : St) (rels : List Nat) :
   · simp only [Bool.or_eq_true, List.contains_iff_mem]; left; left; exact h
   · simp [b, c, h.1, h.2]
 
-/-! ## `delete_batch` (delete.rs:130) -/
+/-! ## `delete_batch` (delete.rs) -/
 
-/-- The variable-tree scan (delete.rs:138-171), rows outer, variables inner. -/
+/-- The variable-tree scan (delete.rs), rows outer, variables inner. -/
 def scan (st : St) : List DV → Except String (St × List Nat × List Nat)
   | [] => .ok (st, [], [])
   | v :: vs => match v with
@@ -434,7 +421,7 @@ theorem deleteBatch_vars (st : St) (vs : List DV) (st' : St) (h : deleteBatch st
 
 /-! ## `snapshot_required`, `*_attrs_to_map`, `new`, `next` -/
 
-/-- delete.rs:70-82: walk the ancestors (nearest first); any non-`Commit` ancestor ⇒ true. -/
+/-- delete.rs: walk the ancestors (nearest first); any non-`Commit` ancestor ⇒ true. -/
 def snapshotRequired (isCommit : List Bool) : Bool :=
   match isCommit with
   | [] => false
@@ -445,7 +432,7 @@ theorem snapshotRequired_spec (cs : List Bool) : snapshotRequired cs = cs.any (!
   | nil => rfl
   | cons c cs ih => cases c <;> simp [snapshotRequired, ih]
 
-/-- delete.rs:39 / :50: keep the ids that have a name, renamed, in order. -/
+/-- delete.rs: keep the ids that have a name, renamed, in order. -/
 def attrsToMap {V : Type} (name : Nat → Option String) (attrs : List (Nat × V)) : List (String × V) :=
   attrs.filterMap fun p => (name p.1).map (·, p.2)
 
@@ -462,7 +449,7 @@ structure DeleteSt (C T : Type) where
   trees : T
   snapshot : Bool
 
-/-- delete.rs:94-108: since #3462 `snapshot = runtime.inspect || snapshot_required(..)`:
+/-- delete.rs: since #3462 `snapshot = runtime.inspect || snapshot_required(..)`:
 `GRAPH.RECORD` reads the rows every operator produced, so it snapshots even when no
 operator above DELETE reads them. -/
 def DeleteSt.new {C T : Type} (inspect : Bool) (child : C) (trees : T) (ancestorsCommit : List Bool) :
@@ -479,12 +466,12 @@ theorem deleteNew_inspect_snapshots {C T : Type} (c : C) (t : T) (anc : List Boo
     (DeleteSt.new true c t anc).snapshot = true := by
   simp [DeleteSt.new]
 
-/-- Without `inspect` the decision is the pre-#3462 one. -/
+/-- Without `inspect` the decision is `snapshot_required`. -/
 theorem deleteNew_no_inspect {C T : Type} (c : C) (t : T) (anc : List Bool) :
     (DeleteSt.new false c t anc).snapshot = snapshotRequired anc := by
   simp [DeleteSt.new]
 
-/-- delete.rs:116-127: one child batch, `delete_batch`, pass the batch (or error) on. -/
+/-- delete.rs: one child batch, `delete_batch`, pass the batch (or error) on. -/
 def deleteNext {B : Type} (del : B → Except String Unit) : Option (Except String B) → Option (Except String B)
   | none => none
   | some (.error e) => some (.error e)

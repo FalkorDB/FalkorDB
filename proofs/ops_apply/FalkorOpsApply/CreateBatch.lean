@@ -1,19 +1,17 @@
 /-
-CREATE execution: `Runtime::create_batch` (create.rs:139), `CreateOp::new` (:102) and
+CREATE execution: `Runtime::create_batch` (create.rs), `CreateOp::new` (:102) and
 `CreateOp::next` (:121).
 
 A batch = its active rows (`Nat → Option Val`, slot ↦ value); `write_column(alias, vals)`
 writes `vals[k]` into active row `k` (`write_scatter`, columnar `write_column` theorem).
 `Pending` is an event log. FFI-free parameters: the id-space `reserve` (proved in
-proofs/id_space: `n` fresh ids). Since #2846 it is the *graph's* batch that answers —
-`g.node_id_space().reserve(n, &pending.created_nodes)` (create.rs:158) and
+proofs/id_space: `n` fresh ids). It is the *graph's* batch that answers —
+`g.node_id_space().reserve(n, &pending.created_nodes)` (create.rs) and
 `g.relationship_id_space().reserve(n, &pending.taken_relationship_ids)` (:280) — and the
 query lends only what it still holds (`reserveN`/`reserveR` read the log: the created,
 not-yet-cancelled ids); cancelled ids are excluded by the space itself. The per-row attribute evaluator (template or map path,
 CreateAttrs.lean), property validation, and the "endpoint gone" predicate
 (`g.is_node_deleted && !pending.is_node_created || pending.is_node_deleted`).
-`note_relationship_created` (create.rs:293, #3051) only marks a reissued id for later reads
-(pending_commit `Snapshot.createR`, runtime_core `RelAccessors.noteCreated`); not modelled here.
 -/
 namespace CreateBatch
 
@@ -57,7 +55,7 @@ def chkAll {W : Type} (valid : Val W → Except String Unit) : List (Nat × Val 
   | [] => .ok ()
   | (_, v) :: as => do valid v; chkAll valid as
 
-/-- `pending.set_{node,relationship}_attributes(id, attrs)?` for every row (create.rs:225-230):
+/-- `pending.set_{node,relationship}_attributes(id, attrs)?` for every row (create.rs):
 validate, then record unless empty. -/
 def setAttrs {W L : Type} (valid : Val W → Except String Unit) (mk : Nat → List (Nat × Val W) → Ev W L) :
     List (Ev W L) → List (Nat × List (Nat × Val W)) → Except String (List (Ev W L))
@@ -66,7 +64,7 @@ def setAttrs {W L : Type} (valid : Val W → Except String Unit) (mk : Nat → L
     chkAll valid a
     setAttrs valid mk (if a.isEmpty then log else log ++ [mk id a]) rest
 
-/-- One pattern node over the batch (create.rs:150-236). -/
+/-- One pattern node over the batch (create.rs). -/
 def createNode {W L A : Type} (c : Ctx W L A) (log : List (Ev W L)) (rows : List (Row W))
     (n : PNode L A) : Except String (List (Ev W L) × List (Row W)) := do
   let ids ← c.reserveN log rows.length
@@ -76,14 +74,14 @@ def createNode {W L A : Type} (c : Ctx W L A) (log : List (Ev W L)) (rows : List
     ((ids.zip attrs).filterMap fun p => p.2.map (p.1, ·))
   pure (log2, (rows.zip ids).map fun p => upd p.1 n.alias (.node p.2))
 
-/-- create.rs:246-251 / :260-265: both endpoints must be node values. -/
+/-- create.rs: both endpoints must be node values. -/
 def endpoint {W : Type} (r : Row W) (src dst : Nat) : Except String (Nat × Nat) :=
   match r src, r dst with
   | some (.node a), some (.node b) => .ok (a, b)
   | _, _ => .error "Invalid node id"
 
-/-- One pattern relationship (create.rs:238-324). `skip` = both endpoints are created by this
-very pattern (create.rs:239-240), which skips the deleted-endpoint check. -/
+/-- One pattern relationship (create.rs). `skip` = both endpoints are created by this
+very pattern (create.rs), which skips the deleted-endpoint check. -/
 def createRel {W L A : Type} (c : Ctx W L A) (skip : Bool) (log : List (Ev W L)) (rows : List (Row W))
     (r : PRel A) : Except String (List (Ev W L) × List (Row W)) := do
   let eps ← rows.mapM fun row => do
@@ -110,7 +108,7 @@ def foldRels {W L A : Type} (c : Ctx W L A) (created : List Nat) : List (PRel A)
     let s ← createRel c (created.contains r.src && created.contains r.dst) log rows r
     foldRels c created rs s
 
-/-- `Runtime::create_batch` (create.rs:139-339): all nodes, then all relationships. -/
+/-- `Runtime::create_batch` (create.rs): all nodes, then all relationships. -/
 def createBatch {W L A : Type} (c : Ctx W L A) (nodes : List (PNode L A)) (rels : List (PRel A))
     (log : List (Ev W L)) (rows : List (Row W)) : Except String (List (Ev W L) × List (Row W)) := do
   let s ← foldNodes c nodes (log, rows)
@@ -224,11 +222,11 @@ theorem createRel_spec {W L A : Type} (c : Ctx W L A) (skip : Bool) (log : List 
           refine ⟨ids, eps, hids, hl, fun k h1 h2 => ?_, ⟨ext, by simp [he]⟩, rfl⟩
           have := hg k h1 h2
           cases hep : endpoint rows[k] r.src r.dst with
-          | error e => simp [hep, bind, Except.bind] at this
+          | error e => simp [hep] at this
           | ok ab =>
             obtain ⟨a, b⟩ := ab
             have hab := (endpoint_spec _ _ _ a b).mp hep
-            simp only [hep, bind, Except.bind] at this
+            simp only [hep] at this
             split at this
             · cases this
             · rename_i hg'
@@ -246,7 +244,7 @@ theorem createRel_gone {W L A : Type} (c : Ctx W L A) (log : List (Ev W L)) (row
     createRel c false log [row] r = .error "Failed to create relationship; endpoint was not found." := by
   simp [createRel, endpoint, ha, hb, hg, bind, Except.bind, throw, throwThe, MonadExceptOf.throw]
 
-/-! ## `CreateOp::new` / `next` (create.rs:102, :121) -/
+/-! ## `CreateOp::new` / `next` (create.rs) -/
 
 structure CreateSt (C P R : Type) where
   child : C
@@ -260,7 +258,7 @@ theorem createNew_spec {C P R : Type} (c : C) (p : P) :
     (CreateSt.new c p : CreateSt C P R).resolved = none ∧ (CreateSt.new c p : CreateSt C P R).child = c ∧
     (CreateSt.new c p : CreateSt C P R).pattern = p := ⟨rfl, rfl, rfl⟩
 
-/-- create.rs:121-136: pull one child batch, pass its error through, resolve the pattern once
+/-- create.rs: pull one child batch, pass its error through, resolve the pattern once
 (`OnceCell`), run `create_batch` on it, pass its error through. -/
 def createNext {B R : Type} (resolve : Unit → R) (create : R → B → Except String B) (cell : Option R) :
     Option (Except String B) → Option (Except String B) × Option R

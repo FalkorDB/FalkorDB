@@ -1,5 +1,5 @@
 /-
-# `parse_primary_expr` in full (cypher.rs:1942-2133; Cypher.g4:361-374)
+# `parse_primary_expr` in full (cypher.rs; Cypher.g4:361-374)
 
 `Model.primary` covers the fragment of `Model.lean` (no CASE, quantifiers,
 calls with DISTINCT / `*`, pattern predicates ...). This is the whole
@@ -10,7 +10,7 @@ import FalkorParserGrammar.C.ExprC5
 namespace FalkorParserGrammar.C
 
 /-- A function registry entry (`get_functions().get(name, Function)` or
-`Aggregation`, cypher.rs:2012-2023). -/
+`Aggregation`, cypher.rs). -/
 structure FnI where
   id : Nat
   lo : Nat
@@ -21,7 +21,7 @@ structure FnI where
 def nmReduce : Nat := 4000003
 def nmPlaceholder : Nat := 4000004
 
-/-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs:2772-2787). -/
+/-- The `loop` of `parse_expression_list` and its closing `)` (cypher.rs). -/
 def argItemsP (pe : PE) : Nat → List ET → P (List ET)
   | 0, _ => fuelP
   | n + 1, acc => do
@@ -30,14 +30,14 @@ def argItemsP (pe : PE) : Nat → List ET → P (List ET)
     if c2 = .comma then do next; argItemsP pe n (acc ++ [e])
     else do tok .rparen; pure (acc ++ [e])
 
-/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen), allow)` (cypher.rs:2763-2790); #3060:
+/-- `parse_expression_list(ZeroOrMoreClosedBy(RParen), allow)` (cypher.rs); #3060:
 only an empty list ends at once, so `f(1,)` is an error. -/
 def argsP (pe : PE) (n : Nat) (acc : List ET) : P (List ET) := do
   let c ← peek
   if c = .rparen then do next; pure acc
   else argItemsP pe n acc
 
-/-- The call part after `name(` (cypher.rs:2025-2088). -/
+/-- The call part after `name(` (cypher.rs). -/
 def callTail (pe : PE) (F : Nat) (fi : FnI) : P ET := do
   let dis ← optK .distinct
   if fi.agg then do
@@ -66,7 +66,7 @@ def identArm (o : Oracle) (fr : List Nat → Option FnI) (F : Nat) (allow : Bool
   let lp ← opt .lparen
   if lp then
     if name = [nmReduce] then do let t ← reduceP (o.pe allow); pure (t, false)
-    else if name = [nmShortest] then do let t ← shortestP F; pure (t, false)
+    else if name = [nmShortest] then do let t ← shortestP o.pmap F; pure (t, false)
     else if name = [nmAllShortest] then fail
     else match fr name with
       | none => fail
@@ -76,12 +76,12 @@ def identArm (o : Oracle) (fr : List Nat → Option FnI) (F : Nat) (allow : Bool
     let v ← ident
     pure (leaf (.var v), false)
 
-def isPatG : Option (QG Nat) → Bool
+def isPatG : Option (QG Alias) → Bool
   | some g => !g.rels.isEmpty
   | none => false
 
 /-- The `(` arm: a pattern predicate when allowed and the pattern has a
-relationship (cypher.rs:2114-2128), otherwise a parenthesised expression. -/
+relationship (cypher.rs), otherwise a parenthesised expression. -/
 def parenArm (o : Oracle) (F : Nat) (allow : Bool) : P (ET × Bool) := do
   let s0 ← getS
   let pat ← (if allow then attempt (patternP o F .match_) else pure none)
@@ -91,7 +91,7 @@ def parenArm (o : Oracle) (F : Nat) (allow : Bool) : P (ET × Bool) := do
     next
     pure (leaf .paren, true)
 
-/-- The quantifier-keyword arm (cypher.rs:1951-1967). -/
+/-- The quantifier-keyword arm (cypher.rs). -/
 def quantArm (o : Oracle) (allow : Bool) : P (ET × Bool) := do
   let s0 ← getS
   next
@@ -141,7 +141,7 @@ theorem np_callTail (pe : PE) (hpe : NP pe) (F : Nat) (fi : FnI) : NP (callTail 
 
 theorem np_identArm (fr : List Nat → Option FnI) (F : Nat) (allow : Bool) : NP (identArm o fr F allow) := by
   have := np_dottedP; have := np_reduceP (o.pe allow) (np_pe o ho allow)
-  have := np_shortestP; have := np_callTail o ho (o.pe allow) (np_pe o ho allow)
+  have := np_shortestP o.pmap ho.pmap; have := np_callTail o ho (o.pe allow) (np_pe o ho allow)
   have hs : ∀ s, NP (setS s) := fun _ => ⟨fun _ => by simp⟩
   unfold identArm; np_go
 

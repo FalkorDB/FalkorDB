@@ -13,7 +13,7 @@ This project is the top of a stack:
 - [`../effects_codec`](../effects_codec) proves the records survive the trip through bytes;
 - [`../id_space`](../id_space) and [`../pending_commit`](../pending_commit) prove the id allocator and the master's commit.
 
-The full Lean↔Rust mapping is in the header of [`FalkorReplication.lean`](FalkorReplication.lean). This README explains *what* is proven and *why it matters*.
+The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -68,7 +68,7 @@ No: `no_spurious_resync`. If the replica is in sync and the write is well formed
 - no id is both created and deleted in the same write (`disjoint`);
 - every id is below `ID_LIMIT` (`inLimit`, from #2911).
 
-`disjoint` is an assumption, not a derived fact. In the engine, a node created and deleted in one query is unwound out of `Pending`, and `digest_cancelled` is the emitter path that can ship it as a separate create/delete pair; today the effects-count gate drops a write that only cancels entities before `digest_cancelled` runs, so that path is suppressed for cancel-only writes (W2-effects-1). The model does not include `digest_cancelled`. See [What the model does not cover](#what-the-model-does-not-cover): that is where W2-effects-1 lives.
+`disjoint` is an assumption, not a derived fact. In the engine, a node created and deleted in one query is unwound out of `Pending`, and `digest_cancelled` is the emitter path that can ship it as a separate create/delete pair. The model does not include `digest_cancelled`. See [What the model does not cover](#what-the-model-does-not-cover) for the open schema-only gap (W2-effects-1).
 
 ## The headline theorems
 
@@ -99,17 +99,16 @@ No: `no_spurious_resync`. If the replica is in sync and the write is well formed
 
 This project found no bugs in the Rust. It did find a bug in its own first draft (the boundary, step 6 above).
 
-One open bug sits exactly in its assumptions: **W2-effects-1**, a write that only registers a name or only cancels entities ships no payload (see [`../effects_emit_apply`](../effects_emit_apply)). The model here has no cancelled pairs and assumes every modifying write produces a payload, so `emit_apply` neither proves nor refutes it.
+One open bug sits exactly in its assumptions: **W2-effects-1**, a write that only registers a name ships no payload (see [`../effects_emit_apply`](../effects_emit_apply)). The model here assumes every modifying write produces a payload, so `emit_apply` neither proves nor refutes it.
 
 ## Files
 
 | File | What's in it |
 |---|---|
-| `FalkorReplication.lean` | The report header, the whole model (`GState`, `Pending`, `commit`, `emit`, `Record`, `applyRec`, `Batch.verify`), `emit_apply`, the stream and state-machine theorems, the `#guard` sanity checks, and the refinement theorems to `Faithful.lean` and `effects_emit_apply` |
+| `FalkorReplication.lean` | A short header, the whole model (`GState`, `Pending`, `commit`, `emit`, `Record`, `applyRec`, `Batch.verify`), `emit_apply`, the stream and state-machine theorems, the `#guard` sanity checks, and the refinement theorems to `Faithful.lean` and `effects_emit_apply` |
 | `Faithful.lean` | Faithful copies of the engine steps the model abstracts: `intern`, `verify_id`, `apply_add_schema`, `IdSpace::reserve` on a fresh batch, and the `live`/`recycled` half of `IdSpace` |
 | `Guard.lean` | `src/divergence_guard.rs`: `is_replayed`, `on_failure`, `force_full_resync`, `master_address`, `log_payload`, `clip` |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
-| `todo.tsv` | Empty |
 
 The lakefile requires [`../effects_emit_apply`](../effects_emit_apply) as a path dependency, so the grouping loop `FalkorEA.memoGroup` is imported rather than copied.
 
@@ -131,12 +130,13 @@ The lakefile requires [`../effects_emit_apply`](../effects_emit_apply) as a path
 ## What the model does not cover
 
 - **Only nodes and schema.** `Record` here has schema registration, node create and node delete. Edges, `UPDATE_NODE`/`UPDATE_EDGE`, `SET_LABELS`/`REMOVE_LABELS`, index and constraint DDL, and `digest_cancelled`'s create/delete pairs are not modelled. The liveness checks #3022 added to those arms are proven separately in `effects_emit_apply` (`apply_wf`); on the arms modelled here they change nothing.
-- **Cancelled entities and schema-only writes.** `PendingWF.disjoint` assumes them away, and assumption 5 in the header assumes every modifying write produces a payload. W2-effects-1 shows that assumption is false today for writes whose only effect is a cancelled pair or a new name.
-- **Bytes.** This model works on `Record`, not bytes. The byte codec is proven in `effects_codec` (`readRecord_encRecord_wf`); the two are not linked by a theorem. (The header's "what is still assumed" item 1 predates that project.)
+- **Cancelled entities and schema-only writes are two separate boundaries.** (1) Cancelled entities: `PendingWF.disjoint` only says no id is in both the create and delete lists; it cannot see entities already unwound out of `Pending`, and the model omits `digest_cancelled`'s records. (2) Schema-only writes: `disjoint` does not exclude them (it holds trivially when both id lists are empty); the payload assumption does, since the model assumes every modifying write produces a payload (`commit_and_replicate` logs a warning and returns when `wq.modified` is set but `effects_buffer` is `None`; the `build_effects` gate is `REPLICATION_CONSUMERS || AOF`, evaluated when the query starts). W2-effects-1 shows that assumption is false today for writes whose only effect is a new name.
+- **Bytes.** This model works on `Record`, not bytes. The byte codec is proven in `effects_codec` (`readRecord_encRecord_wf`); the two are not linked by a theorem.
 - **Transport.** Redis replication delivers payloads in order; `GRAPH.EFFECT` is atomic because the graph is rolled back on any error. Both are taken as given.
 - **The master's own id check.** Since #2846 the master also verifies its id space at commit. That it never refuses a well-formed write is not proven here (the id-space half is in `id_space`).
+- **The id-space model.** `idsOf` models `IdSpace::reserve` on the first batch of a version, where `quarantined` is empty; `Faithful.reserveQ` is the full `reserve` (`reserveQ_nil`, `reserveQ_mem`: a later batch still issues only free or fresh ids). The replica never reserves. `deleteOne_refines_live` discharges `deleteOne_refines`' `1 ≤ live` premise for ids below the entry boundary, and `IdLink.deleteOne_refines_idspace` (Lake dependency on `proofs/id_space`) for every live id.
 - **A replica that attaches mid-query.** Whether to build effects is decided when the query starts; such a replica is covered by its full sync, not by this model.
-- **Faithfulness of `emit` and `applyRec` to the Rust.** The refinement theorems cover the steps listed above; the rest is a correspondence to review against the header table.
+- **Faithfulness of `emit` and `applyRec` to the Rust.** The refinement theorems cover the steps listed above; the rest is a correspondence to review against the Rust, clause by clause, using `COVERAGE.tsv`.
 
 ## Build and check
 

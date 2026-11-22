@@ -1,36 +1,26 @@
 import FalkorAggOps.LoadCsv
 /-
-# LOAD CSV redirects (#3443, fixed by #3458): every hop of a remote fetch, not just the first
+# LOAD CSV redirects: every hop of a remote fetch, not just the first
 
 `LoadCsv.lean` treats a remote LOAD CSV as one request to the URL that
 `validate_remote_url` accepted. The request is a ureq 3.4.2 agent
-(`open_csv_records`, load_csv.rs:376-398) built from `http_config()`
-(:224-234). On b84473a7f `http_config` set only the two timeouts, so the agent
-kept ureq's defaults `max_redirects = 10` and `https_only = false`, redirects
-included, while its resolver `PinnedResolver` (:193-214) ignores the `_uri` it
-is asked about and returns the addresses validated for the first URL. That was
-#3443. On origin/main (5e475e6c9, #3458) `http_config` also sets
-`https_only(true)` and `max_redirects(0)`; `open_csv_records` turns a 3xx reply
+(`open_csv_records`, load_csv.rs) built from `http_config()`
+(:224-234). `http_config` sets the two timeouts, `https_only(true)` and
+`max_redirects(0)`; its resolver `PinnedResolver` (:193-214) ignores the `_uri` it
+is asked about and returns the addresses validated for the first URL, which is
+why redirects must not be followed. `open_csv_records` turns a 3xx reply
 into the error "LOAD CSV does not follow redirects" (:388-399), as C (libcurl
 without `CURLOPT_FOLLOWLOCATION`) does.
 
-| here | there |
-| --- | --- |
-| `Url` | the request URL; `scheme = .https` is `starts_with("https://")`, hosts are names (as `Nat`) |
-| `validateU` | `validate_remote_url` (:81-142) on a parsed URL; `dns` = `to_socket_addrs` |
-| `Cfg` | `ureq::config::Config` (`max_redirects`, `https_only`) |
-| `httpCfgMain` | `http_config` (:224-234) on main: `max_redirects = 0`, `https_only = true` |
-| `pinnedRes` | `PinnedResolver::resolve` (:193-214): `pinned addrs` for every URI |
-| `fetch` | the agent's request loop: resolve, connect, follow a 3xx `Location` while redirects remain; with `https_only` a non-https hop is refused before connecting |
-| `Reply`, `serve` | a 3xx response: its status code and its optional `Location` (`none` = header absent, read as `""`) |
-| `loadRemote` | the remote arm of `open_csv_records` on main (:376-399): the agent, then ANY 3xx answer is the error "LOAD CSV does not follow redirects (HTTP {status} to {location})" |
-
 Property `EachHopValidated`: every connection the fetch makes is an https
 request whose addresses were validated for *that request's* host.
-On b84473a7f a cross-host redirect connected to the first host's IP and an http
-hop was attempted (counterexamples removed in bbee75955; the last revision that has them is 17ccc5412). `fixed3443_eachHopValidated` proves it for
-main's `loadRemote` for every server and DNS answer; `fixed3443_redirect_is_error`
-says a redirecting first URL ends in an error, never a second connection.
+`fixed3443_eachHopValidated` proves it for
+main's `loadRemote` for every server and DNS answer whose result is `.ok` (it takes
+`loadRemote ... = .ok conns`). A 3xx reply makes `loadRemote` return an error after `fetch`
+has already made its one connection, and the error carries no connection list, so that trace is
+NOT covered by this theorem: `noRedirect_single` proves `EachHopValidated` for the `fetch` trace
+itself (any server reply), and `fixed3443_redirect_is_error` says a redirecting first URL ends
+in an error, never a second connection.
 `fixed_eachHopValidated` (https_only + per-URL validate-then-pin resolver,
 any budget) and `noRedirect_single` stay as the general fix-shape lemmas.
 -/
@@ -98,7 +88,7 @@ theorem validateU_matches_validateRemote
       by_cases h2 : (dns u.host).any ipForbidden = true
       · simp [h1', h2, throw, throwThe, MonadExceptOf.throw, Except.toOption]
       · have h2' : (dns u.host).any ipForbidden = false := by simpa using h2
-        simp [h1', h2', throw, throwThe, MonadExceptOf.throw]
+        simp [h1', h2']
   · rw [hsc] at hs
     simp [hs, throw, throwThe, MonadExceptOf.throw, bind, Except.bind]
 
@@ -161,7 +151,7 @@ own host. -/
 def EachHopValidated (dns : Nat → List IP) (conns : List (Url × List IP)) : Prop :=
   ∀ c ∈ conns, c.1.scheme = .https ∧ ∃ as, validateU dns c.1 = .ok as ∧ ∀ a ∈ c.2, a ∈ as
 
-/-! ## Counterexamples on b84473a7f (history) -/
+/-! ## Concrete addresses -/
 
 def ipA : IP := .v4 ⟨140, 82, 112, 3⟩     -- public, first host
 def ipB : IP := .v4 ⟨185, 199, 108, 133⟩  -- public, redirect target
@@ -183,7 +173,7 @@ theorem noRedirect_single (dns : Nat → List IP) (serve : Url → Option Reply)
     rw [List.mem_singleton] at hc; subst hc
     exact ⟨hsch, addrs, hv, fun a ha => (pinned_spec addrs as hr).2 a ha⟩
 
-/-! ## Main (#3458) -/
+/-! ## Main -/
 
 /-- **`fixed3443_eachHopValidated`**: main's `loadRemote` (https_only, no
 redirects, pinned resolver) makes only connections that are https to an address

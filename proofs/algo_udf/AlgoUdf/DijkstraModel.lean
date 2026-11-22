@@ -1,19 +1,5 @@
 import AlgoUdf.Graph
-/-! # `dijkstra_single_path` (algo_procedures.rs:2282-2378) and the `DijkstraItem` heap order
-
-| here | there |
-| --- | --- |
-| `Lbl`, `St.labels`     | `DijkstraLabel`, `labels: FxHashMap<NodeId, DijkstraLabel>` :2232-2237, :2288 |
-| `St.settled`           | `settled: FxHashSet<NodeId>` :2289 |
-| `St.heap`              | `heap: BinaryHeap<DijkstraItem>` :2290 as a multiset of `(weight, node)` |
-| `St.done`              | `reached = true; break` :2312-2313 |
-| `St.ord`, `St.clock`   | ghost: the time each node was settled (proof-only) |
-| `itemCmp`              | `impl Ord for DijkstraItem::cmp` :2251, `partial_cmp` :2266 |
-| `Step.skip`            | pop of a superseded entry, `!settled.insert(node) → continue` :2308-2310 |
-| `Step.reach`           | pop of `target` :2311-2314 |
-| `Step.relax`, `relaxOne` | the relaxation loop :2316-2351 |
-| `walkBack`             | parent-chain walk :2358-2366 (built in traversal order directly instead of push+reverse) |
-| `finish`               | result assembly :2368-2377 (`none` = a `labels[&cur]` panic) |
+/-! # `dijkstra_single_path` (algo_procedures.rs) and the `DijkstraItem` heap order
 
 The heap is modelled as a list from which `Step` may pop *any* entry of minimum
 weight; `itemCmp_max_min_weight` shows `BinaryHeap::pop` (max under `itemCmp`)

@@ -1,12 +1,12 @@
 import PendingCommit.PendingCommitOp
 /-
-# UNIQUE constraints enforced by index lookup (#3334, #3547/#2386; pending.rs:61-290 `unique_violated` and helpers, :1580-1700 constraint checks)
+# UNIQUE constraints enforced by index lookup (#3547/#2386; pending.rs `unique_violated` and helpers, :1580-1700 constraint checks)
 
-Before #3334 (fixing #3330) a UNIQUE check scanned the whole label (type) once per
-affected member: `PC.check` / `PC.scan_ok` / `PC.check_spec` (kept as the reference
-"label-scan spec"). Now `unique_violated` (:217) gathers the members' composite keys
+A UNIQUE check no longer scans the whole label (type) once per
+affected member (`PC.check` / `PC.scan_ok` / `PC.check_spec` are kept as the reference
+"label-scan spec"); `unique_violated` (:217) gathers the members' composite keys
 (an early `true` on two members sharing one), then looks each key up through an index and
-re-verifies every candidate against the graph. Since #3547 the index is abstracted by two
+re-verifies every candidate against the graph. The index is abstracted by two
 closures: `query_for(values) -> Option<Q>` gives the lookup for one member (or `None`: the
 index cannot answer for it) and `lookup(Q)` runs one. `use_index` starts `true`; one member
 for which `query_for` is `None` sends the whole set to the label scan, and the lookups
@@ -14,18 +14,10 @@ gathered so far are dropped (none runs). The RediSearch `query_for` is
 `redisearch_unique_query` (:174); the native one is `native_unique_query`
 (index/falkordb/unique.rs), which this project does not model.
 
-| Lean | Rust |
-| --- | --- |
-| `EV`, `exactLookup`, `exactLookup_spec` | `is_value_valid_for_index_lookup` (:160) |
-| `gather` | the member loop of `unique_violated` (:235-262): `keys`, `lookups`, `use_index` |
-| `uniqueViolated` | `unique_violated` (:217) |
-| `checkMandatory`, `checkUnique`, `checkNode2`, `checkEdge2` | `check_node_constraint` (:1580), `check_edge_constraint` (:1672) |
-| `UniqueQuery.lean`: `Query`, `redisearchQuery` | `redisearch_unique_query` (:174) |
-
 Modelling:
 * Values are an abstract type `V` with decidable equality; `attr e q = none` is an absent
   or `Null` property (both filtered by Rust before keying). The composite key of `e` is
-  `key e = props.mapM (attr e)`: `Graph::build_composite_key` (graph.rs:4772) returns the
+  `key e = props.mapM (attr e)`: `Graph::build_composite_key` (graph.rs) returns the
   empty byte string iff a property is null/absent, and otherwise the `Debug` rendering of
   each value followed by `'|'`. Key equality is therefore equality of the derived `Debug`
   renderings, and `V` is to be read as the set of those renderings (`V` equality = key
@@ -144,13 +136,13 @@ theorem gather_none : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
         have e : (ms.filterMap key ++ vals :: keys).Nodup ↔ (vals ∉ ms.filterMap key ++ keys ∧
             (ms.filterMap key ++ keys).Nodup) := by
           rw [List.perm_middle.nodup_iff, List.nodup_cons]
-        rw [if_neg hv]
+        rw [ite_eq_right hv]
         by_cases hu : ui = true
-        · rw [if_pos hu]
+        · rw [ite_eq_left hu]
           cases hq : qf vals with
           | some q => dsimp only; rw [gather_none ms _ _ _ h', e]
           | none => dsimp only; rw [gather_none ms _ _ _ h', e]
-        · rw [if_neg hu, gather_none ms _ _ _ h', e]
+        · rw [ite_eq_right hu, gather_none ms _ _ _ h', e]
 
 /-- Invariant: while the index is still in use, every key gathered has its query queued. -/
 def GInv (keys : List (List V)) (lk : List Q) (ui : Bool) : Prop :=
@@ -173,8 +165,8 @@ theorem gather_some : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
     | some vals =>
       rw [hk] at h; simp only at h
       by_cases hv : vals ∈ keys
-      · rw [if_pos hv] at h; cases h
-      rw [if_neg hv] at h
+      · rw [ite_eq_left hv] at h; cases h
+      rw [ite_eq_right hv] at h
       have fin : ∀ lk' ui', GInv qf (vals :: keys) lk' ui' →
           gather props attr qf ms (vals :: keys) lk' ui' = some r → (ui' = true → ui = true) →
           (∀ k, k ∈ r.1 ↔ k ∈ keys ∨ k ∈ vals :: ms.filterMap key) ∧ GInv qf r.1 r.2.1 r.2.2 ∧
@@ -186,7 +178,7 @@ theorem gather_some : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
         · rintro ((h | h) | h) <;> simp_all
         · rintro (h | h | h) <;> simp_all
       by_cases hu : ui = true
-      · rw [if_pos hu] at h
+      · rw [ite_eq_left hu] at h
         cases hq : qf vals with
         | some q =>
           rw [hq] at h; dsimp only at h
@@ -213,7 +205,7 @@ theorem gather_some : ∀ (ms : List Nat) (keys : List (List V)) (lk : List Q) (
             · rintro ⟨-, h2⟩
               obtain ⟨q, hq'⟩ := h2 vals (by simp)
               rw [hq] at hq'; cases hq'
-      · rw [if_neg hu] at h
+      · rw [ite_eq_right hu] at h
         obtain ⟨a, b, c, d⟩ := gather_some ms (vals :: keys) lk false r (fun h => by cases h) h
         refine ⟨?_, b, fun h => absurd (c h) (by simp), ?_⟩
         · intro k; rw [a k]; simp only [List.mem_cons]; constructor
@@ -412,7 +404,7 @@ theorem uniqueViolated_agrees (props : List Nat) (members : List Nat) (affected 
     · exact .inr ⟨a, hAff a hfa hca, k, hka, b, hfb, hcb, hkb⟩
     · exact .inl ⟨a, hAff a hfa hca, b, hAff b hfb hcb, hab, k, hka, hkb⟩
 
-/-! ## `check_node_constraint` / `check_edge_constraint` since #3334 -/
+/-! ## `check_node_constraint` / `check_edge_constraint` -/
 
 /-- MANDATORY: every member has every property (the loop moved under the `match`). -/
 def checkMandatory (props affected : List Nat) (member : Nat → Bool) (present : Nat → Nat → Bool) : Bool :=
