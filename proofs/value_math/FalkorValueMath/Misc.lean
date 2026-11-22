@@ -5,13 +5,13 @@ import FalkorValueMath.Conversion
 
 | Lean | Rust (value.rs) |
 | --- | --- |
-| `fmtDuration` | `Value::format_duration` :296 |
-| `HV`, `heapSize`, `amortized` | `Value::heap_size` :342, `amortized_heap_size` :388 |
-| `getAttr`, `pointComponent`, `durationComponentPre` | `get_attr` :439, `get_point_component` :458, `get_duration_component` :608 (pre-chrono part) |
-| `partialCmp` | `PartialOrd for Value` :1788 |
-| `getNumeric` | `Value::get_numeric` :246 |
-| `Tok`, `encode`, `pre3339_decode` | `Encode<19> for Value` :2068; `Decode<19>` before #3339 (current: Nesting.lean) |
-| `Deduper` | `ValuesDeduper` :1853-1896 |
+| `fmtDuration` | `Value::format_duration`  |
+| `HV`, `heapSize`, `amortized` | `Value::heap_size` , `amortized_heap_size`  |
+| `getAttr`, `pointComponent`, `durationComponentPre` | `get_attr` , `get_point_component` , `get_duration_component`  (pre-chrono part) |
+| `partialCmp` | `PartialOrd for Value`  |
+| `getNumeric` | `Value::get_numeric`  |
+| `Tok`, `encode`, `decodeUncapped` | `Encode<19> for Value` ; `Decode<19>` without the cap (current: Nesting.lean) |
+| `Deduper` | `ValuesDeduper`  |
 | `jsonFloat` | `DisplayJson` Float arm :1591 |
 -/
 
@@ -185,7 +185,7 @@ theorem shares_le (x rc : Nat) (h : 0 < rc) : rc * (x / rc) ≤ x ∧ x < rc * (
     have := Nat.mod_lt x h
     rw [Nat.mul_comm] at *; omega
 
-/-- A `Relationship` value owns no heap (it is an id, value.rs:200), yet both
+/-- A `Relationship` value owns no heap (it is an id, value.rs), yet both
 estimates charge it 24 bytes — a fixed over-count (suspicion; no user-visible effect
 known, relationships are never stored as attributes). -/
 theorem rel_charged : heapSize .rel = 24 ∧ amortized .rel = 24 := ⟨rfl, rfl⟩
@@ -198,7 +198,7 @@ def asciiLowerStr (s : List Char) : List Char := s.map lowerAscii
 
 def eqIC (a : String) (b : String) : Bool := asciiLowerStr a.toList == asciiLowerStr b.toList
 
-/-- `get_point_component` (value.rs:458): ASCII case-insensitive. -/
+/-- `get_point_component` (value.rs): ASCII case-insensitive. -/
 def pointComponent (widen : F → F) (la lo : F) (attr : String) : V F :=
   if eqIC attr "latitude" then .float (widen la)
   else if eqIC attr "longitude" then .float (widen lo)
@@ -210,7 +210,7 @@ theorem point_component_case (widen : F → F) (la lo : F) :
     pointComponent widen la lo "LATITUDE" = .float (widen la) := by
   simp [pointComponent, eqIC, asciiLowerStr] <;> decide
 
-/-- The part of `get_duration_component` (value.rs:608-634) before chrono is consulted:
+/-- The part of `get_duration_component` (value.rs) before chrono is consulted:
 unknown names error, `weeks` is always `0.0`. -/
 def durationComponentPre (zero : F) (c : String) : Option (Except String (V F)) :=
   let known := ["years", "months", "weeks", "days", "hours", "minutes", "seconds"]
@@ -223,7 +223,7 @@ live; openCypher expects 2). -/
 theorem duration_weeks_zero (zero : F) : durationComponentPre zero "weeks" = some (.ok (.float zero)) := by
   simp [durationComponentPre, eqIC, asciiLowerStr] <;> decide
 
-/-- `get_attr` dispatch (value.rs:439); temporal component extractors are parameters
+/-- `get_attr` dispatch (value.rs); temporal component extractors are parameters
 (chrono-backed). -/
 def getAttr (widen : F → F) (dt d t du : Int → String → Except String (V F)) (v : V F) (attr : String) :
     Except String (V F) :=
@@ -252,7 +252,7 @@ def getNumeric (ofInt : Int → F) (zero : F) : V F → Option F
   | .null => some zero
   | _ => none   -- unreachable!() panics
 
-/-- `validate_args_domain` (mod.rs:862) calls `get_numeric` on `args[1]` of
+/-- `validate_args_domain` (mod.rs) calls `get_numeric` on `args[1]` of
 `percentile*` after `validate_args_type`: with the declared `Int | Float` slot (and the
 explicit Null test) the panic arm is dead. -/
 theorem getNumeric_after_validation (ofInt : Int → F) (zero : F) (v : V F)
@@ -267,10 +267,10 @@ def partialCmp (fc : FloatCmp F) (a b : V F) : Option Ordering :=
 theorem partialCmp_null (fc : FloatCmp F) (a : V F) : partialCmp fc .null a = none := by
   cases a <;> simp [partialCmp, cmpV]
 
-/-! `Point::validate` was removed in #3301: `point()` checks NaN and range in `point_from_map_entries`
+/-! There is no `Point::validate`: `point()` checks NaN and range in `point_from_map_entries`
 (`proofs/functions_temporal` `SpatialFns.pointFromMapEntries`). -/
 
-/-! ## JSON of a Float (value.rs:1591) -/
+/-! ## JSON of a Float (value.rs) -/
 
 /-- NaN/±∞ are emitted as JSON `null` (valid JSON; C emits `nan`, live). -/
 def jsonFloat (display : FC → String) : FC → String
@@ -293,8 +293,8 @@ theorem dedup_second_seen (seen : List Nat) (h : Nat) :
 theorem dedup_first_unseen (seen : List Nat) (h : Nat) (hn : h ∉ seen) : (dedupStep seen h).1 = false := by
   simp [dedupStep, hn]
 
-/-! ## v19 value codec (`Encode<19>` value.rs:2068; `Decode<19>` before #3339 — the current
-decoder `decode_value` value.rs:2191 is `decodeValue` in Nesting.lean) -/
+/-! ## v19 value codec (`Encode<19>` value.rs; the uncapped `Decode<19>` — the current
+decoder `decode_value` value.rs is `decodeValue` in Nesting.lean) -/
 
 def T_NULL : Nat := 2 ^ 15
 def T_BOOL : Nat := 2 ^ 12
@@ -363,32 +363,16 @@ def encodeList : List (V F) → List (Tok F)
   | x :: xs => encode x ++ encodeList xs
 end
 
-/-- The `T_VECTOR_F32` arm of `decode_value` (value.rs:2240-2268 since #3643): a short
-buffer, a `dim` its buffer cannot hold, and (new in #3643) a buffer longer than
-`4 + 4 * dim` are refused. The per-float `off + 4 > len` check can no longer fire. -/
 def readVec (bytes : List Nat) : Option (List F) :=
-  if bytes.length < 4 then none else
-  let dim := fromLe4 (bytes.take 4)
-  let body := bytes.drop 4
-  if dim > body.length / 4 then none
-  else if bytes.length ≠ 4 + 4 * dim then none
-  else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
-
-/-- The vector reader before #3643: a buffer longer than `4 + 4 * dim` decoded to its
-first `dim` floats. Kept only to state what #3643 changed (`readVec_refuses_trailing`). -/
-def readVecPre3643 (bytes : List Nat) : Option (List F) :=
   if bytes.length < 4 then none else
   let dim := fromLe4 (bytes.take 4)
   let body := bytes.drop 4
   if body.length < 4 * dim then none
   else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
 
-/- Historical `Decode<19>` before #3339 (b080a44c1; value.rs:2131 at 4a4f2a72f): no depth
-bound, so `GRAPH.RESTORE` input recursed once per `T_ARRAY` header. Fuel bounds the nesting.
-Its vector arm uses today's `readVec` (#3643), so it is "the current decoder without the
-depth cap" and `decodeValue_agrees` isolates the cap; the old lenient reader is `readVecPre3643`.
-The current decoder is `decodeValue` (Nesting.lean). -/
-def pre3339_decode : Nat → List (Tok F) → Option (V F × List (Tok F))
+/- `Decode<19>` without the nesting cap (fuel bounds the recursion). The current decoder is
+`decodeValue` (Nesting.lean), proved equal to this one on values within the cap. -/
+def decodeUncapped : Nat → List (Tok F) → Option (V F × List (Tok F))
   | 0, _ => none
   | fuel + 1, .u tag :: rest =>
     if tag = T_NULL then some (.null, rest)
@@ -422,7 +406,7 @@ def pre3339_decode : Nat → List (Tok F) → Option (V F × List (Tok F))
 where
   decodeN : Nat → Nat → List (Tok F) → Option (List (V F) × List (Tok F))
   | _, 0, r => some ([], r)
-  | fuel, n + 1, r => match pre3339_decode fuel r with
+  | fuel, n + 1, r => match decodeUncapped fuel r with
     | some (x, r') => (decodeN fuel n r').map (fun (xs, r'') => (x :: xs, r''))
     | none => none
 
@@ -471,107 +455,61 @@ theorem readVec_vecBytes (v : List F) (hl : v.length < 2 ^ 32) : readVec co (vec
     simp [List.take_left' (le4_length _)]
   have hd : (le4 v.length ++ (v.map (fun x => le4 (co.bits x))).flatten).drop 4 =
       (v.map (fun x => le4 (co.bits x))).flatten := List.drop_left' (le4_length _)
-  rw [ite_eq_right (by omega), ht, hd, fromLe4_le4 _ hl, ite_eq_right (by rw [chunks_length]; omega),
-    ite_eq_right (by rw [hlen]; simp)]
+  rw [ite_eq_right (by omega), ht, hd, fromLe4_le4 _ hl, ite_eq_right (by rw [chunks_length]; omega)]
   congr 1
   apply List.ext_getElem (by simp)
   intro i h1 h2
   simp only [List.getElem_map, List.getElem_range]
   rw [chunks_get co v i h2, fromLe4_le4 _ (co.bits_lt _), co.ofBits_bits]
 
-/-- **#3643, new refusal**: a vector buffer with bytes after its `dim` floats (e.g. one more
-float, `4 + 4 * dim + 4` bytes) is refused. -/
-theorem readVec_refuses_trailing (v : List F) (extra : List Nat) (hl : v.length < 2 ^ 32)
-    (he : extra ≠ []) : readVec co (vecBytes co v ++ extra) = none := by
-  have hne : extra.length ≠ 0 := by simpa using he
-  have hd : (vecBytes co v ++ extra).drop 4 = (v.map (fun x => le4 (co.bits x))).flatten ++ extra := by
-    unfold vecBytes; rw [List.append_assoc]; exact List.drop_left' (le4_length _)
-  have ht : (vecBytes co v ++ extra).take 4 = le4 v.length := by
-    unfold vecBytes; rw [List.append_assoc]; exact List.take_left' (le4_length _)
-  have hlen : (vecBytes co v ++ extra).length = 4 + 4 * v.length + extra.length := by
-    unfold vecBytes; rw [List.length_append, List.length_append, le4_length, chunks_length]
-  unfold readVec
-  rw [hd, ht, hlen, fromLe4_le4 _ hl]
-  simp only [List.length_append, chunks_length]
-  split
-  · rfl
-  split
-  · rfl
-  rw [ite_cond_eq_true _ _ (by simp; omega)]
-
-/-- Before #3643 the same buffer decoded to the first `dim` floats. -/
-theorem readVecPre3643_trailing (v : List F) (extra : List Nat) (hl : v.length < 2 ^ 32) :
-    readVecPre3643 co (vecBytes co v ++ extra) = some v := by
-  have hd : (vecBytes co v ++ extra).drop 4 = (v.map (fun x => le4 (co.bits x))).flatten ++ extra := by
-    unfold vecBytes; rw [List.append_assoc]; exact List.drop_left' (le4_length _)
-  have ht : (vecBytes co v ++ extra).take 4 = le4 v.length := by
-    unfold vecBytes; rw [List.append_assoc]; exact List.take_left' (le4_length _)
-  have hlen : (vecBytes co v ++ extra).length = 4 + 4 * v.length + extra.length := by
-    unfold vecBytes; rw [List.length_append, List.length_append, le4_length, chunks_length]
-  unfold readVecPre3643
-  rw [hd, ht, hlen, fromLe4_le4 _ hl]
-  simp only [List.length_append, chunks_length]
-  split
-  · omega
-  split
-  · omega
-  congr 1
-  apply List.ext_getElem (by simp)
-  intro i h1 h2
-  simp only [List.getElem_map, List.getElem_range]
-  have hc := chunks_length co v
-  rw [List.drop_append_of_le_length (by omega),
-    List.take_append_of_le_length (by rw [List.length_drop]; omega),
-    chunks_get co v i h2, fromLe4_le4 _ (co.bits_lt _), co.ofBits_bits]
-
 /-- **Codec roundtrip**: every storable value decodes to itself, leaving the rest of
 the stream untouched (fuel: any bound above the value's size). -/
-theorem pre3339_decode_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel → Storable v →
-    pre3339_decode co fuel (encode co v ++ rest) = some (v, rest) := by
+theorem decodeUncapped_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel → Storable v →
+    decodeUncapped co fuel (encode co v ++ rest) = some (v, rest) := by
   intro fuel
   induction fuel with
   | zero => intro v _ h; omega
   | succ f ih =>
     intro v rest hs hst
     have hN : ∀ (l : List (V F)) (r : List (Tok F)), sizeOf l < f → StorableList l →
-        pre3339_decode.decodeN co f l.length (encodeList co l ++ r) = some (l, r) := by
+        decodeUncapped.decodeN co f l.length (encodeList co l ++ r) = some (l, r) := by
       intro l
       induction l with
-      | nil => intro r _ _; simp [encodeList, pre3339_decode.decodeN]
+      | nil => intro r _ _; simp [encodeList, decodeUncapped.decodeN]
       | cons x xs ihl =>
         intro r hsz hsl
         simp only [StorableList] at hsl
-        simp only [encodeList, List.length_cons, List.append_assoc, pre3339_decode.decodeN]
+        simp only [encodeList, List.length_cons, List.append_assoc, decodeUncapped.decodeN]
         rw [ih x _ (by simp at hsz; omega) hsl.1]
         simp [ihl r (by simp at hsz; omega) hsl.2]
     cases v with
-    | bool b => cases b <;> simp [encode, pre3339_decode, T_NULL, T_BOOL]
-    | int i => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64]
-    | float x => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE]
-    | str s => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, co.lossy_utf8]
+    | bool b => cases b <;> simp [encode, decodeUncapped, T_NULL, T_BOOL]
+    | int i => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64]
+    | float x => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE]
+    | str s => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, co.lossy_utf8]
     | list l =>
       simp only [Storable] at hst
       simp only [encode, List.cons_append, List.nil_append]
-      simp only [pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
+      simp only [decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
       simp [hN l rest (by simp at hs; omega) hst]
     | point la lo =>
-      simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
+      simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
         co.narrow_widen]
     | vec v =>
       simp only [Storable] at hst
-      simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
+      simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
         T_VECTOR_F32, readVec_vecBytes co v hst]
-    | datetime t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | datetime t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME]
-    | date t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | date t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE]
-    | time t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | time t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME]
-    | duration t => simp [encode, pre3339_decode, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
+    | duration t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME, T_DURATION]
     | null =>
       simp only [encode, List.cons_append, List.nil_append]
-      unfold pre3339_decode
+      unfold decodeUncapped
       simp only [ite_true]
     | map _ => simp [Storable] at hst
     | node _ => simp [Storable] at hst

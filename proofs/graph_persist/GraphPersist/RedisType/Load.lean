@@ -1,4 +1,4 @@
-/-! # Loading keys into the keyspace (redis_type.rs:84-183, :729-787, :858-877)
+/-! # Loading keys into the keyspace (redis_type.rs)
 
 | here | there |
 | --- | --- |
@@ -6,10 +6,9 @@
 | `MS`, `alloc`         | `GRAPH_REGISTRY`, `DECODE_STATE.placeholders`, and the `Arc<RwLock<ThreadedGraph>>` values (`some none` = a placeholder `ThreadedGraph`, `some (some v)` = a loaded graph) |
 | `loadWhole`           | `graph_rdb_load`, `LoadedKey::Graph` arm (:105-115) |
 | `loadPartial`         | `graph_rdb_load`, `LoadedKey::Partial` arm (:116-169) |
-| `finalizePending`     | `finalize_pending_graphs` (:762-797; `finalize_pending_graph` is a `Result` since #3643) |
-| `installGraph`        | `install_graph` (:801-823) |
+| `finalizePending`     | `finalize_pending_graphs` (:729-761) + `install_graph` (:764-787) |
 | `metaLoad`            | `graphmeta_rdb_load` (:858-874) |
-| `ioCacheSize`, `cacheOnLoad` | `io_cache_size` (:69), which every RDB load passes to `rdb_load_graph` (since #3262) |
+| `ioCacheSize`, `cacheOnLoad` | `io_cache_size` (:69), which every RDB load passes to `rdb_load_graph` |
 
 `fin` is `DECODE_STATE.finalized[graph_name]` as the decoder (`Persist.Pending`) leaves it:
 `none` after every key but the last of a multi-key graph, the finished graph after the last.
@@ -18,11 +17,7 @@
   the load order, after `finalize_pending_graphs` the registry entry for the graph and the
   value Redis holds under its key are the **same** `Arc`, holding the finished graph; no
   virtual key is registered; all placeholders are dropped.
-* `finalize_pending_ok` / `finalize_pending_err` — a pending graph left for
-  `finalize_pending_graphs`: `Ok` installs it into its placeholder, `Err` (#3643) logs and
-  installs nothing.
-* `cache_size_on_load` — a loaded graph's query cache has the configured `CACHE_SIZE`
-  (#3262; before, the constant 25).
+* `cache_size_on_load` — a loaded graph's query cache has the configured `CACHE_SIZE`.
 -/
 namespace GraphPersist.RedisType
 
@@ -70,30 +65,16 @@ def loadPartial (ms : MS Nm V) (fin : Option V) (gname kn : Nm) (isVirtual : Boo
     let ms2 := { ms1 with ph := fupd ms1.ph kn (some p) }
     (if isVirtual then ms2 else { ms2 with reg := fupd ms2.reg kn (some p) }, fin, p)
 
-/-- `install_graph` (:801): the graph goes into the placeholder's `Arc`; without a
-placeholder it is dropped (`log_warning`: "graph data will be lost"). The placeholder
-entry is removed either way. -/
-def installGraph (ms : MS Nm V) (v : V) (gname : Nm) : MS Nm V :=
-  match ms.ph gname with
-  | some p => { ms with heap := fupd ms.heap p (some (some v)), ph := fupd ms.ph gname none }
-  | none => ms
-
-/-- `finalize_pending_graphs` (:762) for one graph. `fin` is `finalized[graph_name]`
-(installed); `pend` is the outcome of `finalize_pending_graph(pg)` on a pending graph left
-with `keys_remaining == 0` (`none`: there is none — the decoder finalizes inline, so this
-is the case every load reaches). Since #3643 that outcome is a `Result`: `Ok` installs,
-`Err` logs a warning and installs nothing (the placeholder entry is dropped). Then, with
-no pending or finalized graph left, the placeholders are cleared. -/
-def finalizePending {E : Type} (ms : MS Nm V) (fin : Option V) (pend : Option (Except E V)) (gname : Nm) :
-    MS Nm V :=
+/-- `finalize_pending_graphs` for one graph, `pending` already empty (the decoder never
+leaves a pending graph with `keys_remaining == 0`: it finalizes inline). -/
+def finalizePending (ms : MS Nm V) (fin : Option V) (gname : Nm) : MS Nm V :=
   let ms1 := match fin with
-    | some v => installGraph ms v gname
+    | some v =>
+      match ms.ph gname with
+      | some p => { ms with heap := fupd ms.heap p (some (some v)), ph := fupd ms.ph gname none }
+      | none => ms   -- "no placeholder pointer … graph data will be lost"
     | none => ms
-  let ms2 := match pend with
-    | some (.ok v) => installGraph ms1 v gname
-    | some (.error _) => { ms1 with ph := fupd ms1.ph gname none }   -- `log_warning`
-    | none => ms1
-  { ms2 with ph := fun _ => none }
+  { ms1 with ph := fun _ => none }
 
 /-- The non-final keys: each gets a placeholder (registered iff it is the graph's own key). -/
 def loadPrefix (ms : MS Nm V) (gname : Nm) : List Nm → MS Nm V
@@ -136,7 +117,7 @@ theorem load_main_last (ms : MS Nm V) (gname : Nm) (vkeys : List Nm) (R : V)
     (hv : ∀ k ∈ vkeys, k ≠ gname) (hf : Fresh ms (gname :: vkeys)) :
     let ms1 := loadPrefix ms gname vkeys
     let r := loadPartial ms1 (some R) gname gname false
-    let ms3 := finalizePending r.1 r.2.1 (none : Option (Except Unit V)) gname
+    let ms3 := finalizePending r.1 r.2.1 gname
     ms3.reg gname = some r.2.2 ∧ ms3.heap r.2.2 = some (some R) ∧ (∀ k ∈ vkeys, ms3.reg k = none) ∧
     (∀ n, ms3.ph n = none) ∧ r.2.1 = none := by
   intro ms1 r ms3
@@ -146,14 +127,14 @@ theorem load_main_last (ms : MS Nm V) (gname : Nm) (vkeys : List Nm) (R : V)
       ms1.next + 1⟩, none, ms1.next) := by
     simp [r, loadPartial, hph, alloc]
   refine ⟨?_, ?_, ?_, ?_, ?_⟩
-  · simp [ms3, finalizePending, installGraph, hr, fupd]
-  · simp [ms3, finalizePending, installGraph, hr, fupd]
+  · simp [ms3, finalizePending, hr, fupd]
+  · simp [ms3, finalizePending, hr, fupd]
   · intro k hk
     have hk0 : k ≠ gname := hv k hk
-    simp [ms3, finalizePending, installGraph, hr, fupd, hk0]
+    simp [ms3, finalizePending, hr, fupd, hk0]
     show ms1.reg k = none
     simp only [ms1]; rw [i1]; exact hf.reg k (by simp [hk])
-  · intro n; simp [ms3, finalizePending, installGraph, hr]
+  · intro n; simp [ms3, finalizePending, hr]
   · simp [hr]
 
 /-- **The graph's own key loads before the last key.** It gets a placeholder `Arc`,
@@ -164,7 +145,7 @@ theorem load_main_first (ms : MS Nm V) (gname : Nm) (pre post : List Nm) (last :
     (hf : Fresh ms (gname :: (pre ++ post ++ [last]))) :
     let ms1 := loadPrefix ms gname (pre ++ gname :: post)
     let r := loadPartial ms1 (some R) gname last true
-    let ms3 := finalizePending r.1 r.2.1 (none : Option (Except Unit V)) gname
+    let ms3 := finalizePending r.1 r.2.1 gname
     ∃ p, ms3.reg gname = some p ∧ ms3.heap p = some (some R) ∧
       (∀ k ∈ pre ++ post ++ [last], ms3.reg k = none) ∧ (∀ n, ms3.ph n = none) := by
   intro ms1 r ms3
@@ -194,8 +175,8 @@ theorem load_main_first (ms : MS Nm V) (gname : Nm) (pre post : List Nm) (last :
       ms1.next + 1⟩, some R, ms1.next) := by
     simp [r, loadPartial, alloc, hlast]
   refine ⟨msA.next, ?_, ?_, ?_, ?_⟩
-  · simp [ms3, finalizePending, installGraph, hr, fupd, Ne.symm hlast, hphg, hregg]
-  · simp [ms3, finalizePending, installGraph, hr, fupd, Ne.symm hlast, hphg]
+  · simp [ms3, finalizePending, hr, fupd, Ne.symm hlast, hphg, hregg]
+  · simp [ms3, finalizePending, hr, fupd, Ne.symm hlast, hphg]
   · intro k hk
     have hk0 : k ≠ gname := by
       simp only [List.mem_append, List.mem_singleton] at hk
@@ -203,29 +184,12 @@ theorem load_main_first (ms : MS Nm V) (gname : Nm) (pre post : List Nm) (last :
       · exact hpre k hk
       · exact hpost k hk
       · exact hlast
-    simp only [ms3, finalizePending, installGraph, hr, fupd, Ne.symm hlast, hphg]
+    simp only [ms3, finalizePending, hr, fupd, Ne.symm hlast, hphg]
     show ms1.reg k = none
     rw [hsplit, b1]
     simp only [msB, hmain, fupd, hk0, ite_false, msA]
     rw [a1]; exact hf.reg k (List.mem_cons_of_mem _ hk)
   · intro n; simp [ms3, finalizePending]
-
-/-- **#3643, `Ok` arm.** A pending graph left for `finalize_pending_graphs` that
-`finalize_pending_graph` accepts goes into its placeholder's `Arc`; the registry is
-untouched (the placeholder is already registered) and every placeholder is dropped. -/
-theorem finalize_pending_ok {E : Type} (ms : MS Nm V) (gname : Nm) (v : V) (p : Nat) (hp : ms.ph gname = some p) :
-    let ms3 := finalizePending ms none (some (.ok v : Except E V)) gname
-    ms3.heap p = some (some v) ∧ ms3.reg = ms.reg ∧ ∀ n, ms3.ph n = none := by
-  simp [finalizePending, installGraph, hp, fupd]
-
-/-- **#3643, `Err` arm.** A pending graph `finalize_pending_graph` refuses is logged and
-dropped: nothing is installed (registry and heap unchanged — the placeholder `Arc` keeps
-its empty graph), and every placeholder is dropped. Before #3643 the refusal was a panic
-inside `Graph::restore`. -/
-theorem finalize_pending_err {E : Type} (ms : MS Nm V) (gname : Nm) (e : E) :
-    let ms3 := finalizePending ms none (some (.error e : Except E V)) gname
-    ms3.reg = ms.reg ∧ ms3.heap = ms.heap ∧ ms3.next = ms.next ∧ ∀ n, ms3.ph n = none := by
-  simp [finalizePending]
 
 /-- `graphmeta_rdb_load` (:858): decode like a graph key, keep a dummy byte on success,
 NULL (load failure) on error. -/
@@ -244,23 +208,19 @@ load callback runs under (main thread, GIL held), and `CONFIGURATION_CACHE_SIZE.
 reads the configured `CACHE_SIZE`; `configured` is that config value. -/
 def ioCacheSize (configured : Nat) : Nat := configured
 
-/-- The plan-cache size an RDB-loaded graph gets (`graph_rdb_load` :104 and its placeholder
-:148, `graphmeta_rdb_load` :863 all pass `io_cache_size(rdb)`). Graphs created by
+/-- The plan-cache size an RDB-loaded graph gets (`graph_rdb_load`  and its placeholder
+:148, `graphmeta_rdb_load`  all pass `io_cache_size(rdb)`). Graphs created by
 `GRAPH.QUERY` / `GRAPH.COPY` / effects get `CONFIGURATION_CACHE_SIZE`
-(`commands/query.rs:129`, `copy.rs`, `effect.rs:47`). -/
+(`commands/query.rs`, `copy.rs`, `effect.rs`). -/
 def cacheOnLoad (configured : Nat) : Nat := ioCacheSize configured
 def cacheOnCreate (configured : Nat) : Nat := configured
 
 theorem ioCacheSize_spec (configured : Nat) : ioCacheSize configured = configured := rfl
 
-/-- **W5-rdb-1 fixed by #3262 (`361f62ac1`)**: a graph loaded from an RDB (restart,
+/-- A graph loaded from an RDB (restart,
 `DEBUG RELOAD`, a replica's full sync) gets the same plan-cache size as one created by a
 query — the configured `CACHE_SIZE`, as in C. -/
 theorem cache_size_on_load (configured : Nat) :
     cacheOnLoad configured = cacheOnCreate configured := rfl
-
-/-! ### Historical: before #3262
-
-`redis_type.rs` passed the constant `DEFAULT_CACHE_SIZE = 25` to every RDB load. -/
 
 end GraphPersist.RedisType

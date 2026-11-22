@@ -1,7 +1,7 @@
 import GraphPersist.Persist.MultiKey
 /-! # One RDB key of a multi-key graph reads back its slices
 
-`rdb_load_graph` (decoder/mod.rs:112-128) checks the encoding version, reads header, schema and directory, then — with
+`rdb_load_graph` (decoder/mod.rs) checks the encoding version, reads header, schema and directory, then — with
 `key_count > 1` — `decode_payloads_into_pending` (:260-307) reads the payloads into the
 pending graph. `rdbKey` is that read; `key_rt` says every key `build_multi_key_payloads`
 lays out (entity slices `(offset, count)` and, on key 0, the matrices) reads back as the
@@ -44,18 +44,18 @@ theorem EntryOK.accepted (g : G M Tn Nm Ix Cn) (e : Entry) (h : EntryOK g e) : e
   · simp only [matrixEntries, List.mem_append, List.mem_cons, List.mem_nil_iff, or_false] at he
     rcases he with (he | he) | he | he <;> (try (split at he <;> simp at he)) <;> subst he <;> rfl
 
-theorem slice_rt (limit n : Nat) (del : List Nat) (S : Store) (hl : limit ≤ 65535)
+theorem slice_rt (limit n : Nat) (del : List Nat) (S : Store) (hl : limit ≤ 65536)
     (hk : KindWF limit n del S) (off cnt : Nat) (hc : 0 < cnt) (ho : off + cnt ≤ n) :
-    RT (rep (decEnt (n + del.length)) cnt) (encRange S (live n del) cnt off) ((((live n del).drop off).take cnt).map (rawOf S)) := by
+    RT (rep decEnt cnt) (encRange S (live n del) cnt off) ((((live n del).drop off).take cnt).map (rawOf S)) := by
   obtain ⟨hb, hnd, hlt, hS⟩ := hk
   have hlen := live_length n del hnd hlt
   have hsl : (((live n del).drop off).take cnt).length = cnt := by simp; omega
-  have hrep := RT_rep (decEnt (n + del.length)) (fun e => encEnt S e.1)
-    (fun e => e.1 < n + del.length ∧ e = rawOf S e.1 ∧ ∀ sp, S e.1 = some sp → GoodSpan limit sp)
+  have hrep := RT_rep decEnt (fun e => encEnt S e.1)
+    (fun e => e.1 < 2 ^ 64 ∧ e = rawOf S e.1 ∧ ∀ sp, S e.1 = some sp → GoodSpan limit sp)
     (by
       rintro ⟨i, raw⟩ ⟨hi, hr, hg⟩
       simp only at hi hg ⊢
-      rw [hr]; exact decEnt_rt S i (by omega) limit hl hg _ hi)
+      rw [hr]; exact decEnt_rt S i hi limit hl hg)
     ((((live n del).drop off).take cnt).map (rawOf S))
     (by
       intro e he
@@ -80,22 +80,21 @@ theorem roar_slice_rt (del : List Nat) (hb : ∀ i ∈ del, i < 2 ^ 64) (off cnt
   rw [hsl] at this
   simpa [encRoar] using this
 
-theorem entry_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (name : Nm) (K : Nat)
-    (e : Entry) (he : EntryOK g e) :
-    RT (decPayload C (hdrOf g name K) (e.st, e.count)) (encPayload C g e) (prOfE g e) := by
+theorem entry_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (e : Entry) (he : EntryOK g e) :
+    RT (decPayload C g.tensors.length (e.st, e.count)) (encPayload C g e) (prOfE g e) := by
   rcases he with ⟨hst, hc, ho⟩ | he
   · rcases hst with h | h | h | h <;> obtain ⟨st, count, offset⟩ := e <;> simp only at h <;> subst h <;>
       simp only [kindTotal] at ho
-    · have := RT_bind (slice_rt _ _ _ _ hw.attrMax hw.nk offset count hc ho)
+    · have := RT_bind (slice_rt _ _ _ _ hw.lim hw.nk offset count hc ho)
         (f := fun es => Dec.pure (PR.nodes (M := M) (Tn := Tn) es)) (RT_pure _)
-      simpa [decPayload, encPayload, prOfE, Hdr.nodeBound, hdrOf] using this
+      simpa [decPayload, encPayload, prOfE] using this
     · have hb : ∀ i ∈ g.delNodes, i < 2 ^ 64 := fun i hi => by have := hw.nk.2.2.1 i hi; have := hw.nk.1; omega
       have := RT_bind (roar_slice_rt g.delNodes hb offset count ho)
         (f := fun l => Dec.pure (PR.delN (M := M) (Tn := Tn) l)) (RT_pure _)
       simpa [decPayload, encPayload, prOfE] using this
-    · have := RT_bind (slice_rt _ _ _ _ hw.attrMax hw.ek offset count hc ho)
+    · have := RT_bind (slice_rt _ _ _ _ hw.lim hw.ek offset count hc ho)
         (f := fun es => Dec.pure (PR.edges (M := M) (Tn := Tn) es)) (RT_pure _)
-      simpa [decPayload, encPayload, prOfE, Hdr.edgeBound, hdrOf] using this
+      simpa [decPayload, encPayload, prOfE] using this
     · have hb : ∀ i ∈ g.delEdges, i < 2 ^ 64 := fun i hi => by have := hw.ek.2.2.1 i hi; have := hw.ek.1; omega
       have := RT_bind (roar_slice_rt g.delEdges hb offset count ho)
         (f := fun l => Dec.pure (PR.delE (M := M) (Tn := Tn) l)) (RT_pure _)
@@ -108,7 +107,7 @@ theorem entry_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) 
       · exact Or.inl (Or.inl (Or.inr he))
       · exact Or.inl (Or.inr he)
       · exact Or.inr he
-    have := payload_rt C g hw name K e hin
+    have := payload_rt C g hw e hin
     have hp : prOfE g e = prOf g e := by
       simp only [matrixEntries, List.mem_append, List.mem_cons, List.mem_nil_iff, or_false] at he
       rcases he with (he | he) | he | he
@@ -118,34 +117,19 @@ theorem entry_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) 
       · subst he; rfl
     rw [hp]; exact this
 
-/-- Every entry a multi-key layout holds passes `check_directory`: an entity slice
-ends inside its kind, and the header carries the kind's total. -/
-theorem EntryOK.dir (g : G M Tn Nm Ix Cn) (name : Nm) (K : Nat) (e : Entry) (h : EntryOK g e) :
-    ∀ m, dirCap (hdrOf g name K) e.st = some m → e.count ≤ m := by
-  intro m hm
-  rcases h with ⟨hst, _, ho⟩ | he
-  · rcases hst with h | h | h | h <;> rw [h] at hm ho <;> simp [dirCap, hdrOf, kindTotal] at hm ho <;> omega
-  · simp only [matrixEntries, List.mem_append, List.mem_cons, List.mem_nil_iff, or_false] at he
-    rcases he with (he | he) | he | he <;> (try (split at he <;> simp at he)) <;> subst he <;>
-      simp [dirCap] at hm
-
 /-! ## The key read -/
 
-/-- `rdb_load_graph`'s reads for one key: header (`check_header`), schema, directory
-(`check_directory`), then the payloads (`decode_payloads_into_pending` reads exactly the
-arms `decPayload` does, held to this key's header). Every key of one graph carries the
-same header, so holding the stores to this key's bounds is holding them to the first
-key's (`with_id_bound` on the pending graph's creation, decoder/mod.rs:162). -/
+/-- `rdb_load_graph`'s reads for one key: header, schema, directory, then the payloads
+(`decode_payloads_into_pending` reads exactly the arms `decPayload` does). -/
 def kKeyDir (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) (dir : List (St × Nat)) :
     Dec (Hdr Nm × Sch Nm Ix Cn × List (PR M Tn)) :=
-  (seqD (decPayload C h) dir).bind fun prs => Dec.pure (h, s, prs)
+  (seqD (decPayload C h.relCount) dir).bind fun prs => Dec.pure (h, s, prs)
 
 def kKeySch (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) (s : Sch Nm Ix Cn) :
-    Dec (Hdr Nm × Sch Nm Ix Cn × List (PR M Tn)) :=
-  decDir.bind fun dir => if checkDir h dir then kKeyDir C h s dir else Dec.fail
+    Dec (Hdr Nm × Sch Nm Ix Cn × List (PR M Tn)) := decDir.bind (kKeyDir C h s)
 
 def kKeyHdr (C : Codecs M Tn Nm Ix Cn) (h : Hdr Nm) : Dec (Hdr Nm × Sch Nm Ix Cn × List (PR M Tn)) :=
-  if checkHeader h = false then Dec.fail else C.S.dec.bind (kKeySch C h)
+  C.S.dec.bind (kKeySch C h)
 
 def rdbKey (C : Codecs M Tn Nm Ix Cn) : Dec (Hdr Nm × Sch Nm Ix Cn × List (PR M Tn)) := C.H.dec.bind (kKeyHdr C)
 
@@ -155,21 +139,18 @@ theorem key_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (K
     (hH : C.H.good (hdrOf g g.name K)) (es : List Entry) (hes : ∀ e ∈ es, EntryOK g e)
     (hn : es.length < 2 ^ 64) (hc : ∀ e ∈ es, e.count < 2 ^ 64) :
     RT (rdbKey C) (encodeGraph C g g.name es K) (hdrOf g g.name K, g.sch, es.map (prOfE g)) := by
-  have hseq := RT_seq (fun e : Entry => decPayload C (hdrOf g g.name K) (e.st, e.count))
-    (encPayload C g) (prOfE g) es (fun e he => entry_rt C g hw g.name K e (hes e he))
-  rw [← seqD_map (decPayload C (hdrOf g g.name K)) (fun e : Entry => (e.st, e.count))] at hseq
+  have hseq := RT_seq (fun e : Entry => decPayload C g.tensors.length (e.st, e.count))
+    (encPayload C g) (prOfE g) es (fun e he => entry_rt C g hw e (hes e he))
+  rw [← seqD_map (decPayload C g.tensors.length) (fun e : Entry => (e.st, e.count))] at hseq
   have hfin : RT (kKeyDir C (hdrOf g g.name K) g.sch (es.map fun e => (e.st, e.count)))
       (es.flatMap (encPayload C g) ++ []) (hdrOf g g.name K, g.sch, es.map (prOfE g)) :=
     RT_bind hseq (RT_pure _)
   have hdir : RT (kKeySch C (hdrOf g g.name K) g.sch) (encDir es ++ (es.flatMap (encPayload C g) ++ []))
       (hdrOf g g.name K, g.sch, es.map (prOfE g)) :=
-    RT_bind (decDir_rt es hn hc (fun e he => EntryOK.accepted g e (hes e he)))
-      (RT_if (checkDir_of _ es (fun e he => EntryOK.dir g g.name K e (hes e he))) hfin)
+    RT_bind (decDir_rt es hn hc (fun e he => EntryOK.accepted g e (hes e he))) hfin
   have hsch : RT (kKeyHdr C (hdrOf g g.name K))
       (C.S.enc g.sch ++ (encDir es ++ (es.flatMap (encPayload C g) ++ [])))
-      (hdrOf g g.name K, g.sch, es.map (prOfE g)) := by
-    rw [kKeyHdr, ite_cond_eq_false _ _ (by simp [checkHeader_hdrOf C g hw])]
-    exact RT_bind (C.S.rt _ hw.sch) hdir
+      (hdrOf g g.name K, g.sch, es.map (prOfE g)) := RT_bind (C.S.rt _ hw.sch) hdir
   have hall := RT_bind (C.H.rt _ hH) hsch
   have e : encodeGraph C g g.name es K = C.H.enc (hdrOf g g.name K) ++
       (C.S.enc g.sch ++ (encDir es ++ (es.flatMap (encPayload C g) ++ []))) := by
@@ -178,7 +159,7 @@ theorem key_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (K
 
 /-! ## The encoding-version gate (#3793) -/
 
-/-- `check_encoding_version` (decoder/mod.rs:82): `DECODE_MIN_VERSION = 19 ≤ encver ≤
+/-- `check_encoding_version` (decoder/mod.rs): `DECODE_MIN_VERSION = 19 ≤ encver ≤
 ENCODING_VERSION = 20` (serializers/mod.rs). -/
 def checkVer (encver : Int) : Bool := decide (19 ≤ encver) && decide (encver ≤ 20)
 

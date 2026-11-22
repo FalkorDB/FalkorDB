@@ -2,11 +2,10 @@ import RedisLayer.BufferedIO
 /-!
 # Readers of the v19 byte layer, and the write→read round trip
 
-`BufferedReader` (`buffered_io.rs:170-331`) and `PipeReader` (`:437-559`) share their
+`BufferedReader` (`buffered_io.rs`) and `PipeReader` share their
 read logic and differ only in where a chunk comes from: `Src.load` is `load_chunk`
-(`:212` / `:498`) and `Src.blob` is the `TYPE_BLOB` arm of `read_buffer` (`:307-325` /
-`:474-479`). `Res.crash` is a Rust panic or UB (indexing `buf[pos]` of an empty chunk); since #3643 no
-source hands out an empty chunk, so no read crashes (`readW_no_crash`).
+( /) and `Src.blob` is the `TYPE_BLOB` arm of `read_buffer` ( /). `Res.crash` is a Rust panic or UB (indexing `buf[pos]` of an empty chunk,
+`load_string_buffer(NULL)`).
 -/
 namespace RedisLayer.BufferedIO
 
@@ -31,19 +30,18 @@ structure Rd (σ : Type) where
 
 variable {σ : Type} (S : Src σ)
 
-/-- `ensure_available` (`:221` / `:515`). -/
+/-- `ensure_available` ( /). -/
 def ensure (r : Rd σ) : Res (Rd σ) :=
   if r.rest = [] then (S.load r.src).bind fun (c, s) => .ok ⟨c, s⟩ else .ok r
 
-/-- `read_tag` (`:229` / `:522`): `buf[pos]` panics on an empty chunk. -/
+/-- `read_tag` ( /): `buf[pos]` panics on an empty chunk. -/
 def readTag (e : Nat) (r : Rd σ) : Res (Rd σ) :=
   (ensure S r).bind fun r =>
     match r.rest with
     | [] => .crash
     | t :: rs => if t = e then .ok ⟨rs, r.src⟩ else .err
 
-/-- `read_bytes` (`:265` / `:557`). `pos + n ≤ len` over `Nat` never overflows; `PipeReader`
-writes it as `pos.checked_add(n)` since #3643, which is the same test. -/
+/-- `read_bytes` ( /). -/
 def readBytes (n : Nat) (r : Rd σ) : Res (Bytes × Rd σ) :=
   if n ≤ r.rest.length then .ok (r.rest.take n, ⟨r.rest.drop n, r.src⟩) else .err
 
@@ -76,21 +74,18 @@ def readSeq : List W → Rd σ → Res (List W × Rd σ)
 /-! ## Sources -/
 
 /-- `BufferedReader::new` (`rdb` live) / `from_slice` (`rdb` NULL): chunks are the RDB's
-string buffers. `load_chunk` (`:220`, #3643) refuses a NULL handle (no next chunk: the
-payload ended early) and an empty chunk; before #3643 it called `load_string_buffer(NULL)`
-(UB) and handed an empty chunk to `buf[pos]` (panic). The blob arm checks NULL first and
-errors (`:329-333`). -/
+string buffers. `load_string_buffer(NULL)` is UB (`crash`); the blob arm checks NULL first
+and errors. -/
 def listSrc (null : Bool) : Src (List Bytes) where
-  load := fun l => if null then .err else match l with
+  load := fun l => if null then .crash else match l with
     | [] => .err
-    | c :: cs => if c = [] then .err else .ok (c, cs)
+    | c :: cs => .ok (c, cs)
   blob := fun l => if null then .err else match l with
     | [] => .err
     | c :: cs => .ok (c, cs)
 
-/-- `PipeReader::load_chunk` (`:498-513`) on the byte stream of the pipe: an 8-byte LE
-length, then that many bytes; length 0 is end-of-stream (`Err`). The blob arm
-(`:474-479`) is `load_chunk` and then the whole chunk. -/
+/-- `PipeReader::load_chunk` on the byte stream of the pipe: an 8-byte LE
+length, then that many bytes; length 0 is end-of-stream (`Err`). The blob arm is `load_chunk` and then the whole chunk. -/
 def pipeLoad (s : Bytes) : Res (Bytes × Bytes) :=
   if s.length < 8 then .err else
   let len := fromLE (s.take 8)
@@ -101,7 +96,7 @@ def pipeSrc : Src Bytes where
   load := pipeLoad
   blob := pipeLoad
 
-/-- `PipeWriter`'s byte stream (`flush` `:357`, blob `:429-431`, `finish` `:376-382`):
+/-- `PipeWriter`'s byte stream (`flush`, blob, `finish`):
 each chunk the buffered writer would save, length-prefixed, then a zero length. -/
 def frame (cs : List Bytes) : Bytes := (cs.map fun c => le 8 c.length ++ c).flatten
 

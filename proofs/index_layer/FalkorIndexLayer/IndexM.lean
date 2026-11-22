@@ -1,7 +1,7 @@
 import FalkorIndexLayer.Meta
 import FalkorIndexLayer.Model
 /-
-# `Index` (`graph/src/index/mod.rs:875-2248`): metadata, RS spec lifecycle
+# `Index` (`graph/src/index/mod.rs`): metadata, RS spec lifecycle
 
 The RediSearch spec is abstract: `spec : Option Nat` is the handle identity
 (`None` = the former null), `rs` the list of fields registered on it. The FFI
@@ -38,42 +38,42 @@ structure Idx where
   language : Option String
   stopwords : Option (List String)
   /-- Gap closed 2026-10-20 (#3166): the stopword list the live RediSearch spec was
-  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs:1119-1133`, read by
+  *created* with (`RediSearch_IndexOptionsSetStopwords`, `mod.rs`, read by
   `RediSearch_CreateIndex`). RediSearch fixes it at creation: `register_fields`
-  (`mod.rs:1181`) adds fields to the spec and never touches it. `none` = the
-  `SetStopwords(null, 0)` arm (`mod.rs:1132`), i.e. RediSearch's own default. -/
+  (`mod.rs`) adds fields to the spec and never touches it. `none` = the
+  `SetStopwords(null, 0)` arm (`mod.rs`), i.e. RediSearch's own default. -/
   rsStop : Option (List String) := none
 
 namespace Idx
 
-/-- `Default for Index` (`mod.rs:1013`). -/
+/-- `Default for Index` (`mod.rs`). -/
 def default (id : Nat) : Idx :=
   { id, spec := none, rs := [], fields := [], order := [], slots := ⟨id, 0, 0⟩,
     progress := 0, total := 0, language := none, stopwords := none }
 
-/-- `Index::id` (`mod.rs:1040`). -/
+/-- `Index::id` (`mod.rs`). -/
 def idOf (x : Idx) : Nat := x.id
-/-- `Index::bump_id` (`mod.rs:1049`), `g'` the next value of the static counter. -/
+/-- `Index::bump_id` (`mod.rs`), `g'` the next value of the static counter. -/
 def bumpId (x : Idx) (g' : Nat) : Idx := { x with id := g', slots := x.slots.bump g' }
-/-- `Index::clone_for_update` (`mod.rs:1068`): every component copied; `spec`
+/-- `Index::clone_for_update` (`mod.rs`): every component copied; `spec`
 and `pending_slots` are the *same* `Arc`s (shared, not copied). -/
 def cloneForUpdate (x : Idx) : Idx :=
   { id := x.id, spec := x.spec, rs := x.rs, fields := x.fields, order := x.order, slots := x.slots,
     progress := x.progress, total := x.total, language := x.language, stopwords := x.stopwords,
     rsStop := x.rsStop }
-/-- `has_rs_index` (`mod.rs:1088`). -/
+/-- `has_rs_index` (`mod.rs`). -/
 def hasRsIndex (x : Idx) : Bool := x.spec.isSome
-/-- `rs_ptr` (`mod.rs:1095`): `none` is the null pointer. -/
+/-- `rs_ptr` (`mod.rs`): `none` is the null pointer. -/
 def rsPtr (x : Idx) : Option Nat := x.spec
 
 def hasNul (s : String) : Bool := s.toList.contains (Char.ofNat 0)
 
-/-- `create_rs_index` (`mod.rs:1105`). Error order as in Rust (#3274): stopwords
+/-- `create_rs_index` (`mod.rs`). Error order as in Rust (#3274): stopwords
 `CString::new` (1113-1120), language `CString::new` (1127-1129), label
 `CString::new` (1130), all before the options block is allocated; then
 unsupported language (1156-1160). On success the spec is fresh and carries only
 `NONE_INDEXABLE_FIELDS` (1175-1186), and (#3166 gap) is created with the stopword
-list `stop` (`mod.rs:1144-1154`), recorded as `rsStop`. -/
+list `stop` (`mod.rs`), recorded as `rsStop`. -/
 def createRsIndex (x : Idx) (label : String) (stop : Option (List String)) (lang : Option String)
     (langOk : String → Bool) (fresh : Nat) : Except String Idx :=
   if (stop.getD []).any hasNul then .error "nul" else
@@ -84,7 +84,7 @@ def createRsIndex (x : Idx) (label : String) (stop : Option (List String)) (lang
   | none => if hasNul label then .error "nul"
             else .ok { x with spec := some fresh, rs := [⟨"NONE_INDEXABLE_FIELDS", .noneTag⟩], rsStop := stop }
 
-/-- The metric match of `register_fields` (`mod.rs:1273-1286`). -/
+/-- The metric match of `register_fields` (`mod.rs`). -/
 def metricOf (sim : Option String) : Except String String :=
   match sim.getD "euclidean" with
   | "euclidean" => .ok "L2"
@@ -92,7 +92,7 @@ def metricOf (sim : Option String) : Except String String :=
   | "cosine" => .ok "COSINE"
   | o => .error s!"Unknown similarity function '{o}', expected 'euclidean', 'ip', or 'cosine'"
 
-/-- One iteration of `register_fields` (`mod.rs:1192-1344`). `tieredOk` is
+/-- One iteration of `register_fields` (`mod.rs`). `tieredOk` is
 the result of `VecSimTieredParams_Init` + `VectorFieldSetParams` (FFI). -/
 def registerOne (fo : Option TextOpts) (tieredOk : Bool) (f : Field) : Except String (List RsReg) :=
   match f.ty with
@@ -125,14 +125,14 @@ def registerAll (fo : Option TextOpts) (tieredOk : Bool) : List Field → Except
 
 def allFieldsOf (m : AMap (List Field)) : List Field := m.flatMap (·.2)
 
-/-- `register_fields` (`mod.rs:1181`), applied to the spec. -/
+/-- `register_fields` (`mod.rs`), applied to the spec. -/
 def registerFields (x : Idx) (m : AMap (List Field)) (fo : Option TextOpts) (tieredOk : Bool) :
     Except String Idx :=
   match registerAll fo tieredOk (allFieldsOf m) with
   | .ok r => .ok { x with rs := x.rs ++ r }
   | .error e => .error e
 
-/-! Field-map operations (`mod.rs:1968-2077`). -/
+/-! Field-map operations (`mod.rs`). -/
 def getFields (x : Idx) (a : String) : Option (List Field) := x.fields.get a
 def containsField (x : Idx) (a : String) : Bool := (x.fields.get a).isSome
 def hasFieldWithType (x : Idx) (a : String) (t : IType) : Bool :=
@@ -159,16 +159,16 @@ def languageOf (x : Idx) : Option String := x.language
 def setLanguage (x : Idx) (l : Option String) : Idx := { x with language := l }
 def stopwordsOf (x : Idx) : Option (List String) := x.stopwords
 def setStopwords (x : Idx) (s : Option (List String)) : Idx := { x with stopwords := s }
-/-- `memory_usage` (`mod.rs:2205`); `mem` = `RediSearch_MemUsage` (FFI). -/
+/-- `memory_usage` (`mod.rs`); `mem` = `RediSearch_MemUsage` (FFI). -/
 def memoryUsage (x : Idx) (mem : Nat → Nat) : Nat := match x.spec with | none => 0 | some s => mem s
-/-- `index_count` (`mod.rs:2215`). -/
+/-- `index_count` (`mod.rs`). -/
 def indexCount (x : Idx) : Nat := (x.fields.map (·.2.length)).sum
 
 /-- The field `build_query_node` targets for attribute `a`:
-`self.fields.get(key).and_then(|f| f.first())` (`mod.rs:1397,1426,1484,1496,1554,1615`). -/
+`self.fields.get(key).and_then(|f| f.first())` (`mod.rs`). -/
 def queryField (x : Idx) (a : String) : Option Field := (x.fields.get a).bind (·.head?)
 
-/-- `recreate_index` (`mod.rs:2219`). -/
+/-- `recreate_index` (`mod.rs`). -/
 def recreateIndex (x : Idx) (label : String) (langOk : String → Bool) (tieredOk : Bool)
     (fresh g' : Nat) : Except String Idx :=
   match createRsIndex { x with spec := none } label x.stopwords x.language langOk fresh with
@@ -210,23 +210,6 @@ theorem createRsIndex_ok (x : Idx) (label : String) (stop : Option (List String)
     next l _ _ h2 _ => cases h; simp_all
   · split at h; · cases h
     cases h; simp
-
-/-- The pre-#3274 statement of `createRsIndex_lang_err`: with NUL-free stopwords
-and language, an unsupported language is always reported, whatever the label. -/
-def LangErrSpec (x : Idx) : Prop :=
-  ∀ (label : String) (stop : Option (List String)) (l : String)
-    (langOk : String → Bool) (fresh : Nat), (stop.getD []).any hasNul = false →
-    hasNul l = false → langOk l = false →
-    createRsIndex x label stop (some l) langOk fresh = .error s!"Language is not supported: {l}"
-
-/-- Counterexample (#3274): the label `CString::new` now runs before the language
-check, so a label with a NUL byte and an unsupported language `x` reports the NUL
-error, not `Language is not supported: x`. -/
-theorem createRsIndex_lang_err_fails (x : Idx) : ¬ LangErrSpec x := by
-  intro h
-  have := h "L\x00" none "x" (fun _ => false) 0 rfl (by decide) rfl
-  simp [createRsIndex, hasNul] at this
-  exact absurd this (by decide)
 
 /-- What still holds on the new code: an unsupported language is reported when
 the stopwords, language and label are all NUL-free. -/

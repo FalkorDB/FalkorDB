@@ -261,7 +261,7 @@ theorem rdb_roundtrip (B : Nat) (h9 : 9 ≤ B) (hB : B < 256^8) (xs : List W)
     (hok : ∀ x ∈ xs, x.ok) (rest : List Bytes) :
     readSeq (listSrc false) xs ⟨[], writeAll B xs ++ rest⟩ = .ok (xs, ⟨[], rest⟩) := by
   have := roundtrip B (listSrc false) (fun cs t => cs ++ t)
-    (by intro c cs t hc _; simp [listSrc, hc]) (by intro c cs t _ _; simp [listSrc]) h9 hB xs rest hok
+    (by intro c cs t _ _; simp [listSrc]) (by intro c cs t _ _; simp [listSrc]) h9 hB xs rest hok
   simpa using this
 
 /-- Production buffer size. -/
@@ -283,7 +283,7 @@ theorem pipe_roundtrip (B : Nat) (h9 : 9 ≤ B) (hB : B < 256^8) (xs : List W)
 
 /-! ## `VecWriter` / `BufferedReader::from_slice` (`GRAPH.RESTORE` replication) -/
 
-/-- `VecWriter` (`:576-620`): every write inlined, no chunking, no blob sentinel. -/
+/-- `VecWriter`: every write inlined, no chunking, no blob sentinel. -/
 def vecWrite (xs : List W) : Bytes := (xs.map record).flatten
 
 /-- `VecWriter::into_vec` returns exactly the buffer: the concatenation of the records. -/
@@ -306,254 +306,11 @@ theorem vec_roundtrip (xs : List W) (hok : ∀ x ∈ xs, x.ok) (T : Bytes) :
       rw [vecWrite_cons, List.append_assoc, hc]; simp [ensure]
     · exact ih (fun y hy => hok y (by simp [hy]))
 
-/-- One read past the end of a `from_slice` reader is an error (#3643, `load_chunk` `:220`
-refuses the NULL handle). Before #3643 it called `RedisModule_LoadStringBuffer(NULL)`, so
-every truncated `GRAPH.RESTORE` payload crashed the server (#2537). -/
-theorem from_slice_past_end_err (x : W) (l : List Bytes) :
-    readW (listSrc true) x ⟨[], l⟩ = .err := by
+/-- …but one read past the end of a `from_slice` reader is not an error: `ensure_available`
+calls `load_chunk`, i.e. `RedisModule_LoadStringBuffer(NULL)` (`BufferedReader::from_slice` sets `rdb` to NULL). Every truncated `GRAPH.RESTORE` payload therefore reaches it — the root cause of
+#2537 (`GRAPH.RESTORE k ""` SIGSEGV), and not only for the empty payload. -/
+theorem from_slice_past_end (x : W) :
+    readW (listSrc true) x ⟨[], []⟩ = .crash := by
   cases x <;> simp [readW, readTag, ensure, listSrc, Res.bind]
-
-/-- An empty RDB chunk is refused (#3643) instead of indexing `buf[0]` of it. -/
-theorem rdb_empty_chunk_err (x : W) (cs : List Bytes) :
-    readW (listSrc false) x ⟨[], [] :: cs⟩ = .err := by
-  cases x <;> simp [readW, readTag, ensure, listSrc, Res.bind]
-
-/-! ## No read crashes
-
-`Res.crash` is only reachable by indexing an empty chunk. A source whose `load` never crashes
-and never returns an empty chunk, and whose `blob` never crashes, makes every read total. -/
-
-section NoCrash
-variable {σ : Type} (S : Src σ)
-
-theorem bind_ne_crash {α β} (m : Res α) (f : α → Res β) (hm : m ≠ .crash)
-    (hf : ∀ a, f a ≠ .crash) : m.bind f ≠ .crash := by
-  cases m <;> simp_all [Res.bind]
-
-theorem readBytes_ne_crash (n : Nat) (r : Rd σ) : readBytes n r ≠ .crash := by
-  unfold readBytes; split <;> simp
-
-theorem ensure_ok_or_err
-    (hl : ∀ s, S.load s ≠ .crash) (hne : ∀ s c s', S.load s = .ok (c, s') → c ≠ [])
-    (r : Rd σ) : ensure S r = .err ∨ ∃ r', ensure S r = .ok r' ∧ r'.rest ≠ [] := by
-  unfold ensure
-  split
-  · cases h : S.load r.src with
-    | ok p => exact Or.inr ⟨⟨p.1, p.2⟩, by simp [Res.bind], hne _ _ _ h⟩
-    | err => exact Or.inl (by simp [Res.bind])
-    | crash => exact absurd h (hl _)
-  · exact Or.inr ⟨r, rfl, by assumption⟩
-
-theorem ensure_bind_ne_crash {β} (hl : ∀ s, S.load s ≠ .crash)
-    (hne : ∀ s c s', S.load s = .ok (c, s') → c ≠ []) (r : Rd σ) (f : Rd σ → Res β)
-    (hf : ∀ r' : Rd σ, r'.rest ≠ [] → f r' ≠ .crash) : (ensure S r).bind f ≠ .crash := by
-  rcases ensure_ok_or_err S hl hne r with h | ⟨r', h, hr⟩
-  · simp [h, Res.bind]
-  · simp only [h, Res.bind]; exact hf r' hr
-
-theorem readTag_ne_crash (hl : ∀ s, S.load s ≠ .crash)
-    (hne : ∀ s c s', S.load s = .ok (c, s') → c ≠ []) (e : Nat) (r : Rd σ) :
-    readTag S e r ≠ .crash := by
-  unfold readTag
-  apply ensure_bind_ne_crash S hl hne
-  intro ⟨rest, s⟩ hr
-  cases rest with
-  | nil => exact absurd rfl hr
-  | cons t rs => simp only; split <;> simp
-
-/-- **No read crashes** (#3643): with such a source, every read returns a value or an error. -/
-theorem readW_no_crash (hl : ∀ s, S.load s ≠ .crash)
-    (hne : ∀ s c s', S.load s = .ok (c, s') → c ≠ []) (hb : ∀ s, S.blob s ≠ .crash)
-    (x : W) (r : Rd σ) : readW S x r ≠ .crash := by
-  have hT := readTag_ne_crash S hl hne
-  have hB := readBytes_ne_crash (σ := σ)
-  cases x with
-  | buf _ =>
-    simp only [readW]
-    apply ensure_bind_ne_crash S hl hne
-    intro ⟨rest, s⟩ hr
-    cases rest with
-    | nil => exact absurd rfl hr
-    | cons t rs =>
-      simp only
-      split
-      · exact bind_ne_crash _ _ (hB _ _) fun _ =>
-          bind_ne_crash _ _ (hB _ _) fun _ => by simp
-      · split
-        · exact bind_ne_crash _ _ (hb _) fun _ => by simp
-        · simp
-  | _ =>
-    simp only [readW]
-    exact bind_ne_crash _ _ (hT _ _) fun _ =>
-      bind_ne_crash _ _ (hB _ _) fun _ => by simp
-
-theorem readSeq_no_crash (hl : ∀ s, S.load s ≠ .crash)
-    (hne : ∀ s c s', S.load s = .ok (c, s') → c ≠ []) (hb : ∀ s, S.blob s ≠ .crash)
-    (xs : List W) (r : Rd σ) : readSeq S xs r ≠ .crash := by
-  induction xs generalizing r with
-  | nil => simp [readSeq]
-  | cons x xs ih =>
-    simp only [readSeq]
-    exact bind_ne_crash _ _ (readW_no_crash S hl hne hb x r) fun _ =>
-      bind_ne_crash _ _ (ih _) fun _ => by simp
-
-end NoCrash
-
-/-- `BufferedReader` (`new` and `from_slice`) never crashes on any input (#3643). -/
-theorem listSrc_no_crash (null : Bool) (xs : List W) (r : Rd (List Bytes)) :
-    readSeq (listSrc null) xs r ≠ .crash := by
-  apply readSeq_no_crash
-  · intro l; cases null <;> cases l <;> simp [listSrc] <;> split <;> simp
-  · intro l c l' h
-    cases null <;> cases l <;> simp [listSrc] at h
-    split at h <;> simp_all
-  · intro l; cases null <;> cases l <;> simp [listSrc]
-
-theorem pipeLoad_ne (s c s' : Bytes) (h : pipeLoad s = .ok (c, s')) : c ≠ [] := by
-  unfold pipeLoad at h
-  dsimp only at h
-  split at h
-  · simp at h
-  · split at h
-    · simp at h
-    · split at h
-      · simp at h
-      · simp at h
-        rw [← h.1]; intro he
-        have := congrArg List.length he
-        rw [List.length_take, List.length_nil] at this; omega
-
-theorem pipeLoad_ne_crash (s : Bytes) : pipeLoad s ≠ .crash := by
-  unfold pipeLoad; dsimp only; split
-  · simp
-  · split
-    · simp
-    · split <;> simp
-
-/-- `PipeReader` never crashes either (`load_chunk` refuses a zero length). -/
-theorem pipeSrc_no_crash (xs : List W) (r : Rd Bytes) : readSeq pipeSrc xs r ≠ .crash :=
-  readSeq_no_crash pipeSrc pipeLoad_ne_crash pipeLoad_ne pipeLoad_ne_crash xs r
-
-/-! ## `Reader::remaining` (`:193`, #3643) and `check_count_fits`
-
-A `from_slice` reader holds the whole payload: `remaining` is `buf.len() - pos`, i.e. the
-length of `rest`; a stream reader returns `None`. Every `u`/`s`/`d`/`buf` record a
-`from_slice` reader accepts takes at least 9 bytes, so `check_count_fits(r, _, n, 9)` refuses
-only counts whose `n` records could not all be read: `remaining_bounds_reads`. -/
-
-def remaining (null : Bool) (r : Rd (List Bytes)) : Option Nat :=
-  if null then some r.rest.length else none
-
-/-- A record of at least 9 bytes: everything but `write_float`. -/
-def W.nine : W → Prop
-  | .f _ => False
-  | _ => True
-
-theorem readBytes_len {σ} (n : Nat) (r r' : Rd σ) (b : Bytes) (h : readBytes n r = .ok (b, r')) :
-    r.rest.length = r'.rest.length + n ∧ r'.src = r.src := by
-  unfold readBytes at h; split at h
-  · simp at h; rw [← h.2]; simp; omega
-  · simp at h
-
-theorem readTag_slice_len (e : Nat) (r r' : Rd (List Bytes))
-    (h : readTag (listSrc true) e r = .ok r') :
-    r.rest.length = r'.rest.length + 1 ∧ r'.src = r.src := by
-  obtain ⟨rest, s⟩ := r
-  cases rest with
-  | nil => simp [readTag, ensure, listSrc, Res.bind] at h
-  | cons t rs =>
-    simp only [readTag, ensure, reduceCtorEq, ite_false, Res.bind] at h
-    split at h
-    · simp at h; rw [← h]; simp
-    · simp at h
-
-theorem readW_slice_len (x : W) (hx : x.nine) (r r' : Rd (List Bytes)) (y : W)
-    (h : readW (listSrc true) x r = .ok (y, r')) :
-    r'.rest.length + 9 ≤ r.rest.length ∧ r'.src = r.src := by
-  have tagged : ∀ (e : Nat) (g : Bytes → W),
-      ((readTag (listSrc true) e r).bind fun r =>
-        (readBytes 8 r).bind fun (b, r) => Res.ok (g b, r)) = .ok (y, r') →
-      r'.rest.length + 9 ≤ r.rest.length ∧ r'.src = r.src := by
-    intro e g h
-    cases h1 : readTag (listSrc true) e r with
-    | ok r1 =>
-      rw [h1] at h; simp only [Res.bind] at h
-      cases h2 : readBytes 8 r1 with
-      | ok p =>
-        rw [h2] at h; simp only [Res.bind] at h
-        obtain ⟨b, r2⟩ := p
-        simp at h; rw [← h.2]
-        have a1 := readTag_slice_len e r r1 h1
-        have a2 := readBytes_len 8 r1 r2 b h2
-        exact ⟨by omega, by rw [a2.2, a1.2]⟩
-      | err => rw [h2] at h; simp [Res.bind] at h
-      | crash => rw [h2] at h; simp [Res.bind] at h
-    | err => rw [h1] at h; simp [Res.bind] at h
-    | crash => rw [h1] at h; simp [Res.bind] at h
-  cases x with
-  | u _ => exact tagged TYPE_UNSIGNED (fun b => .u (fromLE b)) h
-  | s _ => exact tagged TYPE_SIGNED (fun b => .s (ofU (fromLE b))) h
-  | d _ => exact tagged TYPE_DOUBLE (fun b => .d (fromLE b)) h
-  | f _ => exact absurd hx (by simp [W.nine])
-  | buf _ =>
-    obtain ⟨rest, s⟩ := r
-    cases rest with
-    | nil => simp [readW, ensure, listSrc, Res.bind] at h
-    | cons t rs =>
-      simp only [readW, ensure, reduceCtorEq, ite_false, Res.bind] at h
-      split at h
-      · cases h2 : readBytes 8 ⟨rs, s⟩ with
-        | ok p =>
-          rw [h2] at h; simp only [Res.bind] at h
-          obtain ⟨lb, r2⟩ := p
-          have a2 := readBytes_len 8 ⟨rs, s⟩ r2 lb h2
-          cases h3 : readBytes (fromLE lb) r2 with
-          | ok q =>
-            rw [h3] at h; simp only [Res.bind] at h
-            obtain ⟨ds, r3⟩ := q
-            have a3 := readBytes_len _ r2 r3 ds h3
-            simp at h; rw [← h.2]
-            simp at a2 ⊢
-            exact ⟨by omega, by rw [a3.2, a2.2]⟩
-          | err => rw [h3] at h; simp at h
-          | crash => rw [h3] at h; simp at h
-        | err => rw [h2] at h; simp at h
-        | crash => rw [h2] at h; simp at h
-      · split at h
-        · simp [listSrc] at h
-        · simp at h
-
-/-- **`check_count_fits` is sound** on a `from_slice` reader: if `n` records of at least
-9 bytes each can be read, then `n * 9 ≤ remaining`. So the new refusal (`Header::decode`
-`:196`, `relationship type`, `min_bytes` 9) only turns an `Err` the loop would have
-reached anyway into an earlier one. -/
-theorem remaining_bounds_reads (xs : List W) (hx : ∀ x ∈ xs, x.nine)
-    (r r' : Rd (List Bytes)) (ys : List W)
-    (h : readSeq (listSrc true) xs r = .ok (ys, r')) :
-    ∃ k, remaining true r = some k ∧ xs.length * 9 ≤ k := by
-  refine ⟨r.rest.length, by simp [remaining], ?_⟩
-  induction xs generalizing r ys with
-  | nil => simp
-  | cons x xs ih =>
-    simp only [readSeq] at h
-    cases h1 : readW (listSrc true) x r with
-    | ok p =>
-      rw [h1] at h; simp only [Res.bind] at h
-      obtain ⟨y, r1⟩ := p
-      have a1 := readW_slice_len x (hx x (by simp)) r r1 y h1
-      cases h2 : readSeq (listSrc true) xs r1 with
-      | ok q =>
-        obtain ⟨ys1, r2⟩ := q
-        rw [h2] at h; simp only [Res.bind] at h
-        injection h with h; injection h with _ h; subst h
-        have := ih (fun z hz => hx z (by simp [hz])) r1 ys1 h2
-        simp; omega
-      | err => rw [h2] at h; simp [Res.bind] at h
-      | crash => rw [h2] at h; simp [Res.bind] at h
-    | err => rw [h1] at h; simp [Res.bind] at h
-    | crash => rw [h1] at h; simp [Res.bind] at h
-
-/-- A stream reader reports nothing: `check_count_fits` is a no-op there. -/
-theorem remaining_stream (r : Rd (List Bytes)) : remaining false r = none := rfl
 
 end RedisLayer.BufferedIO

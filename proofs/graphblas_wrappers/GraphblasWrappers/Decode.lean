@@ -1,55 +1,37 @@
 /-
-# `Tensor::decode` and promotion completeness (`edge_count` underflow, #3033)
+# `Tensor::decode` and promotion completeness (`edge_count` underflow)
 
-**Status on main 73077bb4a: FIXED by #3033.** #2996 added a size check of the
-forward layers (below, `checkLayers_*`) and made a corrupt id blob an `Err`
-(`Codes.decodeBlob_never_dies`). #3033 adds the promotion-completeness check:
+`Tensor::decode` checks the size of the forward layers (below, `checkLayers_*`) and makes a corrupt
+id blob an `Err` (`Codes.decodeBlob_never_dies`). It also checks promotion completeness:
 every tensor-section pair must land on a `MULTI_EDGE` forward entry
-(tensor.rs:1645-1649) and the number of `me` pairs with ids must equal the
-number of markers, counted by `Matrix::<u64>::count_value_eq` (matrix.rs:1608,
-`GrB_select` with `GrB_VALUEEQ_UINT64`) (tensor.rs:1629, 1682-1688). The section
+(tensor.rs) and the number of `me` pairs with ids must equal the
+number of markers, counted by `Matrix::<u64>::count_value_eq` (matrix.rs,
+`GrB_select` with `GrB_VALUEEQ_UINT64`) (tensor.rs). The section
 "Promotion completeness on decode" below proves it refuses exactly the payloads
 that break the invariant (`decodeCheck_ok_iff`) and accepts every encoded tensor
-(`decodeCheck_accepts_encoded`). The text that follows is the pre-#3033 state;
-its counterexamples were removed (in 17ccc5412).
+(`decodeCheck_accepts_encoded`).
 
-**#3643** (`Tensor::decode` at tensor.rs:1565) reads `DecodeLimits::current()`
-(:1631) and refuses any streamed id `≥ edge_bound` (:1665-1670). Modelled as the
-`bound : Option Nat` of `tensorLoopB`/`decodeCheckB` (`none` = no limits installed,
-the old check, so `decodeCheck := decodeCheckB S none` and every #3033 theorem keeps
-its statement). New: `decodeCheckB_ok_iff` (adds "all ids below the bound"),
-`decodeCheckB_refuses_out_of_range`, `decodeCheckB_accepts_encoded` (ids below the
-bound), `edge_bound_test_accepts` / `_refuses` (main's test).
-
-`Tensor::decode` (tensor.rs:1565; then :1553) rebuilds the inline forward matrix `m` from the
+`Tensor::decode` (tensor.rs) rebuilds the inline forward matrix `m` from the
 on-disk forward layers, then fills the multi-edge store `me` from the tensor
-section (then tensor.rs:1609-1647). Before #3033 it never checked the
-*promotion-completeness* invariant that ties them together:
+section (tensor.rs). The *promotion-completeness* invariant ties them together:
 
 > `eff_get (src,dst) = MULTI_EDGE`  ⟺  row `κ(src,dst)` of `me` is non-empty
 > (tensor.rs module docs; `single_me` / `multi_me` in `proofs/versioned_matrix`).
 
-A crafted payload can put a pair in the tensor section (giving it an `me` row)
-without a matching `MULTI_EDGE` forward entry. Then `edge_count` (tensor.rs:1231),
-which is *checked* precisely because a decoded blob can break an invariant,
-computes `multi` (number of `me` rows) greater than the effective forward
-pattern and the subtraction underflows — a deliberate `panic!`. Reached from the
-very next `Tensor::encode` (BGSAVE / GRAPH.COPY), so a restored graph can no
-longer be saved.
+`edge_count` (tensor.rs) is *checked* precisely because a decoded blob can break an invariant:
+if `multi` (number of `me` rows) exceeded the effective forward
+pattern the subtraction would underflow, a deliberate `panic!`, reached from
+the next `Tensor::encode` (BGSAVE / GRAPH.COPY).
 
-`edge_count`'s identity (tensor.rs:1231):
+`edge_count`'s identity (tensor.rs):
 `|E| = |m| + |dp| − |dm| − |dp∩m| − multi + |me|`, each step checked.
 
-Confirmed: `bug_tensor_decode_accepts_orphan_me_row_then_edge_count_panics`
-(`graph/tests/lean_graphblas_wrappers.rs`) prints
-`Tensor::edge_count: multi exceeds the effective pattern
-(promotion-completeness is broken). |m|=0 |dp|=0 |dm|=0 |dp∩m|=0 multi=1 |me|=1`.
 -/
 
 namespace GBW
 
 /-- Checked `u64` subtraction, matching `checked_sub().unwrap_or_else(panic)`
-(tensor.rs:1265-1285): `none` = the panic. -/
+(tensor.rs): `none` = the panic. -/
 def csub (x y : Nat) : Option Nat := if y ≤ x then some (x - y) else none
 
 /-- Checked `u64` add — the two additions in `edge_count`
@@ -57,7 +39,7 @@ def csub (x y : Nat) : Option Nat := if y ≤ x then some (x - y) else none
 `Nat` sum does not fit in a `u64`. -/
 def cadd (x y : Nat) : Option Nat := if x + y < 2 ^ 64 then some (x + y) else none
 
-/-- `Tensor::edge_count` (tensor.rs:1231), the exact left-to-right checked
+/-- `Tensor::edge_count` (tensor.rs), the exact left-to-right checked
 sequence. `some n` = returns `n`; `none` = panics (server crash). -/
 def edgeCount (m dp dm shadow multi me : Nat) : Option Nat :=
   (cadd m dp).bind fun a =>
@@ -67,7 +49,7 @@ def edgeCount (m dp dm shadow multi me : Nat) : Option Nat :=
   cadd a me
 
 /-- The delta/promotion invariants `edge_count`'s doc-comment lists as bounding
-each subtraction (tensor.rs:1231-1265):
+each subtraction (tensor.rs):
 `dm ⊆ m` ⇒ `dm ≤ m`; `dp ∩ dm = ∅` bounds the pattern so `shadow ≤ m+dp−dm`;
 promotion-completeness ⇒ `multi ≤ effective pattern`. The two additions are
 bounded by `u64` itself: `|m| + |dp|` and the final `+ |me|` must fit (the
@@ -104,18 +86,18 @@ theorem edgeCount_value (m dp dm shadow multi me : Nat) (h : Wf m dp dm shadow m
   have e1 : dm ≤ m + dp := by omega
   simp only [Option.bind, ite_eq_left h4, ite_eq_left e1, ite_eq_left h2, ite_eq_left h3, ite_eq_left h5]
 
-/-! ## Forward-layer sizes (#2996, tensor.rs:1576-1585)
+/-! ## Forward-layer sizes (tensor.rs)
 
 `Tensor::decode` merges the on-disk delta-plus / delta-minus layers into a base
-built at the forward base's size. Since #2996 it refuses a payload whose
-deltas are not exactly that size; before, a larger delta-plus was merged and
-`m.set` wrote outside `m`. Dims are `(nrows, ncols)`. -/
+built at the forward base's size. It refuses a payload whose
+deltas are not exactly that size (a larger delta-plus would be merged and
+`m.set` would write outside `m`). Dims are `(nrows, ncols)`. -/
 
 abbrev Dims := Nat × Nat
 
 def inDims (d : Dims) (e : Nat × Nat) : Prop := e.1 < d.1 ∧ e.2 < d.2
 
-/-- tensor.rs:1576-1585 on main: `Err` unless both deltas have the base's dims. -/
+/-- tensor.rs on main: `Err` unless both deltas have the base's dims. -/
 def checkLayers (m dp dm : Dims) : Except String Unit :=
   if dp ≠ m then .error "Tensor decode: forward delta-plus size"
   else if dm ≠ m then .error "Tensor decode: forward delta-minus size"
@@ -142,16 +124,15 @@ theorem checkLayers_merge_in_bounds_dm (m dp dm : Dims) (h : checkLayers m dp dm
 theorem checkLayers_rejects_main_test : checkLayers (4, 4) (8, 8) (4, 4) ≠ .ok () := by
   rw [Ne, checkLayers_ok_iff]; simp
 
-/-! ## Promotion completeness on decode (#3033, tensor.rs:1622-1688)
+/-! ## Promotion completeness on decode (tensor.rs)
 
-After the forward merge `Tensor::decode` waits `m` (:1622) and counts its
-`MULTI_EDGE` markers with `Matrix::<u64>::count_value_eq` (:1629). Then every
+After the forward merge `Tensor::decode` waits `m` (:1623) and counts its
+`MULTI_EDGE` markers with `Matrix::<u64>::count_value_eq` (:1630). Then every
 tensor-section entry `(src, dst, ids)` (TM then TDP, one loop here) is refused
 unless `src < nrows ∧ dst < ncols ∧ m.get(src,dst) = Some(MULTI_EDGE)`
-(:1645-1649), and its ids are streamed into the pair's `me` row, each refused if
-`≥ edge_bound` when `DecodeLimits` are installed (#3643, :1665-1670). At the end the
+(:1645-1649), and its ids are streamed into the pair's `me` row. At the end the
 number of `me` pairs with ids (`multi_pairs_in`, versioned_matrix
-`multiPairsIn_eq`) must equal the marker count (:1682-1688).
+`multiPairsIn_eq`) must equal the marker count (:1675-1680).
 
 Model. `m` is the merged forward matrix as its stored entries (coordinates
 distinct, the GraphBLAS matrix invariant `hk`). `me` rows are identified by
@@ -161,9 +142,9 @@ nothing, so `me` gets no row). -/
 
 abbrev Pair := Nat × Nat
 
-/-- `MULTI_EDGE` (tensor.rs:300) = `u64::MAX`. -/
+/-- `MULTI_EDGE` (tensor.rs) = `u64::MAX`. -/
 def MULTI_EDGE : Nat := 2 ^ 64 - 1
-/-- `MSB_MASK` (tensor.rs:1470): single inline ids have it clear. -/
+/-- `MSB_MASK` (tensor.rs): single inline ids have it clear. -/
 def MSB : Nat := 2 ^ 63
 
 /-- A `Matrix<u64>` as its stored entries. -/
@@ -172,7 +153,7 @@ abbrev MatU := List (Pair × Nat)
 /-- `Matrix::<u64>::get` (`GrB_Matrix_extractElement_UINT64`; `None` on `NO_VALUE`). -/
 def mget (m : MatU) (p : Pair) : Option Nat := List.lookup p m
 
-/-- The C contract of `count_value_eq` (matrix.rs:1608): `GrB_Matrix_select_UINT64`
+/-- The C contract of `count_value_eq` (matrix.rs): `GrB_Matrix_select_UINT64`
 with `GrB_VALUEEQ_UINT64`, no mask/accum/descriptor, into a fresh matrix of the
 same dims, keeps exactly the entries `A(i,j) == y` (C API spec, `GrB_select` with
 the `VALUEEQ` index-unary op); `GrB_Matrix_nvals` is its entry count. A hypothesis
@@ -182,7 +163,7 @@ structure SelectValueEqSpec where
   select : MatU → Nat → MatU
   select_eq : ∀ A y, select A y = A.filter (fun e => e.2 == y)
 
-/-- `Matrix::<u64>::count_value_eq` (matrix.rs:1608): select, then `nvals`. -/
+/-- `Matrix::<u64>::count_value_eq` (matrix.rs): select, then `nvals`. -/
 def countValueEq (S : SelectValueEqSpec) (A : MatU) (y : Nat) : Nat := (S.select A y).length
 
 theorem countValueEq_spec (S : SelectValueEqSpec) (A : MatU) (y : Nat) :
@@ -236,58 +217,28 @@ exactly what decode built before #3033. -/
 def rowsFrom (rows : List Pair) (ts : List (Pair × List Nat)) : List Pair :=
   ts.foldl (fun r e => addRow r e.1 e.2) rows
 
-/-- tensor.rs:1645: the per-entry check. -/
+/-- tensor.rs: the per-entry check. -/
 def entryOk (nrows ncols : Nat) (m : MatU) (p : Pair) : Bool :=
   decide (p.1 < nrows) && decide (p.2 < ncols) && (mget m p == some MULTI_EDGE)
 
-/-- #3643 (tensor.rs:1631, 1665-1670): with the header's `DecodeLimits` installed
-(`bound = some edge_bound`), every streamed id must be `< edge_bound`; with none
-installed (`DecodeLimits::current() = None`) no id is checked. -/
-def idsOk (bound : Option Nat) (ids : List Nat) : Bool :=
-  match bound with
-  | none => true
-  | some b => ids.all fun id => decide (id < b)
-
-theorem idsOk_none (ids : List Nat) : idsOk none ids = true := rfl
-
-theorem idsOk_some (b : Nat) (ids : List Nat) :
-    idsOk (some b) ids = true ↔ ∀ id ∈ ids, id < b := by
-  simp [idsOk]
-
-/-- tensor.rs:1636-1680: the TM/TDP loop under the edge bound; `.error` = an early
-`return Err` (pair check :1647-1651, then the id bound :1665-1670, checked id by
-id while streaming; a refused id stops the decode, so the partial row is dropped
-with the tensor). -/
-def tensorLoopB (bound : Option Nat) (nrows ncols : Nat) (m : MatU) :
+/-- tensor.rs: the TM/TDP loop; `.error` = the early `return Err`. -/
+def tensorLoop (nrows ncols : Nat) (m : MatU) :
     List (Pair × List Nat) → List Pair → Except String (List Pair)
   | [], rows => .ok rows
   | (p, ids) :: rest, rows =>
-    if entryOk nrows ncols m p then
-      if idsOk bound ids then tensorLoopB bound nrows ncols m rest (addRow rows p ids)
-      else .error "Tensor decode: edge id is out of range"
+    if entryOk nrows ncols m p then tensorLoop nrows ncols m rest (addRow rows p ids)
     else .error "Tensor decode: edge ids for a pair which is not a multi-edge pair"
 
-/-- The loop with no `DecodeLimits` installed: exactly the pre-#3643 loop. -/
-def tensorLoop (nrows ncols : Nat) (m : MatU) (ts : List (Pair × List Nat)) (rows : List Pair) :
-    Except String (List Pair) :=
-  tensorLoopB none nrows ncols m ts rows
-
-/-- `Tensor::decode` from the marker count to the final check (tensor.rs:1629-1690)
-under the edge bound; `.ok rows` = decode returns a tensor whose `me` rows are `rows`. -/
-def decodeCheckB (S : SelectValueEqSpec) (bound : Option Nat) (nrows ncols : Nat) (m : MatU)
+/-- `Tensor::decode` from the marker count to the final check (tensor.rs);
+`.ok rows` = decode returns a tensor whose `me` rows are `rows`. -/
+def decodeCheck (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
     (ts : List (Pair × List Nat)) : Except String (List Pair) :=
   let markers := countValueEq S m MULTI_EDGE
-  match tensorLoopB bound nrows ncols m ts [] with
+  match tensorLoop nrows ncols m ts [] with
   | .error e => .error e
   | .ok rows =>
     if rows.length = markers then .ok rows
     else .error "Tensor decode: multi-edge pairs and pairs with edge ids differ"
-
-/-- `decodeCheckB` with no `DecodeLimits` installed (`bound = none`), i.e. the
-#3033 check alone. -/
-def decodeCheck (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
-    (ts : List (Pair × List Nat)) : Except String (List Pair) :=
-  decodeCheckB S none nrows ncols m ts
 
 /-- The invariant: a pair is a forward marker iff it has an `me` row. -/
 def PromotionComplete (m : MatU) (rows : List Pair) : Prop :=
@@ -328,37 +279,23 @@ theorem nodup_rowsFrom : ∀ (ts : List (Pair × List Nat)) (rows : List Pair),
   | [], _, h => h
   | (p, ids) :: rest, rows, h => nodup_rowsFrom rest _ (nodup_addRow rows p ids h)
 
-theorem tensorLoopB_ok_iff (bound : Option Nat) (nrows ncols : Nat) (m : MatU) :
+theorem tensorLoop_ok_iff (nrows ncols : Nat) (m : MatU) :
     ∀ (ts : List (Pair × List Nat)) (rows r : List Pair),
-    tensorLoopB bound nrows ncols m ts rows = .ok r ↔
-      (∀ e ∈ ts, entryOk nrows ncols m e.1 = true ∧ idsOk bound e.2 = true) ∧
-        r = rowsFrom rows ts
+    tensorLoop nrows ncols m ts rows = .ok r ↔
+      (∀ e ∈ ts, entryOk nrows ncols m e.1 = true) ∧ r = rowsFrom rows ts
   | [], rows, r => by
-    simp only [tensorLoopB, Except.ok.injEq, List.not_mem_nil, false_implies, implies_true,
+    simp only [tensorLoop, Except.ok.injEq, List.not_mem_nil, false_implies, implies_true,
       true_and, rowsFrom, List.foldl_nil]
     exact ⟨fun h => h.symm, fun h => h.symm⟩
   | (p, ids) :: rest, rows, r => by
     by_cases hp : entryOk nrows ncols m p = true
-    · by_cases hi : idsOk bound ids = true
-      · simp only [tensorLoopB, hp, hi, ite_true]
-        rw [tensorLoopB_ok_iff bound nrows ncols m rest (addRow rows p ids) r]
-        simp [rowsFrom, hp, hi]
-      · simp only [tensorLoopB, hp, hi, ite_true]
-        constructor
-        · intro h; cases h
-        · rintro ⟨h, -⟩; exact absurd (h (p, ids) List.mem_cons_self).2 hi
-    · simp only [tensorLoopB, hp]
+    · simp only [tensorLoop, hp, ite_true]
+      rw [tensorLoop_ok_iff nrows ncols m rest (addRow rows p ids) r]
+      simp [rowsFrom, hp]
+    · simp only [tensorLoop, hp]
       constructor
       · intro h; cases h
-      · rintro ⟨h, -⟩; exact absurd (h (p, ids) List.mem_cons_self).1 hp
-
-theorem tensorLoop_ok_iff (nrows ncols : Nat) (m : MatU) :
-    ∀ (ts : List (Pair × List Nat)) (rows r : List Pair),
-    tensorLoop nrows ncols m ts rows = .ok r ↔
-      (∀ e ∈ ts, entryOk nrows ncols m e.1 = true) ∧ r = rowsFrom rows ts := by
-  intro ts rows r
-  rw [tensorLoop, tensorLoopB_ok_iff]
-  simp [idsOk_none]
+      · rintro ⟨h, -⟩; exact absurd (h (p, ids) List.mem_cons_self) hp
 
 theorem tensorLoop_error_of_bad (nrows ncols : Nat) (m : MatU) (ts : List (Pair × List Nat))
     (rows : List Pair) (hbad : ∃ e ∈ ts, entryOk nrows ncols m e.1 = false) :
@@ -397,38 +334,34 @@ theorem cover_of_len_eq {l1 l2 : List Pair} (hn : l1.Nodup) (hs : ∀ x ∈ l1, 
   have := List.length_pos_of_mem hb
   omega
 
-/-! ### Main theorems
+/-! ### Main theorems -/
 
-Stated for any edge bound (`decodeCheckB`, #3643); the `decodeCheck_*` forms are
-the `bound = none` instances, word for word the #3033 statements. -/
-
-/-- **#3033 + #3643, exact characterisation.** `Tensor::decode` accepts iff every
-tensor entry is an in-bounds marker pair whose ids are all below the edge bound
-(if one is installed) and the `me` rows it builds are promotion complete. -/
-theorem decodeCheckB_ok_iff (S : SelectValueEqSpec) (bound : Option Nat) (nrows ncols : Nat)
-    (m : MatU) (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup) :
-    (∃ rows, decodeCheckB S bound nrows ncols m ts = .ok rows) ↔
-      (∀ e ∈ ts, entryOk nrows ncols m e.1 = true ∧ idsOk bound e.2 = true) ∧
-        PromotionComplete m (rowsFrom [] ts) := by
+/-- **#3033, exact characterisation.** `Tensor::decode` accepts iff every tensor
+entry is an in-bounds marker pair and the `me` rows it builds are promotion
+complete. -/
+theorem decodeCheck_ok_iff (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
+    (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup) :
+    (∃ rows, decodeCheck S nrows ncols m ts = .ok rows) ↔
+      (∀ e ∈ ts, entryOk nrows ncols m e.1 = true) ∧ PromotionComplete m (rowsFrom [] ts) := by
   have hnd : (rowsFrom [] ts).Nodup := nodup_rowsFrom ts [] List.nodup_nil
   have hmk := markerPairs_nodup m hk
   -- every row is a marker once the per-entry check passed
-  have hsub : (∀ e ∈ ts, entryOk nrows ncols m e.1 = true ∧ idsOk bound e.2 = true) →
+  have hsub : (∀ e ∈ ts, entryOk nrows ncols m e.1 = true) →
       ∀ x ∈ rowsFrom [] ts, x ∈ markerPairs m := by
     intro hall x hx
     rcases (mem_rowsFrom ts [] x).1 hx with h | ⟨ids, hi, -⟩
     · cases h
-    · have := (hall (x, ids) hi).1
+    · have := hall (x, ids) hi
       simp only [entryOk, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at this
       exact (mem_markerPairs m x).2 ((mget_eq_some_iff m x _ hk).1 this.2)
   constructor
   · rintro ⟨rows, h⟩
-    unfold decodeCheckB at h
-    cases hl : tensorLoopB bound nrows ncols m ts [] with
+    unfold decodeCheck at h
+    cases hl : tensorLoop nrows ncols m ts [] with
     | error e => rw [hl] at h; cases h
     | ok r =>
       rw [hl] at h
-      obtain ⟨hall, hr⟩ := (tensorLoopB_ok_iff bound nrows ncols m ts [] r).1 hl
+      obtain ⟨hall, hr⟩ := (tensorLoop_ok_iff nrows ncols m ts [] r).1 hl
       subst hr
       by_cases hlen : (rowsFrom [] ts).length = countValueEq S m MULTI_EDGE
       · refine ⟨hall, fun p => ⟨fun hp => ?_, fun hp => ?_⟩⟩
@@ -439,91 +372,52 @@ theorem decodeCheckB_ok_iff (S : SelectValueEqSpec) (bound : Option Nat) (nrows 
       · simp only [hlen, ite_false] at h; cases h
   · rintro ⟨hall, hpc⟩
     refine ⟨rowsFrom [] ts, ?_⟩
-    have hl := (tensorLoopB_ok_iff bound nrows ncols m ts [] (rowsFrom [] ts)).2 ⟨hall, rfl⟩
+    have hl := (tensorLoop_ok_iff nrows ncols m ts [] (rowsFrom [] ts)).2 ⟨hall, rfl⟩
     have h1 := len_le_of_nodup_subset hnd (hsub hall)
     have h2 := len_le_of_nodup_subset hmk (fun x hx =>
       (hpc x).1 ((mget_eq_some_iff m x _ hk).2 ((mem_markerPairs m x).1 hx)))
     have hlen : (rowsFrom [] ts).length = countValueEq S m MULTI_EDGE := by
       rw [countValueEq_markers]; omega
-    unfold decodeCheckB
+    unfold decodeCheck
     simp only [hl, hlen, ite_true]
 
-/-- **#3033, exact characterisation** (no `DecodeLimits` installed). `Tensor::decode`
-accepts iff every tensor entry is an in-bounds marker pair and the `me` rows it
-builds are promotion complete. -/
-theorem decodeCheck_ok_iff (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
-    (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup) :
-    (∃ rows, decodeCheck S nrows ncols m ts = .ok rows) ↔
-      (∀ e ∈ ts, entryOk nrows ncols m e.1 = true) ∧ PromotionComplete m (rowsFrom [] ts) := by
-  unfold decodeCheck
-  rw [decodeCheckB_ok_iff S none nrows ncols m ts hk]
-  simp [idsOk_none]
-
-/-- **#3643.** With an edge bound installed, a tensor entry carrying an id at or
-past it is refused, whatever else the payload says. -/
-theorem decodeCheckB_refuses_out_of_range (S : SelectValueEqSpec) (b nrows ncols : Nat)
-    (m : MatU) (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup)
-    (hbad : ∃ e ∈ ts, ∃ id ∈ e.2, b ≤ id) :
-    ∃ err, decodeCheckB S (some b) nrows ncols m ts = .error err := by
-  cases h : decodeCheckB S (some b) nrows ncols m ts with
-  | error err => exact ⟨err, rfl⟩
-  | ok rows =>
-    obtain ⟨e, he, id, hid, hle⟩ := hbad
-    have h1 := (((decodeCheckB_ok_iff S (some b) nrows ncols m ts hk).1 ⟨rows, h⟩).1 e he).2
-    have h2 := (idsOk_some b e.2).1 h1 id hid
-    omega
-
 /-- **Main (#3033).** Every input whose `me` rows would break promotion
-completeness is refused, under any edge bound. -/
-theorem decodeCheckB_refuses_incomplete (S : SelectValueEqSpec) (bound : Option Nat)
-    (nrows ncols : Nat) (m : MatU)
-    (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup)
-    (hbad : ¬ PromotionComplete m (rowsFrom [] ts)) :
-    ∃ err, decodeCheckB S bound nrows ncols m ts = .error err := by
-  cases h : decodeCheckB S bound nrows ncols m ts with
-  | error err => exact ⟨err, rfl⟩
-  | ok rows => exact absurd ((decodeCheckB_ok_iff S bound nrows ncols m ts hk).1 ⟨rows, h⟩).2 hbad
-
+completeness is refused. -/
 theorem decodeCheck_refuses_incomplete (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
     (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup)
     (hbad : ¬ PromotionComplete m (rowsFrom [] ts)) :
-    ∃ err, decodeCheck S nrows ncols m ts = .error err :=
-  decodeCheckB_refuses_incomplete S none nrows ncols m ts hk hbad
+    ∃ err, decodeCheck S nrows ncols m ts = .error err := by
+  cases h : decodeCheck S nrows ncols m ts with
+  | error err => exact ⟨err, rfl⟩
+  | ok rows => exact absurd ((decodeCheck_ok_iff S nrows ncols m ts hk).1 ⟨rows, h⟩).2 hbad
 
 /-- An accepted decode yields exactly the unchecked rows, and they are complete. -/
-theorem decodeCheckB_ok_complete (S : SelectValueEqSpec) (bound : Option Nat) (nrows ncols : Nat)
-    (m : MatU) (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup) (rows : List Pair)
-    (h : decodeCheckB S bound nrows ncols m ts = .ok rows) :
+theorem decodeCheck_ok_complete (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
+    (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup) (rows : List Pair)
+    (h : decodeCheck S nrows ncols m ts = .ok rows) :
     rows = rowsFrom [] ts ∧ PromotionComplete m rows := by
-  have hiff := (decodeCheckB_ok_iff S bound nrows ncols m ts hk).1 ⟨rows, h⟩
+  have hiff := (decodeCheck_ok_iff S nrows ncols m ts hk).1 ⟨rows, h⟩
   have hr : rows = rowsFrom [] ts := by
-    unfold decodeCheckB at h
-    have hl := (tensorLoopB_ok_iff bound nrows ncols m ts [] (rowsFrom [] ts)).2 ⟨hiff.1, rfl⟩
+    unfold decodeCheck at h
+    have hl := (tensorLoop_ok_iff nrows ncols m ts [] (rowsFrom [] ts)).2 ⟨hiff.1, rfl⟩
     rw [hl] at h
     by_cases hlen : (rowsFrom [] ts).length = countValueEq S m MULTI_EDGE
     · simp only [hlen, ite_true, Except.ok.injEq] at h; exact h.symm
     · simp only [hlen, ite_false] at h; cases h
   subst hr; exact ⟨rfl, hiff.2⟩
 
-theorem decodeCheck_ok_complete (S : SelectValueEqSpec) (nrows ncols : Nat) (m : MatU)
-    (ts : List (Pair × List Nat)) (hk : (m.map Prod.fst).Nodup) (rows : List Pair)
-    (h : decodeCheck S nrows ncols m ts = .ok rows) :
-    rows = rowsFrom [] ts ∧ PromotionComplete m rows :=
-  decodeCheckB_ok_complete S none nrows ncols m ts hk rows h
-
 /-- **The bug is gone.** A decoded tensor (`dp = dm = ∅`, so `shadow = 0`) has
 `multi = rows.length ≤ |m|`, so `edge_count` cannot underflow, whatever `|me|`;
 it can only panic by `u64` overflow of `|m|` or of the final `+ |me|` (the two
-`hm`/`hov` bounds, a real matrix and a real store both satisfy `hm`). Any edge bound. -/
-theorem decodeCheckB_ok_edgeCount_no_panic (S : SelectValueEqSpec) (bound : Option Nat)
-    (nrows ncols : Nat)
+`hm`/`hov` bounds, a real matrix and a real store both satisfy `hm`). -/
+theorem decodeCheck_ok_edgeCount_no_panic (S : SelectValueEqSpec) (nrows ncols : Nat)
     (m : MatU) (ts : List (Pair × List Nat)) (rows : List Pair)
-    (h : decodeCheckB S bound nrows ncols m ts = .ok rows) (me : Nat)
+    (h : decodeCheck S nrows ncols m ts = .ok rows) (me : Nat)
     (hm : m.length < 2 ^ 64) (hov : m.length - rows.length + me < 2 ^ 64) :
     (edgeCount m.length 0 0 0 rows.length me).isSome := by
   have hlen : rows.length = countValueEq S m MULTI_EDGE := by
-    unfold decodeCheckB at h
-    cases hl : tensorLoopB bound nrows ncols m ts [] with
+    unfold decodeCheck at h
+    cases hl : tensorLoop nrows ncols m ts [] with
     | error e => rw [hl] at h; cases h
     | ok r =>
       rw [hl] at h
@@ -533,13 +427,6 @@ theorem decodeCheckB_ok_edgeCount_no_panic (S : SelectValueEqSpec) (bound : Opti
   have hle : countValueEq S m MULTI_EDGE ≤ m.length := by
     rw [countValueEq_spec]; exact List.length_filter_le _ _
   exact edgeCount_no_panic _ _ _ _ _ _ ⟨Nat.zero_le _, by omega, by omega, by omega, by omega⟩
-
-theorem decodeCheck_ok_edgeCount_no_panic (S : SelectValueEqSpec) (nrows ncols : Nat)
-    (m : MatU) (ts : List (Pair × List Nat)) (rows : List Pair)
-    (h : decodeCheck S nrows ncols m ts = .ok rows) (me : Nat)
-    (hm : m.length < 2 ^ 64) (hov : m.length - rows.length + me < 2 ^ 64) :
-    (edgeCount m.length 0 0 0 rows.length me).isSome :=
-  decodeCheckB_ok_edgeCount_no_panic S none nrows ncols m ts rows h me hm hov
 
 /-! ### Every encoded tensor is accepted -/
 
@@ -569,7 +456,7 @@ def slotVal : Slot → Nat
   | .multi _ => MULTI_EDGE
 
 /-- The forward matrix decode rebuilds from `encode`'s forward layer: a single id
-verbatim, `count | MSB` mapped back to `MULTI_EDGE` (tensor.rs:1595-1607). -/
+verbatim, `count | MSB` mapped back to `MULTI_EDGE` (tensor.rs). -/
 def encFwd (t : TState) : MatU := t.pairs.map fun e => (e.1, slotVal e.2)
 
 def slotIds : Pair × Slot → Option (Pair × List Nat)
@@ -601,19 +488,10 @@ theorem mem_encTs (t : TState) (p : Pair) (ids : List Nat) :
                  obtain ⟨rfl, rfl⟩ := hs; exact hm
   · intro h; exact ⟨_, h, rfl⟩
 
-/-- The ids of `t` are below the installed edge bound, if any (#3643). An encoded
-graph satisfies it: its header's `edge_bound` is one past the highest edge id,
-live or deleted (`IdSpace`: bound = live + recycled), and every id in `me` is a
-live edge id. -/
-def TState.IdsBelow (t : TState) : Option Nat → Prop
-  | none => True
-  | some b => ∀ p ids, (p, Slot.multi ids) ∈ t.pairs → ∀ id ∈ ids, id < b
-
-/-- **Main (#3033 + #3643), no false refusal.** `decode` accepts every tensor
-`encode` writes whose ids are below the installed edge bound. -/
-theorem decodeCheckB_accepts_encoded (S : SelectValueEqSpec) (bound : Option Nat) (t : TState)
-    (h : t.Wf) (hb : t.IdsBelow bound) :
-    ∃ rows, decodeCheckB S bound t.nrows t.ncols (encFwd t) (encTs t) = .ok rows := by
+/-- **Main (#3033), no false refusal.** `decode` accepts every tensor `encode`
+writes. -/
+theorem decodeCheck_accepts_encoded (S : SelectValueEqSpec) (t : TState) (h : t.Wf) :
+    ∃ rows, decodeCheck S t.nrows t.ncols (encFwd t) (encTs t) = .ok rows := by
   obtain ⟨hk0, hwf⟩ := h
   have hk : ((encFwd t).map Prod.fst).Nodup := by
     simpa [encFwd, List.map_map, Function.comp_def] using hk0
@@ -629,16 +507,12 @@ theorem decodeCheckB_accepts_encoded (S : SelectValueEqSpec) (bound : Option Nat
         simp only [slotVal] at hv this
         simp [MSB, MULTI_EDGE] at this hv; omega
     · rintro ⟨ids, hs⟩; exact ⟨_, hs, rfl⟩
-  refine (decodeCheckB_ok_iff S bound _ _ _ _ hk).2 ⟨?_, ?_⟩
+  refine (decodeCheck_ok_iff S _ _ _ _ hk).2 ⟨?_, ?_⟩
   · rintro ⟨p, ids⟩ he
     have hs := (mem_encTs t p ids).1 he
-    have hw := hwf _ hs
-    refine ⟨?_, ?_⟩
-    · simp only [entryOk, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
-      exact ⟨⟨hw.1, hw.2.1⟩, (mget_eq_some_iff _ p _ hk).2 ((hmulti p).2 ⟨ids, hs⟩)⟩
-    · cases bound with
-      | none => rfl
-      | some b => exact (idsOk_some b ids).2 (hb p ids hs)
+    have hb := hwf _ hs
+    simp only [entryOk, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
+    exact ⟨⟨hb.1, hb.2.1⟩, (mget_eq_some_iff _ p _ hk).2 ((hmulti p).2 ⟨ids, hs⟩)⟩
   · intro p
     rw [mget_eq_some_iff _ p _ hk, hmulti, mem_rowsFrom]
     constructor
@@ -648,13 +522,7 @@ theorem decodeCheckB_accepts_encoded (S : SelectValueEqSpec) (bound : Option Nat
       · cases h
       · exact ⟨ids, (mem_encTs t p ids).1 hi⟩
 
-/-- **Main (#3033), no false refusal** (no `DecodeLimits` installed). `decode`
-accepts every tensor `encode` writes. -/
-theorem decodeCheck_accepts_encoded (S : SelectValueEqSpec) (t : TState) (h : t.Wf) :
-    ∃ rows, decodeCheck S t.nrows t.ncols (encFwd t) (encTs t) = .ok rows :=
-  decodeCheckB_accepts_encoded S none t h trivial
-
-/-! ### main's tests, and the pre-#3033 counterexample -/
+/-! ### main's tests -/
 
 /-- `decode_rejects_edge_ids_for_a_pair_that_is_not_multi_edge`, absent pair
 (7, 9) — an orphan row. -/
@@ -674,26 +542,8 @@ theorem marker_without_ids_refused (S : SelectValueEqSpec) :
   refine ⟨"Tensor decode: multi-edge pairs and pairs with edge ids differ", ?_⟩
   have : countValueEq S [((1, 2), MULTI_EDGE), ((3, 4), MULTI_EDGE)] MULTI_EDGE = 2 := by
     rw [countValueEq_spec]; rfl
-  unfold decodeCheck decodeCheckB
+  unfold decodeCheck
   rw [this]
   rfl
-
-/-- #3643's `decode_rejects_an_edge_id_past_the_edge_bound` (tensor.rs): one
-multi-edge pair (1, 2) with ids 0, 1, 2 loads under an edge bound of 3 and is
-refused under 2. -/
-theorem edge_bound_test_accepts (S : SelectValueEqSpec) :
-    ∃ rows, decodeCheckB S (some 3) 64 64 [((1, 2), MULTI_EDGE)] [((1, 2), [0, 1, 2])] =
-      .ok rows := by
-  have : countValueEq S [((1, 2), MULTI_EDGE)] MULTI_EDGE = 1 := by
-    rw [countValueEq_spec]; rfl
-  refine ⟨[(1, 2)], ?_⟩
-  unfold decodeCheckB
-  rw [this]
-  rfl
-
-theorem edge_bound_test_refuses (S : SelectValueEqSpec) :
-    ∃ err, decodeCheckB S (some 2) 64 64 [((1, 2), MULTI_EDGE)] [((1, 2), [0, 1, 2])] =
-      .error err :=
-  ⟨_, rfl⟩
 
 end GBW

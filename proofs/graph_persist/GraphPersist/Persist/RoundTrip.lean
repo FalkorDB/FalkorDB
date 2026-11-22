@@ -47,59 +47,57 @@ def prOf (g : G M Tn Nm Ix Cn) (e : Entry) : PR M Tn :=
   | .lblsM => .lbls g.lbls
   | _ => .skip
 
-theorem kind_rt (limit n : Nat) (del : List Nat) (S : Store) (hl : limit ≤ 65535)
+theorem kind_rt (limit n : Nat) (del : List Nat) (S : Store) (hl : limit ≤ 65536)
     (hk : KindWF limit n del S) (hn : 0 < n) :
-    RT (rep (decEnt (n + del.length)) n) (encRange S (live n del) n 0)
+    RT (rep decEnt n) (encRange S (live n del) n 0)
       ((live n del).map fun i => (i, ((S i).getD []).map fun kv => ((some kv.1 : Option Nat), kv.2))) := by
   obtain ⟨hb, hnd, hlt, hS⟩ := hk
   have hlen := live_length n del hnd hlt
-  have hrep := RT_rep (decEnt (n + del.length)) (fun e => encEnt S e.1)
-    (fun e => e.1 < n + del.length ∧ e.2 = ((S e.1).getD []).map (fun kv => ((some kv.1 : Option Nat), kv.2)) ∧
+  have hrep := RT_rep decEnt (fun e => encEnt S e.1)
+    (fun e => e.1 < 2 ^ 64 ∧ e.2 = ((S e.1).getD []).map (fun kv => ((some kv.1 : Option Nat), kv.2)) ∧
       ∀ sp, S e.1 = some sp → GoodSpan limit sp)
     (by
       rintro ⟨i, raw⟩ ⟨hi, hr, hg⟩
       simp only at hi hr hg ⊢
-      rw [hr]; exact decEnt_rt S i (by omega) limit hl hg _ hi)
+      rw [hr]; exact decEnt_rt S i hi limit hl hg)
     ((live n del).map fun i => (i, ((S i).getD []).map fun kv => ((some kv.1 : Option Nat), kv.2)))
     (by
       intro e he
       obtain ⟨i, hi, rfl⟩ := List.mem_map.1 he
-      exact ⟨live_lt n del i hi, rfl, fun sp h => (hS i sp h).2⟩)
+      exact ⟨by have := live_lt n del i hi; omega, rfl, fun sp h => (hS i sp h).2⟩)
   rw [List.length_map, hlen] at hrep
   have htake : (live n del).take (max n 1) = live n del := List.take_of_length_le (by omega)
   simpa [encRange, htake, List.flatMap_map] using hrep
 
-theorem payload_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (name : Nm) (k : Nat) :
-    ∀ e ∈ buildPayloads g, RT (decPayload C (hdrOf g name k) (e.st, e.count)) (encPayload C g e) (prOf g e) := by
+theorem payload_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) :
+    ∀ e ∈ buildPayloads g, RT (decPayload C g.tensors.length (e.st, e.count)) (encPayload C g e) (prOf g e) := by
   intro e he
   simp only [buildPayloads, List.mem_append, List.mem_cons, List.mem_nil_iff, or_false] at he
   rcases he with ((((((he | he) | he) | he) | he) | he) | he | he)
   all_goals (try (split at he <;> simp at he))
   all_goals (try subst he)
   · -- nodes
-    have := RT_bind (kind_rt _ _ _ _ hw.attrMax hw.nk (by assumption)) (f := fun es => Dec.pure (PR.nodes (M := M) (Tn := Tn) es)) (RT_pure _)
-    simpa [decPayload, encPayload, prOf, Hdr.nodeBound, hdrOf] using this
+    have := RT_bind (kind_rt _ _ _ _ hw.lim hw.nk (by assumption)) (f := fun es => Dec.pure (PR.nodes (M := M) (Tn := Tn) es)) (RT_pure _)
+    simpa [decPayload, encPayload, prOf] using this
   · -- deleted nodes
     have hb : ∀ i ∈ g.delNodes, i < 2 ^ 64 := fun i hi => by have := hw.nk.2.2.1 i hi; have := hw.nk.1; omega
     have := RT_bind (decRoar_rt g.delNodes hb) (f := fun l => Dec.pure (PR.delN (M := M) (Tn := Tn) l)) (RT_pure _)
     simpa [decPayload, encPayload, prOf, encRoar] using this
   · -- edges
-    have := RT_bind (kind_rt _ _ _ _ hw.attrMax hw.ek (by assumption)) (f := fun es => Dec.pure (PR.edges (M := M) (Tn := Tn) es)) (RT_pure _)
-    simpa [decPayload, encPayload, prOf, Hdr.edgeBound, hdrOf] using this
+    have := RT_bind (kind_rt _ _ _ _ hw.lim hw.ek (by assumption)) (f := fun es => Dec.pure (PR.edges (M := M) (Tn := Tn) es)) (RT_pure _)
+    simpa [decPayload, encPayload, prOf] using this
   · -- deleted edges
     have hb : ∀ i ∈ g.delEdges, i < 2 ^ 64 := fun i hi => by have := hw.ek.2.2.1 i hi; have := hw.ek.1; omega
     have := RT_bind (decRoar_rt g.delEdges hb) (f := fun l => Dec.pure (PR.delE (M := M) (Tn := Tn) l)) (RT_pure _)
     simpa [decPayload, encPayload, prOf, encRoar] using this
   · -- label matrices
     have := RT_bind (readU_rt _ hw.lm.1)
-      (f := fun n => if n ≤ (hdrOf g name k).labelCount then
-        (decIdx C.Mx.dec n).bind fun ms => Dec.pure (PR.lm (Tn := Tn) ms) else Dec.fail)
-      (RT_if (by simp [hdrOf])
-        (RT_bind (decIdx_rt C.Mx g.labelMats hw.lm.1 hw.lm.2) (f := fun ms => Dec.pure (PR.lm (Tn := Tn) ms)) (RT_pure _)))
+      (f := fun n => (decIdx C.Mx.dec n).bind fun ms => Dec.pure (PR.lm (Tn := Tn) ms))
+      (RT_bind (decIdx_rt C.Mx g.labelMats hw.lm.1 hw.lm.2) (f := fun ms => Dec.pure (PR.lm (Tn := Tn) ms)) (RT_pure _))
     simpa [decPayload, encPayload, prOf] using this
   · -- relation tensors
     have := RT_bind (decIdx_rt C.Tx g.tensors hw.tn.1 hw.tn.2) (f := fun ts => Dec.pure (PR.rt (M := M) ts)) (RT_pure _)
-    simpa [decPayload, encPayload, prOf, hdrOf] using this
+    simpa [decPayload, encPayload, prOf] using this
   · have := RT_bind (C.Mx.rt _ hw.mx.1) (f := fun m => Dec.pure (PR.adj (Tn := Tn) m)) (RT_pure _)
     simpa [decPayload, encPayload, prOf] using this
   · have := RT_bind (C.Mx.rt _ hw.mx.2) (f := fun m => Dec.pure (PR.lbls (Tn := Tn) m)) (RT_pure _)
@@ -182,14 +180,6 @@ theorem buildPayloads_accepted (g : G M Tn Nm Ix Cn) : ∀ e ∈ buildPayloads g
   rcases he with ((((((he | he) | he) | he) | he) | he) | he | he) <;>
     (try (split at he <;> simp at he)) <;> subst he <;> rfl
 
-/-- `build_payloads` passes `check_directory`: each entity count is the header's. -/
-theorem buildPayloads_dir (g : G M Tn Nm Ix Cn) (name : Nm) (k : Nat) :
-    ∀ e ∈ buildPayloads g, ∀ m, dirCap (hdrOf g name k) e.st = some m → e.count ≤ m := by
-  intro e he m hm
-  simp only [buildPayloads, List.mem_append, List.mem_cons, List.mem_nil_iff, or_false] at he
-  rcases he with ((((((he | he) | he) | he) | he) | he) | he | he) <;>
-    (try (split at he <;> simp at he)) <;> subst he <;> simp_all [dirCap, hdrOf]
-
 /-- **`load_graph_from_reader ∘ encode_graph = id` on the graph state**, with truncation:
 the single-key payload of a well-formed graph decodes to exactly the `Graph::restore`
 arguments of that graph (under any destination name), and every word-boundary truncation
@@ -197,25 +187,23 @@ of it makes the decoder ask for one more word. -/
 theorem load_encode (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm) :
     RT (loadFromReader C dest) (encodeGraph C g g.name (buildPayloads g) 1) (restoreOf g dest) := by
   obtain ⟨hPn, hPc⟩ := buildPayloads_bounds C g hw
-  have hseq := RT_seq (fun e : Entry => decPayload C (hdrOf g g.name 1) (e.st, e.count))
-    (encPayload C g) (prOf g) (buildPayloads g) (payload_rt C g hw g.name 1)
-  rw [← seqD_map (decPayload C (hdrOf g g.name 1)) (fun e : Entry => (e.st, e.count))] at hseq
-  have hf : finish C dest (hdrOf g g.name 1).nodeCount (hdrOf g g.name 1).edgeCount g.sch
-      ((buildPayloads g).map (prOf g)) = restoreOf g dest := by
-    simp only [finish, hdrOf, fold_build C g hw dest, restoreOf]
-  have hfin : RT (kDir C (hdrOf g g.name 1) dest g.sch ((buildPayloads g).map fun e => (e.st, e.count)))
-      ((buildPayloads g).flatMap (encPayload C g) ++ []) (restoreOf g dest) := by
-    exact RT_bind hseq (RT_if (hf ▸ asmOK_restoreOf C g hw g.name 1 dest) (RT_pure_eq hf))
-  have hdir : RT (kSch C (hdrOf g g.name 1) dest g.sch)
+  have hseq := RT_seq (fun e : Entry => decPayload C g.tensors.length (e.st, e.count))
+    (encPayload C g) (prOf g) (buildPayloads g) (payload_rt C g hw)
+  rw [← seqD_map (decPayload C g.tensors.length) (fun e : Entry => (e.st, e.count))] at hseq
+  have hfin := RT_bind hseq (f := fun prs => Dec.pure (finish C dest g.nodeCount g.edgeCount g.sch prs))
+    (RT_pure _)
+  have hf : finish C dest g.nodeCount g.edgeCount g.sch ((buildPayloads g).map (prOf g)) = restoreOf g dest := by
+    simp only [finish, fold_build C g hw dest, restoreOf]
+  rw [hf] at hfin
+  have hdir : RT (kSch C g.tensors.length dest g.nodeCount g.edgeCount g.sch)
       (encDir (buildPayloads g) ++ ((buildPayloads g).flatMap (encPayload C g) ++ [])) (restoreOf g dest) :=
-    RT_bind (decDir_rt (buildPayloads g) hPn hPc (buildPayloads_accepted g))
-      (RT_if (checkDir_of _ _ (buildPayloads_dir g g.name 1)) hfin)
-  have hsch : RT (C.S.dec.bind (kSch C (hdrOf g g.name 1) dest))
+    RT_bind (decDir_rt (buildPayloads g) hPn hPc (buildPayloads_accepted g)) hfin
+  have hsch : RT (C.S.dec.bind (kSch C g.tensors.length dest g.nodeCount g.edgeCount))
       (C.S.enc g.sch ++ (encDir (buildPayloads g) ++ ((buildPayloads g).flatMap (encPayload C g) ++ [])))
       (restoreOf g dest) :=
     RT_bind (C.S.rt _ hw.sch) hdir
-  have hk : kHdr C dest (hdrOf g g.name 1) = C.S.dec.bind (kSch C (hdrOf g g.name 1) dest) := by
-    rw [kHdr, ite_cond_eq_false _ _ (by simp [checkHeader_hdrOf C g hw]), ite_cond_eq_false _ _ (by simp [hdrOf])]
+  have hk : kHdr C dest (hdrOf g g.name 1) = C.S.dec.bind (kSch C g.tensors.length dest g.nodeCount g.edgeCount) := by
+    simp [kHdr, hdrOf]
   have hhdr : RT (loadFromReader C dest)
       (C.H.enc (hdrOf g g.name 1) ++ (C.S.enc g.sch ++ (encDir (buildPayloads g) ++
         ((buildPayloads g).flatMap (encPayload C g) ++ [])))) (restoreOf g dest) :=
@@ -227,11 +215,10 @@ theorem load_encode (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C 
   exact hhdr
 
 /-- **#2537, generalised.** Any payload `vec_save_graph` produces, cut at any word
-boundary short of its end, makes `load_graph_from_reader` ask for another word (none of
-the #3643 checks fires first: they only ever see fully read, well-formed prefixes).
-Behind `vec_load_graph` the reader is `BufferedReader::from_slice` (`rdb = NULL`); before
-#3643 asking past its end crashed (`RedisModule_LoadStringBuffer(NULL)`), since #3643 it
-is an `Err` (redis_layer `from_slice_past_end_err`), so the cut payload is refused. -/
+boundary short of its end, makes `load_graph_from_reader` ask for another word. Behind
+`vec_load_graph` the reader is `BufferedReader::from_slice` (`rdb = NULL`), whose
+`ensure_available → load_chunk` then calls `RedisModule_LoadStringBuffer(NULL)`
+(`buffered_io.rs`; redis_layer `from_slice_past_end`): a crash, not an `Err`. -/
 theorem truncated_payload_eof (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (dest : Nm)
     (p : Stream) (hp : StrictPre p (encodeGraph C g g.name (buildPayloads g) 1)) :
     loadFromReader C dest p = .eof :=

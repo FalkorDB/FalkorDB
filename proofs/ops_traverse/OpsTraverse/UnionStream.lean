@@ -4,7 +4,7 @@ import VersionedMatrix.Delta
 /-
 # `UnionIter`: the streamed union of several types' pair matrices (#3492)
 
-Model of `UnionIter` (`cond_traverse.rs:245-278`), the k-way merge that replaced the per-execution
+Model of `UnionIter` (`cond_traverse.rs`), the k-way merge that replaced the per-execution
 materialised union `build_relationship_matrix_unrestricted`.
 
 | here | there |

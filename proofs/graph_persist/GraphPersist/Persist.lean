@@ -1,7 +1,6 @@
 import GraphPersist.Persist.RoundTrip
 import GraphPersist.Persist.MultiLoad3
 import GraphPersist.Persist.Indexes
-import GraphPersist.Persist.Checks
 /-!
 
 # `src/serializers/{encoder,decoder}/mod.rs`: `decode ∘ encode = id` on the graph state
@@ -23,16 +22,9 @@ schema, payload directory, then each payload. This file models the encoder
   stores, label matrices, relation tensors, adjacency and label matrices, the schema's
   labels/types/attribute dictionary, indexes and constraints).
 * `truncated_payload_eof` — every truncated payload (cut at a word boundary) makes the
-  decoder ask for one more word. On `vec_load_graph` that read is past the end of
-  `BufferedReader::from_slice`: before #3643 `RedisModule_LoadStringBuffer(NULL)`, a crash
-  (#2537, for *every* such cut); since #3643 an `Err` (redis_layer `from_slice_past_end_err`).
-* #3643 (`Checks.lean`) — the decoders hold the payload to its header: `checkHeader`
-  (ids ≤ `2^34`), `checkDir` (sections ≤ the header's counts), `decEnt`'s id bound and
-  `MAX_ATTRIBUTES`, `label_matrix_count` / `tensor_count` (`decPayload`), and `AsmOK`
-  (`check_assembled` + the fallible `Graph::restore`). `load_encode`, `key_rt` and
-  `multi_load` hold on the checked decoder (`WF` gains the graph invariants the checks
-  rely on: `attrMax`, `idMax`, `lmSch`, `tnSch`, `tnEdges`); the `*_refuses_*` theorems
-  show each check refuses what it targets.
+  decoder ask for one more word. On `vec_load_graph` that read is `BufferedReader::
+  from_slice`'s `load_chunk` = `RedisModule_LoadStringBuffer(NULL)` (redis_layer
+  `from_slice_past_end`): #2537 for *every* such cut, not just the empty payload.
 * `multi_key_tiles` / `multi_key_bound` / `multi_key_matrices` — `build_multi_key_payloads`
   splits each entity kind into consecutive slices that tile `[0, total)` in order, no key
   holds more than `vkey_max` entities, key 0 holds every matrix.

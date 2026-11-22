@@ -28,13 +28,13 @@ def GB_NMAX : Nat := 1 <<< 60
 32-bit index arrays while a dimension is `≤ GB_NMAX32`. -/
 def GB_NMAX32 : Nat := 1 <<< 31
 
-/-- `tensor.rs:144` `GrB_INDEX_MAX = (1 << 60) - 1`. -/
+/-- `tensor.rs` `GrB_INDEX_MAX = (1 << 60) - 1`. -/
 def GrB_INDEX_MAX : Nat := (1 <<< 60) - 1
 
-/-- `tensor.rs:153` `ME_DIM = GrB_INDEX_MAX + 1`. -/
+/-- `tensor.rs` `ME_DIM = GrB_INDEX_MAX + 1`. -/
 def ME_DIM : Nat := GrB_INDEX_MAX + 1
 
-/-- `tensor.rs:169` `ME_NARROW_NCOLS = 1 << 31`. -/
+/-- `tensor.rs` `ME_NARROW_NCOLS = 1 << 31`. -/
 def ME_NARROW_NCOLS : Nat := 1 <<< 31
 
 /-- AXIOM-OK: `GB_Matrix_new` (`Source/matrix/GB_Matrix_new.c:28-31`) returns
@@ -45,7 +45,7 @@ def matrixNewOk (nrows ncols : Nat) : Bool :=
 
 /-- `ME_DIM` is exactly the largest dimension GraphBLAS accepts. So an `me`
 block declared with `ME_DIM` rows always constructs — the comment at
-tensor.rs:153 ("one more than the largest key `compound_key` can produce") is
+tensor.rs ("one more than the largest key `compound_key` can produce") is
 consistent with the C bound, not one past it. -/
 theorem me_dim_is_max : ME_DIM = GB_NMAX := by
   unfold ME_DIM GrB_INDEX_MAX GB_NMAX
@@ -59,13 +59,10 @@ theorem me_dim_wide_constructs : matrixNewOk ME_DIM ME_DIM = true := by
   simp only [matrixNewOk, ME_DIM, GrB_INDEX_MAX, GB_NMAX]
   decide
 
-/-! ### Node-id boundary / bug #2892 (HISTORICAL; fixed by #2911)
+/-! ### Node-id boundary
 
-Before #2911 the id-space create path (`IdSpace::record_created`, no longer a
-symbol) refused only `u64::MAX`, so an id in `(GrB_INDEX_MAX, u64::MAX)` reached
-`mark_nodes_live`, which resizes a matrix to `id + 1`. If `id + 1 > GB_NMAX` the
-resize returns `GrB_INVALID_VALUE`, which the pre-fix code asserted on and
-panicked. On main `IdSpace::create` (id_space.rs, fn `create`) refuses every id
+A node id in `(GrB_INDEX_MAX, u64::MAX)` would make a matrix resize to `id + 1`, and if
+`id + 1 > GB_NMAX` the resize returns `GrB_INVALID_VALUE`. `IdSpace::create` (id_space.rs, fn `create`) refuses every id
 `>= ID_LIMIT` (`= GrB_INDEX_MAX`) with `IdOutOfRange` before any matrix is
 sized; `Matrix::resize` itself only `debug_assert`s the status. The theorems
 below are the arithmetic of the boundary, not a model of any current Rust
@@ -88,11 +85,6 @@ theorem create_2pow61_crashes : resizeForIdOk (1 <<< 61) = false := by
   simp only [resizeForIdOk, matrixNewOk, GB_NMAX]
   decide
 
-/-- And the pre-#2911 guard (`id ≠ u64::MAX`) let it through: the
-id `2^61` is far below `u64::MAX`, so the wrapper never sees the code that would
-have refused it. (`u64::MAX = 2^64 - 1`.) -/
-theorem guard_misses_2pow61 : (1 <<< 61 : Nat) ≠ 2^64 - 1 := by decide
-
 /-! ### `usize → u64` on `.len()` casts
 
 `rows.len() as u64` (matrix.rs, fns `build` etc.). On a 64-bit target `usize` is 64-bit,
@@ -106,7 +98,7 @@ theorem len_cast_lossless (n : Nat) (h : n < 2 ^ 64) : (n % 2 ^ 64) = n := Nat.m
 /-! ### `u64 → usize` blob-size casts (`vector.rs`)
 
 `n_bytes as usize`, `blob_size as usize`. On 64-bit this is the identity. The
-`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs:593, `Component::read`)
+`Decode` path *validates* `n_bytes as usize == arr_data.len()` (vector.rs)
 before the cast drives `copy_nonoverlapping`, so even under truncation the copy
 length matches the source buffer. This is the check that makes it safe. -/
 

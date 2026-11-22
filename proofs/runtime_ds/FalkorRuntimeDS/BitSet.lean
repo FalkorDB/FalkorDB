@@ -7,13 +7,13 @@ Words are modelled as `Nat` with the invariant `< 2^64` (`WF`), so `u64`
 
 | here | there |
 | --- | --- |
-| `BitSet`      | `struct BitSet { inline: u64, overflow: ThinVec<u64> }` (bitset.rs:25) |
+| `BitSet`      | `struct BitSet { inline: u64, overflow: ThinVec<u64> }` (bitset.rs) |
 | `resizeZ`     | `ThinVec::resize(n, 0)` |
-| `set`         | `BitSet::set`   (bitset.rs:31) |
-| `test`        | `BitSet::test`  (bitset.rs:49) |
-| `union`       | `BitSet::union` (bitset.rs:63) — `iter_mut().zip(..)` is `zipOr` |
-| `clear`       | `BitSet::clear` (bitset.rs:76) |
-| `isEmpty`     | `BitSet::is_empty` (bitset.rs:94) |
+| `set`         | `BitSet::set`   (bitset.rs) |
+| `test`        | `BitSet::test`  (bitset.rs) |
+| `union`       | `BitSet::union` (bitset.rs) — `iter_mut().zip(..)` is `zipOr` |
+| `clear`       | `BitSet::clear` (bitset.rs) |
+| `isEmpty`     | `BitSet::is_empty` (bitset.rs) |
 -/
 namespace FalkorRuntimeDS.BitSetModel
 
@@ -33,7 +33,7 @@ def mask (bit : Nat) : Nat := 1 <<< (bit % 64)
 def resizeZ (l : List Nat) (n : Nat) : List Nat :=
   if n ≤ l.length then l.take n else l ++ List.replicate (n - l.length) 0
 
-/-- bitset.rs:31 -/
+/-- bitset.rs -/
 def set (s : BitSet) (bit : Nat) : BitSet :=
   let word := bit / 64
   let m := mask bit
@@ -43,7 +43,7 @@ def set (s : BitSet) (bit : Nat) : BitSet :=
     let ov := if idx ≥ s.overflow.length then resizeZ s.overflow (idx + 1) else s.overflow
     { s with overflow := ov.set idx ((ov[idx]?.getD 0) ||| m) }
 
-/-- bitset.rs:49 (Rust `a & m != 0` parses as `(a & m) != 0`) -/
+/-- bitset.rs (Rust `a & m != 0` parses as `(a & m) != 0`) -/
 def test (s : BitSet) (bit : Nat) : Bool :=
   let word := bit / 64
   let m := mask bit
@@ -58,13 +58,13 @@ def zipOr : List Nat → List Nat → List Nat
   | as, [] => as
   | [], _ => []
 
-/-- bitset.rs:63 -/
+/-- bitset.rs -/
 def union (s o : BitSet) : BitSet :=
   let ov := if o.overflow.length > s.overflow.length then resizeZ s.overflow o.overflow.length
             else s.overflow
   { inline := s.inline ||| o.inline, overflow := zipOr ov o.overflow }
 
-/-- bitset.rs:76 -/
+/-- bitset.rs -/
 def clear (s : BitSet) (bit : Nat) : BitSet :=
   let word := bit / 64
   let m := mask bit
@@ -75,7 +75,7 @@ def clear (s : BitSet) (bit : Nat) : BitSet :=
       { s with overflow := s.overflow.set idx ((s.overflow[idx]?.getD 0) &&& (U64MAX ^^^ m)) }
     else s
 
-/-- bitset.rs:94 -/
+/-- bitset.rs -/
 def isEmpty (s : BitSet) : Bool := s.inline == 0 && s.overflow.all (· == 0)
 
 /-- Every word is a `u64`. -/

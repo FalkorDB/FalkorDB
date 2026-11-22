@@ -5,16 +5,16 @@ import FalkorCore.Value
 | here | there |
 | --- | --- |
 | `FloatModel` | `f64`: `as f64` (`ofInt`), `partial_cmp` (`pcmp`), `+ - * / %` — abstract; the one IEEE fact used is a field (hypothesis, not an axiom) |
-| `V` | `Value` (`runtime/value.rs:180`): proofs/core's `FalkorCore.V F`, every variant (since 2026-10-21; was a 7-constructor restriction with an opaque `other t`) |
-| `Column` | `Column` (`runtime/batch.rs:321-334`) |
-| `Column.get?` | `Column::get` (`batch.rs:340-352`); `none` = index-out-of-bounds panic |
-| `Column.len` | `Column::len` (`batch.rs:357-366`) |
-| `gatherL`, `Column.gather` | `Column::gather` (`batch.rs:377-389`); `none` = panic |
-| `Bits` | `NullBitmap` (`batch.rs:90-167`) as its list of bits (word packing is proved in proofs/ops_aggregate) |
-| `intsOf`, `floatsOf`, `classifyNumeric` | `classify_numeric` (`batch.rs:191-231`), both `all()` passes |
-| `classifyStored` | `classify_stored_column` (`batch.rs:241-268`) |
-| `classifyColumn` / `classifyExact` | `classify_column` (`:279`) / `classify_exact_column` (`:295`) |
-| `extendActive` | `extend_active_slice` (`batch.rs:308-317`) |
+| `V` | `Value` (`runtime/value.rs`): proofs/core's `FalkorCore.V F`, every variant (since 2026-10-21; was a 7-constructor restriction with an opaque `other t`) |
+| `Column` | `Column` (`runtime/batch.rs`) |
+| `Column.get?` | `Column::get` (`batch.rs`); `none` = index-out-of-bounds panic |
+| `Column.len` | `Column::len` (`batch.rs`) |
+| `gatherL`, `Column.gather` | `Column::gather` (`batch.rs`); `none` = panic |
+| `Bits` | `NullBitmap` (`batch.rs`) as its list of bits (word packing is proved in proofs/ops_aggregate) |
+| `intsOf`, `floatsOf`, `classifyNumeric` | `classify_numeric` (`batch.rs`), both `all()` passes |
+| `classifyStored` | `classify_stored_column` (`batch.rs`) |
+| `classifyColumn` / `classifyExact` | `classify_column` / `classify_exact_column` |
+| `extendActive` | `extend_active_slice` (`batch.rs`) |
 -/
 
 namespace Columnar
@@ -33,7 +33,7 @@ class FloatModel (F : Type) where
   rem : F → F → F
   pcmp_swap : ∀ a b, pcmp b a = (pcmp a b).map Ordering.swap
 
-/-! `Value` is proofs/core's engine value `FalkorCore.V F` (`value.rs:180`), all sixteen
+/-! `Value` is proofs/core's engine value `FalkorCore.V F` (`value.rs`), all sixteen
 variants (2026-10-21; it was a seven-constructor restriction with an opaque `other` tag).
 Ints are `Int`s holding an `i64` (arithmetic wraps explicitly, see `Arith.wrap`). -/
 variable {F : Type}
@@ -265,19 +265,19 @@ def Bits.ofValues (vs : List (V F)) : Bits := vs.map V.isNull
 /-- `NullBitmap::is_null` (debug-asserted in range; out of range reads 0). -/
 def Bits.isNull (b : Bits) (i : Nat) : Bool := b[i]?.getD false
 
-/-- How a non-int numeric column may fall back to an f64 lane (`FloatLane`, `batch.rs:171`). -/
+/-- How a non-int numeric column may fall back to an f64 lane (`FloatLane`, `batch.rs`). -/
 inductive FloatLane where
   | none | pure | promote
   deriving DecidableEq
 
-/-- First `all()` pass of `classify_numeric` (`batch.rs:196-209`). -/
+/-- First `all()` pass of `classify_numeric` (`batch.rs`). -/
 def intsOf (allowNull : Bool) : List (V F) → Option (List Int)
   | [] => some []
   | .int i :: vs => (intsOf allowNull vs).map (i :: ·)
   | .null :: vs => if allowNull then (intsOf allowNull vs).map (0 :: ·) else none
   | _ :: _ => none
 
-/-- Second `all()` pass (`batch.rs:210-229`). -/
+/-- Second `all()` pass (`batch.rs`). -/
 def floatsOf [FloatModel F] (allowNull : Bool) (lane : FloatLane) : List (V F) → Option (List F)
   | [] => some []
   | .int i :: vs =>
@@ -287,7 +287,7 @@ def floatsOf [FloatModel F] (allowNull : Bool) (lane : FloatLane) : List (V F) �
     if allowNull then (floatsOf allowNull lane vs).map (FloatModel.ofInt 0 :: ·) else none
   | _ :: _ => none
 
-/-- `classify_numeric` (`batch.rs:191-231`). `0.0` is modelled as `ofInt 0`. -/
+/-- `classify_numeric` (`batch.rs`). `0.0` is modelled as `ofInt 0`. -/
 def classifyNumeric [FloatModel F] (vs : List (V F)) (allowNull : Bool) (lane : FloatLane) :
     Column F :=
   match intsOf allowNull vs with
@@ -309,7 +309,7 @@ def relsOf : List (V F) → Option (List Nat)
   | .rel n :: vs => (relsOf vs).map (n :: ·)
   | _ :: _ => none
 
-/-- `classify_stored_column` (`batch.rs:241-268`). -/
+/-- `classify_stored_column` (`batch.rs`). -/
 def classifyStored [FloatModel F] (vs : List (V F)) : Column F :=
   if vs = [] then .values vs
   else match nodesOf vs with
@@ -318,11 +318,11 @@ def classifyStored [FloatModel F] (vs : List (V F)) : Column F :=
       | some rs => .relIds rs
       | none => classifyNumeric vs false .pure
 
-/-- `classify_column` (`batch.rs:279`). -/
+/-- `classify_column` (`batch.rs`). -/
 def classifyColumn [FloatModel F] (vs : List (V F)) : Column F × Bits :=
   (classifyNumeric vs true .promote, Bits.ofValues vs)
 
-/-- `classify_exact_column` (`batch.rs:295`). -/
+/-- `classify_exact_column` (`batch.rs`). -/
 def classifyExact [FloatModel F] (vs : List (V F)) : Column F × Bits :=
   (classifyNumeric vs true .pure, Bits.ofValues vs)
 
@@ -449,8 +449,7 @@ theorem classifyExact_exact (vs : List (V F)) (k : Nat) :
 
 /-- **`classify_column` is lossy** (`FloatLane::Promote`): a mixed int/float
 column reads the int back as a float. Latent — `classify_column` and its only
-wrappers `Runtime::materialize_{node,relationship}_property` (`runtime.rs:1543`,
-`:1605`) have no caller. -/
+wrappers `Runtime::materialize_{node,relationship}_property` (`runtime.rs`) have no caller. -/
 theorem classifyColumn_lossy (f : F) :
     readN (classifyColumn [V.int 1, V.float f]).1 (classifyColumn [V.int 1, V.float f]).2 0
       = some (V.float (FloatModel.ofInt 1)) := by
@@ -466,7 +465,7 @@ end lemmas
 
 /-! ## `extend_active_slice` -/
 
-/-- `extend_active_slice` (`batch.rs:308-317`) as the slice it appends. -/
+/-- `extend_active_slice` (`batch.rs`) as the slice it appends. -/
 def extendActive {α : Type} (src : List α) : Option (List Nat) → Option (List α)
   | none => some src
   | some sel => gatherL src sel

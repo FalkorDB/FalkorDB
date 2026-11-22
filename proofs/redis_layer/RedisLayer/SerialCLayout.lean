@@ -1,16 +1,14 @@
 import RedisLayer.SerialSchema
 /-!
-# C's index-field layout (#3484, fixed by #3514 `a0ba12950`)
+# C's index-field layout
 
 `decField_encField` proves `decode ∘ encode = id` against **Rust's** encoder, which writes
 one field entry per index type, so its type word always has exactly one type. C writes
 one entry per *attribute* with every type in the bitmask (`IndexField_Init`,
 `_RdbSaveIndexField` in C's `src/serializers/encoder/v20/encode_schema.c`; the loader
-accepts any non-empty subset, `decode_graph_schema.c:127`). Before #3514 the decoder
-kept one type: an attribute with a RANGE and a FULLTEXT (or VECTOR) index
-lost its RANGE index when a C-written RDB loads (#3484, confirmed live: v4.22.2 → 6.0.3 and C
-master → Rust main). **Main now satisfies the property**: `SerialSchema.decField` is the merged
-`decode_index_field` (`src/serializers/mod.rs:637-724`), and the three theorems below hold on it.
+accepts any non-empty subset, `decode_graph_schema.c:127`). `SerialSchema.decField` is
+`decode_index_field` (`src/serializers/mod.rs`) and decodes every type in the word;
+the three theorems below hold on it.
 
 * `encFieldC` — C's entry for an attribute with the types `r`, `ft`, `v`.
 * `decField_encFieldC` — **main**: every C entry with at least one type decodes to exactly its
@@ -18,9 +16,7 @@ master → Rust main). **Main now satisfies the property**: `SerialSchema.decFie
 * `decField_empty_refused` — a word with no type is refused, as C's `_RdbLoadIndex` does
   (an unknown bit too: `decField_unknown_bit_refused`).
 * `decField_encField` (in `SerialSchema`) — Rust's own single-type entries still decode as before.
-* History (the pre-#3514 decoder and its counterexamples, removed in bbee75955; the last revision that has them is 17ccc5412): C's `"no"` came back
-  as a code, which `phonetic_enabled` read as ON; Rust wrote an empty string for off, and C enables
-  phonetic for any other string than `"no"`; the fix is `encPh_c_on_iff`.
+* `encPh_c_on_iff` — C enables phonetic for any string other than `"no"`, so off is written `"no"`.
 -/
 namespace RedisLayer.Serial
 open RedisLayer.BufferedIO (W Bytes)
@@ -31,14 +27,13 @@ variable (U : Utf8)
 def maskOf (r ft v : Bool) : Nat :=
   (if r then RANGEW else 0) ||| (if ft then FULLTEXT else 0) ||| (if v then VECTOR else 0)
 
-/-- C's vector option words: dimension, M, efConstruction, efRuntime, metric code (a
-`VecSimMetric`: L2 0, IP 1, Cosine 2). -/
+/-- C's vector option words: dimension, M, efConstruction, efRuntime, metric code. -/
 structure VWords where
   dim : Nat
   m : Nat
   efc : Nat
   efr : Nat
-  sc : Fin 3
+  sc : Nat
   deriving DecidableEq, Repr
 
 /-- `_RdbSaveIndexField`: name, type mask, weight, nostem, phonetic, then the vector
@@ -46,27 +41,26 @@ options iff the VECTOR bit is set. -/
 def encFieldC (attr : Bytes) (r ft v : Bool) (w ns : Nat) (ph : Bytes) (vw : VWords) :
     List W :=
   [.buf (nullTerm attr), .u (maskOf r ft v), .d w, .u ns, .buf (nullTerm ph)]
-  ++ (if v then [.u vw.dim, .u vw.m, .u vw.efc, .u vw.efr, .u vw.sc.val] else [])
+  ++ (if v then [.u vw.dim, .u vw.m, .u vw.efc, .u vw.efr, .u vw.sc] else [])
 
 /-- The fields an entry stands for, in `db.indexes()` order. -/
 def cFields (r ft v : Bool) (w ns : Nat) (ph : Bytes) (vw : VWords) : List Fld :=
   (if r then [⟨.range, none, none, none, none⟩] else [])
   ++ (if ft then [⟨.fulltext, some w, some (ns ≠ 0), some (phonNorm ph), none⟩] else [])
   ++ (if v then [⟨.vector, none, none, none,
-        some ⟨vw.dim, some vw.m, some vw.efc, some vw.efr, some (simName vw.sc.val)⟩⟩] else [])
+        some ⟨vw.dim, some vw.m, some vw.efc, some vw.efr, some (simName vw.sc)⟩⟩] else [])
 
-/-! ## History: the pre-#3514 decoder keeps one type -/
+/-! ## History: a decoder that keeps one type -/
 
-/-! ## Main: the merged decoder (`SerialSchema.decField`, FalkorDB#3514) -/
+/-! ## Main: the decoder (`SerialSchema.decField`) -/
 
 /-- **Fixed on main**: every C entry with at least one type decodes to exactly its types. -/
 theorem decField_encFieldC (attr ph : Bytes) (ha : U.valid attr) (hp : U.valid ph)
     (r ft v : Bool) (hne : r ∨ ft ∨ v) (w ns : Nat) (vw : VWords) (ts : List W) :
     decField U (encFieldC attr r ft v w ns ph vw ++ ts)
       = some ((attr, cFields r ft v w ns ph vw), ts) := by
-  have hs : vw.sc.val ≤ 2 := Nat.le_of_lt_succ vw.sc.isLt
   cases r <;> cases ft <;> cases v <;> simp at hne <;>
-  simp [decField, encFieldC, cFields, maskOf, Dec.bind, rdB, rdU, rdD, pure', hs,
+  simp [decField, encFieldC, cFields, maskOf, Dec.bind, rdB, rdU, rdD, pure',
     strip_nullTerm U attr ha, strip_nullTerm U ph hp, ANYW, RANGEW, NUMERIC, STR, GEO,
     VECTOR, FULLTEXT]
 
@@ -75,7 +69,7 @@ theorem decField_empty_refused (attr ph : Bytes) (w ns : Nat) (vw : VWords) (ts 
     decField U (encFieldC attr false false false w ns ph vw ++ ts) = none := by
   simp [decField, encFieldC, maskOf, Dec.bind, rdB, rdU, rdD, failD]
 
-/-- An unknown bit (here `0x20`) is refused too (`:655-660`). -/
+/-- An unknown bit (here `0x20`) is refused too. -/
 theorem decField_unknown_bit_refused (attr ph : Bytes) (w ns : Nat) (ts : List W) :
     decField U ([.buf (nullTerm attr), .u 0x20, .d w, .u ns, .buf (nullTerm ph)] ++ ts) = none := by
   simp [decField, Dec.bind, rdB, rdU, rdD, failD, ANYW, RANGEW, NUMERIC, STR, GEO, VECTOR,

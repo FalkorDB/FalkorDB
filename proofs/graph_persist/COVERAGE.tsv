@@ -7,15 +7,14 @@ graph/src/graph/graphblas/serialization.rs	read_unsigned	56	AXIOMATISED	trait me
 graph/src/graph/graphblas/serialization.rs	read_signed	57	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
 graph/src/graph/graphblas/serialization.rs	read_double	58	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
 graph/src/graph/graphblas/serialization.rs	read_buffer	59	AXIOMATISED	trait method = Tok constructor (Codec.Tok); BufferedWriter/Reader tagged words assumed inverse
-graph/src/graph/graphblas/serialization.rs	encode	34	NOT COVERED	trait default declaration
-graph/src/graph/graphblas/serialization.rs	encode_with_range	40	NOT COVERED	trait default (unimplemented!)
-graph/src/graph/graphblas/serialization.rs	decode	309	NOT COVERED	trait declaration
-graph/src/graph/graphblas/serialization.rs	decode_with_count	269	NOT COVERED	trait default (unimplemented!)
-graph/src/graph/graphblas/serialization.rs	from_u64	147	MODELLED	payload directory state tags (Persist.St.ofU, CchIndices = 10, Final = 11): St.ofU_toU; exercised via live roundtrip
+graph/src/graph/graphblas/serialization.rs	encode	34	PROVEN	Traits.encode_call (the required method: a call through the trait runs the implementor's; implementors are rows 15/16)
+graph/src/graph/graphblas/serialization.rs	encode_with_range	40	PROVEN	Traits.encode_with_range_default_panics (the default is unimplemented!(): panics whatever the arguments, writes nothing), encode_with_range_override
+graph/src/graph/graphblas/serialization.rs	decode	257	PROVEN	Traits.decode_call (the required method: a call through the trait runs the implementor's; implementors are rows 17/18)
+graph/src/graph/graphblas/serialization.rs	decode_with_count	269	PROVEN	Traits.decode_with_count_default_panics (unimplemented!(): panics whatever the arguments, reads nothing), decode_with_count_override
+graph/src/graph/graphblas/serialization.rs	from_u64	150	PROVEN	Persist.St.ofU_iff (from_u64 v = Some s iff s as u64 = v), St.ofU_none (v >= 12 refused: CchIndices = 10, Final = 11 are the last tags), St.ofU_toU
 graph/src/graph/graphblas/serialization.rs	encode	281	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8
-graph/src/graph/graphblas/serialization.rs	encode_with_range	288	PROVEN	Layout.chunkType_covers (slice partition) + roaring_roundtrip; #3438's select/advance_to/take seek = skip/take: PendingCommit SaveLayout.encRoarP
 graph/src/graph/graphblas/serialization.rs	decode	257	PROVEN	Layout.roaring_roundtrip, encoded_len_mult8 (length check never rejects own output)
-graph/src/graph/graphblas/serialization.rs	decode_with_count	330	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
+graph/src/graph/graphblas/serialization.rs	decode_with_count	269	PROVEN	Layout.roaring_roundtrip; count check (#2996: try_from + checked_mul): countCheck_in_bounds (every bytes[i*8..(i+1)*8] in range), countCheck_own; before #2996 a count of 2^61 matched an empty buffer
 src/redis_type.rs	io_cache_size	72	PROVEN	RedisType.ioCacheSize: ioCacheSize_spec, cache_size_on_load (RedisModule_GetContextFromIO = FFI; the configured CACHE_SIZE is the input)
 src/redis_type.rs	io_key_name	87	PROVEN	RedisType.ioKeyName: ioKeyName_spec (GetKeyNameFromIO/StringPtrLen results are inputs)
 src/redis_type.rs	graph_rdb_load	100	PROVEN	RedisType.loadWhole/loadPartial: load_main_last, load_main_first (registry Arc = key value = finished graph, no vkey registered, any key order); decoder Persist.multi_load; cacheOnLoad: cache_size_on_load (W5-rdb-1 fixed by #3262 361f62ac1)
@@ -33,31 +32,20 @@ src/redis_type.rs	delete_key	578	AXIOMATISED	Redis module API DeleteKey
 src/redis_type.rs	delete_stale_graphmeta_keys	624	PROVEN	RedisType.deleteStaleGraphmeta: scanKeys_spec
 src/redis_type.rs	delete_stale_virtual_keys	658	PROVEN	RedisType.deleteStaleVirtual: deleteStaleVirtual_spec; Persist.multi_meta (meta keys = exactly the virtual keys)
 src/redis_type.rs	scan_keys_by_type	675	PROVEN	RedisType.scanKeys: scanKeys_spec, scanKeys_stops (RedisModule_Call replies are inputs)
-src/redis_type.rs	finalize_pending_graphs	762	PROVEN	RedisType.finalizePending (#3643: finalize_pending_graph Result match): load_main_first, load_main_last, finalize_pending_ok (Ok arm installs), finalize_pending_err (Err arm logs, installs nothing)
-src/redis_type.rs	install_graph	801	PROVEN	RedisType.installGraph (finalizePending install arm): load_main_first, load_main_last, finalize_pending_ok
-src/redis_type.rs	uuid_v4	827	PROVEN	RedisType.uuid (#3286: uuid_fields, clock and counter in separate fields): uuid_counter_distinct (names differ whenever counters differ mod 2^48, any clocks), uuid_same_clock_distinct, uuid_regression_pair_distinct, uuid_length; vkeyName_uuid_counter, names_vname_inj (discharges VKeys.Names.vname_inj)
-src/redis_type.rs	uuid_fields	849	PROVEN	RedisType.uuidFields: counter_field_bijective (last field = bijection of seq mod 2^48, for every seq; the const _ block checks sample points), uuidFields_fit, mixB_mod48, uuid_last_field
-src/redis_type.rs	same_fields	876	PROVEN	RedisType.sameFields (helper of the compile-time const _ check): sameFields_iff (= equality of the five fields), const_check_holds (the const block's assertions hold for every clock, not only its samples)
-src/redis_type.rs	graphmeta_rdb_load	989	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys); cacheOnLoad: cache_size_on_load
-src/redis_type.rs	graphmeta_rdb_save	1014	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
-src/redis_type.rs	graphmeta_free	1026	PROVEN	RedisType.metaFree: metaFree_spec
-src/redis_type.rs	graphmeta_aux_load	1036	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
-graph/src/graph/mvcc_graph.rs	new	106	NOT COVERED	constructor
-graph/src/graph/mvcc_graph.rs	from_graph	118	MODELLED	RDB load path, live
-graph/src/graph/mvcc_graph.rs	read	129	NOT COVERED	Arc clone
-graph/src/graph/mvcc_graph.rs	fork	141	NOT COVERED	private version, takes nothing (proofs/versioned_matrix, proofs/search_concurrency cover it)
-graph/src/graph/mvcc_graph.rs	commit	205	NOT COVERED	schema_version bump/concurrency not modelled (publish/refusal: proofs/search_concurrency, proofs/versioned_matrix)
-graph/src/graph/mvcc_graph.rs	is_stale	155	NOT COVERED	version-number comparison (proofs/search_concurrency Mvcc.checkFork_stale)
-graph/src/graph/mvcc_graph.rs	commit_indexer_batch	262	NOT COVERED	proofs/search_concurrency Mvcc.batch_keeps_forks; fit decision in native_index
-graph/src/graph/mvcc_graph.rs	prepare	293	NOT COVERED	(the checks and last changes of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
-graph/src/graph/mvcc_graph.rs	publish	354	NOT COVERED	(the compare-and-swap and set_indexer_graph of the former commit_version) proofs/search_concurrency Mvcc.commit_publishes
-graph/src/graph/mvcc_graph.rs	drop	370	NOT COVERED	cancel indexing
-src/redis_type.rs	wrong_type_compat	937	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
-graph/src/graph/graph.rs	rebuild_derived_matrices	1059	AXIOMATISED	GraphBLAS transpose/set; node_cap = max(node_cap, saved dims) (#3250) proven in graph_queries Ids.rebuild_never_shrinks
-graph/src/graph/graph.rs	create_constraint	4667	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
-graph/src/graph/graph.rs	validate_mandatory_constraint	4842	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4881	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4936	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+src/redis_type.rs	finalize_pending_graphs	762	PROVEN	RedisType.finalizePending: load_main_first, load_main_last
+src/redis_type.rs	install_graph	797	PROVEN	RedisType.finalizePending (install arm): load_main_first
+src/redis_type.rs	uuid_v4	823	PROVEN	RedisType.uuid (#3286: uuid_fields, clock and counter in separate fields): uuid_counter_distinct (names differ whenever counters differ mod 2^48, any clocks), uuid_same_clock_distinct, uuid_regression_pair_distinct, uuid_length; vkeyName_uuid_counter, names_vname_inj (discharges VKeys.Names.vname_inj)
+src/redis_type.rs	uuid_fields	845	PROVEN	RedisType.uuidFields: counter_field_bijective (last field = bijection of seq mod 2^48, for every seq; the const _ block checks sample points), uuidFields_fit, mixB_mod48, uuid_last_field
+src/redis_type.rs	same_fields	872	PROVEN	RedisType.sameFields (helper of the compile-time const _ check): sameFields_iff (= equality of the five fields), const_check_holds (the const block's assertions hold for every clock, not only its samples)
+src/redis_type.rs	graphmeta_rdb_load	985	PROVEN	RedisType.metaLoad: metaLoad_spec (decode = rdb_load_graph: Persist.key_rt/run_keys); cacheOnLoad: cache_size_on_load
+src/redis_type.rs	graphmeta_rdb_save	1010	PROVEN	RedisType.metaSave (= saveKeySlice, #3161): metaSave_of_slice, metaSave_rdbSave, metaSave_stale
+src/redis_type.rs	graphmeta_free	1022	PROVEN	RedisType.metaFree: metaFree_spec
+src/redis_type.rs	graphmeta_aux_load	1032	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
+src/redis_type.rs	wrong_type_compat	933	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
+graph/src/graph/graph.rs	create_constraint	4622	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4797	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4836	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4891	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
 src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip
@@ -65,28 +53,21 @@ src/serializers/encoder/mod.rs	vec_save_graph	59	PROVEN	Persist.encodeGraph: loa
 src/serializers/encoder/mod.rs	encode_graph	68	PROVEN	Persist.encodeGraph/encDir/encPayload: load_encode, key_rt, decDir_rt, payload_rt, entry_rt
 src/serializers/encoder/mod.rs	build_multi_key_payloads	95	PROVEN	Persist.buildMulti/fillKey/keysFrom: fillKey_spec, multi_key_tiles, multi_key_bound, multi_key_all_placed, multi_key_matrices
 src/serializers/encoder/mod.rs	build_payloads	192	PROVEN	Persist.buildPayloads: load_encode, fold_build, buildPayloads_bounds
-src/serializers/decoder/mod.rs	decode_payload_directory	54	PROVEN	Persist.decDir/decDirEntry/St.accepted: decDir_rt (with buildPayloads_accepted, EntryOK.accepted), decDirEntry_refuses, decDir_refuses_cch (Vec::with_capacity(decode_capacity(..)) = allocation cap, no-op on the word list)
-src/serializers/decoder/mod.rs	check_encoding_version	88	PROVEN	Persist.checkVer: checkVer_iff, key_rt_ver, rdbLoad_refuses
-src/serializers/decoder/mod.rs	rdb_load_graph	118	PROVEN	Persist.rdbLoad (version gate checkVer) + rdbKey/kKeyHdr/kKeySch (#3643: checkHeader, checkDir) (+ stepKey for key_count > 1, finalize = AsmOK check): key_rt, run_keys, run_keys_gen, run_keys_refuses, stepKey_refuses, run_prefix_pending, multi_load (any key order), multi_key_passes_checks; key_count 1: key_rt K=1 + fold_build + asmOK_restoreOf; key_rt_ver, rdbLoad_refuses, rdbKey_refuses_header, rdbKey_refuses_dir
-src/serializers/decoder/mod.rs	decode_payloads_into_pending	341	PROVEN	Persist.decPayload (held to the key header: decEnt id bound, label_matrix_count, tensor_count)/applyPR into PG: fold_char, multi_acc, entry_rt, decPayload_refuses_labels, decEnt_refuses_id, decEnt_refuses_attrs
-src/serializers/decoder/mod.rs	finalize_pending_graph	391	PROVEN	Persist.finalizePG + AsmOK (check_assembled, then fallible Graph::restore) in stepKey: run_keys, run_keys_refuses, stepKey_refuses, multi_load, asmOK_restoreOf
-src/serializers/decoder/mod.rs	rebuild_indexes	434	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
-src/serializers/decoder/mod.rs	pipe_load_graph	495	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
-src/serializers/decoder/mod.rs	vec_load_graph	510	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live; since #3643 an Err, redis_layer from_slice_past_end_err)
-src/serializers/decoder/mod.rs	load_graph_from_reader	520	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir (#3643: checkHeader, checkDir, AsmOK): load_encode, encoder_passes_checks, truncated_payload_eof, buildPayloads_accepted, loadFromReader_refuses_header, loadFromReader_refuses_dir, kDir_refuses
-graph/src/runtime/runtime.rs	publish	600	NOT COVERED	new with the plain-Graph fork, not modelled yet: moves the runtime's fork into MvccGraph::commit and reads the Arc it published from then on
-graph/src/runtime/runtime.rs	QueryGraph::from	119	NOT COVERED	enum constructor
-graph/src/runtime/runtime.rs	QueryGraph::from	125	NOT COVERED	enum constructor
-graph/src/graph/graphblas/serialization.rs	remaining	64	NOT COVERED	Reader::remaining default (None): only feeds check_count_fits, an allocation guard abstracted away in the word-list model
-graph/src/graph/graphblas/serialization.rs	decode_capacity	80	NOT COVERED	allocation cap (Vec::with_capacity): no semantic effect, abstracted in the word-list model
-graph/src/graph/graphblas/serialization.rs	check_count_fits	176	NOT COVERED	byte-budget allocation guard (only when the reader knows remaining bytes): abstracted in the word-list model; every count the encoder writes is backed by its elements
-graph/src/graph/graphblas/serialization.rs	scope	227	NOT COVERED	thread-local DecodeLimits install: feeds the trusted GraphBLAS decoders' max_dim check (Persist.Codecs.Mx/Tx laws)
-graph/src/graph/graphblas/serialization.rs	current	233	NOT COVERED	thread-local DecodeLimits read: see scope
-graph/src/graph/graphblas/serialization.rs	max_dim	239	NOT COVERED	matrix dimension cap for the trusted GraphBLAS decoders (Persist.Codecs.Mx/Tx laws)
-graph/src/graph/graphblas/serialization.rs	drop	250	NOT COVERED	DecodeLimitsGuard restore: see scope
-src/serializers/decoder/validate.rs	check_header	26	PROVEN	Persist.checkHeader (MAX_ID_BOUND = 2^34): checkHeader_hdrOf, checkHeader_false_iff, loadFromReader_refuses_header, rdbKey_refuses_header
-src/serializers/decoder/validate.rs	check_directory	50	PROVEN	Persist.checkDir/dirCap: checkDir_of (buildPayloads_dir, EntryOK.dir), checkDir_false, loadFromReader_refuses_dir, rdbKey_refuses_dir
-src/serializers/decoder/validate.rs	label_matrix_count	72	PROVEN	Persist.decPayload labelsM arm (count <= label_count; check_count_fits abstracted): payload_rt, entry_rt, decPayload_refuses_labels
-src/serializers/decoder/validate.rs	tensor_count	90	PROVEN	Persist.decPayload relM arm (reads relationship_count tensors; check_count_fits abstracted): payload_rt, entry_rt
-src/serializers/decoder/validate.rs	check_deleted	100	PROVEN	Persist.DelOK (len == declared, with id_bound max < live + len): delOK_of, asm_refuses_deleted_count
-src/serializers/decoder/validate.rs	check_assembled	115	PROVEN	Persist.AsmOK (with Graph::restore's id_bound / edge-count / edge-bound checks): asmOK_restoreOf, kDir_refuses, run_keys_refuses, asm_refuses_deleted_node, asm_refuses_deleted_edge, asm_refuses_labels, asm_refuses_types, asm_refuses_edge_count, asm_refuses_edge_bound
+src/serializers/decoder/mod.rs	decode_payload_directory	51	PROVEN	Persist.decDir/decDirEntry/St.accepted: decDir_rt (with buildPayloads_accepted, EntryOK.accepted), decDirEntry_refuses, decDir_refuses_cch
+src/serializers/decoder/mod.rs	check_encoding_version	85	PROVEN	Persist.checkVer: checkVer_iff, key_rt_ver, rdbLoad_refuses
+src/serializers/decoder/mod.rs	rdb_load_graph	115	PROVEN	Persist.rdbLoad (version gate checkVer) + rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build; key_rt_ver, rdbLoad_refuses
+src/serializers/decoder/mod.rs	decode_payloads_into_pending	325	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
+src/serializers/decoder/mod.rs	finalize_pending_graph	375	PROVEN	Persist.finalizePG: run_keys, multi_load
+src/serializers/decoder/mod.rs	rebuild_indexes	410	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
+src/serializers/decoder/mod.rs	pipe_load_graph	471	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/decoder/mod.rs	vec_load_graph	486	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
+src/serializers/decoder/mod.rs	load_graph_from_reader	496	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
+graph/src/graph/graphblas/serialization.rs	remaining	64	NOT COVERED	(#3643): not modelled yet
+graph/src/graph/graphblas/serialization.rs	decode_capacity	80	NOT COVERED	(#3643): not modelled yet
+graph/src/graph/graphblas/serialization.rs	EncodeState::check_count_fits	176	NOT COVERED	(#3643): not modelled yet
+graph/src/graph/graphblas/serialization.rs	DecodeLimits::scope	227	NOT COVERED	(#3643): not modelled yet
+graph/src/graph/graphblas/serialization.rs	DecodeLimits::current	233	NOT COVERED	(#3643): not modelled yet
+graph/src/graph/graphblas/serialization.rs	DecodeLimits::max_dim	239	NOT COVERED	(#3643): not modelled yet
+graph/src/graph/graphblas/serialization.rs	DecodeLimitsGuard::drop	250	NOT COVERED	(#3643): not modelled yet
+graph/src/graph/graphblas/serialization.rs	RoaringTreemap::decode	309	NOT COVERED	(#3643): not modelled yet
+graph/src/graph/graphblas/serialization.rs	RoaringTreemap::decode_with_count	330	NOT COVERED	(#3643): not modelled yet

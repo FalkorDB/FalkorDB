@@ -3,7 +3,7 @@ import FalkorIdList.Wire
 /-!
 # The collapse arithmetic (`Run`, `bucket_body`, `bitmap_header`, `encoded_len`)
 
-`id_list.rs:182-440`, `:582`. All `usize`/`u64` arithmetic here is bounded
+`id_list.rs`. All `usize`/`u64` arithmetic here is bounded
 (ids per bucket ≤ 2^16, runs per bucket ≤ 2^15, headers linear in the bucket
 count), so it is modelled in `Nat`; the one place the Rust could wrap — the
 `lo` loop index at the top of the id space — is modelled with its
@@ -26,14 +26,14 @@ def ASCENDING_SEGMENT_OVERHEAD : Nat := 1 + 4
 def BITMAP_KEY_BYTES : Nat := 4
 def ROARING_FLOOR_BYTES : Nat := 32
 
-/-- `bucket_body` (`id_list.rs:267`). -/
+/-- `bucket_body` (`id_list.rs`). -/
 def bucketBody (ids runs : Nat) : Nat × Bool :=
   let sparse := ids * ARRAY_ELEMENT_BYTES
   let plain := if sparse < BITSET_CONTAINER_BYTES then sparse else BITSET_CONTAINER_BYTES
   let asRun := RUN_COUNT_BYTES + RUN_INTERVAL_BYTES * runs
   if asRun ≤ plain then (asRun, true) else (plain, false)
 
-/-- `bitmap_header` (`id_list.rs:289`). -/
+/-- `bitmap_header` (`id_list.rs`). -/
 def bitmapHeader (buckets : Nat) (hasRun : Bool) : Nat :=
   if hasRun then
     let runFlags := (buckets + 7) / 8          -- `div_ceil(8)`
@@ -56,34 +56,34 @@ structure Tally where
   bucketRuns : Nat := 0
 deriving Repr, DecidableEq
 
-/-- `Run::restart` (`:311`): `Self { start, ..Self::default() }` — the tally is reset. -/
+/-- `Run::restart`: `Self { start, ..Self::default() }` — the tally is reset. -/
 def restart : Tally := {}
 
-/-- `Run::freeze_bucket` (`:409`). -/
+/-- `Run::freeze_bucket`. -/
 def freezeBucket (t : Tally) : Tally :=
   let (body, isRun) := bucketBody t.bucketIds t.bucketRuns
   { t with closedBody := t.closedBody + body, closedHasRun := t.closedHasRun || isRun,
            closedBuckets := t.closedBuckets + 1 }
 
-/-- `Run::freeze_bitmap` (`:416`). -/
+/-- `Run::freeze_bitmap`. -/
 def freezeBitmap (t : Tally) : Tally :=
   { t with closedBitmaps := t.closedBitmaps + BITMAP_KEY_BYTES +
              bitmapHeader t.closedBuckets t.closedHasRun + t.closedBody,
            closedBuckets := 0, closedBody := 0, closedHasRun := false }
 
-/-- `Run::bitmap_bytes` (`:430`). -/
+/-- `Run::bitmap_bytes`. -/
 def bitmapBytes (t : Tally) : Nat :=
   if !t.started then TREEMAP_COUNT_BYTES else
   let (body, isRun) := bucketBody t.bucketIds t.bucketRuns
   TREEMAP_COUNT_BYTES + t.closedBitmaps + BITMAP_KEY_BYTES +
     bitmapHeader (t.closedBuckets + 1) (t.closedHasRun || isRun) + t.closedBody + body
 
-/-- `Run::prefers_bitmap` (`:337`). -/
+/-- `Run::prefers_bitmap`. -/
 def prefersBitmap (t : Tally) : Bool :=
   decide (t.rangeBytes ≥ ROARING_FLOOR_BYTES) &&
     decide (ASCENDING_SEGMENT_OVERHEAD + bitmapBytes t < t.rangeBytes)
 
-/-- One piece of `add_range`'s loop body (`:363-399`), for the bucket `bucket`. -/
+/-- One piece of `add_range`'s loop body, for the bucket `bucket`. -/
 def step (t : Tally) (bucket ids : Nat) : Tally :=
   if !t.started then
     { t with started := true, bitmapKey := bucket / 65536, bucket := bucket,
@@ -101,7 +101,7 @@ def bucketEnd (bucket : Nat) : Nat := bucket * 65536 + 65535
 theorem le_pieceEnd (lo e : Nat) (h : lo ≤ e) : lo ≤ min e (bucketEnd (lo / 65536)) := by
   grind [bucketEnd]
 
-/-- The `while lo <= end` loop of `add_range` (`:356`), `lo`/`end` < 2^64, with
+/-- The `while lo <= end` loop of `add_range`, `lo`/`end` < 2^64, with
 `piece_end.checked_add(1)`'s `None => break` at the top of the id space. -/
 def addLoop (t : Tally) (lo e : Nat) : Tally :=
   if h : lo ≤ e ∧ e < W then
@@ -123,16 +123,16 @@ def pieces (lo e : Nat) : List (Nat × Nat) :=
 termination_by W - lo
 decreasing_by have := le_pieceEnd lo e h.1; omega
 
-/-- `Run::add_range` (`:348`): `end = base + (len - 1)`. -/
+/-- `Run::add_range`: `end = base + (len - 1)`. -/
 def addRange (t : Tally) (base len : Nat) : Tally := addLoop t base (base + (len - 1))
 
-/-- `Segment::encoded_len` (`:582`); `R.size` is `serialized_size()`. -/
+/-- `Segment::encoded_len`; `R.size` is `serialized_size()`. -/
 def encodedLen (R : Roaring) : Seg → Nat
   | .range b l | .rdesc b l => 1 + widthFor b + widthFor l
   | .rep i c => 1 + widthFor i + widthFor c
   | .asc bm | .dsc bm => 1 + 4 + R.size bm
 
-/-- `Run::absorb` (`:323`). -/
+/-- `Run::absorb`. -/
 def absorb (R : Roaring) (t : Tally) (s : Seg) : Tally :=
   addRange { t with rangeBytes := t.rangeBytes + encodedLen R s } s.min s.len
 

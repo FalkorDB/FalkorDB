@@ -1,13 +1,13 @@
 import FalkorValueMath.Misc
 /-!
-# Bounded value nesting (#3339, b080a44c1; GHSA-mwvh-8fq5-x2j8)
+# Bounded value nesting
 
 | Lean | Rust |
 | --- | --- |
-| `MAX_VALUE_NESTING`, `valueNestingError` | value.rs:62, `value_nesting_error` :67 |
-| `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs:2191-2275 (the `for _ in 0..len` loop = `decodeN`) |
-| `decode` | `Decode<19>::decode` value.rs:2179 (= `decode_value(r, 0)`) |
-| `isValidProperty`, `validateListProperty`, `validateProperty` | pending.rs:69, :98, :115 (copied from proofs/pending_commit `PA`, here over `V F` so the codec theorems apply) |
+| `MAX_VALUE_NESTING`, `valueNestingError` | value.rs, `value_nesting_error`  |
+| `DErr`, `decodeValue`, `decodeValue.decodeN` | `decode_value(r, depth)` value.rs (the `for _ in 0..len` loop = `decodeN`) |
+| `decode` | `Decode<19>::decode` value.rs (= `decode_value(r, 0)`) |
+| `isValidProperty`, `validateListProperty`, `validateProperty` | pending.rs (copied from proofs/pending_commit `PA`, here over `V F` so the codec theorems apply) |
 
 `depth` is the doc-comment's measure (`[]` and `{}` are 1, `[[]]` is 2, a scalar 0).
 `within d v` says that no `decode_value` call made while decoding `v` at depth `d` sees
@@ -16,16 +16,13 @@ import FalkorValueMath.Misc
 * `decodeValue_refuses_past_cap` — past the cap the decoder returns the nesting error
   before reading a token, so the recursion never goes deeper than `MAX + 1` frames
   (`decodeValue_reach`).
-* `decodeValue_agrees` — otherwise it decodes exactly as before #3339: its `Ok` results
-  are the old decoder's results that are `within` the cap, and nothing else.
+* `decodeValue_agrees` — otherwise it decodes exactly as a decoder without a cap: its `Ok` results
+  are that decoder's results that are `within` the cap, and nothing else.
 * `decode_encode` / `decode_encode_deep` — on an encoded value: round-trip iff `within`,
   else the nesting error. `within_of_depth` / `not_within_of_depth` place the cut between
   `depth ≤ MAX` (always loads) and `depth ≥ MAX + 2` (always refused).
 * `validateProperty_depth`, **`stored_roundtrip`** — every value a property write accepts
   has `depth ≤ MAX` and round-trips through the RDB codec (the save/load guarantee).
-* History: before #3339 every nesting decoded, one frame per level, and any depth was
-  storable (the `pre3339_*` counterexamples were removed in bbee75955; the last revision
-  that has them is 17ccc5412).
 -/
 
 namespace ValueMath
@@ -35,7 +32,7 @@ variable {F : Type}
 
 def MAX_VALUE_NESTING : Nat := 4096
 
-/-- `value_nesting_error()` (value.rs:67). -/
+/-- `value_nesting_error()` (value.rs). -/
 def valueNestingError : String :=
   "Value nesting exceeds the maximum depth of " ++ toString MAX_VALUE_NESTING
 
@@ -49,8 +46,7 @@ inductive DErr | nesting | other
 
 variable (co : CodecOps F)
 
-/-- `decode_value(r, depth)` (value.rs:2191; #3643's array `check_count_fits` /
-`decode_capacity` only refuse arrays the token list cannot hold, so they are abstracted): the depth check first, then the old
+/-- `decode_value(r, depth)` (value.rs): the depth check first, then the old
 decoder with `depth + 1` for array elements. -/
 def decodeValue : Nat → Nat → List (Tok F) → Except DErr (V F × List (Tok F))
   | 0, depth, _ => if depth > MAX_VALUE_NESTING then .error .nesting else .error .other
@@ -97,7 +93,7 @@ where
     | .ok (x, r') => (decodeN fuel depth n r').map (fun (xs, r'') => (x :: xs, r''))
     | .error e => .error e
 
-/-- `Decode<19>::decode` (value.rs:2179). -/
+/-- `Decode<19>::decode` (value.rs). -/
 def decode (fuel : Nat) (toks : List (Tok F)) : Except DErr (V F × List (Tok F)) :=
   decodeValue co fuel 0 toks
 
@@ -187,25 +183,25 @@ def cappedN (d : Nat) : Option (List (V F) × List (Tok F)) → Option (List (V 
 /-- **Decodes exactly as before below the cap**: `decode_value(r, d)` succeeds with
 `(v, rest)` iff the pre-#3339 decoder does and `v` is `within` the cap at `d`. -/
 theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
-    (decodeValue co fuel d toks).toOption = capped d (pre3339_decode co fuel toks) := by
+    (decodeValue co fuel d toks).toOption = capped d (decodeUncapped co fuel toks) := by
   intro fuel
   induction fuel with
   | zero =>
     intro d toks
-    by_cases h : d > MAX_VALUE_NESTING <;> simp [decodeValue, pre3339_decode, capped, h, Except.toOption]
+    by_cases h : d > MAX_VALUE_NESTING <;> simp [decodeValue, decodeUncapped, capped, h, Except.toOption]
   | succ f ih =>
     intro d toks
     have hN : ∀ n d r, d ≤ MAX_VALUE_NESTING + 1 →
-        (decodeValue.decodeN co f d n r).toOption = cappedN d (pre3339_decode.decodeN co f n r) := by
+        (decodeValue.decodeN co f d n r).toOption = cappedN d (decodeUncapped.decodeN co f n r) := by
       intro n
       induction n with
-      | zero => intro d r _; simp [decodeValue.decodeN, pre3339_decode.decodeN, cappedN, withinL,
+      | zero => intro d r _; simp [decodeValue.decodeN, decodeUncapped.decodeN, cappedN, withinL,
           Except.toOption]
       | succ n ihn =>
         intro d r hd
         have hx := ih d r
-        simp only [decodeValue.decodeN, pre3339_decode.decodeN]
-        rcases hp : pre3339_decode co f r with _ | ⟨x, r'⟩
+        simp only [decodeValue.decodeN, decodeUncapped.decodeN]
+        rcases hp : decodeUncapped co f r with _ | ⟨x, r'⟩
         · rw [hp] at hx
           rcases hdv : decodeValue co f d r with e | ⟨x, r'⟩
           · simp [cappedN, Except.toOption]
@@ -217,7 +213,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
               revert hx; cases decodeValue co f d r <;> simp [Except.toOption]
             rw [hdv]
             have h2 := ihn d r' hd
-            rcases hq' : pre3339_decode.decodeN co f n r' with _ | ⟨xs, r''⟩
+            rcases hq' : decodeUncapped.decodeN co f n r' with _ | ⟨xs, r''⟩
             · rw [hq'] at h2
               rcases hq : decodeValue.decodeN co f d n r' with e | q
               · simp [hq, hq', cappedN, Except.toOption, Except.map]
@@ -237,12 +233,12 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
               revert hx; cases decodeValue co f d r <;> simp [Except.toOption]
             obtain ⟨e, hdv⟩ := hdv
             rw [hdv]
-            rcases hq' : pre3339_decode.decodeN co f n r' with _ | ⟨xs, r''⟩
+            rcases hq' : decodeUncapped.decodeN co f n r' with _ | ⟨xs, r''⟩
             · simp [hq', cappedN, Except.toOption]
             · simp [hq', cappedN, withinL, hw, Except.toOption]
     by_cases hd : d > MAX_VALUE_NESTING
     · rw [decodeValue_refuses_past_cap co _ _ _ hd]
-      cases hp : pre3339_decode co (f + 1) toks with
+      cases hp : decodeUncapped co (f + 1) toks with
       | none => simp [capped, Except.toOption]
       | some p =>
         obtain ⟨v, r⟩ := p
@@ -256,7 +252,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
         cases v with
         | list l => exact absurd rfl (hv l)
         | _ => simp [capped, within, hd']
-      unfold decodeValue pre3339_decode
+      unfold decodeValue decodeUncapped
       rw [ite_eq_right hd]
       split
       · rename_i tag rest
@@ -283,7 +279,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
             cases hq : decodeValue.decodeN co f (d + 1) len r with
             | error e =>
               rw [hq] at this
-              cases hq' : pre3339_decode.decodeN co f len r with
+              cases hq' : decodeUncapped.decodeN co f len r with
               | none => simp [hq', capped, Except.map, Except.toOption]
               | some q =>
                 obtain ⟨l, r'⟩ := q
@@ -297,7 +293,7 @@ theorem decodeValue_agrees : ∀ (fuel d : Nat) (toks : List (Tok F)),
             | ok q =>
               obtain ⟨l, r'⟩ := q
               rw [hq] at this
-              cases hq' : pre3339_decode.decodeN co f len r with
+              cases hq' : decodeUncapped.decodeN co f len r with
               | none => rw [hq'] at this; simp [cappedN, Except.toOption] at this
               | some q' =>
                 obtain ⟨l', r''⟩ := q'
@@ -345,7 +341,7 @@ theorem decodeValue_encode (fuel d : Nat) (v : V F) (rest : List (Tok F)) (hs : 
     (hst : Storable v) (hw : within d v = true) :
     decodeValue co fuel d (encode co v ++ rest) = .ok (v, rest) := by
   apply toOption_some
-  rw [decodeValue_agrees, pre3339_decode_encode co fuel v rest hs hst]
+  rw [decodeValue_agrees, decodeUncapped_encode co fuel v rest hs hst]
   simp [capped, hw]
 
 theorem decode_encode (fuel : Nat) (v : V F) (rest : List (Tok F)) (hs : sizeOf v < fuel)
@@ -503,21 +499,21 @@ theorem within_nest_empty : within 0 (nest MAX_VALUE_NESTING (.list ([] : List (
   refine ⟨?_, hd _⟩
   rw [within_nest]; simp [within, withinL]
 
-/-! ## Property writes (pending.rs:69-131) -/
+/-! ## Property writes (pending.rs) -/
 
-/-- `is_valid_property` (pending.rs:69): a non-list primitive, or NULL when allowed. -/
+/-- `is_valid_property` (pending.rs): a non-list primitive, or NULL when allowed. -/
 def isValidProperty : V F → Bool → Bool
   | .null, allowNull => allowNull
   | .bool _, _ | .int _, _ | .float _, _ | .str _, _ | .point _ _, _ | .vec _, _
   | .datetime _, _ | .date _, _ | .time _, _ | .duration _, _ => true
   | _, _ => false
 
-/-- The two error strings: the nesting message (pending.rs:103) and `INVALID_PROPERTY_MSG`. -/
+/-- The two error strings: the nesting message (pending.rs) and `INVALID_PROPERTY_MSG`. -/
 inductive PErr | nesting | invalid
   deriving DecidableEq
 
 mutual
-/-- The `try_for_each` body of `validate_list_property` (pending.rs:108-112) at nesting
+/-- The `try_for_each` body of `validate_list_property` (pending.rs) at nesting
 `depth`; a nested list is `validate_list_property(inner, depth + 1)`, whose depth check is
 inlined here (`validateListProperty` is the same check around `validateItems`). -/
 def validateItems : Nat → List (V F) → Except PErr Unit
@@ -531,11 +527,11 @@ def validateItem : Nat → V F → Except PErr Unit
   | _, v => if isValidProperty v false then .ok () else .error .invalid
 end
 
-/-- `validate_list_property(items, depth)` (pending.rs:98). -/
+/-- `validate_list_property(items, depth)` (pending.rs). -/
 def validateListProperty (items : List (V F)) (depth : Nat) : Except PErr Unit :=
   if depth > MAX_VALUE_NESTING then .error .nesting else validateItems depth items
 
-/-- `validate_property` (pending.rs:115); `validate_node_property` (:124) and
+/-- `validate_property` (pending.rs); `validate_node_property` (:124) and
 `validate_relationship_property` (:129) are this function. -/
 def validateProperty : V F → Except PErr Unit
   | .list items => validateListProperty items 1

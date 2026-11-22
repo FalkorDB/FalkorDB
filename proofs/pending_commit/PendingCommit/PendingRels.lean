@@ -1,7 +1,7 @@
 import PendingCommit.PendingState
 /-
 # Created relationships, label scans and degrees in `Pending`
-(pending.rs:902-1200: `remove_pending_relationships_for_node` to `has_created_relationships`). See `PendingState.lean`'s header for the statements.
+(pending.rs: `remove_pending_relationships_for_node` to `has_created_relationships`). See `PendingState.lean`'s header for the statements.
 -/
 namespace PendingCommit.PS
 open PA
