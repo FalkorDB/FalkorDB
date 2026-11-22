@@ -37,6 +37,7 @@ def fmtOp : EOp → String
   | .shortest .. => "shortestPath()"
   | .pattern => "<pattern>"
   | .other _ => "?"
+  | .aggPh => "__agg_order_by_placeholder__"
 
 theorem fmtOp_var (v : Nat) : fmtOp (.var v) = toString v := rfl
 theorem fmtOp_param (p : Nat) : fmtOp (.param p) = "@" ++ toString p := rfl

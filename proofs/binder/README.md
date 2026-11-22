@@ -1,6 +1,6 @@
 # binder: which variable a name refers to, and when two variables share an id
 
-This project proves how the binder resolves variable names to numeric ids, and shows with concrete counterexamples where two different variables end up with the same id. The binder runs on every query between the parser and the planner. User-facing behaviour that depends on it:
+This project proves how the binder resolves variable names to numeric ids, and that two different variables of a scope never end up with the same id. The binder runs on every query between the parser and the planner. User-facing behaviour that depends on it:
 
 - which variables a clause can see after `WITH`, `RETURN`, `ORDER BY`, `UNWIND`, `FOREACH` and `CALL {}`;
 - whether `MATCH (a)-[r]->(b) MATCH (c {v: r.w})` binds at all;
@@ -14,7 +14,8 @@ The Rust code is `graph/src/planner/binder.rs`, plus the id-minting side of `gra
 Every variable id is minted as the **current size of its scope table**. The binder's `fresh_var`, the parent copy in `resolve_name`, and the planner's own `fresh_var` all hand out `len()`, `len()+1`, …. That is collision-free only if every id the bound plan uses is below `len()`. In Lean, a table that satisfies this is `Env.Covers`.
 
 - Adding a name keeps it (`mint_new_covers`, `resolve_covers`, `projectName_new_covers`, `foreachRestore_covers`, `mergeSV_covers`).
-- **Removing** a name breaks it, and the binder removes names in two places while their ids are still used by the plan (`erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks`). The next variable then gets an id that is already taken, and two variables share one row slot.
+- Reserving a variable nameless (`Scope::reserve`: loop variables, the aggregate placeholder, unnamed entities, un-YIELDed outputs) keeps it (`reserve_covers`, `reserveLoop_covers`, `bind_aggPlaceholder`).
+- **Hiding** a name keeps it: since #3016 the binder never removes an entry whose id the plan may use; `hide_names` moves the variable to the scope's nameless list, so the table keeps the same ids and length (`Env.hideName_wf`, `Env.hideNames_covers`) while no name reaches it (`Env.hideNames_find`). This needs the scope invariant `Env.WF` (each id and each name listed once), which `reserve`'s dedup and `lift`'s unreserve maintain.
 
 ## The questions this project answers
 
@@ -22,7 +23,7 @@ Every variable id is minted as the **current size of its scope table**. The bind
 
 `mint_fresh_iff` proves the planner's ids `len, len+1, …` avoid every id the bound plan uses **if and only if** every used id is below `len`. So `Env.Covers` on the table is not enough by itself: an id that was removed from the table but is still read by a Filter breaks the condition.
 
-- **On main, no, in three places.** After `MATCH (n) WITH n.v AS k WHERE n.v = 0`, the WITH scope is `{k ↦ 0, n ↦ 1}` (`n` is copied for the WHERE), then `n` is removed. The next `MATCH (x)-->(y)` gives `x` id 1, the same slot the Filter reads (`erase_breaks_covers`, `where_copy_id_reused`). Comprehension and pattern-comprehension locals are cleaned up the same way (`comprehension_cleanup_breaks`).
+- **Yes, since #3016.** After `MATCH (n) WITH n.v AS k WHERE n.v = 0`, the WITH scope is `{k ↦ 0, n ↦ 1}` (`n` is copied for the WHERE), then `n` is hidden, keeping id 1 taken, so the next `MATCH (x)-->(y)` gives `x` id 2 (`hide_keeps_slot`, `where_copy_id_kept`). Pattern and pattern-comprehension aliases are hidden the same way (`comprehension_cleanup_covers`, `hideExcept_find`). Before #3016 these entries were removed and the next variable reused the id (issue #3004).
 
 **2. Does `resolve_name` find exactly the names that are in scope?**
 
@@ -32,7 +33,7 @@ Every variable id is minted as the **current size of its scope table**. The bind
 **3. Does a `WITH`/`RETURN` scope contain exactly its aliases?**
 
 - **Without ORDER BY, yes.** `projectItems_keys` proves a projection scope starts with exactly its aliases, in order; `with_plain` and `where_copy_removed` check the common cases.
-- **With ORDER BY, no.** In `MATCH (n) WITH n.v AS k ORDER BY n.v RETURN n`, the ORDER BY copy of `n` survives into the next clause, so the query is accepted and `RETURN *` returns `k, n` (`orderBy_leaks`). openCypher and C give the scope `[k]`.
+- **With ORDER BY, yes since #3016.** In `MATCH (n) WITH n.v AS k ORDER BY n.v RETURN n`, the ORDER BY copy of `n` is now hidden like a WHERE copy, so the next clause sees `[k]`, as in openCypher and C (`orderBy_hidden`; before #3016 it leaked, issue #3005).
 
 **4. Do consecutive clauses bind in order?**
 
@@ -57,6 +58,8 @@ openCypher binds a pattern left to right, clause by clause.
 |---|---|---|
 | `mint_fresh_iff` | Length-based minting is collision-free iff every used id is below the table length | `Table.lean` |
 | `mint_new_covers`, `fresh_not_used` | Minting under a new name keeps the table covering, and the new id is unused | `Table.lean` |
+| `Env.hideNames_covers`, `Env.hideNames_find`, `hide_keeps_slot` | Hiding a name keeps every id in the table (and the length), and no name reaches the hidden variable | `Table.lean` |
+| `orderBy_hidden`, `where_copy_id_kept` | ORDER BY / WHERE copies are invisible to the next clause, and their slots stay taken | `Projection.lean` |
 | `resolve_ok_iff`, `resolve_innermost` | `resolve_name` succeeds exactly on visible names and returns the innermost binding | `Resolve.lean` |
 | `projectItems_keys` | A projection scope begins with exactly its aliases, in order | `Projection.lean` |
 | `agree_on_outer_refs` | Nodes-first and textual binding agree when inline maps only mention earlier variables | `Pattern.lean` |
@@ -64,6 +67,7 @@ openCypher binds a pattern left to right, clause by clause.
 | `callBody_query_disjoint` | A plain `CALL {}` body's scopes are disjoint from the live outer scopes | `Scopes.lean` |
 | `unionCheck_ok_iff`, `validateImport_ok` | The UNION column rule and the CALL import rule hold as stated | `Scopes.lean` |
 | `bindNode_covers` | Binding a pattern-free expression keeps the table covering | `BindExpr.lean` |
+| `bind_aggPlaceholder`, `hideExcept_find`, `comprehension_cleanup_covers` | The aggregate placeholder gets a fresh nameless slot; a pattern's own names do not leak out, their slots stay | `BindExpr.lean`, `Scopes.lean` |
 | `bind_paren`, `bind_andOr_paren` | `(x)` binds exactly like `x`, and nested AND/OR bind flat | `BindExpr.lean` |
 | `mayBool_sound_except`, `mayEntity_eq` | The boolean and entity type checks, and their exact exceptions | `Types.lean` |
 | `nodeToValue_sound`, `foldCall_sound` | Constant folding gives the same value as evaluation | `Fold.lean` |
@@ -73,11 +77,11 @@ openCypher binds a pattern left to right, clause by clause.
 
 ### How `mint_fresh_iff` and the covering lemmas fit together
 
-1. **Model the table.** `Env` is a list of `(name, Var)` pairs standing for the Rust `HashMap<Arc<String>, Variable>`. `Env.insert`, `Env.erase` and `Env.retain` are the three mutations. `freshVar` is `Binder::fresh_var`: the new id is `e.length`.
+1. **Model the table.** `Env` is a list of `(name, Var)` pairs standing for the Rust `HashMap<Arc<String>, Variable>`. `Env.insert`, `Env.reserve` (a nameless entry, deduplicated by id), `Env.unreserve`, `Env.lift` and `Env.hideName` (`erase` the name, then `reserve` the variable) are the mutations. `freshVar` is `Binder::fresh_var`: the new id is `e.length`.
 2. **State the invariant.** `Env.Covers e` says every id in `e` is below `e.length`. `fresh_not_used` follows directly: `e.length` is not among the ids.
-3. **Check every mutation.** Each place the binder inserts under a new key has a `_covers` theorem. Re-inserting an existing key with a smaller id is `reinsert_covers`.
-4. **Link to the planner.** `mint_fresh_iff` is pure arithmetic: ids `len + j` miss a set `H` for every `j` exactly when every element of `H` is below `len`. The binder bugs are the cases where `H` (ids the plan still reads) contains an id that `erase` or `retain` dropped from the table, so it is no longer below `len`.
-5. **Hypotheses.** `bindNode_covers` assumes `KeysFresh`: the reserved internal names (`_quant_`, `_lc_`, `_reduce_`, …) never clash with a name already in the table. This is a property of how the Rust formats those names, stated rather than proven.
+3. **Check every mutation.** Each place the binder inserts under a new key or reserves a fresh variable has a `_covers` theorem; hiding has `Env.hideNames_covers`. Re-inserting an existing key with a smaller id is `reinsert_covers`.
+4. **Link to the planner.** `mint_fresh_iff` is pure arithmetic: ids `len + j` miss a set `H` for every `j` exactly when every element of `H` is below `len`. Before #3016 the binder bugs were the cases where `H` (ids the plan still reads) contained an id that a removal dropped from the table; hiding keeps every id in the table, so `H` stays below `len`.
+5. **Hypotheses.** Since #3016 reservations are nameless, so `bindNode_covers` needs no hypothesis about reserved key formatting. Hiding and the FOREACH restore assume the scope invariant `Env.WF` / distinct ids (`hideNames_covers`, `foreachRestore_covers`).
 
 ## Bugs found
 
@@ -85,8 +89,6 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_binder`, not committ
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-binder-3 | `erase_breaks_covers`, `where_copy_id_reused`, `comprehension_cleanup_breaks` | A removed WHERE copy or comprehension local frees an id still in use; the next variable reuses it. Wrong rows, extra rows, or "Invalid node id for 'to'" | **Open** (PR #3016 not merged) |
-| W2-binder-5 | `orderBy_leaks` | ORDER BY copies leak past WITH/RETURN: a spurious "already declared", and `RETURN *` returns ORDER BY-only variables | **Open** (PR #3016 not merged) |
 | W2-binder-7 | `defineName_ignores_parent` | A pattern predicate in `WITH … WHERE` rebinds a parent variable as a fresh one: 3 rows where C returns 1 | **Open** (PR #3062 not merged) |
 | W4-plan-2 | `negate_rejected` | `RETURN true AND -null` → Rust "Type mismatch", C `null`; `Length`, `ListComprehension`, `MapProjection` are rejected the same way | **Open** |
 | #1334 | `bug1334_pattern_predicate_declares_var` (property `PatternPredDeclaresNothing`) | A WHERE pattern predicate may mint a new named variable: `MATCH (n0) WITH * WHERE () -- (n1) RETURN *` binds and returns every `n0`; C rejects it (issue #1334; the C error message is not recorded here) | **Open** |
@@ -105,14 +107,14 @@ There are no CONDITIONAL rows in this project.
 | File | What's in it |
 |---|---|
 | `FalkorBinder.lean` | The report header and imports |
-| `Table.lean` | The scope table `Env`, `Env.Covers`, `freshVar`, `mint_fresh_iff`, `erase_breaks_covers` |
+| `Table.lean` | The scope table `Env`, `Env.Covers`, `Env.WF`, `freshVar`, `mint_fresh_iff`, `reserve`/`lift`/`hideName`, `hide_keeps_slot` |
 | `Resolve.lean` | The binder state `St`, `resolve` (`resolve_name`), `visible`, `ensureType`, `defineName`, `projectName` |
-| `Projection.lean` | `bindProjection` (WITH/RETURN), `projectItems`, the ORDER BY and WHERE-copy counterexamples |
+| `Projection.lean` | `bindProjection` (WITH/RETURN), `projectItems`, ORDER BY and WHERE copies hidden (`orderBy_hidden`, `where_copy_id_kept`) |
 | `Pattern.lean` | Nodes-first `rustBind` vs textual `specBind` |
 | `Scopes.lean` | `mergeSV`, `foreachRestore`, comprehension cleanup, `callBodyScope`, label accumulation, `unionCheck`, `validateImport` |
 | `RemoveLabels.lean` | #3450: `held` (point-in-time label set, REMOVE clears), `rsStamp`/`specStamp`, property `StampedLabelsHeld` |
 | `Stack.lean` | The scope stack `BSt`, `sortedScopeVars`, label updates (`updNode`) |
-| `BindExpr.lean` | Expression binding (`NE`, `BE`, `bindNode`), comprehension locals, AND/OR flattening, `bindSetItems`, self-reference checks |
+| `BindExpr.lean` | Expression binding (`NE`, `BE`, `bindNode`), the aggregate placeholder, comprehension locals (`liftLocals`, `hideExcept`, `restoreShadowed`), AND/OR flattening, `bindSetItems`, self-reference checks |
 | `BindIR.lean` | Per-clause rules of `bind_ir` (`RC`, `bindIR`): shortestPath, MERGE, YIELD, `CALL {}` subqueries, CREATE |
 | `Types.lean` | `mayBool`, `mayEntity`, `validate` |
 | `Fold.lean` | Constant folding (`nodeToValue`, `foldCall`), struct-constructor and regex rewrites |
@@ -124,13 +126,13 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 44 rows: 43 for functions of `binder.rs` and 1 (`Planner::fresh_var`) for `planner/mod.rs`:
+`COVERAGE.tsv` has 65 rows, all for functions of `binder.rs`:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 44 |
+| PROVEN | 65 |
 
-Every function in `binder.rs` (and `Planner::fresh_var`) is PROVEN. "PROVEN" here means the function's model has theorems stating what it does; for the functions involved in the bugs above, those theorems include the counterexamples.
+Every function in `binder.rs` is PROVEN, including the #3016 scope helpers (`Scope::reserve`/`unreserve`/`lift`, `hide_names`, `lift_locals`, `restore_shadowed`, `hide_names_except`). "PROVEN" here means the function's model has theorems stating what it does; for the functions involved in the bugs above, those theorems include the counterexamples.
 
 ## Spec vs C disagreements (not Rust-vs-C bugs)
 
@@ -145,7 +147,6 @@ Every function in `binder.rs` (and `Planner::fresh_var`) is PROVEN. "PROVEN" her
 
 - Expressions are abstracted to the names they mention. `NE` keeps only the expression variants the binder treats specially (comprehensions, quantifiers, reduce, pattern predicates, property access).
 - `bind_graph` is modelled as `defineName` per name; `Pattern.lean` has the node/relationship order. The sub-binders that `bind_ir` calls are parameters (`Subs`), each proven in its own file.
-- The reserved-name formatting is a hypothesis (`KeysFresh`).
 - Function contracts are hypotheses: a function marked pure behaves the same at bind time and at run time; a struct constructor is the map function; a compiled regex behaves like the runtime regex.
 - The step from "two variables share an id" to "wrong answer" is shown by the Rust tests, not in Lean.
 

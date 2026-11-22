@@ -60,7 +60,7 @@ graph/src/runtime/eval.rs	eval_compound/In	540	PROVEN	contains_false_iff, contai
 graph/src/runtime/eval.rs	eval_compound/Quantifier	540	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec (arm at eval.rs:1007)
 graph/src/runtime/eval.rs	eval_compound/ListComprehension	540	PROVEN	comprehensionFull (source dispatch comprehensionRust/CSrc, #2954; per-element WHERE and projection comprehensionLoop, eval_node results as Except parameters): comprehension_eq_spec, comprehension_null, comprehension_scalar_err, comprehensionFull_noWhere, comprehensionLoop_skip/keep/nonbool/pred_error/true_id; #3270 (3643a301c) non-boolean WHERE is an error (comprehension_nonbool_raises); Entity.comprehensionSourceCheck_err (arm at eval.rs:1046)
 graph/src/runtime/eval.rs	eval_compound/Reduce	540	PROVEN	reduce_nil, reduce_append (arm at eval.rs:1096)
-graph/src/runtime/eval.rs	check_string_or_null	1320	PROVEN	checkStringOrNull: checkStringOrNull_ok_iff, checkStringOrNull_err (message = Display of get_type, Entity.tyDisp)
-graph/src/runtime/eval.rs	eval_quantifier	1675	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
-graph/src/runtime/eval.rs	get_elements	1785	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
+graph/src/runtime/eval.rs	check_string_or_null	1323	PROVEN	checkStringOrNull: checkStringOrNull_ok_iff, checkStringOrNull_err (message = Display of get_type, Entity.tyDisp)
+graph/src/runtime/eval.rs	eval_quantifier	1678	PROVEN	all_is_kand, any_is_kor, none_is_not_any, single_spec
+graph/src/runtime/eval.rs	get_elements	1788	PROVEN	getElements_spec, getElements_bounds, getElements_noOverflow
 graph/src/runtime/value.rs	add_slow (String/List arms)	967	PROVEN	str_concat_size, size_concat (String/List arms of add_slow)
