@@ -15,6 +15,15 @@ describes, so adding a query decides its own membership.
 
 from falkorbench.model import Query as Q
 
+
+def _unwind_edges(rows: int, match: str) -> str:
+    """A batch of `rows` edges, each between the nodes `match` finds for one
+    row `e` of `$rows`, created and deleted again so the graph stays as it was.
+    """
+    batch = ", ".join(f"{{s: {i}, d: {(i + 1) % 1000}}}" for i in range(rows))
+    return f"CYPHER rows=[{batch}] UNWIND $rows AS e {match} CREATE (a)-[r:UWE]->(b) WITH r DELETE r"
+
+
 SETUP = [
     "CREATE INDEX FOR (p:Person) ON (p.id)",
     "UNWIND range(0, 9999) AS i CREATE (:Person {id: i, name: 'p' + toString(i)})",
@@ -652,6 +661,18 @@ QUERIES = [
     # Upper-bound-only index ranges (Le on node index, Lt on edge index).
     Q("index le range",       False, "MATCH (p:Person) WHERE p.id <= 50 RETURN count(p)"),
     Q("edge index lt range",  False, "MATCH ()-[r:SIMILAR]->() WHERE r.weight < 5 RETURN count(r)"),
+    # Batched edge loading: `UNWIND $rows` and two consecutive MATCH clauses
+    # that each find one endpoint, by an indexed property (#3887) or by id().
+    # The later MATCH shares no variable with the earlier one, so it is a
+    # Cartesian Product branch, and a Value Hash Join over a scan of the whole
+    # label (or of every node) once cost every such query a full scan, however
+    # small the batch. `id seek` has no UNWIND and `create edge` finds both
+    # endpoints in one MATCH, so neither showed it. Endpoint ids stay under
+    # 1,000: the first 1,000 nodes are :Person here and under CG_SETUP.
+    Q("UNWIND index MATCH edge 1 row",    True, _unwind_edges(1, "MATCH (a:Person {id: e.s}) MATCH (b:Person {id: e.d})"), cg=True),
+    Q("UNWIND index MATCH edge 100 rows", True, _unwind_edges(100, "MATCH (a:Person {id: e.s}) MATCH (b:Person {id: e.d})"), cg=True),
+    Q("UNWIND id MATCH edge 1 row",       True, _unwind_edges(1, "MATCH (a) WHERE id(a) = e.s MATCH (b) WHERE id(b) = e.d"), cg=True),
+    Q("UNWIND id MATCH edge 100 rows",    True, _unwind_edges(100, "MATCH (a) WHERE id(a) = e.s MATCH (b) WHERE id(b) = e.d"), cg=True),
 
     # ---- inline edge predicate, swept by selectivity -----------------------
     # `absorb_edge_filters_into_traverse` moves these into the CondTraverse so
