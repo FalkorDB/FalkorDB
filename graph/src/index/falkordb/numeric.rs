@@ -49,6 +49,8 @@ type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
 pub enum DocIter {
     One(TreeIter),
     Many(UnionIter),
+    /// A cursor per key window, chained: a geo cell cover.
+    Windows(WindowIter),
     /// An already-materialised doc set — an intersection, which cannot be produced lazily from
     /// value-ordered streams. Distinct by construction.
     Set(std::collections::hash_set::IntoIter<u64>),
@@ -68,6 +70,7 @@ impl Iterator for DocIter {
         match self {
             Self::One(it) => it.next(),
             Self::Many(it) => it.next(),
+            Self::Windows(it) => it.next(),
             Self::Set(it) => it.next(),
             Self::Distinct(it) => it.next(),
             Self::Strings(it) => it.next(),
@@ -141,6 +144,8 @@ pub enum KeySet {
     Range(u64, u64),
     /// Distinct keys, ascending: an `IN` list or a union of equalities.
     Keys(Vec<u64>),
+    /// Two or more disjoint inclusive windows, ascending and not adjacent: a geo cell cover.
+    Windows(Vec<(u64, u64)>),
 }
 
 impl KeySet {
@@ -177,6 +182,44 @@ impl KeySet {
             Self::Point(k) => *k == key,
             Self::Range(lo, hi) => (*lo..=*hi).contains(&key),
             Self::Keys(keys) => keys.binary_search(&key).is_ok(),
+            Self::Windows(windows) => {
+                // Sorted and disjoint: the only window that can hold `key` is the last one
+                // starting at or below it.
+                let after = windows.partition_point(|&(lo, _)| lo <= key);
+                after > 0 && key <= windows[after - 1].1
+            }
+        }
+    }
+
+    /// The keys in any of `windows`, given sorted and disjoint. Spelled one way per shape, as
+    /// [`of_keys`](Self::of_keys) does: none is [`Empty`](Self::Empty), one is a
+    /// [`Range`](Self::Range) (a [`Point`](Self::Point) if it holds one key).
+    #[must_use]
+    pub fn of_windows(mut windows: Vec<(u64, u64)>) -> Self {
+        debug_assert!(
+            windows.iter().all(|&(lo, hi)| lo <= hi) && windows.windows(2).all(|w| w[0].1 < w[1].0),
+            "windows are non-empty, sorted and disjoint: {windows:?}"
+        );
+        match windows.len() {
+            0 => Self::Empty,
+            1 => {
+                let (lo, hi) = windows.pop().expect("one window");
+                if lo == hi {
+                    Self::Point(lo)
+                } else {
+                    Self::Range(lo, hi)
+                }
+            }
+            _ => Self::Windows(windows),
+        }
+    }
+
+    /// The windows of a set of windows or of a range; `None` for any other set.
+    fn windows(&self) -> Option<Vec<(u64, u64)>> {
+        match self {
+            Self::Range(lo, hi) => Some(vec![(*lo, *hi)]),
+            Self::Windows(windows) => Some(windows.clone()),
+            _ => None,
         }
     }
 
@@ -214,6 +257,24 @@ impl KeySet {
                     .collect(),
             ),
             (Self::Empty, _) | (_, Self::Empty) => Self::Empty,
+            // What is left is two sets of windows (a range is one): the pairwise overlaps, which
+            // come out sorted and disjoint because both sides are.
+            (a, b) => {
+                let (a, b) = (
+                    a.windows().expect("a range or windows"),
+                    b.windows().expect("a range or windows"),
+                );
+                let mut out = Vec::new();
+                for &(alo, ahi) in &a {
+                    for &(blo, bhi) in &b {
+                        let (lo, hi) = (alo.max(blo), ahi.min(bhi));
+                        if lo <= hi {
+                            out.push((lo, hi));
+                        }
+                    }
+                }
+                Self::of_windows(out)
+            }
         }
     }
 }
@@ -247,6 +308,30 @@ impl Iterator for UnionIter {
             // Current member exhausted (or not started): descend for the next one. Keys are
             // distinct, so this advances — it cannot spin.
             self.current = Some(self.tree.point(self.keys.next()?));
+        }
+    }
+}
+
+/// The cursor chain behind a set of key windows.
+///
+/// [`UnionIter`] with a window per member rather than a key, and for the same reasons one cursor at a time over a pinned snapshot. Windows are
+/// disjoint, so a doc stored under one key is reached once.
+pub struct WindowIter {
+    tree: Tree,
+    windows: std::vec::IntoIter<(u64, u64)>,
+    current: Option<TreeIter>,
+}
+
+impl Iterator for WindowIter {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        loop {
+            if let Some(doc) = self.current.as_mut().and_then(Iterator::next) {
+                return Some(doc);
+            }
+            let (lo, hi) = self.windows.next()?;
+            self.current = Some(self.tree.range(lo, hi));
         }
     }
 }
@@ -314,7 +399,7 @@ impl EncodedTuples {
         doc: u64,
     ) {
         match (kind, key) {
-            (KeyKind::Scalar | KeyKind::Array, ColumnKey::Encoded(key)) => {
+            (KeyKind::Scalar | KeyKind::Array | KeyKind::Geo, ColumnKey::Encoded(key)) => {
                 self[kind].push((key, doc));
             }
             (KeyKind::Tag | KeyKind::TagArray, ColumnKey::Tag(s)) => {
@@ -411,7 +496,7 @@ impl NumericIndex {
         match kind {
             KeyKind::Scalar => &mut self.tree,
             KeyKind::Array => &mut self.array_tree,
-            KeyKind::Tag | KeyKind::TagArray => {
+            KeyKind::Tag | KeyKind::TagArray | KeyKind::Geo => {
                 unreachable!("the numeric kind holds only numeric trees")
             }
         }
@@ -597,6 +682,11 @@ pub(super) fn docs_in(
             keys: keys.into_iter(),
             current: None,
         }),
+        KeySet::Windows(windows) => DocIter::Windows(WindowIter {
+            tree: tree.clone(),
+            windows: windows.into_iter(),
+            current: None,
+        }),
     }
 }
 
@@ -650,6 +740,18 @@ mod tests {
     use super::*;
     use crate::index::IndexQuery;
     use std::iter::once;
+
+    /// Every kind's encoded tuple lands in its own slot, geo included: `push` panicked on a
+    /// geo tuple, so writing or building any point under the native index crashed the server.
+    #[test]
+    fn push_routes_a_geo_tuple_to_the_geo_slot() {
+        let mut tuples = EncodedTuples::default();
+        tuples.push(KeyKind::Geo, ColumnKey::Encoded(7), 3);
+        tuples.push(KeyKind::Scalar, ColumnKey::Encoded(8), 4);
+        assert_eq!(tuples[KeyKind::Geo], vec![(7, 3)]);
+        assert_eq!(tuples[KeyKind::Scalar], vec![(8, 4)]);
+        assert_eq!(tuples[KeyKind::Array].len(), 0);
+    }
 
     /// A union across columns reads its streams one after another and yields each doc once,
     /// holding only what it has yielded: `LIMIT 1` reads one row of the first stream.

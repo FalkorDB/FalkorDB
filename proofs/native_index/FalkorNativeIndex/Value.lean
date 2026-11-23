@@ -6,8 +6,9 @@ set_option linter.unusedSimpArgs false
 
 `Value` keeps every variant the index path can meet with its real payload: `Int` (an `i64`), `Float`
 (the `f64` bits, so `-0.0` and every NaN payload are distinct values), `Bool`, the four temporals
-(raw `i64`), `String`, `Null`, and `other` for the variants no numeric index ever stores or queries
-(List/Map/Path/Node/Relationship/Point/VecF32, `tag` = their `order()`).
+(raw `i64`), `String`, `Null`, `List` (its elements' keys), `Point` (#2527, the geo kind) and `other`
+for the variants no index ever stores or queries (Map/Path/Node/Relationship/VecF32, `tag` = their
+`order()`).
 
 `compareValue` is `CompareValue::compare_value` (`value.rs`) on these variants;
 `cmpPred` is the Filter's `<`/`>`/`<=`/`>=` (`eval.rs`) and `=` (`all_equals`,
@@ -29,6 +30,10 @@ inductive Value where
   /-- `List`: only what the index reads of an element is kept, its `encode_numeric` (`for_each_stored_key`
       is `items.iter().filter_map(encode_numeric)`): `some key`, or `none` for an element no tree holds. -/
   | list (elems : List (Option Nat))
+  /-- `Point` (#2527): latitude and longitude as the `f64` bits of their `f32` (the widening is exact
+      and order-preserving, so `fpcmp` on them is `f32::partial_cmp`), and `key`, the Morton key
+      `GeoIndex::key_of` (`geo.rs`, NOT COVERED) gives it: `none` for a NaN coordinate. -/
+  | point (lat lon : Nat) (key : Option Nat)
   | other (tag : Nat)
 deriving DecidableEq, Repr
 
@@ -42,7 +47,8 @@ def Value.WF : Value → Prop
 def Value.order : Value → Nat
   | .null => 2 ^ 15 | .bool _ => 2 ^ 12 | .int _ => 2 ^ 13 | .float _ => 2 ^ 14
   | .string _ => 2 ^ 11 | .datetime _ => 2 ^ 6 | .date _ => 2 ^ 7 | .time _ => 2 ^ 8
-  | .duration _ => 2 ^ 10 | .list _ => 2 ^ 3 | .other t => t
+  | .duration _ => 2 ^ 10 | .list _ => 2 ^ 3 | .point _ _ _ => 2 ^ 5
+  | .other t => t
 
 /-- `DisjointOrNull` (`value.rs`). -/
 inductive Flag where
@@ -71,6 +77,11 @@ def compareValue : Value → Value → Ordering × Flag
   | .duration a, .duration b => (cmpI a b, .none)
   | .int i, .float f => compareFloats (i64ToF64 i) f
   | .float f, .int i => compareFloats f (i64ToF64 i)
+  | .point a1 o1 _, .point a2 o2 _ =>
+    match fpcmp o1 o2 with
+    | some .eq => compareFloats a1 a2
+    | some o => (o, .none)
+    | none => (.lt, .nan)
   | .null, b => (cmpN Value.null.order b.order, .comparedNull)
   | a, .null => (cmpN a.order Value.null.order, .comparedNull)
   | a, b => (cmpN a.order b.order, .disjoint)

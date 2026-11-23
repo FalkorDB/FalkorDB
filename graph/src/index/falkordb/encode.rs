@@ -52,9 +52,10 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
 /// `string:arr` sub-fields; this is the native equivalent.
 ///
 /// A Cypher property is not typed, so one Range column holds whatever the entities put in it:
-/// numbers ([`Scalar`](Self::Scalar), [`Array`](Self::Array)) and strings ([`Tag`](Self::Tag),
-/// [`TagArray`](Self::TagArray)), each in the tree that can order it: a number keyed by its `u64`
-/// encoding, a string by itself ([`ColumnKey`]).
+/// numbers ([`Scalar`](Self::Scalar), [`Array`](Self::Array)), strings ([`Tag`](Self::Tag),
+/// [`TagArray`](Self::TagArray)) and points ([`Geo`](Self::Geo)), each in the tree that can order
+/// it: a number or a point keyed by its `u64` encoding, a string by itself
+/// ([`ColumnKey`]).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum KeyKind {
     /// A numeric scalar value: at most one key per entity, its [`encode_numeric`] image.
@@ -65,6 +66,8 @@ pub enum KeyKind {
     Tag,
     /// The string elements of a list value: one key per distinct element.
     TagArray,
+    /// A point value: its Morton code on the geo grid.
+    Geo,
 }
 
 /// The key a value takes in one tree: a number's encoding, or a string itself.
@@ -78,7 +81,13 @@ pub enum ColumnKey {
 
 impl KeyKind {
     /// Every kind, in order.
-    pub const ALL: [Self; 4] = [Self::Scalar, Self::Array, Self::Tag, Self::TagArray];
+    pub const ALL: [Self; 5] = [
+        Self::Scalar,
+        Self::Array,
+        Self::Tag,
+        Self::TagArray,
+        Self::Geo,
+    ];
 
     /// The numeric kinds, the trees [`for_each_stored_key`] fills.
     pub const NUMERIC: [Self; 2] = [Self::Scalar, Self::Array];
