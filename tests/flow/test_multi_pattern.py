@@ -304,6 +304,20 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         self.env.assertContains("Value Hash Join", str(plan))
         g.delete()
 
+    def test15b_writing_subquery_with_join_sees_earlier_invocations_writes(self):
+        # Rewriting the Cartesian Product must not let a writing body run
+        # batched: the second invocation has to see the node the first one
+        # created (5 rows and 6 nodes, as on main and in C).
+        g = self.db.select_graph("multi_pattern_apply_join_writes")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (:N {v:1})")
+        q = ("UNWIND [1, 2] AS x CALL { WITH x MATCH (a:N), (b:N) WHERE a.v = b.v "
+             "CREATE (:N {v:1}) RETURN a } RETURN count(*)")
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[5]])
+        self.env.assertEqual(g.query("MATCH (n:N) RETURN count(n)").result_set, [[6]])
+        g.delete()
+
     def test16_relationship_variable_cannot_be_named_by_a_later_match(self):
         # C rejects it; accepting it bound a second, unrelated edge to the
         # name (and, with an inline attr on the first, dropped its predicate).
