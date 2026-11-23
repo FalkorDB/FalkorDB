@@ -48,7 +48,7 @@ graph/src/index/falkordb/graph_writes.rs	bulk_node_attrs	157	PROVEN	bulkNodeAttr
 graph/src/index/falkordb/graph_writes.rs	labels_added	185	PROVEN	labelsAdded: labelsAdded_changes, labelsAdded_hit
 graph/src/index/falkordb/graph_writes.rs	labels_product_added	202	PROVEN	labelsProductAdded: labelsProductAdded_changes, lastOp_ops
 graph/src/index/falkordb/graph_writes.rs	labels_removed	223	PROVEN	labelsRemoved: labelsRemoved_changes, labelsRemoved_hit
-graph/src/index/falkordb/graph_writes.rs	nodes_deleted	240	PROVEN	nodesDeleted: nodesDeleted_changes, nodesDeleted_hit, nodesDeleted_noadd
+graph/src/index/falkordb/graph_writes.rs	nodes_deleted	240	NOT COVERED	(#3751): model predates the change: the Lean model takes node ids and reads their labels itself, whereas the function now requires complete, grouped (node, label) pairs from the caller; that caller contract is not established by the cited proof. Previously: nodesDeleted: nodesDeleted_changes, nodesDeleted_hit, nodesDeleted_noadd
 graph/src/index/falkordb/graph_writes.rs	edge_attrs_set	274	PROVEN	edgeAttrsSet: edgeAttrsSet_spec, edgeAttrsSetWith_changes
 graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_of_type	287	PROVEN	edgeAttrsSetOfType: edgeAttrsSet_spec, edgeAttrsSetWith_changes
 graph/src/index/falkordb/graph_writes.rs	edge_attrs_set_with	300	PROVEN	edgeAttrsSetWith/edgeTypeOf: edgeAttrsSetWith_changes, edgeAttrsSetWith_hit; premise discharged for Pending's existing-relationship attribute maps: Bridge.lean edgeAttrsSetWith_hit_pending (PA.inv_huniq)
@@ -291,7 +291,7 @@ graph/src/index/falkordb/range.rs	Selection::equal	295	PROVEN	TagSel.equalT: equ
 graph/src/index/falkordb/range.rs	Selection::equal_to_any	311	PROVEN	TagSel.equalToAnyT: equalToAnyT_matches (union of the equalities), equalToAnyT_none_iff (a value no kind holds declines the list)
 graph/src/index/falkordb/range.rs	Selection::range	368	PROVEN	TagSel.rangeT: rangeT_numeric (= old Selection.range: range_agrees, queryColumn_range_served), rangeT_string_matches, rangeT_mixed
 graph/src/index/falkordb/range.rs	Selection::lists_holding	418	PROVEN	TagSel.listsHoldingT: listsHoldingT_numeric (= old listsHoldingOf: lookupSel_fromEntries), listsHoldingT_string_matches, listsHoldingT_none
-graph/src/index/falkordb/range.rs	Selection::disjunction	392	PROVEN	TagSel.disjunctionT/disjGoT: disjGoT_spec, disjunctionT_matches; numeric share = old disjunction (disjunction_agrees, disjunction_attr_mismatch)
+graph/src/index/falkordb/range.rs	Selection::disjunction	392	NOT COVERED	(#3751): model predates the change: TagSel.disjunctionT/disjGoT collects only equality and IN values (disjMemberValues) and declines range members, but the function now serves range and conjunction members through Scalars::or. Previously: TagSel.disjunctionT/disjGoT: disjGoT_spec, disjunctionT_matches; numeric share = old disjunction (disjunction_agrees, disjunction_attr_mismatch)
 graph/src/index/falkordb/range.rs	Selection::conjunction	423	PROVEN	TagSel.conjunctionT/ofAtomT: conjunctionT_matches, foldl_andT_matches, isEmpty_matches; atoms_and_no_and
 graph/src/index/falkordb/range.rs	Selection::and	517	PROVEN	TagSel.SelT.and: andT_matches (what both select, kind by kind; a scalar and a list selection select nothing together)
 graph/src/index/falkordb/range.rs	atoms	506	PROVEN	atoms/atomsGo: atoms_and_no_and, atoms_or_no_or, of_or_nil (an empty AND/OR names no column)
@@ -391,10 +391,10 @@ graph/src/index/falkordb/data_structures/cow_btree/str_leaf.rs	StrLeaf::key_heap
 graph/src/index/falkordb/tag.rs	StrSel::set	49	PROVEN	TagSel.StrSel.set (sorted, dedup: binary_search = membership): StrSel.contains, eqSel_nil_matches, equalT_string_matches
 graph/src/index/falkordb/tag.rs	StrSel::none	57	PROVEN	TagSel.StrSel.none (.set []): tagIn_none
 graph/src/index/falkordb/tag.rs	StrSel::window	63	PROVEN	TagSel.StrSel.ofBounds: rangeT_string_matches
-graph/src/index/falkordb/tag.rs	StrSel::is_empty	80	PROVEN	TagSel.StrSel.isEmpty: isEmpty_contains
+graph/src/index/falkordb/tag.rs	StrSel::is_empty	80	NOT COVERED	(#3751): model predates the change: TagSel.StrSel has only set and window constructors; the new Any (union) representation and its arms are not modelled. Previously: TagSel.StrSel.isEmpty: isEmpty_contains
 graph/src/index/falkordb/tag.rs	StrSel::ranges	90	NOT COVERED	string trees (StrTree, StrRanges cursors) not modelled; TagSel.lookupT takes the tag kind's lookups as functions (lookupT_lift: the numeric path does not depend on them)
-graph/src/index/falkordb/tag.rs	StrSel::contains	103	PROVEN	TagSel.StrSel.contains (set membership / both window ends): intersect_contains, rangeT_string_matches
-graph/src/index/falkordb/tag.rs	StrSel::intersect	115	PROVEN	TagSel.StrSel.intersect: intersect_contains (selects what both select), maxLo_loOk, minHi_hiOk
+graph/src/index/falkordb/tag.rs	StrSel::contains	103	NOT COVERED	(#3751): model predates the change: TagSel.StrSel has only set and window constructors; the new Any (union) arm is not modelled. Previously: TagSel.StrSel.contains (set membership / both window ends): intersect_contains, rangeT_string_matches
+graph/src/index/falkordb/tag.rs	StrSel::intersect	115	NOT COVERED	(#3751): model predates the change: TagSel.StrSel has only set and window constructors; the new Any (union) arms and the intersect_ranges range-merging algorithm are not modelled, so intersect_contains covers only sets and windows. Previously: TagSel.StrSel.intersect: intersect_contains (selects what both select), maxLo_loOk, minHi_hiOk
 graph/src/index/falkordb/tag.rs	StrSel::is_empty_window	132	PROVEN	TagSel.emptyWindow: isEmpty_contains (an empty window holds no string)
 graph/src/index/falkordb/tag.rs	cmp_lo	143	PROVEN	TagSel.loGt (cmp_lo == Greater): loGt_true, loGt_false, maxLo_loOk
 graph/src/index/falkordb/tag.rs	cmp_hi	158	PROVEN	TagSel.hiLt (cmp_hi == Less): hiLt_true, hiLt_false, minHi_hiOk

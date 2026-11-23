@@ -119,13 +119,13 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 282 rows: all of `index/mod.rs` (94) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
+`COVERAGE.tsv` has 266 rows: all of `index/mod.rs` (80) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 200 |
+| PROVEN | 178 |
+| NOT COVERED | 6 |
 | AXIOMATISED | 82 |
-| MODELLED | 0 |
 
 - **Formerly MODELLED, now PROVEN:** the two #2781 rows. `resyncEdgeKeys_spec`/`resyncEdgeKeys_disjoint` state exactly what the edge arm of the rollback re-adds and deletes, and `commitEdgeAddKeys_mem` what `commit_edge_index_locked` writes; the rollback property itself stays refuted (`bug2781_rollback_not_restored`, open), and the only positive result for it is the fix shape `resyncEdgesFixed_restores` (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
 - **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`.
