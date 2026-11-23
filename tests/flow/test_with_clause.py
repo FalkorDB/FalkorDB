@@ -386,3 +386,46 @@ class testWithClause(FlowTestsBase):
                 self.env.assertContains("Type mismatch", str(e))
         finally:
             g.delete()
+
+    def test15_new_variable_after_call_and_aggregate_gets_a_scan(self):
+        # A variable of a later MATCH that reuses the name of one a WITH
+        # dropped is a new node: it needs its own scan. The CALL {} body's
+        # Argument sits below the aggregate and used to make the planner treat
+        # the chain's endpoints as possibly bound, so the traverse read
+        # whatever the dropped variable had left in its slot (0 rows for half
+        # of these spellings, 2 in C).
+        g = self.db.select_graph("with_stale_traverse_source")
+        try:
+            g.query("""CREATE (b0:B {v:1, id:0}), (x:N {v:1, id:10}),
+                              (y:N {v:2, id:11}), (a1:A {v:3, id:1}),
+                              (a2:A {v:4, id:2}), (z:N {v:5, id:12}),
+                              (b0)-[:R {k:1}]->(x), (x)-[:R {k:2}]->(y),
+                              (y)-[:R {k:5}]->(z), (a1)-[:R {k:3}]->(z),
+                              (a2)-[:R {k:4}]->(z)""")
+            orders = ["w1.k", "w1.k, b.v", "w1.k, w0.v", "w1.k, b.v, w0.v"]
+            wheres = ["w0.v >= 0", "b.v >= 0", "w1.k >= 0",
+                      "w0.v >= 0 AND b.v >= 0"]
+            expected = [[1, 3, 12], [2, 4, 12]]
+            for order in orders:
+                for where in wheres:
+                    query = f"""MATCH (w0:B)-[w1:R]->(b)
+                                WITH b ORDER BY {order} WHERE {where}
+                                CALL {{ WITH b MATCH (b)-[:R]->(w2) RETURN w2 }}
+                                WITH w2, count(*) AS m
+                                MATCH (w1:A)-[w4:R]->(w5)
+                                RETURN w1.id, w4.k, w5.id ORDER BY w1.id"""
+                    res = g.query(query)
+                    self.env.assertEqual(res.result_set, expected,
+                                         message=f"{order} / {where}")
+                    plan = str(g.explain(query))
+                    self.env.assertContains("Node By Label Scan | (w1:A)", plan)
+
+            # Same without hidden copies, and with a grouping key besides w2.
+            res = g.query("""MATCH (b:B)
+                             CALL { WITH b MATCH (b)-[:R]->(w2) RETURN w2 }
+                             WITH b.v AS w3, w2, count(*) AS m
+                             MATCH (w1:A)-[w4:R]->(w5)
+                             RETURN w3, w1.id, w4.k, w5.id ORDER BY w1.id""")
+            self.env.assertEqual(res.result_set, [[1, 1, 3, 12], [1, 2, 4, 12]])
+        finally:
+            g.delete()

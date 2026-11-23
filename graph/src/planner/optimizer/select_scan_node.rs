@@ -66,7 +66,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Bfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 
 use crate::{
     graph::graph::Graph,
@@ -567,6 +567,27 @@ fn resolve_path(
     Some(node.idx())
 }
 
+/// Whether `node`'s subtree contains an `Argument(None)` whose rows still
+/// reach `node`'s output.
+///
+/// `Argument(None)` is opaque about which variables it carries, so one that
+/// feeds the output means the subtree may bind anything. A `Project` or an
+/// `Aggregate` ends that: its output holds exactly its own targets (a `WITH`
+/// or `RETURN` list, a grouping key, an aggregate, a hidden-variable copy),
+/// so an `Argument` beneath it, such as the one a `CALL {}` body starts from,
+/// supplies rows to the projection and nothing past it. Without the cut, a
+/// `CALL {}` anywhere under `WITH x, count(*)` made every later `MATCH` look
+/// as if its endpoints might already be bound, so no scan was planned for a
+/// variable that is new in that `MATCH` and the runtime read whatever a
+/// dropped variable had left in its slot.
+fn carries_opaque_argument(node: &DynNode<IR>) -> bool {
+    match node.data() {
+        IR::Argument(None) => true,
+        IR::Project { .. } | IR::Aggregate { .. } => false,
+        _ => node.children().any(|child| carries_opaque_argument(&child)),
+    }
+}
+
 /// Does the subtree *beneath* `scan_idx` provably bind `alias`?
 ///
 /// `Argument(None)` is opaque about which variables it carries, so its presence
@@ -1007,9 +1028,7 @@ pub(super) fn select_scan_node(
                 None
             } else {
                 let child = optimized_plan.node(bottom_idx).child(0);
-                let opaque = child
-                    .walk::<Bfs>()
-                    .any(|ir| matches!(ir, IR::Argument(None)));
+                let opaque = carries_opaque_argument(&child);
                 // Everything the child binds or carries, as (id, scope) pairs:
                 // its own variables plus every operator's outputs (a known
                 // `Argument`'s bindings, a `Project`/`Aggregate`'s aliases), so
@@ -1639,6 +1658,7 @@ pub(super) fn select_scan_node(
 mod tests {
     use super::*;
     use crate::runtime::functions::Type;
+    use crate::runtime::value::Value;
 
     fn var(
         id: u32,
@@ -1649,6 +1669,34 @@ mod tests {
             id,
             scope_id,
             ty: Type::Any,
+        }
+    }
+
+    /// An `Argument(None)` under a `Project` or an `Aggregate` feeds that
+    /// operator and stops there (a `CALL {}` body below `WITH x, count(*)`);
+    /// anywhere else on the path to the output it is opaque.
+    #[test]
+    fn opaque_argument_stops_at_projections_and_aggregations() {
+        let aggregate = IR::Aggregate {
+            names: vec![],
+            keys: vec![],
+            aggregations: vec![],
+            projections: vec![],
+        };
+        let project = IR::Project {
+            exprs: vec![],
+            copies: vec![],
+        };
+        let bare = tree!(IR::Argument(None));
+        assert!(carries_opaque_argument(&bare.root()));
+        let below_filter = tree!(
+            IR::Filter(Arc::new(tree!(ExprIR::Constant(Value::Bool(true))))),
+            tree!(IR::Argument(None))
+        );
+        assert!(carries_opaque_argument(&below_filter.root()));
+        for barrier in [aggregate, project] {
+            let cut = tree!(barrier, tree!(IR::Argument(None)));
+            assert!(!carries_opaque_argument(&cut.root()));
         }
     }
 

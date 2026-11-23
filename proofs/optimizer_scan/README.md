@@ -61,6 +61,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 | `reorderLabels_sound`, `withPrimary_sound` | Label order and the primary-label choice cannot change a scan | `ScanOrder.lean` |
 | `score_bound_dominant` | A bound endpoint is never outscored as the start node | `ScanTree.lean` |
 | `vl_reverse_sound` | Reversing a var-length leaf binds the same pairs | `ScanTree.lean` |
+| `PT.carriesOpaque_walk`, `PT.carriesOpaque_noBarrier`, `carriesOpaque_barrier` | `carries_opaque_argument` (#3957): an `Argument(None)` makes an outer child opaque only until a `Project`/`Aggregate`; never more conservative than the old any-`Argument` walk, and equal to it with no projection | `ScanTree.lean` |
 
 ### How `utilize_sound` is proved
 
