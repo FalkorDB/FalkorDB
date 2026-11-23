@@ -133,6 +133,16 @@ def resolveName (st : St) (locals : List Env) (n : Name) : Except String (St × 
     .ok ({ st with cur := st.cur.insert (placeholderKey v.id) v }, v)
   else resolve st locals n
 
+/-- `Binder::lookup_name` (binder.rs, #3528): the scope lookup `resolve_name` falls through to,
+never minting the placeholder. It is exactly `resolve`. -/
+abbrev lookupName (st : St) (locals : List Env) (n : Name) : Except String (St × Var) :=
+  resolve st locals n
+
+/-- `lookup_name` succeeds exactly on the visible names, the placeholder included. -/
+theorem lookupName_ok_iff (st : St) (locals : List Env) (n : Name) :
+    (∃ r, lookupName st locals n = .ok r) ↔ visible st locals n :=
+  resolve_ok_iff st locals n
+
 /-- Any name but the placeholder resolves as `resolve` does. -/
 theorem resolveName_other (st : St) (locals : List Env) (n : Name)
     (h : n ≠ "__agg_order_by_placeholder__") : resolveName st locals n = resolve st locals n := by

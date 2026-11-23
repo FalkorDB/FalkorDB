@@ -124,14 +124,14 @@ def patArg : NE → Bool
   | _ => false
 
 /-- The pattern-predicate name check (binder.rs `bind_expr_node`, `ExprIR::Pattern` arm, #1334):
-every named alias is resolved as a variable reference is (`resolve_name`; a parent-scope name is
-copied in), the ORDER BY placeholder is rejected outright; unnamed entities are skipped. -/
+every named alias is looked up with `lookup_name` (= `resolve`: a parent-scope name is copied in;
+unlike `resolve_name`, the ORDER BY placeholder is not minted, so it is an ordinary name here);
+unnamed entities are skipped. -/
 def checkPatNames (st : St) (locals : List Env) : List Alias → Except String St
   | [] => .ok st
   | .anon _ :: as => checkPatNames st locals as
   | .named n :: as =>
-    if n = "__agg_order_by_placeholder__" then .error s!"'{n}' not defined"
-    else match resolve st locals n with
+    match resolve st locals n with
       | .error e => .error e
       | .ok (st1, _) => checkPatNames st1 locals as
 
@@ -733,17 +733,15 @@ theorem checkPatNames_visible (locals : List Env) : ∀ (st : St) (vars : List A
     exact checkPatNames_visible locals st as st' h n hn
   | st, .named a :: as, st', h, n, hn => by
     simp only [checkPatNames] at h
-    split at h
-    · simp at h
-    · cases hr : resolve st locals a with
-      | error e => rw [hr] at h; simp at h
-      | ok p =>
-        rw [hr] at h; simp only at h
-        simp at hn
-        rcases hn with rfl | hn
-        · exact (resolve_ok_iff st locals n).1 ⟨_, hr⟩
-        · exact resolve_visible_back st locals a n p.1 p.2 hr
-            (checkPatNames_visible locals p.1 as st' h n hn)
+    cases hr : resolve st locals a with
+    | error e => rw [hr] at h; simp at h
+    | ok p =>
+      rw [hr] at h; simp only at h
+      simp at hn
+      rcases hn with rfl | hn
+      · exact (resolve_ok_iff st locals n).1 ⟨_, hr⟩
+      · exact resolve_visible_back st locals a n p.1 p.2 hr
+          (checkPatNames_visible locals p.1 as st' h n hn)
 
 /-- **#1334 fixed**: `bind_expr_node` accepts a pattern predicate only when all its named
 variables are already visible. -/
@@ -768,11 +766,33 @@ theorem pattern1334_undeclared_rejected :
   simp (config := { decide := true }) [bindNode, checkPatNames, resolve, st1334, lookupLocals,
     Env.find?, List.lookup]
 
-/-- The ORDER BY placeholder, which `resolve_name` always mints, is undefined in a pattern
-predicate too. -/
-theorem pattern_placeholder_rejected (st : St) (locals : List Env) (vars : List Alias) :
+/-- A named alias visible nowhere makes the pattern predicate fail with `'n' not defined`, before
+anything is bound. -/
+theorem pattern_undeclared_rejected (st : St) (locals : List Env) (n : Name) (vars : List Alias)
+    (hn : ¬ visible st locals n) :
+    bindNode C st locals (.pattern (.named n :: vars)) = .error s!"'{n}' not defined" := by
+  have hr : resolve st locals n = .error s!"'{n}' not defined" := by
+    unfold visible at hn
+    unfold resolve
+    cases h1 : lookupLocals locals n <;> cases h2 : st.cur.find? n <;>
+      cases h3 : st.useParent <;> cases h4 : st.p2c.find? n <;>
+      cases h5 : st.cfp.lookup n <;> cases h6 : st.parent.find? n <;>
+      simp_all
+  simp [bindNode, checkPatNames, hr]
+
+/-- The ORDER BY placeholder, which `resolve_name` always mints, is not minted in a pattern
+predicate (`lookup_name`): unbound, it is undefined. -/
+theorem pattern_placeholder_rejected (st : St) (locals : List Env) (vars : List Alias)
+    (hn : ¬ visible st locals "__agg_order_by_placeholder__") :
     bindNode C st locals (.pattern (.named "__agg_order_by_placeholder__" :: vars)) =
       .error "'__agg_order_by_placeholder__' not defined" := by
-  simp [bindNode, checkPatNames]; decide
+  rw [pattern_undeclared_rejected C st locals _ vars hn]; rfl
+
+/-- …and bound (a query may name a variable so), it resolves like any other name: the name check
+passes without minting anything. -/
+theorem checkPatNames_placeholder_bound (st : St) (locals : List Env) (v : Var)
+    (h : resolve st locals "__agg_order_by_placeholder__" = .ok (st, v)) :
+    checkPatNames st locals [.named "__agg_order_by_placeholder__"] = .ok st := by
+  simp [checkPatNames, h]
 
 end FalkorBinder
