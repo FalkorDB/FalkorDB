@@ -38,7 +38,7 @@ graph/src/graph/graph.rs	node_has_label_id	1312	PROVEN	Schema.nodeHasLabel_iff
 graph/src/graph/graph.rs	edge_has_type	1324	PROVEN	Schema.edgeHasType_iff
 graph/src/graph/graph.rs	get_type_id_mut	1346	PROVEN	Schema.getTypeIdMut (#3277: registers via register_relationship_type): getTypeIdMut_spec, getTypeIdMut_width; Delete.type_cleared_after_registration (W4-graph-1, confirmed live then; counterexample removed in bbee75955; the last revision that has them is 17ccc5412)
 graph/src/graph/graph.rs	register_relationship_type	1366	PROVEN	Schema.registerRelType (get_or_insert: a known type returned as is, #3757): registerRelType_known, registerRelType_spec, registerRelType_width (relationship_type_matrix stays relationship_cap × |types|), getTypeIdMut_spec, getRelMatMut_new; Delete.type_cleared_after_registration; type chain (#3757): SchemaHash.registerRelTypeC_inv, registerRelTypeC_model
-graph/src/graph/graph.rs	get_plan	1385	PROVEN	Index.getPlan_hit, getPlan_stale, getPlan_then_hit (parser/planner abstract)
+graph/src/graph/graph.rs	get_plan	1385	PROVEN	Index.getPlan_hit, getPlan_stale, getPlan_then_hit (parser/planner abstract); #3305 depth/height guards: getPlanChecked: getPlanChecked_ok, getPlanChecked_reject_keeps_cache
 graph/src/graph/graph.rs	get_label_matrix	1460	PROVEN	Schema.labelNodeCount_eq (getLabelMat)
 graph/src/graph/graph.rs	get_label_matrix_mut	1468	PROVEN	Schema.getLabelMatMut_spec
 graph/src/graph/graph.rs	get_relationship_matrix_mut	1481	PROVEN	Schema.getRelMatMut_spec, getRelMatMut_new (new type = registerRelType)
