@@ -298,8 +298,8 @@ fn make_scan_subtree(
     scan
 }
 
-/// Returns the `Filter` operators on a scan subtree's single-child spine,
-/// outermost first.
+/// Returns the `Filter` operators on a scan subtree's single-child spine above
+/// its scan, outermost first.
 ///
 /// The sibling of [`argument_leaf_of`]: whatever the spine carried has to come
 /// along when the subtree is pruned and rebuilt. This pass used to re-derive an
@@ -319,7 +319,12 @@ fn filters_of(
         if matches!(node.data(), IR::Filter(_)) {
             filters.push(node.data().clone());
         }
-        if node.num_children() != 1 {
+        // What hangs below the scan is the scan's input, which the caller
+        // keeps whole (see `scan_input_of`): a `Filter` in it is already
+        // there, and salvaging it too would evaluate it twice.
+        if matches!(node.data(), IR::AllNodeScan(_) | IR::NodeByLabelScan { .. })
+            || node.num_children() != 1
+        {
             return filters;
         }
         node = node.child(0);
@@ -349,6 +354,21 @@ fn argument_leaf_of(
         }
         node = node.child(0);
     }
+}
+
+/// Returns whatever hangs below the scan of a planner-scan subtree (the shape
+/// [`is_planner_scan_subtree`] accepts), as a tree: an `Argument`, or an earlier
+/// clause's rows (`UNWIND [1, 2] AS i MATCH (a) WHERE a.v = 1 MATCH
+/// (a)-[:R]->(b)` hangs `Filter -> Scan(a) -> Unwind -> Argument` under the
+/// traverse). When the subtree is pruned and rebuilt the whole input has to
+/// come along, not just its `Argument` leaf, or the rows it produces (and their
+/// multiplicity) are lost.
+fn scan_input_of(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<DynTree<IR>> {
+    let scan = plan.node(planner_scan_idx(plan, idx)?);
+    (scan.num_children() == 1).then(|| scan.child(0).clone_as_tree())
 }
 
 /// Returns true if `idx` sits inside the match branch (last child) of the
@@ -1164,7 +1184,7 @@ pub(super) fn select_scan_node(
                 preserved_argument = if arg_transparent {
                     Some(make_argument())
                 } else {
-                    argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
+                    scan_input_of(optimized_plan, child_idx)
                 };
                 salvaged_filters = if child_is_planner_scan {
                     filters_of(optimized_plan, child_idx)
@@ -1343,7 +1363,7 @@ pub(super) fn select_scan_node(
                     let arg = if arg_transparent {
                         Some(make_argument())
                     } else if is_scan {
-                        argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
+                        scan_input_of(optimized_plan, child_idx)
                     } else {
                         None
                     };
@@ -1542,7 +1562,7 @@ pub(super) fn select_scan_node(
                         Some(make_argument())
                     } else if has_planner_scan {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
-                        argument_leaf_of(optimized_plan, child_idx).map(|ir| tree!(ir))
+                        scan_input_of(optimized_plan, child_idx)
                     } else {
                         None
                     };

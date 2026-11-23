@@ -11,21 +11,19 @@ reads as the Rust computes them, and decides the premise.
 | here | there |
 | --- | --- |
 | `ScanTree.IRk.filter vs`, `filtersOf`  | `IR::Filter(expr)`, `filters_of` `select_scan_node.rs`; `vs` = the `(id, scope_id)` of every `ExprIR::Variable` of the filter (`collect`) |
-| `ScanTree.isPlannerScan`, `argumentLeafOf` | `is_planner_scan_subtree` (a scan is accepted whatever its children are), `argument_leaf_of` |
-| `argVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`) and the preserved `Argument` leaf (`preserved_argument`) |
+| `ScanTree.isPlannerScan`, `scanInputOf` | `is_planner_scan_subtree` (a scan is accepted whatever its children are), `scan_input_of` (#3099) |
+| `inputVars`, `seedBound` | the variables bound below the first hop of the rebuilt plan: `best_node` (`initial_bound`) and the ids the preserved input binds (`collect_output_aliases` of each of its operators; `initial_bound` also adds `collect_subtree_variables`) |
 | `salvagedSteps`                        | `salvaged_filters` wrapped above the chain |
 | `rebuilt`                              | `make_scan_subtree(&node, in_merge, preserved_argument, ..)` |
 | `leafSteps`                            | the no-swap leaf rewrite: `salvaged_filters` inside the new scan, or `filters_above` the traverse when `planner_scan_alias(child) ≠ from` (#2981) |
 | `leafSteps3594`                        | the same rewrite since #3594: filters salvaged only `if has_planner_scan`; a transparent child keeps its own |
 
-Result: the premise is **not** a fact about the Rust. `is_planner_scan_subtree` accepts a scan
-with *any* child, but `argument_leaf_of` keeps only an `Argument`; a child such as `Unwind`
-is pruned with the scan (`prune`). The filters on the spine then read a
-variable (`k`) that nothing in the rebuilt plan binds (`premise_fails`), and `runScoped` loses a
-row generate-and-test keeps (`salvage_loses_row`). Query:
-`WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` (Rust 0, C 1; also
-`UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C)` Rust 1, C 2 — the `Unwind`
-operator itself is gone from the plan). `premise_of_spine` gives sufficient conditions under which the premise holds (the converse is not proved).
+Since #3099 the pruned planner scan's whole input (`scan_input_of`: an `Argument`, or an earlier
+clause's `Unwind`/`WITH` rows) is re-attached beneath the new scan (`ScanTree.scanInputOf_makeScanSubtree`),
+so the variables it binds are in the seed. On `Filter(b.v = k) → Scan(b) → Unwind(k)` (#2972:
+`WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)`, C 1) the premise
+now holds (`premise_holds`) and the row generate-and-test keeps is kept (`salvage_keeps_row`).
+`premise_of_spine` gives sufficient conditions under which the premise holds (the converse is not proved).
 
 The bound sets here are keyed on the variable id alone, as the Rust keys them: `initial_bound` and `placed_bound`
 are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a subset (notes that the id-only sets decide nothing scope-sensitive). So `salvagedSteps` keeps
@@ -34,14 +32,89 @@ are `HashSet<u32>`, and a filter is placed when its `HashSet<u32>` of ids is a s
 namespace OptimizerScan.Salvage
 open OptimizerScan.ScanTree OptimizerScan.ScanOrder
 
-/-- Ids bound by the preserved `Argument` leaf (`Argument(None)` binds nothing the model knows). -/
+/-- Ids bound by an `Argument` leaf (`Argument(None)` binds nothing the model knows). -/
 def argVars : Option IRk → List Nat
   | some (.argument (some vs)) => vs.map (·.1)
   | _ => []
 
-/-- The bound set below the first hop of the rebuilt plan: the new scan's node and the
-preserved `Argument`'s variables. -/
-def seedBound (best : Nat) (child : PT) : List Nat := best :: argVars (argumentLeafOf child)
+/-- Ids the input preserved beneath the new scan binds: `collect_output_aliases` of each of its
+operators (the part of `initial_bound`'s outer ids that names what each operator outputs). -/
+def inputIds (t : PT) : List Nat := t.walk.flatMap collectOutputAliases
+
+def inputVars (child : PT) : List Nat := ((scanInputOf child).map inputIds).getD []
+
+/-- The bound set below the first hop of the rebuilt plan: the new scan's node and what the
+preserved input binds. -/
+def seedBound (best : Nat) (child : PT) : List Nat := best :: inputVars child
+
+/-- **PROVEN**: `seedBound` is `ScanOrder.initialBoundOuter` with no kept child and the planner scan's
+input (not transparent) preserved, so `initialBoundOuter_wellScoped` applies to it. -/
+theorem seedBound_initialBoundOuter (best : Nat) (child : PT) (chain : List Nat) :
+    seedBound best child =
+      initialBoundOuter best none ((scanInputOf child).map inputIds) chain false := by
+  cases h : scanInputOf child <;> simp [seedBound, inputVars, initialBoundOuter, initialBound, outerSeed, h]
+
+/-- The `Argument` `argument_leaf_of` finds is on the walk. -/
+theorem argumentLeafOf_mem_walk : ∀ (t : PT) (a : IRk), argumentLeafOf t = some a → a ∈ t.walk
+  | .node ir cs, a, h => by
+    unfold argumentLeafOf at h
+    split at h
+    · cases h; simp [PT.walk]
+    · split at h
+      · next c =>
+        have := argumentLeafOf_mem_walk c a h
+        simp [PT.walk, PT.walkL, this]
+      · cases h
+
+/-- **PROVEN** (#3099 keeps what the old code kept): on a planner scan, the variables of the
+`Argument` leaf `argument_leaf_of` used to preserve are among those the preserved input binds. -/
+theorem argVars_sub_inputVars : ∀ (child : PT), isPlannerScan child = true →
+    ∀ x ∈ argVars (argumentLeafOf child), x ∈ inputVars child
+  | .node ir cs, hp, x, hx => by
+    cases ha : scanAlias ir with
+    | some al =>
+      have hd : scanDepth (.node ir cs) = some 0 := by unfold scanDepth; simp [ha]
+      have hnarg : ∀ v, ir ≠ .argument v := by intro v e; subst e; simp [scanAlias] at ha
+      match cs, hx with
+      | [c], hx =>
+        have hl : argumentLeafOf (.node ir [c]) = argumentLeafOf c := by
+          cases ir <;> simp_all [argumentLeafOf]
+        rw [hl] at hx
+        have hin : scanInputOf (.node ir [c]) = some c := by
+          simp [scanInputOf, plannerScanIdx, hd, getAt, PT.cs]
+        rw [inputVars, hin]
+        cases hc : argumentLeafOf c with
+        | none => simp [hc, argVars] at hx
+        | some a =>
+          rw [hc] at hx
+          have hw := argumentLeafOf_mem_walk c a hc
+          simp only [Option.map_some, Option.getD_some, inputIds, List.mem_flatMap]
+          refine ⟨a, hw, ?_⟩
+          match a, hx with
+          | .argument (some vs), hx => simpa [collectOutputAliases, projectedOutputs, argVars] using hx
+      | [], hx =>
+        have hl : argumentLeafOf (.node ir []) = none := by cases ir <;> simp_all [argumentLeafOf]
+        simp [hl, argVars] at hx
+      | c1 :: c2 :: cs', hx =>
+        have hl : argumentLeafOf (.node ir (c1 :: c2 :: cs')) = none := by
+          cases ir <;> simp_all [argumentLeafOf]
+        simp [hl, argVars] at hx
+    | none =>
+      have hw : isWrapper ir = true := by
+        cases hwi : isWrapper ir
+        · unfold isPlannerScan scanDepth at hp; simp [ha, hwi] at hp
+        · rfl
+      match cs, hp with
+      | [c], hp =>
+        have hpc : isPlannerScan c = true := by
+          cases hd : scanDepth c <;> simp_all [isPlannerScan, scanDepth]
+        have hl : argumentLeafOf (.node ir [c]) = argumentLeafOf c := by
+          cases ir <;> simp_all [isWrapper, argumentLeafOf]
+        rw [hl] at hx
+        have := argVars_sub_inputVars c hpc x hx
+        simpa [inputVars, scanInputOf_wrap ir hw c] using this
+      | [], hp => simp [isPlannerScan, scanDepth, ha, hw] at hp
+      | _ :: _ :: _, hp => simp [isPlannerScan, scanDepth, ha, hw] at hp
 
 /-- The salvaged filters as `Step`s: variable ids (`collect_expr_variables` keeps ids). -/
 def salvagedSteps (child : PT) (pred : List Var → (Nat → Nat) → Bool) : List Step :=
@@ -75,17 +148,25 @@ theorem salvaged_wellScoped (child : PT) (B : List Nat) (steps : List Step)
   simpa [salvagedSteps, Function.comp_def] using this
 
 /-- **PROVEN** (a sufficient condition for the premise): if the spine's filters read only the scanned node and
-the `Argument`'s variables, and the scanned node is bound by the new chain, the premise holds. These are
-conditions on the planner's scan subtree, not something `select_scan_node` checks; the converse is not proved. -/
+variables the preserved input binds, and those and the scanned node are bound by the new chain, the premise holds.
+These are conditions on the planner's scan subtree, not something `select_scan_node` checks; the converse is not proved. -/
 theorem premise_of_spine (child : PT) (a : Var) (B : List Nat) (steps : List Step)
     (hb : a.1 ∈ boundAfter B steps)
-    (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ argVars (argumentLeafOf child))
-    (hargs : ∀ x ∈ argVars (argumentLeafOf child), x ∈ boundAfter B steps) :
+    (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ inputVars child)
+    (hargs : ∀ x ∈ inputVars child, x ∈ boundAfter B steps) :
     SalvagePremise child B steps := by
   intro vs hvs v hv'
   rcases hv vs hvs v hv' with rfl | h
   · exact hb
   · exact hargs _ h
+
+/-- **PROVEN**: from the seed, the premise holds whenever the spine's filters read only the new scan's
+node and what the preserved input binds (the input is beneath the new scan since #3099). -/
+theorem premise_of_seed (child : PT) (a : Var) (steps : List Step)
+    (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ inputVars child) :
+    SalvagePremise child (seedBound a.1 child) steps :=
+  premise_of_spine child a _ steps (mem_boundAfter_mono _ _ _ (by simp [seedBound]))
+    hv (fun x hx => mem_boundAfter_mono _ _ _ (by simp [seedBound, hx]))
 
 /-- Does a plan tree contain an `Unwind` within `n` levels? -/
 def hasUnwindF : Nat → PT → Bool
@@ -94,7 +175,7 @@ def hasUnwindF : Nat → PT → Bool
 
 def hasUnwind (t : PT) : Bool := hasUnwindF 8 t
 
-/-! ### The counterexample: `Filter(b.v = k) → Scan(b) → Unwind(k)`
+/-! ### #2972 fixed by #3099: `Filter(b.v = k) → Scan(b) → Unwind(k)`
 
 Variable ids: b = 1, k = 2, c = 3 (edge 10). The planner stitches `UNWIND`/`WITH ... AS k` below the
 next clause's scan, so the child of the bottom CondTraverse is `Filter → NodeByLabelScan → Unwind`. -/
@@ -104,27 +185,30 @@ def k : Var := (2, 0)
 def exChild : PT :=
   .node (.filter [b, k]) [.node (.labelScan b [0]) [.node (.unwind k) []]]
 
-/-- The pass takes it for a planner scan, finds no `Argument` leaf to keep, and salvages the filter. -/
+/-- The pass takes it for a planner scan, finds its `Unwind` input, and salvages the filter. -/
 theorem exChild_shape :
-    isPlannerScan exChild = true ∧ argumentLeafOf exChild = none ∧
-    filtersOf exChild = [[b, k]] ∧ hasUnwind exChild = true := by decide
+    isPlannerScan exChild = true ∧ scanInputOf exChild = some (.node (.unwind k) []) ∧
+    filtersOf exChild = [[b, k]] ∧ inputVars exChild = [k.1] :=
+  ⟨by decide, rfl, by decide, by decide⟩
 
-/-- The rebuilt scan subtree (`make_scan_subtree` with the preserved Argument leaf, none here) has
-no `Unwind`: the operator that bound `k` is pruned with the scan. -/
-theorem rebuilt_drops_unwind :
-    hasUnwind (makeScanSubtree b [0] false ((argumentLeafOf exChild).map (fun a => PT.node a [])) []) = false := by
-      decide
+/-- **PROVEN** (#3099): the rebuilt scan subtree keeps the `Unwind` that binds `k`. -/
+theorem rebuilt_keeps_unwind :
+    hasUnwind (makeScanSubtree b [0] false (scanInputOf exChild) []) = true := by
+  decide
 
-/-- The rebuilt chain `(b)-[10]->(c)` from the seed `[b]`. -/
+/-- The rebuilt chain `(b)-[10]->(c)` from the seed `[b, k]`. -/
 def exSteps : List Step := [.hop ⟨1, 3, 10, 0, false⟩]
 
-/-- **PROVEN** (the premise is false for the Rust code): `k` is neither the new node, an
-`Argument` variable, nor a hop endpoint. -/
-theorem premise_fails : ¬ SalvagePremise exChild (seedBound b.1 exChild) exSteps := by
-  intro h
-  have := h [b, k] (by decide) k (by decide)
-  revert this
-  decide
+/-- **PROVEN** (#3099): the salvaged filter reads `b` and `k`, both bound by the seed. -/
+theorem premise_holds : SalvagePremise exChild (seedBound b.1 exChild) exSteps := by
+  apply premise_of_seed exChild b exSteps
+  intro vs hvs v hv
+  simp [filtersOf, exChild] at hvs
+  subst hvs
+  simp at hv
+  rcases hv with rfl | rfl
+  · exact Or.inl rfl
+  · exact Or.inr (by decide)
 
 /-- The one edge `1 -[10]-> 3`. -/
 def exE : Store := fun r a z e => r == 0 && a == 1 && z == 3 && e == 10
@@ -145,17 +229,63 @@ row where `k = 2`. -/
 theorem exPred_is_eq :
     exPred [b, k] exσ = true ∧ exPred [b, k] (fun x => if x == k.1 then 2 else x) = false := by decide
 
-/-- **PROVEN** (the wrong result): generate-and-test (Cypher) accepts the row (the hop holds and `b.v = k`,
-both 1), but the chain the pass builds reads `k` before anything binds it, so the filter fails and the row is
-lost. -/
-theorem salvage_loses_row :
+/-- **PROVEN** (#2972 fixed by #3099): the chain the pass builds is well-scoped from the seed, so it keeps
+the row generate-and-test (Cypher) accepts (the hop holds and `b.v = k`, both 1). -/
+theorem salvage_keeps_row :
     (exSteps ++ salvagedSteps exChild exPred).all (fullHolds exE exσ) = true ∧
-    runScoped exE exσ (seedBound b.1 exChild) (exSteps ++ salvagedSteps exChild exPred) = false ∧
-    ¬ wellScoped (seedBound b.1 exChild) (exSteps ++ salvagedSteps exChild exPred) := by
-  refine ⟨by decide, by decide, ?_⟩
-  intro hw
-  simp [wellScoped, exSteps, salvagedSteps, filtersOf, exChild, seedBound, b, k, argVars,
-    argumentLeafOf] at hw
+    runScoped exE exσ (seedBound b.1 exChild) (exSteps ++ salvagedSteps exChild exPred) = true ∧
+    wellScoped (seedBound b.1 exChild) (exSteps ++ salvagedSteps exChild exPred) := by
+  have hw : wellScoped (seedBound b.1 exChild) (exSteps ++ salvagedSteps exChild exPred) :=
+    salvaged_wellScoped exChild _ exSteps exPred (by simp [wellScoped, exSteps]) premise_holds
+  refine ⟨by decide, ?_, hw⟩
+  rw [runScoped_wellScoped exE exσ _ _ hw]
+  decide
+
+/-! ### The input's own Filters are not salvaged (#3099)
+
+`filters_of` stops at the scan: what hangs below it is the scan's input, kept whole beneath the new
+scan by `scan_input_of`. So a `Filter` inside the input
+(`UNWIND ... AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L) WHERE d.v = 1 MATCH (d)-[:R]->()`) is
+not salvaged a second time: the rebuilt subtree carries every Filter of the pruned one exactly once.
+(Before the last commit of #3099 the walk went through the scan and the input's Filter was carried
+twice.) -/
+
+/-- Every `Filter` of a plan tree, in pre-order (not just those on the spine). -/
+def allFilters (t : PT) : List (List Var) :=
+  t.walk.filterMap (fun ir => match ir with | .filter vs => some vs | _ => none)
+
+theorem allFilters_node (ir : IRk) (c : PT) :
+    allFilters (PT.node ir [c]) = (match ir with | .filter vs => [vs] | _ => []) ++ allFilters c := by
+  cases ir <;> simp [allFilters, PT.walk, PT.walkL]
+
+theorem allFilters_wrap (fs : List (List Var)) (t : PT) :
+    allFilters (fs.foldr (fun vs t => PT.node (.filter vs) [t]) t) = fs ++ allFilters t := by
+  induction fs with
+  | nil => rfl
+  | cons vs fs ih => simp [allFilters_node, ih]
+
+/-- **PROVEN**: the subtree `make_scan_subtree` rebuilds over the input `t` carries the salvaged
+filters, then exactly the Filters of `t`. -/
+theorem allFilters_makeScanSubtree (alias : Var) (labels : List Nat) (pend : Bool) (t : PT)
+    (fs : List (List Var)) :
+    allFilters (makeScanSubtree alias labels pend (some t) fs) = fs ++ allFilters t := by
+  unfold makeScanSubtree
+  rw [allFilters_wrap]
+  cases pend <;> cases labels.isEmpty <;> simp [allFilters_node]
+
+def d : Var := (5, 0)
+def i : Var := (6, 0)
+def exChild2 : PT :=
+  .node (.filter [d]) [.node (.labelScan d [0]) [.node (.filter [i]) [.node (.unwind i) []]]]
+
+/-- **PROVEN** (#3099): only the Filter above the scan is salvaged, and the rebuilt subtree carries
+each Filter of the pruned one exactly once (the input's `Filter` on `i` stays beneath the new scan). -/
+theorem input_filters_once :
+    filtersOf exChild2 = [[d]] ∧
+    filtersOf (makeScanSubtree d [0] false (scanInputOf exChild2) (filtersOf exChild2)) = [[d]] ∧
+    allFilters (makeScanSubtree d [0] false (scanInputOf exChild2) (filtersOf exChild2)) =
+      allFilters exChild2 := by
+  decide
 
 /-! ### The no-swap leaf rewrite (`select_scan_node.rs`)
 
@@ -183,10 +313,10 @@ theorem leafSteps_same (fr : Var) (child : PT) (h : Hop) pred
   simp [leafSteps, hs]
 
 /-- **PROVEN**: when the pruned scan was for the hop's other endpoint `a` and its filters read only
-`a` and the `Argument`'s variables, the new placement is well-scoped from the seed. -/
+`a` and what its preserved input binds, the new placement is well-scoped from the seed. -/
 theorem leafSteps_other_wellScoped (fr a : Var) (child : PT) (h : Hop) pred
     (hs : plannerScanAlias child = some a) (hne : a ≠ fr) (ha : a.1 = h.src ∨ a.1 = h.dst)
-    (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ argVars (argumentLeafOf child)) :
+    (hv : ∀ vs ∈ filtersOf child, ∀ v ∈ vs, v = a ∨ v.1 ∈ inputVars child) :
     wellScoped (seedBound fr.1 child) (leafSteps fr child h pred) := by
   have hp : isPlannerScan child = true := by
     have := (plannerScan_agree child).2.1; rw [this, hs]; rfl
@@ -254,15 +384,16 @@ theorem leafSteps3594_transparent_wellScoped (fr : Var) (child : PT) (h : Hop) p
 /-- **PROVEN** (#3594, `17547791c`): the subtree the transparent rewrite builds carries each of the
 child's own Filters exactly once (beneath the new scan, where its variables are bound), not a second
 copy outside it. Before `17547791c` the child's spine Filters were also salvaged
-(`filtersOf_makeScanSubtree_tree` with `fs := filtersOf t` gives them twice); the copy above a later
+(`allFilters_makeScanSubtree` with `fs := filtersOf t` gives them twice); the copy above a later
 projection that reused the variable's id read the wrong value:
-`UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L)-[:R]->() RETURN count(*)`. -/
+`UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L)-[:R]->() RETURN count(*)`.
+(Stated over `allFilters`: since #3099 `filtersOf` stops at the new scan, so it no longer sees `t`.) -/
 theorem transparent_filters_once (alias : Var) (labels : List Nat) (pend : Bool) (t : PT) :
-    filtersOf (makeScanSubtree alias labels pend (some t) []) = filtersOf t ∧
-    filtersOf (makeScanSubtree alias labels pend (some t) (filtersOf t)) =
-      filtersOf t ++ filtersOf t := by
+    allFilters (makeScanSubtree alias labels pend (some t) []) = allFilters t ∧
+    allFilters (makeScanSubtree alias labels pend (some t) (filtersOf t)) =
+      filtersOf t ++ allFilters t := by
   constructor
-  · simpa using filtersOf_makeScanSubtree_tree alias labels pend t []
-  · exact filtersOf_makeScanSubtree_tree alias labels pend t (filtersOf t)
+  · simpa using allFilters_makeScanSubtree alias labels pend t []
+  · exact allFilters_makeScanSubtree alias labels pend t (filtersOf t)
 
 end OptimizerScan.Salvage
