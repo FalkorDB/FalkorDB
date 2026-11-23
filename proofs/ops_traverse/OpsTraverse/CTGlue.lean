@@ -75,6 +75,8 @@ structure ChildCT where
   emitRel : Bool
   bidir : Bool
   fromAlias : Nat
+  /-- `child_ct.relationship_pattern.alias.id` -/
+  relAlias : Nat
 
 structure CtCfg where
   dedup : Bool
@@ -82,9 +84,17 @@ structure CtCfg where
   eligible : Bool
   toCol : Option Nat
   produced : Nat
+  /-- the hint the emitter's `pack_ceiling` is sized from (`with_binding(.., pack_hint)`;
+  proofs/columnar `Emitter.withBinding`); the hard stop is `record_cap` (`Drive.capDrive`). -/
+  emitHint : Option Nat
+  /-- `child_ct.emitter.lift_pack_ceiling()` (proofs/columnar `Emitter.liftPackCeiling`). -/
+  liftChild : Bool
+  /-- `BidirDedup::new([rp.from.alias.id, child_ct.relationship_pattern.alias.id])`: the
+  child hop's own bindings, left out of the record identity (`BidirDedup.rec`). -/
+  dedupSkip : Option (Nat × Nat)
 
 def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : List Bool)
-    (child : Option ChildCT) : CtCfg :=
+    (child : Option ChildCT) (packHint : Option Nat) : CtCfg :=
   -- cond_traverse.rs `rp.from.alias.is_unnamed()` (no name)
   let anon := rp.fromName.isNone
   let (dedup, src) :=
@@ -97,15 +107,33 @@ def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : Lis
   let eligible := !emitRel && !rp.bidir && !dedup && siblings.isEmpty &&
     chainBidir.all (!·)
   { dedup, dedupSrc := src, eligible, toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none,
-    produced := 0 }
+    produced := 0, emitHint := packHint, liftChild := dedup,
+    dedupSkip := if dedup then child.map (fun c => (rp.fromAlias, c.relAlias)) else none }
+
+/-- The dedup state skips exactly this hop's `from` slot (the child's intermediate node) and
+the child's edge slot, and exists only when the dedup is armed. -/
+theorem ctNew_dedupSkip (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
+    (ch : Option ChildCT) (ph : Option Nat) :
+    (ctNew rp er sib cb ch ph).dedupSkip =
+      if (ctNew rp er sib cb ch ph).dedup then ch.map (fun c => (rp.fromAlias, c.relAlias))
+      else none := rfl
+
+/-- #3071: the emitter is sized from the soft `pack_hint`, and the child CT is lifted to
+full batches exactly when the dedup is armed (the dedup set now outlives a child batch,
+`BidirDedup.dedupStream_eq`, so batch size never changes rows). -/
+theorem ctNew_pack (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (ch : Option ChildCT)
+    (ph : Option Nat) :
+    (ctNew rp er sib cb ch ph).emitHint = ph ∧
+    (ctNew rp er sib cb ch ph).liftChild = (ctNew rp er sib cb ch ph).dedup := ⟨rfl, rfl⟩
 
 /-- Cross-row bidirectional dedup is armed exactly for an anonymous-intermediate,
 non-emitting bidirectional hop over a non-emitting bidirectional child CT, keyed by the
 child's source alias; the F·A batched path is taken only for directed, non-emitting,
 sibling-free hops whose chain hops are all directed; a self-loop
 binds one endpoint column. -/
-theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (ch : Option ChildCT) :
-    let c := ctNew rp er sib cb ch
+theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (ch : Option ChildCT)
+    (ph : Option Nat) :
+    let c := ctNew rp er sib cb ch ph
     (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName = none ∧
       ∃ x, ch = some x ∧ x.emitRel = false ∧ x.bidir = true) ∧
     (c.dedup = true → c.dedupSrc = ch.map (·.fromAlias)) ∧
@@ -146,9 +174,9 @@ theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (
 /-- The F·A batched path is taken exactly for non-emitting, directed, dedup-free,
 sibling-free hops whose fused chain is all directed (cond_traverse.rs). -/
 theorem ctNew_eligible_iff (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
-    (ch : Option ChildCT) :
-    (ctNew rp er sib cb ch).eligible = true ↔
-      er = false ∧ rp.bidir = false ∧ (ctNew rp er sib cb ch).dedup = false ∧ sib = [] ∧
+    (ch : Option ChildCT) (ph : Option Nat) :
+    (ctNew rp er sib cb ch ph).eligible = true ↔
+      er = false ∧ rp.bidir = false ∧ (ctNew rp er sib cb ch ph).dedup = false ∧ sib = [] ∧
         ∀ b ∈ cb, b = false := by
   simp only [ctNew, Bool.and_eq_true, List.isEmpty_iff, List.all_eq_true,
     Bool.not_eq_eq_eq_not, Bool.not_true]
@@ -312,18 +340,22 @@ structure EiCfg where
   synthetic : Bool
   relCol : Option Nat
   produced : Nat
+  /-- the soft `pack_hint` the emitter is sized from; the hard stop is `record_cap`. -/
+  emitHint : Option Nat
 
 /-- expand_into.rs: a synthetic multi-label check `(a:A:B)` (same alias, labels only on
 `to`) binds no relationship column. -/
-def eiNew (fromA toA relA : Nat) (fromLabels toLabels : List String) : EiCfg :=
+def eiNew (fromA toA relA : Nat) (fromLabels toLabels : List String) (packHint : Option Nat) :
+    EiCfg :=
   let synthetic := fromA == toA && fromLabels.isEmpty && !toLabels.isEmpty
-  { synthetic, relCol := if synthetic then none else some relA, produced := 0 }
+  { synthetic, relCol := if synthetic then none else some relA, produced := 0,
+    emitHint := packHint }
 
-theorem eiNew_spec (f t r : Nat) (fl tl : List String) :
-    ((eiNew f t r fl tl).synthetic = true ↔ f = t ∧ fl = [] ∧ tl ≠ []) ∧
-    ((eiNew f t r fl tl).relCol = none ↔ (eiNew f t r fl tl).synthetic = true) ∧
-    (eiNew f t r fl tl).produced = 0 := by
-  refine ⟨by simp [eiNew, and_assoc], ?_, rfl⟩
+theorem eiNew_spec (f t r : Nat) (fl tl : List String) (ph : Option Nat) :
+    ((eiNew f t r fl tl ph).synthetic = true ↔ f = t ∧ fl = [] ∧ tl ≠ []) ∧
+    ((eiNew f t r fl tl ph).relCol = none ↔ (eiNew f t r fl tl ph).synthetic = true) ∧
+    (eiNew f t r fl tl ph).produced = 0 ∧ (eiNew f t r fl tl ph).emitHint = ph := by
+  refine ⟨by simp [eiNew, and_assoc], ?_, rfl, rfl⟩
   simp only [eiNew]; split <;> simp_all
 
 /-- expand_into.rs: `set_selection(0..remaining)` keeps the first `remaining` rows. -/

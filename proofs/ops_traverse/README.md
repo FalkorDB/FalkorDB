@@ -71,7 +71,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `labelIdScan_correct` | The label + id-range scan returns exactly labelled ∩ range | `Scans.lean` |
 | `canUse_inListV_eq_or`, `canUseE_inListV_eq_or` | An `IN` list reaches the index on the same terms as the `Or` of `Equal`s it replaced (non-empty, every member indexable), so `IN [NULL]` still falls back | `IndexScan.lean` |
 | `scanRow_spec`, `edgeRow_sound`, `orient_length` | Index scans are sound pre-filters, honour bound endpoints, and read undirected edges both ways | `IndexScan.lean` |
-| `dedupRows_keys_nodup`, `dedupRows_keys_complete` | The bidirectional dedup keeps unique keys and never loses a key (the bugs are in *which* key) | `BidirDedup.lean` |
+| `dedup_eq_cSem`, `dedupStream_batch_independent` | The bidirectional dedup (#3071, per input record) keeps each destination once per record, as C's `F * A * A`, whenever adjacent records differ, however the stream is batched | `BidirDedup.lean` |
 | `edgeVerdict_eq_filterEval` | A variable-length edge filter answers every evaluated value exactly as `FilterOp` does, by `StreamOps.filterEval` (non-boolean is a type error) | `VarLen.lean` |
 
 ### How `asp_minimal` is proved
@@ -86,12 +86,12 @@ The hypotheses are `src ≠ dst` (the cycle case is checked on examples only), `
 
 ## Bugs found
 
-Every bug was reproduced against a live server and compared with C before it was recorded, except #3372, whose C baseline is taken from the issue report (see [`../FINDINGS.md`](../FINDINGS.md)). The Rust repros are in `graph/tests/lean_ops_traverse.rs`, kept locally and not committed.
+Every bug was reproduced against a live server and compared with C before it was recorded, except #3372, whose C baseline is taken from the issue report, and the W2-traverse-2 residual (Lean only) (see [`../FINDINGS.md`](../FINDINGS.md)). The Rust repros are in `graph/tests/lean_ops_traverse.rs`, kept locally and not committed.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | W2-traverse-1 | `twoHop_collapse_changes_count` | An unreferenced named edge is collapsed even though a sibling traverse still reads it for uniqueness (`reduce_expand_into.rs`; the oracle is now `optimizer/references.rs`). `MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)` on `a⇉b→c`: Rust 1, C 2. Related to #2896 | **Open** |
-| W2-traverse-2 | `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result` | The dedup for chained anonymous undirected hops (`cond_traverse.rs`) ignores other columns, keys on an intermediate node at 3+ hops, and resets per batch. `UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10; a 3-hop star: Rust 7, C 12 | **Open** |
+| W2-traverse-2 | `equal_adjacent_records_merge` | Residual after #3071 fixed the ignored columns and 3-hop collision (`outer_rows_kept`, `three_hops_kept`): two adjacent identical input records share one dedup set, so `UNWIND [1,1] AS i MATCH (a)-[]-()-[]-(b)` would keep each destination once, not twice. Lean only, not live-confirmed | **Open** |
 | W2-traverse-3 | `bidir_collapse_duplicates_pair`, `expandInto_bidir_collapse_two_rows` | An undirected anonymous hop collapses per direction, not per pair. With `a→b`, `b→a`, `a→b`, `MATCH (a)-[]-(b) RETURN a.id, b.id`: Rust 4 rows, C 2 | **Open** |
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |
 | #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4; C's 4 is the figure from the issue report, not re-run here); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
@@ -117,7 +117,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | `UnionStream.lean` | `UnionIter` (#3492): the k-way merge of per-type pair streams, `drain_spec`, `union_stream`, the layer-merge order (`layerStream_spec`) |
 | `UnionGlue.lean` | Multi-type matrix selection, `delta_lmxm_into` (`deltaInto_eff`), the iterator builders, `expand_union_row` (`union_emit_*_iff`, `union_collapse_directed_keys_nodup`) |
 | `CTGlue.lean` | CondTraverse/ExpandInto constructors, `build_state`, `trim_to_cap`, null padding, `next`; scan and PathBuilder constructors |
-| `BidirDedup.lean` | The bidirectional dedup block and its three counterexamples |
+| `BidirDedup.lean` | The per-record bidirectional dedup (#3071), its batch-independent stream, equality with C's per-record semantics, and the residual equal-records counterexample |
 | `VarLen.lean` | The variable-length DFS, `varLen_iff`, the absorbed edge filter |
 | `VarLenGlue.lean` | `path_value`, the `VarLenIter` frame machine, the endpoint plan, `new` |
 | `ShortestPaths.lean` | allShortestPaths BFS and backtrack, soundness, the cycle counterexamples, PathBuilder |

@@ -160,21 +160,21 @@ structure SortSt (R C T I Bt : Type) where
   order : List Nat
   pos : Nat
   idx : I
-  limit : Option Nat
-  skip : Nat
+  recordCap : Option Nat
 
 def SortSt.new {R C T I Bt : Type} (runtime : R) (child : C) (trees : T) (idx : I)
-    (limit : Option Nat) (skip : Nat) : SortSt R C T I Bt :=
-  { runtime, child := some child, trees, sorted := none, order := [], pos := 0, idx, limit, skip }
+    (recordCap : Option Nat) : SortSt R C T I Bt :=
+  { runtime, child := some child, trees, sorted := none, order := [], pos := 0, idx, recordCap }
 
 /-- Not yet consumed (`child = Some`, so the first `next` builds the sort),
-nothing buffered, cursor at 0; `limit`/`skip` are kept for the `k + skip` cap of
-`next` (`sort_skip_limit`). -/
-theorem sort_new_spec {R C T I Bt : Type} (r : R) (c : C) (t : T) (i : I) (lim : Option Nat) (s : Nat) :
-    let st : SortSt R C T I Bt := SortSt.new r c t i lim s
+nothing buffered, cursor at 0; `record_cap` (the downstream `limit + Σ skip`,
+`Runtime::hard_record_cap`; proofs/runtime_core `Budget.hardRecordCap_sound`) is kept as
+the cap of `next` (`sort_skip_limit`: for `SKIP s LIMIT k` it is `k + s`). -/
+theorem sort_new_spec {R C T I Bt : Type} (r : R) (c : C) (t : T) (i : I) (cap : Option Nat) :
+    let st : SortSt R C T I Bt := SortSt.new r c t i cap
     st.child = some c ∧ st.sorted = none ∧ st.order = [] ∧ st.pos = 0 ∧
-    st.limit = lim ∧ st.skip = s ∧ st.runtime = r ∧ st.trees = t ∧ st.idx = i :=
-  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    st.recordCap = cap ∧ st.runtime = r ∧ st.trees = t ∧ st.idx = i :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-! ## CommitOp::new (ops/commit.rs) -/
 

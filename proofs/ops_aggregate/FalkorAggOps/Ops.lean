@@ -286,12 +286,19 @@ theorem topk_eq_take_sort (c : Nat) (xs : List Nat) :
   exact this xs [] trivial (by simp)
 
 /-- `ORDER BY … SKIP s LIMIT k`: the Sort op keeps `cap = k + s` rows
-(sort.rs, `saturating_add` — no wrap), and Skip/Limit above it cut the
+(sort.rs `record_cap` = `Runtime::hard_record_cap`, which is `k + s` here;
+proofs/runtime_core `Budget.hardRecordCap_eq_need`), and Skip/Limit above it cut the
 window; that is the `[s, s+k)` window of the full sort. -/
 theorem sort_skip_limit (s k : Nat) (xs : List Nat) :
     ((xs.foldl (rustStep (k + s)) []).drop s).take k = ((isort xs).drop s).take k := by
   rw [topk_eq_take_sort, List.drop_take]
   simp [List.take_take]
+
+/-- Any cap at least the number `n` of rows the operators above consume (what
+`hard_record_cap` guarantees, `Budget.hardRecordCap_sound`) leaves those rows unchanged. -/
+theorem sort_cap_sound (cap n : Nat) (xs : List Nat) (h : n ≤ cap) :
+    (xs.foldl (rustStep cap) []).take n = (isort xs).take n := by
+  rw [topk_eq_take_sort, List.take_take, Nat.min_eq_left h]
 
 /-! ## Project and Unwind: batching is invisible -/
 
