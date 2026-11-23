@@ -769,6 +769,54 @@ theorem comprehensionCount_eq_size {β : Type} (pred : Int → Except String PV)
       simp only [comprehensionCount, comprehensionFull, countLoop_eq_length]
       cases comprehensionLoop pred proj l <;> rfl
 
+/-! ### `ListLoop::new` (#3437): the dropped body parts
+
+`ListLoop::new` (eval.rs) keeps the predicate unless it is `Constant(Bool(true))` and the
+projection unless it is the loop variable itself; `list_loop_chunk` reads a dropped predicate
+as `true` and a dropped projection as the element. `N` is the body node, `evP`/`evE` its
+per-element `eval_node`. -/
+
+/-- `ListLoop::new`: `isTrue` = `Constant(Bool(true))`, `isVar` = `Variable(v)` with
+`v.id == var.id`. -/
+def listLoopNew {N : Type} (isTrue isVar : N → Bool) (p q : Option N) : Option N × Option N :=
+  (p.filter (fun n => !isTrue n), q.filter (fun n => !isVar n))
+
+/-- `list_loop_chunk`'s `match predicate { Some(p) => eval_node(p), None => Bool(true) }`. -/
+def predOf {N α : Type} (evP : N → α → Except String PV) : Option N → α → Except String PV
+  | none, _ => .ok .t
+  | some n, x => evP n x
+
+/-- `list_loop_chunk`'s `match projection { Some(p) => eval_node(p), None => value }`. -/
+def projOf {N α : Type} (evE : N → α → Except String α) : Option N → α → Except String α
+  | none, x => .ok x
+  | some n, x => evE n x
+
+/-- **Dropping changes nothing**: when `Constant(true)` evaluates to `true` and the loop
+variable to the element, the loop over `ListLoop::new`'s body is the loop over the original
+predicate and projection. -/
+theorem listLoopNew_eq {N α : Type} (isTrue isVar : N → Bool) (evP : N → α → Except String PV)
+    (evE : N → α → Except String α) (hT : ∀ n x, isTrue n = true → evP n x = .ok .t)
+    (hV : ∀ n x, isVar n = true → evE n x = .ok x) (p q : N) (l : List α) :
+    comprehensionLoop (predOf evP (listLoopNew isTrue isVar (some p) (some q)).1)
+        (projOf evE (listLoopNew isTrue isVar (some p) (some q)).2) l =
+      comprehensionLoop (evP p) (evE q) l := by
+  have h1 : predOf evP (listLoopNew isTrue isVar (some p) (some q)).1 = evP p := by
+    funext x
+    cases h : isTrue p <;> simp [listLoopNew, predOf, Option.filter, h, hT p x]
+  have h2 : projOf evE (listLoopNew isTrue isVar (some p) (some q)).2 = evE q := by
+    funext x
+    cases h : isVar q <;> simp [listLoopNew, projOf, Option.filter, h, hV q x]
+  rw [h1, h2]
+
+/-- The same for the `size()` count (`LoopSink::Tally`). -/
+theorem listLoopNew_count {N α : Type} (isTrue isVar : N → Bool) (evP : N → α → Except String PV)
+    (evE : N → α → Except String α) (hT : ∀ n x, isTrue n = true → evP n x = .ok .t)
+    (hV : ∀ n x, isVar n = true → evE n x = .ok x) (p q : N) (l : List α) :
+    countLoop (predOf evP (listLoopNew isTrue isVar (some p) (some q)).1)
+        (projOf evE (listLoopNew isTrue isVar (some p) (some q)).2) l =
+      countLoop (evP p) (evE q) l := by
+  rw [countLoop_eq_length, countLoop_eq_length, listLoopNew_eq isTrue isVar evP evE hT hV]
+
 /-! ### `eval_iter_expr` (`eval.rs`): the three source shapes
 
 `range(..)` (arguments already `eval_node`d and `validate_args_type`d: an error from either is

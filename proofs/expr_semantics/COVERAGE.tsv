@@ -48,7 +48,7 @@ graph/src/runtime/value.rs	compare_floats	1919	PROVEN	compareFloats_flag, cf_ne 
 graph/src/runtime/functions/math.rs	range	251	PROVEN	rangeMath here (spec of rangeIter_correct); argument validation: proofs/functions_str_list range_elems_between, range_noOverflow
 graph/src/runtime/functions/mod.rs	init_functions	1104	PROVEN	FnRegistry.rustNames (re-extracted at 256ab4d3f: 134 names, identical to the sources): covers_all_but_prev, #2724 bug2724_prev_missing; registration soundness: proofs/value_math Registry.registerAll_ok, initFunctions_once
 graph/src/runtime/eval.rs	counts_comprehension	320	PROVEN	columnar Dispatch.countsComp (the VectorEval guard): size_comprehension_per_row; in E, size(<ListComprehension>) is a compound shape, not E.func (EvalSyntax E)
-graph/src/runtime/eval.rs	ListLoop::new	328	NOT COVERED	(#3437): drops a constant-true WHERE and an identity projection; checked by hand to equal evaluating them, not modelled
+graph/src/runtime/eval.rs	ListLoop::new	328	PROVEN	functions_str_list listLoopNew (drops a Constant(true) WHERE and an identity projection; predOf/projOf read them back as true / the element in list_loop_chunk): listLoopNew_eq, listLoopNew_count (#3437)
 graph/src/runtime/eval.rs	ListLoop::vector_plan	349	NOT COVERED	(#3437): columnar-or-per-element choice; performance only, results fixed by list_loop_chunk's fallback, not modelled
 graph/src/runtime/eval.rs	collect_body_vars	386	NOT COVERED	(#3437): syntactic body filter for the columnar path, not modelled
 graph/src/runtime/eval.rs	loop_var_column	419	NOT COVERED	(#3437): batch column of a chunk, not modelled
