@@ -1,0 +1,52 @@
+# Raise an alarm when a night has no nightly perf result.
+#
+# perf-nightly.yml runs at 00:00 UTC, uploads nightly.json as the artifact
+# `perf-nightly`, and posts it to the team's Chat space through
+# tests/perf/report/post.py. Some failures leave no nightly.json at all: the run
+# never starts, it is still going, resolving the candidate image fails, or the merge
+# step crashes. Then nothing would be posted, and a silent night reads like a quiet
+# one. This workflow runs at 05:00 UTC and looks at the scheduled perf-nightly.yml
+# runs on main from the 24 hours before; unless one of them has the `perf-nightly`
+# artifact, it posts an alarm saying which case it is and fails, so the run is red
+# even where no webhook is configured. A workflow that cannot be found or asked
+# about is an alarm too. See tests/perf/report/README.md.
+#
+# `date` (workflow_dispatch) re-checks an earlier night.
+
+name: perf missed-run alarm
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Night to check, YYYY-MM-DD in UTC (empty: today)"
+        required: false
+        default: ""
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: perf-missed-run
+  cancel-in-progress: false
+
+jobs:
+  alarm:
+    name: Nightly perf result exists
+    if: ${{ github.repository == 'FalkorDB/FalkorDB' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          sparse-checkout: tests/perf/report
+          persist-credentials: false
+      - name: Look for the night's perf-nightly artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PERF_CHAT_WEBHOOK: ${{ secrets.PERF_CHAT_WEBHOOK }}
+          NIGHT: ${{ inputs.date }}
+        run: python3 -I tests/perf/report/missed_run.py ${NIGHT:+--date "$NIGHT"}
