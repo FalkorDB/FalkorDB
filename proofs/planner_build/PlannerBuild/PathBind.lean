@@ -1,31 +1,26 @@
 import PlannerBuild.Misc
 import PlannerBuild.PlanMatch2
 /-
-# Named paths over an already-bound node (gap closed 2026-10-20)
+# Named paths over an already-bound node (#2311, #2727, #2737, #2743, #2744, #2725; fixed by #3526)
 
-Open issues #2311, #2727, #2737, #2743, #2744, #2725: one root cause, two places.
+Before #3526 `MATCH p = (n)` / `OPTIONAL MATCH p = (n)` with `n` bound lost the path or the rows,
+for two reasons, both fixed:
 
-1. **`plan_match` never builds the path.** The node-only, already-bound branch
-   (mod.rs) emits `Argument` (no labels) or a synthetic self-loop
-   `ExpandInto(Argument)` (labels; the binder copies the node's labels onto every
-   later occurrence, so `MATCH (n0:A) … MATCH p=(n0)` takes this branch). Only the
-   unbound branch adds `PathBuilder(component.paths())` (mod.rs). So
-   `p = (n)` with `n` bound is never bound (`nodeOnly_bound_no_paths`).
-2. **The MATCH arm does not Apply-wrap it.** `all_visited` (mod.rs) runs
-   over `pattern.variables()`, which includes the path variables (ast.rs).
-   A new path variable is never visited, so the plan of `MATCH p=(n0)` is not
-   wrapped in `Apply` (mod.rs) although its only leaf is an `Argument`
-   (`planMatchArm_path_unwrapped`). Stitching then puts the previous clause *under*
-   that `Argument` (mod.rs), and the runtime never builds an Argument's
-   children (`children_to_recurse`, runtime.rs): it emits one empty row
-   (runtime.rs). `ev` already models that (`argument_fill_ignores_input`).
+1. **`plan_match` builds the path.** The node-only, already-bound branch (mod.rs) emits
+   `Argument` (no labels) or a synthetic self-loop `ExpandInto(Argument)` (labels; the binder
+   copies the node's labels onto every later occurrence). Since #3526 every node-only branch puts
+   the component's paths in a `PathBuilder` over its plan, and the bound branch also pushes
+   `n IS NOT NULL` (`is_not_null_filter`) to the bound filters: `nodeOnly_bound_binds_paths`,
+   `boundNode_path_built` (`BindsAllPaths`).
+2. **The MATCH arm Apply-wraps it.** `all_visited` (mod.rs) runs over the pattern's nodes and
+   relationships only, not its path variables, so `MATCH p = (n0)` over a bound `n0` is wrapped in
+   `Apply` (`planMatchArm_path_wrapped`), and the previous clauses are no longer stitched under an
+   `Argument`, which the runtime never runs (`argument_fill_ignores_input`; property
+   `Plan.argIsLeaf`).
 
-OPTIONAL MATCH is Apply-wrapped (`any_visited`, mod.rs), so its rows
-survive, but the path is still missing: `RETURN p` gives null.
-
-Bug theorems: `bug2311_optional_path_null`, `bug2737_optional_path_null`,
-`bug2743_bound_path_drops_rows`, `bug2744_bound_path_unfed_argument`,
-`bug2727_alias_path_drops_rows`, `bug2725_call_then_bound_path_loses_var`.
+The repros of the six issues now give the openCypher rows: `fix2311_optional_path_bound`,
+`fix2737_optional_path_bound`, `fix2743_bound_path_counts_rows`, `fix2744_bound_path_fed`,
+`fix2727_alias_path_keeps_rows`, `fix2725_call_then_bound_path_keeps_var`.
 -/
 set_option linter.unusedSimpArgs false
 
@@ -56,27 +51,48 @@ named path `p = (…)` it declares, the plan `plan_match` builds binds `p` (a
 `PathBuilder` lists it, or the var-length traverse it was elided onto carries it).
 This is what openCypher requires of `MATCH`/`OPTIONAL MATCH`: each output row binds
 every path variable of the pattern. Holds for every component with a
-relationship and for an unbound node-only component (`nodeOnly_unbound_binds_paths`);
-fails for a bound node-only one (`boundNode_path_not_built`). -/
+relationship and, since #3526, for every node-only component, bound or not
+(`nodeOnly_path_built`). -/
 def BindsAllPaths (st : MSt) (wi : WI) (comps : List Comp) : Prop :=
   ∀ c ∈ comps, ∀ p ∈ c.paths, p.1 ∈ (planMatch st wi comps none).1.pathVars
 
-/-! ## Root cause 1: the bound node-only branch -/
+/-! ## Fix 1: every node-only branch builds the path -/
 
-/-- The bound branch (mod.rs) builds no path, whatever paths the component has. -/
-theorem nodeOnly_bound_no_paths (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
-    (hb : st.bound n.alias = true) : (nodeOnly st lw n ps).1.pathVars = [] := by
+theorem withPaths_pathVars (ps : List (V × List V)) (m : MP) (p : V × List V) (hp : p ∈ ps) :
+    p.1 ∈ (withPaths ps m).pathVars := by
+  have hne : ps.isEmpty = false := by cases ps <;> simp_all
+  simp only [withPaths, hne, Bool.false_eq_true, ↓reduceIte, MP.pathVars, List.mem_append, List.mem_map]
+  exact Or.inl ⟨p, hp, rfl⟩
+
+/-- The bound branch (mod.rs) binds every path of the component (#3526). -/
+theorem nodeOnly_bound_binds_paths (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
+    (hb : st.bound n.alias = true) (p : V × List V) (hp : p ∈ ps) :
+    p.1 ∈ (nodeOnly st lw n ps).1.pathVars := by
   unfold nodeOnly; simp only [hb, ↓reduceIte]
-  split <;> rfl
+  split <;> exact withPaths_pathVars _ _ _ hp
+
+/-- …and filters out a row where the bound node is null (an earlier OPTIONAL MATCH left it
+unmatched): `n IS NOT NULL` is one of its bound filters as soon as it has a path. -/
+theorem nodeOnly_bound_notNull (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
+    (hb : st.bound n.alias = true) (hne : ps ≠ []) :
+    isNotNullFilter n.alias ∈ (nodeOnly st lw n ps).2.2.1 := by
+  rw [nodeOnly_bound_filter _ _ _ _ hb]
+  cases ps with
+  | nil => exact absurd rfl hne
+  | cons _ _ => simp
 
 /-- The unbound branch does (mod.rs). -/
 theorem nodeOnly_unbound_binds_paths (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
     (hb : st.bound n.alias = false) (p : V × List V) (hp : p ∈ ps) :
     p.1 ∈ (nodeOnly st lw n ps).1.pathVars := by
-  have hne : ps.isEmpty = false := by cases ps <;> simp_all
-  unfold nodeOnly; simp only [hb, Bool.false_eq_true, ↓reduceIte, hne]
-  simp only [MP.pathVars, List.mem_append, List.mem_map]
-  exact Or.inl ⟨p, hp, rfl⟩
+  unfold nodeOnly; simp only [hb, Bool.false_eq_true, ↓reduceIte]
+  exact withPaths_pathVars _ _ _ hp
+
+theorem nodeOnly_binds_paths (st : MSt) (lw : LW) (n : QN) (ps : List (V × List V))
+    (p : V × List V) (hp : p ∈ ps) : p.1 ∈ (nodeOnly st lw n ps).1.pathVars := by
+  cases hb : st.bound n.alias
+  · exact nodeOnly_unbound_binds_paths _ _ _ _ hb _ hp
+  · exact nodeOnly_bound_binds_paths _ _ _ _ hb _ hp
 
 theorem orderRels_nil (st : MSt) (fv : List V) (lead : Option V) : orderRels st fv lead [] = [] := by
   cases lead <;> simp [orderRels, sortRels, leadOrder, pickFirst, HopOrder.selfLoopsAfterBinders]
@@ -111,20 +127,27 @@ theorem planMatch_nodeOnly_pathVars (st : MSt) (wi : WI) (n : QN) (ps : List (V 
 theorem keepNode_noattrs (pending : List V) (n : QN) (h : n.attrs = []) : keepNode pending n = n := by
   simp [keepNode, keepAttrs, h]
 
-/-- **Root cause 1, for every bound node and every named path over it**: `MATCH p = (n)`
-/ `OPTIONAL MATCH p = (n)` with `n` already bound violates `BindsAllPaths`. -/
-theorem boundNode_path_not_built (st : MSt) (wi : WI) (n : QN) (p : V)
-    (hb : st.bound n.alias = true) :
-    ¬ BindsAllPaths st wi [{ nodes := [n], rels := [], paths := [(p, [n.alias])] }] := by
-  intro h
-  have := h _ (List.mem_singleton_self _) (p, [n.alias]) (List.mem_singleton_self _)
-  rw [planMatch_nodeOnly_pathVars, nodeOnly_bound_no_paths _ _ _ _ (by rw [keepNode_alias]; exact hb)] at this
-  simp at this
+/-- **Fix 1, for every node-only component, bound or not**: `MATCH p = (n)` /
+`OPTIONAL MATCH p = (n)` satisfies `BindsAllPaths` (before #3526 it failed whenever `n` was bound). -/
+theorem nodeOnly_path_built (st : MSt) (wi : WI) (n : QN) (ps : List (V × List V)) :
+    BindsAllPaths st wi [{ nodes := [n], rels := [], paths := ps }] := by
+  intro c hc p hp
+  simp only [List.mem_singleton] at hc; subst hc
+  rw [planMatch_nodeOnly_pathVars]
+  exact nodeOnly_binds_paths _ _ _ _ _ hp
 
-/-! ## Root cause 2: the MATCH arm's Apply decision -/
+theorem boundNode_path_built (st : MSt) (wi : WI) (n : QN) (p : V) :
+    BindsAllPaths st wi [{ nodes := [n], rels := [], paths := [(p, [n.alias])] }] :=
+  nodeOnly_path_built _ _ _ _
+
+/-! ## Fix 2: the MATCH arm's Apply decision -/
 
 /-- `pattern.variables()` of a one-component pattern (ast.rs). -/
 def compVars (c : Comp) : List V := c.nodes.map (·.alias) ++ c.rels.map (·.alias) ++ c.paths.map (·.1)
+
+/-- The node and relationship aliases of a one-component pattern (`pattern.nodes()` then
+`pattern.relationships()`): what the MATCH arm's `all_visited` runs over since #3526. -/
+def compEnts (c : Comp) : List V := c.nodes.map (·.alias) ++ c.rels.map (·.alias)
 
 mutual
 /-- The `plan_match` result as an IR tree: operator kinds, payloads dropped (spec id 0). -/
@@ -146,48 +169,46 @@ def MP.toPlanL : List MP → List Plan
 end
 
 /-- `Planner::plan`'s MATCH arm (mod.rs) around the `plan_match` result
-`m`; `vars` = `pattern.variables()`, `ar` = `pattern_attrs_read_visited` (an inline map
-reads a bound variable, #2981), `st` = the planner state *before* `plan_match`.
+`m`; `vars` = `pattern.variables()`, `ents` = the pattern's node and relationship aliases (no
+paths, #3526), `ar` = `pattern_attrs_read_visited` (an inline map reads a bound variable, #2981),
+`st` = the planner state *before* `plan_match`.
 OPTIONAL: `Optional(new vars)`, under `Apply` if any variable is bound; MATCH:
-`Apply(m)` if **all** variables are bound, or (#2981) if one is read (`any_visited`) and
-`m` joins several components (`joins_components`); else `m` as is. The Argument taps of
-the second case bind only the earlier variables (`Some(bound)`); `Plan.argument` carries no
-variable list, so that restriction is not modelled. -/
-def planMatchArm (st : MSt) (vars : List V) (ar : Bool) (optional : Bool) (m : Plan) : Plan :=
+`Apply(m)` if **all** nodes and relationships are bound, or (#2981) if a variable is read
+(`any_visited`) and `m` joins several components (`joins_components`); else `m` as is. The
+Argument taps of the second case bind only the earlier variables (`Some(bound)`);
+`Plan.argument` carries no variable list, so that restriction is not modelled. -/
+def planMatchArm (st : MSt) (vars ents : List V) (ar : Bool) (optional : Bool) (m : Plan) : Plan :=
   if optional then
     let ovs := (vars.filter fun v => !st.bound v).map V.id
     if vars.any st.bound then .node .apply [.node (.optional ovs) [addArgs m]]
     else .node (.optional ovs) [addArgs m]
-  else if vars.all st.bound || ((vars.any st.bound || ar) && joinsComponents m) then .node .apply [addArgs m]
+  else if ents.all st.bound || ((vars.any st.bound || ar) && joinsComponents m) then .node .apply [addArgs m]
   else m
 
-/-- A path variable is new, so a MATCH that declares one is never Apply-wrapped,
-even when every node of it is bound — unless (#2981) its plan joins several components. -/
-theorem planMatchArm_path_unwrapped (st : MSt) (c : Comp) (ar : Bool) (m : Plan) (p : V × List V)
-    (hp : p ∈ c.paths) (hnew : st.bound p.1 = false) (hj : joinsComponents m = false) :
-    planMatchArm st (compVars c) ar false m = m := by
-  have : (compVars c).all st.bound = false := by
-    rw [List.all_eq_false]
-    exact ⟨p.1, by simp [compVars]; exact Or.inr (Or.inr ⟨p.2, hp⟩), by simp [hnew]⟩
-  simp [planMatchArm, this, hj]
+/-- **Fix 2** (#3526): a MATCH whose nodes and relationships are all bound is Apply-wrapped,
+whatever new path variables it declares (before, a new path variable blocked the wrap). -/
+theorem planMatchArm_path_wrapped (st : MSt) (c : Comp) (ar : Bool) (m : Plan)
+    (hb : (compEnts c).all st.bound = true) :
+    planMatchArm st (compVars c) (compEnts c) ar false m = .node .apply [addArgs m] := by
+  simp [planMatchArm, hb]
 
 /-- #2981: a MATCH that reads a bound variable (through a pattern variable or an inline
 map) and joins several components is Apply-wrapped, so its components read that variable
 from the Argument row instead of being stitched beside the earlier clause as one more
 CartesianProduct branch (bug 2, `Match.cp_stitch_loses_correlation`). -/
-theorem planMatchArm_joined_wrapped (st : MSt) (vars : List V) (ar : Bool) (m : Plan)
+theorem planMatchArm_joined_wrapped (st : MSt) (vars ents : List V) (ar : Bool) (m : Plan)
     (hr : vars.any st.bound = true ∨ ar = true) (hj : joinsComponents m = true) :
-    planMatchArm st vars ar false m = .node .apply [addArgs m] := by
+    planMatchArm st vars ents ar false m = .node .apply [addArgs m] := by
   rcases hr with h | h <;> simp [planMatchArm, h, hj]
 
 /-- A disjoint MATCH (nothing bound read) is not wrapped, whatever its plan. -/
-theorem planMatchArm_disjoint (st : MSt) (vars : List V) (m : Plan)
-    (hne : vars ≠ []) (hd : vars.any st.bound = false) :
-    planMatchArm st vars false false m = m := by
-  have : vars.all st.bound = false := by
-    obtain ⟨v, vs, rfl⟩ := List.exists_cons_of_ne_nil hne
-    simp only [List.any_cons, Bool.or_eq_false_iff] at hd
-    simp [hd.1]
+theorem planMatchArm_disjoint (st : MSt) (c : Comp) (m : Plan)
+    (hne : c.nodes ≠ []) (hd : (compVars c).any st.bound = false) :
+    planMatchArm st (compVars c) (compEnts c) false false m = m := by
+  have : (compEnts c).all st.bound = false := by
+    obtain ⟨v, vs, hv⟩ := List.exists_cons_of_ne_nil hne
+    simp only [compVars, hv, List.map_cons, List.cons_append, List.any_cons, Bool.or_eq_false_iff] at hd
+    simp [compEnts, hv, hd.1]
   simp [planMatchArm, this, hd]
 
 theorem refill_argument (q y : Plan) :
@@ -217,6 +238,7 @@ theorem expandInto_fill_ignores_input {Val Gr : Type} (S : Sem Val Gr) (s : Nat)
   rw [refill_eiArg]; simp [ev, Op.isBag, forRows_single]
 
 /-! ## The stitched-plan property -/
+
 
 end PlannerBuild.E
 
@@ -282,61 +304,70 @@ def boundSt : MSt := { visited := [n0], verified := [] }
 
 theorem boundSt_n0 : boundSt.bound n0 = true := rfl
 
-/-- The labelled bound node: `ExpandInto(Argument)`, no `PathBuilder`. -/
+/-- The labelled bound node: `Filter(n IS NOT NULL)` over `PathBuilder(ExpandInto(Argument))`. -/
 theorem planMatch_labelled (st : MSt) (n p : V) (l : String) (hb : st.bound n = true) :
     (planMatch st {} [pathComp { alias := n, labels := [l], ptr := 0 } p] none).1.toPlan =
-      .node (.hop .expandInto 0) [.node .argument []] := by
+      .node (.filter 0) [.node (.pathBuilder 0) [.node (.hop .expandInto 0) [.node .argument []]]] := by
   simp only [pathComp]; rw [planMatch_nodeOnly, keepNode_noattrs _ _ rfl]
-  simp [liftPattern, liftOrder, liftItems, liftItem, nodeOnly, hb, lowerN, lowerInline, inlineAttrsToFilter, MP.toPlan, MP.toPlanL]
+  simp [liftPattern, liftOrder, liftItems, liftItem, nodeOnly, withPaths, hb, lowerN, lowerInline, inlineAttrsToFilter, MP.toPlan, MP.toPlanL]
 
-/-- The unlabelled bound node: a bare `Argument`. -/
+/-- The unlabelled bound node: `Filter(n IS NOT NULL)` over `PathBuilder(Argument)`. -/
 theorem planMatch_plain (st : MSt) (n p : V) (hb : st.bound n = true) :
-    (planMatch st {} [pathComp { alias := n, ptr := 0 } p] none).1.toPlan = .node .argument [] := by
+    (planMatch st {} [pathComp { alias := n, ptr := 0 } p] none).1.toPlan =
+      .node (.filter 0) [.node (.pathBuilder 0) [.node .argument []]] := by
   simp only [pathComp]; rw [planMatch_nodeOnly, keepNode_noattrs _ _ rfl]
-  simp [liftPattern, liftOrder, liftItems, liftItem, nodeOnly, hb, lowerN, lowerInline, inlineAttrsToFilter, MP.toPlan]
+  simp [liftPattern, liftOrder, liftItems, liftItem, nodeOnly, withPaths, hb, lowerN, lowerInline, inlineAttrsToFilter, MP.toPlan, MP.toPlanL]
 
-theorem addArgs_eiArg : addArgs (.node (.hop .expandInto 0) [.node .argument []]) =
-    .node (.hop .expandInto 0) [.node .argument []] := by
+theorem addArgs_fpeiArg : addArgs (.node (.filter 0) [.node (.pathBuilder 0) [.node (.hop .expandInto 0) [.node .argument []]]]) =
+    .node (.filter 0) [.node (.pathBuilder 0) [.node (.hop .expandInto 0) [.node .argument []]]] := by
+  simp [addArgs]
+
+theorem addArgs_fpArg : addArgs (.node (.filter 0) [.node (.pathBuilder 0) [.node .argument []]]) =
+    .node (.filter 0) [.node (.pathBuilder 0) [.node .argument []]] := by
   simp [addArgs]
 
 /-- Shared shape of the OPTIONAL repros: `MATCH (n0:L) OPTIONAL MATCH p0 = (n0) RETURN n0, p0`. -/
 def optQuery (l : String) : List Plan :=
   [.node (.scan 0) [],
    planMatchArm boundSt (compVars (pathComp { alias := n0, labels := [l], ptr := 0 } p0))
+     (compEnts (pathComp { alias := n0, labels := [l], ptr := 0 } p0))
      (attrsReadVisited boundSt [pathComp { alias := n0, labels := [l], ptr := 0 } p0]) true
      (planMatch boundSt {} [pathComp { alias := n0, labels := [l], ptr := 0 } p0] none).1.toPlan,
    .node (.project 0) []]
 
-/-- The live EXPLAIN shape `Project(Apply(Scan, Optional(ExpandInto(Argument))))`. -/
+/-- `Project(Apply(Scan, Optional(Filter(PathBuilder(ExpandInto(Argument))))))`. -/
 theorem optQuery_plan (l : String) :
     rustStitch (optQuery l) =
       .node (.project 0) [.node .apply [.node (.scan 0) [],
-        .node (.optional [1]) [.node (.hop .expandInto 0) [.node .argument []]]]] := by
-  simp only [optQuery, planMatch_labelled boundSt n0 p0 l boundSt_n0, addArgs_eiArg]
-  simp [planMatchArm, compVars, pathComp, boundSt, MSt.bound, n0, p0, addArgs_eiArg, refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
+        .node (.optional [1]) [.node (.filter 0) [.node (.pathBuilder 0)
+          [.node (.hop .expandInto 0) [.node .argument []]]]]]] := by
+  simp only [optQuery, planMatch_labelled boundSt n0 p0 l boundSt_n0, addArgs_fpeiArg]
+  simp [planMatchArm, compVars, compEnts, pathComp, boundSt, MSt.bound, n0, p0, addArgs_fpeiArg, refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
+
 
 theorem optQuery_rows (l : String) :
-    (ev pathS (rustStitch (optQuery l)) [] ()).1 = [[(0, 7)]] := by
+    (ev pathS (rustStitch (optQuery l)) [] ()).1 = [[(1, 100), (0, 7)]] := by
   rw [optQuery_plan]; decide
 
-/-- **#2311** (`MATCH (n0:P) OPTIONAL MATCH p0=(n0) RETURN n0.id, p0` → Rust `1, null`,
-C `1, [(0)]`). `plan_match` violates `BindsAllPaths`; the stitched plan
-`Project(Apply(Scan, Optional(ExpandInto(Argument))))` (the live EXPLAIN) returns the
-row without `p0`; openCypher returns it with the path. -/
-theorem bug2311_optional_path_null :
-    ¬ BindsAllPaths boundSt {} [pathComp { alias := n0, labels := ["P"], ptr := 0 } p0] ∧
-    (ev pathS (rustStitch (optQuery "P")) [] ()).1 = [[(0, 7)]] ∧
-    ¬ RowsBind [0, 1] (ev pathS (rustStitch (optQuery "P")) [] ()).1 ∧
-    [[(0, 7)]].flatMap pathMatch = [[(1, 100), (0, 7)]] := by
-  refine ⟨boundNode_path_not_built _ _ _ _ boundSt_n0, optQuery_rows _, ?_, by decide⟩
-  rw [optQuery_rows]; decide
+/-- **#2311 fixed** (`MATCH (n0:P) OPTIONAL MATCH p0=(n0) RETURN n0.id, p0` → `1, [(0)]`, as C).
+`plan_match` satisfies `BindsAllPaths`; the stitched plan
+`Project(Apply(Scan, Optional(Filter(PathBuilder(ExpandInto(Argument))))))` returns the row with
+`p0` bound, the openCypher answer. -/
+theorem fix2311_optional_path_bound :
+    BindsAllPaths boundSt {} [pathComp { alias := n0, labels := ["P"], ptr := 0 } p0] ∧
+    (rustStitch (optQuery "P")).argIsLeaf = true ∧
+    RowsBind [0, 1] (ev pathS (rustStitch (optQuery "P")) [] ()).1 ∧
+    (ev pathS (rustStitch (optQuery "P")) [] ()).1 = [[(0, 7)]].flatMap pathMatch := by
+  refine ⟨boundNode_path_built _ _ _ _, ?_, ?_, ?_⟩
+  · rw [optQuery_plan]; decide
+  · rw [optQuery_rows]; decide
+  · rw [optQuery_rows]; decide
 
-/-- **#2737** (`MATCH (n1:X) OPTIONAL MATCH p6 = (n1) RETURN p6` → Rust `null`, C `[(0)]`):
-the same shape as #2311. -/
-theorem bug2737_optional_path_null :
-    ¬ BindsAllPaths boundSt {} [pathComp { alias := n0, labels := ["X"], ptr := 0 } p0] ∧
-    ¬ RowsBind [1] (ev pathS (rustStitch (optQuery "X")) [] ()).1 := by
-  refine ⟨boundNode_path_not_built _ _ _ _ boundSt_n0, ?_⟩
+/-- **#2737 fixed** (`MATCH (n1:X) OPTIONAL MATCH p6 = (n1) RETURN p6` → `[(0)]`, as C). -/
+theorem fix2737_optional_path_bound :
+    BindsAllPaths boundSt {} [pathComp { alias := n0, labels := ["X"], ptr := 0 } p0] ∧
+    RowsBind [1] (ev pathS (rustStitch (optQuery "X")) [] ()).1 := by
+  refine ⟨boundNode_path_built _ _ _ _, ?_⟩
   rw [optQuery_rows]; decide
 
 /-- Shared shape of the MATCH repros: `MATCH (n:L) WITH … MATCH p0 = (n) RETURN …`;
@@ -344,120 +375,113 @@ theorem bug2737_optional_path_null :
 def withQuery (st : MSt) (n : V) (l : String) (ret : Plan) : List Plan :=
   [.node (.scan 0) [], .node (.project 0) [],
    planMatchArm st (compVars (pathComp { alias := n, labels := [l], ptr := 0 } p0))
+     (compEnts (pathComp { alias := n, labels := [l], ptr := 0 } p0))
      (attrsReadVisited st [pathComp { alias := n, labels := [l], ptr := 0 } p0]) false
      (planMatch st {} [pathComp { alias := n, labels := [l], ptr := 0 } p0] none).1.toPlan,
    ret]
 
-theorem withQuery_unwrapped (st : MSt) (n : V) (l : String) (hb : st.bound n = true)
-    (hp : st.bound p0 = false) :
+theorem withQuery_wrapped (st : MSt) (n : V) (l : String) (hb : st.bound n = true) :
     planMatchArm st (compVars (pathComp { alias := n, labels := [l], ptr := 0 } p0))
+     (compEnts (pathComp { alias := n, labels := [l], ptr := 0 } p0))
      (attrsReadVisited st [pathComp { alias := n, labels := [l], ptr := 0 } p0]) false
       (planMatch st {} [pathComp { alias := n, labels := [l], ptr := 0 } p0] none).1.toPlan =
-      .node (.hop .expandInto 0) [.node .argument []] := by
-  rw [planMatch_labelled st n p0 l hb]
-  exact planMatchArm_path_unwrapped st _ _ _ (p0, [n]) (List.mem_singleton_self _) hp rfl
+      .node .apply [.node (.filter 0) [.node (.pathBuilder 0) [.node (.hop .expandInto 0) [.node .argument []]]]] := by
+  rw [planMatch_labelled st n p0 l hb, planMatchArm_path_wrapped st _ _ _ (by simp [compEnts, pathComp, hb]),
+    addArgs_fpeiArg]
 
-/-- The live EXPLAIN shape: the WITH and the first MATCH under the `Argument`. -/
-theorem withQuery_project (st : MSt) (n : V) (l : String) (hb : st.bound n = true)
-    (hp : st.bound p0 = false) (k : Nat) :
+theorem withQuery_project (st : MSt) (n : V) (l : String) (hb : st.bound n = true) (k : Nat) :
     rustStitch (withQuery st n l (.node (.project k) [])) =
-      .node (.project k) [.node (.hop .expandInto 0) [.node .argument [.node (.project 0) [.node (.scan 0) []]]]] := by
-  simp only [withQuery, withQuery_unwrapped st n l hb hp]
+      .node (.project k) [.node .apply [.node (.project 0) [.node (.scan 0) []],
+        .node (.filter 0) [.node (.pathBuilder 0) [.node (.hop .expandInto 0) [.node .argument []]]]]] := by
+  simp only [withQuery, withQuery_wrapped st n l hb]
   simp [refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
 
-theorem withQuery_aggregate (st : MSt) (n : V) (l : String) (hb : st.bound n = true)
-    (hp : st.bound p0 = false) (k : Nat) :
+theorem withQuery_aggregate (st : MSt) (n : V) (l : String) (hb : st.bound n = true) (k : Nat) :
     rustStitch (withQuery st n l (.node (.aggregate k) [])) =
-      .node (.aggregate k) [.node (.hop .expandInto 0) [.node .argument [.node (.project 0) [.node (.scan 0) []]]]] := by
-  simp only [withQuery, withQuery_unwrapped st n l hb hp]
+      .node (.aggregate k) [.node .apply [.node (.project 0) [.node (.scan 0) []],
+        .node (.filter 0) [.node (.pathBuilder 0) [.node (.hop .expandInto 0) [.node .argument []]]]]] := by
+  simp only [withQuery, withQuery_wrapped st n l hb]
   simp [refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
 
-/-- **#2744** (`MATCH (n0:A) WITH n0 MATCH p=(n0) RETURN n0.k8, p` → Rust 0 rows,
-C one row `1, [(0)]`). Both root causes: no `PathBuilder` (`BindsAllPaths` fails),
-and the unwrapped `Argument` gets the previous clauses as a child — the live EXPLAIN
-`Project(ExpandInto(Argument(Project(Scan))))` — violating `argIsLeaf`; the row is lost. -/
-theorem bug2744_bound_path_unfed_argument :
-    ¬ BindsAllPaths boundSt {} [pathComp { alias := n0, labels := ["A"], ptr := 0 } p0] ∧
-    (rustStitch (withQuery boundSt n0 "A" (.node (.project 0) []))).argIsLeaf = false ∧
-    (ev pathS (rustStitch (withQuery boundSt n0 "A" (.node (.project 0) []))) [] ()).1 = [] ∧
-    (ev pathS (.node (.project 0) [.node (.scan 0) []]) [] ()).1.flatMap pathMatch =
-      [[(1, 100), (0, 7)]] := by
-  refine ⟨boundNode_path_not_built _ _ _ _ boundSt_n0, ?_, ?_, by decide⟩
-  · rw [withQuery_project boundSt n0 _ rfl rfl]; decide
-  · rw [withQuery_project boundSt n0 _ rfl rfl]; decide
+/-- **#2744 fixed** (`MATCH (n0:A) WITH n0 MATCH p=(n0) RETURN n0.k8, p` → one row `1, [(0)]`, as
+C). The path is built and the clause is Apply-wrapped, so the WITH feeds it:
+`Project(Apply(Project(Scan), Filter(PathBuilder(ExpandInto(Argument)))))`, every `Argument` a
+leaf; the rows are the openCypher ones. -/
+theorem fix2744_bound_path_fed :
+    BindsAllPaths boundSt {} [pathComp { alias := n0, labels := ["A"], ptr := 0 } p0] ∧
+    (rustStitch (withQuery boundSt n0 "A" (.node (.project 0) []))).argIsLeaf = true ∧
+    (ev pathS (rustStitch (withQuery boundSt n0 "A" (.node (.project 0) []))) [] ()).1 =
+      (ev pathS (.node (.project 0) [.node (.scan 0) []]) [] ()).1.flatMap pathMatch := by
+  refine ⟨boundNode_path_built _ _ _ _, ?_, ?_⟩
+  · rw [withQuery_project boundSt n0 _ rfl]; decide
+  · rw [withQuery_project boundSt n0 _ rfl]; decide
 
-/-- **#2743** (`MATCH (n0:V) WITH * MATCH p0=(n0) RETURN count(*)` → Rust 0, C 1). -/
-theorem bug2743_bound_path_drops_rows :
-    ¬ BindsAllPaths boundSt {} [pathComp { alias := n0, labels := ["V"], ptr := 0 } p0] ∧
-    (rustStitch (withQuery boundSt n0 "V" (.node (.aggregate 0) []))).argIsLeaf = false ∧
-    (ev pathS (rustStitch (withQuery boundSt n0 "V" (.node (.aggregate 0) []))) [] ()).1 = [[(9, 0)]] ∧
-    pathS.agg 0 [] ((ev pathS (.node (.project 0) [.node (.scan 0) []]) [] ()).1.flatMap pathMatch) =
-      [[(9, 1)]] := by
-  refine ⟨boundNode_path_not_built _ _ _ _ boundSt_n0, ?_, ?_, by decide⟩
-  · rw [withQuery_aggregate boundSt n0 _ rfl rfl]; decide
-  · rw [withQuery_aggregate boundSt n0 _ rfl rfl]; decide
+/-- **#2743 fixed** (`MATCH (n0:V) WITH * MATCH p0=(n0) RETURN count(*)` → 1, as C). -/
+theorem fix2743_bound_path_counts_rows :
+    BindsAllPaths boundSt {} [pathComp { alias := n0, labels := ["V"], ptr := 0 } p0] ∧
+    (rustStitch (withQuery boundSt n0 "V" (.node (.aggregate 0) []))).argIsLeaf = true ∧
+    (ev pathS (rustStitch (withQuery boundSt n0 "V" (.node (.aggregate 0) []))) [] ()).1 =
+      pathS.agg 0 [] ((ev pathS (.node (.project 0) [.node (.scan 0) []]) [] ()).1.flatMap pathMatch) ∧
+    (ev pathS (rustStitch (withQuery boundSt n0 "V" (.node (.aggregate 0) []))) [] ()).1 = [[(9, 1)]] := by
+  refine ⟨boundNode_path_built _ _ _ _, ?_, ?_, ?_⟩
+  · rw [withQuery_aggregate boundSt n0 _ rfl]; decide
+  · rw [withQuery_aggregate boundSt n0 _ rfl]; decide
+  · rw [withQuery_aggregate boundSt n0 _ rfl]; decide
 
 /-- `WITH n0 AS alias4`: the alias is a fresh variable of the next scope. -/
 def alias4 : V := ⟨0, 1⟩
 def aliasSt : MSt := { visited := [alias4], verified := [] }
 
-/-- **#2727** (`MATCH (n0:A) WITH n0 AS alias4 MATCH (alias4), p1=(alias4) RETURN alias4.k0`
-→ Rust 0 rows, C `'x'`; the full repro errors `Variable alias4 not found`). The pattern
-has one node-only component carrying `p1` (`connected_components`, ast.rs);
-the binder copies `:A` onto `alias4`, so the plan is `ExpandInto(Argument)` again. -/
-theorem bug2727_alias_path_drops_rows :
-    ¬ BindsAllPaths aliasSt {} [pathComp { alias := alias4, labels := ["A"], ptr := 0 } p0] ∧
-    (rustStitch (withQuery aliasSt alias4 "A" (.node (.project 0) []))).argIsLeaf = false ∧
-    (ev pathS (rustStitch (withQuery aliasSt alias4 "A" (.node (.project 0) []))) [] ()).1 = [] := by
-  refine ⟨boundNode_path_not_built _ _ _ _ rfl, ?_, ?_⟩
-  · rw [withQuery_project aliasSt alias4 _ rfl rfl]; decide
-  · rw [withQuery_project aliasSt alias4 _ rfl rfl]; decide
+/-- **#2727 fixed** (`MATCH (n0:A) WITH n0 AS alias4 MATCH (alias4), p1=(alias4) RETURN alias4.k0`
+→ `'x'`, as C). The pattern has one node-only component carrying `p1` (`connected_components`,
+ast.rs); the binder copies `:A` onto `alias4`, so it is the labelled shape again. -/
+theorem fix2727_alias_path_keeps_rows :
+    BindsAllPaths aliasSt {} [pathComp { alias := alias4, labels := ["A"], ptr := 0 } p0] ∧
+    (rustStitch (withQuery aliasSt alias4 "A" (.node (.project 0) []))).argIsLeaf = true ∧
+    (ev pathS (rustStitch (withQuery aliasSt alias4 "A" (.node (.project 0) []))) [] ()).1 =
+      (ev pathS (.node (.project 0) [.node (.scan 0) []]) [] ()).1.flatMap pathMatch := by
+  refine ⟨boundNode_path_built _ _ _ _, ?_, ?_⟩
+  · rw [withQuery_project aliasSt alias4 _ rfl]; decide
+  · rw [withQuery_project aliasSt alias4 _ rfl]; decide
 
 /-- `MATCH (n0) CALL db.labels() YIELD label MATCH (n0), p0=(n0) RETURN n0.k11, label, p0`. -/
 def callQuery : List Plan :=
   [.node (.scan 0) [], .node (.procCall 0) [],
    planMatchArm boundSt (compVars (pathComp { alias := n0, ptr := 0 } p0))
+     (compEnts (pathComp { alias := n0, ptr := 0 } p0))
      (attrsReadVisited boundSt [pathComp { alias := n0, ptr := 0 } p0]) false
      (planMatch boundSt {} [pathComp { alias := n0, ptr := 0 } p0] none).1.toPlan,
    .node (.project 0) []]
 
+/-- `Project(Apply(ProcedureCall(Scan), Filter(PathBuilder(Argument))))`. -/
 theorem callQuery_plan :
     rustStitch callQuery =
-      .node (.project 0) [.node .argument [.node (.procCall 0) [.node (.scan 0) []]]] := by
-  have hu := planMatchArm_path_unwrapped boundSt (pathComp { alias := n0, ptr := 0 } p0)
+      .node (.project 0) [.node .apply [.node (.procCall 0) [.node (.scan 0) []],
+        .node (.filter 0) [.node (.pathBuilder 0) [.node .argument []]]]] := by
+  have hw := planMatchArm_path_wrapped boundSt (pathComp { alias := n0, ptr := 0 } p0)
     (attrsReadVisited boundSt [pathComp { alias := n0, ptr := 0 } p0])
-    (.node .argument []) (p0, [n0]) (List.mem_singleton_self _) rfl rfl
-  simp only [callQuery, planMatch_plain boundSt n0 p0 boundSt_n0, hu]
+    (.node (.filter 0) [.node (.pathBuilder 0) [.node .argument []]]) rfl
+  simp only [callQuery, planMatch_plain boundSt n0 p0 boundSt_n0, hw, addArgs_fpArg]
   simp [refill, rustStitch, stitchLoop, slotFirst, slotLoop, slotWith, walkFirst, walkLoop, Plan.get, projDescend, descendClause, descendOne, Plan.depth, insertStep, insertAt, Plan.modify, Plan.push0, loopPass, isApply, clauseMin, applyChain]
 
-/-- **#2725** (`… CALL algo.BFS(…) YIELD … MATCH (n0), p0 = (n0), (n0) WHERE … RETURN *`
-→ Rust `Variable n0 not found`, C no error; minimal with `db.labels()`: Rust
-`Variable n0 not found`, C `1, A, [(0)]`). The unlabelled bound node is a bare
-`Argument`; the CALL and the first MATCH are stitched under it (live EXPLAIN
-`Project(Argument(ProcedureCall(All Node Scan)))`), so the one output row is empty:
-`n0`, `label` and `p0` are all unbound. -/
-theorem bug2725_call_then_bound_path_loses_var :
-    ¬ BindsAllPaths boundSt {} [pathComp { alias := n0, ptr := 0 } p0] ∧
-    (rustStitch callQuery).argIsLeaf = false ∧
-    (ev pathS (rustStitch callQuery) [] ()).1 = [[]] ∧
-    ¬ RowsBind [0] (ev pathS (rustStitch callQuery) [] ()).1 ∧
-    (ev pathS (.node (.procCall 0) [.node (.scan 0) []]) [] ()).1.flatMap pathMatch =
-      [[(1, 100), (2, 55), (0, 7)]] := by
-  refine ⟨boundNode_path_not_built _ _ _ _ boundSt_n0, ?_, ?_, ?_, by decide⟩
+/-- **#2725 fixed** (`MATCH (n0) CALL db.labels() YIELD label MATCH (n0), p0=(n0) RETURN …` →
+`1, A, [(0)]`, as C; before: `Variable n0 not found`). The unlabelled bound node is
+`Filter(PathBuilder(Argument))` under `Apply`, so the CALL feeds it and every row binds `n0`,
+`label` and `p0`. -/
+theorem fix2725_call_then_bound_path_keeps_var :
+    BindsAllPaths boundSt {} [pathComp { alias := n0, ptr := 0 } p0] ∧
+    (rustStitch callQuery).argIsLeaf = true ∧
+    RowsBind [0, 1, 2] (ev pathS (rustStitch callQuery) [] ()).1 ∧
+    (ev pathS (rustStitch callQuery) [] ()).1 =
+      (ev pathS (.node (.procCall 0) [.node (.scan 0) []]) [] ()).1.flatMap pathMatch := by
+  refine ⟨boundNode_path_built _ _ _ _, ?_, ?_, ?_⟩
   · rw [callQuery_plan]; decide
   · rw [callQuery_plan]; decide
   · rw [callQuery_plan]; decide
 
-/-! ## What a fix must give: the unbound branch is already right
-
-Without the earlier binding (`MATCH p0 = (n0:A)` alone) the plan is
-`PathBuilder(Scan)` and the property holds. -/
+/-- Without the earlier binding (`MATCH p0 = (n0:A)` alone) the plan is `PathBuilder(Scan)`. -/
 theorem unbound_path_built (l : String) :
-    BindsAllPaths { visited := [], verified := [] } {} [pathComp { alias := n0, labels := [l], ptr := 0 } p0] := by
-  intro c hc p hp
-  simp only [List.mem_singleton] at hc; subst hc
-  simp only [pathComp, List.mem_singleton] at hp; subst hp
-  simp only [pathComp]; rw [planMatch_nodeOnly_pathVars, keepNode_noattrs _ _ rfl]
-  exact nodeOnly_unbound_binds_paths _ _ _ _ rfl _ (List.mem_singleton_self _)
+    BindsAllPaths { visited := [], verified := [] } {} [pathComp { alias := n0, labels := [l], ptr := 0 } p0] :=
+  nodeOnly_path_built _ _ _ _
 
 end PlannerBuild.E

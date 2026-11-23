@@ -419,6 +419,14 @@ theorem hasLabelsFilter_shape (v : V) (labels : List String) :
   | nil => rfl
   | cons l ls ih => simp [nodesL, nodes, ih]
 
+/-- `is_not_null_filter` (mod.rs): `var IS NOT NULL` as the parser emits it, the internal
+`is_null` call with the negation flag `true` first and the variable second. -/
+def isNotNullFilter (v : V) : Ex := .node (.func "is_null") [tt, Ex.v v]
+
+theorem isNotNullFilter_shape (v : V) :
+    (isNotNullFilter v).d = .func "is_null" ∧
+    nodes (isNotNullFilter v) = [.func "is_null", .const (.bool true), .var v] := ⟨rfl, rfl⟩
+
 /-! ## `pattern_expr_variables` (mod.rs)
 
 A stack walk: pop, record, push. Popping the children pushed last-first is a
