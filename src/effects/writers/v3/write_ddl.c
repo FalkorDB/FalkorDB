@@ -120,6 +120,22 @@ static void _v3_StageCCH
 		ids [i] = (uint32_t) rel_ids [i] ;
 	}
 
+	// THE WIRE STATES THE SCHEMA COUNT IN TWO BYTES, and a cast that overflows
+	// it turns 65,536 into 0: the record would name no relationship type at
+	// all while still carrying its weight field, and a reader refuses an index
+	// over nothing. GRAPH_MAX_RELATIONS is 1 << 16 (graph_limits.h:37), so the
+	// graph's own ceiling is exactly the count that narrows to zero and a
+	// statement naming every type would reach it. v2 wrote this count at full
+	// width (writers/v2/write_ddl.c:195) and so never had to care.
+	//
+	// RELEASE_ASSERT for the reason the staged-attribute guard gives
+	// (effects_v3_group.c): this writer returns void, so nothing can be
+	// refused upward, and skipping the record would drop an index the primary
+	// built and leave the replica without it with nothing logged.
+	RELEASE_ASSERT (rel_count <= UINT16_MAX &&
+			"a CCH path index over more relationship types than the v3 wire "
+			"can state") ;
+
 	EffectsV3Grouping_AddCCHIndex (EffectsBuffer_V3 (buff), opcode, ids,
 			rel_names, (uint16_t) rel_count, weight_attr, weight_name) ;
 
