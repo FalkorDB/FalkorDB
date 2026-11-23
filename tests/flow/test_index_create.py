@@ -919,8 +919,15 @@ class testIndexCreationFlow():
         # OPTIONS {weight: 1, phonetic: 123} valid, and Index_FulltextCreate
         # then read that integer's union as 'stringval'.
         #
-        # Each case below pairs a well-typed weight with one ill-typed option,
-        # so it is refused only if the second option is checked at all.
+        # phonetic and nostem are the two that reach _validateOptions past a
+        # present weight, so they are the regression cases - phonetic is the
+        # one that used to segfault the server. language and stopwords are
+        # refused earlier, by IndexOperation_ExtractLevelConfig, and a badly
+        # typed weight was caught by the old first rung too; they are here so
+        # the whole option surface is covered, not because they ever broke.
+        #
+        # The last case is the other half of the change: a key this index does
+        # not know is refused rather than silently counted as valid.
         label = "FTOPT"
 
         bad = [
@@ -929,6 +936,7 @@ class testIndexCreationFlow():
             "{weight: 1, language: 7}",
             "{weight: 1, stopwords: 'the'}",
             "{weight: 'heavy'}",
+            "{weight: 1, bogus: 2}",
         ]
 
         accepted = []
