@@ -288,22 +288,70 @@ def numEq : Num → Num → Bool
   | .int a, .flt b => toF a == b
   | .flt a, .int b => a == toF b
 
-/-- `key_as_i64`: exact value. -/
-def key : Num → Int
-  | .int a => a
-  | .flt f => f
+/-- `key_as_i64` (value_hash_join.rs, #3034): the exact `i64` key, only below 2^53. -/
+def joinKey : Num → Option Int
+  | .int a => if a.natAbs < 2 ^ 53 then some a else none
+  | .flt f => if f.natAbs < 2 ^ 53 then some f else none
 
-/-- `(2^53+1) = 2^53.0` is TRUE in the Filter but the join keys differ, so the
-rewrite drops the row. Confirmed: `MATCH (a:L),(b:L) WHERE a.x = b.x` misses
-the pair (9007199254740993, 9007199254740992.0) that `(a.x = b.x) = true` finds. -/
-theorem hash_join_drops_row :
+/-- The join's key test since #3034: exact `i64` keys on the integer table; otherwise the value
+table's `keys_match` (Cypher `=`), whose `JoinKey::hash` puts `=`-equal keys in one bucket and whose
+`same_build_key` never groups keys `=` tells apart. A key the integer table rejects finds nothing
+there, and is `=` to none of its keys. (ops_apply `CartVhj.joinHash_numEq`, `sameBuildKey_sound`,
+`keyAsI64_exact`, `keyAsI64_none_sep`, `vhj_2pow53_fixed`.) -/
+def joinMatch (a b : Num) : Bool :=
+  match joinKey a, joinKey b with
+  | some x, some y => x == y
+  | _, _ => numEq a b
+
+theorem toF_small (i : Int) (h : i.natAbs < 2 ^ 53) : toF i = i := by
+  unfold toF; split
+  · omega
+  · rfl
+
+/-- The join's key test is Cypher `=` on numbers. -/
+theorem joinMatch_numEq (a b : Num) : joinMatch a b = numEq a b := by
+  unfold joinMatch
+  split
+  · rename_i x y ha hb
+    cases a with
+    | int i =>
+      simp only [joinKey] at ha; split at ha <;> simp at ha; subst ha
+      cases b with
+      | int j => simp only [joinKey] at hb; split at hb <;> simp at hb; subst hb; rfl
+      | flt g =>
+        simp only [joinKey] at hb; split at hb <;> simp at hb; subst hb
+        rename_i hi _; simp [numEq, toF_small _ hi]
+    | flt f =>
+      simp only [joinKey] at ha; split at ha <;> simp at ha; subst ha
+      cases b with
+      | int j =>
+        simp only [joinKey] at hb; split at hb <;> simp at hb; subst hb
+        rename_i hj; simp [numEq, toF_small _ hj]
+      | flt g => simp only [joinKey] at hb; split at hb <;> simp at hb; subst hb; rfl
+  · rfl
+
+/-- Hash join with key test `m`, left-major. -/
+def vhjBy {α β} (m : α → β → Bool) (xs : List α) (ys : List β) : List (α × β) :=
+  xs.flatMap (fun x => (ys.filter (m x)).map (fun y => (x, y)))
+
+/-- **The hash join is exact on numbers** (W2-rewrites-3 fixed by #3034). -/
+theorem vhjNum_correct (xs ys : List Num) : vhjBy joinMatch xs ys = cpEq numEq xs ys := by
+  unfold vhjBy cpEq
+  rw [List.filter_flatMap]
+  congr 1; funext x
+  rw [List.filter_map]
+  congr 1
+  apply List.filter_congr
+  intro y _
+  simp [joinMatch_numEq]
+
+/-- `(2^53+1) = 2^53.0` is TRUE in the Filter, and the join keeps the pair:
+`MATCH (a:L),(b:L) WHERE a.x = b.x` on `x = 9007199254740993` and `x = 9007199254740992.0`
+finds it as `(a.x = b.x) = true` does (before #3034 the join dropped it: 2 rows where C gives 4). -/
+theorem hash_join_keeps_row :
     numEq (.int (2^53 + 1)) (.flt (2^53)) = true ∧
-    vhj key key [Num.int (2^53 + 1)] [Num.flt (2^53)] = [] ∧
-    cpEq numEq [Num.int (2^53 + 1)] [Num.flt (2^53)] = [(.int (2^53 + 1), .flt (2^53))] := by
+    vhjBy joinMatch [Num.int (2^53 + 1)] [Num.flt (2^53)] = [(.int (2^53 + 1), .flt (2^53))] := by
   decide
-
--- The rounding is real (`i as f64`, evaluated natively):
-#eval (Float.ofNat 9007199254740993 == 9007199254740992.0)   -- true
 
 /-! ## push_filters_down: which children a conjunct may enter -/
 

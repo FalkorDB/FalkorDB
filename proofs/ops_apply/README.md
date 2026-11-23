@@ -72,6 +72,7 @@ Yes:
 | `createNode_spec`, `createRel_spec` | CREATE binds one fresh node per row; relationships use each row's endpoints | `CreateBatch.lean` |
 | `setFrom_replace`, `setAttrItem_replace_shapes` | `SET e = src` leaves exactly the source's keys (all six shapes) | `SetRemove.lean` |
 | `allTuples_length`, `orbit_valid` | A cartesian product has ∏ lengths rows and visits only valid combinations | `CartVhj.lean` |
+| `keyAsI64_exact`, `keyAsI64_none_sep`, `joinHash_numEq`, `sameBuildKey_sound`, `vhj_2pow53_fixed` | The hash join agrees with `=` on Int/Float keys near 2^53: the integer table holds only keys below 2^53, `=`-equal keys hash alike, and build keys share an entry only when `=` cannot tell them apart (#3034) | `CartVhj.lean` |
 | `applyBatchedW_eq_ref_of_readIndep` | Batched Apply over a writing sub-plan equals per-row Apply when the sub-plan's reads ignore its own writes (the condition a fix for #2738 must meet) | `RowWrites.lean` |
 | `KeyFromBoundNodeOnly`, `MergeBindsOwnNode`, `bug3368_filed_repro_fixed_by_3050` | MERGE over a real row (values + bound bits): the pattern hash reads a value-only slot as the variable's value, the cache hit re-inserts another clause's ids; the fixed key, and #3368 | `MergeSlot.lean` |
 
@@ -150,7 +151,7 @@ The project has no dependencies beyond Lean core. The id-space `reserve` it call
 - **Errors.** FOREACH and UNION have their error paths modelled, but only the error-free theorems are proven.
 - **Attributes.** `SET`/`REMOVE` assume the committed key list of an entity is complete.
 - **Seen, not Rust bugs.** `FOREACH (i IN 1 | …)` is a type error in Rust (C iterates once; Rust follows openCypher). C returns only the x=1 row of `UNWIND [1,2] AS x CALL { MERGE (n:P {v:1}) ON CREATE SET n.v = 2 RETURN n }`, and gives `m=1, c=2` for `UNWIND [1,2] AS x MERGE (a:E {v:1}) ON MATCH SET a.m = x ON CREATE SET a.c = x` (Rust `m=2, c=1`, as openCypher).
-- **Also seen.** Creating and deleting a node in one query reports no `Nodes created/deleted` statistics (`CREATE (a:D) DELETE a`, also via MERGE); C reports 1/1 (pending/stats code, see `pending_commit`). Writes to a DETACH-deleted relationship are applied and counted (W2-pending-3). Hash-join keys Int/Float near 2^53: `keyAsI64_spec` (W2-rewrites-3).
+- **Also seen.** Creating and deleting a node in one query reports no `Nodes created/deleted` statistics (`CREATE (a:D) DELETE a`, also via MERGE); C reports 1/1 (pending/stats code, see `pending_commit`). Writes to a DETACH-deleted relationship are applied and counted (W2-pending-3).
 
 ## Build and check
 
