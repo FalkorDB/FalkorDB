@@ -1,12 +1,13 @@
 import OptimizerScan.Index
 namespace OptimizerScan.Index
 
-/-- Property values the index represents faithfully: Null, Int, String, and (since the array
-tree, #2453/#3736) a list of scalars, which the scalar tree does not hold at all (`enc` is `none`
-on it, as every comparison with a list is not `true`) and the array tree holds element by element
-(`arrEnc`). Bool and Date values stay outside (C1, C2). -/
+/-- Property values the index represents faithfully: Null, Bool (since #2975 a TAG key of its
+own, apart from every number and string — C1 fixed), Int, String, and (since the array tree,
+#2453/#3736) a list of scalars, which the scalar tree does not hold at all (`enc` is `none` on it,
+as every comparison with a list is not `true`) and the array tree holds element by element
+(`arrEnc`). Date values stay outside (not indexed, C2). -/
 def faithV : V → Bool
-  | .null | .i _ | .s _ | .arr _ => true
+  | .null | .b _ | .i _ | .s _ | .arr _ => true
   | _ => false
 
 /-- Literals the index represents faithfully: non-lossy Int, String. -/
@@ -118,6 +119,9 @@ theorem evalT_good (m : Node) (t : T) (h : goodLitT t = true) : evalT m t = eval
 theorem goodV_isPrim (c : V) (h : goodV c = true) : isPrim c = true := by
   cases c <;> simp_all [goodV, isPrim]
 
+theorem goodV_notNull (c : V) (h : goodV c = true) : notNull c = true := by
+  cases c <;> simp_all [goodV, notNull]
+
 /-- **PROVEN**: `n.k IN [c₁,…,cₙ]` on faithful literals is exact through the index
 (`InList` kept whole since #2383 → `build_query_node`'s `InList` arm, a RediSearch union of
 `Equal`s; `build_inList_eq_or` says it is the union the pre-#2383 `Or` built). -/
@@ -131,8 +135,8 @@ theorem sel_inList (ts : List T) (hts : ts.all goodLitT = true) (hv : faithV (n.
     intro t ht
     have := List.all_eq_true.mp hts t ht
     cases t <;> simp_all [goodLitT, evalC, evalT]
-  have hfilt : (ts.map evalC).filter isPrim = ts.map evalC :=
-    List.filter_eq_self.mpr (fun c hc => goodV_isPrim c (List.all_eq_true.mp hgood c hc))
+  have hfilt : (ts.map evalC).filter notNull = ts.map evalC :=
+    List.filter_eq_self.mpr (fun c hc => goodV_notNull c (List.all_eq_true.mp hgood c hc))
   unfold qsem idxSel bsel
   simp only [evalIQ, listVals, hfilt, build, hL, decide_true, Bool.true_and, hmap]
   rw [← buildSome_map_eq, buildSome_eqs idx L k n _ hgood hk hv]
@@ -251,7 +255,7 @@ theorem trySingle_spec (opq : Nat → Node → Bool) (a : A) (L' : Nat) (q : IQ)
     refine ⟨rfl, fun n hn hL => ?_, fun hs => ?_, fun _ => ?_, fun _ _ h => by cases h⟩
     · rw [sel_buildOp idx L k n op c hg (hn k) hk hL]; rfl
     · cases op <;> cases c <;> simp_all [buildOp, rangeOK, goodLitT, isStrLitT, strictStr]
-    · cases op <;> cases c <;> simp_all [buildOp, evalIQ, canUtilize, isIndexable, goodV, evalC, evalT]
+    · cases op <;> cases c <;> simp_all [buildOp, evalIQ, canUtilize, rangeBoundOK, isIndexable, goodV, evalC, evalT]
   | .cmp op (.lit c) (.prop k), hg =>
     simp only [goodA] at hg
     simp only [trySingle, hasT, firstP, findLabel_single, Option.bind_eq_bind] at h
@@ -261,7 +265,7 @@ theorem trySingle_spec (opq : Nat → Node → Bool) (a : A) (L' : Nat) (q : IQ)
     · rw [sel_buildOp idx L k n op.flip c hg (hn k) hk hL, holds_flip']; rfl
     · cases op <;> cases c <;> simp_all [buildOp, Op.flip, rangeOK, goodLitT, isStrLitT, strictStr]
     · cases op <;> cases c <;>
-        simp_all [buildOp, Op.flip, evalIQ, canUtilize, isIndexable, goodV, evalC, evalT]
+        simp_all [buildOp, Op.flip, evalIQ, canUtilize, rangeBoundOK, isIndexable, goodV, evalC, evalT]
   | .inn (.prop k) (.list ts), hg =>
     simp only [goodA] at hg
     have hnt : ts.any hasT = false := by

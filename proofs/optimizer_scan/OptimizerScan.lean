@@ -18,3 +18,4 @@ import OptimizerScan.EdgeInline
 import OptimizerScan.Cleanup
 import OptimizerScan.ScanTree
 import OptimizerScan.Salvage
+import OptimizerScan.BoolOperand

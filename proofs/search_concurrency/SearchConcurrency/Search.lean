@@ -9,7 +9,8 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | --- | --- |
 | `IndexType`, `Field`            | `graph/src/index/mod.rs` `IndexType` `Field` `Field::new` `new_with_vector_options` |
 | `arrNames`                      | `mod.rs` `Field::make_arr_names` |
-| `docSet`                        | `mod.rs` `Document::set` (branch for branch; vector arm; temporal arm) |
+| `docSet`                        | `mod.rs` `Document::set` (branch for branch; vector arm; temporal arm; #2975 Bool as TAG, points under `geo_name`) |
+| `geoName`                       | `mod.rs` `Field::geo_name` |
 | `docSetPanics`                  | the `unreachable!()` arm, `mod.rs` |
 | `buildDoc`                      | the per-attribute loop in `graph.rs` `commit_index_kind` / `graph.rs` population `build_doc` |
 | `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs` `Index::add_document`) |
@@ -65,9 +66,14 @@ structure Field where
   vdim : Option Nat := none
 deriving Repr
 
-/-- `Field::make_arr_names` (mod.rs): only range fields get array sub-fields. -/
-def arrNames (f : Field) : Option (String × String) :=
-  if f.ty = .range then some (f.name ++ ":numeric:arr", f.name ++ ":string:arr") else none
+/-- `Field::make_arr_names` (mod.rs): only range fields get the array sub-fields and (#2975) the
+geo sub-field. -/
+def arrNames (f : Field) : Option (String × String × String) :=
+  if f.ty = .range then some (f.name ++ ":numeric:arr", f.name ++ ":string:arr", f.name ++ ":geo")
+  else none
+
+/-- `Field::geo_name` (mod.rs). -/
+def geoName (f : Field) : Option String := (arrNames f).map (·.2.2)
 
 /-- `Field::new` (mod.rs): no vector options. -/
 def Field.new (name : String) (ty : IndexType) : Field := { name, ty }
@@ -83,17 +89,23 @@ theorem Field.new_spec (n : String) (t : IndexType) (d : Nat) :
     (Field.newVec n t d).name = n ∧ (Field.newVec n t d).ty = t ∧ (Field.newVec n t d).vdim = some d ∧
     arrNames (Field.new n t) = arrNames (Field.newVec n t d) := ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- Only a range field gets the `:numeric:arr` / `:string:arr` sub-fields. -/
+/-- Only a range field gets the `:numeric:arr` / `:string:arr` / `:geo` sub-fields. -/
 theorem Field.new_arr (n : String) (t : IndexType) :
     (arrNames (Field.new n t)).isSome = true ↔ t = .range := by
   cases t <;> simp [arrNames, Field.new]
 
 def isNumeric : Val → Bool
-  | .bool _ | .int _ | .float => true
+  | .int _ | .float => true
   | _ => false
 
 def isStr : Val → Bool
   | .str _ => true
+  | _ => false
+
+/-- A list element `Document::set` writes to the string array: a String, or (#2975) a Bool as
+its `tag_key`. -/
+def isTagItem : Val → Bool
+  | .str _ | .bool _ => true
   | _ => false
 
 /-- `Document::set` (mod.rs), branch for branch. The vector arm
@@ -109,23 +121,30 @@ def docSet (f : Field) (v : Val) : List RSAdd :=
     | .str _ => [.text f.name]
     | _ => []
   | .range => match v with
-    | .bool _ | .int _ | .float => [.num f.name]
-    | .str _ => [.tag f.name]
+    -- #2975: a Bool is a TAG key of its own, never a number
+    | .int _ | .float => [.num f.name]
+    | .bool _ | .str _ => [.tag f.name]
     -- temporals are not indexed (mod.rs)
     | .temporal => []
     | .list xs =>
       let n := (xs.filter isNumeric).length
-      let s := (xs.filter isStr).length
+      let s := (xs.filter isTagItem).length
       (if n > 0 then [.numArr (f.name ++ ":numeric:arr") n] else []) ++
       (if s > 0 then [.strArr (f.name ++ ":string:arr") s] else [])
     | .vecf32 _ => []
-    | .point => [.geo f.name]
+    | .point => [.geo ((geoName f).getD f.name)]
     | .null | .map | .node | .rel | .path => []
 
 /-- **#3076: a temporal value is never written to any RediSearch field**, on any
 index type, so no numeric index query can return it. -/
 theorem docSet_temporal_not_indexed (f : Field) : docSet f .temporal = [] := by
   unfold docSet; cases f.ty <;> rfl
+
+/-- **#2975**: on a range field a Bool is only a TAG, never a number (so `= 1` cannot match
+`true`), and a point goes to the `:geo` sub-field, never the numeric tree of the field's name. -/
+theorem docSet_range_bool_point (f : Field) (h : f.ty = .range) (b : Bool) :
+    docSet f (.bool b) = [.tag f.name] ∧ docSet f .point = [.geo (f.name ++ ":geo")] := by
+  simp [docSet, geoName, arrNames, h]
 
 /-- The `unreachable!()` arm: `Null`, `Map`, `Node`, `Relationship`, `Path` on a range field. -/
 def docSetPanics (f : Field) (v : Val) : Bool :=

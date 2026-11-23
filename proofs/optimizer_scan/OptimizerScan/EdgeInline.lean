@@ -201,7 +201,7 @@ def evalIQE (q : IQ) : Except String Q :=
   | _ => .ok (evalIQ q)
 
 /-- One input row of `NodeByIndexScanOp::next` (`node_by_index_scan.rs`):
-index when `can_utilize_index`, else `get_nodes(labels)`, then the extra labels. -/
+index when `can_be_served`, else `get_nodes(labels)`, then the extra labels. -/
 def scanRow (idx : Nat → List Nat) (ls : List Nat) (L : Nat) (q : IQ) (n : Node) : Bool :=
   let qv := evalIQ q
   (if canUtilize qv then idxSel idx L qv n else hasAll ls n) &&
@@ -243,7 +243,7 @@ theorem evalIQE_inList_err (k : Nat) (t : T) (h : ∀ xs, evalC t ≠ .arr xs) :
   · next xs hx => exact absurd hx (h xs)
   · rfl
 
-/-- `can_utilize_index`: an empty `Or`/`And` (e.g. `IN [NULL]` after the runtime
+/-- `can_be_served`: an empty `Or`/`And` (e.g. `IN [NULL]` after the runtime
 drops non-scalars) is refused, so the kept Filter re-establishes correctness. -/
 theorem canUtilize_empty : canUtilize (.or []) = false ∧ canUtilize (.and []) = false := ⟨rfl, rfl⟩
 
@@ -251,8 +251,15 @@ theorem isIndexable_spec (v : V) :
     isIndexable v = match v with | .i x => !lossy x | .date _ | .arr _ => false | _ => true := by
   cases v <;> rfl
 
-/-- #2383: the runtime keeps an `IN` list whole, filtered to its scalar members. -/
+/-- #2383: the runtime keeps an `IN` list whole; since #2975 (`IndexQuery::in_list`) it drops only
+the null members, so a member the index cannot serve (a `date(...)`) reaches `can_be_served`. -/
 theorem evalIQ_inList (k : Nat) (r : R) :
-    evalIQ (.inList k r) = .inList k ((listVals r).filter isPrim) := rfl
+    evalIQ (.inList k r) = .inList k ((listVals r).filter notNull) := rfl
+
+/-- #2975 (W2-index-3 fixed): an `IN` list with a member the index cannot serve is refused, and
+the scan falls back to the label (the Filter is kept, `needs_post_filter`). -/
+theorem canUtilize_inList_date (k : Nat) (x d : Int) (hx : lossy x = false) :
+    canUtilize (evalIQ (.inList k (.list [.lit (.i x), .lit (.date d)]))) = false := by
+  simp [evalIQ, listVals, evalC, evalT, notNull, canUtilize, isIndexable, hx]
 
 end OptimizerScan.Index

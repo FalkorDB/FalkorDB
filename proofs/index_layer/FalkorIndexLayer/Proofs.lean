@@ -12,12 +12,6 @@ theorem hex_roundtrip_byte (b : Nat) (hb : b < 256) :
     hexNibble (hexDigit (b / 16)) * 16 + hexNibble (hexDigit (b % 16)) = b := by
   rw [nib_digit _ (by omega), nib_digit _ (Nat.mod_lt _ (by decide))]; omega
 
-theorem tagDec_cons_ne (b : Nat) (rest : Bytes) (h : b ≠ 0x5f) : tagDec (b :: rest) = b :: tagDec rest := by
-  rw [tagDec.eq_def]; split <;> simp_all
-
-theorem escaped_le {b : Nat} (h : escaped b = true) : b ≤ 0x5f := by
-  simp [escaped] at h; omega
-
 @[simp] theorem isTrue_some (b : Bool) : isTrue (some b) = b := by cases b <;> rfl
 @[simp] theorem isTrue_none : isTrue none = false := rfl
 @[simp] theorem rsStore_num (v : ENum) : rsStore (.num v) = [.num v] := rfl
@@ -27,23 +21,46 @@ theorem escaped_le {b : Nat} (h : escaped b = true) : b ≤ 0x5f := by
 
 theorem hexDigit_gt_space : ∀ n, n < 16 → 0x20 < hexDigit n := by decide
 
-theorem hexDigit_ne_us : ∀ n, n < 16 → hexDigit n ≠ 0x5f := by decide
-
 /-! ## `tag_encode_lower` -/
 
+theorem tagDecB_encByte (b : Nat) (r : Bytes) : tagDecB (encByte b ++ r) = b :: tagDecB r := by
+  unfold encByte
+  by_cases h1 : b ≤ 0x21
+  · simp only [h1, ite_true, List.cons_append, List.nil_append, tagDecB]; congr 1; omega
+  · by_cases h2 : b = 0x5b
+    · subst h2; simp [tagDecB]
+    · by_cases h3 : b = 0x5c
+      · subst h3; simp [tagDecB]
+      · simp only [h1, h2, h3, ite_false, List.cons_append, List.nil_append]
+        rw [tagDecB.eq_def]; split <;> simp_all <;> omega
+
+theorem tagDecB_tagEncB : ∀ s : Bytes, tagDecB (tagEncB s) = s
+  | [] => by simp [tagEncB, tagDecB]
+  | b :: bs => by simp only [tagEncB, tagDecB_encByte, tagDecB_tagEncB bs]
+
+theorem encByte_ne_nil (b : Nat) : encByte b ≠ [] := by
+  unfold encByte; split <;> (try split) <;> (try split) <;> simp
+
+/-- A non-empty string never encodes to the empty string's key `0x21`: an escape is two bytes,
+and a passed-through byte is above `0x21`. -/
+theorem tagEncB_ne_empty_key (b : Nat) (bs : Bytes) : tagEncB (b :: bs) ≠ [0x21] := by
+  simp only [tagEncB, encByte]
+  by_cases h1 : b ≤ 0x21
+  · simp [h1]
+  · by_cases h2 : b = 0x5b
+    · simp [h2]
+    · by_cases h3 : b = 0x5c
+      · simp [h3]
+      · simp only [h1, h2, h3, ite_false, List.cons_append, List.nil_append, ne_eq,
+          List.cons.injEq, not_and]
+        intro h; omega
+
 /-- Decoding inverts `tag_encode_lower` on byte strings. -/
-theorem tagDec_tagEnc : ∀ s : Bytes, (∀ b ∈ s, b < 256) → tagDec (tagEnc s) = s
-  | [], _ => rfl
-  | b :: bs, h => by
-    have hb : b < 256 := h b (by simp)
-    have ih := tagDec_tagEnc bs (fun x hx => h x (by simp [hx]))
-    by_cases he : escaped b = true
-    · simp only [tagEnc, he, ite_true, tagDec]
-      rw [hex_roundtrip_byte b hb, ih]
-    · have hne : b ≠ 0x5f := by
-        intro h5; apply he; simp [escaped, h5]
-      simp only [tagEnc, he, Bool.false_eq_true, ite_false]
-      rw [tagDec_cons_ne b _ hne, ih]
+theorem tagDec_tagEnc (s : Bytes) (_h : ∀ b ∈ s, b < 256) : tagDec (tagEnc s) = s := by
+  cases s with
+  | nil => rfl
+  | cons b bs =>
+    simp only [tagEnc, tagDec, reduceCtorEq, ite_false, tagEncB_ne_empty_key, tagDecB_tagEncB]
 
 /-- `tag_encode_lower` is injective: distinct strings never share an index
 key, so a TAG exact-match query cannot return a different string. -/
@@ -51,49 +68,86 @@ theorem tagEnc_injective (s t : Bytes) (hs : ∀ b ∈ s, b < 256) (ht : ∀ b �
     (h : tagEnc s = tagEnc t) : s = t := by
   rw [← tagDec_tagEnc s hs, ← tagDec_tagEnc t ht, h]
 
+theorem encByte_printable (b : Nat) : ∀ c ∈ encByte b, 0x20 < c := by
+  unfold encByte
+  by_cases h1 : b ≤ 0x21
+  · simp only [h1, ite_true, List.mem_cons, List.not_mem_nil, or_false]; omega
+  · by_cases h2 : b = 0x5b
+    · simp [h2]
+    · by_cases h3 : b = 0x5c
+      · simp [h3]
+      · simp only [h1, h2, h3, ite_false, List.mem_cons, List.not_mem_nil, or_false]; omega
+
+theorem tagEncB_printable : ∀ (s : Bytes), ∀ c ∈ tagEncB s, 0x20 < c
+  | [], c, h => by simp [tagEncB] at h
+  | b :: bs, c, h => by
+    simp only [tagEncB, List.mem_append] at h
+    rcases h with h | h
+    · exact encByte_printable b c h
+    · exact tagEncB_printable bs c h
+
 /-- Every byte of the encoding is `> 0x20`: no `\x01` separator, no NUL
 (so `CString::new` never fails), no whitespace for the tag tokenizer to trim. -/
-theorem tagEnc_printable : ∀ (s : Bytes), ∀ c ∈ tagEnc s, 0x20 < c
-  | [], c, h => by simp [tagEnc] at h
-  | b :: bs, c, h => by
-    unfold tagEnc at h
-    split at h
-    · rename_i he
-      have := escaped_le he
-      simp only [List.mem_cons] at h
-      rcases h with h | h | h | h
-      · omega
-      · subst h; exact hexDigit_gt_space _ (by omega)
-      · subst h; exact hexDigit_gt_space _ (Nat.mod_lt _ (by decide))
-      · exact tagEnc_printable bs c h
-    · rename_i hn
-      simp only [List.mem_cons] at h
-      rcases h with h | h
-      · subst h; simp [escaped] at hn; omega
-      · exact tagEnc_printable bs c h
+theorem tagEnc_printable (s : Bytes) : ∀ c ∈ tagEnc s, 0x20 < c := by
+  unfold tagEnc
+  split
+  · simp
+  · exact tagEncB_printable s
 
-theorem hexDigit_ne_bs : ∀ n, n < 16 → hexDigit n ≠ 0x5c := by decide
+theorem encByte_no_backslash (b : Nat) : 0x5c ∉ encByte b := by
+  unfold encByte
+  by_cases h1 : b ≤ 0x21
+  · simp only [h1, ite_true, List.mem_cons, List.not_mem_nil, or_false]; omega
+  · by_cases h2 : b = 0x5b
+    · simp [h2]
+    · by_cases h3 : b = 0x5c
+      · simp [h3]
+      · simp only [h1, h2, h3, ite_false, List.mem_cons, List.not_mem_nil, or_false]; omega
+
+theorem tagEncB_no_backslash : ∀ (s : Bytes), 0x5c ∉ tagEncB s
+  | [] => by simp [tagEncB]
+  | b :: bs => by
+    simp only [tagEncB, List.mem_append, not_or]
+    exact ⟨encByte_no_backslash b, tagEncB_no_backslash bs⟩
 
 /-- No backslash in the encoding either (the query-side strip target). -/
-theorem tagEnc_no_backslash : ∀ (s : Bytes), 0x5c ∉ tagEnc s
-  | [] => by simp [tagEnc]
-  | b :: bs => by
-    unfold tagEnc
-    split
-    · rename_i he
-      have := escaped_le he
-      simp only [List.mem_cons, not_or]
-      refine ⟨by decide, fun h => hexDigit_ne_bs _ (by omega) h.symm,
-        fun h => hexDigit_ne_bs _ (Nat.mod_lt _ (by decide)) h.symm, tagEnc_no_backslash bs⟩
-    · rename_i hn
-      simp only [List.mem_cons, not_or]
-      refine ⟨?_, tagEnc_no_backslash bs⟩
-      intro h; subst h; simp [escaped] at hn
+theorem tagEnc_no_backslash (s : Bytes) : 0x5c ∉ tagEnc s := by
+  unfold tagEnc
+  split
+  · simp
+  · exact tagEncB_no_backslash s
 
-theorem tagEnc_nil_iff (s : Bytes) : tagEnc s = [] ↔ s = [] := by
-  cases s with
-  | nil => simp [tagEnc]
-  | cons b bs => unfold tagEnc; split <;> simp
+/-- #2975 (bug 10 fixed): no string, the empty one included, has an empty key, so every string
+is indexed (RediSearch skips only an empty TAG value). -/
+theorem tagEnc_ne_nil (s : Bytes) : tagEnc s ≠ [] := by
+  unfold tagEnc
+  split
+  · simp
+  · cases s with
+    | nil => contradiction
+    | cons b bs => simp [tagEncB, encByte_ne_nil]
+
+/-- A Bool key starts with `0xFF`, which no string key does when the string has no `0xFF` byte
+(a UTF-8 string never does): a Bool and a string never share a key. -/
+theorem tagEnc_ne_boolKey (s : Bytes) (hs : ∀ c ∈ s, c < 0xFF) (b : Bool) :
+    tagEnc s ≠ boolKey b := by
+  unfold tagEnc boolKey
+  split
+  · simp
+  · cases s with
+    | nil => contradiction
+    | cons c cs =>
+      have hc := hs c (by simp)
+      simp only [tagEncB, encByte]
+      by_cases h1 : c ≤ 0x21
+      · simp [h1]
+      · by_cases h2 : c = 0x5b
+        · simp [h2]
+        · by_cases h3 : c = 0x5c
+          · simp [h3]
+          · simp only [h1, h2, h3, ite_false, List.cons_append, List.nil_append, ne_eq,
+              List.cons.injEq, not_and]
+            intro h; omega
 
 /-! ## Document keys -/
 
@@ -221,34 +275,71 @@ theorem equal_exact (fields : Attr → Bool) (p : Props) (k : Attr) (c : Val)
     indexHit fields p (.equal k c) = holds p (.equal k c) := by
   cases hpk : p k with
   | none =>
-    cases hc <;> simp [indexHit, buildQ, buildEq, valueToNumeric, hf, rsMatch, docOf, hpk,
+    cases hc <;> simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch, docOf, hpk,
       holds, propOr, cyEqScalar]
   | some v =>
     have hv := hp v hpk
     cases hc with
     | int i =>
-      cases hv <;> simp [indexHit, buildQ, buildEq, valueToNumeric, hf, rsMatch, docOf, hpk,
+      cases hv <;> simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch, docOf, hpk,
         setRange, inNum_point, holds, propOr, cyEqScalar, numOf]
     | flt f =>
-      cases hv <;> simp [indexHit, buildQ, buildEq, valueToNumeric, hf, rsMatch, docOf, hpk,
+      cases hv <;> simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch, docOf, hpk,
         setRange, inNum_point, holds, propOr, cyEqScalar, numOf]
     | str s hs =>
       cases hv with
-      | int _ | flt _ => simp [indexHit, buildQ, buildEq, valueToNumeric, hf, rsMatch, docOf, hpk,
+      | int _ | flt _ => simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch, docOf, hpk,
           setRange, holds, propOr, cyEqScalar, numOf]
       | str t ht htb =>
-        have hne : tagEnc t ≠ [] := by rw [Ne, tagEnc_nil_iff]; exact ht
+        have hne : tagEnc t ≠ [] := tagEnc_ne_nil t
         have hstore : rsStore (.tag (tagEnc t)) = [.tag (tagEnc t)] := by
           cases h : tagEnc t with
           | nil => exact absurd h hne
           | cons _ _ => rfl
-        simp only [indexHit, buildQ, buildEq, valueToNumeric, hf, ite_true, rsMatch, docOf, hpk,
+        simp only [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, ite_true, rsMatch, docOf, hpk,
           setRange, List.flatMap_cons, List.flatMap_nil, hstore, List.append_nil, List.any_cons,
           List.any_nil, Bool.or_false, holds, propOr, Option.getD_some, cyEqScalar, isTrue_some]
         by_cases he : t = s
         · subst he; simp only [beq_self_eq_true]
         · have : tagEnc t ≠ tagEnc s := fun h => he (tagEnc_injective t s htb hs h)
           rw [beq_false_of_ne this, beq_false_of_ne he]
+
+/-- #2975 (bug 8 fixed): a Bool literal is exact against a stored Bool, number or string (a
+string key never starts with `0xFF`, as no UTF-8 string has that byte): `n.v = true` no longer
+returns `v = 1`. -/
+theorem boolEqual_exact (fields : Attr → Bool) (p : Props) (k : Attr) (b : Bool)
+    (hf : fields k = true) (hp : ∀ v, p k = some v → Pure v ∨ ∃ c, v = .bool c)
+    (hps : ∀ t, p k = some (.str t) → ∀ c ∈ t, c < 0xFF) :
+    indexHit fields p (.equal k (.bool b)) = holds p (.equal k (.bool b)) := by
+  cases hpk : p k with
+  | none => simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch, docOf, hpk,
+      holds, propOr, cyEqScalar]
+  | some v =>
+    rcases hp v hpk with hv | ⟨c, rfl⟩
+    · cases hv with
+      | int _ | flt _ => simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch,
+          docOf, hpk, setRange, holds, propOr, cyEqScalar, numOf]
+      | str t _ _ =>
+        have hne := beq_false_of_ne (tagEnc_ne_boolKey t (hps t hpk) b)
+        simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch, docOf, hpk,
+          setRange, holds, propOr, cyEqScalar, tagEnc_ne_nil, hne, numOf]
+    · cases b <;> cases c <;> simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch,
+        docOf, hpk, setRange, holds, propOr, cyEqScalar, boolKey]
+
+/-- #2975 (bug 8 fixed): a stored Bool is never returned by a number or string literal (`n.v = 1`
+no longer returns `v = true`). -/
+theorem equal_exact_storedBool (fields : Attr → Bool) (p : Props) (k : Attr) (c : Val) (b : Bool)
+    (hf : fields k = true) (hc : Const c) (hcs : ∀ t, c = .str t → ∀ x ∈ t, x < 0xFF)
+    (hpk : p k = some (.bool b)) :
+    indexHit fields p (.equal k c) = holds p (.equal k c) := by
+  cases hc with
+  | int _ | flt _ => simp [indexHit, buildQ, buildEq, valueToNumeric, hf, rsMatch, docOf,
+      hpk, setRange, holds, propOr, cyEqScalar, numOf]
+  | str s _ =>
+    have hne := Ne.symm (tagEnc_ne_boolKey s (hcs s rfl) b)
+    simp only [boolKey] at hne
+    simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, hf, rsMatch, docOf, hpk, setRange,
+      holds, propOr, cyEqScalar, hne, boolKey, numOf]
 
 /-- `IN` over a list of scalar literals: exact. -/
 theorem inList_exact (fields : Attr → Bool) (p : Props) (k : Attr) (xs : List Val)
@@ -257,7 +348,7 @@ theorem inList_exact (fields : Attr → Bool) (p : Props) (k : Attr) (xs : List 
     indexHit fields p (.inList k (.list xs)) = holds p (.inList k (.list xs)) := by
   have hsome : ∀ x ∈ xs, ∃ n, buildEq fields k x = some n := by
     intro x hx
-    cases hc x hx <;> simp [buildEq, valueToNumeric, hf]
+    cases hc x hx <;> simp [buildEq, valueToNumeric, tagKey, hf]
   have hxs : xs.isEmpty = false := by cases xs <;> simp_all
   simp only [indexHit, buildQ, hxs, Bool.false_eq_true, ite_false, rsMatch_union, holds]
   have key : ∀ x ∈ xs, ∀ n, buildEq fields k x = some n →

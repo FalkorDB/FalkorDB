@@ -46,6 +46,6 @@ theorem temporal_equal_exact (fields : Attr → Bool) (p : Props) (k : Attr) (c 
     indexHit fields p (.equal k c) = false ∧ holds p (.equal k c) = false := by
   have hdoc := temporal_not_indexed fields p k kd ts hpk
   cases hc <;> cases hfk : fields k <;>
-    simp [indexHit, buildQ, buildEq, valueToNumeric, holds, propOr, hpk, cyEqScalar, isTrue, rsMatch, hdoc, hfk, numOf]
+    simp [indexHit, buildQ, buildEq, valueToNumeric, tagKey, holds, propOr, hpk, cyEqScalar, isTrue, rsMatch, hdoc, hfk, numOf]
 
 end IndexLayer

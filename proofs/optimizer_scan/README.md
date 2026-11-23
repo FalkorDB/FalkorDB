@@ -47,7 +47,8 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 | Theorem | In plain words | File |
 |---|---|---|
 | `utilize_sound` | On single-label scans with Null/Int/String values and the listed filter shapes, the index rewrite selects exactly what the filter does | `IndexPipeline.lean` |
-| `sel_eq`, `sel_range`, `sel_inList`, `sel_and2`, `sel_merge` | The pieces: equality, ranges, `IN`, AND, merged ranges | `IndexSound.lean` |
+| `sel_eq`, `sel_range`, `sel_inList`, `sel_and2`, `sel_merge` | The pieces: equality, ranges, `IN`, AND, merged ranges | `BoolOperand.lean` | `is_comparison`, `is_boolean_operator` and the `bool_valued_operand` arm of `needs_post_filter` |
+| `IndexSound.lean` |
 | `trySingle_spec`, `pushAnd_spec`, `pushOr_spec` | Each branch of the index pushdown selects the right condition | `IndexSound.lean`, `IndexPipeline.lean` |
 | `edge_utilize_sound` | EdgeByIndexScan plus the bound-endpoint filter equals Filter → CondTraverse | `EdgeInline.lean` |
 | `distance_sound` | A `distance()` index scan is sound, and the Filter is always kept | `EdgeInline.lean` |
@@ -64,7 +65,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 ### How `utilize_sound` is proved
 
-1. **Model the values and the index.** A node has labels and properties. Values are Null, Int, String, plus Bool and Date for the counterexamples. `Faithful n` says every stored value is Null, Int or String. Literals must be `goodV`: a String, or an Int the index can store without losing precision (`lossy` excludes the large ones).
+1. **Model the values and the index.** A node has labels and properties. Values are Null, Bool, Int, String, plus Date for the counterexamples. `Faithful n` says every stored value is Null, Bool, Int or String. Literals must be `goodV`: a String, or an Int the index can store without losing precision (`lossy` excludes the large ones).
 2. **Model RediSearch as definitions.** `build` turns an index query into a node predicate: numeric range, exact tag, lexical range, union skips null, intersection is null on null. These are *definitions* of what RediSearch does, not proven against RediSearch.
 3. **Model the rewrite.** `utilize` follows `utilize_index.rs`: `trySingle` for one atom, `pushAnd` and `pushOr` for AND and OR, `mergeRange` for two bounds on one property. `reference` is the original `Filter → NodeByLabelScan`.
 4. **Split on the filter shape.** `goodF` lists the allowed shapes; AND additionally excludes a strict string bound. For a node without the label both sides are false. For a node with it, each atom reduces to one of the `sel_*` lemmas, and AND and OR reduce to `pushAnd_spec` and `pushOr_spec`.
@@ -76,12 +77,10 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 
 | # | Counterexample | What it means | Status |
 |---|---|---|---|
-| W2-scan-3 | `IndexCex` C4 | A computed constant ≥ 2⁵² (`n.v = 4503599627370495 + 4503599627370495 + 3`): the Filter is dropped and the op falls back to a label scan, returning every node (C: 0) | **Open** |
 | W2-scan-6 (#2972) | `Salvage.premise_fails`, `salvage_loses_row`, `rebuilt_drops_unwind` | The pass prunes a planner scan whole but salvages only its `Filter`s and `Argument` leaf, so an `Unwind`/`WITH` child is lost: `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 0 (C 1); `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 1 (C 2) | **Open**, fix in PR #3099 |
-| W2-scan-7 | `IndexArray.tryPushdown_or_ac_drops_filter`, `Cex C12` | The OR branch of `try_filter_pushdown` keeps no filter for an array-contains disjunct (the same family as #3736, which fixed AND and the single atom): `MATCH (n:L) WHERE 1 IN n.arr OR n.k = 9` on an index over `(arr, k)` also returns `{arr:[true], k:0}`, because Bool and Int share the numeric key. Rust with index and C with index return it; openCypher and Rust without an index do not. Fix: keep the filter whenever an OR branch `is_array_contains` | **Open** |
 | — | `IdSeek.lean` examples on `g5` | `id(n) > -1` returns 0 rows, and non-integer bounds error. Reported as bugs 3–4 of [`../optimizer_rewrites`](../optimizer_rewrites) | **Open** |
 
-The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): a folded `date()` constant returns every node (C3); `IN [.., date()]` drops the item (C9); multi-label AND/OR (C5, C6); Bool/Int conflation (C1, shared with C).
+The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): multi-label AND/OR (C5, C6).
 
 - `evaluate_id_filter` stops at the first empty conjunct, so a type error in a later one is masked: `id(n) = 100 AND id(n) = 'x'` returns 0 rows, swapped it errors (`probe_id_seek_error_order`).
 
@@ -110,14 +109,15 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 72 rows: `select_scan_node.rs`, `utilize_index.rs`, `utilize_node_by_id.rs`, `reorder_labels.rs`, `node_by_index_scan.rs`, one function of `runtime.rs` and one of `index/mod.rs`.
+`COVERAGE.tsv` has 75 rows: `select_scan_node.rs`, `utilize_index.rs`, `utilize_node_by_id.rs`, `reorder_labels.rs`, `node_by_index_scan.rs`, one function of `runtime.rs` and one of `index/mod.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 71 |
+| PROVEN | 74 |
 | MODELLED | 1 |
 
 - **MODELLED:** `Index::build_query_node` in `index/mod.rs`, a support function, not a target file. The RediSearch semantics of its query nodes are definitions here (`build`), used by `sel_eq`, `sel_range` and `sel_and2`.
+- `is_comparison` and `is_boolean_operator` (#2975) and the `bool_valued_operand` arm of `needs_post_filter` they feed are modelled on expression kinds in `BoolOperand.lean` (the term model has no comparison-valued operand; `boolBound` covers the literal-Bool arm): a boolean operator under a range always keeps the filter (`range_parent_flags`), on the RediSearch build only there (`redisearch_only_range`), and under `index-falkordb` also under a comparison or as an `IN` list member (`falkor_comparison_parent_flags`, `falkor_in_list_member_flags`).
 
 ## What the model does not cover
 

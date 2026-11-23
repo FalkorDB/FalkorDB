@@ -46,8 +46,9 @@ NATIVE_ERROR = re.compile(
     r"The `index-falkordb` build"
 )
 # An assertion RLTest reports, `(FAIL):\t<message>\t<file>:<line>`, printed above the verdict of
-# the test that made it. Group 1 is the message.
-ASSERTION = re.compile(r"\(FAIL\):\s*(.*?)\s+\S+\.py:\d+$")
+# the test that made it. Group 1 is the message; a `message=` the test passed follows the location
+# in brackets and is not part of it.
+ASSERTION = re.compile(r"\(FAIL\):\s*(.*?)\s+\S+\.py:\d+(?:\s+\[.*\])?$")
 
 
 def shape_pattern(shape: str) -> re.Pattern[str]:

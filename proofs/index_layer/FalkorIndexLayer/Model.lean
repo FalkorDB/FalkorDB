@@ -167,29 +167,50 @@ def holds (p : Props) : IQ → Bool
       | .list ys => ys.any (fun y => isTrue (cyEqScalar y v))
       | _ => false
 
-/-! ## `tag_encode_lower` (`index/mod.rs`) -/
+/-! ## `tag_encode_lower` and `tag_key` (`index/mod.rs`, #2975) -/
 
 def HEX : List Nat := [48,49,50,51,52,53,54,55,56,57,97,98,99,100,101,102]  -- "0123456789abcdef"
 def hexDigit (n : Nat) : Nat := HEX.getD n 0
 
-/-- The escaped bytes: `b <= 0x20 || b == b'\\' || b == b'_'` (`mod.rs`). -/
-def escaped (b : Nat) : Bool := b ≤ 0x20 || b == 0x5c || b == 0x5f
+/-- The escaped bytes: `0..=0x21`, `[` and `\` (`tag_encode_lower`). -/
+def escaped (b : Nat) : Bool := b ≤ 0x21 || b == 0x5b || b == 0x5c
 
-/-- `tag_encode_lower`, byte for byte. -/
-def tagEnc : Bytes → Bytes
+/-- One byte of `tag_encode_lower`: `0..=0x21` ↦ `0x21, 0x22 + b`; `[` ↦ `[[`; `\` ↦ `[]`;
+every other byte passes through. -/
+def encByte (b : Nat) : Bytes :=
+  if b ≤ 0x21 then [0x21, 0x22 + b]
+  else if b = 0x5b then [0x5b, 0x5b]
+  else if b = 0x5c then [0x5b, 0x5d]
+  else [b]
+
+/-- The byte loop of `tag_encode_lower`. -/
+def tagEncB : Bytes → Bytes
   | [] => []
-  | b :: bs => if escaped b then 0x5f :: hexDigit (b / 16) :: hexDigit (b % 16) :: tagEnc bs
-               else b :: tagEnc bs
+  | b :: bs => encByte b ++ tagEncB bs
+
+/-- `tag_encode_lower`: the empty string is the lone byte `0x21`, which no other string
+encodes to and which sorts before every other key. -/
+def tagEnc (s : Bytes) : Bytes := if s = [] then [0x21] else tagEncB s
+
+/-- `BOOL_TRUE_KEY` / `BOOL_FALSE_KEY`: `0xFF, 't'` / `0xFF, 'f'`. -/
+def boolKey (b : Bool) : Bytes := [0xFF, if b then 0x74 else 0x66]
+
+/-- `STRING_RANGE_END`: closes an open-ended string range below the Bool keys. -/
+def STRING_RANGE_END : Bytes := [0xFE]
 
 /-- `hex_nibble` (`mod.rs`). -/
 def hexNibble (c : Nat) : Nat :=
   if 48 ≤ c ∧ c ≤ 57 then c - 48 else if 97 ≤ c ∧ c ≤ 102 then c - 97 + 10 else 0
 
-/-- A decoder (none exists in Rust; used only to prove `tagEnc` injective). -/
-def tagDec : Bytes → Bytes
-  | 0x5f :: h :: l :: rest => (hexNibble h * 16 + hexNibble l) :: tagDec rest
-  | c :: rest => c :: tagDec rest
+/-- A decoder of the byte loop (none exists in Rust; used only to prove `tagEnc` injective). -/
+def tagDecB : Bytes → Bytes
+  | 0x21 :: c :: rest => (c - 0x22) :: tagDecB rest
+  | 0x5b :: 0x5b :: rest => 0x5b :: tagDecB rest
+  | 0x5b :: 0x5d :: rest => 0x5c :: tagDecB rest
+  | c :: rest => c :: tagDecB rest
   | [] => []
+
+def tagDec (t : Bytes) : Bytes := if t = [0x21] then [] else tagDecB t
 
 /-! ## Document keys (`hex_encode_into` `mod.rs`, `decode_id` `mod.rs`) -/
 
@@ -225,11 +246,11 @@ def intLosesPrecision (i : Int) : Bool := i.natAbs &&& MASK != 0
 
 /-! ## RediSearch documents and queries (the axiomatised boundary) -/
 
-/-- Field of the RS spec. `main` = `range:{attr}` (NUMERIC|GEO|TAG, created
-at `mod.rs`), `numArr` = `range:{attr}:numeric:arr`, `strArr` =
-`range:{attr}:string:arr` (`mod.rs`). -/
+/-- Field of the RS spec. `main` = `range:{attr}` (NUMERIC|TAG, created
+at `mod.rs`), `geo` = `range:{attr}:geo` (GEO, #2975), `numArr` = `range:{attr}:numeric:arr`,
+`strArr` = `range:{attr}:string:arr` (`mod.rs`). -/
 inductive Sub where
-  | main | numArr | strArr
+  | main | geo | numArr | strArr
   deriving DecidableEq, Repr
 
 /-- A value stored under one field. -/
@@ -288,18 +309,18 @@ field, per sub-field (before `rsStore`). `Null/Map/Node/..` are
 stored as null), so they produce nothing here. -/
 def setRange (v : Val) (s : Sub) : List RsV :=
   match s, v with
-  | .main, .bool b => [.num (.fin (if b then 1 else 0))]           -- mod.rs
+  | .main, .bool b => [.tag (boolKey b)]                           -- mod.rs (#2975: a TAG key)
   | .main, .int i => [.num (.fin i)]                               -- mod.rs
   | .main, .flt f => [.num f]                                      -- mod.rs
   | .main, .str t => [.tag (tagEnc t)]                             -- mod.rs
   | .main, .temporal _ _ => []                                     -- mod.rs (#3076: not indexed)
-  | .main, .point la lo => [.geo la lo]                            -- mod.rs
+  | .geo, .point la lo => [.geo la lo]                             -- mod.rs (#2975: `geo_name`)
   | .numArr, .list xs => xs.filterMap fun                          -- mod.rs
-      | .bool b => some (.num (.fin (if b then 1 else 0)))
       | .int i => some (.num (.fin i))
       | .flt f => some (.num f)
       | _ => none
   | .strArr, .list xs => xs.filterMap fun                          -- mod.rs
+      | .bool b => some (.tag (boolKey b))
       | .str t => some (.tag (tagEnc t))
       | _ => none
   | _, _ => []
@@ -320,7 +341,6 @@ def docOf (fields : Attr → Bool) (p : Props) : Doc := fun k s =>
 def valueToNumeric : Val → Option ENum
   | .int i => some (.fin i)
   | .flt f => some f
-  | .bool b => some (.fin (if b then 1 else 0))
   | _ => none
 
 /-- `build_numeric_range_node` (`mod.rs`). Open bounds become
@@ -337,7 +357,8 @@ def buildNumRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Val) (imn 
     | none => some .posInf
   if fields k then some (.numeric k .main lo hi (imn || mn.isNone) (imx || mx.isNone)) else none
 
-/-- `build_string_range_node` (`mod.rs`). -/
+/-- `build_string_range_node` (`mod.rs`). An open upper end is `STRING_RANGE_END`, inclusive
+(#2975), so the range stops below the Bool keys. -/
 def buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (imn imx : Bool) :
     Option QN :=
   if fields k then
@@ -347,7 +368,8 @@ def buildStrRange (fields : Attr → Bool) (k : Attr) (mn mx : Option Bytes) (im
         if !(imn && imx) then some .empty                                        -- mod.rs (#3072)
         else some (.tagToken k .main (tagEnc lo))                                -- mod.rs
       else some (.tagLex k (some (tagEnc lo)) (some (tagEnc hi)) imn imx)
-    | lo, hi => some (.tagLex k (lo.map tagEnc) (hi.map tagEnc) imn imx)
+    | lo, hi => some (.tagLex k (lo.map tagEnc) (some ((hi.map tagEnc).getD STRING_RANGE_END))
+        imn (imx || hi.isNone))
   else none
 
 def strBound : Option Val → Option (Option Bytes)
@@ -359,14 +381,20 @@ def isStrVal : Option Val → Bool
   | some (.str _) => true
   | _ => false
 
+/-- `tag_key` (`mod.rs`): the TAG key a String or Bool is indexed and looked up under. -/
+def tagKey : Val → Option Bytes
+  | .str s => some (tagEnc s)
+  | .bool b => some (boolKey b)
+  | _ => none
+
 /-- The `IndexQuery::Equal` arms of `build_query_node` (`mod.rs`),
 factored out because `InList` re-enters them (`mod.rs`). -/
 def buildEq (fields : Attr → Bool) (k : Attr) (v : Val) : Option QN :=
   match valueToNumeric v with
   | some d => if fields k then some (.numeric k .main d d true true) else none      -- mod.rs
-  | none => match v with
-    | .str s => if fields k then some (.tagToken k .main (tagEnc s)) else none      -- mod.rs
-    | _ => none                                                                      -- mod.rs
+  | none => match tagKey v with
+    | some t => if fields k then some (.tagToken k .main t) else none               -- mod.rs
+    | none => none                                                                   -- mod.rs
 
 /-- `build_query_node`. `none` is Rust's null pointer. -/
 def buildQ (fields : Attr → Bool) : IQ → Option QN
@@ -392,7 +420,7 @@ def buildQ (fields : Attr → Bool) : IQ → Option QN
         match v with
         | .int i => some (.numeric k .numArr (.fin i) (.fin i) true true)
         | .flt f => some (.numeric k .numArr f f true true)
-        | .bool b => some (.numeric k .numArr (.fin (if b then 1 else 0)) (.fin (if b then 1 else 0)) true true)
+        | .bool b => some (.tagToken k .strArr (boolKey b))
         | .str s => some (.tagToken k .strArr (tagEnc s))
         | _ => none
       else none
@@ -408,30 +436,38 @@ def indexHit (fields : Attr → Bool) (p : Props) (q : IQ) : Bool :=
 
 /-! ## The runtime side (`runtime/ops/node_by_index_scan.rs`) -/
 
-/-- `IndexQuery::InList` expansion at `node_by_index_scan.rs`: keep
-only `Int|Float|String|Bool` items. -/
+def notNull : Val → Bool
+  | .null => false
+  | _ => true
+
+/-- `IndexQuery::in_list` (`mod.rs`), called by `evaluate_index_query`
+(`node_by_index_scan.rs`): one `InList` of the non-null items (#2975: a `date(...)` item is
+kept, so `can_be_served` sees it). -/
 def expandIn (k : Attr) : Val → Option IQ
-  | .list xs => some (.or ((xs.filter fun
-      | .int _ | .flt _ | .str _ | .bool _ => true
-      | _ => false).map (IQ.equal k)))
+  | .list xs => some (.inList k (.list (xs.filter notNull)))
   | _ => none
 
-/-- `is_indexable` (`node_by_index_scan.rs`). -/
+/-- `is_indexable`, local to `IndexQuery::can_be_served` (`mod.rs`), on the RediSearch build
+(a Bool has a TAG key of its own). A temporal, a Point or a list has no Equal arm. -/
 def indexable : Val → Bool
   | .int i => !intLosesPrecision i
-  | .flt _ | .str _ | .bool _ | .point _ _ | .null => true
+  | .flt _ | .str _ | .bool _ | .null => true
   | _ => false
 
-/-- `can_utilize_index` (`node_by_index_scan.rs`). -/
+def isBool : Val → Bool
+  | .bool _ => true
+  | _ => false
+
+/-- `IndexQuery::can_be_served` (`mod.rs`, #2975). -/
 def canUtilize : IQ → Bool
   | .equal _ v => indexable v
-  | .range _ mn mx _ _ => (mn.all indexable) && (mx.all indexable)
+  | .range _ mn mx _ _ =>
+      (mn.all fun v => indexable v && !isBool v) && (mx.all fun v => indexable v && !isBool v)
   | .and qs => !qs.isEmpty && qs.attach.all fun ⟨q, _⟩ => canUtilize q
   | .or qs => !qs.isEmpty && qs.attach.all fun ⟨q, _⟩ => canUtilize q
-  | .arrayContains _ v => match v with
-      | .int _ | .flt _ | .str _ | .bool _ => true
-      | _ => false
-  | _ => true
+  | .arrayContains _ v => notNull v && indexable v
+  | .inList _ (.list xs) => !xs.isEmpty && xs.all indexable
+  | .inList _ _ => false
 
 /-- What `NodeByIndexScanOp` emits for one entity of the label, followed by
 the post-filter when the optimizer kept it (`keep`). -/

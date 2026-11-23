@@ -34,7 +34,7 @@ Yes, for non-Bool data and a guarded numeric bound. `filter_iff_key` proves that
 
 **3b. Does an `IN` list (#2383) return what a label scan plus `IN` filter returns?**
 
-Yes for a non-empty list whose members are all guarded numerics, and it declines rather than answering part. One open gap sits before the column: a mixed list such as `[date(..), 2]` loses its non-scalar members in the scan op before the native route sees them, so the column is asked about a shorter list and answers wrongly (W2-index-3, FINDINGS.md; not modelled here). `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and returns them as a `KeySet::Keys` (sorted, deduplicated: `KeySet::distinct`) that `lookup` turns into the union of the point scans (since #2386 the keys are computed apart from the lookup).
+Yes for a non-empty list whose members are all guarded numerics, and it declines rather than answering part. A mixed list such as `[date(..), 2]` keeps its non-scalar members since #2975 (`IndexQuery::in_list`), so `can_be_served` refuses it and the scan falls back before the column is asked (W2-index-3, fixed; not modelled here). `n.a IN [v1, ..]` reaches the column as one `InList`; `numeric.rs::in_list` encodes every member and returns them as a `KeySet::Keys` (sorted, deduplicated: `KeySet::distinct`) that `lookup` turns into the union of the point scans (since #2386 the keys are computed apart from the lookup).
 
 - `inList_agrees`: a served list returns exactly the ids whose value equals some member (members guarded, no `Bool` data), via `point_agrees` per key;
 - `inList_isSome_iff`: the column answers only a non-empty list whose members all encode. Serving the numeric subset would drop rows held by another kind (a string member), and an empty list must not mean "no rows"; the scan op does not re-check the predicate, so both are declined (`inListKeys_isSome_iff`), and under `index-falkordb` a decline is an error, not a RediSearch query;
@@ -130,7 +130,7 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 
 The hypotheses on `range_agrees`:
 
-- **No `Bool` data** (`NotBool`). A `Bool` shares a key with `0`/`1` (`bool_divergence`). This matches C and the RediSearch path, and is pinned in a Rust test.
+- **No `Bool` data** (`NotBool`). A `Bool` shares a key with `0`/`1` (`bool_divergence`). This matches C and is pinned in a Rust test; since #2975 the RediSearch path keeps a Bool apart (its own TAG key), and on this build `can_be_served` refuses a Bool literal so `= true` falls back to a scan.
 - **A guarded bound** (`GoodBound`): a non-NaN float, or an int with `|b| < 2⁵²`. The planner only routes such bounds to the index, except for `i64::MIN`.
 - **The tree contents** follow `cow_btree`'s specs. Those are proven under `TreeWF`, and every tree the API can build satisfies it (`cow_btree` `Reachable_wf_asserted`), so well-formedness is not a hypothesis. Reachability alone is not the whole premise, though: `contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch` and `contract_range` also assume the configuration assertion `constAssert c.L c.B D = true`; the inserted key (and every batch element) must be below `HI` (`contract_removeBatch` has no key bound); `contract_insertBatch` and `contract_removeBatch` require a sorted batch (`SortedLe`); `contract_range` requires a collection bound `n` at least the tree's length; and `contract_fromSorted` requires a sorted input below `HI`. `Contract.lean` (`contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_fromSorted`, `contract_range`) proves each Rust tree operation equals its `Tree.lean` model on every reachable tree.
 
@@ -139,7 +139,7 @@ The hypotheses on `range_agrees`:
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 | `i64min_hole`, `i64min_window` | The guard lets `i64::MIN` through, but `i64::MIN+1 … i64::MIN+512` round to the same `f64`. In the model, a `>` range scan (which starts at `key + 1`) misses those rows and an `=` scan would include them. Confirmed live for `>`: `WHERE n.v > -9223372036854775808` dropped `i64::MIN+1` and `i64::MIN+100` | **Open.** Shared with C on `>` (C returns the same rows), so not a native-index regression; on `=` the live Rust returned only the correct row while C returned the extra ones. Suggested fix: reject `unsigned_abs() >= 1 << 52` |
-| 2 | `bool_divergence` | `true` and `1` share a key, but `true = 1` is false in the filter | Harmless: C and the RediSearch path behave the same; pinned in `encode.rs` tests |
+| 2 | `bool_divergence` | `true` and `1` share a key, but `true = 1` is false in the filter | Harmless: C behaves the same, and since #2975 `can_be_served` keeps a Bool literal off this column (the RediSearch path now stores a Bool as its own TAG key); pinned in `encode.rs` tests |
 
 Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejects 2⁵³, whose collision with 2⁵³+1 is real.
 

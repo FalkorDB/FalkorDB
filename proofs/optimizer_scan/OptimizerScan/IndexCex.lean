@@ -34,8 +34,15 @@ example : agree [0] (.and [.cmp .le (.lit (.i 1)) (.prop 0), .cmp .lt (.prop 0) 
 example : agree [0] (.or [.cmp .eq (.prop 0) (.lit (.i 1)), .cmp .eq (.prop 0) (.lit (.i 7))])
     (node [0] [(0, .i 7)]) := by decide
 
-/-- C1 (shared with C): Bool and Int share the NUMERIC field — `n.v = 1` matches `v: true`. -/
-example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.i 1)))) (node [0] [(0, .b true)]) = false := by
+/-- C1 — FIXED by #2975. Bool and Int used to share the NUMERIC field, so `n.v = 1` matched
+`v: true`. A Bool now has a TAG key of its own (`tag_key`): the scan agrees. -/
+example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.i 1)))) (node [0] [(0, .b true)]) = true := by
+  decide
+
+/-- …and `n.v = true` is answered by the index exactly. -/
+example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.b true)))) (node [0] [(0, .b true)]) := by
+  decide
+example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.b true)))) (node [0] [(0, .i 1)]) := by
   decide
 
 /-- C2 — FIXED by #3076 (e20300436). Temporal values used to be indexed as NUMERIC timestamps, so
@@ -44,18 +51,19 @@ scan now agrees. -/
 example : agree [0] (.atom (.cmp .gt (.prop 0) (.lit (.i 0)))) (node [0] [(0, .date 5)]) = true := by
   decide
 
-/-- C3: `n.v = date(...)` (folded to a `Constant(Date)`, which `is_non_indexable_subexpr` does
-not flag) — the Filter is dropped, `can_utilize_index` rejects the Date, the op falls back to a
-full label scan: every node of the label is returned. -/
-example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.date 3)))) (node [0] [(0, .i 1)]) = false := by
+/-- C3 — FIXED by #2975. `n.v = date(...)` is folded to a `Constant(Date)`, which
+`is_non_indexable_subexpr` used not to flag: the Filter was dropped and the fallback label scan
+returned every node. It is now flagged (`is_exact_index_literal`): the Filter stays. -/
+example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.date 3)))) (node [0] [(0, .i 1)]) = true := by
   decide
 
-/-- C4: a constant expression that evaluates to an int ≥ 2^52 (`4503599627370495 +
-4503599627370495 + 3`): no literal is flagged, the Filter is dropped, the runtime value is
-lossy, fallback label scan — every node. -/
+/-- C4 — FIXED by #2975. A constant expression that evaluates to an int ≥ 2^52
+(`4503599627370495 + 4503599627370495 + 3`) used to drop the Filter (no literal flagged) and the
+lossy runtime value fell back to a label scan — every node. `Add` is now flagged
+(`is_non_indexable_subexpr` is an allow-list): the Filter stays. -/
 example : agree [0] (.atom (.cmp .eq (.prop 0)
     (.add (.add (.lit (.i 4503599627370495)) (.lit (.i 4503599627370495))) (.lit (.i 3)))))
-    (node [0] [(0, .i 1)]) = false := by decide
+    (node [0] [(0, .i 1)]) = true := by decide
 
 /-- C5: multi-label AND. `(n:A:B) WHERE n.a = 1 AND n.b = 2` with `A(a)`, `B(b)`: both
 conjuncts are merged into one query on A's index, which has no `b` field → null → nothing. -/
@@ -80,14 +88,16 @@ example : agree [0] (.atom (.inn (.abs (.prop 1)) (.list [.lit (.i 1)])))
 example : agree [0] (.atom (.inn (.lit (.i 2)) (.list [.prop 1, .prop 2])))
     (node [0] [(1, .i 2), (2, .i 7)]) = true := by decide
 
-/-- C9: `n.v IN [1, date(...)]`: the runtime drops the Date item from the `Or`, the index
-never returns the node, the retained Filter cannot add it back. -/
+/-- C9 — FIXED by #2975. `n.v IN [1, date(...)]`: the runtime used to drop the Date item, so the
+index never returned the node and the retained Filter could not add it back. `in_list` now keeps
+it, `can_be_served` refuses the list, and the scan falls back under the kept Filter. -/
 example : agree [0] (.atom (.inn (.prop 0) (.list [.lit (.i 1), .lit (.date 3)])))
-    (node [0] [(0, .date 3)]) = false := by decide
+    (node [0] [(0, .date 3)]) = true := by decide
 
 /-- C10 — FIXED by #3736. `1 IN n.arr AND …`: array-contains used to keep its Filter only at the
-root, so inside AND it was dropped, and Bool/Int share the numeric array field (shared with C). An
-array-contains conjunct now stays among the leftovers (`pushAnd`): the scan agrees. -/
+root, so inside AND it was dropped, and Bool/Int shared the numeric array field (shared with C).
+A pushed array-contains now keeps the filter (`pushed_needs_post_filter`), and since #2975 a Bool
+member has its own TAG key: the scan agrees. -/
 example : agree [0] (.and [.inn (.lit (.i 1)) (.term (.prop 3)), .opq 0])
     (node [0] [(3, .arr [.b true])]) = true := by decide
 

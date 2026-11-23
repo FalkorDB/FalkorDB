@@ -18,17 +18,17 @@ The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it mo
 
 For the query shapes below, yes. The bridge is `query_eq_scan_filter` (and `queryE_eq_scan_filter` for edges): if the index holds the right document for every entity with the label, and the predicate is one the exactness theorems cover, an id is returned iff it has the label and passes the predicate. The exactness theorems are:
 
-- `equal_exact`: `n.v = literal`, for a stored Int, Float or non-empty String;
+- `equal_exact`: `n.v = literal`, for a stored Int, Float or non-empty String; `boolEqual_exact` and `equal_exact_storedBool`: a Bool and a number never match (#2975 stores a Bool as its own TAG key);
 - `inList_exact`: `n.v IN [scalar literals]`, under the same conditions;
 - `numRange_exact`: numeric `<`, `<=`, `>`, `>=` and two-sided ranges, for every stored number including NaN and ±∞;
-- `strRange_exact`: string ranges, **only** when no string involved contains a byte ≤ 0x20, a `\` or a `_`, and stored strings are non-empty;
+- `strRange_exact`: string ranges for a stored Int, Float or non-empty UTF-8 string (every byte below 0xFE); the premise `Pure` excludes a stored empty string and a stored Bool, so neither is covered by a range-exactness theorem (the empty string's key and the Bool keys are covered only by `fixed2975_empty_string` and `fixed2975_string_range_skips_bool`);
 - `temporal_numRange_exact`, `temporal_equal_exact`: dates and times are not indexed, so a numeric or scalar query never returns them.
 
 Outside these conditions the counterexamples in [Bugs found](#bugs-found) show exactly how it goes wrong.
 
 **2. Can a stored string collide with another, or break the TAG syntax?**
 
-No. `tag_encode_lower` is the only string transformation between Cypher and RediSearch. `tagEnc_injective` proves two different strings never get the same key. `tagEnc_printable` and `tagEnc_no_backslash` prove a key never contains the separator, NUL, whitespace or `\`. So special characters cannot inject anything. But the encoding does **not** preserve order (`tagEnc_not_monotone`), which is why string ranges are exact only on strings it leaves alone.
+No. `tag_encode_lower` is the only string transformation between Cypher and RediSearch. `tagEnc_injective` proves two different strings never get the same key. `tagEnc_printable` and `tagEnc_no_backslash` prove a key never contains the separator, NUL, whitespace or `\`. So special characters cannot inject anything. Since #2975 the encoding also preserves byte order (`tagEnc_mono`, `tagEnc_lt_end`), which is what makes string ranges exact.
 
 **3. Does commit keep the index in step with the graph?**
 
@@ -47,9 +47,9 @@ Yes, for all three page formats (AoS, compact, compact-indexed): build and read 
 | Theorem | In plain words | File |
 |---|---|---|
 | `query_eq_scan_filter`, `queryE_eq_scan_filter` | Node and edge index scan = label/type scan + filter, given an exact predicate and a consistent index | `Iter.lean` |
-| `equal_exact`, `inList_exact` | `=` and `IN` are exact for stored Int, Float and non-empty String | `Proofs.lean` |
+| `equal_exact`, `inList_exact`, `boolEqual_exact` | `=` and `IN` are exact for stored Int, Float and non-empty String; `= true` matches only `true` | `Proofs.lean` |
 | `numRange_exact` | Numeric ranges are exact for every stored number, ±∞ included | `Proofs.lean` |
-| `strRange_exact` | String ranges are exact on strings without bytes ≤ 0x20, `\`, `_` | `Strings.lean` |
+| `strRange_exact` | String ranges are exact for stored Int, Float and non-empty UTF-8 strings (premise `Pure`: no stored empty string or Bool) | `Strings.lean` |
 | `tagEnc_injective`, `tagEnc_printable` | The TAG encoding never collides and never emits a separator or whitespace | `Proofs.lean` |
 | `commit_preserves_inv` | After commit the index matches the committed graph | `Maintenance.lean` |
 | `RC.not_freed` | A RediSearch handle is not freed while an iterator holds it | `Iter.lean` |
@@ -69,17 +69,11 @@ The hypotheses: the RediSearch specification (`RunSpec`, the 82 AXIOMATISED rows
 
 ## Bugs found
 
-Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 256ab4d3f: re-run of `repro.py` on a release module from this tree (redis 8.6) gives the same result as before for bugs 1-4, 7, 8, 12 (and 10), and the header's re-targets list 13 as still present; no commit since touches that code in a way that changes them. The last two rows (#3166, #2781) are not `repro.py` cases: each needs more than one setup and one query (a second `CREATE FULLTEXT INDEX` with options; a failed query whose rollback is observed afterwards), so they were reproduced by hand on a Rust and a C server and the results are recorded in those rows and in the per-bug notes of `FalkorIndexLayer.lean`.
+Each was reproduced live with `proofs/index_layer/repro.py`, which runs each query without and with the index on a Rust and a C server. Shown as full scan → index scan. Status is at main 256ab4d3f: re-run of `repro.py` on a release module from this tree (redis 8.6) gives the same result as before for bugs 4 and 12, and the header's re-targets list 13 as still present; #2975 fixed bugs 1-3, 7, 8 and 10 (their `fixed2975_…` theorems are in `Bugs.lean`); no commit since touches that code in a way that changes them. The last two rows (#3166, #2781) are not `repro.py` cases: each needs more than one setup and one query (a second `CREATE FULLTEXT INDEX` with options; a failed query whose rollback is observed afterwards), so they were reproduced by hand on a Rust and a C server and the results are recorded in those rows and in the per-bug notes of `FalkorIndexLayer.lean`.
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 (W2-index-1) | `bug_folded_temporal_constant` | `n.v = date('2020-01-01')` returns **every** node of the label: the constant is folded and treated as indexable, the filter is dropped, then the index refuses it and falls back to a label scan. C correct | **Open** |
-| 2 (W2-index-2) | `bug_point_equality` | `n.v = point({latitude:1.0, longitude:2.0})` returns `[]`. C correct | **Open** |
-| 3 (W2-index-3) | `bug_in_list_drops_item` | `n.v IN [date('2020-01-01'), 2]` drops the date row. C correct | **Open** |
 | 4 (W2-index-4) | `bug_multilabel_and`, `bug_multilabel_or` | On `(n:A:B)` with A indexing `x` and B indexing `y`, `n.x = 1 AND n.y = 2` returns `[]`, and the `OR` loses rows. C correct | **Open** |
-| 7 | `tagEnc_not_monotone`, `bug_string_range_order`, `bug_string_range_order_gt` | The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong both ways: `n.v < 'JohnA'` misses `'John Smith'` | **Open**. C is also wrong, differently |
-| 8 | `bug_bool_eq_int` | `n.v = 1` also returns `v = true`, and the reverse | **Open**. C has the same bug |
-| 10 | `bug_empty_string_not_indexed` | `n.v = ''` returns `[]`, and `n.v < 'a'` misses `''` | **Open**. C has the same bug |
 | 12 | (outside the model) | Geo radius near the poles: RediSearch geohash is limited to \|lat\| ≤ 85.05, so points at 89.99 are missed | **Open**. C has the same bug |
 | 13 (W4-index-1) | `bug_range_after_fulltext` | After a full-text index and then a range index on the same `n.s`, every range query on `n.s` targets the full-text field and returns `[]`. C correct | **Open**. Fix: pick the field whose type is `IndexType::Range` |
 | #3166 | `bug3166_stopwords_not_applied`, `bug3166_violates` (property `StopwordsAgree` / `CreateIndexKeepsStopwords`) | A range index first, then `CREATE FULLTEXT INDEX … OPTIONS {stopwords: ['router']}`: the label reports `['router']`, but its RediSearch spec keeps the default list, because the second call only registers the new field on the existing spec. `queryNodes('L', 'router')` returns 1 row; C returns 0. `createIndex_fresh_stopwords_agree` proves the new-label path agrees | **Open** |
@@ -92,11 +86,11 @@ C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a ran
 | File | What's in it |
 |---|---|
 | `Model.lean` | The executable model of `mod.rs`/`indexer.rs`: `ENum`, `tagEnc`, node and edge keys, `Document::set` (`docOf`), the query builders (`buildQ`), the RediSearch spec (`rsMatch`), `commit`, `Slots` |
-| `Proofs.lean` | Key round trips, `tagEnc_injective`, `intLosesPrecision_sound`, `equal_exact`, `inList_exact`, `numRange_exact` |
-| `Strings.lean` | `strRange_exact` and the byte-order lemmas (`lexLt_total`, `tagEnc_id`) |
+| `Proofs.lean` | Key round trips, `tagEnc_injective`, `intLosesPrecision_sound`, `equal_exact`, `boolEqual_exact`, `inList_exact`, `numRange_exact` |
+| `Strings.lean` | `strRange_exact` and the byte-order lemmas (`lexLt_total`, `tagEnc_mono`) |
 | `Temporal.lean` | `temporal_not_indexed`, `temporal_numRange_exact`, `temporal_equal_exact` |
 | `Maintenance.lean` | `Indexer::commit` (`commit_lookup`, `commit_preserves_inv`, `commit_both_removes`) and the ticket counters |
-| `Bugs.lean` | Counterexamples 1-10 and the `pre…`/`fixed…` pairs for the fixed ones |
+| `Bugs.lean` | Counterexample 4 and the `fixed…` theorems for the fixed bugs (`fixed2975_…` for 1-3, 7, 8, 10) |
 | `SetVector.lean` | The vector arm of `Document::set`: `setVector_sound` |
 | `Meta.lean`, `IndexM.lean` | `Field` and `Index` metadata, the RediSearch spec lifecycle |
 | `IndexerM.lean` | `Indexer`: create, drop, lookups, `index_info`; `createIndex_ok`, `dropIndex_spec`, the generation bump (`createIndex_regen`), bug 13 |
@@ -110,7 +104,7 @@ C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a ran
 | `LeafMerge.lean` | `merge_sorted`, `merge_walk`, `partition_point`, gallop |
 | `LeafBlockCopy.lean`, `LeafBlockCopy2.lean` | `block_copy_merge`, list level and byte level |
 | `LeafOps.lean` | `Leaf::merge_batch`: every fast path equals the slow path |
-| `InList.lean` | The `IN` arm of the index scan re-checked at 256ab4d3f: `canUtilizeInList_eq_or`, `scan_inlist_faithful` |
+| `InList.lean` | The `IN` arm of the index scan (`IndexQuery::in_list`, #2975): `canUtilizeInList_eq_or`, `scan_inlist_faithful` |
 | `LeafDispatch.lean` | The `Leaf` enum, `from_pairs` format choice, `fromPairs_roundtrip` |
 | `LeafTree.lean` | Tree glue: `pack_branches`, `build_root`, `make_private`, `from_sorted`, `insert_batch` contents |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -119,13 +113,13 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 282 rows: all of `index/mod.rs` (94) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
+`COVERAGE.tsv` has 268 rows: all of `index/mod.rs` (97) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 200 |
+| PROVEN | 185 |
+| CONDITIONAL | 1 |
 | AXIOMATISED | 82 |
-| MODELLED | 0 |
 
 - **Formerly MODELLED, now PROVEN:** the two #2781 rows. `resyncEdgeKeys_spec`/`resyncEdgeKeys_disjoint` state exactly what the edge arm of the rollback re-adds and deletes, and `commitEdgeAddKeys_mem` what `commit_edge_index_locked` writes; the rollback property itself stays refuted (`bug2781_rollback_not_restored`, open), and the only positive result for it is the fix shape `resyncEdgesFixed_restores` (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
 - **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`.

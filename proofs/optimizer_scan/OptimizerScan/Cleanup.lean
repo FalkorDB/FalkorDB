@@ -1,21 +1,21 @@
 import OptimizerScan.EdgeInline
 /-
 # Expression walkers, the fixed-point driver, and the edge clean-up passes of
-# `utilize_index.rs` (origin/main 8743953a8, after #2390 d2c42e032)
+# `utilize_index.rs` (origin/main 8743953a8, after #2390 d2c42e032; lines at #2975 69a773ce0)
 
 | here | there |
 | --- | --- |
 | `D`, `Ex`, `bfs` | `ExprIR<Variable>` trees and `indices::<Bfs>()` |
-| `extractAttr` | `extract_attribute_from_subtree` 357 |
-| `hasPropOf`, `hasAnyProp`, `nestedListE` | `subtree_has_property_of` 547, `subtree_has_any_property` 569, `list_has_nested_list` 582 |
-| `nonIdxD` | `is_non_indexable_subexpr` 855 |
+| `extractAttr` | `extract_attribute_from_subtree` 379 |
+| `hasPropOf`, `hasAnyProp`, `nestedListE` | `subtree_has_property_of` 569, `subtree_has_any_property` 591, `list_has_nested_list` 604 |
+| `nonIdxD` | `is_non_indexable_subexpr` 937, `is_exact_index_literal` 962 |
 | `IQx` | `IndexQuery<QueryExpr<Variable>>`; the old `index_query_references_var` (1123 at a9377c636) was replaced by `references.rs::index_query_references_variable` (proven in `proofs/optimizer_rewrites`, `References.iqRefs_iff`, by `(id, scope)`) |
-| `rowsWithScan`, `prune_sound`, `rowsWithScanOver`, `rowsPruned`, `prune_sound_rows` | `prune_all_node_scan_child` 1092 (#3594: the scan's children are re-attached, 1113-1124) |
-| `hasLabelsFilter`, `isHasLabelsFor`, `addToLabels` | `build_has_labels_filter` 71, `is_has_labels_for` 1142, `add_to_labels_filter` 1084 |
-| `untilStable` | `rewrite_until_stable` 881 |
-| `governingFilter`, `matchScanWithFilter` | `governing_filter` 920, `match_scan_with_filter` 942 |
-| `utilizeP`, `pendingSel` | `apply_filter_pushdown` 973 (`keep_filter = over_pending || needs_post_filter`) |
-| `tryIndexRewrite`, `utilizeIndex` | `try_index_rewrite` 1021, `utilize_index` 1124 |
+| `rowsWithScan`, `prune_sound`, `rowsWithScanOver`, `rowsPruned`, `prune_sound_rows` | `prune_all_node_scan_child` 1151 (#3594: the scan's children are re-attached, 1113-1124) |
+| `hasLabelsFilter`, `isHasLabelsFor`, `addToLabels` | `build_has_labels_filter` 71, `is_has_labels_for` 1249, `add_to_labels_filter` 1191 |
+| `untilStable` | `rewrite_until_stable` 979 |
+| `governingFilter`, `matchScanWithFilter` | `governing_filter` 1018, `match_scan_with_filter` 1039 |
+| `utilizeP`, `pendingSel` | `apply_filter_pushdown` 1070 (`keep_filter = over_pending || needs_post_filter`) |
+| `tryIndexRewrite`, `utilizeIndex` | `try_index_rewrite` 1115, `utilize_index` 1231 |
 -/
 namespace OptimizerScan.Cleanup
 open OptimizerScan.Index
@@ -27,11 +27,17 @@ inductive D
   | param
   | cint (v : Int)
   | cstr (s : Nat)
+  /-- a `Null`, `Bool` or `Float` constant: stored by the index as it is (`is_exact_index_literal`) -/
+  | cexact
+  /-- any other constant (`date(...)`, `point(...)`, a list or map value, ...) -/
   | cother
   | list
   | map
   | func (name : String)
   | prop (k : Nat)
+  /-- the predicate's structure: `And`, `Or`, `Eq`, `Lt`, `Gt`, `Le`, `Ge`, `In`, `Paren` -/
+  | logic
+  /-- any other node (arithmetic, ...) -/
   | other
   deriving DecidableEq, Repr
 
@@ -205,19 +211,27 @@ theorem nestedListE_iff (d : D) (cs : List Ex) :
     nestedListE (.node d cs) = true ↔ d = .list ∧ ∃ c ∈ cs, c.d = .list := by
   simp [nestedListE, Ex.d, Ex.cs]
 
-/-- `is_non_indexable_subexpr` (`utilize_index.rs`). -/
+/-- `is_non_indexable_subexpr` (`utilize_index.rs`, #2975: an allow-list, with
+`is_exact_index_literal` for constants). -/
 def nonIdxD (lossyI : Int → Bool) (scan : Option Nat) : D → Bool
   | .var v => scan.all (· != v)
-  | .param => true
   | .cint v => lossyI v
-  | .list | .map => true
-  | .func _ => true
-  | _ => false
+  | .cstr _ | .cexact | .prop _ | .logic => false
+  | _ => true
 
 theorem nonIdxD_spec (lossyI : Int → Bool) (scan : Option Nat) (d : D) :
     nonIdxD lossyI scan d = true ↔
-      (∃ v, d = .var v ∧ scan ≠ some v) ∨ d = .param ∨ (∃ v, d = .cint v ∧ lossyI v = true) ∨
-      d = .list ∨ d = .map ∨ ∃ n, d = .func n := by
+      (∃ v, d = .var v ∧ scan ≠ some v) ∨ (∃ v, d = .cint v ∧ lossyI v = true) ∨
+      d = .param ∨ d = .cother ∨ d = .list ∨ d = .map ∨ (∃ n, d = .func n) ∨ d = .other := by
+  cases d <;> simp [nonIdxD]
+  cases scan <;> simp
+
+/-- #2975: only the scan's own variable, the property, the predicate's structure and the exactly
+indexed literals are tolerated. -/
+theorem nonIdxD_false (lossyI : Int → Bool) (scan : Option Nat) (d : D) :
+    nonIdxD lossyI scan d = false ↔
+      (∃ v, d = .var v ∧ scan = some v) ∨ (∃ v, d = .cint v ∧ lossyI v = false) ∨
+      (∃ s, d = .cstr s) ∨ d = .cexact ∨ (∃ k, d = .prop k) ∨ d = .logic := by
   cases d <;> simp [nonIdxD]
   cases scan <;> simp
 
@@ -458,12 +472,13 @@ theorem matchScanWithFilter_spec {S : Type} (src : Option S) (anc : List Anc) (s
       simp only [Option.some.injEq, Prod.mk.injEq]
 
 /-- `apply_filter_pushdown` (`utilize_index.rs`) with its `over_pending` flag:
-    `keep_filter = over_pending || needs_post_filter`. `utilizeP _ _ _ false` is `utilize`. -/
+    `keep_filter = over_pending || needs_post_filter` (#2975: the `needs_post` that
+    `try_filter_pushdown` returns, `pushedPost`). `utilizeP _ _ _ false` is `utilize`. -/
 def utilizeP (idx : Nat → List Nat) (ls : List Nat) (f : F) (overPending : Bool) : Plan :=
   match tryPushdown idx ls f with
   | none => .filter f (.labelScan ls)
   | some (L, q, rem) =>
-    let keep := overPending || needsPost f
+    let keep := overPending || pushedPost idx ls f
     let scan := Plan.idxScan ls L q
     if rem.isEmpty then (if keep then .filter f scan else scan)
     else if keep then .filter f scan else .filter (.and rem) scan
