@@ -2096,6 +2096,25 @@ def test_previous_match_where_kept_under_traverse():
     assert query("MATCH (n) RETURN count(n)").result_set == [[4]]
 
 
+def test_earlier_filter_not_duplicated_under_rebuilt_scan():
+    """A `Filter` in the rows feeding a rebuilt scan is kept once, with that
+    input, not salvaged a second time: a volatile `WHERE rand() < 0.5` before
+    the scan would otherwise pass a row only 1 time in 4 (#2972)."""
+    query("CREATE (:A {v:1})-[:R]->(:B)", write=True)
+    n = 4000
+    for q in (
+        "MATCH (a:A) MATCH (a)-[:R]->(b:B)",
+        "MATCH (a:A) WHERE a.v = 1 MATCH (a)-[:R]->(b:B)",
+        "MATCH (a) WHERE a.v = 1 MATCH (a)-[:R]->(b)",
+    ):
+        res = query(
+            f"UNWIND range(1, {n}) AS i WITH i WHERE rand() < 0.5 {q} RETURN count(*)",
+            compare_results=False,
+        )
+        # one pass of the filter keeps ~n/2 rows (sd ~32); two would keep ~n/4
+        assert 1700 < res.result_set[0][0] < 2300, (q, res.result_set)
+
+
 def test_previous_match_kept_under_var_len_traverse():
     """The same holds when the traversal is a variable-length walk whose scan
     selection reverses it to start at the more selective end: the earlier

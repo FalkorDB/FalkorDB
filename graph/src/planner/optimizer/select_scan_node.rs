@@ -298,8 +298,8 @@ fn make_scan_subtree(
     scan
 }
 
-/// Returns the `Filter` operators on a scan subtree's single-child spine,
-/// outermost first.
+/// Returns the `Filter` operators on a scan subtree's single-child spine above
+/// its scan, outermost first.
 ///
 /// The sibling of [`argument_leaf_of`]: whatever the spine carried has to come
 /// along when the subtree is pruned and rebuilt. This pass used to re-derive an
@@ -319,7 +319,14 @@ fn filters_of(
         if matches!(node.data(), IR::Filter(_)) {
             filters.push(node.data().clone());
         }
-        if node.num_children() != 1 {
+        // What hangs below the scan is the scan's input, which the caller
+        // keeps whole (see `scan_input_of`): a `Filter` in it is already
+        // there, and salvaging it too would evaluate it twice.
+        if matches!(
+            node.data(),
+            IR::AllNodeScan(_) | IR::NodeByLabelScan { .. }
+        ) || node.num_children() != 1
+        {
             return filters;
         }
         node = node.child(0);
