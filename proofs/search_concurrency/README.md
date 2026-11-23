@@ -70,6 +70,7 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `never_stuck_3014`, `main_never_blocks` | The main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
 | `shutdown_drains` | Pool shutdown runs every queued job once, in order, then all workers exit | `Pool.lean` |
+| `trySpawn_not_lost` | `try_spawn` (#3680) never loses a job to shutdown: accepted before `close`, it runs in the drain; after, it is handed back | `Pool.lean` |
 | `docSet_vector_sound`, `other_fields_never_dropped` | A bad vector cannot drop the entity from other indexes | `Search.lean` |
 | `alloc_bounded`, `candidates_topk` | KNN never allocates more than the entity count and still returns the top `k` | `Knn.lean` |
 

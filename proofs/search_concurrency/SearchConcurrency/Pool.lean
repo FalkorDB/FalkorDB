@@ -7,7 +7,10 @@
 | `PoolS.step` | a worker's `while let Ok(job) = rx.recv()` loop body: `Some(j)` runs (panics contained), `None` exits |
 | `PoolS.spawn` | `ThreadPool::spawn` (the send never waits — unbounded — and fails only once every receiver is gone) |
 | `PoolS.shutdown`, `run` | `ThreadPool::shutdown` (one `None` per worker, then `join`) |
-| `Global` | `GLOBAL_THREAD_POOL: OnceCell`, `spawn`, `init_thread_pool`, `shutdown` |
+| `TP`, `TP.new` | a `ThreadPool` with its `closing: RwLock<bool>` flag (#3680), `false` from `with_names` |
+| `TP.close` | `ThreadPool::close` (under the write lock: `closing = true`, then one `None` per worker), the first step of `shutdown` and `shutdown_within` |
+| `TP.trySpawn` | `ThreadPool::try_spawn` (under the read lock: `Err(job)` once `closing`, else `spawn`); the two locks make `close` and `try_spawn` atomic with respect to each other |
+| `Global` | `GLOBAL_THREAD_POOL: OnceCell`, `spawn`, `try_spawn`, `init_thread_pool`, `shutdown` |
 | `acquireLoop` | `QueueSlot::try_acquire_in` (the CAS loop), `try_acquire` (on `QUEUED_QUERIES`) |
 | `Loc`, `tr`, `Sys` | a `QueueSlot`'s life: taken by `admit` (`src/graph_core.rs`), carried in the pool job, then (writes) in `WriteMessage.slot`, released by `Drop` |
 
@@ -87,39 +90,88 @@ theorem shutdown_drains (q : List Nat) (n : Nat) (e : List Nat) (hn : 0 < n) :
   simp only [PoolS.shutdownSend]
   rw [run_jobs (m + 1) m q, run_sentinels]
 
+/-! ## `closing` and `ThreadPool::try_spawn` (#3680) -/
+
+/-- A `ThreadPool`: the queue model and the `closing` flag. -/
+structure TP where
+  pool : PoolS
+  closing : Bool
+  deriving DecidableEq, Repr
+
+/-- `with_names`: `closing: RwLock::new(false)`. -/
+def TP.new (size : Nat) : TP := ⟨PoolS.new size, false⟩
+
+/-- `ThreadPool::spawn` does not read `closing`. -/
+def TP.spawn (t : TP) (j : Nat) : TP := { t with pool := t.pool.spawn j }
+
+/-- `ThreadPool::close`: `closing = true` and the sentinels, in one write-locked step. -/
+def TP.close (t : TP) : TP := ⟨t.pool.shutdownSend, true⟩
+
+/-- `ThreadPool::try_spawn`: the job back once `closing`, else `spawn`. -/
+def TP.trySpawn (t : TP) (j : Nat) : Except Nat TP :=
+  if t.closing then .error j else .ok (t.spawn j)
+
+theorem tp_new_spec (n : Nat) : (TP.new n).pool = PoolS.new n ∧ (TP.new n).closing = false := ⟨rfl, rfl⟩
+
+/-- `shutdown`/`shutdown_within` queue the same sentinels as before `close` existed. -/
+theorem close_pool (t : TP) : t.close.pool = t.pool.shutdownSend ∧ t.close.closing = true := ⟨rfl, rfl⟩
+
+/-- **A `try_spawn` job is never lost** (#3680): accepted before `close`, it is queued ahead of
+the sentinels, so the shutdown drain runs it after the jobs already queued, and every worker
+exits; once `close` ran, it is handed back as `Err` (contrast `PoolWithin.late_job_lost`, which
+still holds for `spawn`). -/
+theorem trySpawn_not_lost (q : List Nat) (n : Nat) (e : List Nat) (j : Nat) (hn : 0 < n) :
+    (match (TP.mk ⟨q.map some, n, e, n⟩ false).trySpawn j with
+      | .ok t' => run ((q ++ [j]).length + n) t'.close.pool = ⟨[], 0, e ++ (q ++ [j]), n⟩
+      | .error _ => False) ∧
+    (TP.mk ⟨q.map some, n, e, n⟩ false).close.trySpawn j = .error j := by
+  refine ⟨?_, rfl⟩
+  have hs : (PoolS.mk (q.map some) n e n).spawn j = ⟨(q ++ [j]).map some, n, e, n⟩ := by
+    simp [PoolS.spawn, show n ≠ 0 by omega]
+  simp only [TP.trySpawn, Bool.false_eq_true, ite_false, TP.spawn, TP.close, hs]
+  exact shutdown_drains (q ++ [j]) n e hn
+
 /-! ## The global `OnceCell` -/
 
 inductive Res (α : Type) | ok (a : α) | panic
 
-def Global := Option PoolS
+def Global := Option TP
 
 /-- `init_thread_pool`: `Ok` the first time, `Err(())` afterwards (pool kept). -/
 def init (g : Global) (n : Nat) : Except Unit Global :=
   match g with
-  | none => .ok (some (PoolS.new n))
+  | none => .ok (some (TP.new n))
   | some _ => .error ()
 
 def gSpawn (g : Global) (j : Nat) : Res Global :=
   match g with | none => .panic | some p => .ok (some (p.spawn j))
 /-- `shutdown`: a no-op when uninitialised. -/
-def gShutdown (g : Global) : Global := g.map PoolS.shutdownSend
+def gShutdown (g : Global) : Global := g.map TP.close
 
-theorem global_spec (n j : Nat) (p : PoolS) :
-    init none n = .ok (some (PoolS.new n)) ∧ init (some p) n = .error () ∧
+theorem global_spec (n j : Nat) (p : TP) :
+    init none n = .ok (some (TP.new n)) ∧ init (some p) n = .error () ∧
     (match gSpawn none j with | .panic => True | .ok _ => False) ∧
     gShutdown none = none ∧ (match gSpawn (some p) j with | .ok g => g = some (p.spawn j) | .panic => False) := by
   refine ⟨rfl, rfl, trivial, rfl, rfl⟩
 
-/-- `try_spawn` (`threadpool.rs`, #3680): `spawn` when the pool exists, else the job back
-as `Err` for the caller to run (no panic). -/
+/-- `try_spawn` (`threadpool.rs`, #3680): the job back as `Err` when there is no pool, else
+`ThreadPool::try_spawn`. -/
 def gTrySpawn (g : Global) (j : Nat) : Except Nat Global :=
-  match g with | none => .error j | some p => .ok (some (p.spawn j))
+  match g with | none => .error j | some p => (p.trySpawn j).map some
 
-/-- `try_spawn` never panics: uninitialised it hands the job back, otherwise it is `spawn`. -/
-theorem trySpawn_spec (j : Nat) (p : PoolS) :
-    gTrySpawn none j = .error j ∧ gTrySpawn (some p) j = .ok (some (p.spawn j)) ∧
-    (match gSpawn (some p) j with | .ok g => gTrySpawn (some p) j = .ok g | .panic => False) :=
-  ⟨rfl, rfl, rfl⟩
+/-- `try_spawn` never panics: uninitialised it hands the job back; on a pool that is not
+closing it is `spawn`; once `shutdown` has begun (`closing`) it hands the job back. -/
+theorem trySpawn_spec (j : Nat) (p : TP) :
+    gTrySpawn none j = .error j ∧
+    (p.closing = false → gTrySpawn (some p) j = .ok (some (p.spawn j))) ∧
+    (p.closing = false → match gSpawn (some p) j with | .ok g => gTrySpawn (some p) j = .ok g | .panic => False) ∧
+    (p.closing = true → gTrySpawn (some p) j = .error j) := by
+  refine ⟨rfl, fun h => ?_, fun h => ?_, fun h => ?_⟩ <;>
+    simp [gTrySpawn, gSpawn, TP.trySpawn, h, Except.map]
+
+/-- After the global `shutdown` began, `try_spawn` hands every job back. -/
+theorem trySpawn_after_shutdown (j : Nat) (p : TP) :
+    gTrySpawn (gShutdown (some p)) j = .error j := rfl
 
 /-! ## `QueueSlot::try_acquire_in`
 

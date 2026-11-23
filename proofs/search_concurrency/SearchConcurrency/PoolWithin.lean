@@ -11,7 +11,7 @@ import SearchConcurrency.Pool
 | `drain` | `workers.drain(..).partition(JoinHandle::is_finished)`: a finished handle is joined, an unfinished one is kept (`*workers = running`) and the answer is `workers.is_empty()` |
 | `within` | `ThreadPool::shutdown_within` (sentinels sent first) |
 | `holdEnd` | `ThreadPool::shutdown`: holds the `workers` lock across every `join` |
-| `PoolS.shutdownSend`, `PoolS.spawn` (Pool.lean) | the sentinel loop shared by `shutdown` and `shutdown_within`; `spawn` |
+| `PoolS.shutdownSend`, `TP.close`, `PoolS.spawn` (Pool.lean) | the sentinel loop of `ThreadPool::close` (#3680), shared by `shutdown` and `shutdown_within`; `spawn` |
 
 OS and std primitives are hypotheses, not axioms: `JoinHandle::is_finished` is
 monotone in time (`Fin.done_mono`, by construction: a worker finishes at one instant or
@@ -32,8 +32,9 @@ Findings on the code (confirmed live, `repro/threadpool_within.rs`):
 * **BUG (open)** a `shutdown_within(t)` called while another thread is inside `shutdown` blocks on
   the `workers` lock for as long as `shutdown`'s `join`: with a job that never
   returns, never (`within_blocks_behind_shutdown`), so the time limit does not hold.
-* Benign, same as `shutdown`: a job spawned after the sentinels is accepted (send `Ok`, no
-  log) and never runs (`late_job_lost`).
+* Benign, same as `shutdown`: a job `spawn`ed after the sentinels is accepted (send `Ok`, no
+  log) and never runs (`late_job_lost`). `try_spawn` (#3680) hands such a job back instead
+  (`Pool.trySpawn_not_lost`).
 -/
 namespace SC.PoolWithin
 open SC.Pool
