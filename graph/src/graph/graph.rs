@@ -1316,18 +1316,17 @@ impl Graph {
         names: impl IntoIterator<Item = &'a str>,
     ) -> Result<(), NodeOpError> {
         let mut next = self.schema.relationship_types.len();
-        let mut new: Vec<&str> = Vec::new();
+        let mut new: FxHashSet<&str> = FxHashSet::default();
         for name in names {
             // A registered type already has its id, which may itself be past
             // the limit: types without edges can be registered beyond it.
             let idx = if let Some(t) = self.get_type_id(name) {
                 t.0
-            } else if new.contains(&name) {
-                continue;
-            } else {
-                new.push(name);
+            } else if new.insert(name) {
                 next += 1;
                 next - 1
+            } else {
+                continue;
             };
             if edge_type_slot(idx).is_none() {
                 return Err(NodeOpError::TooManyRelationshipTypes {
