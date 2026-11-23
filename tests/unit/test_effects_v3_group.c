@@ -1857,6 +1857,62 @@ void test_effectsV3Group_unstatedOptionIsNotARepeat(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// A FOLD MUST NOT SWALLOW AN OPTION NOBODY ELSE STATES
+//
+// _field_options_eq reads the field-level half only, and has to: a record that
+// has had its language stripped must still be something to fold into, which is
+// what foldsIntoAStrippedRecord pins. The consequence is that a block STATING
+// an index-level option folds into a record WITHOUT one whenever the weights
+// and the rest agree.
+//
+// Both fields below ask for weight 2.0, so they are one record. Only the
+// second mentions a language. Free it with the rest of the folded block and
+// the payload states it nowhere: the replica builds the index with no language
+// while the primary has english - the same divergence as a lost strip, reached
+// by folding rather than by splitting.
+void test_effectsV3Group_foldKeepsAnOptionNobodyElseStates(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	SIValue a = SI_Map(1);                  // no language
+	Map_Add(&a, SI_ConstStringVal("weight"), SI_DoubleVal(2.0));
+
+	SIValue b = SI_Map(2);                  // the language, and the SAME weight
+	Map_Add(&b, SI_ConstStringVal("language"), SI_ConstStringVal("english"));
+	Map_Add(&b, SI_ConstStringVal("weight"), SI_DoubleVal(2.0));
+
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+			"P", INDEX_FLD_FULLTEXT, 12, "a", a);
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+			"P", INDEX_FLD_FULLTEXT, 13, "b", b);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+			"equal weights fold whatever the index-level half says, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n;
+	unsigned char *buf = _encode(g, &n);
+
+	size_t o = _options_offset(buf, n);
+	TEST_ASSERT_(buf[o] == 1,
+			"the folded-into record must carry the language the second field "
+			"stated - no other record states it, so dropping it states it "
+			"nowhere");
+
+	// and it is the language that was stated, not an empty one
+	uint64_t len;
+	memcpy(&len, buf + o + 1, 8);
+	TEST_ASSERT_(len == strlen("english") + 1,
+			"expected 'english' and its NUL, got a length of %llu",
+			(unsigned long long)len);
+	TEST_ASSERT_(memcmp(buf + o + 1 + 8, "english", 7) == 0,
+			"the adopted language should read 'english'");
+
+	free(buf);
+	Map_Free(a);
+	Map_Free(b);
+	EffectsV3Grouping_Free(g);
+}
+
 // a vector statement's options survive the conversion, codes and all
 void test_effectsV3Group_vectorOptions(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
@@ -1950,6 +2006,8 @@ TEST_LIST = {
 		test_effectsV3Group_anotherIndexDoesNotStripOptions },
 	{ "EffectsV3Group:unstatedOptionIsNotARepeat",
 		test_effectsV3Group_unstatedOptionIsNotARepeat },
+	{ "EffectsV3Group:foldKeepsAnOptionNobodyElseStates",
+		test_effectsV3Group_foldKeepsAnOptionNobodyElseStates },
 	{ "EffectsV3Group:vectorOptions",
 		test_effectsV3Group_vectorOptions },
 	{ "EffectsV3Group:attributeOrderDoesNotSplit",

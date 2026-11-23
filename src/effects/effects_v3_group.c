@@ -1505,6 +1505,41 @@ static bool _names_one_schema
 	return n == 1 && schemas[0].id == (uint32_t)id;
 }
 
+// is 'a' a record for the SAME INDEX as the field being added?
+//
+// An index's identity on this wire: the opcode, the entity type, the single
+// schema it names, and the field type. A range index and a fulltext index over
+// one label are two objects - differentIndexesNeverFold pins that - so the
+// field type belongs in the identity, not beside it.
+//
+// A CCH record is never it, even when it names exactly one relationship type
+// and so agrees on everything else. A path index is its own object, and
+// counting it would let it answer for an ordinary index's options.
+static bool _same_index
+(
+	const EffectsV3Record *a,  // candidate record
+	EffectType opcode,         // CREATE_INDEX or DROP_INDEX
+	SchemaType schema_type,    // node or edge
+	int schema_id,             // schema id
+	uint32_t field_type        // IndexFieldType, a bit set
+) {
+	SchemaType                a_schema_type;
+	const EffectsV3SchemaRef *a_schemas;
+	uint16_t                  a_n_schemas;
+	uint32_t                  a_field_type;
+
+	if(a->opcode != opcode ||
+	   !_index_record_key(a, &a_schema_type, &a_schemas, &a_n_schemas,
+		   &a_field_type)) {
+		return false;
+	}
+
+	return a_schema_type == schema_type
+		&& (a_field_type & INDEX_FLD_CCH) == 0
+		&& a_field_type == field_type
+		&& _names_one_schema(a_schemas, a_n_schemas, schema_id);
+}
+
 void EffectsV3Grouping_AddIndexField
 (
 	EffectsV3Grouping *g,   // accumulator
@@ -1542,46 +1577,37 @@ void EffectsV3Grouping_AddIndexField
 	// statement's language reached no record at all; and a range index over a
 	// label made a fulltext index over the same label look like a continuation
 	// of it, so the fulltext index lost options the primary kept.
-	bool language_stated  = false;  // an earlier record states the language
-	bool stopwords_stated = false;  // an earlier record states the stopwords
+	// WHAT "ONCE" MEANS. Not "an earlier record exists" but "a record for THIS
+	// index already states this option", which is the only thing that makes a
+	// repeat a repeat.
+	//
+	// SCANNED WHOLE BEFORE ANYTHING IS DECIDED, because a field folds into the
+	// FIRST record whose field-level options match, which may sit earlier than
+	// the record that states the index-level ones. Accumulating these while
+	// folding would read only the records up to the fold and could then adopt
+	// an option a later record already carries, which is the repeat this
+	// exists to prevent.
+	bool language_stated  = false;  // some record states the language
+	bool stopwords_stated = false;  // some record states the stopwords
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
-		EffectsV3Record *a = g->announcements + i;
+		const EffectsV3Record *a = g->announcements + i;
 
-		SchemaType                a_schema_type;
-		const EffectsV3SchemaRef *a_schemas;
-		uint16_t                  a_n_schemas;
-		uint32_t                  a_field_type;
-		if(a->opcode != opcode ||
-		   !_index_record_key(a, &a_schema_type, &a_schemas, &a_n_schemas,
-			   &a_field_type)) {
+		if(!_same_index(a, opcode, schema_type, schema_id, field_type)) {
 			continue;
 		}
 
-		// A CCH RECORD IS NEVER THE SAME INDEX, even when it names exactly
-		// one relationship type and so matches on opcode, schema type and
-		// schema id. A path index is its own object: counting it here would
-		// raise the flags below and strip the language and stopwords off the
-		// first ordinary record that follows it in the same payload.
-		if(a_schema_type != schema_type
-				|| (a_field_type & INDEX_FLD_CCH) != 0
-				|| !_names_one_schema(a_schemas, a_n_schemas, schema_id)) {
-			continue;
-		}
-
-		// A DIFFERENT FIELD TYPE IS A DIFFERENT INDEX - a range index and a
-		// fulltext index over one label are two objects, which is what
-		// differentIndexesNeverFold pins. Neither folds into the other, and
-		// neither one's options were stated by the other, so this test comes
-		// BEFORE the flags rather than after them.
-		if(a_field_type != field_type) {
-			continue;
-		}
-
-		// what this record states is what a later one must not repeat. A drop
-		// carries no options, so its arm is not read here
+		// a drop carries no options, so its arm is never read
 		if(opcode == EFFECT_CREATE_INDEX && a->create_index.has_options) {
 			language_stated  |= a->create_index.options.has_language;
 			stopwords_stated |= a->create_index.options.has_stopwords;
+		}
+	}
+
+	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
+		EffectsV3Record *a = g->announcements + i;
+
+		if(!_same_index(a, opcode, schema_type, schema_id, field_type)) {
+			continue;
 		}
 
 		// A DROP IS FOLDED ON THE KEY ALONE. It carries no options, so there
@@ -1594,6 +1620,35 @@ void EffectsV3Grouping_AddIndexField
 		if(_field_options_eq(&a->create_index.options, &o,
 				(field_type & INDEX_FLD_VECTOR) != 0)) {
 			_record_append_attr_ref(a, attr_id, attr_name);
+
+			// THE FOLD LOSES AN OPTION NOBODY ELSE STATES, unless it is moved
+			// across. _field_options_eq reads the field-level half only - it
+			// has to, or a stripped record could never be folded into - so a
+			// block states an index-level option and still folds into a record
+			// without one. Freeing it with the rest would state it nowhere at
+			// all, which is the same divergence the strip below guards, got to
+			// by folding instead of by splitting.
+			//
+			// Guarded on the payload-wide flag, not on the target record: if
+			// any record already states it, moving it here would make two.
+			EffectsV3IndexOptions *t = &a->create_index.options;
+
+			if(!language_stated && o.has_language) {
+				t->language     = o.language;   // ownership moves with it
+				t->has_language = true;
+				o.language      = NULL;
+				o.has_language  = false;
+			}
+
+			if(!stopwords_stated && o.has_stopwords) {
+				t->stopwords     = o.stopwords;
+				t->n_stopwords   = o.n_stopwords;
+				t->has_stopwords = true;
+				o.stopwords      = NULL;
+				o.n_stopwords    = 0;
+				o.has_stopwords  = false;
+			}
+
 			_options_free(&o);
 			return;
 		}
