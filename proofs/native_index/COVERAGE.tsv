@@ -99,7 +99,7 @@ graph/src/index/falkordb/graph_writes.rs	scan	600	PROVEN	scan: scan_sorted (sort
 graph/src/index/falkordb/graph_writes.rs	scan_nodes	625	PROVEN	scanNodes: scanNodes_tuples, scanNodes_missing, scanNodes_below_cursor (read nodes = those that precede the returned cursor), scanNodes_all
 graph/src/index/falkordb/graph_writes.rs	scan_edges	661	PROVEN	scanEdges/edgeLoop: edgeLoop_spec (prefix read, a multi-edge pair never split), scanEdges_below_cursor, scanEdges_missing, scanEdges_all, edgeLoop_all
 graph/src/index/falkordb/numeric.rs	KeySet::distinct	156	PROVEN	KeySet.distinct: distinct_mem (sorted, same members), lookup_distinct_mem, keysOf_sorted
-graph/src/index/falkordb/numeric.rs	KeySet::contains	176	PROVEN	KeySet.contains/matchesValue (Keys = binary_search over a sorted list = membership): distinct_mem, keysOf_sorted, lookup_mem, lookup_fromEntries; #2527 Windows: windowsContainsPP_eq
+graph/src/index/falkordb/numeric.rs	KeySet::contains	176	PROVEN	KeySet.contains/matchesValue (Keys = binary_search over a sorted list = membership): distinct_mem, ofKeys_sorted, keyset_and_sorted, lookup_mem, lookup_fromEntries; #2527 Windows: windowsContainsPP_eq
 graph/src/index/falkordb/numeric.rs	NumericIndex::range_keys	507	PROVEN	rangeKeys/rangeBounds (checked_add/checked_sub branches): range_eq, range_keys, rangeBounds_eq
 graph/src/index/falkordb/falkordb_index.rs	IndexColumn::rows_at	165	PROVEN	IndexColumn.rowsAt (= NumericIndex.pointKey): rows_mem; #3738 delegates to RangeIndex::rows_at (tag kinds: TagSel tagIn / isHeldBy)
 graph/src/index/falkordb/falkordb_index.rs	EqualCandidates::rows	298	PROVEN	EqualCandidates.rows: rows_mem (exactly the ids whose value shares the key), equalCandidates_complete
