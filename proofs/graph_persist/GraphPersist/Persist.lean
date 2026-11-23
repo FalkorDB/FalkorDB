@@ -32,7 +32,7 @@ schema, payload directory, then each payload. This file models the encoder
   order Redis hands the keys over in, and that graph is the single-key one.
 * `rebuild_calls`, `rebuild_entity`, `rebuild_meta_first` (`Indexes.lean`) — one
   `create_index_sync` per (attribute, field) in `field_order`, language/stopwords carried
-  by the first full-text field only. Since #3680 consecutive like fields share one call:
+  by the first full-text field only. Since #3680 consecutive fields (in `field_order`, each attribute's fields in order) of the same index type with equal options, none a vector field, on distinct attributes, and not the full-text field that carries the label's language or stopwords (it is created alone) share one call:
   `rebuildB_expand` (the batches expand to exactly those calls), `exec_retry`.
 
 Sub-codecs proved elsewhere enter as the fields of `Codecs` (laws, not axioms): header and
