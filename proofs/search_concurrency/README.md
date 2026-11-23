@@ -108,7 +108,7 @@ A 40-second stress run (`repro/stress.py`: 3 writers, 6 readers, `GRAPH.DELETE`,
 | `Search.lean` | `Document::set` with RediSearch as a hypothesis structure, vector and fulltext option parsing: `docSet_vector_sound`, `doc_always_accepted`, `rust_eq_c` |
 | `Knn.lean` | `vector_query_nodes`/`vector_query_edges` with the `k` clamp: `alloc_bounded`, `candidates_topk` |
 | `Once.lean` | Set-once globals in `thread_id.rs` and `storage/registry.rs`, and the `POOL_THREAD` cell |
-| `Glue.lean` | `graph_core.rs` C name rules (`upToNul_idem`, `cGraphName_eq_lossy_key`) and the graph registry (`registerGraph_*`, `renameGraph_moves`) |
+| `Glue.lean` | `graph_core.rs` C name rules (`upToNul_idem`, `cGraphName_eq_lossy_key`) and the graph registry (`registerGraph_*`; `rename_graph` is gone since #2782, the registry being keyed by graph identity — redis_layer `GraphCore`) |
 | `Exec.lean` | `ThreadedGraph` constructors, `WriteQueryOk::modified`, `execute_query`/`execute_profile` write detection and admission hand-off (`execQuery_read`, `execQuery_write_keeps_slot`), `compute_effective_timeout`, the two replies |
 | `Session.lean` | `QuerySession`'s own state and drop order, `check_fork` (`checkFork_verdict`), the GIL guard (`acquire_nested`, `acquire_drop`), `must_run_inline`, `reauthorize_write`, `MvccGraph::new`/`from_graph`/`Drop`, `CommitOp::next`'s lock path |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
@@ -129,7 +129,7 @@ No path dependencies.
 
 - **CONDITIONAL (none left):** `Session.checkFork` has two outcomes only.
 - **AXIOMATISED:** thin wrappers over the Redis module API (blocking and unblocking clients, thread-safe contexts, the GIL lock and unlock, replication, string helpers), and `Index::add_document`, whose RediSearch behaviour is the `RediSearch` hypothesis structure in `Search.lean` (a whole document is rejected or accepted).
-- **Formerly MODELLED / NOT COVERED (31 rows, now PROVEN in `Glue`, `Exec`, `Session`, `Search`):** the C name helpers, `register_graph`/`rename_graph`, the `ThreadedGraph` constructors, `execute_query`/`execute_profile`/`profile_sync`, `compute_effective_timeout`, the two replies, the `QuerySession` constructors, accessors, release and drop order, `Gil::acquire`/`drop`, `must_run_inline`, `reauthorize_write`, `MvccGraph::new`/`from_graph`/`Drop`, the `Field` constructors and `CommitOp::next` (its lock path, with the #3226 property refuted).
+- **Formerly MODELLED / NOT COVERED (31 rows, now PROVEN in `Glue`, `Exec`, `Session`, `Search`):** the C name helpers, `register_graph`, the `ThreadedGraph` constructors, `execute_query`/`execute_profile`/`profile_sync`, `compute_effective_timeout`, the two replies, the `QuerySession` constructors, accessors, release and drop order, `Gil::acquire`/`drop`, `must_run_inline`, `reauthorize_write`, `MvccGraph::new`/`from_graph`/`Drop`, the `Field` constructors and `CommitOp::next` (its lock path, with the #3226 property refuted).
 
 `bash proofs/coverage.sh` counts each function once, in its best bucket across projects.
 

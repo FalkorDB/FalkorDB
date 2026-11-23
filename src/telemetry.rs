@@ -18,7 +18,7 @@ use valkey_module::logging::log_warning;
 use valkey_module::{Context, ValkeyString, ValkeyValue, raw};
 
 use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
-use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, up_to_nul};
+use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_id, up_to_nul};
 use crate::query_session::{hold_gil, holds_gil};
 use crate::redis_type::key_holds_graph;
 
@@ -383,6 +383,18 @@ pub fn strip_stream(
     }
 }
 
+/// [`strip_stream`] in database `db`, leaving `ctx`'s selected database as it was.
+///
+/// A graph's stream lives next to it, and a context starts out in whichever database
+/// its caller selected (#2782). The same constraints as [`strip_stream`].
+pub fn strip_stream_in_db(
+    ctx: *mut raw::RedisModuleCtx,
+    db: i32,
+    graph_name: &str,
+) -> bool {
+    RestoreSelectedDb::select(ctx, db).is_some_and(|_restore| strip_stream(ctx, graph_name))
+}
+
 /// Keys of graphs that have been freed and whose telemetry streams are still to be
 /// deleted, see [`queue_streams_of_freed_graph`].
 ///
@@ -393,7 +405,7 @@ pub fn strip_stream(
 /// The lock is taken only on the main thread or under the GIL, so it is never held
 /// across a fork: [`delete_streams_of_freed_graphs`] takes it in a fork child.
 struct FreedGraphStreams {
-    names: Mutex<Vec<String>>,
+    names: Mutex<Vec<(i32, String)>>,
     pending: AtomicBool,
 }
 
@@ -410,10 +422,26 @@ impl FreedGraphStreams {
     /// [`Self::take`].
     fn push(
         &self,
-        names: Vec<String>,
+        names: Vec<(i32, String)>,
     ) {
         self.names.lock().extend(names);
         self.pending.store(true, Ordering::Release);
+    }
+
+    /// `SWAPDB a b`: a name queued for database `a` is now in `b`, and the other way
+    /// round. The queued stream goes with its database, like the graph did.
+    fn swap_dbs(
+        &self,
+        a: i32,
+        b: i32,
+    ) {
+        for (db, _) in &mut *self.names.lock() {
+            if *db == a {
+                *db = b;
+            } else if *db == b {
+                *db = a;
+            }
+        }
     }
 
     /// Whether there may be names to take. One atomic load, no lock.
@@ -423,7 +451,7 @@ impl FreedGraphStreams {
 
     /// Remove and return every queued name, empty when there is none. The lock is
     /// released before this returns, so the caller deletes keys without it.
-    fn take(&self) -> Vec<String> {
+    fn take(&self) -> Vec<(i32, String)> {
         if !self.pending.swap(false, Ordering::AcqRel) {
             return Vec::new();
         }
@@ -472,11 +500,19 @@ pub fn set_flush_in_progress(in_progress: bool) {
 /// the same names. A name queued here would be deleted out of *that* dataset: a
 /// snapshot that wrongly carried a telemetry stream would have it quietly removed
 /// on load, which is exactly what the tests of the persistence strip look for.
-pub fn queue_streams_of_freed_graph(names: Vec<String>) {
+pub fn queue_streams_of_freed_graph(names: Vec<(i32, String)>) {
     if names.is_empty() || !holds_gil() || FLUSH_IN_PROGRESS.load(Ordering::Relaxed) {
         return;
     }
     FREED_GRAPH_STREAMS.push(names);
+}
+
+/// Re-key the queued stream deletions after `SWAPDB a b`, see [`queue_streams_of_freed_graph`].
+pub fn swap_queued_stream_dbs(
+    a: i32,
+    b: i32,
+) {
+    FREED_GRAPH_STREAMS.swap_dbs(a, b);
 }
 
 /// Delete the telemetry streams queued by [`queue_streams_of_freed_graph`]: one
@@ -486,8 +522,8 @@ pub fn queue_streams_of_freed_graph(names: Vec<String>) {
 /// The GIL must be held, and the caller must be somewhere a key may be deleted: not
 /// inside a type callback.
 pub fn delete_streams_of_freed_graphs(ctx: *mut raw::RedisModuleCtx) {
-    for name in &FREED_GRAPH_STREAMS.take() {
-        strip_stream(ctx, name);
+    for (db, name) in &FREED_GRAPH_STREAMS.take() {
+        strip_stream_in_db(ctx, *db, name);
     }
 }
 
@@ -508,6 +544,68 @@ pub fn delete_stream(
         key.as_bytes(),
     )];
     let _ = ctx.call("DEL", args.iter().collect::<Vec<_>>().as_slice());
+}
+
+/// [`delete_stream`], but only when the key holds a stream.
+///
+/// For relocation cleanup, which runs on a name the graph's history is only presumed to
+/// live at: another value of the same name (`SET telemetry{g} keep`) is not that history.
+pub fn delete_stream_if_stream(
+    ctx: &Context,
+    graph_name: &str,
+) {
+    let key = stream_name(graph_name);
+    let args = [ValkeyString::create_from_slice(
+        ctx.get_raw(),
+        key.as_bytes(),
+    )];
+    let args = args.iter().collect::<Vec<_>>();
+    let is_stream = matches!(
+        ctx.call("TYPE", args.as_slice()),
+        Ok(ValkeyValue::SimpleString(t) | ValkeyValue::BulkString(t)) if t == "stream"
+    );
+    if is_stream {
+        let _ = ctx.call("DEL", args.as_slice());
+    }
+}
+
+/// Puts `ctx` back on the database it had selected when this was made, when dropped.
+struct RestoreSelectedDb(*mut raw::RedisModuleCtx, i32);
+
+impl RestoreSelectedDb {
+    /// Select `db` on `ctx`, or `None` when the server refuses it (the context is
+    /// then still on its own database, and nothing is to be restored).
+    fn select(
+        ctx: *mut raw::RedisModuleCtx,
+        db: i32,
+    ) -> Option<Self> {
+        unsafe {
+            let orig = raw::RedisModule_GetSelectedDb.expect("RedisModule_GetSelectedDb")(ctx);
+            (raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(ctx, db)
+                == raw::REDISMODULE_OK as i32)
+                .then_some(Self(ctx, orig))
+        }
+    }
+}
+
+impl Drop for RestoreSelectedDb {
+    fn drop(&mut self) {
+        unsafe { raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(self.0, self.1) };
+    }
+}
+
+/// [`delete_stream_if_stream`] in database `db`, leaving `ctx`'s selected database as it was.
+///
+/// # Safety
+/// `ctx` must be a live module context.
+pub unsafe fn delete_stream_in_db(
+    ctx: &Context,
+    db: i32,
+    graph_name: &str,
+) {
+    if let Some(_restore) = RestoreSelectedDb::select(ctx.get_raw(), db) {
+        delete_stream_if_stream(ctx, graph_name);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -803,6 +901,9 @@ struct PendingEntry {
     /// The Redis key this query addressed — replaced by the key the graph is
     /// registered under *now* just before the write, see `resolve_current_names`.
     graph_name: Arc<str>,
+    /// The database the graph is registered in, set alongside `graph_name` by
+    /// `resolve_current_names`: the stream lives next to the graph.
+    db: i32,
     /// The graph this query ran on, weakly.
     ///
     /// The graph and not the name is what an entry belongs to: a name can be
@@ -823,11 +924,11 @@ struct BatchGraph {
     /// being freed and its address reused by another between resolution and the write.
     /// `Arc::as_ptr` of this is also what the batch's entries are matched against.
     graph: Arc<RwLock<ThreadedGraph>>,
-    /// The key this batch's entries addressed. Tried against the registry first: it is
-    /// still the right answer for every graph whose key has not moved.
+    /// The key this batch's entries addressed. Reused as the resolved name when the
+    /// registry still agrees, which it does for every graph whose key has not moved.
     captured: Arc<str>,
-    /// The key the graph is registered under *now*, once resolved.
-    current: Option<Arc<str>>,
+    /// The database and key the graph is registered under *now*, once resolved.
+    current: Option<(i32, Arc<str>)>,
 }
 
 /// Re-key every entry to the Redis key its graph is registered under *now*, dropping
@@ -843,7 +944,7 @@ struct BatchGraph {
 ///
 /// One registry lock for the whole batch rather than one per entry: at flush rates the
 /// per-entry version was tens of thousands of acquisitions a second on a mutex that
-/// `register_graph`, `rename_graph`, `graph_free` and the pre-fork sync all need.
+/// `register_graph`, `relocate_graph`, `graph_free` and the pre-fork sync all need.
 ///
 /// Called with the GIL held, so that the name this settles on and the keyspace
 /// [`key_holds_graph`] then checks it against cannot disagree: a `RENAME` runs on the
@@ -856,38 +957,18 @@ fn resolve_current_names(
     graphs: &mut [BatchGraph],
 ) {
     if !graphs.is_empty() {
+        // The registry is keyed by graph identity, so this is one hash lookup per
+        // distinct graph of the batch whatever happened to its key since.
         let registry = GRAPH_REGISTRY.lock();
-        // One hash lookup per graph settles the overwhelming majority: the key an entry
-        // addressed is still the key its graph answers to unless a `RENAME` moved it, or
-        // the name was rebound to a different graph, in the milliseconds since.
-        let mut unresolved = 0;
         for b in &mut *graphs {
-            match registry.get(&*b.captured) {
-                Some(arc) if arc.data_ptr() == b.graph.data_ptr() => {
-                    b.current = Some(Arc::clone(&b.captured));
-                }
-                _ => unresolved += 1,
-            }
-        }
-        // Only the graphs that missed need the scan, and it stops as soon as the last of
-        // them is placed. Scanning unconditionally is O(R·G) in the number of graphs in
-        // the keyspace, with the GIL held, every 5-10ms: on a multi-tenant keyspace of
-        // tens of thousands of graphs that is all command processing stalled behind
-        // telemetry bookkeeping.
-        if unresolved > 0 {
-            for (name, arc) in registry.iter() {
-                let Some(b) = graphs
-                    .iter_mut()
-                    .find(|b| b.current.is_none() && b.graph.data_ptr() == arc.data_ptr())
-                else {
-                    continue;
+            b.current = registry.get(&graph_id(&b.graph)).map(|e| {
+                let name = if *b.captured == *e.name {
+                    Arc::clone(&b.captured)
+                } else {
+                    Arc::from(e.name.as_str())
                 };
-                b.current = Some(Arc::from(name.as_str()));
-                unresolved -= 1;
-                if unresolved == 0 {
-                    break;
-                }
-            }
+                (e.db, name)
+            });
         }
     }
     batch.retain_mut(|pe| {
@@ -897,7 +978,7 @@ fn resolve_current_names(
         // entry can borrow a live graph's address and be filed under its name. Upgrading
         // here instead put one contended atomic per entry, a thousand of them a flush,
         // on the single counter every query thread is already touching.
-        let Some(name) = graphs
+        let Some((db, name)) = graphs
             .iter()
             .find(|b| Arc::as_ptr(&b.graph) == pe.graph.as_ptr())
             .and_then(|b| b.current.as_ref())
@@ -909,6 +990,7 @@ fn resolve_current_names(
         if pe.graph_name != *name {
             pe.graph_name = Arc::clone(name);
         }
+        pe.db = *db;
         true
     });
 }
@@ -954,10 +1036,10 @@ fn hold_batch_graphs(batch: &[PendingEntry]) -> Vec<BatchGraph> {
 /// Release what [`hold_batch_graphs`] took, off this thread if it turns out to be the
 /// last holder.
 ///
-/// `register_graph`, `rename_graph` and `graph_free` all hand teardown to a background
-/// thread rather than run it inline, because freeing a large graph and its RediSearch
-/// indexes is slow (it takes no GIL). The flusher is a latency-critical thread for the
-/// same reason they are: the next batch waits behind whatever runs here.
+/// `graph_free` hands teardown to a background thread rather than run it inline,
+/// because freeing a large graph and its RediSearch indexes is slow (it takes no GIL).
+/// The flusher is a latency-critical thread for the same reason it is: the next batch
+/// waits behind whatever runs here.
 fn release_batch_graphs(graphs: Vec<BatchGraph>) {
     for b in graphs {
         let arc = b.graph;
@@ -1066,6 +1148,7 @@ pub fn enqueue_entry(
         if tx
             .send(PendingEntry {
                 graph_name: Arc::clone(graph_name),
+                db: 0,
                 graph: Arc::downgrade(graph),
                 entry,
             })
@@ -1321,9 +1404,24 @@ fn flusher_loop() {
             // rather than once per entry. Sorting is enough: entries of one graph end
             // up in one run, and being stable it keeps arrival order within a graph,
             // which is the order consumers read.
-            batch.sort_by(|a, b| a.graph_name.cmp(&b.graph_name));
-            for run in batch.chunk_by(|a, b| a.graph_name == b.graph_name) {
+            // By database too: two databases can each hold a graph of one name.
+            // And by graph: two keys whose bytes differ can share a lossy name.
+            let identity = |e: &PendingEntry| (e.db, e.graph.as_ptr() as usize);
+            batch.sort_by(|a, b| (identity(a), &a.graph_name).cmp(&(identity(b), &b.graph_name)));
+            for run in
+                batch.chunk_by(|a, b| identity(a) == identity(b) && a.graph_name == b.graph_name)
+            {
                 let name = &run[0].graph_name;
+                // The stream is written into the graph's database; this context is
+                // detached, so it is selected per run. Not written anywhere else: a
+                // stream in whatever database the detached context happens to have
+                // selected would be another graph's history.
+                if unsafe {
+                    raw::RedisModule_SelectDb.expect("RedisModule_SelectDb")(tsc, run[0].db)
+                } != raw::REDISMODULE_OK as i32
+                {
+                    continue;
+                }
                 // The registry named this key; Redis has to agree that it still
                 // holds this graph (see `key_holds_graph`). On the registry's word
                 // alone this would recreate the stream key of a graph Redis has

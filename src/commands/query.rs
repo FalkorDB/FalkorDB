@@ -154,6 +154,6 @@ pub fn graph_query(
     create_key
         .set_value(&GRAPH_TYPE, graph.clone())
         .map_err(wrong_type_compat)?;
-    register_graph(name, graph);
+    register_graph(ctx, name, graph);
     result
 }

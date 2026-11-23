@@ -1,12 +1,14 @@
 import RedisLayer.GraphCore
 /-!
-# Several Redis databases over one name-keyed `GRAPH_REGISTRY` (#2782) — gap closed 2026-10-20
+# Several Redis databases over one `GRAPH_REGISTRY` (#2782, fixed by #3424)
 
-`GraphCore.Reg` modelled the registry over a single keyspace, so a graph name living in
-two Redis databases (`SELECT 0` / `SELECT 1`) could not be expressed. Here the keyspace
-is keyed by `(db, key)` while the registry stays keyed by the name only, as in Rust.
+The keyspace is keyed by `(db, key)`; the registry by graph identity (`GraphCore.Reg`), each
+entry carrying the database and name of its key. `GRAPH.QUERY k "CREATE …"` in database `db`
+(`graph_query`'s create/open path): an existing graph runs its write past the writer check
+(`graph_is_registered`); an empty key gets a new graph, stored and then registered with
+`register_graph(ctx, …)` at the context's selected database.
 
-Every query in the repro is a write (`CREATE`), so it reaches the writer check.
+Every query here is a write (`CREATE`), so it reaches the writer check.
 -/
 namespace RedisLayer.MultiDb
 open RedisLayer.GraphCore
@@ -29,7 +31,7 @@ def query (s : Srv) (db : Nat) (k : List Char) : Srv × Res :=
   | some g => (s, if isRegistered s.reg g then .ok else .aborted)
   | none =>
     let g := s.next
-    ({ keys := ((db, k), g) :: s.keys, reg := (register s.reg k g).1, next := g + 1 }, .ok)
+    ({ keys := ((db, k), g) :: s.keys, reg := register s.reg db k g, next := g + 1 }, .ok)
 
 def run (s : Srv) : List (Nat × List Char) → List Res
   | [] => []
@@ -58,29 +60,40 @@ theorem existing_ok (s : Srv) (db : Nat) (k : List Char) (g : Nat) (hi : Keyspac
   obtain ⟨e, he, rfl⟩ := hm
   simp [query, hg, hi e he]
 
-/-- One name, two databases (the live repro: db0, db1, db0). -/
+/-- **The invariant is kept by every query**: registering a new graph displaces no other
+graph's entry, in whichever database (`GraphCore.register_keeps_others`). -/
+theorem query_keeps (s : Srv) (db : Nat) (k : List Char) (hi : KeyspaceRegistered s) :
+    KeyspaceRegistered (query s db k).1 := by
+  unfold query
+  split
+  · exact hi
+  · intro e he
+    simp only [List.mem_cons] at he
+    rcases he with rfl | he
+    · exact register_registered _ _ _ _
+    · exact isRegistered_register_mono _ _ _ _ _ (hi e he)
+
+theorem run_ok (s : Srv) (qs : List (Nat × List Char)) (hi : KeyspaceRegistered s) :
+    ∀ r ∈ run s qs, r = .ok := by
+  induction qs generalizing s with
+  | nil => simp [run]
+  | cons q qs ih =>
+    obtain ⟨db, k⟩ := q
+    intro r hr
+    simp only [run, List.mem_cons] at hr
+    rcases hr with rfl | hr
+    · cases hl : s.lookup db k with
+      | some g => exact existing_ok s db k g hi hl
+      | none => simp [query, hl]
+    · exact ih _ (query_keeps s db k hi) r hr
+
+/-- **#2782 fixed**: every sequence of writes, over any databases and names, succeeds. -/
+theorem writes_succeed (qs : List (Nat × List Char)) : WritesSucceed qs :=
+  run_ok Srv.empty qs empty_registered
+
+/-- One name, two databases (the #2782 repro: db0, db1, db0): all three succeed, as in C. -/
 def repro : List (Nat × List Char) := [(0, "shared".toList), (1, "shared".toList), (0, "shared".toList)]
 
-/-- **BUG #2782**: creating `shared` in db1 re-registers the name and displaces db0's graph,
-so the db0 graph, still stored under its key, is no longer registered and the next write
-to it aborts. Live: Rust `Labels added: 1`, `Labels added: 1`, then "graph was deleted
-or replaced while the query was running, aborting"; C succeeds three times. -/
-theorem bug2782_same_name_other_db_aborts :
-    run Srv.empty repro = [.ok, .ok, .aborted] ∧ ¬ WritesSucceed repro := by
-  have h : run Srv.empty repro = [.ok, .ok, .aborted] := by decide
-  refine ⟨h, fun hw => ?_⟩
-  have := hw .aborted (by rw [h]; simp); cases this
-
-/-- The invariant breaks at the second create. -/
-theorem bug2782_invariant_broken :
-    KeyspaceRegistered (query Srv.empty 0 "shared".toList).1 ∧
-    ¬ KeyspaceRegistered (query (query Srv.empty 0 "shared".toList).1 1 "shared".toList).1 := by
-  refine ⟨?_, ?_⟩
-  · intro e he
-    simp [query, Srv.lookup, Srv.empty] at he
-    subst he; decide
-  · intro h
-    have := h ((0, "shared".toList), 0) (by decide)
-    revert this; decide
+theorem repro_ok : run Srv.empty repro = [.ok, .ok, .ok] := by decide
 
 end RedisLayer.MultiDb

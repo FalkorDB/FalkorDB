@@ -1,5 +1,6 @@
 import GraphPersist.Persist.RoundTrip
 import GraphPersist.Persist.MultiLoad3
+import GraphPersist.Persist.MultiDb
 import GraphPersist.Persist.Indexes
 /-!
 
@@ -30,6 +31,9 @@ schema, payload directory, then each payload. This file models the encoder
   holds more than `vkey_max` entities, key 0 holds every matrix.
 * `multi_load` (`MultiLoad3.lean`) — the multi-key decode accumulates the same pending graph whatever
   order Redis hands the keys over in, and that graph is the single-key one.
+* `multi_load_db`, `two_dbs_same_name` (`MultiDb.lean`) — `DECODE_STATE` keyed by
+  `(db, graph name)`: a graph finalizes at its own `(db, name)` whatever other graphs'
+  keys are interleaved, so one name in two databases no longer collides (#2782).
 * `rebuild_calls`, `rebuild_entity`, `rebuild_meta_first` (`Indexes.lean`) — one
   `create_index_sync` per (attribute, field) in `field_order`, language/stopwords carried
   by the first full-text field only.

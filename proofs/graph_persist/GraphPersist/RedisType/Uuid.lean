@@ -1,4 +1,4 @@
-/-! # `uuid_v4` / `uuid_fields` (redis_type.rs) and virtual-key names (:463-468)
+/-! # `uuid_v4` / `uuid_fields` (redis_type.rs) and virtual-key names
 
 `uuid_v4` keeps the clock and the counter in separate
 fields: `uuid_fields(t, seq)` prints `t` in the first three fields and
@@ -161,7 +161,7 @@ theorem uuid_same_clock_distinct (t s s' : Nat) (hs : s < 2 ^ 48) (hs' : s' < 2 
     uuid t s ≠ uuid t s' :=
   uuid_counter_distinct t t s s' (by rwa [Nat.mod_eq_of_lt hs, Nat.mod_eq_of_lt hs'])
 
-/-- `same_fields` (:839-850, inside the compile-time `const _` check): `same &= a[i] == b[i]`
+/-- `same_fields` (inside the compile-time `const _` check): `same &= a[i] == b[i]`
 for `i` in `0..5`, as a fold over the arrays. -/
 def sameFields (a b : List Nat) : Bool :=
   (List.range 5).foldl (fun same i => same && (a.getD i 0 == b.getD i 0)) true
