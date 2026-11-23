@@ -21,7 +21,7 @@ For the query shapes below, yes. The bridge is `query_eq_scan_filter` (and `quer
 - `equal_exact`: `n.v = literal`, for a stored Int, Float or non-empty String; `boolEqual_exact` and `equal_exact_storedBool`: a Bool and a number never match (#2975 stores a Bool as its own TAG key);
 - `inList_exact`: `n.v IN [scalar literals]`, under the same conditions;
 - `numRange_exact`: numeric `<`, `<=`, `>`, `>=` and two-sided ranges, for every stored number including NaN and ±∞;
-- `strRange_exact`: string ranges over valid UTF-8 strings (every byte below 0xFE), the empty string included;
+- `strRange_exact`: string ranges for a stored Int, Float or non-empty UTF-8 string (every byte below 0xFE); the premise `Pure` excludes a stored empty string and a stored Bool, so neither is covered by a range-exactness theorem (the empty string's key and the Bool keys are covered only by `fixed2975_empty_string` and `fixed2975_string_range_skips_bool`);
 - `temporal_numRange_exact`, `temporal_equal_exact`: dates and times are not indexed, so a numeric or scalar query never returns them.
 
 Outside these conditions the counterexamples in [Bugs found](#bugs-found) show exactly how it goes wrong.
@@ -49,7 +49,7 @@ Yes, for all three page formats (AoS, compact, compact-indexed): build and read 
 | `query_eq_scan_filter`, `queryE_eq_scan_filter` | Node and edge index scan = label/type scan + filter, given an exact predicate and a consistent index | `Iter.lean` |
 | `equal_exact`, `inList_exact`, `boolEqual_exact` | `=` and `IN` are exact for stored Int, Float and non-empty String; `= true` matches only `true` | `Proofs.lean` |
 | `numRange_exact` | Numeric ranges are exact for every stored number, ±∞ included | `Proofs.lean` |
-| `strRange_exact` | String ranges are exact on UTF-8 strings, the empty string included | `Strings.lean` |
+| `strRange_exact` | String ranges are exact for stored Int, Float and non-empty UTF-8 strings (premise `Pure`: no stored empty string or Bool) | `Strings.lean` |
 | `tagEnc_injective`, `tagEnc_printable` | The TAG encoding never collides and never emits a separator or whitespace | `Proofs.lean` |
 | `commit_preserves_inv` | After commit the index matches the committed graph | `Maintenance.lean` |
 | `RC.not_freed` | A RediSearch handle is not freed while an iterator holds it | `Iter.lean` |
@@ -113,13 +113,13 @@ No path dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 285 rows: all of `index/mod.rs` (97) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
+`COVERAGE.tsv` has 268 rows: all of `index/mod.rs` (97) and `indexer.rs` (43), the `cow_btree` leaf and tree functions this project proves byte for byte (59), the RediSearch bindings (82), and two graph-side rows for the #2781 rollback (`pending.rs` `resync_published_indexes`, `graph.rs` `commit_edge_index_locked`).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 203 |
+| PROVEN | 185 |
+| CONDITIONAL | 1 |
 | AXIOMATISED | 82 |
-| MODELLED | 0 |
 
 - **Formerly MODELLED, now PROVEN:** the two #2781 rows. `resyncEdgeKeys_spec`/`resyncEdgeKeys_disjoint` state exactly what the edge arm of the rollback re-adds and deletes, and `commitEdgeAddKeys_mem` what `commit_edge_index_locked` writes; the rollback property itself stays refuted (`bug2781_rollback_not_restored`, open), and the only positive result for it is the fix shape `resyncEdgesFixed_restores` (`proofs/pending_commit`'s `PD.resync_spec` is keyed by id and cannot express the mismatch; it covers the node arm).
 - **AXIOMATISED:** the 82 functions of `index/redisearch/mod.rs` are the RediSearch LLAPI FFI bindings; their specification is `rsMatch`/`rsStore` in `Model.lean`.

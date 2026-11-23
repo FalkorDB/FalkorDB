@@ -143,11 +143,15 @@ theorem tagEnc_lt_end (t : Bytes) (ht : utf8 t) : lexLt (tagEnc t) STRING_RANGE_
 theorem beq_bytes (a b : Bytes) : (a == b) = decide (a = b) := by
   by_cases h : a = b <;> simp [h]
 
-/-- String ranges are exact (#2975: for every string, with no condition on its bytes beyond
-being UTF-8, the empty string included; before, the bounds and the stored strings had to avoid
-the bytes the old encoding escaped and the stored string had to be non-empty, see
-`fixed2975_string_range_order` and `fixed2975_empty_string`). The optimizer's equal-bounds case
-needs no side condition since #3072 (1c9994e37): with an exclusive side the node is empty. -/
+/-- String ranges are exact for a stored value that is `Pure` (Int, Float or a non-empty
+string; #2975). `hp : Pure` excludes a stored empty string and a stored Bool, so this theorem
+does not cover them: a stored empty string's key (`0x21`, see `fixed2975_empty_string`) and the
+Bool keys are shown only by the equality lemmas and `fixed2975_string_range_skips_bool`, not
+by a range-exactness theorem. Stored strings must be UTF-8 (`hps`); the bounds `lo`/`hi` may be
+any bytes, the empty string included. Before #2975 the bounds and the stored strings had to
+avoid the bytes the old encoding escaped (see `fixed2975_string_range_order`). The optimizer's
+equal-bounds case needs no side condition since #3072 (1c9994e37): with an exclusive side the
+node is empty. -/
 theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
     (lo hi : Option Bytes) (imn imx : Bool) (hf : fields k = true)
     (hb : lo.isSome ∨ hi.isSome)

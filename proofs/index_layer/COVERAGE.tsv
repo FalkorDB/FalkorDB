@@ -53,7 +53,7 @@ graph/src/index/text_index_options.rs	phonetic_enabled	48	PROVEN	Meta.TextOpts.p
 graph/src/index/mod.rs	value_to_numeric	1512	PROVEN	valueToNumeric (no Bool arm since #2975); equal_exact, numRange_exact, boolEqual_exact
 graph/src/index/mod.rs	int_loses_f64_precision	1525	PROVEN	intLosesPrecision; intLosesPrecision_sound
 graph/src/index/mod.rs	build_numeric_range_node	1530	PROVEN	buildNumRange (absent bound inclusive since #3081 ff3d24ba7); numRange_exact (stored ±inf included), fixed3081_open_bound_includes_inf
-graph/src/index/mod.rs	build_string_range_node	1573	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds; #2975 open upper bound = STRING_RANGE_END); strRange_exact (no equal-bounds premise since #3072; UTF-8 strings, empty included, since #2975), fixed3072_exclusive_equal_bounds, fixed2975_string_range_order, fixed2975_string_range_order_gt, fixed2975_string_range_skips_bool
+graph/src/index/mod.rs	build_string_range_node	1573	CONDITIONAL	buildStrRange (#3072 empty node for exclusive equal bounds; #2975 open upper bound = STRING_RANGE_END); strRange_exact (no equal-bounds premise since #3072; CONDITIONAL on hp: Pure for the stored value, which excludes a stored empty string and a stored Bool, and on hps: stored strings are UTF-8), fixed3072_exclusive_equal_bounds, fixed2975_string_range_order, fixed2975_string_range_order_gt, fixed2975_string_range_skips_bool
 graph/src/index/mod.rs	query	1839	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
 graph/src/index/mod.rs	query_edges	1862	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
 graph/src/index/mod.rs	fulltext_query	1880	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
