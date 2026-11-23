@@ -38,7 +38,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use orx_tree::{DynNode, DynTree, NodeRef};
+use orx_tree::{Bfs, Dfs, DynNode, DynTree, NodeRef, PostOrder};
 
 use crate::{
     graph::graph::Graph,
@@ -75,36 +75,44 @@ pub(super) fn replace_cartesian_with_index_seek(
     graph: &Graph,
     params: &HashMap<String, Value>,
 ) {
-    let new_plan = rebuild(&optimized_plan.root(), graph, params);
-    *optimized_plan = new_plan;
+    // In post-order: a later clause's product holds the earlier one, and the
+    // rows it is estimated to feed depend on whether the earlier clause's
+    // scan already became a lookup. A rewrite moves nodes, so the walk starts
+    // over after each one; a product left as it was is left again.
+    loop {
+        let rewrite = optimized_plan
+            .root()
+            .indices::<PostOrder>()
+            .find_map(|idx| {
+                try_rewrite_at(&optimized_plan.node(idx), graph, params).map(|tree| (idx, tree))
+            });
+        let Some((idx, tree)) = rewrite else {
+            break;
+        };
+        // Dropping the walk over the replaced nodes removes them.
+        let _ = optimized_plan.node_mut(idx).replace_with::<Dfs, _>(tree);
+    }
 }
 
-/// Rewrites the children first: a later clause's product holds the earlier
-/// one, and the rows it is estimated to feed depend on whether the earlier
-/// clause's scan already became a lookup.
-fn rebuild(
+/// The rewrite of `node`, when it is a `Filter` over a `CartesianProduct`
+/// that reads no `Argument` rows.
+fn try_rewrite_at(
     node: &DynNode<IR>,
     graph: &Graph,
     params: &HashMap<String, Value>,
-) -> DynTree<IR> {
-    let mut new_tree = DynTree::new(node.data().clone());
-    for child in node.children() {
-        new_tree
-            .root_mut()
-            .push_child_tree(rebuild(&child, graph, params));
-    }
-    let root = new_tree.root();
-    if let IR::Filter(filter) = root.data()
-        && let Some(child) = root.get_child(0)
-        && matches!(child.data(), IR::CartesianProduct)
-        && !child
-            .walk::<orx_tree::Bfs>()
+) -> Option<DynTree<IR>> {
+    let IR::Filter(filter) = node.data() else {
+        return None;
+    };
+    let child = node.get_child(0)?;
+    if !matches!(child.data(), IR::CartesianProduct)
+        || child
+            .walk::<Bfs>()
             .any(|data| matches!(data, IR::Argument(_)))
-        && let Some(result) = try_seek_rewrite(filter, &child, graph, params)
     {
-        return result;
+        return None;
     }
-    new_tree
+    try_seek_rewrite(filter, &child, graph, params)
 }
 
 /// The `Filter*` chain above a childless `NodeByLabelScan` or `AllNodeScan`
@@ -429,7 +437,7 @@ fn has_id_equality(
 /// Whether evaluating `expr` can raise an error (a division, a call, an
 /// element access), which a guard on the scanned branch may be there to avoid.
 fn may_fail(expr: &DynTree<ExprIR<Variable>>) -> bool {
-    expr.root().walk::<orx_tree::Bfs>().any(|data| {
+    expr.root().walk::<Bfs>().any(|data| {
         matches!(
             data,
             ExprIR::Div
@@ -445,7 +453,7 @@ fn may_fail(expr: &DynTree<ExprIR<Variable>>) -> bool {
 /// Whether `expr` calls a function whose result can differ between calls.
 fn has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
     expr.root()
-        .walk::<orx_tree::Bfs>()
+        .walk::<Bfs>()
         .any(|data| matches!(data, ExprIR::FuncInvocation(f) if f.non_deterministic || matches!(f.fn_type, FnType::Udf)))
 }
 
@@ -455,7 +463,7 @@ fn reads_node_bare(
     expr: &DynTree<ExprIR<Variable>>,
     p: u32,
 ) -> bool {
-    expr.root().indices::<orx_tree::Bfs>().any(|idx| {
+    expr.root().indices::<Bfs>().any(|idx| {
         let node = expr.node(idx);
         matches!(node.data(), ExprIR::Variable(v) if v.id == p)
             && !node
