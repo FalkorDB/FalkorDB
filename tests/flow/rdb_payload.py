@@ -437,6 +437,20 @@ class GraphValue:
                 return
         raise ValueError(f'{first}..{last} spans RDB strings')
 
+    def insert_after(self, name, data):
+        """insert raw serializer bytes (tagged values) right after a value,
+        fixing the RDB string length around it; field offsets after it are
+        stale afterwards"""
+        f = self.fields[name]
+        at = f.off + f.size
+        for q, d, e in self.chunks:
+            if d <= at <= e:
+                prefix = rdb_len_bytes((e - d) + len(data))
+                self.buf[at:at] = data
+                self.buf[q:d] = prefix
+                return
+        raise ValueError(f'{name} is outside every RDB string')
+
     def find(self, suffix, value):
         """names of the fields ending with 'suffix' whose value is 'value'"""
         return [n for n, f in self.fields.items()
