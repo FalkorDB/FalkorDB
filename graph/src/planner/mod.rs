@@ -2838,7 +2838,17 @@ impl Planner {
                 res.node_mut(insert_idx).push_child_tree(chain);
             }
         }
-        if distinct && !matches!(res.root().data(), IR::Aggregate { .. }) {
+        // An Aggregate emits one row per group, so its rows are already
+        // distinct, unless an item mixing an aggregate with other terms
+        // (`count(*) > x`) adds hidden grouping keys: two groups can then
+        // project the same row.
+        let rows_distinct = match res.root().data() {
+            IR::Aggregate { aggregations, .. } => aggregations.iter().all(|(_, expr)| {
+                matches!(expr.root().data(), ExprIR::FuncInvocation(func) if func.is_aggregate())
+            }),
+            _ => false,
+        };
+        if distinct && !rows_distinct {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {

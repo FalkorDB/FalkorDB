@@ -1464,6 +1464,20 @@ def test_aggregate_binds_only_the_new_scope():
     res = query("MATCH (p) RETURN p.name, p.name + COUNT(p)", compare_results=False)
     assert_result_set_equal_no_order(res, [["Tom", "Tom1"], ["Judy", "Judy1"]])
 
+    # Implicit grouping keys are hidden: two groups can project the same row,
+    # so DISTINCT (RETURN and WITH) must still remove the duplicates.
+    res = query(
+        "UNWIND [1, 2] AS x RETURN DISTINCT count(*) > x AS b", compare_results=False
+    )
+    assert res.result_set == [[False]]
+    res = query(
+        "UNWIND [1, 2] AS x WITH DISTINCT count(*) > x AS b RETURN b",
+        compare_results=False,
+    )
+    assert res.result_set == [[False]]
+    res = query("UNWIND [1, 2] AS x RETURN DISTINCT count(*) AS c")
+    assert res.result_set == [[2]]
+
     # A MATCH after a WITH that aggregates must not see the old scope's slots
     # as bound: `b` shared the slot id of the old `m`, so the traversal was
     # taken as an expand-into of a bound pair and found nothing (#3333, #3372).
