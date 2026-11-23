@@ -68,7 +68,7 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | Theorem | In plain words | File |
 |---|---|---|
 | `decodeBlob_never_dies`, `decodeU64_never_dies` | No status code from a corrupt blob kills the server | `Codes.lean` |
-| `decode_no_leak_no_double_free`, `adopt_ptr_blind` | `Matrix::decode` frees all it allocates, once, on every path, and ignores the payload's pointers | `MatrixDecode.lean` |
+| `decode_no_leak_no_double_free`, `adopt_ptr_blind` | `Matrix::decode` frees all it allocates, once, on every path, and ignores the payload's pointers, ASSUMING each failed component `Vector::<Untyped>::decode` is atomic (leaves nothing allocated); `decodeBool_safe` proves only the status propagates, so the `decode` row is CONDITIONAL on that contract | `MatrixDecode.lean` |
 | `checkLayers_merge_in_bounds` | `Tensor::decode` only merges delta entries inside the base | `Decode.lean` |
 | `encodeM_no_heap_addresses` | The encoded container header carries no heap address | `Glue.lean` |
 | `edgeCount_no_panic`, `edgeCount_value` | `edge_count` is total and correct while the tensor invariant holds | `Decode.lean` |
@@ -136,7 +136,8 @@ The lakefile depends on `../versioned_matrix` (path dependency), because `DeltaL
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 60 |
+| PROVEN | 59 |
+| CONDITIONAL | 1 |
 | AXIOMATISED | 1145 |
 
 **AXIOMATISED** means the function is the C library, or a wrapper whose only content is one C call:

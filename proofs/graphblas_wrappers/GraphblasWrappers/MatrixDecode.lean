@@ -148,8 +148,10 @@ def replace (h : Heap) (slots : List Nat) (k : Nat) (v : Nat) : Option (Heap × 
 
 /-- Which call fails: `ok[0]` `GxB_Container_new`, `ok[1..5]` the decodes of
 `x, h, p, i, b`, `ok[6]` `GrB_Matrix_new`, `ok[7]` the load, `ok[8]` the wait.
-A failed `Vector::<Untyped>::decode` frees what it allocated (it returns `Err`
-on every code, `decodeBool_safe`) and so allocates nothing here. Returns the
+ASSUMPTION: a failed `Vector::<Untyped>::decode` is atomic, i.e. it leaves nothing
+allocated, so it allocates nothing here. `decodeBool_safe` proves only that it returns `Err`
+on every code, not its own cleanup (`GxB_Type_from_name`, allocation, `GxB_Vector_load`), so
+the theorems below, and the `Matrix::decode` COVERAGE row, are CONDITIONAL on that contract. Returns the
 heap, the container's slots, and whether every decode succeeded. -/
 def decodeVecs (ok : List Bool) : Nat → Heap → List Nat → Option (Heap × List Nat × Bool)
   | 0, h, slots => some (h, slots, true)
