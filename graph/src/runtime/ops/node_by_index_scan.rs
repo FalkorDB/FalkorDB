@@ -299,7 +299,9 @@ impl<'a> NodeByIndexScanOp<'a> {
                     Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
                 )
             }
-            IndexQuery::Point { .. } => true,
+            // A NULL centre selects nothing, but a property `distance()` rejects must still raise
+            // its type error, so it takes the checked scan like any other shape the index declines.
+            IndexQuery::Point { point, .. } => !matches!(point, Value::Null),
         }
     }
 }

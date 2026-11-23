@@ -559,6 +559,35 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertEqual(actual, expected)
         self.env.assertEqual(expected[2], [[1]])
 
+    def test19_distance_type_error_survives_a_null_operand(self):
+        # A NULL or missing operand makes `distance()` null, but the other operand's type error
+        # is raised first, with or without an index: an integer centre over a missing property,
+        # and an integer property under a NULL centre, on nodes and on edges.
+        cases = [
+            ("MATCH (n:PN) WHERE distance(n.loc, 5) < 100 RETURN count(n)",
+             "CREATE (:PN {x: 1})", 'node'),
+            ("MATCH (n:PN) WHERE distance(n.loc, null) < 100 RETURN count(n)",
+             "CREATE (:PN {loc: 1})", 'node'),
+            ("MATCH ()-[r:PN]->() WHERE distance(r.loc, 5) < 100 RETURN count(r)",
+             "CREATE (:PE)-[:PN {x: 1}]->(:PE)", 'edge'),
+            ("MATCH ()-[r:PN]->() WHERE distance(r.loc, null) < 100 RETURN count(r)",
+             "CREATE (:PE)-[:PN {loc: 1}]->(:PE)", 'edge'),
+        ]
+        for i, (query, data, kind) in enumerate(cases):
+            outcomes = []
+            for indexed in (False, True):
+                g = self.db.select_graph(f'distance_null_{i}_{indexed}')
+                if indexed:
+                    make = create_node_range_index if kind == 'node' else create_edge_range_index
+                    make(g, 'PN', 'loc', sync=True)
+                g.query(data)
+                try:
+                    outcomes.append(g.query(query).result_set)
+                except ResponseError as e:
+                    outcomes.append(str(e))
+                g.delete()
+            self.env.assertEqual(outcomes[1], outcomes[0], message=query)
+
     def test18_edge_scan_keeps_a_raising_conjunct_and_staged_sets(self):
         # The edge counterpart of test17's array case, and a staged SET of an unindexed attribute
         # beside a MERGE on the indexed one: same answers as without indexes.

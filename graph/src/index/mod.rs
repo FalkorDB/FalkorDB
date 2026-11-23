@@ -270,11 +270,11 @@ impl IndexQuery<Value> {
     ) -> bool {
         match self {
             Self::And(children) | Self::Or(children) => children.iter().any(|c| c.raises(get)),
+            // Each operand is judged on its own: a null (or missing) one must not hide the type
+            // error of the other.
             Self::Point { key, point, .. } => {
-                let property = get(key);
-                !matches!(property, Some(Value::Null) | None)
-                    && !matches!(point, Value::Null)
-                    && !matches!((property, point), (Some(Value::Point(_)), Value::Point(_)))
+                let invalid = |v: &Value| !matches!(v, Value::Null | Value::Point(_));
+                invalid(point) || get(key).is_some_and(|v| invalid(&v))
             }
             Self::ArrayContains { key, .. } => {
                 !matches!(get(key), Some(Value::List(_) | Value::Null) | None)
