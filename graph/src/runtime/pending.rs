@@ -1094,6 +1094,7 @@ impl Pending {
         &self,
         label_ids: &[LabelId],
         g: &Graph,
+        attrs_matter: impl Fn(&[(u16, Value)]) -> bool,
     ) -> RoaringTreemap {
         if label_ids.is_empty() {
             return self.created_nodes.clone();
@@ -1123,9 +1124,13 @@ impl Pending {
         // A committed node whose attributes were set in this query: an index (and any scan that
         // reads the committed graph) still sees its old values, so a lookup on the new ones
         // misses it. It is enumerated here and the caller's filter, which reads the staged
-        // values, decides.
-        for &node_id in self.existing_nodes_attrs.keys() {
-            if self.deleted_nodes.contains(node_id) || result.contains(node_id) {
+        // values, decides. Only those whose written attributes `attrs_matter` (an indexed one):
+        // enumerating every updated node would pair each with every later row.
+        for (&node_id, attrs) in &self.existing_nodes_attrs {
+            if self.deleted_nodes.contains(node_id)
+                || result.contains(node_id)
+                || !attrs_matter(attrs)
+            {
                 continue;
             }
             let removed = self.remove_labels.get(&node_id);

@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use crate::entity_type::EntityType;
 use crate::graph::graph::NodeId;
 use crate::parser::ast::{QueryNode, Variable};
 use crate::planner::IR;
@@ -100,7 +101,19 @@ impl<'a> IncludePendingOp<'a> {
         self.label_removed_nodes = Some(pending.nodes_with_pending_label_removes(&label_ids));
 
         let pending_nodes = if label_ids.len() == self.node_pattern.labels.len() {
-            pending.get_pending_nodes_with_labels(&label_ids, &g)
+            // A committed node whose attributes were set earlier in the query is a candidate only
+            // when one of them is indexed under a pattern label: otherwise the index hit for it
+            // is not stale.
+            let labels = &self.node_pattern.labels;
+            pending.get_pending_nodes_with_labels(&label_ids, &g, |attrs| {
+                attrs.iter().any(|(attr, _)| {
+                    g.node_attr_name(*attr).is_some_and(|name| {
+                        labels.iter().any(|label| {
+                            g.falkordb_index.has_column(EntityType::Node, label, &name)
+                        })
+                    })
+                })
+            })
         } else {
             RoaringTreemap::new()
         };
