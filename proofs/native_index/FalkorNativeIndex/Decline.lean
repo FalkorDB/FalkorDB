@@ -23,7 +23,7 @@ inductive Pred where
   | or (children : List Pred)
   | and (children : List Pred)
   | inList (key : String) (list : Option (List Value))
-  | point (key : String)
+  | point (key : String) (centre radius : Value)
   | arrayContains (key : String) (value : Value)
 
 mutual
@@ -34,7 +34,7 @@ def Pred.toQuery : Pred → IndexQuery
   | .or cs => .or (Pred.toQueries cs)
   | .and cs => .and (Pred.toQueries cs)
   | .inList k l => .inList k l
-  | .point k => .point k
+  | .point k c r => .point k c r
   | .arrayContains k v => .arrayContains k v
 def Pred.toQueries : List Pred → List IndexQuery
   | [] => []
@@ -54,7 +54,7 @@ def unionMembers : Bool → List Pred → List (String × Bool)
       | .or nested => unionMembers false nested
       | .and nested => unionMembers false nested
       | .range k .. => [(k, false)]
-      | .point k => [(k, false)]
+      | .point k _ _ => [(k, false)]
       | .arrayContains k _ => [(k, false)]) ++ unionMembers top cs
 end
 

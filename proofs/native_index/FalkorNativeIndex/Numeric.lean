@@ -160,6 +160,8 @@ inductive KeySet where
   | point (k : Nat)
   | range (lo hi : Nat)
   | keys (ks : List Nat)
+  /-- `Windows` (#2527): two or more inclusive key windows, a geo cell cover. -/
+  | windows (ws : List (Nat × Nat))
 deriving Repr, DecidableEq
 
 /-- `KeySet::distinct` (`numeric.rs`): `sort_unstable(); dedup()`. -/
@@ -175,6 +177,7 @@ def KeySet.contains : KeySet → Nat → Bool
   | .point k, key => k == key
   | .range lo hi, key => decide (lo ≤ key ∧ key ≤ hi)
   | .keys ks, key => decide (key ∈ ks)
+  | .windows ws, key => ws.any (fun w => decide (w.1 ≤ key ∧ key ≤ w.2))
 
 /-- `KeySet::of_keys` (`numeric.rs`): the set of `keys`, in any order and possibly repeated;
     none is `Empty`, one is a `Point`, more is `Keys`. -/
@@ -183,6 +186,25 @@ def KeySet.ofKeys (keys : List Nat) : KeySet :=
   | .keys [] => .empty
   | .keys [k] => .point k
   | ks => ks
+
+/-- `KeySet::of_windows` (`numeric.rs`, #2527): none is `Empty`, one is a `Range` (a `Point` if it
+    holds one key), more is `Windows`. -/
+def KeySet.ofWindows : List (Nat × Nat) → KeySet
+  | [] => .empty
+  | [(lo, hi)] => if lo = hi then .point lo else .range lo hi
+  | ws => .windows ws
+
+/-- `KeySet::windows` (`numeric.rs`): a range is one window; `None` (here `[]`, never reached by
+    `and`) for any other shape. -/
+def KeySet.windowsOf : KeySet → List (Nat × Nat)
+  | .range lo hi => [(lo, hi)]
+  | .windows ws => ws
+  | _ => []
+
+/-- The pairwise overlaps of two window lists, outer `a`, inner `b` (`KeySet::and`'s last arm). -/
+def overlaps (a b : List (Nat × Nat)) : List (Nat × Nat) :=
+  a.flatMap (fun x => b.filterMap (fun y =>
+    if max x.1 y.1 ≤ min x.2 y.2 then some (max x.1 y.1, min x.2 y.2) else none))
 
 /-- `KeySet::and` (`numeric.rs`), arm by arm: two windows meet in one window, a point set keeps
     the points the other side holds. -/
@@ -194,6 +216,7 @@ def KeySet.and : KeySet → KeySet → KeySet
   | o, .keys ks => KeySet.ofKeys (ks.filter (fun k => o.contains k))
   | .empty, _ => .empty
   | _, .empty => .empty
+  | a, b => KeySet.ofWindows (overlaps a.windowsOf b.windowsOf)
 
 /-- `point_keys` (`numeric.rs`). -/
 def pointKeys (value : Value) : KeySet :=
@@ -231,6 +254,7 @@ def NumericIndex.lookup (ix : NumericIndex) : KeySet → List Nat
   | .point k => tRange ix.tree k k
   | .range lo hi => tRange ix.tree lo hi
   | .keys ks => ks.flatMap (fun k => tRange ix.tree k k)
+  | .windows ws => ws.flatMap (fun w => tRange ix.tree w.1 w.2)
 
 /-- `point` (`numeric.rs`) = `lookup (point_keys value)`. -/
 def NumericIndex.point (ix : NumericIndex) (v : Value) : List Nat := ix.lookup (pointKeys v)
@@ -261,7 +285,8 @@ inductive IndexQuery where
   | arrayContains (key : String) (value : Value)
   | or (children : List IndexQuery)
   | and (children : List IndexQuery)
-  | point (key : String)
+  /-- `Point` (`distance(n.v, centre) < radius`); its `centre` and `radius` since #2527. -/
+  | point (key : String) (centre radius : Value)
 
 /-! ## `Selection` (`range.rs`): what a column answers a predicate on one attribute with -/
 
@@ -334,7 +359,7 @@ def attrsOf : IndexQuery → Option (List String)
   | .range k .. => some [k]
   | .inList k _ => some [k]
   | .arrayContains k _ => some [k]
-  | .point k => some [k]
+  | .point k _ _ => some [k]
   | .or cs => if cs.isEmpty then none else attrsOfAll cs
   | .and cs => if cs.isEmpty then none else attrsOfAll cs
 /-- The `children.iter().all(|c| attributes_of(c, out))`. -/
@@ -415,7 +440,7 @@ def Selection.ofLeaf : IndexQuery → Option Selection
   | .inList _ (some items) => if items.isEmpty then none else Selection.equalToAny items
   | .inList _ none => none
   | .arrayContains _ v => Selection.listsHoldingOf v
-  | .point _ => none
+  | .point .. => none
   | .or _ => none
   | .and _ => none
 
@@ -985,9 +1010,159 @@ theorem ofKeys_sorted (keys ks : List Nat) (h : KeySet.ofKeys keys = .keys ks) :
   | [a] => simp at h
   | _ :: _ :: _ => simp only [KeySet.keys.injEq] at h; subst h; exact hs
 
+theorem ofWindows_not_keys (ws : List (Nat × Nat)) (ks : List Nat) : KeySet.ofWindows ws ≠ .keys ks := by
+  unfold KeySet.ofWindows
+  split
+  · simp
+  · split <;> simp
+  · simp
+
+/-- `KeySet::of_windows` holds a key exactly when one of its windows does. -/
+theorem ofWindows_contains (ws : List (Nat × Nat)) (k : Nat) :
+    (KeySet.ofWindows ws).contains k = ws.any (fun w => decide (w.1 ≤ k ∧ k ≤ w.2)) := by
+  unfold KeySet.ofWindows
+  split
+  · rfl
+  · split
+    · rename_i lo hi h; subst h
+      by_cases h : lo = k
+      · subst h; simp [KeySet.contains]
+      · simp only [KeySet.contains, List.any_cons, List.any_nil, Bool.or_false]
+        rw [beq_false_of_ne h]; symm; simp only [decide_eq_false_iff_not]; omega
+    · simp [KeySet.contains]
+  · rfl
+
+/-- **The pairwise overlaps hold a key exactly when both window lists do** (`KeySet::and`'s last arm). -/
+theorem overlaps_any (a b : List (Nat × Nat)) (k : Nat) :
+    (overlaps a b).any (fun w => decide (w.1 ≤ k ∧ k ≤ w.2)) =
+      (a.any (fun w => decide (w.1 ≤ k ∧ k ≤ w.2)) && b.any (fun w => decide (w.1 ≤ k ∧ k ≤ w.2))) := by
+  rw [Bool.eq_iff_iff]
+  simp only [overlaps, List.any_eq_true, List.mem_flatMap, List.mem_filterMap, Bool.and_eq_true,
+    decide_eq_true_eq]
+  constructor
+  · rintro ⟨w, ⟨x, hx, y, hy, hxy⟩, h1, h2⟩
+    split at hxy
+    · simp only [Option.some.injEq] at hxy; subst hxy
+      exact ⟨⟨x, hx, by omega⟩, ⟨y, hy, by omega⟩⟩
+    · simp at hxy
+  · rintro ⟨⟨x, hx, hx1, hx2⟩, ⟨y, hy, hy1, hy2⟩⟩
+    refine ⟨(max x.1 y.1, min x.2 y.2), ⟨x, hx, y, hy, ?_⟩, by omega, by omega⟩
+    rw [if_pos (by omega)]
+
+/-- A range or a set of windows holds a key exactly when one of its windows does. -/
+theorem windowsOf_contains (a : KeySet) (h : (∃ lo hi, a = .range lo hi) ∨ ∃ ws, a = .windows ws) (k : Nat) :
+    a.contains k = a.windowsOf.any (fun w => decide (w.1 ≤ k ∧ k ≤ w.2)) := by
+  rcases h with ⟨lo, hi, rfl⟩ | ⟨ws, rfl⟩ <;> simp [KeySet.contains, KeySet.windowsOf]
+
+/-- Windows as `of_windows` takes them: each non-empty, sorted and disjoint. -/
+def WinOk (ws : List (Nat × Nat)) : Prop := (∀ w ∈ ws, w.1 ≤ w.2) ∧ ws.Pairwise (fun a b => a.2 < b.1)
+
+/-- `KeySet::contains` on `Windows` as the code computes it: `partition_point(lo <= key)` finds the
+    windows starting at or below `key`; the last of them must reach `key`. -/
+def windowsContainsPP (ws : List (Nat × Nat)) (key : Nat) : Bool :=
+  match (ws.takeWhile (fun w => decide (w.1 ≤ key))).getLast? with
+  | none => false
+  | some w => decide (key ≤ w.2)
+
+private theorem winOk_tail_lo {w : Nat × Nat} {ws : List (Nat × Nat)} (h : WinOk (w :: ws)) :
+    ∀ b ∈ ws, w.2 < b.1 := (List.pairwise_cons.1 h.2).1
+
+private theorem winOk_tail {w : Nat × Nat} {ws : List (Nat × Nat)} (h : WinOk (w :: ws)) : WinOk ws :=
+  ⟨fun b hb => h.1 b (List.mem_cons_of_mem _ hb), (List.pairwise_cons.1 h.2).2⟩
+
+/-- **On sorted, disjoint windows, the `partition_point` lookup is membership in some window**, so the
+    model's `KeySet.contains` (`any`) is the code's. -/
+theorem windowsContainsPP_eq (ws : List (Nat × Nat)) (h : WinOk ws) (key : Nat) :
+    windowsContainsPP ws key = ws.any (fun w => decide (w.1 ≤ key ∧ key ≤ w.2)) := by
+  induction ws with
+  | nil => rfl
+  | cons w rest ih =>
+    have hw := h.1 w (List.mem_cons_self ..)
+    have hlt := winOk_tail_lo h
+    have ih := ih (winOk_tail h)
+    by_cases hk : w.1 ≤ key
+    · cases rest with
+      | nil => simp [windowsContainsPP, hk]
+      | cons x xs =>
+        have hx := hlt x (List.mem_cons_self ..)
+        by_cases hxk : x.1 ≤ key
+        · have hnot : ¬ key ≤ w.2 := by omega
+          have : windowsContainsPP (w :: x :: xs) key = windowsContainsPP (x :: xs) key := by
+            simp only [windowsContainsPP, List.takeWhile_cons, hk, hxk, decide_true]
+            simp [List.getLast?_cons]
+          rw [this, ih]; simp [hnot]
+        · have hall : ∀ b ∈ x :: xs, ¬ b.1 ≤ key := by
+            intro b hb
+            rcases List.mem_cons.1 hb with rfl | hb
+            · exact hxk
+            · have := (List.pairwise_cons.1 (winOk_tail h).2).1 b hb
+              have := (winOk_tail h).1 x (List.mem_cons_self ..)
+              omega
+          have hany : (x :: xs).any (fun w => decide (w.1 ≤ key ∧ key ≤ w.2)) = false := by
+            rw [List.any_eq_false]; intro b hb; simp [hall b hb]
+          simp only [List.any_cons] at hany ⊢
+          simp only [windowsContainsPP, List.takeWhile_cons, hk, hxk, decide_true, decide_false]
+          simp_all
+          intro a b hab h1 _
+          have := hall.2 a b hab
+          omega
+    · have hall : ∀ b ∈ rest, ¬ b.1 ≤ key := by
+        intro b hb; have := hlt b hb; omega
+      have hany : rest.any (fun w => decide (w.1 ≤ key ∧ key ≤ w.2)) = false := by
+        rw [List.any_eq_false]; intro b hb; simp [hall b hb]
+      simp [windowsContainsPP, hk, hany]
+      intro a b hab h1
+      exact absurd h1 (hall _ hab)
+
+/-- **`and`'s pairwise overlaps of sorted, disjoint windows are sorted and disjoint**, as the code's
+    comment claims and `of_windows`'s `debug_assert!` demands. -/
+theorem overlaps_winOk (a b : List (Nat × Nat)) (ha : WinOk a) (hb : WinOk b) : WinOk (overlaps a b) := by
+  have row_mem : ∀ (x p : Nat × Nat), p ∈ b.filterMap (fun y =>
+      if max x.1 y.1 ≤ min x.2 y.2 then some (max x.1 y.1, min x.2 y.2) else none) →
+      ∃ y ∈ b, p = (max x.1 y.1, min x.2 y.2) ∧ max x.1 y.1 ≤ min x.2 y.2 := by
+    intro x p hp
+    obtain ⟨y, hy, he⟩ := List.mem_filterMap.1 hp
+    split at he
+    · exact ⟨y, hy, (Option.some.inj he).symm, by assumption⟩
+    · cases he
+  induction a with
+  | nil => exact ⟨by simp [overlaps], by simp [overlaps]⟩
+  | cons x a ih =>
+    have ih := ih (winOk_tail ha)
+    have hrow : WinOk (b.filterMap (fun y =>
+        if max x.1 y.1 ≤ min x.2 y.2 then some (max x.1 y.1, min x.2 y.2) else none)) := by
+      refine ⟨fun p hp => ?_, ?_⟩
+      · obtain ⟨y, _, rfl, hle⟩ := row_mem x p hp; exact hle
+      · refine List.Pairwise.filterMap _ ?_ hb.2
+        intro y y' hyy' p hp p' hp'
+        split at hp
+        · split at hp'
+          · simp only [Option.mem_def, Option.some.injEq] at hp hp'
+            subst hp hp'
+            simp only; omega
+          · simp at hp'
+        · simp at hp
+    have hx : ∀ q ∈ overlaps a b, x.2 < q.1 := by
+      intro q hq
+      obtain ⟨x', hx', hq⟩ := List.mem_flatMap.1 hq
+      obtain ⟨y, _, rfl, _⟩ := row_mem x' q hq
+      have := winOk_tail_lo ha x' hx'
+      simp only; omega
+    refine ⟨fun p hp => ?_, ?_⟩
+    · simp only [overlaps, List.flatMap_cons, List.mem_append] at hp
+      rcases hp with hp | hp
+      · exact hrow.1 p hp
+      · exact ih.1 p hp
+    · simp only [overlaps, List.flatMap_cons] at ih ⊢
+      refine List.pairwise_append.2 ⟨hrow.2, ih.2, fun p hp q hq => ?_⟩
+      obtain ⟨y, _, rfl, _⟩ := row_mem x p hp
+      have := hx q hq
+      simp only; omega
+
 theorem keyset_and_sorted (a b : KeySet) (ks : List Nat) (h : KeySet.and a b = .keys ks) : Sorted ks := by
   cases a <;> cases b <;> simp [KeySet.and] at h <;> first
     | exact ofKeys_sorted _ _ h
+    | exact absurd h (ofWindows_not_keys _ _)
     | (split at h <;> simp_all)
     | skip
 
@@ -1090,6 +1265,12 @@ theorem lookup_mem (ix : NumericIndex) (ks : KeySet) (id : Nat) (hid : id < W) :
     · rintro ⟨k, hk, k', hk', h1, h2⟩; exact ⟨k', hk', by have : k' = k := by omega
                                                           subst this; exact hk⟩
     · rintro ⟨k, hk, h⟩; exact ⟨k, h, k, hk, Nat.le_refl _, Nat.le_refl _⟩
+  | windows ws =>
+    simp only [NumericIndex.lookup, List.mem_flatMap, mem_tRange _ _ _ _ hid, KeySet.contains,
+      List.any_eq_true, decide_eq_true_eq]
+    constructor
+    · rintro ⟨w, hw, k, hk, h1, h2⟩; exact ⟨k, hk, w, hw, h1, h2⟩
+    · rintro ⟨k, hk, w, hw, h1, h2⟩; exact ⟨w, hw, k, hk, h1, h2⟩
 
 /-- **The scan standing in for a building column keeps exactly what the built column answers.** A
     column built from `entries` answers a key set with the ids whose value's key the set contains,

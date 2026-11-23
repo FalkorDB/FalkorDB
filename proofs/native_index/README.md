@@ -12,6 +12,8 @@ MATCH (p:Person) WHERE p.age = 42 RETURN p
 
 Since #2383 the index also serves `IN [...]`, and an `OR` of equalities and `IN` lists on one attribute, as a union of point lookups (`MATCH (p:Person) WHERE p.age IN [30, 40]`).
 
+Since #2527 a column also has a geo kind: points keyed by the Morton code of their grid cell (`Value.point lat lon key`, the key left abstract). `n.v = p`, a range on point bounds, and `distance(n.v, c) < r` are answered with a **superset** (the cell, every point, the cells of an abstract cover `coverOf`) that the planner's retained filter narrows (`equalT_point_matches`, `rangeT_point`, `withinT_point_matches`); `KeySet::Windows` and `and`'s window overlaps are proven (`windowsContainsPP_eq`, `overlaps_winOk`, `keyset_and_contains`), and every numeric and string theorem is unchanged.
+
 The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes,versioned,unique,mod}.rs`, the native-index parts of `graph/src/graph/graph.rs` (including `redisearch_fields`, `node_matches`, `relationship_matches`), and the index route of `graph/src/runtime/ops/{node,edge}_by_index_scan.rs`. The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv) (every Rust fn with its Lean theorem). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
@@ -166,8 +168,8 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `Unique.lean` | `nativeUniqueQuery`, `fewest`, `ReadOnce` |
 | `Decline.lean` | `Pred`, `unionMembers`, `oneKey` (read by `Tag.describeK`) |
 | `Tag.lean` | #3738's tag (string) kind: `encodeValueK`, the four-kind `EncodedTuples` (`et_spec`), `lastWriteWinsT` over `(kind, ColumnKey, id)`, `describeK` |
-| `TagSel.lean` | #3738's `Selection` with a string share (`StrSel`, `Scalars`, `SelT`): on numbers every builder and `lookup` is the old `Selection` (`matchesT_lift`, `equalT_numeric`, `rangeT_numeric`, `lookupT_lift`); on strings Cypher's semantics (`equalT_string_matches`, `rangeT_string_matches`, `rangeT_mixed`, `andT_matches`, `conjunctionT_matches`) |
-| `RangeKinds.lean` | #3738's `RangeIndex { numeric, tag }`: `new`, `for_each_stored_key`, `push_encoded`, `add_encoded`, `remove_encoded`, `is_empty`, `memory_usage` are the old numeric model on the numeric share plus the tag kind's own (`pushEncoded_num`, `addEncoded_numeric`, `isEmpty_iff`, `memoryUsage_kinds`); the tag trees are parameters |
+| `TagSel.lean` | #3738's `Selection` with a string share (and #2527's geo share: `equalT_point_matches`, `rangeT_point`, `withinT_point_matches`, `geoLookup_mem`) (`StrSel`, `Scalars`, `SelT`): on numbers every builder and `lookup` is the old `Selection` (`matchesT_lift`, `equalT_numeric`, `rangeT_numeric`, `lookupT_lift`); on strings Cypher's semantics (`equalT_string_matches`, `rangeT_string_matches`, `rangeT_mixed`, `andT_matches`, `conjunctionT_matches`) |
+| `RangeKinds.lean` | #3738's `RangeIndex { numeric, tag }` and #2527's `geo` (`pushEncoded_geo`, `addEncoded_geo`, `removeEncoded_geo`): `new`, `for_each_stored_key`, `push_encoded`, `add_encoded`, `remove_encoded`, `is_empty`, `memory_usage` are the old numeric model on the numeric share plus the tag kind's own (`pushEncoded_num`, `addEncoded_numeric`, `isEmpty_iff`, `memoryUsage_kinds`); the tag trees are parameters |
 | `DistinctDisjoint.lean` | #3738's `DistinctIter` `dedupe` flag: on (`new`) it is `distinctGo` (`distinctGoD_true`); off (`disjoint`, the kinds of one column) it yields the chained streams (`distinctGoD_false_spec`), which is the deduplicated union when no doc occurs twice (`chainRem_disjoint`, `chainRem_initial`) |
 | `Rows.lean`, `Bridge.lean`, `Online.lean` | `Selection` row lemmas, the `sizing_batch` / `query_range` glue, and the background builder (`online_build.rs`: a job reads a snapshot and publishes against the entry published at publish time, `publish_stale` / `publish_valid`) |
 | `Batch.lean`, `Rebase.lean`, `Memory.lean` | Indexer batch commit and fit (#3566), rebase and catch-up (#3567, #3568), memory usage (#3569) |
@@ -178,12 +180,13 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 
 ## Coverage
 
-`COVERAGE.tsv` has 190 function rows (plus one header row):
+`COVERAGE.tsv` has 442 function rows (plus one header row):
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 187 |
-| CONDITIONAL | 3 |
+| PROVEN | 360 |
+| MODELLED | 1 |
+| NOT COVERED | 81 |
 
 - The 13 rows that read or write the tree (`from_entries` (test-only since #2351), `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) are PROVEN: `cow_btree` proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model.
 - Three CONDITIONAL rows (`node_attrs_set`, `new_node_attrs`, `edge_attrs_set_with`) state their per-entry result (`*_hit`) under an undischarged caller premise: each node's written attribute ids are unique. `Pending::set_node_attribute` keeps them sorted and unique; `set_node_attributes` only `debug_assert!`s it.
@@ -200,6 +203,7 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 - **CCH (`cch/`).** Weights are `Nat` (the f64 left-fold structure is not modelled); arcs are pair-indexed and linked to the slot arrays by `arc_via_slots`; the ordering backend is an arbitrary function (its permutation is checked by `invert`); node space and rank space are related by `invert_spec`, not composed into one statement. Not proven: the slot writes of `seed` (`seedA` is its pair-level result).
 - **Counters.** The `u64` generation, commit, version and batch counters are unbounded `Nat`; a wrap at 2^64 is assumed unreachable.
 - **Matrix order and size.** `scanNodes_below_cursor` / `scanEdges_below_cursor` assume the label matrix is iterated in ascending row order and a tensor by `(src, dst)` (hypotheses `hasc` / `G.Ordered`, an assumption about GraphBLAS), `buildInOneBatch_entry` that the entity count fits `usize::MAX` (`G.Fits`), and `nodeFilteredScan_agrees` that ids fit a `u64` (`hlt`). Not proven as one induction: "a `Building` column holds exactly the current tuples of the entities below its cursor" over interleaved batches and units of work; its parts are proven separately. `idx as u16` (attribute ids above 65535) is not modelled.
+- **Geo geometry (#2527).** `GeoIndex::key_of` (quantise, Morton interleave) and `cover_of` are not modelled: a point carries its key, and the cover is `opaque coverOf`. That the cover holds every point of the disk is not proven here; soundness rests on the retained filter, which can only narrow a superset.
 - **Scan op details.** The scan ops' label scan (the pattern's labels, `extra_labels`, the edge cache, undirected orientation) belongs to `ops_traverse`; here the scan is the index label's nodes / the type's edges.
 
 ## Build and check

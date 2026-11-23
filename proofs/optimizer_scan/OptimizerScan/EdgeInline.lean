@@ -7,9 +7,9 @@ import OptimizerScan.IndexPipeline
 | --- | --- |
 | `QNode`, `QRel`, `IRs` | `QueryNode`, `QueryRelationship`, the `IR` variants the pass matches |
 | `nAlias`/`nLabels`/`nIndexed`/`nMatch`/`nBuild` | `impl IndexSubject for Arc<QueryNode>` `utilize_index.rs` |
-| `eAlias`/`eLabels`/`eIndexed`/`eFunc`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs` |
+| `eAlias`/`eLabels`/`eIndexed`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs` |
 | `endpointOK`, `edgeScanSel`, `edgeRefSel` | `EdgeByIndexScanOp::next` `runtime/ops/edge_by_index_scan.rs` (bound-endpoint filter), `CondTraverse` + `Filter` |
-| `distScan`, `pointSel` | `try_distance_index_scan` 421, `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs`) |
+| `distScan`, `funcScan`, `pointSel` | `try_distance_index_scan` 411 (generic over the subject since #2527), `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs`) |
 | `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs` |
 -/
 namespace OptimizerScan.Index
@@ -48,8 +48,6 @@ def eAlias (r : QRel) : Nat := r.alias
 def eLabels (r : QRel) : List Nat := r.types
 /-- `graph.is_edge_indexed(type, attr, Range)`. -/
 def eIndexed (eidx : Nat → List Nat) (T' k : Nat) : Bool := k ∈ eidx T'
-/-- `try_func_scan` for edges: no `distance()` path. -/
-def eFunc (_r : QRel) : Option (QRel × Nat × IQ) := none
 def eMatch : IRs → Option (QRel × Bool)
   | .condTraverse r tr sib =>
     if r.types.length ≠ 1 then none
@@ -61,8 +59,8 @@ def eBuild (r : QRel) (q : IQ) (tr : Bool) : IRs := .edgeByIndexScan r q tr
 theorem subject_accessors (n : QNode) (r : QRel) (idx : Nat → List Nat) (L k : Nat) :
     nAlias n = n.alias ∧ nLabels n = n.labels ∧ (nIndexed idx L k = true ↔ k ∈ idx L) ∧
     eAlias r = r.alias ∧ eLabels r = r.types ∧ (eIndexed idx L k = true ↔ k ∈ idx L) ∧
-    eFunc r = none ∧ nBuild n L = IRs.nodeByIndexScan n L := by
-  refine ⟨rfl, rfl, by simp [nIndexed], rfl, rfl, by simp [eIndexed], rfl, rfl⟩
+    nBuild n L = IRs.nodeByIndexScan n L := by
+  refine ⟨rfl, rfl, by simp [nIndexed], rfl, rfl, by simp [eIndexed], rfl⟩
 
 
 /-- `match_scan_source` (node): a `NodeByLabelScan` with at least one label. -/
@@ -182,6 +180,20 @@ theorem distance_sound (op : Op) (al lp rp : Bool) (h : distScan op al lp rp = t
 theorem distScan_shapes (op : Op) (al lp rp : Bool) (h : distScan op al lp rp = true) :
     (op = .lt ∨ op = .le) ∧ al = true ∨ (op = .gt ∨ op = .ge) ∧ al = false := by
   cases op <;> cases al <;> simp_all [distScan]
+
+/-- `try_distance_index_scan<T>` (#2527: called for node labels and relationship types alike, the
+    `try_func_scan` hook that answered `None` for edges is gone): the subject, unchanged, with an
+    `IndexQuery::Point`, when the shape is accepted. -/
+def funcScan {S : Type} (s : S) (op : Op) (al lp rp : Bool) : Option S :=
+  if distScan op al lp rp then some s else none
+
+/-- **The `distance()` scan does not depend on the subject** (#2527): a node and an edge get it on the
+    same shapes, so `distance_sound` and `distance_keeps_filter` hold for an edge scan as for a node
+    scan. -/
+theorem funcScan_subject {S S' : Type} (s : S) (s' : S') (op : Op) (al lp rp : Bool) :
+    (funcScan s op al lp rp).isSome = (funcScan s' op al lp rp).isSome ∧
+      (funcScan s op al lp rp = some s ↔ distScan op al lp rp = true) := by
+  unfold funcScan; cases distScan op al lp rp <;> simp
 
 /-- The Filter is always kept: the attribute side is a function call. -/
 theorem distance_keeps_filter (t : T) : nonIdxT (.abs t) = true := rfl
