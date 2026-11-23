@@ -140,7 +140,8 @@ def typesOf (i : IndexInfo) : Option (List (String × V F)) :=
   i.fieldOrder.foldlM (fun m a => (flookup i.fields a).map fun fs =>
     omInsert m a (.list (strs (typesOfFields fs)))) []
 
-/-- `i64::try_from(u64).unwrap_or(i64::MAX)` (:170). -/
+/-- `i64::try_from(u64).unwrap_or(i64::MAX)` (:170; since #3643 also `M`, `efConstruction`,
+`efRuntime`, :183-191). -/
 def i64Max : Nat := 2 ^ 63 - 1
 def dimToI64 (d : Nat) : Int := if d ≤ i64Max then d else i64Max
 
@@ -152,9 +153,9 @@ def attrOpts (fs : Option (List Field)) : List (String × V F) :=
     omInsert (omInsert (omInsert (omInsert (omInsert []
       "dimension" (.int (dimToI64 v.dimension)))
       "similarityFunction" (.str (v.similarity.getD "euclidean")))
-      "M" (.int (v.m.getD 16)))
-      "efConstruction" (.int (v.efConstruction.getD 200)))
-      "efRuntime" (.int (v.efRuntime.getD 10))
+      "M" (.int (dimToI64 (v.m.getD 16))))
+      "efConstruction" (.int (dimToI64 (v.efConstruction.getD 200))))
+      "efRuntime" (.int (dimToI64 (v.efRuntime.getD 10)))
 
 def optionsOf (i : IndexInfo) : List (String × V F) :=
   i.fieldOrder.foldl (fun m a => omInsert m a (.map (attrOpts (flookup i.fields a)))) []
@@ -453,10 +454,20 @@ theorem attrOpts_defaults (fs : List Field) (v : VecOpts) (hv : fs.findSome? (·
       ("similarityFunction", .str "euclidean"), ("M", .int 16), ("efConstruction", .int 200),
       ("efRuntime", .int 10)] := by
   obtain ⟨h1, h2, h3, h4⟩ := h
-  simp [attrOpts, hv, h1, h2, h3, h4, omInsert]
+  simp [attrOpts, hv, h1, h2, h3, h4, omInsert, dimToI64, i64Max]
 
 theorem dimToI64_le (d : Nat) : dimToI64 d ≤ i64Max ∧ (d ≤ i64Max → dimToI64 d = d) := by
   unfold dimToI64; split <;> omega
+
+/-- **`attrOpts_saturates`** (#3643): every integer vector option is reported in `0..=i64::MAX`,
+and exactly when it fits; an `M` of `2^64 - 1` (restored from a payload) is `i64::MAX`, not `-1`. -/
+theorem attrOpts_saturates (fs : List Field) (v : VecOpts) (hv : fs.findSome? (·.vec) = some v) :
+    attrOpts (F := F) (some fs) = [("dimension", .int (dimToI64 v.dimension)),
+      ("similarityFunction", .str (v.similarity.getD "euclidean")), ("M", .int (dimToI64 (v.m.getD 16))),
+      ("efConstruction", .int (dimToI64 (v.efConstruction.getD 200))),
+      ("efRuntime", .int (dimToI64 (v.efRuntime.getD 10)))] ∧
+    dimToI64 (2 ^ 64 - 1) = i64Max := by
+  refine ⟨by simp [attrOpts, hv, omInsert], by simp [dimToI64, i64Max]⟩
 
 /-- A non-vector attribute's options are `{}` (parity with C, live). -/
 theorem attrOpts_novec (fs : List Field) (h : ∀ f ∈ fs, f.vec = none) : attrOpts (F := F) (some fs) = [] := by

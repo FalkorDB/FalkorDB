@@ -14,6 +14,7 @@ What each function does to stores other projects prove is stated as what it pass
 | `Scan`, `scanStep`            | the first pass of `Graph::restore` (`graph.rs`): `max_edge_id` and `starts` over `tensor.iter_edges()` |
 | `restoreLen`, `restoreStarts` | `len`, the monotone clamp loop |
 | `restoreIndex`                | `EndpointIndex::default()` then `prepare_tiers` then `set` per edge |
+| `idBound`, `maxEndpoint`, `restoreCheck` | `Graph::id_bound` and the live-edge count / `max_edge_id` / `max_endpoint` checks that make `restore` an `Err` (#3643) |
 | `capOf`, `boundOf`, `Restored` | `node_cap`/`relationship_cap` `next_multiple_of(chunk).max(64)` and `IdSpace::bound` (release `u64` wrap modelled), `schema_version`, `version: 0`, empty indexers/constraints, |
 | `deletedEdges`, `DE`          | the per-type collection and `all_implicit` of `Graph::delete_implicit_edges` |
 | `stagedDocs`                  | `index_remove_edge_docs.entry(type_id).or_default().insert(edge_id, (src, dst))` for an indexed type |
@@ -224,8 +225,9 @@ theorem capOf_spec (bound chunk : Nat) :
 
 /-- **Overflow is modelled, not excluded**: a bound within one chunk of `2^64` makes the release
 build's `next_multiple_of` wrap, and the capacity comes out *below* the bound (here 64 for
-`bound = 2^64 - 1`, `chunk = 1024`; a debug build panics). Reachable only from an RDB whose
-`node_count + deleted` is within `NODE_CREATION_BUFFER` of `2^64`. -/
+`bound = 2^64 - 1`, `chunk = 1024`; a debug build panics). `restoreCheck` still lets such a bound
+through (`id_bound` only refuses an overflowing sum); the loaders' `check_header` caps it at `2^34`
+first, so no payload reaches it. -/
 theorem capOf_wraps : capOf (W - 1) 1024 = some 64 := by decide
 
 /-- The other scalar fields: `schema_version` is the number of labels plus relationship types, the
@@ -244,6 +246,155 @@ theorem restoredFields_spec (nc nd rc rd chunk labels types : Nat) (hc : 0 < chu
 theorem restoredFields_zero_chunk (nc nd rc rd labels types : Nat) :
     restoredFields nc nd rc rd 0 labels types = none := by
   simp [restoredFields, capOf, nextMultipleOf]
+
+/-! ### The checks `restore` makes before building anything (#3643)
+
+`Graph::restore` returns `Err` (`none` here) unless the payload's counts account for its ids. -/
+
+/-- `Graph::id_bound(kind, live, deleted)`: `live.checked_add(deleted.len())`, and the largest
+deleted id below it. `deleted` is the `RoaringTreemap`, listed without repeats. -/
+def idBound (live : Nat) (deleted : List Nat) : Option Nat :=
+  if live + deleted.length < W ∧ ∀ d ∈ deleted, d < live + deleted.length then
+    some (live + deleted.length) else none
+
+/-- `max_endpoint`: the largest `src.max(dst)` over the edges (0 when there are none). -/
+def maxEndpoint (edges : List (Nat × Nat × Nat)) : Nat :=
+  edges.foldl (fun m e => max m (max e.2.1 e.2.2)) 0
+
+/-- The checks of `restore`: both id bounds, then the live-edge count equal to
+`relationship_count`, then (with an edge) `max_edge_id < edge_bound` and
+`max_endpoint < node_bound`. `some (node_bound, edge_bound)` is the `Ok` path, which goes on to
+`restoreLen`/`restoreIndex`/`restoredFields` above. -/
+def restoreCheck (nc : Nat) (nd : List Nat) (rc : Nat) (rd : List Nat)
+    (edges : List (Nat × Nat × Nat)) : Option (Nat × Nat) :=
+  match idBound nc nd, idBound rc rd with
+  | some nb, some eb =>
+    if edges.length ≠ rc then none
+    else if edges ≠ [] ∧ ((scanAll edges).maxId ≥ eb ∨ maxEndpoint edges ≥ nb) then none
+    else some (nb, eb)
+  | _, _ => none
+
+theorem maxEndpoint_ge_aux : ∀ (edges : List (Nat × Nat × Nat)) (m : Nat),
+    m ≤ edges.foldl (fun m e => max m (max e.2.1 e.2.2)) m ∧
+    ∀ e ∈ edges, max e.2.1 e.2.2 ≤ edges.foldl (fun m e => max m (max e.2.1 e.2.2)) m
+  | [], m => ⟨Nat.le_refl _, by simp⟩
+  | x :: r, m => by
+    have ih := maxEndpoint_ge_aux r (max m (max x.2.1 x.2.2))
+    refine ⟨by simp only [List.foldl_cons]; omega, fun e he => ?_⟩
+    rcases List.mem_cons.1 he with rfl | he
+    · simp only [List.foldl_cons]; omega
+    · simpa using ih.2 e he
+
+theorem maxEndpoint_lt_aux : ∀ (edges : List (Nat × Nat × Nat)) (m b : Nat), m < b →
+    (∀ e ∈ edges, e.2.1 < b ∧ e.2.2 < b) →
+    edges.foldl (fun m e => max m (max e.2.1 e.2.2)) m < b
+  | [], _, _, hm, _ => hm
+  | x :: r, m, b, hm, h => by
+    have hx := h x (by simp)
+    simp only [List.foldl_cons]
+    exact maxEndpoint_lt_aux r _ b (by omega) (fun e he => h e (by simp [he]))
+
+theorem scan_maxId_lt_aux : ∀ (edges : List (Nat × Nat × Nat)) (a : Scan) (b : Nat), a.maxId < b →
+    (∀ e ∈ edges, e.1 < b) → (edges.foldl scanStep a).maxId < b
+  | [], _, _, ha, _ => ha
+  | x :: r, a, b, ha, h => by
+    have hx := h x (by simp)
+    simp only [List.foldl_cons]
+    exact scan_maxId_lt_aux r _ b (by rw [scanStep_maxId]; omega) (fun e he => h e (by simp [he]))
+
+/-- **What an accepted payload guarantees**: the bounds are the exact `live + deleted` counts
+(no wrap), the payload carries exactly `relationship_count` edges, and every edge id is below the
+edge bound and every endpoint below the node bound; so the index length is at most the edge
+bound. Before #3643 an edge numbered `2^40` sized an index of `2^40 + 1` slots. -/
+theorem restoreCheck_sound (nc rc : Nat) (nd rd : List Nat) (edges : List (Nat × Nat × Nat))
+    (nb eb : Nat) (h : restoreCheck nc nd rc rd edges = some (nb, eb)) :
+    nb = nc + nd.length ∧ eb = rc + rd.length ∧ nb < W ∧ eb < W ∧ edges.length = rc ∧
+    (∀ e ∈ edges, e.1 < eb ∧ e.2.1 < nb ∧ e.2.2 < nb) ∧ restoreLen edges ≤ eb := by
+  unfold restoreCheck at h
+  cases hn : idBound nc nd with
+  | none => simp [hn] at h
+  | some nb' =>
+  cases he : idBound rc rd with
+  | none => simp [hn, he] at h
+  | some eb' =>
+  simp only [hn, he] at h
+  unfold idBound at hn he
+  split at hn <;> simp at hn
+  split at he <;> simp at he
+  rename_i hn1 he1
+  subst hn he
+  by_cases hl : edges.length = rc
+  · by_cases hc : edges ≠ [] ∧ ((scanAll edges).maxId ≥ rc + rd.length ∨
+        maxEndpoint edges ≥ nc + nd.length)
+    · simp [hl, hc] at h
+    · simp only [hl, ne_eq, not_true_eq_false, ite_false, hc, Option.some.injEq,
+        Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      have hall : ∀ e ∈ edges, e.1 < rc + rd.length ∧ e.2.1 < nc + nd.length ∧
+          e.2.2 < nc + nd.length := by
+        intro e hmem
+        have hne : edges ≠ [] := List.ne_nil_of_mem hmem
+        have h1 := scan_maxId_ge edges Scan.init e hmem
+        have h2 := (maxEndpoint_ge_aux edges 0).2 e hmem
+        simp only [scanAll, maxEndpoint] at hc
+        have : ¬ ((edges.foldl scanStep Scan.init).maxId ≥ rc + rd.length ∨
+            edges.foldl (fun m e => max m (max e.2.1 e.2.2)) 0 ≥ nc + nd.length) :=
+          fun hx => hc ⟨hne, hx⟩
+        omega
+      refine ⟨rfl, rfl, hn1.1, he1.1, hl, hall, ?_⟩
+      unfold restoreLen
+      cases edges with
+      | nil => simp
+      | cons x r =>
+        have := scan_maxId_lt_aux (x :: r) Scan.init (rc + rd.length)
+          (by have := hall x (by simp); simp [Scan.init]; omega) (fun e he => (hall e he).1)
+        simp only [List.isEmpty_cons, Bool.false_eq_true, ite_false, scanAll]
+        omega
+  · simp [hl] at h
+
+/-- **Every saved graph passes**: with the id spaces dense (deleted ids distinct and below
+`live + deleted`, the bound below `2^64`), the payload's edge count, and every edge id and
+endpoint inside the bounds, the checks accept with the bounds `IdSpace::bound` would give. -/
+theorem restoreCheck_complete (nc rc : Nat) (nd rd : List Nat) (edges : List (Nat × Nat × Nat))
+    (hnw : nc + nd.length < W) (hew : rc + rd.length < W)
+    (hnd : ∀ d ∈ nd, d < nc + nd.length) (hrd : ∀ d ∈ rd, d < rc + rd.length)
+    (hl : edges.length = rc)
+    (he : ∀ e ∈ edges, e.1 < rc + rd.length ∧ e.2.1 < nc + nd.length ∧ e.2.2 < nc + nd.length) :
+    restoreCheck nc nd rc rd edges = some (nc + nd.length, rc + rd.length) := by
+  have hn : idBound nc nd = some (nc + nd.length) := by
+    unfold idBound; split
+    · rfl
+    · rename_i h; exact absurd ⟨hnw, hnd⟩ h
+  have hr : idBound rc rd = some (rc + rd.length) := by
+    unfold idBound; split
+    · rfl
+    · rename_i h; exact absurd ⟨hew, hrd⟩ h
+  have hc : ¬ (edges ≠ [] ∧ ((scanAll edges).maxId ≥ rc + rd.length ∨
+      maxEndpoint edges ≥ nc + nd.length)) := by
+    cases edges with
+    | nil => simp
+    | cons x r =>
+      have hx := he x (by simp)
+      have h1 := scan_maxId_lt_aux (x :: r) Scan.init _
+        (by simp [Scan.init]; omega) (fun e h => (he e h).1)
+      have h2 := maxEndpoint_lt_aux (x :: r) 0 (nc + nd.length) (by omega)
+        (fun e h => ⟨(he e h).2.1, (he e h).2.2⟩)
+      simp only [scanAll, maxEndpoint]
+      omega
+  simp only [restoreCheck, hn, hr, hl, ne_eq, not_true_eq_false, ite_false]
+  split
+  · rename_i h; exact absurd (by simpa using h) hc
+  · rfl
+
+/-- An edge numbered past the edge bound (the `2^40` of `restore_refuses_ids_the_counts_do_not_
+account_for`) is refused, as is a deleted id outside the id space and a count that overflows. -/
+theorem restoreCheck_refuses_examples :
+    restoreCheck 2 [] 1 [] [(2 ^ 40, 0, 1)] = none ∧
+    restoreCheck 2 [] 1 [] [(0, 0, 9)] = none ∧
+    restoreCheck 2 [] 2 [] [(0, 0, 1)] = none ∧
+    restoreCheck 2 [99] 0 [] [] = none ∧
+    restoreCheck (W - 1) [0] 0 [] [] = none := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 
 /-! ## `Graph::delete_implicit_edges` -/
@@ -394,6 +545,8 @@ theorem clearImplicit_get (ix : Ix) (hwf : WF ix) (N X : List Nat) (T : List (Li
 #print axioms restoreIndex_get
 #print axioms restoreStarts_ordered
 #print axioms restoredFields_spec
+#print axioms restoreCheck_sound
+#print axioms restoreCheck_complete
 #print axioms deletedEdges_mem
 #print axioms clearedAdj_mem
 #print axioms clearImplicit_get

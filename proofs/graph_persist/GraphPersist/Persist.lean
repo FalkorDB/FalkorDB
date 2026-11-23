@@ -1,6 +1,7 @@
 import GraphPersist.Persist.RoundTrip
 import GraphPersist.Persist.MultiLoad3
 import GraphPersist.Persist.Indexes
+import GraphPersist.Persist.IdBound
 /-!
 
 # `src/serializers/{encoder,decoder}/mod.rs`: `decode ∘ encode = id` on the graph state
@@ -23,8 +24,10 @@ schema, payload directory, then each payload. This file models the encoder
   labels/types/attribute dictionary, indexes and constraints).
 * `truncated_payload_eof` — every truncated payload (cut at a word boundary) makes the
   decoder ask for one more word. On `vec_load_graph` that read is `BufferedReader::
-  from_slice`'s `load_chunk` = `RedisModule_LoadStringBuffer(NULL)` (redis_layer
-  `from_slice_past_end`): #2537 for *every* such cut, not just the empty payload.
+  from_slice`'s `load_chunk`, which returns `Err` since #3643 (redis_layer
+  `from_slice_past_end_err`; it was `RedisModule_LoadStringBuffer(NULL)`, #2537).
+* `load_encode_checked` / `load_encode_fails_past_id_bound` (`IdBound.lean`) — `check_header`'s
+  2^34 id cap (#3643): `load_encode` holds below it and fails past it.
 * `multi_key_tiles` / `multi_key_bound` / `multi_key_matrices` — `build_multi_key_payloads`
   splits each entity kind into consecutive slices that tile `[0, total)` in order, no key
   holds more than `vkey_max` entities, key 0 holds every matrix.

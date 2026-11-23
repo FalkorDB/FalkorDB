@@ -8,9 +8,12 @@ import PendingCommit.Pack
   `max(count, 1)` (the `break` follows the write; every caller passes
   `count > 0`, src/serializers/encoder/mod.rs), each as `(id, len,
   entries)`.
-* `decode_spec` — `decode_with_count` (:1460) stores, per entity, the entries
+* `decode_spec` — `decode_with_count` (:1474) stores, per entity, the entries
   whose wire id fits `u16` (`try_from`, not `as`) and the dictionary, minus
   nulls, sorted by id; nothing for an entity left empty.
+* `decodeChecked_spec`, `encode_decode_roundtrip_checked`, `decodeChecked_refuses_u16_wrap` —
+  #3643's refusals (entity id past `id_bound`, more than 65,535 attributes): exact, passed by
+  every encoded window, and closing the `set_span` wrap on load.
 * **`encode_decode_roundtrip`** — decoding what was encoded into an empty
   store restores exactly the encoded entities' spans (sorted null-free spans,
   ids below the dictionary size).
@@ -164,5 +167,78 @@ theorem encode_decode_roundtrip (d : D) (h : SInv d) (hs : SOK d) (limit : Nat)
     · simp [hz, he]
     · simp [hz]
   · simp [hi, he]
+
+/-! ## The refusals of `decode_with_count` (#3643)
+
+Before decoding an entity, `decode_with_count` refuses (`Err`, `none` here) an entity id at or past
+the store's `id_bound` (set by `AttributeStore::with_id_bound` on load) and an attribute count past
+`MAX_ATTRIBUTES` (65,535), which `set_span`'s `u16` length could not hold. (`check_count_fits` only
+refuses a `count` the remaining bytes cannot hold, which the reads would run out on anyway.) Otherwise
+the result is `decode`. -/
+
+def MAX_ATTRIBUTES : Nat := 65535
+
+def admits (bound : Option Nat) (p : Nat × List Entry) : Bool :=
+  (match bound with | some b => decide (p.1 < b) | none => true) && decide (p.2.length ≤ MAX_ATTRIBUTES)
+
+def decodeChecked (d : D) (bound : Option Nat) (limit : Nat) (ents : List (Nat × List Entry)) : Option D :=
+  if ents.all (admits bound) then some (decode d limit ents) else none
+
+/-- **`decodeChecked_spec`**: an accepted stream decodes exactly as `decode_spec` says; the
+refusal is exact. -/
+theorem decodeChecked_spec (d : D) (h : SInv d) (bound : Option Nat) (limit : Nat)
+    (m : List (Nat × List Entry)) (hnd : (m.map (·.1)).Nodup) :
+    (decodeChecked d bound limit m = none ↔ ∃ p ∈ m, admits bound p = false) ∧
+    ∀ d', decodeChecked d bound limit m = some d' →
+      SInv d' ∧ ∀ id, dread d' id = match lk m id with
+        | some ps => (if ps.filter (keep limit) = [] then dread d id else sortById (ps.filter (keep limit)))
+        | none => dread d id := by
+  refine ⟨?_, fun d' hd => ?_⟩
+  · unfold decodeChecked
+    by_cases ha : m.all (admits bound) = true
+    · simp only [ha, ite_true, reduceCtorEq, false_iff, not_exists, not_and]
+      intro p hp hf
+      have := List.all_eq_true.1 ha p hp
+      simp_all
+    · simp only [ha, Bool.false_eq_true, ite_false, true_iff]
+      simpa using ha
+  · unfold decodeChecked at hd
+    split at hd
+    · rename_i ha
+      cases hd
+      exact decode_spec d h limit m hnd (by
+        intro p hp
+        have := List.all_eq_true.1 ha p hp
+        simp [admits, MAX_ATTRIBUTES] at this; exact of_decide_eq_true this.2)
+    · cases hd
+
+/-- **`encode_decode_roundtrip_checked`**: with the bound the loader sets (`live + deleted`, here
+any `bound > maxId`), what `encode_with_range` wrote passes both checks, so the round trip of
+`encode_decode_roundtrip` is what the checked decoder returns. -/
+theorem encode_decode_roundtrip_checked (d : D) (h : SInv d) (hs : SOK d) (limit : Nat)
+    (hlim : ∀ id, ∀ e ∈ dread d id, e.1 < limit ∧ e.1 < 65536) (hfit : ∀ id, (dread d id).length ≤ 65535)
+    (deleted : Nat → Bool) (maxId count offset bound : Nat) (hb : maxId < bound) :
+    ∃ d', decodeChecked emptyD (some bound) limit (encode d deleted maxId count offset) = some d' ∧
+      ∀ id, dread d' id = if id ∈ window deleted maxId count offset then dread d id else [] := by
+  have hall : (encode d deleted maxId count offset).all (admits (some bound)) = true := by
+    apply List.all_eq_true.2
+    intro p hp
+    rw [encode_spec] at hp
+    obtain ⟨i, hi, rfl⟩ := List.mem_map.1 hp
+    have hi' : i < maxId + 1 := by
+      simp only [window] at hi
+      have := List.mem_of_mem_take hi
+      have := List.mem_of_mem_drop this
+      simpa using (List.mem_filter.1 this).1
+    simp only [admits, MAX_ATTRIBUTES, Bool.and_eq_true, decide_eq_true_eq]
+    exact ⟨by omega, decide_eq_true (hfit i)⟩
+  refine ⟨_, ?_, encode_decode_roundtrip d h hs limit hlim hfit deleted maxId count offset⟩
+  simp only [decodeChecked, hall, ite_true]
+
+/-- The `set_span` wrap is no longer reachable from a load: 65,536 entries for one entity are
+refused. -/
+theorem decodeChecked_refuses_u16_wrap (d : D) (bound : Option Nat) (limit id : Nat)
+    (ps : List Entry) (hn : ps.length = 65536) : decodeChecked d bound limit [(id, ps)] = none := by
+  simp [decodeChecked, admits, MAX_ATTRIBUTES, hn]
 
 end PendingCommit.Content

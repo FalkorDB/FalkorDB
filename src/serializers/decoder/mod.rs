@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use graph::entity_type::EntityType;
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Reader};
+use graph::graph::graphblas::serialization::{Decode, Reader, decode_capacity};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::graph::{
@@ -19,6 +19,9 @@ use super::Schema;
 use super::buffered_io::BufferedReader;
 use super::{DECODE_MIN_VERSION, ENCODING_VERSION};
 use super::{DECODE_STATE, PendingGraph};
+
+pub(super) mod validate;
+use validate::{check_assembled, check_directory, check_header, label_matrix_count, tensor_count};
 
 /// What one RDB key turned out to hold.
 pub enum LoadedKey {
@@ -50,8 +53,8 @@ pub enum LoadedKey {
 /// A truncated stream, an unknown state, `Init`, `Final`, or a CCH index payload.
 fn decode_payload_directory(r: &mut dyn Reader) -> Result<Vec<(EncodeState, u64)>, String> {
     let payload_count = r.read_unsigned()?;
-    // No capacity from `payload_count`: it is read from the stream, unchecked.
-    let mut payloads = Vec::new();
+    // The capacity is bounded, not `payload_count`: it is read from the stream, unchecked.
+    let mut payloads = Vec::with_capacity(decode_capacity(payload_count));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;
@@ -123,12 +126,16 @@ pub fn rdb_load_graph(
 
     // --- Header ---
     let hdr = Header::decode(&mut r)?;
+    // Everything below is held to what the header counts.
+    let limits = check_header(&hdr)?;
+    let _limits = limits.scope();
 
     // --- Schema ---
     let schema = Schema::decode(&mut r)?;
 
     // --- Key Schema (payload directory) ---
     let payloads = decode_payload_directory(&mut r)?;
+    check_directory(&payloads, &hdr)?;
 
     // For multi-key graphs, check if we already have a pending graph in DECODE_STATE.
     if hdr.key_count > 1 {
@@ -147,8 +154,8 @@ pub fn rdb_load_graph(
 
         if is_first_key {
             // First key: initialize the pending graph.
-            let node_attrs_init = AttributeStore::new();
-            let rel_attrs = AttributeStore::new();
+            let node_attrs_init = AttributeStore::with_id_bound(limits.node_bound);
+            let rel_attrs = AttributeStore::with_id_bound(limits.edge_bound);
 
             // The RDB's flat `attribute_names` list *is* the graph's dictionary: index is
             // the id. Previously this seeded a copy into each store, which is what gave an
@@ -228,7 +235,7 @@ pub fn rdb_load_graph(
             let pg = decode_state.pending.remove(&graph_name).ok_or_else(|| {
                 format!("pending graph {graph_name} not found at multi-key RDB finalization")
             })?;
-            let graph = finalize_pending_graph(pg);
+            let graph = finalize_pending_graph(pg)?;
             // Store the finalized graph in DECODE_STATE for the caller to retrieve.
             decode_state.finalized.insert(graph_name, graph);
         }
@@ -239,8 +246,8 @@ pub fn rdb_load_graph(
     }
 
     // Single-key path (key_count == 1): decode everything in one go.
-    let mut node_attrs = AttributeStore::new();
-    let mut rel_attrs = AttributeStore::new();
+    let mut node_attrs = AttributeStore::with_id_bound(limits.node_bound);
+    let mut rel_attrs = AttributeStore::with_id_bound(limits.edge_bound);
 
     // One dictionary, shared by both stores — see the multi-key path above.
     let mut attrs_name = AttrNameMap::PropertyKeys(NameList::default());
@@ -270,14 +277,14 @@ pub fn rdb_load_graph(
                 deleted_rels.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
-                let count = r.read_unsigned()?;
+                let count = label_matrix_count(&mut r, &hdr)?;
                 for _ in 0..count {
                     let _label_id = r.read_unsigned()?;
                     label_matrices.push(VersionedMatrix::decode(&mut r)?);
                 }
             }
             EncodeState::RelationMatrices => {
-                for _ in 0..hdr.relationship_count {
+                for _ in 0..tensor_count(&r, &hdr)? {
                     let _relation_id = r.read_unsigned()?;
                     relationship_tensors.push(Tensor::decode(&mut r)?);
                 }
@@ -291,6 +298,15 @@ pub fn rdb_load_graph(
             _ => {}
         }
     }
+
+    check_assembled(
+        &hdr,
+        &schema,
+        &deleted_nodes,
+        &deleted_rels,
+        label_matrices.len(),
+        relationship_tensors.len(),
+    )?;
 
     let mut graph = Graph::restore(
         &hdr.graph_name,
@@ -309,7 +325,7 @@ pub fn rdb_load_graph(
         attrs_name,
         node_attrs,
         rel_attrs,
-    );
+    )?;
 
     graph.rebuild_derived_matrices();
     rebuild_indexes(&mut graph, &schema.indexes);
@@ -347,14 +363,14 @@ fn decode_payloads_into_pending(
                     .decode_with_count(r, *count, pg.attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
-                let count = r.read_unsigned()?;
+                let count = label_matrix_count(r, hdr)?;
                 for _ in 0..count {
                     let _label_id = r.read_unsigned()?;
                     pg.label_matrices.push(VersionedMatrix::decode(r)?);
                 }
             }
             EncodeState::RelationMatrices => {
-                for _ in 0..hdr.relationship_count {
+                for _ in 0..tensor_count(r, hdr)? {
                     let _relation_id = r.read_unsigned()?;
                     pg.relationship_tensors.push(Tensor::decode(r)?);
                 }
@@ -372,7 +388,15 @@ fn decode_payloads_into_pending(
 }
 
 /// Finalize a pending multi-key graph: build Graph, rebuild derived matrices.
-pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
+pub fn finalize_pending_graph(pg: PendingGraph) -> Result<Graph, String> {
+    check_assembled(
+        &pg.header,
+        &pg.schema,
+        &pg.deleted_nodes,
+        &pg.deleted_rels,
+        pg.label_matrices.len(),
+        pg.relationship_tensors.len(),
+    )?;
     let attrs_name = pg.attrs_name;
     let node_attrs = pg.node_attrs;
     let rel_attrs = pg.rel_attrs;
@@ -394,7 +418,7 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
         attrs_name,
         node_attrs,
         rel_attrs,
-    );
+    )?;
 
     graph.rebuild_derived_matrices();
     rebuild_indexes(&mut graph, &pg.schema.indexes);
@@ -403,7 +427,7 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
     }
     graph.populate_indexes_sync();
 
-    graph
+    Ok(graph)
 }
 
 /// Rebuild indexes from the decoded schema information.
@@ -499,6 +523,8 @@ fn load_graph_from_reader(
     dest_name: &str,
 ) -> Result<Graph, String> {
     let hdr = Header::decode(r)?;
+    let limits = check_header(&hdr)?;
+    let _limits = limits.scope();
 
     if hdr.key_count != 1 {
         return Err(format!(
@@ -510,9 +536,10 @@ fn load_graph_from_reader(
     let schema = Schema::decode(r)?;
 
     let payloads = decode_payload_directory(r)?;
+    check_directory(&payloads, &hdr)?;
 
-    let mut node_attrs = AttributeStore::new();
-    let mut rel_attrs = AttributeStore::new();
+    let mut node_attrs = AttributeStore::with_id_bound(limits.node_bound);
+    let mut rel_attrs = AttributeStore::with_id_bound(limits.edge_bound);
 
     // One dictionary, shared by both stores — see the other decode paths above.
     let mut attrs_name = AttrNameMap::PropertyKeys(NameList::default());
@@ -542,14 +569,14 @@ fn load_graph_from_reader(
                 deleted_rels.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
-                let count = r.read_unsigned()?;
+                let count = label_matrix_count(r, &hdr)?;
                 for _ in 0..count {
                     let _label_id = r.read_unsigned()?;
                     label_matrices.push(VersionedMatrix::decode(r)?);
                 }
             }
             EncodeState::RelationMatrices => {
-                for _ in 0..hdr.relationship_count {
+                for _ in 0..tensor_count(r, &hdr)? {
                     let _relation_id = r.read_unsigned()?;
                     relationship_tensors.push(Tensor::decode(r)?);
                 }
@@ -563,6 +590,15 @@ fn load_graph_from_reader(
             _ => {}
         }
     }
+
+    check_assembled(
+        &hdr,
+        &schema,
+        &deleted_nodes,
+        &deleted_rels,
+        label_matrices.len(),
+        relationship_tensors.len(),
+    )?;
 
     let mut graph = Graph::restore(
         dest_name,
@@ -581,7 +617,7 @@ fn load_graph_from_reader(
         attrs_name,
         node_attrs,
         rel_attrs,
-    );
+    )?;
 
     graph.rebuild_derived_matrices();
     rebuild_indexes(&mut graph, &schema.indexes);

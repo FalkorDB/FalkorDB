@@ -50,13 +50,15 @@ with `GrB_BOOL`, any non-success code returned as `Err` (vector.rs). -/
 def decodeBlob : Wrapper := ⟨"Vector::<bool>::decode_blob", 211, .propagate⟩
 
 /-- `Vector::<u64>::decode` (vector.rs) on main: same, with `GrB_UINT64`
-(vector.rs). -/
-def decodeU64 : Wrapper := ⟨"Vector::<u64>::decode", 256, .propagate⟩
+(vector.rs). Since #3643 both go through `deserialize_untrusted`, whose added refusals
+(`check_blob_header`, `nvals` beyond the capacity) are `Err`s too. -/
+def decodeU64 : Wrapper := ⟨"Vector::<u64>::decode", 484, .propagate⟩
 
-/-- `Vector::<bool>::decode` (vector.rs): the hardened path — validates
-lengths and NUL-termination, then `if info != SUCCESS { …free…; return Err }`
+/-- `Vector::<bool>::decode` (vector.rs): the hardened path — `Component::read` validates
+lengths and NUL-termination, `Component::load` (#3643: `handling` forced to 0, a checked
+`n_entries * type_size <= n_bytes`) then `if info != SUCCESS { …free…; return Err }`
 for every GraphBLAS call. -/
-def decodeBoolHardened : Wrapper := ⟨"Vector::<bool>::decode", 350, .propagate⟩
+def decodeBoolHardened : Wrapper := ⟨"Vector::<bool>::decode", 721, .propagate⟩
 
 /-- **Main: the fix.** On every code — including `GrB_INVALID_OBJECT` from a
 corrupt blob and `GrB_DOMAIN_MISMATCH` from a blob of the wrong type — both
@@ -117,5 +119,94 @@ succeeds on the dimension check (`0 ≤ GB_NMAX`), so its `assert_eq!` is not
 payload-reachable. -/
 theorem matrix_decode_internal_new_ok :
     (Nat.ble 0 (1 <<< 60)) = true := by decide
+
+/-- #3643: `GxB_load_Matrix_from_Container` in `Matrix::decode` (matrix.rs) used to be
+`debug_assert`ed, so a container the arrays could not back was ignored in release; it is now
+`if info != SUCCESS { GrB_Matrix_free; return Err }`. -/
+def matrixDecodeLoad : Wrapper := ⟨"Matrix::decode GxB_load_Matrix_from_Container", 787, .propagate⟩
+
+theorem matrixDecodeLoad_never_dies (i : Info) :
+    Disposition.run matrixDecodeLoad.disp i = some i.ok := by
+  cases i <;> rfl
+
+/-- A refused container is an error, not a matrix built on it. -/
+theorem matrixDecodeLoad_rejects (i : Info) (h : i.ok = false) :
+    Disposition.run matrixDecodeLoad.disp i = some false := by
+  cases i <;> simp_all [matrixDecodeLoad, Disposition.run]
+
+/-! ### `ContainerHeader::parse` (matrix.rs, #3643)
+
+Only six scalar fields are taken from the payload's container bytes (no pointer, arena or
+`*_future` word: the `PtrBlind` reliance of the old `copy_nonoverlapping` is gone), and they
+must name a sparse or hypersparse, row- or column-major matrix within `max_dim`. -/
+
+/-- `GxB_HYPERSPARSE = 1`, `GxB_SPARSE = 2`, `GxB_BITMAP = 4`, `GxB_FULL = 8`;
+`GrB_ROWMAJOR = 0`, `GrB_COLMAJOR = 1`. -/
+def headerOk (format orientation nrows ncols maxDim : Nat) : Bool :=
+  (format == 1 || format == 2) && (orientation == 0 || orientation == 1) &&
+    decide (nrows ≤ maxDim) && decide (ncols ≤ maxDim)
+
+/-- Bitmap and full containers (which would allocate `nrows * ncols`) are refused. -/
+theorem headerOk_refuses_dense (o r c d : Nat) :
+    headerOk 4 o r c d = false ∧ headerOk 8 o r c d = false := by
+  simp [headerOk]
+
+/-- A sparse or hypersparse, row- or column-major header within the limit parses. -/
+theorem headerOk_accepts (f o r c d : Nat) (hf : f = 1 ∨ f = 2) (ho : o = 0 ∨ o = 1)
+    (hr : r ≤ d) (hc : c ≤ d) : headerOk f o r c d = true := by
+  rcases hf with rfl | rfl <;> rcases ho with rfl | rfl <;> simp [headerOk, hr, hc]
+
+/-! ### Who frees what in `Matrix::decode` (#3643 `ContainerGuard`)
+
+`GxB_Container_new` allocates the container and five empty component vectors
+(`GxB_Container_new_arena.c`: `p, h, b, i, x`). `decode` reads the five payload components
+(pure Rust), checks the structure, then `load`s each into a fresh vector and stores it over its
+slot. `ContainerGuard` frees the container and whatever its slots hold on every exit. Nothing
+frees the vector a slot held before the store. -/
+
+inductive Blk where
+  | cont
+  | init (k : Nat)
+  | loaded (k : Nat)
+deriving DecidableEq, Repr
+
+/-- Where `decode` stops: a read or `check_structure` error, the `k`-th `load` failing
+(after `k` stores), `GxB_load_Matrix_from_Container` refusing, or success. -/
+inductive DecodeExit where
+  | readFail
+  | loadFail (k : Nat)
+  | containerRefused
+  | ok
+deriving DecidableEq, Repr
+
+def DecodeExit.stored : DecodeExit → Nat
+  | .readFail => 0
+  | .loadFail k => min k 5
+  | .containerRefused => 5
+  | .ok => 5
+
+def allocated (e : DecodeExit) : List Blk :=
+  .cont :: ((List.range 5).map .init ++ (List.range e.stored).map .loaded)
+
+/-- The guard's `GxB_Container_free`: the container and its five slots. -/
+def freedByGuard (e : DecodeExit) : List Blk :=
+  .cont :: (List.range 5).map fun j => if j < e.stored then .loaded j else .init j
+
+def leaked (e : DecodeExit) : List Blk := (allocated e).filter fun b => b ∉ freedByGuard e
+
+/-- #3643 fixes the early error paths: a payload refused before any `load` leaks nothing
+(before, the container and every vector decoded so far leaked). -/
+theorem decode_readFail_no_leak : leaked .readFail = [] := by decide
+
+/-- Still open: each store overwrites the empty vector `GxB_Container_new` put in the slot,
+so a successful decode leaks those five (and a refused container the same five). -/
+theorem decode_ok_leaks_initial_components :
+    leaked .ok = [.init 0, .init 1, .init 2, .init 3, .init 4] ∧
+    leaked .containerRefused = leaked .ok := by decide
+
+/-- A failing `k`-th `load` leaks the initial vectors of the `k` slots already overwritten. -/
+theorem decode_loadFail_leaks :
+    leaked (.loadFail 0) = [] ∧ leaked (.loadFail 2) = [.init 0, .init 1] ∧
+    leaked (.loadFail 4) = [.init 0, .init 1, .init 2, .init 3] := by decide
 
 end GBW

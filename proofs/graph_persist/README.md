@@ -24,6 +24,8 @@ Yes, for a graph saved in one key, **provided** the graph is well-formed (`WF`) 
 
 It holds under any destination key name, which is what `RENAME` and `GRAPH.COPY` need.
 
+`WF` bounds the id spaces only by 2^64. Since #3643 the decoders' `check_header` refuses a header with more than `MAX_ID_BOUND` = 2^34 node ids (live plus deleted), or edge ids. So `load_encode` and `key_rt_ver` still describe the old decoders (`loadFromReader`, `rdbLoad`); the new ones (`loadFromReaderChecked`, `rdbLoadChecked`, `Persist/IdBound.lean`) satisfy them only for graphs within the cap (`load_encode_checked`, `key_rt_ver_checked`). `load_encode_fails_past_id_bound` and `key_rt_ver_fails_past_id_bound` show a well-formed graph with 2^34 + 1 nodes that the new code refuses on load (a deliberate limit; see Bugs found).
+
 The leaves are proven separately:
 
 - `decOne_encode`: every scalar property value comes back as itself, with the bytes after it untouched. That covers null, bool, int, float (bit for bit), string (including interned strings), point, datetime, date, time and duration;
@@ -34,7 +36,7 @@ The leaves are proven separately:
 
 The decoder notices instead of inventing data. `load_encode` also proves that cutting the payload at *any* word boundary makes the decoder ask for one more word, rather than returning a smaller graph (`truncated_payload_eof`, `empty_payload_eof`).
 
-That is the decoder's own logic. The live server still crashes on one kind of truncated `GRAPH.RESTORE`, inside the Redis module API (#2537, see [Bugs found](#bugs-found)).
+That is the decoder's own logic. Since #3643 the extra read on a `GRAPH.RESTORE` payload returns `Err` instead of calling `RedisModule_LoadStringBuffer(NULL)` (#2537; redis_layer `from_slice_past_end_err`).
 
 **3. Does a graph split over several keys load correctly, whatever order Redis loads the keys in?**
 
@@ -115,7 +117,7 @@ All confirmed against live Rust and C servers (see [`../FINDINGS.md`](../FINDING
 |---|---|---|---|
 | 1 | `rust_C_unique_disagree`, `disagreement_two_sided` | The UNIQUE key is type-tagged (`format!("{v:?}")` in `build_composite_key`). `{v:1}` and `{v:1.0}`, `{v:0.0}` and `{v:-0.0}`, `{v:1}` and `{v:true}` are all admitted (C rejects); duplicate lists, points, dates and vectors are rejected (C admits). Same through `SET` and on edges | **Open** (#2774) |
 | 2 | `constraint_creation_diverges` | A consequence of 1: creating a UNIQUE constraint over data that already violates it under C's rules reports OPERATIONAL (C: FAILED) | **Open** |
-| 5 | none (the crash is inside the Redis module API) | `GRAPH.RESTORE` with a payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer`; a cut inside a record errors cleanly. C crashes on both | **Open** (#2537; external PR #3167) |
+| 6 | `load_encode_fails_past_id_bound`, `key_rt_ver_fails_past_id_bound` | `check_header` (#3643) refuses a graph with more than 2^34 node ids (or edge ids) on load: `GRAPH.COPY`, `GRAPH.RESTORE` of its `DUMP` and an RDB reload of such a graph fail with "node counts … are out of range (limit 17179869184)". Deliberate ("beyond any graph that fits in memory"); model only | **Open**, by design, not reproduced |
 
 Recorded but not bugs:
 
@@ -142,6 +144,7 @@ Recorded but not bugs:
 | `Persist/Pending.lean` | The `DECODE_STATE` machine for one multi-key graph (`run_keys`) |
 | `Persist/MultiLoad.lean`, `MultiLoad2.lean`, `MultiLoad3.lean` | The parts of `multi_load` |
 | `Persist/Indexes.lean` | `rebuild_indexes` |
+| `Persist/IdBound.lean` | `check_header`'s 2^34 cap: the checked decoders, `load_encode_checked`, `key_rt_ver_checked` and the counterexamples |
 | `RedisType.lean` | Imports the `RedisType/` modules |
 | `RedisType/AuxData.lean` | Aux fields (UDF libraries), persistence events, the fork hook, `graphmeta` stubs |
 | `RedisType/Uuid.lean` | `uuid_v4` and virtual-key names |

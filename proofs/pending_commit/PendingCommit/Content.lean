@@ -17,8 +17,8 @@ byte packing is `Pack.lean`) and proves the reads:
 * `setSpan_u16_wrap` — the `n as u16` (:597, :608): 65,536 pairs leave a
   slot reading `[]` while the arena grew by 65,536 entries no counter covers,
   i.e. `Arena.Inv` breaks (and `compact`'s `debug_assert_eq!` would fire).
-  Reachable only with ≥ 65,536 entries for one entity (`import_attrs_resolved`
-  / `decode_with_count` do not deduplicate); `setSpan_cast_exact` shows the cast
+  Not reachable: `import_attrs_resolved` deduplicates, and `decode_with_count` refuses more
+  than 65,535 entries since #3643 (`StoreCodec.decodeChecked_refuses_u16_wrap`); `setSpan_cast_exact` shows the cast
   is exact whenever ids are strictly ascending and below `ATTRIBUTE_ID_NONE`.
 -/
 namespace PendingCommit.Content

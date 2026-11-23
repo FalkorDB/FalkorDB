@@ -132,7 +132,7 @@ use crate::graph::{
 
 use super::{
     matrix::{Descriptor, Dup, Matrix},
-    serialization::{Decode, Encode, Reader, Writer},
+    serialization::{Decode, DecodeLimits, Encode, Reader, Writer},
     vector::Vector,
     versioned_matrix::{
         self, Delta, VersionedMatrix, delta_dominates_base, should_fold, should_fold_read,
@@ -1629,6 +1629,7 @@ impl Decode<19> for Tensor {
         // ids (checked at the end by counting `me`'s pairs).
         let markers = m.count_value_eq(MULTI_EDGE);
 
+        let limits = DecodeLimits::current();
         let total_tensor_count = r.read_unsigned()?;
         if total_tensor_count > 0 {
             // Two groups: base (TM) then delta-plus (TDP). Every id of a
@@ -1660,6 +1661,13 @@ impl Decode<19> for Tensor {
                     // gathered for is a compare that fires at most once in the
                     // life of the tensor.
                     for edge_id in v.iter() {
+                        // The ids are the blob's indices, which nothing has
+                        // checked: one past the graph's edge ids is corrupt.
+                        if limits.is_some_and(|l| edge_id >= l.edge_bound) {
+                            return Err(format!(
+                                "Tensor decode: edge id {edge_id} for ({src}, {dst}) is out of range"
+                            ));
+                        }
                         if edge_id >= me_ncols {
                             me_ncols = ME_DIM;
                             for (_, b) in &mut me {
@@ -2587,6 +2595,35 @@ mod tests {
         assert_eq!(back.get(b + 11, 12).collect::<Vec<_>>(), vec![9999]);
         assert_eq!(back.edge_count(), t.edge_count());
         assert_eq!(back.multi_pairs(), t.multi_pairs());
+    }
+
+    /// The edge ids of a multi-edge pair are the blob's indices, which nothing
+    /// else checks: with the header's bounds installed, an id at or past
+    /// `edge_bound` is refused and one just under it loads.
+    #[test]
+    fn decode_rejects_an_edge_id_past_the_edge_bound() {
+        ensure_init();
+        let mut t = Tensor::new(64, 64);
+        t.set_all_from_slices(&[1, 1, 1], &[2, 2, 2], &[0, 1, 2]);
+        let mut t = t.dup();
+        t.flush();
+        t.wait();
+
+        let decode_with = |edge_bound: u64| {
+            let mut tape = Tape::default();
+            t.encode(&mut tape);
+            let _guard = DecodeLimits {
+                node_bound: 64,
+                edge_bound,
+            }
+            .scope();
+            Tensor::decode(&mut tape)
+        };
+        assert!(decode_with(3).is_ok(), "ids 0..=2 fit an edge bound of 3");
+        let err = decode_with(2)
+            .err()
+            .expect("edge id 2 is out of range for a bound of 2");
+        assert!(err.contains("out of range"), "unexpected error: {err}");
     }
 
     /// A tensor section entry for a pair the forward matrix does not mark as

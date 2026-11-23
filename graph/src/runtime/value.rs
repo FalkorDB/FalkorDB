@@ -40,7 +40,9 @@ use thin_vec::{ThinVec, thin_vec};
 use crate::{
     graph::{
         graph::{LabelId, NodeId, RelationshipId},
-        graphblas::serialization::{Decode, Encode, Reader, Writer, si_type},
+        graphblas::serialization::{
+            Decode, Encode, Reader, Writer, check_count_fits, decode_capacity, si_type,
+        },
     },
     runtime::{
         functions::{
@@ -2217,7 +2219,11 @@ fn decode_value(
         }
         si_type::T_ARRAY => {
             let len = r.read_unsigned()?;
-            let mut items = ThinVec::with_capacity(len as usize);
+            // Every element is at least a one-byte tag: a count the payload
+            // cannot hold is refused before it reserves anything, so nested
+            // headers cannot each reserve a full prealloc from a small buffer.
+            check_count_fits(r, "array", len, 1)?;
+            let mut items = ThinVec::with_capacity(decode_capacity(len));
             for _ in 0..len {
                 items.push(decode_value(r, depth + 1)?);
             }
@@ -2237,6 +2243,11 @@ fn decode_value(
                 return Err("vector buffer too short".into());
             }
             let dim = u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize;
+            // dim comes from the buffer itself, so check it against the
+            // bytes that are actually there before reserving for it
+            if dim > (bytes.len() - 4) / 4 {
+                return Err(format!("vector dim {dim} exceeds its buffer"));
+            }
             let mut v = ThinVec::with_capacity(dim);
             for i in 0..dim {
                 let off = 4 + i * 4;
@@ -2244,6 +2255,14 @@ fn decode_value(
                     return Err("vector data truncated".into());
                 }
                 v.push(f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap()));
+            }
+            // Both writers emit exactly `4 + 4 * dim` bytes, so a longer buffer
+            // is corrupt: `dim` floats would silently restore a truncated vector.
+            if bytes.len() != 4 + 4 * dim {
+                return Err(format!(
+                    "vector dim {dim} does not match its {}-byte buffer",
+                    bytes.len()
+                ));
             }
             Ok(Value::VecF32(Arc::new(v)))
         }

@@ -95,12 +95,11 @@ The repro tests for these bugs are not part of this PR (the file `graph/tests/le
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 3 | — (no repro in tree) | `Matrix::decode` leaks 5 heap blocks per matrix, and 8 on an error path: `copy_nonoverlapping` overwrites vectors `GxB_Container_new` allocated. This happens on every RDB load, RESTORE and full sync | **Open** |
+| 3 | `decode_ok_leaks_initial_components` (`Codes.lean`) | `Matrix::decode` leaks 5 heap blocks per matrix: it stores the loaded vectors over the 5 empty ones `GxB_Container_new` allocated without freeing them. This happens on every RDB load, RESTORE and full sync. Since #3643 `ContainerGuard` frees the container on a read or header error (`decode_readFail_no_leak`); a failed load still leaks the initial vectors it already replaced (`decode_loadFail_leaks`) | **Open** |
 | 5 | — (no repro in tree) | `vector::Iter` has no lifetime, so safe code can drop the vector and keep iterating freed memory | **Open, latent:** the only in-scope use is `Tensor::decode`; same class as #2898 |
 
 Also noted, not confirmed:
 
-- `Matrix::decode` copies the payload's `*_future` pointer arrays into the live container unchecked; it relies on GraphBLAS never reading them (`PtrBlind`).
 - Every mutating call is only `debug_assert`ed, so a GraphBLAS failure there is silently ignored in release.
 
 There are no CONDITIONAL rows.
@@ -147,7 +146,7 @@ None of these has Rust logic left to prove.
 - GraphBLAS semantics (eWise, mxm, resize, the serialized byte format) are taken from the C documentation, not modelled or checked.
 - The row-iterator model treats "skip empty rows that return `GrB_NO_VALUE`" as "advance to the next stored entry", which the GraphBLAS header documents.
 - The `Own` model of main covers any number of owners; it takes `Arc`'s contract (one atomic decrement, the drop runs on the thread that took the count to zero) from std rather than proving it. The older `Arc::get_mut` protocol is modelled for two owners, exhaustively. `has_pending` and lock concurrency beyond `drop` are not modelled.
-- Bugs 3 and 5 have no Lean theorem (and no repro test in this tree); the leak and the dangling iterator are outside what the model expresses.
+- Bug 3 has a model-level theorem (`decode_ok_leaks_initial_components`) but no repro test in this tree; bug 5, the dangling iterator, is outside what the model expresses.
 
 ## Build and check
 
