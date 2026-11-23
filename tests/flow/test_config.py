@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
