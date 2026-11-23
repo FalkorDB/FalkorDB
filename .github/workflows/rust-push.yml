@@ -131,6 +131,11 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Install registry inspector
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Promote rc-mg-${{ github.sha }}-<server> to the rolling tags
         run: python3 build/publish_tags.py edge --sha "$GITHUB_SHA" --execute
 

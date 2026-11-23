@@ -358,6 +358,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install registry inspector
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Retag rc-mg-${{ needs.guard.outputs.commit_sha }}-<server> → ${{ needs.guard.outputs.semver }}
         env:
           GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}

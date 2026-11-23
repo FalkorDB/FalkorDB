@@ -52,6 +52,8 @@ PER_OS = (
 )
 
 SERVER_LABEL = "com.falkordb.server.name"
+SPDX_PREDICATE = "https://spdx.dev/Document"
+ATTESTATION_TYPE = "attestation-manifest"
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$")
 ARCHIVE_RE = re.compile(
@@ -249,7 +251,9 @@ def retag_command(step: Retag, source: Optional[str] = None) -> list:
 
 
 def repository(ref: str) -> str:
-    """ghcr.io/falkordb/x of ghcr.io/falkordb/x:tag."""
+    """Return the repository from a tagged or digest-pinned reference."""
+    if "@" in ref:
+        return ref.split("@", 1)[0]
     return ref.rsplit(":", 1)[0]
 
 
@@ -305,6 +309,53 @@ def digest_of(ref: str, runner: Callable = run) -> str:
     return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
+def check_sboms(ref: str, runner: Callable = run, server: Optional[str] = None) -> None:
+    """Check each platform's actual SPDX statement, not just its index annotation."""
+    index = json.loads(runner(["docker", "buildx", "imagetools", "inspect", "--raw", ref]))
+    manifests = index.get("manifests", [])
+    for platform in PLATFORMS.values():
+        os_name, arch = platform.split("/")
+        images = [
+            d for d in manifests
+            if d.get("platform", {}).get("os") == os_name
+            and d.get("platform", {}).get("architecture") == arch
+        ]
+        if len(images) != 1:
+            raise PlanError(f"{ref}: expected one {platform} image, found {len(images)}")
+        image_digest = images[0]["digest"]
+        attestations = [
+            d for d in manifests
+            if d.get("annotations", {}).get("vnd.docker.reference.type") == ATTESTATION_TYPE
+            and d.get("annotations", {}).get("vnd.docker.reference.digest") == image_digest
+        ]
+        found = False
+        for descriptor in attestations:
+            manifest_ref = f"{repository(ref)}@{descriptor['digest']}"
+            manifest = json.loads(runner(["docker", "buildx", "imagetools", "inspect", "--raw", manifest_ref]))
+            if manifest.get("subject") and manifest["subject"].get("digest") != image_digest:
+                raise PlanError(f"{ref} {platform}: attestation manifest has the wrong subject")
+            for layer in manifest.get("layers", []):
+                if layer.get("annotations", {}).get("in-toto.io/predicate-type") != SPDX_PREDICATE:
+                    continue
+                statement = json.loads(runner(["crane", "blob", f"{repository(ref)}@{layer['digest']}"]))
+                subject_digests = [s.get("digest", {}).get("sha256") for s in statement.get("subject", [])]
+                predicate = statement.get("predicate") or {}
+                if (statement.get("predicateType") != SPDX_PREDICATE
+                        or image_digest.removeprefix("sha256:") not in subject_digests
+                        or predicate.get("SPDXID") != "SPDXRef-DOCUMENT"
+                        or not str(predicate.get("spdxVersion", "")).startswith("SPDX-2.")
+                        or not isinstance(predicate.get("packages"), list)):
+                    raise PlanError(f"{ref} {platform}: invalid SPDX attestation or wrong subject")
+                names = {package.get("name") for package in predicate["packages"]}
+                if not {"falkordb-rs", "thiserror", "graphblas", "lagraph", "redisearch", "libomp"}.issubset(names):
+                    raise PlanError(f"{ref} {platform}: SBOM lacks FalkorDB or its embedded dependencies")
+                if server and server not in names:
+                    raise PlanError(f"{ref} {platform}: SBOM lacks the {server} server")
+                found = True
+        if not found:
+            raise PlanError(f"{ref} {platform}: missing SPDX attestation for {image_digest}")
+
+
 def check_source(step: Retag, runner: Callable = run) -> str:
     """The digest of step.source, once it holds the server and platforms it should.
 
@@ -325,6 +376,7 @@ def check_source(step: Retag, runner: Callable = run) -> str:
             )
         raise PlanError(f"cannot read {step.source}{hint}") from e
     pinned = f"{repository(step.source)}@{digest}"
+    check_sboms(pinned, runner, step.server)
     out = runner(["docker", "buildx", "imagetools", "inspect", "--format", "{{json .Image}}", pinned])
     images = {k: v for k, v in json.loads(out).items() if k != "unknown/unknown"}
     want = set(PLATFORMS.values())
@@ -361,6 +413,10 @@ def execute(plan: Sequence, runner: Callable = run, workdir: Optional[Path] = No
         if isinstance(step, Retag):
             # From the digest just checked, not the tag, which could move.
             runner(retag_command(step, f"{repository(step.source)}@{digests[step]}"))
+            for tag in step.tags:
+                if digest_of(tag, runner) != digests[step]:
+                    raise PlanError(f"{tag}: published index differs from the checked source")
+                check_sboms(f"{repository(tag)}@{digests[step]}", runner, step.server)
         else:
             digest_file = (workdir or Path(".")) / f"publish-{step.name}.digest"
             for cmd in podman_commands(step, str(digest_file)):

@@ -152,6 +152,11 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Install registry inspector
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Retag rc-rebuild-${{ needs.prepare.outputs.sha }}-<server> → ${{ needs.prepare.outputs.tag }}
         env:
           TAG: ${{ needs.prepare.outputs.tag }}

@@ -113,6 +113,10 @@ jobs:
           ref: ${{ inputs.commit_sha }}
           persist-credentials: false
 
+      - name: Test image promotion checks
+        if: ${{ inputs.flavour == 'release' }}
+        run: python3 -m unittest discover -s build -p test_publish_tags.py
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to Docker Hub
@@ -138,6 +142,10 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           provenance: false
+          # Only release images are promoted to public tags.
+          # This scanner imports the embedded native.spdx.json alongside the
+          # Rust audit metadata and installed OS/browser packages.
+          sbom: ${{ inputs.flavour == 'release' && 'generator=docker/buildkit-syft-scanner:1.12.1@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315' || 'false' }}
           build-args: |
             BROWSER_TAG=${{ inputs.browser_tag }}
             BUILD_IMAGE=${{ inputs.build_image }}
@@ -191,6 +199,11 @@ jobs:
       contents: read
       packages: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Login to Docker Hub
@@ -241,4 +254,23 @@ jobs:
                 $EXTRA_TAGS \
                 $SRC_TAGS
             done
+          done
+
+      - name: Install registry inspector
+        if: ${{ inputs.flavour == 'release' }}
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify assembled SBOMs
+        if: ${{ inputs.flavour == 'release' }}
+        env:
+          TAG: ${{ inputs.tag }}
+          CELLS: ${{ inputs.cells }}
+          SERVER: ${{ inputs.server }}
+        run: |
+          set -euo pipefail
+          for repo in $(echo "$CELLS" | jq -r 'map(.repo) | unique[]'); do
+            PYTHONPATH=build python3 -c 'import sys; from publish_tags import check_sboms; check_sboms(sys.argv[1], server=sys.argv[2])' \
+              "ghcr.io/falkordb/${repo}:${TAG}" "$SERVER"
           done
