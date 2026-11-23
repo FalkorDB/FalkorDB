@@ -536,7 +536,10 @@ theorem stDelete_props (o : GOps G) (p : P) (c c' : CS G) (h : stDelete o p c = 
 
 /-- **`commit_cancelled_props`** (#3030): with no staged attributes left to import (e.g.
 `CREATE (a:L {v: 1, w: 2}) DELETE a`, whose node's attrs were unwound into
-`cancelled_properties`), `Properties set` is exactly the cancelled entities' properties. -/
+`cancelled_properties`), `Properties set` is exactly the cancelled entities' properties.
+The four emptiness premises `hn`, `he`, `hr`, `hx` are required: this does NOT show the additive
+behaviour (cancelled properties plus the imported attribute maps) when cancelled entities
+coexist with other attribute writes, so the `commit` COVERAGE row is CONDITIONAL on them. -/
 theorem commit_cancelled_props (o : GOps G) (p : P) (g0 : G) (s0 : Stats) (r : P × G × Stats)
     (h : commit o p g0 s0 = some r) (hc : p.cancelledN ≠ [] ∨ p.cancelledR ≠ [])
     (hn : p.newN = []) (he : p.existN = []) (hr : p.newR = []) (hx : p.existR = []) :

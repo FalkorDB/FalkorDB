@@ -56,7 +56,7 @@ A `UNIQUE` check looks each affected member's key up through the constraint's in
 | `commit_spec` | A successful `Pending::commit` grows each counter (nodes and relationships created, labels removed, nodes deleted, relationships deleted including the implicit ones) by exactly the staged changes, cancelled entities counted as both created and deleted (#3030), and the constraints hold afterwards | `PendingCommitOp.lean` |
 | `uniqueViolated_spec`, `uniqueViolated_agrees` | The index-lookup UNIQUE check is right, and agrees with the old label scan | `UniqueIndex.lean` |
 | `sound_under_Good`, `createRust_preserves_Good` | Snapshot reads are right while no snapshotted id is live; the allocator keeps that | `Snapshot.lean` |
-| `rust_eq_c`, `commit_cancelled_props`, `deletePendingNode_cancelledP` | Since #3030 Rust's created/deleted counts equal C's, entities created and deleted in the same segment included, and their properties count as set (`count_set` = `import_attrs`' count: `countSet_eq_import`) | `Stats.lean`, `PendingCommitOp.lean`, `PendingCancel.lean` |
+| `rust_eq_c`, `commit_cancelled_props`, `deletePendingNode_cancelledP` | Since #3030 Rust's created/deleted counts equal C's, entities created and deleted in the same segment included, and their properties count as set (`count_set` = `import_attrs`' count: `countSet_eq_import`). `commit_cancelled_props` holds only when the four staged attribute maps are empty (`newN`, `existN`, `newR`, `existR`); with other attribute writes in the same commit the additive `properties_set` is not proven, so the `commit` row (`pending.rs`, line 1384) is CONDITIONAL on that premise | `Stats.lean`, `PendingCommitOp.lean`, `PendingCancel.lean` |
 | `nthLive_spec`, `prEncode_eq_main`, `encRoarPR_eq` | `SAVE` finds its first live id by rank/select (`nth_live_id`) and seeks the roaring bitmap instead of skipping; the output equals the earlier windowed encoding for every `count > 0` (`count = 0` is unreachable: `encoder_counts_pos`). The roaring crate is trusted at the `RSet` level (`SaveRoaring.lean`), checked by a randomized scratch test | `SaveNthLive.lean`, `SaveSlice.lean`, `SaveLayout.lean` |
 | `enforce_spec`, `enforce_skips_failed` | `enforce_constraints` skips only FAILED constraints, as C's `Schema_EnforceConstraints`; an UNDER CONSTRUCTION one binds writes | `PendingCommitOp.lean` |
 
@@ -80,7 +80,7 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 
 Also confirmed live: property counters are net at commit in Rust and per clause in C (`CREATE (n {v:1}) SET n.v = 2`: Rust set 1, C set 2 / removed 1). That is a policy question, not a bug, and is recorded in `FINDINGS.md`. W4-fn-1 (labels staged before a `DELETE` are missing from the deleted snapshot) is also in that area; it was confirmed by another project and its repro tests are in the same test file.
 
-**CONDITIONAL rows.** `check_node_constraint` and `check_edge_constraint` rest on the index contract the Rust documents (hypotheses `hIdx`/`hScan` in `UniqueIndex.lean`): the supporting index returns every live label member not written by this commit whose key values can be matched exactly, and the label matrix (or tensor) lists every live member. The RediSearch side is FFI, so this is not proven here.
+**CONDITIONAL rows.** `check_node_constraint` and `check_edge_constraint` rest on the index contract the Rust documents (hypotheses `hIdx`/`hScan` in `UniqueIndex.lean`): the supporting index returns every live label member not written by this commit whose key values can be matched exactly, and the label matrix (or tensor) lists every live member. The RediSearch side is FFI, so this is not proven here. The `commit` row (`pending.rs`, line 1384) is CONDITIONAL on the four staged attribute maps being empty (`commit_cancelled_props`).
 
 ## Files
 
@@ -115,11 +115,11 @@ Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for t
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 144 |
+| PROVEN | 143 |
 | MODELLED | 12 |
 | NOT COVERED | 27 |
 | AXIOMATISED | 3 |
-| CONDITIONAL | 2 |
+| CONDITIONAL | 3 |
 
 - **All of `attribute_store.rs` is PROVEN**, and 70 of 72 `pending.rs` functions; the other two are the CONDITIONAL constraint checks.
 - **AXIOMATISED:** `set_node_labels_product`, `set_nodes_labels_bulk`, `remove_nodes_labels`. They call GraphBLAS on the label matrices, which is assumed to behave as set insert and delete, so commit is `(C ∪ set) \ remove`.
