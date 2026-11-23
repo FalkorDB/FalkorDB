@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -242,79 +243,109 @@ class SmokeEndToEndTest(unittest.TestCase):
     def test_dead_candidate_is_a_confirmed_regression(self):
         result, _, _ = self.run_smoke(self.DEAD, self.GOOD)
         self.assertEqual((result["verdict"], result["confirmed"]), ("regression", True))
+        self.assertEqual(result["findings"][0]["status"], "regression")
         self.assertEqual(result["machine"]["runner"], "local")
 
     def test_dead_baseline_is_an_error(self):
         result, _, _ = self.run_smoke(self.GOOD, self.DEAD)
         self.assertEqual(result["verdict"], "error")
         self.assertIn("docker pull failed", result["error"])
+        self.assertEqual(result["findings"][0]["status"], "improvement")
+
+    def test_dead_on_both_sides_is_info_not_regression(self):
+        result, _, _ = self.run_smoke(self.DEAD, self.DEAD.replace("2" * 64, "4" * 64))
+        self.assertEqual(result["verdict"], "error")
+        self.assertEqual(result["findings"][0]["status"], "info")
 
 
-# gce-github-runner's action.sh stand-in. It "creates" a VM for the
-# type@zone pairs listed in SUCCEED, "creates and then fails" (its own delete
-# failing too) for those in LEFTOVER, and refuses everything else.
+# gce-github-runner's action.sh stand-in, driven by type@zone lists:
+#   SUCCEED   creates the VM and reports runner_id;
+#   NOTREADY  creates it, waits out the readiness check, deletes it, fails;
+#   PARTIAL   creates it, then fails with an error and leaves it behind;
+#   anything else is refused with gcloud's two-line error.
 FAKE_ACTION = r"""#!/usr/bin/env bash
 for a in "$@"; do
   case $a in
     --machine_zone=*) zone=${a#*=} ;;
     --machine_type=*) type=${a#*=} ;;
-    --runner_label=*) label=${a#*=} ;;
   esac
 done
 echo "$*" >> "$STATE/attempts"
 n=$(wc -l < "$STATE/attempts" | tr -d ' ')
+vm=gce-gh-$n
+if [[ " $SUCCEED $NOTREADY $PARTIAL " == *" $type@$zone "* ]]; then
+  printf '%s\t%s\t%s\n' "$vm" "$zone" "$type" >> "$STATE/vms"
+  echo "runner_id=$vm" >> "$GITHUB_OUTPUT"
+fi
 if [[ " $SUCCEED " == *" $type@$zone "* ]]; then
-  printf 'gce-gh-%s\t%s\t%s\n' "$n" "$zone" "$type" >> "$STATE/vms"
-  echo "runner_id=gce-gh-$n" >> "$GITHUB_OUTPUT"
   exit 0
 fi
-if [[ " $LEFTOVER " == *" $type@$zone "* ]]; then
-  printf 'gce-gh-%s\t%s\t%s\n' "$n" "$zone" "$type" >> "$STATE/vms"
-  echo "Waited 7 minutes for gce-gh-$n, without luck, deleting gce-gh-$n ..."
+if [[ " $NOTREADY " == *" $type@$zone "* ]]; then
+  echo "Waited 7 minutes for $vm, without luck, deleting $vm ..."
+  grep -v "^$vm	" "$STATE/vms" > "$STATE/vms.new"; mv "$STATE/vms.new" "$STATE/vms"
+  echo "Deleted [https://www.googleapis.com/compute/v1/projects/$GCP_PROJECT_ID/zones/$zone/instances/$vm]."
   exit 1
 fi
-echo "ERROR: (gcloud.compute.instances.create) The zone '$zone' does not have enough resources available to fulfill the request."
+if [[ " $PARTIAL " == *" $type@$zone "* ]]; then
+  echo "ERROR: (gcloud.compute.instances.create) something odd after insert"
+  exit 1
+fi
+echo "ERROR: (gcloud.compute.instances.create) Could not fetch resource:"
+echo " - The zone 'projects/$GCP_PROJECT_ID/zones/$zone' does not have enough resources available to fulfill the request."
 exit 1
 """
 
 # gcloud stand-in over the VMs FAKE_ACTION made: list (honouring whether the
-# format asks for the machine type) and delete.
+# format asks for the machine type), describe and delete.
 FAKE_GCLOUD = r"""#!/usr/bin/env bash
 touch "$STATE/vms"
 case "$3" in
   list)
     if [[ "$*" == *machineType* ]]; then cat "$STATE/vms"; else cut -f1,2 "$STATE/vms"; fi ;;
+  describe)
+    awk -F'\t' -v n="$4" -v z="${5#--zone=}" '$1 == n && $2 == z { print $3; found = 1 } END { exit !found }' "$STATE/vms" ;;
   delete)
     echo "delete $4" >> "$STATE/deletes"
     grep -v "^$4	" "$STATE/vms" > "$STATE/vms.new"; mv "$STATE/vms.new" "$STATE/vms" ;;
 esac
 """
 
+# The registration-token check: fails when TOKEN_BAD is set.
+FAKE_CURL = r"""#!/usr/bin/env bash
+echo "$*" >> "$STATE/curl"
+[[ -z ${TOKEN_BAD:-} ]] || { echo "curl: (22) The requested URL returned error: 401" >&2; exit 22; }
+"""
+
+PROJECT = "proj-123456"
+
 
 class CreateVmTest(unittest.TestCase):
-    """create-vm.sh against a fake action.sh and gcloud."""
+    """create-vm.sh against a fake action.sh, gcloud and curl."""
 
     LABEL = "perf-smoke-1-1"
 
-    def create(self, zones, types, succeed="", leftover=""):
+    def create(self, zones, types, succeed="", notready="", partial="", token_bad=""):
         self.attempt_args = []
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            for name, body in [("action/action.sh", FAKE_ACTION), ("bin/gcloud", FAKE_GCLOUD)]:
+            for name, body in [("action/action.sh", FAKE_ACTION), ("bin/gcloud", FAKE_GCLOUD),
+                               ("bin/curl", FAKE_CURL)]:
                 path = tmp / name
                 path.parent.mkdir(exist_ok=True)
                 path.write_text(body)
                 path.chmod(0o755)
             outputs = tmp / "outputs"
             env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", STATE=str(tmp),
-                       SUCCEED=succeed, LEFTOVER=leftover, GITHUB_OUTPUT=str(outputs),
-                       GH_SA_TOKEN="t", GCP_PROJECT_ID="p", GCP_SA_KEY="{}",
+                       SUCCEED=succeed, NOTREADY=notready, PARTIAL=partial, TOKEN_BAD=token_bad,
+                       GITHUB_OUTPUT=str(outputs), GITHUB_REPOSITORY="FalkorDB/FalkorDB",
+                       GH_SA_TOKEN="t", GCP_PROJECT_ID=PROJECT, GCP_SA_KEY="{}",
                        DELETE_VMS_POLL_S="0", DELETE_VMS_GIVE_UP_S="2")
             proc = subprocess.run(["bash", str(HERE / "create-vm.sh"), str(tmp / "action"), self.LABEL,
                                    zones, *types], capture_output=True, text=True, env=env)
             out = dict(line.split("=", 1) for line in outputs.read_text().splitlines()) if outputs.exists() else {}
             attempts = []
-            for line in (tmp / "attempts").read_text().splitlines():
+            lines = (tmp / "attempts").read_text().splitlines() if (tmp / "attempts").exists() else []
+            for line in lines:
                 words = dict(w.split("=", 1) for w in line.split() if w.startswith("--") and "=" in w)
                 attempts.append(f"{words['--machine_type']}@{words['--machine_zone']}")
                 self.attempt_args.append(words)
@@ -326,8 +357,8 @@ class CreateVmTest(unittest.TestCase):
                                              succeed="n4-standard-16@z2")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(attempts, ["n4-standard-16@z1", "n4-standard-16@z2"])
-        self.assertEqual((out["zone"], out["machine_type"], out["fallback_used"]),
-                         ("z2", "n4-standard-16", "false"))
+        self.assertEqual((out["vm_name"], out["zone"], out["machine_type"], out["fallback_used"]),
+                         ("gce-gh-2", "z2", "n4-standard-16", "false"))
         self.assertNotIn("runner_id", out)
 
     def test_fallback_type_after_every_zone(self):
@@ -338,14 +369,17 @@ class CreateVmTest(unittest.TestCase):
                                     "n2-standard-16@z1", "n2-standard-16@z2"])
         self.assertEqual((out["machine_type"], out["fallback_used"]), ("n2-standard-16", "true"))
 
-    def test_nothing_anywhere(self):
+    def test_nothing_anywhere_names_each_reason_without_the_project(self):
         proc, out, attempts, _ = self.create("z1,z2", ["n4-standard-16", "n2-standard-16"])
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(len(attempts), 4)
-        self.assertIn("no VM came up after 4 attempts", out["create_error"])
-        self.assertIn("n2-standard-16 in z2: ERROR: (gcloud.compute.instances.create) The zone 'z2'",
-                      out["create_error"])
-        self.assertNotIn("\n", out["create_error"])
+        error = out["create_error"]
+        self.assertTrue(error.startswith("no VM came up: n4-standard-16 in z1: "), error)
+        self.assertIn("n2-standard-16 in z2: ERROR: (gcloud.compute.instances.create) Could not fetch resource: "
+                      "- The zone 'projects/…/zones/z2' does not have enough resources", error)
+        self.assertTrue(error.endswith("; every attempt failed"), error)
+        self.assertNotIn(PROJECT, error)
+        self.assertNotIn("\n", error)
 
     def test_no_fallback_type(self):
         proc, _, attempts, _ = self.create("z1", ["n4-standard-16"])
@@ -359,16 +393,90 @@ class CreateVmTest(unittest.TestCase):
             self.assertEqual(args["--disk_size"], "100GB")
             self.assertEqual(args["--ephemeral"], "true")
             self.assertEqual(args["--network"], "gh-runner")
+            self.assertEqual(args["--scopes"], "compute-rw")
             self.assertEqual(args["--runner_label"], self.LABEL)
             # action.sh runs `if $actions_preinstalled` and `if $arm`: empty would read as true.
             self.assertEqual((args["--actions_preinstalled"], args["--arm"]), ("false", "false"))
 
-    def test_leftover_vm_is_deleted_before_the_next_attempt(self):
+    def test_runner_that_never_comes_up_stops_the_loop(self):
+        proc, out, attempts, vms = self.create("z1,z2", ["n4-standard-16", "n2-standard-16"],
+                                               notready="n4-standard-16@z1")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(attempts, ["n4-standard-16@z1"])
+        self.assertIn("runner never came up", out["create_error"])
+        self.assertNotIn(PROJECT, out["create_error"])
+        self.assertEqual(vms, [])
+
+    def test_bad_token_stops_before_any_vm(self):
+        proc, out, attempts, _ = self.create("z1,z2", ["n4-standard-16"], succeed="n4-standard-16@z1",
+                                             token_bad="1")
+        self.assertEqual((proc.returncode, attempts), (1, []))
+        self.assertIn("GH_SA_TOKEN cannot create a runner registration token", out["create_error"])
+
+    def test_vm_left_by_a_failed_attempt_is_deleted_before_the_next(self):
         proc, out, _, vms = self.create("z1,z2", ["n4-standard-16"],
-                                        succeed="n4-standard-16@z2", leftover="n4-standard-16@z1")
+                                        succeed="n4-standard-16@z2", partial="n4-standard-16@z1")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertEqual(len(vms), 1, vms)
-        self.assertEqual(out["zone"], "z2")
+        self.assertEqual(vms, ["gce-gh-2\tz2\tn4-standard-16"])
+        self.assertEqual(out["vm_name"], "gce-gh-2")
+
+
+class RunCheckTest(unittest.TestCase):
+    """run-check.sh under `bash -e`, the shell GitHub gives a `run:` step."""
+
+    def run_check(self, command, timeout="30", **extra):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            # Records its arguments into out/argv, one per line, then exits with $EXIT.
+            (tmp / "record.sh").write_text('printf "%s\\n" "$@" > out/argv; exit "${EXIT:-0}"\n')
+            (tmp / "slow.sh").write_text("sleep 30\n")
+            outputs = tmp / "outputs"
+            env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="smoke",
+                       COMMAND=command.format(dir=tmp),
+                       CANDIDATE="c@sha256:" + "1" * 64, BASELINE="b@sha256:" + "2" * 64,
+                       MODE="nightly", TIMEOUT_SECONDS=timeout, PERF_CLIENT_CPUS="")
+            for key in ("CANDIDATE_LABEL", "BASELINE_LABEL", "CANDIDATE_COMMIT", "BASELINE_COMMIT", "EXIT"):
+                env.pop(key, None)
+            env.update(extra)
+            proc = subprocess.run(["bash", "-e", str(HERE / "run-check.sh")], cwd=tmp,
+                                  capture_output=True, text=True, env=env)
+            out = dict(line.split("=", 1) for line in outputs.read_text().splitlines()) if outputs.exists() else {}
+            argv_file = tmp / "out" / "argv"
+            argv = argv_file.read_text().splitlines() if argv_file.exists() else []
+            return proc, out, argv
+
+    def test_failing_command_is_recorded_and_returned(self):
+        proc, out, _ = self.run_check("bash {dir}/record.sh", EXIT="3")
+        self.assertEqual(proc.returncode, 3)
+        self.assertEqual(out, {"command_exit": "3", "timed_out": "false"})
+        self.assertIn("wrote no result.json", proc.stdout)
+
+    def test_timeout_is_recorded(self):
+        proc, out, _ = self.run_check("bash {dir}/slow.sh", timeout="1")
+        self.assertEqual(proc.returncode, 124)
+        self.assertEqual(out, {"command_exit": "124", "timed_out": "true"})
+
+    def test_contract_flags_and_only_non_empty_labels(self):
+        proc, out, argv = self.run_check("bash {dir}/record.sh", CANDIDATE_LABEL="main@4c10889",
+                                         BASELINE_COMMIT="", BASELINE_LABEL="6.2.0")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(out["command_exit"], "0")
+        self.assertEqual(argv, ["--candidate", "c@sha256:" + "1" * 64, "--baseline", "b@sha256:" + "2" * 64,
+                                "--out", "out", "--mode", "nightly",
+                                "--candidate-label", "main@4c10889", "--baseline-label", "6.2.0"])
+
+
+class WorkflowLabelTest(unittest.TestCase):
+    """The runner label is spelled the same where it is created, used and deleted."""
+
+    def test_label_template_matches_runs_on(self):
+        text = (HERE.parents[2] / ".github" / "workflows" / "_perf-vm.yml").read_text()
+        label = re.search(r"^  PERF_VM_LABEL: (.+)$", text, re.M).group(1)
+        runs_on = re.findall(r"^    runs-on: (perf-.+)$", text, re.M)
+        self.assertEqual(runs_on, [label])
+        create, rest = text.split("\n  run:\n")
+        self.assertIn('create-vm.sh "$PWD/.gce-github-runner" "$PERF_VM_LABEL"', create)
+        self.assertIn('delete-vms.sh "$PERF_VM_LABEL"', rest.split("\n  cleanup:\n")[1])
 
 
 class DeleteVmsTest(unittest.TestCase):

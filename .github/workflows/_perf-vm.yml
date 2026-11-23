@@ -19,6 +19,9 @@
 # Every artifact holds perf-vm.json (zone, machine type, fallback, exit code,
 # or why no VM came up). When no VM came up it is the only file.
 #
+# Re-run a failed run with "Re-run all jobs": "Re-run failed jobs" would not
+# create a new VM, so the run job is skipped and cleanup fails, saying so.
+#
 # Three things delete the VM: the cleanup job; a systemd timer the run job
 # arms on the VM at timeout_minutes + 30 min; and the action's own
 # `sleep 6h && delete`, armed by the VM's startup script.
@@ -117,8 +120,10 @@ jobs:
       machine_type: ${{ steps.create.outputs.machine_type }}
       fallback_used: ${{ steps.create.outputs.fallback_used }}
       create_error: ${{ steps.create.outputs.create_error || steps.plan.outputs.error }}
+      planned: ${{ steps.plan.outcome }}
+      attempt: ${{ github.run_attempt }}
       job_timeout: ${{ steps.plan.outputs.job_timeout }}
-      command_timeout: ${{ steps.plan.outputs.command_timeout }}
+      command_timeout_s: ${{ steps.plan.outputs.command_timeout_s }}
       step_timeout: ${{ steps.plan.outputs.step_timeout }}
       deadline: ${{ steps.plan.outputs.deadline }}
     steps:
@@ -137,8 +142,9 @@ jobs:
           set -euo pipefail
           fail() { echo "error=$1" >> "$GITHUB_OUTPUT"; echo "::error::$1"; exit 1; }
           # The name becomes a GCE label key inside PERF_VM_LABEL (63 chars).
-          [[ $CHECK =~ ^[a-z][a-z0-9-]{0,42}$ ]] \
-            || fail "check '$CHECK' must be lowercase letters, digits and dashes, at most 43 characters"
+          # `--` is reserved for a check's own artifact names (contract v1.5).
+          [[ $CHECK =~ ^[a-z][a-z0-9-]{0,42}$ && $CHECK != *--* ]] \
+            || fail "check '$CHECK' must be lowercase letters, digits and single dashes, at most 43 characters"
           [[ $MODE =~ ^(queue|nightly|long)$ ]] || fail "mode '$MODE' is not queue, nightly or long"
           for image in "$CANDIDATE" "$BASELINE"; do
             [[ $image =~ ^[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] \
@@ -155,7 +161,7 @@ jobs:
             echo "zones=$ZONES"
             echo "machine_type=$MACHINE_TYPE"
             echo "fallback=$FALLBACK"
-            echo "command_timeout=$TIMEOUT"
+            echo "command_timeout_s=$((TIMEOUT * 60))"
             # The command's own `timeout` fires first; the step and job
             # timeouts are backstops that still leave time for the upload.
             echo "step_timeout=$((TIMEOUT + 5))"
@@ -184,8 +190,8 @@ jobs:
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         run: |
           set -euo pipefail
-          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null 2>&1
-          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null 2>&1
+          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null
+          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null
 
       - name: Create the VM
         id: create
@@ -223,8 +229,11 @@ jobs:
   run:
     name: Run ${{ inputs.check }}
     needs: create
+    # After "Re-run failed jobs" create is not re-run, so no VM carries this
+    # attempt's label; skip rather than wait 24 h for one.
+    if: needs.create.outputs.attempt == format('{0}', github.run_attempt)
     runs-on: perf-${{ inputs.check }}-${{ github.run_id }}-${{ github.run_attempt }}
-    timeout-minutes: ${{ fromJSON(needs.create.outputs.job_timeout) }}
+    timeout-minutes: ${{ fromJSON(needs.create.outputs.job_timeout || '80') }}
     outputs:
       command_exit: ${{ steps.check.outputs.command_exit }}
     steps:
@@ -246,12 +255,18 @@ jobs:
           $sudo systemctl list-timers perf-vm-deadline.timer --no-pager
 
       - name: Install git and python3
+        # Without git, checkout falls back to the REST API, and python3 is
+        # only needed for the helpers; a failed install is worth a warning,
+        # not the night.
+        continue-on-error: true
         run: |
           set -euo pipefail
-          sudo=; (( EUID == 0 )) || sudo=sudo
+          echo "before install: python3=$(command -v python3 || echo none) git=$(command -v git || echo none)"
           export DEBIAN_FRONTEND=noninteractive
-          $sudo apt-get update -q
-          $sudo apt-get install -y -q --no-install-recommends git python3 ca-certificates
+          apt=(apt-get -q -o DPkg::Lock::Timeout=300)
+          (( EUID == 0 )) || apt=(sudo "${apt[@]}")
+          "${apt[@]}" update
+          "${apt[@]}" install -y --no-install-recommends git python3 ca-certificates
 
       - name: Check out the calling commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -283,7 +298,7 @@ jobs:
 
       - name: Run ${{ inputs.check }}
         id: check
-        timeout-minutes: ${{ fromJSON(needs.create.outputs.step_timeout) }}
+        timeout-minutes: ${{ fromJSON(needs.create.outputs.step_timeout || '65') }}
         env:
           CHECK: ${{ inputs.check }}
           COMMAND: ${{ inputs.command }}
@@ -294,30 +309,8 @@ jobs:
           BASELINE_LABEL: ${{ inputs.baseline_label }}
           CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
           BASELINE_COMMIT: ${{ inputs.baseline_commit }}
-          TIMEOUT: ${{ needs.create.outputs.command_timeout }}
-        run: |
-          set -uo pipefail
-          read -r -a cmd <<< "$COMMAND"
-          args=(--candidate "$CANDIDATE" --baseline "$BASELINE" --out out --mode "$MODE")
-          if [[ -n $CANDIDATE_LABEL ]]; then args+=(--candidate-label "$CANDIDATE_LABEL"); fi
-          if [[ -n $BASELINE_LABEL ]]; then args+=(--baseline-label "$BASELINE_LABEL"); fi
-          if [[ -n $CANDIDATE_COMMIT ]]; then args+=(--candidate-commit "$CANDIDATE_COMMIT"); fi
-          if [[ -n $BASELINE_COMMIT ]]; then args+=(--baseline-commit "$BASELINE_COMMIT"); fi
-          rm -rf out && mkdir out
-          echo "running on CPUs $PERF_CLIENT_CPUS: ${cmd[*]} ${args[*]}"
-          start=$SECONDS
-          timeout --kill-after=60 "${TIMEOUT}m" taskset -c "$PERF_CLIENT_CPUS" "${cmd[@]}" "${args[@]}"
-          rc=$?
-          timed_out=false
-          # 124: stopped by TERM; 137: KILLed after the grace period.
-          if (( (rc == 124 || rc == 137) && SECONDS - start >= TIMEOUT * 60 )); then
-            timed_out=true
-            echo "::error::$CHECK did not finish within $TIMEOUT minutes"
-          fi
-          echo "command_exit=$rc" >> "$GITHUB_OUTPUT"
-          echo "timed_out=$timed_out" >> "$GITHUB_OUTPUT"
-          [[ -f out/result.json ]] || echo "::warning::$CHECK wrote no result.json (exit $rc)"
-          exit "$rc"
+          TIMEOUT_SECONDS: ${{ needs.create.outputs.command_timeout_s }}
+        run: tests/perf/vm/run-check.sh
 
       - name: Record the VM
         if: always()
@@ -328,11 +321,12 @@ jobs:
           TYPE: ${{ needs.create.outputs.machine_type }}
           FALLBACK_USED: ${{ needs.create.outputs.fallback_used }}
           COMMAND_EXIT: ${{ steps.check.outputs.command_exit }}
-          TIMED_OUT: ${{ steps.check.outputs.timed_out }}
+          # No exit code but a failed step: the step timeout stopped it.
+          TIMED_OUT: ${{ steps.check.outputs.timed_out || (steps.check.outcome == 'failure' && 'true') || 'false' }}
         run: |
           python3 -I tests/perf/vm/vm.py record --out out/perf-vm.json --check "$CHECK" \
             --vm-name "$VM_NAME" --zone "$ZONE" --machine-type "$TYPE" \
-            --fallback-used "$FALLBACK_USED" --command-exit "$COMMAND_EXIT" --timed-out "${TIMED_OUT:-false}"
+            --fallback-used "$FALLBACK_USED" --command-exit "$COMMAND_EXIT" --timed-out "$TIMED_OUT"
 
       - name: Upload perf-result-${{ inputs.check }}
         if: always()
@@ -348,32 +342,45 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Every step says always(): a cancel that lands while this job runs
+    # skips any step that does not, and the delete must still happen.
     steps:
       - name: Check out the VM scripts
+        if: always()
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: tests/perf/vm
           persist-credentials: false
 
       - name: Authenticate gcloud
+        if: always()
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
         run: |
           set -euo pipefail
-          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null 2>&1
-          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null 2>&1
+          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null
+          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null
 
       - name: Delete every VM labelled ${{ env.PERF_VM_LABEL }}
+        if: always()
         env:
           CREATE_RESULT: ${{ needs.create.result }}
+          PLANNED: ${{ needs.create.outputs.planned }}
         run: |
           set -euo pipefail
-          # A create that did not succeed may have an insert still in flight.
+          # A create that started but did not succeed may have an insert
+          # still in flight.
           grace=0
-          [[ $CREATE_RESULT == success ]] || grace=120
+          if [[ $CREATE_RESULT != success && $PLANNED == success ]]; then grace=120; fi
           tests/perf/vm/delete-vms.sh "$PERF_VM_LABEL" "$grace"
           echo "Deleted every VM labelled \`$PERF_VM_LABEL\`; none remain." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Refuse a partial re-run
+        if: always() && needs.create.result == 'success' && needs.run.result == 'skipped'
+        run: |
+          echo "::error::No VM for attempt ${{ github.run_attempt }}: create was not re-run. Use \"Re-run all jobs\"."
+          exit 1
 
       - name: Record why no VM ran the check
         if: always() && needs.create.result != 'success'

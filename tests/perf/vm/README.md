@@ -26,6 +26,12 @@ jobs:
     secrets: inherit                             # GH_SA_TOKEN, GCP_PROJECT_ID, GCP_SA_KEY
 ```
 
+A matrix caller needs `fail-fast: false`, or one check's failure cancels the
+others mid-run (their VMs are still deleted, but their results are lost).
+Re-run a failed run with **Re-run all jobs**. "Re-run failed jobs" does not
+re-run the create job, so no VM carries the new attempt's label: the run job is
+skipped and the cleanup job fails, saying so.
+
 The VM job runs, in a checkout of the calling commit:
 
 ```
@@ -52,7 +58,8 @@ n4-standard-16 (8 cores, CPU n and n+8 share a core) that is `0-3,8-11` and
 unpinned).
 
 The VM is Debian 12 with Docker, git, python3 and uv, a 100 GB boot disk, and
-4 GB of memory per vCPU on the default type.
+4 GB of memory per vCPU on the default type. Its service account token is
+scoped to Compute only (`compute-rw`): enough to label and delete itself.
 
 ## The artifact
 
@@ -73,12 +80,24 @@ leg's outputs, so read `perf-vm.json` instead.
 
 ## Getting a VM
 
-`create-vm.sh` runs `FalkorDB/gce-github-runner`'s `action.sh` (pinned by
-commit in the workflow) once per zone: every zone in `vars.GCP_ZONES` (or the
-`zones` input) for `machine_type`, then every zone for the fallback type. Any
-failure moves on to the next zone. The action's own zone loop moves on only
-for `ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS` and stops on any other error,
-so it is called with one zone at a time.
+`create-vm.sh` runs `FalkorDB/gce-github-runner`'s `action.sh` at commit
+`0caf8406` (`GCE_GITHUB_RUNNER_REF` in the workflow, the same pin C's
+`benchmark.yml` uses) directly, not through the composite action, and once
+per zone: every zone in `vars.GCP_ZONES` (or the `zones` input) for
+`machine_type`, then every zone for the fallback type. Any failure moves on to
+the next zone. This loop replaces `action.sh`'s own zone loop, which moves on
+only for `ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS` and stops the whole
+create on any other error. The flags are the ones the composite passes, with
+`ephemeral=true`, a 100 GB disk, Debian 12, `compute-rw` scope, and a runner
+version resolved with a token instead of through the unauthenticated API.
+
+Two failures are not a zone's fault and stop the loop at once instead of
+costing every zone: a `GH_SA_TOKEN` that cannot create a runner registration
+token (checked once, up front; `action.sh` would read the error as the token
+"null"), and a VM whose runner never comes up within the action's 7-minute
+wait. No attempt starts after 50 minutes. `create_error` quotes gcloud's reason
+line for each attempt, with the project ID replaced by `…`: GitHub drops a job
+output that contains a secret.
 
 The fallback is `n2-<size>` for an `n4-<size>` type, the same vCPUs and
 memory in a more plentiful family. Set `fallback_machine_type` for any other
@@ -89,27 +108,34 @@ comparison holds. Only its numbers are not comparable with another night's.
 
 Three independent things delete it:
 
-1. **The cleanup job** (`ubuntu-latest`, `if: always()`) runs after success,
-   failure, timeout and cancel. It deletes every VM carrying the run's label in
-   any zone (`delete-vms.sh`) and goes red if one remains. After a create that
-   did not succeed, it keeps listing for 2 minutes, because a cancelled
-   `instances create` finishes server-side.
+1. **The cleanup job** (`ubuntu-latest`, `if: always()` on the job and on
+   every step, so a cancel that lands mid-cleanup does not skip the delete)
+   runs after success, failure, timeout and cancel. It deletes every VM
+   carrying the run's label in any zone (`delete-vms.sh`), retrying a failed
+   listing rather than reading it as "none", and goes red if one remains.
+   After a create that did not succeed, it keeps listing for 2 minutes,
+   because a cancelled `instances create` finishes server-side.
 2. **A systemd timer on the VM**, armed first thing in the run job, deletes
    the VM `timeout_minutes + 30` minutes after the job starts. It covers a run
-   whose cleanup job never runs (a force-cancel, an Actions outage).
+   whose cleanup job never runs (a force-cancel, an Actions outage). Proven on
+   a hand-made VM (2026-11-23): the VM's own service account deleted it 3.5
+   minutes after boot. With the gcloud path broken, `systemd-run` refuses to
+   arm, the step is flagged (`continue-on-error`) and nothing else changes.
 3. **The action's startup script** runs `sleep 6h && gcloud … delete`.
 
-Not covered: a run job queued for its runner never starts, so the timer
-(2) is never armed. That needs the runner to have gone offline after the action
-saw it ready. The 6 h timer (3) still deletes that VM. GCE's own
-`--max-run-duration` would cover all of these. The pinned action has no input
-for it, and `set-scheduling` only works on a stopped VM.
+What remains: a VM whose run job never started (its runner went offline
+after the action saw it ready) carries no timer (2). If the cleanup job also
+never runs (a force-cancel during create), only the 6 h timer (3) deletes it.
+GCE's own `--max-run-duration` set at create would bound every path. The
+pinned action has no input for it, and `set-scheduling` only works on a
+stopped VM; adding that input to `gce-github-runner` is the follow-up.
 
 ## Files
 
 | file | what |
 | --- | --- |
 | `create-vm.sh` | zones × types loop over the action's `action.sh` |
+| `run-check.sh` | runs the command with the contract's flags under `timeout` and `taskset`; records exit code and timeout |
 | `delete-vms.sh` | delete every VM with a label; retries listing, waits out in-flight inserts |
 | `vm.py env` | core split, machine object, `PERF_*` lines for `$GITHUB_ENV` |
 | `vm.py record` | writes `perf-vm.json` |

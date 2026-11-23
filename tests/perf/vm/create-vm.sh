@@ -10,13 +10,20 @@
 # on any other error, such as a plain ZONE_RESOURCE_POOL_EXHAUSTED or a type
 # that one zone does not offer. Here any failure moves on to the next zone.
 #
+# Only a failure to create the VM moves on. A VM that was created but whose
+# runner never came up (the action's 7-minute readiness wait) is not a zone
+# problem, and neither is a GH_SA_TOKEN that cannot register runners, which
+# is checked once up front: both stop the loop rather than cost every zone.
+#
 # Environment: GH_SA_TOKEN, GCP_PROJECT_ID, GCP_SA_KEY (as for the action),
 # RUNNER_VER (runner version, default latest), DISK_SIZE (default 100GB),
+# CREATE_BUDGET_S (start no attempt after this many seconds, default 3000),
 # GITHUB_OUTPUT. gcloud must already be authenticated, for delete-vms.sh.
 #
 # Writes outputs vm_name, zone, machine_type, fallback_used on success, or
 # create_error, one line naming every attempt and why it failed, when no
-# VM came up (then exits 1).
+# VM came up (then exits 1). create_error never holds the project ID:
+# GitHub drops a job output that contains a secret.
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -42,17 +49,50 @@ if [[ -n $fallback && $fallback != "$primary" ]]; then
 fi
 
 errors=()
+give_up() {
+  local joined
+  joined=$(printf '%s; ' ${errors[@]+"${errors[@]}"} "$1")
+  create_error="no VM came up: ${joined%; }"
+  echo "create_error=$create_error" >> "$GITHUB_OUTPUT"
+  echo "::error::$create_error"
+  exit 1
+}
+
+# What gcloud said, on one line, without the project ID: its first ERROR
+# line, the ` - reason` line under it, or the action's own last word.
+reason_from() {
+  local log=$1 rc=$2 text
+  text=$(sed -n '/ERROR/{N;s/\n/ /;p;q;}' "$log")
+  [[ -n $text ]] || text=$(tail -n1 "$log")
+  text=${text:-exit $rc}
+  text=${text//$GCP_PROJECT_ID/…}
+  # shellcheck disable=SC2001 # a regex, not a literal
+  sed 's|projects/[^/ ]*/|projects/…/|g' <<< "$text" | tr -d '\r' | tr -s ' ' | cut -c1-240
+}
+
+# action.sh reads the registration token with `curl` and no -f, so a bad
+# token becomes the string "null" and every attempt waits 7 minutes for a
+# runner that cannot register.
+if ! curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $GH_SA_TOKEN" \
+    "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/registration-token"; then
+  give_up "GH_SA_TOKEN cannot create a runner registration token for $GITHUB_REPOSITORY"
+fi
+
 for type in "${types[@]}"; do
   for zone in "${zone_list[@]}"; do
+    if (( SECONDS >= ${CREATE_BUDGET_S:-3000} )); then
+      give_up "stopped trying after ${SECONDS}s"
+    fi
     # A failed attempt leaves a VM behind only if the action's own delete
     # failed; clear it so at most one VM ever carries the label.
     "$here/delete-vms.sh" "$label" 0 || true
 
     log=$(mktemp)
+    action_out=$(mktemp)
     echo "::group::create $type in $zone"
-    # action.sh writes runner_id/runner_label to GITHUB_OUTPUT, even for an
-    # attempt that then fails; keep those out of this step's outputs.
-    GITHUB_OUTPUT=$(mktemp) "$action_dir/action.sh" \
+    # action.sh writes runner_id to GITHUB_OUTPUT, also for an attempt that
+    # then fails; keep it apart from this step's outputs.
+    GITHUB_OUTPUT=$action_out "$action_dir/action.sh" \
       --command=start \
       --token="$GH_SA_TOKEN" \
       --project_id="$GCP_PROJECT_ID" \
@@ -65,7 +105,7 @@ for type in "${types[@]}"; do
       --boot_disk_type="$(disk_type "$type")" \
       --image_project=debian-cloud \
       --image_family=debian-12 \
-      --scopes=cloud-platform \
+      --scopes=compute-rw \
       --shutdown_timeout=30 \
       --runner_label="$label" \
       --preemptible=false \
@@ -77,13 +117,16 @@ for type in "${types[@]}"; do
     rc=${PIPESTATUS[0]}
     echo "::endgroup::"
 
+    vm_name=$(sed -n 's/^runner_id=//p' "$action_out" | tail -n1)
+    rm -f "$action_out"
     if (( rc == 0 )); then
-      if ! found=$(gcloud compute instances list --filter="labels.${label}=1" \
-          --format='value(name,zone.basename(),machineType.basename())'); then
-        found=""
+      vm_type=""
+      if [[ -n $vm_name ]]; then
+        vm_type=$(gcloud compute instances describe "$vm_name" --zone="$zone" \
+          --format='value(machineType.basename())') || vm_type=""
       fi
-      read -r vm_name vm_zone vm_type <<< "$(head -n1 <<< "$found")"
-      if [[ -n ${vm_name:-} ]]; then
+      if [[ -n $vm_type ]]; then
+        vm_zone=$zone
         fallback_used=false
         [[ $vm_type == "$primary" ]] || fallback_used=true
         {
@@ -95,21 +138,18 @@ for type in "${types[@]}"; do
         echo "VM $vm_name: $vm_type in $vm_zone (fallback used: $fallback_used)"
         exit 0
       fi
-      echo "::warning::the action reported success, but no VM carries label $label"
+      echo "::warning::the action reported success, but VM '${vm_name}' is not in $zone"
     fi
 
-    # The first gcloud ERROR line, or the action's own last word.
-    reason=$(sed -n '/ERROR/{p;q;}' "$log")
-    [[ -n $reason ]] || reason=$(tail -n1 "$log")
-    reason=$(tr -d '\r' <<< "${reason:-exit $rc}" | cut -c1-200)
+    reason=$(reason_from "$log" "$rc")
+    if grep -q 'Waited 7 minutes' "$log"; then
+      rm -f "$log"
+      give_up "$type in $zone: the VM was created but its runner never came up ($reason)"
+    fi
+    rm -f "$log"
     errors+=("$type in $zone: $reason")
     echo "::warning::$type in $zone failed: $reason"
-    rm -f "$log"
   done
 done
 
-joined=$(printf '%s; ' "${errors[@]}")
-create_error="no VM came up after ${#errors[@]} attempts: ${joined%; }"
-echo "create_error=$create_error" >> "$GITHUB_OUTPUT"
-echo "::error::$create_error"
-exit 1
+give_up "every attempt failed"

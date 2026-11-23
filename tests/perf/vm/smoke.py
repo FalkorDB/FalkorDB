@@ -56,6 +56,13 @@ def default_label(image: str) -> str:
     return f"{name}@{digest[:12]}"
 
 
+def completed_status(candidate: int, baseline: int) -> str:
+    """Contract v1.4: broken on both sides is `info`, not a regression."""
+    if candidate == baseline:
+        return "ok" if candidate else "info"
+    return "improvement" if candidate else "regression"
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -193,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             "ratio": round(completed["candidate"] / completed["baseline"], 4) if completed["baseline"] else None,
             "threshold": None,
             "direction": "lower_is_worse",
-            "status": "regression" if completed["baseline"] and not completed["candidate"] else "ok",
+            "status": completed_status(completed["candidate"], completed["baseline"]),
         }
     ]
     if pings["candidate"] is not None and pings["baseline"] is not None:
@@ -215,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
         "regression": "the candidate server did not answer; the baseline did",
         "error": "the baseline server did not answer, so nothing was compared",
     }[verdict]
+    if verdict == "error" and not completed["candidate"]:
+        summary = "neither server answered (broken on both sides), so nothing was compared"
     result = {
         "schema": 1,
         "check": "smoke",
