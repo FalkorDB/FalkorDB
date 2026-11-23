@@ -559,6 +559,36 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertEqual(actual, expected)
         self.env.assertEqual(expected[2], [[1]])
 
+    def test18_edge_scan_keeps_a_raising_conjunct_and_staged_sets(self):
+        # The edge counterpart of test17's array case, and a staged SET of an unindexed attribute
+        # beside a MERGE on the indexed one: same answers as without indexes.
+        def outcome(name, indexed, data, query):
+            g = self.db.select_graph(name)
+            if indexed:
+                create_edge_range_index(g, 'PX', 'v')
+                create_edge_range_index(g, 'PX', 'a', sync=True)
+                create_node_range_index(g, 'PM', 'id', sync=True)
+            g.query(data)
+            try:
+                result = g.query(query).result_set
+            except ResponseError as e:
+                result = str(e)
+            g.delete()
+            return result
+
+        data = "CREATE (:PE)-[:PX {a: 3}]->(:PE), (:PE)-[:PX {v: date('2020-01-01'), a: []}]->(:PE)"
+        query = "MATCH ()-[r:PX]->() WHERE r.v = date('2020-01-01') AND 1 IN r.a RETURN count(r)"
+        expected = outcome('edge_array_truth', False, data, query)
+        self.env.assertContains("Type mismatch", str(expected))
+        self.env.assertEqual(outcome('edge_array_index', True, data, query), expected)
+
+        data = "UNWIND range(0, 49) AS i CREATE (:PM {id: i})"
+        query = ("UNWIND range(0, 49) AS i MATCH (n:PM {id: i}) SET n.scratch = i "
+                 "MERGE (m:PM {id: i}) RETURN count(m)")
+        expected = outcome('merge_scratch_truth', False, data, query)
+        self.env.assertEqual(expected, [[50]])
+        self.env.assertEqual(outcome('merge_scratch_index', True, data, query), expected)
+
     def test17_invalid_distance_operand_raises_on_an_indexed_scan(self):
         # A property `distance()` rejects must reach the filter that raises the type error, as it
         # does without an index, even when another predicate of the query is answered by a scan
