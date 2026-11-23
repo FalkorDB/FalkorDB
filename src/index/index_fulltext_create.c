@@ -47,7 +47,7 @@ static bool _validateOptions
 	// for EVERY field whether the statement named one or not - the ladder's
 	// first rung always answered, so no later rung was reachable to be wrong.
 	// A map carrying only what the statement stated is what reaches here now.
-	uint matched = 0;
+	uint known = 0;
 	for(uint i = 0; i < n; i++) {
 		SIValue key;
 		SIValue val;
@@ -70,11 +70,29 @@ static bool _validateOptions
 			continue;    // not an option this index knows
 		}
 
-		matched++;
+		known++;
 	}
 
-	// make sure all specified options are valid
-	return (matched == n);
+	// ACCEPTANCE IS LEFT EXACTLY WHERE IT WAS, which is not where it would be
+	// put from scratch: a map is valid if it names at least one option this
+	// index knows, and an unrecognised key alongside it is ignored rather than
+	// refused. {weight: 1, typo: 2} creates the index; {typo: 2} alone does
+	// not.
+	//
+	// Refusing the stray key is the better rule and was tried here. It cannot
+	// land as part of a type-checking fix, because the v2 effect carries the
+	// options map WHOLE (writers/v2/write_ddl.c:49) and the replica hands the
+	// decoded map straight back to GraphHub_AddIndex
+	// (create_index_effect.c:126). A primary running an older build accepts
+	// the stray key, creates the index and replicates that map; a replica that
+	// refused it would log a warning and skip the index, and the two would
+	// diverge with nothing raised to anyone. An AOF written by an older build
+	// replays the same way.
+	//
+	// The type checks above have no such window: an ill-typed option did not
+	// work before this, it crashed the server on the primary, so no index was
+	// created and no effect was ever written for a replica to refuse.
+	return (n == 0 || known > 0);
 }
 
 // create fulltext index

@@ -926,8 +926,10 @@ class testIndexCreationFlow():
         # typed weight was caught by the old first rung too; they are here so
         # the whole option surface is covered, not because they ever broke.
         #
-        # The last case is the other half of the change: a key this index does
-        # not know is refused rather than silently counted as valid.
+        # An unrecognised key is NOT in this list: a stray key alongside a
+        # known one is still ignored, deliberately, because the v2 effect
+        # carries the options map whole and refusing it would make a replica
+        # skip an index its primary created. _validateOptions says why.
         label = "FTOPT"
 
         bad = [
@@ -936,7 +938,6 @@ class testIndexCreationFlow():
             "{weight: 1, language: 7}",
             "{weight: 1, stopwords: 'the'}",
             "{weight: 'heavy'}",
-            "{weight: 1, bogus: 2}",
         ]
 
         accepted = []
@@ -950,6 +951,11 @@ class testIndexCreationFlow():
 
         # assertEqual rather than assertTrue: it names the offenders
         self.env.assertEqual(accepted, [])
+
+        # a stray key alongside a known one is ignored, not refused - pinned
+        # because it is a deliberate choice, not an oversight
+        self.graph.query(f"CREATE FULLTEXT INDEX FOR (n:{label}) ON (n.w) "
+                         "OPTIONS {weight: 1, bogus: 2}")
 
         # and the same shape, well typed throughout, is still accepted
         self.graph.query(f"CREATE FULLTEXT INDEX FOR (n:{label}) ON (n.v) "
