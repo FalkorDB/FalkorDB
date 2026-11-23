@@ -10,7 +10,7 @@
 # `taskset -c` on them), GITHUB_OUTPUT.
 #
 # Runs `<command> --candidate … --baseline … --out out --mode …` in the
-# current directory, writes outputs command_exit and timed_out, and exits
+# current directory, writes outputs started, command_exit and timed_out, and exits
 # with the command's status. GitHub runs a step under `bash -e`; this
 # script does not stop at a failing command before recording it.
 set -uo pipefail
@@ -27,6 +27,8 @@ pin=()
 if [[ -n ${PERF_CLIENT_CPUS:-} ]]; then pin=(taskset -c "$PERF_CLIENT_CPUS"); fi
 
 rm -rf out && mkdir out
+# Lets the workflow tell "stopped by the step timeout" from "never started".
+echo "started=true" >> "$GITHUB_OUTPUT"
 echo "running${PERF_CLIENT_CPUS:+ on CPUs $PERF_CLIENT_CPUS}: ${cmd[*]} ${args[*]}"
 start=$SECONDS
 timeout --kill-after=60 "$TIMEOUT_SECONDS" ${pin[@]+"${pin[@]}"} "${cmd[@]}" "${args[@]}"

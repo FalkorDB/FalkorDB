@@ -303,6 +303,7 @@ case "$3" in
   list)
     if [[ "$*" == *machineType* ]]; then cat "$STATE/vms"; else cut -f1,2 "$STATE/vms"; fi ;;
   describe)
+    [[ -z ${DESCRIBE_FAILS:-} ]] || exit 1
     awk -F'\t' -v n="$4" -v z="${5#--zone=}" '$1 == n && $2 == z { print $3; found = 1 } END { exit !found }' "$STATE/vms" ;;
   delete)
     echo "delete $4" >> "$STATE/deletes"
@@ -324,7 +325,7 @@ class CreateVmTest(unittest.TestCase):
 
     LABEL = "perf-smoke-1-1"
 
-    def create(self, zones, types, succeed="", notready="", partial="", token_bad=""):
+    def create(self, zones, types, succeed="", notready="", partial="", token_bad="", describe_fails=""):
         self.attempt_args = []
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -337,6 +338,7 @@ class CreateVmTest(unittest.TestCase):
             outputs = tmp / "outputs"
             env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", STATE=str(tmp),
                        SUCCEED=succeed, NOTREADY=notready, PARTIAL=partial, TOKEN_BAD=token_bad,
+                       DESCRIBE_FAILS=describe_fails,
                        GITHUB_OUTPUT=str(outputs), GITHUB_REPOSITORY="FalkorDB/FalkorDB",
                        GH_SA_TOKEN="t", GCP_PROJECT_ID=PROJECT, GCP_SA_KEY="{}",
                        DELETE_VMS_POLL_S="0", DELETE_VMS_GIVE_UP_S="2")
@@ -413,6 +415,13 @@ class CreateVmTest(unittest.TestCase):
         self.assertEqual((proc.returncode, attempts), (1, []))
         self.assertIn("GH_SA_TOKEN cannot create a runner registration token", out["create_error"])
 
+    def test_failed_describe_keeps_the_ready_vm(self):
+        proc, out, attempts, _ = self.create("z1,z2", ["n2-standard-16"], succeed="n2-standard-16@z1",
+                                             describe_fails="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(attempts, ["n2-standard-16@z1"])
+        self.assertEqual((out["vm_name"], out["machine_type"]), ("gce-gh-1", "n2-standard-16"))
+
     def test_vm_left_by_a_failed_attempt_is_deleted_before_the_next(self):
         proc, out, _, vms = self.create("z1,z2", ["n4-standard-16"],
                                         succeed="n4-standard-16@z2", partial="n4-standard-16@z1")
@@ -438,7 +447,9 @@ class RunCheckTest(unittest.TestCase):
             for key in ("CANDIDATE_LABEL", "BASELINE_LABEL", "CANDIDATE_COMMIT", "BASELINE_COMMIT", "EXIT"):
                 env.pop(key, None)
             env.update(extra)
-            proc = subprocess.run(["bash", "-e", str(HERE / "run-check.sh")], cwd=tmp,
+            # The step is `run: tests/perf/vm/run-check.sh`, which GitHub hands to
+            # `bash -e`: the file is executed, so it must be executable.
+            proc = subprocess.run(["bash", "-e", "-c", str(HERE / "run-check.sh")], cwd=tmp,
                                   capture_output=True, text=True, env=env)
             out = dict(line.split("=", 1) for line in outputs.read_text().splitlines()) if outputs.exists() else {}
             argv_file = tmp / "out" / "argv"
@@ -448,13 +459,13 @@ class RunCheckTest(unittest.TestCase):
     def test_failing_command_is_recorded_and_returned(self):
         proc, out, _ = self.run_check("bash {dir}/record.sh", EXIT="3")
         self.assertEqual(proc.returncode, 3)
-        self.assertEqual(out, {"command_exit": "3", "timed_out": "false"})
+        self.assertEqual(out, {"started": "true", "command_exit": "3", "timed_out": "false"})
         self.assertIn("wrote no result.json", proc.stdout)
 
     def test_timeout_is_recorded(self):
         proc, out, _ = self.run_check("bash {dir}/slow.sh", timeout="1")
         self.assertEqual(proc.returncode, 124)
-        self.assertEqual(out, {"command_exit": "124", "timed_out": "true"})
+        self.assertEqual(out, {"started": "true", "command_exit": "124", "timed_out": "true"})
 
     def test_contract_flags_and_only_non_empty_labels(self):
         proc, out, argv = self.run_check("bash {dir}/record.sh", CANDIDATE_LABEL="main@4c10889",
@@ -464,6 +475,12 @@ class RunCheckTest(unittest.TestCase):
         self.assertEqual(argv, ["--candidate", "c@sha256:" + "1" * 64, "--baseline", "b@sha256:" + "2" * 64,
                                 "--out", "out", "--mode", "nightly",
                                 "--candidate-label", "main@4c10889", "--baseline-label", "6.2.0"])
+
+
+class ScriptModeTest(unittest.TestCase):
+    def test_scripts_the_workflow_executes_are_executable(self):
+        for script in HERE.glob("*.sh"):
+            self.assertTrue(os.access(script, os.X_OK), f"{script.name} is not executable")
 
 
 class WorkflowLabelTest(unittest.TestCase):
@@ -476,7 +493,11 @@ class WorkflowLabelTest(unittest.TestCase):
         self.assertEqual(runs_on, [label])
         create, rest = text.split("\n  run:\n")
         self.assertIn('create-vm.sh "$PWD/.gce-github-runner" "$PERF_VM_LABEL"', create)
-        self.assertIn('delete-vms.sh "$PERF_VM_LABEL"', rest.split("\n  cleanup:\n")[1])
+        cleanup = rest.split("\n  cleanup:\n")[1]
+        # Cleanup deletes every attempt's label: the template with its last part replaced.
+        self.assertTrue(label.endswith("-${{ github.run_attempt }}"), label)
+        self.assertIn('label=${PERF_VM_LABEL%-*}-$attempt', cleanup)
+        self.assertIn('delete-vms.sh "$label"', cleanup)
 
 
 class DeleteVmsTest(unittest.TestCase):

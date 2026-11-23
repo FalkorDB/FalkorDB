@@ -321,8 +321,8 @@ jobs:
           TYPE: ${{ needs.create.outputs.machine_type }}
           FALLBACK_USED: ${{ needs.create.outputs.fallback_used }}
           COMMAND_EXIT: ${{ steps.check.outputs.command_exit }}
-          # No exit code but a failed step: the step timeout stopped it.
-          TIMED_OUT: ${{ steps.check.outputs.timed_out || (steps.check.outcome == 'failure' && 'true') || 'false' }}
+          # Started, no exit code, failed: the step timeout stopped it.
+          TIMED_OUT: ${{ steps.check.outputs.timed_out || (steps.check.outputs.started == 'true' && steps.check.outcome == 'failure' && 'true') || 'false' }}
         run: |
           python3 -I tests/perf/vm/vm.py record --out out/perf-vm.json --check "$CHECK" \
             --vm-name "$VM_NAME" --zone "$ZONE" --machine-type "$TYPE" \
@@ -362,19 +362,28 @@ jobs:
           printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null
           gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null
 
-      - name: Delete every VM labelled ${{ env.PERF_VM_LABEL }}
+      - name: Delete every VM of this run
         if: always()
         env:
           CREATE_RESULT: ${{ needs.create.result }}
           PLANNED: ${{ needs.create.outputs.planned }}
         run: |
-          set -euo pipefail
-          # A create that started but did not succeed may have an insert
-          # still in flight.
-          grace=0
-          if [[ $CREATE_RESULT != success && $PLANNED == success ]]; then grace=120; fi
-          tests/perf/vm/delete-vms.sh "$PERF_VM_LABEL" "$grace"
-          echo "Deleted every VM labelled \`$PERF_VM_LABEL\`; none remain." >> "$GITHUB_STEP_SUMMARY"
+          set -uo pipefail
+          # A create that did not succeed may have an insert still in flight;
+          # wait for it unless Plan stopped the job before any create.
+          grace=120
+          if [[ $CREATE_RESULT == success || $PLANNED == failure ]]; then grace=0; fi
+          # Every attempt's label: "Re-run failed jobs" may re-run only this
+          # job, after an earlier attempt's cleanup failed.
+          failed=0
+          for attempt in $(seq 1 "$GITHUB_RUN_ATTEMPT"); do
+            label=${PERF_VM_LABEL%-*}-$attempt
+            wait=0
+            if [[ $attempt == "$GITHUB_RUN_ATTEMPT" ]]; then wait=$grace; fi
+            tests/perf/vm/delete-vms.sh "$label" "$wait" || failed=1
+          done
+          (( failed == 0 )) || exit 1
+          echo "No VM labelled \`${PERF_VM_LABEL%-*}-<1..$GITHUB_RUN_ATTEMPT>\` remains." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Refuse a partial re-run
         if: always() && needs.create.result == 'success' && needs.run.result == 'skipped'

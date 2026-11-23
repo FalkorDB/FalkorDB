@@ -111,7 +111,8 @@ Three independent things delete it:
 1. **The cleanup job** (`ubuntu-latest`, `if: always()` on the job and on
    every step, so a cancel that lands mid-cleanup does not skip the delete)
    runs after success, failure, timeout and cancel. It deletes every VM
-   carrying the run's label in any zone (`delete-vms.sh`), retrying a failed
+   carrying the label of any attempt of the run, in any zone
+   (`delete-vms.sh`), retrying a failed
    listing rather than reading it as "none", and goes red if one remains.
    After a create that did not succeed, it keeps listing for 2 minutes,
    because a cancelled `instances create` finishes server-side.
@@ -149,7 +150,8 @@ interleaved with the order swapped, pinned to `PERF_SERVER_CPUS`, on ports it
 picks itself, and asks each server for PING and `GRAPH.QUERY smoke "RETURN 1"`.
 Its result.json says `pass` when every start answered, `regression` when only
 the candidate failed, and `error` when the baseline failed. Every `--mode` does
-the same. Use it to try the VM path without a real check:
+the same, and its result.json always says `"check": "smoke"`, so register it
+under that name. Use it to try the VM path without a real check:
 
 ```yaml
 command: python3 -I tests/perf/vm/smoke.py

@@ -73,7 +73,7 @@ reason_from() {
 # action.sh reads the registration token with `curl` and no -f, so a bad
 # token becomes the string "null" and every attempt waits 7 minutes for a
 # runner that cannot register.
-if ! curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $GH_SA_TOKEN" \
+if ! curl -fsS --retry 3 -o /dev/null -X POST -H "Authorization: Bearer $GH_SA_TOKEN" \
     "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/registration-token"; then
   give_up "GH_SA_TOKEN cannot create a runner registration token for $GITHUB_REPOSITORY"
 fi
@@ -122,8 +122,13 @@ for type in "${types[@]}"; do
     if (( rc == 0 )); then
       vm_type=""
       if [[ -n $vm_name ]]; then
-        vm_type=$(gcloud compute instances describe "$vm_name" --zone="$zone" \
-          --format='value(machineType.basename())') || vm_type=""
+        for _ in 1 2 3; do
+          vm_type=$(gcloud compute instances describe "$vm_name" --zone="$zone" \
+            --format='value(machineType.basename())') && break
+        done
+        # The action saw this VM's runner come up; a failed describe must
+        # not throw it away.
+        vm_type=${vm_type:-$type}
       fi
       if [[ -n $vm_type ]]; then
         vm_zone=$zone
@@ -138,7 +143,7 @@ for type in "${types[@]}"; do
         echo "VM $vm_name: $vm_type in $vm_zone (fallback used: $fallback_used)"
         exit 0
       fi
-      echo "::warning::the action reported success, but VM '${vm_name}' is not in $zone"
+      echo "::warning::the action reported success but no runner_id"
     fi
 
     reason=$(reason_from "$log" "$rc")
