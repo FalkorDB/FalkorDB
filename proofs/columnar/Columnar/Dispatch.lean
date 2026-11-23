@@ -51,6 +51,7 @@ inductive Kind (Val : Type) where
   | eq | neq | lt | le | gt | ge
   | func (name : String) (aggregation structFn write : Bool)
   | list | distinct
+  | listComp  -- `ListComprehension` (#3437: tested by the `FuncInvocation` guard)
   | other (tag : Nat)
 
 inductive Node (Val : Type) where
@@ -116,6 +117,12 @@ def isDistinct : Node Val → Bool
   | .mk .distinct _ => true
   | _ => false
 
+/-- `counts_comprehension` (eval.rs, #3437) on a `FuncInvocation`: `size(<list comprehension>)`,
+which `ExprEval` answers by counting and `VectorEval` leaves to `eval_per_row`. -/
+def countsComp (name : String) : List (Node Val) → Bool
+  | [.mk .listComp _] => name == "size"
+  | _ => false
+
 /-- `VectorEval::eval` (:211). Each `if` is one guarded arm, in source order; a failed
 guard falls through to the next arm, the last being `_ => eval_per_row`. -/
 noncomputable def eval : Node Val → List Nat → Except String C
@@ -146,7 +153,7 @@ noncomputable def eval : Node Val → List Nat → Except String C
        | _ => A.perRow n rows)
     | .case hs => A.case sub hs n rows
     | .func name agg sf w =>
-      if !agg && !sf && !w && !cs.any isDistinct then
+      if !agg && !countsComp name cs && !sf && !w && !cs.any isDistinct then
         if name = "hasLabels" then
           (match A.hasLabels n rows with
            | some col => .ok col
@@ -164,6 +171,13 @@ noncomputable def eval : Node Val → List Nat → Except String C
        | _ => A.perRow n rows)
 termination_by n => sizeOf n
 decreasing_by all_goals exact h
+
+/-- #3437: `size(<list comprehension>)` is never a function lane; it runs per row, where
+`ExprEval` counts the comprehension without building it. -/
+theorem size_comprehension_per_row (agg sf w : Bool) (cs : List (Node Val)) (rows : List Nat) :
+    eval A (.mk (.func "size" agg sf w) [.mk .listComp cs]) rows =
+      A.perRow (.mk (.func "size" agg sf w) [.mk .listComp cs]) rows := by
+  rw [eval]; simp [countsComp]
 
 /-- The per-row semantics and the soundness contract. -/
 structure RowSem (Val C : Type) where
@@ -255,7 +269,7 @@ theorem eval_sound (L : Lawful A S) : ∀ (n : Node Val) (rows : List Nat) (col 
           · exact L.func _ _ rows col sub_sound h
         · exact L.func _ _ rows col sub_sound h
       · exact L.perRow _ rows col h
-    | paren | list | distinct | other _ | add | sub | mul | div | modulo | eq | neq | lt | le | gt | ge =>
+    | paren | list | distinct | listComp | other _ | add | sub | mul | div | modulo | eq | neq | lt | le | gt | ge =>
       simp only at h
       split at h
       · rename_i l r

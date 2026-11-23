@@ -2697,6 +2697,21 @@ impl Graph {
             .get_attrs_by_idx_batch_into(keys, attr_idx, default, out);
     }
 
+    /// Integer-lane variant of [`Self::get_node_attributes_by_idx`]; see
+    /// `AttributeStore::get_int_attrs_by_idx_batch_into`.
+    pub fn get_node_int_attributes_by_idx(
+        &self,
+        ids: &[NodeId],
+        attr_idx: u16,
+        out: &mut Vec<i64>,
+        on_null: impl FnMut(usize),
+    ) -> bool {
+        // SAFETY: NodeId is `#[repr(transparent)]` over u64.
+        let keys: &[u64] = unsafe { std::slice::from_raw_parts(ids.as_ptr().cast(), ids.len()) };
+        self.node_attrs
+            .get_int_attrs_by_idx_batch_into(keys, attr_idx, out, on_null)
+    }
+
     /// Create relationships of a single type using flat arrays.
     ///
     /// Avoids HashMap overhead while using individual GraphBLAS set calls. The
@@ -6193,6 +6208,10 @@ mod grow_cap_tests {
 
 #[cfg(all(test, feature = "index-falkordb"))]
 mod falkordb_index_tests;
+
+// `get_node_attributes_by_idx` views a `&[NodeId]` as a `&[u64]`.
+const _: () =
+    assert!(size_of::<NodeId>() == size_of::<u64>() && align_of::<NodeId>() == align_of::<u64>());
 
 #[cfg(test)]
 mod restore_tests {

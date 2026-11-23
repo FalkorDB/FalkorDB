@@ -629,6 +629,10 @@ def step (pe : List Tok → Out) (fuel : Nat) : List Frame → List Tok → St
       -- the i64::MIN special case (2549-2565) reads `child(0)` of a Negate
       match res with
       | .node .neg [] => .panic
+      -- #3437: a Negate of a numeric constant folds to the negated constant (cypher.rs,
+      -- level 9). `i64::MIN` (the branch above it in Rust) negates to itself there, as
+      -- `-i` does for the 2^63 literal here; the model has no floats.
+      | .node .neg (.node (.int i) _ :: _) => ret (lf (.int (-i))) K ts
       | _ => ret res K ts
     | 10 => postStep pe fuel res K ts
     | 11 => closeStep res K ts

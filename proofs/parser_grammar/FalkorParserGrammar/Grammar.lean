@@ -53,6 +53,13 @@ def addTok : Tok → Option Op
 def mulTok : Tok → Option Op
   | .star => some .mul | .slash => some .div | .percent => some .mod | _ => none
 
+/-- The tree of `- a`. The grammar's `-` applied to a numeric literal is that literal's
+negation; since #3437 the AST holds it as the negated constant (`-1` is `Constant(-1)`), which
+evaluates the same as `Negate(1)`. Any other operand stays under a `Negate`. -/
+def negTree : RT → RT
+  | .node (.int i) _ => lf (.int (-i))
+  | a => .node .neg [a]
+
 mutual
 
 /-- `oC_Expression` / `oC_OrExpression`. -/
@@ -190,7 +197,7 @@ def unE : Nat → List Tok → Out
   | 0, _ => .fuel
   | n + 1, .dash :: r =>
     match nonArith n r with
-    | .ok a r' => .ok (.node .neg [a]) r'
+    | .ok a r' => .ok (negTree a) r'
     | o => o
   | n + 1, .plus :: r => nonArith n r
   | n + 1, ts => nonArith n ts

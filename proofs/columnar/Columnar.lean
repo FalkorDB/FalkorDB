@@ -19,6 +19,7 @@ import Columnar.HasLabelsFn
 import Columnar.LaneWF
 import Columnar.CoreBridge
 import Columnar.RuntimeReads
+import Columnar.IntLane
 import Columnar.EvalBatch
 
 /-

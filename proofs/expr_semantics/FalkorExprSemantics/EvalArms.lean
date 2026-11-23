@@ -160,7 +160,9 @@ theorem evalRev_ok : ∀ (cs : List (E V)) (vs : List V),
 /-! ## Function calls -/
 
 /-- The runtime is checked before any argument is evaluated: a call under the constant
-evaluator errors even when an argument would. -/
+evaluator errors even when an argument would. (`size(<list comprehension>)` is not an
+`E.func`: since #3437 it is counted without the runtime check, so `ExprEval::constant()` with
+`NO_ROW` errors "Variable not found" on it instead; both callers only test for `Ok(true)`.) -/
 theorem func_constant_errors (f : Fn V) (cs : List (E V)) :
     evalNode O Ev.constant c env (.func f cs) = .error "not a constant expression" := by
   simp [evalNode, Ev.constant, Ev.rt, bind, Except.bind]

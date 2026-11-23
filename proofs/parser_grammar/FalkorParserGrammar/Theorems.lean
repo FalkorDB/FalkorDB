@@ -25,10 +25,24 @@ theorem binary_pairs_agree :
 These hold for *every* integer literal `a b c` (the parser never looks at a
 literal's value), by evaluation. -/
 
-/-- `-a ^ b` is `(-a) ^ b`: unary minus binds tighter than `^` (Cypher.g4:342-347). -/
-theorem neg_binds_tighter_than_pow (a b : Nat) :
-    parseAll 400 [.dash, .int a, .pow, .int b] = .ok (.node .pow [.node .neg [lf (.int a)], lf (.int b)]) [] := by
-  rfl
+/-- `-a ^ b` is `(-a) ^ b`: unary minus binds tighter than `^` (Cypher.g4:342-347). On a
+literal the `-` is folded into the constant (#3437); on any other operand it is a `Negate`. -/
+theorem neg_binds_tighter_than_pow (a b x : Nat) :
+    parseAll 400 [.dash, .int a, .pow, .int b] = .ok (.node .pow [lf (.int (-(a : Int))), lf (.int b)]) [] ∧
+    parseAll 400 [.dash, .ident x, .pow, .int b] = .ok (.node .pow [.node .neg [lf (.var x)], lf (.int b)]) [] := by
+  constructor <;> rfl
+
+/-- **A negated numeric literal is a constant** (#3437, cypher.rs level 9): `-a` is
+`Constant(-a)`, not `Negate(a)`, wherever it stands (`x = -a` compares against a constant);
+a negated non-literal, `-x`, `-(a)` or `-a.p`, keeps its `Negate`. -/
+theorem neg_literal_folds (a x p : Nat) :
+    parseAll 400 [.dash, .int a] = .ok (lf (.int (-(a : Int)))) [] ∧
+    parseAll 400 [.ident x, .eq, .dash, .int a] =
+      .ok (.node .eq [lf (.var x), lf (.int (-(a : Int)))]) [] ∧
+    parseAll 400 [.dash, .ident x] = .ok (.node .neg [lf (.var x)]) [] ∧
+    parseAll 400 [.dash, .lparen, .int a, .rparen] = .ok (.node .neg [.node .paren [lf (.int a)]]) [] ∧
+    parseAll 400 [.dash, .int a, .dot, .ident p] = .ok (.node .neg [.node (.prop p) [lf (.int a)]]) [] := by
+  refine ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- `a ^ b ^ c` is left-associative: one `Pow[a,b,c]`, folded left by the evaluator. -/
 theorem pow_left_assoc (a b c : Nat) :
@@ -198,17 +212,22 @@ theorem exprList_comma_first (pe : List Tok → Out) (n : Nat) (r : List Tok)
 /-- Fixed by #3525 (`56d00c3d8`, closes #2309): a run of signs parses, folded by the parity of its
 `-` as `NOT` runs are: `+-x` and `- -x` and `-+x` all parse (cypher.rs). `- -x` is
 `Negate(Negate x)` (`Negate` type-checks its operand, so it is not `x`), `---x` folds to one
-`Negate`. The grammar (`Cypher.g4:345`) allows exactly one sign, so the model and the grammar
+`Negate`. On a literal each `Negate` folds into the constant (#3437): `- -1` is `1`, `---1` is
+`-1`. The grammar (`Cypher.g4:345`) allows exactly one sign, so the model and the grammar
 now differ on every run of two or more signs (`known` in `BoundedDefs`). -/
 theorem sign_runs :
-    parseAll 400 [.plus, .dash, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
-    parseAll 400 [.dash, .dash, .int 1] = .ok (.node .neg [.node .neg [lf (.int 1)]]) [] ∧
-    parseAll 400 [.dash, .plus, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
-    parseAll 400 [.dash, .dash, .dash, .int 1] = .ok (.node .neg [lf (.int 1)]) [] ∧
+    parseAll 400 [.plus, .dash, .ident 3] = .ok (.node .neg [lf (.var 3)]) [] ∧
+    parseAll 400 [.dash, .dash, .ident 3] = .ok (.node .neg [.node .neg [lf (.var 3)]]) [] ∧
+    parseAll 400 [.dash, .plus, .ident 3] = .ok (.node .neg [lf (.var 3)]) [] ∧
+    parseAll 400 [.dash, .dash, .dash, .ident 3] = .ok (.node .neg [lf (.var 3)]) [] ∧
+    parseAll 400 [.plus, .dash, .int 1] = .ok (lf (.int (-1))) [] ∧
+    parseAll 400 [.dash, .dash, .int 1] = .ok (lf (.int 1)) [] ∧
+    parseAll 400 [.dash, .plus, .int 1] = .ok (lf (.int (-1))) [] ∧
+    parseAll 400 [.dash, .dash, .dash, .int 1] = .ok (lf (.int (-1))) [] ∧
     parseAll 400 [.plus, .plus, .int 1] = .ok (lf (.int 1)) [] ∧
     (∃ e, G.all 200 [.dash, .dash, .int 1] = .err e) ∧
     (∃ e, G.all 200 [.plus, .dash, .int 1] = .err e) := by
-  refine ⟨rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
+  refine ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, ⟨_, rfl⟩, ⟨_, rfl⟩⟩
 
 /-- A run of signs, however long, pushes at most two frames (so, with the `Reach.opener` height 1
 each, costs the stack and the tree nothing: `-----…5` folds). -/

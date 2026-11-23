@@ -333,6 +333,23 @@ theorem rowIter_spec {I : Type} (x : I) (xs : List I) :
     | nil => rfl
     | cons y ys ih => simp [drainIt, rowIterNext, ih]
 
+/-- `RowIter::size_hint` (#3437): `Spread`/`Many` forward their inner iterator's hint
+(`inner`), `One` reports its exact remaining count. -/
+def rowIterSizeHint {I : Type} (inner : List I → Nat × Option Nat) : RowIter I → Nat × Option Nat
+  | .one x => (x.toList.length, some x.toList.length)
+  | .spread xs => inner xs
+  | .many xs => inner xs
+
+/-- The hint is exact whenever the inner iterators' hints are: it is never a wrong buffer size. -/
+theorem rowIterSizeHint_exact {I : Type} (inner : List I → Nat × Option Nat)
+    (h : ∀ xs, inner xs = (xs.length, some xs.length)) (it : RowIter I) :
+    rowIterSizeHint inner it = ((rowIterList it).length, some (rowIterList it).length) := by
+  cases it <;> simp [rowIterSizeHint, rowIterList, h]
+
+/-- After `next` drains a `One`, the hint is `(0, Some(0))`. -/
+theorem rowIterSizeHint_one_next {I : Type} (inner : List I → Nat × Option Nat) (x : Option I) :
+    rowIterSizeHint inner (rowIterNext (.one x)).2 = (0, some 0) := rfl
+
 /-! ## `BatchedResultEmitter::new` (:774), `new_without_alias` (:784), `batch` (:760) -/
 
 structure Em (B : Type) where
