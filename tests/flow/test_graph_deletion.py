@@ -267,6 +267,81 @@ class testGraphDeletionFlow(FlowTestsBase):
         expected_result = []
         self.env.assertEqual(actual_result.result_set, expected_result)
 
+    def test15_1_writes_to_deleted_relationships_are_skipped(self):
+        # SET/REMOVE on a relationship the query already deleted must be
+        # skipped, as they are for nodes. REMOVE had no check for
+        # relationships at all, and SET missed an edge cascaded by DETACH
+        # DELETE of its endpoint, which is only recorded at commit.
+        # https://github.com/FalkorDB/FalkorDB/issues/2967
+        self.graph.delete()
+        self.graph.query("CREATE ()-[:R {v:1}]->()")
+        res = self.graph.query("MATCH ()-[r]->() DELETE r REMOVE r.v RETURN r.v")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.env.assertEqual(res.properties_removed, 0)
+
+        self.graph.delete()
+        self.graph.query("CREATE (a)-[:R {v:1}]->()")
+        res = self.graph.query("MATCH (a)-[r]->() DETACH DELETE a SET r.v = 2 RETURN r.v")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.env.assertEqual(res.properties_set, 0)
+        self.env.assertEqual(res.properties_removed, 0)
+
+        self.graph.delete()
+        self.graph.query("CREATE (a)-[:R {v:1}]->()")
+        res = self.graph.query("MATCH (a)-[r]->() DETACH DELETE a REMOVE r.v RETURN r.v")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(res.properties_removed, 0)
+
+        # the surviving endpoint and the graph are untouched
+        res = self.graph.query("MATCH (n) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+    def test15_2_writes_to_a_relationship_created_then_deleted_are_skipped(self):
+        self.graph.delete()
+        self.graph.query("CREATE ()-[:R {v:1}]->()")
+
+        # an edge the query creates and deletes again is skipped
+        res = self.graph.query("MATCH ()-[r]->() DELETE r WITH 1 AS x "
+                               "CREATE ()-[r2:R {v:1}]->() WITH r2 DELETE r2 WITH r2 SET r2.v = 9")
+        self.env.assertEqual(res.properties_set, 1)
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        # ... and so is one the query cascades away with DETACH DELETE
+        self.graph.query("CREATE ()-[:R {v:1}]->()")
+        res = self.graph.query("MATCH ()-[r]->() DELETE r WITH 1 AS x "
+                               "CREATE (a:A)-[r2:R {v:1}]->(b:B) WITH a, r2 "
+                               "DETACH DELETE a SET r2.v = 9")
+        self.env.assertEqual(res.properties_set, 1)
+        res = self.graph.query("MATCH ()-[r:R]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+    def test15_3_writes_to_a_relationship_created_in_the_query_apply(self):
+        # A relationship created by this query whose id was reclaimed from the
+        # graph's free set is still "deleted" in the graph until commit, but
+        # it is alive for this query: SET/REMOVE on it must apply, also when
+        # another entity is deleted in the same query.
+        self.graph.delete()
+        self.graph.query("CREATE ()-[:T]->()")
+        self.graph.query("MATCH ()-[r]->() DELETE r")
+
+        res = self.graph.query("CREATE ()-[r:R {v:1}]->() REMOVE r.v RETURN r.v")
+        self.env.assertEqual(res.result_set, [[None]])
+
+        self.graph.query("MATCH ()-[r]->() DELETE r")
+        res = self.graph.query("CREATE (a)-[r:R {v:1}]->(b), (c)-[s:S {v:2}]->(d) "
+                               "DELETE s SET r.v = 5 RETURN r.v")
+        self.env.assertEqual(res.result_set, [[5]])
+
+        self.graph.query("MATCH ()-[r]->() DELETE r")
+        res = self.graph.query("CREATE (a)-[r:R {v:1}]->(b), (c)-[s:S {v:2}]->(d) "
+                               "DELETE s REMOVE r.v RETURN r.v")
+        self.env.assertEqual(res.result_set, [[None]])
+
     def test16_repeated_entity_deletion(self):
         # create 2 nodes cyclically connected by 2 edges
         actual_result = self.graph.query("CREATE (x1:A)-[r:R]->(n2:B)-[t:T]->(x1)")

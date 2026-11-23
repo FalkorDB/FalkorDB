@@ -1680,6 +1680,24 @@ impl<'a> Runtime<'a> {
         g.get_relationship_attribute(id, attr)
     }
 
+    /// Whether this query has deleted `id`, so a write to it must be skipped.
+    ///
+    /// Three records between them: the graph's (deleted before this segment),
+    /// the segment's explicit deletes, and the snapshot map, which is the only
+    /// place an edge cascaded by `DETACH DELETE` of its endpoint is recorded
+    /// before commit. The graph's record is ignored for an edge this query
+    /// created: its id may have been reserved out of the graph's free set,
+    /// where it stays "deleted" until commit, yet the edge is alive.
+    pub fn is_relationship_deleted(
+        &self,
+        id: RelationshipId,
+    ) -> bool {
+        let pending = self.pending.borrow();
+        pending.is_relationship_deleted(id)
+            || (self.graph().is_relationship_deleted(id) && !pending.is_relationship_created(id))
+            || self.deleted_relationships.borrow().contains_key(&id)
+    }
+
     /// Materializes a property column for a batch of node IDs.
     ///
     /// Resolves the attribute index once, then fetches the value for each node.
