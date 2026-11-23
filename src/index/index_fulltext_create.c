@@ -3,6 +3,8 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include <string.h>
+
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -31,78 +33,48 @@ static bool _validateOptions
 		return false;
 	}
 
-	SIValue tmp;
-	uint matched = n;
+	// THE MAP'S OWN PAIRS, each walked once.
+	//
+	// This used to run the whole MAP_GET ladder n times over, which validates
+	// whichever key sits highest in the ladder n times and never reaches the
+	// rest. With a weight present, "weight" answered on every iteration and
+	// continued, so phonetic, nostem, language and stopwords went unchecked
+	// while 'matched' still counted down to zero:
+	// OPTIONS {weight: 1, phonetic: 123} was accepted, and Index_FulltextCreate
+	// below then read that integer's union as 'stringval'.
+	//
+	// It was invisible while the fulltext procedure put a weight into the map
+	// for EVERY field whether the statement named one or not - the ladder's
+	// first rung always answered, so no later rung was reachable to be wrong.
+	// A map carrying only what the statement stated is what reaches here now.
+	uint matched = 0;
 	for(uint i = 0; i < n; i++) {
-		//----------------------------------------------------------------------
-		// validate weight
-		//----------------------------------------------------------------------
+		SIValue key;
+		SIValue val;
+		Map_GetIdx(options, i, &key, &val);
 
-		if(MAP_GET(options, "weight", tmp)) {
-			matched--;
-			if(!(SI_TYPE(tmp) & SI_NUMERIC)) {
-				return false;
-			}
-			continue;
+		const char *k = key.stringval;
+		SIType      t = SI_TYPE(val);
+
+		if(strcmp(k, "weight") == 0) {
+			if(!(t & SI_NUMERIC)) return false;
+		} else if(strcmp(k, "phonetic") == 0) {
+			if(!(t & T_STRING)) return false;
+		} else if(strcmp(k, "nostem") == 0) {
+			if(!(t & T_BOOL)) return false;
+		} else if(strcmp(k, "language") == 0) {
+			if(!(t & T_STRING)) return false;
+		} else if(strcmp(k, "stopwords") == 0) {
+			if(!(t & T_ARRAY)) return false;
+		} else {
+			continue;    // not an option this index knows
 		}
 
-		//----------------------------------------------------------------------
-		// validate phonetic
-		//----------------------------------------------------------------------
-
-		if(MAP_GET(options, "phonetic", tmp)) {
-			matched--;
-			// `!(t != T_STRING)` rejected exactly the phonetics it should
-			// accept. It went unnoticed because weight is checked first and
-			// `continue`s, and the fulltext procedure used to put a weight in
-			// the map for every field whether the statement named one or not -
-			// so this branch was unreachable until the map started carrying
-			// only what was actually stated
-			if(!(SI_TYPE(tmp) & T_STRING)) {
-				return false;
-			}
-			continue;
-		}
-
-		//----------------------------------------------------------------------
-		// validate nostem
-		//----------------------------------------------------------------------
-
-		if(MAP_GET(options, "nostem", tmp)) {
-			matched--;
-			if(!(SI_TYPE(tmp) & T_BOOL)) {
-				return false;
-			}
-			continue;
-		}
-
-		//----------------------------------------------------------------------
-		// validate language
-		//----------------------------------------------------------------------
-
-		if(MAP_GET(options, "language", tmp)) {
-			matched--;
-			if(!(SI_TYPE(tmp) & T_STRING)) {
-				return false;
-			}
-			continue;
-		}
-
-		//----------------------------------------------------------------------
-		// validate stopwords
-		//----------------------------------------------------------------------
-
-		if(MAP_GET(options, "stopwords", tmp)) {
-			matched--;
-			if(!(SI_TYPE(tmp) & T_ARRAY)) {
-				return false;
-			}
-			continue;
-		}
+		matched++;
 	}
 
 	// make sure all specified options are valid
-	return (matched == 0);
+	return (matched == n);
 }
 
 // create fulltext index

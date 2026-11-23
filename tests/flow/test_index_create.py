@@ -909,3 +909,44 @@ class testIndexCreationFlow():
         self.env.assertEqual(res[0][3], 'english')           # language
         self.env.assertEqual(res[0][7], 'OPERATIONAL')       # status
 
+    def test19_fulltext_option_types_are_all_validated(self):
+        # EVERY option in the map is type-checked, not just the one the
+        # validator happens to reach first.
+        #
+        # _validateOptions re-scanned the map from the top on each of its n
+        # iterations, so a 'weight' that was present answered on every one of
+        # them and nothing below it in the ladder was ever reached. That made
+        # OPTIONS {weight: 1, phonetic: 123} valid, and Index_FulltextCreate
+        # then read that integer's union as 'stringval'.
+        #
+        # Each case below pairs a well-typed weight with one ill-typed option,
+        # so it is refused only if the second option is checked at all.
+        label = "FTOPT"
+
+        bad = [
+            "{weight: 1, phonetic: 123}",
+            "{weight: 1, nostem: 'yes'}",
+            "{weight: 1, language: 7}",
+            "{weight: 1, stopwords: 'the'}",
+            "{weight: 'heavy'}",
+        ]
+
+        accepted = []
+        for options in bad:
+            try:
+                self.graph.query(f"CREATE FULLTEXT INDEX FOR (n:{label}) "
+                                 f"ON (n.v) OPTIONS {options}")
+                accepted.append(options)
+            except ResponseError:
+                pass
+
+        # assertEqual rather than assertTrue: it names the offenders
+        self.env.assertEqual(accepted, [])
+
+        # and the same shape, well typed throughout, is still accepted
+        self.graph.query(f"CREATE FULLTEXT INDEX FOR (n:{label}) ON (n.v) "
+                         "OPTIONS {weight: 1, phonetic: 'dm:en', nostem: true}")
+        wait_for_indices_to_sync(self.graph)
+
+        res = list_indicies(self.graph, label).result_set
+        self.env.assertEqual(len(res), 1)
