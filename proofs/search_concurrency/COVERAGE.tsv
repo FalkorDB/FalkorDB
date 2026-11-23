@@ -3,14 +3,14 @@ graph/src/threadpool.rs	new	70	PROVEN	Pool.new_spec, shutdown_drains; PoolWithin
 graph/src/threadpool.rs	named	76	PROVEN	PoolWithin.spawnNames_length, spawnNames_get (`with_names(size, Some(name))`: worker i is `{name}-{i}`; #3502)
 graph/src/threadpool.rs	with_names	83	PROVEN	PoolWithin.spawnNames_length/spawnNames_get/spawnNames_none (names), Pool.new_spec (size workers); Builder::spawn failure -> `.expect` panic, sender dropped, started workers exit (header; std primitive); #3816: each worker marks itself with set_pool_thread before its first job (Once.pool_thread_spec)
 graph/src/threadpool.rs	spawn	129	PROVEN	Pool.spawn_never_blocks, spawn_after_exit; PoolWithin.late_job_lost (job sent after the sentinels is accepted and never runs); Locks.main_never_blocks, never_stuck_3014 (W3-conc-1 fixed by #3014)
-graph/src/threadpool.rs	shutdown	151	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit); PoolWithin.within_blocks_behind_shutdown / holdEnd_ge (holds the `workers` lock across every join: BUG, a concurrent shutdown_within is not bounded)
+graph/src/threadpool.rs	shutdown	183	PROVEN	Pool.shutdown_drains (all queued jobs run once, in order; all workers exit); PoolWithin.within_blocks_behind_shutdown / holdEnd_ge (holds the `workers` lock across every join: BUG, a concurrent shutdown_within is not bounded)
 graph/src/threadpool.rs	shutdown_within	167	PROVEN	PoolWithin.waitLoop_exit, waitLoop_bound, within_in_time (returns before start+timeout+s), within_true_all_finished, within_false_unfinished, blocked_reported, within_partition (no handle lost: joined or kept, `*workers = running`), left_behind_workers_exit (no worker leak); #3585 keeps the stragglers: second_call_reports_straggler, second_call_joins_when_returned; sleep/is_finished are hypotheses on std (monotone, sleep in [1,s]); BUG (open) within_blocks_behind_shutdown (case B, still Err(Timeout) at 256ab4d3f)
-graph/src/threadpool.rs	spawn	191	PROVEN	Pool.global_spec (gSpawn: panics uninitialised, else ThreadPool::spawn)
+graph/src/threadpool.rs	spawn	219	PROVEN	Pool.global_spec (gSpawn: panics uninitialised, else ThreadPool::spawn)
 graph/src/threadpool.rs	init_thread_pool	230	PROVEN	Pool.global_spec (init: Ok once, then Err)
-graph/src/threadpool.rs	shutdown	239	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
+graph/src/threadpool.rs	shutdown	262	PROVEN	Pool.global_spec (gShutdown no-op uninitialised), shutdown_drains
 graph/src/threadpool.rs	try_acquire	268	PROVEN	Pool.acquireLoop on QUEUED_QUERIES: acquire_bounded, acquire_full; Locks.inv3014_step (count ≤ MAX_QUEUED_QUERIES)
 graph/src/threadpool.rs	try_acquire_in	272	PROVEN	Pool.acquireLoop (CAS loop vs any interleaving): acquire_bounded (count after admission ≤ max), acquire_full (refusal writes nothing, never waits)
-graph/src/threadpool.rs	drop	288	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
+graph/src/threadpool.rs	drop	311	PROVEN	Pool.tr/follow/Sys: release_exactly_once, paths_release_once (every #3014 path), count_eq_live (count = live slots ⇒ prev > 0)
 graph/src/locks.rs	upgrade_to_write	56	PROVEN	Locks.all_programs_ordered/no_cycle (trait contract: escalation order); takes the fork as `&mut Graph` since #3578 (the host checks it: Session.checkFork)
 graph/src/thread_id.rs	set_main_thread	15	PROVEN	Once.thread_id_spec
 graph/src/thread_id.rs	is_main_thread	23	PROVEN	Once.thread_id_spec
@@ -48,4 +48,6 @@ graph/src/graph/graph.rs	vector_query_edges	4466	PROVEN	Knn.alloc_bounded, no_ab
 graph/src/runtime/runtime.rs	map_to_index_options	2042	PROVEN	Search.fulltextUnknown/parseVector/parseDimension/parseSim/parsePhonetic: parseDimension_missing, parseSim_missing, parseSim_lower, parseSim_ok_lower, parseSim_unknown, rust_refuses_missing, rust_eq_c (#3094 fixes #3091), rust_eq_c_all (PR #3257, dimension 0 too), fulltextUnknown_none_iff, rust_keys_ok_imp_c; #guard remaining C divergences
 graph/src/runtime/ops/commit.rs	next	69	PROVEN	lock path only (#3226): Session.commitNext_closed_scan (scan dropped before the commit: ordered, no re-acquire), commitNext_open_scan (= Locks.bug3226_open_scan_upgrade, bug3226_open_scan_unordered: with the scan still open the escalation at :96 -> commit_deferred_indexes -> Indexer::commit -> RediSearch_IndexAddDocument re-takes the spec read lock it holds; OPEN, issue #3226 still open at 256ab4d3f), commitNext_escalates_in_order
 # Online index build (#2355): fns the background builder added, not modelled yet.
-graph/src/threadpool.rs	try_spawn	210	PROVEN	Pool.gTrySpawn: trySpawn_spec (#3680: no pool ⇒ the job back as Err, else spawn)
+graph/src/threadpool.rs	try_spawn	236	PROVEN	Pool.gTrySpawn: trySpawn_spec (#3680: no pool ⇒ the job back as Err, else spawn)
+graph/src/threadpool.rs	ThreadPool::try_spawn	152	NOT COVERED	(#3680): not modelled yet
+graph/src/threadpool.rs	ThreadPool::close	169	NOT COVERED	(#3680): not modelled yet
