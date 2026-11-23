@@ -284,6 +284,10 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         # A hash join keyed only on `y.v = x.v` would pair branch rows of
         # different outer rows (x2 here: two `n0`). C and the Cartesian
         # Product plan give 18 on every form.
+        #
+        # Each form is still planned as a hash join: the join keeps one table
+        # per outer row (#3035), so it needs no fallback to the Cartesian
+        # Product, which costs O(N*M) per outer row.
         g = self.db.select_graph("multi_pattern_apply_join")
         self.env.cmd("DEL", g.name)
         g.query("CREATE (:B {v:1}), (:B {v:1}), (:A {v:1})")
@@ -294,9 +298,24 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             "MATCH (n0:B) CALL { WITH n0 MATCH (x {v: n0.v}), (y) WHERE y.v = x.v RETURN x, y } RETURN count(*)",
         ]:
             self.env.assertEqual(g.query(q).result_set, [[18]], message=q)
+            self.env.assertContains("Value Hash Join", str(g.explain(q)), message=q)
         # an uncorrelated join is still a hash join
         plan = g.explain("MATCH (x), (y) WHERE y.v = x.v RETURN count(*)")
         self.env.assertContains("Value Hash Join", str(plan))
+        g.delete()
+
+    def test15b_writing_subquery_with_join_sees_earlier_invocations_writes(self):
+        # Rewriting the Cartesian Product must not let a writing body run
+        # batched: the second invocation has to see the node the first one
+        # created (5 rows and 6 nodes, as on main and in C).
+        g = self.db.select_graph("multi_pattern_apply_join_writes")
+        self.env.cmd("DEL", g.name)
+        g.query("CREATE (:N {v:1})")
+        q = ("UNWIND [1, 2] AS x CALL { WITH x MATCH (a:N), (b:N) WHERE a.v = b.v "
+             "CREATE (:N {v:1}) RETURN a } RETURN count(*)")
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[5]])
+        self.env.assertEqual(g.query("MATCH (n:N) RETURN count(n)").result_set, [[6]])
         g.delete()
 
     def test16_relationship_variable_cannot_be_named_by_a_later_match(self):
