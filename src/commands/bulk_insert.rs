@@ -9,6 +9,7 @@ use crate::{
     redis_type::{GRAPH_TYPE, wrong_type_compat},
     telemetry,
 };
+use arcstr::ArcStr;
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
@@ -132,7 +133,7 @@ fn read_property(
                 }
                 BI_DOUBLE => Value::Float(read_f64_ne(data, idx)?),
                 BI_LONG => Value::Int(read_i64_ne(data, idx)?),
-                BI_STRING => Value::String(Arc::new(read_cstring(data, idx)?.to_string())),
+                BI_STRING => Value::String(ArcStr::from(read_cstring(data, idx)?)),
                 BI_ARRAY => {
                     // Iterative here, but the value it builds is walked
                     // recursively everywhere else (drop, save, replies), so
@@ -250,7 +251,7 @@ fn parse_header(
     data: &[u8],
     idx: &mut usize,
     entity: &str,
-) -> Result<(Vec<String>, Vec<Arc<String>>), String> {
+) -> Result<(Vec<String>, Vec<ArcStr>), String> {
     // Read colon-delimited label/type names
     let labels_str = read_cstring(data, idx)?;
     let labels: Vec<String> = labels_str
@@ -273,7 +274,7 @@ fn parse_header(
     for _ in 0..prop_count {
         let name = read_cstring(data, idx)?;
         validate_identifier_len(name, "Property name")?;
-        prop_names.push(Arc::new(name.to_string()));
+        prop_names.push(ArcStr::from(name));
     }
 
     Ok((labels, prop_names))
@@ -531,7 +532,7 @@ fn process_edge_token(
             type_names.len()
         ));
     }
-    let type_name = Arc::new(type_names[0].clone());
+    let type_name = ArcStr::from(type_names[0].as_str());
     let type_id = g.get_type_id_mut(&type_name);
 
     let attr_ids: Vec<u16> = prop_names

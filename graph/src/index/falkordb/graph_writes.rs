@@ -23,6 +23,7 @@
 //! behind, and it comes back as a wrong row once its id is reused. The edge read's endpoint
 //! lookup hides only edges that are deleted and not yet reused.
 
+use arcstr::ArcStr;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -98,7 +99,7 @@ pub fn node_rows_set(
         return IndexChanges::new(EntityType::Node);
     }
     let mut changes = IndexChanges::new(EntityType::Node);
-    let attrs: Vec<Option<Arc<String>>> = attr_ids.iter().map(|&a| g.node_attr_name(a)).collect();
+    let attrs: Vec<Option<ArcStr>> = attr_ids.iter().map(|&a| g.node_attr_name(a)).collect();
     for (&id, row) in ids.iter().zip(rows.chunks_exact(attr_ids.len())) {
         for ((&attr_id, attr), new_value) in attr_ids.iter().zip(&attrs).zip(row) {
             let Some(attr) = attr else {
@@ -419,8 +420,8 @@ pub fn create_index(
     g: &mut Graph,
     index_type: &IndexType,
     entity: EntityType,
-    label: &Arc<String>,
-    attrs: &[Arc<String>],
+    label: &ArcStr,
+    attrs: &[ArcStr],
 ) {
     if *index_type == IndexType::Range {
         for attr in attrs {
@@ -436,8 +437,8 @@ pub fn create_index(
 fn build_in_one_batch(
     g: &mut Graph,
     entity: EntityType,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
 ) {
     g.falkordb_index.create_building(entity, label, attr);
     // Applied to `g` itself: a writer's version, published with the writer's changes.
@@ -521,8 +522,8 @@ pub(crate) fn entity_tuples(
 pub fn populate(
     g: &mut Graph,
     entity: EntityType,
-    label: &Arc<String>,
-    fields: &HashMap<Arc<String>, Vec<Arc<Field>>>,
+    label: &ArcStr,
+    fields: &HashMap<ArcStr, Vec<Arc<Field>>>,
 ) {
     for (attr, attr_fields) in fields {
         if attr_fields.iter().any(|f| f.ty == IndexType::Range) {
@@ -584,7 +585,7 @@ fn node_label_ids_into(
 fn edge_type(
     g: &Graph,
     id: u64,
-) -> &Arc<String> {
+) -> &ArcStr {
     &g.get_types()[g.get_relationship_type_id(RelationshipId::from(id)).0]
 }
 
@@ -599,8 +600,8 @@ fn edge_type(
 /// ([`VersionedIndex::indexer_read`](super::versioned::VersionedIndex::indexer_read)).
 pub(super) fn scan(
     g: &Graph,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
     from: BuildCursor,
     entities: usize,
     column: &IndexColumn,
@@ -624,8 +625,8 @@ pub(super) fn scan(
 /// Returns the node to resume from, or `None` when no `label` node is left.
 fn scan_nodes(
     g: &Graph,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
     from: NodeId,
     budget: usize,
     column: &IndexColumn,
@@ -660,8 +661,8 @@ fn scan_nodes(
 /// done.
 fn scan_edges(
     g: &Graph,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
     (from_src, from_dst): (NodeId, NodeId),
     budget: usize,
     column: &IndexColumn,

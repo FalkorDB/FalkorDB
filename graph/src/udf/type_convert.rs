@@ -41,6 +41,7 @@
 //! Integer round-tripping: JS numbers that equal their floor and fit within
 //! the safe integer range are converted back to `Value::Int`, not `Value::Float`.
 
+use arcstr::ArcStr;
 use std::sync::Arc;
 
 use rquickjs::function::This;
@@ -308,7 +309,7 @@ fn js_to_value_level(
 
     if let Some(s) = val.as_string() {
         let s = s.to_string().map_err(|e| format!("JS string error: {e}"))?;
-        return Ok(Value::String(Arc::new(s)));
+        return Ok(Value::String(ArcStr::from(s)));
     }
 
     // Check for symbol early - it's not an object
@@ -392,7 +393,7 @@ fn js_to_value_level(
             let s: String = to_string
                 .call((This(obj.clone()),))
                 .map_err(|e| format!("RegExp toString error: {e}"))?;
-            return Ok(Value::String(Arc::new(s)));
+            return Ok(Value::String(ArcStr::from(s)));
         }
 
         // Plain object -> Map
@@ -416,7 +417,7 @@ fn js_to_value_level(
             } else {
                 key
             };
-            map.push((Arc::new(original_key), js_to_value_at(v, depth + 1)?));
+            map.push((ArcStr::from(original_key), js_to_value_at(v, depth + 1)?));
         }
         return Ok(Value::Map(Arc::new(map.into_iter().collect())));
     }
@@ -429,6 +430,7 @@ mod nesting_tests {
     use super::{MAX_UDF_VALUE_NESTING, js_to_value, udf_nesting_error, value_to_js};
     use crate::graph::{graph::Graph, graphblas::test_init::ensure_init};
     use crate::runtime::value::Value;
+    use arcstr::ArcStr;
     use rquickjs::{Context, Runtime, Value as JsValue};
     use std::sync::Arc;
     use thin_vec::thin_vec;
@@ -559,7 +561,7 @@ mod nesting_tests {
             let g = Graph::new(16, 16, 1, 0, "udf_nesting");
             let v = Value::List(Arc::new(thin_vec![
                 Value::Int(1),
-                Value::List(Arc::new(thin_vec![Value::String(Arc::new("a".into()))])),
+                Value::List(Arc::new(thin_vec![Value::String(ArcStr::from("a"))])),
                 Value::List(Arc::new(thin_vec![])),
             ]));
             let js = value_to_js(ctx, &v, &g, None).unwrap();

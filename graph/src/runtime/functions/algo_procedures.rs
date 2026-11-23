@@ -82,6 +82,7 @@ use crate::{
         value::Value,
     },
 };
+use arcstr::ArcStr;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -278,7 +279,7 @@ unsafe extern "C" fn msf_score_of(
 fn opt_string(
     v: &Value,
     name: &str,
-) -> Result<Option<Arc<String>>, String> {
+) -> Result<Option<ArcStr>, String> {
     match v {
         Value::Null => Ok(None),
         Value::String(s) => Ok(Some(s.clone())),
@@ -288,7 +289,7 @@ fn opt_string(
 
 /// Validate a map-style config for the given allowed keys.
 fn validate_config_map(
-    map: &OrderMap<Arc<String>, Value>,
+    map: &OrderMap<ArcStr, Value>,
     allowed: &[&str],
 ) -> Result<(), String> {
     for key in map.keys() {
@@ -300,8 +301,8 @@ fn validate_config_map(
 }
 
 /// Extract `nodeLabels` from config map. Must be a list of strings if present.
-fn extract_node_labels(map: &OrderMap<Arc<String>, Value>) -> Result<Vec<Arc<String>>, String> {
-    match map.get(&Arc::new(String::from("nodeLabels"))) {
+fn extract_node_labels(map: &OrderMap<ArcStr, Value>) -> Result<Vec<ArcStr>, String> {
+    match map.get(&ArcStr::from("nodeLabels")) {
         None | Some(Value::Null) => Ok(vec![]),
         Some(Value::List(list)) => {
             let mut labels = Vec::with_capacity(list.len());
@@ -318,8 +319,8 @@ fn extract_node_labels(map: &OrderMap<Arc<String>, Value>) -> Result<Vec<Arc<Str
 }
 
 /// Extract `relationshipTypes` from config map. Must be a list of strings if present.
-fn extract_rel_types(map: &OrderMap<Arc<String>, Value>) -> Result<Vec<Arc<String>>, String> {
-    match map.get(&Arc::new(String::from("relationshipTypes"))) {
+fn extract_rel_types(map: &OrderMap<ArcStr, Value>) -> Result<Vec<ArcStr>, String> {
+    match map.get(&ArcStr::from("relationshipTypes")) {
         None | Some(Value::Null) => Ok(vec![]),
         Some(Value::List(list)) => {
             let mut types = Vec::with_capacity(list.len());
@@ -342,7 +343,7 @@ fn extract_rel_types(map: &OrderMap<Arc<String>, Value>) -> Result<Vec<Arc<Strin
 }
 
 /// Parse config from a single argument: either Null (no config) or a Map.
-fn parse_config(args: &[Value]) -> Result<OrderMap<Arc<String>, Value>, String> {
+fn parse_config(args: &[Value]) -> Result<OrderMap<ArcStr, Value>, String> {
     if args.is_empty() {
         return Ok(OrderMap::default());
     }
@@ -479,8 +480,8 @@ const fn node_value(id: NodeId) -> Value {
 /// not have, with the procedure's C error message for each.
 fn check_known_labels_and_types(
     g: &Graph,
-    labels: &[Arc<String>],
-    rel_types: &[Arc<String>],
+    labels: &[ArcStr],
+    rel_types: &[ArcStr],
     unknown_label: impl Fn(&str) -> String,
     unknown_type: impl Fn(&str) -> String,
 ) -> Result<(), String> {
@@ -497,11 +498,11 @@ fn check_known_labels_and_types(
 /// If labels is empty, returns all active node IDs.
 fn collect_node_ids(
     g: &Graph,
-    labels: &[Arc<String>],
+    labels: &[ArcStr],
 ) -> Vec<u64> {
     use crate::runtime::orderset::OrderSet;
     if labels.is_empty() {
-        let empty: OrderSet<Arc<String>> = OrderSet::default();
+        let empty: OrderSet<ArcStr> = OrderSet::default();
         return g.get_nodes(&empty, 0).map(u64::from).collect();
     }
     // Union: collect nodes matching any of the labels
@@ -521,7 +522,7 @@ fn collect_node_ids(
 /// Build a HashSet of all active node IDs (regardless of label).
 fn active_node_set(g: &Graph) -> FxHashSet<u64> {
     use crate::runtime::orderset::OrderSet;
-    let empty: OrderSet<Arc<String>> = OrderSet::default();
+    let empty: OrderSet<ArcStr> = OrderSet::default();
     g.get_nodes(&empty, 0).map(u64::from).collect()
 }
 
@@ -623,7 +624,7 @@ unsafe fn cache_transpose(
 /// The caller owns the returned GrB_Matrix and must free it.
 unsafe fn build_compact_adj_from_tensors(
     g: &crate::graph::graph::Graph,
-    rel_types: &[Arc<String>],
+    rel_types: &[ArcStr],
     active: &FxHashSet<u64>,
 ) -> (
     crate::graph::graphblas::GrB_Matrix,
@@ -688,7 +689,7 @@ unsafe fn build_compact_adj_from_tensors(
 /// The caller owns the returned GrB_Matrix and must free it.
 unsafe fn build_compact_adj_symmetric_from_tensors(
     g: &crate::graph::graph::Graph,
-    rel_types: &[Arc<String>],
+    rel_types: &[ArcStr],
     active: &FxHashSet<u64>,
 ) -> (
     crate::graph::graphblas::GrB_Matrix,
@@ -788,7 +789,7 @@ fn register_pagerank(funcs: &mut Functions) {
                 return Ok(empty_procedure_batch());
             }
 
-            let rel_types: Vec<Arc<String>> = rel_type.into_iter().collect();
+            let rel_types: Vec<ArcStr> = rel_type.into_iter().collect();
 
             unsafe {
                 use crate::graph::graphblas::{
@@ -1003,7 +1004,7 @@ fn register_betweenness(funcs: &mut Functions) {
             let rel_types = extract_rel_types(&config)?;
 
             // Parse samplingSize
-            let sampling_size: usize = match config.get(&Arc::new(String::from("samplingSize"))) {
+            let sampling_size: usize = match config.get(&ArcStr::from("samplingSize")) {
                 None | Some(Value::Null) => 16,
                 Some(Value::Int(n)) => {
                     if *n <= 0 {
@@ -1015,7 +1016,7 @@ fn register_betweenness(funcs: &mut Functions) {
             } as usize;
 
             // Parse samplingSeed
-            let sampling_seed: u64 = match config.get(&Arc::new(String::from("samplingSeed"))) {
+            let sampling_seed: u64 = match config.get(&ArcStr::from("samplingSeed")) {
                 None | Some(Value::Null) => 0,
                 Some(Value::Int(n)) => *n as u64,
                 _ => return Err(String::from("samplingSeed must be an integer")),
@@ -1171,7 +1172,7 @@ fn register_bfs(funcs: &mut Functions) {
                 return Err(String::from("Source node not found in graph"));
             }
 
-            let rel_types: Vec<Arc<String>> = rel_type.into_iter().collect();
+            let rel_types: Vec<ArcStr> = rel_type.into_iter().collect();
             let adj = g.build_adjacency_matrix(&rel_types);
 
             // Parent tracking is only needed to reconstruct edges; skip it
@@ -1305,7 +1306,7 @@ fn register_cdlp(funcs: &mut Functions) {
             let rel_types = extract_rel_types(&config)?;
 
             // Parse maxIterations
-            let max_iterations: i32 = match config.get(&Arc::new(String::from("maxIterations"))) {
+            let max_iterations: i32 = match config.get(&ArcStr::from("maxIterations")) {
                 None | Some(Value::Null) => 10,
                 Some(Value::Int(n)) => {
                     if *n <= 0 {
@@ -1434,14 +1435,14 @@ fn register_msf(funcs: &mut Functions) {
             }
 
             // Parse weightAttribute
-            let weight_attr: Option<Arc<String>> = match config.get(&Arc::new(String::from("weightAttribute"))) {
+            let weight_attr: Option<ArcStr> = match config.get(&ArcStr::from("weightAttribute")) {
                 None | Some(Value::Null) => None,
                 Some(Value::String(s)) => Some(s.clone()),
                 _ => return Err(String::from("weightAttribute must be a string")),
             };
 
             // Parse objective (minimize or maximize)
-            let maximize = match config.get(&Arc::new(String::from("objective"))) {
+            let maximize = match config.get(&ArcStr::from("objective")) {
                 None | Some(Value::Null) => false, // default: minimize
                 Some(Value::String(s)) => match s.as_str() {
                     "minimize" => false,
@@ -2018,21 +2019,21 @@ fn register_msf(funcs: &mut Functions) {
 struct PathAlgoConfig {
     source: NodeId,
     target: Option<NodeId>,
-    rel_types: Vec<Arc<String>>,
+    rel_types: Vec<ArcStr>,
     rel_direction: EdgeDirection,
     max_len: u32,
-    weight_prop: Option<Arc<String>>,
-    cost_prop: Option<Arc<String>>,
+    weight_prop: Option<ArcStr>,
+    cost_prop: Option<ArcStr>,
     max_cost: Option<f64>,
     path_count: i64,
 }
 
 fn parse_common_path_config(
-    config: &OrderMap<Arc<String>, Value>,
+    config: &OrderMap<ArcStr, Value>,
     source: NodeId,
     target: Option<NodeId>,
 ) -> Result<PathAlgoConfig, String> {
-    let rel_types = match config.get(&Arc::new(String::from("relTypes"))) {
+    let rel_types = match config.get(&ArcStr::from("relTypes")) {
         None | Some(Value::Null) => vec![],
         Some(Value::List(list)) => {
             let mut types = Vec::with_capacity(list.len());
@@ -2047,7 +2048,7 @@ fn parse_common_path_config(
         _ => return Err(String::from("relTypes must be array of strings")),
     };
 
-    let rel_direction = match config.get(&Arc::new(String::from("relDirection"))) {
+    let rel_direction = match config.get(&ArcStr::from("relDirection")) {
         None | Some(Value::Null) => EdgeDirection::Outgoing,
         Some(Value::String(s)) => s.parse().map_err(|()| {
             String::from("relDirection values must be 'incoming', 'outgoing' or 'both'")
@@ -2059,7 +2060,7 @@ fn parse_common_path_config(
         }
     };
 
-    let max_len = match config.get(&Arc::new(String::from("maxLen"))) {
+    let max_len = match config.get(&ArcStr::from("maxLen")) {
         None | Some(Value::Null) => u32::MAX,
         Some(Value::Int(n)) => {
             if *n < 0 {
@@ -2070,26 +2071,26 @@ fn parse_common_path_config(
         _ => return Err(String::from("maxLen must be integer")),
     };
 
-    let weight_prop = match config.get(&Arc::new(String::from("weightProp"))) {
+    let weight_prop = match config.get(&ArcStr::from("weightProp")) {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(s.clone()),
         _ => return Err(String::from("weightProp must be string")),
     };
 
-    let cost_prop = match config.get(&Arc::new(String::from("costProp"))) {
+    let cost_prop = match config.get(&ArcStr::from("costProp")) {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(s.clone()),
         _ => return Err(String::from("costProp must be string")),
     };
 
-    let max_cost = match config.get(&Arc::new(String::from("maxCost"))) {
+    let max_cost = match config.get(&ArcStr::from("maxCost")) {
         None | Some(Value::Null) => None,
         Some(Value::Int(n)) => Some(*n as f64),
         Some(Value::Float(f)) => Some(*f),
         _ => return Err(String::from("maxCost must be numeric")),
     };
 
-    let path_count = match config.get(&Arc::new(String::from("pathCount"))) {
+    let path_count = match config.get(&ArcStr::from("pathCount")) {
         None | Some(Value::Null) => 1,
         Some(Value::Int(n)) => {
             if *n < 0 {
@@ -2116,8 +2117,8 @@ fn parse_common_path_config(
 fn parse_sp_config(args: &[Value]) -> Result<PathAlgoConfig, String> {
     let config = parse_config(args)?;
 
-    let source_key = Arc::new(String::from("sourceNode"));
-    let target_key = Arc::new(String::from("targetNode"));
+    let source_key = ArcStr::from("sourceNode");
+    let target_key = ArcStr::from("targetNode");
 
     let source_val = config.get(&source_key);
     let target_val = config.get(&target_key);
@@ -2152,7 +2153,7 @@ fn parse_sp_config(args: &[Value]) -> Result<PathAlgoConfig, String> {
 fn parse_ss_config(args: &[Value]) -> Result<PathAlgoConfig, String> {
     let config = parse_config(args)?;
 
-    let source_key = Arc::new(String::from("sourceNode"));
+    let source_key = ArcStr::from("sourceNode");
     let source_val = config.get(&source_key);
 
     let source_present = matches!(source_val, Some(v) if !matches!(v, Value::Null));
@@ -2205,7 +2206,7 @@ fn cmp_found_path(
 fn edge_numeric_attr(
     g: &Graph,
     edge_id: RelationshipId,
-    prop: Option<&Arc<String>>,
+    prop: Option<&ArcStr>,
     default: f64,
 ) -> f64 {
     prop.map_or(default, |p| {
@@ -2982,7 +2983,7 @@ fn register_maxflow(funcs: &mut Functions) {
             }
 
             let parse_nodes = |key: &str| -> Result<Vec<NodeId>, String> {
-                match config.get(&Arc::new(String::from(key))) {
+                match config.get(&ArcStr::from(key)) {
                     Some(Value::List(list)) => {
                         let mut nodes = Vec::with_capacity(list.len());
                         for v in list.iter() {
@@ -3018,8 +3019,8 @@ fn register_maxflow(funcs: &mut Functions) {
                 ));
             }
 
-            let capacity_attr: Arc<String> = match config
-                .get(&Arc::new(String::from("capacityProperty")))
+            let capacity_attr: ArcStr = match config
+                .get(&ArcStr::from("capacityProperty"))
             {
                 Some(Value::String(s)) => s.clone(),
                 _ => return Err(String::from(
@@ -3028,7 +3029,7 @@ fn register_maxflow(funcs: &mut Functions) {
             };
 
             let default_cap: Option<f64> = match config
-                .get(&Arc::new(String::from("defaultCapacity")))
+                .get(&ArcStr::from("defaultCapacity"))
             {
                 None | Some(Value::Null) => None,
                 Some(Value::Float(f)) if *f >= 0.0 => Some(*f),

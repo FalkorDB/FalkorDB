@@ -34,6 +34,7 @@ use crate::runtime::functions::{FnArguments, FnType, Type};
 use crate::runtime::orderset::OrderSet;
 use crate::runtime::value::{Value, ValueTypeOf};
 use crate::tree;
+use arcstr::ArcStr;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::mem::discriminant;
@@ -46,28 +47,28 @@ use std::sync::Arc;
 /// pattern entities, which no name can reach, in a list of their own.
 #[derive(Clone, Default)]
 struct Scope {
-    named: HashMap<Arc<String>, Variable>,
+    named: HashMap<ArcStr, Variable>,
     unnamed: Vec<Variable>,
 }
 
 impl Scope {
     fn get(
         &self,
-        name: &Arc<String>,
+        name: &ArcStr,
     ) -> Option<&Variable> {
         self.named.get(name)
     }
 
     fn contains_key(
         &self,
-        name: &Arc<String>,
+        name: &ArcStr,
     ) -> bool {
         self.named.contains_key(name)
     }
 
     fn insert(
         &mut self,
-        name: Arc<String>,
+        name: ArcStr,
         var: Variable,
     ) -> Option<Variable> {
         self.named.insert(name, var)
@@ -75,7 +76,7 @@ impl Scope {
 
     fn remove(
         &mut self,
-        name: &Arc<String>,
+        name: &ArcStr,
     ) -> Option<Variable> {
         self.named.remove(name)
     }
@@ -100,12 +101,12 @@ impl Scope {
     }
 
     /// The named variables in scope.
-    fn iter(&self) -> impl Iterator<Item = (&Arc<String>, &Variable)> {
+    fn iter(&self) -> impl Iterator<Item = (&ArcStr, &Variable)> {
         self.named.iter()
     }
 
     /// The names in scope; unnamed variables have none.
-    fn keys(&self) -> impl Iterator<Item = &Arc<String>> {
+    fn keys(&self) -> impl Iterator<Item = &ArcStr> {
         self.named.keys()
     }
 
@@ -126,7 +127,7 @@ impl Scope {
     /// Keeps the named variables `keep` accepts; unnamed ones always stay.
     fn retain(
         &mut self,
-        keep: impl FnMut(&Arc<String>, &mut Variable) -> bool,
+        keep: impl FnMut(&ArcStr, &mut Variable) -> bool,
     ) {
         self.named.retain(keep);
     }
@@ -142,14 +143,14 @@ pub struct Binder {
     /// Whether to look up variables in parent scope
     use_parent_scope: bool,
     /// Variables copied from parent scope to current scope
-    parent_to_child_scope: HashMap<Arc<String>, Variable>,
+    parent_to_child_scope: HashMap<ArcStr, Variable>,
     /// Track which variables need to be copied from parent
-    copy_from_parent: HashMap<Arc<String>, (Variable, Variable)>,
+    copy_from_parent: HashMap<ArcStr, (Variable, Variable)>,
     /// Accumulated labels for each node variable across all MATCH clauses.
     /// When `MATCH (n:N) ... MATCH (n:O)` is encountered, this maps
     /// n's `VarKey` → {N, O} so the planner can create a single
     /// NodeByLabelScan with the full label set.
-    node_labels: HashMap<VarKey, OrderSet<Arc<String>>>,
+    node_labels: HashMap<VarKey, OrderSet<ArcStr>>,
     /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
     /// These are typed as `Type::Path` but represent a list of edges, so
     /// property access like `r.prop` is allowed (per-edge predicate)
@@ -257,25 +258,24 @@ impl Binder {
     /// are merged into the node's own labels instead of replacing them, so
     /// clause-local optional labels are preserved.
     fn update_graph_labels(
-        graph: &mut QueryGraph<Arc<String>, Arc<String>, Variable>,
-        node_labels: &HashMap<VarKey, OrderSet<Arc<String>>>,
+        graph: &mut QueryGraph<ArcStr, ArcStr, Variable>,
+        node_labels: &HashMap<VarKey, OrderSet<ArcStr>>,
         union: bool,
     ) {
-        let merged_labels = |own: &OrderSet<Arc<String>>,
-                             accumulated: &OrderSet<Arc<String>>|
-         -> OrderSet<Arc<String>> {
-            if union {
-                let mut merged = own.clone();
-                for l in accumulated.iter() {
-                    if !merged.contains(l) {
-                        merged.insert(l.clone());
+        let merged_labels =
+            |own: &OrderSet<ArcStr>, accumulated: &OrderSet<ArcStr>| -> OrderSet<ArcStr> {
+                if union {
+                    let mut merged = own.clone();
+                    for l in accumulated.iter() {
+                        if !merged.contains(l) {
+                            merged.insert(l.clone());
+                        }
                     }
+                    merged
+                } else {
+                    accumulated.clone()
                 }
-                merged
-            } else {
-                accumulated.clone()
-            }
-        };
+            };
         for node in graph.nodes_mut() {
             let key = node.alias.key();
             if let Some(labels) = node_labels.get(&key) {
@@ -772,7 +772,7 @@ impl Binder {
                             Type::Any,
                             self.env_stack.len() as u32 - 1,
                         );
-                        let hidden_name = Arc::new(format!("_hidden_{}_{name}", var.id));
+                        let hidden_name = ArcStr::from(format!("_hidden_{}_{name}", var.id));
                         self.current_env_mut().insert(hidden_name, var.clone());
                         bound_vars.push(var);
                         bound_aliases.push(None);
@@ -827,7 +827,7 @@ impl Binder {
                         self.current_env_mut().push_unnamed(v);
                         continue;
                     }
-                    let key = Arc::new(format!("_foreach_{}_{}", scope_id, v.id));
+                    let key = ArcStr::from(format!("_foreach_{}_{}", scope_id, v.id));
                     self.current_env_mut().insert(key, v);
                 }
                 Ok(QueryIR::ForEach {
@@ -1132,7 +1132,7 @@ impl Binder {
     /// Also carries forward `node_labels` for Node-typed imports.
     fn build_import_projections(
         &mut self,
-        imported: &HashMap<Arc<String>, Variable>,
+        imported: &HashMap<ArcStr, Variable>,
     ) -> Vec<(Variable, QueryExpr<Variable>)> {
         let mut projections = Vec::with_capacity(imported.len());
         for (name, outer_var) in imported {
@@ -1154,7 +1154,7 @@ impl Binder {
         &self,
         with: &RawQueryIR,
         outer_env: &Scope,
-    ) -> Result<HashMap<Arc<String>, Variable>, String> {
+    ) -> Result<HashMap<ArcStr, Variable>, String> {
         let import_error =
             "WITH imports in CALL {} must consist of only simple references to outside variables";
         if let QueryIR::With {
@@ -1211,11 +1211,11 @@ impl Binder {
         kind: ProjectionKind,
         distinct: bool,
         all: bool,
-        exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
-        orderby: &[(QueryExpr<Arc<String>>, bool)],
-        skip: Option<QueryExpr<Arc<String>>>,
-        limit: Option<QueryExpr<Arc<String>>>,
-        filter: Option<QueryExpr<Arc<String>>>,
+        exprs: &[(ArcStr, QueryExpr<ArcStr>)],
+        orderby: &[(QueryExpr<ArcStr>, bool)],
+        skip: Option<QueryExpr<ArcStr>>,
+        limit: Option<QueryExpr<ArcStr>>,
+        filter: Option<QueryExpr<ArcStr>>,
         write: bool,
     ) -> Result<QueryIR<Variable>, String> {
         let bound_exprs = exprs
@@ -1233,7 +1233,7 @@ impl Binder {
         if all {
             // Collect the names of explicitly provided projections so we can
             // skip duplicates when expanding *.
-            let explicit_names: HashSet<Arc<String>> =
+            let explicit_names: HashSet<ArcStr> =
                 bound_exprs.iter().map(|(name, _)| name.clone()).collect();
 
             let env_copy = self
@@ -1265,7 +1265,7 @@ impl Binder {
             projected.sort_by(|(name_a, _), (name_b, _)| name_a.name().cmp(&name_b.name()));
 
             // Now add the explicit projections after the star-expanded ones
-            let mut seen_aliases: HashSet<Arc<String>> = projected
+            let mut seen_aliases: HashSet<ArcStr> = projected
                 .iter()
                 .filter_map(|(v, _)| v.name().cloned())
                 .collect();
@@ -1316,7 +1316,7 @@ impl Binder {
         // Collect variable names used in non-aggregation (group-by) projected
         // expressions.  These variables are allowed in ORDER BY even in an
         // aggregation scope because they form the grouping keys.
-        let groupby_var_names: HashSet<Arc<String>> = projected
+        let groupby_var_names: HashSet<ArcStr> = projected
             .iter()
             .filter(|(_, e)| !e.is_aggregation())
             .flat_map(|(_, e)| {
@@ -1384,8 +1384,7 @@ impl Binder {
 
         // Save env keys before binding filter/orderby/skip/limit so we can
         // remove variables that were only added by those clauses.
-        let env_keys_before_filter: HashSet<Arc<String>> =
-            self.current_env().keys().cloned().collect();
+        let env_keys_before_filter: HashSet<ArcStr> = self.current_env().keys().cloned().collect();
 
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
@@ -1399,7 +1398,7 @@ impl Binder {
         // Remove from current env any variables added only by filter/orderby/skip/limit.
         // These should be available for the WHERE evaluation at runtime (kept in
         // copy_from_parent) but not visible to subsequent clauses (RETURN *).
-        let filter_only_keys: Vec<Arc<String>> = self
+        let filter_only_keys: Vec<ArcStr> = self
             .copy_from_parent
             .keys()
             .filter(|name| !env_keys_before_filter.contains(*name))
@@ -1480,11 +1479,11 @@ impl Binder {
     /// their own maps.
     fn bind_graph(
         &mut self,
-        graph: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+        graph: &QueryGraph<ArcStr, ArcStr, ArcStr>,
         is_create: bool,
         merged_occurrences: bool,
-    ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
-        let mut bound: QueryGraph<Arc<String>, Arc<String>, Variable> = QueryGraph::default();
+    ) -> Result<QueryGraph<ArcStr, ArcStr, Variable>, String> {
+        let mut bound: QueryGraph<ArcStr, ArcStr, Variable> = QueryGraph::default();
 
         // Pre-register path variables in scope so they can be resolved
         // when binding node/relationship inline properties below.
@@ -1742,8 +1741,8 @@ impl Binder {
 
     fn bind_graph_create(
         &mut self,
-        pattern: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
-    ) -> Result<QueryGraph<Arc<String>, Arc<String>, Variable>, String> {
+        pattern: &QueryGraph<ArcStr, ArcStr, ArcStr>,
+    ) -> Result<QueryGraph<ArcStr, ArcStr, Variable>, String> {
         // For CREATE clause validation: we need to detect when a variable is declared
         // multiple times OR when it shadows a previous declaration.
         //
@@ -1867,7 +1866,7 @@ impl Binder {
     ///   CREATE (a:L {v: a.v})  → Attempted to access undefined attribute
     fn check_unbound_self_referential(
         entity_alias: &Alias,
-        attrs: &QueryExpr<Arc<String>>,
+        attrs: &QueryExpr<ArcStr>,
     ) -> Result<(), String> {
         let Alias::Named(entity_alias) = entity_alias else {
             return Ok(());
@@ -1889,8 +1888,8 @@ impl Binder {
 
     fn bind_set_items(
         &mut self,
-        items: Vec<SetItem<Arc<String>, Arc<String>>>,
-    ) -> Result<Vec<SetItem<Arc<String>, Variable>>, String> {
+        items: Vec<SetItem<ArcStr, ArcStr>>,
+    ) -> Result<Vec<SetItem<ArcStr, Variable>>, String> {
         let mut res = Vec::with_capacity(items.len());
         for item in items {
             match item {
@@ -1914,15 +1913,15 @@ impl Binder {
 
     fn bind_expr(
         &mut self,
-        expr: &QueryExpr<Arc<String>>,
+        expr: &QueryExpr<ArcStr>,
     ) -> Result<QueryExpr<Variable>, String> {
         self.bind_expr_with_locals(expr, &mut vec![])
     }
 
     fn bind_expr_with_locals(
         &mut self,
-        expr: &QueryExpr<Arc<String>>,
-        locals: &mut Vec<HashMap<Arc<String>, Variable>>,
+        expr: &QueryExpr<ArcStr>,
+        locals: &mut Vec<HashMap<ArcStr, Variable>>,
     ) -> Result<QueryExpr<Variable>, String> {
         let root = expr.root();
         Ok(Arc::new(self.bind_expr_node(expr, &root, locals)?))
@@ -1935,9 +1934,9 @@ impl Binder {
     )]
     fn bind_expr_node(
         &mut self,
-        expr: &DynTree<ExprIR<Arc<String>>>,
-        node_ref: &DynNode<ExprIR<Arc<String>>>,
-        locals: &mut Vec<HashMap<Arc<String>, Variable>>,
+        expr: &DynTree<ExprIR<ArcStr>>,
+        node_ref: &DynNode<ExprIR<ArcStr>>,
+        locals: &mut Vec<HashMap<ArcStr, Variable>>,
     ) -> Result<DynTree<ExprIR<Variable>>, String> {
         match node_ref.data() {
             ExprIR::Variable(name) => {
@@ -1952,7 +1951,7 @@ impl Binder {
                 let bound_var: Variable =
                     self.fresh_var(Some(Alias::Named(name.clone())), Type::Any, scope_id);
                 // Reserve the ID slot in env_stack with a unique key.
-                let key = Arc::new(format!("_quant_{}_{}", scope_id, bound_var.id));
+                let key = ArcStr::from(format!("_quant_{}_{}", scope_id, bound_var.id));
                 self.env_stack[scope_id as usize].insert(key, bound_var.clone());
 
                 // Bind child[0] (the iterable) BEFORE introducing the
@@ -1987,7 +1986,7 @@ impl Binder {
                 let bound_var: Variable =
                     self.fresh_var(Some(Alias::Named(name.clone())), Type::Any, scope_id);
                 // Reserve the ID slot in env_stack with a unique key.
-                let key = Arc::new(format!("_lc_{}_{}", scope_id, bound_var.id));
+                let key = ArcStr::from(format!("_lc_{}_{}", scope_id, bound_var.id));
                 self.env_stack[scope_id as usize].insert(key, bound_var.clone());
 
                 // Bind child[0] (the iterable) BEFORE introducing the
@@ -2029,11 +2028,11 @@ impl Binder {
                 let scope_id = self.env_stack.len() as u32 - 1;
                 let bound_acc: Variable =
                     self.fresh_var(Some(Alias::Named(acc_name.clone())), Type::Any, scope_id);
-                let key = Arc::new(format!("_reduce_acc_{}_{}", scope_id, bound_acc.id));
+                let key = ArcStr::from(format!("_reduce_acc_{}_{}", scope_id, bound_acc.id));
                 self.env_stack[scope_id as usize].insert(key, bound_acc.clone());
                 let bound_iter: Variable =
                     self.fresh_var(Some(Alias::Named(iter_name.clone())), Type::Any, scope_id);
-                let key = Arc::new(format!("_reduce_iter_{}_{}", scope_id, bound_iter.id));
+                let key = ArcStr::from(format!("_reduce_iter_{}_{}", scope_id, bound_iter.id));
                 self.env_stack[scope_id as usize].insert(key, bound_iter.clone());
 
                 let mut children_iter = node_ref.children();
@@ -2085,7 +2084,7 @@ impl Binder {
 
                 // Snapshot outer scope so pattern-local aliases can be
                 // cleaned up after binding (they must not leak outward).
-                let outer_scope_names: HashSet<Arc<String>> =
+                let outer_scope_names: HashSet<ArcStr> =
                     self.current_env().keys().cloned().collect();
 
                 // Temporarily inject local comprehension variables into
@@ -2271,7 +2270,7 @@ impl Binder {
                     ExprIR::Pattern(pattern) => {
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
-                        let outer_scope_names: HashSet<Arc<String>> =
+                        let outer_scope_names: HashSet<ArcStr> =
                             self.current_env().keys().cloned().collect();
 
                         // Temporarily inject local comprehension variables into
@@ -2347,7 +2346,7 @@ impl Binder {
 
     fn define_name_in_scope(
         &mut self,
-        name: Arc<String>,
+        name: ArcStr,
         ty: Type,
         allow_reuse: bool,
     ) -> Result<Variable, String> {
@@ -2420,7 +2419,7 @@ impl Binder {
 
     fn project_name(
         &mut self,
-        name: &Arc<String>,
+        name: &ArcStr,
         ty: Type,
     ) -> Variable {
         let var = self.fresh_var(
@@ -2434,8 +2433,8 @@ impl Binder {
 
     fn resolve_name(
         &mut self,
-        name: &Arc<String>,
-        locals: &[HashMap<Arc<String>, Variable>],
+        name: &ArcStr,
+        locals: &[HashMap<ArcStr, Variable>],
     ) -> Result<Variable, String> {
         // Special placeholder for aggregate function ordering - always create a fresh variable
         if name.as_str() == "__agg_order_by_placeholder__" {
@@ -2443,7 +2442,7 @@ impl Binder {
             let var = self.fresh_var(Some(Alias::Named(name.clone())), Type::Any, scope_id);
             // Insert with a unique key so each placeholder occupies its own
             // slot in the env (keeping env.len() == next available ID).
-            let key = Arc::new(format!("__agg_placeholder_{}", var.id));
+            let key = ArcStr::from(format!("__agg_placeholder_{}", var.id));
             self.env_stack[scope_id as usize].insert(key, var.clone());
             return Ok(var);
         }
@@ -2707,8 +2706,7 @@ fn expr_tree_to_value(tree: &DynTree<ExprIR<Variable>>) -> Option<Value> {
                 Some(Value::List(Arc::new(elements)))
             }
             ExprIR::Map => {
-                let mut entries: Vec<(Arc<String>, Value)> =
-                    Vec::with_capacity(node.num_children());
+                let mut entries: Vec<(ArcStr, Value)> = Vec::with_capacity(node.num_children());
                 for child in node.children() {
                     let ExprIR::Constant(Value::String(key)) = child.data() else {
                         return None;
@@ -2844,9 +2842,9 @@ fn rewrite_compiled_regex(
 /// sub-tree that structurally matches a projected aggregation with a variable
 /// reference to the projection alias.
 fn replace_agg_subtrees(
-    node: &DynNode<ExprIR<Arc<String>>>,
-    exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
-) -> DynTree<ExprIR<Arc<String>>> {
+    node: &DynNode<ExprIR<ArcStr>>,
+    exprs: &[(ArcStr, QueryExpr<ArcStr>)],
+) -> DynTree<ExprIR<ArcStr>> {
     // If this node is an aggregate function, check if the subtree rooted here
     // matches any projected aggregation.
     if let ExprIR::FuncInvocation(func) = node.data()
@@ -2893,18 +2891,18 @@ fn constants_equal(
 /// internal `__agg_order_by_placeholder__` variables that the parser
 /// appends to aggregate functions.
 fn raw_exprs_structurally_equal(
-    a: &DynTree<ExprIR<Arc<String>>>,
-    b: &DynTree<ExprIR<Arc<String>>>,
+    a: &DynTree<ExprIR<ArcStr>>,
+    b: &DynTree<ExprIR<ArcStr>>,
 ) -> bool {
-    fn is_agg_placeholder(node: &ExprIR<Arc<String>>) -> bool {
+    fn is_agg_placeholder(node: &ExprIR<ArcStr>) -> bool {
         matches!(node, ExprIR::Variable(v) if v.as_str() == "__agg_order_by_placeholder__")
     }
 
     fn nodes_eq(
-        a: &DynTree<ExprIR<Arc<String>>>,
-        a_idx: orx_tree::NodeIdx<Dyn<ExprIR<Arc<String>>>>,
-        b: &DynTree<ExprIR<Arc<String>>>,
-        b_idx: orx_tree::NodeIdx<Dyn<ExprIR<Arc<String>>>>,
+        a: &DynTree<ExprIR<ArcStr>>,
+        a_idx: orx_tree::NodeIdx<Dyn<ExprIR<ArcStr>>>,
+        b: &DynTree<ExprIR<ArcStr>>,
+        b_idx: orx_tree::NodeIdx<Dyn<ExprIR<ArcStr>>>,
     ) -> bool {
         let a_node = a.node(a_idx);
         let b_node = b.node(b_idx);
@@ -2931,8 +2929,8 @@ fn raw_exprs_structurally_equal(
     }
 
     fn expr_ir_eq(
-        a: &ExprIR<Arc<String>>,
-        b: &ExprIR<Arc<String>>,
+        a: &ExprIR<ArcStr>,
+        b: &ExprIR<ArcStr>,
     ) -> bool {
         match (a, b) {
             // Constants match when they are equal values, as in C

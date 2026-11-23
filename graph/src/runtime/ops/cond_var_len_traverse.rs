@@ -29,6 +29,7 @@
 //! lists are lazily cached per node to avoid creating GraphBLAS iterators
 //! at every DFS step.
 
+use arcstr::ArcStr;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -80,7 +81,7 @@ type UsedEdges = SmallVec<[u64; 12]>;
 #[allow(clippy::struct_excessive_bools)]
 struct VarLenIter<'a> {
     runtime: &'a Runtime<'a>,
-    rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    rp: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
     /// WHERE-clause per-hop edge filter plus the owned input row used as its
     /// evaluation environment (only cloned when a filter is present).
     edge_filter: Option<(&'a QueryExpr<Variable>, Row)>,
@@ -438,7 +439,7 @@ pub struct CondVarLenTraverseOp<'a> {
     /// emitter resumes a partially-drained input batch across `next()` calls, so
     /// a batch that produces more than `BATCH_SIZE` results never drops rows.
     pub(crate) emitter: BatchedResultEmitter<'a, VarLenResult>,
-    relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
     /// Optional per-hop edge filter expression (absorbed from WHERE clause by the optimizer).
     edge_filter: Option<&'a QueryExpr<Variable>>,
     /// `@prev(<id>)` marker variable found in `edge_filter`, if any.
@@ -463,7 +464,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
         edge_filter: Option<&'a QueryExpr<Variable>>,
         emit_path: bool,
         path_var: Option<u32>,
@@ -525,7 +526,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
     )]
     fn expand_row(
         runtime: &'a Runtime<'a>,
-        rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        rp: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
         edge_filter: Option<&'a QueryExpr<Variable>>,
         prev_var: Option<&'a Variable>,
         emit_path: bool,

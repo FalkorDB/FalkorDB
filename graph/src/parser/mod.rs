@@ -27,11 +27,11 @@
 //!                            |
 //!                            v
 //!                  RawQueryIR (ast.rs)
-//!                  = QueryIR<Arc<String>>
+//!                  = QueryIR<ArcStr>
 //! ```
 //!
 //! The output is a `RawQueryIR` -- a `QueryIR` tree parameterized by raw
-//! string variable names (`Arc<String>`). After binding, variables are
+//! string variable names (`ArcStr`). After binding, variables are
 //! resolved to numeric IDs and the tree becomes a `BoundQueryIR`
 //! (`QueryIR<Variable>`).
 //!

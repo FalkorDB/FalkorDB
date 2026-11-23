@@ -29,6 +29,7 @@
 //! `sibling_edges` and `transposed = false`. When any condition fails the
 //! pair is left alone and the fast/slow paths run as before.
 
+use arcstr::ArcStr;
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::parser::ast::VarKey;
@@ -37,11 +38,7 @@ use super::super::IR;
 use super::references::ir_references_variable;
 /// True when the QueryRelationship's inline-attrs tree is the empty `{}` map.
 fn rel_attrs_empty(
-    rel: &crate::parser::ast::QueryRelationship<
-        std::sync::Arc<String>,
-        std::sync::Arc<String>,
-        crate::parser::ast::Variable,
-    >
+    rel: &crate::parser::ast::QueryRelationship<ArcStr, ArcStr, crate::parser::ast::Variable>
 ) -> bool {
     use crate::parser::ast::ExprIR;
     let root = rel.attrs.root();

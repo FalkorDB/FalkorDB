@@ -24,6 +24,7 @@
 //! DFS from `dst` to `src` to enumerate every shortest path. Supports edge
 //! attribute filters, hop-length constraints, and bidirectional patterns.
 
+use arcstr::ArcStr;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
@@ -51,7 +52,7 @@ pub struct AllShortestPathsOp<'a> {
     /// partially-drained batch across `next()` calls, so an input batch that
     /// produces more than `BATCH_SIZE` paths never drops rows.
     pub(crate) emitter: BatchedResultEmitter<'a, Value>,
-    relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -59,7 +60,7 @@ impl<'a> AllShortestPathsOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -84,7 +85,7 @@ impl<'a> AllShortestPathsOp<'a> {
     /// borrowing the emitter through `&self`.
     fn expand_row(
         runtime: &Runtime,
-        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        rp: &QueryRelationship<ArcStr, ArcStr, Variable>,
         batch: &Batch,
         row_idx: usize,
     ) -> Result<Option<RowIter<'a, Value>>, String> {

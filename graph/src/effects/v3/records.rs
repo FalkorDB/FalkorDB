@@ -1,8 +1,8 @@
 //! The records themselves, and reading a whole payload.
 
+use arcstr::ArcStr;
 use std::borrow::Cow;
 use std::ops::Deref;
-use std::sync::Arc;
 
 use crate::index::text_index_options::TextIndexOptions;
 use crate::index::vector_index_options::VectorIndexOptions;
@@ -233,7 +233,7 @@ impl EffectDecodeSized<3> for IndexFieldOptions {
             let n = r.guard_count(n, 9)?;
             let mut out = Vec::with_capacity(n);
             for _ in 0..n {
-                out.push(Arc::new(r.string()?));
+                out.push(ArcStr::from(r.string()?));
             }
             Ok(out)
         })?;
@@ -273,7 +273,7 @@ impl EffectDecodeSized<3> for IndexFieldOptions {
                 weight,
                 nostem,
                 phonetic,
-                language: language.map(Arc::new),
+                language: language.map(ArcStr::from),
                 stopwords,
             },
             vector,
