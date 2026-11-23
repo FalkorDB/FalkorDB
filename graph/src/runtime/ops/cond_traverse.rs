@@ -28,7 +28,8 @@
 //!   (replicating the parent columns once per result via `gather` instead of
 //!   cloning the parent env per result).
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use crate::graph::graph::{LabelId, NodeId, RelationshipId};
@@ -150,6 +151,68 @@ struct CtState {
     chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
 
+/// The destinations a two-hop anonymous bidirectional traverse has emitted for
+/// one input record.
+///
+/// C computes `F * A * A` with one row of `F` per record, so a destination is
+/// reached once per record, not once per query: two records that share the
+/// scan source but differ elsewhere (`UNWIND range(1, 2) AS i`) each get it.
+/// A record's results reach this operator through the child traverse
+/// contiguously, in input order, so only the current record's destinations are
+/// kept: the set is cleared when the record changes, which bounds it by the
+/// nodes one record can reach instead of by the whole traversal.
+pub(crate) struct BidirDedup {
+    /// The slots the child hop binds itself (its intermediate node and its
+    /// edge): they differ between the results of one record, so they are not
+    /// part of its identity.
+    skip: [u32; 2],
+    /// Identity of the record whose destinations `seen` holds.
+    record: Option<u64>,
+    seen: HashSet<u64>,
+}
+
+impl BidirDedup {
+    fn new(skip: [u32; 2]) -> Self {
+        Self {
+            skip,
+            record: None,
+            seen: HashSet::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.record = None;
+        self.seen.clear();
+    }
+
+    /// Switches to the record of `batch`'s `row`, forgetting the previous
+    /// record's destinations. The record is identified by the row's
+    /// correlation tag and every bound column but the child hop's own
+    /// bindings, so a record that spans several input batches keeps one set.
+    fn enter(
+        &mut self,
+        batch: &Batch<'_>,
+        row: usize,
+    ) {
+        let mut hasher = DefaultHasher::new();
+        batch.origin_row(row).hash(&mut hasher);
+        for id in 0..batch.num_columns() as u32 {
+            if self.skip.contains(&id) {
+                continue;
+            }
+            if let Some(value) = batch.value_at(id, row) {
+                id.hash(&mut hasher);
+                value.hash(&mut hasher);
+            }
+        }
+        let record = hasher.finish();
+        if self.record != Some(record) {
+            self.seen.clear();
+            self.record = Some(record);
+        }
+    }
+}
+
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent plan flags, read in the per-row loop"
@@ -212,11 +275,11 @@ pub struct CondTraverseOp<'a> {
     /// by this CT may be created by a sibling Commit earlier in the same
     /// query, so capturing them at construction would miss them.
     state: std::cell::RefCell<Option<CtState>>,
-    /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
-    /// already emitted to deduplicate rows that reach the same pair via
-    /// different intermediate nodes — matching C FalkorDB's matrix-multiply
-    /// semantics.
-    bidir_dedup: Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
+    /// For bidirectional anonymous-edge CTs, tracks the destinations already
+    /// emitted for the current input record to deduplicate rows that reach the
+    /// same pair via different intermediate nodes — matching C FalkorDB's
+    /// matrix-multiply semantics (one result per record and destination).
+    bidir_dedup: Option<std::cell::RefCell<BidirDedup>>,
     /// When the child is also an anonymous bidir CT, stores the child's
     /// from-alias so the dedup key uses the original scan source (not the
     /// intermediate node).  When None, dedup uses this CT's own from-alias.
@@ -369,8 +432,8 @@ fn build_transposed_union_iter(
 }
 
 impl<'a> CondTraverseOp<'a> {
-    /// Forgets the (source, destination) pairs already emitted by the
-    /// bidirectional dedup, for a new argument batch.
+    /// Forgets the destinations already emitted by the bidirectional dedup,
+    /// for a new argument batch.
     pub(crate) fn clear_bidir_dedup(&self) {
         if let Some(dedup) = &self.bidir_dedup {
             dedup.borrow_mut().clear();
@@ -415,11 +478,10 @@ impl<'a> CondTraverseOp<'a> {
                 if let BatchOp::CondTraverse(ref child_ct) = *child {
                     if !child_ct.emit_relationship && child_ct.relationship_pattern.bidirectional {
                         (
-                            Some(std::cell::RefCell::new(std::collections::HashSet::<(
-                                u64,
-                                u64,
-                            )>::new(
-                            ))),
+                            Some(std::cell::RefCell::new(BidirDedup::new([
+                                rp.from.alias.id,
+                                child_ct.relationship_pattern.alias.id,
+                            ]))),
                             Some(child_ct.relationship_pattern.from.alias.clone()),
                         )
                     } else {
@@ -929,7 +991,7 @@ impl<'a> CondTraverseOp<'a> {
         sibling_edges: &[u32],
         transposed: bool,
         state_cell: &std::cell::RefCell<Option<CtState>>,
-        bidir_dedup: Option<&std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
+        bidir_dedup: Option<&std::cell::RefCell<BidirDedup>>,
         dedup_source_alias: Option<&Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
@@ -1107,24 +1169,22 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         // When both this CT and its child are anonymous bidirectional,
-        // deduplicate output rows by (scan_source, final_dest) across
+        // deduplicate output rows by (input record, final_dest) across
         // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
         if let Some(dedup) = bidir_dedup {
             let source_alias = dedup_source_alias.unwrap();
             // The scan source is a parent-carried column, constant for every
             // result of this row, so read it once.
-            let src_key = match batch.value_at(source_alias.id, row_idx) {
-                Some(Value::Node(id)) => Some(u64::from(id)),
-                _ => None,
-            };
-            let mut seen = dedup.borrow_mut();
+            let has_source = matches!(
+                batch.value_at(source_alias.id, row_idx),
+                Some(Value::Node(_))
+            );
+            let mut state = dedup.borrow_mut();
+            state.enter(batch, row_idx);
             let mut i = start;
             while i < out.len() {
                 // `out[i].1` is the `to` endpoint bound on the produced row.
-                let key = src_key.map(|s| (s, u64::from(out[i].1)));
-                if let Some(k) = key
-                    && !seen.insert(k)
-                {
+                if has_source && !state.seen.insert(u64::from(out[i].1)) {
                     out.swap_remove(i);
                     continue;
                 }

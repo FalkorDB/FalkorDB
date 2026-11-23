@@ -640,10 +640,11 @@ class testTraversalConstruction():
             self.env.assertEqual(sorted(g.query(q).result_set), expected, message=q)
         g.delete()
 
-    # Two anonymous bidirectional hops deduplicate (source, destination) pairs
-    # per input batch of the second hop. A LIMIT hint must not shrink those
-    # batches, or a pair reached through several intermediates is emitted once
-    # per batch and the LIMIT counts the duplicates.
+    # Two anonymous bidirectional hops deduplicate the destinations reached
+    # from one input record, across the input batches of the second hop. A LIMIT
+    # hint must not shrink those batches, or a pair reached through several
+    # intermediates is emitted once per batch and the LIMIT counts the
+    # duplicates.
     def test_limit_keeps_bidirectional_dedup(self):
         g = self.db.select_graph("LimitBidirectionalDedup")
         try:
@@ -653,6 +654,50 @@ class testTraversalConstruction():
             for limit in ["", "LIMIT 1", "LIMIT 2", "LIMIT 3", "LIMIT 100"]:
                 q = f"MATCH (a:A)-[]-()-[]-(b:B) RETURN a.id, b.id {limit}"
                 self.env.assertEqual(g.query(q).result_set, [[1, 2]], message=q)
+        finally:
+            g.delete()
+
+    # The dedup of two anonymous bidirectional hops is per input record (one
+    # result per record and destination, as C's matrix product gives), not per
+    # (scan source, destination) for the whole query: records that share the
+    # scan source but differ in another column each get every destination.
+    def test_bidirectional_dedup_is_per_input_record(self):
+        g = self.db.select_graph("BidirectionalDedupPerRecord")
+        try:
+            g.query("""CREATE (:X {n: 'x'})-[:E]->(a:A {n: 'a'})-[:E]->(:Y {n: 'y'})-[:E]->(:Z {n: 'z'})""")
+            # From a: through x back to a; through y back to a and on to z.
+            q = """MATCH (a:A) UNWIND range(1, 3) AS i
+                   MATCH (a)-[]-()-[]-(b) RETURN i, b.n ORDER BY i, b.n"""
+            expected = [[i, n] for i in (1, 2, 3) for n in ("a", "z")]
+            self.env.assertEqual(g.query(q).result_set, expected)
+            # Records spread over several input batches keep their own rows.
+            q = """MATCH (a:A) UNWIND range(1, 3000) AS i
+                   MATCH (a)-[]-()-[]-(b) RETURN i, count(b)"""
+            rows = g.query(q).result_set
+            self.env.assertEqual(len(rows), 3000)
+            self.env.assertTrue(all(count == 2 for _, count in rows))
+            # A scan source with a correlated second MATCH: one result per
+            # outer row.
+            q = """UNWIND [1, 2] AS i MATCH (a:A) CALL { WITH a MATCH (a)-[]-()-[]-(b) RETURN b.n AS bn }
+                   RETURN i, bn ORDER BY i, bn"""
+            self.env.assertEqual(g.query(q).result_set,
+                                 [[1, "a"], [1, "z"], [2, "a"], [2, "z"]])
+        finally:
+            g.delete()
+
+    # One record whose results span several input batches of the second hop
+    # still gets each destination once: two hubs share every leaf, so a leaf
+    # reaches each leaf through both of them.
+    def test_bidirectional_dedup_spans_input_batches(self):
+        g = self.db.select_graph("BidirectionalDedupBatches")
+        try:
+            g.query("""CREATE (h1:H {n: 1}), (h2:H {n: 2})
+                       WITH h1, h2 UNWIND range(1, 3000) AS i
+                       CREATE (h1)-[:E]->(:L {i: i})<-[:E]-(h2)""")
+            q = "MATCH (l:L {i: 7})-[]-()-[]-(b:L) RETURN count(b)"
+            self.env.assertEqual(g.query(q).result_set, [[3000]])
+            q = "MATCH (l:L)-[]-()-[]-(b:L) WHERE l.i <= 3 RETURN l.i, count(b) ORDER BY l.i"
+            self.env.assertEqual(g.query(q).result_set, [[1, 3000], [2, 3000], [3, 3000]])
         finally:
             g.delete()
 
