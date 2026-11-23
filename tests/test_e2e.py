@@ -599,6 +599,17 @@ def test_collapsed_undirected_edge_keeps_one_row_per_stored_edge():
     assert res.result_set == [["A", "B", 2], ["B", "A", 1]]
 
 
+def test_collapsed_hops_over_a_self_loop_need_two_edges():
+    # Both named hops collapse (nothing reads `r` or `s`), yet each still binds
+    # its representative edge in the row, so the second hop sees that the first
+    # one took the only edge of the self-loop.
+    query("CREATE (a:N)-[:R]->(a)", write=True)
+    assert query("MATCH (a)-[r:R]->(x)-[s:R]->(b) RETURN count(*)").result_set == [[0]]
+    assert query("MATCH (a:N)-[r:R]->(x:N)-[s:R]->(b:N) RETURN count(b)").result_set == [[0]]
+    query("MATCH (a:N) CREATE (a)-[:R]->(a)", write=True)
+    assert query("MATCH (a)-[r:R]->(x)-[s:R]->(b) RETURN count(*)").result_set == [[1]]
+
+
 def test_stacked_filters_keep_their_order():
     # The optimizer merges the second MATCH's filter into the first's. The
     # first one must still run first: it is what keeps `1 / (n.v - 1)` from
