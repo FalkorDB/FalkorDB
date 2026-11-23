@@ -492,6 +492,59 @@ theorem typed_hop_depends_on_representative :
     edgeAlreadyUsedP gRT (envR 0) 0 1 [⟨0, .any⟩] = true ∧
     edgeAlreadyUsedP gRT (envR 1) 0 1 [⟨0, .any⟩] = false := by decide
 
+/-! #### Counterexample (#3054): a shared representative lets a third `R` hop through
+
+`R0 = e0`, `R1 = e1` of type 0 (`R`), `T2 = e2`, `T3 = e3` of type 1 (`T`), all `1→2`.
+`MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t]->(x), (a)-[u:R]->(x) RETURN id(u)`:
+`r`, `s` (aliases 0, 1, collapsed, flag `single`), `t` (alias 2, untyped, collapsed, flag
+`any`) and `u` (alias 3, read, emitted), expanded in that order. Three `R` hops need three
+distinct `R` edges and the pair has two, so the pattern has no match. Before #3054 `s`
+skips `R0` (held by `r`) and takes `R1`, and `u` finds both taken: no row. Since #3054 `s`
+shares `R0` with `r` (`own_avoids`: the pair holds `R1`), and the final check for `u`
+counts with `AnyType` (because `t` is untyped), 3 hops against 4 edges, so `u = R1`
+passes, although `r`, `s` and `u` then use only two `R` edges between them. -/
+
+def gRRTT (own : Option (List Nat)) : Par :=
+  ⟨[⟨0, 1, 2, 0⟩, ⟨1, 1, 2, 0⟩, ⟨2, 1, 2, 1⟩, ⟨3, 1, 2, 1⟩], 2, own, fun _ => false⟩
+
+/-- The row's relationship slots, `alias ↦ edge`. -/
+def envL (l : List (Nat × Nat)) : Nat → Option Slot := fun v => (l.lookup v).map .rel
+
+/-- **Counterexample** (#3054): relationship uniqueness (`edgeAlreadyUsed_iff`: an edge
+another hop of the clause holds is rejected) fails for the new `edge_already_used`, and
+the clause emits a row the pattern does not have. `s` is given `R0` although `r` holds
+it; `t` takes `R0` too; `u` rejects `R0` but accepts `R1`, so the row `u = R1` is emitted
+with only two `R` edges for three `R` hops. The old scan (`edgeAlreadyUsed`) rejects `R0`
+for `s` (so `s = R1`) and then both `R` edges for `u`: no row, as Cypher requires.
+The result is the same whichever tensor the untyped `t` tries first (`T2` instead of
+`R0` for `t`: last conjunct). -/
+theorem shared_representative_extra_row :
+    -- `s` (tensor `R` only) accepts `R0` although `r` holds it
+    (envL [(0, 0)] 0 = some (.rel 0) ∧
+      edgeAlreadyUsedP (gRRTT (some [0])) (envL [(0, 0)]) 0 1
+        [⟨0, .single⟩, ⟨1, .none⟩, ⟨2, .any⟩, ⟨3, .none⟩] = false) ∧
+    -- `t` (every tensor) accepts `R0` as well
+    edgeAlreadyUsedP (gRRTT (some [0, 1])) (envL [(0, 0), (1, 0)]) 0 2
+        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .none⟩, ⟨3, .none⟩] = false ∧
+    -- `u` (emitted) rejects `R0` and accepts `R1`: a row
+    edgeAlreadyUsedP (gRRTT none) (envL [(0, 0), (1, 0), (2, 0)]) 0 3
+        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = true ∧
+    edgeAlreadyUsedP (gRRTT none) (envL [(0, 0), (1, 0), (2, 0)]) 1 3
+        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = false ∧
+    -- the pattern has no match: three `R` hops, two `R` edges
+    ((gRRTT none).rels.filter (·.ty == 0)).length = 2 ∧
+    -- before #3054: `s` rejects `R0`; `u` then rejects both `R0` and `R1`
+    edgeAlreadyUsed (envL [(0, 0)]) 0 1 [0, 1, 2, 3] = true ∧
+    edgeAlreadyUsed (envL [(0, 0), (1, 1), (2, 2)]) 0 3 [0, 1, 2, 3] = true ∧
+    edgeAlreadyUsed (envL [(0, 0), (1, 1), (2, 2)]) 1 3 [0, 1, 2, 3] = true ∧
+    -- `t` on `T2` instead: `u = R1` still passes
+    (edgeAlreadyUsedP (gRRTT (some [1, 0])) (envL [(0, 0), (1, 0)]) 2 2
+        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .none⟩, ⟨3, .none⟩] = false ∧
+      edgeAlreadyUsedP (gRRTT none) (envL [(0, 0), (1, 0), (2, 2)]) 1 3
+        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = false) := by
+  refine ⟨⟨rfl, by decide⟩, ?_⟩
+  decide
+
 /-! ### `map_to_index_options` (vector arm, phonetic) -/
 
 inductive V where
