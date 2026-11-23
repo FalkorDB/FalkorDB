@@ -466,6 +466,20 @@ static void cch_index_create
 
 	const char **rel_names = _index_reltype_names(index_op);   // >= 1 (grammar)
 
+	// THE EFFECT STATES THIS COUNT IN TWO BYTES, and the names arrive verbatim:
+	// ()-[e:A|A]->() is two of them, because only CCHIndex_New de-duplicates
+	// and that runs after the effect is staged. So what a statement can present
+	// is not bounded by the graph's relationship-type ceiling, and a wide
+	// enough one has to be refused HERE - this is the last place that still has
+	// a caller to refuse it to. Below, the index is built and the schema and
+	// attribute effects are already emitted, and the writer returns void.
+	if(arr_len(rel_names) > UINT16_MAX) {
+		ErrorCtx_SetError("a CCH index cannot span more than %d relationship "
+				"types", UINT16_MAX);
+		arr_free(rel_names);
+		return;
+	}
+
 	QueryCtx_AcquireWriteLock();
 
 	// resolve-or-create the relationship schemas + weight attribute; these emit

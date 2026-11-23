@@ -113,28 +113,24 @@ static void _v3_StageCCH
 	AttributeID weight_attr,     // edge weight attribute
 	const char *weight_name      // its name
 ) {
+	// A BACKSTOP, not the check. cch_index_create refuses a statement this
+	// wide while it still has a caller to refuse it to (index_operations.c);
+	// by here the index is built and its schema effects are staged, so there
+	// is no outcome left but to stop. Kept because the cast below is silent:
+	// it turns 65,536 into 0, and the record would name no relationship type
+	// at all while still carrying its weight field.
+	//
+	// Above the allocation, so the stopping path owns nothing.
+	RELEASE_ASSERT (rel_count <= UINT16_MAX &&
+			"a CCH path index over more relationship types than the v3 wire "
+			"can state") ;
+
 	// a schema id travels as a u32 where a RelationID is an int; widened here
 	// rather than cast through the list, which would reinterpret the array
 	uint32_t *ids = rm_malloc (rel_count * sizeof (uint32_t)) ;
 	for (uint i = 0 ; i < rel_count ; i++) {
 		ids [i] = (uint32_t) rel_ids [i] ;
 	}
-
-	// THE WIRE STATES THE SCHEMA COUNT IN TWO BYTES, and a cast that overflows
-	// it turns 65,536 into 0: the record would name no relationship type at
-	// all while still carrying its weight field, and a reader refuses an index
-	// over nothing. GRAPH_MAX_RELATIONS is 1 << 16 (graph_limits.h:37), so the
-	// graph's own ceiling is exactly the count that narrows to zero and a
-	// statement naming every type would reach it. v2 wrote this count at full
-	// width (writers/v2/write_ddl.c:195) and so never had to care.
-	//
-	// RELEASE_ASSERT for the reason the staged-attribute guard gives
-	// (effects_v3_group.c): this writer returns void, so nothing can be
-	// refused upward, and skipping the record would drop an index the primary
-	// built and leave the replica without it with nothing logged.
-	RELEASE_ASSERT (rel_count <= UINT16_MAX &&
-			"a CCH path index over more relationship types than the v3 wire "
-			"can state") ;
 
 	EffectsV3Grouping_AddCCHIndex (EffectsBuffer_V3 (buff), opcode, ids,
 			rel_names, (uint16_t) rel_count, weight_attr, weight_name) ;
