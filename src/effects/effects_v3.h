@@ -50,11 +50,29 @@
 //   bits 4-5  count width code - Range len,  Repeat count
 //   bit  6    descending
 //   bit  7    reserved - a segment setting it is refused
+
+// the three KIND values carried in header bits 0-1
+//
+// Three on the wire, five in the decoded enum: direction is a separate bit there
+// and folded into the kind here, so the mapping lives at each end rather than in
+// the values themselves. Beside the other wire macros because both directions
+// need them - these describe the BYTE, the enum describes the decoded value.
+#define EFFECTS_V3_WIRE_SEG_RANGE   0
+#define EFFECTS_V3_WIRE_SEG_SET     1
+#define EFFECTS_V3_WIRE_SEG_REPEAT  2
+
 #define EFFECTS_V3_SEG_KIND_MASK    0x03
 #define EFFECTS_V3_SEG_VWIDTH_SHIFT 2
 #define EFFECTS_V3_SEG_CWIDTH_SHIFT 4
 #define EFFECTS_V3_SEG_DESCENDING   0x40
 #define EFFECTS_V3_SEG_RESERVED     0x80
+
+// every segment opens with exactly one header byte, whatever its kind
+#define EFFECTS_V3_SEG_HEADER_BYTES 1
+
+// a Set segment's blob is preceded by a u32 byte length - fixed width, not one
+// of the per-value widths the header's two width codes select
+#define EFFECTS_V3_SEG_BLOB_LEN_BYTES 4
 
 // a segment's kind and direction, as one closed set
 //
