@@ -1,0 +1,183 @@
+# TEMPORARY: proves _perf-vm.yml on real VMs (#3979). Removed before the PR
+# is marked ready. The legs run one after another (one VM at a time), and
+# only if the first one passed.
+name: perf VM proof
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/_perf-vm.yml
+      - .github/workflows/perf-vm-proof.yml
+      - tests/perf/vm/**
+
+permissions:
+  contents: read
+  packages: read
+
+# One chain, so one VM, at a time across pushes too.
+concurrency:
+  group: perf-vm-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  # B1 + B2: the smoke check, with a first zone that does not exist.
+  smoke:
+    uses: ./.github/workflows/_perf-vm.yml
+    with:
+      check: smoke
+      command: python3 -I tests/perf/vm/smoke.py
+      candidate_image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+      baseline_image: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+      candidate_label: main@4c1088949
+      candidate_commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+      baseline_label: "6.2.0"
+      timeout_minutes: 10
+      zones: us-central1-z,us-central1-a,us-central1-b,us-central1-c,us-central1-f
+    secrets: inherit
+
+  # B3: a machine type that exists nowhere, so every zone refuses it.
+  fallback:
+    needs: smoke
+    uses: ./.github/workflows/_perf-vm.yml
+    with:
+      check: smoke-fallback
+      command: python3 -I tests/perf/vm/smoke.py
+      candidate_image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+      baseline_image: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+      timeout_minutes: 10
+      machine_type: n4-standard-7
+      fallback_machine_type: n2-standard-16
+    secrets: inherit
+
+  # The check fails: its exit code must still reach perf-vm.json.
+  failing:
+    needs: [smoke, fallback]
+    if: ${{ !cancelled() && needs.smoke.result == 'success' }}
+    uses: ./.github/workflows/_perf-vm.yml
+    with:
+      check: smoke-fail
+      command: /bin/false
+      candidate_image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+      baseline_image: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+      timeout_minutes: 5
+    secrets: inherit
+
+  # The check outlives timeout_minutes (`--` hands the appended flags to
+  # the script's @ARGV instead of perl's own option parser).
+  timeout:
+    needs: [smoke, failing]
+    if: ${{ !cancelled() && needs.smoke.result == 'success' }}
+    uses: ./.github/workflows/_perf-vm.yml
+    with:
+      check: smoke-timeout
+      command: perl -e sleep(600) --
+      candidate_image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+      baseline_image: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+      timeout_minutes: 1
+    secrets: inherit
+
+  # No zone can work: no VM, and the artifact says why.
+  novm:
+    needs: [smoke, timeout]
+    if: ${{ !cancelled() && needs.smoke.result == 'success' }}
+    uses: ./.github/workflows/_perf-vm.yml
+    with:
+      check: smoke-novm
+      command: python3 -I tests/perf/vm/smoke.py
+      candidate_image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+      baseline_image: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+      timeout_minutes: 5
+      zones: us-central1-z
+    secrets: inherit
+
+  assert:
+    needs: [smoke, fallback, failing, timeout, novm]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: perf-result-smoke*
+          path: artifacts
+
+      - name: Authenticate gcloud
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null
+          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null
+
+      - name: No VM from this run is left
+        run: |
+          set -euo pipefail
+          left=$(gcloud compute instances list --filter="labels.gh_run_id=${{ github.run_id }}" --format='value(name,zone.basename())')
+          if [[ -n $left ]]; then echo "::error::left running: $left"; exit 1; fi
+          echo "no VM carries gh_run_id=${{ github.run_id }}"
+
+      - name: Each leg ended as it should
+        run: |
+          find artifacts -type f | sort
+          for f in artifacts/*/perf-vm.json; do echo "== $f"; cat "$f"; done
+          python3 -I - <<'EOF'
+          import json, pathlib
+          root = pathlib.Path("artifacts")
+          def vm(check):
+              return json.loads((root / f"perf-result-{check}" / "perf-vm.json").read_text())
+          def files(check):
+              return sorted(p.relative_to(root / f"perf-result-{check}").as_posix()
+                            for p in (root / f"perf-result-{check}").rglob("*") if p.is_file())
+          problems = []
+          def expect(what, got, want):
+              print(f"{'ok ' if got == want else 'BAD'} {what}: {got!r}" + ("" if got == want else f" (want {want!r})"))
+              if got != want:
+                  problems.append(what)
+
+          s = vm("smoke")
+          expect("smoke zone (first real zone after us-central1-z)", s["zone"], "us-central1-a")
+          expect("smoke type", (s["machine_type"], s["fallback_used"]), ("n4-standard-16", False))
+          expect("smoke exit", (s["command_exit"], s["timed_out"]), (0, False))
+          r = json.loads((root / "perf-result-smoke" / "result.json").read_text())
+          expect("smoke verdict", r["verdict"], "pass")
+          expect("smoke machine", (r["machine"]["runner"], r["machine"]["type"], r["machine"]["cores"]),
+                 ("gce", "n4-standard-16", 16))
+          expect("smoke labels", (r["candidate"]["label"], r["candidate"]["commit"], r["baseline"]["label"]),
+                 ("main@4c1088949", "4c1088949a5852e3949c05bfb3d92a603c4cd4ca", "6.2.0"))
+
+          f = vm("smoke-fallback")
+          expect("fallback type", (f["machine_type"], f["fallback_used"]), ("n2-standard-16", True))
+          expect("fallback exit", f["command_exit"], 0)
+
+          x = vm("smoke-fail")
+          expect("failing exit", (x["command_exit"], x["timed_out"]), (1, False))
+          expect("failing files", files("smoke-fail"), ["perf-vm.json"])
+
+          t = vm("smoke-timeout")
+          expect("timeout exit", (t["command_exit"], t["timed_out"]), (124, True))
+
+          n = vm("smoke-novm")
+          expect("novm files", files("smoke-novm"), ["perf-vm.json"])
+          error = n["create_error"] or ""
+          expect("novm quotes gcloud's reason", "(gcloud.compute.instances.create)" in error, True)
+          expect("novm tried both types", ("n4-standard-16 in us-central1-z" in error, "n2-standard-16 in us-central1-z" in error), (True, True))
+          expect("novm ends with the summary", error.endswith("every attempt failed"), True)
+          expect("novm no exit", n["command_exit"], None)
+
+          if problems:
+              raise SystemExit(f"{len(problems)} problem(s): {problems}")
+          EOF
+
+      - name: perf-judge's validator accepts the results
+        run: |
+          set -euo pipefail
+          if git fetch -q --depth 1 origin perf/judge 2>/dev/null; then
+            git show FETCH_HEAD:tests/perf/validate.py > "$RUNNER_TEMP/validate.py"
+            python3 -I "$RUNNER_TEMP/validate.py" artifacts/perf-result-smoke/result.json artifacts/perf-result-smoke-fallback/result.json
+          else
+            echo "::notice::perf/judge is not pushed yet; validator skipped here"
+          fi
