@@ -475,6 +475,20 @@ class testRdbLoad():
             self.env.assertContains("encoding version", str(e))
         self.env.assertEqual(self.conn.exists("b"), 0)
 
+    def test_restore_blob_holding_only_the_version_is_refused(self):
+        # A blob that ends right after its version prefix has nothing for the
+        # graph header to read; it must be an error, not a load from a missing
+        # Redis IO handle.
+        self.conn.flushall()
+        for blob in (_unsigned(ENCODING_VERSION), _unsigned(20)):
+            try:
+                self.conn.execute_command("GRAPH.RESTORE", "v", blob)
+                self.env.assertTrue(False, message="a version-only blob restored")
+            except redis.exceptions.ResponseError:
+                pass  # expected: truncated
+            self.env.assertEqual(self.conn.exists("v"), 0)
+            self.env.assertTrue(self.conn.ping())
+
     def test_restore_blob_from_before_the_version_prefix(self):
         self.conn.flushall()
         self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (:S {s: 'x', n: 3})-[:R {w: 1}]->(:S {s: 'y'})")

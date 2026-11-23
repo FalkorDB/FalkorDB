@@ -260,6 +260,11 @@ impl BufferedReader {
 
     /// Load the next chunk from Redis.
     fn load_chunk(&mut self) -> Result<(), String> {
+        // A reader over a blob has no Redis IO handle: past its end the data
+        // is truncated, there is nothing more to load.
+        if self.rdb.is_null() {
+            return Err("BufferedReader: truncated input".to_string());
+        }
         let chunk = raw::load_string_buffer(self.rdb)
             .map_err(|e| format!("BufferedReader: load chunk: {e}"))?;
         self.buf = chunk.as_ref().to_vec();

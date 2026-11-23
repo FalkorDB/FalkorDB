@@ -763,6 +763,7 @@ impl Schema {
 mod tests {
     use super::*;
     use crate::serializers::buffered_io::{BufferedReader, VecWriter};
+    use crate::serializers::decoder::vec_load_graph;
     use index_field_type::{
         INDEX_FLD_FULLTEXT, INDEX_FLD_GEO, INDEX_FLD_NUMERIC, INDEX_FLD_STR, INDEX_FLD_VECTOR,
     };
@@ -838,6 +839,21 @@ mod tests {
             BufferedReader::from_blob(&[]).is_ok(),
             "empty is a read error later, not here"
         );
+    }
+
+    /// A blob holding only the version prefix leaves the reader at EOF. A
+    /// blob has no Redis IO handle to load another chunk from, so reading on
+    /// must be an error rather than a call through a null handle.
+    #[test]
+    fn restore_blob_version_only_is_truncated() {
+        let mut w = VecWriter::new();
+        w.write_unsigned(GRAPH_ENCODING_VERSION);
+        let blob = w.into_vec();
+        let mut r = BufferedReader::from_blob(&blob).unwrap();
+        let err = r.read_buffer().unwrap_err();
+        assert!(err.contains("truncated"), "{err}");
+        let err = vec_load_graph(&blob, 0, "g").err().unwrap();
+        assert!(err.contains("truncated"), "{err}");
     }
 
     fn types(fields: &[Field]) -> Vec<IndexType> {
