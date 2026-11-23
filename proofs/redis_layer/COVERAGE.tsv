@@ -61,32 +61,32 @@ src/serializers/buffered_io.rs	VecWriter::write_double	603	PROVEN	vecWrite: vecW
 src/serializers/buffered_io.rs	VecWriter::write_buffer	611	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
 src/serializers/buffered_io.rs	write_all_fd	626	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
 src/serializers/buffered_io.rs	read_all_fd	641	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
-src/serializers/mod.rs	VirtualKeyState::new	47	PROVEN	Serial.VKS.new: VKS.clear_eq_new
-src/serializers/mod.rs	VirtualKeyState::clear	54	PROVEN	Serial.VKS.clear: VKS.clear_eq_new
-src/serializers/mod.rs	DecodeState::new	109	PROVEN	Serial.DS.new: DS.new_empty
-src/serializers/mod.rs	DecodeState::clear	119	PROVEN	Serial.DS.clear: DS.clear_eq_new
-src/serializers/mod.rs	Header::encode	144	PROVEN	Serial.encH: decH_encH
-src/serializers/mod.rs	Header::null_terminated	148	PROVEN	Serial.nullTerm: strip_nullTerm
-src/serializers/mod.rs	Header::decode	173	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
-src/serializers/mod.rs	Header::from_graph	221	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
-src/serializers/mod.rs	null_terminated	253	PROVEN	Serial.nullTerm: strip_nullTerm
-src/serializers/mod.rs	strip_null_terminator	261	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
-src/serializers/mod.rs	Schema::encode	270	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
-src/serializers/mod.rs	encode_schema_index_block	346	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
-src/serializers/mod.rs	encode_constraint_block	452	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
-src/serializers/mod.rs	Schema::decode	480	PROVEN	Serial.decSchema: decSchema_encSchema
-src/serializers/mod.rs	decode_schema_entry	542	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
-src/serializers/mod.rs	decode_index_field	644	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
-src/serializers/mod.rs	Schema::from_graph	734	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
-src/reply.rs	write_f	43	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
-src/reply.rs	format_value_to_string	56	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
-src/reply.rs	reply_with_str	120	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
-src/reply.rs	format_g	130	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
-src/reply.rs	reply_compact_value	152	PROVEN	Resp.encC call stream given the entity lookups: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed. Lookups: RelLookup.compactRel; OPEN BUG #3447 deleted edge of an unregistered type panics at :260 (bug3447_compact_cancelled_new_type_panics; replyTotal_of_registered under RegisteredTypes)
-src/reply.rs	reply_verbose_value	364	PROVEN	Resp.encVb: verbose_emits given the entity lookups (node/edge postponed arrays closed with exact counts); lookups RelLookup.verboseRel (deleted -> pending -> graph via Runtime::get_relationship_type since #3462; verboseRelFixed_total, fixed3449_record_abort); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
-src/reply.rs	reply_stats	548	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
-src/reply.rs	reply_query	688	PROVEN	Resp.queryCalls (ReplyFormat::Verbose = (false, None), Compact{schema} = (true, schema), #3757) over Resp.resultCalls: query_verbose_reply, query_verbose_noreturn (verbose never sends the schema element), query_compact_reply + Compact.decReply_enc, query_compact_schema_reply, query_schema_noreturn; resultCalls: compact_reply, verbose_reply, noreturn_reply, noreturn_schema_reply, compact_schema_reply, verbose_schema_reply; bytes_of_emits (RESP2 bytes)
-src/reply.rs	reply_schema	644	PROVEN	Resp.schemaCalls (#3757): schema_emits (hash alone, or hash + labels/relationshipTypes/propertyKeys as a 2n-element map), i64OfU64_spec (u64 hash sent as its i64 bit pattern)
+src/serializers/mod.rs	VirtualKeyState::new	48	PROVEN	Serial.VKS.new: VKS.clear_eq_new
+src/serializers/mod.rs	VirtualKeyState::clear	55	PROVEN	Serial.VKS.clear: VKS.clear_eq_new
+src/serializers/mod.rs	DecodeState::new	110	PROVEN	Serial.DS.new: DS.new_empty
+src/serializers/mod.rs	DecodeState::clear	120	PROVEN	Serial.DS.clear: DS.clear_eq_new
+src/serializers/mod.rs	Header::encode	145	PROVEN	Serial.encH: decH_encH
+src/serializers/mod.rs	Header::null_terminated	149	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	Header::decode	174	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
+src/serializers/mod.rs	Header::from_graph	222	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
+src/serializers/mod.rs	null_terminated	254	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	strip_null_terminator	262	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
+src/serializers/mod.rs	Schema::encode	271	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
+src/serializers/mod.rs	encode_schema_index_block	347	PROVEN	Serial.encIdx: decIdx_enc; #3514: phonetic off written as C's "no" (Serial.encPh, encPh_c_on_iff)
+src/serializers/mod.rs	encode_constraint_block	453	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
+src/serializers/mod.rs	Schema::decode	481	PROVEN	Serial.decSchema: decSchema_encSchema
+src/serializers/mod.rs	decode_schema_entry	543	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
+src/serializers/mod.rs	decode_index_field	645	PROVEN	Serial.decField (#3514, main: one field per set type, no type/unknown bit refused, C "no" phonetic read as off; name verbatim since #3252): decField_encField (Rust round trip, every attribute name), field_name_kept, field_prefix_kept; SerialCLayout: decField_encFieldC (every C multi-type entry decodes to exactly its types), decField_empty_refused, decField_unknown_bit_refused, decField_c_phonetic_no_off; W4-redis-2 and #3514 counterexamples removed (17ccc5412) (#3484 fixed by #3514 a0ba12950)
+src/serializers/mod.rs	Schema::from_graph	735	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
+src/reply.rs	write_f	42	PROVEN	Resp.wf (#3043): wf_c (= C %f, NaN as nan), fmtS_floats_c, fmtS_vec_c
+src/reply.rs	format_value_to_string	55	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits; floats/vectors print as C (fmtS_floats_c, fmtS_vec_c, #3043)
+src/reply.rs	reply_with_str	119	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
+src/reply.rs	format_g	129	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
+src/reply.rs	reply_compact_value	151	PROVEN	Resp.encC call stream given the entity lookups: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed. Lookups: RelLookup.compactRel; OPEN BUG #3447 deleted edge of an unregistered type panics at :260 (bug3447_compact_cancelled_new_type_panics; replyTotal_of_registered under RegisteredTypes)
+src/reply.rs	reply_verbose_value	363	PROVEN	Resp.encVb: verbose_emits given the entity lookups (node/edge postponed arrays closed with exact counts); lookups RelLookup.verboseRel (deleted -> pending -> graph via Runtime::get_relationship_type since #3462; verboseRelFixed_total, fixed3449_record_abort); postponed_wrong_len; top-level point = C text (pointStr_c, verbose_point_c, #3043)
+src/reply.rs	reply_stats	545	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
+src/reply.rs	reply_query	685	PROVEN	Resp.queryCalls (ReplyFormat::Verbose = (false, None), Compact{schema} = (true, schema), #3757) over Resp.resultCalls: query_verbose_reply, query_verbose_noreturn (verbose never sends the schema element), query_compact_reply + Compact.decReply_enc, query_compact_schema_reply, query_schema_noreturn; resultCalls: compact_reply, verbose_reply, noreturn_reply, noreturn_schema_reply, compact_schema_reply, verbose_schema_reply; bytes_of_emits (RESP2 bytes)
+src/reply.rs	reply_schema	641	PROVEN	Resp.schemaCalls (#3757): schema_emits (hash alone, or hash + labels/relationshipTypes/propertyKeys as a 2n-element map), i64OfU64_spec (u64 hash sent as its i64 bit pattern)
 src/graph_core.rs	c_graph_name	106	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key)); GraphCore.Lossy (from_utf8_lossy kept as a core-library hypothesis structure; KeyName.lossy is a separate concrete model, not bridged to it) — #2653: bug2653_nonutf8_key_mangled
 src/graph_core.rs	register_graph	142	PROVEN	GraphCore.register: register_registered, register_get; MultiDb.query (registry keyed by name only, keyspace by (db,key)) — #2782 open: bug2782_same_name_other_db_aborts refutes KeyspaceRegistered/WritesSucceed
 src/graph_core.rs	graph_is_registered	188	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others; MultiDb.existing_ok (under KeyspaceRegistered), bug2782_invariant_broken: OPEN BUG #2782 refutes KeyspaceRegistered on main (kept PROVEN, bug named)
@@ -152,19 +152,19 @@ src/query_session.rs	Gil::acquire	722	PROVEN	QuerySession.gilAcquire (no-op iff 
 src/query_session.rs	Gil::drop	745	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
 src/query_session.rs	lock_gil	766	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/query_session.rs	release_gil	779	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
-src/module_init.rs	pthread_atfork	95	AXIOMATISED	libc pthread_atfork declaration
-src/module_init.rs	on_fork_child	122	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
-src/module_init.rs	sync_deepbind_environ	158	PROVEN	EnvBuild.syncDeepbind: sync_unchanged (NULL dlopen handle, NULL dlsym, or the symbol is this module's own environ: environ untouched, the path CI reaches), sync_installs (otherwise environ becomes a NULL-terminated snapshot of the live array's strings); dlopen/dlsym/dlclose results are the inputs of `Ld`, the libc side being FFI
+src/module_init.rs	pthread_atfork	98	AXIOMATISED	libc pthread_atfork declaration
+src/module_init.rs	on_fork_child	125	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
+src/module_init.rs	sync_deepbind_environ	161	PROVEN	EnvBuild.syncDeepbind: sync_unchanged (NULL dlopen handle, NULL dlsym, or the symbol is this module's own environ: environ untouched, the path CI reaches), sync_installs (otherwise environ becomes a NULL-terminated snapshot of the live array's strings); dlopen/dlsym/dlclose results are the inputs of `Ld`, the libc side being FFI
 graph/src/env_snapshot.rs	leak_deep_copy	22	PROVEN	EnvBuild.leakDeepCopy: copy_null_src, copy_length, copy_terminated (len+1 cells, last NULL), copy_read_back (the copy reads back exactly the source's entries in order), copy_fresh (every string cell allocated fresh), copy_indep (depends on the entries' bytes only, so a later setenv/putenv/free of the source cannot change it); the unsafe pointer reads are the `# Safety` contract (NULL-terminated source)
-src/module_init.rs	graph_init	203	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range
-src/module_init.rs	info_func	494	PROVEN	ModuleInit.infoSections: info_normal
-src/module_init.rs	on_flush	511	PROVEN	ModuleInit.onFlush (#3844 FLUSH_IN_PROGRESS): onFlush_start, onFlush_end
-src/module_init.rs	on_shutdown	525	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
-src/module_init.rs	on_role_change	549	PROVEN	ModuleInit.onRoleChange (no replica flag since #3844): onRoleChange_promote, onRoleChange_demote
-src/module_init.rs	enforce_pending_constraints_after_promotion	578	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
-src/module_init.rs	on_replica_change	645	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
-src/module_init.rs	on_loading	657	PROVEN	ModuleInit.onLoading: onLoading_only_end
-src/module_init.rs	on_keyspace_event	678	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
+src/module_init.rs	graph_init	206	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range
+src/module_init.rs	info_func	497	PROVEN	ModuleInit.infoSections: info_normal
+src/module_init.rs	on_flush	514	PROVEN	ModuleInit.onFlush (#3844 FLUSH_IN_PROGRESS): onFlush_start, onFlush_end
+src/module_init.rs	on_shutdown	528	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
+src/module_init.rs	on_role_change	552	PROVEN	ModuleInit.onRoleChange (no replica flag since #3844): onRoleChange_promote, onRoleChange_demote
+src/module_init.rs	enforce_pending_constraints_after_promotion	581	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
+src/module_init.rs	on_replica_change	648	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
+src/module_init.rs	on_loading	660	PROVEN	ModuleInit.onLoading: onLoading_only_end
+src/module_init.rs	on_keyspace_event	681	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
 src/telemetry.rs	truncate	34	PROVEN	Telemetry.truncate: truncate_short, truncate_len, truncate_prefix
 src/telemetry.rs	truncate_arc	50	PROVEN	Telemetry.truncateArc: truncateArc_eq
 src/telemetry.rs	stream_name	66	PROVEN	Telemetry.streamName: streamName_key_name, streamName_inj, streamName_nul, stream_same_slot, stream_other_slot
@@ -224,29 +224,29 @@ src/config.rs	validate_temp_folder	218	PROVEN	LoadArgs.validateTempFolder (FS = 
 src/config.rs	validate_load_only	236	PROVEN	LoadArgs.validateLoadOnly: step_agree, fixed3328_counterexamples, rust_only_names
 src/config.rs	apply_load_arg	269	PROVEN	LoadArgs.applyLoadArg/applied: ok_applies_each_pair, error_applies_nothing
 src/config.rs	apply_module_args	314	PROVEN	LoadArgs.applyModuleArgs: rust_c_same_accept, error_applies_nothing, ok_applies_each_pair, fixed3328_counterexamples, both_refuse; DIVERGENCES leading_space_divergence (confirmed live), rust_only_names
-src/commands/bulk_insert.rs	read_cstring	38	PROVEN	Bulk.cstr: cstr_enc, cstr_len
-src/commands/bulk_insert.rs	read_u32_ne	54	PROVEN	Bulk.readNe (w = 4; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w)
-src/commands/bulk_insert.rs	read_u64_ne	66	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
-src/commands/bulk_insert.rs	read_i64_ne	78	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
-src/commands/bulk_insert.rs	read_f64_ne	90	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
-src/commands/bulk_insert.rs	read_property	102	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc (values within MAX_VALUE_NESTING), deep_refused (#3339 depth cap), enc_len_pos
-src/commands/bulk_insert.rs	PropColumns::new	204	PROVEN	Bulk.PropColumns.new/buildCols/slotOf (HashMap entry/or_insert(len) = insertion index): new_spec (col i = (ids[i], index among distinct attrs); filled = one false per slot), slot_inj (shared slot iff same attr; slot < filled.len, no index panic)
-src/commands/bulk_insert.rs	PropColumns::is_empty	219	PROVEN	Bulk.PropColumns.isEmpty: new_isEmpty (empty iff the header names no property)
-src/commands/bulk_insert.rs	PropColumns::read_record	225	PROVEN	Bulk.PropColumns.readRecord/recLoop: readRecord_enc (any prior filled: fill(false) reset; reads keepFirst [] (ids.zip vs), leaves the bytes after the record), keepFirst_nodup, keepFirst_find (first non-null in header order), keepFirst_sublist, readRecord_plain/keepFirst_plain_of_nodup, keepFirst_plainRead (#3026)
-src/commands/bulk_insert.rs	parse_header	249	PROVEN	Bulk.resolve: duplicate_header_ids (a repeated column resolves to one id; since #3063 import keeps the first column — pending_commit Content.normResolved_get); header byte parse via cstr
-src/commands/bulk_insert.rs	discard_created_graph	298	PROVEN	Commands.discardCreated/discardOps (#3863: key_of_write's key, nothing if none holds it): discardOps_stream_first, discardCreated_main, discardCreated_admitted, discardCreated_renamed, discardCreated_unheld, bulk_begin_failure_discards
-src/commands/bulk_insert.rs	HeldArgs::hold	351	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
-src/commands/bulk_insert.rs	HeldArgs::replicate	378	PROVEN	Commands.heldReplicate: heldReplicate_verbatim
-src/commands/bulk_insert.rs	HeldArgs::rekey	398	PROVEN	Commands.heldRekey/bulkArgv: bulkArgv_renamed, bulkArgv_admitted (RM_HoldString/RM_FreeString = FFI)
-src/commands/bulk_insert.rs	HeldArgs::drop	413	AXIOMATISED	RM_FreeString under hold_gil
-src/commands/bulk_insert.rs	maybe_yield	432	PROVEN	Commands.maybeYield: maybeYield_null
-src/commands/bulk_insert.rs	process_node_token	438	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); per-record values via PropColumns.readRecord (readRecord_enc, #3026); slot_len_truncates (set_span cast; unreachable from BULK since #3063: pending_commit Content.normResolved_fits)
-src/commands/bulk_insert.rs	process_edge_token	517	PROVEN	Commands.edgeRecords: edgeRecords_bound (+ Bulk.records/readN shared record loop); per-record values via PropColumns.readRecord (readRecord_enc, #3026)
-src/commands/bulk_insert.rs	bulk_insert_sync	598	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
-src/commands/bulk_insert.rs	bulk_insert_sync_yield	646	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
-src/commands/bulk_insert.rs	parse_count	697	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
-src/commands/bulk_insert.rs	max_records	733	PROVEN	Bulk.ceiling_sound; phase-loop retry (#3559) = GraphCore.loopW: loopW_bounded, loopW_decided (never rejects honest payloads)
-src/commands/bulk_insert.rs	graph_bulk_insert	747	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_unkeyed_refused, bulk_flushed_refused (worker key_of_write since #3863), bulkArgv_admitted, bulkArgv_renamed (replicated under the live key), bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
+src/commands/bulk_insert.rs	read_cstring	39	PROVEN	Bulk.cstr: cstr_enc, cstr_len
+src/commands/bulk_insert.rs	read_u32_ne	55	PROVEN	Bulk.readNe (w = 4; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w)
+src/commands/bulk_insert.rs	read_u64_ne	67	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
+src/commands/bulk_insert.rs	read_i64_ne	79	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
+src/commands/bulk_insert.rs	read_f64_ne	91	PROVEN	Bulk.readNe (w = 8; from_ne_bytes = any total decoder): readNe_ok_iff, readNe_ok (slice has w bytes, no panic, cursor +w), the Codec round trip readNe_enc8 is not counted here: it rests on the core law from_ne_bytes . to_ne_bytes = id (Codec.dec_enc8), a std guarantee kept as a structure field
+src/commands/bulk_insert.rs	read_property	103	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc (values within MAX_VALUE_NESTING), deep_refused (#3339 depth cap), enc_len_pos
+src/commands/bulk_insert.rs	PropColumns::new	205	PROVEN	Bulk.PropColumns.new/buildCols/slotOf (HashMap entry/or_insert(len) = insertion index): new_spec (col i = (ids[i], index among distinct attrs); filled = one false per slot), slot_inj (shared slot iff same attr; slot < filled.len, no index panic)
+src/commands/bulk_insert.rs	PropColumns::is_empty	220	PROVEN	Bulk.PropColumns.isEmpty: new_isEmpty (empty iff the header names no property)
+src/commands/bulk_insert.rs	PropColumns::read_record	226	PROVEN	Bulk.PropColumns.readRecord/recLoop: readRecord_enc (any prior filled: fill(false) reset; reads keepFirst [] (ids.zip vs), leaves the bytes after the record), keepFirst_nodup, keepFirst_find (first non-null in header order), keepFirst_sublist, readRecord_plain/keepFirst_plain_of_nodup, keepFirst_plainRead (#3026)
+src/commands/bulk_insert.rs	parse_header	250	PROVEN	Bulk.resolve: duplicate_header_ids (a repeated column resolves to one id; since #3063 import keeps the first column — pending_commit Content.normResolved_get); header byte parse via cstr
+src/commands/bulk_insert.rs	discard_created_graph	299	PROVEN	Commands.discardCreated/discardOps (#3863: key_of_write's key, nothing if none holds it): discardOps_stream_first, discardCreated_main, discardCreated_admitted, discardCreated_renamed, discardCreated_unheld, bulk_begin_failure_discards
+src/commands/bulk_insert.rs	HeldArgs::hold	352	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
+src/commands/bulk_insert.rs	HeldArgs::replicate	379	PROVEN	Commands.heldReplicate: heldReplicate_verbatim
+src/commands/bulk_insert.rs	HeldArgs::rekey	399	PROVEN	Commands.heldRekey/bulkArgv: bulkArgv_renamed, bulkArgv_admitted (RM_HoldString/RM_FreeString = FFI)
+src/commands/bulk_insert.rs	HeldArgs::drop	414	AXIOMATISED	RM_FreeString under hold_gil
+src/commands/bulk_insert.rs	maybe_yield	433	PROVEN	Commands.maybeYield: maybeYield_null
+src/commands/bulk_insert.rs	process_node_token	439	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); per-record values via PropColumns.readRecord (readRecord_enc, #3026); slot_len_truncates (set_span cast; unreachable from BULK since #3063: pending_commit Content.normResolved_fits)
+src/commands/bulk_insert.rs	process_edge_token	518	PROVEN	Commands.edgeRecords: edgeRecords_bound (+ Bulk.records/readN shared record loop); per-record values via PropColumns.readRecord (readRecord_enc, #3026)
+src/commands/bulk_insert.rs	bulk_insert_sync	599	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
+src/commands/bulk_insert.rs	bulk_insert_sync_yield	647	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
+src/commands/bulk_insert.rs	parse_count	698	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
+src/commands/bulk_insert.rs	max_records	734	PROVEN	Bulk.ceiling_sound; phase-loop retry (#3559) = GraphCore.loopW: loopW_bounded, loopW_decided (never rejects honest payloads)
+src/commands/bulk_insert.rs	graph_bulk_insert	748	PROVEN	Commands.bulkFlow/bulkReply: publishOps (commit_index_docs since #3307): publishOps_nonempty, publishOps_no_indexer; bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_unkeyed_refused, bulk_flushed_refused (worker key_of_write since #3863), bulkArgv_admitted, bulkArgv_renamed (replicated under the live key), bulk_reply_c (reply wording = C since #3301; rfl between two copies of the text, a record not a regression guard); Bulk.ceiling_sound
 src/commands/config_cmd.rs	config_get_one	59	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
 src/commands/config_cmd.rs	validate_config_set	123	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names)
 src/commands/config_cmd.rs	validate_timeout_cross_constraints	216	PROVEN	Config.cross = load + check_timeout_constraints (LoadArgs.cross_eq): rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
@@ -255,13 +255,13 @@ src/commands/config_cmd.rs	apply_config_set	271	PROVEN	Config.apply1 (used by ru
 src/commands/config_cmd.rs	ConfigValue::as_i64	317	PROVEN	Commands.asI64: asI64_small
 src/commands/config_cmd.rs	ConfigValue::as_u64	323	PROVEN	Commands.asU64: asU64_nonneg, asU64_neg
 src/commands/config_cmd.rs	graph_config	331	PROVEN	Config.dispatch: get_extra_wrong_arity, set_pairs_complete, dotless_i_not_folded; Config.rustSet (SET): rustSet_inv; Commands.getOne (GET)
-src/commands/constraint.rs	is_valid_identifier	26	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
-src/commands/constraint.rs	register_constraint_schema	70	PROVEN	Commands.registerSchema: registerSchema_contains
-src/commands/constraint.rs	find_status	89	PROVEN	Commands.findStatus: findStatus_none
-src/commands/constraint.rs	settle_constraint	178	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
-src/commands/constraint.rs	attempt_settle	284	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
-src/commands/constraint.rs	graph_constraint	384	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053); pool path Commands.consWorker: consWorker_announce, consWorker_signal, consWorker_key_gone (#3819)
-src/commands/constraint.rs	apply_constraint	599	PROVEN	Commands.applyCons: applyCons_replayed_silent, applyCons_commit_refused, applyCons_aof_duplicate, applyCons_ok (#3819; create_constraint/drop_constraint/commit/find_status/build_constraint results are inputs)
+src/commands/constraint.rs	is_valid_identifier	27	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
+src/commands/constraint.rs	register_constraint_schema	71	PROVEN	Commands.registerSchema: registerSchema_contains
+src/commands/constraint.rs	find_status	90	PROVEN	Commands.findStatus: findStatus_none
+src/commands/constraint.rs	settle_constraint	179	PROVEN	Commands.settle (Stale/paused transient, Invalid permanent; #3657 dropped WriteSlotBusy): settle_bounded, settle_permanent, settle_stale_retries
+src/commands/constraint.rs	attempt_settle	285	PROVEN	Commands.attempt (commit refusal passed on by `?` through From<CommitError>; #3657): attempt_nothing, attempt_ok, attempt_upgrade_fail, attempt_stale, attempt_invalid
+src/commands/constraint.rs	graph_constraint	385	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053); pool path Commands.consWorker: consWorker_announce, consWorker_signal, consWorker_key_gone (#3819)
+src/commands/constraint.rs	apply_constraint	600	PROVEN	Commands.applyCons: applyCons_replayed_silent, applyCons_commit_refused, applyCons_aof_duplicate, applyCons_ok (#3819; create_constraint/drop_constraint/commit/find_status/build_constraint results are inputs)
 src/commands/copy.rs	pipe	19	AXIOMATISED	libc pipe(2)
 src/commands/copy.rs	fork	20	AXIOMATISED	libc fork(2)
 src/commands/copy.rs	_exit	21	AXIOMATISED	libc _exit(2)
