@@ -948,11 +948,10 @@ impl Pending {
 
         // A cancelled edge still registers its type and reaches the replica as
         // a create/delete pair, so its type must fit the endpoint index's type
-        // column exactly as a committed edge's does. Checked before anything
-        // is undone, so a refusal leaves both sides as they were.
-        for (_, _, _, type_name) in &rels {
-            g.relationship_type_slot(type_name)?;
-        }
+        // column exactly as a committed edge's does. Checked as a group, since
+        // each new type takes the next id, and before anything is undone, so a
+        // refusal leaves both sides as they were.
+        g.relationship_types_fit(rels.iter().map(|(_, _, _, t)| t.as_str()))?;
 
         let mut result = Vec::with_capacity(rels.len());
         for (rel_id, from, to, type_name) in rels {

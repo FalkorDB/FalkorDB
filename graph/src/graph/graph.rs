@@ -833,6 +833,16 @@ pub const DEFAULT_NODE_CREATION_BUFFER: u64 = 16384;
 /// immutable afterwards.
 pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATION_BUFFER);
 
+/// A type index as stored in the endpoint index's type column, or `None` past
+/// [`MAX_TYPE_ID`]: the column reserves `u16::MAX` as its empty marker, so
+/// 65,535 relationship types can carry edges.
+#[must_use]
+pub fn edge_type_slot(type_idx: usize) -> Option<u16> {
+    u16::try_from(type_idx)
+        .ok()
+        .filter(|&t| usize::from(t) <= MAX_TYPE_ID)
+}
+
 /// Capacity growth step for entity matrices. Sparse matrices carry a
 /// row-pointer array sized by the matrix dimension, so doubling the
 /// capacity wastes up to `4 * cap` bytes per matrix at large graph sizes.
@@ -847,16 +857,6 @@ pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATIO
 /// never reached `needed` again — an infinite loop in release. Ids that large
 /// are refused before they get here (`IdSpace::create`), so the clamp
 /// is what keeps a caller that forgets from hanging instead of failing. #2892.
-/// A type index as stored in the endpoint index's type column, or `None` past
-/// [`MAX_TYPE_ID`]: the column reserves `u16::MAX` as its empty marker, so
-/// 65,535 relationship types can carry edges.
-#[must_use]
-pub fn edge_type_slot(type_idx: usize) -> Option<u16> {
-    u16::try_from(type_idx)
-        .ok()
-        .filter(|&t| usize::from(t) <= MAX_TYPE_ID)
-}
-
 fn grow_cap(
     mut cap: u64,
     needed: u64,
@@ -1306,6 +1306,31 @@ impl Graph {
             name: type_name.to_string(),
             max: MAX_TYPE_ID + 1,
         })
+    }
+
+    /// Like [`Self::relationship_type_slot`] for several types registered
+    /// together: each unregistered name takes the next id in turn, so they are
+    /// checked as a group rather than each against today's type count.
+    pub fn relationship_types_fit<'a>(
+        &self,
+        names: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), NodeOpError> {
+        let mut next = self.schema.relationship_types.len();
+        let mut new: Vec<&str> = Vec::new();
+        for name in names {
+            if self.get_type_id(name).is_some() || new.contains(&name) {
+                continue;
+            }
+            if edge_type_slot(next).is_none() {
+                return Err(NodeOpError::TooManyRelationshipTypes {
+                    name: name.to_string(),
+                    max: MAX_TYPE_ID + 1,
+                });
+            }
+            new.push(name);
+            next += 1;
+        }
+        Ok(())
     }
 
     pub fn get_type_id(

@@ -2103,6 +2103,45 @@ mod cascade {
     }
 
     #[test]
+    fn two_new_types_cannot_share_the_last_slot() {
+        // `CREATE (a)-[:X]->(b), (a)-[:Y]->(b) DETACH DELETE a` with one slot
+        // free: each type alone fits, but registering both would put Y past
+        // the limit.
+        let g = graph_cell();
+        {
+            let mut graph = g.borrow_mut();
+            for i in 0..MAX_TYPE_ID {
+                graph.get_type_id_mut(&format!("R{i}"));
+            }
+        }
+        let mut p = Pending::default();
+        p.stage_created_node(0, &[], &[]);
+        p.stage_created_node(1, &[], &[]);
+        for (id, ty) in [(0_u64, "X"), (1, "Y")] {
+            p.created_relationship(
+                RelationshipId::from(id),
+                NodeId::from(0_u64),
+                NodeId::from(1_u64),
+                Arc::new(ty.to_owned()),
+            );
+        }
+        let res = p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut());
+        assert!(
+            matches!(
+                res,
+                Err(crate::graph::graph::NodeOpError::TooManyRelationshipTypes { .. })
+            ),
+            "{res:?}"
+        );
+        assert_eq!(
+            g.borrow().get_types().len(),
+            MAX_TYPE_ID,
+            "nothing registered"
+        );
+        assert!(p.cancelled_relationships.is_empty(), "nothing was undone");
+    }
+
+    #[test]
     fn a_cancelled_edge_of_the_last_type_that_fits_is_cancelled() {
         let (res, p, types) = cascade_new_type_after(MAX_TYPE_ID);
         assert!(res.is_ok(), "{res:?}");
