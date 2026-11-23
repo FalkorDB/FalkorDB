@@ -1534,7 +1534,16 @@ void EffectsV3Grouping_AddIndexField
 	// field's own ADD_SCHEMA and ADD_ATTRIBUTE announcements are appended
 	// between two index effects, so the record this belongs to is not the
 	// last one
-	bool index_seen = false;  // any earlier record naming the same index
+	// WHAT "ONCE" MEANS. Not "an earlier record exists" but "an earlier record
+	// for THIS index already states this option", which is the only thing that
+	// makes a repeat a repeat. Both halves of that were wrong when this was a
+	// single flag raised on any matching record: a first record that stated no
+	// language made the second strip a language nothing had sent, so the
+	// statement's language reached no record at all; and a range index over a
+	// label made a fulltext index over the same label look like a continuation
+	// of it, so the fulltext index lost options the primary kept.
+	bool language_stated  = false;  // an earlier record states the language
+	bool stopwords_stated = false;  // an earlier record states the stopwords
 	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
 		EffectsV3Record *a = g->announcements + i;
 
@@ -1551,18 +1560,28 @@ void EffectsV3Grouping_AddIndexField
 		// A CCH RECORD IS NEVER THE SAME INDEX, even when it names exactly
 		// one relationship type and so matches on opcode, schema type and
 		// schema id. A path index is its own object: counting it here would
-		// set 'index_seen' and strip the language and stopwords off the first
-		// ordinary record that follows it in the same payload.
+		// raise the flags below and strip the language and stopwords off the
+		// first ordinary record that follows it in the same payload.
 		if(a_schema_type != schema_type
 				|| (a_field_type & INDEX_FLD_CCH) != 0
 				|| !_names_one_schema(a_schemas, a_n_schemas, schema_id)) {
 			continue;
 		}
 
-		index_seen = true;
-
+		// A DIFFERENT FIELD TYPE IS A DIFFERENT INDEX - a range index and a
+		// fulltext index over one label are two objects, which is what
+		// differentIndexesNeverFold pins. Neither folds into the other, and
+		// neither one's options were stated by the other, so this test comes
+		// BEFORE the flags rather than after them.
 		if(a_field_type != field_type) {
 			continue;
+		}
+
+		// what this record states is what a later one must not repeat. A drop
+		// carries no options, so its arm is not read here
+		if(opcode == EFFECT_CREATE_INDEX && a->create_index.has_options) {
+			language_stated  |= a->create_index.options.has_language;
+			stopwords_stated |= a->create_index.options.has_stopwords;
 		}
 
 		// A DROP IS FOLDED ON THE KEY ALONE. It carries no options, so there
@@ -1586,26 +1605,30 @@ void EffectsV3Grouping_AddIndexField
 
 	// INDEX-LEVEL OPTIONS ARE STATED ONCE PER INDEX PER PAYLOAD. language and
 	// stopwords configure the index, not the field, and their setters are
-	// asymmetric: Index_SetLanguage (index.c:852) objects only when the
+	// asymmetric: Index_SetLanguage (index.c:843) objects only when the
 	// language DIFFERS, but Index_SetStopwords (index.c:871) objects when
 	// stopwords are set AT ALL. Repeating them on a second record for the same
 	// index would apply cleanly for language and fail for stopwords - and no
 	// single-field statement can show it.
-	if(index_seen) {
-		if(o.has_language) {
-			rm_free(o.language);
-			o.language     = NULL;
-			o.has_language = false;
+	//
+	// EACH ONE AGAINST ITS OWN FLAG. Dropping an option because some earlier
+	// record exists loses it outright when that record did not carry it: the
+	// statement would then state its language on no record at all, and the
+	// replica would build the index without a language the primary has.
+	if(language_stated && o.has_language) {
+		rm_free(o.language);
+		o.language     = NULL;
+		o.has_language = false;
+	}
+
+	if(stopwords_stated && o.has_stopwords) {
+		for(uint64_t i = 0; i < o.n_stopwords; i++) {
+			rm_free(o.stopwords[i]);
 		}
-		if(o.has_stopwords) {
-			for(uint64_t i = 0; i < o.n_stopwords; i++) {
-				rm_free(o.stopwords[i]);
-			}
-			rm_free(o.stopwords);
-			o.stopwords     = NULL;
-			o.n_stopwords   = 0;
-			o.has_stopwords = false;
-		}
+		rm_free(o.stopwords);
+		o.stopwords     = NULL;
+		o.n_stopwords   = 0;
+		o.has_stopwords = false;
 	}
 
 	// FILLED BEFORE IT IS APPENDED, so the list never holds a record whose arm

@@ -22,6 +22,8 @@
 //      groups, so the one a per-group implementation gets locally right and
 //      globally wrong
 
+#include <inttypes.h>
+
 #include "src/effects/effects_v3_group.h"
 #include "src/effects/effects_v3_encode.h"
 #include "src/effects/effects_bytes.h"
@@ -1740,6 +1742,121 @@ void test_effectsV3Group_differentIndexesNeverFold(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// ANOTHER INDEX OVER THE SAME LABEL IS NOT THIS INDEX
+//
+// Index-level options are stated once per index per payload, and the record
+// that may not repeat them is one for the SAME index. A range index and a
+// fulltext index over one label are two objects - differentIndexesNeverFold
+// pins exactly that - so the range index's record states nothing about the
+// fulltext index's options and must not make them look already sent.
+//
+// Read the other way round, this is a replica that builds a fulltext index
+// with no language and no stopwords while the primary has both, from a query
+// that indexed a property twice. Raise the flag before the field-type test and
+// the second record below comes out empty.
+void test_effectsV3Group_anotherIndexDoesNotStripOptions(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	SIValue sw = SIArray_New(1);
+	SIArray_Append(&sw, SI_ConstStringVal("the"));
+
+	SIValue none = SI_Map(1);               // a range field states nothing
+	SIValue ft   = SI_Map(2);
+	Map_Add(&ft, SI_ConstStringVal("language"), SI_ConstStringVal("english"));
+	Map_Add(&ft, SI_ConstStringVal("stopwords"), sw);
+
+	// a range index over P, then a FULLTEXT index over the same label
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+			"P", INDEX_FLD_RANGE, 12, "a", none);
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+			"P", INDEX_FLD_FULLTEXT, 13, "b", ft);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+			"a range index and a fulltext index are two records, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n;
+	unsigned char *buf = _encode(g, &n);
+
+	// record 1, the range index: the text half is five clear bytes
+	size_t o = _options_offset(buf, n);
+	for(int i = 0; i < 5; i++) {
+		TEST_ASSERT_(buf[o + i] == 0,
+				"the range index should state no text option, byte %d is %u",
+				i, buf[o + i]);
+	}
+
+	// record 2, the fulltext index, still states both
+	size_t q  = o + 5;
+	size_t o2 = _options_offset(buf + q, n - q) + q;
+
+	TEST_ASSERT_(buf[o2] == 1,
+			"the fulltext index must keep its language - the range index "
+			"before it is a different index and stated none");
+
+	uint64_t len;
+	memcpy(&len, buf + o2 + 1, 8);
+	TEST_ASSERT_(buf[o2 + 1 + 8 + len] == 1,
+			"the fulltext index must keep its stopwords");
+
+	free(buf);
+	SIArray_Free(sw);
+	Map_Free(none);
+	Map_Free(ft);
+	EffectsV3Grouping_Free(g);
+}
+
+// AN OPTION NO EARLIER RECORD STATED IS NOT A REPEAT
+//
+// Stripping exists so that a second record for one index does not re-send what
+// the first already sent - Index_SetStopwords refuses stopwords that are
+// already set. What makes that a repeat is the EARLIER RECORD CARRYING IT, not
+// the earlier record existing.
+//
+// Two statements against one index in one payload: the first field asks for no
+// language, the second asks for english. Differing weights keep them apart, so
+// the second is the only record that could carry the language anywhere. Strip
+// on "a record exists" and it is cleared here and stated nowhere - the replica
+// builds the index with no language while the primary has english.
+void test_effectsV3Group_unstatedOptionIsNotARepeat(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	SIValue a = SI_Map(1);                  // no language
+	Map_Add(&a, SI_ConstStringVal("weight"), SI_DoubleVal(2.0));
+
+	SIValue b = SI_Map(2);                  // the language, first stated here
+	Map_Add(&b, SI_ConstStringVal("language"), SI_ConstStringVal("english"));
+	Map_Add(&b, SI_ConstStringVal("weight"), SI_DoubleVal(5.0));
+
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+			"P", INDEX_FLD_FULLTEXT, 12, "a", a);
+	EffectsV3Grouping_AddIndexField(g, EFFECT_CREATE_INDEX, SCHEMA_NODE, 3,
+			"P", INDEX_FLD_FULLTEXT, 13, "b", b);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+			"differing weights should split, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n;
+	unsigned char *buf = _encode(g, &n);
+
+	// record 1 states no language, no stopwords, a weight, no nostem,
+	// no phonetic - thirteen bytes in all
+	size_t o = _options_offset(buf, n);
+	TEST_ASSERT_(buf[o] == 0, "record 1 states no language");
+	size_t q = o + 1 + 1 + (1 + 8) + 1 + 1;
+
+	size_t o2 = _options_offset(buf + q, n - q) + q;
+	TEST_ASSERT_(buf[o2] == 1,
+			"record 2 must state the language: no earlier record carried it, "
+			"so clearing it here states it nowhere at all");
+
+	free(buf);
+	Map_Free(a);
+	Map_Free(b);
+	EffectsV3Grouping_Free(g);
+}
+
 // a vector statement's options survive the conversion, codes and all
 void test_effectsV3Group_vectorOptions(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
@@ -1829,6 +1946,10 @@ TEST_LIST = {
 		test_effectsV3Group_dropIndexFoldsWithNoOptions },
 	{ "EffectsV3Group:differentIndexesNeverFold",
 		test_effectsV3Group_differentIndexesNeverFold },
+	{ "EffectsV3Group:anotherIndexDoesNotStripOptions",
+		test_effectsV3Group_anotherIndexDoesNotStripOptions },
+	{ "EffectsV3Group:unstatedOptionIsNotARepeat",
+		test_effectsV3Group_unstatedOptionIsNotARepeat },
 	{ "EffectsV3Group:vectorOptions",
 		test_effectsV3Group_vectorOptions },
 	{ "EffectsV3Group:attributeOrderDoesNotSplit",
