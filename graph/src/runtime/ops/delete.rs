@@ -24,7 +24,7 @@
 
 use crate::graph::graph::{Graph, LabelId, NodeId, RelationshipId};
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
-use crate::planner::IR;
+use crate::planner::{IR, subtree_contains};
 use crate::runtime::eval::ExprEval;
 use crate::runtime::ordermap::OrderMap;
 use crate::runtime::{
@@ -88,6 +88,28 @@ pub struct DeleteOp<'a> {
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Whether deleted entities must be snapshotted for later reads.
     snapshot: bool,
+    /// Whether to drain the child before deleting anything. Set when the
+    /// child writes: `Create`/`Set` of a later batch must still see entities
+    /// an earlier batch deleted (C buffers deletes until its input is
+    /// exhausted), or they fail with "endpoint was not found" (#2729).
+    /// Read-only children stream, so `MATCH (n) DELETE n` buffers nothing.
+    eager: bool,
+    /// Drained input, replayed once the deletes have been applied.
+    buffered: Option<std::vec::IntoIter<Batch<'a>>>,
+}
+
+/// Whether the operator writes to the graph, so that a later batch it feeds
+/// must still see what an earlier batch of a sibling `Delete` removed.
+const fn writes_graph(ir: &IR) -> bool {
+    matches!(
+        ir,
+        IR::Create(_)
+            | IR::Merge { .. }
+            | IR::Set(_)
+            | IR::Remove(_)
+            | IR::Delete { .. }
+            | IR::ForEach { .. }
+    )
 }
 
 impl<'a> DeleteOp<'a> {
@@ -106,6 +128,16 @@ impl<'a> DeleteOp<'a> {
             trees,
             idx,
             snapshot,
+            // Below this Delete only: its own node is not a reason to buffer,
+            // but a Delete nested in the child (a `CALL { ... DELETE b }`
+            // body) is, since this one would otherwise delete between that
+            // one's batches.
+            eager: runtime
+                .plan
+                .node(idx)
+                .children()
+                .any(|child| subtree_contains(&runtime.plan, child.idx(), writes_graph)),
+            buffered: None,
         }
     }
 }
@@ -114,6 +146,25 @@ impl<'a> Iterator for DeleteOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.eager {
+            if self.buffered.is_none() {
+                let mut batches = Vec::new();
+                for res in self.child.by_ref() {
+                    match res {
+                        Ok(b) => batches.push(b),
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                for b in &batches {
+                    if let Err(e) = self.runtime.delete_batch(self.trees, b, self.snapshot) {
+                        return Some(Err(e));
+                    }
+                }
+                self.buffered = Some(batches.into_iter());
+            }
+            return self.buffered.as_mut()?.next().map(Ok);
+        }
+
         let batch = match self.child.next()? {
             Ok(b) => b,
             Err(e) => return Some(Err(e)),

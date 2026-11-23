@@ -43,7 +43,7 @@ All of this needs the value comparison to be a valid total order. On main it is 
 
 **4. Does `DISTINCT` keep exactly one row per value?**
 
-Only if the hash it keys on never collides. `dedup_injective` proves `DISTINCT` is correct when the hash is injective. `dedup_collision_drops` shows the other side: with a collision, a row is dropped. The engine keys on a 64-bit FxHash, so this is the known #2780. The project also found one new place where DISTINCT state is shared wrongly (see [Bugs found](#bugs-found)).
+Only if the hash it keys on never collides. `dedup_injective` proves `DISTINCT` is correct when the hash is injective. `dedup_collision_drops` shows the other side: with a collision, a row is dropped. The engine keys on a 64-bit FxHash, so this is the known #2780. A per-row `CALL {}` used to wipe an outer `count(DISTINCT)`'s state between batches (W2-agg-1, #2779); since #2968 it resets only its own entries, and `distinct_scoped_clear_exact` proves the outer count exact.
 
 **5. Is `LOAD CSV` safe?**
 
@@ -70,6 +70,7 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `limitOp_spec`, `skipOp_spec` | `LIMIT` is `take`, `SKIP` is `drop`, for any batching | `Ops.lean` |
 | `project_flatten`, `unwind_batches`, `unwind_null` | Project and Unwind do not depend on batching; `UNWIND null` gives no rows | `Ops.lean` |
 | `dedup_injective` | `DISTINCT` is correct when its hash is injective (`dedup_collision_drops` is one counterexample for a collision, not the converse) | `Ops.lean` |
+| `distinct_scoped_clear_exact`, `scopedClear_clears`, `GroupId.gid_lt_length` | The per-row `CALL {}` reset (#2968) clears exactly the sub-plan's `(distinct node, group id)` entries, so an outer `count(DISTINCT)` counts as over one batch | `Ops.lean`, `GroupId.lean` |
 | `drain_all` | The aggregate's `next` emits every group once, 1024 per batch | `AggNext.lean` |
 | `finishGroup_outputs` | Output bindings of a finished group take precedence | `AggNext.lean` |
 | `bug3375_output_overwrites_next_acc` … `bug3368_count_acc_in_merge_slot` | With the ids the binder really assigns, `next` breaks `AggRowSpec` in four open issues (#3375, #3333, #3368, #3369) | `SlotReuse.lean` |
@@ -98,7 +99,6 @@ Every bug was reproduced against a live server before it was recorded (see [`../
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-agg-1 | `distinct_fold_clear_overcounts` | `CALL {}` clears the runtime-wide DISTINCT state after each run (`apply.rs:283`), wiping an outer `count(DISTINCT)`'s state every batch. `UNWIND range(1,3000) AS i CALL { WITH i RETURN i % 2 AS v LIMIT 1 } RETURN count(DISTINCT v)` gives 6; C gives 2 | **Open** |
 | #3375 | `bug3375_output_overwrites_next_acc`, `bug3375_avg_panics` (property `OutputsOwnAcc`) | The binder gives `count(x)`'s output the same id as `sum(x)`'s accumulator, and `next` writes the output into `combined` before `sum` reads it. `UNWIND [1,2,3] AS x RETURN 'a', 'b', count(x), sum(x)`: Rust 3, 3; C 3, 6. With `avg` the server panics (`finalize_avg expects a list`) | **Open** (PR #3374) |
 | #3333 | `bug3333_alias_binds_next_var` (property `EmitsOnlyScope`) | `… (x)-[:R]->(m) WITH m, count(*) AS c1 MATCH (m)-[r]->(b …)`: the pre-projection alias of `m` (id 2) is bound on the emitted row, and `b` gets id 2, so `b` starts bound to `m`. Rust `[]`, C `[3,1,4]` | **Open** |
 | #3369 | `bug3369_count_acc_in_merge_slot` (property `EmitsOnlyScope`) | Two `count(*)` accumulators are left, unbound but present, at the ids of the next segments' MERGE nodes (2 and 3). The MERGE that then treats them as bound is in `merge.rs`, which this project does not model | **Open** |

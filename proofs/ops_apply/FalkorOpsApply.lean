@@ -20,8 +20,8 @@ See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn 
 
 The Apply/Optional/SemiApply/OR-apply batching theorems are proofs for modelled `OpSep.Adm` trees. The
 premise that the sub-plan the `can_batch` guard admits is such a tree is NOT discharged: it is the hypothesis
-of the six CONDITIONAL rows. `guard_admits_classified` classifies the admitted IR kinds but admitted writes
-(#2738) and the bidirectional-dedup `CondTraverse` (#3106) have no `Adm` constructor (counterexamples), and
+of the six CONDITIONAL rows. `guard_admits_classified` classifies the admitted IR kinds (no writing operator is admitted since #2968) but
+the bidirectional-dedup `CondTraverse` (#3106) has no `Adm` constructor (counterexample), and
 the planner's output is not machine-checked to land in `Adm`.
 -/
 import FalkorOpsApply.Correlated

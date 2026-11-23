@@ -6,7 +6,7 @@ Plan-shape helpers and constructors of `Runtime` (graph/src/runtime/runtime.rs).
 | `IRK`, `VT`, `nodeVars`, `expand`, `getVariables`, `visible` | `GetVariables` trait (:257) and its `DynNode` impl (:260-395) |
 | `PT`, `returnNames`  | `ReturnNames` trait (:399) and its impl (:402-) |
 | `inspectBatch`       | `Runtime::inspect_batch` (:449) |
-| `RtInit`, `rtNew`    | `Runtime::new` (:471-525; the graph fields are `QueryGraph.new`) |
+| `RtInit`, `rtNew`    | `Runtime::new` (:477-540; the graph fields are `QueryGraph.new`) |
 | `resyncPublished`, `commitDeferred` | `resync_published_indexes` (:633), `commit_deferred_indexes` (:643) |
 | `defaultBatch`       | `default_batch` (:699) |
 | `childrenSpec`       | `children_to_recurse` (:787), on `RunBatch.childrenToRecurse` |
@@ -215,7 +215,7 @@ theorem inspectBatch_spec {R : Type} (rec : List (Nat × Except String R)) (idx 
     inspectBatch true rec idx (.error e) = rec ++ [(idx, .error e)] ∧
     inspectBatch false rec idx res = rec := ⟨rfl, rfl, rfl⟩
 
-/-! ## `Runtime::new` (:471) -/
+/-! ## `Runtime::new` (:477) -/
 
 structure RtInit (P B : Type) where
   returnNames : Option (List Nat)
@@ -225,6 +225,8 @@ structure RtInit (P B : Type) where
   deadline : Option Nat
   record : List Nat
   dedupers : List Nat
+  /-- `aggregate_group_counts` (#2968): the largest `groups.len()` per aggregate node. -/
+  groupCounts : List (Nat × Nat)
   mergeCache : List Nat
   memoN : List Nat
   memoR : List Nat
@@ -243,7 +245,7 @@ def rtNew {P B : Type} (root : PT) (rootIsNested : Bool) (rootKids : List Nat) (
     pending := if write then openWrite pendingNew else pendingNew
     write
     deadline := timeoutMs.map (now + ·)
-    record := [], dedupers := [], mergeCache := [], memoN := [], memoR := []
+    record := [], dedupers := [], groupCounts := [], mergeCache := [], memoN := [], memoR := []
     effects := none, effectsCount := 0, buildEffects := true }
 
 theorem rtNew_spec {P B : Type} (root : PT) (nested : Bool) (kids : List Nat) (w : Bool) (p : P)
@@ -252,9 +254,9 @@ theorem rtNew_spec {P B : Type} (root : PT) (nested : Bool) (kids : List Nat) (w
     r.returnNames = returnNames root ∧ (nested = true → r.nestedPlans = kids.drop 1) ∧
     (nested = false → r.nestedPlans = []) ∧ (w = true → r.pending = ow p) ∧ (w = false → r.pending = p) ∧
     r.deadline = t.map (now + ·) ∧ r.record = [] ∧ r.mergeCache = [] ∧ r.effects = none ∧
-    r.buildEffects = true := by
+    r.buildEffects = true ∧ r.dedupers = [] ∧ r.groupCounts = [] := by
   refine ⟨rfl, fun h => by simp [rtNew, h], fun h => by simp [rtNew, h], fun h => by simp [rtNew, h],
-    fun h => by simp [rtNew, h], rfl, rfl, rfl, rfl, rfl⟩
+    fun h => by simp [rtNew, h], rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-! ## Delegating accessors (:633, :643) -/
 

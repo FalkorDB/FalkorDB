@@ -26,6 +26,23 @@ def gid : List K → K → Nat
   | [], _ => 0
   | x :: xs, k => if x = k then 0 else 1 + gid xs k
 
+/-- A present key's id is below `groups.len()`, so the per-row CALL {} reset
+(`Ops.scopedClear` with `cnt` = the largest `groups.len()`, #2968) covers every group id the
+sub-plan's aggregate used. -/
+theorem gid_lt_length (gs : List K) (k : K) (h : k ∈ gs) : gid gs k < gs.length := by
+  induction gs with
+  | nil => simp at h
+  | cons x xs ih =>
+    simp only [gid, List.length_cons]
+    split
+    · omega
+    · rename_i hx
+      have : k ∈ xs := by
+        rcases List.mem_cons.mp h with e | e
+        · exact absurd e.symm hx
+        · exact e
+      have := ih this; omega
+
 theorem gid_append_mem (a b : List K) (k : K) (h : k ∈ a) : gid (a ++ b) k = gid a k := by
   induction a with
   | nil => simp at h

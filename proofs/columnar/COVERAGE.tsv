@@ -53,8 +53,8 @@ graph/src/runtime/batch.rs	new	1414	PROVEN	BatchRow.new: batchRowNew_spec
 graph/src/runtime/batch.rs	value_at	1424	PROVEN	Row viewAt; toOwned_get_eq_view (owned row = view on every slot, #3059)
 graph/src/runtime/batch.rs	next	1471	PROVEN	Batch.active (active_lt)
 graph/src/runtime/batch.rs	size_hint	1494	PROVEN	sizeHint: sizeHint_spec
-graph/src/runtime/batch.rs	inspect_context	1738	PROVEN	inspectCtx: inspectCtx_spec
-graph/src/runtime/batch.rs	next	1787	PROVEN	opNext/leafNext: opNext_spec
+graph/src/runtime/batch.rs	inspect_context	1741	PROVEN	inspectCtx: inspectCtx_spec
+graph/src/runtime/batch.rs	next	1790	PROVEN	opNext/leafNext: opNext_spec
 graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	PROVEN	Dispatch fromExprIR: fromExprIR_isSome, fromExprIR_sem, flip_sem, eval_cmp
 graph/src/runtime/vectorized.rs	compare_f64_column	162	PROVEN	VExpr kernelF_get, fcmp_agree_ff/if/fi, fcmp_nan
 graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	VExpr compareValues (= per-row rowCmp by definition; Neq arm as #2917); caseMatch_eq_compare_value; CoreOps allEq_rowCmp, allNeq_rowCmp, cmpResult_rowCmp (= expr_semantics all_equals / all_not_equals / comparison arms)
@@ -102,5 +102,5 @@ graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter 
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter packRows_spec, stream_rows_active
 graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch: emNew_spec
 # runtime.rs attribute reads (RuntimeReads, 2026-10-21): the bulk fetch is the per-row read, with the graph batch / by-name reads modelled as their definitions (proofs/runtime_core models the same fns with hbg/hName as hypotheses).
-graph/src/runtime/runtime.rs	materialize_node_property_values	1702	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
+graph/src/runtime/runtime.rs	materialize_node_property_values	1709	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
