@@ -21,7 +21,7 @@ The full Lean↔Rust mapping is in the header of [`GraphblasWrappers.lean`](Grap
 
 **Does `Matrix::decode` leak or trust the payload's pointers? (#3080)** No. `MatrixDecode.lean`:
 
-- `decode_no_leak_no_double_free`: whichever of its nine fallible steps fails, `decode` frees every block it allocated exactly once (the five empty vectors `GxB_Container_new` made are freed by `OwnedContainer::replace`, the container by `OwnedContainer::drop`), and only the returned matrix stays live. Before #3080 the header copy overwrote those five vectors on every RDB load, RESTORE and full sync;
+- `decode_no_leak_no_double_free`: whichever of its fallible steps fails (its four GraphBLAS calls, and any step of each of the five component decodes: `vecDecode_gb` shows `Vector::<Untyped>::decode` either fails before allocating, frees its vector, or returns one, and `vecDecode_rust_clean` that it never leaks its byte buffer; `decode_no_leak_real`), `decode` frees every block it allocated exactly once (the five empty vectors `GxB_Container_new` made are freed by `OwnedContainer::replace`, the container by `OwnedContainer::drop`), and only the returned matrix stays live. Before #3080 the header copy overwrote those five vectors on every RDB load, RESTORE and full sync;
 - `adopt_ptr_blind`: only the nine scalar fields are taken from the payload, so the loaded container does not depend on its pointer fields;
 - `field_in_bounds`, `flag_ok_iff`, `formatOk_iff`: `ContainerHeader::parse` reads in range, refuses a flag byte other than 0/1, and `decode` refuses a sparsity format other than hypersparse/sparse/bitmap/full;
 - `decodeCalls_never_die`: `GxB_Container_new`, `GrB_Matrix_new`, the load and the wait return their failure as `Err`.
@@ -68,7 +68,7 @@ Yes. `drain_seek_eq_spec` proves `Iter::seek` followed by `next` until the end y
 | Theorem | In plain words | File |
 |---|---|---|
 | `decodeBlob_never_dies`, `decodeU64_never_dies` | No status code from a corrupt blob kills the server | `Codes.lean` |
-| `decode_no_leak_no_double_free`, `adopt_ptr_blind` | `Matrix::decode` frees all it allocates, once, on every path, and ignores the payload's pointers, ASSUMING each failed component `Vector::<Untyped>::decode` is atomic (leaves nothing allocated); `decodeBool_safe` proves only the status propagates, so the `decode` row is CONDITIONAL on that contract | `MatrixDecode.lean` |
+| `decode_no_leak_no_double_free`, `decode_no_leak_real`, `vecDecode_gb`, `vecDecode_rust_clean`, `adopt_ptr_blind` | `Matrix::decode` frees all it allocates, once, on every path (including each step of the five component `Vector::<Untyped>::decode`s, which are atomic), and ignores the payload's pointers | `MatrixDecode.lean` |
 | `checkLayers_merge_in_bounds` | `Tensor::decode` only merges delta entries inside the base | `Decode.lean` |
 | `encodeM_no_heap_addresses` | The encoded container header carries no heap address | `Glue.lean` |
 | `edgeCount_no_panic`, `edgeCount_value` | `edge_count` is total and correct while the tensor invariant holds | `Decode.lean` |
@@ -136,8 +136,7 @@ The lakefile depends on `../versioned_matrix` (path dependency), because `DeltaL
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 59 |
-| CONDITIONAL | 1 |
+| PROVEN | 60 |
 | AXIOMATISED | 1145 |
 
 **AXIOMATISED** means the function is the C library, or a wrapper whose only content is one C call:

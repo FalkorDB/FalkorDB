@@ -9,6 +9,7 @@ import GraphblasWrappers.Glue
 | `flag`, `formatOk`             | `ContainerHeader::parse` (the `flag` closure) / the format check in `decode` |
 | `adopt`                        | `decode` writing the nine scalar fields into the fresh container |
 | `Heap`, `run`                  | `OwnedContainer::{new, replace, drop}` and the body of `decode` |
+| `vecDecode`, `VecEff`          | `Vector::<Untyped>::decode` (vector.rs), the component decoder |
 | `decodeCalls`                  | the four GraphBLAS calls `decode` makes itself, each now `propagate` |
 
 Before #3080 `decode` `copy_nonoverlapping`-ed the whole payload header over the
@@ -16,7 +17,8 @@ container `GxB_Container_new` had just filled, losing its five empty component
 vectors (a leak on every RDB load, RESTORE and full sync), and `?` on a
 component decode returned without freeing the container. Now:
 
-* `decode_no_leak_no_double_free`: whichever call fails (any of the nine), every
+* `decode_no_leak_no_double_free` / `decode_no_leak_real`: whichever call fails
+  (any of the four, or any step of a component decode, `vecDecode_gb`), every
   free hits a live block once, and the heap afterwards holds exactly the
   returned matrix (`Ok`) or nothing (`Err`).
 * `adopt_ptr_blind`: the container handed to `GxB_load_Matrix_from_Container`
@@ -146,38 +148,103 @@ def replace (h : Heap) (slots : List Nat) (k : Nat) (v : Nat) : Option (Heap × 
   let h ← free h (slots.getD k 0)
   pure (h, slots.set k v)
 
-/-- Which call fails: `ok[0]` `GxB_Container_new`, `ok[1..5]` the decodes of
-`x, h, p, i, b`, `ok[6]` `GrB_Matrix_new`, `ok[7]` the load, `ok[8]` the wait.
-ASSUMPTION: a failed `Vector::<Untyped>::decode` is atomic, i.e. it leaves nothing
-allocated, so it allocates nothing here. `decodeBool_safe` proves only that it returns `Err`
-on every code, not its own cleanup (`GxB_Type_from_name`, allocation, `GxB_Vector_load`), so
-the theorems below, and the `Matrix::decode` COVERAGE row, are CONDITIONAL on that contract. Returns the
-heap, the container's slots, and whether every decode succeeded. -/
-def decodeVecs (ok : List Bool) : Nat → Heap → List Nat → Option (Heap × List Nat × Bool)
+/-! ### `Vector::<Untyped>::decode`, the component decoder (vector.rs)
+
+Its GraphBLAS vector lives on `Heap`; the byte buffer it `std::alloc::alloc`s
+lives on a second `Heap` (the Rust allocator). Which step fails: `ok[0]` the
+reads, the length and NUL checks and `GxB_Type_from_name` (nothing allocated
+yet), `ok[1]` `GrB_Vector_new`, `ok[2]` `Layout::from_size_align`, `ok[3]`
+`std::alloc::alloc` (null), `ok[4]` `GxB_Vector_load`. `nz` is `n_bytes > 0`
+(only then is a layout made and a buffer allocated). A failed `GrB_Vector_new`
+allocates nothing (C contract). On success `GxB_Vector_load` adopts the buffer:
+it leaves the Rust heap and is freed with the vector. -/
+def vecDecode (ok : List Bool) (nz : Bool) (h rs : Heap) : Option ((Heap × Heap) × Option Nat) :=
+  if !ok.getD 0 true || !ok.getD 1 true then some ((h, rs), none) else
+  let (v, h) := alloc h
+  if nz && (!ok.getD 2 true || !ok.getD 3 true) then
+    -- `GrB_Vector_free(v)`; the null pointer from `alloc` is not freed
+    (free h v).map fun h => ((h, rs), none)
+  else if nz then
+    let (buf, rs) := alloc rs
+    if !ok.getD 4 true then
+      -- `dealloc(arr_ptr)`, `GrB_Vector_free(v)`
+      (free rs buf >>= fun rs => (free h v).map (·, rs)).map (·, none)
+    else
+      -- adopted by `v`
+      (free rs buf).map fun rs => ((h, rs), some v)
+  else if !ok.getD 4 true then (free h v).map fun h => ((h, rs), none)
+  else some ((h, rs), some v)
+
+/-- What a component decode can do to the GraphBLAS heap: fail before
+allocating, fail after `GrB_Vector_new` (and free it), or return a vector. -/
+inductive VecEff | errEarly | errFreed | ok
+deriving DecidableEq, Repr
+
+def vecEff : VecEff → Heap → Option (Heap × Option Nat)
+  | .errEarly, h => some (h, none)
+  | .errFreed, h => let (v, h) := alloc h; (free h v).map (·, none)
+  | .ok, h => let (v, h) := alloc h; some (h, some v)
+
+def classify (ok : List Bool) (nz : Bool) : VecEff :=
+  if !ok.getD 0 true || !ok.getD 1 true then .errEarly
+  else if (!nz || (ok.getD 2 true && ok.getD 3 true)) && ok.getD 4 true then .ok
+  else .errFreed
+
+/-- **The component decoder is atomic** on the GraphBLAS heap: whichever of its
+steps fails, its effect is one of the three `VecEff`s (`classify`). -/
+theorem vecDecode_gb (b0 b1 b2 b3 b4 nz : Bool) (h rs : Heap) :
+    (vecDecode [b0, b1, b2, b3, b4] nz h rs).map (fun x => (x.1.1, x.2))
+      = vecEff (classify [b0, b1, b2, b3, b4] nz) h := by
+  cases b0 <;> cases b1 <;> cases b2 <;> cases b3 <;> cases b4 <;> cases nz <;>
+    simp [vecDecode, vecEff, classify, alloc, free]
+
+/-- **No leak, no double free of the Rust buffer**: every path returns with the
+Rust heap's live blocks as they were (freed on error, adopted on success). -/
+theorem vecDecode_rust_clean (b0 b1 b2 b3 b4 nz : Bool) (h rs : Heap) :
+    (vecDecode [b0, b1, b2, b3, b4] nz h rs).map (·.1.2.live) = some rs.live := by
+  cases b0 <;> cases b1 <;> cases b2 <;> cases b3 <;> cases b4 <;> cases nz <;>
+    simp [vecDecode, alloc, free]
+
+/-- It returns a vector exactly when every step succeeds. -/
+theorem vecDecode_ok_iff (b0 b1 b2 b3 b4 nz : Bool) (h rs : Heap) :
+    ((vecDecode [b0, b1, b2, b3, b4] nz h rs).bind (·.2)).isSome
+      = (b0 && b1 && (!nz || (b2 && b3)) && b4) := by
+  cases b0 <;> cases b1 <;> cases b2 <;> cases b3 <;> cases b4 <;> cases nz <;>
+    simp [vecDecode, alloc, free]
+
+/-! ### The body of `Matrix::decode` -/
+
+/-- Decode `x, h, p, i, b` in order (`effs[k]` is what the `k`-th component
+decode does, `vecDecode_gb`), each `OwnedContainer::replace`d into its slot.
+Returns the heap, the container's slots, and whether every decode succeeded. -/
+def decodeVecs (effs : List VecEff) : Nat → Heap → List Nat → Option (Heap × List Nat × Bool)
   | 0, h, slots => some (h, slots, true)
   | n + 1, h, slots =>
     let k := 5 - (n + 1)
-    if ok.getD (1 + k) true then
-      let (v, h) := alloc h
+    match vecEff (effs.getD k .ok) h with
+    | none => none
+    | some (h, none) => some (h, slots, false)
+    | some (h, some v) =>
       match replace h slots k v with
       | none => none
-      | some (h, slots) => decodeVecs ok n h slots
-    else some (h, slots, false)
+      | some (h, slots) => decodeVecs effs n h slots
 
-/-- The body of `Matrix::decode` after the header checks. `some (h, some m)` is
+/-- The body of `Matrix::decode` after the header checks. Which call fails:
+`ok[0]` `GxB_Container_new`, `ok[1]` `GrB_Matrix_new`, `ok[2]` the load,
+`ok[3]` the wait; `effs` the five component decodes. `some (h, some m)` is
 `Ok` with matrix `m`, `some (h, none)` an `Err`, `none` a double free. -/
-def run (ok : List Bool) (h : Heap) : Option (Heap × Option Nat) :=
+def run (ok : List Bool) (effs : List VecEff) (h : Heap) : Option (Heap × Option Nat) :=
   if !ok.getD 0 true then some (h, none) else
   let ((c, slots), h) := containerNew h
-  match decodeVecs ok 5 h slots with
+  match decodeVecs effs 5 h slots with
   | none => none
   | some (h, slots, false) =>
     -- `?` returned: `container` dropped, freeing the vectors installed so far
     (containerFree h c slots).map (·, none)
   | some (h, slots, true) =>
-    if !ok.getD 6 true then (containerFree h c slots).map (·, none) else
+    if !ok.getD 1 true then (containerFree h c slots).map (·, none) else
     let (m, h) := alloc h
-    if !ok.getD 7 true || !ok.getD 8 true then
+    if !ok.getD 2 true || !ok.getD 3 true then
       -- `GrB_Matrix_free(m)`, then `container` dropped
       (free h m >>= fun h => containerFree h c slots).map (·, none)
     else
@@ -194,20 +261,32 @@ def Clean (h0 : Heap) (r : Option (Heap × Option Nat)) : Prop :=
 instance (h0 : Heap) (r : Option (Heap × Option Nat)) : Decidable (Clean h0 r) := by
   unfold Clean; split <;> infer_instance
 
-/-- **#3080: no leak, no double free.** From an empty heap, whichever of the nine
-calls fails (and whatever fails after it), `decode` frees every block it
-allocated exactly once, except the matrix it returns. -/
-theorem decode_no_leak_no_double_free (b0 b1 b2 b3 b4 b5 b6 b7 b8 : Bool) :
-    Clean ⟨0, []⟩ (run [b0, b1, b2, b3, b4, b5, b6, b7, b8] ⟨0, []⟩) := by
-  revert b0 b1 b2 b3 b4 b5 b6 b7 b8
-  decide
+/-- **#3080: no leak, no double free.** From an empty heap, whichever of the
+four calls `decode` makes itself fails, and whatever each component decode does
+(`vecDecode_gb`: every outcome of the real decoder is one of the three `VecEff`s),
+`decode` frees every block it allocated exactly once, except the matrix it returns. -/
+theorem decode_no_leak_no_double_free (b0 b1 b2 b3 : Bool) (e0 e1 e2 e3 e4 : VecEff) :
+    Clean ⟨0, []⟩ (run [b0, b1, b2, b3] [e0, e1, e2, e3, e4] ⟨0, []⟩) := by
+  revert b0 b1 b2 b3
+  cases e0 <;> cases e1 <;> cases e2 <;> cases e3 <;> cases e4 <;> decide
 
 /-- The success path returns a matrix; any failure returns `Err`. -/
-theorem decode_ok_iff_all_ok (b0 b1 b2 b3 b4 b5 b6 b7 b8 : Bool) :
-    ((run [b0, b1, b2, b3, b4, b5, b6, b7, b8] ⟨0, []⟩).bind (·.2)).isSome
-      = (b0 && b1 && b2 && b3 && b4 && b5 && b6 && b7 && b8) := by
-  revert b0 b1 b2 b3 b4 b5 b6 b7 b8
-  decide
+theorem decode_ok_iff_all_ok (b0 b1 b2 b3 : Bool) (e0 e1 e2 e3 e4 : VecEff) :
+    ((run [b0, b1, b2, b3] [e0, e1, e2, e3, e4] ⟨0, []⟩).bind (·.2)).isSome
+      = (b0 && b1 && b2 && b3 &&
+          [e0, e1, e2, e3, e4].all (· == .ok)) := by
+  revert b0 b1 b2 b3
+  cases e0 <;> cases e1 <;> cases e2 <;> cases e3 <;> cases e4 <;> decide
+
+/-- The same for the real component decoder: for any failure point in each of
+the five `Vector::<Untyped>::decode` calls (`oks k`, `nz k`), `decode` neither leaks nor
+double-frees on the GraphBLAS heap (`vecDecode_gb`), and each call leaves the
+Rust heap as it found it (`vecDecode_rust_clean`). -/
+theorem decode_no_leak_real (b0 b1 b2 b3 : Bool)
+    (oks : Fin 5 → Bool × Bool × Bool × Bool × Bool) (nz : Fin 5 → Bool) :
+    let c := fun k => let (a, b, c, d, e) := oks k; classify [a, b, c, d, e] (nz k)
+    Clean ⟨0, []⟩ (run [b0, b1, b2, b3] [c 0, c 1, c 2, c 3, c 4] ⟨0, []⟩) :=
+  decode_no_leak_no_double_free _ _ _ _ _ _ _ _ _
 
 /-! ## Status codes of the calls `decode` makes itself -/
 
