@@ -109,6 +109,9 @@ impl From<NodeOpError> for ApplyError {
             NodeOpError::Graph(e) => Self::Graph(e),
             NodeOpError::IdSpace { kind, source } => id_space_error_map(kind, source),
             NodeOpError::DanglingRelationship { id } => Self::DanglingRelationship { id },
+            // A master holding the edge passed the same check, so this is a
+            // divergence between the two schemas; reported as the graph words it.
+            e @ NodeOpError::TooManyRelationshipTypes { .. } => Self::Graph(e.to_string()),
         }
     }
 }

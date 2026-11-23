@@ -30,8 +30,8 @@
 //! │                          │ (supports multiple edges between same    │
 //! │                          │  src/dst pair via 3rd dimension)         │
 //! ├──────────────────────────┼───────────────────────────────────────────┤
-//! │ relationship_type_matrix │ Matrix: edge_id x type_id -> bool        │
-//! │                          │ (maps each edge to its type)             │
+//! │ edge_endpoints           │ edge_id -> (src, dst, type_id)           │
+//! │                          │ (paged reverse index, O(1) per edge)     │
 //! ├──────────────────────────┼───────────────────────────────────────────┤
 //! │ node_attrs               │ AttributeStore: node properties          │
 //! │ relationship_attrs       │ AttributeStore: edge properties          │
@@ -96,13 +96,13 @@ use crate::{
     graph::{
         attribute_store::{AttrNameMap, AttributeStore},
         constraint::{Constraint, ConstraintStatus, ConstraintType},
-        endpoint_index::EndpointIndex,
+        endpoint_index::{EndpointIndex, MAX_TYPE_ID},
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::{GrB_INDEX_MAX, Tensor},
             vector::Vector,
-            versioned_matrix::{self, VersionedMatrix},
+            versioned_matrix::VersionedMatrix,
         },
         id_space::{IdSpace, IdSpaceError},
         schema::{NameMap, Schema},
@@ -376,6 +376,16 @@ pub enum NodeOpError {
          with the query — please report it"
     )]
     DanglingRelationship { id: u64 },
+
+    /// A relationship would get a type id past what the endpoint index's type
+    /// column can store. Types can still be registered past the limit (by an
+    /// index, a constraint or a replica's schema); only creating an edge of one
+    /// is refused, before anything is written.
+    #[error(
+        "cannot create a relationship of type '{name}': a graph supports at most {max} \
+         relationship types with relationships"
+    )]
+    TooManyRelationshipTypes { name: String, max: usize },
 }
 
 impl NodeOpError {
@@ -438,8 +448,6 @@ pub struct Graph {
     adjacancy_matrix: VersionedMatrix<bool>,
     /// Matrix mapping nodes to their labels
     node_labels_matrix: VersionedMatrix<bool>,
-    /// Matrix mapping relationships to their types
-    relationship_type_matrix: VersionedMatrix<bool>,
     /// Per-label matrices (label ID → node membership)
     labels_matices: Vec<VersionedMatrix<bool>>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
@@ -839,6 +847,15 @@ pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATIO
 /// never reached `needed` again — an infinite loop in release. Ids that large
 /// are refused before they get here (`IdSpace::create`), so the clamp
 /// is what keeps a caller that forgets from hanging instead of failing. #2892.
+/// A type index as stored in the endpoint index's type column, or `None` past
+/// [`MAX_TYPE_ID`]: the column reserves `u16::MAX` as its empty marker, so
+/// 65,535 relationship types can carry edges.
+fn edge_type_slot(type_idx: usize) -> Option<u16> {
+    u16::try_from(type_idx)
+        .ok()
+        .filter(|&t| usize::from(t) <= MAX_TYPE_ID)
+}
+
 fn grow_cap(
     mut cap: u64,
     needed: u64,
@@ -871,7 +888,6 @@ impl Graph {
             zero_matrix: VersionedMatrix::<bool>::new(0, 0),
             adjacancy_matrix: VersionedMatrix::<bool>::new(n, n),
             node_labels_matrix: VersionedMatrix::<bool>::new(0, 0),
-            relationship_type_matrix: VersionedMatrix::<bool>::new(0, 0),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Arc::new(EndpointIndex::default()),
@@ -906,7 +922,6 @@ impl Graph {
         deleted_relationships: RoaringTreemap,
         adjacancy_matrix: VersionedMatrix<bool>,
         node_labels_matrix: VersionedMatrix<bool>,
-        relationship_type_matrix: VersionedMatrix<bool>,
         labels_matices: Vec<VersionedMatrix<bool>>,
         relationship_matrices: Vec<Tensor>,
         node_labels: Vec<Arc<String>>,
@@ -956,9 +971,16 @@ impl Graph {
         let to_slot = |v: u64| usize::try_from(v).expect("edge id exceeds usize");
         let mut edge_endpoints = EndpointIndex::default();
         edge_endpoints.prepare_tiers(starts.map(to_slot), to_slot(len));
-        for tensor in &relationship_matrices {
+        for (type_idx, tensor) in relationship_matrices.iter().enumerate() {
+            if tensor.edge_count() == 0 {
+                continue;
+            }
+            // Edges past the limit are refused at creation, so a graph that
+            // saved them cannot exist.
+            let type_id = edge_type_slot(type_idx)
+                .expect("a saved graph has no relationships past the type limit");
             for (src, dst, edge_id) in tensor.iter_edges() {
-                edge_endpoints.set(edge_id, src, dst);
+                edge_endpoints.set(edge_id, src, dst, type_id);
             }
         }
 
@@ -977,7 +999,6 @@ impl Graph {
             zero_matrix: VersionedMatrix::<bool>::new(0, 0),
             adjacancy_matrix,
             node_labels_matrix,
-            relationship_type_matrix,
             labels_matices,
             relationship_matrices,
             edge_endpoints: Arc::new(edge_endpoints),
@@ -1008,10 +1029,9 @@ impl Graph {
         }
     }
 
-    /// Rebuild derived matrices after RDB load.
-    ///
-    /// - `relationship_type_matrix`: `(edge_id, type_index) = true` for all edges
-    /// - Tensor backward (`mt`): transpose of forward (`m`)
+    /// Rebuild derived matrices after RDB load: each tensor's backward (`mt`)
+    /// matrix, the transpose of its forward (`m`). Edge types need no rebuild:
+    /// [`Self::restore`] records them in `edge_endpoints` with the endpoints.
     pub fn rebuild_derived_matrices(&mut self) {
         // Decoded matrices keep the saving server's node_cap, which `grow_cap`
         // leaves up to 25% past the highest node id, while `restore` sets
@@ -1031,20 +1051,8 @@ impl Graph {
             .unwrap_or(0);
         self.node_cap = self.node_cap.max(saved);
         self.resize_node_matrices();
-        let rc = self.relationship_cap;
-        self.relationship_type_matrix
-            .resize(rc, self.schema.relationship_types.len() as u64);
-
-        // Rebuild relationship_type_matrix and tensor backward matrices
-        for (type_idx, tensor) in self.relationship_matrices.iter_mut().enumerate() {
-            // Rebuild backward (transpose) matrix from forward matrix in one operation
+        for tensor in &mut self.relationship_matrices {
             tensor.rebuild_backward();
-
-            // Iterate edges matrix to rebuild relationship_type_matrix
-            for (_, _, edge_id) in tensor.iter(0, u64::MAX, false) {
-                self.relationship_type_matrix
-                    .set(edge_id, type_idx as u64, true);
-            }
         }
     }
 
@@ -1094,7 +1102,6 @@ impl Graph {
             zero_matrix: self.zero_matrix.dup(),
             adjacancy_matrix: self.adjacancy_matrix.dup(),
             node_labels_matrix: self.node_labels_matrix.dup(),
-            relationship_type_matrix: self.relationship_type_matrix.dup(),
             labels_matices: self
                 .labels_matices
                 .iter()
@@ -1337,9 +1344,9 @@ impl Graph {
         edge_id: RelationshipId,
         type_id: TypeId,
     ) -> bool {
-        self.relationship_type_matrix
-            .get(edge_id.0, type_id.0 as u64)
-            .is_some()
+        self.edge_endpoints
+            .get_type(edge_id.0)
+            .is_some_and(|t| usize::from(t) == type_id.0)
     }
 
     /// Get-or-create a relationship type by name, returning its `TypeId`.
@@ -1354,12 +1361,8 @@ impl Graph {
         self.register_relationship_type(&Arc::new(relationship_type.to_string()))
     }
 
-    /// Append a new relationship type: its name, its tensor, and the extra
-    /// column in `relationship_type_matrix` (relationships x types). Every
-    /// registration goes through here so none can skip the resize: a type
-    /// registered with no edge (a constraint, a replica's `ADD_SCHEMA`) used to
-    /// leave the matrix a column short, and every later edge delete built a
-    /// removal mask the matrix refused, keeping the deleted edge's type (#3244).
+    /// Append a new relationship type: its name and its tensor. Every
+    /// registration goes through here so none can skip the resize.
     ///
     /// A type already registered gets its id back and nothing else, so its tensor
     /// is never displaced.
@@ -2083,10 +2086,7 @@ impl Graph {
     /// As [`track_edge_index_updates`](Self::track_edge_index_updates), for a caller that
     /// already knows the type every edge in `attrs` carries — a bulk token has exactly one.
     ///
-    /// `get_relationship_type_id` iterates `relationship_type_matrix`, and `iter` waits on the
-    /// matrix, forcing a pending-delta merge. Doing that once per edge right after
-    /// `create_relationships_bulk` enqueued a large delta is the per-entity overhead the bulk
-    /// path exists to avoid, so the type is resolved once by the caller instead.
+    /// The type is resolved once by the caller instead of per edge.
     fn track_edge_index_updates_of_type<'a>(
         &self,
         type_id: TypeId,
@@ -2745,6 +2745,17 @@ impl Graph {
                 ids.len()
             )));
         }
+        // Before anything is written: the id this type has or would get must
+        // fit the endpoint index's type column.
+        let type_idx = self
+            .get_type_id(type_name)
+            .map_or(self.schema.relationship_types.len(), |t| t.0);
+        let type_slot =
+            edge_type_slot(type_idx).ok_or_else(|| NodeOpError::TooManyRelationshipTypes {
+                name: type_name.to_string(),
+                max: MAX_TYPE_ID + 1,
+            })?;
+
         self.relationship_ids
             .create(&ids)
             .map_err(NodeOpError::relationship)?;
@@ -2753,7 +2764,6 @@ impl Graph {
             let needed = max_id + 1;
             if needed > self.relationship_cap {
                 self.relationship_cap = grow_cap(self.relationship_cap, needed);
-                self.resize_relationship_matrices();
             }
         }
 
@@ -2776,17 +2786,13 @@ impl Graph {
         ) {
             endpoints.prepare(max_id, max_endpoint);
         }
+        debug_assert_eq!(edge_type_slot(type_idx), Some(type_slot));
         for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
-            endpoints.set(id, src, dst);
+            endpoints.set(id, src, dst, type_slot);
         }
 
         self.adjacancy_matrix
             .set_all::<false>(srcs.iter().copied().zip(dsts.iter().copied()));
-
-        let type_id = type_idx as u64;
-        let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
-        self.relationship_type_matrix
-            .set_all::<true>(rel_ids.iter().copied().zip(type_ids.iter().copied()));
         Ok(())
     }
 
@@ -2802,7 +2808,6 @@ impl Graph {
             m.fold_latched();
         }
         self.adjacancy_matrix.fold_latched();
-        self.relationship_type_matrix.fold_latched();
         for t in &mut self.relationship_matrices {
             t.fold_latched();
         }
@@ -2827,8 +2832,6 @@ impl Graph {
         self.adjacancy_matrix.wait_base();
         self.node_labels_matrix.fold_oversized();
         self.node_labels_matrix.wait_base();
-        self.relationship_type_matrix.fold_oversized();
-        self.relationship_type_matrix.wait_base();
         for m in &mut self.labels_matices {
             m.fold_oversized();
             m.wait_base();
@@ -2846,7 +2849,6 @@ impl Graph {
         self.zero_matrix.wait_all();
         self.adjacancy_matrix.wait_all();
         self.node_labels_matrix.wait_all();
-        self.relationship_type_matrix.wait_all();
         for m in &self.labels_matices {
             m.wait_all();
         }
@@ -2864,7 +2866,6 @@ impl Graph {
         self.zero_matrix.is_synced()
             && self.adjacancy_matrix.is_synced()
             && self.node_labels_matrix.is_synced()
-            && self.relationship_type_matrix.is_synced()
             && self.labels_matices.iter().all(VersionedMatrix::is_synced)
             && self.relationship_matrices.iter().all(Tensor::is_synced)
     }
@@ -2888,10 +2889,8 @@ impl Graph {
     /// share one type.
     ///
     /// The difference is entirely in the index bookkeeping: the general form
-    /// calls `get_relationship_type_id` per edge, and that is a
-    /// `relationship_type_matrix.iter(id, id)` each time — the per-entity delta
-    /// iteration `import_node_attrs` documents as O(accumulated delta). Every
-    /// caller that already knows the type should state it.
+    /// calls `get_relationship_type_id` per edge. Every caller that already
+    /// knows the type should state it.
     ///
     /// The v3 `UPDATE_EDGE` record does, since #2570: its group key is the
     /// relationship type, so one record is one type by construction.
@@ -2974,28 +2973,21 @@ impl Graph {
         let num_types = self.relationship_matrices.len();
 
         // --- Phase 1: resolve (type, src, dst) per edge without mutating state ---
-        // Endpoints come from the graph-wide reverse index (O(1)); the type from
-        // a single re-seekable iterator over `relationship_type_matrix`. Walking
-        // `rels` (O(deleted)) with per-edge seeks avoids scanning every edge in
-        // the [min, max] id range. Only edges that resolve to both endpoints and
-        // a type are recorded in `resolved`; stale/non-existent ids are skipped
-        // so they can't corrupt counters or bitmaps in phase 2.
+        // Endpoints and type both come from the graph-wide reverse index, O(1)
+        // per edge. Only edges that resolve to both are recorded in `resolved`;
+        // stale/non-existent ids are skipped so they can't corrupt counters or
+        // bitmaps in phase 2.
         let mut by_type: Vec<Vec<(u64, u64, u64)>> = vec![Vec::new(); num_types];
         let mut resolved = RoaringTreemap::new();
-        {
-            let min_id = rels.min().expect("rels is non-empty");
-            let mut type_iter = self.relationship_type_matrix.iter(min_id, min_id);
-            #[allow(clippy::cast_possible_truncation)]
-            for edge_id in rels {
-                let Some((src, dst)) = self.endpoints_for_edge(edge_id) else {
-                    continue;
-                };
-                type_iter.seek(edge_id, edge_id);
-                if let Some((_, type_idx)) = type_iter.next() {
-                    by_type[type_idx as usize].push((edge_id, src, dst));
-                    resolved.insert(edge_id);
-                }
-            }
+        for edge_id in rels {
+            let (Some((src, dst)), Some(type_idx)) = (
+                self.edge_endpoints.get(edge_id),
+                self.edge_endpoints.get_type(edge_id),
+            ) else {
+                continue;
+            };
+            by_type[usize::from(type_idx)].push((edge_id, src, dst));
+            resolved.insert(edge_id);
         }
 
         // --- Phase 2: mutate state for the actually-resolved edges only ---
@@ -3015,9 +3007,6 @@ impl Graph {
         self.relationship_attrs.remove_all(&resolved);
 
         let mut endpoints: Vec<DeletedEdge> = Vec::with_capacity(resolved.len() as usize);
-        // (edge_id, type_id) pairs for a single bulk removal from the type matrix.
-        let mut tm_rows: Vec<u64> = Vec::with_capacity(endpoints.capacity());
-        let mut tm_cols: Vec<u64> = Vec::with_capacity(endpoints.capacity());
         // (src, dst) pairs emptied from a tensor — candidates for adjacency removal.
         let mut adj_candidates: Vec<(u64, u64)> = Vec::new();
 
@@ -3039,8 +3028,6 @@ impl Graph {
             }
 
             for &(edge_id, src, dst) in type_rels {
-                tm_rows.push(edge_id);
-                tm_cols.push(type_id);
                 endpoints.push(DeletedEdge {
                     id: RelationshipId(edge_id),
                     type_id,
@@ -3051,16 +3038,6 @@ impl Graph {
             }
 
             adj_candidates.extend(self.relationship_matrices[type_idx].remove_all(type_rels));
-        }
-
-        // Remove every deleted edge from relationship_type_matrix in one masked op.
-        if !tm_rows.is_empty() {
-            let mut type_mask = Matrix::<bool>::new(
-                self.relationship_cap,
-                self.schema.relationship_types.len() as u64,
-            );
-            type_mask.build(&tm_rows, &tm_cols);
-            self.relationship_type_matrix.remove_mask(&type_mask);
         }
 
         // Update adjacancy_matrix for pairs that lost all edges.
@@ -3163,16 +3140,7 @@ impl Graph {
                 continue;
             }
 
-            // Batch remove from relationship_type_matrix using bulk mask
             let type_id = type_idx as u64;
-            let tm_rows: Vec<u64> = rels.iter().map(|&(id, _, _)| id).collect();
-            let tm_cols: Vec<u64> = vec![type_id; rels.len()];
-            let mut type_mask = Matrix::<bool>::new(
-                self.relationship_cap,
-                self.schema.relationship_types.len() as u64,
-            );
-            type_mask.build(&tm_rows, &tm_cols);
-
             let del_keys: RoaringTreemap = rels.iter().map(|&(id, _, _)| id).collect();
             let type_name = &self.schema.relationship_types[type_idx];
             let is_indexed = self.edge_indexer.has_index(type_name);
@@ -3194,14 +3162,13 @@ impl Graph {
                         .insert(edge_id, (src, dst));
                 }
             }
-            // Before the type matrix and attributes are torn down below.
+            // Before the edge types and attributes are torn down below.
             #[cfg(feature = "index-falkordb")]
             docs.native
                 .extend(graph_writes::edges_deleted(self, del_keys.iter()));
-            self.relationship_type_matrix.remove_mask(&type_mask);
             self.relationship_attrs.remove_all(&del_keys);
 
-            // Drop deleted edges from the graph-wide reverse index.
+            // Drop deleted edges (endpoints and type) from the reverse index.
             for &(edge_id, _, _) in &rels {
                 self.clear_edge_endpoint(edge_id);
             }
@@ -3440,12 +3407,11 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> TypeId {
-        #[allow(clippy::cast_possible_truncation)]
-        self.relationship_type_matrix
-            .iter(id.0, id.0)
-            .map(|(_, l)| TypeId(l as usize))
-            .next()
-            .expect("relationship must have a type in type_matrix")
+        TypeId(usize::from(
+            self.edge_endpoints
+                .get_type(id.0)
+                .expect("relationship must have a type"),
+        ))
     }
 
     /// Decode the (src, dst) endpoints for an edge from the graph-wide reverse
@@ -3479,17 +3445,6 @@ impl Graph {
         }
 
         panic!("relationship {} not found", id.0);
-    }
-
-    /// Iterate the relationship type matrix over a range of edge IDs.
-    /// Returns `(edge_id, type_index)` pairs.
-    #[must_use]
-    pub fn relationship_type_matrix_iter(
-        &self,
-        min_edge_id: u64,
-        max_edge_id: u64,
-    ) -> versioned_matrix::Iter {
-        self.relationship_type_matrix.iter(min_edge_id, max_edge_id)
     }
 
     #[must_use]
@@ -3552,13 +3507,6 @@ impl Graph {
         }
     }
 
-    fn resize_relationship_matrices(&mut self) {
-        self.relationship_type_matrix.resize(
-            self.relationship_cap,
-            self.schema.relationship_types.len() as u64,
-        );
-    }
-
     fn resize(&mut self) {
         if self.node_ids.live() > self.node_cap {
             self.node_cap = grow_cap(self.node_cap, self.node_ids.live());
@@ -3572,14 +3520,6 @@ impl Graph {
 
         if self.relationship_ids.live() > self.relationship_cap {
             self.relationship_cap = grow_cap(self.relationship_cap, self.relationship_ids.live());
-            self.resize_relationship_matrices();
-        }
-
-        if self.schema.relationship_types.len() as u64 > self.relationship_type_matrix.ncols() {
-            self.relationship_type_matrix.resize(
-                self.relationship_cap,
-                self.schema.relationship_types.len() as u64,
-            );
         }
     }
 
@@ -5067,11 +5007,10 @@ impl Graph {
             self.node_attrs.structural_memory_usage() + self.node_ids.recycled().serialized_size();
 
         // --- edge block storage ---
-        // Mirrors the node side: the matrix recording each edge's existence and
-        // type, plus the graph-wide edge_id → endpoint reverse index (one slot
-        // per edge id, 4, 6, 8 or 16 bytes wide depending on the tier).
-        let edge_block_storage_sz: usize = self.relationship_type_matrix.memory_usage()
-            + self.relationship_attrs.structural_memory_usage()
+        // Mirrors the node side, plus the graph-wide edge_id → (endpoints, type)
+        // reverse index: per edge id, a 4/6/8/16-byte endpoint slot depending on
+        // the tier and a 2-byte type id.
+        let edge_block_storage_sz: usize = self.relationship_attrs.structural_memory_usage()
             + self.relationship_ids.recycled().serialized_size()
             + self.edge_endpoints.memory_usage();
 
@@ -6224,7 +6163,6 @@ mod restore_tests {
             RoaringTreemap::new(),
             VersionedMatrix::<bool>::new(SAVED, SAVED),
             VersionedMatrix::<bool>::new(SAVED, 1),
-            VersionedMatrix::<bool>::new(0, 0),
             vec![VersionedMatrix::<bool>::new(SAVED, SAVED)],
             vec![tensor],
             vec![Arc::new("L".to_string())],
@@ -6311,7 +6249,6 @@ mod restore_tests {
             RoaringTreemap::new(),
             VersionedMatrix::<bool>::new(16, 16),
             VersionedMatrix::<bool>::new(16, 2),
-            VersionedMatrix::<bool>::new(0, 0),
             vec![
                 VersionedMatrix::<bool>::new(16, 16),
                 VersionedMatrix::<bool>::new(16, 16),
@@ -6339,5 +6276,32 @@ mod restore_tests {
         assert_eq!(g.register_relationship_type(&r), TypeId(0));
         assert_eq!(g.get_types().len(), 2);
         assert_eq!(g.relationship_matrices.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod edge_type_slot_tests {
+    use super::{MAX_TYPE_ID, NodeOpError, edge_type_slot};
+
+    #[test]
+    fn type_ids_up_to_the_limit_fit_and_the_next_is_refused() {
+        assert_eq!(edge_type_slot(0), Some(0));
+        assert_eq!(edge_type_slot(MAX_TYPE_ID), Some(u16::MAX - 1));
+        assert_eq!(
+            edge_type_slot(MAX_TYPE_ID + 1),
+            None,
+            "u16::MAX is the empty marker"
+        );
+        assert_eq!(edge_type_slot(usize::MAX), None);
+    }
+
+    #[test]
+    fn the_refusal_names_the_type_and_the_limit() {
+        let e = NodeOpError::TooManyRelationshipTypes {
+            name: "R65536".into(),
+            max: MAX_TYPE_ID + 1,
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("'R65536'") && msg.contains("65535"), "{msg}");
     }
 }
