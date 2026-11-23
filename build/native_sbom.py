@@ -4,13 +4,12 @@
 import configparser
 import datetime
 import json
-import subprocess
 import sys
 import urllib.parse
 import uuid
 
 
-def inventory(lock_path, compiler, server, server_version):
+def inventory(lock_path, libomp_version_path, server, server_version):
     lock = configparser.ConfigParser(interpolation=None)
     with open(lock_path, encoding="utf-8") as source:
         lock.read_file(source)
@@ -37,29 +36,29 @@ def inventory(lock_path, compiler, server, server_version):
                 "referenceLocator": f'pkg:github/{source_path}@{dep["rev"]}',
             }],
         })
-        if server not in ("redis", "valkey") or not server_version:
-            raise ValueError(f"invalid server or version: {server} {server_version}")
-        owner = "redis" if server == "redis" else "valkey-io"
-        server_purl = f"pkg:github/{owner}/{server}@{urllib.parse.quote(server_version, safe='')}"
-        packages.append({
-            "name": server,
-            "SPDXID": "SPDXRef-server",
-            "versionInfo": server_version,
-            "downloadLocation": f"https://github.com/{owner}/{server}/releases/tag/{urllib.parse.quote(server_version, safe='')}",
-            "filesAnalyzed": False,
-            "licenseConcluded": "NOASSERTION",
-            "licenseDeclared": "NOASSERTION",
-            "copyrightText": "NOASSERTION",
-            "externalRefs": [{
-                "referenceCategory": "PACKAGE-MANAGER",
-                "referenceType": "purl",
-                "referenceLocator": server_purl,
-            }],
-        })
-    # The toolchain builds libomp from the version printed by its compiler.
-    version = subprocess.run([compiler, "-dumpversion"], check=True, capture_output=True, text=True).stdout.strip()
-    if not version:
-        raise ValueError(f"{compiler} returned an empty version")
+    if server not in ("redis", "valkey") or not server_version:
+        raise ValueError(f"invalid server or version: {server} {server_version}")
+    owner = "redis" if server == "redis" else "valkey-io"
+    server_purl = f"pkg:github/{owner}/{server}@{urllib.parse.quote(server_version, safe='')}"
+    packages.append({
+        "name": server,
+        "SPDXID": "SPDXRef-server",
+        "versionInfo": server_version,
+        "downloadLocation": f"https://github.com/{owner}/{server}/releases/tag/{urllib.parse.quote(server_version, safe='')}",
+        "filesAnalyzed": False,
+        "licenseConcluded": "NOASSERTION",
+        "licenseDeclared": "NOASSERTION",
+        "copyrightText": "NOASSERTION",
+        "externalRefs": [{
+            "referenceCategory": "PACKAGE-MANAGER",
+            "referenceType": "purl",
+            "referenceLocator": server_purl,
+        }],
+    })
+    with open(libomp_version_path, encoding="utf-8") as source:
+        version = source.read().strip()
+    if len(version.split(".")) != 3 or not all(part.isdigit() for part in version.split(".")):
+        raise ValueError(f"invalid libomp source version in {libomp_version_path}: {version!r}")
     packages.append({
         "name": "libomp",
         "SPDXID": "SPDXRef-libomp",

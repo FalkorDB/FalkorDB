@@ -61,7 +61,7 @@ RUN case "$SERVER" in \
       valkey) version="$VALKEY_VERSION" ;; \
       *) echo "Unsupported server: $SERVER" >&2; exit 1 ;; \
     esac && \
-    python3 build/native_sbom.py deps/native-deps.lock "$CXX" "$SERVER" "$version" > /out/native.spdx.json
+    python3 build/native_sbom.py deps/native-deps.lock "${LIBOMP_PREFIX}/source-version" "$SERVER" "$version" > /out/native.spdx.json
 
 # ---------------------------------------------------------------------------
 # Artifact export stage — yields ONLY the built falkordb.so so CI can extract

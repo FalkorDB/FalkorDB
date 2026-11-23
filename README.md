@@ -73,8 +73,8 @@ Valkey one, see [Moving a data volume from Redis to Valkey](docs/valkey-migratio
 New `falkordb/falkordb:edge` and versioned images include per-platform SPDX
 SBOM attestations. Browse the inventory in the image's **Packages** tab on
 [Docker Hub](https://hub.docker.com/r/falkordb/falkordb), or export the
-SBOM for the platform you deploy (replace `edge` with a version or image digest
-to pin it):
+SBOM for the platform you deploy (replace the full `:edge` suffix with a
+version tag or `@sha256:<digest>` to pin it):
 
 ```sh
 docker buildx imagetools inspect falkordb/falkordb:edge \
@@ -87,6 +87,9 @@ pinned native libraries.
 The native library entries identify their source revisions; they do not
 enumerate all transitive dependencies built inside those libraries. Older tags
 created before SBOM publication do not acquire attestations retroactively.
+Historical source rebuilds that predate embedded dependency metadata still
+require digest-bound, per-platform SPDX attestations, but skip the package
+completeness check for metadata the source could not produce.
 
 ### Step 2
 

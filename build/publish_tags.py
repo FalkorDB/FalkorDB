@@ -309,7 +309,12 @@ def digest_of(ref: str, runner: Callable = run) -> str:
     return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
-def check_sboms(ref: str, runner: Callable = run, server: Optional[str] = None) -> None:
+def check_sboms(
+    ref: str,
+    runner: Callable = run,
+    server: Optional[str] = None,
+    require_complete: bool = True,
+) -> None:
     """Check each platform's actual SPDX statement, not just its index annotation."""
     index = json.loads(runner(["docker", "buildx", "imagetools", "inspect", "--raw", ref]))
     manifests = index.get("manifests", [])
@@ -347,16 +352,18 @@ def check_sboms(ref: str, runner: Callable = run, server: Optional[str] = None) 
                         or not isinstance(predicate.get("packages"), list)):
                     raise PlanError(f"{ref} {platform}: invalid SPDX attestation or wrong subject")
                 names = {package.get("name") for package in predicate["packages"]}
-                if not {"falkordb-rs", "thiserror", "graphblas", "lagraph", "redisearch", "libomp"}.issubset(names):
+                if require_complete and not {
+                    "falkordb-rs", "thiserror", "graphblas", "lagraph", "redisearch", "libomp",
+                }.issubset(names):
                     raise PlanError(f"{ref} {platform}: SBOM lacks FalkorDB or its embedded dependencies")
-                if server and server not in names:
+                if require_complete and server and server not in names:
                     raise PlanError(f"{ref} {platform}: SBOM lacks the {server} server")
                 found = True
         if not found:
             raise PlanError(f"{ref} {platform}: missing SPDX attestation for {image_digest}")
 
 
-def check_source(step: Retag, runner: Callable = run) -> str:
+def check_source(step: Retag, runner: Callable = run, require_complete_sbom: bool = True) -> str:
     """The digest of step.source, once it holds the server and platforms it should.
 
     The digest is read first and the checks run on it, so the digest that is
@@ -376,7 +383,7 @@ def check_source(step: Retag, runner: Callable = run) -> str:
             )
         raise PlanError(f"cannot read {step.source}{hint}") from e
     pinned = f"{repository(step.source)}@{digest}"
-    check_sboms(pinned, runner, step.server)
+    check_sboms(pinned, runner, step.server, require_complete_sbom)
     out = runner(["docker", "buildx", "imagetools", "inspect", "--format", "{{json .Image}}", pinned])
     images = {k: v for k, v in json.loads(out).items() if k != "unknown/unknown"}
     want = set(PLATFORMS.values())
@@ -399,13 +406,18 @@ def check_archive(step: Assemble, arch: str, path: str, runner: Callable = run) 
         raise PlanError(f"{path}: {SERVER_LABEL} is {server!r}, expected {step.server!r}")
 
 
-def execute(plan: Sequence, runner: Callable = run, workdir: Optional[Path] = None) -> None:
+def execute(
+    plan: Sequence,
+    runner: Callable = run,
+    workdir: Optional[Path] = None,
+    require_complete_sbom: bool = True,
+) -> None:
     # Check every source before pushing anything: a bad source stops the
     # whole publish, not the half after it.
     digests = {}
     for step in plan:
         if isinstance(step, Retag):
-            digests[step] = check_source(step, runner)
+            digests[step] = check_source(step, runner, require_complete_sbom)
         else:
             for arch, path in step.archives:
                 check_archive(step, arch, path, runner)
@@ -416,7 +428,12 @@ def execute(plan: Sequence, runner: Callable = run, workdir: Optional[Path] = No
             for tag in step.tags:
                 if digest_of(tag, runner) != digests[step]:
                     raise PlanError(f"{tag}: published index differs from the checked source")
-                check_sboms(f"{repository(tag)}@{digests[step]}", runner, step.server)
+                check_sboms(
+                    f"{repository(tag)}@{digests[step]}",
+                    runner,
+                    step.server,
+                    require_complete_sbom,
+                )
         else:
             digest_file = (workdir or Path(".")) / f"publish-{step.name}.digest"
             for cmd in podman_commands(step, str(digest_file)):
@@ -452,6 +469,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p.add_argument("--sha", required=True)
     p.add_argument("--latest", action="store_true",
                    help="also move latest*; refused unless the tag is the highest stable version with a published release")
+    p.add_argument(
+        "--allow-incomplete-sbom",
+        action="store_true",
+        help="allow legacy SBOMs without embedded dependency metadata (historical source rebuilds only)",
+    )
 
     p = sub.add_parser("per-os", help="per-OS falkordb-server images from their archives")
     p.add_argument("--version", required=True)
@@ -477,7 +499,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         print_plan(plan)
         if args.execute:
-            execute(plan, workdir=Path(args.images) if getattr(args, "images", None) else None)
+            execute(
+                plan,
+                workdir=Path(args.images) if getattr(args, "images", None) else None,
+                require_complete_sbom=not getattr(args, "allow_incomplete_sbom", False),
+            )
             print(f"published {sum(len(s.tags) for s in plan)} tags")
     except PlanError as e:
         print(f"::error::{e}", file=sys.stderr)

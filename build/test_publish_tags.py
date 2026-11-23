@@ -4,6 +4,7 @@
 import copy
 import configparser
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -72,6 +73,10 @@ class SbomChecks(unittest.TestCase):
         with self.assertRaisesRegex(publish.PlanError, "lacks FalkorDB"):
             publish.check_sboms(self.ref, self.runner)
 
+    def test_legacy_sbom_still_requires_a_valid_digest_bound_statement(self):
+        self.statements["sha256:amd64-sbom"]["predicate"]["packages"] = [{"name": "legacy"}]
+        publish.check_sboms(self.ref, self.runner, "valkey", require_complete=False)
+
     def test_missing_server_is_rejected(self):
         with self.assertRaisesRegex(publish.PlanError, "lacks the valkey server"):
             publish.check_sboms(self.ref, self.runner, "valkey")
@@ -95,13 +100,16 @@ class SbomChecks(unittest.TestCase):
 
 
 class NativeMetadata(unittest.TestCase):
-    def test_native_entries_follow_lock_and_compiler(self):
+    def test_native_entries_follow_lock_and_resolved_libomp_source(self):
         lock = Path(__file__).resolve().parent.parent / "deps/native-deps.lock"
-        with patch.object(native_sbom.subprocess, "run") as run:
-            run.return_value.stdout = "23.1.2\n"
-            document = native_sbom.inventory(lock, "clang++", "valkey", "9.2.0")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            version_file = Path(temp_dir) / "libomp-source-version"
+            version_file.write_text("23.1.2\n", encoding="utf-8")
+            document = native_sbom.inventory(lock, version_file, "valkey", "9.2.0")
         parsed = configparser.ConfigParser()
         parsed.read(lock)
+        identifiers = [p["SPDXID"] for p in document["packages"]]
+        self.assertEqual(len(identifiers), len(set(identifiers)))
         packages = {p["name"]: p for p in document["packages"]}
         self.assertEqual(packages["libomp"]["versionInfo"], "23.1.2")
         self.assertEqual(packages["graphblas"]["versionInfo"], parsed["graphblas"]["rev"])

@@ -85,6 +85,11 @@ on:
         required: false
         type: boolean
         default: true
+      require_complete_sbom:
+        description: "Require embedded FalkorDB, Rust, and native dependency packages in each SPDX attestation"
+        required: false
+        type: boolean
+        default: true
     secrets:
       DOCKER_USERNAME:
         description: "Docker Hub username (only needed when push_to_dockerhub=true)"
@@ -201,8 +206,19 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ github.workflow_sha }}
+          path: verifier
           persist-credentials: false
+
+      - name: Test image promotion checks
+        if: ${{ inputs.flavour == 'release' }}
+        run: python3 -m unittest discover -s verifier/build -p test_publish_tags.py
+
+      - name: Install registry inspector
+        if: ${{ inputs.flavour == 'release' }}
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -236,31 +252,25 @@ jobs:
 
           # Loop unique repos in the cells. For each, collect its per-arch tag
           # references and create a manifest combining them.
-          REPOS=$(echo "$CELLS" | jq -r 'map(.repo) | unique[]')
-          for REPO in $REPOS; do
-            ARCHES=$(echo "$CELLS" | jq -r --arg r "$REPO" '[ .[] | select(.repo == $r) | .arch ] | unique[]')
-            SRC_TAGS=""
-            for ARCH in $ARCHES; do
-              SRC_TAGS="$SRC_TAGS ghcr.io/falkordb/${REPO}:${TAG}-${ARCH}"
+          mapfile -t REPOS < <(jq -r 'map(.repo) | unique[]' <<< "$CELLS")
+          for REPO in "${REPOS[@]}"; do
+            mapfile -t ARCHES < <(jq -r --arg r "$REPO" '[ .[] | select(.repo == $r) | .arch ] | unique[]' <<< "$CELLS")
+            SRC_TAGS=()
+            for ARCH in "${ARCHES[@]}"; do
+              SRC_TAGS+=("ghcr.io/falkordb/${REPO}:${TAG}-${ARCH}")
             done
 
             for REGISTRY in $REGISTRIES; do
-              EXTRA_TAGS=""
+              EXTRA_TAGS=()
               if [ "$IS_LATEST" = "true" ]; then
-                EXTRA_TAGS="-t ${REGISTRY}/${REPO}:latest"
+                EXTRA_TAGS=(-t "${REGISTRY}/${REPO}:latest")
               fi
               docker buildx imagetools create \
                 -t "${REGISTRY}/${REPO}:${TAG}" \
-                $EXTRA_TAGS \
-                $SRC_TAGS
+                "${EXTRA_TAGS[@]}" \
+                "${SRC_TAGS[@]}"
             done
           done
-
-      - name: Install registry inspector
-        if: ${{ inputs.flavour == 'release' }}
-        run: |
-          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Verify assembled SBOMs
         if: ${{ inputs.flavour == 'release' }}
@@ -268,9 +278,10 @@ jobs:
           TAG: ${{ inputs.tag }}
           CELLS: ${{ inputs.cells }}
           SERVER: ${{ inputs.server }}
+          REQUIRE_COMPLETE: ${{ inputs.require_complete_sbom }}
         run: |
           set -euo pipefail
           for repo in $(echo "$CELLS" | jq -r 'map(.repo) | unique[]'); do
-            PYTHONPATH=build python3 -c 'import sys; from publish_tags import check_sboms; check_sboms(sys.argv[1], server=sys.argv[2])' \
-              "ghcr.io/falkordb/${repo}:${TAG}" "$SERVER"
+            PYTHONPATH=verifier/build python3 -c 'import sys; from publish_tags import check_sboms; check_sboms(sys.argv[1], server=sys.argv[2], require_complete=sys.argv[3] == "true")' \
+              "ghcr.io/falkordb/${repo}:${TAG}" "$SERVER" "$REQUIRE_COMPLETE"
           done
