@@ -7,21 +7,26 @@ Three subcommands, one per job that needs them:
            -> plan.json, and the job matrices on $GITHUB_OUTPUT
   context  the resolved candidate and baseline + the earlier nightlies
            -> context.json: skip_reason and previous_green_commit
-  merge    context.json + plan.json + every perf-result-<check> artifact
-           -> nightly.json
+  merge    context.json + plan.json + each planned check's perf-result-<check>
+           artifact -> nightly.json
 
 The shapes are perf-judge's: tests/perf/schema/ and tests/perf/validate.py, which
 `merge` runs on every result.json it embeds and on the nightly.json it writes.
 
 What `merge` guarantees, whatever the check jobs did:
 
-  * every planned check appears exactly once in nightly.json, micro included;
+  * every planned check appears exactly once in nightly.json, micro included,
+    and nothing unplanned does;
   * a check that left no result.json, an unreadable one, one the validator
-    rejects, or one that names another check, appears as the stub
+    rejects, one that names another check, or a `pass` from a run that crashed
+    or timed out (perf-vm.json / perf-hosted.json), appears as the stub
     {"check": name, "verdict": "error", "error": reason}, so a missing
     measurement can never make a night green;
   * the night's status is derived from the checks (red > error > green), or
     `skipped` with an empty checks list when `context` decided to skip.
+
+A checks.yaml that does not parse, or an entry without a usable name, does not
+stop the night either: it is planned as the error `checks-yaml`.
 
 Stdlib only: it runs under `python -I` on a bare ubuntu-latest runner.
 """
@@ -37,9 +42,14 @@ SCHEMA = 1
 
 # The micro tier is not in the registry; the workflow calls _perf-micro.yml for it.
 MICRO = "micro"
+# A problem with tests/perf/checks.yaml itself is reported under this name, so a
+# bad registry shows up in the night's report instead of stopping the night.
+REGISTRY = "checks-yaml"
+RESERVED = (MICRO, REGISTRY)
 
 # A check's name becomes a GCE label, a runner label and part of an artifact name
-# (_perf-vm.yml), so it is held to the narrowest of the three.
+# (_perf-vm.yml), so it is held to the narrowest of the three. `--` is reserved
+# besides: the reusable workflows name their internal artifacts <artifact>--*.
 CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,42}$")
 
 RUNNERS = ("vm", "hosted")
@@ -61,21 +71,12 @@ class PlanError(Exception):
 # --- plan ------------------------------------------------------------------------
 
 
-def registry_entry(index, entry):
-    """A checks.yaml entry as a plan row; a malformed one becomes a stub row.
+def is_check_name(name):
+    return isinstance(name, str) and bool(CHECK_NAME.match(name)) and "--" not in name
 
-    Raises PlanError only when the entry has no usable name, because then there is
-    nothing to report the problem under.
-    """
-    if not isinstance(entry, dict):
-        raise PlanError(f"checks.yaml entry {index} is not a mapping")
-    name = entry.get("name")
-    if not isinstance(name, str) or not CHECK_NAME.match(name):
-        raise PlanError(
-            f"checks.yaml entry {index}: name {name!r} does not match {CHECK_NAME.pattern}"
-        )
-    if name == MICRO:
-        raise PlanError(f"checks.yaml entry {index}: '{MICRO}' is reserved for the micro tier")
+
+def registry_entry(name, entry):
+    """One checks.yaml entry as a plan row; a malformed one becomes a stub row."""
 
     def invalid(why):
         return {"check": name, "runner": None, "error": f"invalid tests/perf/checks.yaml entry: {why}"}
@@ -109,34 +110,61 @@ def registry_entry(index, entry):
     }
 
 
-def build_plan(registry, select):
+def read_registry(registry):
+    """(plan rows, problems) for the parsed checks.yaml.
+
+    An entry with a usable name is planned even if the rest of it is wrong (it
+    then reports as an error under its own name); one without a usable name, or
+    repeating one, can only be reported as a problem with the registry.
+    """
+    if registry is None:  # a file holding only comments
+        return [], []
+    if not isinstance(registry, list):
+        return [], [f"it is a {type(registry).__name__}, not a list"]
+    rows, problems, seen = [], [], set(RESERVED)
+    for index, entry in enumerate(registry):
+        if not isinstance(entry, dict):
+            problems.append(f"entry {index} is not a mapping")
+            continue
+        name = entry.get("name")
+        if not is_check_name(name):
+            problems.append(f"entry {index}: name {name!r} is not a check name")
+        elif name in seen:
+            problems.append(f"entry {index}: name '{name}' is reserved or already used")
+        else:
+            seen.add(name)
+            rows.append(registry_entry(name, entry))
+    return rows, problems
+
+
+def build_plan(registry, select, registry_error=None):
     """The checks tonight's run measures, in registry order (micro first).
 
     `select` is the workflow's `checks` input: a comma list, empty for all. A name
     it asks for that is not in the registry is planned as a stub, so a typo shows
-    up in the report instead of silently measuring less.
+    up in the report instead of silently measuring less. `registry_error` says the
+    file could not be parsed at all.
     """
-    if not isinstance(registry, list):
-        raise PlanError("tests/perf/checks.yaml is not a list")
-    rows = {MICRO: {"check": MICRO, "runner": "micro"}}
-    for index, entry in enumerate(registry):
-        row = registry_entry(index, entry)
-        if row["check"] in rows:
-            raise PlanError(f"checks.yaml entry {index}: duplicate name '{row['check']}'")
-        rows[row["check"]] = row
+    rows, problems = ([], [registry_error]) if registry_error else read_registry(registry)
+    by_name = {MICRO: {"check": MICRO, "runner": "micro"}}
+    by_name.update((row["check"], row) for row in rows)
+    registry_stub = []
+    if problems:
+        why = "tests/perf/checks.yaml: " + "; ".join(problems)
+        registry_stub = [{"check": REGISTRY, "runner": None, "error": why}]
 
     wanted = [name.strip() for name in (select or "").split(",") if name.strip()]
     if not wanted:
-        return list(rows.values())
+        return list(by_name.values()) + registry_stub
     plan = []
     for name in dict.fromkeys(wanted):
-        if name in rows:
-            plan.append(rows[name])
-        elif CHECK_NAME.match(name):
+        if name in by_name:
+            plan.append(by_name[name])
+        elif is_check_name(name) and name != REGISTRY:
             plan.append({"check": name, "runner": None, "error": "not in tests/perf/checks.yaml"})
         else:
             raise PlanError(f"checks input: {name!r} is not a check name")
-    return plan
+    return plan + registry_stub
 
 
 def matrix(plan, runner):
@@ -196,19 +224,30 @@ def read_history(runs_file, history_dir):
     for line in Path(runs_file).read_text(encoding="utf-8").split():
         path = Path(history_dir) / line / "nightly.json"
         try:
-            nightly = strict_load(path)
-            if not isinstance(nightly, dict):
-                nightly = None
+            nightly = usable(strict_load(path))
         except (OSError, ValueError):
             nightly = None
         history.append((line, nightly))
     return history
 
 
+def usable(nightly):
+    """The fields the skip rule reads, type-checked; None if any is unusable."""
+    if not isinstance(nightly, dict):
+        return None
+    candidate, baseline = nightly.get("candidate"), nightly.get("baseline")
+    if not (isinstance(candidate, dict) and isinstance(baseline, dict)):
+        return None
+    if not isinstance(nightly.get("status"), str):
+        return None
+    return nightly
+
+
 def previous_green_commit(history):
     for _, nightly in history:
-        if nightly and nightly.get("status") == "green":
-            return (nightly.get("candidate") or {}).get("commit")
+        if nightly and nightly["status"] == "green":
+            commit = nightly["candidate"].get("commit")
+            return commit if isinstance(commit, str) and COMMIT.match(commit) else None
     return None
 
 
@@ -224,17 +263,17 @@ def skip_reason(history, candidate, baseline):
     if not history or candidate["commit"] is None:
         return None
     _, last = history[0]
-    if last is None or last.get("status") == "error":
+    if last is None or last["status"] == "error":
         return None
-    if (last.get("candidate") or {}).get("commit") != candidate["commit"]:
+    if last["candidate"].get("commit") != candidate["commit"]:
         return None
-    if (last.get("baseline") or {}).get("image") != baseline["image"]:
+    if last["baseline"].get("image") != baseline["image"]:
         return None
     # Name the night that actually measured this pair, not the last skip. Every
     # night between it and now skipped, so they all carry the same pair.
     measured = last
     for _, nightly in history:
-        if nightly is None or nightly.get("status") != "skipped":
+        if nightly is None or nightly["status"] != "skipped":
             if nightly is not None:
                 measured = nightly
             break
@@ -256,20 +295,26 @@ def load_validator(path):
     return module
 
 
-def vm_reason(artifact):
-    """Why _perf-vm.yml produced no result.json, from its perf-vm.json, or ''."""
-    try:
-        vm = strict_load(artifact / "perf-vm.json")
-    except (OSError, ValueError):
-        return ""
-    if not isinstance(vm, dict):
-        return ""
-    if vm.get("create_error"):
-        return f"no VM came up: {vm['create_error']}"
-    if vm.get("timed_out"):
-        return "the check timed out on the VM"
-    if vm.get("command_exit") not in (None, 0):
-        return f"the check exited {vm['command_exit']} on the VM"
+# How the check's command ended, written next to result.json: perf-vm.json by
+# _perf-vm.yml (contract v1.3), perf-hosted.json by this workflow's hosted job.
+RUN_FACTS = ("perf-vm.json", "perf-hosted.json")
+
+
+def ended_badly(artifact):
+    """Why the check's run did not end cleanly, from its run facts, or ''."""
+    for name in RUN_FACTS:
+        try:
+            facts = strict_load(artifact / name)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(facts, dict):
+            continue
+        if facts.get("create_error"):
+            return f"no VM came up: {facts['create_error']}"
+        if facts.get("timed_out"):
+            return "the check timed out"
+        if facts.get("command_exit") not in (None, 0):
+            return f"the check exited {facts['command_exit']}"
     return ""
 
 
@@ -281,20 +326,31 @@ def stub(check, reason):
     return {"check": check, "verdict": "error", "error": one_line(reason) or NO_RESULT}
 
 
+def own_error(path):
+    """The `error` text an invalid result.json carries, if it parses at all."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    error = doc.get("error") if isinstance(doc, dict) else None
+    return error.strip() if isinstance(error, str) else ""
+
+
 def collect(check, artifact, validator):
     """The result.json in one artifact directory, or a stub saying why not."""
     path = artifact / "result.json"
+    ended = ended_badly(artifact)
     if not path.is_file():
         nested = sorted(str(p.relative_to(artifact)) for p in artifact.rglob("result.json"))
         if nested:
             return stub(check, f"{NO_RESULT} at the artifact root (found {', '.join(nested)})")
-        why = vm_reason(artifact)
-        return stub(check, f"{NO_RESULT}: {why}" if why else NO_RESULT)
+        return stub(check, f"{NO_RESULT}: {ended}" if ended else NO_RESULT)
     if validator is not None:
         _, problems = validator.validate_file(str(path), kind="result")
         if problems:
-            more = f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""
-            return stub(check, f"result.json failed validation: {problems[0]}{more}")
+            codes = ", ".join(dict.fromkeys(getattr(p, "code", str(p)) for p in problems))
+            said = own_error(path)
+            return stub(check, f"invalid result.json ({codes})" + (f"; check said: {said}" if said else ""))
     try:
         result = strict_load(path)
     except (OSError, ValueError) as err:
@@ -303,6 +359,11 @@ def collect(check, artifact, validator):
         return stub(check, "result.json is not an object")
     if result.get("check") != check:
         return stub(check, f"result.json names check {result.get('check')!r}")
+    # The contract exits 0 whenever result.json was written, so a check that did
+    # not end cleanly crashed after writing it: its `pass` is not a measurement.
+    # A regression or error it wrote still stands.
+    if ended and result.get("verdict") == "pass":
+        return stub(check, f"result.json says pass, but {ended}")
     return result
 
 
@@ -336,16 +397,11 @@ def build_nightly(context, plan, results_dir, validator):
         if row.get("error"):
             checks.append(stub(row["check"], row["error"]))
             continue
+        # Only planned artifacts are read: the workflow downloads each one by
+        # name, and the reusable workflows' internal <artifact>--* ones are not
+        # checks.
         artifact = results_dir / f"perf-result-{row['check']}"
         checks.append(collect(row["check"], artifact, validator))
-
-    # An artifact nobody planned (should not happen) is still reported rather than
-    # dropped, under its own name.
-    planned = {row["check"] for row in plan}
-    for artifact in sorted(results_dir.glob("perf-result-*")):
-        name = artifact.name[len("perf-result-"):]
-        if artifact.is_dir() and name not in planned and CHECK_NAME.match(name):
-            checks.append(collect(name, artifact, validator))
 
     nightly["checks"] = checks
     nightly["status"] = status_of(checks)
@@ -371,8 +427,15 @@ def write_outputs(path, outputs):
 
 
 def cmd_plan(args):
-    registry = strict_load(args.registry)
-    plan = build_plan(registry, args.select)
+    registry, error = None, args.registry_error
+    if not error:
+        try:
+            text = Path(args.registry).read_text(encoding="utf-8")
+            # yq prints nothing or `null` for a file holding only comments.
+            registry = json.loads(text) if text.strip() else None
+        except (OSError, ValueError) as err:
+            error = f"could not read the converted file: {err}"
+    plan = build_plan(registry, args.select, registry_error=error)
     write_json(args.out, plan)
     outputs = plan_outputs(plan)
     write_outputs(args.github_output, outputs)
@@ -390,8 +453,8 @@ def cmd_context(args):
             print(f"history: run {run_id} left no readable perf-nightly artifact")
         else:
             print(
-                f"history: run {run_id} {nightly.get('date')} {nightly.get('status')} "
-                f"candidate {(nightly.get('candidate') or {}).get('commit')}"
+                f"history: run {run_id} {nightly.get('date')} {nightly['status']} "
+                f"candidate {nightly['candidate'].get('commit')}"
             )
     reason = skip_reason(history, candidate, baseline) if args.may_skip else None
     context = {
@@ -432,7 +495,9 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("plan", help="checks.json + selection -> plan.json and job matrices")
-    p.add_argument("--registry", required=True, help="tests/perf/checks.yaml converted to JSON")
+    registry = p.add_mutually_exclusive_group(required=True)
+    registry.add_argument("--registry", help="tests/perf/checks.yaml converted to JSON")
+    registry.add_argument("--registry-error", help="why tests/perf/checks.yaml could not be parsed")
     p.add_argument("--select", default="", help="comma list of checks; empty for all")
     p.add_argument("--out", required=True)
     p.add_argument("--github-output", default="")

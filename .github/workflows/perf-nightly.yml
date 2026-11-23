@@ -62,9 +62,12 @@ on:
 
 permissions: {}
 
-# One nightly at a time, and never cancel one that is running.
+# One nightly at a time, and never cancel one that is running. Per event: a
+# queued scheduled run must not be displaced by dispatches queueing behind it
+# (only one run per group waits; a newer one cancels it). Every leg runs on its
+# own runner or VM, so a dispatch beside a nightly measures nothing differently.
 concurrency:
-  group: perf-nightly
+  group: perf-nightly-${{ github.event_name }}
   cancel-in-progress: false
 
 env:
@@ -190,9 +193,21 @@ jobs:
             note="given by hand"
           else
             tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+            note="release marked Latest ($tag)"
+            # The C engine's v4.x releases live in this repository too and are
+            # published by hand; one marked Latest is not this engine's release.
+            # Then the newest stable release of this engine stands in, and says so.
+            if [[ $tag == v4.* ]]; then
+              stood_in=$tag
+              tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+                --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(test("^v([5-9]|[1-9][0-9])[.][0-9]+[.][0-9]+$"))' \
+                | sort -V | tail -n 1)
+              note="newest stable release ($tag); the release marked Latest is $stood_in, a C engine release"
+              echo "::warning::baseline: $note"
+            fi
             version=${tag#v}
             if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::the latest release's tag '$tag' is not vX.Y.Z"
+              echo "::error::the baseline release tag '$tag' is not vX.Y.Z"
               exit 1
             fi
             digest=$(digest_of "docker.io/$BASELINE_REPO:$version") \
@@ -201,7 +216,6 @@ jobs:
             # The peeled tag: release-tag.yml retags rc-mg-<this commit>.
             commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
             label=$version
-            note="release marked Latest ($tag)"
           fi
 
           {
@@ -280,8 +294,14 @@ jobs:
           CHECKS: ${{ inputs.checks }}
         run: |
           set -euo pipefail
-          yq -o=json '.' tests/perf/checks.yaml > "$RUNNER_TEMP/checks.json"
-          python3 -I tests/perf/merge.py plan --registry "$RUNNER_TEMP/checks.json" --select "$CHECKS" \
+          # A registry that does not parse is reported as the check `checks-yaml`
+          # (an error) instead of stopping the night.
+          if yq -o=json '.' tests/perf/checks.yaml > "$RUNNER_TEMP/checks.json" 2> "$RUNNER_TEMP/yq.err"; then
+            registry=(--registry "$RUNNER_TEMP/checks.json")
+          else
+            registry=(--registry-error "yq: $(tr '\n' ' ' < "$RUNNER_TEMP/yq.err")")
+          fi
+          python3 -I tests/perf/merge.py plan "${registry[@]}" --select "$CHECKS" \
             --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -365,8 +385,8 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Run ${{ matrix.check }}
-        timeout-minutes: ${{ matrix.timeout_minutes }}
         env:
+          TIMEOUT_MINUTES: ${{ matrix.timeout_minutes }}
           CHECK: ${{ matrix.check }}
           CHECK_COMMAND: ${{ matrix.command }}
           CANDIDATE_IMAGE: ${{ needs.resolve.outputs.candidate_image }}
@@ -384,8 +404,15 @@ jobs:
           if [[ -n $BASELINE_COMMIT ]]; then args+=(--baseline-commit "$BASELINE_COMMIT"); fi
           args+=(--out "$RUNNER_TEMP/out" --mode nightly)
           # The registry's command is shell text; the contract's flags are
-          # appended as separate words, never spliced into it.
-          bash -c "$CHECK_COMMAND"' "$@"' "$CHECK" "${args[@]}"
+          # appended as separate words, never spliced into it. `timeout` rather
+          # than the step's timeout-minutes, so the exit status is still ours to
+          # record: merge.py does not take a `pass` from a check that crashed or
+          # timed out after writing result.json.
+          rc=0
+          timeout --kill-after=2m "${TIMEOUT_MINUTES}m" \
+            bash -c "$CHECK_COMMAND"' "$@"' "$CHECK" "${args[@]}" || rc=$?
+          jq -n --argjson rc "$rc" '{command_exit: $rc, timed_out: ($rc == 124)}' > "$RUNNER_TEMP/out/perf-hosted.json"
+          exit "$rc"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -403,6 +430,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      # This run's perf-result-<check> artifacts, by name.
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -420,14 +449,25 @@ jobs:
           name: perf-plan
           path: ${{ runner.temp }}/plan
 
-      # A download that fails leaves those checks without a result.json, so they
-      # become stubs: never green, and the night is still reported.
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      # Each planned check's artifact by its exact name, into its own folder. Not
+      # download-artifact with a pattern: a lone match lands without its folder,
+      # and the reusable workflows' internal <artifact>--* ones match too. A
+      # download that fails leaves that check without a result.json, so it
+      # becomes a stub: never green, and the night is still reported.
+      - name: Download the results
         if: needs.resolve.outputs.skip == 'false'
-        continue-on-error: true
-        with:
-          pattern: perf-result-*
-          path: ${{ runner.temp }}/results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for check in $(jq -r '.[] | select(.runner != null) | .check' "$RUNNER_TEMP/plan/plan.json"); do
+            if gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n "perf-result-$check" \
+                -D "$RUNNER_TEMP/results/perf-result-$check"; then
+              find "$RUNNER_TEMP/results/perf-result-$check" -maxdepth 1 -printf "perf-result-$check: %f\n"
+            else
+              echo "::warning::perf-result-$check: not downloaded"
+            fi
+          done
 
       - name: Merge the results into nightly.json
         run: |
@@ -463,13 +503,16 @@ jobs:
           filter: blob:none
           persist-credentials: false
 
-      # TEMPORARY: perf-chat's reporter until it is on main (#3978).
-      - name: Fetch the reporter from ci/perf-chat
+      # TEMPORARY: perf-chat's reporter (#3978) and the validator it loads from
+      # tests/perf/validate.py (#3975), until both are on main.
+      - name: Fetch the reporter and the validator
         run: |
           set -euo pipefail
           # No --depth: it would graft a shallow boundary into the full history above.
           git fetch --no-tags origin ci/perf-chat
           git checkout FETCH_HEAD -- tests/perf/report
+          git fetch --no-tags origin perf/judge
+          git checkout FETCH_HEAD -- tests/perf/validate.py
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

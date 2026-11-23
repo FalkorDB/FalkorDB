@@ -8,6 +8,8 @@ checked together.
 import importlib.util
 import json
 import math
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -182,17 +184,65 @@ def test_malformed_entry_is_planned_as_a_stub(entry, why):
 
 
 @pytest.mark.parametrize(
-    "registry",
+    "registry, why",
     [
-        {"name": "x"},
-        [{**HOSTED_ENTRY, "name": "Bad_Name"}],
-        [{**HOSTED_ENTRY, "name": "micro"}],
-        [HOSTED_ENTRY, HOSTED_ENTRY],
+        ({"name": "x"}, "it is a dict, not a list"),
+        ([{**HOSTED_ENTRY, "name": "Bad_Name"}, VM_ENTRY], "entry 0: name 'Bad_Name' is not a check name"),
+        ([{**HOSTED_ENTRY, "name": "ldbc--x"}, VM_ENTRY], "entry 0: name 'ldbc--x' is not a check name"),
+        ([{**HOSTED_ENTRY, "name": "micro"}, VM_ENTRY], "entry 0: name 'micro' is reserved"),
+        ([{**HOSTED_ENTRY, "name": "checks-yaml"}, VM_ENTRY], "entry 0: name 'checks-yaml' is reserved"),
+        ([VM_ENTRY, VM_ENTRY], "entry 1: name 'size-probe' is reserved or already used"),
+        (["size-probe", VM_ENTRY], "entry 0 is not a mapping"),
     ],
 )
-def test_registry_without_usable_names_fails_the_plan(registry):
-    with pytest.raises(merge.PlanError):
-        merge.build_plan(registry, "")
+def test_registry_problems_are_reported_not_fatal(registry, why):
+    """A bad registry must not stop the night: micro (and every usable entry)
+    still runs, and the problem is a `checks-yaml` error in the report."""
+    plan = merge.build_plan(registry, "")
+    assert plan[0] == {"check": "micro", "runner": "micro"}
+    assert plan[-1]["check"] == "checks-yaml" and plan[-1]["runner"] is None
+    assert why in plan[-1]["error"]
+    if isinstance(registry, list) and VM_ENTRY in registry:
+        assert merge.plan_outputs(plan)["has_vm"] == "true"
+
+
+def test_registry_that_does_not_parse_still_plans_micro(tmp_path):
+    out = tmp_path / "github_output"
+    argv = ["plan", "--registry-error", "yq: bad indentation", "--out", str(tmp_path / "plan.json")]
+    assert merge.main(argv + ["--github-output", str(out)]) == 0
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    assert plan == [
+        {"check": "micro", "runner": "micro"},
+        {"check": "checks-yaml", "runner": None, "error": "tests/perf/checks.yaml: yq: bad indentation"},
+    ]
+    assert "run_micro=true\n" in out.read_text()
+
+
+@pytest.mark.parametrize("converted", ["", "null\n", "[]\n"])
+def test_registry_with_no_checks_plans_micro_alone(tmp_path, converted):
+    (tmp_path / "checks.json").write_text(converted)
+    argv = ["plan", "--registry", str(tmp_path / "checks.json"), "--out", str(tmp_path / "plan.json")]
+    assert merge.main(argv) == 0
+    assert json.loads((tmp_path / "plan.json").read_text()) == MICRO_ONLY
+
+
+def parse_yaml(path):
+    """The way the workflow reads checks.yaml (yq), else PyYAML."""
+    if shutil.which("yq"):
+        text = subprocess.run(
+            ["yq", "-o=json", ".", str(path)], check=True, capture_output=True, text=True
+        ).stdout
+        return json.loads(text) if text.strip() else None
+    yaml = pytest.importorskip("yaml", reason="needs yq or PyYAML to parse checks.yaml")
+    return yaml.safe_load(path.read_text())
+
+
+def test_the_real_registry_is_usable():
+    """Every check PR appends to tests/perf/checks.yaml; this is where a bad
+    append fails, before it can turn a night into an error."""
+    plan = merge.build_plan(parse_yaml(HERE / "checks.yaml"), "")
+    assert plan[0]["check"] == "micro"
+    assert [row for row in plan if row["runner"] is None] == []
 
 
 # --- merge -----------------------------------------------------------------------
@@ -245,14 +295,25 @@ def test_an_error_result_is_kept_whole(tmp_path):
     assert nightly["status"] == "error"
 
 
-def test_invalid_result_becomes_a_stub_naming_the_problem(tmp_path):
+def test_invalid_result_becomes_a_stub_naming_the_codes(tmp_path):
     results = tmp_path / "results"
-    bad = result("micro", candidate={**CANDIDATE, "image": "falkordb/falkordb-server:6.2.0"})
+    tag = "falkordb/falkordb-server:6.2.0"
+    bad = result("micro", candidate={**CANDIDATE, "image": tag}, baseline={**BASELINE, "commit": "d8c"})
     put(results, "micro", bad)
     _, nightly = run_merge(tmp_path, MICRO_ONLY)
-    (entry,) = nightly["checks"]
-    assert entry["verdict"] == "error"
-    assert entry["error"].startswith("result.json failed validation: image-not-digest")
+    assert nightly["checks"] == [
+        {"check": "micro", "verdict": "error", "error": "invalid result.json (image-not-digest, bad-commit)"}
+    ]
+
+
+def test_invalid_error_result_keeps_what_the_check_said(tmp_path):
+    """A check handed a tag cannot write a valid result (no digest to record),
+    but its own message must reach the report."""
+    said = "candidate image falkordb/falkordb-server:6.2.0 is not pinned by digest"
+    bad = result("micro", "error", error=said, candidate={**CANDIDATE, "image": "falkordb/falkordb-server:6.2.0"})
+    put(tmp_path / "results", "micro", bad)
+    _, nightly = run_merge(tmp_path, MICRO_ONLY)
+    assert nightly["checks"][0]["error"] == f"invalid result.json (image-not-digest); check said: {said}"
 
 
 def test_nan_in_a_result_becomes_a_stub(tmp_path):
@@ -260,13 +321,14 @@ def test_nan_in_a_result_becomes_a_stub(tmp_path):
     text = json.dumps(result("micro", "regression")).replace("3.0", "NaN", 1)
     put(results, "micro", text=text)
     _, nightly = run_merge(tmp_path, MICRO_ONLY)
-    assert "failed validation" in nightly["checks"][0]["error"]
+    assert nightly["checks"][0]["error"].startswith("invalid result.json (")
+    assert nightly["status"] == "error"
 
 
 def test_unparsable_result_becomes_a_stub(tmp_path):
     put(tmp_path / "results", "micro", text="{not json")
     _, nightly = run_merge(tmp_path, MICRO_ONLY)
-    assert nightly["checks"][0]["error"].startswith("result.json failed validation: invalid-json")
+    assert nightly["checks"][0]["error"] == "invalid result.json (invalid-json)"
 
 
 def test_result_naming_another_check_becomes_a_stub(tmp_path):
@@ -290,8 +352,8 @@ def test_result_below_the_artifact_root_is_reported_as_misplaced(tmp_path):
             {"create_error": "all zones out of stock for n4-standard-16 and n2-standard-16"},
             "no result.json: no VM came up: all zones out of stock for n4-standard-16 and n2-standard-16",
         ),
-        ({"create_error": None, "timed_out": True}, "no result.json: the check timed out on the VM"),
-        ({"create_error": "", "command_exit": 137}, "no result.json: the check exited 137 on the VM"),
+        ({"create_error": None, "timed_out": True}, "no result.json: the check timed out"),
+        ({"create_error": "", "command_exit": 137}, "no result.json: the check exited 137"),
         ({"create_error": None, "command_exit": 0}, "no result.json"),
     ],
 )
@@ -313,12 +375,60 @@ def test_planned_stub_keeps_its_reason(tmp_path):
     }
 
 
-def test_unplanned_artifact_is_reported_not_dropped(tmp_path):
+def test_unplanned_and_internal_artifacts_are_ignored(tmp_path):
+    """_perf-micro.yml uploads perf-result-micro--cg-1 etc. beside the real one;
+    they are not checks, and must not turn a passing night into an error."""
     results = tmp_path / "results"
     put(results, "micro", result("micro"))
+    put(results, "micro--cg-1", text="cg", name="rows.csv")
     put(results, "extra", result("extra"))
     _, nightly = run_merge(tmp_path, MICRO_ONLY)
-    assert [c["check"] for c in nightly["checks"]] == ["micro", "extra"]
+    assert [c["check"] for c in nightly["checks"]] == ["micro"]
+    assert nightly["status"] == "green"
+
+
+@pytest.mark.parametrize("facts", ["perf-hosted.json", "perf-vm.json"])
+@pytest.mark.parametrize(
+    "ran, verdict, kept",
+    [
+        ({"command_exit": 0, "timed_out": False}, "pass", True),
+        ({"command_exit": 1, "timed_out": False}, "pass", False),
+        ({"command_exit": 124, "timed_out": True}, "pass", False),
+        ({"command_exit": 1, "timed_out": False}, "regression", True),
+        ({"command_exit": 1, "timed_out": False}, "error", True),
+    ],
+)
+def test_a_pass_from_a_check_that_crashed_is_not_green(tmp_path, facts, ran, verdict, kept):
+    """Exit 0 whenever result.json was written (contract §1): a non-zero exit
+    or a timeout after writing it means the check crashed, so its `pass` is
+    not a measurement. A regression or error it wrote still stands."""
+    results = tmp_path / "results"
+    put(results, "micro", result("micro", verdict))
+    put(results, "micro", ran, name=facts)
+    _, nightly = run_merge(tmp_path, MICRO_ONLY)
+    (entry,) = nightly["checks"]
+    if kept:
+        assert entry == result("micro", verdict)
+    else:
+        assert entry["verdict"] == "error"
+        assert entry["error"].startswith("result.json says pass, but the check ")
+        assert nightly["status"] == "error"
+
+
+FIXTURES = HERE / "fixtures" / "valid"
+
+
+@pytest.mark.parametrize(
+    "fixture", sorted(p.name for p in FIXTURES.glob("result-*.json")) or ["(none)"]
+)
+def test_perf_judges_valid_results_pass_through_whole(tmp_path, fixture):
+    if fixture == "(none)":
+        pytest.skip("tests/perf/fixtures/valid is perf-judge's and not here yet")
+    doc = json.loads((FIXTURES / fixture).read_text())
+    put(tmp_path / "results", doc["check"], doc)
+    plan = [{"check": doc["check"], "runner": "hosted"}]
+    _, nightly = run_merge(tmp_path, plan)
+    assert nightly["checks"] == [doc]
 
 
 def test_skipped_night_lists_no_checks(tmp_path):
@@ -390,6 +500,26 @@ def test_candidate_without_commit_never_skips():
     assert merge.skip_reason(nights, {**CANDIDATE, "commit": None}, BASELINE) is None
 
 
+@pytest.mark.parametrize(
+    "broken",
+    [
+        [1, 2],
+        {**night("green"), "candidate": "main"},
+        {**night("green"), "baseline": None},
+        {**night("green"), "status": None},
+    ],
+)
+def test_an_unusable_earlier_nightly_counts_as_missing(tmp_path, broken):
+    """Never crash on history (no nightly at all would follow), and never skip
+    on the word of a file that cannot be read."""
+    (tmp_path / "prev" / "30").mkdir(parents=True)
+    (tmp_path / "prev" / "30" / "nightly.json").write_text(json.dumps(broken))
+    (tmp_path / "runs.txt").write_text("30\n")
+    history = merge.read_history(tmp_path / "runs.txt", tmp_path / "prev")
+    assert history == [("30", None)]
+    assert merge.skip_reason(history, CANDIDATE, BASELINE) is None
+
+
 def test_previous_green_is_the_newest_green_night():
     nights = history(night("red"), None, night("skipped"), night("green", commit=OLDER), night("green"))
     assert merge.previous_green_commit(nights) == OLDER
@@ -426,14 +556,15 @@ def test_context_cli_reads_downloaded_history(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "flag, value",
+    "flag, value, said",
     [
-        ("--candidate-image", "ghcr.io/falkordb/falkordb-server:rc-mg-x-valkey"),
-        ("--baseline-commit", "d8c329b"),
-        ("--candidate-label", ""),
+        ("--candidate-image", "ghcr.io/falkordb/falkordb-server:rc-mg-x-valkey", "candidate image"),
+        ("--baseline-image", "falkordb/falkordb-server@sha256:44eb4a6d", "baseline image"),
+        ("--baseline-commit", "d8c329b", "baseline commit"),
+        ("--candidate-label", "", "candidate label"),
     ],
 )
-def test_context_refuses_unpinned_or_malformed_sides(tmp_path, flag, value):
+def test_context_refuses_unpinned_or_malformed_sides(tmp_path, capsys, flag, value, said):
     args = {
         "--candidate-image": CAND, "--candidate-commit": MAIN, "--candidate-label": "main@4c10889",
         "--baseline-image": BASE, "--baseline-commit": RELEASE, "--baseline-label": "6.2.0",
@@ -442,3 +573,5 @@ def test_context_refuses_unpinned_or_malformed_sides(tmp_path, flag, value):
     argv = ["context"] + [x for pair in args.items() for x in pair]
     argv += ["--date", "2026-11-24", "--run-url", "https://x/y", "--out", str(tmp_path / "c.json")]
     assert merge.main(argv) == 1
+    assert f"::error::{said} " in capsys.readouterr().err
+    assert not (tmp_path / "c.json").exists()

@@ -1,9 +1,12 @@
 # The perf checks the nightly run (.github/workflows/perf-nightly.yml) measures,
 # besides the micro tier, which it always calls through _perf-micro.yml.
 #
-# Each check's PR appends exactly one entry and touches nothing else here:
+# The list starts empty: this file holds only comments, which parses as no
+# checks. Each check's PR appends exactly one entry at the end and touches
+# nothing else here (an explicit `[]` would turn the first append into invalid
+# YAML):
 #
-#   - name: size-probe                 # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$
+#   - name: size-probe                 # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$, no "--"
 #     runner: vm                       # vm (_perf-vm.yml on a GCE VM) | hosted (ubuntu-latest)
 #     command: uv run --project bench bench probe
 #     timeout_minutes: 45              # 1-360
@@ -11,6 +14,6 @@
 #
 # The workflow appends --candidate, --baseline (both image@sha256), the four
 # optional --candidate-/--baseline-label/-commit flags, --out and --mode to the
-# command. tests/perf/merge.py reads this file; an entry it cannot use shows up in
-# the night's report as an error.
-[]
+# command. tests/perf/merge.py reads this file, and tests/perf/test_merge.py
+# fails on an entry it cannot use. At night, such an entry (or a file that does
+# not parse) is reported as an error rather than skipped.
