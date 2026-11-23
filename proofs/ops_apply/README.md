@@ -74,6 +74,7 @@ Yes:
 | `allTuples_length`, `orbit_valid` | A cartesian product has ∏ lengths rows and visits only valid combinations | `CartVhj.lean` |
 | `applyBatchedW_eq_ref_of_readIndep` | Batched Apply over a writing sub-plan equals per-row Apply when the sub-plan's reads ignore its own writes (kept as the condition under which batching writes would be sound; since #2968 writes run per row) | `RowWrites.lean` |
 | `applyW_write_eq_ref`, `fixed2738_call_sees_writes` | A CALL subquery with a writing operator runs per row (`can_batch` blacklists writes since #2968): each row sees every earlier row's committed writes | `RowWrites.lean` |
+| `deleteNew_eager_iff`, `deleteNew_nested_delete_eager`, `deleteNew_readonly_streams` | DELETE drains its child exactly when a writing operator (`writes_graph`, a nested DELETE included) is below it; a read-only child streams (#2968) | `Delete.lean` |
 | `pipeline_partitionInvariant`, `fixed2729_two_batches` | CREATE followed by an eager DELETE (#2968) gives the same pending state and log, or the same error, however the rows are batched | `RowWrites.lean` |
 | `KeyFromBoundNodeOnly`, `MergeBindsOwnNode`, `bug3368_filed_repro_fixed_by_3050` | MERGE over a real row (values + bound bits): the pattern hash reads a value-only slot as the variable's value, the cache hit re-inserts another clause's ids; the fixed key, and #3368 | `MergeSlot.lean` |
 

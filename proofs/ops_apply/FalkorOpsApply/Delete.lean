@@ -451,19 +451,27 @@ structure DeleteSt (C T : Type) where
   /-- #2968: drain the child before deleting anything (see `eagerOf`). -/
   eager : Bool
 
-/-- The plan-node kinds `DeleteOp::new`'s `eager` test distinguishes (`subtree_contains` over
-the subtree rooted at the Delete, delete.rs): the writing ones, and everything else. -/
+/-- The plan-node kinds `DeleteOp::new`'s `eager` test distinguishes (`writes_graph` over the
+subtrees of the Delete's children, delete.rs): the writing ones, and everything else. -/
 inductive SubKind
-  | create | merge | set | remove | forEach | other
+  | create | merge | set | remove | delete | forEach | other
   deriving DecidableEq, Repr
 
-/-- delete.rs (#2968): eager iff the subtree holds `Create`, `Merge`, `Set`, `Remove` or
-`ForEach`. -/
-def eagerOf (sub : List SubKind) : Bool := sub.any (· != .other)
+/-- delete.rs `writes_graph`: `Create`, `Merge`, `Set`, `Remove`, `Delete` or `ForEach`. -/
+def writesGraph : SubKind → Bool
+  | .create | .merge | .set | .remove | .delete | .forEach => true
+  | .other => false
+
+theorem writesGraph_spec (k : SubKind) : writesGraph k = true ↔ k ≠ .other := by
+  cases k <;> simp [writesGraph]
+
+/-- delete.rs (#2968): eager iff some node strictly below the Delete (`sub`: the nodes of
+its children's subtrees; the Delete's own node is not in it) satisfies `writes_graph`. -/
+def eagerOf (sub : List SubKind) : Bool := sub.any writesGraph
 
 /-- delete.rs: since #3462 `snapshot = runtime.inspect || snapshot_required(..)`:
 `GRAPH.RECORD` reads the rows every operator produced, so it snapshots even when no
-operator above DELETE reads them. Since #2968 `eager` = `eagerOf` of the subtree. -/
+operator above DELETE reads them. Since #2968 `eager` = `eagerOf` of the nodes below it. -/
 def DeleteSt.new {C T : Type} (inspect : Bool) (child : C) (trees : T) (ancestorsCommit : List Bool)
     (sub : List SubKind) : DeleteSt C T :=
   { child, trees, snapshot := inspect || snapshotRequired ancestorsCommit, eager := eagerOf sub }
@@ -477,7 +485,19 @@ theorem deleteNew_spec {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool)
 theorem deleteNew_eager_iff {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool)
     (sub : List SubKind) :
     (DeleteSt.new i c t anc sub).eager = true ↔ ∃ k ∈ sub, k ≠ .other := by
-  simp [DeleteSt.new, eagerOf]
+  simp [DeleteSt.new, eagerOf, writesGraph_spec]
+
+/-- #2968 (d38c9a15f): a Delete nested below this one (a `CALL { ... DELETE b }` body) makes
+it drain its child, so it never deletes between that Delete's batches. -/
+theorem deleteNew_nested_delete_eager {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool)
+    (sub : List SubKind) (h : SubKind.delete ∈ sub) :
+    (DeleteSt.new i c t anc sub).eager = true :=
+  (deleteNew_eager_iff i c t anc sub).2 ⟨_, h, by decide⟩
+
+/-- Its own node is not below it: a Delete over a read-only child streams. -/
+theorem deleteNew_readonly_streams {C T : Type} (i : Bool) (c : C) (t : T) (anc : List Bool)
+    (n : Nat) : (DeleteSt.new i c t anc (List.replicate n .other)).eager = false := by
+  simp [DeleteSt.new, eagerOf, writesGraph, List.any_eq_false]
 
 /-- #3462: under `GRAPH.RECORD` the snapshot is always on, even when every ancestor is a
 `Commit` (the case that skipped it before). -/

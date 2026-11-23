@@ -42,12 +42,12 @@ graph/src/runtime/ops/create.rs	resolve_pattern	353	PROVEN	CreateAttrs.resolveLa
 graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	PROVEN	Delete.attrsToMap: attrsToMap_spec
 graph/src/runtime/ops/delete.rs	rel_attrs_to_map	50	PROVEN	Delete.attrsToMap: attrsToMap_spec
 graph/src/runtime/ops/delete.rs	snapshot_required	70	PROVEN	Delete.snapshotRequired: snapshotRequired_spec
-graph/src/runtime/ops/delete.rs	new	102	PROVEN	Delete.DeleteSt.new: deleteNew_spec, deleteNew_inspect_snapshots, deleteNew_no_inspect (inspect || snapshot_required since #3462), deleteNew_eager_iff (eager iff a writing op below, #2968)
-graph/src/runtime/ops/delete.rs	next	135	PROVEN	Delete.deleteNext (streaming): deleteNext_spec; Delete.deleteEager (eager since #2968): deleteEager_spec, deleteEager_child_error; RowWrites.pipeline_partitionInvariant, fixed2729_two_batches, DelClosed.foldlM_dB
-graph/src/runtime/ops/delete.rs	delete_batch	168	PROVEN	Delete.deleteBatch/scan: deleteBatch_vars, scan_nodes, deleteBatch_mismatch; DeleteCancel.deleteBatchE/scanE: deleteBatchE_ok, scanE_ok
-graph/src/runtime/ops/delete.rs	delete_nodes_bulk	251	PROVEN	Delete.delNodesBulk/bulkScan: delNodesBulk_spec, bulkScan_spec; DeleteCancel.delNodesBulkE/bulkScanE/markCommitted: delNodesBulkE_ok, bulkScanE_ok, markCommitted_ok
-graph/src/runtime/ops/delete.rs	delete_relationships_bulk	357	PROVEN	Delete.delRelsBulk/relScan: delRelsBulk_spec, relScan_cls, foldl_delRel
-graph/src/runtime/ops/delete.rs	delete_entity	453	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
+graph/src/runtime/ops/delete.rs	new	116	PROVEN	Delete.DeleteSt.new: deleteNew_spec, deleteNew_inspect_snapshots, deleteNew_no_inspect (inspect || snapshot_required since #3462), deleteNew_eager_iff, deleteNew_nested_delete_eager, deleteNew_readonly_streams (eager iff a writes_graph op strictly below, a nested Delete included, #2968)
+graph/src/runtime/ops/delete.rs	next	148	PROVEN	Delete.deleteNext (streaming): deleteNext_spec; Delete.deleteEager (eager since #2968): deleteEager_spec, deleteEager_child_error; RowWrites.pipeline_partitionInvariant, fixed2729_two_batches, DelClosed.foldlM_dB
+graph/src/runtime/ops/delete.rs	delete_batch	181	PROVEN	Delete.deleteBatch/scan: deleteBatch_vars, scan_nodes, deleteBatch_mismatch; DeleteCancel.deleteBatchE/scanE: deleteBatchE_ok, scanE_ok
+graph/src/runtime/ops/delete.rs	delete_nodes_bulk	264	PROVEN	Delete.delNodesBulk/bulkScan: delNodesBulk_spec, bulkScan_spec; DeleteCancel.delNodesBulkE/bulkScanE/markCommitted: delNodesBulkE_ok, bulkScanE_ok, markCommitted_ok
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	370	PROVEN	Delete.delRelsBulk/relScan: delRelsBulk_spec, relScan_cls, foldl_delRel
+graph/src/runtime/ops/delete.rs	delete_entity	466	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
 graph/src/runtime/ops/set.rs	new	40	PROVEN	SetRemove.SetSt.new: setNew_spec
 graph/src/runtime/ops/set.rs	next	59	PROVEN	SetRemove.opNext: opNext_spec
 graph/src/runtime/ops/set.rs	set_batch	76	PROVEN	SetRemove.perRow: perRow_spec
@@ -81,4 +81,4 @@ graph/src/runtime/ops/apply.rs	ApplyOp::flush_acc	322	PROVEN	RowWrites.flushAcc:
 graph/src/runtime/ops/apply.rs	ApplyOp::push_acc	334	PROVEN	RowWrites.pushAcc: pushAcc_spec (no row lost or reordered, acc within BATCH_SIZE; batches as row lists)
 graph/src/runtime/ops/apply.rs	ApplyOp::sub_plan_distincts	494	NOT COVERED	plan-tree walk over IR/ExprIR (no plan-tree model in ops_apply); its result is the `subs` of ops_aggregate Ops.scopedClear
 graph/src/runtime/ops/apply.rs	imported_ids	525	NOT COVERED	plan-tree walk (Argument leaves, nested-Apply scoping, leading Project exprs); no plan-tree model in ops_apply
-graph/src/runtime/ops/delete.rs	writes_graph	103	NOT COVERED	(#2968): not modelled yet
+graph/src/runtime/ops/delete.rs	writes_graph	103	PROVEN	Delete.writesGraph: writesGraph_spec (Create/Merge/Set/Remove/Delete/ForEach; used by DeleteSt.new eagerOf)
