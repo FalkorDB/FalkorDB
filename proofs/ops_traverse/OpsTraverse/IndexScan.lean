@@ -450,6 +450,21 @@ theorem collectHitsGo_fits (bidir : Bool) (max : Nat) :
         List.length_nil] at hle ⊢
       rw [ite_eq_right (by omega), ih _ (by simp; omega)]; simp
 
+/-- `collect_hits` refuses (`none`) exactly when the oriented hits pass the budget. -/
+theorem collectHits_some_iff (hits : List (Nat × Nat × Nat)) (bidir : Bool) (max : Nat) :
+    (collectHits hits bidir max).isSome ↔ (orient bidir hits).length ≤ max := by
+  constructor
+  · intro h
+    cases hk : collectHits hits bidir max with
+    | none => simp [hk] at h
+    | some l =>
+      obtain ⟨rfl, hl⟩ := collectHits_sound _ _ _ _ hk
+      exact hl
+  · intro h
+    unfold collectHits
+    rw [collectHitsGo_fits bidir max hits [] (by simpa using h)]
+    rfl
+
 /-- `HitCache::lookup`'s endpoint key: the pattern's `from` is the edge's dst when transposed. -/
 def endpointOf (transposed wantFrom : Bool) : Nat × Nat × Nat → Nat
   | (s, d, _) => if wantFrom == transposed then d else s
