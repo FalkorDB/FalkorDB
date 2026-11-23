@@ -112,7 +112,7 @@ class testSocialFlow(FlowTestsBase):
         actual_result = self.graph.query(q)
 
         # assert result set
-        self._assert_only_expected_results_are_in_actual_results(
+        self._assert_same_rows_with_multiplicity(
             actual_result,
             queries.friends_visited_same_places_as_me_query)
 
@@ -123,7 +123,7 @@ class testSocialFlow(FlowTestsBase):
         q = queries.countries_visited_by_roi_tal_boaz.query
         actual_result = self.graph.query(q)
         # assert result set
-        self._assert_only_expected_results_are_in_actual_results(
+        self._assert_same_rows_with_multiplicity(
             actual_result,
             queries.countries_visited_by_roi_tal_boaz)
 
