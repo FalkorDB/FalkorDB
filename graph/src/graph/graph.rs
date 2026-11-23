@@ -1318,17 +1318,23 @@ impl Graph {
         let mut next = self.schema.relationship_types.len();
         let mut new: Vec<&str> = Vec::new();
         for name in names {
-            if self.get_type_id(name).is_some() || new.contains(&name) {
+            // A registered type already has its id, which may itself be past
+            // the limit: types without edges can be registered beyond it.
+            let idx = if let Some(t) = self.get_type_id(name) {
+                t.0
+            } else if new.contains(&name) {
                 continue;
-            }
-            if edge_type_slot(next).is_none() {
+            } else {
+                new.push(name);
+                next += 1;
+                next - 1
+            };
+            if edge_type_slot(idx).is_none() {
                 return Err(NodeOpError::TooManyRelationshipTypes {
                     name: name.to_string(),
                     max: MAX_TYPE_ID + 1,
                 });
             }
-            new.push(name);
-            next += 1;
         }
         Ok(())
     }
