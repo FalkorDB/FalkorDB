@@ -172,6 +172,7 @@ def test_selection_without_micro_skips_micro():
         ({**HOSTED_ENTRY, "runner": "gce"}, "runner 'gce'"),
         ({**HOSTED_ENTRY, "command": " "}, "command is missing"),
         ({**HOSTED_ENTRY, "timeout_minutes": "30"}, "timeout_minutes '30'"),
+        ({**HOSTED_ENTRY, "timeout_minutes": 331}, "from 1 to 330"),
         ({**HOSTED_ENTRY, "timeout_minutes": True}, "timeout_minutes True"),
         ({**HOSTED_ENTRY, "machine_type": "n4-standard-16"}, "only for runner: vm"),
         ({**HOSTED_ENTRY, "env": {}}, "unknown key(s) env"),
@@ -403,16 +404,47 @@ def test_a_pass_from_a_check_that_crashed_is_not_green(tmp_path, facts, ran, ver
     or a timeout after writing it means the check crashed, so its `pass` is
     not a measurement. A regression or error it wrote still stands."""
     results = tmp_path / "results"
-    put(results, "micro", result("micro", verdict))
-    put(results, "micro", ran, name=facts)
-    _, nightly = run_merge(tmp_path, MICRO_ONLY)
+    put(results, "ldbc", result("ldbc", verdict))
+    put(results, "ldbc", ran, name=facts)
+    _, nightly = run_merge(tmp_path, [{"check": "ldbc", "runner": "hosted"}])
     (entry,) = nightly["checks"]
     if kept:
-        assert entry == result("micro", verdict)
+        assert entry == result("ldbc", verdict)
     else:
         assert entry["verdict"] == "error"
         assert entry["error"].startswith("result.json says pass, but the check ")
         assert nightly["status"] == "error"
+
+
+@pytest.mark.parametrize("runner", ["vm", "hosted"])
+@pytest.mark.parametrize(
+    "facts",
+    [
+        None,  # the job was cancelled before writing perf-hosted.json
+        {"create_error": None, "command_exit": None, "timed_out": False},  # _perf-vm.yml, run job cancelled
+        {"command_exit": "0"},
+        {"command_exit": False},
+    ],
+)
+def test_a_pass_needs_a_recorded_clean_exit(tmp_path, runner, facts):
+    """Where the runner records the exit, silence is not success: a job
+    cancelled mid-command uploads the result.json it wrote before the kill."""
+    results = tmp_path / "results"
+    put(results, "ldbc", result("ldbc"))
+    if facts is not None:
+        put(results, "ldbc", facts, name="perf-vm.json" if runner == "vm" else "perf-hosted.json")
+    _, nightly = run_merge(tmp_path, [{"check": "ldbc", "runner": runner}])
+    assert nightly["checks"][0]["error"] == (
+        "result.json says pass, but nothing records that the check's command finished (no exit status)"
+    )
+    assert nightly["status"] == "error"
+
+
+def test_micro_pass_needs_no_exit_record(tmp_path):
+    """_perf-micro.yml writes result.json from its own job; it has no run-facts file."""
+    put(tmp_path / "results", "micro", result("micro"))
+    _, nightly = run_merge(tmp_path, MICRO_ONLY)
+    assert nightly["status"] == "green"
 
 
 FIXTURES = HERE / "fixtures" / "valid"
@@ -426,6 +458,7 @@ def test_perf_judges_valid_results_pass_through_whole(tmp_path, fixture):
         pytest.skip("tests/perf/fixtures/valid is perf-judge's and not here yet")
     doc = json.loads((FIXTURES / fixture).read_text())
     put(tmp_path / "results", doc["check"], doc)
+    put(tmp_path / "results", doc["check"], {"command_exit": 0, "timed_out": False}, name="perf-hosted.json")
     plan = [{"check": doc["check"], "runner": "hosted"}]
     _, nightly = run_merge(tmp_path, plan)
     assert nightly["checks"] == [doc]

@@ -9,7 +9,7 @@
 #   - name: size-probe                 # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$, no "--"
 #     runner: vm                       # vm (_perf-vm.yml on a GCE VM) | hosted (ubuntu-latest)
 #     command: uv run --project bench bench probe
-#     timeout_minutes: 45              # 1-360
+#     timeout_minutes: 45              # 1-330
 #     machine_type: n4-standard-16     # vm only; optional
 #
 # The workflow appends --candidate, --baseline (both image@sha256), the four

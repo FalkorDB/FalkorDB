@@ -53,6 +53,7 @@ RESERVED = (MICRO, REGISTRY)
 CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,42}$")
 
 RUNNERS = ("vm", "hosted")
+MAX_TIMEOUT = 330
 
 DIGEST_REF = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -92,8 +93,10 @@ def registry_entry(name, entry):
     if not isinstance(command, str) or not command.strip():
         return invalid("command is missing or empty")
     timeout = entry.get("timeout_minutes")
-    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 360:
-        return invalid(f"timeout_minutes {timeout!r} is not an integer from 1 to 360")
+    # Below the hosted job's 360-minute limit, so the step's own `timeout` fires
+    # first and the exit is still recorded.
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_TIMEOUT:
+        return invalid(f"timeout_minutes {timeout!r} is not an integer from 1 to {MAX_TIMEOUT}")
     machine_type = entry.get("machine_type", "")
     if machine_type is None:
         machine_type = ""
@@ -299,9 +302,15 @@ def load_validator(path):
 # _perf-vm.yml (contract v1.3), perf-hosted.json by this workflow's hosted job.
 RUN_FACTS = ("perf-vm.json", "perf-hosted.json")
 
+# Runners whose artifact must say the command exited 0 before a `pass` counts.
+# The micro tier writes result.json from a job of its own and has no such file.
+RECORDED = ("vm", "hosted")
 
-def ended_badly(artifact):
-    """Why the check's run did not end cleanly, from its run facts, or ''."""
+
+def how_it_ended(artifact):
+    """(clean, why): clean is True when a run-facts file says the command exited
+    0 in time, False when one says it did not, None when nothing says either
+    (no file, or no exit status: the job was cancelled or killed first)."""
     for name in RUN_FACTS:
         try:
             facts = strict_load(artifact / name)
@@ -309,13 +318,16 @@ def ended_badly(artifact):
             continue
         if not isinstance(facts, dict):
             continue
+        exit_status = facts.get("command_exit")
         if facts.get("create_error"):
-            return f"no VM came up: {facts['create_error']}"
+            return False, f"no VM came up: {facts['create_error']}"
         if facts.get("timed_out"):
-            return "the check timed out"
-        if facts.get("command_exit") not in (None, 0):
-            return f"the check exited {facts['command_exit']}"
-    return ""
+            return False, "the check timed out"
+        if isinstance(exit_status, int) and not isinstance(exit_status, bool):
+            if exit_status == 0:
+                return True, ""
+            return False, f"the check exited {exit_status}"
+    return None, "nothing records that the check's command finished (no exit status)"
 
 
 def one_line(text):
@@ -336,15 +348,15 @@ def own_error(path):
     return error.strip() if isinstance(error, str) else ""
 
 
-def collect(check, artifact, validator):
+def collect(check, artifact, validator, runner=None):
     """The result.json in one artifact directory, or a stub saying why not."""
     path = artifact / "result.json"
-    ended = ended_badly(artifact)
+    clean, why = how_it_ended(artifact)
     if not path.is_file():
         nested = sorted(str(p.relative_to(artifact)) for p in artifact.rglob("result.json"))
         if nested:
             return stub(check, f"{NO_RESULT} at the artifact root (found {', '.join(nested)})")
-        return stub(check, f"{NO_RESULT}: {ended}" if ended else NO_RESULT)
+        return stub(check, f"{NO_RESULT}: {why}" if clean is False else NO_RESULT)
     if validator is not None:
         _, problems = validator.validate_file(str(path), kind="result")
         if problems:
@@ -361,9 +373,11 @@ def collect(check, artifact, validator):
         return stub(check, f"result.json names check {result.get('check')!r}")
     # The contract exits 0 whenever result.json was written, so a check that did
     # not end cleanly crashed after writing it: its `pass` is not a measurement.
-    # A regression or error it wrote still stands.
-    if ended and result.get("verdict") == "pass":
-        return stub(check, f"result.json says pass, but {ended}")
+    # Where the runner records the exit, a `pass` needs that record to say 0; a
+    # job cancelled mid-command uploads result.json with no exit status at all.
+    # A regression or error the check wrote still stands.
+    if result.get("verdict") == "pass" and (clean is False or (clean is None and runner in RECORDED)):
+        return stub(check, f"result.json says pass, but {why}")
     return result
 
 
@@ -401,7 +415,7 @@ def build_nightly(context, plan, results_dir, validator):
         # name, and the reusable workflows' internal <artifact>--* ones are not
         # checks.
         artifact = results_dir / f"perf-result-{row['check']}"
-        checks.append(collect(row["check"], artifact, validator))
+        checks.append(collect(row["check"], artifact, validator, row["runner"]))
 
     nightly["checks"] = checks
     nightly["status"] = status_of(checks)

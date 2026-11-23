@@ -192,18 +192,20 @@ jobs:
             pin_input "$BASELINE_INPUT"
             note="given by hand"
           else
-            tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-            note="release marked Latest ($tag)"
-            # The C engine's v4.x releases live in this repository too and are
-            # published by hand; one marked Latest is not this engine's release.
-            # Then the newest stable release of this engine stands in, and says so.
-            if [[ $tag == v4.* ]]; then
-              stood_in=$tag
-              tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
-                --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(test("^v([5-9]|[1-9][0-9])[.][0-9]+[.][0-9]+$"))' \
-                | sort -V | tail -n 1)
-              note="newest stable release ($tag); the release marked Latest is $stood_in, a C engine release"
-              echo "::warning::baseline: $note"
+            # The highest stable release of this engine (v5 and up): the rule
+            # build/publish_tags.py uses for the `latest` image tag. Not the
+            # GitHub "Latest" flag on its own, which can land on a release
+            # published later but lower: a 6.0.x backport, or one of the C
+            # engine's v4.x releases that share this repository (a C release is
+            # not a baseline for main). When the two differ, the run says so.
+            tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+              --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(test("^v([5-9]|[1-9][0-9])[.][0-9]+[.][0-9]+$"))' \
+              | sort -V | tail -n 1)
+            flagged=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+            note="highest stable release ($tag)"
+            if [[ $flagged != "$tag" ]]; then
+              note="$note; the release marked Latest is $flagged"
+              echo "::notice::baseline: $note"
             fi
             version=${tag#v}
             if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -461,11 +463,22 @@ jobs:
         run: |
           set -euo pipefail
           for check in $(jq -r '.[] | select(.runner != null) | .check' "$RUNNER_TEMP/plan/plan.json"); do
-            if gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n "perf-result-$check" \
-                -D "$RUNNER_TEMP/results/perf-result-$check"; then
-              find "$RUNNER_TEMP/results/perf-result-$check" -maxdepth 1 -printf "perf-result-$check: %f\n"
+            name=perf-result-$check
+            dir=$RUNNER_TEMP/results/$name
+            # The newest artifact of that name: after "Re-run jobs" the previous
+            # attempt's is still listed beside the new one.
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$name&per_page=100" \
+              --jq '[.artifacts[] | select(.expired | not)] | max_by(.id) | .id // empty')
+            if [[ -z $id ]]; then
+              echo "::warning::$name: no artifact"
+              continue
+            fi
+            mkdir -p "$dir"
+            if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$name.zip" \
+                && unzip -q -o "$RUNNER_TEMP/$name.zip" -d "$dir"; then
+              find "$dir" -maxdepth 1 -printf "$name (artifact $id): %f\n"
             else
-              echo "::warning::perf-result-$check: not downloaded"
+              echo "::warning::$name: artifact $id did not download"
             fi
           done
 
