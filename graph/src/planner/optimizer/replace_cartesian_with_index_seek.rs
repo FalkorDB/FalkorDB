@@ -408,26 +408,21 @@ fn has_seekable_equality(
     }
 }
 
-/// Whether `expr` is `id(node) = key` with a key that does not read `node`:
-/// a lookup of at most one node.
-fn is_id_equality(
-    expr: &DynNode<ExprIR<Variable>>,
-    node: &QueryNode<Arc<String>, Variable>,
-) -> bool {
-    matches!(get_id_filter(expr, &node.alias), Some((_, ExprIR::Eq)))
-}
-
-/// Whether `filter`, or one of its conjuncts, is `id(node) = key`: the scan
-/// below it yields at most one node per input row.
+/// Whether `filter`, or one of its conjuncts, is `id(node) = key` with a key
+/// that does not read `node`: the scan below it yields at most one node per
+/// input row.
 fn has_id_equality(
     node: &QueryNode<Arc<String>, Variable>,
     filter: &QueryExpr<Variable>,
 ) -> bool {
+    let is_eq = |c: &DynNode<ExprIR<Variable>>| {
+        matches!(get_id_filter(c, &node.alias), Some((_, ExprIR::Eq)))
+    };
     let root = filter.root();
     if matches!(root.data(), ExprIR::And) {
-        root.children().any(|c| is_id_equality(&c, node))
+        root.children().any(|c| is_eq(&c))
     } else {
-        is_id_equality(&root, node)
+        is_eq(&root)
     }
 }
 
