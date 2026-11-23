@@ -24,7 +24,7 @@ graph/src/runtime/runtime.rs	record_cap	777	PROVEN	Budget.recordCap_hardCap_soun
 graph/src/runtime/runtime.rs	children_to_recurse	787	PROVEN	RunBatch.childrenToRecurse: childrenToRecurse_spec
 graph/src/runtime/runtime.rs	run_nested_plan	813	PROVEN	Plan.runNested: runNested_spec
 graph/src/runtime/runtime.rs	run_batch	845	PROVEN	RunBatch.runBatch_eq_rec, RunBatch.runBatch_ok_single
-graph/src/runtime/runtime.rs	build_batch_op	878	PROVEN	Plan.buildOp/popOrOnce/popOrArgument: buildOp_spec; RunBatch.runBatch_eq_rec
+graph/src/runtime/runtime.rs	build_batch_op	913	PROVEN	Plan.buildOp/popOrOnce/popOrArgument: buildOp_spec; RunBatch.runBatch_eq_rec
 graph/src/runtime/runtime.rs	set_pending_node_attr	1517	PROVEN	RelAccessors.setPendingAttr: setPendingAttr_spec
 graph/src/runtime/runtime.rs	set_pending_relationship_attr	1536	PROVEN	RelAccessors.setPendingAttr (rel tables): setPendingAttr_spec
 graph/src/runtime/runtime.rs	memo_lookup	1553	PROVEN	Accessors.memoLookup_ok
