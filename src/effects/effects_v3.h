@@ -553,8 +553,11 @@ void EffectsV3_RecordsFree
 // shape that survives every consistency check. This says the accumulator is
 // reachable from the effect writers for all 14.
 //
-// tests/flow/test_effects_v3_emit.py holds it: an unrouted effect logs and
-// refuses to replicate, and that test fails on the log.
+// NOTHING IN THIS PR PINS IT, and saying so is the point. The flow test that
+// does - an unrouted effect logs and refuses to replicate, and the test fails
+// on the log - travels with the flow suites rather than with the writers, so
+// it is not in this tree. A flag naming a test that is not here reads as
+// coverage and is not.
 #define EFFECTS_V3_ALL_RECORDS_WIRED 1
 
 // a record declaring count == 0 is refused at the header
