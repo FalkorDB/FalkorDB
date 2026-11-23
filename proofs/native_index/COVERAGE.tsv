@@ -61,9 +61,9 @@ graph/src/index/falkordb/graph_writes.rs	add_node_under_label	538	PROVEN	addNode
 graph/src/index/falkordb/graph_writes.rs	remove_node_under_label	551	PROVEN	removeNodeUnderLabel: removeNodeUnderLabel_eq
 graph/src/index/falkordb/graph_writes.rs	node_label_ids_into	569	PROVEN	nodeLabelIdsInto: nodeLabelIdsInto_spec
 graph/src/index/falkordb/graph_writes.rs	edge_type	584	PROVEN	edgeType: edgeType_spec
-graph/src/graph/graph.rs	apply_index_writes	3916	PROVEN	applyIndexWrites (with `G.place`: a node by id, an edge by its endpoints, None once deleted): applyIndexWrites_spec, runUnit_spec, kind_place; since #3567 the closure is `BuildCursor::from_id`: Rebase.fromId_spec (= G.place)
-graph/src/graph/graph.rs	query_index_nodes	4245	PROVEN	queryIndexNumericNodes (raw docs mapped to NodeId, identity): queryIndexNumericNodes_spec, nodeScan_building_agrees
-graph/src/graph/graph.rs	query_index_edges	4263	PROVEN	queryIndexNumericEdges (endpoints from the edge_id reverse index; an unknown id skipped; a ScanFilter passes through): queryIndexNumericEdges_scan/_none, edgeScan_building_agrees
+graph/src/graph/graph.rs	apply_index_writes	3920	PROVEN	applyIndexWrites (with `G.place`: a node by id, an edge by its endpoints, None once deleted): applyIndexWrites_spec, runUnit_spec, kind_place; since #3567 the closure is `BuildCursor::from_id`: Rebase.fromId_spec (= G.place)
+graph/src/graph/graph.rs	query_index_nodes	4249	PROVEN	queryIndexNumericNodes (raw docs mapped to NodeId, identity): queryIndexNumericNodes_spec, nodeScan_building_agrees
+graph/src/graph/graph.rs	query_index_edges	4267	PROVEN	queryIndexNumericEdges (endpoints from the edge_id reverse index; an unknown id skipped; a ScanFilter passes through): queryIndexNumericEdges_scan/_none, edgeScan_building_agrees
 graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	302	PROVEN	nodeScanOp/scanOp (rows, the resolved filtered scan, or the error): scanOp_spec, scanOp_none_iff, nodeScanOp_error_iff, nodeScanOp_range_served, nodeFilteredScan_agrees
 graph/src/index/falkordb/numeric.rs	EncodedTuples::scalars	271	PROVEN	EncodedTuples.scalars: encodedTuples_spec
 graph/src/index/falkordb/numeric.rs	EncodedTuples::is_empty	279	PROVEN	EncodedTuples.isEmpty: encodedTuples_spec
@@ -114,8 +114,8 @@ graph/src/index/falkordb/mod.rs	describe_predicate	69	PROVEN	describe/describeAl
 graph/src/index/falkordb/mod.rs	union_members	161	PROVEN	unionMembers (nested combinators count by attribute but are not served): unionMembers_sameAttr, unionKeys_served, describe_or
 graph/src/graph/graph.rs	redisearch_fields	145	PROVEN	redisearchFieldsAll (cfg(not(index-falkordb)): the identity): redisearchFieldsAll_id
 graph/src/graph/graph.rs	redisearch_fields	152	PROVEN	redisearchFields (index-falkordb: drop each key's Range fields, drop a key left with none): redisearchFields_mem, redisearchFields_no_range, redisearchFields_keeps_nonrange (Fulltext/Vector kept, also beside a Range field), redisearchFields_nonempty, redisearchFields_drops_range_only, redisearchFields_idem, native_owns_range (the Range attribute is built natively by populate)
-graph/src/graph/graph.rs	node_matches	4295	PROVEN	G.nodeMatches: nodeMatches_spec, nodeMatches_none; nodeFilteredScan_agrees (the scan keeps exactly what the built column answers), nodeScan_building_agrees
-graph/src/graph/graph.rs	relationship_matches	4307	PROVEN	G.relationshipMatches: relationshipMatches_spec; edgeFilteredScan_agrees, edgeScan_building_agrees
+graph/src/graph/graph.rs	node_matches	4299	PROVEN	G.nodeMatches: nodeMatches_spec, nodeMatches_none; nodeFilteredScan_agrees (the scan keeps exactly what the built column answers), nodeScan_building_agrees
+graph/src/graph/graph.rs	relationship_matches	4311	PROVEN	G.relationshipMatches: relationshipMatches_spec; edgeFilteredScan_agrees, edgeScan_building_agrees
 graph/src/index/falkordb/versioned.rs	IndexEntry::discarded_against	448	PROVEN	Batch.discardedAgainst: discardedAgainst_none_iff (None iff the published copy has the same generation and one commit fewer; another generation or no copy = Gone, a different count = AnotherBatch)
 graph/src/index/falkordb/versioned.rs	Graph::indexer_fit	504	PROVEN	Batch.indexerFit: fit_fresh (Same), fit_after_other_batch (Swap), fit_after_writer (CatchUp how since #3567; it was Discarded Writers), fit_after_writer_within / fit_after_writer_too_large (the catch-up limit, CatchUpTooLarge, #2355), fit_after_same_batch (AnotherBatch), fit_after_drop, fit_after_recreate (Gone), fit_same_version; #3568: the Refresh/Insert choice is in the fit: indexerFit returns CatchUp (catchUpBy since-count batch_len), the two read off the model: SE.written (the published copy's since_last_indexer_step.len(), 0 when Ready) and IndexColumn.batchLen work (batch_len(&work)); fit_catchUp_how, fit_after_writer; catchUpBy_refresh_iff, catchUpBy_saturating
 graph/src/index/falkordb/versioned.rs	Graph::with_batch_index	551	PROVEN	Batch.V.withBatchIndex: commit_swap (rest, data version and created-count from the published version; only the batch's entry replaced)
@@ -144,12 +144,12 @@ graph/src/index/falkordb/versioned.rs	Graph::overtaken	692	PROVEN	Rebase.overtak
 graph/src/index/falkordb/versioned.rs	Graph::rebase_index	711	PROVEN	Rebase.EN.rebase: rebase_not_overtaken, rebase_progress (the batches' generation, commit count and cursor are kept), rebase_keeps_writes, rebase_index_spec, rebase_inv (given Frame); the #3567 fix: rebased_commit_keeps_chain, rebased_batch_fits
 graph/src/index/falkordb/graph_writes.rs	entity_tuples	469	PROVEN	Rebase.entityTuples: entityTuples_spec (the tuple of each id whose label or type holds, none otherwise)
 graph/src/graph/mvcc_graph.rs	MvccGraph::rebase_onto_indexer_batches	171	PROVEN	Rebase.mvccRebase: mvccRebase_noop (nothing overtaken: Ok, fork untouched), mvccRebase_unborrowed (an escalating writer's fork always succeeds), mvccRebase_borrowed_release/_debug (Err(Stale) / panic); V.rebased_keeps_data, V.rebased_not_stale (no data version change); the fork is now a plain Graph taken by &mut, so the borrowed arms (mvccRebase_borrowed_*) describe code that is gone and mvccRebase_noop/_unborrowed are the whole function
-graph/src/graph/graph.rs	Graph::build_place	3901	PROVEN	Rebase.BuildCursor.fromId (with the version's edge endpoints): fromId_spec
-graph/src/graph/graph.rs	Graph::create_cch_index	5347	PROVEN	Cch.graphCreateCchIndex: graphCreateCchIndex_panics (unimplemented!, #3212; nothing calls it)
-graph/src/graph/graph.rs	Graph::drop_cch_index	5359	PROVEN	Cch.graphDropCchIndex: graphDropCchIndex_panics (through FalkorDbIndex::drop_cch, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::cch_indexes	5370	PROVEN	Cch.graphCchIndexes: graphCchIndexes_panics (through FalkorDbIndex::cch_defs, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::cch_index	5380	PROVEN	Cch.graphCchIndex: graphCchIndex_panics (through FalkorDbIndex::cch_index, unimplemented!, #3212)
-graph/src/graph/graph.rs	Graph::rebuild_cch_indexes	5396	PROVEN	Cch.graphRebuildCchIndexes: graphRebuildCchIndexes_panics (unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::build_place	3905	PROVEN	Rebase.BuildCursor.fromId (with the version's edge endpoints): fromId_spec
+graph/src/graph/graph.rs	Graph::create_cch_index	5351	PROVEN	Cch.graphCreateCchIndex: graphCreateCchIndex_panics (unimplemented!, #3212; nothing calls it)
+graph/src/graph/graph.rs	Graph::drop_cch_index	5363	PROVEN	Cch.graphDropCchIndex: graphDropCchIndex_panics (through FalkorDbIndex::drop_cch, unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::cch_indexes	5374	PROVEN	Cch.graphCchIndexes: graphCchIndexes_panics (through FalkorDbIndex::cch_defs, unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::cch_index	5384	PROVEN	Cch.graphCchIndex: graphCchIndex_panics (through FalkorDbIndex::cch_index, unimplemented!, #3212)
+graph/src/graph/graph.rs	Graph::rebuild_cch_indexes	5400	PROVEN	Cch.graphRebuildCchIndexes: graphRebuildCchIndexes_panics (unimplemented!, #3212)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_index	1228	PROVEN	Cch.indexCchIndex: indexCchIndex_panics (unimplemented!, #3212)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::cch_defs	1236	PROVEN	Cch.indexCchDefs: indexCchDefs_panics (unimplemented! before the `std::iter::empty()` that only pins the return type)
 graph/src/index/falkordb/falkordb_index.rs	FalkorDbIndex::drop_cch	1252	PROVEN	Cch.indexDropCch: indexDropCch_panics (unimplemented!, #3212)

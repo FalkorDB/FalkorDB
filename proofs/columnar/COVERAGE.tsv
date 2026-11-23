@@ -102,5 +102,5 @@ graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter 
 graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter packRows_spec, stream_rows_active
 graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch: emNew_spec
 # runtime.rs attribute reads (RuntimeReads, 2026-10-21): the bulk fetch is the per-row read, with the graph batch / by-name reads modelled as their definitions (proofs/runtime_core models the same fns with hbg/hName as hypotheses).
-graph/src/runtime/runtime.rs	materialize_node_property_values	1702	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
+graph/src/runtime/runtime.rs	materialize_node_property_values	1708	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.

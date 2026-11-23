@@ -458,6 +458,33 @@ theorem getPlan_then_hit (cache : List (String × Nat)) (q : String) (u : Nat) :
     (getPlan (getPlan cache q u u).2 q u u).1 = true := by
   unfold getPlan; by_cases h : (q, u) ∈ cache <;> simp [h]
 
+/-- `get_plan` with the #3305 height guards. `depthOk`: `Planner::check_depth`
+on a freshly planned tree (miss path only); `heightOk`: `Planner::check_height`
+on the optimized tree (both paths). A rejection returns `Err` (`none`) before
+the miss path caches, so the cache is unchanged; otherwise it is `getPlan`. -/
+def getPlanChecked (cache : List (String × Nat)) (q : String) (udf udfAfter : Nat)
+    (depthOk heightOk : Bool) : Option Bool × List (String × Nat) :=
+  if (q, udf) ∈ cache then
+    (if heightOk then some true else none, cache)
+  else if depthOk && heightOk then
+    (some false, (getPlan cache q udf udfAfter).2)
+  else (none, cache)
+
+/-- **PROVEN**: when both guards pass, the decision and cache are `getPlan`'s. -/
+theorem getPlanChecked_ok (cache : List (String × Nat)) (q : String) (u u' : Nat) :
+    getPlanChecked cache q u u' true true =
+      (some (getPlan cache q u u').1, (getPlan cache q u u').2) := by
+  unfold getPlanChecked getPlan; by_cases h : (q, u) ∈ cache <;> simp [h]
+
+/-- **PROVEN**: a rejected query never touches the plan cache. -/
+theorem getPlanChecked_reject_keeps_cache (cache : List (String × Nat)) (q : String)
+    (u u' : Nat) (d h : Bool) (hr : (getPlanChecked cache q u u' d h).1 = none) :
+    (getPlanChecked cache q u u' d h).2 = cache := by
+  unfold getPlanChecked at *
+  by_cases hm : (q, u) ∈ cache
+  · simp [hm]
+  · cases d <;> cases h <;> simp_all
+
 /-- `is_synced`: conjunction over every matrix and tensor. -/
 def isSynced (flags : List Bool) : Bool := flags.all id
 theorem isSynced_iff (flags : List Bool) : isSynced flags = true ↔ ∀ b ∈ flags, b = true := by
