@@ -141,8 +141,8 @@ inductive LClause
   | predicate (labels : List Name)     -- WHERE (n:L)-->(): saved/restored (binder.rs)
   | create (labels : List Name)        -- CREATE (n:L)-[..]->(): `with_node_labels_rolled_back(true, …)` (:552)
   | comprehension (labels : List Name) -- [(n:L)-->() | …]: `with_node_labels_rolled_back(false, …)` (:2104)
-  | remove (labels : List Name)        -- REMOVE n:L…: `bind_ir` QueryIR::Remove (b84473a7f :477-482)
-                                       -- binds the items and leaves `node_labels` alone (#3450)
+  | remove (labels : List Name)        -- REMOVE n:L…: `bind_ir` QueryIR::Remove leaves `node_labels`
+                                       -- alone; it records `removed_labels` (#3457, RemoveLabels.lean)
   deriving Repr, DecidableEq
 
 /-- `acc ∪ ls` as `OrderSet::extend` does it (binder.rs). -/

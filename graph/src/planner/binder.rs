@@ -150,6 +150,13 @@ pub struct Binder {
     /// n's `VarKey` → {N, O} so the planner can create a single
     /// NodeByLabelScan with the full label set.
     node_labels: HashMap<VarKey, OrderSet<Arc<String>>>,
+    /// Labels a `REMOVE n:L` earlier in the query stripped. They stay in
+    /// `node_labels`, whose full set is stamped on the MATCH before the
+    /// REMOVE, but are not carried to a projected variable: the WITH commits
+    /// the REMOVE, so a MATCH after it must not assume `L`. Kept per label
+    /// rather than per variable, since `n` may be reachable under other names
+    /// (`WITH n AS a, n AS b`, a CALL body's import).
+    removed_labels: OrderSet<Arc<String>>,
     /// Variables bound from variable-length relationship patterns (e.g. `[r*]`).
     /// These are typed as `Type::Path` but represent a list of edges, so
     /// property access like `r.prop` is allowed (per-edge predicate)
@@ -176,6 +183,7 @@ impl Default for Binder {
             parent_to_child_scope: HashMap::new(),
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
+            removed_labels: OrderSet::default(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
             match_rel_vars: std::collections::HashSet::new(),
             retired_scope_vars: vec![],
@@ -188,6 +196,25 @@ impl Default for Binder {
 enum ProjectionKind {
     With,
     Return,
+}
+
+/// The labels of a bound `REMOVE n:L1:L2` item, or `None` for a property
+/// removal.
+#[must_use]
+pub(crate) fn removed_node_labels(item: &QueryExpr<Variable>) -> Option<Vec<Arc<String>>> {
+    let root = item.root();
+    match root.data() {
+        ExprIR::FuncInvocation(func) if func.name == "hasLabels" => Some(
+            root.get_child(1)?
+                .children()
+                .filter_map(|c| match c.data() {
+                    ExprIR::Constant(Value::String(label)) => Some(label.clone()),
+                    _ => None,
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
 }
 
 impl Binder {
@@ -229,7 +256,28 @@ impl Binder {
                 Self::update_graph_labels(pattern, &self.node_labels, *optional);
             }
             QueryIR::Create(graph) | QueryIR::Merge { pattern: graph, .. } => {
-                Self::update_graph_labels(graph, &self.node_labels, false);
+                if self.removed_labels.is_empty() {
+                    Self::update_graph_labels(graph, &self.node_labels, false);
+                } else {
+                    // A label a REMOVE stripped is stamped on the clauses that
+                    // match the node, not on a CREATE/MERGE that may run after
+                    // the removal (`drop_removed_labels` left only what the
+                    // clause writes), so the stamp adds to the clause's own
+                    // labels without the removed ones.
+                    let held: HashMap<VarKey, OrderSet<Arc<String>>> = self
+                        .node_labels
+                        .iter()
+                        .map(|(key, labels)| {
+                            let kept = labels
+                                .iter()
+                                .filter(|l| !self.removed_labels.contains(*l))
+                                .cloned()
+                                .collect();
+                            (*key, kept)
+                        })
+                        .collect();
+                    Self::update_graph_labels(graph, &held, true);
+                }
             }
             QueryIR::Query { clauses, .. } => {
                 for clause in clauses {
@@ -250,6 +298,52 @@ impl Binder {
             // avoid overwriting inner labels with colliding outer scope IDs.
             _ => {}
         }
+    }
+
+    /// A MERGE after `REMOVE n:L` matches the node as it is now: the bound
+    /// pattern carries the labels accumulated for `n`, `L` among them, which
+    /// would be checked against a node that no longer has it. Drop the removed
+    /// labels from the bound pattern unless this clause writes them itself.
+    fn drop_removed_labels(
+        &self,
+        bound: &mut QueryGraph<Arc<String>, Arc<String>, Variable>,
+        raw: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+    ) {
+        if self.removed_labels.is_empty() {
+            return;
+        }
+        let mut written: HashMap<Alias, OrderSet<Arc<String>>> = HashMap::new();
+        let raw_nodes = raw.nodes().iter().map(|n| (&n.alias, &n.labels)).chain(
+            raw.relationships()
+                .iter()
+                .flat_map(|r| [(&r.from.alias, &r.from.labels), (&r.to.alias, &r.to.labels)]),
+        );
+        for (alias, labels) in raw_nodes {
+            written
+                .entry(alias.clone())
+                .or_default()
+                .extend(labels.iter().cloned());
+        }
+        let mut kept: HashMap<VarKey, OrderSet<Arc<String>>> = HashMap::new();
+        let bound_nodes = bound.nodes().iter().map(AsRef::as_ref).chain(
+            bound
+                .relationships()
+                .iter()
+                .flat_map(|r| [r.from.as_ref(), r.to.as_ref()]),
+        );
+        for node in bound_nodes {
+            let own = node.alias.alias.as_ref().and_then(|a| written.get(a));
+            let labels = node
+                .labels
+                .iter()
+                .filter(|l| {
+                    !self.removed_labels.contains(*l) || own.is_some_and(|w| w.contains(*l))
+                })
+                .cloned()
+                .collect();
+            kept.insert(node.alias.key(), labels);
+        }
+        Self::update_graph_labels(bound, &kept, false);
     }
 
     /// Replace QueryNode labels in the graph with the full accumulated set.
@@ -534,7 +628,9 @@ impl Binder {
                     }
                 }
 
-                let pattern = self.bind_graph(&pattern, false, false)?;
+                let mut bound_pattern = self.bind_graph(&pattern, false, false)?;
+                self.drop_removed_labels(&mut bound_pattern, &pattern);
+                let pattern = bound_pattern;
                 let on_create = self.bind_set_items(on_create)?;
                 let on_match = self.bind_set_items(on_match)?;
                 Ok(QueryIR::Merge {
@@ -602,6 +698,11 @@ impl Binder {
                     .iter()
                     .map(|expr| self.bind_expr(expr))
                     .collect::<Result<Vec<_>, _>>()?;
+                for item in &items {
+                    if let Some(labels) = removed_node_labels(item) {
+                        self.removed_labels.extend(labels);
+                    }
+                }
                 Ok(QueryIR::Remove(items))
             }
             QueryIR::LoadCsv {
@@ -1053,6 +1154,7 @@ impl Binder {
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
+                        removed_labels: OrderSet::default(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
                         match_rel_vars: std::collections::HashSet::new(),
                         retired_scope_vars: vec![],
@@ -1104,6 +1206,11 @@ impl Binder {
                     let mut branch_scope_vars = binder.scope_vars();
                     merge_scope_vars(&mut branch_scope_vars, binder.retired_scope_vars.clone());
                     merge_scope_vars(&mut self.retired_scope_vars, branch_scope_vars);
+                    // A label a branch removed is gone for the clauses after the
+                    // whole UNION, whichever branch ran.
+                    for label in binder.removed_labels.iter() {
+                        self.removed_labels.insert(label.clone());
+                    }
                     // Capture the binder's final env (RETURN-projected vars)
                     last_binder_env = Some(binder.current_env().clone());
                     bound_branches.push(bound);
@@ -1126,6 +1233,24 @@ impl Binder {
         }
     }
 
+    /// Give the projected variable `to` the labels `from` still holds: the
+    /// accumulated ones minus any a REMOVE stripped.
+    fn carry_node_labels(
+        &mut self,
+        from: &Variable,
+        to: &Variable,
+    ) {
+        let Some(labels) = self.node_labels.get(&from.key()) else {
+            return;
+        };
+        let held = labels
+            .iter()
+            .filter(|l| !self.removed_labels.contains(*l))
+            .cloned()
+            .collect();
+        self.node_labels.insert(to.key(), held);
+    }
+
     /// Build projection pairs that map outer variables to fresh inner variables.
     /// For each imported variable, allocates a fresh inner ID via `project_name`
     /// and creates `(inner_var, ExprIR::Variable(outer_var))` pairs.
@@ -1138,10 +1263,8 @@ impl Binder {
         for (name, outer_var) in imported {
             let inner_var = self.project_name(name, outer_var.ty.clone());
             // Carry forward node_labels for Node-typed imports
-            if outer_var.ty == Type::Node
-                && let Some(labels) = self.node_labels.get(&outer_var.key()).cloned()
-            {
-                self.node_labels.insert(inner_var.key(), labels);
+            if outer_var.ty == Type::Node {
+                self.carry_node_labels(outer_var, &inner_var);
             }
             let outer_expr = Arc::new(DynTree::new(ExprIR::Variable(outer_var.clone())));
             projections.push((inner_var, outer_expr));
@@ -1254,10 +1377,8 @@ impl Binder {
                 }
                 let bound_var = self.project_name(&name, var.ty.clone());
                 // Carry forward labels for projected node variables.
-                if var.ty == Type::Node
-                    && let Some(labels) = self.node_labels.get(&var.key()).cloned()
-                {
-                    self.node_labels.insert(bound_var.key(), labels);
+                if var.ty == Type::Node {
+                    self.carry_node_labels(&var, &bound_var);
                 }
                 let expr = Arc::new(DynTree::new(ExprIR::Variable(var)));
                 projected.push((bound_var, expr));
@@ -1280,10 +1401,8 @@ impl Binder {
                     self.parent_to_child_scope
                         .insert(var_name.name().unwrap().clone(), bound_var.clone());
                     // Carry forward node_labels for projected node variables.
-                    if var_name.ty == Type::Node
-                        && let Some(labels) = self.node_labels.get(&var_name.key()).cloned()
-                    {
-                        self.node_labels.insert(bound_var.key(), labels);
+                    if var_name.ty == Type::Node {
+                        self.carry_node_labels(var_name, &bound_var);
                     }
                 }
                 projected.push((bound_var, expr));
@@ -1303,10 +1422,8 @@ impl Binder {
                     self.parent_to_child_scope
                         .insert(var_name.name().unwrap().clone(), bound_var.clone());
                     // Carry forward node_labels for projected node variables.
-                    if var_name.ty == Type::Node
-                        && let Some(labels) = self.node_labels.get(&var_name.key()).cloned()
-                    {
-                        self.node_labels.insert(bound_var.key(), labels);
+                    if var_name.ty == Type::Node {
+                        self.carry_node_labels(var_name, &bound_var);
                     }
                 }
                 projected.push((bound_var, expr));
