@@ -107,108 +107,108 @@ theorem flip_holds (op : IdOp) (n c : Int) : op.flip.holds n c = op.holdsRev c n
   cases op <;> simp only [IdOp.flip, IdOp.holds, IdOp.holdsRev] <;>
     apply Bool.eq_iff_iff.2 <;> simp <;> omega
 
-/-- Rust `id as u64`. -/
-def wrap (i : Int) : Nat := (i % 2 ^ 64).toNat
+/-- One iteration of the `for (expr, op) in filter` loop of `evaluate_id_filter` (runtime.rs,
+PR #3017) for an integer bound `c` (its own ceiling and floor), on the `i128` range. -/
+def step (lo hi c : Int) : IdOp → Int × Int
+  | .eq => (max lo c, min hi c)
+  | .gt => (max lo (c + 1), hi)
+  | .ge => (max lo c, hi)
+  | .lt => (lo, min hi (c - 1))
+  | .le => (lo, min hi c)
 
-/-- One iteration of the `for (expr, op) in filter` loop (runtime.rs). -/
-def step (lo hi c : Nat) : IdOp → Option (Nat × Nat)
-  | .eq => if c < lo ∨ c > hi then none else some (c, c)
-  | .gt => if c ≥ hi then none else some (max lo (c + 1), hi)
-  | .ge => if c > hi then none else some (max lo c, hi)
-  | .lt => if c ≤ lo then none else some (lo, min hi (c - 1))
-  | .le => if c < lo then none else some (lo, min hi c)
-
-/-- The whole function. `Ok(None)` = empty; a non-integer value is an error. -/
+/-- The whole function. `Ok(None)` = empty: a non-integer bound (floats are modelled in
+`proofs/optimizer_scan` `IdSeek`), or a step that leaves `min > max`. At the end the range is
+cast `min as u64 ..= max as u64`. No value is an error since PR #3017. -/
 def idFilter (maxId : Nat) (fs : List (Val × IdOp)) : Except Err (Option (Nat × Nat)) :=
   go 0 maxId fs
 where
-  go (lo hi : Nat) : List (Val × IdOp) → Except Err (Option (Nat × Nat))
-    | [] => .ok (some (lo, hi))
+  go (lo hi : Int) : List (Val × IdOp) → Except Err (Option (Nat × Nat))
+    | [] => .ok (some (lo.toNat, hi.toNat))
     | (v, op) :: rest =>
       match v with
       | .int i =>
-        match step lo hi (wrap i) op with
-        | none => .ok none
-        | some (lo', hi') => go lo' hi' rest
-      | _ => .error .typeMismatch     -- "Node ID must be an integer"
+        let r := step lo hi i op
+        if r.1 > r.2 then .ok none else go r.1 r.2 rest
+      | _ => .ok none
 
 def inRange (r : Option (Nat × Nat)) (n : Nat) : Bool :=
   match r with
   | none => false
   | some (lo, hi) => decide (lo ≤ n ∧ n ≤ hi)
 
-/-- `+ 1` / `- 1` never overflow/underflow: the guards run first. -/
-theorem step_no_wrap (lo hi c : Nat) (hhi : hi < 2 ^ 64) (op : IdOp) (lo' hi' : Nat)
-    (h : step lo hi c op = some (lo', hi')) :
-    (op = .gt → c + 1 < 2 ^ 64) ∧ (op = .lt → 1 ≤ c) := by
-  cases op <;> simp [step] at h ⊢ <;> omega
+/-- The `saturating_add(1)` / `saturating_sub(1)` never saturate on an `i64` bound, and the
+range only narrows, so from `[0, max]` both ends stay in `[0, max]` for the `as u64` casts. -/
+theorem step_no_wrap (lo hi c : Int) (hc : -2 ^ 63 ≤ c ∧ c < 2 ^ 63) (op : IdOp) (lo' hi' : Int)
+    (h : step lo hi c op = (lo', hi')) :
+    (op = .gt → c + 1 < 2 ^ 127) ∧ (op = .lt → -2 ^ 127 ≤ c - 1) ∧ lo ≤ lo' ∧ hi' ≤ hi := by
+  cases op <;> simp only [step, Prod.mk.injEq] at h <;> obtain ⟨rfl, rfl⟩ := h <;>
+    simp <;> omega
 
-theorem step_correct (lo hi c n : Nat) (op : IdOp) :
-    inRange (step lo hi c op) n = (decide (lo ≤ n ∧ n ≤ hi) && op.holds n c) := by
-  cases op <;> simp only [step] <;> split <;> simp only [inRange, IdOp.holds] <;>
-    apply Bool.eq_iff_iff.2 <;> simp <;> omega
+theorem step_correct (lo hi c n : Int) (op : IdOp) :
+    decide ((step lo hi c op).1 ≤ n ∧ n ≤ (step lo hi c op).2) =
+      (decide (lo ≤ n ∧ n ≤ hi) && op.holds n c) := by
+  cases op <;> simp only [step, IdOp.holds] <;>
+    apply Bool.eq_iff_iff.2 <;> simp only [decide_eq_true_eq, Bool.and_eq_true, Int.max_le, Int.le_min, beq_iff_eq] <;> omega
 
-theorem wrap_of_nonneg (i : Int) (h0 : 0 ≤ i) (h1 : i < 2 ^ 64) : (wrap i : Int) = i := by
-  unfold wrap
-  rw [Int.emod_eq_of_lt h0 h1]
-  omega
-
-/-- **evaluate_id_filter is correct for integer arguments in `[0, 2^63)`**:
-a node id `n` is in the seek range iff `n ≤ max_node_id` and every comparison
-holds. -/
-theorem idFilter_correct (maxId : Nat) (fs : List (Int × IdOp))
-    (hfs : ∀ p ∈ fs, 0 ≤ p.1 ∧ p.1 < 2 ^ 63) (n : Nat) :
+/-- **evaluate_id_filter is correct for every integer bound** (PR #3017; it was only for bounds
+in `[0, 2^63)` while the bound was cast `as u64`): a node id `n` is in the seek range iff
+`n ≤ max` and every comparison holds. -/
+theorem idFilter_correct (maxId : Nat) (fs : List (Int × IdOp)) (n : Nat) :
     (match idFilter maxId (fs.map fun p => (Val.int p.1, p.2)) with
      | .ok r => inRange r n
      | .error _ => false) =
     (decide (n ≤ maxId) && fs.all (fun p => p.2.holds n p.1)) := by
   unfold idFilter
-  suffices H : ∀ lo hi, (match idFilter.go lo hi (fs.map fun p => (Val.int p.1, p.2)) with
+  suffices H : ∀ lo hi : Int, 0 ≤ lo → lo ≤ hi →
+     (match idFilter.go lo hi (fs.map fun p => (Val.int p.1, p.2)) with
      | .ok r => inRange r n | .error _ => false) =
      (decide (lo ≤ n ∧ n ≤ hi) && fs.all (fun p => p.2.holds n p.1)) by
-    rw [H 0 maxId]; simp
-  intro lo hi
+    rw [H 0 maxId (by omega) (by omega)]
+    congr 1
+    apply Bool.eq_iff_iff.2; simp
+  intro lo hi hlo hle
   induction fs generalizing lo hi with
-  | nil => simp [idFilter.go, inRange]
+  | nil =>
+    simp only [List.map_nil, idFilter.go, inRange, List.all_nil, Bool.and_true]
+    apply Bool.eq_iff_iff.2; simp; omega
   | cons p fs ih =>
     obtain ⟨c, op⟩ := p
-    have hc := hfs (c, op) (by simp)
-    have hop : op.holds n (wrap c) = op.holds n c := by
-      have hw : (wrap c : Int) = c := wrap_of_nonneg c hc.1 (by omega)
-      rw [hw]
-    have hs := step_correct lo hi (wrap c) n op
-    rw [hop] at hs
+    have hs := step_correct lo hi c n op
     simp only [List.map_cons, idFilter.go, List.all_cons]
-    cases hst : step lo hi (wrap c) op with
-    | none =>
-      rw [hst] at hs
-      simp only [inRange] at hs ⊢
-      rw [← Bool.and_assoc, ← hs, Bool.false_and]
-    | some st =>
-      obtain ⟨lo', hi'⟩ := st
-      rw [hst] at hs
-      simp only
-      rw [ih (fun p hp => hfs p (by simp [hp])) lo' hi']
-      simp only [inRange] at hs
-      rw [hs, Bool.and_assoc]
+    rcases hst : step lo hi c op with ⟨lo', hi'⟩
+    rw [hst] at hs
+    simp only at hs ⊢
+    have hn : lo ≤ lo' ∧ hi' ≤ hi := by
+      cases op <;> simp only [step, Prod.mk.injEq] at hst <;> obtain ⟨rfl, rfl⟩ := hst <;> omega
+    by_cases hgt : lo' > hi'
+    · simp only [hgt, ite_true]
+      simp only [inRange]
+      rw [← Bool.and_assoc, ← hs]
+      have : decide (lo' ≤ (n : Int) ∧ (n : Int) ≤ hi') = false := by simp; omega
+      rw [this, Bool.false_and]
+    · simp only [hgt, ite_false]
+      rw [ih lo' hi' (by omega) (by omega), hs, Bool.and_assoc]
 
-/-! ### Counterexamples (confirmed on the server, see the root file) -/
+/-- A non-integer bound (null, a string, a boolean) leaves no range: the Filter it replaces never
+compares it true (it raised "Node ID must be an integer" before PR #3017). -/
+theorem idFilter_nonint (maxId : Nat) (v : Val) (hv : ∀ i, v ≠ .int i) (op : IdOp)
+    (rest : List (Val × IdOp)) : idFilter maxId ((v, op) :: rest) = .ok none := by
+  cases v with
+  | int i => exact absurd rfl (hv i)
+  | _ => rfl
 
-/-- `MATCH (n) WHERE id(n) > -1`: Rust returns 0 rows, C and openCypher all. -/
-theorem id_gt_neg_empty (maxId : Nat) (h : maxId < 2 ^ 64) :
-    idFilter maxId [(.int (-1), .gt)] = .ok none := by
-  have hw : wrap (-1) = 2 ^ 64 - 1 := rfl
-  simp only [idFilter, idFilter.go, hw, step]
-  rw [ite_eq_left_iff.mpr (by omega)]
+/-! ### The bounds PR #3017 fixed -/
 
-/-- `id(n) <= -1`: every node (issue #2266, C too). -/
-theorem id_le_neg_all :
-    idFilter 5 [(.int (-1), .le)] = .ok (some (0, 5)) := rfl
+/-- `MATCH (n) WHERE id(n) > -1`: every node (it returned 0 rows while `-1` was cast `as u64`). -/
+theorem id_gt_neg_all : idFilter 5 [(.int (-1), .gt)] = .ok (some (0, 5)) := rfl
 
-/-- `id(n) = null`: the Filter it replaces drops the row, the seek errors
-("Node ID must be an integer"). Same for `1.0`, `'1'`, `true`. -/
-theorem id_eq_null_errors :
-    idFilter 5 [(.null, .eq)] = .error .typeMismatch ∧
+/-- `id(n) <= -1`: no node (it returned every node, as C does, #2266). -/
+theorem id_le_neg_none : idFilter 5 [(.int (-1), .le)] = .ok none := rfl
+
+/-- `id(n) = null`: no row, as the Filter it replaces (it raised "Node ID must be an integer").
+Same for `'1'`, `true`. -/
+theorem id_eq_null_empty :
+    idFilter 5 [(.null, .eq)] = .ok none ∧
     passB (.eq (.var ⟨0,0⟩) (.lit .null)) [(⟨0,0⟩, .int 1)] = false := ⟨rfl, rfl⟩
 
 /-! ## reduce_count -/

@@ -260,6 +260,42 @@ class testNodeByIDFlow(FlowTestsBase):
             self.env.assertFalse("query crashed")
 
 
+    def test_non_integer_id_bounds(self):
+        # A seek must keep exactly the rows the `id(n) <op> x` filter it
+        # replaces keeps. A float compares numerically; null, NaN and
+        # non-numeric bounds never compare true, so they match nothing
+        # (they used to raise "Node ID must be an integer").
+        queries = [
+            ("MATCH (n) WHERE ID(n) = null RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) > null RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) = '1' RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) = true RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) = 0.0 / 0.0 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) = 1.0 RETURN count(n)", 1),
+            ("MATCH (n) WHERE ID(n) = 1.5 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) > 1.5 RETURN count(n)", 8),
+            ("MATCH (n) WHERE ID(n) >= 1.5 RETURN count(n)", 8),
+            ("MATCH (n) WHERE ID(n) < 2.5 RETURN count(n)", 3),
+            ("MATCH (n) WHERE ID(n) <= 2.5 RETURN count(n)", 3),
+            ("MATCH (n) WHERE ID(n) > 2.0 AND ID(n) < 5.0 RETURN count(n)", 2),
+            ("MATCH (n) WHERE ID(n) > 1.0 / 0.0 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) < 1.0 / 0.0 RETURN count(n)", 10),
+            ("MATCH (n) WHERE ID(n) > -1.0 / 0.0 RETURN count(n)", 10),
+            ("MATCH (n) WHERE ID(n) > -1 RETURN count(n)", 10),
+            ("MATCH (n) WHERE ID(n) >= -5 RETURN count(n)", 10),
+            ("MATCH (n) WHERE ID(n) <= -1 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) < -1.5 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) > 9223372036854775807 RETURN count(n)", 0),
+            ("MATCH (n:person) WHERE ID(n) = 3.0 RETURN count(n)", 1),
+            ("MATCH (n:person) WHERE ID(n) = null RETURN count(n)", 0),
+            ("MATCH (n:person) WHERE ID(n) > -1 RETURN count(n)", 10),
+        ]
+        for query, expected in queries:
+            plan = str(self.graph.explain(query))
+            self.env.assertTrue("NodeByIdSeek" in plan or "Node By Label and ID Scan" in plan)
+            res = self.graph.query(query).result_set
+            self.env.assertEqual(res, [[expected]], message=query)
+
     def test_id_seek_on_a_graph_that_never_held_a_node(self):
         # An empty graph reported its highest node id as 0, which the id seek
         # read as "id 0 exists", so it returned a phantom node 0. Writes to it
@@ -292,13 +328,10 @@ class testNodeByIDFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set, [[0, 0], [1, 1], [2, 2]])
         g.delete()
 
-        # A non-integer bound is still rejected when no node was ever created.
+        # A non-integer bound matches nothing, as the filter it replaces would.
         g = self.db.select_graph("node_by_id_empty_type")
-        try:
-            g.query("MATCH (n) WHERE id(n) = '0' RETURN n")
-            self.env.assertTrue(False)
-        except Exception as e:
-            self.env.assertContains("Node ID must be an integer", str(e))
+        res = g.query("MATCH (n) WHERE id(n) = '0' RETURN n")
+        self.env.assertEqual(res.result_set, [])
         g.delete()
 
     def test_parenthesised_id_predicates(self):
