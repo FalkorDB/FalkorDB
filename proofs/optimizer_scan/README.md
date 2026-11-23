@@ -47,7 +47,8 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 | Theorem | In plain words | File |
 |---|---|---|
 | `utilize_sound` | On single-label scans with Null/Int/String values and the listed filter shapes, the index rewrite selects exactly what the filter does | `IndexPipeline.lean` |
-| `sel_eq`, `sel_range`, `sel_inList`, `sel_and2`, `sel_merge` | The pieces: equality, ranges, `IN`, AND, merged ranges | `IndexSound.lean` |
+| `sel_eq`, `sel_range`, `sel_inList`, `sel_and2`, `sel_merge` | The pieces: equality, ranges, `IN`, AND, merged ranges | `BoolOperand.lean` | `is_comparison`, `is_boolean_operator` and the `bool_valued_operand` arm of `needs_post_filter` |
+| `IndexSound.lean` |
 | `trySingle_spec`, `pushAnd_spec`, `pushOr_spec` | Each branch of the index pushdown selects the right condition | `IndexSound.lean`, `IndexPipeline.lean` |
 | `edge_utilize_sound` | EdgeByIndexScan plus the bound-endpoint filter equals Filter → CondTraverse | `EdgeInline.lean` |
 | `distance_sound` | A `distance()` index scan is sound, and the Filter is always kept | `EdgeInline.lean` |
@@ -112,12 +113,11 @@ The project has no Lake dependencies.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 72 |
+| PROVEN | 74 |
 | MODELLED | 1 |
-| NOT COVERED | 2 |
 
 - **MODELLED:** `Index::build_query_node` in `index/mod.rs`, a support function, not a target file. The RediSearch semantics of its query nodes are definitions here (`build`), used by `sel_eq`, `sel_range` and `sel_and2`.
-- **NOT COVERED:** `is_comparison` and `is_boolean_operator` (#2975) feed only the `bool_valued_operand` arm of `needs_post_filter`; the term model has no comparison-valued operand (`boolBound` covers the literal-Bool arm).
+- `is_comparison` and `is_boolean_operator` (#2975) and the `bool_valued_operand` arm of `needs_post_filter` they feed are modelled on expression kinds in `BoolOperand.lean` (the term model has no comparison-valued operand; `boolBound` covers the literal-Bool arm): a boolean operator under a range always keeps the filter (`range_parent_flags`), on the RediSearch build only there (`redisearch_only_range`), and under `index-falkordb` also under a comparison or as an `IN` list member (`falkor_comparison_parent_flags`, `falkor_in_list_member_flags`).
 
 ## What the model does not cover
 
