@@ -58,7 +58,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 |---|---|---|
 | `emit_directed_iff`, `emit_bidir_iff` | A single hop returns exactly the matching edges, directed or undirected; a self-loop matches once | `CondTraverse.lean` |
 | `twoHop_emit_iff`, `twoHopN_eq_emit` | Two chained hops return the openCypher match set with distinct relationships, collapsed or not (#3639) | `CondTraverse.lean` |
-| `expandRowN_eq_emit`, `expandIntoN_eq_emit`, `hopCount_eq`, `walks2_distinct_count` | Since #3639 every hop, per-row or batched, counts edges, not node pairs | `CondTraverse.lean` |
+| `expandRowN_eq_emit`, `expandIntoN_eq_emit`, `hopCount_eq`, `walks2_distinct_count` | Since #3639 every hop, per-row or batched, counts edges, not node pairs (`hopCount_eq` counts in unbounded `Nat`; the engine's `u64` products wrap, so the batched-path rows are CONDITIONAL on no overflow; `count_lmxm_into`'s `BoolUnion` arm is not modelled, NOT COVERED) | `CondTraverse.lean` |
 | `batched_eq_collapse`, `fused_chain_semantics` | The matrix-multiply path equals per-row expansion, for any multiply meeting the GraphBLAS spec | `CondTraverse.lean` |
 | `varLen_iff` | Variable-length returns exactly the trails with length in `[min, max]` | `VarLen.lean` |
 | `varLen_bidir_reverse_iff` | An undirected variable-length walk started from the bound `to` (reversed) returns the same trails read backwards | `VarLen.lean` |
@@ -131,13 +131,15 @@ The project imports `proofs/graphblas_wrappers` and `proofs/versioned_matrix` (t
 
 Line numbers are pinned to main 5e475e6c9. No traversal operator changed since fb3d516d0; #2383 changed the index scans (a list now reaches the index as one `InList`, `canUse_inListV_eq_or`), #3436 only replaced `g.borrow()` with `graph()`, and #2899 / #2954 shifted the `eval.rs` rows.
 
-`COVERAGE.tsv` has 84 rows:
+`COVERAGE.tsv` has 93 rows:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 84 |
+| PROVEN | 82 |
+| CONDITIONAL | 2 |
+| NOT COVERED | 9 |
 
-Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled). The rest:
+The operator files under `runtime/ops/` in scope are PROVEN except the rows named in COVERAGE.tsv as CONDITIONAL (`expand_batch`, `expand_batch_rows`: no-overflow of the `u64` counts) or NOT COVERED (including `count_lmxm_into`, whose `BoolUnion` arm and counted helper calls are not modelled). No FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled. The rest:
 
 - **`cond_traverse.rs` since #3492:** `delta_lmxm_into` is proved (`UnionGlue.deltaInto_eff`: `F * (A1 + .. + Ak)` on the pattern, via `GBWDelta.deltaLmxm_eff`); the iterator builders and the `UnionIter` merge (`UnionStream.drain_spec`) are modelled and proved. The batched path's one-hop theorems still take `MxmSpec` for the multiply.
 - **`algo_procedures.rs`, `eval.rs` (since 2026-11-22):** config parsing, the path comparator, `to_numeric_value`, `edge_numeric_attr`, `far_endpoint`, `node_successors`, the Dijkstra heap order, `build_path_batch` and the two registrations are PROVEN (`AlgoPaths`); `eval_shortest_path` is PROVEN as glue (`EvalSP`, the search is a parameter).

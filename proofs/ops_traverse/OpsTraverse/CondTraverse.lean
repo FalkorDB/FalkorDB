@@ -445,7 +445,10 @@ theorem nuRetain_idFree_count (g : Graph) (ps : List (Nat × Nat)) (r : RowIn)
 and `add_counted_product` adds `f · surplus`, the edges each pair holds beyond the first. -/
 
 /-- One hop from the frontier `F` (a count per node of `nodes`) to `d`: the pair product plus
-the surplus product. -/
+the surplus product. This is a mathematical specification over unbounded `Nat`: the engine's
+`PLUS_PAIR` products and `add_counts` wrap in `u64`, so `hopCount_eq` is exact only under the
+no-overflow assumption (every count below `2^64`), and the COVERAGE rows citing it are
+CONDITIONAL on that. -/
 def hopCount (g : Graph) (nodes : List Nat) (F : Nat → Nat) (d : Nat) : Nat :=
   (nodes.map fun k => F k * (if (k, d) ∈ pairs g then 1 else 0)).sum +
     (nodes.map fun k => F k * ((edgesBetween g k d).length - 1)).sum
