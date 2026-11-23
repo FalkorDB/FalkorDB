@@ -111,7 +111,7 @@ pub use value_hash_join::ValueHashJoinOp;
 
 use std::collections::VecDeque;
 
-use crate::graph::graph::RelationshipId;
+use crate::graph::graph::{Graph, RelationshipId};
 use crate::runtime::value::Value;
 
 use super::{
@@ -137,6 +137,217 @@ pub fn drain_pending(
     }
 }
 
+/// Marks an entry of a `sibling_edges` list as a *collapsed* edge.
+///
+/// A collapsed edge is one the planner stopped emitting per edge, so it binds
+/// one arbitrary representative of its parallel edges. The flag is the top bit
+/// of the alias id. The collapsed edge matches a single relationship type,
+/// that of its representative.
+pub const COLLAPSED_SIBLING: u32 = 1 << 31;
+
+/// Like [`COLLAPSED_SIBLING`], for a collapsed edge that matches every
+/// relationship type (an untyped pattern).
+///
+/// A collapsed edge matching several but not all types is not flagged: its
+/// types are not known here.
+pub const COLLAPSED_SIBLING_ANY_TYPE: u32 = 1 << 30;
+
+/// Every flag bit of a `sibling_edges` entry.
+const SIBLING_FLAGS: u32 = COLLAPSED_SIBLING | COLLAPSED_SIBLING_ANY_TYPE;
+
+/// What an operator knows about the other edges it could have bound in place of
+/// a collapsed edge's representative; see [`edge_already_used`].
+pub struct Parallel<'a> {
+    pub graph: &'a Graph,
+    /// The tensor indices the expanding relationship matches when it is
+    /// collapsed (`emit_relationship == false`), `None` when it emits.
+    pub own_types: Option<&'a [usize]>,
+    /// Relationships deleted by the running query, which are not alternatives.
+    pub deleted: &'a dyn Fn(RelationshipId) -> bool,
+}
+
+/// The relationship types an alternative edge may have.
+#[derive(Clone, Copy)]
+enum Matching<'a> {
+    /// These tensors.
+    Tensors(&'a [usize]),
+    /// The type of the edge in question.
+    TypeOfEdge,
+    /// Any type.
+    AnyType,
+}
+
+impl Parallel<'_> {
+    /// Could `edge_id`'s endpoint pair still supply a distinct edge to one more
+    /// hop, given that `taken` other hops of `siblings` are bound to edges of
+    /// that pair with a type in `types`? True when the pair holds more live
+    /// edges of those types than the hops already bound to it.
+    ///
+    /// Counting the bound hops, not just the existence of a parallel edge,
+    /// keeps a third collapsed hop from reusing an edge two siblings took when
+    /// the pair holds only two.
+    fn has_alternative<R: RowView + ?Sized>(
+        &self,
+        env: &R,
+        edge_id: RelationshipId,
+        own_alias_id: u32,
+        siblings: &[u32],
+        types: Matching,
+    ) -> bool {
+        let g = self.graph;
+        let raw = u64::from(edge_id);
+        let Some((src, dst)) = g.endpoints_for_edge(raw) else {
+            return false;
+        };
+        let edge_tidx = || {
+            g.relationship_type_matrix_iter(raw, raw)
+                .next()
+                .map(|(_, tidx)| tidx as usize)
+        };
+        let all = g.relationship_tensors().len();
+        let matches = |tidx: usize, own_tidx: Option<usize>| match types {
+            Matching::Tensors(tensors) => tensors.contains(&tidx),
+            Matching::TypeOfEdge => own_tidx == Some(tidx),
+            Matching::AnyType => tidx < all,
+        };
+        let own_tidx = edge_tidx();
+        // Hops of the clause already bound to an edge of this pair (stored
+        // direction: an undirected pattern reaches the edge stored the other
+        // way round through its own row, not as a stand-in for this one).
+        let mut taken = 0usize;
+        for &entry in siblings {
+            let sibling_id = entry & !SIBLING_FLAGS;
+            if sibling_id == own_alias_id {
+                continue;
+            }
+            let Some(Value::Relationship(bound)) = env.value_at(sibling_id) else {
+                continue;
+            };
+            let bound_raw = u64::from(bound);
+            // A binding deleted by this query is not among `live` below, so it
+            // must not count against it either.
+            if (self.deleted)(RelationshipId::from(bound_raw))
+                || g.endpoints_for_edge(bound_raw) != Some((src, dst))
+            {
+                continue;
+            }
+            let bound_tidx = if bound == edge_id {
+                own_tidx
+            } else {
+                g.relationship_type_matrix_iter(bound_raw, bound_raw)
+                    .next()
+                    .map(|(_, tidx)| tidx as usize)
+            };
+            if bound_tidx.is_some_and(|t| matches(t, own_tidx)) {
+                taken += 1;
+            }
+        }
+        if taken == 0 {
+            // Nothing else is bound here: any live edge is free.
+            return true;
+        }
+        // Live edges of the pair of the matching types; stops once there are
+        // more than `taken`. No allocation: this runs on every uniqueness
+        // collision of a collapsed edge.
+        let live = |tidx: usize| -> usize {
+            g.relationship_tensors().get(tidx).map_or(0, |tensor| {
+                tensor
+                    .get(src, dst)
+                    .filter(|&other| !(self.deleted)(RelationshipId::from(other)))
+                    .take(taken + 1)
+                    .count()
+            })
+        };
+        let mut total = 0;
+        match types {
+            Matching::Tensors(tensors) => {
+                for &tidx in tensors {
+                    total += live(tidx);
+                    if total > taken {
+                        break;
+                    }
+                }
+            }
+            Matching::TypeOfEdge => {
+                if let Some(tidx) = own_tidx {
+                    total = live(tidx);
+                }
+            }
+            Matching::AnyType => {
+                for tidx in 0..all {
+                    total += live(tidx);
+                    if total > taken {
+                        break;
+                    }
+                }
+            }
+        }
+        total > taken
+    }
+}
+
+impl Parallel<'_> {
+    /// Do the hops that can only bind an edge of `edge_id`'s type already need
+    /// every live edge of that type between its endpoints?
+    ///
+    /// Counts this hop (it binds `edge_id`, or collapses over that one type)
+    /// and every single-type collapsed sibling bound to the pair with an edge of
+    /// that type. Those hops cannot take another type, so they need distinct
+    /// edges of it however the flexible siblings (untyped, several types) are
+    /// bound. Without this, three `:R` hops over two `:R` edges pass when an
+    /// untyped sibling can absorb the surplus in the any-type count.
+    fn typed_demand_exceeded<R: RowView + ?Sized>(
+        &self,
+        env: &R,
+        edge_id: RelationshipId,
+        own_alias_id: u32,
+        siblings: &[u32],
+    ) -> bool {
+        if self.own_types.is_some_and(|types| types.len() != 1) {
+            return false;
+        }
+        let g = self.graph;
+        let raw = u64::from(edge_id);
+        let Some((src, dst)) = g.endpoints_for_edge(raw) else {
+            return false;
+        };
+        let tidx_of = |id: u64| {
+            g.relationship_type_matrix_iter(id, id)
+                .next()
+                .map(|(_, tidx)| tidx as usize)
+        };
+        let Some(own_tidx) = tidx_of(raw) else {
+            return false;
+        };
+        let mut demand = 1usize;
+        for &entry in siblings {
+            let sibling_id = entry & !SIBLING_FLAGS;
+            if sibling_id == own_alias_id || entry & COLLAPSED_SIBLING == 0 {
+                continue;
+            }
+            let Some(Value::Relationship(bound)) = env.value_at(sibling_id) else {
+                continue;
+            };
+            let bound_raw = u64::from(bound);
+            if (self.deleted)(RelationshipId::from(bound_raw))
+                || g.endpoints_for_edge(bound_raw) != Some((src, dst))
+                || tidx_of(bound_raw) != Some(own_tidx)
+            {
+                continue;
+            }
+            demand += 1;
+        }
+        let live = g.relationship_tensors().get(own_tidx).map_or(0, |tensor| {
+            tensor
+                .get(src, dst)
+                .filter(|&other| !(self.deleted)(RelationshipId::from(other)))
+                .take(demand)
+                .count()
+        });
+        demand > live
+    }
+}
+
 /// Check whether a given edge ID is already bound to another relationship
 /// variable in the environment.
 ///
@@ -145,28 +356,93 @@ pub fn drain_pending(
 /// distinct physical edge.
 ///
 /// `own_alias_id` is the variable slot of the current relationship being
-/// expanded — it is skipped during the scan.
+/// expanded — it is skipped during the scan. `parallel` describes the
+/// alternatives a collapsed edge has (see below).
 ///
 /// `sibling_edges` contains the alias IDs of other relationship variables
 /// in the same MATCH clause component. Only these are checked — relationship
 /// variables from other MATCH/OPTIONAL MATCH clauses are ignored per the
 /// Cypher spec.
+///
+/// A collapsed edge stands for all the parallel edges of its (src, dst) pair
+/// and binds an arbitrary one of them, so its representative colliding with
+/// another edge says nothing when a parallel edge exists: some other choice
+/// would not collide. Such a collision is ignored, which keeps the result from
+/// depending on which parallel edge was picked. A parallel edge counts when it
+/// is live and its type is one the collapsed pattern matches; when the pair
+/// holds no such edge the representative is the only choice and the check
+/// applies as usual.
 #[must_use]
 pub fn edge_already_used<R: RowView + ?Sized>(
     env: &R,
+    parallel: &Parallel,
     edge_id: RelationshipId,
     own_alias_id: u32,
     sibling_edges: &[u32],
 ) -> bool {
-    for &sibling_id in sibling_edges {
+    let mut any_collapsed = parallel.own_types.is_some();
+    let mut any_type_sibling = false;
+    for &entry in sibling_edges {
+        let sibling_id = entry & !SIBLING_FLAGS;
+        any_collapsed |= entry & SIBLING_FLAGS != 0;
+        any_type_sibling |= entry & COLLAPSED_SIBLING_ANY_TYPE != 0;
         if sibling_id == own_alias_id {
             continue;
         }
         if let Some(Value::Relationship(rel)) = env.value_at(sibling_id)
             && rel == edge_id
         {
+            // The collision can be avoided when either side could have bound
+            // another edge of the types it matches that no other hop holds.
+            let own_avoids = parallel.own_types.is_some_and(|types| {
+                parallel.has_alternative(
+                    env,
+                    edge_id,
+                    own_alias_id,
+                    sibling_edges,
+                    Matching::Tensors(types),
+                )
+            });
+            let sibling_avoids = if entry & COLLAPSED_SIBLING_ANY_TYPE != 0 {
+                parallel.has_alternative(
+                    env,
+                    edge_id,
+                    own_alias_id,
+                    sibling_edges,
+                    Matching::AnyType,
+                )
+            } else if entry & COLLAPSED_SIBLING != 0 {
+                parallel.has_alternative(
+                    env,
+                    edge_id,
+                    own_alias_id,
+                    sibling_edges,
+                    Matching::TypeOfEdge,
+                )
+            } else {
+                false
+            };
+            if own_avoids || sibling_avoids {
+                continue;
+            }
             return true;
         }
     }
-    false
+    // A collapsed hop reuses an edge a sibling holds instead of failing (above),
+    // so an edge that collides with nothing can still be one hop too many: when
+    // the hops bound to the pair already use up its edges, no further hop can
+    // bind a distinct one, whichever edge it picks.
+    any_collapsed
+        && (parallel.typed_demand_exceeded(env, edge_id, own_alias_id, sibling_edges)
+            || !parallel.has_alternative(
+                env,
+                edge_id,
+                own_alias_id,
+                sibling_edges,
+                match parallel.own_types {
+                    Some(types) => Matching::Tensors(types),
+                    None if any_type_sibling => Matching::AnyType,
+                    None => Matching::TypeOfEdge,
+                },
+            ))
 }

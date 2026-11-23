@@ -70,6 +70,7 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 | `hasLabelId_iff`, `hasLabel_iff` | `n:L` is exactly `L ∈ labels(n)`, by id or by name | `Accessors.lean` |
 | `degree_exact` | Degrees never underflow and count live edges exactly | `Accessors.lean` |
 | `checkTimeout_spec`, `checkMem_spec` | The timeout fires iff now ≥ deadline; for usage < 2⁶³, the memory cap fires iff 0 < cap < usage | `Misc.lean` |
+| `edgeAlreadyUsedP_iff`, `edgeAlreadyUsedP_plain`, `hasAlt_spec`, `typedDemandExceeded_spec`, `shared_representative_no_row` | Relationship uniqueness (#3054): with nothing collapsed, an edge is rejected iff another hop of the clause holds it; a collision with or by a collapsed hop is ignored while the pair has a live matching edge no other hop holds, and single-type hops never need more edges of their type than the pair holds | `Misc.lean` |
 | `vector_requires_dimension`, `vector_requires_similarity`, `fulltextUnknown_none_iff` | Index OPTIONS validation as in C (#3094) | `Misc.lean` |
 
 ### How `need_sound` is proved (and why `record_cap` fails it)
@@ -108,7 +109,7 @@ Each bug was compared against C. The live repro for B1/B2 is `repro_limit.py POR
 | `Accessors.lean` | Node attribute reads (deleted > pending > committed), the attr-id memo, labels and label staging, degrees |
 | `RelAccessors.lean` | Relationship attribute reads, typed materialisation, `label_id`, endpoints and type, pending attribute writes |
 | `Plan.lean` | `get_variables`, `get_return_names`, `inspect_batch`, `Runtime::new`, `default_batch`, `run_nested_plan`, `build_batch_op`'s child popping and checks |
-| `Misc.lean` | `check_timeout`, `check_mem_capacity`, `drain_pending`, `edge_already_used`, index OPTIONS validation |
+| `Misc.lean` | `check_timeout`, `check_mem_capacity`, `drain_pending`, `edge_already_used`, `Parallel::has_alternative`, `Parallel::typed_demand_exceeded`, index OPTIONS validation |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Its `lakefile.toml` requires [`../redis_layer`](../redis_layer) (for `Reuse.lean` only). `evaluate_id_filter` (`runtime.rs`) is proven in [`../optimizer_scan`](../optimizer_scan), and the emitter's typed gather lanes are proven in [`../columnar`](../columnar).

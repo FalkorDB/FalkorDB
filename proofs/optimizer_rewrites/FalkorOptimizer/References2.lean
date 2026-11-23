@@ -148,4 +148,95 @@ theorem main_misses_call_sibling :
   · simp [outsideOps, callCtx, Plan.ops]
   · decide
 
+/-! ## `reduce_expand_into` since #3054: which edges collapse, and their sibling flag -/
+
+/-- The flag a collapsed edge gets in its siblings' lists (`COLLAPSED_SIBLING` /
+`COLLAPSED_SIBLING_ANY_TYPE`, `runtime/ops/mod.rs`). -/
+inductive SibFlag where
+  | single
+  | anyType
+deriving DecidableEq
+
+/-- The `match relationship.types.len()` of `reduce_expand_into`: `none` = the edge is
+skipped (`continue`: never collapsed), `some f` = it may collapse, flagged `f` (`none`:
+unflagged, a multi-type hop among at most two siblings). -/
+def collapseFlag (ntypes nsibs : Nat) : Option (Option SibFlag) :=
+  match ntypes with
+  | 0 => some (some .anyType)
+  | 1 => some (some .single)
+  | _ => if nsibs > 2 then none else some none
+
+/-- `reduce_expand_into`: the edge `v` (with `ntypes` types and `nsibs` sibling entries)
+is collapsed iff the type guard lets it through and no ancestor reads it. -/
+def collapses (refs : IR → Var → Bool) (ctx : Ctx) (v : Var) (ntypes nsibs : Nat) : Bool :=
+  (collapseFlag ntypes nsibs).isSome && !ancestorsRead refs ctx v
+
+/-- **PROVEN**: #3054 only removes collapses: an edge is still collapsed only when the
+ancestor walk finds no reader, so every theorem about `ancestorsRead` carries over. -/
+theorem collapses_imp_unread (refs : IR → Var → Bool) (ctx : Ctx) (v : Var) (nt ns : Nat)
+    (h : collapses refs ctx v nt ns = true) : ancestorsRead refs ctx v = false := by
+  simp only [collapses, Bool.and_eq_true, Bool.not_eq_true'] at h; exact h.2
+
+/-- **PROVEN**: an untyped or single-type edge collapses exactly as before #3054. -/
+theorem collapses_le_one_type (refs : IR → Var → Bool) (ctx : Ctx) (v : Var) (nt ns : Nat)
+    (hn : nt ≤ 1) : collapses refs ctx v nt ns = !ancestorsRead refs ctx v := by
+  rcases Nat.le_one_iff_eq_zero_or_eq_one.1 hn with rfl | rfl <;> simp [collapses, collapseFlag]
+
+/-- **PROVEN**: a hop over several types among three or more siblings is never collapsed
+(its types cannot be told apart at run time). -/
+theorem multi_type_many_siblings_emits (refs : IR → Var → Bool) (ctx : Ctx) (v : Var)
+    (nt ns : Nat) (hn : 2 ≤ nt) (hs : 2 < ns) : collapses refs ctx v nt ns = false := by
+  obtain ⟨k, rfl⟩ : ∃ k, nt = k + 2 := ⟨nt - 2, by omega⟩
+  simp [collapses, collapseFlag, hs]
+
+/-- The untyped `r` of `main_misses_call_sibling` still collapses after #3054 (bug 7 open). -/
+theorem main_misses_call_sibling_collapses : collapses refsNew callCtx r 0 0 = true := by
+  rw [collapses_le_one_type _ _ _ _ _ (by decide), main_misses_call_sibling.1]; rfl
+
+/-- `starts_plan`: is the child at position `pos` of `parent` the root of a plan of its own? -/
+def startsPlan : IR → Nat → Bool
+  | .union, _ | .nestedPlans, _ => true
+  | .apply, pos | .semiApply, pos | .antiSemiApply, pos | .orApplyMultiplexer, pos => decide (0 < pos)
+  | _, _ => false
+
+/-- **PROVEN**: a plan starts below a `Union` or `NestedPlans`, and below every child of an
+apply but the first (the one feeding it). -/
+theorem startsPlan_spec (ir : IR) (pos : Nat) :
+    startsPlan ir pos = true ↔
+      (ir = .union ∨ ir = .nestedPlans) ∨
+      ((ir = .apply ∨ ir = .semiApply ∨ ir = .antiSemiApply ∨ ir = .orApplyMultiplexer) ∧
+        0 < pos) := by
+  cases ir <;> simp [startsPlan]
+
+/-- `branch_root`: the ancestors of the operator, innermost first, each as the parent and
+the position of the child the walk comes from (`sibling_idx`). The result is the number of
+steps the `while let` loop climbs before `starts_plan` breaks it or the root is reached. -/
+def branchDepth : List (IR × Nat) → Nat
+  | [] => 0
+  | (p, pos) :: fs => if startsPlan p pos then 0 else branchDepth fs + 1
+
+/-- **PROVEN**: `branch_root` climbs over exactly the parents that do not start a plan:
+none of the frames it crosses starts one, and it stops either at the plan's root or at a
+frame that does. -/
+theorem branchDepth_spec :
+    ∀ fs : List (IR × Nat),
+      (∀ f ∈ fs.take (branchDepth fs), startsPlan f.1 f.2 = false) ∧
+      (branchDepth fs = fs.length ∨
+        ∃ f, fs[branchDepth fs]? = some f ∧ startsPlan f.1 f.2 = true)
+  | [] => by simp [branchDepth]
+  | (p, pos) :: fs => by
+    obtain ⟨ih1, ih2⟩ := branchDepth_spec fs
+    by_cases h : startsPlan p pos = true
+    · simp [branchDepth, h]
+    · simp only [Bool.not_eq_true] at h
+      simp only [branchDepth, h, Bool.false_eq_true, ite_false, List.take_succ_cons,
+        List.mem_cons, List.length_cons, List.getElem?_cons_succ]
+      refine ⟨?_, ?_⟩
+      · rintro f (rfl | hf)
+        · exact h
+        · exact ih1 f hf
+      · rcases ih2 with h2 | h2
+        · exact Or.inl (by omega)
+        · exact Or.inr h2
+
 end Falkor.Opt.Refs

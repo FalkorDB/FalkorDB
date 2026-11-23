@@ -25,7 +25,12 @@ namespace OpsTraverse
 structure RowIn where
   fromId : Option Nat
   toId   : Option Nat
-  /-- Edge ids bound to *sibling* relationship aliases on this row. -/
+  /-- Edge ids `edge_already_used` rejects on this row. It is a per-row predicate of the
+  edge id (the row, `sibling_edges` and `Parallel` are fixed for the row), so a list of
+  ids describes it exactly. With nothing collapsed these are the edges bound to *sibling*
+  relationship aliases (`RuntimeCore.Misc.edgeAlreadyUsedP_plain`); since #3054 a
+  collapsed hop or sibling may also share an edge that has a parallel alternative, or
+  reject one when the pair's edges are used up (`edgeAlreadyUsedP_iff`). -/
   used   : List Nat
 deriving DecidableEq, Repr
 

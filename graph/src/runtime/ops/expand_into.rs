@@ -194,6 +194,12 @@ impl<'a> ExpandIntoOp<'a> {
             }
         });
 
+        let parallel = super::Parallel {
+            graph: g,
+            own_types: (!emit_relationship).then_some(edge_type_indices.as_slice()),
+            deleted: &|id| pending.is_relationship_deleted(id),
+        };
+
         // Matched edge ids for this input row, drained eagerly while the caller
         // holds the graph borrow (the tensor edge lookups are consumed here, never
         // parked in the emitter).
@@ -208,7 +214,13 @@ impl<'a> ExpandIntoOp<'a> {
                     for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                         let id = RelationshipId::from(raw_id);
                         if !pending.is_relationship_deleted(id)
-                            && !super::edge_already_used(&env, id, rp.alias.id, sibling_edges)
+                            && !super::edge_already_used(
+                                &env,
+                                &parallel,
+                                id,
+                                rp.alias.id,
+                                sibling_edges,
+                            )
                         {
                             found_id = Some(id);
                             break 'outer;
@@ -227,7 +239,7 @@ impl<'a> ExpandIntoOp<'a> {
                     if pending.is_relationship_deleted(id) {
                         continue;
                     }
-                    if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
+                    if super::edge_already_used(&env, &parallel, id, rp.alias.id, sibling_edges) {
                         continue;
                     }
                     row_edges.push(id);

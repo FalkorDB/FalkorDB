@@ -51,7 +51,8 @@ graph/src/runtime/runtime.rs	get_node_indegree	1965	PROVEN	Accessors.degree_exac
 graph/src/runtime/runtime.rs	get_node_indegree_by_type	1982	PROVEN	Accessors.degree_exact (endp = dst)
 graph/src/runtime/runtime.rs	get_node_outdegree	2000	PROVEN	Accessors.degree_exact (endp = src, types = [])
 graph/src/runtime/runtime.rs	get_node_outdegree_by_type	2017	PROVEN	Accessors.degree_exact (endp = src)
-graph/src/runtime/ops/mod.rs	edge_already_used	155	PROVEN	Misc.edgeAlreadyUsed_iff
+graph/src/runtime/ops/mod.rs	edge_already_used	376	PROVEN	Misc.edgeAlreadyUsedP (#3054, collapsed hops and flagged siblings): edgeAlreadyUsedP_iff, collisions_iff; nothing collapsed = the plain scan Misc.edgeAlreadyUsed: edgeAlreadyUsedP_plain, edgeAlreadyUsedP_plain_iff, edgeAlreadyUsed_iff; #3047 repro: repro3047_parallel_free, repro3047_single_kept, repro3047_deleted_parallel; open: typed_hop_depends_on_representative (W2-traverse-12); typed_demand_exceeded term: typedDemandExceeded_spec; W2-traverse-13 (introduced and fixed within #3054): shared_representative_no_row
+graph/src/runtime/ops/mod.rs	Parallel::has_alternative	189	PROVEN	Misc.hasAlt/taken/live/sumBreak/total (literal, with the take(taken + 1) and break early exits): hasAlt_spec (the early exits do not change the answer: live matching edges of the pair > hops bound to them), used by edgeAlreadyUsedP_iff
 graph/src/runtime/ops/batched_result_emitter.rs	one	458	PROVEN	Emitter.RowIter.one; reused: proofs/columnar Gather.RowIter.one: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Emitter.RowIter.spread; reused: proofs/columnar Gather.RowIter.spread: rowIter_spec
 graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Emitter.RowIter.many; reused: proofs/columnar Gather.RowIter.many: rowIter_spec
@@ -63,3 +64,4 @@ graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loo
 graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
 graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
 graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)
+graph/src/runtime/ops/mod.rs	Parallel::typed_demand_exceeded	299	PROVEN	Misc.typedDemand/multiOwn/typedDemandExceeded (literal, with the take(demand) early exit): typedDemandExceeded_spec (live edges of the edge's type on its pair < this hop + single-type collapsed siblings bound to such edges), used by edgeAlreadyUsedP_iff, shared_representative_no_row
