@@ -108,7 +108,7 @@ The project has no Lake dependencies. [`../replication`](../replication) require
 |---|---|
 | PROVEN | 36 |
 
-Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models.
+Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does. Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models.
 
 ## What the model does not cover
 
