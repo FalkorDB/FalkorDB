@@ -1,4 +1,5 @@
 from common import *
+from index_utils import wait_for_indices_to_sync
 
 GRAPH_ID = "node_by_id"
 
@@ -343,4 +344,116 @@ class testNodeByIDFlow(FlowTestsBase):
         # A node created in the same query is still found.
         res = g.query("CREATE (a) WITH a MATCH (n) WHERE id(n) = id(a) RETURN count(n)")
         self.env.assertEqual(res.result_set, [[1]])
+        g.delete()
+
+    def test_unwind_then_match_by_id_seeks_per_row(self):
+        # `UNWIND .. MATCH (a) WHERE id(a) = e.s MATCH (b) WHERE id(b) = e.d`:
+        # the second MATCH is joined to the first by `id(b)` only. It used to
+        # become a Value Hash Join over a scan of every node (or of b's label),
+        # whose cost grows with the graph however few rows the UNWIND produces.
+        # Each row now looks b up by id, as it already looks a up.
+        g = self.db.select_graph("unwind_match_by_id")
+        g.query("UNWIND range(0, 99) AS i CREATE (:A {v: i})")
+        g.query("UNWIND range(0, 599) AS i CREATE (:B {v: i})")
+
+        # no node has id 999999
+        q = ("UNWIND [{s: 0, d: 100}, {s: 1, d: 650}, {s: 2, d: 999999}] AS e "
+             "MATCH (a) WHERE id(a) = e.s MATCH (b) WHERE id(b) = e.d "
+             "RETURN id(a), id(b), b.v ORDER BY id(a)")
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count("NodeByIdSeek"), 2)
+        self.env.assertNotContains("Value Hash Join", plan)
+        self.env.assertNotContains("All Node Scan", plan)
+        self.env.assertEqual(g.query(q).result_set, [[0, 100, 0], [1, 650, 550]])
+
+        # with labels: node 5 is an A, not a B
+        q = ("UNWIND [{s: 0, d: 100}, {s: 1, d: 5}] AS e "
+             "MATCH (a:A) WHERE id(a) = e.s MATCH (b:B) WHERE id(b) = e.d "
+             "RETURN id(a), id(b) ORDER BY id(a)")
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count("Node By Label and ID Scan"), 2)
+        self.env.assertNotContains("Value Hash Join", plan)
+        self.env.assertNotContains("Node By Label Scan", plan)
+        self.env.assertEqual(g.query(q).result_set, [[0, 100]])
+
+        # the reported shape: a batch of edges between nodes found by id
+        q = ("UNWIND [{s: 0, d: 100}, {s: 1, d: 101}] AS e "
+             "MATCH (a) WHERE id(a) = e.s MATCH (b) WHERE id(b) = e.d CREATE (a)-[:R]->(b)")
+        self.env.assertNotContains("Value Hash Join", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).relationships_created, 2)
+        res = g.query("MATCH (a)-[:R]->(b) RETURN id(a), id(b) ORDER BY id(a)")
+        self.env.assertEqual(res.result_set, [[0, 100], [1, 101]])
+
+        # b's own filter and a conjunct on the outer row still apply
+        q = ("UNWIND [{s: 0, d: 100, v: 0}, {s: 1, d: 101, v: 7}, {s: 2, d: 102, v: 2}] AS e "
+             "MATCH (a) WHERE id(a) = e.s MATCH (b:B) WHERE id(b) = e.d AND b.v > 0 AND b.v = e.v "
+             "RETURN id(a), id(b) ORDER BY id(a)")
+        plan = str(g.explain(q))
+        self.env.assertContains("Node By Label and ID Scan", plan)
+        self.env.assertNotContains("Value Hash Join", plan)
+        self.env.assertEqual(g.query(q).result_set, [[2, 102]])
+
+        # the MATCH clauses are separate isomorphism scopes (#2923): b may be a
+        q = "UNWIND [3] AS x MATCH (a) WHERE id(a) = x MATCH (b) WHERE id(b) = x RETURN id(a), id(b)"
+        self.env.assertEqual(g.query(q).result_set, [[3, 3]])
+
+        # A key that can fail stays behind b's filter, which rejects every B,
+        # so `e.q / e.z` never runs.
+        q = ("UNWIND [{s: 0, q: 5, z: 0}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b:B) WHERE b.v > 1000 AND id(b) = e.q / e.z RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+
+        # A key that is not deterministic would be evaluated twice, and a key
+        # that reads b cannot be evaluated before b is found: only a is sought.
+        for q in [
+            "UNWIND [{s: 0, d: 100}, {s: 1, d: 101}] AS e MATCH (a) WHERE id(a) = e.s "
+            "MATCH (b) WHERE id(b) = e.d + toInteger(rand() * 0) RETURN id(a), id(b) ORDER BY id(a)",
+            "UNWIND [{s: 0, d: 100}, {s: 1, d: 101}] AS e MATCH (a) WHERE id(a) = e.s "
+            "MATCH (b) WHERE id(b) = e.d + b.v * 0 RETURN id(a), id(b) ORDER BY id(a)",
+        ]:
+            self.env.assertEqual(str(g.explain(q)).count("NodeByIdSeek"), 1, message=q)
+            self.env.assertEqual(g.query(q).result_set, [[0, 100], [1, 101]], message=q)
+
+        # more rows than the graph has nodes: one scan beats a lookup per row
+        q = ("UNWIND range(0, 999) AS i MATCH (a) WHERE id(a) = i % 100 "
+             "MATCH (b) WHERE id(b) = 100 + i % 600 RETURN count(*)")
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[1000]])
+
+        # A lookup on two labels intersects both label matrices for every row,
+        # so one scan for the hash join is cheaper.
+        g.query("MATCH (b:B) WHERE b.v < 10 SET b:C")
+        q = ("UNWIND [{s: 0, d: 101}, {s: 1, d: 200}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b:B:C) WHERE id(b) = e.d RETURN id(a), id(b)")
+        self.env.assertContains("Value Hash Join", str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[0, 101]])
+
+        # An indexed later MATCH after an id seek: the id seek yields one row
+        # per outer row, so the index is sought per row too.
+        g.create_node_range_index("B", "v")
+        wait_for_indices_to_sync(g)
+        q = ("UNWIND [{s: 0, v: 7}, {s: 1, v: 9}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b:B {v: e.v}) RETURN id(a), b.v ORDER BY id(a)")
+        plan = str(g.explain(q))
+        self.env.assertContains("Node By Index Scan", plan)
+        self.env.assertNotContains("Value Hash Join", plan)
+        self.env.assertEqual(g.query(q).result_set, [[0, 7], [1, 9]])
+
+        # A third MATCH joins a product that holds the first two, which are
+        # lookups by then: it is sought per row too.
+        q = ("UNWIND [{s: 0, d: 101, x: 102}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b) WHERE id(b) = e.d MATCH (c) WHERE id(c) = e.x RETURN id(a), id(b), id(c)")
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count("NodeByIdSeek"), 3)
+        self.env.assertNotContains("Value Hash Join", plan)
+        self.env.assertEqual(g.query(q).result_set, [[0, 101, 102]])
+
+        q = ("UNWIND [{s: 0, d: 101, v: 7}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b) WHERE id(b) = e.d MATCH (c:B {v: e.v}) RETURN id(a), id(b), c.v")
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count("NodeByIdSeek"), 2)
+        self.env.assertContains("Node By Index Scan", plan)
+        self.env.assertNotContains("Value Hash Join", plan)
+        self.env.assertEqual(g.query(q).result_set, [[0, 101, 7]])
+
         g.delete()
