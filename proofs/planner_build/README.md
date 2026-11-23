@@ -58,7 +58,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 |---|---|---|
 | `rustStitch_eq_nestStitch` | The Rust stitching loop builds the nested fill of the clause plans | `Stitch.lean` |
 | `query_correct` | If every clause plan implements its clause, the whole plan evaluates to the openCypher clause sequence | `Match.lean` |
-| `project_correct` | WITH/RETURN (projection or aggregation, DISTINCT, ORDER BY, SKIP, LIMIT, WHERE) is correct at its slot | `Clauses.lean` |
+| `project_correct_rows`, `project_correct` | WITH/RETURN (projection or aggregation, DISTINCT, ORDER BY, SKIP, LIMIT, WHERE) is correct at its slot | `Clauses.lean` |
 | `merge_loop_correct`, `create_loop_correct` | MERGE and CREATE, with or without a named path, are correct when not last | `Clauses.lean` |
 | `union_correct`, `call_correct`, `foreach_correct` | UNION / UNION ALL, `CALL {}` and FOREACH are correct | `Clauses.lean` |
 | `cp_stitch_sound` | Prepending a MATCH to a Cartesian product is right when no other component reads its variables | `Match.lean` |
@@ -76,7 +76,7 @@ The planner plans each clause on its own, then stitches the plans in reverse: th
 3. **Model the stitching.** `walkFirst` and `walkLoop` are the two insertion-point walks of `plan_query`; `insertStep` and `stitchLoop` are the tree surgery. `rustStitch_eq_nestStitch` shows the loop computes the nested fill.
 4. **State "implements".** `Implements w ok p F` says: put any input plan at the slot that walk `w` finds in `p`, and `ev` of the result is `F` applied to `ev` of the input. Each clause theorem in `Clauses.lean` proves this for one clause kind.
 5. **Compose.** `query_correct` inducts on the clause list: the nested fill of plans that each implement their clause evaluates to the composition of the clause meanings.
-6. **Hypotheses.** Sub-plans that come from elsewhere are hypotheses. The MERGE match branch must implement its pattern (`MatchBranch`), and FOREACH and `CALL {}` bodies must implement their clauses. `project_correct` assumes DISTINCT of an aggregate equals the aggregate. These are proven in other projects or are standard; they are stated, not linked.
+6. **Hypotheses.** Sub-plans that come from elsewhere are hypotheses. The MERGE match branch must implement its pattern (`MatchBranch`), and FOREACH and `CALL {}` bodies must implement their clauses. `project_correct_rows` assumes DISTINCT of an aggregate equals the aggregate only where the planner drops the `Distinct` (every item a bare aggregate call, #3579). These are proven in other projects or are standard; they are stated, not linked.
 
 ## Bugs found
 
