@@ -193,4 +193,50 @@ theorem multi_type_many_siblings_emits (refs : IR → Var → Bool) (ctx : Ctx) 
 theorem main_misses_call_sibling_collapses : collapses refsNew callCtx r 0 0 = true := by
   rw [collapses_le_one_type _ _ _ _ _ (by decide), main_misses_call_sibling.1]; rfl
 
+/-- `starts_plan`: is the child at position `pos` of `parent` the root of a plan of its own? -/
+def startsPlan : IR → Nat → Bool
+  | .union, _ | .nestedPlans, _ => true
+  | .apply, pos | .semiApply, pos | .antiSemiApply, pos | .orApplyMultiplexer, pos => decide (0 < pos)
+  | _, _ => false
+
+/-- **PROVEN**: a plan starts below a `Union` or `NestedPlans`, and below every child of an
+apply but the first (the one feeding it). -/
+theorem startsPlan_spec (ir : IR) (pos : Nat) :
+    startsPlan ir pos = true ↔
+      (ir = .union ∨ ir = .nestedPlans) ∨
+      ((ir = .apply ∨ ir = .semiApply ∨ ir = .antiSemiApply ∨ ir = .orApplyMultiplexer) ∧
+        0 < pos) := by
+  cases ir <;> simp [startsPlan]
+
+/-- `branch_root`: the ancestors of the operator, innermost first, each as the parent and
+the position of the child the walk comes from (`sibling_idx`). The result is the number of
+steps the `while let` loop climbs before `starts_plan` breaks it or the root is reached. -/
+def branchDepth : List (IR × Nat) → Nat
+  | [] => 0
+  | (p, pos) :: fs => if startsPlan p pos then 0 else branchDepth fs + 1
+
+/-- **PROVEN**: `branch_root` climbs over exactly the parents that do not start a plan:
+none of the frames it crosses starts one, and it stops either at the plan's root or at a
+frame that does. -/
+theorem branchDepth_spec :
+    ∀ fs : List (IR × Nat),
+      (∀ f ∈ fs.take (branchDepth fs), startsPlan f.1 f.2 = false) ∧
+      (branchDepth fs = fs.length ∨
+        ∃ f, fs[branchDepth fs]? = some f ∧ startsPlan f.1 f.2 = true)
+  | [] => by simp [branchDepth]
+  | (p, pos) :: fs => by
+    obtain ⟨ih1, ih2⟩ := branchDepth_spec fs
+    by_cases h : startsPlan p pos = true
+    · simp [branchDepth, h]
+    · simp only [Bool.not_eq_true] at h
+      simp only [branchDepth, h, Bool.false_eq_true, ite_false, List.take_succ_cons,
+        List.mem_cons, List.length_cons, List.getElem?_cons_succ]
+      refine ⟨?_, ?_⟩
+      · rintro f (rfl | hf)
+        · exact h
+        · exact ih1 f hf
+      · rcases ih2 with h2 | h2
+        · exact Or.inl (by omega)
+        · exact Or.inr h2
+
 end Falkor.Opt.Refs

@@ -81,7 +81,7 @@ graph/src/graph/graphblas/me_delta_bench.rs	per_op	43	NOT COVERED	TEST-ONLY: ben
 graph/src/graph/graphblas/me_delta_bench.rs	committed_multi	58	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_step	84	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
 graph/src/graph/graphblas/me_delta_bench.rs	me_delta_attach_vs_seek	140	NOT COVERED	TEST-ONLY: benchmark harness (me_delta_bench.rs), not production code
-graph/src/planner/optimizer/reduce_expand_into.rs	starts_plan	101	NOT COVERED	(#3054): IR-variant test of where a plan branch starts (Union, NestedPlans, the non-first children of the applies); not modelled: the plan tree with its child positions has no model here
-graph/src/planner/optimizer/reduce_expand_into.rs	branch_root	114	NOT COVERED	(#3054): orx_tree parent walk up to starts_plan; not modelled: no orx_tree NodeIdx/sibling_idx model
+graph/src/planner/optimizer/reduce_expand_into.rs	starts_plan	101	PROVEN	References2.startsPlan: startsPlan_spec (Union, NestedPlans, the non-first children of the applies)
+graph/src/planner/optimizer/reduce_expand_into.rs	branch_root	114	PROVEN	References2.branchDepth (the parent walk over (parent, sibling_idx) frames, innermost first): branchDepth_spec
 graph/src/planner/optimizer/reduce_expand_into.rs	plan_indices	130	NOT COVERED	(#3054): DFS of one plan branch stopping at starts_plan; not modelled: no orx_tree NodeIdx model
 graph/src/planner/optimizer/reduce_expand_into.rs	flag_collapsed_siblings	156	NOT COVERED	(#3054): sets the flag bit of a collapsed edge in the sibling_edges of every traverse of its branch and scope; not modelled as a tree pass: its effect (flagged entries) is the input of RuntimeCore.Misc.edgeAlreadyUsedP (Entry.flag)
