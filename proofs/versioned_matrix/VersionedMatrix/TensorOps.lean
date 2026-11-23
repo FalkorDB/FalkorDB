@@ -11,7 +11,7 @@ import VersionedMatrix.Policy
 | `extract`     | `extract` (:986) |
 | `rebuildBackward` | `rebuild_backward` (:1007) |
 | `waitFwd`/`waitT`/`waitBase`/`waitAll`/`isSyncedT` | :420 / :1412 / :1423 / :1432 / :1445 |
-| `memoryUsage` | :1454 |
+| `memoryUsage`, `derivedMemory` | `memory_usage` (:1634), `Derived::memory_usage` (:321, #3639) |
 | `flushT`/`foldLatched`/`foldOversized` | :888 / :946 / :964 |
 | `dupT`        | `dup` (:1018) |
 | `resizeT`     | `resize` (:821; model in `TensorResize.lean`) |
@@ -208,9 +208,23 @@ theorem waitT_st (t : TT) : (waitT t).st = t.st ∧ (waitT t).nf = t.nf := by
 theorem waitT_me_synced (t : TT) : ∀ e ∈ (waitT t).me, e.synced = true := by
   intro e he; simp [waitT, syncAll] at he; obtain ⟨a, _, rfl⟩ := he; rfl
 
-def memoryUsage (fwd mt : Nat) (meMem : MeB → Nat) (t : TT) : Nat := fwd + mt + (t.me.map meMem).sum
-theorem memoryUsage_eq (fwd mt : Nat) (meMem : MeB → Nat) (t : TT) :
-    memoryUsage fwd mt meMem t = fwd + mt + (t.me.map meMem).sum := rfl
+/-- `Derived::memory_usage` (#3639): the bytes of the derived caches built so far (`added`,
+`surplus`, `surplus_t`, `merged`; `none` = not built, or built empty). -/
+def derivedMemory (added surplus surplusT merged : Option Nat) : Nat :=
+  added.getD 0 + surplus.getD 0 + surplusT.getD 0 + merged.getD 0
+
+theorem derivedMemory_eq (a s st m : Option Nat) :
+    derivedMemory a s st m = a.getD 0 + s.getD 0 + st.getD 0 + m.getD 0 := rfl
+
+/-- No cache built: nothing to count (measuring never builds one, `OnceLock::get`). -/
+theorem derivedMemory_none : derivedMemory none none none none = 0 := rfl
+
+/-- `Tensor::memory_usage`: `fwd` = `m + dp + dm`, then `mt`, every `me` block, and (#3639)
+the derived caches. -/
+def memoryUsage (fwd mt : Nat) (meMem : MeB → Nat) (derived : Nat) (t : TT) : Nat :=
+  fwd + mt + (t.me.map meMem).sum + derived
+theorem memoryUsage_eq (fwd mt : Nat) (meMem : MeB → Nat) (derived : Nat) (t : TT) :
+    memoryUsage fwd mt meMem derived t = fwd + mt + (t.me.map meMem).sum + derived := rfl
 
 /-! ## flush / fold_latched / fold_oversized / dup -/
 

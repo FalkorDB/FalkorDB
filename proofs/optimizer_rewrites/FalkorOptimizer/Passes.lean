@@ -28,10 +28,33 @@ theorem fuse_same_support (E : List (Nat × Nat)) (a c : Nat) :
   simp [fused, unfused, travCollapsed, List.mem_eraseDups, List.mem_flatMap]
 
 /-- … but not the multiset: diamond `a→b1→c`, `a→b2→c` gives 2 unfused rows,
-1 fused. C FalkorDB also returns 1 (it builds the same algebraic expression);
-openCypher says 2. Rust mirrors C here. -/
+1 fused. C FalkorDB returns 1 (it builds the same algebraic expression), and so did Rust
+before #3639; openCypher says 2. `fused` is that boolean product. -/
 theorem fuse_changes_multiplicity :
     unfused [(0,1),(0,2),(1,3),(2,3)] 0 = [3, 3] ∧ fused [(0,1),(0,2),(1,3),(2,3)] 0 = [3] := by
+  decide
+
+/-- Since #3639 the fused operator counts paths (`u64` frontier, `count_lmxm` plus the parallel
+surplus: proofs/ops_traverse `hopCount_eq`): the entry `f[a, c]` is the number of two-hop walks
+`a → b → c`, and it emits that many rows for `c`. -/
+def pathCount (E : List (Nat × Nat)) (a c : Nat) : Nat :=
+  ((out E a).map fun b => (out E b).count c).sum
+
+/-- Two per-edge traverses (an unread edge is emitted per edge since #3639), the anonymous
+middle dropped. -/
+def unfusedN (E : List (Nat × Nat)) (a : Nat) : List Nat :=
+  (out E a).flatMap (out E)
+
+/-- **Fusion keeps the multiset**: the fused path count of `c` is the number of unfused rows
+for `c` (sibling-free hops; the self-loop a sibling pair may not reuse is subtracted on both
+sides, proofs/ops_traverse `walks2_distinct_count`). -/
+theorem fuse_counts_paths (E : List (Nat × Nat)) (a c : Nat) :
+    (unfusedN E a).count c = pathCount E a c := by
+  simp [unfusedN, pathCount, List.count_flatMap, Function.comp_def]
+
+/-- The diamond of `fuse_changes_multiplicity`: 2 rows for `c` on both plans. -/
+theorem fuse_diamond_two_rows :
+    unfusedN [(0,1),(0,2),(1,3),(2,3)] 0 = [3, 3] ∧ pathCount [(0,1),(0,2),(1,3),(2,3)] 0 3 = 2 := by
   decide
 
 /-! ## fuse_optional_traverse -/

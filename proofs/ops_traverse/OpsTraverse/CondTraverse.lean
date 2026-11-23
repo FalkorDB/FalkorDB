@@ -8,9 +8,15 @@ import OpsTraverse.Basic
 | `processPairs`           | `CondTraverseOp::process_pairs` (`cond_traverse.rs`): bound-endpoint filter; no inline-attr checks since #2390 (the planner lowers them to a Filter) |
 | `expandRow`              | `CondTraverseOp::expand_row` (`cond_traverse.rs`): forward scan, then the reverse scan with `s != d` (the multi-type twin `expand_union_row` , `UnionGlue`) for bidirectional patterns |
 | `expandInto`             | `ExpandIntoOp::expand_row` (`expand_into.rs`): pairs `[(src,dst),(dst,src)]`, the second only when bidirectional and `src != dst` |
-| `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`cond_traverse.rs`, `graphblas/matrix.rs`; proved in `UnionGlue.deltaInto_eff`, `GBWDelta.deltaLmxm_correct`) |
+| `Mat`, `MxmSpec`         | **GraphBLAS boundary**: `Matrix::delta_lmxm` = `GrB_mxm` over the structural `ANY_PAIR` semiring (`graphblas/matrix.rs`; proved in `GBWDelta.deltaLmxm_correct`); since #3639 the traversal counts with `count_lmxm` (`PLUS_PAIR`), whose support is this product |
 | `mxmRef`                 | a reference implementation proving `MxmSpec` is satisfiable |
-| `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs`) |
+| `chain`                  | `expand_batch`'s `F = F·A₀·A₁·…` (`cond_traverse.rs`); `batched_eq_collapse` gives the support of the path-count frontier |
+| `multiEdge`, `expandRowN`, `expandIntoN` | #3639: `expand_row` collapses only when `!(emit \|\| multi_edge \|\| edge_type_indices.len() > 1)` (`build_state`'s `has_multi_edge`), `ExpandIntoOp::expand_row` when `!(emit \|\| multi_edge)`: then collapse = emit (`expandRowN_eq_emit`, `expandIntoN_eq_emit`) |
+| `processPairsIdFree`     | `process_pairs` with `id_free` (no id read or compared): `counts.get(pair).unwrap_or(1)` rows of edge 0 |
+| `nuRetain`               | `CondTraverseOp::next`'s node-unique retain over `node_comparable_siblings` / `sibling_edge_pairs` |
+| `hopCount`               | `TraversalMatrix::count_lmxm_into` / `Matrix::count_lmxm` (`PLUS_PAIR`) plus `add_counted_product` of `parallel_surplus` |
+| `walks2`, `sharedLoops`  | `expand_batch_rows`' `chain_overlap` subtraction of `shared_self_loops` |
+| `twoHopN`                | two hops with the #3639 collapse rule (W2-traverse-1 fixed: `twoHopN_eq_emit`) |
 
 The GraphBLAS primitive is not given an `axiom`: every theorem about the
 batched path takes an arbitrary `mxm` together with a proof of `MxmSpec mxm`,
@@ -219,21 +225,6 @@ theorem collapse_directed_keys_nodup (g : Graph) (r : RowIn) :
   simp only [expandRow, Bool.false_eq_true, ite_false, List.append_nil]
   exact (nodup_pairs g).sublist (collapse_keys_sublist g r _)
 
-/-! ### Counterexample: undirected collapse is one row per pair *per direction*
-
-`a→b` twice and `b→a` once. C collapses `(a)-[]-(b)` to one row per `(a,b)`;
-the forward and the reverse scan each contribute a representative, so Rust
-emits `(1,2)` twice (`cond_traverse.rs`; `expand_into.rs`).
-Repro: `lean_ops_traverse::bug_undirected_anonymous_collapse_duplicates_pairs`. -/
-def gAB : Graph := [⟨0, 1, 2⟩, ⟨1, 2, 1⟩, ⟨2, 1, 2⟩]
-
-theorem bidir_collapse_duplicates_pair :
-    ((expandRow gAB true false ⟨none, none, []⟩).map fun x => (x.1, x.2.1)).count (1, 2) = 2 := by
-  decide
-
-theorem expandInto_bidir_collapse_two_rows :
-    (expandInto gAB true false 1 2 []).length = 2 := by decide
-
 /-- ExpandInto in emit mode returns every unused edge between the endpoints, in
 either orientation when undirected, a self-loop once. -/
 theorem mem_expandInto_emit {g : Graph} {b : Bool} {s d e : Nat} {used : List Nat} :
@@ -259,12 +250,313 @@ theorem mem_expandInto_emit {g : Graph} {b : Bool} {s d e : Nat} {used : List Na
       · exact ⟨⟨x, hx, h1, h2⟩, hu⟩
       · exact absurd (h hb) hne
 
+/-! ## Collapse only where it is exact (#3639)
+
+`expand_row` and `ExpandIntoOp::expand_row` force emit mode when the relation holds a pair
+with parallel edges (`CtState::multi_edge`, `Tensor::has_multi_edge`) or spans several types
+(`edge_type_indices.len() > 1`, so that `Graph` is the union of several tensors). Collapse is
+then reached only on a relation where every pair holds at most one edge, where it is emit mode:
+an anonymous or unread edge counts edges, as openCypher does, not node pairs. -/
+
+/-- `CtState::multi_edge`: some pair holds more than one edge. -/
+def multiEdge (g : Graph) : Bool :=
+  (pairs g).any fun p => decide (1 < (edgesBetween g p.1 p.2).length)
+
+theorem edgesBetween_nil_of_not_pair {g : Graph} {s d : Nat} (hp : (s, d) ∉ pairs g) :
+    edgesBetween g s d = [] := by
+  apply List.eq_nil_iff_forall_not_mem.2
+  intro e he
+  obtain ⟨x, hx, -, h1, h2⟩ := mem_edgesBetween.1 he
+  exact hp (mem_pairs.2 ⟨x, hx, h1, h2⟩)
+
+theorem edgesBetween_length_le_one {g : Graph} (h : multiEdge g = false) (s d : Nat) :
+    (edgesBetween g s d).length ≤ 1 := by
+  by_cases hp : (s, d) ∈ pairs g
+  · have := List.any_eq_false.1 h (s, d) hp
+    simp only [decide_eq_true_eq] at this
+    omega
+  · simp [edgesBetween_nil_of_not_pair hp]
+
+theorem pairRows_collapse_eq_emit {g : Graph} (h : multiEdge g = false) (isRev : Bool)
+    (r : RowIn) (p : Nat × Nat) : pairRows g isRev r false p = pairRows g isRev r true p := by
+  have hl : (pes g r p).length ≤ 1 :=
+    Nat.le_trans (List.length_filter_le _ _) (edgesBetween_length_le_one h p.1 p.2)
+  simp [pairRows, List.take_of_length_le hl]
+
+theorem processPairs_collapse_eq_emit {g : Graph} (h : multiEdge g = false)
+    (ps : List (Nat × Nat)) (isRev : Bool) (r : RowIn) :
+    processPairs g ps isRev r false = processPairs g ps isRev r true := by
+  simp only [processPairs]
+  congr 1
+  funext p
+  exact pairRows_collapse_eq_emit h isRev r p
+
+theorem expandRow_collapse_eq_emit {g : Graph} (h : multiEdge g = false) (bidir : Bool)
+    (r : RowIn) : expandRow g bidir false r = expandRow g bidir true r := by
+  simp only [expandRow, processPairs_collapse_eq_emit h]
+
+/-- `expand_row` (#3639): `emit_relationship || multi_edge || edge_type_indices.len() > 1`. -/
+def expandRowN (g : Graph) (bidir emit multiType : Bool) (r : RowIn) : List (Nat × Nat × Nat) :=
+  expandRow g bidir (emit || multiEdge g || multiType) r
+
+/-- **A single hop is emit mode whatever the edge's use**: an anonymous or unread edge
+returns one row per matching edge, so `emit_directed_iff` and `emit_bidir_iff` describe every
+hop. -/
+theorem expandRowN_eq_emit (g : Graph) (bidir emit mt : Bool) (r : RowIn) :
+    expandRowN g bidir emit mt r = expandRow g bidir true r := by
+  unfold expandRowN
+  cases hm : multiEdge g
+  · cases emit <;> cases mt <;> simp [expandRow_collapse_eq_emit hm]
+  · simp
+
+theorem expandRowN_directed_iff {g : Graph} {emit mt : Bool} {r : RowIn} {f t e : Nat} :
+    (f, t, e) ∈ expandRowN g false emit mt r ↔
+      ∃ x ∈ g, x.id = e ∧ x.src = f ∧ x.dst = t ∧ e ∉ r.used ∧
+        okBound r.fromId f ∧ okBound r.toId t := by
+  rw [expandRowN_eq_emit]; exact emit_directed_iff
+
+theorem expandRowN_bidir_iff {g : Graph} {emit mt : Bool} {r : RowIn} {f t e : Nat} :
+    (f, t, e) ∈ expandRowN g true emit mt r ↔
+      ∃ x ∈ g, x.id = e ∧ e ∉ r.used ∧ okBound r.fromId f ∧ okBound r.toId t ∧
+        ((x.src = f ∧ x.dst = t) ∨ (x.src ≠ x.dst ∧ x.src = t ∧ x.dst = f)) := by
+  rw [expandRowN_eq_emit]; exact emit_bidir_iff
+
+theorem expandInto_collapse_eq_emit {g : Graph} (h : multiEdge g = false) (b : Bool)
+    (s d : Nat) (used : List Nat) : expandInto g b false s d used = expandInto g b true s d used := by
+  simp only [expandInto, Bool.false_eq_true, ite_false, ite_true]
+  congr 1
+  funext p
+  exact List.take_of_length_le
+    (Nat.le_trans (List.length_filter_le _ _) (edgesBetween_length_le_one h p.1 p.2))
+
+/-- `ExpandIntoOp::expand_row` (#3639): `emit_relationship || multi_edge`, where its `multi_edge`
+includes `indices.len() > 1`. -/
+def expandIntoN (g : Graph) (bidir emit multiType : Bool) (src dst : Nat) (used : List Nat) :
+    List Nat :=
+  expandInto g bidir (emit || multiEdge g || multiType) src dst used
+
+theorem expandIntoN_eq_emit (g : Graph) (b emit mt : Bool) (s d : Nat) (used : List Nat) :
+    expandIntoN g b emit mt s d used = expandInto g b true s d used := by
+  unfold expandIntoN
+  cases hm : multiEdge g
+  · cases emit <;> cases mt <;> simp [expandInto_collapse_eq_emit hm]
+  · simp
+
+theorem mem_expandIntoN {g : Graph} {b emit mt : Bool} {s d e : Nat} {used : List Nat} :
+    e ∈ expandIntoN g b emit mt s d used ↔
+      e ∉ used ∧ ∃ x ∈ g, x.id = e ∧
+        ((x.src = s ∧ x.dst = d) ∨ (b = true ∧ s ≠ d ∧ x.src = d ∧ x.dst = s)) := by
+  rw [expandIntoN_eq_emit]; exact mem_expandInto_emit
+
+/-- `a→b` twice and `b→a` once: the undirected anonymous `(a)-[]-(b)` returns one row per
+edge, 3 for `(1,2)`; before #3639 the per-direction collapse returned 2 (W2-traverse-3, C 1). -/
+def gAB : Graph := [⟨0, 1, 2⟩, ⟨1, 2, 1⟩, ⟨2, 1, 2⟩]
+
+theorem bidir_anonymous_per_edge :
+    ((expandRowN gAB true false false ⟨none, none, []⟩).map fun x => (x.1, x.2.1)).count (1, 2) = 3 := by
+  decide
+
+theorem expandIntoN_bidir_per_edge :
+    (expandIntoN gAB true false false 1 2 []).length = 3 := by decide
+
+/-! ### `id_free` rows and the node-compared siblings
+
+With `node_unique` set (`node_comparable_siblings`: one type, every sibling a plain unread
+directed traverse) nothing reads or compares an edge id: `process_pairs` pushes, per pair, one
+placeholder row (edge id 0) per edge, and `next` drops, per pair, as many rows as siblings
+bound to that pair of nodes. -/
+
+/-- `process_pairs` with `id_free`: `counts.get(pair).unwrap_or(1)` rows, the pair's edge
+count (`counts` holds the pairs with parallel edges; collapse is reached only when there are
+none). -/
+def pairRowsIdFree (g : Graph) (isRev : Bool) (r : RowIn) (p : Nat × Nat) :
+    List (Nat × Nat × Nat) :=
+  if pcond r isRev p then List.replicate (edgesBetween g p.1 p.2).length (pf isRev p, pt isRev p, 0)
+  else []
+
+def processPairsIdFree (g : Graph) (ps : List (Nat × Nat)) (isRev : Bool) (r : RowIn) :
+    List (Nat × Nat × Nat) :=
+  ps.flatMap (pairRowsIdFree g isRev r)
+
+/-- The `id_free` rows are the emitted rows with the edge id blanked (the sibling list is empty
+in this mode: `sibling_edges = &[]`). -/
+theorem processPairsIdFree_eq (g : Graph) (ps : List (Nat × Nat)) (isRev : Bool) (r : RowIn)
+    (hr : r.used = []) :
+    processPairsIdFree g ps isRev r =
+      (processPairs g ps isRev r true).map fun x => (x.1, x.2.1, 0) := by
+  simp only [processPairsIdFree, processPairs, List.map_flatMap]
+  congr 1
+  funext p
+  simp only [pairRowsIdFree, pairRows, ite_true]
+  split
+  · simp [pes, hr, Function.comp_def, List.map_const', List.filter_eq_self.2]
+  · simp
+
+/-- `next`'s `retain` for `node_unique`: a row whose node pair `key` is shared by `shared k`
+siblings is dropped until that many rows of the pair have been taken. -/
+def nuRetain {R K : Type} [DecidableEq K] (key : R → K) (shared : K → Nat) :
+    (K → Nat) → List R → List R
+  | _, [] => []
+  | taken, x :: xs =>
+    if shared (key x) = 0 then x :: nuRetain key shared taken xs
+    else
+      let taken' := fun j => if j = key x then taken (key x) + 1 else taken j
+      if taken (key x) + 1 > shared (key x) then x :: nuRetain key shared taken' xs
+      else nuRetain key shared taken' xs
+
+theorem nuRetain_count {R K : Type} [DecidableEq K] (key : R → K) (shared : K → Nat) (k : K)
+    (taken : K → Nat) (xs : List R) :
+    (nuRetain key shared taken xs).countP (fun x => key x = k) =
+      xs.countP (fun x => key x = k) - (shared k - taken k) := by
+  induction xs generalizing taken with
+  | nil => simp [nuRetain]
+  | cons x xs ih =>
+    unfold nuRetain
+    by_cases h0 : shared (key x) = 0
+    · simp only [h0, ite_true, List.countP_cons, ih taken]
+      by_cases hk : key x = k
+      · subst hk; simp [h0]
+      · simp [hk]
+    · simp only [h0, ite_false]
+      have e := ih (fun j => if j = key x then taken (key x) + 1 else taken j)
+      by_cases hk : key x = k
+      · subst hk
+        simp only [ite_true] at e
+        by_cases ht : taken (key x) + 1 > shared (key x)
+        · simp only [ht, ite_true, List.countP_cons, e]; simp; omega
+        · simp only [ht, ite_false, List.countP_cons, e]; simp; omega
+      · have hk' : (k = key x) = False := propext ⟨fun h => hk h.symm, False.elim⟩
+        simp only [hk', ite_false] at e
+        split <;> simp [e, hk]
+
+/-- **Node-compared uniqueness counts edges**: starting from nothing taken, a pair keeps its
+edge count less the siblings bound to it (`taken` starts empty per input row). -/
+theorem nuRetain_idFree_count (g : Graph) (ps : List (Nat × Nat)) (r : RowIn)
+    (siblings : List (Nat × Nat)) (f t : Nat) :
+    (nuRetain (fun x : Nat × Nat × Nat => (x.1, x.2.1)) siblings.count (fun _ => 0)
+        (processPairsIdFree g ps false r)).countP (fun x => (x.1, x.2.1) = (f, t)) =
+      (processPairsIdFree g ps false r).countP (fun x => (x.1, x.2.1) = (f, t)) -
+        siblings.count (f, t) := by
+  rw [nuRetain_count]; simp
+
+/-! ### Path counts on the batched path
+
+`expand_batch` multiplies a `u64` frontier: `count_lmxm` over `PLUS_PAIR` counts each pair once,
+and `add_counted_product` adds `f · surplus`, the edges each pair holds beyond the first. -/
+
+/-- One hop from the frontier `F` (a count per node of `nodes`) to `d`: the pair product plus
+the surplus product. This is a mathematical specification over unbounded `Nat`: the engine's
+`PLUS_PAIR` products and `add_counts` wrap in `u64`, so `hopCount_eq` is exact only under the
+no-overflow assumption (every count below `2^64`), and the COVERAGE rows citing it are
+CONDITIONAL on that. -/
+def hopCount (g : Graph) (nodes : List Nat) (F : Nat → Nat) (d : Nat) : Nat :=
+  (nodes.map fun k => F k * (if (k, d) ∈ pairs g then 1 else 0)).sum +
+    (nodes.map fun k => F k * ((edgesBetween g k d).length - 1)).sum
+
+theorem pair_plus_surplus (g : Graph) (k d : Nat) :
+    (if (k, d) ∈ pairs g then 1 else 0) + ((edgesBetween g k d).length - 1) =
+      (edgesBetween g k d).length := by
+  by_cases hp : (k, d) ∈ pairs g
+  · obtain ⟨x, hx, h1, h2⟩ := mem_pairs.1 hp
+    have : x.id ∈ edgesBetween g k d := mem_edgesBetween.2 ⟨x, hx, rfl, h1, h2⟩
+    have := List.length_pos_of_mem this
+    simp only [hp, ite_true]; omega
+  · simp [hp, edgesBetween_nil_of_not_pair hp]
+
+/-- **The count is per edge**: the pair product plus the surplus is the number of edges from the
+frontier to `d`, each weighted by the paths reaching its source. -/
+theorem hopCount_eq (g : Graph) (nodes : List Nat) (F : Nat → Nat) (d : Nat) :
+    hopCount g nodes F d = (nodes.map fun k => F k * (edgesBetween g k d).length).sum := by
+  have hp : ∀ k, F k * (if (k, d) ∈ pairs g then 1 else 0) +
+      F k * ((edgesBetween g k d).length - 1) = F k * (edgesBetween g k d).length := fun k => by
+    rw [← Nat.mul_add, pair_plus_surplus]
+  unfold hopCount
+  induction nodes with
+  | nil => simp
+  | cons k ks ih =>
+    simp only [List.map_cons, List.sum_cons]
+    rw [← hp k, ← ih]
+    omega
+
+/-- The two-hop walks `e1 : s → v` (in `g1`), `e2 : v → d` (in `g2`): what `f = f·A₀·A₁`
+counts for a fused two-hop chain. -/
+def walks2 (g1 g2 : Graph) (s d : Nat) : List (Edge × Edge) :=
+  (g1.filter fun e => e.src = s).flatMap fun e1 =>
+    (g2.filter fun e2 => e2.src = e1.dst ∧ e2.dst = d).map fun e2 => (e1, e2)
+
+/-- The self-loops at `v` both hops can bind (`shared_self_loops`). -/
+def sharedLoops (g1 g2 : Graph) (v : Nat) : List Edge :=
+  g1.filter fun e => e.src = v ∧ e.dst = v ∧ e ∈ g2
+
+theorem countP_eq_nodup {α : Type} [DecidableEq α] (a : α) (q : Prop) [Decidable q] :
+    ∀ (l : List α), l.Nodup → l.countP (fun x => decide (x = a ∧ q)) = if a ∈ l ∧ q then 1 else 0
+  | [], _ => by simp
+  | b :: l, h => by
+    rw [List.nodup_cons] at h
+    rw [List.countP_cons, countP_eq_nodup a q l h.2]
+    by_cases hb : b = a
+    · subst hb; by_cases hq : q <;> simp [hq, h.1]
+    · by_cases hm : a ∈ l
+      · simp [hb, hm]
+      · have : ¬ a = b := fun e => hb e.symm
+        simp [hb, hm, this]
+
+theorem walks2_eq_len (g1 g2 : Graph) (h2 : g2.Nodup) (s d : Nat) :
+    (walks2 g1 g2 s d).countP (fun w => decide (w.1 = w.2)) =
+      if s = d then (sharedLoops g1 g2 s).length else 0 := by
+  induction g1 with
+  | nil => simp [walks2, sharedLoops]
+  | cons a t ih =>
+    have e : walks2 (a :: t) g2 s d =
+        (if a.src = s then (g2.filter fun e2 => e2.src = a.dst ∧ e2.dst = d).map (fun e2 => (a, e2))
+          else []) ++ walks2 t g2 s d := by
+      unfold walks2; rw [List.filter_cons]
+      by_cases ha : a.src = s <;> simp [ha]
+    rw [e, List.countP_append, ih]
+    have inner : ((g2.filter fun e2 => e2.src = a.dst ∧ e2.dst = d).map (fun e2 => (a, e2))).countP
+        (fun w => decide (w.1 = w.2)) = if a ∈ g2 ∧ (a.src = a.dst ∧ a.dst = d) then 1 else 0 := by
+      rw [List.countP_map, List.countP_filter, ← countP_eq_nodup a _ g2 h2]
+      congr 1; funext x
+      by_cases hx : x = a
+      · subst hx; simp
+      · have : ¬ a = x := fun h => hx h.symm
+        simp [hx, this]
+    by_cases ha : a.src = s
+    · subst ha
+      simp only [ite_true, inner]
+      by_cases hsd : a.src = d
+      · subst hsd
+        simp only [sharedLoops, List.filter_cons, ite_true]
+        by_cases h1 : a.dst = a.src <;> by_cases hm : a ∈ g2 <;> simp [h1, hm, eq_comm] <;> omega
+      · have : ¬ (a ∈ g2 ∧ a.src = a.dst ∧ a.dst = d) := by
+          rintro ⟨-, h1, h3⟩; exact hsd (by rw [h1, h3])
+        simp [this, hsd]
+    · simp only [ha, ite_false, List.countP_nil, Nat.zero_add]
+      by_cases hsd : s = d
+      · subst hsd; simp [sharedLoops, ha]
+      · simp [hsd]
+
+/-- **The self-loop subtraction is exact** (`shared_self_loops`, `chain_overlap`): the two-hop
+walks that bind two distinct edges are the walks less, when the chain returns to its start, the
+self-loops at the start both hops match. A repeated edge is a self-loop used twice; any other
+repeat needs three hops or an undirected one, which `can_fuse` refuses. -/
+theorem walks2_distinct_count (g1 g2 : Graph) (h2 : g2.Nodup) (s d : Nat) :
+    (walks2 g1 g2 s d).countP (fun w => decide (w.1 ≠ w.2)) =
+      (walks2 g1 g2 s d).length - (if s = d then (sharedLoops g1 g2 s).length else 0) := by
+  simp only [ne_eq]
+  rw [← walks2_eq_len g1 g2 h2 s d,
+    List.length_eq_countP_add_countP (fun w : Edge × Edge => decide (w.1 = w.2))]
+  simp only [decide_eq_true_eq]
+  omega
+
 /-! ## Two hops, sibling uniqueness, and the collapse of an unreferenced edge
 
 `(a)-[r]->(x)<-[s]-(c)`: the second hop reads `r` for uniqueness
 (`edge_already_used`). `reduce_expand_into` (`planner/optimizer/reduce_expand_into.rs`)
 collapses `r` and `s` when no ancestor *expression* names them, ignoring
-that the ancestor traverse's `sibling_edges` does. -/
+that the ancestor traverse's `sibling_edges` does. Since #3639 the operator collapses only
+a relation without parallel edges, where the representative edge is the only one, so the
+collapse is exact (`twoHopN_eq_emit`). -/
 
 def twoHop (g : Graph) (nodes : List Nat) (emit1 emit2 : Bool) :
     List (Nat × Nat × Nat × Nat × Nat) :=
@@ -299,11 +591,25 @@ theorem twoHop_emit_iff {g : Graph} {nodes : List Nat} {a x r c s : Nat} :
 /-- `e1, e2 : 1→2`, `e3 : 2→3` (the repro graph). -/
 def gPar : Graph := [⟨0, 1, 2⟩, ⟨1, 1, 2⟩, ⟨2, 2, 3⟩]
 
-/-- **Bug** (`lean_ops_traverse::bug_unreferenced_edge_collapse_breaks_sibling_uniqueness`):
-the collapsed plan returns 1 row, the emitting plan (= openCypher = C) 2. -/
-theorem twoHop_collapse_changes_count :
-    (twoHop gPar [1, 2, 3] true true).length = 2 ∧
-    (twoHop gPar [1, 2, 3] false false).length = 1 := by decide
+/-- The two hops since #3639: each collapses only where it is exact
+(`emit || multi_edge`). -/
+def twoHopN (g : Graph) (nodes : List Nat) (emit1 emit2 : Bool) :
+    List (Nat × Nat × Nat × Nat × Nat) :=
+  twoHop g nodes (emit1 || multiEdge g) (emit2 || multiEdge g)
+
+/-- **Fixed (#3639, was W2-traverse-1)**: collapsing an unreferenced edge no longer changes
+the rows, whatever the planner decided — the plan is the emitting one, `twoHop_emit_iff`. -/
+theorem twoHopN_eq_emit (g : Graph) (nodes : List Nat) (e1 e2 : Bool) :
+    twoHopN g nodes e1 e2 = twoHop g nodes true true := by
+  unfold twoHopN
+  cases hm : multiEdge g
+  · cases e1 <;> cases e2 <;>
+      simp [twoHop, expandRow_collapse_eq_emit hm, processPairs_collapse_eq_emit hm]
+  · simp
+
+/-- The W2-traverse-1 repro graph: both hops collapsed still give C's 2 rows (it gave 1). -/
+theorem twoHopN_gPar_two_rows : (twoHopN gPar [1, 2, 3] false false).length = 2 := by
+  decide
 
 /-! ## GraphBLAS boundary and the batched F·A path -/
 
@@ -362,7 +668,9 @@ theorem chain_nodup {mxm : Mat → Mat → Mat} (h : MxmSpec mxm) :
 /-- **Batched path = per-row collapse.** For any `mxm` meeting the GraphBLAS
 spec, row `i` of `F·A` (F seeded with `(i, src_i)`) holds `d` exactly when the
 per-row collapsed expansion of `src_i` yields a row for `(src_i, d)`; and the
-batched output has no duplicate `(i,d)`. -/
+batched output has no duplicate `(i,d)`. Since #3639 the batched path counts
+(`hopCount_eq`): this is the support of its count matrix, the count being the
+per-edge row count. -/
 theorem batched_eq_collapse {mxm : Mat → Mat → Mat} (h : MxmSpec mxm) (g : Graph)
     (F : Mat) (i d : Nat) :
     (i, d) ∈ chain mxm F [pairs g] ↔

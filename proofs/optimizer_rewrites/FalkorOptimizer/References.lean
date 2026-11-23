@@ -388,7 +388,7 @@ theorem refsNew_sound (ir : IR) (v : Var) (h : refsNew ir v = true) : v ∈ read
     | skip
   all_goals done
 
-/-! ## `runtimeReadsIds`: the sibling-edge columns (W2-traverse-1, still open) -/
+/-! ## `runtimeReadsIds`: the sibling-edge columns (W2-traverse-1; harmless at runtime since #3639) -/
 
 /-- What the operator reads *at runtime*, by id: also the columns of `sibling_edges`
 (`edge_already_used`, `runtime/ops/mod.rs`). -/
@@ -404,7 +404,9 @@ def sRel : QRel := ⟨⟨4, 0⟩, [], nd ⟨5, 0⟩, nd ⟨6, 0⟩⟩
 
 /-- `MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)`: the second hop reads `r`'s column for
 relationship uniqueness, but the oracle says nothing reads `r`, so `reduce_expand_into`
-collapses it (live on 8743953a8: Rust 1, C 2; proofs/ops_traverse `twoHop_collapse_changes_count`). -/
+collapses it (live on 8743953a8: Rust 1, C 2). Since #3639 the operator collapses only a relation
+without parallel edges, where it is exact (proofs/ops_traverse `twoHopN_eq_emit`,
+`twoHopN_gPar_two_rows`), so the gap no longer changes results; the oracle still misses the read. -/
 theorem refsNew_misses_sibling_edges :
     r.id ∈ runtimeReadsIds (.condTraverse sRel [] [r.id]) ∧
     refsNew (.condTraverse sRel [] [r.id]) r = false ∧

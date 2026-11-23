@@ -22,11 +22,11 @@ Yes, when the edge is emitted (the edge variable is read):
 - **undirected:** every edge matches in its stored direction and, unless it is a self-loop, in reverse too, so a self-loop matches once (`emit_bidir_iff`); ExpandInto, used when both endpoints are bound, does the same (`mem_expandInto_emit`);
 - **two hops:** `(a)-[r]->(x)<-[s]-(c)` returns exactly the openCypher match set with `r ≠ s` (`twoHop_emit_iff`).
 
-When the edge is not read, a directed hop *collapses* parallel edges into one row per node pair. That only ever returns rows emit mode would (`collapse_sub_emit`), and the directed keys are unique (`collapse_directed_iff`, `collapse_directed_keys_nodup`). Undirected anonymous collapse is a known exception: it can emit one representative per direction (W2-traverse-3). This is C's behaviour, not openCypher's: `MATCH (a)-[]->(b) RETURN count(*)` counts pairs, not edges.
+When the edge is not read, a hop may *collapse* to one row per node pair. That only ever returns rows emit mode would (`collapse_sub_emit`), and the directed keys are unique (`collapse_directed_iff`, `collapse_directed_keys_nodup`). Since #3639 the operators collapse only a relation with no parallel edge and a single type (`multiEdge`), where each pair holds one edge and the collapse is the emitting expansion (`expandRowN_eq_emit`, `expandIntoN_eq_emit`, `twoHopN_eq_emit`): every hop counts edges, as openCypher says (`bidir_anonymous_per_edge`). When nothing reads or compares the edge id, `process_pairs` emits the per-pair edge count without a lookup (`processPairsIdFree_eq`), and the node-unique retain of `next` drops exactly the edges sibling hops took (`nuRetain_count`).
 
 **2. Is the batched matrix-multiply path the same as row-by-row?**
 
-Yes, for any matrix multiply that meets the GraphBLAS spec. For anonymous hops the engine multiplies a frontier matrix `F` by the relationship matrix instead of walking row by row. `batched_eq_collapse` proves the result equals the per-row collapsed expansion, with no duplicate rows. `fused_chain_semantics` proves a chain of such hops returns `(row, dst)` iff a walk through the chain exists.
+Yes, for any matrix multiply that meets the GraphBLAS spec. For anonymous hops the engine multiplies a frontier matrix `F` by the relationship matrix instead of walking row by row. `batched_eq_collapse` proves the support of the result equals the per-row expansion's pairs, with no duplicate rows. `fused_chain_semantics` proves a chain of such hops returns `(row, dst)` iff a walk through the chain exists. Since #3639 the product counts paths: the pair count plus the parallel-edge surplus is the edge count (`hopCount_eq`), and on a two-hop chain subtracting the shared self-loops leaves the walks over two distinct edges (`walks2_distinct_count`).
 
 The spec is the hypothesis `MxmSpec`: `(i, j)` is in `F·A` iff some `k` has `(i, k)` in `F` and `(k, j)` in `A`, with no duplicates. It is the only FFI fact the traversal proofs use, and `mxmRef_spec` shows a reference multiply satisfies it.
 
@@ -57,7 +57,8 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | Theorem | In plain words | File |
 |---|---|---|
 | `emit_directed_iff`, `emit_bidir_iff` | A single hop returns exactly the matching edges, directed or undirected; a self-loop matches once | `CondTraverse.lean` |
-| `twoHop_emit_iff` | Two chained hops return the openCypher match set with distinct relationships | `CondTraverse.lean` |
+| `twoHop_emit_iff`, `twoHopN_eq_emit` | Two chained hops return the openCypher match set with distinct relationships, collapsed or not (#3639) | `CondTraverse.lean` |
+| `expandRowN_eq_emit`, `expandIntoN_eq_emit`, `hopCount_eq`, `walks2_distinct_count` | Since #3639 every hop, per-row or batched, counts edges, not node pairs (`hopCount_eq` counts in unbounded `Nat`; the engine's `u64` products wrap, so the batched-path rows are CONDITIONAL on no overflow; `count_lmxm_into`'s `BoolUnion` arm is not modelled, NOT COVERED) | `CondTraverse.lean` |
 | `batched_eq_collapse`, `fused_chain_semantics` | The matrix-multiply path equals per-row expansion, for any multiply meeting the GraphBLAS spec | `CondTraverse.lean` |
 | `varLen_iff` | Variable-length returns exactly the trails with length in `[min, max]` | `VarLen.lean` |
 | `varLen_bidir_reverse_iff` | An undirected variable-length walk started from the bound `to` (reversed) returns the same trails read backwards | `VarLen.lean` |
@@ -71,7 +72,6 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `labelIdScan_correct` | The label + id-range scan returns exactly labelled ∩ range | `Scans.lean` |
 | `canUse_inListV_eq_or`, `canUseE_inListV_eq_or` | An `IN` list reaches the index on the same terms as the `Or` of `Equal`s it replaced (non-empty, every member indexable), so `IN [NULL]` still falls back | `IndexScan.lean` |
 | `scanRow_spec`, `edgeRow_sound`, `orient_length` | Index scans are sound pre-filters, honour bound endpoints, and read undirected edges both ways | `IndexScan.lean` |
-| `dedupRows_keys_nodup`, `dedupRows_keys_complete` | The bidirectional dedup keeps unique keys and never loses a key (the bugs are in *which* key) | `BidirDedup.lean` |
 | `edgeVerdict_eq_filterEval` | A variable-length edge filter answers every evaluated value exactly as `FilterOp` does, by `StreamOps.filterEval` (non-boolean is a type error) | `VarLen.lean` |
 
 ### How `asp_minimal` is proved
@@ -90,9 +90,6 @@ Every bug was reproduced against a live server and compared with C before it was
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-traverse-1 | `twoHop_collapse_changes_count` | An unreferenced named edge is collapsed even though a sibling traverse still reads it for uniqueness (`reduce_expand_into.rs`; the oracle is now `optimizer/references.rs`). `MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)` on `a⇉b→c`: Rust 1, C 2. Related to #2896 | **Open** |
-| W2-traverse-2 | `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result` | The dedup for chained anonymous undirected hops (`cond_traverse.rs`) ignores other columns, keys on an intermediate node at 3+ hops, and resets per batch. `UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10; a 3-hop star: Rust 7, C 12 | **Open** |
-| W2-traverse-3 | `bidir_collapse_duplicates_pair`, `expandInto_bidir_collapse_two_rows` | An undirected anonymous hop collapses per direction, not per pair. With `a→b`, `b→a`, `a→b`, `MATCH (a)-[]-(b) RETURN a.id, b.id`: Rust 4 rows, C 2 | **Open** |
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |
 | #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4; C's 4 is the figure from the issue report, not re-run here); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
 | #3451 | `bug3451_main_violates`, `bug3451_cycle_not_reversed` | PathBuilder infers a var-length segment's direction by comparing its first node with the previous path node (`path_builder.rs:102-110`); on a cycle they are equal, so an incoming `(a)<-[:R*3..3]-(a)` on `0→1→2→0` comes out `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]` (C: `[0,2,1,0]`/`[1,2,3]`: right nodes, but its relationship list is also in the wrong order). Property `PathFollowsPattern`; main is right on non-cyclic walks (`vltMain_follows_of_ne`), the plan-time direction flag fixes it (`vltFix_follows`) | **Open** |
@@ -103,7 +100,6 @@ Every bug was reproduced against a live server and compared with C before it was
 
 - `algo.SPpaths` / `SSpaths` with a `costProp` no edge carries and no `maxLen`/`maxCost`: Rust reports the hop count as the cost, C reports 0 on its own fast path (`{sourceNode: a, targetNode: c, weightProp: 'w', costProp: 'zz'}`: Rust 2, C 0; with `maxLen: 5` both 2). `maxLen` wraps modulo 2^32 in both engines (`AlgoPaths.pMaxLen_wraps`).
 - `[x IN null | x]` returns `[]` (C `null`); outside this project's target files.
-- Anonymous edges, and named edges that are never read, collapse parallel edges.
 - No relationship uniqueness between variable-length hops and sibling edges (`no_sibling_uniqueness`), nor for anonymous edges or named paths.
 - An undirected allShortestPaths cycle reuses its first edge (`undirected_cycle_repeats_edge`).
 - Where Rust is right and C is wrong: undirected self-loops under `*` (C reports them twice), uniqueness of named edges within one MATCH (C ignores it), and the allShortestPaths undirected self-loop (C duplicates it).
@@ -113,11 +109,10 @@ Every bug was reproduced against a live server and compared with C before it was
 | File | What's in it |
 |---|---|
 | `Basic.lean` | The graph model: edges, the pair-level matrix pattern `pairs`, `edgesBetween`, `step` |
-| `CondTraverse.lean` | Single hop (emit and collapse, directed and undirected), ExpandInto, two hops, `MxmSpec` and the batched multiply path; the collapse counterexamples |
+| `CondTraverse.lean` | Single hop (emit and collapse, directed and undirected), ExpandInto, the #3639 collapse rule and path counts, two hops, `MxmSpec` and the batched multiply path |
 | `UnionStream.lean` | `UnionIter` (#3492): the k-way merge of per-type pair streams, `drain_spec`, `union_stream`, the layer-merge order (`layerStream_spec`) |
-| `UnionGlue.lean` | Multi-type matrix selection, `delta_lmxm_into` (`deltaInto_eff`), the iterator builders, `expand_union_row` (`union_emit_*_iff`, `union_collapse_directed_keys_nodup`) |
+| `UnionGlue.lean` | Multi-type matrix selection (`untypedSel`), the support of `count_lmxm_into` (`deltaInto_eff`), the iterator builders, `expand_union_row` (`union_emit_*_iff`, `union_collapse_directed_keys_nodup`) |
 | `CTGlue.lean` | CondTraverse/ExpandInto constructors, `build_state`, `trim_to_cap`, null padding, `next`; scan and PathBuilder constructors |
-| `BidirDedup.lean` | The bidirectional dedup block and its three counterexamples |
 | `VarLen.lean` | The variable-length DFS, `varLen_iff`, the absorbed edge filter |
 | `VarLenGlue.lean` | `path_value`, the `VarLenIter` frame machine, the endpoint plan, `new` |
 | `ShortestPaths.lean` | allShortestPaths BFS and backtrack, soundness, the cycle counterexamples, PathBuilder |
@@ -136,13 +131,15 @@ The project imports `proofs/graphblas_wrappers` and `proofs/versioned_matrix` (t
 
 Line numbers are pinned to main 5e475e6c9. No traversal operator changed since fb3d516d0; #2383 changed the index scans (a list now reaches the index as one `InList`, `canUse_inListV_eq_or`), #3436 only replaced `g.borrow()` with `graph()`, and #2899 / #2954 shifted the `eval.rs` rows.
 
-`COVERAGE.tsv` has 84 rows:
+`COVERAGE.tsv` has 93 rows:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 84 |
+| PROVEN | 82 |
+| CONDITIONAL | 2 |
+| NOT COVERED | 9 |
 
-Every operator file under `runtime/ops/` in scope is fully PROVEN (no FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled). The rest:
+The operator files under `runtime/ops/` in scope are PROVEN except the rows named in COVERAGE.tsv as CONDITIONAL (`expand_batch`, `expand_batch_rows`: no-overflow of the `u64` counts) or NOT COVERED (including `count_lmxm_into`, whose `BoolUnion` arm and counted helper calls are not modelled). No FFI rows are left since #3492: `delta_lmxm_into` and the iterator builders are modelled. The rest:
 
 - **`cond_traverse.rs` since #3492:** `delta_lmxm_into` is proved (`UnionGlue.deltaInto_eff`: `F * (A1 + .. + Ak)` on the pattern, via `GBWDelta.deltaLmxm_eff`); the iterator builders and the `UnionIter` merge (`UnionStream.drain_spec`) are modelled and proved. The batched path's one-hop theorems still take `MxmSpec` for the multiply.
 - **`algo_procedures.rs`, `eval.rs` (since 2026-11-22):** config parsing, the path comparator, `to_numeric_value`, `edge_numeric_attr`, `far_endpoint`, `node_successors`, the Dijkstra heap order, `build_path_batch` and the two registrations are PROVEN (`AlgoPaths`); `eval_shortest_path` is PROVEN as glue (`EvalSP`, the search is a parameter).

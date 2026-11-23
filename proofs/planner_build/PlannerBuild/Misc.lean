@@ -238,4 +238,126 @@ theorem setIP_scansLeaf : ∀ p, scansLeaf (setIP p) = true
 termination_by p => sizeOf p
 decreasing_by simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; omega
 
+/-! ## `may_share_edge` (#3639)
+
+Two relationship patterns of one component can bind the same physical edge: both are
+fixed-length (no `min_hops`, not a shortest path) and their type sets overlap, an empty set
+matching every type. -/
+
+structure SRel where
+  fixed : Bool
+  types : List String
+
+def mayShareEdge (a b : SRel) : Bool :=
+  a.fixed && b.fixed && (a.types.isEmpty || b.types.isEmpty || a.types.any (fun t => b.types.contains t))
+
+/-- A type both can carry exists (the empty set stands for every type). -/
+theorem mayShareEdge_spec (a b : SRel) :
+    mayShareEdge a b = true ↔ a.fixed = true ∧ b.fixed = true ∧
+      ∃ t, (a.types = [] ∨ t ∈ a.types) ∧ (b.types = [] ∨ t ∈ b.types) := by
+  simp only [mayShareEdge, Bool.and_eq_true, Bool.or_eq_true, List.isEmpty_iff, List.any_eq_true,
+    List.contains_iff_mem]
+  constructor
+  · rintro ⟨⟨ha, hb⟩, (h | h) | ⟨t, h1, h2⟩⟩
+    · exact ⟨ha, hb, (b.types.head? |>.getD ""), Or.inl h, by
+        cases hbt : b.types with
+        | nil => exact Or.inl rfl
+        | cons x xs => exact Or.inr (by simp)⟩
+    · exact ⟨ha, hb, (a.types.head? |>.getD ""), by
+        cases hat : a.types with
+        | nil => exact Or.inl rfl
+        | cons x xs => exact Or.inr (by simp), Or.inl h⟩
+    · exact ⟨ha, hb, t, Or.inr h1, Or.inr h2⟩
+  · rintro ⟨ha, hb, t, h1 | h1, h2 | h2⟩
+    · exact ⟨⟨ha, hb⟩, Or.inl (Or.inl h1)⟩
+    · exact ⟨⟨ha, hb⟩, Or.inl (Or.inl h1)⟩
+    · exact ⟨⟨ha, hb⟩, Or.inl (Or.inr h2)⟩
+    · exact ⟨⟨ha, hb⟩, Or.inr ⟨t, h1, h2⟩⟩
+
+theorem mayShareEdge_comm (a b : SRel) : mayShareEdge a b = mayShareEdge b a := by
+  rw [Bool.eq_iff_iff, mayShareEdge_spec, mayShareEdge_spec]
+  constructor <;> rintro ⟨ha, hb, t, h1, h2⟩ <;> exact ⟨hb, ha, t, h2, h1⟩
+
+/-- A variable-length pattern never shares (its edges are already distinct per path). -/
+theorem mayShareEdge_varlen (a b : SRel) (h : a.fixed = false) : mayShareEdge a b = false := by
+  simp [mayShareEdge, h]
+
+/-- Disjoint non-empty type sets never share. -/
+theorem mayShareEdge_disjoint (a b : SRel) (ha : a.types ≠ []) (hb : b.types ≠ [])
+    (hd : ∀ t ∈ a.types, t ∉ b.types) : mayShareEdge a b = false := by
+  cases h : mayShareEdge a b
+  · rfl
+  · obtain ⟨-, -, t, h1 | h1, h2 | h2⟩ := (mayShareEdge_spec a b).1 h
+    all_goals first | exact absurd h1 ha | exact absurd h2 hb | exact absurd h2 (hd t h1)
+
+/-! ## `plan_match`'s sibling edges (#3639)
+
+`component_siblings`: a relationship of the component takes part in uniqueness when it is named
+or another relationship of the component (a different alias) may bind the same edge;
+`siblings_of` gives that list to a member and nothing to a non-member. -/
+
+structure CRel where
+  id : Nat
+  named : Bool
+  rel : SRel
+
+def componentSiblings (rs : List CRel) : List Nat :=
+  (rs.filter fun r => r.named || rs.any fun o => o.id != r.id && mayShareEdge r.rel o.rel).map (·.id)
+
+def siblingsOf (rs : List CRel) (r : CRel) : List Nat :=
+  if (componentSiblings rs).contains r.id then componentSiblings rs else []
+
+theorem mem_componentSiblings {rs : List CRel} {r : CRel} (hr : r ∈ rs)
+    (h : r.named = true ∨ ∃ o ∈ rs, o.id ≠ r.id ∧ mayShareEdge r.rel o.rel = true) :
+    r.id ∈ componentSiblings rs := by
+  unfold componentSiblings
+  refine List.mem_map.2 ⟨r, List.mem_filter.2 ⟨hr, ?_⟩, rfl⟩
+  rcases h with h | ⟨o, ho, hne, hs⟩
+  · simp [h]
+  · simp only [Bool.or_eq_true, List.any_eq_true, Bool.and_eq_true, bne_iff_ne, ne_eq]
+    exact Or.inr ⟨o, ho, hne, hs⟩
+
+/-- A named edge always checks the whole sibling set. -/
+theorem siblingsOf_named {rs : List CRel} {r : CRel} (hr : r ∈ rs) (hn : r.named = true) :
+    siblingsOf rs r = componentSiblings rs := by
+  simp [siblingsOf, mem_componentSiblings hr (Or.inl hn)]
+
+/-- Two relationships that may bind one edge check each other, named or anonymous: the result
+no longer depends on naming. -/
+theorem siblingsOf_share {rs : List CRel} {r o : CRel} (hr : r ∈ rs) (ho : o ∈ rs)
+    (hne : o.id ≠ r.id) (hs : mayShareEdge r.rel o.rel = true) :
+    o.id ∈ siblingsOf rs r ∧ r.id ∈ siblingsOf rs o := by
+  have h1 := mem_componentSiblings hr (Or.inr ⟨o, ho, hne, hs⟩)
+  have h2 := mem_componentSiblings ho
+    (Or.inr ⟨r, hr, fun h => hne h.symm, by rw [mayShareEdge_comm]; exact hs⟩)
+  simp [siblingsOf, h1, h2]
+
+/-- An anonymous relationship that can share an edge with no other checks nothing, and is
+checked by nobody. -/
+theorem siblingsOf_lone {rs : List CRel} {r : CRel} (hn : r.named = false)
+    (hu : ∀ o ∈ rs, o.id ≠ r.id → mayShareEdge r.rel o.rel = false)
+    (hid : ∀ o ∈ rs, o.id = r.id → o = r) :
+    siblingsOf rs r = [] ∧ ∀ o ∈ rs, r.id ∉ siblingsOf rs o := by
+  have hnot : r.id ∉ componentSiblings rs := by
+    intro h
+    unfold componentSiblings at h
+    obtain ⟨x, hx, hxid⟩ := List.mem_map.1 h
+    obtain ⟨hxr, hxp⟩ := List.mem_filter.1 hx
+    have := hid x hxr hxid
+    subst this
+    simp only [hn, Bool.false_or, List.any_eq_true, Bool.and_eq_true, bne_iff_ne, ne_eq] at hxp
+    obtain ⟨o, ho, hne, hs⟩ := hxp
+    rw [hu o ho hne] at hs
+    exact Bool.false_ne_true hs
+  refine ⟨by simp [siblingsOf, hnot], fun o _ h => ?_⟩
+  unfold siblingsOf at h
+  split at h
+  · exact hnot h
+  · simp at h
+
+/-- Every operator of the component checks the same list, or none. -/
+theorem siblingsOf_uniform (rs : List CRel) (r : CRel) :
+    siblingsOf rs r = [] ∨ siblingsOf rs r = componentSiblings rs := by
+  unfold siblingsOf; split <;> simp
+
 end PlannerBuild

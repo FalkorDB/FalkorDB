@@ -4,10 +4,10 @@ CondTraverse / ExpandInto / scan operator glue and constructors.
 
 | here | there |
 | --- | --- |
-| `ncolsT`               | `TraversalMatrix::ncols` (cond_traverse.rs) |
+| `ncolsT`               | `TraversalMatrix::ncols` (cond_traverse.rs; `BoolUnion` arm since #3639) |
 | `emptyIter`            | `empty_edge_iter` (cond_traverse.rs) |
-| `ctNew`                | `CondTraverseOp::new` (cond_traverse.rs) |
-| `buildState`           | `CondTraverseOp::build_state` (cond_traverse.rs; multi-type branch :506-535, #3492) |
+| `ctNew`                | `CondTraverseOp::new` (cond_traverse.rs; #3639: `node_unique`, chain-pair siblings, no bidir dedup) |
+| `buildState`           | `CondTraverseOp::build_state` (cond_traverse.rs; multi-type branch, #3492; `multi_edge`, #3639) |
 | `trimToCap`            | `CondTraverseOp::trim_to_cap` (cond_traverse.rs) |
 | `outAlias`             | `CondTraverseOp::out_alias_id` (cond_traverse.rs) |
 | `nullPad`              | `CondTraverseOp::null_pad` (cond_traverse.rs) |
@@ -30,6 +30,7 @@ inductive TM where
   | bool (m : Mat)
   | u64 (fwd : Mat)   -- a tensor; only its forward layer is read
   | union (fwds : List Mat)   -- several types kept apart (#3492); forward layers
+  | boolUnion (ms : List Mat)   -- `BoolUnion` (#3639): per-type boolean adjacencies, kept apart
 
 /-- cond_traverse.rs: the union's column count is the first tensor's (every
 relationship tensor is sized to the node capacity), 0 for an (unreachable) empty list. -/
@@ -37,11 +38,16 @@ def ncolsT : TM → Nat
   | .bool m => m.ncols
   | .u64 f => f.ncols
   | .union fs => (fs.head?.map Mat.ncols).getD 0
+  | .boolUnion ms => (ms.head?.map Mat.ncols).getD 0
 
 theorem ncolsT_spec (m : Mat) : ncolsT (.bool m) = m.ncols ∧ ncolsT (.u64 m) = m.ncols := ⟨rfl, rfl⟩
 
 theorem ncolsT_union (m : Mat) (rest : List Mat) : ncolsT (.union (m :: rest)) = m.ncols := rfl
 theorem ncolsT_union_nil : ncolsT (.union []) = 0 := rfl
+
+/-- `BoolUnion` (#3639): the first member's column count, 0 when empty. -/
+theorem ncolsT_boolUnion (m : Mat) (rest : List Mat) :
+    ncolsT (.boolUnion (m :: rest)) = m.ncols ∧ ncolsT (.boolUnion []) = 0 := ⟨rfl, rfl⟩
 
 /-- When the tensors share a column count (node capacity), the union's `ncols` is every member's. -/
 theorem ncolsT_union_all (fs : List Mat) (c : Nat) (hne : fs ≠ []) (h : ∀ f ∈ fs, f.ncols = c) :
@@ -71,90 +77,93 @@ structure RelPat where
   relAlias : Nat
   bidir : Bool
 
-structure ChildCT where
-  emitRel : Bool
-  bidir : Bool
+/-- A sibling CondTraverse compared by its endpoints (`SiblingEnds`). -/
+structure SibEnds where
   fromAlias : Nat
+  toAlias : Nat
+  transposed : Bool
 
 structure CtCfg where
-  dedup : Bool
-  dedupSrc : Option Nat
+  nodeUnique : Option (List SibEnds)
   eligible : Bool
   toCol : Option Nat
   produced : Nat
 
-def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : List Bool)
-    (child : Option ChildCT) : CtCfg :=
-  -- cond_traverse.rs `rp.from.alias.is_unnamed()` (no name)
-  let anon := rp.fromName.isNone
-  let (dedup, src) :=
-    if !emitRel && rp.bidir && anon then
-      match child with
-      | some c => if !c.emitRel && c.bidir then (true, some c.fromAlias) else (false, none)
-      | none => (false, none)
-    else (false, none)
+/-- `CondTraverseOp::new` (#3639: the bidirectional dedup is gone). `chain` lists the fused hops'
+`(alias, bidirectional)`; `ncs` is what `node_comparable_siblings` returns for this pattern. -/
+def ctNew (rp : RelPat) (emitRel bind optional : Bool) (siblings : List Nat)
+    (chain : List (Nat × Bool)) (ncs : Option (List SibEnds)) : CtCfg :=
+  let nodeUnique :=
+    if !emitRel && !bind && !optional && chain.isEmpty && !rp.bidir then ncs else none
   -- cond_traverse.rs (#2390: the inline-attr emptiness test is gone)
-  let eligible := !emitRel && !rp.bidir && !dedup && siblings.isEmpty &&
-    chainBidir.all (!·)
-  { dedup, dedupSrc := src, eligible, toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none,
+  let eligible := !emitRel && !rp.bidir &&
+    (siblings.isEmpty || nodeUnique.isSome ||
+      (chain.length == 1 && siblings.all fun i => i == rp.relAlias || chain.any (·.1 == i))) &&
+    chain.all (fun h => !h.2)
+  { nodeUnique, eligible, toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none,
     produced := 0 }
 
-/-- Cross-row bidirectional dedup is armed exactly for an anonymous-intermediate,
-non-emitting bidirectional hop over a non-emitting bidirectional child CT, keyed by the
-child's source alias; the F·A batched path is taken only for directed, non-emitting,
-sibling-free hops whose chain hops are all directed; a self-loop
-binds one endpoint column. -/
-theorem ctNew_spec (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool) (ch : Option ChildCT) :
-    let c := ctNew rp er sib cb ch
-    (c.dedup = true ↔ er = false ∧ rp.bidir = true ∧ rp.fromName = none ∧
-      ∃ x, ch = some x ∧ x.emitRel = false ∧ x.bidir = true) ∧
-    (c.dedup = true → c.dedupSrc = ch.map (·.fromAlias)) ∧
-    (c.eligible = true → er = false ∧ rp.bidir = false ∧ sib = [] ∧ ∀ b ∈ cb, b = false) ∧
+/-- Siblings are compared by node only for a plain, non-emitting, unbound, non-optional,
+unchained, directed hop, and then exactly as `node_comparable_siblings` says; the F·A batched
+path is taken only for directed, non-emitting hops whose chain hops are all directed and whose
+siblings are node-compared or, on a two-hop chain, only the chain's own edges; a self-loop binds
+one endpoint column. -/
+theorem ctNew_spec (rp : RelPat) (er bd op : Bool) (sib : List Nat) (ch : List (Nat × Bool))
+    (ncs : Option (List SibEnds)) :
+    let c := ctNew rp er bd op sib ch ncs
+    (c.nodeUnique.isSome → er = false ∧ bd = false ∧ op = false ∧ ch = [] ∧ rp.bidir = false ∧
+      c.nodeUnique = ncs) ∧
+    (c.eligible = true → er = false ∧ rp.bidir = false ∧ (∀ h ∈ ch, h.2 = false) ∧
+      (sib = [] ∨ c.nodeUnique.isSome ∨
+        (∃ a b, ch = [(a, b)] ∧ ∀ i ∈ sib, i = rp.relAlias ∨ i = a))) ∧
     (c.toCol = none ↔ rp.toAlias = rp.fromAlias) ∧ c.produced = 0 := by
-  simp only [ctNew]
-  refine ⟨?_, ?_, ?_, ?_, by first | rfl | trivial⟩
-  · by_cases h : (!er && rp.bidir && rp.fromName.isNone) = true
-    · simp only [h, ite_true]
-      simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
-      obtain ⟨⟨h1, h2⟩, h3⟩ := h
-      rw [Option.isNone_iff_eq_none] at h3
-      cases ch with
-      | none => simp
-      | some x => by_cases hx : (!x.emitRel && x.bidir) = true
-                  · simp only [hx, ite_true]; simp at hx; simp [h1, h2, h3, hx]
-                  · simp only [hx, Bool.false_eq_true, ite_false]; simp at hx
-                    constructor
-                    · intro h; cases h
-                    · rintro ⟨_, _, _, y, hy, h4, h5⟩
-                      cases hy; simp [hx h4] at h5
-    · simp only [h, Bool.false_eq_true, ite_false, false_iff, not_and]
-      intro h1 h2 h3; simp [h1, h2, h3] at h
-  · intro hd
-    split at hd
-    · split at hd
-      · split at hd
-        · simp_all
-        · simp at hd
-      · simp at hd
-    · simp at hd
+  refine ⟨?_, ?_, ?_, rfl⟩
+  · simp only [ctNew]
+    split
+    · rename_i h
+      simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_iff] at h
+      obtain ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h5⟩ := h
+      intro _; exact ⟨h1, h2, h3, h4, h5, rfl⟩
+    · simp
   · intro he
-    simp only [Bool.and_eq_true, Bool.not_eq_true', List.isEmpty_iff, List.all_eq_true] at he
-    obtain ⟨⟨⟨⟨h1, h2⟩, _⟩, h4⟩, h6⟩ := he
-    exact ⟨h1, h2, h4, fun b hb => by simpa using h6 b hb⟩
-  · by_cases h : rp.toAlias = rp.fromAlias <;> simp [h]
+    simp only [ctNew] at he ⊢
+    simp only [Bool.and_eq_true, Bool.or_eq_true, Bool.not_eq_true', List.isEmpty_iff,
+      List.all_eq_true, beq_iff_eq] at he ⊢
+    obtain ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩ := he
+    refine ⟨h1, h2, fun h hh => by simpa using h4 h hh, ?_⟩
+    rcases h3 with (h3 | h3) | ⟨hl, hs⟩
+    · exact Or.inl h3
+    · exact Or.inr (Or.inl h3)
+    · refine Or.inr (Or.inr ?_)
+      match ch, hl with
+      | [(a, b)], _ =>
+        refine ⟨a, b, rfl, fun i hi => ?_⟩
+        have := hs i hi
+        simp only [beq_iff_eq, List.any_cons, List.any_nil, Bool.or_false] at this
+        rcases this with h | h
+        · exact Or.inl h
+        · exact Or.inr h.symm
+  · by_cases h : rp.toAlias = rp.fromAlias <;> simp [ctNew, h]
 
-/-- The F·A batched path is taken exactly for non-emitting, directed, dedup-free,
-sibling-free hops whose fused chain is all directed (cond_traverse.rs). -/
-theorem ctNew_eligible_iff (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
-    (ch : Option ChildCT) :
-    (ctNew rp er sib cb ch).eligible = true ↔
-      er = false ∧ rp.bidir = false ∧ (ctNew rp er sib cb ch).dedup = false ∧ sib = [] ∧
-        ∀ b ∈ cb, b = false := by
-  simp only [ctNew, Bool.and_eq_true, List.isEmpty_iff, List.all_eq_true,
-    Bool.not_eq_eq_eq_not, Bool.not_true]
+/-- The F·A batched path is taken exactly for non-emitting, directed hops whose fused chain is
+all directed and whose siblings it can account for (cond_traverse.rs `batched_eligible`). -/
+theorem ctNew_eligible_iff (rp : RelPat) (er bd op : Bool) (sib : List Nat) (ch : List (Nat × Bool))
+    (ncs : Option (List SibEnds)) :
+    (ctNew rp er bd op sib ch ncs).eligible = true ↔
+      er = false ∧ rp.bidir = false ∧
+        (sib = [] ∨ (ctNew rp er bd op sib ch ncs).nodeUnique.isSome ∨
+          (ch.length = 1 ∧ ∀ i ∈ sib, i = rp.relAlias ∨ ∃ h ∈ ch, h.1 = i)) ∧
+        ∀ h ∈ ch, h.2 = false := by
+  simp only [ctNew, Bool.and_eq_true, Bool.or_eq_true, List.isEmpty_iff,
+    List.all_eq_true, List.any_eq_true, beq_iff_eq, Bool.not_eq_eq_eq_not, Bool.not_true]
   constructor
-  · rintro ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩; exact ⟨h1, h2, h3, h4, h6⟩
-  · rintro ⟨h1, h2, h3, h4, h6⟩; exact ⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, h6⟩
+  · rintro ⟨⟨⟨h1, h2⟩, h3⟩, h4⟩; exact ⟨h1, h2, or_assoc.1 h3, h4⟩
+  · rintro ⟨h1, h2, h3, h4⟩; exact ⟨⟨⟨h1, h2⟩, or_assoc.2 h3⟩, h4⟩
+
+/-- Without siblings or a chain the rule is the one before #3639. -/
+theorem ctNew_eligible_plain (rp : RelPat) (er bd op : Bool) (ncs : Option (List SibEnds)) :
+    (ctNew rp er bd op [] [] ncs).eligible = (!er && !rp.bidir) := by
+  simp [ctNew]
 
 /-! ## `build_state` (cond_traverse.rs) -/
 
@@ -171,12 +180,14 @@ structure CtState where
   multi : Bool
   /-- `union.rev` exists: a bidirectional multi-type pattern -/
   unionRev : Bool
+  /-- `multi_edge` (#3639): some matched tensor holds a parallel edge (`Tensor::has_multi_edge`) -/
+  multiEdge : Bool
 
 /-- `resolve` = `g.resolve_label_ids` (`None` when a label is unknown); `typeId` =
 `get_type_id`; `fwdIter`/`revIter` = whether `build_unrestricted_iter` found the matrix. -/
 def buildState (resolve : List String → Option (List Nat)) (typeId : String → Option Nat)
     (ntensors : Nat) (fromL toL : List String) (types : List String) (bidir transposed : Bool)
-    (fwdOk revOk : Bool) : CtState :=
+    (fwdOk revOk : Bool) (hasMulti : Nat → Bool := fun _ => false) : CtState :=
   let (fs, fd) := if transposed then (toL, fromL) else (fromL, toL)
   let fsi := resolve fs
   let fdi := resolve fd
@@ -184,10 +195,20 @@ def buildState (resolve : List String → Option (List Nat)) (typeId : String �
       (if transposed then (resolve fromL, resolve toL) else (resolve toL, resolve fromL))
     else (some [], some [])
   let noMatch := fsi.isNone || fdi.isNone || rsi.isNone || rdi.isNone || !fwdOk || (bidir && !revOk)
+  let edgeTypes := if types.isEmpty then List.range ntensors else types.filterMap typeId
   { fwdSrc := fsi.getD [], fwdDst := fdi.getD [], revSrc := rsi.getD [], revDst := rdi.getD [],
-    edgeTypes := if types.isEmpty then List.range ntensors else types.filterMap typeId,
-    noMatch, hasRev := bidir && !(decide (types.length > 1)),
-    multi := decide (types.length > 1), unionRev := bidir && decide (types.length > 1) }
+    edgeTypes, noMatch, hasRev := bidir && !(decide (types.length > 1)),
+    multi := decide (types.length > 1), unionRev := bidir && decide (types.length > 1),
+    multiEdge := edgeTypes.any hasMulti }
+
+/-- **`multi_edge` (#3639)**: set exactly when a matched tensor (`edge_type_indices`) holds a
+parallel edge; it disables the collapse (`CondTraverse.expandRowN`). -/
+theorem buildState_multiEdge (resolve : List String → Option (List Nat))
+    (typeId : String → Option Nat) (n : Nat) (fromL toL types : List String)
+    (bidir tr fwdOk revOk : Bool) (hm : Nat → Bool) :
+    let s := buildState resolve typeId n fromL toL types bidir tr fwdOk revOk hm
+    (s.multiEdge = true ↔ ∃ t ∈ s.edgeTypes, hm t = true) := by
+  simp [buildState]
 
 /-- An unknown label sets `no_match` (no rows, but the child is still drained), and so does a
 builder that found no matrix: `fwdOk`/`revOk` say whether the iterator builders found theirs, which

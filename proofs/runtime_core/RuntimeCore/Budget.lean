@@ -25,23 +25,27 @@ non-negative `i64`), so the sum never saturates in `usize`; `Nat` addition is ex
 namespace RuntimeCore.Budget
 
 /-- The ancestors the walks distinguish. `project g` is any 1:1 operator the walks treat
-as transparent (`Project`); `traverse f` is `CondTraverse`/`ExpandInto`, which map one
-input row to an arbitrary list of rows (possibly empty); `other h` is any barrier. -/
+as transparent (`Project`); `condTraverse sib f`/`expandInto sib f` are `CondTraverse`/`ExpandInto`,
+which map one input row to an arbitrary list of rows (possibly empty), `sib` saying whether its
+`sibling_edges` is non-empty (#3639); `other h` is any barrier. -/
 inductive Anc (α : Type) where
   | limit (n : Nat)
   | skip (n : Nat)
   | project (g : α → α)
-  | condTraverse (f : α → List α)
-  | expandInto (f : α → List α)
+  | condTraverse (sib : Bool) (f : α → List α)
+  | expandInto (sib : Bool) (f : α → List α)
   | other (h : List α → List α)
 
 variable {α : Type}
 
-/-- `Runtime::effective_limit` (`runtime.rs`). -/
+/-- `Runtime::effective_limit` (`runtime.rs`). Since #3639 a traverse with sibling edges is a
+barrier (it drops rows whose edges another hop uses). -/
 def effectiveLimit : List (Anc α) → Option Nat
   | [] => none
   | .limit n :: _ => some n
-  | .project _ :: r | .skip _ :: r | .condTraverse _ :: r | .expandInto _ :: r => effectiveLimit r
+  | .project _ :: r | .skip _ :: r | .condTraverse false _ :: r | .expandInto false _ :: r =>
+    effectiveLimit r
+  | .condTraverse true _ :: _ | .expandInto true _ :: _ => none
   | .other _ :: _ => none
 
 /-- `Runtime::effective_skip` (`runtime.rs`): the *first* `Skip` reached through
@@ -61,8 +65,8 @@ def Anc.sem : Anc α → List α → List α
   | .limit n, xs => xs.take n
   | .skip n, xs => xs.drop n
   | .project g, xs => xs.map g
-  | .condTraverse f, xs => xs.flatMap f
-  | .expandInto f, xs => xs.flatMap f
+  | .condTraverse _ f, xs => xs.flatMap f
+  | .expandInto _ f, xs => xs.flatMap f
   | .other h, xs => h xs
 
 /-- The rows reaching the top of the chain. -/
@@ -109,7 +113,7 @@ theorem need_sound : ∀ (as : List (Anc α)) (c : Nat), need as = some c →
     simp only [run, Anc.sem]
     rw [List.map_take]
     exact need_sound r c h _
-  | .condTraverse _ :: _, _, h, _ | .expandInto _ :: _, _, h, _ | .other _ :: _, _, h, _ => by
+  | .condTraverse _ _ :: _, _, h, _ | .expandInto _ _ :: _, _, h, _ | .other _ :: _, _, h, _ => by
     simp [need] at h
 
 /-- **PROVEN**: any budget at least `need` is sound too. -/
@@ -157,23 +161,25 @@ theorem recordCap_hardCap_sound_oneSkip {as : List (Anc α)} (h : OneSkip as) (x
 
 /-! ### Where `record_cap` is wrong for a hard cap (CONFIRMED against Rust, see header) -/
 
-/-- The lower `CondTraverse` of `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1`:
+/-- The lower `CondTraverse` of `MATCH (a:A)-[:R]->(b)-[:S]->(a) RETURN a.id LIMIT 1`:
 ancestors `ExpandInto` (keeps only the pair that closes the cycle), `Project`, `Limit 1`.
-Rows are `a.id`; pair `1` has no edge back, pair `2` does. -/
+Rows are `a.id`; pair `1` has no edge back, pair `2` does. The two hops' types are disjoint, so
+the planner gives them no sibling edges (#3639; with one type `R` for both they are siblings and
+the walk stops: `recordCap_sibling_barrier`). -/
 def cycleChain : List (Anc Nat) :=
-  [.expandInto (fun a => if a = 2 then [a] else []), .project id, .limit 1]
+  [.expandInto false (fun a => if a = 2 then [a] else []), .project id, .limit 1]
 
-/-- **PROVEN** (bug B1): `record_cap` walks through `ExpandInto`, and the hard cap it
-gives the traverse beneath drops the only answer: `[]` instead of `[2]`. -/
+/-- **PROVEN** (bug B1): `record_cap` walks through a sibling-free `ExpandInto`, and the hard
+cap it gives the traverse beneath drops the only answer: `[]` instead of `[2]`. -/
 theorem hard_cap_unsound_expandInto :
     recordCap cycleChain = some 1 ∧
     run cycleChain (hardCap (recordCap cycleChain) [1, 2]) = [] ∧
     run cycleChain [1, 2] = [2] := by decide
 
-/-- The lower `CondTraverse` of `MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 1`:
-the upper traverse maps `b1 ↦ []` (dead end) and `b2 ↦ [c]`. -/
+/-- The lower `CondTraverse` of `MATCH (a:A)-[:R]->(b)-[:S]->(c) RETURN c.id LIMIT 1`:
+the upper traverse (no sibling edges: disjoint types) maps `b1 ↦ []` (dead end) and `b2 ↦ [c]`. -/
 def twoHopChain : List (Anc Nat) :=
-  [.condTraverse (fun b => if b = 20 then [30] else []), .project id, .limit 1]
+  [.condTraverse false (fun b => if b = 20 then [30] else []), .project id, .limit 1]
 
 theorem hard_cap_unsound_condTraverse :
     recordCap twoHopChain = some 1 ∧
@@ -191,11 +197,11 @@ theorem hard_cap_unsound_stacked_skip :
     run stackedSkips (hardCap (recordCap stackedSkips) [10, 20, 30]) = [] ∧
     run stackedSkips [10, 20, 30] = [20] := by decide
 
-/-- **PROVEN** (general form of B1): whenever a `CondTraverse`/`ExpandInto` sits between
-a hard-capped operator and the `Limit`, some expansion makes the cap drop rows. -/
+/-- **PROVEN** (general form of B1): whenever a sibling-free `CondTraverse`/`ExpandInto` sits
+between a hard-capped operator and the `Limit`, some expansion makes the cap drop rows. -/
 theorem hard_cap_unsound_through_traverse (n : Nat) :
     ∃ (f : Nat → List Nat) (xs : List Nat),
-      let as : List (Anc Nat) := [.condTraverse f, .limit (n + 1)]
+      let as : List (Anc Nat) := [.condTraverse false f, .limit (n + 1)]
       recordCap as = some (n + 1) ∧ run as (hardCap (recordCap as) xs) ≠ run as xs := by
   refine ⟨fun x => if x = n + 1 then [x] else [], List.range (n + 2), ?_⟩
   simp only [recordCap, effectiveLimit, effectiveSkip, Option.map_some, Nat.add_zero, true_and]
@@ -220,7 +226,29 @@ theorem hard_cap_unsound_through_traverse (n : Nat) :
 traverse is a barrier) instead of `effective_limit + effective_skip`. `need_sound` is
 the correctness proof of that fix. On the soft consumers (`BatchedResultEmitter`) the
 current value is harmless — see `Emitter.emitAll_flatten`. -/
-theorem need_is_barrier_at_traverse (f : α → List α) (r : List (Anc α)) :
-    need (.condTraverse f :: r) = none ∧ need (.expandInto f :: r) = none := ⟨rfl, rfl⟩
+theorem need_is_barrier_at_traverse (b : Bool) (f : α → List α) (r : List (Anc α)) :
+    need (.condTraverse b f :: r) = none ∧ need (.expandInto b f :: r) = none := ⟨rfl, rfl⟩
+
+/-! ### #3639: a traverse with sibling edges is a barrier -/
+
+/-- **PROVEN**: `effective_limit` stops at a `CondTraverse`/`ExpandInto` with sibling edges, so
+nothing beneath it gets a cap from above it. -/
+theorem recordCap_sibling_barrier (f : α → List α) (r : List (Anc α)) :
+    effectiveLimit (.condTraverse true f :: r) = none ∧ effectiveLimit (.expandInto true f :: r) = none ∧
+    recordCap (.condTraverse true f :: r) = none ∧ recordCap (.expandInto true f :: r) = none :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- **PROVEN**: through sibling traverses the hard cap is never wrong, whatever lies above. -/
+theorem hardCap_sound_sibling (f : α → List α) (r : List (Anc α)) (xs : List α) :
+    run (.condTraverse true f :: r) (hardCap (recordCap (.condTraverse true f :: r)) xs) =
+      run (.condTraverse true f :: r) xs ∧
+    run (.expandInto true f :: r) (hardCap (recordCap (.expandInto true f :: r)) xs) =
+      run (.expandInto true f :: r) xs := ⟨rfl, rfl⟩
+
+/-- The B1 repro with one type, `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1`: the hops
+may share an edge, so the `ExpandInto` has siblings and the answer `[2]` is kept (it was `[]`). -/
+theorem cycleChain_siblings_fixed :
+    let as : List (Anc Nat) := [.expandInto true (fun a => if a = 2 then [a] else []), .project id, .limit 1]
+    recordCap as = none ∧ run as (hardCap (recordCap as) [1, 2]) = [2] := by decide
 
 end RuntimeCore.Budget

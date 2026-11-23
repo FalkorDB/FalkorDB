@@ -64,8 +64,9 @@ pub struct ExpandIntoOp<'a> {
     ///
     /// Lazily initialized on first use rather than at construction: the
     /// relationship type may be created by a sibling Commit earlier in the
-    /// same query, so capturing matrices in `new()` would miss them.
-    edge_type_indices: std::cell::RefCell<Option<Vec<usize>>>,
+    /// same query, so capturing matrices in `new()` would miss them. The flag is
+    /// true when one of the types holds a (src, dst) pair with parallel edges.
+    edge_type_indices: std::cell::RefCell<Option<(Vec<usize>, bool)>>,
 }
 
 impl<'a> ExpandIntoOp<'a> {
@@ -129,7 +130,7 @@ impl<'a> ExpandIntoOp<'a> {
         sibling_edges: &'a [u32],
         g: &Graph,
         pending: &Pending,
-        iters_ref: &mut Option<Vec<usize>>,
+        iters_ref: &mut Option<(Vec<usize>, bool)>,
         batch: &Batch<'a>,
         row_idx: usize,
     ) -> Result<Option<RowIter<'a, RelationshipId>>, String> {
@@ -183,16 +184,27 @@ impl<'a> ExpandIntoOp<'a> {
         let pairs = [(src, dst), (dst, src)];
         let npairs = if rp.bidirectional && src != dst { 2 } else { 1 };
 
-        let edge_type_indices = iters_ref.get_or_insert_with(|| {
-            if rp.types.is_empty() {
+        let (edge_type_indices, multi_edge) = iters_ref.get_or_insert_with(|| {
+            let indices: Vec<usize> = if rp.types.is_empty() {
                 (0..g.relationship_tensors().len()).collect()
             } else {
                 rp.types
                     .iter()
                     .filter_map(|t| g.get_type_id(t).map(|tid| tid.0))
                     .collect()
-            }
+            };
+            // A pair joined by edges of different types holds several edges
+            // although no single tensor stores a parallel one.
+            let multi_edge = indices.len() > 1
+                || indices
+                    .iter()
+                    .any(|&tidx| g.relationship_tensors()[tidx].has_multi_edge());
+            (indices, multi_edge)
         });
+
+        // Collapsing parallel edges to one row per pair is only exact when the
+        // relation has none.
+        let emit_relationship = emit_relationship || *multi_edge;
 
         // Matched edge ids for this input row, drained eagerly while the caller
         // holds the graph borrow (the tensor edge lookups are consumed here, never

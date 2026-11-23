@@ -69,7 +69,7 @@ Several passes collapse an edge, a bound edge or a variable-length path when nob
 
 **7. Do the remaining passes keep the result?**
 
-- `fuse_same_support`: anonymous-chain fusion keeps the set of rows. It collapses paths to (start, end) pairs exactly as C does (`fuse_changes_multiplicity`).
+- `fuse_same_support`: anonymous-chain fusion keeps the set of rows. Since #3639 the fused operator counts paths, so it keeps the multiset too (`fuse_counts_paths`, `fuse_diamond_two_rows`); `fuse_changes_multiplicity` is the boolean product C (and Rust before #3639) uses. `can_fuse` admits siblings that are only the two hops' own edges on an unchained pair (`canFuse_spec`, `canFuse_no_siblings`).
 - `fuse_optional_correct`: Optional-over-traverse fusion is column-exact.
 - `reorder_perm`, `reorder_preserves`: `reorder_labels` cannot change results.
 - `reduce_count_correct`: `reduce_count` returns the label cardinality of the graph at plan time.
@@ -114,10 +114,10 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | 3 (W2-rewrites-2) | `id_gt_neg_empty`, `id_le_neg_all` | `id(n) > -1` → 0 rows (C: 5); `id(n) <= -1` returns every node on both (#2266) | **Open** |
 | 4 (W2-rewrites-2) | `id_eq_null_errors` | `id(n) = null`, `= 1.0`, `> 1.5` → "Node ID must be an integer" (C: 0 rows) | **Open** |
 | 5 (W2-rewrites-3) | `hash_join_drops_row` | The hash join drops Int/Float pairs near 2⁵³: 2 rows where C gives 4 | **Open** |
-| 7 | `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | **Open** (PR #2918 not merged) |
+| 7 | `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1). Since #3639 the operator collapses only a relation without parallel edges, where it is exact (ops_traverse `twoHopN_eq_emit`), so W2-traverse-1 no longer changes results; the oracle gap remains | **Open** (PR #2918 not merged) |
 | #2556 | `bug2556_filter_below_binding`, `bug2556_t_seeded`, `bug2556_plan` (property `KeepsFiltersBound`) | `… WITH collect(x) AS fs UNWIND fs AS f MATCH (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}), (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)`: `select_scan_node` picks `t` as the best endpoint, seeds it into `initial_bound` although the outer `Unwind` child is kept and no scan for `t` is built, and places `t.id = 100` after the first hop, before `t` is bound. Rust 0, C 3 (the issue's query: a type error). Not `push_filters_down` (`bug2556_push_not_cause`); `bug2556_fixed` gives the C plan | **Open** |
 
-Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`).
+Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time, so a count after a write in the same query reads 0 (`reduce_count_stale`); C's fusion returns one row per (start, end) pair (`fuse_changes_multiplicity`; Rust counts paths since #3639).
 
 `refsNew_complete` also assumes `PlanInv`: inline property maps have already been turned into Filters. That is proven in [`../planner_build`](../planner_build) (`planMatch_stripped`), but the two projects are not linked, so here it is a stated assumption.
 
