@@ -22,9 +22,19 @@
 //   1. ONE RECORD PER (opcode, shape). Shape is the attribute IDS and never the
 //      values, plus the labels for a node and the relationship type for an edge.
 //
-//   2. GROUPS ARE SORTED BY KEY before emission. A hash table iterates
-//      arbitrarily, so the same query could emit its records in a different
-//      order on two runs of one engine, let alone on two engines.
+//   2. GROUPS GO OUT IN APPLY ORDER, AND BY KEY WITHIN IT. The stages are
+//      Rust's for_each_record: created nodes, created edges, updates, label
+//      changes, deleted edges, deleted nodes - so a node exists before it is
+//      updated, and an edge is unhooked before the node it hangs off goes.
+//      The opcode NUMBERING is v2's and is not that order - UPDATE_NODE is 1
+//      where CREATE_NODE is 3 - so sorting on the opcode itself sends
+//      CREATE (n) SET n.x = 1 backwards. Within a stage the key decides,
+//      because a hash table iterates arbitrarily and the same query would
+//      otherwise emit its records in a different order on two runs of one
+//      engine. Note the STAGES are what the two engines agree on: Rust does
+//      not impose an order within a stage and walks its shapes in first-seen
+//      order, so CREATE (:B), (:A) emits those two records in a different
+//      order there than here.
 //
 //   3. LABEL SETS ARE NORMALISED ASCENDING. Callers keep their own order, so
 //      [7,8] and [8,7] arrive for the same set; they are ONE shape.

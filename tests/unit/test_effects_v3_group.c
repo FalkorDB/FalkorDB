@@ -1913,6 +1913,69 @@ void test_effectsV3Group_foldKeepsAnOptionNobodyElseStates(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// A NODE IS CREATED BEFORE IT IS UPDATED
+//
+// CREATE (n:L) SET n.x = 1 is ONE entity in TWO groups: the create carries the
+// labels, the SET stages an update, and nothing merges them. So the payload
+// has to state them in an order the replica can apply.
+//
+// The opcode numbering is v2's and carries no order - UPDATE_NODE is 1 while
+// CREATE_NODE is 3 - so a sort on the opcode itself puts the update first. The
+// replica then updates a node it does not have; and were it to tolerate that,
+// the CREATE_NODE arriving afterwards carries no attributes, which v3 states
+// as "this node has no properties", so the property would be dropped instead.
+//
+// Rust's for_each_record (emit.rs) emits created nodes, created edges,
+// updates, label changes, deleted edges then deleted nodes, and says that is
+// the only ordering the format requires - so this is byte parity too, not just
+// an apply-order question.
+void test_effectsV3Group_createPrecedesUpdate(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID L = 7;
+
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &L, 1, 100, NULL, NULL, 0);
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 100, &L, 1, 0, 42,
+			SI_LongVal(1));
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+			"a create and an update are two records, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n;
+	unsigned char *b = _encode(g, &n);
+
+	TEST_ASSERT_(_u32(b) == EFFECT_CREATE_NODE,
+			"the node must be created before it is updated: first record is "
+			"opcode %u, wanted CREATE_NODE (%d)",
+			_u32(b), EFFECT_CREATE_NODE);
+
+	free(b);
+	EffectsV3Grouping_Free(g);
+}
+
+// AN EDGE IS UNHOOKED BEFORE THE NODE IT HANGS OFF IS REMOVED
+//
+// The other half of the same rule, and the one the opcode numbering happens to
+// get backwards too: DELETE_NODE is 5 and DELETE_EDGE is 6.
+void test_effectsV3Group_edgeDeletedBeforeNode(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID L = 7;
+
+	EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &L, 1, 100, NULL, NULL, 0);
+	EffectsV3Grouping_AddEdge(g, EFFECT_DELETE_EDGE, 3, 500, 100, 101, NULL,
+			NULL, 0);
+
+	size_t n;
+	unsigned char *b = _encode(g, &n);
+
+	TEST_ASSERT_(_u32(b) == EFFECT_DELETE_EDGE,
+			"edges are deleted before nodes: first record is opcode %u, "
+			"wanted DELETE_EDGE (%d)", _u32(b), EFFECT_DELETE_EDGE);
+
+	free(b);
+	EffectsV3Grouping_Free(g);
+}
+
 // a vector statement's options survive the conversion, codes and all
 void test_effectsV3Group_vectorOptions(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
@@ -2000,6 +2063,10 @@ TEST_LIST = {
 		test_effectsV3Group_foldsIntoAStrippedRecord },
 	{ "EffectsV3Group:dropIndexFoldsWithNoOptions",
 		test_effectsV3Group_dropIndexFoldsWithNoOptions },
+	{ "EffectsV3Group:createPrecedesUpdate",
+		test_effectsV3Group_createPrecedesUpdate },
+	{ "EffectsV3Group:edgeDeletedBeforeNode",
+		test_effectsV3Group_edgeDeletedBeforeNode },
 	{ "EffectsV3Group:differentIndexesNeverFold",
 		test_effectsV3Group_differentIndexesNeverFold },
 	{ "EffectsV3Group:anotherIndexDoesNotStripOptions",

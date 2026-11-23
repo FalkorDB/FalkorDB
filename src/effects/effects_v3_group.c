@@ -286,16 +286,83 @@ static int _cmp_u32(uint32_t a, uint32_t b) {
 	return (a < b) ? -1 : (a > b) ? 1 : 0;
 }
 
-// total order over (opcode, shape)
+// WHERE A GROUP'S OPCODE PUTS IT IN THE PAYLOAD.
 //
-// Any total order would keep one engine self-consistent; this one has to match
-// the other engine's, so it compares the shape's components in the order the
-// wire states them: the opcode, then the schema half (labels or relationship
-// type), then the attribute ids.
+// NOT the opcode's own value. The numbering is v2's and says nothing about
+// order - UPDATE_NODE is 1 and CREATE_NODE is 3 - so sorting on it emits the
+// update to a node ahead of the record that creates it. CREATE (n) SET n.x = 1
+// is two groups for one entity, and a replica reading them in that order
+// updates a node it has not got, or creates it afterwards and loses the
+// property, because a CREATE_NODE with no attributes states that the node has
+// none.
+//
+// The sequence is Rust's, which is normative: for_each_record (emit.rs) emits
+// created nodes, created edges, updates, label changes, deleted edges and
+// deleted nodes, in that order, and states that this is "the only ordering the
+// format requires".
+//
+// WHAT THAT DOES AND DOES NOT BUY. It settles the STAGES, and the same
+// sentence in Rust goes on to say that within a stage "their order among
+// themselves carries no meaning and is not imposed" - digest_created_nodes
+// walks its shapes in first-seen order while this file sorts them by key, so
+// CREATE (:B), (:A) still puts B first on one engine and A first on the other.
+// Record order across stages matches; record order inside one does not, and a
+// cross-engine byte fixture must not assume it. What this fixes is an order no
+// replica could apply, which is a bug on either engine's terms.
+//
+// Edges are deleted before nodes so the replica unhooks before it removes, and
+// nodes are created before edges for the mirror of that reason.
+//
+// EXHAUSTIVE AND WITHOUT A default:, deliberately, exactly as _shape_of above
+// is and for the same reason - a new opcode has to be placed in the sequence
+// here, and leaving it to a default would put it after every delete, silently
+// and only in release. ASSERT is no substitute: it compiles to nothing in
+// release, which is where the distinction matters.
+static uint32_t _stage_of(EffectType opcode) {
+	switch(opcode) {
+		case EFFECT_CREATE_NODE:    return 0;
+		case EFFECT_CREATE_EDGE:    return 1;
+		case EFFECT_UPDATE_NODE:    return 2;
+		case EFFECT_UPDATE_EDGE:    return 3;
+		case EFFECT_SET_LABELS:     return 4;
+		case EFFECT_REMOVE_LABELS:  return 5;
+		case EFFECT_DELETE_EDGE:    return 6;
+		case EFFECT_DELETE_NODE:    return 7;
+
+		// not groups: announcements and DDL records are emitted ahead of the
+		// sorted groups and never reach this comparator, and a CCH statement
+		// travels as CREATE_INDEX or DROP_INDEX carrying INDEX_FLD_CCH
+		case EFFECT_UNKNOWN:
+		case EFFECT_ADD_SCHEMA:
+		case EFFECT_ADD_ATTRIBUTE:
+		case EFFECT_CREATE_INDEX:
+		case EFFECT_DROP_INDEX:
+		case EFFECT_CREATE_CONSTRAINT:
+		case EFFECT_DROP_CONSTRAINT:
+		case EFFECT_CREATE_CCH:
+		case EFFECT_DROP_CCH:
+			break;
+	}
+
+	// LAST, not first: an opcode that should not be here sorts after every
+	// real stage rather than ahead of the creates, so a mistake cannot put a
+	// stray record before the records it depends on
+	return 8;
+}
+
 static int _cmp_group(const void *va, const void *vb) {
 	const Group *a = va, *b = vb;
 
-	int c = _cmp_u32((uint32_t)a->opcode, (uint32_t)b->opcode);
+	int c = _cmp_u32(_stage_of(a->opcode), _stage_of(b->opcode));
+	if(c != 0) return c;
+
+	// A BACKSTOP, and unreachable while _stage_of is a bijection over the eight
+	// group opcodes: equal stages mean equal opcodes. It earns its place only
+	// for the opcodes that share stage 8, which are the ones that should never
+	// have become a group at all - and those still need an order between them,
+	// because the shape comparison below reads a union arm chosen by opcode.
+	// What orders two groups in one REAL stage is the shape, further down.
+	c = _cmp_u32((uint32_t)a->opcode, (uint32_t)b->opcode);
 	if(c != 0) return c;
 
 	// the opcodes are equal from here, so the same arm is live on both and
