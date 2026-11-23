@@ -10,13 +10,14 @@ computes the nested fill `pₙ[pₙ₋₁[…p₁]]` (`stitch_eq_nest`), where `
 `x` at `p`'s own insertion point. Whether `p[x]` means "run `x`, then clause
 `p` on its output" is then a per-clause question (Clauses.lean, Match.lean).
 
-The one place where the two walks disagree on a plan a clause can end with is
-`PathBuilder`: the first walk (mod.rs, and the FOREACH body walk
-mod.rs) does not step over it, the in-loop walk (mod.rs) does
-(`walkFirst_pathBuilder`, `walkLoop_pathBuilder`). MERGE with a named path is
-planned as `PathBuilder(Merge(match))` (mod.rs), so when it is the
-last clause the previous clause lands beside `Merge`, under `PathBuilder`,
-which only ever runs its child 0: `merge_path_last_misplaced`.
+Both walks step over `PathBuilder` (since #3101; before, the first walk did
+not, so a MERGE/CREATE with a named path as the last clause got the previous
+clause beside `Merge`/`Create`, under `PathBuilder`, and never ran). MERGE and
+CREATE with a named path are planned as `PathBuilder(Merge(match))` /
+`PathBuilder(Create)` (mod.rs), so the input lands below `Merge`/`Create`
+(`merge_first_correct`, `create_first_correct`). The FOREACH body walk
+(`plan`, mod.rs) steps over `PathBuilder` with `step_over_path_builder`
+(`stepOverPB`, `bodyStitch`).
 -/
 namespace PlannerBuild
 
@@ -47,10 +48,10 @@ def insertAt (p : Plan) (π : Path) (x : Plan) : Plan := p.modify (fun q => q.pu
 
 /-! ## The walks -/
 
-/-- Operators the first walk steps over (mod.rs). -/
+/-- Operators the first walk steps over (mod.rs; `PathBuilder` since #3101). -/
 def firstPass : Op → Bool
   | .sort _ | .skip _ | .limit _ | .distinct | .filter _ | .semiApply | .antiSemiApply
-  | .orMux => true
+  | .orMux | .pathBuilder _ => true
   | _ => false
 
 /-- Operators the in-loop walk steps over (mod.rs): the same, plus
@@ -142,6 +143,36 @@ def slotWith (w : Plan → Path) (p : Plan) : Path :=
 
 def slotFirst := slotWith walkFirst
 def slotLoop := slotWith walkLoop
+
+/-! ## The FOREACH body stitch (`plan`, mod.rs) -/
+
+/-- `step_over_path_builder` (mod.rs): a `PathBuilder` with a child steps to child 0. -/
+def stepOverPB : Plan → Path
+  | .node (.pathBuilder _) (_ :: _) => [0]
+  | _ => []
+
+/-- The body walk: `descend_clause_expr_applies(step_over_path_builder(idx))`. -/
+def slotBody (p : Plan) : Path :=
+  match p.get (stepOverPB p) with
+  | some q => stepOverPB p ++ descendClause q.depth q
+  | none => stepOverPB p
+
+/-- The body's `for n in body_iter` loop: insert as child 0, then walk from `n`. -/
+def bodyLoop : Plan → Path → List Plan → Plan
+  | res, _, [] => res
+  | res, idx, n :: rest =>
+    let res' := insertAt res idx n
+    let idx' := idx ++ [0]
+    let idx'' := match res'.get idx' with
+      | some q => idx' ++ slotBody q
+      | none => idx'
+    bodyLoop res' idx'' rest
+
+/-- The FOREACH body plan before `add_argument_to_leaves`: `plans` in clause order. -/
+def bodyStitch (plans : List Plan) : Plan :=
+  match plans.reverse with
+  | [] => .node .argument []
+  | last :: rest => bodyLoop last (slotBody last) rest
 
 /-! ## `needs_apply_wrapping` and `add_argument_to_leaves` -/
 
