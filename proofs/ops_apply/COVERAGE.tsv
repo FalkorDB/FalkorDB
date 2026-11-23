@@ -52,13 +52,13 @@ graph/src/runtime/ops/set.rs	new	40	PROVEN	SetRemove.SetSt.new: setNew_spec
 graph/src/runtime/ops/set.rs	next	59	PROVEN	SetRemove.opNext: opNext_spec
 graph/src/runtime/ops/set.rs	set_batch	76	PROVEN	SetRemove.perRow/skipDelChecks: perRow_spec, skipDelChecks_snap, fixedW2p3_set_deleted_rel (#3051 fixes W2-pending-3)
 graph/src/runtime/ops/set.rs	resolve_set_items	99	PROVEN	SetRemove.resolveItems: resolveItems_length, resolveItems_attr
-graph/src/runtime/ops/set.rs	set_inner	154	PROVEN	SetRemove.setAttrItem/setProp/setFrom/clearForReplace/setLabelItem: setProp_spec, setAll_get, setFrom_replace, setFrom_merge_keeps, setAttrItem_replace_shapes (#3524: every branch clears; all six shapes), setAttrItem_spec, setLabelItem_live; fixed by #3524 af45ca776: fixed3524_clears_pending; #3051 COUNTEREXAMPLE: bug3051_set_created_rel_skipped, bug3051_set_demo (relationship arm skips a pending-created edge on a recycled id)
+graph/src/runtime/ops/set.rs	set_inner	154	PROVEN	SetRemove.setAttrItem/setProp/setFrom/clearForReplace/setLabelItem: setProp_spec, setAll_get, setFrom_replace, setFrom_merge_keeps, setAttrItem_replace_shapes (#3524: every branch clears; all six shapes), setAttrItem_spec, setLabelItem_live; fixed by #3524 af45ca776: fixed3524_clears_pending; #3051: fixedW2p3_set_deleted_rel, fixed3051_set_created_rel (a pending-created edge on a recycled id is written)
 graph/src/runtime/ops/set.rs	clear_node_attrs_for_replace	128	PROVEN	SetRemove.clearForReplace: setFrom_replace (staged and committed keys gone before the source is written), fixed3524_clears_pending
 graph/src/runtime/ops/set.rs	clear_relationship_attrs_for_replace	141	PROVEN	SetRemove.clearForReplace: setFrom_replace, setAttrItem_replace_shapes (relationship targets), fixed3524_clears_pending
 graph/src/runtime/ops/remove.rs	new	30	PROVEN	SetRemove.RemoveSt.new: removeNew_spec
 graph/src/runtime/ops/remove.rs	next	48	PROVEN	SetRemove.opNext: opNext_spec
 graph/src/runtime/ops/remove.rs	remove_batch	62	PROVEN	SetRemove.perRow: perRow_spec
-graph/src/runtime/ops/remove.rs	remove	74	PROVEN	SetRemove.removeItem: removeItem_spec, removeItem_rel_live, fixedW2p3_remove_deleted_rel, fixedW2p3_remove_demo (#3051 fixes W2-pending-3); #3051 COUNTEREXAMPLE: bug3051_remove_created_rel_skipped, bug3051_remove_demo
+graph/src/runtime/ops/remove.rs	remove	74	PROVEN	SetRemove.removeItem: removeItem_spec, removeItem_rel_live, fixedW2p3_remove_deleted_rel, fixedW2p3_remove_demo, fixed3051_remove_created_rel, fixed3051_remove_demo (#3051 fixes W2-pending-3)
 graph/src/runtime/ops/cartesian_product.rs	RightSide::new	80	PROVEN	CartVhj.rsNew: rs_spec
 graph/src/runtime/ops/cartesian_product.rs	RightSide::is_empty	94	PROVEN	CartVhj.rsEmpty: rs_spec
 graph/src/runtime/ops/cartesian_product.rs	RightSide::advance	105	PROVEN	CartVhj.adv (odometer): adv_valid, adv_wrap, orbit_valid, allTuples_mem, allTuples_length
@@ -76,4 +76,4 @@ graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::new	237	PROVEN	CartVhj
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::build_hash_table	266	PROVEN	CartVhj.build/buildPO: build_int, build_append, buildPO_origin (one table per origin_row, #3035), buildPO_single, buildPO_int_probe
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::fill_matches	352	PROVEN	CartVhj.fillMatches/fillMatchesPO/probe: fillMatches_int, fillMatches_absent, probe_insert_fresh, buildPO_int_probe
 graph/src/runtime/ops/value_hash_join.rs	ValueHashJoinOp::next	398	PROVEN	CartVhj.vhjRows/vhjRowsPO: vhjRows_spec, vhjRowsPO_spec, vhjRowsPO_single
-graph/src/runtime/runtime.rs	is_relationship_deleted	1690	PROVEN	SetRemove.relGone: relGone_iff, fixedW2p3_set_deleted_rel, fixedW2p3_remove_deleted_rel; COUNTEREXAMPLE bug3051_relGone_created_recycled (a pending-created edge on a recycled id reads deleted; relGoneOld_live)
+graph/src/runtime/runtime.rs	is_relationship_deleted	1691	PROVEN	SetRemove.relGone: relGone_iff, fixedW2p3_set_deleted_rel, fixedW2p3_remove_deleted_rel, fixed3051_relGone_live (property LiveCreatedNotGone)

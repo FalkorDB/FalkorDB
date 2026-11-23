@@ -320,18 +320,21 @@ theorem removeItem_rel_live {L : Type} [DecidableEq L] (gone goneR : E → Bool)
 /-! ## Deleted relationships (#3051, fixes W2-pending-3) -/
 
 /-- `Runtime::is_relationship_deleted` (runtime.rs): the segment's pending deletes, the
-graph's deleted set, or the deleted-relationship snapshot map (`snap`, its keys), the only
-record of an edge cascaded by `DETACH DELETE` before commit. -/
-def relGone (pDel gDel : E → Bool) (snap : List E) (e : E) : Bool :=
-  pDel e || gDel e || snap.contains e
+graph's deleted set unless this query created the edge (`created` =
+`Pending::is_relationship_created`: a pending create may sit on an id reserved out of the
+graph's free set, which reads "deleted" until commit), or the deleted-relationship snapshot
+map (`snap`, its keys), the only record of an edge cascaded by `DETACH DELETE` before commit. -/
+def relGone (pDel gDel created : E → Bool) (snap : List E) (e : E) : Bool :=
+  pDel e || (gDel e && !created e) || snap.contains e
 
 /-- `set_batch`'s pre-check (set.rs): skip the per-row deleted checks only when no node
 or relationship was deleted, in any of the records. -/
 def skipDelChecks (delN : Bool) (snap : List E) (pDelN pDelR : Bool) : Bool :=
   !delN && snap.isEmpty && !pDelN && !pDelR
 
-theorem relGone_iff (pDel gDel : E → Bool) (snap : List E) (e : E) :
-    relGone pDel gDel snap e = true ↔ pDel e = true ∨ gDel e = true ∨ e ∈ snap := by
+theorem relGone_iff (pDel gDel created : E → Bool) (snap : List E) (e : E) :
+    relGone pDel gDel created snap e = true ↔
+      pDel e = true ∨ (gDel e = true ∧ created e = false) ∨ e ∈ snap := by
   simp [relGone, or_assoc]
 
 /-- An edge in the snapshot map turns the per-row checks on. -/
@@ -345,15 +348,15 @@ theorem skipDelChecks_snap (delN : Bool) (snap : List E) (pDelN pDelR : Bool) (e
 earlier, or by a `DETACH DELETE` cascade recorded only in the snapshot map) changes nothing,
 whatever the item shape. -/
 theorem fixedW2p3_set_deleted_rel (ckeys : E → List K) (aN aR : E → List (K × Option V))
-    (sN sR : Store E K V) (pDel gDel : E → Bool) (snap : List E) (delN pDelN pDelR : Bool)
-    (e : E) (hd : pDel e = true ∨ gDel e = true ∨ e ∈ snap)
+    (sN sR : Store E K V) (pDel gDel created : E → Bool) (snap : List E) (delN pDelN pDelR : Bool)
+    (e : E) (hd : pDel e = true ∨ (gDel e = true ∧ created e = false) ∨ e ∈ snap)
     (hs : pDel e = true → pDelR = true) (hgd : gDel e = true → snap ≠ [] ∨ pDelR = true ∨ delN = true)
     (prop : Option K) (val : Src E K V) (rep : Bool) (v : Option V) :
-    setAttrItem ckeys (fun t => match t with | .rel r => relGone pDel gDel snap r | _ => false)
+    setAttrItem ckeys (fun t => match t with | .rel r => relGone pDel gDel created snap r | _ => false)
       (skipDelChecks delN snap pDelN pDelR) aN aR sN sR (.rel e) prop val rep v = .ok (sN, sR) := by
-  have hg : relGone pDel gDel snap e = true := (relGone_iff _ _ _ _).2 hd
+  have hg : relGone pDel gDel created snap e = true := (relGone_iff _ _ _ _ _).2 hd
   have hk : skipDelChecks delN snap pDelN pDelR = false := by
-    rcases hd with h | h | h
+    rcases hd with h | ⟨h, _⟩ | h
     · simp [skipDelChecks, hs h]
     · rcases hgd h with h' | h' | h'
       · cases snap with
@@ -366,89 +369,57 @@ theorem fixedW2p3_set_deleted_rel (ckeys : E → List K) (aN aR : E → List (K 
 
 /-- **W2-pending-3 fixed (REMOVE)**: `REMOVE r.k` on a deleted relationship changes nothing. -/
 theorem fixedW2p3_remove_deleted_rel {L : Type} [DecidableEq L] (gone : E → Bool) (s : Store E K V)
-    (labels : E → List L) (pDel gDel : E → Bool) (snap : List E) (e : E)
-    (hd : pDel e = true ∨ gDel e = true ∨ e ∈ snap) (prop : Option K) :
-    removeItem gone (relGone pDel gDel snap) s labels (.rel e) false prop none = .ok (s, labels) := by
-  have hg : relGone pDel gDel snap e = true := (relGone_iff _ _ _ _).2 hd
+    (labels : E → List L) (pDel gDel created : E → Bool) (snap : List E) (e : E)
+    (hd : pDel e = true ∨ (gDel e = true ∧ created e = false) ∨ e ∈ snap) (prop : Option K) :
+    removeItem gone (relGone pDel gDel created snap) s labels (.rel e) false prop none = .ok (s, labels) := by
+  have hg : relGone pDel gDel created snap e = true := (relGone_iff _ _ _ _ _).2 hd
   simp [removeItem, hg]
 
 /-- The repro `CREATE ()-[:R {v:1}]->()` then `MATCH ()-[r]->() DELETE r REMOVE r.v`: `r` is
 pending-deleted, so `r.v` still reads 1 (no `Properties removed`). -/
 theorem fixedW2p3_remove_demo :
-    (removeItem (L := Nat) (fun _ => false) (relGone (fun e => e == 0) (fun _ => false) [])
+    (removeItem (L := Nat) (fun _ => false) (relGone (fun e => e == 0) (fun _ => false) (fun _ => false) [])
       ({ cv := fun e k => if e = 0 ∧ k = 0 then some 1 else none, pv := fun _ _ => none } : Store Nat Nat Nat)
       (fun _ => []) (.rel 0) false (some 0) none).map (fun r => get r.1 0 0) = .ok (some 1) := rfl
 
-/-! ## Counterexample (#3051): a relationship this query created on a recycled id
+/-! ## A relationship this query created on a recycled id is live (#3051 5b6ac5bbc)
 
 `IdSpace::reserve` hands out an id freed by an earlier query but leaves it in `recycled`
 until commit, so `Graph::is_relationship_deleted` (`gDel`) reads true for the whole life of
-a pending create (delete.rs says so). The check #3051 replaced, `relGoneOld`, excused a
-pending-created id (`created` = `Pending::is_relationship_created`); `relGone` does not, so
-`SET`/`REMOVE` on that live relationship is skipped. -/
-
-/-- The set.rs relationship check before #3051. -/
-def relGoneOld (pDel gDel created : E → Bool) (e : E) : Bool :=
-  (gDel e && !created e) || pDel e
+a pending create. `relGone` excuses a pending-created id, so `SET`/`REMOVE` on it land. -/
 
 /-- The property: a relationship this query created and has not deleted is not "gone". -/
 def LiveCreatedNotGone (goneR : E → Bool) (pDel gDel created : E → Bool) (snap : List E) : Prop :=
   ∀ e, created e = true → pDel e = false → e ∉ snap → goneR e = false
 
-theorem relGoneOld_live (pDel gDel created : E → Bool) (snap : List E) :
-    LiveCreatedNotGone (relGoneOld pDel gDel created) pDel gDel created snap := by
-  intro e hc hp _; simp [relGoneOld, hc, hp]
+theorem fixed3051_relGone_live (pDel gDel created : E → Bool) (snap : List E) :
+    LiveCreatedNotGone (relGone pDel gDel created snap) pDel gDel created snap := by
+  intro e hc hp hs; simp [relGone, hc, hp, hs]
 
-/-- `relGone` breaks it as soon as the created id is a recycled one. -/
-theorem bug3051_relGone_created_recycled (pDel gDel created : E → Bool) (snap : List E) (e : E)
-    (hrec : gDel e = true) (hc : created e = true) (hp : pDel e = false) (hs : e ∉ snap) :
-    ¬ LiveCreatedNotGone (relGone pDel gDel snap) pDel gDel created snap := by
-  intro h; have := h e hc hp hs; simp [relGone, hrec] at this
-
-/-- **SET**: with the per-row checks on, `SET r.k = v` on such a relationship is dropped,
-where the old check wrote it. -/
-theorem bug3051_set_created_rel_skipped (ckeys : E → List K) (aN aR : E → List (K × Option V))
+/-- **SET**: with the per-row checks on, `SET r.k = v` on a created edge on a recycled id lands. -/
+theorem fixed3051_set_created_rel (ckeys : E → List K) (aN aR : E → List (K × Option V))
     (sN sR : Store E K V) (pDel gDel created : E → Bool) (snap : List E) (e : E)
-    (hrec : gDel e = true) (hc : created e = true) (hp : pDel e = false)
+    (hc : created e = true) (hp : pDel e = false) (hs : e ∉ snap)
     (k : K) (val : Src E K V) (rep : Bool) (v : Option V) :
-    setAttrItem ckeys (fun t => match t with | .rel r => relGone pDel gDel snap r | _ => false)
-      false aN aR sN sR (.rel e) (some k) val rep v = .ok (sN, sR) ∧
-    setAttrItem ckeys (fun t => match t with | .rel r => relGoneOld pDel gDel created r | _ => false)
+    setAttrItem ckeys (fun t => match t with | .rel r => relGone pDel gDel created snap r | _ => false)
       false aN aR sN sR (.rel e) (some k) val rep v = .ok (sN, setProp sR e k v) := by
-  constructor
-  · simp [setAttrItem, relGone, hrec]
-  · simp [setAttrItem, relGoneOld, hc, hp]
+  have := fixed3051_relGone_live pDel gDel created snap e hc hp hs
+  simp [setAttrItem, this]
 
-/-- **REMOVE**: `REMOVE r.k` on such a relationship is dropped (no pre-check gates it). -/
-theorem bug3051_remove_created_rel_skipped {L : Type} [DecidableEq L] (gone : E → Bool)
-    (s : Store E K V) (labels : E → List L) (pDel gDel : E → Bool) (snap : List E) (e : E)
-    (hrec : gDel e = true) (k : K) :
-    removeItem gone (relGone pDel gDel snap) s labels (.rel e) false (some k) none = .ok (s, labels) := by
-  simp [removeItem, relGone, hrec]
+/-- **REMOVE**: `REMOVE r.k` on such a relationship makes `r.k` absent. -/
+theorem fixed3051_remove_created_rel {L : Type} [DecidableEq L] (gone : E → Bool)
+    (s : Store E K V) (labels : E → List L) (pDel gDel created : E → Bool) (snap : List E) (e : E)
+    (hc : created e = true) (hp : pDel e = false) (hs : e ∉ snap) (k : K) :
+    ∃ r, removeItem gone (relGone pDel gDel created snap) s labels (.rel e) false (some k) none = .ok r ∧
+      get r.1 e k = none :=
+  removeItem_rel_live gone _ s labels e k (fixed3051_relGone_live pDel gDel created snap e hc hp hs)
 
-/-- The `SET` repro: after `CREATE ()-[:R]->(), (:D)` and `MATCH ()-[r:R]->() DELETE r`, id 0 is
-recycled; `MATCH (d:D) DELETE d CREATE ()-[r:R]->() SET r.v = 1 RETURN r.v` creates `r` on id 0,
-the deleted `d` turns the checks on (`skipDelChecks … = false`), and `r.v` reads null, not 1. -/
-theorem bug3051_set_demo :
-    let s0 : Store Nat Nat Nat := { cv := fun _ _ => none, pv := fun _ _ => none }
-    let gDel := fun e : Nat => e == 0
-    let created := fun e : Nat => e == 0
-    let skip := skipDelChecks false ([] : List Nat) true false
-    skip = false ∧
-    (setAttrItem (fun _ => []) (fun t => match t with | .rel r => relGone (fun _ => false) gDel [] r | _ => false)
-      skip (fun _ => []) (fun _ => []) s0 s0 (.rel 0) (some 0) .other false (some 1)).map
-        (fun r => get r.2 0 0) = .ok none ∧
-    (setAttrItem (fun _ => []) (fun t => match t with | .rel r => relGoneOld (fun _ => false) gDel created r | _ => false)
-      skip (fun _ => []) (fun _ => []) s0 s0 (.rel 0) (some 0) .other false (some 1)).map
-        (fun r => get r.2 0 0) = .ok (some 1) :=
-  ⟨rfl, rfl, rfl⟩
-
-/-- The `REMOVE` repro: after `CREATE ()-[:R]->()` and `MATCH ()-[r:R]->() DELETE r`,
-`CREATE ()-[r:R {v:1}]->() REMOVE r.v RETURN r.v` creates `r` on recycled id 0 and returns 1. -/
-theorem bug3051_remove_demo :
-    (removeItem (L := Nat) (fun _ => false) (relGone (fun _ => false) (fun e => e == 0) [])
+/-- After `CREATE ()-[:R]->()` and `MATCH ()-[r:R]->() DELETE r`, id 0 is recycled;
+`CREATE ()-[r:R {v:1}]->() REMOVE r.v RETURN r.v` creates `r` on id 0 and returns null. -/
+theorem fixed3051_remove_demo :
+    (removeItem (L := Nat) (fun _ => false) (relGone (fun _ => false) (fun e => e == 0) (fun e => e == 0) [])
       ({ cv := fun _ _ => none, pv := fun e k => if e = 0 ∧ k = 0 then some (some 1) else none } : Store Nat Nat Nat)
-      (fun _ => []) (.rel 0) false (some 0) none).map (fun r => get r.1 0 0) = .ok (some 1) := rfl
+      (fun _ => []) (.rel 0) false (some 0) none).map (fun r => get r.1 0 0) = .ok none := rfl
 
 /-! ## `new` / `next` -/
 
