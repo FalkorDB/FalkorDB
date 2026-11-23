@@ -58,6 +58,7 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 
 - **When key equality is Cypher `=`, yes** (`vhj_correct`).
 - **Near 2⁵³, yes.** `=` compares an Int with a Float through `i as f64`; the join keys exactly only below 2⁵³ and otherwise applies `=` itself, so its key test is `=` on numbers (`joinMatch_numEq`, `vhjNum_correct`; the pair `9007199254740993`, `9007199254740992.0` is kept: `hash_join_keeps_row`).
+- **Not modelled:** `vhjBy` is a left-major list filter whose predicate is already the key test. The runtime hash join's bucket hashing, `same_build_key` grouping and multi-entry `fill_matches` are not modelled, so these theorems hold for the rewrite only on the hypothesis that the hash join returns the rows of that filter; the `replace_cartesian_with_hash_join` row is CONDITIONAL on it. A `pr3034_review` project connecting the hash table to the rewrite does not exist yet.
 
 **6. When is a variable "read" by the rest of the plan?**
 
@@ -145,7 +146,8 @@ The project has no Lake dependencies.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 38 |
+| PROVEN | 37 |
+| CONDITIONAL | 1 |
 | NOT COVERED | 42 |
 
 - **PROVEN:** every production function in the optimizer files this project owns. The five planner helpers in `optimizer/mod.rs` added by the var-length anchor change (#2558: `collect_expr_scoped_variables`, `collect_single_variable_conjuncts`, `walk`, `endpoint_scan_score`, `walk_scans_to_endpoint`) are proven in `planner_build` (`Anchor.lean`), next to the `plan_match` model that uses them.
