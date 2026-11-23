@@ -73,10 +73,6 @@ Each was reproduced live with `proofs/index_layer/repro.py`, which runs each que
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 1 (W2-index-1) | `bug_folded_temporal_constant` | `n.v = date('2020-01-01')` returns **every** node of the label: the constant is folded and treated as indexable, the filter is dropped, then the index refuses it and falls back to a label scan. C correct | **Open** |
-| 2 (W2-index-2) | `bug_point_equality` | `n.v = point({latitude:1.0, longitude:2.0})` returns `[]`. C correct | **Open** |
-| 3 (W2-index-3) | `bug_in_list_drops_item` | `n.v IN [date('2020-01-01'), 2]` drops the date row. C correct | **Open** |
-| 4 (W2-index-4) | `bug_multilabel_and`, `bug_multilabel_or` | On `(n:A:B)` with A indexing `x` and B indexing `y`, `n.x = 1 AND n.y = 2` returns `[]`, and the `OR` loses rows. C correct | **Open** |
 | 7 | `tagEnc_not_monotone`, `bug_string_range_order`, `bug_string_range_order_gt` | The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong both ways: `n.v < 'JohnA'` misses `'John Smith'` | **Open**. C is also wrong, differently |
 | 8 | `bug_bool_eq_int` | `n.v = 1` also returns `v = true`, and the reverse | **Open**. C has the same bug |
 | 10 | `bug_empty_string_not_indexed` | `n.v = ''` returns `[]`, and `n.v < 'a'` misses `''` | **Open**. C has the same bug |
@@ -96,7 +92,7 @@ C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a ran
 | `Strings.lean` | `strRange_exact` and the byte-order lemmas (`lexLt_total`, `tagEnc_id`) |
 | `Temporal.lean` | `temporal_not_indexed`, `temporal_numRange_exact`, `temporal_equal_exact` |
 | `Maintenance.lean` | `Indexer::commit` (`commit_lookup`, `commit_preserves_inv`, `commit_both_removes`) and the ticket counters |
-| `Bugs.lean` | Counterexamples 1-10 and the `pre…`/`fixed…` pairs for the fixed ones |
+| `Bugs.lean` | Counterexamples 7-10 and the `pre…`/`fixed…` pairs for the fixed ones (1-4 fixed by #3064: `fixed3064_*`) |
 | `SetVector.lean` | The vector arm of `Document::set`: `setVector_sound` |
 | `Meta.lean`, `IndexM.lean` | `Field` and `Index` metadata, the RediSearch spec lifecycle |
 | `IndexerM.lean` | `Indexer`: create, drop, lookups, `index_info`; `createIndex_ok`, `dropIndex_spec`, the generation bump (`createIndex_regen`), bug 13 |
@@ -110,7 +106,7 @@ C-only, not a Rust bug: C crashes on `distance(n.v, point(…)) <= 0` with a ran
 | `LeafMerge.lean` | `merge_sorted`, `merge_walk`, `partition_point`, gallop |
 | `LeafBlockCopy.lean`, `LeafBlockCopy2.lean` | `block_copy_merge`, list level and byte level |
 | `LeafOps.lean` | `Leaf::merge_batch`: every fast path equals the slow path |
-| `InList.lean` | The `IN` arm of the index scan re-checked at 256ab4d3f: `canUtilizeInList_eq_or`, `scan_inlist_faithful` |
+| `InList.lean` | The `IN` arm of the index scan: `canUtilizeInList_eq_or`, `scan_inlist_faithful`, and since #3064 `IndexQuery::in_list` / `can_be_served` (`inListQ_eq_expandIn`, `inListQ_unservable_falls_back`) |
 | `LeafDispatch.lean` | The `Leaf` enum, `from_pairs` format choice, `fromPairs_roundtrip` |
 | `LeafTree.lean` | Tree glue: `pack_branches`, `build_root`, `make_private`, `from_sorted`, `insert_batch` contents |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |

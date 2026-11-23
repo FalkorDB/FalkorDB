@@ -406,7 +406,7 @@ theorem edgeScan_building_agrees (g : G) (ep : Nat → Option (Nat × Nat)) (t :
 /-! ## The scan ops under `index-falkordb` -/
 
 /-- `NodeByIndexScanOp::next`'s source of nodes for one row (`node_by_index_scan.rs`):
-    `can_utilize_index` false → the label scan; else rows, the filtered scan, or the error (`none`). -/
+    `IndexQuery::can_be_served` false → the label scan; else rows, the filtered scan, or the error (`none`). -/
 def nodeScanOp (g : G) (utilize : Bool) (label : String) (q : IndexQuery) : Option (List Nat) :=
   scanOp utilize (queryIndexNumericNodes g label q) ((g.labelNodes label).getD []) (nodeFilteredScan g label)
 

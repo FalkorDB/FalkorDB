@@ -408,30 +408,33 @@ def indexHit (fields : Attr → Bool) (p : Props) (q : IQ) : Bool :=
 
 /-! ## The runtime side (`runtime/ops/node_by_index_scan.rs`) -/
 
-/-- `IndexQuery::InList` expansion at `node_by_index_scan.rs`: keep
-only `Int|Float|String|Bool` items. -/
+/-- `IndexQuery::in_list` (`mod.rs`), seen as the `Or` of one `Equal` per member that
+`build_query_node` unions: every non-null item is kept (#3064; before, only
+`Int|Float|String|Bool` items were). -/
 def expandIn (k : Attr) : Val → Option IQ
   | .list xs => some (.or ((xs.filter fun
-      | .int _ | .flt _ | .str _ | .bool _ => true
-      | _ => false).map (IQ.equal k)))
+      | .null => false
+      | _ => true).map (IQ.equal k)))
   | _ => none
 
-/-- `is_indexable` (`node_by_index_scan.rs`). -/
+/-- `is_indexable` inside `IndexQuery::can_be_served` (`mod.rs`): no `Point` since #3064. -/
 def indexable : Val → Bool
   | .int i => !intLosesPrecision i
-  | .flt _ | .str _ | .bool _ | .point _ _ | .null => true
+  | .flt _ | .str _ | .bool _ | .null => true
   | _ => false
 
-/-- `can_utilize_index` (`node_by_index_scan.rs`). -/
+/-- `IndexQuery::can_be_served` (`mod.rs`), shared by the node and edge scans since #3064. -/
 def canUtilize : IQ → Bool
   | .equal _ v => indexable v
   | .range _ mn mx _ _ => (mn.all indexable) && (mx.all indexable)
   | .and qs => !qs.isEmpty && qs.attach.all fun ⟨q, _⟩ => canUtilize q
   | .or qs => !qs.isEmpty && qs.attach.all fun ⟨q, _⟩ => canUtilize q
   | .arrayContains _ v => match v with
-      | .int _ | .flt _ | .str _ | .bool _ => true
+      | .null => false
+      | v => indexable v
+  | .inList _ l => match l with
+      | .list items => !items.isEmpty && items.all indexable
       | _ => false
-  | _ => true
 
 /-- What `NodeByIndexScanOp` emits for one entity of the label, followed by
 the post-filter when the optimizer kept it (`keep`). -/

@@ -15,18 +15,20 @@ their `sel` agree on every node of the graph.
 | `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs` |
 | `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs` (`null_mut` ↦ `none`) |
 | `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs`, `graph/graph.rs`) |
-| `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs` |
-| `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs` (InList → one `InList` of the scalar items) |
+| `isIndexable`, `canUtilize`| `IndexQuery::can_be_served` and its inner `is_indexable`, `index/mod.rs` (#3064; shared by the node and edge scans) |
+| `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs` (InList → `IndexQuery::in_list`: one `InList` of the non-null items) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |
 | `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs` |
 | `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs` |
-| `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr`, `utilize_index.rs` |
-| `needsPost`                | `needs_post_filter`, `utilize_index.rs` |
+| `litFlag`                  | `!is_exact_index_literal`, `utilize_index.rs` |
+| `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr` (an allow-list since #3064), `utilize_index.rs` |
+| `needsPost`                | `needs_post_filter` (on one pushed conjunct since #3064), `utilize_index.rs` |
+| `pushedNeedsPost`          | `pushed_needs_post_filter`, `utilize_index.rs` |
 | `buildOp`                  | `build_op_query`, `utilize_index.rs` |
 | `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` (+ `bare_property_of`) + `extract_attribute_and_expression_from_filter`, `utilize_index.rs` |
 | `mergeRange`               | `merge_range_queries`, `utilize_index.rs` |
 | `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs` |
-| `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs` |
+| `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs` (`keep_filter` = the pushdown's flag) |
 | `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index or label-scan fallback, then extra labels), `node_by_index_scan.rs` |
 -/
 namespace OptimizerScan.Index
@@ -259,12 +261,12 @@ def isIndexable : V → Bool
   | .arr _ => false
 
 mutual
-/-- `can_utilize_index` (`node_by_index_scan.rs`). -/
+/-- `IndexQuery::can_be_served` (`index/mod.rs`, #3064). -/
 def canUtilize : Q → Bool
   | .eq _ v => isIndexable v
   | .range _ lo hi _ _ => (lo.map isIndexable).getD true && (hi.map isIndexable).getD true
-  | .contains _ v => match v with | .b _ | .i _ | .s _ => true | _ => false
-  | .inList _ vs => !vs.isEmpty && vs.all isIndexable   -- node_by_index_scan.rs (#2383)
+  | .contains _ v => match v with | .null => false | v => isIndexable v
+  | .inList _ vs => !vs.isEmpty && vs.all isIndexable   -- the `InList` arm (#2383)
   | .and qs => !qs.isEmpty && canAll qs
   | .or qs => !qs.isEmpty && canAll qs
 def canAll : List Q → Bool
@@ -272,7 +274,7 @@ def canAll : List Q → Bool
   | q :: qs => canUtilize q && canAll qs
 end
 
-/-- **#2383**: `can_utilize_index` decides an `InList` on the same terms as the `Or` of
+/-- **#2383**: `can_be_served` decides an `InList` on the same terms as the `Or` of
 `Equal`s it replaced (the Rust test `in_list_reaches_the_index_on_the_same_terms_as_an_or_of_its_members`). -/
 theorem canUtilize_inList_eq_or (k : Nat) (vs : List V) :
     canUtilize (.inList k vs) = canUtilize (.or (vs.map (Q.eq k))) := by
@@ -354,17 +356,21 @@ def firstR : R → Option Nat
   | .list ts => ts.findSome? firstP
   | .term t => firstP t
 
+/-- `!is_exact_index_literal` (`utilize_index.rs`): since #3064 a folded `date(...)` constant is
+flagged too. -/
 def litFlag : V → Bool
   | .i x => lossy x
   | .arr _ => true            -- a list literal is an `ExprIR::List` node
-  | _ => false                -- note: a folded `date(...)` constant is NOT flagged
+  | .date _ => true
+  | .null | .b _ | .s _ => false
 
+/-- `is_non_indexable_subexpr` over the subtree (an allow-list since #3064: `Add` is flagged). -/
 def nonIdxT : T → Bool
   | .prop _ => false
   | .lit v => litFlag v
   | .param _ => true
   | .abs _ => true
-  | .add a b => nonIdxT a || nonIdxT b
+  | .add _ _ => true
 
 def nonIdxR : R → Bool
   | .list _ => true
@@ -380,13 +386,11 @@ def scalarLit : T → Bool
   | .lit (.b _) | .lit (.s _) => true
   | _ => false
 
-/-- `needs_post_filter` (`utilize_index.rs`). -/
-def needsPost : F → Bool
-  | .atom (.inn (.prop _) (.list ts)) =>
+/-- `needs_post_filter` (`utilize_index.rs`), asked of one pushed conjunct or branch since #3064. -/
+def needsPost : A → Bool
+  | .inn (.prop _) (.list ts) =>
     if !ts.isEmpty && ts.all scalarLit then false else true
-  | .atom a => nonIdxA a
-  | .and as => as.any nonIdxA
-  | .or as => as.any nonIdxA
+  | a => nonIdxA a
 
 /-- Unevaluated index queries (`IndexQuery<QueryExpr<Variable>>`). -/
 inductive IQ
@@ -469,43 +473,52 @@ def mergeInto (m : Option (Nat × IQ)) (L : Nat) (q : IQ) : Option (Nat × IQ) :
   | none => some (L, q)
   | some (L0, q0) => some (L0, mergeRange q0 q)
 
-/-- `value IN n.prop` (array-contains): the index may answer it with false positives, so its
-filter is always kept (`is_array_contains`, `utilize_index.rs`). -/
+/-- `value IN n.prop` (array-contains): the index may answer it with false positives
+(`pushed_needs_post_filter`'s `is_array_contains`, `utilize_index.rs`). -/
 def isArrayContains : A → Bool
   | .inn l r => !hasT l && hasR r
   | _ => false
 
-/-- The AND branch of `try_filter_pushdown` (`utilize_index.rs`). A pushed
-array-contains conjunct also stays among the leftovers, as it does on its own. -/
+/-- `pushed_needs_post_filter` (`utilize_index.rs`, #3064): a pushed conjunct or branch keeps the
+whole original filter if it is an array-contains or `needs_post_filter` flags it. -/
+def pushedNeedsPost (a : A) : Bool := isArrayContains a || needsPost a
+
+/-- The AND branch of `try_filter_pushdown` (`utilize_index.rs`): a conjunct is merged only
+when it is served by the label of the conjuncts merged so far (#3064), else it stays among the
+leftovers; the flag ORs `pushed_needs_post_filter` of the pushed conjuncts. -/
 def pushAnd (idx : Nat → List Nat) (ls : List Nat) :
-    List A → Option (Nat × IQ) → List A → Option (Nat × IQ) × List A
-  | [], m, rem => (m, rem)
-  | a :: as, m, rem =>
+    List A → Option (Nat × IQ) → List A → Bool → Option (Nat × IQ) × List A × Bool
+  | [], m, rem, keep => (m, rem, keep)
+  | a :: as, m, rem, keep =>
     match trySingle idx ls a with
     | some (L, q) =>
-      pushAnd idx ls as (mergeInto m L q) (if isArrayContains a then rem ++ [a] else rem)
-    | none => pushAnd idx ls as m (rem ++ [a])
+      if m.all (·.1 == L) then pushAnd idx ls as (mergeInto m L q) rem (keep || pushedNeedsPost a)
+      else pushAnd idx ls as m (rem ++ [a]) keep
+    | none => pushAnd idx ls as m (rem ++ [a]) keep
 
-/-- The OR branch: every disjunct must convert (`utilize_index.rs`). -/
-def pushOr (idx : Nat → List Nat) (ls : List Nat) : List A → Option (Option Nat × List IQ)
-  | [] => some (none, [])
+/-- The OR branch: every disjunct must convert, all on one label (#3064), and the flag ORs
+`pushed_needs_post_filter` of the branches (`utilize_index.rs`). -/
+def pushOr (idx : Nat → List Nat) (ls : List Nat) : List A → Option (Option Nat × List IQ × Bool)
+  | [] => some (none, [], false)
   | a :: as => match trySingle idx ls a, pushOr idx ls as with
-    | some (L, q), some (_, qs) => some (some L, q :: qs)   -- label of the first disjunct
+    | some (L, q), some (lab, qs, k) =>
+      if lab.all (· == L) then some (some L, q :: qs, pushedNeedsPost a || k) else none
     | _, _ => none
 
-/-- `try_filter_pushdown` (`utilize_index.rs`). -/
-def tryPushdown (idx : Nat → List Nat) (ls : List Nat) : F → Option (Nat × IQ × List A)
+/-- `try_filter_pushdown` (`utilize_index.rs`): label, query, leftover conjuncts, and whether the
+whole original filter must stay. -/
+def tryPushdown (idx : Nat → List Nat) (ls : List Nat) : F → Option (Nat × IQ × List A × Bool)
   | .and as =>
-    match pushAnd idx ls as none [] with
-    | (some (L, q), rem) => some (L, q, rem)
-    | (none, _) => none
+    match pushAnd idx ls as none [] false with
+    | (some (L, q), rem, keep) => some (L, q, rem, keep)
+    | (none, _, _) => none
   | .or as =>
     match pushOr idx ls as with
-    | some (some L, qs) => some (L, .or qs, [])
+    | some (some L, qs, keep) => some (L, .or qs, [], keep)
     | _ => none
   | .atom a =>
     match trySingle idx ls a with
-    | some (L, q) => some (L, q, if isArrayContains a then [a] else [])
+    | some (L, q) => some (L, q, [], pushedNeedsPost a)
     | none => none
 
 /-! ## Plans and their semantics -/
@@ -516,14 +529,15 @@ def listVals : R → List V
   | .list ts => ts.map evalC
   | .term t => match evalC t with | .arr xs => xs.map P.toV | _ => []
 
-def isPrim : V → Bool | .b _ | .i _ | .s _ => true | _ => false
+/-- `not_null` in `IndexQuery::in_list` (`index/mod.rs`). -/
+def notNull : V → Bool | .null => false | _ => true
 
 mutual
 /-- `evaluate_index_query` (`node_by_index_scan.rs`). -/
 def evalIQ : IQ → Q
   | .eq k t => .eq k (evalC t)
   | .range k lo hi il ih => .range k (lo.map evalC) (hi.map evalC) il ih
-  | .inList k r => .inList k ((listVals r).filter isPrim)   -- kept whole, not an `Or` of `Equal`s
+  | .inList k r => .inList k ((listVals r).filter notNull)   -- `IndexQuery::in_list` (#3064)
   | .contains k t => .contains k (evalC t)
   | .and qs => .and (evalIQs qs)
   | .or qs => .or (evalIQs qs)
@@ -550,8 +564,7 @@ def Plan.sel (idx : Nat → List Nat) (opq : Nat → Node → Bool) : Plan → N
 def utilize (idx : Nat → List Nat) (ls : List Nat) (f : F) : Plan :=
   match tryPushdown idx ls f with
   | none => .filter f (.labelScan ls)
-  | some (L, q, rem) =>
-    let keep := needsPost f
+  | some (L, q, rem, keep) =>
     let scan := Plan.idxScan ls L q
     if rem.isEmpty then (if keep then .filter f scan else scan)
     else if keep then .filter f scan else .filter (.and rem) scan

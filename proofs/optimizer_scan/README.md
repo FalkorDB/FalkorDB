@@ -19,7 +19,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 
 - **On the shapes the proof covers, yes.** `utilize_sound` is the headline. It covers a single-label scan whose property values are Null, Int or String, and filters built from `n.k op literal`, `literal op n.k`, `n.k IN [literals]` and unindexable conjuncts, combined by AND or OR. For those, the rewritten plan selects exactly the nodes the original plan does.
 - The building blocks are proven one by one: `sel_eq` (equality), `sel_range` (one- and two-sided ranges), `sel_inList` (`IN`; the list reaches the index whole as `IndexQuery::InList`), `sel_and2` (an index AND is the intersection), `sel_merge` (merging range conditions), and `pushAnd_spec`/`pushOr_spec` (the AND and OR branches of `try_filter_pushdown`).
-- **Outside those shapes, no.** Each hypothesis of `utilize_sound` is there because the `IndexCex.lean` examples break the result without it: a computed constant ≥ 2⁵², a computed left side of `IN`, a list of properties on the right of `IN`, two labels, Bool or Date values. See [Bugs found](#bugs-found).
+- **Outside those shapes, no.** Each hypothesis of `utilize_sound` is there because the `IndexCex.lean` examples break the result without it: Bool values (C1). Computed constants, two labels and Date values are handled since #3064 (the Filter is kept or the pushdown refused). See [Bugs found](#bugs-found).
 
 **2. Does the id seek return the same nodes as `WHERE id(n) …`?**
 
@@ -76,12 +76,10 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_scan`, not
 
 | # | Counterexample | What it means | Status |
 |---|---|---|---|
-| W2-scan-3 | `IndexCex` C4 | A computed constant ≥ 2⁵² (`n.v = 4503599627370495 + 4503599627370495 + 3`): the Filter is dropped and the op falls back to a label scan, returning every node (C: 0) | **Open** |
 | W2-scan-6 (#2972) | `Salvage.premise_fails`, `salvage_loses_row`, `rebuilt_drops_unwind` | The pass prunes a planner scan whole but salvages only its `Filter`s and `Argument` leaf, so an `Unwind`/`WITH` child is lost: `WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 0 (C 1); `UNWIND [1,1] AS k MATCH (b:B) WHERE b.v = 1 MATCH (b)-[:H]->(c:C) RETURN count(*)` returns 1 (C 2) | **Open**, fix in PR #3099 |
-| W2-scan-7 | `IndexArray.tryPushdown_or_ac_drops_filter`, `Cex C12` | The OR branch of `try_filter_pushdown` keeps no filter for an array-contains disjunct (the same family as #3736, which fixed AND and the single atom): `MATCH (n:L) WHERE 1 IN n.arr OR n.k = 9` on an index over `(arr, k)` also returns `{arr:[true], k:0}`, because Bool and Int share the numeric key. Rust with index and C with index return it; openCypher and Rust without an index do not. Fix: keep the filter whenever an OR branch `is_array_contains` | **Open** |
 | — | `IdSeek.lean` examples on `g5` | `id(n) > -1` returns 0 rows, and non-integer bounds error. Reported as bugs 3–4 of [`../optimizer_rewrites`](../optimizer_rewrites) | **Open** |
 
-The `IndexCex.lean` examples also reproduce bugs owned by [`../index_layer`](../index_layer): a folded `date()` constant returns every node (C3); `IN [.., date()]` drops the item (C9); multi-label AND/OR (C5, C6); Bool/Int conflation (C1, shared with C).
+The `IndexCex.lean` examples also reproduce a bug owned by [`../index_layer`](../index_layer): Bool/Int conflation (C1, shared with C). C3, C4, C5, C6, C9 (folded `date()`, computed constant, multi-label AND/OR, `IN [.., date()]`) and C12 (array-contains in an OR) now agree since #3064.
 
 - `evaluate_id_filter` stops at the first empty conjunct, so a type error in a later one is masked: `id(n) = 100 AND id(n) = 'x'` returns 0 rows, swapped it errors (`probe_id_seek_error_order`).
 

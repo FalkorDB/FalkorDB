@@ -44,27 +44,36 @@ scan now agrees. -/
 example : agree [0] (.atom (.cmp .gt (.prop 0) (.lit (.i 0)))) (node [0] [(0, .date 5)]) = true := by
   decide
 
-/-- C3: `n.v = date(...)` (folded to a `Constant(Date)`, which `is_non_indexable_subexpr` does
-not flag) — the Filter is dropped, `can_utilize_index` rejects the Date, the op falls back to a
-full label scan: every node of the label is returned. -/
-example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.date 3)))) (node [0] [(0, .i 1)]) = false := by
+/-- C3 — FIXED by #3064 (W2-index-1). `n.v = date(...)` is folded to a `Constant(Date)`, which
+`is_non_indexable_subexpr` used not to flag: the Filter was dropped, the index rejected the Date and
+the op fell back to a full label scan, returning every node. `is_exact_index_literal` now flags it
+(`litFlag`): the Filter stays and the scan agrees. -/
+example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.date 3)))) (node [0] [(0, .i 1)]) = true := by
   decide
 
-/-- C4: a constant expression that evaluates to an int ≥ 2^52 (`4503599627370495 +
-4503599627370495 + 3`): no literal is flagged, the Filter is dropped, the runtime value is
-lossy, fallback label scan — every node. -/
+/-- C4 — FIXED by #3064 (W2-scan-3). A constant expression that evaluates to an int ≥ 2^52
+(`4503599627370495 + 4503599627370495 + 3`) used to keep no Filter (no literal is lossy), and the
+lossy runtime value fell back to a label scan returning every node. `Add` is now outside the
+allow-list of `is_non_indexable_subexpr` (`nonIdxT`): the Filter stays and the scan agrees. -/
 example : agree [0] (.atom (.cmp .eq (.prop 0)
     (.add (.add (.lit (.i 4503599627370495)) (.lit (.i 4503599627370495))) (.lit (.i 3)))))
-    (node [0] [(0, .i 1)]) = false := by decide
+    (node [0] [(0, .i 1)]) = true := by decide
 
-/-- C5: multi-label AND. `(n:A:B) WHERE n.a = 1 AND n.b = 2` with `A(a)`, `B(b)`: both
-conjuncts are merged into one query on A's index, which has no `b` field → null → nothing. -/
+/-- C5 — FIXED by #3064 (W2-index-4). Multi-label AND `(n:A:B) WHERE n.a = 1 AND n.b = 2` with
+`A(a)`, `B(b)`: both conjuncts used to be merged into one query on A's index, which has no `b`
+field → null → nothing. Only A's conjuncts are merged now (`pushAnd`); `n.b = 2` stays in the
+leftover filter: the scan agrees. -/
 example : agree [0, 1] (.and [.cmp .eq (.prop 1) (.lit (.i 1)), .cmp .eq (.prop 2) (.lit (.i 2))])
-    (node [0, 1] [(1, .i 1), (2, .i 2)]) = false := by decide
+    (node [0, 1] [(1, .i 1), (2, .i 2)]) = true := by decide
 
-/-- C6: multi-label OR: the `b` disjunct is a null child of the union and silently skipped. -/
+/-- C6 — FIXED by #3064 (W2-index-4). Multi-label OR: the `b` disjunct used to be a null child of
+the union, silently skipped. An OR across labels is no longer pushed (`pushOr`): the scan agrees. -/
 example : agree [0, 1] (.or [.cmp .eq (.prop 1) (.lit (.i 1)), .cmp .eq (.prop 2) (.lit (.i 9))])
-    (node [0, 1] [(1, .i 5), (2, .i 9)]) = false := by decide
+    (node [0, 1] [(1, .i 5), (2, .i 9)]) = true := by decide
+
+/-- …and the OR across labels is refused outright. -/
+example : tryPushdown idx1 [0, 1] (.or [.cmp .eq (.prop 1) (.lit (.i 1)), .cmp .eq (.prop 2) (.lit (.i 9))])
+    = none := rfl
 
 /-- C7 — FIXED by #3068. `n.a + 1 IN [2]` used to be pushed as `a IN [2]` (the IN path only
 asked that the left side *contain* a property). `bare_property_of` now requires `n.a` itself:
@@ -80,14 +89,15 @@ example : agree [0] (.atom (.inn (.abs (.prop 1)) (.list [.lit (.i 1)])))
 example : agree [0] (.atom (.inn (.lit (.i 2)) (.list [.prop 1, .prop 2])))
     (node [0] [(1, .i 2), (2, .i 7)]) = true := by decide
 
-/-- C9: `n.v IN [1, date(...)]`: the runtime drops the Date item from the `Or`, the index
-never returns the node, the retained Filter cannot add it back. -/
+/-- C9 — FIXED by #3064 (W2-index-3). `n.v IN [1, date(...)]`: the runtime used to drop the Date
+item, so the index never returned the node. `IndexQuery::in_list` keeps it, `can_be_served`
+refuses the list, the op falls back under the kept Filter: the scan agrees. -/
 example : agree [0] (.atom (.inn (.prop 0) (.list [.lit (.i 1), .lit (.date 3)])))
-    (node [0] [(0, .date 3)]) = false := by decide
+    (node [0] [(0, .date 3)]) = true := by decide
 
 /-- C10 — FIXED by #3736. `1 IN n.arr AND …`: array-contains used to keep its Filter only at the
 root, so inside AND it was dropped, and Bool/Int share the numeric array field (shared with C). An
-array-contains conjunct now stays among the leftovers (`pushAnd`): the scan agrees. -/
+array-contains conjunct now keeps the whole Filter (`pushedNeedsPost`, #3064): the scan agrees. -/
 example : agree [0] (.and [.inn (.lit (.i 1)) (.term (.prop 3)), .opq 0])
     (node [0] [(3, .arr [.b true])]) = true := by decide
 

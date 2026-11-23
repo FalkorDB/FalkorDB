@@ -594,7 +594,7 @@ theorem queryIndexNumericEdges_none (g : G) (ep : Nat → Option (Nat × Nat)) (
 
 /-! ## The scan ops (`node_by_index_scan.rs`, `edge_by_index_scan.rs`)
 
-Under `index-falkordb` the index branch of `next` is: `can_utilize_index(q)` false → scan (the planner
+Under `index-falkordb` the index branch of `next` is: `q.can_be_served()` false → scan (the planner
 kept a filter); else the three-way answer: rows, or the scan the `ScanFilter` describes, or the error
 `unsupported_by_native_index`. There is no RediSearch branch. -/
 
