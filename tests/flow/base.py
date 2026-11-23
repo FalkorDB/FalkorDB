@@ -57,6 +57,14 @@ class FlowTestsBase(object):
         for res in actual_result_set:
             self.env.assertContains(res, query_info.expected_result)
 
+    def _assert_same_rows_with_multiplicity(self, actual_result, query_info):
+        # Row-for-row comparison ignoring order: a row repeated in the
+        # expectation must be repeated exactly as often in the result, which the
+        # length-plus-membership checks above cannot tell (a missing duplicate
+        # and a surplus copy of another row would cancel out).
+        actual_result_set = actual_result.result_set or []
+        self.env.assertEqual(sorted(actual_result_set), sorted(query_info.expected_result))
+
     def _assert_resultset_equals_expected(self, actual_result, query_info):
         actual_result_set = actual_result.result_set or []
         self.env.assertEqual(actual_result_set, query_info.expected_result)
