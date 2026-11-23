@@ -322,10 +322,8 @@ fn filters_of(
         // What hangs below the scan is the scan's input, which the caller
         // keeps whole (see `scan_input_of`): a `Filter` in it is already
         // there, and salvaging it too would evaluate it twice.
-        if matches!(
-            node.data(),
-            IR::AllNodeScan(_) | IR::NodeByLabelScan { .. }
-        ) || node.num_children() != 1
+        if matches!(node.data(), IR::AllNodeScan(_) | IR::NodeByLabelScan { .. })
+            || node.num_children() != 1
         {
             return filters;
         }
