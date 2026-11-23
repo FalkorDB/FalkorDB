@@ -286,6 +286,68 @@ impl Parallel<'_> {
     }
 }
 
+impl Parallel<'_> {
+    /// Do the hops that can only bind an edge of `edge_id`'s type already need
+    /// every live edge of that type between its endpoints?
+    ///
+    /// Counts this hop (it binds `edge_id`, or collapses over that one type)
+    /// and every single-type collapsed sibling bound to the pair with an edge of
+    /// that type. Those hops cannot take another type, so they need distinct
+    /// edges of it however the flexible siblings (untyped, several types) are
+    /// bound. Without this, three `:R` hops over two `:R` edges pass when an
+    /// untyped sibling can absorb the surplus in the any-type count.
+    fn typed_demand_exceeded<R: RowView + ?Sized>(
+        &self,
+        env: &R,
+        edge_id: RelationshipId,
+        own_alias_id: u32,
+        siblings: &[u32],
+    ) -> bool {
+        if self.own_types.is_some_and(|types| types.len() != 1) {
+            return false;
+        }
+        let g = self.graph;
+        let raw = u64::from(edge_id);
+        let Some((src, dst)) = g.endpoints_for_edge(raw) else {
+            return false;
+        };
+        let tidx_of = |id: u64| {
+            g.relationship_type_matrix_iter(id, id)
+                .next()
+                .map(|(_, tidx)| tidx as usize)
+        };
+        let Some(own_tidx) = tidx_of(raw) else {
+            return false;
+        };
+        let mut demand = 1usize;
+        for &entry in siblings {
+            let sibling_id = entry & !SIBLING_FLAGS;
+            if sibling_id == own_alias_id || entry & COLLAPSED_SIBLING == 0 {
+                continue;
+            }
+            let Some(Value::Relationship(bound)) = env.value_at(sibling_id) else {
+                continue;
+            };
+            let bound_raw = u64::from(bound);
+            if (self.deleted)(RelationshipId::from(bound_raw))
+                || g.endpoints_for_edge(bound_raw) != Some((src, dst))
+                || tidx_of(bound_raw) != Some(own_tidx)
+            {
+                continue;
+            }
+            demand += 1;
+        }
+        let live = g.relationship_tensors().get(own_tidx).map_or(0, |tensor| {
+            tensor
+                .get(src, dst)
+                .filter(|&other| !(self.deleted)(RelationshipId::from(other)))
+                .take(demand)
+                .count()
+        });
+        demand > live
+    }
+}
+
 /// Check whether a given edge ID is already bound to another relationship
 /// variable in the environment.
 ///
@@ -371,15 +433,16 @@ pub fn edge_already_used<R: RowView + ?Sized>(
     // the hops bound to the pair already use up its edges, no further hop can
     // bind a distinct one, whichever edge it picks.
     any_collapsed
-        && !parallel.has_alternative(
-            env,
-            edge_id,
-            own_alias_id,
-            sibling_edges,
-            match parallel.own_types {
-                Some(types) => Matching::Tensors(types),
-                None if any_type_sibling => Matching::AnyType,
-                None => Matching::TypeOfEdge,
-            },
-        )
+        && (parallel.typed_demand_exceeded(env, edge_id, own_alias_id, sibling_edges)
+            || !parallel.has_alternative(
+                env,
+                edge_id,
+                own_alias_id,
+                sibling_edges,
+                match parallel.own_types {
+                    Some(types) => Matching::Tensors(types),
+                    None if any_type_sibling => Matching::AnyType,
+                    None => Matching::TypeOfEdge,
+                },
+            ))
 }

@@ -610,6 +610,23 @@ def test_collapsed_hops_over_a_self_loop_need_two_edges():
     assert query("MATCH (a)-[r:R]->(x)-[s:R]->(b) RETURN count(*)").result_set == [[1]]
 
 
+def test_untyped_sibling_cannot_absorb_a_typed_hop_surplus():
+    # Three `:R` hops need three distinct `:R` edges; the pair holds two. The
+    # untyped `t` can take a `:T` edge, but that frees no `:R` edge for `u`.
+    query(
+        "CREATE (a:N)-[:R]->(x:N), (a)-[:R]->(x), (a)-[:T]->(x), (a)-[:T]->(x)",
+        write=True,
+    )
+    for ret in ["id(u)", "count(*)", "id(r), id(s), id(t), id(u)"]:
+        res = query(
+            f"MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t]->(x), (a)-[u:R]->(x) RETURN {ret}"
+        )
+        assert res.result_set in ([], [[0]]), ret
+    # two `:R` hops and an untyped one still match
+    res = query("MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t]->(x) RETURN count(*)")
+    assert res.result_set == [[1]]
+
+
 def test_stacked_filters_keep_their_order():
     # The optimizer merges the second MATCH's filter into the first's. The
     # first one must still run first: it is what keeps `1 / (n.v - 1)` from
