@@ -51,7 +51,7 @@ use super::super::IR;
 use super::eliminate_true_filters::substitute_params;
 use super::utilize_index::{can_seek_index, seek_index_label};
 use super::utilize_node_by_id::get_id_filter;
-use super::{collect_expr_variables, collect_subtree_variables};
+use super::{collect_expr_variables, collect_subtree_variables, conjuncts, min_label_count};
 
 /// What one index lookup costs, in nodes of a label scan. Measured on a 1M-node
 /// label: reading it once (the hash join's build side) takes about 52 ms, a
@@ -149,15 +149,10 @@ fn try_seek_rewrite(
     graph: &Graph,
     params: &HashMap<String, Value>,
 ) -> Option<DynTree<IR>> {
-    let conjuncts: Vec<DynTree<ExprIR<Variable>>> = if matches!(filter.root().data(), ExprIR::And) {
-        filter
-            .root()
-            .children()
-            .map(|c| c.clone_as_tree())
-            .collect()
-    } else {
-        vec![(**filter).clone()]
-    };
+    let conjuncts: Vec<DynTree<ExprIR<Variable>>> = conjuncts(filter)
+        .iter()
+        .map(NodeRef::clone_as_tree)
+        .collect();
     let children: Vec<DynNode<IR>> = cp_node.children().collect();
     if children.len() < 2 {
         return None;
@@ -266,8 +261,9 @@ fn try_seek_rewrite(
         // An estimate we cannot make is taken as a handful of rows, the
         // shape of an OLTP lookup: the plan before consecutive MATCH clauses
         // were kept apart always seeked.
+        let scanned = min_label_count(&scan_node, graph).unwrap_or_else(|| graph.node_count());
         #[allow(clippy::cast_precision_loss, reason = "a row-count estimate")]
-        if feeder_rows.is_some_and(|rows| rows * seek_cost > scan_size(&scan_node, graph) as f64) {
+        if feeder_rows.is_some_and(|rows| rows * seek_cost > scanned as f64) {
             continue;
         }
 
@@ -326,29 +322,17 @@ fn estimate_rows(
             let len = unwound_len(&expr)?;
             Some(inputs()? * len as f64)
         }
-        IR::NodeByLabelScan { node: n } => {
+        IR::NodeByLabelScan { node: n } | IR::AllNodeScan(n) => {
             // `utilize_index` and `utilize_node_by_id` run after this pass: a
             // scan under a filter they will serve is a lookup, not a scan.
-            // A range lookup can return the whole label, so only an
-            // equality counts as one row per input row.
             if let Some(parent) = node.parent()
                 && let IR::Filter(f) = parent.data()
-                && ((can_seek_index(n, f, graph) && has_seekable_equality(n, f, graph))
-                    || has_id_equality(n, f))
+                && is_point_lookup(n, f, graph)
             {
                 return inputs();
             }
-            Some(inputs()? * scan_size(n, graph) as f64)
-        }
-        IR::AllNodeScan(n) => {
-            // Likewise `utilize_node_by_id`: `id(n) = key` finds one node.
-            if let Some(parent) = node.parent()
-                && let IR::Filter(f) = parent.data()
-                && has_id_equality(n, f)
-            {
-                return inputs();
-            }
-            Some(inputs()? * scan_size(n, graph) as f64)
+            let nodes = min_label_count(n, graph).unwrap_or_else(|| graph.node_count());
+            Some(inputs()? * nodes as f64)
         }
         IR::NodeByIndexScan { .. }
         | IR::Filter(_)
@@ -357,22 +341,6 @@ fn estimate_rows(
         | IR::CartesianProduct => inputs(),
         _ => None,
     }
-}
-
-/// Number of nodes a scan of `node` reads: its smallest label, or every node
-/// when it has none.
-fn scan_size(
-    node: &QueryNode<Arc<String>, Variable>,
-    graph: &Graph,
-) -> u64 {
-    if node.labels.is_empty() {
-        return graph.node_count();
-    }
-    node.labels
-        .iter()
-        .map(|l| graph.label_node_count(l))
-        .min()
-        .unwrap_or(0)
 }
 
 /// Length of the list an `UNWIND` expression (parameters already substituted)
@@ -400,47 +368,38 @@ fn unwound_len(expr: &DynTree<ExprIR<Variable>>) -> Option<usize> {
     }
 }
 
-/// Whether an equality that an index serves is among the conjuncts of `filter`.
-fn has_seekable_equality(
+/// Whether the scan of `node` under `filter` becomes a lookup that the row
+/// estimate counts as one row per input row: one of the conjuncts is
+/// `id(node) = key`, or an index serves `filter` and one of its conjuncts is
+/// an equality the index serves. A range lookup can return the whole label,
+/// so it does not count.
+fn is_point_lookup(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     filter: &QueryExpr<Variable>,
     graph: &Graph,
 ) -> bool {
-    let root = filter.root();
-    match root.data() {
-        ExprIR::Eq => true,
-        ExprIR::And => root.children().any(|c| {
-            matches!(c.data(), ExprIR::Eq) && can_seek_index(node, &c.clone_as_tree(), graph)
-        }),
-        _ => false,
-    }
+    let conjuncts = conjuncts(filter);
+    conjuncts
+        .iter()
+        .any(|c| matches!(get_id_filter(c, &node.alias), Some((_, ExprIR::Eq))))
+        || (can_seek_index(node, filter, graph)
+            && conjuncts.iter().any(|c| {
+                matches!(c.data(), ExprIR::Eq) && can_seek_index(node, &c.clone_as_tree(), graph)
+            }))
 }
 
-/// Whether `filter`, or one of its conjuncts, is `id(node) = key` with a key
-/// that does not read `node`: the scan below it yields at most one node per
-/// input row.
-fn has_id_equality(
-    node: &QueryNode<Arc<String>, Variable>,
-    filter: &QueryExpr<Variable>,
-) -> bool {
-    let is_eq = |c: &DynNode<ExprIR<Variable>>| {
-        matches!(get_id_filter(c, &node.alias), Some((_, ExprIR::Eq)))
-    };
-    let root = filter.root();
-    if matches!(root.data(), ExprIR::And) {
-        root.children().any(|c| is_eq(&c))
-    } else {
-        is_eq(&root)
-    }
-}
-
-/// Whether evaluating `expr` can raise an error (a division, a call, an
-/// element access), which a guard on the scanned branch may be there to avoid.
+/// Whether evaluating `expr` can raise an error (arithmetic on a value of the
+/// wrong type or out of range, a call, an element access), which a guard on
+/// the scanned branch may be there to avoid.
 fn may_fail(expr: &DynTree<ExprIR<Variable>>) -> bool {
     expr.root().walk::<Bfs>().any(|data| {
         matches!(
             data,
-            ExprIR::Div
+            ExprIR::Add
+                | ExprIR::Sub
+                | ExprIR::Mul
+                | ExprIR::Negate
+                | ExprIR::Div
                 | ExprIR::Modulo
                 | ExprIR::Pow
                 | ExprIR::GetElement

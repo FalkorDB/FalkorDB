@@ -67,12 +67,13 @@ mod utilize_index;
 mod utilize_node_by_id;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    parser::ast::{ExprIR, VarKey, Variable},
+    parser::ast::{ExprIR, QueryNode, VarKey, Variable},
     runtime::value::Value,
 };
 
@@ -249,4 +250,24 @@ pub fn optimize(
     reduce_bound_edge(&mut optimized_plan);
 
     optimized_plan
+}
+
+/// The top-level conjuncts of `expr`: the children of an `AND`, or `expr`
+/// itself.
+pub(super) fn conjuncts(expr: &DynTree<ExprIR<Variable>>) -> Vec<DynNode<'_, ExprIR<Variable>>> {
+    let root = expr.root();
+    if matches!(root.data(), ExprIR::And) {
+        root.children().collect()
+    } else {
+        vec![root]
+    }
+}
+
+/// The node count of the smallest of `node`'s labels, or `None` when it has
+/// no label.
+pub(super) fn min_label_count(
+    node: &QueryNode<Arc<String>, Variable>,
+    graph: &Graph,
+) -> Option<u64> {
+    node.labels.iter().map(|l| graph.label_node_count(l)).min()
 }

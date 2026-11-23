@@ -398,18 +398,22 @@ class testNodeByIDFlow(FlowTestsBase):
         self.env.assertEqual(g.query(q).result_set, [[3, 3]])
 
         # A key that can fail stays behind b's filter, which rejects every B,
-        # so `e.q / e.z` never runs.
-        q = ("UNWIND [{s: 0, q: 5, z: 0}] AS e MATCH (a) WHERE id(a) = e.s "
-             "MATCH (b:B) WHERE b.v > 1000 AND id(b) = e.q / e.z RETURN count(*)")
-        self.env.assertEqual(g.query(q).result_set, [[0]])
+        # so neither `e.q / e.z` nor `e.w * 1` runs.
+        for q in [
+            ("UNWIND [{s: 0, q: 5, z: 0}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b:B) WHERE b.v > 1000 AND id(b) = e.q / e.z RETURN count(*)"),
+            ("UNWIND [{s: 0, w: 'x'}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b:B) WHERE b.v > 1000 AND id(b) = e.w * 1 RETURN count(*)"),
+        ]:
+            self.env.assertEqual(g.query(q).result_set, [[0]], message=q)
 
         # A key that is not deterministic would be evaluated twice, and a key
         # that reads b cannot be evaluated before b is found: only a is sought.
         for q in [
-            "UNWIND [{s: 0, d: 100}, {s: 1, d: 101}] AS e MATCH (a) WHERE id(a) = e.s "
-            "MATCH (b) WHERE id(b) = e.d + toInteger(rand() * 0) RETURN id(a), id(b) ORDER BY id(a)",
-            "UNWIND [{s: 0, d: 100}, {s: 1, d: 101}] AS e MATCH (a) WHERE id(a) = e.s "
-            "MATCH (b) WHERE id(b) = e.d + b.v * 0 RETURN id(a), id(b) ORDER BY id(a)",
+            ("UNWIND [{s: 0, d: 100}, {s: 1, d: 101}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b) WHERE id(b) = e.d + toInteger(rand() * 0) RETURN id(a), id(b) ORDER BY id(a)"),
+            ("UNWIND [{s: 0, d: 100}, {s: 1, d: 101}] AS e MATCH (a) WHERE id(a) = e.s "
+             "MATCH (b) WHERE id(b) = e.d + b.v * 0 RETURN id(a), id(b) ORDER BY id(a)"),
         ]:
             self.env.assertEqual(str(g.explain(q)).count("NodeByIdSeek"), 1, message=q)
             self.env.assertEqual(g.query(q).result_set, [[0, 100], [1, 101]], message=q)
