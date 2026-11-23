@@ -20,13 +20,29 @@ theorem ofKeys_filter_contains (ks : List Nat) (o : KeySet) (k : Nat) :
   rw [ofKeys_contains]
   by_cases h1 : k ∈ ks <;> by_cases h2 : o.contains k = true <;> simp [List.mem_filter, h1, h2]
 
+theorem keyset_and_windows (a b : KeySet) (k : Nat)
+    (ha : (∃ lo hi, a = .range lo hi) ∨ ∃ ws, a = .windows ws)
+    (hb : (∃ lo hi, b = .range lo hi) ∨ ∃ ws, b = .windows ws)
+    (hand : a.and b = KeySet.ofWindows (overlaps a.windowsOf b.windowsOf)) :
+    (a.and b).contains k = (a.contains k && b.contains k) := by
+  rw [hand, ofWindows_contains, overlaps_any, ← windowsOf_contains a ha, ← windowsOf_contains b hb]
+
+theorem point_and_contains (ka k : Nat) (o : KeySet) :
+    (if o.contains ka = true then KeySet.point ka else KeySet.empty).contains k = (ka == k && o.contains k) := by
+  rw [ctn_ite]
+  by_cases h : ka = k
+  · subst h; simp [KeySet.contains]
+  · simp [KeySet.contains, beq_false_of_ne h]
+
+/-- **`KeySet::and` holds exactly the keys both sides hold**, the geo windows (#2527) included. -/
 theorem keyset_and_contains (a b : KeySet) (k : Nat) : (a.and b).contains k = (a.contains k && b.contains k) := by
-  rcases a with _ | ka | ⟨lo, hi⟩ | ks <;> rcases b with _ | kb | ⟨lo', hi'⟩ | ks'
+  rcases a with _ | ka | ⟨lo, hi⟩ | ks | wa <;> rcases b with _ | kb | ⟨lo', hi'⟩ | ks' | wb
   -- a = empty
   · simp [KeySet.and, KeySet.contains]
   · simp only [KeySet.and]; rw [ctn_ite]; simp [KeySet.contains]
   · simp [KeySet.and, KeySet.contains]
   · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
+  · simp [KeySet.and, KeySet.contains]
   -- a = point
   · simp only [KeySet.and]; rw [ctn_ite]; simp [KeySet.contains]
   · simp only [KeySet.and]; rw [ctn_ite]
@@ -34,20 +50,12 @@ theorem keyset_and_contains (a b : KeySet) (k : Nat) : (a.and b).contains k = (a
     · subst h
       by_cases h2 : kb = ka <;> simp [KeySet.contains, h2]
     · simp [KeySet.contains, beq_false_of_ne h]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : ka = k
-    · subst h; simp [KeySet.contains]
-    · simp [KeySet.contains, beq_false_of_ne h]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : ka = k
-    · subst h; simp [KeySet.contains]
-    · simp [KeySet.contains, beq_false_of_ne h]
+  · simp only [KeySet.and]; rw [point_and_contains]; simp [KeySet.contains]
+  · simp only [KeySet.and]; rw [point_and_contains]; simp [KeySet.contains]
+  · simp only [KeySet.and]; rw [point_and_contains]; simp [KeySet.contains]
   -- a = range
   · simp [KeySet.and, KeySet.contains]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : kb = k
-    · subst h; simp [KeySet.contains]
-    · simp [KeySet.contains, beq_false_of_ne h]
+  · simp only [KeySet.and]; rw [point_and_contains, Bool.and_comm]; simp [KeySet.contains]
   · simp only [KeySet.and]
     by_cases hc : max lo lo' ≤ min hi hi'
     · rw [if_pos hc, Bool.eq_iff_iff]
@@ -58,14 +66,19 @@ theorem keyset_and_contains (a b : KeySet) (k : Nat) : (a.and b).contains k = (a
       · intro h; exact h.elim
       · rintro ⟨⟨h1, h2⟩, h3, h4⟩; omega
   · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp only [KeySet.contains]; rw [Bool.and_comm]
+  · exact keyset_and_windows _ _ k (.inl ⟨_, _, rfl⟩) (.inr ⟨_, rfl⟩) rfl
   -- a = keys
   · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
-  · simp only [KeySet.and]; rw [ctn_ite]
-    by_cases h : kb = k
-    · subst h; simp [KeySet.contains]
-    · simp [KeySet.contains, beq_false_of_ne h]
+  · simp only [KeySet.and]; rw [point_and_contains, Bool.and_comm]; simp [KeySet.contains]
   · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
   · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
+  · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp [KeySet.contains]
+  -- a = windows
+  · simp [KeySet.and, KeySet.contains]
+  · simp only [KeySet.and]; rw [point_and_contains, Bool.and_comm]; simp [KeySet.contains]
+  · exact keyset_and_windows _ _ k (.inr ⟨_, rfl⟩) (.inl ⟨_, _, rfl⟩) rfl
+  · simp only [KeySet.and]; rw [ofKeys_filter_contains]; simp only [KeySet.contains]; rw [Bool.and_comm]
+  · exact keyset_and_windows _ _ k (.inr ⟨_, rfl⟩) (.inr ⟨_, rfl⟩) rfl
 
 /-! ## `atoms` (`range.rs`) -/
 
@@ -124,7 +137,7 @@ theorem atoms_same : ∀ (m : IndexQuery) (b : Bool) (as : List IndexQuery), sam
   | .range .., b, as, hs, h => by simp [sameCombinator] at hs
   | .inList .., b, as, hs, h => by simp [sameCombinator] at hs
   | .arrayContains .., b, as, hs, h => by simp [sameCombinator] at hs
-  | .point _, b, as, hs, h => by simp [sameCombinator] at hs
+  | .point .., b, as, hs, h => by simp [sameCombinator] at hs
 end
 
 /-- **No atom of an `AND` is itself an `AND`** (`conjunction`'s `debug_assert!`, `range.rs`): the

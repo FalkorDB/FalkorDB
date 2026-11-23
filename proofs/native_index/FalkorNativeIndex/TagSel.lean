@@ -197,17 +197,23 @@ theorem isEmpty_contains (t : StrSel) (h : t.isEmpty = true) (s : String) : t.co
 
 /-! ## `Scalars` and `Selection` (`range.rs`) -/
 
-/-- `Scalars`: the numeric keys and the strings a scalar predicate selects. -/
+/-- `Scalars`: the numeric keys, the strings and (#2527) the geo cells a scalar predicate selects. -/
 structure Scalars where
   numeric : KeySet
   tag : StrSel
+  geo : KeySet := .empty
 deriving DecidableEq, Repr
 
 /-- `Scalars::none`. -/
-def Scalars.none : Scalars := ⟨.empty, StrSel.none⟩
+def Scalars.none : Scalars := ⟨.empty, StrSel.none, .empty⟩
 
 /-- `Scalars::is_empty`. -/
-def Scalars.isEmpty (sc : Scalars) : Bool := sc.numeric == .empty && sc.tag.isEmpty
+def Scalars.isEmpty (sc : Scalars) : Bool := sc.numeric == .empty && sc.tag.isEmpty && sc.geo == .empty
+
+/-- `GeoIndex::is_scalar_in` (`geo.rs`): a point whose Morton key the cells hold. -/
+def geoIn (ks : KeySet) : Value → Bool
+  | .point _ _ (some k) => ks.contains k
+  | _ => false
 
 /-- `TagIndex::is_scalar_in`: a string the selection holds. -/
 def tagIn (t : StrSel) : Value → Bool
@@ -215,10 +221,11 @@ def tagIn (t : StrSel) : Value → Bool
   | _ => false
 
 /-- `Scalars::contains`. -/
-def Scalars.contains (sc : Scalars) (v : Value) : Bool := isScalarIn sc.numeric v || tagIn sc.tag v
+def Scalars.contains (sc : Scalars) (v : Value) : Bool :=
+  isScalarIn sc.numeric v || tagIn sc.tag v || geoIn sc.geo v
 
 /-- `Scalars::and`: kind by kind. -/
-def Scalars.and (a b : Scalars) : Scalars := ⟨a.numeric.and b.numeric, a.tag.intersect b.tag⟩
+def Scalars.and (a b : Scalars) : Scalars := ⟨a.numeric.and b.numeric, a.tag.intersect b.tag, a.geo.and b.geo⟩
 
 /-- `Selection` since #3738. -/
 inductive SelT where
@@ -249,7 +256,7 @@ def StrsOk (strs : Value → List String) : Prop := ∀ v, (∃ es, v = .list es
 
 /-- The numeric-only `Selection` (`Numeric.lean`) as a `SelT`: no string share. -/
 def lift : Selection → SelT
-  | .scalars ks => .scalars ⟨ks, StrSel.none⟩
+  | .scalars ks => .scalars ⟨ks, StrSel.none, .empty⟩
   | .listsHolding f r => .listsHolding (.encoded f) (r.map .encoded)
 
 /-- `Kind::of` returns `Tag` for a string. -/
@@ -257,42 +264,80 @@ def isStr : Value → Bool
   | .string _ => true
   | _ => false
 
-/-- `Selection::equal`. -/
+/-- `Kind::of` returns `Geo` for a point (#2527). -/
+def isPt : Value → Bool
+  | .point .. => true
+  | _ => false
+
+/-- The geo cell of a point (`GeoIndex::key_of(value).map_or(KeySet::Empty, KeySet::Point)`). -/
+def cellOf : Value → KeySet
+  | .point _ _ (some k) => .point k
+  | _ => .empty
+
+/-- `Selection::equal`. A point selects its grid cell (#2527): a superset of the equal points, which
+    the planner's retained filter narrows (`equalT_point_matches`). -/
 def equalT (v : Value) : Option SelT :=
   match v with
-  | .string s => some (.scalars ⟨.empty, .set [s]⟩)
-  | _ => if isNumericKind v then some (.scalars ⟨pointKeys v, StrSel.none⟩)
+  | .string s => some (.scalars ⟨.empty, .set [s], .empty⟩)
+  | .point _ _ _ => some (.scalars ⟨.empty, StrSel.none, cellOf v⟩)
+  | _ => if isNumericKind v then some (.scalars ⟨pointKeys v, StrSel.none, .empty⟩)
          else if v == .null then some SelT.empty else Option.none
 
-/-- `EqualValues::push`: the numeric keys and the strings, or a decline at a value no kind holds. -/
-def pushEq : List Value → List Nat × List String → Option (List Nat × List String)
+/-- `EqualValues::push`: the numeric keys, the strings and the geo cells, or a decline at a value no
+    kind holds. -/
+def pushEq : List Value → List Nat × List String × List Nat → Option (List Nat × List String × List Nat)
   | [], acc => some acc
-  | v :: vs, (ks, ss) =>
+  | v :: vs, (ks, ss, cs) =>
     match v with
-    | .string s => pushEq vs (ks, ss ++ [s])
-    | _ => if isNumericKind v then pushEq vs (ks ++ (encodeNumeric v).toList, ss)
-           else if v == .null then pushEq vs (ks, ss) else Option.none
+    | .string s => pushEq vs (ks, ss ++ [s], cs)
+    | .point _ _ k => pushEq vs (ks, ss, cs ++ k.toList)
+    | _ => if isNumericKind v then pushEq vs (ks ++ (encodeNumeric v).toList, ss, cs)
+           else if v == .null then pushEq vs (ks, ss, cs) else Option.none
 
 /-- `EqualValues::selection` (`StrSel::set` sorts and dedups; membership is what it keeps). -/
-def eqSel (acc : List Nat × List String) : SelT := .scalars ⟨KeySet.ofKeys acc.1, .set acc.2⟩
+def eqSel (acc : List Nat × List String × List Nat) : SelT :=
+  .scalars ⟨KeySet.ofKeys acc.1, .set acc.2.1, KeySet.ofKeys acc.2.2⟩
 
 /-- `Selection::equal_to_any`. -/
-def equalToAnyT (values : List Value) : Option SelT := (pushEq values ([], [])).map eqSel
+def equalToAnyT (values : List Value) : Option SelT := (pushEq values ([], [], [])).map eqSel
 
 /-- The string of a bound (`as_str`). -/
 def strOf : Option Value → Option String
   | some (.string s) => some s
   | _ => Option.none
 
+/-- The largest `u64`. -/
+def u64Max : Nat := 2 ^ 64 - 1
+
 /-- `Selection::range`: a bound no kind holds declines; a `NULL` bound, or bounds of two kinds, answer
-    empty; string bounds a window of the tag kind; else the numeric window. -/
+    empty; string bounds a window of the tag kind; point bounds every point (#2527: the Morton key does
+    not follow `compare_value`'s order, so the whole grid `KeySet::Range(0, u64::MAX)`, narrowed by the
+    retained filter); else the numeric window. -/
 def rangeT (mn mx : Option Value) (incMin incMax : Bool) : Option SelT :=
   let bounds := mn.toList ++ mx.toList
-  if bounds.any (fun b => !isNumericKind b && !isStr b && b != Value.null) then Option.none
+  if bounds.any (fun b => !isNumericKind b && !isStr b && !isPt b && b != Value.null) then Option.none
   else if bounds.any (fun b => b == Value.null) then some SelT.empty
-  else if bounds.any isNumericKind && bounds.any isStr then some SelT.empty
-  else if bounds.any isStr then some (.scalars ⟨.empty, StrSel.ofBounds (strOf mn) (strOf mx) incMin incMax⟩)
-  else some (.scalars ⟨rangeKeys mn mx incMin incMax, StrSel.none⟩)
+  else if (bounds.any isNumericKind && bounds.any isStr) || (bounds.any isNumericKind && bounds.any isPt) ||
+      (bounds.any isStr && bounds.any isPt) then some SelT.empty
+  else if bounds.any isStr then some (.scalars ⟨.empty, StrSel.ofBounds (strOf mn) (strOf mx) incMin incMax, .empty⟩)
+  else if bounds.any isPt then some (.scalars ⟨.empty, StrSel.none, .range 0 u64Max⟩)
+  else some (.scalars ⟨rangeKeys mn mx incMin incMax, StrSel.none, .empty⟩)
+
+/-- `cover_of` (`geo.rs`, NOT COVERED): the Morton windows covering the disk of `radius` (`f64` bits)
+    around a point, sorted and disjoint. Left abstract. -/
+opaque coverOf : Nat → Nat → Nat → List (Nat × Nat)
+
+/-- `Selection::within` (#2527): `distance(n.v, centre) < radius`. A `NULL` operand, or a radius that is
+    not a number, answers empty; a centre that is not a point declines; else the cells covering the disk. -/
+def withinT (centre radius : Value) : Option SelT :=
+  if centre == .null || radius == .null then some SelT.empty
+  else match centre with
+    | .point lat lon _ =>
+      match radius with
+      | .int i => some (.scalars ⟨.empty, StrSel.none, KeySet.ofWindows (coverOf lat lon (i64ToF64 i))⟩)
+      | .float f => some (.scalars ⟨.empty, StrSel.none, KeySet.ofWindows (coverOf lat lon f)⟩)
+      | _ => some SelT.empty
+    | _ => Option.none
 
 /-- `Selection::lists_holding`. -/
 def listsHoldingT (v : Value) : Option SelT :=
@@ -303,7 +348,7 @@ def listsHoldingT (v : Value) : Option SelT :=
          else Option.none
 
 /-- The loop of `Selection::disjunction`. -/
-def disjGoT : List IndexQuery → List Nat × List String → Option (List Nat × List String)
+def disjGoT : List IndexQuery → List Nat × List String × List Nat → Option (List Nat × List String × List Nat)
   | [], acc => some acc
   | m :: ms, acc =>
     match disjMemberValues m with
@@ -312,7 +357,7 @@ def disjGoT : List IndexQuery → List Nat × List String → Option (List Nat �
 
 /-- `Selection::disjunction`. -/
 def disjunctionT (members : List IndexQuery) : Option SelT :=
-  if !onOneAttribute members then Option.none else (disjGoT members ([], [])).map eqSel
+  if !onOneAttribute members then Option.none else (disjGoT members ([], [], [])).map eqSel
 
 /-- `Selection::and`. -/
 def SelT.and : SelT → SelT → SelT
@@ -327,7 +372,7 @@ def ofLeafT : IndexQuery → Option SelT
   | .inList _ (some items) => if items.isEmpty then Option.none else equalToAnyT items
   | .inList _ Option.none => Option.none
   | .arrayContains _ v => listsHoldingT v
-  | .point _ => Option.none
+  | .point _ c r => withinT c r
   | .or _ => Option.none
   | .and _ => Option.none
 
@@ -364,11 +409,20 @@ theorem isScalarIn_empty (v : Value) : isScalarIn .empty v = false := by
 theorem tagIn_none (v : Value) : tagIn StrSel.none v = false := by
   cases v <;> simp [tagIn, StrSel.none, StrSel.contains]
 
+theorem geoIn_empty (v : Value) : geoIn .empty v = false := by
+  cases v with
+  | point a o k => cases k <;> rfl
+  | _ => rfl
+
+/-- Only a point is ever in a geo share. -/
+theorem geoIn_not_point (ks : KeySet) (v : Value) (h : isPt v = false) : geoIn ks v = false := by
+  cases v <;> simp_all [geoIn, isPt]
+
 /-- **A lifted selection matches what the old one did.** -/
 theorem matchesT_lift (strs : Value → List String) (sel : Selection) (v : Value) :
     (lift sel).matches strs v = sel.matches v := by
   cases sel with
-  | scalars ks => simp [lift, SelT.matches, Scalars.contains, tagIn_none, Selection.matches]
+  | scalars ks => simp [lift, SelT.matches, Scalars.contains, tagIn_none, geoIn_empty, Selection.matches]
   | listsHolding f r =>
     simp only [lift, SelT.matches, Selection.matches, List.all_cons, List.all_map]
     rfl
@@ -391,14 +445,16 @@ theorem listsHoldingT_numeric (v : Value) (h : isNumericKind v = true) :
 theorem listsHoldingT_none (v : Value) (h : indexable v = false) : listsHoldingT v = Option.none := by
   cases v <;> simp_all [listsHoldingT, indexable, isNumericKind]
 
-/-- **On bounds that are not strings, `range` is the old numeric `range`.** -/
+/-- **On bounds that are neither strings nor (#2527) points, `range` is the old numeric `range`.** -/
 theorem rangeT_numeric (mn mx : Option Value) (a b : Bool)
-    (h : ∀ x ∈ mn.toList ++ mx.toList, isStr x = false) :
+    (h : ∀ x ∈ mn.toList ++ mx.toList, isStr x = false ∧ isPt x = false) :
     rangeT mn mx a b = (Selection.range mn mx a b).map lift := by
   have hs : (mn.toList ++ mx.toList).any isStr = false := by
-    simp only [List.any_eq_false]; intro x hx; simp [h x hx]
-  have hL : ∀ L : List Value, (∀ x ∈ L, isStr x = false) →
-      L.any (fun b => !isNumericKind b && !isStr b && b != Value.null) =
+    simp only [List.any_eq_false]; intro x hx; simp [(h x hx).1]
+  have hp : (mn.toList ++ mx.toList).any isPt = false := by
+    simp only [List.any_eq_false]; intro x hx; simp [(h x hx).2]
+  have hL : ∀ L : List Value, (∀ x ∈ L, isStr x = false ∧ isPt x = false) →
+      L.any (fun b => !isNumericKind b && !isStr b && !isPt b && b != Value.null) =
       L.any (fun b => !isNumericKind b && b != Value.null) := by
     intro L
     induction L with
@@ -406,13 +462,14 @@ theorem rangeT_numeric (mn mx : Option Value) (a b : Bool)
     | cons x xs ih =>
       intro hx
       simp only [List.any_cons]
-      rw [ih (fun y hy => hx y (List.mem_cons_of_mem _ hy)), hx x List.mem_cons_self]
+      rw [ih (fun y hy => hx y (List.mem_cons_of_mem _ hy)), (hx x List.mem_cons_self).1,
+        (hx x List.mem_cons_self).2]
       simp
   have he' := hL _ h
   unfold rangeT Selection.range
   dsimp only
-  rw [he', hs]
-  simp only [Bool.and_false, Bool.false_eq_true, ite_false]
+  rw [he', hs, hp]
+  simp only [Bool.and_false, Bool.or_false, Bool.false_eq_true, ite_false]
   split
   · rfl
   · split
@@ -425,12 +482,12 @@ theorem isEmpty_matches (strs : Value → List String) (sel : SelT) (h : sel.isE
   cases sel with
   | listsHolding => simp [SelT.isEmpty] at h
   | scalars sc =>
-    obtain ⟨n, t⟩ := sc
+    obtain ⟨n, t, g⟩ := sc
     simp only [SelT.isEmpty, Scalars.isEmpty, Bool.and_eq_true, beq_iff_eq] at h
-    obtain ⟨rfl, ht⟩ := h
+    obtain ⟨⟨rfl, ht⟩, rfl⟩ := h
     have h1 : isScalarIn .empty v = false := isScalarIn_empty v
     have h2 : tagIn t v = false := by cases v <;> simp [tagIn, isEmpty_contains t ht]
-    simp [SelT.matches, Scalars.contains, h1, h2]
+    simp [SelT.matches, Scalars.contains, h1, h2, geoIn_empty]
 
 theorem empty_matches (strs : Value → List String) (v : Value) : SelT.empty.matches strs v = false :=
   isEmpty_matches strs _ (by decide) v
@@ -441,7 +498,7 @@ theorem empty_matches (strs : Value → List String) (v : Value) : SelT.empty.ma
 theorem equalT_string_matches (strs : Value → List String) (s : String) (v : Value) :
     ∃ sel, equalT (.string s) = some sel ∧ (sel.matches strs v = true ↔ v = .string s) := by
   refine ⟨_, rfl, ?_⟩
-  cases v <;> simp [SelT.matches, Scalars.contains, isScalarIn_empty, tagIn, StrSel.contains]
+  cases v <;> simp [SelT.matches, Scalars.contains, isScalarIn_empty, tagIn, StrSel.contains, geoIn_empty]
 
 /-- A string in a window with these ends. -/
 def inWindow (mn mx : Option String) (incMin incMax : Bool) (s : String) : Prop :=
@@ -456,8 +513,10 @@ theorem rangeT_string_matches (strs : Value → List String) (mn mx : Option Str
     intro x hx
     cases mn <;> cases mx <;> simp at hx <;>
       first | exact ⟨_, hx⟩ | (rcases hx with hx | hx <;> exact ⟨_, hx⟩)
+  have h5 : ((mn.map Value.string).toList ++ (mx.map Value.string).toList).any isPt = false := by
+    simp only [List.any_eq_false]; intro x hx; obtain ⟨s, rfl⟩ := hstr x hx; simp [isPt]
   have h1 : ((mn.map Value.string).toList ++ (mx.map Value.string).toList).any
-      (fun b => !isNumericKind b && !isStr b && b != Value.null) = false := by
+      (fun b => !isNumericKind b && !isStr b && !isPt b && b != Value.null) = false := by
     simp only [List.any_eq_false]; intro x hx; obtain ⟨s, rfl⟩ := hstr x hx; simp [isStr]
   have h2 : ((mn.map Value.string).toList ++ (mx.map Value.string).toList).any (fun b => b == Value.null) = false := by
     simp only [List.any_eq_false]; intro x hx; obtain ⟨s, rfl⟩ := hstr x hx; simp
@@ -465,14 +524,14 @@ theorem rangeT_string_matches (strs : Value → List String) (mn mx : Option Str
     simp only [List.any_eq_false]; intro x hx; obtain ⟨s, rfl⟩ := hstr x hx; simp [isNumericKind]
   have h4 : ((mn.map Value.string).toList ++ (mx.map Value.string).toList).any isStr = true := by
     cases mn <;> cases mx <;> simp_all [isStr]
-  refine ⟨_, by simp only [rangeT, h1, h2, h3, h4]; rfl, ?_⟩
+  refine ⟨_, by simp only [rangeT, h1, h2, h3, h4, h5]; rfl, ?_⟩
   have hso : ∀ o : Option String, strOf (o.map Value.string) = o := by intro o; cases o <;> rfl
   simp only [hso]
   cases v with
   | string s =>
     simp only [SelT.matches, Scalars.contains, isScalarIn_eq, KeySet.matchesValue, encodeNumeric,
       Option.any_none, Bool.false_or, tagIn, StrSel.ofBounds, StrSel.contains, Value.string.injEq,
-      exists_eq_left', inWindow, Bool.and_eq_true]
+      exists_eq_left', inWindow, Bool.and_eq_true, geoIn, Bool.or_false]
     constructor
     · rintro ⟨hl, hh⟩
       refine ⟨fun b' hb => ?_, fun b' hb => ?_⟩
@@ -486,14 +545,14 @@ theorem rangeT_string_matches (strs : Value → List String) (mn mx : Option Str
       · cases mx with
         | none => rfl
         | some m => have := hh m rfl; cases b <;> simpa [Bnd.hiOk] using this
-  | _ => simp [SelT.matches, Scalars.contains, isScalarIn_empty, tagIn]
+  | _ => simp [SelT.matches, Scalars.contains, isScalarIn_empty, tagIn, geoIn_empty]
 
 /-- **Bounds of two kinds select nothing** (`n.v >= 1 AND n.v < 'z'`: Cypher orders a number only
     with numbers and a string only with strings). -/
 theorem rangeT_mixed (x : Value) (s : String) (hx : isNumericKind x = true) (a b : Bool) :
     rangeT (some x) (some (.string s)) a b = some SelT.empty ∧
     rangeT (some (.string s)) (some x) a b = some SelT.empty := by
-  cases x <;> simp_all [rangeT, isNumericKind, isStr]
+  cases x <;> simp_all [rangeT, isNumericKind, isStr, isPt]
 
 /-- **`'s' IN n.v` selects exactly the lists holding `'s'`.** -/
 theorem listsHoldingT_string_matches (strs : Value → List String) (s : String) (v : Value) :
@@ -511,48 +570,72 @@ theorem beq_dec_comm (a b : Nat) : (a == b) = decide (b = a) := by
   · subst h; simp
   · simp [h, Ne.symm h]
 
-theorem pushEq_spec (strs : Value → List String) : ∀ (vs : List Value) (acc acc' : List Nat × List String),
+theorem pushEq_spec (strs : Value → List String) :
+    ∀ (vs : List Value) (acc acc' : List Nat × List String × List Nat),
     pushEq vs acc = some acc' → ∀ v,
       (eqSel acc').matches strs v = ((eqSel acc).matches strs v || vs.any (fun b => eqMatches strs b v))
   | [], acc, acc', h, v => by simp [pushEq] at h; subst h; simp
-  | b :: vs, (ks, ss), acc', h, v => by
-    have key : ∀ ks' ss', pushEq vs (ks', ss') = some acc' →
-        (eqSel (ks', ss')).matches strs v = ((eqSel (ks, ss)).matches strs v || eqMatches strs b v) →
-        (eqSel acc').matches strs v = ((eqSel (ks, ss)).matches strs v || (b :: vs).any (fun b => eqMatches strs b v)) := by
-      intro ks' ss' hp he
+  | b :: vs, (ks, ss, cs), acc', h, v => by
+    have key : ∀ ks' ss' cs', pushEq vs (ks', ss', cs') = some acc' →
+        (eqSel (ks', ss', cs')).matches strs v = ((eqSel (ks, ss, cs)).matches strs v || eqMatches strs b v) →
+        (eqSel acc').matches strs v =
+          ((eqSel (ks, ss, cs)).matches strs v || (b :: vs).any (fun b => eqMatches strs b v)) := by
+      intro ks' ss' cs' hp he
       rw [pushEq_spec strs vs _ _ hp v, he, List.any_cons, Bool.or_assoc]
-    have hsc : ∀ (n : KeySet) (t : StrSel), (SelT.scalars ⟨n, t⟩).matches strs v = (isScalarIn n v || tagIn t v) := by
-      intro n t; rfl
+    have hsc : ∀ (n : KeySet) (t : StrSel) (g : KeySet), (SelT.scalars ⟨n, t, g⟩).matches strs v =
+        (isScalarIn n v || tagIn t v || geoIn g v) := by
+      intro n t g; rfl
     cases b with
     | string s =>
-      apply key ks (ss ++ [s]) (by simpa [pushEq] using h)
+      apply key ks (ss ++ [s]) cs (by simpa [pushEq] using h)
       simp only [eqSel, hsc, eqMatches, equalT, Option.any_some]
-      cases v <;> simp [tagIn, StrSel.contains, isScalarIn_empty, Bool.or_assoc]
+      cases v with
+      | point a o k => cases k <;> simp [tagIn, StrSel.contains, isScalarIn_empty, geoIn_empty, geoIn, KeySet.contains]
+      | _ => simp [tagIn, StrSel.contains, isScalarIn_empty, geoIn_empty, geoIn, Bool.or_assoc]
+    | point la lo k =>
+      apply key ks ss (cs ++ k.toList) (by simpa [pushEq] using h)
+      simp only [eqSel, hsc, eqMatches, equalT, Option.any_some]
+      cases v with
+      | point la' lo' k' =>
+        cases k' with
+        | none => simp [geoIn, isScalarIn_eq, KeySet.matchesValue, encodeNumeric, tagIn, cellOf]
+        | some k' =>
+          simp only [geoIn, isScalarIn_empty, tagIn_none, ofKeys_contains, List.mem_append, cellOf]
+          cases k <;> simp [KeySet.contains, tagIn, isScalarIn_eq, KeySet.matchesValue, encodeNumeric,
+            beq_dec_comm, Bool.or_assoc] <;> (cases decide (k' ∈ cs) <;> simp)
+      | _ => simp [geoIn, tagIn, tagIn_none, isScalarIn_empty, cellOf, StrSel.none, StrSel.contains]
     | null =>
-      apply key ks ss (by simpa [pushEq, isNumericKind] using h)
+      apply key ks ss cs (by simpa [pushEq, isNumericKind] using h)
       simp [eqMatches, equalT, isNumericKind, empty_matches]
     | int i | float x | bool c =>
-      apply key (ks ++ (encodeNumeric _).toList) ss (by simpa [pushEq, isNumericKind] using h)
+      apply key (ks ++ (encodeNumeric _).toList) ss cs (by simpa [pushEq, isNumericKind] using h)
       simp only [eqSel, hsc, eqMatches, equalT, isNumericKind, ite_true, Option.any_some]
-      simp only [isScalarIn_eq, KeySet.matchesValue, tagIn_none, Bool.or_false]
+      simp only [isScalarIn_eq, KeySet.matchesValue, tagIn_none, geoIn_empty, Bool.or_false]
       cases hv : encodeNumeric v with
       | none => simp
       | some k =>
-        simp only [Option.any_some, ofKeys_contains, List.mem_append, pointKeys]
+        have hg : geoIn (KeySet.ofKeys cs) v = false := by
+          cases v <;> simp_all [encodeNumeric, geoIn]
+        simp only [Option.any_some, ofKeys_contains, List.mem_append, pointKeys, hg, Bool.or_false]
         cases encodeNumeric _ <;> simp [KeySet.contains] <;>
           (cases decide (k ∈ ks) <;> cases tagIn (StrSel.set ss) v <;> simp [beq_dec_comm])
     | _ => simp [pushEq, isNumericKind] at h
 
-theorem pushEq_none_iff : ∀ (vs : List Value) (acc : List Nat × List String),
+theorem pushEq_none_iff : ∀ (vs : List Value) (acc : List Nat × List String × List Nat),
     pushEq vs acc = Option.none ↔ ∃ b ∈ vs, equalT b = Option.none
   | [], acc => by simp [pushEq]
-  | b :: vs, (ks, ss) => by
+  | b :: vs, (ks, ss, cs) => by
     cases b <;> simp [pushEq, isNumericKind, equalT, pushEq_none_iff vs]
 
-theorem eqSel_nil_matches (strs : Value → List String) (v : Value) : (eqSel ([], [])).matches strs v = false := by
+theorem eqSel_nil_matches (strs : Value → List String) (v : Value) :
+    (eqSel ([], [], [])).matches strs v = false := by
   have : isScalarIn (KeySet.ofKeys []) v = false := by
     simp [isScalarIn_eq, KeySet.matchesValue]; cases encodeNumeric v <;> simp [ofKeys_contains]
-  simp [eqSel, SelT.matches, Scalars.contains, this, tagIn]; cases v <;> simp [tagIn, StrSel.contains]
+  have hg : geoIn (KeySet.ofKeys []) v = false := by
+    cases v with
+    | point a o k => cases k <;> simp [geoIn, ofKeys_contains]
+    | _ => rfl
+  simp [eqSel, SelT.matches, Scalars.contains, this, hg, tagIn]; cases v <;> simp [tagIn, StrSel.contains]
 
 /-- **`n.v IN [b, ...]` selects what `n.v = b OR ...` does: numbers by key, strings by value** — and
     declines exactly when some member is a value no kind holds. -/
@@ -560,7 +643,7 @@ theorem equalToAnyT_matches (strs : Value → List String) (items : List Value) 
     (h : equalToAnyT items = some sel) (v : Value) :
     sel.matches strs v = items.any (fun b => eqMatches strs b v) := by
   unfold equalToAnyT at h
-  cases hp : pushEq items ([], []) with
+  cases hp : pushEq items ([], [], []) with
   | none => simp [hp] at h
   | some acc =>
     simp [hp] at h; subst h
@@ -575,7 +658,8 @@ def memberValuesT : List IndexQuery → List Value
   | [] => []
   | m :: ms => (disjMemberValues m).getD [] ++ memberValuesT ms
 
-theorem disjGoT_spec (strs : Value → List String) : ∀ (ms : List IndexQuery) (acc acc' : List Nat × List String),
+theorem disjGoT_spec (strs : Value → List String) :
+    ∀ (ms : List IndexQuery) (acc acc' : List Nat × List String × List Nat),
     disjGoT ms acc = some acc' → ∀ v,
       (eqSel acc').matches strs v = ((eqSel acc).matches strs v || (memberValuesT ms).any (fun b => eqMatches strs b v))
   | [], acc, acc', h, v => by simp [disjGoT] at h; subst h; simp [memberValuesT]
@@ -597,7 +681,7 @@ theorem disjunctionT_matches (strs : Value → List String) (ms : List IndexQuer
   unfold disjunctionT at h
   by_cases ho : onOneAttribute ms = true
   · simp only [ho, Bool.not_true, Bool.false_eq_true, ite_false] at h
-    cases hg : disjGoT ms ([], []) with
+    cases hg : disjGoT ms ([], [], []) with
     | none => simp [hg] at h
     | some acc =>
       simp [hg] at h; subst h
@@ -623,7 +707,7 @@ theorem isHeldBy_list (strs : Value → List String) (hs : StrsOk strs) (e : Col
     · simp [isHeldBy, hv] at h
 
 theorem scalars_contains_not_list (sc : Scalars) (es : List (Option Nat)) : sc.contains (.list es) = false := by
-  simp [Scalars.contains, isScalarIn_list, tagIn]
+  simp [Scalars.contains, isScalarIn_list, tagIn, geoIn]
 
 /-- **`Selection::and` selects what both select** — kind by kind on scalars (a number is never a
     string), and nothing for a scalar and a list selection. -/
@@ -640,8 +724,12 @@ theorem andT_matches (strs : Value → List String) (hs : StrsOk strs) (a b : Se
       rw [hk]
       cases v with
       | string s =>
-        simp only [isScalarIn_string, tagIn, intersect_contains]; simp
-      | _ => simp [tagIn]
+        simp only [isScalarIn_string, tagIn, intersect_contains, geoIn]; simp
+      | point a o k =>
+        cases k with
+        | none => simp [isScalarIn_eq, KeySet.matchesValue, encodeNumeric, tagIn, geoIn]
+        | some k => simp [isScalarIn_eq, KeySet.matchesValue, encodeNumeric, tagIn, geoIn, keyset_and_contains]
+      | _ => simp [tagIn, geoIn]
     | listsHolding f r =>
       simp only [SelT.and, empty_matches]
       cases hm : (SelT.listsHolding f r).matches strs v
@@ -738,44 +826,177 @@ def listsT (ix : NumericIndex) (tagLists : String → List Nat) : ColumnKey → 
   | .encoded k => ix.listsHolding k
   | .tag s => tagLists s
 
-/-- `RangeIndex::lookup`. A scalar share that is empty is not read; with both shares the two streams
-    are chained (`DistinctIter::disjoint`: a scalar is of one kind, so they share no doc).
-    `tagScalars` is `TagIndex::scalars`. -/
-def lookupT (ix : NumericIndex) (tagScalars : StrSel → List Nat) (tagLists : String → List Nat) :
+/-- The geo key of a stored point (`GeoIndex::key_of`), `none` for anything else. -/
+def geoKey : Value → Option Nat
+  | .point _ _ k => k
+  | _ => Option.none
+
+theorem geoIn_eq (ks : KeySet) (v : Value) :
+    geoIn ks v = ((geoKey v).map ks.contains).getD false := by
+  cases v with
+  | point a o k => cases k <;> rfl
+  | _ => rfl
+
+theorem scalars_geo_matches (strs : Value → List String) (g : KeySet) (v : Value) :
+    SelT.matches strs (.scalars ⟨.empty, StrSel.none, g⟩) v = geoIn g v := by
+  simp [SelT.matches, Scalars.contains, isScalarIn_empty, tagIn_none]
+
+/-- **`n.v = p` on a point (#2527) selects exactly the points in `p`'s grid cell** (the same Morton key):
+    `p` itself among them, so no equal point is lost; a point with a NaN coordinate (no key) selects
+    nothing, as it equals nothing. The planner's retained filter drops the cell's other points. -/
+theorem equalT_point_matches (strs : Value → List String) (a o : Nat) (k : Option Nat) (v : Value) :
+    ∃ sel, equalT (.point a o k) = some sel ∧
+      sel.matches strs v = (k.isSome && geoKey v == k) := by
+  refine ⟨_, rfl, ?_⟩
+  rw [scalars_geo_matches]
+  cases k with
+  | none => cases v with
+    | point _ _ k' => cases k' <;> rfl
+    | _ => rfl
+  | some c =>
+    cases v with
+    | point _ _ k' =>
+      cases k' with
+      | none => rfl
+      | some d =>
+        simp only [cellOf, geoIn, geoKey, KeySet.contains, Option.isSome_some, Bool.true_and]
+        rw [Bool.eq_iff_iff]; simp only [beq_iff_eq, Option.some.injEq]; exact ⟨fun h => h.symm, fun h => h.symm⟩
+    | _ => rfl
+
+/-- Hence an equal point (same coordinates, so the same key) is always selected. -/
+theorem equalT_point_self (strs : Value → List String) (a o c : Nat) :
+    ∃ sel, equalT (.point a o (some c)) = some sel ∧ sel.matches strs (.point a o (some c)) = true := by
+  obtain ⟨sel, h, hm⟩ := equalT_point_matches strs a o (some c) (.point a o (some c))
+  exact ⟨sel, h, by simp [hm, geoKey]⟩
+
+/-- **A range on point bounds (#2527) selects every point with a key** (`KeySet::Range(0, u64::MAX)`:
+    a Morton key is a `u64`), narrowed by the retained filter. -/
+theorem rangeT_point (strs : Value → List String) (mn mx : Option Value) (a b : Bool)
+    (hpt : ∀ x ∈ mn.toList ++ mx.toList, isPt x = true) (hne : mn.toList ++ mx.toList ≠ []) (v : Value) :
+    ∃ sel, rangeT mn mx a b = some sel ∧
+      sel.matches strs v = ((geoKey v).map (fun k => decide (k ≤ u64Max))).getD false := by
+  have hx : ∀ x ∈ mn.toList ++ mx.toList,
+      isNumericKind x = false ∧ isStr x = false ∧ x ≠ Value.null := by
+    intro x hx'
+    have := hpt x hx'
+    cases x <;> simp_all [isPt, isNumericKind, isStr]
+  obtain ⟨y, hy⟩ := List.exists_mem_of_ne_nil _ hne
+  have h1 : (mn.toList ++ mx.toList).any (fun b => !isNumericKind b && !isStr b && !isPt b && b != Value.null) = false := by
+    rw [List.any_eq_false]; intro x hx'; simp [hpt x hx']
+  have h2 : (mn.toList ++ mx.toList).any (fun b => b == Value.null) = false := by
+    rw [List.any_eq_false]; intro x hx'; simp [(hx x hx').2.2]
+  have h3 : (mn.toList ++ mx.toList).any isNumericKind = false := by
+    rw [List.any_eq_false]; intro x hx'; simp [(hx x hx').1]
+  have h4 : (mn.toList ++ mx.toList).any isStr = false := by
+    rw [List.any_eq_false]; intro x hx'; simp [(hx x hx').2.1]
+  have h5 : (mn.toList ++ mx.toList).any isPt = true := List.any_eq_true.mpr ⟨y, hy, hpt y hy⟩
+  refine ⟨.scalars ⟨.empty, StrSel.none, .range 0 u64Max⟩, ?_, ?_⟩
+  · simp [rangeT, h1, h2, h3, h4, h5]
+  · rw [scalars_geo_matches, geoIn_eq]
+    cases geoKey v <;> simp [KeySet.contains]
+
+/-- `distance(n.v, c) < r` with a `NULL` operand answers empty. -/
+theorem withinT_null (c r : Value) (h : c = .null ∨ r = .null) : withinT c r = some SelT.empty := by
+  rcases h with rfl | rfl <;> simp [withinT]
+
+/-- A centre that is neither `NULL` nor a point declines (the scan is not used). -/
+theorem withinT_not_point (c r : Value) (hc : c ≠ .null) (hp : isPt c = false) (hr : r ≠ .null) :
+    withinT c r = Option.none := by
+  cases c <;> simp_all [withinT, isPt]
+
+/-- **`distance(n.v, centre) < radius` (#2527) selects exactly the points whose key lies in a window of
+    the cover of the disk** (`cover_of`, abstract: the proof that the cover holds every point of the disk
+    is geometry, NOT COVERED). A radius that is not a number answers empty. -/
+theorem withinT_point_matches (strs : Value → List String) (lat lon : Nat) (k : Option Nat) (r : Value)
+    (f : Nat) (hr : r = .float f ∨ ∃ i, r = .int i ∧ f = i64ToF64 i) (v : Value) :
+    ∃ sel, withinT (.point lat lon k) r = some sel ∧
+      sel.matches strs v =
+        ((geoKey v).map (fun key => (coverOf lat lon f).any (fun w => decide (w.1 ≤ key ∧ key ≤ w.2)))).getD false := by
+  rcases hr with rfl | ⟨i, rfl, rfl⟩ <;>
+  · refine ⟨_, by simp [withinT]; rfl, ?_⟩
+    rw [scalars_geo_matches, geoIn_eq]
+    cases geoKey v <;> simp [ofWindows_contains]
+
+theorem withinT_other_radius (lat lon : Nat) (k : Option Nat) (r : Value) (hr : r ≠ .null)
+    (hn : ∀ f, r ≠ .float f) (hi : ∀ i, r ≠ .int i) : withinT (.point lat lon k) r = some SelT.empty := by
+  cases r <;> simp_all [withinT]
+
+/-- `GeoIndex::scalars` (`geo.rs`): `docs_in` over the geo tree `gt` of `(Morton key, doc)` entries,
+    the same cursor code as the numeric kind's (`NumericIndex.lookup` on a tree, `WindowIter` for
+    `Windows`). -/
+def geoLookup (gt : List Nat) (ks : KeySet) : List Nat := (NumericIndex.mk gt []).lookup ks
+
+/-- `RangeIndex::rows` on scalars (#2527): one stream per kind whose share is not empty, in the order
+    numeric, tag, geo; none is the numeric kind's empty read, one is that stream, more are chained
+    (`DistinctIter::disjoint`: a scalar is of one kind, so they share no doc). -/
+def scalarStreams (ix : NumericIndex) (gt : List Nat) (tagScalars : StrSel → List Nat) (sc : Scalars) :
+    List (List Nat) :=
+  (if sc.numeric == .empty then [] else [ix.lookup sc.numeric]) ++
+    (if sc.tag.isEmpty then [] else [tagScalars sc.tag]) ++
+    (if sc.geo == .empty then [] else [geoLookup gt sc.geo])
+
+/-- `RangeIndex::lookup`. `tagScalars` is `TagIndex::scalars`; `gt` is the geo kind's tree. -/
+def lookupT (ix : NumericIndex) (gt : List Nat) (tagScalars : StrSel → List Nat) (tagLists : String → List Nat) :
     SelT → List Nat
   | .scalars sc =>
-    match sc.numeric == .empty, sc.tag.isEmpty with
-    | false, false => ix.lookup sc.numeric ++ tagScalars sc.tag
-    | true, false => tagScalars sc.tag
-    | _, _ => ix.lookup sc.numeric
+    match scalarStreams ix gt tagScalars sc with
+    | [] => ix.lookup .empty
+    | [s] => s
+    | ss => ss.flatten
   | .listsHolding first rest =>
     rest.foldl (fun found e =>
       if found.isEmpty then found else (listsT ix tagLists e).filter (fun d => found.contains d))
       (listsT ix tagLists first)
 
-/-- **On a lifted (numeric) selection, `lookup` is the old `lookupSel`**, whatever the tag kind holds:
-    every theorem about the numeric lookup (`lookupSel_fromEntries`, ...) describes the new code. -/
-theorem lookupT_lift (ix : NumericIndex) (ts : StrSel → List Nat) (tl : String → List Nat) (s : Selection) :
-    lookupT ix ts tl (lift s) = ix.lookupSel s := by
+/-- **On a lifted (numeric) selection, `lookup` is the old `lookupSel`**, whatever the tag and geo kinds
+    hold: every theorem about the numeric lookup (`lookupSel_fromEntries`, ...) describes the new code. -/
+theorem lookupT_lift (ix : NumericIndex) (gt : List Nat) (ts : StrSel → List Nat) (tl : String → List Nat)
+    (s : Selection) : lookupT ix gt ts tl (lift s) = ix.lookupSel s := by
   cases s with
   | scalars ks =>
-    simp only [lift, lookupT, NumericIndex.lookupSel, StrSel.none, StrSel.isEmpty, List.isEmpty_nil]
-    cases ks == KeySet.empty <;> rfl
+    simp only [lift, lookupT, scalarStreams, NumericIndex.lookupSel, StrSel.none, StrSel.isEmpty,
+      List.isEmpty_nil]
+    cases h : ks == KeySet.empty
+    · simp
+    · simp only [beq_iff_eq] at h; subst h; simp
   | listsHolding f r =>
     simp only [lift, lookupT, NumericIndex.lookupSel, NumericIndex.lookupLists, List.foldl_map, listsT]
 
-/-- **A scalar lookup returns the numeric share's docs and the tag share's docs**, each read only when
-    it can hold one (`tagScalars` of an empty `StrSel` is empty, and the empty `KeySet` reads nothing). -/
-theorem lookupT_scalars_mem (ix : NumericIndex) (ts : StrSel → List Nat) (tl : String → List Nat)
+/-- **A scalar lookup returns the numeric, tag and geo shares' docs**, each read only when it can hold
+    one (`tagScalars` of an empty `StrSel` is empty, and the empty `KeySet` reads nothing). -/
+theorem lookupT_scalars_mem (ix : NumericIndex) (gt : List Nat) (ts : StrSel → List Nat) (tl : String → List Nat)
     (sc : Scalars) (hT : sc.tag.isEmpty = true → ts sc.tag = [])
-    (hN : sc.numeric = .empty → ix.lookup sc.numeric = []) (d : Nat) :
-    d ∈ lookupT ix ts tl (.scalars sc) ↔ d ∈ ix.lookup sc.numeric ∨ d ∈ ts sc.tag := by
-  simp only [lookupT]
-  cases hn : (sc.numeric == KeySet.empty) <;> cases ht : sc.tag.isEmpty
-  · simp
-  · simp [hT ht]
-  · simp [hN (by simpa using hn)]
-  · simp [hT ht, hN (by simpa using hn)]
+    (hN : ix.lookup .empty = []) (d : Nat) :
+    d ∈ lookupT ix gt ts tl (.scalars sc) ↔
+      d ∈ ix.lookup sc.numeric ∨ d ∈ ts sc.tag ∨ d ∈ geoLookup gt sc.geo := by
+  have hG : geoLookup gt .empty = [] := by
+    simp [geoLookup, NumericIndex.lookup, NumericIndex.empty, tRange_empty]
+  have hflat : d ∈ lookupT ix gt ts tl (.scalars sc) ↔ ∃ s ∈ scalarStreams ix gt ts sc, d ∈ s := by
+    simp only [lookupT]
+    split
+    · rename_i h; simp [h, hN]
+    · rename_i s h; simp [h]
+    · simp [List.mem_flatten]
+  rw [hflat]
+  simp only [scalarStreams]
+  by_cases hn : sc.numeric = KeySet.empty <;> by_cases hg : sc.geo = KeySet.empty <;>
+    cases ht : sc.tag.isEmpty <;> simp [hn, hg, hT, ht, hN, hG]
+
+/-- **A point column read with a cell set finds exactly the docs stored under a key the set holds** —
+    `Windows` (a distance's cell cover, `WindowIter`) included. -/
+theorem geoLookup_mem (gt : List Nat) (ks : KeySet) (id : Nat) (hid : id < W) :
+    id ∈ geoLookup gt ks ↔ ∃ k, enc k id ∈ gt ∧ ks.contains k = true :=
+  lookup_mem (NumericIndex.mk gt []) ks id hid
+
+/-- **`rows_at(Geo, k)` (#2527): `geo.scalars(KeySet::Point(k))`, the docs stored under exactly `k`.** -/
+theorem geoLookup_point_mem (gt : List Nat) (k id : Nat) (hid : id < W) :
+    id ∈ geoLookup gt (.point k) ↔ enc k id ∈ gt := by
+  rw [geoLookup_mem gt _ id hid]
+  constructor
+  · rintro ⟨k', h, hc⟩
+    simp only [KeySet.contains, beq_iff_eq] at hc
+    subst hc; exact h
+  · intro h; exact ⟨k, h, by simp [KeySet.contains]⟩
 
 end Tag
 end NI

@@ -290,10 +290,10 @@ theorem queryColumn_null_equal (x : FalkorDbIndex) (e : EntityType) (l key : Str
 /-- Shapes no kind serves are declined, whatever the state: a non-numeric `Equal` value (a string, a
     temporal, a list), a `Point`, and an empty composite. -/
 theorem queryColumn_declined (x : FalkorDbIndex) (e : EntityType) (l : String) :
-    (∀ key, x.queryColumn e l (.point key) = none) ∧
+    (∀ key c r, x.queryColumn e l (.point key c r) = none) ∧
     x.queryColumn e l (.or []) = none ∧ x.queryColumn e l (.and []) = none ∧
     (∀ key v, v ≠ Value.null → isNumericKind v = false → x.queryColumn e l (.equal key v) = none) := by
-  refine ⟨fun key => ?_, by simp [queryColumn, attrsOf], by simp [queryColumn, attrsOf], fun key v hn he => ?_⟩
+  refine ⟨fun key _ _ => ?_, by simp [queryColumn, attrsOf], by simp [queryColumn, attrsOf], fun key v hn he => ?_⟩
   · rw [queryColumn_single x e l _ key (by simp [attrsOf])]
     cases x.entry e l key <;> simp [Selection.of, Selection.ofLeaf]
   · rw [queryColumn_single x e l _ key (by simp [attrsOf])]

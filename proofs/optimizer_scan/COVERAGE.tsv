@@ -21,9 +21,9 @@ graph/src/planner/optimizer/select_scan_node.rs	subtree_may_bind	602	PROVEN	Scan
 graph/src/planner/optimizer/select_scan_node.rs	select_var_len_scan_node	625	PROVEN	ScanTree.vl_reverse_sound, reach_reverse_iff, vlNonLeaf_keeps_wrappers, vlLeaf_guards, vlLeaf_keeps_filter, vlNonLeaf_attrs, vl_reverse_sound_symm, vlLeaf_bidir, vlLeaf_over_input, vl_leaf_never_rebinds_to, leafScan_keeps_below (#3593: undirected walks allowed, all children kept under the new scan, refuses when edge attrs read an endpoint or a kept child may bind `to`), vl_never_drops_filter, vl_leaf_bug_case_fixed (#3264: the leaf rewrite never prunes a Filter wrapper)
 graph/src/planner/optimizer/select_scan_node.rs	select_scan_node	836	PROVEN	ScanOrder.order_sound, ScanTree.startKeyLt/equality_beats_late (start-point key, #3821 equality tie-break), order_length, pick_perm, run_perm, place_wellScoped, initialBound_wellScoped, initialBound_keeps_row, runScoped_wellScoped, salvage_wellScoped, Salvage.salvaged_wellScoped/premise_of_spine (sound only with an honest initial_bound, and only when the salvaged filters read bound variables); FIXED by #3523 (lines 1070-1075: best_node seeded only when no outer child is kept; initialBound_wellScoped, initialBound_keeps_row); CONFIRMED BUG #2972, open fix PR #3099 (Salvage.premise_fails, salvage_loses_row): a planner scan with an Unwind child is pruned whole (is_planner_scan_subtree:377, argument_leaf_of:338 keeps only an Argument) while its Filter reading the Unwind variable is salvaged: WITH 1 AS k MATCH (b:B) WHERE b.v = k MATCH (b)-[:H]->(c:C) Rust 0, C 1; #2981 no-swap leaf (lines 1402-1477): filters of a pruned scan for another node go above the traverse (filters_above): Salvage.leafSteps, leafSteps_same, leafSteps_other_wellScoped, Leaf2981.fixed2981_filter_above_hop; #3594 transparent outer child moved beneath the new scan (lines 1005-1057, seed 1198-1224): ScanOrder.initialBoundOuter, initialBoundOuter_none, outerSeed_transparent_no_chain, initialBoundOuter_wellScoped; the no-swap leaf salvages only from a planner scan (line 1564, 17547791c): Salvage.leafSteps3594, leafSteps3594_planner, leafSteps3594_transparent_wellScoped, transparent_filters_once
 graph/src/planner/optimizer/utilize_index.rs	build_has_labels_filter	71	PROVEN	Cleanup.hasLabelsFilter, isHasLabelsFor_build, addToLabels_idem
-graph/src/planner/optimizer/utilize_index.rs	alias	101	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	all_labels	105	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	is_indexed	108	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
+graph/src/planner/optimizer/utilize_index.rs	alias	100	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
+graph/src/planner/optimizer/utilize_index.rs	all_labels	104	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
+graph/src/planner/optimizer/utilize_index.rs	is_indexed	107	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
 graph/src/planner/optimizer/utilize_index.rs	match_scan_source	118	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
 graph/src/planner/optimizer/utilize_index.rs	build_scan_ir	122	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
 graph/src/planner/optimizer/utilize_index.rs	with_primary_label	132	PROVEN	trait IndexSubject: EdgeInline.subject_accessors, nMatch_spec, eMatch_spec; ScanOrder.withPrimary_sound
@@ -39,33 +39,33 @@ graph/src/planner/optimizer/utilize_index.rs	is_indexed	204	PROVEN	(edge impl of
 graph/src/planner/optimizer/utilize_index.rs	match_scan_source	212	PROVEN	(edge impl of IndexSubject) EdgeInline.eMatch_spec
 graph/src/planner/optimizer/utilize_index.rs	build_scan_ir	241	PROVEN	(edge impl of IndexSubject) EdgeInline.edge_utilize_sound (eBuild)
 graph/src/planner/optimizer/utilize_index.rs	with_primary_label	253	PROVEN	(edge impl of IndexSubject) ScanOrder.withPrimary_sound (same list operation; edge has exactly one type)
-graph/src/planner/optimizer/utilize_index.rs	build_op_query	315	PROVEN	Index.sel_buildOp, flip_correct
-graph/src/planner/optimizer/utilize_index.rs	extract_attribute_from_subtree	379	PROVEN	Cleanup.extractAttr_some, extractAttr_none, mem_bfs
-graph/src/planner/optimizer/utilize_index.rs	extract_attribute_and_expression_from_filter	398	PROVEN	Index.trySingle cmp arm; trySingle_spec
-graph/src/planner/optimizer/utilize_index.rs	try_distance_index_scan	443	PROVEN	EdgeInline.distance_sound, distScan_shapes
-graph/src/planner/optimizer/utilize_index.rs	merge_range_queries	503	PROVEN	Index.sel_merge, rangeOK_merge, cu_merge; IndexCex C11 (string trap)
-graph/src/planner/optimizer/utilize_index.rs	subtree_has_property_of	569	PROVEN	Cleanup.hasPropOf_iff
-graph/src/planner/optimizer/utilize_index.rs	subtree_has_any_property	591	PROVEN	Cleanup.hasAnyProp_iff
-graph/src/planner/optimizer/utilize_index.rs	list_has_nested_list	604	PROVEN	Cleanup.nestedListE_iff
-graph/src/planner/optimizer/utilize_index.rs	try_in_filter_scan	624	PROVEN	Index.trySingle inn arm (bare `n.k` side via bare_property_of, #3068); sel_inList, trySingle_spec, trySingle_inn_bare; IndexCex C7/C7'/C8 (fixed by #3068: now agree), C9 counterexample
-graph/src/planner/optimizer/utilize_index.rs	try_single_filter_scan	683	PROVEN	Index.trySingle; trySingle_spec
-graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	752	PROVEN	Index.tryPushdown/pushAnd/pushOr; pushAnd_spec, pushOr_spec, utilize_sound (an array-contains conjunct keeps its filter since #3736: C10 now states agreement); IndexArray.utilize_sound_ac for array-contains conjuncts (#3736)
-graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	842	PROVEN	Index.needsPost; used in utilize_sound (¬keep ⇒ canUtilize); IndexCex C3/C4 (Date/computed constants)
-graph/src/planner/optimizer/utilize_index.rs	is_non_indexable_subexpr	895	PROVEN	Cleanup.nonIdxD_spec
-graph/src/planner/optimizer/utilize_index.rs	rewrite_until_stable	921	PROVEN	Cleanup.untilStable_preserves, untilStable_stable
-graph/src/planner/optimizer/utilize_index.rs	governing_filter	960	PROVEN	Cleanup.governingFilter: governingFilter_spec (parent Filter, or grandparent across one single-child IncludePending ⇒ over_pending)
-graph/src/planner/optimizer/utilize_index.rs	match_scan_with_filter	981	PROVEN	Cleanup.matchScanWithFilter_spec
-graph/src/planner/optimizer/utilize_index.rs	reorder_subject_labels	993	PROVEN	ScanOrder.withPrimary_sound
-graph/src/planner/optimizer/utilize_index.rs	apply_filter_pushdown	1012	PROVEN	Index.utilize = Cleanup.utilizeP false (utilizeP_false); utilize_sound; over_pending: utilizeP_true, overPending_sound, overPending_needs_filter; #3335: remaining conjuncts rebuilt with and_of (model .and rem; same verdict: optimizer_rewrites AndOf.flat_passes)
-graph/src/planner/optimizer/utilize_index.rs	try_index_rewrite	1056	PROVEN	Cleanup.tryIndexRewrite: tryIndexRewrite_sound, tryIndexRewrite_pending_sound (inline path removed by #2390)
-graph/src/planner/optimizer/utilize_index.rs	prune_all_node_scan_child	1090	PROVEN	Cleanup.prune_sound, prune_sound_rows (#3594: the scan's children are re-attached beneath the edge scan, lines 1113-1122); guard = references.rs index_query_references_variable by (id, scope) (proofs/optimizer_rewrites References.iqRefs_iff)
-graph/src/planner/optimizer/utilize_index.rs	add_to_labels_filter	1130	PROVEN	Cleanup.addToLabels_idem, hasLabelsSem
-graph/src/planner/optimizer/utilize_index.rs	utilize_index	1170	PROVEN	Cleanup.utilizeIndex_sound (4 passes compose), Index.utilize_sound, Cleanup.tryIndexRewrite_sound/_pending_sound, EdgeInline.edge_utilize_sound
-graph/src/planner/optimizer/utilize_index.rs	is_has_labels_for	1188	PROVEN	Cleanup.isHasLabelsFor_build, addToLabels_idem
-graph/src/planner/optimizer/utilize_index.rs	is_array_contains	816	PROVEN	Index.isArrayContains: isArrayContains_good, isArrayContains_ac (IndexArray), tp_atom, pushAnd
-graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown/array-contains	725	PROVEN	IndexArray.utilize_sound_ac (an array-contains conjunct, alone or in an AND, keeps its filter: pushAnd_spec_ac, contains_no_fn, cu_contains); the OR branch keeps none: IndexArray.tryPushdown_or_ac_drops_filter, Cex C12 (confirmed live, shared with C)
+graph/src/planner/optimizer/utilize_index.rs	build_op_query	282	PROVEN	Index.sel_buildOp, flip_correct
+graph/src/planner/optimizer/utilize_index.rs	extract_attribute_from_subtree	346	PROVEN	Cleanup.extractAttr_some, extractAttr_none, mem_bfs
+graph/src/planner/optimizer/utilize_index.rs	extract_attribute_and_expression_from_filter	365	PROVEN	Index.trySingle cmp arm; trySingle_spec
+graph/src/planner/optimizer/utilize_index.rs	try_distance_index_scan	411	PROVEN	EdgeInline.distance_sound, distScan_shapes, funcScan_subject (generic over node/edge subject since #2527)
+graph/src/planner/optimizer/utilize_index.rs	merge_range_queries	471	PROVEN	Index.sel_merge, rangeOK_merge, cu_merge; IndexCex C11 (string trap)
+graph/src/planner/optimizer/utilize_index.rs	subtree_has_property_of	537	PROVEN	Cleanup.hasPropOf_iff
+graph/src/planner/optimizer/utilize_index.rs	subtree_has_any_property	559	PROVEN	Cleanup.hasAnyProp_iff
+graph/src/planner/optimizer/utilize_index.rs	list_has_nested_list	572	PROVEN	Cleanup.nestedListE_iff
+graph/src/planner/optimizer/utilize_index.rs	try_in_filter_scan	592	PROVEN	Index.trySingle inn arm (bare `n.k` side via bare_property_of, #3068); sel_inList, trySingle_spec, trySingle_inn_bare; IndexCex C7/C7'/C8 (fixed by #3068: now agree), C9 counterexample
+graph/src/planner/optimizer/utilize_index.rs	try_single_filter_scan	651	PROVEN	Index.trySingle; trySingle_spec
+graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown	720	PROVEN	Index.tryPushdown/pushAnd/pushOr; pushAnd_spec, pushOr_spec, utilize_sound (an array-contains conjunct keeps its filter since #3736: C10 now states agreement); IndexArray.utilize_sound_ac for array-contains conjuncts (#3736)
+graph/src/planner/optimizer/utilize_index.rs	needs_post_filter	810	PROVEN	Index.needsPost; used in utilize_sound (¬keep ⇒ canUtilize); IndexCex C3/C4 (Date/computed constants)
+graph/src/planner/optimizer/utilize_index.rs	is_non_indexable_subexpr	863	PROVEN	Cleanup.nonIdxD_spec
+graph/src/planner/optimizer/utilize_index.rs	rewrite_until_stable	889	PROVEN	Cleanup.untilStable_preserves, untilStable_stable
+graph/src/planner/optimizer/utilize_index.rs	governing_filter	928	PROVEN	Cleanup.governingFilter: governingFilter_spec (parent Filter, or grandparent across one single-child IncludePending ⇒ over_pending)
+graph/src/planner/optimizer/utilize_index.rs	match_scan_with_filter	949	PROVEN	Cleanup.matchScanWithFilter_spec
+graph/src/planner/optimizer/utilize_index.rs	reorder_subject_labels	961	PROVEN	ScanOrder.withPrimary_sound
+graph/src/planner/optimizer/utilize_index.rs	apply_filter_pushdown	980	PROVEN	Index.utilize = Cleanup.utilizeP false (utilizeP_false); utilize_sound; over_pending: utilizeP_true, overPending_sound, overPending_needs_filter; #3335: remaining conjuncts rebuilt with and_of (model .and rem; same verdict: optimizer_rewrites AndOf.flat_passes)
+graph/src/planner/optimizer/utilize_index.rs	try_index_rewrite	1024	PROVEN	Cleanup.tryIndexRewrite: tryIndexRewrite_sound, tryIndexRewrite_pending_sound (inline path removed by #2390)
+graph/src/planner/optimizer/utilize_index.rs	prune_all_node_scan_child	1058	PROVEN	Cleanup.prune_sound, prune_sound_rows (#3594: the scan's children are re-attached beneath the edge scan, lines 1113-1122); guard = references.rs index_query_references_variable by (id, scope) (proofs/optimizer_rewrites References.iqRefs_iff)
+graph/src/planner/optimizer/utilize_index.rs	add_to_labels_filter	1098	PROVEN	Cleanup.addToLabels_idem, hasLabelsSem
+graph/src/planner/optimizer/utilize_index.rs	utilize_index	1138	PROVEN	Cleanup.utilizeIndex_sound (4 passes compose), Index.utilize_sound, Cleanup.tryIndexRewrite_sound/_pending_sound, EdgeInline.edge_utilize_sound
+graph/src/planner/optimizer/utilize_index.rs	is_has_labels_for	1156	PROVEN	Cleanup.isHasLabelsFor_build, addToLabels_idem
+graph/src/planner/optimizer/utilize_index.rs	is_array_contains	784	PROVEN	Index.isArrayContains: isArrayContains_good, isArrayContains_ac (IndexArray), tp_atom, pushAnd
+graph/src/planner/optimizer/utilize_index.rs	try_filter_pushdown/array-contains	720	PROVEN	IndexArray.utilize_sound_ac (an array-contains conjunct, alone or in an AND, keeps its filter: pushAnd_spec_ac, contains_no_fn, cu_contains); the OR branch keeps none: IndexArray.tryPushdown_or_ac_drops_filter, Cex C12 (confirmed live, shared with C)
 graph/src/planner/optimizer/utilize_node_by_id.rs	get_id_filter	52	PROVEN	IdSeek.getIdFilter: getIdFilter_spec, getIdFilter_other_scope ((id, scope) since #2390), flip_correct, flip_flip
 graph/src/planner/optimizer/reorder_labels.rs	reorder_labels	16	PROVEN	ScanOrder.reorderLabels_sound, sortBy_perm
 graph/src/runtime/runtime.rs	evaluate_id_filter	1444	PROVEN	(support, not a target file) IdSeek.evalIdFilter/evalIdFilterMain; step_none, step_some, step_nonempty, fold_none, fold_some, go_eq_fold, seek_sound, empty_graph_seek_none, idMax_eq_maxNodeId, seek_sound_nonempty (#3394 fixes #3353 / W2-scan-2; #2979 starts at idMax = node_id_bound - 1)
 graph/src/index/mod.rs	build_query_node	1491	PROVEN	(support, not a target file) Index.build (the RediSearch node semantics are the FFI contract, taken as definitions); sel_eq, sel_range, sel_and2, sel_inList, contains_no_fn (ArrayContains arm); also proofs/index_layer buildQ/equal_exact
-graph/src/planner/optimizer/utilize_index.rs	bare_property_of	360	PROVEN	Index.trySingle inn arm (`match l with .prop k` / `match r with .term (.prop k)`; Paren unwrapping abstracted: the model has no Paren); trySingle_inn_bare; IndexCex C7/C7'/C8 agree
+graph/src/planner/optimizer/utilize_index.rs	bare_property_of	327	PROVEN	Index.trySingle inn arm (`match l with .prop k` / `match r with .term (.prop k)`; Paren unwrapping abstracted: the model has no Paren); trySingle_inn_bare; IndexCex C7/C7'/C8 agree

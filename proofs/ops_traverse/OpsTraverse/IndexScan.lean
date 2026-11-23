@@ -128,6 +128,68 @@ theorem evalIQ_inList_err {E : Type} (ev : E → Except String V) (asList : E �
     evalIQ ev asList (.inList k l) = .error "IN operator requires a list" := by
   simp [evalIQ, h, bind, Except.bind, throw, throwThe, MonadExceptOf.throw]
 
+/-! ### The `IN` list under `index-falkordb` (#2527)
+
+`evaluate_index_query`'s `InList` arm is `cfg!`-dependent. Without the feature (`native = false`, the
+build `evalIQ` models) it is the old `items.filter isScalar`; with it, a point member is kept too (the
+native index's geo kind holds points), and a member no kind holds that is not `NULL` keeps the list
+whole, so `can_utilize_index` declines and the retained filter sees every member. -/
+
+/-- The `keep` closure: a scalar, or (under the feature) a point. -/
+def keepF (native : Bool) (v : V) : Bool := isScalar v || (native && v == .point)
+
+/-- The list the `InList` arm hands on, `native` the `cfg!(feature = "index-falkordb")`. -/
+def inListItems (native : Bool) (items : List V) : List V :=
+  if (native && items.any (fun v => !keepF native v && v != .null)) || items.all (keepF native) then items
+  else items.filter (keepF native)
+
+/-- **Without the feature the arm is unchanged** (`evalIQ`'s `items.filter isScalar`). -/
+theorem inListItems_default (items : List V) : inListItems false items = items.filter isScalar := by
+  have hk : keepF false = isScalar := by funext v; simp [keepF]
+  simp only [inListItems, hk, Bool.false_and, Bool.false_or]
+  split
+  · rename_i h; exact (List.filter_eq_self.2 (by simpa using h)).symm
+  · rfl
+
+/-- **Under the feature no non-`NULL` member is dropped**: a point stays (it is indexed), and a member
+    no kind holds keeps the whole list. W2-index-3 does not arise in this build. -/
+theorem inListItems_native_keeps (items : List V) (v : V) (hv : v ∈ items) (hn : v ≠ .null) :
+    v ∈ inListItems true items := by
+  unfold inListItems
+  split
+  · exact hv
+  · rename_i h
+    refine List.mem_filter.2 ⟨hv, ?_⟩
+    cases hk : keepF true v
+    · exfalso; apply h; simp only [Bool.true_and, Bool.or_eq_true, List.any_eq_true]
+      exact Or.inl ⟨v, hv, by simp [hk, hn]⟩
+    · rfl
+
+/-- Under the feature, the result is the list itself or a sub-list of it (only `NULL`s go). -/
+theorem inListItems_native_sub (items : List V) (v : V) (h : v ∈ inListItems true items) : v ∈ items := by
+  unfold inListItems at h
+  split at h
+  · exact h
+  · exact (List.mem_filter.1 h).1
+
+theorem inListItems_native_not_indexable (items : List V) (v : V) (hv : v ∈ items)
+    (hk : keepF true v = false) (hn : v ≠ .null) : (inListItems true items).all indexable = false := by
+  have hmem := inListItems_native_keeps items v hv hn
+  have hi : indexable v = false := by cases v <;> simp_all [keepF, isScalar, indexable]
+  exact List.all_eq_false.2 ⟨v, hmem, by simp [hi]⟩
+
+/-- **Under the feature, a list with a member no kind holds is not sent to the index**:
+    `can_utilize_index` falls back to a scan, and the retained filter checks every member. -/
+theorem inListItems_native_unservable (k : String) (items : List V) (v : V) (hv : v ∈ items)
+    (hk : keepF true v = false) (hn : v ≠ .null) :
+    canUse (.inListV k (inListItems true items)) = false := by
+  simp [canUse, inListItems_native_not_indexable items v hv hk hn]
+
+/-- Under the feature a list of points (with scalars, `NULL`s dropped) reaches the index whole. -/
+theorem inListItems_native_point (items : List V) (h : items.all (keepF true) = true) :
+    inListItems true items = items := by
+  simp [inListItems, h]
+
 /-- Every leaf expression is evaluated in place; the query shape is kept. -/
 theorem evalIQ_eq {E : Type} (ev : E → Except String V) (asList : E → Except String (Option (List V)))
     (k : String) (e : E) (v : V) (h : ev e = .ok v) :
@@ -415,5 +477,11 @@ theorem edgeVecRow_spec (q : String → String → Nat → Nat → Except String
     (l a : String) (k v : Nat) (rs : List (Nat × Nat × Nat × Float)) (h : q l a v k = .ok rs) :
     edgeVecRow q (.ok (l, a, k, v)) = .ok (rs.map fun (_, _, e, s) => (e, s)) := by
   simp [edgeVecRow, h, bind, Except.bind, pure, Except.pure]
+
+/-- The edge op likewise (#2527): a list with a member no kind holds falls back to a scan. -/
+theorem inListItems_native_unservableE (k : String) (items : List V) (v : V) (hv : v ∈ items)
+    (hk : keepF true v = false) (hn : v ≠ .null) :
+    canUseE (.inListV k (inListItems true items)) = false := by
+  simp [canUseE, inListItems_native_not_indexable items v hv hk hn]
 
 end OpsTraverse.IndexScan

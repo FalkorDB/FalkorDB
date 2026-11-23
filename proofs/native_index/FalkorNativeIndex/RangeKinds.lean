@@ -2,39 +2,52 @@ import FalkorNativeIndex.Tag
 import FalkorNativeIndex.Memory
 
 /-!
-# `RangeIndex` over its two kinds (#3738, `range.rs`)
+# `RangeIndex` over its three kinds (#3738, #2527, `range.rs`)
 
-Since #3738 `RangeIndex { numeric: NumericIndex, tag: TagIndex }` and each of its whole-column
-operations runs the numeric kind, then the tag kind (`let Self { numeric, tag } = self`):
+Since #3738 `RangeIndex { numeric: NumericIndex, tag: TagIndex }`, and since #2527 also
+`geo: GeoIndex` (`geo.rs`: points keyed by the Morton code of their grid cell, `GeoIndex::key_of`,
+in one tree of `(key, doc)` tuples). Each whole-column operation runs the numeric kind, then the tag
+kind, then the geo kind (`let Self { numeric, tag, geo } = self`):
 `new` (`Default`), `for_each_stored_key`, `push_encoded`, `add_encoded`, `remove_encoded`,
 `is_empty`, `memory_usage`. `EncodedTuples` carries the numeric kinds' `u64` tuples (`by_kind`) and
-the tag kinds' string tuples (`tags`); `sort_dedup` sorts only `by_kind`.
+the tag kinds' string tuples (`tags`), and the geo kind's `u64` tuples (`by_kind[Geo]`); `sort_dedup`
+sorts `by_kind` (numeric and geo).
 
 The numeric kind is the existing `NumericIndex` model. The tag trees (`StrTree`) are not modelled
 (their `tag.rs` rows are NOT COVERED), so the tag kind's operations are parameters, as in
 `TagSel.lookupT`. Proven: each operation is the old numeric model on the numeric share, so every
 numeric theorem (`addEncoded_spec`, `removeEncoded_spec`, `isEmpty_spec`, `pushStored_scalar`, …)
-still describes it, and the tag kind adds exactly its own share.
+still describes it, and the tag and geo kinds add exactly their own shares. The geo tree is modelled
+like a numeric tree (`addTree`/`removeTree`, the same `add_sorted`/`remove_sorted`).
 -/
 
 namespace NI
 namespace RangeKinds
 
-/-- `EncodedTuples` (`numeric.rs`): the numeric kinds' tuples and the tag kinds' tuples. -/
+/-- `EncodedTuples` (`numeric.rs`): the numeric kinds' tuples, the tag kinds' tuples and the geo
+    kind's tuples. -/
 structure Buf where
   num : EncodedTuples
   tag : List (String × Nat)
   tagArray : List (String × Nat)
+  geo : List Nat := []
 
-/-- `RangeIndex { numeric, tag }` (`range.rs`), the tag kind's state `T` left abstract. -/
+/-- `RangeIndex { numeric, tag, geo }` (`range.rs`), the tag kind's state `T` left abstract, the geo
+    kind its tree of encoded `(key, doc)` tuples. -/
 structure RangeK (T : Type) where
   numeric : NumericIndex
   tag : T
+  geo : List Nat := []
 
 variable {T : Type}
 
-/-- `RangeIndex::new` (`Default`): both kinds empty. -/
-def new (tagNew : T) : RangeK T := ⟨NumericIndex.new, tagNew⟩
+/-- `RangeIndex::new` (`Default`): every kind empty. -/
+def new (tagNew : T) : RangeK T := ⟨NumericIndex.new, tagNew, []⟩
+
+/-- `GeoIndex::key_of`: a point's Morton key, `none` for a `NaN` coordinate or a non-point. -/
+def geoKeyOf : Value → Option Nat
+  | .point _ _ k => k
+  | _ => none
 
 /-- The tag kind's stored keys (`TagIndex::for_each_stored_key`): a parameter. -/
 abbrev TagKeys := Value → List (Tag.KeyKind × String)
@@ -45,10 +58,11 @@ def liftKind : KeyKind → Tag.KeyKind
   | .array => .array
 
 /-- `RangeIndex::for_each_stored_key`: the numeric kind's keys (`ColumnKey::Encoded`), then the
-    tag kind's (`ColumnKey::Tag`). -/
+    tag kind's (`ColumnKey::Tag`), then the geo kind's (`GeoIndex::for_each_stored_key`). -/
 def storedKeys (tagKeys : TagKeys) (v : Value) : List (Tag.KeyKind × Tag.ColumnKey) :=
   (forEachStoredKey v).map (fun kk => (liftKind kk.1, .encoded kk.2)) ++
-    (tagKeys v).map (fun kk => (kk.1, .tag kk.2))
+    (tagKeys v).map (fun kk => (kk.1, .tag kk.2)) ++
+    (geoKeyOf v).toList.map (fun k => (.geo, .encoded k))
 
 /-- `EncodedTuples::push` of one stored key. -/
 def pushKey (b : Buf) (id : Nat) : Tag.KeyKind × Tag.ColumnKey → Buf
@@ -56,32 +70,36 @@ def pushKey (b : Buf) (id : Nat) : Tag.KeyKind × Tag.ColumnKey → Buf
   | (.array, .encoded k) => { b with num := b.num.push .array (enc k id) }
   | (.tag, .tag s) => { b with tag := b.tag ++ [(s, id)] }
   | (.tagArray, .tag s) => { b with tagArray := b.tagArray ++ [(s, id)] }
+  | (.geo, .encoded k) => { b with geo := b.geo ++ [enc k id] }
   | _ => b
 
 /-- `RangeIndex::push_encoded`: `for_each_stored_key`, each key pushed onto its kind. -/
 def pushEncoded (tagKeys : TagKeys) (v : Value) (id : Nat) (b : Buf) : Buf :=
   (storedKeys tagKeys v).foldl (fun o kk => pushKey o id kk) b
 
-/-- `RangeIndex::add_encoded`: `sort_dedup` (the numeric share), then each kind's `add_encoded`. -/
+/-- `RangeIndex::add_encoded`: `sort_dedup` (the numeric and geo shares), then each kind's
+    `add_encoded`. -/
 def addEncoded (tagAdd : T → Buf → T) (r : RangeK T) (b : Buf) : RangeK T × Buf :=
-  let b := { b with num := b.num.sortDedup }
-  (⟨r.numeric.addTrees b.num, tagAdd r.tag b⟩, b)
+  let b := { b with num := b.num.sortDedup, geo := sortDedup b.geo }
+  (⟨r.numeric.addTrees b.num, tagAdd r.tag b, addTree r.geo b.geo⟩, b)
 
 /-- `RangeIndex::remove_encoded`. -/
 def removeEncoded (tagRemove : T → Buf → T) (r : RangeK T) (b : Buf) : RangeK T × Buf :=
-  let b := { b with num := b.num.sortDedup }
-  (⟨r.numeric.removeTrees b.num, tagRemove r.tag b⟩, b)
+  let b := { b with num := b.num.sortDedup, geo := sortDedup b.geo }
+  (⟨r.numeric.removeTrees b.num, tagRemove r.tag b, removeTree r.geo b.geo⟩, b)
 
-/-- `RangeIndex::is_empty`: no tuple in either kind. -/
-def isEmpty (tagEmpty : T → Bool) (r : RangeK T) : Bool := r.numeric.isEmpty && tagEmpty r.tag
+/-- `RangeIndex::is_empty`: no tuple in any kind. -/
+def isEmpty (tagEmpty : T → Bool) (r : RangeK T) : Bool :=
+  r.numeric.isEmpty && tagEmpty r.tag && r.geo.isEmpty
 
-/-- `RangeIndex::memory_usage`: both kinds' heap bytes, `ht` a tree's `heap_bytes`. -/
+/-- `RangeIndex::memory_usage`: every kind's heap bytes, `ht` a tree's `heap_bytes`. -/
 def memoryUsage (ht : List Nat → Nat) (tagMem : T → Nat) (r : RangeK T) : Nat :=
-  r.numeric.memoryUsage (fun i => ht i.tree + ht i.arrayTree) + tagMem r.tag
+  r.numeric.memoryUsage (fun i => ht i.tree + ht i.arrayTree) + tagMem r.tag + ht r.geo
 
 theorem new_spec (tagNew : T) :
-    (new tagNew).numeric.tree = [] ∧ (new tagNew).numeric.arrayTree = [] ∧ (new tagNew).tag = tagNew :=
-  ⟨rfl, rfl, rfl⟩
+    (new tagNew).numeric.tree = [] ∧ (new tagNew).numeric.arrayTree = [] ∧ (new tagNew).tag = tagNew ∧
+      (new tagNew).geo = [] :=
+  ⟨rfl, rfl, rfl, rfl⟩
 
 private theorem foldl_pushKey_num (id : Nat) :
     ∀ (l : List (KeyKind × Nat)) (b : Buf),
@@ -105,13 +123,36 @@ private theorem foldl_pushKey_tags_num (id : Nat) :
 private theorem foldl_pushKey_num_tag (id : Nat) :
     ∀ (l : List (KeyKind × Nat)) (b : Buf),
       (l.foldl (fun o kk => pushKey o id (liftKind kk.1, .encoded kk.2)) b).tag = b.tag ∧
-      (l.foldl (fun o kk => pushKey o id (liftKind kk.1, .encoded kk.2)) b).tagArray = b.tagArray
-  | [], _ => ⟨rfl, rfl⟩
+      (l.foldl (fun o kk => pushKey o id (liftKind kk.1, .encoded kk.2)) b).tagArray = b.tagArray ∧
+      (l.foldl (fun o kk => pushKey o id (liftKind kk.1, .encoded kk.2)) b).geo = b.geo
+  | [], _ => ⟨rfl, rfl, rfl⟩
   | (k, n) :: l, b => by
     simp only [List.foldl_cons]
     have := foldl_pushKey_num_tag id l (pushKey b id (liftKind k, .encoded n))
-    rw [this.1, this.2]
-    cases k <;> exact ⟨rfl, rfl⟩
+    rw [this.1, this.2.1, this.2.2]
+    cases k <;> exact ⟨rfl, rfl, rfl⟩
+
+private theorem foldl_pushKey_tags_geo (id : Nat) :
+    ∀ (l : List (Tag.KeyKind × String)) (b : Buf),
+      (l.foldl (fun o kk => pushKey o id (kk.1, .tag kk.2)) b).geo = b.geo
+  | [], _ => rfl
+  | (k, s) :: l, b => by
+    simp only [List.foldl_cons]
+    rw [foldl_pushKey_tags_geo id l]
+    cases k <;> rfl
+
+private theorem foldl_pushKey_geo (id : Nat) :
+    ∀ (l : List Nat) (b : Buf),
+      (l.foldl (fun o k => pushKey o id (.geo, .encoded k)) b).num = b.num ∧
+      (l.foldl (fun o k => pushKey o id (.geo, .encoded k)) b).tag = b.tag ∧
+      (l.foldl (fun o k => pushKey o id (.geo, .encoded k)) b).tagArray = b.tagArray ∧
+      (l.foldl (fun o k => pushKey o id (.geo, .encoded k)) b).geo = b.geo ++ l.map (fun k => enc k id)
+  | [], _ => by simp
+  | k :: l, b => by
+    simp only [List.foldl_cons]
+    have := foldl_pushKey_geo id l (pushKey b id (.geo, .encoded k))
+    rw [this.1, this.2.1, this.2.2.1, this.2.2.2]
+    simp [pushKey]
 
 private theorem foldl_pushKey_tags (id : Nat) :
     ∀ (l : List (Tag.KeyKind × String)) (b : Buf),
@@ -131,7 +172,7 @@ private theorem foldl_pushKey_tags (id : Nat) :
 theorem pushEncoded_num (tagKeys : TagKeys) (v : Value) (id : Nat) (b : Buf) :
     (pushEncoded tagKeys v id b).num = pushStored v id b.num := by
   simp only [pushEncoded, storedKeys, List.foldl_append, List.foldl_map]
-  rw [foldl_pushKey_tags_num, foldl_pushKey_num]
+  rw [(foldl_pushKey_geo id _ _).1, foldl_pushKey_tags_num, foldl_pushKey_num]
   rfl
 
 /-- The tag share of `push_encoded`: one `(string, id)` per key the tag kind stores, by kind. -/
@@ -141,22 +182,31 @@ theorem pushEncoded_tag (tagKeys : TagKeys) (v : Value) (id : Nat) (b : Buf) :
     (pushEncoded tagKeys v id b).tagArray =
         b.tagArray ++ ((tagKeys v).filter (·.1 == .tagArray)).map (fun kk => (kk.2, id)) := by
   simp only [pushEncoded, storedKeys, List.foldl_append, List.foldl_map]
-  rw [(foldl_pushKey_tags id _ _).1, (foldl_pushKey_tags id _ _).2,
-    (foldl_pushKey_num_tag id _ _).1, (foldl_pushKey_num_tag id _ _).2]
+  rw [(foldl_pushKey_geo id _ _).2.1, (foldl_pushKey_geo id _ _).2.2.1,
+    (foldl_pushKey_tags id _ _).1, (foldl_pushKey_tags id _ _).2,
+    (foldl_pushKey_num_tag id _ _).1, (foldl_pushKey_num_tag id _ _).2.1]
   exact ⟨rfl, rfl⟩
+
+/-- **The geo share of `push_encoded` (#2527): one `(key, id)` tuple for a point with a key**
+    (`GeoIndex::for_each_stored_key`), nothing for any other value or a `NaN` point. -/
+theorem pushEncoded_geo (tagKeys : TagKeys) (v : Value) (id : Nat) (b : Buf) :
+    (pushEncoded tagKeys v id b).geo = b.geo ++ (geoKeyOf v).toList.map (fun k => enc k id) := by
+  simp only [pushEncoded, storedKeys, List.foldl_append, List.foldl_map]
+  rw [(foldl_pushKey_geo id _ _).2.2.2, foldl_pushKey_tags_geo, (foldl_pushKey_num_tag id _ _).2.2]
 
 /-- `for_each_stored_key`'s numeric keys are exactly the old ones (`forEachStoredKey_scalar/_array`). -/
 theorem storedKeys_encoded (tagKeys : TagKeys) (v : Value) (k : KeyKind) (n : Nat) :
     (liftKind k, Tag.ColumnKey.encoded n) ∈ storedKeys tagKeys v ↔ (k, n) ∈ forEachStoredKey v := by
   simp only [storedKeys, List.mem_append, List.mem_map]
   constructor
-  · rintro (⟨⟨k', n'⟩, h, he⟩ | ⟨_, _, he⟩)
+  · rintro ((⟨⟨k', n'⟩, h, he⟩ | ⟨_, _, he⟩) | ⟨_, _, he⟩)
     · simp only [Prod.mk.injEq, Tag.ColumnKey.encoded.injEq] at he
       obtain ⟨hk, rfl⟩ := he
       cases k <;> cases k' <;> simp_all [liftKind]
     · simp at he
+    · cases k <;> simp [liftKind] at he
   · intro h
-    exact Or.inl ⟨(k, n), h, rfl⟩
+    exact Or.inl (Or.inl ⟨(k, n), h, rfl⟩)
 
 /-- **`add_encoded` is the old numeric `addEncoded` on the numeric share** (`addEncoded_spec`,
     `addEncoded_array_spec`, `addEncoded_sorted` carry over), and hands the tag kind the tag
@@ -167,6 +217,17 @@ theorem addEncoded_numeric (tagAdd : T → Buf → T) (r : RangeK T) (b : Buf) :
     (addEncoded tagAdd r b).1.tag = tagAdd r.tag (addEncoded tagAdd r b).2 ∧
     (addEncoded tagAdd r b).2.tag = b.tag ∧ (addEncoded tagAdd r b).2.tagArray = b.tagArray :=
   ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- **`add_encoded`'s geo kind (#2527) adds exactly the geo tuples**, sorted and deduplicated. -/
+theorem addEncoded_geo (tagAdd : T → Buf → T) (r : RangeK T) (b : Buf) (e : Nat) :
+    (e ∈ (addEncoded tagAdd r b).1.geo ↔ e ∈ r.geo ∨ e ∈ b.geo) ∧ Sorted (addEncoded tagAdd r b).2.geo := by
+  simp only [addEncoded, addTree_spec, (sortDedup_spec _).2]
+  exact ⟨trivial, (sortDedup_spec _).1⟩
+
+/-- **`remove_encoded`'s geo kind (#2527) removes exactly the geo tuples.** -/
+theorem removeEncoded_geo (tagRemove : T → Buf → T) (r : RangeK T) (b : Buf) (e : Nat) :
+    e ∈ (removeEncoded tagRemove r b).1.geo ↔ e ∈ r.geo ∧ e ∉ b.geo := by
+  simp only [removeEncoded, removeTree_spec, (sortDedup_spec _).2]
 
 /-- **`remove_encoded` is the old numeric `removeEncoded` on the numeric share.** -/
 theorem removeEncoded_numeric (tagRemove : T → Buf → T) (r : RangeK T) (b : Buf) :
@@ -187,11 +248,18 @@ theorem removeEncoded_mem (tagRemove : T → Buf → T) (r : RangeK T) (b : Buf)
       e ∈ r.numeric.arrayTree ∧ e ∉ b.num.array) :=
   ⟨removeEncoded_spec r.numeric b.num e, removeEncoded_array_spec r.numeric b.num e⟩
 
-/-- **`is_empty` holds iff both numeric trees are empty and the tag kind is.** -/
+/-- **`is_empty` holds iff both numeric trees are empty, the tag kind is and (#2527) the geo tree is.** -/
 theorem isEmpty_iff (tagEmpty : T → Bool) (r : RangeK T) :
     isEmpty tagEmpty r = true ↔
-      r.numeric.tree = [] ∧ r.numeric.arrayTree = [] ∧ tagEmpty r.tag = true := by
-  simp only [isEmpty, Bool.and_eq_true, isEmpty_spec, and_assoc]
+      r.numeric.tree = [] ∧ r.numeric.arrayTree = [] ∧ tagEmpty r.tag = true ∧ r.geo = [] := by
+  simp only [isEmpty, Bool.and_eq_true, isEmpty_spec, List.isEmpty_iff, and_assoc]
+
+/-- A column holding a point is not empty (#2527), whatever its other kinds. -/
+theorem isEmpty_geo_nonempty (tagEmpty : T → Bool) (r : RangeK T) (h : r.geo ≠ []) :
+    isEmpty tagEmpty r = false := by
+  cases hg : r.geo with
+  | nil => exact absurd hg h
+  | cons _ _ => simp [isEmpty, hg]
 
 /-- A column holding a string is not empty, whatever its numeric trees: the old
     numeric-only `is_empty` would have said empty. -/
@@ -199,9 +267,10 @@ theorem isEmpty_tag_nonempty (tagEmpty : T → Bool) (r : RangeK T) (h : tagEmpt
     isEmpty tagEmpty r = false := by
   simp [isEmpty, h]
 
-/-- **`memory_usage` is the numeric kind's two trees (`memoryUsage_two_trees`) plus the tag kind's.** -/
+/-- **`memory_usage` is the numeric kind's two trees (`memoryUsage_two_trees`) plus the tag kind's
+    plus (#2527) the geo tree's.** -/
 theorem memoryUsage_kinds (ht : List Nat → Nat) (tagMem : T → Nat) (r : RangeK T) :
-    memoryUsage ht tagMem r = ht r.numeric.tree + ht r.numeric.arrayTree + tagMem r.tag := by
+    memoryUsage ht tagMem r = ht r.numeric.tree + ht r.numeric.arrayTree + tagMem r.tag + ht r.geo := by
   simp only [memoryUsage, memoryUsage_two_trees]
 
 end RangeKinds

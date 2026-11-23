@@ -50,7 +50,7 @@ A plan is a membership test on nodes: each scan yields a node at most once, and 
 | `sel_eq`, `sel_range`, `sel_inList`, `sel_and2`, `sel_merge` | The pieces: equality, ranges, `IN`, AND, merged ranges | `IndexSound.lean` |
 | `trySingle_spec`, `pushAnd_spec`, `pushOr_spec` | Each branch of the index pushdown selects the right condition | `IndexSound.lean`, `IndexPipeline.lean` |
 | `edge_utilize_sound` | EdgeByIndexScan plus the bound-endpoint filter equals Filter → CondTraverse | `EdgeInline.lean` |
-| `distance_sound` | A `distance()` index scan is sound, and the Filter is always kept | `EdgeInline.lean` |
+| `distance_sound`, `funcScan_subject` | A `distance()` index scan is sound, and the Filter is always kept; since #2527 nodes and edges get it on the same shapes | `EdgeInline.lean` |
 | `utilizeIndex_sound`, `tryIndexRewrite_sound` | The whole `utilize_index` driver, including its fixed-point loop, preserves results | `Cleanup.lean` |
 | `overPending_sound` | Over `IncludePending` the kept Filter makes the index scan exact for any set of pending writes | `Cleanup.lean` |
 | `prune_sound` | Dropping the AllNodeScan child of an edge index scan keeps the edges | `Cleanup.lean` |
