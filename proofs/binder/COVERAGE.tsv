@@ -60,3 +60,4 @@ graph/src/planner/binder.rs	sorted_scope_vars	2991	PROVEN	Stack.sortedScopeVars_
 graph/src/planner/binder.rs	merge_scope_vars	2999	PROVEN	mergeSV_ge, mergeSV_covers
 graph/src/planner/binder.rs	Binder::with_node_labels_rolled_back	1724	PROVEN	Scopes.accumulateFrom (create: keep_new, comprehension: !keep_new): accumulate_bound_match_only, labels_leak_fixed, create_new_keeps_labels
 graph/src/planner/binder.rs	constants_equal	2880	PROVEN	AggEq.constEq (Int/Float exact via fint, else Value == = compare_value): constEq_refl, constEq_symm, int_float_iff
+graph/src/planner/binder.rs	Binder::lookup_name	2483	NOT COVERED	(#3528): not modelled yet
