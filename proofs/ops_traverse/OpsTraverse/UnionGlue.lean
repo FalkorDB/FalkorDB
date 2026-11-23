@@ -13,7 +13,7 @@ import GraphblasWrappers.DeltaLmxm
 | `fwdOkOf`                    | the `fwd_ok` / `rev_ok` of `build_state` (:512-531) |
 | `pickMatrix`                 | the `TraversalMatrix` selection of `expand_batch` (:615-650, chain hops :658-680) |
 | `deltaInto`, `TMat`          | `TraversalMatrix::delta_lmxm_into` (:86-112) |
-| `expandRowP`, `expandUnionRow` | `expand_row`'s forward/reverse blocks over `PairIters<UnionIter>` = `expand_union_row` (:1121) |
+| `expandRowP` (CondTraverse), `expandUnionRow` | `expand_row`'s forward/reverse blocks (with `drop_reverse_duplicates` in collapse mode) over `PairIters<UnionIter>` = `expand_union_row` |
 | `expandRowDispatch`          | the `state.union.is_some()` branch of `expand_row` (:963-990) |
 -/
 
@@ -237,12 +237,9 @@ theorem deltaInto_union_singleton (n : Nat) (F : Pat) (v : VM.VM) :
 
 /-! ## `expand_union_row` -/
 
-/-- `expand_row`'s two blocks over an arbitrary pair stream: forward, then (undirected) the
-reverse block over non-loop pairs. -/
-def expandRowP (g : Graph) (ps : List (Nat × Nat)) (bidir emit : Bool) (r : RowIn) :
-    List (Nat × Nat × Nat) :=
-  processPairs g ps false r emit ++
-    (if bidir then processPairs g (ps.filter fun p => p.1 != p.2) true r emit else [])
+/-! `expandRowP` (`CondTraverse.lean`) is `expand_row`'s two blocks over an arbitrary pair
+stream: forward, then (undirected) the reverse block over non-loop pairs, with the collapse-mode
+`drop_reverse_duplicates` (#3107) that `expand_union_row` runs too. -/
 
 /-- The single-type expansion is the pair stream `pairs g`. -/
 theorem expandRow_eq_expandRowP (g : Graph) (bidir emit : Bool) (r : RowIn) :
@@ -317,7 +314,7 @@ theorem union_emit_directed_iff {S : Graph → List (Nat × Nat)} (hS : StructIt
       ∃ x ∈ gs.flatten, x.id = e ∧ x.src = f ∧ x.dst = t ∧ e ∉ r.used ∧
         okBound r.fromId f ∧ okBound r.toId t := by
   have hs := (unionStream_spec hS gs (fun _ => true)).2.2
-  simp only [expandUnionRow, expandRowP, Bool.false_eq_true, ite_false, List.append_nil]
+  simp only [expandUnionRow, expandRowP, revBlock_eq, Bool.false_eq_true, ite_false, List.append_nil]
   rw [mem_processPairs (fun _ _ => True) (fun s d => by rw [hs]; simp)]
   simp only [Bool.false_eq_true, ite_false]
   constructor
@@ -334,7 +331,7 @@ theorem union_emit_bidir_iff {S : Graph → List (Nat × Nat)} (hS : StructIter 
   have hf : ∀ s d, (s, d) ∈ (unionStream S gs (fun _ => true)).filter (fun q => q.1 != q.2) ↔
       (∃ x ∈ gs.flatten, x.src = s ∧ x.dst = d) ∧ s ≠ d := by
     intro s d; simp [List.mem_filter, hs]
-  simp only [expandUnionRow, expandRowP, ite_true, List.mem_append]
+  simp only [expandUnionRow, expandRowP, revBlock_eq, ite_true, List.mem_append]
   rw [mem_processPairs (fun _ _ => True) (fun s d => by rw [hs]; simp),
     mem_processPairs (fun s d => s ≠ d) hf]
   simp only [Bool.false_eq_true, ite_false, ite_true]
@@ -351,8 +348,22 @@ the `UnionIter` docs: a pair joined by several types is emitted once). -/
 theorem union_collapse_directed_keys_nodup {S : Graph → List (Nat × Nat)} (hS : StructIter S)
     (gs : List Graph) (p : Nat × Nat → Bool) (r : RowIn) :
     ((expandUnionRow S gs p false false r).map fun x => (x.1, x.2.1)).Nodup := by
-  simp only [expandUnionRow, expandRowP, Bool.false_eq_true, ite_false, List.append_nil]
+  simp only [expandUnionRow, expandRowP, revBlock_eq, Bool.false_eq_true, ite_false, List.append_nil]
   exact (unionStream_spec hS gs p).2.1.sublist (collapse_keys_sublist gs.flatten r _)
+
+/-- **Multi-type, undirected, collapse mode: one row per pattern pair** (#3107): a pair joined
+in both directions, by one type or several, is emitted once. -/
+theorem union_collapse_bidir_keys_nodup {S : Graph → List (Nat × Nat)} (hS : StructIter S)
+    (gs : List Graph) (p : Nat × Nat → Bool) (r : RowIn) :
+    ((expandUnionRow S gs p true false r).map key).Nodup :=
+  collapseP_bidir_keys_nodup gs.flatten (unionStream_spec hS gs p).2.1 r
+
+/-- Multi-type, undirected, collapse mode: a row for `(f, t)` exists iff emit mode has one. -/
+theorem union_collapse_bidir_exists_iff (S : Graph → List (Nat × Nat)) (gs : List Graph)
+    (p : Nat × Nat → Bool) (r : RowIn) (f t : Nat) :
+    (∃ e, (f, t, e) ∈ expandUnionRow S gs p true false r) ↔
+      ∃ e, (f, t, e) ∈ expandUnionRow S gs p true true r :=
+  collapseP_bidir_exists_iff
 
 /-- The per-type *transposed* iterator (`Tensor::matrix_t`): dst-major, `(dst, src)` ascending. -/
 structure StructIterT (S : Graph → List (Nat × Nat)) : Prop where

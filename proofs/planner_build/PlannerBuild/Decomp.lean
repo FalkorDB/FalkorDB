@@ -251,15 +251,21 @@ theorem fresh_cons (ι : List (Nat × QG)) (c : Ex) (cs : List Ex) (h : Fresh ι
 theorem lk_mint (ι : List (Nat × QG)) (st : CSt) (g : QG) (h : Good ι (mint st g).2) :
     lk ι (mint st g).1 = some g := h ((mint st g).1, g) (by simp [mint])
 
+/-- SemiApply below a non-connective becomes Exists, or Collect below `size` (#3107). -/
+theorem descend_ne_semi' (d : D) (hd : isConn d = false) : Mode.semiApply.descend d ≠ .semiApply := by
+  unfold Mode.descend; split
+  · simp
+  · simp [hd]
+
 theorem needs_conn (d : D) (cs : List Ex) (hd : isConn d = true)
     (h : needsExtraction (.node d cs) .semiApply = false) : needsExtractionL cs .semiApply = false := by
-  have : Mode.semiApply.descend d = .semiApply := by simp [Mode.descend, hd]
+  have : Mode.semiApply.descend d = .semiApply := by simp [Mode.descend, hd, isConn_isSize d hd]
   cases d <;> simp_all [needsExtraction, isConn]
 
 theorem needs_other (d : D) (cs : List Ex) (hd : isConn d = false) (hp : isPat d = false)
     (h : needsExtraction (.node d cs) .semiApply = false) : hasPatternExprL cs = false := by
-  have : Mode.semiApply.descend d = .exists_ := by simp [Mode.descend, hd]
-  rw [← needsExtractionL_exists]
+  have hne : Mode.semiApply.descend d ≠ .semiApply := descend_ne_semi' d hd
+  rw [← needsExtractionL_nonSemi cs _ hne]
   cases d <;> simp_all [needsExtraction, isConn, isPat]
 
 mutual
@@ -267,8 +273,13 @@ mutual
 theorem needs_of_exists : ∀ (e : Ex) (m : Mode), needsExtraction e .exists_ = false →
     needsExtraction e m = false
   | .node d cs, m, h => by
-    have hd : Mode.exists_.descend d = .exists_ := by simp [Mode.descend]
-    cases d <;> simp_all [needsExtraction] <;> exact needsL_of_exists cs _ h
+    rw [needsExtraction_exists] at h
+    have hL : needsExtractionL cs .exists_ = false := by
+      rw [needsExtractionL_exists]; cases d <;> simp_all [hasPatternExpr]
+    cases d
+    case pat => simp [hasPatternExpr] at h
+    case patComp => simp [hasPatternExpr] at h
+    all_goals (simp only [needsExtraction]; exact needsL_of_exists cs _ hL)
 theorem needsL_of_exists : ∀ (l : List Ex) (m : Mode), needsExtractionL l .exists_ = false →
     needsExtractionL l m = false
   | [], _, _ => rfl
@@ -337,7 +348,7 @@ theorem collect_value : ∀ (st : CSt) (e : Ex), shapeOK e = true →
       -- mode, which is no weaker than `SemiApply`.
       obtain ⟨c, rfl, hsc⟩ := shape_one .paren cs (Or.inr rfl) hs
       have hnc : needsExtraction c .semiApply = false := by
-        have h0 : Mode.semiApply.descend .paren = .exists_ := by simp [Mode.descend, isConn]
+        have h0 : Mode.semiApply.descend .paren = .exists_ := by simp [Mode.descend, isConn, isSize]
         simp only [needsExtraction, h0, needsExtractionL, Bool.or_false] at hn
         exact needs_of_exists c _ hn
       have hfc := (fresh_cons ι c [] (fresh_varIds ι _ _ hf)).1

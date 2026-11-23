@@ -93,6 +93,24 @@ def hoist (st : PSt) (acc : List EC) (node : Ex) (comp : EC) : Ex × PSt × List
     (.node (.nested id comp.var) (free.map Ex.v),
      { b.2 with visited := saved, nestedN := b.2.nestedN + 1 }, acc)
 
+/-- The comprehension `extract_pattern_comprehensions` builds for a bare pattern (mod.rs):
+`[p = pattern | p]`. #3107: when the list is used (Collect, e.g. under `size`) the path is
+registered on the graph itself (`graph.add_path`), so `plan_match` binds every edge; as a
+predicate (Exists) the PathBuilder stays and node pairs may collapse (only emptiness counts). -/
+def patEC (m : Mode) (var pv : V) (g : QG) : EC :=
+  let qp := (pv, interleave g.nodes g.rels)
+  if m = .exists_ then .mk var g none (Ex.v pv) (some qp) []
+  else .mk var (g.addPath qp.1 qp.2) none (Ex.v pv) none []
+
+theorem patEC_exists (var pv : V) (g : QG) :
+    patEC .exists_ var pv g = .mk var g none (Ex.v pv) (some (pv, interleave g.nodes g.rels)) [] := rfl
+
+/-- Collect mode: no PathBuilder; the pattern's graph carries the path (and lists its variable). -/
+theorem patEC_collect (var pv : V) (g : QG) :
+    patEC .collect var pv g = .mk var (g.addPath pv (interleave g.nodes g.rels)) none (Ex.v pv) none [] ∧
+      (g.addPath pv (interleave g.nodes g.rels)).paths = g.paths ++ [(pv, interleave g.nodes g.rels)] ∧
+      (g.addPath pv (interleave g.nodes g.rels)).vars = g.vars ++ [pv] := ⟨rfl, rfl, rfl⟩
+
 mutual
 def extract (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) : Ex → Ex × PSt × List EC
   | .node d cs => match d with
@@ -112,8 +130,7 @@ def extract (sc : Nat) (st : PSt) (acc : List EC) (m : Mode) : Ex → Ex × PSt 
       else
         let a := fresh st sc
         let b := fresh a.2 sc
-        let h := hoist b.2 acc (.node d cs)
-          (.mk a.1 g none (Ex.v b.1) (some (b.1, interleave g.nodes g.rels)) [])
+        let h := hoist b.2 acc (.node d cs) (patEC m a.1 b.1 g)
         (if m = .exists_ then gt0 h.1 else h.1, h.2.1, h.2.2)
     | _ =>
       let x := extractL sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs

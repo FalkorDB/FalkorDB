@@ -141,8 +141,7 @@ theorem extract_noPat (sc : Nat) : ∀ (st : PSt) acc m (e : Ex), m ≠ .semiApp
     hasPatternExpr (extract sc st acc m e).1 = false
   | st, acc, m, .node d cs, hm, hp => by
     have hpl : pcOKL cs = true := by cases d <;> simp_all [pcOK]
-    have hd : m.descend d = m := by simp [Mode.descend, hm]
-    have hL := extractL_noPat sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs (by rw [hd]; exact hm) hpl
+    have hL := extractL_noPat sc st acc d (binds d).1 (binds d).2 (m.descend d) 0 cs (descend_ne_semi m d hm) hpl
     cases d
     case patComp g =>
       match cs, hp with
