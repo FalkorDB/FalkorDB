@@ -7,7 +7,7 @@
 | `asI64`, `checkMem`  | `Runtime::check_mem_capacity`, `runtime/runtime.rs` (`usage_fn() as i64`) |
 | `drainPending`       | `drain_pending`, `runtime/ops/mod.rs` |
 | `edgeAlreadyUsed`    | `edge_already_used`, `runtime/ops/mod.rs`, when nothing is collapsed (`edgeAlreadyUsedP_plain`) |
-| `edgeAlreadyUsedP`, `hasAlt` | `edge_already_used` and `Parallel::has_alternative` since #3054, `runtime/ops/mod.rs` |
+| `edgeAlreadyUsedP`, `hasAlt`, `typedDemandExceeded` | `edge_already_used`, `Parallel::has_alternative` and `Parallel::typed_demand_exceeded` since #3054, `runtime/ops/mod.rs` |
 | `natOpt`, `vectorOptions`, `simNames` | the `IndexType::Vector` arm of `map_to_index_options`, `runtime/runtime.rs` (name check) |
 | `fulltextUnknown`    | the unknown-key refusal of the `IndexType::Fulltext` arm, `runtime.rs` |
 | `phonetic`           | the `phonetic` key of the `IndexType::Fulltext` arm, `runtime.rs` |
@@ -345,11 +345,64 @@ def finalMatching (P : Par) (sibs : List Entry) : Matching :=
 def anyCollapsed (P : Par) (sibs : List Entry) : Bool :=
   P.ownTypes.isSome || sibs.any (·.flag != .none)
 
+/-- The `demand` loop of `Parallel::typed_demand_exceeded`: this hop plus every other
+`COLLAPSED_SIBLING` (single-type) hop bound to a live edge of the pair `(src, dst)` of
+tensor `t`. -/
+def typedDemand (P : Par) (env : Nat → Option Slot) (src dst own t : Nat)
+    (sibs : List Entry) : Nat :=
+  1 + sibs.countP fun en =>
+    en.id != own && en.flag == .single && match env en.id with
+      | some (.rel b) => !P.deleted b && match P.find b with
+          | some rb => rb.src == src && rb.dst == dst && rb.ty == t
+          | none => false
+      | _ => false
+
+/-- The early `return false` of `typed_demand_exceeded`: the hop is collapsed over a
+number of tensors other than one. -/
+def multiOwn (P : Par) : Bool :=
+  match P.ownTypes with
+  | some ts => ts.length != 1
+  | none => false
+
+/-- `Parallel::typed_demand_exceeded`: the live edges of `edge`'s type on its pair,
+counted up to `demand` (`take(demand)`), are fewer than the hops that need one. -/
+def typedDemandExceeded (P : Par) (env : Nat → Option Slot) (edge own : Nat)
+    (sibs : List Entry) : Bool :=
+  if multiOwn P then false
+  else match P.find edge with
+    | none => false
+    | some e =>
+      let d := typedDemand P env e.src e.dst own e.ty sibs
+      decide (d > live P e.src e.dst (d - 1) e.ty)
+
+/-- **PROVEN**: the `take(demand)` early exit does not change the answer:
+`typed_demand_exceeded` holds iff the hop is not collapsed over several tensors, the edge
+exists, and the pair holds fewer live edges of its type than the single-type hops bound
+to it (this one included). -/
+theorem typedDemandExceeded_spec (P : Par) (env : Nat → Option Slot) (edge own : Nat)
+    (sibs : List Entry) :
+    typedDemandExceeded P env edge own sibs = true ↔
+      multiOwn P = false ∧
+      ∃ e, P.find edge = some e ∧
+        liveAll P e.src e.dst e.ty < typedDemand P env e.src e.dst own e.ty sibs := by
+  unfold typedDemandExceeded
+  cases hm : multiOwn P
+  · simp only [Bool.false_eq_true, ite_false, true_and]
+    cases P.find edge with
+    | none => simp
+    | some e =>
+      simp only [Option.some.injEq, exists_eq_left', decide_eq_true_eq, live_eq]
+      have : 1 ≤ typedDemand P env e.src e.dst own e.ty sibs := by
+        unfold typedDemand; omega
+      omega
+  · simp
+
 /-- `edge_already_used` (#3054). -/
 def edgeAlreadyUsedP (P : Par) (env : Nat → Option Slot) (edge own : Nat) (sibs : List Entry) :
     Bool :=
   collisions P env edge own sibs sibs ||
-    (anyCollapsed P sibs && !hasAlt P env edge own sibs (finalMatching P sibs))
+    (anyCollapsed P sibs && (typedDemandExceeded P env edge own sibs ||
+      !hasAlt P env edge own sibs (finalMatching P sibs)))
 
 theorem collisions_iff (P : Par) (env : Nat → Option Slot) (edge own : Nat) (full : List Entry) :
     ∀ L : List Entry, collisions P env edge own full L = true ↔
@@ -397,13 +450,16 @@ theorem collisions_iff (P : Par) (env : Nat → Option Slot) (edge own : Nat) (f
 /-- **PROVEN**: `edge_already_used` since #3054 rejects `edge` exactly when some other
 hop of the clause is bound to it and neither the expanding hop (when collapsed) nor that
 sibling (when flagged collapsed) has an alternative edge on the pair, or when some hop is
-collapsed and the pair has no edge left for one more hop (`has_alternative`). -/
+collapsed and either the single-type hops bound to the pair need more edges of the edge's
+type than it holds (`typed_demand_exceeded`) or the pair has no edge left for one more hop
+(`has_alternative`). -/
 theorem edgeAlreadyUsedP_iff (P : Par) (env : Nat → Option Slot) (edge own : Nat)
     (sibs : List Entry) :
     edgeAlreadyUsedP P env edge own sibs = true ↔
       (∃ en ∈ sibs, en.id ≠ own ∧ env en.id = some (.rel edge) ∧
         ownAvoids P env edge own sibs = false ∧ sibAvoids P env edge own sibs en = false) ∨
-      (anyCollapsed P sibs = true ∧ hasAlt P env edge own sibs (finalMatching P sibs) = false) := by
+      (anyCollapsed P sibs = true ∧ (typedDemandExceeded P env edge own sibs = true ∨
+        hasAlt P env edge own sibs (finalMatching P sibs) = false)) := by
   simp only [edgeAlreadyUsedP, Bool.or_eq_true, Bool.and_eq_true, Bool.not_eq_true',
     collisions_iff]
 
@@ -492,17 +548,15 @@ theorem typed_hop_depends_on_representative :
     edgeAlreadyUsedP gRT (envR 0) 0 1 [⟨0, .any⟩] = true ∧
     edgeAlreadyUsedP gRT (envR 1) 0 1 [⟨0, .any⟩] = false := by decide
 
-/-! #### Counterexample (#3054): a shared representative lets a third `R` hop through
+/-! #### Three `R` hops over two `R` edges next to an untyped hop (W2-traverse-13, fixed)
 
 `R0 = e0`, `R1 = e1` of type 0 (`R`), `T2 = e2`, `T3 = e3` of type 1 (`T`), all `1→2`.
 `MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t]->(x), (a)-[u:R]->(x) RETURN id(u)`:
 `r`, `s` (aliases 0, 1, collapsed, flag `single`), `t` (alias 2, untyped, collapsed, flag
 `any`) and `u` (alias 3, read, emitted), expanded in that order. Three `R` hops need three
-distinct `R` edges and the pair has two, so the pattern has no match. Before #3054 `s`
-skips `R0` (held by `r`) and takes `R1`, and `u` finds both taken: no row. Since #3054 `s`
-shares `R0` with `r` (`own_avoids`: the pair holds `R1`), and the final check for `u`
-counts with `AnyType` (because `t` is untyped), 3 hops against 4 edges, so `u = R1`
-passes, although `r`, `s` and `u` then use only two `R` edges between them. -/
+distinct `R` edges and the pair has two, so the pattern has no match. `s` may still share
+`R0` with `r` (`own_avoids`: the pair holds `R1`), but `typed_demand_exceeded` charges `r`
+and `s` against the `R` edges, so `u` finds none. -/
 
 def gRRTT (own : Option (List Nat)) : Par :=
   ⟨[⟨0, 1, 2, 0⟩, ⟨1, 1, 2, 0⟩, ⟨2, 1, 2, 1⟩, ⟨3, 1, 2, 1⟩], 2, own, fun _ => false⟩
@@ -510,39 +564,25 @@ def gRRTT (own : Option (List Nat)) : Par :=
 /-- The row's relationship slots, `alias ↦ edge`. -/
 def envL (l : List (Nat × Nat)) : Nat → Option Slot := fun v => (l.lookup v).map .rel
 
-/-- **Counterexample** (#3054): relationship uniqueness (`edgeAlreadyUsed_iff`: an edge
-another hop of the clause holds is rejected) fails for the new `edge_already_used`, and
-the clause emits a row the pattern does not have. `s` is given `R0` although `r` holds
-it; `t` takes `R0` too; `u` rejects `R0` but accepts `R1`, so the row `u = R1` is emitted
-with only two `R` edges for three `R` hops. The old scan (`edgeAlreadyUsed`) rejects `R0`
-for `s` (so `s = R1`) and then both `R` edges for `u`: no row, as Cypher requires.
-The result is the same whichever tensor the untyped `t` tries first (`T2` instead of
-`R0` for `t`: last conjunct). -/
-theorem shared_representative_extra_row :
-    -- `s` (tensor `R` only) accepts `R0` although `r` holds it
-    (envL [(0, 0)] 0 = some (.rel 0) ∧
-      edgeAlreadyUsedP (gRRTT (some [0])) (envL [(0, 0)]) 0 1
-        [⟨0, .single⟩, ⟨1, .none⟩, ⟨2, .any⟩, ⟨3, .none⟩] = false) ∧
-    -- `t` (every tensor) accepts `R0` as well
-    edgeAlreadyUsedP (gRRTT (some [0, 1])) (envL [(0, 0), (1, 0)]) 0 2
-        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .none⟩, ⟨3, .none⟩] = false ∧
-    -- `u` (emitted) rejects `R0` and accepts `R1`: a row
+/-- **PROVEN** (W2-traverse-13 fixed by `typed_demand_exceeded`): with `r` and `s` sharing
+`R0`, `u` rejects both `R` edges, whichever edge the untyped `t` took (`R0` or `T2`), so
+the clause emits no row, as Cypher requires (three `R` hops, two `R` edges). -/
+theorem shared_representative_no_row :
+    -- `s` (tensor `R` only) may still share `R0` with `r`
+    edgeAlreadyUsedP (gRRTT (some [0])) (envL [(0, 0)]) 0 1
+        [⟨0, .single⟩, ⟨1, .none⟩, ⟨2, .any⟩, ⟨3, .none⟩] = false ∧
+    -- the pattern has no match: three `R` hops, two `R` edges
+    ((gRRTT none).rels.filter (·.ty == 0)).length = 2 ∧
+    -- `t` on `R0`: `u` rejects `R0` and `R1`
     edgeAlreadyUsedP (gRRTT none) (envL [(0, 0), (1, 0), (2, 0)]) 0 3
         [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = true ∧
     edgeAlreadyUsedP (gRRTT none) (envL [(0, 0), (1, 0), (2, 0)]) 1 3
-        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = false ∧
-    -- the pattern has no match: three `R` hops, two `R` edges
-    ((gRRTT none).rels.filter (·.ty == 0)).length = 2 ∧
-    -- before #3054: `s` rejects `R0`; `u` then rejects both `R0` and `R1`
-    edgeAlreadyUsed (envL [(0, 0)]) 0 1 [0, 1, 2, 3] = true ∧
-    edgeAlreadyUsed (envL [(0, 0), (1, 1), (2, 2)]) 0 3 [0, 1, 2, 3] = true ∧
-    edgeAlreadyUsed (envL [(0, 0), (1, 1), (2, 2)]) 1 3 [0, 1, 2, 3] = true ∧
-    -- `t` on `T2` instead: `u = R1` still passes
-    (edgeAlreadyUsedP (gRRTT (some [1, 0])) (envL [(0, 0), (1, 0)]) 2 2
-        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .none⟩, ⟨3, .none⟩] = false ∧
-      edgeAlreadyUsedP (gRRTT none) (envL [(0, 0), (1, 0), (2, 2)]) 1 3
-        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = false) := by
-  refine ⟨⟨rfl, by decide⟩, ?_⟩
+        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = true ∧
+    -- `t` on `T2`: `u` rejects `R0` and `R1`
+    edgeAlreadyUsedP (gRRTT none) (envL [(0, 0), (1, 0), (2, 2)]) 0 3
+        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = true ∧
+    edgeAlreadyUsedP (gRRTT none) (envL [(0, 0), (1, 0), (2, 2)]) 1 3
+        [⟨0, .single⟩, ⟨1, .single⟩, ⟨2, .any⟩, ⟨3, .none⟩] = true := by
   decide
 
 /-! ### `map_to_index_options` (vector arm, phonetic) -/

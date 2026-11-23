@@ -70,7 +70,7 @@ Several of these rest on store contracts the project can't see; see the CONDITIO
 | `hasLabelId_iff`, `hasLabel_iff` | `n:L` is exactly `L ∈ labels(n)`, by id or by name | `Accessors.lean` |
 | `degree_exact` | Degrees never underflow and count live edges exactly | `Accessors.lean` |
 | `checkTimeout_spec`, `checkMem_spec` | The timeout fires iff now ≥ deadline; for usage < 2⁶³, the memory cap fires iff 0 < cap < usage | `Misc.lean` |
-| `edgeAlreadyUsedP_iff`, `edgeAlreadyUsedP_plain`, `hasAlt_spec` | Relationship uniqueness (#3054): with nothing collapsed, an edge is rejected iff another hop of the clause holds it; a collision with or by a collapsed hop is ignored while the pair has a live matching edge no other hop holds | `Misc.lean` |
+| `edgeAlreadyUsedP_iff`, `edgeAlreadyUsedP_plain`, `hasAlt_spec`, `typedDemandExceeded_spec`, `shared_representative_no_row` | Relationship uniqueness (#3054): with nothing collapsed, an edge is rejected iff another hop of the clause holds it; a collision with or by a collapsed hop is ignored while the pair has a live matching edge no other hop holds, and single-type hops never need more edges of their type than the pair holds | `Misc.lean` |
 | `vector_requires_dimension`, `vector_requires_similarity`, `fulltextUnknown_none_iff` | Index OPTIONS validation as in C (#3094) | `Misc.lean` |
 
 ### How `need_sound` is proved (and why `record_cap` fails it)
@@ -93,7 +93,6 @@ Each bug was compared against C. The live repro for B1/B2 is `repro_limit.py POR
 | B3 | *(same shape as B1; no separate theorem)* | SortOp's top-k uses the same walk: `MATCH (a:A) WITH a ORDER BY a.id MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1` returns `[]`; expected `[20]` | **Open**, shared with C. The stacked-SKIP Sort variant is #2659 |
 | — | `Accessors.reuse_diverges` | With a node id present in both pending attribute maps, `n.a` falls through `new_nodes_attrs` to `existing_nodes_attrs` while `properties(n)` reads only `new_nodes_attrs`. Only reachable via deleted-id reuse (#2876), where `deleted_nodes` shadows both anyway | Suspected |
 | — | `checkMem_wrap` | `usage_fn() as i64` wraps at 2⁶³, so the memory cap never fires past 8 EiB | Latent |
-| W2-traverse-13 | `Misc.shared_representative_extra_row` | #3054's `edge_already_used` lets collapsed `r:R`, `s:R` share `R0` and, next to an untyped `t`, checks `u:R` against all types: on a pair `R0, R1, T2, T3`, `MATCH (a)-[r:R]->(x), (a)-[s:R]->(x), (a)-[t]->(x), (a)-[u:R]->(x) RETURN id(u)` gives one row (base: none, correct) | **Open** (#3054), Lean-only |
 
 **CONDITIONAL rows (4).** `get_node_attribute`, `get_node_attribute_no_delete_check`, `get_node_attrs` and `get_relationship_attrs` are proven under two facts about the pending attribute maps: `hdisj` (a node is in at most one pending attribute map) and `huniq` (each staged list has distinct keys). `proofs/pending_commit` proves both for every reachable `Pending` state (`PendingCommit/AttrInv.lean` `PA.inv_hdisj`, `PA.inv_huniq`; `AccessorBridge.lean` instantiates these accessors' theorems with them). The rows stay CONDITIONAL because that proof assumes SET/REMOVE only stage attributes on a live entity, the deleted-entity guard `proofs/ops_apply` proves, and the two are not linked. The store contracts `hc`, `hbg` and `hName` are discharged in `Discharge.lean`.
 
@@ -110,7 +109,7 @@ Each bug was compared against C. The live repro for B1/B2 is `repro_limit.py POR
 | `Accessors.lean` | Node attribute reads (deleted > pending > committed), the attr-id memo, labels and label staging, degrees |
 | `RelAccessors.lean` | Relationship attribute reads, typed materialisation, `label_id`, endpoints and type, pending attribute writes |
 | `Plan.lean` | `get_variables`, `get_return_names`, `inspect_batch`, `Runtime::new`, `default_batch`, `run_nested_plan`, `build_batch_op`'s child popping and checks |
-| `Misc.lean` | `check_timeout`, `check_mem_capacity`, `drain_pending`, `edge_already_used`, `Parallel::has_alternative`, index OPTIONS validation |
+| `Misc.lean` | `check_timeout`, `check_mem_capacity`, `drain_pending`, `edge_already_used`, `Parallel::has_alternative`, `Parallel::typed_demand_exceeded`, index OPTIONS validation |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Its `lakefile.toml` requires [`../redis_layer`](../redis_layer) (for `Reuse.lean` only). `evaluate_id_filter` (`runtime.rs`) is proven in [`../optimizer_scan`](../optimizer_scan), and the emitter's typed gather lanes are proven in [`../columnar`](../columnar).
