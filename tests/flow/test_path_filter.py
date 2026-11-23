@@ -488,6 +488,15 @@ class testPathFilter(FlowTestsBase):
             msg = assert_error_reply(self.env, self.conn, "GRAPH.QUERY", GRAPH_ID, query)
             self.env.assertContains(f"'{name}' not defined", msg or "")
 
+        # the placeholder's name is still an ordinary variable when the query
+        # binds it (a node here, a relationship below)
+        query = "MATCH (__agg_order_by_placeholder__) WHERE (__agg_order_by_placeholder__)-->() RETURN 1"
+        self.env.assertEqual(self.graph.query(query).result_set, [[1]])
+
+        query = """MATCH (a)-[__agg_order_by_placeholder__]->(b)
+                   WHERE (a)-[__agg_order_by_placeholder__]->(b) RETURN a.x"""
+        self.env.assertEqual(self.graph.query(query).result_set, [['a']])
+
         # anonymous aliases, and names bound by the query, a list
         # comprehension or a pattern comprehension are fine
         query = "MATCH (n) WHERE (n)-[:R]->() RETURN n.x"

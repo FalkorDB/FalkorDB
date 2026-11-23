@@ -2289,11 +2289,9 @@ impl Binder {
                             if let Some(name) = alias.name() {
                                 // The ORDER BY placeholder is the one name
                                 // `resolve_name` always mints; a query can
-                                // spell it, so it is undefined here too.
-                                if name.as_str() == "__agg_order_by_placeholder__" {
-                                    return Err(format!("'{name}' not defined"));
-                                }
-                                self.resolve_name(name, locals)?;
+                                // spell it, so look it up without minting:
+                                // bound, it resolves; unbound, undefined.
+                                self.lookup_name(name, locals)?;
                             }
                         }
 
@@ -2476,6 +2474,17 @@ impl Binder {
             return Ok(var);
         }
 
+        self.lookup_name(name, locals)
+    }
+
+    /// Resolves `name` through the local, current and parent scopes without
+    /// ever synthesizing a variable (unlike the ORDER BY placeholder case of
+    /// [`resolve_name`](Self::resolve_name)).
+    fn lookup_name(
+        &mut self,
+        name: &Arc<String>,
+        locals: &[HashMap<Arc<String>, Variable>],
+    ) -> Result<Variable, String> {
         for scope in locals.iter().rev() {
             if let Some(var) = scope.get(name) {
                 return Ok(var.clone());
