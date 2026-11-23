@@ -1575,6 +1575,11 @@ class testIndexScanFlow():
              "MATCH (s:Sensor {id: e.sid}) MATCH (p:G) "
              "WHERE p.nts <> 0 AND p.ts > e.q / e.d RETURN count(*)")
         self.env.assertEqual(g.query(q).result_set, [[0]])
+        # Arithmetic can fail too: `'x' * 1` is a type error.
+        q = ("UNWIND [{sid: 1, w: 'x'}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:G) "
+             "WHERE p.nts <> 0 AND p.ts > e.w * 1 RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
 
         # A disjunction is evaluated whole by the index query, so a failing
         # disjunct is not moved: every `H` node matches the first disjunct,
