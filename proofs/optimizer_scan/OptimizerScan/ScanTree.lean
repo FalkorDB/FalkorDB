@@ -11,17 +11,17 @@ path (child indices from the root), which is exactly what `node_path` computes.
 | `Ex`, `exprVars`, `propertyVar`, `collectEqualities` | `collect_equalities` 170 (#3821) |
 | `collectFilteredVars`, `spineVars`, `eqLoop`, `spineEqs`, `filteredVars` | `collect_filtered_vars` 210 (`above` / `all` / `equality`), its `collect` 214 (= `filterVars`, `filterEqOf`) |
 | `makeScanSubtree`, `filtersOf` | `make_scan_subtree` 276 (argument a whole `DynTree` since #3594), `filters_of` 312 |
-| `argumentLeafOf` | `argument_leaf_of` 338 |
-| `scanInputOf` | `scan_input_of` 361 (#3099) |
-| `inMergeMatchBranch` | `in_merge_match_branch` 357 |
-| `scanDepth`, `isPlannerScan`, `plannerScanAlias`, `plannerScanIdx` | `is_planner_scan_subtree` 377, `planner_scan_alias` 396, `planner_scan_idx` 417 |
-| `projectedOutputs`, `copiesOf`, `collectOutputPairs`, `collectOutputAliases` | `projected_outputs` 459, `collect_output_pairs` 484, `collect_output_aliases` 502 (#3594) |
-| `nodePath`, `resolvePath` | `node_path` 542, `resolve_path` 559 |
-| `childSubtreeBinds` | `child_subtree_binds` 575 |
-| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 632; `subtreeMayBind`: `subtree_may_bind` 606 |
+| `argumentLeafOf` | `argument_leaf_of` 343 |
+| `scanInputOf` | `scan_input_of` 366 (#3099) |
+| `inMergeMatchBranch` | `in_merge_match_branch` 377 |
+| `scanDepth`, `isPlannerScan`, `plannerScanAlias`, `plannerScanIdx` | `is_planner_scan_subtree` 397, `planner_scan_alias` 416, `planner_scan_idx` 437 |
+| `projectedOutputs`, `copiesOf`, `collectOutputPairs`, `collectOutputAliases` | `projected_outputs` 479, `collect_output_pairs` 504, `collect_output_aliases` 522 (#3594) |
+| `nodePath`, `resolvePath` | `node_path` 562, `resolve_path` 579 |
+| `childSubtreeBinds` | `child_subtree_binds` 595 |
+| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 645; `subtreeMayBind`: `subtree_may_bind` 622 |
 
-Table lines re-mapped to PR #3821 (f71981fa3), which adds `collect_equalities` and the
-`has_equality` tie-break; line ranges inside older docstrings cite the revision they were written for.
+Table lines re-mapped to PR #3099 (c95d476e9), which adds `scan_input_of` (#3821 added
+`collect_equalities` and the `has_equality` tie-break); line ranges inside older docstrings cite the revision they were written for.
 -/
 namespace OptimizerScan.ScanTree
 
@@ -411,11 +411,13 @@ def makeScanSubtree (alias : Var) (labels : List Nat) (pending : Bool)
   let s1 := if pending then PT.node .includePending [s0] else s0
   filters.foldr (fun vs t => PT.node (.filter vs) [t]) s1
 
-/-- `filters_of` (`select_scan_node.rs`): the `Filter`s on a subtree's single-child spine,
-    outermost first. -/
+/-- `filters_of` (`select_scan_node.rs`): the `Filter`s on a subtree's single-child spine above
+    its scan, outermost first. Since #3099 the walk stops at an `AllNodeScan` / `NodeByLabelScan`:
+    what hangs below is the scan's input, kept whole by `scan_input_of`. -/
 def filtersOf : PT → List (List Var)
   | .node ir cs =>
-    (match ir with | .filter vs => [vs] | _ => []) ++ (match cs with | [c] => filtersOf c | _ => [])
+    (match ir with | .filter vs => [vs] | _ => []) ++
+      (if (scanAlias ir).isSome then [] else match cs with | [c] => filtersOf c | _ => [])
 
 theorem plannerScanAlias_filter (alias : Var) (vs : List Var) (t : PT) (ht : plannerScanAlias t = some alias) :
     plannerScanAlias (PT.node (.filter vs) [t]) = some alias := by
@@ -467,7 +469,7 @@ theorem filtersOf_wrap (fs : List (List Var)) (t : PT) :
     filtersOf (fs.foldr (fun vs t => PT.node (.filter vs) [t]) t) = fs ++ filtersOf t := by
   induction fs with
   | nil => rfl
-  | cons vs fs ih => simp [filtersOf, ih]
+  | cons vs fs ih => simp [filtersOf, scanAlias, ih]
 
 /-- ...so the rebuilt scan subtree carries exactly the Filters `filters_of` took off the old one
     (the scan itself and `IncludePending` add none). -/
@@ -477,18 +479,18 @@ theorem filtersOf_makeScanSubtree (alias : Var) (labels : List Nat) (pend : Bool
     filtersOf (makeScanSubtree alias labels pend none fs) = fs := by
   unfold makeScanSubtree
   rw [filtersOf_wrap, filtersOf_wrap]
-  constructor <;> (cases pend <;> cases labels.isEmpty <;> simp [filtersOf])
+  constructor <;> (cases pend <;> cases labels.isEmpty <;> simp [filtersOf, scanAlias])
 
-/-- **PROVEN** (#3594, the argument is a whole subtree): `filters_of` walks through the new scan into
-    the subtree beneath it (the scan has one child), so the rebuilt subtree's spine carries the
-    salvaged filters followed by the Filters on that subtree's own spine; the scan and
-    `IncludePending` add none. -/
+/-- **PROVEN** (#3594, the argument is a whole subtree; #3099): `filters_of` stops at the new scan,
+    so whatever subtree rides beneath it, the rebuilt subtree's spine carries exactly the salvaged
+    filters; the scan and `IncludePending` add none, and the subtree's own Filters stay in it
+    (`scanInputOf_makeScanSubtree`). -/
 theorem filtersOf_makeScanSubtree_tree (alias : Var) (labels : List Nat) (pend : Bool) (t : PT)
     (fs : List (List Var)) :
-    filtersOf (makeScanSubtree alias labels pend (some t) fs) = fs ++ filtersOf t := by
+    filtersOf (makeScanSubtree alias labels pend (some t) fs) = fs := by
   unfold makeScanSubtree
   rw [filtersOf_wrap]
-  cases pend <;> cases labels.isEmpty <;> simp [filtersOf]
+  cases pend <;> cases labels.isEmpty <;> simp [filtersOf, scanAlias]
 
 /-- A `Filter` / `IncludePending` wrapper does not change what `scan_input_of` finds. -/
 theorem scanInputOf_wrap (ir : IRk) (hw : isWrapper ir = true) (t : PT) :

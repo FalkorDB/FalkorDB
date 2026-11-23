@@ -241,26 +241,50 @@ theorem salvage_keeps_row :
   rw [runScoped_wellScoped exE exσ _ _ hw]
   decide
 
-/-! ### The input's own Filters are salvaged as well
+/-! ### The input's own Filters are not salvaged (#3099)
 
-`filters_of` walks the single-child spine through the scan into its input, so a `Filter` inside the
-input (`UNWIND ... AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L) WHERE d.v = 1 MATCH (d)-[:R]->()`)
-is both salvaged and, since #3099, kept beneath the new scan: the rebuilt subtree carries it twice.
-In this id-keyed model the copy is harmless (its ids are seeded); #3594's transparent path stopped
-salvaging such Filters (`transparent_filters_once`) because a copy above a projection that reused
-the id read the wrong variable. Not confirmed live for the planner-scan path. -/
+`filters_of` stops at the scan: what hangs below it is the scan's input, kept whole beneath the new
+scan by `scan_input_of`. So a `Filter` inside the input
+(`UNWIND ... AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L) WHERE d.v = 1 MATCH (d)-[:R]->()`) is
+not salvaged a second time: the rebuilt subtree carries every Filter of the pruned one exactly once.
+(Before the last commit of #3099 the walk went through the scan and the input's Filter was carried
+twice.) -/
+
+/-- Every `Filter` of a plan tree, in pre-order (not just those on the spine). -/
+def allFilters (t : PT) : List (List Var) :=
+  t.walk.filterMap (fun ir => match ir with | .filter vs => some vs | _ => none)
+
+theorem allFilters_node (ir : IRk) (c : PT) :
+    allFilters (PT.node ir [c]) = (match ir with | .filter vs => [vs] | _ => []) ++ allFilters c := by
+  cases ir <;> simp [allFilters, PT.walk, PT.walkL]
+
+theorem allFilters_wrap (fs : List (List Var)) (t : PT) :
+    allFilters (fs.foldr (fun vs t => PT.node (.filter vs) [t]) t) = fs ++ allFilters t := by
+  induction fs with
+  | nil => rfl
+  | cons vs fs ih => simp [allFilters_node, ih]
+
+/-- **PROVEN**: the subtree `make_scan_subtree` rebuilds over the input `t` carries the salvaged
+filters, then exactly the Filters of `t`. -/
+theorem allFilters_makeScanSubtree (alias : Var) (labels : List Nat) (pend : Bool) (t : PT)
+    (fs : List (List Var)) :
+    allFilters (makeScanSubtree alias labels pend (some t) fs) = fs ++ allFilters t := by
+  unfold makeScanSubtree
+  rw [allFilters_wrap]
+  cases pend <;> cases labels.isEmpty <;> simp [allFilters_node]
 
 def d : Var := (5, 0)
 def i : Var := (6, 0)
 def exChild2 : PT :=
   .node (.filter [d]) [.node (.labelScan d [0]) [.node (.filter [i]) [.node (.unwind i) []]]]
 
-/-- **PROVEN**: rebuilt with its salvaged filters inside (the same-node leaf rewrite), the subtree
-carries the input's `Filter` on `i` twice. -/
-theorem input_filters_twice :
-    filtersOf exChild2 = [[d], [i]] ∧
-    filtersOf (makeScanSubtree d [0] false (scanInputOf exChild2) (filtersOf exChild2)) =
-      [[d], [i], [i]] := by
+/-- **PROVEN** (#3099): only the Filter above the scan is salvaged, and the rebuilt subtree carries
+each Filter of the pruned one exactly once (the input's `Filter` on `i` stays beneath the new scan). -/
+theorem input_filters_once :
+    filtersOf exChild2 = [[d]] ∧
+    filtersOf (makeScanSubtree d [0] false (scanInputOf exChild2) (filtersOf exChild2)) = [[d]] ∧
+    allFilters (makeScanSubtree d [0] false (scanInputOf exChild2) (filtersOf exChild2)) =
+      allFilters exChild2 := by
   decide
 
 /-! ### The no-swap leaf rewrite (`select_scan_node.rs`)
@@ -360,15 +384,16 @@ theorem leafSteps3594_transparent_wellScoped (fr : Var) (child : PT) (h : Hop) p
 /-- **PROVEN** (#3594, `17547791c`): the subtree the transparent rewrite builds carries each of the
 child's own Filters exactly once (beneath the new scan, where its variables are bound), not a second
 copy outside it. Before `17547791c` the child's spine Filters were also salvaged
-(`filtersOf_makeScanSubtree_tree` with `fs := filtersOf t` gives them twice); the copy above a later
+(`allFilters_makeScanSubtree` with `fs := filtersOf t` gives them twice); the copy above a later
 projection that reused the variable's id read the wrong value:
-`UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L)-[:R]->() RETURN count(*)`. -/
+`UNWIND [1, 2, 3] AS i WITH i WHERE i > 1 WITH 0 AS z MATCH (d:L)-[:R]->() RETURN count(*)`.
+(Stated over `allFilters`: since #3099 `filtersOf` stops at the new scan, so it no longer sees `t`.) -/
 theorem transparent_filters_once (alias : Var) (labels : List Nat) (pend : Bool) (t : PT) :
-    filtersOf (makeScanSubtree alias labels pend (some t) []) = filtersOf t ∧
-    filtersOf (makeScanSubtree alias labels pend (some t) (filtersOf t)) =
-      filtersOf t ++ filtersOf t := by
+    allFilters (makeScanSubtree alias labels pend (some t) []) = allFilters t ∧
+    allFilters (makeScanSubtree alias labels pend (some t) (filtersOf t)) =
+      filtersOf t ++ allFilters t := by
   constructor
-  · simpa using filtersOf_makeScanSubtree_tree alias labels pend t []
-  · exact filtersOf_makeScanSubtree_tree alias labels pend t (filtersOf t)
+  · simpa using allFilters_makeScanSubtree alias labels pend t []
+  · exact allFilters_makeScanSubtree alias labels pend t (filtersOf t)
 
 end OptimizerScan.Salvage
