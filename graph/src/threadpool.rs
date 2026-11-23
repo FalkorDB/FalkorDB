@@ -44,7 +44,7 @@ use std::{
 
 use crossfire::{MRx, MTx, mpmc::List};
 use once_cell::sync::OnceCell;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 
 use crate::thread_id::set_pool_thread;
 
@@ -61,6 +61,11 @@ pub struct ThreadPool {
     workers: Mutex<Vec<JoinHandle<()>>>,
     sender: MTx<List<Job>>,
     size: usize,
+    /// Set, under the write lock, by the same step that queues the exit
+    /// sentinels. [`Self::try_spawn`] checks it under the read lock, so a job is
+    /// either queued ahead of the sentinels or handed back, never queued behind
+    /// them where no worker will take it.
+    closing: RwLock<bool>,
 }
 
 unsafe impl Sync for ThreadPool {}
@@ -123,6 +128,7 @@ impl ThreadPool {
             workers: Mutex::new(workers),
             sender,
             size,
+            closing: RwLock::new(false),
         }
     }
 
@@ -142,6 +148,32 @@ impl ThreadPool {
             eprintln!("thread pool: dropping job, no workers available to dispatch to");
         }
     }
+    /// [`Self::spawn`] that hands the job back instead of queueing it behind a shutdown.
+    pub fn try_spawn<F>(
+        &self,
+        job: F,
+        idx: Option<usize>,
+    ) -> Result<(), F>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let closing = self.closing.read();
+        if *closing {
+            return Err(job);
+        }
+        self.spawn(job, idx);
+        Ok(())
+    }
+
+    /// Stop [`Self::try_spawn`] accepting jobs and queue one exit sentinel per worker.
+    fn close(&self) {
+        let mut closing = self.closing.write();
+        *closing = true;
+        for _ in 0..self.size {
+            let _ = self.sender.send(None);
+        }
+    }
+
     /// Drain queued work, signal every worker to exit, and join them.
     ///
     /// Joining matters under sanitizers: pthread TLS destructors only fire
@@ -149,9 +181,7 @@ impl ThreadPool {
     /// routine), not when the process is torn down via `exit(2)`. Without
     /// the join, LSan reports every per-thread allocation as leaked.
     pub fn shutdown(&self) {
-        for _ in 0..self.size {
-            let _ = self.sender.send(None);
-        }
+        self.close();
         let mut workers = self.workers.lock();
         for worker in workers.drain(..) {
             let _ = worker.join();
@@ -168,9 +198,7 @@ impl ThreadPool {
         &self,
         timeout: Duration,
     ) -> bool {
-        for _ in 0..self.size {
-            let _ = self.sender.send(None);
-        }
+        self.close();
         let deadline = Instant::now() + timeout;
         let mut workers = self.workers.lock();
         while Instant::now() < deadline && !workers.iter().all(JoinHandle::is_finished) {
@@ -198,6 +226,24 @@ pub fn spawn<F>(
         .get()
         .expect("Thread pool not initialized")
         .spawn(job, idx);
+}
+
+/// [`spawn`] for a caller that may run with no pool (before init, e.g. in unit tests).
+///
+/// The job comes back as `Err` instead of panicking, for the caller to run or drop itself: when
+/// there is no pool, and once [`shutdown`] has begun, since a job queued behind its exit
+/// sentinels would never be taken. A job accepted before that is queued ahead of them and runs.
+pub fn try_spawn<F>(
+    job: F,
+    idx: Option<usize>,
+) -> Result<(), F>
+where
+    F: FnOnce() + Send + 'static,
+{
+    match GLOBAL_THREAD_POOL.get() {
+        Some(pool) => pool.try_spawn(job, idx),
+        None => Err(job),
+    }
 }
 
 /// Initialize the global thread pool with a specific size.
@@ -273,6 +319,7 @@ mod tests {
     use super::*;
     use crate::thread_id::is_pool_thread;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::mpsc;
 
     /// A bounded shutdown returns on time with a worker blocked in a job, and reports it. It keeps
@@ -360,5 +407,43 @@ mod tests {
         assert_eq!(COUNTER.load(Ordering::Acquire), 0);
         assert!(QueueSlot::try_acquire_in(&COUNTER, 1).is_some());
         assert_eq!(COUNTER.load(Ordering::Acquire), 0);
+    }
+
+    /// A job a worker sends while shutdown is draining is queued behind the exit
+    /// sentinels, where no worker will ever take it. `try_spawn` must hand it back
+    /// so the caller runs or drops it, rather than accept it and lose it.
+    #[test]
+    fn try_spawn_during_shutdown_hands_the_job_back() {
+        struct Tracked(Arc<AtomicUsize>);
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let pool = Arc::new(ThreadPool::new(2));
+        let finalized = Arc::new(AtomicUsize::new(0));
+        let (started, has_started) = mpsc::channel();
+        let (result, got) = mpsc::channel();
+        let sender = Arc::clone(&pool);
+        let tracked = Tracked(Arc::clone(&finalized));
+        pool.spawn(
+            move || {
+                started.send(()).unwrap();
+                // Shutdown has queued its sentinels by now.
+                thread::sleep(Duration::from_millis(300));
+                let job = move || drop(tracked);
+                result.send(sender.try_spawn(job, None).err()).unwrap();
+            },
+            None,
+        );
+        has_started.recv().unwrap();
+        pool.shutdown();
+        // Accepted jobs run or drop on a worker; a returned one is the caller's.
+        drop(got.recv().unwrap());
+        assert_eq!(
+            finalized.load(Ordering::SeqCst),
+            1,
+            "a job accepted during shutdown was neither run nor dropped"
+        );
     }
 }

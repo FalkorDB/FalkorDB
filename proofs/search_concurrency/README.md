@@ -38,7 +38,7 @@ No. `Mvcc.lean` models each atomic step of the Rust (read, fork a private versio
 **4. Is a new index always populated?**
 
 - **Yes.** `create_index` bumps the generation whenever the label already has an index, so the old job fails `is_ticket_current` at its next batch and the new job indexes everything. `main_operational_complete` proves, over every interleaving of any number of `CREATE INDEX`es on a label with the batches of every populate job, that an OPERATIONAL index has every field in every batch. The proof is an inductive invariant (`MInv`, `reach_inv`): at most one job owns the current generation, it holds the current field list, and the batches before its cursor are complete. `main_lost_order_complete` replays the second-index interleaving.
-- **One remaining window.** The theorem excludes the moment between `Indexer::create_index` storing the entry and `populate_index` taking its ticket. In that window the entry has no pending ticket, so it looks OPERATIONAL while the new field is in no document (`store_window_operational_incomplete`). The window is a few instructions long and has not been seen on a live server.
+- **No window (#3680).** `create_index` builds a fresh entry (`fork_for_ddl`) that owes its population with the ticket already counted (`owe_population`), and the population starts once the version is published (`publish_indexes` → `populate_owed_index`). So `operational_complete_always` drops the `owed = false` hypothesis: an OPERATIONAL index has every field populated in every reachable state (`store_window_fixed` replays the trace).
 
 The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv`, `release_exact`, `operational_iff`, `stale_release_isolated`).
 
@@ -63,12 +63,14 @@ The ticket counters themselves are proven sound (`inc_inv`, `dec_inv`, `bump_inv
 | `no_cycle`, `all_programs_ordered` | The lock order rules out deadlock, and every locking path follows it | `Locks.lean` |
 | `drain_no_lost_message` | The `write_loop` hand-off never strands a queued write (2 producers, exhaustive) | `Locks.lean` |
 | `unchecked_fork_cannot_write` | In every reachable state a thread with an unchecked fork can neither mutate nor commit | `Mvcc.lean` |
-| `main_operational_complete` | An OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches, except the store-to-ticket window (the theorem assumes `owed = false`; see "One remaining window", `store_window_operational_incomplete`) | `Guarded.lean` | Eraser-style locksets: which locks every access to shared state holds (`consistent`, `h1_fork_vs_populate_race`) |
-| `Tickets.lean` |
+| `main_operational_complete` | An OPERATIONAL index has every field populated, over every interleaving of index creations and populate batches once the owed population has started (`owed = false`) | `Tickets.lean` |
+| `operational_complete_always` | Since #3680 the same with no window: an entry owing its population is never OPERATIONAL (`store_window_fixed`) | `Tickets.lean` |
+| `consistent`, `h1_fork_vs_populate_race` | Eraser-style locksets: which locks every access to shared state holds | `Guarded.lean` |
 | `within_in_time`, `second_call_reports_straggler`, `left_behind_workers_exit` | `threadpool.rs`: named workers; `shutdown_within` returns in time, keeps a stuck worker and reports it on every later call until it exits, and leaks none; one bug stays open (`within_blocks_behind_shutdown`) | `PoolWithin.lean` |
 | `never_stuck_3014`, `main_never_blocks` | The main thread never blocks on a full queue | `Locks.lean` |
 | `release_exactly_once`, `count_eq_live` | Every admitted query releases its queue slot exactly once; the counter equals live queries | `Pool.lean` |
 | `shutdown_drains` | Pool shutdown runs every queued job once, in order, then all workers exit | `Pool.lean` |
+| `trySpawn_not_lost` | `try_spawn` (#3680) never loses a job to shutdown: accepted before `close`, it runs in the drain; after, it is handed back | `Pool.lean` |
 | `docSet_vector_sound`, `other_fields_never_dropped` | A bad vector cannot drop the entity from other indexes | `Search.lean` |
 | `alloc_bounded`, `candidates_topk` | KNN never allocates more than the entity count and still returns the top `k` | `Knn.lean` |
 

@@ -92,6 +92,7 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 | `roaring_roundtrip`, `encoded_len_mult8` | The deleted-id bitmap round-trips; its encoding is 8 bytes per id | `Layout.lean` |
 | `decode_filter_sound` | Load never binds an out-of-dictionary or `Null` attribute, and keeps every good one | `Layout.lean` |
 | `rebuild_calls`, `rebuild_entity`, `rebuild_meta_first` | Indexes are replayed after load with the right fields, entity type and full-text options | `Persist/Indexes.lean` |
+| `rebuildB_expand`, `exec_retry` | Since #3680 consecutive fields (in `field_order`, each attribute's fields in order) of the same index type with equal options, none a vector field, on distinct attributes, and not the full-text field that carries the label's language or stopwords (it is created alone) are batched into one `create_index_sync` call; the batches expand to exactly those calls, and a failed batch is retried field by field | `Persist/Indexes.lean` |
 | `save_main`, `save_vkey`, `deleteVKeys_spec`, `onPersistence_spec` | SAVE writes the graph key plus K − 1 virtual keys and deletes them afterwards; BGSAVE never splits | `RedisType/VKeys.lean`, `RedisType/AuxData.lean` |
 | `load_main_first`, `load_main_last` | Whatever the load order, the registered graph is the finished graph | `RedisType/Load.lean` |
 | `aux_roundtrip` | UDF libraries round-trip through the RDB aux fields | `RedisType/AuxData.lean` |

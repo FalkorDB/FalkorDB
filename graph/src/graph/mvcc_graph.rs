@@ -362,6 +362,9 @@ impl MvccGraph {
         }
         // After the swap, so a refused version is never handed to the indexers.
         version.set_indexer_graph(Arc::clone(&version));
+        // The version is published, so what its index DDL held back may happen now: the
+        // indexes it built start populating, from `version`, which the indexers now hold.
+        version.publish_indexes(&previous);
         Ok(version)
     }
 }
