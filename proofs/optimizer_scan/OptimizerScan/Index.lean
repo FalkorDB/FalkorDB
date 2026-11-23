@@ -26,6 +26,8 @@ their `sel` agree on every node of the graph.
 | `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` (+ `bare_property_of`) + `extract_attribute_and_expression_from_filter`, `utilize_index.rs` |
 | `mergeRange`               | `merge_range_queries`, `utilize_index.rs` |
 | `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs` |
+| `canSeek`                  | `can_seek_index`, `utilize_index.rs` |
+| `seekLabel`                | `seek_index_label`, `utilize_index.rs` |
 | `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs` |
 | `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index or label-scan fallback, then extra labels), `node_by_index_scan.rs` |
 -/
@@ -507,6 +509,101 @@ def tryPushdown (idx : Nat → List Nat) (ls : List Nat) : F → Option (Nat × 
     match trySingle idx ls a with
     | some (L, q) => some (L, q, if isArrayContains a then [a] else [])
     | none => none
+
+/-- `can_seek_index` (`utilize_index.rs`, #3889): `try_filter_pushdown(..).is_some()`. -/
+def canSeek (idx : Nat → List Nat) (ls : List Nat) (f : F) : Bool := (tryPushdown idx ls f).isSome
+
+/-- **PROVEN**: `can_seek_index` holds exactly when `try_filter_pushdown` yields a rewrite. -/
+theorem canSeek_iff (idx : Nat → List Nat) (ls : List Nat) (f : F) :
+    canSeek idx ls f = true ↔ ∃ r, tryPushdown idx ls f = some r := by
+  unfold canSeek; cases tryPushdown idx ls f <;> simp
+
+/-- `seek_index_label` (`utilize_index.rs`, #3889): the label `try_filter_pushdown`
+serves `f` from; for an OR, every disjunct's label, which must all be the same
+(`labels.next()??`: an empty OR has none). -/
+def seekLabel (idx : Nat → List Nat) (ls : List Nat) : F → Option Nat
+  | .or as =>
+    match as.map (fun a => (tryPushdown idx ls (.atom a)).map (·.1)) with
+    | [] => none
+    | first :: rest =>
+      match first with
+      | some L => if rest.all (· == some L) then some L else none
+      | none => none
+  | f => (tryPushdown idx ls f).map (·.1)
+
+private theorem tp_atom_label {idx : Nat → List Nat} {ls : List Nat} {a : A} {L : Nat}
+    (h : (tryPushdown idx ls (.atom a)).map (·.1) = some L) :
+    ∃ q, trySingle idx ls a = some (L, q) := by
+  simp only [tryPushdown] at h
+  cases hs : trySingle idx ls a with
+  | none => simp [hs] at h
+  | some r => obtain ⟨L', q⟩ := r; simp [hs] at h; exact ⟨q, by rw [h]⟩
+
+private theorem pushOr_label (idx : Nat → List Nat) (ls : List Nat) (L : Nat) :
+    ∀ (a : A) (as : List A),
+      (tryPushdown idx ls (.atom a)).map (·.1) = some L →
+      (∀ b ∈ as, (tryPushdown idx ls (.atom b)).map (·.1) = some L) →
+      ∃ qs, pushOr idx ls (a :: as) = some (some L, qs)
+  | a, [], ha, _ => by
+    obtain ⟨q, hq⟩ := tp_atom_label ha
+    exact ⟨[q], by simp [pushOr, hq]⟩
+  | a, b :: bs, ha, hall => by
+    obtain ⟨q, hq⟩ := tp_atom_label ha
+    obtain ⟨qs, hqs⟩ := pushOr_label idx ls L b bs (hall b (by simp))
+      (fun c hc => hall c (by simp [hc]))
+    exact ⟨q :: qs, by simp only [pushOr, hq]; simp only [pushOr] at hqs; rw [hqs]⟩
+
+/-- **PROVEN**: the label `seek_index_label` reports is the one `try_filter_pushdown`
+(hence `utilize_index`) serves the filter from; in particular `can_seek_index` holds. -/
+theorem seekLabel_sound (idx : Nat → List Nat) (ls : List Nat) (f : F) (L : Nat)
+    (h : seekLabel idx ls f = some L) : ∃ q rem, tryPushdown idx ls f = some (L, q, rem) := by
+  cases f with
+  | or as =>
+    cases as with
+    | nil => simp [seekLabel] at h
+    | cons a as =>
+      simp only [seekLabel, List.map_cons] at h
+      cases ha : (tryPushdown idx ls (.atom a)).map (·.1) with
+      | none => rw [ha] at h; simp at h
+      | some L0 =>
+        rw [ha] at h
+        dsimp only at h
+        by_cases hall : (as.map (fun a => (tryPushdown idx ls (.atom a)).map (·.1))).all
+            (· == some L0) = true
+        · simp only [hall, ↓reduceIte] at h
+          have hL : L0 = L := Option.some.inj h
+          subst hL
+          have hall' : ∀ b ∈ as, (tryPushdown idx ls (.atom b)).map (·.1) = some L0 := by
+            intro b hb
+            have := List.all_eq_true.mp hall _ (List.mem_map_of_mem hb)
+            simpa using this
+          obtain ⟨qs, hqs⟩ := pushOr_label idx ls L0 a as ha hall'
+          exact ⟨.or qs, [], by simp [tryPushdown, hqs]⟩
+        · simp [hall] at h
+  | and as =>
+    simp only [seekLabel] at h
+    cases ht : tryPushdown idx ls (.and as) with
+    | none => rw [ht] at h; simp at h
+    | some r => obtain ⟨L', q, rem⟩ := r; rw [ht] at h; simp at h; exact ⟨q, rem, by rw [h]⟩
+  | atom a =>
+    simp only [seekLabel] at h
+    cases ht : tryPushdown idx ls (.atom a) with
+    | none => rw [ht] at h; simp at h
+    | some r => obtain ⟨L', q, rem⟩ := r; rw [ht] at h; simp at h; exact ⟨q, rem, by rw [h]⟩
+
+theorem seekLabel_canSeek (idx : Nat → List Nat) (ls : List Nat) (f : F) (L : Nat)
+    (h : seekLabel idx ls f = some L) : canSeek idx ls f = true := by
+  obtain ⟨q, rem, hq⟩ := seekLabel_sound idx ls f L h
+  exact (canSeek_iff idx ls f).mpr ⟨_, hq⟩
+
+/-- An OR whose disjuncts are served from different labels' indexes has no seek label,
+though `try_filter_pushdown` would serve it from the first disjunct's label. -/
+theorem seekLabel_or_needs_one_label (idx : Nat → List Nat) (ls : List Nat) (a b : A)
+    (La Lb : Nat) (hab : La ≠ Lb)
+    (ha : (tryPushdown idx ls (.atom a)).map (·.1) = some La)
+    (hb : (tryPushdown idx ls (.atom b)).map (·.1) = some Lb) :
+    seekLabel idx ls (.or [a, b]) = none := by
+  simp [seekLabel, ha, hb, hab.symm]
 
 /-! ## Plans and their semantics -/
 

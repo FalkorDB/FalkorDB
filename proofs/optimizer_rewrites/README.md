@@ -133,21 +133,22 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | `Sequence.lean` | `optimize` sequencing, the tree rebuilds (`rebuild_with_hash_joins`), edge-filter absorption |
 | `CallBoundary.lean` | Push-down across the `CALL {}` entry projection (namespace `Pr2845`): the Case-2 walk stops at a two-child `Optional` (#3281) |
 | `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
+| `IndexSeek.lean` | `replace_cartesian_with_index_seek` (#3889): the `UNWIND range(..)` row estimate `unwound_len` (`rangeEst_exact`, `rangeEst_upper`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 80 function rows:
+`COVERAGE.tsv` has 91 function rows:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 38 |
-| NOT COVERED | 42 |
+| PROVEN | 40 |
+| NOT COVERED | 51 |
 
 - **PROVEN:** every production function in the optimizer files this project owns. The five planner helpers in `optimizer/mod.rs` added by the var-length anchor change (#2558: `collect_expr_scoped_variables`, `collect_single_variable_conjuncts`, `walk`, `endpoint_scan_score`, `walk_scans_to_endpoint`) are proven in `planner_build` (`Anchor.lean`), next to the `plan_match` model that uses them.
-- **NOT COVERED:** all test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them.
+- **NOT COVERED:** the plan rewrite of `replace_cartesian_with_index_seek.rs` (#3889: `try_seek_rewrite` and its helpers; only `unwound_len` is proven, `IndexSeek.lean`), and test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them.
 
 ## Open PRs touching these files
 

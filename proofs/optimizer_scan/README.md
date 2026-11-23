@@ -96,7 +96,7 @@ There are no CONDITIONAL rows in this project.
 |---|---|
 | `OptimizerScan.lean` | The report header and imports |
 | `IdSeek.lean` | `get_id_filter`, the flip table, `first_id_where` (`firstIdWhere`), `evaluate_id_filter` (`bounds`, `step`, `fold`, `evalIdFilter`, `evalIdFilterMain`), `seek` vs `reference`, `seek_sound`, the id-seek examples |
-| `Index.lean` | The value and node model, index encoding, query nodes (`build`), `utilize_index`'s helpers and rewrite (`utilize`) |
+| `Index.lean` | The value and node model, index encoding, query nodes (`build`), `utilize_index`'s helpers and rewrite (`utilize`); `can_seek_index`/`seek_index_label` (#3889: `canSeek_iff`, `seekLabel_sound`) |
 | `IndexSound.lean` | `sel_*` lemmas for each query node, `trySingle_spec` |
 | `IndexPipeline.lean` | The AND/OR pushdown, `goodF`, and the headline `utilize_sound` |
 | `IndexCex.lean` | The `decide`d counterexamples C1–C11 (namespace `Cex`) |
@@ -111,14 +111,13 @@ The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 72 rows: `select_scan_node.rs`, `utilize_index.rs`, `utilize_node_by_id.rs`, `reorder_labels.rs`, `node_by_index_scan.rs`, one function of `runtime.rs` and one of `index/mod.rs`.
+`COVERAGE.tsv` has 75 rows: `select_scan_node.rs`, `utilize_index.rs`, `utilize_node_by_id.rs`, `reorder_labels.rs`, `node_by_index_scan.rs`, one function of `runtime.rs` and one of `index/mod.rs`.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 71 |
-| MODELLED | 1 |
+| PROVEN | 75 |
 
-- **MODELLED:** `Index::build_query_node` in `index/mod.rs`, a support function, not a target file. The RediSearch semantics of its query nodes are definitions here (`build`), used by `sel_eq`, `sel_range` and `sel_and2`.
+- `Index::build_query_node` in `index/mod.rs`, a support function, not a target file. The RediSearch semantics of its query nodes are definitions here (`build`), used by `sel_eq`, `sel_range` and `sel_and2`.
 
 ## What the model does not cover
 
