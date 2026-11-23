@@ -538,6 +538,18 @@ static bool cch_index_drop
 
 	const char **rel_names = _index_reltype_names(op);
 
+	// THE SAME TWO-BYTE COUNT THE CREATE PATH IS BOUNDED BY. A drop stages its
+	// record through the same writer and the names are not de-duplicated on
+	// the way in either, so ()-[e:A|A| ... ]->() reaches the cast here too.
+	// Refused before the write lock, for the same reason: past this point the
+	// writer returns void and can only stop the process.
+	if(arr_len(rel_names) > UINT16_MAX) {
+		ErrorCtx_SetError("a CCH index cannot span more than %d relationship "
+				"types", UINT16_MAX);
+		arr_free(rel_names);
+		return false;
+	}
+
 	// resolve ids -- all must already exist to match a live index
 	uint rc = arr_len(rel_names);
 	RelationID *rel_ids = arr_new(RelationID, rc);
