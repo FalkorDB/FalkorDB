@@ -6,8 +6,8 @@
   optimized independently; `passes_order` — the exact order (reduce_var_len_path twice).
 * `rebuildHJ_id` (no rewrite: a plain copy) and `rebuildHJ_sound` (a
   congruence `R` + sound local rewrites ⇒ the rebuilt tree is `R`-equal);
-  `rebuildHJ_guard_sound`, `guardHJ_argument`: the #2981 guard (no rewrite over a
-  CartesianProduct with an `Argument` below) only removes rewrites.
+  `rebuildHJ_fires`: the rewrite is applied wherever it fires, also over a
+  CartesianProduct with an `Argument` below (no guard since #3930).
 * `rebuildCP_*`: identity off the target; at the target the CartesianProduct
   children are permuted (`splitCP_perm`) with the conjunct over the extracted ones.
 * `findVlt_spec`, `absorb_correct`: under the per-edge reading of an edge-only
@@ -81,10 +81,6 @@ inductive T (D : Type)
 
 variable {D : Type}
 
-/-- Does some node of the tree satisfy `f` (a BFS `walk().any`)? -/
-def T.anyD (f : D → Bool) : T D → Bool
-  | .node d cs => f d || cs.attach.any fun ⟨c, _⟩ => T.anyD f c
-
 /-- Bottom-up copy; at a `Filter(CartesianProduct)` the local rewrite `rw` is
 tried and, if it fires, the result is processed again (fuel bounds the
 re-processing; the Rust relies on each rewrite consuming one conjunct). -/
@@ -135,39 +131,14 @@ decreasing_by
   · simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; right; omega
   · simp_wf; omega
 
-/-- The local rewrite Rust tries (replace_cartesian_with_hash_join.rs, #2981): the
-`try_hash_join_rewrite` step `rw` is attempted only when no node of the CartesianProduct
-`cp` (the Filter's child) is an `Argument` (`reads_argument_rows`, :105-109), i.e. no branch
-is re-run per outer row of an enclosing `Apply`/`Optional`. -/
-def guardHJ (isCP : D → Bool) (isArg : D → Bool) (rw : T D → Option (T D)) : T D → Option (T D)
-  | .node d [.node cd ccs] =>
-    if isCP cd && T.anyD isArg (.node cd ccs) then none else rw (.node d [.node cd ccs])
-  | t => rw t
-
-/-- A guarded rewrite fires only where the unguarded one does, with the same result. -/
-theorem guardHJ_sub (isCP isArg : D → Bool) (rw : T D → Option (T D)) (t t' : T D)
-    (h : guardHJ isCP isArg rw t = some t') : rw t = some t' := by
-  unfold guardHJ at h
-  split at h
-  · split at h
-    · exact absurd h (by simp)
-    · exact h
-  · exact h
-
-/-- `rebuildHJ_sound` for the guarded pass: the guard only removes rewrites. -/
-theorem rebuildHJ_guard_sound (isCP isArg : D → Bool) (rw : T D → Option (T D)) (R : T D → T D → Prop)
-    (hrefl : ∀ t, R t t) (htrans : ∀ a b c, R a b → R b c → R a c)
-    (hcong : ∀ d (cs cs' : List (T D)), cs.length = cs'.length →
-      (∀ i (h1 : i < cs.length) (h2 : i < cs'.length), R cs[i] cs'[i]) → R (.node d cs) (.node d cs'))
-    (hrw : ∀ t t', rw t = some t' → R t t') (fuel : Nat) (t : T D) :
-    R t (rebuildHJ (guardHJ isCP isArg rw) fuel t) :=
-  rebuildHJ_sound _ R hrefl htrans hcong (fun t t' h => hrw t t' (guardHJ_sub isCP isArg rw t t' h)) fuel t
-
-/-- A Filter over a CartesianProduct with an `Argument` below is left alone. -/
-theorem guardHJ_argument (isCP isArg : D → Bool) (rw : T D → Option (T D)) (d cd : D) (ccs : List (T D))
-    (hcp : isCP cd = true) (ha : T.anyD isArg (.node cd ccs) = true) :
-    guardHJ isCP isArg rw (.node d [.node cd ccs]) = none := by
-  simp [guardHJ, hcp, ha]
+/-- The local rewrite fires wherever `try_hash_join_rewrite` (`rw`) does, also over a
+CartesianProduct with an `Argument` below (#3930 dropped the `reads_argument_rows` guard): the
+result is processed again. Under a batched Apply/Optional/`CALL {}` the per-origin join keeps
+outer rows apart (ops_apply `VhjSep.vhjPO_sepT`, `applyBatched_vhjPO`), so `rw` stays sound there. -/
+theorem rebuildHJ_fires (rw : T D → Option (T D)) (fuel : Nat) (t t' : T D) (h : rw t = some t') :
+    rebuildHJ rw (fuel + 1) t = rebuildHJ rw fuel t' := by
+  cases t with
+  | node d cs => rw [rebuildHJ, h]
 
 /-! ## `rebuild_with_cp_split` -/
 

@@ -49,6 +49,13 @@
 //! ```
 //!
 //! The pass is applied recursively so nested join opportunities are found.
+//!
+//! **Correlated sub-plans:**
+//!
+//! A CartesianProduct under an `Apply`, `Optional` or `CALL {}` is rewritten
+//! too. When such a sub-plan runs batched, its argument batch holds every
+//! outer row, and `ValueHashJoinOp` keeps one table per outer row
+//! (`origin_row`), so branch rows of different outer rows are never paired.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -81,7 +88,6 @@ fn rebuild_with_hash_joins(node: &DynNode<IR>) -> DynTree<IR> {
     if let IR::Filter(filter) = node.data()
         && let Some(child) = node.get_child(0)
         && matches!(child.data(), IR::CartesianProduct)
-        && !reads_argument_rows(&child)
         && let Some(result) = try_hash_join_rewrite(filter, &child)
     {
         // Recursively apply to the result (may find more join opportunities).
@@ -95,17 +101,6 @@ fn rebuild_with_hash_joins(node: &DynNode<IR>) -> DynTree<IR> {
         new_tree.root_mut().push_child_tree(child_tree);
     }
     new_tree
-}
-
-/// Whether a branch of `cp_node` is fed by an `Argument`, i.e. runs once per
-/// row of an enclosing `Apply`/`Optional`. Those branches carry the outer row
-/// along, and a hash join keyed only on the predicate would pair branch rows
-/// that belong to different outer rows (rows of the earlier clause multiply),
-/// where the Cartesian Product pairs them per outer row.
-fn reads_argument_rows(cp_node: &DynNode<IR>) -> bool {
-    cp_node
-        .walk::<orx_tree::Bfs>()
-        .any(|data| matches!(data, IR::Argument(_)))
 }
 
 /// Attempts to find one equality conjunct in the filter that can be converted
