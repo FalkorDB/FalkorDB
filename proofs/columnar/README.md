@@ -114,7 +114,7 @@ This project has no CONDITIONAL rows.
 | `AndOrLane.lean`, `CaseLane.lean`, `FuncLane.lean`, `HasLabelsFn.lean`, `LaneWF.lean` | `eval_and_or`, `eval_case`, `eval_function`, `eval_has_labels` (and the registry's `hasLabels`) against `ExprEval`; every lane returns `len` rows |
 | `CoreBridge.lean` | the `Lawful` instance over a batch (`lawful`, `vec_sound`) |
 | `RuntimeReads.lean` | the runtime's attribute reads: bulk fetch = per-row read (`matNode_eq`, `matRel_eq`, `propReads`) |
-| `IntLane.lean` | #3437 integer-lane property fetch: `get_int_attrs_by_idx_batch_into` (`intBatch_sound`) and `materialize_node_property_exact` = `classify_exact_column` of the `Value` fetch (`matNodeExact_eq`) |
+| `IntLane.lean` | #3437 integer-lane property fetch: `get_int_attrs_by_idx_batch_into` (`intBatch_sound`) and `materialize_node_property_exact` = `classify_exact_column` of the `Value` fetch (`matNodeExact_eq`, which takes `hlook`: the committed lookup equals unpacking the packed one; not proven from a shared store model, so `materialize_node_property_exact` and `eval_property` are CONDITIONAL on it) |
 | `EvalBatch.lean` | expr_semantics' `BatchLaws` for `eval_batch`, discharged |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -126,7 +126,8 @@ The project imports `../core` (the engine value) and `../expr_semantics` (the ex
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 148 |
+| PROVEN | 146 |
+| CONDITIONAL | 2 |
 | MODELLED | 16 |
 | NOT COVERED | 2 |
 
