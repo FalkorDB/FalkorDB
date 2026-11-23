@@ -98,6 +98,20 @@ pub struct DeleteOp<'a> {
     buffered: Option<std::vec::IntoIter<Batch<'a>>>,
 }
 
+/// Whether the operator writes to the graph, so that a later batch it feeds
+/// must still see what an earlier batch of a sibling `Delete` removed.
+const fn writes_graph(ir: &IR) -> bool {
+    matches!(
+        ir,
+        IR::Create(_)
+            | IR::Merge { .. }
+            | IR::Set(_)
+            | IR::Remove(_)
+            | IR::Delete { .. }
+            | IR::ForEach { .. }
+    )
+}
+
 impl<'a> DeleteOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
@@ -114,16 +128,15 @@ impl<'a> DeleteOp<'a> {
             trees,
             idx,
             snapshot,
-            eager: subtree_contains(&runtime.plan, idx, |ir| {
-                matches!(
-                    ir,
-                    IR::Create(_)
-                        | IR::Merge { .. }
-                        | IR::Set(_)
-                        | IR::Remove(_)
-                        | IR::ForEach { .. }
-                )
-            }),
+            // Below this Delete only: its own node is not a reason to buffer,
+            // but a Delete nested in the child (a `CALL { ... DELETE b }`
+            // body) is, since this one would otherwise delete between that
+            // one's batches.
+            eager: runtime
+                .plan
+                .node(idx)
+                .children()
+                .any(|child| subtree_contains(&runtime.plan, child.idx(), writes_graph)),
             buffered: None,
         }
     }

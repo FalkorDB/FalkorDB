@@ -3598,3 +3598,24 @@ updating clause.")
                MATCH p = ()-->()
                RETURN CASE WHEN false THEN p.name END AS x""",
             "Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was Path")
+
+    def test_65_delete_after_a_deleting_subquery_sees_every_batch(self):
+        """A `CALL { ... DELETE b }` body writes, so the outer DELETE must
+        drain it before deleting, as it does for CREATE/SET bodies: a later
+        batch's `MATCH (a:A)` must still see what an earlier batch deleted
+        (C returns 3000 x 5 rows; streaming returned 5120)."""
+
+        g = self.graph
+        for returning in ("", "RETURN 1 AS z"):
+            g.query("MATCH (n) DETACH DELETE n")
+            g.query("UNWIND range(1, 5) AS i CREATE (:A {i: i}), (:B {i: i})")
+            res = g.query(
+                f"""UNWIND range(1, 3000) AS i
+                    CALL {{ MATCH (b:B) DELETE b {returning} }}
+                    MATCH (a:A) DELETE a
+                    RETURN count(*)""")
+            # with RETURN the body is a per-row subquery whose first row
+            # deletes every B, so only that row sees them (5) per A (5)
+            expected = 25 if returning else 3000 * 5
+            self.env.assertEqual(res.result_set, [[expected]])
+            self.env.assertEqual(res.nodes_deleted, 10)

@@ -81,3 +81,4 @@ graph/src/runtime/ops/apply.rs	ApplyOp::flush_acc	322	PROVEN	RowWrites.flushAcc:
 graph/src/runtime/ops/apply.rs	ApplyOp::push_acc	334	PROVEN	RowWrites.pushAcc: pushAcc_spec (no row lost or reordered, acc within BATCH_SIZE; batches as row lists)
 graph/src/runtime/ops/apply.rs	ApplyOp::sub_plan_distincts	494	NOT COVERED	plan-tree walk over IR/ExprIR (no plan-tree model in ops_apply); its result is the `subs` of ops_aggregate Ops.scopedClear
 graph/src/runtime/ops/apply.rs	imported_ids	525	NOT COVERED	plan-tree walk (Argument leaves, nested-Apply scoping, leading Project exprs); no plan-tree model in ops_apply
+graph/src/runtime/ops/delete.rs	writes_graph	103	NOT COVERED	(#2968): not modelled yet
