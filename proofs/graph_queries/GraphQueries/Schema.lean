@@ -531,7 +531,8 @@ theorem relTypeSlot_refused (g : G V) (s : String) (h : maxTypeId < (getTypeId g
   unfold relTypeSlot edgeTypeSlot; rw [ite_eq_right (by omega)]
 
 /-- `relationship_types_fit` (graph.rs): walk the names; a registered one is checked at its
-id, a new one at `next` (then `next += 1`), a repeated new one skipped. `none` = `Ok(())`,
+id, a new one at `next` (then `next += 1`), a repeated new one skipped (`new` is an
+`FxHashSet`; only membership is read, so the list `new` models it exactly). `none` = `Ok(())`,
 `some n` = `Err(TooManyRelationshipTypes { name: n, .. })`. -/
 def relTypesFitAux (g : G V) : List String → Nat → List String → Option String
   | [], _, _ => none
