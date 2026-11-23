@@ -1,0 +1,16 @@
+# The perf checks the nightly run (.github/workflows/perf-nightly.yml) measures,
+# besides the micro tier, which it always calls through _perf-micro.yml.
+#
+# Each check's PR appends exactly one entry and touches nothing else here:
+#
+#   - name: size-probe                 # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$
+#     runner: vm                       # vm (_perf-vm.yml on a GCE VM) | hosted (ubuntu-latest)
+#     command: uv run --project bench bench probe
+#     timeout_minutes: 45              # 1-360
+#     machine_type: n4-standard-16     # vm only; optional
+#
+# The workflow appends --candidate, --baseline (both image@sha256), the four
+# optional --candidate-/--baseline-label/-commit flags, --out and --mode to the
+# command. tests/perf/merge.py reads this file; an entry it cannot use shows up in
+# the night's report as an error.
+[]

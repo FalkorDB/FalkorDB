@@ -1,0 +1,486 @@
+# Nightly perf regression run on main (epic #3974).
+#
+# Every night it measures main's newest merge-queue image against the latest
+# release with every perf check, and posts one message to the core team's Chat
+# space. The contract (check interface, result.json, nightly.json) is perf-judge's
+# tests/perf/schema/ and tests/perf/validate.py.
+#
+#   candidate  ghcr.io/falkordb/falkordb-server:rc-mg-<sha>-valkey for main's tip,
+#              the image the merge queue built and tested for that commit. A
+#              commit with no such image (the queue had not finished, or
+#              cleanup-rc-images.yml swept it) falls back along main's
+#              first-parent history to the newest commit that has one, at most
+#              WALK commits back, and the candidate's label says so.
+#   baseline   falkordb/falkordb-server:<version> (Valkey), for the GitHub release
+#              marked Latest; its commit is the release tag's.
+#
+# Both are pinned by digest before anything runs, so every check measures the
+# same two images even if a tag moves mid-run.
+#
+# Jobs: resolve -> micro (_perf-micro.yml), vm (_perf-vm.yml, one leg per
+# `runner: vm` entry of tests/perf/checks.yaml), hosted (one leg per `runner:
+# hosted` entry) -> merge (tests/perf/merge.py -> nightly.json, artifact
+# perf-nightly) -> report (tests/perf/report/post.py).
+#
+# Skipped nights. A scheduled run whose candidate commit AND baseline digest equal
+# the last nightly's does not measure: there is nothing new. It still writes a
+# `skipped` nightly.json and calls the reporter, because perf-missed-run.yml
+# alarms on a night without a perf-nightly artifact. It never skips right after a
+# night that ended in `error` or left no artifact, so a transient failure is
+# retried. A dispatch never skips.
+#
+# What counts as an earlier nightly (for the skip and for previous_green_commit):
+# completed scheduled runs of this workflow on main. A dispatch, which may measure
+# any pair of images, is reported but never feeds either.
+#
+# A missing measurement is never green: merge.py stubs every planned check that
+# left no valid result.json as {check, verdict: error, error: <why>}.
+
+name: Perf nightly
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      candidate_image:
+        description: "Candidate image (tag or digest); empty = main's newest rc-mg image"
+        type: string
+        default: ""
+      baseline_image:
+        description: "Baseline image (tag or digest); empty = the latest release"
+        type: string
+        default: ""
+      checks:
+        description: "Comma list of checks to run (micro, or names in tests/perf/checks.yaml); empty = all"
+        type: string
+        default: ""
+  # TEMPORARY: proves the workflow on its own PR (dispatch and schedule only work
+  # from the default branch). Removed, with every other TEMPORARY line, before the
+  # PR is marked ready.
+  pull_request:
+
+permissions: {}
+
+# One nightly at a time, and never cancel one that is running.
+concurrency:
+  group: perf-nightly
+  cancel-in-progress: false
+
+env:
+  WALK: 20
+  CANDIDATE_REPO: ghcr.io/falkordb/falkordb-server
+  BASELINE_REPO: falkordb/falkordb-server
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Earlier runs of this workflow and their perf-nightly artifacts.
+      actions: read
+    outputs:
+      candidate_image: ${{ steps.images.outputs.candidate_image }}
+      candidate_commit: ${{ steps.images.outputs.candidate_commit }}
+      candidate_label: ${{ steps.images.outputs.candidate_label }}
+      baseline_image: ${{ steps.images.outputs.baseline_image }}
+      baseline_commit: ${{ steps.images.outputs.baseline_commit }}
+      baseline_label: ${{ steps.images.outputs.baseline_label }}
+      skip: ${{ steps.context.outputs.skip }}
+      run_micro: ${{ steps.plan.outputs.run_micro }}
+      has_vm: ${{ steps.plan.outputs.has_vm }}
+      vm_matrix: ${{ steps.plan.outputs.vm_matrix }}
+      has_hosted: ${{ steps.plan.outputs.has_hosted }}
+      hosted_matrix: ${{ steps.plan.outputs.hosted_matrix }}
+    steps:
+      # Deep enough for the WALK-commit first-parent fallback below.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 25
+          persist-credentials: false
+
+      - name: Pin the candidate and baseline images
+        id: images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_INPUT: ${{ inputs.candidate_image }}
+          BASELINE_INPUT: ${{ inputs.baseline_image }}
+        run: |
+          set -euo pipefail
+
+          # digest_of REF prints REF's manifest digest. Exit 3 means the registry
+          # says REF does not exist; any other failure (network, auth, rate limit)
+          # is 1, so it can never be taken for "no image" and walk past a commit
+          # that has one.
+          digest_of() {
+            local out
+            if out=$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>"$RUNNER_TEMP/inspect.err"); then
+              jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$out"
+              return
+            fi
+            if grep -qiE 'not found|manifest unknown' "$RUNNER_TEMP/inspect.err"; then
+              return 3
+            fi
+            cat "$RUNNER_TEMP/inspect.err" >&2
+            return 1
+          }
+
+          # pin_input REF sets image/commit/label for an image given by hand.
+          # The commit is known only from an rc-mg-<sha>-<server> tag.
+          pin_input() {
+            local ref=$1 name tag="" last digest
+            digest=$(digest_of "$ref") || { echo "::error::$ref does not resolve to an image"; exit 1; }
+            name=${ref%@*}
+            last=${name##*/}
+            if [[ $last == *:* ]]; then tag=${last#*:}; name=${name%:*}; fi
+            image="$name@$digest"
+            commit=""
+            if [[ $tag =~ ^rc-mg-([0-9a-f]{40})- ]]; then
+              commit=${BASH_REMATCH[1]}
+              label="rc-mg@${commit:0:7}"
+            elif [[ -n $tag ]]; then
+              label=$tag
+            else
+              label="${last%%@*}@${digest:7:12}"
+            fi
+          }
+
+          if [[ -n $CANDIDATE_INPUT ]]; then
+            pin_input "$CANDIDATE_INPUT"
+            note="given by hand"
+          else
+            # On schedule (and a dispatch from main) HEAD is main's tip. On the
+            # TEMPORARY pull_request trigger it is the PR's merge commit, which has
+            # no rc-mg image, so the fallback below runs for real.
+            tip=$(git rev-parse HEAD)
+            found=""
+            for sha in $(git rev-list --first-parent -n "$WALK" HEAD); do
+              if digest=$(digest_of "$CANDIDATE_REPO:rc-mg-$sha-valkey"); then
+                found=$sha
+                break
+              else
+                rc=$?
+              fi
+              if [[ $rc != 3 ]]; then
+                echo "::error::could not look up $CANDIDATE_REPO:rc-mg-$sha-valkey"
+                exit 1
+              fi
+              echo "$CANDIDATE_REPO:rc-mg-$sha-valkey: no such image"
+            done
+            if [[ -z $found ]]; then
+              echo "::error::none of the $WALK newest first-parent commits from $tip has an rc-mg-<sha>-valkey image"
+              exit 1
+            fi
+            image="$CANDIDATE_REPO@$digest"
+            commit=$found
+            label="main@${found:0:7}"
+            note="main's tip"
+            if [[ $found != "$tip" ]]; then
+              back=$(git rev-list --first-parent --count "$found..$tip")
+              label="$label (tip ${tip:0:7} has no image)"
+              note="fallback: tip $tip has no rc-mg image; newest first-parent commit with one is $back back"
+              echo "::notice::candidate $note"
+            fi
+          fi
+          candidate_image=$image candidate_commit=$commit candidate_label=$label candidate_note=$note
+
+          if [[ -n $BASELINE_INPUT ]]; then
+            pin_input "$BASELINE_INPUT"
+            note="given by hand"
+          else
+            tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+            version=${tag#v}
+            if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::the latest release's tag '$tag' is not vX.Y.Z"
+              exit 1
+            fi
+            digest=$(digest_of "docker.io/$BASELINE_REPO:$version") \
+              || { echo "::error::docker.io/$BASELINE_REPO:$version does not resolve"; exit 1; }
+            image="$BASELINE_REPO@$digest"
+            # The peeled tag: release-tag.yml retags rc-mg-<this commit>.
+            commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
+            label=$version
+            note="release marked Latest ($tag)"
+          fi
+
+          {
+            echo "candidate_image=$candidate_image"
+            echo "candidate_commit=$candidate_commit"
+            echo "candidate_label=$candidate_label"
+            echo "baseline_image=$image"
+            echo "baseline_commit=$commit"
+            echo "baseline_label=$label"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Images"
+            echo "| side | image | commit | label | from |"
+            echo "| --- | --- | --- | --- | --- |"
+            echo "| candidate | \`$candidate_image\` | ${candidate_commit:-null} | $candidate_label | $candidate_note |"
+            echo "| baseline | \`$image\` | ${commit:-null} | $label | $note |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "candidate: $candidate_image commit=${candidate_commit:-null} label='$candidate_label' ($candidate_note)"
+          echo "baseline:  $image commit=${commit:-null} label='$label' ($note)"
+
+      - name: Download the earlier nightlies
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HISTORY: ${{ runner.temp }}/history
+          # Nightlies are scheduled runs on main. TEMPORARY: on the proof PR its
+          # own runs play that part, so the skip path can run there.
+          HISTORY_EVENT: ${{ github.event_name == 'pull_request' && 'pull_request' || 'schedule' }}
+          HISTORY_BRANCH: ${{ github.head_ref || 'main' }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HISTORY"
+          # By this run's workflow id, which exists on any branch (a lookup by
+          # file name needs the file on the default branch).
+          workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?event=$HISTORY_EVENT&branch=$HISTORY_BRANCH&status=completed&per_page=30" \
+            --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id" > "$HISTORY/runs.txt"
+          echo "earlier $HISTORY_EVENT runs on $HISTORY_BRANCH, newest first: $(paste -sd' ' "$HISTORY/runs.txt")"
+          # Newest first, until the newest green one: that is all merge.py reads.
+          while read -r id; do
+            if ! gh run download "$id" -R "$GITHUB_REPOSITORY" -n perf-nightly -D "$HISTORY/$id" >/dev/null 2>&1; then
+              echo "run $id: no perf-nightly artifact"
+              continue
+            fi
+            status=$(jq -r .status "$HISTORY/$id/nightly.json" 2>/dev/null || echo unreadable)
+            echo "run $id: $status"
+            if [[ $status == green ]]; then break; fi
+          done < "$HISTORY/runs.txt"
+
+      - name: Decide whether tonight runs
+        id: context
+        env:
+          HISTORY: ${{ runner.temp }}/history
+          MAY_SKIP: ${{ github.event_name != 'workflow_dispatch' }}
+          CANDIDATE_IMAGE: ${{ steps.images.outputs.candidate_image }}
+          CANDIDATE_COMMIT: ${{ steps.images.outputs.candidate_commit }}
+          CANDIDATE_LABEL: ${{ steps.images.outputs.candidate_label }}
+          BASELINE_IMAGE: ${{ steps.images.outputs.baseline_image }}
+          BASELINE_COMMIT: ${{ steps.images.outputs.baseline_commit }}
+          BASELINE_LABEL: ${{ steps.images.outputs.baseline_label }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plan"
+          skip=()
+          if [[ $MAY_SKIP == true ]]; then skip=(--may-skip); fi
+          python3 -I tests/perf/merge.py context \
+            --candidate-image "$CANDIDATE_IMAGE" --candidate-commit "$CANDIDATE_COMMIT" --candidate-label "$CANDIDATE_LABEL" \
+            --baseline-image "$BASELINE_IMAGE" --baseline-commit "$BASELINE_COMMIT" --baseline-label "$BASELINE_LABEL" \
+            --history-runs "$HISTORY/runs.txt" --history-dir "$HISTORY" "${skip[@]}" \
+            --date "$(date -u +%F)" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --out "$RUNNER_TEMP/plan/context.json" --github-output "$GITHUB_OUTPUT" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Plan the checks
+        id: plan
+        env:
+          CHECKS: ${{ inputs.checks }}
+        run: |
+          set -euo pipefail
+          yq -o=json '.' tests/perf/checks.yaml > "$RUNNER_TEMP/checks.json"
+          python3 -I tests/perf/merge.py plan --registry "$RUNNER_TEMP/checks.json" --select "$CHECKS" \
+            --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: perf-plan
+          path: ${{ runner.temp }}/plan/
+          if-no-files-found: error
+
+  micro:
+    needs: resolve
+    if: needs.resolve.outputs.skip == 'false' && needs.resolve.outputs.run_micro == 'true'
+    permissions:
+      contents: read
+      # On a cache miss it builds the bench image and pushes it to ghcr.
+      packages: write
+    # TEMPORARY: perf-micro's branch until _perf-micro.yml is on main (#3977); then ./.github/workflows/_perf-micro.yml
+    uses: FalkorDB/FalkorDB/.github/workflows/_perf-micro.yml@ci/perf-micro
+    with:
+      candidate_image: ${{ needs.resolve.outputs.candidate_image }}
+      baseline_image: ${{ needs.resolve.outputs.baseline_image }}
+      candidate_commit: ${{ needs.resolve.outputs.candidate_commit }}
+      baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
+      candidate_label: ${{ needs.resolve.outputs.candidate_label }}
+      baseline_label: ${{ needs.resolve.outputs.baseline_label }}
+      mode: nightly
+
+  vm:
+    needs: resolve
+    # A matrix expands before `if:` is read and an empty one fails the job, so
+    # merge.py always emits at least a placeholder leg and has_vm switches it off.
+    if: needs.resolve.outputs.skip == 'false' && needs.resolve.outputs.has_vm == 'true'
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.vm_matrix) }}
+    # TEMPORARY: perf-gce-runner's branch until _perf-vm.yml is on main (#3979); then ./.github/workflows/_perf-vm.yml
+    uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
+    with:
+      check: ${{ matrix.check }}
+      command: ${{ matrix.command }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      machine_type: ${{ matrix.machine_type }}
+      candidate_image: ${{ needs.resolve.outputs.candidate_image }}
+      baseline_image: ${{ needs.resolve.outputs.baseline_image }}
+      candidate_commit: ${{ needs.resolve.outputs.candidate_commit }}
+      baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
+      candidate_label: ${{ needs.resolve.outputs.candidate_label }}
+      baseline_label: ${{ needs.resolve.outputs.baseline_label }}
+      mode: nightly
+    secrets: inherit
+
+  hosted:
+    needs: resolve
+    if: needs.resolve.outputs.skip == 'false' && needs.resolve.outputs.has_hosted == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.hosted_matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Checks run under `uv run --project bench`; copied out of the official
+      # image, as benchmark-cov.yml does.
+      - name: Fetch uv
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          cid=$(docker create ghcr.io/astral-sh/uv:0.9.29)
+          docker cp "$cid:/uv" "$RUNNER_TEMP/bin/uv"
+          docker rm -f "$cid" >/dev/null
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Run ${{ matrix.check }}
+        timeout-minutes: ${{ matrix.timeout_minutes }}
+        env:
+          CHECK: ${{ matrix.check }}
+          CHECK_COMMAND: ${{ matrix.command }}
+          CANDIDATE_IMAGE: ${{ needs.resolve.outputs.candidate_image }}
+          BASELINE_IMAGE: ${{ needs.resolve.outputs.baseline_image }}
+          CANDIDATE_COMMIT: ${{ needs.resolve.outputs.candidate_commit }}
+          BASELINE_COMMIT: ${{ needs.resolve.outputs.baseline_commit }}
+          CANDIDATE_LABEL: ${{ needs.resolve.outputs.candidate_label }}
+          BASELINE_LABEL: ${{ needs.resolve.outputs.baseline_label }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          args=(--candidate "$CANDIDATE_IMAGE" --baseline "$BASELINE_IMAGE"
+                --candidate-label "$CANDIDATE_LABEL" --baseline-label "$BASELINE_LABEL")
+          if [[ -n $CANDIDATE_COMMIT ]]; then args+=(--candidate-commit "$CANDIDATE_COMMIT"); fi
+          if [[ -n $BASELINE_COMMIT ]]; then args+=(--baseline-commit "$BASELINE_COMMIT"); fi
+          args+=(--out "$RUNNER_TEMP/out" --mode nightly)
+          # The registry's command is shell text; the contract's flags are
+          # appended as separate words, never spliced into it.
+          bash -c "$CHECK_COMMAND"' "$@"' "$CHECK" "${args[@]}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: perf-result-${{ matrix.check }}
+          path: ${{ runner.temp }}/out/
+
+  merge:
+    needs: [resolve, micro, vm, hosted]
+    # Whatever the check jobs did: a failed or cancelled one becomes a stub. Only
+    # a failed resolve leaves nothing to merge (no pinned images), and the
+    # missed-run alarm reports that.
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # TEMPORARY: perf-judge's validator until it is on main (#3975).
+      - name: Fetch validate.py from perf/judge
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin perf/judge
+          git checkout FETCH_HEAD -- tests/perf/validate.py
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: perf-plan
+          path: ${{ runner.temp }}/plan
+
+      # A download that fails leaves those checks without a result.json, so they
+      # become stubs: never green, and the night is still reported.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.resolve.outputs.skip == 'false'
+        continue-on-error: true
+        with:
+          pattern: perf-result-*
+          path: ${{ runner.temp }}/results
+
+      - name: Merge the results into nightly.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/results" "$RUNNER_TEMP/nightly"
+          python3 -I tests/perf/merge.py merge \
+            --context "$RUNNER_TEMP/plan/context.json" --plan "$RUNNER_TEMP/plan/plan.json" \
+            --results "$RUNNER_TEMP/results" --validator tests/perf/validate.py \
+            --out "$RUNNER_TEMP/nightly/nightly.json"
+          # The validator's own CLI, as a second opinion on the file that ships.
+          python3 -I tests/perf/validate.py --kind nightly "$RUNNER_TEMP/nightly/nightly.json"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: perf-nightly
+          path: ${{ runner.temp }}/nightly/nightly.json
+          if-no-files-found: error
+          retention-days: 90
+
+  report:
+    needs: merge
+    if: always() && needs.merge.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # post.py lists the commits since previous_green_commit: `git log` in this
+      # checkout, else the compare API.
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      # TEMPORARY: perf-chat's reporter until it is on main (#3978).
+      - name: Fetch the reporter from ci/perf-chat
+        run: |
+          set -euo pipefail
+          # No --depth: it would graft a shallow boundary into the full history above.
+          git fetch --no-tags origin ci/perf-chat
+          git checkout FETCH_HEAD -- tests/perf/report
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: perf-nightly
+          path: ${{ runner.temp }}/nightly
+
+      - name: Post the night's result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Chat hears about real nights only: the schedule, and a dispatch that
+          # picked its own images is a by-hand comparison, so it goes to the step
+          # summary alone (as does the TEMPORARY pull_request trigger).
+          PERF_CHAT_WEBHOOK: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
+        run: python3 -I tests/perf/report/post.py --nightly "$RUNNER_TEMP/nightly/nightly.json"
