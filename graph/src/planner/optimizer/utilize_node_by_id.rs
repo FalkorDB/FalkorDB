@@ -52,6 +52,7 @@ use super::references::subtree_references_variable;
 fn get_id_filter(
     filter: &DynNode<ExprIR<Variable>>,
     node_alias: &Variable,
+    traverser: &mut Bfs,
 ) -> Option<(QueryExpr<Variable>, ExprIR<Variable>)> {
     if matches!(
         filter.data(),
@@ -60,7 +61,7 @@ fn get_id_filter(
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(0).child(0).data()
         && var.key() == node_alias.key()
-        && !subtree_references_variable(&filter.child(1), node_alias.key())
+        && !subtree_references_variable(&filter.child(1), node_alias.key(), traverser)
     {
         Some((
             Arc::new(filter.child(1).clone_as_tree()),
@@ -73,7 +74,7 @@ fn get_id_filter(
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(1).child(0).data()
         && var.key() == node_alias.key()
-        && !subtree_references_variable(&filter.child(0), node_alias.key())
+        && !subtree_references_variable(&filter.child(0), node_alias.key(), traverser)
     {
         let op = match filter.data() {
             ExprIR::Eq => ExprIR::Eq,
@@ -90,10 +91,16 @@ fn get_id_filter(
 }
 
 /// Replaces label scan + ID filter with direct node ID lookup.
-pub(super) fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
+pub(super) fn utilize_node_by_id(
+    optimized_plan: &mut DynTree<IR>,
+    traverser: &mut Bfs,
+) {
     loop {
         let mut changed = false;
-        let indices = optimized_plan.root().indices::<Bfs>().collect::<Vec<_>>();
+        let indices = optimized_plan
+            .root()
+            .indices_with(traverser)
+            .collect::<Vec<_>>();
 
         for idx in indices {
             let mut filters = vec![];
@@ -102,11 +109,11 @@ pub(super) fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
                 _ => continue,
             };
             if let IR::Filter(filter) = optimized_plan.node(idx).parent().unwrap().data() {
-                if let Some((id, op)) = get_id_filter(&filter.root(), &node.alias) {
+                if let Some((id, op)) = get_id_filter(&filter.root(), &node.alias, traverser) {
                     filters.push((id, op));
                 } else if matches!(filter.root().data(), ExprIR::And) {
                     for child in filter.root().children() {
-                        if let Some((id, op)) = get_id_filter(&child, &node.alias) {
+                        if let Some((id, op)) = get_id_filter(&child, &node.alias, traverser) {
                             filters.push((id, op));
                         } else {
                             filters.clear();

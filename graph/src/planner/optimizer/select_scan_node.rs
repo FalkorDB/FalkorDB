@@ -76,7 +76,7 @@ use crate::{
 
 use super::super::IR;
 use super::{
-    collect_expr_scoped_variables, collect_expr_variables, collect_subtree_variables,
+    collect_expr_scoped_variables, collect_expr_variables_with, collect_subtree_variables,
     endpoint_scan_score, walk_scans_to_endpoint,
 };
 use crate::runtime::runtime::GetVariables;
@@ -210,14 +210,16 @@ fn collect_equalities(
 fn collect_filtered_vars(
     plan: &DynTree<IR>,
     start_idx: NodeIdx<Dyn<IR>>,
+    traverser: &mut Bfs,
 ) -> FilteredVars {
     fn collect(
         filter: &crate::parser::ast::QueryExpr<Variable>,
         vars: &mut HashSet<VarKey>,
         equality: &mut HashSet<VarKey>,
+        traverser: &mut Bfs,
     ) {
         collect_equalities(filter, filter.root().idx(), equality);
-        for idx in filter.root().indices::<Bfs>() {
+        for idx in filter.root().indices_with(traverser) {
             if let ExprIR::Variable(v) = filter.node(idx).data() {
                 vars.insert(v.key());
             }
@@ -229,7 +231,7 @@ fn collect_filtered_vars(
     let mut current = start_idx;
     while let Some(parent) = plan.node(current).parent() {
         match parent.data() {
-            IR::Filter(filter) => collect(filter, &mut above, &mut equality),
+            IR::Filter(filter) => collect(filter, &mut above, &mut equality, traverser),
             // Walk through transparent operators to find filters higher up
             IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
             _ => break,
@@ -247,7 +249,7 @@ fn collect_filtered_vars(
     let mut node = plan.node(start_idx);
     loop {
         match node.data() {
-            IR::Filter(filter) => collect(filter, &mut all, &mut equality),
+            IR::Filter(filter) => collect(filter, &mut all, &mut equality, traverser),
             IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
             _ => break,
         }
@@ -576,11 +578,12 @@ fn child_subtree_binds(
     plan: &DynTree<IR>,
     scan_idx: NodeIdx<Dyn<IR>>,
     alias: &Variable,
+    traverser: &mut Bfs,
 ) -> bool {
     use crate::runtime::runtime::GetVariables;
     let mut binds = false;
     for child in plan.node(scan_idx).children() {
-        for ir in child.walk::<Bfs>() {
+        for ir in child.walk_with(traverser) {
             if matches!(ir, IR::Argument(None)) {
                 return false;
             }
@@ -625,11 +628,12 @@ fn subtree_may_bind(
 fn select_var_len_scan_node(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) {
     // Paths rather than `NodeIdx`es, and deepest-first, for the same reason
     // `select_scan_node` uses them: `prune` can reorganize the tree.
     let mut vlt_paths = Vec::new();
-    for idx in optimized_plan.root().indices::<Bfs>() {
+    for idx in optimized_plan.root().indices_with(traverser) {
         if matches!(
             optimized_plan.node(idx).data(),
             IR::CondVarLenTraverse { .. }
@@ -691,7 +695,7 @@ fn select_var_len_scan_node(
         // chains via `bound_vars`, except the binding here sits *below* the
         // planner's scan rather than being the immediate child, so it has to be
         // looked for one level deeper.
-        let filtered_vars = collect_filtered_vars(optimized_plan, idx);
+        let filtered_vars = collect_filtered_vars(optimized_plan, idx, traverser);
 
         // `planner_scan_alias` looks through `Filter` (inline attrs) and
         // `IncludePending` (MERGE) wrappers, so the scan to drop is not
@@ -724,7 +728,7 @@ fn select_var_len_scan_node(
         let wrapper_ok = !has_filter && !has_include_pending;
         if wrapper_ok
             && !attrs_read_from
-            && child_subtree_binds(optimized_plan, scan_idx, &to.alias)
+            && child_subtree_binds(optimized_plan, scan_idx, &to.alias, traverser)
         {
             let kept: Vec<DynTree<IR>> = optimized_plan
                 .node(scan_idx)
@@ -836,6 +840,7 @@ fn select_var_len_scan_node(
 pub(super) fn select_scan_node(
     optimized_plan: &mut DynTree<IR>,
     graph: &Graph,
+    traverser: &mut Bfs,
 ) {
     // Collect all bottom-of-chain CondTraverse nodes as structural paths.
     // A "bottom CT" is a CT that either has no children (leaf) or whose
@@ -851,7 +856,7 @@ pub(super) fn select_scan_node(
     // mutations (which only ever affect its own subtree) never shift the path
     // of a not-yet-processed, shallower chain.
     let mut bottom_ct_paths = Vec::new();
-    for idx in optimized_plan.root().indices::<Bfs>() {
+    for idx in optimized_plan.root().indices_with(traverser) {
         let node = optimized_plan.node(idx);
         if !matches!(node.data(), IR::CondTraverse { .. }) {
             continue;
@@ -925,7 +930,7 @@ pub(super) fn select_scan_node(
 
         // Collect filtered variables from Filter ancestors above the chain.
         let top_of_chain = *chain.last().unwrap();
-        let filtered_vars = collect_filtered_vars(optimized_plan, top_of_chain);
+        let filtered_vars = collect_filtered_vars(optimized_plan, top_of_chain, traverser);
 
         // For non-leaf chains, detect bound variables from the child.
         // Only consider vars as "bound" if they come from an outer context
@@ -1425,7 +1430,7 @@ pub(super) fn select_scan_node(
                 .into_iter()
                 .map(|(_, filter_tree)| {
                     let vars = match filter_tree.root().data() {
-                        IR::Filter(expr) => collect_expr_variables(expr),
+                        IR::Filter(expr) => collect_expr_variables_with(expr, traverser),
                         _ => HashSet::new(),
                     };
                     (vars, filter_tree)
@@ -1632,7 +1637,7 @@ pub(super) fn select_scan_node(
         // else: no swap needed and non-leaf — nothing to do, child already attached.
     }
 
-    select_var_len_scan_node(optimized_plan, graph);
+    select_var_len_scan_node(optimized_plan, graph, traverser);
 }
 
 #[cfg(test)]

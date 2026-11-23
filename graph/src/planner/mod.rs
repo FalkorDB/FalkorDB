@@ -3197,10 +3197,11 @@ impl Planner {
         {
             idx = plan.node(idx).child(0).idx();
         }
+        let mut exprs = Traversal.bfs();
         let reads_bound = plan.node(idx).indices::<Bfs>().any(|i| {
             bound
                 .iter()
-                .any(|&key| ir_references_variable(plan.node(i).data(), key))
+                .any(|&key| ir_references_variable(plan.node(i).data(), key, &mut exprs))
         });
         if !reads_bound {
             plan.node_mut(idx).push_parent(IR::CartesianProduct);
