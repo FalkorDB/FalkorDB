@@ -21,7 +21,11 @@
 //! 3. push_filters_down        -- Move Filter conjuncts closer to the
 //!       |                        operators that produce their variables
 //!       v
-//! 4. replace_cartesian_       -- Convert CartesianProduct + equality
+//! 4. replace_cartesian_       -- Feed an index-served scan branch of a
+//!    with_index_seek              CartesianProduct with the other branches
+//!       |
+//!       v
+//!    replace_cartesian_       -- Convert CartesianProduct + equality
 //!    with_hash_join               Filter into ValueHashJoin
 //!       |
 //!       v
@@ -57,6 +61,7 @@ mod reduce_var_len_path;
 pub(in crate::planner) mod references;
 mod reorder_labels;
 mod replace_cartesian_with_hash_join;
+mod replace_cartesian_with_index_seek;
 mod select_scan_node;
 mod utilize_index;
 mod utilize_node_by_id;
@@ -84,6 +89,7 @@ use reduce_expand_into::reduce_expand_into;
 use reduce_var_len_path::reduce_var_len_path;
 use reorder_labels::reorder_labels;
 use replace_cartesian_with_hash_join::replace_cartesian_with_hash_join;
+use replace_cartesian_with_index_seek::replace_cartesian_with_index_seek;
 use select_scan_node::select_scan_node;
 use utilize_index::utilize_index;
 use utilize_node_by_id::utilize_node_by_id;
@@ -221,6 +227,7 @@ pub fn optimize(
     select_scan_node(&mut optimized_plan, graph);
     push_filters_down(&mut optimized_plan);
     fuse_anonymous_traverse(&mut optimized_plan);
+    replace_cartesian_with_index_seek(&mut optimized_plan, graph, params);
     replace_cartesian_with_hash_join(&mut optimized_plan);
     absorb_edge_filters_into_vlt(&mut optimized_plan);
     // Re-run path reduction: folding an edge-only filter into a

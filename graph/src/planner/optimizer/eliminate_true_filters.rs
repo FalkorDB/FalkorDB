@@ -79,7 +79,7 @@ fn expr_has_parameter(expr: &DynTree<ExprIR<Variable>>) -> bool {
 
 /// Clone the expression tree, replacing `ExprIR::Parameter(name)` nodes
 /// with their evaluated constant values from `params`.
-fn substitute_params(
+pub(super) fn substitute_params(
     expr: &DynTree<ExprIR<Variable>>,
     params: &HashMap<String, Value>,
 ) -> DynTree<ExprIR<Variable>> {

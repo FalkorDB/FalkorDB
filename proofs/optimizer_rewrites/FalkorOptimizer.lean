@@ -15,3 +15,4 @@ import FalkorOptimizer.Sequence
 import FalkorOptimizer.CallBoundary
 import FalkorOptimizer.AndOf
 import FalkorOptimizer.PushPlan
+import FalkorOptimizer.IndexSeek
