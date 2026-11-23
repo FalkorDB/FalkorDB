@@ -946,6 +946,14 @@ impl Pending {
             }
         }
 
+        // A cancelled edge still registers its type and reaches the replica as
+        // a create/delete pair, so its type must fit the endpoint index's type
+        // column exactly as a committed edge's does. Checked before anything
+        // is undone, so a refusal leaves both sides as they were.
+        for (_, _, _, type_name) in &rels {
+            g.relationship_type_slot(type_name)?;
+        }
+
         let mut result = Vec::with_capacity(rels.len());
         for (rel_id, from, to, type_name) in rels {
             self.created_rel_types.remove(&rel_id);

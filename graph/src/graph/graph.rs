@@ -850,7 +850,8 @@ pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATIO
 /// A type index as stored in the endpoint index's type column, or `None` past
 /// [`MAX_TYPE_ID`]: the column reserves `u16::MAX` as its empty marker, so
 /// 65,535 relationship types can carry edges.
-fn edge_type_slot(type_idx: usize) -> Option<u16> {
+#[must_use]
+pub fn edge_type_slot(type_idx: usize) -> Option<u16> {
     u16::try_from(type_idx)
         .ok()
         .filter(|&t| usize::from(t) <= MAX_TYPE_ID)
@@ -975,10 +976,10 @@ impl Graph {
             if tensor.edge_count() == 0 {
                 continue;
             }
-            // Edges past the limit are refused at creation, so a graph that
-            // saved them cannot exist.
+            // The decoder refuses a snapshot with edges past the limit, and
+            // creation refuses them, so every tensor with edges fits.
             let type_id = edge_type_slot(type_idx)
-                .expect("a saved graph has no relationships past the type limit");
+                .expect("the decoder refuses relationships past the type limit");
             for (src, dst, edge_id) in tensor.iter_edges() {
                 edge_endpoints.set(edge_id, src, dst, type_id);
             }
@@ -1288,6 +1289,23 @@ impl Graph {
         label: &str,
     ) -> Option<LabelId> {
         self.schema.labels.id_of(label).map(LabelId)
+    }
+
+    /// The endpoint index's type-column slot that `type_name` has, or would
+    /// get if it were registered now. Refused past [`MAX_TYPE_ID`]: every path
+    /// that gives an edge a type checks this before writing anything, so an
+    /// edge whose type does not fit is never created (nor replicated).
+    pub fn relationship_type_slot(
+        &self,
+        type_name: &str,
+    ) -> Result<u16, NodeOpError> {
+        let type_idx = self
+            .get_type_id(type_name)
+            .map_or(self.schema.relationship_types.len(), |t| t.0);
+        edge_type_slot(type_idx).ok_or_else(|| NodeOpError::TooManyRelationshipTypes {
+            name: type_name.to_string(),
+            max: MAX_TYPE_ID + 1,
+        })
     }
 
     pub fn get_type_id(
@@ -2747,14 +2765,7 @@ impl Graph {
         }
         // Before anything is written: the id this type has or would get must
         // fit the endpoint index's type column.
-        let type_idx = self
-            .get_type_id(type_name)
-            .map_or(self.schema.relationship_types.len(), |t| t.0);
-        let type_slot =
-            edge_type_slot(type_idx).ok_or_else(|| NodeOpError::TooManyRelationshipTypes {
-                name: type_name.to_string(),
-                max: MAX_TYPE_ID + 1,
-            })?;
+        let type_slot = self.relationship_type_slot(type_name)?;
 
         self.relationship_ids
             .create(&ids)
