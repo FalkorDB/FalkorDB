@@ -31,11 +31,12 @@ NOT separable, with a counterexample theorem each:
 * `Aggregate`, `CartesianProduct`, `Sort`, `Limit`, `Skip`, `Distinct`, `Union`, `Merge`, `Optional`,
   `Apply` (batched): blacklisted by Apply's guard (`applyGuard`); `Correlated.count_not_separable`,
   `limitF_not_separable`.
-* anonymous-bidirectional chained `CondTraverse` (`bidir_dedup`, `cond_traverse.rs`):
-  `dedupF_not_separable` (**known bug #3106**, confirmed live: see the report; also wrong at top level).
 * the writing operators (`Create`, `Delete`, `Set`, `Remove`, `Commit`, `ForEach`): admitted by the
   guard, rows are not row-local in effect: `RowWrites.bug2738_batched_call_hides_writes` (**known bug
   #2738**, fix pending in #2968).
+
+Separable since #3071: the anonymous-bidirectional chained `CondTraverse` (`BidirDedup`, per input
+record), `dedupF_dsep` (formerly #3106's `dedupF_not_separable`).
 
 `Optional`'s guard is wider than Apply's: it blacklists only `Aggregate` and `CartesianProduct`.  The
 extra kinds it admits (`Sort`, `Limit`, `Skip`, `Distinct`, `Union`, `Merge`, `Apply`, `Optional`)
@@ -46,7 +47,7 @@ of one path pattern.  That planner-output fact is not machine-checked here (`opt
 lists the kinds); every kind the real shapes contain is covered by `Adm`.
 
 That last sentence is the undischarged hypothesis of the CONDITIONAL rows: `guard_admits_classified` gives each
-admitted kind a verdict, but admitted writes and bidirectional dedup have no `Adm` constructor, and nothing proves
+admitted kind a verdict, but admitted writes and the bidirectional dedup (separable: `dedupF_dsep`) have no `Adm` constructor, and nothing proves
 the planner's sub-plans are `Adm` trees.
 -/
 namespace OpSep
@@ -688,9 +689,8 @@ def verdict : IRv → Verdict
   | .edgeByVectorScan | .nodeByLabelAndIdScan | .nodeByIdSeek | .condTraverse
   | .condVarLenTraverse | .allShortestPaths | .expandInto | .pathBuilder | .filter
   | .valueHashJoin | .semiApply | .antiSemiApply | .orApplyMultiplexer | .loadCsv | .project
-  | .nestedPlans => .exact
+  | .nestedPlans | .condTraverseBidirDedup => .exact
   | .condTraverseOptional => .permOnly
-  | .condTraverseBidirDedup => .bug 3106
   | .create | .delete | .set | .remove | .commit | .forEach => .bug 2738
   | .includePending => .mergeOnly
   | .createIndex | .dropIndex => .ddl
@@ -717,39 +717,115 @@ theorem guard_admits_classified (k : IRv) (h : applyBlacklisted k = false) :
       ∨ verdict k = .mergeOnly ∨ verdict k = .ddl := by
   cases k <;> simp_all [applyBlacklisted, verdict]
 
+/-! ## The anonymous-bidirectional chained `CondTraverse` (#3071: separable)
+
+`BidirDedup` (`cond_traverse.rs`): for each input record (the correlation tag and every bound
+column but the child hop's own; here the tagged row `(origin, x)` itself) the destinations
+already emitted; `enter` forgets them when the record changes. Two Apply rows have different
+origins, so they never share a record: the dedup is exactly separable (`dedupF_dsep`), which
+fixes #3106's batched-Apply form (`MATCH (a:P) UNWIND [1,2] AS x MATCH (a)--()--(b)`, formerly
+`dedupF_not_separable`). -/
+
+section Dedup
+variable [DecidableEq ρ] (kd : ρ → Nat) (g : ρ → List ρ)
+
+/-- The `swap_remove` loop of `expand_row`: keep a result iff its destination is new. -/
+def keep : List Nat → List ρ → List ρ × List Nat
+  | seen, [] => ([], seen)
+  | seen, y :: ys =>
+    if kd y ∈ seen then keep seen ys
+    else ((y :: (keep (kd y :: seen) ys).1), (keep (kd y :: seen) ys).2)
+
+/-- One Apply row's run (no origin tags): `cur` is `BidirDedup::record`. -/
+def dgo : Option ρ → List Nat → List ρ → List ρ
+  | _, _, [] => []
+  | cur, seen, x :: xs =>
+    (keep kd (if cur = some x then seen else []) (g x)).1 ++
+      dgo (some x) (keep kd (if cur = some x then seen else []) (g x)).2 xs
+
+/-- The state `dgo` leaves. -/
+def dgoSt : Option ρ → List Nat → List ρ → Option ρ × List Nat
+  | cur, seen, [] => (cur, seen)
+  | cur, seen, x :: xs => dgoSt (some x) (keep kd (if cur = some x then seen else []) (g x)).2 xs
+
+/-- The batched run over tagged rows: the record is `(origin, row)`. -/
+def dedupGo : Option (Nat × ρ) → List Nat → List (Nat × ρ) → List (Nat × ρ)
+  | _, _, [] => []
+  | cur, seen, p :: ps =>
+    (keep kd (if cur = some p then seen else []) (g p.2)).1.map (fun y => (p.1, y)) ++
+      dedupGo (some p) (keep kd (if cur = some p then seen else []) (g p.2)).2 ps
+
+def dedupF (c : SubPlan ρ ρ) : SubPlan ρ ρ := fun a => dedupGo kd g none [] (c a)
+
+theorem dedupGo_tag (o : Nat) : ∀ (xs : List ρ) (cur : Option ρ) (seen : List Nat)
+    (rest : List (Nat × ρ)),
+    dedupGo kd g (cur.map (fun y => (o, y))) seen (xs.map (fun y => (o, y)) ++ rest) =
+      (dgo kd g cur seen xs).map (fun y => (o, y)) ++
+        dedupGo kd g ((dgoSt kd g cur seen xs).1.map (fun y => (o, y))) (dgoSt kd g cur seen xs).2 rest
+  | [], _, _, _ => rfl
+  | x :: xs, cur, seen, rest => by
+    have hiff : (cur.map (fun y => (o, y)) = some (o, x)) = (cur = some x) := by
+      cases cur <;> simp
+    have ih := dedupGo_tag o xs (some x)
+    simp only [Option.map_some] at ih
+    simp only [List.map_cons, List.cons_append, dedupGo, dgo, dgoSt, hiff, List.map_append,
+      List.append_assoc, ih]
+
+theorem dedupGo_reset (o : Nat) (x : ρ) (xs : List ρ) (cur : Option (Nat × ρ)) (seen : List Nat)
+    (rest : List (Nat × ρ)) (h : ∀ q ∈ cur, q.1 ≠ o) :
+    dedupGo kd g cur seen ((x :: xs).map (fun y => (o, y)) ++ rest) =
+      dedupGo kd g none [] ((x :: xs).map (fun y => (o, y)) ++ rest) := by
+  have hc : (cur = some (o, x)) = False := by
+    apply propext; constructor
+    · intro he; exact h _ he rfl
+    · intro hf; exact hf.elim
+  simp only [List.map_cons, List.cons_append, dedupGo, hc, reduceCtorEq, if_false]
+
+theorem dedupGo_groups (c : SubPlan ρ ρ) : ∀ (args : List (Nat × ρ)) (cur : Option (Nat × ρ))
+    (seen : List Nat), (args.map Prod.fst).Nodup → (∀ q ∈ cur, q.1 ∉ args.map Prod.fst) →
+    dedupGo kd g cur seen (args.flatMap (fun p => (single c p.2).map (fun y => (p.1, y)))) =
+      args.flatMap (fun p => (dgo kd g none [] (single c p.2)).map (fun y => (p.1, y)))
+  | [], _, _, _, _ => rfl
+  | p :: args, cur, seen, hn, hcur => by
+    rw [List.map_cons] at hn
+    have hn' := (List.nodup_cons.1 hn).2
+    have hp : p.1 ∉ args.map Prod.fst := (List.nodup_cons.1 hn).1
+    simp only [List.flatMap_cons]
+    cases hs : single c p.2 with
+    | nil =>
+      simp only [List.map_nil, List.nil_append, dgo]
+      exact dedupGo_groups c args cur seen hn' (fun q hq hm => hcur q hq (by simp [hm]))
+    | cons x xs =>
+      rw [dedupGo_reset kd g p.1 x xs cur seen _ (fun q hq he => hcur q hq (by simp [he]))]
+      have := dedupGo_tag kd g p.1 (x :: xs) none [] (args.flatMap
+        (fun p => (single c p.2).map (fun y => (p.1, y))))
+      simp only [Option.map_none] at this
+      rw [this, dedupGo_groups c args _ _ hn']
+      intro q hq
+      simp only [Option.mem_def, Option.map_eq_some_iff] at hq
+      obtain ⟨_, _, rfl⟩ := hq
+      exact hp
+
+/-- **PROVEN** (#3071): over an exactly separable child, the per-record bidirectional dedup is
+exactly separable: batching Apply rows never merges two rows' destinations. -/
+theorem dedupF_dsep (c : SubPlan ρ ρ) (hc : DSep true c) : DSep true (dedupF kd g c) := by
+  intro args hn
+  apply Rel.of_eq
+  have h1 : c args = rowsOf c args := hc args hn
+  have h2 : ∀ x : ρ, single (dedupF kd g c) x = dgo kd g none [] (single c x) := by
+    intro x
+    have h0 : c [(0, x)] = (single c x).map (fun y => ((0 : Nat), y)) := hc.single_at 0 x
+    have := dedupGo_tag kd g 0 (single c x) none [] []
+    simp only [Option.map_none, List.append_nil, dedupGo] at this
+    show (dedupGo kd g none [] (c [(0, x)])).map Prod.snd = _
+    rw [h0, this, List.map_map]
+    exact List.map_id _
+  simp only [dedupF, h1, rowsOf, h2]
+  exact dedupGo_groups kd g c args none [] hn (by simp)
+
+end Dedup
+
 /-! ## What is NOT separable (counterexamples) -/
-
-/-- The anonymous-bidirectional chained `CondTraverse` (`cond_traverse.rs`),
-KNOWN BUG #3106: a `(source, destination)` pair set shared by every row of the input batch
-(cleared only per batch), keyed by the source column value, never by origin. -/
-def dedupRow (src : Nat) (kd : ρ → Nat) (seen : List (Nat × Nat)) :
-    List ρ → List ρ × List (Nat × Nat)
-  | [] => ([], seen)
-  | y :: ys =>
-    if (src, kd y) ∈ seen then dedupRow src kd seen ys
-    else
-      let r := dedupRow src kd ((src, kd y) :: seen) ys
-      (y :: r.1, r.2)
-
-def dedupGo (ks : ρ → Nat) (kd : ρ → Nat) (g : ρ → List ρ) :
-    List (Nat × Nat) → List (Nat × ρ) → List (Nat × ρ)
-  | _, [] => []
-  | seen, p :: ps =>
-    let r := dedupRow (ks p.2) kd seen (g p.2)
-    r.1.map (fun y => (p.1, y)) ++ dedupGo ks kd g r.2 ps
-
-def dedupF (ks : ρ → Nat) (kd : ρ → Nat) (g : ρ → List ρ) (c : SubPlan ρ ρ) : SubPlan ρ ρ :=
-  fun a => dedupGo ks kd g [] (c a)
-
-/-- Two outer rows with the same scan source: the second row's results are all deduplicated away.
-Live (graph `CREATE (:P)-[:R]->(:Q)-[:R]->(:S)`):
-`MATCH (a:P) UNWIND [1,2] AS x MATCH (a)--()--(b) RETURN x, labels(b)` → Rust 2 rows (both `x=1`),
-C 4; `CALL { WITH a MATCH (a)--()--(b) RETURN b }` and `OPTIONAL MATCH` forms likewise. -/
-theorem dedupF_not_separable :
-    ¬ DSep false (dedupF (fun x => x) (fun y => y) (fun _ => [7, 8]) (fun a => a) : SubPlan Nat Nat) := by
-  intro h
-  have := (Rel.perm (h (tag [1, 1] 0) (tag_origins_nodup [1, 1] 0))).length_eq
-  revert this; decide
 
 /-- `Limit` (blacklisted by Apply, admitted by `OptionalOp`'s guard): one cap over all rows. -/
 def limitF (n : Nat) (c : SubPlan ρ ρ) : SubPlan ρ ρ := fun a => (c a).take n

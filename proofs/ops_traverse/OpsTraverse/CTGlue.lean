@@ -75,6 +75,8 @@ structure ChildCT where
   emitRel : Bool
   bidir : Bool
   fromAlias : Nat
+  /-- `child_ct.relationship_pattern.alias.id` -/
+  relAlias : Nat
 
 structure CtCfg where
   dedup : Bool
@@ -87,6 +89,9 @@ structure CtCfg where
   emitHint : Option Nat
   /-- `child_ct.emitter.lift_pack_ceiling()` (proofs/columnar `Emitter.liftPackCeiling`). -/
   liftChild : Bool
+  /-- `BidirDedup::new([rp.from.alias.id, child_ct.relationship_pattern.alias.id])`: the
+  child hop's own bindings, left out of the record identity (`BidirDedup.rec`). -/
+  dedupSkip : Option (Nat × Nat)
 
 def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : List Bool)
     (child : Option ChildCT) (packHint : Option Nat) : CtCfg :=
@@ -102,7 +107,16 @@ def ctNew (rp : RelPat) (emitRel : Bool) (siblings : List Nat) (chainBidir : Lis
   let eligible := !emitRel && !rp.bidir && !dedup && siblings.isEmpty &&
     chainBidir.all (!·)
   { dedup, dedupSrc := src, eligible, toCol := if rp.toAlias ≠ rp.fromAlias then some rp.toAlias else none,
-    produced := 0, emitHint := packHint, liftChild := dedup }
+    produced := 0, emitHint := packHint, liftChild := dedup,
+    dedupSkip := if dedup then child.map (fun c => (rp.fromAlias, c.relAlias)) else none }
+
+/-- The dedup state skips exactly this hop's `from` slot (the child's intermediate node) and
+the child's edge slot, and exists only when the dedup is armed. -/
+theorem ctNew_dedupSkip (rp : RelPat) (er : Bool) (sib : List Nat) (cb : List Bool)
+    (ch : Option ChildCT) (ph : Option Nat) :
+    (ctNew rp er sib cb ch ph).dedupSkip =
+      if (ctNew rp er sib cb ch ph).dedup then ch.map (fun c => (rp.fromAlias, c.relAlias))
+      else none := rfl
 
 /-- #3071: the emitter is sized from the soft `pack_hint`, and the child CT is lifted to
 full batches exactly when the dedup is armed (the dedup set now outlives a child batch,
