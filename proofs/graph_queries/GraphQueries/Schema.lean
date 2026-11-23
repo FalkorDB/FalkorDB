@@ -7,7 +7,8 @@ import GraphQueries.Basic
 | `nextMul`      | `u64::next_multiple_of` (core) |
 | `grbMax`, `ckAdd`, `ckNextMul` | `GrB_INDEX_MAX` (tensor.rs), `checked_add`, `checked_next_multiple_of` |
 | `growStep`, `growCap` | `grow_cap`  (loop body :847-852) |
-| `resizeNodeMs`/`resizeRelMs`/`resize` | `resize_node_matrices`  / `resize_relationship_matrices`  / `resize`  |
+| `resizeNodeMs`/`resize` | `resize_node_matrices`  / `resize`  (#3967: no type matrix to resize) |
+| `edgeTypeSlot`/`relTypeSlot`/`relTypesFit` | `edge_type_slot`  / `relationship_type_slot`  / `relationship_types_fit`  (#3967) |
 | `idx`          | `NameMap::id_of` (schema.rs; first position, `FirstInv` in pending_commit `NameMap`) |
 | `internLabel`  | `intern_label`  |
 | `getLabelId`   | `get_label_id`  |
@@ -173,29 +174,24 @@ def resizeNodeMs (g : G V) : G V :=
            labelMs := g.labelMs.map (·.resize g.nodeCap g.nodeCap) }
   -- tensors: `Tensor::resize` keeps the logical triples (dims are not modelled on `Ten`)
 
-def resizeRelMs (g : G V) : G V :=
-  { g with relType := g.relType.resize g.relCap g.types.length }
-
 def resize (chunk : Nat) (hc : 0 < chunk) (g : G V) : G V :=
   let g1 := if g.nodeCount > g.nodeCap then
       resizeNodeMs { g with nodeCap := growCap chunk g.nodeCap g.nodeCount hc } else g
   let g2 := if g1.labelMs.length > g1.nodeLabels.nc then
       { g1 with nodeLabels := g1.nodeLabels.resize g1.nodeCap g1.labelMs.length } else g1
-  let g3 := if g2.relCount > g2.relCap then
-      resizeRelMs { g2 with relCap := growCap chunk g2.relCap g2.relCount hc } else g2
-  if g3.types.length > g3.relType.nc then
-      { g3 with relType := g3.relType.resize g3.relCap g3.types.length } else g3
+  if g2.relCount > g2.relCap then
+      { g2 with relCap := growCap chunk g2.relCap g2.relCount hc } else g2
 
 /-- Post-condition of `resize`: every dimension covers what it must hold. -/
 theorem resize_post (chunk : Nat) (hc : 0 < chunk) (g : G V) :
     let r := resize chunk hc g
     (g.nodeCount ≤ grbMax → r.nodeCount ≤ r.nodeCap) ∧ r.labelMs.length ≤ r.nodeLabels.nc ∧
-    (g.relCount ≤ grbMax → r.relCount ≤ r.relCap) ∧ r.types.length ≤ r.relType.nc := by
+    (g.relCount ≤ grbMax → r.relCount ≤ r.relCap) := by
   have gn := growCap_ge_needed chunk g.nodeCap g.nodeCount hc
   have gr := growCap_ge_needed chunk g.relCap g.relCount hc
   simp only [resize]
   by_cases h1 : g.nodeCount > g.nodeCap <;> simp only [h1, ite_true, ite_false] <;>
-  (repeat' split) <;> simp_all [resizeNodeMs, resizeRelMs, Mat.resize] <;> omega
+  (repeat' split) <;> simp_all [resizeNodeMs, Mat.resize] <;> omega
 
 /-! ## Label / type id tables -/
 
@@ -273,7 +269,13 @@ theorem resize_keeps (chunk : Nat) (hc : 0 < chunk) (g : G V) :
     let r := resize chunk hc g
     r.labels = g.labels ∧ r.labelsIndex = g.labelsIndex ∧ r.labelMs.length = g.labelMs.length ∧
     r.types = g.types ∧ r.relMs = g.relMs := by
-  simp only [resize]; (repeat' split) <;> simp [resizeNodeMs, resizeRelMs]
+  simp only [resize]; (repeat' split) <;> simp [resizeNodeMs]
+
+/-- `resize` changes no edge's type or endpoints (the type column lives in `edge_endpoints`,
+which `resize` does not touch). -/
+theorem resize_keeps_relTypes (chunk : Nat) (hc : 0 < chunk) (g : G V) :
+    (resize chunk hc g).relTypes = g.relTypes ∧ (resize chunk hc g).endpoints = g.endpoints := by
+  simp only [resize]; (repeat' split) <;> simp [resizeNodeMs]
 
 theorem getLabelIdMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) (h : LInv g) :
     let r := getLabelIdMut chunk hc g s
@@ -354,12 +356,12 @@ theorem idx_some (l : List String) (s : String) (h : s ∈ l) : ∃ i, idx l s =
   | none => exact absurd h ((idx_none l s).1 hh)
   | some i => exact ⟨i, rfl⟩
 
-/-- A *new* type gets its tensor and a widened `relationship_type_matrix`;
-an already-registered one is returned as is. -/
+/-- A *new* type gets its tensor and the next type index (`types.len()` before, which is
+what `relationship_type_slot` checked); an already-registered one is returned as is. -/
 theorem getRelMatMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) (h : TInv g) :
     let r := getRelMatMut chunk hc g s
     TInv r.1 ∧ r.1.types[r.2]? = some s ∧
-    (s ∉ g.types → r.1.types.length ≤ r.1.relType.nc) := by
+    (s ∉ g.types → r.2 = g.types.length) := by
   by_cases hm : s ∈ g.types
   · obtain ⟨i, hi⟩ := idx_some _ _ hm
     simp only [getRelMatMut, hm, ite_true, hi, Option.getD_some]
@@ -367,38 +369,33 @@ theorem getRelMatMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) 
   · simp only [getRelMatMut, hm, ite_false]
     obtain ⟨-, -, -, k4, k5⟩ := resize_keeps chunk hc
       ({ g with types := g.types ++ [s], relMs := vecInsert g.relMs (g.types ++ [s]).length.pred [] } : G V)
-    have kp := (resize_post chunk hc
-      ({ g with types := g.types ++ [s], relMs := vecInsert g.relMs (g.types ++ [s]).length.pred [] } : G V)).2.2.2
-    simp only at k4 k5 kp
+    simp only at k4 k5
     have hn := (idx_none g.types s).2 hm
     simp only [k4, k5, idx_append, hn, ite_true, Option.getD_some, TInv]
-    refine ⟨?_, by simp, fun _ => by rw [k4] at kp; exact kp⟩
+    refine ⟨?_, by simp, fun _ => trivial⟩
     simp only [TInv] at h
     simp only [List.length_append, List.length_singleton, Nat.pred_eq_sub_one, Nat.add_sub_cancel]
     rw [← h, vecInsert_end]; simp
 
-/-- `registerRelType` keeps `relationship_type_matrix` exactly `relationship_cap × |types|`. -/
-theorem registerRelType_width (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String)
-    (hw : g.relType.nr = g.relCap ∧ g.relType.nc = g.types.length) :
+/-- `registerRelType` changes no edge's type or endpoints (#3967: there is no type matrix to
+widen; the type column is per edge, so a new type needs no room in it). -/
+theorem registerRelType_keeps_relTypes (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) :
     let r := (registerRelType chunk hc g s).1
-    r.relType.nr = r.relCap ∧ r.relType.nc = r.types.length := by
+    r.relTypes = g.relTypes ∧ r.endpoints = g.endpoints := by
   simp only [registerRelType]
   split
-  · exact hw
-  simp only [resize]
-  (repeat' split) <;> simp_all [resizeNodeMs, resizeRelMs, Mat.resize] <;> omega
+  · exact ⟨rfl, rfl⟩
+  · exact resize_keeps_relTypes chunk hc _
 
-/-- **`getTypeIdMut_width`**: whatever `get_type_id_mut` registers,
-`relationship_type_matrix` stays `relationship_cap × |types|`, so later edge deletes
-build a mask of the matrix's own shape. -/
-theorem getTypeIdMut_width (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String)
-    (hw : g.relType.nr = g.relCap ∧ g.relType.nc = g.types.length) :
+/-- **`getTypeIdMut_keeps_relTypes`**: whatever `get_type_id_mut` registers, every edge keeps
+its type, so a later delete still clears it (`type_cleared_after_registration`). -/
+theorem getTypeIdMut_keeps_relTypes (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) :
     let r := (getTypeIdMut chunk hc g s).1
-    r.relType.nr = r.relCap ∧ r.relType.nc = r.types.length := by
+    r.relTypes = g.relTypes ∧ r.endpoints = g.endpoints := by
   simp only [getTypeIdMut]
   split
-  · exact hw
-  · exact registerRelType_width chunk hc g s hw
+  · exact ⟨rfl, rfl⟩
+  · exact registerRelType_keeps_relTypes chunk hc g s
 
 /-- `get_relationship_matrix_mut` registers a new type through `register_relationship_type`. -/
 theorem getRelMatMut_new (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) (hn : s ∉ g.types) :
@@ -458,13 +455,15 @@ theorem getLabelMatMut_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String
 def nodeHasLabelId (g : G V) (n l : Nat) : Bool := g.nodeLabels.get n l
 def nodeHasLabel (g : G V) (n : Nat) (s : String) : Bool :=
   match getLabelId g s with | some l => g.nodeLabels.get n l | none => false
-/-- `edge_has_type_id` (`graph.rs`): the relationship-type matrix at `(edge, type)`, no string lookup. -/
-def edgeHasTypeId (g : G V) (e t : Nat) : Bool := g.relType.get e t
+/-- `edge_has_type_id` (`graph.rs`): the type column's entry for the edge is `type_id`
+(`get_type(e).is_some_and(|t| t == type_id)`), no string lookup. -/
+def edgeHasTypeId (g : G V) (e t : Nat) : Bool := g.relTypes e == some t
 /-- `edge_has_type` (`graph.rs`): the type's id by name, then `edge_has_type_id`. -/
 def edgeHasType (g : G V) (e : Nat) (s : String) : Bool :=
   match getTypeId g s with | some t => edgeHasTypeId g e t | none => false
 
-theorem edgeHasTypeId_iff (g : G V) (e t : Nat) : edgeHasTypeId g e t = true ↔ g.relType.get e t = true := Iff.rfl
+theorem edgeHasTypeId_iff (g : G V) (e t : Nat) : edgeHasTypeId g e t = true ↔ g.relTypes e = some t := by
+  simp [edgeHasTypeId]
 
 theorem nodeHasLabel_iff (g : G V) (n : Nat) (s : String) :
     nodeHasLabel g n s = true ↔ ∃ l, getLabelId g s = some l ∧ nodeHasLabelId g n l = true := by
@@ -472,11 +471,11 @@ theorem nodeHasLabel_iff (g : G V) (n : Nat) (s : String) :
 
 theorem edgeHasType_iff (g : G V) (e : Nat) (s : String) :
     edgeHasType g e s = true ↔ ∃ t, g.types[t]? = some s ∧ getTypeId g s = some t ∧
-      g.relType.get e t = true := by
-  unfold edgeHasType edgeHasTypeId; cases ht : getTypeId g s with
+      g.relTypes e = some t := by
+  unfold edgeHasType; cases ht : getTypeId g s with
   | none => simp
   | some t =>
-    simp only
+    simp only [edgeHasTypeId_iff]
     exact ⟨fun h => ⟨t, idx_get _ _ _ ht, rfl, h⟩, fun ⟨_, _, h1, h2⟩ => by cases h1; exact h2⟩
 
 def labelNodeCount (g : G V) (s : String) : Nat := ((getLabelMat g s).map Mat.nvals).getD 0
@@ -490,5 +489,133 @@ theorem labelNodeCount_eq (g : G V) (s : String) (i : Nat) (h : getLabelId g s =
 
 theorem labelNodeCount_unknown (g : G V) (s : String) (h : getLabelId g s = none) :
     labelNodeCount g s = 0 := by simp [labelNodeCount, getLabelMat, h]
+
+/-! ## The relationship type limit (#3967)
+
+The endpoint index stores each edge's type as a `u16`, `u16::MAX` its empty marker, so
+type indices `0..=MAX_TYPE_ID = 65534` can carry edges. Every edge-creating path checks the
+type's slot before it writes anything. -/
+
+/-- `MAX_TYPE_ID` (endpoint_index.rs). -/
+def maxTypeId : Nat := 65534
+
+/-- `edge_type_slot` (graph.rs): `u16::try_from(type_idx).ok().filter(|t| t <= MAX_TYPE_ID)`. -/
+def edgeTypeSlot (i : Nat) : Option Nat := if i ≤ maxTypeId then some i else none
+
+theorem edgeTypeSlot_spec (i t : Nat) : edgeTypeSlot i = some t ↔ t = i ∧ i ≤ maxTypeId := by
+  unfold edgeTypeSlot; split <;> simp_all [eq_comm]
+  intro h; subst h; assumption
+
+/-- `relationship_type_slot` (graph.rs): the type's id, or `types.len()` (the id it would be
+registered with); `none` = `Err(TooManyRelationshipTypes)`. -/
+def relTypeSlot (g : G V) (s : String) : Option Nat :=
+  edgeTypeSlot ((getTypeId g s).getD g.types.length)
+
+/-- **The slot is the id the type has or will get**: when `relationship_type_slot` accepts,
+`get_relationship_matrix_mut` returns that very index (`create_relationships_bulk`'s
+`debug_assert_eq!(edge_type_slot(type_idx), Some(type_slot))`). -/
+theorem relTypeSlot_getRelMatMut (chunk : Nat) (hc : 0 < chunk) (g : G V) (s : String) (h : TInv g)
+    (t : Nat) (ht : relTypeSlot g s = some t) : (getRelMatMut chunk hc g s).2 = t := by
+  unfold relTypeSlot at ht
+  rw [edgeTypeSlot_spec] at ht
+  obtain ⟨rfl, -⟩ := ht
+  by_cases hm : s ∈ g.types
+  · obtain ⟨i, hi⟩ := idx_some _ _ hm
+    simp [getRelMatMut, hm, hi, getTypeId]
+  · rw [(getRelMatMut_spec chunk hc g s h).2.2 hm]
+    simp [getTypeId, (idx_none g.types s).2 hm]
+
+/-- A type past the limit is refused, registered or not. -/
+theorem relTypeSlot_refused (g : G V) (s : String) (h : maxTypeId < (getTypeId g s).getD g.types.length) :
+    relTypeSlot g s = none := by
+  unfold relTypeSlot edgeTypeSlot; rw [ite_eq_right (by omega)]
+
+/-- `relationship_types_fit` (graph.rs): walk the names; a registered one is checked at its
+id, a new one at `next` (then `next += 1`), a repeated new one skipped. `none` = `Ok(())`,
+`some n` = `Err(TooManyRelationshipTypes { name: n, .. })`. -/
+def relTypesFitAux (g : G V) : List String → Nat → List String → Option String
+  | [], _, _ => none
+  | n :: ns, next, new =>
+    match getTypeId g n with
+    | some t => if edgeTypeSlot t = none then some n else relTypesFitAux g ns next new
+    | none =>
+      if n ∈ new then relTypesFitAux g ns next new
+      else if edgeTypeSlot next = none then some n else relTypesFitAux g ns (next + 1) (new ++ [n])
+
+def relTypesFit (g : G V) (names : List String) : Option String :=
+  relTypesFitAux g names g.types.length []
+
+/-- For one name the group check is `relationship_type_slot`. -/
+theorem relTypesFit_single (g : G V) (n : String) :
+    relTypesFit g [n] = none ↔ (relTypeSlot g n).isSome := by
+  unfold relTypesFit relTypeSlot
+  simp only [relTypesFitAux]
+  cases h : getTypeId g n with
+  | some t => simp only [Option.getD_some]; cases edgeTypeSlot t <;> simp
+  | none => simp only [Option.getD_none, List.not_mem_nil, ite_false]; cases edgeTypeSlot g.types.length <;> simp
+
+theorem relTypesFitAux_known (g : G V) : ∀ (ns : List String) (next : Nat) (new : List String),
+    relTypesFitAux g ns next new = none → ∀ n ∈ ns, ∀ t, getTypeId g n = some t → t ≤ maxTypeId := by
+  intro ns
+  induction ns with
+  | nil => intro _ _ _ n hn; cases hn
+  | cons m ms ih =>
+    intro next new h n hn t ht
+    simp only [relTypesFitAux] at h
+    cases hm : getTypeId g m with
+    | some u =>
+      rw [hm] at h; simp only at h
+      split at h
+      · cases h
+      · rename_i hfit
+        rcases List.mem_cons.1 hn with rfl | hn
+        · rw [hm] at ht; cases ht
+          unfold edgeTypeSlot at hfit; split at hfit <;> simp_all
+        · exact ih _ _ h n hn t ht
+    | none =>
+      rw [hm] at h; simp only at h
+      rcases List.mem_cons.1 hn with rfl | hn
+      · rw [hm] at ht; cases ht
+      · split at h
+        · exact ih _ _ h n hn t ht
+        · split at h
+          · cases h
+          · exact ih _ _ h n hn t ht
+
+/-- **Accepted ⇒ every registered name fits.** -/
+theorem relTypesFit_known (g : G V) (names : List String) (h : relTypesFit g names = none)
+    (n : String) (hn : n ∈ names) (t : Nat) (ht : getTypeId g n = some t) : t ≤ maxTypeId :=
+  relTypesFitAux_known g names _ _ h n hn t ht
+
+theorem relTypesFitAux_full (g : G V) : ∀ (ns : List String) (next : Nat) (new : List String),
+    maxTypeId < next → ∀ n ∈ ns, getTypeId g n = none → n ∉ new → relTypesFitAux g ns next new ≠ none := by
+  intro ns
+  induction ns with
+  | nil => intro _ _ _ n hn; cases hn
+  | cons m ms ih =>
+    intro next new hfull n hn hnone hnew
+    simp only [relTypesFitAux]
+    cases hm : getTypeId g m with
+    | some u =>
+      simp only
+      split
+      · simp
+      · rcases List.mem_cons.1 hn with rfl | hn
+        · rw [hm] at hnone; cases hnone
+        · exact ih _ _ hfull n hn hnone hnew
+    | none =>
+      simp only
+      split
+      · rename_i hmn
+        rcases List.mem_cons.1 hn with rfl | hn
+        · exact absurd hmn hnew
+        · exact ih _ _ hfull n hn hnone hnew
+      · rw [ite_eq_left_iff.2 (fun h => (h (by unfold edgeTypeSlot; rw [ite_eq_right (by omega)])).elim)]; simp
+
+/-- **No room ⇒ any new name is refused**: with `MAX_TYPE_ID + 1` types already registered,
+a group that would register one more is refused (before any write). -/
+theorem relTypesFit_full (g : G V) (names : List String) (hfull : maxTypeId < g.types.length)
+    (n : String) (hn : n ∈ names) (hnone : getTypeId g n = none) : relTypesFit g names ≠ none :=
+  relTypesFitAux_full g names _ [] hfull n hn hnone (by simp)
 
 end GQ

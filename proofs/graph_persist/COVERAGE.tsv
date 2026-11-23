@@ -42,10 +42,10 @@ src/redis_type.rs	graphmeta_rdb_save	1010	PROVEN	RedisType.metaSave (= saveKeySl
 src/redis_type.rs	graphmeta_free	1022	PROVEN	RedisType.metaFree: metaFree_spec
 src/redis_type.rs	graphmeta_aux_load	1032	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
 src/redis_type.rs	wrong_type_compat	933	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
-graph/src/graph/graph.rs	create_constraint	4622	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
-graph/src/graph/graph.rs	validate_mandatory_constraint	4797	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4836	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4891	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+graph/src/graph/graph.rs	create_constraint	4604	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4779	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4818	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4873	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
 src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip
@@ -53,12 +53,14 @@ src/serializers/encoder/mod.rs	vec_save_graph	59	PROVEN	Persist.encodeGraph: loa
 src/serializers/encoder/mod.rs	encode_graph	68	PROVEN	Persist.encodeGraph/encDir/encPayload: load_encode, key_rt, decDir_rt, payload_rt, entry_rt
 src/serializers/encoder/mod.rs	build_multi_key_payloads	95	PROVEN	Persist.buildMulti/fillKey/keysFrom: fillKey_spec, multi_key_tiles, multi_key_bound, multi_key_all_placed, multi_key_matrices
 src/serializers/encoder/mod.rs	build_payloads	192	PROVEN	Persist.buildPayloads: load_encode, fold_build, buildPayloads_bounds
-src/serializers/decoder/mod.rs	decode_payload_directory	51	PROVEN	Persist.decDir/decDirEntry/St.accepted: decDir_rt (with buildPayloads_accepted, EntryOK.accepted), decDirEntry_refuses, decDir_refuses_cch
-src/serializers/decoder/mod.rs	check_encoding_version	85	PROVEN	Persist.checkVer: checkVer_iff, key_rt_ver, rdbLoad_refuses
-src/serializers/decoder/mod.rs	rdb_load_graph	115	PROVEN	Persist.rdbLoad (version gate checkVer) + rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build; key_rt_ver, rdbLoad_refuses
-src/serializers/decoder/mod.rs	decode_payloads_into_pending	325	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt
-src/serializers/decoder/mod.rs	finalize_pending_graph	375	PROVEN	Persist.finalizePG: run_keys, multi_load
-src/serializers/decoder/mod.rs	rebuild_indexes	410	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
-src/serializers/decoder/mod.rs	pipe_load_graph	471	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
-src/serializers/decoder/mod.rs	vec_load_graph	486	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
-src/serializers/decoder/mod.rs	load_graph_from_reader	496	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted
+src/serializers/decoder/mod.rs	push_tensor	56	PROVEN	Persist.decTn/decTns (decode a tensor, then check_type_fits on its index): decTns_rt, decTns_rt0, decTn_refuses
+src/serializers/decoder/mod.rs	check_type_fits	67	PROVEN	Persist.checkTypeFits: checkTypeFits_false (index > maxTypeId = 65534 with edges refused), decTn_refuses
+src/serializers/decoder/mod.rs	decode_payload_directory	80	PROVEN	Persist.decDir/decDirEntry/St.accepted: decDir_rt (with buildPayloads_accepted, EntryOK.accepted), decDirEntry_refuses, decDir_refuses_cch
+src/serializers/decoder/mod.rs	check_encoding_version	114	PROVEN	Persist.checkVer: checkVer_iff, key_rt_ver, rdbLoad_refuses
+src/serializers/decoder/mod.rs	rdb_load_graph	144	PROVEN	Persist.rdbLoad (version gate checkVer) + rdbKey (+ stepKey for key_count > 1): key_rt, run_keys, run_prefix_pending, multi_load (any key order); key_count 1: key_rt K=1 + fold_build; key_rt_ver, rdbLoad_refuses; #3967 RelationMatrices tensors pass push_tensor (Persist.decTns; WF.tfit): decTns_rt0, decTn_refuses
+src/serializers/decoder/mod.rs	decode_payloads_into_pending	353	PROVEN	Persist.decPayload/applyPR into PG: fold_char, multi_acc, entry_rt; #3967 RelationMatrices tensors pass push_tensor (Persist.decTns; WF.tfit): decTns_rt0, decTn_refuses
+src/serializers/decoder/mod.rs	finalize_pending_graph	403	PROVEN	Persist.finalizePG: run_keys, multi_load; #3967 RelationMatrices tensors pass push_tensor (Persist.decTns; WF.tfit): decTns_rt0, decTn_refuses
+src/serializers/decoder/mod.rs	rebuild_indexes	437	PROVEN	Persist.Indexes.rebuild: rebuild_calls, rebuild_entity, rebuild_meta_first, rebuild_no_meta (create_index_sync = index layer)
+src/serializers/decoder/mod.rs	pipe_load_graph	498	PROVEN	Persist.loadFromReader (PipeReader): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/decoder/mod.rs	vec_load_graph	513	PROVEN	Persist.loadFromReader (from_slice): load_encode, truncated_payload_eof, empty_payload_eof (#2537: any word-boundary cut -> LoadStringBuffer(NULL), confirmed live)
+src/serializers/decoder/mod.rs	load_graph_from_reader	523	PROVEN	Persist.loadFromReader/kHdr/kSch/kDir: load_encode, truncated_payload_eof, buildPayloads_accepted; #3967 RelationMatrices tensors pass push_tensor (Persist.decTns; WF.tfit): decTns_rt0, decTn_refuses

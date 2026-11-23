@@ -38,6 +38,50 @@ a known name is left alone, a new one is appended to `relationship_types`
 (graph_queries `Schema.getTypeIdMut`; its tensor and resize touch no id space). -/
 def regT (g : Gr) (t : Nat) : Gr := (g.1, g.2.1, if t ∈ g.2.2 then g.2.2 else g.2.2 ++ [t])
 
+/-- `relationship_types_fit` (graph.rs, #3967) on this graph: a registered name is checked at its
+index, a new one at `next` (then `next + 1`), a repeated new one skipped; an index fits when it is
+at most `MAX_TYPE_ID = 65534` (graph_queries `Schema.relTypesFitAux`, names as `Nat`s). -/
+def fitAux (tys : List Nat) : List Nat → Nat → List Nat → Bool
+  | [], _, _ => true
+  | n :: ns, next, new =>
+    match tys.idxOf? n with
+    | some t => if t ≤ GQ.maxTypeId then fitAux tys ns next new else false
+    | none =>
+      if n ∈ new then fitAux tys ns next new
+      else if next ≤ GQ.maxTypeId then fitAux tys ns (next + 1) (new ++ [n]) else false
+
+def fit (g : Gr) (ns : List Nat) : Bool := fitAux g.2.2 ns g.2.2.length []
+
+/-- With `MAX_TYPE_ID + 1` types registered, a cascade carrying an unregistered type is refused. -/
+theorem fitAux_full (tys : List Nat) (hfull : GQ.maxTypeId < tys.length) :
+    ∀ (ns : List Nat) (next : Nat) (new : List Nat), tys.length ≤ next →
+    ∀ n ∈ ns, n ∉ tys → n ∉ new → fitAux tys ns next new = false := by
+  intro ns
+  induction ns with
+  | nil => intro _ _ _ n hn; cases hn
+  | cons m ms ih =>
+    intro next new hnext n hn hnt hnew
+    simp only [fitAux]
+    cases hm : tys.idxOf? m with
+    | some t =>
+      simp only
+      split
+      · rcases List.mem_cons.1 hn with rfl | hn
+        · exact absurd (List.idxOf?_eq_none_iff.2 hnt) (by rw [hm]; simp)
+        · exact ih _ _ hnext n hn hnt hnew
+      · rfl
+    | none =>
+      simp only
+      split
+      · rcases List.mem_cons.1 hn with rfl | hn
+        · contradiction
+        · exact ih _ _ hnext n hn hnt hnew
+      · rw [if_neg (by omega)]
+
+theorem fit_full (g : Gr) (hfull : GQ.maxTypeId < (types g).length) (ns : List Nat) (n : Nat)
+    (hn : n ∈ ns) (hnt : n ∉ types g) : fit g ns = false :=
+  fitAux_full g.2.2 hfull ns _ [] (Nat.le_refl _) n hn hnt (by simp)
+
 theorem rCancel_ok (s s' : IdS) (id : Nat) (h : rCancel s id = some s') :
     s'.recycled = ins s.recycled id := by
   unfold rCancel at h
@@ -102,15 +146,22 @@ theorem cancelR_types : KeepsTypes types cancelR := by
 
 /-- `deletePendingNode_spec` for the Rust graph: `CancelSpec` and `RegSpec` discharged. -/
 theorem deletePendingNode_spec_rust :
-    type_of% (@deletePendingNode_spec Gr types freeN freeR cancelN cancelR regT cancelN_spec cancelR_spec
+    type_of% (@deletePendingNode_spec Gr types freeN freeR fit cancelN cancelR regT cancelN_spec cancelR_spec
       regT_spec cancelR_types cancelN_types) :=
-  @deletePendingNode_spec Gr types freeN freeR cancelN cancelR regT cancelN_spec cancelR_spec
+  @deletePendingNode_spec Gr types freeN freeR fit cancelN cancelR regT cancelN_spec cancelR_spec
     regT_spec cancelR_types cancelN_types
 
 /-- `removeRelsG_spec` for the Rust graph: `CancelSpec` and `RegSpec` discharged. -/
 theorem removeRelsG_spec_rust :
-    type_of% (@removeRelsG_spec Gr types freeN freeR cancelR regT cancelR_spec regT_spec cancelR_types) :=
-  @removeRelsG_spec Gr types freeN freeR cancelR regT cancelR_spec regT_spec cancelR_types
+    type_of% (@removeRelsG_spec Gr types freeN freeR fit cancelR regT cancelR_spec regT_spec cancelR_types) :=
+  @removeRelsG_spec Gr types freeN freeR fit cancelR regT cancelR_spec regT_spec cancelR_types
+
+/-- **#3967 on the Rust graph**: with the type column full, a node delete whose cascade carries a
+new type is refused before anything is undone. -/
+theorem removeRelsG_type_refused_rust (p : P) (g : Gr) (id : Nat) (hfull : GQ.maxTypeId < (types g).length)
+    (n : Nat) (hn : n ∈ Tys (collect p id)) (hnt : n ∉ types g) :
+    removeRelsG fit cancelR regT p g id = none :=
+  removeRelsG_type_refused fit cancelR regT p g id (fit_full g hfull _ n hn hnt)
 
 #print axioms deletePendingNode_spec_rust
 

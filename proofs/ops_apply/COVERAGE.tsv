@@ -47,7 +47,7 @@ graph/src/runtime/ops/delete.rs	next	116	PROVEN	Delete.deleteNext: deleteNext_sp
 graph/src/runtime/ops/delete.rs	delete_batch	130	PROVEN	Delete.deleteBatch/scan: deleteBatch_vars, scan_nodes, deleteBatch_mismatch; DeleteCancel.deleteBatchE/scanE: deleteBatchE_ok, scanE_ok
 graph/src/runtime/ops/delete.rs	delete_nodes_bulk	213	PROVEN	Delete.delNodesBulk/bulkScan: delNodesBulk_spec, bulkScan_spec; DeleteCancel.delNodesBulkE/bulkScanE/markCommitted: delNodesBulkE_ok, bulkScanE_ok, markCommitted_ok
 graph/src/runtime/ops/delete.rs	delete_relationships_bulk	319	PROVEN	Delete.delRelsBulk/relScan: delRelsBulk_spec, relScan_cls, foldl_delRel
-graph/src/runtime/ops/delete.rs	delete_entity	415	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
+graph/src/runtime/ops/delete.rs	delete_entity	394	PROVEN	Delete.delEntity/delNode/delRel: delEntity_spec, delNode_gone, delNode_other, delRel_gone; DeleteCancel.delEntityE/delNodeE: delEntityE_ok, delNodeE_ok, delNodeE_gone, delNodeE_refusedP, delNodeE_refusedC
 graph/src/runtime/ops/set.rs	new	40	PROVEN	SetRemove.SetSt.new: setNew_spec
 graph/src/runtime/ops/set.rs	next	59	PROVEN	SetRemove.opNext: opNext_spec
 graph/src/runtime/ops/set.rs	set_batch	76	PROVEN	SetRemove.perRow: perRow_spec

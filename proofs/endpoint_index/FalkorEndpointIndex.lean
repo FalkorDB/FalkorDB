@@ -1207,6 +1207,237 @@ theorem u64_max_one_side_is_live :
 #print axioms detach_delete_index
 #print axioms paged_at
 #print axioms ensurePages_spec
+
+/-! ## The type column (#3967)
+
+`EndpointIndex` also holds `types: Option<Arc<Paged<u16>>>`, `edge_id -> type id`, indexed
+by edge id directly (no tiers). It is independent of the endpoint tiers: `set` writes both,
+`clear` vacates both, `prepare` / `prepare_tiers` grow both. `TIx` is the whole index: the
+endpoint tiers `ix` (everything above) and the type column's flat slot list `types` (`None`
+is the empty list: `get_type` answers `None` for every id of either, and `allocated_bytes`
+of an empty `Paged` is 0). The paging of the column is the generic `Paged<S>` of
+`EndpointPaged` with `fill = NO_TYPE` (`Paged.growTypes_paged`). -/
+
+/-- `NO_TYPE = u16::MAX`, the type column's empty marker. -/
+def NO_TYPE : Nat := 65535
+/-- `MAX_TYPE_ID = u16::MAX - 1`: the largest storable type id. -/
+def MAX_TYPE_ID : Nat := 65534
+
+/-- `grow_types(len)`: `ensure_pages(len)`, `types.len = len`, only when `len` is larger. -/
+def growTypes (ts : List Nat) (n : Nat) : List Nat :=
+  if n > ts.length then ts ++ List.replicate (n - ts.length) NO_TYPE else ts
+
+/-- `get_type`: `None` past the end or on an empty slot (`NO_TYPE`). -/
+def getTypeT (ts : List Nat) (e : Nat) : Option Nat :=
+  match ts[e]? with
+  | some t => if t = NO_TYPE then none else some t
+  | none => none
+
+structure TIx where
+  ix : Ix := {}
+  types : List Nat := []
+
+namespace TIx
+
+/-- `EndpointIndex::get`: the endpoint tiers only. -/
+def get (x : TIx) (e : Nat) : Option Slot := x.ix.get e
+/-- `EndpointIndex::get_type`. -/
+def getType (x : TIx) (e : Nat) : Option Nat := getTypeT x.types e
+
+/-- `EndpointIndex::set(edge_id, src, dst, type_id)`: `grow_types(slot + 1)`, write the
+type at `slot`, then the endpoint arms (`Ix.set`). -/
+def set (x : TIx) (e s d t : Nat) : TIx :=
+  { ix := x.ix.set e s d, types := (growTypes x.types (e + 1)).set e t }
+
+/-- `EndpointIndex::clear`: vacate the endpoint slot, then `NO_TYPE` at `slot` if
+`slot < types.len()`. -/
+def clear (x : TIx) (e : Nat) : TIx :=
+  { ix := x.ix.clear e, types := if e < x.types.length then x.types.set e NO_TYPE else x.types }
+
+/-- `EndpointIndex::prepare`: the endpoint tier sizing, then `grow_types(needed)`,
+`needed = max_edge_id + 1`. -/
+def prepare (x : TIx) (m n : Nat) : TIx :=
+  { ix := x.ix.prepare m n, types := growTypes x.types (m + 1) }
+
+/-- `EndpointIndex::prepare_tiers`: the four tiers, then `grow_types(len)` if `len > 0`. -/
+def prepareTiers (x : TIx) (s1 s2 s3 len : Nat) : TIx :=
+  { ix := x.ix.prepareTiers s1 s2 s3 len, types := if len > 0 then growTypes x.types len else x.types }
+
+end TIx
+
+theorem getTypeT_growTypes (ts : List Nat) (n i : Nat) : getTypeT (growTypes ts n) i = getTypeT ts i := by
+  unfold growTypes; split
+  · unfold getTypeT
+    by_cases hi : i < ts.length
+    · rw [List.getElem?_append_left hi]
+    · rw [List.getElem?_append_right (by omega), List.getElem?_replicate,
+        List.getElem?_eq_none (by omega)]
+      by_cases h : i - ts.length < n - ts.length <;> simp [h]
+  · rfl
+
+theorem length_growTypes (ts : List Nat) (n : Nat) : n ≤ (growTypes ts n).length := by
+  unfold growTypes; split
+  · simp only [List.length_append, List.length_replicate]; omega
+  · omega
+
+/-- **`get_type` after `set`**: id `e` reads the type written (any type id below the empty
+marker, i.e. up to `MAX_TYPE_ID`), every other id is unchanged. -/
+theorem getType_set (x : TIx) (e s d t : Nat) (ht : t ≤ MAX_TYPE_ID) (i : Nat) :
+    (x.set e s d t).getType i = if i = e then some t else x.getType i := by
+  simp only [TIx.getType, TIx.set]
+  by_cases hi : i = e
+  · subst hi
+    have hl := length_growTypes x.types (i + 1)
+    have hlt : i < (growTypes x.types (i + 1)).length := by omega
+    simp only [getTypeT, List.getElem?_set_self hlt, ite_true]
+    have : t ≠ NO_TYPE := by simp only [NO_TYPE, MAX_TYPE_ID] at ht ⊢; omega
+    simp [this]
+  · rw [ite_eq_right hi, ← getTypeT_growTypes x.types (e + 1) i]
+    simp only [getTypeT, List.getElem?_set_ne (Ne.symm hi)]
+
+/-- **`get_type` after `clear`**: id `e` reads absent, every other id is unchanged. -/
+theorem getType_clear (x : TIx) (e i : Nat) :
+    (x.clear e).getType i = if i = e then none else x.getType i := by
+  simp only [TIx.getType, TIx.clear]
+  split
+  · by_cases hi : i = e
+    · subst hi; simp [getTypeT, List.getElem?_set_self (by omega)]
+    · simp [getTypeT, List.getElem?_set_ne (Ne.symm hi), hi]
+  · rename_i hl
+    by_cases hi : i = e
+    · subst hi; simp [getTypeT, List.getElem?_eq_none (Nat.le_of_not_lt hl)]
+    · simp [hi]
+
+/-- `prepare` and `prepare_tiers` change no type anyone can read. -/
+theorem getType_prepare (x : TIx) (m n i : Nat) : (x.prepare m n).getType i = x.getType i := by
+  simp [TIx.getType, TIx.prepare, getTypeT_growTypes]
+
+theorem getType_prepareTiers (x : TIx) (s1 s2 s3 len i : Nat) :
+    (x.prepareTiers s1 s2 s3 len).getType i = x.getType i := by
+  simp only [TIx.getType, TIx.prepareTiers]; split
+  · exact getTypeT_growTypes _ _ _
+  · rfl
+
+/-- The endpoint half of each operation is exactly the `Ix` operation, so every theorem
+above (`get_set`, `get_clear`, `get_prepare`, `view_prepareTiers`, `run_refines`) is about
+the new `EndpointIndex` too. -/
+theorem tix_ix (x : TIx) (e s d t m n s1 s2 s3 len : Nat) :
+    (x.set e s d t).ix = x.ix.set e s d ∧ (x.clear e).ix = x.ix.clear e ∧
+    (x.prepare m n).ix = x.ix.prepare m n ∧
+    (x.prepareTiers s1 s2 s3 len).ix = x.ix.prepareTiers s1 s2 s3 len :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-! ### Any sequence of operations, with types -/
+
+inductive TOp where
+  | set (e s d t : Nat)
+  | clear (e : Nat)
+  | prepare (maxEdgeId maxEndpoint : Nat)
+
+def TOp.apply (x : TIx) : TOp → TIx
+  | .set e s d t => x.set e s d t
+  | .clear e => x.clear e
+  | .prepare m n => x.prepare m n
+
+/-- Every caller passes a type id from `edge_type_slot` (at most `MAX_TYPE_ID`; `set`'s
+`debug_assert_ne!(type_id, NO_TYPE)`). -/
+def TOp.valid : TOp → Prop
+  | .set _ s d t => Valid s d ∧ t ≤ MAX_TYPE_ID
+  | _ => True
+
+/-- The endpoint half of an operation. -/
+def TOp.ep : TOp → Op
+  | .set e s d _ => .set e s d
+  | .clear e => .clear e
+  | .prepare m n => .prepare m n
+
+/-- The reference for the type column: a flat map from edge id to type. -/
+def TOp.tref (g : Nat → Option Nat) : TOp → (Nat → Option Nat)
+  | .set e _ _ t => fun i => if i = e then some t else g i
+  | .clear e => fun i => if i = e then none else g i
+  | .prepare _ _ => g
+
+def trun (x : TIx) (ops : List TOp) : TIx := ops.foldl TOp.apply x
+def trefRun (g : Nat → Option Nat) (ops : List TOp) : Nat → Option Nat := ops.foldl TOp.tref g
+
+theorem trun_ix (ops : List TOp) : ∀ x : TIx, (trun x ops).ix = run x.ix (ops.map TOp.ep) := by
+  induction ops with
+  | nil => intro x; rfl
+  | cons op ops ih =>
+    intro x
+    simp only [trun, List.foldl_cons, List.map_cons, run] at ih ⊢
+    rw [ih]; cases op <;> rfl
+
+theorem trun_types (ops : List TOp) : ∀ (x : TIx) (g : Nat → Option Nat), (∀ i, x.getType i = g i) →
+    (∀ op ∈ ops, op.valid) → ∀ i, (trun x ops).getType i = trefRun g ops i := by
+  induction ops with
+  | nil => intro x g hg _ i; exact hg i
+  | cons op ops ih =>
+    intro x g hg hv i
+    refine ih (op.apply x) (op.tref g) (fun j => ?_) (fun o ho => hv o (List.mem_cons_of_mem _ ho)) i
+    have hop := hv op (List.mem_cons_self ..)
+    cases op with
+    | set e s d t => simp only [TOp.apply, TOp.tref]; rw [getType_set x e s d t hop.2, hg]
+    | clear e => simp only [TOp.apply, TOp.tref]; rw [getType_clear, hg]
+    | prepare m n => simp only [TOp.apply, TOp.tref]; rw [getType_prepare, hg]
+
+/-- **Headline, with types.** After any valid sequence of `set` / `clear` / `prepare` on a
+well-formed index that agrees with the two reference maps, `get` agrees with the endpoint
+map and `get_type` with the type map, id by id. -/
+theorem trun_refines (ops : List TOp) (x : TIx) (f : Nat → Option Slot) (g : Nat → Option Nat)
+    (hw : WF x.ix) (hf : ∀ i, x.get i = f i) (hg : ∀ i, x.getType i = g i)
+    (hv : ∀ op ∈ ops, op.valid) :
+    WF (trun x ops).ix ∧ (∀ i, (trun x ops).get i = refRun f (ops.map TOp.ep) i) ∧
+      ∀ i, (trun x ops).getType i = trefRun g ops i := by
+  have hv' : ∀ op ∈ ops.map TOp.ep, op.valid := by
+    intro op hop
+    obtain ⟨o, ho, rfl⟩ := List.mem_map.1 hop
+    have := hv o ho
+    cases o <;> simp_all [TOp.ep, TOp.valid, Op.valid]
+  have h := run_refines (ops.map TOp.ep) x.ix f hw hf hv'
+  refine ⟨?_, fun i => ?_, trun_types ops x g hg hv⟩
+  · rw [trun_ix]; exact h.1
+  · simp only [TIx.get]; rw [trun_ix]; exact h.2 i
+
+theorem empty_getType (i : Nat) : ({} : TIx).getType i = none := by
+  simp [TIx.getType, getTypeT]
+
+/-- The two reference maps move together: every operation either writes both (`set`),
+clears both (`clear`) or neither (`prepare`). -/
+theorem ref_isSome (ops : List TOp) : ∀ (f : Nat → Option Slot) (g : Nat → Option Nat),
+    (∀ i, (f i).isSome = (g i).isSome) →
+    ∀ i, (refRun f (ops.map TOp.ep) i).isSome = (trefRun g ops i).isSome := by
+  induction ops with
+  | nil => intro f g h i; exact h i
+  | cons op ops ih =>
+    intro f g h i
+    simp only [List.map_cons, refRun, trefRun, List.foldl_cons] at ih ⊢
+    apply ih
+    intro j
+    cases op with
+    | set e s d t => simp only [TOp.ep, Op.ref, TOp.tref]; split <;> simp_all
+    | clear e => simp only [TOp.ep, Op.ref, TOp.tref]; split <;> simp_all
+    | prepare m n => exact h j
+
+/-- **An edge has endpoints iff it has a type.** From a fresh index, after any valid
+sequence of operations, `get` and `get_type` are absent for exactly the same ids: the type
+column never reports a type for a deleted or never-created edge, and never loses the type of
+a live one (what `relationship_type_matrix` held before #3967). -/
+theorem fresh_type_iff_endpoints (ops : List TOp) (hv : ∀ op ∈ ops, op.valid) (i : Nat) :
+    ((trun {} ops).get i).isSome = ((trun {} ops).getType i).isSome := by
+  obtain ⟨_, h1, h2⟩ := trun_refines ops {} (fun _ => none) (fun _ => none) empty_wf
+    (fun i => empty_get i) empty_getType hv
+  rw [h1, h2]
+  exact ref_isSome ops _ _ (fun _ => rfl) i
+
+/-- The Rust test `types_round_trip_and_clear_with_the_endpoints`: the largest storable
+type id is not the empty marker, and a cleared id reads absent. -/
+theorem max_type_id_reads_back (x : TIx) (e s d : Nat) :
+    (x.set e s d MAX_TYPE_ID).getType e = some MAX_TYPE_ID ∧ ((x.set e s d MAX_TYPE_ID).clear e).getType e = none := by
+  refine ⟨by rw [getType_set x e s d _ (Nat.le_refl _)]; simp, by rw [getType_clear]; simp⟩
+
+#print axioms trun_refines
+#print axioms fresh_type_iff_endpoints
 -- PROOFS
 
 end Falkor.EndpointIndex

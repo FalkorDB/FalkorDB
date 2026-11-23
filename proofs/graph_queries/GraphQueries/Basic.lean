@@ -125,7 +125,9 @@ structure G (V : Type) where
   zero : Mat
   adj : Mat
   nodeLabels : Mat
-  relType : Mat
+  /-- The endpoint index's type column (`edge_endpoints.get_type`, #3967): edge id ↦ type
+  index, `none` for a missing, deleted or never-typed edge. -/
+  relTypes : Nat → Option Nat
   labelMs : List Mat
   relMs : List Ten
   endpoints : Nat → Option (Nat × Nat)
