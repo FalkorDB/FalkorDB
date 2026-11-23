@@ -41,7 +41,7 @@ use crate::effects::EffectsBuffer;
 use crate::{
     graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
-    index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
+    index::indexer::{IndexOptions, IndexQuery, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
     planner::IR,
     runtime::{
@@ -1600,6 +1600,80 @@ impl<'a> Runtime<'a> {
         let id = g.get_rel_attr_id(attr)?;
         Self::memo_insert(&self.rel_attr_id_memo, attr, id);
         Some(id)
+    }
+
+    /// The attribute ids `query` reads, each resolved once: a scan evaluating the query on every
+    /// node would otherwise look the names up per row. `None` for a name no node has.
+    #[must_use]
+    pub fn resolve_node_query_attrs(
+        &self,
+        query: &IndexQuery<Value>,
+    ) -> Vec<(Arc<String>, Option<u16>)> {
+        let g = self.graph();
+        let mut keys = Vec::new();
+        query.keys(&mut keys);
+        keys.into_iter()
+            .map(|key| {
+                let id = self.node_attr_id(&g, &key);
+                (key, id)
+            })
+            .collect()
+    }
+
+    /// [`Self::resolve_node_query_attrs`] for relationship attributes.
+    #[must_use]
+    pub fn resolve_relationship_query_attrs(
+        &self,
+        query: &IndexQuery<Value>,
+    ) -> Vec<(Arc<String>, Option<u16>)> {
+        let g = self.graph();
+        let mut keys = Vec::new();
+        query.keys(&mut keys);
+        keys.into_iter()
+            .map(|key| {
+                let id = self.rel_attr_id(&g, &key);
+                (key, id)
+            })
+            .collect()
+    }
+
+    /// Whether node `id` satisfies `query`, reading its attributes as this query sees them: the
+    /// staged writes first, then the graph. `attrs` is [`Self::resolve_node_query_attrs`].
+    #[must_use]
+    pub fn node_holds(
+        &self,
+        id: NodeId,
+        query: &IndexQuery<Value>,
+        attrs: &[(Arc<String>, Option<u16>)],
+    ) -> bool {
+        let g = self.graph();
+        query.holds(&mut |key| {
+            let attr = attrs.iter().find(|(k, _)| k == key)?.1?;
+            self.pending
+                .borrow()
+                .get_node_attribute(id, attr)
+                .cloned()
+                .or_else(|| g.get_node_attribute_by_idx(id, attr))
+        })
+    }
+
+    /// [`Self::node_holds`] for relationship `id`.
+    #[must_use]
+    pub fn relationship_holds(
+        &self,
+        id: RelationshipId,
+        query: &IndexQuery<Value>,
+        attrs: &[(Arc<String>, Option<u16>)],
+    ) -> bool {
+        let g = self.graph();
+        query.holds(&mut |key| {
+            let attr = attrs.iter().find(|(k, _)| k == key)?.1?;
+            self.pending
+                .borrow()
+                .get_relationship_attribute(id, attr)
+                .cloned()
+                .or_else(|| g.get_relationship_attribute_by_idx(id, attr))
+        })
     }
 
     pub fn get_node_attribute(

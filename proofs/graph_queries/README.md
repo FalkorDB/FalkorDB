@@ -114,18 +114,18 @@ The lakefile has no path dependencies. `IdRust.lean` copies `proofs/id_space`'s 
 
 ## Coverage
 
-`COVERAGE.tsv` has 198 rows (194 in `graph.rs`, 4 in `constraint.rs`):
+`COVERAGE.tsv` has 188 rows (180 in `graph.rs`, 4 in `constraint.rs`, 3 in `schema_hash.rs`, 1 in `schema.rs`):
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 185 |
+| PROVEN | 177 |
 | CONDITIONAL | 1 |
-| AXIOMATISED | 12 |
+| AXIOMATISED | 10 |
 
 - **CONDITIONAL:** `first_node_with_relationships`, on `AdjExact` (above).
 - **AXIOMATISED:** functions that only hand off to code outside this project:
   - GraphBLAS fold and wait (`flush_for_bulk`, `fold_oversized_deltas`, `wait_all`; `proofs/versioned_matrix` proves folds keep the logical content);
-  - RediSearch delegations (`is_indexed`, `get_indexed_nodes`, `is_edge_indexed`, `get_indexed_edges`, `fulltext_query_nodes`, `fulltext_query_edges`, `cancel_indexing`);
+  - RediSearch delegations (`is_indexed`, `is_edge_indexed`, `fulltext_query_nodes`, `fulltext_query_edges`, `cancel_indexing`);
   - mutex plumbing (`index_locks`, `set_indexer_graph`).
 
 ## What the model does not cover

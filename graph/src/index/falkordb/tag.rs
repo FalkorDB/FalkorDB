@@ -41,6 +41,9 @@ pub enum StrSel {
     Set(Vec<Arc<String>>),
     /// Every string between these bounds, in byte (codepoint) order.
     Window(StrBounds),
+    /// Every string any member selects: a union with a window in it (`v = 'a' OR v > 'x'`). The
+    /// members are never themselves unions.
+    Any(Vec<Self>),
 }
 
 impl StrSel {
@@ -81,6 +84,43 @@ impl StrSel {
         match self {
             Self::Set(strings) => strings.is_empty(),
             Self::Window(window) => is_empty_window(window),
+            Self::Any(members) => members.iter().all(Self::is_empty),
+        }
+    }
+
+    /// The strings either selects: a union of string predicates on one attribute. Two sets stay a
+    /// set; anything with a window in it is an [`Any`](Self::Any), flattened.
+    #[must_use]
+    pub fn or(
+        self,
+        other: Self,
+    ) -> Self {
+        Self::or_all([self, other])
+    }
+
+    /// The strings any of `sets` selects, normalised once however many there are.
+    #[must_use]
+    pub fn or_all(sets: impl IntoIterator<Item = Self>) -> Self {
+        let sets: Vec<Self> = sets.into_iter().filter(|s| !s.is_empty()).collect();
+        if sets.iter().all(|s| matches!(s, Self::Set(_))) {
+            let mut all = Vec::new();
+            for set in sets {
+                if let Self::Set(strings) = set {
+                    all.extend(strings);
+                }
+            }
+            return Self::set(all);
+        }
+        let mut members = Vec::new();
+        for side in sets {
+            match side {
+                Self::Any(inner) => members.extend(inner),
+                other => members.push(other),
+            }
+        }
+        match members.len() {
+            1 => members.pop().expect("one member"),
+            _ => Self::Any(members),
         }
     }
 
@@ -93,6 +133,9 @@ impl StrSel {
                 .iter()
                 .map(|s| (Bound::Included(s.clone()), Bound::Included(s.clone())))
                 .collect(),
+            // Members may overlap (`v = 'a' OR v >= 'a'`): their ranges are merged, so no doc is
+            // read twice.
+            Self::Any(members) => merge_ranges(members.iter().flat_map(Self::ranges).collect()),
             Self::Window(window) if is_empty_window(window) => Vec::new(),
             Self::Window(window) => vec![window.clone()],
         }
@@ -107,10 +150,16 @@ impl StrSel {
         match self {
             Self::Set(strings) => strings.binary_search(s).is_ok(),
             Self::Window(window) => window.contains(s),
+            Self::Any(members) => members.iter().any(|member| member.contains(s)),
         }
     }
 
     /// The strings both select: a conjunction of string predicates on one attribute.
+    ///
+    /// A set is filtered by the other side. Two selections with a window in them are intersected
+    /// as the disjoint, ordered key ranges they select, in one pass over both: distributing each
+    /// member of a union over the other side would grow with the product of their sizes, and a
+    /// conjunction of `k` two-window unions on one attribute would build `2^k` windows.
     #[must_use]
     pub fn intersect(
         self,
@@ -123,8 +172,45 @@ impl StrSel {
             (Self::Window((alo, ahi)), Self::Window((blo, bhi))) => {
                 Self::Window((cmp::max_by(alo, blo, cmp_lo), cmp::min_by(ahi, bhi, cmp_hi)))
             }
+            (a, b) => {
+                let mut windows = intersect_ranges(&a.ranges(), &b.ranges());
+                match windows.len() {
+                    0 => Self::none(),
+                    1 => Self::Window(windows.remove(0)),
+                    _ => Self::Any(windows.into_iter().map(Self::Window).collect()),
+                }
+            }
         }
     }
+}
+
+/// The ranges both `a` and `b` select, each given as disjoint ranges in key order, and the result
+/// in the same form.
+fn intersect_ranges(
+    a: &[StrBounds],
+    b: &[StrBounds],
+) -> Vec<StrBounds> {
+    let mut out = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while let (Some((alo, ahi)), Some((blo, bhi))) = (a.get(i), b.get(j)) {
+        let window = (
+            cmp::max_by(alo.clone(), blo.clone(), cmp_lo),
+            cmp::min_by(ahi.clone(), bhi.clone(), cmp_hi),
+        );
+        if !is_empty_window(&window) {
+            out.push(window);
+        }
+        // The range that ends first cannot meet anything further on the other side.
+        match cmp_hi(ahi, bhi) {
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
+            Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out
 }
 
 /// Whether no string lies in `window`. An inverted window is not a valid range for a cursor, so
@@ -167,6 +253,33 @@ fn cmp_hi(
             .cmp(y)
             .then(matches!(a, Bound::Included(_)).cmp(&matches!(b, Bound::Included(_)))),
     }
+}
+
+/// `ranges` as disjoint ranges in key order, each key in exactly the ranges it was in before.
+/// Ranges that overlap or meet with no key between them are joined; two that both exclude the key
+/// between them (`< 'x'` and `> 'x'`) are not, since `x` is in neither.
+fn merge_ranges(mut ranges: Vec<StrBounds>) -> Vec<StrBounds> {
+    // Whether a range ending at `hi` and one starting at `lo` leave no key between them.
+    let joins = |hi: &Bound<Arc<String>>, lo: &Bound<Arc<String>>| match (hi, lo) {
+        (Bound::Unbounded, _) | (_, Bound::Unbounded) => true,
+        (Bound::Excluded(x), Bound::Excluded(y)) => y < x,
+        (Bound::Included(x) | Bound::Excluded(x), Bound::Included(y) | Bound::Excluded(y)) => {
+            y <= x
+        }
+    };
+    ranges.sort_by(|a, b| cmp_lo(&a.0, &b.0));
+    let mut out: Vec<StrBounds> = Vec::with_capacity(ranges.len());
+    for (lo, hi) in ranges {
+        match out.last_mut() {
+            Some((_, last_hi)) if joins(last_hi, &lo) => {
+                if cmp_hi(&hi, last_hi) == Ordering::Greater {
+                    *last_hi = hi;
+                }
+            }
+            _ => out.push((lo, hi)),
+        }
+    }
+    out
 }
 
 /// The tag kind of one `(label, attribute)` column: entity ids keyed by their string value.
@@ -501,6 +614,48 @@ mod tests {
         );
     }
 
+    /// A conjunction of unions on one attribute stays the size of its answer: each union is
+    /// intersected as ordered ranges, not distributed over the result (which doubled it per
+    /// union, so 25 of them were 2^25 windows).
+    #[test]
+    fn intersecting_many_unions_does_not_multiply_them() {
+        // How many windows the selection is made of, before any merging.
+        fn leaves(sel: &StrSel) -> usize {
+            match sel {
+                StrSel::Any(members) => members.iter().map(leaves).sum(),
+                _ => 1,
+            }
+        }
+        let window = |min: &str, max: &str| StrSel::window(Some(s(min)), Some(s(max)), true, false);
+        let union = || window("a", "m").or(window("n", "z"));
+        let mut all = union();
+        for _ in 0..24 {
+            all = all.intersect(union());
+        }
+        assert_eq!(leaves(&all), 2);
+        assert_eq!(all.ranges().len(), 2);
+        assert!(all.contains(&s("bob")) && all.contains(&s("nick")) && !all.contains(&s("m")));
+        // Staggered unions meet in the pieces they share.
+        let low = window("a", "d").or(window("f", "k"));
+        let high = window("c", "g").or(window("j", "p"));
+        let both = low.intersect(high);
+        assert_eq!(
+            both.ranges(),
+            vec![
+                (Bound::Included(s("c")), Bound::Excluded(s("d"))),
+                (Bound::Included(s("f")), Bound::Excluded(s("g"))),
+                (Bound::Included(s("j")), Bound::Excluded(s("k"))),
+            ]
+        );
+        // Disjoint unions select nothing.
+        assert!(
+            window("a", "b")
+                .or(window("c", "d"))
+                .intersect(window("e", "f").or(window("g", "h")))
+                .is_empty()
+        );
+    }
+
     /// A string whose last tuple goes leaves nothing behind: no entry, no empty cursor in a
     /// range, and adding it again is like adding it the first time.
     #[test]
@@ -618,5 +773,57 @@ mod tests {
             .expect("a string range is served")
             .collect();
         assert_eq!(docs, vec![3, 2], "bravo, then charlie");
+    }
+
+    /// A union of string selections reads each doc once, however its members overlap, and keeps
+    /// out a key both of two excluding members leave out.
+    #[test]
+    fn a_union_of_strings_reads_each_doc_once() {
+        let mut idx = RangeIndex::new();
+        for (i, x) in ["a", "b", "c", "x", "y"].iter().enumerate() {
+            idx.add(&val(x), i as u64);
+        }
+        let eq = |x: &str| IndexQuery::Equal {
+            key: attr(),
+            value: val(x),
+        };
+        let cmp = |min: Option<&str>, max: Option<&str>, inc: bool| IndexQuery::Range {
+            key: attr(),
+            min: min.map(val),
+            max: max.map(val),
+            include_min: inc,
+            include_max: inc,
+        };
+        for (q, want) in [
+            (
+                IndexQuery::Or(vec![eq("a"), cmp(Some("a"), None, true)]),
+                vec![0, 1, 2, 3, 4],
+            ),
+            (
+                IndexQuery::Or(vec![
+                    cmp(None, Some("x"), false),
+                    cmp(Some("x"), None, false),
+                ]),
+                vec![0, 1, 2, 4],
+            ),
+            (
+                IndexQuery::Or(vec![
+                    cmp(Some("a"), Some("b"), true),
+                    cmp(Some("b"), Some("c"), true),
+                    eq("y"),
+                ]),
+                vec![0, 1, 2, 4],
+            ),
+        ] {
+            let docs: Vec<u64> = idx
+                .query(&q)
+                .expect("a union of strings is served")
+                .collect();
+            let mut sorted = docs.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(docs.len(), sorted.len(), "a doc read twice: {q:?}");
+            assert_eq!(sorted, want, "{q:?}");
+        }
     }
 }

@@ -229,10 +229,9 @@ maintainer updates those proofs by hand (or from a same-repo branch).
 - GraphBLAS FFI bindings are in `graph/src/graph/GraphBLAS.rs` (auto-generated, do not edit)
 - Keep clippy clean under the strict set: pedantic, nursery and cargo, from
   `[workspace.lints]` in `Cargo.toml`, which CI enforces with `-D warnings`.
-  Check it before every commit, in both feature sets:
+  Check it before every commit:
   ```bash
   CXX=${CXX:-clang++} cargo clippy --workspace --all-targets -- -D warnings
-  CXX=${CXX:-clang++} cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
   cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
   ```
   Fix every warning. Where a lint is wrong or the shape is deliberate, put a

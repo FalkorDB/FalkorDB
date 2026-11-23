@@ -59,14 +59,12 @@ cargo build --release  # release build -> target/release/libfalkordb.{so,dylib}
 ```bash
 cargo fmt --all -- --check
 CXX=clang++ cargo clippy --workspace --all-targets -- -D warnings
-CXX=clang++ cargo clippy -p falkordb-rs -p graph --all-targets --features index-falkordb -- -D warnings
 cargo clippy --all-targets --manifest-path native-deps/Cargo.toml -- -D warnings
 ```
 
 - The lint set is strict: pedantic, nursery and cargo, from `[workspace.lints]`
   in `Cargo.toml` (and `[lints]` in `native-deps/Cargo.toml`), so a plain
-  `cargo clippy` shows what CI fails on. The `index-falkordb` run lints the
-  native index, which the default build does not compile.
+  `cargo clippy` shows what CI fails on.
 - In `native-deps`, `src/recipes/`, `src/toolchain.rs` and `src/util.rs` feed
   the dependency cache key: a style edit there rebuilds all three native deps
   everywhere. Allow their lints on the `mod` line in `src/lib.rs` instead.

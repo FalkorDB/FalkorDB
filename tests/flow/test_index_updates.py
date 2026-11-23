@@ -1,7 +1,10 @@
 import string
+import time
 import random
 from common import *
+from common import _db_handle
 from index_utils import *
+from constraint_utils import create_mandatory_node_constraint
 
 GRAPH_ID = "G"
 labels = ["label_a", "label_b"]
@@ -301,15 +304,360 @@ class testIndexUpdatesFlow(FlowTestsBase):
         self.env.assertEqual(result.result_set[0][0], 20000)
         g.delete()
 
+    # Rolling back a failed query must restore the edge index exactly, also when the
+    # query reused an edge id for an edge with other endpoints. Edge documents are
+    # keyed by (src, dst, id): re-adding the committed edge's document is not enough,
+    # the one published under the rolled-back endpoints must be deleted too, or the
+    # index scan returns a phantom relationship.
+    # https://github.com/FalkorDB/FalkorDB/issues/2781
+    def test12_failed_edge_id_reuse_leaves_no_index_entry(self):
+        g = self.db.select_graph('edge_id_reuse')
+        g.query("""CREATE (:A {n: 'a'})-[:R {w: 1}]->(:B {n: 'b'}),
+                          (:C {n: 'c'}), (:D {n: 'd'})""")
+        create_edge_range_index(g, 'R', 'w', sync=True)
+
+        # The first Commit deletes edge 0 and frees its id, the second reuses it for
+        # c->d and publishes that document, then the division fails the query.
+        try:
+            g.query("""MATCH ()-[r:R]->() DELETE r
+                       WITH 1 AS x
+                       MATCH (c:C), (d:D) CREATE (c)-[:R {w: 1}]->(d)
+                       WITH 1 AS x
+                       RETURN 1 / 0""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
+
+        expected = [['a', 0, 'b']]
+        # the index scan sees only the committed edge ...
+        query = "MATCH (s)-[r:R]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
+        plan = str(g.explain(query))
+        self.env.assertContains("Edge By Index Scan", plan)
+        self.env.assertEqual(g.query(query).result_set, expected)
+
+        # ... as a full scan does
+        query = "MATCH (s)-[r:R]->(t) WHERE r.w + 0 = 1 RETURN s.n, id(r), t.n"
+        self.env.assertNotContains("Edge By Index Scan", str(g.explain(query)))
+        self.env.assertEqual(g.query(query).result_set, expected)
+
+        # the id reused by an edge of another type, between the same endpoints:
+        # the committed R document stays, the S one is deleted
+        create_edge_range_index(g, 'S', 'w', sync=True)
+        try:
+            g.query("""MATCH ()-[r:R]->() DELETE r
+                       WITH 1 AS x
+                       MATCH (a:A), (b:B) CREATE (a)-[:S {w: 1}]->(b)
+                       WITH 1 AS x
+                       RETURN 1 / 0""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
+
+        query = "MATCH (s)-[r:R]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
+        self.env.assertEqual(g.query(query).result_set, expected)
+        query = "MATCH (s)-[r:S]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
+        self.env.assertContains("Edge By Index Scan", str(g.explain(query)))
+        self.env.assertEqual(g.query(query).result_set, [])
+
+        # the replacement edge is deleted again by the segment that then fails: the
+        # failure comes from the Commit itself, before that deletion is published,
+        # so the rollback must still know the key the replacement was published under
+        create_mandatory_node_constraint(g, 'K', 'q', sync=True)
+        try:
+            g.query("""MATCH ()-[r:R]->() DELETE r
+                       WITH 1 AS x
+                       MATCH (c:C), (d:D) CREATE (c)-[:R {w: 1}]->(d)
+                       WITH 1 AS x
+                       MATCH ()-[r:R]->() DELETE r
+                       CREATE (:K)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("mandatory constraint violation", str(e))
+
+        query = "MATCH (s)-[r:R]->(t) WHERE r.w = 1 RETURN s.n, id(r), t.n"
+        self.env.assertContains("Edge By Index Scan", str(g.explain(query)))
+        self.env.assertEqual(g.query(query).result_set, expected)
+
+    def _build_while_writing(self, g, acked, create):
+        # Starts the build once the writer has had a mutation acknowledged, polls until the index is
+        # operational, and returns how many mutations were acknowledged while the build was still
+        # running. `acked` holds the time each one was acknowledged. A build only goes from
+        # building to operational, so a poll issued at time t that finds it still building shows it
+        # was building at every time up to t: a mutation acknowledged by then committed during the
+        # build, not before CREATE INDEX returned and not in the sleep after the build finished.
+        deadline = time.monotonic() + 60
+        while not acked:
+            self.env.assertLess(time.monotonic(), deadline, message="the writer made no progress")
+            time.sleep(0.01)
+        create()
+        created = time.monotonic()
+        still_building = created
+        q = "CALL db.indexes() YIELD status WHERE status <> 'OPERATIONAL' RETURN count(1)"
+        deadline = created + 300
+        while True:
+            polled = time.monotonic()
+            if g.ro_query(q).result_set[0][0] == 0:
+                break
+            still_building = polled
+            self.env.assertLess(polled, deadline, message="the index was not operational in 300 s")
+            time.sleep(0.005)
+        return sum(1 for t in list(acked) if created < t <= still_building)
+
+    def test14_concurrent_writes_during_index_population(self):
+        # Writes that race background index population must not leave stale
+        # documents: population reads the committed graph, while a writer
+        # publishes its documents before its commit, so a batch in between used
+        # to overwrite the writer's newer document with the old value.
+        import threading
+        g = self.db.select_graph('idx_pop_writes')
+        # Large enough that the build outlasts several of the writer's statements.
+        n = 2000000
+        g.query("UNWIND range(0, $n - 1) AS k CREATE (:PW {k: k, v: 0})", {'n': n})
+
+        overlapped = 0
+        for _ in range(3):
+            stop = threading.Event()
+            errors = []
+            acked = []
+
+            def writer():
+                try:
+                    # own client: redis connections are not shared across threads
+                    wg = _db_handle(self.env.host, self.env.port).select_graph('idx_pop_writes')
+                    i = 0
+                    while not stop.is_set():
+                        # a fixed key space and a few distinct values keep the
+                        # dataset and the index the same size in every round
+                        wg.query("MATCH (n:PW) WHERE id(n) = $id SET n.v = (n.v + 1) % 8", {'id': (i * 7919) % n})
+                        acked.append(time.monotonic())
+                        k = i % 1000
+                        wg.query("MATCH (n:PW {k: $k}) DELETE n", {'k': k})
+                        acked.append(time.monotonic())
+                        wg.query("CREATE (:PW {k: $k, v: 0})", {'k': k})
+                        acked.append(time.monotonic())
+                        i += 1
+                except Exception as e:
+                    errors.append(e)
+
+            t = threading.Thread(target=writer)
+            t.start()
+            try:
+                overlapped += self._build_while_writing(
+                    g, acked, lambda: create_node_range_index(g, 'PW', 'v'))
+            finally:
+                stop.set()
+                t.join(timeout=60)
+            self.env.assertFalse(t.is_alive(), message="writer thread did not stop")
+            self.env.assertEqual(errors, [])
+
+            # every value's index count agrees with a label scan
+            for v, expected in g.ro_query(
+                    "MATCH (n:PW) RETURN n.v, count(n) ORDER BY n.v").result_set:
+                q = "MATCH (n:PW) WHERE n.v = $v RETURN count(n)"
+                self.env.assertIn("Node By Index Scan", str(g.explain(q, {'v': v})))
+                actual = g.ro_query(q, {'v': v}).result_set[0][0]
+                self.env.assertEqual(actual, expected, message=f"v = {v}")
+
+            g.query("DROP INDEX FOR (n:PW) ON (n.v)")
+        # Without it the rounds above could all have run before or after the build.
+        self.env.assertGreater(overlapped, 0, message="no write was acknowledged during a build")
+        g.delete()
+
+    def test15_concurrent_edge_writes_during_index_population(self):
+        # The edge counterpart of test12: edge population resumes from
+        # (src, dst, edge id) cursors, and a deleted edge's id is reused by a
+        # later CREATE, so a stale or resurrected document is easy to leave.
+        import threading
+        g = self.db.select_graph('idx_pop_edge_writes')
+        # Two nodes and many edges between them: the edge build is what has to outlast the writer.
+        n = 4000000
+        g.query("CREATE (a:PE), (b:PE) WITH a, b UNWIND range(0, $n - 1) AS k CREATE (a)-[:PR {k: k, v: 0}]->(b)", {'n': n})
+
+        overlapped = 0
+        for _ in range(3):
+            stop = threading.Event()
+            errors = []
+            acked = []
+
+            def writer():
+                try:
+                    wg = _db_handle(self.env.host, self.env.port).select_graph('idx_pop_edge_writes')
+                    i = 0
+                    while not stop.is_set():
+                        wg.query("MATCH ()-[r:PR]->() WHERE id(r) = $id SET r.v = (r.v + 1) % 8", {'id': (i * 7919) % n})
+                        acked.append(time.monotonic())
+                        k = i % 1000
+                        wg.query("MATCH ()-[r:PR {k: $k}]->() DELETE r", {'k': k})
+                        acked.append(time.monotonic())
+                        wg.query("CREATE (:PE)-[:PR {k: $k, v: 0}]->(:PE)", {'k': k})
+                        acked.append(time.monotonic())
+                        i += 1
+                except Exception as e:
+                    errors.append(e)
+
+            t = threading.Thread(target=writer)
+            t.start()
+            try:
+                overlapped += self._build_while_writing(
+                    g, acked, lambda: create_edge_range_index(g, 'PR', 'v'))
+            finally:
+                stop.set()
+                t.join(timeout=60)
+            self.env.assertFalse(t.is_alive(), message="writer thread did not stop")
+            self.env.assertEqual(errors, [])
+
+            # every value's index count agrees with an edge scan
+            for v, expected in g.ro_query(
+                    "MATCH ()-[r:PR]->() RETURN r.v, count(r) ORDER BY r.v").result_set:
+                q = "MATCH ()-[r:PR]->() WHERE r.v = $v RETURN count(r)"
+                self.env.assertIn("Edge By Index Scan", str(g.explain(q, {'v': v})))
+                actual = g.ro_query(q, {'v': v}).result_set[0][0]
+                self.env.assertEqual(actual, expected, message=f"v = {v}")
+
+            drop_edge_range_index(g, 'PR', 'v')
+        self.env.assertGreater(overlapped, 0, message="no write was acknowledged during a build")
+        g.delete()
+
+    def test16_index_scan_sees_attributes_set_earlier_in_the_query(self):
+        # An index holds committed values, so a scan beginning after a SET of the same query must
+        # still find the entity by its new value, as a label scan does: MERGE must match it rather
+        # than create a duplicate. Each shape is compared with the same data and no index.
+        def run(name, indexed, create, setup_index, queries):
+            g = self.db.select_graph(name)
+            if indexed:
+                setup_index(g)
+            g.query(create)
+            results = [g.query(q).result_set for q in queries]
+            g.delete()
+            return results
+
+        node_queries = [
+            "MATCH (n:PS) SET n.v = 5 MERGE (m:PS {v: 5}) RETURN count(m)",
+            "MATCH (n:PS) RETURN count(n)",
+            "MATCH (n:PS) SET n.v = date('2020-01-01') MERGE (m:PS {v: date('2020-01-01')}) RETURN count(m)",
+            "MATCH (n:PS) RETURN count(n)",
+            "MATCH (n:PS) SET n.v = 7 WITH n MATCH (m:PS) WHERE m.v = 7 RETURN count(m)",
+            "MATCH (n:PS) SET n.v = 'x' WITH n MATCH (m:PS) WHERE m.v = 'x' RETURN count(m)",
+        ]
+        make = lambda g: create_node_range_index(g, 'PS', 'v', sync=True)
+        data = "CREATE (:PS {v: 0})"
+        expected = run('pending_scan_truth', False, data, make, node_queries)
+        actual = run('pending_scan_index', True, data, make, node_queries)
+        self.env.assertEqual(actual, expected)
+        self.env.assertEqual(expected[0], [[1]])
+        self.env.assertEqual(expected[1], [[1]])
+
+        edge_queries = [
+            "MATCH ()-[r:PR]->() SET r.v = 5 WITH r MATCH ()-[m:PR]->() WHERE m.v = 5 RETURN count(m)",
+            "MATCH (a)-[r:PR]->(b) SET r.v = 7 MERGE (a)-[m:PR {v: 7}]->(b) RETURN count(m)",
+            "MATCH ()-[r:PR]->() RETURN count(r)",
+        ]
+        make = lambda g: create_edge_range_index(g, 'PR', 'v', sync=True)
+        data = "CREATE (:PE)-[:PR {v: 0}]->(:PE)"
+        expected = run('pending_edge_scan_truth', False, data, make, edge_queries)
+        actual = run('pending_edge_scan_index', True, data, make, edge_queries)
+        self.env.assertEqual(actual, expected)
+        self.env.assertEqual(expected[2], [[1]])
+
+    def test19_distance_type_error_survives_a_null_operand(self):
+        # A NULL or missing operand makes `distance()` null, but the other operand's type error
+        # is raised first, with or without an index: an integer centre over a missing property,
+        # and an integer property under a NULL centre, on nodes and on edges.
+        cases = [
+            ("MATCH (n:PN) WHERE distance(n.loc, 5) < 100 RETURN count(n)",
+             "CREATE (:PN {x: 1})", 'node'),
+            ("MATCH (n:PN) WHERE distance(n.loc, null) < 100 RETURN count(n)",
+             "CREATE (:PN {loc: 1})", 'node'),
+            ("MATCH ()-[r:PN]->() WHERE distance(r.loc, 5) < 100 RETURN count(r)",
+             "CREATE (:PE)-[:PN {x: 1}]->(:PE)", 'edge'),
+            ("MATCH ()-[r:PN]->() WHERE distance(r.loc, null) < 100 RETURN count(r)",
+             "CREATE (:PE)-[:PN {loc: 1}]->(:PE)", 'edge'),
+        ]
+        for i, (query, data, kind) in enumerate(cases):
+            outcomes = []
+            for indexed in (False, True):
+                g = self.db.select_graph(f'distance_null_{i}_{indexed}')
+                if indexed:
+                    make = create_node_range_index if kind == 'node' else create_edge_range_index
+                    make(g, 'PN', 'loc', sync=True)
+                g.query(data)
+                try:
+                    outcomes.append(g.query(query).result_set)
+                except ResponseError as e:
+                    outcomes.append(str(e))
+                g.delete()
+            self.env.assertEqual(outcomes[1], outcomes[0], message=query)
+
+    def test18_edge_scan_keeps_a_raising_conjunct_and_staged_sets(self):
+        # The edge counterpart of test17's array case, and a staged SET of an unindexed attribute
+        # beside a MERGE on the indexed one: same answers as without indexes.
+        def outcome(name, indexed, data, query):
+            g = self.db.select_graph(name)
+            if indexed:
+                create_edge_range_index(g, 'PX', 'v')
+                create_edge_range_index(g, 'PX', 'a', sync=True)
+                create_node_range_index(g, 'PM', 'id', sync=True)
+            g.query(data)
+            try:
+                result = g.query(query).result_set
+            except ResponseError as e:
+                result = str(e)
+            g.delete()
+            return result
+
+        data = "CREATE (:PE)-[:PX {a: 3}]->(:PE), (:PE)-[:PX {v: date('2020-01-01'), a: []}]->(:PE)"
+        query = "MATCH ()-[r:PX]->() WHERE r.v = date('2020-01-01') AND 1 IN r.a RETURN count(r)"
+        expected = outcome('edge_array_truth', False, data, query)
+        self.env.assertContains("Type mismatch", str(expected))
+        self.env.assertEqual(outcome('edge_array_index', True, data, query), expected)
+
+        data = "UNWIND range(0, 49) AS i CREATE (:PM {id: i})"
+        query = ("UNWIND range(0, 49) AS i MATCH (n:PM {id: i}) SET n.scratch = i "
+                 "MERGE (m:PM {id: i}) RETURN count(m)")
+        expected = outcome('merge_scratch_truth', False, data, query)
+        self.env.assertEqual(expected, [[50]])
+        self.env.assertEqual(outcome('merge_scratch_index', True, data, query), expected)
+
+    def test17_invalid_distance_operand_raises_on_an_indexed_scan(self):
+        # A property `distance()` rejects must reach the filter that raises the type error, as it
+        # does without an index, even when another predicate of the query is answered by a scan
+        # that checks it itself (a date is not answered by an index lookup).
+        query = ("MATCH (n:PD) WHERE n.v = date('2020-01-01') "
+                 "AND distance(n.loc, point({latitude: 0, longitude: 0})) < 100 RETURN count(n)")
+        data = "CREATE (:PD {v: date('2020-01-01'), loc: 1})"
+
+        def outcome(name, indexed):
+            g = self.db.select_graph(name)
+            if indexed:
+                create_node_range_index(g, 'PD', 'v')
+                create_node_range_index(g, 'PD', 'loc', sync=True)
+                create_node_range_index(g, 'PD', 'a', sync=True)
+            g.query(data)
+            try:
+                result = g.query(query).result_set
+            except ResponseError as e:
+                result = str(e)
+            g.delete()
+            return result
+
+        expected = outcome('distance_operand_truth', False)
+        self.env.assertContains("Type mismatch", str(expected))
+        self.env.assertEqual(outcome('distance_operand_index', True), expected)
+
+        # A row the scan's own predicate rejects (here a missing `v`) must not hide another
+        # conjunct's error: `1 IN n.a` over a property that is not a list is a type error.
+        query = ("MATCH (n:PD) WHERE n.v = date('2020-01-01') AND 1 IN n.a RETURN count(n)")
+        data = "CREATE (:PD {a: 3}), (:PD {v: date('2020-01-01'), a: []})"
+        expected = outcome('array_operand_truth', False)
+        self.env.assertContains("Type mismatch", str(expected))
+        self.env.assertEqual(outcome('array_operand_index', True), expected)
 
 class testNativeOnlyFeedFlow(FlowTestsBase):
-    # Under `index-falkordb` the native index is the only Range index, so nothing may also feed
-    # Range fields to RediSearch: not a write, not the build after CREATE INDEX, not the build
-    # after an RDB load. `indices_sz_mb` in GRAPH.MEMORY USAGE is what makes those feeds visible
-    # from a client: RediSearch's own memory, plus under the flag the native columns, which cost
-    # several times less than a RediSearch copy of the same entries. Without the flag RediSearch
-    # is the Range index and all three must reach it; that half also shows the data is big enough
-    # for a whole-MB counter to see.
+    # The native index is the only Range index, so nothing may also feed Range fields to
+    # RediSearch: not a write, not the build after CREATE INDEX, not the build after an RDB load.
+    # `indices_sz_mb` in GRAPH.MEMORY USAGE is what makes those feeds visible from a client:
+    # RediSearch's own memory plus the native columns, which cost several times less than a
+    # RediSearch copy of the same entries.
     def __init__(self):
         # enableDebugCommand: the test reloads via DEBUG RELOAD, which redis refuses by default.
         self.env, self.db = Env(enableDebugCommand=True)
@@ -347,25 +695,21 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
 
         answers(written)
 
-        # The flag's defining behaviour: a predicate the native index cannot serve is an error,
-        # not a RediSearch answer. A union with a range member is one such predicate today: the
-        # planner hands the `OR` to the index whole, and the native union serves only equalities
-        # and `IN` lists.
-        try:
-            g.query("MATCH (n:NF) WHERE n.v = 1 OR n.v > 7 RETURN n")
-            native_only = False
-        except ResponseError as e:
-            self.env.assertContains("native index cannot serve", str(e))
-            native_only = True
+        # A predicate the native index does not answer is answered by a scan, not an error: a union
+        # with a member on an attribute that has no index (`u`, set on one node, so the member
+        # selects something). The native index does serve a union with a range member on its own
+        # attribute (`n.v = 1 OR n.v > 7`), so that shape would not reach the scan.
+        g.query("MATCH (n:NF {v: 7}) SET n.u = 3")
+        declined = "MATCH (n:NF) WHERE n.v = 1 OR n.u = 3 RETURN count(n)"
+        self.env.assertContains("Node By Label Scan", str(g.explain(declined)))
+        self.env.assertEqual(g.query(declined).result_set, [[2]])
 
         # The build after CREATE INDEX: the data exists before the indexes.
         g.query("UNWIND range(1, 50000) AS i CREATE (:NB {v: i})")
         g.query("UNWIND range(1, 50000) AS i CREATE ()-[:RB {w: i}]->()")
-        before_build = indices_mb()
         create_node_range_index(g, 'NB', 'v')
         create_edge_range_index(g, 'RB', 'w')
-        # The build runs in the background, RediSearch's or, under the flag, the native column's;
-        # it has to finish before the reading shows it.
+        # The build runs in the background; it has to finish before the reading shows it.
         wait_for_indices_to_sync(g, timeout=300)
         after_build = indices_mb()
 
@@ -373,24 +717,17 @@ class testNativeOnlyFeedFlow(FlowTestsBase):
         self.env.dumpAndReload()
         after_reload = indices_mb()
 
-        if native_only:
-            # Only the native columns: an entry takes at most 16 bytes in its page and the
-            # branches above it under one more, so 32 is a ceiling with room to spare; the fixed
-            # cost is under 1 MiB, and the reading truncates to whole MiB. A RediSearch copy is
-            # 3.5x to 5x this bound at each step (7, 18, 36 and 36 MiB against 2, 4, 7 and 7).
-            def native_mb(entries):
-                return entries * 32 // (1 << 20) + 1
+        # Only the native columns: an entry takes at most 16 bytes in its page and the
+        # branches above it under one more, so 32 is a ceiling with room to spare; the fixed
+        # cost is under 1 MiB, and the reading truncates to whole MiB. A RediSearch copy is
+        # 3.5x to 5x this bound at each step (7, 18, 36 and 36 MiB against 2, 4, 7 and 7).
+        def native_mb(entries):
+            return entries * 32 // (1 << 20) + 1
 
-            self.env.assertLessEqual(after_nodes, native_mb(50000))
-            self.env.assertLessEqual(after_writes, native_mb(100000))
-            self.env.assertLessEqual(after_build, native_mb(200000))
-            self.env.assertLessEqual(after_reload, native_mb(200000))
-        else:
-            self.env.assertGreater(after_nodes, 0)
-            self.env.assertGreater(after_writes, after_nodes)
-            self.env.assertGreater(after_build, before_build)
-            self.env.assertGreater(after_reload, 0)
-
+        self.env.assertLessEqual(after_nodes, native_mb(50000))
+        self.env.assertLessEqual(after_writes, native_mb(100000))
+        self.env.assertLessEqual(after_build, native_mb(200000))
+        self.env.assertLessEqual(after_reload, native_mb(200000))
         # Both builds, and the reload of what the writes filled, still leave an index the planner
         # uses and that answers.
         answers(written + built)

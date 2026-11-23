@@ -214,6 +214,49 @@ impl KeySet {
         }
     }
 
+    /// The keys in either: two predicates on one scalar under `OR`. Every set is a set of key
+    /// windows (a key is a window of one), so the union is their windows merged where they overlap
+    /// or touch. A union of single keys stays a set of keys, read as points.
+    ///
+    /// The merged windows are disjoint, and a scalar has one key, so a lookup reads each entity
+    /// once however much the members overlapped: `v = 1 OR v < 5` reads key 1 once.
+    #[must_use]
+    pub fn or(
+        self,
+        other: Self,
+    ) -> Self {
+        Self::or_all([self, other])
+    }
+
+    /// What any of `sets` selects, normalised once however many there are: uniting them one pair
+    /// at a time would rebuild and re-sort the accumulated windows per member.
+    pub fn or_all(sets: impl IntoIterator<Item = Self>) -> Self {
+        let mut windows: Vec<(u64, u64)> = sets
+            .into_iter()
+            .flat_map(|set| match set {
+                Self::Empty => Vec::new(),
+                Self::Point(key) => vec![(key, key)],
+                Self::Range(lo, hi) => vec![(lo, hi)],
+                Self::Keys(keys) => keys.into_iter().map(|key| (key, key)).collect(),
+                Self::Windows(windows) => windows,
+            })
+            .collect();
+        if windows.iter().all(|&(lo, hi)| lo == hi) {
+            return Self::of_keys(windows.into_iter().map(|(key, _)| key).collect());
+        }
+        windows.sort_unstable();
+        let mut merged: Vec<(u64, u64)> = Vec::with_capacity(windows.len());
+        for (lo, hi) in windows {
+            match merged.last_mut() {
+                Some((_, prev_hi)) if lo <= prev_hi.saturating_add(1) => {
+                    *prev_hi = (*prev_hi).max(hi);
+                }
+                _ => merged.push((lo, hi)),
+            }
+        }
+        Self::of_windows(merged)
+    }
+
     /// The windows of a set of windows or of a range; `None` for any other set.
     fn windows(&self) -> Option<Vec<(u64, u64)>> {
         match self {
@@ -741,6 +784,24 @@ mod tests {
     use crate::index::IndexQuery;
     use std::iter::once;
 
+    /// Uniting many sets at once selects what folding the pairs does, in one normalisation: a left
+    /// fold over 4,000 equality members rebuilt the accumulated windows per member.
+    #[test]
+    fn or_all_matches_a_fold_of_pairs() {
+        let sets: Vec<KeySet> = (0..4000u64)
+            .map(|i| match i % 3 {
+                0 => KeySet::Point(i * 2),
+                1 => KeySet::Range(i * 2, i * 2 + 3),
+                _ => KeySet::of_keys(vec![i * 2, i * 2 + 9]),
+            })
+            .collect();
+        let all = KeySet::or_all(sets.clone());
+        let folded = sets.into_iter().fold(KeySet::Empty, KeySet::or);
+        for key in 0..8100 {
+            assert_eq!(all.contains(key), folded.contains(key), "key {key}");
+        }
+    }
+
     /// Every kind's encoded tuple lands in its own slot, geo included: `push` panicked on a
     /// geo tuple, so writing or building any point under the native index crashed the server.
     #[test]
@@ -1161,19 +1222,21 @@ mod tests {
                 .is_none(),
             "an empty list member declines, as an empty list does on its own"
         );
-        assert!(
-            idx.query(&IndexQuery::Or(vec![
-                eq(10),
-                IndexQuery::Range {
-                    key: attr.clone(),
-                    min: Some(Value::Int(0)),
-                    max: None,
-                    include_min: true,
-                    include_max: true,
-                },
-            ]))
-            .is_none(),
-            "a range member is not this shape"
+        assert_eq!(
+            sorted(
+                idx.query(&IndexQuery::Or(vec![
+                    eq(10),
+                    IndexQuery::Range {
+                        key: attr.clone(),
+                        min: Some(Value::Int(25)),
+                        max: None,
+                        include_min: true,
+                        include_max: true,
+                    },
+                ]))
+                .expect("a range member is served: its window joins the union's keys")
+            ),
+            vec![0, 2]
         );
         assert!(
             idx.query(&IndexQuery::Or(vec![])).is_none(),

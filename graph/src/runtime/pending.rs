@@ -31,15 +31,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use roaring::RoaringTreemap;
 
 use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
-#[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
     falkordb_index::EqualCandidates,
     unique::{ReadOnce, native_unique_query},
-};
-#[cfg(not(feature = "index-falkordb"))]
-use crate::index::{
-    Index,
-    indexer::{IndexQuery, IndexType},
 };
 
 use crate::{
@@ -148,49 +142,6 @@ fn lookup_sorted(
         .binary_search_by_key(&attr_id, |(k, _)| *k)
         .ok()
         .map(|pos| &attrs[pos].1)
-}
-
-/// Whether the supporting index's exact match on `value` returns every entity
-/// whose composite-key component equals it. Other values (large integers the
-/// index stores rounded, NaN, the empty string, and any type it does not index)
-/// are checked by a scan instead. A string containing NUL is fine: the tag
-/// encoding escapes it to `_00` on both the write and the query path.
-#[cfg(not(feature = "index-falkordb"))]
-fn is_value_valid_for_index_lookup(value: &Value) -> bool {
-    match value {
-        Value::Int(i) => !Index::int_loses_f64_precision(*i),
-        Value::Float(f) => !f.is_nan(),
-        Value::Bool(_) => true,
-        Value::String(s) => !s.is_empty(),
-        _ => false,
-    }
-}
-
-/// The RediSearch lookup for one member of a unique constraint: an equality on
-/// every constrained property, when each is Range-indexed (`indexed`) and each
-/// value is one the index matches exactly.
-#[cfg(not(feature = "index-falkordb"))]
-fn redisearch_unique_query(
-    indexed: bool,
-    properties: &[Arc<String>],
-    values: Vec<Value>,
-) -> Option<IndexQuery<Value>> {
-    if !indexed || !values.iter().all(is_value_valid_for_index_lookup) {
-        return None;
-    }
-    let mut eqs = properties
-        .iter()
-        .zip(values)
-        .map(|(key, value)| IndexQuery::Equal {
-            key: key.clone(),
-            value,
-        })
-        .collect::<Vec<_>>();
-    Some(if eqs.len() == 1 {
-        eqs.pop().unwrap()
-    } else {
-        IndexQuery::And(eqs)
-    })
 }
 
 /// Whether a unique constraint is violated by this commit, given `members`: the
@@ -434,7 +385,6 @@ impl IndexDocs {
     ) {
         // The native index's changes are applied to the private version before a commit's
         // documents are folded for publishing; anything still here would be dropped.
-        #[cfg(feature = "index-falkordb")]
         debug_assert!(
             other.native.is_empty(),
             "native index writes must be applied before the documents are folded"
@@ -1144,6 +1094,7 @@ impl Pending {
         &self,
         label_ids: &[LabelId],
         g: &Graph,
+        attrs_matter: impl Fn(&[(u16, Value)]) -> bool,
     ) -> RoaringTreemap {
         if label_ids.is_empty() {
             return self.created_nodes.clone();
@@ -1167,6 +1118,30 @@ impl Pending {
                 committed || staged.contains(&lid)
             });
             if matches && !all_committed {
+                result.insert(node_id);
+            }
+        }
+        // A committed node whose attributes were set in this query: an index (and any scan that
+        // reads the committed graph) still sees its old values, so a lookup on the new ones
+        // misses it. It is enumerated here and the caller's filter, which reads the staged
+        // values, decides. Only those whose written attributes `attrs_matter` (an indexed one):
+        // enumerating every updated node would pair each with every later row.
+        for (&node_id, attrs) in &self.existing_nodes_attrs {
+            if self.deleted_nodes.contains(node_id)
+                || result.contains(node_id)
+                || !attrs_matter(attrs)
+            {
+                continue;
+            }
+            let removed = self.remove_labels.get(&node_id);
+            let staged = self.set_labels.get(&node_id);
+            let has_labels = label_ids.iter().all(|&label| {
+                let lid = usize::from(label) as u64;
+                staged.is_some_and(|s| s.contains(&lid))
+                    || (!removed.is_some_and(|r| r.contains(&lid))
+                        && g.node_has_label_id(NodeId::from(node_id), label))
+            });
+            if has_labels {
                 result.insert(node_id);
             }
         }
@@ -1660,10 +1635,8 @@ impl Pending {
                 }
             }
             ConstraintType::Unique => {
-                // Under `index-falkordb` the native index answers, and RediSearch is not asked.
-                #[cfg(feature = "index-falkordb")]
+                // The native index answers; RediSearch holds no Range field.
                 let read_once = ReadOnce::default();
-                #[cfg(feature = "index-falkordb")]
                 let (query_for, lookup) = (
                     |values: Vec<Value>| {
                         native_unique_query(
@@ -1678,19 +1651,6 @@ impl Pending {
                         read_once.candidates(&candidates).map(NodeId::from)
                     },
                 );
-                #[cfg(not(feature = "index-falkordb"))]
-                let (query_for, lookup) = {
-                    let indexed = constraint
-                        .properties
-                        .iter()
-                        .all(|prop| g.is_indexed(label, prop, &IndexType::Range));
-                    (
-                        move |values| {
-                            redisearch_unique_query(indexed, &constraint.properties, values)
-                        },
-                        |query| g.get_indexed_nodes(label, query),
-                    )
-                };
                 let violated = unique_violated(
                     &constraint.properties,
                     members.map(NodeId::from),
@@ -1756,9 +1716,7 @@ impl Pending {
             }
             ConstraintType::Unique => {
                 // As for nodes. An edge column's ids are `edge_id`s.
-                #[cfg(feature = "index-falkordb")]
                 let read_once = ReadOnce::default();
-                #[cfg(feature = "index-falkordb")]
                 let (query_for, lookup) = (
                     |values: Vec<Value>| {
                         native_unique_query(
@@ -1773,22 +1731,6 @@ impl Pending {
                         read_once.candidates(&candidates).map(RelationshipId::from)
                     },
                 );
-                #[cfg(not(feature = "index-falkordb"))]
-                let (query_for, lookup) = {
-                    let indexed = constraint
-                        .properties
-                        .iter()
-                        .all(|prop| g.is_edge_indexed(type_name, prop, &IndexType::Range));
-                    (
-                        move |values| {
-                            redisearch_unique_query(indexed, &constraint.properties, values)
-                        },
-                        |query| {
-                            g.get_indexed_edges(type_name, query)
-                                .map(|(_, _, edge_id)| edge_id)
-                        },
-                    )
-                };
                 let violated = unique_violated(
                     &constraint.properties,
                     members.map(RelationshipId::from),
@@ -1990,7 +1932,6 @@ impl Pending {
         self.index_docs.node_removes.clear();
         self.index_docs.edge_adds.clear();
         self.index_docs.edge_removes.clear();
-        #[cfg(feature = "index-falkordb")]
         self.index_docs.native.clear();
 
         // Close this segment's batch and open the next at the boundary the
@@ -2259,11 +2200,11 @@ mod property_nesting_tests {
     }
 }
 
-/// Unique constraints under `index-falkordb`: the native index answers a member's lookup when it
+/// Unique constraints: the native index answers a member's lookup when it
 /// can, and the label or type scan answers when it cannot. Each test checks the path a member
 /// takes (`native_unique_query`) as well as the verdict (`check_*_constraint`), because a verdict
 /// alone is the same whichever path reached it.
-#[cfg(all(test, feature = "index-falkordb"))]
+#[cfg(test)]
 mod native_unique_tests {
     use super::*;
     use crate::graph::constraint::Constraint;

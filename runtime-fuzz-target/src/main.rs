@@ -1,6 +1,8 @@
 // Dependency version duplicates are from transitive dependencies.
 #![allow(clippy::multiple_crate_versions)]
 
+use std::sync::Once;
+
 use fuzz_support::init_index_support;
 use graph::{
     graph::{
@@ -32,9 +34,12 @@ fn main() {
     unsafe {
         GrB_init(GrB_Mode::GrB_NONBLOCKING as _);
     }
-    init_index_support();
     init_functions().expect("Failed to init functions");
+    // AFL forks its children from inside `fuzz!`, and a fork keeps only the calling thread, so the
+    // index worker pool has to start in the child, once, not here before the fork.
+    let index_support = Once::new();
     fuzz!(|data: &[u8]| {
+        index_support.call_once(init_index_support);
         if let Ok(query) = std::str::from_utf8(data) {
             let g = MvccGraph::new(1024, 1024, 25, "fuzz_test");
             let Ok(Plan {
