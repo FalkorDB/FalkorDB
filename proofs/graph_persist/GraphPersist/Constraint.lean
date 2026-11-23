@@ -53,7 +53,10 @@ inductive KVal where
   | kother
 
 /-- `f64::to_bits`, abstract: a 64-bit pattern, distinct for distinct non-NaN values
-(`-0.0` and `+0.0` included). -/
+(`-0.0` and `+0.0` included). CAVEAT: `F.num` and `F.frac` range over unbounded `Int`/`Nat`
+while `lt` allows only `2 ^ 64` patterns, so no `ToBits` exists for this `F`; every theorem
+taking `(tb : ToBits)` is vacuous until the value domain is restricted to representable `f64`
+values (the COVERAGE rows that cite them are CONDITIONAL on it). -/
 structure ToBits where
   bits : F → Nat
   lt : ∀ x, bits x < 2 ^ 64

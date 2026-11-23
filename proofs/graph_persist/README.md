@@ -155,9 +155,11 @@ The project depends on [`../core`](../core) (`FalkorCore.F`, the `f64` model).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 54 |
+| PROVEN | 51 |
+| CONDITIONAL | 3 |
 | AXIOMATISED | 9 |
 
+- **CONDITIONAL:** `create_constraint`, `validate_unique_constraint` and `build_composite_key`, on `(tb : ToBits)` (see the Floats note below).
 - **AXIOMATISED:** the eight `BufferedWriter`/`BufferedReader` word methods (`write_unsigned` … `read_buffer`), taken as inverse to each other; `delete_key` (Redis module API; `key_holds_graph` is PROVEN in redis_layer, `Telemetry.keyHolds`).
 - **Not rows of this ledger:** the `MvccGraph` functions (`new`, `from_graph`, `read`, `fork`, `commit`, `is_stale`, `prepare`, `publish`, `drop`) are PROVEN rows of [`../versioned_matrix`](../versioned_matrix); this project's `Mvcc.lean` models the load-publish and fork-commit entry points sequentially, which excludes races between writers; those are covered by [`../search_concurrency`](../search_concurrency). `bash proofs/coverage.sh` counts each function once, in its best bucket.
 
@@ -165,7 +167,7 @@ The project depends on [`../core`](../core) (`FalkorCore.F`, the `f64` model).
 
 - **GraphBLAS matrix and tensor (de)serialisation** and RediSearch index creation are trusted (hypotheses or AXIOMATISED).
 - **List and vector property values** are checked by evaluating round trips on nested samples (`#guard_msgs`), not proven; the decoder proof (`decV`) covers scalars. The nesting cap is proven in `value_math` (`stored_roundtrip`).
-- **Floats** are bit patterns in the codec; the UNIQUE key uses `core`'s `f64` model with `to_bits` abstract (`ToBits`).
+- **Floats** are bit patterns in the codec; the UNIQUE key uses `core`'s `f64` model with `to_bits` abstract (`ToBits`). `ToBits` is a hypothesis that cannot be instantiated for the current `F` (its integral and fractional values are unbounded, `to_bits` has only 2^64 patterns), so `rust_C_unique_agree`, `constraint_creation_agrees` and the `create_constraint`, `validate_unique_constraint` and `build_composite_key` rows are CONDITIONAL on it and vacuous until `F` is restricted to representable `f64` values.
 - **`MvccGraph` concurrency** is not modelled.
 - **Hostile or malformed RDB payloads** beyond truncation were not attempted.
 - **Header and schema codecs** are hypotheses here, proven in `redis_layer`.
