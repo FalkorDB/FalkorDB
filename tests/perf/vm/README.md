@@ -2,20 +2,20 @@
 
 `.github/workflows/_perf-vm.yml` runs one perf check on a VM of its own and
 deletes the VM afterwards. `perf-nightly.yml` calls it once for each
-`runner: vm` entry in `tests/perf/checks.yaml`.
+`runner: vm` entry in `bench/checks.yaml`.
 
 ## Calling it
 
 ```yaml
 jobs:
-  size-probe:
+  pokec:
     permissions:
       contents: read   # checkout of the calling commit
       packages: read   # ghcr.io login (the images also pull anonymously)
     uses: ./.github/workflows/_perf-vm.yml
     with:
-      check: size-probe                          # [a-z][a-z0-9-]{0,42}, unique in the run
-      command: uv run --project bench bench probe
+      check: pokec                               # [a-z][a-z0-9-]{0,42}, unique in the run
+      command: uv run --project bench bench pokec
       candidate_image: ghcr.io/falkordb/falkordb-server@sha256:…
       baseline_image: falkordb/falkordb-server@sha256:…
       mode: nightly                              # queue | nightly | long
@@ -95,7 +95,7 @@ and only when it is created with a virtual PMU. With `pmu: true`:
 `perf-result-<check>` holds the check's `out/` directory plus `perf-vm.json`:
 
 ```json
-{"schema": 1, "check": "size-probe", "vm_name": "gce-gh-…", "zone": "us-central1-b",
+{"schema": 1, "check": "pokec", "vm_name": "gce-gh-…", "zone": "us-central1-b",
  "machine_type": "n2-standard-16", "fallback_used": true, "create_error": null,
  "command_exit": 0, "timed_out": false, "pmu": null}
 ```
@@ -172,4 +172,4 @@ stopped VM; adding that input to `gce-github-runner` is the follow-up.
 | `delete-vms.sh` | delete every VM with a label; retries listing, waits out in-flight inserts |
 | `vm.py env` | core split, machine object, `PERF_*` lines for `$GITHUB_ENV` |
 | `vm.py record` | writes `perf-vm.json` |
-| `test_vm.py` | `python3 -I -m unittest discover -s tests/perf/vm` |
+| `test_vm.py` | `uv run --project bench --frozen --group dev python -I -B -m pytest tests/perf/vm` |

@@ -124,7 +124,9 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .perf-vm-tools
-          sparse-checkout: tests/perf/vm
+          sparse-checkout: |
+            tests/perf/vm
+            bench
           persist-credentials: false
 
       - name: Confirm the scripts are this workflow's commit
@@ -146,6 +148,11 @@ jobs:
             exit 1
           fi
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"  # the uv perf-contract.yml and benchmark-cov.yml pin
+
       - name: Plan
         id: plan
         env:
@@ -158,7 +165,12 @@ jobs:
           PMU: ${{ inputs.pmu }}
           CANDIDATE: ${{ inputs.candidate_image }}
           BASELINE: ${{ inputs.baseline_image }}
-        run: '"$PERF_VM_TOOLS/plan.sh"'
+          CANDIDATE_LABEL: ${{ inputs.candidate_label }}
+          BASELINE_LABEL: ${{ inputs.baseline_label }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          BASELINE_COMMIT: ${{ inputs.baseline_commit }}
+        # In bench's environment: plan.sh checks the inputs with falkorbench.kit.
+        run: uv run --project .perf-vm-tools/bench --frozen --no-dev bash "$PERF_VM_TOOLS/plan.sh"
 
       - name: Check out FalkorDB/gce-github-runner
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -296,6 +308,19 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"  # the uv perf-contract.yml and benchmark-cov.yml pin
+
+      - name: Install the Python bench pins
+        # Before the check's clock starts: `uv run --project bench` in the
+        # check's command would otherwise download it inside timeout_minutes.
+        run: |
+          set -euo pipefail
+          if [[ -f bench/.python-version ]]; then
+            (cd bench && uv python install && echo "bench's Python: $(uv python find)")
+          else
+            echo "::notice::the calling commit has no bench/.python-version; nothing to install"
+          fi
 
       - name: Log in to ghcr.io
         env:

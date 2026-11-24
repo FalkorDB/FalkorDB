@@ -2,7 +2,8 @@
 # Check _perf-vm.yml's inputs and pick what to create: machine type, fallback,
 # vPMU, gce-github-runner commit and timeouts, as GitHub outputs (or `error`,
 # exit 1). Env: CHECK, MODE, TIMEOUT, ZONES, MACHINE_TYPE, FALLBACK, PMU,
-# CANDIDATE, BASELINE, GCE_GITHUB_RUNNER_REF, GCE_GITHUB_RUNNER_PMU_REF.
+# CANDIDATE, BASELINE (+ _LABEL, _COMMIT), GCE_GITHUB_RUNNER_REF and _PMU_REF.
+# Runs in bench's environment (`uv run --project bench`), for falkorbench.kit.
 # The rules: tests/perf/vm/README.md.
 set -euo pipefail
 
@@ -10,8 +11,9 @@ requested_fallback=${FALLBACK:-}
 requested_type=${MACHINE_TYPE:-}
 
 fail() {
-  echo "error=$1" >> "$GITHUB_OUTPUT"
-  echo "::error::$1"
+  local message=${1//$'\n'/ }  # one line: it becomes a job output
+  echo "error=$message" >> "$GITHUB_OUTPUT"
+  echo "::error::$message"
   exit 1
 }
 
@@ -19,11 +21,26 @@ fail() {
 # reserved for a check's own artifact names (contract v1.5).
 [[ $CHECK =~ ^[a-z][a-z0-9-]{0,42}$ && $CHECK != *--* ]] \
   || fail "check '$CHECK' must be lowercase letters, digits and single dashes, at most 43 characters"
-[[ $MODE =~ ^(queue|nightly|long)$ ]] || fail "mode '$MODE' is not queue, nightly or long"
-for image in "$CANDIDATE" "$BASELINE"; do
-  [[ $image =~ ^[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] \
-    || fail "image '$image' is not pinned by digest (name@sha256:<64 hex>)"
-done
+# The flags the check will get, judged by the contract's own rule
+# (images by digest per IMAGE_RE, 40-hex commits, one-line labels, mode):
+# a run that could never give a valid result.json gets no VM.
+# shellcheck disable=SC2016 # Python source, not shell expansions
+if ! contract_errors=$(python -I -B -c '
+import sys
+from types import SimpleNamespace
+from falkorbench.kit import input_errors
+fields = ("candidate", "baseline", "mode", "candidate_label", "baseline_label",
+          "candidate_commit", "baseline_commit")
+values = dict(zip(fields, sys.argv[1:]))
+for name in fields[3:]:
+    values[name] = values[name] or None  # an empty input means the flag is not passed
+errors = input_errors(SimpleNamespace(**values))
+print("; ".join(errors))
+sys.exit(1 if errors else 0)
+' "$CANDIDATE" "$BASELINE" "$MODE" "${CANDIDATE_LABEL:-}" "${BASELINE_LABEL:-}" \
+  "${CANDIDATE_COMMIT:-}" "${BASELINE_COMMIT:-}" 2>&1); then
+  fail "${contract_errors:-the input check (falkorbench.kit) did not run}"
+fi
 if ! [[ $TIMEOUT =~ ^[1-9][0-9]*$ ]]; then
   fail "timeout_minutes '$TIMEOUT' is not a whole number of minutes"
 fi

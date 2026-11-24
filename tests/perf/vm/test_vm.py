@@ -1,4 +1,5 @@
-"""Tests for the _perf-vm.yml helpers. Run: python3 -I -m unittest discover -s tests/perf/vm"""
+"""Tests for the _perf-vm.yml helpers, in bench's environment (plan.sh imports falkorbench):
+uv run --project bench --frozen --group dev python -I -B -m pytest tests/perf/vm"""
 
 from __future__ import annotations
 
@@ -13,6 +14,8 @@ import textwrap
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+
+from falkorbench.contract import IMAGE_RE
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -107,7 +110,7 @@ class RecordCommandTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "perf-vm.json"
             with redirect_stdout(io.StringIO()):
-                vm.main(["record", "--out", str(path), "--check", "size-probe", *extra])
+                vm.main(["record", "--out", str(path), "--check", "pokec", *extra])
             return json.loads(path.read_text())
 
     def test_fields(self):
@@ -210,7 +213,7 @@ PROJECT = "proj-123456"
 class CreateVmTest(unittest.TestCase):
     """create-vm.sh against a fake action.sh, gcloud and curl."""
 
-    LABEL = "perf-size-probe-1-1"
+    LABEL = "perf-pokec-1-1"
 
     def create(self, zones, types, succeed="", notready="", partial="", token_bad="", describe_fails="", pmu="",
                beta_missing="", beta_installable="", beta_old="", delete_fails=""):
@@ -371,7 +374,7 @@ class PlanTest(unittest.TestCase):
     def plan(self, **env_extra):
         with tempfile.TemporaryDirectory() as tmp:
             outputs = Path(tmp) / "outputs"
-            env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="size-probe", MODE="nightly",
+            env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="pokec", MODE="nightly",
                        TIMEOUT="45", ZONES="us-central1-a,us-central1-b", MACHINE_TYPE="", FALLBACK="",
                        PMU="false", CANDIDATE=self.DIGEST, BASELINE=self.DIGEST,
                        GCE_GITHUB_RUNNER_REF="default-ref", GCE_GITHUB_RUNNER_PMU_REF="pmu-ref")
@@ -417,6 +420,16 @@ class PlanTest(unittest.TestCase):
         _, out = self.plan(PMU="true", MACHINE_TYPE="c4-standard-48", FALLBACK="c4-standard-32")
         self.assertEqual(out["fallback"], "c4-standard-32")
 
+    def test_image_rule_is_the_contracts(self):
+        digest = "@sha256:" + "a" * 64
+        images = ["falkordb/falkordb-server" + digest, "ghcr.io/falkordb/falkordb-server:rc-x" + digest,
+                  "localhost:5000/repo" + digest, "Falkordb/falkordb-server" + digest,
+                  "falkordb/falkordb-server:6.2.0", "falkordb/falkordb-server@sha256:" + "a" * 63]
+        for image in images:
+            with self.subTest(image):
+                rc, out = self.plan(CANDIDATE=image)
+                self.assertEqual(rc == 0, IMAGE_RE.fullmatch(image) is not None, out.get("error"))
+
     def test_bad_inputs(self):
         for extra, words in [({"CHECK": "micro--x"}, "single dashes"), ({"CHECK": "Size"}, "lowercase"),
                              ({"MODE": "fast"}, "mode"), ({"CANDIDATE": "falkordb/falkordb-server:6.2.0"}, "digest"),
@@ -425,7 +438,9 @@ class PlanTest(unittest.TestCase):
                              ({"PMU": "yes"}, "pmu"), ({"MACHINE_TYPE": "c4-standard-16 x", "PMU": "true"}, "name"),
                              ({"FALLBACK": "n2-standard-16;true"}, "name"),
                              ({"MACHINE_TYPE": "c4a-standard-16"}, "Arm"), ({"MACHINE_TYPE": "n4a-standard-16"}, "Arm"),
-                             ({"MACHINE_TYPE": "t2a-standard-8"}, "Arm"), ({"FALLBACK": "c4a-standard-16"}, "Arm")]:
+                             ({"MACHINE_TYPE": "t2a-standard-8"}, "Arm"), ({"FALLBACK": "c4a-standard-16"}, "Arm"),
+                             ({"CANDIDATE_COMMIT": "4c10889"}, "--candidate-commit"),
+                             ({"BASELINE_LABEL": "two\nlines"}, "--baseline-label")]:
             rc, out = self.plan(**extra)
             self.assertEqual(rc, 1, extra)
             self.assertIn(words, out["error"], extra)
@@ -441,7 +456,7 @@ class RunCheckTest(unittest.TestCase):
             (tmp / "record.sh").write_text('printf "%s\\n" "$@" > out/argv; exit "${EXIT:-0}"\n')
             (tmp / "slow.sh").write_text("sleep 30\n")
             outputs = tmp / "outputs"
-            env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="size-probe",
+            env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="pokec",
                        COMMAND=command.replace("{dir}", str(tmp)),
                        CANDIDATE="c@sha256:" + "1" * 64, BASELINE="b@sha256:" + "2" * 64,
                        MODE="nightly", TIMEOUT_SECONDS=timeout, PERF_CLIENT_CPUS="")
@@ -471,7 +486,7 @@ class RunCheckTest(unittest.TestCase):
             fake_rm.parent.mkdir()
             fake_rm.write_text('#!/usr/bin/env bash\necho "rm: out: Permission denied" >&2\nexit 1\n')
             fake_rm.chmod(0o755)
-            env = dict(os.environ, GITHUB_OUTPUT=str(tmp / "outputs"), CHECK="size-probe",
+            env = dict(os.environ, GITHUB_OUTPUT=str(tmp / "outputs"), CHECK="pokec",
                        COMMAND=f"touch {marker}", CANDIDATE="c@sha256:" + "1" * 64,
                        BASELINE="b@sha256:" + "2" * 64, MODE="nightly", TIMEOUT_SECONDS="30",
                        PERF_CLIENT_CPUS="", PATH=f"{fake_rm.parent}:{os.environ['PATH']}")
@@ -547,7 +562,12 @@ class WorkflowScriptsTest(unittest.TestCase):
         for line in text.splitlines():
             code = line.split("#", 1)[0]
             if "tests/perf/vm" in code:
-                self.assertTrue("sparse-checkout:" in code or ".perf-vm-tools/tests/perf/vm" in code, line)
+                self.assertTrue("sparse-checkout:" in code or code.strip() == "tests/perf/vm"
+                                or ".perf-vm-tools/tests/perf/vm" in code, line)
+        # plan.sh runs in the workflow's own bench, whose falkorbench.kit judges the inputs.
+        create = jobs["create"]
+        self.assertRegex(create, r"sparse-checkout: \|\n +tests/perf/vm\n +bench\n")
+        self.assertIn('uv run --project .perf-vm-tools/bench --frozen --no-dev bash "$PERF_VM_TOOLS/plan.sh"', create)
 
 
 class WorkflowLabelTest(unittest.TestCase):
@@ -594,7 +614,7 @@ class DeleteVmsTest(unittest.TestCase):
             gcloud.chmod(0o755)
             env = dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}",
                        DELETE_VMS_POLL_S="0", DELETE_VMS_GIVE_UP_S="2")
-            proc = subprocess.run(["bash", str(HERE / "delete-vms.sh"), "perf-size-probe-1-1", grace],
+            proc = subprocess.run(["bash", str(HERE / "delete-vms.sh"), "perf-pokec-1-1", grace],
                                   capture_output=True, text=True, env=env)
             calls = (tmp / "calls").read_text().splitlines() if (tmp / "calls").exists() else []
             return proc, calls
