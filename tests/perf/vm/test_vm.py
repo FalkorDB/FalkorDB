@@ -451,7 +451,8 @@ class PlanTest(unittest.TestCase):
                       {"MACHINE_TYPE": "c4d-standard-16"}, {"MACHINE_TYPE": "c4a-standard-16"}):
             rc, out = self.plan(PMU="true", **extra)
             self.assertEqual(rc, 1, extra)
-            self.assertIn("C4 or M4", out["error"], extra)
+            # C4A is refused twice over: no counters here, and Arm.
+            self.assertRegex(out["error"], "C4 or M4|Arm", extra)
 
     def test_pmu_named_type_gets_no_silent_smaller_fallback(self):
         for named in ("c4-standard-8", "c4-standard-48", "m4-megamem-28"):
@@ -466,7 +467,9 @@ class PlanTest(unittest.TestCase):
                              ({"TIMEOUT": "0"}, "timeout_minutes"), ({"TIMEOUT": "301"}, "over 300"),
                              ({"ZONES": " , "}, "no zones"),
                              ({"PMU": "yes"}, "pmu"), ({"MACHINE_TYPE": "c4-standard-16 x", "PMU": "true"}, "name"),
-                             ({"FALLBACK": "n2-standard-16;true"}, "name")]:
+                             ({"FALLBACK": "n2-standard-16;true"}, "name"),
+                             ({"MACHINE_TYPE": "c4a-standard-16"}, "Arm"), ({"MACHINE_TYPE": "n4a-standard-16"}, "Arm"),
+                             ({"MACHINE_TYPE": "t2a-standard-8"}, "Arm"), ({"FALLBACK": "c4a-standard-16"}, "Arm")]:
             rc, out = self.plan(**extra)
             self.assertEqual(rc, 1, extra)
             self.assertIn(words, out["error"], extra)
@@ -506,16 +509,18 @@ class RunCheckTest(unittest.TestCase):
             (work / "out").mkdir(parents=True)
             (work / "out" / "result.json").write_text("{}")  # an earlier run's
             marker = tmp / "ran"
-            work.chmod(0o555)  # out/ can be emptied but not removed or recreated
-            try:
-                env = dict(os.environ, GITHUB_OUTPUT=str(tmp / "outputs"), CHECK="size-probe",
-                           COMMAND=f"touch {marker}", CANDIDATE="c@sha256:" + "1" * 64,
-                           BASELINE="b@sha256:" + "2" * 64, MODE="nightly", TIMEOUT_SECONDS="30",
-                           PERF_CLIENT_CPUS="")
-                proc = subprocess.run(["bash", "-e", "-c", str(HERE / "run-check.sh")], cwd=work,
-                                      capture_output=True, text=True, env=env)
-            finally:
-                work.chmod(0o755)
+            # An `rm` that fails, as one would on a directory it may not remove.
+            # Not chmod: root, which the VM's runner is, ignores permissions.
+            fake_rm = tmp / "bin" / "rm"
+            fake_rm.parent.mkdir()
+            fake_rm.write_text('#!/usr/bin/env bash\necho "rm: out: Permission denied" >&2\nexit 1\n')
+            fake_rm.chmod(0o755)
+            env = dict(os.environ, GITHUB_OUTPUT=str(tmp / "outputs"), CHECK="size-probe",
+                       COMMAND=f"touch {marker}", CANDIDATE="c@sha256:" + "1" * 64,
+                       BASELINE="b@sha256:" + "2" * 64, MODE="nightly", TIMEOUT_SECONDS="30",
+                       PERF_CLIENT_CPUS="", PATH=f"{fake_rm.parent}:{os.environ['PATH']}")
+            proc = subprocess.run(["bash", "-e", "-c", str(HERE / "run-check.sh")], cwd=work,
+                                  capture_output=True, text=True, env=env)
             self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
             self.assertIn("could not empty out/", proc.stdout)
             self.assertFalse(marker.exists())

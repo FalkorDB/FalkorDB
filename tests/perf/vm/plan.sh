@@ -9,6 +9,7 @@
 # without and with a vPMU), GITHUB_OUTPUT.
 #
 # timeout_minutes is at most 300 (the action deletes the VM 6 h after boot).
+# Machine types must be x86: the VM boots x86 Debian with the x64 runner.
 #
 # Writes outputs zones, machine_type, fallback, pmu (the vPMU type to ask
 # for, empty without counters), action_ref, command_timeout_s, step_timeout,
@@ -53,6 +54,11 @@ fi
 
 for type in "$requested_type" "$requested_fallback"; do
   [[ -z $type || $type =~ ^[a-z][a-z0-9-]*$ ]] || fail "machine type '$type' is not a GCE machine type name"
+  # create-vm.sh boots x86 Debian and the action's x64 runner (--arm=false),
+  # which no Arm VM can run: C4A and N4A (Axion), T2A (Ampere), A4X (Grace).
+  case $type in
+    c4a-* | n4a-* | t2a-* | a4x-*) fail "machine type '$type' is Arm; the VM image and runner are x86 only" ;;
+  esac
 done
 
 case ${PMU:-false} in

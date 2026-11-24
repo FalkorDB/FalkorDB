@@ -132,6 +132,8 @@ wait. No attempt starts after 50 minutes. `create_error` quotes gcloud's reason
 line for each attempt, with the project ID replaced by `…`: GitHub drops a job
 output that contains a secret.
 
+Machine types must be x86: the VM boots x86 Debian with the action's x64 runner, so `plan.sh` refuses Arm families (C4A, N4A, T2A, A4X).
+
 The fallback is `n2-<size>` for an `n4-<size>` type, the same vCPUs and
 memory in a more plentiful family. Set `fallback_machine_type` for any other
 choice. A fallback VM is still one machine running both sides, so the
