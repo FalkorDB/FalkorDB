@@ -32,7 +32,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import post  # needs the path above
-from post import Bold, Line, Link
 
 ALARM_HOUR_UTC = 5
 
@@ -40,7 +39,7 @@ ALARM_HOUR_UTC = 5
 @dataclass
 class Outcome:
     alarm: bool
-    lines: list[Line]
+    lines: list[post.Line]
 
 
 def window(night: date) -> tuple[datetime, datetime]:
@@ -103,10 +102,10 @@ def runs_page(environ: dict, workflow: str, branch: str) -> str:
 
 
 def alarm(night: date, reason: str, link: str, link_text: str) -> Outcome:
-    return Outcome(True, [Line([
-        Bold(f"Perf nightly alarm {night.isoformat()}"),
+    return Outcome(True, [post.Line([
+        post.Bold(f"Perf nightly alarm {night.isoformat()}"),
         f": no nightly result. {reason} ",
-        Link(link, link_text),
+        post.Link(link, link_text),
     ])])
 
 
@@ -128,9 +127,9 @@ def check(environ: dict, night: date, workflow: str, branch: str, event: str, ar
     try:
         for run in runs:
             if has_artifact(environ, run, artifact):
-                return Outcome(False, [Line([
+                return Outcome(False, [post.Line([
                     f"Perf nightly {night.isoformat()}: run ",
-                    Link(str(run.get("html_url") or listing), str(run.get("id"))),
+                    post.Link(str(run.get("html_url") or listing), str(run.get("id"))),
                     f" has the {artifact} artifact; no alarm.",
                 ])])
     except post.GitHubError as exc:

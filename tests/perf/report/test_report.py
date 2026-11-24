@@ -21,12 +21,12 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.parse
 from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from unittest import mock
 
 import missed_run
 import post
@@ -99,8 +99,8 @@ class Workspace(unittest.TestCase):
     def setUp(self):
         self.directory = Path(self.enter(tempfile.TemporaryDirectory()))
         self.environ = {}
-        self.enter(mock.patch.object(post, "POST_RETRY_DELAYS", (0.0, 0.0)))
-        self.enter(mock.patch.object(post, "VALIDATOR", VALIDATOR))
+        self.enter(unittest.mock.patch.object(post, "POST_RETRY_DELAYS", (0.0, 0.0)))
+        self.enter(unittest.mock.patch.object(post, "VALIDATOR", VALIDATOR))
 
     def enter(self, context):
         """TestCase.enterContext, which needs Python 3.11."""
@@ -182,7 +182,7 @@ class RedMessage(Workspace):
             post.Commit("0ecba8bc9", "fix(optimizer): per-row index seek (#3887)", 3889),
             post.Commit("abcdef123", "direct push without a PR", None),
         ], 3)
-        with mock.patch.object(post, "commits_since_green", return_value=commits):
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=commits):
             text = self.chat(self.night)
         lines = text.splitlines()
         self.assertEqual(lines[0], "*Perf nightly 2026-11-24: REGRESSION* — main@4c10889 vs 6.2.0: "
@@ -204,7 +204,7 @@ class RedMessage(Workspace):
         self.assertTrue(lines[-1].startswith(f"<{RUN_URL}|run> · <https://github.com/FalkorDB/FalkorDB/issues/new?"))
 
     def test_the_issue_link_is_prefilled_and_labelled(self):
-        with mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
             text = self.chat(self.night)
         url = text.splitlines()[-1].split(" · <", 1)[1].rsplit("|open an issue>", 1)[0]
         parts = urllib.parse.urlsplit(url)
@@ -221,7 +221,7 @@ class RedMessage(Workspace):
 
     def test_an_unconfirmed_regression_says_so(self):
         self.night["checks"][0]["confirmed"] = False
-        with mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
             self.assertIn("*micro* (NOT confirmed by a re-run)", self.chat(self.night))
 
     def test_a_regression_on_the_same_commit_as_the_last_green_night_points_at_the_run(self):
@@ -230,7 +230,8 @@ class RedMessage(Workspace):
                       self.chat(self.night))
 
     def test_the_compare_link_stays_when_the_commit_list_is_unavailable(self):
-        with mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "git: no; API: no")):
+        unavailable = post.CommitRange([], 0, "git: no; API: no")
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=unavailable):
             text = self.chat(self.night)
         compare = f"https://github.com/FalkorDB/FalkorDB/compare/{PREVIOUS_GREEN}...{CANDIDATE_COMMIT}"
         self.assertIn(f"Commits since the last green night: git: no; API: no. <{compare}|compare>", text)
@@ -248,7 +249,7 @@ class RedMessage(Workspace):
     def test_more_regression_rows_than_shown_are_counted(self):
         self.night["checks"][0]["findings"] = [
             finding(f"query {index}", "cycles", 2.0 + index, 1.0, 2.0 + index, 1.1) for index in range(7)]
-        with mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
             text = self.chat(self.night)
         self.assertIn("- query 6: cycles 8 vs 1 (8.00x, threshold 1.10x)", text)
         self.assertIn("- 4 more regression rows in the run's result.json", text)
@@ -287,14 +288,14 @@ class StatusIsNeverBetterThanTheEvidence(Workspace):
                           for index, verdict in enumerate(verdicts)]
                 night = post.read_night(self.write(nightly(declared, checks)), {})
                 self.assertEqual(night.status, shown)
-                with mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
+                with unittest.mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
                     text = self.chat(nightly(declared, checks))
                 self.assertTrue(text.startswith(f"*Perf nightly 2026-11-24: {HEADLINE_WORD[shown]}*"), text)
                 if shown != declared:
                     self.assertIn("*Problems with nightly.json:*", text)
 
     def test_guards_that_hold_without_the_validator(self):
-        with mock.patch.object(post, "contract_problems", return_value=[]):
+        with unittest.mock.patch.object(post, "contract_problems", return_value=[]):
             duplicate = self.chat(nightly("green", [result("micro", "pass"), result("micro", "pass")]))
             stub = self.chat(nightly("green", [result("micro", "pass"),
                                                {"check": "pokec", "verdict": "pass", "error": None}]))
@@ -306,7 +307,7 @@ class StatusIsNeverBetterThanTheEvidence(Workspace):
 
     def test_a_validator_that_cannot_run_is_an_error_not_a_pass(self):
         for validator in (self.directory / "absent.py", self.write("raise RuntimeError('boom')", "broken.py")):
-            with self.subTest(validator=validator.name), mock.patch.object(post, "VALIDATOR", validator):
+            with self.subTest(validator=validator.name), unittest.mock.patch.object(post, "VALIDATOR", validator):
                 text = self.chat(nightly("green", [result("micro", "pass")]))
                 self.assertTrue(text.startswith("*Perf nightly 2026-11-24: ERROR*"), text)
                 self.assertIn(f"could not run the contract validator {validator.name}", text)
@@ -336,7 +337,7 @@ class StatusIsNeverBetterThanTheEvidence(Workspace):
 
     def test_a_crash_inside_the_reporter_still_reports_and_exits_non_zero(self):
         environ = {"GITHUB_RUN_ID": "77"}
-        with mock.patch.object(post, "build_message", side_effect=RuntimeError("boom <users/all>")):
+        with unittest.mock.patch.object(post, "build_message", side_effect=RuntimeError("boom <users/all>")):
             code, stdout, stderr = self.run_post(nightly("green", [result("micro", "pass")]), environ)
         self.assertEqual(code, 1)
         self.assertEqual(stdout, "*Perf nightly: the reporter crashed* (RuntimeError: boom ‹users/all>), so tonight's "
@@ -422,7 +423,7 @@ class CommitList(Workspace):
         for subject in ("base (#1)", "fix: a < b (#3887) (#3889)", "direct push", "perf: x (#3963)"):
             git(self.repository, "commit", "-q", "--allow-empty", "-m", subject)
             self.shas.append(git(self.repository, "rev-parse", "HEAD"))
-        self.enter(mock.patch.object(post, "CHECKOUT", self.repository))
+        self.enter(unittest.mock.patch.object(post, "CHECKOUT", self.repository))
 
     def night(self, previous: str, candidate: str) -> post.Night:
         return post.read_night(self.write(nightly("red", [result("micro", "regression")], previous_green=previous,
@@ -469,7 +470,7 @@ class CommitList(Workspace):
                            capture_output=True, check=False).returncode == 0,
         "this checkout lacks the history of main around 4c1088949")
     def test_a_real_range_on_main(self):
-        with mock.patch.object(post, "CHECKOUT", REPO_ROOT):
+        with unittest.mock.patch.object(post, "CHECKOUT", REPO_ROOT):
             commits = post.commits_since_green(self.night(PREVIOUS_GREEN, CANDIDATE_COMMIT), {})
         self.assertEqual([c.pull_request for c in commits.commits], [3963, 3017, 3889, 3930])
 
@@ -548,7 +549,8 @@ class Delivery(Workspace):
             self.assertNotIn(secret, stdout + stderr)
 
     def test_a_timeout_is_not_retried_because_the_post_may_have_arrived(self):
-        with mock.patch.object(post, "HTTP_TIMEOUT_SECONDS", 0.2), StubServer({"/hook": (200, {}, 1.0)}) as server:
+        slow = StubServer({"/hook": (200, {}, 1.0)})
+        with unittest.mock.patch.object(post, "HTTP_TIMEOUT_SECONDS", 0.2), slow as server:
             code, _, stderr = self.run_post(self.GREEN, {"PERF_CHAT_WEBHOOK": f"{server.url}/hook"})
         self.assertEqual(code, 0)
         self.assertEqual(len(server.requests), 1)
@@ -556,7 +558,7 @@ class Delivery(Workspace):
 
     def test_a_connect_timeout_is_retried_because_nothing_was_sent(self):
         timeout = urllib.error.URLError(TimeoutError("timed out"))
-        with mock.patch.object(post.urllib.request, "urlopen", side_effect=timeout) as urlopen:
+        with unittest.mock.patch.object(post.urllib.request, "urlopen", side_effect=timeout) as urlopen:
             code, _, stderr = self.run_post(self.GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
         self.assertEqual((code, urlopen.call_count), (0, 3))
         self.assertIn("posting to Chat failed: connection failed: TimeoutError", stderr)
@@ -610,7 +612,7 @@ class Delivery(Workspace):
     def test_a_run_url_that_could_inject_markup_is_not_used(self):
         night = nightly("green", [result("micro", "pass")])
         night["run_url"] = "https://github.com/FalkorDB/FalkorDB/actions/runs/1|click><users/all><https://evil.example|x"
-        with mock.patch.object(post, "contract_problems", return_value=[]):
+        with unittest.mock.patch.object(post, "contract_problems", return_value=[]):
             code, stdout, _ = self.run_post(night, {"GITHUB_RUN_ID": "5"})
         self.assertEqual(code, 0)
         self.assertNotIn("users/all", stdout)
@@ -620,7 +622,7 @@ class Delivery(Workspace):
     def test_commit_titles_cannot_mention_or_link_in_chat(self):
         night = nightly("red", [result("micro", "regression", [UNWIND])])
         commits = post.CommitRange([post.Commit("1" * 40, "fix <users/all> <https://evil.example|x>", 12)], 1)
-        with mock.patch.object(post, "commits_since_green", return_value=commits):
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=commits):
             text = self.chat(night)
         self.assertNotIn("<users/all>", text)
         self.assertNotIn("<https://evil.example", text)
@@ -663,7 +665,7 @@ class BrokenOnBothSides(Workspace):
 
     def test_a_red_night_counts_them_in_chat_and_never_as_regressions(self):
         night = nightly("red", [result("micro", "regression", [UNWIND]), self.SOAK])
-        with mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
             text = self.chat(night)
         self.assertIn("2 rows broken on both sides (not new); named in the run's job summary.", text.splitlines())
         self.assertIn("1 of 2 checks regressed.", text.splitlines()[0])
@@ -677,7 +679,7 @@ class ChatBudget(Workspace):
             for i in range(50)]) for c in range(6)]
         commits = post.CommitRange([post.Commit(f"{i:040x}", "a very long commit title " + "y" * 120, 4000 + i)
                                     for i in range(300)], 300)
-        with mock.patch.object(post, "commits_since_green", return_value=commits):
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=commits):
             summary = self.directory / "summary.md"
             code, stdout, _ = self.run_post(nightly("red", checks), {"GITHUB_STEP_SUMMARY": str(summary)})
         self.assertEqual(code, 0)
@@ -691,7 +693,7 @@ class ChatBudget(Workspace):
     def test_a_trimmed_red_night_keeps_the_run_and_issue_links_and_the_budget(self):
         checks = [result(f"check-{c}", "regression", [UNWIND], summary="s" * 290) for c in range(4)]
         checks += [{"check": f"stub-{c}", "verdict": "error", "error": "e" * 400} for c in range(14)]
-        with mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
             text = self.chat(nightly("red", checks)).rstrip("\n")
         self.assertLessEqual(len(text), post.CHAT_CHARACTER_BUDGET)
         last = text.splitlines()[-1]
@@ -719,7 +721,7 @@ class ChatBudget(Workspace):
         night = post.read_night(self.write(nightly("error", [{"check": "e", "verdict": "error", "error": "x"}])), {})
         for length in range(post.CHAT_CHARACTER_BUDGET - 150, post.CHAT_CHARACTER_BUDGET + 1):
             lines = [post.Line(["a" * length]), post.BLANK, post.Line(["b" * 5000])]
-            with mock.patch.object(post, "build_message", return_value=lines):
+            with unittest.mock.patch.object(post, "build_message", return_value=lines):
                 text = post.chat_text(night, None, {})
             self.assertLessEqual(len(text), post.CHAT_CHARACTER_BUDGET, length)
 
@@ -745,7 +747,7 @@ class JudgeFixtures(Workspace):
         super().setUp()
         if not FIXTURES.is_dir():
             self.fail(f"perf-judge's fixtures are missing: {FIXTURES} (set PERF_JUDGE_DIR)")
-        self.enter(mock.patch.object(post, "commits_since_green",
+        self.enter(unittest.mock.patch.object(post, "commits_since_green",
                                             return_value=post.CommitRange([], 0, "not looked up in tests")))
 
     def test_valid_nightlies_show_their_status_and_every_check_that_did_not_pass(self):
