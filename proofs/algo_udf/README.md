@@ -126,6 +126,7 @@ Shared with C, not reported: `maxIterations`, `samplingSize` and `maxLen` wrap a
 | `PathDispatch.lean`, `PathSeed.lean` | `parse_sp_config`/`parse_ss_config`, `run_path_algo`'s fast path and seeding |
 | `AlgoGlue.lean` | Messages, MSF scoring callbacks, node collection, LAGraph handle ownership |
 | `AlgoBfsReg.lean` | `algo.BFS` result assembly and procedure registration |
+| `BfsPushPull.lean` | `bfs_levels_push_pull`: levels independent of the push/pull choice, source at 0, `max_level` honoured |
 | `Marshal.lean`, `MarshalThm.lean` | `value_to_js`/`js_to_value` over an abstract f64 and QuickJS heap; the round-trip theorems |
 | `Nesting.lean`, `MarshalCap.lean` | Generic depth-bounded recursion, instantiated for both conversion directions |
 | `Repo.lean`, `UdfRepoOps.lean` | The UDF repository: load, delete, registry, serialise/deserialise |
