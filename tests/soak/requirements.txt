@@ -1,5 +1,0 @@
-# Client side of the soak (soak_check.py and the scenarios); the servers come from images.
-# redis-py's retries are off in soakkit.connect(): a latency is always one request.
-numpy==2.3.5
-psutil==7.1.3
-redis==8.1.0
