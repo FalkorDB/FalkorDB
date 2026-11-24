@@ -9,7 +9,7 @@
 # job diffs the push's before and after): a `paths` filter would match the whole PR's
 # diff, and `workflow_dispatch` works only for a file on the default branch. To prove a
 # new commit, change that line deliberately, after telling the coordinator.
-# Proof of: (not yet)
+# Proof of: 40675d3dd (the port), 6.2.0 vs 6.2.1 on soak-b.
 
 name: TEMPORARY soak proof
 
@@ -79,6 +79,6 @@ jobs:
       candidate_commit: ${{ matrix.candidate_commit }}
       baseline_commit: ${{ matrix.baseline_commit }}
       mode: nightly
-      timeout_minutes: 120
+      timeout_minutes: 135
       machine_type: n4-standard-16
     secrets: inherit
