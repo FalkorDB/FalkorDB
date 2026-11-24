@@ -1,9 +1,9 @@
 """Example results and nightlies for the tests, and broken variants of them.
 
-`example(name)` returns a valid document: a file in fixtures/valid/, or a nightly
+`example(name)` returns a valid document: a file in valid/ (beside this file), or a nightly
 built from the result files there (only nightly-red.json is kept as a literal).
 Each `Case` changes one field of an example and names the one problem
-validate.py must report. Standard library only.
+the contract (falkorbench.contract) must report. Standard library only.
 """
 
 from __future__ import annotations
@@ -11,16 +11,17 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
-from typing import Any, NamedTuple, Tuple, Union
+from typing import Any
+from typing import NamedTuple
 
-VALID = Path(__file__).resolve().parent / "fixtures" / "valid"
+VALID = Path(__file__).resolve().parent / "valid"
 
 
 def _file(name: str) -> Any:
     return json.loads((VALID / name).read_text(encoding="utf-8"))
 
 
-def nightly(status: str, checks: list, skip_reason: Union[str, None] = None) -> dict:
+def nightly(status: str, checks: list, skip_reason: str | None = None) -> dict:
     """A nightly with nightly-red.json's header (date, images, run link) and these checks."""
     night = _file("nightly-red.json")
     night.update(status=status, skip_reason=skip_reason, checks=copy.deepcopy(checks))
@@ -67,9 +68,9 @@ DELETE = Delete()
 class Case(NamedTuple):
     name: str
     start: str  # an example name
-    path: Tuple[Union[str, int], ...]  # the field to change
+    path: tuple[str | int, ...]  # the field to change
     value: Any  # its new value, or DELETE
-    code: str  # the problem validate.py reports
+    code: str  # the problem the contract reports
     at: str  # where it reports it
 
 

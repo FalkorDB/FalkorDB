@@ -63,7 +63,14 @@ src = ["src", "tests"]
 # queries.py is a data table whose columns are hand-aligned so a reader can scan
 # name/write/cypher down the page. The formatter would explode each multi-value
 # literal onto its own line and destroy that. The linter still checks it.
-exclude = ["src/falkorbench/queries.py"]
+# The contract's files came from tests/perf/ with their history; their case
+# tables are one case per line, and formatting would rewrite most lines.
+exclude = [
+    "src/falkorbench/queries.py",
+    "src/falkorbench/contract.py",
+    "tests/fixtures/examples.py",
+    "tests/test_contract.py",
+]
 
 [tool.ruff.lint]
 select = [

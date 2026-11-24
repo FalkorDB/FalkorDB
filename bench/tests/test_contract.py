@@ -1,36 +1,31 @@
-"""Tests for validate.py and acceptance.yaml (see README.md for what they define)."""
+"""Tests for falkorbench.contract and bench/acceptance.yaml (bench/README.md,
+"Result contract", says what they define)."""
 
 from __future__ import annotations
 
-import importlib.util
+import ast
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 import yaml
+from click.testing import CliRunner
 
-HERE = Path(__file__).resolve().parent
-VALIDATE_PY = HERE / "validate.py"
+import falkorbench
+from falkorbench import contract
+from falkorbench.cli import cli
+from falkorbench.queries import QUERIES
+from fixtures import examples
 
-
-def _load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-validate = _load("perf_validate", VALIDATE_PY)
-examples = _load("perf_examples", HERE / "examples.py")
+BENCH = Path(__file__).resolve().parents[1]
 Case, DELETE, example = examples.Case, examples.DELETE, examples.example
 
 
 def _problems(case) -> list:
     # Through the strict parser, as a file would go (NaN/Infinity included).
-    _, problems = validate.validate_text(json.dumps(examples.changed(case)), examples.kind(case.start))
+    _, problems = contract.validate_text(json.dumps(examples.changed(case)), examples.kind(case.start))
     return [(p.code, p.path) for p in problems]
 
 
@@ -43,7 +38,7 @@ def _unchanged(name: str) -> Case:
 
 @pytest.mark.parametrize("name", examples.NAMES)
 def test_valid_example_passes(name):
-    _, problems = validate.validate_text(json.dumps(example(name)), examples.kind(name))
+    _, problems = contract.validate_text(json.dumps(example(name)), examples.kind(name))
     assert problems == []
 
 
@@ -132,7 +127,7 @@ TEXT_CASES = [
 
 @pytest.mark.parametrize("text, code, path", TEXT_CASES)
 def test_text_gives_exactly_its_problem(text, code, path):
-    _, problems = validate.validate_text(text)
+    _, problems = contract.validate_text(text)
     assert [(p.code, p.path) for p in problems] == [(code, path)]
 
 
@@ -141,54 +136,87 @@ def test_nan_and_infinity_in_a_document_built_in_memory(value):
     # merge.py validates parsed results, where NaN is a float, not the parser's stand-in.
     document = example(GREEN)
     document["checks"][0]["machine"]["cores"] = value
-    assert [(p.code, p.path) for p in validate.validate_nightly(document)] == [("non-finite-number", "$.checks[0].machine.cores")]
+    assert [(p.code, p.path) for p in contract.validate_nightly(document)] == [("non-finite-number", "$.checks[0].machine.cores")]
 
 
 def test_nesting_deeper_than_python_recursion_is_a_problem_not_a_crash():
     depth = 200_000
-    _, problems = validate.validate_text('{"check": "micro", "artifacts": ' + "[" * depth + "]" * depth + "}")
+    _, problems = contract.validate_text('{"check": "micro", "artifacts": ' + "[" * depth + "]" * depth + "}")
     assert [p.code for p in problems] == ["invalid-json"]
     nested: list = []
     for _ in range(sys.getrecursionlimit() * 5):
         nested = [nested]
     document = dict(example(MICRO_PASS), artifacts=nested)
-    assert ("wrong-type", "$.artifacts[0]") in [(p.code, p.path) for p in validate.validate_result(document)]
+    assert ("wrong-type", "$.artifacts[0]") in [(p.code, p.path) for p in contract.validate_result(document)]
 
 
 def test_unreadable_file(tmp_path):
-    _, problems = validate.validate_file(tmp_path / "absent.json")
+    _, problems = contract.validate_file(tmp_path / "absent.json")
     assert [p.code for p in problems] == ["unreadable"]
 
 
 def test_every_problem_code_is_produced_by_some_test():
     produced = {code for c in CHANGES for code, _ in c[4]} | {code for _, code, _ in TEXT_CASES} | {"unreadable"}
-    assert produced == set(validate.CODES)
+    assert produced == set(contract.CODES)
 
 
-# -- the command line ---------------------------------------------------------------
+# -- standard library only ------------------------------------------------------------
 
 
-def _run(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-I", str(VALIDATE_PY), *args], capture_output=True, text=True, check=False)
+def _imported_roots(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    roots = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import would pull in the rest of the package and its dependencies.
+            roots.add(node.module.split(".")[0] if node.level == 0 and node.module else ".")
+    return roots
 
 
-def test_cli(tmp_path):
+@pytest.mark.parametrize("module", [contract, falkorbench], ids=["contract", "falkorbench"])
+def test_contract_imports_only_the_standard_library(module):
+    # The reporting path must never depend on a package: importing falkorbench.contract
+    # runs falkorbench/__init__.py first, so both stay standard library only.
+    roots = _imported_roots(Path(module.__file__))
+    assert roots <= sys.stdlib_module_names, sorted(roots - sys.stdlib_module_names)
+
+
+# -- bench validate -------------------------------------------------------------------
+
+
+def _bench_validate(*args: str):
+    return CliRunner().invoke(cli, ["validate", *args])
+
+
+def test_bench_validate(tmp_path):
     files = sorted(str(p) for p in examples.VALID.glob("*.json"))
-    run = _run(*files)
-    assert run.returncode == 0, run.stdout + run.stderr
-    assert len(run.stdout.splitlines()) == len(files)
+    run = _bench_validate(*files)
+    assert run.exit_code == 0, run.output
+    assert run.output.splitlines() == [f"{f}: ok ({examples.kind(Path(f).name)})" for f in files]
+    # A tag in place of a digest is refused.
+    assert examples.CASES[0].code == "image-not-digest"
     bad = tmp_path / "result.json"
     bad.write_text(json.dumps(examples.changed(examples.CASES[0])))
-    run = _run(files[0], str(bad))
-    assert run.returncode == 1
-    assert run.stdout.splitlines()[0].endswith(": ok (nightly)")
-    assert re.fullmatch(re.escape(str(bad)) + r": image-not-digest: \$\.baseline\.image: .+", run.stdout.splitlines()[1])
-    assert _run().returncode == 2
+    run = _bench_validate(files[0], str(bad))
+    assert run.exit_code == 1
+    assert run.output.splitlines()[0].endswith(": ok (nightly)")
+    assert re.fullmatch(re.escape(str(bad)) + r": image-not-digest: \$\.baseline\.image: .+", run.output.splitlines()[1])
+    assert _bench_validate().exit_code == 2
+    assert _bench_validate("--kind", "nightlies", files[0]).exit_code == 2
+
+
+def test_bench_validate_kind_skips_detection():
+    result = str(examples.VALID / examples.MICRO_PASS)
+    run = _bench_validate("--kind", "nightly", result)
+    assert run.exit_code == 1
+    assert ": missing-field: $.date: " in run.output
 
 
 # -- acceptance.yaml -----------------------------------------------------------------
 
-ACCEPTANCE = yaml.safe_load((HERE / "acceptance.yaml").read_text())
+ACCEPTANCE = yaml.safe_load((BENCH / "acceptance.yaml").read_text())
 PAIRS = [(check, pair) for check, pairs in ACCEPTANCE["checks"].items() for pair in pairs]
 
 
@@ -200,28 +228,28 @@ def test_acceptance_pairs_are_well_formed():
     assert ACCEPTANCE["schema"] == 1
     ids = [pair["id"] for _, pair in PAIRS]
     assert len(ids) == len(set(ids)), "duplicate pair id"
-    for check, pair in PAIRS:
+    for _, pair in PAIRS:
         assert set(pair) <= {"id", "candidate", "baseline", "mode", "expect", "judge"}, pair["id"]
         assert pair["mode"] == "nightly"
         for side in (pair["candidate"], pair["baseline"]):
-            assert validate.IMAGE_RE.fullmatch(side["image"]), side
-            assert validate.COMMIT_RE.fullmatch(side["commit"]), side
+            assert contract.IMAGE_RE.fullmatch(side["image"]), side
+            assert contract.COMMIT_RE.fullmatch(side["commit"]), side
         if pair["candidate"]["image"] == pair["baseline"]["image"] and pair["expect"]:
             assert pair["expect"] == {"verdict": "pass", "no_regression_findings": True}, pair["id"]
         for matcher in pair["expect"].get("findings", []):
             assert set(matcher) <= {"name", "name_regex", "metric", "status"}, pair["id"]
             metrics = matcher.get("metric", [])
-            assert set(metrics if isinstance(metrics, list) else [metrics]) <= set(validate.METRICS), pair["id"]
-            assert matcher["status"] in validate.FINDING_STATUSES, pair["id"]
+            assert set(metrics if isinstance(metrics, list) else [metrics]) <= set(contract.METRICS), pair["id"]
+            assert matcher["status"] in contract.FINDING_STATUSES, pair["id"]
             re.compile(matcher.get("name_regex", ""))
 
 
 def test_micro_hw_acceptance_rows_exist_in_bench():
-    queries = (HERE.parent.parent / "bench" / "src" / "falkorbench" / "queries.py").read_text()
+    names = {q.name for q in QUERIES}
     rows = [re.match(r"\^(.+?)\(", m["name_regex"]).group(1) for m in _pair("micro-hw-6.2.0-vs-main")["expect"]["findings"]]
     assert rows
     for row in rows:
-        assert f'Q("{row}"' in queries, f"bench has no row named {row!r}"
+        assert row in names, f"bench has no row named {row!r}"
 
 
 # A pattern from acceptance.yaml must match its own finding names and no neighbour's.

@@ -16,6 +16,7 @@ import click
 from falkorbench import callgrind as cg
 from falkorbench import client as client_mod
 from falkorbench import compare as compare_mod
+from falkorbench import contract
 from falkorbench import coverage as coverage_mod
 from falkorbench import flow as flow_mod
 from falkorbench import measure as measure_mod
@@ -473,6 +474,27 @@ def flow(module, out, baseline, current, names):
     finally:
         if tmp is not None:
             tmp.cleanup()
+
+
+# --- validate ----------------------------------------------------------------
+
+
+@cli.command()
+@click.option(
+    "--kind",
+    type=click.Choice(["result", "nightly"]),
+    default=None,
+    help="skip shape detection",
+)
+@click.argument("files", nargs=-1, required=True)
+def validate(kind, files):
+    """Check perf result.json / nightly.json files against the result contract.
+
+    Prints each problem as <file>: <code>: <path>: <message>, or <file>: ok
+    (<kind>); exits 1 if any file has a problem.
+    """
+    if contract.check_files(files, kind, echo=click.echo):
+        raise SystemExit(1)
 
 
 def main() -> int:

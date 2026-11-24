@@ -1,21 +1,24 @@
-#!/usr/bin/env python3
-"""Check a perf result.json or nightly.json before it is reported (see README.md).
+"""The result contract: the format of a perf check's result.json and of the
+night's nightly.json, and the checker that runs on them before anything is
+reported (bench/README.md, "Result contract").
 
-    python -I tests/perf/validate.py [--kind result|nightly] <file>...
+    bench validate [--kind result|nightly] <file>...
 
-Standard library only, Python 3.9+. Scripts load it by path and call
+Code that writes or reads these files imports it:
 validate_file(path, kind) -> (kind, [Problem(code, path, message)]).
+Standard library only, so the reporting path never depends on a package.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import math
 import re
-import sys
+from collections.abc import Callable
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Callable, NamedTuple
+from typing import Any
+from typing import NamedTuple
 
 VERDICTS = ("pass", "regression", "error")
 METRICS = (
@@ -434,21 +437,16 @@ def validate_file(path: str | Path, kind: str | None = None) -> tuple[str | None
     return validate_text(text, kind)
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check perf result.json / nightly.json files.")
-    parser.add_argument("--kind", choices=("result", "nightly"), help="skip shape detection")
-    parser.add_argument("files", nargs="+")
-    args = parser.parse_args(argv)
+def check_files(files: Iterable[str | Path], kind: str | None = None,
+                echo: Callable[[str], Any] = print) -> int:
+    """`bench validate`: one line per problem, `<file>: <code>: <path>: <message>`,
+    or `<file>: ok (<kind>)`. Returns 1 if any file has a problem, else 0."""
     failed = False
-    for name in args.files:
-        kind, problems = validate_file(name, args.kind)
+    for name in files:
+        found, problems = validate_file(name, kind)
         failed |= bool(problems)
         for problem in problems:
-            print(f"{name}: {problem}")
+            echo(f"{name}: {problem}")
         if not problems:
-            print(f"{name}: ok ({kind})")
+            echo(f"{name}: ok ({found})")
     return 1 if failed else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

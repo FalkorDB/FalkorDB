@@ -1,18 +1,17 @@
-# Tests for the nightly perf runs and their checks: tests/perf/ (the result
-# validator, its example files, acceptance.yaml, the reporter), tests/soak/ (the
-# soak and fuzz checks) and bench/tests/ (the bench harness, incl. the micro
-# tier's verdict). Nothing here builds or runs the engine or a server; it takes
-# about a minute.
+# Tests for the nightly perf runs and their checks: bench/tests/ (the bench
+# toolset, incl. the result contract, its example files and acceptance.yaml),
+# plus whatever has not moved into bench/ yet: tests/perf/ (the VM scripts) and
+# tests/soak/ (the soak and fuzz checks). Nothing here builds or runs the engine
+# or a server; it takes about a minute.
 
 name: perf-contract
 
 on:
   pull_request:
     paths:
+      - "bench/**"
       - "tests/perf/**"
       - "tests/soak/**"
-      # Also covers queries.py, whose micro acceptance rows test_validate.py checks.
-      - "bench/**"
       - ".github/workflows/perf-contract.yml"
   merge_group:
 
@@ -32,7 +31,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # Same pinned uv as benchmark-cov.yml.
+      # Same pinned uv as benchmark-cov.yml. Every step below runs in bench's
+      # environment: bench/uv.lock, on the Python bench/.python-version pins.
       - name: Install uv
         run: |
           set -euo pipefail
@@ -42,41 +42,31 @@ jobs:
           docker rm -f "$cid" >/dev/null
           chmod +x .bin/uv
 
-      # validate.py promises Python 3.9+ and the standard library only.
-      - name: validate.py on Python 3.9, standard library only
-        run: |
-          set -euo pipefail
-          .bin/uv run --no-project --python 3.9 python -I tests/perf/validate.py tests/perf/fixtures/valid/*.json
-          # The nightlies examples.py builds pass, and its first broken case (a tag
-          # in place of a digest) is refused.
-          .bin/uv run --no-project --python 3.9 python -I - <<'EOF'
-          import importlib.util, json, sys
-          def load(name, path):
-              spec = importlib.util.spec_from_file_location(name, path)
-              module = importlib.util.module_from_spec(spec)
-              spec.loader.exec_module(module)
-              return module
-          validate = load("validate", "tests/perf/validate.py")
-          examples = load("examples", "tests/perf/examples.py")
-          bad = [(n, str(p)) for n in examples.BUILT for p in validate.validate_text(json.dumps(examples.example(n)))[1]]
-          refused = validate.validate_text(json.dumps(examples.changed(examples.CASES[0])))[1]
-          print("built nightlies:", bad or "ok", "| tag case refused:", bool(refused))
-          sys.exit(1 if bad or not refused else 0)
-          EOF
-
-      # pytest and pyyaml (acceptance.yaml) are test-only. --python: the step
-      # above leaves a uv-managed 3.9 behind, which uv would otherwise pick,
-      # and pytest 9 needs 3.10+.
-      - name: pytest tests/perf
-        run: >-
-          .bin/uv run --no-project --python 3.12
-          --with pytest==9.2.0 --with pyyaml==6.0.4
-          python -I -m pytest tests/perf -v -p no:cacheprovider
+      # The command the checks and the nightly call, through its real entry point.
+      - name: bench validate on the example results
+        run: .bin/uv run --project bench --frozen bench validate bench/tests/fixtures/valid/*.json
 
       # Separate runs per suite: test files with the same basename in two
       # suites would collide in one run (pytest's default prepend import mode),
-      # and a failure names its suite. tests/soak/ arrives with the soak and
-      # fuzz checks' PRs; until then there is nothing to run.
+      # and a failure names its suite.
+      - name: pytest bench/tests
+        run: >-
+          .bin/uv run --project bench --frozen --group dev
+          python -I -B -m pytest bench/tests -v -p no:cacheprovider
+
+      # tests/perf/ keeps the VM scripts' tests, which arrive with the VM PR.
+      - name: pytest tests/perf
+        run: |
+          set -euo pipefail
+          if [ -z "$(find tests/perf -name 'test_*.py' 2>/dev/null)" ]; then
+            echo "::notice::no tests under tests/perf on this branch; nothing to run"
+            exit 0
+          fi
+          .bin/uv run --project bench --frozen --group dev \
+            python -I -B -m pytest tests/perf -v -p no:cacheprovider
+
+      # tests/soak/ arrives with the soak and fuzz checks' PRs, until they move
+      # into bench/.
       - name: pytest tests/soak
         run: |
           set -euo pipefail
@@ -84,10 +74,5 @@ jobs:
             echo "::notice::tests/soak does not exist on this branch; nothing to run"
             exit 0
           fi
-          .bin/uv run --no-project --python 3.12 \
-            --with pytest==9.2.0 --with pyyaml==6.0.4 \
-            python -I -m pytest tests/soak -v -p no:cacheprovider
-
-      # bench's own environment, from bench/uv.lock (pytest is in its dev group).
-      - name: pytest bench/tests
-        run: .bin/uv run --project bench --frozen --python 3.12 pytest bench/tests -v -p no:cacheprovider
+          .bin/uv run --project bench --frozen --group dev --group soak --group fuzz \
+            python -I -B -m pytest tests/soak -v -p no:cacheprovider
