@@ -2,10 +2,14 @@
 # marked ready. Runs `bench ldbc check` through _perf-vm.yml (perf-gce-runner's
 # branch until it is on main, #3979) on the proof pairs, one VM at a time.
 # Each leg's VM-workflow check name differs only so the three artifacts do not
-# collide; every result.json says check "ldbc". It runs only when this file
-# changes, so a code push does not start three VMs: to prove a new commit,
-# change this file deliberately (the line below), after telling the
-# coordinator.
+# collide; every result.json says check "ldbc".
+#
+# The legs run only for a push that itself changes the "Proof of:" line
+# below (the `gate` job diffs the push's before and after). A `paths` filter
+# cannot do it: for pull_request it is matched against the whole PR's diff,
+# which contains this file, and `workflow_dispatch` works only for a file on
+# the default branch. To prove a new commit, change that line deliberately,
+# after telling the coordinator.
 # Proof of: review round 4.
 
 name: TEMPORARY ldbc proof
@@ -13,8 +17,6 @@ name: TEMPORARY ldbc proof
 on:
   pull_request:
     branches: [main]
-    paths:
-      - .github/workflows/ldbc-proof.yml
 
 permissions: {}
 
@@ -23,7 +25,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.diff.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          # No pipe into grep -q: with the default pipefail an early exit of
+          # grep would make a match read as no match.
+          run=false
+          if [[ -n $BEFORE ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            git diff -U0 "$BEFORE" "$AFTER" -- .github/workflows/ldbc-proof.yml > proof.diff
+            if grep -q '^+# Proof of:' proof.diff; then run=true; fi
+          fi
+          echo "before=${BEFORE:-none} after=$AFTER run=$run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
   proof:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
     permissions:
       contents: read
       packages: read
