@@ -24,11 +24,6 @@ on:
         description: "Night to check, YYYY-MM-DD in UTC (empty: today)"
         required: false
         default: ""
-  # TEMPORARY, removed before this PR is marked ready: runs the `prove` job below.
-  pull_request:
-    paths:
-      - .github/workflows/perf-missed-run.yml
-      - tests/perf/report/**
 
 permissions:
   actions: read
@@ -41,9 +36,7 @@ concurrency:
 jobs:
   alarm:
     name: Nightly perf result exists
-    # TEMPORARY: `&& github.event_name != 'pull_request'` keeps the real alarm (and the
-    # webhook) off this PR's runs; removed with the trigger above.
-    if: ${{ github.repository == 'FalkorDB/FalkorDB' && github.event_name != 'pull_request' }}
+    if: ${{ github.repository == 'FalkorDB/FalkorDB' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -57,53 +50,3 @@ jobs:
           PERF_CHAT_WEBHOOK: ${{ secrets.PERF_CHAT_WEBHOOK }}
           NIGHT: ${{ inputs.date }}
         run: python3 -I tests/perf/report/missed_run.py ${NIGHT:+--date "$NIGHT"}
-
-  # TEMPORARY, removed before this PR is marked ready: proves the alarm against
-  # real runs with an injected night. It never gets the webhook.
-  prove:
-    name: "Prove: ${{ matrix.case }}"
-    if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - case: fires, no perf-nightly.yml run on main that night (or no such workflow yet)
-            arguments: --date 2026-11-24
-            expect: 1
-          - case: quiet, the night's run has the artifact (rust-push.yml coverage-binary)
-            arguments: --workflow rust-push.yml --event push --artifact coverage-binary --date 2026-11-23
-            expect: 0
-          - case: fires, the night's runs lack the artifact (rust-push.yml)
-            arguments: --workflow rust-push.yml --event push --date 2026-11-23
-            expect: 1
-          - case: fires, a push run with the artifact does not stand in for a scheduled one
-            arguments: --workflow rust-push.yml --artifact coverage-binary --date 2026-11-23
-            expect: 1
-          # perf-nightly.yml run 45332918572 (PR #3991), created 2026-11-24T05:22:58Z,
-          # uploaded a real perf-nightly artifact: it belongs to the night of 11-25.
-          - case: quiet, a real perf-nightly run uploaded perf-nightly (run 45332918572)
-            arguments: --workflow perf-nightly.yml --branch ci/perf-nightly --event pull_request --date 2026-11-25
-            expect: 0
-          - case: fires, the night before that run (it started after 05:00)
-            arguments: --workflow perf-nightly.yml --branch ci/perf-nightly --event pull_request --date 2026-11-24
-            expect: 1
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          sparse-checkout: tests/perf/report
-          persist-credentials: false
-      - name: Run the alarm on an injected night and check its exit code
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARGUMENTS: ${{ matrix.arguments }}
-          EXPECT: ${{ matrix.expect }}
-        run: |
-          set +e
-          # shellcheck disable=SC2086  # ARGUMENTS is a word list from the matrix
-          python3 -I tests/perf/report/missed_run.py $ARGUMENTS
-          code=$?
-          set -e
-          echo "exit code $code, expected $EXPECT"
-          test "$code" = "$EXPECT"
