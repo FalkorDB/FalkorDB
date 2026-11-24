@@ -13,7 +13,11 @@ row.
 """
 
 import csv
+import io
 import re
+import shutil
+import subprocess
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -357,7 +361,7 @@ def test_result_csv_is_written_with_the_declared_columns(tmp_path):
 
     out = tmp_path / "ldbc.csv"
     runner.write_csv(out, [result])
-    rows = list(csv.DictReader(out.open()))
+    rows = list(csv.DictReader(out.read_text().splitlines()))
     assert list(rows[0]) == list(runner.CSV_FIELDS)
     assert rows[0]["query"] == "IC1"
     assert rows[0]["rewritten"] == "yes"
@@ -397,7 +401,7 @@ def test_birthday_parts_are_derived_from_epoch_millis(tmp_path):
     path.write_text("id|firstName|birthday\n933|Mahinda|628646400000\n")
 
     dataset._derive_birthday_parts(path)
-    rows = list(csv.DictReader(path.open(), delimiter="|"))
+    rows = list(csv.DictReader(path.read_text().splitlines(), delimiter="|"))
     assert rows[0]["birthdayMonth"] == "12"
     assert rows[0]["birthdayDay"] == "3"
 
@@ -426,3 +430,90 @@ def test_a_person_file_without_a_birthday_column_is_an_error(tmp_path):
 def test_an_unknown_scale_factor_is_refused_before_any_download(tmp_path):
     with pytest.raises(dataset.DatasetError, match="unknown scale factor"):
         dataset.fetch(tmp_path, "1000", echo=lambda _: None)
+
+
+def _tar_zst(tmp_path, members):
+    """A .tar.zst holding `members` ({name: bytes}), via the zstd binary."""
+    if not shutil.which("zstd"):
+        pytest.skip("zstd not on PATH")
+    raw = tmp_path / "x.tar"
+    with tarfile.open(raw, "w") as tar:
+        for name, data in members.items():
+            if data is None:  # a directory entry, as the LDBC archive has
+                info = tarfile.TarInfo(name)
+                info.type, info.mode = tarfile.DIRTYPE, 0o755
+                tar.addfile(info)
+                continue
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(data), 0o4775  # setuid + group write
+            tar.addfile(info, io.BytesIO(data))
+    subprocess.run(["zstd", "-q", "-f", str(raw), "-o", str(tmp_path / "x.tar.zst")], check=True)
+    return tmp_path / "x.tar.zst"
+
+
+# On a newer Python, extracting without a filter warns that 3.14 will filter;
+# 3.11.2 itself does not.
+@pytest.mark.filterwarnings("ignore:Python 3.14 will:DeprecationWarning")
+@pytest.mark.parametrize("filters", [True, False], ids=["with-filters", "python-3.11.2"])
+def test_extraction_works_with_and_without_tarfile_filters(tmp_path, monkeypatch, filters):
+    """Debian 12, the nightly VM's image, ships Python 3.11.2: no `filter=`."""
+    if not filters:
+        monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    archive = _tar_zst(tmp_path, {"ds": None, "ds/static": None, "ds/static/a.csv": b"id|x\n1|2\n"})
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    dataset._extract_zst(archive, dest)
+    assert (dest / "ds/static/a.csv").read_bytes() == b"id|x\n1|2\n"
+    # The server in the container runs as another user (uid 999): it must be
+    # able to enter every directory and read every file.
+    for d in (dest / "ds", dest / "ds/static"):
+        assert d.stat().st_mode & 0o777 == 0o755, oct(d.stat().st_mode)
+    # Nothing beyond what `filter="data"` keeps: no setuid, no group write.
+    assert (dest / "ds/static/a.csv").stat().st_mode & 0o7777 == 0o755
+
+
+@pytest.mark.filterwarnings("ignore:Python 3.14 will:DeprecationWarning")
+def test_extraction_without_filters_still_refuses_an_escape(tmp_path, monkeypatch):
+    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    archive = _tar_zst(tmp_path, {"../evil.csv": b"x"})
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    with pytest.raises(dataset.DatasetError, match="outside the cache"):
+        dataset._extract_zst(archive, dest)
+    assert not (tmp_path / "evil.csv").exists()
+
+
+def test_an_interrupted_extraction_does_not_pass_for_a_dataset(tmp_path, monkeypatch):
+    """`fetch` treats an existing dataset directory as extracted, so a run
+    stopped mid-extraction must not leave one behind."""
+    sf = "0.1"
+    tarball = tmp_path / schema.DATASET_TARBALL.format(sf=sf)
+    tarball.write_bytes(b"x" * schema.SCALE_FACTORS[sf])
+    target = dataset.dataset_dir(tmp_path, sf)
+
+    def half(archive, dest):
+        (dest / target.name / "static").mkdir(parents=True)
+        (dest / target.name / "static/place_0_0.csv").write_text("id|")
+        raise dataset.DatasetError("zstd exited 1")
+
+    monkeypatch.setattr(dataset, "_extract_zst", half)
+    with pytest.raises(dataset.DatasetError):
+        dataset.fetch(tmp_path, sf, echo=lambda _: None)
+    assert not target.exists()
+
+    def whole(archive, dest):
+        (dest / target.name / "static").mkdir(parents=True)
+
+    monkeypatch.setattr(dataset, "_extract_zst", whole)
+    assert dataset.fetch(tmp_path, sf, echo=lambda _: None) == target
+    assert target.is_dir() and not list(tmp_path.glob(".extracting-*"))
+
+
+def test_only_plain_files_and_directories_are_extracted():
+    link = tarfile.TarInfo("ds/link")
+    link.type = tarfile.SYMTYPE
+    with pytest.raises(dataset.DatasetError, match="not a plain file"):
+        dataset._refuse_unsafe(link)
+    with pytest.raises(dataset.DatasetError, match="outside the cache"):
+        dataset._refuse_unsafe(tarfile.TarInfo("/etc/passwd"))
+    dataset._refuse_unsafe(tarfile.TarInfo("ds/static/a.csv"))

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import os
 import shutil
 import subprocess
 import tarfile
@@ -86,9 +87,19 @@ def fetch(cache: Path, sf: str, *, echo: Echo = print) -> Path:
         part.rename(tarball)
 
     echo(f"extracting {tarball.name}...")
-    _extract_zst(tarball, cache)
-    if not target.is_dir():
-        raise DatasetError(f"{tarball.name} did not contain {target.name}")
+    # Into a scratch directory first, renamed into place only once complete:
+    # `target` existing is what marks the dataset as extracted, so a run
+    # stopped mid-extraction must not leave a partial tree under that name.
+    scratch = cache / f".extracting-{target.name}"
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir()
+    try:
+        _extract_zst(tarball, scratch)
+        if not (scratch / target.name).is_dir():
+            raise DatasetError(f"{tarball.name} did not contain {target.name}")
+        (scratch / target.name).rename(target)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
     return target
 
 
@@ -112,19 +123,65 @@ def _extract_zst(tarball: Path, dest: Path) -> None:
     """
     if not shutil.which("zstd"):
         raise DatasetError("`zstd` not found on PATH; install zstd to extract the dataset")
+    proc: subprocess.Popen[bytes] | None = None
     try:
         proc = subprocess.Popen(
             ["zstd", "--decompress", "--stdout", str(tarball)],
             stdout=subprocess.PIPE,
         )
         with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
-            # `filter="data"` refuses absolute paths and ../ escapes. Default in
-            # 3.14; set explicitly so behaviour does not depend on the runtime.
-            tar.extractall(dest, filter="data")
+            if hasattr(tarfile, "data_filter"):
+                # `filter="data"` refuses absolute paths and ../ escapes.
+                # Default in 3.14; set explicitly so behaviour does not depend
+                # on the runtime.
+                tar.extractall(dest, filter="data")
+            else:
+                # Extraction filters arrived in 3.11.4, and Debian 12 (the
+                # nightly's VM image) ships 3.11.2, where `filter=` is a
+                # TypeError. Apply the same refusals by hand.
+                for member in tar:
+                    _refuse_unsafe(member)
+                    tar.extract(_sanitised(member), dest)
         if proc.wait() != 0:
             raise DatasetError(f"zstd exited {proc.returncode}")
     except (OSError, tarfile.TarError) as e:
         raise DatasetError(f"extracting {tarball.name} failed: {e}") from e
+    finally:
+        # A refusal or a read error stops reading mid-stream; don't leave
+        # zstd blocked on a full pipe.
+        if proc is not None:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            if proc.stdout is not None:
+                proc.stdout.close()
+
+
+def _sanitised(member: tarfile.TarInfo) -> tarfile.TarInfo:
+    """The member with what `filter="data"` would change, changed.
+
+    Its mode loses setuid, setgid, sticky and group/other write, and the owner
+    always keeps read and write (search, for a directory); the owner becomes
+    whoever extracts, so a run as root does not hand files to the archive's
+    uid. The attributes are still applied: without them `tarfile` leaves a
+    directory at the 0700 it creates it with, which the server's own user in
+    the container (uid 999) cannot enter.
+    """
+    keep = 0o700 if member.isdir() else 0o600
+    member.mode = (member.mode & 0o755) | keep
+    member.uid, member.gid = os.geteuid(), os.getegid()
+    member.uname = member.gname = ""
+    return member
+
+
+def _refuse_unsafe(member: tarfile.TarInfo) -> None:
+    """What `filter="data"` refuses, for a runtime without it: anything but
+    a plain file or directory, an absolute path, and a `..` component."""
+    name = member.name
+    if not (member.isfile() or member.isdir()):
+        raise DatasetError(f"refusing {name!r}: not a plain file or directory")
+    if name.startswith(("/", "\\")) or ".." in Path(name).parts:
+        raise DatasetError(f"refusing {name!r}: it would extract outside the cache")
 
 
 def prepare(root: Path, *, echo: Echo = print) -> None:
@@ -157,11 +214,14 @@ def _rewrite_header(path: Path, names: list[str]) -> None:
     if not path.exists():
         raise DatasetError(f"missing dataset file: {path}")
 
-    with path.open("r", encoding="utf-8", newline="") as fh:
-        header = fh.readline()
-        if not header:
+    # Binary, so `tell()` is a byte offset: a text-mode `tell()` is an opaque
+    # cookie, not a position the binary copy below may seek to.
+    with path.open("rb") as fh:
+        raw = fh.readline()
+        if not raw:
             raise DatasetError(f"empty dataset file: {path}")
         rest_offset = fh.tell()
+    header = raw.decode("utf-8")
 
     fields = header.rstrip("\r\n").split("|")
     if len(fields) < len(names):

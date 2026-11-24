@@ -367,8 +367,9 @@ def rewrite_self_edge_header(path, from_id, to_id):
     if not os.path.exists(path):
         raise FileNotFoundError(path)
 
-    with open(path, newline="") as f:
-        header = f.readline()
+    # Binary, so `tell()` is a byte offset the binary copy below can seek to.
+    with open(path, "rb") as f:
+        header = f.readline().decode("utf-8")
         body_offset = f.tell()
 
     fields = header.rstrip("\r\n").split("|")
