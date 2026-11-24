@@ -1,0 +1,73 @@
+# TEMPORARY: proves the pmu create path's beta-flag check and the
+# pmu-probe parser on a real runner (#3979). Removed once the run is in.
+name: perf VM proof
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/_perf-vm.yml
+      - .github/workflows/perf-vm-proof.yml
+      - tests/perf/vm/**
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: perf-vm-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  pmu:
+    uses: ./.github/workflows/_perf-vm.yml
+    with:
+      check: smoke-pmu
+      command: perf stat -x, -o out/perf-stat.csv -e cycles,instructions -- true
+      candidate_image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+      baseline_image: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+      timeout_minutes: 10
+      pmu: true
+    secrets: inherit
+
+  assert:
+    needs: pmu
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: perf-result-smoke-pmu
+          path: artifacts
+
+      - name: Authenticate gcloud
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null
+          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null
+
+      - name: No VM from this run is left
+        run: |
+          set -euo pipefail
+          left=$(gcloud compute instances list --filter="labels.gh_run_id=${{ github.run_id }}" --format='value(name,zone.basename())')
+          if [[ -n $left ]]; then echo "::error::left running: $left"; exit 1; fi
+          echo "no VM carries gh_run_id=${{ github.run_id }}"
+
+      - name: The pmu leg ended as it should
+        run: |
+          cat artifacts/perf-vm.json artifacts/perf-stat.csv
+          python3 -I - <<'PY'
+          import json, re
+          p = json.load(open("artifacts/perf-vm.json"))
+          checks = {
+              "C4": p["machine_type"] in ("c4-standard-16", "c4-standard-8"),
+              "vPMU STANDARD": (p["pmu"] or "").upper() == "STANDARD",
+              "probe counted": bool(re.fullmatch(r"cycles=[1-9]\d* instructions=[1-9]\d*", p["pmu_probe"] or "")),
+              "exit 0": p["command_exit"] == 0,
+          }
+          for name, ok in checks.items():
+              print("ok " if ok else "BAD", name)
+          if not all(checks.values()):
+              raise SystemExit(1)
+          PY
