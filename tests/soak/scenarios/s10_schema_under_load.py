@@ -298,7 +298,6 @@ timed_index("Probe", "id", 1)
 QUIRK_INDEX_SCAN_ON_ANY_INDEX = "Index Scan" in explain(r, "MATCH (n:Probe) WHERE n.x = 1 RETURN count(n)")
 Q("DROP INDEX FOR (n:Probe) ON (n.id)")
 Q("MATCH (n:Probe) DELETE n")
-build_log.clear() if False else None
 print("quirk index-scan-on-any-index:", QUIRK_INDEX_SCAN_ON_ANY_INDEX, flush=True)
 
 
@@ -333,7 +332,7 @@ for name, sp in SPECS.items():
     ex2 = explain(r, eq_q(sp, True, sorted(sp["tab"])[0]))
     checks.add(f"baseline {name}: EXPLAIN no index after drop", no_index_plan(ex2), ex2, "major")
 # string index + unique constraint build timing on the largest label
-dt = timed_index("Person", "email", NP)
+timed_index("Person", "email", NP)
 bad = []
 rng = random.Random(3)
 for _ in range(20):

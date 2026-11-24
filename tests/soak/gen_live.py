@@ -76,7 +76,7 @@ def live_lat(d, window=60):
 
 
 def spark(vals, w=260, h=44, color="var(--accent)"):
-    vals = [v for v in vals if v == v]
+    vals = [v for v in vals if not math.isnan(v)]
     if len(vals) < 2:
         return ""
     vals = vals[-600:]
@@ -154,7 +154,7 @@ def main():
         livep = f"""
       <p><b>{sc}</b> on <b>{eng}</b>, phase <code>{html.escape(phase)}</code>, started {t0}, {len(mon)} s monitored.</p>
       <div class="two">
-        <div class="card"><h3>Server CPU % · now {fmt(cpu[-1] if cpu else None, 0)}</h3>{spark(cpu)}<span class="note">avg {fmt(sum(c for c in cpu if c == c) / max(1, len([c for c in cpu if c == c])) if cpu else None, 0)}%, 100 = one core</span></div>
+        <div class="card"><h3>Server CPU % · now {fmt(cpu[-1] if cpu else None, 0)}</h3>{spark(cpu)}<span class="note">avg {fmt(sum(c for c in cpu if not math.isnan(c)) / max(1, len([c for c in cpu if not math.isnan(c)])) if cpu else None, 0)}%, 100 = one core</span></div>
         <div class="card"><h3>RSS MB · now {fmt(rss[-1] if rss else None, 0)}</h3>{spark(rss, color="var(--warn)")}<span class="note">used_memory now {fmt(um[-1] if um else None, 0)} MB, peak RSS {fmt(max(rss) if rss else None, 0)} MB</span></div>
       </div>
       <div class="tbl"><table><thead><tr><th>Op (last 60 s)</th><th>ops/s</th><th>p50 ms</th><th>p99 ms</th><th>errors</th></tr></thead>

@@ -285,8 +285,10 @@ def _timing_row(tag: str, name: str, cand: list[Run], base: list[Run], perf_gate
     elif pairs and all(cv is False and bv is False for cv, bv in pairs):
         cv, bv = 0, 0
     else:
+        # the baseline counts as broken under the same rule as the candidate: every run (at
+        # least two) broke it; a single break is noise in either direction
         cv = 1 if c_seen else None
-        bv = None if not b_seen else int(not all(v is False for v in b_seen))
+        bv = None if not b_seen else int(not (len(b_seen) >= 2 and all(v is False for v in b_seen)))
     row = _zero_one(f"{tag} {name}", "invariant", cv, bv)
     row.crossed = bool(pairs) and regress[0]
     if cv == 1 and c_broke:

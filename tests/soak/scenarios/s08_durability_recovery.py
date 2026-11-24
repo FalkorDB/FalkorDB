@@ -515,7 +515,6 @@ def ledger_op(ctx):
     recs = []
     name = None
     if nid not in nodes:
-        state = {"id": None}
         props = []
         state = {}
         for f in LEDGER_FIELDS:
@@ -1027,7 +1026,7 @@ rdb_mtime = rdb_path.stat().st_mtime
 rec["tkill"] = time.time()
 srv.kill9()
 rec["label"] = label
-rcv = recover(rec, "kill9")
+recover(rec, "kill9")
 after = rdb_snapshot_state()
 checks.add(f"{label}: restored graph == state at last SAVE", rdb_equal(snap, after), "", "critical")
 checks.add(f"{label}: kill->first query < 180s", rec["kill_to_query_s"] < 180, f"{rec['kill_to_query_s']}s", "major")
@@ -1040,7 +1039,7 @@ rd().execute_command("SAVE")
 snap2 = rdb_snapshot_state()
 rdb_mtime2 = rdb_path.stat().st_mtime
 rec, bgrec = run_segment(label, "rdb", "kill9")
-rcv = recover(rec, "kill9")
+recover(rec, "kill9")
 after2 = rdb_snapshot_state()
 checks.add(f"{label}: restored graph == state at last SAVE (post-SAVE writes gone)", rdb_equal(snap2, after2),
            f"nodes {len(snap2['nodes'])} vs {len(after2['nodes'])}, cnt {snap2['cnt']} vs {after2['cnt']}", "critical")

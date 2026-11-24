@@ -820,7 +820,7 @@ crash = srv.crashed()
 checks.add("no crash/panic markers in server log", not crash, "; ".join(crash[:3]), "critical")
 checks.add("server alive at end", srv.alive(), "", "critical")
 mon.stop()
-s = sk.analyze(out, srv)
+sk.analyze(out, srv)   # writes summary.json; the final one is written after the depth probes
 srv.stop()
 
 # ---------------------------------------------------------------- extreme-depth probes on a throwaway server

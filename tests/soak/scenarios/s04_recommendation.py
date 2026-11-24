@@ -407,7 +407,7 @@ if srv.alive():
     print(f"acked writes: views={nview} purchases={len(adds_u)}", flush=True)
 else:
     verify1_s = 0
-    nview = len(adds_u) if False else 0
+    nview = 0
     adds_u = []
 
 mon.stop()

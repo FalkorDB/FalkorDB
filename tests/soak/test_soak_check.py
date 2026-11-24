@@ -157,6 +157,13 @@ def test_timing_confirmation_pairs_the_runs():
     assert row.status == "info" and row.candidate == 1
 
 
+def test_timing_check_broken_once_on_the_baseline_is_not_an_improvement():
+    name = "victim open-loop schedule kept (few late/missed sends)"
+    row = [r for r in sc.scenario_rows("s11_client_chaos", [run("candidate", checks={name: True})],
+                                       [run("baseline", checks={name: False})], True) if r.metric == "invariant"][0]
+    assert (row.status, row.candidate, row.baseline) == ("ok", 1, 1)
+
+
 def test_timing_check_broken_on_both_sides_every_run_is_info():
     name = "steady state: RSS plateau (2nd half growth <10%+50MB)"
     cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
@@ -300,7 +307,9 @@ def test_compress_large_keeps_small_files(tmp_path):
     (tmp_path / "checks.json").write_text("[]")
     sc.compress_large(tmp_path)
     assert sorted(f.name for f in tmp_path.iterdir()) == ["checks.json", "ledger-0.jsonl.gz"]
-    assert gzip.open(tmp_path / "ledger-0.jsonl.gz").read() == b"x" * (1 << 20)
+    with gzip.open(tmp_path / "ledger-0.jsonl.gz") as f:
+        data = f.read()
+    assert data == b"x" * (1 << 20)
 
 
 def test_read_run_crash_and_exit(tmp_path):

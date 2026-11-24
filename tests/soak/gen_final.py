@@ -83,8 +83,8 @@ def mon_series(d):
         bins.setdefault(b, []).append((cpu, rss))
     cpu, rss = [], []
     for b in sorted(bins):
-        c = [x for x, _ in bins[b] if x == x]
-        r = [y for _, y in bins[b] if y == y]
+        c = [x for x, _ in bins[b] if not math.isnan(x)]
+        r = [y for _, y in bins[b] if not math.isnan(y)]
         x = round(b * 15 / 60, 2)
         if c:
             cpu.append([x, round(st.mean(c), 1)])
