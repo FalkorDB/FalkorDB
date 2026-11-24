@@ -15,7 +15,7 @@ report (stdout, `$GITHUB_STEP_SUMMARY`, `$PERF_CHAT_WEBHOOK`) and the exit code 
 alarm as well: not knowing is not quiet.
 
 `--workflow`, `--branch`, `--event` and `--artifact` exist so the alarm can be
-proven against other runs; the defaults are the nightly's.
+accepted against other runs; the defaults are the nightly's.
 """
 
 from __future__ import annotations

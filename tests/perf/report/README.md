@@ -90,8 +90,8 @@ it posts an alarm naming the case and exits 1:
 * the newest run finished (with its conclusion) without the artifact;
 * `perf-nightly.yml` does not exist, or GitHub could not be asked.
 
-`--workflow`, `--branch`, `--event` and `--artifact` point it at other runs to prove
-it; the workflow takes `date` through `workflow_dispatch`.
+`--workflow`, `--branch`, `--event` and `--artifact` point it at other runs for an
+acceptance run; the workflow takes `date` through `workflow_dispatch`.
 
 ## Tests
 

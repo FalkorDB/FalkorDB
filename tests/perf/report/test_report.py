@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import http.client
+import importlib.util
 import io
 import json
 import os
@@ -37,6 +38,16 @@ REPO_ROOT = HERE.parents[2]
 JUDGE = Path(os.environ.get("PERF_JUDGE_DIR") or REPO_ROOT / "tests" / "perf")
 FIXTURES = JUDGE / "fixtures"
 VALIDATOR = JUDGE / "validate.py"
+INVALID_CASES = JUDGE / "invalid_cases.py"
+
+
+def load_invalid_cases():
+    """perf-judge's table of broken documents (tests/perf/invalid_cases.py), loaded by path."""
+    spec = importlib.util.spec_from_file_location("perf_invalid_cases", INVALID_CASES)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 CANDIDATE_IMAGE = ("ghcr.io/falkordb/falkordb-server@sha256:"
                    "95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed")
@@ -315,13 +326,14 @@ class StatusIsNeverBetterThanTheEvidence(Workspace):
                 self.assertIn(f"could not run the contract validator {validator.name}", text)
 
     def test_contract_problems_are_listed_and_capped(self):
-        night = nightly("green", [result("micro", "pass")])
-        for index in range(8):
-            night["checks"][0][f"unknown_{index}"] = 1
-        text = self.chat(night)
+        # Eight findings with a metric the contract does not list: eight unknown-metric problems.
+        rows = [finding(f"row {index}", "latency_ms", 1.0, 1.0, 1.0, 1.1, status="ok") for index in range(8)]
+        text = self.chat(nightly("green", [result("micro", "pass", rows)]))
         self.assertTrue(text.startswith("*Perf nightly 2026-11-24: ERROR*"), text)
-        self.assertIn("contract: ", text)
-        self.assertIn("more (run tests/perf/validate.py)", text)
+        self.assertIn("contract: unknown-metric at $.checks[0].findings[0].metric", text)
+        self.assertIn("contract: unknown-metric at $.checks[0].findings[4].metric", text)
+        self.assertNotIn("findings[5].metric", text)
+        self.assertIn("contract: 3 more (run tests/perf/validate.py)", text)
 
     def test_a_check_entry_that_is_not_an_object_is_an_error(self):
         text = self.chat(nightly("green", [result("micro", "pass"), "pokec"]))
@@ -910,19 +922,16 @@ class JudgeFixtures(Workspace):
                     self.assertIn(data["skip_reason"], first)
 
     def test_invalid_nightlies_are_never_green_and_name_every_contract_problem(self):
-        files = fixture_files("invalid")
-        self.assertTrue(files, f"no nightly*.json in {FIXTURES / 'invalid'}")
-        expected = json.loads((FIXTURES / "expected.json").read_text())
-        for path in files:
-            with self.subTest(fixture=path.name):
-                text = self.chat(path)
+        cases = load_invalid_cases()
+        nightlies = [case for case in cases.CASES if cases.kind(case) == "nightly"]
+        self.assertTrue(nightlies, f"no nightly case in {INVALID_CASES}")
+        for case in nightlies:
+            with self.subTest(case=case.name):
+                text = self.chat(self.write(cases.invalid_text(case), "invalid-nightly.json"))
                 self.assertNotIn(": green*", text.splitlines()[0])
                 self.assertNotIn(": skipped*", text.splitlines()[0])
                 self.assertIn("*Problems with nightly.json:*", text)
-                codes = expected[f"invalid/{path.name}"]
-                self.assertTrue(codes, f"expected.json lists no problem for {path.name}")
-                for code, json_path in codes:
-                    self.assertIn(f"contract: {code} at {json_path}", text)
+                self.assertIn(f"contract: {case.code} at {case.at}", text)
 
     def test_each_valid_result_reads_right_as_a_one_check_night(self):
         files = sorted((FIXTURES / "valid").glob("result*.json"))
