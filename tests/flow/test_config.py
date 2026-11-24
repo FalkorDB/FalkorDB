@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -47,7 +47,8 @@ class testConfig(FlowTestsBase):
                 ("TEMP_FOLDER", "/tmp"),
                 ("JS_HEAP_SIZE", 256 * 1024 * 1024),
                 ("JS_STACK_SIZE", 1024 * 1024),
-                ("WRITE_LOCK_POLL_INTERVAL", 5)
+                ("WRITE_LOCK_POLL_INTERVAL", 5),
+                ("PARALLEL_INDEXING", 0)
         ]
 
         for i, config in enumerate(response):
@@ -74,6 +75,71 @@ class testConfig(FlowTestsBase):
             # Expecting an error.
             assert("Unknown configuration field" in str(e))
             pass
+
+    def test_delay_parallel_indexing_mutually_exclusive(self):
+        # DELAY_INDEXING (async) and PARALLEL_INDEXING (synchronous, concurrent)
+        # are mutually-exclusive index-construction modes; the server must reject
+        # any attempt to enable both
+
+        # start from a known clean state
+        self.db.config_set("DELAY_INDEXING", "no")
+        self.db.config_set("PARALLEL_INDEXING", "no")
+
+        # enabling one, then the other, must fail and leave state unchanged
+        self.db.config_set("DELAY_INDEXING", "yes")
+        try:
+            self.db.config_set("PARALLEL_INDEXING", "yes")
+            self.env.assertTrue(False) # should have raised
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("mutually exclusive", str(e))
+        self.env.assertEqual(self.db.config_get("DELAY_INDEXING"), 1)
+        self.env.assertEqual(self.db.config_get("PARALLEL_INDEXING"), 0)
+
+        # same in the opposite direction
+        self.db.config_set("DELAY_INDEXING", "no")
+        self.db.config_set("PARALLEL_INDEXING", "yes")
+        try:
+            self.db.config_set("DELAY_INDEXING", "yes")
+            self.env.assertTrue(False) # should have raised
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("mutually exclusive", str(e))
+        self.env.assertEqual(self.db.config_get("DELAY_INDEXING"), 0)
+        self.env.assertEqual(self.db.config_get("PARALLEL_INDEXING"), 1)
+
+        # a single command enabling both must fail atomically - neither applied
+        self.db.config_set("PARALLEL_INDEXING", "no")
+        try:
+            self.redis_con.execute_command("GRAPH.CONFIG", "SET",
+                    "DELAY_INDEXING", "yes", "PARALLEL_INDEXING", "yes")
+            self.env.assertTrue(False) # should have raised
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("mutually exclusive", str(e))
+        self.env.assertEqual(self.db.config_get("DELAY_INDEXING"), 0)
+        self.env.assertEqual(self.db.config_get("PARALLEL_INDEXING"), 0)
+
+        # restore defaults
+        self.db.config_set("DELAY_INDEXING", "no")
+        self.db.config_set("PARALLEL_INDEXING", "no")
+
+    def test_config_set_rejects_oversized_batch(self):
+        # the number of (field, value) pairs in a single GRAPH.CONFIG SET is
+        # bounded; an oversized batch is rejected rather than sizing stack
+        # buffers from client input
+        prev = self.redis_con.execute_command("GRAPH.CONFIG GET *")
+
+        # build a command with more pairs than there are configurations
+        pairs = []
+        for _ in range(64):
+            pairs += ["RESULTSET_SIZE", "10"]
+        try:
+            self.redis_con.execute_command("GRAPH.CONFIG", "SET", *pairs)
+            self.env.assertTrue(False) # should have raised
+        except redis.exceptions.ResponseError as e:
+            self.env.assertIn("too many configuration parameters", str(e))
+
+        # configuration must be unchanged
+        self.env.assertEqual(self.redis_con.execute_command("GRAPH.CONFIG GET *"),
+                prev)
 
     def test03_config_set(self):
         config_name = "RESULTSET_SIZE"
@@ -503,6 +569,7 @@ class testLoadTimeConfig(FlowTestsBase):
             ("VKEY_MAX_ENTITY_COUNT", 100000),
             ("CMD_INFO",              "yes"),
             ("DELAY_INDEXING",        "no"),
+            ("PARALLEL_INDEXING",     "no"),
             ("IMPORT_FOLDER",         "/var/lib/FalkorDB/import/"),
             ("TEMP_FOLDER",           "/tmp"),
             ("JS_HEAP_SIZE",          268435456),

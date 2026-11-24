@@ -25,7 +25,8 @@
 static void _Index_PopulateNodeIndex
 (
 	Index idx,
-	GraphContext *gc
+	GraphContext *gc,
+	bool unsafe       // skip RediSearch's global write lock (parallel decode)
 ) {
 	ASSERT (gc  != NULL) ;
 	ASSERT (idx != NULL) ;
@@ -39,7 +40,11 @@ static void _Index_PopulateNodeIndex
 
 	while(true) {
 		// lock graph for reading
-		GraphContext_AcquireReadLock (gc) ;
+		// the parallel decode path (unsafe) is single-writer-per-spec with no
+		// concurrent writers; it skips the graph lock so workers don't race on
+		// the shared lock / matrix-sync-policy state (ReleaseLock resets the
+		// policy), and the caller-set NOP policy survives the whole region
+		if(!unsafe) GraphContext_AcquireReadLock (gc) ;
 
 		// index state changed, abort indexing
 		// this can happen if for example the following sequance is issued:
@@ -76,7 +81,11 @@ static void _Index_PopulateNodeIndex
 		{
 			Node n;
 			Graph_GetNode(g, id, &n);
-			Index_IndexNode(idx, &n);
+			if(unsafe) {
+				Index_IndexNodeUnsafe(idx, &n);
+			} else {
+				Index_IndexNode(idx, &n);
+			}
 			indexed++;
 		}
 
@@ -89,7 +98,7 @@ static void _Index_PopulateNodeIndex
 			break;
 		} else {
 			// release read lock
-			GraphContext_ReleaseLock (gc) ;
+			if(!unsafe) GraphContext_ReleaseLock (gc) ;
 
 			// finished current batch
 			Delta_MatrixTupleIter_detach(&it);
@@ -102,7 +111,7 @@ static void _Index_PopulateNodeIndex
 	}
 
 	// release read lock
-	GraphContext_ReleaseLock (gc) ;
+	if(!unsafe) GraphContext_ReleaseLock (gc) ;
 	Delta_MatrixTupleIter_detach(&it);
 }
 
@@ -118,7 +127,8 @@ static void _Index_PopulateNodeIndex
 static void _Index_PopulateEdgeIndex
 (
 	Index idx,
-	GraphContext *gc
+	GraphContext *gc,
+	bool unsafe       // skip RediSearch's global write lock (parallel decode)
 ) {
 	ASSERT (gc  != NULL) ;
 	ASSERT (idx != NULL) ;
@@ -138,14 +148,18 @@ static void _Index_PopulateEdgeIndex
 
 	while (active) {
 		// lock graph for reading
-		GraphContext_AcquireReadLock (gc) ;
+		// the parallel decode path (unsafe) is single-writer-per-spec with no
+		// concurrent writers; it skips the graph lock so workers don't race on
+		// the shared lock / matrix-sync-policy state (ReleaseLock resets the
+		// policy), and the caller-set NOP policy survives the whole region
+		if(!unsafe) GraphContext_AcquireReadLock (gc) ;
 
 		// index state changed, abort indexing
 		// this can happen if for example the following sequance is issued:
 		// 1. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.since)
 		// 2. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.title)
 		if(Index_PendingChanges(idx) > 1) {
-			GraphContext_ReleaseLock (gc) ;
+			if(!unsafe) GraphContext_ReleaseLock (gc) ;
 			return ;
 		}
 
@@ -188,7 +202,11 @@ static void _Index_PopulateEdgeIndex
 			e.relationID = schema_id;
 
 			Graph_GetEdge(g, edge_id, &e);
-			Index_IndexEdge(idx, &e);
+			if(unsafe) {
+				Index_IndexEdgeUnsafe(idx, &e);
+			} else {
+				Index_IndexEdge(idx, &e);
+			}
 
 			prev_src_id = src_id;
 			prev_dest_id = dest_id;
@@ -200,15 +218,18 @@ static void _Index_PopulateEdgeIndex
 		//----------------------------------------------------------------------
 		// done with current batch, release read lock
 		//----------------------------------------------------------------------
-		GraphContext_ReleaseLock (gc) ;
+		if(!unsafe) GraphContext_ReleaseLock (gc) ;
 	}
 }
 
 // constructs index
-void Index_Populate
+// when 'unsafe' is true the RediSearch global write lock is NOT taken per
+// document; see Index_PopulateUnsafe for the required caller guarantees
+static void _Index_Populate
 (
 	Index idx,
-	GraphContext *gc
+	GraphContext *gc,
+	bool unsafe
 ) {
 	ASSERT (gc  != NULL) ;
 	ASSERT (idx != NULL) ;
@@ -219,9 +240,29 @@ void Index_Populate
 	//--------------------------------------------------------------------------
 
 	if (Index_GraphEntityType(idx) == GETYPE_NODE) {
-		_Index_PopulateNodeIndex (idx, gc) ;
+		_Index_PopulateNodeIndex (idx, gc, unsafe) ;
 	} else {
-		_Index_PopulateEdgeIndex (idx, gc) ;
+		_Index_PopulateEdgeIndex (idx, gc, unsafe) ;
 	}
+}
+
+// constructs index (acquires RediSearch's global write lock per document)
+void Index_Populate
+(
+	Index idx,
+	GraphContext *gc
+) {
+	_Index_Populate (idx, gc, false) ;
+}
+
+// constructs index without acquiring RediSearch's global write lock
+// only valid for parallel population of disjoint, not-yet-registered indices
+// during RDB decode (single writer per spec, no concurrent query/GC/add)
+void Index_PopulateUnsafe
+(
+	Index idx,
+	GraphContext *gc
+) {
+	_Index_Populate (idx, gc, true) ;
 }
 
