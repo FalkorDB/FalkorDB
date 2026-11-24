@@ -1,0 +1,67 @@
+# TEMPORARY: perf-ldbc's proof evidence for PR #2559, removed before the PR is
+# marked ready. Runs `bench ldbc check` through _perf-vm.yml (perf-gce-runner's
+# branch until it is on main, #3979) on the proof pairs, one VM at a time.
+# Each leg's VM-workflow check name differs only so the three artifacts do not
+# collide; every result.json says check "ldbc".
+
+name: TEMPORARY ldbc proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/ldbc-proof.yml
+      - bench/src/falkorbench/ldbc/**
+      - bench/src/falkorbench/cli.py
+
+permissions: {}
+
+concurrency:
+  group: ldbc-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - check: ldbc-aa-main
+            candidate: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+            candidate_label: main@4c1088949
+            candidate_commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+            baseline: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+            baseline_label: main@4c1088949
+            baseline_commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+          - check: ldbc-aa-c
+            candidate: falkordb/falkordb-server@sha256:4e651dac5dbabf3169d91af06db4be13ee7679ffc392f14bac5fa730349b5dbf
+            candidate_label: C v4.22.4
+            candidate_commit: 958fbead7d6e08d50d48d4776f0f310ea1dfb9a4
+            baseline: falkordb/falkordb-server@sha256:4e651dac5dbabf3169d91af06db4be13ee7679ffc392f14bac5fa730349b5dbf
+            baseline_label: C v4.22.4
+            baseline_commit: 958fbead7d6e08d50d48d4776f0f310ea1dfb9a4
+          - check: ldbc-604-vs-620
+            candidate: falkordb/falkordb-server@sha256:698a6e748b42699c1f63af01f8902652b764582e363731de56c7d566c322c209
+            candidate_label: "6.0.4"
+            candidate_commit: 6ca3adc9d0418f76c5a15f820552e0603a65e553
+            baseline: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+            baseline_label: "6.2.0"
+            baseline_commit: d8c329b777c177fc7343d959157d6acdf7398fa5
+    uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
+    with:
+      check: ${{ matrix.check }}
+      command: uv run --project bench bench ldbc check
+      candidate_image: ${{ matrix.candidate }}
+      baseline_image: ${{ matrix.baseline }}
+      candidate_label: ${{ matrix.candidate_label }}
+      baseline_label: ${{ matrix.baseline_label }}
+      candidate_commit: ${{ matrix.candidate_commit }}
+      baseline_commit: ${{ matrix.baseline_commit }}
+      mode: nightly
+      timeout_minutes: 45
+      machine_type: n4-standard-16
+    secrets: inherit
