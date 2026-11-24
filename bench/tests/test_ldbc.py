@@ -1683,3 +1683,22 @@ def test_the_cache_root_is_searchable_by_the_server(tmp_path, monkeypatch):
     finally:
         os.umask(old)
     assert cache.stat().st_mode & 0o055 == 0o055
+
+
+def test_a_ping_reply_after_the_grace_deadline_does_not_count(monkeypatch):
+    now = {"t": 0.0}
+    monkeypatch.setattr(ck.time, "monotonic", lambda: now["t"])
+    monkeypatch.setattr(ck.time, "sleep", lambda s: now.__setitem__("t", now["t"] + s))
+
+    class Late:
+        def __init__(self, **kwargs):
+            pass
+
+        def ping(self):
+            now["t"] += ck.PING_GRACE_S + 10  # answers, but long after the grace
+            return True
+
+    monkeypatch.setattr(ck, "Redis", Late)
+    side = ck.Side(ck.CANDIDATE, MAIN)
+    side.container = SimpleNamespace(port=1, state=lambda: "running")
+    assert side._answers() is False
