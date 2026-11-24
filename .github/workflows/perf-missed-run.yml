@@ -81,6 +81,14 @@ jobs:
           - case: fires, a push run with the artifact does not stand in for a scheduled one
             arguments: --workflow rust-push.yml --artifact coverage-binary --date 2026-11-23
             expect: 1
+          # perf-nightly.yml run 45332918572 (PR #3991), created 2026-11-24T05:22:58Z,
+          # uploaded a real perf-nightly artifact: it belongs to the night of 11-25.
+          - case: quiet, a real perf-nightly run uploaded perf-nightly (run 45332918572)
+            arguments: --workflow perf-nightly.yml --branch ci/perf-nightly --event pull_request --date 2026-11-25
+            expect: 0
+          - case: fires, the night before that run (it started after 05:00)
+            arguments: --workflow perf-nightly.yml --branch ci/perf-nightly --event pull_request --date 2026-11-24
+            expect: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
