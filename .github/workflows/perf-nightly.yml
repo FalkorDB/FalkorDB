@@ -2,8 +2,8 @@
 #
 # Every night it measures main's newest merge-queue image against the latest
 # release with every perf check, and posts one message to the core team's Chat
-# space. The contract (check interface, result.json, nightly.json) is perf-judge's
-# tests/perf/schema/ and tests/perf/validate.py.
+# space. The contract (check interface, result.json, nightly.json) is checked by
+# perf-judge's tests/perf/validate.py.
 #
 #   candidate  ghcr.io/falkordb/falkordb-server:rc-mg-<sha>-valkey for main's tip,
 #              the image the merge queue built and tested for that commit. A
@@ -17,7 +17,7 @@
 # Both are pinned by digest before anything runs, so every check measures the
 # same two images even if a tag moves mid-run.
 #
-# Jobs: resolve -> micro (_perf-micro.yml: `micro`, and `micro-hw` on a C4 VM),
+# Jobs: resolve -> micro (_perf-micro.yml, whose one check, micro-hw, runs on a C4 VM),
 # vm (_perf-vm.yml, one leg per `runner: vm` entry of tests/perf/checks.yaml),
 # hosted (one leg per `runner: hosted` entry) -> merge (tests/perf/merge.py ->
 # nightly.json, artifact perf-nightly) -> report (tests/perf/report/post.py).
@@ -53,12 +53,12 @@ on:
         type: string
         default: ""
       checks:
-        description: "Comma list of checks to run (micro, or names in tests/perf/checks.yaml); empty = all"
+        description: "Comma list of checks to run (micro-hw, or names in tests/perf/checks.yaml); empty = all"
         type: string
         default: ""
-  # TEMPORARY: proves the workflow on its own PR (dispatch and schedule only work
-  # from the default branch). Removed, with every other TEMPORARY line, before the
-  # PR is marked ready.
+  # TEMPORARY: runs the workflow on its own PR (dispatch and schedule only work
+  # from the default branch). Removed, with every other TEMPORARY line, once the
+  # PRs below it in the stack are on main.
   pull_request:
 
 permissions: {}
@@ -93,8 +93,6 @@ jobs:
       baseline_label: ${{ steps.images.outputs.baseline_label }}
       skip: ${{ steps.context.outputs.skip }}
       run_micro: ${{ steps.plan.outputs.run_micro }}
-      micro: ${{ steps.plan.outputs.micro }}
-      micro_hw: ${{ steps.plan.outputs.micro_hw }}
       has_vm: ${{ steps.plan.outputs.has_vm }}
       vm_matrix: ${{ steps.plan.outputs.vm_matrix }}
       has_hosted: ${{ steps.plan.outputs.has_hosted }}
@@ -245,8 +243,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HISTORY: ${{ runner.temp }}/history
-          # Nightlies are scheduled runs on main. TEMPORARY: on the proof PR its
-          # own runs play that part, so the skip path can run there.
+          # Nightlies are scheduled runs on main. TEMPORARY: on this PR its own
+          # runs play that part.
           HISTORY_EVENT: ${{ github.event_name == 'pull_request' && 'pull_request' || 'schedule' }}
           HISTORY_BRANCH: ${{ github.head_ref || 'main' }}
         run: |
@@ -308,14 +306,6 @@ jobs:
           else
             registry=(--registry-error "yq: $(tr '\n' ' ' < "$RUNNER_TEMP/yq.err")")
           fi
-          # TEMPORARY (goes with the pull_request trigger): until #3987 is on main,
-          # a PR's merge commit has no `bench hw`, which micro-hw's VM runs from
-          # the calling commit. A PR run plans everything but micro-hw, so its
-          # micro call gets micro_hw: false and starts no C4 VM.
-          if [[ $GITHUB_EVENT_NAME == pull_request && -z $CHECKS ]]; then
-            CHECKS="micro$(jq -r '.[]? | .name? | select(type == "string") | ",\(.)"' "$RUNNER_TEMP/checks.json" 2>/dev/null | tr -d '\n' || true)"
-            echo "pull_request: planning '$CHECKS' (no micro-hw)"
-          fi
           python3 -I tests/perf/merge.py plan "${registry[@]}" --select "$CHECKS" \
             --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
 
@@ -325,9 +315,10 @@ jobs:
           path: ${{ runner.temp }}/plan/
           if-no-files-found: error
 
-  # Both micro checks: `micro` (callgrind and allocations, hosted runners) and
-  # `micro-hw` (hardware counters on a C4 VM, through a nested _perf-vm.yml,
-  # which needs the GCE secrets). Each half runs only when it is planned.
+  # The micro tier's one check, micro-hw: hardware counters and allocations on a
+  # C4 VM, through a nested _perf-vm.yml that needs the GCE secrets.
+  # _perf-micro.yml always runs it, so it is called only when micro-hw is
+  # planned (run_micro).
   micro:
     needs: resolve
     if: needs.resolve.outputs.skip == 'false' && needs.resolve.outputs.run_micro == 'true'
@@ -345,8 +336,6 @@ jobs:
       baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
       candidate_label: ${{ needs.resolve.outputs.candidate_label }}
       baseline_label: ${{ needs.resolve.outputs.baseline_label }}
-      micro: ${{ needs.resolve.outputs.micro == 'true' }}
-      micro_hw: ${{ needs.resolve.outputs.micro_hw == 'true' }}
       mode: nightly
     secrets: inherit
 
@@ -526,8 +515,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      # post.py lists the commits since previous_green_commit: `git log` in this
-      # checkout, else the compare API.
+      # post.py lists the commits since previous_green_commit with `git log` in
+      # this checkout (else it links the compare page).
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -536,25 +525,24 @@ jobs:
           filter: blob:none
           persist-credentials: false
 
-      # TEMPORARY: perf-chat's reporter (#3978) and the validator it loads from
-      # tests/perf/validate.py (#3975), until both are on main.
-      - name: Fetch the reporter and the validator
+      # TEMPORARY: perf-chat's reporter (#3978), until it is on main.
+      - name: Fetch the reporter
         run: |
           set -euo pipefail
           # No --depth: it would graft a shallow boundary into the full history above.
           git fetch --no-tags origin ci/perf-chat
           git checkout FETCH_HEAD -- tests/perf/report
-          git fetch --no-tags origin perf/judge
-          git checkout FETCH_HEAD -- tests/perf/validate.py
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: perf-nightly
           path: ${{ runner.temp }}/nightly
 
+      # post.py exits 0 for any night it reported (red and error included) and 1
+      # only when it could not report; failing the run for a red or error night
+      # is the next step's job alone.
       - name: Post the night's result
         env:
-          GH_TOKEN: ${{ github.token }}
           # Chat hears about real nights only: the schedule, and a dispatch that
           # picked its own images is a by-hand comparison, so it goes to the step
           # summary alone (as does the TEMPORARY pull_request trigger).
@@ -564,6 +552,8 @@ jobs:
       # Last, once the report is out and nightly.json is uploaded (merge job), so
       # a failing run never loses either: a red or error night fails the run.
       # The list of runs then reads as a timeline, and a failed scheduled run
-      # sends GitHub's email. Green and skipped nights succeed.
+      # sends GitHub's email. Green and skipped nights succeed. It runs even when
+      # the report step failed, so the run's result is always the night's.
       - name: Fail the run unless the night is green or skipped
+        if: ${{ !cancelled() }}
         run: python3 -I tests/perf/merge.py conclude --nightly "$RUNNER_TEMP/nightly/nightly.json"

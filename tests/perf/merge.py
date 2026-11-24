@@ -12,13 +12,13 @@ Four subcommands, one per step that needs them:
   conclude nightly.json -> the run's exit status: 0 for green or skipped,
            1 for red or error (the report job's last step)
 
-The shapes are perf-judge's: tests/perf/schema/ and tests/perf/validate.py, which
-`merge` runs on every result.json it embeds and on the nightly.json it writes.
+The shapes are perf-judge's tests/perf/validate.py, which `merge` runs on every
+result.json it embeds and on the nightly.json it writes.
 
 What `merge` guarantees, whatever the check jobs did:
 
-  * every planned check appears exactly once in nightly.json, micro included,
-    and nothing unplanned does;
+  * every planned check appears exactly once in nightly.json, micro-hw
+    included, and nothing unplanned does;
   * a check that left no result.json, an unreadable one, one the validator
     rejects, one that names another check, or a `pass` from a run that crashed
     or timed out (perf-vm.json / perf-hosted.json), appears as the stub
@@ -43,18 +43,14 @@ from pathlib import Path
 SCHEMA = 1
 
 # The micro tier is not in the registry: the workflow calls _perf-micro.yml,
-# which produces `micro` (callgrind and allocations, hosted runners) and, when
-# asked, `micro-hw` (hardware counters on a C4 VM, through _perf-vm.yml).
-MICRO = "micro"
+# which runs its one check, `micro-hw` (hardware counters and allocations on a
+# C4 VM, through a nested _perf-vm.yml).
 MICRO_HW = "micro-hw"
 # A problem with tests/perf/checks.yaml itself is reported under this name, so a
 # bad registry shows up in the night's report instead of stopping the night.
 REGISTRY = "checks-yaml"
-RESERVED = (MICRO, MICRO_HW, REGISTRY)
-MICRO_TIER = {
-    MICRO: {"check": MICRO, "runner": "micro"},
-    MICRO_HW: {"check": MICRO_HW, "runner": "micro-hw"},
-}
+RESERVED = (MICRO_HW, REGISTRY)
+MICRO_TIER = {MICRO_HW: {"check": MICRO_HW, "runner": "micro-hw"}}
 
 # A check's name becomes a GCE label, a runner label and part of an artifact name
 # (_perf-vm.yml), so it is held to the narrowest of the three. `--` is reserved
@@ -190,14 +186,9 @@ def matrix(plan, runner):
 
 def plan_outputs(plan):
     """The $GITHUB_OUTPUT lines the workflow's jobs switch on."""
-    runners = {row["runner"] for row in plan}
-    out = {
-        # One _perf-micro.yml call serves both; its `micro` / `micro_hw`
-        # inputs say which halves to run.
-        "run_micro": json.dumps(bool(runners & {"micro", "micro-hw"})),
-        "micro": json.dumps("micro" in runners),
-        "micro_hw": json.dumps("micro-hw" in runners),
-    }
+    # _perf-micro.yml always runs micro-hw, so it is called only when micro-hw
+    # is planned: a selection without it starts no C4 VM.
+    out = {"run_micro": json.dumps(any(row["runner"] == "micro-hw" for row in plan))}
     for runner in RUNNERS:
         rows = matrix(plan, runner)
         out[f"has_{runner}"] = json.dumps(bool(rows))
@@ -328,11 +319,6 @@ def load_validator(path):
 # _perf-vm.yml (contract v1.3), perf-hosted.json by this workflow's hosted job.
 RUN_FACTS = ("perf-vm.json", "perf-hosted.json")
 
-# Runners whose artifact must say the command exited 0 before a `pass` counts.
-# micro writes result.json from a job of its own and has no such file; micro-hw
-# runs through _perf-vm.yml, whose perf-vm.json records the exit.
-RECORDED = ("vm", "hosted", "micro-hw")
-
 
 def how_it_ended(artifact):
     """(clean, why): clean is True when a run-facts file says the command exited
@@ -375,7 +361,7 @@ def own_error(path):
     return error.strip() if isinstance(error, str) else ""
 
 
-def collect(check, artifact, validator, runner=None):
+def collect(check, artifact, validator):
     """The result.json in one artifact directory, or a stub saying why not."""
     path = artifact / "result.json"
     clean, why = how_it_ended(artifact)
@@ -400,10 +386,11 @@ def collect(check, artifact, validator, runner=None):
         return stub(check, f"result.json names check {result.get('check')!r}")
     # The contract exits 0 whenever result.json was written, so a check that did
     # not end cleanly crashed after writing it: its `pass` is not a measurement.
-    # Where the runner records the exit, a `pass` needs that record to say 0; a
-    # job cancelled mid-command uploads result.json with no exit status at all.
+    # Every runner records the exit (vm and micro-hw in perf-vm.json, hosted in
+    # perf-hosted.json), and a `pass` needs that record to say 0: a job
+    # cancelled mid-command uploads result.json with no exit status at all.
     # A regression or error the check wrote still stands.
-    if result.get("verdict") == "pass" and (clean is False or (clean is None and runner in RECORDED)):
+    if result.get("verdict") == "pass" and clean is not True:
         return stub(check, f"result.json says pass, but {why}")
     return result
 
@@ -442,7 +429,7 @@ def build_nightly(context, plan, results_dir, validator):
         # name, and the reusable workflows' internal <artifact>--* ones are not
         # checks.
         artifact = results_dir / f"perf-result-{row['check']}"
-        checks.append(collect(row["check"], artifact, validator, row["runner"]))
+        checks.append(collect(row["check"], artifact, validator))
 
     nightly["checks"] = checks
     nightly["status"] = status_of(checks)
