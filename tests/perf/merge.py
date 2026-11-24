@@ -42,12 +42,19 @@ from pathlib import Path
 
 SCHEMA = 1
 
-# The micro tier is not in the registry; the workflow calls _perf-micro.yml for it.
+# The micro tier is not in the registry: the workflow calls _perf-micro.yml,
+# which produces `micro` (callgrind and allocations, hosted runners) and, when
+# asked, `micro-hw` (hardware counters on a C4 VM, through _perf-vm.yml).
 MICRO = "micro"
+MICRO_HW = "micro-hw"
 # A problem with tests/perf/checks.yaml itself is reported under this name, so a
 # bad registry shows up in the night's report instead of stopping the night.
 REGISTRY = "checks-yaml"
-RESERVED = (MICRO, REGISTRY)
+RESERVED = (MICRO, MICRO_HW, REGISTRY)
+MICRO_TIER = {
+    MICRO: {"check": MICRO, "runner": "micro"},
+    MICRO_HW: {"check": MICRO_HW, "runner": "micro-hw"},
+}
 
 # A check's name becomes a GCE label, a runner label and part of an artifact name
 # (_perf-vm.yml), so it is held to the narrowest of the three. `--` is reserved
@@ -151,7 +158,7 @@ def build_plan(registry, select, registry_error=None):
     file could not be parsed at all.
     """
     rows, problems = ([], [registry_error]) if registry_error else read_registry(registry)
-    by_name = {MICRO: {"check": MICRO, "runner": "micro"}}
+    by_name = {name: dict(row) for name, row in MICRO_TIER.items()}
     by_name.update((row["check"], row) for row in rows)
     registry_stub = []
     if problems:
@@ -183,7 +190,14 @@ def matrix(plan, runner):
 
 def plan_outputs(plan):
     """The $GITHUB_OUTPUT lines the workflow's jobs switch on."""
-    out = {"run_micro": json.dumps(any(row["runner"] == "micro" for row in plan))}
+    runners = {row["runner"] for row in plan}
+    out = {
+        # One _perf-micro.yml call serves both; its `micro` / `micro_hw`
+        # inputs say which halves to run.
+        "run_micro": json.dumps(bool(runners & {"micro", "micro-hw"})),
+        "micro": json.dumps("micro" in runners),
+        "micro_hw": json.dumps("micro-hw" in runners),
+    }
     for runner in RUNNERS:
         rows = matrix(plan, runner)
         out[f"has_{runner}"] = json.dumps(bool(rows))
@@ -315,8 +329,9 @@ def load_validator(path):
 RUN_FACTS = ("perf-vm.json", "perf-hosted.json")
 
 # Runners whose artifact must say the command exited 0 before a `pass` counts.
-# The micro tier writes result.json from a job of its own and has no such file.
-RECORDED = ("vm", "hosted")
+# micro writes result.json from a job of its own and has no such file; micro-hw
+# runs through _perf-vm.yml, whose perf-vm.json records the exit.
+RECORDED = ("vm", "hosted", "micro-hw")
 
 
 def how_it_ended(artifact):

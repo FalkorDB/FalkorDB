@@ -114,6 +114,7 @@ def run_merge(tmp_path, plan, ctx=None):
 
 
 MICRO_ONLY = [{"check": "micro", "runner": "micro"}]
+MICRO_TIER = MICRO_ONLY + [{"check": "micro-hw", "runner": "micro-hw"}]
 VM_ENTRY = {
     "name": "size-probe",
     "runner": "vm",
@@ -127,11 +128,11 @@ HOSTED_ENTRY = {"name": "ldbc", "runner": "hosted", "command": "true", "timeout_
 # --- plan ------------------------------------------------------------------------
 
 
-def test_empty_registry_plans_micro_alone_with_placeholder_matrices():
+def test_empty_registry_plans_the_micro_tier_with_placeholder_matrices():
     plan = merge.build_plan([], "")
-    assert plan == MICRO_ONLY
+    assert plan == MICRO_TIER
     out = merge.plan_outputs(plan)
-    assert out["run_micro"] == "true"
+    assert out["run_micro"] == out["micro"] == out["micro_hw"] == "true"
     assert out["has_vm"] == out["has_hosted"] == "false"
     # Never an empty matrix: that fails the job before its `if:` is read.
     assert json.loads(out["vm_matrix"]) == merge.PLACEHOLDER
@@ -140,7 +141,7 @@ def test_empty_registry_plans_micro_alone_with_placeholder_matrices():
 
 def test_registry_entries_become_matrix_rows():
     plan = merge.build_plan([VM_ENTRY, HOSTED_ENTRY], "")
-    assert [row["check"] for row in plan] == ["micro", "size-probe", "ldbc"]
+    assert [row["check"] for row in plan] == ["micro", "micro-hw", "size-probe", "ldbc"]
     out = merge.plan_outputs(plan)
     assert json.loads(out["vm_matrix"]) == [
         {
@@ -164,6 +165,22 @@ def test_selection_keeps_order_and_plans_unknown_names_as_stubs():
 def test_selection_without_micro_skips_micro():
     plan = merge.build_plan([VM_ENTRY], "size-probe")
     assert merge.plan_outputs(plan)["run_micro"] == "false"
+
+
+@pytest.mark.parametrize(
+    "select, run_micro, micro, micro_hw",
+    [
+        ("micro", "true", "true", "false"),  # no C4 VM for a callgrind-only dispatch
+        ("micro-hw", "true", "false", "true"),
+        ("micro-hw,micro", "true", "true", "true"),
+        ("size-probe", "false", "false", "false"),
+    ],
+)
+def test_one_micro_call_runs_the_selected_halves(select, run_micro, micro, micro_hw):
+    """_perf-micro.yml makes both micro checks; its `micro` and `micro_hw`
+    inputs say which, so a selection never starts a half nobody planned."""
+    out = merge.plan_outputs(merge.build_plan([VM_ENTRY], select))
+    assert (out["run_micro"], out["micro"], out["micro_hw"]) == (run_micro, micro, micro_hw)
 
 
 @pytest.mark.parametrize(
@@ -191,6 +208,7 @@ def test_malformed_entry_is_planned_as_a_stub(entry, why):
         ([{**HOSTED_ENTRY, "name": "Bad_Name"}, VM_ENTRY], "entry 0: name 'Bad_Name' is not a check name"),
         ([{**HOSTED_ENTRY, "name": "ldbc--x"}, VM_ENTRY], "entry 0: name 'ldbc--x' is not a check name"),
         ([{**HOSTED_ENTRY, "name": "micro"}, VM_ENTRY], "entry 0: name 'micro' is reserved"),
+        ([{**HOSTED_ENTRY, "name": "micro-hw"}, VM_ENTRY], "entry 0: name 'micro-hw' is reserved"),
         ([{**HOSTED_ENTRY, "name": "checks-yaml"}, VM_ENTRY], "entry 0: name 'checks-yaml' is reserved"),
         ([VM_ENTRY, VM_ENTRY], "entry 1: name 'size-probe' is reserved or already used"),
         (["size-probe", VM_ENTRY], "entry 0 is not a mapping"),
@@ -212,8 +230,7 @@ def test_registry_that_does_not_parse_still_plans_micro(tmp_path):
     argv = ["plan", "--registry-error", "yq: bad indentation", "--out", str(tmp_path / "plan.json")]
     assert merge.main(argv + ["--github-output", str(out)]) == 0
     plan = json.loads((tmp_path / "plan.json").read_text())
-    assert plan == [
-        {"check": "micro", "runner": "micro"},
+    assert plan == MICRO_TIER + [
         {"check": "checks-yaml", "runner": None, "error": "tests/perf/checks.yaml: yq: bad indentation"},
     ]
     assert "run_micro=true\n" in out.read_text()
@@ -224,7 +241,7 @@ def test_registry_with_no_checks_plans_micro_alone(tmp_path, converted):
     (tmp_path / "checks.json").write_text(converted)
     argv = ["plan", "--registry", str(tmp_path / "checks.json"), "--out", str(tmp_path / "plan.json")]
     assert merge.main(argv) == 0
-    assert json.loads((tmp_path / "plan.json").read_text()) == MICRO_ONLY
+    assert json.loads((tmp_path / "plan.json").read_text()) == MICRO_TIER
 
 
 def parse_yaml(path):
@@ -263,9 +280,9 @@ def test_every_planned_check_appears_once(tmp_path):
     plan = merge.build_plan([VM_ENTRY, HOSTED_ENTRY], "")
     code, nightly = run_merge(tmp_path, plan)
     assert code == 0
-    assert [c["check"] for c in nightly["checks"]] == ["micro", "size-probe", "ldbc"]
+    assert [c["check"] for c in nightly["checks"]] == ["micro", "micro-hw", "size-probe", "ldbc"]
     assert nightly["checks"][0] == result("micro")
-    assert nightly["checks"][1]["error"] == nightly["checks"][2]["error"] == "no result.json"
+    assert [c["error"] for c in nightly["checks"][1:]] == ["no result.json"] * 3
 
 
 def test_all_pass_is_green_and_records_both_sides(tmp_path):
@@ -284,7 +301,7 @@ def test_regression_outranks_error(tmp_path):
     put(results, "micro", result("micro", "regression"))
     plan = merge.build_plan([HOSTED_ENTRY], "")
     _, nightly = run_merge(tmp_path, plan)
-    assert [c["verdict"] for c in nightly["checks"]] == ["regression", "error"]
+    assert [c["verdict"] for c in nightly["checks"]] == ["regression", "error", "error"]
     assert nightly["status"] == "red"
 
 
@@ -654,3 +671,26 @@ def test_conclude_fails_on_an_unreadable_nightly(tmp_path, text):
     path = tmp_path / "nightly.json"
     path.write_text(text)
     assert merge.main(["conclude", "--nightly", str(path)]) == 1
+
+
+# --- micro-hw: the micro tier's hardware-counter half, on a C4 VM -----------------
+
+HW = [{"check": "micro-hw", "runner": "micro-hw"}]
+
+
+def test_missing_micro_hw_is_a_stub_with_the_vm_reason(tmp_path):
+    put(tmp_path / "results", "micro-hw", {"create_error": "no C4 in any zone"}, name="perf-vm.json")
+    _, nightly = run_merge(tmp_path, HW)
+    assert nightly["checks"] == [
+        {"check": "micro-hw", "verdict": "error", "error": "no result.json: no VM came up: no C4 in any zone"}
+    ]
+
+
+@pytest.mark.parametrize("facts, kept", [({"command_exit": 0, "timed_out": False}, True), (None, False)])
+def test_micro_hw_pass_needs_a_recorded_clean_exit(tmp_path, facts, kept):
+    """It runs through _perf-vm.yml, so its pass is held to the vm rule."""
+    put(tmp_path / "results", "micro-hw", result("micro-hw"))
+    if facts is not None:
+        put(tmp_path / "results", "micro-hw", facts, name="perf-vm.json")
+    _, nightly = run_merge(tmp_path, HW)
+    assert (nightly["checks"][0] == result("micro-hw")) is kept

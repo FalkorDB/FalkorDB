@@ -17,10 +17,10 @@
 # Both are pinned by digest before anything runs, so every check measures the
 # same two images even if a tag moves mid-run.
 #
-# Jobs: resolve -> micro (_perf-micro.yml), vm (_perf-vm.yml, one leg per
-# `runner: vm` entry of tests/perf/checks.yaml), hosted (one leg per `runner:
-# hosted` entry) -> merge (tests/perf/merge.py -> nightly.json, artifact
-# perf-nightly) -> report (tests/perf/report/post.py).
+# Jobs: resolve -> micro (_perf-micro.yml: `micro`, and `micro-hw` on a C4 VM),
+# vm (_perf-vm.yml, one leg per `runner: vm` entry of tests/perf/checks.yaml),
+# hosted (one leg per `runner: hosted` entry) -> merge (tests/perf/merge.py ->
+# nightly.json, artifact perf-nightly) -> report (tests/perf/report/post.py).
 #
 # Skipped nights. A scheduled run whose candidate commit AND baseline digest equal
 # the last nightly's does not measure: there is nothing new. It still writes a
@@ -93,6 +93,8 @@ jobs:
       baseline_label: ${{ steps.images.outputs.baseline_label }}
       skip: ${{ steps.context.outputs.skip }}
       run_micro: ${{ steps.plan.outputs.run_micro }}
+      micro: ${{ steps.plan.outputs.micro }}
+      micro_hw: ${{ steps.plan.outputs.micro_hw }}
       has_vm: ${{ steps.plan.outputs.has_vm }}
       vm_matrix: ${{ steps.plan.outputs.vm_matrix }}
       has_hosted: ${{ steps.plan.outputs.has_hosted }}
@@ -315,12 +317,16 @@ jobs:
           path: ${{ runner.temp }}/plan/
           if-no-files-found: error
 
+  # Both micro checks: `micro` (callgrind and allocations, hosted runners) and
+  # `micro-hw` (hardware counters on a C4 VM, through a nested _perf-vm.yml,
+  # which needs the GCE secrets). Each half runs only when it is planned.
   micro:
     needs: resolve
     if: needs.resolve.outputs.skip == 'false' && needs.resolve.outputs.run_micro == 'true'
     permissions:
       contents: read
-      # On a cache miss it builds the bench image and pushes it to ghcr.
+      # On a cache miss it builds the bench image and pushes it to ghcr; the
+      # VM pulls with read.
       packages: write
     # TEMPORARY: perf-micro's branch until _perf-micro.yml is on main (#3977); then ./.github/workflows/_perf-micro.yml
     uses: FalkorDB/FalkorDB/.github/workflows/_perf-micro.yml@ci/perf-micro
@@ -331,7 +337,10 @@ jobs:
       baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
       candidate_label: ${{ needs.resolve.outputs.candidate_label }}
       baseline_label: ${{ needs.resolve.outputs.baseline_label }}
+      micro: ${{ needs.resolve.outputs.micro == 'true' }}
+      micro_hw: ${{ needs.resolve.outputs.micro_hw == 'true' }}
       mode: nightly
+    secrets: inherit
 
   vm:
     needs: resolve
