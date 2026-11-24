@@ -49,7 +49,7 @@ use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use super::super::IR;
 use super::references::subtree_references_variable;
 
-fn get_id_filter(
+pub(super) fn get_id_filter(
     filter: &DynNode<ExprIR<Variable>>,
     node_alias: &Variable,
 ) -> Option<(QueryExpr<Variable>, ExprIR<Variable>)> {

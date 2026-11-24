@@ -4,19 +4,19 @@ import FalkorEffectsCodec.Value
 
 | here | there |
 | --- | --- |
-| `IdCodec`        | `IdList` + `read_ids` (`id_list.rs`) — **abstract**: its roundtrip is a hypothesis owned by the IdList proof |
-| `wLabelSet`/`rLabelSet` | `LabelSet` (`blocks.rs:54-81`) |
-| `wAttrIds`/`rAttrIds`   | `AttrIds` (`blocks.rs:100-124`) |
-| `wRows`/`rRows`         | `AttrValues` (`blocks.rs:154-189`) |
-| `Rec`            | `Record` (`records.rs:489`) — batchable variants and `ADD_ATTRIBUTE` |
-| `encRec`         | `impl EffectEncode<3> for Record` (`records.rs:917`) |
-| `readRec`        | `read_record` (`records.rs:611`) |
-| `readAll`        | `Records::next` (`records.rs:1242`) |
+| `IdCodec`        | `IdList` + `read_ids` (`id_list.rs`) — abstract here, instantiated by `IdLink.idListCodec` with `proofs/id_list`'s model |
+| `wLabelSet`/`rLabelSet` | `LabelSet` (`blocks.rs`) |
+| `wAttrIds`/`rAttrIds`   | `AttrIds` (`blocks.rs`) |
+| `wRows`/`rRows`         | `AttrValues` (`blocks.rs`) |
+| `Rec`            | `Record` (`records.rs`) — batchable variants and `ADD_ATTRIBUTE` |
+| `encRec`         | `impl EffectEncode<3> for Record` (`records.rs`) |
+| `readRec`        | `read_record` (`records.rs`) |
+| `readAll`        | `Records::next` (`records.rs`) |
 
 Modelled: `CREATE_NODE`, `UPDATE_NODE`, `DELETE_NODE`, `SET_LABELS`,
 `REMOVE_LABELS`, `CREATE_EDGE`, `DELETE_EDGE`, `ADD_ATTRIBUTE`. Not modelled:
 `UPDATE_EDGE` (same shape as `UPDATE_NODE` with a `u32` in the label slot),
-`ADD_SCHEMA`, and the index/constraint DDL — see `REPORT.md`.
+`ADD_SCHEMA`, and the index/constraint DDL — see `README.md`.
 -/
 
 namespace FalkorCodec
@@ -44,10 +44,10 @@ def rAttrIds : R (List Nat) := do
   let n ← u16; let n ← guardCount n 2; readN n u16
 
 /-- `AttrValues` writes every row it holds; **it does not check** that there
-are `count × attrs` of them (`blocks.rs:155-168`). -/
+are `count × attrs` of them (`blocks.rs`). -/
 def wRows : List Val → Except EErr Bytes := encL I
 
-/-- `AttrValues::decode_sized` (`blocks.rs:177-188`). -/
+/-- `AttrValues::decode_sized` (`blocks.rs`). -/
 def rRows (count attrs : Nat) : R (List Val) := do
   let total ← guardCount (count * attrs) MIN_VALUE_BYTES
   readN total (decodeV utf8)
@@ -65,8 +65,8 @@ def seqE (xs : List (Except EErr Bytes)) : Except EErr Bytes :=
     | .error e, _ => .error e
     | _, .error e => .error e) (.ok [])
 
-/-- `records.rs:948-960`: `check_row_shape` (#2916), header `opcode · count`
-from `ids.count()` (`write_header` refuses a zero count since #2916), then the
+/-- `records.rs`: `check_row_shape`, header `opcode · count`
+from `ids.count()` (`write_header` refuses a zero count), then the
 blocks. Both conditions the decoder needs are now checked here. -/
 def encRec : Rec C.T → Except EErr Bytes
   | .createNode ids ls as rows =>
@@ -151,7 +151,7 @@ theorem encRec_createNode (ids : C.T) (ls as : List Nat) (rows : List Val) (idb 
   simp [encRec, seqE, wLabelSet, wAttrIds, wRows, hl, ha, hid, hrb, h1, h2]
 
 /-- **The encoder refuses exactly the two shapes the reader cannot take**
-(#2916): a row block that is not `count × attrs`, and a record with no ids. -/
+a row block that is not `count × attrs`, and a record with no ids. -/
 theorem encRec_refuses_shape (ids : C.T) (ls as : List Nat) (rows : List Val) :
     (rows.length ≠ C.count ids * as.length →
       encRec C I (.createNode ids ls as rows) = .error .rowShapeMismatch) ∧
@@ -162,9 +162,8 @@ theorem encRec_refuses_shape (ids : C.T) (ls as : List Nat) (rows : List Val) :
   · have : rows.length = 0 := by rw [h, h0]; simp
     simp [encRec, h0, this]
 
-/-- **Record roundtrip for `CREATE_NODE`.** `hc` and `hrows` are now the
-encoder's own checks (`encRec_createNode` needs them to produce these bytes);
-before #2916 they were conditions only the reader enforced. -/
+/-- **Record roundtrip for `CREATE_NODE`.** `hc` and `hrows` are the
+encoder's own checks (`encRec_createNode` needs them to produce these bytes). -/
 theorem readRec_createNode (ids : C.T) (ls as : List Nat) (rows : List Val) (idb rb rest : Bytes)
     (hl : ls.length < 2 ^ 16) (ha : as.length < 2 ^ 16)
     (hid : C.enc ids = .ok idb) (hrb : encL I rows = .ok rb)
@@ -218,7 +217,7 @@ theorem readRec_addAttribute (id : Nat) (name rest : Bytes) (hid : id < 2 ^ 16)
 
 /-! ## Framing: a payload is its records, back to back -/
 
-/-- `Records::next` (`records.rs:1242-1249`): stop when the reader is empty,
+/-- `Records::next` (`records.rs`): stop when the reader is empty,
 yield one record otherwise, fuse on the first error. -/
 def readAll : Nat → R (List (Rec C.T))
   | 0 => fun _ => .error .outOfFuel
@@ -269,9 +268,9 @@ def isOk {α} : Except DErr α → Bool
   | .ok _ => true
   | .error _ => false
 
--- The wave-1 counterexample (a CREATE_NODE with one id, one attribute and
--- **two** rows was written, and its spare row's tag `T_INT64 = 0x2000` was then
--- read as the next opcode) no longer holds: #2916 (`2c874022a`) refuses it.
+-- The wave-1 case (a CREATE_NODE with one id, one attribute and
+-- **two** rows, whose spare row's tag `T_INT64 = 0x2000` would be read as the
+-- next opcode) is refused by the encoder.
 def eerr {α} : Except EErr α → Option EErr | .error e => some e | .ok _ => none
 #guard eerr (encToy (.createNode 7 [] [0] [.int 1, .int 2])) == some .rowShapeMismatch
 #guard eerr (encToy (.createNode 7 [] [0, 1] [.int 1])) == some .rowShapeMismatch

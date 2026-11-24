@@ -2,10 +2,10 @@
 Aggregation functions (`graph/src/runtime/functions/aggregation.rs`) and the
 two ways the Aggregate operator drives them (`graph/src/runtime/ops/aggregate.rs`):
 
-* per row  — `run_agg_expr` (aggregate.rs:981): skip a `Null` argument
-  (aggregate.rs:1030), else call `batch_fn(runtime, &[v], 1, prev)`
-  (aggregate.rs:1066);
-* per batch — the keyless fast path (aggregate.rs:586-689): one
+* per row  — `run_agg_expr` (aggregate.rs): skip a `Null` argument
+  (aggregate.rs), else call `batch_fn(runtime, &[v], 1, prev)`
+  (aggregate.rs);
+* per batch — the keyless fast path (aggregate.rs): one
   `batch_fn(runtime, column, num_active, prev)` call per input batch.
 
 Every `*_batch` kernel is a left fold over its input slice that skips `Null`.
@@ -17,7 +17,7 @@ namespace FalkorAggOps
 
 /-- The slice of `runtime::value::Value` the numeric aggregates see.
 `other n` stands for every non-numeric, non-null value (validated away before
-`sum`/`avg`/`stDev` are called — aggregate.rs:657-669, :1045). -/
+`sum`/`avg`/`stDev` are called — aggregate.rs). -/
 inductive V where
   | null
   | int (i : Int)
@@ -42,11 +42,11 @@ def skipFold {S : Type} (step : S → V → S) (acc : S) (xs : List V) : S :=
   xs.foldl (fun a v => if v.isNull then a else step a v) acc
 
 /-- The per-row driver `run_agg_expr`: null arguments return early
-(aggregate.rs:1030), others call the kernel on a one-element slice. -/
+(aggregate.rs), others call the kernel on a one-element slice. -/
 def rowDriver {S : Type} (kernel : S → List V → S) (acc : S) (xs : List V) : S :=
   xs.foldl (fun a v => if v.isNull then a else kernel a [v]) acc
 
-/-- The keyless fast path: one kernel call per batch (aggregate.rs:676). -/
+/-- The keyless fast path: one kernel call per batch (aggregate.rs). -/
 def batchDriver {S : Type} (kernel : S → List V → S) (acc : S) (bs : List (List V)) : S :=
   bs.foldl kernel acc
 
@@ -83,11 +83,11 @@ theorem vectorized_eq_rowwise {S : Type} (step : S → V → S) (acc : S) (bs : 
 
 /-! ## The kernels, line by line -/
 
-/-- `count_batch` (aggregation.rs:350) with a column (`count(x)`). -/
+/-- `count_batch` (aggregation.rs) with a column (`count(x)`). -/
 def countStep (n : Int) (_ : V) : Int := n + 1
 def countBatch (acc : Int) (xs : List V) : Int := skipFold countStep acc xs
 
-/-- `count_batch` with no column (`count(*)`, aggregation.rs:354): adds `num_rows`. -/
+/-- `count_batch` with no column (`count(*)`, aggregation.rs): adds `num_rows`. -/
 def countStarBatch (acc : Int) (numRows : Nat) : Int := acc + numRows
 
 theorem countBatch_spec (acc : Int) (xs : List V) :
@@ -115,11 +115,11 @@ theorem countStar_rowwise (acc : Int) (n : Nat) :
   rw [countBatch_spec]
   simp [countStarBatch, V.isNull]
 
-/-- `sum_batch` (aggregation.rs:394): the accumulator is always `f64`. -/
+/-- `sum_batch` (aggregation.rs): the accumulator is always `f64`. -/
 def sumStep (t : Float) (v : V) : Float := t + v.num
 def sumBatch (acc : Float) (xs : List V) : Float := skipFold sumStep acc xs
 
-/-- `collect_batch` (aggregation.rs:371). -/
+/-- `collect_batch` (aggregation.rs). -/
 def collectStep (l : List V) (v : V) : List V := l ++ [v]
 def collectBatch (acc : List V) (xs : List V) : List V := skipFold collectStep acc xs
 
@@ -145,7 +145,7 @@ structure Cmp (α : Type) where
   nullFlag : α → α → Bool
   nanFlag : α → α → Bool
 
-/-- `max_batch` / `min_batch` (aggregation.rs:421, :498; since #2917 7fdf06a0e): `best =
+/-- `max_batch` / `min_batch` (aggregation.rs; since #2917 7fdf06a0e): `best =
 Null` takes the first value, then `val` replaces `best` when strictly greater (less) and
 neither a null nor a NaN comparison. `want = .gt` for max, `.lt` for min. -/
 def mmStep {α : Type} (c : Cmp α) (want : Ordering) (best : Option α) (v : α) : Option α :=
@@ -157,7 +157,7 @@ def mmBatch {α : Type} (c : Cmp α) (want : Ordering) (best : Option α) (xs : 
     Option α :=
   xs.foldl (fun a v => match v with | none => a | some v => mmStep c want a v) best
 
-/-- The scalar `max` function body (aggregation.rs:119-133, since #2917): keep `a` (the new
+/-- The scalar `max` function body (aggregation.rs, since #2917): keep `a` (the new
 value) when `b.compare_value(a)` is `Less` and not a NaN comparison, or a null comparison. -/
 def maxScalar {α : Type} (c : Cmp α) (a : α) (b : Option α) : Option α :=
   match b with
@@ -168,7 +168,7 @@ def maxScalar {α : Type} (c : Cmp α) (a : α) (b : Option α) : Option α :=
 (`ord b a = lt ↔ ord a b = gt`), whose NaN flag is symmetric, and that never flags two
 non-null values as a null comparison, the scalar `max` and `max_batch` agree. The premises are
 about the abstract comparison `c`; they are NOT instantiated for `Value` here. They hold for the
-scalar kinds, but not for lists with a nested NaN: `Value::compare_list` (value.rs:1442) drops the
+scalar kinds, but not for lists with a nested NaN: `Value::compare_list` (value.rs) drops the
 inner NaN flag, so `[NaN]` vs `[5]` is `(Less, None)` in both directions and `anti` fails. The scalar
 `max` body is dead code anyway (`batch_agg` is always preferred), so `max_batch` is covered by
 `minmax_hom`, not by this theorem. -/
@@ -202,13 +202,13 @@ theorem maxScalar_eq_batch_nan : maxScalar nanCmp 0 (some 5) = mmStep nanCmp .gt
     mmStep nanCmp .gt (some 5) 0 = some 5 ∧ mmStep nanCmp .gt (some 0) 5 = some 0 := by
   decide
 
-/-- `avg_batch` (aggregation.rs:451) state `[sum, count, had_overflow]`. -/
+/-- `avg_batch` (aggregation.rs) state `[sum, count, had_overflow]`. -/
 structure AvgS where
   sum : Float
   count : Int
   ovf : Bool
 
-/-- `about_to_overflow` (aggregation.rs:338). -/
+/-- `about_to_overflow` (aggregation.rs). -/
 def aboutToOverflow (a b : Float) : Bool :=
   (if a < 0 then -1.0 else if a > 0 then 1.0 else if a.isNaN then a else
     -- signum(+0.0) = 1, signum(-0.0) = -1
@@ -229,7 +229,19 @@ def avgStep (s : AvgS) (v : V) : AvgS :=
 
 def avgBatch (acc : AvgS) (xs : List V) : AvgS := skipFold avgStep acc xs
 
-/-- `finalize_avg` (aggregation.rs:599). -/
+/-- How `about_to_overflow` is used (aggregation.rs, the `avg_batch` loop): the running
+sum switches to incremental averaging exactly when it was already incremental or
+`about_to_overflow(sum, val)`, and stays switched. -/
+theorem avgStep_switch_iff (s : AvgS) (v : V) :
+    (avgStep s v).ovf = (s.ovf || aboutToOverflow s.sum v.num) := by
+  unfold avgStep
+  by_cases h : (s.ovf || aboutToOverflow s.sum v.num) = true
+  · simp [h]
+  · have h' : (s.ovf || aboutToOverflow s.sum v.num) = false := by simpa using h
+    simp [h']
+    simpa [Bool.or_eq_false_iff] using (Bool.or_eq_false_iff.mp h').1
+
+/-- `finalize_avg` (aggregation.rs). -/
 def finalizeAvg (s : AvgS) : Option Float :=
   if s.count == 0 then none else if s.ovf then some s.sum else some (s.sum / Float.ofInt s.count)
 
@@ -295,11 +307,11 @@ theorem avg_no_overflow_is_sum (acc : AvgS) (xs : List V)
         rw [e] at h ⊢
         exact ih _ h
 
-/-- `stdev_batch` (aggregation.rs:565) state `[sum, values]`. -/
+/-- `stdev_batch` (aggregation.rs) state `[sum, values]`. -/
 def stdevStep (s : Float × List Float) (v : V) : Float × List Float := (s.1 + v.num, s.2 ++ [v.num])
 def stdevBatch (acc : Float × List Float) (xs : List V) := skipFold stdevStep acc xs
 
-/-- `finalize_stdev` (aggregation.rs:683): `n ≤ 1` → `0.0` (C and openCypher). -/
+/-- `finalize_stdev` (aggregation.rs): `n ≤ 1` → `0.0` (C and openCypher). -/
 def finalizeStdev (s : Float × List Float) : Float :=
   if s.2.length ≤ 1 then 0.0 else
     let mean := s.1 / Float.ofNat s.2.length
@@ -308,10 +320,36 @@ def finalizeStdev (s : Float × List Float) : Float :=
 
 theorem stdev_empty : finalizeStdev (stdevBatch (0.0, []) []) = 0.0 := rfl
 
-/-- `percentile_batch` (aggregation.rs:531 at 8621212fc) state
+/-- `finalize_stdev` returns `0.0` for none or one value (aggregation.rs). -/
+theorem finalizeStdev_small (s : Float × List Float) (h : s.2.length ≤ 1) : finalizeStdev s = 0.0 := by
+  simp [finalizeStdev, h]
+
+/-- Otherwise the sample divisor is `n - 1` and the mean `sum / n`. -/
+theorem finalizeStdev_big (s : Float × List Float) (h : ¬ s.2.length ≤ 1) :
+    finalizeStdev s =
+      Float.sqrt ((s.2.map (fun v => (v - s.1 / Float.ofNat s.2.length) * (v - s.1 / Float.ofNat s.2.length))).foldl
+        (· + ·) 0.0 / Float.ofNat (s.2.length - 1)) := by
+  simp [finalizeStdev, h]
+
+/-- `finalize_stdevp` (aggregation.rs): population variant, `n = 0` → `0.0`, divisor `n`. -/
+def finalizeStdevp (s : Float × List Float) : Float :=
+  if s.2.isEmpty then 0.0 else
+    let mean := s.1 / Float.ofNat s.2.length
+    Float.sqrt ((s.2.map (fun v => (v - mean) * (v - mean))).foldl (· + ·) 0.0
+      / Float.ofNat s.2.length)
+
+theorem finalizeStdevp_empty (sum : Float) : finalizeStdevp (sum, []) = 0.0 := rfl
+
+theorem finalizeStdevp_nonempty (s : Float × List Float) (h : s.2.isEmpty = false) :
+    finalizeStdevp s =
+      Float.sqrt ((s.2.map (fun v => (v - s.1 / Float.ofNat s.2.length) * (v - s.1 / Float.ofNat s.2.length))).foldl
+        (· + ·) 0.0 / Float.ofNat s.2.length) := by
+  simp [finalizeStdevp, h]
+
+/-- `percentile_batch` (aggregation.rs at 8621212fc) state
 `[percentile, values]`. Since #3007 (1d3b029e1, closes #2980) the percentile
-is stored only while `values` is still empty (aggregation.rs:552-555; the
-scalar body, aggregation.rs:257-260, does the same), so the first non-null
+is stored only while `values` is still empty (aggregation.rs; the
+scalar body, aggregation.rs, does the same), so the first non-null
 row's percentile is the aggregate's, as in C (`agg_percentile.c`). -/
 def pctStep (s : Float × List Float) (vp : V × Float) : Float × List Float :=
   if vp.1.isNull then s else (if s.2.isEmpty then vp.2 else s.1, s.2 ++ [vp.1.num])
@@ -353,10 +391,10 @@ theorem pct_first_wins (q : Float) (nulls : List (V × Float))
     List.nil_append]
   exact pct_stable p [v.num] (by simp) xs
 
-/-! #### History: before #3007 (aggregation.rs:539 / :253 at 289c201fe) -/
+/-! #### The percentile is taken from the first row -/
 
 /-- The `percentileDisc(x, x/10.0)` repro over x = 1..10: the percentile the
-finalizer sees was row 10's before #3007 and is row 1's on main (C's). -/
+finalizer sees is row 1's on main (C's); the overwriting model gives row 10's. -/
 def pctRow (k : Nat) : V × Float := (V.int k, Float.ofNat k / 10.0)
 def pctRepro : List (V × Float) := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map pctRow
 

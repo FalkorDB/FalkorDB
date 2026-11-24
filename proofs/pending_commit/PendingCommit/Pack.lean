@@ -2,7 +2,7 @@ import Std.Tactic.BVDecide
 /-
 # Packed entries and the block heap: `pack_value` / `unpack` / free list
 
-attribute_store.rs:256-300 (`Tag`, `PackedAttr`, `heap_index`) and the
+attribute_store.rs (`Tag`, `PackedAttr`, `heap_index`) and the
 `Block` methods :430-532. A stored value is a 12-byte `(id u16, tag u8,
 [u8; 8])`; scalars are their little-endian bytes, everything else (`String`,
 `List`, `VecF32`, `Map`, …: `V.other`) goes to the block's `heap` and the

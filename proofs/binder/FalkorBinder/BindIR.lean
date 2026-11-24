@@ -2,28 +2,13 @@ import FalkorBinder.BindExpr
 import FalkorBinder.Scopes
 /-
 # `bind_ir`: the per-clause checks, CALL {} and CREATE
-
-| here | there |
-| --- | --- |
-| `shortestOk` | allShortestPaths endpoint check, MATCH arm binder.rs:306-332 |
-| `withOptionalLabels` | OPTIONAL MATCH label save/restore binder.rs:336-345 |
-| `mergeOk` | MERGE redeclaration checks binder.rs:371-414 |
-| `deleteOk` | DELETE entity check binder.rs:461-466 |
-| `returnStarOk` | `RETURN *` check binder.rs:531-540 |
-| `yieldOk`, `bindYield` | CALL … YIELD validation and binding binder.rs:562-662 |
-| `relReused`, `recordMatchRels` | MATCH arm's `match_rel_vars` check and record (#2981) binder.rs:441-462 |
-| `RC`, `bindIR` | the dispatcher `bind_ir` binder.rs:267-740 (sub-binders as parameters) |
-| `subqueryReturns`, `bindCallSubquery` | `bind_call_subquery` binder.rs:742-821 |
-| `pruneMatchRels` | its step 2c for `match_rel_vars` binder.rs:870-874 (#2981) |
-| `pruneVarlen` | its step 2c for `varlen_rel_var_ids` binder.rs:877-878 (#3891) |
-| `importProjections` | `build_import_projections` binder.rs:979-1001 |
-| `createCheck`, `bindGraphCreate` | `bind_graph_create` binder.rs:1557-1680 |
 -/
 namespace FalkorBinder
 
 /-! ## MATCH -/
 
-/-- `(from, to, isShortest)` per relationship. -/
+/-- `(from, to, isShortest)` per relationship. An unnamed endpoint is a name no table holds (its
+`lookup_alias` finds nothing unless the same pattern bound it, which `inner` covers). -/
 abbrev RelEnds := Name × Name × Bool
 
 def shortestOk (env : Env) (rels : List RelEnds) : Bool :=
@@ -76,7 +61,9 @@ theorem optional_labels_restored {L : Type} (before : L) (f : L → L) :
 /-- Accumulated labels of a bound name (none if not bound / no labels). -/
 abbrev LabelsOf := Name → Option (List Name)
 
-/-- Nodes `(alias, labels)`, relationships `(alias, from, to)`. -/
+/-- Nodes `(alias, labels)`, relationships `(alias, from, to)`. Only named aliases are passed: the Rust
+checks `lookup_alias`, and an unnamed entity's number is unique per query and never bound before the
+check (so it finds nothing, the same as an unbound name). -/
 def mergeOk (env : Env) (lab : LabelsOf) (nodes : List (Name × List Name))
     (rels : List (Name × (Name × List Name) × (Name × List Name))) : Bool :=
   let nodeOk := fun (n : Name × List Name) =>
@@ -111,7 +98,7 @@ def deleteOk {B : Type} (mayEntity : B → Bool) (es : List B) : Bool := es.all 
 theorem deleteOk_iff {B : Type} (m : B → Bool) (es : List B) : deleteOk m es = true ↔ ∀ e ∈ es, m e = true := by
   simp [deleteOk]
 
-/-- `current_env().iter()` (binder.rs:618-622) walks the named entries only (#3303). -/
+/-- `current_env().iter()` (binder.rs) walks the named entries only (#3303). -/
 def returnStarOk (all : Bool) (env : Env) : Bool := !all || env.keys.any fun k => !k.startsWith "_"
 
 theorem returnStarOk_iff (all : Bool) (env : Env) :
@@ -174,7 +161,7 @@ theorem yield_requires_entity (fields : List Name) (ys : List (Name × Option Na
     simpa [List.all_eq_true, List.any_eq_false] using h
   simp [this]
 
-/-- Binding one yield (binder.rs:625-656): `YIELD f AS a` registers `a` with the
+/-- Binding one yield (binder.rs): `YIELD f AS a` registers `a` with the
 variable's name set to the source field; without `YIELD` the variable is hidden
 under `_hidden_{id}_{name}` so `RETURN *` ignores it. -/
 def bindYield (explicit : Bool) (hidden : Nat → Name → Name) (e : Env) (depth : Nat)
@@ -198,15 +185,15 @@ theorem bindYield_hidden (hidden : Nat → Name → Name) (e : Env) (d : Nat) (y
     bindYield false hidden e d y =
       .ok (e.insert (hidden e.length y.1) (freshVar e y.1 .any d), freshVar e y.1 .any d) := rfl
 
-/-! ## MATCH: a relationship variable bound by an earlier MATCH (#2981) -/
+/-! ## MATCH: a relationship variable bound by an earlier MATCH -/
 
-/-- `Alias::name` (ast.rs:97-102): an unnamed pattern entity has none. -/
+/-- `Alias::name` (ast.rs): an unnamed pattern entity has none. -/
 def aliasName : Alias → Option Name
   | .named n => some n
   | .anon _ => none
 
 /-- The first named relationship alias of the pattern that names a variable of the current table
-an earlier MATCH bound as a relationship (binder.rs:441-451: `rel.alias.name()`, then
+an earlier MATCH bound as a relationship (binder.rs: `rel.alias.name()`, then
 `Scope::get`; an unnamed relationship is never checked). -/
 def relReused (st : St) (aliases : List Alias) : Option Name :=
   (aliases.filterMap aliasName).find? fun a => match st.cur.find? a with
@@ -214,7 +201,7 @@ def relReused (st : St) (aliases : List Alias) : Option Name :=
     | none => false
 
 /-- After `bind_graph`, every named relationship of the pattern is recorded by its bound variable
-(binder.rs:457-462: `!rel.alias.is_unnamed()`). `bind_graph` defines each named alias in the
+(binder.rs: `!rel.alias.is_unnamed()`). `bind_graph` defines each named alias in the
 current table, so the bound variable is the table's entry. -/
 def recordMatchRels (st : St) (aliases : List Alias) : St :=
   let keys := (aliases.filterMap aliasName).filterMap
@@ -386,7 +373,7 @@ theorem match_records_rels (st0 : St) (as : List Alias) (a : Name) (ha : .named 
   simp only [recordMatchRels, List.mem_append, List.mem_filterMap]
   exact .inr ⟨a, ⟨.named a, ha, rfl⟩, by simp [hv]⟩
 
-/-- An unnamed relationship is neither checked nor recorded (binder.rs:442, 458): only named
+/-- An unnamed relationship is neither checked nor recorded (binder.rs): only named
 aliases take part, whatever the table holds. -/
 theorem relReused_unnamed (st : St) (ks : List Nat) :
     relReused st (ks.map Alias.anon) = none ∧
@@ -447,7 +434,7 @@ def internalPrefixes : List String := ["_slot_", "__agg_placeholder_", "_quant_"
 def isInternal (n : Name) : Bool := internalPrefixes.any fun p => n.startsWith p
 
 /-- What a returning CALL body hands back: its final table's named entries
-(`subquery_env.keys()` / `.iter()`, binder.rs:848-874) minus internal reservations. -/
+(`subquery_env.keys()` / `.iter()`, binder.rs) minus internal reservations. -/
 def subqueryReturns (inner : Env) : List (Name × Var) := inner.named.filter fun kv => !isInternal kv.1
 
 /-- Steps 3-4 of `bind_call_subquery`: restore the outer table, reject a returned
@@ -463,7 +450,7 @@ def bindCallSubquery (outer inner : Env) (depth : Nat) (returning : Bool) :
         let p := projectName acc.1 depth kv.1 kv.2.ty
         (p.1, acc.2 ++ [(kv.2, p.2)])) (outer, []))
 
-/-- Step 2c of `bind_call_subquery` for `match_rel_vars` (binder.rs:870-874): drop the entries
+/-- Step 2c of `bind_call_subquery` for `match_rel_vars` (binder.rs): drop the entries
 of the body's scopes `[lo, hi)` (`saved_env_stack_len..env_stack.len()`). -/
 def pruneMatchRels (mr : List (Nat × Nat)) (lo hi : Nat) : List (Nat × Nat) :=
   mr.filter fun k => !(decide (lo ≤ k.2) && decide (k.2 < hi))
@@ -475,7 +462,7 @@ theorem pruneMatchRels_spec (mr : List (Nat × Nat)) (lo hi : Nat) (k : Nat × N
   simp only [pruneMatchRels, List.mem_filter, Bool.not_eq_true', Bool.and_eq_false_iff,
     decide_eq_false_iff_not, Nat.not_le, Nat.not_lt]
 
-/-- Step 2c of `bind_call_subquery` for `varlen_rel_var_ids` (binder.rs:877-878, #3891): its keys
+/-- Step 2c of `bind_call_subquery` for `varlen_rel_var_ids` (binder.rs, #3891): its keys
 are `(scope_id, id)`, so the body's scopes `[lo, hi)` are matched on the first component. -/
 def pruneVarlen (vl : List (Nat × Nat)) (lo hi : Nat) : List (Nat × Nat) :=
   vl.filter fun k => !(decide (lo ≤ k.1) && decide (k.1 < hi))
@@ -530,7 +517,7 @@ theorem foldProject_covers (depth : Nat) : ∀ (ret : List (Name × Var)) (acc :
     · exact hd.2
 
 /-- With distinct returned names, the outer table stays covering: every returned
-variable gets a fresh outer id (binder.rs:777-787). -/
+variable gets a fresh outer id (binder.rs). -/
 theorem callSubquery_covers (outer inner : Env) (d : Nat) (hc : outer.Covers)
     (hd : ((subqueryReturns inner).map (·.1)).Nodup) (r : Env × List (Var × Var))
     (h : bindCallSubquery outer inner d true = .ok r) : r.1.Covers := by
@@ -553,7 +540,7 @@ def importProjections (imported : List (Name × Var)) (depth : Nat) : Env × Lis
     let p := projectName acc.1 depth kv.1 kv.2.ty
     (p.1, acc.2 ++ [(p.2, kv.2)])) ([], [])
 
-/-- `sort_by` on the inner variable's name (binder.rs:1098); an inner projection is always
+/-- `sort_by` on the inner variable's name (binder.rs); an inner projection is always
 named (`project_name`), so `getD ""` loses nothing. -/
 def sortProj (ps : List (Var × Var)) : List (Var × Var) :=
   ps.mergeSort fun a b => decide (a.1.name.getD "" ≤ b.1.name.getD "")
@@ -583,7 +570,7 @@ theorem sortProj_spec (ps : List (Var × Var)) :
 
 /-! ## `bind_graph_create` -/
 
-/-- The redeclaration check (binder.rs:1662-1731): a node that is a
+/-- The redeclaration check (binder.rs): a node that is a
 relationship endpoint is a reference; a bare node or a named relationship
 may not reuse a bound name at its first occurrence in the clause. An unnamed
 entity (`alias.name().is_none()`, #3303) is skipped. -/
@@ -652,7 +639,7 @@ theorem createCheck_anon (env : Env) (k : Nat) (eps : List Alias) :
   simp [createCheck, createStepN, createStepR]
 
 /-- The first written self-reference: `check_unbound_self_referential` over every entity
-(binder.rs:1739-1744). -/
+(binder.rs). -/
 def firstSelfRef (attrs : List (Alias × NE)) : Option Name :=
   attrs.findSome? fun a => match a.1 with
     | .named n => if selfRef n a.2 then some n else none

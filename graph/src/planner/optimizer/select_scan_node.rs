@@ -77,7 +77,7 @@ use crate::{
 use super::super::IR;
 use super::{
     collect_expr_scoped_variables, collect_expr_variables, collect_subtree_variables,
-    endpoint_scan_score, walk_scans_to_endpoint,
+    endpoint_scan_score, min_label_count, walk_scans_to_endpoint,
 };
 use crate::runtime::runtime::GetVariables;
 
@@ -127,15 +127,7 @@ fn score_endpoint(
     let filter_runs_late = filtered_vars.above.contains(&key);
     // Cardinality: minimum label node count (lower is better).
     // For nodes with no labels, use u64::MAX so labeled nodes win ties.
-    let cardinality = if node.labels.is_empty() {
-        u64::MAX
-    } else {
-        node.labels
-            .iter()
-            .map(|l| graph.label_node_count(l))
-            .min()
-            .unwrap_or(u64::MAX)
-    };
+    let cardinality = min_label_count(node, graph).unwrap_or(u64::MAX);
     (score, has_equality, filter_runs_late, cardinality)
 }
 

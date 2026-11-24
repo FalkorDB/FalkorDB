@@ -1,17 +1,5 @@
 /-
 LOAD CSV (graph/src/runtime/ops/load_csv.rs).
-
-| here | there |
-| --- | --- |
-| `v4Forbidden`        | `ipv4_is_forbidden` (:48) |
-| `validateRemote`     | `validate_remote_url` (:81) — DNS (`to_socket_addrs`) is the FFI parameter `resolve` |
-| `ER`, `erNew`, `erRead` | `EnforcingReader::new` (:153), `read` (:167) |
-| `pinned`             | `PinnedResolver::resolve` (:195) |
-| `httpConfig`         | `http_config` (:223), a `OnceLock` |
-| `csvNext`            | `CsvRecordIter::next` (:260) |
-| `LcSt.new`           | `LoadCsvOp::new` (:328) |
-| `headerPlan`, `openSource` | `open_csv_records` (:357) |
-| `resolvePath`, `lcRow` | the per-row closure of `LoadCsvOp::next` (:458) |
 -/
 namespace FalkorAggOps.LoadCsv
 
@@ -25,7 +13,7 @@ structure V4 where
   d : Nat
   deriving DecidableEq
 
-/-- load_csv.rs:48-63 (std `is_loopback`/`is_private`/… spelled out on the octets). -/
+/-- load_csv.rs (std `is_loopback`/`is_private`/… spelled out on the octets). -/
 def v4Forbidden (ip : V4) : Bool :=
   ip.a == 127 ||                                                   -- loopback
   ip.a == 10 || (ip.a == 172 && 16 ≤ ip.b && ip.b ≤ 31) || (ip.a == 192 && ip.b == 168) || -- private
@@ -54,7 +42,7 @@ def ipForbidden : IP → Bool
   | .v4 ip => v4Forbidden ip
   | .v6 f => f
 
-/-- load_csv.rs:81-136 after parsing: https only, a host, a port, a non-empty DNS answer, and
+/-- load_csv.rs after parsing: https only, a host, a port, a non-empty DNS answer, and
 EVERY resolved address public. `parse` = the host/port split (`none` = malformed). -/
 def validateRemote (parse : String → Except String (String × Nat)) (resolve : String → Nat → Except String (List IP))
     (url : String) : Except String (List IP) := do
@@ -154,7 +142,7 @@ theorem erNew_spec (l : Nat) : (erNew l).remaining = l + 1 ∧ (erNew l).limit =
 
 /-! ## Pinned resolver, client config -/
 
-/-- load_csv.rs:195-216: at most 16 of the validated addresses; none → `HostNotFound`. -/
+/-- load_csv.rs: at most 16 of the validated addresses; none → `HostNotFound`. -/
 def pinned (addrs : List IP) : Except String (List IP) :=
   let out := addrs.take 16
   if out.isEmpty then .error "HostNotFound" else .ok out
@@ -167,7 +155,7 @@ theorem pinned_spec (addrs : List IP) (out : List IP) (h : pinned addrs = .ok ou
   · cases h
   · cases h; exact ⟨List.length_take_le _ _, fun a ha => List.mem_of_mem_take ha⟩
 
-/-- load_csv.rs:223-234: `OnceLock::get_or_init` — built once, then shared. -/
+/-- load_csv.rs: `OnceLock::get_or_init` — built once, then shared. -/
 def httpConfig {C : Type} (init : C) : Option C → C × Option C
   | none => (init, some init)
   | some c => (c, some c)
@@ -184,7 +172,7 @@ inductive CV where
   | list (vs : List CV)
   | map (kvs : List (String × CV))
 
-/-- load_csv.rs:425-445 (in `open_csv_records`): header name ↦ column index; a duplicated name keeps its FIRST position
+/-- load_csv.rs (in `open_csv_records`): header name ↦ column index; a duplicated name keeps its FIRST position
 in the plan but reads the LAST column carrying it. -/
 def headerPlan (hdr : List String) : List (String × Nat) :=
   (hdr.zipIdx).foldl (fun acc (n, i) =>
@@ -192,7 +180,7 @@ def headerPlan (hdr : List String) : List (String × Nat) :=
 
 theorem headerPlan_example : headerPlan ["a", "b", "a"] = [("a", 2), ("b", 1)] := by decide
 
-/-- load_csv.rs:260-308: parked error ⇒ stop; a record becomes a list (empty field ⇒ null) or a
+/-- load_csv.rs: parked error ⇒ stop; a record becomes a list (empty field ⇒ null) or a
 map over the header plan (empty fields omitted); a parse error is parked and ends the stream. -/
 def csvNext (plan : Option (List (String × Nat))) (err : Option String) (rec : Option (Except String (List String))) :
     Option CV × Option String :=
@@ -212,7 +200,7 @@ theorem csvNext_spec (fields : List String) (e : String) :
     csvNext none none (some (.error e)) = (none, some s!"Failed to read CSV record: {e}") ∧
     (∀ p r, csvNext p (some e) r = (none, some e)) := ⟨rfl, rfl, fun _ _ => rfl⟩
 
-/-- load_csv.rs:328-346 -/
+/-- load_csv.rs -/
 structure LcSt where
   col : Nat
   cap : Option Nat
@@ -221,7 +209,7 @@ structure LcSt where
 def LcSt.new (var : Nat) : LcSt := ⟨var, none, none⟩
 theorem lcNew_spec (v : Nat) : LcSt.new v = ⟨v, none, none⟩ := rfl
 
-/-- load_csv.rs:364-415: the byte source — remote via the validated, pinned fetch; else a local
+/-- load_csv.rs: the byte source — remote via the validated, pinned fetch; else a local
 file, both under the 100 MiB cap. -/
 def openSource (validated : String → Except String (List IP)) (openLocal : String → Except String Unit)
     (path : String) : Except String Bool :=

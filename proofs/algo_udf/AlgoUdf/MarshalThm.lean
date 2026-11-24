@@ -219,7 +219,7 @@ theorem proto_key_dropped :
 
 theorem path_rt (ns rs : List Nat) : rt (.path ns rs) := rfl
 
-/-! ## Entities (#2976): read from the `JsEntity` class, never from the markers -/
+/-! ## Entities: read from the `JsEntity` class, never from the markers -/
 
 /-- **A current entity converts to the entity it was made for, whatever its visible properties
 are**: overwriting `__falkor_node_id` (or any marker) on a real node object has no effect. -/

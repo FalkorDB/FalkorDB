@@ -1,6 +1,6 @@
 import PendingCommit.SaveRoaring
 /-
-# `nth_live_id` (attribute_store.rs:1485-1506, #3438)
+# `nth_live_id` (attribute_store.rs)
 
 ```rust
 fn nth_live_id(deleted: &RoaringTreemap, max_id: u64, n: u64) -> Option<u64> {
@@ -15,13 +15,6 @@ fn nth_live_id(deleted: &RoaringTreemap, max_id: u64, n: u64) -> Option<u64> {
     Some(lo)
 }
 ```
-
-| here | there |
-| --- | --- |
-| `cntLive l x` | live ids `< x`: `((0..x).filter(!deleted.contains)).count()` |
-| `liveL l maxId` | the ids main's walk visits and does not skip as deleted (`0..=max_id` minus `deleted`) |
-| `bsearch` | the `while lo < hi` loop (:1497-1504) |
-| `nthLive` | `nth_live_id` (:1485) |
 
 * `liveThrough_eq` — `x + 1 - rank(x)` is the number of live ids in `0..=x`,
   and `rank_le` — `rank(x) ≤ x + 1`, so the `u128` subtraction never underflows

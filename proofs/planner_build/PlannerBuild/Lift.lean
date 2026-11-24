@@ -1,6 +1,6 @@
 import PlannerBuild.PlanMatch
 /-
-# Lifting cross-entity inline attributes (#2981, mod.rs:575-751)
+# Lifting cross-entity inline attributes (mod.rs)
 
 `plan_match` first rewrites the pattern: an inline-attribute entry whose value
 reads a variable the pattern binds, other than the entity itself (and, for a
@@ -8,22 +8,13 @@ relationship, its endpoints), is taken out of the map and becomes a filter in
 `bound_filters`, so it sits above the whole pattern like a `WHERE`. Such an
 edge is put in `lifted_rels`: it must be emitted for the filter to read it.
 
-| here | there |
-| --- | --- |
-| `patVars` | `QueryGraph::variables` (nodes, relationships, paths) over every component |
-| `readsPending` | `split_inline_attrs::reads_pending` mod.rs:590-599 |
-| `keepAttrs`, `liftItem` | `split_inline_attrs` mod.rs:582-620 (`seen` = `lowered`-style key `(alias, map)`) |
-| `keepNode`, `keepRel` | the rewritten `QueryNode` / `QueryRelationship` (mod.rs:663-692, 710-749) |
-| `liftItems`, `liftPattern` | `lift_cross_entity_attrs` mod.rs:648-751 |
-| `attrsReadVisited` | `pattern_attrs_read_visited` mod.rs:623-634 |
-
 Abstractions (documented, not load-bearing for a theorem here):
 * the lifted filters are listed in component order; Rust walks
   `pattern.relationships()` then `pattern.nodes()` of the whole pattern, which is the
   same order when the components are listed in pattern order;
 * a kept map keeps its map identity `ptr` (Rust allocates a fresh `Arc` for it);
   `lower_inline_attrs` keys on it, and the old map is gone from the rewritten pattern;
-* an endpoint's entry in `nodes()` lifts into `dropped` (mod.rs:724-732): its map was
+* an endpoint's entry in `nodes()` lifts into `dropped` (mod.rs): its map was
   already handled through the relationship, so the model skips it.
 -/
 namespace PlannerBuild.E

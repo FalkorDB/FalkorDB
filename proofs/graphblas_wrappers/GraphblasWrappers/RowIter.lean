@@ -1,15 +1,14 @@
 /-
 # `matrix::Iter`: row-range iteration is exactly the entries in range, once each
 
-Model of `Matrix::Iter` (matrix.rs:1618-1770) — `seek`, `next`, and the two
+Model of `Matrix::Iter` (matrix.rs) — `seek`, `next`, and the two
 `GxB_rowIterator_*` drive loops.
 
 The underlying `GxB_rowIterator` is axiomatised (it is C). Its documented
 contract (GraphBLAS.h:7796-7990) is: attached to a matrix, `seekRow(r)` /
 `nextRow()` move to the first *stored* entry on row `≥ r` (empty rows may be
 skipped; on sparse storage `seekRow` lands on an empty row and returns
-`GrB_NO_VALUE`, which the Rust loop then walks past — matrix.rs:1726-1730,
-1715-1719), and `nextCol()` walks the stored entries within a row in ascending
+`GrB_NO_VALUE`, which the Rust loop then walks past — matrix.rs), and `nextCol()` walks the stored entries within a row in ascending
 column order, returning `GrB_NO_VALUE` at the row's end. `getRowIndex()` returns
 the current row, or `nrows` when exhausted.
 
@@ -25,7 +24,7 @@ namespace GBW
 /-- A stored entry `(row, col)`. -/
 abbrev Entry := Nat × Nat
 
-/-- `depleted` is set (matrix.rs:1732-1733, 1764-1765) when there is no current
+/-- `depleted` is set (matrix.rs) when there is no current
 entry or the current row exceeds `max_row`. -/
 def depletedFor : List Entry → Nat → Bool
   | [], _ => true
@@ -33,13 +32,13 @@ def depletedFor : List Entry → Nat → Bool
 
 /-- Drive loop over the remaining stored entries: `next()` yields the head
 unless depleted, then advances and recomputes `depleted`. Structural on the
-list. Mirrors matrix.rs:1746-1769. -/
+list. Mirrors matrix.rs. -/
 def drainL : List Entry → Nat → Bool → List Entry
   | [], _, _ => []
   | e :: rest, maxRow, depleted =>
       if depleted then [] else e :: drainL rest maxRow (depletedFor rest maxRow)
 
-/-- `seek(min_row, max_row)` (matrix.rs:1713): skip stored entries on rows below
+/-- `seek(min_row, max_row)` (matrix.rs): skip stored entries on rows below
 `min_row`, then drive to exhaustion. -/
 def drainSeek (entries : List Entry) (minRow maxRow : Nat) : List Entry :=
   let rem := entries.filter (fun e => decide (e.1 ≥ minRow))
@@ -165,7 +164,7 @@ theorem drain_no_duplication (entries : List Entry) (minRow maxRow : Nat)
   rw [drain_seek_eq_spec entries minRow maxRow hsorted]
 
 /-- Empty matrix yields nothing — the `detached`/depleted fast paths
-(matrix.rs:1677). -/
+(matrix.rs). -/
 theorem drain_empty_matrix (minRow maxRow : Nat) :
     drainSeek [] minRow maxRow = [] := by
   simp [drainSeek, drainL, depletedFor]

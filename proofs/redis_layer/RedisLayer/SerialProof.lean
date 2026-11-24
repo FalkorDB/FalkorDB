@@ -235,7 +235,7 @@ theorem decSchema_encSchema (s : Schema) (hw : WF U s) (ts : List W) :
   rw [e1, e1, e2, e2, e3, e3]
   rfl
 
-/-- `Schema::from_graph` (`:702-718`): the four graph lists and the caller's attribute
+/-- `Schema::from_graph`: the four graph lists and the caller's attribute
 table, unchanged. -/
 def schemaFromGraph (attrs labels types : List Bytes) (infos : List Info) (cons : List Cons) : Schema :=
   ⟨attrs, labels, types, infos, cons⟩
@@ -254,7 +254,7 @@ theorem pos_none (l : List Bytes) (p : Bytes) (h : p ∉ l) : pos l p = none := 
     simp [pos, hap, ih this]
 
 /-- **Finding (latent)**: a constraint property absent from the attribute table is written
-as id 0 (`unwrap_or(0)`, `:460`) and so reloads as attribute 0. -/
+as id 0 (`unwrap_or(0)`) and so reloads as attribute 0. -/
 theorem cons_unknown_prop (a : Bytes) (as : List Bytes) (p : Bytes) (h : p ∉ a :: as) :
     lookupAttr (a :: as) (attrId (a :: as) p) = a := by
   simp [attrId, pos_none _ _ h, lookupAttr]

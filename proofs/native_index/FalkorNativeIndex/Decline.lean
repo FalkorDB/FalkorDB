@@ -2,7 +2,7 @@ import FalkorNativeIndex.Query
 set_option linter.unusedSimpArgs false
 
 /-!
-# `unsupported_by_native_index` and `describe_predicate` (`graph/src/index/falkordb/mod.rs:43-165`)
+# `unsupported_by_native_index` and `describe_predicate` (`graph/src/index/falkordb/mod.rs`)
 
 Under `index-falkordb` a predicate the native index declines (`query_numeric` = `None`) raises an
 error, never an empty result (`nodeScanOp_error_iff`, `Scan.lean`). The message names the entity kind,
@@ -24,18 +24,18 @@ inductive Pred where
   | and (children : List Pred)
   | inList (key : String) (list : Option (List Value))
   | point (key : String)
-  | arrayContains (key : String)
+  | arrayContains (key : String) (value : Value)
 
 mutual
-/-- The numeric column's view of a predicate: `And`, `Point`, `ArrayContains` are `other`. -/
+/-- The column's view of a predicate (`IndexQuery`). -/
 def Pred.toQuery : Pred → IndexQuery
   | .equal k v => .equal k v
   | .range k mn mx a b => .range k mn mx a b
   | .or cs => .or (Pred.toQueries cs)
-  | .and _ => .other
+  | .and cs => .and (Pred.toQueries cs)
   | .inList k l => .inList k l
-  | .point _ => .other
-  | .arrayContains _ => .other
+  | .point k => .point k
+  | .arrayContains k v => .arrayContains k v
 def Pred.toQueries : List Pred → List IndexQuery
   | [] => []
   | c :: cs => c.toQuery :: Pred.toQueries cs
@@ -51,11 +51,11 @@ inductive Desc where
   | and (children : List Desc)
   | inList (key : String) (numeric : Bool)
   | geo (key : String)
-  | arrayContains (key : String)
+  | arrayContains (key : String) (numeric : Bool)
 deriving Repr
 
 mutual
-/-- `union_members` (`mod.rs:145-163`): the attribute of every member of a union, with whether the
+/-- `union_members` (`mod.rs`): the attribute of every member of a union, with whether the
     native union serves that member kind (an `Equal` or an `IN` list, directly in the union). Nested
     combinators count by their attributes but are not served. -/
 def unionMembers : Bool → List Pred → List (String × Bool)
@@ -68,15 +68,15 @@ def unionMembers : Bool → List Pred → List (String × Bool)
       | .and nested => unionMembers false nested
       | .range k .. => [(k, false)]
       | .point k => [(k, false)]
-      | .arrayContains k => [(k, false)]) ++ unionMembers top cs
+      | .arrayContains k _ => [(k, false)]) ++ unionMembers top cs
 end
 
-/-- The attribute every member names, if there is one (`one_key`, `mod.rs:98-101`). -/
+/-- The attribute every member names, if there is one (`one_key`, `mod.rs`). -/
 def oneKey (ms : List (String × Bool)) : Option String :=
   (ms.head?.map Prod.fst).filter (fun first => ms.all (fun m => m.1 == first))
 
 mutual
-/-- `describe_predicate` (`mod.rs:59-143`). -/
+/-- `describe_predicate` (`mod.rs`). -/
 def describe : Pred → Desc
   | .equal k v => .equality k (encodeNumeric v).isSome
   | .range k mn mx _ _ =>
@@ -93,13 +93,13 @@ def describe : Pred → Desc
       | some items => items.all (fun v => (encodeNumeric v).isSome)
       | none => false)
   | .point k => .geo k
-  | .arrayContains k => .arrayContains k
+  | .arrayContains k v => .arrayContains k (encodeNumeric v).isSome
 def describeAll : List Pred → List Desc
   | [] => []
   | c :: cs => describe c :: describeAll cs
 end
 
-/-- `unsupported_by_native_index` (`mod.rs:43-57`): what the error names. -/
+/-- `unsupported_by_native_index` (`mod.rs`): what the error names. -/
 structure Unsupported where
   entity : String
   label : String
@@ -120,8 +120,9 @@ theorem describe_equal (k : String) (v : Value) : describe (.equal k v) = .equal
 theorem describe_inList (k : String) (items : List Value) :
     describe (.inList k (some items)) = .inList k (items.all (fun v => (encodeNumeric v).isSome)) := rfl
 
-theorem describe_leaves (k : String) :
-    describe (.point k) = .geo k ∧ describe (.arrayContains k) = .arrayContains k := ⟨rfl, rfl⟩
+theorem describe_leaves (k : String) (v : Value) :
+    describe (.point k) = .geo k ∧ describe (.arrayContains k v) = .arrayContains k (encodeNumeric v).isSome :=
+  ⟨rfl, rfl⟩
 
 /-- A conjunction names its children (not just their count). -/
 theorem describe_and (cs : List Pred) : describe (.and cs) = .and (describeAll cs) := rfl
@@ -164,97 +165,24 @@ theorem describe_or (cs : List Pred) :
     · simp [hs]
     · simp [hs]
 
-/-! ### The reasons are sound (a reason is only given for a union the column really declines) -/
+/-! ### Reasons and the single-column union
 
-/-- If every child of the union is a member the column serves on attribute `a`, the flattened members
-    are all `(a, true)`. -/
-theorem unionMembers_sameAttr (a : String) : ∀ (cs : List Pred), SameAttr a (Pred.toQueries cs) →
-    ∀ top, unionMembers top cs = cs.map (fun _ => (a, top)) := by
-  intro cs
-  induction cs with
-  | nil => intro _ top; simp [unionMembers]
-  | cons c cs ih =>
-    intro h top
-    have hc := h c.toQuery (by simp [Pred.toQueries])
-    obtain ⟨vs, hvs⟩ := hc
-    have hrest : SameAttr a (Pred.toQueries cs) := fun q hq => h q (by simp [Pred.toQueries, hq])
-    simp only [List.map_cons]
-    cases c with
-    | equal k v =>
-      simp only [Pred.toQuery, unionMember, Option.some.injEq, Prod.mk.injEq] at hvs
-      obtain ⟨rfl, _⟩ := hvs
-      simp [unionMembers, ih hrest top]
-    | inList k l =>
-      cases l with
-      | none => simp [Pred.toQuery, unionMember] at hvs
-      | some items =>
-        simp only [Pred.toQuery, unionMember] at hvs
-        by_cases he : items.isEmpty = true
-        · simp [he] at hvs
-        · simp only [he, Bool.false_eq_true, ite_false, Option.some.injEq, Prod.mk.injEq] at hvs
-          obtain ⟨rfl, _⟩ := hvs
-          simp [unionMembers, ih hrest top]
-    | range k mn mx a' b' => simp [Pred.toQuery, unionMember] at hvs
-    | or _ => simp [Pred.toQuery, unionMember] at hvs
-    | and _ => simp [Pred.toQuery, unionMember] at hvs
-    | point _ => simp [Pred.toQuery, unionMember] at hvs
-    | arrayContains _ => simp [Pred.toQuery, unionMember] at hvs
-
-/-- A union the column serves is non-empty, on one attribute, and every member is served: so
-    `describe_predicate` would call it "not all-numeric" (never "spanning"/"non-member"). -/
-theorem unionKeys_served (cs : List Pred) (ks : KeySet) (h : NumericIndex.unionKeys (Pred.toQueries cs) = some ks) :
-    cs ≠ [] ∧ ∃ a, unionMembers true cs = cs.map (fun _ => (a, true)) := by
-  unfold NumericIndex.unionKeys at h
-  have hne : cs ≠ [] := by
-    rintro rfl; simp [Pred.toQueries] at h
-  refine ⟨hne, ?_⟩
-  by_cases hc : (Pred.toQueries cs).isEmpty = true
-  · exfalso; apply hne; cases cs with
-    | nil => rfl
-    | cons c cs => simp [Pred.toQueries] at hc
-  · simp only [hc, Bool.false_eq_true, ite_false] at h
-    obtain ⟨out, hg⟩ : ∃ out, unionGo none [] (Pred.toQueries cs) = some out := by
-      cases hg : unionGo none [] (Pred.toQueries cs) with
-      | none => simp [hg] at h
-      | some out => exact ⟨out, rfl⟩
-    obtain ⟨a, _, hs, _⟩ := unionGo_spec _ none [] out hg
-    exact ⟨a, unionMembers_sameAttr a cs hs true⟩
-
-/-- **A "spanning more than one attribute" or "member that is not an equality or IN list" report is
-    always a real decline.** -/
-theorem describe_or_reason_sound (cs : List Pred) :
-    (describe (.or cs) = .orSpanning cs.length →
-      NumericIndex.unionKeys (Pred.toQueries cs) = none) ∧
-    (∀ key, describe (.or cs) = .orNonMember cs.length key →
-      NumericIndex.unionKeys (Pred.toQueries cs) = none) := by
-  have key : NumericIndex.unionKeys (Pred.toQueries cs) ≠ none →
-      oneKey (unionMembers true cs) ≠ none ∧ (unionMembers true cs).all (·.2) = true := by
-    intro hne
-    obtain ⟨ks, hks⟩ := Option.ne_none_iff_exists'.1 hne
-    obtain ⟨hcs, a, hm⟩ := unionKeys_served cs ks hks
-    rw [hm]
-    cases cs with
-    | nil => exact absurd rfl hcs
-    | cons c cs =>
-      refine ⟨?_, by simp⟩
-      simp only [List.map_cons, oneKey]
-      simp [Option.filter]
-  refine ⟨fun h => ?_, fun k h => ?_⟩
-  · by_cases hn : NumericIndex.unionKeys (Pred.toQueries cs) = none
-    · exact hn
-    · exact absurd ((describe_or cs).1.1 h) (key hn).1
-  · by_cases hn : NumericIndex.unionKeys (Pred.toQueries cs) = none
-    · exact hn
-    · exact absurd (key hn).2 (((describe_or cs).2.1 k).1 h).2
+`Selection::disjunction` is the single-column union. Since #3737 a union spanning attributes is served by
+`combine_columns` (`queryColumn`, one column per attribute), so "spanning more than one attribute" is
+reported only when a column is missing or a share is unservable: the wording is a hint, not the claim
+that the union is unservable. What remains true of the one-column union: -/
 
 /-- The one inexact reason (cosmetic, not reachable from the planner today: the scan op drops what it
     cannot index before a list gets here): `a = 1 OR a IN []` is reported "not all-numeric", but every
-    value encodes; the real reason is the empty `IN` list. -/
+    value encodes; the real reason is the empty `IN` list, which declines the union. -/
 theorem describe_empty_in_misreported (v : Value) :
     describe (.or [.equal "a" v, .inList "a" (some [])]) = .orNotAllNumeric 2 "a" ∧
-    NumericIndex.unionKeys (Pred.toQueries [.equal "a" v, .inList "a" (some [])]) = none := by
+    Selection.disjunction [.equal "a" v, .inList "a" (some [])] = none := by
   refine ⟨by simp [describe, unionMembers, oneKey, Option.filter], ?_⟩
-  simp only [Pred.toQueries, Pred.toQuery, NumericIndex.unionKeys, List.isEmpty_cons, Bool.false_eq_true, ite_false]
-  cases hh : encodeAll (nonNull [v]) <;> simp [unionGo, unionMember, hh]
+  unfold Selection.disjunction
+  split
+  · rfl
+  · simp only [Option.map_eq_none_iff]
+    cases hh : pushEqualKeys [v] [] <;> simp [disjGo, disjMemberValues, hh]
 
 end NI
