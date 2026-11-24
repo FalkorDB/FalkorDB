@@ -1,0 +1,356 @@
+{
+  "schema": 1,
+  "date": "2026-11-24",
+  "run_url": "https://github.com/FalkorDB/FalkorDB/actions/runs/19672031458",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
+    "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+    "label": "main@4c1088949"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923",
+    "commit": "d8c329b777c177fc7343d959157d6acdf7398fa5",
+    "label": "6.2.0"
+  },
+  "previous_green_commit": "4ac2af3103ae5a293baef097b749fb8338bc0bfd",
+  "status": "error",
+  "skip_reason": null,
+  "checks": [
+    {
+      "schema": 1,
+      "check": "micro",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "No row regressed beyond 1.10x instructions; 3 UNWIND ... MATCH edge rows use 1.5x-6.9x fewer than 6.2.0.",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
+        "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+        "label": "main@4c1088949"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923",
+        "commit": "d8c329b777c177fc7343d959157d6acdf7398fa5",
+        "label": "6.2.0"
+      },
+      "machine": {
+        "runner": "hosted",
+        "type": "ubuntu-latest",
+        "cpu": "AMD EPYC 7763 64-Core Processor",
+        "cores": 4
+      },
+      "started": "2026-11-24T00:06:12Z",
+      "finished": "2026-11-24T00:31:47Z",
+      "findings": [
+        {
+          "name": "UNWIND index MATCH edge 100 rows [writes]",
+          "metric": "instructions",
+          "candidate": 5715944,
+          "baseline": 5611840,
+          "ratio": 1.0186,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "ok"
+        },
+        {
+          "name": "two-hop [reads]",
+          "metric": "instructions",
+          "candidate": 8811402,
+          "baseline": 8790115,
+          "ratio": 1.0024,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "ok"
+        },
+        {
+          "name": "create edge [writes]",
+          "metric": "alloc_bytes",
+          "candidate": 1310720,
+          "baseline": 1310720,
+          "ratio": 1.0,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "ok"
+        },
+        {
+          "name": "UNWIND index MATCH edge 1 row [writes]",
+          "metric": "instructions",
+          "candidate": 921308,
+          "baseline": 1421630,
+          "ratio": 0.6481,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "UNWIND id MATCH edge 100 rows [writes]",
+          "metric": "instructions",
+          "candidate": 3622440,
+          "baseline": 8492954,
+          "ratio": 0.4265,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "UNWIND id MATCH edge 1 row [writes]",
+          "metric": "instructions",
+          "candidate": 848682,
+          "baseline": 5865812,
+          "ratio": 0.1447,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        }
+      ],
+      "error": null,
+      "artifacts": [
+        "rows.csv",
+        "callgrind/"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "size-probe",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "No shape slower beyond 1.5x p50; the UNWIND edge batches are 2.8x-66x faster than 6.2.0, more so at larger graphs.",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
+        "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+        "label": "main@4c1088949"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923",
+        "commit": "d8c329b777c177fc7343d959157d6acdf7398fa5",
+        "label": "6.2.0"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "n4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-24T00:09:40Z",
+      "finished": "2026-11-24T00:38:02Z",
+      "findings": [
+        {
+          "name": "MATCH (:Person {id}) lookup @500k",
+          "metric": "p50_ms",
+          "candidate": 0.2,
+          "baseline": 0.2,
+          "ratio": 1.0,
+          "threshold": 1.5,
+          "direction": "higher_is_worse",
+          "status": "ok"
+        },
+        {
+          "name": "UNWIND id MATCH CREATE edge @10k",
+          "metric": "p50_ms",
+          "candidate": 0.4,
+          "baseline": 1.1,
+          "ratio": 0.3636,
+          "threshold": 1.5,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "UNWIND index MATCH CREATE edge @100k",
+          "metric": "p50_ms",
+          "candidate": 0.6,
+          "baseline": 4.7,
+          "ratio": 0.1277,
+          "threshold": 1.5,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "UNWIND id MATCH CREATE edge @100k",
+          "metric": "p50_ms",
+          "candidate": 0.4,
+          "baseline": 6.9,
+          "ratio": 0.058,
+          "threshold": 1.5,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "UNWIND index MATCH CREATE edge @500k",
+          "metric": "p50_ms",
+          "candidate": 0.6,
+          "baseline": 21.4,
+          "ratio": 0.028,
+          "threshold": 1.5,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "UNWIND id MATCH CREATE edge @500k",
+          "metric": "p50_ms",
+          "candidate": 0.5,
+          "baseline": 33.0,
+          "ratio": 0.0152,
+          "threshold": 1.5,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        }
+      ],
+      "error": null,
+      "artifacts": [
+        "raw/rows.csv"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "pokec",
+      "verdict": "error",
+      "confirmed": false,
+      "summary": "Could not measure: the baseline server never answered PING after start.",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
+        "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+        "label": "main@4c1088949"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923",
+        "commit": "d8c329b777c177fc7343d959157d6acdf7398fa5",
+        "label": "6.2.0"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "n4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-24T00:09:51Z",
+      "finished": "2026-11-24T00:12:03Z",
+      "findings": [],
+      "error": "baseline server (falkordb/falkordb-server@sha256:44eb4a6d48ef...) did not answer PING within 120 s of docker run; see raw/baseline-server.log",
+      "artifacts": [
+        "raw/baseline-server.log"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "soak-b",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "5 min per scenario: ingest rate held steady in every scenario.",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
+        "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+        "label": "main@4c1088949"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923",
+        "commit": "d8c329b777c177fc7343d959157d6acdf7398fa5",
+        "label": "6.2.0"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "n4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-24T00:10:02Z",
+      "finished": "2026-11-24T00:47:31Z",
+      "findings": [
+        {
+          "name": "s12 IoT ingest",
+          "metric": "throughput",
+          "candidate": 188.0,
+          "baseline": 41.5,
+          "ratio": 4.5301,
+          "threshold": 0.8,
+          "direction": "lower_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "s12 IoT ingest rate, last minute / first minute",
+          "metric": "growth_ratio",
+          "candidate": 0.97,
+          "baseline": 0.21,
+          "ratio": 4.619,
+          "threshold": 0.8,
+          "direction": "lower_is_worse",
+          "status": "improvement"
+        }
+      ],
+      "error": null,
+      "artifacts": [
+        "raw/scenarios.csv"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "micro-hw",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "No row regressed beyond 1.10x cycles or 1.25x misses; 3 UNWIND ... MATCH edge rows take 1.5x-6.4x fewer cycles than 6.2.0.",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
+        "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+        "label": "main@4c1088949"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923",
+        "commit": "d8c329b777c177fc7343d959157d6acdf7398fa5",
+        "label": "6.2.0"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "c4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-24T00:07:02Z",
+      "finished": "2026-11-24T00:42:51Z",
+      "findings": [
+        {
+          "name": "two-hop [reads]",
+          "metric": "l2_misses",
+          "candidate": 40118,
+          "baseline": 39870,
+          "ratio": 1.0062,
+          "threshold": 1.25,
+          "direction": "higher_is_worse",
+          "status": "ok"
+        },
+        {
+          "name": "UNWIND index MATCH edge 1 row [writes]",
+          "metric": "cycles",
+          "candidate": 1488204,
+          "baseline": 2204871,
+          "ratio": 0.675,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "UNWIND id MATCH edge 100 rows [writes]",
+          "metric": "cycles",
+          "candidate": 5310977,
+          "baseline": 11962430,
+          "ratio": 0.444,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "UNWIND id MATCH edge 1 row [writes]",
+          "metric": "cycles",
+          "candidate": 1402118,
+          "baseline": 8914502,
+          "ratio": 0.1573,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        }
+      ],
+      "error": null,
+      "artifacts": [
+        "rows.csv",
+        "perf-stat/"
+      ]
+    }
+  ]
+}

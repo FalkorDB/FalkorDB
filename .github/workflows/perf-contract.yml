@@ -1,0 +1,84 @@
+# Tests for the nightly perf runs and their checks: tests/perf/ (the result
+# validator, its example files, acceptance.yaml, the reporter), tests/soak/ (the
+# soak and fuzz checks) and bench/tests/ (the bench harness, incl. the micro
+# tier's verdict). Nothing here builds or runs the engine or a server; it takes
+# about a minute.
+
+name: perf-contract
+
+on:
+  pull_request:
+    paths:
+      - "tests/perf/**"
+      - "tests/soak/**"
+      # Also covers queries.py, whose micro acceptance rows test_validate.py checks.
+      - "bench/**"
+      - ".github/workflows/perf-contract.yml"
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same pinned uv as benchmark-cov.yml.
+      - name: Install uv
+        run: |
+          set -euo pipefail
+          mkdir -p .bin
+          cid=$(docker create ghcr.io/astral-sh/uv:0.9.29)
+          docker cp "$cid:/uv" .bin/uv
+          docker rm -f "$cid" >/dev/null
+          chmod +x .bin/uv
+
+      # validate.py promises Python 3.9+ and the standard library only.
+      - name: validate.py on Python 3.9, standard library only
+        run: |
+          set -euo pipefail
+          .bin/uv run --no-project --python 3.9 python -I tests/perf/validate.py tests/perf/fixtures/valid/*.json
+          # A valid result with a tag in place of a digest must be refused.
+          python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); d["baseline"]["image"] = "falkordb/falkordb-server:6.2.0"; print(json.dumps(d))' \
+            tests/perf/fixtures/valid/result-micro-pass.json > "$RUNNER_TEMP/tag-image.json"
+          if .bin/uv run --no-project --python 3.9 python -I tests/perf/validate.py "$RUNNER_TEMP/tag-image.json"; then
+            echo "::error::validate.py accepted a tag instead of a digest on Python 3.9"
+            exit 1
+          fi
+
+      # pytest and pyyaml (acceptance.yaml) are test-only. --python: the step
+      # above leaves a uv-managed 3.9 behind, which uv would otherwise pick,
+      # and pytest 9 needs 3.10+.
+      - name: pytest tests/perf
+        run: >-
+          .bin/uv run --no-project --python 3.12
+          --with pytest==9.2.0 --with pyyaml==6.0.4
+          python -I -m pytest tests/perf -v -p no:cacheprovider
+
+      # Separate runs per suite: test files with the same basename in two
+      # suites would collide in one run (pytest's default prepend import mode),
+      # and a failure names its suite. tests/soak/ arrives with the soak and
+      # fuzz checks' PRs; until then there is nothing to run.
+      - name: pytest tests/soak
+        run: |
+          set -euo pipefail
+          if [ ! -d tests/soak ]; then
+            echo "::notice::tests/soak does not exist on this branch; nothing to run"
+            exit 0
+          fi
+          .bin/uv run --no-project --python 3.12 \
+            --with pytest==9.2.0 --with pyyaml==6.0.4 \
+            python -I -m pytest tests/soak -v -p no:cacheprovider
+
+      # bench's own environment, from bench/uv.lock (pytest is in its dev group).
+      - name: pytest bench/tests
+        run: .bin/uv run --project bench --frozen --python 3.12 pytest bench/tests -v -p no:cacheprovider
