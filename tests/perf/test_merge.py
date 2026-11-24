@@ -622,3 +622,35 @@ def test_context_refuses_unpinned_or_malformed_sides(tmp_path, capsys, flag, val
     assert merge.main(argv) == 1
     assert f"::error::{said} " in capsys.readouterr().err
     assert not (tmp_path / "c.json").exists()
+
+
+# --- conclude: the night's status as the run's ----------------------------------
+
+
+@pytest.mark.parametrize(
+    "status, code",
+    [("green", 0), ("skipped", 0), ("red", 1), ("error", 1), ("unknown", 1), (None, 1)],
+)
+def test_only_green_and_skipped_nights_succeed(tmp_path, capsys, status, code):
+    """A red night fails the run (Dvir, 2026-11-24), and so does an error night:
+    one that could not measure is not green. Anything unrecognised fails too."""
+    path = tmp_path / "nightly.json"
+    path.write_text(json.dumps({"status": status}))
+    assert merge.main(["conclude", "--nightly", str(path)]) == code
+    out = capsys.readouterr().out
+    assert out.startswith("::error::the night is ") if code else out.startswith("the night is ")
+
+
+def test_conclude_on_a_real_nightly(tmp_path):
+    """End to end: the nightly.json merge writes for a regression fails the run."""
+    put(tmp_path / "results", "micro", result("micro", "regression"))
+    _, nightly = run_merge(tmp_path, MICRO_ONLY)
+    assert nightly["status"] == "red"
+    assert merge.main(["conclude", "--nightly", str(tmp_path / "nightly.json")]) == 1
+
+
+@pytest.mark.parametrize("text", ["{not json", "[]", '{"status": NaN}'])
+def test_conclude_fails_on_an_unreadable_nightly(tmp_path, text):
+    path = tmp_path / "nightly.json"
+    path.write_text(text)
+    assert merge.main(["conclude", "--nightly", str(path)]) == 1

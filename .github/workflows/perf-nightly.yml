@@ -543,3 +543,10 @@ jobs:
           # summary alone (as does the TEMPORARY pull_request trigger).
           PERF_CHAT_WEBHOOK: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
         run: python3 -I tests/perf/report/post.py --nightly "$RUNNER_TEMP/nightly/nightly.json"
+
+      # Last, once the report is out and nightly.json is uploaded (merge job), so
+      # a failing run never loses either: a red or error night fails the run.
+      # The list of runs then reads as a timeline, and a failed scheduled run
+      # sends GitHub's email. Green and skipped nights succeed.
+      - name: Fail the run unless the night is green or skipped
+        run: python3 -I tests/perf/merge.py conclude --nightly "$RUNNER_TEMP/nightly/nightly.json"

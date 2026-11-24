@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The bookkeeping steps of the nightly perf run (.github/workflows/perf-nightly.yml).
 
-Three subcommands, one per job that needs them:
+Four subcommands, one per step that needs them:
 
   plan     tests/perf/checks.yaml (as JSON) + the `checks` input
            -> plan.json, and the job matrices on $GITHUB_OUTPUT
@@ -9,6 +9,8 @@ Three subcommands, one per job that needs them:
            -> context.json: skip_reason and previous_green_commit
   merge    context.json + plan.json + each planned check's perf-result-<check>
            artifact -> nightly.json
+  conclude nightly.json -> the run's exit status: 0 for green or skipped,
+           1 for red or error (the report job's last step)
 
 The shapes are perf-judge's: tests/perf/schema/ and tests/perf/validate.py, which
 `merge` runs on every result.json it embeds and on the nightly.json it writes.
@@ -432,6 +434,17 @@ def build_nightly(context, plan, results_dir, validator):
     return nightly
 
 
+# How a night ends its workflow run: only a green or skipped night succeeds. A
+# red night, and an error night (one that could not measure is not green),
+# fail the run, so the list of runs reads as a timeline and a failed scheduled
+# run sends GitHub's email.
+RUN_SUCCEEDS = ("green", "skipped")
+
+
+def run_exit_status(status):
+    return 0 if status in RUN_SUCCEEDS else 1
+
+
 def write_json(path, obj):
     text = json.dumps(obj, indent=2, allow_nan=False) + "\n"
     Path(path).write_text(text, encoding="utf-8")
@@ -514,6 +527,21 @@ def cmd_merge(args):
     return 0
 
 
+def cmd_conclude(args):
+    try:
+        nightly = strict_load(args.nightly)
+    except (OSError, ValueError) as err:
+        print(f"::error::cannot read {args.nightly}: {err}", file=sys.stderr)
+        return 1
+    status = nightly.get("status") if isinstance(nightly, dict) else None
+    code = run_exit_status(status)
+    if code:
+        print(f"::error::the night is {status}: failing the run (the report and nightly.json are already out)")
+    else:
+        print(f"the night is {status}: the run succeeds")
+    return code
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -548,6 +576,10 @@ def main(argv=None):
     p.add_argument("--validator", default="", help="path to tests/perf/validate.py")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_merge)
+
+    p = sub.add_parser("conclude", help="nightly.json -> this run's exit status")
+    p.add_argument("--nightly", required=True)
+    p.set_defaults(func=cmd_conclude)
 
     args = parser.parse_args(argv)
     try:
