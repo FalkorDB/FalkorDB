@@ -362,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn a_paused_terminal_costs_one_wait_and_keeps_its_queue_free() {
+    fn a_paused_terminal_costs_at_most_one_wait_and_keeps_its_queue_free() {
         let (mut master, slave) = pty();
         // Ctrl-S: the terminal stops taking output, as when a user pauses it.
         std::io::Write::write_all(&mut master, b"\x13").unwrap();
@@ -371,9 +371,11 @@ mod tests {
         let wait = Duration::from_millis(100);
         let start = Instant::now();
         assert!(!write_bounded(&mut tty, &banner(), wait));
+        // Linux rejects the first write with EAGAIN at once; macOS queues
+        // the first line and gives up after one `wait` for it to drain.
         let took = start.elapsed();
-        assert!(took >= wait && took < wait * 5, "took {took:?}");
-        // Only the first line was queued, so the server's own log lines
+        assert!(took < wait * 5, "took {took:?}");
+        // At most the first line was queued, so the server's own log lines
         // still fit instead of blocking.
         let mut queued: libc::c_int = 0;
         // SAFETY: TIOCOUTQ stores the queue length in the c_int it is given.
