@@ -98,15 +98,32 @@ def attr_start(lines, j):
     return None
 
 
+def only_comments(text):
+    """True when `text` is nothing but whitespace and complete (possibly
+    nested) `/* */` block comments: `/* a */ let x = 1; /* b */` is not."""
+    depth, i = 0, 0
+    while i < len(text):
+        pair = text[i:i + 2]
+        if pair == '/*':
+            depth, i = depth + 1, i + 2
+        elif pair == '*/' and depth:
+            depth, i = depth - 1, i + 2
+        else:
+            if not depth and not text[i].isspace():
+                return False
+            i += 1
+    return depth == 0
+
+
 def lead_start(lines, start):
     """First line of the attributes, comments and blank lines directly above the
     `fn` on line `start`: lines that belong to no fn's body."""
     j = start - 1
     while j >= 1:
         s = lines[j - 1].strip()
-        if not s or s.startswith('//') or (s.startswith(('#[', '#![')) and s.endswith(']')):
+        if not s or s.startswith('//'):
             j -= 1
-        elif s.endswith('*/') and ('/*' not in s or s.startswith('/*')):
+        elif s.endswith('*/'):
             # a block comment, possibly multi-line: back to the line it opens on
             k = j
             while k >= 1 and not lines[k - 1].strip().startswith('/*'):
@@ -114,8 +131,8 @@ def lead_start(lines, start):
                     k = 0                         # another comment's end: not one block
                     break
                 k -= 1
-            if k < 1:
-                break
+            if k < 1 or not only_comments('\n'.join(lines[k - 1:j])):
+                break                             # code shares a line with the comment
             j = k - 1
         elif s.endswith(']') and (k := attr_start(lines, j)) is not None:
             j = k - 1
