@@ -1,3 +1,4 @@
+import time
 from common import *
 from index_utils import *
 
@@ -387,3 +388,50 @@ class testFulltextIndexQuery():
             CALL db.idx.fulltext.queryNodes(l, 'hello') YIELD node
             RETURN l, node.v""")
         self.env.assertEqual(result.result_set, [['L1', 'hello redis world']])
+
+    def test07_query_while_index_is_under_construction(self):
+        # regression (#3931): a full-text query used to answer from the
+        # half-built index, returning a partial count. Like a vector query
+        # (#3382), it is refused until the index is OPERATIONAL, for node and
+        # relationship queries alike.
+        #
+        # CREATE INDEX, the query and a status check run in one MULTI/EXEC,
+        # so they run in order on the main thread with nothing in between.
+        # Population runs in the background, 10k entities per batch, so with
+        # 20k entities the index is still building when EXEC ends. The status
+        # check inside EXEC asserts that, so if population ever finished
+        # first, this test fails loudly instead of passing by accident.
+        key = "fulltext_under_construction"
+        g = self.db.select_graph(key)
+        g.query("""UNWIND range(1, 20000) AS i
+                   CREATE (:Doc {t: 'hello'})-[:LINK {t: 'hello'}]->(:Other)""")
+        conn = self.env.getConnection()
+
+        def check_refused_until_operational(label, create, q):
+            status_q = f"CALL db.indexes() YIELD label, status WHERE label = '{label}' RETURN status"
+            p = conn.pipeline(transaction=True)
+            p.execute_command("GRAPH.QUERY", key, create)
+            p.execute_command("GRAPH.RO_QUERY", key, q)
+            p.execute_command("GRAPH.RO_QUERY", key, status_q)
+            created, answer, status = p.execute(raise_on_error=False)
+            self.env.assertFalse(isinstance(created, Exception), message=str(created))
+            # the index was still building after the query ran
+            self.env.assertContains("UNDER CONSTRUCTION", status[1][0][0])
+            self.env.assertTrue(isinstance(answer, Exception),
+                                message=f"{label}: answered {answer} from an index under construction")
+            self.env.assertContains(f"The fulltext index on '{label}' is under construction", str(answer))
+
+            # once OPERATIONAL the query answers in full (bounded poll, no sleep)
+            deadline = time.monotonic() + 120
+            while g.ro_query(status_q).result_set != [["OPERATIONAL"]]:
+                if time.monotonic() > deadline:
+                    self.env.assertTrue(False, message=f"{label}: still under construction after 120s")
+                    return
+            self.env.assertEqual(g.ro_query(q).result_set, [[20000]])
+
+        check_refused_until_operational(
+            "Doc", "CREATE FULLTEXT INDEX FOR (n:Doc) ON (n.t)",
+            "CALL db.idx.fulltext.queryNodes('Doc', 'hello') YIELD node RETURN count(node)")
+        check_refused_until_operational(
+            "LINK", "CREATE FULLTEXT INDEX FOR ()-[r:LINK]-() ON (r.t)",
+            "CALL db.idx.fulltext.queryRelationships('LINK', 'hello') YIELD relationship RETURN count(relationship)")
