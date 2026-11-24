@@ -256,8 +256,17 @@ ProcedureResult Proc_CDLPInvoke
 	//--------------------------------------------------------------------------
 
 	GrB_Matrix A = NULL;
-	Build_Matrix(&A, &pdata->nodes, g, lbls, arr_len(lbls), rels,
-			arr_len(rels), true, true);
+
+	PGTM_config conf = DEFAULT_PGTM_CONFIG;
+	conf.g         = g;
+	conf.lbls      = lbls;
+	conf.n_lbls    = arr_len(lbls);
+	conf.rels      = rels;
+	conf.n_rels    = arr_len(rels);
+	conf.direction = GRAPH_EDGE_DIR_BOTH;
+	conf.compact   = false;
+
+	project_graph_to_matrix(&A, &pdata->nodes, conf);
 
 	// free build matrix inputs
 	if(lbls != NULL) arr_free(lbls);
