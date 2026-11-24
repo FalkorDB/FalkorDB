@@ -11,13 +11,15 @@ crash of this script all report the night as ERROR, never green.
 * `$GITHUB_STEP_SUMMARY` (when set) gets the details as Markdown: each check's
   verdict and summary, the worst regression rows, the commits since the last green
   night, and a pre-filled issue link.
-* `$PERF_CHAT_WEBHOOK` (when set) gets one line with the status and the run link.
+* `$PERF_CHAT_WEBHOOK` (when set) gets one line with the status, a "details" link to
+  the run page and, on a red night, a "new issue" link pre-filled from nightly.json.
   A failed post is a warning; a post that may have arrived is never sent again.
 * stdout gets the same line.
 
-Exit code: 0 for a green or skipped night, 1 for a red or error night (and for a
-file it cannot read, or a crash), so the run itself shows the night.
-Standard library only.
+Exit code: 0 for any night it reported (green, skipped, red or error); merge.py
+alone decides the run's colour from the status. 1 only when it could not report:
+a file it cannot read, an unknown status, or its own crash (whose ERROR line is
+still posted first). Standard library only.
 """
 
 from __future__ import annotations
@@ -43,9 +45,10 @@ DEFAULT_API_URL = "https://api.github.com"
 USER_AGENT = "falkordb-perf-report"
 # Comma-separated, as GitHub's issues/new `labels` parameter takes them.
 ISSUE_LABELS = "performance,perf-regression"
+# GitHub refuses very long URLs (414); the body is cut to stay well under that.
+ISSUE_URL_CHARACTERS = 2000
 
 STATUSES = ("green", "red", "error", "skipped")
-RUN_SUCCEEDS = ("green", "skipped")
 TEXT_CHARACTERS = 300
 NAME_CHARACTERS = 80
 RUN_URL_CHARACTERS = 300  # a run link is about 70
@@ -186,8 +189,39 @@ def run_url_of(night: dict, environ: dict) -> str:
     return current_run_url(environ)
 
 
+def regressed_checks(night: dict) -> list[dict]:
+    return [check for check in checks_of(night) if check.get("verdict") == "regression"]
+
+
+def issue_url(night: dict, environ: dict) -> str:
+    """A pre-filled new issue for a red night, built only from nightly.json, in plain text.
+
+    The body is cut line by line (and then shortened) so the URL stays under
+    ISSUE_URL_CHARACTERS; the link itself is never dropped.
+    """
+    date = one_line(night.get("date"), "date unknown", 20)
+    names = ", ".join(name_of(check) for check in regressed_checks(night)) or "unknown check"
+    title = shorten(f"Perf regression {date}: {names}", 150)
+    url = run_url_of(night, environ)
+    body = [f"{label(night.get('candidate'))} vs {label(night.get('baseline'))}", f"Run: {url or 'unknown'}", ""]
+    body += [f"- {name_of(check)}: {one_line(check.get('summary'), 'no summary')}" for check in regressed_checks(night)]
+    base = f"{server_url(environ)}/{repository(environ)}/issues/new?"
+
+    def build(text: str) -> str:
+        query = {"title": title, "labels": ISSUE_LABELS, "body": text}
+        return base + urllib.parse.urlencode(query, safe=",", quote_via=urllib.parse.quote)
+
+    text = "\n".join(body)
+    while len(build(text)) > ISSUE_URL_CHARACTERS and len(body) > 3:
+        body = body[:-1]
+        text = "\n".join([*body, "(more on the run page)"])
+    while len(build(text)) > ISSUE_URL_CHARACTERS and len(text) > 1:
+        text = shorten(text, len(text) * 3 // 4)
+    return build(text)
+
+
 def chat_line(night: dict, status: str, reason: str, environ: dict) -> str:
-    """Perf nightly 2026-11-24: RED (micro-hw, pokec), main@4c10889 vs 6.2.0 <run>"""
+    """Perf nightly 2026-11-24: RED (micro-hw, pokec), main@4c10889 vs 6.2.0 · details · new issue"""
     date = one_line(night.get("date"), "date unknown", 20)
     checks = checks_of(night)
     if reason:
@@ -204,7 +238,10 @@ def chat_line(night: dict, status: str, reason: str, environ: dict) -> str:
     text = chat_plain(f"Perf nightly {date}: {status.upper()} ({shorten(detail, TEXT_CHARACTERS)})")
     text += chat_plain(f", {versus}") if versus else ""
     url = run_url_of(night, environ)
-    return text + (f" {chat_link(url, 'run')}" if url else "")
+    text += f" · {chat_link(url, 'details')}" if url else ""
+    if status == "red" and not reason:
+        text += f" · {chat_link(issue_url(night, environ), 'new issue')}"
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -316,17 +353,11 @@ def summary_markdown(night: dict, status: str, reason: str, environ: dict) -> st
             lines.append(f"| {markdown_plain(name_of(check))} | {markdown_plain(one_line(check.get('verdict'), '?'))} "
                          f"| {markdown_plain(one_line(text, ''))} |")
         lines.append("")
-    regressed = [check for check in checks if check.get("verdict") == "regression"]
-    for check in regressed:
+    for check in regressed_checks(night):
         lines += regression_lines(check)
     if status == "red":
         lines += commit_lines(night, environ)
-        names = ", ".join(name_of(check) for check in regressed) or "unknown check"
-        query = urllib.parse.urlencode({"title": shorten(f"perf: nightly {date} regression in {names}", 200),
-                                        "labels": ISSUE_LABELS, "body": f"Run: {url or 'unknown'}"},
-                                       safe=",", quote_via=urllib.parse.quote)
-        issue = f"{server_url(environ)}/{repository(environ)}/issues/new?{query}"
-        lines += [markdown_link(issue, "Open an issue for this regression"), ""]
+        lines += [markdown_link(issue_url(night, environ), "Open an issue for this regression"), ""]
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
@@ -417,10 +448,11 @@ def main(argv: list[str] | None = None, environ: dict | None = None) -> int:
         traceback.print_exc()
         reason = one_line(f"the reporter crashed: {type(exc).__name__}: {exc}", "the reporter crashed")
         status, url = "error", current_run_url(environ)
-        chat = chat_plain(f"Perf nightly: ERROR ({reason})") + (f" {chat_link(url, 'run')}" if url else "")
+        chat = chat_plain(f"Perf nightly: ERROR ({reason})") + (f" · {chat_link(url, 'details')}" if url else "")
         markdown = f"## Perf nightly: ERROR\n\n**Not green:** {markdown_plain(reason)}\n"
     deliver(chat, markdown, environ)
-    return 0 if status in RUN_SUCCEEDS else 1
+    # `reason` is set exactly when the night could not be reported as written.
+    return 1 if reason else 0
 
 
 if __name__ == "__main__":

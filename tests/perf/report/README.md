@@ -16,20 +16,26 @@ validator: a file it cannot read, a status that is not `green`, `red`, `error` o
 `skipped`, and a crash of `post.py` itself all report the night as ERROR, never
 green.
 
-* **Chat:** one line, posted to the incoming webhook in `$PERF_CHAT_WEBHOOK` when
-  that is set, and printed to stdout, for example
-  `Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 <run link>`.
+* **Chat:** one line every night, posted to the incoming webhook in
+  `$PERF_CHAT_WEBHOOK` when that is set, and printed to stdout, for example
+  `Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 · details · new issue`.
   The parentheses hold the regressed checks on a red night, the checks that could
   not measure on an error night, the reason on a skipped night, and the number of
-  checks on a green night. The details are on the run page, so Chat stays short.
+  checks on a green night. "details" links to the run page. A red night also gets
+  "new issue": a new GitHub issue pre-filled from nightly.json only (title
+  `Perf regression <date>: <checks>`, labels `performance` and `perf-regression`, a
+  plain-text body with candidate vs baseline, the run link and each regressed
+  check's summary), its body cut so the URL stays under 2,000 characters.
 * **Run page:** `$GITHUB_STEP_SUMMARY`, when set, gets the details as Markdown: a
   row per check with its verdict and summary (or error), the worst regression rows
   of each regressed check (the first five, in the check's order), and on a red
   night the commits since `previous_green_commit` with their PR numbers (from
   `git log` in this checkout; each PR number is the last `(#N)` of the commit
-  title) and a pre-filled issue link labelled `performance` and `perf-regression`.
-* **Exit code:** 0 for a green or skipped night, 1 for a red or error night, so the
-  run itself shows the night.
+  title) and the same pre-filled issue link.
+* **Exit code:** 0 whenever it reported the night, whatever its status: `merge.py`
+  owns the status and alone decides the run's colour. 1 only when it could not
+  report: a file it cannot read, an unknown status, or its own crash (whose ERROR
+  line is still posted first).
 
 Text from the file or from commit titles cannot become a Chat link or mention (`<`
 is replaced), Markdown is escaped, and a `run_url` that is not a plain `https://`

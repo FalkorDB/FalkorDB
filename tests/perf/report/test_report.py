@@ -5,7 +5,8 @@ Standard library only: `python -m pytest tests/perf/report` or
 
 post.py trusts the status merge.py wrote after validating nightly.json, so these
 tests check what post.py itself decides: the guards that need no validator, the one
-Chat line, the run page (step summary), delivery, and the exit code. Each test
+Chat line and its links, the run page (step summary), delivery, and the exit code
+(0 whenever the night was reported; merge.py decides the run's colour). Each test
 fails when the rule it names is broken. PERF_JUDGE_DIR points the fixture tests at
 another checkout's tests/perf.
 """
@@ -127,25 +128,38 @@ class Workspace(unittest.TestCase):
 
 
 class ChatLineAndExitCode(Workspace):
-    def test_green_is_one_line_and_exits_0(self):
+    """One line per night, every night; exit 0 whenever the night was reported."""
+
+    def test_green_is_one_line_with_a_details_link(self):
         code, line, _ = self.summary(GREEN)
         self.assertEqual((code, line), (0, (f"Perf nightly 2026-11-24: GREEN (2 checks), main@4c10889 vs 6.2.0 "
-                                           f"<{RUN_URL}|run>")))
+                                           f"· <{RUN_URL}|details>")))
 
-    def test_skipped_says_why_and_exits_0(self):
+    def test_skipped_says_why(self):
         code, line, _ = self.summary(SKIPPED)
         self.assertEqual((code, line), (0, ("Perf nightly 2026-11-24: SKIPPED (main has not moved since 4c10889), "
-                                           f"main@4c10889 vs 6.2.0 <{RUN_URL}|run>")))
+                                           f"main@4c10889 vs 6.2.0 · <{RUN_URL}|details>")))
 
-    def test_red_names_the_regressed_checks_and_exits_1(self):
+    def test_red_names_the_regressed_checks_and_adds_a_new_issue_link(self):
         code, line, _ = self.summary(RED)
-        self.assertEqual((code, line), (1, (f"Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 "
-                                           f"<{RUN_URL}|run>")))
+        self.assertEqual(code, 0)
+        self.assertTrue(line.startswith(f"Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 "
+                                        f"· <{RUN_URL}|details> · <https://github.com/FalkorDB/FalkorDB/issues/new?"),
+                        line)
+        self.assertTrue(line.endswith("|new issue>"), line)
 
-    def test_error_names_the_checks_that_could_not_measure_and_exits_1(self):
+    def test_error_names_the_checks_that_could_not_measure(self):
         code, line, _ = self.summary(ERROR)
-        self.assertEqual((code, line), (1, ("Perf nightly 2026-11-24: ERROR (pokec, soak-a), main@4c10889 vs 6.2.0 "
-                                           f"<{RUN_URL}|run>")))
+        self.assertEqual((code, line), (0, ("Perf nightly 2026-11-24: ERROR (pokec, soak-a), main@4c10889 vs 6.2.0 "
+                                           f"· <{RUN_URL}|details>")))
+
+    def test_only_a_red_night_gets_a_new_issue_link(self):
+        for night in (GREEN, SKIPPED, ERROR):
+            with self.subTest(status=night["status"]):
+                _, line, _ = self.summary(night)
+                self.assertNotIn("new issue", line)
+                self.assertNotIn("/issues/new", line)
+                self.assertTrue(line.endswith(f"· <{RUN_URL}|details>"), line)
 
     def test_the_status_is_trusted_as_merge_py_wrote_it(self):
         # merge.py validated nightly.json and set the status; the reporter does not re-derive it.
@@ -154,7 +168,39 @@ class ChatLineAndExitCode(Workspace):
         self.assertTrue(line.startswith("Perf nightly 2026-11-24: GREEN (2 checks)"), line)
 
 
+class NewIssueLink(Workspace):
+    def issue(self, night: dict) -> dict:
+        _, line, _ = self.summary(night)
+        url = line.split(" · <")[-1].removesuffix("|new issue>")
+        self.assertLessEqual(len(url), post.ISSUE_URL_CHARACTERS)
+        return {key: values[0] for key, values in urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).items()}
+
+    def test_it_is_prefilled_from_nightly_json_only(self):
+        night = nightly("red", [result("micro-hw", "regression", [UNWIND], summary="2 rows slower, worst 33x"),
+                                result("size-probe", "regression", [UNWIND], summary="UNWIND 1.6x at 500k"),
+                                STUB, result("soak-a", "pass", summary="steady")])
+        issue = self.issue(night)
+        self.assertEqual(issue["title"], "Perf regression 2026-11-24: micro-hw, size-probe")
+        self.assertEqual(issue["labels"], "performance,perf-regression")
+        self.assertEqual(issue["body"], (f"main@4c10889 vs 6.2.0\nRun: {RUN_URL}\n\n"
+                                         "- micro-hw: 2 rows slower, worst 33x\n- size-probe: UNWIND 1.6x at 500k"))
+
+    def test_a_long_body_is_cut_and_the_link_kept(self):
+        checks = [result(f"check-{index}", "regression", [UNWIND], summary="s" * 290) for index in range(30)]
+        issue = self.issue(nightly("red", checks))
+        self.assertTrue(issue["body"].startswith(f"main@4c10889 vs 6.2.0\nRun: {RUN_URL}\n\n- check-0: sss"))
+        self.assertTrue(issue["body"].endswith("(more on the run page)"), issue["body"][-80:])
+        self.assertLessEqual(len(issue["title"]), 150)
+
+    def test_the_run_page_offers_the_same_issue(self):
+        _, line, summary = self.summary(RED)
+        url = line.split(" · <")[-1].removesuffix("|new issue>")
+        self.assertIn(f"[Open an issue for this regression]({url})", summary)
+
+
 class GuardsThatNeedNoValidator(Workspace):
+    """The only cases where post.py exits 1: it could not report the night as written."""
+
     def test_a_file_that_cannot_be_read_is_an_error(self):
         cases = {"": "could not read nightly.json", "{": "could not read nightly.json",
                  "[]": "nightly.json is not a JSON object", "null": "nightly.json is not a JSON object",
@@ -168,7 +214,7 @@ class GuardsThatNeedNoValidator(Workspace):
         code, stdout, _ = self.run_post(self.directory / "absent.json", {"GITHUB_RUN_ID": "77"})
         self.assertEqual(code, 1)
         self.assertIn("ERROR (could not read absent.json", stdout)
-        self.assertIn("<https://github.com/FalkorDB/FalkorDB/actions/runs/77|run>", stdout)
+        self.assertIn("· <https://github.com/FalkorDB/FalkorDB/actions/runs/77|details>", stdout)
 
     def test_an_unknown_status_is_an_error(self):
         for status in ("GREEN", "bogus", None, 1):
@@ -182,7 +228,7 @@ class GuardsThatNeedNoValidator(Workspace):
             code, stdout, stderr = self.run_post(GREEN, {"GITHUB_RUN_ID": "77"})
         self.assertEqual(code, 1)
         self.assertEqual(stdout, "Perf nightly: ERROR (the reporter crashed: RuntimeError: boom ‹users/all>) "
-                                 "<https://github.com/FalkorDB/FalkorDB/actions/runs/77|run>\n")
+                                 "· <https://github.com/FalkorDB/FalkorDB/actions/runs/77|details>\n")
         self.assertIn("Traceback", stderr)
 
 
@@ -212,15 +258,11 @@ class RunPage(Workspace):
         self.assertNotIn("steady", summary)
         self.assertNotIn("None", summary)
 
-    def test_a_red_night_ends_with_a_one_line_issue_link_with_both_labels(self):
+    def test_only_a_red_night_ends_with_an_issue_link(self):
         _, _, summary = self.summary(RED)
         last = summary.rstrip("\n").splitlines()[-1]
         self.assertTrue(last.startswith("[Open an issue for this regression](https://github.com/FalkorDB/FalkorDB/"
                                         "issues/new?"), last)
-        query = urllib.parse.parse_qs(urllib.parse.urlsplit(last[last.index("(") + 1:-1]).query)
-        self.assertEqual(query["labels"], ["performance,perf-regression"])
-        self.assertEqual(query["title"], ["perf: nightly 2026-11-24 regression in micro-hw"])
-        self.assertEqual(query["body"], [f"Run: {RUN_URL}"])
         self.assertNotIn("Open an issue", self.summary(ERROR)[2])
 
     def test_a_skipped_night_shows_why(self):
@@ -246,8 +288,8 @@ class TextSafety(Workspace):
     def test_an_unsafe_or_oversized_run_url_is_replaced_by_the_current_run(self):
         for bad in ("https://github.com/FalkorDB/FalkorDB/actions/runs/1|x><users/all>",
                     "https://github.com/FalkorDB/FalkorDB/actions/runs/1?" + "a" * 400, "http://plain.example/run"):
-            for environ, link in (({"GITHUB_RUN_ID": "5"}, "<https://github.com/FalkorDB/FalkorDB/actions/runs/5|run>"),
-                                  ({}, "")):
+            for environ, link in (({"GITHUB_RUN_ID": "5"},
+                                   "· <https://github.com/FalkorDB/FalkorDB/actions/runs/5|details>"), ({}, "")):
                 with self.subTest(url=bad[:60], environ=environ):
                     night = dict(GREEN, run_url=bad)
                     _, line, _ = self.summary(night, environ)
@@ -405,10 +447,11 @@ class Delivery(Workspace):
         for secret in ("SECRETKEY123", "SECRETTOKEN456", "/hook"):
             self.assertNotIn(secret, stdout + stderr)
 
-    def test_a_failed_post_does_not_change_the_exit_code_of_a_red_night(self):
+    def test_a_failed_post_does_not_change_the_exit_code(self):
         with StubServer({"/hook": (400, {})}) as server:
-            code, _, _ = self.run_post(RED, {"PERF_CHAT_WEBHOOK": f"{server.url}/hook"})
-        self.assertEqual(code, 1)
+            reported, _, _ = self.run_post(RED, {"PERF_CHAT_WEBHOOK": f"{server.url}/hook"})
+            unreadable, _, _ = self.run_post("{", {"PERF_CHAT_WEBHOOK": f"{server.url}/hook"})
+        self.assertEqual((reported, unreadable), (0, 1))
 
     def test_a_client_error_is_not_retried(self):
         with StubServer({"/hook": (400, {"error": "bad"})}) as server:
@@ -502,9 +545,10 @@ class JudgeFixtures(Workspace):
             with self.subTest(fixture=path.name):
                 data = json.loads(path.read_text())
                 code, line, summary = self.summary(path)
-                self.assertEqual(code, 0 if data["status"] in ("green", "skipped") else 1)
+                self.assertEqual(code, 0)
                 self.assertTrue(line.startswith(f"Perf nightly {data['date']}: {data['status'].upper()} ("), line)
-                self.assertIn(f"<{data['run_url']}|run>", line)
+                self.assertIn(f"· <{data['run_url']}|details>", line)
+                self.assertEqual("|new issue>" in line, data["status"] == "red")
                 verdict = {"red": "regression", "error": "error"}.get(data["status"])
                 for check in data["checks"]:
                     if check["verdict"] == verdict:
@@ -732,12 +776,12 @@ class CommandLine(unittest.TestCase):
                 [sys.executable, "-I", str(HERE / "post.py"), "--nightly", str(path)],
                 capture_output=True, text=True, check=False, cwd=directory, env={"PATH": os.environ.get("PATH", "")})
 
-    def test_post_runs_isolated_and_its_exit_code_is_the_night(self):
-        green, red = self.run_isolated(GREEN), self.run_isolated(RED)
-        self.assertEqual(green.returncode, 0, green.stderr)
+    def test_post_runs_isolated_and_exits_1_only_when_it_could_not_report(self):
+        green, red, unknown = self.run_isolated(GREEN), self.run_isolated(RED), self.run_isolated(nightly("x", []))
+        self.assertEqual((green.returncode, red.returncode, unknown.returncode), (0, 0, 1), green.stderr + red.stderr)
         self.assertTrue(green.stdout.startswith("Perf nightly 2026-11-24: GREEN"), green.stdout)
-        self.assertEqual(red.returncode, 1, red.stderr)
         self.assertTrue(red.stdout.startswith("Perf nightly 2026-11-24: RED (micro-hw)"), red.stdout)
+        self.assertTrue(unknown.stdout.startswith("Perf nightly 2026-11-24: ERROR (unknown status 'x'"), unknown.stdout)
 
     def test_missed_run_imports_post_when_isolated(self):
         completed = subprocess.run(
