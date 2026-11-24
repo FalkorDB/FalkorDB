@@ -689,3 +689,23 @@ def test_end_to_end_unreadable_machine_file_still_measures(tmp_path, fake_docker
     res = run_fake(tmp_path)
     assert res["verdict"] == "regression", res["summary"]  # outranks the machine error
     assert "PERF_MACHINE_JSON unreadable" in res["summary"]
+
+
+def test_end_to_end_relative_out_lands_under_the_working_directory(
+    tmp_path, fake_docker, monkeypatch
+):
+    """_perf-vm.yml passes `--out out` (contract v1.8)."""
+    work = tmp_path / "checkout"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    res = probe.run(
+        candidate=IMAGE_A,
+        baseline=IMAGE_B,
+        out=Path("out"),
+        mode="nightly",
+        sizes=[1000, 2000],
+        reps=5,
+        echo=lambda _: None,
+    )
+    assert json.loads((work / "out" / "result.json").read_text()) == res
+    assert res["artifacts"] and all((work / "out" / a).is_file() for a in res["artifacts"])

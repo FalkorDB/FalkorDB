@@ -1138,6 +1138,9 @@ def run(
     of being unable to write it. Returns the result."""
     started = now_utc()
     clock0 = time.monotonic()
+    # _perf-vm.yml passes `--out out`, relative to the checkout (contract v1.8):
+    # pin it now, so nothing that runs later can resolve it elsewhere.
+    out = Path(out).absolute()
     raw = out / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     images = {"candidate": candidate, "baseline": baseline}
