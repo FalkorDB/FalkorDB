@@ -430,8 +430,11 @@ def timed_pool_class(base, waits: dict):
             self._opening = getattr(self, "_opening", {})
             self._opening[task] = 0.0
             t0 = now()
-            conn = await super().get_connection(*a, **kw)
-            waits[task] = max(0.0, now() - t0 - self._opening.pop(task, 0.0))
+            try:
+                conn = await super().get_connection(*a, **kw)
+            finally:
+                opened = self._opening.pop(task, 0.0)
+            waits[task] = max(0.0, now() - t0 - opened)
             return conn
 
         async def ensure_connection(self, connection):
@@ -1051,7 +1054,8 @@ def run_server_hour(opts: dict, info: dict, tag: str, hp: dict, epochs: list[dic
         log(f"{tag}: built {out['build']}, cal={cal}")
         ledger = checks.Ledger(sizes)
         for ep in epochs:
-            after_load = 300 if ep.get("indexes") else 0  # an index still building gets this long after the load
+            # an index or a constraint still building gets up to 300 s each after the load
+            after_load = 300 * (bool(ep.get("indexes")) + bool(ep.get("constraints")))
             if deadline and time.time() + opts["epoch_s"] + opts["drain_s"] + 120 + after_load > deadline:
                 log("deadline: no time for another epoch")
                 break

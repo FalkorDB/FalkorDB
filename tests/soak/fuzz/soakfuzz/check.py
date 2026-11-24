@@ -284,7 +284,7 @@ def _pair_estimate(opts, seed, h) -> float:
     """Seconds a server-hour pair should take: its epochs, drains, checks, index waits and builds."""
     hp = model.hour_params(seed, h, opts["long_scale_range"])
     eps = [model.epoch_params(seed, h, e, hp["graphs"]) for e in range(1, LONG_EPOCHS_PER_HOUR + 1)]
-    one = sum(opts["epoch_s"] + opts["drain_s"] + 90 + (300 if ep["indexes"] else 0) for ep in eps)
+    one = sum(opts["epoch_s"] + opts["drain_s"] + 90 + 300 * (ep["indexes"] + ep["constraints"]) for ep in eps)
     return 2 * (one + 120 + 120 * sum(hp["scales"]))
 
 
@@ -338,7 +338,8 @@ def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
         h_, e_ = (int(x[1:]) for x in s_.split("-")[-2:])
         hp = model.hour_params(seed, h_, opts["long_scale_range"])
         ep = model.epoch_params(seed, h_, e_, hp["graphs"])
-        one = opts["epoch_s"] + opts["drain_s"] + 90 + (300 if ep["indexes"] else 0) + 120 + 120 * sum(hp["scales"])
+        one = (opts["epoch_s"] + opts["drain_s"] + 90 + 300 * (ep["indexes"] + ep["constraints"])
+               + 120 + 120 * sum(hp["scales"]))
         if not time_for(opts, 2 * one * slow, f"replay of {s_}", run):  # as slow as the hours ran
             continue
         replayed.add(s_)

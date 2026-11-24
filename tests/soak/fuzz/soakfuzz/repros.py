@@ -212,15 +212,18 @@ def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
         r.execute_command("GRAPH.RO_QUERY", "q", read_q(k))
         d = time.perf_counter() - t
         k = max(1, min(20000, int(k * 0.3 / max(d, 1e-3))))
-    stop, writes, errs = threading.Event(), [], []
+    stop, writes, errs, lost = threading.Event(), [], [], []
 
     def reader():
         c = _conn(port)
         while not stop.is_set():
             try:
                 c.execute_command("GRAPH.RO_QUERY", "q", read_q(k))
-            except Exception as e:
+            except ResponseError as e:
                 errs.append(f"read: {e}")
+            except Exception as e:  # no reply at all: this client is done, and the run is incomplete
+                lost.append(f"read: {_outcome(e)}")
+                return
 
     def writer(w):
         c = _conn(port)
@@ -229,8 +232,11 @@ def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
             try:
                 c.execute_command("GRAPH.QUERY", "q", f"CREATE (:W {{w: {w}, i: {i}}})")
                 writes.append((w, i, time.perf_counter() - a))
-            except Exception as e:
+            except ResponseError as e:
                 errs.append(f"write: {e}")
+            except Exception as e:
+                lost.append(f"write: {_outcome(e)}")
+                return
 
     rs = [threading.Thread(target=reader, daemon=True) for _ in range(readers)]
     for t in rs:
@@ -249,8 +255,16 @@ def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
         t.join(timeout=60)
     n_w = r.execute_command("GRAPH.RO_QUERY", "q", "MATCH (n:W) RETURN count(n)")[1][0][0]
     n_d = r.execute_command("GRAPH.RO_QUERY", "q", "MATCH (n:W) RETURN count(DISTINCT [n.w, n.i])")[1][0][0]
+    return judge_writers(writes, errs, lost, starved, took, n_w, n_d, writers * per)
+
+
+def judge_writers(writes, errs, lost, starved, took, n_w, n_d, expected) -> dict:
+    """writer-starvation's verdict: every write acknowledged within the limit, exactly once, no
+    error reply. A client that lost its connection makes the run incomplete (crash or unmeasured)."""
+    if lost:
+        raise Incomplete(f"{len(lost)} clients lost their connection: {lost[0]}")
     lat = sorted(x[2] for x in writes)
-    ok = not starved and not errs and n_w == n_d == len(writes) == writers * per
+    ok = not starved and not errs and n_w == n_d == len(writes) == expected
     return {"pass": ok, "detail": {"acked": len(writes), "took_s": round(took, 1), "starved": starved,
                                    "write_max_ms": round(lat[-1] * 1000, 1) if lat else None,
                                    "count_w": n_w, "distinct_w": n_d, "errors": errs[:3]}}

@@ -292,6 +292,8 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     # behind (writes are judged by writers_dont_starve, which accounts for their queue)
     tc = hp["thread_count"]
     all_req = [(r_[0], r_[1], r_[3], r_[4], r_[5]) for r_ in reads if _pool_wait(r_, 6) <= DRIVER_LAG_S]
+    drainable = sum(1 for r_ in reads if r_[5] in (0, 1))
+    judged = sum(1 for x in all_req if x[4] in (0, 1))
     sends = sorted((x[2], cal[x[0]].get(x[1], 1.0) / 1000) for x in all_req)
     st = [x[0] for x in sends]
     cum = [0.0]
@@ -307,7 +309,8 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
         excess = reply - bound
         if excess > DRAIN_S + backlog:
             jam.append(round(excess, 2))
-    checks["requests_drain"] = {"pass": not jam and data["unfinished"] == 0, "late_requests": len(jam),
+    drained = False if data["unfinished"] else (None if drainable and not judged else not jam)
+    checks["requests_drain"] = {"pass": drained, "late_requests": len(jam),
                                 "pool_limited_reads": len(pool_limited_reads),
                                 "worst_excess_s": max(jam, default=0), "unfinished_at_end": data["unfinished"],
                                 "pending_at_stop": data["pending_at_stop"], "drain_s": round(data["drain_s"], 1)}

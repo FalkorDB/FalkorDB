@@ -632,7 +632,8 @@ def test_driver_limited_requests_are_not_judged_on_timing():
     assert checks_["quiet_graphs_stay_fast"]["pass"] and checks_["quiet_graphs_stay_fast"]["reads"] == 1
     assert checks_["requests_drain"]["pool_limited_reads"] == 1
     # every sample driver-limited: nothing was judged, so the check did not measure
-    assert _analyse(_epoch_data(reads=[stalled_in_pool]), quiet=True)["quiet_graphs_stay_fast"]["pass"] is None
+    only_stalled = _analyse(_epoch_data(reads=[stalled_in_pool]), quiet=True)
+    assert only_stalled["quiet_graphs_stay_fast"]["pass"] is None and only_stalled["requests_drain"]["pass"] is None
     slow_write = [0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9]
     fine_write = [0, "upsert", 11.0, 11.0, 18.5, 0, "", [], 0.0]
     longs = [[0, "full-scan", 10.0, 18.0, 0, ""]]
@@ -761,6 +762,19 @@ def test_the_pool_wait_is_the_wait_for_a_slot_only(monkeypatch):
     asyncio.run(main())
     (wait,) = waits.values()
     assert 0.08 < wait < 0.18
+
+    class Refused(Base):  # opening the connection fails: no wait recorded, nothing left behind
+        async def ensure_connection(self, connection):
+            raise ConnectionError("refused")
+
+    pool = harness.timed_pool_class(Refused, waits)()
+
+    async def refused():
+        with pytest.raises(ConnectionError):
+            await pool.get_connection("PING")
+
+    asyncio.run(refused())
+    assert pool._opening == {}
 
 
 def test_constraints_cut_short_by_the_epoch_end_are_judged_on_what_was_created(monkeypatch):
@@ -911,3 +925,14 @@ def test_reads_behind_writer_needs_every_reply(monkeypatch):
         with pytest.raises(repros.Incomplete):
             repros.judge_reads(*bad, 2)
     assert repros.judge_reads(reads, [(1.0, 0.5, "reply: ResponseError: no")], lr, 2)["pass"] is False
+
+
+def test_writer_starvation_needs_every_client_to_get_replies(monkeypatch):
+    _stub_redis(monkeypatch)
+    from soakfuzz import repros
+    writes = [(w, i, 0.1) for w in range(2) for i in range(3)]
+    assert repros.judge_writers(writes, [], [], False, 5.0, 6, 6, 6)["pass"] is True
+    assert repros.judge_writers(writes, ["write: ERR"], [], False, 5.0, 6, 6, 6)["pass"] is False
+    assert repros.judge_writers(writes[:5], [], [], True, 120.0, 5, 5, 6)["pass"] is False  # starved
+    with pytest.raises(repros.Incomplete):
+        repros.judge_writers(writes[:5], [], ["write: lost: ConnectionError"], False, 5.0, 5, 5, 6)
