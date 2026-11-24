@@ -288,7 +288,10 @@ class Side:
                 self.down = f"no answer to PING for {PING_GRACE_S:.0f}s after a client-side timeout"
             return sample
         except (RedisConnectionError, OSError) as e:
-            state = self.container.state() if self.container else "unknown"
+            try:
+                state = self.container.state() if self.container else "unknown"
+            except containers.DockerError as inspect_error:
+                state = f"unknown ({inspect_error})"
             self.down = f"connection lost ({e}); container {state}"
             sample.outcome = DOWN
             sample.error = self.down
@@ -310,23 +313,29 @@ class Side:
         """
         assert self.container is not None
         deadline = time.monotonic() + PING_GRACE_S
-        while True:
-            if self.container.state().startswith(("exited", "dead")):
-                return False
+        while (left := deadline - time.monotonic()) > 0:
+            try:
+                if self.container.state().startswith(("exited", "dead")):
+                    return False
+            except containers.DockerError:
+                pass  # inspect failed: says nothing either way, keep probing
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
             try:
                 probe = Redis(
                     host="127.0.0.1",
                     port=self.container.port,
-                    socket_timeout=5,
+                    socket_timeout=min(5.0, left),
+                    socket_connect_timeout=min(5.0, left),
                     retry=Retry(NoBackoff(), 0),
                 )
-                if probe.ping():
+                if probe.ping() and time.monotonic() <= deadline:
                     return True
             except RedisError:
                 pass  # not answering yet: try again until the grace runs out
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(2.0)
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+        return False
 
 
 def _error_sample(sample: Sample, message: str) -> Sample:
@@ -381,8 +390,9 @@ class SideStats:
     errors: int = 0
     down: int = 0
     first_failure: str = ""
-    ok_params: set[int] = field(default_factory=set)
-    failed_params: set[int] = field(default_factory=set)
+    #: Requests (phase, round, parameter row) that finished, and that failed.
+    ok_keys: set[Key] = field(default_factory=set)
+    failed_keys: set[Key] = field(default_factory=set)
     #: Per request that finished, keyed by (phase, round, parameter row), so
     #: the two sides are compared request against request: a warm-up's row
     #: count never stands in for a later round's, and a latency only counts
@@ -410,20 +420,20 @@ class SideStats:
 
 
 def completion(query: str, cand: SideStats, base: SideStats) -> dict[str, Any] | None:
-    """The `completed` finding, decided per parameter row.
+    """The `completed` finding, decided request by request.
 
-    The candidate regressed when it failed on a row the baseline always
-    finished. Failures on both sides (on the same rows, or each on rows the
-    other also failed) are `info`; the baseline failing where the candidate
+    The candidate regressed when it failed a request (a parameter row in a
+    given round) that the baseline finished. Failures on both sides with no
+    such request are `info`; the baseline failing a request the candidate
     finished is an improvement.
     """
 
-    def only(a: SideStats, b: SideStats) -> list[int]:
-        return sorted(p for p in a.failed_params if p in b.ok_params and p not in b.failed_params)
+    def only(a: SideStats, b: SideStats) -> list[Key]:
+        return sorted(a.failed_keys & b.ok_keys)
 
     if only(cand, base):
         status, c, b = "regression", 0, 1
-    elif cand.failed_params and base.failed_params:
+    elif cand.failed_keys and base.failed_keys:
         status, c, b = "info", 0, 0
     elif only(base, cand):
         status, c, b = "improvement", 1, 0
@@ -442,15 +452,15 @@ def side_stats(samples: list[Sample]) -> SideStats:
         stats.attempted += 1
         if s.outcome == OK:
             stats.ok += 1
-            stats.ok_params.add(s.param)
             key = (s.phase, s.round, s.param)
+            stats.ok_keys.add(key)
             stats.rows[key] = s.rows or 0
             if s.digest is not None:
                 stats.digests[key] = s.digest
             if s.latency_ms is not None and s.phase != "warmup":
                 stats.latencies[key] = s.latency_ms
             continue
-        stats.failed_params.add(s.param)
+        stats.failed_keys.add((s.phase, s.round, s.param))
         if s.outcome == TIMEOUT:
             stats.timeouts += 1
         elif s.outcome == DOWN:
@@ -590,7 +600,10 @@ def compare_rows(query: str, cand: SideStats, base: SideStats, *, same_engine: b
             _finding(name, "rows", c_total, b_total, direction="mismatch", status="regression")
         )
         return out
-    if common and all(base.rows[k] == 0 for k in common):
+    # Whether the query returned anything is decided on the measured requests:
+    # a warm-up that returned rows does not make empty rounds worth timing.
+    measured = [k for k in common if k[0] != "warmup"] or common
+    if measured and all(base.rows[k] == 0 for k in measured):
         out.empty = True
         out.findings.append(
             _finding(
@@ -691,20 +704,32 @@ def _latency_finding(query: str, cmp: LatencyCompare, status: str) -> dict[str, 
     )
 
 
+@dataclass
+class Confirmation:
+    findings: list[dict[str, Any]] = field(default_factory=list)
+    #: Why the re-run settles nothing, when it does not; the result is then
+    #: an `error` unless something else regressed.
+    inconclusive: str = ""
+
+
 def confirm(
     query: str,
     crossed: list[str],
     rerun: list[Sample],
-) -> list[dict[str, Any]]:
+    timed_rows: set[int] | None = None,
+) -> Confirmation:
     """The re-run's verdict on the metrics the main rounds crossed.
 
     A metric that crosses again is a regression (`confirmed`). One that does
     not is reported as `ok` with the re-run's numbers: the first crossing was
-    noise, or too small to repeat.
+    noise, or too small to repeat. That claim needs the re-run to have timed
+    every parameter row the main rounds timed (`timed_rows`), on both sides,
+    and to have returned rows; otherwise the re-run is inconclusive.
     """
     base = side_stats([s for s in rerun if s.side == BASELINE])
     cand = side_stats([s for s in rerun if s.side == CANDIDATE])
-    out = []
+    result = Confirmation()
+    out = result.findings
     done = completion(query, cand, base)
     if done is not None and done["status"] == "regression":
         out.append(done)
@@ -712,15 +737,27 @@ def confirm(
     # a candidate that returns nothing is fast for the wrong reason.
     rows = compare_rows(query, cand, base, same_engine=False)
     if rows.differ:
-        return out + [f for f in rows.findings if f["status"] == "regression"]
+        out += [f for f in rows.findings if f["status"] == "regression"]
+        return result
+    if out:
+        return result  # the candidate stopped finishing: that is the finding
+    if rows.empty:
+        result.inconclusive = "the re-run returned no rows on either side"
+        return result
+    retimed = {k[2] for k in set(cand.latencies) & set(base.latencies)}
+    missing = sorted((timed_rows or retimed) - retimed)
+    if missing:
+        result.inconclusive = f"the re-run did not time parameter row(s) {missing} on both sides"
+        return result
     by_metric = {c.metric: c for c in compare_latency(cand, base)}
     for metric in crossed:
         cmp = by_metric.get(metric)
         if cmp is None:
+            result.inconclusive = f"the re-run did not measure {metric}"
             continue
         status = "regression" if cmp.crossing() == "regression" else "ok"
         out.append(_latency_finding(query, cmp, status))
-    return out
+    return result
 
 
 # --- findings and verdict ----------------------------------------------------
@@ -1254,10 +1291,15 @@ class Check:
                 continue
             self.compared_queries += 1 if v.compared else 0
             if v.crossed:
-                confirmed = confirm(q.name, v.crossed, reruns.get(q.name, []))
-                if not confirmed:
+                base = side_stats([s for s in main[q.name] if s.side == BASELINE])
+                cand = side_stats([s for s in main[q.name] if s.side == CANDIDATE])
+                timed = {k[2] for k in set(cand.latencies) & set(base.latencies)}
+                confirmed = confirm(q.name, v.crossed, reruns.get(q.name, []), timed)
+                if confirmed.inconclusive:
+                    self.problem(f"{q.name}: re-run inconclusive: {confirmed.inconclusive}")
+                elif not confirmed.findings:
                     self.problem(f"{q.name}: the re-run did not finish on both sides")
-                self.findings += confirmed
+                self.findings += confirmed.findings
             self.record_summary(q.name, main[q.name], reruns.get(q.name))
 
         if self.deadline_skips:
@@ -1316,16 +1358,18 @@ class Check:
         started = time.monotonic()
         for i, params in enumerate(rows):
             reason = ""
-            if self.past_deadline():
+            # The timeout rules come first: a row they exclude would not run
+            # with any budget, so it is not a row the budget cut.
+            if i in self.timed_out.get(q.name, set()):
+                reason = "a side timed out on this parameter row before"
+            elif any(self.sides[s].timeouts.get(q.name, 0) >= MAX_TIMEOUTS for s in SIDES):
+                reason = f"a side timed out {MAX_TIMEOUTS} times on this query"
+            elif self.past_deadline():
                 reason = "past the check's deadline"
                 self.deadline_skips += 1
             elif time.monotonic() - started > mode.query_budget_s:
                 reason = f"over the {mode.query_budget_s:.0f}s per-round budget"
                 self.budget_skips += 1
-            elif i in self.timed_out.get(q.name, set()):
-                reason = "a side timed out on this parameter row before"
-            elif any(self.sides[s].timeouts.get(q.name, 0) >= MAX_TIMEOUTS for s in SIDES):
-                reason = f"a side timed out {MAX_TIMEOUTS} times on this query"
             for side in order:
                 if reason:
                     skipped = Sample(phase, rnd, q.name, i, side, SKIPPED, error=reason)
@@ -1355,9 +1399,10 @@ class Check:
         return sample
 
     def record_summary(self, query: str, main: list[Sample], rerun: list[Sample] | None) -> None:
-        for phase, samples in (("main", main), ("rerun", rerun or [])):
+        everything = main + (rerun or [])
+        for phase in ("warmup", "main", "rerun"):
             for side in SIDES:
-                st = side_stats([s for s in samples if s.side == side])
+                st = side_stats([s for s in everything if s.side == side and s.phase == phase])
                 if st.attempted == 0:
                     continue
                 lat = list(st.latencies.values())

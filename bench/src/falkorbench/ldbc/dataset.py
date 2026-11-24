@@ -68,6 +68,14 @@ def fetch(cache: Path, sf: str, *, echo: Echo = print) -> Path:
         raise DatasetError(f"unknown scale factor {sf!r}; known: {', '.join(schema.SCALE_FACTORS)}")
 
     cache.mkdir(parents=True, exist_ok=True)
+    # The cache itself is the server's IMPORT_FOLDER (bind-mounted at
+    # /import), so the server's user must be able to search it even under a
+    # umask of 077. Only group/other read and search are added, also on a
+    # cache the caller supplied; nothing else about it changes.
+    try:
+        cache.chmod(cache.stat().st_mode | 0o055)
+    except OSError as e:
+        raise DatasetError(f"could not make the cache {cache} readable: {e}") from e
     # One fetch per cache and scale factor at a time: two runs sharing a cache
     # would otherwise share the `.part` download and the scratch tree.
     with _locked(cache / f".fetch-sf{sf}.lock"):
@@ -248,6 +256,14 @@ def prepare(root: Path, *, echo: Echo = print) -> None:
     Idempotent: a marker file records completion, and a prepared tree is left
     untouched on a second call.
     """
+    # One preparer per dataset at a time: both rewrites go through fixed
+    # `.tmp` names, and the marker is written only at the end, so two runs
+    # sharing a cache must not overlap here.
+    with _locked(root.parent / f".prepare-{root.name}.lock"):
+        _prepare_locked(root, echo=echo)
+
+
+def _prepare_locked(root: Path, *, echo: Echo) -> None:
     marker = root / _MARKER
     if marker.exists() and marker.read_text().strip() == _MARKER_VERSION:
         echo("dataset already prepared")

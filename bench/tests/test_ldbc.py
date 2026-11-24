@@ -12,6 +12,7 @@ accepted by the engine and the originals are not — are covered by
 row.
 """
 
+import contextlib
 import csv
 import importlib.util
 import io
@@ -751,7 +752,7 @@ def test_a_latency_crossing_waits_for_the_re_run():
         repeated += pair(
             p, base={"ms": 10.0, "phase": "rerun"}, cand={"ms": 35.0, "phase": "rerun"}
         )
-    confirmed = ck.confirm("IC3", v.crossed, repeated)
+    confirmed = ck.confirm("IC3", v.crossed, repeated).findings
     assert [(f["name"], f["status"], f["ratio"]) for f in confirmed] == [
         ("IC3 p50", "regression", 3.5),
         ("IC3 p95", "regression", 3.5),
@@ -760,12 +761,12 @@ def test_a_latency_crossing_waits_for_the_re_run():
     noise = []
     for p in range(5):
         noise += pair(p, base={"ms": 10.0, "phase": "rerun"}, cand={"ms": 11.0, "phase": "rerun"})
-    assert {f["status"] for f in ck.confirm("IC3", v.crossed, noise)} == {"ok"}
+    assert {f["status"] for f in ck.confirm("IC3", v.crossed, noise).findings} == {"ok"}
 
 
 def test_a_candidate_that_stops_finishing_in_the_re_run_is_a_regression():
     rerun = [S(ck.BASELINE, 0, phase="rerun"), S(ck.CANDIDATE, 0, outcome="timeout", phase="rerun")]
-    found = ck.confirm("IC3", ["p50_ms"], rerun)
+    found = ck.confirm("IC3", ["p50_ms"], rerun).findings
     assert [(f["name"], f["status"]) for f in found] == [("IC3 completed", "regression")]
 
 
@@ -1324,7 +1325,7 @@ def test_a_re_run_that_returns_different_rows_is_a_rows_regression_not_a_timing(
         rerun += pair(
             p, base={"rows": 4, "phase": "rerun"}, cand={"rows": 0, "ms": 1.0, "phase": "rerun"}
         )
-    found = ck.confirm("IC2", ["p50_ms"], rerun)
+    found = ck.confirm("IC2", ["p50_ms"], rerun).findings
     assert [(f["name"], f["metric"], f["status"]) for f in found] == [
         ("IC2 rows", "rows", "regression")
     ]
@@ -1517,3 +1518,168 @@ def test_a_relative_out_is_resolved_against_the_caller_s_directory(tmp_path, mon
     )
     assert res.exit_code == 0, res.output
     assert seen["out"] == tmp_path.resolve() / "out" and seen["out"].is_absolute()
+
+
+# --- the fourth review round ---------------------------------------------------
+
+
+def test_a_candidate_failure_is_judged_against_the_same_request():
+    """Baseline fails row 0 in round 0 but finishes it in round 1; the
+    candidate finishes round 0 and fails round 1."""
+    samples = [S(ck.BASELINE, 0, outcome="error", rnd=0), S(ck.CANDIDATE, 0, rnd=0)]
+    samples += [S(ck.BASELINE, 0, rnd=1), S(ck.CANDIDATE, 0, outcome="timeout", rnd=1)]
+    v = ck.analyse("IC2", samples, same_engine=True)
+    (f,) = [f for f in v.findings if f["metric"] == "completed"]
+    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
+
+
+def test_a_warm_up_with_rows_does_not_make_empty_rounds_worth_timing():
+    samples = [
+        S(ck.BASELINE, 0, rows=1, phase="warmup"),
+        S(ck.CANDIDATE, 0, rows=1, phase="warmup"),
+    ]
+    for p in range(3):
+        samples += pair(p, base={"rows": 0, "ms": 1.0}, cand={"rows": 0, "ms": 9.0})
+    v = ck.analyse("IC2", samples, same_engine=True)
+    assert v.no_rows and v.crossed == []
+
+
+def test_a_re_run_with_no_rows_on_either_side_is_inconclusive():
+    rerun = []
+    for p in range(3):
+        rerun += pair(
+            p, base={"rows": 0, "phase": "rerun"}, cand={"rows": 0, "ms": 50.0, "phase": "rerun"}
+        )
+    result = ck.confirm("IC2", ["p50_ms"], rerun, {0, 1, 2})
+    assert result.findings == [] and "no rows" in result.inconclusive
+
+
+def test_a_re_run_that_did_not_retime_a_row_does_not_clear_the_crossing():
+    """Row 2 was the slow one; both sides fail it in the re-run."""
+    rerun = pair(0, base={"phase": "rerun"}, cand={"phase": "rerun"})
+    rerun += pair(1, base={"phase": "rerun"}, cand={"phase": "rerun"})
+    rerun += pair(
+        2,
+        base={"outcome": "timeout", "phase": "rerun"},
+        cand={"outcome": "timeout", "phase": "rerun"},
+    )
+    result = ck.confirm("IC2", ["p50_ms"], rerun, {0, 1, 2})
+    assert result.findings == [] and "[2]" in result.inconclusive
+
+
+def test_an_inconclusive_re_run_is_an_error_in_the_result(tmp_path):
+    def fast_then_empty(cypher, params, n):
+        return ck.Sample("", 0, "", 0, "", ck.OK, 50.0 if n <= 7 else 5.0, 2 if n <= 7 else 0, "d")
+
+    check = scripted_check(tmp_path, _ok(ms=5.0), fast_then_empty, names=("IC2",), params=3)
+    check.measure()
+    result = check.write()
+    assert result["verdict"] in ("error", "regression")
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_rows_excluded_by_the_timeout_rules_are_not_budget_skips(tmp_path, monkeypatch):
+    """Two shared timeouts use up both the timeout cap and the round budget:
+    the rows after them are excluded by the cap, not cut by the budget."""
+    now = {"t": 0.0}
+    monkeypatch.setattr(ck.time, "monotonic", lambda: now["t"])
+
+    def hangs(cypher, params, n):
+        now["t"] += 200.0  # each request takes 200 s of the 300 s budget
+        return ck.Sample("", 0, "", 0, "", ck.TIMEOUT, error="Query timed out")
+
+    check = scripted_check(tmp_path, hangs, hangs, names=("IC3",), params=6)
+    check.t0 = 0.0
+    check.opts = ck.Options(
+        **{
+            **check.opts.__dict__,
+            "mode": ck.Mode("nightly", "0.1", 6, 2, 2, 60_000, 300.0, 1e9, 600.0),
+        }
+    )
+    check.measure()
+    assert check.budget_skips == 0
+    assert not any("budget" in p for p in check.problems)
+
+
+def test_the_summary_keeps_warm_ups_out_of_the_main_rows(tmp_path):
+    check = scripted_check(tmp_path, _ok(rows=3), _ok(rows=3), names=("IC2",), params=1)
+    check.measure()
+    by = {(r["phase"], r["side"]): r for r in check.summary_rows}
+    assert by[("warmup", ck.BASELINE)]["attempted"] == 1
+    assert by[("main", ck.BASELINE)]["attempted"] == 2
+    assert by[("main", ck.BASELINE)]["rows_total"] == 6
+
+
+def test_a_failed_inspect_during_the_ping_grace_is_not_a_crash(monkeypatch):
+    calls = {"n": 0}
+
+    def state():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise containers.DockerError("`docker inspect` did not return within 120s")
+        return "running"
+
+    class Up:
+        def __init__(self, **kwargs):
+            pass
+
+        def ping(self):
+            return True
+
+    monkeypatch.setattr(ck, "Redis", Up)
+    side = ck.Side(ck.CANDIDATE, MAIN)
+    side.container = SimpleNamespace(port=1, state=state)
+    assert side._answers() is True
+
+
+def test_the_ping_grace_ends_at_its_deadline(monkeypatch):
+    now = {"t": 0.0}
+    monkeypatch.setattr(ck.time, "monotonic", lambda: now["t"])
+
+    def sleep(s):
+        now["t"] += max(s, 1.0)
+
+    monkeypatch.setattr(ck.time, "sleep", sleep)
+
+    class Down:
+        def __init__(self, **kwargs):
+            pass
+
+        def ping(self):
+            now["t"] += 5.0
+            raise ck.RedisTimeoutError("no")
+
+    monkeypatch.setattr(ck, "Redis", Down)
+    side = ck.Side(ck.CANDIDATE, MAIN)
+    side.container = SimpleNamespace(port=1, state=lambda: "running")
+    assert side._answers() is False
+    assert now["t"] <= ck.PING_GRACE_S + 5.0
+
+
+def test_prepare_holds_a_lock_per_dataset(tmp_path, monkeypatch):
+    held = []
+    real = dataset._locked
+
+    @contextlib.contextmanager
+    def spy(path):
+        held.append(path.name)
+        with real(path):
+            yield
+
+    monkeypatch.setattr(dataset, "_locked", spy)
+    root = tmp_path / "ds"
+    root.mkdir()
+    (root / dataset._MARKER).write_text(dataset._MARKER_VERSION + "\n")
+    dataset.prepare(root, echo=lambda _: None)
+    assert held == [".prepare-ds.lock"]
+
+
+def test_the_cache_root_is_searchable_by_the_server(tmp_path, monkeypatch):
+    cache = tmp_path / "cache"
+    old = os.umask(0o077)
+    try:
+        monkeypatch.setattr(dataset, "_fetch_locked", lambda cache, sf, echo: cache)
+        dataset.fetch(cache, "0.1", echo=lambda _: None)
+    finally:
+        os.umask(old)
+    assert cache.stat().st_mode & 0o055 == 0o055
