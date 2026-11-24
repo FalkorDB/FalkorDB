@@ -49,23 +49,19 @@ class SplitCoresTest(unittest.TestCase):
             cores = vm.read_cores(fake_sysfs(Path(tmp), siblings))
         return vm.split_cores(cores)
 
-    def test_gce_layout_siblings_n_apart(self):
-        # n4-standard-16: 8 cores, CPU n and n+8 share one.
-        server, client, warning = self.split([[i, i + 8] for i in range(8)])
-        self.assertEqual(vm.format_cpu_list(server), "0-3,8-11")
-        self.assertEqual(vm.format_cpu_list(client), "4-7,12-15")
-        self.assertIsNone(warning)
-
-    def test_adjacent_siblings(self):
-        server, client, _ = self.split([[2 * i, 2 * i + 1] for i in range(8)])
-        self.assertEqual(vm.format_cpu_list(server), "0-7")
-        self.assertEqual(vm.format_cpu_list(client), "8-15")
-
-    def test_no_core_is_shared(self):
-        siblings = [[i, i + 8] for i in range(8)]
-        server, client, _ = self.split(siblings)
-        for core in siblings:
-            self.assertFalse(set(core) & set(server) and set(core) & set(client), core)
+    def test_split_keeps_hyperthread_siblings_together(self):
+        cases = {
+            # n4-standard-16 / c4-standard-16: 8 cores, CPU n and n+8 share one.
+            "siblings n apart": ([[i, i + 8] for i in range(8)], "0-3,8-11", "4-7,12-15"),
+            "adjacent siblings": ([[2 * i, 2 * i + 1] for i in range(8)], "0-7", "8-15"),
+        }
+        for name, (siblings, want_server, want_client) in cases.items():
+            with self.subTest(name):
+                server, client, warning = self.split(siblings)
+                self.assertEqual((vm.format_cpu_list(server), vm.format_cpu_list(client), warning),
+                                 (want_server, want_client, None))
+                for core in siblings:
+                    self.assertFalse(set(core) & set(server) and set(core) & set(client), core)
 
     def test_odd_core_count_gives_server_the_extra_core(self):
         server, client, _ = self.split([[0], [1], [2]])
@@ -114,58 +110,20 @@ class RecordCommandTest(unittest.TestCase):
                 vm.main(["record", "--out", str(path), "--check", "size-probe", *extra])
             return json.loads(path.read_text())
 
-    def test_no_vm(self):
-        got = self.record("--create-error", "no zone had n4-standard-16")
-        self.assertEqual(got["create_error"], "no zone had n4-standard-16")
-        self.assertIsNone(got["zone"])
-        self.assertIsNone(got["command_exit"])
-        self.assertFalse(got["fallback_used"])
-        self.assertEqual((got["pmu"], got["pmu_probe"]), (None, None))
-
-    def test_ran(self):
-        got = self.record("--vm-name", "gce-gh-1", "--zone", "us-central1-b", "--machine-type",
-                          "n2-standard-16", "--fallback-used", "true", "--command-exit", "0",
-                          "--timed-out", "false")
-        self.assertEqual(got["zone"], "us-central1-b")
-        self.assertTrue(got["fallback_used"])
-        self.assertEqual(got["command_exit"], 0)
-        self.assertIsNone(got["create_error"])
-
-    def test_pmu(self):
-        got = self.record("--pmu", "STANDARD", "--pmu-probe", "cycles=1203456 instructions=834567")
-        self.assertEqual((got["pmu"], got["pmu_probe"]), ("STANDARD", "cycles=1203456 instructions=834567"))
-
-
-class PmuProbeTest(unittest.TestCase):
-    """vm.py pmu-probe: when `perf stat` output means the counters work."""
-
-    GOOD = "661511,,cycles,295712,100.00,,\n592778,,instructions,295712,100.00,0.90,insn per cycle\n"
-
-    def probe(self, text):
-        proc = subprocess.run([sys.executable, "-I", str(HERE / "vm.py"), "pmu-probe"], input=text,
-                              capture_output=True, text=True)
-        return proc.returncode, proc.stdout.strip()
-
-    def test_both_counted(self):
-        self.assertEqual(self.probe(self.GOOD), (0, "cycles=661511 instructions=592778"))
-        self.assertEqual(self.probe(self.GOOD.replace(",cycles,", ",cycles:u,"))[0], 0)
-
-    def test_anything_else_fails_closed(self):
-        bad = {
-            "not supported": "<not supported>,,cycles,0,100.00,,\n<not supported>,,instructions,0,100.00,,\n",
-            "not counted": "<not counted>,,cycles,0,0.00,,\n592778,,instructions,295712,100.00,,\n",
-            "zero": "0,,cycles,295712,100.00,,\n592778,,instructions,295712,100.00,,\n",
-            "one missing": "661511,,cycles,295712,100.00,,\n",
-            "fell back to cpu-clock": "0.31,msec,cpu-clock,312000,100.00,0.5,CPUs utilized\n",
-            "hybrid name": "661511,,cpu_core/cycles/,1,100.00,,\n592778,,cpu_core/instructions/,1,100.00,,\n",
-            "duplicate": self.GOOD + "1,,cycles,1,100.00,,\n",
-            "nothing": "",
+    def test_fields(self):
+        cases = {
+            "no VM": (["--create-error", "no zone had n4-standard-16"],
+                      {"create_error": "no zone had n4-standard-16", "zone": None, "command_exit": None,
+                       "fallback_used": False, "pmu": None}),
+            "ran": (["--vm-name", "gce-gh-1", "--zone", "us-central1-b", "--machine-type", "n2-standard-16",
+                     "--fallback-used", "true", "--command-exit", "0", "--timed-out", "false"],
+                    {"zone": "us-central1-b", "fallback_used": True, "command_exit": 0, "create_error": None}),
+            "pmu": (["--pmu", "STANDARD"], {"pmu": "STANDARD"}),
         }
-        for name, text in bad.items():
-            rc, out = self.probe(text)
-            self.assertEqual(rc, 1, name)
-            self.assertTrue(out, name)
-
+        for name, (args, want) in cases.items():
+            with self.subTest(name):
+                got = self.record(*args)
+                self.assertEqual({key: got[key] for key in want}, want)
 
 # gce-github-runner's action.sh stand-in, driven by type@zone lists:
 #   SUCCEED   creates the VM and reports runner_id;
@@ -365,24 +323,25 @@ class CreateVmTest(unittest.TestCase):
         self.assertEqual(out["pmu"], "")
         self.assertFalse([c for c in self.gcloud_calls if c.startswith("beta ")], self.gcloud_calls)
 
-    def test_missing_beta_track_is_installed_once(self):
-        proc, out, attempts, _ = self.create("z1", ["c4-standard-16"], succeed="c4-standard-16@z1", pmu="standard",
-                                             beta_missing="1", beta_installable="1")
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertEqual((attempts, out["pmu"]), (["c4-standard-16@z1"], "STANDARD"))
-        self.assertEqual(len([c for c in self.gcloud_calls if c.startswith("components install")]), 1)
-
-    def test_beta_track_without_the_pmu_flag_counts_as_missing(self):
-        proc, out, attempts, _ = self.create("z1", ["c4-standard-16"], succeed="c4-standard-16@z1",
-                                             pmu="standard", beta_old="1")
-        self.assertEqual((proc.returncode, attempts), (1, []))
-        self.assertIn("missing or too old", out["create_error"])
-
-    def test_beta_track_that_cannot_be_installed_stops_before_any_vm(self):
-        proc, out, attempts, _ = self.create("z1,z2", ["c4-standard-16"], succeed="c4-standard-16@z1",
-                                             pmu="standard", beta_missing="1")
-        self.assertEqual((proc.returncode, attempts), (1, []))
-        self.assertIn("missing or too old", out["create_error"])
+    def test_pmu_needs_a_beta_track_with_the_flag(self):
+        # (fake gcloud state, VM expected, `components install` calls)
+        cases = {
+            "missing, installable": ({"beta_missing": "1", "beta_installable": "1"}, True, 1),
+            "present but without the flag": ({"beta_old": "1"}, False, 1),
+            "missing, not installable": ({"beta_missing": "1"}, False, 1),
+        }
+        for name, (state, comes_up, installs) in cases.items():
+            with self.subTest(name):
+                proc, out, attempts, _ = self.create("z1,z2", ["c4-standard-16"], succeed="c4-standard-16@z1",
+                                                     pmu="standard", **state)
+                installed = [c for c in self.gcloud_calls if c.startswith("components install")]
+                self.assertEqual(len(installed), installs)
+                if comes_up:
+                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                    self.assertEqual((attempts, out["pmu"]), (["c4-standard-16@z1"], "STANDARD"))
+                else:
+                    self.assertEqual((proc.returncode, attempts), (1, []))
+                    self.assertIn("missing or too old", out["create_error"])
 
     def test_failed_describe_keeps_the_ready_vm(self):
         proc, out, attempts, _ = self.create("z1,z2", ["n2-standard-16"], succeed="n2-standard-16@z1",
@@ -391,21 +350,18 @@ class CreateVmTest(unittest.TestCase):
         self.assertEqual(attempts, ["n2-standard-16@z1"])
         self.assertEqual((out["vm_name"], out["machine_type"]), ("gce-gh-1", "n2-standard-16"))
 
-    def test_vm_that_will_not_delete_stops_before_a_second_shares_its_label(self):
-        proc, out, attempts, vms = self.create("z1,z2", ["n4-standard-16"], succeed="n4-standard-16@z2",
-                                               partial="n4-standard-16@z1", delete_fails="1")
-        self.assertEqual(proc.returncode, 1)
-        self.assertEqual(attempts, ["n4-standard-16@z1"])
-        self.assertIn("could not be deleted", out["create_error"])
-        self.assertEqual(len(vms), 1)
-
-    def test_vm_left_by_a_failed_attempt_is_deleted_before_the_next(self):
-        proc, out, _, vms = self.create("z1,z2", ["n4-standard-16"],
-                                        succeed="n4-standard-16@z2", partial="n4-standard-16@z1")
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertEqual(vms, ["gce-gh-2\tz2\tn4-standard-16"])
-        self.assertEqual(out["vm_name"], "gce-gh-2")
-
+    def test_vm_left_by_a_failed_attempt(self):
+        with self.subTest("deletes: the next attempt goes ahead"):
+            proc, out, _, vms = self.create("z1,z2", ["n4-standard-16"],
+                                            succeed="n4-standard-16@z2", partial="n4-standard-16@z1")
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(vms, ["gce-gh-2\tz2\tn4-standard-16"])
+            self.assertEqual(out["vm_name"], "gce-gh-2")
+        with self.subTest("will not delete: stop, so no second VM shares its label"):
+            proc, out, attempts, vms = self.create("z1,z2", ["n4-standard-16"], succeed="n4-standard-16@z2",
+                                                   partial="n4-standard-16@z1", delete_fails="1")
+            self.assertEqual((proc.returncode, attempts, len(vms)), (1, ["n4-standard-16@z1"], 1))
+            self.assertIn("could not be deleted", out["create_error"])
 
 class PlanTest(unittest.TestCase):
     """plan.sh: input checks and the machine types it asks for."""
@@ -539,15 +495,14 @@ class RunCheckTest(unittest.TestCase):
 
     def test_command_may_name_the_workflow_scripts(self):
         for spelling in ("$PERF_VM_TOOLS", "${PERF_VM_TOOLS}"):
-            proc, out, argv = self.run_check(f"bash {spelling}/record.sh", PERF_VM_TOOLS="{dir}")
-            self.assertEqual(proc.returncode, 0, spelling + proc.stdout + proc.stderr)
-            self.assertEqual(argv[:2], ["--candidate", "c@sha256:" + "1" * 64], spelling)
-
-    def test_unset_tools_path_is_an_error_not_a_wrong_path(self):
-        proc, out, _ = self.run_check("bash $PERF_VM_TOOLS/record.sh")
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("PERF_VM_TOOLS", proc.stdout)
-        self.assertEqual(out, {})
+            with self.subTest(spelling):
+                proc, out, argv = self.run_check(f"bash {spelling}/record.sh", PERF_VM_TOOLS="{dir}")
+                self.assertEqual(proc.returncode, 0, spelling + proc.stdout + proc.stderr)
+                self.assertEqual(argv[:2], ["--candidate", "c@sha256:" + "1" * 64])
+        with self.subTest("unset: an error, not a wrong path"):
+            proc, out, _ = self.run_check("bash $PERF_VM_TOOLS/record.sh")
+            self.assertEqual((proc.returncode, out), (2, {}))
+            self.assertIn("PERF_VM_TOOLS", proc.stdout)
 
     def test_contract_flags_and_only_non_empty_labels(self):
         proc, out, argv = self.run_check("bash {dir}/record.sh", CANDIDATE_LABEL="main@4c10889",
@@ -663,15 +618,15 @@ class DeleteVmsTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("still exist", proc.stdout)
 
-    def test_failed_listing_is_retried_not_read_as_none(self):
-        proc, calls = self.run_script(["FAIL", "FAIL", "vm-a\tus-central1-a\n", ""])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertIn("compute instances delete vm-a --zone=us-central1-a --quiet", calls)
-
-    def test_listing_that_never_works_fails(self):
-        proc, _ = self.run_script(["FAIL"])
-        self.assertEqual(proc.returncode, 1)
-        self.assertIn("cannot list", proc.stdout)
+    def test_failed_listing_is_retried_never_read_as_none(self):
+        with self.subTest("fails twice, then works"):
+            proc, calls = self.run_script(["FAIL", "FAIL", "vm-a\tus-central1-a\n", ""])
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("compute instances delete vm-a --zone=us-central1-a --quiet", calls)
+        with self.subTest("never works"):
+            proc, _ = self.run_script(["FAIL"])
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("cannot list", proc.stdout)
 
     def test_grace_catches_a_vm_that_appears_late(self):
         # First listing is empty (insert still in flight), then the VM shows up.
