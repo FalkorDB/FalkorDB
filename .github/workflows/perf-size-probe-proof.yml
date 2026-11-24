@@ -1,0 +1,79 @@
+# TEMPORARY — proof runs for #3980. Removed before the PR is marked ready.
+#
+# Runs `bench probe` through _perf-vm.yml (from its PR branch ci/perf-vm,
+# #3988, until it is on main) on real VMs, one pair at a time, with the proof
+# images pinned by digest (2026-11-24, perf swarm START-HERE):
+#   regress  6.2.0 vs 6.0.4            -> regression, `unwind` findings
+#   improve  main@4c1088949 vs 6.2.0   -> improvement on the same shapes
+#   aa-main  main@4c1088949 vs itself  -> pass
+#   aa-c     C v4.22.4 vs itself       -> pass (or a clear error), no crash
+# Each leg names its check `size-probe-<pair>` only so the four artifacts and
+# VM labels differ; every result.json still says "check": "size-probe".
+name: Perf size-probe proof (temporary)
+
+on:
+  pull_request:
+    paths:
+      - bench/**
+      - .github/workflows/perf-size-probe-proof.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-size-probe-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1  # one VM of this swarm member at a time
+      matrix:
+        include:
+          - pair: regress
+            candidate: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+            candidate_label: "6.2.0"
+            candidate_commit: ""
+            baseline: falkordb/falkordb-server@sha256:698a6e748b42699c1f63af01f8902652b764582e363731de56c7d566c322c209
+            baseline_label: "6.0.4"
+            baseline_commit: ""
+          - pair: improve
+            candidate: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+            candidate_label: main@4c10889
+            candidate_commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+            baseline: falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923
+            baseline_label: "6.2.0"
+            baseline_commit: ""
+          - pair: aa-main
+            candidate: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+            candidate_label: main@4c10889
+            candidate_commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+            baseline: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+            baseline_label: main@4c10889
+            baseline_commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+          - pair: aa-c
+            candidate: falkordb/falkordb-server@sha256:4e651dac5dbabf3169d91af06db4be13ee7679ffc392f14bac5fa730349b5dbf
+            candidate_label: v4.22.4
+            candidate_commit: ""
+            baseline: falkordb/falkordb-server@sha256:4e651dac5dbabf3169d91af06db4be13ee7679ffc392f14bac5fa730349b5dbf
+            baseline_label: v4.22.4
+            baseline_commit: ""
+    uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
+    with:
+      check: size-probe-${{ matrix.pair }}
+      command: uv run --project bench bench probe
+      candidate_image: ${{ matrix.candidate }}
+      baseline_image: ${{ matrix.baseline }}
+      candidate_label: ${{ matrix.candidate_label }}
+      baseline_label: ${{ matrix.baseline_label }}
+      candidate_commit: ${{ matrix.candidate_commit }}
+      baseline_commit: ${{ matrix.baseline_commit }}
+      mode: nightly
+      timeout_minutes: 45
+      machine_type: n4-standard-16
+    secrets: inherit
