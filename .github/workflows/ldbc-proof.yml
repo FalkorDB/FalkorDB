@@ -2,7 +2,11 @@
 # marked ready. Runs `bench ldbc check` through _perf-vm.yml (perf-gce-runner's
 # branch until it is on main, #3979) on the proof pairs, one VM at a time.
 # Each leg's VM-workflow check name differs only so the three artifacts do not
-# collide; every result.json says check "ldbc".
+# collide; every result.json says check "ldbc". It runs only when this file
+# changes, so a code push does not start three VMs: to prove a new commit,
+# change this file deliberately (the line below), after telling the
+# coordinator.
+# Proof of: review round 4.
 
 name: TEMPORARY ldbc proof
 
@@ -11,8 +15,6 @@ on:
     branches: [main]
     paths:
       - .github/workflows/ldbc-proof.yml
-      - bench/src/falkorbench/ldbc/**
-      - bench/src/falkorbench/cli.py
 
 permissions: {}
 
