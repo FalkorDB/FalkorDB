@@ -88,9 +88,10 @@ def bindProjection (st : St) (p : Proj) : Except String St := do
   let before := st.cur.keys
   let (st, _) ← p.tail.foldlM (init := (st, ([] : List Var)))
     fun (st, acc) e => do let (st, vs) ← resolveAll st e.vars; pure (st, acc ++ vs)
-  -- 7. remove the copies made only by WHERE / SKIP / LIMIT (binder.rs)
+  -- 7. hide the copies made only by WHERE / SKIP / LIMIT (`hide_names`, binder.rs, #3062):
+  --    unnameable, but still counted by `len()`
   let filterOnly := (st.cfp.map (·.1)).filter (fun k => !before.contains k)
-  let cur := st.cur.retain (fun k => !filterOnly.contains k)
+  let cur := st.cur.hide filterOnly
   -- 8. commit_scope (binder.rs)
   pure { st with cur, useParent := false, p2c := [], cfp := [] }
 
@@ -126,16 +127,21 @@ theorem where_copy_removed :
       = .ok ["k"] := by
   decide
 
-/-- … but the Filter still reads it, at id 1 of scope 1, while the table
-the next clause mints from has length 1 (**root cause 2**): the next
-variable of the scope (`x` in `MATCH (x)-->(y)`) gets id 1 too. -/
-theorem where_copy_id_reused :
+/-- … and, since #3062, hidden rather than dropped (**W2-binder-3 fixed**): the Filter reads the
+copy at id 1 of scope 1, and the table the next clause mints from keeps size 2, so the next
+variable of the scope (`x` in `MATCH (x)-->(y)`) gets id 2, not the copy's 1. -/
+theorem where_copy_id_fresh :
     (do let st ← projectItems (pushScope st0) [] [("k", { vars := ["n"] }, [⟨"n", 0, 0, .node, none⟩])]
         let (_, v) ← resolve st [] "n"
         pure v.id : Except String Nat) = .ok 1 ∧
     ((bindProjection st0 { items := [("k", { vars := ["n"] })], tail := [{ vars := ["n"] }] }).map
-      (fun st => (freshVar st.cur "x" .node st.depth).id)) = .ok 1 := by
+      (fun st => (freshVar st.cur "x" .node st.depth).id)) = .ok 2 := by
   decide
+
+/-- Step 7 never shrinks the table: hiding the WHERE-only copies keeps every id below `len()`. -/
+theorem hideFilterOnly_covers (e : Env) (h : e.Covers) (filterOnly : List Name) :
+    (e.hide filterOnly).Covers ∧ (e.hide filterOnly).length = e.length :=
+  ⟨hide_covers h _, Env.hide_length _ _⟩
 
 /-- A bare-variable item records `parent_to_child_scope`, so an ORDER BY on
 the *old* name resolves to the projected variable and makes no copy:

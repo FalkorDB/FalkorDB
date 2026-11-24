@@ -2751,7 +2751,10 @@ impl Planner {
         for expr in &exprs {
             self.visited.insert(expr.0.key());
         }
-        for (new_var, _) in &copy_from_parent {
+        // Each pair is (parent variable, its copy in the new scope): the copy
+        // is what the rest of the clause (a WHERE pattern predicate) sees.
+        for (old_var, new_var) in &copy_from_parent {
+            self.visited.insert(old_var.key());
             self.visited.insert(new_var.key());
         }
         for (var, _) in &apply_plans {

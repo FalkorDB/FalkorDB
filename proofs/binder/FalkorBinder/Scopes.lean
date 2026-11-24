@@ -85,23 +85,24 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
 
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
-comprehension's sub-plan uses; the cleanup then keeps only the names that
-were there before (unnamed entries stay, #3303). -/
+comprehension's sub-plan uses; the cleanup (`hide_new_names`, #3062) then hides every name
+that was not there before, keeping its entry unnamed. -/
 def compScope : Env :=
   [("n", ⟨"n", 0, 0, .node, none⟩), ("m", ⟨"m", 1, 0, .node, none⟩), ("r", ⟨"r", 2, 0, .rel, none⟩)]
 
-def compCleaned : Env := compScope.retain (fun k => k == "n")
+def compCleaned : Env := compScope.hide (compScope.keys.filter fun k => !["n"].contains k)
 
-/-- **Root cause 2 (comprehensions).** The cleaned table has size 1 while
-ids 1 and 2 are still in the IR: the planner's first two fresh ids in scope
-0 — or the next binder variable (`x`, `y` of a following `MATCH (x)-->(y)`)
-— are exactly `m`'s and `r`'s. `mint_fresh_iff` says that is a collision. -/
-theorem comprehension_cleanup_breaks :
-    compScope.Covers ∧ compCleaned.length = 1 ∧
-    ¬ (∀ i ∈ compScope.ids, i < compCleaned.length) := by
-  refine ⟨?_, by decide, ?_⟩
-  · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
-  · intro h; exact absurd (h 1 (by decide)) (by decide)
+/-- **W2-binder-3 (comprehensions), fixed by #3062.** The cleaned table names only `n` but keeps
+size 3, so ids 1 and 2, still in the IR, stay below `len()`: the planner's fresh ids in scope 0,
+and the next binder variable (`x`, `y` of a following `MATCH (x)-->(y)`), start at 3
+(`mint_fresh_iff`). Before, the names were dropped and the table shrank to size 1. -/
+theorem comprehension_cleanup_keeps_ids :
+    compScope.Covers ∧ compCleaned.keys = ["n"] ∧ compCleaned.length = 3 ∧
+    (∀ i ∈ compScope.ids, i < compCleaned.length) := by
+  have hc : compScope.Covers := by
+    intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
+  refine ⟨hc, by decide, by decide, ?_⟩
+  intro i hi; rw [compCleaned, Env.hide_length]; exact hc i hi
 
 /-! ## `CALL { … UNION … }` scope numbering (`bind_call_body`, binder.rs) -/
 

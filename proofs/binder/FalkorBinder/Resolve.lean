@@ -367,21 +367,6 @@ theorem denotes_anon_iff (v : Var) (k j : Nat) (h : v.anon = some k) :
   simp only [denotes, h, beq_iff_eq, Option.some.injEq]
   exact ⟨fun x => x.symm, fun x => x.symm⟩
 
-/-- `define_name_in_scope` looks only at the *current* table: a name that
-`resolve_name` would find through the parent copy is **redefined** as a
-fresh, unconstrained variable. This is root cause 6 — the pattern predicate
-in `MATCH (n) WITH n.v AS k WHERE (n)-->() RETURN k` gets its own `n` (Rust
-returns every row; C one). Pattern comprehensions pre-copy parent names
-(binder.rs); pattern predicates (binder.rs) do not. -/
-theorem defineName_ignores_parent :
-    let pv : Var := ⟨"n", 0, 0, .node, none⟩
-    let st : St := { cur := [("k", ⟨"k", 0, 1, .any, none⟩)], parent := [("n", pv)], depth := 1,
-                     useParent := true, p2c := [], cfp := [] }
-    (∃ st' v, resolve st [] "n" = .ok (st', v) ∧ v.name = "n") ∧
-    (∃ e v, defineName st.cur st.depth "n" .node true = .ok (e, v) ∧ v ≠ pv ∧
-      v.scope = 1 ∧ v.id = 1) := by
-  refine ⟨⟨_, _, rfl, rfl⟩, ⟨_, _, rfl, by decide, rfl, rfl⟩⟩
-
 /-- `Binder::project_name` (binder.rs): always a fresh id, and the
 key is overwritten if present. -/
 def projectName (e : Env) (depth : Nat) (n : Name) (ty : Ty) : Env × Var :=

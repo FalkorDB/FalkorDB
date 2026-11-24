@@ -12,7 +12,10 @@ binder.rs), and the planner mints its own ids the same way, as
 A `Scope` is modelled as one association list whose keys are a name (`Key.nm`, the `named`
 map, distinct keys) or `Key.un` (an entry of `unnamed`, which no name reaches). `insert`
 replaces the value of a present name and appends otherwise, so `length` is `Scope::len()`
-(`named.len() + unnamed.len()`, binder.rs).
+(`named.len() + unnamed.len() - aliased`, binder.rs): the second names
+`import_parent_names` enters with `insert_alias` take no id, and an `Env` leaves them out; they are
+kept beside it while a pattern is bound (`RScope` and `Env.withAliases` below prove that the Rust
+scope with its `aliased` counter has length `Env.length` and the same lookups).
 -/
 namespace FalkorBinder
 
@@ -68,11 +71,6 @@ def insert (e : Env) (k : Name) (v : Var) : Env :=
 /-- `Scope::remove` (binder.rs). -/
 def erase (e : Env) (k : Name) : Env := e.filter (fun p => p.1 != .nm k)
 
-/-- `Scope::retain` (binder.rs): filters the named entries; unnamed ones always stay. -/
-def retain (e : Env) (keep : Name → Bool) : Env := e.filter (fun p => match p.1 with
-  | .nm n => keep n
-  | .un => true)
-
 /-- `Scope::push_unnamed` (binder.rs). -/
 def pushUnnamed (e : Env) (v : Var) : Env := e ++ [(.un, v)]
 
@@ -100,6 +98,24 @@ def values (e : Env) : List Var := e.map (·.2)
 
 def ids (e : Env) : List Nat := e.map (·.2.id)
 
+/-- `HashMap::remove` on `named` returning the entry: the first entry keyed `n` and the table
+without it. -/
+def take1 : Env → Name → Option (Var × Env)
+  | [], _ => none
+  | (k, v) :: r, n => if k = .nm n then some (v, r) else
+    match take1 r n with
+    | some (w, r') => some (w, (k, v) :: r')
+    | none => none
+
+/-- `Binder::hide_names` (binder.rs): each name present is removed (`Scope::remove`) and its
+variable pushed to the unnamed list (`Scope::push_unnamed`), so no name reaches it but it still
+counts toward `len()`. -/
+def hide (e : Env) : List Name → Env
+  | [] => e
+  | n :: ns => match take1 e n with
+    | some (v, r) => hide (r ++ [(.un, v)]) ns
+    | none => hide e ns
+
 /-- Every id in the table is below its size: minting at `len()` is fresh. -/
 def Covers (e : Env) : Prop := ∀ i ∈ e.ids, i < e.length
 
@@ -123,11 +139,6 @@ theorem Env.pushUnnamed_find (e : Env) (v : Var) (n : Name) :
     (e.pushUnnamed v).find? n = e.find? n := by
   have : (Key.nm n == Key.un) = false := by simp
   simp [Env.pushUnnamed, Env.find?, List.lookup_append, List.lookup, this]
-
-/-- `Scope::retain` keeps every unnamed entry. -/
-theorem Env.retain_keeps_unnamed (e : Env) (keep : Name → Bool) (v : Var) (h : (.un, v) ∈ e) :
-    (.un, v) ∈ e.retain keep := by
-  simp [Env.retain, List.mem_filter, h]
 
 /-- `lookup_anon` finds only a variable whose parser number is `k`. -/
 theorem Env.lookupAnon_spec (e : Env) (k : Nat) (v : Var) (h : e.lookupAnon k = some v) :
@@ -153,7 +164,7 @@ theorem Env.lookupAnon_pushUnnamed_other (e : Env) (v : Var) (k j : Nat) (hv : v
   simp [Env.lookupAnon, hu, List.find?_append, this]
 
 /-- No name reaches an unnamed variable and no name-keyed operation changes the unnamed list:
-`insert`, `erase` and `retain` leave `lookup_anon` alone for the entries `retain` keeps. -/
+`insert` leaves `lookup_anon` alone, and `hide` (`hide_names`) keeps every earlier hit. -/
 theorem Env.lookupAnon_insert (e : Env) (n : Name) (v : Var) (k : Nat) :
     (e.insert n v).lookupAnon k = e.lookupAnon k := by
   have : (e.insert n v).unnamed = e.unnamed := by
@@ -167,17 +178,94 @@ theorem Env.lookupAnon_insert (e : Env) (n : Name) (v : Var) (k : Nat) :
     · simp [Env.unnamed, List.filterMap_append]
   simp [Env.lookupAnon, this]
 
-theorem Env.lookupAnon_retain (e : Env) (keep : Name → Bool) (k : Nat) :
-    (e.retain keep).lookupAnon k = e.lookupAnon k := by
-  have : (e.retain keep).unnamed = e.unnamed := by
-    simp only [Env.retain, Env.unnamed]
-    induction e with
-    | nil => rfl
-    | cons p rest ih =>
-      rcases p with ⟨_ | _, v⟩
-      · by_cases h : keep (‹Name›) = true <;> simp_all
-      · simp_all
-  simp [Env.lookupAnon, this]
+theorem Env.take1_spec (e : Env) (n : Name) (v : Var) (r : Env) (h : Env.take1 e n = some (v, r)) :
+    r.length + 1 = e.length ∧ (∀ p ∈ r, p ∈ e) ∧ (.nm n, v) ∈ e ∧ r.unnamed = e.unnamed := by
+  induction e generalizing r with
+  | nil => simp [Env.take1] at h
+  | cons p rest ih =>
+    obtain ⟨k, w⟩ := p
+    simp only [Env.take1] at h
+    split at h
+    · rename_i hk
+      simp only [Option.some.injEq, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      subst hk
+      refine ⟨by simp, fun p hp => by simp [hp], by simp, by simp [Env.unnamed]⟩
+    · rename_i hk
+      cases ht : Env.take1 rest n with
+      | none => simp [ht] at h
+      | some q =>
+        obtain ⟨w', r'⟩ := q
+        simp only [ht, Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        obtain ⟨h1, h2, h3, h4⟩ := ih r' ht
+        refine ⟨by simp; omega, ?_, by simp [h3], ?_⟩
+        · intro p hp; simp at hp; rcases hp with rfl | hp
+          · simp
+          · simp [h2 p hp]
+        · cases k with
+          | nm m => simpa [Env.unnamed] using h4
+          | un => simp [Env.unnamed] at h4 ⊢; exact h4
+
+/-- `hide_names` keeps the table's size: every hidden variable still counts toward `len()`. -/
+theorem Env.hide_length (e : Env) (ns : List Name) : (e.hide ns).length = e.length := by
+  induction ns generalizing e with
+  | nil => rfl
+  | cons n ns ih =>
+    simp only [Env.hide]
+    cases ht : Env.take1 e n with
+    | none => exact ih e
+    | some q =>
+      obtain ⟨v, r⟩ := q
+      have := (Env.take1_spec e n v r ht).1
+      rw [ih]; simp; omega
+
+/-- … and every id it holds was held before. -/
+theorem Env.hide_ids (e : Env) (ns : List Name) : ∀ i ∈ (e.hide ns).ids, i ∈ e.ids := by
+  induction ns generalizing e with
+  | nil => intro i hi; exact hi
+  | cons n ns ih =>
+    simp only [Env.hide]
+    cases ht : Env.take1 e n with
+    | none => exact ih e
+    | some q =>
+      obtain ⟨v, r⟩ := q
+      obtain ⟨-, h2, h3, -⟩ := Env.take1_spec e n v r ht
+      intro i hi
+      have := ih _ i hi
+      simp only [Env.ids, List.map_append, List.mem_append, List.mem_map, List.map_cons,
+        List.map_nil, List.mem_singleton] at this ⊢
+      rcases this with ⟨p, hp, rfl⟩ | rfl
+      · exact ⟨p, h2 p hp, rfl⟩
+      · exact ⟨_, h3, rfl⟩
+
+/-- So `hide_names` keeps a covering table covering (where removing the names did not:
+`Scope::remove` before #3062 freed ids the plan still used). -/
+theorem hide_covers {e : Env} (h : e.Covers) (ns : List Name) : (e.hide ns).Covers := by
+  intro i hi
+  rw [Env.hide_length]
+  exact h i (Env.hide_ids e ns i hi)
+
+/-- The unnamed list only grows at its end under `hide_names`. -/
+theorem Env.hide_unnamed (e : Env) (ns : List Name) : ∃ l, (e.hide ns).unnamed = e.unnamed ++ l := by
+  induction ns generalizing e with
+  | nil => exact ⟨[], by simp [Env.hide]⟩
+  | cons n ns ih =>
+    simp only [Env.hide]
+    cases ht : Env.take1 e n with
+    | none => exact ih e
+    | some q =>
+      obtain ⟨v, r⟩ := q
+      obtain ⟨-, -, -, h4⟩ := Env.take1_spec e n v r ht
+      obtain ⟨l, hl⟩ := ih (r ++ [(.un, v)])
+      refine ⟨v :: l, ?_⟩
+      rw [hl]; simp [Env.unnamed, List.filterMap_append] at h4 ⊢; rw [h4]
+
+theorem Env.lookupAnon_hide (e : Env) (ns : List Name) (k : Nat) (v : Var)
+    (h : e.lookupAnon k = some v) : (e.hide ns).lookupAnon k = some v := by
+  obtain ⟨l, hl⟩ := Env.hide_unnamed e ns
+  have h' : e.unnamed.find? (fun v => v.anon == some k) = some v := h
+  simp [Env.lookupAnon, hl, List.find?_append, h']
 
 /-- `Scope::values` covers every entry, named or not, so `len()` is its length. -/
 theorem Env.values_length (e : Env) : e.values.length = e.length := by
@@ -380,23 +468,140 @@ theorem plannerFresh_covers (sv : List Var) (scope : Nat) (ty : Ty)
 theorem erase_length_le (e : Env) (k : Name) : (e.erase k).length ≤ e.length := by
   simp [Env.erase]; exact List.length_filter_le _ _
 
-/-- A covering table stays covering after `erase`/`retain` **only** for the
-ids it still holds; an id the IR still uses may now be `≥ len()`.
-Concretely (binder.rs): after `MATCH (n) WITH n.v AS k WHERE n.v = 0`
-the WITH scope is `{k ↦ 0, n ↦ 1}` (`n` copied for the WHERE, id 1, used by
-the Filter), then `n` is removed: the table is `{k ↦ 0}` and the next
-variable of the scope, `x` in `MATCH (x)-->(y)`, is minted with id 1. -/
+/-- **W2-binder-3, fixed by #3062.** After `MATCH (n) WITH n.v AS k WHERE n.v = 0` the WITH scope
+is `{k ↦ 0, n ↦ 1}` (`n` copied for the WHERE, id 1, read by the Filter). `bind_projection` now
+hides `n` (`hide_names`) rather than removing it: the table keeps size 2, so the next variable of
+the scope, `x` in `MATCH (x)-->(y)`, gets id 2, not the Filter's 1. -/
 def withScope : Env :=
   [("k", ⟨"k", 0, 1, .any, none⟩), ("n", ⟨"n", 1, 1, .node, none⟩)]
 
-def withScopeAfter : Env := withScope.erase "n"
+def withScopeAfter : Env := withScope.hide ["n"]
 
 theorem withScope_covers : withScope.Covers := by
   intro i hi; simp [withScope, Env.ids] at hi; rcases hi with rfl | rfl <;> decide
 
-theorem erase_breaks_covers :
-    withScope.Covers ∧ 1 ∈ withScope.ids ∧
-    (freshVar withScopeAfter "x" .node 1).id = 1 := by
-  refine ⟨withScope_covers, by decide, by decide⟩
+theorem hide_keeps_where_copy :
+    withScope.Covers ∧ 1 ∈ withScope.ids ∧ withScopeAfter.keys = ["k"] ∧
+    withScopeAfter.Covers ∧ (freshVar withScopeAfter "x" .node 1).id = 2 := by
+  exact ⟨withScope_covers, by decide, by decide, hide_covers withScope_covers _, by decide⟩
+
+/-! ## The `aliased` counter: `Scope::len`, `insert_alias`, `remove_alias` (#3062)
+
+`import_parent_names` enters a renamed parent name (`n` of `WITH n AS m`) as a second name for the
+projected variable with `Scope::insert_alias`, and `drop_aliases` removes it with
+`Scope::remove_alias`. `RScope` is the Rust `Scope` with its counter; `Env.withAliases e al` is the
+scope an `Env` stands for while the second names `al` are entered over it. -/
+
+/-- `Scope` (binder.rs) as Rust holds it. -/
+structure RScope where
+  named : List (Name × Var)
+  unnamed : List Var
+  aliased : Nat
+
+/-- `Scope::len` (binder.rs). -/
+def RScope.len (s : RScope) : Nat := s.named.length + s.unnamed.length - s.aliased
+
+/-- `Scope::get` (binder.rs). -/
+def RScope.get (s : RScope) (n : Name) : Option Var := s.named.lookup n
+
+/-- `Scope::insert_alias` (binder.rs): `HashMap::insert`, counting a new key. -/
+def RScope.insertAlias (s : RScope) (n : Name) (v : Var) : RScope :=
+  if (s.named.lookup n).isSome then
+    { s with named := s.named.map fun p => if p.1 == n then (n, v) else p }
+  else { s with named := s.named ++ [(n, v)], aliased := s.aliased + 1 }
+
+/-- `Scope::remove_alias` (binder.rs): `HashMap::remove`, uncounting a present key. -/
+def RScope.removeAlias (s : RScope) (n : Name) : RScope :=
+  if (s.named.lookup n).isSome then
+    { s with named := s.named.filter (·.1 != n), aliased := s.aliased - 1 }
+  else s
+
+/-- `Binder::drop_aliases` (binder.rs). -/
+def RScope.dropAliases (s : RScope) (ns : List Name) : RScope := ns.foldl RScope.removeAlias s
+
+def Env.withAliases (e : Env) (al : List (Name × Var)) : RScope :=
+  ⟨e.named ++ al, e.unnamed, al.length⟩
+
+theorem Env.named_unnamed_length (e : Env) : e.named.length + e.unnamed.length = e.length := by
+  induction e with
+  | nil => rfl
+  | cons p rest ih =>
+    obtain ⟨k, v⟩ := p
+    cases k <;> simp [Env.named, Env.unnamed] at ih ⊢ <;> omega
+
+theorem Env.named_lookup (e : Env) (n : Name) : e.named.lookup n = e.find? n := by
+  induction e with
+  | nil => rfl
+  | cons p rest ih =>
+    obtain ⟨k, v⟩ := p
+    cases k with
+    | nm m =>
+      by_cases h : m = n
+      · subst h; simp [Env.named, Env.find?, List.lookup]
+      · have h1 : (n == m) = false := by simp; exact fun h' => h h'.symm
+        have h2 : (Key.nm n == Key.nm m) = false := by simp; exact fun h' => h h'.symm
+        simp only [Env.named, Env.find?, List.filterMap_cons, List.lookup, h1, h2] at ih ⊢
+        exact ih
+    | un =>
+      have h2 : (Key.nm n == Key.un) = false := by simp
+      simp only [Env.named, Env.find?, List.filterMap_cons, List.lookup, h2] at ih ⊢
+      exact ih
+
+/-- **`len()` ignores the second names**: the Rust scope with aliases `al` entered over `e` has
+`len()` = `e.length`, so `fresh_var` mints exactly what it would without them. -/
+theorem Env.withAliases_len (e : Env) (al : List (Name × Var)) :
+    (e.withAliases al).len = e.length := by
+  simp only [Env.withAliases, RScope.len, List.length_append]
+  have := Env.named_unnamed_length e
+  omega
+
+/-- … and `Scope::get` sees the table's names first, then the second names. -/
+theorem Env.withAliases_get (e : Env) (al : List (Name × Var)) (n : Name) :
+    (e.withAliases al).get n = (e.find? n).or (al.lookup n) := by
+  simp only [Env.withAliases, RScope.get, List.lookup_append, Env.named_lookup]
+
+/-- `insert_alias` of a name in neither the table nor the second names counts it and enters it. -/
+theorem Env.insertAlias_withAliases (e : Env) (al : List (Name × Var)) (n : Name) (v : Var)
+    (he : e.find? n = none) (ha : al.lookup n = none) :
+    (e.withAliases al).insertAlias n v = e.withAliases (al ++ [(n, v)]) := by
+  have : ((e.named ++ al).lookup n).isSome = false := by
+    simp [List.lookup_append, Env.named_lookup, he, ha]
+  simp [RScope.insertAlias, Env.withAliases, this]
+
+theorem Env.named_filter_of_find (e : Env) (n : Name) (he : e.find? n = none) :
+    e.named.filter (·.1 != n) = e.named := by
+  rw [List.filter_eq_self]
+  intro p hp
+  have hl : e.named.lookup n = none := by rw [Env.named_lookup]; exact he
+  rw [List.lookup_eq_none_iff] at hl
+  have := hl p hp
+  simp only [bne_iff_ne, ne_eq] at this ⊢
+  intro h; exact this (by simp [h])
+
+/-- **`drop_aliases` undoes the import**: removing every second name, each absent from the
+table and entered once, leaves the scope the table alone stands for, counter back to 0. -/
+theorem Env.dropAliases_withAliases (e : Env) (al : List (Name × Var))
+    (he : ∀ p ∈ al, e.find? p.1 = none) (hd : (al.map (·.1)).Nodup) :
+    (e.withAliases al).dropAliases (al.map (·.1)) = e.withAliases [] := by
+  induction al with
+  | nil => rfl
+  | cons p rest ih =>
+    obtain ⟨n, v⟩ := p
+    simp only [List.map_cons, List.nodup_cons] at hd
+    have hn : e.find? n = none := he (n, v) (by simp)
+    have hrest : rest.filter (·.1 != n) = rest := by
+      rw [List.filter_eq_self]
+      intro q hq
+      simp only [bne_iff_ne, ne_eq]
+      intro h; exact hd.1 (List.mem_map.2 ⟨q, hq, h⟩)
+    have step : (e.withAliases ((n, v) :: rest)).removeAlias n = e.withAliases rest := by
+      have : ((e.named ++ (n, v) :: rest).lookup n).isSome = true := by
+        simp [List.lookup_append, Env.named_lookup, hn, List.lookup]
+      simp only [RScope.removeAlias, Env.withAliases, this, ite_true, List.filter_append,
+        Env.named_filter_of_find e n hn, List.filter_cons, bne_self_eq_false, hrest]
+      simp
+    simp only [RScope.dropAliases, List.map_cons, List.foldl_cons] at ih ⊢
+    rw [step]
+    exact ih (fun q hq => he q (by simp [hq])) hd.2
 
 end FalkorBinder
