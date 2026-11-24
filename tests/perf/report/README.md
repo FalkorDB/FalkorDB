@@ -1,81 +1,45 @@
 # Nightly perf report and missed-run alarm
 
-Two scripts turn the nightly perf run into one message in the core team's Google
-Chat space. Both use only the Python standard library and run as `python3 -I`.
+Two scripts tell the core team's Google Chat space how the nightly perf run went.
+Both use only the Python standard library and run as `python3 -I`.
 
 | script | called by | does |
 | --- | --- | --- |
-| `post.py --nightly <nightly.json>` | the last job of `perf-nightly.yml` | reports one night |
+| `post.py --nightly <nightly.json>` | the report job of `perf-nightly.yml` | reports one night |
 | `missed_run.py [--date YYYY-MM-DD]` | `perf-missed-run.yml`, 05:00 UTC | alarms when a night left no result |
 
-## `post.py`: one message per night
+## `post.py`: one night
 
-Every verdict comes from `nightly.json` (schema 1, epic #3974). Before trusting it,
-`post.py` runs perf-judge's validator, `tests/perf/validate.py`, on the file. The
-message never shows a status better than the evidence:
+`merge.py` validates `nightly.json` and sets its `status` before the report runs,
+so `post.py` trusts that status as written. It checks only what needs no
+validator: a file it cannot read, a status that is not `green`, `red`, `error` or
+`skipped`, and a crash of `post.py` itself all report the night as ERROR, never
+green.
 
-* **red** when any check says `regression`;
-* otherwise **error** when any check says `error`, when the file breaks the contract
-  (the validator's problems are listed as `contract: <code> at <json path>`), when
-  its declared `status` disagrees with its checks, when the validator itself cannot
-  run, or when a non-skipped night has no checks;
-* **skipped** only for `status: "skipped"` with no checks and no problems;
-* **green** only when every check passed and nothing above applies.
+* **Chat:** one line, posted to the incoming webhook in `$PERF_CHAT_WEBHOOK` when
+  that is set, and printed to stdout, for example
+  `Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 <run link>`.
+  The parentheses hold the regressed checks on a red night, the checks that could
+  not measure on an error night, the reason on a skipped night, and the number of
+  checks on a green night. The details are on the run page, so Chat stays short.
+* **Run page:** `$GITHUB_STEP_SUMMARY`, when set, gets the details as Markdown: a
+  row per check with its verdict and summary (or error), the worst regression rows
+  of each regressed check (the first five, in the check's order), and on a red
+  night the commits since `previous_green_commit` with their PR numbers (from
+  `git log` in this checkout; each PR number is the last `(#N)` of the commit
+  title) and a pre-filled issue link labelled `performance` and `perf-regression`.
+* **Exit code:** 0 for a green or skipped night, 1 for a red or error night, so the
+  run itself shows the night.
 
-Two guards hold even without the validator: a check name listed twice, and a
-`pass`/`regression` entry that is not a full result (no `schema`), both make the
-night an error. If the script itself crashes, it still posts "the reporter crashed"
-with the run link, and exits 1.
+Text from the file or from commit titles cannot become a Chat link or mention (`<`
+is replaced), Markdown is escaped, and a `run_url` that is not a plain `https://`
+link of at most 300 characters is replaced by the current run's link.
 
-What each message holds:
-
-| status | message |
-| --- | --- |
-| green | one line: date, candidate vs baseline label, how many checks passed (and how many rows are broken on both sides), run link |
-| skipped | one line with `skip_reason` |
-| error | the checks that could not measure and why, the problems with the file, the checks that passed; the headline says "tonight is not green" |
-| red | each regressed check (confirmed or not, its summary, its worst regression rows: correctness first, then by ratio), the checks that could not measure, the commits since `previous_green_commit` with their PR numbers, the run link, and a pre-filled new-issue link (labels `performance` and `perf-regression`) |
-
-Findings read as plain words. `completed` 0 is "did not finish", `invariant` 0 is
-"invariant broken", a `mismatch` row is "row count differs: 12 vs 14". A null value
-prints as `n/a`, and a null ratio or threshold is left out, never computed here. A
-correctness row at 0 on both sides (contract v1.4: status `info`) is never a
-regression: Chat only counts such rows ("2 rows broken on both sides (not new)"),
-because they recur every night, and the job summary names them.
-
-The commit list comes from `git log <previous_green_commit>..<candidate commit>` in
-this checkout, else from GitHub's compare API (`GITHUB_API_URL`, token from
-`GH_TOKEN` or `GITHUB_TOKEN`). Each PR number is the last `(#N)` at the end of the
-commit title (squash merges), so `… (#3887) (#3889)` is PR #3889. When neither
-source works the message says why and still links the compare page. When the
-candidate commit is the last green night's, there is no list: the message says
-nothing new was merged on main.
-
-Delivery:
-
-* stdout: the Chat text;
-* `$GITHUB_STEP_SUMMARY`, when set: the same message as GitHub Markdown, with
-  more findings and commits;
-* `$PERF_CHAT_WEBHOOK`, when set: POSTed as `{"text": …}` to the Chat incoming
-  webhook. Chat markup, not Markdown: incoming webhooks default to
-  `MARKUP_SYNTAX_CHAT` (developers.google.com/workspace/chat/format-messages), so
-  `*bold*`, `` `code` ``, `<url|text>` and `- ` bullets. Text from results and
-  commit titles has `<` replaced, so it cannot become a mention or a disguised
-  link (a bare URL in it still shows as itself). A link whose URL holds `<`, `>`,
-  `|`, quotes, brackets or spaces is shown as plain text, and a `run_url` like that,
-  or one longer than 300 characters, is replaced by the current run's. Google caps a message at 32,000 bytes ("The
-  maximum message size (including any text or cards) is 32,000 bytes",
-  developers.google.com/workspace/chat/create-messages, an API page; the webhook
-  page states no limit). The message stays under 4,000 characters: fewer rows, free
-  text cut to 300 characters, and as a last resort whole lines dropped from the end
-  with a pointer to the job summary.
-
-A failed post is a warning, and the exit code stays 0: only a crash of the script is
-a failure. A post is retried twice on 429, 5xx and errors while connecting or
-sending (nothing was sent yet). It is not retried after a timeout, a lost connection
-or a malformed answer while waiting for Chat, because the message may have arrived. A
-trimmed red message still ends with the run and issue links. The webhook URL is the
-credential and is never printed. Only `https://` webhooks are used.
+A failed post is a warning; it never changes the exit code. A post is retried
+twice on 429, 5xx and errors while connecting or sending, when nothing has arrived
+yet. It is not retried after a timeout, a lost connection or a malformed answer
+while waiting for Chat, because the message may have arrived. The webhook URL is
+the credential and is never printed. Only `https://` webhooks are used.
 
 ## `missed_run.py`: the 05:00 UTC alarm
 
@@ -91,6 +55,8 @@ it posts an alarm naming the case and exits 1:
 * the newest run finished (with its conclusion) without the artifact;
 * `perf-nightly.yml` does not exist, or GitHub could not be asked.
 
+A re-run of a scheduled alarm checks the night its run was created for. Each run
+has its own concurrency group, so no check can displace another one that waits.
 `--workflow`, `--branch`, `--event` and `--artifact` point it at other runs for an
 acceptance run; the workflow takes `date` through `workflow_dispatch`.
 
@@ -100,10 +66,9 @@ acceptance run; the workflow takes `date` through `workflow_dispatch`.
 python -m pytest tests/perf/report        # or: python -m unittest discover tests/perf/report
 ```
 
-The expected messages come from the contract and perf-judge's fixtures in
-`tests/perf/fixtures/`; the tests serve the webhook and the GitHub API from a local
-stub server. `.github/workflows/perf-contract.yml` runs them with the rest of
-`tests/perf`.
+Each test names one rule and fails when that rule is broken. The webhook and the
+GitHub API are served from a local stub server. `.github/workflows/perf-contract.yml`
+runs them with the rest of `tests/perf`.
 
 Try a fixture by hand:
 

@@ -39,7 +39,8 @@ ALARM_HOUR_UTC = 5
 @dataclass
 class Outcome:
     alarm: bool
-    lines: list[post.Line]
+    chat: str  # the line for Chat and stdout
+    markdown: str  # the same line for the job summary
 
 
 def window(night: date) -> tuple[datetime, datetime]:
@@ -102,11 +103,10 @@ def runs_page(environ: dict, workflow: str, branch: str) -> str:
 
 
 def alarm(night: date, reason: str, link: str, link_text: str) -> Outcome:
-    return Outcome(True, [post.Line([
-        post.Bold(f"Perf nightly alarm {night.isoformat()}"),
-        f": no nightly result. {reason} ",
-        post.Link(link, link_text),
-    ])])
+    title, text = f"Perf nightly alarm {night.isoformat()}", f": no nightly result. {reason} "
+    return Outcome(True,
+                   f"*{post.chat_plain(title)}*{post.chat_plain(text)}{post.chat_link(link, link_text)}",
+                   f"**{post.markdown_plain(title)}**{post.markdown_plain(text)}{post.markdown_link(link, link_text)}")
 
 
 def check(environ: dict, night: date, workflow: str, branch: str, event: str, artifact: str,
@@ -127,11 +127,11 @@ def check(environ: dict, night: date, workflow: str, branch: str, event: str, ar
     try:
         for run in runs:
             if has_artifact(environ, run, artifact):
-                return Outcome(False, [post.Line([
-                    f"Perf nightly {night.isoformat()}: run ",
-                    post.Link(str(run.get("html_url") or listing), str(run.get("id"))),
-                    f" has the {artifact} artifact; no alarm.",
-                ])])
+                url, run_id = str(run.get("html_url") or listing), str(run.get("id"))
+                before, after = f"Perf nightly {night.isoformat()}: run ", f" has the {artifact} artifact; no alarm."
+                chat = post.chat_plain(before) + post.chat_link(url, run_id) + post.chat_plain(after)
+                markdown = post.markdown_plain(before) + post.markdown_link(url, run_id) + post.markdown_plain(after)
+                return Outcome(False, chat, markdown)
     except post.GitHubError as exc:
         return alarm(night, f"Could not list the artifacts of tonight's run ({exc}).",
                      str(runs[0].get("html_url") or listing), "run")
@@ -182,7 +182,7 @@ def main(argv: list[str] | None = None, environ: dict | None = None, now: dateti
 
     night = arguments.date or scheduled_night(environ) or now.date()
     outcome = check(environ, night, arguments.workflow, arguments.branch, arguments.event, arguments.artifact, now)
-    post.deliver(post.render_chat(outcome.lines), post.render_markdown(outcome.lines), environ, post=outcome.alarm)
+    post.deliver(outcome.chat, outcome.markdown, environ, post=outcome.alarm)
     return 1 if outcome.alarm else 0
 
 
