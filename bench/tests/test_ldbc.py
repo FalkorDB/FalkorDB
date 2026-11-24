@@ -12,7 +12,6 @@ accepted by the engine and the originals are not — are covered by
 row.
 """
 
-import contextlib
 import csv
 import importlib.util
 import io
@@ -1412,29 +1411,12 @@ def test_the_ping_grace_ends_at_its_deadline(monkeypatch):
     assert now["t"] <= ck.PING_GRACE_S + 5.0
 
 
-def test_prepare_holds_a_lock_per_dataset(tmp_path, monkeypatch):
-    held = []
-    real = dataset._locked
-
-    @contextlib.contextmanager
-    def spy(path):
-        held.append(path.name)
-        with real(path):
-            yield
-
-    monkeypatch.setattr(dataset, "_locked", spy)
-    root = tmp_path / "ds"
-    root.mkdir()
-    (root / dataset._MARKER).write_text(dataset._MARKER_VERSION + "\n")
-    dataset.prepare(root, echo=lambda _: None)
-    assert held == [".prepare-ds.lock"]
-
-
 def test_the_cache_root_is_searchable_by_the_server(tmp_path, monkeypatch):
     cache = tmp_path / "cache"
     old = os.umask(0o077)
     try:
-        monkeypatch.setattr(dataset, "_fetch_locked", lambda cache, sf, echo: cache)
+        # an already extracted dataset, so fetch() returns before any download
+        monkeypatch.setattr(dataset, "dataset_dir", lambda cache, sf: tmp_path)
         dataset.fetch(cache, "0.1", echo=lambda _: None)
     finally:
         os.umask(old)

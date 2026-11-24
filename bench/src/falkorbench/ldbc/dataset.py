@@ -21,17 +21,14 @@ re-run is a no-op rather than double-appending columns.
 
 from __future__ import annotations
 
-import contextlib
 import csv
 import datetime as dt
-import fcntl
 import os
 import shutil
 import subprocess
 import tarfile
 import urllib.request
 from collections.abc import Callable
-from collections.abc import Iterator
 from pathlib import Path
 
 from falkorbench.ldbc import schema
@@ -70,23 +67,6 @@ def fetch(cache: Path, sf: str, *, echo: Echo = print) -> Path:
         cache.chmod(cache.stat().st_mode | 0o055)
     except OSError as e:
         raise DatasetError(f"could not make the cache {cache} readable: {e}") from e
-    # One fetch per cache and scale factor at a time: two runs sharing a cache
-    # would otherwise share the `.part` download and the scratch tree.
-    with _locked(cache / f".fetch-sf{sf}.lock"):
-        return _fetch_locked(cache, sf, echo=echo)
-
-
-@contextlib.contextmanager
-def _locked(path: Path) -> Iterator[None]:
-    with path.open("w") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
-
-
-def _fetch_locked(cache: Path, sf: str, *, echo: Echo) -> Path:
     target = dataset_dir(cache, sf)
     if target.is_dir():
         echo(f"dataset already extracted: {target}")
@@ -209,14 +189,6 @@ def prepare(root: Path, *, echo: Echo = print) -> None:
     Idempotent: a marker file records completion, and a prepared tree is left
     untouched on a second call.
     """
-    # One preparer per dataset at a time: both rewrites go through fixed
-    # `.tmp` names, and the marker is written only at the end, so two runs
-    # sharing a cache must not overlap here.
-    with _locked(root.parent / f".prepare-{root.name}.lock"):
-        _prepare_locked(root, echo=echo)
-
-
-def _prepare_locked(root: Path, *, echo: Echo) -> None:
     marker = root / _MARKER
     if marker.exists() and marker.read_text().strip() == _MARKER_VERSION:
         echo("dataset already prepared")
