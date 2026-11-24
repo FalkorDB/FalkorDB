@@ -17,7 +17,6 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import smoke  # noqa: E402
 import vm  # noqa: E402
 
 
@@ -112,7 +111,7 @@ class RecordCommandTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "perf-vm.json"
             with redirect_stdout(io.StringIO()):
-                vm.main(["record", "--out", str(path), "--check", "smoke", *extra])
+                vm.main(["record", "--out", str(path), "--check", "size-probe", *extra])
             return json.loads(path.read_text())
 
     def test_no_vm(self):
@@ -166,179 +165,6 @@ class PmuProbeTest(unittest.TestCase):
             rc, out = self.probe(text)
             self.assertEqual(rc, 1, name)
             self.assertTrue(out, name)
-
-
-class RespReplyTest(unittest.TestCase):
-    """smoke.read_reply takes a whole reply or none."""
-
-    def read(self, data):
-        return smoke.read_reply(io.BytesIO(data))
-
-    def test_complete_replies(self):
-        self.assertEqual(self.read(b"+PONG\r\n"), b"PONG")
-        self.assertEqual(self.read(b"*2\r\n$3\r\nabc\r\n*1\r\n:1\r\n"), [b"abc", [b"1"]])
-        self.assertEqual(self.read(b"%1\r\n+k\r\n:2\r\n"), [b"k", b"2"])
-        self.assertIsNone(self.read(b"$-1\r\n"))
-
-    def test_cut_short(self):
-        for data in (b"*3\r\n", b"*2\r\n:1\r\n", b"$5\r\nab", b"+PON"):
-            with self.assertRaises(ConnectionError, msg=data):
-                self.read(data)
-
-    def test_error_reply(self):
-        with self.assertRaises(smoke.ReplyError):
-            self.read(b"-ERR unknown command\r\n")
-
-
-class SmokeLabelTest(unittest.TestCase):
-    DIGEST = "sha256:" + "ab" * 32
-
-    def test_default_label(self):
-        self.assertEqual(smoke.default_label(f"falkordb/falkordb-server@{self.DIGEST}"),
-                         "falkordb/falkordb-server@abababababab")
-        self.assertEqual(smoke.default_label(f"ghcr.io/falkordb/falkordb-server:rc-x@{self.DIGEST}"),
-                         "ghcr.io/falkordb/falkordb-server@abababababab")
-        self.assertEqual(smoke.default_label(f"localhost:5000/repo@{self.DIGEST}"),
-                         "localhost:5000/repo@abababababab")
-
-
-# A `docker` stand-in: `run` starts a tiny RESP server on the published port,
-# `pull` fails for any image whose name contains "dead".
-FAKE_DOCKER = r'''#!/usr/bin/env python3
-import os, signal, subprocess, sys
-SERVER = r"""
-import os, socket, sys, time
-mode = os.environ.get("FAKE_SERVER_MODE", "")
-s = socket.socket()
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("127.0.0.1", int(sys.argv[1])))
-s.listen()
-while True:
-    c, _ = s.accept()
-    while True:
-        data = c.recv(4096)
-        if not data:
-            break
-        if mode == "slow":
-            time.sleep(0.1)
-        if b"GRAPH.QUERY" in data and mode == "truncate":
-            c.sendall(b"*3\r\n")  # an array header whose elements never come
-            c.close()
-            break
-        c.sendall(b"*1\r\n:1\r\n" if b"GRAPH.QUERY" in data else b"+PONG\r\n")
-"""
-state = os.environ["FAKE_DOCKER_STATE"]
-args = sys.argv[1:]
-with open(os.path.join(state, "calls"), "a") as f:
-    f.write(" ".join(args) + "\n")
-if args[0] == "pull":
-    sys.exit(1 if "dead" in args[-1] else 0)
-if args[0] == "run":
-    name = args[args.index("--name") + 1]
-    port = args[args.index("-p") + 1].split(":")[1]
-    proc = subprocess.Popen([sys.executable, "-c", SERVER, port], start_new_session=True,
-                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    with open(os.path.join(state, name), "w") as f:
-        f.write(str(proc.pid))
-    print("container-id")
-if args[0] == "rm":
-    pidfile = os.path.join(state, args[-1])
-    if os.path.exists(pidfile):
-        os.kill(int(open(pidfile).read()), signal.SIGTERM)
-        os.remove(pidfile)
-'''
-
-VALIDATOR = Path(os.environ.get("PERF_VALIDATE", HERE.parent / "validate.py"))
-
-
-class SmokeEndToEndTest(unittest.TestCase):
-    """smoke.py against a fake docker; result.json checked by the contract validator."""
-
-    GOOD = "example/falkordb-server@sha256:" + "1" * 64
-    DEAD = "example/dead-server@sha256:" + "2" * 64
-
-    def run_smoke(self, candidate, baseline, *extra, env_extra=None, relative_out=False):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            docker = tmp / "bin" / "docker"
-            docker.parent.mkdir()
-            docker.write_text(FAKE_DOCKER)
-            docker.chmod(0o755)
-            env = dict(os.environ, PATH=f"{docker.parent}:{os.environ['PATH']}", FAKE_DOCKER_STATE=str(tmp))
-            env.pop("PERF_MACHINE_JSON", None)
-            env.update(env_extra or {})
-            out = tmp / "out"
-            proc = subprocess.run(
-                [sys.executable, "-I", str(HERE / "smoke.py"), "--candidate", candidate,
-                 "--baseline", baseline, "--out", "out" if relative_out else str(out), "--mode", "nightly", *extra],
-                capture_output=True, text=True, env=env, timeout=120, cwd=tmp,
-            )
-            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-            result_path = out / "result.json"
-            if VALIDATOR.exists():
-                check = subprocess.run([sys.executable, "-I", str(VALIDATOR), str(result_path)],
-                                       capture_output=True, text=True)
-                self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
-            calls = (tmp / "calls").read_text().splitlines()
-            return json.loads(result_path.read_text()), calls, sorted(p.name for p in (out / "raw").iterdir())
-
-    def test_pass_interleaves_and_pins(self):
-        machine = {"runner": "gce", "type": "n4-standard-16", "cpu": "x", "cores": 16}
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump(machine, f)
-        try:
-            result, calls, raw = self.run_smoke(
-                self.GOOD, self.GOOD.replace("1" * 64, "3" * 64),
-                "--candidate-label", "main@4c10889", "--baseline-commit", "a" * 40,
-                env_extra={"PERF_SERVER_CPUS": "0-3,8-11", "PERF_MACHINE_JSON": f.name},
-            )
-        finally:
-            os.unlink(f.name)
-        self.assertEqual(result["verdict"], "pass")
-        self.assertEqual(result["machine"], machine)
-        self.assertEqual(result["candidate"]["label"], "main@4c10889")
-        self.assertEqual(result["baseline"]["commit"], "a" * 40)
-        self.assertEqual(result["baseline"]["label"], "example/falkordb-server@333333333333")
-        runs = [c for c in calls if c.startswith("run ")]
-        self.assertEqual([r.split()[-1][-3:] for r in runs], ["111", "333", "333", "111"])
-        self.assertTrue(all("--cpuset-cpus 0-3,8-11" in r for r in runs))
-        self.assertFalse(any("6379:6379" in r for r in runs))
-        self.assertIn("smoke.csv", raw)
-
-    def test_dead_candidate_is_a_confirmed_regression(self):
-        result, _, _ = self.run_smoke(self.DEAD, self.GOOD)
-        self.assertEqual((result["verdict"], result["confirmed"]), ("regression", True))
-        self.assertEqual(result["findings"][0]["status"], "regression")
-        self.assertEqual(result["machine"]["runner"], "local")
-
-    def test_dead_baseline_is_an_error(self):
-        result, _, _ = self.run_smoke(self.GOOD, self.DEAD)
-        self.assertEqual(result["verdict"], "error")
-        self.assertIn("docker pull failed", result["error"])
-        self.assertEqual(result["findings"][0]["status"], "improvement")
-
-    def test_relative_out_is_under_the_start_directory(self):
-        # Contract v1.8: _perf-vm.yml passes `--out out`.
-        result, _, raw = self.run_smoke(self.GOOD, self.GOOD, relative_out=True)
-        self.assertEqual(result["verdict"], "pass")
-        self.assertIn("smoke.csv", raw)
-
-    def test_truncated_query_reply_is_not_a_completed_start(self):
-        result, _, _ = self.run_smoke(self.GOOD, self.GOOD, env_extra={"FAKE_SERVER_MODE": "truncate"})
-        self.assertEqual(result["verdict"], "error")
-        self.assertIn("reply cut short", result["error"])
-
-    def test_a_probe_slower_than_the_limit_is_not_a_completed_start(self):
-        # 51 replies at 0.1 s each cannot finish inside a 2 s limit, though each one succeeds.
-        result, _, _ = self.run_smoke(self.GOOD, self.GOOD,
-                                      env_extra={"FAKE_SERVER_MODE": "slow", "SMOKE_START_TIMEOUT_S": "2"})
-        self.assertEqual(result["verdict"], "error")
-        self.assertRegex(result["error"], r"probe failed|took longer")
-
-    def test_dead_on_both_sides_is_info_not_regression(self):
-        result, _, _ = self.run_smoke(self.DEAD, self.DEAD.replace("2" * 64, "4" * 64))
-        self.assertEqual(result["verdict"], "error")
-        self.assertEqual(result["findings"][0]["status"], "info")
 
 
 # gce-github-runner's action.sh stand-in, driven by type@zone lists:
@@ -426,7 +252,7 @@ PROJECT = "proj-123456"
 class CreateVmTest(unittest.TestCase):
     """create-vm.sh against a fake action.sh, gcloud and curl."""
 
-    LABEL = "perf-smoke-1-1"
+    LABEL = "perf-size-probe-1-1"
 
     def create(self, zones, types, succeed="", notready="", partial="", token_bad="", describe_fails="", pmu="",
                beta_missing="", beta_installable="", beta_old="", delete_fails=""):
@@ -656,7 +482,7 @@ class RunCheckTest(unittest.TestCase):
             (tmp / "record.sh").write_text('printf "%s\\n" "$@" > out/argv; exit "${EXIT:-0}"\n')
             (tmp / "slow.sh").write_text("sleep 30\n")
             outputs = tmp / "outputs"
-            env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="smoke",
+            env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="size-probe",
                        COMMAND=command.replace("{dir}", str(tmp)),
                        CANDIDATE="c@sha256:" + "1" * 64, BASELINE="b@sha256:" + "2" * 64,
                        MODE="nightly", TIMEOUT_SECONDS=timeout, PERF_CLIENT_CPUS="")
@@ -682,7 +508,7 @@ class RunCheckTest(unittest.TestCase):
             marker = tmp / "ran"
             work.chmod(0o555)  # out/ can be emptied but not removed or recreated
             try:
-                env = dict(os.environ, GITHUB_OUTPUT=str(tmp / "outputs"), CHECK="smoke",
+                env = dict(os.environ, GITHUB_OUTPUT=str(tmp / "outputs"), CHECK="size-probe",
                            COMMAND=f"touch {marker}", CANDIDATE="c@sha256:" + "1" * 64,
                            BASELINE="b@sha256:" + "2" * 64, MODE="nightly", TIMEOUT_SECONDS="30",
                            PERF_CLIENT_CPUS="")
@@ -808,7 +634,7 @@ class DeleteVmsTest(unittest.TestCase):
             gcloud.chmod(0o755)
             env = dict(os.environ, PATH=f"{tmp}:{os.environ['PATH']}",
                        DELETE_VMS_POLL_S="0", DELETE_VMS_GIVE_UP_S="2")
-            proc = subprocess.run(["bash", str(HERE / "delete-vms.sh"), "perf-smoke-1-1", grace],
+            proc = subprocess.run(["bash", str(HERE / "delete-vms.sh"), "perf-size-probe-1-1", grace],
                                   capture_output=True, text=True, env=env)
             calls = (tmp / "calls").read_text().splitlines() if (tmp / "calls").exists() else []
             return proc, calls

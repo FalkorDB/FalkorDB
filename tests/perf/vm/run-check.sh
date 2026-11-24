@@ -5,7 +5,7 @@
 #
 # Environment: COMMAND (split on spaces, no shell syntax; `$PERF_VM_TOOLS`
 # or `${PERF_VM_TOOLS}` in it is replaced with that variable, the workflow's
-# own tests/perf/vm, so a caller can run e.g. `$PERF_VM_TOOLS/smoke.py`), CHECK, CANDIDATE,
+# own tests/perf/vm, so a caller can run e.g. `$PERF_VM_TOOLS/<script>`), CHECK, CANDIDATE,
 # BASELINE, MODE, optional CANDIDATE_LABEL, BASELINE_LABEL,
 # CANDIDATE_COMMIT, BASELINE_COMMIT (each flag passed only when non-empty),
 # TIMEOUT_SECONDS, optional PERF_CLIENT_CPUS (the command runs under

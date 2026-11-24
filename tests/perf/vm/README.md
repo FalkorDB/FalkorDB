@@ -60,7 +60,7 @@ scripts, still gets the matching ones. Each job logs and checks that commit
 | `PERF_CLIENT_CPUS` | CPUs the command already runs on (`taskset`), so the client side needs nothing |
 | `PERF_ZONE`, `PERF_MACHINE_TYPE` | where the VM is, read from the metadata server |
 | `PERF_MACHINE_JSON` | a file holding the result.json `machine` object: `{"runner": "gce", "type", "cpu", "cores"}` |
-| `PERF_VM_TOOLS` | absolute path of this workflow's own `tests/perf/vm` (e.g. `smoke.py`) |
+| `PERF_VM_TOOLS` | absolute path of this workflow's own `tests/perf/vm` |
 | `PERF_PMU` | `1` when `pmu: true` and `perf stat` counted on this VM; unset otherwise |
 
 The split is by physical core: hyperthread siblings stay together, the
@@ -151,7 +151,7 @@ Three independent things delete it:
    because a cancelled `instances create` finishes server-side.
 2. **A systemd timer on the VM**, armed first thing in the run job, deletes
    the VM `timeout_minutes + 30` minutes after the job starts. It covers a run
-   whose cleanup job never runs (a force-cancel, an Actions outage). Proven on
+   whose cleanup job never runs (a force-cancel, an Actions outage). Checked on
    a hand-made VM (2026-11-23): the VM's own service account deleted it 3.5
    minutes after boot. With the gcloud path broken, `systemd-run` refuses to
    arm, the step is flagged (`continue-on-error`) and nothing else changes.
@@ -175,22 +175,4 @@ stopped VM; adding that input to `gce-github-runner` is the follow-up.
 | `vm.py env` | core split, machine object, `PERF_*` lines for `$GITHUB_ENV` |
 | `vm.py record` | writes `perf-vm.json` |
 | `vm.py pmu-probe` | judges the counters probe's `perf stat` output |
-| `smoke.py` | the VM path's self-test check, not in `checks.yaml` (below) |
 | `test_vm.py` | `python3 -I -m unittest discover -s tests/perf/vm` |
-
-### smoke.py
-
-A stand-in check in the contract's shape. It starts each image twice,
-interleaved with the order swapped, pinned to `PERF_SERVER_CPUS`, on ports it
-picks itself, and asks each server for PING and `GRAPH.QUERY smoke "RETURN 1"`.
-Its result.json says `pass` when every start answered, `regression` when only
-the candidate failed, and `error` when the baseline failed. Every `--mode` does
-the same, and its result.json always says `"check": "smoke"`, so register it
-under that name. Use it to try the VM path without a real check:
-
-```yaml
-- name: smoke            # result.json always says "check": "smoke"
-  runner: vm
-  command: python3 -I $PERF_VM_TOOLS/smoke.py
-  timeout_minutes: 15
-```
