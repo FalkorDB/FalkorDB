@@ -1,6 +1,6 @@
 # `pokec`: FalkorDB/benchmark on the Pokec dataset
 
-A check of the nightly perf contract (`tests/perf/README.md`): it runs the
+A check of the nightly perf contract (bench/README.md, "Result contract"): it runs the
 mixed Cypher workload of [FalkorDB/benchmark](https://github.com/FalkorDB/benchmark)
 on the Pokec social graph, against the candidate and baseline images, on one
 machine and in one run, and writes `<out>/result.json`.
@@ -14,13 +14,16 @@ writes, so this is the check that sees a query plan going wrong *and* what that
 does to everybody else on the server.
 
 ```
-python3 -I tests/perf/pokec/pokec.py --candidate <image@sha256:…> --baseline <image@sha256:…> \
+uv run --project bench --frozen bench pokec --candidate <image@sha256:…> --baseline <image@sha256:…> \
     --out <dir> --mode <queue|nightly|long> \
     [--candidate-label …] [--baseline-label …] [--candidate-commit …] [--baseline-commit …]
 ```
 
-Standard library only. It needs Docker, git, `uv`, network access, and on a
-machine without a C toolchain, root (or passwordless sudo) to `apt-get` one.
+The flags, `result.json`, the signal handling and the docker calls are
+`falkorbench.kit`'s (bench/README.md, "Shared check kit"); `check.py` measures
+and judges. Standard library only. It needs Docker, git, `uv`, network access,
+and on a machine without a C toolchain, root (or passwordless sudo) to
+`apt-get` one.
 
 ## Modes
 
@@ -286,13 +289,13 @@ error for the whole check.
 
 ## Running it
 
-On the VM, `_perf-vm.yml` runs the `checks.yaml` entry. Elsewhere, run it
+On the VM, `_perf-vm.yml` runs the `bench/checks.yaml` entry. Elsewhere, run it
 unpinned (`runner: local` in `machine`); a local result is not a contract run.
 `--reps N` and `--workloads read|write5` (hidden) shorten a development run.
 
-Tests: `python -m pytest tests/perf/pokec` (no Docker; runs in
-`perf-contract.yml`). They check every result they build with
-`tests/perf/validate.py`.
+Tests: `uv run --project bench --group dev python -I -B -m pytest bench/tests/test_pokec.py`
+(no Docker; `perf-contract.yml` runs bench/tests). They check every result they
+build with `falkorbench.contract`.
 
 ## Limits
 

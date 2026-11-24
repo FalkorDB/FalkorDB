@@ -19,3 +19,8 @@
 # this file, and bench/tests/test_nightly_merge.py fails on an entry it cannot
 # use. At night, such an entry (or a file that does not parse) is reported as an
 # error rather than skipped.
+- name: pokec
+  runner: vm
+  command: uv run --project bench --frozen bench pokec
+  timeout_minutes: 75
+  machine_type: n4-standard-16

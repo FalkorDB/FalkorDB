@@ -1,36 +1,22 @@
 """Unit tests for the pokec check: parsing, the comparison rules and result.json.
 
-No Docker, no network: runs are built in memory. `pytest tests/perf` (perf-contract.yml)
-runs them. Every result the tests build is checked with tests/perf/validate.py, the
-contract's validator, which lands on main with #3986 (as does perf-contract.yml, the CI
-job that runs these tests). Until then those checks report as skipped, by name; the
-comparison assertions in the same tests still run.
+No Docker, no network: runs are built in memory. Every result the tests build is
+checked with falkorbench.contract, the contract's checker.
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import contextlib
 import json
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
-HERE = Path(__file__).resolve().parent
-
-
-def load(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-pokec = load("pokec_check", HERE / "pokec.py")
-VALIDATE = HERE.parent / "validate.py"
+from falkorbench import contract
+from falkorbench import kit
+from falkorbench.pokec import check as pokec
 
 CAND = "ghcr.io/falkordb/falkordb-server@sha256:" + "a" * 64
 BASE = "falkordb/falkordb-server@sha256:" + "b" * 64
@@ -38,11 +24,7 @@ THREE_HOP = "aggregate_expansion_3_with_filter"
 
 
 def validate(result: dict) -> list:
-    if not VALIDATE.exists():
-        # Deliberate: the validator and the CI job that runs this file arrive together (#3986).
-        pytest.skip("result.json not validated: tests/perf/validate.py (#3986) is not on this branch yet")
-    validator = load("perf_validate", VALIDATE)
-    return [str(p) for p in validator.validate_result(json.loads(json.dumps(result)))]
+    return [str(p) for p in contract.validate_result(json.loads(json.dumps(result)))]
 
 
 # --- parsing -----------------------------------------------------------------
@@ -91,30 +73,36 @@ Q3 = "CYPHER id = 28105 MATCH (s:User {id: $id})-->()-->()-->(n:User)  WHERE n.a
 QW = "CYPHER id = 5 MATCH (n:User {id: $id}) SET n.age = 3"
 LOG = (
     "\x1b[2m2026-11-24T09:31:41.170739Z\x1b[0m \x1b[31mERROR\x1b[0m benchmark::falkor::falkor_driver: "
-    f"Error executing query: {Q3}, the error is: RedisError(\"Query timed out\")\n"
+    f'Error executing query: {Q3}, the error is: RedisError("Query timed out")\n'
     "    at src/falkor/falkor_driver.rs:1244\n"
     f"2026-11-24T09:31:42Z ERROR benchmark::falkor::falkor_driver: Error executing query: {Q3}, the error is: Elapsed(())\n"
-    f"2026-11-24T09:31:43Z ERROR benchmark::falkor::falkor_driver: Error executing query: {QW}, the error is: ParsingError(\"x\")\n"
+    f'2026-11-24T09:31:43Z ERROR benchmark::falkor::falkor_driver: Error executing query: {QW}, the error is: ParsingError("x")\n'
     "2026-11-24T09:31:44Z ERROR benchmark::falkor::falkor_driver: Error executing query: CYPHER id = 1 RETURN 9, "
-    "the error is: ParsingError(\"x\")\n"
+    'the error is: ParsingError("x")\n'
     # The worker's own line repeats the error inside OtherError; it is not a second failure.
     f"2026-11-24T09:31:45Z  INFO benchmark: worker 3 failed to process query, not sleeping for 3 seconds "
-    f"OtherError(\"Error (type x) executing query: {Q3}, the error is: y\")\n"
+    f'OtherError("Error (type x) executing query: {Q3}, the error is: y")\n'
 )
 
 
 def test_parse_errors_counts_each_failed_request_once():
     errors, unmatched = pokec.parse_errors(LOG, {Q3: THREE_HOP, QW: "single_vertex_update"})
-    assert errors == {THREE_HOP: {"timeouts": 2, "failures": 0}, "single_vertex_update": {"timeouts": 0, "failures": 1}}
+    assert errors == {
+        THREE_HOP: {"timeouts": 2, "failures": 0},
+        "single_vertex_update": {"timeouts": 0, "failures": 1},
+    }
     assert unmatched == ["CYPHER id = 1 RETURN 9"]
 
 
 def test_read_query_file(tmp_path):
     path = tmp_path / "q.jsonl"
     path.write_text(
-        json.dumps({"size": 2, "catalog": [{"id": 10, "name": THREE_HOP, "q_type": "Read"}]}) + "\n"
-        + json.dumps({"q_name": THREE_HOP, "q_type": "Read", "cypher": Q3}) + "\n"
-        + json.dumps({"q_name": "single_vertex_update", "q_type": "Write", "cypher": QW}) + "\n"
+        json.dumps({"size": 2, "catalog": [{"id": 10, "name": THREE_HOP, "q_type": "Read"}]})
+        + "\n"
+        + json.dumps({"q_name": THREE_HOP, "q_type": "Read", "cypher": Q3})
+        + "\n"
+        + json.dumps({"q_name": "single_vertex_update", "q_type": "Write", "cypher": QW})
+        + "\n"
     )
     qfile = pokec.read_query_file(path)
     assert qfile.counts == {THREE_HOP: 1, "single_vertex_update": 1}
@@ -122,7 +110,10 @@ def test_read_query_file(tmp_path):
 
 
 def test_hop_label_names_the_3_hop_query():
-    assert pokec.hop_label(THREE_HOP) == "3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter)"
+    assert (
+        pokec.hop_label(THREE_HOP)
+        == "3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter)"
+    )
     assert pokec.hop_label("aggregate_expansion_3") == "3-hop expansion (aggregate_expansion_3)"
     assert pokec.hop_label("single_vertex_read") == "single_vertex_read"
 
@@ -139,9 +130,22 @@ def qfiles(workloads=("read", "write5")):
     return files
 
 
-def make_run(side, pass_no, rep, workload="write5", scale=1.0, finished=True, ping=5.0, errors=None,
-             overrides=None, stop_reason=None):
-    per_query = {q: {"p50_ms": 10.0 * scale, "p95_ms": 50.0 * scale, "p99_ms": 100.0 * scale} for q in QUERIES}
+def make_run(
+    side,
+    pass_no,
+    rep,
+    workload="write5",
+    scale=1.0,
+    finished=True,
+    ping=5.0,
+    errors=None,
+    overrides=None,
+    stop_reason=None,
+):
+    per_query = {
+        q: {"p50_ms": 10.0 * scale, "p95_ms": 50.0 * scale, "p99_ms": 100.0 * scale}
+        for q in QUERIES
+    }
     for query, values in (overrides or {}).items():
         per_query[query] = {k: v for k, v in values.items()}
     run = pokec.Run("medium", workload, side, pass_no, rep)
@@ -166,7 +170,9 @@ def pass_runs(pass_no, reps, **kw_by_side):
 
 
 def analyse(runs, mode="nightly", rerun_done=None):
-    return pokec.analyse(runs, pokec.MODES[mode], qfiles(), [], set() if rerun_done is None else rerun_done)
+    return pokec.analyse(
+        runs, pokec.MODES[mode], qfiles(), [], set() if rerun_done is None else rerun_done
+    )
 
 
 def statuses(analysis, status):
@@ -184,7 +190,10 @@ def test_a_a_is_quiet():
 
 
 def test_latency_regression_needs_the_re_run():
-    slow = {"workload": "read", "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 200.0}}}
+    slow = {
+        "workload": "read",
+        "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 200.0}},
+    }
     read = {"workload": "read"}
     first = pass_runs(1, 3, candidate=slow, baseline=read)
     analysis = analyse(first)
@@ -204,25 +213,41 @@ def test_latency_regression_needs_the_re_run():
 def test_under_writes_only_p50_gates_per_query():
     # A read's p95/p99 under writes is the writer gate, not the query: rows.csv only.
     tail = {"overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 500.0, "p99_ms": 900.0}}}
-    analysis = analyse(pass_runs(1, 3, candidate=tail) + pass_runs(2, 2, candidate=tail),
-                       rerun_done={("medium", "write5")})
+    analysis = analyse(
+        pass_runs(1, 3, candidate=tail) + pass_runs(2, 2, candidate=tail),
+        rerun_done={("medium", "write5")},
+    )
     assert not analysis.rerun and not statuses(analysis, "regression")
-    row = next(r for r in analysis.rows if r["name"] == "single_vertex_read [5% writes]" and r["metric"] == "p99_ms")
+    row = next(
+        r
+        for r in analysis.rows
+        if r["name"] == "single_vertex_read [5% writes]" and r["metric"] == "p99_ms"
+    )
     assert row["use"] == "row" and row["first_pass"] == 1
-    median = {"overrides": {"single_vertex_read": {"p50_ms": 20.0, "p95_ms": 50.0, "p99_ms": 100.0}}}
-    analysis = analyse(pass_runs(1, 3, candidate=median) + pass_runs(2, 2, candidate=median),
-                       rerun_done={("medium", "write5")})
+    median = {
+        "overrides": {"single_vertex_read": {"p50_ms": 20.0, "p95_ms": 50.0, "p99_ms": 100.0}}
+    }
+    analysis = analyse(
+        pass_runs(1, 3, candidate=median) + pass_runs(2, 2, candidate=median),
+        rerun_done={("medium", "write5")},
+    )
     assert statuses(analysis, "regression") == [("single_vertex_read [5% writes]", "p50_ms")]
 
 
 def test_under_writes_write_queries_never_gate():
     files = qfiles()
     files[("medium", "write5")].types["single_edge_write"] = "Write"
-    slow = {"overrides": {"single_edge_write": {"p50_ms": 900.0, "p95_ms": 2000.0, "p99_ms": 3000.0}}}
+    slow = {
+        "overrides": {"single_edge_write": {"p50_ms": 900.0, "p95_ms": 2000.0, "p99_ms": 3000.0}}
+    }
     runs = pass_runs(1, 3, candidate=slow) + pass_runs(2, 2, candidate=slow)
     analysis = pokec.analyse(runs, pokec.MODES["nightly"], files, [], {("medium", "write5")})
     assert not statuses(analysis, "regression")
-    assert {r["use"] for r in analysis.rows if r["name"] == "single_edge_write [5% writes]" and r["metric"] != "completed"} == {"row"}
+    assert {
+        r["use"]
+        for r in analysis.rows
+        if r["name"] == "single_edge_write [5% writes]" and r["metric"] != "completed"
+    } == {"row"}
 
 
 def test_latency_floor_ignores_tiny_moves():
@@ -292,8 +317,11 @@ def test_one_ping_freeze_asks_for_a_re_run():
     runs = pass_runs(1, 1, candidate={"ping": 2500.0})
     analysis = analyse(runs, mode="queue")
     assert analysis.rerun == {("medium", "write5")}
-    analysis = analyse(runs + pass_runs(2, 1, candidate={"ping": 2400.0}), mode="queue",
-                       rerun_done={("medium", "write5")})
+    analysis = analyse(
+        runs + pass_runs(2, 1, candidate={"ping": 2400.0}),
+        mode="queue",
+        rerun_done={("medium", "write5")},
+    )
     assert ("PING max [5% writes]", "ping_max_ms") in statuses(analysis, "regression")
 
 
@@ -312,24 +340,23 @@ def test_throughput_is_lower_is_worse():
     assert finding["direction"] == "lower_is_worse" and finding["ratio"] == 0.5
 
 
-def test_select_findings_caps():
-    findings = [pokec.make_finding(f"r{i}", "p99_ms", 2.0, 1.0, 1.3, "higher_is_worse", "regression")
-                for i in range(60)]
-    findings += [pokec.make_finding(f"i{i}", "p99_ms", 1.0, 1.0, 1.3, "higher_is_worse", "info") for i in range(20)]
-    selected = pokec.select_findings(findings)
-    assert len(selected) == 50 and all(f["status"] == "regression" for f in selected)
-    selected = pokec.select_findings(findings[60:])
-    assert len(selected) == 10
-
-
 # --- result.json -------------------------------------------------------------
 
 
 def make_check(tmp_path, mode="nightly", **extra):
     args = argparse.Namespace(
-        candidate=CAND, baseline=BASE, out=str(tmp_path / "out"), mode=mode, candidate_label="6.0.4",
-        baseline_label=None, candidate_commit="6ca3adc9d0418f76c5a15f820552e0603a65e553", baseline_commit=None,
-        tools_dir=str(tmp_path / "tools"), reps=None, workloads=None, **extra,
+        candidate=CAND,
+        baseline=BASE,
+        out=str(tmp_path / "out"),
+        mode=mode,
+        candidate_label="6.0.4",
+        baseline_label=None,
+        candidate_commit="6ca3adc9d0418f76c5a15f820552e0603a65e553",
+        baseline_commit=None,
+        tools_dir=str(tmp_path / "tools"),
+        reps=None,
+        workloads=None,
+        **extra,
     )
     check = pokec.Check(args)
     check.machine = {"runner": "local", "type": "test", "cpu": "test", "cores": 1}
@@ -339,8 +366,10 @@ def make_check(tmp_path, mode="nightly", **extra):
 
 def test_result_pass_is_valid(tmp_path):
     check = make_check(tmp_path)
-    check.runs = pass_runs(1, 3) + pass_runs(1, 3, baseline={"workload": "read"}, candidate={"workload": "read"})
-    result = check.result()
+    check.runs = pass_runs(1, 3) + pass_runs(
+        1, 3, baseline={"workload": "read"}, candidate={"workload": "read"}
+    )
+    result = check.build()
     assert result["verdict"] == "pass", result["summary"]
     assert result["confirmed"] is False and result["error"] is None
     assert result["baseline"]["label"] == "falkordb/falkordb-server@" + "b" * 12
@@ -351,11 +380,18 @@ def test_result_pass_is_valid(tmp_path):
 
 def test_result_regression_is_valid_and_matches_the_acceptance_pattern(tmp_path):
     check = make_check(tmp_path)
-    hung = {"finished": False, "ping": 5100.0, "errors": {THREE_HOP: {"timeouts": 30, "failures": 0}}}
+    hung = {
+        "finished": False,
+        "ping": 5100.0,
+        "errors": {THREE_HOP: {"timeouts": 30, "failures": 0}},
+    }
     check.runs = pass_runs(1, 3, candidate=hung)
-    result = check.result()
+    result = check.build()
     assert result["verdict"] == "regression" and result["confirmed"] is True
-    assert any(re.search("3-hop", f["name"], re.I) and f["status"] == "regression" for f in result["findings"])
+    assert any(
+        re.search("3-hop", f["name"], re.I) and f["status"] == "regression"
+        for f in result["findings"]
+    )
     assert "\n" not in result["summary"]
     assert validate(result) == []
 
@@ -363,7 +399,7 @@ def test_result_regression_is_valid_and_matches_the_acceptance_pattern(tmp_path)
 def test_result_error_when_the_baseline_does_not_finish(tmp_path):
     check = make_check(tmp_path)
     check.runs = pass_runs(1, 3, baseline={"finished": False})
-    result = check.result()
+    result = check.build()
     assert result["verdict"] == "error" and "not measured" in result["error"]
     assert validate(result) == []
 
@@ -371,7 +407,7 @@ def test_result_error_when_the_baseline_does_not_finish(tmp_path):
 def test_result_error_when_setup_failed(tmp_path):
     check = make_check(tmp_path)
     check.error = "could not pull the baseline image"
-    result = check.result()
+    result = check.build()
     assert result["verdict"] == "error" and result["findings"] == []
     assert result["summary"].startswith("Could not measure: could not pull")
     assert validate(result) == []
@@ -379,9 +415,12 @@ def test_result_error_when_setup_failed(tmp_path):
 
 def test_candidate_that_does_not_start_is_a_regression(tmp_path):
     check = make_check(tmp_path)
-    check.info.append(pokec.make_finding("server started [medium]", "completed", 0, 1, None, "lower_is_worse",
-                                         "regression"))
-    result = check.result()
+    check.info.append(
+        kit.finding(
+            "server started [medium]", "completed", 0, 1, "regression", direction="lower_is_worse"
+        )
+    )
+    result = check.build()
     assert result["verdict"] == "regression"
     assert validate(result) == []
 
@@ -397,33 +436,21 @@ def test_cross_check_catches_a_log_parser_that_misses_failures(tmp_path):
     check._cross_check(run, metrics, qfiles()[("medium", "write5")], [])
 
 
-def test_images_and_commits_follow_the_validator_s_rules():
-    assert pokec.IMAGE_RE.fullmatch(CAND) and pokec.IMAGE_RE.fullmatch(BASE)
-    for bad in ("falkordb/falkordb-server:6.2.0", "FalkorDB/falkordb-server@sha256:" + "b" * 64, BASE + "\n"):
-        assert not pokec.IMAGE_RE.fullmatch(bad), bad
-    assert not pokec.COMMIT_RE.fullmatch("6ca3adc9d0418f76c5a15f820552e0603a65e553\n")
-    if VALIDATE.exists():  # the same rules, not a look-alike
-        validator = load("perf_validate", VALIDATE)
-        assert (pokec.IMAGE_RE.pattern, pokec.COMMIT_RE.pattern) == (validator.IMAGE_RE.pattern, validator.COMMIT_RE.pattern)
-
-
-def test_an_uppercase_image_is_an_error_not_an_invalid_result(tmp_path, monkeypatch):
-    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
-    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: None)
-    out = tmp_path / "out"
-    pokec.main(["--candidate", "FalkorDB/falkordb-server@sha256:" + "a" * 64, "--baseline", BASE, "--out", str(out),
-                "--mode", "nightly", "--tools-dir", str(tmp_path / "tools")])
-    result = json.loads((out / "result.json").read_text())
-    assert result["verdict"] == "error" and "not pinned by digest" in result["error"]
-
-
 # --- the RESP client and the PING probe, against a fake server ----------------
 
 
 class FakeServer:
     """Replies to PING with +PONG; `stall` seconds before the n-th reply; `mute` after it."""
 
-    def __init__(self, stall_at=None, stall=0.0, mute_at=None, reply=b"+PONG\r\n", signal_at=None, hold_at=None):
+    def __init__(
+        self,
+        stall_at=None,
+        stall=0.0,
+        mute_at=None,
+        reply=b"+PONG\r\n",
+        signal_at=None,
+        hold_at=None,
+    ):
         import socket
         import threading
 
@@ -440,10 +467,9 @@ class FakeServer:
         threading.Thread(target=self.serve, daemon=True).start()
 
     def serve(self):
-        try:
+        # the probe closed its end (stop() shuts the socket): nothing left to serve
+        with contextlib.suppress(OSError):
             self._serve()
-        except OSError:
-            pass  # the probe closed its end (stop() shuts the socket): nothing left to serve
 
     def _serve(self):
         import time
@@ -510,7 +536,10 @@ def test_ping_probe_counts_a_freeze_that_outlasts_the_run(tmp_path):
 
 
 def test_a_crossed_row_whose_re_run_did_not_finish_is_not_a_pass(tmp_path):
-    slow = {"workload": "read", "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}}}
+    slow = {
+        "workload": "read",
+        "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}},
+    }
     read = {"workload": "read"}
     runs = pass_runs(1, 3, candidate=slow, baseline=read)
     runs += pass_runs(2, 2, candidate=slow, baseline={"workload": "read", "finished": False})
@@ -519,7 +548,7 @@ def test_a_crossed_row_whose_re_run_did_not_finish_is_not_a_pass(tmp_path):
     assert any("never re-measured" in u for u in analysis.unmeasured)
     check = make_check(tmp_path)
     check.runs = runs
-    result = check.result()
+    result = check.build()
     assert result["verdict"] == "error"
     assert validate(result) == []
 
@@ -543,7 +572,7 @@ def test_a_baseline_run_that_did_not_finish_is_not_a_pass(tmp_path):
     runs[0].finished, runs[0].stop_reason = False, "bulk load exited 1"  # baseline rep 1
     check = make_check(tmp_path)
     check.runs = runs
-    result = check.result()
+    result = check.build()
     assert result["verdict"] == "error" and "baseline did not finish" in result["error"]
     assert validate(result) == []
 
@@ -552,8 +581,9 @@ def test_the_summary_names_queries_broken_on_both_sides(tmp_path):
     broken = {"errors": {"single_edge_write": {"timeouts": 0, "failures": 50}}}
     check = make_check(tmp_path)
     check.runs = pass_runs(1, 3, candidate=broken, baseline=broken) + pass_runs(
-        1, 3, candidate={"workload": "read"}, baseline={"workload": "read"})
-    result = check.result()
+        1, 3, candidate={"workload": "read"}, baseline={"workload": "read"}
+    )
+    result = check.build()
     assert result["verdict"] == "pass"
     assert "failed on both sides (not new): single_edge_write [5% writes]" in result["summary"]
     assert validate(result) == []
@@ -562,29 +592,51 @@ def test_the_summary_names_queries_broken_on_both_sides(tmp_path):
 def test_an_error_with_a_carriage_return_stays_one_line(tmp_path):
     check = make_check(tmp_path)
     check.error = "docker said:\r\nno space left on device"
-    result = check.result()
+    result = check.build()
     assert "\r" not in result["summary"] and "\n" not in result["summary"]
     assert validate(result) == []
 
 
 def test_main_writes_an_error_result_for_a_tag(tmp_path, monkeypatch):
     monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
-    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: None)  # no Docker in unit tests
+    monkeypatch.setattr(kit, "remove_labelled", lambda label: None)  # no Docker in unit tests
     out = tmp_path / "out"
-    code = pokec.main(["--candidate", "falkordb/falkordb-server:6.2.0", "--baseline", BASE, "--out", str(out),
-                       "--mode", "nightly", "--tools-dir", str(tmp_path / "tools")])
+    code = pokec.main(
+        [
+            "--candidate",
+            "falkordb/falkordb-server:6.2.0",
+            "--baseline",
+            BASE,
+            "--out",
+            str(out),
+            "--mode",
+            "nightly",
+            "--tools-dir",
+            str(tmp_path / "tools"),
+        ]
+    )
     assert code == 0
     result = json.loads((out / "result.json").read_text())
-    assert result["verdict"] == "error" and "not pinned by digest" in result["error"]
+    assert (
+        result["verdict"] == "error"
+        and "is not name[:tag]@sha256:<64 hex>, a digest" in result["error"]
+    )
 
 
 def test_no_re_run_once_the_candidate_did_not_finish():
-    runs = pass_runs(1, 3, candidate={"finished": False, "errors": {THREE_HOP: {"timeouts": 30, "failures": 0}}})
-    runs[1].errors["single_edge_write"] = {"timeouts": 1, "failures": 0}  # one run only: would ask for a re-run
+    runs = pass_runs(
+        1, 3, candidate={"finished": False, "errors": {THREE_HOP: {"timeouts": 30, "failures": 0}}}
+    )
+    runs[1].errors["single_edge_write"] = {
+        "timeouts": 1,
+        "failures": 0,
+    }  # one run only: would ask for a re-run
     analysis = analyse(runs)
     assert not analysis.rerun
     assert any("no re-run" in note for note in analysis.notes)
-    assert (f"{pokec.hop_label(THREE_HOP)} [5% writes]", "completed") in statuses(analysis, "regression")
+    assert (f"{pokec.hop_label(THREE_HOP)} [5% writes]", "completed") in statuses(
+        analysis, "regression"
+    )
 
 
 def test_a_freeze_with_no_baseline_to_compare_is_not_a_regression():
@@ -600,30 +652,23 @@ def test_a_freeze_with_no_baseline_to_compare_is_not_a_regression():
 
 def test_sigterm_during_a_checkpoint_keeps_the_findings(tmp_path):
     check = make_check(tmp_path)
-    hung = {"finished": False, "ping": 5100.0, "errors": {THREE_HOP: {"timeouts": 30, "failures": 0}}}
+    hung = {
+        "finished": False,
+        "ping": 5100.0,
+        "errors": {THREE_HOP: {"timeouts": 30, "failures": 0}},
+    }
     check.runs = pass_runs(1, 3, candidate=hung)
-    real = check.result
+    real = check.build
 
-    def interrupted(unfinished=None):
-        raise pokec.Stopped("signal 15")
+    def interrupted(error=None):
+        raise kit.Stopped("signal 15")
 
-    check.result = interrupted
-    with pytest.raises(pokec.Stopped):  # not swallowed into a bare error result
+    check.build = interrupted
+    with pytest.raises(kit.Stopped):  # the checkpoint does not swallow the stop
         check.checkpoint("after a run")
-    check.result = real
-    check.error = "stopped by a signal"
-    result = check.write_result()
+    check.build = real
+    result = check.build("stopped by a signal")
     assert result["verdict"] == "regression" and result["findings"]
-
-
-def test_a_relative_out_is_made_absolute(tmp_path, monkeypatch):
-    # _perf-vm.yml passes `--out out`; the benchmark runs from other directories, and a
-    # relative query-file path made `generate-queries` fail with NotFound on the first VM leg.
-    monkeypatch.chdir(tmp_path)
-    check = make_check(tmp_path)
-    check.args.out = "out"
-    check = pokec.Check(check.args)
-    assert check.out == tmp_path / "out" and check.raw.is_absolute()
 
 
 # --- review round 2 (PR #4000 bot threads), kept as tests --------------------------
@@ -633,10 +678,16 @@ V1 = "CYPHER id = 7 MATCH (n:User {id: $id}) RETURN n"
 
 def test_a_shared_query_text_keeps_both_types_and_is_split_from_metrics(tmp_path):
     path = tmp_path / "q.jsonl"
-    lines = [{"size": 3, "catalog": []},
-             {"q_name": "vertex_on_label_property", "q_type": "Read", "cypher": V1},
-             {"q_name": "vertex_on_label_property_index", "q_type": "Read", "cypher": V1},
-             {"q_name": "single_vertex_read", "q_type": "Read", "cypher": "CYPHER id = 8 MATCH (n) RETURN n"}]
+    lines = [
+        {"size": 3, "catalog": []},
+        {"q_name": "vertex_on_label_property", "q_type": "Read", "cypher": V1},
+        {"q_name": "vertex_on_label_property_index", "q_type": "Read", "cypher": V1},
+        {
+            "q_name": "single_vertex_read",
+            "q_type": "Read",
+            "cypher": "CYPHER id = 8 MATCH (n) RETURN n",
+        },
+    ]
     path.write_text("".join(json.dumps(line) + "\n" for line in lines))
     qfile = pokec.read_query_file(path)
     shared = "vertex_on_label_property|vertex_on_label_property_index"
@@ -658,19 +709,28 @@ def test_a_shared_query_text_keeps_both_types_and_is_split_from_metrics(tmp_path
 
 
 def test_a_re_run_without_a_value_for_the_row_is_not_a_pass(tmp_path):
-    slow = {"workload": "read", "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}}}
+    slow = {
+        "workload": "read",
+        "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}},
+    }
     read = {"workload": "read"}
-    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(2, 2, candidate=slow, baseline=read)
+    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(
+        2, 2, candidate=slow, baseline=read
+    )
     for run in runs:
         if run.pass_no == 2 and run.side == "baseline":
             run.per_query.pop("single_vertex_read")  # every request of it failed in the re-run
     analysis = analyse(runs, rerun_done={("medium", "read")})
-    row = next(r for r in analysis.rows if r["name"] == "single_vertex_read [read-only]" and r["metric"] == "p99_ms")
+    row = next(
+        r
+        for r in analysis.rows
+        if r["name"] == "single_vertex_read [read-only]" and r["metric"] == "p99_ms"
+    )
     assert row["first_pass"] == 1 and row["re_run"] is None
     assert any("never re-measured" in u for u in analysis.unmeasured)
     check = make_check(tmp_path)
     check.runs = runs
-    assert check.result()["verdict"] == "error"
+    assert check.build()["verdict"] == "error"
 
 
 def test_requests_the_benchmark_never_ended_are_caught():
@@ -681,7 +741,9 @@ def test_requests_the_benchmark_never_ended_are_caught():
     )
     assert metrics["executed"] == {"single_vertex_read": 199, "single_edge_write": 50}
     assert pokec.missing_requests(metrics["executed"], {"single_edge_write": 50}) is None
-    missing = pokec.missing_requests(metrics["executed"], {"single_vertex_read": 200, "single_edge_write": 50})
+    missing = pokec.missing_requests(
+        metrics["executed"], {"single_vertex_read": 200, "single_edge_write": 50}
+    )
     assert missing and "single_vertex_read 199 of 200" in missing
 
 
@@ -706,7 +768,11 @@ def test_one_timeout_on_each_side_still_asks_for_a_re_run():
 
 def test_a_finished_run_with_no_ping_answered_is_unmeasured():
     runs = pass_runs(1, 3)
-    runs[1].ping = {"ping_max_ms": None, "ping_answered": 0, "ping_errors": 140}  # candidate rep 1: every PING failed
+    runs[1].ping = {
+        "ping_max_ms": None,
+        "ping_answered": 0,
+        "ping_errors": 140,
+    }  # candidate rep 1: every PING failed
     analysis = analyse(runs, rerun_done={("medium", "write5")})
     assert any("no PING answered during a finished candidate run" in u for u in analysis.unmeasured)
 
@@ -715,10 +781,10 @@ def test_development_options_must_schedule_runs(tmp_path):
     base = ["--candidate", CAND, "--baseline", BASE, "--out", str(tmp_path), "--mode", "nightly"]
     for bad in (["--reps", "0"], ["--reps", "-1"], ["--workloads", "typo"], ["--workloads", ","]):
         with pytest.raises(SystemExit):
-            pokec.parse_args(base + bad)
-    assert pokec.parse_args(base + ["--workloads", "read,write5", "--reps", "1"]).reps == 1
+            pokec.parse_args([*base, *bad])
+    assert pokec.parse_args([*base, "--workloads", "read,write5", "--reps", "1"]).reps == 1
     check = make_check(tmp_path)  # and a result with no run at all is never a pass
-    result = check.result()
+    result = check.build()
     assert result["verdict"] == "error" and "no benchmark run was made" in result["error"]
 
 
@@ -730,7 +796,9 @@ def test_the_timeout_test_needs_the_requested_timeout_to_apply():
     assert "outside" in pokec.timeout_problem({**ok, "elapsed_s": 5.01}, 5000)
     assert "outside" in pokec.timeout_problem({**ok, "elapsed_s": 1.002}, 1000)
     assert "inside" in pokec.timeout_problem(ok, 2500)
-    assert "ended" in pokec.timeout_problem({"timed_out": False, "elapsed_s": 0.012, "reply": "[[1]]"}, 1000)
+    assert "ended" in pokec.timeout_problem(
+        {"timed_out": False, "elapsed_s": 0.012, "reply": "[[1]]"}, 1000
+    )
 
 
 def test_a_failed_benchmark_start_still_stops_the_probe(tmp_path, monkeypatch):
@@ -757,46 +825,9 @@ def test_only_this_run_s_files_are_artifacts(tmp_path):
     (out / "raw").mkdir(parents=True)
     (out / "raw" / "queries-large-read.jsonl").write_text("an earlier run's")
     check = make_check(tmp_path)
-    artifacts = check.result()["artifacts"]
+    artifacts = check.build()["artifacts"]
     assert "raw/queries-large-read.jsonl" not in artifacts
     assert {"raw/check.log", "raw/rows.csv", "raw/runs.csv"} <= set(artifacts)
-
-
-def test_a_signal_during_the_first_checkpoint_still_writes_the_result(tmp_path, monkeypatch):
-    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
-    removed = []
-    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: removed.append(True))
-    real = pokec.Check.checkpoint
-
-    def checkpoint(self, where):
-        if where == "at start":
-            raise pokec.Stopped("signal 15")
-        real(self, where)
-
-    monkeypatch.setattr(pokec.Check, "checkpoint", checkpoint)
-    out = tmp_path / "out"
-    assert pokec.main(["--candidate", CAND, "--baseline", BASE, "--out", str(out), "--mode", "nightly",
-                       "--tools-dir", str(tmp_path / "tools")]) == 0
-    result = json.loads((out / "result.json").read_text())
-    assert result["verdict"] == "error" and "stopped by a signal" in result["error"] and removed
-
-
-def test_containers_are_removed_even_when_the_final_write_fails(tmp_path, monkeypatch):
-    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
-    removed = []
-    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: removed.append(True))
-    monkeypatch.setattr(pokec.Check, "main", lambda self: None)
-
-    def write_result(self, unfinished=None):
-        if unfinished is None:
-            raise OSError(28, "No space left on device")
-        return {}
-
-    monkeypatch.setattr(pokec.Check, "write_result", write_result)
-    with pytest.raises(OSError):
-        pokec.main(["--candidate", CAND, "--baseline", BASE, "--out", str(tmp_path / "out"), "--mode", "nightly",
-                    "--tools-dir", str(tmp_path / "tools")])
-    assert removed
 
 
 # --- what _run_on reads after the benchmark (no Docker: the files are written here) ---
@@ -807,31 +838,54 @@ V2 = "CYPHER id = 9 MATCH (n:User) RETURN n LIMIT 1"
 def bench_output(tmp_path, *, executed, rates, log_lines):
     """A query file and the run folder the benchmark would leave behind."""
     qpath = tmp_path / "q.jsonl"
-    rows = [{"size": 3, "catalog": []},
-            {"q_name": "vertex_on_label_property", "q_type": "Read", "cypher": V1},
-            {"q_name": "vertex_on_label_property_index", "q_type": "Read", "cypher": V1},
-            {"q_name": "single_vertex_read", "q_type": "Read", "cypher": V2}]
+    rows = [
+        {"size": 3, "catalog": []},
+        {"q_name": "vertex_on_label_property", "q_type": "Read", "cypher": V1},
+        {"q_name": "vertex_on_label_property_index", "q_type": "Read", "cypher": V1},
+        {"q_name": "single_vertex_read", "q_type": "Read", "cypher": V2},
+    ]
     qpath.write_text("".join(json.dumps(r) + "\n" for r in rows))
     folder = tmp_path / "run"
     (folder / "bench" / "falkor").mkdir(parents=True)
-    (folder / "run.log").write_text("".join(
-        f"2026-11-24T09:31:42Z ERROR benchmark::falkor::falkor_driver: Error executing query: {q}, the error is: {e}\n"
-        for q, e in log_lines))
-    prom = [f'operations_total{{name="{q}",spawn_id="0",vendor="falkor"}} {n}' for q, n in executed.items()]
-    prom += [f'benchmark_query_failure_rate_pct{{query="{q}",vendor="falkor"}} {r}' for q, r in rates.items()]
-    prom += [f'falkordb_query_latency_pct_us{{pct="{p}",query="{q}"}} 500' for q in executed for p in ("50", "95", "99")]
+    (folder / "run.log").write_text(
+        "".join(
+            f"2026-11-24T09:31:42Z ERROR benchmark::falkor::falkor_driver: Error executing query: {q}, the error is: {e}\n"
+            for q, e in log_lines
+        )
+    )
+    prom = [
+        f'operations_total{{name="{q}",spawn_id="0",vendor="falkor"}} {n}'
+        for q, n in executed.items()
+    ]
+    prom += [
+        f'benchmark_query_failure_rate_pct{{query="{q}",vendor="falkor"}} {r}'
+        for q, r in rates.items()
+    ]
+    prom += [
+        f'falkordb_query_latency_pct_us{{pct="{p}",query="{q}"}} 500'
+        for q in executed
+        for p in ("50", "95", "99")
+    ]
     prom += [f"falkordb_latency_{p}_us 500" for p in ("p50", "p95", "p99")]
     (folder / "bench" / "falkor" / "metrics.prom").write_text("\n".join(prom) + "\n")
     (folder / "bench" / "falkor" / "meta.json").write_text(json.dumps({"elapsed_ms": 25000}))
     return pokec.read_query_file(qpath), folder
 
 
-ALL_ENDED = {"vertex_on_label_property": 1, "vertex_on_label_property_index": 1, "single_vertex_read": 1}
+ALL_ENDED = {
+    "vertex_on_label_property": 1,
+    "vertex_on_label_property_index": 1,
+    "single_vertex_read": 1,
+}
 
 
 def test_a_finished_run_splits_a_shared_text_failure(tmp_path):
-    qfile, folder = bench_output(tmp_path, executed=ALL_ENDED, rates={"vertex_on_label_property_index": 100.0},
-                                 log_lines=[(V1, "Elapsed(())")])
+    qfile, folder = bench_output(
+        tmp_path,
+        executed=ALL_ENDED,
+        rates={"vertex_on_label_property_index": 100.0},
+        log_lines=[(V1, "Elapsed(())")],
+    )
     check = make_check(tmp_path)
     run = pokec.Run("medium", "write5", "candidate", 1, 1)  # as _run_on hands it over
     check._read_output(run, qfile, folder, 0)
@@ -841,8 +895,9 @@ def test_a_finished_run_splits_a_shared_text_failure(tmp_path):
 
 def test_a_run_that_ended_too_few_requests_did_not_finish(tmp_path):
     # single_vertex_read: 1 generated, 0 ended; the request that never ended was not logged either
-    qfile, folder = bench_output(tmp_path, executed={**ALL_ENDED, "single_vertex_read": 0}, rates={},
-                                 log_lines=[])
+    qfile, folder = bench_output(
+        tmp_path, executed={**ALL_ENDED, "single_vertex_read": 0}, rates={}, log_lines=[]
+    )
     check = make_check(tmp_path)
     run = pokec.Run("medium", "write5", "candidate", 1, 1)  # as _run_on hands it over
     check._read_output(run, qfile, folder, 0)
@@ -853,9 +908,17 @@ def test_a_short_run_is_not_finished_before_the_log_cross_check(tmp_path):
     # Rates are over the requests that ended (1 of 2 failed = 50 %); against the 2 generated
     # that reads 1, the log has 1: fine. With 1 of 1 ended and failed (100 %) the rate times
     # the generated 2 reads 2, the log 1: the cross-check would call it a parser error.
-    rows_q = {"vertex_on_label_property": 1, "vertex_on_label_property_index": 1, "single_vertex_read": 1}
-    qfile, folder = bench_output(tmp_path, executed={**rows_q, "single_vertex_read": 0},
-                                 rates={"vertex_on_label_property": 100.0}, log_lines=[])
+    rows_q = {
+        "vertex_on_label_property": 1,
+        "vertex_on_label_property_index": 1,
+        "single_vertex_read": 1,
+    }
+    qfile, folder = bench_output(
+        tmp_path,
+        executed={**rows_q, "single_vertex_read": 0},
+        rates={"vertex_on_label_property": 100.0},
+        log_lines=[],
+    )
     qfile.counts["vertex_on_label_property"] = 2  # 2 generated, 1 ended (and failed), 1 lost
     check = make_check(tmp_path)
     run = pokec.Run("medium", "write5", "candidate", 1, 1)  # as _run_on hands it over
@@ -876,18 +939,22 @@ def test_the_probe_stops_even_when_its_csv_cannot_be_written(tmp_path):
 
 def test_the_threshold_is_strict_on_ratio_and_floor():
     # exactly 1.3x, or exactly the floor's delta, does not cross
-    assert pokec.crossed("p50_ms", 13.0, 10.0, "higher_is_worse") == 0       # ratio 1.3, delta 3 > 1
-    assert pokec.crossed("p99_ms", 65.0, 50.0, "higher_is_worse") == 0       # ratio 1.3, delta 15 = floor
-    assert pokec.crossed("p99_ms", 66.0, 50.0, "higher_is_worse") == 1       # 1.32x, +16 ms
-    assert pokec.crossed("p99_ms", 40.0, 25.0, "higher_is_worse") == 0       # 1.6x, +15 ms = floor
+    assert pokec.crossed("p50_ms", 13.0, 10.0, "higher_is_worse") == 0  # ratio 1.3, delta 3 > 1
+    assert (
+        pokec.crossed("p99_ms", 65.0, 50.0, "higher_is_worse") == 0
+    )  # ratio 1.3, delta 15 = floor
+    assert pokec.crossed("p99_ms", 66.0, 50.0, "higher_is_worse") == 1  # 1.32x, +16 ms
+    assert pokec.crossed("p99_ms", 40.0, 25.0, "higher_is_worse") == 0  # 1.6x, +15 ms = floor
     assert pokec.crossed("throughput", 100.0, 130.0, "lower_is_worse") == 0  # exactly 1/1.3
     assert pokec.crossed("throughput", 100.0, 131.0, "lower_is_worse") == 1
 
 
 def test_findings_carry_no_ok_rows(tmp_path):
     check = make_check(tmp_path)
-    check.runs = pass_runs(1, 3) + pass_runs(1, 3, baseline={"workload": "read"}, candidate={"workload": "read"})
-    result = check.result()
+    check.runs = pass_runs(1, 3) + pass_runs(
+        1, 3, baseline={"workload": "read"}, candidate={"workload": "read"}
+    )
+    result = check.build()
     assert result["verdict"] == "pass" and result["findings"] == []
     rows = (Path(check.out) / "raw" / "rows.csv").read_text()
     assert "benchmark run finished [5% writes],completed,1,1" in rows  # the ok rows live here
@@ -900,10 +967,16 @@ def test_mixed_kinds_on_a_shared_text_are_not_guessed():
     shared = "vertex_on_label_property|vertex_on_label_property_index"
     errors = {shared: {"timeouts": 1, "failures": 1}}
     counts = {"vertex_on_label_property": 1, "vertex_on_label_property_index": 1}
-    rates = {"vertex_on_label_property": {"failure": 100.0}, "vertex_on_label_property_index": {"failure": 100.0}}
+    rates = {
+        "vertex_on_label_property": {"failure": 100.0},
+        "vertex_on_label_property_index": {"failure": 100.0},
+    }
     assert "cannot be told apart" in pokec.attribute_ambiguous(errors, counts, rates)[1]
     # one kind, or one type to give it to: still placed
-    assert pokec.attribute_ambiguous({shared: {"timeouts": 2, "failures": 0}}, counts, rates)[1] is None
+    assert (
+        pokec.attribute_ambiguous({shared: {"timeouts": 2, "failures": 0}}, counts, rates)[1]
+        is None
+    )
 
 
 def test_a_finished_run_needs_the_percentiles_of_what_succeeded():
@@ -919,24 +992,37 @@ def test_a_finished_run_needs_the_percentiles_of_what_succeeded():
 
 
 def test_an_empty_overall_histogram_is_missing_not_zero():
-    metrics = pokec.parse_metrics("falkordb_latency_p50_us 0\nfalkordb_latency_p95_us 0\nfalkordb_latency_p99_us 0\n")
+    metrics = pokec.parse_metrics(
+        "falkordb_latency_p50_us 0\nfalkordb_latency_p95_us 0\nfalkordb_latency_p99_us 0\n"
+    )
     assert metrics["overall"] == {}
     slow = {"workload": "read", "scale": 2.0}
     read = {"workload": "read"}
-    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(2, 2, candidate=slow, baseline=read)
+    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(
+        2, 2, candidate=slow, baseline=read
+    )
     for run in runs:
         if run.pass_no == 2 and run.side == "baseline":
             run.overall = {}  # every baseline request of the re-run failed
     analysis = analyse(runs, rerun_done={("medium", "read")})
-    row = next(r for r in analysis.rows if r["name"] == "all queries [read-only]" and r["metric"] == "p99_ms")
+    row = next(
+        r
+        for r in analysis.rows
+        if r["name"] == "all queries [read-only]" and r["metric"] == "p99_ms"
+    )
     assert row["first_pass"] == 1 and row["re_run"] is None
     assert any("all queries [read-only] p99_ms" in u for u in analysis.unmeasured)
 
 
 def test_an_interrupted_re_run_does_not_confirm():
-    slow = {"workload": "read", "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}}}
+    slow = {
+        "workload": "read",
+        "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}},
+    }
     read = {"workload": "read"}
-    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(2, 1, candidate=slow, baseline=read)  # 1 of 2
+    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(
+        2, 1, candidate=slow, baseline=read
+    )  # 1 of 2
     analysis = analyse(runs, rerun_done={("medium", "read")})
     assert not statuses(analysis, "regression")
     assert any("never re-measured" in u for u in analysis.unmeasured)
@@ -944,7 +1030,10 @@ def test_an_interrupted_re_run_does_not_confirm():
 
 def test_a_pending_ping_is_not_an_answer():
     runs = pass_runs(1, 3)
-    runs[1].ping = {"ping_max_ms": 50.0, "ping_answered": 0}  # every PING failed; the last was 50 ms in flight
+    runs[1].ping = {
+        "ping_max_ms": 50.0,
+        "ping_answered": 0,
+    }  # every PING failed; the last was 50 ms in flight
     analysis = analyse(runs, rerun_done={("medium", "write5")})
     assert any("no PING answered" in u for u in analysis.unmeasured)
 
@@ -967,8 +1056,13 @@ def test_the_log_never_raises(tmp_path, capsys):
 def test_a_finished_run_without_a_succeeded_query_s_percentiles_is_rejected(tmp_path):
     qfile, folder = bench_output(tmp_path, executed=ALL_ENDED, rates={}, log_lines=[])
     prom = folder / "bench" / "falkor" / "metrics.prom"
-    prom.write_text("".join(line + "\n" for line in prom.read_text().splitlines()
-                            if 'query="single_vertex_read"' not in line or "operations_total" in line))
+    prom.write_text(
+        "".join(
+            line + "\n"
+            for line in prom.read_text().splitlines()
+            if 'query="single_vertex_read"' not in line or "operations_total" in line
+        )
+    )
     check = make_check(tmp_path)
     run = pokec.Run("medium", "write5", "candidate", 1, 1)
     with pytest.raises(pokec.SetupError, match="single_vertex_read"):

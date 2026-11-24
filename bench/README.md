@@ -551,6 +551,7 @@ about 2.
 | `src/falkorbench/cli.py` | the `bench` command |
 | `src/falkorbench/contract.py` | the nightly perf checks' `result.json` / `nightly.json` format and its checker (`bench validate`) |
 | `src/falkorbench/kit.py` | what the nightly perf checks share: flags, `result.json`, the threshold test, docker |
+| `src/falkorbench/pokec/` | `bench pokec`, the nightly Pokec check (FalkorDB/benchmark under concurrent writes); its README is there |
 | `src/falkorbench/nightly/` | `bench nightly`: the night's report (Chat line and run page) and the missed-run alarm |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |

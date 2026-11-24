@@ -1,38 +1,43 @@
-#!/usr/bin/env python3
-"""Pokec check: FalkorDB/benchmark on Pokec, candidate against baseline (tests/perf/pokec/README.md).
+"""The pokec check: FalkorDB/benchmark on Pokec, candidate against baseline (README.md here).
 
-    pokec.py --candidate <image@sha256:…> --baseline <image@sha256:…> --out <dir> \\
-             --mode <queue|nightly|long> [--candidate-label …] [--baseline-label …] \\
-             [--candidate-commit …] [--baseline-commit …]
+    bench pokec --candidate <image@sha256:…> --baseline <image@sha256:…> --out <dir> \\
+                --mode <queue|nightly|long> [--candidate-label …] [--baseline-label …] \\
+                [--candidate-commit …] [--baseline-commit …]
 
-Standard library only; run it with `python3 -I`.
+The contract plumbing, signals and docker calls are falkorbench.kit's; this module
+measures (FalkorDB/benchmark under a PING probe) and judges. Standard library only.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import gzip
 import hashlib
 import json
 import os
-import platform
 import re
 import shutil
-import signal
 import socket
 import statistics
 import subprocess
 import sys
 import threading
 import time
-import traceback
 import urllib.request
-from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections import Counter
+from collections import defaultdict
+from collections.abc import Callable
+from collections.abc import Iterable
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import UTC
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any
+
+from falkorbench import kit
 
 CHECK = "pokec"
 
@@ -118,7 +123,12 @@ WORKLOADS = (
 # cores turned a 10k-query run into ten minutes of contention (main vs itself, read-only:
 # 589 s, 354 requests abandoned at the client's guard, harmonic centrality p50 4.1 s).
 # 6.0.x and C v4.22 lack some of them anyway.
-ALGORITHM_FLAGS = ("--enable-algo-pagerank", "--enable-algo-max-flow", "--enable-algo-msf", "--enable-algo-harmonic")
+ALGORITHM_FLAGS = (
+    "--enable-algo-pagerank",
+    "--enable-algo-max-flow",
+    "--enable-algo-msf",
+    "--enable-algo-harmonic",
+)
 
 # --- thresholds --------------------------------------------------------------
 
@@ -159,15 +169,6 @@ MODES = {
     "long": Mode(("medium", "large"), reps=3, rerun_reps=2, latency_gates=True),
 }
 
-# tests/perf/validate.py's IMAGE_RE and COMMIT_RE, used with fullmatch as it does: a looser
-# rule here (uppercase repo, trailing newline) would write a result the validator rejects.
-_PATH_PART = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
-_HOST_PART = r"(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
-IMAGE_RE = re.compile(
-    rf"(?:(?:localhost|{_HOST_PART}(?:\.{_HOST_PART})+)(?::[0-9]+)?/|{_HOST_PART}:[0-9]+/)?"
-    rf"{_PATH_PART}(?:/{_PATH_PART})*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{{0,127}})?@sha256:[0-9a-f]{{64}}"
-)
-COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -175,34 +176,12 @@ class SetupError(Exception):
     """The check could not set up its tools or data: the result is an error."""
 
 
-class Stopped(BaseException):
-    """SIGTERM (the workflow's timeout) arrived. Not an Exception: no broad handler may eat it."""
-
-
 # --- small helpers -----------------------------------------------------------
-
-
-def now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def default_label(image: str) -> str:
-    """`<repo>@<first 12 hex of the digest>`, the contract's label when none is given."""
-    name, _, digest = image.partition("@sha256:")
-    if name.rfind(":") > name.rfind("/"):
-        name = name[: name.rfind(":")]
-    return f"{name}@{digest[:12]}"
 
 
 def median(values: Iterable[float]) -> float | None:
     data = [v for v in values if v is not None]
     return statistics.median(data) if data else None
-
-
-def ratio(candidate: float | None, baseline: float | None) -> float | None:
-    if candidate is None or baseline is None or baseline == 0:
-        return None
-    return round(candidate / baseline, 4)
 
 
 def rounded(value: float | None, digits: int = 3) -> float | None:
@@ -217,7 +196,7 @@ class Log:
         self.file = path.open("a", encoding="utf-8")
 
     def __call__(self, message: str) -> None:
-        line = f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {message}"
+        line = f"[{datetime.now(UTC).strftime('%H:%M:%S')}] {message}"
         print(line, flush=True)
         try:
             self.file.write(line + "\n")
@@ -271,20 +250,16 @@ class Resp:
         self.buf = b""
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(OSError):  # best effort: the socket is being dropped either way
             self.sock.close()
-        except OSError:
-            pass  # best effort: the socket is being dropped either way
 
     def shutdown(self) -> None:
         """Close from another thread: shutdown() wakes a recv() blocked on this socket."""
-        try:
+        with contextlib.suppress(OSError):  # already closed or never connected
             self.sock.shutdown(socket.SHUT_RDWR)
-        except OSError:
-            pass  # already closed or never connected
         self.close()
 
-    def __enter__(self) -> "Resp":
+    def __enter__(self) -> Resp:
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -345,8 +320,9 @@ def resp_call(port: int, *words: str | int, timeout: float = 30.0) -> Any:
     return reply
 
 
-def query_rows(port: int, query: str, *, graph: str = GRAPH, read_only: bool = True,
-               timeout: float = 120.0) -> list[list[Any]]:
+def query_rows(
+    port: int, query: str, *, graph: str = GRAPH, read_only: bool = True, timeout: float = 120.0
+) -> list[list[Any]]:
     """The rows of a (non-compact) GRAPH.QUERY reply. Scalars only: a list comes back as text."""
     command = "GRAPH.RO_QUERY" if read_only else "GRAPH.QUERY"
     reply = resp_call(port, command, graph, query, timeout=timeout)
@@ -403,7 +379,7 @@ class PingProbe:
         while True:
             try:
                 return conn.read()
-            except socket.timeout:
+            except TimeoutError:
                 if self._stop.is_set():
                     return None  # stop() has recorded this PING
                 if time.monotonic() - sent >= PING_TIMEOUT_S:
@@ -428,7 +404,7 @@ class PingProbe:
                 ms = (time.monotonic() - sent) * 1000
                 if not self._record((epoch, ms, "ok" if reply == "PONG" else "error")):
                     break
-            except socket.timeout:
+            except TimeoutError:
                 self._record((epoch, PING_TIMEOUT_S * 1000, "timeout"))
                 conn.close() if conn else None
                 conn = None
@@ -482,108 +458,13 @@ class PingProbe:
 # --- docker ------------------------------------------------------------------
 
 
-def free_port() -> int:
-    while True:
-        with socket.socket() as sock:
-            sock.bind(("127.0.0.1", 0))
-            port = sock.getsockname()[1]
-        if port != 6379:
-            return port
-
-
-def image_env(image: str, log: Log) -> dict[str, str]:
-    proc = run_cmd(["docker", "image", "inspect", "--format", "{{json .Config.Env}}", image], log)
-    env = {}
-    for item in json.loads(proc.stdout.strip() or "[]") or []:
-        key, _, value = item.partition("=")
-        env[key] = value
-    return env
-
-
-@dataclass
-class Server:
-    name: str
-    image: str
-    port: int
-
-
-class Docker:
-    """Starts and removes this check's server containers (all labelled with run_id)."""
-
-    def __init__(self, log: Log, run_id: str, server_cpus: str | None) -> None:
-        self.log = log
-        self.run_id = run_id
-        self.server_cpus = server_cpus
-        self.count = 0
-        self.args_cache: dict[str, str] = {}
-
-    def server_args(self, image: str) -> str:
-        """The image's own FALKORDB_ARGS plus THREAD_COUNT: same thread count on every side."""
-        if image not in self.args_cache:
-            own = image_env(image, self.log).get("FALKORDB_ARGS", "")
-            own = re.sub(r"\bTHREAD_COUNT\s+\S+", "", own).strip()
-            self.args_cache[image] = f"{own} THREAD_COUNT {THREAD_COUNT}".strip()
-        return self.args_cache[image]
-
-    def start(self, image: str, tag: str) -> Server:
-        self.count += 1
-        name = f"perf-pokec-{self.run_id}-{self.count}-{tag}"
-        port = free_port()
-        cmd = ["docker", "run", "-d", "--name", name, "--label", f"perf-pokec={self.run_id}"]
-        if self.server_cpus:
-            cmd += ["--cpuset-cpus", self.server_cpus]
-        cmd += ["-p", f"127.0.0.1:{port}:6379", "-e", f"FALKORDB_ARGS={self.server_args(image)}"]
-        cmd.append(image)
-        run_cmd(cmd, self.log, timeout=300)
-        return Server(name, image, port)
-
-    def running(self, server: Server) -> tuple[bool, str]:
-        try:
-            proc = subprocess.run(
-                ["docker", "inspect", "--format", "{{.State.Running}} {{.State.ExitCode}}", server.name],
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-        except subprocess.TimeoutExpired:
-            return True, "docker inspect did not answer"
-        state = proc.stdout.strip()
-        return state.startswith("true"), state
-
-    def logs(self, server: Server, path: Path) -> None:
-        with path.open("wb") as sink:
-            subprocess.run(
-                ["docker", "logs", server.name], stdout=sink, stderr=subprocess.STDOUT, timeout=60
-            )
-
-    def remove(self, server: Server) -> None:
-        try:
-            subprocess.run(["docker", "rm", "-f", server.name], capture_output=True, timeout=120)
-        except subprocess.TimeoutExpired:
-            pass  # remove_all() tries again at the end
-
-    def remove_all(self) -> None:
-        proc = subprocess.run(
-            ["docker", "ps", "-aq", "--filter", f"label=perf-pokec={self.run_id}"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        ids = proc.stdout.split()
-        if ids:
-            subprocess.run(["docker", "rm", "-f", *ids], capture_output=True, timeout=300)
-
-
-def wait_ping(port: int, seconds: float) -> bool:
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        try:
-            if resp_call(port, "PING", timeout=5) == "PONG":
-                return True
-        except (OSError, RespError):
-            pass  # not up yet (refused, reset or LOADING): try again until the deadline
-        time.sleep(0.5)
-    return False
+def server_env(image: str, cache: dict[str, str]) -> dict[str, str]:
+    """FALKORDB_ARGS: the image's own plus THREAD_COUNT, the same thread count on every side."""
+    if image not in cache:
+        own = kit.image_env(image).get("FALKORDB_ARGS", "")
+        own = re.sub(r"\bTHREAD_COUNT\s+\S+", "", own).strip()
+        cache[image] = f"{own} THREAD_COUNT {THREAD_COUNT}".strip()
+    return {"FALKORDB_ARGS": cache[image]}
 
 
 # --- tools -------------------------------------------------------------------
@@ -602,7 +483,10 @@ def privileged() -> list[str] | None:
         return None
     if os.geteuid() == 0:
         return []
-    if shutil.which("sudo") and subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0:
+    if (
+        shutil.which("sudo")
+        and subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
+    ):
         return ["sudo", "-n"]
     return None
 
@@ -618,10 +502,10 @@ def ensure_build_packages(log: Log, setup_log: Path) -> None:
             f"install {' '.join(BUILD_PACKAGES)} (no apt-get as root)"
         )
     env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
-    apt = prefix + ["apt-get", "-q", "-o", "DPkg::Lock::Timeout=300"]
-    run_cmd(apt + ["update"], log, env=env, timeout=600, output=setup_log)
+    apt = [*prefix, "apt-get", "-q", "-o", "DPkg::Lock::Timeout=300"]
+    run_cmd([*apt, "update"], log, env=env, timeout=600, output=setup_log)
     run_cmd(
-        apt + ["install", "-y", "--no-install-recommends", *BUILD_PACKAGES],
+        [*apt, "install", "-y", "--no-install-recommends", *BUILD_PACKAGES],
         log,
         env=env,
         timeout=900,
@@ -637,7 +521,16 @@ def ensure_rust(tools_dir: Path, log: Log, setup_log: Path) -> Path:
         with urllib.request.urlopen(RUSTUP_URL, timeout=60) as response:
             script.write_bytes(response.read())
         run_cmd(
-            ["sh", str(script), "-y", "--profile", "minimal", "--default-toolchain", "none", "--no-modify-path"],
+            [
+                "sh",
+                str(script),
+                "-y",
+                "--profile",
+                "minimal",
+                "--default-toolchain",
+                "none",
+                "--no-modify-path",
+            ],
             log,
             timeout=600,
             output=setup_log,
@@ -655,15 +548,24 @@ def ensure_rust(tools_dir: Path, log: Log, setup_log: Path) -> Path:
 def fetch_commit(repo: str, commit: str, dest: Path, log: Log, setup_log: Path) -> None:
     head = dest / ".git" / "HEAD"
     if dest.exists():
-        proc = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True, text=True)
+        proc = subprocess.run(
+            ["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True, text=True
+        )
         if proc.returncode == 0 and proc.stdout.strip() == commit:
             return
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     run_cmd(["git", "init", "-q", str(dest)], log, output=setup_log)
-    run_cmd(["git", "-C", str(dest), "fetch", "-q", "--depth", "1", repo, commit], log, timeout=600, output=setup_log)
+    run_cmd(
+        ["git", "-C", str(dest), "fetch", "-q", "--depth", "1", repo, commit],
+        log,
+        timeout=600,
+        output=setup_log,
+    )
     run_cmd(["git", "-C", str(dest), "checkout", "-q", "FETCH_HEAD"], log, output=setup_log)
-    proc = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True, text=True)
+    proc = subprocess.run(
+        ["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True, text=True
+    )
     if proc.stdout.strip() != commit or not head.exists():
         raise SetupError(f"{repo} checked out {proc.stdout.strip()!r}, not {commit}")
 
@@ -688,7 +590,9 @@ def build_benchmark(tools_dir: Path, log: Log, setup_log: Path) -> Path:
         timeout=3600,
         output=setup_log,
     )
-    log(f"built benchmark {BENCHMARK_COMMIT[:7]} with Rust {RUST_TOOLCHAIN} in {time.monotonic() - started:.0f} s")
+    log(
+        f"built benchmark {BENCHMARK_COMMIT[:7]} with Rust {RUST_TOOLCHAIN} in {time.monotonic() - started:.0f} s"
+    )
     if not binary.exists():
         raise SetupError(f"cargo build left no {binary}")
     stamp.write_text(BENCHMARK_COMMIT + "\n")
@@ -700,8 +604,15 @@ def setup_loader(tools_dir: Path, log: Log, setup_log: Path) -> Path:
     fetch_commit(LOADER_REPO, LOADER_COMMIT, source, log, setup_log)
     uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
     if not Path(uv).exists():
-        raise SetupError("uv not found: the bulk loader runs from its own uv.lock (uv sync --frozen)")
-    run_cmd([uv, "sync", "--frozen", "--no-dev", "--project", str(source)], log, timeout=900, output=setup_log)
+        raise SetupError(
+            "uv not found: the bulk loader runs from its own uv.lock (uv sync --frozen)"
+        )
+    run_cmd(
+        [uv, "sync", "--frozen", "--no-dev", "--project", str(source)],
+        log,
+        timeout=900,
+        output=setup_log,
+    )
     python = source / ".venv" / "bin" / "python"
     if not python.exists():
         raise SetupError(f"uv sync left no {python}")
@@ -709,7 +620,9 @@ def setup_loader(tools_dir: Path, log: Log, setup_log: Path) -> Path:
 
 
 USER_RE = re.compile(r"^CREATE \(:User \{(.*)\}\);$")
-EDGE_RE = re.compile(r"^MATCH \(n:User \{id: (\d+)\}\), \(m:User \{id: (\d+)\}\) CREATE \(n\)-\[e: Friend\]->\(m\);$")
+EDGE_RE = re.compile(
+    r"^MATCH \(n:User \{id: (\d+)\}\), \(m:User \{id: (\d+)\}\) CREATE \(n\)-\[e: Friend\]->\(m\);$"
+)
 
 
 def convert_dataset(source: Path, users: Path, friends: Path) -> tuple[int, int]:
@@ -720,9 +633,11 @@ def convert_dataset(source: Path, users: Path, friends: Path) -> tuple[int, int]
     """
     opener = gzip.open if source.suffix == ".gz" else open
     node_count = edge_count = 0
-    with opener(source, "rt", encoding="utf-8") as lines, users.open("w", encoding="utf-8") as u, friends.open(
-        "w", encoding="utf-8"
-    ) as f:
+    with (
+        opener(source, "rt", encoding="utf-8") as lines,
+        users.open("w", encoding="utf-8") as u,
+        friends.open("w", encoding="utf-8") as f,
+    ):
         u.write("id,completion_percentage,gender,age\n")
         f.write("src_id,dst_id,bench_capacity\n")
         for raw in lines:
@@ -765,13 +680,21 @@ def setup_dataset(dataset: Dataset, tools_dir: Path, log: Log) -> tuple[Path, Pa
     folder = tools_dir / "datasets" / dataset.name
     folder.mkdir(parents=True, exist_ok=True)
     users, friends, stamp = folder / "User.csv", folder / "FRIEND.csv", folder / "converted-from"
-    if users.exists() and friends.exists() and stamp.exists() and stamp.read_text().strip() == dataset.sha256:
+    if (
+        users.exists()
+        and friends.exists()
+        and stamp.exists()
+        and stamp.read_text().strip() == dataset.sha256
+    ):
         return users, friends
     source = folder / dataset.file
     if not source.exists() or sha256_of(source) != dataset.sha256:
         log(f"downloading {DATA_URL}{dataset.file}")
         partial = source.with_suffix(source.suffix + ".part")
-        with urllib.request.urlopen(DATA_URL + dataset.file, timeout=120) as response, partial.open("wb") as sink:
+        with (
+            urllib.request.urlopen(DATA_URL + dataset.file, timeout=120) as response,
+            partial.open("wb") as sink,
+        ):
             shutil.copyfileobj(response, sink, 1 << 20)
         got = sha256_of(partial)
         if got != dataset.sha256:
@@ -779,7 +702,9 @@ def setup_dataset(dataset: Dataset, tools_dir: Path, log: Log) -> tuple[Path, Pa
         partial.rename(source)
     nodes, edges = convert_dataset(source, users, friends)
     if (nodes, edges) != (dataset.nodes, dataset.edges):
-        raise SetupError(f"{dataset.file} converted to {nodes} nodes / {edges} edges, expected {dataset.nodes} / {dataset.edges}")
+        raise SetupError(
+            f"{dataset.file} converted to {nodes} nodes / {edges} edges, expected {dataset.nodes} / {dataset.edges}"
+        )
     stamp.write_text(dataset.sha256 + "\n")
     log(f"dataset {dataset.name}: {nodes} users, {edges} Friend edges")
     return users, friends
@@ -838,10 +763,15 @@ def attribute_ambiguous(
         residual = {}
         for name in names:
             rate = rates.get(name, {})
-            expected = round((rate.get("timeout", 0.0) + rate.get("failure", 0.0)) * counts.get(name, 0) / 100)
+            expected = round(
+                (rate.get("timeout", 0.0) + rate.get("failure", 0.0)) * counts.get(name, 0) / 100
+            )
             residual[name] = expected - sum(out.get(name, {}).values())
         if any(v < 0 for v in residual.values()) or sum(residual.values()) != sum(kinds.values()):
-            return out, f"{sum(kinds.values())} failures of the shared text {key} do not match metrics.prom ({residual})"
+            return (
+                out,
+                f"{sum(kinds.values())} failures of the shared text {key} do not match metrics.prom ({residual})",
+            )
         left = {"timeouts": kinds.get("timeouts", 0), "failures": kinds.get("failures", 0)}
         if left["timeouts"] and left["failures"] and sum(1 for v in residual.values() if v) > 1:
             # The log has no query identity: which type timed out and which got an error is
@@ -903,7 +833,11 @@ def parse_metrics(text: str) -> dict[str, Any]:
         if name == "falkordb_query_latency_pct_us" and "query" in labels and "pct" in labels:
             if labels["pct"] in ("50", "95", "99"):
                 per_query[labels["query"]][f"p{labels['pct']}_ms"] = value / 1000
-        elif (match := re.fullmatch(r"falkordb_latency_(p\d+)_us", name)) and match.group(1) in ("p50", "p95", "p99"):
+        elif (match := re.fullmatch(r"falkordb_latency_(p\d+)_us", name)) and match.group(1) in (
+            "p50",
+            "p95",
+            "p99",
+        ):
             if value > 0:  # 0 = no request succeeded (the tool's empty histogram), not 0 ms
                 overall[f"{match.group(1)}_ms"] = value / 1000
         elif name in ("benchmark_query_timeout_rate_pct", "benchmark_query_failure_rate_pct"):
@@ -912,14 +846,23 @@ def parse_metrics(text: str) -> dict[str, Any]:
         elif name in ("benchmark_global_timeout_rate_pct", "benchmark_global_failure_rate_pct"):
             if labels.get("vendor", "falkor").lower().startswith("falkor"):
                 global_rates["timeout" if "timeout" in name else "failure"] = value
-        elif name == "operations_total" and labels.get("vendor", "falkor").lower().startswith("falkor"):
+        elif name == "operations_total" and labels.get("vendor", "falkor").lower().startswith(
+            "falkor"
+        ):
             # lib.rs OPERATION_COUNTER, one series per worker: counted once a request ends.
             executed[labels.get("name", "")] += int(value)
-    return {"per_query": dict(per_query), "overall": overall, "rates": dict(rates), "global_rates": global_rates,
-            "executed": dict(executed)}
+    return {
+        "per_query": dict(per_query),
+        "overall": overall,
+        "rates": dict(rates),
+        "global_rates": global_rates,
+        "executed": dict(executed),
+    }
 
 
-def missing_percentiles(metrics: dict[str, Any], counts: dict[str, int], errors: dict[str, dict[str, int]]) -> str | None:
+def missing_percentiles(
+    metrics: dict[str, Any], counts: dict[str, int], errors: dict[str, dict[str, int]]
+) -> str | None:
     """What a finished run should have exported and did not: the overall p50/p95/p99 when
     any request succeeded, and each query's when any of its requests did."""
     succeeded = {q: n - sum(errors.get(q, {}).values()) for q, n in counts.items()}
@@ -950,7 +893,9 @@ def missing_requests(executed: dict[str, int], counts: dict[str, int]) -> str | 
 ERROR_RE = re.compile(r"Error executing query: (?P<query>.*?), the error is: (?P<error>.*)$")
 
 
-def parse_errors(log_text: str, by_text: dict[str, str]) -> tuple[dict[str, dict[str, int]], list[str]]:
+def parse_errors(
+    log_text: str, by_text: dict[str, str]
+) -> tuple[dict[str, dict[str, int]], list[str]]:
     """Per query, the requests that ended in a timeout or another error, from the run's log.
 
     The benchmark logs every failed request (`error!`, falkor_driver.rs read_reply) with the
@@ -1025,32 +970,13 @@ def timeout_problem(test: dict[str, Any], server_timeout: Any) -> str | None:
     if not test.get("timed_out"):
         return f"a read sent with timeout {TIMEOUT_TEST_MS} ms ended after {test.get('elapsed_s')} s ({test.get('reply')})"
     if not low <= test["elapsed_s"] <= high:
-        return (f"a read sent with timeout {TIMEOUT_TEST_MS} ms timed out after {test['elapsed_s']} s, "
-                f"outside {low}-{high} s")
+        return (
+            f"a read sent with timeout {TIMEOUT_TEST_MS} ms timed out after {test['elapsed_s']} s, "
+            f"outside {low}-{high} s"
+        )
     if isinstance(server_timeout, int) and low * 1000 <= server_timeout <= high * 1000:
         return f"the server's own TIMEOUT {server_timeout} ms falls inside the test's window, so the test cannot tell the two apart"
     return None
-
-
-def make_finding(
-    name: str,
-    metric: str,
-    candidate: float | None,
-    baseline: float | None,
-    threshold: float | None,
-    direction: str,
-    status: str,
-) -> dict[str, Any]:
-    return {
-        "name": name,
-        "metric": metric,
-        "candidate": candidate,
-        "baseline": baseline,
-        "ratio": ratio(candidate, baseline),
-        "threshold": threshold,
-        "direction": direction,
-        "status": status,
-    }
 
 
 def repeated_level(values: list[float | None]) -> float | None:
@@ -1059,29 +985,18 @@ def repeated_level(values: list[float | None]) -> float | None:
     return data[-REPEAT_RUNS] if len(data) >= REPEAT_RUNS else None
 
 
-def completed_status(candidate: int, baseline: int) -> str:
-    """Contract v1.4: 0 on the candidate only is a regression at once; on both, info."""
-    if candidate == baseline:
-        return "ok" if candidate else "info"
-    return "improvement" if candidate else "regression"
-
-
 def scope(dataset: str, workload: Workload) -> str:
     return workload.label if dataset == "medium" else f"{dataset}, {workload.label}"
 
 
 def crossed(metric: str, candidate: float | None, baseline: float | None, direction: str) -> int:
-    """+1 when the candidate is worse past the threshold (and floor), -1 better, else 0."""
-    if candidate is None or baseline is None or baseline <= 0:
+    """kit.crossed with this check's threshold and the metric's floor. A row with no
+    baseline value never crosses (every metric here is positive when measured)."""
+    if not baseline:
         return 0
-    floor = LATENCY_FLOOR_MS.get(metric, 0.0)
-    if direction == "lower_is_worse":
-        candidate, baseline = baseline, candidate
-    if candidate > RATIO_THRESHOLD * baseline and candidate - baseline > floor:
-        return 1
-    if baseline > RATIO_THRESHOLD * candidate and baseline - candidate > floor:
-        return -1
-    return 0
+    return kit.crossed(
+        candidate, baseline, RATIO_THRESHOLD, LATENCY_FLOOR_MS.get(metric, 0.0), direction
+    )
 
 
 @dataclass
@@ -1113,14 +1028,26 @@ def analyse(
         rerun.add(key)
         rerun_why[key].append(why)
 
-    def record(dataset: str, workload: Workload, name: str, metric: str, cand: float | None, base: float | None,
-               direction: str, status: str, threshold: float | None, sort: float, **extra: Any) -> None:
+    def record(
+        dataset: str,
+        workload: Workload,
+        name: str,
+        metric: str,
+        cand: float | None,
+        base: float | None,
+        direction: str,
+        status: str,
+        threshold: float | None,
+        sort: float,
+        **extra: Any,
+    ) -> None:
         """One comparison: always a raw/rows.csv row; a finding unless it is ok."""
-        rows.append({"dataset": dataset, "workload": workload.label, "name": name, "metric": metric,
-                     "candidate": cand, "baseline": base, "ratio": ratio(cand, base), "direction": direction,
-                     "status": status, **extra})
+        finding = kit.finding(
+            name, metric, cand, base, status, direction=direction, threshold=threshold
+        )
+        rows.append({"dataset": dataset, "workload": workload.label, **finding, **extra})
         if status != "ok":
-            findings.append({**make_finding(name, metric, cand, base, threshold, direction, status), "_sort": sort})
+            findings.append({**finding, "_sort": sort})
 
     groups: dict[tuple[str, str], list[Run]] = defaultdict(list)
     for run in runs:
@@ -1129,7 +1056,9 @@ def analyse(
     for (dataset, wl_key), group in groups.items():
         workload = next(w for w in WORKLOADS if w.key == wl_key)
         where = scope(dataset, workload)
-        side_runs = {side: [r for r in group if r.side == side] for side in ("candidate", "baseline")}
+        side_runs = {
+            side: [r for r in group if r.side == side] for side in ("candidate", "baseline")
+        }
         finished = {side: [r for r in rs if r.finished] for side, rs in side_runs.items()}
         qfile = query_files.get((dataset, wl_key))
 
@@ -1138,14 +1067,28 @@ def analyse(
             continue
         done = {side: int(all(r.finished for r in rs)) for side, rs in side_runs.items()}
         reasons = sorted({r.stop_reason for r in group if r.stop_reason})
-        record(dataset, workload, f"benchmark run finished [{where}]", "completed", done["candidate"],
-               done["baseline"], "lower_is_worse", completed_status(done["candidate"], done["baseline"]), None, 10.0,
-               detail="; ".join(f"{r.side} {r.pass_no}.{r.rep}: {r.stop_reason}" for r in group if r.stop_reason))
+        record(
+            dataset,
+            workload,
+            f"benchmark run finished [{where}]",
+            "completed",
+            done["candidate"],
+            done["baseline"],
+            "lower_is_worse",
+            kit.correctness_status(done["candidate"], done["baseline"]),
+            None,
+            10.0,
+            detail="; ".join(
+                f"{r.side} {r.pass_no}.{r.rep}: {r.stop_reason}" for r in group if r.stop_reason
+            ),
+        )
         if not finished["candidate"] or not finished["baseline"]:
             unmeasured.append(f"{where}: " + ("; ".join(reasons) or "no finished run"))
         elif not done["baseline"]:
             # The candidate is compared with fewer baseline runs than planned.
-            unmeasured.append(f"{where}: the baseline did not finish every run (" + "; ".join(reasons) + ")")
+            unmeasured.append(
+                f"{where}: the baseline did not finish every run (" + "; ".join(reasons) + ")"
+            )
 
         # Per query: did every request return? (from every run, finished or not)
         names = sorted(qfile.counts) if qfile else sorted({q for r in group for q in r.per_query})
@@ -1162,45 +1105,86 @@ def analyse(
                 # count once they happen in REPEAT_RUNS separate runs.
                 broken[side] = failures > 0 or timeout_runs >= REPEAT_RUNS
             cand_ok, base_ok = int(not broken["candidate"]), int(not broken["baseline"])
-            status = completed_status(cand_ok, base_ok)
+            status = kit.correctness_status(cand_ok, base_ok)
             detail = "; ".join(
-                f"{side}: {f} errors, {t} timeouts in {tr} of {n} runs" for side, (f, t, tr, n) in counts.items()
+                f"{side}: {f} errors, {t} timeouts in {tr} of {n} runs"
+                for side, (f, t, tr, n) in counts.items()
             )
             sort = 9.0
             # Timeouts in one candidate run: re-run to see whether they repeat. Also when the
             # baseline timed out once too: only a repeat decides which side is broken.
-            f, t, tr, n = counts["candidate"]
+            _, t, tr, n = counts["candidate"]
             if status == "ok" and tr == 1:
                 if (dataset, wl_key) not in rerun_done:
                     want_rerun((dataset, wl_key), f"{label}: timeouts in 1 candidate run")
                 else:
                     status, sort = "info", 1.0
                     notes.append(f"{label}: {t} timeouts in 1 of {n} candidate runs, not repeated")
-            record(dataset, workload, label, "completed", cand_ok, base_ok, "lower_is_worse", status, None, sort,
-                   detail=detail)
+            record(
+                dataset,
+                workload,
+                label,
+                "completed",
+                cand_ok,
+                base_ok,
+                "lower_is_worse",
+                status,
+                None,
+                sort,
+                detail=detail,
+            )
 
         # Latency, throughput and PING: from the finished runs.
         if not finished["candidate"] or not finished["baseline"]:
             continue
 
-        def side_value(side: str, getter: Callable[[Run], float | None], pass_no: int | None = None) -> float | None:
-            return median(getter(r) for r in finished[side] if pass_no is None or r.pass_no == pass_no)
-
-        def compare(name: str, metric: str, direction: str, getter: Callable[[Run], float | None],
-                    use: str) -> None:
+        def compare(
+            name: str,
+            metric: str,
+            direction: str,
+            getter: Callable[[Run], float | None],
+            use: str,
+            *,
+            finished: dict[str, list[Run]] = finished,
+            dataset: str = dataset,
+            workload: Workload = workload,
+        ) -> None:
             """use: "gate" (can fail the check), "report" (info when it crosses), "row" (rows.csv only)."""
+            key = (dataset, workload.key)
+
+            def side_value(
+                side: str, getter: Callable[[Run], float | None], pass_no: int | None = None
+            ) -> float | None:
+                return median(
+                    getter(r) for r in finished[side] if pass_no is None or r.pass_no == pass_no
+                )
+
             cand, base = side_value("candidate", getter), side_value("baseline", getter)
-            first = crossed(metric, side_value("candidate", getter, 1), side_value("baseline", getter, 1), direction)
+            first = crossed(
+                metric,
+                side_value("candidate", getter, 1),
+                side_value("baseline", getter, 1),
+                direction,
+            )
             # Only the full re-run confirms: one pair of an interrupted re-run is not it.
-            has_second = all(sum(1 for r in finished[side] if r.pass_no == 2) >= mode.rerun_reps
-                             for side in ("candidate", "baseline"))
+            has_second = all(
+                sum(1 for r in finished[side] if r.pass_no == 2) >= mode.rerun_reps
+                for side in ("candidate", "baseline")
+            )
             # A re-run with no value for this row (e.g. every request of the query failed on
             # one side) did not re-measure it: that stays None, never "did not cross".
             cand2, base2 = side_value("candidate", getter, 2), side_value("baseline", getter, 2)
-            second = (crossed(metric, cand2, base2, direction)
-                      if has_second and cand2 is not None and base2 is not None else None)
-            r = ratio(cand, base)
-            severity = 0.0 if r is None else (r if direction == "higher_is_worse" else (1 / r if r else 0.0))
+            second = (
+                crossed(metric, cand2, base2, direction)
+                if has_second and cand2 is not None and base2 is not None
+                else None
+            )
+            r = cand / base if cand is not None and base else None
+            severity = (
+                0.0
+                if r is None
+                else (r if direction == "higher_is_worse" else (1 / r if r else 0.0))
+            )
             if use == "row":
                 status = "ok"
             elif first and use == "report":
@@ -1208,25 +1192,42 @@ def analyse(
             elif first == 1:
                 if second == 1:
                     status = "regression"
-                elif second is None and (dataset, wl_key) not in rerun_done:
-                    want_rerun((dataset, wl_key), f"{name} {metric} {r}x")
+                elif second is None and key not in rerun_done:
+                    want_rerun(key, f"{name} {metric} {r}x")
                     status = "info"
                 elif second is None:
                     # Crossed once and never re-measured: neither a pass nor a regression.
                     status = "info"
-                    unmeasured.append(f"{name} {metric} crossed {RATIO_THRESHOLD}x in the first pass and was "
-                                      f"never re-measured (no finished re-run on both sides, or none was run)")
+                    unmeasured.append(
+                        f"{name} {metric} crossed {RATIO_THRESHOLD}x in the first pass and was "
+                        f"never re-measured (no finished re-run on both sides, or none was run)"
+                    )
                 else:
                     status = "info"
-                    notes.append(f"{name} {metric}: crossed {RATIO_THRESHOLD}x in the first pass, not in the re-run")
+                    notes.append(
+                        f"{name} {metric}: crossed {RATIO_THRESHOLD}x in the first pass, not in the re-run"
+                    )
             elif first == -1 and second in (None, -1):
                 status = "improvement"
             else:
                 status = "ok"
             # Crossed rows rank by ratio; an info row ranks below the other info lines.
             sort = 0.4 + min(severity, 100.0) / 1000 if status == "info" else severity
-            record(dataset, workload, name, metric, rounded(cand), rounded(base), direction, status,
-                   RATIO_THRESHOLD, sort, first_pass=first, re_run=second, use=use)
+            record(
+                dataset,
+                workload,
+                name,
+                metric,
+                rounded(cand),
+                rounded(base),
+                direction,
+                status,
+                RATIO_THRESHOLD,
+                sort,
+                first_pass=first,
+                re_run=second,
+                use=use,
+            )
 
         # queue: every latency row is reported, none fails the run. nightly/long: the
         # whole-workload rows gate in both workloads; per query, every row gates read-only,
@@ -1237,9 +1238,16 @@ def analyse(
         # 411-557 ms on one image (README: "Thresholds").
         whole = "gate" if mode.latency_gates else "report"
         for metric in PERCENTILES:
-            compare(f"all queries [{where}]", metric, "higher_is_worse",
-                    lambda r, m=metric: r.overall.get(m), whole)
-        compare(f"throughput [{where}]", "throughput", "lower_is_worse", lambda r: r.throughput, whole)
+            compare(
+                f"all queries [{where}]",
+                metric,
+                "higher_is_worse",
+                lambda r, m=metric: r.overall.get(m),
+                whole,
+            )
+        compare(
+            f"throughput [{where}]", "throughput", "lower_is_worse", lambda r: r.throughput, whole
+        )
         for query in names:
             for metric in PERCENTILES:
                 is_write = qfile is not None and qfile.types.get(query) == "Write"
@@ -1249,20 +1257,31 @@ def analyse(
                     use = "row"
                 else:
                     use = "gate"
-                compare(f"{hop_label(query)} [{where}]", metric, "higher_is_worse",
-                        lambda r, q=query, m=metric: r.per_query.get(q, {}).get(m), use)
+                compare(
+                    f"{hop_label(query)} [{where}]",
+                    metric,
+                    "higher_is_worse",
+                    lambda r, q=query, m=metric: r.per_query.get(q, {}).get(m),
+                    use,
+                )
 
     # PING: every run counts, finished or not (a freeze that ended the run counts most).
     for (dataset, wl_key), group in groups.items():
         workload = next(w for w in WORKLOADS if w.key == wl_key)
         where = scope(dataset, workload)
-        values = {side: [r.ping.get("ping_max_ms") for r in group if r.side == side and r.ping] for side in
-                  ("candidate", "baseline")}
+        values = {
+            side: [r.ping.get("ping_max_ms") for r in group if r.side == side and r.ping]
+            for side in ("candidate", "baseline")
+        }
         # A run that finished with no PING answered was not watched: "no freeze" is unknown.
         # A PING still pending at the end shows no reply; its wait still counts as a freeze.
-        blind = sorted({r.side for r in group if r.finished and r.ping.get("ping_answered", 1) == 0})
+        blind = sorted(
+            {r.side for r in group if r.finished and r.ping.get("ping_answered", 1) == 0}
+        )
         if blind:
-            unmeasured.append(f"PING max [{where}]: no PING answered during a finished {' and '.join(blind)} run")
+            unmeasured.append(
+                f"PING max [{where}]: no PING answered during a finished {' and '.join(blind)} run"
+            )
         if not values["candidate"]:
             continue
         # A side's value is the slowest PING reached in at least REPEAT_RUNS runs (the
@@ -1273,7 +1292,9 @@ def analyse(
         name = f"PING max [{where}]"
         if froze >= REPEAT_RUNS and base is None:
             status = "info"  # nothing to compare with: fewer than two baseline runs probed
-            unmeasured.append(f"{name}: the candidate froze in {froze} runs, the baseline has too few runs to compare")
+            unmeasured.append(
+                f"{name}: the candidate froze in {froze} runs, the baseline has too few runs to compare"
+            )
         elif froze >= REPEAT_RUNS:
             # Frozen as long on the baseline is not new.
             status = "regression" if cand > RATIO_THRESHOLD * base else "info"
@@ -1286,61 +1307,63 @@ def analyse(
             status = "improvement"
         else:
             status = "ok"
-        record(dataset, workload, name, "ping_max_ms", rounded(cand), rounded(base), "higher_is_worse", status,
-               PING_LIMIT_MS, 8.0 if status == "regression" else 0.5,
-               detail=f"candidate froze (>1 s) in {froze} of {len(values['candidate'])} runs, "
-                      f"baseline in {base_froze} of {len(values['baseline'])}")
+        record(
+            dataset,
+            workload,
+            name,
+            "ping_max_ms",
+            rounded(cand),
+            rounded(base),
+            "higher_is_worse",
+            status,
+            PING_LIMIT_MS,
+            8.0 if status == "regression" else 0.5,
+            detail=f"candidate froze (>1 s) in {froze} of {len(values['candidate'])} runs, "
+            f"baseline in {base_froze} of {len(values['baseline'])}",
+        )
 
     # A workload whose candidate already did not finish a run is a regression; re-running it
     # would only spend more deadlines (6.0.4: up to 272 s a run) to confirm rows beside it.
     for key in list(rerun):
         if any(r.side == "candidate" and not r.finished for r in groups[key]):
             rerun.discard(key)
-            notes.append(f"{key}: no re-run, the candidate did not finish a run; "
-                         + "; ".join(rerun_why.pop(key, [])) + " stay unconfirmed")
+            notes.append(
+                f"{key}: no re-run, the candidate did not finish a run; "
+                + "; ".join(rerun_why.pop(key, []))
+                + " stay unconfirmed"
+            )
     for item in info:
         findings.append({**item, "_sort": 0.0})
-    return Analysis(findings, rows, rerun, unmeasured, notes, {k: v for k, v in rerun_why.items() if k in rerun})
+    return Analysis(
+        findings, rows, rerun, unmeasured, notes, {k: v for k, v in rerun_why.items() if k in rerun}
+    )
 
 
-def select_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Crossed rows first (regressions, then improvements), worst first; at most 10 others; 50 in all."""
-    order = {"regression": 0, "improvement": 1, "info": 2, "ok": 3}
-    ranked = sorted(findings, key=lambda f: (order[f["status"]], -f.get("_sort", 0.0), f["name"], f["metric"]))
-    kept: list[dict[str, Any]] = []
-    informative = 0
-    for finding in ranked:
-        if finding["status"] in ("info", "ok"):
-            if informative >= 10:
-                continue
-            informative += 1
-        kept.append({k: v for k, v in finding.items() if not k.startswith("_")})
-        if len(kept) == 50:
-            break
-    return kept
+def rank(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Worst first within each status, for kit.select (which keeps the order it is given)."""
+    ranked = sorted(findings, key=lambda f: (-f.get("_sort", 0.0), f["name"], f["metric"]))
+    return [{k: v for k, v in f.items() if not k.startswith("_")} for f in ranked]
 
 
 def describe(finding: dict[str, Any]) -> str:
     metric, cand, base = finding["metric"], finding["candidate"], finding["baseline"]
     if metric == "completed":
-        return f"{finding['name']} did not complete on the {'candidate' if cand == 0 else 'baseline'}"
+        return (
+            f"{finding['name']} did not complete on the {'candidate' if cand == 0 else 'baseline'}"
+        )
     unit = " ms" if metric.endswith("_ms") else " q/s" if metric == "throughput" else ""
     r = finding.get("ratio")
     return f"{finding['name']} {metric} {cand}{unit} vs {base}{unit}" + (f" ({r}x)" if r else "")
 
 
-def verdict_of(selected: list[dict[str, Any]], analysis: Analysis, error: str | None) -> tuple[str, str | None]:
-    if any(f["status"] == "regression" for f in selected):
-        return "regression", None
-    if error:
-        return "error", error
-    if analysis.unmeasured:
-        return "error", "not measured: " + " | ".join(analysis.unmeasured)
-    return "pass", None
-
-
-def summary_of(verdict: str, selected: list[dict[str, Any]], error: str | None, counts: dict[str, int],
-               mode_name: str, findings: list[dict[str, Any]] | None = None) -> str:
+def summary_of(
+    verdict: str,
+    selected: list[dict[str, Any]],
+    error: str | None,
+    counts: dict[str, int],
+    mode_name: str,
+    findings: list[dict[str, Any]] | None = None,
+) -> str:
     findings = findings if findings is not None else selected
     regressions = [f for f in selected if f["status"] == "regression"]
     if verdict == "regression":
@@ -1350,12 +1373,20 @@ def summary_of(verdict: str, selected: list[dict[str, Any]], error: str | None, 
     if verdict == "error":
         return " ".join(f"Could not measure: {error}".split())[:500]
     improvements = sum(1 for f in selected if f["status"] == "improvement")
-    both = [f["name"] for f in findings if f["metric"] == "completed" and f["candidate"] == 0 and f["baseline"] == 0]
+    both = [
+        f["name"]
+        for f in findings
+        if f["metric"] == "completed" and f["candidate"] == 0 and f["baseline"] == 0
+    ]
     text = (
         f"Pass ({mode_name}): {counts['runs']} runs, {counts['rows']} rows compared; no row regressed past "
         f"{RATIO_THRESHOLD}x after a re-run, every run finished, no new PING freeze"
         + (f"; {improvements} improvements" if improvements else "")
-        + (f"; {len(both)} queries failed on both sides (not new): {', '.join(both[:3])}" if both else "")
+        + (
+            f"; {len(both)} queries failed on both sides (not new): {', '.join(both[:3])}"
+            if both
+            else ""
+        )
         + "."
     )
     return " ".join(text.split())
@@ -1365,18 +1396,16 @@ def summary_of(verdict: str, selected: list[dict[str, Any]], error: str | None, 
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--candidate", required=True)
-    parser.add_argument("--baseline", required=True)
-    parser.add_argument("--out", required=True)
-    parser.add_argument("--mode", required=True, choices=sorted(MODES))
-    parser.add_argument("--candidate-label")
-    parser.add_argument("--baseline-label")
-    parser.add_argument("--candidate-commit")
-    parser.add_argument("--baseline-commit")
+    parser = argparse.ArgumentParser(
+        prog="bench pokec",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    kit.add_args(parser)
     parser.add_argument(
         "--tools-dir",
-        default=os.environ.get("PERF_POKEC_TOOLS") or str(Path.home() / ".cache" / "falkordb-perf" / "pokec"),
+        default=os.environ.get("PERF_POKEC_TOOLS")
+        or str(Path.home() / ".cache" / "falkordb-perf" / "pokec"),
         help="where the built benchmark, the loader's venv and the datasets are kept between runs",
     )
     # Development only: shrink a run. A result made with these is not a contract run.
@@ -1390,26 +1419,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         keys = [key for key in args.workloads.split(",") if key]
         known = [w.key for w in WORKLOADS]
         if not keys or any(key not in known for key in keys):
-            parser.error(f"--workloads takes a comma-separated subset of {', '.join(known)}, not {args.workloads!r}")
+            parser.error(
+                f"--workloads takes a comma-separated subset of {', '.join(known)}, not {args.workloads!r}"
+            )
     return args
-
-
-def machine_object() -> dict[str, Any]:
-    path = os.environ.get("PERF_MACHINE_JSON")
-    if path:
-        try:
-            return json.loads(Path(path).read_text())
-        except (OSError, ValueError) as exc:
-            print(f"PERF_MACHINE_JSON {path}: {exc}; describing this machine instead", file=sys.stderr)
-    cpu = platform.processor() or platform.machine() or "unknown"
-    try:
-        for line in Path("/proc/cpuinfo").read_text().splitlines():
-            if line.startswith("model name"):
-                cpu = line.partition(":")[2].strip()
-                break
-    except OSError:
-        pass  # no /proc (macOS): keep platform.processor()
-    return {"runner": "local", "type": platform.machine() or "unknown", "cpu": cpu, "cores": os.cpu_count() or 1}
 
 
 class Check:
@@ -1417,17 +1430,21 @@ class Check:
         self.args = args
         self.mode = MODES[args.mode]
         if args.reps:
-            self.mode = Mode(self.mode.datasets, args.reps, self.mode.rerun_reps, self.mode.latency_gates)
-        self.workloads = [w for w in WORKLOADS if not args.workloads or w.key in args.workloads.split(",")]
-        # Absolute: the tools run from other directories (the workflow passes `--out out`).
-        self.out = Path(args.out).resolve()
+            self.mode = Mode(
+                self.mode.datasets, args.reps, self.mode.rerun_reps, self.mode.latency_gates
+            )
+        self.workloads = [
+            w for w in WORKLOADS if not args.workloads or w.key in args.workloads.split(",")
+        ]
+        self.out = kit.out_dir(args.out)  # absolute: the tools run from other directories
         self.raw = self.out / "raw"
-        self.raw.mkdir(parents=True, exist_ok=True)
         self.log = Log(self.raw / "check.log")
-        self.started = now()
-        self.started_mono = time.monotonic()
+        self.started = kit.utc_now()
         self.run_id = f"{os.getpid()}-{int(time.time())}"
-        self.docker = Docker(self.log, self.run_id, os.environ.get("PERF_SERVER_CPUS") or None)
+        self.label = f"perf-pokec={self.run_id}"  # every container this run starts
+        self.server_cpus = os.environ.get("PERF_SERVER_CPUS") or None
+        self.env_cache: dict[str, str] = {}
+        self.containers = 0
         self.images = {"candidate": args.candidate, "baseline": args.baseline}
         self.runs: list[Run] = []
         self.query_files: dict[tuple[str, str], QueryFile] = {}
@@ -1436,8 +1453,7 @@ class Check:
         self.rerun_done: set[tuple[str, str]] = set()
         self.error: str | None = None
         self.notes: list[str] = []
-        self.stopping = False
-        self.machine: dict[str, Any] = machine_object()
+        self.machine: dict[str, Any] = kit.machine()
 
     # -- setup --
 
@@ -1452,48 +1468,88 @@ class Check:
         for name in self.mode.datasets:
             tools.datasets[name] = setup_dataset(DATASETS[name], tools_dir, self.log)
         for side, image in self.images.items():
-            for attempt in range(3):
-                proc = subprocess.run(["docker", "pull", "-q", image], capture_output=True, text=True, timeout=900)
-                if proc.returncode == 0:
-                    break
-                self.log(f"docker pull {image} failed (attempt {attempt + 1}): {proc.stderr.strip()[-300:]}")
-                time.sleep(10)
-            else:
-                raise SetupError(f"could not pull the {side} image {image}")
+            try:
+                kit.pull(image)
+            except kit.DockerError as exc:
+                raise SetupError(f"could not pull the {side} image: {exc}") from exc
         return tools
+
+    def start(self, side: str, tag: str) -> kit.Container:
+        self.containers += 1
+        image = self.images[side]
+        name = f"perf-pokec-{self.run_id}-{self.containers}-{tag}"
+        return kit.start(
+            image,
+            name,
+            env=server_env(image, self.env_cache),
+            labels={"perf-pokec": self.run_id},
+            cpus=self.server_cpus,
+        )
+
+    def save_logs(self, container: kit.Container, path: Path) -> None:
+        try:
+            path.write_text(kit.logs(container.name))
+        except (OSError, kit.DockerError) as exc:
+            self.log(f"   could not save the server log: {exc}")  # the result does not depend on it
+
+    def remove(self, container: kit.Container) -> None:
+        try:
+            kit.remove(container.name)
+        except kit.DockerError as exc:
+            self.log(f"   could not remove {container.name}: {exc}")  # cleanup removes it by label
 
     # -- probing an image --
 
     def probe(self, side: str) -> dict[str, Any] | None:
         """Start the image once, empty: server identity, config, procedures, timeout mechanism."""
         image = self.images[side]
-        server = self.docker.start(image, f"probe-{side[:4]}")
-        facts: dict[str, Any] = {"image": image, "falkordb_args": self.docker.server_args(image)}
+        server = self.start(side, f"probe-{side[:4]}")
+        facts: dict[str, Any] = {
+            "image": image,
+            "falkordb_args": server_env(image, self.env_cache)["FALKORDB_ARGS"],
+        }
         try:
-            if not wait_ping(server.port, 120):
-                self.docker.logs(server, self.raw / f"{side}-probe-server.log")
+            if not kit.wait_ping(server.port, 120, server):
+                self.save_logs(server, self.raw / f"{side}-probe-server.log")
                 facts["error"] = "did not answer PING within 120 s of docker run"
                 return facts
             info = resp_call(server.port, "INFO", "server")
             fields = dict(line.split(":", 1) for line in info.splitlines() if ":" in line)
-            facts["server"] = {k: fields.get(k) for k in ("server_name", "redis_version", "valkey_version",
-                                                         "executable", "os", "arch_bits") if fields.get(k)}
+            facts["server"] = {
+                k: fields.get(k)
+                for k in (
+                    "server_name",
+                    "redis_version",
+                    "valkey_version",
+                    "executable",
+                    "os",
+                    "arch_bits",
+                )
+                if fields.get(k)
+            }
             modules = resp_call(server.port, "MODULE", "LIST")
-            facts["modules"] = [dict(zip(m[0::2], m[1::2])) for m in modules if isinstance(m, list)]
+            facts["modules"] = [
+                dict(zip(m[0::2], m[1::2], strict=False)) for m in modules if isinstance(m, list)
+            ]
             for key in ("THREAD_COUNT", "TIMEOUT", "MAX_QUEUED_QUERIES", "RESULTSET_SIZE"):
                 try:
                     reply = resp_call(server.port, "GRAPH.CONFIG", "GET", key)
                     facts[key] = reply[1] if isinstance(reply, list) and len(reply) == 2 else reply
                 except RespError as exc:
                     facts[key] = f"error: {exc}"
-            rows = query_rows(server.port, "CALL dbms.procedures() YIELD name RETURN toLower(name)",
-                              graph="probe", read_only=False, timeout=60)
+            rows = query_rows(
+                server.port,
+                "CALL dbms.procedures() YIELD name RETURN toLower(name)",
+                graph="probe",
+                read_only=False,
+                timeout=60,
+            )
             facts["procedures"] = sorted(row[0] for row in rows)
             facts["timeout_test"] = self.timeout_test(server.port)
             return facts
         finally:
-            if not self.stopping:
-                self.docker.remove(server)
+            if not kit.stopping():
+                self.remove(server)
 
     def timeout_test(self, port: int) -> dict[str, Any]:
         """Does the per-query timeout the benchmark sends override the server's TIMEOUT?
@@ -1508,51 +1564,64 @@ class Check:
         answered = False
         try:
             with Resp(port, 60) as conn:
-                reply = conn.call("GRAPH.RO_QUERY", "probe", query, "--compact", "timeout", TIMEOUT_TEST_MS)
+                reply = conn.call(
+                    "GRAPH.RO_QUERY", "probe", query, "--compact", "timeout", TIMEOUT_TEST_MS
+                )
             answered = True
         except OSError as exc:  # no reply within 60 s: the server did not stop it
             reply = f"no reply: {exc}"
         elapsed = time.monotonic() - started
-        return {"elapsed_s": round(elapsed, 3), "reply": str(reply)[:200], "requested_ms": TIMEOUT_TEST_MS,
-                "timed_out": answered and isinstance(reply, RespError) and "time" in str(reply).lower()}
+        return {
+            "elapsed_s": round(elapsed, 3),
+            "reply": str(reply)[:200],
+            "requested_ms": TIMEOUT_TEST_MS,
+            "timed_out": answered and isinstance(reply, RespError) and "time" in str(reply).lower(),
+        }
 
     # -- one run --
 
     def deadline_for(self, dataset: Dataset, workload: Workload, side: str) -> float:
         other = "baseline" if side == "candidate" else "candidate"
         for who in (other, side):
-            done = [r.wall_s for r in self.runs if r.dataset == dataset.name and r.workload == workload.key
-                    and r.side == who and r.finished and r.wall_s]
+            done = [
+                r.wall_s
+                for r in self.runs
+                if r.dataset == dataset.name
+                and r.workload == workload.key
+                and r.side == who
+                and r.finished
+                and r.wall_s
+            ]
             if done:
                 return max(dataset.deadline_floor_s, DEADLINE_FACTOR * max(done))
         return float(dataset.first_deadline_s)
 
-    def run_one(self, tools: Tools, dataset: Dataset, workload: Workload, side: str, pass_no: int, rep: int) -> Run:
+    def run_one(
+        self, tools: Tools, dataset: Dataset, workload: Workload, side: str, pass_no: int, rep: int
+    ) -> Run:
         run = Run(dataset.name, workload.key, side, pass_no, rep)
         tag = f"{dataset.name}-{workload.key}-{side}-p{pass_no}r{rep}"
         run.dir = f"raw/runs/{tag}"
         folder = self.out / run.dir
         folder.mkdir(parents=True, exist_ok=True)
-        image = self.images[side]
-        self.log(f"== {tag}: {image}")
-        server = self.docker.start(image, f"{side[:4]}-p{pass_no}r{rep}")
+        self.log(f"== {tag}: {self.images[side]}")
+        server = self.start(side, f"{side[:4]}-p{pass_no}r{rep}")
         try:
             self._run_on(server, run, tools, dataset, workload, folder)
-        except (OSError, RespError, subprocess.TimeoutExpired) as exc:
+        except (OSError, RespError, subprocess.TimeoutExpired, kit.DockerError) as exc:
             run.finished = False
             run.stop_reason = run.stop_reason or f"{type(exc).__name__}: {exc}"[:300]
         finally:
-            # Stopping: write the result first; main() removes the containers after it.
-            if not self.stopping:
-                alive, state = self.docker.running(server)
-                if not alive and run.finished:
-                    run.finished, run.stop_reason = False, f"server exited ({state})"
+            # Stopping: the result comes first; run_check's cleanup removes the containers.
+            if not kit.stopping():
                 try:
-                    self.docker.logs(server, folder / "server.log")
-                except (OSError, subprocess.SubprocessError) as exc:
-                    # Best effort: the run's result does not depend on the server log.
-                    self.log(f"   could not save the server log: {exc}")
-                self.docker.remove(server)
+                    state = kit.state(server.name)
+                except kit.DockerError:
+                    state = "running"  # docker did not answer: says nothing about the server
+                if state != "running" and run.finished:
+                    run.finished, run.stop_reason = False, f"server exited ({state})"
+                self.save_logs(server, folder / "server.log")
+                self.remove(server)
         self.runs.append(run)
         self.checkpoint(f"after {run.dir}")
         self.log(
@@ -1563,23 +1632,55 @@ class Check:
         )
         return run
 
-    def _run_on(self, server: Server, run: Run, tools: Tools, dataset: Dataset, workload: Workload,
-                folder: Path) -> None:
-        if not wait_ping(server.port, 120):
+    def _run_on(
+        self,
+        server: kit.Container,
+        run: Run,
+        tools: Tools,
+        dataset: Dataset,
+        workload: Workload,
+        folder: Path,
+    ) -> None:
+        if not kit.wait_ping(server.port, 120, server):
             run.stop_reason = "server did not answer PING within 120 s of docker run"
             return
         users, friends = tools.datasets[dataset.name]
         started = time.monotonic()
         with (folder / "load.log").open("wb") as load_log:
             load = subprocess.run(
-            [str(tools.loader_python), "-I", "-m", "falkordb_bulk_loader.bulk_insert", GRAPH,
-             # redis-py 8 re-sends a request after a socket timeout (5 s by default); a
-             # re-sent GRAPH.BULK batch would load it twice. No timeout, so no re-send.
-             "-u", f"redis://127.0.0.1:{server.port}?socket_timeout=3600",
-             "-n", str(users), "-R", "Friend", str(friends), "-j", "INTEGER", "-s",
-             "-i", "User:id", "-i", "User:age", "-c", "128", "-b", "16", "-t", "16"],
-            stdout=load_log, stderr=subprocess.STDOUT, timeout=dataset.load_timeout_s,
-        )
+                [
+                    str(tools.loader_python),
+                    "-I",
+                    "-m",
+                    "falkordb_bulk_loader.bulk_insert",
+                    GRAPH,
+                    # redis-py 8 re-sends a request after a socket timeout (5 s by default); a
+                    # re-sent GRAPH.BULK batch would load it twice. No timeout, so no re-send.
+                    "-u",
+                    f"redis://127.0.0.1:{server.port}?socket_timeout=3600",
+                    "-n",
+                    str(users),
+                    "-R",
+                    "Friend",
+                    str(friends),
+                    "-j",
+                    "INTEGER",
+                    "-s",
+                    "-i",
+                    "User:id",
+                    "-i",
+                    "User:age",
+                    "-c",
+                    "128",
+                    "-b",
+                    "16",
+                    "-t",
+                    "16",
+                ],
+                stdout=load_log,
+                stderr=subprocess.STDOUT,
+                timeout=dataset.load_timeout_s,
+            )
         if load.returncode != 0:
             run.stop_reason = f"bulk load exited {load.returncode}"
             return
@@ -1587,14 +1688,20 @@ class Check:
         deadline = time.monotonic() + dataset.load_timeout_s
         while True:
             try:
-                statuses = [row[0] for row in
-                            query_rows(server.port, "CALL db.indexes() YIELD status RETURN status", timeout=5)]
+                statuses = [
+                    row[0]
+                    for row in query_rows(
+                        server.port, "CALL db.indexes() YIELD status RETURN status", timeout=5
+                    )
+                ]
             except (OSError, RespError):
                 statuses = []
             if statuses and all(s == "OPERATIONAL" for s in statuses):
                 break
             if time.monotonic() > deadline:
-                run.stop_reason = f"indexes not operational {dataset.load_timeout_s} s after the load: {statuses}"
+                run.stop_reason = (
+                    f"indexes not operational {dataset.load_timeout_s} s after the load: {statuses}"
+                )
                 return
             time.sleep(0.5)
         nodes = query_scalar(server.port, "MATCH (n:User) RETURN count(n)")
@@ -1610,10 +1717,25 @@ class Check:
         qfile = self.query_files[(dataset.name, workload.key)]
         run.deadline_s = round(self.deadline_for(dataset, workload, run.side), 1)
         results = folder / "bench"
-        env = dict(os.environ, FALKOR_QUERY_TIMEOUT_MS=str(QUERY_TIMEOUT_MS), NO_COLOR="1", RUST_LOG="info")
-        cmd = [str(tools.benchmark), "run", "--vendor", "falkor", "--name", str(qfile.path),
-               "--parallel", str(PARALLEL), "--mps", str(MPS),
-               "--endpoint", f"falkor://127.0.0.1:{server.port}", "--results-dir", str(results)]
+        env = dict(
+            os.environ, FALKOR_QUERY_TIMEOUT_MS=str(QUERY_TIMEOUT_MS), NO_COLOR="1", RUST_LOG="info"
+        )
+        cmd = [
+            str(tools.benchmark),
+            "run",
+            "--vendor",
+            "falkor",
+            "--name",
+            str(qfile.path),
+            "--parallel",
+            str(PARALLEL),
+            "--mps",
+            str(MPS),
+            "--endpoint",
+            f"falkor://127.0.0.1:{server.port}",
+            "--results-dir",
+            str(results),
+        ]
         code = self._drive(run, server.port, cmd, env, folder)
         if code is None:
             run.stop_reason = f"stopped at the deadline ({run.deadline_s:.0f} s)"
@@ -1658,10 +1780,14 @@ class Check:
             run.finished = run.stop_reason is None
         elif any("|" in key for key in run.errors):
             # No metrics.prom to split a shared text by: those failures stay unattributed.
-            self.log(f"   unattributed (shared query text): "
-                     f"{ {k: v for k, v in run.errors.items() if '|' in k} }")
+            self.log(
+                f"   unattributed (shared query text): "
+                f"{ {k: v for k, v in run.errors.items() if '|' in k} }"
+            )
 
-    def _drive(self, run: Run, port: int, cmd: list[str], env: dict[str, str], folder: Path) -> int | None:
+    def _drive(
+        self, run: Run, port: int, cmd: list[str], env: dict[str, str], folder: Path
+    ) -> int | None:
         """Run the benchmark under the PING probe; None when it passed its deadline.
 
         The probe stops on every path, a failed start included: a probe left running
@@ -1672,7 +1798,9 @@ class Check:
         started = time.monotonic()
         try:
             with (folder / "run.log").open("wb") as sink:
-                proc = subprocess.Popen(cmd, cwd=folder, env=env, stdout=sink, stderr=subprocess.STDOUT)
+                proc = subprocess.Popen(
+                    cmd, cwd=folder, env=env, stdout=sink, stderr=subprocess.STDOUT
+                )
                 try:
                     return proc.wait(timeout=run.deadline_s)
                 except subprocess.TimeoutExpired:
@@ -1681,7 +1809,7 @@ class Check:
                     if proc.poll() is None:
                         proc.terminate()
                         try:
-                            proc.wait(timeout=1 if self.stopping else 15)
+                            proc.wait(timeout=1 if kit.stopping() else 15)
                         except subprocess.TimeoutExpired:
                             proc.kill()
                             proc.wait()
@@ -1690,7 +1818,9 @@ class Check:
             probe.stop()
             run.ping = probe.summary()
 
-    def _cross_check(self, run: Run, metrics: dict[str, Any], qfile: QueryFile, unmatched: list[str]) -> None:
+    def _cross_check(
+        self, run: Run, metrics: dict[str, Any], qfile: QueryFile, unmatched: list[str]
+    ) -> None:
         """The failed requests parsed from the log must agree with metrics.prom's rates.
 
         Totals per query, not per kind: the tool calls its own guard's timeout a failure.
@@ -1705,16 +1835,30 @@ class Check:
                     f"in metrics.prom; the log parser is out of date"
                 )
         if unmatched:
-            raise SetupError(f"{run.dir}: {len(unmatched)} failed requests in run.log match no generated query, "
-                             f"e.g. {unmatched[0]!r}")
+            raise SetupError(
+                f"{run.dir}: {len(unmatched)} failed requests in run.log match no generated query, "
+                f"e.g. {unmatched[0]!r}"
+            )
 
     # -- the plan --
 
     def generate_queries(self, tools: Tools, dataset: Dataset) -> None:
         for workload in self.workloads:
             path = self.raw / f"queries-{dataset.name}-{workload.key}.jsonl"
-            cmd = [str(tools.benchmark), "generate-queries", "--vendor", "falkor", "--size", str(QUERY_COUNT),
-                   "--dataset", dataset.name, "--name", str(path), "--write-ratio", str(workload.write_ratio)]
+            cmd = [
+                str(tools.benchmark),
+                "generate-queries",
+                "--vendor",
+                "falkor",
+                "--size",
+                str(QUERY_COUNT),
+                "--dataset",
+                dataset.name,
+                "--name",
+                str(path),
+                "--write-ratio",
+                str(workload.write_ratio),
+            ]
             for flag in ALGORITHM_FLAGS:
                 cmd += [flag, "false"]
             run_cmd(cmd, self.log, cwd=self.raw, timeout=600, output=self.raw / "setup.log")
@@ -1728,15 +1872,27 @@ class Check:
             if facts.get("error"):
                 if side == "baseline":
                     raise SetupError(f"baseline server ({self.images[side]}) {facts['error']}")
-                self.info.append(make_finding(f"server started [{dataset.name}]", "completed", 0, 1, None,
-                                              "lower_is_worse", "regression"))
+                self.info.append(
+                    kit.finding(
+                        f"server started [{dataset.name}]",
+                        "completed",
+                        0,
+                        1,
+                        "regression",
+                        direction="lower_is_worse",
+                    )
+                )
                 return
             problem = timeout_problem(facts["timeout_test"], facts.get("TIMEOUT"))
             if problem:
-                raise SetupError(f"{side}: {problem}: the benchmark's per-query timeout ({QUERY_TIMEOUT_MS} ms) "
-                                 f"is not shown to be what this server applies")
+                raise SetupError(
+                    f"{side}: {problem}: the benchmark's per-query timeout ({QUERY_TIMEOUT_MS} ms) "
+                    f"is not shown to be what this server applies"
+                )
             if str(facts.get("THREAD_COUNT")) != str(THREAD_COUNT):
-                raise SetupError(f"{side}: THREAD_COUNT is {facts.get('THREAD_COUNT')}, not {THREAD_COUNT}")
+                raise SetupError(
+                    f"{side}: THREAD_COUNT is {facts.get('THREAD_COUNT')}, not {THREAD_COUNT}"
+                )
         self.generate_queries(tools, dataset)
 
         # First pass: rep 1 runs the baseline first (so the candidate's deadline has a
@@ -1753,8 +1909,10 @@ class Check:
         todo = [w for w in self.workloads if (dataset.name, w.key) in analysis.rerun]
         for workload in todo:
             why = analysis.rerun_why.get((dataset.name, workload.key), [])
-            self.log(f"re-run {dataset.name} {workload.label} to confirm: {'; '.join(why[:5])}"
-                     + (f" (+{len(why) - 5} more)" if len(why) > 5 else ""))
+            self.log(
+                f"re-run {dataset.name} {workload.label} to confirm: {'; '.join(why[:5])}"
+                + (f" (+{len(why) - 5} more)" if len(why) > 5 else "")
+            )
         for rep in range(1, self.mode.rerun_reps + 1):
             for workload in todo:
                 for side in self.order(rep + 1):
@@ -1768,153 +1926,178 @@ class Check:
 
     # -- result --
 
-    def result(self, unfinished: str | None = None) -> dict[str, Any]:
-        """The result from the runs so far; `unfinished` says why it is only a checkpoint."""
-        analysis = analyse(self.runs, self.mode, self.query_files, self.info,
-                           self.rerun_done | {(r.dataset, r.workload) for r in self.runs})
-        selected = select_findings(analysis.findings)
-        nothing = None if self.runs else "no benchmark run was made"
-        verdict, error = verdict_of(selected, analysis, self.error or unfinished or nothing)
-        counts = {"runs": len(self.runs), "rows": len(analysis.rows)}
+    def build(self, error: str | None = None) -> dict[str, Any]:
+        """The result from the runs so far (run_check's build, and every checkpoint)."""
+        analysis = analyse(
+            self.runs,
+            self.mode,
+            self.query_files,
+            self.info,
+            self.rerun_done | {(r.dataset, r.workload) for r in self.runs},
+        )
         self.write_tables(analysis)
+        errors = [e for e in (error, self.error) if e]
+        if not self.runs:
+            errors.append("no benchmark run was made")
+        if analysis.unmeasured:
+            errors.append("not measured: " + " | ".join(analysis.unmeasured))
+        findings = rank(analysis.findings)
+        verdict = kit.verdict(kit.select(findings), [*kit.input_errors(self.args), *errors])
+        counts = {"runs": len(self.runs), "rows": len(analysis.rows)}
+        summary = summary_of(
+            verdict,
+            kit.select(findings),
+            "; ".join([*kit.input_errors(self.args), *errors]),
+            counts,
+            self.args.mode,
+            analysis.findings,
+        )
         # Only what this run wrote: an --out reused by hand may hold an earlier run's files.
-        written = [self.raw / n for n in ("check.log", "setup.log", "rows.csv", "runs.csv", "servers.json", "notes.txt")]
+        written = [
+            self.raw / n
+            for n in ("check.log", "setup.log", "rows.csv", "runs.csv", "servers.json", "notes.txt")
+        ]
         written += [q.path for q in self.query_files.values()]
-        artifacts = [p.relative_to(self.out).as_posix() for p in written if p.is_file() and p.is_relative_to(self.out)]
+        artifacts = [
+            p.relative_to(self.out).as_posix()
+            for p in written
+            if p.is_file() and p.is_relative_to(self.out)
+        ]
         if self.runs:
             artifacts.append("raw/runs")
-        sides = {side: self.side_object(side) for side in ("candidate", "baseline")}
-        return {
-            "schema": 1,
-            "check": CHECK,
-            "verdict": verdict,
-            "confirmed": verdict == "regression",
-            "summary": summary_of(verdict, selected, error, counts, self.args.mode, analysis.findings),
-            "candidate": sides["candidate"],
-            "baseline": sides["baseline"],
-            "machine": self.machine,
-            "started": self.started,
-            "finished": now(),
-            "findings": selected,
-            "error": error if verdict == "error" else None,
-            "artifacts": artifacts,
-        }
+        return kit.result(
+            CHECK,
+            self.args,
+            started=self.started,
+            findings=findings,
+            summary=summary,
+            errors=errors,
+            artifacts=artifacts,
+            machine_info=self.machine,
+        )
 
     def write_tables(self, analysis: Analysis) -> None:
-        columns = ["dataset", "workload", "name", "metric", "candidate", "baseline", "ratio", "direction",
-                   "status", "use", "first_pass", "re_run", "detail"]
+        columns = [
+            "dataset",
+            "workload",
+            "name",
+            "metric",
+            "candidate",
+            "baseline",
+            "ratio",
+            "direction",
+            "status",
+            "use",
+            "first_pass",
+            "re_run",
+            "detail",
+        ]
         with (self.raw / "rows.csv").open("w", newline="", encoding="utf-8") as sink:
             writer = csv.DictWriter(sink, columns, extrasaction="ignore")
             writer.writeheader()
             writer.writerows(analysis.rows)
-        run_columns = ["dataset", "workload", "side", "pass_no", "rep", "finished", "stop_reason", "wall_s",
-                       "elapsed_s", "load_s", "deadline_s", "used_memory_loaded", "ping_max_ms", "ping_samples",
-                       "ping_over_100ms", "ping_over_1s", "ping_timeouts", "ping_errors", "p50_ms", "p95_ms",
-                       "p99_ms", "throughput", "errors", "timeouts", "dir"]
+        run_columns = [
+            "dataset",
+            "workload",
+            "side",
+            "pass_no",
+            "rep",
+            "finished",
+            "stop_reason",
+            "wall_s",
+            "elapsed_s",
+            "load_s",
+            "deadline_s",
+            "used_memory_loaded",
+            "ping_max_ms",
+            "ping_samples",
+            "ping_over_100ms",
+            "ping_over_1s",
+            "ping_timeouts",
+            "ping_errors",
+            "p50_ms",
+            "p95_ms",
+            "p99_ms",
+            "throughput",
+            "errors",
+            "timeouts",
+            "dir",
+        ]
         with (self.raw / "runs.csv").open("w", newline="", encoding="utf-8") as sink:
             writer = csv.DictWriter(sink, run_columns, extrasaction="ignore")
             writer.writeheader()
             for run in self.runs:
-                writer.writerow({
-                    **{k: getattr(run, k) for k in ("dataset", "workload", "side", "pass_no", "rep", "finished",
-                                                    "stop_reason", "wall_s", "elapsed_s", "load_s", "deadline_s",
-                                                    "used_memory_loaded", "dir")},
-                    **run.ping, **{k: rounded(v) for k, v in run.overall.items()},
-                    "throughput": rounded(run.throughput),
-                    "errors": sum(e.get("failures", 0) for e in run.errors.values()),
-                    "timeouts": sum(e.get("timeouts", 0) for e in run.errors.values()),
-                })
+                writer.writerow(
+                    {
+                        **{
+                            k: getattr(run, k)
+                            for k in (
+                                "dataset",
+                                "workload",
+                                "side",
+                                "pass_no",
+                                "rep",
+                                "finished",
+                                "stop_reason",
+                                "wall_s",
+                                "elapsed_s",
+                                "load_s",
+                                "deadline_s",
+                                "used_memory_loaded",
+                                "dir",
+                            )
+                        },
+                        **run.ping,
+                        **{k: rounded(v) for k, v in run.overall.items()},
+                        "throughput": rounded(run.throughput),
+                        "errors": sum(e.get("failures", 0) for e in run.errors.values()),
+                        "timeouts": sum(e.get("timeouts", 0) for e in run.errors.values()),
+                    }
+                )
         (self.raw / "servers.json").write_text(json.dumps(self.servers, indent=2) + "\n")
         (self.raw / "notes.txt").write_text("\n".join(self.notes + analysis.notes) + "\n")
-
-    def side_object(self, side: str) -> dict[str, Any]:
-        commit = getattr(self.args, f"{side}_commit")
-        return {
-            "image": self.images[side],
-            "commit": commit if commit and COMMIT_RE.fullmatch(commit) else None,
-            "label": getattr(self.args, f"{side}_label") or default_label(self.images[side]),
-        }
-
-    def write_result(self, unfinished: str | None = None) -> dict[str, Any]:
-        try:
-            result = self.result(unfinished)
-        except Exception as exc:  # noqa: BLE001 - a result.json must exist whatever happened
-            self.log(traceback.format_exc())
-            result = self.bare_result(f"{self.error or unfinished or ''} (and building the result failed: "
-                                      f"{type(exc).__name__}: {exc})".strip())
-        text = json.dumps(result, indent=2, allow_nan=False) + "\n"
-        partial = self.out / "result.json.part"
-        partial.write_text(text)
-        partial.replace(self.out / "result.json")
-        return result
-
-    def bare_result(self, error: str) -> dict[str, Any]:
-        return {
-            "schema": 1, "check": CHECK, "verdict": "error", "confirmed": False,
-            "summary": " ".join(f"Could not measure: {error}".split())[:500],
-            "candidate": self.side_object("candidate"),
-            "baseline": self.side_object("baseline"),
-            "machine": self.machine, "started": self.started, "finished": now(), "findings": [],
-            "error": error, "artifacts": [],
-        }
 
     def checkpoint(self, where: str) -> None:
         """Rewrite result.json from the runs so far: if the check is killed, it stands."""
         try:
-            self.write_result(f"the check did not finish; this result is its checkpoint {where}")
-        except OSError as exc:
+            kit.write_result(
+                self.out,
+                self.build(f"the check did not finish; this result is its checkpoint {where}"),
+            )
+        except (OSError, TypeError, ValueError) as exc:
             self.log(f"checkpoint failed: {exc}")
 
     def main(self) -> None:
-        self.log(f"pokec check, mode {self.args.mode}: candidate {self.images['candidate']}, "
-                 f"baseline {self.images['baseline']}")
-        for side, image in self.images.items():
-            if not IMAGE_RE.fullmatch(image):
-                raise SetupError(f"the {side} image {image!r} is not pinned by digest (name@sha256:<64 hex>)")
+        self.log(
+            f"pokec check, mode {self.args.mode}: candidate {self.images['candidate']}, "
+            f"baseline {self.images['baseline']}"
+        )
         tools = self.setup()
         for name in self.mode.datasets:
             self.measure(tools, DATASETS[name])
 
 
 def main(argv: list[str] | None = None) -> int:
-    check = Check(parse_args(argv))
+    """`bench pokec`: always writes <out>/result.json, and returns 0 when it did."""
+    args = parse_args(argv)
+    check = Check(args)
 
-    def on_term(signum: int, _frame: Any) -> None:
-        # Once: `timeout --kill-after=60` leaves a minute to write the result.
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        check.stopping = True
-        raise Stopped(f"signal {signum}")
-
-    signal.signal(signal.SIGTERM, on_term)
-    signal.signal(signal.SIGINT, on_term)
-    try:
-        check.checkpoint("at start")
-        check.main()
-    except Stopped:
-        minutes = (time.monotonic() - check.started_mono) / 60
-        check.error = f"stopped by a signal after {minutes:.0f} min (the workflow's timeout?); partial data in raw/"
-    except SetupError as exc:
-        check.error = str(exc)
-    except Exception as exc:  # noqa: BLE001 - always write result.json
-        check.error = f"the check crashed: {type(exc).__name__}: {exc}"
-        check.log(traceback.format_exc())
-    # From here on a TERM must not interrupt the final write (`--kill-after` leaves 60 s).
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    if check.error:
-        check.log(f"ERROR: {check.error}")
-    try:
-        result = check.write_result()
-        check.log(f"verdict {result['verdict']}: {result['summary']}")
-    finally:
-        # Also when the write failed (a full disk): the last checkpoint is the result then,
-        # and a loaded server must not outlive the check.
+    def work() -> None:
+        if kit.input_errors(args):
+            return  # kit.result reports them; nothing is pulled
         try:
-            check.docker.remove_all()
-        except (OSError, subprocess.SubprocessError) as exc:
-            # Best effort, after the result: the containers carry the run's label for later cleanup.
-            check.log(f"could not remove the containers: {exc}")
+            check.main()
+        except SetupError as exc:
+            check.error = str(exc)
+
+    def build(error: str | None) -> dict[str, Any]:
+        if error or check.error:
+            check.log(f"ERROR: {error or check.error}")
+        result = check.build(error)
+        check.log(f"verdict {result['verdict']}: {result['summary']}")
+        return result
+
+    kit.run_check(CHECK, args, work, build, cleanup=lambda: kit.remove_labelled(check.label))
     return 0
 
 
