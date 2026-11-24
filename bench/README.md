@@ -348,11 +348,11 @@ re-sends (redis-py's retries are off), with the query's server-side `TIMEOUT`.
 
 | finding | metric | when |
 |---|---|---|
-| `IC3 p50`, `IC3 p95` | `p50_ms`, `p95_ms` | the ratio candidate/baseline over the rows both sides finished crosses 2x **and** the difference is at least 0.5 ms (p50) / 2 ms (p95). A crossing is measured again (two more swapped rounds); it is a `regression` only when the re-run crosses too, otherwise `ok` with the re-run's numbers. Wall clock, hence the wide band. |
-| `IC9 rows` | `rows` (`mismatch`) | the two sides return a different number of rows for the same parameter row. A regression at once, and the query gets no latency finding: the two sides did different work (6.0.4's IC9 "ran" 93x faster by returning nothing, #2557). |
+| `IC3 p50`, `IC3 p95` | `p50_ms`, `p95_ms` | the ratio candidate/baseline over the requests both sides finished (the same parameter row in the same round) crosses 2x **and** the difference is at least 0.5 ms (p50) / 2 ms (p95). A crossing is measured again (two more swapped rounds); it is a `regression` only when the re-run crosses too, otherwise `ok` with the re-run's numbers. Wall clock, hence the wide band. |
+| `IC9 rows` | `rows` (`mismatch`) | the two sides return a different number of rows for the same request (parameter row and round, re-runs included). A regression at once, and the query gets no latency finding: the two sides did different work (6.0.4's IC9 "ran" 93x faster by returning nothing, #2557). |
 | `IC3 completed` | `completed` | judged per parameter row: the candidate timed out, errored or lost its server on a row the baseline finished is a regression at once; rows failing on both sides are `info`. A parameter row that timed out is skipped on both sides from then on, and a side stops a query after two timeouts. |
 | `server up` | `completed` | a server that went down at any point, also after its last reply (its container exited): the candidate's is a regression, the baseline's makes the result an `error`. |
-| `IC6 returns rows` | `invariant` | zero rows on every parameter row, on both sides: it measured nothing (`info`). |
+| `IC6 returns rows` | `invariant` | zero rows on every parameter row, on both sides: it measured nothing (`info`), and its latency is not compared. |
 | `IC14 same rows` | `invariant` | the counts agree but the row contents differ, between two images of the same engine (`info`; see below). |
 | `load` | `throughput` | entities loaded per second, per side: one sample each, so `info` only. |
 
@@ -391,8 +391,8 @@ The same query failing on the *candidate* only is a regression.
 **Verdict.** `regression` (confirmed) if any finding is one; otherwise `error`
 when something could not be measured (an image not pinned by digest, a pull or
 a dataset download that failed, a baseline that did not start, load or stay
-up, no query that finished on both sides, a deadline that cut any query's
-rounds); otherwise `pass`. The summary counts as compared only the queries
+up, no query that finished on both sides, a deadline or a per-round budget
+that cut any query's rounds); otherwise `pass`. The summary counts as compared only the queries
 with at least one parameter row finished on both sides. `result.json` is written
 first as an `error` and replaced at the end, so a run stopped from outside
 still leaves one. The command exits 0 whenever `result.json` was written.

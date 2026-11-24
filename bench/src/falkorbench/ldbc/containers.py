@@ -19,6 +19,7 @@ every falkordb-server image back to the C v4.22 line:
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,7 +83,14 @@ class Container:
         return proc.stdout + proc.stderr
 
     def remove(self) -> None:
-        _docker("rm", "--force", "--volumes", self.name, timeout=60.0)
+        remove_by_name(self.name)
+
+
+def remove_by_name(name: str) -> None:
+    """`docker rm --force`; one that is already gone counts as removed."""
+    proc = _docker("rm", "--force", "--volumes", name, timeout=60.0)
+    if proc.returncode != 0 and "no such container" not in (proc.stderr or "").lower():
+        _check(proc, f"docker rm {name}")
 
 
 def start(
@@ -115,8 +123,13 @@ def start(
     container = Container(name=name, image=image, port=0)
     try:
         container.port = parse_port(_check(_docker("port", name, _INNER_PORT), "docker port"))
-    except (DockerError, ValueError):
-        container.remove()
+    except BaseException:
+        # Including an interrupt: the container exists and nobody else owns
+        # it yet. The original exception is the one that propagates.
+        # A failure here is reported by the caller's teardown, which removes
+        # the container by name again.
+        with contextlib.suppress(DockerError):
+            container.remove()
         raise
     return container
 

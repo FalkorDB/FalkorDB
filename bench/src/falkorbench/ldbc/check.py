@@ -113,6 +113,11 @@ STARTUP_S = 120.0
 #: timeout per row.
 MAX_TIMEOUTS = 2
 
+#: After a client-side timeout, how long the server gets to answer PING
+#: before it counts as down. A server finishing a long query can be slow to
+#: answer for a while; one that is silent this long is not coming back.
+PING_GRACE_S = 60.0
+
 #: A client-side socket timeout this far above the server-side TIMEOUT: when
 #: it fires, the server ignored its own timeout and is treated as hung.
 SOCKET_SLACK_S = 30.0
@@ -247,6 +252,7 @@ class Side:
     side: str
     image: str
     container: containers.Container | None = None
+    container_name: str = ""
     conn: Redis | None = None
     engine: str = ""
     module_version: int | None = None
@@ -279,7 +285,7 @@ class Side:
             sample.outcome = TIMEOUT
             sample.error = f"no reply within {timeout_ms / 1000 + SOCKET_SLACK_S:.0f}s"
             if not self._answers():
-                self.down = "stopped answering after a client-side timeout"
+                self.down = f"no answer to PING for {PING_GRACE_S:.0f}s after a client-side timeout"
             return sample
         except (RedisConnectionError, OSError) as e:
             state = self.container.state() if self.container else "unknown"
@@ -296,17 +302,31 @@ class Side:
         return sample
 
     def _answers(self) -> bool:
+        """Whether the server answers PING within `PING_GRACE_S`.
+
+        One missed PING is not enough to call it down: a server still busy
+        with the query that timed out can be slow to answer, and calling it
+        down would turn every later request on this side into a failure.
+        """
         assert self.container is not None
-        try:
-            probe = Redis(
-                host="127.0.0.1",
-                port=self.container.port,
-                socket_timeout=5,
-                retry=Retry(NoBackoff(), 0),
-            )
-            return bool(probe.ping())
-        except RedisError:
-            return False
+        deadline = time.monotonic() + PING_GRACE_S
+        while True:
+            if self.container.state().startswith(("exited", "dead")):
+                return False
+            try:
+                probe = Redis(
+                    host="127.0.0.1",
+                    port=self.container.port,
+                    socket_timeout=5,
+                    retry=Retry(NoBackoff(), 0),
+                )
+                if probe.ping():
+                    return True
+            except RedisError:
+                pass  # not answering yet: try again until the grace runs out
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(2.0)
 
 
 def _error_sample(sample: Sample, message: str) -> Sample:
@@ -349,6 +369,10 @@ def engine_of(version: int | None) -> str:
 # --- analysis ----------------------------------------------------------------
 
 
+#: A request's place in the run: (phase, round, parameter row).
+Key = tuple[str, int, int]
+
+
 @dataclass
 class SideStats:
     attempted: int = 0
@@ -359,9 +383,13 @@ class SideStats:
     first_failure: str = ""
     ok_params: set[int] = field(default_factory=set)
     failed_params: set[int] = field(default_factory=set)
-    rows: dict[int, int] = field(default_factory=dict)
-    digests: dict[int, str] = field(default_factory=dict)
-    latencies: dict[int, list[float]] = field(default_factory=dict)
+    #: Per request that finished, keyed by (phase, round, parameter row), so
+    #: the two sides are compared request against request: a warm-up's row
+    #: count never stands in for a later round's, and a latency only counts
+    #: when the other side finished the same request too.
+    rows: dict[Key, int] = field(default_factory=dict)
+    digests: dict[Key, str] = field(default_factory=dict)
+    latencies: dict[Key, float] = field(default_factory=dict)
 
     @property
     def failed(self) -> int:
@@ -415,11 +443,12 @@ def side_stats(samples: list[Sample]) -> SideStats:
         if s.outcome == OK:
             stats.ok += 1
             stats.ok_params.add(s.param)
-            stats.rows.setdefault(s.param, s.rows or 0)
+            key = (s.phase, s.round, s.param)
+            stats.rows[key] = s.rows or 0
             if s.digest is not None:
-                stats.digests.setdefault(s.param, s.digest)
+                stats.digests[key] = s.digest
             if s.latency_ms is not None and s.phase != "warmup":
-                stats.latencies.setdefault(s.param, []).append(s.latency_ms)
+                stats.latencies[key] = s.latency_ms
             continue
         stats.failed_params.add(s.param)
         if s.outcome == TIMEOUT:
@@ -458,10 +487,11 @@ class LatencyCompare:
 
 
 def compare_latency(cand: SideStats, base: SideStats) -> list[LatencyCompare]:
-    """p50 and p95 over the parameter rows both sides finished."""
+    """p50 and p95 over the requests both sides finished: the same parameter
+    row in the same round, so the two lists are drawn from the same work."""
     common = sorted(set(cand.latencies) & set(base.latencies))
-    c = [v for p in common for v in cand.latencies[p]]
-    b = [v for p in common for v in base.latencies[p]]
+    c = [cand.latencies[k] for k in common]
+    b = [base.latencies[k] for k in common]
     if not c or not b:
         return []
     out = []
@@ -516,10 +546,79 @@ class QueryVerdict:
     #: different work (6.0.4's IC9 "ran" 93x faster by returning nothing), so
     #: no latency finding is made for this query.
     rows_differ: bool = False
+    #: Every request both sides finished returned zero rows: the query
+    #: measured nothing, so its latency is not compared either.
+    no_rows: bool = False
     #: At least one parameter row finished on both sides, so the two were
     #: actually compared (a query broken on both sides is measured, not
     #: compared).
     compared: bool = False
+
+
+@dataclass
+class RowCheck:
+    findings: list[dict[str, Any]] = field(default_factory=list)
+    compared: bool = False
+    differ: bool = False
+    empty: bool = False
+
+
+def compare_rows(query: str, cand: SideStats, base: SideStats, *, same_engine: bool) -> RowCheck:
+    """Row counts (and, between like engines, contents), request by request.
+
+    A count that differs on any request both sides finished is a `rows`
+    regression. Its values are the two sides' totals over one request per
+    parameter row; when those happen to agree, the first differing request's
+    counts are given instead, named after its parameter row.
+    """
+    out = RowCheck()
+    common = sorted(set(cand.rows) & set(base.rows))
+    out.compared = bool(common)
+    mismatched = [k for k in common if cand.rows[k] != base.rows[k]]
+    out.differ = bool(mismatched)
+    if mismatched:
+        first_per_row: dict[int, Key] = {}
+        for k in common:
+            first_per_row.setdefault(k[2], k)
+        c_total = sum(cand.rows[k] for k in first_per_row.values())
+        b_total = sum(base.rows[k] for k in first_per_row.values())
+        name = f"{query} rows"
+        if c_total == b_total:
+            k = mismatched[0]
+            name, c_total, b_total = f"{query} rows (param {k[2]})", cand.rows[k], base.rows[k]
+        out.findings.append(
+            _finding(name, "rows", c_total, b_total, direction="mismatch", status="regression")
+        )
+        return out
+    if common and all(base.rows[k] == 0 for k in common):
+        out.empty = True
+        out.findings.append(
+            _finding(
+                f"{query} returns rows",
+                "invariant",
+                0,
+                0,
+                direction="lower_is_worse",
+                status="info",
+            )
+        )
+    differing = [
+        k
+        for k in common
+        if k in cand.digests and k in base.digests and cand.digests[k] != base.digests[k]
+    ]
+    if differing and same_engine:
+        out.findings.append(
+            _finding(
+                f"{query} same rows",
+                "invariant",
+                None,
+                None,
+                direction="lower_is_worse",
+                status="info",
+            )
+        )
+    return out
 
 
 def analyse(
@@ -561,54 +660,13 @@ def analyse(
         elif done["status"] == "info":
             verdict.note = "did not finish on either side"
 
-    common = sorted(set(cand.rows) & set(base.rows))
-    verdict.compared = bool(common)
-    mismatched = [p for p in common if cand.rows[p] != base.rows[p]]
-    if mismatched:
-        c_total = sum(cand.rows[p] for p in common)
-        b_total = sum(base.rows[p] for p in common)
-        name = f"{query} rows"
-        if c_total == b_total:
-            first = mismatched[0]
-            name, c_total, b_total = (
-                f"{query} rows (param {first})",
-                cand.rows[first],
-                base.rows[first],
-            )
-        verdict.findings.append(
-            _finding(name, "rows", c_total, b_total, direction="mismatch", status="regression")
-        )
-    elif common:
-        if all(base.rows[p] == 0 for p in common):
-            verdict.findings.append(
-                _finding(
-                    f"{query} returns rows",
-                    "invariant",
-                    0,
-                    0,
-                    direction="lower_is_worse",
-                    status="info",
-                )
-            )
-        differing = [
-            p
-            for p in common
-            if p in cand.digests and p in base.digests and cand.digests[p] != base.digests[p]
-        ]
-        if differing and same_engine:
-            verdict.findings.append(
-                _finding(
-                    f"{query} same rows",
-                    "invariant",
-                    None,
-                    None,
-                    direction="lower_is_worse",
-                    status="info",
-                )
-            )
+    rows = compare_rows(query, cand, base, same_engine=same_engine)
+    verdict.compared = rows.compared
+    verdict.findings += rows.findings
 
-    verdict.rows_differ = bool(mismatched)
-    for cmp in [] if verdict.rows_differ else compare_latency(cand, base):
+    verdict.rows_differ = rows.differ
+    verdict.no_rows = rows.empty
+    for cmp in [] if verdict.rows_differ or verdict.no_rows else compare_latency(cand, base):
         crossing = cmp.crossing()
         if crossing == "regression":
             verdict.crossed.append(cmp.metric)
@@ -650,6 +708,11 @@ def confirm(
     done = completion(query, cand, base)
     if done is not None and done["status"] == "regression":
         out.append(done)
+    # A re-run that returns different rows is that regression, not a timing:
+    # a candidate that returns nothing is fast for the wrong reason.
+    rows = compare_rows(query, cand, base, same_engine=False)
+    if rows.differ:
+        return out + [f for f in rows.findings if f["status"] == "regression"]
     by_metric = {c.metric: c for c in compare_latency(cand, base)}
     for metric in crossed:
         cmp = by_metric.get(metric)
@@ -740,7 +803,7 @@ def machine() -> dict[str, Any]:
                 or cpu
             )
     except OSError:
-        pass
+        pass  # best effort: the CPU model falls back to platform's answer
     return {
         "runner": "local",
         "type": f"{platform.system().lower()}-{platform.machine()}",
@@ -792,6 +855,9 @@ class Check:
         self.timed_out: dict[str, set[int]] = {}
         #: Requests not sent because the deadline had passed.
         self.deadline_skips = 0
+        #: Parameter-row runs not sent because a query used up its round's
+        #: budget: the comparison covers fewer rows than the mode asks for.
+        self.budget_skips = 0
 
     # -- result -----------------------------------------------------------
 
@@ -978,6 +1044,9 @@ class Check:
         for side in SIDES:  # baseline first: a broken baseline stops the run early
             s = self.sides[side]
             name = f"perf-ldbc-{side}-{os.getpid()}"
+            # Named before it exists, so teardown can remove it even when a
+            # SIGTERM lands between `docker run` and `start` returning.
+            s.container_name = name
             try:
                 s.container = containers.start(s.image, name, self.opts.cache, cpus=cpus)
                 client = self.connect(s)
@@ -1050,21 +1119,31 @@ class Check:
             if state != "running":
                 raise RuntimeError(f"container {state}: {s.container.logs()[-400:]}")
             try:
-                db = FalkorDB(
+                # Bounded by what is left of the readiness window: a server
+                # that accepts but never answers must not hold one attempt
+                # past it.
+                left = max(1.0, deadline - time.monotonic())
+                FalkorDB(
                     host="127.0.0.1",
                     port=port,
                     retry=Retry(NoBackoff(), 0),
-                    # A load or sampling request that never returns is a load
-                    # that did not finish, not a check that hangs to its kill.
-                    socket_timeout=self.opts.mode.load_request_s,
-                )
-                db.connection.ping()
+                    socket_timeout=min(5.0, left),
+                    socket_connect_timeout=min(5.0, left),
+                ).connection.ping()
                 break
             except RedisError as e:
                 last = e
                 time.sleep(0.5)
         else:
             raise RuntimeError(f"no answer on :{port} within {STARTUP_S:.0f}s ({last})")
+        db = FalkorDB(
+            host="127.0.0.1",
+            port=port,
+            retry=Retry(NoBackoff(), 0),
+            # A load or sampling request that never returns is a load that
+            # did not finish, not a check that hangs until it is killed.
+            socket_timeout=self.opts.mode.load_request_s,
+        )
         # The images keep redis's default save points; one would fork a
         # BGSAVE a minute into the measurement, on one side only.
         db.connection.config_set("save", "")
@@ -1186,13 +1265,18 @@ class Check:
                 f"the {self.opts.mode.deadline_s / 60:.0f} min deadline passed before every "
                 f"query had its rounds ({self.deadline_skips} parameter-row runs skipped)"
             )
+        if self.budget_skips:
+            self.problem(
+                f"the {self.opts.mode.query_budget_s:.0f}s per-round budget cut "
+                f"{self.budget_skips} parameter-row runs"
+            )
         if self.compared_queries == 0:
             self.problem("no query could be compared on both sides")
 
         # The rows that did not cross, as candidates for the informative slots.
         for q in self.queries:
             v = verdicts[q.name]
-            if v.left_out or not v.measured or v.rows_differ:
+            if v.left_out or not v.measured or v.rows_differ or v.no_rows:
                 continue
             base = side_stats([s for s in main[q.name] if s.side == BASELINE])
             cand = side_stats([s for s in main[q.name] if s.side == CANDIDATE])
@@ -1237,6 +1321,7 @@ class Check:
                 self.deadline_skips += 1
             elif time.monotonic() - started > mode.query_budget_s:
                 reason = f"over the {mode.query_budget_s:.0f}s per-round budget"
+                self.budget_skips += 1
             elif i in self.timed_out.get(q.name, set()):
                 reason = "a side timed out on this parameter row before"
             elif any(self.sides[s].timeouts.get(q.name, 0) >= MAX_TIMEOUTS for s in SIDES):
@@ -1275,7 +1360,7 @@ class Check:
                 st = side_stats([s for s in samples if s.side == side])
                 if st.attempted == 0:
                     continue
-                lat = [v for vs in st.latencies.values() for v in vs]
+                lat = list(st.latencies.values())
                 self.summary_rows.append(
                     {
                         "query": query,
@@ -1299,9 +1384,17 @@ class Check:
         for side in SIDES:
             s = self.sides[side]
             if s.container is None:
+                if s.container_name:  # started, but stopped before it was ours
+                    try:
+                        containers.remove_by_name(s.container_name)
+                    except containers.DockerError as e:
+                        self.notes.append(f"{side} container not removed: {e}")
                 continue
             try:
                 self.artifact(f"raw/{side}-server.log", s.container.logs())
+            except (containers.DockerError, OSError) as e:
+                self.notes.append(f"{side} logs: {e}")
+            try:
                 state = s.container.state()
                 # Only an exit is a server that went down. "gone" means
                 # `docker inspect` itself failed, which says nothing about
@@ -1311,7 +1404,7 @@ class Check:
                 elif state not in ("running",) and not s.down:
                     self.notes.append(f"{side} container state unreadable at teardown: {state}")
             except (containers.DockerError, OSError) as e:
-                self.notes.append(f"{side} logs: {e}")
+                self.notes.append(f"{side} state: {e}")
             if s.down:
                 self.notes.append(f"{side} server: {s.down}")
             try:
@@ -1440,5 +1533,5 @@ def run_check(opts: Options, echo: Echo = print) -> dict[str, Any]:
                 check.write_samples()
                 check.write_summary()
             except OSError:
-                pass
+                pass  # raw files are a bonus here; result.json below is the must
             return check.write(error=f"the check {reason}: {type(e).__name__}: {e}")

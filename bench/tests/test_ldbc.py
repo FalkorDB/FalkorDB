@@ -368,9 +368,10 @@ def test_result_csv_is_written_with_the_declared_columns(tmp_path):
     result.rows_total = 40
 
     out = tmp_path / "ldbc.csv"
-    runner.write_csv(out, [result])
+    runner.write_csv(out, [result], params="parameters sampled from the loaded graph (seed=1)")
     rows = list(csv.DictReader(out.read_text().splitlines()))
     assert list(rows[0]) == list(runner.CSV_FIELDS)
+    assert rows[0]["params"] == "parameters sampled from the loaded graph (seed=1)"
     assert rows[0]["query"] == "IC1"
     assert rows[0]["rewritten"] == "yes"
     assert rows[0]["runs"] == "2"
@@ -467,6 +468,8 @@ def _tar_zst(tmp_path, members):
 @pytest.mark.parametrize("filters", [True, False], ids=["with-filters", "python-3.11.2"])
 def test_extraction_works_with_and_without_tarfile_filters(tmp_path, monkeypatch, filters):
     """Debian 12, the nightly VM's image, ships Python 3.11.2: no `filter=`."""
+    if filters and not dataset._HAS_FILTERS:
+        pytest.skip("this Python has no tarfile extraction filters")
     if not filters:
         monkeypatch.setattr(dataset, "_HAS_FILTERS", False)
     archive = _tar_zst(tmp_path, {"ds": None, "ds/static": None, "ds/static/a.csv": b"id|x\n1|2\n"})
@@ -862,7 +865,6 @@ def scripted_check(
     cand = ScriptedSide(ck.CANDIDATE, cand_script)
     for side in (base, cand):
         side.engine = "rust"
-        side.side = side.side  # the scripted sample's side is filled in below
     check.sides = {ck.BASELINE: base, ck.CANDIDATE: cand}
     for side in (base, cand):
         original = side.script
@@ -1279,3 +1281,239 @@ def test_only_an_exited_container_counts_as_a_server_that_went_down(tmp_path, st
     result = check.write()
     assert result["verdict"] == verdict, result
     assert_valid(check.opts.out / "result.json")
+
+
+# --- the third review round ----------------------------------------------------
+
+
+def test_row_counts_are_compared_per_request_not_from_the_warm_up():
+    """Both sides return one row in the warm-up; the candidate then returns none."""
+    samples = [
+        S(ck.BASELINE, 0, rows=1, phase="warmup"),
+        S(ck.CANDIDATE, 0, rows=1, phase="warmup"),
+    ]
+    samples += pair(0, base={"rows": 1}, cand={"rows": 0})
+    v = ck.analyse("IC2", samples, same_engine=True)
+    assert [(f["metric"], f["status"]) for f in v.findings] == [("rows", "regression")]
+
+
+def test_latencies_are_paired_per_request():
+    """A candidate time whose baseline counterpart failed is not compared."""
+    samples = [S(ck.BASELINE, 0, outcome="error", rnd=0), S(ck.CANDIDATE, 0, ms=900.0, rnd=0)]
+    samples += [S(ck.BASELINE, 0, ms=10.0, rnd=1), S(ck.CANDIDATE, 0, ms=10.0, rnd=1)]
+    base = ck.side_stats([s for s in samples if s.side == ck.BASELINE])
+    cand = ck.side_stats([s for s in samples if s.side == ck.CANDIDATE])
+    assert [(c.candidate, c.baseline) for c in ck.compare_latency(cand, base)] == [
+        (10.0, 10.0),
+        (10.0, 10.0),
+    ]
+
+
+def test_a_query_that_returns_nothing_on_both_sides_gets_no_latency_finding():
+    samples = []
+    for p in range(4):
+        samples += pair(p, base={"rows": 0, "ms": 1.0}, cand={"rows": 0, "ms": 5.0})
+    v = ck.analyse("IC6", samples, same_engine=True)
+    assert v.no_rows and v.crossed == []
+    assert [f["name"] for f in v.findings] == ["IC6 returns rows"]
+
+
+def test_a_re_run_that_returns_different_rows_is_a_rows_regression_not_a_timing():
+    rerun = []
+    for p in range(3):
+        rerun += pair(
+            p, base={"rows": 4, "phase": "rerun"}, cand={"rows": 0, "ms": 1.0, "phase": "rerun"}
+        )
+    found = ck.confirm("IC2", ["p50_ms"], rerun)
+    assert [(f["name"], f["metric"], f["status"]) for f in found] == [
+        ("IC2 rows", "rows", "regression")
+    ]
+
+
+def test_a_budget_cut_is_an_error_not_a_pass(tmp_path):
+    check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",), params=3)
+    clock = iter(range(0, 10_000, 200))  # every reading 200 s after the last
+    real = ck.time.monotonic
+    ck.time.monotonic = lambda: float(next(clock))
+    try:
+        check.t0 = 0.0
+        check.opts = ck.Options(
+            **{
+                **check.opts.__dict__,
+                "mode": ck.Mode("nightly", "0.1", 3, 2, 2, 60_000, 300.0, 10**9, 600.0),
+            }
+        )
+        check.measure()
+    finally:
+        ck.time.monotonic = real
+    assert check.budget_skips > 0
+    result = check.write()
+    assert result["verdict"] == "error" and "per-round budget cut" in result["error"]
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_one_missed_ping_does_not_make_a_busy_server_down(monkeypatch):
+    calls = {"n": 0}
+
+    class SlowThenUp:
+        def __init__(self, **kwargs):
+            pass
+
+        def ping(self):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise ck.RedisTimeoutError("busy")
+            return True
+
+    monkeypatch.setattr(ck, "Redis", SlowThenUp)
+    monkeypatch.setattr(ck.time, "sleep", lambda s: None)
+    side = ck.Side(ck.CANDIDATE, MAIN)
+    side.container = SimpleNamespace(port=1, state=lambda: "running")
+    assert side._answers() is True and calls["n"] == 3
+    side.container = SimpleNamespace(port=1, state=lambda: "exited 139")
+    assert side._answers() is False
+
+
+def test_docker_rm_failures_are_reported_and_a_missing_container_is_fine(monkeypatch):
+    def proc(rc, err):
+        return SimpleNamespace(returncode=rc, stdout="", stderr=err)
+
+    monkeypatch.setattr(
+        containers, "_docker", lambda *a, **k: proc(1, "Error: No such container: x")
+    )
+    containers.remove_by_name("x")
+    monkeypatch.setattr(containers, "_docker", lambda *a, **k: proc(1, "Error: daemon is busy"))
+    with pytest.raises(containers.DockerError, match="docker rm x"):
+        containers.remove_by_name("x")
+
+
+def test_an_interrupt_during_startup_still_removes_the_container(monkeypatch, tmp_path):
+    removed = []
+
+    def docker(*args, **kwargs):
+        if args[0] == "port":
+            raise KeyboardInterrupt("signal 15")
+        if args[0] == "rm":
+            removed.append(args[-1])
+        return SimpleNamespace(returncode=0, stdout="cid\n", stderr="")
+
+    monkeypatch.setattr(containers, "_docker", docker)
+    with pytest.raises(KeyboardInterrupt):
+        containers.start(MAIN, "perf-ldbc-candidate-1", tmp_path)
+    assert removed[-1] == "perf-ldbc-candidate-1"
+
+
+def test_teardown_reads_the_state_even_when_logs_fail(tmp_path):
+    class Exited(containers.Container):
+        def logs(self):
+            raise containers.DockerError("`docker logs` did not return within 60s")
+
+        def state(self):
+            return "exited 139"
+
+        def remove(self):
+            pass
+
+    class Running(Exited):
+        def state(self):
+            return "running"
+
+    check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",))
+    check.measure()
+    check.sides[ck.BASELINE].container = Running("b", MAIN, 1)
+    check.sides[ck.CANDIDATE].container = Exited("c", MAIN, 1)
+    check.teardown()
+    assert ("server up", "regression") in [(f["name"], f["status"]) for f in check.findings]
+
+
+def test_teardown_removes_a_container_that_was_named_but_never_handed_over(tmp_path, monkeypatch):
+    removed = []
+    monkeypatch.setattr(containers, "remove_by_name", removed.append)
+    check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",))
+    check.sides[ck.CANDIDATE].container_name = "perf-ldbc-candidate-7"
+    check.teardown()
+    assert removed == ["perf-ldbc-candidate-7"]
+
+
+def test_a_dataset_extracted_under_umask_077_is_readable_by_the_server(tmp_path, monkeypatch):
+    sf = "0.1"
+    tarball = tmp_path / schema.DATASET_TARBALL.format(sf=sf)
+    tarball.write_bytes(b"x" * schema.SCALE_FACTORS[sf])
+    target = dataset.dataset_dir(tmp_path, sf)
+
+    def extract(archive, dest):
+        (dest / target.name / "static").mkdir(parents=True, mode=0o700)
+        (dest / target.name / "static/a.csv").write_text("id\n")
+        os.chmod(dest / target.name / "static/a.csv", 0o600)
+        os.chmod(dest / target.name, 0o700)
+
+    monkeypatch.setattr(dataset, "_extract_zst", extract)
+    dataset.fetch(tmp_path, sf, echo=lambda _: None)
+    for d in (target, target / "static"):
+        assert d.stat().st_mode & 0o777 == 0o755
+    assert (target / "static/a.csv").stat().st_mode & 0o777 == 0o644
+
+
+def test_a_prepared_file_keeps_its_mode_under_umask_077(tmp_path):
+    path = tmp_path / "person_knows_person_0_0.csv"
+    path.write_text("Person.id|Person.id|creationDate\n1|2|100\n")
+    os.chmod(path, 0o644)
+    old = os.umask(0o077)
+    try:
+        dataset._rewrite_header(path, ["FromPerson.id", "ToPerson.id"])
+    finally:
+        os.umask(old)
+    assert path.stat().st_mode & 0o777 == 0o644
+
+
+def test_a_filesystem_error_while_preparing_is_a_dataset_error(tmp_path, monkeypatch):
+    def full(path):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(dataset, "_rewrite_header", lambda path, names: None)
+    monkeypatch.setattr(dataset, "_derive_birthday_parts", full)
+    with pytest.raises(dataset.DatasetError, match="No space left"):
+        dataset.prepare(tmp_path, echo=lambda _: None)
+
+
+def test_a_download_that_stalls_times_out(tmp_path, monkeypatch):
+    seen = {}
+
+    def urlopen(request, timeout=None):
+        seen["timeout"] = timeout
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(dataset.urllib.request, "urlopen", urlopen)
+    with pytest.raises(OSError):
+        dataset._download("https://example.invalid/x", tmp_path / "x.part")
+    assert seen["timeout"] == dataset._DOWNLOAD_STALL_S
+
+
+def test_a_duplicated_endpoint_id_fails_the_load():
+    assert loader_mod.UNCONSTRAINED_ENDPOINTS == ("Place", "TagClass")
+
+    def client(dupes):
+        return SimpleNamespace(
+            graph=SimpleNamespace(ro_query=lambda q: SimpleNamespace(result_set=[[dupes]]))
+        )
+
+    loader_mod._assert_unique_endpoint_ids(client(0))
+    with pytest.raises(loader_mod.LoadError, match="Place holds 2 duplicated id"):
+        loader_mod._assert_unique_endpoint_ids(client(2))
+
+
+def test_a_relative_out_is_resolved_against_the_caller_s_directory(tmp_path, monkeypatch):
+    """`_perf-vm.yml` passes `--out out`, relative (contract v1.8)."""
+    seen = {}
+
+    def fake_run(opts, echo):
+        seen["out"] = opts.out
+        return {"verdict": "error", "summary": "s"}
+
+    monkeypatch.setattr(ck, "run_check", fake_run)
+    monkeypatch.chdir(tmp_path)
+    res = CliRunner().invoke(
+        cli_mod.cli, ["ldbc", "check", "--candidate", MAIN, "--baseline", OTHER, "--out", "out"]
+    )
+    assert res.exit_code == 0, res.output
+    assert seen["out"] == tmp_path.resolve() / "out" and seen["out"].is_absolute()

@@ -64,6 +64,7 @@ def load(
     create_indices(client, echo=echo)
     for node in schema.NODE_FILES:
         stats.nodes += _load_nodes(client, rel, node, echo=echo)
+    _assert_unique_endpoint_ids(client)
     for edge in schema.EDGE_FILES:
         stats.edges += _load_edges(client, rel, edge, echo=echo)
     create_constraints(client, echo=echo)
@@ -88,8 +89,34 @@ def _refuse_a_loaded_graph(client: BenchClient) -> None:
     if held:
         raise LoadError(
             f"graph {client.graph_name!r} already holds {held:,} nodes; loading would "
-            f"duplicate them (GRAPH.DELETE it first, or run without --load)"
+            f"duplicate them. GRAPH.DELETE it and load again (a graph left by a failed "
+            f"load is partial); run without --load only on a graph whose load completed"
         )
+
+
+#: Edge endpoint labels that no unique constraint covers. The edge phase
+#: checks only that a file created as many relationships as it has rows; with
+#: a duplicated id on one of these labels, a row matching two nodes could
+#: make up for a row matching none, and the totals would still agree.
+UNCONSTRAINED_ENDPOINTS = tuple(
+    sorted(
+        {label for edge in schema.EDGE_FILES for label in (edge.from_label, edge.to_label)}
+        - set(schema.UNIQUE_CONSTRAINTS)
+    )
+)
+
+
+def _assert_unique_endpoint_ids(client: BenchClient) -> None:
+    """Fail if an unconstrained endpoint label holds a duplicated id."""
+    for label in UNCONSTRAINED_ENDPOINTS:
+        res = client.graph.ro_query(
+            f"MATCH (n:{label}) WITH n.id AS id, count(*) AS c WHERE c > 1 RETURN count(id)"
+        )
+        dupes = int(res.result_set[0][0]) if res.result_set else 0
+        if dupes:
+            raise LoadError(
+                f":{label} holds {dupes} duplicated id(s); edges to it would not be 1:1"
+            )
 
 
 def create_indices(client: BenchClient, *, echo: Echo = print) -> None:

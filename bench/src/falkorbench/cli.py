@@ -569,15 +569,19 @@ def ldbc_run(
     except ValueError as e:
         raise click.ClickException(str(e)) from e
 
-    try:
-        root = ldbc_dataset.fetch(cache_dir, sf, echo=click.echo)
-        ldbc_dataset.prepare(root, echo=click.echo)
-    except ldbc_dataset.DatasetError as e:
-        raise click.ClickException(str(e)) from e
-
     # As with `measure`, --reuse means "do not start a server" and must not
     # silently also mean "do not load", or this measures an empty database.
     should_load = (not reuse) if do_load is None else do_load
+
+    # The dataset is needed only to load it: measuring a graph that is
+    # already loaded must not depend on the download being reachable.
+    root = None
+    if should_load:
+        try:
+            root = ldbc_dataset.fetch(cache_dir, sf, echo=click.echo)
+            ldbc_dataset.prepare(root, echo=click.echo)
+        except ldbc_dataset.DatasetError as e:
+            raise click.ClickException(str(e)) from e
 
     server = client_mod.Server(port=port)
     if reuse:
@@ -595,6 +599,7 @@ def ldbc_run(
         bench = client_mod.connect(server)
         bench.graph_name = f"ldbc_sf{sf}"
         if should_load:
+            assert root is not None
             click.echo(f"loading {root.name}...")
             ldbc_loader.load(bench, root, import_root=cache_dir, echo=click.echo)
 
@@ -612,7 +617,7 @@ def ldbc_run(
         results = ldbc_runner.run(
             bench, selected, param_set, timeout_ms=timeout_ms, echo=click.echo
         )
-        ldbc_runner.write_csv(out_path, results)
+        ldbc_runner.write_csv(out_path, results, params=param_set.caveat())
         click.echo(f"\nwrote {out_path}")
     except (client_mod.SetupFailed, ldbc_loader.LoadError, ldbc_params.ParamError) as e:
         raise click.ClickException(str(e)) from e
@@ -675,7 +680,9 @@ def ldbc_check_cmd(
     opts = ldbc_check.Options(
         candidate=candidate,
         baseline=baseline,
-        out=Path(out),
+        # Absolute from the start: the VM workflow passes `--out out`, and
+        # nothing later may resolve it against another directory.
+        out=Path(out).resolve(),
         mode=ldbc_check.MODES[mode],
         candidate_label=candidate_label,
         baseline_label=baseline_label,

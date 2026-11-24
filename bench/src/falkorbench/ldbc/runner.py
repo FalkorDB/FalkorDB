@@ -40,6 +40,7 @@ CSV_FIELDS = (
     "mean_ms",
     "max_ms",
     "rewritten",
+    "params",
 )
 
 
@@ -168,13 +169,16 @@ def _summary_line(result: QueryResult) -> str:
     )
 
 
-def write_csv(path: Path, results: list[QueryResult]) -> None:
+def write_csv(path: Path, results: list[QueryResult], *, params: str = "") -> None:
+    """One row per query. `params` says where the parameters came from
+    (`ParamSet.caveat()`), on every row, so a saved CSV of sampled
+    parameters cannot be mistaken for one of LDBC's official sets."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_FIELDS)
         writer.writeheader()
         for result in results:
-            writer.writerow(result.row())
+            writer.writerow({**result.row(), "params": params})
 
 
 def problems(results: list[QueryResult]) -> list[str]:

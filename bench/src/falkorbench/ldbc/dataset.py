@@ -21,14 +21,17 @@ re-run is a no-op rather than double-appending columns.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import datetime as dt
+import fcntl
 import os
 import shutil
 import subprocess
 import tarfile
 import urllib.request
 from collections.abc import Callable
+from collections.abc import Iterator
 from pathlib import Path
 
 from falkorbench.ldbc import schema
@@ -64,12 +67,29 @@ def fetch(cache: Path, sf: str, *, echo: Echo = print) -> Path:
     if sf not in schema.SCALE_FACTORS:
         raise DatasetError(f"unknown scale factor {sf!r}; known: {', '.join(schema.SCALE_FACTORS)}")
 
+    cache.mkdir(parents=True, exist_ok=True)
+    # One fetch per cache and scale factor at a time: two runs sharing a cache
+    # would otherwise share the `.part` download and the scratch tree.
+    with _locked(cache / f".fetch-sf{sf}.lock"):
+        return _fetch_locked(cache, sf, echo=echo)
+
+
+@contextlib.contextmanager
+def _locked(path: Path) -> Iterator[None]:
+    with path.open("w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _fetch_locked(cache: Path, sf: str, *, echo: Echo) -> Path:
     target = dataset_dir(cache, sf)
     if target.is_dir():
         echo(f"dataset already extracted: {target}")
         return target
 
-    cache.mkdir(parents=True, exist_ok=True)
     tarball = cache / schema.DATASET_TARBALL.format(sf=sf)
     expected = schema.SCALE_FACTORS[sf]
 
@@ -103,10 +123,33 @@ def fetch(cache: Path, sf: str, *, echo: Echo = print) -> Path:
         _extract_zst(tarball, scratch)
         if not (scratch / target.name).is_dir():
             raise DatasetError(f"{tarball.name} did not contain {target.name}")
+        _readable_by_all(scratch / target.name)
         (scratch / target.name).rename(target)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return target
+
+
+def _readable_by_all(root: Path) -> None:
+    """Directories 0755, files readable by everyone, whatever the umask.
+
+    The server that reads the dataset runs as another user (uid 999 in the
+    container). Under a umask such as 077, `tarfile` creates directories
+    0700 even with `filter="data"`, so the tree is opened up before it is
+    published; nothing gains write or execute it did not have.
+    """
+    try:
+        for dirpath, _dirnames, filenames in os.walk(root):
+            os.chmod(dirpath, 0o755)
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                os.chmod(path, (os.stat(path).st_mode & 0o7755) | 0o444)
+    except OSError as e:
+        raise DatasetError(f"could not make {root} readable: {e}") from e
+
+
+#: Seconds a download may go without receiving a byte before it fails.
+_DOWNLOAD_STALL_S = 120
 
 
 def _download(url: str, dest: Path) -> None:
@@ -117,7 +160,10 @@ def _download(url: str, dest: Path) -> None:
     `Python-urllib/3.x` with 403 while serving the same URL to curl.
     """
     request = urllib.request.Request(url, headers={"User-Agent": "falkorbench-ldbc/1.0"})
-    with urllib.request.urlopen(request) as response, dest.open("wb") as fh:
+    with (
+        urllib.request.urlopen(request, timeout=_DOWNLOAD_STALL_S) as response,
+        dest.open("wb") as fh,
+    ):
         shutil.copyfileobj(response, fh)
 
 
@@ -207,12 +253,18 @@ def prepare(root: Path, *, echo: Echo = print) -> None:
         echo("dataset already prepared")
         return
 
-    for edge in schema.EDGE_FILES:
-        if edge.from_label == edge.to_label:
-            _rewrite_header(root / edge.file, [edge.from_id, edge.to_id])
+    try:
+        for edge in schema.EDGE_FILES:
+            if edge.from_label == edge.to_label:
+                _rewrite_header(root / edge.file, [edge.from_id, edge.to_id])
 
-    _derive_birthday_parts(root / "dynamic/person_0_0.csv")
-    marker.write_text(_MARKER_VERSION + "\n")
+        _derive_birthday_parts(root / "dynamic/person_0_0.csv")
+        marker.write_text(_MARKER_VERSION + "\n")
+    except OSError as e:
+        # A full disk or a permission problem is a dataset that is not ready,
+        # reported like every other one. The per-file guards make a retry
+        # pick up where this stopped.
+        raise DatasetError(f"preparing {root.name} failed: {e}") from e
     echo(f"prepared {root.name}")
 
 
@@ -248,6 +300,7 @@ def _rewrite_header(path: Path, names: list[str]) -> None:
         dst.write(new_header.encode("utf-8"))
         src.seek(rest_offset)
         shutil.copyfileobj(src, dst)
+    shutil.copymode(path, tmp)  # not the umask's: the server reads it as another user
     tmp.replace(path)
 
 
@@ -284,4 +337,5 @@ def _derive_birthday_parts(path: Path) -> None:
                 raise DatasetError(f"{path.name}: bad birthday in row {row[:1]}: {e}") from e
             date = dt.datetime.fromtimestamp(millis / 1000, tz=dt.UTC)
             writer.writerow([*row, date.month, date.day])
+    shutil.copymode(path, tmp)  # not the umask's: the server reads it as another user
     tmp.replace(path)
