@@ -75,8 +75,10 @@ leaves room for the slowest of these plus a re-run of both workloads.
 The client side (bulk loader, benchmark, probe) runs on `PERF_CLIENT_CPUS`:
 `_perf-vm.yml` starts the command under `taskset`.
 
-Order: rep 1 runs the baseline first, every later rep swaps, so the two sides
-interleave and the order changes at least once. Before the first run each image
+Order: rep 1 runs the baseline first and every later rep swaps, so the two
+sides interleave. With 3 reps (`nightly`, `long`) the order changes at least
+once; with 1 rep (`queue`) it changes only when a re-run is needed, since the
+re-run starts with the candidate. Before the first run each image
 is started once, empty, to record its server and module (`raw/servers.json`),
 read back `THREAD_COUNT`, and test the timeout (below).
 
@@ -131,7 +133,15 @@ Read from the source, not assumed:
   request per query from the run's log, so a query that stops finishing cannot
   vanish from p99 (below). It also checks those counts against `metrics.prom`'s
   rates, and errors out if they disagree (a log format the parser no longer
-  reads).
+  reads). Two query types can send the same text: `vertex_on_label_property`
+  and `vertex_on_label_property_index` share a template, so the same random id
+  collides. A failure logged under such a text is split between the two from
+  their `metrics.prom` rates.
+* **Every request has to end.** The benchmark ignores its workers' join
+  errors, so a worker that died after taking a request could leave a run at
+  exit 0 with the request unaccounted for. The check counts the requests that
+  ended (`operations_total`, per query type) and treats a run whose count falls
+  short of the generated file as not finished.
 * **Latency starts at dequeue.** The benchmark times a request from the moment
   a worker takes it to its reply (closed loop, 8 workers), not from its
   scheduled time. Every image measured finished slower than 2000 queries/s, so
@@ -153,9 +163,12 @@ GIL included, for minutes and the run never finished. With 15 s it ends as a
 counted timeout, and the run goes on to name it.
 
 Every image ships `TIMEOUT 1000`. Before measuring, the check sends a read that
-would run for hours with `timeout 2500` and requires that it ran past 1.5 s and
-then timed out. That makes sure the per-query timeout, not the server's, is the
-one that applies on that image. If it does not, the check is an `error`.
+would run for hours with `timeout 2500` and requires that it timed out between
+2.2 s and 4.0 s. On main, 6.0.4 and C v4.22.4 it stopped at 2.50 s, and at
+1.00 s with no timeout argument. A stop outside that window means another limit
+applied, and a server whose own `TIMEOUT` falls inside the window cannot tell
+the two apart. Either way the per-query timeout is not shown to apply on that
+image, and the check is an `error`.
 
 ## Did not finish
 
@@ -171,7 +184,7 @@ was at least 3x slower than the other side.
 
 Names end in `[<workload>]` (`[large, <workload>]` for the large dataset). The
 expansion queries read `3-hop expansion, age >= 18
-(aggregate_expansion_3_with_filter)`, so the 6.0.4 proof's `3-hop` pattern
+(aggregate_expansion_3_with_filter)`, so the 6.0.4 acceptance pair's `3-hop` pattern
 matches its rows.
 
 | finding | metric | when it is a regression |
@@ -190,11 +203,11 @@ so.
 
 From four A/A runs, each 3 runs a side on n4-standard-16 with the
 `_perf-vm.yml` CPU split: main@4c1088949 and C v4.22.4, once on the dev VM and
-once in the `_perf-vm.yml` proof run 45389482775.
+once in the `_perf-vm.yml` acceptance run 45389482775.
 
 * **Read-only, per query.** p50 never moved: no row's worst split of its six
   readings (median of the top three over median of the bottom three) passed
-  1.3x. p95 and p99 of the millisecond queries did. In the proof run's A/As, a
+  1.3x. p95 and p99 of the millisecond queries did. In the acceptance run's A/As, a
   worst split moved `indexed_in_list_predicate` p95 by 4.0 ms on C, and
   `aggregate_expansion_4_with_filter` p99 by 14.7 ms (1.47x) on main.
 * **How the floors were set.** A false regression needs the first pass (3 runs
@@ -202,7 +215,7 @@ once in the `_perf-vm.yml` proof run 45389482775.
   check's rule was applied to every 3-vs-3 and 2-vs-2 split of its six
   readings, and the two crossing probabilities multiplied. Floors of p95 3 ms
   and p99 10 ms gave 0.02–0.04 expected false regressions per night in the two
-  proof-run A/As, which is roughly one false red night a month. p95 5 ms and
+  acceptance-run A/As, which is roughly one false red night a month. p95 5 ms and
   p99 15 ms gave none in all four, so those are the floors.
 * **5% writes, per query.** A read's tail there is the writer gate (#3816), not
   the query: whether 5% of a query's ~200 requests waited behind a writer decides
@@ -218,7 +231,8 @@ once in the `_perf-vm.yml` proof run 45389482775.
 
 A workload is re-run (2 reps a side in `nightly` and `long`, 1 in `queue`)
 when a gated row crossed in the first pass, a query timed out in one candidate
-run only, or one candidate run froze. It is not re-run when a candidate run of
+run only (also when the baseline timed out once too), or one candidate run
+froze. It is not re-run when a candidate run of
 that workload already did not finish: that is a regression already, and each
 more run would spend another deadline.
 
@@ -232,10 +246,14 @@ worst first, at most 50. Every comparison is in `raw/rows.csv`, every run in
   repeated, or is a correctness or did-not-finish failure that needs no re-run);
 * else `error` when the check could not set up (tools, dataset, image pull, the
   baseline image not starting, the timeout test), was stopped by a signal, a
-  baseline run did not finish, a side has no finished run of a workload, or a
-  row crossed in the first pass and the re-run had nothing finished to repeat
-  it with;
+  baseline run did not finish, a side has no finished run of a workload, a row
+  crossed in the first pass and the re-run gave no value to repeat it with (no
+  finished re-run, or none of that query's requests returned), a finished run
+  had no PING answered, or no run was made at all;
 * else `pass`. Queries that failed on both sides are named in the summary.
+
+An earlier invocation's `raw/` and `result.json` in the same `--out` are
+removed first, so only this run's files are listed as artifacts.
 
 `result.json` is written at the start and rewritten after every run as an
 `error` checkpoint ("the check did not finish"), so a check killed by the

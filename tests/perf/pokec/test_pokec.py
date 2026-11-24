@@ -2,7 +2,9 @@
 
 No Docker, no network: runs are built in memory. `pytest tests/perf` (perf-contract.yml)
 runs them. Every result the tests build is checked with tests/perf/validate.py, the
-contract's validator.
+contract's validator, which lands on main with #3986 (as does perf-contract.yml, the CI
+job that runs these tests). Until then those checks report as skipped, by name; the
+comparison assertions in the same tests still run.
 """
 
 from __future__ import annotations
@@ -37,7 +39,8 @@ THREE_HOP = "aggregate_expansion_3_with_filter"
 
 def validate(result: dict) -> list:
     if not VALIDATE.exists():
-        pytest.skip("tests/perf/validate.py is not on this branch yet")
+        # Deliberate: the validator and the CI job that runs this file arrive together (#3986).
+        pytest.skip("result.json not validated: tests/perf/validate.py (#3986) is not on this branch yet")
     validator = load("perf_validate", VALIDATE)
     return [str(p) for p in validator.validate_result(json.loads(json.dumps(result)))]
 
@@ -346,7 +349,7 @@ def test_result_pass_is_valid(tmp_path):
     assert validate(result) == []
 
 
-def test_result_regression_is_valid_and_matches_the_proof_pattern(tmp_path):
+def test_result_regression_is_valid_and_matches_the_acceptance_pattern(tmp_path):
     check = make_check(tmp_path)
     hung = {"finished": False, "ping": 5100.0, "errors": {THREE_HOP: {"timeouts": 30, "failures": 0}}}
     check.runs = pass_runs(1, 3, candidate=hung)
@@ -404,7 +407,7 @@ def test_digest_required(tmp_path):
 class FakeServer:
     """Replies to PING with +PONG; `stall` seconds before the n-th reply; `mute` after it."""
 
-    def __init__(self, stall_at=None, stall=0.0, mute_at=None, reply=b"+PONG\r\n"):
+    def __init__(self, stall_at=None, stall=0.0, mute_at=None, reply=b"+PONG\r\n", signal_at=None):
         import socket
         import threading
 
@@ -414,6 +417,8 @@ class FakeServer:
         self.port = self.sock.getsockname()[1]
         self.stall_at, self.stall, self.mute_at, self.reply = stall_at, stall, mute_at, reply
         self.count = 0
+        self.signal_at = signal_at
+        self.got = threading.Event()  # set once the signal_at-th PING has arrived
         threading.Thread(target=self.serve, daemon=True).start()
 
     def serve(self):
@@ -426,6 +431,8 @@ class FakeServer:
                 return
             for _ in range(data.count(b"PING")):
                 self.count += 1
+                if self.count == self.signal_at:
+                    self.got.set()
                 if self.mute_at is not None and self.count >= self.mute_at:
                     continue
                 if self.count == self.stall_at:
@@ -461,10 +468,12 @@ def test_ping_probe_sees_a_freeze(tmp_path):
 def test_ping_probe_counts_a_freeze_that_outlasts_the_run(tmp_path):
     import time
 
-    server = FakeServer(mute_at=3)
+    server = FakeServer(mute_at=3, signal_at=3)
     probe = pokec.PingProbe(server.port, tmp_path / "ping.csv")
     probe.start()
-    time.sleep(1.6)
+    # Time the freeze from the muted PING's arrival, not from the probe's start.
+    assert server.got.wait(5)
+    time.sleep(1.2)
     probe.stop()
     summary = probe.summary()
     assert summary["ping_timeouts"] == 1  # the PING still waiting when the run ended
@@ -534,6 +543,7 @@ def test_an_error_with_a_carriage_return_stays_one_line(tmp_path):
 
 def test_main_writes_an_error_result_for_a_tag(tmp_path, monkeypatch):
     monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
+    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: None)  # no Docker in unit tests
     out = tmp_path / "out"
     code = pokec.main(["--candidate", "falkordb/falkordb-server:6.2.0", "--baseline", BASE, "--out", str(out),
                        "--mode", "nightly", "--tools-dir", str(tmp_path / "tools")])
@@ -588,3 +598,175 @@ def test_a_relative_out_is_made_absolute(tmp_path, monkeypatch):
     check.args.out = "out"
     check = pokec.Check(check.args)
     assert check.out == tmp_path / "out" and check.raw.is_absolute()
+
+
+# --- review round 2 (PR #4000 bot threads), kept as tests --------------------------
+
+V1 = "CYPHER id = 7 MATCH (n:User {id: $id}) RETURN n"
+
+
+def test_a_shared_query_text_keeps_both_types_and_is_split_from_metrics(tmp_path):
+    path = tmp_path / "q.jsonl"
+    lines = [{"size": 3, "catalog": []},
+             {"q_name": "vertex_on_label_property", "q_type": "Read", "cypher": V1},
+             {"q_name": "vertex_on_label_property_index", "q_type": "Read", "cypher": V1},
+             {"q_name": "single_vertex_read", "q_type": "Read", "cypher": "CYPHER id = 8 MATCH (n) RETURN n"}]
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    qfile = pokec.read_query_file(path)
+    shared = "vertex_on_label_property|vertex_on_label_property_index"
+    assert qfile.by_text[V1] == shared
+    log = f"2026-11-24T09:31:42Z ERROR benchmark::falkor::falkor_driver: Error executing query: {V1}, the error is: Elapsed(())\n"
+    errors, unmatched = pokec.parse_errors(log, qfile.by_text)
+    assert errors == {shared: {"timeouts": 1, "failures": 0}} and not unmatched
+    # metrics.prom: the _index type had its one request fail (100 % of 1)
+    rates = {"vertex_on_label_property_index": {"failure": 100.0}}
+    resolved, problem = pokec.attribute_ambiguous(errors, qfile.counts, rates)
+    assert problem is None
+    assert resolved == {"vertex_on_label_property_index": {"timeouts": 1, "failures": 0}}
+    check = make_check(tmp_path)
+    run = make_run("candidate", 1, 1)
+    run.errors = resolved
+    check._cross_check(run, {"rates": rates}, qfile, [])  # agrees with metrics.prom
+    # metrics.prom says nothing failed: the shared failure cannot be placed
+    assert pokec.attribute_ambiguous(errors, qfile.counts, {})[1]
+
+
+def test_a_re_run_without_a_value_for_the_row_is_not_a_pass(tmp_path):
+    slow = {"workload": "read", "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}}}
+    read = {"workload": "read"}
+    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(2, 2, candidate=slow, baseline=read)
+    for run in runs:
+        if run.pass_no == 2 and run.side == "baseline":
+            run.per_query.pop("single_vertex_read")  # every request of it failed in the re-run
+    analysis = analyse(runs, rerun_done={("medium", "read")})
+    row = next(r for r in analysis.rows if r["name"] == "single_vertex_read [read-only]" and r["metric"] == "p99_ms")
+    assert row["first_pass"] == 1 and row["re_run"] is None
+    assert any("never re-measured" in u for u in analysis.unmeasured)
+    check = make_check(tmp_path)
+    check.runs = runs
+    assert check.result()["verdict"] == "error"
+
+
+def test_requests_the_benchmark_never_ended_are_caught():
+    metrics = pokec.parse_metrics(
+        'operations_total{dataset="",dataset_size="",name="single_vertex_read",spawn_id="0",type="",vendor="falkor"} 120\n'
+        'operations_total{dataset="",dataset_size="",name="single_vertex_read",spawn_id="1",type="",vendor="falkor"} 79\n'
+        'operations_total{dataset="",dataset_size="",name="single_edge_write",spawn_id="0",type="",vendor="falkor"} 50\n'
+    )
+    assert metrics["executed"] == {"single_vertex_read": 199, "single_edge_write": 50}
+    assert pokec.missing_requests(metrics["executed"], {"single_edge_write": 50}) is None
+    missing = pokec.missing_requests(metrics["executed"], {"single_vertex_read": 200, "single_edge_write": 50})
+    assert missing and "single_vertex_read 199 of 200" in missing
+
+
+def test_a_ping_answered_while_the_probe_stops_is_recorded_once(tmp_path):
+    server = FakeServer(stall_at=2, stall=0.5, signal_at=2)
+    probe = pokec.PingProbe(server.port, tmp_path / "ping.csv")
+    probe.start()
+    assert server.got.wait(5)  # PING 2 is in flight; its reply comes in 0.5 s
+    probe.stop()
+    assert len(probe.samples) == server.count == 2
+    assert [kind for _, _, kind in probe.samples] == ["ok", "inflight"]
+    assert not probe._thread.is_alive()  # stop() unblocked the probe's recv
+
+
+def test_one_timeout_on_each_side_still_asks_for_a_re_run():
+    runs = pass_runs(1, 3)
+    runs[0].errors = {THREE_HOP: {"timeouts": 1, "failures": 0}}  # baseline rep 1
+    runs[1].errors = {THREE_HOP: {"timeouts": 1, "failures": 0}}  # candidate rep 1
+    assert analyse(runs).rerun == {("medium", "write5")}
+
+
+def test_a_finished_run_with_no_ping_answered_is_unmeasured():
+    runs = pass_runs(1, 3)
+    runs[1].ping = {"ping_max_ms": None, "ping_errors": 140}  # candidate rep 1: every PING failed
+    analysis = analyse(runs, rerun_done={("medium", "write5")})
+    assert any("no PING answered during a finished candidate run" in u for u in analysis.unmeasured)
+
+
+def test_development_options_must_schedule_runs(tmp_path):
+    base = ["--candidate", CAND, "--baseline", BASE, "--out", str(tmp_path), "--mode", "nightly"]
+    for bad in (["--reps", "0"], ["--reps", "-1"], ["--workloads", "typo"], ["--workloads", ","]):
+        with pytest.raises(SystemExit):
+            pokec.parse_args(base + bad)
+    assert pokec.parse_args(base + ["--workloads", "read,write5", "--reps", "1"]).reps == 1
+    check = make_check(tmp_path)  # and a result with no run at all is never a pass
+    result = check.result()
+    assert result["verdict"] == "error" and "no benchmark run was made" in result["error"]
+
+
+def test_the_timeout_test_needs_the_requested_timeout_to_apply():
+    ok = {"timed_out": True, "elapsed_s": 2.503, "reply": "Query timed out"}
+    assert pokec.timeout_problem(ok, 1000) is None
+    assert pokec.timeout_problem(ok, 0) is None
+    # a 5 s default that ignores `timeout 2500` must not pass
+    assert "outside" in pokec.timeout_problem({**ok, "elapsed_s": 5.01}, 5000)
+    assert "outside" in pokec.timeout_problem({**ok, "elapsed_s": 1.002}, 1000)
+    assert "inside" in pokec.timeout_problem(ok, 2500)
+    assert "ended" in pokec.timeout_problem({"timed_out": False, "elapsed_s": 0.012, "reply": "[[1]]"}, 1000)
+
+
+def test_a_failed_benchmark_start_still_stops_the_probe(tmp_path, monkeypatch):
+    server = FakeServer()
+    check = make_check(tmp_path)
+    run = make_run("candidate", 1, 1)
+    run.deadline_s = 30
+    started = []
+    real = pokec.PingProbe.start
+
+    def start(self):
+        started.append(self)
+        real(self)
+
+    monkeypatch.setattr(pokec.PingProbe, "start", start)
+    with pytest.raises(OSError):
+        check._drive(run, server.port, [str(tmp_path / "no-such-benchmark")], {}, tmp_path)
+    assert started and not started[0]._thread.is_alive()
+    assert (tmp_path / "ping.csv").exists() and run.ping is not None
+
+
+def test_an_earlier_run_s_files_are_not_this_run_s_artifacts(tmp_path):
+    out = tmp_path / "out"
+    (out / "raw").mkdir(parents=True)
+    (out / "raw" / "queries-medium-read.jsonl").write_text("old")
+    (out / "result.json").write_text("{}")
+    check = make_check(tmp_path)
+    assert not (out / "raw" / "queries-medium-read.jsonl").exists() and not (out / "result.json").exists()
+    assert "raw/queries-medium-read.jsonl" not in check.result()["artifacts"]
+
+
+def test_a_signal_during_the_first_checkpoint_still_writes_the_result(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
+    removed = []
+    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: removed.append(True))
+    real = pokec.Check.checkpoint
+
+    def checkpoint(self, where):
+        if where == "at start":
+            raise pokec.Stopped("signal 15")
+        real(self, where)
+
+    monkeypatch.setattr(pokec.Check, "checkpoint", checkpoint)
+    out = tmp_path / "out"
+    assert pokec.main(["--candidate", CAND, "--baseline", BASE, "--out", str(out), "--mode", "nightly",
+                       "--tools-dir", str(tmp_path / "tools")]) == 0
+    result = json.loads((out / "result.json").read_text())
+    assert result["verdict"] == "error" and "stopped by a signal" in result["error"] and removed
+
+
+def test_containers_are_removed_even_when_the_final_write_fails(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
+    removed = []
+    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: removed.append(True))
+    monkeypatch.setattr(pokec.Check, "main", lambda self: None)
+
+    def write_result(self, unfinished=None):
+        if unfinished is None:
+            raise OSError(28, "No space left on device")
+        return {}
+
+    monkeypatch.setattr(pokec.Check, "write_result", write_result)
+    with pytest.raises(OSError):
+        pokec.main(["--candidate", CAND, "--baseline", BASE, "--out", str(tmp_path / "out"), "--mode", "nightly",
+                    "--tools-dir", str(tmp_path / "tools")])
+    assert removed

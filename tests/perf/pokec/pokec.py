@@ -135,7 +135,7 @@ ALGORITHM_FLAGS = ("--enable-algo-pagerank", "--enable-algo-max-flow", "--enable
 RATIO_THRESHOLD = 1.3
 # A latency row also has to move by at least this much (ms): below it a ratio is
 # noise. Set from four A/A runs (main@4c1088949 and C v4.22.4, dev VM and the
-# _perf-vm.yml proof run 45389482775; README: "Thresholds measured"). Over every
+# _perf-vm.yml acceptance run 45389482775; README: "Thresholds measured"). Over every
 # 3-vs-3 split of a row's six first-pass readings, and every 2-vs-2 split for the
 # re-run, floors of 3 / 10 ms gave 0.02-0.04 expected false regressions a night (the
 # CI A/As: aggregate_expansion_4_with_filter p99 +14.7 ms at 1.47x on main,
@@ -144,6 +144,7 @@ LATENCY_FLOOR_MS = {"p50_ms": 1.0, "p95_ms": 5.0, "p99_ms": 15.0}
 PING_LIMIT_MS = 1000.0
 PING_INTERVAL_S = 0.2
 PING_TIMEOUT_S = 30.0
+PING_SLICE_S = 0.25  # the probe looks for a stop this often while it waits for a reply
 # A run that takes this many times as long as the other side's slowest finished
 # run of the same workload did not finish (README: "Did not finish").
 DEADLINE_FACTOR = 3.0
@@ -273,7 +274,15 @@ class Resp:
         try:
             self.sock.close()
         except OSError:
-            pass
+            pass  # best effort: the socket is being dropped either way
+
+    def shutdown(self) -> None:
+        """Close from another thread: shutdown() wakes a recv() blocked on this socket."""
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # already closed or never connected
+        self.close()
 
     def __enter__(self) -> "Resp":
         return self
@@ -362,7 +371,8 @@ class PingProbe:
 
     A reply that has not come after PING_TIMEOUT_S is recorded as a timeout and the
     connection replaced; a PING still waiting when the probe stops is recorded with the
-    time it has waited so far (a freeze that outlasted the run).
+    time it has waited so far (a freeze that outlasted the run). Each PING is recorded
+    once: stop() and the probe thread claim the sample under one lock.
     """
 
     def __init__(self, port: int, path: Path) -> None:
@@ -370,11 +380,34 @@ class PingProbe:
         self.path = path
         self.samples: list[tuple[int, float | None, str]] = []  # epoch ms, ms, kind
         self._stop = threading.Event()
-        self._inflight: float | None = None
+        self._lock = threading.Lock()
+        self._stopped = False
+        self._inflight: tuple[float, int] | None = None  # (monotonic send time, epoch ms)
+        self._conn: Resp | None = None
         self._thread = threading.Thread(target=self._loop, name="ping", daemon=True)
 
     def start(self) -> None:
         self._thread.start()
+
+    def _record(self, sample: tuple[int, float | None, str]) -> bool:
+        """Append unless stop() already did (it records the PING in flight itself)."""
+        with self._lock:
+            self._inflight = None
+            if self._stopped:
+                return False
+            self.samples.append(sample)
+            return True
+
+    def _reply(self, conn: Resp, sent: float) -> Any:
+        """Wait for the reply in short slices, so a stop() is seen within PING_SLICE_S."""
+        while True:
+            try:
+                return conn.read()
+            except socket.timeout:
+                if self._stop.is_set():
+                    return None  # stop() has recorded this PING
+                if time.monotonic() - sent >= PING_TIMEOUT_S:
+                    raise
 
     def _loop(self) -> None:
         conn: Resp | None = None
@@ -384,20 +417,23 @@ class PingProbe:
             try:
                 if conn is None:
                     conn = Resp(self.port, PING_TIMEOUT_S)
-                self._inflight = sent
+                    conn.sock.settimeout(PING_SLICE_S)
+                    self._conn = conn
+                with self._lock:
+                    if self._stopped:
+                        break
+                    self._inflight = (sent, epoch)
                 conn.send("PING")
-                reply = conn.read()
-                self._inflight = None
+                reply = self._reply(conn, sent)
                 ms = (time.monotonic() - sent) * 1000
-                self.samples.append((epoch, ms, "ok" if reply == "PONG" else "error"))
+                if not self._record((epoch, ms, "ok" if reply == "PONG" else "error")):
+                    break
             except socket.timeout:
-                self._inflight = None
-                self.samples.append((epoch, PING_TIMEOUT_S * 1000, "timeout"))
+                self._record((epoch, PING_TIMEOUT_S * 1000, "timeout"))
                 conn.close() if conn else None
                 conn = None
             except OSError:
-                self._inflight = None
-                self.samples.append((epoch, None, "error"))
+                self._record((epoch, None, "error"))
                 conn.close() if conn else None
                 conn = None
             wait = PING_INTERVAL_S - (time.monotonic() - sent)
@@ -407,16 +443,18 @@ class PingProbe:
             conn.close()
 
     def stop(self) -> None:
-        inflight = self._inflight
+        with self._lock:
+            self._stopped = True
+            inflight, self._inflight = self._inflight, None
+            if inflight is not None:
+                # Still waiting for a reply: the freeze lasted at least this long.
+                sent, epoch = inflight
+                self.samples.append((epoch, (time.monotonic() - sent) * 1000, "inflight"))
         self._stop.set()
-        if inflight is not None:
-            # Still waiting for a reply: the freeze lasted at least this long.
-            self.samples.append(
-                (int(time.time() * 1000), (time.monotonic() - inflight) * 1000, "inflight")
-            )
-        # The thread may be blocked in recv for up to PING_TIMEOUT_S; it is a daemon and
-        # only appends to samples, which are read below from a copy.
-        self._thread.join(timeout=1.0)
+        conn = self._conn
+        if conn is not None:
+            conn.shutdown()  # a probe blocked in recv() returns now
+        self._thread.join(timeout=5.0)
         with self.path.open("w", encoding="utf-8") as sink:
             sink.write("epoch_ms,latency_ms,kind\n")
             for epoch, ms, kind in list(self.samples):
@@ -537,7 +575,7 @@ def wait_ping(port: int, seconds: float) -> bool:
             if resp_call(port, "PING", timeout=5) == "PONG":
                 return True
         except (OSError, RespError):
-            pass
+            pass  # not up yet (refused, reset or LOADING): try again until the deadline
         time.sleep(0.5)
     return False
 
@@ -749,13 +787,17 @@ class QueryFile:
     path: Path
     counts: Counter  # q_name -> requests
     types: dict[str, str]  # q_name -> Read | Write
-    by_text: dict[str, str]  # the exact cypher the benchmark sends -> q_name
+    # The exact cypher the benchmark sends -> q_name. Two query types can send the same text
+    # (benchmark c366437: vertex_on_label_property and vertex_on_label_property_index share
+    # a template, so the same random id collides); such a text maps to "a|b" and its
+    # failures are split per type from metrics.prom (attribute_ambiguous).
+    by_text: dict[str, str]
 
 
 def read_query_file(path: Path) -> QueryFile:
     counts: Counter = Counter()
     types: dict[str, str] = {}
-    by_text: dict[str, str] = {}
+    names_by_text: dict[str, set[str]] = defaultdict(set)
     with path.open(encoding="utf-8") as lines:
         meta = json.loads(lines.readline())
         for entry in meta.get("catalog", []):
@@ -766,8 +808,44 @@ def read_query_file(path: Path) -> QueryFile:
             item = json.loads(line)
             counts[item["q_name"]] += 1
             types[item["q_name"]] = item["q_type"]
-            by_text[item["cypher"]] = item["q_name"]
+            names_by_text[item["cypher"]].add(item["q_name"])
+    by_text = {text: "|".join(sorted(names)) for text, names in names_by_text.items()}
     return QueryFile(path, counts, types, by_text)
+
+
+def attribute_ambiguous(
+    errors: dict[str, dict[str, int]], counts: dict[str, int], rates: dict[str, dict[str, float]]
+) -> tuple[dict[str, dict[str, int]], str | None]:
+    """Split failures logged under a shared text ("a|b") between its query types.
+
+    metrics.prom's per-type rates say how many requests of each type failed; what the
+    unambiguous log lines do not account for belongs to the shared text. Timeouts are
+    handed out before other errors. Returns the errors and a problem when they disagree.
+    """
+    out = {name: dict(kinds) for name, kinds in errors.items() if "|" not in name}
+    for key, kinds in errors.items():
+        if "|" not in key:
+            continue
+        names = key.split("|")
+        residual = {}
+        for name in names:
+            rate = rates.get(name, {})
+            expected = round((rate.get("timeout", 0.0) + rate.get("failure", 0.0)) * counts.get(name, 0) / 100)
+            residual[name] = expected - sum(out.get(name, {}).values())
+        if any(v < 0 for v in residual.values()) or sum(residual.values()) != sum(kinds.values()):
+            return out, f"{sum(kinds.values())} failures of the shared text {key} do not match metrics.prom ({residual})"
+        left = {"timeouts": kinds.get("timeouts", 0), "failures": kinds.get("failures", 0)}
+        for name in names:
+            need = residual[name]
+            if not need:
+                continue
+            slot = out.setdefault(name, {"timeouts": 0, "failures": 0})
+            for kind in ("timeouts", "failures"):
+                take = min(need, left[kind])
+                slot[kind] = slot.get(kind, 0) + take
+                left[kind] -= take
+                need -= take
+    return out, None
 
 
 def hop_label(query: str) -> str:
@@ -808,6 +886,7 @@ def parse_metrics(text: str) -> dict[str, Any]:
     overall: dict[str, float] = {}
     rates: dict[str, dict[str, float]] = defaultdict(dict)
     global_rates: dict[str, float] = {}
+    executed: Counter = Counter()  # requests a worker finished, per query type (any outcome)
     for name, labels, value in parse_prom(text):
         if name == "falkordb_query_latency_pct_us" and "query" in labels and "pct" in labels:
             if labels["pct"] in ("50", "95", "99"):
@@ -820,7 +899,24 @@ def parse_metrics(text: str) -> dict[str, Any]:
         elif name in ("benchmark_global_timeout_rate_pct", "benchmark_global_failure_rate_pct"):
             if labels.get("vendor", "falkor").lower().startswith("falkor"):
                 global_rates["timeout" if "timeout" in name else "failure"] = value
-    return {"per_query": dict(per_query), "overall": overall, "rates": dict(rates), "global_rates": global_rates}
+        elif name == "operations_total" and labels.get("vendor", "falkor").lower().startswith("falkor"):
+            # lib.rs OPERATION_COUNTER, one series per worker: counted once a request ends.
+            executed[labels.get("name", "")] += int(value)
+    return {"per_query": dict(per_query), "overall": overall, "rates": dict(rates), "global_rates": global_rates,
+            "executed": dict(executed)}
+
+
+def missing_requests(executed: dict[str, int], counts: dict[str, int]) -> str | None:
+    """None when every generated request ended (with any outcome), else what is missing.
+
+    The benchmark ignores its workers' join errors (main.rs run_falkor), so a worker that
+    dies after taking a request can leave the run at exit 0 with the request unaccounted.
+    """
+    short = {q: (executed.get(q, 0), n) for q, n in counts.items() if executed.get(q, 0) != n}
+    if not short:
+        return None
+    sample = ", ".join(f"{q} {got} of {want}" for q, (got, want) in sorted(short.items())[:3])
+    return f"the benchmark ended {sum(executed.get(q, 0) for q in counts)} of {sum(counts.values())} requests ({sample})"
 
 
 ERROR_RE = re.compile(r"Error executing query: (?P<query>.*?), the error is: (?P<error>.*)$")
@@ -886,6 +982,26 @@ class Run:
 
 
 # --- analysis ----------------------------------------------------------------
+
+
+# The self-test sends a read that would run for hours with this per-query timeout. Measured
+# on main, 6.0.4 and C v4.22.4: it stops at 2.50 s (and at 1.00 s with no timeout argument,
+# the images' TIMEOUT 1000). A stop outside this window means another limit applied.
+TIMEOUT_TEST_MS = 2500
+TIMEOUT_TEST_WINDOW_S = (2.2, 4.0)
+
+
+def timeout_problem(test: dict[str, Any], server_timeout: Any) -> str | None:
+    """None when the per-query timeout demonstrably applied, else why it did not."""
+    low, high = TIMEOUT_TEST_WINDOW_S
+    if not test.get("timed_out"):
+        return f"a read sent with timeout {TIMEOUT_TEST_MS} ms ended after {test.get('elapsed_s')} s ({test.get('reply')})"
+    if not low <= test["elapsed_s"] <= high:
+        return (f"a read sent with timeout {TIMEOUT_TEST_MS} ms timed out after {test['elapsed_s']} s, "
+                f"outside {low}-{high} s")
+    if isinstance(server_timeout, int) and low * 1000 <= server_timeout <= high * 1000:
+        return f"the server's own TIMEOUT {server_timeout} ms falls inside the test's window, so the test cannot tell the two apart"
+    return None
 
 
 def make_finding(
@@ -1039,9 +1155,10 @@ def analyse(
                 rows.append({"dataset": dataset, "workload": workload.label, "name": label,
                              "metric": "completed", "candidate": 1, "baseline": 1, "ratio": 1.0,
                              "direction": "lower_is_worse", "status": "ok", "detail": detail})
-                # Timeouts in one run only on the candidate: re-run to see whether they repeat.
+                # Timeouts in one candidate run: re-run to see whether they repeat. Also when the
+                # baseline timed out once too: only a repeat decides which side is broken.
                 f, t, tr, n = counts["candidate"]
-                if tr == 1 and counts["baseline"][1] == 0:
+                if tr == 1:
                     if (dataset, wl_key) not in rerun_done:
                         want_rerun((dataset, wl_key), f"{label}: timeouts in 1 candidate run")
                     else:
@@ -1063,8 +1180,11 @@ def analyse(
             first = crossed(metric, side_value("candidate", getter, 1), side_value("baseline", getter, 1), direction)
             has_second = any(r.pass_no == 2 for r in finished["candidate"]) and any(
                 r.pass_no == 2 for r in finished["baseline"])
-            second = (crossed(metric, side_value("candidate", getter, 2), side_value("baseline", getter, 2), direction)
-                      if has_second else None)
+            # A re-run with no value for this row (e.g. every request of the query failed on
+            # one side) did not re-measure it: that stays None, never "did not cross".
+            cand2, base2 = side_value("candidate", getter, 2), side_value("baseline", getter, 2)
+            second = (crossed(metric, cand2, base2, direction)
+                      if has_second and cand2 is not None and base2 is not None else None)
             r = ratio(cand, base)
             severity = 0.0 if r is None else (r if direction == "higher_is_worse" else (1 / r if r else 0.0))
             if use == "row":
@@ -1129,6 +1249,10 @@ def analyse(
         where = scope(dataset, workload)
         values = {side: [r.ping.get("ping_max_ms") for r in group if r.side == side and r.ping] for side in
                   ("candidate", "baseline")}
+        # A run that finished with no PING answered was not watched: "no freeze" is unknown.
+        blind = sorted({r.side for r in group if r.finished and r.ping.get("ping_max_ms") is None})
+        if blind:
+            unmeasured.append(f"PING max [{where}]: no PING answered during a finished {' and '.join(blind)} run")
         if not values["candidate"]:
             continue
         # A side's value is the slowest PING reached in at least REPEAT_RUNS runs (the
@@ -1254,7 +1378,16 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     # Development only: shrink a run. A result made with these is not a contract run.
     parser.add_argument("--reps", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--workloads", help=argparse.SUPPRESS)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # A development option must still schedule runs: zero runs would read as a pass.
+    if args.reps is not None and args.reps < 1:
+        parser.error(f"--reps must be at least 1, not {args.reps}")
+    if args.workloads is not None:
+        keys = [key for key in args.workloads.split(",") if key]
+        known = [w.key for w in WORKLOADS]
+        if not keys or any(key not in known for key in keys):
+            parser.error(f"--workloads takes a comma-separated subset of {', '.join(known)}, not {args.workloads!r}")
+    return args
 
 
 def machine_object() -> dict[str, Any]:
@@ -1271,7 +1404,7 @@ def machine_object() -> dict[str, Any]:
                 cpu = line.partition(":")[2].strip()
                 break
     except OSError:
-        pass
+        pass  # no /proc (macOS): keep platform.processor()
     return {"runner": "local", "type": platform.machine() or "unknown", "cpu": cpu, "cores": os.cpu_count() or 1}
 
 
@@ -1285,8 +1418,15 @@ class Check:
         # Absolute: the tools run from other directories (the workflow passes `--out out`).
         self.out = Path(args.out).resolve()
         self.raw = self.out / "raw"
+        # Only this invocation's files may become its artifacts: drop an earlier run's.
+        stale = self.raw.exists() or (self.out / "result.json").exists()
+        if self.raw.exists():
+            shutil.rmtree(self.raw)
+        (self.out / "result.json").unlink(missing_ok=True)
         self.raw.mkdir(parents=True, exist_ok=True)
         self.log = Log(self.raw / "check.log")
+        if stale:
+            self.log(f"removed an earlier run's raw/ and result.json from {self.out}")
         self.started = now()
         self.started_mono = time.monotonic()
         self.run_id = f"{os.getpid()}-{int(time.time())}"
@@ -1371,15 +1511,13 @@ class Check:
         answered = False
         try:
             with Resp(port, 60) as conn:
-                reply = conn.call("GRAPH.RO_QUERY", "probe", query, "--compact", "timeout", 2500)
+                reply = conn.call("GRAPH.RO_QUERY", "probe", query, "--compact", "timeout", TIMEOUT_TEST_MS)
             answered = True
         except OSError as exc:  # no reply within 60 s: the server did not stop it
             reply = f"no reply: {exc}"
         elapsed = time.monotonic() - started
-        return {"elapsed_s": round(elapsed, 3), "reply": str(reply)[:200],
-                "timed_out": answered and isinstance(reply, RespError) and "time" in str(reply).lower()
-                and elapsed < 10,
-                "ran_past_server_timeout": elapsed > 1.5}
+        return {"elapsed_s": round(elapsed, 3), "reply": str(reply)[:200], "requested_ms": TIMEOUT_TEST_MS,
+                "timed_out": answered and isinstance(reply, RespError) and "time" in str(reply).lower()}
 
     # -- one run --
 
@@ -1414,8 +1552,9 @@ class Check:
                     run.finished, run.stop_reason = False, f"server exited ({state})"
                 try:
                     self.docker.logs(server, folder / "server.log")
-                except (OSError, subprocess.SubprocessError):
-                    pass
+                except (OSError, subprocess.SubprocessError) as exc:
+                    # Best effort: the run's result does not depend on the server log.
+                    self.log(f"   could not save the server log: {exc}")
                 self.docker.remove(server)
         self.runs.append(run)
         self.checkpoint(f"after {run.dir}")
@@ -1475,31 +1614,10 @@ class Check:
         run.deadline_s = round(self.deadline_for(dataset, workload, run.side), 1)
         results = folder / "bench"
         env = dict(os.environ, FALKOR_QUERY_TIMEOUT_MS=str(QUERY_TIMEOUT_MS), NO_COLOR="1", RUST_LOG="info")
-        probe = PingProbe(server.port, folder / "ping.csv")
-        probe.start()
-        started = time.monotonic()
-        with (folder / "run.log").open("wb") as sink:
-            proc = subprocess.Popen(
-                [str(tools.benchmark), "run", "--vendor", "falkor", "--name", str(qfile.path),
-                 "--parallel", str(PARALLEL), "--mps", str(MPS),
-                 "--endpoint", f"falkor://127.0.0.1:{server.port}", "--results-dir", str(results)],
-                cwd=folder, env=env, stdout=sink, stderr=subprocess.STDOUT,
-            )
-            try:
-                code = proc.wait(timeout=run.deadline_s)
-            except subprocess.TimeoutExpired:
-                code = None
-            finally:
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=1 if self.stopping else 15)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait()
-        run.wall_s = round(time.monotonic() - started, 2)
-        probe.stop()
-        run.ping = probe.summary()
+        cmd = [str(tools.benchmark), "run", "--vendor", "falkor", "--name", str(qfile.path),
+               "--parallel", str(PARALLEL), "--mps", str(MPS),
+               "--endpoint", f"falkor://127.0.0.1:{server.port}", "--results-dir", str(results)]
+        code = self._drive(run, server.port, cmd, env, folder)
         if code is None:
             run.stop_reason = f"stopped at the deadline ({run.deadline_s:.0f} s)"
             try:
@@ -1522,8 +1640,48 @@ class Check:
             metrics = parse_metrics(prom.read_text(encoding="utf-8"))
             run.per_query, run.overall = metrics["per_query"], metrics["overall"]
             run.elapsed_s = round(json.loads(meta.read_text())["elapsed_ms"] / 1000, 3)
+            run.errors, problem = attribute_ambiguous(run.errors, qfile.counts, metrics["rates"])
+            if problem:
+                raise SetupError(f"{run.dir}: {problem}; the log parser is out of date")
             self._cross_check(run, metrics, qfile, unmatched)
+            missing = missing_requests(metrics["executed"], qfile.counts)
+            if missing:
+                run.stop_reason = missing
+                return
             run.finished = run.stop_reason is None
+        elif any("|" in key for key in run.errors):
+            # No metrics.prom to split a shared text by: those failures stay unattributed.
+            self.log(f"   unattributed (shared query text): "
+                     f"{ {k: v for k, v in run.errors.items() if '|' in k} }")
+
+    def _drive(self, run: Run, port: int, cmd: list[str], env: dict[str, str], folder: Path) -> int | None:
+        """Run the benchmark under the PING probe; None when it passed its deadline.
+
+        The probe stops on every path, a failed start included: a probe left running
+        would keep pinging whatever server takes this port next.
+        """
+        probe = PingProbe(port, folder / "ping.csv")
+        probe.start()
+        started = time.monotonic()
+        try:
+            with (folder / "run.log").open("wb") as sink:
+                proc = subprocess.Popen(cmd, cwd=folder, env=env, stdout=sink, stderr=subprocess.STDOUT)
+                try:
+                    return proc.wait(timeout=run.deadline_s)
+                except subprocess.TimeoutExpired:
+                    return None
+                finally:
+                    if proc.poll() is None:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=1 if self.stopping else 15)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.wait()
+        finally:
+            run.wall_s = round(time.monotonic() - started, 2)
+            probe.stop()
+            run.ping = probe.summary()
 
     def _cross_check(self, run: Run, metrics: dict[str, Any], qfile: QueryFile, unmatched: list[str]) -> None:
         """The failed requests parsed from the log must agree with metrics.prom's rates.
@@ -1566,13 +1724,10 @@ class Check:
                 self.info.append(make_finding(f"server started [{dataset.name}]", "completed", 0, 1, None,
                                               "lower_is_worse", "regression"))
                 return
-            test = facts["timeout_test"]
-            if not (test["timed_out"] and test["ran_past_server_timeout"]):
-                raise SetupError(
-                    f"{side}: a read sent with timeout 2500 ms {'stopped' if test['timed_out'] else 'ended'} "
-                    f"after {test['elapsed_s']} s ({test['reply']}): the benchmark's per-query timeout "
-                    f"({QUERY_TIMEOUT_MS} ms) is not what this server applies"
-                )
+            problem = timeout_problem(facts["timeout_test"], facts.get("TIMEOUT"))
+            if problem:
+                raise SetupError(f"{side}: {problem}: the benchmark's per-query timeout ({QUERY_TIMEOUT_MS} ms) "
+                                 f"is not shown to be what this server applies")
             if str(facts.get("THREAD_COUNT")) != str(THREAD_COUNT):
                 raise SetupError(f"{side}: THREAD_COUNT is {facts.get('THREAD_COUNT')}, not {THREAD_COUNT}")
         self.generate_queries(tools, dataset)
@@ -1611,7 +1766,8 @@ class Check:
         analysis = analyse(self.runs, self.mode, self.query_files, self.info,
                            self.rerun_done | {(r.dataset, r.workload) for r in self.runs})
         selected = select_findings(analysis.findings)
-        verdict, error = verdict_of(selected, analysis, self.error or unfinished)
+        nothing = None if self.runs else "no benchmark run was made"
+        verdict, error = verdict_of(selected, analysis, self.error or unfinished or nothing)
         counts = {"runs": len(self.runs), "rows": len(analysis.rows)}
         self.write_tables(analysis)
         artifacts = [p.relative_to(self.out).as_posix() for p in sorted(self.raw.glob("*")) if p.is_file()]
@@ -1722,8 +1878,8 @@ def main(argv: list[str] | None = None) -> int:
 
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGINT, on_term)
-    check.checkpoint("at start")
     try:
+        check.checkpoint("at start")
         check.main()
     except Stopped:
         minutes = (time.monotonic() - check.started_mono) / 60
@@ -1738,12 +1894,17 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     if check.error:
         check.log(f"ERROR: {check.error}")
-    result = check.write_result()
-    check.log(f"verdict {result['verdict']}: {result['summary']}")
     try:
-        check.docker.remove_all()
-    except (OSError, subprocess.SubprocessError):
-        pass
+        result = check.write_result()
+        check.log(f"verdict {result['verdict']}: {result['summary']}")
+    finally:
+        # Also when the write failed (a full disk): the last checkpoint is the result then,
+        # and a loaded server must not outlive the check.
+        try:
+            check.docker.remove_all()
+        except (OSError, subprocess.SubprocessError) as exc:
+            # Best effort, after the result: the containers carry the run's label for later cleanup.
+            check.log(f"could not remove the containers: {exc}")
     return 0
 
 
