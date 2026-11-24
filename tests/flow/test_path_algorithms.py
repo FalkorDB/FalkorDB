@@ -1124,4 +1124,34 @@ class testAllShortestPaths():
                         elif direction == 'incoming':
                             self.env.assertEqual((s, d), (v, u))
                         else:
-                            self.env.assertTrue((s, d) in [(u, v), (v, u)])
+                            self.env.assertIn((s, d), [(u, v), (v, u)])
+
+    def test26_unit_weight_sp_past_a_hub(self):
+        # The unit-weight search grows the side with less to inspect. Here the
+        # target is a hub with thousands of unrelated in-edges (more than the
+        # degree probe counts), so the search has to go around it from the
+        # source; either way the answer is the 3-hop path, and a dead end and
+        # the hub's leaves are not on it.
+        g = self.db.select_graph("sp_hub")
+        g.query("""CREATE (s:N {id: 0})-[:E]->(:N {id: 1})-[:E]->(:N {id: 2})-[:E]->(t:N {id: 3}),
+                          (s)-[:E]->(:N {id: 4})""")
+        g.query("MATCH (t:N {id: 3}) UNWIND range(1, 3000) AS i CREATE (:Leaf)-[:E]->(t)")
+
+        for direction, (src, dst), expected in (
+                ('outgoing', (0, 3), [0, 1, 2, 3]),
+                ('incoming', (3, 0), [3, 2, 1, 0]),
+                ('both', (0, 3), [0, 1, 2, 3])):
+            result = g.query(f"""
+                MATCH (a:N {{id: {src}}}), (b:N {{id: {dst}}})
+                CALL algo.SPpaths({{sourceNode: a, targetNode: b, relTypes: ['E'],
+                                   relDirection: '{direction}'}})
+                YIELD path, pathWeight
+                RETURN [n IN nodes(path) | n.id], pathWeight""").result_set
+            self.env.assertEqual(result, [[expected, 3]])
+
+        # a leaf reaches the hub in one hop, never the source
+        result = g.query("""
+            MATCH (l:Leaf) WITH l LIMIT 1 MATCH (s:N {id: 0})
+            CALL algo.SPpaths({sourceNode: l, targetNode: s, relTypes: ['E']})
+            YIELD path RETURN length(path)""").result_set
+        self.env.assertEqual(result, [])

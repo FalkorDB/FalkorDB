@@ -2426,11 +2426,27 @@ struct BfsSide {
     /// set; the root is in it with depth 0 and no link.
     seen: FxHashMap<NodeId, (u32, Option<(NodeId, (RelationshipId, NodeId, NodeId))>)>,
     frontier: Vec<NodeId>,
+    /// Relationships the frontier's next expansion will inspect — the sum of
+    /// its nodes' degrees in `dir` — while the frontier is small enough to
+    /// count them; see [`BfsSide::cost`].
+    work: Option<u64>,
     depth: u32,
 }
 
+/// Largest frontier whose degrees [`bfs_single_path`] sums to pick the side
+/// to grow. A degree probe costs about as much as expanding the node, so
+/// summing every frontier made the search several times slower; but a hub
+/// only distorts the choice while frontiers are tiny, where one node with a
+/// million relationships outweighs everything else on the board.
+const BFS_DEGREE_PROBE_MAX: usize = 8;
+
+/// Per-node cap on a degree probe; see [`degree_capped`].
+const BFS_DEGREE_PROBE_CAP: usize = 1024;
+
 impl BfsSide {
     fn new(
+        g: &Graph,
+        types: &[Arc<String>],
         root: NodeId,
         dir: EdgeDirection,
     ) -> Self {
@@ -2440,8 +2456,23 @@ impl BfsSide {
             dir,
             seen,
             frontier: vec![root],
+            work: Some(degree_capped(g, root, types, dir, BFS_DEGREE_PROBE_CAP)),
             depth: 0,
         }
+    }
+
+    /// Sum the frontier's degrees if it is small enough to be worth it.
+    fn measure(
+        &mut self,
+        g: &Graph,
+        types: &[Arc<String>],
+    ) {
+        self.work = (self.frontier.len() <= BFS_DEGREE_PROBE_MAX).then(|| {
+            self.frontier
+                .iter()
+                .map(|&n| degree_capped(g, n, types, self.dir, BFS_DEGREE_PROBE_CAP))
+                .sum()
+        });
     }
 
     /// The edges from `node` back to this side's root, nearest `node` first.
@@ -2458,13 +2489,31 @@ impl BfsSide {
     }
 }
 
+/// How many `types` relationships `node` has in direction `dir`, counting
+/// no further than `cap`: the side choice only needs to know that a node is
+/// heavy, not how heavy, and an exact degree costs as much as the hub's
+/// whole expansion.
+fn degree_capped(
+    g: &Graph,
+    node: NodeId,
+    types: &[Arc<String>],
+    dir: EdgeDirection,
+    cap: usize,
+) -> u64 {
+    g.get_node_relationships_by_type(node, types, dir)
+        .take(cap)
+        .count() as u64
+}
+
 /// The unit-weight case of [`dijkstra_single_path`]: with no `weightProp`
 /// every edge weighs 1, so the fewest-hops path is the cheapest one and a
 /// BFS finds it.
 ///
 /// The search runs from both ends at once — forward from the source along the
 /// configured direction, backward from the target against it — and always
-/// grows the side with the smaller frontier. A path of length L then costs
+/// grows the side whose frontier has fewer relationships to inspect (not
+/// fewer nodes: one hub on a side can outweigh a frontier of leaves; see
+/// [`BFS_DEGREE_PROBE_MAX`] for when it counts nodes instead). A path of length L then costs
 /// two searches of about L/2 hops instead of one of L, which on a social
 /// graph is the difference between touching a neighbourhood and touching
 /// most of the graph. It also ends early when there is no path: as soon as
@@ -2486,30 +2535,38 @@ fn bfs_single_path(
         EdgeDirection::Incoming => EdgeDirection::Outgoing,
         EdgeDirection::Both => EdgeDirection::Both,
     };
-    let mut fwd = BfsSide::new(config.source, config.rel_direction);
-    let mut bwd = BfsSide::new(target, reverse);
+    let types = &config.rel_types;
+    let mut fwd = BfsSide::new(g, types, config.source, config.rel_direction);
+    let mut bwd = BfsSide::new(g, types, target, reverse);
     let mut next: Vec<NodeId> = Vec::new();
     let mut iters: u64 = 0;
     // (path length, node where the two sides meet)
     let mut best: Option<(u32, NodeId)> = None;
 
     while best.is_none() && !fwd.frontier.is_empty() && !bwd.frontier.is_empty() {
-        let (side, other) = if fwd.frontier.len() <= bwd.frontier.len() {
+        // Fewer relationships to inspect when both sides know their count,
+        // otherwise fewer nodes.
+        let fwd_first = match (fwd.work, bwd.work) {
+            (Some(f), Some(b)) => f <= b,
+            _ => fwd.frontier.len() <= bwd.frontier.len(),
+        };
+        let (side, other) = if fwd_first {
             (&mut fwd, &bwd)
         } else {
             (&mut bwd, &fwd)
         };
         let depth = side.depth + 1;
         for &node in &side.frontier {
-            iters += 1;
-            if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
-                runtime.check_timeout()?;
-                runtime.check_mem_capacity()?;
-            }
-
+            // Polled per relationship, not per node: one node with millions
+            // of relationships must not run unchecked.
             for (edge_src, edge_dst, edge_id) in
-                g.get_node_relationships_by_type(node, &config.rel_types, side.dir)
+                g.get_node_relationships_by_type(node, types, side.dir)
             {
+                iters += 1;
+                if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
+                    runtime.check_timeout()?;
+                    runtime.check_mem_capacity()?;
+                }
                 let Some(far) = far_endpoint(node, edge_src, edge_dst, side.dir) else {
                     continue;
                 };
@@ -2531,6 +2588,7 @@ fn bfs_single_path(
         side.depth = depth;
         swap(&mut side.frontier, &mut next);
         next.clear();
+        side.measure(g, types);
     }
 
     let Some((_, meet)) = best else {
