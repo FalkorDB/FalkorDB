@@ -1,25 +1,9 @@
 #!/usr/bin/env python3
-"""Report one night of the perf nightly: the details on the run page, one line in Chat.
+"""Report one perf nightly: one line to Chat, the details on the run page.
 
     python -I tests/perf/report/post.py --nightly <path/to/nightly.json>
 
-merge.py validated nightly.json and set its `status` before this runs, so the
-status is trusted as written. Only what needs no validator is checked here: a
-file that cannot be read, a status that is not green, red, error or skipped, and a
-crash of this script all report the night as ERROR, never green.
-
-* `$GITHUB_STEP_SUMMARY` (when set) gets the details as Markdown: each check's
-  verdict and summary, the worst regression rows, the commits since the last green
-  night, and a pre-filled issue link.
-* `$PERF_CHAT_WEBHOOK` (when set) gets one line with the status, a "details" link to
-  the run page and, on a red night, a "new issue" link pre-filled from nightly.json.
-  A failed post is a warning; a post that may have arrived is never sent again.
-* stdout gets the same line.
-
-Exit code: 0 for any night it reported (green, skipped, red or error); merge.py
-alone decides the run's colour from the status. 1 only when it could not report:
-a file it cannot read, an unknown status, or its own crash (whose ERROR line is
-still posted first). Standard library only.
+See tests/perf/report/README.md.
 """
 
 from __future__ import annotations

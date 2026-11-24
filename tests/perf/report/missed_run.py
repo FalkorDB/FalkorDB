@@ -1,21 +1,9 @@
 #!/usr/bin/env python3
-"""The 05:00 UTC alarm: did tonight's perf-nightly run leave its result?
+"""The 05:00 UTC alarm: did the night's perf-nightly run leave its result?
 
     python -I tests/perf/report/missed_run.py [--date YYYY-MM-DD]
 
-Looks at the scheduled runs of `perf-nightly.yml` on `main` created in the 24 hours
-before <date> 05:00 UTC. It stays quiet when one of them uploaded the `perf-nightly`
-artifact (nightly.json: the reporter already spoke for that night). A hand-started
-run does not count: one given its own images uploads nightly.json without posting
-it, so it must not stand in for the night's scheduled run. Otherwise it
-raises the alarm and says which case it is: no run, a run still going, or a run
-that finished without the artifact. The alarm goes out the same way as the nightly
-report (stdout, `$GITHUB_STEP_SUMMARY`, `$PERF_CHAT_WEBHOOK`) and the exit code is
-1, so the scheduled run itself fails too. A check that cannot reach GitHub is an
-alarm as well: not knowing is not quiet.
-
-`--workflow`, `--branch`, `--event` and `--artifact` exist so the alarm can be
-accepted against other runs; the defaults are the nightly's.
+See tests/perf/report/README.md.
 """
 
 from __future__ import annotations

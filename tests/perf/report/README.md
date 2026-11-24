@@ -54,7 +54,8 @@ before `<date> 05:00 UTC` (`perf-nightly.yml` starts at 00:00). It is quiet when
 any of them has an unexpired `perf-nightly` artifact; a skipped night uploads one
 too, and a re-run of the night's jobs is the same run. A hand-started run does not
 count: one given its own images uploads nightly.json but posts nothing. Otherwise
-it posts an alarm naming the case and exits 1:
+it posts an alarm naming the case and exits 1, so the run is red even without a
+webhook:
 
 * no scheduled run in the window;
 * the newest run is still going;

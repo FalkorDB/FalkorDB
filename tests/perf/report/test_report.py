@@ -1,14 +1,6 @@
-"""Tests for the nightly perf reporter (post.py) and the missed-run alarm (missed_run.py).
+"""Tests for post.py and missed_run.py: one test per rule, each failing when its rule breaks.
 
-Standard library only: `python -m pytest tests/perf/report` or
-`python -m unittest discover tests/perf/report`.
-
-post.py trusts the status merge.py wrote after validating nightly.json, so these
-tests check what post.py itself decides: the guards that need no validator, the one
-Chat line and its links, the run page (step summary), delivery, and the exit code
-(0 whenever the night was reported; merge.py decides the run's colour). Each test
-fails when the rule it names is broken. PERF_JUDGE_DIR points the fixture tests at
-another checkout's tests/perf.
+Standard library only: `python -m pytest tests/perf/report`. See tests/perf/report/README.md.
 """
 
 from __future__ import annotations
@@ -36,8 +28,7 @@ import post
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
-JUDGE = Path(os.environ.get("PERF_JUDGE_DIR") or REPO_ROOT / "tests" / "perf")
-FIXTURES = JUDGE / "fixtures"
+FIXTURES = REPO_ROOT / "tests" / "perf" / "fixtures"
 
 CANDIDATE_IMAGE = ("ghcr.io/falkordb/falkordb-server@sha256:"
                    "95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed")
