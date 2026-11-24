@@ -402,14 +402,15 @@ still leaves one. The command exits 0 whenever `result.json` was written.
 | `nightly` | SF0.1 (18 MB) | 25 | 2 (+2) | 60 s | 35 min |
 | `long` | SF1 (230 MB) | 25 | 2 (+2) | 300 s | 150 min |
 
-How long `nightly` takes, measured on an n4-standard-16 dev VM (unpinned), before
-the per-round budget was raised to 300 s: main@4c1088949 against itself 9.3 min,
-C v4.22.4 against itself 3.7 min, 6.0.4 against 6.2.0 (nine regressions
-confirmed, so nine re-runs) 20.6 min. Most of it is the two loads (about 70 s
-each) and the queries that time out (IC3 and one IC14 row on the Rust engine).
-The 35-minute deadline stops new measurement well inside the 45 minutes the
-check gets in `tests/perf/checks.yaml`. `queue` and `long` are accepted and set
-as above but not yet measured end to end; `long` at SF1 is untimed.
+How long it takes, measured on an n4-standard-16 dev VM (unpinned), with the
+settings above: main@4c1088949 against itself took 13.5 min in `nightly` and
+7.7 min in `queue`. Earlier runs, before the per-round budget was raised to
+300 s: C v4.22.4 against itself 3.7 min, 6.0.4 against 6.2.0 (nine
+regressions confirmed, so nine re-runs) 20.6 min. Most of it is the two loads
+(about 70 s each) and the queries that time out (IC3 on every row, and one IC14
+row, on the Rust engine). The 35-minute deadline stops new measurement well
+inside the 45 minutes the check gets in `tests/perf/checks.yaml`. `long` (SF1)
+is accepted and set as above but not yet run end to end.
 
 **Artifacts** under `<out>/raw/`: `samples.csv` (every request: phase, round,
 query, parameter row, side, outcome, latency, rows, digest), `summary.csv`

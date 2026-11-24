@@ -943,7 +943,10 @@ class Check:
                 self.explain()
                 self.measure()
         finally:
-            self.teardown()
+            # A first SIGTERM arriving here is held until teardown is done,
+            # so the containers are still removed and the logs still kept.
+            with _sigterm_deferred():
+                self.teardown()
         self.write_samples()
         self.write_summary()
         return self.write()
@@ -1178,7 +1181,7 @@ class Check:
         if self.deadline_skips:
             self.problem(
                 f"the {self.opts.mode.deadline_s / 60:.0f} min deadline passed before every "
-                f"query had its rounds ({self.deadline_skips} parameter rows not run)"
+                f"query had its rounds ({self.deadline_skips} parameter-row runs skipped)"
             )
         if self.compared_queries == 0:
             self.problem("no query could be compared on both sides")
@@ -1297,8 +1300,13 @@ class Check:
             try:
                 self.artifact(f"raw/{side}-server.log", s.container.logs())
                 state = s.container.state()
-                if state != "running" and not s.down:
+                # Only an exit is a server that went down. "gone" means
+                # `docker inspect` itself failed, which says nothing about
+                # the server (a daemon hiccup must not turn a night red).
+                if state.startswith(("exited", "dead")) and not s.down:
                     s.down = f"container {state}"
+                elif state not in ("running",) and not s.down:
+                    self.notes.append(f"{side} container state unreadable at teardown: {state}")
             except (containers.DockerError, OSError) as e:
                 self.notes.append(f"{side} logs: {e}")
             if s.down:
@@ -1404,18 +1412,30 @@ def _term_as_interrupt() -> Iterator[None]:
         signal.signal(signal.SIGTERM, previous)
 
 
+@contextmanager
+def _sigterm_deferred() -> Iterator[None]:
+    """Hold SIGTERM while the block runs; it is delivered when it ends."""
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+
+
 def run_check(opts: Options, echo: Echo = print) -> dict[str, Any]:
     """Run the check and write `<out>/result.json`; never raises once that
     file can be written."""
     check = Check(opts, echo)
-    try:
-        with _term_as_interrupt():
-            return check.run()
-    except (KeyboardInterrupt, Exception) as e:
-        reason = "stopped" if isinstance(e, KeyboardInterrupt) else "crashed"
+    # The handler stays in place through the final write below: after the
+    # first SIGTERM it ignores the rest, so that write is not cut short.
+    with _term_as_interrupt():
         try:
-            check.write_samples()
-            check.write_summary()
-        except OSError:
-            pass
-        return check.write(error=f"the check {reason}: {type(e).__name__}: {e}")
+            return check.run()
+        except (KeyboardInterrupt, Exception) as e:
+            reason = "stopped" if isinstance(e, KeyboardInterrupt) else "crashed"
+            try:
+                check.write_samples()
+                check.write_summary()
+            except OSError:
+                pass
+            return check.write(error=f"the check {reason}: {type(e).__name__}: {e}")

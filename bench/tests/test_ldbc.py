@@ -449,7 +449,9 @@ def _tar_zst(tmp_path, members):
         for name, data in members.items():
             if data is None:  # a directory entry, as the LDBC archive has
                 info = tarfile.TarInfo(name)
-                info.type, info.mode = tarfile.DIRTYPE, 0o755
+                # 0700 on one of them: the data filter ignores a directory's
+                # archived mode, so the fallback must too.
+                info.type, info.mode = tarfile.DIRTYPE, 0o700 if name == "ds" else 0o755
                 tar.addfile(info)
                 continue
             info = tarfile.TarInfo(name)
@@ -466,7 +468,7 @@ def _tar_zst(tmp_path, members):
 def test_extraction_works_with_and_without_tarfile_filters(tmp_path, monkeypatch, filters):
     """Debian 12, the nightly VM's image, ships Python 3.11.2: no `filter=`."""
     if not filters:
-        monkeypatch.delattr(tarfile, "data_filter", raising=False)
+        monkeypatch.setattr(dataset, "_HAS_FILTERS", False)
     archive = _tar_zst(tmp_path, {"ds": None, "ds/static": None, "ds/static/a.csv": b"id|x\n1|2\n"})
     dest = tmp_path / "cache"
     dest.mkdir()
@@ -482,7 +484,7 @@ def test_extraction_works_with_and_without_tarfile_filters(tmp_path, monkeypatch
 
 @pytest.mark.filterwarnings("ignore:Python 3.14 will:DeprecationWarning")
 def test_extraction_without_filters_still_refuses_an_escape(tmp_path, monkeypatch):
-    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    monkeypatch.setattr(dataset, "_HAS_FILTERS", False)
     archive = _tar_zst(tmp_path, {"../evil.csv": b"x"})
     dest = tmp_path / "cache"
     dest.mkdir()
@@ -1232,3 +1234,48 @@ def test_a_runner_failure_count_is_not_capped_at_the_messages_kept():
     assert runner.problems([result]) == [
         "IC2: produced no measurement (Timeout reading from socket)"
     ]
+
+
+@pytest.mark.parametrize(
+    ("archived", "expected"),
+    [(0o4775, 0o755), (0o655, 0o644), (0o600, 0o600), (0o0777, 0o755), (0o444, 0o644)],
+)
+def test_the_fallback_gives_a_file_the_mode_the_data_filter_would(archived, expected):
+    info = tarfile.TarInfo("ds/a.csv")
+    info.mode = archived
+    assert dataset._sanitised(info).mode == expected
+    if dataset._HAS_FILTERS:  # the reference, where this Python has it
+        assert (
+            tarfile.data_filter(tarfile.TarInfo("ds/a.csv").replace(mode=archived), "/x").mode
+            == expected
+        )
+
+
+@pytest.mark.parametrize(
+    ("state", "verdict"), [("gone", "pass"), ("exited 139", "regression"), ("running", "pass")]
+)
+def test_only_an_exited_container_counts_as_a_server_that_went_down(tmp_path, state, verdict):
+    """`gone` is `docker inspect` failing, which says nothing about the server."""
+
+    class Fake(containers.Container):
+        def __init__(self, name, state):
+            super().__init__(name, MAIN, 1)
+            self._state = state
+
+        def state(self):
+            return self._state
+
+        def logs(self):
+            return ""
+
+        def remove(self):
+            pass
+
+    check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",))
+    check.measure()
+    check.sides[ck.BASELINE].container = Fake("b", "running")
+    check.sides[ck.CANDIDATE].container = Fake("c", state)
+    check.teardown()
+    result = check.write()
+    assert result["verdict"] == verdict, result
+    assert_valid(check.opts.out / "result.json")

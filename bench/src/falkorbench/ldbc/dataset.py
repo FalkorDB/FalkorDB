@@ -41,6 +41,12 @@ _MARKER_VERSION = "1"
 
 Echo = Callable[[str], None]
 
+#: Extraction filters (`filter="data"`) arrived in Python 3.11.4; Debian 12,
+#: the nightly VM's image, ships 3.11.2. A module flag rather than a check at
+#: the call, so a test can take the other path without deleting anything
+#: from `tarfile` itself (which 3.14's `extract()` uses internally).
+_HAS_FILTERS = hasattr(tarfile, "data_filter")
+
 
 class DatasetError(RuntimeError):
     """The dataset could not be fetched or prepared."""
@@ -130,7 +136,7 @@ def _extract_zst(tarball: Path, dest: Path) -> None:
             stdout=subprocess.PIPE,
         )
         with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
-            if hasattr(tarfile, "data_filter"):
+            if _HAS_FILTERS:
                 # `filter="data"` refuses absolute paths and ../ escapes.
                 # Default in 3.14; set explicitly so behaviour does not depend
                 # on the runtime.
@@ -160,15 +166,21 @@ def _extract_zst(tarball: Path, dest: Path) -> None:
 def _sanitised(member: tarfile.TarInfo) -> tarfile.TarInfo:
     """The member with what `filter="data"` would change, changed.
 
-    Its mode loses setuid, setgid, sticky and group/other write, and the owner
-    always keeps read and write (search, for a directory); the owner becomes
+    A directory gets 0755 whatever the archive says (the data filter leaves
+    a directory's mode to the default), so the server's own user in the
+    container (uid 999) can always enter it. A file loses setuid, setgid,
+    sticky and group/other write, keeps owner read and write, and loses
+    group/other execute when the owner cannot execute it. The owner becomes
     whoever extracts, so a run as root does not hand files to the archive's
-    uid. The attributes are still applied: without them `tarfile` leaves a
-    directory at the 0700 it creates it with, which the server's own user in
-    the container (uid 999) cannot enter.
+    uid.
     """
-    keep = 0o700 if member.isdir() else 0o600
-    member.mode = (member.mode & 0o755) | keep
+    if member.isdir():
+        member.mode = 0o755
+    else:
+        mode = (member.mode & 0o755) | 0o600
+        if not mode & 0o100:
+            mode &= ~0o011
+        member.mode = mode
     member.uid, member.gid = os.geteuid(), os.getegid()
     member.uname = member.gname = ""
     return member
