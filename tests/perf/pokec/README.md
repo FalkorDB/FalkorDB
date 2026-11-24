@@ -37,18 +37,19 @@ medium is 100,000 users and 1,768,515 `Friend` edges; large is 1,632,803 and
 
 ### Durations
 
-Measured on the dev VM (n4-standard-16, us-central1-a, the `_perf-vm.yml` CPU
-split), with the tools already built. Add about 6 min on a fresh VM: 4 min 11 s
-for the build, `apt-get` and rustup, 8 s for the dataset.
+Measured through `_perf-vm.yml` (run 45389482775, a fresh n4-standard-16 per
+pair, so each includes `apt-get`, rustup and a 224–270 s build of the
+benchmark):
 
-| pair | runs | re-run | wall |
-| --- | --- | --- | --- |
-| main@4c1088949 vs itself | 12 | none | 12.5 min |
-| 6.0.4 vs 6.0.1 | 12 (all six 6.0.4 runs stopped at their deadline: 180 s read-only, 270 s with writes) | none (the candidate did not finish) | 30.2 min |
+| pair | verdict | runs | re-run | the command's wall time |
+| --- | --- | --- | --- | --- |
+| main@4c1088949 vs itself | pass | 12 | none | 17.4 min |
+| 6.0.4 vs 6.0.1 | regression | 12 (all six 6.0.4 runs stopped at their deadline: 180 s read-only, 227 s with writes) | none (the candidate did not finish) | 31.4 min |
+| C v4.22.4 vs itself | pass | 12 | none | 22.1 min |
 
-A healthy run takes 25–29 s read-only and 77–92 s under 5% writes; a re-run adds
-2 reps a side of the workload (about 4 or 8 min). `timeout_minutes: 75` leaves
-room for the worst of these plus a fresh VM.
+A healthy run takes 24–31 s read-only and 71–130 s under 5% writes. A re-run
+adds 2 reps a side of a workload, about 2 or 9 min. `timeout_minutes: 75`
+leaves room for the slowest of these plus a re-run of both workloads.
 
 ## What one run does
 
@@ -178,7 +179,7 @@ matches its rows.
 | `benchmark run finished [w]` | `completed` (1 if every run of the side finished) | candidate 0, baseline 1: at once |
 | `server started [dataset]` | `completed` | the candidate image does not answer PING within 120 s: at once |
 | `<query> [w]` | `completed` (1 if every request of that query returned) | candidate 0, baseline 1. An error reply counts at once (a correctness failure). A timeout counts once it happens in 2 separate runs of the side. In 1 run only, the workload is re-run, and if it does not happen again the row is `info` |
-| `all queries [w]`, `<query> [w]` | `p50_ms` `p95_ms` `p99_ms` (median over the side's finished runs) | past 1.3x **and** past an absolute floor (p50 1 ms, p95 3 ms, p99 10 ms), in the first pass **and** in the re-run. Under 5% writes only `all queries` and a read query's p50 (below) |
+| `all queries [w]`, `<query> [w]` | `p50_ms` `p95_ms` `p99_ms` (median over the side's finished runs) | past 1.3x **and** past an absolute floor (p50 1 ms, p95 5 ms, p99 15 ms), in the first pass **and** in the re-run. Under 5% writes only `all queries` and a read query's p50 (below) |
 | `throughput [w]` | `throughput` (10,000 / the query phase's seconds; lower is worse) | below 1/1.3 in both passes |
 | `PING max [w]` | `ping_max_ms`: the slowest PING reached in at least 2 of the side's runs, finished or not (the second-highest run maximum) | the candidate froze (a PING over 1 s) in at least 2 runs and its value is above 1.3x the baseline's. One freeze re-runs the workload; freezes as long on the baseline are `info` |
 
@@ -187,15 +188,22 @@ so.
 
 ### Thresholds measured
 
-From two A/A runs of main@4c1088949 on the dev VM (n4-standard-16, the same CPU
-split as `_perf-vm.yml`; 3 runs a side each, with two different generated query
-files):
+From four A/A runs, each 3 runs a side on n4-standard-16 with the
+`_perf-vm.yml` CPU split: main@4c1088949 and C v4.22.4, once on the dev VM and
+once in the `_perf-vm.yml` proof run 45389482775.
 
 * **Read-only, per query.** p50 never moved: no row's worst split of its six
   readings (median of the top three over median of the bottom three) passed
-  1.3x. p95 and p99 of the millisecond queries did, by up to 2.3 ms (p95) and
-  6.75 ms (p99); for example `aggregate_count_users` p99 read 3.7–11.5 ms on one
-  image. Those numbers set the floors: p95 3 ms, p99 10 ms.
+  1.3x. p95 and p99 of the millisecond queries did. In the proof run's A/As, a
+  worst split moved `indexed_in_list_predicate` p95 by 4.0 ms on C, and
+  `aggregate_expansion_4_with_filter` p99 by 14.7 ms (1.47x) on main.
+* **How the floors were set.** A false regression needs the first pass (3 runs
+  against 3) and the re-run (2 against 2) to cross. For each gated row, the
+  check's rule was applied to every 3-vs-3 and 2-vs-2 split of its six
+  readings, and the two crossing probabilities multiplied. Floors of p95 3 ms
+  and p99 10 ms gave 0.02–0.04 expected false regressions per night in the two
+  proof-run A/As, which is roughly one false red night a month. p95 5 ms and
+  p99 15 ms gave none in all four, so those are the floors.
 * **5% writes, per query.** A read's tail there is the writer gate (#3816), not
   the query: whether 5% of a query's ~200 requests waited behind a writer decides
   its p95. One image against itself read `indexed_or_predicate` p95 at 5.9, 22.7
@@ -278,4 +286,4 @@ Tests: `python -m pytest tests/perf/pokec` (no Docker; runs in
   (above); a query that regresses only there shows in the whole-workload rows or
   not at all.
 * 1.3x with 3 reps a side and a re-run: a smaller change, or one under the
-  floors (a 5 ms p99 that becomes 14 ms), passes.
+  floors (a 5 ms p99 that becomes 19 ms), passes.

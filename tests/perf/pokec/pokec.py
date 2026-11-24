@@ -134,11 +134,13 @@ ALGORITHM_FLAGS = ("--enable-algo-pagerank", "--enable-algo-max-flow", "--enable
 
 RATIO_THRESHOLD = 1.3
 # A latency row also has to move by at least this much (ms): below it a ratio is
-# noise. Set from two A/A runs of main@4c1088949 (README: "Thresholds"): splitting
-# each read-only row's six readings worst-case (median of the top three over median
-# of the bottom three), every split past 1.3x moved p95 by at most 2.3 ms and p99
-# by at most 6.75 ms.
-LATENCY_FLOOR_MS = {"p50_ms": 1.0, "p95_ms": 3.0, "p99_ms": 10.0}
+# noise. Set from four A/A runs (main@4c1088949 and C v4.22.4, dev VM and the
+# _perf-vm.yml proof run 45389482775; README: "Thresholds measured"). Over every
+# 3-vs-3 split of a row's six first-pass readings, and every 2-vs-2 split for the
+# re-run, floors of 3 / 10 ms gave 0.02-0.04 expected false regressions a night (the
+# CI A/As: aggregate_expansion_4_with_filter p99 +14.7 ms at 1.47x on main,
+# indexed_in_list_predicate p95 +4.0 ms on C); 5 / 15 ms gave none in all four.
+LATENCY_FLOOR_MS = {"p50_ms": 1.0, "p95_ms": 5.0, "p99_ms": 15.0}
 PING_LIMIT_MS = 1000.0
 PING_INTERVAL_S = 0.2
 PING_TIMEOUT_S = 30.0
