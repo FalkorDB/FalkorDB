@@ -136,7 +136,8 @@ Read from the source, not assumed:
   reads). Two query types can send the same text: `vertex_on_label_property`
   and `vertex_on_label_property_index` share a template, so the same random id
   collides. A failure logged under such a text is split between the two from
-  their `metrics.prom` rates.
+  their `metrics.prom` rates; timeouts and errors mixed across both types are an
+  error, since the log does not say which type got which.
 * **Every request has to end.** The benchmark ignores its workers' join
   errors, so a worker that died after taking a request could leave a run at
   exit 0 with the request unaccounted for. The check counts the requests that

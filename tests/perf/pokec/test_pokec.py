@@ -423,7 +423,7 @@ def test_an_uppercase_image_is_an_error_not_an_invalid_result(tmp_path, monkeypa
 class FakeServer:
     """Replies to PING with +PONG; `stall` seconds before the n-th reply; `mute` after it."""
 
-    def __init__(self, stall_at=None, stall=0.0, mute_at=None, reply=b"+PONG\r\n", signal_at=None):
+    def __init__(self, stall_at=None, stall=0.0, mute_at=None, reply=b"+PONG\r\n", signal_at=None, hold_at=None):
         import socket
         import threading
 
@@ -435,9 +435,17 @@ class FakeServer:
         self.count = 0
         self.signal_at = signal_at
         self.got = threading.Event()  # set once the signal_at-th PING has arrived
+        self.hold_at = hold_at
+        self.release = threading.Event()  # the hold_at-th reply waits for this
         threading.Thread(target=self.serve, daemon=True).start()
 
     def serve(self):
+        try:
+            self._serve()
+        except OSError:
+            pass  # the probe closed its end (stop() shuts the socket): nothing left to serve
+
+    def _serve(self):
         import time
 
         conn, _ = self.sock.accept()
@@ -453,6 +461,8 @@ class FakeServer:
                     continue
                 if self.count == self.stall_at:
                     time.sleep(self.stall)
+                if self.count == self.hold_at:
+                    self.release.wait(10)
                 conn.sendall(self.reply)
 
 
@@ -676,11 +686,12 @@ def test_requests_the_benchmark_never_ended_are_caught():
 
 
 def test_a_ping_answered_while_the_probe_stops_is_recorded_once(tmp_path):
-    server = FakeServer(stall_at=2, stall=0.5, signal_at=2)
+    server = FakeServer(hold_at=2, signal_at=2)
     probe = pokec.PingProbe(server.port, tmp_path / "ping.csv")
     probe.start()
-    assert server.got.wait(5)  # PING 2 is in flight; its reply comes in 0.5 s
+    assert server.got.wait(5)  # PING 2 is in flight, and its reply is held
     probe.stop()
+    server.release.set()  # the reply now arrives after stop() recorded the PING
     assert len(probe.samples) == server.count == 2
     assert [kind for _, _, kind in probe.samples] == ["ok", "inflight"]
     assert not probe._thread.is_alive()  # stop() unblocked the probe's recv
@@ -695,7 +706,7 @@ def test_one_timeout_on_each_side_still_asks_for_a_re_run():
 
 def test_a_finished_run_with_no_ping_answered_is_unmeasured():
     runs = pass_runs(1, 3)
-    runs[1].ping = {"ping_max_ms": None, "ping_errors": 140}  # candidate rep 1: every PING failed
+    runs[1].ping = {"ping_max_ms": None, "ping_answered": 0, "ping_errors": 140}  # candidate rep 1: every PING failed
     analysis = analyse(runs, rerun_done={("medium", "write5")})
     assert any("no PING answered during a finished candidate run" in u for u in analysis.unmeasured)
 
@@ -808,7 +819,8 @@ def bench_output(tmp_path, *, executed, rates, log_lines):
         for q, e in log_lines))
     prom = [f'operations_total{{name="{q}",spawn_id="0",vendor="falkor"}} {n}' for q, n in executed.items()]
     prom += [f'benchmark_query_failure_rate_pct{{query="{q}",vendor="falkor"}} {r}' for q, r in rates.items()]
-    prom += [f'falkordb_query_latency_pct_us{{pct="50",query="{q}"}} 500' for q in executed]
+    prom += [f'falkordb_query_latency_pct_us{{pct="{p}",query="{q}"}} 500' for q in executed for p in ("50", "95", "99")]
+    prom += [f"falkordb_latency_{p}_us 500" for p in ("p50", "p95", "p99")]
     (folder / "bench" / "falkor" / "metrics.prom").write_text("\n".join(prom) + "\n")
     (folder / "bench" / "falkor" / "meta.json").write_text(json.dumps({"elapsed_ms": 25000}))
     return pokec.read_query_file(qpath), folder
@@ -879,3 +891,85 @@ def test_findings_carry_no_ok_rows(tmp_path):
     assert result["verdict"] == "pass" and result["findings"] == []
     rows = (Path(check.out) / "raw" / "rows.csv").read_text()
     assert "benchmark run finished [5% writes],completed,1,1" in rows  # the ok rows live here
+
+
+# --- review round 3 (bot threads on 46d931e4b) ---------------------------------------
+
+
+def test_mixed_kinds_on_a_shared_text_are_not_guessed():
+    shared = "vertex_on_label_property|vertex_on_label_property_index"
+    errors = {shared: {"timeouts": 1, "failures": 1}}
+    counts = {"vertex_on_label_property": 1, "vertex_on_label_property_index": 1}
+    rates = {"vertex_on_label_property": {"failure": 100.0}, "vertex_on_label_property_index": {"failure": 100.0}}
+    assert "cannot be told apart" in pokec.attribute_ambiguous(errors, counts, rates)[1]
+    # one kind, or one type to give it to: still placed
+    assert pokec.attribute_ambiguous({shared: {"timeouts": 2, "failures": 0}}, counts, rates)[1] is None
+
+
+def test_a_finished_run_needs_the_percentiles_of_what_succeeded():
+    counts = {"single_vertex_read": 2, "single_edge_write": 1}
+    full = {"p50_ms": 1.0, "p95_ms": 2.0, "p99_ms": 3.0}
+    metrics = {"overall": dict(full), "per_query": {"single_vertex_read": dict(full)}}
+    errors = {"single_edge_write": {"timeouts": 0, "failures": 1}}  # its one request failed: exempt
+    assert pokec.missing_percentiles(metrics, counts, errors) is None
+    assert "single_edge_write" in pokec.missing_percentiles(metrics, counts, {})
+    assert "overall" in pokec.missing_percentiles({**metrics, "overall": {}}, counts, errors)
+    all_failed = {"single_vertex_read": {"failures": 2}, "single_edge_write": {"failures": 1}}
+    assert pokec.missing_percentiles({"overall": {}, "per_query": {}}, counts, all_failed) is None
+
+
+def test_an_empty_overall_histogram_is_missing_not_zero():
+    metrics = pokec.parse_metrics("falkordb_latency_p50_us 0\nfalkordb_latency_p95_us 0\nfalkordb_latency_p99_us 0\n")
+    assert metrics["overall"] == {}
+    slow = {"workload": "read", "scale": 2.0}
+    read = {"workload": "read"}
+    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(2, 2, candidate=slow, baseline=read)
+    for run in runs:
+        if run.pass_no == 2 and run.side == "baseline":
+            run.overall = {}  # every baseline request of the re-run failed
+    analysis = analyse(runs, rerun_done={("medium", "read")})
+    row = next(r for r in analysis.rows if r["name"] == "all queries [read-only]" and r["metric"] == "p99_ms")
+    assert row["first_pass"] == 1 and row["re_run"] is None
+    assert any("all queries [read-only] p99_ms" in u for u in analysis.unmeasured)
+
+
+def test_an_interrupted_re_run_does_not_confirm():
+    slow = {"workload": "read", "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}}}
+    read = {"workload": "read"}
+    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(2, 1, candidate=slow, baseline=read)  # 1 of 2
+    analysis = analyse(runs, rerun_done={("medium", "read")})
+    assert not statuses(analysis, "regression")
+    assert any("never re-measured" in u for u in analysis.unmeasured)
+
+
+def test_a_pending_ping_is_not_an_answer():
+    runs = pass_runs(1, 3)
+    runs[1].ping = {"ping_max_ms": 50.0, "ping_answered": 0}  # every PING failed; the last was 50 ms in flight
+    analysis = analyse(runs, rerun_done={("medium", "write5")})
+    assert any("no PING answered" in u for u in analysis.unmeasured)
+
+
+def test_the_log_never_raises(tmp_path, capsys):
+    log = pokec.Log(tmp_path / "check.log")
+
+    class Full:
+        def write(self, _):
+            raise OSError(28, "No space left on device")
+
+        def flush(self):
+            raise OSError(28, "No space left on device")
+
+    log.file = Full()
+    log("ERROR: something")  # must not raise: main() still writes the result and cleans up
+    assert "ERROR: something" in capsys.readouterr().out
+
+
+def test_a_finished_run_without_a_succeeded_query_s_percentiles_is_rejected(tmp_path):
+    qfile, folder = bench_output(tmp_path, executed=ALL_ENDED, rates={}, log_lines=[])
+    prom = folder / "bench" / "falkor" / "metrics.prom"
+    prom.write_text("".join(line + "\n" for line in prom.read_text().splitlines()
+                            if 'query="single_vertex_read"' not in line or "operations_total" in line))
+    check = make_check(tmp_path)
+    run = pokec.Run("medium", "write5", "candidate", 1, 1)
+    with pytest.raises(pokec.SetupError, match="single_vertex_read"):
+        check._read_output(run, qfile, folder, 0)

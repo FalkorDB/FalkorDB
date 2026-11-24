@@ -219,8 +219,11 @@ class Log:
     def __call__(self, message: str) -> None:
         line = f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {message}"
         print(line, flush=True)
-        self.file.write(line + "\n")
-        self.file.flush()
+        try:
+            self.file.write(line + "\n")
+            self.file.flush()
+        except OSError:
+            pass  # stdout has the line; a full disk must not stop the result write or cleanup
 
 
 def run_cmd(
@@ -467,6 +470,7 @@ class PingProbe:
         timed = [ms for _, ms, kind in samples if ms is not None]
         return {
             "ping_max_ms": rounded(max(timed)) if timed else None,
+            "ping_answered": sum(1 for _, _, kind in samples if kind == "ok"),
             "ping_samples": len(samples),
             "ping_over_100ms": sum(1 for ms in timed if ms > 100),
             "ping_over_1s": sum(1 for ms in timed if ms > 1000),
@@ -821,11 +825,10 @@ def attribute_ambiguous(
     """Split failures logged under a shared text ("a|b") between its query types.
 
     metrics.prom's per-type rates say how many requests of each type failed; what the
-    unambiguous log lines do not account for belongs to the shared text. The split is
-    exact per type in totals; when a shared text has both timeouts and other errors, which
-    type got which kind is not known (the tool's own rates call its guard's `Elapsed` a
-    failure), and timeouts are handed out first, in name order. Returns the errors and a
-    problem when they disagree.
+    unambiguous log lines do not account for belongs to the shared text. When a shared text
+    has both timeouts and other errors spread over more than one type, which type got which
+    is not known (the log has no query identity), and that is a problem, not a guess.
+    Returns the errors and a problem when they cannot be placed.
     """
     out = {name: dict(kinds) for name, kinds in errors.items() if "|" not in name}
     for key, kinds in errors.items():
@@ -840,6 +843,10 @@ def attribute_ambiguous(
         if any(v < 0 for v in residual.values()) or sum(residual.values()) != sum(kinds.values()):
             return out, f"{sum(kinds.values())} failures of the shared text {key} do not match metrics.prom ({residual})"
         left = {"timeouts": kinds.get("timeouts", 0), "failures": kinds.get("failures", 0)}
+        if left["timeouts"] and left["failures"] and sum(1 for v in residual.values() if v) > 1:
+            # The log has no query identity: which type timed out and which got an error is
+            # unknown, and a guess could invent or hide a correctness regression.
+            return out, f"timeouts and errors on the shared text {key} cannot be told apart by type"
         for name in names:
             need = residual[name]
             if not need:
@@ -897,7 +904,8 @@ def parse_metrics(text: str) -> dict[str, Any]:
             if labels["pct"] in ("50", "95", "99"):
                 per_query[labels["query"]][f"p{labels['pct']}_ms"] = value / 1000
         elif (match := re.fullmatch(r"falkordb_latency_(p\d+)_us", name)) and match.group(1) in ("p50", "p95", "p99"):
-            overall[f"{match.group(1)}_ms"] = value / 1000
+            if value > 0:  # 0 = no request succeeded (the tool's empty histogram), not 0 ms
+                overall[f"{match.group(1)}_ms"] = value / 1000
         elif name in ("benchmark_query_timeout_rate_pct", "benchmark_query_failure_rate_pct"):
             if labels.get("vendor", "falkor").lower().startswith("falkor") and "query" in labels:
                 rates[labels["query"]]["timeout" if "timeout" in name else "failure"] = value
@@ -909,6 +917,21 @@ def parse_metrics(text: str) -> dict[str, Any]:
             executed[labels.get("name", "")] += int(value)
     return {"per_query": dict(per_query), "overall": overall, "rates": dict(rates), "global_rates": global_rates,
             "executed": dict(executed)}
+
+
+def missing_percentiles(metrics: dict[str, Any], counts: dict[str, int], errors: dict[str, dict[str, int]]) -> str | None:
+    """What a finished run should have exported and did not: the overall p50/p95/p99 when
+    any request succeeded, and each query's when any of its requests did."""
+    succeeded = {q: n - sum(errors.get(q, {}).values()) for q, n in counts.items()}
+    if any(v > 0 for v in succeeded.values()):
+        lost = [m for m in PERCENTILES if m not in metrics["overall"]]
+        if lost:
+            return f"overall {', '.join(lost)}"
+    for query, ok in sorted(succeeded.items()):
+        lost = [m for m in PERCENTILES if ok > 0 and m not in metrics["per_query"].get(query, {})]
+        if lost:
+            return f"{', '.join(lost)} for {query} ({ok} requests succeeded)"
+    return None
 
 
 def missing_requests(executed: dict[str, int], counts: dict[str, int]) -> str | None:
@@ -1168,8 +1191,9 @@ def analyse(
             """use: "gate" (can fail the check), "report" (info when it crosses), "row" (rows.csv only)."""
             cand, base = side_value("candidate", getter), side_value("baseline", getter)
             first = crossed(metric, side_value("candidate", getter, 1), side_value("baseline", getter, 1), direction)
-            has_second = any(r.pass_no == 2 for r in finished["candidate"]) and any(
-                r.pass_no == 2 for r in finished["baseline"])
+            # Only the full re-run confirms: one pair of an interrupted re-run is not it.
+            has_second = all(sum(1 for r in finished[side] if r.pass_no == 2) >= mode.rerun_reps
+                             for side in ("candidate", "baseline"))
             # A re-run with no value for this row (e.g. every request of the query failed on
             # one side) did not re-measure it: that stays None, never "did not cross".
             cand2, base2 = side_value("candidate", getter, 2), side_value("baseline", getter, 2)
@@ -1235,7 +1259,8 @@ def analyse(
         values = {side: [r.ping.get("ping_max_ms") for r in group if r.side == side and r.ping] for side in
                   ("candidate", "baseline")}
         # A run that finished with no PING answered was not watched: "no freeze" is unknown.
-        blind = sorted({r.side for r in group if r.finished and r.ping.get("ping_max_ms") is None})
+        # A PING still pending at the end shows no reply; its wait still counts as a freeze.
+        blind = sorted({r.side for r in group if r.finished and r.ping.get("ping_answered", 1) == 0})
         if blind:
             unmeasured.append(f"PING max [{where}]: no PING answered during a finished {' and '.join(blind)} run")
         if not values["candidate"]:
@@ -1627,6 +1652,9 @@ class Check:
             if problem:
                 raise SetupError(f"{run.dir}: {problem}; the log parser is out of date")
             self._cross_check(run, metrics, qfile, unmatched)
+            gap = missing_percentiles(metrics, qfile.counts, run.errors)
+            if gap:
+                raise SetupError(f"{run.dir}: metrics.prom has no {gap}; the parser is out of date")
             run.finished = run.stop_reason is None
         elif any("|" in key for key in run.errors):
             # No metrics.prom to split a shared text by: those failures stay unattributed.
