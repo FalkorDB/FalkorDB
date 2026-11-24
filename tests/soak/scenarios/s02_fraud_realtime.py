@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import soakkit as sk  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--module", required=True)
+sk.add_engine_args(ap)  # --module PATH | --image REF
 ap.add_argument("--port", type=int, required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--duration", type=float, default=60)
@@ -529,8 +529,8 @@ try:
                     gv = [gv[0], int(gv[1])]
                 if gv != want.get(k):
                     bad.append((k, gv, want.get(k)))
-        checks.add(f"per-account {nm} count/sum == Python ({checked} accounts)", not bad,
-                   f"{len(bad)} mismatches, e.g. {bad[:3]}", "critical")
+        checks.add(f"per-account {nm} count/sum == Python", not bad,
+                   f"{checked} accounts, {len(bad)} mismatches, e.g. {bad[:3]}", "critical")
     # 4. velocity on stream-only window
     ids = sorted(sc, key=lambda k: -sc[k][0])[:100] + random.Random(5).sample(sorted(sc), min(200, len(sc)))
     bad = []
@@ -539,8 +539,8 @@ try:
         gv = [sk.cval(x) for x in sk.rows(v)[0]]
         if [gv[0], int(gv[1])] != sc[acc]:
             bad.append((acc, gv, sc[acc]))
-    checks.add(f"velocity window count/sum == Python ({len(ids)} accounts)", not bad,
-               f"{len(bad)} mismatches, e.g. {bad[:3]}", "critical")
+    checks.add("velocity window count/sum == Python", not bad,
+               f"{len(ids)} accounts, {len(bad)} mismatches, e.g. {bad[:3]}", "critical")
     # 5. shared-device ring lookup per member + sample of normal accounts
     sample = [x for v in ring_members.values() for x in v] + [x for v in inj_ring_members for x in v]
     sample += random.Random(6).sample(range(N), min(300, N)) + random.Random(7).sample(sorted(sc), min(100, len(sc)))
@@ -553,8 +553,8 @@ try:
         want.discard(acc)
         if got != want:
             bad.append((acc, len(got), len(want)))
-    checks.add(f"shared-device neighbours == Python ({len(sample)} accounts)", not bad,
-               f"{len(bad)} mismatches, e.g. {bad[:3]}", "critical")
+    checks.add("shared-device neighbours == Python", not bad,
+               f"{len(sample)} accounts, {len(bad)} mismatches, e.g. {bad[:3]}", "critical")
     # 6. 3-hop device->IP ring lookup
     bad = []
     sample3 = sample[:150] + sample[-150:]
@@ -567,8 +567,8 @@ try:
                     want |= accs_ip(i)
         if got != len(want):
             bad.append((acc, got, len(want)))
-    checks.add(f"3-hop device->IP ring size == Python ({len(sample3)} accounts)", not bad,
-               f"{len(bad)} mismatches, e.g. {bad[:3]}", "critical")
+    checks.add("3-hop device->IP ring size == Python", not bad,
+               f"{len(sample3)} accounts, {len(bad)} mismatches, e.g. {bad[:3]}", "critical")
     # 7. global ring scan finds exactly the devices with >= K accounts
     t = time.time()
     res = Q("MATCH (a:Account)-[:USES]->(d:Device) WITH d, count(a) AS c WHERE c >= $k RETURN d.id", {"k": K_DEV})
@@ -604,8 +604,9 @@ try:
         v = sk.scalar(sk.query(r, G, CYC_Q[0], {"id": acc}, ro=True))
         if v != 0:
             nbad.append((acc, v))
-    checks.add(f"cycle detection: {len(allc)} planted members find 1 cycle, 300 normal find 0",
-               not bad and not nbad, f"planted bad={bad[:3]} normal bad={nbad[:3]}", "critical")
+    checks.add("cycle detection: planted members find 1 cycle, 300 normal find 0",
+               not bad and not nbad, f"{len(allc)} planted; planted bad={bad[:3]} normal bad={nbad[:3]}",
+               "critical")
 except Exception as e:  # noqa: BLE001
     scan_s = fan_s = None
     checks.add("verification phase completed", False, f"{type(e).__name__}: {str(e)[:500]}", "critical")

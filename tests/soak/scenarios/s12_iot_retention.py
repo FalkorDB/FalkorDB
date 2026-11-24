@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import soakkit as sk  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--module", required=True)
+sk.add_engine_args(ap)  # --module PATH | --image REF
 ap.add_argument("--port", type=int, required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--duration", type=float, default=60)
@@ -463,9 +463,13 @@ def checkpoint(idx, rc, t_run0):
     if not (ix == fs == exp_win):
         problems.append(f"window count: index-scan={ix} full-scan={fs} expected={exp_win}")
     # anomaly query vs truth (last 30 s of window cutoff region)
+    # Live readings are preloaded slots [0, K_PRE) and written slots [K0, nk) not older than the
+    # retention cutoff C. With a window under 30 s (short runs) the 30 s lookback reaches past
+    # C and into the preload, so both bounds matter.
     lo3 = now_ms() - 30_000
-    exp_an = sorted(((val_of(s, k), s) for s in range(SENSORS) for k in range(max(K0, 0), nk[s])
-                     if ts_of(s, k) >= lo3 and val_of(s, k) > THRESH), reverse=True)
+    exp_an = sorted(((val_of(s, k), s) for s in range(SENSORS)
+                     for k in (*range(K_PRE), *range(max(K0, 0), nk[s]))
+                     if ts_of(s, k) >= max(lo3, C) and val_of(s, k) > THRESH), reverse=True)
     rs = sk.rows(sk.query(rc, G, "MATCH (r:Reading) WHERE r.ts >= $lo AND r.v > $th RETURN count(r)",
                           {"lo": lo3, "th": THRESH}))
     if sk.cval(rs[0][0]) != len(exp_an):

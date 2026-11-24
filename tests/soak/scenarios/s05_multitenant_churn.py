@@ -20,7 +20,7 @@ import redis  # noqa: E402
 import soakkit as sk  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--module", required=True)
+sk.add_engine_args(ap)  # --module PATH | --image REF
 ap.add_argument("--port", type=int, required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--duration", type=float, default=60)
@@ -348,7 +348,8 @@ for nm in names:
     vn += 1
     if e:
         vbad.append(e)
-checks.add(f"final checksum on {vn}/{len(names)} tenants", not vbad, "; ".join(vbad[:3]), "critical")
+checks.add("final checksum on every live tenant", not vbad,
+           f"{vn}/{len(names)} tenants; " + "; ".join(vbad[:3]), "critical")
 
 # plateau analysis (cycle samples)
 half = cyc[len(cyc) // 2:]

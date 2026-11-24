@@ -607,7 +607,7 @@ def err_kind(e):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--module", required=True)
+    sk.add_engine_args(ap)  # --module PATH | --image REF
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--duration", type=float, default=60)
@@ -616,10 +616,10 @@ def main():
     out = Path(a.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     setup_sizes(a.scale)
-    is_rust = "rust" in Path(a.module).name.lower()
 
     # TIMEOUT_DEFAULT bounds every query that forgets a client timeout; TIMEOUT_MAX caps client ones
     srv = sk.Server(a.module, a.port, out, module_args=["TIMEOUT_DEFAULT", "300000", "TIMEOUT_MAX", "600000"])
+    is_rust = srv.engine() == "rust"
     mon = sk.Monitor(srv, out)
     mon.start()
     checks = sk.Checks(out)

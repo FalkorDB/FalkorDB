@@ -9,10 +9,12 @@ S=$(cd "$(dirname "$0")" && pwd); mkdir -p "$S/full"
 MOD=$1; LABEL=$2
 [ -n "$VIRTUAL_ENV" ] || source "$S/../../venv/bin/activate"
 log() { echo "$(date +%T) $*" >> "$S/full/progress.log"; }
+# 1-minute load average: /proc/loadavg on Linux, vm.loadavg on macOS
+load1() { if [ -r /proc/loadavg ]; then awk '{print $1}' /proc/loadavg; else sysctl -n vm.loadavg | awk '{print $2}'; fi; }
 wait_quiet() {
   local q=0 said=0 l
   while [ $q -lt 5 ]; do
-    l=$(sysctl -n vm.loadavg | awk '{print int($2)}')
+    l=$(load1 | awk '{print int($1)}')
     if [ "$l" -lt 8 ]; then q=$((q+1)); else q=0; [ $said = 0 ] && log "WAIT quiet machine before $1 (load $l)" && said=1; fi
     sleep 60
   done
@@ -33,7 +35,7 @@ for f in "$S"/scenarios/s[0-9][0-9]_*.py; do [ "$(basename "$f")" = s00_pilot.py
     pkill -9 -f 'redis-server \*:19' 2>/dev/null; sleep 1
     log "START $n rust dur=1200 ($LABEL)"
     start=$(date +%s)
-    ( while true; do echo "$(date +%s) $(sysctl -n vm.loadavg | awk '{print $2}')" >> "$o/load.log"; sleep 30; done ) &
+    ( while true; do echo "$(date +%s) $(load1)" >> "$o/load.log"; sleep 30; done ) &
     sampler=$!
     timeout 6000 python -I "$f" --module "$MOD" --port 19000 --out "$o" --duration 1200 --scale 1.0 > "$o/stdout.log" 2>&1
     rc=$?

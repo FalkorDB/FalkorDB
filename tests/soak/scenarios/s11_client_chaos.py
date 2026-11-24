@@ -23,7 +23,7 @@ import soakkit as sk  # noqa: E402
 import redis  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--module", required=True)
+sk.add_engine_args(ap)  # --module PATH | --image REF
 ap.add_argument("--port", type=int, required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--duration", type=float, default=60)
@@ -544,8 +544,8 @@ def udf_op(ctx):
 # ---------------------------------------------------------------- setup
 # A looping UDF is only safe where UDFs have a timeout (Rust: 30 s cap). The C module has none:
 # the loop would pin a thread forever and block every writer. Override with S11_UDF_LOOP=0/1.
-UDF_LOOP = os.environ.get("S11_UDF_LOOP", "1" if "rust" in os.path.basename(a.module).lower() else "0") == "1"
 srv = sk.Server(a.module, PORT, out, extra=["--maxclients", "10000"])
+UDF_LOOP = os.environ.get("S11_UDF_LOOP", "1" if srv.engine() == "rust" else "0") == "1"
 mon = sk.Monitor(srv, out)
 mon.start()
 checks = sk.Checks(out)

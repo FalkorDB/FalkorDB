@@ -41,7 +41,7 @@ import soakkit as sk  # noqa: E402
 import redis  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--module", required=True)
+sk.add_engine_args(ap)  # --module PATH | --image REF
 ap.add_argument("--port", type=int, required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--duration", type=float, default=60)
@@ -80,8 +80,7 @@ import atexit  # noqa: E402
 
 def _cleanup():
     try:
-        if srv.proc and srv.proc.poll() is None:
-            srv.proc.kill()
+        srv.kill9()
     except Exception:
         pass
 
@@ -272,22 +271,8 @@ def gen_field(name, rng):
 
 # ----------------------------------------------------------------- server helpers
 def start_server(timeout=900):
-    """Like Server.start() but with a long deadline (large AOF/RDB loads)."""
-    cmd = [srv.redis_bin, "--port", str(srv.port), "--dir", str(srv.workdir),
-           "--dbfilename", f"{srv.name}-{srv.port}.rdb", "--save", "",
-           "--appendonly", "no", "--logfile", str(srv.log), "--protected-mode", "no",
-           "--loadmodule", srv.module, *srv.module_args, *srv.extra]
-    srv.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if srv.proc.poll() is not None:
-            raise RuntimeError(f"redis exited at start rc={srv.proc.returncode}; see {srv.log}")
-        try:
-            if sk.connect(srv.port).ping():
-                return
-        except redis.exceptions.ConnectionError:
-            time.sleep(0.05)
-    raise RuntimeError("redis did not finish loading in time")
+    """Server.start() with a long deadline (large AOF/RDB loads)."""
+    srv.start(timeout=timeout)
 
 
 def wait_info(key, want=0, timeout=900, section="persistence"):
@@ -831,10 +816,9 @@ def recover(rec, kind):
     """start server after it died; measure recovery; returns client."""
     if kind == "term":
         try:
-            srv.proc.wait(300)
+            srv.wait(300)
         except subprocess.TimeoutExpired:
-            srv.proc.kill()
-            srv.proc.wait()
+            srv.kill9()
     t_down = time.time()
     start_server()
     t_ping = time.time()
@@ -853,7 +837,7 @@ def do_end(kind, rec):
     if kind == "kill9":
         srv.kill9()
     elif kind == "term":
-        srv.proc.terminate()
+        srv.terminate()
 
 
 def check_after_restart(ep, label, mode, tkill, rc):
@@ -866,8 +850,9 @@ def check_after_restart(ep, label, mode, tkill, rc):
     onodes, oedges, info = observe_led(rc)
     T.append(time.time())
     viol, tol, det = compare_led(en, ee, tlast, pend, onodes, oedges, info, tkill, window)
-    checks.add(f"{label}: led graph == ledger (nodes={len(onodes)} edges={len(oedges)} tolerated-in-window={tol})",
-               viol == 0, "; ".join(det), "critical")
+    checks.add(f"{label}: led graph == ledger", viol == 0,
+               f"nodes={len(onodes)} edges={len(oedges)} tolerated-in-window={tol}; " + "; ".join(det),
+               "critical")
     T.append(time.time())
     okb, detb, cs = observe_big(rc, TRUTH, 100 + ep)
     T.append(time.time())
@@ -876,7 +861,7 @@ def check_after_restart(ep, label, mode, tkill, rc):
     lost_allow = sum(1 for x in bump_t if x > tkill - window) if window else 0
     delta = cs - BUMP_BASE
     cnt_ok = (acked - lost_allow) <= delta <= acked + bump_pend
-    checks.add(f"{label}: cnt counter in [acked-window_loss, acked+inflight] ({delta} vs acked={acked} lost_allow={lost_allow} inflight={bump_pend})",
+    checks.add(f"{label}: cnt counter in [acked-window_loss, acked+inflight]",
                cnt_ok, f"delta={delta} acked={acked} pend={bump_pend} lost_allow={lost_allow}", "critical")
     sd = static_digest(rc)
     T.append(time.time())
@@ -941,10 +926,10 @@ def judge_window(ws, label, bgrec):
             if worst is None or d["in_p99_ms"] > worst[1]:
                 worst = (op, d["in_p99_ms"], d["out_p99_ms"], ratio)
     bad = worst and worst[3] > 10 and worst[1] > 250
-    checks.add(f"{label}: p99 during background save/rewrite not >10x and >250ms worse "
-               f"(worst {worst[0] + ' %.1f vs %.1f ms' % (worst[1], worst[2]) if worst else 'n/a'}, "
-               f"cmd stall {bgrec.get('cmd_s', 0) * 1000:.0f} ms, total {bgrec.get('total_s', 0):.1f}s)",
-               not bad, str(worst), "major")
+    checks.add(f"{label}: p99 during background save/rewrite not >10x and >250ms worse", not bad,
+               f"worst {worst[0] + ' %.1f vs %.1f ms' % (worst[1], worst[2]) if worst else 'n/a'}, "
+               f"cmd stall {bgrec.get('cmd_s', 0) * 1000:.0f} ms, total {bgrec.get('total_s', 0):.1f}s; {worst}",
+               "major")
     checks.add(f"{label}: background save/rewrite finished ok", bool(bgrec.get("status_ok")), str(bgrec.get("status")), "critical")
 
 
@@ -976,7 +961,8 @@ for label, mode, endkind, kw in PLAN:
     rec["lost_in_window"] = tol
     rec["disk_mb"] = round(disk_mb())
     meta["recoveries"][-1].update({"verify_s": rec["verify_s"], "lost_in_window": tol, "disk_mb": rec["disk_mb"]})
-    checks.add(f"{label}: recovery (kill->first query) {rec['kill_to_query_s']}s < 180s", rec["kill_to_query_s"] < 180, "", "major")
+    checks.add(f"{label}: recovery (kill->first query) < 180s", rec["kill_to_query_s"] < 180,
+               f"{rec['kill_to_query_s']}s", "major")
     # no stale ledger files kept when all is well
     if viol == 0:
         for f in list(out.glob(f"led-{EP}-*.jsonl")) + list(out.glob(f"bump-{EP}-*.jsonl")):
@@ -1044,7 +1030,7 @@ rec["label"] = label
 rcv = recover(rec, "kill9")
 after = rdb_snapshot_state()
 checks.add(f"{label}: restored graph == state at last SAVE", rdb_equal(snap, after), "", "critical")
-checks.add(f"{label}: kill->first query {rec['kill_to_query_s']}s < 180s", rec["kill_to_query_s"] < 180, "", "major")
+checks.add(f"{label}: kill->first query < 180s", rec["kill_to_query_s"] < 180, f"{rec['kill_to_query_s']}s", "major")
 write_base(EP, after["nodes"], after["edges"], after["cnt"])
 BUMP_BASE = after["cnt"]
 
@@ -1058,7 +1044,7 @@ rcv = recover(rec, "kill9")
 after2 = rdb_snapshot_state()
 checks.add(f"{label}: restored graph == state at last SAVE (post-SAVE writes gone)", rdb_equal(snap2, after2),
            f"nodes {len(snap2['nodes'])} vs {len(after2['nodes'])}, cnt {snap2['cnt']} vs {after2['cnt']}", "critical")
-checks.add(f"{label}: kill->first query {rec['kill_to_query_s']}s < 180s", rec["kill_to_query_s"] < 180, "", "major")
+checks.add(f"{label}: kill->first query < 180s", rec["kill_to_query_s"] < 180, f"{rec['kill_to_query_s']}s", "major")
 write_base(EP, after2["nodes"], after2["edges"], after2["cnt"])
 BUMP_BASE = after2["cnt"]
 meta["recoveries"][-1]["label"] = label
@@ -1083,10 +1069,9 @@ try:
 except Exception:
     pass
 try:
-    srv.proc.wait(600)
+    srv.wait(600)
 except subprocess.TimeoutExpired:
-    srv.proc.kill()
-    srv.proc.wait()
+    srv.kill9()
 meta["shutdown_save_s"] = round(time.time() - t, 2)
 t = time.time()
 start_server()

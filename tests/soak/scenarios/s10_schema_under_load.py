@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import soakkit as sk  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--module", required=True)
+sk.add_engine_args(ap)  # --module PATH | --image REF
 ap.add_argument("--port", type=int, required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--duration", type=float, default=60)
@@ -172,7 +172,7 @@ mon = sk.Monitor(srv, out)
 mon.start()
 checks = sk.Checks(out)
 r = srv.client()
-IS_RUST = "rust" in a.module.lower() or "libfalkordb" in a.module.lower()
+IS_RUST = srv.engine() == "rust"
 
 
 def Q(q, p=None, ro=False):
@@ -1040,7 +1040,7 @@ for f in out.glob("findings-*.jsonl"):
             if not e["detail"]:
                 e["detail"] = d["detail"]
 for name, e in sorted(agg.items()):
-    checks.add(f"{name} [{e['n']} runs]", e["bad"] == 0, f"{e['bad']} failed; first: {e['detail']}", e["sev"])
+    checks.add(name, e["bad"] == 0, f"{e['bad']} of {e['n']} runs failed; first: {e['detail']}", e["sev"])
 events = []
 for f in out.glob("events-*.jsonl"):
     events += [json.loads(x) for x in f.read_text().splitlines()]

@@ -7,6 +7,10 @@ Every scenario uses this so all results share one format:
   <out>/summary.json      produced by analyze(): throughput, p50/p95/p99/p999,
                           drift, cpu, memory growth, crashes, errors, checks
 
+The server under test is either a module path, run with a local redis-server, or a
+falkordb-server image (Image), whose own server binary and module run in docker; a
+scenario takes either through add_engine_args().
+
 Usage sketch (see scenario template in README.md):
     srv = Server(module=..., port=..., workdir=out)   # starts redis + module
     mon = Monitor(srv, out); mon.start()
@@ -17,6 +21,9 @@ Usage sketch (see scenario template in README.md):
 """
 from __future__ import annotations
 
+import argparse
+import atexit
+import functools
 import json
 import math
 import multiprocessing as mp
@@ -24,6 +31,7 @@ import os
 import random
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -38,6 +46,65 @@ from redis.retry import Retry
 REDIS_BIN = os.environ.get("SOAK_REDIS", "redis-server")
 RUST_MODULE = os.environ.get("SOAK_RUST_MODULE", "")
 C_MODULE = os.environ.get("SOAK_C_MODULE", "")
+# Where every falkordb-server image keeps the module (Rust and C, Redis and Valkey).
+IMAGE_MODULE = "/var/lib/falkordb/bin/falkordb.so"
+# Every container a Server starts carries this label, so a driver can remove what a
+# scenario that died left behind (check.py sets SOAK_RUN_ID per run).
+DOCKER_LABEL = "falkordb-soak=" + os.environ.get("SOAK_RUN_ID", "local")
+CHECK_LABEL = "falkordb-soak-check=" + os.environ.get("SOAK_CHECK_ID", "local")
+
+
+# ---------------------------------------------------------------- engine under test
+@dataclass(frozen=True)
+class Image:
+    """A falkordb-server image (name@sha256:...) to run instead of a local module."""
+    ref: str
+
+    def __str__(self):
+        return self.ref
+
+
+def add_engine_args(ap: argparse.ArgumentParser) -> None:
+    """--module PATH | --image REF, both stored in args.module (a str or an Image)."""
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--module", help="module path, loaded into $SOAK_REDIS (default redis-server)")
+    g.add_argument("--image", dest="module", type=Image,
+                   help="falkordb-server image; runs the image's own server and module in docker "
+                        "(Linux only)")
+
+
+def _docker(*args: str, check: bool = True) -> str:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=check).stdout
+
+
+@functools.lru_cache(maxsize=None)
+def image_server(ref: str) -> str:
+    """The server binary an image ships, picked the way its run.sh picks it:
+    ${FALKORDB_SERVER:-redis}-server (6.2+ Rust images set valkey; C and older ones none)."""
+    try:
+        env_json = _docker("image", "inspect", "--format", "{{json .Config.Env}}", ref)
+    except subprocess.CalledProcessError:
+        _docker("pull", "--quiet", ref)
+        env_json = _docker("image", "inspect", "--format", "{{json .Config.Env}}", ref)
+    env = dict(e.split("=", 1) for e in (json.loads(env_json) or []) if "=" in e)
+    return f"{env.get('FALKORDB_SERVER') or 'redis'}-server"
+
+
+def image_server_version(ref: str) -> str:
+    """`<server> --version` of the binary image_server() names, run from the image."""
+    return _docker("run", "--rm", "--network", "none", "--entrypoint", image_server(ref), ref,
+                   "--version").strip()
+
+
+_CONTAINERS: set[str] = set()
+
+
+@atexit.register
+def _remove_containers():
+    # a scenario that raised leaves its servers running; never leave a container behind
+    for name in list(_CONTAINERS):
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
 
 
 # ---------------------------------------------------------------- client utils
@@ -113,45 +180,95 @@ def scalar(res):
 
 # ---------------------------------------------------------------- server
 class Server:
-    def __init__(self, module: str, port: int, workdir: Path | str, redis_bin: str = REDIS_BIN,
-                 module_args: list[str] | None = None, extra: list[str] | None = None,
-                 name: str = "server"):
-        self.module, self.port, self.redis_bin = module, port, redis_bin
+    """One server under test. `module` is a module path (a local $SOAK_REDIS loads it) or an
+    Image: then the image's own server binary and module run in a container with host
+    networking, the workdir bind-mounted at the same path (RDB/AOF/log land where they do
+    locally), as the calling user, pinned to $PERF_SERVER_CPUS when set. The image's
+    run.sh and its default FALKORDB_ARGS are deliberately bypassed: both sides of a
+    comparison get exactly the scenario's arguments. `docker run` stays in the
+    foreground, so self.proc tracks the container; pid is the server's host PID."""
+
+    def __init__(self, module: str | Image, port: int, workdir: Path | str,
+                 redis_bin: str = REDIS_BIN, module_args: list[str] | None = None,
+                 extra: list[str] | None = None, name: str = "server"):
+        self.module, self.port = module, port
+        self.image = module if isinstance(module, Image) else None
+        if self.image:
+            if not sys.platform.startswith("linux"):
+                raise RuntimeError("--image needs Linux (host networking, host PIDs); use --module here")
+            redis_bin = image_server(self.image.ref)
+        self.redis_bin = redis_bin
         self.workdir = Path(workdir).resolve()  # redis --dir/--logfile need absolute paths
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.module_args = module_args or []
         self.extra = extra or []
         self.name = name
         self.log = self.workdir / f"{name}-{port}.log"
+        self.container = f"soak-{name}-{port}-{os.getpid()}" if self.image else None
         self.proc: subprocess.Popen | None = None
+        self._host_pid: int | None = None
         self.start()
 
-    def start(self):
+    def argv(self) -> list[str]:
+        module = IMAGE_MODULE if self.image else self.module
+        return [self.redis_bin, "--port", str(self.port), "--dir", str(self.workdir),
+                "--dbfilename", f"{self.name}-{self.port}.rdb", "--save", "",
+                "--appendonly", "no", "--logfile", str(self.log), "--protected-mode", "no",
+                "--loadmodule", module, *self.module_args, *self.extra]
+
+    def start(self, timeout: float = 60):
         # refuse to attach to a stale server left on this port by a crashed earlier run
         try:
             if connect(self.port).ping():
-                raise RuntimeError(f"port {self.port} already has a server (stale run?); "
-                                   f"pkill -f 'redis-server.*--port {self.port}' first")
+                raise RuntimeError(f"port {self.port} already has a server (stale run?); stop it first "
+                                   f"(docker rm -f $(docker ps -q --filter label=falkordb-soak) for "
+                                   f"image runs, pkill -f 'redis-server.*--port {self.port}' otherwise)")
         except redis.exceptions.ConnectionError:
             pass
-        cmd = [self.redis_bin, "--port", str(self.port), "--dir", str(self.workdir),
-               "--dbfilename", f"{self.name}-{self.port}.rdb", "--save", "",
-               "--appendonly", "no", "--logfile", str(self.log), "--protected-mode", "no",
-               "--loadmodule", self.module, *self.module_args, *self.extra]
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
-        deadline = time.time() + 60
+        cmd = self.argv()
+        if self.image:
+            subprocess.run(["docker", "rm", "-f", self.container], capture_output=True)
+            cpus = os.environ.get("PERF_SERVER_CPUS")
+            # host networking, so listen on loopback only: no password, protected mode off
+            cmd = ["docker", "run", "--rm", "--name", self.container, "--label", DOCKER_LABEL,
+                   "--label", CHECK_LABEL,
+                   "--network", "host", "--user", f"{os.getuid()}:{os.getgid()}",
+                   "--ulimit", "nofile=65536:65536", "-v", f"{self.workdir}:{self.workdir}",
+                   *(["--cpuset-cpus", cpus] if cpus else []),
+                   "--entrypoint", cmd[0], self.image.ref, *cmd[1:3], "--bind", "127.0.0.1",
+                   *cmd[3:]]
+            _CONTAINERS.add(self.container)
+        self._host_pid = None
+        stderr = self.workdir / f"{self.name}-{self.port}.stderr"
+        with open(stderr, "ab") as err:
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=err)
+        deadline = time.time() + timeout
         while time.time() < deadline:
             if self.proc.poll() is not None:
-                raise RuntimeError(f"redis exited at start rc={self.proc.returncode}; see {self.log}")
+                tail = stderr.read_text(errors="replace")[-400:].strip()
+                raise RuntimeError(f"server exited at start rc={self.proc.returncode}; see {self.log}"
+                                   + (f"; stderr: {tail}" if tail else ""))
+            if self.image and not self._host_pid:
+                # as soon as the container runs, so the monitor follows the server through a
+                # long RDB/AOF load (it answers LOADING, which redis-py reports as an error)
+                state = subprocess.run(["docker", "inspect", "--format", "{{.State.Pid}}", self.container],
+                                       capture_output=True, text=True).stdout.strip()
+                self._host_pid = int(state) if state.isdigit() and int(state) > 0 else None
             try:
                 if connect(self.port).ping():
+                    if self.image and not self._host_pid:
+                        self._host_pid = int(_docker("inspect", "--format", "{{.State.Pid}}",
+                                                     self.container).strip())
                     return
             except redis.exceptions.ConnectionError:
                 time.sleep(0.1)
-        raise RuntimeError("redis did not start in 60s")
+        raise RuntimeError(f"server did not start in {timeout:.0f}s")
 
     @property
     def pid(self):
+        """Host PID of the server process (psutil works on it in both modes)."""
+        if self.image:
+            return self._host_pid
         return self.proc.pid if self.proc else None
 
     def alive(self):
@@ -159,6 +276,18 @@ class Server:
 
     def client(self):
         return connect(self.port)
+
+    def engine(self) -> str:
+        """'rust' or 'c', from the graph module's version as the server reports it
+        (C is 4.x = 4xxxx; Rust is 6.x and later, a local dev build 99.99.99)."""
+        for m in self.client().execute_command("MODULE", "LIST"):
+            # redis-py parses each module into a dict; a raw reply is a flat key/value list
+            pairs = m.items() if isinstance(m, dict) else zip(m[::2], m[1::2])
+            d = {(k.decode() if isinstance(k, bytes) else k): v for k, v in pairs}
+            name = d.get("name")
+            if (name.decode() if isinstance(name, bytes) else name) == "graph":
+                return "rust" if int(d["ver"]) >= 50000 else "c"
+        raise RuntimeError("graph module not loaded")
 
     def restart(self, save=True):
         """SAVE (optional), SIGTERM, start again from the RDB; returns restart seconds."""
@@ -170,10 +299,26 @@ class Server:
         self.start()
         return time.time() - t
 
+    def _signal(self, sig: signal.Signals):
+        if self.image:
+            subprocess.run(["docker", "kill", "--signal", sig.name, self.container], capture_output=True)
+        else:
+            self.proc.send_signal(sig)
+
     def kill9(self):
         if self.proc:
-            self.proc.send_signal(signal.SIGKILL)
+            if self.proc.poll() is None:
+                self._signal(signal.SIGKILL)
             self.proc.wait()
+
+    def terminate(self):
+        """SIGTERM (the server saves per its config and exits); wait() for it."""
+        if self.alive():
+            self._signal(signal.SIGTERM)
+
+    def wait(self, timeout: float | None = None):
+        """Wait for the server to exit; raises subprocess.TimeoutExpired."""
+        return self.proc.wait(timeout)
 
     def stop(self):
         if self.alive():
@@ -184,8 +329,7 @@ class Server:
             try:
                 self.proc.wait(30)
             except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait()
+                self.kill9()
 
     def crashed(self) -> list[str]:
         """Crash / panic markers in the server log."""
@@ -226,7 +370,9 @@ class Monitor(threading.Thread):
             t = time.time() - self.t0
             alive = self.server.alive()
             cpu = rss = um = th = cl = float("nan")
-            if alive:
+            # pid is None while an image's container is starting: psutil.Process(None) would
+            # be this process, so skip the sample
+            if alive and self.server.pid:
                 try:
                     if pid != self.server.pid:
                         pid = self.server.pid

@@ -26,7 +26,7 @@ import numpy as np  # noqa: E402
 import soakkit as sk  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--module", required=True)
+sk.add_engine_args(ap)  # --module PATH | --image REF
 ap.add_argument("--port", type=int, required=True)
 ap.add_argument("--out", required=True)
 ap.add_argument("--duration", type=float, default=60)
@@ -164,7 +164,7 @@ mon = sk.Monitor(srv, out)
 mon.start()
 checks = sk.Checks(out)
 r = srv.client()
-is_rust = "rust" in os.path.basename(a.module).lower()
+is_rust = srv.engine() == "rust"
 print(f"N={N} E={E} C={C} dim={DIM} module={a.module}", flush=True)
 
 
@@ -695,7 +695,7 @@ s["meta"] = {"scenario": "s03_graphrag_vector", "scale": a.scale, "chunks": N, "
              "duration": a.duration, "recall_early": locals().get("rec_early"),
              "recall_late": locals().get("rec_late"), "lag": locals().get("lagstat"),
              "restart_s": locals().get("rst"), "live_chunks_end": len(locals().get("live", {})),
-             "fulltext_default_limit_hit": FT_LIMIT, "module": os.path.basename(a.module)}
+             "fulltext_default_limit_hit": FT_LIMIT, "module": os.path.basename(str(a.module))}
 (out / "summary.json").write_text(json.dumps(s, indent=1, default=str))
 srv.stop()
 sk.print_summary(s)
