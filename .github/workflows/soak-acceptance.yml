@@ -1,17 +1,18 @@
-# TEMPORARY: perf-soak-port's proof evidence for the soak check (#3982), removed before
+# TEMPORARY: perf-soak-port's acceptance run for the soak check (#3982), removed before
 # the PR is marked ready. Runs soak_check.py through _perf-vm.yml (perf-gce-runner's
 # branch until it is on main, #3979) on one VM: shard soak-b (s07-s12), 6.2.0 (candidate)
 # vs 6.2.1 (baseline), which differ in s12's ingest plan (#3887 in 6.2.0, its fix #3889
 # backported to 6.2.1). The VM-workflow check name differs only so the artifact is
 # recognisable; the result.json says check "soak-b".
 #
-# The leg runs only for a push that itself changes the "Proof of:" line below (the `gate`
-# job diffs the push's before and after): a `paths` filter would match the whole PR's
-# diff, and `workflow_dispatch` works only for a file on the default branch. To prove a
-# new commit, change that line deliberately, after telling the coordinator.
-# Proof of: 40675d3dd (the port), 6.2.0 vs 6.2.1 on soak-b.
+# The leg runs only for a push that itself changes the "Acceptance run of:" line below in
+# a file that already existed before the push (the `gate` job diffs the push's before and
+# after; a renamed or new file never starts a run): a `paths` filter would match the whole
+# PR's diff, and `workflow_dispatch` works only for a file on the default branch. To run
+# it on a new commit, change that line deliberately, after telling the coordinator.
+# Acceptance run of: 40675d3dd (the port), 6.2.0 vs 6.2.1 on soak-b.
 
-name: TEMPORARY soak proof
+name: TEMPORARY soak acceptance
 
 on:
   pull_request:
@@ -20,7 +21,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: soak-proof-${{ github.event.pull_request.number }}
+  group: soak-acceptance-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
@@ -43,14 +44,16 @@ jobs:
           # No pipe into grep -q: with the default pipefail an early exit of
           # grep would make a match read as no match.
           run=false
-          if [[ -n $BEFORE ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            git diff -U0 "$BEFORE" "$AFTER" -- .github/workflows/soak-proof.yml > proof.diff
-            if grep -q '^+# Proof of:' proof.diff; then run=true; fi
+          file=.github/workflows/soak-acceptance.yml
+          if [[ -n $BEFORE ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+              && git cat-file -e "$BEFORE:$file" 2>/dev/null; then
+            git diff -U0 "$BEFORE" "$AFTER" -- "$file" > acceptance.diff
+            if grep -q '^+# Acceptance run of:' acceptance.diff; then run=true; fi
           fi
           echo "before=${BEFORE:-none} after=$AFTER run=$run"
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
-  proof:
+  acceptance:
     needs: gate
     if: needs.gate.outputs.run == 'true'
     permissions:

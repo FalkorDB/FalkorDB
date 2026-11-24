@@ -54,7 +54,7 @@ VALIDATOR = HERE.parent / "perf" / "validate.py"
 
 # ------------------------------------------------------------------ parameters
 # --mode sets only the length (contract §1). duration: seconds of load per scenario and
-# side; scale: dataset size (1.0 = Avi's full runs); perf_gate: whether perf can fail the
+# side; scale: dataset size (1.0 = the full-size runs); perf_gate: whether perf can fail the
 # check (queue reports it as info); reruns: confirmation re-runs; deadline_min: when to
 # stop starting runs, a margin inside the checks.yaml timeout_minutes.
 MODES = {

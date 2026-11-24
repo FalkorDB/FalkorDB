@@ -835,8 +835,8 @@ for name, q in (("parens5000", "RETURN " + "(" * 5000 + "1" + ")" * 5000),
                 ("maps2000", "RETURN " + "{a:" * 2000 + "1" + "}" * 2000)):
     try:
         ps = sk.Server(a.module, PORT + 5, probe_dir, name=f"probe-{name}")
-        # bounded: C v4.22.4 spins for minutes on parens5000 without answering, which would
-        # hold the whole scenario to its cap
+        # bounded: C spins for minutes on parens5000 without answering (#650, fixed in Rust
+        # only; #2400), which would hold the whole scenario to its cap
         pc = sk.connect(PORT + 5, timeout=PROBE_TIMEOUT_S)
         try:
             pc.execute_command("GRAPH.QUERY", "p", q)
