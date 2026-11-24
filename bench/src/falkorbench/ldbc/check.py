@@ -498,6 +498,10 @@ class QueryVerdict:
     #: actually compared (a query broken on both sides is measured, not
     #: compared).
     compared: bool = False
+    #: The main rounds' per-side statistics, kept for the re-run and the
+    #: non-crossing rows.
+    base: SideStats = field(default_factory=lambda: SideStats())
+    cand: SideStats = field(default_factory=lambda: SideStats())
 
 
 @dataclass
@@ -555,9 +559,9 @@ def compare_rows(query: str, cand: SideStats, base: SideStats) -> RowCheck:
 
 def analyse(query: str, main: list[Sample]) -> QueryVerdict:
     """Findings from the main rounds (latency crossings still unconfirmed)."""
-    verdict = QueryVerdict(query)
     base = side_stats([s for s in main if s.side == BASELINE])
     cand = side_stats([s for s in main if s.side == CANDIDATE])
+    verdict = QueryVerdict(query, base=base, cand=cand)
 
     if base.attempted == 0 and cand.attempted == 0:
         verdict.measured = False
@@ -1007,20 +1011,7 @@ class Check:
                 s.container = containers.start(s.image, name, self.opts.cache, cpus=cpus)
                 client = self.connect(s)
             except (containers.DockerError, RuntimeError, RedisError) as e:
-                if side == BASELINE:
-                    self.problem(f"baseline server did not start: {e}")
-                    return
-                self.findings.append(
-                    _finding(
-                        "server start",
-                        "completed",
-                        0,
-                        1,
-                        direction="lower_is_worse",
-                        status="regression",
-                    )
-                )
-                self.notes.append(f"candidate server did not start: {e}")
+                self.side_failed(side, "server start", f"server did not start: {e}")
                 return
             self.echo(f"{side}: port {s.container.port}")
             try:
@@ -1028,20 +1019,7 @@ class Check:
             except (loader_mod.LoadError, RedisError) as e:
                 load[side] = {"error": str(e)}
                 self.artifact("raw/load.json", json.dumps(load, indent=2) + "\n")
-                if side == BASELINE:
-                    self.problem(f"baseline could not load the dataset: {e}")
-                    return
-                self.findings.append(
-                    _finding(
-                        "load completed",
-                        "completed",
-                        0,
-                        1,
-                        direction="lower_is_worse",
-                        status="regression",
-                    )
-                )
-                self.notes.append(f"candidate could not load the dataset: {e}")
+                self.side_failed(side, "load completed", f"could not load the dataset: {e}")
                 return
             load[side] = {
                 "nodes": stats.nodes,
@@ -1061,6 +1039,17 @@ class Check:
                 status="info",
             )
         )
+
+    def side_failed(self, side: str, name: str, why: str) -> None:
+        """A side that could not start or load: the baseline's failure leaves
+        nothing to compare against (error); the candidate's is a regression."""
+        if side == BASELINE:
+            self.problem(f"baseline {why}")
+            return
+        self.findings.append(
+            _finding(name, "completed", 0, 1, direction="lower_is_worse", status="regression")
+        )
+        self.notes.append(f"candidate {why}")
 
     def connect(self, s: Side) -> BenchClient:
         """Wait for the server, switch off background saves, read its engine."""
@@ -1186,7 +1175,19 @@ class Check:
             for rnd in range(mode.rerun_rounds):
                 order = SIDES[::-1] if rnd % 2 == 0 else SIDES
                 reruns[q.name] += self.round(q, "rerun", rnd, order)
+        self.judge(main, reruns, verdicts)
 
+    def judge(
+        self,
+        main: dict[str, list[Sample]],
+        reruns: dict[str, list[Sample]],
+        verdicts: dict[str, QueryVerdict],
+    ) -> None:
+        """Findings and problems from the samples, apart from the servers.
+
+        Separate from collecting them, so a run's raw/samples.csv can be
+        judged again offline with the same code.
+        """
         for q in self.queries:
             v = verdicts[q.name]
             self.findings += v.findings
@@ -1197,9 +1198,7 @@ class Check:
                 continue
             self.compared_queries += 1 if v.compared else 0
             if v.crossed:
-                base = side_stats([s for s in main[q.name] if s.side == BASELINE])
-                cand = side_stats([s for s in main[q.name] if s.side == CANDIDATE])
-                timed = {k[2] for k in set(cand.latencies) & set(base.latencies)}
+                timed = {k[2] for k in set(v.cand.latencies) & set(v.base.latencies)}
                 confirmed = confirm(q.name, v.crossed, reruns.get(q.name, []), timed)
                 if confirmed.inconclusive:
                     self.problem(f"{q.name}: re-run inconclusive: {confirmed.inconclusive}")
@@ -1226,9 +1225,7 @@ class Check:
             v = verdicts[q.name]
             if v.left_out or not v.measured or v.rows_differ or v.no_rows:
                 continue
-            base = side_stats([s for s in main[q.name] if s.side == BASELINE])
-            cand = side_stats([s for s in main[q.name] if s.side == CANDIDATE])
-            for cmp in compare_latency(cand, base):
+            for cmp in compare_latency(v.cand, v.base):
                 if cmp.metric not in v.crossed and cmp.crossing() is None:
                     self.ok_rows.append(_latency_finding(q.name, cmp, "ok"))
 
