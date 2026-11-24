@@ -11,15 +11,19 @@
 name = "falkorbench"
 version = "0.1.0"
 description = "Per-query performance harness for FalkorDB"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     # The FalkorDB client, not raw redis-py: `Graph.query` raises on an error
     # reply, which is what replaces the old `"execution time" not in out`
-    # substring check on redis-cli's stdout. redis-py still arrives as a
-    # transitive dependency and `db.connection` exposes it for the raw
-    # commands (INFO, MEMORY MALLOC-STATS, DEBUG RELOAD, GRAPH.CONSTRAINT).
-    "falkordb>=1.0.9",
+    # substring check on redis-cli's stdout. `db.connection` exposes its
+    # redis-py for the raw commands (INFO, MEMORY MALLOC-STATS, DEBUG RELOAD,
+    # GRAPH.CONSTRAINT).
+    "falkordb>=1.8.2",
+    # The one redis-py of the perf toolset (falkordb's), bounded like
+    # tests/requirements.txt (see the note there). redis-py 8 changed the retry
+    # defaults: a client that must never retry says so explicitly.
+    "redis>=8.0,<8.2",
     "click>=8.1",
 ]
 
@@ -30,6 +34,18 @@ bench = "falkorbench.cli:cli"
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    # acceptance.yaml, read by the contract tests
+    "pyyaml>=6.0.4",
+]
+# `uv run --project bench --group soak bench soak`
+soak = [
+    "psutil>=7.1.3",
+    "numpy>=2.3.5",
+]
+# `uv run --project bench --group fuzz bench fuzz`: the full scan returns ~100k
+# rows, and the pure-Python reply parser would add seconds to each
+fuzz = [
+    "hiredis>=3.1.0",
 ]
 
 [build-system]

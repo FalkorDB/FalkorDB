@@ -249,7 +249,7 @@ jobs:
         run: |
           set -euo pipefail
           key=$( { printf '%s' "$C_DIGEST"; \
-                   cat bench/pyproject.toml bench/uv.lock bench/Dockerfile; } \
+                   cat bench/.python-version bench/pyproject.toml bench/uv.lock bench/Dockerfile; } \
                  | sha256sum | cut -c1-16 )
           image="ghcr.io/falkordb/falkordb-bench:$key"
           echo "bench_image=$image" >> "$GITHUB_OUTPUT"
