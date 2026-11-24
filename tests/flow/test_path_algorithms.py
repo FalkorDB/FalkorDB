@@ -1084,3 +1084,44 @@ class testAllShortestPaths():
         self.env.assertEqual(sp("weightProp: 'weight', costProp: 'cost', pathCount: 0"), [[2, 3]])
         # without a costProp the cost stays 0
         self.env.assertEqual(sp("weightProp: 'weight'"), [[2, 0]])
+
+    def test25_unit_weight_sp_matches_shortest_path(self):
+        # Without weightProp every edge weighs 1, and SPpaths takes a BFS route.
+        # On every pair of the random graph, its single path must be as short
+        # as shortestPath()'s, and be a real walk in the requested direction.
+        patterns = {'outgoing': "-[:E*]->", 'incoming': "<-[:E*]-", 'both': "-[:E*]-"}
+        for direction, pattern in patterns.items():
+            for x in range(1, NODES + 1):
+                for y in range(1, NODES + 1):
+                    if x == y:
+                        continue
+                    sp = self.graph.query(f"""
+                        MATCH (a:L {{v: {x}}}), (b:L {{v: {y}}})
+                        CALL algo.SPpaths({{sourceNode: a, targetNode: b, relTypes: ['E'],
+                                           relDirection: '{direction}'}})
+                        YIELD path, pathWeight, pathCost
+                        RETURN length(path), pathWeight, pathCost,
+                               [n IN nodes(path) | n.v],
+                               [r IN relationships(path) | [startNode(r).v, endNode(r).v]]""").result_set
+                    expected = self.graph.query(f"""
+                        MATCH (a:L {{v: {x}}}), (b:L {{v: {y}}})
+                        WITH shortestPath((a){pattern}(b)) AS p
+                        WHERE p IS NOT NULL
+                        RETURN length(p)""").result_set
+                    if not expected:
+                        self.env.assertEqual(sp, [])
+                        continue
+                    self.env.assertEqual(len(sp), 1)
+                    length, weight, cost, nodes, rels = sp[0]
+                    self.env.assertEqual(length, expected[0][0])
+                    self.env.assertEqual(weight, length)
+                    self.env.assertEqual(cost, 0)
+                    self.env.assertEqual(nodes[0], x)
+                    self.env.assertEqual(nodes[-1], y)
+                    for (u, v), (s, d) in zip(zip(nodes, nodes[1:]), rels):
+                        if direction == 'outgoing':
+                            self.env.assertEqual((s, d), (u, v))
+                        elif direction == 'incoming':
+                            self.env.assertEqual((s, d), (v, u))
+                        else:
+                            self.env.assertTrue((s, d) in [(u, v), (v, u)])

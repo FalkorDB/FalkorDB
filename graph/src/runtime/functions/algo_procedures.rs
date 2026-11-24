@@ -85,6 +85,7 @@ use crate::{
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::collections::hash_map::Entry;
 use std::mem::swap;
 use std::ptr::null_mut;
 use std::sync::Arc;
@@ -2415,6 +2416,90 @@ fn dijkstra_single_path(
     Ok(Some((edges, labels[&target].weight, cost)))
 }
 
+/// The unit-weight case of [`dijkstra_single_path`]: with no `weightProp`
+/// every edge weighs 1, so the fewest-hops path is the cheapest one and a
+/// plain BFS finds it.
+///
+/// It does less work than Dijkstra on the same graph in two ways. Dijkstra
+/// only stops when it *pops* the target, so it first expands every node at
+/// the target's distance minus one; a BFS stops the moment an expansion
+/// *discovers* the target, part-way through that level. And a discovered node
+/// costs one hash insert here, against Dijkstra's settled-set probe, label
+/// lookup, label insert and heap push per relaxed edge.
+fn bfs_single_path(
+    runtime: &Runtime,
+    g: &Graph,
+    config: &PathAlgoConfig,
+    target: NodeId,
+) -> Result<Option<FoundPath>, String> {
+    // node -> (parent, edge reaching it in its original direction); doubles as
+    // the visited set. The source has no entry and is marked separately.
+    let mut parents: FxHashMap<NodeId, (NodeId, (RelationshipId, NodeId, NodeId))> =
+        FxHashMap::default();
+    let mut frontier = vec![config.source];
+    let mut next_frontier: Vec<NodeId> = Vec::new();
+    let mut iters: u64 = 0;
+    let mut found = false;
+
+    'levels: while !frontier.is_empty() {
+        for &node in &frontier {
+            iters += 1;
+            if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
+                runtime.check_timeout()?;
+                runtime.check_mem_capacity()?;
+            }
+
+            for (edge_src, edge_dst, edge_id) in
+                g.get_node_relationships_by_type(node, &config.rel_types, config.rel_direction)
+            {
+                let Some(far) = far_endpoint(node, edge_src, edge_dst, config.rel_direction) else {
+                    continue;
+                };
+                if far == config.source {
+                    continue;
+                }
+                match parents.entry(far) {
+                    Entry::Occupied(_) => continue,
+                    Entry::Vacant(slot) => {
+                        slot.insert((node, (edge_id, edge_src, edge_dst)));
+                    }
+                }
+                if far == target {
+                    found = true;
+                    break 'levels;
+                }
+                next_frontier.push(far);
+            }
+        }
+        swap(&mut frontier, &mut next_frontier);
+        next_frontier.clear();
+    }
+
+    if !found {
+        return Ok(None);
+    }
+
+    let mut edges = Vec::new();
+    let mut cur = target;
+    while cur != config.source {
+        let (parent, edge) = parents[&cur];
+        edges.push(edge);
+        cur = parent;
+    }
+    edges.reverse();
+
+    // Same reporting as `dijkstra_single_path`: weight is the hop count, and
+    // cost sums `costProp` over the winning path (1 per edge lacking it), or
+    // 0 when no `costProp` was given.
+    let weight = edges.len() as f64;
+    let missing_cost = if config.cost_prop.is_some() { 1.0 } else { 0.0 };
+    let cost = edges.iter().fold(0.0, |acc, &(edge_id, _, _)| {
+        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), missing_cost)
+    });
+
+    Ok(Some((edges, weight, cost)))
+}
+
 /// Level-synchronised BFS from `config.source` looking for `target`, honouring
 /// `relTypes` / `relDirection` / `maxLen`, keeping one parent record per node.
 ///
@@ -2728,7 +2813,13 @@ fn run_path_algo(
         && config.max_len == u32::MAX
         && config.source != target
     {
-        let found = dijkstra_single_path(runtime, &g, config, target)?;
+        // Without `weightProp` every edge weighs 1, and Dijkstra is a BFS that
+        // pays for a heap it does not need and finds the target late.
+        let found = if config.weight_prop.is_none() {
+            bfs_single_path(runtime, &g, config, target)?
+        } else {
+            dijkstra_single_path(runtime, &g, config, target)?
+        };
         return Ok(build_path_batch(config, found.into_iter().collect()));
     }
 
