@@ -11,7 +11,8 @@
 # even where no webhook is configured. A workflow that cannot be found or asked
 # about is an alarm too. See tests/perf/report/README.md.
 #
-# `date` (workflow_dispatch) re-checks an earlier night.
+# `date` (workflow_dispatch) re-checks an earlier night. A re-run of a scheduled run
+# checks the night that run was created for, not the day it is re-run.
 
 name: perf missed-run alarm
 
@@ -29,8 +30,10 @@ permissions:
   actions: read
   contents: read
 
+# One group per trigger and night: a hand-started check can never displace the
+# scheduled one while it waits.
 concurrency:
-  group: perf-missed-run
+  group: perf-missed-run-${{ github.event_name }}-${{ inputs.date }}
   cancel-in-progress: false
 
 jobs:

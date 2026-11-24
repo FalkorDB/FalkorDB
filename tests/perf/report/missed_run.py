@@ -149,11 +149,30 @@ def check(environ: dict, night: date, workflow: str, branch: str, event: str, ar
     return alarm(night, reason, link, "run")
 
 
+def scheduled_night(environ: dict) -> date | None:
+    """The night a scheduled run was created for, so a re-run days later checks that night.
+
+    None outside a scheduled Actions run, or when GitHub cannot say; the caller then
+    uses today.
+    """
+    run_id = environ.get("GITHUB_RUN_ID") or ""
+    if environ.get("GITHUB_EVENT_NAME") != "schedule" or not run_id.isdigit():
+        return None
+    url = f"{post.api_url(environ)}/repos/{post.repository(environ)}/actions/runs/{run_id}"
+    try:
+        data = post.github_get(url, post.github_token(environ))
+    except post.GitHubError:
+        return None
+    created = parse_time(data.get("created_at")) if isinstance(data, dict) else None
+    return created.date() if created else None
+
+
 def main(argv: list[str] | None = None, environ: dict | None = None, now: datetime | None = None) -> int:
     now = now or datetime.now(timezone.utc)
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
-    parser.add_argument("--date", type=date.fromisoformat, default=now.date(),
-                        help="the night to check, YYYY-MM-DD (UTC; default today)")
+    parser.add_argument("--date", type=date.fromisoformat, default=None,
+                        help="the night to check, YYYY-MM-DD (UTC); default: the night a scheduled run "
+                             "was created for, else today")
     parser.add_argument("--workflow", default="perf-nightly.yml")
     parser.add_argument("--branch", default="main")
     parser.add_argument("--event", default="schedule", help="the run's trigger (default: schedule)")
@@ -161,8 +180,8 @@ def main(argv: list[str] | None = None, environ: dict | None = None, now: dateti
     arguments = parser.parse_args(argv)
     environ = dict(os.environ) if environ is None else environ
 
-    outcome = check(environ, arguments.date, arguments.workflow, arguments.branch, arguments.event,
-                    arguments.artifact, now)
+    night = arguments.date or scheduled_night(environ) or now.date()
+    outcome = check(environ, night, arguments.workflow, arguments.branch, arguments.event, arguments.artifact, now)
     post.deliver(post.render_chat(outcome.lines), post.render_markdown(outcome.lines), environ, post=outcome.alarm)
     return 1 if outcome.alarm else 0
 

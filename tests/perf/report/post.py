@@ -20,6 +20,7 @@ Standard library only, so it runs under `python -I` on any runner.
 from __future__ import annotations
 
 import argparse
+import http.client
 import importlib.util
 import json
 import math
@@ -582,7 +583,8 @@ def github_get(url: str, token: str) -> object:
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise GitHubError(exc.code, f"HTTP {exc.code} {exc.reason}") from None
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
+        # HTTPException covers a body cut short (IncompleteRead) after the headers arrived.
         raise GitHubError(None, f"{type(exc).__name__}: {getattr(exc, 'reason', exc)}") from None
 
 
@@ -857,6 +859,10 @@ def chat_text(night: Night, commits: CommitRange | None, environ: dict) -> str:
     # Still too long: keep whole lines from the top and say where the rest is. The tail
     # never takes more than half the budget, so the headline always fits beside it.
     tail = Line(["(trimmed: the full report is in the run's job summary) ", run_link(night)])
+    previous, candidate = night.previous_green_commit, night.candidate_commit
+    if night.status == "red" and previous and candidate and previous != candidate:
+        compare = f"{server_url(environ)}/{repository(environ)}/compare/{previous}...{candidate}"
+        tail.segments += [" · ", Link(compare, "commits since the last green night")]
     if night.status == "red":
         with_issue = Line([*tail.segments, " · ", Link(issue_link(night, environ, CHAT_LIMITS[-1]), "open an issue")])
         if len(render_chat([with_issue])) <= CHAT_CHARACTER_BUDGET // 2:
@@ -902,8 +908,10 @@ def post_to_chat(webhook: str, text: str) -> str:
             "User-Agent": USER_AGENT,
         })
         try:
-            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-                response.read()
+            # Chat's answer body is not used, so it is not read: a body cut short after a
+            # 2xx must not turn a delivered message into a failure.
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS):
+                pass
             return ""
         except urllib.error.HTTPError as exc:
             failure = f"HTTP {exc.code} {exc.reason}"
@@ -915,6 +923,9 @@ def post_to_chat(webhook: str, text: str) -> str:
         except TimeoutError:
             # Raised while waiting for the response: the message may have arrived.
             return "timed out waiting for Chat (not retried: the message may have arrived)"
+        except http.client.HTTPException as exc:
+            # A malformed or cut-short answer after the request went out: it may have arrived.
+            return f"bad answer from Chat: {type(exc).__name__} (not retried: the message may have arrived)"
         except (OSError, ValueError) as exc:
             failure = f"request failed: {type(exc).__name__}"
     return failure
@@ -935,7 +946,10 @@ def deliver(chat: str, markdown: str, environ: dict, post: bool = True) -> None:
     if not webhook:
         print("PERF_CHAT_WEBHOOK is not set: not posted to Chat.", file=sys.stderr)
         return
-    failure = post_to_chat(webhook, chat)
+    try:
+        failure = post_to_chat(webhook, chat)
+    except Exception as exc:  # noqa: BLE001  (a failed post is a warning, never a failed job)
+        failure = f"unexpected {type(exc).__name__}"
     if failure:
         warn(f"posting to Chat failed: {failure}", environ)
     else:

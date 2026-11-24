@@ -12,6 +12,7 @@ both at another checkout's tests/perf (development before they are on this branc
 from __future__ import annotations
 
 import contextlib
+import http.client
 import io
 import json
 import os
@@ -570,6 +571,52 @@ class Delivery(Workspace):
         self.assertIn("PERF_CHAT_WEBHOOK is not a valid URL", stderr)
         self.assertNotIn("SECRETKEY", stdout + stderr)
 
+    def test_a_cut_short_answer_after_a_2xx_is_still_a_delivered_post(self):
+        class Answer:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exception):
+                return False
+
+            def read(self, *arguments):
+                raise http.client.IncompleteRead(b"")
+
+        with unittest.mock.patch.object(post.urllib.request, "urlopen", return_value=Answer()) as urlopen:
+            code, _, stderr = self.run_post(self.GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
+        self.assertEqual((code, urlopen.call_count), (0, 1))
+        self.assertIn("Posted to Chat.", stderr)
+
+    def test_a_malformed_answer_is_a_warning_and_not_retried(self):
+        with unittest.mock.patch.object(post.urllib.request, "urlopen",
+                                        side_effect=http.client.BadStatusLine("x")) as urlopen:
+            code, _, stderr = self.run_post(self.GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
+        self.assertEqual((code, urlopen.call_count), (0, 1))
+        self.assertIn("posting to Chat failed: bad answer from Chat: BadStatusLine (not retried", stderr)
+
+    def test_any_other_failure_while_posting_is_a_warning(self):
+        with unittest.mock.patch.object(post, "post_to_chat", side_effect=RuntimeError("boom")):
+            code, stdout, stderr = self.run_post(self.GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
+        self.assertEqual(code, 0)
+        self.assertTrue(stdout.startswith("*Perf nightly 2026-11-24: green*"))
+        self.assertIn("posting to Chat failed: unexpected RuntimeError", stderr)
+
+    def test_a_github_body_cut_short_is_a_github_error(self):
+        class Answer:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exception):
+                return False
+
+            def read(self, *arguments):
+                raise http.client.IncompleteRead(b"{")
+
+        with unittest.mock.patch.object(post.urllib.request, "urlopen", return_value=Answer()), \
+                self.assertRaises(post.GitHubError) as raised:
+            post.github_get("https://api.github.com/repos/x/y", "")
+        self.assertIn("IncompleteRead", str(raised.exception))
+
     def test_a_client_error_is_not_retried(self):
         with StubServer({"/hook": (400, {"error": "bad"})}) as server:
             _, _, stderr = self.run_post(self.GREEN, {"PERF_CHAT_WEBHOOK": f"{server.url}/hook"})
@@ -714,16 +761,30 @@ class ChatBudget(Workspace):
         self.assertIn("Commits since the last green night (300,", stdout)
         self.assertGreater(len(summary.read_text()), len(stdout), "the job summary keeps more than Chat")
 
-    def test_a_trimmed_red_night_keeps_the_run_and_issue_links_and_the_budget(self):
+    def test_a_trimmed_red_night_keeps_the_run_commit_and_issue_links_and_the_budget(self):
         checks = [result(f"check-{c}", "regression", [UNWIND], summary="s" * 290) for c in range(4)]
         checks += [{"check": f"stub-{c}", "verdict": "error", "error": "e" * 400} for c in range(14)]
         with unittest.mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
             text = self.chat(nightly("red", checks)).rstrip("\n")
         self.assertLessEqual(len(text), post.CHAT_CHARACTER_BUDGET)
         last = text.splitlines()[-1]
+        compare = f"https://github.com/FalkorDB/FalkorDB/compare/{PREVIOUS_GREEN}...{CANDIDATE_COMMIT}"
         self.assertTrue(last.startswith(f"(trimmed: the full report is in the run's job summary) <{RUN_URL}|run> · "
+                                        f"<{compare}|commits since the last green night> · "
                                         "<https://github.com/FalkorDB/FalkorDB/issues/new?"), last)
         self.assertTrue(last.endswith("|open an issue>"), last)
+
+    def test_a_trimmed_red_night_without_a_commit_range_has_no_compare_link(self):
+        checks = [result(f"check-{c}", "regression", [UNWIND], summary="s" * 290) for c in range(4)]
+        checks += [{"check": f"stub-{c}", "verdict": "error", "error": "e" * 400} for c in range(14)]
+        for previous in (None, CANDIDATE_COMMIT):
+            with self.subTest(previous=previous):
+                night = nightly("red", checks, previous_green=previous)
+                with unittest.mock.patch.object(post, "commits_since_green",
+                                                return_value=post.CommitRange([], 0, "x")):
+                    last = self.chat(night).rstrip("\n").splitlines()[-1]
+                self.assertNotIn("/compare/", last)
+                self.assertIn("|open an issue>", last)
 
     def test_the_cap_holds_for_many_shapes_of_night(self):
         for regressed in range(7):
@@ -777,8 +838,9 @@ class ChatBudget(Workspace):
             text = post.chat_text(night, post.CommitRange([], 0, "x"), {})
         self.assertLessEqual(len(text), post.CHAT_CHARACTER_BUDGET)
         self.assertTrue(text.startswith("*Perf nightly 2026-11-24: REGRESSION*"), text[:100])
-        self.assertTrue(text.endswith(f"(trimmed: the full report is in the run's job summary) <{RUN_URL}|run>"),
-                        text[-200:])
+        compare = f"https://github.com/FalkorDB/FalkorDB/compare/{PREVIOUS_GREEN}...{CANDIDATE_COMMIT}"
+        self.assertTrue(text.endswith(f"(trimmed: the full report is in the run's job summary) <{RUN_URL}|run> · "
+                                      f"<{compare}|commits since the last green night>"), text[-300:])
 
     def test_summarize_names(self):
         self.assertEqual(post.summarize_names(["micro", "pokec"], 100), "micro, pokec")
@@ -1039,6 +1101,46 @@ class MissedRun(Workspace):
         self.assertEqual(code, 0)
         query = urllib.parse.parse_qs(requests[0]["query"])
         self.assertEqual((query["branch"], query["event"]), (["dev"], ["push"]))
+
+    def test_a_rerun_of_a_scheduled_check_checks_the_night_it_was_created_for(self):
+        routes = {RUNS_PATH: (200, {"workflow_runs": []}),
+                  "/repos/FalkorDB/FalkorDB/actions/runs/99": (200, {"id": 99, "created_at": "2026-11-24T05:03:00Z"})}
+        with StubServer(routes) as server:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                missed_run.main([], {"GITHUB_API_URL": server.url, "GITHUB_EVENT_NAME": "schedule",
+                                     "GITHUB_RUN_ID": "99"},
+                                now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
+        runs = [request for request in server.requests if request["path"] == RUNS_PATH]
+        self.assertEqual(urllib.parse.parse_qs(runs[0]["query"])["created"],
+                         ["2026-11-23T05:00:00Z..2026-11-24T05:00:00Z"])
+
+    def test_today_when_the_run_cannot_be_looked_up_or_was_not_scheduled(self):
+        for environ in ({"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ID": "98"},  # lookup answers 404
+                        {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ID": "99"},
+                        # Not a number: never put in the URL (here it would reach runs/99).
+                        {"GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ID": "99?x=1"}):
+            with self.subTest(environ=environ):
+                routes = {RUNS_PATH: (200, {"workflow_runs": []}),
+                          "/repos/FalkorDB/FalkorDB/actions/runs/99": (200, {"created_at": "2026-11-20T05:03:00Z"})}
+                with StubServer(routes) as server:
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        missed_run.main([], {"GITHUB_API_URL": server.url, **environ},
+                                        now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
+                runs = [request for request in server.requests if request["path"] == RUNS_PATH]
+                self.assertEqual(urllib.parse.parse_qs(runs[0]["query"])["created"],
+                                 ["2026-11-25T05:00:00Z..2026-11-26T05:00:00Z"])
+
+    def test_an_explicit_date_wins_over_the_scheduled_night(self):
+        routes = {RUNS_PATH: (200, {"workflow_runs": []}),
+                  "/repos/FalkorDB/FalkorDB/actions/runs/99": (200, {"created_at": "2026-11-24T05:03:00Z"})}
+        with StubServer(routes) as server:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                missed_run.main(["--date", "2026-11-10"], {"GITHUB_API_URL": server.url,
+                                                           "GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ID": "99"},
+                                now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
+        self.assertEqual([request["path"] for request in server.requests], [RUNS_PATH])
+        self.assertEqual(urllib.parse.parse_qs(server.requests[0]["query"])["created"],
+                         ["2026-11-09T05:00:00Z..2026-11-10T05:00:00Z"])
 
     def test_the_default_night_is_today_in_utc(self):
         with StubServer({RUNS_PATH: (200, {"workflow_runs": []})}) as server:
