@@ -151,6 +151,10 @@ def cmd_record(args: argparse.Namespace) -> int:
         "create_error": args.create_error or None,
         "command_exit": optional_int(args.command_exit),
         "timed_out": args.timed_out == "true",
+        # The vPMU type GCE reports for the VM, and what `perf stat` counted
+        # on it (or why it could not): both null without hardware counters.
+        "pmu": args.pmu or None,
+        "pmu_probe": args.pmu_probe or None,
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -182,6 +186,8 @@ def main(argv: list[str] | None = None) -> int:
     record.add_argument("--create-error", default="")
     record.add_argument("--command-exit", default="", help="empty when the command never ran")
     record.add_argument("--timed-out", default="false", help="true or false")
+    record.add_argument("--pmu", default="", help="vPMU type, empty without one")
+    record.add_argument("--pmu-probe", default="", help="what perf stat counted, or why it could not")
     record.set_defaults(func=cmd_record)
 
     args = parser.parse_args(argv)

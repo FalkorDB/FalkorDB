@@ -20,7 +20,8 @@ jobs:
       baseline_image: falkordb/falkordb-server@sha256:…
       mode: nightly                              # queue | nightly | long
       timeout_minutes: 45                        # default 60
-      machine_type: n4-standard-16               # default; '' means the default
+      machine_type: ''                           # n4-standard-16, or c4-standard-16 with pmu
+      pmu: false                                 # true: hardware counters (below)
       # optional: candidate_label, baseline_label, candidate_commit,
       # baseline_commit, fallback_machine_type, zones
     secrets: inherit                             # GH_SA_TOKEN, GCP_PROJECT_ID, GCP_SA_KEY
@@ -60,6 +61,7 @@ scripts, still gets the matching ones. Each job logs and checks that commit
 | `PERF_ZONE`, `PERF_MACHINE_TYPE` | where the VM is, read from the metadata server |
 | `PERF_MACHINE_JSON` | a file holding the result.json `machine` object: `{"runner": "gce", "type", "cpu", "cores"}` |
 | `PERF_VM_TOOLS` | absolute path of this workflow's own `tests/perf/vm` (e.g. `smoke.py`) |
+| `PERF_PMU` | `1` when `pmu: true` and `perf stat` counted on this VM; unset otherwise |
 
 The split is by physical core: hyperthread siblings stay together, the
 servers get the first half of the cores and the client the rest. On an
@@ -71,6 +73,26 @@ The VM is Debian 12 with Docker, git, python3 and uv, a 100 GB boot disk, and
 4 GB of memory per vCPU on the default type. Its service account token is
 scoped to Compute only (`compute-rw`): enough to label and delete itself.
 
+## Hardware counters (`pmu: true`)
+
+GCE gives a VM hardware counters only on some families (on x86, C4 and M4)
+and only when it is created with a virtual PMU. With `pmu: true`:
+
+- `plan.sh` asks for `c4-standard-16`, falling back to `c4-standard-8`. Any
+  type it is given must be C4 or M4: a check that wants counters gets a VM
+  that has them, or no VM (then `perf-vm.json` says why and the check is an
+  error). It never falls back to a type without counters.
+- The VM comes from gce-github-runner's `pmu-on-pinned` commit
+  (`GCE_GITHUB_RUNNER_PMU_REF`, the default pin plus a
+  `performance_monitoring_unit` flag, created through gcloud's beta track) with
+  `--performance-monitoring-unit=standard`. `perf-vm.json`'s `pmu` is the type
+  GCE reports for the VM.
+- On the VM: `linux-perf` is installed, `kernel.perf_event_paranoid` is set to
+  -1 (so `perf stat -p <host pid of a container's server>` works for any
+  user), and `perf stat -e cycles,instructions -- true` must count both, or
+  the job fails before the check runs. `perf-vm.json`'s `pmu_probe` records
+  what it counted, and `PERF_PMU=1` tells the check.
+
 ## The artifact
 
 `perf-result-<check>` holds the check's `out/` directory plus `perf-vm.json`:
@@ -78,7 +100,7 @@ scoped to Compute only (`compute-rw`): enough to label and delete itself.
 ```json
 {"schema": 1, "check": "size-probe", "vm_name": "gce-gh-…", "zone": "us-central1-b",
  "machine_type": "n2-standard-16", "fallback_used": true, "create_error": null,
- "command_exit": 0, "timed_out": false}
+ "command_exit": 0, "timed_out": false, "pmu": null, "pmu_probe": null}
 ```
 
 It is uploaded when the command fails or times out too. When no VM came up,
@@ -145,6 +167,7 @@ stopped VM; adding that input to `gce-github-runner` is the follow-up.
 
 | file | what |
 | --- | --- |
+| `plan.sh` | checks the inputs; picks machine type, fallback and PMU |
 | `create-vm.sh` | zones × types loop over the action's `action.sh` |
 | `run-check.sh` | runs the command with the contract's flags under `timeout` and `taskset`; records exit code and timeout |
 | `delete-vms.sh` | delete every VM with a label; retries listing, waits out in-flight inserts |

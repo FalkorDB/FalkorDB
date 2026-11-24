@@ -17,10 +17,14 @@
 #
 # Environment: GH_SA_TOKEN, GCP_PROJECT_ID, GCP_SA_KEY (as for the action),
 # RUNNER_VER (runner version, default latest), DISK_SIZE (default 100GB),
+# PMU (a vPMU type such as `standard`, or empty: the action at <action-dir>
+# must then be gce-github-runner's pmu-on-pinned, since the default pin
+# rejects the flag),
 # CREATE_BUDGET_S (start no attempt after this many seconds, default 3000),
 # GITHUB_OUTPUT. gcloud must already be authenticated, for delete-vms.sh.
 #
-# Writes outputs vm_name, zone, machine_type, fallback_used on success, or
+# Writes outputs vm_name, zone, machine_type, fallback_used and pmu (the
+# vPMU type GCE reports for the VM, empty without one) on success, or
 # create_error, one line naming every attempt and why it failed, when no
 # VM came up (then exits 1). create_error never holds the project ID:
 # GitHub drops a job output that contains a secret.
@@ -47,6 +51,9 @@ types=("$primary")
 if [[ -n $fallback && $fallback != "$primary" ]]; then
   types+=("$fallback")
 fi
+
+pmu_flag=()
+if [[ -n ${PMU:-} ]]; then pmu_flag=(--performance_monitoring_unit="$PMU"); fi
 
 errors=()
 give_up() {
@@ -113,6 +120,7 @@ for type in "${types[@]}"; do
       --no_external_address=false \
       --actions_preinstalled=false \
       --arm=false \
+      ${pmu_flag[@]+"${pmu_flag[@]}"} \
       </dev/null 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
     echo "::endgroup::"
@@ -132,6 +140,13 @@ for type in "${types[@]}"; do
       fi
       if [[ -n $vm_type ]]; then
         vm_zone=$zone
+        vm_pmu=""
+        if [[ -n ${PMU:-} ]]; then
+          # A beta-API field: the v1 describe does not show it.
+          vm_pmu=$(gcloud beta compute instances describe "$vm_name" --zone="$zone" \
+            --format='value(advancedMachineFeatures.performanceMonitoringUnit)') \
+            || echo "::warning::could not read $vm_name's PMU type"
+        fi
         fallback_used=false
         [[ $vm_type == "$primary" ]] || fallback_used=true
         {
@@ -139,8 +154,9 @@ for type in "${types[@]}"; do
           echo "zone=$vm_zone"
           echo "machine_type=$vm_type"
           echo "fallback_used=$fallback_used"
+          echo "pmu=$vm_pmu"
         } >> "$GITHUB_OUTPUT"
-        echo "VM $vm_name: $vm_type in $vm_zone (fallback used: $fallback_used)"
+        echo "VM $vm_name: $vm_type in $vm_zone (fallback used: $fallback_used${PMU:+, PMU: ${vm_pmu:-unknown}})"
         exit 0
       fi
       echo "::warning::the action reported success but no runner_id"

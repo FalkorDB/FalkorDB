@@ -60,13 +60,17 @@ on:
         type: number
         default: 60
       machine_type:
-        description: GCE machine type. Empty means n4-standard-16.
-        type: string
-        default: n4-standard-16
-      fallback_machine_type:
-        description: Type to try in every zone when machine_type is out of stock in all of them. Empty means n2-<rest of machine_type> for an n4 type, else none.
+        description: GCE machine type. Empty means n4-standard-16, or c4-standard-16 with pmu.
         type: string
         default: ""
+      fallback_machine_type:
+        description: Type to try in every zone when machine_type is out of stock in all of them. Empty means n2-<size> for an n4-<size> type, c4-standard-8 with pmu, else none.
+        type: string
+        default: ""
+      pmu:
+        description: Give the VM hardware counters (a C4 or M4 VM with a vPMU, linux-perf, PERF_PMU=1). Never falls back to a type without counters.
+        type: boolean
+        default: false
       zones:
         description: Zones to try in order, comma- or space-separated. Empty means vars.GCP_ZONES.
         type: string
@@ -100,6 +104,8 @@ on:
         value: ${{ jobs.create.outputs.machine_type }}
       fallback_used:
         value: ${{ jobs.create.outputs.fallback_used }}
+      pmu:
+        value: ${{ jobs.create.outputs.pmu }}
       command_exit:
         value: ${{ jobs.run.outputs.command_exit }}
 
@@ -112,6 +118,9 @@ env:
   # keeps a re-run off a VM left by the attempt before it.
   PERF_VM_LABEL: perf-${{ inputs.check }}-${{ github.run_id }}-${{ github.run_attempt }}
   GCE_GITHUB_RUNNER_REF: 0caf8406cd6353630fcd0b2eade420d3da124e01
+  # pmu-on-pinned: the commit above plus a performance_monitoring_unit flag,
+  # which creates through gcloud's beta track (the field is beta-only).
+  GCE_GITHUB_RUNNER_PMU_REF: ef56e4c9a1abfc80c300b33e3e1e9a3065b5905a
 
 jobs:
   create:
@@ -123,6 +132,8 @@ jobs:
       zone: ${{ steps.create.outputs.zone }}
       machine_type: ${{ steps.create.outputs.machine_type }}
       fallback_used: ${{ steps.create.outputs.fallback_used }}
+      pmu: ${{ steps.create.outputs.pmu }}
+      pmu_requested: ${{ steps.plan.outputs.pmu }}
       create_error: ${{ steps.create.outputs.create_error || steps.plan.outputs.error }}
       planned: ${{ steps.plan.outcome }}
       attempt: ${{ github.run_attempt }}
@@ -131,49 +142,6 @@ jobs:
       step_timeout: ${{ steps.plan.outputs.step_timeout }}
       deadline: ${{ steps.plan.outputs.deadline }}
     steps:
-      - name: Plan
-        id: plan
-        env:
-          CHECK: ${{ inputs.check }}
-          MODE: ${{ inputs.mode }}
-          TIMEOUT: ${{ inputs.timeout_minutes }}
-          ZONES: ${{ inputs.zones || vars.GCP_ZONES }}
-          MACHINE_TYPE: ${{ inputs.machine_type || 'n4-standard-16' }}
-          FALLBACK: ${{ inputs.fallback_machine_type }}
-          CANDIDATE: ${{ inputs.candidate_image }}
-          BASELINE: ${{ inputs.baseline_image }}
-        run: |
-          set -euo pipefail
-          fail() { echo "error=$1" >> "$GITHUB_OUTPUT"; echo "::error::$1"; exit 1; }
-          # The name becomes a GCE label key inside PERF_VM_LABEL (63 chars).
-          # `--` is reserved for a check's own artifact names (contract v1.5).
-          [[ $CHECK =~ ^[a-z][a-z0-9-]{0,42}$ && $CHECK != *--* ]] \
-            || fail "check '$CHECK' must be lowercase letters, digits and single dashes, at most 43 characters"
-          [[ $MODE =~ ^(queue|nightly|long)$ ]] || fail "mode '$MODE' is not queue, nightly or long"
-          for image in "$CANDIDATE" "$BASELINE"; do
-            [[ $image =~ ^[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]] \
-              || fail "image '$image' is not pinned by digest (name@sha256:<64 hex>)"
-          done
-          if ! [[ $TIMEOUT =~ ^[1-9][0-9]*$ ]]; then
-            fail "timeout_minutes '$TIMEOUT' is not a whole number of minutes"
-          fi
-          [[ -n ${ZONES//[ ,]/} ]] || fail "no zones: set the zones input or vars.GCP_ZONES"
-          if [[ -z $FALLBACK && $MACHINE_TYPE == n4-* ]]; then
-            FALLBACK=n2-${MACHINE_TYPE#n4-}
-          fi
-          {
-            echo "zones=$ZONES"
-            echo "machine_type=$MACHINE_TYPE"
-            echo "fallback=$FALLBACK"
-            echo "command_timeout_s=$((TIMEOUT * 60))"
-            # The command's own `timeout` fires first; the step and job
-            # timeouts are backstops that still leave time for the upload.
-            echo "step_timeout=$((TIMEOUT + 5))"
-            echo "job_timeout=$((TIMEOUT + 20))"
-            # The VM deletes itself this long after the run job starts.
-            echo "deadline=$((TIMEOUT + 30))"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Check out this workflow's own VM scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -205,11 +173,25 @@ jobs:
             exit 1
           fi
 
+      - name: Plan
+        id: plan
+        env:
+          CHECK: ${{ inputs.check }}
+          MODE: ${{ inputs.mode }}
+          TIMEOUT: ${{ inputs.timeout_minutes }}
+          ZONES: ${{ inputs.zones || vars.GCP_ZONES }}
+          MACHINE_TYPE: ${{ inputs.machine_type }}
+          FALLBACK: ${{ inputs.fallback_machine_type }}
+          PMU: ${{ inputs.pmu }}
+          CANDIDATE: ${{ inputs.candidate_image }}
+          BASELINE: ${{ inputs.baseline_image }}
+        run: '"$PERF_VM_TOOLS/plan.sh"'
+
       - name: Check out FalkorDB/gce-github-runner
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: FalkorDB/gce-github-runner
-          ref: ${{ env.GCE_GITHUB_RUNNER_REF }}
+          ref: ${{ steps.plan.outputs.pmu && env.GCE_GITHUB_RUNNER_PMU_REF || env.GCE_GITHUB_RUNNER_REF }}
           path: .gce-github-runner
           persist-credentials: false
 
@@ -232,6 +214,7 @@ jobs:
           ZONES: ${{ steps.plan.outputs.zones }}
           MACHINE_TYPE: ${{ steps.plan.outputs.machine_type }}
           FALLBACK: ${{ steps.plan.outputs.fallback }}
+          PMU: ${{ steps.plan.outputs.pmu }}
         run: |
           set -euo pipefail
           # action.sh resolves `latest` through the unauthenticated GitHub API,
@@ -247,10 +230,11 @@ jobs:
           ZONE: ${{ steps.create.outputs.zone }}
           TYPE: ${{ steps.create.outputs.machine_type }}
           FALLBACK_USED: ${{ steps.create.outputs.fallback_used }}
+          PMU: ${{ steps.create.outputs.pmu }}
           CREATE_ERROR: ${{ steps.create.outputs.create_error }}
         run: |
           if [[ -n $VM_NAME ]]; then
-            echo "VM \`$VM_NAME\`: **$TYPE** in **$ZONE** (fallback type used: $FALLBACK_USED), label \`$PERF_VM_LABEL\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "VM \`$VM_NAME\`: **$TYPE** in **$ZONE** (fallback type used: $FALLBACK_USED${PMU:+, PMU $PMU}), label \`$PERF_VM_LABEL\`" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "No VM: ${CREATE_ERROR:-the create step did not finish}" >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -296,6 +280,31 @@ jobs:
           (( EUID == 0 )) || apt=(sudo "${apt[@]}")
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends git python3 ca-certificates
+
+      - name: Enable hardware counters
+        if: needs.create.outputs.pmu_requested != ''
+        id: pmu
+        run: |
+          set -euo pipefail
+          sudo=; (( EUID == 0 )) || sudo=sudo
+          export DEBIAN_FRONTEND=noninteractive
+          # linux-perf is Debian 12's perf for its own 6.1 kernel.
+          $sudo apt-get -q -o DPkg::Lock::Timeout=300 install -y --no-install-recommends linux-perf
+          # Debian's default (3) forbids perf to everyone but root; -1 lets a
+          # check run `perf stat -p <host pid of a container's server>` as any user.
+          $sudo sysctl -w kernel.perf_event_paranoid=-1
+          probe=$(perf stat -x, -e cycles,instructions -- true 2>&1 >/dev/null) || true
+          echo "$probe"
+          cycles=$(awk -F, '$3 ~ /^cycles/ { print $1 }' <<< "$probe")
+          instructions=$(awk -F, '$3 ~ /^instructions/ { print $1 }' <<< "$probe")
+          if ! [[ $cycles =~ ^[0-9]+$ && $instructions =~ ^[0-9]+$ ]]; then
+            echo "probe=$(tr '\n' ' ' <<< "$probe" | cut -c1-200)" >> "$GITHUB_OUTPUT"
+            echo "::error::hardware counters do not count on this VM: $(tr '\n' ' ' <<< "$probe")"
+            exit 1
+          fi
+          echo "probe=cycles=$cycles instructions=$instructions" >> "$GITHUB_OUTPUT"
+          echo "PERF_PMU=1" >> "$GITHUB_ENV"
+          echo "Hardware counters: \`perf stat -- true\` counted $cycles cycles, $instructions instructions" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check out the calling commit
         # The check's own code. It comes first: checkout empties a workspace
@@ -385,12 +394,15 @@ jobs:
           TYPE: ${{ needs.create.outputs.machine_type }}
           FALLBACK_USED: ${{ needs.create.outputs.fallback_used }}
           COMMAND_EXIT: ${{ steps.check.outputs.command_exit }}
+          PMU: ${{ needs.create.outputs.pmu }}
+          PMU_PROBE: ${{ steps.pmu.outputs.probe }}
           # Started, no exit code, failed: the step timeout stopped it.
           TIMED_OUT: ${{ steps.check.outputs.timed_out || (steps.check.outputs.started == 'true' && steps.check.outcome == 'failure' && 'true') || 'false' }}
         run: |
           python3 -I "$PERF_VM_TOOLS/vm.py" record --out out/perf-vm.json --check "$CHECK" \
             --vm-name "$VM_NAME" --zone "$ZONE" --machine-type "$TYPE" \
-            --fallback-used "$FALLBACK_USED" --command-exit "$COMMAND_EXIT" --timed-out "$TIMED_OUT"
+            --fallback-used "$FALLBACK_USED" --command-exit "$COMMAND_EXIT" --timed-out "$TIMED_OUT" \
+            --pmu "$PMU" --pmu-probe "$PMU_PROBE"
 
       - name: Upload perf-result-${{ inputs.check }}
         if: always()
