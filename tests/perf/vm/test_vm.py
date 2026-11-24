@@ -137,6 +137,37 @@ class RecordCommandTest(unittest.TestCase):
         self.assertEqual((got["pmu"], got["pmu_probe"]), ("STANDARD", "cycles=1203456 instructions=834567"))
 
 
+class PmuProbeTest(unittest.TestCase):
+    """vm.py pmu-probe: when `perf stat` output means the counters work."""
+
+    GOOD = "661511,,cycles,295712,100.00,,\n592778,,instructions,295712,100.00,0.90,insn per cycle\n"
+
+    def probe(self, text):
+        proc = subprocess.run([sys.executable, "-I", str(HERE / "vm.py"), "pmu-probe"], input=text,
+                              capture_output=True, text=True)
+        return proc.returncode, proc.stdout.strip()
+
+    def test_both_counted(self):
+        self.assertEqual(self.probe(self.GOOD), (0, "cycles=661511 instructions=592778"))
+        self.assertEqual(self.probe(self.GOOD.replace(",cycles,", ",cycles:u,"))[0], 0)
+
+    def test_anything_else_fails_closed(self):
+        bad = {
+            "not supported": "<not supported>,,cycles,0,100.00,,\n<not supported>,,instructions,0,100.00,,\n",
+            "not counted": "<not counted>,,cycles,0,0.00,,\n592778,,instructions,295712,100.00,,\n",
+            "zero": "0,,cycles,295712,100.00,,\n592778,,instructions,295712,100.00,,\n",
+            "one missing": "661511,,cycles,295712,100.00,,\n",
+            "fell back to cpu-clock": "0.31,msec,cpu-clock,312000,100.00,0.5,CPUs utilized\n",
+            "hybrid name": "661511,,cpu_core/cycles/,1,100.00,,\n592778,,cpu_core/instructions/,1,100.00,,\n",
+            "duplicate": self.GOOD + "1,,cycles,1,100.00,,\n",
+            "nothing": "",
+        }
+        for name, text in bad.items():
+            rc, out = self.probe(text)
+            self.assertEqual(rc, 1, name)
+            self.assertTrue(out, name)
+
+
 class SmokeLabelTest(unittest.TestCase):
     DIGEST = "sha256:" + "ab" * 32
 
@@ -313,7 +344,11 @@ fi
 if [[ $1 == beta ]]; then
   [[ -n ${BETA_MISSING:-} && ! -e $STATE/beta ]] && { echo "beta Not Installed" >&2; exit 1; }
   shift
-  [[ $3 == create && $* == *--help* ]] && exit 0
+  if [[ $3 == create && $* == *--help* ]]; then
+    [[ -n ${BETA_OLD:-} && ! -e $STATE/beta ]] && { echo "--machine-type --zone"; exit 0; }
+    echo "--machine-type --performance-monitoring-unit=PERFORMANCE_MONITORING_UNIT --zone"
+    exit 0
+  fi
   [[ $3 == describe && $* == *performanceMonitoringUnit* ]] && { echo STANDARD; exit 0; }
 fi
 case "$3" in
@@ -343,7 +378,7 @@ class CreateVmTest(unittest.TestCase):
     LABEL = "perf-smoke-1-1"
 
     def create(self, zones, types, succeed="", notready="", partial="", token_bad="", describe_fails="", pmu="",
-               beta_missing="", beta_installable=""):
+               beta_missing="", beta_installable="", beta_old=""):
         self.attempt_args = []
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -357,7 +392,7 @@ class CreateVmTest(unittest.TestCase):
             env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", STATE=str(tmp),
                        SUCCEED=succeed, NOTREADY=notready, PARTIAL=partial, TOKEN_BAD=token_bad,
                        DESCRIBE_FAILS=describe_fails, PMU=pmu, BETA_MISSING=beta_missing,
-                       BETA_INSTALLABLE=beta_installable,
+                       BETA_INSTALLABLE=beta_installable, BETA_OLD=beta_old,
                        GITHUB_OUTPUT=str(outputs), GITHUB_REPOSITORY="FalkorDB/FalkorDB",
                        GH_SA_TOKEN="t", GCP_PROJECT_ID=PROJECT, GCP_SA_KEY="{}",
                        DELETE_VMS_POLL_S="0", DELETE_VMS_GIVE_UP_S="2")
@@ -371,6 +406,7 @@ class CreateVmTest(unittest.TestCase):
                 attempts.append(f"{words['--machine_type']}@{words['--machine_zone']}")
                 self.attempt_args.append(words)
             vms = (tmp / "vms").read_text().splitlines() if (tmp / "vms").exists() else []
+            self.gcloud_calls = (tmp / "gcloud").read_text().splitlines() if (tmp / "gcloud").exists() else []
             return proc, out, attempts, vms
 
     def test_first_zone_failing_falls_through(self):
@@ -445,18 +481,26 @@ class CreateVmTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertNotIn("--performance_monitoring_unit", self.attempt_args[0])
         self.assertEqual(out["pmu"], "")
+        self.assertFalse([c for c in self.gcloud_calls if c.startswith("beta ")], self.gcloud_calls)
 
     def test_missing_beta_track_is_installed_once(self):
         proc, out, attempts, _ = self.create("z1", ["c4-standard-16"], succeed="c4-standard-16@z1", pmu="standard",
                                              beta_missing="1", beta_installable="1")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual((attempts, out["pmu"]), (["c4-standard-16@z1"], "STANDARD"))
+        self.assertEqual(len([c for c in self.gcloud_calls if c.startswith("components install")]), 1)
+
+    def test_beta_track_without_the_pmu_flag_counts_as_missing(self):
+        proc, out, attempts, _ = self.create("z1", ["c4-standard-16"], succeed="c4-standard-16@z1",
+                                             pmu="standard", beta_old="1")
+        self.assertEqual((proc.returncode, attempts), (1, []))
+        self.assertIn("missing or too old", out["create_error"])
 
     def test_beta_track_that_cannot_be_installed_stops_before_any_vm(self):
         proc, out, attempts, _ = self.create("z1,z2", ["c4-standard-16"], succeed="c4-standard-16@z1",
                                              pmu="standard", beta_missing="1")
         self.assertEqual((proc.returncode, attempts), (1, []))
-        self.assertIn("no beta track", out["create_error"])
+        self.assertIn("missing or too old", out["create_error"])
 
     def test_failed_describe_keeps_the_ready_vm(self):
         proc, out, attempts, _ = self.create("z1,z2", ["n2-standard-16"], succeed="n2-standard-16@z1",
@@ -483,7 +527,8 @@ class PlanTest(unittest.TestCase):
             outputs = Path(tmp) / "outputs"
             env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="size-probe", MODE="nightly",
                        TIMEOUT="45", ZONES="us-central1-a,us-central1-b", MACHINE_TYPE="", FALLBACK="",
-                       PMU="false", CANDIDATE=self.DIGEST, BASELINE=self.DIGEST)
+                       PMU="false", CANDIDATE=self.DIGEST, BASELINE=self.DIGEST,
+                       GCE_GITHUB_RUNNER_REF="default-ref", GCE_GITHUB_RUNNER_PMU_REF="pmu-ref")
             env.update(env_extra)
             proc = subprocess.run(["bash", "-e", "-c", str(HERE / "plan.sh")], capture_output=True, text=True, env=env)
             out = dict(line.split("=", 1) for line in outputs.read_text().splitlines()) if outputs.exists() else {}
@@ -492,7 +537,8 @@ class PlanTest(unittest.TestCase):
     def test_default_vm(self):
         rc, out = self.plan()
         self.assertEqual(rc, 0)
-        self.assertEqual((out["machine_type"], out["fallback"], out["pmu"]), ("n4-standard-16", "n2-standard-16", ""))
+        self.assertEqual((out["machine_type"], out["fallback"], out["pmu"], out["action_ref"]),
+                         ("n4-standard-16", "n2-standard-16", "", "default-ref"))
         self.assertEqual((out["command_timeout_s"], out["step_timeout"], out["job_timeout"], out["deadline"]),
                          ("2700", "50", "65", "75"))
 
@@ -503,7 +549,8 @@ class PlanTest(unittest.TestCase):
     def test_pmu_default_is_c4_with_a_c4_fallback(self):
         rc, out = self.plan(PMU="true")
         self.assertEqual(rc, 0)
-        self.assertEqual((out["machine_type"], out["fallback"], out["pmu"]), ("c4-standard-16", "c4-standard-8", "standard"))
+        self.assertEqual((out["machine_type"], out["fallback"], out["pmu"], out["action_ref"]),
+                         ("c4-standard-16", "c4-standard-8", "standard", "pmu-ref"))
 
     def test_pmu_never_falls_back_to_a_type_without_counters(self):
         for extra in ({"MACHINE_TYPE": "n4-standard-16"}, {"FALLBACK": "n2-standard-16"},
@@ -512,15 +559,19 @@ class PlanTest(unittest.TestCase):
             self.assertEqual(rc, 1, extra)
             self.assertIn("C4 or M4", out["error"], extra)
 
-    def test_pmu_on_the_smallest_default_has_no_fallback(self):
-        _, out = self.plan(PMU="true", MACHINE_TYPE="c4-standard-8")
-        self.assertEqual(out["fallback"], "")
+    def test_pmu_named_type_gets_no_silent_smaller_fallback(self):
+        for named in ("c4-standard-8", "c4-standard-48", "m4-megamem-28"):
+            _, out = self.plan(PMU="true", MACHINE_TYPE=named)
+            self.assertEqual((out["machine_type"], out["fallback"]), (named, ""), named)
+        _, out = self.plan(PMU="true", MACHINE_TYPE="c4-standard-48", FALLBACK="c4-standard-32")
+        self.assertEqual(out["fallback"], "c4-standard-32")
 
     def test_bad_inputs(self):
         for extra, words in [({"CHECK": "micro--x"}, "single dashes"), ({"CHECK": "Size"}, "lowercase"),
                              ({"MODE": "fast"}, "mode"), ({"CANDIDATE": "falkordb/falkordb-server:6.2.0"}, "digest"),
                              ({"TIMEOUT": "0"}, "timeout_minutes"), ({"ZONES": " , "}, "no zones"),
-                             ({"PMU": "yes"}, "pmu")]:
+                             ({"PMU": "yes"}, "pmu"), ({"MACHINE_TYPE": "c4-standard-16 x", "PMU": "true"}, "name"),
+                             ({"FALLBACK": "n2-standard-16;true"}, "name")]:
             rc, out = self.plan(**extra)
             self.assertEqual(rc, 1, extra)
             self.assertIn(words, out["error"], extra)

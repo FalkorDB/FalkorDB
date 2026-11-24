@@ -10,6 +10,11 @@
     Writes `perf-vm.json`: where the check ran, or why no VM came up.
     `merge.py` quotes it when the artifact holds no result.json.
 
+`pmu-probe`
+    Reads `perf stat -x, -e cycles,instructions` output on stdin and prints
+    `cycles=N instructions=M` when both counted at least once; otherwise
+    prints what perf said and exits 1.
+
 Standard library only: it runs on a bare Debian VM and on `ubuntu-latest`.
 """
 
@@ -163,6 +168,41 @@ def cmd_record(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- pmu-probe ----------------------------------------------------------------
+
+
+def parse_probe(text: str) -> dict[str, int] | None:
+    """Counts of `cycles` and `instructions` from `perf stat -x,` output.
+
+    None unless both were counted and non-zero: `<not supported>`, `<not
+    counted>`, a zero, a missing event or a duplicate all mean the counters
+    cannot be trusted. Event names may carry a modifier (`cycles:u`) but not
+    a PMU prefix (`cpu_core/cycles/`, a hybrid CPU this VM is not).
+    """
+    counts: dict[str, int] = {}
+    for line in text.splitlines():
+        fields = line.split(",")
+        if len(fields) < 3:
+            continue
+        event = fields[2].split(":", 1)[0]
+        if event not in ("cycles", "instructions"):
+            continue
+        if event in counts or not fields[0].isdigit() or int(fields[0]) < 1:
+            return None
+        counts[event] = int(fields[0])
+    return counts if set(counts) == {"cycles", "instructions"} else None
+
+
+def cmd_pmu_probe(_args: argparse.Namespace) -> int:
+    text = sys.stdin.read()
+    counts = parse_probe(text)
+    if counts is None:
+        print(" ".join(text.split())[:200] or "perf printed nothing")
+        return 1
+    print(f"cycles={counts['cycles']} instructions={counts['instructions']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -189,6 +229,9 @@ def main(argv: list[str] | None = None) -> int:
     record.add_argument("--pmu", default="", help="vPMU type, empty without one")
     record.add_argument("--pmu-probe", default="", help="what perf stat counted, or why it could not")
     record.set_defaults(func=cmd_record)
+
+    probe = sub.add_parser("pmu-probe", help="judge `perf stat -x, -e cycles,instructions` output")
+    probe.set_defaults(func=cmd_pmu_probe)
 
     args = parser.parse_args(argv)
     return args.func(args)

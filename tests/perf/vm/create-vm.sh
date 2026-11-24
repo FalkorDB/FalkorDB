@@ -90,13 +90,18 @@ if ! curl -fsS --retry 3 -o /dev/null -X POST -H "Authorization: Bearer $GH_SA_T
 fi
 
 # The vPMU field exists only on gcloud's beta track, which the pmu action
-# uses. Make sure it is there before any attempt, instead of every zone
-# failing the same way.
-if [[ -n ${PMU:-} ]] && ! gcloud beta compute instances create --help >/dev/null 2>&1; then
-  echo "gcloud has no beta track; installing it"
+# uses. Make sure that track knows the flag before any attempt, instead of
+# every zone failing the same way.
+beta_has_pmu() {
+  local help
+  help=$(gcloud beta compute instances create --help 2>/dev/null) || return 1
+  [[ $help == *--performance-monitoring-unit* ]]
+}
+if [[ -n ${PMU:-} ]] && ! beta_has_pmu; then
+  echo "gcloud's beta track is missing or has no --performance-monitoring-unit; installing it"
   gcloud components install beta --quiet || true
-  if ! gcloud beta compute instances create --help >/dev/null 2>&1; then
-    give_up "gcloud has no beta track, which the vPMU needs, and installing it failed"
+  if ! beta_has_pmu; then
+    give_up "gcloud's beta track, which the vPMU needs, is missing or too old, and installing it failed"
   fi
 fi
 

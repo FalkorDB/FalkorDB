@@ -78,10 +78,11 @@ scoped to Compute only (`compute-rw`): enough to label and delete itself.
 GCE gives a VM hardware counters only on some families (on x86, C4 and M4)
 and only when it is created with a virtual PMU. With `pmu: true`:
 
-- `plan.sh` asks for `c4-standard-16`, falling back to `c4-standard-8`. Any
-  type it is given must be C4 or M4: a check that wants counters gets a VM
-  that has them, or no VM (then `perf-vm.json` says why and the check is an
-  error). It never falls back to a type without counters.
+- `plan.sh` asks for `c4-standard-16`, falling back to `c4-standard-8`. A
+  `machine_type` the caller names gets no fallback unless the caller names
+  that too, so a named size never quietly shrinks. Every type must be C4 or
+  M4: a check that wants counters gets a VM that has them, or no VM (then
+  `perf-vm.json` says why and the check is an error).
 - The VM comes from gce-github-runner's `pmu-on-pinned` commit
   (`GCE_GITHUB_RUNNER_PMU_REF`, the default pin plus a
   `performance_monitoring_unit` flag, created through gcloud's beta track) with
@@ -89,8 +90,8 @@ and only when it is created with a virtual PMU. With `pmu: true`:
   GCE reports for the VM.
 - On the VM: `linux-perf` is installed, `kernel.perf_event_paranoid` is set to
   -1 (so `perf stat -p <host pid of a container's server>` works for any
-  user), and `perf stat -e cycles,instructions -- true` must count both, or
-  the job fails before the check runs. `perf-vm.json`'s `pmu_probe` records
+  user), and `perf stat -e cycles,instructions -- true` must count both, each
+  at least once (`vm.py pmu-probe`), or the job fails before the check runs. `perf-vm.json`'s `pmu_probe` records
   what it counted, and `PERF_PMU=1` tells the check.
 
 ## The artifact
@@ -173,6 +174,7 @@ stopped VM; adding that input to `gce-github-runner` is the follow-up.
 | `delete-vms.sh` | delete every VM with a label; retries listing, waits out in-flight inserts |
 | `vm.py env` | core split, machine object, `PERF_*` lines for `$GITHUB_ENV` |
 | `vm.py record` | writes `perf-vm.json` |
+| `vm.py pmu-probe` | judges the counters probe's `perf stat` output |
 | `smoke.py` | the VM path's self-test check, not in `checks.yaml` (below) |
 | `test_vm.py` | `python3 -I -m unittest discover -s tests/perf/vm` |
 

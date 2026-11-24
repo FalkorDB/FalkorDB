@@ -191,7 +191,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: FalkorDB/gce-github-runner
-          ref: ${{ steps.plan.outputs.pmu && env.GCE_GITHUB_RUNNER_PMU_REF || env.GCE_GITHUB_RUNNER_REF }}
+          ref: ${{ steps.plan.outputs.action_ref }}
           path: .gce-github-runner
           persist-credentials: false
 
@@ -281,31 +281,6 @@ jobs:
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends git python3 ca-certificates
 
-      - name: Enable hardware counters
-        if: needs.create.outputs.pmu_requested != ''
-        id: pmu
-        run: |
-          set -euo pipefail
-          sudo=; (( EUID == 0 )) || sudo=sudo
-          export DEBIAN_FRONTEND=noninteractive
-          # linux-perf is Debian 12's perf for its own 6.1 kernel.
-          $sudo apt-get -q -o DPkg::Lock::Timeout=300 install -y --no-install-recommends linux-perf
-          # Debian's default (3) forbids perf to everyone but root; -1 lets a
-          # check run `perf stat -p <host pid of a container's server>` as any user.
-          $sudo sysctl -w kernel.perf_event_paranoid=-1
-          probe=$(perf stat -x, -e cycles,instructions -- true 2>&1 >/dev/null) || true
-          echo "$probe"
-          cycles=$(awk -F, '$3 ~ /^cycles/ { print $1 }' <<< "$probe")
-          instructions=$(awk -F, '$3 ~ /^instructions/ { print $1 }' <<< "$probe")
-          if ! [[ $cycles =~ ^[0-9]+$ && $instructions =~ ^[0-9]+$ ]]; then
-            echo "probe=$(tr '\n' ' ' <<< "$probe" | cut -c1-200)" >> "$GITHUB_OUTPUT"
-            echo "::error::hardware counters do not count on this VM: $(tr '\n' ' ' <<< "$probe")"
-            exit 1
-          fi
-          echo "probe=cycles=$cycles instructions=$instructions" >> "$GITHUB_OUTPUT"
-          echo "PERF_PMU=1" >> "$GITHUB_ENV"
-          echo "Hardware counters: \`perf stat -- true\` counted $cycles cycles, $instructions instructions" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Check out the calling commit
         # The check's own code. It comes first: checkout empties a workspace
         # that is not its repository, which would remove the scripts below.
@@ -345,6 +320,36 @@ jobs:
             echo "::error::VM scripts are at '$got', not this workflow's commit '$WANT_SHA'"
             exit 1
           fi
+
+      - name: Enable hardware counters
+        if: needs.create.outputs.pmu_requested != ''
+        id: pmu
+        run: |
+          set -euo pipefail
+          sudo=; (( EUID == 0 )) || sudo=sudo
+          export DEBIAN_FRONTEND=noninteractive
+          apt=(apt-get -q -o DPkg::Lock::Timeout=300)
+          (( EUID == 0 )) || apt=(sudo "${apt[@]}")
+          # linux-perf is Debian 12's perf for its own 6.1 kernel. Its own
+          # update: the install step before this one is allowed to fail.
+          if ! { "${apt[@]}" update && "${apt[@]}" install -y --no-install-recommends linux-perf; }; then
+            echo "probe=linux-perf did not install" >> "$GITHUB_OUTPUT"
+            echo "::error::linux-perf did not install"
+            exit 1
+          fi
+          # Debian's default (3) forbids perf to everyone but root; -1 lets a
+          # check run `perf stat -p <host pid of a container's server>` as any user.
+          $sudo sysctl -w kernel.perf_event_paranoid=-1
+          raw=$(perf stat -x, -e cycles,instructions -- true 2>&1 >/dev/null) || true
+          echo "$raw"
+          if ! probe=$(python3 -I "$PERF_VM_TOOLS/vm.py" pmu-probe <<< "$raw"); then
+            echo "probe=$probe" >> "$GITHUB_OUTPUT"
+            echo "::error::hardware counters do not count on this VM: $probe"
+            exit 1
+          fi
+          echo "probe=$probe" >> "$GITHUB_OUTPUT"
+          echo "PERF_PMU=1" >> "$GITHUB_ENV"
+          echo "Hardware counters: \`perf stat -- true\` counted $probe" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -472,9 +477,10 @@ jobs:
         run: |
           set -uo pipefail
           # A create that did not succeed may have an insert still in flight;
-          # wait for it unless Plan stopped the job before any create.
+          # wait for it unless Plan failed or never ran, so no create began.
+          # (Empty means the create job's outputs were lost: wait.)
           grace=120
-          if [[ $CREATE_RESULT == success || $PLANNED == failure ]]; then grace=0; fi
+          if [[ $CREATE_RESULT == success || $PLANNED == failure || $PLANNED == skipped ]]; then grace=0; fi
           # Every attempt's label: "Re-run failed jobs" may re-run only this
           # job, after an earlier attempt's cleanup failed.
           delete=${PERF_VM_TOOLS:-.perf-vm-tools/tests/perf/vm}/delete-vms.sh
