@@ -10,7 +10,7 @@
 # after; a renamed or new file never starts a run): a `paths` filter would match the whole
 # PR's diff, and `workflow_dispatch` works only for a file on the default branch. To run
 # it on a new commit, change that line deliberately, after telling the coordinator.
-# Acceptance run of: 40675d3dd (the port), 6.2.0 vs 6.2.1 on soak-b.
+# Acceptance run of: 5b81736f5 (final code), 6.2.0 vs 6.2.1 on soak-b.
 
 name: TEMPORARY soak acceptance
 
