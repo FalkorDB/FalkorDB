@@ -228,6 +228,8 @@ Three deliberate deviations:
 CLAUDE.md) is p99 latency. `redis-benchmark` computes a latency distribution and
 this harness currently discards it, so the p99 bar is not measured here yet.
 
+## Known gaps
+
 One structural gap is worth recording because closing it needs a design decision
 rather than a patch: the MVCC copy-on-write `GrB_Matrix_dup` of delta matrices in
 `create_nodes` / `set_nodes_labels_bulk` waits on pending work first, so it scales
@@ -278,10 +280,10 @@ membership, and an audit commissioned from a certified auditor. What this gives
 you is an internal, repeatable number on a standard dataset and standard
 queries.
 
-### Seven queries differ from the reference text
+### Five queries differ from the reference text
 
 Each departure is annotated in the `.cypher` file next to the line it replaced,
-and listed in `ldbc/queries.py::REWRITES` so a run always prints them. All seven
+and listed in `ldbc/queries.py::REWRITES` so a run always prints them. All five
 were confirmed against a running engine, and each was checked against the C
 engine too so that a genuine bug is not filed away as a dialect gap:
 
@@ -291,12 +293,13 @@ engine too so that a genuine bug is not filed away as a dialect gap:
 | IC14 | `allShortestPaths()` with inline endpoint patterns → *"Source and destination must already be resolved"*. Endpoints pre-bound in a preceding `MATCH`. Also, a pattern comprehension's `WHERE` cannot see the enclosing list comprehension's variable, so the per-relationship weights are computed over `UNWIND`ed relationships with their endpoints hoisted into plain variables. |
 | IC10 | `datetime({epochMillis: ...}).month` → *"Unknown function 'datetime'"*. The loader derives `birthdayMonth`/`birthdayDay` instead. |
 | IC7 | `not((liker)-[:KNOWS]-(person))` → *"Type mismatch: expected Boolean or Null but was List"*. A traversal pattern is not a boolean-valued expression in a projection, and `exists()` explicitly refuses traversal patterns, so this becomes `size(<pattern>) = 0`. |
-| IC6 | **A bug, not a dialect gap.** An inline property filter on a pattern followed by further patterns fails under `UNWIND` with *"Type mismatch: expected Map, Node, Edge, ... but was List"*; the C engine runs it correctly. The filter moves into `WHERE`. Tracked as [#2556](https://github.com/FalkorDB/FalkorDB/issues/2556) — revert when fixed. |
-| IC9 | **A bug, not a dialect gap.** A `WHERE` on a node reached from an `UNWIND`-bound anchor silently returns zero rows — no error, just nothing, while the same query without the `WHERE` returns 81,897. The C engine is correct. `WITH DISTINCT` in place of `collect(DISTINCT ...)` + `UNWIND` avoids it. Tracked as [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) — revert when fixed. |
 
 IC1, IC7, IC13 and IC14 fail identically on the C engine, so those four are
-dialect gaps rather than regressions. IC6 and IC9 look like the same kind of
-thing and are not: both run correctly on C. That distinction only exists because
+dialect gaps rather than regressions. IC6 and IC9 were rewritten too at first,
+and were not dialect gaps: both ran correctly on C and hit two Rust
+wrong-result bugs ([#2556](https://github.com/FalkorDB/FalkorDB/issues/2556),
+[#2557](https://github.com/FalkorDB/FalkorDB/issues/2557)). Both are fixed, and
+both queries run the upstream text again. That distinction only exists because
 every failure was re-checked against `falkordb/falkordb-server:edge-c` before
 being classified — without that step two real regressions would have been
 written off as dialect gaps, and two dialect gaps filed as false bugs.

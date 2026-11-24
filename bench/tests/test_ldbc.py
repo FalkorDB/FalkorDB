@@ -78,12 +78,13 @@ def test_the_known_dialect_gaps_are_the_rewritten_ones():
     inside MATCH, allShortestPaths() needs pre-bound endpoints, there is no
     datetime(), a traversal pattern is not a boolean in a projection, and a
     pattern comprehension's WHERE cannot see an outer list-comprehension
-    variable. IC6 is the odd one out — it works around a Rust-only wrong-result
-    bug (FalkorDB/FalkorDB#2556) rather than a dialect gap. If a future engine
-    version accepts the original, this test is the prompt to drop the rewrite
-    rather than carry it forever.
+    variable. IC6 and IC9 used to be rewritten around two Rust wrong-result
+    bugs (FalkorDB/FalkorDB#2556, #2557); both are fixed and the two queries
+    run the upstream text again. If a future engine version accepts another
+    original, this test is the prompt to drop that rewrite rather than carry
+    it forever.
     """
-    assert set(query_mod.REWRITES) == {1, 6, 7, 9, 10, 13, 14}
+    assert set(query_mod.REWRITES) == {1, 7, 10, 13, 14}
 
 
 def _code(cypher: str) -> str:
