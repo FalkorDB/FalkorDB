@@ -16,7 +16,17 @@
 //! - `COLORTERM` is `truecolor` or `24bit`: the logo in 24-bit colour.
 //! - Otherwise: the logo in the xterm 256-colour palette.
 
-use std::io::{IsTerminal, Write};
+use std::{
+    ffi::CStr,
+    fs::{File, OpenOptions},
+    io::{IsTerminal, Write},
+    os::{
+        fd::{AsRawFd, RawFd},
+        unix::fs::OpenOptionsExt,
+    },
+    thread,
+    time::{Duration, Instant},
+};
 
 const TRUECOLOR: &str = include_str!("truecolor.ans");
 const ANSI256: &str = include_str!("ansi256.ans");
@@ -76,23 +86,106 @@ fn render(
     }
 }
 
-/// Prints the banner if stdout is a terminal that can show it. Write errors
-/// are ignored: the banner must never fail or delay the module load.
+/// How long to wait for the terminal to take one banner line before giving
+/// up on the rest; a draining terminal takes a line in microseconds.
+const DRAIN_WAIT: Duration = Duration::from_millis(100);
+
+/// Prints the banner if stdout is a terminal that can show it.
+///
+/// The banner is several KB, more than a terminal's output queue holds. If
+/// the terminal is not draining (the user pressed Ctrl-S, or nothing reads the
+/// pty), a blocking write would stall `graph_init`, which runs on the server's
+/// main thread at startup and on `MODULE LOAD`; and even a non-blocking write
+/// would leave the queue full, so the server's next log line would stall
+/// instead. So the banner goes out a line at a time through a fresh
+/// non-blocking open of the terminal (a new file description: stdout's flags,
+/// which the server shares, are untouched), and the next line is written only
+/// once the queue has drained. If it does not drain within [`DRAIN_WAIT`],
+/// the rest of the banner is dropped. Each line resets its own colour, so a
+/// cut banner leaves no colour behind. Errors are ignored: the banner must
+/// never fail or hold up the module load.
 pub fn print() {
-    let mut out = std::io::stdout().lock();
-    if !out.is_terminal() {
+    if !std::io::stdout().is_terminal() {
         return;
     }
     let Some(style) = style(|name| std::env::var(name).ok()) else {
         return;
     };
-    let _ = out.write_all(render(style, env!("CARGO_PKG_VERSION")).as_bytes());
-    let _ = out.flush();
+    if let Some(mut tty) = reopen_nonblocking(libc::STDOUT_FILENO) {
+        write_bounded(
+            &mut tty,
+            &render(style, env!("CARGO_PKG_VERSION")),
+            DRAIN_WAIT,
+        );
+    }
+}
+
+/// Writes `text` to `tty` a line at a time, each line only once the previous
+/// one has left the output queue; stops at the first line the terminal does
+/// not take within `wait`. Returns whether all of `text` was written.
+fn write_bounded(
+    tty: &mut File,
+    text: &str,
+    wait: Duration,
+) -> bool {
+    text.split_inclusive('\n')
+        .all(|line| tty.write_all(line.as_bytes()).is_ok() && drained(tty, wait))
+}
+
+/// Waits up to `wait` for the terminal's output queue to empty.
+fn drained(
+    tty: &File,
+    wait: Duration,
+) -> bool {
+    let deadline = Instant::now() + wait;
+    loop {
+        let mut queued: libc::c_int = 0;
+        // SAFETY: TIOCOUTQ stores the output queue length in the c_int it is
+        // given; `tty` is an open terminal for the duration of the call.
+        if unsafe { libc::ioctl(tty.as_raw_fd(), libc::TIOCOUTQ, &raw mut queued) } != 0 {
+            return false;
+        }
+        if queued == 0 {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Opens the terminal `fd` refers to again, as a new file description that is
+/// non-blocking and does not become the controlling terminal.
+fn reopen_nonblocking(fd: RawFd) -> Option<File> {
+    let mut name = [0 as libc::c_char; 256];
+    // SAFETY: `name` is a writable buffer of the length passed; on success
+    // ttyname_r leaves a NUL-terminated path in it.
+    if unsafe { libc::ttyname_r(fd, name.as_mut_ptr(), name.len()) } != 0 {
+        return None;
+    }
+    // SAFETY: ttyname_r succeeded, so `name` holds a NUL-terminated string.
+    let path = unsafe { CStr::from_ptr(name.as_ptr()) }.to_str().ok()?;
+    OpenOptions::new()
+        .write(true)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(path)
+        .ok()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ANSI256, PLAIN, Style, TRUECOLOR, render, style};
+    use std::{
+        fs::File,
+        io::Read,
+        os::fd::{FromRawFd, OwnedFd},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use super::{
+        ANSI256, PLAIN, Style, TRUECOLOR, render, reopen_nonblocking, style, write_bounded,
+    };
 
     fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let vars: Vec<(String, String)> = vars
@@ -216,5 +309,82 @@ mod tests {
         assert!(!plain.contains('\x1b') && plain.contains(PLAIN));
         assert!(render(Style::TrueColor, "1.2.3").contains(TRUECOLOR));
         assert!(render(Style::Ansi256, "1.2.3").contains(ANSI256));
+    }
+
+    /// A pseudo-terminal: the master end (what a terminal emulator reads) and
+    /// the slave end (the server's stdout).
+    fn pty() -> (File, OwnedFd) {
+        let (mut master, mut slave) = (0, 0);
+        // SAFETY: openpty writes two fds into the out-pointers; the name,
+        // termios and winsize arguments may be NULL.
+        let rc = unsafe {
+            libc::openpty(
+                &raw mut master,
+                &raw mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, 0, "openpty failed");
+        // SAFETY: both fds were just opened by openpty and are owned here.
+        unsafe { (File::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) }
+    }
+
+    fn banner() -> String {
+        render(Style::TrueColor, "1.2.3")
+    }
+
+    #[test]
+    fn whole_banner_reaches_a_draining_terminal() {
+        let (mut master, slave) = pty();
+        let banner = banner();
+        let want = banner.len();
+        let reader = thread::spawn(move || {
+            // The pty turns each \n into \r\n on the way out.
+            let mut got = Vec::new();
+            let mut buf = [0u8; 4096];
+            while got.iter().filter(|&&b| b != b'\r').count() < want {
+                let n = master.read(&mut buf).expect("read pty");
+                got.extend_from_slice(&buf[..n]);
+            }
+            got
+        });
+        let mut tty = reopen_nonblocking(std::os::fd::AsRawFd::as_raw_fd(&slave)).expect("reopen");
+        assert!(write_bounded(&mut tty, &banner, Duration::from_secs(5)));
+        let got: Vec<u8> = reader
+            .join()
+            .unwrap()
+            .into_iter()
+            .filter(|&b| b != b'\r')
+            .collect();
+        assert_eq!(String::from_utf8(got).unwrap(), banner);
+    }
+
+    #[test]
+    fn a_paused_terminal_costs_one_wait_and_keeps_its_queue_free() {
+        let (mut master, slave) = pty();
+        // Ctrl-S: the terminal stops taking output, as when a user pauses it.
+        std::io::Write::write_all(&mut master, b"\x13").unwrap();
+        thread::sleep(Duration::from_millis(50));
+        let mut tty = reopen_nonblocking(std::os::fd::AsRawFd::as_raw_fd(&slave)).expect("reopen");
+        let wait = Duration::from_millis(100);
+        let start = Instant::now();
+        assert!(!write_bounded(&mut tty, &banner(), wait));
+        let took = start.elapsed();
+        assert!(took >= wait && took < wait * 5, "took {took:?}");
+        // Only the first line was queued, so the server's own log lines
+        // still fit instead of blocking.
+        let mut queued: libc::c_int = 0;
+        // SAFETY: TIOCOUTQ stores the queue length in the c_int it is given.
+        let rc = unsafe {
+            libc::ioctl(
+                std::os::fd::AsRawFd::as_raw_fd(&slave),
+                libc::TIOCOUTQ,
+                &raw mut queued,
+            )
+        };
+        assert_eq!(rc, 0);
+        assert!(queued <= 2, "{queued} bytes queued");
     }
 }
