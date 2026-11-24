@@ -45,10 +45,20 @@ void GIL_Unlock
 (
 	RedisModuleCtx *ctx  // thread-safe context used to unlock the GIL
 ) {
-	// only the outermost release unlocks; guard against an unbalanced release
-	if(t_gil_depth > 0 && --t_gil_depth == 0) {
+	// guard against an unbalanced release
+	if(t_gil_depth == 0) {
+		return;
+	}
+
+	// release the GIL on the outermost unlock, but keep the depth counter
+	// nonzero until RedisModule_ThreadSafeContextUnlock returns: Redis may run
+	// post-execution jobs on this thread during the unlock while the mutex is
+	// still held, and if such a job frees a graph its callback must see the GIL
+	// as held (depth > 0) rather than try to re-lock it and deadlock
+	if(t_gil_depth == 1) {
 		RedisModule_ThreadSafeContextUnlock(ctx);
 	}
+	t_gil_depth--;
 }
 
 bool GIL_HeldByCurrentThread(void) {
@@ -61,16 +71,23 @@ RedisModuleCtx *GIL_AcquireContext
 (
 	bool *took_gil  // out: true if this call took the GIL
 ) {
-	// take the GIL only when this thread doesn't already hold it
-	bool need_lock = !GIL_HeldByCurrentThread() &&
-		RedisModule_GetThreadSafeContext != NULL;
+	*took_gil = false;
 
-	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
-	if(need_lock) {
-		GIL_Lock(ctx);
+	// the Redis module API may be unresolved (e.g. a standalone unit test that
+	// frees a fake graph); there's no keyspace to mutate and nothing to lock, so
+	// return a NULL context - GIL_ReleaseContext tolerates it
+	if(RedisModule_GetThreadSafeContext == NULL) {
+		return NULL;
 	}
 
-	*took_gil = need_lock;
+	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
+
+	// take the GIL only when this thread doesn't already hold it
+	if(!GIL_HeldByCurrentThread()) {
+		GIL_Lock(ctx);
+		*took_gil = true;
+	}
+
 	return ctx;
 }
 
@@ -79,6 +96,9 @@ void GIL_ReleaseContext
 	RedisModuleCtx *ctx,  // context returned by GIL_AcquireContext
 	bool took_gil         // the flag GIL_AcquireContext reported
 ) {
+	if(ctx == NULL) {
+		return;  // nothing was acquired
+	}
 	if(took_gil) {
 		GIL_Unlock(ctx);
 	}
