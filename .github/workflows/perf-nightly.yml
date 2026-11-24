@@ -305,7 +305,7 @@ jobs:
             jq --arg reason "$reason" '.skip_reason = $reason' "$RUNNER_TEMP/plan/context.json" > "$RUNNER_TEMP/context.json"
             mv "$RUNNER_TEMP/context.json" "$RUNNER_TEMP/plan/context.json"
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "skip: $reason" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "skip (pull_request run, overrides the line above): $reason" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Plan the checks
