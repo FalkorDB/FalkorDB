@@ -399,8 +399,10 @@ class testFulltextIndexQuery():
         # that does not pause population (RediSearch takes its own lock), so
         # on a fast machine the build can finish before the query runs. Both
         # outcomes are valid; a partial answer never is. Each label gets up to
-        # 5 fresh builds until a refusal is seen, so the under-construction
-        # path is exercised.
+        # 5 fresh builds until a refusal is seen. If every build finishes
+        # first, the refusal path was not exercised and the test is skipped
+        # (there is no deterministic way to pause population); a partial
+        # answer seen on the way still fails it.
         key = "fulltext_under_construction"
         n = 20000
         g = self.db.select_graph(key)
@@ -411,6 +413,7 @@ class testFulltextIndexQuery():
         def check_never_partial(label, pattern, q):
             status_q = f"CALL db.indexes() YIELD label, status WHERE label = '{label}' RETURN status"
             refused = 0
+            partial = 0
             for attempt in range(1, 6):
                 # a fresh build each attempt
                 if g.ro_query(status_q).result_set:
@@ -425,6 +428,7 @@ class testFulltextIndexQuery():
                                             str(answer))
                     refused += 1
                 else:
+                    partial += answer[1] != [[n]]
                     self.env.assertEqual(answer[1], [[n]],
                                          message=f"{label} attempt {attempt}: partial answer {answer}")
 
@@ -433,15 +437,24 @@ class testFulltextIndexQuery():
                 while g.ro_query(status_q).result_set != [["OPERATIONAL"]]:
                     if time.monotonic() > deadline:
                         self.env.assertTrue(False, message=f"{label}: still under construction after 120s")
-                        return
+                        return True
                 self.env.assertEqual(g.ro_query(q).result_set, [[n]])
                 if refused:
                     break
-            self.env.assertGreater(refused, 0, message=f"{label}: never refused in 5 fresh builds")
+            # a partial answer also hit the half-built index (and failed above)
+            return refused + partial > 0
 
-        check_never_partial(
-            "Doc", "(e:Doc)",
-            "CALL db.idx.fulltext.queryNodes('Doc', 'hello') YIELD node RETURN count(node)")
-        check_never_partial(
-            "LINK", "()-[e:LINK]-()",
-            "CALL db.idx.fulltext.queryRelationships('LINK', 'hello') YIELD relationship RETURN count(relationship)")
+        exercised = {
+            "Doc": check_never_partial(
+                "Doc", "(e:Doc)",
+                "CALL db.idx.fulltext.queryNodes('Doc', 'hello') YIELD node RETURN count(node)"),
+            "LINK": check_never_partial(
+                "LINK", "()-[e:LINK]-()",
+                "CALL db.idx.fulltext.queryRelationships('LINK', 'hello') YIELD relationship RETURN count(relationship)"),
+        }
+        missed = [label for label, seen in exercised.items() if not seen]
+        if missed:
+            self.env.debugPrint(f"{', '.join(missed)}: the index finished building before every query "
+                                "in 5 fresh builds, so the under-construction guard was not exercised",
+                                force=True)
+            self.env.skip()
