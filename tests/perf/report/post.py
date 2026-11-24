@@ -38,7 +38,8 @@ from pathlib import Path
 DEFAULT_REPOSITORY = "FalkorDB/FalkorDB"
 DEFAULT_SERVER_URL = "https://github.com"
 DEFAULT_API_URL = "https://api.github.com"
-ISSUE_LABEL = "performance"
+# Comma-separated, as GitHub's issues/new `labels` parameter takes them.
+ISSUE_LABELS = "performance,perf-regression"
 USER_AGENT = "falkordb-perf-report"
 
 # "The maximum message size (including any text or cards) is 32,000 bytes"
@@ -807,8 +808,8 @@ def issue_link(night: Night, environ: dict, limits: Limits) -> str:
     base = f"{server_url(environ)}/{repository(environ)}/issues/new?"
 
     def build(title: str, lines: list[str]) -> str:
-        query = {"title": title, "labels": ISSUE_LABEL, "body": "\n".join(lines)}
-        return base + urllib.parse.urlencode(query, quote_via=urllib.parse.quote)
+        query = {"title": title, "labels": ISSUE_LABELS, "body": "\n".join(lines)}
+        return base + urllib.parse.urlencode(query, safe=",", quote_via=urllib.parse.quote)
 
     url = build(title, body)
     while len(url) > limits.issue_url_characters and len(body) > 1:

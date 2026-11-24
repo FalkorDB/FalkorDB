@@ -210,7 +210,8 @@ class RedMessage(Workspace):
         parts = urllib.parse.urlsplit(url)
         self.assertEqual((parts.netloc, parts.path), ("github.com", "/FalkorDB/FalkorDB/issues/new"))
         query = urllib.parse.parse_qs(parts.query)
-        self.assertEqual(query["labels"], ["performance"])
+        self.assertEqual(query["labels"], ["performance,perf-regression"])
+        self.assertIn("&labels=performance,perf-regression&", url, "a literal comma, as GitHub's docs write it")
         self.assertEqual(query["title"], ["perf: nightly 2026-11-24 regression in micro (main@4c10889 vs 6.2.0)"])
         body = query["body"][0]
         for expected in (RUN_URL, CANDIDATE_IMAGE, BASELINE_IMAGE,

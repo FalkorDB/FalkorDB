@@ -34,7 +34,7 @@ What each message holds:
 | green | one line: date, candidate vs baseline label, how many checks passed (and how many rows are broken on both sides), run link |
 | skipped | one line with `skip_reason` |
 | error | the checks that could not measure and why, the problems with the file, the checks that passed; the headline says "tonight is not green" |
-| red | each regressed check (confirmed or not, its summary, its worst regression rows: correctness first, then by ratio), the checks that could not measure, the commits since `previous_green_commit` with their PR numbers, the run link, and a pre-filled new-issue link (label `performance`) |
+| red | each regressed check (confirmed or not, its summary, its worst regression rows: correctness first, then by ratio), the checks that could not measure, the commits since `previous_green_commit` with their PR numbers, the run link, and a pre-filled new-issue link (labels `performance` and `perf-regression`) |
 
 Findings read as plain words. `completed` 0 is "did not finish", `invariant` 0 is
 "invariant broken", a `mismatch` row is "row count differs: 12 vs 14". A null value
