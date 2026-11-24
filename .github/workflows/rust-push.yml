@@ -165,6 +165,8 @@ jobs:
         run: |
           RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
           RUSTDOCFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph
+          # The root crate's own unit tests (src/), which `-p graph` skips.
+          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p falkordb-rs --lib
           # `cargo build` only produces libfalkordb.so's coverage map, which is
           # blind to code with no caller reachable from the cdylib (e.g.
           # graph/src/index/falkordb's cow_btree, not wired into the runtime
@@ -173,10 +175,10 @@ jobs:
           # anything) so llvm-cov can also credit coverage recorded by
           # test-only call paths, not just the shared library's. Cargo prints
           # "  Executable <target> (<path>)" to stderr for every test binary
-          # it builds (one per test target; today that's just the lib's own
+          # it builds (one per test target: graph's lib and the root crate's lib
           # unit tests) — no jq/python needed to find it.
           TEST_OBJECTS=""
-          for bin in $(RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph --no-run 2>&1 | grep -w Executable | grep -oE 'target/debug/deps/[^)]+'); do
+          for bin in $( (RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p graph --no-run && RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo test -p falkordb-rs --lib --no-run) 2>&1 | grep -w Executable | grep -oE 'target/debug/[^)]+'); do
             TEST_OBJECTS="$TEST_OBJECTS -object $bin"
           done
           echo "Additional coverage objects: $TEST_OBJECTS"
