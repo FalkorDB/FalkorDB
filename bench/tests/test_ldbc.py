@@ -35,7 +35,6 @@ from falkorbench.ldbc import dataset
 from falkorbench.ldbc import loader as loader_mod
 from falkorbench.ldbc import params as params_mod
 from falkorbench.ldbc import queries as query_mod
-from falkorbench.ldbc import runner
 from falkorbench.ldbc import schema
 
 # --- query texts -------------------------------------------------------------
@@ -218,46 +217,6 @@ def test_person_properties_cover_what_ic1_and_ic10_return():
 # --- parameters --------------------------------------------------------------
 
 
-def test_duration_days_is_converted_to_an_end_date():
-    """IC3 and IC4 ship `durationDays`; the queries take `endDate`.
-
-    Upstream drivers derive it. Doing the same here is what lets the query texts
-    stay equal to upstream.
-    """
-    row = params_mod._coerce(4, {"personId": "42", "startDate": "1000", "durationDays": "3"})
-    assert row == {"personId": 42, "startDate": 1000, "endDate": 1000 + 3 * 86_400_000}
-    query_mod.validate(4, row)
-
-
-def test_coerce_keeps_strings_as_strings_and_numbers_as_numbers():
-    row = params_mod._coerce(1, {"personId": "933", "firstName": "Jose"})
-    assert row == {"personId": 933, "firstName": "Jose"}
-
-
-def test_official_parameter_directory_round_trips(tmp_path):
-    """A parameter file in LDBC's own pipe-separated format is parsed."""
-    for n in query_mod.COMPLEX_READS:
-        names = [p for p in query_mod.PARAM_NAMES[n] if p != "endDate"]
-        if n in (3, 4):
-            names = [*names, "durationDays"]
-        values = ["1000" if _numeric(p) else "Jose" for p in names]
-        path = tmp_path / f"interactive_{n}_param.txt"
-        with path.open("w", newline="") as fh:
-            writer = csv.writer(fh, delimiter="|", lineterminator="\n")
-            writer.writerow(names)
-            writer.writerow(values)
-
-    param_set = params_mod.from_directory(tmp_path, echo=lambda _: None)
-    assert param_set.official is True
-    assert "NOT comparable" not in param_set.caveat()
-    for n in query_mod.COMPLEX_READS:
-        assert len(param_set.for_query(n)) == 1
-
-
-def _numeric(name: str) -> bool:
-    return name.endswith(("Id", "Date", "Year")) or name in ("month", "durationDays")
-
-
 class _StubGraph:
     """Enough of a graph for sample() to run: canned columns and a date span."""
 
@@ -289,93 +248,6 @@ def test_ic3_gets_a_far_wider_date_window_than_the_other_queries():
         assert ic3_width > 365 * 86_400_000, "IC3 needs at least a year to match anything"
         assert ic3_width == span - span // 4
         assert ic3_width > (ic4["endDate"] - ic4["startDate"]) * 10
-
-
-def test_sampled_parameters_are_labelled_as_not_comparable():
-    """The caveat is the point: sampled numbers are not LDBC results.
-
-    Constructed directly rather than by sampling a graph — this asserts the
-    reporting contract, which is what a reader of the CSV depends on.
-    """
-    sampled = params_mod.ParamSet(rows={}, official=False, source="seed=1, n=5")
-    assert "NOT comparable to published LDBC results" in sampled.caveat()
-
-
-def test_missing_parameter_file_is_an_error_not_an_empty_set(tmp_path):
-    with pytest.raises(params_mod.ParamError, match=r"missing interactive_1_param\.txt"):
-        params_mod.from_directory(tmp_path, echo=lambda _: None)
-
-
-# --- results -----------------------------------------------------------------
-
-
-def test_percentiles_are_values_that_actually_occurred():
-    """Nearest-rank, so a reported p99 is a latency that was measured."""
-    result = runner.QueryResult(name="IC1", rewritten=False)
-    result.latencies_ms = [float(n) for n in range(1, 101)]
-    assert result.pct(50) == 50.0
-    assert result.pct(99) == 99.0
-    assert result.pct(100) == 100.0
-
-
-def test_a_query_that_always_returned_nothing_is_a_problem():
-    """The failure mode this benchmark is most likely to produce silently.
-
-    It does not error, and its latency looks excellent, but it measured nothing.
-    """
-    empty = runner.QueryResult(name="IC7", rewritten=False)
-    empty.latencies_ms = [1.0, 2.0]
-    empty.empty_runs = 2
-    assert runner.problems([empty]) == ["IC7: returned zero rows on all 2 runs"]
-
-    fine = runner.QueryResult(name="IC7", rewritten=False)
-    fine.latencies_ms = [1.0, 2.0]
-    fine.empty_runs = 1
-    assert runner.problems([fine]) == []
-
-
-def test_a_query_with_no_measurement_is_a_problem():
-    failed = runner.QueryResult(name="IC14", rewritten=True)
-    failed.failures = ["timeout"]
-    assert runner.problems([failed]) == ["IC14: produced no measurement (timeout)"]
-
-
-def test_the_per_query_timeout_reaches_the_server():
-    """IC3 needs a cap above the default to produce a number at all while
-    https://github.com/FalkorDB/FalkorDB/issues/2558 is open, so the override
-    has to actually reach ro_query rather than being accepted and dropped."""
-    seen = []
-
-    class _Graph:
-        def ro_query(self, cypher, params, timeout):
-            seen.append(timeout)
-            return SimpleNamespace(result_set=[[1]])
-
-    client = SimpleNamespace(graph=_Graph())
-    query = query_mod.ComplexRead(number=3, cypher="RETURN 1")
-    param_set = params_mod.ParamSet(rows={3: [{"personId": 1}]}, official=False, source="sampled")
-
-    runner.run(client, [query], param_set, warmup=1, timeout_ms=900_000, echo=lambda *a: None)
-    assert seen == [900_000, 900_000]
-
-    seen.clear()
-    runner.run(client, [query], param_set, warmup=0, echo=lambda *a: None)
-    assert seen == [runner.DEFAULT_TIMEOUT_MS]
-
-
-def test_result_csv_is_written_with_the_declared_columns(tmp_path):
-    result = runner.QueryResult(name="IC1", rewritten=True)
-    result.latencies_ms = [1.5, 2.5]
-    result.rows_total = 40
-
-    out = tmp_path / "ldbc.csv"
-    runner.write_csv(out, [result], params="parameters sampled from the loaded graph (seed=1)")
-    rows = list(csv.DictReader(out.read_text().splitlines()))
-    assert list(rows[0]) == list(runner.CSV_FIELDS)
-    assert rows[0]["params"] == "parameters sampled from the loaded graph (seed=1)"
-    assert rows[0]["query"] == "IC1"
-    assert rows[0]["rewritten"] == "yes"
-    assert rows[0]["runs"] == "2"
 
 
 # --- dataset preparation -----------------------------------------------------
@@ -859,7 +731,6 @@ def scripted_check(
     check.queries = query_mod.select(names)
     check.param_set = params_mod.ParamSet(
         rows={q.number: [{"personId": i} for i in range(params)] for q in check.queries},
-        official=False,
         source="test",
     )
     base = ScriptedSide(ck.BASELINE, base_script)
@@ -1203,40 +1074,6 @@ def test_a_query_that_finished_on_neither_side_alone_is_not_a_comparison(tmp_pat
     assert result["verdict"] == "error"
     assert "no query could be compared" in result["error"]
     assert_valid(check.opts.out / "result.json")
-
-
-def test_loading_into_a_graph_that_holds_nodes_is_refused(tmp_path):
-    """Every row is a CREATE: a second load would duplicate the dataset."""
-
-    def client(exists, held):
-        return SimpleNamespace(
-            graph_name="ldbc",
-            command=lambda *args: exists,
-            graph=SimpleNamespace(ro_query=lambda q: SimpleNamespace(result_set=[[held]])),
-        )
-
-    with pytest.raises(loader_mod.LoadError, match="already holds 327,588 nodes"):
-        loader_mod._refuse_a_loaded_graph(client(1, 327588))
-    loader_mod._refuse_a_loaded_graph(client(0, 0))  # no graph yet
-    loader_mod._refuse_a_loaded_graph(client(1, 0))  # an empty graph
-
-
-def test_a_runner_failure_count_is_not_capped_at_the_messages_kept():
-    from redis.exceptions import TimeoutError as RedisTimeoutError
-
-    def ro_query(*args, **kwargs):
-        raise RedisTimeoutError("Timeout reading from socket")
-
-    bench = SimpleNamespace(graph=SimpleNamespace(ro_query=ro_query))
-    query = query_mod.select(("IC2",))
-    rows = {2: [{"personId": i, "maxDate": 1} for i in range(8)]}
-    param_set = params_mod.ParamSet(rows=rows, official=False, source="test")
-    (result,) = runner.run(bench, query, param_set, echo=lambda _: None)
-    assert result.failure_count == 8 and len(result.failures) == 5
-    assert result.row()["failures"] == 8
-    assert runner.problems([result]) == [
-        "IC2: produced no measurement (Timeout reading from socket)"
-    ]
 
 
 @pytest.mark.parametrize(

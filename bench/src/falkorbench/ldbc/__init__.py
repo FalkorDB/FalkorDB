@@ -14,7 +14,6 @@ from falkorbench.ldbc import dataset
 from falkorbench.ldbc import loader
 from falkorbench.ldbc import params
 from falkorbench.ldbc import queries
-from falkorbench.ldbc import runner
 from falkorbench.ldbc import schema
 
-__all__ = ["dataset", "loader", "params", "queries", "runner", "schema"]
+__all__ = ["dataset", "loader", "params", "queries", "schema"]
