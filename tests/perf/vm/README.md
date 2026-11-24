@@ -61,7 +61,6 @@ scripts, still gets the matching ones. Each job logs and checks that commit
 | `PERF_ZONE`, `PERF_MACHINE_TYPE` | where the VM is, read from the metadata server |
 | `PERF_MACHINE_JSON` | a file holding the result.json `machine` object: `{"runner": "gce", "type", "cpu", "cores"}` |
 | `PERF_VM_TOOLS` | absolute path of this workflow's own `tests/perf/vm` |
-| `PERF_PMU` | `1` when `pmu: true` and `perf stat` counted on this VM; unset otherwise |
 
 The split is by physical core: hyperthread siblings stay together, the
 servers get the first half of the cores and the client the rest. On an
@@ -88,11 +87,8 @@ and only when it is created with a virtual PMU. With `pmu: true`:
   `performance_monitoring_unit` flag, created through gcloud's beta track) with
   `--performance-monitoring-unit=standard`. `perf-vm.json`'s `pmu` is the type
   GCE reports for the VM.
-- On the VM: `linux-perf` is installed, `kernel.perf_event_paranoid` is set to
-  -1 (so `perf stat -p <host pid of a container's server>` works for any
-  user), and `perf stat -e cycles,instructions -- true` must count both, each
-  at least once (`vm.py pmu-probe`), or the job fails before the check runs. `perf-vm.json`'s `pmu_probe` records
-  what it counted, and `PERF_PMU=1` tells the check.
+- The check reads the counters itself (micro-hw runs `perf` in its own privileged
+  container), so the VM installs no host tools for them.
 
 ## The artifact
 
@@ -101,7 +97,7 @@ and only when it is created with a virtual PMU. With `pmu: true`:
 ```json
 {"schema": 1, "check": "size-probe", "vm_name": "gce-gh-…", "zone": "us-central1-b",
  "machine_type": "n2-standard-16", "fallback_used": true, "create_error": null,
- "command_exit": 0, "timed_out": false, "pmu": null, "pmu_probe": null}
+ "command_exit": 0, "timed_out": false, "pmu": null}
 ```
 
 It is uploaded when the command fails or times out too. When no VM came up,
@@ -176,5 +172,4 @@ stopped VM; adding that input to `gce-github-runner` is the follow-up.
 | `delete-vms.sh` | delete every VM with a label; retries listing, waits out in-flight inserts |
 | `vm.py env` | core split, machine object, `PERF_*` lines for `$GITHUB_ENV` |
 | `vm.py record` | writes `perf-vm.json` |
-| `vm.py pmu-probe` | judges the counters probe's `perf stat` output |
 | `test_vm.py` | `python3 -I -m unittest discover -s tests/perf/vm` |

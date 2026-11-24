@@ -10,11 +10,6 @@
     Writes `perf-vm.json`: where the check ran, or why no VM came up.
     `merge.py` quotes it when the artifact holds no result.json.
 
-`pmu-probe`
-    Reads `perf stat -x, -e cycles,instructions` output on stdin and prints
-    `cycles=N instructions=M` when both counted at least once; otherwise
-    prints what perf said and exits 1.
-
 Standard library only: it runs on a bare Debian VM and on `ubuntu-latest`.
 """
 
@@ -156,50 +151,13 @@ def cmd_record(args: argparse.Namespace) -> int:
         "create_error": args.create_error or None,
         "command_exit": optional_int(args.command_exit),
         "timed_out": args.timed_out == "true",
-        # The vPMU type GCE reports for the VM, and what `perf stat` counted
-        # on it (or why it could not): both null without hardware counters.
+        # The vPMU type GCE reports for the VM; null without hardware counters.
         "pmu": args.pmu or None,
-        "pmu_probe": args.pmu_probe or None,
     }
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(record, indent=2, allow_nan=False) + "\n")
     print(out.read_text(), end="")
-    return 0
-
-
-# --- pmu-probe ----------------------------------------------------------------
-
-
-def parse_probe(text: str) -> dict[str, int] | None:
-    """Counts of `cycles` and `instructions` from `perf stat -x,` output.
-
-    None unless both were counted and non-zero: `<not supported>`, `<not
-    counted>`, a zero, a missing event or a duplicate all mean the counters
-    cannot be trusted. Event names may carry a modifier (`cycles:u`) but not
-    a PMU prefix (`cpu_core/cycles/`, a hybrid CPU this VM is not).
-    """
-    counts: dict[str, int] = {}
-    for line in text.splitlines():
-        fields = line.split(",")
-        if len(fields) < 3:
-            continue
-        event = fields[2].split(":", 1)[0]
-        if event not in ("cycles", "instructions"):
-            continue
-        if event in counts or not fields[0].isdigit() or int(fields[0]) < 1:
-            return None
-        counts[event] = int(fields[0])
-    return counts if set(counts) == {"cycles", "instructions"} else None
-
-
-def cmd_pmu_probe(_args: argparse.Namespace) -> int:
-    text = sys.stdin.read()
-    counts = parse_probe(text)
-    if counts is None:
-        print(" ".join(text.split())[:200] or "perf printed nothing")
-        return 1
-    print(f"cycles={counts['cycles']} instructions={counts['instructions']}")
     return 0
 
 
@@ -227,11 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     record.add_argument("--command-exit", default="", help="empty when the command never ran")
     record.add_argument("--timed-out", default="false", help="true or false")
     record.add_argument("--pmu", default="", help="vPMU type, empty without one")
-    record.add_argument("--pmu-probe", default="", help="what perf stat counted, or why it could not")
     record.set_defaults(func=cmd_record)
-
-    probe = sub.add_parser("pmu-probe", help="judge `perf stat -x, -e cycles,instructions` output")
-    probe.set_defaults(func=cmd_pmu_probe)
 
     args = parser.parse_args(argv)
     return args.func(args)

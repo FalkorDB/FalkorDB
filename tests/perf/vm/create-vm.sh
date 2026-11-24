@@ -1,33 +1,9 @@
 #!/usr/bin/env bash
-# Create the perf runner VM with FalkorDB/gce-github-runner, trying every zone
-# for the machine type, then every zone for the fallback type.
-#
+# Create the perf runner VM with gce-github-runner's action.sh, one zone at a
+# time: every zone for the machine type, then every zone for the fallback.
 #   create-vm.sh <action-dir> <label> <zones> <machine-type> [<fallback-type>]
-#
-# <action-dir> is a checkout of FalkorDB/gce-github-runner. Its action.sh runs
-# once per (type, zone), with one zone each time: its own zone loop moves on
-# only for ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS and stops the whole create
-# on any other error, such as a plain ZONE_RESOURCE_POOL_EXHAUSTED or a type
-# that one zone does not offer. Here any failure moves on to the next zone.
-#
-# Only a failure to create the VM moves on. A VM that was created but whose
-# runner never came up (the action's 7-minute readiness wait) is not a zone
-# problem, and neither is a GH_SA_TOKEN that cannot register runners, which
-# is checked once up front: both stop the loop rather than cost every zone.
-#
-# Environment: GH_SA_TOKEN, GCP_PROJECT_ID, GCP_SA_KEY (as for the action),
-# RUNNER_VER (runner version, default latest), DISK_SIZE (default 100GB),
-# PMU (a vPMU type such as `standard`, or empty: the action at <action-dir>
-# must then be gce-github-runner's pmu-on-pinned, since the default pin
-# rejects the flag),
-# CREATE_BUDGET_S (start no attempt after this many seconds, default 3000),
-# GITHUB_OUTPUT. gcloud must already be authenticated, for delete-vms.sh.
-#
-# Writes outputs vm_name, zone, machine_type, fallback_used and pmu (the
-# vPMU type GCE reports for the VM, empty without one) on success, or
-# create_error, one line naming every attempt and why it failed, when no
-# VM came up (then exits 1). create_error never holds the project ID:
-# GitHub drops a job output that contains a secret.
+# Env: GH_SA_TOKEN, GCP_PROJECT_ID, GCP_SA_KEY, PMU, RUNNER_VER, DISK_SIZE,
+# CREATE_BUDGET_S, GITHUB_OUTPUT. Outputs and stop rules: tests/perf/vm/README.md.
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

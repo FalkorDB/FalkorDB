@@ -1,34 +1,7 @@
-# Run one perf check on a temporary GCE VM and always delete the VM.
-#
-# Called by perf-nightly.yml, once per `runner: vm` entry in
-# tests/perf/checks.yaml. The check is one command (contract: START-HERE §1
-# of the perf swarm, tests/perf/vm/README.md):
-#
-#   <command> --candidate <image@sha256:…> --baseline <image@sha256:…>
-#             --out out --mode <queue|nightly|long> [--candidate-label …] …
-#
-# create   ubuntu-latest. Creates the VM through FalkorDB/gce-github-runner,
-#          every zone for machine_type, then every zone for the fallback type
-#          (tests/perf/vm/create-vm.sh).
-# Its own scripts (tests/perf/vm) come from the commit this file was read
-# from (job.workflow_sha), so a caller on any branch gets the matching ones;
-# the check's code comes from the calling commit.
-#
-# run      The VM. Runs the command on a checkout of the calling commit, the
-#          client pinned to half the cores and PERF_SERVER_CPUS naming the
-#          other half, then uploads out/ as perf-result-<check>, also when
-#          the command fails or times out.
-# cleanup  ubuntu-latest, always. Deletes every VM carrying this run's label.
-#
-# Every artifact holds perf-vm.json (zone, machine type, fallback, exit code,
-# or why no VM came up). When no VM came up it is the only file.
-#
-# Re-run a failed run with "Re-run all jobs": "Re-run failed jobs" would not
-# create a new VM, so the run job is skipped and cleanup fails, saying so.
-#
-# Three things delete the VM: the cleanup job; a systemd timer the run job
-# arms on the VM at timeout_minutes + 30 min; and the action's own
-# `sleep 6h && delete`, armed by the VM's startup script.
+# Run one perf check on a temporary GCE VM, upload its out/ (with perf-vm.json)
+# as perf-result-<check>, and always delete the VM.
+# Jobs: create (ubuntu-latest), run (on the VM), cleanup (ubuntu-latest, always).
+# Inputs, what the check gets, and what deletes the VM: tests/perf/vm/README.md.
 
 name: Perf check on a GCE VM
 
@@ -68,7 +41,7 @@ on:
         type: string
         default: ""
       pmu:
-        description: Give the VM hardware counters (a C4 or M4 VM with a vPMU, linux-perf, PERF_PMU=1). Never falls back to a type without counters.
+        description: Give the VM hardware counters (a C4 or M4 VM created with a vPMU). Never falls back to a type without counters.
         type: boolean
         default: false
       zones:
@@ -321,36 +294,6 @@ jobs:
             exit 1
           fi
 
-      - name: Enable hardware counters
-        if: needs.create.outputs.pmu_requested != ''
-        id: pmu
-        run: |
-          set -euo pipefail
-          sudo=; (( EUID == 0 )) || sudo=sudo
-          export DEBIAN_FRONTEND=noninteractive
-          apt=(apt-get -q -o DPkg::Lock::Timeout=300)
-          (( EUID == 0 )) || apt=(sudo "${apt[@]}")
-          # linux-perf is Debian 12's perf for its own 6.1 kernel. Its own
-          # update: the install step before this one is allowed to fail.
-          if ! { "${apt[@]}" update && "${apt[@]}" install -y --no-install-recommends linux-perf; }; then
-            echo "probe=linux-perf did not install" >> "$GITHUB_OUTPUT"
-            echo "::error::linux-perf did not install"
-            exit 1
-          fi
-          # Debian's default (3) forbids perf to everyone but root; -1 lets a
-          # check run `perf stat -p <host pid of a container's server>` as any user.
-          $sudo sysctl -w kernel.perf_event_paranoid=-1
-          raw=$(perf stat -x, -e cycles,instructions -- true 2>&1 >/dev/null) || true
-          echo "$raw"
-          if ! probe=$(python3 -I "$PERF_VM_TOOLS/vm.py" pmu-probe <<< "$raw"); then
-            echo "probe=$probe" >> "$GITHUB_OUTPUT"
-            echo "::error::hardware counters do not count on this VM: $probe"
-            exit 1
-          fi
-          echo "probe=$probe" >> "$GITHUB_OUTPUT"
-          echo "PERF_PMU=1" >> "$GITHUB_ENV"
-          echo "Hardware counters: \`perf stat -- true\` counted $probe" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
@@ -400,14 +343,13 @@ jobs:
           FALLBACK_USED: ${{ needs.create.outputs.fallback_used }}
           COMMAND_EXIT: ${{ steps.check.outputs.command_exit }}
           PMU: ${{ needs.create.outputs.pmu }}
-          PMU_PROBE: ${{ steps.pmu.outputs.probe }}
           # Started, no exit code, failed: the step timeout stopped it.
           TIMED_OUT: ${{ steps.check.outputs.timed_out || (steps.check.outputs.started == 'true' && steps.check.outcome == 'failure' && 'true') || 'false' }}
         run: |
           python3 -I "$PERF_VM_TOOLS/vm.py" record --out out/perf-vm.json --check "$CHECK" \
             --vm-name "$VM_NAME" --zone "$ZONE" --machine-type "$TYPE" \
             --fallback-used "$FALLBACK_USED" --command-exit "$COMMAND_EXIT" --timed-out "$TIMED_OUT" \
-            --pmu "$PMU" --pmu-probe "$PMU_PROBE"
+            --pmu "$PMU"
 
       - name: Upload perf-result-${{ inputs.check }}
         if: always()

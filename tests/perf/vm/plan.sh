@@ -1,26 +1,9 @@
 #!/usr/bin/env bash
-# Check _perf-vm.yml's inputs and work out what to create.
-#
-#   plan.sh
-#
-# Environment: CHECK, MODE, TIMEOUT (minutes), ZONES, MACHINE_TYPE and
-# FALLBACK (either may be empty), PMU (true or false), CANDIDATE, BASELINE,
-# GCE_GITHUB_RUNNER_REF and GCE_GITHUB_RUNNER_PMU_REF (the action's commit
-# without and with a vPMU), GITHUB_OUTPUT.
-#
-# timeout_minutes is at most 300 (the action deletes the VM 6 h after boot).
-# Machine types must be x86: the VM boots x86 Debian with the x64 runner.
-#
-# Writes outputs zones, machine_type, fallback, pmu (the vPMU type to ask
-# for, empty without counters), action_ref, command_timeout_s, step_timeout,
-# job_timeout and deadline; or error, and exits 1.
-#
-# Without PMU the VM is n4-standard-16 by default, and an n4-<size> falls
-# back to n2-<size>. With PMU it must be a family whose VMs GCE gives
-# hardware counters (C4 or M4; C4A and A4X are Arm): c4-standard-16 by
-# default, with c4-standard-8 as the fallback; a type the caller names gets
-# no fallback unless the caller names one too. A type without counters is
-# never tried, so a check that wants counters gets them or gets no VM.
+# Check _perf-vm.yml's inputs and pick what to create: machine type, fallback,
+# vPMU, gce-github-runner commit and timeouts, as GitHub outputs (or `error`,
+# exit 1). Env: CHECK, MODE, TIMEOUT, ZONES, MACHINE_TYPE, FALLBACK, PMU,
+# CANDIDATE, BASELINE, GCE_GITHUB_RUNNER_REF, GCE_GITHUB_RUNNER_PMU_REF.
+# The rules: tests/perf/vm/README.md.
 set -euo pipefail
 
 requested_fallback=${FALLBACK:-}
