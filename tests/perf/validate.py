@@ -133,8 +133,11 @@ def _is_number(value: Any) -> bool:
 
 
 def _is_int(value: Any) -> bool:
-    # JSON has one number type: 16.0 is the integer 16.
-    return _is_number(value) and float(value).is_integer()
+    # JSON has one number type: 16.0 is the integer 16. A Python int of any size
+    # is an integer as it is; float() of a huge one would raise OverflowError.
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value) and value.is_integer())
 
 
 def _child(path: str, key: Any) -> str:

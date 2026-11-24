@@ -98,6 +98,7 @@ ACCEPTED = [
     ("null commit", MICRO_PASS, ("candidate", "commit"), None),
     ("null ratio", MICRO_PASS, ("findings", 0, "ratio"), None),
     ("16.0 cores", MICRO_PASS, ("machine", "cores"), 16.0),
+    ("401-digit core count (an int, however large)", MICRO_PASS, ("machine", "cores"), 10**400),
     ("extra key ignored", MICRO_PASS, ("notes",), "pinned to cores 0-4"),
     ("hardware-counter metric", MICRO_PASS, ("findings", 1, "metric"), "l2_misses"),
     ("error verdict with ordinary findings", POKEC_ERROR, ("findings",), _fixture(MICRO_PASS)["findings"]),
@@ -106,6 +107,8 @@ ACCEPTED = [
 # Breaks beyond invalid_cases.py: one field each, with every problem expected.
 REJECTED = [
     ("schema 2", MICRO_PASS, ("schema",), 2, [("unsupported-schema", "$.schema")]),
+    # A huge integer is reported, never raised: merge.py and post.py call validate_file.
+    ("401-digit schema", MICRO_PASS, ("schema",), 10**400, [("unsupported-schema", "$.schema")]),
     ('confirmed "false" (truthy)', MICRO_PASS, ("confirmed",), "false", [("wrong-type", "$.confirmed")]),
     ("ratio as a string", MICRO_PASS, ("findings", 0, "ratio"), "0.03", [("wrong-type", "$.findings[0].ratio")]),
     ("blank label", MICRO_PASS, ("baseline", "label"), "　", [("empty-string", "$.baseline.label")]),
