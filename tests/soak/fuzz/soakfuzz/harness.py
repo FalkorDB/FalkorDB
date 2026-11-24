@@ -1,0 +1,1254 @@
+"""Drives one server: builds the graphs, runs epochs of long reads, writes and cheap reads, and
+records everything `checks.analyse` judges.
+
+Per server-hour: a fresh server from the image (THREAD_COUNT given), a plain server from the same
+image without the module beside it (the PING control), 1-4 graphs at their own scales. Per epoch:
+busy graphs, long-read streams, write and read rates, write pattern, indexes, constraints, write
+timeouts and BGSAVE, all from the epoch's parameters (`model.epoch_params`).
+
+Clients never re-send (no socket timeout, no retries). Reads and writes are open loop: sent at
+their scheduled time whether or not earlier ones have returned, and timed from that schedule. A
+separate process PINGs FalkorDB and the plain server every 10 ms, timed from the scheduled send.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import gzip
+import json
+import multiprocessing as mp
+import os
+import random
+import socket
+import statistics
+import subprocess
+import sys
+import threading
+import time
+import traceback
+
+import redis
+from redis.backoff import NoBackoff
+from redis.exceptions import ResponseError
+from redis.retry import Retry
+
+from . import checks, model
+from .checks import gname
+
+MODULE_PATH = "/var/lib/falkordb/bin/falkordb.so"
+PING_INTERVAL_S = 0.010
+HANG_S = 60  # a FalkorDB PING unanswered this long: the server is hung
+MAX_INFLIGHT_WRITES = 900  # per graph; C crashes when a graph's 1,024-entry write queue overflows
+
+
+def now() -> float:
+    return time.monotonic()
+
+
+def log(*a):
+    print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+def s(v) -> str:
+    return v.decode() if isinstance(v, bytes) else str(v)
+
+
+def connect(port: int, host="127.0.0.1", timeout: float | None = None) -> redis.Redis:
+    """No retries. Measured requests use no socket timeout (a latency is one request, however long);
+    setup and checking connections pass one, so a hung server cannot block the run forever."""
+    return redis.Redis(host=host, port=port, socket_timeout=timeout, socket_connect_timeout=10,
+                       retry=Retry(NoBackoff(), 0))
+
+
+ADMIN_TIMEOUT_S = 300
+
+
+class DockerError(RuntimeError):
+    """Docker itself failed or timed out (pull, run, inspect): nothing about the engine was learnt."""
+
+
+#: set by the check's SIGTERM handler: containers are removed at once, without a graceful stop
+STOPPING = False
+
+
+def server_hung(port: int, tries: int = 3) -> bool:
+    """A running server that answers none of `tries` PINGs, each given 10 s."""
+    for _ in range(tries):
+        r = connect(port, timeout=10)
+        try:
+            if r.ping():
+                return False
+        except Exception:
+            pass
+        finally:
+            r.close()
+    return True
+
+
+def outcome_of(exc):
+    return checks.outcome_of(exc, ResponseError)
+
+
+def cypher_params(params: dict) -> str:
+    def lit(v):
+        if v is None:
+            return "null"
+        if isinstance(v, str):
+            return "'" + v.replace("\\", "\\\\").replace("'", "\\'") + "'"
+        return str(v)
+    return "CYPHER " + " ".join(f"{k}={lit(v)}" for k, v in params.items()) + " " if params else ""
+
+
+def qargs(graph, cypher, params, write, timeout_ms):
+    a = ["GRAPH.QUERY" if write else "GRAPH.RO_QUERY", graph, cypher_params(params) + cypher]
+    if timeout_ms:
+        a += ["TIMEOUT", str(int(timeout_ms))]
+    return a
+
+
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+# --- images and servers ----------------------------------------------------------------------------
+
+
+def docker(*a, check=True, timeout=120):
+    try:
+        return subprocess.run(["docker", *a], check=check, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise DockerError(f"docker {a[0]} did not return within {timeout} s") from None
+
+
+def probe_image(image: str) -> dict:
+    """Pull the image and find its server binary and module. Raises RuntimeError on failure."""
+    p = docker("pull", "-q", image, check=False, timeout=900)
+    if p.returncode != 0:
+        raise DockerError(f"docker pull failed: {(p.stderr or p.stdout).strip()[:300]}")
+    script = ("command -v valkey-server || command -v redis-server; "
+              f"if [ -f {MODULE_PATH} ]; then echo {MODULE_PATH}; else find / -name falkordb.so 2>/dev/null | head -1; fi")
+    p = docker("run", "--rm", "--entrypoint", "sh", image, "-c", script, check=False, timeout=300)
+    lines = [x.strip() for x in p.stdout.splitlines() if x.strip()]
+    server = next((x for x in lines if x.endswith(("valkey-server", "redis-server"))), None)
+    module = next((x for x in lines if x.endswith("falkordb.so")), None)
+    if not server or not module:
+        raise DockerError(f"no server binary or module in the image: {lines} {p.stderr.strip()[:200]}")
+    return {"image": image, "server": server, "module": module}
+
+
+class Server:
+    """One container from the image: its own server binary, with the module (FalkorDB) or without
+    (the plain server that tells a host stall from a FalkorDB freeze)."""
+
+    def __init__(self, info: dict, name: str, cpus: str | None, net: str, thread_count: int | None = None,
+                 module: bool = True, module_args: tuple = ()):
+        self.info, self.name, self.cpus, self.net = info, name, cpus, net
+        self.tc, self.module, self.module_args = thread_count, module, module_args
+        self.port = free_port()
+
+    def start(self, wait_s: float = 60) -> redis.Redis:
+        docker("rm", "-f", self.name, check=False)
+        net = ["--network", "host"] if self.net == "host" else ["-p", f"127.0.0.1:{self.port}:{self.port}"]
+        cpus = ["--cpuset-cpus", self.cpus] if self.cpus else []
+        cmd = ["run", "-d", "--name", self.name, *net, *cpus, "--ulimit", "nofile=1048576",
+               "--entrypoint", self.info["server"], self.info["image"],
+               "--port", str(self.port), "--bind", "127.0.0.1" if self.net == "host" else "0.0.0.0", "--maxclients", "200000", "--save", "",
+               "--appendonly", "no", "--dir", "/tmp", "--protected-mode", "no"]
+        if self.module:
+            cmd += ["--loadmodule", self.info["module"], "THREAD_COUNT", str(self.tc), "CACHE_SIZE", "200",
+                    "EFFECTS_THRESHOLD", "0", *self.module_args]
+        p = docker(*cmd, check=False)
+        if p.returncode != 0:
+            raise DockerError(f"docker run failed: {p.stderr.strip()[:300]}")
+        r = connect(self.port, timeout=ADMIN_TIMEOUT_S)
+        t0 = now()
+        while now() - t0 < wait_s:
+            try:
+                r.ping()
+                return r
+            except Exception:
+                running, _ = self.state()
+                if not running:
+                    break
+                time.sleep(0.1)
+        raise RuntimeError("server did not start: " + self.logs(50)[-1500:])
+
+    def state(self) -> tuple[bool, int]:
+        p = docker("inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", self.name, check=False)
+        if p.returncode != 0:
+            return False, -1
+        run, code = p.stdout.split()
+        return run == "true", int(code)
+
+    def pid(self) -> int:
+        return int(docker("inspect", "-f", "{{.State.Pid}}", self.name).stdout.strip())
+
+    def logs(self, tail=400) -> str:
+        p = docker("logs", "--tail", str(tail), self.name, check=False)
+        return (p.stdout or "") + (p.stderr or "")
+
+    def restart(self, timeout_s=900) -> redis.Redis:
+        """Restart the container in place (its /tmp keeps dump.rdb) and wait until the load ends."""
+        docker("restart", "-t", "30", self.name)
+        r = connect(self.port, timeout=ADMIN_TIMEOUT_S)
+        t0 = now()
+        while now() - t0 < timeout_s:
+            try:
+                if int(r.info("persistence").get("loading", 1)) == 0:
+                    return r
+            except Exception:
+                pass
+            time.sleep(0.5)
+        raise RuntimeError("server did not finish loading: " + self.logs(50))
+
+    def stop(self) -> str:
+        """Stop and remove the container; returns its log tail. Best effort: never raises."""
+        tail = ""
+        try:
+            if not STOPPING:
+                docker("stop", "-t", "20", self.name, check=False, timeout=60)
+            tail = self.logs(200)
+        except DockerError as e:
+            tail = f"(no log: {e})"
+        try:
+            docker("rm", "-f", self.name, check=False)
+        except DockerError:
+            pass
+        return tail
+
+
+def module_version(r) -> str:
+    ver = "?"
+    for m in r.execute_command("MODULE", "LIST"):
+        d = dict(zip(map(s, m[::2]), m[1::2])) if isinstance(m, list) else {s(k): v for k, v in m.items()}
+        if s(d.get("name", "")) in ("graph", "falkordb"):
+            ver = s(d.get("ver"))
+    return ver
+
+
+def server_config(r) -> dict:
+    try:
+        flat = [s(x) for p in r.execute_command("GRAPH.CONFIG", "GET", "*") for x in p]
+        return dict(zip(flat[::2], flat[1::2]))
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
+# --- PING prober process -------------------------------------------------------------------------
+
+
+def prober_proc(ports: dict, out_path: str, hang_path: str, stop):
+    asyncio.run(_prober(ports, out_path, hang_path, stop))
+
+
+async def _prober(ports, out_path, hang_path, stop):
+    f = open(out_path, "a", buffering=1)  # line-buffered: an epoch reads the file while this writes
+
+    async def one(name, port):
+        while not stop.is_set():
+            try:
+                reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            except OSError:
+                f.write(f"{name},{now():.4f},down\n")
+                await asyncio.sleep(1)
+                continue
+            pending = collections.deque()
+            alive = [True]
+
+            async def read_loop():
+                try:
+                    while True:
+                        line = await reader.readline()
+                        if not line:
+                            break
+                        t = now()
+                        if pending:
+                            sched = pending.popleft()
+                            f.write(f"{name},{sched:.4f},{(t - sched) * 1000:.2f}\n")
+                finally:
+                    alive[0] = False
+
+            rt = asyncio.create_task(read_loop())
+            nxt = now()
+            hung = False
+            try:
+                while alive[0] and not stop.is_set():
+                    nxt += PING_INTERVAL_S
+                    d = nxt - now()
+                    if d > 0:
+                        await asyncio.sleep(d)
+                    else:
+                        nxt = now()  # we fell behind (the prober itself stalled); do not burst
+                    pending.append(nxt)
+                    writer.write(b"PING\r\n")
+                    if name == "falkor" and pending and now() - pending[0] > HANG_S and not hung:
+                        hung = True
+                        with open(hang_path, "w") as h:
+                            h.write(f"{now():.3f}\n")
+            except (ConnectionError, OSError):
+                pass
+            finally:
+                rt.cancel()
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            if not stop.is_set():
+                f.write(f"{name},{now():.4f},down\n")
+                await asyncio.sleep(1)
+
+    await asyncio.gather(*(one(n, p) for n, p in ports.items()))
+    f.close()
+
+
+# --- long-read process (threads) ---------------------------------------------------------------------
+
+
+def long_proc(cfg: dict, stop, scanning, out_path: str):
+    ep, sizes, port = cfg["ep"], cfg["sizes"], cfg["port"]
+    longs, writes, died = [], [], []
+    lock = threading.Lock()
+
+    def aligned_write(g, rng):
+        r = connect(port)
+        try:
+            cypher, params, keys = model.make_upsert(sizes[g], rng)
+            t0 = now()
+            # recorded before sending (outcome 3, unknown): this timer thread is not joined, so a write
+            # still queued behind a long read when the process dumps its results would otherwise
+            # vanish from the ledger while it commits
+            rec = [g, "scan-write", t0, t0, None, 3, "", keys]
+            with lock:
+                writes.append(rec)
+            try:
+                r.execute_command(*qargs(gname(g), cypher, params, True, None))
+                exc = None
+            except Exception as e:
+                exc = e
+            t1 = now()
+            oc, msg = outcome_of(exc)
+            with lock:
+                rec[4], rec[5], rec[6] = t1, oc, msg
+        finally:
+            r.close()
+
+    def stream(g, j):
+        rng = random.Random(f"{ep['seed']}-long-{g}-{j}")
+        r = connect(port)
+        try:
+            stop.wait(rng.uniform(0, model.LONG_START_S))
+            while not stop.is_set():
+                kind = "full-scan" if rng.random() < model.SCAN_SHARE else "full-count"
+                batch = model.make_long(kind)
+                with scanning.get_lock():
+                    scanning[g] += 1
+                try:
+                    if rng.random() < model.SCAN_WRITE_P:
+                        threading.Timer(0.001, aligned_write, args=(g, random.Random(rng.random()))).start()
+                    for op, cypher, params in batch:
+                        if stop.is_set():
+                            break
+                        t0 = now()
+                        try:
+                            r.execute_command(*qargs(gname(g), cypher, params, False,
+                                                     model.LONG_TIMEOUT[op] * 1000))
+                            exc = None
+                        except Exception as e:
+                            exc = e
+                        t1 = now()
+                        oc, msg = outcome_of(exc)
+                        with lock:
+                            longs.append([g, op, t0, t1, oc, msg])
+                        if oc == 4:
+                            raise exc
+                finally:
+                    with scanning.get_lock():
+                        scanning[g] -= 1
+                stop.wait(rng.expovariate(1 / model.LONG_PAUSE_S))
+        except Exception as e:
+            with lock:
+                died.append(f"long[{g}.{j}]: {type(e).__name__}: {e}")
+        finally:
+            r.close()
+
+    threads = []
+    for gs, k in ep["long_streams"].items():
+        for j in range(k):
+            threads.append(threading.Thread(target=stream, args=(int(gs), j), daemon=True))
+    for t in threads:
+        t.start()
+    stop.wait()
+    deadline = now() + cfg["drain_s"]
+    for t in threads:
+        t.join(max(0.1, deadline - now()))
+    unfinished = sum(t.is_alive() for t in threads)
+    with open(out_path, "w") as f:
+        json.dump({"longs": longs, "writes": writes, "died": died, "unfinished": unfinished}, f)
+    os._exit(0)
+
+
+# --- open-loop reads + writes process (asyncio) ------------------------------------------------------
+
+
+def async_proc(cfg: dict, stop, scanning, out_path: str):
+    try:
+        import resource
+        _soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+    except Exception:
+        pass
+    asyncio.run(_async_main(cfg, stop, scanning, out_path))
+    os._exit(0)
+
+
+async def _async_main(cfg, stop, scanning, out_path):
+    import redis.asyncio as aredis
+    ep, sizes, port = cfg["ep"], cfg["sizes"], cfg["port"]
+    ng = len(sizes)
+    pool = aredis.BlockingConnectionPool(host="127.0.0.1", port=port, max_connections=cfg["max_conns"],
+                                         timeout=None, socket_timeout=None, socket_connect_timeout=10,
+                                         retry=Retry(NoBackoff(), 0))
+    r = aredis.Redis(connection_pool=pool)
+    reads, writes, errors, died = [], [], {}, []
+    inflight = set()
+    lag = {"late_sends": 0, "max_send_lag_ms": 0.0, "max_write_wait_s": 0.0}
+    wsem = {g: asyncio.Semaphore(cfg.get("max_inflight_writes", MAX_INFLIGHT_WRITES)) for g in range(ng)}
+
+    async def do(kind, g, op, args, sched, keys=None):
+        send = now()
+        sl = (send - sched) * 1000
+        if kind == "r":  # driver lag; writes also wait for the in-flight cap, reported apart
+            if sl > lag["max_send_lag_ms"]:
+                lag["max_send_lag_ms"] = sl
+            if sl > 50:
+                lag["late_sends"] += 1
+        elif sl / 1000 > lag["max_write_wait_s"]:
+            lag["max_write_wait_s"] = sl / 1000
+        # recorded before sending: a request still open when the epoch ends keeps outcome 3 (unknown)
+        if kind == "r":
+            rec = [g, op, sched, send, None, 3]
+            reads.append(rec)
+        else:
+            rec = [g, op, sched, send, None, 3, "", keys]
+            writes.append(rec)
+        try:
+            await r.execute_command(*args)
+            exc = None
+        except Exception as e:
+            exc = e
+        t = now()
+        oc, msg = outcome_of(exc)
+        if msg:
+            errors.setdefault(op, msg)
+        rec[4], rec[5] = t, oc
+        if kind == "w":
+            rec[6] = msg
+
+    async def capped(g, coro):
+        try:
+            await coro
+        finally:
+            wsem[g].release()
+
+    def spawn(coro):
+        task = asyncio.create_task(coro)
+        inflight.add(task)
+        task.add_done_callback(inflight.discard)
+
+    async def read_stream(g, op, rate):
+        rng = random.Random(f"{ep['seed']}-read-{g}-{op}")
+        tmo = model.READ_OPS[op][1] * 1000
+        nxt = now() + rng.uniform(0, 1 / rate)
+        while not stop.is_set():
+            d = nxt - now()
+            if d > 0:
+                await asyncio.sleep(min(d, 0.5))
+                continue
+            cypher, params = model.make_read(op, sizes[g], rng)
+            spawn(do("r", g, op, qargs(gname(g), cypher, params, False, tmo), nxt))
+            nxt += rng.expovariate(rate)
+
+    async def write_stream(g, op, rate):
+        rng = random.Random(f"{ep['seed']}-write-{g}-{op}")
+        nxt = now() + rng.uniform(0, 1 / rate)
+        holdoff = ep["write_pattern"] == "holdoff"
+        while not stop.is_set():
+            d = nxt - now()
+            if d > 0:
+                await asyncio.sleep(min(d, 0.5))
+                continue
+            if holdoff:  # writes that stay clear of long reads: hold, then send (timed from the send)
+                while scanning[g] > 0 and not stop.is_set():
+                    await asyncio.sleep(0.02)
+                if stop.is_set():
+                    break
+                sched = now()
+            else:
+                sched = nxt
+            if op == "upsert":
+                cypher, params, keys = model.make_upsert(sizes[g], rng)
+            else:
+                (cypher, params), keys = model.make_bulk_set(rng), []
+            await wsem[g].acquire()
+            spawn(capped(g, do("w", g, op, qargs(gname(g), cypher, params, True, None), sched, keys)))
+            nxt += rng.expovariate(rate)
+            if holdoff and nxt < now() - 1.0:  # no burst of the writes held back during a long read
+                nxt = now()
+
+    # warm the pool so the first second is not connection setup
+    warm = [await pool.get_connection("PING") for _ in range(min(200, cfg["max_conns"]))]
+    for c in warm:
+        await pool.release(c)
+
+    tasks = []
+    for g in range(ng):
+        for op, (rt, _) in model.READ_OPS.items():
+            tasks.append(asyncio.create_task(read_stream(g, op, rt * ep["read_mult"])))
+    for g in ep["busy"]:
+        for op, rt in model.WRITE_RATE.items():
+            tasks.append(asyncio.create_task(write_stream(g, op, rt * ep["write_mult"])))
+
+    while not stop.is_set():
+        await asyncio.sleep(0.2)
+    for t in tasks:
+        t.cancel()
+    t_stop = now()
+    pending_at_stop = len(inflight)
+    if inflight:
+        await asyncio.wait(list(inflight), timeout=cfg["drain_s"])
+    unfinished = len(inflight)
+    drain_s = now() - t_stop
+    # write results now: tearing down tens of thousands of open requests can outlast the join
+    res = {"reads": reads, "writes": writes, "errors": errors, "died": died,
+           "pending_at_stop": pending_at_stop, "unfinished": unfinished, "drain_s": drain_s,
+           "harness": lag}
+    with open(out_path + ".tmp", "w") as f:
+        json.dump(res, f)
+    os.replace(out_path + ".tmp", out_path)
+    os._exit(0)
+
+
+# --- building ------------------------------------------------------------------------------------
+
+
+def build_graph(r, graph: str, scale: float, batch: int = model.BUILD_BATCH) -> tuple[dict, dict, dict]:
+    """A fresh graph: labels get consecutive ids, so edges are wired by id. Returns the label sizes,
+    the build's timing (wall seconds and query counts of the node phase and the edge phase) and
+    each label's first node id."""
+    n = model.label_sizes(scale)
+    timing = {"nodes_s": 0.0, "edges_s": 0.0, "node_queries": 0, "edge_queries": 0, "nodes": sum(n.values())}
+    r.delete(graph)
+
+    def run(phase, q):
+        t0 = time.perf_counter()
+        r.execute_command("GRAPH.QUERY", graph, q)
+        timing[f"{phase}_s"] += time.perf_counter() - t0
+        timing[f"{phase[:-1]}_queries"] += 1
+
+    for phase, _label, q in model.build_plan(n, None, batch):
+        run(phase, q)
+    base = {}
+    for label in n:
+        lo_id, hi_id, c = r.execute_command("GRAPH.RO_QUERY", graph,
+                                            f"MATCH (x:{label}) RETURN min(id(x)), max(id(x)), count(x)")[1][0]
+        if hi_id - lo_id + 1 != c or c != n[label]:
+            raise RuntimeError(f"{graph}: {label} ids not consecutive ({lo_id}..{hi_id}, {c} nodes)")
+        base[label] = lo_id
+    for phase, _t, q in model.build_plan(n, base, batch):
+        if phase == "edges":
+            run(phase, q)
+    timing = {k: round(v, 3) if isinstance(v, float) else v for k, v in timing.items()}
+    return n, timing, base
+
+
+# --- epoch events ----------------------------------------------------------------------------------
+
+
+def wait_indexes(r, graph, timeout_s=300, stop=None) -> tuple[bool | None, float]:
+    """True once no index is UNDER CONSTRUCTION, False after timeout_s, None if `stop` was set first."""
+    t0 = now()
+    while now() - t0 < timeout_s:
+        rows = r.execute_command("GRAPH.RO_QUERY", graph, "CALL db.indexes()")[1]
+        if not any("UNDER CONSTRUCTION" in s(x) for row in rows for x in row if isinstance(x, (bytes, str))):
+            return True, now() - t0
+        if stop is not None:
+            if stop.wait(0.5):
+                return None, now() - t0
+        else:
+            time.sleep(0.5)
+    return False, now() - t0
+
+
+def constraint_status(r, graph) -> list[str]:
+    rows = r.execute_command("GRAPH.RO_QUERY", graph, "CALL db.constraints() YIELD status RETURN status")[1]
+    return [s(row[0]) for row in rows]
+
+
+def idx_create(label, props):
+    return f"CREATE INDEX FOR (n:{label}) ON (" + ", ".join(f"n.{p}" for p in props) + ")"
+
+
+def idx_drop(label, props):
+    return f"DROP INDEX FOR (n:{label}) ON (" + ", ".join(f"n.{p}" for p in props) + ")"
+
+
+def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, constraint_info: dict):
+    """Index creation, constraints, deliberate violations and BGSAVE, during the epoch."""
+    if ep.get("churn"):
+        return constraint_churn(port, epoch_s, ep, ng, stop, events, t_start, constraint_info)
+    r = connect(port, timeout=ADMIN_TIMEOUT_S)
+    rng = random.Random(f"{ep['seed']}-events")
+    plan = []
+    if ep["indexes"]:
+        plan.append((rng.uniform(0.05, 0.2) * epoch_s, "indexes"))
+    if ep["constraints"]:
+        plan.append((rng.uniform(0.1, 0.4) * epoch_s, "constraints"))
+    if ep["bgsave"]:
+        plan.append((rng.uniform(0.1, 0.8) * epoch_s, "bgsave"))
+    plan.sort()
+
+    def ev(kind, **kw):
+        events.append({"t": round(now() - t_start, 2), "event": kind, **kw})
+
+    try:
+        for at, kind in plan:
+            if stop.wait(max(0, t_start + at - now())):
+                return
+            if kind == "indexes":
+                t_created = now()
+                for g in range(ng):
+                    for label, props in model.EPOCH_INDEXES:
+                        try:
+                            r.execute_command("GRAPH.QUERY", gname(g), idx_create(label, props))
+                        except ResponseError as e:
+                            ev("index_error", graph=g, label=label, msg=str(e)[:200])
+                for g in range(ng):  # every graph gets an event; once the epoch ends the rest are pending
+                    ok, took = (None, 0.0) if stop.is_set() else wait_indexes(r, gname(g), stop=stop)
+                    kind_ = {True: "indexes_ready", False: "indexes_stuck", None: "indexes_pending_at_epoch_end"}[ok]
+                    ev(kind_, graph=g, seconds=round(now() - t_created if ok is None else took, 1))
+            elif kind == "constraints":
+                for g in range(ng):
+                    for label, props in model.CONSTRAINTS:
+                        try:
+                            r.execute_command("GRAPH.QUERY", gname(g), idx_create(label, props))
+                            r.execute_command("GRAPH.CONSTRAINT", "CREATE", gname(g), "UNIQUE", "NODE", label,
+                                              "PROPERTIES", str(len(props)), *props)
+                        except ResponseError as e:
+                            ev("constraint_error", graph=g, label=label, msg=str(e)[:200])
+                t0 = now()
+                states = {}
+                while now() - t0 < 180:
+                    states = {g: constraint_status(r, gname(g)) for g in range(ng)}
+                    if all(st and all(x != "UNDER CONSTRUCTION" for x in st) for st in states.values()):
+                        break
+                    if stop.wait(1):
+                        break
+                took = now() - t0
+                constraint_info["states"] = {str(g): st for g, st in states.items()}
+                constraint_info["seconds"] = round(took, 1)
+                ev("constraints_state", seconds=round(took, 1), states={str(g): st for g, st in states.items()})
+                operational = {g for g, st in states.items() if st and all(x == "OPERATIONAL" for x in st)}
+                # deliberate violations on operational graphs: existing keys, must be rejected
+                label = model.CONSTRAINTS[0][0]
+                for g in sorted(operational):
+                    for k in range(3):
+                        try:
+                            r.execute_command("GRAPH.QUERY", gname(g),
+                                              f"CREATE (:{label} {{k: {k}, g: {k % model.GROUPS}}})")
+                            constraint_info.setdefault("violations_accepted", []).append([g, k])
+                            ev("violation_accepted", graph=g, key=k)
+                        except ResponseError as e:
+                            constraint_info.setdefault("violations_rejected", 0)
+                            constraint_info["violations_rejected"] += 1
+                            if "constraint" not in str(e).lower():
+                                ev("violation_odd_error", graph=g, msg=str(e)[:200])
+            elif kind == "bgsave":
+                try:
+                    r.execute_command("BGSAVE")
+                    t0 = now()
+                    info = {}
+                    while now() - t0 < 300:
+                        info = r.info("persistence")
+                        if not info.get("rdb_bgsave_in_progress") or stop.wait(0.5):
+                            break
+                    ev("bgsave_done", seconds=round(now() - t0, 1), status=info.get("rdb_last_bgsave_status"))
+                except Exception as e:
+                    ev("bgsave_error", msg=str(e)[:200])
+    except Exception as e:
+        ev("events_died", msg=f"{type(e).__name__}: {e}"[:300])
+    finally:
+        r.close()
+
+
+def plist(v) -> tuple:
+    """A procedure's list column: an array, or (verbose replies) its string form "[a, b]"."""
+    if isinstance(v, (list, tuple)):
+        return tuple(sorted(s(x) for x in v))
+    return tuple(sorted(x.strip() for x in s(v).strip("[]").split(",") if x.strip()))
+
+
+def constraints_of(r, graph, label) -> list[tuple[str, tuple, str]]:
+    rows = r.execute_command("GRAPH.RO_QUERY", graph, "CALL db.constraints() YIELD type, label, properties, status "
+                             "RETURN type, label, properties, status")[1]
+    return [(s(t), plist(props), s(st)) for t, lb, props, st in rows if s(lb) == label]
+
+
+def index_props(r, graph, label) -> set[str]:
+    rows = r.execute_command("GRAPH.RO_QUERY", graph, "CALL db.indexes() YIELD label, properties "
+                             "RETURN label, properties")[1]
+    return {p for lb, props in rows if s(lb) == label for p in plist(props)}
+
+
+CHURN_SCRATCH = "churn-scratch"
+#: what each churn cycle runs on the scratch graph while a read holds its read lock, in rotation
+SCRATCH_VARIANTS = ("create-unique+delete", "drop-unique", "create-mandatory", "drop-mandatory")
+
+
+def constraint_churn(port, epoch_s, ep, ng, stop, events: list, t_start: float, info: dict):
+    """#3763 under load: GRAPH.CONSTRAINT CREATE/DROP (UNIQUE and MANDATORY) while long reads run, a
+    duplicate CREATE racing the first, a CREATE racing a DROP of the same constraint, and a CREATE
+    whose graph is deleted while it waits. Problems go to info['churn']['problems']."""
+    ch = info.setdefault("churn", {"cycles": 0, "ops": 0, "slowest_op_s": 0.0, "scratch_rounds": 0,
+                                   "scratch_variants": {}, "race_outcomes": {}, "problems": []})
+
+    def ev(kind, **kw):
+        events.append({"t": round(now() - t_start, 2), "event": kind, **kw})
+
+    def problem(msg):
+        ch["problems"].append(msg[:300])
+        ev("churn_problem", msg=msg[:300])
+
+    def op(conn, graph, *argv):
+        t = now()
+        try:
+            rep, err = conn.execute_command(*argv), None
+        except ResponseError as e:
+            rep, err = None, str(e)
+        dt = now() - t
+        ch["ops"] += 1
+        ch["slowest_op_s"] = max(ch["slowest_op_s"], round(dt, 2))
+        ev("churn_op", graph=graph, cmd=" ".join(str(a) for a in argv if a != graph)[:140], seconds=round(dt, 2),
+           reply=s(rep) if isinstance(rep, (bytes, str)) else None, error=err[:160] if err else None)
+        return rep, err
+
+    def cons(verb, kind, graph, label, props):
+        return ("GRAPH.CONSTRAINT", verb, graph, kind, "NODE", label, "PROPERTIES", str(len(props)), *props)
+
+    def timed_op(conn, graph, *argv):
+        t = now()
+        rep, err = op(conn, graph, *argv)
+        return rep, err, now() - t
+
+    def in_thread(fn, *a):
+        out = {}
+        t = threading.Thread(target=lambda: out.setdefault("r", fn(*a)), daemon=True)
+        t.start()
+        return t, out
+
+    def settle(conn, graph, label, timeout_s=120):
+        t0 = now()
+        while now() - t0 < timeout_s:
+            cs = constraints_of(conn, graph, label)
+            if all(st != "UNDER CONSTRUCTION" for _, _, st in cs):
+                return cs
+            if stop.wait(0.5):
+                break
+        cs = constraints_of(conn, graph, label)
+        if any(st == "UNDER CONSTRUCTION" for _, _, st in cs):
+            problem(f"{graph}: constraints still UNDER CONSTRUCTION after {timeout_s}s: {cs}")
+        return cs
+
+    (ul, up), (ml, mp_) = model.CHURN_UNIQUE, model.CHURN_MANDATORY
+    ukey = tuple(sorted(up))
+
+    def safe_drop_index(conn, g, graph):
+        """Drop the churn constraints first, then the index fields, and drop an index field only
+        once no UNIQUE constraint on the label depends on it."""
+        left = []
+        for _ in range(3):
+            for kind, props in (("MANDATORY", mp_), ("UNIQUE", up)):
+                try:
+                    conn.execute_command(*cons("DROP", kind, graph, ul, props))
+                except ResponseError:
+                    pass
+            left = [c for c in constraints_of(conn, graph, ul) if c[0] == "UNIQUE"]
+            if not left:
+                drop_index(conn, g, ul, up, [])
+                return
+            time.sleep(1)
+        problem(f"{graph}: UNIQUE constraint still present after 3 DROPs, index left in place: {left}")
+
+    c1, c2, c3 = connect(port), connect(port), connect(port)
+    busy = [int(g) for g, k in ep["long_streams"].items() if k] or list(range(ng))
+    order = busy + [g for g in range(ng) if g not in busy]
+    cycle = 0
+    try:
+        if stop.wait(20):  # let the load ramp up
+            return
+        while not stop.is_set() and now() - t_start < epoch_s - 60:
+            g = order[cycle % len(order)]
+            gn = gname(g)
+            cycle += 1
+            # 1. the supporting index
+            op(c1, gn, "GRAPH.QUERY", gn, idx_create(ul, up))
+            ok, _ = wait_indexes(c1, gn, 120)
+            if not ok:
+                problem(f"{gn}: supporting index not ready after 120 s")
+            # 2. two CREATEs of the same UNIQUE constraint at once, then a MANDATORY one
+            t_a, _ = in_thread(op, c1, gn, *cons("CREATE", "UNIQUE", gn, ul, up))
+            time.sleep(0.02)
+            op(c2, gn, *cons("CREATE", "UNIQUE", gn, ul, up))
+            t_a.join(300)
+            op(c2, gn, *cons("CREATE", "MANDATORY", gn, ml, mp_))
+            cs = settle(c1, gn, ul)
+            uniq = [c for c in cs if c[0] == "UNIQUE" and c[1] == ukey]
+            if len(uniq) != 1:
+                problem(f"{gn}: {len(uniq)} UNIQUE constraints on {ul}{ukey} after two CREATEs: {cs}")
+            for t_, props, st in cs:
+                if st != "OPERATIONAL":
+                    problem(f"{gn}: {t_} {ul}{props} ended {st}")
+            # 3. both must reject a violation
+            st = {(t_, props): s_ for t_, props, s_ in cs}
+            probes = []
+            if st.get(("UNIQUE", ukey)) == "OPERATIONAL":
+                probes.append(("unique", f"CREATE (:{ul} {{k: 0, g: 0}})"))
+            if st.get(("MANDATORY", tuple(mp_))) == "OPERATIONAL":
+                probes.append(("mandatory", f"CREATE (:{ul} {{g: 0}})"))
+            for kind, q in probes:
+                _, err = op(c1, gn, "GRAPH.QUERY", gn, q)
+                if err is None:
+                    problem(f"{gn}: {kind} violation accepted")
+                    info.setdefault("violations_accepted", []).append([g, f"churn-{kind}"])
+            # 4. drop both while the load runs
+            for kind, props in (("MANDATORY", mp_), ("UNIQUE", up)):
+                _, err = op(c1, gn, *cons("DROP", kind, gn, ul, props))
+                if err:
+                    problem(f"{gn}: DROP {kind} failed: {err[:120]}")
+            left = constraints_of(c1, gn, ul)
+            if left:
+                problem(f"{gn}: constraints left after DROP: {left}")
+            # 5. CREATE racing DROP of the same constraint: it exists afterwards exactly when the DROP
+            # failed. (Not CREATE racing DROP INDEX: see safe_drop_index.)
+            t_a, out_a = in_thread(op, c1, gn, *cons("CREATE", "UNIQUE", gn, ul, up))
+            time.sleep(0.02)
+            _, drop_err = op(c2, gn, *cons("DROP", "UNIQUE", gn, ul, up))
+            t_a.join(300)
+            cs = settle(c1, gn, ul)
+            live = [c for c in cs if c[0] == "UNIQUE" and c[1] == ukey and c[2] != "FAILED"]
+            outcome = ("drop-ok" if drop_err is None else "drop-err") + "+" + ("present" if live else "absent")
+            ch["race_outcomes"][outcome] = ch["race_outcomes"].get(outcome, 0) + 1
+            if bool(live) != (drop_err is not None):
+                problem(f"{gn}: CREATE vs DROP race ended {outcome} (create: {out_a.get('r')}, drop: {drop_err})")
+            if not set(up) <= index_props(c1, gn, ul):
+                problem(f"{gn}: supporting index lost fields during the CREATE/DROP race")
+            safe_drop_index(c1, g, gn)
+            # 6. one constraint command on a scratch graph while a ~10 s read holds its read lock,
+            # rotating: CREATE UNIQUE with the graph deleted mid-wait, DROP UNIQUE, CREATE MANDATORY,
+            # DROP MANDATORY (the drops on an OPERATIONAL constraint). The command must wait for the
+            # read (its reply time shows it did) without freezing the server, and leave the right state.
+            if not stop.is_set():
+                variant = SCRATCH_VARIANTS[ch["scratch_rounds"] % len(SCRATCH_VARIANTS)]
+                ch["scratch_rounds"] += 1
+                verb, kind = variant.split("+")[0].upper().split("-")
+                sc = CHURN_SCRATCH
+                c1.delete(sc)
+                c1.execute_command("GRAPH.QUERY", sc, "UNWIND range(0, 299999) AS i CREATE (:N {v: i})")
+                c1.execute_command("GRAPH.QUERY", sc, "CREATE INDEX FOR (n:N) ON (n.v)")
+                wait_indexes(c1, sc, 120)
+                if verb == "DROP":
+                    c1.execute_command(*cons("CREATE", kind, sc, "N", ("v",)))
+                    pre = settle(c1, sc, "N")
+                    if [st_ for t_, _, st_ in pre if t_ == kind] != ["OPERATIONAL"]:
+                        problem(f"{sc}: {kind} constraint to drop is not OPERATIONAL: {pre}")
+                t_r, _ = in_thread(op, c3, sc, "GRAPH.RO_QUERY", sc,
+                                   "MATCH (n:N) WITH n LIMIT 1000 UNWIND range(1, 150000) AS x RETURN count(x)")
+                time.sleep(0.5)
+                t_c, out_c = in_thread(timed_op, c1, sc, *cons(verb, kind, sc, "N", ("v",)))
+                if variant == "create-unique+delete":
+                    time.sleep(0.5)
+                    op(c2, sc, "GRAPH.DELETE", sc)
+                t_c.join(300)
+                t_r.join(300)
+                rep, err, dt = out_c.get("r", (None, "no reply", 0.0))
+                ch["scratch_variants"].setdefault(variant, []).append(
+                    [round(dt, 2), s(rep) if isinstance(rep, (bytes, str)) else (err or "")[:80]])
+                if variant == "create-unique+delete":
+                    for wait in (0, 2):
+                        time.sleep(wait)
+                        if c2.exists(sc):
+                            problem(f"{sc} exists again {wait} s after GRAPH.DELETE")
+                            break
+                else:
+                    if err:
+                        problem(f"{sc}: {verb} {kind} behind a read failed: {err[:120]}")
+                    after = [c for c in settle(c1, sc, "N") if c[0] == kind]
+                    if verb == "DROP" and after:
+                        problem(f"{sc}: {kind} still present after DROP: {after}")
+                    if verb == "CREATE" and [c[2] for c in after] != ["OPERATIONAL"]:
+                        problem(f"{sc}: {kind} after CREATE behind a read: {after}")
+                c2.delete(sc)
+            ch["cycles"] += 1
+    except Exception as e:
+        problem(f"churn died: {type(e).__name__}: {e}")
+    finally:
+        for g in range(ng):
+            try:
+                safe_drop_index(c1, g, gname(g))
+            except Exception:
+                pass
+        try:
+            c1.delete(CHURN_SCRATCH)
+        except Exception:
+            pass
+        for c in (c1, c2, c3):
+            c.close()
+
+
+def restart_check(server: Server, ng) -> dict:
+    """#3759: SAVE, restart from the snapshot. Graphs come back unchanged; telemetry streams do not."""
+    r = connect(server.port, timeout=ADMIN_TIMEOUT_S)
+
+    def graph_counts(conn):
+        out = {}
+        for g in range(ng):
+            n = conn.execute_command("GRAPH.RO_QUERY", gname(g), "MATCH (n) RETURN count(n)")[1][0][0]
+            e = conn.execute_command("GRAPH.RO_QUERY", gname(g), "MATCH ()-[x]->() RETURN count(x)")[1][0][0]
+            out[gname(g)] = [n, e]
+        return out
+
+    before = graph_counts(r)
+    keys_before = sorted(s(k) for k in r.scan_iter(count=1000))
+    tele_before = [k for k in keys_before if k.startswith("telemetry{")]
+    t0 = now()
+    r.execute_command("SAVE")
+    save_s = round(now() - t0, 1)
+    r.close()
+    t0 = now()
+    r = server.restart()
+    load_s = round(now() - t0, 1)
+    keys_after = sorted(s(k) for k in r.scan_iter(count=1000))  # before any query can write telemetry
+    tele_after = [k for k in keys_after if k.startswith("telemetry{")]
+    after = graph_counts(r)
+    want_keys = sorted(set(keys_before) - set(tele_before))
+    res = {"save_s": save_s, "load_s": load_s, "counts_before": before, "counts_after": after,
+           "telemetry_before": tele_before, "telemetry_after_load": tele_after,
+           "keys_missing": sorted(set(want_keys) - set(keys_after)),
+           "keys_extra": sorted(set(keys_after) - set(want_keys))}
+    res["pass"] = before == after and not tele_after and not res["keys_missing"] and not res["keys_extra"]
+    res["telemetry_tested"] = bool(tele_before)
+    r.close()
+    return res
+
+
+def end_of_epoch_cleanup(r, ep, ng, notes):
+    for g in range(ng):
+        if ep["constraints"]:
+            for label, props in model.CONSTRAINTS:
+                try:
+                    r.execute_command("GRAPH.CONSTRAINT", "DROP", gname(g), "UNIQUE", "NODE", label,
+                                      "PROPERTIES", str(len(props)), *props)
+                except ResponseError as e:
+                    notes.append(f"g{g} drop constraint {label}: {str(e)[:120]}")
+                drop_index(r, g, label, props, notes)
+        if ep["indexes"]:
+            for label, props in model.EPOCH_INDEXES:
+                drop_index(r, g, label, props, notes)
+
+
+def drop_index(r, g, label, props, notes):
+    """C's DROP INDEX with several properties drops only the first one: drop them one by one."""
+    for p_ in props:
+        try:
+            r.execute_command("GRAPH.QUERY", gname(g), idx_drop(label, (p_,)))
+        except ResponseError as e:
+            notes.append(f"g{g} drop index {label}.{p_}: {str(e)[:120]}")
+
+
+def index_vs_scan(r, ng, sizes, seed) -> list[str]:
+    rng = random.Random(f"{seed}-ivs")
+    problems = []
+    for g in range(ng):
+        for label, prop in model.INDEX_PROBES:
+            for _ in range(5):
+                v = rng.randrange(sizes[g][label])
+                a = r.execute_command("GRAPH.RO_QUERY", gname(g), f"MATCH (n:{label} {{{prop}: {v}}}) RETURN count(n)")[1][0][0]
+                b = r.execute_command("GRAPH.RO_QUERY", gname(g), f"MATCH (n:{label}) WHERE n.{prop} + 0 = {v} RETURN count(n)")[1][0][0]
+                if a != b:
+                    problems.append(f"g{g} {label}.{prop}={v}: index {a}, scan {b}")
+    return problems
+
+
+def calibrate(r, ng, sizes, seed) -> list[dict]:
+    """Each cheap read's cost alone (median of 7, ms), per graph, before any load."""
+    rng = random.Random(f"{seed}-cal")
+    cal = []
+    for g in range(ng):
+        c = {}
+        for op in model.READ_OPS:
+            ts_ = []
+            for _ in range(7):
+                cypher, params = model.make_read(op, sizes[g], rng)
+                t0 = now()
+                r.execute_command(*qargs(gname(g), cypher, params, False, None))
+                ts_.append((now() - t0) * 1000)
+            c[op] = round(statistics.median(ts_), 2)
+        cal.append(c)
+    return cal
+
+
+# --- running one epoch ----------------------------------------------------------------------------
+
+
+def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Ledger, ping_path, hang_path,
+              hdir) -> dict:
+    port = server.port
+    r = connect(port, timeout=ADMIN_TIMEOUT_S)
+    ng = hp["graphs"]
+    edir = os.path.join(hdir, f"e{ep['epoch']}")
+    os.makedirs(edir, exist_ok=True)
+    log(f"epoch {ep['seed']}: {json.dumps(ep)}")
+    if ep["write_timeout_ms"]:
+        r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", "10000")
+        r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", str(ep["write_timeout_ms"]))
+    stop = mp.Event()
+    scanning = mp.Array("i", ng)
+    base_cfg = {"ep": ep, "sizes": sizes, "port": port, "drain_s": opts["drain_s"],
+                "max_conns": opts["max_conns"], "max_inflight_writes": ep.get("max_inflight_writes", MAX_INFLIGHT_WRITES)}
+    lp, ap = os.path.join(edir, "long.json"), os.path.join(edir, "async.json")
+    p_long = mp.Process(target=long_proc, args=(base_cfg, stop, scanning, lp), daemon=True)
+    p_async = mp.Process(target=async_proc, args=(base_cfg, stop, scanning, ap), daemon=True)
+    t_start = now()
+    p_long.start()
+    p_async.start()
+    events, constraint_info = [], {}
+    ev_stop = threading.Event()
+    ev_thread = threading.Thread(target=epoch_events,
+                                 args=(port, opts["epoch_s"], ep, ng, ev_stop, events, t_start, constraint_info),
+                                 daemon=True)
+    ev_thread.start()
+    crash = hang = None
+    try:
+        while now() - t_start < opts["epoch_s"]:
+            time.sleep(1)
+            running, code = server.state()
+            if not running:
+                crash = {"exit_code": code, "t": round(now() - t_start, 1)}
+                break
+            if os.path.exists(hang_path):
+                hang = {"t": round(now() - t_start, 1)}
+                break
+            if not p_async.is_alive() or not p_long.is_alive():
+                log("driver process died early")
+                break
+    except BaseException:  # stopped (SIGTERM) or docker failed: the drivers must not outlive the epoch
+        stop.set()
+        ev_stop.set()
+        for p in (p_async, p_long):
+            p.kill()
+        raise
+    stop.set()
+    ev_stop.set()
+    t_stopped = now()
+    if hang:
+        hang["backtrace_file"] = grab_backtrace(server, edir)
+        docker("kill", server.name, check=False)
+    p_async.join(opts["drain_s"] + 180)
+    p_long.join(opts["drain_s"] + 60)
+    for p in (p_async, p_long):
+        if p.is_alive():
+            p.kill()
+    ev_thread.join(60)
+    # an index still building when the load stopped gets 300 s more before it counts as stuck
+    for e in [x for x in events if x["event"] == "indexes_pending_at_epoch_end"]:
+        try:
+            ok, took = wait_indexes(r, gname(e["graph"]), 300)
+            events.append({"t": round(now() - t_start, 2), "event": "indexes_ready" if ok else "indexes_stuck",
+                           "graph": e["graph"], "seconds": round(e["seconds"] + took, 1), "after_load": True})
+        except Exception as exc:
+            events.append({"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]})
+    t_end = now()
+    data = {"reads": [], "writes": [], "longs": [], "errors": {}, "died": [], "unfinished": 0,
+            "pending_at_stop": 0, "drain_s": 0.0, "harness": {}}
+    for path, keys in ((ap, ("reads", "writes", "errors", "died", "unfinished", "pending_at_stop", "drain_s", "harness")),
+                       (lp, ("longs", "writes", "died", "unfinished"))):
+        try:
+            with open(path) as f:
+                d = json.load(f)
+            for k in keys:
+                if k in ("writes", "died"):
+                    data[k] += d.get(k, [])
+                elif k == "unfinished":
+                    data[k] += d.get(k, 0)
+                else:
+                    data[k] = d.get(k, data[k])
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            data["died"].append(f"no results from {os.path.basename(path)}: {e}")
+            ledger.incomplete = True
+    for w in data["writes"]:
+        ledger.add(w[0], w[7], w[5])
+    for g, _key in constraint_info.get("violations_accepted", []):
+        ledger.extra[g][model.CONSTRAINTS[0][0]] += 1
+    pings, downs = checks.read_pings(ping_path, t_start, t_end)
+
+    result = {"params": ep, "hour": hp, "calibration": cal, "events": events,
+              "duration_s": round(t_stopped - t_start, 1)}
+    if crash or hang:
+        result["crash"] = crash
+        result["hang"] = hang
+        result["checks"] = {"server_stays_up": {"pass": False, **(crash or {}), "hang": hang}}
+        an = checks.analyse(ep, hp, cal, data, pings, downs, events, constraint_info, [])
+        result["checks"].update({k: v for k, v in an["checks"].items() if k in ("no_freeze",)})
+        result["info"] = an["info"]
+    else:
+        notes = []
+        try:
+            r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", "0")
+            r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", "0")
+            ledger_problems = ledger.check(r)
+            ivs = index_vs_scan(r, ng, sizes, ep["seed"]) if (ep["indexes"] or ep["constraints"]) else []
+            end_of_epoch_cleanup(r, ep, ng, notes)
+            mem = r.info("memory")
+            result["memory"] = {"used_memory": mem.get("used_memory"), "used_memory_rss": mem.get("used_memory_rss")}
+        except Exception as e:
+            ledger_problems, ivs = [("harness", f"end-of-epoch checks failed: {type(e).__name__}: {e}")], []
+            notes.append(traceback.format_exc()[-500:])
+        an = checks.analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_problems)
+        running, code = server.state()
+        # a server that stopped answering after the load (the prober's marker, or no PONG now) did not stay up
+        hung = running and (os.path.exists(hang_path) or server_hung(port))
+        an["checks"]["server_stays_up"] = {"pass": running and not hung, "exit_code": None if running else code,
+                                           "hang": hung}
+        if ledger.incomplete:
+            for k in ("writes_add_up", "upsert_edges_complete", "timed_out_writes_leave_nothing"):
+                an["checks"][k] = {"pass": None, "skipped": "a driver result file was lost earlier on this server"}
+        an["checks"]["index_matches_scan"] = {"pass": not ivs, "applies": ep["indexes"] or ep["constraints"],
+                                              "problems": ivs}
+        if ep.get("churn"):
+            ch = constraint_info.get("churn", {})
+            an["checks"]["constraint_churn"] = {"pass": bool(ch.get("cycles")) and not ch.get("problems"), **ch}
+        result.update(an)
+        result["notes"] = notes
+    result["failed"] = sorted(k for k, v in result["checks"].items() if v.get("pass", True) is False)
+    with open(os.path.join(edir, "epoch.json"), "w") as f:
+        json.dump(result, f, indent=1, default=str)
+    with gzip.open(os.path.join(edir, "raw.json.gz"), "wt") as f:
+        json.dump({"reads": data["reads"], "writes": data["writes"], "longs": data["longs"]}, f)
+    for p in (lp, ap):
+        try:
+            os.remove(p)
+        except FileNotFoundError:
+            pass
+    log(f"epoch {ep['seed']} failed={result['failed']} "
+        f"worst_ping={result['checks'].get('no_freeze', {}).get('worst_ping_ms')}ms "
+        f"read_timeouts={result['checks'].get('no_timeouts_while_waiting', {}).get('all_read_timeouts')}")
+    return result
+
+
+def grab_backtrace(server: Server, edir: str) -> str:
+    path = os.path.join(edir, "hang-backtrace.txt")
+    try:
+        pid = server.pid()
+        with open(path, "w") as f:
+            subprocess.run(["gdb", "-p", str(pid), "-batch", "-ex", "thread apply all bt"], stdout=f,
+                           stderr=subprocess.STDOUT, timeout=120)
+    except Exception as e:
+        with open(path, "a") as f:
+            f.write(f"\nbacktrace failed: {e}\n")
+    return os.path.basename(path)
+
+
+# --- server-hour --------------------------------------------------------------------------------
+
+
+def run_server_hour(opts: dict, info: dict, tag: str, hp: dict, epochs: list[dict], hdir: str,
+                    deadline: float | None = None, restart: bool = False) -> dict:
+    """Start a server and its plain PING control from the image, build the hour's graphs, run its
+    epochs. Returns {"hour", "build": [...], "epochs": [...], "module_version", "config"}, plus
+    "error" and "server_alive" when something failed before the epochs finished (a server that
+    would not start, died during the build, or a harness fault)."""
+    os.makedirs(hdir, exist_ok=True)
+    log(f"{tag}: server-hour {hp}")
+    server = Server(info, f"{opts['name_prefix']}-{tag}", opts.get("server_cpus"), opts["net"], hp["thread_count"])
+    control = Server(info, f"{opts['name_prefix']}-{tag}-plain", opts.get("client_cpus"), opts["net"], module=False)
+    out = {"hour": hp, "tag": tag, "build": [], "epochs": []}
+    prober = None
+    stop = mp.Event()
+    ping_path = os.path.join(hdir, "pings.csv")
+    hang_path = os.path.join(hdir, "HANG")
+    try:
+        r = server.start()
+        control.start()
+        out["module_version"] = module_version(r)
+        out["config"] = server_config(r)
+        prober = mp.Process(target=prober_proc, args=({"falkor": server.port, "control": control.port},
+                                                      ping_path, hang_path, stop), daemon=True)
+        prober.start()
+        sizes = []
+        for g, sc in enumerate(hp["scales"]):
+            n, timing, _base = build_graph(r, gname(g), sc)
+            sizes.append(n)
+            out["build"].append({"graph": g, "scale": sc, **timing})
+        cal = calibrate(r, hp["graphs"], sizes, f"{hp.get('seed', 'soak')}-h{hp['hour']}")
+        out["calibration"] = cal
+        out["used_memory_after_build"] = r.info("memory").get("used_memory")
+        log(f"{tag}: built {out['build']}, cal={cal}")
+        ledger = checks.Ledger(sizes)
+        for ep in epochs:
+            after_load = 300 if ep.get("indexes") else 0  # an index still building gets this long after the load
+            if deadline and time.time() + opts["epoch_s"] + opts["drain_s"] + 120 + after_load > deadline:
+                log("deadline: no time for another epoch")
+                break
+            res = run_epoch(opts, server, hp, ep, sizes, cal, ledger, ping_path, hang_path, hdir)
+            out["epochs"].append(res)
+            if res.get("crash") or res.get("hang"):
+                break
+        res_list = out["epochs"]
+        mems = [x.get("memory", {}).get("used_memory") for x in res_list if x.get("memory")]
+        if len(mems) >= 2 and mems[0]:
+            growth = (mems[-1] - mems[0]) / mems[0]
+            res_list[-1]["checks"]["memory_steady"] = {"pass": growth < 0.10, "growth": round(growth, 4),
+                                                      "used_memory_by_epoch": mems}
+        if restart and res_list and not (res_list[-1].get("crash") or res_list[-1].get("hang")):
+            try:
+                rc = restart_check(server, hp["graphs"])
+            except Exception as e:
+                rc = {"pass": False, "error": f"{type(e).__name__}: {e}"[:300]}
+            res_list[-1]["checks"]["restart_from_snapshot"] = rc
+        for x in res_list:
+            x["failed"] = sorted(k for k, v in x.get("checks", {}).items() if v.get("pass", True) is False)
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"[:500]
+        out["server_alive"] = None  # docker failed: nothing learnt about the engine
+        if not isinstance(e, DockerError):
+            try:
+                running, code = server.state()
+                hung = running and (os.path.exists(hang_path) or server_hung(server.port))
+                out["server_alive"], out["exit_code"], out["hung"] = running and not hung, None if running else code, hung
+            except DockerError:
+                pass
+        log(f"{tag}: {out['error']} (server alive: {out['server_alive']})")
+        with open(os.path.join(hdir, "error.txt"), "w") as f:
+            f.write(traceback.format_exc())
+    finally:
+        stop.set()
+        if prober is not None:
+            prober.join(5)
+            if prober.is_alive():
+                prober.kill()
+        with open(os.path.join(hdir, "server-tail.log"), "w") as f:
+            f.write(server.stop())
+        control.stop()
+    with open(os.path.join(hdir, "hour.json"), "w") as f:
+        json.dump({k: v for k, v in out.items() if k != "epochs"}, f, indent=1, default=str)
+    return out
+
+
+def set_start_method():
+    if sys.platform != "win32":
+        try:
+            mp.set_start_method("fork")
+        except RuntimeError:
+            pass
