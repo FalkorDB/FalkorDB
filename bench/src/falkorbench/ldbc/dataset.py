@@ -44,12 +44,6 @@ _MARKER_VERSION = "1"
 
 Echo = Callable[[str], None]
 
-#: Extraction filters (`filter="data"`) arrived in Python 3.11.4; Debian 12,
-#: the nightly VM's image, ships 3.11.2. A module flag rather than a check at
-#: the call, so a test can take the other path without deleting anything
-#: from `tarfile` itself (which 3.14's `extract()` uses internally).
-_HAS_FILTERS = hasattr(tarfile, "data_filter")
-
 
 class DatasetError(RuntimeError):
     """The dataset could not be fetched or prepared."""
@@ -190,18 +184,10 @@ def _extract_zst(tarball: Path, dest: Path) -> None:
             stdout=subprocess.PIPE,
         )
         with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
-            if _HAS_FILTERS:
-                # `filter="data"` refuses absolute paths and ../ escapes.
-                # Default in 3.14; set explicitly so behaviour does not depend
-                # on the runtime.
-                tar.extractall(dest, filter="data")
-            else:
-                # Extraction filters arrived in 3.11.4, and Debian 12 (the
-                # nightly's VM image) ships 3.11.2, where `filter=` is a
-                # TypeError. Apply the same refusals by hand.
-                for member in tar:
-                    _refuse_unsafe(member)
-                    tar.extract(_sanitised(member), dest)
+            # `filter="data"` refuses absolute paths, ../ escapes and links,
+            # and strips setuid and group/other write. It needs Python 3.11.4
+            # (bench/pyproject.toml), not Debian 12's 3.11.2; uv provides it.
+            tar.extractall(dest, filter="data")
         if proc.wait() != 0:
             raise DatasetError(f"zstd exited {proc.returncode}")
     except (OSError, tarfile.TarError) as e:
@@ -215,39 +201,6 @@ def _extract_zst(tarball: Path, dest: Path) -> None:
                 proc.wait()
             if proc.stdout is not None:
                 proc.stdout.close()
-
-
-def _sanitised(member: tarfile.TarInfo) -> tarfile.TarInfo:
-    """The member with what `filter="data"` would change, changed.
-
-    A directory gets 0755 whatever the archive says (the data filter leaves
-    a directory's mode to the default), so the server's own user in the
-    container (uid 999) can always enter it. A file loses setuid, setgid,
-    sticky and group/other write, keeps owner read and write, and loses
-    group/other execute when the owner cannot execute it. The owner becomes
-    whoever extracts, so a run as root does not hand files to the archive's
-    uid.
-    """
-    if member.isdir():
-        member.mode = 0o755
-    else:
-        mode = (member.mode & 0o755) | 0o600
-        if not mode & 0o100:
-            mode &= ~0o011
-        member.mode = mode
-    member.uid, member.gid = os.geteuid(), os.getegid()
-    member.uname = member.gname = ""
-    return member
-
-
-def _refuse_unsafe(member: tarfile.TarInfo) -> None:
-    """What `filter="data"` refuses, for a runtime without it: anything but
-    a plain file or directory, an absolute path, and a `..` component."""
-    name = member.name
-    if not (member.isfile() or member.isdir()):
-        raise DatasetError(f"refusing {name!r}: not a plain file or directory")
-    if name.startswith(("/", "\\")) or ".." in Path(name).parts:
-        raise DatasetError(f"refusing {name!r}: it would extract outside the cache")
 
 
 def prepare(root: Path, *, echo: Echo = print) -> None:

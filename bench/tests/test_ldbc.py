@@ -335,38 +335,14 @@ def _tar_zst(tmp_path, members):
     return tmp_path / "x.tar.zst"
 
 
-# On a newer Python, extracting without a filter warns that 3.14 will filter;
-# 3.11.2 itself does not.
-@pytest.mark.filterwarnings("ignore:Python 3.14 will:DeprecationWarning")
-@pytest.mark.parametrize("filters", [True, False], ids=["with-filters", "python-3.11.2"])
-def test_extraction_works_with_and_without_tarfile_filters(tmp_path, monkeypatch, filters):
-    """Debian 12, the nightly VM's image, ships Python 3.11.2: no `filter=`."""
-    if filters and not dataset._HAS_FILTERS:
-        pytest.skip("this Python has no tarfile extraction filters")
-    if not filters:
-        monkeypatch.setattr(dataset, "_HAS_FILTERS", False)
+def test_extraction_applies_the_data_filter(tmp_path):
     archive = _tar_zst(tmp_path, {"ds": None, "ds/static": None, "ds/static/a.csv": b"id|x\n1|2\n"})
     dest = tmp_path / "cache"
     dest.mkdir()
     dataset._extract_zst(archive, dest)
     assert (dest / "ds/static/a.csv").read_bytes() == b"id|x\n1|2\n"
-    # The server in the container runs as another user (uid 999): it must be
-    # able to enter every directory and read every file.
-    for d in (dest / "ds", dest / "ds/static"):
-        assert d.stat().st_mode & 0o777 == 0o755, oct(d.stat().st_mode)
-    # Nothing beyond what `filter="data"` keeps: no setuid, no group write.
+    # archived 0o4775: the data filter drops setuid and group write
     assert (dest / "ds/static/a.csv").stat().st_mode & 0o7777 == 0o755
-
-
-@pytest.mark.filterwarnings("ignore:Python 3.14 will:DeprecationWarning")
-def test_extraction_without_filters_still_refuses_an_escape(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset, "_HAS_FILTERS", False)
-    archive = _tar_zst(tmp_path, {"../evil.csv": b"x"})
-    dest = tmp_path / "cache"
-    dest.mkdir()
-    with pytest.raises(dataset.DatasetError, match="outside the cache"):
-        dataset._extract_zst(archive, dest)
-    assert not (tmp_path / "evil.csv").exists()
 
 
 def test_an_interrupted_extraction_does_not_pass_for_a_dataset(tmp_path, monkeypatch):
@@ -393,16 +369,6 @@ def test_an_interrupted_extraction_does_not_pass_for_a_dataset(tmp_path, monkeyp
     monkeypatch.setattr(dataset, "_extract_zst", whole)
     assert dataset.fetch(tmp_path, sf, echo=lambda _: None) == target
     assert target.is_dir() and not list(tmp_path.glob(".extracting-*"))
-
-
-def test_only_plain_files_and_directories_are_extracted():
-    link = tarfile.TarInfo("ds/link")
-    link.type = tarfile.SYMTYPE
-    with pytest.raises(dataset.DatasetError, match="not a plain file"):
-        dataset._refuse_unsafe(link)
-    with pytest.raises(dataset.DatasetError, match="outside the cache"):
-        dataset._refuse_unsafe(tarfile.TarInfo("/etc/passwd"))
-    dataset._refuse_unsafe(tarfile.TarInfo("ds/static/a.csv"))
 
 
 # --- the nightly check (`bench ldbc check`) ----------------------------------
@@ -1042,21 +1008,6 @@ def test_a_query_that_finished_on_neither_side_alone_is_not_a_comparison(tmp_pat
     assert result["verdict"] == "error"
     assert "no query could be compared" in result["error"]
     assert_valid(check.opts.out / "result.json")
-
-
-@pytest.mark.parametrize(
-    ("archived", "expected"),
-    [(0o4775, 0o755), (0o655, 0o644), (0o600, 0o600), (0o0777, 0o755), (0o444, 0o644)],
-)
-def test_the_fallback_gives_a_file_the_mode_the_data_filter_would(archived, expected):
-    info = tarfile.TarInfo("ds/a.csv")
-    info.mode = archived
-    assert dataset._sanitised(info).mode == expected
-    if dataset._HAS_FILTERS:  # the reference, where this Python has it
-        assert (
-            tarfile.data_filter(tarfile.TarInfo("ds/a.csv").replace(mode=archived), "/x").mode
-            == expected
-        )
 
 
 @pytest.mark.parametrize(

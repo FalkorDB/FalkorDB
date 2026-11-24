@@ -11,7 +11,7 @@
 name = "falkorbench"
 version = "0.1.0"
 description = "Per-query performance harness for FalkorDB"
-requires-python = ">=3.11"
+requires-python = ">=3.11.4"
 
 dependencies = [
     # The FalkorDB client, not raw redis-py: `Graph.query` raises on an error
