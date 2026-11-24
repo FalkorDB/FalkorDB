@@ -13,12 +13,17 @@ import importlib.util
 import json
 import os
 import signal
+import socket
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
 from falkorbench import probe
+from falkorbench.cli import cli
 from falkorbench.probe import SHAPES
 from falkorbench.probe import Cell
 from falkorbench.probe import Reply
@@ -548,8 +553,9 @@ def test_every_mode_fits_its_budget_when_every_block_hits_its_cap(mode):
 class FakeServer:
     """Answers every query at once; records what it was sent."""
 
-    def __init__(self, side, log, fail_with=None):
+    def __init__(self, side, log, fail_with=None, dies=False):
         self.side, self.log, self.fail_with, self.settled = side, log, fail_with, 0
+        self.dies, self.down = dies, None
 
     def query(self, graph, cypher):
         self.log.append((self.side, cypher))
@@ -559,11 +565,14 @@ class FakeServer:
 
     def settle(self, graph):
         self.settled += 1
+        if self.dies:
+            self.down = "server stopped answering (container exited exit 139)"
+        return self.dies
 
 
-def unit(spec, deadline=None, **fails):
+def unit(spec, deadline=None, dies=(), **fails):
     log = []
-    servers = {s: FakeServer(s, log, fails.get(s)) for s in probe.SIDES}
+    servers = {s: FakeServer(s, log, fails.get(s), s in dies) for s in probe.SIDES}
     shape = SHAPES[2]  # UNWIND id MATCH edge 1 row
     cell = probe.run_unit(
         servers, shape, 10_000, "screen", "baseline", spec, lambda r: None, deadline
@@ -756,3 +765,160 @@ def test_end_to_end_relative_out_lands_under_the_working_directory(
     )
     assert json.loads((work / "out" / "result.json").read_text()) == res
     assert res["artifacts"] and all((work / "out" / a).is_file() for a in res["artifacts"])
+
+
+# --- review fixes (PR #3998) ----------------------------------------------------
+
+
+def test_a_reply_in_slow_pieces_times_out_as_one_request():
+    """The timeout bounds the whole request, not each recv: two halves of a
+    reply 0.25 s apart each beat a 0.3 s per-recv timeout, but not 0.3 s total."""
+    listener = socket.create_server(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+
+    def serve():
+        conn, _ = listener.accept()
+        with conn:
+            conn.recv(1024)
+            time.sleep(0.2)
+            conn.sendall(b"*2\r\n:1\r\n")
+            time.sleep(0.25)
+            conn.sendall(b":2\r\n")
+            time.sleep(0.5)
+
+    threading.Thread(target=serve, daemon=True).start()
+    conn = probe.Conn(port, timeout=5)
+    try:
+        with pytest.raises(probe.Timeout):
+            conn.call(["PING"], timeout=0.3)
+    finally:
+        conn.close()
+        listener.close()
+
+
+def test_run_unit_a_server_gone_after_a_timeout_is_a_crash():
+    """settle() finding the server gone makes the side `down`, so the crash
+    rule applies even when the other side also timed out."""
+    spec = probe.ModeSpec(warmup=1, reps=3, block_seconds=60.0, budget_minutes=1.0)
+    cell, _, _ = unit(
+        spec,
+        dies=("candidate",),
+        candidate=probe.Timeout("no reply within 120 s"),
+        baseline=probe.Timeout("no reply within 120 s"),
+    )
+    assert cell.runs["candidate"].failure_kind == "down"
+    assert cell.runs["baseline"].failure_kind == "timeout"
+    screen = grid(flat)
+    screen[(SHAPES[2].name, SIZES[-1])] = cell
+    res = result(screen)
+    assert res["verdict"] == "regression"
+    assert "broken on both sides" not in res["summary"]
+
+
+def test_salvage_keeps_correctness_never_timings():
+    mismatched = cell(
+        "create node", 1000, 1.0, 1.0, counts={"candidate": {0: 0}, "baseline": {0: 1}}
+    )
+    kept = probe.salvage(mismatched)
+    assert kept is not None and probe.first_mismatch(kept) == (0, 0, 1)
+    assert all(run.wall == [] and run.server == [] for run in kept.runs.values())
+    assert probe.salvage(cell("create node", 1000, 1.0, 1.0)) is None  # nothing to keep
+    assert probe.salvage(None) is None
+
+
+def test_end_to_end_a_mismatch_survives_an_interrupted_unit(tmp_path, fake_docker, monkeypatch):
+    """SIGTERM lands at the end of the first unit, after the candidate
+    created one relationship fewer than the baseline: the mismatch stands."""
+    monkeypatch.setenv("FAKE_DOCKER_SHORT", "a" * 64)  # the candidate
+    real = probe.run_unit
+
+    def interrupted(*args, **kwargs):
+        stop = probe.Stopped()
+        stop.cell = real(*args, **kwargs)
+        raise stop
+
+    monkeypatch.setattr(probe, "run_unit", interrupted)
+    res = run_fake(tmp_path)
+    assert res["verdict"] == "regression", res["summary"]
+    (rows,) = [f for f in by_status(res, "regression") if f["metric"] == "rows"]
+    assert rows["direction"] == "mismatch" and (rows["candidate"], rows["baseline"]) == (0, 1)
+    assert "stopped by SIGTERM" in res["summary"]
+    assert not any(f["metric"] == "growth_ratio" for f in res["findings"])
+
+
+def test_end_to_end_connection_lost_during_config_is_the_candidates_failure(
+    tmp_path, fake_docker, monkeypatch
+):
+    monkeypatch.setenv("FAKE_DOCKER_CLOSE_CONFIG", "a" * 64)  # the candidate
+    res = run_fake(tmp_path)
+    assert res["verdict"] == "regression" and res["error"] is None, res["summary"]
+    (start,) = by_status(res, "regression")
+    assert start["name"] == "server starts and answers PING" and start["metric"] == "completed"
+    assert list(fake_docker.glob("*.pid")) == []
+
+
+@pytest.mark.parametrize(
+    "content", ['{"runner": "gce", "type": "x", "cpu": "y", "cores": NaN}', "[1, 2]", "{}"]
+)
+def test_an_unusable_machine_file_is_an_error_not_a_crash(tmp_path, monkeypatch, content):
+    machine = tmp_path / "machine.json"
+    machine.write_text(content)
+    monkeypatch.setenv("PERF_MACHINE_JSON", str(machine))
+    res = probe.run(
+        candidate="falkordb/falkordb-server:edge",  # stops before any server starts
+        baseline=IMAGE_B,
+        out=tmp_path / "out",
+        mode="nightly",
+        echo=lambda _: None,
+    )
+    assert res["verdict"] == "error" and "PERF_MACHINE_JSON unreadable" in res["error"]
+    assert res["machine"]["runner"] == "local"
+    assert json.loads((tmp_path / "out" / "result.json").read_text()) == res
+
+
+@pytest.mark.parametrize(
+    ("sizes", "reps", "message"),
+    [
+        ([1000, 1000], None, "two distinct positive sizes"),
+        ([0, 1000], None, "two distinct positive sizes"),
+        (None, 0, "--reps must be a positive"),
+        (None, -1, "--reps must be a positive"),
+    ],
+)
+def test_development_overrides_are_checked(tmp_path, monkeypatch, sizes, reps, message):
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))  # no docker: must stop before it
+    res = probe.run(
+        candidate=IMAGE_A,
+        baseline=IMAGE_B,
+        out=tmp_path / "out",
+        mode="nightly",
+        sizes=sizes,
+        reps=reps,
+        echo=lambda _: None,
+    )
+    assert res["verdict"] == "error" and message in res["error"]
+    assert "FileNotFoundError" not in res["error"]
+
+
+def test_end_to_end_through_the_bench_probe_command(tmp_path, fake_docker):
+    """The command and its options, as _perf-vm.yml calls it (relative --out)."""
+    work = tmp_path / "checkout"
+    work.mkdir()
+    args = [
+        "probe",
+        "--candidate", IMAGE_A, "--baseline", IMAGE_B, "--out", "out", "--mode", "nightly",
+        "--candidate-label", "main@4c10889", "--baseline-label", "6.2.0",
+        "--candidate-commit", "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+        "--sizes", "1000,2000", "--reps", "5",
+    ]  # fmt: skip
+    with contextlib.chdir(work):
+        outcome = CliRunner().invoke(cli, args, catch_exceptions=False)
+    assert outcome.exit_code == 0, outcome.output
+    res = json.loads((work / "out" / "result.json").read_text())
+    assert res["candidate"] == {
+        "image": IMAGE_A,
+        "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+        "label": "main@4c10889",
+    }
+    assert res["baseline"]["label"] == "6.2.0" and res["baseline"]["commit"] is None
+    assert f"{res['verdict']}: " in outcome.output

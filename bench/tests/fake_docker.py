@@ -11,6 +11,10 @@ Environment:
   FAKE_DOCKER_HANG    image substring whose queries containing
                       FAKE_DOCKER_HANG_QUERY sleep 5 s
   FAKE_DOCKER_REFUSE  container-name substring that `docker run` refuses
+  FAKE_DOCKER_CLOSE_CONFIG  image substring whose server closes the
+                      connection on CONFIG SET
+  FAKE_DOCKER_SHORT   image substring whose UNWIND shapes create one
+                      relationship fewer than asked (a rows mismatch)
 
 Every measured query sleeps 2 ms, so a ratio of two of them is stable on a
 busy machine.
@@ -51,11 +55,23 @@ def run(args: list[str]) -> int:
         print("docker: Error response from daemon: Conflict.", file=sys.stderr)
         return 125
     slow = int(os.environ.get("FAKE_DOCKER_SLOW", NEVER) in image)
+    close_config = int(os.environ.get("FAKE_DOCKER_CLOSE_CONFIG", NEVER) in image)
+    short = int(os.environ.get("FAKE_DOCKER_SHORT", NEVER) in image)
     hang = os.environ.get("FAKE_DOCKER_HANG_QUERY", "")
     if os.environ.get("FAKE_DOCKER_HANG", NEVER) not in image:
         hang = ""  # argv cannot carry NEVER
     server = subprocess.Popen(
-        [sys.executable, "-I", __file__, "serve", port, str(slow), hang],
+        [
+            sys.executable,
+            "-I",
+            __file__,
+            "serve",
+            port,
+            str(slow),
+            hang,
+            str(close_config),
+            str(short),
+        ],
         start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -73,7 +89,7 @@ def main(argv: list[str]) -> int:
     if cmd == "run":
         return run(args)
     if cmd == "serve":
-        serve(int(args[0]), args[1] == "1", args[2])
+        serve(int(args[0]), args[1] == "1", args[2], args[3] == "1", args[4] == "1")
         return 0
     if cmd in ("rm", "inspect", "logs") and not record.exists():
         print(f"Error: No such container: {args[-1]}", file=sys.stderr)
@@ -113,7 +129,7 @@ def size_of(graph: str) -> int:
     return int(m.group(1)) * (1000 if m.group(2) else 1)
 
 
-def answer(words: list[str], slow: bool, hang: str) -> bytes:
+def answer(words: list[str], slow: bool, hang: str, short: bool = False) -> bytes:
     cmd = words[0].upper()
     if cmd == "PING":
         return b"+PONG\r\n"
@@ -134,7 +150,7 @@ def answer(words: list[str], slow: bool, hang: str) -> bytes:
     if query.startswith("CYPHER rows="):
         if slow:
             time.sleep(size_of(graph) * 2e-6)
-        n = query.count("{s:")
+        n = query.count("{s:") - int(short)
         return encode([[f"Relationships created: {n}", f"Relationships deleted: {n}", *stats]])
     if query.startswith("CYPHER id="):
         node = int(query.split()[1].removeprefix("id="))
@@ -144,7 +160,7 @@ def answer(words: list[str], slow: bool, hang: str) -> bytes:
     return encode([stats])
 
 
-def serve(port: int, slow: bool, hang: str) -> None:
+def serve(port: int, slow: bool, hang: str, close_config: bool, short: bool) -> None:
     class Handler(socketserver.StreamRequestHandler):
         def handle(self) -> None:
             with contextlib.suppress(OSError, ValueError):
@@ -156,7 +172,9 @@ def serve(port: int, slow: bool, hang: str) -> None:
                     for _ in range(int(head[1:])):
                         n = int(self.rfile.readline()[1:])
                         words.append(self.rfile.read(n + 2)[:-2].decode())
-                    self.wfile.write(answer(words, slow, hang))
+                    if close_config and words[0].upper() == "CONFIG":
+                        return  # drop the connection: PING answered, CONFIG SET not
+                    self.wfile.write(answer(words, slow, hang, short))
 
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     socketserver.ThreadingTCPServer.daemon_threads = True

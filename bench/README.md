@@ -216,11 +216,14 @@ Wall clock is the measure here (the VM has no PMU access), which is acceptable
 because the signal is a large ratio of medians from the same machine and run.
 **Its limits:** a constant-factor change (the candidate 2x slower at every
 size) leaves the growth ratio at 1 and is not this check's to find; the micro
-tier measures it. And a shape whose per-request cost grows by under 1 ms from
-10k to 500k nodes is not flagged (a 0.2 ms lookup reaching 1.0 ms, say). The
-floor is there because the controls are 0.1-0.4 ms requests whose wall clock
-is bimodal, so a ratio of four such medians swings: in the workflow's proof
-run a same-image `create node` read 1.66x at only +0.12 ms. In that run every
+tier measures it. And a shape is not flagged when the candidate adds under
+1 ms per request at 500k nodes beyond what the baseline's own growth and the
+10k ratio predict: the excess is relative to the baseline, not the
+candidate's own change (a 0.2 ms lookup reaching 1.0 ms while the baseline
+stays at 0.2 ms, say). The floor is there because the controls are 0.1-0.4 ms
+requests whose wall clock is bimodal, so a ratio of four such medians swings:
+in the workflow's acceptance run a same-image `create node` read 1.66x at only
++0.12 ms. In that run every
 same-image cell's excess lay within −0.54 to +0.47 ms, and every regressed
 shape's within +67.6 to +77.0 ms; 1 ms is about 1.9x the first and 67x below
 the second.
@@ -259,8 +262,9 @@ Artifacts: `raw/rows.csv` (every request), `raw/growth.csv` (per shape), `raw/su
 p50, p95, ratio, failures), `raw/setup.csv` (build times), `raw/plans.txt`
 (`GRAPH.EXPLAIN` of every shape on both sides at 500k nodes), and each
 server's log. Tests: `bench/tests/test_probe.py`, no server needed. They
-include end-to-end runs of `bench probe` against `tests/fake_docker.py`, a
-stand-in `docker` whose containers are small RESP servers.
+include end-to-end runs against `tests/fake_docker.py`, a stand-in `docker`
+whose containers are small RESP servers: of the runner (`probe.run`), and one
+through the `bench probe` command and its options.
 
 ## pmc_tool (optional, for branch/L1D columns)
 

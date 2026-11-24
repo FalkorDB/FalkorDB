@@ -98,14 +98,18 @@ THRESHOLD = 1.5
 
 # ...and when the candidate adds more than this many milliseconds per request
 # at the largest size beyond what its ratio at the smallest size predicts (or,
-# for an improvement, saves more). The controls are 0.1-0.4 ms requests whose
-# wall clock is bimodal, so a ratio of four such medians swings: in the
-# workflow's proof run (45388515425) a same-image `create node` read 1.66x at
-# +0.12 ms. There, every same-image cell's excess lay in -0.54..+0.47 ms and
-# every regressed shape's in +67.6..+77.0 ms. 1.0 ms is about 1.9x the
-# same-image spread and about 67x below the real regressions. The limit: a
-# shape whose per-request cost grows by under 1 ms from 10k to 500k nodes is
-# not flagged (a 0.2 ms lookup reaching 1.0 ms, say).
+# for an improvement, saves more). The excess is relative to the baseline: it
+# is the candidate's p50 at the largest size minus the baseline's p50 there
+# scaled by the smallest size's ratio, not the candidate's own change. The
+# controls are 0.1-0.4 ms requests whose wall clock is bimodal, so a ratio of
+# four such medians swings: in the workflow's acceptance run (45388515425) a
+# same-image `create node` read 1.66x at +0.12 ms. There, every same-image
+# cell's excess lay in -0.54..+0.47 ms and every regressed shape's in
+# +67.6..+77.0 ms. 1.0 ms is about 1.9x the same-image spread and about 67x
+# below the real regressions. The limit: a shape is not flagged when the
+# candidate adds under 1 ms per request at 500k nodes beyond what the
+# baseline's own growth and the 10k ratio predict (a 0.2 ms lookup reaching
+# 1.0 ms while the baseline stays at 0.2 ms, say).
 EXCESS_FLOOR_MS = 1.0
 
 # A block stops early once it has run this long, but never below MIN_REPS.
@@ -319,12 +323,25 @@ class Conn:
         except OSError as e:
             raise Gone(f"cannot connect to 127.0.0.1:{port}: {e}") from e
         self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.reader = RespReader(lambda: self.sock.recv(1 << 16))
+        self.deadline = 0.0
+        self.reader = RespReader(self._recv)
+
+    def _recv(self) -> bytes:
+        """One recv, bounded by what is left of the request's deadline: a
+        socket timeout bounds each recv alone, and a reply arriving in pieces
+        could otherwise take any time in total."""
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("request deadline passed")
+        self.sock.settimeout(left)
+        return self.sock.recv(1 << 16)
 
     def call(self, words: Sequence[str], timeout: float) -> Any:
-        """Send one command and return its reply. Raises QueryError for an
-        error reply; Timeout and Gone close the connection."""
+        """Send one command and return its reply, all within `timeout`.
+        Raises QueryError for an error reply; Timeout and Gone close the
+        connection, so the request is never re-sent."""
         try:
+            self.deadline = time.monotonic() + timeout
             self.sock.settimeout(timeout)
             self.sock.sendall(encode(words))
             reply = self.reader.read()
@@ -463,8 +480,8 @@ class Server:
         for key, value in (("save", ""), ("appendonly", "no")):
             try:
                 self.call(["CONFIG", "SET", key, value], timeout=10)
-            except QueryError as e:
-                raise StartFailed(f"CONFIG SET {key} failed: {e}") from e
+            except (QueryError, Gone, Timeout) as e:
+                raise StartFailed(f"CONFIG SET {key} failed: {e} ({self.state()})") from e
 
     def call(self, words: Sequence[str], timeout: float) -> Any:
         if self.conn is None:
@@ -493,17 +510,22 @@ class Server:
         wall_ms = (time.perf_counter_ns() - t0) / 1e6
         return Reply.parse(raw), wall_ms
 
-    def settle(self, graph: str) -> None:
+    def settle(self, graph: str) -> bool:
         """After a timed-out request: wait until the graph takes a write again,
-        so the next unit is not measured behind the request still running."""
+        so the next unit is not measured behind the request still running.
+        Returns True when the server turned out to be gone (a crash, not a
+        slow request)."""
         try:
             self.call(["GRAPH.QUERY", graph, "CREATE (z:ProbeSync) DELETE z"], SETTLE_TIMEOUT_S)
         except Timeout:
             self.down = f"still busy {SETTLE_TIMEOUT_S:.0f} s after a request timed out"
         except Gone as e:
             self.down = f"server stopped answering ({e}; {self.state()})"
+            return True
         except QueryError:
+            # An error reply is still a reply: the graph takes requests again.
             pass
+        return False
 
     def state(self) -> str:
         try:
@@ -521,6 +543,9 @@ class Server:
             done = docker("logs", self.name, timeout=20)
             path.write_text(done.stdout + done.stderr)
         except (subprocess.TimeoutExpired, OSError):
+            # Best effort: the log is evidence, not a result. A log that
+            # could not be saved is simply not listed (artifacts are
+            # filtered to the files that exist).
             pass
 
     def stop(self) -> None:
@@ -635,7 +660,8 @@ def run_unit(
                 run.fail(kind, f"error reply: {e}")
             except Timeout as e:
                 run.fail("timeout", f"did not finish: {e}")
-                server.settle(graph)
+                if server.settle(graph):  # the server died: a crash, not a slow request
+                    run.failure_kind, run.failure = "down", server.down
             except Gone as e:
                 run.fail("down", str(e))
             if run.failure:
@@ -665,6 +691,23 @@ def run_unit(
     except Interrupted as e:
         e.cell = cell
         raise
+    return cell
+
+
+def salvage(cell: Cell | None) -> Cell | None:
+    """What a unit cut short (SIGTERM, the budget) may keep: its correctness
+    evidence, never its incomplete timings. That is a candidate that did not
+    finish while the baseline answered, or a request whose counts already
+    differ between the sides. The kept cell carries no latency samples, so
+    it can never feed a growth ratio."""
+    if cell is None:
+        return None
+    cand, base = cell.runs["candidate"], cell.runs["baseline"]
+    did_not_finish = cand.failure is not None and base.counts and base.failure is None
+    if not did_not_finish and first_mismatch(cell) is None:
+        return None
+    for run in cell.runs.values():
+        run.wall, run.server = [], []
     return cell
 
 
@@ -1029,12 +1072,21 @@ def default_label(image: str) -> str:
     return f"{name}@{digest[:12]}" if digest else name
 
 
+MACHINE_KEYS = {"runner", "type", "cpu", "cores"}
+
+
 def machine() -> dict:
-    """The workflow's machine object (contract v1.3), copied as is; else local."""
+    """The workflow's machine object (contract v1.3), copied as is; else local.
+    Raises ValueError for anything but an object with exactly the contract's
+    keys and no NaN or Infinity, which could not be written to result.json."""
     path = os.environ.get("PERF_MACHINE_JSON")
-    if path:
-        return json.loads(Path(path).read_text())
-    return local_machine()
+    if not path:
+        return local_machine()
+    obj = json.loads(Path(path).read_text())
+    if not isinstance(obj, dict) or set(obj) != MACHINE_KEYS:
+        raise ValueError(f"not a machine object with keys {sorted(MACHINE_KEYS)}: {obj!r:.200}")
+    json.dumps(obj, allow_nan=False)  # ValueError on NaN or Infinity
+    return obj
 
 
 def local_machine() -> dict:
@@ -1223,10 +1275,13 @@ def run(
     spec = MODES.get(mode)
     if spec is None:
         errors.append(f"unknown --mode {mode!r} (queue, nightly or long)")
-    elif reps:
-        spec = ModeSpec(min(spec.warmup, reps), reps, spec.block_seconds, spec.budget_minutes)
-    if len(sizes) < 2:
-        errors.append(f"growth needs at least two sizes, got {sizes}")
+    elif reps is not None:
+        if reps < 1:
+            errors.append(f"--reps must be a positive number of requests, got {reps}")
+        else:
+            spec = ModeSpec(min(spec.warmup, reps), reps, spec.block_seconds, spec.budget_minutes)
+    if len(set(sizes)) < 2 or any(size < 1 for size in sizes):
+        errors.append(f"growth needs at least two distinct positive sizes, got {sizes}")
     # Reported, but never a reason not to measure: a regression still outranks it.
     late_errors: list[str] = []
     try:
@@ -1366,17 +1421,9 @@ def run(
                             servers, shape, size, phase, first, spec, rows_csv.writerow, budget_end
                         )
                     except Interrupted as e:
-                        # A unit cut short keeps one thing: a candidate that did
-                        # not finish while the baseline answered.
-                        part = e.cell
-                        base = part.runs["baseline"] if part else None
-                        if (
-                            part
-                            and part.runs["candidate"].failure
-                            and base.counts
-                            and not (base.failure)
-                        ):
-                            store[(shape.name, size)] = part
+                        kept = salvage(e.cell)
+                        if kept is not None:
+                            store[(shape.name, size)] = kept
                         if isinstance(e, Stopped):
                             raise
                         errors.append(
