@@ -455,10 +455,15 @@ class PingProbe:
         if conn is not None:
             conn.shutdown()  # a probe blocked in recv() returns now
         self._thread.join(timeout=5.0)
-        with self.path.open("w", encoding="utf-8") as sink:
-            sink.write("epoch_ms,latency_ms,kind\n")
-            for epoch, ms, kind in list(self.samples):
-                sink.write(f"{epoch},{'' if ms is None else round(ms, 3)},{kind}\n")
+        try:
+            with self.path.open("w", encoding="utf-8") as sink:
+                sink.write("epoch_ms,latency_ms,kind\n")
+                for epoch, ms, kind in list(self.samples):
+                    sink.write(f"{epoch},{'' if ms is None else round(ms, 3)},{kind}\n")
+        except OSError as exc:
+            # The samples (and summary()) stand without the file; an error here must not
+            # replace a stop signal that is unwinding through the caller.
+            print(f"ping probe: could not write {self.path}: {exc}", file=sys.stderr)
 
     def summary(self) -> dict[str, Any]:
         samples = list(self.samples)
@@ -819,8 +824,11 @@ def attribute_ambiguous(
     """Split failures logged under a shared text ("a|b") between its query types.
 
     metrics.prom's per-type rates say how many requests of each type failed; what the
-    unambiguous log lines do not account for belongs to the shared text. Timeouts are
-    handed out before other errors. Returns the errors and a problem when they disagree.
+    unambiguous log lines do not account for belongs to the shared text. The split is
+    exact per type in totals; when a shared text has both timeouts and other errors, which
+    type got which kind is not known (the tool's own rates call its guard's `Elapsed` a
+    failure), and timeouts are handed out first, in name order. Returns the errors and a
+    problem when they disagree.
     """
     out = {name: dict(kinds) for name, kinds in errors.items() if "|" not in name}
     for key, kinds in errors.items():
@@ -1420,12 +1428,16 @@ class Check:
         self.raw = self.out / "raw"
         # Only this invocation's files may become its artifacts: drop an earlier run's.
         stale = self.raw.exists() or (self.out / "result.json").exists()
-        if self.raw.exists():
-            shutil.rmtree(self.raw)
-        (self.out / "result.json").unlink(missing_ok=True)
+        cleanup_error = None
+        try:
+            if self.raw.exists():
+                shutil.rmtree(self.raw)
+            (self.out / "result.json").unlink(missing_ok=True)
+        except OSError as exc:
+            cleanup_error = f"could not remove an earlier run's files from {self.out}: {exc}"
         self.raw.mkdir(parents=True, exist_ok=True)
         self.log = Log(self.raw / "check.log")
-        if stale:
+        if stale and not cleanup_error:
             self.log(f"removed an earlier run's raw/ and result.json from {self.out}")
         self.started = now()
         self.started_mono = time.monotonic()
@@ -1439,6 +1451,8 @@ class Check:
         self.rerun_done: set[tuple[str, str]] = set()
         self.error: str | None = None
         self.notes: list[str] = []
+        # Set before main(): main() raises it, so the result is an error, not a traceback.
+        self.cleanup_error = cleanup_error
         self.stopping = False
         self.machine: dict[str, Any] = machine_object()
 
@@ -1627,12 +1641,17 @@ class Check:
             self.log(f"   deadline hit; PING now: {answer}")
         elif code != 0:
             run.stop_reason = f"benchmark exited {code}"
+        self._read_output(run, qfile, folder, code)
 
+    def _read_output(self, run: Run, qfile: QueryFile, folder: Path, code: int | None) -> None:
+        """What the benchmark left in `folder`: failed requests from run.log, and for a run
+        that exited 0, metrics.prom and meta.json. Marks the run finished only when every
+        generated request ended and the log agrees with metrics.prom."""
         log_text = (folder / "run.log").read_text(encoding="utf-8", errors="replace")
         run.errors, unmatched = parse_errors(log_text, qfile.by_text)
         run.unmatched_errors = len(unmatched)
-        prom = results / "falkor" / "metrics.prom"
-        meta = results / "falkor" / "meta.json"
+        prom = folder / "bench" / "falkor" / "metrics.prom"
+        meta = folder / "bench" / "falkor" / "meta.json"
         if code == 0:
             if not prom.exists() or not meta.exists():
                 run.stop_reason = "benchmark exited 0 but wrote no metrics.prom / meta.json"
@@ -1640,14 +1659,16 @@ class Check:
             metrics = parse_metrics(prom.read_text(encoding="utf-8"))
             run.per_query, run.overall = metrics["per_query"], metrics["overall"]
             run.elapsed_s = round(json.loads(meta.read_text())["elapsed_ms"] / 1000, 3)
-            run.errors, problem = attribute_ambiguous(run.errors, qfile.counts, metrics["rates"])
-            if problem:
-                raise SetupError(f"{run.dir}: {problem}; the log parser is out of date")
-            self._cross_check(run, metrics, qfile, unmatched)
+            # First: with requests missing, metrics.prom's rates are over fewer requests
+            # than generated, and the log cross-check below would call that a parser error.
             missing = missing_requests(metrics["executed"], qfile.counts)
             if missing:
                 run.stop_reason = missing
                 return
+            run.errors, problem = attribute_ambiguous(run.errors, qfile.counts, metrics["rates"])
+            if problem:
+                raise SetupError(f"{run.dir}: {problem}; the log parser is out of date")
+            self._cross_check(run, metrics, qfile, unmatched)
             run.finished = run.stop_reason is None
         elif any("|" in key for key in run.errors):
             # No metrics.prom to split a shared text by: those failures stay unattributed.
@@ -1856,6 +1877,8 @@ class Check:
             self.log(f"checkpoint failed: {exc}")
 
     def main(self) -> None:
+        if self.cleanup_error:
+            raise SetupError(self.cleanup_error)
         self.log(f"pokec check, mode {self.args.mode}: candidate {self.images['candidate']}, "
                  f"baseline {self.images['baseline']}")
         for side, image in self.images.items():

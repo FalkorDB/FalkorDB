@@ -770,3 +770,90 @@ def test_containers_are_removed_even_when_the_final_write_fails(tmp_path, monkey
         pokec.main(["--candidate", CAND, "--baseline", BASE, "--out", str(tmp_path / "out"), "--mode", "nightly",
                     "--tools-dir", str(tmp_path / "tools")])
     assert removed
+
+
+# --- what _run_on reads after the benchmark (no Docker: the files are written here) ---
+
+V2 = "CYPHER id = 9 MATCH (n:User) RETURN n LIMIT 1"
+
+
+def bench_output(tmp_path, *, executed, rates, log_lines):
+    """A query file and the run folder the benchmark would leave behind."""
+    qpath = tmp_path / "q.jsonl"
+    rows = [{"size": 3, "catalog": []},
+            {"q_name": "vertex_on_label_property", "q_type": "Read", "cypher": V1},
+            {"q_name": "vertex_on_label_property_index", "q_type": "Read", "cypher": V1},
+            {"q_name": "single_vertex_read", "q_type": "Read", "cypher": V2}]
+    qpath.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    folder = tmp_path / "run"
+    (folder / "bench" / "falkor").mkdir(parents=True)
+    (folder / "run.log").write_text("".join(
+        f"2026-11-24T09:31:42Z ERROR benchmark::falkor::falkor_driver: Error executing query: {q}, the error is: {e}\n"
+        for q, e in log_lines))
+    prom = [f'operations_total{{name="{q}",spawn_id="0",vendor="falkor"}} {n}' for q, n in executed.items()]
+    prom += [f'benchmark_query_failure_rate_pct{{query="{q}",vendor="falkor"}} {r}' for q, r in rates.items()]
+    prom += [f'falkordb_query_latency_pct_us{{pct="50",query="{q}"}} 500' for q in executed]
+    (folder / "bench" / "falkor" / "metrics.prom").write_text("\n".join(prom) + "\n")
+    (folder / "bench" / "falkor" / "meta.json").write_text(json.dumps({"elapsed_ms": 25000}))
+    return pokec.read_query_file(qpath), folder
+
+
+ALL_ENDED = {"vertex_on_label_property": 1, "vertex_on_label_property_index": 1, "single_vertex_read": 1}
+
+
+def test_a_finished_run_splits_a_shared_text_failure(tmp_path):
+    qfile, folder = bench_output(tmp_path, executed=ALL_ENDED, rates={"vertex_on_label_property_index": 100.0},
+                                 log_lines=[(V1, "Elapsed(())")])
+    check = make_check(tmp_path)
+    run = pokec.Run("medium", "write5", "candidate", 1, 1)  # as _run_on hands it over
+    check._read_output(run, qfile, folder, 0)
+    assert run.finished and run.stop_reason is None
+    assert run.errors == {"vertex_on_label_property_index": {"timeouts": 1, "failures": 0}}
+
+
+def test_a_run_that_ended_too_few_requests_did_not_finish(tmp_path):
+    # single_vertex_read: 1 generated, 0 ended; the request that never ended was not logged either
+    qfile, folder = bench_output(tmp_path, executed={**ALL_ENDED, "single_vertex_read": 0}, rates={},
+                                 log_lines=[])
+    check = make_check(tmp_path)
+    run = pokec.Run("medium", "write5", "candidate", 1, 1)  # as _run_on hands it over
+    check._read_output(run, qfile, folder, 0)
+    assert not run.finished and "single_vertex_read 0 of 1" in run.stop_reason
+
+
+def test_a_short_run_is_not_finished_before_the_log_cross_check(tmp_path):
+    # Rates are over the requests that ended (1 of 2 failed = 50 %); against the 2 generated
+    # that reads 1, the log has 1: fine. With 1 of 1 ended and failed (100 %) the rate times
+    # the generated 2 reads 2, the log 1: the cross-check would call it a parser error.
+    rows_q = {"vertex_on_label_property": 1, "vertex_on_label_property_index": 1, "single_vertex_read": 1}
+    qfile, folder = bench_output(tmp_path, executed={**rows_q, "single_vertex_read": 0},
+                                 rates={"vertex_on_label_property": 100.0}, log_lines=[])
+    qfile.counts["vertex_on_label_property"] = 2  # 2 generated, 1 ended (and failed), 1 lost
+    check = make_check(tmp_path)
+    run = pokec.Run("medium", "write5", "candidate", 1, 1)  # as _run_on hands it over
+    check._read_output(run, qfile, folder, 0)  # no SetupError
+    assert not run.finished and "ended" in run.stop_reason
+
+
+def test_a_failed_cleanup_of_out_is_an_error_result(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
+    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: None)
+    out = tmp_path / "out"
+    (out / "raw").mkdir(parents=True)
+
+    def rmtree(path, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(pokec.shutil, "rmtree", rmtree)
+    assert pokec.main(["--candidate", CAND, "--baseline", BASE, "--out", str(out), "--mode", "nightly",
+                       "--tools-dir", str(tmp_path / "tools")]) == 0
+    result = json.loads((out / "result.json").read_text())
+    assert result["verdict"] == "error" and "could not remove an earlier run's files" in result["error"]
+
+
+def test_the_probe_stops_even_when_its_csv_cannot_be_written(tmp_path):
+    server = FakeServer()
+    probe = pokec.PingProbe(server.port, tmp_path / "no-such-dir" / "ping.csv")
+    probe.start()
+    probe.stop()  # an OSError here would replace a stop signal unwinding through _drive
+    assert probe.summary()["ping_samples"] >= 0
