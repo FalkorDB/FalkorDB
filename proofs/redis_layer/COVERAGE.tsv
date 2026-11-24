@@ -152,19 +152,25 @@ src/query_session.rs	Gil::acquire	722	PROVEN	QuerySession.gilAcquire (no-op iff 
 src/query_session.rs	Gil::drop	745	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
 src/query_session.rs	lock_gil	766	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
 src/query_session.rs	release_gil	779	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
-src/module_init.rs	pthread_atfork	95	AXIOMATISED	libc pthread_atfork declaration
-src/module_init.rs	on_fork_child	122	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
-src/module_init.rs	sync_deepbind_environ	158	PROVEN	EnvBuild.syncDeepbind: sync_unchanged (NULL dlopen handle, NULL dlsym, or the symbol is this module's own environ: environ untouched, the path CI reaches), sync_installs (otherwise environ becomes a NULL-terminated snapshot of the live array's strings); dlopen/dlsym/dlclose results are the inputs of `Ld`, the libc side being FFI
+src/module_init.rs	pthread_atfork	96	AXIOMATISED	libc pthread_atfork declaration
+src/module_init.rs	on_fork_child	123	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
+src/module_init.rs	sync_deepbind_environ	159	PROVEN	EnvBuild.syncDeepbind: sync_unchanged (NULL dlopen handle, NULL dlsym, or the symbol is this module's own environ: environ untouched, the path CI reaches), sync_installs (otherwise environ becomes a NULL-terminated snapshot of the live array's strings); dlopen/dlsym/dlclose results are the inputs of `Ld`, the libc side being FFI
 graph/src/env_snapshot.rs	leak_deep_copy	22	PROVEN	EnvBuild.leakDeepCopy: copy_null_src, copy_length, copy_terminated (len+1 cells, last NULL), copy_read_back (the copy reads back exactly the source's entries in order), copy_fresh (every string cell allocated fresh), copy_indep (depends on the entries' bytes only, so a later setenv/putenv/free of the source cannot change it); the unsafe pointer reads are the `# Safety` contract (NULL-terminated source)
-src/module_init.rs	graph_init	203	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range
-src/module_init.rs	info_func	494	PROVEN	ModuleInit.infoSections: info_normal
-src/module_init.rs	on_flush	511	PROVEN	ModuleInit.onFlush (#3844 FLUSH_IN_PROGRESS): onFlush_start, onFlush_end
-src/module_init.rs	on_shutdown	525	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
-src/module_init.rs	on_role_change	549	PROVEN	ModuleInit.onRoleChange (no replica flag since #3844): onRoleChange_promote, onRoleChange_demote
-src/module_init.rs	enforce_pending_constraints_after_promotion	578	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
-src/module_init.rs	on_replica_change	645	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
-src/module_init.rs	on_loading	657	PROVEN	ModuleInit.onLoading: onLoading_only_end
-src/module_init.rs	on_keyspace_event	678	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
+src/module_init.rs	graph_init	204	PROVEN	ModuleInit.graphInitArgs (args → apply_module_args; Err ⇒ Status::Err): graphInitArgs_refuses; LoadArgs.rust_c_same_accept; table_defaults_in_range
+src/module_init.rs	info_func	496	PROVEN	ModuleInit.infoSections: info_normal
+src/module_init.rs	on_flush	513	PROVEN	ModuleInit.onFlush (#3844 FLUSH_IN_PROGRESS): onFlush_start, onFlush_end
+src/module_init.rs	on_shutdown	527	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first, onShutdown_no_teardown_under_a_left_worker, onShutdown_without_native_index
+src/module_init.rs	on_role_change	551	PROVEN	ModuleInit.onRoleChange (no replica flag since #3844): onRoleChange_promote, onRoleChange_demote
+src/module_init.rs	enforce_pending_constraints_after_promotion	580	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
+src/module_init.rs	on_replica_change	647	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
+src/module_init.rs	on_loading	659	PROVEN	ModuleInit.onLoading: onLoading_only_end
+src/module_init.rs	on_keyspace_event	680	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
+src/banner/mod.rs	style	45	PROVEN	Banner.style: style_none_iff, style_textOnly, style_logo_needs_utf8, style_no_color, style_trueColor_iff, locale_lc_all
+src/banner/mod.rs	render	69	PROVEN	Banner.render (logo files = Logos): render_logo, render_textOnly_no_esc, render_plain_no_esc
+src/banner/mod.rs	print	107	AXIOMATISED	stdout isatty, std::env::var and terminal I/O; composes style, render and write_bounded (proven)
+src/banner/mod.rs	write_bounded	126	PROVEN	Banner.writeBounded (write_all && drained = ok i): wb_true_iff, wb_attempted_prefix, wb_stops, wb_true_all
+src/banner/mod.rs	drained	136	AXIOMATISED	libc ioctl(TIOCOUTQ) polling against the clock (OS terminal I/O)
+src/banner/mod.rs	reopen_nonblocking	160	AXIOMATISED	libc ttyname_r and open(O_NONBLOCK|O_NOCTTY) (OS I/O)
 src/telemetry.rs	truncate	34	PROVEN	Telemetry.truncate: truncate_short, truncate_len, truncate_prefix
 src/telemetry.rs	truncate_arc	50	PROVEN	Telemetry.truncateArc: truncateArc_eq
 src/telemetry.rs	stream_name	66	PROVEN	Telemetry.streamName: streamName_key_name, streamName_inj, streamName_nul, stream_same_slot, stream_other_slot
