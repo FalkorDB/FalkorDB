@@ -17,9 +17,3 @@
 # command. tests/perf/merge.py reads this file, and tests/perf/test_merge.py
 # fails on an entry it cannot use. At night, such an entry (or a file that does
 # not parse) is reported as an error rather than skipped.
-# TEMPORARY (proof run on the PR, reverted before ready): a check that writes
-# no result.json, which the night must report as an error.
-- name: writes-nothing
-  runner: hosted
-  command: "true"
-  timeout_minutes: 5
