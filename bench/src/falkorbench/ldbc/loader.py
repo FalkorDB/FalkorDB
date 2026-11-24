@@ -57,6 +57,7 @@ def load(
             f"dataset {dataset} is not under the server's import folder {import_root}"
         ) from e
 
+    _refuse_a_loaded_graph(client)
     stats = LoadStats()
     started = time.monotonic()
 
@@ -70,6 +71,25 @@ def load(
     stats.seconds = time.monotonic() - started
     echo(f"loaded {stats.line()}")
     return stats
+
+
+def _refuse_a_loaded_graph(client: BenchClient) -> None:
+    """Fail rather than load a second copy on top of the first.
+
+    Every node and edge is a `CREATE`, so loading into a graph that already
+    holds the dataset (`bench ldbc run --reuse --load`, or a retry after a
+    partial load) would duplicate it, and every query would then measure a
+    different graph.
+    """
+    if not client.command("EXISTS", client.graph_name):
+        return
+    res = client.graph.ro_query("MATCH (n) RETURN count(n)")
+    held = int(res.result_set[0][0]) if res.result_set else 0
+    if held:
+        raise LoadError(
+            f"graph {client.graph_name!r} already holds {held:,} nodes; loading would "
+            f"duplicate them (GRAPH.DELETE it first, or run without --load)"
+        )
 
 
 def create_indices(client: BenchClient, *, echo: Echo = print) -> None:

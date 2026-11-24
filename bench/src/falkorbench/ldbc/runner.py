@@ -20,7 +20,7 @@ from dataclasses import field
 from pathlib import Path
 from typing import Any
 
-from redis.exceptions import ResponseError
+from redis.exceptions import RedisError
 
 from falkorbench.client import BenchClient
 from falkorbench.ldbc import params as params_mod
@@ -60,7 +60,10 @@ class QueryResult:
     latencies_ms: list[float] = field(default_factory=list)
     rows_total: int = 0
     empty_runs: int = 0
+    #: The first few failure messages, for the report; `failure_count` has
+    #: them all.
     failures: list[str] = field(default_factory=list)
+    failure_count: int = 0
 
     @property
     def runs(self) -> int:
@@ -87,7 +90,7 @@ class QueryResult:
             "runs": self.runs,
             "rows_total": self.rows_total,
             "empty_runs": self.empty_runs,
-            "failures": len(self.failures),
+            "failures": self.failure_count,
             "p50_ms": fmt(self.pct(50)),
             "p95_ms": fmt(self.pct(95)),
             "p99_ms": fmt(self.pct(99)),
@@ -113,6 +116,7 @@ def run(
         result = QueryResult(name=query.name, rewritten=query.rewritten)
         if not rows:
             result.failures.append("no parameters")
+            result.failure_count = 1
             echo(f"{result.name:<6} SKIPPED: no parameters")
             results.append(result)
             continue
@@ -120,16 +124,19 @@ def run(
         # GraphBLAS compiles kernels on first use, so an unwarmed first call
         # carries a one-off cost that has nothing to do with the query.
         for row in rows[:warmup]:
-            with contextlib.suppress(ResponseError, OSError):
+            with contextlib.suppress(RedisError, OSError):
                 client.graph.ro_query(query.cypher, dict(row), timeout=timeout_ms)
 
         for row in rows:
             started = time.perf_counter()
             try:
                 res = client.graph.ro_query(query.cypher, dict(row), timeout=timeout_ms)
-            except (ResponseError, OSError) as e:
+            except (RedisError, OSError) as e:
                 # Recorded per parameter row rather than aborting: one bad
-                # parameter row must not cost the other thirteen queries.
+                # parameter row must not cost the other thirteen queries. A
+                # client-side timeout or a dropped connection is a RedisError,
+                # not an OSError, and counts the same way.
+                result.failure_count += 1
                 if len(result.failures) < 5:
                     result.failures.append(str(e)[:200])
                 continue
@@ -152,8 +159,8 @@ def _summary_line(result: QueryResult) -> str:
         flags.append("rewritten")
     if result.empty_runs:
         flags.append(f"{result.empty_runs}/{result.runs} empty")
-    if result.failures:
-        flags.append(f"{len(result.failures)} failed")
+    if result.failure_count:
+        flags.append(f"{result.failure_count} failed")
     suffix = f"   [{', '.join(flags)}]" if flags else ""
     return (
         f"{result.name:<6} p50 {result.pct(50):>9.2f}ms  p99 {result.pct(99):>9.2f}ms  "
@@ -184,6 +191,6 @@ def problems(results: list[QueryResult]) -> list[str]:
             out.append(f"{result.name}: produced no measurement ({why})")
         elif result.empty_runs == result.runs:
             out.append(f"{result.name}: returned zero rows on all {result.runs} runs")
-        elif result.failures:
-            out.append(f"{result.name}: {len(result.failures)} parameter row(s) failed")
+        elif result.failure_count:
+            out.append(f"{result.name}: {result.failure_count} parameter row(s) failed")
     return out

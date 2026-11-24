@@ -1198,3 +1198,37 @@ def test_a_query_that_finished_on_neither_side_alone_is_not_a_comparison(tmp_pat
     assert result["verdict"] == "error"
     assert "no query could be compared" in result["error"]
     assert_valid(check.opts.out / "result.json")
+
+
+def test_loading_into_a_graph_that_holds_nodes_is_refused(tmp_path):
+    """Every row is a CREATE: a second load would duplicate the dataset."""
+
+    def client(exists, held):
+        return SimpleNamespace(
+            graph_name="ldbc",
+            command=lambda *args: exists,
+            graph=SimpleNamespace(ro_query=lambda q: SimpleNamespace(result_set=[[held]])),
+        )
+
+    with pytest.raises(loader_mod.LoadError, match="already holds 327,588 nodes"):
+        loader_mod._refuse_a_loaded_graph(client(1, 327588))
+    loader_mod._refuse_a_loaded_graph(client(0, 0))  # no graph yet
+    loader_mod._refuse_a_loaded_graph(client(1, 0))  # an empty graph
+
+
+def test_a_runner_failure_count_is_not_capped_at_the_messages_kept():
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+
+    def ro_query(*args, **kwargs):
+        raise RedisTimeoutError("Timeout reading from socket")
+
+    bench = SimpleNamespace(graph=SimpleNamespace(ro_query=ro_query))
+    query = query_mod.select(("IC2",))
+    rows = {2: [{"personId": i, "maxDate": 1} for i in range(8)]}
+    param_set = params_mod.ParamSet(rows=rows, official=False, source="test")
+    (result,) = runner.run(bench, query, param_set, echo=lambda _: None)
+    assert result.failure_count == 8 and len(result.failures) == 5
+    assert result.row()["failures"] == 8
+    assert runner.problems([result]) == [
+        "IC2: produced no measurement (Timeout reading from socket)"
+    ]
