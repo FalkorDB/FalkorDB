@@ -2416,33 +2416,91 @@ fn dijkstra_single_path(
     Ok(Some((edges, labels[&target].weight, cost)))
 }
 
+/// One side of [`bfs_single_path`]'s bidirectional search.
+struct BfsSide {
+    /// Direction this side walks: the configured one from the source, its
+    /// reverse from the target.
+    dir: EdgeDirection,
+    /// node -> (its depth on this side, the node it was reached from, the
+    /// edge between them in original orientation). Doubles as the visited
+    /// set; the root is in it with depth 0 and no link.
+    seen: FxHashMap<NodeId, (u32, Option<(NodeId, (RelationshipId, NodeId, NodeId))>)>,
+    frontier: Vec<NodeId>,
+    depth: u32,
+}
+
+impl BfsSide {
+    fn new(
+        root: NodeId,
+        dir: EdgeDirection,
+    ) -> Self {
+        let mut seen = FxHashMap::default();
+        seen.insert(root, (0, None));
+        Self {
+            dir,
+            seen,
+            frontier: vec![root],
+            depth: 0,
+        }
+    }
+
+    /// The edges from `node` back to this side's root, nearest `node` first.
+    fn chain(
+        &self,
+        mut node: NodeId,
+    ) -> Vec<(RelationshipId, NodeId, NodeId)> {
+        let mut edges = Vec::new();
+        while let Some((_, Some((prev, edge)))) = self.seen.get(&node) {
+            edges.push(*edge);
+            node = *prev;
+        }
+        edges
+    }
+}
+
 /// The unit-weight case of [`dijkstra_single_path`]: with no `weightProp`
 /// every edge weighs 1, so the fewest-hops path is the cheapest one and a
-/// plain BFS finds it.
+/// BFS finds it.
 ///
-/// It does less work than Dijkstra on the same graph in two ways. Dijkstra
-/// only stops when it *pops* the target, so it first expands every node at
-/// the target's distance minus one; a BFS stops the moment an expansion
-/// *discovers* the target, part-way through that level. And a discovered node
-/// costs one hash insert here, against Dijkstra's settled-set probe, label
-/// lookup, label insert and heap push per relaxed edge.
+/// The search runs from both ends at once — forward from the source along the
+/// configured direction, backward from the target against it — and always
+/// grows the side with the smaller frontier. A path of length L then costs
+/// two searches of about L/2 hops instead of one of L, which on a social
+/// graph is the difference between touching a neighbourhood and touching
+/// most of the graph. It also ends early when there is no path: as soon as
+/// either side runs out of nodes, which for a target with few incoming edges
+/// is almost at once.
+///
+/// When a level expansion first reaches a node the other side has seen, the
+/// level is still finished and the shortest join kept: the other side's seen
+/// set spans several depths, so the first meeting is not necessarily the
+/// shortest one.
 fn bfs_single_path(
     runtime: &Runtime,
     g: &Graph,
     config: &PathAlgoConfig,
     target: NodeId,
 ) -> Result<Option<FoundPath>, String> {
-    // node -> (parent, edge reaching it in its original direction); doubles as
-    // the visited set. The source has no entry and is marked separately.
-    let mut parents: FxHashMap<NodeId, (NodeId, (RelationshipId, NodeId, NodeId))> =
-        FxHashMap::default();
-    let mut frontier = vec![config.source];
-    let mut next_frontier: Vec<NodeId> = Vec::new();
+    let reverse = match config.rel_direction {
+        EdgeDirection::Outgoing => EdgeDirection::Incoming,
+        EdgeDirection::Incoming => EdgeDirection::Outgoing,
+        EdgeDirection::Both => EdgeDirection::Both,
+    };
+    let mut fwd = BfsSide::new(config.source, config.rel_direction);
+    let mut bwd = BfsSide::new(target, reverse);
+    let mut next: Vec<NodeId> = Vec::new();
     let mut iters: u64 = 0;
-    let mut found = false;
+    // (path length, node where the two sides meet)
+    let mut best: Option<(u32, NodeId)> = None;
 
-    'levels: while !frontier.is_empty() {
-        for &node in &frontier {
+    while best.is_none() && !fwd.frontier.is_empty() && !bwd.frontier.is_empty() {
+        let (side, other) = if fwd.frontier.len() <= bwd.frontier.len() {
+            (&mut fwd, &bwd)
+        } else {
+            (&mut bwd, &fwd)
+        };
+        let depth = side.depth + 1;
+        for &node in &side.frontier {
             iters += 1;
             if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
                 runtime.check_timeout()?;
@@ -2450,43 +2508,40 @@ fn bfs_single_path(
             }
 
             for (edge_src, edge_dst, edge_id) in
-                g.get_node_relationships_by_type(node, &config.rel_types, config.rel_direction)
+                g.get_node_relationships_by_type(node, &config.rel_types, side.dir)
             {
-                let Some(far) = far_endpoint(node, edge_src, edge_dst, config.rel_direction) else {
+                let Some(far) = far_endpoint(node, edge_src, edge_dst, side.dir) else {
                     continue;
                 };
-                if far == config.source {
-                    continue;
-                }
-                match parents.entry(far) {
+                match side.seen.entry(far) {
                     Entry::Occupied(_) => continue,
                     Entry::Vacant(slot) => {
-                        slot.insert((node, (edge_id, edge_src, edge_dst)));
+                        slot.insert((depth, Some((node, (edge_id, edge_src, edge_dst)))));
                     }
                 }
-                if far == target {
-                    found = true;
-                    break 'levels;
+                if let Some(&(other_depth, _)) = other.seen.get(&far) {
+                    let len = depth + other_depth;
+                    if best.is_none_or(|(b, _)| len < b) {
+                        best = Some((len, far));
+                    }
                 }
-                next_frontier.push(far);
+                next.push(far);
             }
         }
-        swap(&mut frontier, &mut next_frontier);
-        next_frontier.clear();
+        side.depth = depth;
+        swap(&mut side.frontier, &mut next);
+        next.clear();
     }
 
-    if !found {
+    let Some((_, meet)) = best else {
         return Ok(None);
-    }
+    };
 
-    let mut edges = Vec::new();
-    let mut cur = target;
-    while cur != config.source {
-        let (parent, edge) = parents[&cur];
-        edges.push(edge);
-        cur = parent;
-    }
+    // source .. meet, then meet .. target; both chains are already in
+    // original edge orientation.
+    let mut edges = fwd.chain(meet);
     edges.reverse();
+    edges.extend(bwd.chain(meet));
 
     // Same reporting as `dijkstra_single_path`: weight is the hop count, and
     // cost sums `costProp` over the winning path (1 per edge lacking it), or
