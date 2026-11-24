@@ -58,7 +58,6 @@
 
 #define PROPERTY_NAME_PATTERN "[a-zA-Z_][a-zA-Z0-9_$]*"
 
-extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
 
 // constraint operation
 typedef enum {
@@ -477,7 +476,7 @@ static bool _Constraint_Create
 	QueryCtx_SetGraphCtx (gc) ;
 	QueryCtx_SetRedisCtx (ctx) ;
 
-	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
+	bool from_thread = !ThreadIsMain() ;
 
 	//--------------------------------------------------------------------------
 	// fast read-locked rejection of the common, benign CREATE failures

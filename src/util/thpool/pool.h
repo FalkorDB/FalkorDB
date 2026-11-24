@@ -8,8 +8,18 @@
 
 #include "thpool.h"
 #include <sys/types.h>
+#include <pthread.h>
+#include <stdbool.h>
 
 #define THPOOL_QUEUE_FULL -2
+
+// redis main thread id, captured once on module load (see ThreadPool_CreatePools)
+extern pthread_t MAIN_THREAD_ID;
+
+// true when the calling thread is the redis main thread
+static inline bool ThreadIsMain(void) {
+	return pthread_equal(pthread_self(), MAIN_THREAD_ID) != 0;
+}
 
 // initialize pool
 int ThreadPool_Init(void);

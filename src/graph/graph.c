@@ -12,8 +12,6 @@
 #include "delta_matrix/delta_matrix_iter.h"
 #include "../util/datablock/oo_datablock.h"
 
-extern pthread_t redis_main_thread_id;
-
 //------------------------------------------------------------------------------
 // Graph utility functions
 //------------------------------------------------------------------------------

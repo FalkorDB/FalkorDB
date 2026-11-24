@@ -5,6 +5,8 @@
  */
 
 #include "indexer.h"
+#include "../util/redis_gil.h"
+#include "../util/thpool/pool.h"  // MAIN_THREAD_ID
 #include "../globals.h"
 #include "../redismodule.h"
 #include "../util/rmalloc.h"
@@ -162,7 +164,7 @@ static void _Indexer_ClearTasks(void) {
 //
 // rm_ctx must be UNLOCKED on entry; on return the caller holds BOTH the GIL
 // (rm_ctx locked) and gc's write lock, to be released with
-// GraphContext_ReleaseLock + RedisModule_ThreadSafeContextUnlock.
+// GraphContext_ReleaseLock + GIL_Unlock.
 static void _indexer_acquire_write_lock
 (
 	GraphContext   *gc,     // graph to lock
@@ -171,7 +173,7 @@ static void _indexer_acquire_write_lock
 	ASSERT (gc     != NULL) ;
 	ASSERT (rm_ctx != NULL) ;
 	// acquiring the GIL on the main thread (which already holds it) would deadlock
-	ASSERT (pthread_equal (Globals_Get_MainThreadId (), pthread_self ()) == 0) ;
+	ASSERT (!ThreadIsMain ()) ;
 
 	int64_t poll_interval ;
 	Config_Option_get (Config_WRITE_LOCK_POLL_INTERVAL, &poll_interval) ;
@@ -179,7 +181,7 @@ static void _indexer_acquire_write_lock
 	// legacy / disabled: single blocking acquire holding the GIL - the exact
 	// behavior prior to this change (the server may stall until readers drain)
 	if (poll_interval <= 0) {
-		RedisModule_ThreadSafeContextLock (rm_ctx) ;
+		GIL_Lock (rm_ctx) ;
 		GraphContext_AcquireWriteLock (gc) ;
 		return ;
 	}
@@ -191,7 +193,7 @@ static void _indexer_acquire_write_lock
 
 	while (true) {
 		// hold the GIL for a single bounded attempt on the write lock
-		RedisModule_ThreadSafeContextLock (rm_ctx) ;
+		GIL_Lock (rm_ctx) ;
 		int rc = GraphContext_TimeAcquireWriteLock (gc, poll_interval) ;
 		if (rc == 0) {
 			// success: return holding BOTH the GIL and the write lock
@@ -202,7 +204,7 @@ static void _indexer_acquire_write_lock
 		}
 
 		// couldn't get it this slice: drop the GIL so the main thread runs
-		RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
+		GIL_Unlock (rm_ctx) ;
 
 		if (rc != ETIMEDOUT) {
 			// an unexpected lock error (should never happen for a valid rwlock).
@@ -213,7 +215,7 @@ static void _indexer_acquire_write_lock
 			if (gate_engaged) {
 				GraphContext_WriterGateLeave (gc) ;
 			}
-			RedisModule_ThreadSafeContextLock (rm_ctx) ;
+			GIL_Lock (rm_ctx) ;
 			GraphContext_AcquireWriteLock (gc) ;
 			return ;
 		}
@@ -272,7 +274,7 @@ static void _indexer_idx_populate
 
 	// release locks
 	GraphContext_ReleaseLock (gc) ;
-	RedisModule_ThreadSafeContextUnlock(rm_ctx);
+	GIL_Unlock(rm_ctx);
 	RedisModule_FreeThreadSafeContext(rm_ctx);
 
 	// decrease graph reference count
@@ -287,12 +289,12 @@ static void _indexer_idx_drop
 	IndexDropCtx *ctx
 ) {
 	RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(NULL);
-	RedisModule_ThreadSafeContextLock(rm_ctx);
+	GIL_Lock(rm_ctx);
 
 	// TODO: expecting index pending_changes count to be either 0 or 1
 	Index_Free(ctx->idx);
 
-	RedisModule_ThreadSafeContextUnlock(rm_ctx);
+	GIL_Unlock(rm_ctx);
 	RedisModule_FreeThreadSafeContext(rm_ctx);
 
 	// decrease graph reference count
@@ -339,12 +341,12 @@ static void _indexer_enforce_constraint
 	if(Constraint_GetStatus(c) == CT_ACTIVE) {
 		// lock before calling replicate
 		RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(NULL);
-		RedisModule_ThreadSafeContextLock(rm_ctx);
+		GIL_Lock(rm_ctx);
 
 		Constraint_Replicate(rm_ctx, c, (const struct GraphContext*)gc);
 
 		// unlock and free
-		RedisModule_ThreadSafeContextUnlock(rm_ctx);
+		GIL_Unlock(rm_ctx);
 		RedisModule_FreeThreadSafeContext(rm_ctx);
 	}
 

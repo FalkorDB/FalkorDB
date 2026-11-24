@@ -36,9 +36,6 @@ void Globals_Set_ProcessIsChild
 	bool process_is_child
 );
 
-// get process main thread id
-pthread_t Globals_Get_MainThreadId(void);
-
 // collect graphs
 // caller is responsible for:
 // 1. decreasing ref count for each GraphContext

@@ -54,6 +54,7 @@
 
 
 #include "RG.h"
+#include "../util/redis_gil.h"
 #include "../cron/cron.h"
 #include "../util/uuid.h"
 #include "../util/path_utils.h"
@@ -308,7 +309,7 @@ static void LoadGraphFromFile
 	// add cloned graph to keyspace
 	//--------------------------------------------------------------------------
 
-	RedisModule_ThreadSafeContextLock(ctx); // lock GIL
+	GIL_Lock(ctx); // lock GIL
 
 	// make sure dest key does not exists
 	RedisModuleKey *key =
@@ -319,7 +320,7 @@ static void LoadGraphFromFile
 
 	if(key_type != REDISMODULE_KEYTYPE_EMPTY) {
 		// error!
-		RedisModule_ThreadSafeContextUnlock(ctx);  // release GIL
+		GIL_Unlock(ctx);  // release GIL
 
 		// free graph
 		GraphContext_DecreaseRefCount(gc);
@@ -343,7 +344,7 @@ static void LoadGraphFromFile
 		RedisModule_Replicate (ctx, "GRAPH.RESTORE", "cb", copy_ctx->dest,
 				buffer, fileLength) ;
 
-		RedisModule_ThreadSafeContextUnlock (ctx) ;  // release GIL
+		GIL_Unlock (ctx) ;  // release GIL
 
 		// register graph context for BGSave
 		GraphContext_RegisterWithModule (gc) ;
@@ -429,7 +430,7 @@ static void _Graph_Copy
 	//--------------------------------------------------------------------------
 
 	// lock GIL
-	RedisModule_ThreadSafeContextLock (ctx) ;
+	GIL_Lock (ctx) ;
 
 	// make sure dest key does not exists
 	RedisModuleKey *dest_key =
@@ -438,7 +439,7 @@ static void _Graph_Copy
 	RedisModule_CloseKey (dest_key) ;
 
 	// release GIL
-	RedisModule_ThreadSafeContextUnlock (ctx) ;
+	GIL_Unlock (ctx) ;
 
 	// dest key shouldn't exists
 	if (dest_key_type != REDISMODULE_KEYTYPE_EMPTY) {
