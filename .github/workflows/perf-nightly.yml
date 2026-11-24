@@ -26,8 +26,9 @@
 # the last nightly's does not measure: there is nothing new. It still writes a
 # `skipped` nightly.json and calls the reporter, because perf-missed-run.yml
 # alarms on a night without a perf-nightly artifact. It never skips right after a
-# night that ended in `error` or left no artifact, so a transient failure is
-# retried. A dispatch never skips.
+# night in which any check said `error` (even beside a regression) or that left
+# no artifact, so a check that could not measure is retried. A dispatch never
+# skips.
 #
 # What counts as an earlier nightly (for the skip and for previous_green_commit):
 # completed scheduled runs of this workflow on main. A dispatch, which may measure
@@ -270,7 +271,9 @@ jobs:
         id: context
         env:
           HISTORY: ${{ runner.temp }}/history
-          MAY_SKIP: ${{ github.event_name != 'workflow_dispatch' }}
+          # Only a scheduled night may skip: a dispatch is a request to measure
+          # (and so is every push on the TEMPORARY pull_request trigger).
+          MAY_SKIP: ${{ github.event_name == 'schedule' }}
           CANDIDATE_IMAGE: ${{ steps.images.outputs.candidate_image }}
           CANDIDATE_COMMIT: ${{ steps.images.outputs.candidate_commit }}
           CANDIDATE_LABEL: ${{ steps.images.outputs.candidate_label }}
