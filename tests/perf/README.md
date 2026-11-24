@@ -1,7 +1,7 @@
 # Nightly perf runs: the result format and its checker
 
-Each nightly perf check (micro, micro-hw, size-probe, pokec, soak-a, soak-b,
-fuzz, ldbc) compares a candidate image with a baseline image and writes one
+Each nightly perf check (micro-hw, size-probe, pokec, soak-a, soak-b, fuzz,
+ldbc) compares a candidate image with a baseline image and writes one
 `result.json`. The nightly merges them into one `nightly.json`, which the
 reporter posts. This directory defines those two files and holds what the
 checks are accepted against. Nothing here runs at night or stores history.
@@ -20,7 +20,7 @@ checks are accepted against. Nothing here runs at night or stores history.
 
 ```json
 {
-  "schema": 1, "check": "micro", "verdict": "pass | regression | error", "confirmed": false,
+  "schema": 1, "check": "micro-hw", "verdict": "pass | regression | error", "confirmed": false,
   "summary": "one line in plain words",
   "candidate": {"image": "repo@sha256:<64 hex>", "commit": "<40 hex or null>", "label": "main@4c1088949"},
   "baseline":  {"image": "repo@sha256:<64 hex>", "commit": null, "label": "6.2.1"},

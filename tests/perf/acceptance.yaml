@@ -4,7 +4,7 @@
 # and so on. A check is accepted when an independent run of every pair (the
 # acceptance run) comes out as expected; the owner's own run is evidence only.
 #
-# Every pair runs in mode nightly, on GCE (micro: the GitHub-hosted runner),
+# Every pair runs in mode nightly, on GCE (micro-hw: a C4 VM with counters),
 # with both images and their labels/commits passed to the check:
 #
 #   <command> --candidate <image> --baseline <image> --out <dir> --mode nightly \
@@ -72,35 +72,6 @@ images:
     commit: 958fbead7d6e08d50d48d4776f0f310ea1dfb9a4
 
 checks:
-  micro:
-    - id: micro-a-a
-      candidate: *main-4c1088949
-      baseline: *main-4c1088949
-      mode: nightly
-      expect:
-        verdict: pass
-        no_regression_findings: true
-    - id: micro-6.2.0-vs-main
-      candidate: *v6-2-0
-      baseline: *main-4c1088949
-      mode: nightly
-      expect:
-        verdict: regression
-        findings:
-          - {name_regex: '^UNWIND index MATCH edge 1 row( \[(reads|writes)\])?$', status: regression}
-          - {name_regex: '^UNWIND id MATCH edge 1 row( \[(reads|writes)\])?$', status: regression}
-          - {name_regex: '^UNWIND id MATCH edge 100 rows( \[(reads|writes)\])?$', status: regression}
-      judge: >-
-        Three of the four rows #3963 added (bench/src/falkorbench/queries.py)
-        are regression findings, confirmed by a re-run. The fourth, UNWIND
-        index MATCH edge 100 rows, is at parity at bench sizes (one hash join
-        over the scan costs about as much as 100 seeks; #3887's cost grows
-        with node count, which size-probe covers): report its ratio from
-        raw/rows.csv, it is not required (amended 2026-11-24, DECISIONS).
-        micro names a finding after its bench row plus its class
-        ("<row> [writes]"); the patterns are anchored so no other row
-        matches. Report any other regression finding as it is.
-
   micro-hw:
     - id: micro-hw-a-a
       candidate: *main-4c1088949
@@ -126,11 +97,18 @@ checks:
           - {name_regex: '^UNWIND index MATCH edge 1 row( \[(reads|writes)\])?$', metric: cycles, status: regression}
           - {name_regex: '^UNWIND id MATCH edge 1 row( \[(reads|writes)\])?$', metric: cycles, status: regression}
           - {name_regex: '^UNWIND id MATCH edge 100 rows( \[(reads|writes)\])?$', metric: cycles, status: regression}
+          - {name_regex: '^correlated hash join( \[(reads|writes)\])?$', metric: alloc_bytes, status: regression}
       judge: >-
-        The same three #3963 rows as micro, on cycles (hardware counters on
-        a C4 VM, contract v1.6), confirmed by a re-run. Report the fourth row
-        and the branch/L2 miss rows as measured (contract v1.7: l2_misses; the
-        standard PMU counts no last-level-cache event).
+        Three of the four rows #3963 added (bench/src/falkorbench/queries.py)
+        regress on cycles, and correlated hash join on allocated bytes, each
+        confirmed by a re-run. The fourth #3963 row, UNWIND index MATCH edge
+        100 rows, is at parity at bench sizes (one hash join over the scan
+        costs about as much as 100 seeks; #3887's cost grows with node count,
+        which size-probe covers): report its ratio, it is not required. Report
+        the other allocation rows (the replay of run 45403484820 also flagged
+        id eq join and the three #3963 rows) and the branch/L2 miss rows as
+        measured. micro-hw names a finding "<row> [<class>]"; the patterns are
+        anchored so no other row matches.
     - id: micro-hw-c-v4.22.4-a-a
       candidate: *c-v4-22-4
       baseline: *c-v4-22-4

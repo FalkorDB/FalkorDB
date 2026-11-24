@@ -225,7 +225,7 @@ def test_cli_prints_every_problem_and_fails(tmp_path):
 # -- acceptance.yaml -----------------------------------------------------------------
 
 ACCEPTANCE = yaml.safe_load((HERE / "acceptance.yaml").read_text())
-CHECKS = ("micro", "micro-hw", "size-probe", "pokec", "soak-a", "soak-b", "fuzz", "ldbc")
+CHECKS = ("micro-hw", "size-probe", "pokec", "soak-a", "soak-b", "fuzz", "ldbc")
 MAIN = "main@4c1088949"
 # The pinned images (2026-11-24) and their commits (release tags, and main's merge commit for #3963).
 PINNED = {
@@ -254,14 +254,13 @@ def _micro_row_pattern(row: str) -> str:
 # (check, candidate, baseline) -> expectation. Every check has main against itself.
 TABLE = {
     **{(check, MAIN, MAIN): AA for check in CHECKS},
-    ("micro", "6.2.0", MAIN): {
-        "verdict": "regression",
-        "findings": [{"name_regex": _micro_row_pattern(row), "status": "regression"} for row in MICRO_REQUIRED_ROWS],
-    },
     ("micro-hw", "6.2.0", "6.2.0"): AA,
     ("micro-hw", "6.2.0", MAIN): {
         "verdict": "regression",
-        "findings": [{"name_regex": _micro_row_pattern(row), "metric": "cycles", "status": "regression"} for row in MICRO_REQUIRED_ROWS],
+        "findings": [
+            *({"name_regex": _micro_row_pattern(row), "metric": "cycles", "status": "regression"} for row in MICRO_REQUIRED_ROWS),
+            {"name_regex": _micro_row_pattern("correlated hash join"), "metric": "alloc_bytes", "status": "regression"},
+        ],
     },
     ("micro-hw", "C v4.22.4", "C v4.22.4"): {},
     ("size-probe", "6.2.0", "6.0.4"): {"verdict": "regression", "findings": [{"name_regex": "unwind", "status": "regression"}]},
@@ -320,9 +319,9 @@ def test_acceptance_pairs_are_well_formed():
 
 def test_micro_acceptance_rows_exist_in_bench_and_the_reported_one_is_named():
     queries = (HERE.parent.parent / "bench" / "src" / "falkorbench" / "queries.py").read_text()
-    for row in MICRO_REQUIRED_ROWS + MICRO_REPORTED_ROWS:
+    for row in MICRO_REQUIRED_ROWS + MICRO_REPORTED_ROWS + ("correlated hash join",):
         assert f'Q("{row}"' in queries, f"bench has no row named {row!r}"
-    pair = next(p for p in ACCEPTANCE["checks"]["micro"] if p["id"] == "micro-6.2.0-vs-main")
+    pair = next(p for p in ACCEPTANCE["checks"]["micro-hw"] if p["id"] == "micro-hw-6.2.0-vs-main")
     for row in MICRO_REPORTED_ROWS:
         assert row in " ".join(pair["judge"].split())
 
