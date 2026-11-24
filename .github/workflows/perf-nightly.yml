@@ -308,6 +308,14 @@ jobs:
           else
             registry=(--registry-error "yq: $(tr '\n' ' ' < "$RUNNER_TEMP/yq.err")")
           fi
+          # TEMPORARY (goes with the pull_request trigger): until #3987 is on main,
+          # a PR's merge commit has no `bench hw`, which micro-hw's VM runs from
+          # the calling commit. A PR run plans everything but micro-hw, so its
+          # micro call gets micro_hw: false and starts no C4 VM.
+          if [[ $GITHUB_EVENT_NAME == pull_request && -z $CHECKS ]]; then
+            CHECKS="micro$(jq -r '.[]? | .name? | select(type == "string") | ",\(.)"' "$RUNNER_TEMP/checks.json" 2>/dev/null | tr -d '\n' || true)"
+            echo "pull_request: planning '$CHECKS' (no micro-hw)"
+          fi
           python3 -I tests/perf/merge.py plan "${registry[@]}" --select "$CHECKS" \
             --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
 
