@@ -92,27 +92,40 @@ class _Pinger:
         return [lat for t, lat in self.pings if a <= t <= b]
 
 
+def _outcome(e: Exception) -> str:
+    """An engine's error reply is an answer ("reply: …"); anything else means no answer ("lost: …")."""
+    return f"{'reply' if isinstance(e, ResponseError) else 'lost'}: {type(e).__name__}: {e}"[:200]
+
+
 def _long_read(port, limit, out):
-    """Appends (start, end, error or None): a failed read's interval is no evidence of anything."""
+    """Appends (start, end, outcome): None when the read answered, else _outcome's text."""
     c = _conn(port)
     t = time.perf_counter()
     err = None
     try:
         c.execute_command("GRAPH.RO_QUERY", "q", LONG_READ.format(limit=limit))
     except Exception as e:
-        err = f"{type(e).__name__}: {e}"[:200]
+        err = _outcome(e)
     out.append((t, time.perf_counter(), err))
 
 
+def _answered(what, rec):
+    """A request with no answer (lost connection, no record) makes the repro incomplete."""
+    if not rec or (rec[0][2] or "").startswith("lost"):
+        raise Incomplete(f"the {what} did not complete: {rec[0][2] if rec else 'no reply'}")
+
+
 def _freeze_verdict(pinger, lr, extra):
-    if not lr or lr[0][2] is not None:
-        raise Incomplete(f"the long read did not complete: {lr[0][2] if lr else 'no reply'}")
-    a, b, _ = lr[0]
+    """No PING over 500 ms during a long read that answered. An error reply to the long read, or to
+    the command sent during it (extra["error"]), fails the repro: the engine refused it."""
+    _answered("long read", lr)
+    a, b, err = lr[0]
     during = pinger.during(a, b)
     late = sum(1 for x in during if x > FREEZE_MS)
-    return {"pass": late == 0 if during else None,
+    refused = err or extra.get("error")
+    return {"pass": False if refused else (late == 0 if during else None),
             "detail": {"long_read_s": round(b - a, 1), "worst_ping_ms": round(max(during, default=0), 1),
-                       "pings_over_500ms": late, **extra}}
+                       "pings_over_500ms": late, "long_read_error": err, **extra}}
 
 
 def write_during_long_read(port, mode, nodes=1_000_000):
@@ -127,7 +140,10 @@ def write_during_long_read(port, mode, nodes=1_000_000):
         q = {"create": "CREATE (:W {i: 1})", "set": "MATCH (n:N {v: 1}) SET n.w = 1"}.get(mode)
         if q:
             t_w = time.perf_counter()
-            r.execute_command("GRAPH.QUERY", "q", q)
+            try:
+                r.execute_command("GRAPH.QUERY", "q", q)
+            except ResponseError as e:
+                extra["error"] = _outcome(e)
             extra["write_s"] = round(time.perf_counter() - t_w, 1)
         _join(th)
         time.sleep(0.5)
@@ -151,8 +167,12 @@ def constraint_during_long_read(port, mode, nodes=1_000_000):
         time.sleep(1.0)
         if mode != "none":
             t_c = time.perf_counter()
-            rep = r.execute_command("GRAPH.CONSTRAINT", "DROP" if mode == "drop" else "CREATE", *constraint)
-            extra.update(reply=harness.s(rep), command_s=round(time.perf_counter() - t_c, 1))
+            try:
+                rep = r.execute_command("GRAPH.CONSTRAINT", "DROP" if mode == "drop" else "CREATE", *constraint)
+                extra["reply"] = harness.s(rep)
+            except ResponseError as e:
+                extra["error"] = _outcome(e)
+            extra["command_s"] = round(time.perf_counter() - t_c, 1)
         _join(th)
         time.sleep(0.5)
     return _freeze_verdict(pinger, lr, extra)
@@ -261,7 +281,7 @@ def reads_behind_writer(port, nodes=1_000_000, n_reads=8):
             _conn(port).execute_command("GRAPH.QUERY", "q", "CREATE (:W {i: 1})")
             wr.append((round(a - t0, 1), round(time.perf_counter() - a, 1), None))
         except Exception as e:
-            wr.append((round(a - t0, 1), round(time.perf_counter() - a, 1), f"{type(e).__name__}: {e}"[:120]))
+            wr.append((round(a - t0, 1), round(time.perf_counter() - a, 1), _outcome(e)))
 
     t0 = time.perf_counter()
     ths = [threading.Thread(target=_long_read, args=(port, 2000, lr))]
@@ -282,18 +302,18 @@ def reads_behind_writer(port, nodes=1_000_000, n_reads=8):
 
 
 def judge_reads(out, wr, lr, n_reads) -> dict:
-    """reads-behind-writer's verdict: every cheap read answered (no timeout, no error reply). It is
-    judged only when all 2 * n_reads reads, the write and the long read completed; otherwise the
-    run is incomplete (a crash or an unmeasured repro, as run_repro finds)."""
+    """reads-behind-writer's verdict: every cheap read answered (no timeout, no error reply), and
+    the write and the long read too. It is judged only when every one of them got an answer (an
+    error reply counts as one); otherwise the run is incomplete (a crash or an unmeasured repro,
+    as run_repro finds)."""
     failed = [x for x in out if x[2].startswith("failed")]
     if len(out) != 2 * n_reads or failed:
         raise Incomplete(f"{len(out) - len(failed)} of {2 * n_reads} cheap reads got a reply")
-    if not wr or wr[0][2] is not None:
-        raise Incomplete(f"the write did not complete: {wr[0][2] if wr else 'no reply'}")
-    if not lr or lr[0][2] is not None:
-        raise Incomplete(f"the long read did not complete: {lr[0][2] if lr else 'no reply'}")
+    _answered("write", wr)
+    _answered("long read", lr)
     timeouts = sum(1 for x in out if x[2] == "timeout")
-    other = [x for x in out if x[2] not in ("ok", "timeout")]
+    other = [x for x in out if x[2] not in ("ok", "timeout")] + [("write", 0, wr[0][2])] * bool(wr[0][2]) \
+        + [("long read", 0, lr[0][2])] * bool(lr[0][2])
     return {"pass": timeouts == 0 and not other,
             "detail": {"timeouts": timeouts, "other": other[:3], "write": wr[:1],
                        "long_read_s": round(lr[0][1] - lr[0][0], 1), "reads": sorted(out)}}

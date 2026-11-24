@@ -94,6 +94,8 @@ Long mode adds `timed_out_writes_leave_nothing`, `constraints_hold`, `index_matc
 could never confirm it. The repros are
 a write, a constraint command and an index build while a long read runs (no freeze), writers
 behind a flood of reads at THREAD_COUNT 10, and cheap reads with TIMEOUT behind a waiting writer.
+An error reply fails a repro (the engine refused the request); a request that got no reply at all
+makes it a crash (the server died or hung) or unmeasured.
 
 ## How a check becomes a finding
 
@@ -111,7 +113,7 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
   that was not measured, or a repeat that did not measure the check, is not judged (the
   candidate's value is null). A request that waited more than 50 ms to be sent or for a free
   connection in the driver is driver-limited and left out of the timing judgments (counted in
-  `epoch.json`).
+  `epoch.json`); a check with every sample driver-limited is unmeasured.
 * **Data checks** (`writes_add_up`, `upsert_edges_complete`) and a crash count at once.
 * Contract v1.4 sets the status: 0 on the candidate only is `regression`, 0 on both sides is `info`
   ("broken on both sides (not new)"), 0 on the baseline only is `improvement`.

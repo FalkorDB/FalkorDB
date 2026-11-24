@@ -626,13 +626,18 @@ def test_no_freeze_needs_the_pings_it_judges():
 
 
 def test_driver_limited_requests_are_not_judged_on_timing():
-    stalled_in_pool = [[1, "lookup", 1.0, 1.0, 3.0, 0, 1.99]]  # 2 s, all of it waiting for a connection
-    checks_ = _analyse(_epoch_data(reads=stalled_in_pool), quiet=True)
-    assert checks_["quiet_graphs_stay_fast"]["pass"] and checks_["quiet_graphs_stay_fast"]["reads"] == 0
+    stalled_in_pool = [1, "lookup", 1.0, 1.0, 3.0, 0, 1.99]  # 2 s, all of it waiting for a connection
+    fast = [1, "lookup", 2.0, 2.0, 2.01, 0, 0.0]
+    checks_ = _analyse(_epoch_data(reads=[stalled_in_pool, fast]), quiet=True)
+    assert checks_["quiet_graphs_stay_fast"]["pass"] and checks_["quiet_graphs_stay_fast"]["reads"] == 1
     assert checks_["requests_drain"]["pool_limited_reads"] == 1
-    slow_write = [[0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9]]
+    # every sample driver-limited: nothing was judged, so the check did not measure
+    assert _analyse(_epoch_data(reads=[stalled_in_pool]), quiet=True)["quiet_graphs_stay_fast"]["pass"] is None
+    slow_write = [0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9]
+    fine_write = [0, "upsert", 11.0, 11.0, 18.5, 0, "", [], 0.0]
     longs = [[0, "full-scan", 10.0, 18.0, 0, ""]]
-    assert _analyse(_epoch_data(writes=slow_write, longs=longs))["writers_dont_starve"]["pass"]
+    assert _analyse(_epoch_data(writes=[slow_write, fine_write], longs=longs))["writers_dont_starve"]["pass"]
+    assert _analyse(_epoch_data(writes=[slow_write], longs=longs))["writers_dont_starve"]["pass"] is None
 
 
 def test_a_duplicated_key_breaks_writes_add_up_without_a_constraint():
@@ -691,6 +696,105 @@ def test_long_mode_starts_nothing_past_the_time_limit(monkeypatch, tmp_path):
 # --- review round: the harness -----------------------------------------------------------------------
 
 
+def test_a_long_baseline_with_no_paired_seed_stays_unknown():
+    hours = [_hour("candidate", {"x-h1-e1": {}})]
+    f = _by_name(check.long_findings(hours, [])[0])
+    assert (f["long writes_add_up"]["candidate"], f["long writes_add_up"]["baseline"]) == (1, None)
+    assert f["long writes_add_up"]["status"] == "info"
+
+
+def test_replays_of_one_hour_get_their_own_directories(monkeypatch, tmp_path):
+    _stub_redis(monkeypatch)
+    from soakfuzz import harness
+    dirs = []
+    monkeypatch.setattr(harness, "run_server_hour", lambda opts, info, tag, hp, eps, hdir, deadline=None:
+                        dirs.append(hdir) or {"epochs": [], "build": []})
+    run, opts = check.Run(tmp_path), {"long_scale_range": (0.25, 2.0, 4.0)}
+    for e in (1, 2):
+        ep = model.epoch_params("s", 1, e, model.hour_params("s", 1)["graphs"])
+        check.long_hour(opts, {"candidate": {}}, run, "candidate", 1, "s", None, epochs=[ep], replay=True)
+    assert len(set(dirs)) == 2
+
+
+def test_a_stale_hang_marker_is_cleared(monkeypatch, tmp_path):
+    _stub_redis(monkeypatch)
+    from soakfuzz import harness
+
+    class NoDocker:
+        def __init__(self, info, name, *a, **kw):
+            self.port, self.name = 1, name
+
+        def start(self):
+            raise harness.DockerError("no docker here")
+
+        def stop(self):
+            return ""
+
+    monkeypatch.setattr(harness, "Server", NoDocker)
+    hdir = tmp_path / "h"
+    hdir.mkdir()
+    (hdir / "HANG").write_text("left by an earlier run\n")
+    opts = {"name_prefix": "t", "server_cpus": None, "client_cpus": None, "net": "host"}
+    out = harness.run_server_hour(opts, {}, "t", {"thread_count": 4, "hour": 1, "scales": []}, [], str(hdir))
+    assert not (hdir / "HANG").exists() and out["server_alive"] is None
+
+
+def test_the_pool_wait_is_the_wait_for_a_slot_only(monkeypatch):
+    _stub_redis(monkeypatch)
+    import asyncio
+    from soakfuzz import harness
+
+    class Base:  # a slot after 0.10 s, then 0.20 s to open the connection (a server round trip)
+        async def get_connection(self, *a, **kw):
+            await asyncio.sleep(0.10)
+            await self.ensure_connection("c")
+            return "c"
+
+        async def ensure_connection(self, connection):
+            await asyncio.sleep(0.20)
+
+    waits = {}
+
+    async def main():
+        await harness.timed_pool_class(Base, waits)().get_connection("PING")
+
+    asyncio.run(main())
+    (wait,) = waits.values()
+    assert 0.08 < wait < 0.18
+
+
+def test_constraints_cut_short_by_the_epoch_end_are_judged_on_what_was_created(monkeypatch):
+    _stub_redis(monkeypatch)
+    import threading
+    from soakfuzz import harness
+    stop, sent = threading.Event(), []
+
+    class Conn:
+        def execute_command(self, *a):
+            sent.append(a)
+            if a[:2] == ("GRAPH.CONSTRAINT", "CREATE"):
+                stop.set()  # the epoch ends while the first constraint is being created
+            if a[0] == "GRAPH.RO_QUERY" and "db.constraints" in a[2]:
+                return [[], [["UNDER CONSTRUCTION"]]]
+            return [[], []]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(harness, "connect", lambda *a, **kw: Conn())
+    ep = {**model.control_params((1.0,))[1], "constraints": True}
+    info = {}
+    harness.epoch_events(0, 0.0, ep, 3, stop, [], time.monotonic(), info)
+    assert list(info["states"]) == ["0"] and info["pending_at_epoch_end"]
+    assert not any(a[0] == "GRAPH.QUERY" and "CREATE (:" in a[2] for a in sent)  # no violation probes
+    hp = model.control_params((1.0,))[0]
+    cal = [{"lookup": 1.0, "filter-sort": 3.0, "distinct": 3.0, "scan-lookup": 200.0}]
+    held = checks.analyse(ep, hp, cal, _epoch_data(), _window_pings(100), [], [], info, [])
+    assert held["checks"]["constraints_hold"]["pass"] is False
+    none = checks.analyse(ep, hp, cal, _epoch_data(), _window_pings(100), [], [], {}, [])
+    assert none["checks"]["constraints_hold"]["pass"] is None  # created on no graph: not measured
+
+
 def test_a_failed_docker_inspect_is_not_a_crash(monkeypatch):
     _stub_redis(monkeypatch)
     from soakfuzz import harness
@@ -702,6 +806,9 @@ def test_a_failed_docker_inspect_is_not_a_crash(monkeypatch):
         server.state()
     reply.update(rc=1, out="", err="Error: No such object: n")
     assert server.state() == (False, -1)
+    reply.update(rc=1, out="", err="error during connect: dial tcp: lookup docker-host: no such host")
+    with pytest.raises(harness.DockerError):
+        server.state()
     reply.update(rc=0, out="false 139\n", err="")
     assert server.state() == (False, 139)
 
@@ -733,8 +840,11 @@ def test_schema_commands_stop_when_the_epoch_ends(monkeypatch):
 
     monkeypatch.setattr(harness, "connect", lambda *a, **kw: Conn())
     ep = {**model.control_params((1.0,))[1], "indexes": True}
-    harness.epoch_events(0, 0.0, ep, 3, stop, [], time.monotonic(), {})
+    events = []
+    harness.epoch_events(0, 0.0, ep, 3, stop, events, time.monotonic(), {})
     assert {a[1] for a in sent} == {"soak_g0"}  # nothing for graphs 1 and 2
+    # and every graph is left for the wait after the load, graph 0's half-built indexes included
+    assert sorted(e["graph"] for e in events if e["event"] == "indexes_pending_at_epoch_end") == [0, 1, 2]
 
 
 def test_clean_up_runs_even_when_the_counting_fails(monkeypatch):
@@ -743,9 +853,10 @@ def test_clean_up_runs_even_when_the_counting_fails(monkeypatch):
     dropped, schema = [], {"left": 0}
 
     class Conn:
-        def execute_command(self, cmd, graph=None, q=""):
-            if cmd == "GRAPH.CONFIG":
+        def execute_command(self, *a):
+            if a[0] == "GRAPH.CONFIG":
                 return "OK"
+            q = a[2]
             if "DROP INDEX" in q:
                 dropped.append(q)
                 return [[], []]
@@ -762,7 +873,8 @@ def test_clean_up_runs_even_when_the_counting_fails(monkeypatch):
     ep = {**model.control_params((0.01,))[1], "indexes": True}
     events = []
     out = harness.end_of_epoch(Conn(), ep, 1, [n], checks.Ledger([n]), events, time.monotonic())
-    assert out["ledger_problems"][0][0] == "harness" and dropped and out["reusable"]
+    assert out["ledger_problems"][0][0] == "harness" and "the count query failed" in out["ledger_problems"][0][1]
+    assert dropped and out["reusable"]
     schema["left"] = 1  # an index survived the clean-up: the server must not run another epoch
     out = harness.end_of_epoch(Conn(), ep, 1, [n], checks.Ledger([n]), events, time.monotonic())
     assert out["reusable"] is False and events[-1]["event"] == "cleanup_incomplete"
@@ -777,10 +889,13 @@ def test_a_failed_long_read_is_no_freeze_evidence(monkeypatch):
             return [1.0, 1.0]
 
     with pytest.raises(repros.Incomplete):
-        repros._freeze_verdict(Pinger(), [(0.0, 1.0, "ConnectionError: closed")], {})
+        repros._freeze_verdict(Pinger(), [(0.0, 1.0, "lost: ConnectionError: closed")], {})
     with pytest.raises(repros.Incomplete):
         repros._freeze_verdict(Pinger(), [], {})
     assert repros._freeze_verdict(Pinger(), [(0.0, 30.0, None)], {})["pass"] is True
+    # an error reply is an answer: the engine refused the long read, or the command sent during it
+    assert repros._freeze_verdict(Pinger(), [(0.0, 1.0, "reply: ResponseError: x")], {})["pass"] is False
+    assert repros._freeze_verdict(Pinger(), [(0.0, 30.0, None)], {"error": "reply: ResponseError: y"})["pass"] is False
 
 
 def test_reads_behind_writer_needs_every_reply(monkeypatch):
@@ -791,6 +906,8 @@ def test_reads_behind_writer_needs_every_reply(monkeypatch):
     assert repros.judge_reads(reads, wr, lr, 2)["pass"] is True
     assert repros.judge_reads(reads[:3] + [("behind-writer", 1000.0, "timeout")], wr, lr, 2)["pass"] is False
     for bad in ((reads[:3], wr, lr), (reads[:3] + [("behind-writer", 1.0, "failed: ConnectionError")], wr, lr),
-                (reads, [], lr), (reads, [(1.0, 0.5, "ConnectionError")], lr), (reads, wr, [(0.0, 1.0, "x")])):
+                (reads, [], lr), (reads, [(1.0, 0.5, "lost: ConnectionError")], lr),
+                (reads, wr, [(0.0, 1.0, "lost: ConnectionError")])):
         with pytest.raises(repros.Incomplete):
             repros.judge_reads(*bad, 2)
+    assert repros.judge_reads(reads, [(1.0, 0.5, "reply: ResponseError: no")], lr, 2)["pass"] is False

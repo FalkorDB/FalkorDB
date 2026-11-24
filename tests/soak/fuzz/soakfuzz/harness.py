@@ -181,7 +181,7 @@ class Server:
         of `docker inspect` (its daemon unreachable) raises DockerError, never reads as a crash."""
         p = docker("inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", self.name, check=False)
         if p.returncode != 0:
-            if "no such" in (p.stderr + p.stdout).lower():
+            if any(s_ in (p.stderr + p.stdout).lower() for s_ in ("no such object", "no such container")):
                 return False, -1
             raise DockerError(f"docker inspect failed: {(p.stderr or p.stdout).strip()[:200]}")
         run, code = p.stdout.split()
@@ -420,20 +420,39 @@ def async_proc(cfg: dict, stop, scanning, out_path: str):
     os._exit(0)
 
 
+def timed_pool_class(base, waits: dict):
+    """A connection pool that records, per task, how long it waited for a free connection: the time
+    in get_connection less the time spent opening a connection (a connect plus a handshake the
+    server answers, which is server time, not the driver's)."""
+    class TimedPool(base):
+        async def get_connection(self, *a, **kw):
+            task = asyncio.current_task()
+            self._opening = getattr(self, "_opening", {})
+            self._opening[task] = 0.0
+            t0 = now()
+            conn = await super().get_connection(*a, **kw)
+            waits[task] = max(0.0, now() - t0 - self._opening.pop(task, 0.0))
+            return conn
+
+        async def ensure_connection(self, connection):
+            t0 = now()
+            try:
+                await super().ensure_connection(connection)
+            finally:
+                opening = getattr(self, "_opening", {})
+                task = asyncio.current_task()
+                if task in opening:
+                    opening[task] += now() - t0
+
+    return TimedPool
+
+
 async def _async_main(cfg, stop, scanning, out_path):
     import redis.asyncio as aredis
     ep, sizes, port = cfg["ep"], cfg["sizes"], cfg["port"]
     ng = len(sizes)
     pool_waits = {}  # task -> seconds it waited for a free connection (the pool is full at max_conns)
-
-    class TimedPool(aredis.BlockingConnectionPool):
-        async def get_connection(self, *a, **kw):
-            t0 = now()
-            conn = await super().get_connection(*a, **kw)
-            pool_waits[asyncio.current_task()] = now() - t0
-            return conn
-
-    pool = TimedPool(host="127.0.0.1", port=port, max_connections=cfg["max_conns"], timeout=None,
+    pool = timed_pool_class(aredis.BlockingConnectionPool, pool_waits)(host="127.0.0.1", port=port, max_connections=cfg["max_conns"], timeout=None,
                      socket_timeout=None, socket_connect_timeout=10, retry=Retry(NoBackoff(), 0))
     r = aredis.Redis(connection_pool=pool)
     reads, writes, errors, died = [], [], {}, []
@@ -651,7 +670,7 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                 t_created = now()
                 for g in range(ng):
                     if stop.is_set():  # no new schema commands once the epoch has ended
-                        return
+                        break
                     for label, props in model.EPOCH_INDEXES:
                         try:
                             r.execute_command("GRAPH.QUERY", gname(g), idx_create(label, props))
@@ -662,9 +681,11 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                     kind_ = {True: "indexes_ready", False: "indexes_stuck", None: "indexes_pending_at_epoch_end"}[ok]
                     ev(kind_, graph=g, seconds=round(now() - t_created if ok is None else took, 1))
             elif kind == "constraints":
+                created = []  # the graphs the constraints were created on (the epoch may end first)
                 for g in range(ng):
                     if stop.is_set():
-                        return
+                        break
+                    created.append(g)
                     for label, props in model.CONSTRAINTS:
                         try:
                             r.execute_command("GRAPH.QUERY", gname(g), idx_create(label, props))
@@ -675,7 +696,7 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                 t0 = now()
                 states = {}
                 while now() - t0 < 180:
-                    states = {g: constraint_status(r, gname(g)) for g in range(ng)}
+                    states = {g: constraint_status(r, gname(g)) for g in created}
                     if all(st and all(x != "UNDER CONSTRUCTION" for x in st) for st in states.values()):
                         break
                     if stop.wait(1):
@@ -684,12 +705,15 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                 constraint_info["states"] = {str(g): st for g, st in states.items()}
                 constraint_info["seconds"] = round(took, 1)
                 ev("constraints_state", seconds=round(took, 1), states={str(g): st for g, st in states.items()})
+                if stop.is_set() and any("UNDER CONSTRUCTION" in st for st in states.values()):
+                    constraint_info["pending_at_epoch_end"] = True  # run_epoch waits for them after the load
+                    return
                 operational = {g for g, st in states.items() if st and all(x == "OPERATIONAL" for x in st)}
                 # deliberate violations on operational graphs: existing keys, must be rejected
                 label = model.CONSTRAINTS[0][0]
                 for g in sorted(operational):
                     if stop.is_set():
-                        return
+                        break
                     for k in range(3):
                         try:
                             r.execute_command("GRAPH.QUERY", gname(g),
@@ -841,6 +865,20 @@ def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Led
     if ev_thread.is_alive():  # still inside a schema command: the server must not run another epoch
         events.append({"t": round(now() - t_start, 2), "event": "events_stuck"})
         reusable = False
+    # a constraint still building when the load stopped gets 300 s more, then its state is judged
+    if constraint_info.get("pending_at_epoch_end"):
+        try:
+            t0 = now()
+            while now() - t0 < 300:
+                states = {g: constraint_status(r, gname(int(g))) for g in constraint_info["states"]}
+                if all("UNDER CONSTRUCTION" not in st for st in states.values()):
+                    break
+                time.sleep(1)
+            constraint_info["states"] = states
+            events.append({"t": round(now() - t_start, 2), "event": "constraints_state", "states": states,
+                           "seconds": round(now() - t0, 1), "after_load": True})
+        except Exception as exc:
+            events.append({"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]})
     # an index still building when the load stopped gets 300 s more before it counts as stuck
     for e in [x for x in events if x["event"] == "indexes_pending_at_epoch_end"]:
         try:

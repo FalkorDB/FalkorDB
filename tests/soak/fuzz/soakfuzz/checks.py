@@ -264,7 +264,9 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
         excess = reply - wait_bound(g, head, reply)
         if excess > STARVE_S:
             starve.append(round(excess, 2))
-    checks["writers_dont_starve"] = {"pass": not starve, "slow_writes": len(starve),
+    acked = sum(1 for w in writes if w[5] == 0)
+    # every acknowledged write driver-limited: nothing was judged, so the check did not measure
+    checks["writers_dont_starve"] = {"pass": None if acked and not wlat else not starve, "slow_writes": len(starve),
                                      "worst_excess_s": max(starve, default=0), "writes": len(wlat),
                                      "write_p99_ms": round(pct(wlat, 99), 1), "write_max_ms": round(max(wlat, default=0), 1),
                                      "queue_wait_max_s": round(max(qwait, default=0), 2)}
@@ -273,6 +275,7 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     quiet = [g for g in range(ng) if g not in ep["busy"]]
     qviol = 0
     qlat = []
+    quiet_ok = sum(1 for r_ in reads if r_[0] in quiet and r_[5] == 0)
     for r_ in reads:
         g, op, sched, send, reply, oc = r_[:6]
         if g in quiet and oc == 0 and (send - sched) < DRIVER_LAG_S and _pool_wait(r_, 6) <= DRIVER_LAG_S:
@@ -280,7 +283,8 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
             qlat.append(lat)
             if lat > cal[g].get(op, 0) + QUIET_SLACK_MS:
                 qviol += 1
-    checks["quiet_graphs_stay_fast"] = {"pass": qviol == 0, "applies": bool(quiet), "quiet_graphs": quiet,
+    checks["quiet_graphs_stay_fast"] = {"pass": None if quiet_ok and not qlat else qviol == 0,
+                                        "applies": bool(quiet), "quiet_graphs": quiet,
                                         "slow_reads": qviol, "reads": len(qlat),
                                         "p99_ms": round(pct(qlat, 99), 1), "max_ms": round(max(qlat, default=0), 1)}
 
@@ -326,10 +330,11 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     # constraints
     dups = by_kind["duplicate"]
     if ep["constraints"]:
-        states = constraint_info.get("states", {})
+        states = constraint_info.get("states", {})  # the graphs they were created on
         bad_state = {g: st for g, st in states.items() if not st or any(x != "OPERATIONAL" for x in st)}
         acc = constraint_info.get("violations_accepted", [])
-        checks["constraints_hold"] = {"pass": not bad_state and not acc and not dups, "applies": True,
+        held = not bad_state and not acc and not dups
+        checks["constraints_hold"] = {"pass": held if states or bad_state or acc or dups else None, "applies": True,
                                       "not_operational": bad_state, "seconds": constraint_info.get("seconds"),
                                       "violations_rejected": constraint_info.get("violations_rejected", 0),
                                       "violations_accepted": acc, "duplicates": dups}

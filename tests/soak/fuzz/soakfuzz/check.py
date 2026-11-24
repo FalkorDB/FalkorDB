@@ -332,14 +332,14 @@ def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
         if c not in LONG_IMMEDIATE:
             suspects += [(s_, c) for s_ in _seeds_where(hours, c)]
     replayed = set()
-    for s_, _c in suspects:
-        if len(replayed) >= LONG_REPLAYS or s_ in replayed:
-            continue
+    for s_ in dict.fromkeys(s_ for s_, _c in suspects):  # each seed once, in the order found
+        if len(replayed) >= LONG_REPLAYS:
+            break
         h_, e_ = (int(x[1:]) for x in s_.split("-")[-2:])
         hp = model.hour_params(seed, h_, opts["long_scale_range"])
         ep = model.epoch_params(seed, h_, e_, hp["graphs"])
         one = opts["epoch_s"] + opts["drain_s"] + 90 + (300 if ep["indexes"] else 0) + 120 + 120 * sum(hp["scales"])
-        if not time_for(opts, 2 * one, f"replay of {s_}", run):
+        if not time_for(opts, 2 * one * slow, f"replay of {s_}", run):  # as slow as the hours ran
             continue
         replayed.add(s_)
         for side in ("baseline", "candidate"):
@@ -393,7 +393,10 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
         if any(None in v for v in vals):
             unmeasured.append(f"long {chk}: not measured on every seed")
         sus = _seeds_where(hours, chk)
-        if chk in LONG_IMMEDIATE:
+        if chk in LONG_IMMEDIATE and not vals:  # only seeds the baseline never ran: its value is unknown
+            cand = 0 if any(c is False for c in lone_c) else (1 if all(c is True for c in lone_c) else None)
+            base = None
+        elif chk in LONG_IMMEDIATE:
             seen = vals + pairs(c_rep, b_rep, [s_ for s_ in c_rep if s_ in b_rep])
             if any(c is False and b is True for c, b in seen):
                 cand, base = 0, 1
