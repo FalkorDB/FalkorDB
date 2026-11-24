@@ -482,7 +482,10 @@ def test_json_out_refuses_nan(tmp_path):
 # --- context: skip and previous green --------------------------------------------
 
 
-def night(status, commit=MAIN, base=BASE, date="2026-11-23"):
+def night(status, commit=MAIN, base=BASE, date="2026-11-23", checks=None):
+    if checks is None:
+        verdict = {"green": "pass", "red": "regression", "error": "error"}.get(status)
+        checks = [{"check": "micro", "verdict": verdict}] if verdict else []
     return {
         "schema": 1,
         "date": date,
@@ -490,6 +493,7 @@ def night(status, commit=MAIN, base=BASE, date="2026-11-23"):
         "candidate": {**CANDIDATE, "commit": commit},
         "baseline": {**BASELINE, "image": base},
         "status": status,
+        "checks": checks,
     }
 
 
@@ -520,6 +524,15 @@ def test_skip_reason_names_the_night_that_measured(tmp_path):
         [],  # the first nightly ever
         history(None, night("green")),  # last run left no artifact
         history(night("error"), night("green")),  # retry a failed night
+        # A red night whose other check could not measure (run 45332918572:
+        # micro regressed, writes-nothing left no result.json): retry it too.
+        history(
+            night("red", checks=[
+                {"check": "micro", "verdict": "regression"},
+                {"check": "writes-nothing", "verdict": "error", "error": "no result.json"},
+            ]),
+            night("green"),
+        ),
         history(night("green", commit=OLDER)),  # main moved
         history(night("green", base=OTHER_BASE)),  # a new release
     ],
@@ -540,6 +553,7 @@ def test_candidate_without_commit_never_skips():
         {**night("green"), "candidate": "main"},
         {**night("green"), "baseline": None},
         {**night("green"), "status": None},
+        {**night("green"), "checks": None},
     ],
 )
 def test_an_unusable_earlier_nightly_counts_as_missing(tmp_path, broken):

@@ -241,9 +241,18 @@ def usable(nightly):
     candidate, baseline = nightly.get("candidate"), nightly.get("baseline")
     if not (isinstance(candidate, dict) and isinstance(baseline, dict)):
         return None
-    if not isinstance(nightly.get("status"), str):
+    if not isinstance(nightly.get("status"), str) or not isinstance(nightly.get("checks"), list):
         return None
     return nightly
+
+
+def left_unmeasured(nightly):
+    """Whether any check of that night could not measure. A red night can hold
+    one too (a regression outranks an error in the status), and skipping after
+    it would leave that check unmeasured until main moves."""
+    if nightly["status"] == "error":
+        return True
+    return any(not isinstance(c, dict) or c.get("verdict") == "error" for c in nightly["checks"])
 
 
 def previous_green_commit(history):
@@ -258,15 +267,16 @@ def skip_reason(history, candidate, baseline):
     """Why tonight need not run, or None.
 
     Skipped only when there is nothing new to measure AND the last answer stands:
-    the newest earlier nightly left a nightly.json, was not `error` (a transient
-    failure gets retried), and measured the same candidate commit against the same
-    baseline digest. A skipped night counts too, since it carries the pair it
-    skipped, so a quiet stretch keeps skipping.
+    the newest earlier nightly left a nightly.json, none of its checks said
+    `error` (a transient failure gets retried, even beside a regression), and it
+    measured the same candidate commit against the same baseline digest. A
+    skipped night counts too, since it carries the pair it skipped, so a quiet
+    stretch keeps skipping.
     """
     if not history or candidate["commit"] is None:
         return None
     _, last = history[0]
-    if last is None or last["status"] == "error":
+    if last is None or left_unmeasured(last):
         return None
     if last["candidate"].get("commit") != candidate["commit"]:
         return None
