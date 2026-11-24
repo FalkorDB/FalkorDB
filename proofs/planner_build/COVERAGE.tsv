@@ -55,26 +55,26 @@ graph/src/planner/mod.rs	Planner::plan	3293	PROVEN	per-clause plans: unwind/crea
 graph/src/parser/ast.rs	Variable::eq	185	PROVEN	Ast.AV.eqv_iff (id only), AV.eqv_other_scope, AV.eqv_equivalence
 graph/src/parser/ast.rs	Variable::key	214	PROVEN	Ast.AV.key: AV.key_eq_iff (id and scope), AV.key_eq_eqv, AV.key_other_scope, notVisited_key
 graph/src/parser/ast.rs	Variable::as_str	236	PROVEN	Ast.AV.asStr: AV.asStr_spec (the written name, else `?`)
-graph/src/parser/ast.rs	ExprIR::and_of	444	PROVEN	E.andOf = flat .and true (Expr.lean); AndOf.tv_andOf (three-valued value = Kleene AND of the operands), passes_andOf; andOf_nested_in_order, andOf_keeps_or (the Rust unit tests); with runtime errors: optimizer_rewrites AndOf.flat_eval, flat_passes
-graph/src/parser/ast.rs	ExprIR::or_of	450	PROVEN	E.orOf = flat .or false; AndOf.tv_orOf (three-valued value = Kleene OR of the operands); with runtime errors: optimizer_rewrites AndOf.flat_eval (o = true)
-graph/src/parser/ast.rs	ExprIR::flat	457	PROVEN	E.flat/flatBody/spliceOp: flat_eq_body (early return is a shortcut), flat_nil (identity), flat_single, flat_single_same, flat_many (splice in order, take_out keeps position), spliceOp_other (other operators never merged); optimizer_rewrites AndOf.flatT_eq_body, scL_splice (associativity with errors/nulls/short-circuit), flat_eval
-graph/src/parser/ast.rs	ExprIR::fmt	488	PROVEN	Ast2.exprFmt (every variant), exprFmt_ops_distinct, exprFmt_param, exprFmt_func
-graph/src/parser/ast.rs	QuantifierType::fmt	582	PROVEN	Ast2.quantFmt, quantFmt_injective
-graph/src/parser/ast.rs	SupportAggregation::is_aggregation	599	PROVEN	Ast.isAggregation (trait method = any aggregate call in the tree): isAggregation_root/_child/_leaf
-graph/src/parser/ast.rs	is_aggregation	603	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf
-graph/src/parser/ast.rs	is_aggregation	614	PROVEN	Ast.isAggregation (raw-name impl, same DFS any)
-graph/src/parser/ast.rs	QueryNode::fmt	639	PROVEN	Ast.fmtNode, fmtNode_plain
-graph/src/parser/ast.rs	QueryGraph::default	788	PROVEN	Ast.new_spec (empty nodes/rels/paths)
-graph/src/parser/ast.rs	QueryGraph::fmt	801	PROVEN	Ast.fmtGraph, fmtGraph_empty
-graph/src/parser/ast.rs	merge_attr_maps	824	PROVEN	Ast.mergeAttrs_eq (entries concatenated, duplicates kept)
-graph/src/parser/ast.rs	QueryGraph::merge_node	862	PROVEN	Ast.mergeNode_present (labels unioned via extendLabels_mem, attrs concatenated, same position), mergeNode_absent
-graph/src/parser/ast.rs	QueryGraph::variables	918	PROVEN	Ast.variables_order (nodes, then rels, then paths)
-graph/src/parser/ast.rs	QueryGraph::dfs	1001	PROVEN	Ast2.dfs (one id-only visited set for nodes, rels, paths): dfs_mono, dfs_marks, relStep_mono
-graph/src/parser/ast.rs	SetItem::fmt	1056	PROVEN	Ast2.setItemFmt_replace, setItemFmt_merge
-graph/src/parser/ast.rs	QueryIR::fmt	1201	PROVEN	Ast2.clauseFmt, clauseFmt_union, clauseFmt_match
-graph/src/parser/ast.rs	QueryIR::validate	1310	PROVEN	Ast.validate: call_then_match_rejected, call_then_unwind_rejected, call_then_create_multi_type_rejected (#3297), with_last_rejected (#3291), validate_ends
-graph/src/parser/ast.rs	validate_set_items	1494	PROVEN	Ast.setItemsOk_spec
-graph/src/parser/ast.rs	QueryIR::return_column_names	1535	PROVEN	Ast.returnColumns: returnColumns_last_return, returnColumns_skips_updates, returnColumns_nonquery
+graph/src/parser/ast.rs	ExprIR::and_of	449	PROVEN	E.andOf = flat .and true (Expr.lean); AndOf.tv_andOf (three-valued value = Kleene AND of the operands), passes_andOf; andOf_nested_in_order, andOf_keeps_or (the Rust unit tests); with runtime errors: optimizer_rewrites AndOf.flat_eval, flat_passes
+graph/src/parser/ast.rs	ExprIR::or_of	455	PROVEN	E.orOf = flat .or false; AndOf.tv_orOf (three-valued value = Kleene OR of the operands); with runtime errors: optimizer_rewrites AndOf.flat_eval (o = true)
+graph/src/parser/ast.rs	ExprIR::flat	462	PROVEN	E.flat/flatBody/spliceOp: flat_eq_body (early return is a shortcut), flat_nil (identity), flat_single, flat_single_same, flat_many (splice in order, take_out keeps position), spliceOp_other (other operators never merged); optimizer_rewrites AndOf.flatT_eq_body, scL_splice (associativity with errors/nulls/short-circuit), flat_eval
+graph/src/parser/ast.rs	ExprIR::fmt	493	PROVEN	Ast2.exprFmt (every variant), exprFmt_ops_distinct, exprFmt_param, exprFmt_func, exprFmt_aggOrderPlaceholder (#3016)
+graph/src/parser/ast.rs	QuantifierType::fmt	588	PROVEN	Ast2.quantFmt, quantFmt_injective
+graph/src/parser/ast.rs	SupportAggregation::is_aggregation	605	PROVEN	Ast.isAggregation (trait method = any aggregate call in the tree): isAggregation_root/_child/_leaf
+graph/src/parser/ast.rs	is_aggregation	609	PROVEN	Ast.isAggregation: isAggregation_root, isAggregation_child, isAggregation_leaf
+graph/src/parser/ast.rs	is_aggregation	620	PROVEN	Ast.isAggregation (raw-name impl, same DFS any)
+graph/src/parser/ast.rs	QueryNode::fmt	645	PROVEN	Ast.fmtNode, fmtNode_plain
+graph/src/parser/ast.rs	QueryGraph::default	794	PROVEN	Ast.new_spec (empty nodes/rels/paths)
+graph/src/parser/ast.rs	QueryGraph::fmt	807	PROVEN	Ast.fmtGraph, fmtGraph_empty
+graph/src/parser/ast.rs	merge_attr_maps	830	PROVEN	Ast.mergeAttrs_eq (entries concatenated, duplicates kept)
+graph/src/parser/ast.rs	QueryGraph::merge_node	868	PROVEN	Ast.mergeNode_present (labels unioned via extendLabels_mem, attrs concatenated, same position), mergeNode_absent
+graph/src/parser/ast.rs	QueryGraph::variables	924	PROVEN	Ast.variables_order (nodes, then rels, then paths)
+graph/src/parser/ast.rs	QueryGraph::dfs	1007	PROVEN	Ast2.dfs (one id-only visited set for nodes, rels, paths): dfs_mono, dfs_marks, relStep_mono
+graph/src/parser/ast.rs	SetItem::fmt	1062	PROVEN	Ast2.setItemFmt_replace, setItemFmt_merge
+graph/src/parser/ast.rs	QueryIR::fmt	1207	PROVEN	Ast2.clauseFmt, clauseFmt_union, clauseFmt_match
+graph/src/parser/ast.rs	QueryIR::validate	1316	PROVEN	Ast.validate: call_then_match_rejected, call_then_unwind_rejected, call_then_create_multi_type_rejected (#3297), with_last_rejected (#3291), validate_ends
+graph/src/parser/ast.rs	validate_set_items	1500	PROVEN	Ast.setItemsOk_spec
+graph/src/parser/ast.rs	QueryIR::return_column_names	1541	PROVEN	Ast.returnColumns: returnColumns_last_return, returnColumns_skips_updates, returnColumns_nonquery
 graph/src/planner/hop_order.rs	self_loops_after_binders	25	PROVEN	HopOrder.selfLoopsAfterBinders: selfLoops_perm (permutation; run_inv: deferred list empty at the end), kept_sublist (non-deferred hops keep their order), deferred_after_binder (a deferred self-loop follows its first later binder), single_pass (one fold, one step per hop), early_return_sound, pr_cases; eq_reference = pre-#3102 loop (pre3102_reference, tests::reference) under WF (self_loop ⇒ from = to; planner: orderRels_eq_reference when alias ids are unique per pattern), wf_needed (#3102 61284ea4f, fixes #2999)
 graph/src/planner/optimizer/mod.rs	collect_expr_scoped_variables	112	PROVEN	E.scopedVars (Anchor.lean): mem_scopedVars (exactly the (scope,id) of the variables the expression reads), scopedVars_keeps_scope
 graph/src/planner/optimizer/mod.rs	collect_single_variable_conjuncts	127	PROVEN	E.singleVarConj (Anchor.lean): singleVarConj_spec/singleVarConj_sound (every collected var is the only var of a top-level AND conjunct), nodes_conj; singleVarConj_and/_two_vars/_or/_pattern

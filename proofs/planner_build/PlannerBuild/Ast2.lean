@@ -133,7 +133,7 @@ theorem components_cover (g : QG) :
 /-- What `Display for ExprIR` prints for each payload (`render` = the payload's own Display). -/
 inductive EK
   | null | bool (b : String) | int (i : String) | float (f : String) | str (s : String) | otherConst (dbg : String)
-  | list | map | var (v : String) | param (p : String) | length | getElement | getElements | isNode | isRel
+  | list | map | var (v : String) | aggOrderPlaceholder | param (p : String) | length | getElement | getElements | isNode | isRel
   | or | xor | and | not | negate | eq | neq | lt | gt | le | ge | inOp | add | sub | mul | div | pow | modulo
   | distinct | property (p : String) | func (name : String) | quant (q v : String) | listComp (v : String)
   | reduce (a i : String) | patComp | paren | pattern | nested (id : Nat) | shortestPath | mapProjection
@@ -141,7 +141,8 @@ inductive EK
 
 def exprFmt : EK → String
   | .null => "null" | .bool b => b | .int i => i | .float f => f | .str s => s | .otherConst d => "const(" ++ d ++ ")"
-  | .list => "[]" | .map => "{}" | .var v => v | .param p => "@" ++ p
+  | .list => "[]" | .map => "{}" | .var v => v
+  | .aggOrderPlaceholder => "__agg_order_by_placeholder__" | .param p => "@" ++ p
   | .length => "length()" | .getElement => "get_element()" | .getElements => "get_elements()"
   | .isNode => "is_node()" | .isRel => "is_relationship()"
   | .or => "or()" | .xor => "xor()" | .and => "and()" | .not => "not()" | .negate => "-negate()"
@@ -165,6 +166,10 @@ theorem exprFmt_ops_distinct :
 
 theorem exprFmt_param (p : String) : exprFmt (.param p) = "@" ++ p := rfl
 theorem exprFmt_func (n : String) : exprFmt (.func n) = n ++ "()" := rfl
+/-- #3016: the aggregate ORDER BY placeholder prints the name it was spelled as before it became
+its own variant, so plan dumps do not change. -/
+theorem exprFmt_aggOrderPlaceholder :
+    exprFmt .aggOrderPlaceholder = exprFmt (.var "__agg_order_by_placeholder__") := rfl
 
 inductive QK | all | any | none | single
 

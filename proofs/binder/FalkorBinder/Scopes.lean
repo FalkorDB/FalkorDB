@@ -1,4 +1,5 @@
 import FalkorBinder.Pattern
+import FalkorBinder.BindExpr
 /-
 # Scope tables across clauses: UNION, CALL {}, FOREACH, comprehensions, labels
 -/
@@ -39,22 +40,36 @@ theorem mergeSV_covers (a b : List (List Var)) (s i : Nat)
 
 /-! ## FOREACH restore (binder.rs) -/
 
-/-- The restored table: the saved outer table plus every inner entry whose
-id the outer table does not hold, re-keyed `_foreach_{scope}_{id}` — or, for a nameless
-variable, pushed unnamed (#3303). -/
-def foreachRestore (saved inner : Env) (scope : Nat) : Env :=
-  saved ++ (inner.filter (fun p => !(saved.ids.contains p.2.id))).map
-    (fun p => if p.2.name.isNone then (Key.un, p.2) else (Key.nm s!"_foreach_{scope}_{p.2.id}", p.2))
+/-- The restored table (binder.rs): the saved outer table, then every inner variable whose id the
+outer table does not hold, reserved nameless (`Scope::reserve`, #3016; before, re-keyed
+`_foreach_{scope}_{id}`). -/
+def foreachRestore (saved inner : Env) : Env :=
+  (inner.filter (fun p => !(saved.ids.contains p.2.id))).foldl (fun e p => e.reserve p.2) saved
+
+/-- Reserving variables whose ids the table does not hold, and that are pairwise distinct, appends
+them, nameless. -/
+theorem Env.foldl_reserve_fresh : ∀ (l : Env) (e : Env), (e.ids ++ l.map (·.2.id)).Nodup →
+    l.foldl (fun e p => e.reserve p.2) e = e ++ l.map (fun p => (Key.un, p.2))
+  | [], e, _ => by simp
+  | p :: l, e, h => by
+    have hni : p.2.id ∉ e.unnamedIds := fun hm => by
+      have h1 := Env.unnamedIds_sub _ _ hm
+      exact (List.nodup_append.1 h).2.2 _ h1 _ (by simp) rfl
+    simp only [List.foldl_cons, Env.reserve_eq_append hni]
+    rw [Env.foldl_reserve_fresh l _ (by simpa [Env.ids] using h)]
+    simp
 
 /-- When the body only *added* entries, each minted at or above the outer
 size (`inner = saved ++ added`), the restored table holds exactly the inner
 ids and has the inner size — so a covering inner table stays covering: no id
-used inside the FOREACH is handed out again after it. -/
-theorem foreachRestore_covers (saved added : Env) (scope : Nat)
+used inside the FOREACH is handed out again after it. Since `reserve` lists an id once
+(#3016), this needs the scope invariant that the inner table lists each id once
+(`Env.WF`; `lift` unreserves before naming, `hide_names` moves rather than copies). -/
+theorem foreachRestore_covers (saved added : Env)
     (hs : saved.Covers) (ha : ∀ p ∈ added, saved.length ≤ p.2.id)
-    (hi : (saved ++ added).Covers) :
-    (foreachRestore saved (saved ++ added) scope).Covers ∧
-    (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
+    (hi : (saved ++ added).Covers) (hn : (saved ++ added).ids.Nodup) :
+    (foreachRestore saved (saved ++ added)).Covers ∧
+    (foreachRestore saved (saved ++ added)).ids = (saved ++ added).ids := by
   have hS : saved.filter (fun p => !(saved.ids.contains p.2.id)) = [] := by
     rw [List.filter_eq_nil_iff]
     intro p hp
@@ -69,14 +84,13 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
     intro hm
     have := hs _ hm
     omega
-  have hids : (foreachRestore saved (saved ++ added) scope).ids = (saved ++ added).ids := by
+  have hr : foreachRestore saved (saved ++ added) = saved ++ added.map (fun p => (Key.un, p.2)) := by
     simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
-    simp only [Env.ids, List.map_append, List.map_map, Function.comp_def]
-    congr 1
-    apply List.map_congr_left; intro p _; split <;> rfl
-  have hlen : (foreachRestore saved (saved ++ added) scope).length = (saved ++ added).length := by
-    simp only [foreachRestore, List.filter_append, hS, hA, List.nil_append]
-    simp
+    exact Env.foldl_reserve_fresh added saved (by simpa [Env.ids] using hn)
+  have hids : (foreachRestore saved (saved ++ added)).ids = (saved ++ added).ids := by
+    rw [hr]; simp [Env.ids]
+  have hlen : (foreachRestore saved (saved ++ added)).length = (saved ++ added).length := by
+    rw [hr]; simp
   refine ⟨?_, hids⟩
   intro i hmem
   rw [hids] at hmem; rw [hlen]; exact hi i hmem
@@ -85,23 +99,27 @@ theorem foreachRestore_covers (saved added : Env) (scope : Nat)
 
 /-- `MATCH (n:A) RETURN [(n)-[r]->(m) | m.v] AS l`, scope 0 while the
 comprehension is bound: `bind_graph` mints `m ↦ 1`, `r ↦ 2`, which the
-comprehension's sub-plan uses; the cleanup then keeps only the names that
-were there before (unnamed entries stay, #3303). -/
+comprehension's sub-plan uses; the cleanup then hides the names that were not there before
+(`hide_names_except`, #3016). -/
 def compScope : Env :=
   [("n", ⟨"n", 0, 0, .node, none⟩), ("m", ⟨"m", 1, 0, .node, none⟩), ("r", ⟨"r", 2, 0, .rel, none⟩)]
 
-def compCleaned : Env := compScope.retain (fun k => k == "n")
+def compCleaned : Env := cleanup ["n"] [] compScope
 
-/-- **Root cause 2 (comprehensions).** The cleaned table has size 1 while
-ids 1 and 2 are still in the IR: the planner's first two fresh ids in scope
-0 — or the next binder variable (`x`, `y` of a following `MATCH (x)-->(y)`)
-— are exactly `m`'s and `r`'s. `mint_fresh_iff` says that is a collision. -/
-theorem comprehension_cleanup_breaks :
-    compScope.Covers ∧ compCleaned.length = 1 ∧
-    ¬ (∀ i ∈ compScope.ids, i < compCleaned.length) := by
-  refine ⟨?_, by decide, ?_⟩
+/-- **The cleanup keeps the pattern's slots** (#3016, fixes #3004 for comprehensions;
+before, `m` and `r` were removed, the table shrank to size 1 and the next variables of scope 0 —
+the planner's or `x`, `y` of a following `MATCH (x)-->(y)` — got `m`'s and `r`'s ids). Now only
+`n` is reachable by name, the table still holds ids 0, 1, 2 and the next id is 3. -/
+theorem comprehension_cleanup_covers :
+    compScope.Covers ∧ compCleaned.keys = ["n"] ∧ compCleaned.length = 3 ∧
+    (∀ i ∈ compScope.ids, i < compCleaned.length) ∧ compCleaned.Covers ∧
+    (freshVar compCleaned "x" .node 0).id = 3 := by
+  have hc : compScope.Covers := by
+    intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
+  have hids : compCleaned.ids = [0, 1, 2] := by decide
+  refine ⟨hc, by decide, by decide, ?_, ?_, by decide⟩
   · intro i hi; simp [compScope, Env.ids] at hi; rcases hi with rfl | rfl | rfl <;> decide
-  · intro h; exact absurd (h 1 (by decide)) (by decide)
+  · intro i hi; rw [hids] at hi; simp at hi; rcases hi with rfl | rfl | rfl <;> decide
 
 /-! ## `CALL { … UNION … }` scope numbering (`bind_call_body`, binder.rs) -/
 

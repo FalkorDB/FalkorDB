@@ -13,6 +13,12 @@ A `Scope` is modelled as one association list whose keys are a name (`Key.nm`, t
 map, distinct keys) or `Key.un` (an entry of `unnamed`, which no name reaches). `insert`
 replaces the value of a present name and appends otherwise, so `length` is `Scope::len()`
 (`named.len() + unnamed.len()`, binder.rs).
+
+Since #3016 the binder never drops an entry whose id may be in use: `Scope::reserve` lists a
+variable nameless (once per id), `Scope::lift` names a reserved variable for a nested pattern, and
+`Binder::hide_names` moves a named variable to the nameless list. On a table listing each id and
+name once (`Env.WF`) hiding keeps the ids and the length (`Env.hideNames_wf`), so `Covers` holds
+throughout (`Env.hideNames_covers`, `hide_keeps_slot`).
 -/
 namespace FalkorBinder
 
@@ -65,16 +71,8 @@ def has (e : Env) (k : Name) : Bool := e.any (·.1 == .nm k)
 def insert (e : Env) (k : Name) (v : Var) : Env :=
   if e.has k then e.map (fun p => if p.1 == .nm k then (.nm k, v) else p) else e ++ [(.nm k, v)]
 
-/-- `Scope::remove` (binder.rs). -/
+/-- `HashMap::remove` on `named` (inside `Binder::hide_names` / `restore_shadowed`, binder.rs). -/
 def erase (e : Env) (k : Name) : Env := e.filter (fun p => p.1 != .nm k)
-
-/-- `Scope::retain` (binder.rs): filters the named entries; unnamed ones always stay. -/
-def retain (e : Env) (keep : Name → Bool) : Env := e.filter (fun p => match p.1 with
-  | .nm n => keep n
-  | .un => true)
-
-/-- `Scope::push_unnamed` (binder.rs). -/
-def pushUnnamed (e : Env) (v : Var) : Env := e ++ [(.un, v)]
 
 /-- `Scope::keys` (binder.rs): the names; unnamed entries have none. -/
 def keys (e : Env) : List Name := e.filterMap (fun p => match p.1 with
@@ -95,6 +93,30 @@ def unnamed (e : Env) : List Var := e.filterMap (fun p => match p.1 with
 (`find` over `unnamed`, so the first). -/
 def lookupAnon (e : Env) (k : Nat) : Option Var := e.unnamed.find? (fun v => v.anon == some k)
 
+/-- `Scope::unnamed_ids` (#3016): the ids of the unnamed list. -/
+def unnamedIds (e : Env) : List Nat := e.unnamed.map (·.id)
+
+/-- `Scope::reserve` (binder.rs, #3016): keep `v`'s id taken without a name; a variable whose id
+is already reserved is not listed again. -/
+def reserve (e : Env) (v : Var) : Env := if e.unnamedIds.contains v.id then e else e ++ [(.un, v)]
+
+/-- `Scope::unreserve` (binder.rs, #3016): drop the reserved entry with this id. -/
+def unreserve (e : Env) (i : Nat) : Env := e.filter (fun p => match p.1 with
+  | .un => p.2.id != i
+  | .nm _ => true)
+
+/-- `Scope::lift` (binder.rs, #3016): un-reserve `v` and put it under `n`. -/
+def lift (e : Env) (n : Name) (v : Var) : Env := (e.unreserve v.id).insert n v
+
+/-- One name of `Binder::hide_names` (binder.rs, #3016): take it out of `named` and reserve its
+variable. -/
+def hideName (e : Env) (n : Name) : Env := match e.find? n with
+  | some v => (e.erase n).reserve v
+  | none => e
+
+/-- `Binder::hide_names` (binder.rs, #3016). -/
+def hideNames (e : Env) (ns : List Name) : Env := ns.foldl hideName e
+
 /-- `Scope::values` (binder.rs) / `into_values` (binder.rs): every variable. -/
 def values (e : Env) : List Var := e.map (·.2)
 
@@ -102,6 +124,10 @@ def ids (e : Env) : List Nat := e.map (·.2.id)
 
 /-- Every id in the table is below its size: minting at `len()` is fresh. -/
 def Covers (e : Env) : Prop := ∀ i ∈ e.ids, i < e.length
+
+/-- The table lists each id once and each name once (#3016: what the Rust test
+`scope_tables_list_each_variable_once` checks, with `Covers` it makes the ids exactly `0..len`). -/
+def WF (e : Env) : Prop := e.ids.Nodup ∧ e.keys.Nodup
 
 end Env
 
@@ -114,20 +140,53 @@ def freshVar (e : Env) (name : Name) (ty : Ty) (scope : Nat) : Var :=
 def freshAnon (e : Env) (k : Nat) (ty : Ty) (scope : Nat) : Var :=
   { name := none, id := e.length, scope, ty, anon := some k }
 
-/-- `Scope::len` counts the unnamed entries (binder.rs). -/
-theorem Env.pushUnnamed_length (e : Env) (v : Var) : (e.pushUnnamed v).length = e.length + 1 := by
-  simp [Env.pushUnnamed]
+theorem Env.unnamedIds_sub (e : Env) (i : Nat) (h : i ∈ e.unnamedIds) : i ∈ e.ids := by
+  induction e with
+  | nil => simp [Env.unnamedIds, Env.unnamed] at h
+  | cons p rest ih =>
+    obtain ⟨k, w⟩ := p
+    cases k with
+    | nm m =>
+      have : i ∈ Env.unnamedIds rest := by simpa [Env.unnamedIds, Env.unnamed] using h
+      simp [Env.ids] at ih ⊢; exact Or.inr (ih this)
+    | un =>
+      simp only [Env.unnamedIds, Env.unnamed, List.filterMap_cons, List.map_cons,
+        List.mem_cons] at h
+      simp only [Env.ids, List.map_cons, List.mem_cons]
+      rcases h with h | h
+      · exact Or.inl h
+      · exact Or.inr (ih h)
 
-/-- An unnamed entry is reached by no name. -/
-theorem Env.pushUnnamed_find (e : Env) (v : Var) (n : Name) :
-    (e.pushUnnamed v).find? n = e.find? n := by
-  have : (Key.nm n == Key.un) = false := by simp
-  simp [Env.pushUnnamed, Env.find?, List.lookup_append, List.lookup, this]
+/-- A variable whose id is not reserved yet is appended to the unnamed list. -/
+theorem Env.reserve_eq_append {e : Env} {v : Var} (h : v.id ∉ e.unnamedIds) :
+    e.reserve v = e ++ [(.un, v)] := by
+  simp [Env.reserve, h]
 
-/-- `Scope::retain` keeps every unnamed entry. -/
-theorem Env.retain_keeps_unnamed (e : Env) (keep : Name → Bool) (v : Var) (h : (.un, v) ∈ e) :
-    (.un, v) ∈ e.retain keep := by
-  simp [Env.retain, List.mem_filter, h]
+/-- An id already reserved is not listed twice (`unnamed_ids`). -/
+theorem Env.reserve_dup {e : Env} {v : Var} (h : v.id ∈ e.unnamedIds) : e.reserve v = e := by
+  simp [Env.reserve, h]
+
+/-- `Scope::len` counts the unnamed entries: reserving a new id adds one. -/
+theorem Env.reserve_length {e : Env} {v : Var} (h : v.id ∉ e.unnamedIds) :
+    (e.reserve v).length = e.length + 1 := by
+  simp [Env.reserve_eq_append h]
+
+/-- A reserved entry is reached by no name. -/
+theorem Env.reserve_find (e : Env) (v : Var) (n : Name) : (e.reserve v).find? n = e.find? n := by
+  unfold Env.reserve
+  split
+  · rfl
+  · have : (Key.nm n == Key.un) = false := by simp
+    simp [Env.find?, List.lookup_append, List.lookup, this]
+
+theorem Env.unnamed_append_un (e : Env) (v : Var) : Env.unnamed (e ++ [(Key.un, v)]) = e.unnamed ++ [v] := by
+  simp [Env.unnamed, List.filterMap_append]
+
+/-- `Scope::reserve` keeps every unnamed entry. -/
+theorem Env.reserve_keeps_unnamed (e : Env) (w v : Var) (h : (.un, v) ∈ e) : (.un, v) ∈ e.reserve w := by
+  unfold Env.reserve; split
+  · exact h
+  · exact List.mem_append_left _ h
 
 /-- `lookup_anon` finds only a variable whose parser number is `k`. -/
 theorem Env.lookupAnon_spec (e : Env) (k : Nat) (v : Var) (h : e.lookupAnon k = some v) :
@@ -136,24 +195,22 @@ theorem Env.lookupAnon_spec (e : Env) (k : Nat) (v : Var) (h : e.lookupAnon k = 
   have := List.find?_some h
   exact ⟨by simpa using this, List.mem_of_find?_eq_some h⟩
 
-/-- A table without the number has no hit, and a new unnamed variable becomes the hit. -/
-theorem Env.lookupAnon_pushUnnamed_self (e : Env) (v : Var) (k : Nat) (hv : v.anon = some k)
-    (h : e.lookupAnon k = none) : (e.pushUnnamed v).lookupAnon k = some v := by
-  have hu : (e.pushUnnamed v).unnamed = e.unnamed ++ [v] := by
-    simp [Env.pushUnnamed, Env.unnamed, List.filterMap_append]
+/-- A table without the number has no hit, and a newly reserved unnamed variable becomes the hit. -/
+theorem Env.lookupAnon_reserve_self (e : Env) (v : Var) (k : Nat) (hv : v.anon = some k)
+    (hf : v.id ∉ e.unnamedIds) (h : e.lookupAnon k = none) : (e.reserve v).lookupAnon k = some v := by
   have hn : e.unnamed.find? (fun v => v.anon == some k) = none := h
-  simp [Env.lookupAnon, hu, List.find?_append, hn, hv]
+  simp [Env.reserve_eq_append hf, Env.lookupAnon, Env.unnamed_append_un, List.find?_append, hn, hv]
 
-/-- Pushing an unnamed variable for another number changes no earlier hit. -/
-theorem Env.lookupAnon_pushUnnamed_other (e : Env) (v : Var) (k j : Nat) (hv : v.anon = some j)
-    (hne : j ≠ k) : (e.pushUnnamed v).lookupAnon k = e.lookupAnon k := by
-  have hu : (e.pushUnnamed v).unnamed = e.unnamed ++ [v] := by
-    simp [Env.pushUnnamed, Env.unnamed, List.filterMap_append]
-  have : (v.anon == some k) = false := by simp [hv, hne]
-  simp [Env.lookupAnon, hu, List.find?_append, this]
+/-- Reserving a variable of another number (or a named one) changes no hit. -/
+theorem Env.lookupAnon_reserve_other (e : Env) (v : Var) (k : Nat) (hv : v.anon ≠ some k) :
+    (e.reserve v).lookupAnon k = e.lookupAnon k := by
+  unfold Env.reserve
+  split
+  · rfl
+  · have : (v.anon == some k) = false := by simpa using hv
+    simp [Env.lookupAnon, Env.unnamed_append_un, List.find?_append, this]
 
-/-- No name reaches an unnamed variable and no name-keyed operation changes the unnamed list:
-`insert`, `erase` and `retain` leave `lookup_anon` alone for the entries `retain` keeps. -/
+/-- No name-keyed operation changes the unnamed list: `insert` leaves `lookup_anon` alone. -/
 theorem Env.lookupAnon_insert (e : Env) (n : Name) (v : Var) (k : Nat) :
     (e.insert n v).lookupAnon k = e.lookupAnon k := by
   have : (e.insert n v).unnamed = e.unnamed := by
@@ -167,27 +224,51 @@ theorem Env.lookupAnon_insert (e : Env) (n : Name) (v : Var) (k : Nat) :
     · simp [Env.unnamed, List.filterMap_append]
   simp [Env.lookupAnon, this]
 
-theorem Env.lookupAnon_retain (e : Env) (keep : Name → Bool) (k : Nat) :
-    (e.retain keep).lookupAnon k = e.lookupAnon k := by
-  have : (e.retain keep).unnamed = e.unnamed := by
-    simp only [Env.retain, Env.unnamed]
-    induction e with
-    | nil => rfl
-    | cons p rest ih =>
-      rcases p with ⟨_ | _, v⟩
-      · by_cases h : keep (‹Name›) = true <;> simp_all
-      · simp_all
-  simp [Env.lookupAnon, this]
+/-- `HashMap::remove` on `named` leaves the unnamed list alone. -/
+theorem Env.erase_unnamed (e : Env) (n : Name) : (e.erase n).unnamed = e.unnamed := by
+  induction e with
+  | nil => rfl
+  | cons p rest ih =>
+    obtain ⟨k, w⟩ := p
+    cases k with
+    | nm m =>
+      by_cases hm : m = n
+      · subst hm; simpa [Env.erase, Env.unnamed] using ih
+      · have : (Key.nm m != Key.nm n) = true := by simp [hm]
+        simp only [Env.erase, List.filter_cons, this, ite_true, Env.unnamed,
+          List.filterMap_cons] at ih ⊢
+        exact ih
+    | un => simp only [Env.erase, Env.unnamed, List.filter_cons] at ih ⊢; simp [ih]
+
+/-- Hiding a name never touches an unnamed entry. -/
+theorem Env.hideName_keeps_unnamed (e : Env) (n : Name) (v : Var) (h : (.un, v) ∈ e) :
+    (.un, v) ∈ e.hideName n := by
+  unfold Env.hideName
+  split
+  · apply Env.reserve_keeps_unnamed
+    simp [Env.erase, List.mem_filter, h]
+  · exact h
+
+/-- Hiding a name leaves `lookup_anon` alone unless the hidden variable is itself an unnamed
+entity of that number (a named variable has none). -/
+theorem Env.lookupAnon_hideName (e : Env) (n : Name) (k : Nat)
+    (hv : ∀ v, e.find? n = some v → v.anon ≠ some k) : (e.hideName n).lookupAnon k = e.lookupAnon k := by
+  unfold Env.hideName
+  split
+  · rename_i v hf
+    rw [Env.lookupAnon_reserve_other _ _ _ (hv v hf)]
+    simp [Env.lookupAnon, Env.erase_unnamed]
+  · rfl
 
 /-- `Scope::values` covers every entry, named or not, so `len()` is its length. -/
 theorem Env.values_length (e : Env) : e.values.length = e.length := by
   simp [Env.values]
 
-/-- An unnamed entry adds no key, no named entry, but one value. -/
-theorem Env.pushUnnamed_views (e : Env) (v : Var) :
-    (e.pushUnnamed v).keys = e.keys ∧ (e.pushUnnamed v).named = e.named ∧
-      (e.pushUnnamed v).values = e.values ++ [v] := by
-  simp [Env.pushUnnamed, Env.keys, Env.named, Env.values, List.filterMap_append]
+/-- A newly reserved entry adds no key, no named entry, but one value. -/
+theorem Env.reserve_views (e : Env) (v : Var) (h : v.id ∉ e.unnamedIds) :
+    (e.reserve v).keys = e.keys ∧ (e.reserve v).named = e.named ∧
+      (e.reserve v).values = e.values ++ [v] := by
+  simp [Env.reserve_eq_append h, Env.keys, Env.named, Env.values, List.filterMap_append]
 
 /-- `Scope::keys` are the names of `Scope::iter`. -/
 theorem Env.keys_named (e : Env) : e.keys = e.named.map (·.1) := by
@@ -220,16 +301,26 @@ theorem Env.erase_find (e : Env) (n : Name) : (e.erase n).find? n = none := by
       simp only [Env.erase, Env.find?, List.filter_cons] at ih ⊢
       simp [hk, List.lookup, this, ih]
 
-/-- Pushing an unnamed variable minted at `len()` keeps the table covering. -/
-theorem pushUnnamed_covers {e : Env} (h : e.Covers) (k : Nat) (t : Ty) (s : Nat) :
-    (e.pushUnnamed (freshAnon e k t s)).Covers := by
+/-- A variable minted at `len()` is not reserved yet, and reserving it keeps the table covering
+(the list comprehension, quantifier, reduce, placeholder, unnamed-entity and CALL-without-YIELD
+reservations, #3016). -/
+theorem reserve_covers {e : Env} (h : e.Covers) (v : Var) (hv : v.id = e.length) :
+    v.id ∉ e.unnamedIds ∧ (e.reserve v).Covers := by
+  have hn : v.id ∉ e.unnamedIds := fun hm => by
+    have := h _ (Env.unnamedIds_sub _ _ hm); omega
+  refine ⟨hn, ?_⟩
+  rw [Env.reserve_eq_append hn]
   intro i hi
-  simp only [Env.pushUnnamed, Env.ids, List.map_append, List.mem_append, List.map_cons,
-    List.map_nil, List.mem_singleton] at hi
-  simp only [Env.pushUnnamed, List.length_append, List.length_singleton]
+  simp only [Env.ids, List.map_append, List.mem_append, List.map_cons, List.map_nil,
+    List.mem_singleton] at hi
+  simp only [List.length_append, List.length_singleton]
   rcases hi with hi | hi
   · have := h i hi; omega
-  · simp [freshAnon] at hi; omega
+  · omega
+
+/-- Reserving an unnamed entity minted at `len()` keeps the table covering. -/
+theorem reserveAnon_covers {e : Env} (h : e.Covers) (k : Nat) (t : Ty) (s : Nat) :
+    (e.reserve (freshAnon e k t s)).Covers := (reserve_covers h _ rfl).2
 
 theorem Env.insert_new_eq {e : Env} {k : Name} {v : Var} (h : e.has k = false) :
     e.insert k v = e ++ [(.nm k, v)] := by
@@ -281,9 +372,9 @@ theorem fresh_not_used {e : Env} (h : e.Covers) (n : Name) (t : Ty) (s : Nat) :
   simp [freshVar] at this
 
 /-- Minting under a *new* key (every `fresh_var` + `insert` pair in the
-binder: `define_name_in_scope`, `project_name`, the `_quant_`, `_lc_`,
-`_reduce_`, `__agg_placeholder_` and `_hidden_` reservations, and
-the parent copy in `resolve_name`) keeps the table covering. -/
+binder: `define_name_in_scope`, `project_name` and the parent copy in `resolve_name`; since
+#3016 the loop-variable, placeholder and hidden-output reservations are nameless, `reserve_covers`)
+keeps the table covering. -/
 theorem mint_new_covers {e : Env} (h : e.Covers) {k : Name} (hk : e.has k = false)
     (n : Name) (t : Ty) (s : Nat) :
     (e.insert k (freshVar e n t s)).Covers := by
@@ -380,23 +471,160 @@ theorem plannerFresh_covers (sv : List Var) (scope : Nat) (ty : Ty)
 theorem erase_length_le (e : Env) (k : Name) : (e.erase k).length ≤ e.length := by
   simp [Env.erase]; exact List.length_filter_le _ _
 
-/-- A covering table stays covering after `erase`/`retain` **only** for the
-ids it still holds; an id the IR still uses may now be `≥ len()`.
-Concretely (binder.rs): after `MATCH (n) WITH n.v AS k WHERE n.v = 0`
+/-! ## Hiding a name keeps its slot (#3016, fixes #3004)
+
+Before #3016 `bind_projection` and the pattern cleanup removed a name while its id was still used
+by the bound IR, so the next variable of the scope was minted with that id. `hide_names` moves the
+variable to the unnamed list instead: on a table that lists each id and name once (`WF`), hiding
+keeps the same ids and the same length, so `Covers` is preserved and the next mint is fresh. -/
+
+theorem Env.erase_find_other (e : Env) (n m : Name) (h : m ≠ n) : (e.erase n).find? m = e.find? m := by
+  induction e with
+  | nil => rfl
+  | cons p rest ih =>
+    obtain ⟨k, v⟩ := p
+    by_cases hk : k = .nm n
+    · subst hk
+      have : (Key.nm m == Key.nm n) = false := by simp [h]
+      simpa [Env.erase, Env.find?, List.lookup, this] using ih
+    · have hk' : (k != Key.nm n) = true := by simp [hk]
+      simp only [Env.erase, Env.find?, List.filter_cons, hk', ite_true, List.lookup] at ih ⊢
+      split <;> simp_all
+
+theorem Env.keys_erase (e : Env) (n : Name) : (e.erase n).keys = e.keys.filter (· != n) := by
+  induction e with
+  | nil => rfl
+  | cons p rest ih =>
+    obtain ⟨k, v⟩ := p
+    cases k with
+    | nm m =>
+      by_cases hm : m = n
+      · subst hm; simpa [Env.erase, Env.keys] using ih
+      · have : (Key.nm m != Key.nm n) = true := by simp [hm]
+        simp only [Env.erase, List.filter_cons, this, ite_true, Env.keys, List.filterMap_cons] at ih ⊢
+        simp [ih, hm]
+    | un => simp only [Env.erase, Env.keys, List.filter_cons] at ih ⊢; simp [ih]
+
+theorem Env.erase_perm : ∀ (e : Env) (n : Name) (v : Var), e.keys.Nodup → e.find? n = some v →
+    (e.erase n).length + 1 = e.length ∧ ((e.erase n).ids ++ [v.id]).Perm e.ids
+  | [], n, v, _, h => by simp [Env.find?] at h
+  | (k, w) :: rest, n, v, hk, h => by
+    by_cases hkn : k = .nm n
+    · subst hkn
+      have hv : w = v := by simpa [Env.find?, List.lookup] using h
+      subst hv
+      have hnot : n ∉ Env.keys rest := by
+        have : (Env.keys ((Key.nm n, w) :: rest)) = n :: Env.keys rest := by simp [Env.keys]
+        rw [this] at hk; exact (List.nodup_cons.1 hk).1
+      have hr : Env.erase rest n = rest := by
+        apply List.filter_eq_self.2
+        intro p hp
+        obtain ⟨k', w'⟩ := p
+        simp only [bne_iff_ne, ne_eq, decide_eq_true_eq]
+        intro he; subst he
+        exact hnot (by simp only [Env.keys, List.mem_filterMap]; exact ⟨_, hp, rfl⟩)
+      have he : Env.erase ((Key.nm n, w) :: rest) n = rest := by
+        simp only [Env.erase, List.filter_cons, bne_self_eq_false]; exact hr
+      rw [he]
+      refine ⟨by simp, ?_⟩
+      simp only [Env.ids, List.map_cons]
+      exact List.perm_append_singleton _ _
+    · have hk' : (k != Key.nm n) = true := by simp [hkn]
+      have he : Env.erase ((k, w) :: rest) n = (k, w) :: Env.erase rest n := by
+        simp only [Env.erase, List.filter_cons, hk', ite_true]
+      have hf : Env.find? rest n = some v := by
+        have : (Key.nm n == k) = false := by simp; exact fun h => hkn h.symm
+        simpa [Env.find?, List.lookup, this] using h
+      have hkr : (Env.keys rest).Nodup := by
+        cases k with
+        | nm m => simp [Env.keys] at hk; exact hk.2
+        | un => simpa [Env.keys] using hk
+      obtain ⟨hl, hp⟩ := Env.erase_perm rest n v hkr hf
+      rw [he]
+      refine ⟨by simp; omega, ?_⟩
+      simp only [Env.ids, List.map_cons, List.cons_append] at hp ⊢
+      exact hp.cons _
+
+/-- **Hiding a name keeps its id**: on a `WF` table, `hide_names` of one name gives a `WF` table of
+the same length holding the same ids. -/
+theorem Env.hideName_wf {e : Env} (hw : e.WF) (n : Name) :
+    (e.hideName n).WF ∧ (e.hideName n).length = e.length ∧ (e.hideName n).ids.Perm e.ids := by
+  unfold Env.hideName
+  split
+  · rename_i v hf
+    obtain ⟨hl, hp⟩ := Env.erase_perm e n v hw.2 hf
+    have hnd : ((e.erase n).ids ++ [v.id]).Nodup := hp.nodup_iff.2 hw.1
+    have hni : v.id ∉ (e.erase n).unnamedIds := fun hm => by
+      have := Env.unnamedIds_sub _ _ hm
+      have := (List.nodup_append.1 hnd).2.2 _ this _ (List.mem_singleton_self _)
+      exact this rfl
+    rw [Env.reserve_eq_append hni]
+    have hids : Env.ids (e.erase n ++ [(Key.un, v)]) = (e.erase n).ids ++ [v.id] := by
+      simp [Env.ids]
+    have hkeys : Env.keys (e.erase n ++ [(Key.un, v)]) = (e.erase n).keys := by
+      simp [Env.keys, List.filterMap_append]
+    refine ⟨⟨by rw [hids]; exact hnd, ?_⟩, by simp; omega, by rw [hids]; exact hp⟩
+    rw [hkeys, Env.keys_erase]; exact hw.2.filter _
+  · exact ⟨hw, rfl, List.Perm.refl _⟩
+
+theorem Env.hideNames_wf : ∀ (ns : List Name) {e : Env}, e.WF →
+    (e.hideNames ns).WF ∧ (e.hideNames ns).length = e.length ∧ (e.hideNames ns).ids.Perm e.ids
+  | [], e, hw => ⟨hw, rfl, List.Perm.refl _⟩
+  | n :: ns, e, hw => by
+    obtain ⟨hw1, hl1, hp1⟩ := Env.hideName_wf hw n
+    obtain ⟨hw2, hl2, hp2⟩ := Env.hideNames_wf ns hw1
+    exact ⟨hw2, by simp only [Env.hideNames, List.foldl_cons] at hl2 ⊢; omega,
+      by simp only [Env.hideNames, List.foldl_cons] at hp2 ⊢; exact hp2.trans hp1⟩
+
+/-- So hiding keeps the table covering: every id the bound IR uses stays below `len()`. -/
+theorem Env.hideNames_covers {e : Env} (hw : e.WF) (hc : e.Covers) (ns : List Name) :
+    (e.hideNames ns).Covers ∧ ∀ i ∈ e.ids, i ∈ (e.hideNames ns).ids := by
+  obtain ⟨-, hl, hp⟩ := Env.hideNames_wf ns hw
+  refine ⟨fun i hi => ?_, fun i hi => hp.mem_iff.2 hi⟩
+  rw [hl]; exact hc i (hp.mem_iff.1 hi)
+
+theorem Env.hideName_find_self (e : Env) (n : Name) : (e.hideName n).find? n = none := by
+  unfold Env.hideName
+  split
+  · rw [Env.reserve_find, Env.erase_find]
+  · assumption
+
+theorem Env.hideName_find_other (e : Env) (n m : Name) (h : m ≠ n) :
+    (e.hideName n).find? m = e.find? m := by
+  unfold Env.hideName
+  split
+  · rw [Env.reserve_find, Env.erase_find_other _ _ _ h]
+  · rfl
+
+/-- …and no name reaches a hidden variable any more, while every other name is unchanged. -/
+theorem Env.hideNames_find : ∀ (ns : List Name) (e : Env) (m : Name),
+    (e.hideNames ns).find? m = if m ∈ ns then none else e.find? m
+  | [], e, m => by simp [Env.hideNames]
+  | n :: ns, e, m => by
+    have ih := Env.hideNames_find ns (e.hideName n) m
+    simp only [Env.hideNames, List.foldl_cons] at ih ⊢
+    rw [ih]
+    by_cases hm : m = n
+    · subst hm; simp [Env.hideName_find_self]
+    · rw [Env.hideName_find_other _ _ _ hm]; simp [hm]
+
+/-- Concretely (binder.rs): after `MATCH (n) WITH n.v AS k WHERE n.v = 0`
 the WITH scope is `{k ↦ 0, n ↦ 1}` (`n` copied for the WHERE, id 1, used by
-the Filter), then `n` is removed: the table is `{k ↦ 0}` and the next
-variable of the scope, `x` in `MATCH (x)-->(y)`, is minted with id 1. -/
+the Filter). Before #3016 `n` was removed, so `x` in a following `MATCH (x)-->(y)` was minted
+with id 1, the Filter's slot (#3004). Now `n` is hidden: no name reaches it, its id stays in
+the table, and `x` gets id 2. -/
 def withScope : Env :=
   [("k", ⟨"k", 0, 1, .any, none⟩), ("n", ⟨"n", 1, 1, .node, none⟩)]
 
-def withScopeAfter : Env := withScope.erase "n"
+def withScopeAfter : Env := withScope.hideNames ["n"]
 
 theorem withScope_covers : withScope.Covers := by
   intro i hi; simp [withScope, Env.ids] at hi; rcases hi with rfl | rfl <;> decide
 
-theorem erase_breaks_covers :
-    withScope.Covers ∧ 1 ∈ withScope.ids ∧
-    (freshVar withScopeAfter "x" .node 1).id = 1 := by
-  refine ⟨withScope_covers, by decide, by decide⟩
+theorem hide_keeps_slot :
+    withScope.Covers ∧ withScopeAfter.find? "n" = none ∧ 1 ∈ withScopeAfter.ids ∧
+    withScopeAfter.Covers ∧ (freshVar withScopeAfter "x" .node 1).id = 2 := by
+  refine ⟨withScope_covers, by decide, by decide, ?_, by decide⟩
+  unfold Env.Covers; decide
 
 end FalkorBinder

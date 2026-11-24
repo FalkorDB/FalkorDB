@@ -25,10 +25,14 @@ structure St where
   /-- `match_rel_vars` (#2981): the `(id, scope_id)` of every named relationship a MATCH bound -/
   matchRels : List (Nat × Nat) := []
 
-/-- The name `resolve_name` treats specially (binder.rs). Since #3303 no `_anon` name
-is special: an unnamed entity has no name to resolve. -/
-def isSpecial (n : Name) : Bool :=
-  n == "__agg_order_by_placeholder__"
+/-- The names `resolve_name` treats specially (binder.rs): none. Since #3303 no `_anon` name
+is special (an unnamed entity has no name to resolve), and since #3016 neither is
+`__agg_order_by_placeholder__`: the parser's aggregate-ORDER-BY placeholder is its own
+`ExprIR::AggOrderPlaceholder` node, bound in `bind_expr_node` (`BindExpr.bind_aggPlaceholder`). -/
+def isSpecial (_n : Name) : Bool := false
+
+/-- A written `` `__agg_order_by_placeholder__` `` is an ordinary name (#3016). -/
+theorem isSpecial_placeholder_name : isSpecial "__agg_order_by_placeholder__" = false := rfl
 
 /-- A written `_anon…` name is an ordinary name (#3303; before, `resolve_name` minted a fresh
 variable for it whatever the scope held). -/
@@ -122,39 +126,22 @@ theorem resolve_covers (st : St) (locals : List Env) (n : Name) (st' : St) (v : 
     · rw [← h.1]; exact hc
   · rw [← h.1]; exact hc
 
-/-- The reserved key `resolve_name` files an `__agg_order_by_placeholder__` under (binder.rs). -/
-def placeholderKey (id : Nat) : Name := s!"__agg_placeholder_{id}"
-
-/-- `Binder::resolve_name` in full (binder.rs): the aggregate-ORDER-BY placeholder always
-gets a fresh variable at `len()` under its own key; every other name is `resolve`. -/
+/-- `Binder::resolve_name` in full (binder.rs): since #3016 it has no special name, so it is
+`resolve` for every name. -/
 def resolveName (st : St) (locals : List Env) (n : Name) : Except String (St × Var) :=
-  if n == "__agg_order_by_placeholder__" then
-    let v := freshVar st.cur n .any st.depth
-    .ok ({ st with cur := st.cur.insert (placeholderKey v.id) v }, v)
-  else resolve st locals n
+  resolve st locals n
 
-/-- Any name but the placeholder resolves as `resolve` does. -/
-theorem resolveName_other (st : St) (locals : List Env) (n : Name)
-    (h : n ≠ "__agg_order_by_placeholder__") : resolveName st locals n = resolve st locals n := by
-  simp [resolveName, h]
+/-- Every name, a written `__agg_order_by_placeholder__` included, resolves as `resolve` does. -/
+theorem resolveName_other (st : St) (locals : List Env) (n : Name) :
+    resolveName st locals n = resolve st locals n := rfl
 
-/-- The placeholder is minted fresh at `len()` in the current scope, whatever the scope holds, and
-never reads a local, the parent or the table. -/
-theorem resolveName_placeholder (st : St) (locals : List Env) :
-    ∃ v, resolveName st locals "__agg_order_by_placeholder__" =
-      .ok ({ st with cur := st.cur.insert (placeholderKey st.cur.length) v }, v) ∧
-      v.id = st.cur.length ∧ v.scope = st.depth ∧ v.name = some "__agg_order_by_placeholder__" := by
-  refine ⟨freshVar st.cur "__agg_order_by_placeholder__" .any st.depth, ?_, rfl, rfl, rfl⟩
-  simp [resolveName, freshVar]
-
-/-- Under a fresh reserved key the placeholder keeps the table covering (the key is
-`__agg_placeholder_<len>`; `KeysFresh` for it is the hypothesis, as for the loop variables). -/
-theorem resolveName_placeholder_covers (st : St) (locals : List Env) (hc : st.cur.Covers)
-    (hk : st.cur.has (placeholderKey st.cur.length) = false) (st' : St) (v : Var)
-    (h : resolveName st locals "__agg_order_by_placeholder__" = .ok (st', v)) : st'.cur.Covers := by
-  simp only [resolveName, beq_self_eq_true, if_true, Except.ok.injEq, Prod.mk.injEq] at h
-  obtain ⟨rfl, rfl⟩ := h
-  exact mint_new_covers hc hk _ _ _
+/-- A written `` `__agg_order_by_placeholder__` `` no longer mints a fresh variable whatever the scope
+holds (before #3016 it did, so `WITH 1 AS `__agg_order_by_placeholder__` RETURN
+`__agg_order_by_placeholder__`` read an unset slot): it resolves to its binding like any name. -/
+theorem resolveName_placeholder_spelling (st : St) (v : Var)
+    (hv : st.cur.find? "__agg_order_by_placeholder__" = some v) :
+    resolveName st [] "__agg_order_by_placeholder__" = .ok (st, v) := by
+  simp [resolveName, resolve, lookupLocals, hv]
 
 /-! ## `define_name_in_scope` and `ensure_type` -/
 
@@ -234,7 +221,7 @@ theorem defineName_covers (e : Env) (d : Nat) (n : Name) (ty : Ty) (b : Bool) (h
 
 /-- `Binder::define_alias_in_scope` (binder.rs): a name is `define_name_in_scope`d; an
 unnamed entity reuses the `lookup_anon` hit of the current scope, else gets a nameless variable
-minted at `len()` and pushed to the scope's unnamed list. -/
+minted at `len()` and reserved in the scope's unnamed list (`Scope::reserve`). -/
 def defineAlias (st : St) (a : Alias) (ty : Ty) (allowReuse : Bool) : Except String (St × Var) :=
   match a with
   | .named n => match defineName st.cur st.depth n ty allowReuse with
@@ -244,7 +231,7 @@ def defineAlias (st : St) (a : Alias) (ty : Ty) (allowReuse : Bool) : Except Str
     | some v => .ok (st, v)
     | none =>
       let v := freshAnon st.cur k ty st.depth
-      .ok ({ st with cur := st.cur.pushUnnamed v }, v)
+      .ok ({ st with cur := st.cur.reserve v }, v)
 
 /-- `Binder::lookup_alias` (binder.rs). -/
 def lookupAlias (st : St) : Alias → Option Var
@@ -265,15 +252,17 @@ def denotes (v : Var) : Alias → Bool
 
 /-- An unnamed entity's variable is new, nameless, at `len()`, reached by no name, and is the one
 every later `lookup_alias` / `resolve_alias` of that entity returns. -/
-theorem defineAlias_anon_fresh (st : St) (k : Nat) (t : Ty) (b : Bool) (h : st.cur.lookupAnon k = none) :
+theorem defineAlias_anon_fresh (st : St) (k : Nat) (t : Ty) (b : Bool) (hc : st.cur.Covers)
+    (h : st.cur.lookupAnon k = none) :
     ∃ st' v, defineAlias st (.anon k) t b = .ok (st', v) ∧ v.name = none ∧ v.anon = some k ∧
-      v.id = st.cur.length ∧ st'.cur = st.cur.pushUnnamed v ∧
+      v.id = st.cur.length ∧ st'.cur = st.cur ++ [(.un, v)] ∧
       (∀ n, st'.cur.find? n = st.cur.find? n) ∧ lookupAlias st' (.anon k) = some v ∧
       resolveAlias st' [] (.anon k) = .ok (st', v) ∧ denotes v (.anon k) = true := by
-  have hl := Env.lookupAnon_pushUnnamed_self st.cur (freshAnon st.cur k t st.depth) k
-    (by simp [freshAnon]) h
+  have hf := (reserve_covers hc (freshAnon st.cur k t st.depth) rfl).1
+  have hl := Env.lookupAnon_reserve_self st.cur (freshAnon st.cur k t st.depth) k
+    (by simp [freshAnon]) hf h
   simp only [defineAlias, h]
-  refine ⟨_, _, rfl, rfl, rfl, rfl, rfl, fun n => Env.pushUnnamed_find _ _ n, ?_, ?_,
+  refine ⟨_, _, rfl, rfl, rfl, rfl, Env.reserve_eq_append hf, fun n => Env.reserve_find _ _ n, ?_, ?_,
     by simp [denotes, freshAnon]⟩
   · simpa [lookupAlias] using hl
   · simp [resolveAlias, hl]
@@ -288,7 +277,7 @@ theorem defineAlias_anon_covers (st : St) (k : Nat) (t : Ty) (b : Bool) (hc : st
     (st' : St) (v : Var) (h : defineAlias st (.anon k) t b = .ok (st', v)) : st'.cur.Covers := by
   unfold defineAlias at h
   cases hl : st.cur.lookupAnon k <;> simp [hl] at h
-  · obtain ⟨rfl, rfl⟩ := h; exact pushUnnamed_covers hc _ _ _
+  · obtain ⟨rfl, rfl⟩ := h; exact reserveAnon_covers hc _ _ _
   · rw [← h.1]; exact hc
 
 /-- A written name, `_anon_0` included, is an ordinary name: `defineAlias (.named n)` is
@@ -301,7 +290,7 @@ theorem defineAlias_named_anon_spelling (st : St) (v : Var) (hv : st.cur.find? "
 /-- After any successful `define_alias_in_scope`, `lookup_alias` returns the bound variable
 (a named alias through its name, an unnamed one through its number). -/
 theorem lookupAlias_defineAlias (st : St) (a : Alias) (t : Ty) (b : Bool) (st' : St) (v : Var)
-    (h : defineAlias st a t b = .ok (st', v)) : lookupAlias st' a = some v := by
+    (hc : st.cur.Covers) (h : defineAlias st a t b = .ok (st', v)) : lookupAlias st' a = some v := by
   cases a with
   | named n =>
     unfold defineAlias at h
@@ -333,8 +322,8 @@ theorem lookupAlias_defineAlias (st : St) (a : Alias) (t : Ty) (b : Bool) (st' :
     | none =>
       simp only [hl, Except.ok.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
-      simpa [lookupAlias] using Env.lookupAnon_pushUnnamed_self st.cur (freshAnon st.cur k t st.depth) k
-        (by simp [freshAnon]) hl
+      simpa [lookupAlias] using Env.lookupAnon_reserve_self st.cur (freshAnon st.cur k t st.depth) k
+        (by simp [freshAnon]) (reserve_covers hc _ rfl).1 hl
 
 /-- `resolve_alias` of an alias `lookup_alias` finds returns it, leaving the state alone. -/
 theorem resolveAlias_of_lookup (st : St) (a : Alias) (v : Var)

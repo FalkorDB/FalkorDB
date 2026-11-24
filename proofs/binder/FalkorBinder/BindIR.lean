@@ -162,9 +162,10 @@ theorem yield_requires_entity (fields : List Name) (ys : List (Name × Option Na
   simp [this]
 
 /-- Binding one yield (binder.rs): `YIELD f AS a` registers `a` with the
-variable's name set to the source field; without `YIELD` the variable is hidden
-under `_hidden_{id}_{name}` so `RETURN *` ignores it. -/
-def bindYield (explicit : Bool) (hidden : Nat → Name → Name) (e : Env) (depth : Nat)
+variable's name set to the source field; without `YIELD` the variable is reserved nameless
+(`Scope::reserve`, #3016; before, under a `_hidden_{id}_{name}` key) so no alias reaches it and
+`RETURN *` ignores it. -/
+def bindYield (explicit : Bool) (e : Env) (depth : Nat)
     (y : Name × Option Name) : Except String (Env × Var) :=
   if explicit then
     match defineName e depth y.1 .any true with
@@ -174,16 +175,22 @@ def bindYield (explicit : Bool) (hidden : Nat → Name → Name) (e : Env) (dept
       | none => .ok (e1, v)
   else
     let v := freshVar e y.1 .any depth
-    .ok (e.insert (hidden v.id y.1) v, v)
+    .ok (e.reserve v, v)
 
-theorem bindYield_alias (hidden : Nat → Name → Name) (e : Env) (d : Nat) (n f : Name) (e1 : Env) (v : Var)
+theorem bindYield_alias (e : Env) (d : Nat) (n f : Name) (e1 : Env) (v : Var)
     (h : defineName e d n .any true = .ok (e1, v)) :
-    bindYield true hidden e d (n, some f) = .ok (e1.insert n { v with name := some f }, { v with name := some f }) := by
+    bindYield true e d (n, some f) = .ok (e1.insert n { v with name := some f }, { v with name := some f }) := by
   simp [bindYield, h]
 
-theorem bindYield_hidden (hidden : Nat → Name → Name) (e : Env) (d : Nat) (y : Name × Option Name) :
-    bindYield false hidden e d y =
-      .ok (e.insert (hidden e.length y.1) (freshVar e y.1 .any d), freshVar e y.1 .any d) := rfl
+/-- Without `YIELD` every output is a fresh variable at `len()`, appended nameless: no name of the
+scope changes, and a covering table stays covering. -/
+theorem bindYield_hidden (e : Env) (d : Nat) (y : Name × Option Name) (hc : e.Covers) :
+    bindYield false e d y = .ok (e ++ [(.un, freshVar e y.1 .any d)], freshVar e y.1 .any d) ∧
+      (∀ n, (e.reserve (freshVar e y.1 .any d)).find? n = e.find? n) ∧
+      (e.reserve (freshVar e y.1 .any d)).Covers := by
+  have hr := reserve_covers hc (freshVar e y.1 .any d) rfl
+  refine ⟨?_, fun n => Env.reserve_find _ _ n, hr.2⟩
+  simp only [bindYield, Bool.false_eq_true, if_false, Env.reserve_eq_append hr.1]
 
 /-! ## MATCH: a relationship variable bound by an earlier MATCH -/
 
@@ -242,7 +249,6 @@ structure Subs where
   mayEntity : NE → Bool
   columns : RC → List Name
   labels : LabelsOf
-  hidden : Nat → Name → Name
   callSub : St → RC → Bool → Except String St
   bindBranch : RC → Except String Unit
 
@@ -308,7 +314,7 @@ def bindIR : St → RC → Except String St
       match (if explicit then yieldOk proc fields ys else .ok ()) with
       | .error e => .error e
       | .ok () =>
-        match seqE (fun st y => (bindYield explicit S.hidden st.cur st.depth y).map
+        match seqE (fun st y => (bindYield explicit st.cur st.depth y).map
             fun r => { st with cur := r.1 }) st1 ys with
         | .error e => .error e
         | .ok st2 => match filter with
@@ -323,7 +329,7 @@ def bindIR : St → RC → Except String St
       | .error e => .error e
       | .ok (c, _) => match bindIRs { st1 with cur := c } body with
         | .error e => .error e
-        | .ok st2 => .ok { st2 with cur := foreachRestore st1.cur st2.cur st1.depth }
+        | .ok st2 => .ok { st2 with cur := foreachRestore st1.cur st2.cur }
   | st, .callSub body ret => S.callSub st body ret
 where
   bindIRs : St → List RC → Except String St
@@ -429,13 +435,11 @@ theorem union_state (st st' : St) (bs : List RC) (h : bindIR S st (.union bs) = 
 
 /-! ## CALL {} -/
 
-def internalPrefixes : List String := ["_slot_", "__agg_placeholder_", "_quant_", "_lc_", "_reduce_"]
-
-def isInternal (n : Name) : Bool := internalPrefixes.any fun p => n.startsWith p
-
 /-- What a returning CALL body hands back: its final table's named entries
-(`subquery_env.keys()` / `.iter()`, binder.rs) minus internal reservations. -/
-def subqueryReturns (inner : Env) : List (Name × Var) := inner.named.filter fun kv => !isInternal kv.1
+(`subquery_env.keys()` / `.iter()`, binder.rs). Since #3016 every internal reservation is
+nameless, so no prefix filter is needed (before, `_quant_`/`_lc_`/… keys were filtered out, and a
+written name with such a prefix was dropped too). -/
+def subqueryReturns (inner : Env) : List (Name × Var) := inner.named
 
 /-- Steps 3-4 of `bind_call_subquery`: restore the outer table, reject a returned
 name the outer scope already has, then project each returned name to a fresh
@@ -494,10 +498,21 @@ theorem callSubquery_collision (outer inner : Env) (d : Nat) (kv : Name × Var) 
   have : (subqueryReturns inner).any (fun kv => outer.has kv.1) = true := List.any_eq_true.2 ⟨kv, hk, h⟩
   exact ⟨"already declared in outer scope", by simp [bindCallSubquery, this]⟩
 
-/-- No internal reservation is ever returned. -/
+/-- No internal reservation is ever returned: every returned entry is a *named* entry of the body's
+table, so a nameless reserved slot (loop variable, placeholder, hidden copy, unnamed entity) never
+is. -/
 theorem subqueryReturns_noInternal (inner : Env) (kv : Name × Var) (h : kv ∈ subqueryReturns inner) :
-    isInternal kv.1 = false := by
-  simp only [subqueryReturns, List.mem_filter, Bool.not_eq_true'] at h; exact h.2
+    (Key.nm kv.1, kv.2) ∈ inner := by
+  simp only [subqueryReturns, Env.named, List.mem_filterMap] at h
+  obtain ⟨⟨k, v⟩, hm, he⟩ := h
+  cases k with
+  | nm n => simp at he; subst he; exact hm
+  | un => simp at he
+
+/-- A written name with an internal-looking prefix is an ordinary name and is returned (#3016):
+`CALL { WITH 1 AS _lc_x RETURN _lc_x } RETURN _lc_x`. -/
+theorem subqueryReturns_prefixed_name (v : Var) :
+    subqueryReturns [(.nm "_lc_x", v)] = [("_lc_x", v)] := rfl
 
 theorem foldProject_covers (depth : Nat) : ∀ (ret : List (Name × Var)) (acc : Env × List (Var × Var)),
     acc.1.Covers → (∀ kv ∈ ret, acc.1.has kv.1 = false) → (ret.map (·.1)).Nodup →

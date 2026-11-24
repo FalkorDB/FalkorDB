@@ -265,6 +265,11 @@ pub enum ExprIR<TVar: VarKind> {
     Map,
     /// Variable reference
     Variable(TVar),
+    /// The extra argument the parser appends to an aggregate call. It names
+    /// nothing a query can write; the binder turns it into a fresh variable,
+    /// reserved in a slot no name reaches, that the aggregate uses to carry its
+    /// ORDER BY key.
+    AggOrderPlaceholder,
     /// Query parameter reference ($param)
     Parameter(String),
     /// Length/size of a list or string
@@ -501,6 +506,7 @@ impl<TVar: VarKind + Display + std::fmt::Debug> Display for ExprIR<TVar> {
             Self::List => write!(f, "[]"),
             Self::Map => write!(f, "{{}}"),
             Self::Variable(id) => write!(f, "{id}"),
+            Self::AggOrderPlaceholder => write!(f, "__agg_order_by_placeholder__"),
             Self::Parameter(p) => write!(f, "@{p}"),
             Self::Length => write!(f, "length()"),
             Self::GetElement => write!(f, "get_element()"),

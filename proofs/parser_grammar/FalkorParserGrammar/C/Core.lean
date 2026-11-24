@@ -92,11 +92,17 @@ inductive EOp
   | case_ (subject : Bool) | quant (q : Nat) (v : Nat) | listComp (v : Nat)
   | reduce (acc it : Nat) | patComp | shortest (types : List Nat) (mn : Nat) (mx : Option Nat) (directed : Bool)
   | pattern | other (n : Nat)
+  /-- `ExprIR::AggOrderPlaceholder` (#3016): the extra argument appended to an aggregate call;
+  no written name parses to it -/
+  | aggPh
   deriving DecidableEq, Repr
 
 inductive ET
   | node (op : EOp) (cs : List ET)
   deriving Repr
+
+/-- #3016: the placeholder is no variable, so no name (written or reserved) denotes it. -/
+theorem EOp.aggPh_ne_var (v : Nat) : EOp.aggPh ≠ EOp.var v := nofun
 
 def ET.root : ET → EOp | .node o _ => o
 def ET.kids : ET → List ET | .node _ cs => cs
@@ -134,7 +140,7 @@ theorem aggName_sound : ∀ t : ET, (aggName t).isSome → HasAgg t
   | .node .map cs, h | .node .paren cs, h | .node .distinct cs, h
   | .node (.case_ _) cs, h | .node (.quant _ _) cs, h | .node (.listComp _) cs, h
   | .node (.reduce _ _) cs, h | .node .patComp cs, h | .node (.shortest _ _ _ _) cs, h
-  | .node .pattern cs, h
+  | .node .pattern cs, h | .node .aggPh cs, h
   | .node (.other _) cs, h => .inner _ cs (aggNameL_sound cs (by simpa [aggName] using h))
 theorem aggNameL_sound : ∀ cs : List ET, (aggNameL cs).isSome → HasAggL cs
   | [], h => by simp [aggNameL] at h

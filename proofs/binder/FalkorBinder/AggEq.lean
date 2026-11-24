@@ -35,6 +35,8 @@ inductive RD
   | reduce (acc it : String)
   | shortest (rels : List String) (minHops : Nat) (maxHops : Option Nat) (directed : Bool)
   | regex (kind : Nat) (src : String)
+  /-- `ExprIR::AggOrderPlaceholder` (#3016): the parser's ORDER BY slot of an aggregate -/
+  | aggPh
   | other (tag : Nat)
   deriving DecidableEq, Repr
 
@@ -48,16 +50,20 @@ def RE.d : RE → RD | .node d _ => d
 def disc : RD → Nat
   | .var _ => 0 | .func _ _ => 1 | .const _ => 2 | .prop _ => 3 | .param _ => 4
   | .quant _ _ => 5 | .listComp _ => 6 | .case _ => 7 | .reduce _ _ => 8
-  | .shortest _ _ _ _ => 9 | .regex _ _ => 10 | .other t => 11 + t
+  | .shortest _ _ _ _ => 9 | .regex _ _ => 10 | .aggPh => 11 | .other t => 12 + t
 
-def placeholder : String := "__agg_order_by_placeholder__"
-
+/-- `is_agg_placeholder` (binder.rs): since #3016 the placeholder is its own variant,
+`matches!(node, ExprIR::AggOrderPlaceholder)` (before, `Variable("__agg_order_by_placeholder__")`). -/
 def isAggPlaceholder : RD → Bool
-  | .var v => v == placeholder
+  | .aggPh => true
   | _ => false
 
-theorem isAggPlaceholder_iff (d : RD) : isAggPlaceholder d = true ↔ d = .var placeholder := by
+theorem isAggPlaceholder_iff (d : RD) : isAggPlaceholder d = true ↔ d = .aggPh := by
   cases d <;> simp [isAggPlaceholder]
+
+/-- A variable a query writes, `` `__agg_order_by_placeholder__` `` included, is never taken for the
+placeholder, so it is compared, not skipped (#3016). -/
+theorem isAggPlaceholder_var (n : String) : isAggPlaceholder (.var n) = false := rfl
 
 variable (feq : Nat → Nat → Bool) (fint : Nat → Option Int) (oeq : Nat → Nat → Nat → Bool)
 
@@ -87,7 +93,7 @@ def exprIrEq : RD → RD → Bool
   | .regex k s, .regex l t => k == l && s == t
   | a, b => disc a == disc b
 
-/- Drop the `__agg_order_by_placeholder__` children everywhere (the index
+/- Drop the `AggOrderPlaceholder` children everywhere (the index
 filter of `nodes_eq`, applied at every level it recurses to). -/
 mutual
 def strip : RE → RE
@@ -213,23 +219,23 @@ theorem patterns_by_variant (t : Nat) : exprIrEq feq fint oeq (.other t) (.other
 def aggOf (k : RV) : RE :=
   .node (.func "max" true)
     [.node (.other 20) [.node (.prop "v") [.node (.var "n") []], .node (.const k) []],
-     .node (.var placeholder) []]
+     .node .aggPh []]
 
 /-- #3254: `max(n.v % 3)` no longer matches `max(n.v % 4.0)` (any float that is not 3). -/
 theorem order_by_float_rejected (f : Nat) (hf : fint f ≠ some 3) :
     structEq feq fint oeq (aggOf (.int 3)) (aggOf (.float f)) = false := by
-  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, placeholder, eqS, eqSL,
+  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, eqS, eqSL,
     exprIrEq, constEq, disc, hf]
 
 /-- …but still matches `max(n.v % 3.0)`, as in C. -/
 theorem order_by_float_equal (f : Nat) (hf : fint f = some 3) :
     structEq feq fint oeq (aggOf (.int 3)) (aggOf (.float f)) = true := by
-  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, placeholder, eqS, eqSL,
+  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, eqS, eqSL,
     exprIrEq, constEq, disc, hf]
 
 /-- …while the same aggregate with another Int constant is told apart. -/
 theorem order_by_int_distinguished : structEq feq fint oeq (aggOf (.int 3)) (aggOf (.int 4)) = false := by
-  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, placeholder, eqS, eqSL, exprIrEq, constEq, disc]
+  simp [structEq, aggOf, strip, stripL, RE.d, isAggPlaceholder, eqS, eqSL, exprIrEq, constEq, disc]
 
 /-! ## `replace_agg_subtrees` -/
 
