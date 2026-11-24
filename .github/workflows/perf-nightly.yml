@@ -285,13 +285,26 @@ jobs:
           mkdir -p "$RUNNER_TEMP/plan"
           skip=()
           if [[ $MAY_SKIP == true ]]; then skip=(--may-skip); fi
+          out=$GITHUB_OUTPUT
+          if [[ $GITHUB_EVENT_NAME == pull_request ]]; then out=$RUNNER_TEMP/context.out; fi  # TEMPORARY, below
           python3 -I tests/perf/merge.py context \
             --candidate-image "$CANDIDATE_IMAGE" --candidate-commit "$CANDIDATE_COMMIT" --candidate-label "$CANDIDATE_LABEL" \
             --baseline-image "$BASELINE_IMAGE" --baseline-commit "$BASELINE_COMMIT" --baseline-label "$BASELINE_LABEL" \
             --history-runs "$HISTORY/runs.txt" --history-dir "$HISTORY" "${skip[@]}" \
             --date "$(date -u +%F)" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --out "$RUNNER_TEMP/plan/context.json" --github-output "$GITHUB_OUTPUT" \
+            --out "$RUNNER_TEMP/plan/context.json" --github-output "$out" \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          # TEMPORARY (goes with the pull_request trigger): a PR push measures
+          # nothing, so it starts no C4 VM. It writes a skipped night saying why
+          # and still runs merge, the report and the run's conclusion; the
+          # acceptance runs that measured are linked from the PR.
+          if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+            reason="pull_request run: a push to the PR measures nothing (no C4 VM per push); the acceptance runs are linked from the PR"
+            jq --arg reason "$reason" '.skip_reason = $reason' "$RUNNER_TEMP/plan/context.json" > "$RUNNER_TEMP/context.json"
+            mv "$RUNNER_TEMP/context.json" "$RUNNER_TEMP/plan/context.json"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip: $reason" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Plan the checks
         id: plan
