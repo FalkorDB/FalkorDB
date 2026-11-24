@@ -361,7 +361,10 @@ to nine significant digits (`raw/samples.csv`), so tie order and the engines'
 different float spelling do not count. IC14 returns every shortest path, and
 paths of equal weight have no defined order, which the sorted digest absorbs.
 A difference is reported as `info` only, until it has proven stable across
-nights.
+nights, and only between images of the same engine: across engines the
+contents can differ for reasons outside the query (the C engine's `LOAD CSV`
+drops a field's trailing whitespace, #4003, which changes IC9's message
+contents).
 
 **Thresholds.** The ratio and the floors come from three A/A runs (main@4c1088949
 against itself twice, C v4.22.4 against itself once; nightly mode, unpinned,
@@ -407,7 +410,7 @@ settings above: main@4c1088949 against itself took 13.5 min in `nightly` and
 7.7 min in `queue`. Earlier runs, before the per-round budget was raised to
 300 s: C v4.22.4 against itself 3.7 min, 6.0.4 against 6.2.0 (nine
 regressions confirmed, so nine re-runs) 20.6 min. Most of it is the two loads
-(about 70 s each) and the queries that time out (IC3 on every row, and one IC14
+(about 70 s each) and the queries that time out (IC3 on every row, #4001, and one IC14
 row, on the Rust engine). The 35-minute deadline stops new measurement well
 inside the 45 minutes the check gets in `tests/perf/checks.yaml`. `long` (SF1)
 is accepted and set as above but not yet run end to end.

@@ -1144,6 +1144,9 @@ class Check:
             for q in self.queries:
                 main[q.name] += self.round(q, "main", rnd, order)
 
+        # Row contents are compared only between images of the same engine:
+        # across engines they can differ for reasons outside the query (the
+        # C engine's LOAD CSV drops a field's trailing whitespace, #4003).
         same_engine = (
             self.sides[BASELINE].engine == self.sides[CANDIDATE].engine
             and self.sides[BASELINE].engine != "unknown"
