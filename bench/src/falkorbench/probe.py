@@ -34,18 +34,20 @@ For each shape, the ratio candidate p50 / baseline p50 at every size, and
 
 which equals the candidate's own slowdown from the smallest to the largest
 graph divided by the baseline's. Above `THRESHOLD` the shape is re-measured at
-every size with the order swapped, and it is a regression only when the
-re-run alone crosses again (else `info`). Below 1 / `THRESHOLD` it is an
+the smallest and largest size with the order swapped, and it is a regression
+only when the re-run alone crosses again (else `info`). Below 1 / `THRESHOLD` it is an
 improvement. A constant-factor change (the candidate 2x slower at every size)
 does not move the growth ratio; the micro tier is where that shows.
 
 Correctness needs no re-run: a shape that errors, times out or loses its
 server on the candidate while the baseline answers is a `completed`
 regression, and a request whose rows (or relationships created) differ
-between the sides is a `rows` mismatch. A shape the baseline cannot run is
-left out with an `info` finding (an older engine may lack it); a baseline
-server that stops answering, or a setup that fails on the baseline, makes the
-verdict `error`, since nothing can be compared after it.
+between the sides is a `rows` mismatch. A shape that both sides fail is
+`info` (broken on both sides, not new). A shape the baseline answers with an
+error at every size is left out with an `info` finding (an older engine may
+lack it). Any other baseline failure (a timeout, an error at some sizes only,
+a server that stops answering, a setup step that fails) makes the verdict
+`error`: something was not measured, and that is never a pass.
 
 Standard library only, apart from the click command in cli.py.
 """
@@ -90,7 +92,7 @@ MIN_REPS = 5
 
 REQUEST_TIMEOUT_S = 120.0  # one measured request; past it the shape did not finish
 BUILD_TIMEOUT_S = 900.0  # one graph-building request
-SETTLE_TIMEOUT_S = 600.0  # after a timed-out request, wait this long for the graph
+SETTLE_TIMEOUT_S = 120.0  # after a timed-out request, wait this long for the graph
 START_TIMEOUT_S = 120.0  # docker run until PING answers
 INDEX_TIMEOUT_S = 300.0  # until db.indexes() says OPERATIONAL
 BUILD_BATCH = 50_000  # nodes (and edges) per building request
@@ -99,7 +101,14 @@ BUILD_BATCH = 50_000  # nodes (and edges) per building request
 MAX_FINDINGS = 50
 MAX_QUIET = 10
 
-DIGEST_RE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+# Docker's reference grammar with the digest required, as the contract's
+# validator reads it: a registry only when it has a dot or a port or is
+# localhost, then a lowercase repository path, an optional tag, the digest.
+DIGEST_RE = re.compile(
+    r"^(?:(?:localhost|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(?::[0-9]+)?/|[A-Za-z0-9-]+:[0-9]+/)?"
+    r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64}$"
+)
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -115,13 +124,20 @@ class ModeSpec:
 
 # Measured on an n4-standard-16 (2026-11-24, nightly): a whole run takes 1-3
 # minutes; 6.2.0's slowest unit, 85 ms per request at 500k nodes, fills a
-# 60-request block in about 5 s. The caps bound a pathological candidate: at
-# most 36 units (18 + 18 re-run) x 4 blocks x block_seconds, which is 10, 19
-# and 48 minutes for queue, nightly and long, inside each budget.
+# 60-request block in about 5 s.
+#
+# The caps bound a candidate that is slow everywhere. A run has at most 30
+# units (18, plus 12 re-run: 6 shapes x 2 sizes), each a warm-up per side and
+# four blocks, and each of those six stops at block_seconds. While a request
+# takes under block_seconds / MIN_REPS, that is at most 30 x 6 x block_seconds:
+# 9, 18 and 45 minutes for queue, nightly and long. Slower requests stretch a
+# block to MIN_REPS of them; the budget then stops the run inside the block,
+# late by at most one request and one settle, and the result says error.
+# `long`'s budget assumes its own timeout_minutes of at least 110 (phase 3).
 MODES = {
-    "queue": ModeSpec(warmup=3, reps=30, block_seconds=4.0, budget_minutes=20.0),
-    "nightly": ModeSpec(warmup=5, reps=60, block_seconds=8.0, budget_minutes=35.0),
-    "long": ModeSpec(warmup=10, reps=150, block_seconds=20.0, budget_minutes=100.0),
+    "queue": ModeSpec(warmup=3, reps=30, block_seconds=3.0, budget_minutes=20.0),
+    "nightly": ModeSpec(warmup=5, reps=60, block_seconds=6.0, budget_minutes=35.0),
+    "long": ModeSpec(warmup=10, reps=150, block_seconds=15.0, budget_minutes=100.0),
 }
 
 
@@ -339,7 +355,12 @@ class Reply:
 
 
 class StartFailed(Exception):
-    pass
+    """The server did not come up. `infra` means Docker refused to start the
+    container at all, which says nothing about the image's engine."""
+
+    def __init__(self, message: str, *, infra: bool = False) -> None:
+        super().__init__(message)
+        self.infra = infra
 
 
 def free_port() -> int:
@@ -385,24 +406,34 @@ class Server:
         return f"docker pull {self.image} failed: {err}"
 
     def start(self) -> None:
+        # A container left by an earlier run that was killed (same pid) would
+        # make `docker run` refuse the name.
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            docker("rm", "-f", self.name, timeout=30)
         self.port = free_port()
         args = ["run", "-d", "--name", self.name, "-p", f"127.0.0.1:{self.port}:6379"]
         if self.cpus:
             args += ["--cpuset-cpus", self.cpus]
-        done = docker(*args, self.image)
+        # Before the call: an interrupted `docker run` may still create it.
         self.created = True
+        try:
+            done = docker(*args, self.image)
+        except subprocess.TimeoutExpired as e:
+            raise StartFailed("docker run took over 120 s", infra=True) from e
         if done.returncode != 0:
-            raise StartFailed(f"docker run failed: {done.stderr.strip()[-300:]}")
+            raise StartFailed(f"docker run failed: {done.stderr.strip()[-300:]}", infra=True)
         deadline = time.monotonic() + START_TIMEOUT_S
         while True:
+            why = "PING did not answer PONG"
             try:
                 if self.call(["PING"], timeout=5) == "PONG":
                     break
             except (Gone, Timeout, QueryError) as e:
-                state = self.state()
-                if "running" not in state or time.monotonic() > deadline:
-                    raise StartFailed(f"no PONG ({e}; {state})") from e
-                time.sleep(0.5)
+                why = str(e)
+            state = self.state()
+            if "running" not in state or time.monotonic() > deadline:
+                raise StartFailed(f"no PONG ({why}; {state})")
+            time.sleep(0.5)
         # The idle server must not snapshot while the other one is measured.
         for key, value in (("save", ""), ("appendonly", "no")):
             try:
@@ -463,7 +494,7 @@ class Server:
         if not self.created:
             return
         try:
-            done = docker("logs", self.name, timeout=60)
+            done = docker("logs", self.name, timeout=20)
             path.write_text(done.stdout + done.stderr)
         except (subprocess.TimeoutExpired, OSError):
             pass
@@ -474,7 +505,7 @@ class Server:
             self.conn = None
         if self.created:
             with contextlib.suppress(subprocess.TimeoutExpired):
-                docker("rm", "-f", self.name, timeout=60)
+                docker("rm", "-f", self.name, timeout=20)
 
 
 # --- measurement -------------------------------------------------------------
@@ -510,6 +541,20 @@ def other(side: str) -> str:
     return SIDES[1] if side == SIDES[0] else SIDES[0]
 
 
+class Interrupted(Exception):
+    """Ends a unit early. `cell` is what it had measured so far."""
+
+    cell: Cell | None = None
+
+
+class Stopped(Interrupted):
+    """SIGTERM arrived (the workflow's timeout)."""
+
+
+class BudgetOut(Interrupted):
+    """The mode's time budget ran out."""
+
+
 ROW_FIELDS = (
     "phase",
     "size",
@@ -532,29 +577,38 @@ def run_unit(
     first: str,
     spec: ModeSpec,
     record: Callable[[dict], None],
+    deadline: float | None = None,
 ) -> Cell:
-    """Warm-up on each side, then blocks A B B A. Request k uses parameters k
-    on both sides; a side's first block takes the first `reps` parameters
-    after the warm-up and its second block the next `reps`."""
+    """A warm-up on each side, then blocks A B B A. Request k uses parameters
+    k on both sides: a side's first block takes the first `reps` parameters
+    after the warm-up and its second block the next `reps`. Every block, the
+    warm-up too, stops at `block_seconds` once it has its minimum (MIN_REPS,
+    one for the warm-up). Past `deadline` it raises BudgetOut; either way an
+    Interrupted carries the partial cell."""
     graph = graph_name(size)
     rng = random.Random(f"{phase}/{size}/{shape.name}")
     params = [shape.params(rng, size) for _ in range(spec.warmup + 2 * spec.reps)]
     cell = Cell(shape.name, size, phase, first)
 
-    def block(side: str, number: int, indexes: range, cap: float | None) -> None:
+    def block(side: str, number: int, indexes: range, least: int) -> None:
         run, server = cell.runs[side], servers[side]
         if run.failure:
             return
         t0 = time.monotonic()
         for i, k in enumerate(indexes):
-            if cap is not None and i >= MIN_REPS and time.monotonic() - t0 > cap:
+            now = time.monotonic()
+            if i >= least and now - t0 > spec.block_seconds:
                 return
+            if deadline is not None and now > deadline:
+                raise BudgetOut()
             row = {"phase": phase, "size": size, "shape": shape.name, "side": side}
             row |= {"block": number, "request": k}
             try:
                 reply, wall_ms = server.query(graph, shape.query(params[k]))
             except QueryError as e:
-                run.fail("error", f"error reply: {e}")
+                # The images' own TIMEOUT ends a slow read with an error reply.
+                kind = "timeout" if "timed out" in str(e).lower() else "error"
+                run.fail(kind, f"error reply: {e}")
             except Timeout as e:
                 run.fail("timeout", f"did not finish: {e}")
                 server.settle(graph)
@@ -576,12 +630,17 @@ def run_unit(
             record(row)
 
     second = other(first)
-    for side in (first, second):
-        block(side, 0, range(spec.warmup), None)
-    base = spec.warmup
-    for number, (side, half) in enumerate(((first, 0), (second, 0), (second, 1), (first, 1)), 1):
-        start = base + half * spec.reps
-        block(side, number, range(start, start + spec.reps), spec.block_seconds)
+    try:
+        for side in (first, second):
+            block(side, 0, range(spec.warmup), 1)
+        for number, (side, half) in enumerate(
+            ((first, 0), (second, 0), (second, 1), (first, 1)), 1
+        ):
+            start = spec.warmup + half * spec.reps
+            block(side, number, range(start, start + spec.reps), MIN_REPS)
+    except Interrupted as e:
+        e.cell = cell
+        raise
     return cell
 
 
@@ -679,10 +738,12 @@ class ShapeResult:
 
 @dataclass
 class Assessment:
-    loud: list[dict]  # regression and improvement findings
+    loud: list[dict]  # regression and improvement findings, most severe first
     quiet: list[list[dict]]  # info/ok findings in priority groups; a group is kept whole
     errors: list[str]
     shapes: list[ShapeResult]
+    unsupported: list[str] = field(default_factory=list)  # shapes the baseline cannot run
+    both_broken: list[str] = field(default_factory=list)  # "<shape> @<size>" failing on both
 
 
 def completed_finding(name: str, cand_ok: bool, base_ok: bool) -> dict:
@@ -701,46 +762,72 @@ def completed_finding(name: str, cand_ok: bool, base_ok: bool) -> dict:
     )
 
 
+def where(shape: str, size: int, phase: str = "screen") -> str:
+    return f"{shape} @{size_label(size)}" + (" (re-run)" if phase == "confirm" else "")
+
+
 def assess(
     screen: dict[tuple[str, int], Cell],
     confirm: dict[tuple[str, int], Cell],
     shapes: Sequence[Shape],
     sizes: Sequence[int],
 ) -> Assessment:
-    loud: list[dict] = []
+    """Every finding the cells support, and every reason they are not enough.
+
+    A missing cell is not an error here: whatever stopped the run (budget,
+    SIGTERM, a setup failure) already said so, and `build_result` refuses a
+    pass with fewer cells than planned.
+    """
+    correctness: list[dict] = []
+    grown: list[dict] = []
     left_out: list[dict] = []
     unconfirmed: list[dict] = []
     triples: list[tuple[float, list[dict]]] = []
     oks: list[dict] = []
     errors: list[str] = []
     results: list[ShapeResult] = []
+    unsupported: list[str] = []
+    both_broken: list[str] = []
     small, large = sizes[0], sizes[-1]
 
     for shape in shapes:
         res = ShapeResult(shape.name)
         results.append(res)
-        # Correctness, in every cell of both phases: needs no re-run.
+        cells = [screen[(shape.name, z)] for z in sizes if (shape.name, z) in screen]
+        # Rule 1: a shape the baseline answers with an error at every size is
+        # one its engine cannot run. Anything less consistent was not measured.
+        cannot_run = len(cells) == len(sizes) and all(
+            c.runs["baseline"].failure_kind == "error" for c in cells
+        )
+        if cannot_run:
+            unsupported.append(shape.name)
+            cand_ok = not any(c.runs["candidate"].failure for c in cells)
+            left_out.append(completed_finding(shape.name, cand_ok, False))
+
         rerun_failed = False
-        for phase, cells in (("screen", screen), ("confirm", confirm)):
+        for phase, table in (("screen", screen), ("confirm", confirm)):
             for size in sizes:
-                cell = cells.get((shape.name, size))
+                cell = table.get((shape.name, size))
                 if cell is None:
                     continue
-                where = f"{shape.name} @{size_label(size)}"
-                if phase == "confirm":
-                    where += " (re-run)"
+                name = where(shape.name, size, phase)
                 c, b = cell.runs["candidate"], cell.runs["baseline"]
-                if b.failure_kind == "down":
-                    errors.append(f"baseline {b.failure} ({where})")
                 if c.failure and not b.failure:
-                    loud.append(completed_finding(where, False, True))
+                    correctness.append(completed_finding(name, False, True))
                     rerun_failed |= phase == "confirm"
-                elif c.failure or b.failure:
-                    left_out.append(completed_finding(where, not c.failure, not b.failure))
+                elif c.failure and b.failure and not cannot_run:
+                    both_broken.append(name)
+                    left_out.append(completed_finding(name, False, False))
+                elif b.failure and not cannot_run:
+                    errors.append(f"baseline {b.failure} ({name})")
+                if b.failure_kind == "down" and c.failure:
+                    errors.append(f"baseline {b.failure} ({name})")
                 mismatch = first_mismatch(cell)
                 if mismatch:
                     _, cc, bc = mismatch
-                    loud.append(finding(where, "rows", cc, bc, "regression", direction="mismatch"))
+                    correctness.append(
+                        finding(name, "rows", cc, bc, "regression", direction="mismatch")
+                    )
 
         lo, hi = screen.get((shape.name, small)), screen.get((shape.name, large))
         res.growth = growth(lo, hi) if measured(lo) and measured(hi) else None
@@ -762,7 +849,7 @@ def assess(
             shape.name, "growth_ratio", cand_g, base_g, res.status, threshold=THRESHOLD, rate=g
         )
         if res.status in ("regression", "improvement"):
-            loud.append(row)
+            grown.append(row)
         elif res.status == "info":
             unconfirmed.append(row)
         else:
@@ -773,8 +860,7 @@ def assess(
                 cell = screen.get((shape.name, size))
                 if measured(cell):
                     cp, bp = p50(cell.runs["candidate"].wall), p50(cell.runs["baseline"].wall)
-                    name = f"{shape.name} @{size_label(size)}"
-                    triple.append(finding(name, "p50_ms", cp, bp, "info"))
+                    triple.append(finding(where(shape.name, size), "p50_ms", cp, bp, "info"))
             triples.append((abs(math.log(g)), triple))
 
     def by_ratio(rows: list[dict], reverse: bool = True) -> list[dict]:
@@ -786,17 +872,20 @@ def assess(
             ),
         )
 
-    regressions = by_ratio([f for f in loud if f["status"] == "regression"])
-    improvements = by_ratio([f for f in loud if f["status"] == "improvement"], reverse=False)
+    # Most severe first: a correctness failure, then growth regressions,
+    # steepest first, then improvements, steepest first.
+    loud = correctness
+    loud += by_ratio([f for f in grown if f["status"] == "regression"])
+    loud += by_ratio([f for f in grown if f["status"] == "improvement"], reverse=False)
     quiet = [[f] for f in left_out]
     quiet += [[f] for f in by_ratio(unconfirmed)]
     quiet += [t for _, t in sorted(triples, key=lambda x: -x[0])]
     quiet += [[f] for f in by_ratio(oks)]
-    return Assessment(regressions + improvements, quiet, errors, results)
+    return Assessment(loud, quiet, errors, results, unsupported, both_broken)
 
 
 def select_findings(assessment: Assessment) -> list[dict]:
-    """Every loud finding, then whole quiet groups while they fit the cap."""
+    """Every loud finding (up to the cap), then whole quiet groups while they fit."""
     loud = assessment.loud[:MAX_FINDINGS]
     room = min(MAX_QUIET, MAX_FINDINGS - len(loud))
     quiet: list[dict] = []
@@ -806,18 +895,32 @@ def select_findings(assessment: Assessment) -> list[dict]:
     return loud + quiet
 
 
-def summarize(verdict: str, assessment: Assessment, sizes: Sequence[int], error: str | None) -> str:
+def _names(items: Sequence[str], most: int = 3) -> str:
+    shown = ", ".join(items[:most])
+    return shown + (f" and {len(items) - most} more" if len(items) > most else "")
+
+
+def summarize(
+    verdict: str, assessment: Assessment, sizes: Sequence[int], errors: Sequence[str]
+) -> str:
     """One line in plain words."""
     span = f"{size_label(sizes[0])} to {size_label(sizes[-1])} nodes"
     shapes = [s for s in assessment.shapes if s.growth is not None]
     regressed = [s for s in shapes if s.status == "regression"]
     improved = [s for s in shapes if s.status == "improvement"]
+    unconfirmed = [s for s in shapes if s.status == "info"]
+    settled = [s for s in shapes if s.status in ("ok", "improvement")]
     correctness = [
         f for f in assessment.loud if f["status"] == "regression" and f["metric"] != "growth_ratio"
     ]
     parts = []
     if verdict == "error":
-        parts.append(f"could not measure: {(error or '')[:300]}")
+        parts.append(f"could not measure: {'; '.join(errors)[:300]}")
+    if correctness:
+        first = correctness[0]
+        parts.append(
+            f"{len(correctness)} correctness finding(s), first {first['name']} ({first['metric']})"
+        )
     if regressed:
         worst = max(regressed, key=lambda s: s.growth[2])
         parts.append(
@@ -825,29 +928,27 @@ def summarize(verdict: str, assessment: Assessment, sizes: Sequence[int], error:
             f"{worst.shape}: its candidate/baseline ratio grows {worst.growth[2]:.2f}x from "
             f"{span} (re-run {worst.confirm_growth:.2f}x)"
         )
-    if correctness:
-        first = correctness[0]
-        parts.append(
-            f"{len(correctness)} correctness finding(s), first {first['name']} ({first['metric']})"
-        )
-    if verdict == "pass" and shapes:
-        worst = max(shapes, key=lambda s: s.growth[2])
+    if verdict == "pass" and settled:
+        worst = max(settled, key=lambda s: s.growth[2])
         parts.append(
             f"no shape's candidate/baseline ratio grew more than {THRESHOLD}x from {span} "
-            f"({len(shapes)} shapes, highest {worst.shape} {worst.growth[2]:.2f}x)"
+            f"({len(settled)} shapes, highest {worst.shape} {worst.growth[2]:.2f}x)"
         )
     if improved:
         best = min(improved, key=lambda s: s.growth[2])
         parts.append(
             f"{len(improved)} shape(s) improved with size, best {best.shape} {best.growth[2]:.3f}x"
         )
-    unconfirmed = [s for s in shapes if s.status == "info"]
-    if unconfirmed:
-        parts.append(f"{len(unconfirmed)} crossed once and not on the re-run")
-    left = sum(1 for g in assessment.quiet if g and g[0]["metric"] == "completed")
-    if left:
-        parts.append(f"{left} left out because an engine could not run them")
-    return "; ".join(parts).replace("\n", " ").replace("\r", " ")
+    for s in unconfirmed:
+        again = f"{s.confirm_growth:.2f}x" if s.confirm_growth is not None else "not measured"
+        parts.append(f"{s.shape} crossed once ({s.growth[2]:.2f}x) but not on the re-run ({again})")
+    if assessment.unsupported:
+        parts.append(f"left out, the baseline cannot run them: {_names(assessment.unsupported)}")
+    if assessment.both_broken:
+        parts.append(f"broken on both sides (not new): {_names(assessment.both_broken)}")
+    if verdict == "regression" and errors:
+        parts.append(f"also could not measure: {'; '.join(errors)[:200]}")
+    return " ".join("; ".join(parts).splitlines())
 
 
 # --- result.json -------------------------------------------------------------
@@ -918,10 +1019,6 @@ def write_summary(path: Path, cells: Iterable[Cell]) -> None:
 # --- the run -----------------------------------------------------------------
 
 
-class Stopped(Exception):
-    """SIGTERM arrived (the workflow's timeout)."""
-
-
 class Abort(Exception):
     """Setup failed or the arguments are unusable: nothing more to measure."""
 
@@ -934,10 +1031,15 @@ class Setup:
     quiet: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
-    def side_failed(self, what: str, failed: dict[str, str]) -> None:
+    def side_failed(self, what: str, failed: dict[str, str], infra: Sequence[str] = ()) -> None:
         """A setup step failed on one side or both. The candidate alone is a
         regression at once (contract §1: a crash needs no re-run); anything
-        that fails on the baseline leaves nothing to compare with."""
+        that fails on the baseline leaves nothing to compare with. A side in
+        `infra` failed outside its engine (Docker refused the container), which
+        says nothing about the image: an error."""
+        if infra:
+            self.errors += [f"{what} failed on the {side}: {failed[side]}" for side in infra]
+            return
         if "baseline" not in failed:
             self.loud.append(completed_finding(what, False, True))
             return
@@ -1029,6 +1131,36 @@ def run(
         spec = ModeSpec(min(spec.warmup, reps), reps, spec.block_seconds, spec.budget_minutes)
     if len(sizes) < 2:
         errors.append(f"growth needs at least two sizes, got {sizes}")
+    try:
+        machine_obj = machine()
+    except (OSError, ValueError) as e:
+        machine_obj = local_machine()
+        errors.append(f"PERF_MACHINE_JSON unreadable: {e}")
+    refs = {
+        "candidate": side_ref(candidate, candidate_label, commits["candidate"]),
+        "baseline": side_ref(baseline, baseline_label, commits["baseline"]),
+    }
+
+    def write(screen: dict, confirm: dict, setup: Setup, errors: list[str]) -> dict:
+        listed = [a for a in dict.fromkeys(artifacts) if (out / a).is_file()]
+        result = build_result(
+            screen=screen,
+            confirm=confirm,
+            sizes=sizes,
+            candidate=refs["candidate"],
+            baseline=refs["baseline"],
+            machine=machine_obj,
+            started=started,
+            artifacts=listed,
+            setup=setup,
+            errors=errors,
+        )
+        (out / "result.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
+        return result
+
+    # Replaced at the end. If the process is killed before that (timeout's
+    # KILL), this one stands: an error, never a missing or stale file.
+    write({}, {}, Setup(), [*errors, "the check was killed before it wrote its result"])
 
     # SIGTERM (run-check.sh's timeout) stops the measurement once. The handler
     # disarms itself before it raises, and every way out of the measurement
@@ -1060,16 +1192,18 @@ def run(
             if errors:
                 raise Abort()
 
-            failed = {}
+            failed, infra = {}, []
             for side in SIDES:
                 echo(f"starting {side}: {images[side]}")
                 try:
                     servers[side].start()
                 except StartFailed as e:
                     failed[side] = str(e)
+                    if e.infra:
+                        infra.append(side)
                     setup_csv.writerow({"side": side, "step": "start", "error": str(e)})
             if failed:
-                setup.side_failed("server starts and answers PING", failed)
+                setup.side_failed("server starts and answers PING", failed, infra)
                 raise Abort()
 
             # Every graph on both servers, alternating which side builds first.
@@ -1106,25 +1240,52 @@ def run(
                 setup.side_failed("index becomes OPERATIONAL", failed)
                 raise Abort()
 
-            stats = docker("stats", "--no-stream", *(s.name for s in servers.values()), timeout=60)
-            (raw / "docker-stats-before.txt").write_text(stats.stdout + stats.stderr)
-            artifacts.append("raw/docker-stats-before.txt")
-            write_plans(raw / "plans.txt", servers, sizes[-1])
-            artifacts.append("raw/plans.txt")
+            # Evidence only: neither may stop the measurement.
+            try:
+                names = [s.name for s in servers.values()]
+                stats = docker("stats", "--no-stream", *names, timeout=60)
+                (raw / "docker-stats-before.txt").write_text(stats.stdout + stats.stderr)
+                artifacts.append("raw/docker-stats-before.txt")
+            except (subprocess.TimeoutExpired, OSError) as e:
+                setup_csv.writerow({"step": "docker stats", "error": str(e)})
+            try:
+                write_plans(raw / "plans.txt", servers, sizes[-1])
+                artifacts.append("raw/plans.txt")
+            except OSError as e:
+                setup_csv.writerow({"step": "plans", "error": str(e)})
 
             budget_end = clock0 + spec.budget_minutes * 60
 
             def units(phase: str, todo: list[tuple[Shape, int, str]], store: dict) -> None:
                 for n, (shape, size, first) in enumerate(todo):
-                    if time.monotonic() > budget_end:
+                    try:
+                        if time.monotonic() > budget_end:
+                            raise BudgetOut()
+                        cell = run_unit(
+                            servers, shape, size, phase, first, spec, rows_csv.writerow, budget_end
+                        )
+                    except Interrupted as e:
+                        # A unit cut short keeps one thing: a candidate that did
+                        # not finish while the baseline answered.
+                        part = e.cell
+                        base = part.runs["baseline"] if part else None
+                        if (
+                            part
+                            and part.runs["candidate"].failure
+                            and base.counts
+                            and not (base.failure)
+                        ):
+                            store[(shape.name, size)] = part
+                        if isinstance(e, Stopped):
+                            raise
                         errors.append(
                             f"the {mode} budget ({spec.budget_minutes:.0f} min) ran out with "
                             f"{n} of {len(todo)} {phase} units measured"
                         )
                         return
-                    cell = run_unit(servers, shape, size, phase, first, spec, rows_csv.writerow)
+                    finally:
+                        rows_fh.flush()
                     store[(shape.name, size)] = cell
-                    rows_fh.flush()
                     echo(progress_line(cell))
 
             # A alternates between units, so each side leads half of them.
@@ -1138,12 +1299,12 @@ def run(
                 if g is not None and crosses(g[2]) == "regression":
                     crossed.append(shape)
             if crossed:
-                echo(f"re-running {len(crossed)} crossed shape(s) at every size, order swapped")
+                ends = (sizes[0], sizes[-1])  # the two sizes the growth ratio reads
+                echo(f"re-running {len(crossed)} crossed shape(s) at {ends}, order swapped")
                 redo = [
                     (shape, size, other(screen[(shape.name, size)].first))
-                    for size in sizes
+                    for size in ends
                     for shape in crossed
-                    if (shape.name, size) in screen
                 ]
                 units("confirm", redo, confirm)
             armed[0] = False
@@ -1170,24 +1331,7 @@ def run(
         write_summary(raw / "summary.csv", [*screen.values(), *confirm.values()])
     except OSError as e:
         errors.append(f"could not write raw/summary.csv: {e}")
-    try:
-        machine_obj = machine()
-    except (OSError, ValueError) as e:
-        machine_obj = local_machine()
-        errors.append(f"PERF_MACHINE_JSON unreadable: {e}")
-    result = build_result(
-        screen=screen,
-        confirm=confirm,
-        sizes=sizes,
-        candidate=side_ref(candidate, candidate_label, commits["candidate"]),
-        baseline=side_ref(baseline, baseline_label, commits["baseline"]),
-        machine=machine_obj,
-        started=started,
-        artifacts=artifacts,
-        setup=setup,
-        errors=errors,
-    )
-    (out / "result.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
+    result = write(screen, confirm, setup, errors)
     signal.signal(signal.SIGTERM, previous)
     return result
 
@@ -1229,13 +1373,14 @@ def build_result(
         verdict = "error"
     else:
         verdict = "pass"
-    error = "; ".join(dict.fromkeys(all_errors))[:2000] if verdict == "error" else None
+    all_errors = list(dict.fromkeys(all_errors))
+    error = "; ".join(all_errors)[:2000] if verdict == "error" else None
     return {
         "schema": 1,
         "check": CHECK,
         "verdict": verdict,
         "confirmed": verdict == "regression",
-        "summary": summarize(verdict, assessment, sizes, error),
+        "summary": summarize(verdict, assessment, sizes, all_errors),
         "candidate": candidate,
         "baseline": baseline,
         "machine": machine,

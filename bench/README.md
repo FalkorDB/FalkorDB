@@ -190,15 +190,18 @@ is the client's wall clock around one request on a plain socket, never re-sent
 **What it decides.** Per shape, `growth_ratio` = (candidate p50 / baseline
 p50 at 500k) ÷ (the same at 10k): how much more the candidate slows down from
 10k to 500k nodes than the baseline does. Above 1.5 the shape is re-measured at
-every size with the order swapped, and is a `regression` only when the re-run
+10k and 500k with the order swapped, and is a `regression` only when the re-run
 crosses again; below 1/1.5 it is an `improvement`. The per-size ratios are
 `info` findings for the crossed shapes (whole triples, worst first, within the
 contract's ten), and every number is in `raw/summary.csv`. A candidate that
 errors, times out (120 s) or loses its server on a shape the baseline runs is
 a `completed` regression at once; a request whose rows or relationships
-created differ between the sides is a `rows` mismatch. A shape the baseline
-cannot run is left out as `info` (a C image may lack one); a baseline server
-that dies, or a setup step that fails on the baseline, is `error`.
+created differ between the sides is a `rows` mismatch. A shape both sides fail
+is `info`, named in the summary as broken on both sides. A shape the baseline
+answers with an error at every size is left out as `info` (a C image may lack
+one). Any other baseline failure (a timeout, an error at some sizes only, a
+server that dies, a setup step that fails) is `error`: a shape that was not
+compared is never a pass. So is Docker refusing to start either container.
 
 Wall clock is the measure here (the VM has no PMU access), which is acceptable
 because the signal is a large ratio of medians from the same machine and run.
@@ -210,24 +213,29 @@ tier measures it.
 
 | mode | warm-up | requests per block (4 blocks per unit) | block cap | budget |
 |---|---|---|---|---|
-| `queue` | 3 | 30 | 4 s | 20 min |
-| `nightly` | 5 | 60 | 8 s | 35 min |
-| `long` | 10 | 150 | 20 s | 100 min |
+| `queue` | 3 | 30 | 3 s | 20 min |
+| `nightly` | 5 | 60 | 6 s | 35 min |
+| `long` | 10 | 150 | 15 s | 100 min |
 
-A block stops at its cap once it has 5 requests, so a candidate that is slow
-everywhere still finishes: at most 36 units (18 plus 18 re-run) x 4 blocks x
-the cap, 19 minutes for `nightly`. No unit starts past the budget, and the
-result then says `error`. `--sizes` and `--reps` exist for development only.
+Every block, and each side's warm-up, stops at its cap once it has its
+minimum (5 requests, 1 for the warm-up). A run has at most 30 units (18, plus
+12 re-run), each six capped stretches, so while a request takes under a fifth
+of the cap a run measures for at most 9, 18 and 45 minutes. Slower requests
+stretch a block to 5 of them; the budget then stops the run mid-block (late by
+at most one 120 s request and a 120 s wait for the graph), and the result says
+`error`, not `regression`. `long`'s budget needs its own `timeout_minutes` of
+at least 110 when phase 3 runs it. `--sizes` and `--reps` exist for
+development only.
 
-Measured on an n4-standard-16 (`nightly`, 2026-11-24), a whole run took
-1-3 minutes plus the image pulls:
+Measured on an n4-standard-16 (`nightly`, 2026-11-24, two rounds on one VM),
+a whole run took 1-3 minutes plus the image pulls:
 
-| candidate vs baseline | verdict | UNWIND shapes' growth ratio | controls |
-|---|---|---|---|
-| 6.2.0 vs 6.0.4 | regression, all four confirmed | 6.16x-9.77x | 1.01x |
-| main@4c1088949 vs 6.2.0 | pass, four improvements | 0.145x-0.160x | 1.05x |
-| main@4c1088949 vs itself | pass | 0.959x-1.082x | 0.880x-0.886x |
-| C v4.22.4 vs itself | pass | 0.951x-1.050x | 1.006x-1.014x |
+| candidate vs baseline | verdict, both rounds | UNWIND shapes' growth ratio |
+|---|---|---|
+| 6.2.0 vs 6.0.4 | regression, all four confirmed by the re-run | 6.16x-9.77x |
+| main@4c1088949 vs 6.2.0 | pass, four improvements | 0.135x-0.176x |
+| main@4c1088949 vs itself | pass | all six shapes 0.880x-1.082x |
+| C v4.22.4 vs itself | pass | all six shapes 0.906x-1.061x |
 
 The same-image runs moved no growth ratio further than 1.14x (1/0.880) from 1,
 against the 1.5 threshold.

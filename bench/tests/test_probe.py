@@ -157,12 +157,6 @@ def test_unwind_shapes_are_micros_3963_rows():
     assert not any("unwind" in s.name.lower() for s in SHAPES[4:])
 
 
-def test_same_parameters_on_both_sides():
-    """run_unit seeds one sequence per unit, so request k is the same on both sides."""
-    a = [SHAPES[1].params(probe.random.Random("screen/100000/x"), 100_000) for _ in range(2)]
-    assert a[0] == a[1]
-
-
 # --- the growth ratio --------------------------------------------------------
 
 
@@ -208,7 +202,11 @@ def test_crossing_not_repeated_by_the_rerun_is_info():
     assert res["verdict"] == "pass"
     growth_rows = [f for f in res["findings"] if f["name"] == UNWIND_ID_1]
     assert growth_rows[0]["status"] == "info"
-    assert "crossed once and not on the re-run" in res["summary"]
+    assert f"{UNWIND_ID_1} crossed once (50.00x) but not on the re-run (1.00x)" in res["summary"]
+    # "highest" reads the shapes that settled, not the one that crossed once.
+    assert (
+        "highest" in res["summary"] and "highest UNWIND id MATCH edge 1 row" not in res["summary"]
+    )
 
 
 def test_crossing_the_rerun_could_not_measure_is_an_error():
@@ -246,17 +244,57 @@ def test_candidate_error_is_an_immediate_completed_regression():
     assert (reg["candidate"], reg["baseline"], reg["direction"]) == (0, 1, "lower_is_worse")
 
 
+def fail(screen, shape, sizes, side, kind, why="boom"):
+    for size in sizes:
+        run = screen[(shape, size)].runs[side]
+        run.wall = []
+        run.fail(kind, why)
+    return screen
+
+
 def test_shape_the_baseline_cannot_run_is_left_out_as_info():
-    screen = grid(flat)
-    for size in SIZES:
-        b = screen[(UNWIND_ID_1, size)].runs["baseline"]
-        b.wall = []
-        b.fail("error", "error reply: unknown function")
+    screen = fail(grid(flat), UNWIND_ID_1, SIZES, "baseline", "error", "unknown function")
     res = result(screen)
     assert res["verdict"] == "pass"
-    left = [f for f in res["findings"] if f["metric"] == "completed"]
-    assert len(left) == 3 and all(f["status"] == "info" for f in left)
-    assert all((f["candidate"], f["baseline"], f["ratio"]) == (1, 0, None) for f in left)
+    (left,) = [f for f in res["findings"] if f["metric"] == "completed"]
+    assert left["name"] == UNWIND_ID_1 and left["status"] == "info"
+    assert (left["candidate"], left["baseline"], left["ratio"]) == (1, 0, None)
+    assert f"the baseline cannot run them: {UNWIND_ID_1}" in res["summary"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "sizes"),
+    [
+        ("timeout", SIZES[-1:]),  # did not finish where the candidate could regress
+        ("timeout", SIZES),
+        ("error", SIZES[-1:]),  # an error at some sizes only is not "cannot run"
+    ],
+)
+def test_other_baseline_failures_are_never_a_pass(kind, sizes):
+    screen = grid(flat)
+    for shape in SHAPES[:4]:
+        fail(screen, shape.name, sizes, "baseline", kind)
+    res = result(screen)
+    assert res["verdict"] == "error" and "baseline boom" in res["error"]
+
+
+def test_broken_on_both_sides_is_info_and_said():
+    screen = grid(flat)
+    for side in ("candidate", "baseline"):
+        fail(screen, UNWIND_ID_1, SIZES[-1:], side, "timeout")
+    res = result(screen)
+    assert res["verdict"] == "pass"
+    (both,) = [f for f in res["findings"] if f["metric"] == "completed"]
+    assert both["status"] == "info" and (both["candidate"], both["baseline"]) == (0, 0)
+    assert f"broken on both sides (not new): {UNWIND_ID_1} @500k" in res["summary"]
+
+
+def test_baseline_down_is_an_error_even_when_the_candidate_failed_too():
+    screen = grid(flat)
+    fail(screen, "create node", SIZES[-1:], "candidate", "down")
+    fail(screen, "create node", SIZES[-1:], "baseline", "down", "server stopped answering")
+    res = result(screen)
+    assert res["verdict"] == "error" and "server stopped answering" in res["error"]
 
 
 def test_baseline_server_down_is_an_error():
@@ -288,6 +326,11 @@ def test_candidate_fails_to_start_is_a_regression_baseline_is_an_error():
     setup.side_failed("server starts and answers PING", {"candidate": "no PONG"})
     res = result({}, setup=setup)
     assert res["verdict"] == "regression" and res["error"] is None
+    # Docker refusing the container says nothing about the engine.
+    setup = Setup()
+    setup.side_failed("server starts", {"candidate": "name in use"}, infra=["candidate"])
+    res = result({}, setup=setup)
+    assert res["verdict"] == "error" and "name in use" in res["error"]
     setup = Setup()
     setup.side_failed("build the 500k graph", {"baseline": "boom", "candidate": "boom"})
     res = result({}, setup=setup)
@@ -305,6 +348,27 @@ def test_missing_units_are_never_a_pass():
 def test_budget_error_is_kept():
     res = result(grid(flat), errors=["the nightly budget (35 min) ran out"])
     assert res["verdict"] == "error" and "budget" in res["error"]
+
+
+def test_regression_still_says_what_it_could_not_measure():
+    screen = fail(grid(flat), UNWIND_ID_1, SIZES[-1:], "candidate", "timeout")
+    fail(screen, "create node", SIZES[-1:], "baseline", "down", "exit 139")
+    res = result(screen)
+    assert res["verdict"] == "regression" and res["error"] is None
+    assert "also could not measure: baseline exit 139" in res["summary"]
+
+
+def test_summary_is_one_line_whatever_the_errors_hold():
+    res = result(grid(flat), errors=["a\x0bb\u2028c\nd"])
+    assert res["summary"] == " ".join(res["summary"].splitlines())
+
+
+def test_correctness_findings_come_first():
+    names = {UNWIND_ID_1}
+    screen = grid(grows_on_candidate(names))
+    fail(screen, "create node", SIZES[-1:], "candidate", "error")
+    res = result(screen, grid(grows_on_candidate(names), "confirm"))
+    assert [f["metric"] for f in by_status(res, "regression")] == ["completed", "growth_ratio"]
 
 
 # --- contract limits ---------------------------------------------------------
@@ -352,6 +416,8 @@ def test_default_label_and_digest_rule():
         "localhost:5000/x@cccccccccccc"
     )
     assert probe.DIGEST_RE.match(IMAGE_B) and not probe.DIGEST_RE.match("falkordb/x:6.2.0")
+    assert probe.DIGEST_RE.match("localhost:5000/x:tag@sha256:" + "c" * 64)
+    assert not probe.DIGEST_RE.match("FalkorDB/x@sha256:" + "c" * 64)  # docker refuses it
 
 
 def test_run_with_a_tag_writes_an_error_result(tmp_path):
@@ -377,10 +443,83 @@ def test_run_with_an_unknown_mode_writes_an_error_result(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["queue", "nightly", "long"])
-def test_every_mode_measures_the_same_sizes_and_shapes(mode):
+def test_every_mode_fits_its_budget_when_every_block_hits_its_cap(mode):
+    """30 units (18 + 12 re-run), each a warm-up per side and four blocks."""
     spec = probe.MODES[mode]
-    assert spec.reps >= probe.MIN_REPS and spec.warmup >= 1
-    assert probe.SIZES == (10_000, 100_000, 500_000)
+    worst = (len(SHAPES) * 3 + len(SHAPES) * 2) * 6 * spec.block_seconds
+    assert worst <= 0.9 * spec.budget_minutes * 60
+    assert spec.reps >= probe.MIN_REPS
+
+
+# --- run_unit, against fake servers ----------------------------------------
+
+
+class FakeServer:
+    """Answers every query at once; records what it was sent."""
+
+    def __init__(self, side, log, fail_with=None):
+        self.side, self.log, self.fail_with, self.settled = side, log, fail_with, 0
+
+    def query(self, graph, cypher):
+        self.log.append((self.side, cypher))
+        if self.fail_with is not None:
+            raise self.fail_with
+        return Reply([], [], {"Relationships created": "1"}), 1.0
+
+    def settle(self, graph):
+        self.settled += 1
+
+
+def unit(spec, deadline=None, **fails):
+    log = []
+    servers = {s: FakeServer(s, log, fails.get(s)) for s in probe.SIDES}
+    shape = SHAPES[2]  # UNWIND id MATCH edge 1 row
+    cell = probe.run_unit(
+        servers, shape, 10_000, "screen", "baseline", spec, lambda r: None, deadline
+    )
+    return cell, log, servers
+
+
+def test_run_unit_runs_a_b_b_a_with_identical_requests_on_both_sides():
+    spec = probe.ModeSpec(warmup=2, reps=3, block_seconds=60.0, budget_minutes=1.0)
+    cell, log, _ = unit(spec)
+    sides = "".join(side[0] for side, _ in log)
+    assert sides == "bb" + "cc" + "bbb" + "ccc" + "ccc" + "bbb"  # warm-ups, then A B B A
+    sent = {s: [q for side, q in log if side == s] for s in probe.SIDES}
+    assert sent["candidate"] == sent["baseline"] and len(set(sent["baseline"])) == 8
+    assert [len(cell.runs[s].wall) for s in probe.SIDES] == [6, 6]
+    assert probe.first_mismatch(cell) is None
+
+
+def test_run_unit_caps_every_block_and_the_warm_up():
+    spec = probe.ModeSpec(warmup=4, reps=20, block_seconds=0.0, budget_minutes=1.0)
+    cell, log, _ = unit(spec)
+    per_side = 1 + probe.MIN_REPS * 2  # warm-up stops after one, blocks after MIN_REPS
+    assert len(log) == 2 * per_side
+    assert len(cell.runs["candidate"].wall) == 2 * probe.MIN_REPS
+
+
+def test_run_unit_candidate_timeout_settles_and_the_baseline_still_runs():
+    spec = probe.ModeSpec(warmup=1, reps=3, block_seconds=60.0, budget_minutes=1.0)
+    cell, log, servers = unit(spec, candidate=probe.Timeout("no reply within 120 s"))
+    c, b = cell.runs["candidate"], cell.runs["baseline"]
+    assert c.failure_kind == "timeout" and servers["candidate"].settled == 1
+    assert len([1 for side, _ in log if side == "candidate"]) == 1  # never re-sent
+    assert b.failure is None and len(b.wall) == 6
+
+
+def test_run_unit_server_side_timeout_reply_is_a_timeout():
+    spec = probe.ModeSpec(warmup=1, reps=3, block_seconds=60.0, budget_minutes=1.0)
+    cell, _, servers = unit(spec, baseline=probe.QueryError("Query timed out"))
+    assert cell.runs["baseline"].failure_kind == "timeout"
+    assert servers["baseline"].settled == 0  # the server already ended it
+
+
+def test_run_unit_past_the_deadline_raises_with_the_partial_cell():
+    spec = probe.ModeSpec(warmup=1, reps=3, block_seconds=60.0, budget_minutes=1.0)
+    with pytest.raises(probe.BudgetOut) as raised:
+        unit(spec, deadline=0.0)
+    assert raised.value.cell is not None and raised.value.cell.shape == SHAPES[2].name
 
 
 def test_run_without_docker_still_writes_an_error_result(tmp_path, monkeypatch):
