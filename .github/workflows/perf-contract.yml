@@ -47,13 +47,22 @@ jobs:
         run: |
           set -euo pipefail
           .bin/uv run --no-project --python 3.9 python -I tests/perf/validate.py tests/perf/fixtures/valid/*.json
-          # A valid result with a tag in place of a digest must be refused.
-          python3 -I -c 'import json, sys; d = json.load(open(sys.argv[1])); d["baseline"]["image"] = "falkordb/falkordb-server:6.2.0"; print(json.dumps(d))' \
-            tests/perf/fixtures/valid/result-micro-pass.json > "$RUNNER_TEMP/tag-image.json"
-          if .bin/uv run --no-project --python 3.9 python -I tests/perf/validate.py "$RUNNER_TEMP/tag-image.json"; then
-            echo "::error::validate.py accepted a tag instead of a digest on Python 3.9"
-            exit 1
-          fi
+          # The nightlies examples.py builds pass, and its first broken case (a tag
+          # in place of a digest) is refused.
+          .bin/uv run --no-project --python 3.9 python -I - <<'EOF'
+          import importlib.util, json, sys
+          def load(name, path):
+              spec = importlib.util.spec_from_file_location(name, path)
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              return module
+          validate = load("validate", "tests/perf/validate.py")
+          examples = load("examples", "tests/perf/examples.py")
+          bad = [(n, str(p)) for n in examples.BUILT for p in validate.validate_text(json.dumps(examples.example(n)))[1]]
+          refused = validate.validate_text(json.dumps(examples.changed(examples.CASES[0])))[1]
+          print("built nightlies:", bad or "ok", "| tag case refused:", bool(refused))
+          sys.exit(1 if bad or not refused else 0)
+          EOF
 
       # pytest and pyyaml (acceptance.yaml) are test-only. --python: the step
       # above leaves a uv-managed 3.9 behind, which uv would otherwise pick,

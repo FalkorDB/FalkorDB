@@ -1,13 +1,9 @@
-"""Broken results and nightlies, each built from a valid fixture by one change.
+"""Example results and nightlies for the tests, and broken variants of them.
 
-Every case starts from a file in fixtures/valid/, changes one field, and names
-the single problem validate.py must report for it. test_validate.py runs every
-case through validate.py; the reporter's tests build the nightly cases the same
-way. Standard library only.
-
-    for case in CASES:
-        text = invalid_text(case)      # the broken file's JSON
-        validate.validate_text(text)   # -> [Problem(case.code, case.at, ...)]
+`example(name)` returns a valid document: a file in fixtures/valid/, or a nightly
+built from the result files there (only nightly-red.json is kept as a literal).
+Each `Case` changes one field of an example and names the one problem
+validate.py must report. Standard library only.
 """
 
 from __future__ import annotations
@@ -20,6 +16,47 @@ from typing import Any, NamedTuple, Tuple, Union
 VALID = Path(__file__).resolve().parent / "fixtures" / "valid"
 
 
+def _file(name: str) -> Any:
+    return json.loads((VALID / name).read_text(encoding="utf-8"))
+
+
+def nightly(status: str, checks: list, skip_reason: Union[str, None] = None) -> dict:
+    """A nightly with nightly-red.json's header (date, images, run link) and these checks."""
+    night = _file("nightly-red.json")
+    night.update(status=status, skip_reason=skip_reason, checks=copy.deepcopy(checks))
+    return night
+
+
+def _stub(check: str, error: str) -> dict:
+    return {"check": check, "verdict": "error", "error": error}
+
+
+def _nightlies() -> dict:
+    passed, error = _file("result-micro-pass.json"), _file("result-pokec-error.json")
+    soak = _file("result-soak-both-broken.json")  # pass, one invariant broken on both sides
+    return {
+        "nightly-green.json": nightly("green", [passed, soak]),
+        "nightly-error.json": nightly("error", [passed, error, soak]),
+        "nightly-missing-result.json": nightly("error", [
+            passed, soak, _stub("pokec", "no result.json"),
+            _stub("micro-hw", "no C4 VM with performance-monitoring-unit=standard came up; no counterless fallback"),
+        ]),
+        "nightly-skipped.json": nightly("skipped", [], "main has not moved since the last run (main@4c1088949)"),
+    }
+
+
+BUILT = tuple(_nightlies())
+NAMES = tuple(sorted({p.name for p in VALID.glob("*.json")} | set(BUILT)))
+
+
+def example(name: str) -> Any:
+    return _nightlies()[name] if name in BUILT else _file(name)
+
+
+def kind(name: str) -> str:
+    return "nightly" if name.startswith("nightly-") else "result"
+
+
 class Delete:
     """Remove the field instead of changing it."""
 
@@ -29,7 +66,7 @@ DELETE = Delete()
 
 class Case(NamedTuple):
     name: str
-    start: str  # a file in fixtures/valid/
+    start: str  # an example name
     path: Tuple[Union[str, int], ...]  # the field to change
     value: Any  # its new value, or DELETE
     code: str  # the problem validate.py reports
@@ -67,13 +104,9 @@ CASES = [
 ]
 
 
-def kind(case: Case) -> str:
-    return "nightly" if case.start.startswith("nightly-") else "result"
-
-
-def invalid_document(case: Case) -> Any:
-    """The start fixture with the case's one change applied."""
-    document = json.loads((VALID / case.start).read_text(encoding="utf-8"))
+def changed(case: Case) -> Any:
+    """The case's start example with its one change applied."""
+    document = example(case.start)
     target = document
     for key in case.path[:-1]:
         target = target[key]
@@ -82,8 +115,3 @@ def invalid_document(case: Case) -> Any:
     else:
         target[case.path[-1]] = copy.deepcopy(case.value)
     return document
-
-
-def invalid_text(case: Case) -> str:
-    """The broken file's JSON text (an infinite float is written as Infinity)."""
-    return json.dumps(invalid_document(case), indent=2)

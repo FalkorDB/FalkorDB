@@ -1,7 +1,6 @@
 # Nightly perf runs: the result format and its checker
 
-Each nightly perf check (micro-hw, size-probe, pokec, soak-a, soak-b, fuzz,
-ldbc) compares a candidate image with a baseline image and writes one
+Each nightly perf check (micro-hw, pokec, soak-a, soak-b, fuzz, ldbc) compares a candidate image with a baseline image and writes one
 `result.json`. The nightly merges them into one `nightly.json`, which the
 reporter posts. This directory defines those two files and holds what the
 checks are accepted against. Nothing here runs at night or stores history.
@@ -9,8 +8,8 @@ checks are accepted against. Nothing here runs at night or stores history.
 | file | what it is |
 | --- | --- |
 | `validate.py` | The checker. It rejects a result or nightly that cannot be reported as it stands: a missing or malformed field the reporter reads, or a verdict that contradicts its findings. Standard library only. |
-| `fixtures/valid/` | Hand-written example files (7 results, 5 nightlies) for the tests and for the reporter's tests. |
-| `invalid_cases.py` | Broken examples, each built from a valid file by changing one field, with the problem it must produce. |
+| `fixtures/valid/` | Hand-written example files: 7 results and one nightly (`nightly-red.json`). |
+| `examples.py` | Builds the other example nightlies from those results, and the broken examples: one field changed, with the problem it must produce. |
 | `acceptance.yaml` | For each check, image pairs whose right answer is known, and that answer. |
 | `test_validate.py` | Runs all of the above. |
 

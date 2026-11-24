@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
-"""Check that a perf check's result.json, or the nightly's nightly.json, can be
-reported as it stands: every field the reporter reads is there and well formed,
-and the verdict does not contradict the findings under it.
+"""Check a perf result.json or nightly.json before it is reported (see README.md).
 
     python -I tests/perf/validate.py [--kind result|nightly] <file>...
 
-A file with "checks" is a nightly, one with "check" a result, unless --kind
-says which. Each problem prints as `<file>: <code>: <json-path>: <message>`; a
-good file prints `<file>: ok (<kind>)`. Exit 0 when every file is good, 1 when
-any has a problem, 2 on a usage error. Standard library only, Python 3.9+.
-
-From another script (python -I keeps tests/perf off sys.path), load it by path
-and call validate_file(path, kind) -> (kind, [Problem(code, path, message)]).
+Standard library only, Python 3.9+. Scripts load it by path and call
+validate_file(path, kind) -> (kind, [Problem(code, path, message)]).
 """
 
 from __future__ import annotations

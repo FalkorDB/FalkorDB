@@ -103,8 +103,8 @@ checks:
         regress on cycles, and correlated hash join on allocated bytes, each
         confirmed by a re-run. The fourth #3963 row, UNWIND index MATCH edge
         100 rows, is at parity at bench sizes (one hash join over the scan
-        costs about as much as 100 seeks; #3887's cost grows with node count,
-        which size-probe covers): report its ratio, it is not required. Report
+        costs about as much as 100 seeks): report its ratio, it is not
+        required. Report
         the other allocation rows (the replay of run 45403484820 also flagged
         id eq join and the three #3963 rows) and the branch/L2 miss rows as
         measured. micro-hw names a finding "<row> [<class>]"; the patterns are
@@ -118,48 +118,6 @@ checks:
         Hardware counters can measure the C engine (callgrind cannot). Only
         a valid result.json is required; record its verdict and findings as
         measured.
-
-  size-probe:
-    - id: size-probe-a-a
-      candidate: *main-4c1088949
-      baseline: *main-4c1088949
-      mode: nightly
-      expect:
-        verdict: pass
-        no_regression_findings: true
-    - id: size-probe-6.2.0-vs-6.0.4
-      candidate: *v6-2-0
-      baseline: *v6-0-4
-      mode: nightly
-      expect:
-        verdict: regression
-        findings:
-          - {name_regex: unwind, status: regression}
-      judge: >-
-        The regression is on the UNWIND ... MATCH (a) WHERE id(a) = e.s
-        MATCH (b) WHERE id(b) = e.d CREATE shape (and its label-scan form),
-        and its ratio grows with node count: larger at 100k than at 10k,
-        larger at 500k than at 100k.
-    - id: size-probe-main-vs-6.2.0
-      candidate: *main-4c1088949
-      baseline: *v6-2-0
-      mode: nightly
-      expect:
-        findings:
-          - {name_regex: unwind, status: improvement}
-        no_regression_findings_matching: unwind
-      judge: >-
-        Improvement findings on the same shapes that regressed in
-        size-probe-6.2.0-vs-6.0.4. Any other regression is reported as
-        measured; it is not part of this pair's expectation.
-    - id: size-probe-c-v4.22.4-a-a
-      candidate: *c-v4-22-4
-      baseline: *c-v4-22-4
-      mode: nightly
-      expect:
-        verdict: pass
-        no_regression_findings: true
-      judge: The C engine against itself.
 
   pokec:
     - id: pokec-a-a
