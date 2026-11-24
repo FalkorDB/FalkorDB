@@ -269,7 +269,7 @@ jobs:
 
       - name: Install git and python3
         # Debian 12's GCE image already ships python3 and git (seen in the
-        # proof run); this only makes sure. A failed install is worth a
+        # acceptance run); this only makes sure. A failed install is worth a
         # warning, not the night.
         continue-on-error: true
         run: |
