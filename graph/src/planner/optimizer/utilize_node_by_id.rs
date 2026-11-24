@@ -47,8 +47,9 @@ use orx_tree::{Bfs, DynNode, DynTree, NodeRef};
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 
 use super::super::IR;
+use super::references::subtree_references_variable;
 
-fn get_id_filter(
+pub(super) fn get_id_filter(
     filter: &DynNode<ExprIR<Variable>>,
     node_alias: &Variable,
 ) -> Option<(QueryExpr<Variable>, ExprIR<Variable>)> {
@@ -58,8 +59,8 @@ fn get_id_filter(
     ) && let ExprIR::FuncInvocation(inner_func) = filter.child(0).data()
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(0).child(0).data()
-        && var == node_alias
-        && !references_var(&filter.child(1), node_alias)
+        && var.key() == node_alias.key()
+        && !subtree_references_variable(&filter.child(1), node_alias.key())
     {
         Some((
             Arc::new(filter.child(1).clone_as_tree()),
@@ -71,8 +72,8 @@ fn get_id_filter(
     ) && let ExprIR::FuncInvocation(inner_func) = filter.child(1).data()
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(1).child(0).data()
-        && var == node_alias
-        && !references_var(&filter.child(0), node_alias)
+        && var.key() == node_alias.key()
+        && !subtree_references_variable(&filter.child(0), node_alias.key())
     {
         let op = match filter.data() {
             ExprIR::Eq => ExprIR::Eq,
@@ -86,21 +87,6 @@ fn get_id_filter(
     } else {
         None
     }
-}
-
-/// Returns true if the expression tree references the given variable.
-fn references_var(
-    expr: &DynNode<ExprIR<Variable>>,
-    var: &Variable,
-) -> bool {
-    for node in expr.walk::<Bfs>() {
-        if let ExprIR::Variable(v) = node
-            && v == var
-        {
-            return true;
-        }
-    }
-    false
 }
 
 /// Replaces label scan + ID filter with direct node ID lookup.
@@ -133,12 +119,12 @@ pub(super) fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
                 let mut new_op = optimized_plan.node_mut(idx);
                 if node.labels.is_empty() {
                     *new_op.data_mut() = IR::NodeByIdSeek {
-                        node: node.clone(),
+                        node,
                         filter: filters,
                     };
                 } else {
                     *new_op.data_mut() = IR::NodeByLabelAndIdScan {
-                        node: node.clone(),
+                        node,
                         filter: filters,
                     };
                 }

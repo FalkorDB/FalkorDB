@@ -1,11 +1,19 @@
-# Release the Rust engine (>= 6.0.0) by pushing a tag.
+# Release the Rust engine (>= 6.0.0). This is the ONLY release pipeline: it
+# creates the GitHub Release, builds and uploads the per-platform .so assets,
+# retags the runtime images, and pushes the per-OS server images. No other
+# workflow listens for a release.
 #
-# WHY TAG-PUSH: a tag push runs the workflow files from the TAGGED COMMIT'S OWN
-# TREE, so this pipeline is immune to which branch is the repository default.
-# `release:` and `workflow_run` are default-branch-only events — after the Rust
-# tree becomes the default branch of FalkorDB/FalkorDB (with the C engine still
-# on `master`), a `release:`-driven publish would fire the WRONG tree's workflows
-# (or none at all). Routing on the tag makes engine selection automatic:
+# WHY ONE TRIGGER, AND WHY THE TAG
+# Publishing a release drafted in the UI also creates its tag, so a `release:`
+# listener and a tag-push listener BOTH fire for the same release. When the
+# image and artifact workflows listened for `release:` while also being called
+# from here, every release ran them twice side by side, and the two artifact
+# builds raced for the same build cache. The tag push is the one event every
+# release produces, whether it is cut with `git push` or from the UI, so it is
+# the only trigger.
+#
+# A tag push runs the workflow files from the TAGGED COMMIT'S OWN TREE, which
+# makes engine selection automatic:
 #
 #   git push origin v5.2.0   → C tree's workflows   (master lineage, no this file)
 #   git push origin v6.0.0   → this pipeline        (Rust lineage)
@@ -15,16 +23,29 @@
 # a mis-tagged Rust release fails loudly instead of publishing as C.
 #
 # WHAT IT DOES
-#   1. guard          — validate tag shape, major >= 6, Cargo.toml version match
-#   2. create-release — create the GitHub Release for the tag (idempotent)
-#   3. artifacts      — build + upload the per-platform .so assets
-#   4. image          — retag the validated rc-pr-<N> manifest to semver
+#   1. guard             — validate tag shape, major >= 6, Cargo.toml version match
+#   2. create-release    — create the GitHub Release (idempotent)
+#   3. build-artifacts   — build the per-platform .so files, and the per-OS
+#                          server images on both architectures
+#                          (_build-artifacts.yml)
+#      macos-from-queue  — take falkordb-macos-arm64v8.so from the merge
+#                          queue's run for this commit (_build-macos.yml)
+#   4. publish-artifacts — require the full set, checksum, upload to the release
+#   5. image             — retag the validated rc-mg-<sha>-valkey and -redis
+#                          manifests to <semver>-valkey, <semver>-redis and
+#                          <semver> (Valkey), and to latest* if this is the
+#                          highest published stable release
+#   6. publish-images    — push the per-OS server images, one multi-arch index
+#                          each, as <semver>-<os>-<server>
+#   7. browser-tests     — exercise the published image
 #
-# Steps 3 and 4 reuse release-artifacts.yml / release-image.yml via workflow_call
-# — the same code paths the `release:` event uses, so there is one publish
-# implementation, not two. create-release runs BEFORE image because the
-# latest-pointer decision in release-image.yml compares against the list of
-# published releases.
+# build/publish_tags.py works out every tag pushed here.
+#
+# workflow_dispatch re-runs all of it for an existing tag; every step is
+# idempotent (existing release reused, assets uploaded with --clobber, retag
+# overwrites). To rebuild the images from source instead of retagging — the
+# rc-mg-<sha>-<server> images were swept, or the commit never went through the
+# merge queue — use release-image.yml.
 
 name: Release (tag)
 
@@ -41,6 +62,14 @@ on:
       tag:
         description: "Existing tag to (re)release, e.g. v6.0.0"
         required: true
+      rebuild_macos:
+        description: >-
+          Build falkordb-macos-arm64v8.so from the tag instead of taking the
+          merge queue's (the queue's file expired, or the commit never went
+          through the queue)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -109,10 +138,23 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Releasing $TAG (semver=$SEMVER prerelease=$PRERELEASE) at $(git rev-parse HEAD)"
 
-  # Create the Release up front: release-artifacts.yml uploads assets to it, and
-  # release-image.yml's :latest decision reads the published-release list.
+
+  # Create the Release up front: publish-artifacts uploads assets to it, and the
+  # image job's :latest decision reads the published-release list, which must
+  # include this one.
+  #
+  # After the macOS file is in hand -- macos-from-queue, which takes seconds,
+  # or macos-rebuild on a rebuild_macos dispatch: when it is missing or the
+  # rebuild fails, nothing is published (no release, no image tags) rather
+  # than a release with no assets. One of the two is always skipped, so this
+  # and every job after it state their conditions instead of relying on the
+  # default success(), which a skipped job upstream would turn false.
   create-release:
-    needs: guard
+    needs: [guard, macos-from-queue, macos-rebuild]
+    if: >-
+      !cancelled() &&
+      needs.guard.result == 'success' &&
+      (needs.macos-from-queue.result == 'success' || needs.macos-rebuild.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -134,43 +176,274 @@ jobs:
           gh release create "$TAG" "${FLAGS[@]}"
           echo "Created release $TAG"
 
-  # Per-platform .so assets → uploaded to the release.
-  artifacts:
-    needs: [guard, create-release]
-    uses: ./.github/workflows/release-artifacts.yml
+  # Per-platform .so assets. BUILD (fan-out) and PUBLISH (fan-in) are separate so
+  # a partial matrix failure never leaves a half-populated release: the build
+  # cells only produce workflow artifacts, and publish-artifacts downloads them,
+  # requires the FULL set, generates SHA256SUMS, then uploads.
+  build-artifacts:
+    needs: guard
+    uses: ./.github/workflows/_build-artifacts.yml
     permissions:
-      contents: write
+      contents: read
       packages: read
     with:
-      tag: ${{ needs.guard.outputs.tag }}
-      commit_sha: ${{ needs.guard.outputs.commit_sha }}
+      revision: ${{ needs.guard.outputs.commit_sha }}
+      # Release builds run on a tag that is already in this repository —
+      # reviewed code, so this build may write the cache.
+      trusted_revision: true
+      export_images: true
+    # No `secrets: inherit` — the reusable build only needs the auto GITHUB_TOKEN.
+
+  # falkordb-macos-arm64v8.so is the file the merge queue built and tested for
+  # this commit (_build-macos.yml, from rust-pr.yml), not a rebuild, the way
+  # the runtime images are the queue's. Uploaded again under the same artifact
+  # name, so publish-artifacts takes it with the Linux files. The queue keeps it
+  # for 90 days; past that, or for a commit that never went through the queue,
+  # dispatch with `rebuild_macos`.
+  macos-from-queue:
+    needs: guard
+    if: ${{ !inputs.rebuild_macos }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Take falkordb-macos-arm64v8.so from the merge queue's run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ needs.guard.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          RUN=$(gh run list --workflow rust-pr.yml --event merge_group --commit "$SHA" \
+            --limit 20 --json databaseId,conclusion --jq '[.[] | select(.conclusion == "success")][0].databaseId // empty')
+          if [ -z "$RUN" ]; then
+            echo "::error::no successful merge-queue run of Rust PR for $SHA; dispatch this workflow with rebuild_macos to build falkordb-macos-arm64v8.so from the tag"
+            exit 1
+          fi
+          mkdir -p dist
+          if ! gh run download "$RUN" --name falkordb-macos-arm64v8.so --dir dist; then
+            echo "::error::merge-queue run $RUN has no falkordb-macos-arm64v8.so (expired?); dispatch this workflow with rebuild_macos"
+            exit 1
+          fi
+          ( cd dist && sha256sum -c falkordb-macos-arm64v8.so.sha256 )
+          echo "falkordb-macos-arm64v8.so from merge-queue run $RUN"
+
+      - name: Upload falkordb-macos-arm64v8.so
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: falkordb-macos-arm64v8.so
+          path: dist/falkordb-macos-arm64v8.so*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  # The rebuild path, only on request: builds and tests the tagged commit on
+  # macOS and uploads the same artifact name. It runs the tagged tree's build
+  # scripts (build/build-server-macos.sh, build/check-server-pins.sh), so it
+  # works for commits that carry them, not for releases cut before them.
+  macos-rebuild:
+    needs: guard
+    if: ${{ inputs.rebuild_macos }}
+    uses: ./.github/workflows/_build-macos.yml
+    permissions:
+      contents: read
+    with:
+      revision: ${{ needs.guard.outputs.commit_sha }}
+
+  publish-artifacts:
+    needs: [guard, create-release, build-artifacts, macos-from-queue, macos-rebuild]
+    # One of the two macOS jobs runs and the other is skipped, so this cannot
+    # rely on the default `needs` success check.
+    if: >-
+      !cancelled() &&
+      needs.create-release.result == 'success' &&
+      needs.build-artifacts.result == 'success' &&
+      (needs.macos-from-queue.result == 'success' || needs.macos-rebuild.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.guard.outputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: falkordb-*.so
+          path: downloaded
+
+      - name: Assemble + assert complete set + checksums
+        env:
+          SUFFIXES: ${{ needs.build-artifacts.outputs.suffixes }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # download-artifact lays each artifact down under downloaded/<name>/...
+          find downloaded -type f \( -name 'falkordb-*.so' -o -name 'falkordb-*.so.sha256' \) \
+            -exec cp -t dist {} +
+          # Completeness gate: every platform built must be present, else FAIL
+          # (never publish a partial release). macOS is not one of
+          # _build-artifacts.yml's cells; it comes from macos-from-queue or
+          # macos-rebuild.
+          MISSING=""
+          for s in $(printf '%s' "$SUFFIXES" | jq -r '. + ["macos-arm64v8"] | .[]'); do
+            if [ ! -f "dist/falkordb-${s}.so" ]; then MISSING="$MISSING falkordb-${s}.so"; fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::missing expected release assets:$MISSING"; exit 1
+          fi
+          if [[ -f LICENSE-SSPL && -f LICENSE-AGPL ]]; then
+            cp LICENSE LICENSE-SSPL LICENSE-AGPL dist/
+          elif [[ ! -e LICENSE-SSPL && ! -L LICENSE-SSPL &&
+                  ! -e LICENSE-AGPL && ! -L LICENSE-AGPL ]] \
+            && grep -qx ' *Server Side Public License' LICENSE; then
+            # A workflow_dispatch may re-release a tag from before dual licensing.
+            # Publish only the SSPL terms from the historical combined file.
+            if ! grep -qx ' *END OF TERMS AND CONDITIONS' LICENSE; then
+              echo "::error::historical SSPL license has no end marker"; exit 1
+            fi
+            sed '/^ *END OF TERMS AND CONDITIONS$/q' LICENSE > dist/LICENSE
+            echo "Publishing the historical SSPL license."
+          else
+            echo "::error::tagged tree has an incomplete license set"; exit 1
+          fi
+          ( cd dist && sha256sum falkordb-*.so > SHA256SUMS )
+          echo "Publishing:"; ls -1 dist
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.guard.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            dist/falkordb-*.so dist/falkordb-*.so.sha256 dist/SHA256SUMS \
+            dist/LICENSE* \
+            --clobber
+
+  # Runtime images: retag the multi-arch manifests the merge queue built and
+  # tested for this commit (rc-mg-<sha>-valkey and rc-mg-<sha>-redis) to the
+  # release tags, on both repositories and both registries. No layer rebuild:
+  # what CI validated is what ships. Those images only exist for a commit that
+  # went through the queue, and only for cleanup-rc-images.yml's TTL;
+  # otherwise rebuild from source with release-image.yml.
+  image:
+    needs: [guard, create-release]
+    if: ${{ !cancelled() && needs.create-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag rc-mg-${{ needs.guard.outputs.commit_sha }}-<server> → ${{ needs.guard.outputs.semver }}
+        env:
+          GH_TOKEN:   ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO:    ${{ github.repository }}
+          SEMVER:     ${{ needs.guard.outputs.semver }}
+          COMMIT_SHA: ${{ needs.guard.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          # latest* moves only when this release is the highest stable version
+          # with a published (non-draft) GitHub release, so a backport patch on
+          # an old version branch does not clobber it and a prerelease never
+          # moves it. publish_tags.py reads the release list itself, right
+          # before the push, so a newer release published meanwhile is
+          # already in it.
+          python3 build/publish_tags.py release --version "$SEMVER" --sha "$COMMIT_SHA" --execute
+
+  # Per-OS server images, falkordb-server:<semver>-<os>-<server>. Unlike the
+  # Debian images, nothing before the release builds them, so build-artifacts
+  # builds them from the tagged commit next to the .so files, one archive per
+  # OS, server and architecture, and this job pushes them. Pushing here rather
+  # than in the build keeps registry credentials out of the job that compiles
+  # code. Each tag is one multi-arch index; the per-arch images under it are
+  # pushed by digest with no tag of their own. No latest-<os> tag: these are
+  # pinned by version.
+  publish-images:
+    needs: [guard, build-artifacts, macos-from-queue, macos-rebuild]
+    # Held back with create-release until the macOS file is in hand.
+    if: >-
+      !cancelled() &&
+      needs.build-artifacts.result == 'success' &&
+      (needs.macos-from-queue.result == 'success' || needs.macos-rebuild.result == 'success')
+    # Pinned: the push needs podman and skopeo, which this image ships
+    # (4.9.3 and 1.13.3); ubuntu-latest moving on could take them away.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download server images
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-falkordb-server-*
+          path: ${{ runner.temp }}/images
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # podman assembles each index and pushes it to GHCR; the script then
+      # copies that index to Docker Hub with imagetools, so both hold one digest.
+      - name: Login to GHCR (podman)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+
+      - name: Push falkordb-server:${{ needs.guard.outputs.semver }}-<os>-<server>
+        env:
+          SEMVER: ${{ needs.guard.outputs.semver }}
+        # The script pushes nothing unless every per-OS archive is there and
+        # holds the platform and server its name says.
+        run: python3 build/publish_tags.py per-os --version "$SEMVER" --images "$RUNNER_TEMP/images" --execute
 
   # Browser tests for the released image. Mirrors the C engine's
   # browser-tests-trigger.yml hook so both engines exercise the browser on a
-  # stable release. Deliberately chained AFTER `image` rather than off a
-  # `release:` event: browser tests need the PUBLISHED image, and `release:`
-  # fires the moment the release is created — racing the image push. It is also
-  # why this is not a `release:` listener at all; that event is version-blind and
-  # would fire for the C engine's releases too.
+  # stable release. Chained AFTER `image` because browser tests need the
+  # PUBLISHED image.
   browser-tests:
     needs: [guard, image]
+    if: ${{ !cancelled() && needs.image.result == 'success' }}
     uses: ./.github/workflows/browser-tests-trigger.yml
     permissions:
       contents: read
     with:
       tag: ${{ needs.guard.outputs.tag }}
-
-  # Runtime images → retag the rc-pr-<N> manifest that PR CI already validated.
-  image:
-    needs: [guard, create-release]
-    uses: ./.github/workflows/release-image.yml
-    permissions:
-      contents: read
-      packages: write
-      pull-requests: read
-    with:
-      tag: ${{ needs.guard.outputs.semver }}
-      commit_sha: ${{ needs.guard.outputs.commit_sha }}
-      mode: retag
-    # Docker Hub credentials for the release push.
-    secrets: inherit

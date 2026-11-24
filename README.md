@@ -24,7 +24,7 @@
     <img src="https://github.com/FalkorDB/FalkorDB/actions/workflows/rust-push.yml/badge.svg?branch=main" alt="Rust" />
   </a>
   <a href="https://github.com/FalkorDB/FalkorDB/blob/main/LICENSE">
-    <img src="https://img.shields.io/badge/license-Server_Side_Public_License-green" alt="license" />
+    <img src="https://img.shields.io/badge/license-SSPLv1%20%7C%20AGPLv3-green" alt="license: SSPLv1 or AGPLv3" />
   </a>
 </div>
 
@@ -64,6 +64,9 @@ To quickly try out FalkorDB, launch an instance using docker:
 ```
 docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb
 ```
+
+If `./data` was written by a Redis image of FalkorDB and the image you run is a
+Valkey one, see [Moving a data volume from Redis to Valkey](docs/valkey-migration.md).
 
 ### Step 2
 
@@ -282,7 +285,7 @@ reply = g.query("CREATE (:person {name:'roi', age:33, gender:'male', status:'mar
 
 * **Contributing**: We welcome contributions! See the [Developer Guide](#developer-guide) below to build FalkorDB from source and run the test suites.
 
-* **License**: This project is licensed under the Server Side Public License v1 (SSPLv1). See the [LICENSE](LICENSE) file for details.
+* **License**: FalkorDB is available under either [SSPLv1](LICENSE-SSPL) or [AGPLv3](LICENSE-AGPL), at your option. See [LICENSE](LICENSE).
 
 ## Developer Guide
 
@@ -322,7 +325,7 @@ GraphBLAS, LAGraph, and RediSearch must be built and installed before building t
 | Host | Compiler | OpenMP runtime |
 | --- | --- | --- |
 | macOS | `brew install llvm` (provides `clang` with OpenMP support) | `brew install libomp` |
-| Linux | `clang-22` (e.g. from [apt.llvm.org](https://apt.llvm.org/)) | `apt install libomp-22-dev` |
+| Linux | `clang-23` (e.g. from [apt.llvm.org](https://apt.llvm.org/)) | `apt install libomp-23-dev` |
 
 Local builds use whatever OpenMP package is on the system — `build/libomp.sh`
 is **not** required for local development. It is only invoked by the Docker
@@ -348,32 +351,64 @@ version arg. In Docker the same auto-detection runs against
 `clang-${CLANG_MAJOR}`, eliminating the prior drift risk between the
 apt-installed clang and a hand-pinned `LLVMORG_VERSION`.
 
-##### Building GraphBLAS + LAGraph
+##### Building the native dependencies
 
-[GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git) and
-[LAGraph](https://github.com/GraphBLAS/LAGraph.git) are built by a single
-script: GraphBLAS is installed system-wide, LAGraph is emitted under
-`./lagraph_lib`.
+[GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git),
+[LAGraph](https://github.com/GraphBLAS/LAGraph.git) and
+[RediSearch](https://github.com/FalkorDB/RediSearch.git) are git submodules
+under `deps/`, built by the `native-deps` crate. **git owns those checkouts** —
+`native-deps` only builds what is there, so populate them first.
 
-On macOS, point the script at homebrew clang first:
+On macOS, point the build at Homebrew clang first: the system clang has no
+OpenMP, and GraphBLAS would build single-threaded without saying so.
 
 ```bash
 export CC=$(brew --prefix llvm)/bin/clang
 export CXX=$(brew --prefix llvm)/bin/clang++
-./graphblas.sh
 ```
-
-On Linux:
 
 ```bash
-CC=clang-22 CXX=clang++-22 ./graphblas.sh
+git submodule update --init --recursive
+cargo build   # graph/build.rs calls native-deps; nothing else to run
 ```
 
-##### Building RediSearch
+(`git clone --recurse-submodules` does the first step for you.)
+
+`cargo build` builds any missing dependency automatically, so the explicit step
+below is only needed if you want to build them ahead of time or inspect the
+result:
 
 ```bash
-./redisearch.sh
+cargo run --manifest-path native-deps/Cargo.toml
 ```
+
+###### The artifact cache
+
+Results are cached at
+`${XDG_CACHE_HOME:-$HOME/.cache}/falkordb/native-deps/<dep>/<key>/`
+(`$FALKORDB_DEPS_CACHE` overrides the root). The key covers everything the artifacts are ABI-tied to:
+the submodule revision, the `GB_control` patch, the vendored PreJIT kernels, the
+recipe sources, `$CC`/`$CXX --version`, the target triple and the
+OpenMP/sanitizer flavour. Worktrees therefore share archives, and a compiler
+bump can never yield a stale-ABI cache hit.
+
+`$FALKORDB_NATIVE_DEPS_PREBUILT` names extra read-only roots to search first;
+the Docker images use it to expose the artifacts their dep stages built.
+
+###### Bumping a dependency
+
+Move the gitlink the ordinary way, then regenerate the lock file:
+
+```bash
+git -C deps/RediSearch checkout <sha>
+git add deps/RediSearch
+cargo run --manifest-path native-deps/Cargo.toml -- lock
+```
+
+`deps/native-deps.lock` mirrors the gitlinks as a plain file, because a Docker
+build context has no `.git` for the dep stages to read. CI enforces that the two
+agree via `lock --check`.
+
 
 - pytest - create virtualenv and install tests/requirements.txt
 
@@ -411,7 +446,12 @@ TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
 
 ## LICENSE
 
-Licensed under the Server Side Public License v1 (SSPLv1). See [LICENSE](LICENSE).
+Unless otherwise noted, FalkorDB is dual-licensed under the [Server Side Public
+License v1](LICENSE-SSPL) (SSPLv1) or the [GNU Affero General Public License
+v3](LICENSE-AGPL) (AGPLv3), at your option. Third-party components may be
+subject to their own license terms and notices. See [LICENSE](LICENSE).
+The license notice and texts are also included in container images under
+`/usr/local/share/licenses/falkordb/` and as release assets.
 
 ### Support our work
 

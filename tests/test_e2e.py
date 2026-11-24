@@ -456,6 +456,21 @@ def test_match_node_by_id():
     assert res1.result_set == res2.result_set == [[1000]]
     assert res1.run_time_ms < res2.run_time_ms
 
+def test_stacked_filters_keep_their_order():
+    # The optimizer merges the second MATCH's filter into the first's. The
+    # first one must still run first: it is what keeps `1 / (n.v - 1)` from
+    # dividing by zero.
+    query("UNWIND range(1, 5) AS i CREATE (:N {v: i})", write=True)
+    res = query(
+        "MATCH (n:N) WHERE n.v <> 1 MATCH (m:N) WHERE 1 / (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[15]]
+    res = query(
+        "MATCH (n:N) WHERE n.v > 1 WITH n MATCH (m:N) WHERE m.v % (n.v - 1) = 0 RETURN count(*)"
+    )
+    assert res.result_set == [[9]]
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
@@ -509,6 +524,15 @@ def test_list_range():
     assert res.result_set == [[None]]
     res = query("RETURN [1, 2, 3][..] AS r")
     assert res.result_set == [[[1, 2, 3]]]
+
+
+def test_list_range_bound_errors():
+    # A bound that fails to parse used to be read as a missing bound, so the
+    # slice ran as [..2] / [1..] instead of failing.
+    query_exception("RETURN [1, 2, 3][abs()..2]", "Received 0 arguments to function 'abs'")
+    query_exception("RETURN [1, 2, 3][1..abs()]", "Received 0 arguments to function 'abs'")
+    for q in ["RETURN [1, 2, 3][1+..2]", "RETURN [1, 2, 3][1..2+]", "RETURN [1, 2, 3][(1..2]"]:
+        query_exception(q, "Invalid input")
 
 
 @given(st.integers(-10, 10), st.integers(-10, 10))
@@ -1018,32 +1042,34 @@ def test_string_match_regex():
     res = query("RETURN string.matchRegEx('foo bar', '([a-z]+)\\s+([a-z]+)') AS name")
     assert res.result_set == [[[["foo bar", "foo", "bar"]]]]
 
-@pytest.mark.extra
 def test_string_replace_regex():
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '(?<first>[a-z]+)-(?<last>[a-z]+)', '$first $last') AS name"
-    )
-    assert res.result_set == [["foo bar baz qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '$1 $2') AS name"
-    )
-    assert res.result_set == [["foo bar baz qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '([a-z]+)-([a-z]+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["foo_bar baz_qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('foo-bar baz-qux', '(\\w+)-(\\w+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["foo_bar baz_qux"]]
-
-    res = query(
-        "RETURN string.replaceRegEx('123', '(\\w+)-(\\w+)', '${1}_${2}') AS name"
-    )
-    assert res.result_set == [["123"]]
+    # the replacement is copied literally, as C does: `$` is never a group reference
+    cases = [
+        ("foo-bar baz-qux", "(?<first>[a-z]+)-(?<last>[a-z]+)", "$first $last", "$first $last $first $last"),  # named groups: Rust-only syntax
+        ("foo-bar baz-qux", "([a-z]+)-([a-z]+)", "$1 $2", "$1 $2 $1 $2"),
+        ("foo-bar baz-qux", "([a-z]+)-([a-z]+)", "${1}_${2}", "${1}_${2} ${1}_${2}"),
+        ("foo-bar baz-qux", "(\\w+)-(\\w+)", "${1}_${2}", "${1}_${2} ${1}_${2}"),
+        ("123", "(\\w+)-(\\w+)", "${1}_${2}", "123"),
+        # issue #2929
+        ("price: X", "X", "$5", "price: $5"),
+        ("abc", "b", "$0x", "a$0xc"),
+        ("abc", "b", "[$0]", "a[$0]c"),
+        ("a-b", "(a)-(b)", "$2$1", "$2$1"),
+        ("x", "x", "$$", "$$"),
+        ("a1b2", "[0-9]", "$&", "a$&b$&"),
+    ]
+    for text, pattern, repl, expected in cases:
+        res = query(
+            "RETURN string.replaceRegEx($t, $p, $r) AS name",
+            params={"t": text, "p": pattern, "r": repl},
+        )
+        assert res.result_set == [[expected]], (text, pattern, repl)
+        # bind-time compiled path (literal pattern/replacement)
+        lit = lambda x: "'" + x.replace("\\", "\\\\") + "'"
+        res = query(
+            f"RETURN string.replaceRegEx({lit(text)}, {lit(pattern)}, {lit(repl)}) AS name"
+        )
+        assert res.result_set == [[expected]], (text, pattern, repl)
 
     ## broken regex
     query_exception(
@@ -1162,6 +1188,32 @@ def test_pow():
     assert res.result_set == [[None]]
 
 
+
+def test_pow_operator_propagates_errors():
+    res = query("RETURN 2 ^ 3, 2 ^ -1, null ^ 2, 2 ^ null")
+    assert res.result_set == [[8.0, 0.5, None, None]]
+
+    # An operand's error must not be dropped.
+    query_exception("RETURN 2 ^ (1/0)", "Division by zero")
+    query_exception("RETURN (1/0) ^ 3", "Division by zero")
+
+    # Non-numeric operands are a type error, like pow().
+    for q in ["RETURN 'a' ^ 2", "RETURN 2 ^ 'a'", "RETURN null ^ 'a'"]:
+        query_exception(
+            q, "Type mismatch: expected Integer, Float, or Null but was String"
+        )
+    query_exception(
+        "UNWIND [1, 2] AS x RETURN x ^ true",
+        "Type mismatch: expected Integer, Float, or Null but was Boolean",
+    )
+
+    # The optimizer must not fold this predicate to constant true and drop
+    # the filter: it is a type error at runtime (C errors too).
+    query_exception(
+        "UNWIND [1, 2] AS x WITH x WHERE x ^ true RETURN x",
+        "Type mismatch",
+    )
+
 def shannon_entropy(data):
     n = len(data)
     counts = Counter(data)
@@ -1201,6 +1253,19 @@ def signum(x):
 def test_sign(a):
     res = query("RETURN sign($a)", params={"a": a})
     assert res.result_set == [[signum(a) if a is not None else None]]
+    # sign() returns an Integer even for a Float argument (Python's
+    # -1 == -1.0, so check the type too).
+    if a is not None:
+        assert type(res.result_set[0][0]) is int
+
+
+def test_sign_float_special_values():
+    res = query(
+        "RETURN sign(-2.5), sign(2.5), sign(0.0), sign(-0.0), sign(0.0/0.0), "
+        "sign(1.0/0.0), sign(-1.0/0.0), sign(1e-300)"
+    )
+    assert res.result_set == [[-1, 1, 0, 0, 0, 1, -1, 1]]
+    assert all(type(v) is int for v in res.result_set[0])
 
 
 def test_sqrt():
@@ -1692,7 +1757,77 @@ def test_list_comprehension():
     assert res.result_set == [[[]]]
 
 
+def test_list_comprehension_non_list_source():
+    # A null source gives null, like reduce() and the quantifiers; it is not
+    # UNWIND, where null means "no rows".
+    for q in [
+        "RETURN [x IN null | x] AS result",
+        "RETURN [x IN null WHERE x > 1] AS result",
+        "WITH null AS l RETURN [x IN l | x + 1] AS result",
+    ]:
+        assert query(q).result_set == [[None]], q
+
+    # A scalar source is a type error, not a one-element list.
+    for q in [
+        "RETURN [x IN 5 | x] AS result",
+        "WITH 'a' AS l RETURN [x IN l | x] AS result",
+    ]:
+        query_exception(q, "Type mismatch: expected List or Null but was")
+
+    # Empty lists and ranges still give [].
+    assert query("RETURN [x IN [] | x] AS result").result_set == [[[]]]
+    assert query("RETURN [x IN range(1, 0) | x] AS result").result_set == [[[]]]
+
+    # The error names the type the way C does (and typeOf() does): Edge and
+    # Vectorf32, not Relationship and VecF32.
+    query("CREATE (:TypeNameA)-[:TYPE_NAME_R]->(:TypeNameB)", write=True)
+    for src, name in [("r", "Edge"), ("vecf32([1.0])", "Vectorf32"), ("n", "Node")]:
+        query_exception(
+            f"MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->() RETURN [x IN {src} | x]",
+            f"Type mismatch: expected List or Null but was {name}")
+    res = query("MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->() RETURN typeOf(r), typeOf(vecf32([1.0])), typeOf(n)")
+    assert res.result_set == [["Edge", "Vectorf32", "Node"]]
+    query("MATCH (n:TypeNameA)-[r:TYPE_NAME_R]->(m) DELETE r, n, m", write=True)
+
+
 @pytest.mark.extra
+def test_syntax_outside_the_grammar_is_rejected():
+    # Each of these used to parse and run.
+    query_exception("RETURN abs(-1,)", "Invalid input")
+    query_exception("MATCH MATCH (n) RETURN n", "Invalid input")
+    query_exception("LOAD CSV WITH FROM 'file://x.csv' AS r RETURN r", "Invalid input")
+    query("CREATE (:SetBracket {x: 1})", write=True)
+    query_exception("MATCH (n:SetBracket) SET [n).x = 5", "Invalid input")
+    query_exception("MATCH (n:SetBracket) REMOVE [n).x", "Invalid input")
+    res = query("MATCH (n:SetBracket) RETURN n.x")
+    assert res.result_set == [[1]]
+    query("MATCH (n:SetBracket) DELETE n", write=True)
+
+
+def test_predicates_after_is_null():
+    res = query("RETURN 1 IS NULL IN [false], 1 IS NOT NULL = true, null IS NULL IS NOT NULL")
+    assert res.result_set == [[True, True, True]]
+
+
+def test_not_not_type_checks_its_operand():
+    query_exception("RETURN NOT NOT 1", "Type mismatch")
+    query_exception("RETURN NOT NOT NOT NOT 1", "Type mismatch")
+    res = query("RETURN NOT NOT true, NOT NOT NOT true, NOT NOT null")
+    assert res.result_set == [[True, False, None]]
+
+
+def test_boolean_operator_type_mismatch_names_the_type():
+    # The operand's type in the engine's own vocabulary, as C words it — not
+    # Rust's Debug form (`Int(3)`, `String("a")`).
+    for q, t in [
+        ("UNWIND [3] AS x RETURN x AND true", "Integer"),
+        ("UNWIND [3] AS x RETURN x OR false", "Integer"),
+        ("UNWIND [3] AS x RETURN x XOR true", "Integer"),
+        ("UNWIND ['a'] AS x RETURN x AND true", "String"),
+    ]:
+        query_exception(q, f"Type mismatch: expected Boolean or Null but was {t}")
+
+
 def test_parentheses():
     lparen = "(" * 10000
     rparen = ")" * 10000
@@ -1709,6 +1844,52 @@ def test_nested_list():
     for _ in range(100):
         expected = [expected]
     assert res.result_set == [expected]
+
+
+def test_literal_lexing_matches_c():
+    # Lexer and literal cases that differed from the C implementation (#2909).
+    assert query("UNWIND [1, 2] AS x\r\nRETURN x").result_set == [[1], [2]]
+    assert query("RETURN 0e5, 0E1, 0e-2").result_set == [[0.0, 0.0, 0.0]]
+    assert query("RETURN -0x08000000000000000").result_set == [
+        [-9223372036854775808]
+    ]
+    query_exception("RETURN 9223372036854775808.x", "Integer overflow")
+    query_exception("RETURN 9223372036854775808[0]", "Integer overflow")
+    query_exception("RETURN '\\u+041'", "Invalid unicode escape")
+
+
+def test_block_comments():
+    # A block comment ends at the first `*/`, not at the first `/` (#2901).
+    assert query("RETURN 5 /* a/ -1 //*/").result_set == [[5]]
+    assert query("RETURN 1 /* a/b */ + 1").result_set == [[2]]
+    # A lone `/` is division, and an unterminated `/*` is not a comment.
+    query_exception("RETURN 1 /", "Invalid input")
+    query_exception("RETURN 1 /* never closed", "Invalid input")
+
+
+def test_deep_expression_nesting_is_rejected():
+    # Parentheses that cannot collapse - each one wraps an operator - used to
+    # build a tree deep enough to overflow the stack of the stages that walk
+    # it, taking the server down for every connected client with a raw SIGSEGV
+    # no panic handler could report. It has to come back as an error instead,
+    # and the server has to survive it.
+    n = 1000
+    query_exception(f"RETURN {'(' * n}1{'+1)' * n}", "Query nesting exceeds")
+    assert query("RETURN 1").result_set == [[1]]
+
+
+def test_deep_clause_nesting_is_rejected():
+    # SET/REMOVE property chains and nested FOREACH were built outside the
+    # expression parser's depth guard, so a few kilobytes of either overflowed
+    # the stack and took the server down. They must come back as errors.
+    n = 5000
+    for q in [
+        f"MATCH (n) SET n{'.a' * n} = 1",
+        f"MATCH (n) REMOVE n{'.a' * n}",
+        f"{'FOREACH (x IN [1] | ' * n}CREATE (){')' * n}",
+    ]:
+        query_exception(q, "Query nesting exceeds")
+        assert query("RETURN 1").result_set == [[1]]
 
 
 def test_index():
@@ -1874,3 +2055,261 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_order_by_aggregate_matches_projection_only_on_equal_constants():
+    """An ORDER BY aggregate binds to a projected aggregate only when their
+    constants are equal values, as in C (#3236): `3` matches `3.0`, but `4.0`
+    does not match `3`, and `null` does not match `7`."""
+    query("UNWIND range(1, 6) AS i CREATE (:N {g: i % 2, v: i})", write=True)
+    try:
+        for order_by in [
+            "max(n.v % 4.0)",
+            "max(coalesce(n.x, null))",
+            "max(n.v % '3')",
+        ]:
+            try:
+                common.g.query(
+                    f"MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m, max(coalesce(n.x, 7)) AS c ORDER BY {order_by}"
+                )
+            except ResponseError as e:
+                assert "failed to map aggregation expression" in str(e), order_by
+            else:
+                assert False, f"ORDER BY {order_by} should be rejected"
+
+        for order_by in ["max(n.v % 3)", "max(n.v % 3.0)"]:
+            res = query(
+                f"MATCH (n:N) RETURN n.g AS g, max(n.v % 3) AS m ORDER BY {order_by} DESC, g"
+            )
+            assert res.result_set == [[0, 2], [1, 2]], order_by
+
+        # quantifiers that differ only in kind are different aggregates
+        projected = "max(all(x IN [1, 2] WHERE x > 1))"
+        query_exception(
+            f"MATCH (n:N) RETURN n.g AS g, {projected} AS m ORDER BY max(any(x IN [1, 2] WHERE x > 1))",
+            "failed to map aggregation expression",
+        )
+        res = query(
+            f"MATCH (n:N) RETURN n.g AS g, {projected} AS m ORDER BY {projected}, g"
+        )
+        assert res.result_set == [[0, False], [1, False]]
+    finally:
+        query("MATCH (n:N) DETACH DELETE n", write=True)
+
+
+def test_call_optional_match_filter_not_pushed_with_outer_variable_ids():
+    """A filter in an OPTIONAL MATCH inside a CALL {} body must stay on the
+    body's own rows: variable ids are per scope, so the body's `n` must not
+    pass for an outer variable with the same id (#2728)."""
+    query("UNWIND range(1, 3) AS i CREATE (:A:B {id: i})", write=True)
+
+    res = query(
+        "MATCH (x:A:B) CALL { OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id AS nid }"
+        " RETURN x.id, nid ORDER BY x.id"
+    )
+    assert res.result_set == [[1, 3], [2, 3], [3, 3]]
+
+    res = query(
+        "MATCH (x:A:B) CALL { WITH x OPTIONAL MATCH (n:A:B) WHERE n.id = x.id + 1"
+        " RETURN n.id AS nid } RETURN x.id, nid ORDER BY x.id"
+    )
+    assert res.result_set == [[1, 2], [2, 3], [3, None]]
+
+    # The query from #2728.
+    res = query(
+        """
+        UNWIND [1] AS alias0
+        CALL { WITH * RETURN alias0 AS alias1, range(0, 4) AS alias2, range(9, 16, 1) AS alias3 SKIP 0 }
+        CREATE ({id: 135})
+        WITH alias0, alias3, alias2, alias1 AS alias4,
+             toBooleanOrNull(range(23, 9, -3)) AS alias5, localTime('12:00:00') AS alias6
+        WHERE true
+        CALL {
+            WITH alias3, alias2, alias6
+            OPTIONAL MATCH (n0)<-[r0:rt11]-(n1 {k6: '9'}), (n0), p0 = (n0)<-[:rt3]-()
+            WHERE size(r0.k9) >= 0
+            RETURN n1 AS n2, r0 AS r1, p0 AS p1, alias6 AS alias7, alias3 AS alias8,
+                   alias2 AS alias9, list.insertListElements(labels(n1), [0], 0, false) AS alias10
+        }
+        CALL db.relationshipTypes() YIELD relationshipType AS alias11
+        RETURN n2
+        """,
+        write=True,
+    )
+    assert res.result_set == []
+
+
+def test_call_optional_match_filter_wrapped_aggregate_inherits_only_outputs():
+    """An aggregate under a wrapper (`LIMIT`) in the left branch exposes only
+    its own outputs to the OPTIONAL MATCH, so the filter on `n` must not be
+    pushed onto an Argument that carries a discarded variable's id."""
+    query("UNWIND range(1, 3) AS i CREATE (:A:B {id: i})", write=True)
+
+    res = query(
+        "UNWIND [1] AS a UNWIND [1] AS b WITH count(*) AS k LIMIT 1"
+        " OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id"
+    )
+    assert res.result_set == [[3]]
+
+
+def test_optional_match_filter_after_projection_copy_to_another_slot():
+    """`WITH 1 AS k ORDER BY c` carries `c` through the projection from one
+    slot to another. The OPTIONAL MATCH after it inherits the slot the copy is
+    written to, not the one it was read from, which the next scan reuses."""
+    query("CREATE (:A:B {id: 3})", write=True)
+
+    res = query(
+        "UNWIND [1] AS a UNWIND [1] AS b UNWIND [1] AS c WITH 1 AS k ORDER BY c"
+        " OPTIONAL MATCH (n:A:B {id: 3}) RETURN n.id"
+    )
+    assert res.result_set == [[3]]
+
+
+def test_call_optional_match_filter_after_pattern_predicate():
+    """A pattern predicate (SemiApply / AntiSemiApply) in the left branch
+    contributes only its input's variables; its existence sub-plan's anonymous
+    entities must not pass for the body's variables (#2728)."""
+    query(
+        "CREATE (a:A:B {id: 1})-[:R]->(:A:B {id: 2}), (:A:B {id: 3})", write=True
+    )
+
+    for pred in ["(x)-[:R]->()", "NOT (x)-[:R]->()", "(x)-[:R]->(:B) OR x.id > 2"]:
+        res = query(
+            f"MATCH (x:A:B) WHERE {pred} CALL {{ OPTIONAL MATCH (n:A:B {{id: 3}})"
+            " RETURN n.id AS nid } RETURN x.id, nid ORDER BY x.id"
+        )
+        expected = {
+            "(x)-[:R]->()": [[1, 3]],
+            "NOT (x)-[:R]->()": [[2, 3], [3, 3]],
+            "(x)-[:R]->(:B) OR x.id > 2": [[1, 3], [3, 3]],
+        }[pred]
+        assert res.result_set == expected
+
+        res = query(
+            f"MATCH (x:A:B) WHERE {pred} OPTIONAL MATCH (n:A:B) WHERE n.id = 3"
+            " RETURN x.id, n.id ORDER BY x.id"
+        )
+        assert res.result_set == [[r[0], 3] for r in expected]
+
+
+def test_union_branch_optional_match_filter_keeps_anonymous_scan():
+    """A `WHERE` on an OPTIONAL MATCH inside a UNION branch of a CALL {} stays
+    above the anonymous node's scan: the branch's `_anon_0` shares its id with
+    an outer variable, and was pushed onto the scan's Argument, where it is
+    unbound ("Variable _anon_0 not found", #2742)."""
+    query("CREATE (:L {k0: true})", write=True)
+
+    body = """
+        MATCH (n0:L)
+        CALL { WITH * RETURN n0 AS n1 }
+        CALL {
+            WITH n0, n1
+            RETURN n0 AS n2
+            UNION
+            OPTIONAL MATCH ({k0: true}), ()
+            WHERE true
+            %s
+            RETURN null AS n2
+        }
+        RETURN id(n0), id(n1), id(n2) ORDER BY id(n2)
+    """
+    for barrier in ["", "CALL { RETURN 0 AS __barrier }"]:
+        res = query(body % barrier)
+        assert res.result_set == [[0, 0, 0], [0, 0, None]]
+
+
+def test_var_len_traverse_keeps_earlier_clause_below_it():
+    """Reversing a variable-length traverse to scan its more selective end
+    must not drop an earlier clause stitched under it: a MATCH … WHERE
+    filter or an UNWIND (#2972, variable-length shape)."""
+    query(
+        "CREATE (:S {v: 1})-[:R]->(:B {w: 2}), (:S {v: 0})-[:R]->(:B {w: 2}),"
+        " (:S {v: 0})-[:R]->(:X)-[:R]->(:B {w: 2})",
+        write=True,
+    )
+
+    res = query(
+        "MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN a.v, b.w"
+    )
+    assert res.result_set == [[1, 2]]
+
+    res = query(
+        "UNWIND [1, 2] AS i MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN count(*)"
+    )
+    assert res.result_set == [[2]]
+
+    res = query("UNWIND [1, 2] AS i MATCH (a)-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    assert res.result_set == [[8]]
+
+    # A single MATCH still scans the selective end.
+    res = query("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    assert res.result_set == [[2]]
+
+    plan = str(
+        common.g.explain("MATCH (a {v: 0})-[*1..2]->(b:B {w: 2}) RETURN count(*)")
+    )
+    assert "Node By Label Scan | (b:B)" in plan, plan
+
+
+def test_variable_named_like_an_anonymous_entity():
+    # An unnamed pattern entity has no name at all, so no variable a query
+    # writes can be it - not `_anon_<n>`, not `_anonymous`, and not even the
+    # backquoted `@anon_<n>` that plans print for it.
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    res = query("MATCH (_anon_0:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (`@anon_0`:A), (:B) RETURN count(*)")
+    assert res.result_set == [[2]]
+    res = query("MATCH (`@anon_1`:A), (:B), (`@anon_0`:B) RETURN count(*)")
+    assert res.result_set == [[4]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->(_anon_2) RETURN count(_anon_1)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (`@anon_0`:B)-[`@anon_1`]->(`@anon_2`) RETURN count(*)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_0:B)-[_anon_1]->() RETURN labels(_anon_0), type(_anon_1)")
+    assert res.result_set == [[["B"], "R"]]
+    res = query("MATCH (_anonymous:A) RETURN count(_anonymous)")
+    assert res.result_set == [[1]]
+    res = query("MATCH (_anon_x:A) RETURN _anon_x.v, labels(_anon_x)")
+    assert res.result_set == [[None, ["A"]]]
+
+
+def test_foreach_slot_of_an_unnamed_entity_cannot_be_named():
+    """The slot a FOREACH keeps for an unnamed entity it created is not a name
+    a query can spell."""
+    query_exception(
+        "FOREACH (i IN [] | CREATE ()) WITH _foreach_0_1 AS n RETURN n",
+        "not defined",
+    )
+
+
+def test_return_star_leaves_out_unnamed_entities():
+    query("CREATE (:A), (:B)-[:R]->(:B)", write=True)
+    # Only `a` is named: the relationship and the other node are not columns.
+    res = query("MATCH (a:B)-[]->() RETURN *")
+    assert res.header[0][1] == "a" and len(res.header) == 1
+    assert len(res.result_set) == 1
+    res = query("MATCH (a:B)-[r]->(c) RETURN *")
+    assert sorted(h[1] for h in res.header) == ["a", "c", "r"]
+    # No named variable in scope: nothing for `*` to return.
+    query_exception("MATCH (:A) RETURN *", "RETURN * is not allowed when there are no variables in scope")
+    query_exception("MATCH ()-[]->() RETURN *", "RETURN * is not allowed when there are no variables in scope")
+
+
+def test_self_loop_hop_after_other_hops_keeps_them():
+    """A fixed-length self-loop whose node is reached only through a later
+    (var-length) hop must not drop the hops planned before it (#2999)."""
+    query(
+        "CREATE (a:A {v:1})-[:R]->(b:B {v:2})-[:S]->(c:C {v:3}), (c)-[:L]->(c), "
+        "(:C {v:4})-[:L]->(:C {v:4}), (b)-[:S]->(:C {v:5})",
+        write=True,
+    )
+    for q in [
+        "MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (a)-[:R]->(b)-[:S*1..1]->(c)-[:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (a)-[:R]->(b)-[:S*]->(c:C {v: 3})-[e:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (c)-[:L]->(c)<-[:S*]-(b)<-[:R]-(a) RETURN a.v, b.v, c.v",
+    ]:
+        assert query(q).result_set == [[1, 2, 3]], q
+    res = query("MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)-[:L]->(c) RETURN count(*)")
+    assert res.result_set == [[1]]

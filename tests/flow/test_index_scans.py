@@ -337,6 +337,53 @@ class testIndexScanFlow():
         plan = str(self.graph.explain(q))
         self.env.assertNotContains("Node By Index Scan", plan)
 
+        # a negative radius can never match: no distance is below zero. Handing
+        # such a range to the index used to hang the server, and later to
+        # segfault it inside the index iterator.
+        # https://github.com/FalkorDB/FalkorDB/issues/291
+        # the optimizer accepts the point on either side of distance(), and the
+        # report is written with the literal first, so cover both orders
+        for dist in ["distance(r.location, point({latitude:30.27822306, longitude:-97.75134723}))",
+                     "distance(point({latitude:30.27822306, longitude:-97.75134723}), r.location)"]:
+            q = f"""MATCH (r:restaurant)
+            WHERE {dist} < -20000
+            RETURN r"""
+            self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+            self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # the same when the negative bound is computed rather than a literal
+        # https://github.com/FalkorDB/FalkorDB/issues/281
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) <= -(round(0.7784249186515808))
+        RETURN r"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # #281 reproduced against an empty index too, which is a different path
+        # through the iterator than one holding an entry
+        self.graph.query("MATCH (r:restaurant) DELETE r")
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # restore the node the remaining assertions match against
+        self.graph.query("CREATE (:restaurant {location: point({latitude:30.27822306, longitude:-97.75134723})})")
+
+        # a bound of exactly zero is the boundary case: distance is never
+        # negative, so '< 0' cannot match however close the two points are
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:40.4, longitude:30.3})) < 0
+        RETURN r"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # the crash was asynchronous - the reply arrived and the server died
+        # afterwards - so the index must still be queryable
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) < 1000
+        RETURN count(r)"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [[1]])
+
     def test14_index_scan_utilize_array(self):
         # Querying indexed properties using IN a constant array should utilize indexes.
         query = "MATCH (a:person) WHERE a.age IN [34, 33] RETURN a.name ORDER BY a.name"
@@ -1247,3 +1294,363 @@ class testIndexScanFlow():
         res = self.graph.query(q).result_set
         # `n.v` is a scalar int, never a list — no row should match.
         self.env.assertEqual(res, [])
+
+    def test_39_in_needs_the_bare_property(self):
+        # `abs(n.a) IN [1]` and `2 IN [n.a, n.b]` only contain n.a; they
+        # must not become `n.a IN [..]` or an array-contains on n.a.
+        with_idx = self.db.select_graph("index_parity_idx")
+        no_idx = self.db.select_graph("index_parity_scan")
+        setup = "CREATE (:L {k:1, a:1}), (:L {k:2, a:-1}), (:L {k:3, a:2, b:7})"
+        try:
+            with_idx.create_node_range_index('L', 'a')
+            wait_for_indices_to_sync(with_idx)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            for q in ["MATCH (n:L) WHERE abs(n.a) IN [1] RETURN n.k",
+                      "MATCH (n:L) WHERE toString(n.a) IN ['1'] RETURN n.k",
+                      "MATCH (n:L) WHERE n.a + 1 IN [2] RETURN n.k",
+                      "MATCH (n:L) WHERE 2 IN [n.a, n.b] RETURN n.k",
+                      "MATCH (n:L) WHERE -1 IN [n.a] RETURN n.k"]:
+                self.env.assertNotContains('Node By Index Scan', str(with_idx.explain(q)), message=q)
+                self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                     sorted(no_idx.query(q).result_set), message=q)
+            # the bare property is still served by the index
+            q = "MATCH (n:L) WHERE n.a IN [1, 2] RETURN n.k"
+            self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)))
+            self.env.assertEqual(sorted(with_idx.query(q).result_set), [[1], [3]])
+            # ... also when parenthesized
+            q = "MATCH (n:L) WHERE (n.a) IN [1, 2] RETURN n.k"
+            self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)), message=q)
+            self.env.assertEqual(sorted(with_idx.query(q).result_set), [[1], [3]])
+        finally:
+            with_idx.delete()
+            no_idx.delete()
+
+    def _index_vs_scan(self, indices, setup, queries, expect_index=True,
+                       expected_rows=None):
+        # Run each query on a graph with the indices and on one without,
+        # and require the same rows: an index must never change a result.
+        # `expected_rows`, when given, pins each query's sorted rows too, so the
+        # parity check cannot pass on two equally wrong (e.g. empty) results.
+        with_idx = self.db.select_graph("index_parity_idx")
+        no_idx = self.db.select_graph("index_parity_scan")
+        try:
+            for label, attr in indices:
+                with_idx.create_node_range_index(label, attr)
+            wait_for_indices_to_sync(with_idx)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            for i, q in enumerate(queries):
+                if expect_index:
+                    self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)))
+                expected = sorted(no_idx.query(q).result_set)
+                actual = sorted(with_idx.query(q).result_set)
+                self.env.assertEqual(actual, expected, message=q)
+                if expected_rows is not None:
+                    self.env.assertEqual(actual, sorted(expected_rows[i]), message=q)
+        finally:
+            with_idx.delete()
+            no_idx.delete()
+
+    def test_38_exclusive_equal_string_bounds(self):
+        # `> 'a' AND < 'a'` is empty; the equal-bounds exact-match
+        # shortcut must only apply when both bounds are inclusive.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:'a', k:'a'}), (:L {v:'b', k:'b'})",
+            ["MATCH (n:L) WHERE n.v > 'a' AND n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a' AND n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 'a' AND n.v <= 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a' AND n.v <= 'a' RETURN n.k"])
+
+    def test_40_temporals_not_in_numeric_range(self):
+        # Temporals must not be indexed as their raw number, where numeric
+        # ranges would match them. Each query has a numeric match, so the
+        # expected rows are non-empty and a temporal leaking in shows up.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:5, k:'int'}), (:L {v:-3, k:'neg'}), (:L {v:86400, k:'day'}),"
+            " (:L {v:date('2020-01-01'), k:'date'}), (:L {v:date('1960-01-01'), k:'old'}),"
+            " (:L {v:duration('P1D'), k:'dur'}), (:L {v:localtime('01:00:00'), k:'time'}),"
+            " (:L {v:localdatetime('2020-01-01T00:00:00'), k:'ldt'})",
+            ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 86400 RETURN n.k"],
+            expected_rows=[[['day'], ['int']], [['neg']], [['day']]])
+
+    def test_41_open_bound_includes_infinity(self):
+        # An absent bound is unbounded: `n.v > 0` selects a stored +inf.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1.0/0.0, k:'inf'}), (:L {v:-1.0/0.0, k:'-inf'}), (:L {v:1, k:'one'})",
+            ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 1.0/0.0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v <= -1.0/0.0 RETURN n.k"],
+            expected_rows=[[['inf'], ['one']], [['-inf']], [['inf']], [['-inf']]])
+
+    def test_42_parenthesised_predicates_use_the_index(self):
+        # #3331: parentheses around a WHERE, or around one of its conjuncts,
+        # change nothing about what it means, so the index is used either way.
+        g = self.db.select_graph('parenthesised_index')
+        g.query("UNWIND range(1, 300) AS i CREATE (:A {k: i % 100, s: i % 3})")
+        g.create_node_range_index('A', 'k')
+        wait_for_indices_to_sync(g)
+
+        expected = g.query("MATCH (n:A) WHERE n.k = 7 AND n.s = 1 RETURN count(n)").result_set
+        self.env.assertEqual(expected, [[1]])
+        queries = [
+            ("MATCH (n:A) WHERE (n.k = 7 AND n.s = 1) RETURN count(n)", None),
+            ("MATCH (n:A) WHERE (n.k = 7) AND n.s = 1 RETURN count(n)", None),
+            ("MATCH (n:A) WHERE ((n.k = 7) AND (n.s = 1)) RETURN count(n)", None),
+            ("MATCH (n:A) WHERE (n.s = 1 AND ((n.k = 7))) RETURN count(n)", None),
+            ("MATCH (n:A) WHERE (n.s = 1 AND n.s >= 0) AND (n.k = 7) RETURN count(n)", None),
+            ("MATCH (n:A) WHERE (n.k = $k AND n.s = $s) RETURN count(n)", {'k': 7, 's': 1}),
+            ("MATCH (n:A) WHERE ((n.k = $k) AND (n.s = $s)) RETURN count(n)", {'k': 7, 's': 1}),
+            ("MATCH (n:A) WHERE (n.k IN [7]) AND n.s = 1 RETURN count(n)", None),
+        ]
+        for q, params in queries:
+            plan = str(g.explain(q, params))
+            self.env.assertContains('Node By Index Scan', plan, message=q)
+            self.env.assertNotContains('Label Scan', plan, message=q)
+            self.env.assertEqual(g.query(q, params).result_set, expected, message=q)
+
+        g.delete()
+
+    def test_43_merged_filters_use_the_index(self):
+        # A pattern's inline attributes and its WHERE are separate filters
+        # that push-down merges into one; the merge keeps the conjuncts flat,
+        # so the index still sees the indexed one.
+        g = self.db.select_graph('merged_filters_index')
+        g.query("UNWIND range(1, 300) AS i CREATE (:A {k: i % 100, s: i % 3, t: i % 7})")
+        g.create_node_range_index('A', 'k')
+        wait_for_indices_to_sync(g)
+
+        expected = g.query("MATCH (n:A) WHERE n.k = 7 AND n.s = 1 AND n.t = 2 RETURN count(n)").result_set
+        queries = [
+            "MATCH (n:A {s: 1}) WHERE (n.k = 7 AND n.t = 2) RETURN count(n)",
+            "MATCH (n:A {s: 1, t: 2}) WHERE ((n.k = 7) AND n.k >= 0) RETURN count(n)",
+            "MATCH (n:A {k: 7}) WHERE (n.s = 1 AND (n.t = 2)) RETURN count(n)",
+        ]
+        for q in queries:
+            plan = str(g.explain(q))
+            self.env.assertContains('Node By Index Scan', plan, message=q)
+            self.env.assertNotContains('Label Scan', plan, message=q)
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+        g.delete()
+
+    def test_44_array_contains_conjunction_keeps_its_filter(self):
+        # The index answers `v IN n.arr` with possible false positives: a
+        # numeric key is shared by `1` and `true`. Alone, the predicate keeps
+        # its filter; inside a conjunction it must keep it too, or `[true, 2]`
+        # satisfies `1 IN n.v AND 2 IN n.v`.
+        g = self.db.select_graph('array_contains_conjunction')
+        g.create_node_range_index('L', 'v')
+        wait_for_indices_to_sync(g)
+        g.query("CREATE (:L {v: [true, 2]}), (:L {v: [1, 2]})")
+
+        q = "MATCH (n:L) WHERE 1 IN n.v AND 2 IN n.v RETURN n.v"
+        self.env.assertContains('Node By Index Scan', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[[1, 2]]])
+
+        g.delete()
+
+    def test_45_unwind_then_match_on_indexed_property_seeks_per_row(self):
+        # `UNWIND .. MATCH (s ..) MATCH (p:L {k: e.x})`: the second MATCH is
+        # joined to the first one by an inline property only. It used to become
+        # a Value Hash Join over a scan of the whole label (#3887), whose cost
+        # grows with the label however few rows the UNWIND produces. With an
+        # index on `k` and a small outer side each row seeks the index; a bulk
+        # batch keeps the hash join, which reads the label once.
+        g = self.db.select_graph('unwind_match_seek')
+        g.create_node_range_index('Sensor', 'id')
+        g.create_node_range_index('Reading', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 9) AS i CREATE (:Sensor {id: i})")
+        g.query("UNWIND range(0, 1999) AS i CREATE (:Reading {ts: i, nts: i})")
+        # a duplicate key, so a seek has to return every match
+        g.query("CREATE (:Reading {ts: 5, nts: 5})")
+
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}, {sid: 3, pts: 99999}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {ts: e.pts}) "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count('Node By Index Scan'), 2)
+        self.env.assertNotContains('Value Hash Join', plan)
+        self.env.assertNotContains('Label Scan', plan)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5], [2, 7]])
+
+        # a WHERE conjunct that reads the outer row too
+        q = ("UNWIND [{sid: 1, pts: 5, k: 5}, {sid: 2, pts: 7, k: 8}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {ts: e.pts}) WHERE p.nts = e.k "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertNotContains('Value Hash Join', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5]])
+
+        # many outer rows against a small label: one scan beats a lookup per row
+        q = ("UNWIND range(0, 999) AS i MATCH (s:Sensor {id: i % 10}) "
+             "MATCH (p:Reading {ts: i}) RETURN count(*)")
+        self.env.assertContains('Value Hash Join', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[1001]])
+
+        # no index on the joined property: only the hash join reads the label once
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {nts: e.pts}) "
+             "RETURN s.id, p.nts ORDER BY s.id")
+        plan = str(g.explain(q))
+        self.env.assertContains('Value Hash Join', plan)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5], [2, 7]])
+
+        # the later MATCH is a separate isomorphism scope (#2923): `p` may be `s`'s twin
+        q = ("UNWIND [5] AS x MATCH (a:Reading {ts: x}) MATCH (b:Reading {ts: x}) "
+             "RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[4]])
+
+        g.delete()
+
+    def test_45a_unwind_then_match_seek_keeps_guards_and_unsafe_keys_out(self):
+        # The per-row seek of `test_45` only takes what an index can serve
+        # from the outer row. Everything else about the join stays where the
+        # hash-join plan evaluated it.
+        g = self.db.select_graph('unwind_match_seek_guards')
+        g.create_node_range_index('Sensor', 'id')
+        g.create_node_range_index('Reading', 'ts')
+        g.create_node_range_index('A', 'a')
+        g.create_node_range_index('B', 'b')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 9) AS i CREATE (:Sensor {id: i})")
+        g.query("UNWIND range(0, 1999) AS i CREATE (:Reading {ts: i, nts: i})")
+        g.query("CREATE (:A:B {a: 1, b: 2}), (:A {a: 1}), (:B {b: 2})")
+
+        # A guard on the scanned node runs before a conjunct that would fail
+        # without it: node ts=0 has nts=0, and `10 / 0` is an error.
+        q = ("UNWIND [{sid: 1, pts: 0, q: 10}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts AND p.nts <> 0 AND e.q / p.nts > 0 RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+
+        # A key that reads the scanned node cannot be evaluated before the scan.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts + id(p) * 0 RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # A key that is not deterministic would be evaluated twice.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts + toInteger(rand() * 0) RETURN s.id, p.ts ORDER BY s.id")
+        # only `s` is read from an index
+        self.env.assertEqual(str(g.explain(q)).count('Node By Index Scan'), 1)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # A filter on the scanned branch that is not deterministic runs per
+        # outer row after the rewrite, so the branch is left alone.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts AND p.nts + toInteger(rand() * 0) >= 0 "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertEqual(str(g.explain(q)).count('Node By Index Scan'), 1)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # Two conjuncts served by indexes of different labels: one lookup can
+        # use only one of them, and the other must still be checked.
+        q = ("UNWIND [{sid: 1, a: 1, b: 2}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:A:B) "
+             "WHERE p.a = e.a AND p.b = e.b RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+
+        # A disjunction whose branches need different labels' indexes.
+        q = ("UNWIND [{sid: 1, a: 9, b: 2}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:A:B) "
+             "WHERE p.a = e.a OR p.b = e.b RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+
+        # A range key that can fail stays behind the scanned branch's guard:
+        # every `G` node is rejected by `p.nts <> 0`, so `e.q / e.d` never runs.
+        g.create_node_range_index('G', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 599) AS i CREATE (:G {ts: i, nts: 0})")
+        q = ("UNWIND [{sid: 1, q: 5, d: 0}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:G) "
+             "WHERE p.nts <> 0 AND p.ts > e.q / e.d RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+        # Arithmetic can fail too: `'x' * 1` is a type error.
+        q = ("UNWIND [{sid: 1, w: 'x'}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:G) "
+             "WHERE p.nts <> 0 AND p.ts > e.w * 1 RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+
+        # A disjunction is evaluated whole by the index query, so a failing
+        # disjunct is not moved: every `H` node matches the first disjunct,
+        # which short-circuits the division.
+        g.create_node_range_index('H', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 599) AS i CREATE (:H {ts: 1})")
+        q = ("UNWIND [{sid: 1, pts: 1, q: 5, d: 0}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:H) "
+             "WHERE p.ts = e.pts OR p.ts > e.q / e.d RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[600]])
+
+        g.delete()
+
+    def test_36_scalar_array_scalar_round_trip(self):
+        # A property changing kind — scalar -> array -> scalar — must re-index
+        # cleanly each time.
+        #
+        # Scalars and array elements are held apart (RediSearch keeps a
+        # `numeric:arr` sub-field; the native index keeps a second tree), because
+        # `n.v = 1` must NOT match a node whose `v` is `[1, 2]`, and `1 IN n.v`
+        # must NOT match a node whose `v` is the scalar `1`. Every transition
+        # therefore has to delete from one side and insert into the other. A
+        # remove that routed on the NEW value's kind rather than the OLD one
+        # would leave a tuple stranded on the wrong side, and nothing in the
+        # scalar path re-checks the index's answer.
+        self.graph.create_node_range_index('rt', 'v')
+        wait_for_indices_to_sync(self.graph)
+
+        self.graph.query("CREATE (:rt {v: 1})")
+
+        def eq(x):
+            q = "MATCH (n:rt) WHERE n.v = $x RETURN count(n)"
+            return self.graph.query(q, {'x': x}).result_set[0][0]
+
+        def contains(x):
+            q = "MATCH (n:rt) WHERE $x IN n.v RETURN count(n)"
+            return self.graph.query(q, {'x': x}).result_set[0][0]
+
+        # scalar
+        self.env.assertEqual(eq(1), 1)
+        self.env.assertEqual(contains(1), 0)
+
+        # -> array. The scalar tuple must be gone, not merely shadowed.
+        self.graph.query("MATCH (n:rt) SET n.v = [1, 2]")
+        self.env.assertEqual(eq(1), 0)
+        self.env.assertEqual(contains(1), 1)
+        self.env.assertEqual(contains(2), 1)
+
+        # -> array with one element dropped
+        self.graph.query("MATCH (n:rt) SET n.v = [2]")
+        self.env.assertEqual(contains(1), 0)
+        self.env.assertEqual(contains(2), 1)
+
+        # -> back to a scalar holding a value that was previously an *element*.
+        # The same key crosses back, which is the case a kind-confused remove
+        # gets wrong in both directions at once.
+        self.graph.query("MATCH (n:rt) SET n.v = 2")
+        self.env.assertEqual(eq(2), 1)
+        self.env.assertEqual(contains(2), 0)
+
+        # Both transitions inside a single transaction: the pending layer
+        # collapses multi-SET to (first_old, final_new), so the intermediate
+        # array must never reach the index at all.
+        self.graph.query("MATCH (n:rt) SET n.v = [7, 8] SET n.v = 9")
+        self.env.assertEqual(eq(9), 1)
+        self.env.assertEqual(contains(7), 0)
+        self.env.assertEqual(contains(8), 0)
+
+        # Deleting the entity must clear whichever side currently holds it.
+        self.graph.query("MATCH (n:rt) SET n.v = [4, 5]")
+        self.graph.query("MATCH (n:rt) DELETE n")
+        self.env.assertEqual(contains(4), 0)
+        self.env.assertEqual(eq(9), 0)

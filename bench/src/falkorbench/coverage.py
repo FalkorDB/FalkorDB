@@ -116,7 +116,19 @@ def _llvm_tool(name: str) -> Path:
     path `./llvm-profdata` and failed with a confusing "No such file or
     directory" — hence the explicit error below.
     """
-    roots = [Path.home() / ".rustup/toolchains"]
+    # The *active* toolchain's sysroot comes first: `~/.rustup/toolchains` holds
+    # every installed toolchain, and globbing it picks whichever sorts first — an
+    # old 1.85 there read a 1.99 build's profiles as "raw profile version
+    # mismatch" and the whole coverage run failed after the query pass.
+    roots = []
+    try:
+        sysroot = subprocess.run(
+            ["rustc", "--print", "sysroot"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        roots.append(Path(sysroot) / "lib/rustlib")
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    roots.append(Path.home() / ".rustup/toolchains")
     rustc = shutil.which("rustc")
     if rustc:
         # rustup shims resolve to ~/.rustup/toolchains/<tc>/bin/rustc, so the

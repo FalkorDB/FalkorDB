@@ -1,0 +1,369 @@
+from common import *
+from index_utils import *
+
+GRAPH_ID = "inline_pattern_attributes"
+
+
+class testInlinePatternAttributes(FlowTestsBase):
+    """Inline attributes on a MATCH pattern (`MATCH (a {x: 1})`) are a
+    predicate, and the planner is the only thing that enforces them for most
+    operators. These cover the pattern positions where the lowering used to be
+    skipped, so the predicate was silently dropped and the query returned rows
+    it should not have."""
+
+    def __init__(self):
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
+        self.populate_graph()
+
+    def populate_graph(self):
+        self.graph.query(
+            """CREATE (n1:N {x: 1}), (n2:N {x: 2}), (n3:N {x: 3}), (n4:N {x: 4}),
+                      (n1)-[:R]->(n2), (n2)-[:R]->(n3),
+                      (n1)-[:S]->(n3), (n2)-[:S]->(n4)"""
+        )
+
+    # A variable-length traverse whose source is already bound: the endpoint's
+    # inline attrs were not lowered (the alias is already visited) and
+    # CondVarLenTraverse only evaluates the *edge*'s attrs at runtime, so
+    # nothing enforced `x: 1`.
+    def test01_var_len_bound_source(self):
+        query = """MATCH (a:N) WITH a
+                   MATCH (a {x: 1})-[:R*1..2]->(b)
+                   RETURN b.x ORDER BY b.x"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[2], [3]])
+
+    # Same hole on the destination endpoint.
+    def test02_var_len_bound_destination(self):
+        query = """MATCH (b:N) WITH b
+                   MATCH (a:N)-[:R*1..2]->(b {x: 3})
+                   RETURN a.x ORDER BY a.x"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[1], [2]])
+
+    # allShortestPaths reads the edge's attrs only, exactly like the var-length
+    # traverse, so a bound endpoint's inline attrs went unenforced.
+    def test03_all_shortest_paths_bound_endpoints(self):
+        query = """MATCH (a:N), (b:N) WITH a, b
+                   MATCH p = allShortestPaths((a {x: 1})-[:R*]->(b {x: 3}))
+                   RETURN length(p)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[2]])
+
+    # A fixed-length traverse whose source is bound by an earlier clause. This
+    # one happened to work, because CondTraverse re-checks the endpoints'
+    # attrs per row — it is here so the runtime check can be removed later
+    # without losing the coverage.
+    def test04_traverse_bound_source(self):
+        query = """MATCH (a:N) WITH a
+                   MATCH (a {x: 1})-[:R]->(b)
+                   RETURN b.x"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[2]])
+
+    # One alias, two occurrences, each writing its own inline attrs. The binder
+    # builds a separate enriched QueryNode per occurrence, so both maps have to
+    # be lowered; these two contradict, so nothing can match.
+    def test05_two_occurrences_of_one_alias(self):
+        query = """MATCH (a {x: 1})-[:R]->(c), (a {x: 2})-[:S]->(d)
+                   RETURN count(*)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[0]])
+
+    # ...and the same shape where the two occurrences agree, so it does match.
+    def test06_two_occurrences_agreeing(self):
+        query = """MATCH (a {x: 1})-[:R]->(c), (a {x: 1})-[:S]->(d)
+                   RETURN c.x, d.x"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[2, 3]])
+
+    # A third hop whose `from` endpoint is already bound by the first two. The
+    # chained-relationship loop lowered only the `to` endpoint, so this
+    # predicate had no representation at all.
+    def test07_chained_hop_bound_source(self):
+        query = """MATCH (a)-[:R]->(b)-[:R]->(c), (b {x: 9})-[:S]->(d)
+                   RETURN count(*)"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[0]])
+
+    def test08_chained_hop_bound_source_matching(self):
+        query = """MATCH (a)-[:R]->(b)-[:R]->(c), (b {x: 2})-[:S]->(d)
+                   RETURN a.x, b.x, c.x, d.x"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[1, 2, 3, 4]])
+
+    # The predicate must survive whichever endpoint `select_scan_node` picks as
+    # the scan root, including when it reverses the chain.
+    def test09_predicate_survives_chain_reversal(self):
+        query = """MATCH (a:N)-[:R]->(b:N {x: 3})
+                   RETURN a.x"""
+        actual_result = self.graph.query(query)
+        self.env.assertEqual(actual_result.result_set, [[2]])
+
+    # A predicate from an *earlier* clause sits on the spine of the scan
+    # subtree that gets stitched under the next clause's traverse. When
+    # `select_scan_node` decides the far endpoint is the better scan root, it
+    # prunes that subtree and rebuilds it — and the predicate has to come with
+    # it, above the traverse rather than under the new scan: reversal means the
+    # traverse now *binds* the constrained variable instead of scanning it, so
+    # below the traverse that variable is still unbound.
+    #
+    # Both paths are covered because they salvage separately: one CondTraverse
+    # swaps in place, a longer chain is rebuilt bottom-up. Verified by ablation
+    # — zeroing either path's salvage returns the unfiltered row too.
+    def test15_earlier_clause_predicate_survives_single_swap(self):
+        g = self.db.select_graph(GRAPH_ID + "_salvage1")
+        g.query("CREATE (:B {rn: 'A'})-[:H]->(:C {t: 5}), (:B {rn: 'Z'})-[:H]->(:C {t: 5})")
+        # `c` is filtered from above and labelled, so it outscores `b`, whose
+        # predicate is already down on the stitched scan — the chain reverses.
+        actual = g.query(
+            """MATCH (b:B) WHERE b.rn IN ['A']
+               MATCH (b)-[:H]->(c:C) WHERE c.t = 5
+               RETURN b.rn ORDER BY b.rn"""
+        )
+        self.env.assertEqual(actual.result_set, [['A']])
+        g.delete()
+
+    def test16_earlier_clause_predicate_survives_chain_reversal(self):
+        g = self.db.select_graph(GRAPH_ID + "_salvage2")
+        g.query(
+            "CREATE (:A {p: 'x'})-[:R]->(:M)-[:S]->(:Z {q: 1}), "
+            "(:A {p: 'y'})-[:R]->(:M)-[:S]->(:Z {q: 1})"
+        )
+        # Two hops, so the best endpoint is at a parent CondTraverse and the
+        # whole chain is reversed rather than a single traverse swapped.
+        actual = g.query(
+            """MATCH (a:A) WHERE a.p IN ['x']
+               MATCH (a)-[:R]->(m)-[:S]->(z:Z) WHERE z.q = 1
+               RETURN a.p ORDER BY a.p"""
+        )
+        self.env.assertEqual(actual.result_set, [['x']])
+        g.delete()
+
+    # `utilize_index` reaches a MERGE branch's scan through `IncludePending`.
+    # The Filter above it must survive that pushdown: `IncludePending` unions
+    # in nodes created earlier in the same query, which are not in the index,
+    # so the index scan cannot have filtered them. Without the Filter the
+    # second MERGE matches the first's pending node and creates nothing.
+    def test11_merge_index_pushdown_still_filters_pending(self):
+        g = self.db.select_graph(GRAPH_ID + "_pending")
+        g.query("CREATE INDEX FOR (p:P) ON (p.age)")
+        # Index creation is asynchronous; until it is operational the planner
+        # cannot use it, and the plan assertion below would read a label scan.
+        wait_for_indices_to_sync(g)
+        result = g.query("MERGE (a:P {age: 40}) MERGE (b:P {age: 41})")
+        self.env.assertEqual(result.nodes_created, 2)
+
+        plan = str(g.explain("MERGE (a:P {age: 40}) MERGE (b:P {age: 41})"))
+        self.env.assertEqual(plan.count("Node By Index Scan"), 2)
+
+        # Re-running must match both, not create more.
+        result = g.query("MERGE (a:P {age: 40}) MERGE (b:P {age: 41})")
+        self.env.assertEqual(result.nodes_created, 0)
+
+        # Three distinct values in one query: every pending row has to be
+        # re-checked, not just the first.
+        result = g.query("MERGE (c:P {age: 1}) MERGE (d:P {age: 2}) MERGE (e:P {age: 3})")
+        self.env.assertEqual(result.nodes_created, 3)
+        actual = g.query("MATCH (p:P) RETURN p.age ORDER BY p.age")
+        self.env.assertEqual(actual.result_set, [[1], [2], [3], [40], [41]])
+        g.delete()
+
+    # Inline attrs on an *edge*. Each operator enforces them differently:
+    # CondTraverse and ExpandInto via a Filter above themselves, with the
+    # collapse of parallel edges disabled; CondVarLenTraverse and
+    # AllShortestPaths via their edge_filter, applied per edge during the walk.
+    def test12_edge_attrs_parallel_edges(self):
+        g = self.db.select_graph(GRAPH_ID + "_edges")
+        # Two parallel edges between the same pair, distinguished only by `k`.
+        g.query(
+            "CREATE (a:E {n: 'a'}), (b:E {n: 'b'}), "
+            "(a)-[:R {k: 1}]->(b), (a)-[:R {k: 2}]->(b)"
+        )
+
+        # An anonymous edge with a predicate must not collapse to one
+        # representative edge: whichever were picked, the other is the match.
+        for k in (1, 2):
+            actual = g.query("MATCH (a:E)-[{k: %d}]->(b:E) RETURN count(*)" % k)
+            self.env.assertEqual(actual.result_set, [[1]])
+
+        # Contrast: with no predicate on the edge, an anonymous traverse still
+        # collapses the pair to a single representative edge, so this counts 1
+        # rather than 2. That is long-standing behaviour, independent of this
+        # file — it is here to pin the boundary the predicate cases rely on.
+        actual = g.query("MATCH (a:E)-[]->(b:E) RETURN count(*)")
+        self.env.assertEqual(actual.result_set, [[1]])
+
+        # ExpandInto: both endpoints already bound.
+        actual = g.query(
+            "MATCH (a:E {n: 'a'}), (b:E {n: 'b'}) WITH a, b "
+            "MATCH (a)-[{k: 2}]->(b) RETURN count(*)"
+        )
+        self.env.assertEqual(actual.result_set, [[1]])
+        g.delete()
+
+    def test13_edge_attrs_var_len_and_shortest_paths(self):
+        g = self.db.select_graph(GRAPH_ID + "_edgewalk")
+        g.query(
+            "CREATE (a:W {n: 1}), (b:W {n: 2}), (c:W {n: 3}), "
+            "(a)-[:R {k: 1}]->(b), (b)-[:R {k: 1}]->(c), (a)-[:R {k: 9}]->(c)"
+        )
+
+        # Var-length: the k=9 shortcut is pruned, so 3 is reached in two hops.
+        actual = g.query(
+            "MATCH (a:W {n: 1})-[:R*1..2 {k: 1}]->(x:W) RETURN x.n ORDER BY x.n"
+        )
+        self.env.assertEqual(actual.result_set, [[2], [3]])
+
+        # Without the predicate the one-hop shortcut is available.
+        actual = g.query("MATCH (a:W {n: 1})-[:R*1..1]->(x:W) RETURN x.n ORDER BY x.n")
+        self.env.assertEqual(actual.result_set, [[2], [3]])
+
+        # allShortestPaths: pruning the shortcut makes the shortest path 2 hops.
+        actual = g.query(
+            "MATCH (a:W {n: 1}), (c:W {n: 3}) WITH a, c "
+            "MATCH p = allShortestPaths((a)-[:R* {k: 1}]->(c)) RETURN length(p)"
+        )
+        self.env.assertEqual(actual.result_set, [[2]])
+
+        actual = g.query(
+            "MATCH (a:W {n: 1}), (c:W {n: 3}) WITH a, c "
+            "MATCH p = allShortestPaths((a)-[:R*]->(c)) RETURN length(p)"
+        )
+        self.env.assertEqual(actual.result_set, [[1]])
+        g.delete()
+
+    # An inline attribute on a traversal endpoint must be servable by the index,
+    # with nothing left over as a Filter. This is the payoff of lowering it
+    # once: the shape used to plan `a.p = 1` twice, and two conjuncts on one key
+    # become an IndexQuery::And.
+    #
+    # It does NOT detect a returning duplicate, and is not the guard for one.
+    # Verified by ablation: with the endpoint filter deliberately emitted twice,
+    # this plan is byte-identical, because `utilize_index` folds
+    # `And(a.p = 1, a.p = 1)` back into a single index query. The duplicate is
+    # observable only under `--features index-falkordb`, where an unserviceable
+    # `And` is a hard error rather than a silent fold. What actually prevents it
+    # is `debug_assert_no_pattern_attrs`: with the attrs stripped there is
+    # nothing left for a downstream pass to re-derive a second copy from.
+    def test14_inline_attr_is_served_by_the_index(self):
+        g = self.db.select_graph(GRAPH_ID + "_once")
+        g.query("CREATE (a:L {p: 1})-[:R]->(b:L {p: 2})")
+        g.query("CREATE INDEX FOR (n:L) ON (n.p)")
+        wait_for_indices_to_sync(g)
+
+        plan = str(g.explain("MATCH (a:L {p: 1})-[:R]->(b) RETURN b"))
+        self.env.assertContains("Node By Index Scan", plan)
+        self.env.assertEqual(plan.count("Filter"), 0)
+
+        # Both endpoints constrained: two distinct predicates, one served by the
+        # index and one left as a Filter — not collapsed into each other.
+        plan = str(g.explain("MATCH (a:L {p: 1})-[:R]->(b:L {p: 2}) RETURN b"))
+        self.env.assertContains("Node By Index Scan", plan)
+        self.env.assertEqual(plan.count("Filter"), 1)
+
+        actual = g.query("MATCH (a:L {p: 1})-[:R]->(b:L {p: 2}) RETURN b.p")
+        self.env.assertEqual(actual.result_set, [[2]])
+        g.delete()
+
+    # Inline attrs on a MERGE pattern are a constructor, not a predicate: the
+    # created node must carry them.
+    def test10_merge_pattern_attrs_are_constructed(self):
+        g = self.db.select_graph(GRAPH_ID + "_merge")
+        g.query("MERGE (n:M {a: 1, b: 2})")
+        actual_result = g.query("MATCH (n:M) RETURN n.a, n.b")
+        self.env.assertEqual(actual_result.result_set, [[1, 2]])
+        # Second MERGE of the same pattern must match, not create a duplicate.
+        g.query("MERGE (n:M {a: 1, b: 2})")
+        actual_result = g.query("MATCH (n:M) RETURN count(*)")
+        self.env.assertEqual(actual_result.result_set, [[1]])
+        g.delete()
+
+    # An inline attr on a walk's edge can read a variable bound earlier, so the
+    # predicate needs the input row, not just the edge. `{weight: p.limit}` came
+    # back empty when the walk evaluated it in a row holding only the edge.
+    def test17_var_len_edge_attr_reads_another_variable(self):
+        g = self.db.select_graph(GRAPH_ID + "_vlt_outer")
+        g.query(
+            "CREATE (p:P {limit: 1})-[:R {weight: 1}]->(m:M)-[:R {weight: 1}]->(:Q), "
+            "(m)-[:R {weight: 2}]->(:Q)"
+        )
+        actual = g.query("MATCH (p:P) MATCH (p)-[:R* {weight: p.limit}]->(x) RETURN count(x)")
+        self.env.assertEqual(actual.result_set, [[2]])
+        g.delete()
+
+    def test18_all_shortest_paths_edge_attr_reads_another_variable(self):
+        g = self.db.select_graph(GRAPH_ID + "_asp_outer")
+        g.query(
+            "CREATE (p:P {limit: 1})-[:R {weight: 1}]->(m:M)-[:R {weight: 1}]->(:Q {n: 1}), "
+            "(m)-[:R {weight: 2}]->(:Q {n: 2})"
+        )
+        actual = g.query(
+            "MATCH (p:P), (q:Q {n: 1}) WITH p, q "
+            "MATCH path = allShortestPaths((p)-[:R* {weight: p.limit}]->(q)) RETURN length(path)"
+        )
+        self.env.assertEqual(actual.result_set, [[2]])
+        g.delete()
+
+    # A predicate folded into a traverse is evaluated per edge, and must answer a
+    # non-boolean the way a Filter does — a type error — instead of quietly
+    # rejecting the edge. A null still just drops it.
+    def test19_folded_edge_predicate_rejects_non_boolean(self):
+        g = self.db.select_graph(GRAPH_ID + "_nonbool")
+        g.query("CREATE (:A)-[:R {w: 5}]->(:B)")
+        for query in [
+            "MATCH (a:A)-[r:R]->(b) WHERE r.w RETURN count(a)",
+            "MATCH (a:A)-[r:R*1..2]->(b) WHERE r.w RETURN count(a)",
+        ]:
+            try:
+                g.query(query)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("expected Boolean but was Integer", str(e))
+        actual = g.query("MATCH (a:A)-[r:R]->(b) WHERE r.missing RETURN count(a)")
+        self.env.assertEqual(actual.result_set, [[0]])
+        g.delete()
+
+    # Above a walk the edge alias holds the walk's edges, not one edge, so a WHERE
+    # on it asks about the whole walk. Folding it into the walk as a per-edge test
+    # would change the question: `r[0]` would index into a single edge.
+    def test20_where_on_a_walk_edge_alias_keeps_its_meaning(self):
+        g = self.db.select_graph(GRAPH_ID + "_walksem")
+        g.query(
+            "CREATE (a:W {n: 1})-[:R {k: 1}]->(:W {n: 2})-[:R {k: 1}]->(c:W {n: 3}), "
+            "(a)-[:R {k: 1}]->(c)"
+        )
+        shortest = (
+            "MATCH (a:W {n: 1}), (c:W {n: 3}) WITH a, c "
+            "MATCH p = allShortestPaths((a)-[r:R*]->(c))"
+        )
+        actual = g.query(shortest + " WHERE r[0].k = 1 RETURN length(p)")
+        self.env.assertEqual(actual.result_set, [[1]])
+        actual = g.query(shortest + " WHERE all(x IN r WHERE x.k = 1) RETURN length(p)")
+        self.env.assertEqual(actual.result_set, [[1]])
+        g.delete()
+
+    # An inline edge predicate on allShortestPaths constrains the search: the
+    # shortest paths among edges that match. The same condition as a WHERE asks
+    # for the shortest paths and then filters them. They differ when the
+    # shortest path has an edge that fails — here the direct a->b edge — and C
+    # answers both this way, which is why the predicate is evaluated inside the
+    # walk rather than by a Filter above it.
+    def test21_all_shortest_paths_edge_attr_prunes_the_search(self):
+        g = self.db.select_graph(GRAPH_ID + "_aspprune")
+        g.query(
+            "CREATE (a:N {n: 1}), (m:N {n: 2}), (b:N {n: 3}), "
+            "(a)-[:R {c: 0}]->(b), (a)-[:R {c: 1}]->(m), (m)-[:R {c: 1}]->(b)"
+        )
+        endpoints = "MATCH (a:N {n: 1}), (b:N {n: 3}) WITH a, b "
+        actual = g.query(
+            endpoints + "MATCH p = allShortestPaths((a)-[:R* {c: 1}]->(b)) RETURN length(p)"
+        )
+        self.env.assertEqual(actual.result_set, [[2]])
+        actual = g.query(
+            endpoints + "MATCH p = allShortestPaths((a)-[:R*]->(b)) "
+            "WHERE all(e IN relationships(p) WHERE e.c = 1) RETURN length(p)"
+        )
+        self.env.assertEqual(actual.result_set, [])
+        g.delete()

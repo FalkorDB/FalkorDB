@@ -13,7 +13,9 @@ GRAPH_ID = "index_create"
 
 class testIndexCreationFlow():
     def __init__(self):
-        self.env, self.db = Env()
+        # DEBUG LOADAOF, for the AOF replay test.
+        self.env, self.db = Env(enableDebugCommand=True)
+        self.conn = self.env.getConnection()
         self.graph = self.db.select_graph(GRAPH_ID)
 
     # full-text index creation
@@ -653,8 +655,9 @@ class testIndexCreationFlow():
         # determine how much time does it take to construct our index
         start = time()
 
-        res = create_node_range_index(self.graph, 'L', 'v', sync=True)
+        res = create_node_range_index(self.graph, 'L', 'v')
         self.env.assertEqual(res.indices_created, 1)
+        wait_on_index(self.graph, 'L', timeout=300)
 
         # total index creation time
         elapsed = time() - start
@@ -689,8 +692,9 @@ class testIndexCreationFlow():
         res = self.graph.create_node_range_index('L', 'v')
         self.env.assertEqual(res.indices_created, 1)
 
-        # wait for index to become operational
-        wait_for_indices_to_sync(self.graph)
+        # wait for index to become operational, the way the first build's wait
+        # did, so the two times are measured alike
+        wait_on_index(self.graph, 'L', timeout=300)
 
         elapsed_2 = time() - start
 
@@ -866,6 +870,92 @@ class testIndexCreationFlow():
         self.env.assertEqual(result.indices_created, 1)
         self.env.assertEqual(result.labels_added, 1)
 
+    def test20_failed_fulltext_create_does_not_leak(self):
+        # A fulltext CREATE refused while building the RediSearch index
+        # (unsupported language, NUL byte in a stopword) must free the
+        # options block it allocated: ~56 bytes per statement leaked before.
+        conn = self.env.getConnection()
+        graph = self.db.select_graph("failed_fulltext_create_leak")
+        try:
+            graph.query("CREATE (:L {s:'a'})")
+            n = 10000
+            cases = [
+                ("CREATE FULLTEXT INDEX FOR (n:L) ON (n.s) OPTIONS {language:'klingon'}",
+                 "Language is not supported"),
+                ("CREATE FULLTEXT INDEX FOR (n:L) ON (n.s) OPTIONS {stopwords:['a\\u0000b']}",
+                 "nul byte"),
+            ]
+            for q, expected in cases:
+                def run(times):
+                    for _ in range(times):
+                        try:
+                            graph.query(q)
+                            self.env.assertTrue(False, message=q)
+                        except ResponseError as e:
+                            # Refused by design; only what the refusal leaves
+                            # behind is measured, and it must be this refusal.
+                            if expected not in str(e):
+                                self.env.assertTrue(False, message=f"{q}: {e}")
+                                return
+                run(100)  # warm up
+                before = conn.info('memory')['used_memory']
+                run(n)
+                grown = conn.info('memory')['used_memory'] - before
+                # the leak alone was ~560 KB here; allow for allocator noise
+                self.env.assertLess(grown, 200_000, message=q)
+        finally:
+            graph.delete()
+
+    def test19_index_options_validation(self):
+        # index OPTIONS are validated like C: a vector index needs a dimension
+        # and a similarity function (matched case-insensitively), and a
+        # fulltext index refuses option keys it does not know
+        graph = self.db.select_graph("index_options_validation")
+
+        invalid = [
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v)",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {similarityFunction:'euclidean'}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:2}",
+             "Invalid vector index configuration"),
+            # an unknown similarity function is refused whatever the
+            # dimension, including 0 (an index no vector can enter)
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:2, similarityFunction:'bogus'}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:0, similarityFunction:'bogus'}",
+             "Invalid vector index configuration"),
+            ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {foo:1}",
+             "unknown option 'foo'"),
+            ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {weight:1, foo:1}",
+             "unknown option 'foo'"),
+        ]
+        for q, msg in invalid:
+            try:
+                graph.query(q)
+                self.env.assertTrue(False, message=q)
+            except ResponseError as e:
+                self.env.assertContains(msg, str(e))
+
+        res = graph.query("CREATE VECTOR INDEX FOR (n:B) ON (n.v) OPTIONS {dimension:2, similarityFunction:'Euclidean'}")
+        self.env.assertEqual(res.indices_created, 1)
+        res = graph.query("CREATE VECTOR INDEX FOR (n:C) ON (n.v) OPTIONS {dimension:2, similarityFunction:'COSINE'}")
+        self.env.assertEqual(res.indices_created, 1)
+        res = graph.query("CREATE FULLTEXT INDEX FOR (n:D) ON (n.t) OPTIONS {weight:2, nostem:true}")
+        self.env.assertEqual(res.indices_created, 1)
+        # `ip` (inner product) is accepted, a Rust extension over C
+        res = graph.query("CREATE VECTOR INDEX FOR (n:F) ON (n.v) OPTIONS {dimension:2, similarityFunction:'ip'}")
+        self.env.assertEqual(res.indices_created, 1)
+        # dimension 0 is accepted, as in C
+        res = graph.query("CREATE VECTOR INDEX FOR (n:E) ON (n.v) OPTIONS {dimension:0, similarityFunction:'cosine'}")
+        self.env.assertEqual(res.indices_created, 1)
+
+        # the similarity function is stored normalized
+        res = graph.query("CALL db.indexes() YIELD label, options WHERE label = 'B' RETURN options")
+        self.env.assertEqual(res.result_set[0][0]['v']['similarityFunction'], 'euclidean')
+
     def test17_index_catalog_response(self):
         graph_name = "index_catalog_response"
         graph = self.db.select_graph(graph_name)
@@ -900,3 +990,101 @@ class testIndexCreationFlow():
         self.env.assertEqual(row_by_column["entitytype"], "NODE")
         self.env.assertEqual(row_by_column["status"], "OPERATIONAL")
 
+
+    def test18_field_added_during_population_is_populated(self):
+        # A field added to a label's index while that index is still being
+        # populated must itself be populated: the index may only report
+        # OPERATIONAL once every field covers every existing node.
+        graph_name = "index_field_added_during_population"
+        graph = self.db.select_graph(graph_name)
+        n = 30000  # several population batches
+
+        for _ in range(5):
+            if graph_name in self.db.list_graphs():
+                graph.delete()
+            graph.query("UNWIND range(1, $n) AS x CREATE (:L {a:x, b:x})", {'n': n})
+
+            # second field arrives while the first is populating
+            create_node_range_index(graph, 'L', 'a')
+            create_node_range_index(graph, 'L', 'b')
+            wait_for_indices_to_sync(graph)
+
+            for attr in ['a', 'b']:
+                q = f"MATCH (n:L) WHERE n.{attr} > 0 RETURN count(n)"
+                plan = str(graph.explain(q))
+                self.env.assertIn("Node By Index Scan", plan)
+                count = graph.ro_query(q).result_set[0][0]
+                self.env.assertEqual(count, n, message=f"index on L.{attr}")
+
+    # CREATE INDEX as the first query on a key that does not exist creates the
+    # graph, and commits the index before the graph is registered under its
+    # key. An index the engine builds in the background must still be built:
+    # its commit starts the build, whether or not the key holds the graph yet.
+    # Each test waits a bounded time, so an index left under construction
+    # fails it rather than hanging it.
+    def _assert_index_serves(self, graph):
+        graph.query("UNWIND range(1, 100) AS x CREATE (:L {v:x})")
+        q = "MATCH (n:L) WHERE n.v = 42 RETURN n.v"
+        self.env.assertIn("Node By Index Scan", str(graph.explain(q)))
+        self.env.assertEqual(graph.ro_query(q).result_set, [[42]])
+
+    def test20_create_index_on_missing_key_in_multi_exec(self):
+        graph = self.db.select_graph("index_on_missing_key_multi")
+        # A transactional pipeline sends MULTI, the query and EXEC on one connection.
+        pipe = self.conn.pipeline(transaction=True)
+        pipe.execute_command("GRAPH.QUERY", "index_on_missing_key_multi",
+                             "CREATE INDEX FOR (n:L) ON (n.v)")
+        res = pipe.execute(raise_on_error=False)
+        self.env.assertFalse(isinstance(res[0], Exception), message=str(res[0]))
+        self.env.assertIn("Indices created: 1", str(res[0]))
+        wait_on_index(graph, 'L', timeout=30)
+        self._assert_index_serves(graph)
+        graph.delete()
+
+    def test21_create_index_on_missing_key_in_aof_replay(self):
+        # Turn the AOF on, then replay it in-process with DEBUG LOADAOF. The
+        # rewrite that turning it on starts holds the dataset as it is; the
+        # CREATE INDEX comes after it, as a GRAPH.EFFECT: every write
+        # replicates as effects.
+        self.conn.config_set("appendonly", "no")
+        self.conn.config_set("appendonly", "yes")
+        try:
+            deadline = time() + 30
+            # A rewrite can be scheduled and not yet started: wait for both, read from one reply.
+            while ((p := self.conn.info("persistence")).get("aof_rewrite_in_progress", 0)
+                   or p.get("aof_rewrite_scheduled", 0)):
+                self.env.assertLess(time(), deadline, message="AOF rewrite did not finish")
+                if time() >= deadline:
+                    break
+                sleep(0.1)
+
+            graph = self.db.select_graph("index_on_missing_key_aof")
+            graph.query("CREATE INDEX FOR (n:L) ON (n.v)")
+            self.conn.execute_command("DEBUG", "LOADAOF")
+
+            wait_on_index(graph, 'L', timeout=30)
+            self._assert_index_serves(graph)
+            graph.delete()
+        finally:
+            self.conn.config_set("appendonly", "no")
+
+    def test22_create_index_on_a_graph_loaded_from_several_keys(self):
+        # A graph saved as several keys loads into a placeholder, unless its
+        # own key loads last, and the graph replaces the placeholder once its
+        # last key is in. An index created on it afterwards must be built. The reload saves every graph on the server
+        # one entity per key, so it starts from an empty server.
+        self.conn.flushall()
+        vkey_max = self.db.config_get("VKEY_MAX_ENTITY_COUNT")
+        self.db.config_set("VKEY_MAX_ENTITY_COUNT", 1)
+        try:
+            graph = self.db.select_graph("index_after_multi_key_load")
+            graph.query("UNWIND range(1, 100) AS x CREATE (:L {v:x})")
+            self.conn.execute_command("DEBUG", "RELOAD")
+            graph.query("CREATE INDEX FOR (n:L) ON (n.v)")
+            wait_on_index(graph, 'L', timeout=30)
+            q = "MATCH (n:L) WHERE n.v = 42 RETURN n.v"
+            self.env.assertIn("Node By Index Scan", str(graph.explain(q)))
+            self.env.assertEqual(graph.ro_query(q).result_set, [[42]])
+            graph.delete()
+        finally:
+            self.db.config_set("VKEY_MAX_ENTITY_COUNT", vkey_max)

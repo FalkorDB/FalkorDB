@@ -274,3 +274,115 @@ class testWithClause(FlowTestsBase):
         query = """WITH 1 AS x MATCH (a:label_a), (b:label_b) RETURN a.v, b.v"""
         actual_result = self.graph.query(query)
         self.env.assertEqual(len(actual_result.result_set), 36)
+
+    def test13_rematch_multiple_carried_variables(self):
+        # Re-MATCHing several variables that a WITH already bound used to
+        # either crash the server or fail to resolve the alias the WHERE
+        # referred to. Re-matching a single variable always worked, so the
+        # regression only shows up from the second carried variable onwards.
+        # https://github.com/FalkorDB/FalkorDB/issues/1949
+        # https://github.com/FalkorDB/FalkorDB/issues/2004
+        g = self.db.select_graph("with_rematch_bound")
+
+        try:
+            g.query("""CREATE (:Person {name: 'Alice', age: 30}),
+                              (:Person {name: 'Bob', age: 25})""")
+
+            # the reported repro - re-matching both carried variables
+            res = g.query("""MATCH (a:Person {name: 'Alice'}),
+                                   (b:Person {name: 'Bob'})
+                             WITH a, b
+                             MATCH (a), (b)
+                             RETURN a.name AS name, b.name AS name2""")
+            self.env.assertEqual(res.result_set, [['Alice', 'Bob']])
+
+            # the same with a WHERE filtering both re-matched aliases
+            res = g.query("""MATCH (a:Person), (b:Person)
+                             WITH a, b
+                             MATCH (a), (b)
+                             WHERE a.age > 25 AND b.age < 30
+                             RETURN a.name AS a, b.name AS b""")
+            self.env.assertEqual(res.result_set, [['Alice', 'Bob']])
+
+            # a variable carried under an alias by WITH * is re-matchable too
+            # https://github.com/FalkorDB/FalkorDB/issues/1280
+            res = g.query("""OPTIONAL MATCH (n0)
+                             WITH *, n0 AS alias4
+                             MATCH (n0), (alias4)
+                             RETURN n0.name, alias4.name ORDER BY n0.name""")
+            self.env.assertEqual(res.result_set,
+                                 [['Alice', 'Alice'], ['Bob', 'Bob']])
+
+            # re-matching inside OPTIONAL MATCH, filtering a bound alias
+            # https://github.com/FalkorDB/FalkorDB/issues/1300
+            res = g.query("""MATCH (n1), (n0)
+                             OPTIONAL MATCH (n0), (n1)
+                             WHERE n0
+                             RETURN n0.name, n1.name
+                             ORDER BY n0.name, n1.name""")
+            self.env.assertEqual(res.result_set,
+                                 [['Alice', 'Alice'], ['Alice', 'Bob'],
+                                  ['Bob', 'Alice'], ['Bob', 'Bob']])
+
+            # the same re-match without a WHERE - no alias to resolve, yet it
+            # still crashed the server outright
+            # https://github.com/FalkorDB/FalkorDB/issues/1281
+            res = g.query("""MATCH (n), (n1)
+                             OPTIONAL MATCH (n), (n1)
+                             RETURN n.name, n1.name
+                             ORDER BY n.name, n1.name""")
+            self.env.assertEqual(res.result_set,
+                                 [['Alice', 'Alice'], ['Alice', 'Bob'],
+                                  ['Bob', 'Alice'], ['Bob', 'Bob']])
+
+            # re-matching a single variable kept working throughout
+            res = g.query("""MATCH (a:Person {name: 'Alice'})
+                             WITH a MATCH (a) RETURN a.name AS name""")
+            self.env.assertEqual(res.result_set, [['Alice']])
+        finally:
+            g.delete()
+
+    def test14_rematch_filtering_a_projected_scalar_alias(self):
+        # The alias a WITH carries into a later MATCH need not be a node - a
+        # projected *scalar* used as the WHERE predicate hit a separate
+        # resolution path and failed with "Unable to resolve filtered alias".
+        # https://github.com/FalkorDB/FalkorDB/issues/1301
+        g = self.db.select_graph("with_rematch_scalar_alias")
+
+        try:
+            g.query("""CREATE (:T {name: 'n1'})<-[:E]-(:T {name: 'n0', k1: true})
+                              <-[:E]-(:T {name: 'n2'})""")
+
+            # the reported repro - alias0 is n0.k1, a boolean, and drives the
+            # filter of a MATCH that re-binds variables the WITH carried
+            res = g.query("""MATCH p0 = (n1)<-[]-(n0)<-[]-(n2)
+                             WITH *, n0.k1 AS alias0, n1
+                             MATCH (n2), (n1)
+                             WHERE alias0
+                             RETURN n1.name, n2.name, alias0""")
+            self.env.assertEqual(res.result_set, [['n1', 'n2', True]])
+
+            # negating the same alias keeps it resolvable and filters the row
+            # out, proving the predicate is really evaluated rather than
+            # dropped
+            res = g.query("""MATCH p0 = (n1)<-[]-(n0)<-[]-(n2)
+                             WITH *, n0.k1 AS alias0, n1
+                             MATCH (n2), (n1)
+                             WHERE NOT alias0
+                             RETURN n1.name""")
+            self.env.assertEqual(res.result_set, [])
+
+            # a non-boolean projected alias must still resolve - the failure
+            # has to be the type of the predicate, never the alias lookup
+            g.query("MATCH (t:T {name: 'n0'}) SET t.k1 = 7")
+            try:
+                g.query("""MATCH p0 = (n1)<-[]-(n0)<-[]-(n2)
+                           WITH *, n0.k1 AS alias0, n1
+                           MATCH (n2), (n1)
+                           WHERE alias0
+                           RETURN n1.name""")
+                assert(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("Type mismatch", str(e))
+        finally:
+            g.delete()

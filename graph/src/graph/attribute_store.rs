@@ -119,66 +119,32 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
+use super::schema::NameMap;
 use crate::runtime::value::Value;
 
-/// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
-/// (`USHRT_MAX`, `src/graph/entities/attribute_set.h`). Never a valid id, so an id
-/// this large in an RDB is malformed rather than merely out of our range.
+/// Highest `u16`, reserved as "no attribute".
+///
+/// C's `ATTRIBUTE_ID_NONE` (`USHRT_MAX`, `src/graph/entities/attribute_set.h`).
+/// Never a valid id, so an id this large in an RDB is malformed rather than
+/// merely out of our range.
 pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
 
 /// How many distinct attribute names a graph can hold, given that
 /// [`ATTRIBUTE_ID_NONE`] is reserved: ids run `0..MAX_ATTRIBUTES`.
 pub const MAX_ATTRIBUTES: usize = ATTRIBUTE_ID_NONE as usize;
 
-/// Insertion-ordered map of attribute names to attribute indices.
-///
-/// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
-/// deterministic iteration order) and a `FxHashMap<Arc<String>, u16>` for
-/// O(1) name → index resolution on the hot read path.
-#[derive(Default, Clone)]
-pub struct AttrNameMap {
-    vec: Vec<Arc<String>>,
-    index: FxHashMap<Arc<String>, u16>,
-}
-
-impl<'a> IntoIterator for &'a AttrNameMap {
-    type Item = &'a Arc<String>;
-    type IntoIter = std::slice::Iter<'a, Arc<String>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
+/// The property-key names, one list for the whole graph (see
+/// [`Schema::property_keys`](super::schema::Schema::property_keys)): a
+/// [`NameMap::PropertyKeys`], whose ids fit a `u16`.
+pub type AttrNameMap = NameMap;
 
 impl AttrNameMap {
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.vec.len()
-    }
-
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.vec.is_empty()
-    }
-
-    #[must_use]
-    pub fn get(
-        &self,
-        idx: usize,
-    ) -> Option<&Arc<String>> {
-        self.vec.get(idx)
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<'_, Arc<String>> {
-        self.vec.iter()
-    }
-
     #[must_use]
     pub fn get_index_of(
         &self,
         name: &Arc<String>,
     ) -> Option<usize> {
-        self.index.get(name).map(|&i| i as usize)
+        self.id_of(name)
     }
 
     /// Intern `name`, doing nothing if the dictionary is already full.
@@ -188,27 +154,18 @@ impl AttrNameMap {
     /// `get_or_create` and compare against [`ATTRIBUTE_ID_NONE`].
     pub fn insert(
         &mut self,
-        name: Arc<String>,
+        name: &Arc<String>,
     ) {
-        if self.index.contains_key(&name) {
-            return;
-        }
-        if self.vec.len() >= MAX_ATTRIBUTES {
-            return;
-        }
-        let idx = self.vec.len() as u16;
-        self.vec.push(name.clone());
-        self.index.insert(name, idx);
+        self.get_or_insert(name);
     }
 
     /// Resolve `name` to its id, interning it if this graph has not seen it.
     ///
-    /// The single place ids are minted. There is exactly one of these tables per
-    /// graph — shared by the node and relationship stores — so an id means the same
-    /// attribute wherever it appears: in a span, in the RDB, in a `GRAPH.EFFECT`, or
-    /// in a compact reply. Per-store tables would number the same name differently
-    /// for nodes and relationships, and a bare id on the wire would then land on the
-    /// wrong attribute on a replica (#2457).
+    /// There is exactly one of these tables per graph — shared by the node and
+    /// relationship stores — so an id means the same attribute wherever it appears: in
+    /// a span, in the RDB, in a `GRAPH.EFFECT`, or in a compact reply. Per-store tables
+    /// would number the same name differently for nodes and relationships, and a bare
+    /// id on the wire would then land on the wrong attribute on a replica (#2457).
     ///
     /// Matches C, whose `GraphContext_FindOrAddAttribute` likewise takes no entity
     /// type and mints from one array.
@@ -216,36 +173,19 @@ impl AttrNameMap {
     /// Returns [`ATTRIBUTE_ID_NONE`] once [`MAX_ATTRIBUTES`] names are interned,
     /// as C's `GraphContext_FindOrAddAttribute` does when its table is full. The
     /// id space is `u16`, so without the cap the 65,537th distinct name would take
-    /// `self.vec.len() as u16` == 0 and **alias attribute 0** — reads of an
-    /// unrelated, long-established property would start returning the new one's
-    /// values. Refusing to mint keeps the failure confined to the name that could
-    /// not be added: `ATTRIBUTE_ID_NONE` resolves to no entry, so the property
-    /// reads as absent, and `decode_with_count` already rejects it on the wire.
+    /// `len as u16` == 0 and **alias attribute 0** — reads of an unrelated,
+    /// long-established property would start returning the new one's values. Refusing
+    /// to mint keeps the failure confined to the name that could not be added:
+    /// `ATTRIBUTE_ID_NONE` resolves to no entry, so the property reads as absent, and
+    /// `decode_with_count` already rejects it on the wire. The cap is the property-key
+    /// list's capacity, which [`NameMap::get_or_insert`] enforces.
     pub fn get_or_create(
         &mut self,
         name: &Arc<String>,
     ) -> u16 {
-        if let Some(&idx) = self.index.get(name) {
-            return idx;
-        }
-        if self.vec.len() >= MAX_ATTRIBUTES {
-            return ATTRIBUTE_ID_NONE;
-        }
-        let idx = self.vec.len() as u16;
-        self.vec.push(Arc::clone(name));
-        self.index.insert(Arc::clone(name), idx);
-        idx
-    }
-}
-
-impl std::ops::Index<usize> for AttrNameMap {
-    type Output = Arc<String>;
-
-    fn index(
-        &self,
-        idx: usize,
-    ) -> &Arc<String> {
-        &self.vec[idx]
+        self.get_or_insert(name)
+            .and_then(|id| u16::try_from(id).ok())
+            .unwrap_or(ATTRIBUTE_ID_NONE)
     }
 }
 
@@ -345,6 +285,80 @@ struct Block {
     dead: u32,
     /// Arena entries reserved but unused inside live spans (`cap - len`).
     slack: u32,
+}
+
+/// One entity's attribute updates for [`Block::merge_span`], ascending by id.
+///
+/// A trait rather than a slice because the two callers hold the same
+/// information in different shapes and neither should have to build the
+/// other's. `insert_attrs` already owns `(id, value)` pairs. `insert_attrs_rows`
+/// has the record's shared `attr_ids` beside one row of a row-major value
+/// block, and materializing pairs from those meant cloning every `Value` in the
+/// record — `count x width` clones to pass values that were already laid out
+/// exactly as the merge reads them, one row at a time.
+///
+/// Indexed rather than iterated because the merge walks it with a cursor
+/// against the existing span, and re-reads the entry at `ni` several times per
+/// step.
+trait AttrUpdates {
+    fn len(&self) -> usize;
+    fn id(
+        &self,
+        i: usize,
+    ) -> u16;
+    fn value(
+        &self,
+        i: usize,
+    ) -> &Value;
+}
+
+impl AttrUpdates for &[(u16, Value)] {
+    fn len(&self) -> usize {
+        <[(u16, Value)]>::len(self)
+    }
+
+    fn id(
+        &self,
+        i: usize,
+    ) -> u16 {
+        self[i].0
+    }
+
+    fn value(
+        &self,
+        i: usize,
+    ) -> &Value {
+        &self[i].1
+    }
+}
+
+/// One row of a row-major value block, against the record's shared ids.
+///
+/// The two slices are parallel and the same length; nothing is copied to put
+/// them together.
+struct RowUpdates<'a> {
+    ids: &'a [u16],
+    values: &'a [Value],
+}
+
+impl AttrUpdates for RowUpdates<'_> {
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    fn id(
+        &self,
+        i: usize,
+    ) -> u16 {
+        self.ids[i]
+    }
+
+    fn value(
+        &self,
+        i: usize,
+    ) -> &Value {
+        &self.values[i]
+    }
 }
 
 impl Block {
@@ -562,7 +576,7 @@ impl Block {
     fn merge_span(
         &mut self,
         slot_idx: usize,
-        pairs: &[(u16, Value)],
+        pairs: &impl AttrUpdates,
         scratch: &mut Vec<PackedAttr>,
     ) -> (usize, usize) {
         self.grow_slots(slot_idx);
@@ -575,30 +589,32 @@ impl Block {
         if old.cap != 0 {
             let s = old.offset as usize;
             let span = &self.arena[s..s + old.len as usize];
-            if pairs.iter().all(|(id, v)| {
-                !matches!(v, Value::Null) && span.binary_search_by_key(id, |e| e.id).is_ok()
+            if (0..pairs.len()).all(|i| {
+                !matches!(pairs.value(i), Value::Null)
+                    && span.binary_search_by_key(&pairs.id(i), |e| e.id).is_ok()
             }) {
-                for (id, v) in pairs {
+                for i in 0..pairs.len() {
+                    let id = pairs.id(i);
                     let span = &self.arena[s..s + old.len as usize];
-                    let pos = span.binary_search_by_key(id, |e| e.id).unwrap();
+                    let pos = span.binary_search_by_key(&id, |e| e.id).unwrap();
                     self.release_heap_value(self.arena[s + pos]);
-                    self.store_packed_value(s + pos, *id, v.clone());
+                    self.store_packed_value(s + pos, id, pairs.value(i).clone());
                 }
                 return (pairs.len(), pairs.len());
             }
 
             // Fast path: pure removal (every pair null). Shift surviving
             // entries left within the span, releasing removed heap values.
-            if pairs.iter().all(|(_, v)| matches!(v, Value::Null)) {
+            if (0..pairs.len()).all(|i| matches!(pairs.value(i), Value::Null)) {
                 let mut w = s;
                 let mut ni = 0;
                 let mut nremoved = 0;
                 for r in s..s + old.len as usize {
                     let e = self.arena[r];
-                    while ni < pairs.len() && pairs[ni].0 < e.id {
+                    while ni < pairs.len() && pairs.id(ni) < e.id {
                         ni += 1;
                     }
-                    if ni < pairs.len() && pairs[ni].0 == e.id {
+                    if ni < pairs.len() && pairs.id(ni) == e.id {
                         nremoved += 1;
                         self.release_heap_value(e);
                         continue;
@@ -629,26 +645,25 @@ impl Block {
         {
             let (mut ci, mut ni) = (0usize, 0usize);
             while ci < scratch.len() && ni < pairs.len() {
-                match scratch[ci].id.cmp(&pairs[ni].0) {
+                match scratch[ci].id.cmp(&pairs.id(ni)) {
                     Ordering::Less => {
                         new_len += 1;
                         ci += 1;
                     }
                     Ordering::Equal => {
-                        new_len += usize::from(!matches!(pairs[ni].1, Value::Null));
+                        new_len += usize::from(!matches!(pairs.value(ni), Value::Null));
                         ci += 1;
                         ni += 1;
                     }
                     Ordering::Greater => {
-                        new_len += usize::from(!matches!(pairs[ni].1, Value::Null));
+                        new_len += usize::from(!matches!(pairs.value(ni), Value::Null));
                         ni += 1;
                     }
                 }
             }
             new_len += scratch.len() - ci;
-            new_len += pairs[ni..]
-                .iter()
-                .filter(|(_, v)| !matches!(v, Value::Null))
+            new_len += (ni..pairs.len())
+                .filter(|&i| !matches!(pairs.value(i), Value::Null))
                 .count();
         }
 
@@ -674,22 +689,22 @@ impl Block {
         let (mut ci, mut ni) = (0usize, 0usize);
         while ci < scratch.len() || ni < pairs.len() {
             let take_old =
-                ni >= pairs.len() || (ci < scratch.len() && scratch[ci].id < pairs[ni].0);
+                ni >= pairs.len() || (ci < scratch.len() && scratch[ci].id < pairs.id(ni));
             if take_old {
                 self.arena[w] = scratch[ci];
                 w += 1;
                 ci += 1;
                 continue;
             }
-            if ci < scratch.len() && scratch[ci].id == pairs[ni].0 {
+            if ci < scratch.len() && scratch[ci].id == pairs.id(ni) {
                 nremoved += 1;
                 self.release_heap_value(scratch[ci]);
                 ci += 1;
             }
-            let (id, v) = &pairs[ni];
+            let v = pairs.value(ni);
             if !matches!(v, Value::Null) {
                 nset += 1;
-                self.store_packed_value(w, *id, v.clone());
+                self.store_packed_value(w, pairs.id(ni), v.clone());
                 w += 1;
             }
             ni += 1;
@@ -933,7 +948,7 @@ impl DataBlock {
     fn merge_span(
         &mut self,
         entity_id: u64,
-        pairs: &[(u16, Value)],
+        pairs: &impl AttrUpdates,
         scratch: &mut Vec<PackedAttr>,
     ) -> (usize, usize) {
         let (block_idx, slot_idx) = Self::locate(entity_id);
@@ -942,7 +957,7 @@ impl DataBlock {
         let has_span = self
             .block(block_idx)
             .is_some_and(|block| block.slots.get(slot_idx).is_some_and(|slot| slot.cap != 0));
-        if !has_span && pairs.iter().all(|(_, v)| matches!(v, Value::Null)) {
+        if !has_span && (0..pairs.len()).all(|i| matches!(pairs.value(i), Value::Null)) {
             return (0, 0);
         }
         let block = self.block_mut(block_idx);
@@ -1177,10 +1192,66 @@ impl AttributeStore {
         }
     }
 
+    /// Insert attributes laid out row-major, as the wire carries them.
+    ///
+    /// [`Self::insert_attrs`] takes a map only to flatten it back into a
+    /// `Vec` and sort that by id — work the effects path has already done,
+    /// because a record's ids arrive ascending by contract. Building the map
+    /// first costs one heap allocation per entity for a `Vec` of two or three
+    /// pairs, plus the hash inserts and the sort, to say what `ids`,
+    /// `attr_ids` and a flat row-major slice already say.
+    ///
+    /// `attr_ids` must be ascending: it is a record's attribute set, which is
+    /// built from an already-sorted vector.
+    pub fn insert_attrs_rows(
+        &mut self,
+        ids: &[u64],
+        attr_ids: &[u16],
+        rows: &[Value],
+    ) -> Result<(usize, usize), String> {
+        debug_assert!(
+            attr_ids.windows(2).all(|w| w[0] < w[1]),
+            "the attribute set must be ascending"
+        );
+        let width = attr_ids.len();
+        debug_assert_eq!(rows.len(), ids.len() * width, "rows must be count x width");
+
+        let mut nremoved = 0;
+        let mut nset = 0;
+        let mut scratch: Vec<PackedAttr> = Vec::new();
+
+        for (row, &id) in ids.iter().enumerate() {
+            // The row is handed over where it lies. `attr_ids` is the record's
+            // and shared by every row; the values are the row's slice of the
+            // block. Building `(id, value)` pairs from them cloned every
+            // `Value` in the record — `count x width` clones to say what the
+            // two slices already said, since `merge_span` clones again at the
+            // point it stores.
+            //
+            // Nulls are passed through, not filtered. FalkorDB never *stores* a
+            // null, so a null in a row means "remove this attribute" — and
+            // `merge_span` is what performs the removal, including a fast path
+            // for a span where every value is null. Stripping them here would
+            // turn `SET n.x = NULL` into a no-op.
+            let updates = RowUpdates {
+                ids: attr_ids,
+                values: &rows[row * width..(row + 1) * width],
+            };
+            let (r, s) = self.data.merge_span(id, &updates, &mut scratch);
+            nremoved += r;
+            nset += s;
+        }
+        Ok((nremoved, nset))
+    }
+
     /// Batch insert/update multiple attributes for entities.
     ///
     /// Returns `(nremoved, nset)`: the number of attributes *replaced* and
     /// the number of non-null attributes *set*.
+    ///
+    /// Takes a map because that is what accumulates one `SET` at a time on the
+    /// write path. A caller that already has its entities in id order, with the
+    /// attribute set stated once, wants [`Self::insert_attrs_rows`] instead.
     pub fn insert_attrs(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
@@ -1203,7 +1274,9 @@ impl AttributeStore {
         items.sort_unstable_by_key(|&(key, _)| key);
 
         for (key, entity_attrs) in items {
-            let (r, s) = self.data.merge_span(key, entity_attrs, &mut scratch);
+            let (r, s) = self
+                .data
+                .merge_span(key, &entity_attrs.as_slice(), &mut scratch);
             nremoved += r;
             nset += s;
         }
@@ -1243,17 +1316,33 @@ impl AttributeStore {
 
     /// Import pre-resolved attribute data directly.
     /// Skips name resolution and OrderMap construction; used by bulk insert.
+    ///
+    /// The ids come straight from a client-supplied header, so they are brought to
+    /// the span invariant here — unique and real — as the RDB decoder does with its
+    /// `attr_limit` check: a column the dictionary refused to mint
+    /// ([`ATTRIBUTE_ID_NONE`]) is dropped, and of a repeated id the first column is
+    /// kept (the sort is stable). Otherwise a header naming more attributes than the
+    /// id space holds builds a span longer than `Slot::len` (a `u16`) can count:
+    /// 65,536 entries stored `len = 0` and the entity silently lost every property
+    /// (#2539).
     pub fn import_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
     ) -> usize {
         let mut nset = 0;
         for (entity_id, mut entries) in data.drain(..) {
+            entries.sort_by_key(|(idx, _)| *idx);
+            entries.dedup_by_key(|(idx, _)| *idx);
+            if entries
+                .last()
+                .is_some_and(|(idx, _)| *idx == ATTRIBUTE_ID_NONE)
+            {
+                entries.pop();
+            }
             if entries.is_empty() {
                 continue;
             }
             nset += entries.len();
-            entries.sort_by_key(|(idx, _)| *idx);
             self.data.set_span(entity_id, &mut entries);
         }
         nset
@@ -1281,15 +1370,27 @@ impl AttributeStore {
         count: u64,
         offset: u64,
     ) {
-        let mut skipped = 0u64;
-        let mut encoded = 0u64;
+        if count == 0 {
+            return;
+        }
+        // Seek straight to the `offset`-th live id. Walking from id 0 and skipping
+        // `offset` live ids one by one made a multi-key save quadratic: each of the
+        // ~N / VKEY_MAX_ENTITY_COUNT virtual keys re-walked every id before its
+        // slice, which for a 117M-edge graph was ~90% of a 90 s SAVE.
+        let Some(start) = nth_live_id(deleted, max_id, offset) else {
+            return;
+        };
 
-        for id in 0..=max_id {
-            if deleted.contains(id) {
-                continue;
-            }
-            if skipped < offset {
-                skipped += 1;
+        // Deleted ids are visited in order alongside the id walk, rather than
+        // probed with `contains` for every id.
+        let mut deleted_iter = deleted.iter();
+        deleted_iter.advance_to(start);
+        let mut next_deleted = deleted_iter.next();
+
+        let mut encoded = 0u64;
+        for id in start..=max_id {
+            if next_deleted == Some(id) {
+                next_deleted = deleted_iter.next();
                 continue;
             }
 
@@ -1311,6 +1412,35 @@ impl AttributeStore {
             }
         }
     }
+}
+
+/// The `n`-th (0-based) id in `0..=max_id` that is not in `deleted`, or `None`
+/// when there are not that many.
+///
+/// The number of live ids in `0..=x` is `x + 1 - deleted.rank(x)`, which is
+/// monotone in `x`, so the answer is the smallest `x` where it exceeds `n` —
+/// found by binary search in `O(log max_id)` rank queries.
+fn nth_live_id(
+    deleted: &RoaringTreemap,
+    max_id: u64,
+    n: u64,
+) -> Option<u64> {
+    // `rank(x) <= x + 1`, so this neither underflows nor overflows in u128.
+    let live_through = |x: u64| u128::from(x) + 1 - u128::from(deleted.rank(x));
+    let n128 = u128::from(n);
+    if live_through(max_id) <= n128 {
+        return None;
+    }
+    let (mut lo, mut hi) = (n, max_id);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if live_through(mid) > n128 {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    Some(lo)
 }
 
 impl Decode<19> for AttributeStore {
@@ -1366,6 +1496,7 @@ impl Decode<19> for AttributeStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::schema::NameList;
 
     fn name(s: &str) -> Arc<String> {
         Arc::new(s.to_string())
@@ -1377,7 +1508,7 @@ mod tests {
     /// across versions — not where the dictionary lives, so pairing the two here keeps
     /// them in their original shape. `Deref` forwards everything that does not need the
     /// dictionary; the handful of methods that do are shadowed below.
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct TestStore {
         names: AttrNameMap,
         store: AttributeStore,
@@ -1385,7 +1516,10 @@ mod tests {
 
     impl TestStore {
         fn new() -> Self {
-            Self::default()
+            Self {
+                names: AttrNameMap::PropertyKeys(NameList::default()),
+                store: AttributeStore::new(),
+            }
         }
 
         /// Clones the dictionary alongside the store, which is what `Graph::new_version`
@@ -1543,7 +1677,7 @@ mod tests {
         let store = store_with(&[(1, &pairs)]);
         assert_eq!(store.entity_memory_usage(1), 4 * 12);
         assert_eq!(store.entity_memory_usage(2), 0);
-        assert!(store.data.block(0).unwrap().heap.is_empty());
+        assert_eq!(store.data.block(0).unwrap().heap, [] as [Value; 0]);
     }
 
     #[test]
@@ -1581,7 +1715,7 @@ mod tests {
         // The old string's heap slot must be recycled, not leaked.
         let block = store.data.block(0).unwrap();
         assert_eq!(block.heap.len(), 1);
-        assert!(block.heap_free.is_empty());
+        assert_eq!(block.heap_free, [] as [u32; 0]);
     }
 
     #[test]
@@ -1825,7 +1959,7 @@ mod tests {
         ops: Vec<Op>,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug, PartialEq)]
     enum Op {
         Unsigned(u64),
         Signed(i64),
@@ -1946,8 +2080,8 @@ mod tests {
             ],
         );
 
-        let mut dict = AttrNameMap::default();
-        dict.insert(Arc::new("a".to_string()));
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
+        dict.insert(&Arc::new("a".to_string()));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
@@ -1966,11 +2100,42 @@ mod tests {
     }
 
     #[test]
+    fn resolved_import_never_overflows_the_slot_length() {
+        // A bulk header with more names than the id space: every id is minted,
+        // then the dictionary refuses the rest (ATTRIBUTE_ID_NONE), which used to
+        // make 65,536 entries and store `len = 0` — every property lost.
+        for extra in [1usize, 2, 70] {
+            let mut entries: Vec<(u16, Value)> = (0..MAX_ATTRIBUTES)
+                .map(|i| (i as u16, Value::Int(i as i64)))
+                .collect();
+            entries.extend((0..extra).map(|i| (ATTRIBUTE_ID_NONE, Value::Int(-(i as i64)))));
+            let mut store = AttributeStore::default();
+            let nset = store.import_attrs_resolved(&mut vec![(3, entries)]);
+            assert_eq!(nset, MAX_ATTRIBUTES, "extra = {extra}");
+            assert_eq!(store.get_all_attrs_by_id(3).count(), MAX_ATTRIBUTES);
+            assert_eq!(store.get_attr_by_idx(3, 0), Some(Value::Int(0)));
+            assert_eq!(
+                store.get_attr_by_idx(3, (MAX_ATTRIBUTES - 1) as u16),
+                Some(Value::Int((MAX_ATTRIBUTES - 1) as i64))
+            );
+        }
+
+        // a repeated id keeps its first value and is stored once
+        let mut store = AttributeStore::default();
+        let entries = vec![(0, Value::Int(1)), (1, Value::Int(2)), (0, Value::Int(3))];
+        assert_eq!(store.import_attrs_resolved(&mut vec![(0, entries)]), 2);
+        assert_eq!(
+            store.get_all_attrs_by_id(0).collect::<Vec<_>>(),
+            vec![(0, Value::Int(1)), (1, Value::Int(2))]
+        );
+    }
+
+    #[test]
     fn minting_stops_at_the_id_space_rather_than_wrapping() {
         // Fill the dictionary to capacity, then ask for one more name.
-        let mut dict = AttrNameMap::default();
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
         for i in 0..MAX_ATTRIBUTES {
-            dict.insert(Arc::new(format!("a{i}")));
+            dict.insert(&Arc::new(format!("a{i}")));
         }
         assert_eq!(dict.len(), MAX_ATTRIBUTES);
 
@@ -1984,7 +2149,7 @@ mod tests {
              GraphContext_FindOrAddAttribute does"
         );
         // What the cap prevents, in the order it would go wrong without it:
-        // `self.vec.len() as u16` is ATTRIBUTE_ID_NONE at 65_535 entries — a real
+        // `len as u16` is ATTRIBUTE_ID_NONE at 65_535 entries — a real
         // name minted onto the reserved sentinel, which `decode_with_count` then
         // rejects on the wire — and 0 at 65_536, aliasing attribute 0 so that reads
         // of a long-established property return the new one's values. The guard
@@ -2000,7 +2165,7 @@ mod tests {
             "the refused name must not be resolvable to any id"
         );
 
-        dict.insert(Arc::clone(&overflow));
+        dict.insert(&overflow);
         assert_eq!(
             dict.len(),
             MAX_ATTRIBUTES,
@@ -2014,8 +2179,8 @@ mod tests {
         let mut r = span_stream(7, &[(0, Value::Int(10)), (5, Value::Int(20))]);
 
         // A dictionary holding a single name: id 0 is real, id 5 resolves to nothing.
-        let mut dict = AttrNameMap::default();
-        dict.insert(Arc::new("a".to_string()));
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
+        dict.insert(&Arc::new("a".to_string()));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
@@ -2039,5 +2204,65 @@ mod tests {
             1,
             "only the in-range attribute should have been stored"
         );
+    }
+
+    /// A store split across virtual keys is encoded one `(count, offset)` slice
+    /// at a time. However the live ids are sliced — deleted ids at the start, in
+    /// runs, at the end, slices wider than what is left — the slices must
+    /// concatenate to exactly the walk over every live id in order.
+    #[test]
+    fn encode_slices_concatenate_to_the_full_walk() {
+        let max_id = 60u64;
+        let deleted: RoaringTreemap = [0u64, 1, 7, 8, 9, 23, 40, 59, 60].into_iter().collect();
+        let mut store = AttributeStore::default();
+        // Every third id has an attribute, so spans and empty entities interleave.
+        let mut data: Vec<(u64, Vec<(u16, Value)>)> = (0..=max_id)
+            .filter(|id| id % 3 == 0 && !deleted.contains(*id))
+            .map(|id| (id, vec![(0, Value::Int(id as i64))]))
+            .collect();
+        store.import_attrs_resolved(&mut data);
+
+        let mut expected = Recorder::default();
+        let live: Vec<u64> = (0..=max_id).filter(|id| !deleted.contains(*id)).collect();
+        for &id in &live {
+            expected.write_unsigned(id);
+            if id % 3 == 0 {
+                expected.write_unsigned(1);
+                expected.write_unsigned(0);
+                Value::Int(id as i64).encode(&mut expected);
+            } else {
+                expected.write_unsigned(0);
+            }
+        }
+
+        let total = live.len() as u64;
+        for slice in [1u64, 2, 5, 13, total, total + 7] {
+            let mut got = Recorder::default();
+            let mut offset = 0;
+            while offset < total {
+                let count = slice.min(total - offset);
+                store.encode_with_range(&mut got, &deleted, max_id, count, offset);
+                offset += count;
+            }
+            assert_eq!(got.ops, expected.ops, "slices of {slice} disagree");
+        }
+
+        // An offset past the last live id writes nothing.
+        let mut past = Recorder::default();
+        store.encode_with_range(&mut past, &deleted, max_id, 5, total);
+        assert_eq!(past.ops, [] as [Op; 0]);
+    }
+
+    #[test]
+    fn nth_live_id_skips_deleted_ids() {
+        let deleted: RoaringTreemap = [0u64, 1, 4, 9, 10].into_iter().collect();
+        let live: Vec<u64> = (0..=10).filter(|id| !deleted.contains(*id)).collect();
+        for (n, &id) in live.iter().enumerate() {
+            assert_eq!(nth_live_id(&deleted, 10, n as u64), Some(id));
+        }
+        assert_eq!(nth_live_id(&deleted, 10, live.len() as u64), None);
+        assert_eq!(nth_live_id(&RoaringTreemap::new(), 0, 0), Some(0));
+        let all: RoaringTreemap = (0u64..=5).collect();
+        assert_eq!(nth_live_id(&all, 5, 0), None);
     }
 }

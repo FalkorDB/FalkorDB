@@ -30,6 +30,7 @@
 //! - **Sort/Skip/Limit**: Order and paginate results
 
 pub mod binder;
+mod hop_order;
 pub mod optimizer;
 pub mod tree;
 
@@ -39,7 +40,11 @@ use std::{
     sync::Arc,
 };
 
-use crate::planner::optimizer::collect_expr_variables;
+use crate::planner::hop_order::{HopShape, self_loops_after_binders};
+use crate::planner::optimizer::collect_expr_scoped_variables;
+use crate::planner::optimizer::collect_single_variable_conjuncts;
+use crate::planner::optimizer::references::ir_references_variable;
+use crate::planner::optimizer::{endpoint_scan_score, walk_scans_to_endpoint};
 use crate::runtime::functions::{FnType, Type, get_functions};
 use crate::runtime::value::Value;
 use crate::tree;
@@ -50,8 +55,8 @@ use crate::{
     entity_type::EntityType,
     index::indexer::{IndexQuery, IndexType},
     parser::ast::{
-        AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode,
-        QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable,
+        AllShortestPaths, BoundQueryIR, ExprIR, NestedPlanRef, QueryExpr, QueryGraph, QueryIR,
+        QueryNode, QueryPath, QueryRelationship, SetItem, SupportAggregation, VarKey, Variable,
     },
     runtime::functions::GraphFn,
     runtime::orderset::OrderSet,
@@ -66,12 +71,12 @@ pub enum IR {
     /// Receives input from parent operator.
     ///
     /// The payload lists the variables the argument rows are known to bind,
-    /// as `(id, scope_id)` pairs: `Some(vars)` means the incoming rows bind
+    /// by their `VarKey`: `Some(vars)` means the incoming rows bind
     /// exactly these variables, `None` means unknown (optimizers must stay
     /// conservative). The scope must be carried — `fresh_var` numbers ids
     /// per scope (`id = scope_vars[scope_id].len()`), so a bare id is
     /// ambiguous across scopes.
-    Argument(Option<Vec<(u32, u32)>>),
+    Argument(Option<Vec<VarKey>>),
     /// OPTIONAL MATCH - returns nulls if no match
     Optional(Vec<Variable>),
     /// CALL procedure with arguments, yielding outputs
@@ -294,6 +299,11 @@ pub enum IR {
     },
     /// Remove duplicate rows
     Distinct,
+    /// Root of a plan whose expressions hold nested plans
+    /// (`ExprIR::NestedPlan`). Child 0 is the query's plan and runs as if it
+    /// were the root; child `1 + id` is nested plan `id`, which the evaluator
+    /// runs on demand.
+    NestedPlans,
     /// UNION of multiple sub-query branches.
     /// Each child is a fully-planned branch.
     Union,
@@ -331,135 +341,6 @@ pub fn subtree_contains(
     plan.node(idx)
         .walk_with(&mut Traversal.bfs().over_nodes())
         .any(|n| predicate(n.data()))
-}
-
-/// Returns true if a QueryExpr tree contains any non-deterministic function call.
-fn expr_has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
-    expr.root()
-        .walk_with(&mut Traversal.bfs().over_nodes())
-        .any(|n| matches!(n.data(), ExprIR::FuncInvocation(func) if func.non_deterministic))
-}
-
-/// Returns true if a SetItem references any non-deterministic expression.
-fn set_item_has_non_deterministic(item: &SetItem<Arc<String>, Variable>) -> bool {
-    match item {
-        SetItem::Attribute { target, value, .. } => {
-            expr_has_non_deterministic(target) || expr_has_non_deterministic(value)
-        }
-        SetItem::Label { .. } => false,
-    }
-}
-
-/// Returns true if a QueryGraph (CREATE/MERGE pattern) contains non-deterministic expressions.
-fn query_graph_has_non_deterministic(qg: &QueryGraph<Arc<String>, Arc<String>, Variable>) -> bool {
-    for node in qg.nodes() {
-        if expr_has_non_deterministic(&node.attrs) {
-            return true;
-        }
-    }
-    for rel in qg.relationships() {
-        if expr_has_non_deterministic(&rel.attrs) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Returns true if an IndexQuery tree contains any non-deterministic function call.
-fn index_query_has_non_deterministic(query: &IndexQuery<QueryExpr<Variable>>) -> bool {
-    match query {
-        IndexQuery::Range { min, max, .. } => {
-            min.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
-                || max.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
-        }
-        IndexQuery::And(queries) | IndexQuery::Or(queries) => {
-            queries.iter().any(index_query_has_non_deterministic)
-        }
-        IndexQuery::Point { point, radius, .. } => {
-            expr_has_non_deterministic(point) || expr_has_non_deterministic(radius)
-        }
-        IndexQuery::InList { list, .. } => expr_has_non_deterministic(list),
-        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
-            expr_has_non_deterministic(value)
-        }
-    }
-}
-
-/// Returns true if the execution plan contains any non-deterministic function call.
-#[must_use]
-pub fn plan_is_non_deterministic(plan: &DynTree<IR>) -> bool {
-    plan.root()
-        .walk_with(&mut Traversal.bfs().over_nodes())
-        .any(|node| match node.data() {
-            IR::Create(qg) => query_graph_has_non_deterministic(qg),
-            IR::Merge {
-                pattern,
-                on_create,
-                on_match,
-            } => {
-                query_graph_has_non_deterministic(pattern)
-                    || on_create.iter().any(set_item_has_non_deterministic)
-                    || on_match.iter().any(set_item_has_non_deterministic)
-            }
-            IR::Set(items) => items.iter().any(set_item_has_non_deterministic),
-            IR::Remove(exprs) | IR::Delete { exprs, .. } => {
-                exprs.iter().any(|e| expr_has_non_deterministic(e))
-            }
-            IR::Unwind { expr, .. }
-            | IR::Filter(expr)
-            | IR::Skip(expr)
-            | IR::Limit(expr)
-            | IR::ForEach { list: expr, .. } => expr_has_non_deterministic(expr),
-            IR::Sort(exprs) => exprs.iter().any(|(e, _)| expr_has_non_deterministic(e)),
-            IR::Project { exprs, .. } => exprs.iter().any(|(_, e)| expr_has_non_deterministic(e)),
-            IR::Aggregate {
-                keys, aggregations, ..
-            } => {
-                keys.iter().any(|(_, e)| expr_has_non_deterministic(e))
-                    || aggregations
-                        .iter()
-                        .any(|(_, e)| expr_has_non_deterministic(e))
-            }
-            IR::ProcedureCall { args, .. } => args.iter().any(|e| expr_has_non_deterministic(e)),
-            IR::LoadCsv {
-                file_path,
-                delimiter,
-                ..
-            } => expr_has_non_deterministic(file_path) || expr_has_non_deterministic(delimiter),
-            IR::ValueHashJoin { lhs_exp, rhs_exp } => {
-                expr_has_non_deterministic(lhs_exp) || expr_has_non_deterministic(rhs_exp)
-            }
-            IR::NodeByIndexScan { query, .. } | IR::EdgeByIndexScan { query, .. } => {
-                index_query_has_non_deterministic(query)
-            }
-            IR::NodeByFulltextScan { label, query, .. }
-            | IR::EdgeByFulltextScan { label, query, .. } => {
-                expr_has_non_deterministic(label) || expr_has_non_deterministic(query)
-            }
-            IR::NodeByVectorScan {
-                label,
-                attr,
-                k,
-                vector,
-                ..
-            }
-            | IR::EdgeByVectorScan {
-                label,
-                attr,
-                k,
-                vector,
-                ..
-            } => {
-                expr_has_non_deterministic(label)
-                    || expr_has_non_deterministic(attr)
-                    || expr_has_non_deterministic(k)
-                    || expr_has_non_deterministic(vector)
-            }
-            IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => {
-                filter.iter().any(|(e, _)| expr_has_non_deterministic(e))
-            }
-            _ => false,
-        })
 }
 
 /// Formats a relationship for variable-length traverse display, e.g.
@@ -524,10 +405,7 @@ fn fmt_rel_with_labels_dir(
     let from_str = rel.from.alias.to_string();
     let to_str = fmt_node(&rel.to);
 
-    let alias_str = rel.alias.to_string();
-    let is_anon = alias_str.starts_with("_anon");
-
-    if is_anon {
+    if rel.alias.is_unnamed() {
         format!("({from_str}){left_arrow}-{right_arrow}({to_str})")
     } else if rel.types.is_empty() {
         let alias = &rel.alias;
@@ -648,6 +526,7 @@ impl Display for IR {
             Self::Commit => write!(f, "Commit"),
             Self::ForEach { var, .. } => write!(f, "ForEach | {var}"),
             Self::Union => write!(f, "Union"),
+            Self::NestedPlans => write!(f, "Nested Plans"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
                 write!(f, "Create Index | :{label}({attrs:?})")
@@ -686,11 +565,311 @@ pub(super) fn inline_attrs_to_filter(
 
     if filters.is_empty() {
         None
-    } else if filters.len() == 1 {
-        Some(filters.pop().unwrap())
     } else {
-        Some(tree!(ExprIR::And; filters))
+        Some(ExprIR::and_of(filters))
     }
+}
+
+/// Splits an inline-attribute map into the entries that may be checked where
+/// `alias` is matched and the rest, returned as an equality filter.
+///
+/// An entry stays inline unless its value reads a variable in `pending`, the
+/// variables this pattern binds that are not bound when `alias` is matched
+/// (`local` lists the ones that are). The planner orders scans and traversals
+/// freely, so only the variables bound before the pattern, the entity itself
+/// and, for a relationship, its endpoints are known to be bound there.
+fn split_inline_attrs(
+    alias: &Variable,
+    attrs: &QueryExpr<Variable>,
+    pending: &HashSet<VarKey>,
+    local: &[&Variable],
+    lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+    seen: &mut HashSet<(VarKey, usize)>,
+) -> Option<QueryExpr<Variable>> {
+    let reads_pending = |entry: &DynNode<ExprIR<Variable>>| {
+        entry.walk::<Bfs>().any(|data| {
+            matches!(
+                data,
+                ExprIR::Variable(v) if pending.contains(&v.key())
+                    && !local.iter().any(|l| l.key() == v.key())
+            )
+        })
+    };
+    let moves: Vec<bool> = attrs
+        .root()
+        .children()
+        .map(|entry| reads_pending(&entry))
+        .collect();
+    if !moves.contains(&true) {
+        return None;
+    }
+    let mut kept = tree!(ExprIR::Map);
+    let mut moved = tree!(ExprIR::Map);
+    for (entry, moves) in attrs.root().children().zip(moves) {
+        let target = if moves { &mut moved } else { &mut kept };
+        target.root_mut().push_child_tree(entry.as_cloned_subtree());
+    }
+    // The binder clones an endpoint for each occurrence that writes its own
+    // attrs, but the clones share the map: lift each map's filter once, as
+    // `lower_inline_attrs` does, or a non-deterministic predicate runs twice.
+    if seen.insert((alias.key(), Arc::as_ptr(attrs) as usize)) {
+        lifted.extend(inline_attrs_to_filter(alias, &moved));
+    }
+    Some(Arc::new(kept))
+}
+
+/// Whether an inline-attribute map of `pattern` reads a variable in `visited`.
+fn pattern_attrs_read_visited(
+    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    visited: &HashSet<VarKey>,
+) -> bool {
+    let reads = |attrs: &QueryExpr<Variable>| {
+        attrs
+            .root()
+            .walk::<Bfs>()
+            .any(|data| matches!(data, ExprIR::Variable(v) if visited.contains(&v.key())))
+    };
+    pattern.nodes().iter().any(|n| reads(&n.attrs))
+        || pattern.relationships().iter().any(|r| reads(&r.attrs))
+}
+
+/// Takes the inline-attribute entries that read another variable of the same
+/// pattern out of `pattern` and appends them to `lifted` as filters.
+///
+/// `(b), (c {v: b.v})` (one clause, two components) is planned as separate
+/// components joined by a Cartesian product, and `(a {v: b.v})-->(b)` may be scanned from
+/// either end. Checked inline, `c.v = b.v` would run where `b` is not bound
+/// yet, and no row would pass. Applied above the whole pattern, like `WHERE`,
+/// it sees every variable, and the optimizer can still push it down or turn
+/// it into a hash join. Variable-length and shortest-path relationships keep
+/// their attrs: those are per-edge predicates, not a property of one entity.
+///
+/// Returns `None` when no entry has to move.
+fn lift_cross_entity_attrs(
+    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    visited: &HashSet<VarKey>,
+    lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+    lifted_rels: &mut HashSet<VarKey>,
+) -> Option<QueryGraph<Arc<String>, Arc<String>, Variable>> {
+    let pending: HashSet<VarKey> = pattern
+        .variables()
+        .map(|v| v.key())
+        .filter(|key| !visited.contains(key))
+        .collect();
+    let before = lifted.len();
+    // The same node is shared by `nodes()` and the endpoints of its
+    // relationships; rewrite each occurrence once so its filter is not
+    // emitted twice.
+    let mut rewritten: HashMap<*const QueryNode<Arc<String>, Variable>, _> = HashMap::new();
+    let mut seen: HashSet<(VarKey, usize)> = HashSet::new();
+    let mut rewrite_node = |node: &Arc<QueryNode<Arc<String>, Variable>>,
+                            lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+                            seen: &mut HashSet<(VarKey, usize)>| {
+        rewritten
+            .entry(Arc::as_ptr(node))
+            .or_insert_with(|| {
+                split_inline_attrs(
+                    &node.alias,
+                    &node.attrs,
+                    &pending,
+                    &[&node.alias],
+                    lifted,
+                    seen,
+                )
+                .map_or_else(
+                    || node.clone(),
+                    |attrs| {
+                        Arc::new(QueryNode::new(
+                            node.alias.clone(),
+                            node.labels.clone(),
+                            attrs,
+                        ))
+                    },
+                )
+            })
+            .clone()
+    };
+    // Like the planner, lift an endpoint's attrs from the relationship that
+    // carries it, and from `nodes()` only a node no relationship touches: the
+    // binder gives the relationship's endpoint its own copy of the map, and
+    // reading both would apply one predicate twice.
+    let endpoints: HashSet<VarKey> = pattern
+        .relationships()
+        .iter()
+        .flat_map(|rel| [&rel.from, &rel.to])
+        .map(|n| n.alias.key())
+        .collect();
+    let mut hops = Vec::new();
+    for rel in pattern.relationships() {
+        let from = rewrite_node(&rel.from, lifted, &mut seen);
+        let to = rewrite_node(&rel.to, lifted, &mut seen);
+        let attrs = if rel.min_hops.is_none() && rel.all_shortest_paths == AllShortestPaths::No {
+            split_inline_attrs(
+                &rel.alias,
+                &rel.attrs,
+                &pending,
+                &[&rel.alias, &rel.from.alias, &rel.to.alias],
+                lifted,
+                &mut seen,
+            )
+        } else {
+            None
+        };
+        if attrs.is_some() {
+            lifted_rels.insert(rel.alias.key());
+        }
+        hops.push((from, to, attrs));
+    }
+    let mut res = QueryGraph::default();
+    let mut dropped = Vec::new();
+    for node in pattern.nodes() {
+        let target = if endpoints.contains(&node.alias.key()) {
+            &mut dropped
+        } else {
+            &mut *lifted
+        };
+        res.add_node(rewrite_node(node, target, &mut seen));
+    }
+    for (rel, (from, to, attrs)) in pattern.relationships().iter().zip(hops) {
+        let mut new_rel = QueryRelationship::new(
+            rel.alias.clone(),
+            rel.types.clone(),
+            attrs.unwrap_or_else(|| rel.attrs.clone()),
+            from,
+            to,
+            rel.bidirectional,
+            rel.min_hops,
+            rel.max_hops,
+        );
+        new_rel.all_shortest_paths = rel.all_shortest_paths;
+        res.add_relationship(Arc::new(new_rel));
+    }
+    for path in pattern.paths() {
+        res.add_path(path.clone());
+    }
+    (lifted.len() > before).then_some(res)
+}
+
+/// Lowers a MATCH pattern element's inline attributes to a predicate, at most
+/// once per (alias, attrs map) pair.
+///
+/// The planner reaches the same pattern element from several branches — a
+/// relationship endpoint is visible as `rel.from`/`rel.to` and again in the
+/// component's node list — and every branch used to lower it independently.
+/// Two copies of the same predicate survive as `And(p, p)` once
+/// `push_filters_down` merges the stacked filters, and that shape is not
+/// servable by an index, so the query silently drops to a scan.
+///
+/// Identity, not equality, is the right question here: the binder builds a
+/// fresh enriched clone for each occurrence that writes its own attrs
+/// (`binder.rs`, the `has_extra_attrs` paths), so `(a {x:1})-->(c), (a {y:2})-->(d)`
+/// legitimately carries two distinct maps for one alias and both must be
+/// lowered. Reaching one map twice must not.
+///
+/// Keying on the address is sound because every attrs map reachable here is
+/// owned by the `&QueryGraph` being planned — nodes and relationships hold
+/// their `Arc`s for the whole call — so none can be freed and its address
+/// reused while the set is alive.
+///
+/// Only ever call this for predicate positions. Inline attrs on a CREATE or
+/// MERGE pattern are a *constructor* — `runtime/ops/create.rs` builds the
+/// property template from them and `runtime/ops/merge.rs` builds the merge
+/// lookup hash key — and those patterns never pass through here.
+fn lower_inline_attrs(
+    lowered: &mut HashSet<(VarKey, usize)>,
+    alias: &Variable,
+    attrs: &QueryExpr<Variable>,
+) -> Option<DynTree<ExprIR<Variable>>> {
+    if !lowered.insert((alias.key(), Arc::as_ptr(attrs) as usize)) {
+        return None;
+    }
+    inline_attrs_to_filter(alias, attrs)
+}
+
+/// Returns `node` with its inline attributes removed, for embedding in a
+/// match-side IR operator once [`lower_inline_attrs`] has turned them into a
+/// `Filter`.
+///
+/// The predicate then has exactly one representation in the plan. Leaving a
+/// second copy on the pattern invites every pass that touches it to re-derive
+/// the filter — which is how the plan ended up with `And(p, p)` — and lets the
+/// two disagree.
+///
+/// Returns the same `Arc` when there is nothing to strip, so the common case
+/// allocates nothing.
+///
+/// Never call this on a CREATE or MERGE pattern: there `attrs` is the property
+/// template for the entity being built, not a predicate.
+fn strip_node_attrs(
+    node: &Arc<QueryNode<Arc<String>, Variable>>
+) -> Arc<QueryNode<Arc<String>, Variable>> {
+    if node.attrs.root().num_children() == 0 {
+        return node.clone();
+    }
+    Arc::new(QueryNode::new(
+        node.alias.clone(),
+        node.labels.clone(),
+        Arc::new(tree!(ExprIR::Map)),
+    ))
+}
+
+/// Returns `rel` with its own and both endpoints' inline attributes removed.
+/// See [`strip_node_attrs`].
+///
+/// Every operator that can carry an edge pattern now lowers its attrs:
+/// `CondTraverse` and `ExpandInto` into a `Filter` above themselves (with
+/// the operator told not to collapse parallel edges), and
+/// `CondVarLenTraverse` and `AllShortestPaths` prune per edge during the walk.
+/// Which of those the runtime does is decided when operators are built.
+fn strip_rel_attrs(
+    rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
+) -> Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+    let from = strip_node_attrs(&rel.from);
+    let to = strip_node_attrs(&rel.to);
+    if rel.attrs.root().num_children() == 0
+        && Arc::ptr_eq(&from, &rel.from)
+        && Arc::ptr_eq(&to, &rel.to)
+    {
+        return rel.clone();
+    }
+    let mut stripped = QueryRelationship::new(
+        rel.alias.clone(),
+        rel.types.clone(),
+        Arc::new(tree!(ExprIR::Map)),
+        from,
+        to,
+        rel.bidirectional,
+        rel.min_hops,
+        rel.max_hops,
+    );
+    stripped.all_shortest_paths = rel.all_shortest_paths;
+    Arc::new(stripped)
+}
+
+/// Like [`strip_rel_attrs`], but keeps the edge's own attrs, for the
+/// var-length walks: they prune on those per edge, which a `Filter` above the
+/// walk cannot express (it would test an assembled path). Only the endpoints'
+/// attrs, which are lowered to Filters, are stripped.
+fn strip_endpoint_attrs(
+    rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
+) -> Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+    let from = strip_node_attrs(&rel.from);
+    let to = strip_node_attrs(&rel.to);
+    if Arc::ptr_eq(&from, &rel.from) && Arc::ptr_eq(&to, &rel.to) {
+        return rel.clone();
+    }
+    let mut stripped = QueryRelationship::new(
+        rel.alias.clone(),
+        rel.types.clone(),
+        rel.attrs.clone(),
+        from,
+        to,
+        rel.bidirectional,
+        rel.min_hops,
+        rel.max_hops,
+    );
+    stripped.all_shortest_paths = rel.all_shortest_paths;
+    Arc::new(stripped)
 }
 
 /// Build a `hasLabels(var, [label1, label2, ...])` filter expression.
@@ -719,10 +898,10 @@ fn has_labels_filter(
 ///   during pattern-predicate decomposition without collisions.
 #[derive(Default)]
 pub struct Planner {
-    /// Variable (id, scope_id) pairs that are already bound in the current
+    /// Keys of the variables that are already bound in the current
     /// execution stream.  Tracking scope alongside id prevents inner-scope
     /// variables from shadowing outer-scope variables with the same id.
-    visited: HashSet<(u32, u32)>,
+    visited: HashSet<VarKey>,
     /// Binder-assigned variables grouped by scope ID.
     /// Used to derive fresh variable IDs within each scope.
     scope_vars: Vec<Vec<Variable>>,
@@ -731,7 +910,19 @@ pub struct Planner {
     /// an already-bound variable that are missing from this set (e.g.
     /// clause-local labels from an OPTIONAL MATCH on a bound alias) must be
     /// re-verified with a hasLabels filter.
-    verified_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    verified_labels: HashMap<VarKey, OrderSet<Arc<String>>>,
+    /// Plans for the `ExprIR::NestedPlan`s minted so far, by id; `finish`
+    /// hangs them under the plan's root.
+    nested_plans: Vec<DynTree<IR>>,
+    /// Variables bound by the list comprehensions, quantifiers and `reduce`s
+    /// enclosing the expression `extract_pattern_comprehensions` is visiting,
+    /// innermost last. A pattern comprehension reading one of them cannot be
+    /// hoisted out of the loop and becomes a nested plan instead.
+    loop_vars: Vec<Variable>,
+    /// Pattern variables of the pattern comprehensions enclosing that
+    /// expression. A nested plan inside one runs on the enclosing
+    /// comprehension's rows, where they are bound.
+    pattern_vars: Vec<Variable>,
 }
 
 /// A pattern comprehension (or inline pattern) hoisted out of a projection
@@ -751,7 +942,7 @@ struct ExtractedComprehension {
     /// Comprehensions nested within `where_filter` / `result_expr`, which may
     /// reference variables bound by `graph` and so must be applied inside this
     /// comprehension's sub-plan.
-    nested: Vec<ExtractedComprehension>,
+    nested: Vec<Self>,
 }
 
 /// What `extract_pattern_comprehensions` does with a bare existential
@@ -785,12 +976,7 @@ impl PatternMode {
         self,
         parent: &ExprIR<Variable>,
     ) -> Self {
-        if self == Self::SemiApply
-            && !matches!(
-                parent,
-                ExprIR::And | ExprIR::Or | ExprIR::Not | ExprIR::Paren
-            )
-        {
+        if self == Self::SemiApply && !matches!(parent, ExprIR::And | ExprIR::Or | ExprIR::Not) {
             Self::Exists
         } else {
             self
@@ -805,7 +991,27 @@ impl Planner {
             visited: HashSet::new(),
             scope_vars,
             verified_labels: HashMap::new(),
+            nested_plans: vec![],
+            loop_vars: vec![],
+            pattern_vars: vec![],
         }
+    }
+
+    /// Complete a plan built by `plan`: when its expressions hold nested
+    /// plans, root it at `IR::NestedPlans` with the query's plan first and
+    /// each nested plan after it, in id order.
+    pub fn finish(
+        &mut self,
+        plan: DynTree<IR>,
+    ) -> DynTree<IR> {
+        if self.nested_plans.is_empty() {
+            return plan;
+        }
+        let mut root = tree!(IR::NestedPlans, plan);
+        for nested in std::mem::take(&mut self.nested_plans) {
+            root.root_mut().push_child_tree(nested);
+        }
+        root
     }
 
     /// Mint a fresh variable with an ID unique within the given scope.
@@ -816,7 +1022,7 @@ impl Planner {
     ) -> Variable {
         let id = self.scope_vars[scope_id as usize].len() as u32;
         let var = Variable {
-            name: None,
+            alias: None,
             id,
             scope_id,
             ty,
@@ -838,7 +1044,7 @@ impl Planner {
     /// runtime creates an inline Argument for the input.
     fn add_argument_to_leaves(
         tree: &mut DynTree<IR>,
-        bound_vars: Option<Vec<(u32, u32)>>,
+        bound_vars: Option<&[VarKey]>,
     ) {
         let mut leaves = Vec::new();
 
@@ -868,7 +1074,7 @@ impl Planner {
         // Add Argument node as a child to each leaf.
         for leaf_idx in leaves {
             tree.node_mut(leaf_idx)
-                .push_child(IR::Argument(bound_vars.clone()));
+                .push_child(IR::Argument(bound_vars.map(<[_]>::to_vec)));
         }
     }
 
@@ -931,20 +1137,47 @@ impl Planner {
         matches!(tree.node(idx).data(), IR::Apply) && tree.node(idx).num_children() > 1
     }
 
-    /// Walk past the Apply chain a `ForEach` or `Unwind` carries for pattern
-    /// comprehensions in its list expression, so the preceding clause is
-    /// stitched below the sub-plans rather than as an extra child.
+    /// Walk past the Apply chain a clause operator (`ForEach`, `Unwind`,
+    /// `Set`, `Remove`, `Delete`, `LoadCsv`, a procedure call or index query) carries
+    /// for pattern comprehensions in its expressions, so the
+    /// preceding clause is stitched below the sub-plans rather than as an
+    /// extra child.
     ///
     /// A freshly planned `ForEach` holds its body as the last child, so only a
-    /// second child can be the chain; a freshly planned `Unwind` has no child
-    /// at all, so any child it has is the chain.
-    fn descend_list_expr_applies(
+    /// second child can be the chain; the others are planned with no child at
+    /// all, so any child they have is the chain.
+    fn descend_clause_expr_applies(
+        tree: &DynTree<IR>,
+        mut idx: NodeIdx<Dyn<IR>>,
+    ) -> NodeIdx<Dyn<IR>> {
+        loop {
+            let next = Self::descend_one_clause_expr_chain(tree, idx);
+            // An Apply still waiting for its input is where stitching goes.
+            // A chain that already has one sits on the Set holding a SET's
+            // earlier items (see `QueryIR::Set`), whose input slot is below.
+            if next == idx || matches!(tree.node(next).data(), IR::Apply) {
+                return next;
+            }
+            idx = next;
+        }
+    }
+
+    fn descend_one_clause_expr_chain(
         tree: &DynTree<IR>,
         mut idx: NodeIdx<Dyn<IR>>,
     ) -> NodeIdx<Dyn<IR>> {
         let min_children = match tree.node(idx).data() {
             IR::ForEach { .. } => 2,
-            IR::Unwind { .. } => 1,
+            IR::Unwind { .. }
+            | IR::Set(_)
+            | IR::Remove(_)
+            | IR::Delete { .. }
+            | IR::LoadCsv { .. }
+            | IR::ProcedureCall { .. }
+            | IR::NodeByFulltextScan { .. }
+            | IR::EdgeByFulltextScan { .. }
+            | IR::NodeByVectorScan { .. }
+            | IR::EdgeByVectorScan { .. } => 1,
             _ => return idx,
         };
         if tree.node(idx).num_children() >= min_children
@@ -958,6 +1191,37 @@ impl Planner {
         idx
     }
 
+    /// Feed `input` into an Apply chain built by
+    /// `extract_clause_expr_comprehensions`, as child(0) of its innermost,
+    /// still single-child Apply.
+    fn stitch_below_apply_chain(
+        mut chain: DynTree<IR>,
+        input: DynTree<IR>,
+    ) -> DynTree<IR> {
+        let mut idx = chain.root().idx();
+        while Self::is_saturated_apply(&chain, idx) {
+            idx = chain.node(idx).child(0).idx();
+        }
+        chain
+            .node_mut(idx)
+            .child_mut(0)
+            .push_sibling_tree(Side::Left, input);
+        chain
+    }
+
+    /// The variables an `Argument` tapping the current row binds: everything
+    /// visited so far. Read it *before* planning the correlated sub-plan,
+    /// which marks the pattern's own variables visited too.
+    ///
+    /// Passing this to [`Self::add_argument_to_leaves`] instead of `None`
+    /// lets `select_scan_node` see that an endpoint is already bound by the
+    /// outer row and start the traversal there. An opaque `Argument(None)`
+    /// hides that, so a labelled far endpoint would outscore the bound one
+    /// and the sub-plan would walk every relationship into that label.
+    fn argument_vars(&self) -> Vec<VarKey> {
+        self.visited.iter().copied().collect()
+    }
+
     /// Build a pattern sub-plan for a graph, saving and restoring visited state.
     fn build_pattern_sub_plan(
         &mut self,
@@ -968,7 +1232,7 @@ impl Planner {
         let mut sub_plan = self.plan_match(graph, None);
         self.visited = saved;
         self.verified_labels = saved_verified;
-        Self::add_argument_to_leaves(&mut sub_plan, None);
+        Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
         sub_plan
     }
 
@@ -997,12 +1261,17 @@ impl Planner {
                 let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
 
                 let mut nested = Vec::new();
+                let outer_pattern_vars = self.pattern_vars.len();
+                self.pattern_vars.extend(graph.variables());
+                // The comprehension's own WHERE is a boolean per match and
+                // its result a value, whatever context the comprehension
+                // itself sits in.
                 let where_tree = {
                     let t = self.extract_pattern_comprehensions(
                         &node.child(0),
                         scope_id,
                         &mut nested,
-                        mode,
+                        PatternMode::Exists,
                     );
                     if matches!(t.root().data(), ExprIR::Constant(Value::Bool(true))) {
                         None
@@ -1014,18 +1283,19 @@ impl Planner {
                     &node.child(1),
                     scope_id,
                     &mut nested,
-                    mode,
+                    PatternMode::Collect,
                 ));
+                self.pattern_vars.truncate(outer_pattern_vars);
 
-                extracted.push(ExtractedComprehension {
-                    var: var.clone(),
+                let comprehension = ExtractedComprehension {
+                    var,
                     graph: graph.as_ref().clone(),
                     where_filter: where_tree,
                     result_expr: result_tree,
                     paths: vec![],
                     nested,
-                });
-                DynTree::new(ExprIR::Variable(var))
+                };
+                self.hoist_or_nest(node, comprehension, extracted)
             }
             ExprIR::Pattern(graph) if mode != PatternMode::SemiApply => {
                 let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
@@ -1046,40 +1316,151 @@ impl Planner {
                 }
                 let query_path = Arc::new(QueryPath::new(path_var.clone(), path_component_vars));
 
-                extracted.push(ExtractedComprehension {
-                    var: var.clone(),
+                let comprehension = ExtractedComprehension {
+                    var,
                     graph: graph.as_ref().clone(),
                     where_filter: None,
                     result_expr: Arc::new(DynTree::new(ExprIR::Variable(path_var))),
                     paths: vec![query_path],
                     nested: vec![],
-                });
+                };
+                let list = self.hoist_or_nest(node, comprehension, extracted);
                 if mode == PatternMode::Exists {
                     // The pattern was a predicate, so hand the caller a
                     // boolean rather than the list of matched paths.
                     let mut length = DynTree::new(ExprIR::Length);
-                    length
-                        .root_mut()
-                        .push_child_tree(DynTree::new(ExprIR::Variable(var)));
+                    length.root_mut().push_child_tree(list);
                     let mut gt = DynTree::new(ExprIR::Gt);
                     gt.root_mut().push_child_tree(length);
                     gt.root_mut().push_child(ExprIR::Constant(Value::Int(0)));
                     gt
                 } else {
-                    DynTree::new(ExprIR::Variable(var))
+                    list
                 }
             }
             _ => {
                 let child_mode = mode.descend(node.data());
+                // The loop variables this node binds, and the child from
+                // which on they are in scope (the list itself is not).
+                let (bound, first_scoped): (Vec<Variable>, usize) = match node.data() {
+                    ExprIR::ListComprehension(var) | ExprIR::Quantifier { var, .. } => {
+                        (vec![var.clone()], 1)
+                    }
+                    ExprIR::Reduce(vars) => {
+                        (vec![vars.accumulator.clone(), vars.iterator.clone()], 2)
+                    }
+                    _ => (vec![], usize::MAX),
+                };
                 let mut new_tree = DynTree::new(node.data().clone());
-                for child in node.children() {
+                for (i, child) in node.children().enumerate() {
+                    let outer_len = self.loop_vars.len();
+                    if i >= first_scoped {
+                        self.loop_vars.extend(bound.iter().cloned());
+                    }
+                    // A list comprehension's WHERE and a quantifier's
+                    // predicate are booleans per element: a bare pattern
+                    // there is an existence test, never a list of paths.
+                    let child_mode = if i == 1
+                        && matches!(
+                            node.data(),
+                            ExprIR::ListComprehension(_) | ExprIR::Quantifier { .. }
+                        ) {
+                        PatternMode::Exists
+                    } else {
+                        child_mode
+                    };
                     let child_tree = self
                         .extract_pattern_comprehensions(&child, scope_id, extracted, child_mode);
+                    self.loop_vars.truncate(outer_len);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
             }
         }
+    }
+
+    /// Stand-in for an extracted pattern comprehension: the variable its
+    /// collected list is bound to, with the comprehension queued in
+    /// `extracted` for its Apply sub-plan. When it reads a variable bound by
+    /// an enclosing loop (see `loop_vars`) it cannot run before the loop, so
+    /// it becomes a nested plan the evaluator runs for each iteration instead,
+    /// as Neo4j's nested plan expressions do.
+    fn hoist_or_nest(
+        &mut self,
+        node: &DynNode<ExprIR<Variable>>,
+        comprehension: ExtractedComprehension,
+        extracted: &mut Vec<ExtractedComprehension>,
+    ) -> DynTree<ExprIR<Variable>> {
+        let is_loop_var =
+            |v: &Variable, loop_vars: &[Variable]| loop_vars.iter().any(|l| l.key() == v.key());
+        let reads = Self::pattern_expr_variables(node);
+        if !reads.iter().any(|v| is_loop_var(v, &self.loop_vars)) {
+            let var = comprehension.var.clone();
+            extracted.push(comprehension);
+            return DynTree::new(ExprIR::Variable(var));
+        }
+
+        // The loop variables, and the pattern variables of any comprehension
+        // it sits in, arrive in the argument row, bound like any variable of
+        // the outer stream.
+        let saved = self.visited.clone();
+        for v in self.loop_vars.iter().chain(&self.pattern_vars) {
+            self.visited.insert(v.key());
+        }
+        let plan = self.build_pattern_comprehension_plan(&comprehension);
+        // What the nested plan reads from the row: variables bound outside
+        // its own pattern. Listed as children so passes that ask what an
+        // expression uses see them.
+        let free: Vec<Variable> = reads
+            .into_iter()
+            .filter(|v| self.visited.contains(&v.key()))
+            .collect();
+        self.visited = saved;
+
+        let id = self.nested_plans.len() as u32;
+        self.nested_plans.push(plan);
+        let mut res = DynTree::new(ExprIR::NestedPlan(Box::new(NestedPlanRef {
+            id,
+            result: comprehension.var,
+        })));
+        for v in free {
+            res.root_mut().push_child(ExprIR::Variable(v));
+        }
+        res
+    }
+
+    /// Every variable a pattern comprehension or existential pattern
+    /// mentions, in its pattern, predicate or result, nested ones included;
+    /// each once.
+    fn pattern_expr_variables(node: &DynNode<ExprIR<Variable>>) -> Vec<Variable> {
+        let mut vars: Vec<Variable> = vec![];
+        let mut add = |v: &Variable| {
+            if !vars.iter().any(|w| w.key() == v.key()) {
+                vars.push(v.clone());
+            }
+        };
+        let mut stack = vec![node.clone()];
+        while let Some(n) = stack.pop() {
+            match n.data() {
+                ExprIR::Variable(v) => add(v),
+                ExprIR::PatternComprehension(graph) | ExprIR::Pattern(graph) => {
+                    for v in graph.variables() {
+                        add(&v);
+                    }
+                    for rel in graph.relationships() {
+                        for attrs in [&rel.attrs, &rel.from.attrs, &rel.to.attrs] {
+                            stack.push(attrs.root());
+                        }
+                    }
+                    for n in graph.nodes() {
+                        stack.push(n.attrs.root());
+                    }
+                }
+                _ => {}
+            }
+            stack.extend(n.children());
+        }
+        vars
     }
 
     /// Extract the pattern comprehensions of a clause's list expression
@@ -1089,37 +1470,68 @@ impl Planner {
     /// variable holding its collected list — and an Apply chain to hang below
     /// the clause's operator.  The innermost Apply is deliberately left
     /// single-child: `plan_query` stitching inserts the preceding clause there
-    /// as child(0) (see `descend_list_expr_applies`).
+    /// as child(0) (see `descend_clause_expr_applies`).
     fn extract_list_expr_comprehensions(
         &mut self,
-        expr: QueryExpr<Variable>,
+        mut expr: QueryExpr<Variable>,
         scope_id: u32,
     ) -> (QueryExpr<Variable>, Option<DynTree<IR>>) {
-        if !Self::has_pattern_expr(&expr.root()) {
-            return (expr, None);
-        }
+        let chain = self.extract_clause_expr_comprehensions([&mut expr], Some(scope_id));
+        (expr, chain)
+    }
 
+    /// Extract the pattern comprehensions of a clause's expressions into
+    /// their own sub-plans, rewriting each expression in place to reference
+    /// the variable holding the collected list.
+    ///
+    /// Returns the Apply chain to hang below the clause's operator, left
+    /// single-child for stitching as in `extract_list_expr_comprehensions`.
+    /// With no `scope_id`, the fresh variables go in the scope of the
+    /// pattern's first variable, as in `collect_patterns_and_rebuild`.
+    fn extract_clause_expr_comprehensions<'a>(
+        &mut self,
+        exprs: impl IntoIterator<Item = &'a mut QueryExpr<Variable>>,
+        scope_id: Option<u32>,
+    ) -> Option<DynTree<IR>> {
         let mut extracted = Vec::new();
-        let rebuilt = self.extract_pattern_comprehensions(
-            &expr.root(),
-            scope_id,
-            &mut extracted,
-            PatternMode::Collect,
-        );
+        for expr in exprs {
+            let Some(pattern_scope) = Self::pattern_expr_scope(&expr.root()) else {
+                continue;
+            };
+            let rebuilt = self.extract_pattern_comprehensions(
+                &expr.root(),
+                scope_id.unwrap_or(pattern_scope),
+                &mut extracted,
+                PatternMode::Collect,
+            );
+            *expr = Arc::new(rebuilt);
+        }
         // Build the innermost Apply first (last comprehension), then wrap
         // outward, so the chain reads Apply(Apply(input, sub2), sub1).
         let mut chain: Option<DynTree<IR>> = None;
         for comprehension in extracted.iter().rev() {
             let sub_plan = self.build_pattern_comprehension_plan(comprehension);
-            chain = Some(match chain {
-                Some(inner) => tree!(IR::Apply, inner, sub_plan),
-                None => tree!(IR::Apply, sub_plan),
+            chain = Some(if let Some(inner) = chain {
+                tree!(IR::Apply, inner, sub_plan)
+            } else {
+                tree!(IR::Apply, sub_plan)
             });
         }
         for c in &extracted {
-            self.visited.insert((c.var.id, c.var.scope_id));
+            self.visited.insert(c.var.key());
         }
-        (Arc::new(rebuilt), chain)
+        chain
+    }
+
+    /// The scope of the first pattern comprehension or existential pattern
+    /// in an expression tree, or `None` if it has neither.
+    fn pattern_expr_scope(node: &DynNode<ExprIR<Variable>>) -> Option<u32> {
+        match node.data() {
+            ExprIR::PatternComprehension(graph) | ExprIR::Pattern(graph) => {
+                graph.variables().next().map(|v| v.scope_id)
+            }
+            _ => node.children().find_map(|c| Self::pattern_expr_scope(&c)),
+        }
     }
 
     /// Extract the parts of a WHERE predicate that need their own sub-plan:
@@ -1166,7 +1578,7 @@ impl Planner {
             .map(|c| self.build_pattern_comprehension_plan(c))
             .collect();
         for c in &extracted {
-            self.visited.insert((c.var.id, c.var.scope_id));
+            self.visited.insert(c.var.key());
         }
         (Arc::new(rebuilt), sub_plans)
     }
@@ -1195,7 +1607,7 @@ impl Planner {
 
         // Add PathBuilder to construct Path values from matched variables.
         if !paths.is_empty() {
-            sub_plan = tree!(IR::PathBuilder(paths.to_vec()), sub_plan);
+            sub_plan = tree!(IR::PathBuilder(paths.clone()), sub_plan);
         }
 
         // Nested comprehensions are planned while this comprehension's own
@@ -1215,7 +1627,7 @@ impl Planner {
             sub_plan = tree!(IR::Filter(filter.clone()), sub_plan);
         }
 
-        Self::add_argument_to_leaves(&mut sub_plan, None);
+        Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
 
         // Build collect(result_expr) aggregation expression
         let collect_fn = get_functions()
@@ -1268,13 +1680,6 @@ impl Planner {
         input: DynTree<IR>,
     ) -> DynTree<IR> {
         let inline_var_ids: HashSet<u32> = inline_map.keys().copied().collect();
-
-        // Unwrap Paren nodes transparently
-        if matches!(node.data(), ExprIR::Paren)
-            && let Some(child) = node.get_child(0)
-        {
-            return self.expr_to_plan(&child, inline_map, input);
-        }
 
         // Inline-pattern variable → SemiApply (pass if pattern exists)
         if let ExprIR::Variable(v) = node.data()
@@ -1425,11 +1830,7 @@ impl Planner {
 
         // Apply scalar filter first (cheapest).
         if !scalar_parts.is_empty() {
-            let filter_expr = if scalar_parts.len() == 1 {
-                Arc::new(scalar_parts.into_iter().next().unwrap())
-            } else {
-                Arc::new(tree!(ExprIR::And; scalar_parts))
-            };
+            let filter_expr = Arc::new(ExprIR::and_of(scalar_parts));
             plan = tree!(IR::Filter(filter_expr), plan);
         }
 
@@ -1479,7 +1880,7 @@ impl Planner {
                     // record for inline handling via expr_to_plan.
                     let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
-                        name: None,
+                        alias: None,
                         id: self.scope_vars[current_scope as usize].len() as u32,
                         scope_id: current_scope,
                         ty: Type::Bool,
@@ -1504,7 +1905,7 @@ impl Planner {
                     // recognize the negation and use AntiSemiApply.
                     let current_scope = graph.variables().next().unwrap().scope_id;
                     let var = Variable {
-                        name: None,
+                        alias: None,
                         id: self.scope_vars[current_scope as usize].len() as u32,
                         scope_id: current_scope,
                         ty: Type::Bool,
@@ -1564,10 +1965,7 @@ impl Planner {
         if labels.peek().is_none() {
             return;
         }
-        let entry = self
-            .verified_labels
-            .entry((var.id, var.scope_id))
-            .or_default();
+        let entry = self.verified_labels.entry(var.key()).or_default();
         for l in labels {
             if !entry.contains(l) {
                 entry.insert(l.clone());
@@ -1581,9 +1979,7 @@ impl Planner {
         &self,
         node: &QueryNode<Arc<String>, Variable>,
     ) -> Vec<Arc<String>> {
-        let verified = self
-            .verified_labels
-            .get(&(node.alias.id, node.alias.scope_id));
+        let verified = self.verified_labels.get(&node.alias.key());
         node.labels
             .iter()
             .filter(|l| !verified.is_some_and(|v| v.contains(*l)))
@@ -1609,16 +2005,41 @@ impl Planner {
         let mut vec = vec![];
         // Variables the WHERE predicate constrains. Used below to order the
         // hops of a component so constrained endpoints are reached first.
-        let filter_vars: HashSet<u32> = filter
+        let filter_vars: HashSet<VarKey> = filter
             .as_ref()
-            .map(|f| collect_expr_variables(f))
-            .unwrap_or_default();
+            .map_or_default(|f| collect_expr_scoped_variables(f));
+        // The subset of those a promoted walk can start from: variables a WHERE
+        // conjunct constrains by itself, evaluable as soon as the endpoint is
+        // scanned (`p.id = length(r)` waits for the path, so it anchors nothing).
+        let anchor_vars: HashSet<VarKey> = filter
+            .as_ref()
+            .map_or_default(|f| collect_single_variable_conjuncts(f));
         // Collect extra filters for bound variables with new constraints
         // (labels or inline properties). These are applied as top-level
         // filters rather than as plan components, so they don't interfere
         // with stitching.
         let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
-        for component in pattern.connected_components() {
+        // Relationships whose attrs were lifted: the Filter reads the edge, so
+        // the traversal must emit every parallel edge for it to test.
+        let mut lifted_rels: HashSet<VarKey> = HashSet::new();
+        let lifted =
+            lift_cross_entity_attrs(pattern, &self.visited, &mut bound_filters, &mut lifted_rels);
+        let pattern = lifted.as_ref().unwrap_or(pattern);
+        // Inline attrs already lowered to a Filter in this clause, keyed by
+        // (alias, attrs map identity). See `lower_inline_attrs`.
+        let mut lowered_attrs: HashSet<(VarKey, usize)> = HashSet::new();
+        // Whether an earlier clause bound anything. Reversing a promoted walk
+        // rebuilds its scan, which would drop an earlier clause's input if one
+        // sits underneath. Components of this clause are independent of each
+        // other, so what they bind does not count.
+        let bound_before_clause = !self.visited.is_empty();
+        // Computed once: the decomposition is a graph walk.
+        let components = pattern.connected_components();
+        let single_component = components.len() == 1
+            && !filter
+                .as_ref()
+                .is_some_and(|f| Self::has_pattern_expr(&f.root()));
+        for component in components {
             let relationships = component.relationships();
             // Endpoints already bound by earlier clauses may carry labels
             // that were never enforced by a scan or traversal (e.g.
@@ -1626,10 +2047,7 @@ impl Planner {
             // Verify them with an explicit hasLabels filter.
             for rel in relationships {
                 for endpoint in [&rel.from, &rel.to] {
-                    if self
-                        .visited
-                        .contains(&(endpoint.alias.id, endpoint.alias.scope_id))
-                    {
+                    if self.visited.contains(&endpoint.alias.key()) {
                         let missing = self.unverified_labels(endpoint);
                         if !missing.is_empty() {
                             bound_filters.push(has_labels_filter(&endpoint.alias, &missing));
@@ -1643,9 +2061,101 @@ impl Planner {
             // traversals (especially self-loops / ExpandInto) are planned as
             // leaves and variable-length traversals sit above them.
             let mut sorted_rels: Vec<_> = relationships.to_vec();
+            // An endpoint the query constrains (inline attributes, or a WHERE
+            // predicate) is a cheap place to start: an index lookup or a short
+            // scan rather than every node of a label.
+            let is_constrained = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                n.attrs.root().num_children() > 0 || anchor_vars.contains(&n.alias.key())
+            };
+            let anchored = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                is_constrained(&r.from) || is_constrained(&r.to)
+            };
+            // A variable-length hop on an anchored endpoint leads the component
+            // when no fixed-length hop is anchored and nothing is bound yet.
+            // Planned last, as the sort below does by default, it would sit
+            // above a fixed-length hop that `select_scan_node` then starts from
+            // an unrelated label scan, and the var-length expansion runs from
+            // every candidate that scan finds (#2558).
+            //
+            // Only a walk that can start the plan leads, and the hops after it
+            // follow the pattern outward (see below), so each one has a bound
+            // endpoint when its turn comes:
+            //   - no walk in the component reads a variable in its endpoint or
+            //     edge attributes, so moving it loses no match;
+            //   - the endpoint `select_var_len_scan_node` will scan is the
+            //     anchored one. That pass scans the endpoint with the higher
+            //     `endpoint_scan_score` (the `to` side only when strictly
+            //     higher, since the walk can run either way), so the decision is
+            //     made here with the same score and a predicate that mentions
+            //     an endpoint at all (`a.x = c.x`) counts for it, anchored or not.
+            // Otherwise a walk keeps its place after the fixed-length hops,
+            // where its endpoints are bound by the hops before it.
+            let var_len_anchor_leads = !bound_before_clause
+                && !relationships.iter().any(|r| {
+                    r.min_hops.is_none()
+                        && r.all_shortest_paths == AllShortestPaths::No
+                        && anchored(r)
+                });
+            let references_variable =
+                |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                    [&r.attrs, &r.from.attrs, &r.to.attrs]
+                        .into_iter()
+                        .any(|attrs| !collect_expr_scoped_variables(attrs).is_empty())
+                };
+            // The WHERE sits above everything the clause plans. Scan selection
+            // reads the Filters directly above the component (through its own
+            // traversals), so a predicate is only visible to it when the
+            // component is the clause's only one (no CartesianProduct between)
+            // and is a tree (a cycle or self-loop plans an `ExpandInto`, which
+            // hides it), and the WHERE holds no pattern (that plans an `Apply`
+            // between). Otherwise only the inline attributes count here.
+            let where_visible =
+                single_component && relationships.len() + 1 == component.nodes().len();
+            let scan_score = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                endpoint_scan_score(
+                    n.attrs.root().num_children() > 0
+                        || (where_visible && filter_vars.contains(&n.alias.key())),
+                    !n.labels.is_empty(),
+                )
+            };
+            let is_anchored_end = |n: &Arc<QueryNode<Arc<String>, Variable>>| {
+                n.attrs.root().num_children() > 0
+                    || (where_visible && anchor_vars.contains(&n.alias.key()))
+            };
+            let leads_from_anchor = |r: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                let lead = if walk_scans_to_endpoint(scan_score(&r.from), scan_score(&r.to)) {
+                    &r.to
+                } else {
+                    &r.from
+                };
+                is_anchored_end(lead)
+            };
+            // Every hop must be free to move: none reads a variable some other
+            // hop binds (a fixed hop's edge filter or an endpoint's attrs would
+            // run before the hop that binds it), and none is an allShortestPaths
+            // (which needs both ends).
+            let walks_can_move = relationships
+                .iter()
+                .all(|r| r.all_shortest_paths == AllShortestPaths::No && !references_variable(r));
+            let leading_walk = if var_len_anchor_leads && walks_can_move {
+                relationships
+                    .iter()
+                    .find(|r| {
+                        r.min_hops.is_some()
+                            && r.from.alias.id != r.to.alias.id
+                            && leads_from_anchor(r)
+                    })
+                    .map(|r| r.alias.key())
+            } else {
+                None
+            };
             sorted_rels.sort_by_key(|r| {
                 let base = if r.all_shortest_paths == AllShortestPaths::No {
-                    i32::from(r.min_hops.is_some())
+                    if leading_walk == Some(r.alias.key()) {
+                        -1
+                    } else {
+                        i32::from(r.min_hops.is_some())
+                    }
                 } else {
                     2
                 };
@@ -1653,10 +2163,8 @@ impl Planner {
                 // touch an already-bound variable so that traversals start
                 // from the known node (matches FalkorDB C behaviour).
                 let has_bound = i32::from(
-                    !(self
-                        .visited
-                        .contains(&(r.from.alias.id, r.from.alias.scope_id))
-                        || self.visited.contains(&(r.to.alias.id, r.to.alias.scope_id))),
+                    !(self.visited.contains(&r.from.alias.key())
+                        || self.visited.contains(&r.to.alias.key())),
                 );
                 // Among the hops leaving that known node, prefer the one that
                 // reaches a constrained endpoint, so its filter runs right
@@ -1668,23 +2176,66 @@ impl Planner {
                 // the filters land.
                 let unfiltered = if has_bound == 0 {
                     i32::from(![&r.from, &r.to].iter().any(|n| {
-                        n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.id)
+                        n.attrs.root().num_children() > 0 || filter_vars.contains(&n.alias.key())
                     }))
                 } else {
                     0
                 };
                 (base, has_bound, unfiltered)
             });
+            // A promoted walk starts the plan, and every hop after it must touch
+            // what is bound already, as in a walk outward from the anchor: a hop
+            // sorted by tier alone could come first with neither end bound
+            // (a second walk would then start from every node). The runtime
+            // runs a walk from whichever end is bound, so the order is free.
+            if let Some(lead) = leading_walk {
+                let mut ordered = Vec::with_capacity(sorted_rels.len());
+                let mut bound: HashSet<VarKey> = HashSet::new();
+                let mut rest = sorted_rels;
+                let first = rest
+                    .iter()
+                    .position(|r| r.alias.key() == lead)
+                    .expect("the leading walk is one of the component's hops");
+                let mut next = Some(rest.remove(first));
+                while let Some(r) = next {
+                    bound.insert(r.from.alias.key());
+                    bound.insert(r.to.alias.key());
+                    ordered.push(r);
+                    let pos = rest.iter().position(|r| {
+                        bound.contains(&r.from.alias.key()) || bound.contains(&r.to.alias.key())
+                    });
+                    next = pos
+                        .or_else(|| (!rest.is_empty()).then_some(0))
+                        .map(|i| rest.remove(i));
+                }
+                sorted_rels = ordered;
+            }
+            // Past the first hop, a fixed-length self-loop on a node nothing
+            // has bound yet could only scan that node again and cross it with
+            // the hops before it (the var-length hop that reaches it was
+            // sorted later). Move it to just after the first later hop that
+            // binds the node, so it becomes an ExpandInto on the bound node.
+            let sorted_rels = self_loops_after_binders(
+                sorted_rels,
+                |r| HopShape {
+                    from: r.from.alias.key(),
+                    to: r.to.alias.key(),
+                    self_loop: r.from.alias.id == r.to.alias.id,
+                    fixed: r.min_hops.is_none() && r.all_shortest_paths == AllShortestPaths::No,
+                },
+                |node| self.visited.contains(node),
+            );
             let mut iter = sorted_rels.iter();
             let Some(relationship) = iter.next() else {
                 // Node-only component (no relationships).
                 let nodes = component.nodes();
                 debug_assert_eq!(nodes.len(), 1);
                 let node = nodes[0].clone();
-                if self.visited.contains(&(node.alias.id, node.alias.scope_id)) {
+                if self.visited.contains(&node.alias.key()) {
                     // Already bound: check for inline property constraints and
                     // additional labels that need verifying.
-                    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
+                    let attr_filter =
+                        lower_inline_attrs(&mut lowered_attrs, &node.alias, &node.attrs);
                     if let Some(filter_expr) = attr_filter {
                         bound_filters.push(filter_expr);
                     }
@@ -1704,7 +2255,7 @@ impl Planner {
                             Arc::new(tree!(ExprIR::Map)),
                         ));
                         let edge_alias = Variable {
-                            name: None,
+                            alias: None,
                             id: u32::MAX - node.alias.id,
                             scope_id: node.alias.scope_id,
                             ty: Type::Relationship,
@@ -1723,28 +2274,30 @@ impl Planner {
                             IR::ExpandInto {
                                 relationship: rel,
                                 emit_relationship: false,
-                                sibling_edges: vec![]
+                                sibling_edges: vec![],
                             },
                             tree!(IR::Argument(None))
                         ));
                         self.mark_labels_verified(&node.alias, node.labels.iter());
                     }
                 } else {
-                    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
+                    let attr_filter =
+                        lower_inline_attrs(&mut lowered_attrs, &node.alias, &node.attrs);
                     // The binder's post-processing already set the full
                     // accumulated label set on each QueryNode directly.
+                    let scan_node = strip_node_attrs(&node);
                     let mut res = if node.labels.is_empty() {
-                        tree!(IR::AllNodeScan(node.clone()))
+                        tree!(IR::AllNodeScan(scan_node))
                     } else {
                         // Multi-label node: the runtime's get_nodes()
                         // intersects all label matrices, so we can pass
                         // all labels directly to NodeByLabelScan.
-                        tree!(IR::NodeByLabelScan { node: node.clone() })
+                        tree!(IR::NodeByLabelScan { node: scan_node })
                     };
                     if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                     }
-                    self.visited.insert((node.alias.id, node.alias.scope_id));
+                    self.visited.insert(node.alias.key());
                     self.mark_labels_verified(&node.alias, node.labels.iter());
                     let paths = component.paths();
                     if !paths.is_empty() {
@@ -1765,10 +2318,8 @@ impl Planner {
             // (named edge or edge referenced in a named path). When false,
             // the runtime may collapse multi-edges into one row per (src, dst).
             let emit_rel = |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> bool {
-                !rel.alias
-                    .name
-                    .as_ref()
-                    .is_some_and(|n| n.starts_with("_anon"))
+                !rel.alias.is_unnamed()
+                    || lifted_rels.contains(&rel.alias.key())
                     || component
                         .paths()
                         .iter()
@@ -1776,55 +2327,63 @@ impl Planner {
             };
             // Collect edge alias IDs for relationship uniqueness checking.
             // Only named (non-anonymous) edges participate in uniqueness constraints;
-            // anonymous edges (`_anon*`) are excluded so the same physical edge
+            // unnamed edges are excluded so the same physical edge
             // can be traversed by different anonymous bindings (matches FalkorDB C).
             let sibling_edges: Vec<u32> = relationships
                 .iter()
-                .filter(|r| {
-                    !r.alias
-                        .name
-                        .as_ref()
-                        .is_some_and(|n| n.starts_with("_anon"))
-                })
+                .filter(|r| !r.alias.is_unnamed())
                 .map(|r| r.alias.id)
                 .collect();
+            // Inline attrs are lowered to Filters below; the operator embeds the
+            // stripped pattern so the predicate has one representation only.
+            // A var-length walk is the exception for its edge's own attrs: it
+            // keeps them on the pattern and prunes per edge with them, as on
+            // main, because above the walk `r` binds a list and a `Filter` there
+            // would test an assembled path instead.
+            let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
+                || relationship.min_hops.is_some();
+            let rel = if is_walk {
+                strip_endpoint_attrs(relationship)
+            } else {
+                strip_rel_attrs(relationship)
+            };
+            let edge_pred = if is_walk {
+                None
+            } else {
+                lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
+            };
             let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths(relationship.clone()))
+                tree!(IR::AllShortestPaths(rel))
             } else if relationship.min_hops.is_some() {
                 // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
                 // Build scan child for the from-node when it's not yet visited
                 // (i.e. this CVLT is the leaf of a component).
-                let scan_child = if self
-                    .visited
-                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                {
+                let scan_child = if self.visited.contains(&relationship.from.alias.key()) {
                     None
                 } else {
-                    let from_attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    let mut scan = if relationship.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    // No inline-attr Filter here: the endpoint blocks below
+                    // lower both endpoints unconditionally, and
+                    // `push_filters_down` lands the predicate back on this
+                    // scan. Emitting it here too would duplicate it, and the
+                    // copy on the scan is the one `select_var_len_scan_node`
+                    // discards when it prunes and rebuilds.
+                    Some(if rel.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(rel.from.clone()))
                     } else {
                         tree!(IR::NodeByLabelScan {
-                            node: relationship.from.clone(),
+                            node: rel.from.clone(),
                         })
-                    };
-                    if let Some(filter_expr) = from_attr_filter {
-                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
-                    }
-                    Some(scan)
+                    })
                 };
                 // Both endpoints already bound (and distinct): the traverse only
                 // verifies reachability between two known nodes.
                 let expand_into = scan_child.is_none()
                     && relationship.from.alias.id != relationship.to.alias.id
-                    && self
-                        .visited
-                        .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));
+                    && self.visited.contains(&relationship.to.alias.key());
                 scan_child.map_or_else(
                     || {
                         tree!(IR::CondVarLenTraverse {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             edge_filter: None,
                             emit_path: true,
                             path_var: None,
@@ -1834,7 +2393,7 @@ impl Planner {
                     |scan| {
                         tree!(
                             IR::CondVarLenTraverse {
-                                relationship: relationship.clone(),
+                                relationship: rel.clone(),
                                 edge_filter: None,
                                 emit_path: true,
                                 path_var: None,
@@ -1848,235 +2407,172 @@ impl Planner {
                 // Self-loop with fixed-length edge: scan + ExpandInto.
                 // If the node is already bound (visited), don't rescan — the
                 // Argument from the surrounding Apply will provide the binding.
-                let already_bound = self
-                    .visited
-                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
+                let already_bound = self.visited.contains(&relationship.from.alias.key());
                 if already_bound {
-                    let attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    let mut ei = tree!(IR::ExpandInto {
-                        relationship: relationship.clone(),
-                        emit_relationship: emit_rel(relationship),
-                        sibling_edges: sibling_edges.clone()
-                    });
-                    if let Some(filter_expr) = attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                    }
-                    ei
+                    tree!(IR::ExpandInto {
+                        relationship: rel,
+                        emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
+                        sibling_edges: sibling_edges.clone(),
+                    })
                 } else {
-                    let attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    let mut scan = if relationship.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    let scan = if rel.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(rel.from.clone()))
                     } else {
                         tree!(IR::NodeByLabelScan {
-                            node: relationship.from.clone(),
+                            node: rel.from.clone(),
                         })
                     };
-                    if let Some(filter_expr) = attr_filter {
-                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
-                    }
                     tree!(
                         IR::ExpandInto {
-                            relationship: relationship.clone(),
-                            emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone()
+                            relationship: rel,
+                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
+                            sibling_edges: sibling_edges.clone(),
                         },
                         scan
                     )
                 }
-            } else if self
-                .visited
-                .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                && self
-                    .visited
-                    .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
+            } else if self.visited.contains(&relationship.from.alias.key())
+                && self.visited.contains(&relationship.to.alias.key())
             {
-                let mut ei = tree!(IR::ExpandInto {
-                    relationship: relationship.clone(),
-                    emit_relationship: emit_rel(relationship),
-                    sibling_edges: sibling_edges.clone()
-                });
-                // Both endpoints already bound — check for inline attrs
-                // that need filtering (e.g. reversed patterns where attrs
-                // appear on a later occurrence of an already-bound node).
-                let from_attr_filter =
-                    inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                if let Some(filter_expr) = from_attr_filter {
-                    ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                }
-                let to_attr_filter =
-                    inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
-                if let Some(filter_expr) = to_attr_filter {
-                    ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                }
-                ei
+                // Both endpoints already bound; their inline attrs are lowered
+                // by the endpoint blocks below, which no longer skip visited
+                // aliases.
+                tree!(IR::ExpandInto {
+                    relationship: rel,
+                    emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
+                    sibling_edges: sibling_edges.clone(),
+                })
             } else {
-                let edge_attr_filter =
-                    inline_attrs_to_filter(&relationship.alias, &relationship.attrs);
-                let mut ct = tree!(IR::CondTraverse {
-                    relationship: relationship.clone(),
-                    emit_relationship: emit_rel(relationship),
+                tree!(IR::CondTraverse {
+                    relationship: rel,
+                    emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                     sibling_edges: sibling_edges.clone(),
                     transposed: false,
                     chain: Vec::new(),
                     optional: false,
                     bind_relationship: true,
-                });
-                if let Some(filter_expr) = edge_attr_filter {
-                    ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
-                }
-                ct
+                })
             };
-            // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
-            // and add a Filter if present.
-            if !self
-                .visited
-                .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
+            // Fixed-length traverses take the predicate as a `Filter`, the one
+            // place it is evaluated. That Filter reads the edge, which is why
+            // the operator above was planned with `emit_relationship` set: it
+            // must emit every parallel edge for the Filter to test, not one
+            // representative per (src, dst) pair. The walks never get one: they
+            // keep the edge's attrs on their pattern and prune with them.
+            if let Some(filter_expr) = edge_pred
+                && matches!(
+                    res.root().data(),
+                    IR::CondTraverse { .. } | IR::ExpandInto { .. }
+                )
             {
-                let to_attr_filter =
-                    inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
-                if let Some(filter_expr) = to_attr_filter {
+                res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+            }
+            // Lower both endpoints' inline attributes (e.g. `(b {val: 'v2'})`)
+            // into Filters above the operator. Both are lowered whether or not
+            // the alias is already visited: an endpoint bound by an earlier
+            // clause can still carry attrs on this occurrence
+            // (`MATCH (a:A) MATCH (a {x:1})-[:R]->(b)`), and only `CondTraverse`
+            // re-checks them at runtime — `CondVarLenTraverse` and
+            // `AllShortestPaths` read the edge's attrs only, so skipping the
+            // lowering there dropped the predicate outright.
+            //
+            // Above the operator rather than on the scan, so the optimizer's
+            // chain reversal can see and reposition them; `push_filters_down`
+            // lands them back on the scan afterwards.
+            for endpoint in [&relationship.to, &relationship.from] {
+                let attr_filter =
+                    lower_inline_attrs(&mut lowered_attrs, &endpoint.alias, &endpoint.attrs);
+                if let Some(filter_expr) = attr_filter {
                     res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                 }
             }
-            // Check source node for inline attributes and add a Filter above
-            // the CT. This is needed so the optimizer's chain reversal can
-            // see and reposition these filters properly.
-            if !self
-                .visited
-                .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-            {
-                let from_attr_filter =
-                    inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                if let Some(filter_expr) = from_attr_filter {
-                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                }
-            }
-            self.visited
-                .insert((relationship.from.alias.id, relationship.from.alias.scope_id));
-            self.visited
-                .insert((relationship.to.alias.id, relationship.to.alias.scope_id));
-            self.visited
-                .insert((relationship.alias.id, relationship.alias.scope_id));
+            self.visited.insert(relationship.from.alias.key());
+            self.visited.insert(relationship.to.alias.key());
+            self.visited.insert(relationship.alias.key());
             self.mark_labels_verified(&relationship.from.alias, relationship.from.labels.iter());
             self.mark_labels_verified(&relationship.to.alias, relationship.to.labels.iter());
             // Chain remaining relationships in the component, each one
             // stacking on top of the previous result using the same logic.
             for relationship in iter {
+                // As above: a walk keeps its edge's own attrs on the pattern.
+                let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
+                    || relationship.min_hops.is_some();
+                let rel = if is_walk {
+                    strip_endpoint_attrs(relationship)
+                } else {
+                    strip_rel_attrs(relationship)
+                };
+                let edge_pred = if is_walk {
+                    None
+                } else {
+                    lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
+                };
                 res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(IR::AllShortestPaths(relationship.clone()), res)
+                    tree!(IR::AllShortestPaths(rel), res)
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
-                        && self.visited.contains(&(
-                            relationship.from.alias.id,
-                            relationship.from.alias.scope_id,
-                        ))
-                        && self
-                            .visited
-                            .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));
-                    let mut cvlt = tree!(
+                        && self.visited.contains(&relationship.from.alias.key())
+                        && self.visited.contains(&relationship.to.alias.key());
+                    tree!(
                         IR::CondVarLenTraverse {
-                            relationship: relationship.clone(),
+                            relationship: rel,
                             edge_filter: None,
                             emit_path: true,
                             path_var: None,
                             expand_into,
                         },
                         res
-                    );
-                    if !self
-                        .visited
-                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                    {
-                        let from_attr_filter = inline_attrs_to_filter(
-                            &relationship.from.alias,
-                            &relationship.from.attrs,
-                        );
-                        if let Some(filter_expr) = from_attr_filter {
-                            cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
-                        }
-                    }
-                    cvlt
+                    )
                 } else if relationship.from.alias.id == relationship.to.alias.id {
-                    let already_bound = self
-                        .visited
-                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
+                    let already_bound = self.visited.contains(&relationship.from.alias.key());
                     if already_bound {
-                        let attr_filter = inline_attrs_to_filter(
-                            &relationship.from.alias,
-                            &relationship.from.attrs,
-                        );
-                        let mut ei = tree!(
-                            IR::ExpandInto {
-                                relationship: relationship.clone(),
-                                emit_relationship: emit_rel(relationship),
-                                sibling_edges: sibling_edges.clone()
-                            },
-                            res
-                        );
-                        if let Some(filter_expr) = attr_filter {
-                            ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                        }
-                        ei
-                    } else {
-                        let attr_filter = inline_attrs_to_filter(
-                            &relationship.from.alias,
-                            &relationship.from.attrs,
-                        );
-                        let mut scan = if relationship.from.clone().labels.is_empty() {
-                            tree!(IR::AllNodeScan(relationship.from.clone()))
-                        } else {
-                            tree!(IR::NodeByLabelScan {
-                                node: relationship.from.clone(),
-                            })
-                        };
-                        if let Some(filter_expr) = attr_filter {
-                            scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
-                        }
                         tree!(
                             IR::ExpandInto {
-                                relationship: relationship.clone(),
-                                emit_relationship: emit_rel(relationship),
-                                sibling_edges: sibling_edges.clone()
+                                relationship: rel,
+                                emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
+                                sibling_edges: sibling_edges.clone(),
                             },
-                            scan,
                             res
                         )
+                    } else {
+                        // The node is not bound yet: scan it once per row of
+                        // the hops planned so far, so the scan sits on top of
+                        // `res` and no earlier hop is dropped.
+                        let scan = if rel.from.clone().labels.is_empty() {
+                            tree!(IR::AllNodeScan(rel.from.clone()), res)
+                        } else {
+                            tree!(
+                                IR::NodeByLabelScan {
+                                    node: rel.from.clone(),
+                                },
+                                res
+                            )
+                        };
+                        tree!(
+                            IR::ExpandInto {
+                                relationship: rel,
+                                emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
+                                sibling_edges: sibling_edges.clone(),
+                            },
+                            scan
+                        )
                     }
-                } else if self
-                    .visited
-                    .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                    && self
-                        .visited
-                        .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
+                } else if self.visited.contains(&relationship.from.alias.key())
+                    && self.visited.contains(&relationship.to.alias.key())
                 {
-                    let mut ei = tree!(
+                    tree!(
                         IR::ExpandInto {
-                            relationship: relationship.clone(),
-                            emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone()
+                            relationship: rel,
+                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
+                            sibling_edges: sibling_edges.clone(),
                         },
                         res
-                    );
-                    let from_attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    if let Some(filter_expr) = from_attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                    }
-                    let to_attr_filter =
-                        inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
-                    if let Some(filter_expr) = to_attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                    }
-                    ei
+                    )
                 } else {
-                    let edge_attr_filter =
-                        inline_attrs_to_filter(&relationship.alias, &relationship.attrs);
-                    let mut ct = tree!(
+                    tree!(
                         IR::CondTraverse {
-                            relationship: relationship.clone(),
-                            emit_relationship: emit_rel(relationship),
+                            relationship: rel,
+                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                             transposed: false,
                             chain: Vec::new(),
@@ -2084,30 +2580,34 @@ impl Planner {
                             bind_relationship: true,
                         },
                         res
-                    );
-                    if let Some(filter_expr) = edge_attr_filter {
-                        ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
-                    }
-                    ct
+                    )
                 };
-                // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
-                // and add a Filter if present.
-                if !self
-                    .visited
-                    .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
+                // See the same block above the chained loop.
+                if let Some(filter_expr) = edge_pred
+                    && matches!(
+                        res.root().data(),
+                        IR::CondTraverse { .. } | IR::ExpandInto { .. }
+                    )
                 {
-                    let to_attr_filter =
-                        inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
-                    if let Some(filter_expr) = to_attr_filter {
+                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                }
+                // Both endpoints, unconditionally — see the same block above the
+                // chained loop. The `from` endpoint had no lowering here at all,
+                // so in `MATCH (a)-[:R]->(b)-[:R]->(c), (b {x:1})-[:S]->(d)` the
+                // third hop's `b.x = 1` reached the plan only as `rp.from.attrs`
+                // on the CondTraverse, enforced by its per-row re-check. That
+                // still gave the right answer; it just left the predicate
+                // invisible to the optimizer.
+                for endpoint in [&relationship.to, &relationship.from] {
+                    let attr_filter =
+                        lower_inline_attrs(&mut lowered_attrs, &endpoint.alias, &endpoint.attrs);
+                    if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                     }
                 }
-                self.visited
-                    .insert((relationship.from.alias.id, relationship.from.alias.scope_id));
-                self.visited
-                    .insert((relationship.to.alias.id, relationship.to.alias.scope_id));
-                self.visited
-                    .insert((relationship.alias.id, relationship.alias.scope_id));
+                self.visited.insert(relationship.from.alias.key());
+                self.visited.insert(relationship.to.alias.key());
+                self.visited.insert(relationship.alias.key());
                 self.mark_labels_verified(
                     &relationship.from.alias,
                     relationship.from.labels.iter(),
@@ -2172,57 +2672,15 @@ impl Planner {
         //   - "inline" patterns (under OR, etc.) are handled by expr_to_plan
         //   - remaining scalar predicates become a Filter node
         if let Some(filter) = filter {
-            // Pattern comprehensions in the predicate get their own sub-plans,
-            // applied below the Filter so their result lists are bound first.
             let scope_id = pattern.variables().next().map_or(0, |v| v.scope_id);
-            let (filter, comprehension_plans) =
-                self.extract_filter_comprehensions(filter, scope_id);
-            for sub_plan in comprehension_plans {
-                res = tree!(IR::Apply, res, sub_plan);
-            }
-
-            let mut extractable = vec![];
-            let mut inline = HashMap::new();
-            let rebuilt = self.collect_patterns_and_rebuild(
-                &filter.root(),
-                &mut extractable,
-                &mut inline,
-                true,
-            );
-
-            // When there are inline patterns, recursively decompose the
-            // rebuilt expression into multiplexer / semi-apply / filter nodes.
-            if !inline.is_empty() {
-                res = self.expr_to_plan(&rebuilt.root(), &inline, res);
-            } else if !matches!(rebuilt.root().data(), ExprIR::Constant(Value::Bool(true))) {
-                res = tree!(IR::Filter(Arc::new(rebuilt)), res);
-            }
-
-            // Apply SemiApply/AntiSemiApply for each extractable pattern
-            for (graph, is_anti) in extractable {
-                let saved = self.visited.clone();
-                let saved_verified = self.verified_labels.clone();
-                let mut sub_plan = self.plan_match(&graph, None);
-                self.visited = saved;
-                self.verified_labels = saved_verified;
-                Self::add_argument_to_leaves(&mut sub_plan, None);
-                if is_anti {
-                    res = tree!(IR::AntiSemiApply, res, sub_plan);
-                } else {
-                    res = tree!(IR::SemiApply, res, sub_plan);
-                }
-            }
+            res = self.plan_filter(res, filter, scope_id);
         }
         // Apply filters for bound variables with new label/property
         // constraints. These are collected during component planning and
         // applied here so they sit above the stitching target, ensuring
         // the bound variable's env is available when the filter runs.
         if !bound_filters.is_empty() {
-            let filter_expr = if bound_filters.len() == 1 {
-                bound_filters.pop().unwrap()
-            } else {
-                tree!(ExprIR::And; bound_filters)
-            };
+            let filter_expr = ExprIR::and_of(bound_filters);
             res = tree!(IR::Filter(Arc::new(filter_expr)), res);
         }
         res
@@ -2251,10 +2709,7 @@ impl Planner {
     ) -> DynTree<IR> {
         // Check if any expressions contain pattern comprehensions or patterns.
         // Only rebuild expressions if patterns need to be extracted.
-        let needs_extraction = exprs.iter().any(|(_, e)| Self::has_pattern_expr(&e.root()))
-            || orderby
-                .iter()
-                .any(|(e, _)| Self::has_pattern_expr(&e.root()));
+        let needs_extraction = exprs.iter().any(|(_, e)| Self::has_pattern_expr(&e.root()));
 
         // Extract pattern comprehensions from all projection expressions BEFORE
         // clearing visited — the sub-plans need to know which variables are
@@ -2281,24 +2736,6 @@ impl Planner {
         } else {
             exprs
         };
-        // Also extract from orderby expressions
-        let orderby: Vec<_> = if needs_extraction {
-            orderby
-                .into_iter()
-                .map(|(expr, desc)| {
-                    let rebuilt = self.extract_pattern_comprehensions(
-                        &expr.root(),
-                        pre_scope_id,
-                        &mut all_extracted,
-                        PatternMode::Collect,
-                    );
-                    (Arc::new(rebuilt) as QueryExpr<Variable>, desc)
-                })
-                .collect()
-        } else {
-            orderby
-        };
-
         // Build Apply + Aggregate sub-plans for each extracted pattern comprehension.
         // This uses the CURRENT (pre-clear) visited set so plan_match knows which
         // variables are already bound by the outer stream.
@@ -2312,13 +2749,13 @@ impl Planner {
         // projected (and copied) variables are in scope.
         self.visited.clear();
         for expr in &exprs {
-            self.visited.insert((expr.0.id, expr.0.scope_id));
+            self.visited.insert(expr.0.key());
         }
         for (new_var, _) in &copy_from_parent {
-            self.visited.insert((new_var.id, new_var.scope_id));
+            self.visited.insert(new_var.key());
         }
         for (var, _) in &apply_plans {
-            self.visited.insert((var.id, var.scope_id));
+            self.visited.insert(var.key());
         }
 
         // Carry verified labels through the projection for node variables
@@ -2326,14 +2763,14 @@ impl Planner {
         let mut carried_verified = HashMap::new();
         for (new_var, expr) in &exprs {
             if let ExprIR::Variable(old) = expr.root().data()
-                && let Some(v) = self.verified_labels.get(&(old.id, old.scope_id))
+                && let Some(v) = self.verified_labels.get(&old.key())
             {
-                carried_verified.insert((new_var.id, new_var.scope_id), v.clone());
+                carried_verified.insert(new_var.key(), v.clone());
             }
         }
         for (new_var, old_var) in &copy_from_parent {
-            if let Some(v) = self.verified_labels.get(&(old_var.id, old_var.scope_id)) {
-                carried_verified.insert((new_var.id, new_var.scope_id), v.clone());
+            if let Some(v) = self.verified_labels.get(&old_var.key()) {
+                carried_verified.insert(new_var.key(), v.clone());
             }
         }
         self.verified_labels = carried_verified;
@@ -2405,6 +2842,15 @@ impl Planner {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {
+            // The binder resolves ORDER BY against the projected scope, so
+            // its pattern comprehensions are planned above the projection,
+            // now that `visited` holds just the projected variables.
+            let mut orderby = orderby;
+            let chain =
+                self.extract_clause_expr_comprehensions(orderby.iter_mut().map(|(e, _)| e), None);
+            if let Some(chain) = chain {
+                res = Self::stitch_below_apply_chain(chain, res);
+            }
             res = tree!(IR::Sort(orderby), res);
         }
         if let Some(skip_expr) = skip {
@@ -2418,41 +2864,56 @@ impl Planner {
         if let Some(filter) = filter {
             // The predicate runs after the projection, so its pattern
             // comprehensions resolve against the projected scope.
-            let (filter, comprehension_plans) =
-                self.extract_filter_comprehensions(filter, scope_id);
-            for sub_plan in comprehension_plans {
-                res = tree!(IR::Apply, res, sub_plan);
-            }
+            res = self.plan_filter(res, filter, scope_id);
+        }
+        res
+    }
 
-            let mut extractable = vec![];
-            let mut inline = HashMap::new();
-            let rebuilt = self.collect_patterns_and_rebuild(
-                &filter.root(),
-                &mut extractable,
-                &mut inline,
-                true,
-            );
+    /// Put a WHERE predicate on top of `res`.
+    ///
+    /// Pattern comprehensions in the predicate get their own sub-plans,
+    /// applied below the Filter so their result lists are bound first;
+    /// pattern predicates are separated from scalar ones by
+    /// `collect_patterns_and_rebuild`:
+    ///   - "extractable" patterns become SemiApply / AntiSemiApply wrappers
+    ///   - "inline" patterns (under OR, etc.) are handled by `expr_to_plan`
+    ///   - remaining scalar predicates become a Filter node
+    fn plan_filter(
+        &mut self,
+        mut res: DynTree<IR>,
+        filter: QueryExpr<Variable>,
+        scope_id: u32,
+    ) -> DynTree<IR> {
+        let (filter, comprehension_plans) = self.extract_filter_comprehensions(filter, scope_id);
+        for sub_plan in comprehension_plans {
+            res = tree!(IR::Apply, res, sub_plan);
+        }
 
-            if !matches!(rebuilt.root().data(), ExprIR::Constant(Value::Bool(true))) {
-                if inline.is_empty() {
-                    res = tree!(IR::Filter(Arc::new(rebuilt)), res);
-                } else {
-                    res = self.expr_to_plan(&rebuilt.root(), &inline, res);
-                }
-            }
+        let mut extractable = vec![];
+        let mut inline = HashMap::new();
+        let rebuilt =
+            self.collect_patterns_and_rebuild(&filter.root(), &mut extractable, &mut inline, true);
 
-            for (graph, is_anti) in extractable {
-                let saved = self.visited.clone();
-                let saved_verified = self.verified_labels.clone();
-                let mut sub_plan = self.plan_match(&graph, None);
-                self.visited = saved;
-                self.verified_labels = saved_verified;
-                Self::add_argument_to_leaves(&mut sub_plan, None);
-                if is_anti {
-                    res = tree!(IR::AntiSemiApply, res, sub_plan);
-                } else {
-                    res = tree!(IR::SemiApply, res, sub_plan);
-                }
+        // When there are inline patterns, recursively decompose the
+        // rebuilt expression into multiplexer / semi-apply / filter nodes.
+        if !inline.is_empty() {
+            res = self.expr_to_plan(&rebuilt.root(), &inline, res);
+        } else if !matches!(rebuilt.root().data(), ExprIR::Constant(Value::Bool(true))) {
+            res = tree!(IR::Filter(Arc::new(rebuilt)), res);
+        }
+
+        // Apply SemiApply/AntiSemiApply for each extractable pattern
+        for (graph, is_anti) in extractable {
+            let saved = self.visited.clone();
+            let saved_verified = self.verified_labels.clone();
+            let mut sub_plan = self.plan_match(&graph, None);
+            self.visited = saved;
+            self.verified_labels = saved_verified;
+            Self::add_argument_to_leaves(&mut sub_plan, Some(&self.argument_vars()));
+            if is_anti {
+                res = tree!(IR::AntiSemiApply, res, sub_plan);
+            } else {
+                res = tree!(IR::SemiApply, res, sub_plan);
             }
         }
         res
@@ -2473,7 +2934,7 @@ impl Planner {
         let outer = |v: &Variable| {
             remap
                 .iter()
-                .find(|(inner, _)| inner.id == v.id && inner.scope_id == v.scope_id)
+                .find(|(inner, _)| inner.key() == v.key())
                 .map(|(_, outer)| outer.clone())
         };
         let idx = plan.root().idx();
@@ -2525,7 +2986,7 @@ impl Planner {
             && pattern
                 .nodes()
                 .iter()
-                .all(|n| self.visited.contains(&(n.alias.id, n.alias.scope_id)))
+                .all(|n| self.visited.contains(&n.alias.key()))
     }
 
     /// Assemble a multi-clause query plan from individual clause plans.
@@ -2551,11 +3012,39 @@ impl Planner {
         // `visited` untouched, which is correct: every variable the clause
         // mentions is already bound.
         let mut plans = Vec::with_capacity(q.len());
+        let mut prev_is_match = false;
         for ir in q {
             if self.is_redundant_optional_match(&ir) {
                 continue;
             }
-            plans.push(self.plan(ir));
+            // A MATCH right after another MATCH that shares no variable with
+            // anything bound so far is a Cartesian Product with it. Stitching
+            // would instead hang the earlier clause under this clause's scan,
+            // which drops it when the scan is later re-selected. Wrapping the
+            // plan in a one-branch Cartesian Product makes the stitcher add
+            // the earlier clause as a second branch, the plan the two clauses
+            // had when the parser still folded them into one pattern.
+            let bound = self.visited.clone();
+            let disjoint_match = prev_is_match
+                && matches!(
+                    &ir,
+                    QueryIR::Match { pattern, optional: false, .. }
+                        if !pattern
+                            .variables()
+                            .any(|v| bound.contains(&v.key()))
+                );
+            prev_is_match = matches!(
+                &ir,
+                QueryIR::Match {
+                    optional: false,
+                    ..
+                }
+            );
+            let mut plan = self.plan(ir);
+            if disjoint_match {
+                Self::join_as_cartesian_branch(&mut plan, &bound);
+            }
+            plans.push(plan);
         }
         // Stitch plans together in reverse: start from the last clause's plan
         // (the root), then insert each preceding plan at the deepest input slot.
@@ -2590,7 +3079,7 @@ impl Planner {
                 idx = res.node(idx).child(0).idx();
             }
         }
-        idx = Self::descend_list_expr_applies(&res, idx);
+        idx = Self::descend_clause_expr_applies(&res, idx);
         // Insert each remaining clause plan (in reverse order) at the
         // current insertion point, then walk down again to find the next
         // insertion point for the clause before it.
@@ -2669,7 +3158,7 @@ impl Planner {
                     idx = res.node(idx).child(0).idx();
                 }
             }
-            idx = Self::descend_list_expr_applies(&res, idx);
+            idx = Self::descend_clause_expr_applies(&res, idx);
         }
 
         // For write queries without an explicit WITH/RETURN commit, wrap
@@ -2686,6 +3175,53 @@ impl Planner {
         Self::ensure_apply_has_input(&mut res);
 
         res
+    }
+
+    /// Make `plan`, a `MATCH` clause that binds none of `bound`, the one branch
+    /// of a Cartesian Product, below the filters that sit on top of it (its
+    /// `WHERE`, which may read the variables of the clause stitched in as the
+    /// other branch). Left as it is when an operator below those filters reads
+    /// one of `bound`: that one needs the earlier clause's rows as its input.
+    fn join_as_cartesian_branch(
+        plan: &mut DynTree<IR>,
+        bound: &HashSet<VarKey>,
+    ) {
+        let mut idx = plan.root().idx();
+        // A WHERE pattern comprehension adds a saturated Apply above the
+        // pattern, as `plan_query` also steps through.
+        while (matches!(
+            plan.node(idx).data(),
+            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+        ) && plan.node(idx).num_children() > 0)
+            || Self::is_saturated_apply(plan, idx)
+        {
+            idx = plan.node(idx).child(0).idx();
+        }
+        let reads_bound = plan.node(idx).indices::<Bfs>().any(|i| {
+            bound
+                .iter()
+                .any(|&key| ir_references_variable(plan.node(i).data(), key))
+        });
+        if !reads_bound {
+            plan.node_mut(idx).push_parent(IR::CartesianProduct);
+        }
+    }
+
+    /// Does this `MATCH` plan join several components, i.e. is its operator
+    /// below any filters a Cartesian Product?
+    fn joins_components(plan: &DynTree<IR>) -> bool {
+        let mut idx = plan.root().idx();
+        // A WHERE pattern comprehension adds a saturated Apply above the
+        // pattern, as `plan_query` also steps through.
+        while (matches!(
+            plan.node(idx).data(),
+            IR::Filter(_) | IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+        ) && plan.node(idx).num_children() > 0)
+            || Self::is_saturated_apply(plan, idx)
+        {
+            idx = plan.node(idx).child(0).idx();
+        }
+        matches!(plan.node(idx).data(), IR::CartesianProduct)
     }
 
     /// Returns true if a plan `n` being stitched into a CartesianProduct
@@ -2789,40 +3325,36 @@ impl Planner {
                 let yield_by_field = |field: &str| -> Option<Variable> {
                     named_outputs
                         .iter()
-                        .find(|v| v.name.as_ref().is_some_and(|n| n.as_str() == field))
+                        .find(|v| v.name().is_some_and(|n| n.as_str() == field))
                         .cloned()
                 };
-                if proc.name == "db.idx.fulltext.queryNodes" {
-                    let scan = tree!(IR::NodeByFulltextScan {
+                // Pattern comprehensions in the arguments get their own
+                // sub-plans, applied below the call (see
+                // `descend_clause_expr_applies`).
+                let mut exprs = exprs;
+                let chain = self.extract_clause_expr_comprehensions(&mut exprs, None);
+                // The yielded columns are bound from here on, for the YIELD
+                // ... WHERE predicate and the clauses that follow.
+                for v in &named_outputs {
+                    self.visited.insert(v.key());
+                }
+                let mut res = match proc.name.as_str() {
+                    "db.idx.fulltext.queryNodes" => tree!(IR::NodeByFulltextScan {
                         node: yield_by_field("node")
                             .expect("binder ensures 'node' is yielded for queryNodes"),
                         label: exprs[0].clone(),
                         query: exprs[1].clone(),
                         score: yield_by_field("score"),
-                    });
-                    return if let Some(filter) = filter {
-                        tree!(IR::Filter(filter), scan)
-                    } else {
-                        scan
-                    };
-                }
-                if proc.name == "db.idx.fulltext.queryRelationships" {
-                    let scan = tree!(IR::EdgeByFulltextScan {
+                    }),
+                    "db.idx.fulltext.queryRelationships" => tree!(IR::EdgeByFulltextScan {
                         edge: yield_by_field("relationship").expect(
                             "binder ensures 'relationship' is yielded for queryRelationships"
                         ),
                         label: exprs[0].clone(),
                         query: exprs[1].clone(),
                         score: yield_by_field("score"),
-                    });
-                    return if let Some(filter) = filter {
-                        tree!(IR::Filter(filter), scan)
-                    } else {
-                        scan
-                    };
-                }
-                if proc.name == "db.idx.vector.queryNodes" {
-                    let scan = tree!(IR::NodeByVectorScan {
+                    }),
+                    "db.idx.vector.queryNodes" => tree!(IR::NodeByVectorScan {
                         node: yield_by_field("node")
                             .expect("binder ensures 'node' is yielded for queryNodes"),
                         label: exprs[0].clone(),
@@ -2830,15 +3362,8 @@ impl Planner {
                         k: exprs[2].clone(),
                         vector: exprs[3].clone(),
                         score: yield_by_field("score"),
-                    });
-                    return if let Some(filter) = filter {
-                        tree!(IR::Filter(filter), scan)
-                    } else {
-                        scan
-                    };
-                }
-                if proc.name == "db.idx.vector.queryRelationships" {
-                    let scan = tree!(IR::EdgeByVectorScan {
+                    }),
+                    "db.idx.vector.queryRelationships" => tree!(IR::EdgeByVectorScan {
                         edge: yield_by_field("relationship").expect(
                             "binder ensures 'relationship' is yielded for queryRelationships"
                         ),
@@ -2847,28 +3372,22 @@ impl Planner {
                         k: exprs[2].clone(),
                         vector: exprs[3].clone(),
                         score: yield_by_field("score"),
-                    });
-                    return if let Some(filter) = filter {
-                        tree!(IR::Filter(filter), scan)
-                    } else {
-                        scan
-                    };
+                    }),
+                    _ => tree!(IR::ProcedureCall {
+                        func: proc,
+                        args: exprs,
+                        yields: named_outputs.clone()
+                    }),
+                };
+                if let Some(chain) = chain {
+                    res.root_mut().push_child_tree(chain);
                 }
+                // The YIELD ... WHERE predicate runs over the yielded columns.
                 if let Some(filter) = filter {
-                    return tree!(
-                        IR::Filter(filter),
-                        tree!(IR::ProcedureCall {
-                            func: proc,
-                            args: exprs,
-                            yields: named_outputs
-                        })
-                    );
+                    let scope_id = named_outputs.first().map_or(0, |v| v.scope_id);
+                    res = self.plan_filter(res, filter, scope_id);
                 }
-                tree!(IR::ProcedureCall {
-                    func: proc,
-                    args: exprs,
-                    yields: named_outputs
-                })
+                res
             }
             // MATCH / OPTIONAL MATCH
             QueryIR::Match {
@@ -2881,19 +3400,17 @@ impl Planner {
                     // so we know which variables to null-pad when no match is found.
                     let optional_vars: Vec<Variable> = pattern
                         .variables()
-                        .filter(|v| !self.visited.contains(&(v.id, v.scope_id)))
+                        .filter(|v| !self.visited.contains(&v.key()))
                         .collect();
-                    let any_visited = pattern
-                        .variables()
-                        .any(|v| self.visited.contains(&(v.id, v.scope_id)));
+                    let any_visited = pattern.variables().any(|v| self.visited.contains(&v.key()));
                     // Label checks made inside an OPTIONAL MATCH only hold
                     // within its subplan (unmatched rows flow past them), so
                     // they are discarded once the clause is planned.
                     let saved_verified = self.verified_labels.clone();
+                    let argument_vars = self.argument_vars();
                     let mut match_plan = self.plan_match(&pattern, filter);
                     self.verified_labels = saved_verified;
-                    // If any pattern variable is already bound from a prior clause,
-                    Self::add_argument_to_leaves(&mut match_plan, None);
+                    Self::add_argument_to_leaves(&mut match_plan, Some(&argument_vars));
                     // If all pattern variables are already bound from a prior clause,
                     // we need an Apply (correlated join) so the inner plan re-evaluates
                     // the pattern for each incoming row.  Otherwise, the Optional node
@@ -2904,17 +3421,35 @@ impl Planner {
                         tree!(IR::Optional(optional_vars), match_plan)
                     }
                 } else {
-                    let all_visited = pattern
-                        .variables()
-                        .all(|v| self.visited.contains(&(v.id, v.scope_id)));
+                    let all_visited = pattern.variables().all(|v| self.visited.contains(&v.key()));
+                    // A variable read only by an inline attr (`(x {v: a.v})`) is
+                    // not one the pattern binds, but it is as much a read of
+                    // the earlier clause.
+                    let any_visited = pattern.variables().any(|v| self.visited.contains(&v.key()))
+                        || pattern_attrs_read_visited(&pattern, &self.visited);
+                    // Taken before `plan_match` adds the pattern's own variables
+                    // to `visited`: the Argument rows bind only these.
+                    let bound: Vec<VarKey> = self.visited.iter().copied().collect();
                     let match_plan = self.plan_match(&pattern, filter);
                     // If all pattern variables are already bound, we need
                     // Apply so each incoming row feeds the inner plan via
                     // set_argument_batch (Argument leaves are runtime-only
                     // leaf nodes that don't pull from children).
-                    if all_visited {
+                    //
+                    // The same holds when the clause has several components and
+                    // reads a variable an earlier clause bound: stitching would
+                    // otherwise make the earlier clause one more Cartesian
+                    // Product branch, and the components would rebind that
+                    // variable on their own instead of reading it.
+                    //
+                    // Passing the bound variables lets the scan-selection pass see
+                    // that a component sharing none of them is uncorrelated and
+                    // needs a scan of its own, instead of expanding from the
+                    // Argument row over every edge of its type.
+                    if all_visited || (any_visited && Self::joins_components(&match_plan)) {
                         let mut inner = match_plan;
-                        Self::add_argument_to_leaves(&mut inner, None);
+                        let argument_vars = if all_visited { None } else { Some(bound) };
+                        Self::add_argument_to_leaves(&mut inner, argument_vars.as_deref());
                         tree!(IR::Apply, inner)
                     } else {
                         match_plan
@@ -2927,7 +3462,7 @@ impl Planner {
                 // since the comprehension resolves against the incoming stream.
                 let (expr, apply_chain) =
                     self.extract_list_expr_comprehensions(expr, alias.scope_id);
-                self.visited.insert((alias.id, alias.scope_id));
+                self.visited.insert(alias.key());
                 let mut res = tree!(IR::Unwind { expr, var: alias });
                 if let Some(chain) = apply_chain {
                     res.root_mut().push_child_tree(chain);
@@ -2947,13 +3482,13 @@ impl Planner {
                 // variables to `visited`, which are NOT bound by the
                 // incoming Argument rows. Keep the scope on each entry —
                 // ids are only unique within a scope.
-                let bound: Vec<(u32, u32)> = self.visited.iter().copied().collect();
+                let bound: Vec<VarKey> = self.visited.iter().copied().collect();
                 let mut match_branch = self.plan_match(&pattern, None);
                 Self::set_include_pending_on_scans(&mut match_branch);
                 // The Argument rows bind exactly the variables visited so
                 // far; passing them lets the scan-selection optimizer prove
                 // when the match branch is uncorrelated and add a scan.
-                Self::add_argument_to_leaves(&mut match_branch, Some(bound));
+                Self::add_argument_to_leaves(&mut match_branch, Some(&bound));
 
                 let paths = pattern.paths();
                 let merge = tree!(
@@ -2974,35 +3509,110 @@ impl Planner {
             // CREATE: only create entities not already bound.
             QueryIR::Create(pattern) => {
                 let filtered = pattern.filter_visited(&self.visited);
+                // Take the paths from `filtered`, not `pattern`: a path variable
+                // already bound by an earlier clause is dropped by `filter_visited`,
+                // and rebuilding it here would overwrite that binding. What is left
+                // is exactly what this clause declares and creates.
+                let paths = filtered.paths().to_vec();
                 // Add created variables to visited so subsequent clauses
                 // (e.g. FOREACH body) know they're already bound.
                 for v in pattern.variables() {
-                    self.visited.insert((v.id, v.scope_id));
+                    self.visited.insert(v.key());
                 }
-                tree!(IR::Create(Box::new(filtered)))
+                let create = tree!(IR::Create(Box::new(filtered)));
+                if paths.is_empty() {
+                    create
+                } else {
+                    tree!(IR::PathBuilder(paths), create)
+                }
             }
+            // A pattern comprehension in a DELETE or SET expression gets its
+            // own sub-plan, applied below the operator (see
+            // `descend_clause_expr_applies`).
             QueryIR::Delete {
-                exprs,
+                mut exprs,
                 detach: is_detach,
-            } => tree!(IR::Delete {
-                exprs,
-                detach: is_detach
-            }),
-            QueryIR::Set(items) => tree!(IR::Set(items)),
-            QueryIR::Remove(items) => tree!(IR::Remove(items)),
+            } => {
+                let chain = self.extract_clause_expr_comprehensions(&mut exprs, None);
+                let mut res = tree!(IR::Delete {
+                    exprs,
+                    detach: is_detach
+                });
+                if let Some(chain) = chain {
+                    res.root_mut().push_child_tree(chain);
+                }
+                res
+            }
+            QueryIR::Set(items) => {
+                // SET applies its items in order, and a later item sees what
+                // the earlier ones set (`SET n.p = 1, n.q = n.p`), but a
+                // comprehension's sub-plan runs before the operator it feeds.
+                // So an item with one starts a new Set, fed by the Set holding
+                // the items before it.
+                let has_pattern = |item: &SetItem<Arc<String>, Variable>| match item {
+                    SetItem::Attribute { target, value, .. } => {
+                        Self::has_pattern_expr(&target.root())
+                            || Self::has_pattern_expr(&value.root())
+                    }
+                    SetItem::Label { .. } => false,
+                };
+                let mut groups: Vec<Vec<SetItem<Arc<String>, Variable>>> = vec![];
+                for item in items {
+                    match groups.last_mut() {
+                        Some(group) if !has_pattern(&item) => group.push(item),
+                        _ => groups.push(vec![item]),
+                    }
+                }
+                let mut res: Option<DynTree<IR>> = None;
+                for mut group in groups {
+                    let exprs = group.iter_mut().flat_map(|item| match item {
+                        SetItem::Attribute { target, value, .. } => vec![target, value],
+                        SetItem::Label { .. } => vec![],
+                    });
+                    let chain = self.extract_clause_expr_comprehensions(exprs, None);
+                    let mut set = tree!(IR::Set(group));
+                    let input = match (chain, res.take()) {
+                        (Some(chain), Some(earlier)) => {
+                            Some(Self::stitch_below_apply_chain(chain, earlier))
+                        }
+                        (chain, earlier) => chain.or(earlier),
+                    };
+                    if let Some(input) = input {
+                        set.root_mut().push_child_tree(input);
+                    }
+                    res = Some(set);
+                }
+                res.expect("SET has at least one item")
+            }
+            QueryIR::Remove(mut items) => {
+                let chain = self.extract_clause_expr_comprehensions(&mut items, None);
+                let mut res = tree!(IR::Remove(items));
+                if let Some(chain) = chain {
+                    res.root_mut().push_child_tree(chain);
+                }
+                res
+            }
             QueryIR::LoadCsv {
-                file_path,
+                mut file_path,
                 headers,
-                delimiter,
+                mut delimiter,
                 var,
             } => {
-                self.visited.insert((var.id, var.scope_id));
-                tree!(IR::LoadCsv {
+                // As for SET: the path and delimiter are evaluated per input
+                // row, so their pattern comprehensions are applied below.
+                let chain =
+                    self.extract_clause_expr_comprehensions([&mut file_path, &mut delimiter], None);
+                self.visited.insert(var.key());
+                let mut res = tree!(IR::LoadCsv {
                     file_path,
                     headers,
                     delimiter,
                     var,
-                })
+                });
+                if let Some(chain) = chain {
+                    res.root_mut().push_child_tree(chain);
+                }
+                res
             }
             // WITH clause: projection that also introduces a new scope.
             // May include WHERE filter with pattern predicates.
@@ -3081,7 +3691,11 @@ impl Planner {
                     // decomposition mints synthetic variables by indexing
                     // `scope_vars`, which panics on an empty Default table.
                     let mut planner = Self::new(self.scope_vars.clone());
-                    planner.plan(branch)
+                    // Nested plan ids are indices into one query-wide list.
+                    planner.nested_plans = std::mem::take(&mut self.nested_plans);
+                    let plan = planner.plan(branch);
+                    self.nested_plans = std::mem::take(&mut planner.nested_plans);
+                    plan
                 }));
                 if !all {
                     res = tree!(IR::Distinct, res);
@@ -3110,12 +3724,12 @@ impl Planner {
                         match inner_plan.root().data() {
                             IR::Project { exprs: vars, .. } => {
                                 for (var, _) in vars {
-                                    self.visited.insert((var.id, var.scope_id));
+                                    self.visited.insert(var.key());
                                 }
                             }
                             IR::Aggregate { names, .. } => {
                                 for var in names {
-                                    self.visited.insert((var.id, var.scope_id));
+                                    self.visited.insert(var.key());
                                 }
                             }
                             _ => {}
@@ -3130,7 +3744,7 @@ impl Planner {
                         // FalkorDB C's plan shape).
                         let renamed = Self::rename_projection_outputs(&mut inner_plan, &remap);
                         for (_, outer_var) in &remap {
-                            self.visited.insert((outer_var.id, outer_var.scope_id));
+                            self.visited.insert(outer_var.key());
                         }
                         if renamed {
                             tree!(IR::Apply, inner_plan)
@@ -3156,9 +3770,22 @@ impl Planner {
                         }
                     }
                 } else {
-                    // Non-returning: side-effect only, wrap in Optional so
-                    // outer row survives even if inner produces nothing
-                    tree!(IR::Apply, tree!(IR::Optional(vec![]), inner_plan))
+                    // Non-returning: side-effect only. A keyless Aggregate
+                    // drains the body and always yields exactly one row, so
+                    // each outer row passes through once, however many rows
+                    // the body produced (none included).
+                    tree!(
+                        IR::Apply,
+                        tree!(
+                            IR::Aggregate {
+                                names: vec![],
+                                keys: vec![],
+                                aggregations: vec![],
+                                projections: vec![],
+                            },
+                            inner_plan
+                        )
+                    )
                 }
             }
             QueryIR::ForEach {
@@ -3183,7 +3810,7 @@ impl Planner {
                 // stay there past the restore: their Apply sub-plans run below
                 // the ForEach, on the outer stream.
                 let saved_visited = self.visited.clone();
-                self.visited.insert((var.id, var.scope_id));
+                self.visited.insert(var.key());
 
                 // Plan the body clauses as a sub-plan
                 let body_plans: Vec<DynTree<IR>> =
@@ -3195,7 +3822,7 @@ impl Planner {
                 // Stitch body plans together (same as plan_query stitching)
                 let mut body_iter = body_plans.into_iter().rev();
                 let mut body_plan = body_iter.next().unwrap();
-                let mut idx = Self::descend_list_expr_applies(&body_plan, body_plan.root().idx());
+                let mut idx = Self::descend_clause_expr_applies(&body_plan, body_plan.root().idx());
                 for n in body_iter {
                     if body_plan.node(idx).num_children() > 0 {
                         idx = body_plan
@@ -3205,7 +3832,7 @@ impl Planner {
                     } else {
                         idx = body_plan.node_mut(idx).push_child_tree(n);
                     }
-                    idx = Self::descend_list_expr_applies(&body_plan, idx);
+                    idx = Self::descend_clause_expr_applies(&body_plan, idx);
                 }
                 // Do NOT wrap in Commit — mutations accumulate in pending
                 // across all iterations and are committed by the outer Commit

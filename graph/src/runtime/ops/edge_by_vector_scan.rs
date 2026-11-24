@@ -51,10 +51,15 @@ impl<'a> EdgeByVectorScanOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(ScoredColumn {
-                id: edge.id,
-                score: score.as_ref().map(|v| v.id),
-            }),
+            // No cap, for the same reason as `node_by_vector_scan`: `k`
+            // bounds the scan and there is no boundary step to remove.
+            emitter: BatchedResultEmitter::with_binding(
+                ScoredColumn {
+                    id: edge.id,
+                    score: score.as_ref().map(|v| v.id),
+                },
+                None,
+            ),
             label,
             attr,
             k,
@@ -84,7 +89,7 @@ impl<'a> Iterator for EdgeByVectorScanOp<'a> {
                     &view,
                     "db.idx.vector.queryRelationships",
                 )?;
-                let g = self.runtime.g.borrow();
+                let g = self.runtime.graph();
                 let iter = Box::new(
                     g.vector_query_edges(&label_str, &attr_str, vec_arc, k_val)?
                         .map(|(_src, _dst, edge_id, score)| (edge_id, score)),

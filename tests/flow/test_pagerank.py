@@ -158,3 +158,35 @@ class testPagerank(FlowTestsBase):
         # Should return an empty result set
         self.env.assertEqual(len(result.result_set), 0)
 
+    def test_pagerank_one_node_label(self):
+        """A label holding exactly one node is answered (#3349)"""
+        # the label matches one node; the graph holds others
+        self.graph.query("CREATE (:Node {id: 'a'}), (:Other {id: 'b'}), (:Other {id: 'c'})")
+
+        result = self.graph.query("""CALL algo.pageRank('Node', NULL)
+                                     YIELD node, score
+                                     RETURN node.id, score""").result_set
+        # a single node holds all the rank
+        self.env.assertEqual(len(result), 1)
+        self.env.assertEqual(result[0][0], 'a')
+        self.env.assertAlmostEqual(result[0][1], 1.0, 1e-6)
+
+        # a graph holding a single node, unfiltered
+        self.graph.delete()
+        self.graph.query("CREATE (:Node {id: 'a'})")
+        result = self.graph.query("""CALL algo.pageRank(NULL, NULL)
+                                     YIELD node, score
+                                     RETURN node.id, score""").result_set
+        # a single node holds all the rank
+        self.env.assertEqual(len(result), 1)
+        self.env.assertEqual(result[0][0], 'a')
+        self.env.assertAlmostEqual(result[0][1], 1.0, 1e-6)
+
+    def test_pagerank_unknown_label_or_relationship_type(self):
+        """An unknown label or relationship type selects nothing: no rows (as in C)"""
+
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1}), (:B {id:2})")
+        self.graph.query("MATCH (b:B) DELETE b")  # label B exists, no node has it
+        for args in ["'Nope', NULL", "NULL, 'Nope'", "'A', 'Nope'", "'B', NULL"]:
+            res = self.graph.query(f"CALL algo.pageRank({args}) YIELD node RETURN node").result_set
+            self.env.assertEqual(res, [])

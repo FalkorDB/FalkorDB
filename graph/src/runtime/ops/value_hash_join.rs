@@ -23,14 +23,21 @@
 //!
 //! The table has two representations (see [`JoinHashTable`]): an `i64`-keyed
 //! fast path when every build key is integer-valued, and a general `Value`
-//! table (hash-to-bucket, then exact `Value` equality) for everything else.
-//! NULL keys are skipped on both sides (Cypher NULL != NULL semantics).
+//! table (hash-to-bucket, then [`keys_match`] on the bucket) for everything
+//! else. Top-level NULL keys are skipped on both sides, and a key that merely
+//! *carries* a NULL (`[1, null]`) is rejected by [`keys_match`], because
+//! Cypher `=` is three-valued: a NULL operand makes the predicate UNKNOWN
+//! rather than TRUE. Build additionally drops any key that
+//! [`Value::is_never_equal`] rejects, since nothing can ever match it (see
+//! [`insert_value`]).
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use ahash::RandomState;
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
+use smallvec::{SmallVec, smallvec};
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::planner::IR;
@@ -39,7 +46,7 @@ use crate::runtime::{
     eval::ExprEval,
     row::{Row, RowView},
     runtime::Runtime,
-    value::Value,
+    value::{CompareValue, DisjointOrNull, Value},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
@@ -55,7 +62,15 @@ pub(crate) struct RightRowRef {
 
 /// One hash bucket's worth of build-side rows that share the same key value,
 /// kept as positions so probe can re-check exact key equality after a hash hit.
-pub(crate) type BuildSlot = Vec<RightRowRef>;
+///
+/// Inline capacity 1, because the overwhelmingly common case is a key that
+/// appears once. A `Vec` here is a heap allocation per *distinct key* to hold a
+/// single 8-byte position, and joins on near-unique keys are exactly the shape
+/// that produces one per row. Measured on a 10,000-row build side: 1,646,215
+/// bytes allocated when every key was distinct, against 12,423 when the same
+/// rows carried only five distinct keys. Duplicate keys spill to the heap as
+/// before.
+pub(crate) type BuildSlot = SmallVec<[RightRowRef; 1]>;
 
 /// General-path build/probe table: `seeded_hash(Value) -> [(key, right rows)]`.
 /// The per-bucket `Vec` resolves hash collisions; exact `Value` equality is
@@ -104,13 +119,37 @@ fn hash_value(value: &Value) -> u64 {
     JOIN_HASH_SEED.hash_one(value)
 }
 
+/// Cypher `=` between two join keys: a match only when they compare equal *and*
+/// the comparison was conclusive.
+///
+/// `Value`'s `PartialEq` is `compare_value(..).0 == Ordering::Equal`, which
+/// throws the [`DisjointOrNull`] flag away and so collapses UNKNOWN into TRUE:
+/// `[1, null] == [1, null]` reports `true` even though `compare_list` flagged
+/// it `ComparedNull` — "equal as far as the non-NULL elements go, but the
+/// answer is UNKNOWN". Keeping the flag is what makes the join agree with the
+/// `Filter` it replaces. `Disjoint` is rejected for the same reason:
+/// `compare_map` reports `(Equal, Disjoint)` for maps whose values have
+/// incomparable types, which is FALSE, not TRUE.
+///
+/// This costs nothing over `PartialEq` — the flag is already computed and
+/// returned by the same `compare_value` call, so the bucket scan simply stops
+/// discarding it.
+fn keys_match(
+    a: &Value,
+    b: &Value,
+) -> bool {
+    let (ordering, disjoint_or_null) = a.compare_value(b);
+    ordering == Ordering::Equal && matches!(disjoint_or_null, DisjointOrNull::None)
+}
+
 /// Map a key to the `i64` the [`JoinHashTable::Int`] fast path is keyed on,
 /// honouring `Value`'s numeric equality (`Int(n)` and the whole float `n.0`
 /// compare equal and hash identically, so they must share a key). Integers map
 /// directly; a float maps only if it round-trips through `i64` exactly (a whole
 /// number, in range — matching the `Value` `Hash`/`compare_value` rules);
 /// anything else (string, non-whole float, NaN, …) can't equal an integer key,
-/// so it returns `None`.
+/// so it returns `None`. Only scalar numerics are accepted, so a null-bearing
+/// key can never reach the integer table.
 fn key_as_i64(key: &Value) -> Option<i64> {
     match key {
         Value::Int(n) => Some(*n),
@@ -124,16 +163,28 @@ fn key_as_i64(key: &Value) -> Option<i64> {
 
 /// Insert one build row into the general (`Value`) table, grouping rows that
 /// share a key under a single bucket entry (re-using it on a hash collision or
-/// a repeated key).
+/// a repeated key). Grouping uses the same [`keys_match`] test as the probe
+/// side, so two keys share an entry exactly when a probe key matching one must
+/// also match the other.
+///
+/// A key that [`Value::is_never_equal`] rejects is dropped rather than stored.
+/// `keys_match` would reject it on every probe, so it can never join — and
+/// since grouping uses that same test, a repeated one (say N rows all keyed
+/// `[1, null]`, which all hash alike) would append a fresh entry per row and
+/// rescan the whole bucket to do it, making the build O(N²) and every colliding
+/// probe O(N).
 fn insert_value(
     table: &mut ValueTable,
     key: Value,
     slot: RightRowRef,
 ) {
+    if key.is_never_equal() {
+        return;
+    }
     let bucket = table.entry(hash_value(&key)).or_default();
-    match bucket.iter_mut().find(|(k, _)| *k == key) {
+    match bucket.iter_mut().find(|(k, _)| keys_match(k, &key)) {
         Some((_, refs)) => refs.push(slot),
-        None => bucket.push((key, vec![slot])),
+        None => bucket.push((key, smallvec![slot])),
     }
 }
 
@@ -158,8 +209,17 @@ pub struct ValueHashJoinOp<'a> {
     pub(crate) lhs_exp: &'a QueryExpr<Variable>,
     pub(crate) rhs_exp: &'a QueryExpr<Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
-    /// Build/probe hash table; `None` until the right side has been consumed.
-    pub(crate) hash_table: Option<JoinHashTable>,
+    /// Build/probe hash tables keyed by origin row (see `per_origin`; origin 0
+    /// holds the single table otherwise). Origins are sparse, so only those
+    /// that occur on the build side get a table; `None` until the right side
+    /// has been consumed.
+    pub(crate) hash_table: Option<FxHashMap<usize, JoinHashTable>>,
+    /// Set when the join runs inside a batched correlated sub-plan (Apply,
+    /// Optional, Merge): its argument batch then holds several outer rows,
+    /// tagged by `origin_row`, and a left row may only join right rows of the
+    /// same outer row. The build keeps one table per origin and the probe
+    /// looks in the table of the left row's origin.
+    pub(crate) per_origin: bool,
     /// The right sub-plan's batches, retained so probe can gather matched rows
     /// by `RightRowRef` position without the build phase materialising an owned
     /// `Row` per right row.
@@ -190,6 +250,7 @@ impl<'a> ValueHashJoinOp<'a> {
             rhs_exp,
             idx,
             hash_table: None,
+            per_origin: false,
             right_batches: Vec::new(),
             left_batch: None,
             left_pos: 0,
@@ -202,14 +263,17 @@ impl<'a> ValueHashJoinOp<'a> {
     /// keeps its rows in place; the table stores `RightRowRef` positions into
     /// `right_batches` rather than owned `Row`s, so the build side allocates
     /// nothing per row and only matched rows are materialised during probe.
-    fn build_hash_table(&mut self) -> Result<JoinHashTable, String> {
+    fn build_hash_table(&mut self) -> Result<FxHashMap<usize, JoinHashTable>, String> {
         let eval = ExprEval::from_runtime(self.runtime);
         // Build on the integer fast path; the first non-integer-valued key
         // promotes the entries gathered so far into the general `Value` table,
-        // and the rest of the build continues there.
-        let mut int_table: HashMap<i64, BuildSlot, RandomState> =
-            HashMap::with_hasher((*JOIN_HASH_SEED).clone());
-        let mut value_table: Option<ValueTable> = None;
+        // and the rest of the build continues there. One such pair per origin
+        // row when `per_origin`, else just one.
+        let new_int_table = || HashMap::with_hasher((*JOIN_HASH_SEED).clone());
+        let mut tables: FxHashMap<
+            usize,
+            (HashMap<i64, BuildSlot, RandomState>, Option<ValueTable>),
+        > = FxHashMap::default();
 
         for result in self.right.by_ref() {
             let batch = result?;
@@ -235,7 +299,15 @@ impl<'a> ValueHashJoinOp<'a> {
                     batch: batch_ref,
                     row: row as u32,
                 };
-                match &mut value_table {
+                let origin = if self.per_origin {
+                    batch.origin_row(row) as usize
+                } else {
+                    0
+                };
+                let (int_table, value_table) = tables
+                    .entry(origin)
+                    .or_insert_with(|| (new_int_table(), None));
+                match value_table {
                     // General path already active: re-materialize the key value.
                     Some(table) => insert_value(table, column.get(i), slot),
                     // All-integer column: key directly on the `i64` — the
@@ -251,9 +323,9 @@ impl<'a> ValueHashJoinOp<'a> {
                             if let Some(n) = key_as_i64(&key) {
                                 int_table.entry(n).or_default().push(slot);
                             } else {
-                                let mut table = promote_int_table(&mut int_table);
+                                let mut table = promote_int_table(int_table);
                                 insert_value(&mut table, key, slot);
-                                value_table = Some(table);
+                                *value_table = Some(table);
                             }
                         }
                     }
@@ -262,7 +334,14 @@ impl<'a> ValueHashJoinOp<'a> {
             self.right_batches.push(batch);
         }
 
-        Ok(value_table.map_or_else(|| JoinHashTable::Int(int_table), JoinHashTable::Value))
+        Ok(tables
+            .into_iter()
+            .map(|(origin, (int_table, value_table))| {
+                let table =
+                    value_table.map_or_else(|| JoinHashTable::Int(int_table), JoinHashTable::Value);
+                (origin, table)
+            })
+            .collect())
     }
 
     /// Populate `right_match_envs` with the build-side rows whose key equals
@@ -273,10 +352,14 @@ impl<'a> ValueHashJoinOp<'a> {
     fn fill_matches(
         &mut self,
         key: &Value,
+        origin: usize,
     ) {
         self.right_match_envs.clear();
         self.right_match_pos = 0;
-        let refs = match self.hash_table.as_ref().unwrap() {
+        let Some(table) = self.hash_table.as_ref().unwrap().get(&origin) else {
+            return;
+        };
+        let refs = match table {
             // Integer fast path: only integer-valued probe keys can match an
             // all-integer build side; everything else short-circuits.
             JoinHashTable::Int(table) => {
@@ -285,12 +368,17 @@ impl<'a> ValueHashJoinOp<'a> {
                 };
                 table.get(&n)
             }
-            // General path: hash to the bucket, then re-check exact equality.
+            // General path: hash to the bucket, then re-check exact equality
+            // under three-valued logic (`PartialEq` would report a match for
+            // an UNKNOWN comparison; see [`keys_match`]).
             JoinHashTable::Value(table) => {
                 let Some(bucket) = table.get(&hash_value(key)) else {
                     return;
                 };
-                bucket.iter().find(|(k, _)| k == key).map(|(_, refs)| refs)
+                bucket
+                    .iter()
+                    .find(|(k, _)| keys_match(k, key))
+                    .map(|(_, refs)| refs)
             }
         };
         let Some(refs) = refs else {
@@ -311,11 +399,11 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
         // Lazy materialization of right side
         if self.hash_table.is_none() {
             match self.build_hash_table() {
-                Ok(table) => {
-                    if table.is_empty() {
+                Ok(tables) => {
+                    if tables.values().all(JoinHashTable::is_empty) {
                         return None;
                     }
-                    self.hash_table = Some(table);
+                    self.hash_table = Some(tables);
                 }
                 Err(e) => return Some(Err(e)),
             }
@@ -358,18 +446,27 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
                 // Inline probe to avoid borrow conflict with self.right_match_envs
                 let eval = ExprEval::from_runtime(self.runtime);
                 let lhs_idx = self.lhs_exp.root().idx();
-                let key = {
-                    let left_row = BatchRow::new(self.left_batch.as_ref().unwrap(), self.left_pos);
-                    match eval.eval(self.lhs_exp, lhs_idx, Some(&left_row), None) {
+                let (key, origin) = {
+                    let left_batch = self.left_batch.as_ref().unwrap();
+                    let left_row = BatchRow::new(left_batch, self.left_pos);
+                    let key = match eval.eval(self.lhs_exp, lhs_idx, Some(&left_row), None) {
                         Ok(k) => k,
                         Err(e) => return Some(Err(e)),
-                    }
+                    };
+                    let origin = if self.per_origin {
+                        left_batch.origin_row(self.left_pos) as usize
+                    } else {
+                        0
+                    };
+                    (key, origin)
                 };
+                // Cheap top-level early-out; a NULL nested inside a container
+                // key is left to `keys_match`, which rejects it for free.
                 if matches!(key, Value::Null) {
                     self.left_pos += 1;
                     continue;
                 }
-                self.fill_matches(&key);
+                self.fill_matches(&key, origin);
                 if self.right_match_envs.is_empty() {
                     self.left_pos += 1;
                     continue;
@@ -412,5 +509,118 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::RightRowRef;
+    use super::{ValueTable, insert_value, key_as_i64, keys_match};
+    use crate::runtime::{ordermap::OrderMap, value::Value};
+
+    fn list(items: Vec<Value>) -> Value {
+        Value::List(Arc::new(items.into_iter().collect()))
+    }
+
+    fn map(entries: Vec<(&str, Value)>) -> Value {
+        Value::Map(Arc::new(OrderMap::from_vec(
+            entries
+                .into_iter()
+                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .collect(),
+        )))
+    }
+
+    fn string(s: &str) -> Value {
+        Value::String(Arc::new(s.to_string()))
+    }
+
+    #[test]
+    fn keys_match_requires_a_conclusive_equality() {
+        // This is the regression under test: `PartialEq` drops the
+        // `DisjointOrNull` flag, so it reports `[1, null] == [1, null]`,
+        // which turned an UNKNOWN predicate into a join match.
+        let null_list = list(vec![Value::Int(1), Value::Null]);
+        assert!(null_list == null_list, "PartialEq is deliberately laxer");
+        assert!(!keys_match(&null_list, &null_list));
+
+        // A NULL on only one side is no match either.
+        assert!(!keys_match(
+            &null_list,
+            &list(vec![Value::Int(1), Value::Int(2)])
+        ));
+        assert!(!keys_match(&Value::Null, &Value::Null));
+        assert!(!keys_match(&Value::Null, &Value::Int(1)));
+
+        // Maps whose values are of incomparable types compare FALSE, not TRUE.
+        assert!(!keys_match(
+            &map(vec![("a", Value::Int(1))]),
+            &map(vec![("a", string("1"))])
+        ));
+        assert!(!keys_match(
+            &map(vec![("a", Value::Null)]),
+            &map(vec![("a", Value::Null)])
+        ));
+    }
+
+    #[test]
+    fn keys_match_still_accepts_legitimate_joins() {
+        // Scalars, including Cypher's cross-type numeric equality.
+        assert!(keys_match(&Value::Int(30), &Value::Int(30)));
+        assert!(keys_match(&Value::Int(30), &Value::Float(30.0)));
+        assert!(!keys_match(&Value::Int(30), &Value::Int(31)));
+        assert!(keys_match(&string("a"), &string("a")));
+        assert!(!keys_match(&string("a"), &string("b")));
+
+        // NULL-free containers.
+        let pair = list(vec![Value::Int(1), Value::Int(2)]);
+        assert!(keys_match(&pair, &pair));
+        assert!(!keys_match(&pair, &list(vec![Value::Int(1)])));
+        assert!(keys_match(&list(vec![]), &list(vec![])));
+        let m = map(vec![("a", Value::Int(1)), ("b", string("x"))]);
+        assert!(keys_match(&m, &m));
+        assert!(!keys_match(&m, &map(vec![("a", Value::Int(1))])));
+    }
+
+    #[test]
+    fn integer_fast_path_never_sees_a_null_bearing_key() {
+        // The `Int` table is matched on the `i64` alone, with no `keys_match`
+        // check, so a null-bearing key must never map into it. `key_as_i64`
+        // accepts only scalar numerics, which is what guarantees that.
+        assert_eq!(key_as_i64(&Value::Int(7)), Some(7));
+        assert_eq!(key_as_i64(&Value::Float(7.0)), Some(7));
+        assert_eq!(key_as_i64(&Value::Null), None);
+        assert_eq!(key_as_i64(&list(vec![Value::Int(1), Value::Null])), None);
+        assert_eq!(key_as_i64(&map(vec![("a", Value::Null)])), None);
+    }
+
+    /// A key that cannot match itself never enters the table. Otherwise the
+    /// build degrades to O(N²): all N such keys hash alike, none groups with
+    /// any other under `keys_match`, so each row would append an entry and
+    /// rescan the bucket to discover it must.
+    #[test]
+    fn unmatchable_build_keys_never_enter_the_table() {
+        let mut table = ValueTable::default();
+        for row in 0..64 {
+            let slot = RightRowRef { batch: 0, row };
+            insert_value(&mut table, list(vec![Value::Int(1), Value::Null]), slot);
+            insert_value(&mut table, map(vec![("k", Value::Null)]), slot);
+            insert_value(&mut table, Value::Null, slot);
+        }
+        assert!(table.is_empty());
+
+        // A matchable key still groups its repeats under one entry.
+        for row in 0..64 {
+            insert_value(
+                &mut table,
+                list(vec![Value::Int(1), Value::Int(2)]),
+                RightRowRef { batch: 0, row },
+            );
+        }
+        let entries: usize = table.values().map(Vec::len).sum();
+        assert_eq!(entries, 1);
+        assert_eq!(table.values().next().unwrap()[0].1.len(), 64);
     }
 }

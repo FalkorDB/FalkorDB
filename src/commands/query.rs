@@ -19,17 +19,21 @@
 //! `graph_core`.
 
 use crate::{
+    commands::query_args::{QueryFlags, parse_query_flags},
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, query_mut, reply_invalid_graph_version},
-    redis_type::GRAPH_TYPE,
+    graph_core::{
+        ThreadedGraph, c_graph_key, c_graph_name, query_mut, register_graph,
+        reply_invalid_graph_version, up_to_nul,
+    },
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString};
 use std::sync::Arc;
 #[cfg(feature = "fuzz")]
 use std::sync::atomic::{AtomicI32, Ordering};
 #[cfg(feature = "fuzz")]
 use std::{fs::File, io::Write};
+use valkey_module::{Context, NextArg, ValkeyResult, ValkeyString, ValkeyValue};
 
 #[cfg(feature = "fuzz")]
 static FILE_ID: AtomicI32 = AtomicI32::new(0);
@@ -37,11 +41,18 @@ static FILE_ID: AtomicI32 = AtomicI32::new(0);
 #[allow(unused_imports)]
 pub fn graph_query(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
+    let QueryFlags {
+        format,
+        track_memory,
+        timeout,
+        version: version_check,
+    } = parse_query_flags(&args)?;
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
-    let query = args.next_str()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
 
     #[cfg(feature = "fuzz")]
     {
@@ -50,38 +61,28 @@ pub fn graph_query(
         file.write_all(query.as_bytes())?;
     }
 
-    let mut compact = false;
-    let mut track_memory = false;
-    let mut version_check: Option<u64> = None;
-    let mut timeout: Option<i64> = None;
-    while let Ok(arg) = args.next_str() {
-        // Matched case-insensitively, as the C dispatcher does with strcasecmp:
-        // `TIMEOUT` is the documented spelling.
-        if arg.eq_ignore_ascii_case("--compact") {
-            compact = true;
-        } else if arg.eq_ignore_ascii_case("--track-memory") {
-            track_memory = true;
-        } else if arg.eq_ignore_ascii_case("version") {
-            let ver_str = args.next_str()?;
-            version_check = Some(ver_str.parse::<u64>()?);
-        } else if arg.eq_ignore_ascii_case("timeout") {
-            let t_str = args.next_str()?;
-            timeout = Some(t_str.parse::<i64>()?);
-        }
-    }
-
     // Try read-only key access first to avoid triggering WATCH on existing graphs.
+    //
+    // `key_name` is the *key* the graph lives at, not C's name for it: replication,
+    // `WATCH` signalling, the registry and telemetry all address Redis by it, and a
+    // write replicated against a name no key answers to leaves a replica that never
+    // reconverges. For a graph that already exists that key is the one the command
+    // named, NUL and all — a `RENAME` can leave a graph sitting at such a key. A graph
+    // this query *creates* lands elsewhere, and rebinds `key_name` below.
     let read_key = ctx.open_key(&key_str);
     let key_name: Arc<str> = Arc::from(key_str.to_string());
 
-    if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    if let Some(graph) = read_key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         let graph = graph.clone();
         drop(read_key);
         return query_mut(
             ctx,
             &graph,
             query,
-            compact,
+            format,
             true,
             track_memory,
             key_name,
@@ -92,15 +93,18 @@ pub fn graph_query(
 
     // Graph doesn't exist - open writable key to create it.
     drop(read_key);
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
     // Re-check: another client may have created it between our read and write open.
-    if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+    if let Some(graph) = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
         let graph = graph.clone();
         return query_mut(
             ctx,
             &graph,
             query,
-            compact,
+            format,
             true,
             track_memory,
             key_name,
@@ -109,9 +113,14 @@ pub fn graph_query(
         );
     }
 
+    // Creating, from here on: `GraphContext_SetKey` puts a new graph at the key rebuilt
+    // from C's name rather than at the addressed one, so that truncated key — which is
+    // the name — is the key this graph lives at.
+    let name = c_graph_name(&key_str);
+    let key_name: Arc<str> = Arc::from(name.as_str());
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-        &key_str.to_string(),
+        &name,
     )));
 
     // For a newly-created graph, the initial schema_version is 0. Checked
@@ -120,21 +129,31 @@ pub fn graph_query(
         && provided_version != 0
     {
         reply_invalid_graph_version(ctx, 0);
-        return Ok(redis_module::RedisValue::NoReply);
+        return Ok(ValkeyValue::NoReply);
     }
 
+    // Stored under the name, not under the key that was looked up — this is
+    // `GraphContext_SetKey`, and it is why a graph addressed as `a\0b` lands at key
+    // `a`, replacing whatever graph was there. Opened before the query runs: once
+    // `query_mut` has replied or blocked the client, a refused open could no longer
+    // be reported without a second reply.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
     let result = query_mut(
         ctx,
         &graph,
         query,
-        compact,
+        format,
         true,
         track_memory,
         key_name,
         timeout,
         None,
     );
-    key.set_value(&GRAPH_TYPE, graph.clone())?;
-    crate::graph_core::register_graph(key_str.to_string(), graph);
+    // `key` is dropped unset, leaving the addressed key absent, exactly as in C.
+    drop(key);
+    create_key
+        .set_value(&GRAPH_TYPE, graph.clone())
+        .map_err(wrong_type_compat)?;
+    register_graph(name, graph);
     result
 }

@@ -42,7 +42,13 @@ all_types = [
     Type.LIST
 ]
 
-def random_value(type):
+# Nesting cap for random LIST values. Without one the recursion has no bound,
+# and the old `str([...])` form re-quoted every nested level, doubling its
+# backslashes each time: a rare deep draw built a multi-GB query string and the
+# CI runner OOM-killed pytest partway through this file.
+MAX_LIST_DEPTH = 3
+
+def random_value(type, depth=0):
     if type == Type.NULL:
         return "null"
     elif type == Type.BOOL:
@@ -54,9 +60,11 @@ def random_value(type):
     elif type == Type.STRING:
         return f"\"{''.join(choice(string.ascii_letters + string.digits) for _ in range(choice(range(0, 100))))}\""
     elif type == Type.LIST:
-        return str([random_value(choice(all_types)) for _ in range(choice(range(0, 10)))])
+        element_types = all_types if depth < MAX_LIST_DEPTH else [t for t in all_types if t != Type.LIST]
+        elements = [random_value(choice(element_types), depth + 1) for _ in range(choice(range(0, 10)))]
+        return f"[{', '.join(elements)}]"
     elif isinstance(type, Optional):
-        return choice([random_value(type.__args__[0]), None])
+        return choice([random_value(type.__args__[0], depth), None])
     return None
 
 def is_valid_type(actual_type, expected_type):
@@ -238,3 +246,18 @@ def test_struct_constructor_accepted_arities():
     # duration decodes to a relativedelta, which compares cleanly to its parts
     duration = common.g.query("RETURN duration({days: 1, hours: 2})").result_set[0][0]
     assert (duration.days, duration.hours) == (1, 2)
+
+def test_list_argument_type_check_is_not_per_row_linear():
+    """A function taking `List<Any>` (size, head, last, ...) must not walk the
+    list to type-check it: every element is accepted, and the walk made each
+    call O(len), so reading one large list variable per row was quadratic.
+    100k elements x 100k rows took tens of seconds before the fix and
+    milliseconds after; the 10s ceiling is generous. The ceiling is the query's
+    own TIMEOUT, so a regression fails at 10s instead of running to the end."""
+    for expr in ["size(ns)", "head(ns)", "last(ns)"]:
+        q = f"WITH range(0, 99999) AS ns UNWIND range(0, 99999) AS i RETURN count({expr})"
+        try:
+            res = common.g.query(q, timeout=10_000)
+        except ResponseError as e:
+            raise AssertionError(f"{expr} per row is quadratic: {e}") from e
+        assert res.result_set == [[100000]], q

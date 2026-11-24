@@ -403,6 +403,25 @@ class testLoadLocalCSV():
             except Exception as e:
                 self.env.assertContains("CSV field terminator can only be one character wide", str(e))
 
+    def test15_pattern_comprehension_in_file_path(self):
+        # the file path is evaluated per input row, so a pattern
+        # comprehension in it has to be planned as a sub-plan; it used to
+        # reach the evaluator un-lowered and crash the server
+        name = "load_csv_pattern_comprehension"
+        if name in self.db.list_graphs():
+            self.db.select_graph(name).delete()
+        g = self.db.select_graph(name)
+        try:
+            g.query(f"""CREATE (:F {{name: 'a'}})-[:R]->
+                               (:F {{file: 'file://{SHORT_CSV_WITHOUT_HEADERS}'}})""")
+            q = """MATCH (f:F {name: 'a'})
+                   LOAD CSV FROM head([(f)-->(x) | x.file]) AS row
+                   RETURN row"""
+            result = g.query(q).result_set
+            self.env.assertEqual(result, [[row] for row in SHORT_CSV_WITHOUT_HEADERS_DATA])
+        finally:
+            g.delete()
+
 
 class testLoadRemoteCSV():
     def __init__(self):
@@ -446,6 +465,21 @@ class testLoadRemoteCSV():
                 self.env.assertFalse("we should have failed" and False)
             except Exception:
                 pass
+
+    def test_03_redirect_not_followed(self):
+        # The fetch is pinned to the addresses validated for the URL's own
+        # host, so a redirect is not followed (#3443): it used to be, to the
+        # first host's IP whatever host it named, and over http as well.
+        # Like C (libcurl without CURLOPT_FOLLOWLOCATION) no second request
+        # is made; unlike C, which parses the 3xx body as the CSV, the query
+        # fails and says why. github.com/<repo>/raw/... answers 302 to the
+        # same file on raw.githubusercontent.com, a different host.
+        url = "https://github.com/FalkorDB/FalkorDB/raw/refs/heads/master/demo/social/resources/friends.csv"
+        target = "https://raw.githubusercontent.com/FalkorDB/FalkorDB/refs/heads/master/demo/social/resources/friends.csv"
+
+        msg = assert_error_reply(self.env, self.env.getConnection(), "GRAPH.QUERY",
+                                 GRAPH_ID_REMOTE, f"LOAD CSV FROM '{url}' AS row RETURN row")
+        self.env.assertContains(f"LOAD CSV does not follow redirects (HTTP 302 to {target})", msg)
 
 class testLoadCsvPlan():
     def __init__(self):

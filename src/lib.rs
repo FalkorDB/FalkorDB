@@ -42,6 +42,7 @@ mod allocator;
 mod commands;
 mod config;
 mod dispatch;
+mod divergence_guard;
 mod graph_core;
 mod module_init;
 mod query_session;
@@ -59,47 +60,49 @@ use commands::{
 };
 use config::{
     CONFIGURATION_CACHE_SIZE, CONFIGURATION_CMD_INFO, CONFIGURATION_DELAY_INDEXING,
-    CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE,
-    CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER,
-    CONFIGURATION_THREAD_COUNT, CONFIGURATION_VKEY_MAX_ENTITY_COUNT,
+    CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_INDEX_BUILD_THREAD_COUNT,
+    CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
+    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, CONFIGURATION_THREAD_COUNT,
+    CONFIGURATION_VKEY_MAX_ENTITY_COUNT,
 };
 use module_init::graph_init;
-use redis_module::{configuration::ConfigurationFlags, redis_module};
 use redis_type::{GRAPH_TYPE, GRAPHMETA_TYPE};
+use valkey_module::{configuration::ConfigurationFlags, valkey_module};
 
-redis_module! {
+valkey_module! {
     name: "graph",
     version: env!("FALKORDB_VERSION_INT").parse::<i32>().unwrap(),
     allocator: (ThreadCountingAllocator, ThreadCountingAllocator),
     data_types: [GRAPH_TYPE, GRAPHMETA_TYPE],
     init: graph_init,
     commands: [
-        ["graph.DELETE", graph_delete, "write deny-script", 1, 1, 1, ""],
-        ["graph.COPY", graph_copy, "write deny-oom deny-script", 1, 2, 1, ""],
-        ["graph.RESTORE", graph_restore, "write deny-script", 1, 1, 1, ""],
-        ["graph.QUERY", graph_query, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.RO_QUERY", graph_ro_query, "readonly deny-script blocking", 1, 1, 1, ""],
-        ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.PROFILE", graph_profile, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0, ""],
-        ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1, ""],
-        ["graph.MEMORY", graph_memory, "readonly deny-script blocking", 2, 2, 1, ""],
-        ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0, ""],
-        ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0, ""],
-        ["graph.DEBUG", graph_debug, "write deny-script", 0, 0, 0, ""],
-        ["graph.EFFECT", graph_effect, "write deny-script", 1, 1, 1, ""],
-        ["graph.CONSTRAINT", graph_constraint, "write deny-oom deny-script", 2, 2, 1, ""],
-        ["graph.BULK", graph_bulk_insert, "write deny-oom deny-script", 1, 1, 1, ""],
-        ["graph.SLOWLOG", graph_slowlog, "readonly deny-script allow-busy", 1, 1, 1, ""],
-        ["graph.INFO", graph_info, "readonly deny-script allow-busy", 1, 1, 1, ""],
+        ["graph.DELETE", graph_delete, "write deny-script", 1, 1, 1],
+        ["graph.COPY", graph_copy, "write deny-oom deny-script", 1, 2, 1],
+        ["graph.RESTORE", graph_restore, "write deny-script", 1, 1, 1],
+        ["graph.QUERY", graph_query, "write deny-oom deny-script blocking", 1, 1, 1],
+        ["graph.RO_QUERY", graph_ro_query, "readonly deny-script blocking", 1, 1, 1],
+        ["graph.EXPLAIN", graph_explain, "write deny-oom deny-script blocking", 1, 1, 1],
+        ["graph.PROFILE", graph_profile, "write deny-oom deny-script blocking", 1, 1, 1],
+        ["graph.LIST", graph_list, "readonly deny-script allow-busy", 0, 0, 0],
+        ["graph.RECORD", graph_record, "write deny-oom deny-script blocking", 1, 1, 1],
+        ["graph.MEMORY", graph_memory, "readonly deny-script blocking", 2, 2, 1],
+        ["graph.CONFIG", graph_config, "readonly deny-script allow-busy", 0, 0, 0],
+        ["graph.UDF", graph_udf, "write deny-script", 0, 0, 0],
+        ["graph.DEBUG", graph_debug, "write deny-script", 0, 0, 0],
+        ["graph.EFFECT", graph_effect, "write deny-script", 1, 1, 1],
+        ["graph.CONSTRAINT", graph_constraint, "write deny-oom deny-script", 2, 2, 1],
+        ["graph.BULK", graph_bulk_insert, "write deny-oom deny-script", 1, 1, 1],
+        ["graph.SLOWLOG", graph_slowlog, "readonly deny-script allow-busy", 1, 1, 1],
+        ["graph.INFO", graph_info, "readonly deny-script allow-busy", 1, 1, 1],
     ],
     configurations: [
         i64: [
             ["CACHE_SIZE", &*CONFIGURATION_CACHE_SIZE, 25, 0, 1000, ConfigurationFlags::IMMUTABLE, None],
             ["THREAD_COUNT", &*CONFIGURATION_THREAD_COUNT, 0, 0, 1024, ConfigurationFlags::IMMUTABLE, None],
             ["INDEX_WORKER_THREADS", &*CONFIGURATION_INDEX_WORKER_THREADS, 0, 0, 1024, ConfigurationFlags::IMMUTABLE, None],
+            ["INDEX_BUILD_THREAD_COUNT", &*CONFIGURATION_INDEX_BUILD_THREAD_COUNT, 1, 1, 1024, ConfigurationFlags::IMMUTABLE, None],
             ["NODE_CREATION_BUFFER", &*CONFIGURATION_NODE_CREATION_BUFFER, graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64, 0, 1_073_741_824, ConfigurationFlags::IMMUTABLE, None],
-            ["VKEY_MAX_ENTITY_COUNT", &*CONFIGURATION_VKEY_MAX_ENTITY_COUNT, 100_000, 1, 1_073_741_824, ConfigurationFlags::DEFAULT, None],
+            ["VKEY_MAX_ENTITY_COUNT", &*CONFIGURATION_VKEY_MAX_ENTITY_COUNT, 100_000, 0, i64::MAX, ConfigurationFlags::DEFAULT, None],
             ["JS_HEAP_SIZE", &*CONFIGURATION_JS_HEAP_SIZE, 268_435_456, 0, 4_294_967_296, ConfigurationFlags::DEFAULT, None],
             ["JS_STACK_SIZE", &*CONFIGURATION_JS_STACK_SIZE, 1_048_576, 0, 4_294_967_296, ConfigurationFlags::DEFAULT, None],
         ],
@@ -112,6 +115,9 @@ redis_module! {
             ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::DEFAULT, None],
         ],
         enum: [],
-        module_args_as_configuration: true,
+        // Module arguments are parsed once, in `graph_init`, the way C's
+        // `Config_Init` parses them (see `apply_module_args`). They are applied
+        // after redis.conf's `graph.*` lines, so a module argument wins.
+        module_args_as_configuration: false,
     ]
 }

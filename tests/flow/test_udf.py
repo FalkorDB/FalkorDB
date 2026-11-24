@@ -1061,6 +1061,27 @@ class testUDF():
         self.env.assertEqual(res["attributes"]["id"], "edge_custom_id")
         self.env.assertEqual(res["attributes"]["role"], "dev")
 
+    def test_deleted_entities_seen_as_runtime_sees_them(self):
+        # Regression for #3454: a node deleted earlier in the same query must
+        # look the same to a UDF as it does to labels(n) / n.name, both when
+        # passed directly and as an edge endpoint (e.source).
+        script = """
+        function inspect_node(n) { return [n.labels, n.attributes.name]; }
+        function inspect_src(e) { return [e.source.labels, e.source.attributes.name]; }
+        falkor.register('inspect_node', inspect_node);
+        falkor.register('inspect_src', inspect_src);
+        """
+        self.db.udf_load("deleted", script, True)
+
+        self.graph.query("CREATE (:P {name: 'A'})-[:R]->(:Q {name: 'B'})")
+
+        q = """MATCH (n:P)-[r:R]->()
+               DETACH DELETE n
+               RETURN labels(n), n.name, deleted.inspect_node(n), deleted.inspect_src(r)"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.result_set, [[['P'], 'A', [['P'], 'A'], [['P'], 'A']]])
+
     def test_load_invalid_invocations(self):
         """
         Test invalid invocations of GRAPH.UDF LOAD:
@@ -1079,6 +1100,30 @@ class testUDF():
             assert False, "Expected failure on invalid option"
         except ResponseError as e:
             self.env.assertContains("unknown option given", str(e).lower())
+
+    def test_load_empty_lib_name_or_script(self):
+        """
+        GRAPH.UDF LOAD rejects an empty library name and an empty script,
+        with or without REPLACE, and registers nothing.
+        """
+
+        script = "falkor.register('f', function() { return 1; });"
+        cases = [
+            (["", script], "empty lib name"),
+            (["REPLACE", "", script], "empty lib name"),
+            (["", ""], "empty lib name"),
+            (["lib", ""], "empty script"),
+            (["REPLACE", "lib", ""], "empty script"),
+            (["x" * 513, ""], "empty script"),
+        ]
+        for args, msg in cases:
+            try:
+                self.db.execute_command("GRAPH.UDF", "LOAD", *args)
+                self.env.assertTrue(False, message=f"LOAD {args} should fail")
+            except ResponseError as e:
+                self.env.assertContains(msg, str(e))
+
+        self._assert_any_udfs_missing()
 
     def test_load_udf_lib(self):
         """
@@ -1793,6 +1838,141 @@ class test_udf_javascript():
         v2 = self.graph.query("RETURN lib_args.f(1, 2, 3)").result_set[0][0]
         self.env.assertEqual(v2, [1, 2])
 
+    def test_graph_global_at_load(self):
+        """
+        A library may reference the `graph` global at top level: LOAD
+        validates it in a context that defines `graph`, as the runtime does.
+        """
+
+        self.db.udf_load("gg", "var G = graph; falkor.register('f', function() { return typeof G.traverse; });")
+        self.env.assertEqual(self.graph.query("RETURN gg.f()").result_set, [['function']])
+
+    def test_roundtrip_fidelity(self):
+        """
+        Values that C passes through an identity UDF unchanged: -0.0 stays a
+        float, a map with a `constructor` key stays a map, and a vecf32
+        holding inf survives.
+        """
+
+        script = """
+        function id(x) { return x; }
+        function nz() { return -0; }
+        falkor.register('id', id);
+        falkor.register('nz', nz);
+        """
+        self.db.udf_load("rt", script)
+
+        res = self.graph.query("RETURN rt.id(-0.0), 1 / rt.id(-0.0), 1 / rt.nz()").result_set
+        self.env.assertEqual(res, [[-0.0, float('-inf'), float('-inf')]])
+
+        for m in ["{constructor: {name: 'Date'}}", "{constructor: {name: 'RegExp'}}"]:
+            res = self.graph.query(f"RETURN rt.id({m}) = {m}").result_set
+            self.env.assertEqual(res, [[True]])
+
+        res = self.graph.query("RETURN rt.id(vecf32([1e39, 1.5])) = vecf32([1e39, 1.5])").result_set
+        self.env.assertEqual(res, [[True]])
+
+        # real Date and RegExp objects still convert
+        res = self.graph.query("""RETURN rt.id(localdatetime('2020-01-02T03:04:05'))
+                                         = localdatetime('2020-01-02T03:04:05'),
+                                         rt.id(date('2020-01-02')) = date('2020-01-02')""").result_set
+        self.env.assertEqual(res, [[True, True]])
+
+    def test_qualified_name_collisions(self):
+        """
+        As in C, two libraries may not claim the same qualified name (compared
+        ignoring case), and calls are case-sensitive.
+        """
+
+        self.db.udf_load("Coll", "falkor.register('f', function() { return 1; });")
+        self.db.udf_load("a", "falkor.register('b.c', function() { return 1; });")
+
+        # `coll.f` collides with `Coll.f`
+        try:
+            self.db.udf_load("coll", "falkor.register('f', function() { return 2; });")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("'coll.f' already registered", str(e))
+        self.env.assertEqual(self.graph.query("RETURN Coll.f()").result_set, [[1]])
+
+        # library `a.b` registering `c` collides with `a`'s `b.c`
+        try:
+            self.db.udf_load("a.b", "falkor.register('c', function() { return 2; });")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("function 'a.b.c' already registered", str(e))
+        self.env.assertEqual(self.graph.query("RETURN a.b.c()").result_set, [[1]])
+
+        # replacing a library with its own names is fine
+        self.db.udf_load("Coll", "falkor.register('f', function() { return 3; });", replace=True)
+        self.env.assertEqual(self.graph.query("RETURN Coll.f()").result_set, [[3]])
+
+        # function names are case-sensitive
+        self.db.udf_load("cased", """falkor.register('f', function() { return 1; });
+                                     falkor.register('F', function() { return 2; });""")
+        res = self.graph.query("RETURN cased.f(), cased.F()").result_set
+        self.env.assertEqual(res, [[1, 2]])
+        try:
+            self.graph.query("RETURN CASED.f()")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Unknown function", str(e))
+
+    def test_get_neighbors_self_loop_once(self):
+        """
+        getNeighbors({returnType: 'edges'}) and graph.traverse report a
+        self-loop once, in every direction.
+        """
+
+        script = """
+        falkor.register('e', function(x, d) {
+            return x.getNeighbors({direction: d, returnType: 'edges'}).map(function(y) { return y.id; });
+        });
+        falkor.register('t', function(x, d) {
+            return graph.traverse([x], {direction: d, returnType: 'edges'})[0].map(function(y) { return y.id; });
+        });
+        """
+        self.db.udf_load("loop", script)
+        self.graph.query("""CREATE (a:A {id:0})-[:R {k:'ab'}]->(b:A {id:1})-[:R {k:'bc'}]->(c:A {id:2}),
+                                   (a)-[:R {k:'aa'}]->(a), (c)-[:S {k:'ca'}]->(a), (a)-[:R {k:'ab2'}]->(b)""")
+        rid = dict(self.graph.query("MATCH ()-[r]->() RETURN r.k, ID(r)").result_set)
+
+        expected = {'outgoing': ['ab', 'aa', 'ab2'], 'incoming': ['aa', 'ca'], 'both': ['ab', 'aa', 'ca', 'ab2']}
+        for d, keys in expected.items():
+            ids = sorted(rid[k] for k in keys)
+            res = self.graph.query(f"MATCH (n {{id: 0}}) RETURN loop.e(n, '{d}'), loop.t(n, '{d}')").result_set
+            self.env.assertEqual(sorted(res[0][0]), ids)
+            self.env.assertEqual(sorted(res[0][1]), ids)
+
+    def test_deeply_nested_result_is_an_error(self):
+        """
+        A UDF result nested past the conversion's depth limit is a query
+        error, not a stack overflow, and the server keeps answering.
+        """
+
+        script = """
+        function deep(n) { let a = null; for (let i = 0; i < n; i++) a = [a]; return a; }
+        function deepObj(n) { let o = null; for (let i = 0; i < n; i++) o = {k: o}; return o; }
+        function cyclic() { const a = []; a.push(a); return a; }
+        falkor.register('deep', deep);
+        falkor.register('deepObj', deepObj);
+        falkor.register('cyclic', cyclic);
+        """
+        self.db.udf_load("nest", script)
+
+        for q in ["RETURN nest.deep(300000)", "RETURN nest.deepObj(300000)",
+                  "RETURN nest.deep(1025)", "RETURN nest.cyclic()"]:
+            try:
+                self.graph.query(q)
+                assert False, f"expected an error for {q}"
+            except ResponseError as e:
+                self.env.assertContains("nesting exceeds the maximum depth", str(e))
+            self.env.assertTrue(self.db.connection.ping())
+
+        # At the limit, and in ordinary use, nested results still convert.
+        res = self.graph.query("RETURN size(nest.deep(1024)), nest.deep(2)").result_set
+        self.env.assertEqual(res, [[1, [[None]]]])
+
     def test_returning_undefined(self):
         """
         UDFs returning `undefined` should map to Cypher NULL.
@@ -1807,3 +1987,179 @@ class test_udf_javascript():
         v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
 
+
+    def test_forged_entity_by_prototype_tricks(self):
+        """
+        An object that shares a real entity's prototype or constructor is still
+        not that entity: only the instances the engine made are references to
+        graph entities.
+        """
+
+        script = """
+        function viaCreate(n) { return Object.create(Object.getPrototypeOf(n)); }
+        function viaSetProto(n) {
+            return Object.setPrototypeOf({id: 1000}, Object.getPrototypeOf(n));
+        }
+        function viaNew(n) { return new n.constructor(); }
+        function viaConstruct(n) { return Reflect.construct(n.constructor, []); }
+        function viaAssign(n) { return Object.assign(Object.create(n), {id: 1000}); }
+        falkor.register('viaCreate', viaCreate);
+        falkor.register('viaSetProto', viaSetProto);
+        falkor.register('viaNew', viaNew);
+        falkor.register('viaConstruct', viaConstruct);
+        falkor.register('viaAssign', viaAssign);
+        """
+        self.db.udf_load("protoforge", script)
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+
+        for f in ["viaCreate", "viaSetProto", "viaNew", "viaConstruct", "viaAssign"]:
+            for q in [f"MATCH (a {{id:0}}) WITH protoforge.{f}(a) AS n "
+                      "MATCH (b {id:1}) CREATE (b)-[:R]->(n)",
+                      f"MATCH (a {{id:0}}) RETURN startNode(protoforge.{f}(a))"]:
+                # a forged object is not an entity: each of these is refused
+                with self.env.assertResponseError():
+                    self.graph.query(q)
+
+        # the server is alive and the graph is unchanged
+        self.env.assertEqual(self.graph.query("MATCH ()-[r]->() RETURN count(r)").result_set, [[1]])
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[2]])
+
+    def test_stale_entity_kept_in_global(self):
+        """
+        A UDF may keep a node/edge in a JS global, and the context outlives the
+        call. A later call must not be able to use that stale reference (here
+        the edge was deleted since): it must be refused, not crash the server.
+        """
+
+        script = """
+        function stash(a) { globalThis.se = a.getNeighbors({returnType: 'edges'})[0]; return 1; }
+        function stashN(a) { globalThis.sn = a; return 1; }
+        function edge(x) { return globalThis.se; }
+        function nb(x) { return globalThis.sn.getNeighbors().length; }
+        falkor.register('stash', stash);
+        falkor.register('stashN', stashN);
+        falkor.register('edge', edge);
+        falkor.register('nb', nb);
+        """
+        self.db.udf_load("stale", script)
+        self.graph.query("CREATE (:A {id:5})-[:R]->(:A {id:6})")
+        # the calls run on a pool of threads, each with its own JS context:
+        # repeat so that the later calls reach a context holding the stash
+        for _ in range(60):
+            self.graph.query("MATCH (a {id:5}) RETURN stale.stash(a), stale.stashN(a)")
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:A {id:7})")
+
+        for q in ["RETURN startNode(stale.edge(1))", "RETURN stale.nb(1)"]:
+            for _ in range(60):
+                try:
+                    self.graph.query(q)
+                except ResponseError:
+                    pass
+
+        # the server is alive
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[1]])
+
+    def test_forged_entity_markers(self):
+        """
+        A plain JS object that copies the node/edge markers is a Map, not a
+        reference to a graph entity: it must not crash the server or create
+        an edge to a node that does not exist. Real entities still round-trip.
+        """
+
+        script = """
+        function fn(n) { return {__falkor_type:'node', __falkor_node_id: n}; }
+        function fe(n) { return {__falkor_type:'edge', __falkor_edge_id: n}; }
+        function same(x) { return x; }
+        function retag(x) { x.__falkor_node_id = 1000; return x; }
+        function nb(x) { return x.getNeighbors.call({__falkor_node_id: 1000}, {}); }
+        function tr(x) { return graph.traverse([{__falkor_node_id: 1000}]); }
+        falkor.register('fn', fn);
+        falkor.register('fe', fe);
+        falkor.register('same', same);
+        falkor.register('retag', retag);
+        falkor.register('nb', nb);
+        falkor.register('tr', tr);
+        """
+        self.db.udf_load("forge", script)
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+
+        for q in ["RETURN startNode(forge.fe(1000))",
+                  "RETURN type(forge.fe(1000))",
+                  "WITH forge.fn(7) AS n MATCH (a {id:0}) CREATE (a)-[:R]->(n)",
+                  "MATCH (a {id:0}) RETURN forge.nb(a)",
+                  "MATCH (a {id:0}) RETURN forge.tr(a)"]:
+            with self.env.assertResponseError():
+                self.graph.query(q)
+
+        # the server is alive and the graph is unchanged
+        res = self.graph.query("MATCH (a)-[r]->(b) RETURN count(r), max(id(b))").result_set
+        self.env.assertEqual(res, [[1, 1]])
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set, [[2]])
+
+        # real entities round-trip, and editing their markers does not retarget them
+        res = self.graph.query("""MATCH p=(a {id:0})-[r]->(b)
+                                  RETURN forge.same(a) = a, forge.same(r) = r,
+                                         forge.same(p) = p, id(forge.retag(a))""").result_set
+        self.env.assertEqual(res, [[True, True, True, 0]])
+
+    def test_get_neighbors_without_config(self):
+        """
+        node.getNeighbors() with no argument uses the default config.
+        """
+
+        script = """
+        falkor.register('n', function(x) {
+            return x.getNeighbors().map(function(y) { return y.id; });
+        });
+        """
+        self.db.udf_load("lib_nocfg", script)
+        self.graph.query("CREATE (a {id:0})-[:R]->(:B {id:1}), (a)<-[:R]-(:C {id:2})")
+
+        res = self.graph.query("MATCH (a {id:0}) RETURN lib_nocfg.n(a)").result_set
+        self.env.assertEqual(res, [[[1]]])
+
+
+class testUDFShutdown():
+    """A UDF run on the Redis main thread (GRAPH.QUERY inside MULTI) leaves
+    the main thread's QuickJS state alive until exit. Dropping it must free
+    the cached functions before the runtime, or QuickJS aborts during
+    SHUTDOWN (signal 6)."""
+
+    def __init__(self):
+        # A moduleArgs value unique to this class, so RLTest starts a fresh
+        # server that this test is free to shut down.
+        self.env, self.db = Env(moduleArgs="MAX_INFO_QUERIES 1001")
+        self.conn = self.env.getConnection()
+
+    def test_shutdown_after_main_thread_udf(self):
+        # Only meaningful when RLTest owns the server process.
+        proc = getattr(self.env.envRunner, 'masterProcess', None)
+        if proc is None:
+            self.env.skip()
+            return
+
+        self.db.udf_load("sd", "falkor.register('f', function(x) { return x; });")
+        pipe = self.conn.pipeline(transaction=True)
+        pipe.execute_command("GRAPH.QUERY", "g", "RETURN sd.f(1)")
+        res = pipe.execute()
+        self.env.assertEqual(res[0][1][0][0], 1)
+
+        try:
+            self.conn.execute_command("SHUTDOWN", "NOSAVE")
+        except Exception:
+            # SHUTDOWN closes the socket before any reply is read; the exit
+            # status checked below is what proves the shutdown was clean.
+            pass
+
+        deadline = time.time() + 30
+        while time.time() < deadline and proc.poll() is None:
+            time.sleep(0.1)
+        if proc.poll() is None:
+            proc.kill()
+        self.env.assertEqual(proc.poll(), 0)
+
+        # The server is gone; keep RLTest from trying to talk to it on the way out.
+        self.env.envRunner.masterProcess = None
+        self.env.envRunner.envIsUp = False
+        self.env.envRunner.envIsHealthy = False

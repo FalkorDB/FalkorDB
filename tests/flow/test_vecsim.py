@@ -1,3 +1,4 @@
+import time
 from common import *
 from index_utils import *
 
@@ -292,3 +293,118 @@ class testVecsim():
         g.query("CREATE (:DUser {tag: 'B', emb: vecf32($v)})", params={'v': v})
         self.env.assertEqual(knn_tags(v), ['B'])
 
+
+    def test10_wrong_dimension_vector_keeps_other_indexes(self):
+        # regression: a vector whose dimension differs from the index's is not
+        # indexed, but the entity must stay in every other index on its label
+        # (RediSearch rejects the whole document if the vector is added).
+        g = Graph(self.conn, "vecsim_wrong_dim")
+
+        # pre-existing entity, indexed by background population
+        g.query("CREATE (:WUser {name: 'old', emb: vecf32([1,2,3])})")
+        create_node_range_index(g, "WUser", "name")
+        g.create_node_vector_index("WUser", "emb", dim=2,
+                                   similarity_function="euclidean")
+        wait_for_indices_to_sync(g)
+
+        # entities indexed on write: wrong dimension, then a good one
+        g.query("CREATE (:WUser {name: 'new', emb: vecf32([1,2,3])})")
+        g.query("CREATE (:WUser {name: 'good', emb: vecf32([1,2])})")
+        # updating the wrong-dimension vector re-indexes the entity
+        g.query("MATCH (u:WUser {name: 'old'}) SET u.emb = vecf32([4,5,6])")
+
+        for name in ['old', 'new', 'good']:
+            q = "MATCH (u:WUser) WHERE u.name = $name RETURN u.name"
+            self.env.assertIn("Node By Index Scan", str(g.explain(q, {'name': name})))
+            res = g.ro_query(q, {'name': name}).result_set
+            self.env.assertEqual(res, [[name]])
+
+        # only the vector of the index's dimension is in the vector index
+        res = query_node_vector_index(g, "WUser", "emb", 10, [1, 2]).result_set
+        self.env.assertEqual([row[0].properties['name'] for row in res], ['good'])
+
+    def test11_vector_index_without_dimension_keeps_other_indexes(self):
+        # regression: a vector field created without a dimension has no vector
+        # params in RediSearch; adding a vector to it must not drop the entity
+        # from the label's other indexes.
+        g = Graph(self.conn, "vecsim_no_dim")
+
+        g.query("CREATE (:NUser {name: 'old', emb: vecf32([1,2,3])})")
+        create_node_range_index(g, "NUser", "name")
+        try:
+            # may be refused (no dimension); what matters is the range index
+            g.query("CREATE VECTOR INDEX FOR (n:NUser) ON (n.emb)")
+        except ResponseError:
+            pass
+        wait_for_indices_to_sync(g)
+
+        g.query("CREATE (:NUser {name: 'new', emb: vecf32([1,2,3])})")
+
+        for name in ['old', 'new']:
+            q = "MATCH (u:NUser) WHERE u.name = $name RETURN u.name"
+            self.env.assertIn("Node By Index Scan", str(g.explain(q, {'name': name})))
+            res = g.ro_query(q, {'name': name}).result_set
+            self.env.assertEqual(res, [[name]])
+
+    def test12_huge_k_is_clamped(self):
+        # regression: k far larger than the index used to size an allocation by
+        # k (crashing the server) or make the KNN query return nothing.
+        for k in [1000000000000000, 9223372036854775807]:
+            res = query_node_vector_index(self.graph, "Person", "embeddings", k, [50, 50])
+            self.env.assertEqual(len(res.result_set), 1001)
+            res = query_edge_vector_index(self.graph, "Points", "embeddings", k, [50, 50])
+            self.env.assertGreater(len(res.result_set), 0)
+        self.env.assertTrue(self.conn.ping())
+
+    def test13_query_while_index_is_under_construction(self):
+        # regression (#3382): a vector query used to answer from the half-built
+        # index. Like C, it is refused until that index is OPERATIONAL, for node
+        # and relationship queries alike, whatever the number of rows it would
+        # have returned.
+        g = self.db.select_graph("vecsim_under_construction")
+        # Population runs in the background, 10k entities per batch. This many
+        # keeps each index UNDER CONSTRUCTION for about a second, orders of
+        # magnitude longer than it takes to issue the first query after CREATE.
+        # (There is no hook to pause population; if it ever finished before the
+        # first query, the refused > 0 check below fails loudly, never silently.)
+        g.query("""UNWIND range(1, 100000) AS i
+                   CREATE (:V {e: vecf32([toFloat(i), 1.0])})-[:R {e: vecf32([toFloat(i), 1.0])}]->(:W)""")
+
+        def constructing(label):
+            # only the index the query targets matters: another label's index
+            # may still be building while this one is already operational
+            res = g.ro_query("CALL db.indexes() YIELD label, status RETURN label, status")
+            return any(l == label and "UNDER CONSTRUCTION" in status
+                       for l, status in res.result_set)
+
+        def check_refused_until_operational(label, name, q):
+            refused = 0
+            deadline = time.time() + 120
+            while constructing(label):
+                if time.time() >= deadline:
+                    self.env.assertTrue(False, message=f"{name}: index still under construction after 120s")
+                    raise TimeoutError(f"{name}: index still under construction after 120s")
+                try:
+                    g.ro_query(q)
+                except Exception as e:
+                    self.env.assertContains(f"The vector index on '{label}' is under construction", str(e))
+                    refused += 1
+                    time.sleep(0.01)
+                    continue
+                # answered: only acceptable if population finished meanwhile
+                self.env.assertFalse(constructing(label),
+                                     message=f"{name} answered from an index under construction")
+            self.env.assertGreater(refused, 0, message=f"{name} was never refused")
+            self.env.assertEqual(g.ro_query(q).result_set, [[3]])
+
+        create_node_vector_index(g, "V", "e", dim=2)
+        check_refused_until_operational(
+            "V", "db.idx.vector.queryNodes",
+            "CALL db.idx.vector.queryNodes('V', 'e', 3, vecf32([1.0, 1.0])) YIELD node RETURN count(node)")
+
+        create_edge_vector_index(g, "R", "e", dim=2)
+        check_refused_until_operational(
+            "R", "db.idx.vector.queryRelationships",
+            "CALL db.idx.vector.queryRelationships('R', 'e', 3, vecf32([1.0, 1.0])) YIELD relationship RETURN count(relationship)")
+
+        wait_for_indices_to_sync(g)

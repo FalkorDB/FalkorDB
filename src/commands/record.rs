@@ -19,23 +19,26 @@
 //! blocked; the main thread only resolves (or creates) the graph key.
 
 use crate::dispatch::must_run_inline;
+use crate::graph_core::{abandon_write, finish_write};
 use crate::query_session::QuerySession;
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
-    graph_core::{BlockedClient, ThreadedGraph, ffi},
-    redis_type::GRAPH_TYPE,
+    graph_core::{
+        BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph, up_to_nul,
+    },
+    redis_type::{GRAPH_TYPE, wrong_type_compat},
     reply::reply_verbose_value,
 };
 use graph::{
     graph::graph::Plan,
     planner::IR,
-    runtime::runtime::{GetVariables, Runtime},
+    runtime::runtime::{GetVariables, QueryGraph, Runtime},
     threadpool::spawn,
 };
 use orx_tree::{Bfs, Collection, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
-use std::{os::raw::c_char, sync::Arc};
+use std::{collections::HashSet, os::raw::c_char, sync::Arc};
+use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue, raw};
 
 #[inline]
 fn record_mut(
@@ -43,7 +46,7 @@ fn record_mut(
     graph: &Arc<RwLock<ThreadedGraph>>,
     key_name: &Arc<str>,
     query: &str,
-) -> RedisResult {
+) -> ValkeyResult {
     // A recorded query may be a write, and it is a *real* write: run it under a real
     // session (per-graph lock, escalation at the first `Commit`, mutations into a
     // private MVCC version), then commit and replicate exactly like `GRAPH.QUERY`.
@@ -59,31 +62,25 @@ fn record_mut(
     let Plan {
         plan, parameters, ..
     } = session
-        .with_graph(|tg| tg.graph.read().borrow().get_plan(query))
-        .map_err(RedisError::String)?;
+        .with_graph(|tg| tg.graph.read().get_plan(query))
+        .map_err(ValkeyError::String)?;
     let is_write = plan.iter().any(|n| {
         matches!(
             n,
             IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
         )
     });
-    // Writes need the MVCC write slot so they build a private version instead of
-    // mutating the published one in place; reads run on the committed snapshot.
-    let g = if is_write {
-        let Some(g) = session.with_graph(|tg| tg.graph.write()) else {
-            return Err(RedisError::String(
-                "ERR another write is in progress, retry the query".to_string(),
-            ));
-        };
-        g
+    // Writes build a private version instead of mutating the published one in
+    // place (checked against the published graph when the query escalates);
+    // reads run on the committed snapshot.
+    let g: QueryGraph = if is_write {
+        session.write_version().into()
     } else {
-        session.with_graph(|tg| tg.graph.read())
+        session.with_graph(|tg| tg.graph.read()).into()
     };
-    let g_arc = Arc::clone(&g);
     let runtime = Runtime::new(
         g,
         parameters,
-        is_write,
         plan.clone(),
         true,
         (*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone(),
@@ -96,57 +93,25 @@ fn record_mut(
     );
     let outcome = runtime.query();
     if is_write {
+        // Deliberately the same two paths `GRAPH.QUERY` takes: RECORD adds an
+        // operator trace to a real write, it does not change how one is published
+        // or how a failed one is undone.
         match &outcome {
-            Err(_) => {
-                // Same undo a failed write does: bring the index back in line with
-                // committed state, then release the MVCC write slot.
-                let committed = session.with_graph(|tg| tg.graph.read());
-                runtime.resync_published_indexes(&committed);
-                session.with_graph(|tg| tg.graph.rollback());
-            }
+            Err(_) => abandon_write(&session, &runtime),
             Ok(result) => {
-                let stats = &result.stats;
-                let modified = stats.nodes_created > 0
-                    || stats.nodes_deleted > 0
-                    || stats.relationships_created > 0
-                    || stats.relationships_deleted > 0
-                    || stats.properties_set > 0
-                    || stats.properties_removed > 0
-                    || stats.labels_added > 0
-                    || stats.labels_removed > 0
-                    || stats.indexes_created > 0
-                    || stats.indexes_dropped > 0
-                    || runtime.effects_count.get() > 0;
-                // Effects encoding mirrors `execute_query_write`: index DDL carrying
-                // OPTIONS cannot round-trip, so those fall back to verbatim
-                // replication of the query.
-                let has_unencodable_index = runtime.plan.iter().any(
-                    |node| matches!(node, IR::CreateIndex { options, .. } if options.is_some()),
-                );
-                let effects_buffer = if has_unencodable_index {
-                    None
-                } else {
-                    let buf = crate::graph_core::should_use_effects(
-                        false,
-                        &runtime,
-                        stats.execution_time,
-                    );
-                    crate::graph_core::build_index_effects(&runtime, buf)
-                };
-                let wq = crate::graph_core::WriteQueryOk {
-                    graph: g_arc,
-                    effects_buffer,
-                    modified,
-                };
-                if session
-                    .with_graph_mut(|tg| {
-                        crate::graph_core::commit_and_replicate(tg, ctx, key_name, query, wq)
-                    })
-                    .is_none()
-                {
-                    // The plan's `Commit` never ran (`LIMIT 0` above it, say), so
-                    // nothing was mutated — release the slot without publishing.
-                    session.with_graph(|tg| tg.graph.rollback());
+                // Refused because no key holds the graph any more: undone like a
+                // failed write. Every operator succeeded, so the trace alone would
+                // read as a committed write; end it with `GRAPH.QUERY`'s error on
+                // the root, as when the same refusal comes at escalation (the
+                // write is then an `Err` outcome whose error the root records).
+                if let Err(abort) = finish_write(&session, ctx, key_name, &runtime, &result.stats) {
+                    abandon_write(&session, &runtime);
+                    if let Some(root) = plan.root().indices::<Bfs>().next() {
+                        runtime
+                            .record
+                            .borrow_mut()
+                            .push((root, Err(abort.to_string())));
+                    }
                 }
             }
         }
@@ -204,38 +169,56 @@ fn record_mut(
         raw::reply_with_string_buffer(ctx.ctx, node.as_ptr().cast::<c_char>(), node.len());
         let vars = plan.node(idx).get_variables();
         raw::reply_with_array(ctx.ctx, vars.len() as _);
+        // The display form keeps unnamed variables distinct (`as_str` is `?`
+        // for all of them); a user may still backquote an unnamed entity's
+        // display name, so a repeated label gets the variable's id appended
+        // and a recording's bindings never share a key.
+        let mut labels = HashSet::new();
         for var in vars {
-            raw::reply_with_string_buffer(
-                ctx.ctx,
-                var.as_str().as_ptr().cast::<c_char>(),
-                var.as_str().len(),
-            );
+            let mut label = var.to_string();
+            if !labels.insert(label.clone()) {
+                label = format!("{label}#{}", var.id);
+                labels.insert(label.clone());
+            }
+            raw::reply_with_string_buffer(ctx.ctx, label.as_ptr().cast::<c_char>(), label.len());
         }
     }
-    Ok(RedisValue::NoReply)
+    Ok(ValkeyValue::NoReply)
 }
 
 pub fn graph_record(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
-    let query = args.next_str()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
 
-    let key_name: Arc<str> = Arc::from(key_str.to_string().as_str());
-    let key = ctx.open_key_writable(&key_str);
+    let key = ctx.open_key_writable(&key_str)?;
 
-    let graph = if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        graph.clone()
+    // `key_name` is the key the graph lives at, not C's name for it — see `graph_query`.
+    // An existing graph is at the key the command named; one created here lands at the
+    // key C rebuilds from the name.
+    let (graph, key_name): (Arc<RwLock<ThreadedGraph>>, Arc<str>) = if let Some(graph) = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
+        (graph.clone(), Arc::from(key_str.to_string()))
     } else {
+        let name = c_graph_name(&key_str);
         let graph = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
+            &name,
         )));
-        key.set_value(&GRAPH_TYPE, graph.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), graph.clone());
-        graph
+        // Stored under C's key, as GRAPH.QUERY does — see `c_graph_key`.
+        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str))?;
+        create_key
+            .set_value(&GRAPH_TYPE, graph.clone())
+            .map_err(wrong_type_compat)?;
+        let key_name: Arc<str> = Arc::from(name.as_str());
+        register_graph(name, graph.clone());
+        (graph, key_name)
     };
 
     // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
@@ -250,7 +233,6 @@ pub fn graph_record(
     // write lock and waits for the GIL.
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let query: Arc<str> = Arc::from(query);
-    let key_name = key_name.clone();
     spawn(
         move || {
             let ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
@@ -265,5 +247,5 @@ pub fn graph_record(
         None,
     );
 
-    RedisResult::Ok(RedisValue::NoReply)
+    ValkeyResult::Ok(ValkeyValue::NoReply)
 }

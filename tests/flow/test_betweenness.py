@@ -83,6 +83,20 @@ class testBetweenness(FlowTestsBase):
         # check if it returned empty results (acceptable behavior)
         self.env.assertEqual(len(result.result_set), 0)
 
+    def test_betweenness_one_node_projection(self):
+        """A nodeLabels projection holding exactly one node is answered (#3349)"""
+        # the label matches one node; the graph holds others
+        self.graph.query("CREATE (:Node {name: 'a'}), (:Other {name: 'b'}), (:Other {name: 'c'})")
+
+        result = self.betweenness_centrality(nodeLabels=['Node'])
+        self.env.assertEqual(result.result_set, [['a', 0.0]])
+
+        # a graph holding a single node, unfiltered
+        self.graph.delete()
+        self.graph.query("CREATE (:Node {name: 'a'})")
+        result = self.betweenness_centrality()
+        self.env.assertEqual(result.result_set, [['a', 0.0]])
+
     def test_betweenness_centrality(self):
         """Test betweenness centrality algorithm on a simple directed graph structure."""
 
@@ -437,3 +451,16 @@ class testBetweenness(FlowTestsBase):
         # Different seeds should give different results
         self.env.assertNotEqual(centrality_scores7['B'], centrality_scores8['B'])
 
+
+    def test_unknown_label_or_relationship_type(self):
+        """An unknown nodeLabels / relationshipTypes entry is an error (as in C)"""
+
+        self.graph.query("CREATE (:A {id:0})-[:R]->(:A {id:1})")
+        for config, msg in [("{nodeLabels: ['Nope']}", "betweenness configuration, unknown label Nope"),
+                            ("{nodeLabels: ['A', 'Nope']}", "betweenness configuration, unknown label Nope"),
+                            ("{relationshipTypes: ['Nope']}", "betweenness configuration, unknown relationship-type Nope")]:
+            try:
+                self.graph.query(f"CALL algo.betweenness({config}) YIELD node RETURN node")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertEqual(str(e), msg)

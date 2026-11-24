@@ -49,6 +49,13 @@
 //! ```
 //!
 //! The pass is applied recursively so nested join opportunities are found.
+//!
+//! **Correlated sub-plans:**
+//!
+//! A CartesianProduct under an `Apply`, `Optional` or `CALL {}` is rewritten
+//! too. When such a sub-plan runs batched, its argument batch holds every
+//! outer row, and `ValueHashJoinOp` keeps one table per outer row
+//! (`origin_row`), so branch rows of different outer rows are never paired.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -142,25 +149,13 @@ fn try_hash_join_rewrite(
                 if lhs_vars.iter().all(|v| l_vars.contains(v))
                     && rhs_vars.iter().all(|v| r_vars.contains(v))
                 {
-                    found = Some((
-                        ci,
-                        li,
-                        ri,
-                        Arc::new(lhs_tree.clone()),
-                        Arc::new(rhs_tree.clone()),
-                    ));
+                    found = Some((ci, li, ri, Arc::new(lhs_tree), Arc::new(rhs_tree)));
                     break 'outer;
                 }
                 if rhs_vars.iter().all(|v| l_vars.contains(v))
                     && lhs_vars.iter().all(|v| r_vars.contains(v))
                 {
-                    found = Some((
-                        ci,
-                        li,
-                        ri,
-                        Arc::new(rhs_tree.clone()),
-                        Arc::new(lhs_tree.clone()),
-                    ));
+                    found = Some((ci, li, ri, Arc::new(rhs_tree), Arc::new(lhs_tree)));
                     break 'outer;
                 }
             }
@@ -205,11 +200,7 @@ fn try_hash_join_rewrite(
     if remaining.is_empty() {
         Some(join_subtree)
     } else {
-        let remaining_filter = if remaining.len() == 1 {
-            Arc::new(remaining.into_iter().next().unwrap())
-        } else {
-            Arc::new(tree!(ExprIR::And; remaining))
-        };
+        let remaining_filter = Arc::new(ExprIR::and_of(remaining));
         let mut result = DynTree::new(IR::Filter(remaining_filter));
         result.root_mut().push_child_tree(join_subtree);
         Some(result)

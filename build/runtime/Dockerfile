@@ -1,9 +1,16 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
-# Redis base image version. Override via `--build-arg REDIS_VERSION=X.Y.Z`
-# to ship against a different redis release without editing the Dockerfile.
-ARG REDIS_VERSION=8.6.3
+# Which server the image ships FalkorDB on: `redis` (default) or `valkey`.
+# Selects the `server-${SERVER}` stage below, and the `base-${SERVER}` OS the
+# server is built and run on; the other server's stages are never built.
+ARG SERVER=redis
+# Server versions. Override via `--build-arg REDIS_VERSION=X.Y.Z` /
+# `--build-arg VALKEY_VERSION=X.Y.Z` to ship against a different release
+# without editing the Dockerfile. Every Dockerfile that builds a server pins
+# the same versions; build/check-server-pins.sh enforces it in CI.
+ARG REDIS_VERSION=8.10.2
+ARG VALKEY_VERSION=9.2.0
 
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
@@ -14,12 +21,20 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
-# CXX defaults to the Debian toolchain's clang++-22. Per-OS toolchain images
+# CXX defaults to the Debian toolchain's clang++-23. Per-OS toolchain images
 # (rhel9/al2023/rhel8/alpine) reuse this exact builder stage and override the
 # compiler via `--build-arg CXX=<their clang++>` — keeping one build path /
 # one self-containment contract for every platform (see build/Dockerfile.<os>).
-ARG CXX=clang++-22
+ARG CXX=clang++-23
 COPY --from=planner /src/recipe.json recipe.json
+# cargo-chef stubs out build SCRIPTS, but cargo still has to RESOLVE every
+# manifest -- and graph/Cargo.toml carries a path build-dependency on
+# ../native-deps. Without the crate present, `cook` fails with
+# "failed to read /src/native-deps/Cargo.toml". It is ~140KB of source and its
+# own workspace, so copying it here costs nothing and does not disturb the
+# dependency layer chef is caching.
+COPY native-deps native-deps
+COPY deps/native-deps.lock deps/native-deps.lock
 RUN CXX="$CXX" cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN CXX="$CXX" cargo build --release && \
@@ -32,6 +47,8 @@ RUN CXX="$CXX" cargo build --release && \
     fi && \
     undef="$(nm -D --undefined-only /out/falkordb.so 2>/dev/null | grep -E 'omp_|GOMP_|__kmpc_' || true)" && \
     if [ -n "$undef" ]; then echo "FAIL: OpenMP symbols undefined in .so:"; echo "$undef"; exit 1; fi && \
+    unresolved="$(ldd -r /out/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
+    if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this OS cannot resolve (the module would not load):"; echo "$unresolved"; exit 1; fi && \
     echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
 
 # ---------------------------------------------------------------------------
@@ -51,76 +68,62 @@ FROM scratch AS artifact
 COPY --from=builder /out/falkordb.so /falkordb.so
 
 # ---------------------------------------------------------------------------
-# Redis builder stage — debian:trixie-slim + minimal build deps.
+# Base OS, chosen by SERVER: Redis runs on Debian, Valkey on Ubuntu LTS. The
+# server is compiled (server-builder-base) and run (server-base) on the same
+# base, so it links against the glibc and OpenSSL its image ships.
+# ---------------------------------------------------------------------------
+FROM debian:trixie-slim AS base-redis
+FROM ubuntu:26.04 AS base-valkey
+# Canonical's labels must not pass for ours; a label cannot be unset, so blank them.
+LABEL org.opencontainers.image.title="" \
+      org.opencontainers.image.description="" \
+      org.opencontainers.image.version="" \
+      org.opencontainers.image.created=""
+
+# ---------------------------------------------------------------------------
+# Server builder stages — the base OS + minimal build deps.
 #
-# We build redis-server / redis-cli ourselves on debian:trixie-slim instead
-# of inheriting `FROM redis:${REDIS_VERSION}` for two reasons:
+# We build the server binaries ourselves (build/build-server.sh, shared with
+# every other image that ships a server) instead of inheriting
+# `FROM redis:${REDIS_VERSION}` / `FROM valkey/valkey`, for two reasons:
 #
 #   1. The upstream redis image bakes a ~60 MB build-toolchain layer
 #      (gcc, g++, cmake, clang, python, rust) that is `apt-get purge`d in
 #      the same RUN — purged binaries don't shrink the layer tarball, so
-#      that 60 MB ships in every pull. Discarding this entire stage drops
+#      that 60 MB ships in every pull. Discarding these stages drops
 #      the waste.
 #
-#   2. The upstream image also ships the bundled stack modules
+#   2. The upstream redis image also ships the bundled stack modules
 #      (redisearch, rejson, redistimeseries, redisbloom — ~25 MB combined).
 #      run.sh only `--loadmodule`s falkordb.so so those modules are dead
-#      weight. Building with BUILD_WITH_MODULES=no skips them entirely
-#      and eliminates the rust toolchain requirement that pulls them in.
+#      weight; a plain build of the tag carries none of them.
 #
-# Trade-off: we are now the SBOM/CVE publisher for the redis binaries,
+# Trade-off: we are now the SBOM/CVE publisher for the server binaries,
 # losing the upstream image's attestation chain. Acceptable for a DB
 # vendor distribution.
 # ---------------------------------------------------------------------------
-FROM debian:trixie-slim AS redis-builder
-
-ARG REDIS_VERSION
-
+FROM base-${SERVER} AS server-builder-base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates git dpkg-dev gcc g++ libc6-dev libssl-dev make; \
+        ca-certificates git gcc g++ libc6-dev libssl-dev make; \
     rm -rf /var/lib/apt/lists/*
+COPY ./build/build-server.sh /usr/local/bin/build-server
 
-WORKDIR /tmp
-# Clone the immutable upstream tag — same pattern as Dockerfile.asan.
-# --depth 1 keeps the fetch small; the tag ref is content-addressed by git
-# so no separate SHA pin is required.
-RUN set -eux; \
-    git clone --depth 1 --branch "${REDIS_VERSION}" https://github.com/redis/redis.git redis-src
+FROM server-builder-base AS redis-builder
+ARG REDIS_VERSION
+RUN build-server redis "${REDIS_VERSION}" /server-install
 
-WORKDIR /tmp/redis-src
-RUN set -eux; \
-    # Mirror the upstream image's protected-mode default flip (1 → 0)
-    # — docker users supply auth/network controls externally.
-    sed -ri 's!^( *createBoolConfig[(]"protected-mode",.*, *)1( *,.*[)],)$!\10\2!' src/config.c; \
-    grep -E '^ *createBoolConfig[(]"protected-mode",.*, *0 *,.*[)],$' src/config.c; \
-    # Bundled jemalloc page-size tuning to match upstream image.
-    gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
-    arch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
-    extraJemallocConfigureFlags="--build=$gnuArch"; \
-    case "${arch##*-}" in \
-        amd64 | i386 | x32) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=12" ;; \
-        *) extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-page=16" ;; \
-    esac; \
-    extraJemallocConfigureFlags="$extraJemallocConfigureFlags --with-lg-hugepage=21"; \
-    sed -ri 's!cd jemalloc && ./configure !&'"$extraJemallocConfigureFlags"' !' deps/Makefile; \
-    export BUILD_TLS=yes BUILD_WITH_MODULES=no; \
-    make -j "$(nproc)" all; \
-    make PREFIX=/redis-install install; \
-    strip /redis-install/bin/redis-server /redis-install/bin/redis-cli; \
-    /redis-install/bin/redis-server --version; \
-    /redis-install/bin/redis-cli --version
+FROM server-builder-base AS valkey-builder
+ARG VALKEY_VERSION
+RUN build-server valkey "${VALKEY_VERSION}" /server-install
 
 # ---------------------------------------------------------------------------
-# Runtime image — debian:trixie-slim, no build tools.
+# Runtime image — the base OS, no build tools. The same apt steps run on
+# Debian (redis) and Ubuntu (valkey).
 # ---------------------------------------------------------------------------
-FROM debian:trixie-slim AS server
-
-# BuildKit auto-ARGs (TARGETPLATFORM, TARGETARCH, ...) must be re-declared in each
-# stage that consumes them, else they expand to empty.
-ARG TARGETPLATFORM
+FROM base-${SERVER} AS server-base
 
 ENV FALKORDB_HOME=/var/lib/falkordb \
     FALKORDB_DATA_PATH=/var/lib/falkordb/data \
@@ -136,54 +139,124 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 #
 # Required at runtime:
 #   ca-certificates, bash, openssl  : run.sh + gen-certs.sh
-#   libssl3                         : redis-server with BUILD_TLS=yes
+#   libssl3                         : the server, built with BUILD_TLS=yes
+#   gosu                            : run.sh drops root to `falkordb`; the
+#                                     browser entrypoint drops to nextjs
 #
 # CVE trim: purge python3.13 + force-remove essential packages not needed at
-# runtime (ncurses, perl, login, passwd). With no LLVM in this image any more
+# runtime (ncurses, perl, login, passwd, util-linux), and on Ubuntu the
+# non-essential e2fsprogs. With no LLVM in this image any more
 # we can run the trim straight through without the load-bearing ordering the
 # old layout required.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3; \
+    apt-get install -y --no-install-recommends ca-certificates bash openssl libssl3 gosu; \
     apt-get upgrade -y; \
-    # Create the redis user/group BEFORE purging `passwd` (which provides
-    # groupadd/useradd). Matches the upstream redis image's uid/gid 999
-    # so downstream consumers' bind-mount permissions and `USER redis`
-    # directives remain compatible after the base switch.
-    groupadd -r -g 999 redis && useradd -r -g redis -u 999 redis; \
+    # Create the falkordb user/group, which run.sh runs the server as,
+    # BEFORE purging `passwd` (which provides groupadd/useradd). uid/gid 999
+    # is the upstream redis (and valkey) image's, so bind-mount permissions
+    # carry over.
+    groupadd -r -g 999 falkordb && useradd -r -g falkordb -u 999 falkordb; \
+    # The `full` stage below runs the bundled browser as nextjs:nodejs (1001),
+    # the uid/gid baked into the falkordb-browser image. useradd/groupadd only
+    # exist until `passwd` is purged a few lines down, so the account has to be
+    # created here even though the browser-less `server` image never uses it.
+    groupadd -g 1001 nodejs && useradd -r -u 1001 -g nodejs nextjs; \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true); \
     (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true); \
     (dpkg --force-remove-essential --purge perl-base || true); \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true); \
     (dpkg --purge passwd || true); \
+    # util-linux, mount and bsdutils ship the setuid mount/umount/su plus
+    # nsenter/unshare, and between them carry most of the image's HIGH
+    # findings that Debian has not fixed yet. Nothing here runs them. On
+    # Ubuntu e2fsprogs depends on libblkid1 and libuuid1, so it goes too, with
+    # its libraries. dpkg skips a package the base does not have.
+    # No `|| true`: if a new dependent appears, fail the build rather than
+    # silently ship them — the Trivy gate ignores unfixed findings, so
+    # nothing else would notice.
+    dpkg --force-remove-essential --purge \
+        util-linux mount bsdutils \
+        libmount1 libblkid1 libuuid1 libsmartcols1 liblastlog2-2 \
+        e2fsprogs logsave libext2fs2t64 libss2 libcom-err2; \
+    # Ubuntu's Pebble: a Go binary no package owns, so apt can't update it.
+    rm -rf /usr/bin/pebble /var/lib/pebble; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
 
-# Pull only the binaries from the redis-builder stage — no build toolchain,
-# no bundled modules, no jemalloc build artefacts.
-COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
-COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
-
+# root:falkordb 0775: `falkordb` writes through the group (after run.sh drops
+# to it, or under --user 999), and root still owns them, so a root process
+# with no capabilities (--cap-drop ALL, where run.sh cannot drop) can still
+# write. The official redis image's user:user ownership cannot SAVE in that
+# case.
 RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} ${FALKORDB_TLS_PATH} && \
+    chown root:falkordb ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
+    chmod 0775 ${FALKORDB_DATA_PATH} ${FALKORDB_TLS_PATH} && \
     ln -s ${FALKORDB_DATA_PATH} /data
+
+# Pull only the server tree from the builder stage — no build toolchain, no
+# bundled modules, no jemalloc build artefacts. build-server.sh also lays down
+# the <server>-sentinel / -check-rdb / -check-aof entry points (and on valkey
+# the redis-* aliases, so scripts and healthchecks written for the redis image
+# keep working) as symlinks: the directory COPY keeps them, at zero size cost.
+# FALKORDB_SERVER is what run.sh execs (`${FALKORDB_SERVER}-server`).
+FROM server-base AS server-redis
+ARG REDIS_VERSION
+ENV FALKORDB_SERVER=redis \
+    FALKORDB_SERVER_VERSION=${REDIS_VERSION}
+COPY --from=redis-builder /server-install/ /usr/local/
+
+FROM server-base AS server-valkey
+ARG VALKEY_VERSION
+ENV FALKORDB_SERVER=valkey \
+    FALKORDB_SERVER_VERSION=${VALKEY_VERSION}
+COPY --from=valkey-builder /server-install/ /usr/local/
+
+FROM server-${SERVER} AS server
+
+# BuildKit auto-ARGs (TARGETPLATFORM, TARGETARCH, ...) must be re-declared in each
+# stage that consumes them, else they expand to empty.
+ARG TARGETPLATFORM
+
+LABEL com.falkordb.server.name="${FALKORDB_SERVER}" \
+      com.falkordb.server.version="${FALKORDB_SERVER_VERSION}"
 
 WORKDIR ${FALKORDB_HOME}
 
+COPY LICENSE LICENSE-SSPL LICENSE-AGPL /usr/local/share/licenses/falkordb/
 COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
-# Runtime-stage sanity (cheap belt-and-braces; the load-bearing checks are in
-# the builder stage where binutils is available). Verify falkordb.so deps and
-# that the redis binaries we copied are runnable in this base.
-RUN deps="$(ldd ${FALKORDB_BIN_PATH}/falkordb.so | awk '{print $1}' | sort -u)" && \
-    echo "$deps" && \
-    if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
+# Runtime-stage sanity, on the OS the image ships (the builder stage checks
+# the .so on the toolchain image's OS). Verify falkordb.so deps and that this
+# base resolves every library and symbol version it needs, that the shipped
+# server is the one the labels name, and that every entry point this image is
+# expected to ship is present and runnable in this base — the sentinel/check-*
+# symlinks are covered here so a future COPY-only refactor cannot silently
+# drop them again (issue #2827).
+RUN lddr="$(ldd -r ${FALKORDB_BIN_PATH}/falkordb.so 2>&1)" && \
+    echo "$lddr" && \
+    if echo "$lddr" | grep -E 'undefined symbol|not found'; then \
+        echo "FAIL: this base cannot resolve falkordb.so's libraries or symbols"; exit 1; \
+    fi && \
+    if echo "$lddr" | awk '{print $1}' | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
         echo "FAIL: forbidden dyn dep in final image"; exit 1; \
     fi && \
-    redis-server --version && \
-    redis-cli --version
+    "${FALKORDB_SERVER}-server" --version | grep -F " v=${FALKORDB_SERVER_VERSION} " && \
+    for name in "${FALKORDB_SERVER}" redis; do \
+        for tool in server cli sentinel check-aof; do \
+            "${name}-${tool}" --version || exit 1; \
+        done; \
+        # valkey-check-rdb reads --version only after a file argument, and
+        # otherwise checks a file named "--version": either reply proves the
+        # entry point runs in check-rdb mode.
+        # A missing or dangling entry point would print "...check-rdb: not found",
+        # which the grep below matches, so check it resolves to an executable first.
+        bin="$(command -v "${name}-check-rdb")" && [ -x "$bin" ] || exit 1; \
+        "${name}-check-rdb" --version 2>&1 | grep -E 'check-rdb|Checking RDB file' || exit 1; \
+    done
 
 ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \
@@ -192,18 +265,42 @@ ENV ARCH=${TARGETPLATFORM} \
 
 EXPOSE 6379/tcp
 
-# run.sh is self-contained — it execs `redis-server ...` with the right
-# args based on TLS/BROWSER env vars and doesn't forward $@. No CMD
+# run.sh is self-contained — it execs `${FALKORDB_SERVER}-server ...` with the
+# right args based on TLS/BROWSER env vars and doesn't forward $@. No CMD
 # stanza so it's clear that container args are ignored.
 ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
 
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
-FROM node:24-bookworm-slim AS node
+FROM node:26-bookworm-slim AS node
 
 FROM server AS full
 ENV FALKORDB_BROWSER_PATH=/var/lib/falkordb/browser \
     BROWSER=1
+
+# The falkordb-browser image is Alpine-based; only its /app tree and entrypoint
+# are copied here, so this stage must provide the userland they expect:
+#   * node(1) from node:26 links against libatomic.so.1 and libstdc++.so.6.
+#     Neither base image ships libatomic1; libstdc++6 is there only because
+#     apt and libapt-pkg depend on it, so it is named here too.
+#   * docker-entrypoint.sh drops privileges with su-exec(1), an Alpine tool.
+#     The Debian and Ubuntu equivalent is gosu (installed in `server`),
+#     symlinked under the expected name.
+# Without these the browser never starts (see issue #2750).
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libatomic1 libstdc++6; \
+    ln -sf "$(command -v gosu)" /usr/local/bin/su-exec; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
+
 COPY --from=node /usr/local/bin/node /usr/local/bin/
-COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
+COPY --from=browser --chown=nextjs:nodejs /app ${FALKORDB_BROWSER_PATH}
 COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}/
+
+# docker-entrypoint.sh stores the browser's credentials under a hardcoded
+# /app/.data, which is outside the copied browser tree — pre-create it owned by
+# nextjs so the entrypoint's writability check passes.
+RUN mkdir -p /app/.data && chown -R nextjs:nodejs /app/.data && \
+    su-exec nextjs:nodejs node --version
+
 EXPOSE 3000/tcp

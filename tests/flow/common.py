@@ -143,6 +143,11 @@ def mountable_mkdtemp(*args, **kwargs):
     via _spawn_falkordb's bind-mount logic. Local dev gets plain mkdtemp."""
     if os.getenv("FALKORDB_TEST_IMAGE") and "dir" not in kwargs:
         kwargs["dir"] = _ci_tmpdir()
+        path = tempfile.mkdtemp(*args, **kwargs)
+        # mkdtemp makes it 0700, owned by this process; the image's
+        # redis-server runs as `falkordb` and could not use it.
+        os.chmod(path, 0o777)
+        return path
     return tempfile.mkdtemp(*args, **kwargs)
 
 
@@ -157,6 +162,54 @@ def _ci_tmpdir():
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ci-tmp")
     os.makedirs(p, exist_ok=True)
     return p
+
+
+# ──── A server of the test's own (local runs only) ─────────────────────────
+#
+# For what RLTest's Env cannot show: a server that refuses to start. These run
+# the binary and module RLTest uses, so they need them on this machine: skip
+# the test under FALKORDB_TEST_IMAGE, where both live in a container.
+
+def start_local_server(workdir, *server_args, module_args=(), listen=False):
+    """Start a server with the module, `workdir` as its --dir, logging to
+    `workdir`/server.log. Return (process, log path).
+
+    Without `listen` it has no port, so it exits once the module is loaded,
+    before reading any RDB file; with it, it listens on a free local port and
+    goes on to load `workdir`/dump.rdb, if there is one."""
+    module = Defaults.module
+    if isinstance(module, (list, tuple)):
+        module = module[0]
+    port = 0
+    if listen:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+    log = os.path.join(workdir, "server.log")
+    cmd = [Defaults.binary, "--port", str(port), "--bind", "127.0.0.1",
+           "--dir", workdir, "--dbfilename", "dump.rdb", "--logfile", log,
+           *server_args, "--loadmodule", module, *module_args]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return proc, log
+
+
+def wait_for_exit(proc, timeout):
+    """The exit code of a `start_local_server` process, or None if it was still
+    running after `timeout` seconds (it is then killed)."""
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        return None
+
+
+def read_log(log):
+    """The text of a `start_local_server` log, or '' before there is one."""
+    if not os.path.exists(log):
+        return ""
+    with open(log) as f:
+        return f.read()
 
 
 def _job_network():
@@ -242,7 +295,10 @@ def _log_mount_args(alias):
     if not ws:
         return [], None
     log_dir = os.path.join(ws, "redis-logs", alias)
-    os.makedirs(log_dir, mode=0o777, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    # makedirs' mode is masked by the umask, so set it outright: redis-server
+    # runs as `falkordb` in the image and opens its --logfile here.
+    os.chmod(log_dir, 0o777)
     host_path, covered = _host_path_for(log_dir)
     if not covered:
         return [], None
@@ -835,3 +891,16 @@ def skip():
             return f(x, *args, **kwargs)
         return wrapper
     return decorate
+
+
+def assert_error_reply(env, conn, *cmd):
+    """Run `cmd`, require an error reply, and require the server to still answer
+    afterwards. Returns the error message, so callers can check its text too."""
+    try:
+        conn.execute_command(*cmd)
+        env.assertTrue(False, message=f"expected an error reply from {cmd!r}")
+        return None
+    except ResponseError as e:
+        msg = str(e)
+    env.assertTrue(conn.ping())
+    return msg

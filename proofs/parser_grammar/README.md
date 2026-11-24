@@ -1,0 +1,188 @@
+# parser_grammar: does the parser read Cypher the way the grammar says?
+
+This project proves that FalkorDB's hand-written Cypher parser never panics and builds the tree the openCypher grammar (`graph/src/Cypher.g4`) prescribes. It also gives concrete counterexamples where the parser accepts what the grammar rejects, or loops forever. Every query goes through it. User-facing behaviour that depends on it:
+
+- operator precedence: `-2^2`, `1 + 2 * 3`, `NOT a = b`, `x IS NULL`, chained comparisons such as `1 < x < 3`;
+- which queries are syntax errors and which are accepted;
+- the pattern graph a MATCH / CREATE / MERGE builds, and the validation that runs on it;
+- whether a malformed query can hang a worker thread or crash the server.
+
+The Rust code is `graph/src/parser/cypher.rs` and `graph/src/parser/ast.rs`. The lexer, literal values and the depth guards are in [`../lexer`](../lexer), which this project does not repeat. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorParserGrammar.lean`](FalkorParserGrammar.lean). This README explains *what* is proven and *why it matters*.
+
+The project has two layers:
+
+- the **expression layer** (`Model.lean`, `NoPanic.lean`, `Theorems.lean`, `Bounded.lean`): a line-by-line model of `parse_expr_inner`, the explicit-stack expression parser;
+- the **clause layer** (`C/*`): every clause parser, patterns, the full `parse_primary_expr`, query parameters and the `ast.rs` query graph and validation.
+
+## The questions this project answers
+
+**1. Can the expression parser panic?**
+
+`parse_expr_inner` has six panic sites:
+
+- two `children().last().unwrap()` in the comparison chain;
+- `child(0)` of a `Negate` and of a `Paren`;
+- two `unreachable!()`.
+
+- **No.** `parseExpr_no_panic` proves the modelled parser never reaches any of them, on any input, and that every tree it returns is well formed (`Good`: every `Negate`, `Paren` and comparison has a child).
+- **At the clause level, conditionally.** Given an `Oracle.Safe` expression/map parser (the abstract `Oracle` stands for `parse_expr`, `parse_primary_expr` and `parse_map`; that the Rust ones are `Safe` is a bridge by inspection, via `parseExpr_no_panic`), `parse_no_panic` covers index DDL, every clause and end of input, including the two `unreachable!()` dispatchers. `primaryC_np` covers `parse_primary_expr`, and `np_paramsP` the query-parameter parser.
+
+**2. Is operator precedence what the grammar says?**
+
+- **Yes, for every pair of binary operators.** `binary_pairs_agree` checks all 400 ordered pairs of the 20 binary operators (`OR XOR AND = <> < <= > >= IN STARTS WITH ENDS WITH CONTAINS =~ + - * / % ^`): `1 op1 2 op2 3` gives the grammar's tree.
+- **For short inputs, exhaustively.** `bounded_agree` proves that on all 9,724 token lists of length ≤ 3 over a 21-token alphabet, the parser and the grammar accept the same inputs with the same trees, apart from the documented classes in `known`. The same check was run with `#eval` (not as a proof) over all 4.3 million lists of length ≤ 5, with the same result.
+- **For arbitrary operands:**
+  - unary minus binds tighter than `^`, so `-2^2 = 4`;
+  - `^` is left-associative;
+  - `- + * / %` fold left;
+  - chained comparisons desugar to `AND` (`chained_comparison`);
+  - `NOT` binds looser than comparison;
+  - `IS NULL` and `STARTS WITH` sit between comparison and `+`;
+  - postfix `.p`, `[i]` and `[i..j]` bind tightest.
+- `parse_deterministic`: the parse is a function of the input; backtracking restores the saved position and the anonymous-name counter.
+
+**3. Is every accepted query grammatical, with the grammar's tree?**
+
+- **Conditionally, for the model, and apart from listed extensions.** Given the `Oracle.PPRec` contract (a `parse_primary_expr` that asks to recurse started at `(` and returned a `Paren` tree, or at `[` and returned a list; the bridge from the Rust to the abstract oracle is by inspection), an accepted model input is derivable in a transcription of the matching `Cypher.g4` rule, and the tree returned is that derivation's. The top-level theorems are `parseP_sound` and `queryP_sound`, with `patternP_sound`, `primaryC_sound`, `shortestP_sound`, `listLitP_sound` and `lit_sound` for the pieces.
+- The extensions are explicit flags (`Ext`, `GExt`, `CExt`), not silent. They include keyword folding (`MATCH … MATCH`), allShortestPaths, and FalkorDB-only constructs: index DDL, LOAD CSV, FOREACH, `CALL {}`, reduce and shortestPath.
+- Completeness is **not** claimed: the parser rejects some grammatical inputs on purpose, for example aggregates in WHERE, `SKIP 1+1`, mixed UNION / UNION ALL, and undirected CREATE.
+
+**4. Is the pattern-comprehension gate safe?**
+
+The pattern-comprehension attempt runs only behind a gate (`list_has_top_level_pipe`) and failed attempts are memoised, so deeply nested `[(x {k: [(x {k: …})]})]` does not blow up exponentially.
+
+- **The gate is exact on balanced brackets** (`pipeScan_exact`).
+- **Failed attempts are linear in the abstract `memoRun` model**: for any visit list with positions ≤ `n` and depth ≤ 100, at most `808·(n+1)` failed (`failed_attempts_linear`, `memoRun_nodup`). The theorem is not linked to parser runs; that a whole parse only produces such visits is by inspection.
+- **"The gate never changes the parse" is CONDITIONAL.** `listLitP_eq_ungated` holds under two premises, `Oracle.Bal` and `MemoSound`. A failed slice bound is an error, so `[1][(1..2]` is refused (`slice_unclosed_paren_refused`), and the expression fragment consumes balanced runs on every input checked (`bounded_bal`). `Oracle.Bal` is not refuted, but it is not proved for the whole expression parser (CASE, comprehensions, maps, … are outside the fragment). `MemoSound` is unproven: the memo key omits the anonymous counter, and no input was found where that matters (`memoRun_sound`).
+
+**5. Does `connected_components` split a pattern correctly?**
+
+- **Conditionally.** `connectedComponents_spec` proves the components are node-disjoint and consist of the graph's nodes or relationship endpoints; every graph node is covered unless its id is also used by a relationship or a path (one `visited` set holds all three kinds of id), and the theorem applies only when the model returns within its fuel budget.
+
+## The headline theorems
+
+| Theorem | In plain words | File |
+|---|---|---|
+| `parseExpr_no_panic` | The expression parser never reaches a panic site, and returns well-formed trees | `NoPanic.lean` |
+| `binary_pairs_agree` | All 400 binary-operator pairs parse to the grammar's tree | `Theorems.lean` |
+| `bounded_agree` | Every token list of length ≤ 3 is parsed exactly as the grammar parses it, apart from `known` classes (no slice class) | `Bounded.lean` |
+| `slice_bound_error_reported` | A slice bound that fails to parse is an error, as in the grammar and C | `Theorems.lean` |
+| `bounded_bal` | Every token list of length ≤ 3 that parses consumes a balanced run (the fragment's `Oracle.Bal`) | `Bounded.lean` |
+| `chained_comparison` | `a < b < c` becomes `a < b AND b < c` | `Theorems.lean` |
+| `parse_deterministic` | The parse is a function of the input | `Theorems.lean` |
+| `parseP_sound`, `queryP_sound` | Given `Oracle.PPRec` (question 3), every accepted model query is derivable in the grammar, with the derivation's tree | `C/Index.lean`, `C/ClausesG3.lean` |
+| `patternP_sound`, `primaryC_sound`, `shortestP_sound`, `listLitP_sound` | The same for patterns, primaries, shortestPath and list literals | `C/PatternG2.lean`, `C/PrimaryG.lean`, `C/ExprC5.lean`, `C/ExprC3.lean` |
+| `parse_no_panic` | Given `Oracle.Safe` (question 1), the clause layer never panics | `C/Index.lean` (clause lemmas in `C/ClausesNP.lean`) |
+| `pipeScan_exact`, `failed_attempts_linear` | The gate is exact on balanced input; failed attempts are linear | `C/ListGate.lean` |
+| `connectedComponents_spec` | Pattern components are disjoint and cover every node whose id is not also a relationship or path id (within the fuel budget) | `C/Components.lean` |
+| `not_not_kept`, `is_null_then_predicate` | `NOT NOT x` keeps both NOTs; `1 IS NULL IN [false]` parses | `Theorems.lean` |
+
+### How `parseExpr_no_panic` is proved
+
+1. **Model the tokens and trees.** `Tok` is the expression fragment of the lexer's tokens; `RT` is the expression tree.
+2. **Model the parser.** `parse_expr_inner` runs a loop over a stack of `(level, tree, height)` frames. `Frame` and `St` model the stack and state. `step` is one iteration, with one Lean function per level: `binStep` for the binary levels, `cmpStep` for comparison chains, `predStep` for `IS NULL`/`STARTS WITH`/…, `postStep` for postfix operators, and `closeStep` for parentheses. A state `.panic` marks each panic site.
+3. **State the invariant.** `Inv` says:
+   - the stack is not empty;
+   - every frame's level is at most 11;
+   - every frame's tree has well-formed children (`AlmostGood`);
+   - the top frame's tree, when it has one, is itself well formed (`Good`).
+
+   This holds because a `Negate`, `Paren` or comparison is only ever pushed *under* the frame that will produce its child.
+4. **Show each step keeps the invariant.** `StOK` lifts `Inv` to the parser state and is false for `.panic`. Each step from an `StOK` state reaches an `StOK` state, so `.panic` is unreachable.
+5. **Hypotheses.** None about other Rust code. The step budget (`fuel`) belongs to the model: if it runs out, the result is a non-panic error.
+
+## Bugs found
+
+Each bug was confirmed against the Rust (`graph/tests/lean_parser_grammar.rs`, not committed; the `bug_*` tests fail while the bug is present), and live against the C module (see [`../FINDINGS.md`](../FINDINGS.md)).
+
+| # | Theorem (counterexample) | What it means | Status |
+|---|---|---|---|
+| — | (Rust test only) | A pattern predicate in a projection swallows the `,`: `RETURN (a)-->(b), (b)-->(a)` returns one column (C: two) | **Open** |
+
+Out of this project's files but seen while probing: 2000 chained `UNWIND [1] AS xN` clauses crash the Rust server in planning or execution (W4-parse-5); C runs 5000.
+
+**Rust follows the grammar and C does not** (each needs a decision, see FINDINGS "Decisions needed"):
+
+- `2^3^2`: Rust 64 (left-associative, as the grammar says), C 512.
+- Chained comparisons: `1 < 2 < 3 < 0` → Rust false, C true.
+- `'a' + 'b' STARTS WITH 'ab'`: Rust true, C `'afalse'`.
+- `SKIP (1)`: Rust rejects, C accepts.
+
+**CONDITIONAL:** `listLitP_eq_ungated` rests on `Oracle.Bal` (unproven, with no known counterexample, and checked on the fragment by `bounded_bal`, see question 4) and `MemoSound` (unproven). The `parse_list_literal_or_comprehension` row in `COVERAGE.tsv` is PROVEN through `listLitP_sound` and the no-panic theorem, which do not need those premises; only the "the gate never changes the parse" claim is conditional.
+
+## Files
+
+| File | What's in it |
+|---|---|
+| `FalkorParserGrammar.lean` | The report header and imports |
+| `Model.lean` | The expression parser: tokens `Tok`, trees, frames, `step`, one function per level, `primary`, `listLit`, `listOp` |
+| `Grammar.lean` | The reference: openCypher's expression rules (`G.*`) as a recursive-descent recogniser |
+| `NoPanic.lean` | `Good`, `Inv`, `parseExpr_no_panic` |
+| `Theorems.lean` | Precedence, associativity, `binary_pairs_agree`, determinism, `not_not_kept`, `is_null_then_predicate`, `sign_runs`, the slice-bound error |
+| `Bounded.lean` | `bounded_agree` and the `known` disagreement classes; `bounded_bal` (balanced consumption) |
+| `Clauses.lean` | Clause-level fragments: the shortestPath filter skipper, SET/REMOVE targets, the projection-comma bug |
+| `Tactic.lean` | Proof helpers |
+| `C/Core.lean` | Clause-layer tokens, the parser monad and its primitives |
+| `C/Clauses.lean` | The clause parsers, one model function per Rust function |
+| `C/ClausesG.lean`, `C/ClausesG2.lean`, `C/ClausesG3.lean` | The clause grammar and soundness of each clause parser, up to `parse_query` |
+| `C/ClausesNP.lean` | No panics at the clause level |
+| `C/Pattern.lean`, `C/PatternG.lean`, `C/PatternG2.lean` | Node, relationship and path patterns, their grammar and soundness |
+| `C/Primary.lean`, `C/PrimaryG.lean` | The full `parse_primary_expr` and its soundness |
+| `C/ExprC.lean` … `C/ExprC5.lean` | CASE, quantifiers, reduce, list and pattern comprehensions, shortestPath |
+| `C/ListGate.lean` | The pattern-comprehension gate and memo |
+| `C/Index.lean` | Index DDL and the entry point `parse`: `parseP_sound`, `parse_no_panic` |
+| `C/Params.lean` | Query parameters and small helpers |
+| `C/Graph.lean`, `C/Components.lean`, `C/IR.lean`, `C/Fmt.lean` | `ast.rs`: `QueryGraph`, connected components, `QueryIR` validation, `Display` |
+| `C/ClauseBugs.lean`, `C/PatternBugs.lean` | The clause- and pattern-level counterexamples |
+| `C/PredicateBugs.lean` | `PredEndsBeforeClause` (a WHERE pattern predicate ends before a clause keyword) and its counterexamples |
+| `C/Oracle0.lean` | A small concrete expression oracle for running the clause models on examples |
+| `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
+
+The project has no Lake dependencies.
+
+## Coverage
+
+`COVERAGE.tsv` has 112 rows: 74 in `parser/cypher.rs` and 38 in `parser/ast.rs`.
+
+| Bucket | Rows |
+|---|---|
+| PROVEN | 112 |
+
+Every function listed is PROVEN. For the functions involved in open bugs (for example `parse_shortest_path_expr`), the row cites both the soundness theorem and the counterexample.
+
+## More clause-level facts
+
+- `add_pattern_relationship` (cypher.rs) replaces five copies of `if !query_graph.add_relationship(..) && clause == Match`; it rejects a repeated alias in every clause (`create_named_path_dup_rel_rejected`, `merge_dup_rel_rejected`). A pattern comprehension collects the first repeat and goes on, and the caller reports it after the speculative attempt succeeded (`pattern_comprehension_repeated_rel_refused`).
+- `parse_relationship_types` is `ident (| :? ident)*`: a bare `:` does not continue the list (`typesP_colon_refused`, `type_colon_refused`); a parenthesised SET/REMOVE target needs a following `.` (`set_paren_target_refused`, `set_paren_needs_dot`).
+- `parse_pattern` records `is_incoming` before `parse_relationship_pattern`, so `(a)<-[*]-(a)` keeps its direction (`aspRel_same_alias`).
+- A WHERE pattern predicate stops before a clause keyword (`PredEndsBeforeClause`, `fixed2502_pred_stops_at_match`, `fixed2502_where_match_split`: `MATCH (a) WHERE (a)-[:Q]->() MATCH (a)-[:R]->(m) RETURN m` parses to two clauses). Anonymous entities are `Alias::Anon(N)`, which no identifier equals (`fixed3303_anon_name_distinct`).
+- While a `CYPHER` parameter value goes through the expression fallback, `legacy_signs` is set: `C.legacySigns` models the loop (`legacySigns_runs`, `legacySigns_neg_le`: at most one `-`, `+`, `-` or `+-`). The Rust-side `Parser::new` field is false, and the main sign run is `countSigns` (any run of `+`/`-`, folded by the parity of `-`: `sign_runs`).
+
+More places where Rust follows the grammar and C does not: `1 = 1 = 1` gives Rust true (chained), C false; `WHERE n.x = 0 = true` gives Rust 0 rows, C 1; `1 + 2 IS NULL` gives Rust false, C `1`; `- 1 IS NULL` gives Rust false, C a type error. `true CONTAINS 'c'` and `1 ENDS WITH 1` return null in Rust, where C raises a type error. `SET n.x = 1 SET n.y = n.x` gives Rust 1, C null (C evaluates the folded SETs as one batch). Known and not re-reported: #2605 (`.1e-5`), #2895 (SET chains, FOREACH nesting; see `proofs/lexer`), the lexer findings of #2909.
+
+## What the model does not cover
+
+- The expression layer's token alphabet has no `CASE`, quantifiers, `reduce`, `shortestPath`, `DISTINCT`, `count(*)`, aggregates, `|`, pattern predicates or pattern comprehensions, and no floats. The clause layer models those.
+- At the clause level the expression parser is an *oracle* (`Oracle`). Soundness holds for every oracle; no-panic holds for every oracle that does not panic (`Oracle.Safe`). `parseExpr_no_panic` gives that for the expression model, but the two layers use different token types, and the bridge between them is by inspection.
+- Soundness is "accepted ⇒ grammatical, with the grammar's tree". Completeness is not claimed.
+- Tree heights, `check_depth` and `nested` are abstracted away; see [`../lexer`](../lexer).
+- The step budget (`fuel`) is the model's. It is not proven that more fuel never changes a result, so parsers and `connected_components` are proven partially correct: nothing is claimed when fuel runs out.
+- Relationship types go through a `HashSet`; the model keeps first-occurrence order, and only membership is observable.
+- Identifier length limits, error messages and error positions are not modelled.
+- `COVERAGE.tsv` is the authoritative Rust line list; docstring cites may point at earlier targets, and `lean_ci.sh` does not check them against current main, so they may have drifted.
+
+## Build and check
+
+```bash
+(cd proofs/parser_grammar && lake build)   # this project
+bash proofs/lean_ci.sh parser_grammar    # build + no sorry/admit/native_decide/unmarked axiom
+bash proofs/coverage.sh                  # repo-wide coverage report
+```
+
+**When you change `parser/cypher.rs` or `parser/ast.rs`:**
+
+1. Find the function in `COVERAGE.tsv`.
+2. Update its Lean model to match.
+3. Re-run the build.
+
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A new syntax extension should get a flag in `Ext`/`GExt`/`CExt` and a grammar rule, so that `parseP_sound` keeps saying exactly what is accepted beyond openCypher.

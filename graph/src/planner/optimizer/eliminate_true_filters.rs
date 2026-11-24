@@ -38,7 +38,6 @@ use orx_tree::{Bfs, DynTree, NodeRef};
 use crate::{
     parser::ast::{ExprIR, Variable},
     runtime::{eval::ExprEval, eval::NO_ROW, value::Value},
-    tree,
 };
 
 use super::super::IR;
@@ -80,7 +79,7 @@ fn expr_has_parameter(expr: &DynTree<ExprIR<Variable>>) -> bool {
 
 /// Clone the expression tree, replacing `ExprIR::Parameter(name)` nodes
 /// with their evaluated constant values from `params`.
-fn substitute_params(
+pub(super) fn substitute_params(
     expr: &DynTree<ExprIR<Variable>>,
     params: &HashMap<String, Value>,
 ) -> DynTree<ExprIR<Variable>> {
@@ -131,12 +130,9 @@ pub(super) fn eliminate_true_filters(
                 if remaining.len() < filter.root().num_children() {
                     if remaining.is_empty() {
                         optimized_plan.node_mut(idx).take_out();
-                    } else if remaining.len() == 1 {
-                        *optimized_plan.node_mut(idx).data_mut() =
-                            IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
                     } else {
                         *optimized_plan.node_mut(idx).data_mut() =
-                            IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+                            IR::Filter(Arc::new(ExprIR::and_of(remaining)));
                     }
                     changed = true;
                     break;

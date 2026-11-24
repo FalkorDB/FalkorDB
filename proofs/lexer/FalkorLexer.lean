@@ -1,0 +1,1719 @@
+/-
+# The Cypher lexer: total, boundary-safe, and where it disagrees with the spec
+
+A model of FalkorDB-rs's Cypher lexer (`graph/src/parser/lexer.rs`), its string-escape
+decoder (`string_escape.rs`), and the literal handling and depth guards of
+`graph/src/parser/cypher.rs`, with proofs that the lexer never panics, reads whitespace,
+comments, escapes and integer literals as openCypher says, and bounds parser recursion.
+See README.md for the theorems, open bugs and gaps; COVERAGE.tsv for the per-fn map.
+-/
+
+namespace FalkorLexer
+
+set_option linter.deprecated false
+
+/-! ## 1. Bytes and char boundaries -/
+
+/-- `char::len_utf8`. -/
+abbrev u8 (c : Char) : Nat := c.utf8Size
+
+/-- `str::len` of a char list. -/
+def bytes : List Char → Nat
+  | [] => 0
+  | c :: r => u8 c + bytes r
+
+/-- `n` is a char boundary of `cs`. -/
+def Boundary (cs : List Char) (n : Nat) : Prop := ∃ k, bytes (cs.take k) = n
+
+/-- Rust slicing at byte `n`: `none` is exactly the panic. -/
+def splitBytes : List Char → Nat → Option (List Char × List Char)
+  | cs, 0 => some ([], cs)
+  | [], _ + 1 => none
+  | c :: r, n + 1 =>
+    if u8 c ≤ n + 1 then (splitBytes r (n + 1 - u8 c)).map (fun p => (c :: p.1, p.2))
+    else none
+
+theorem u8_pos (c : Char) : 0 < u8 c := Char.utf8Size_pos c
+
+theorem bnd_zero (cs : List Char) : Boundary cs 0 := ⟨0, rfl⟩
+
+theorem bnd_cons {c : Char} {r : List Char} {n : Nat} (h : Boundary r n) :
+    Boundary (c :: r) (u8 c + n) := by
+  obtain ⟨k, hk⟩ := h
+  exact ⟨k + 1, by simp [bytes, hk]⟩
+
+theorem bnd_cons1 {c : Char} {r : List Char} {n : Nat} (hc : u8 c = 1) (h : Boundary r n) :
+    Boundary (c :: r) (1 + n) := by
+  rw [← hc]; exact bnd_cons h
+
+/-- Slicing at a boundary succeeds and cuts after `k` chars. -/
+theorem splitBytes_take (cs : List Char) (k : Nat) :
+    splitBytes cs (bytes (cs.take k)) = some (cs.take k, cs.drop k) := by
+  induction cs generalizing k with
+  | nil => cases k <;> rfl
+  | cons c r ih =>
+    cases k with
+    | zero => rfl
+    | succ k =>
+      have hp := u8_pos c
+      simp only [List.take_succ_cons, List.drop_succ_cons, bytes]
+      obtain ⟨m, hm⟩ : ∃ m, u8 c + bytes (r.take k) = m + 1 := ⟨_, (Nat.succ_pred_eq_of_pos (by omega)).symm⟩
+      rw [hm]
+      simp only [splitBytes]
+      have h1 : u8 c ≤ m + 1 := by omega
+      have h2 : m + 1 - u8 c = bytes (r.take k) := by omega
+      simp [h1, h2, ih]
+
+/-- ... and a boundary is exactly where slicing does not panic. -/
+theorem splitBytes_some {cs : List Char} {n : Nat} {a b : List Char}
+    (h : splitBytes cs n = some (a, b)) : ∃ k, a = cs.take k ∧ b = cs.drop k ∧ bytes a = n := by
+  induction cs generalizing n a b with
+  | nil =>
+    cases n with
+    | zero => simp [splitBytes] at h; obtain ⟨rfl, rfl⟩ := h; exact ⟨0, rfl, rfl, rfl⟩
+    | succ n => simp [splitBytes] at h
+  | cons c r ih =>
+    cases n with
+    | zero => simp [splitBytes] at h; obtain ⟨rfl, rfl⟩ := h; exact ⟨0, rfl, rfl, rfl⟩
+    | succ n =>
+      simp only [splitBytes] at h
+      split at h
+      · rename_i hle
+        cases hs : splitBytes r (n + 1 - u8 c) with
+        | none => simp [hs] at h
+        | some p =>
+          simp [hs] at h
+          obtain ⟨rfl, rfl⟩ := h
+          obtain ⟨k, h1, h2, h3⟩ := ih hs
+          refine ⟨k + 1, by simp [h1], by simp [h2], ?_⟩
+          simp [bytes, h3]; omega
+      · simp at h
+
+theorem boundary_iff (cs : List Char) (n : Nat) :
+    Boundary cs n ↔ ∃ p, splitBytes cs n = some p := by
+  constructor
+  · rintro ⟨k, rfl⟩; exact ⟨_, splitBytes_take cs k⟩
+  · rintro ⟨⟨a, b⟩, h⟩
+    obtain ⟨k, rfl, -, h3⟩ := splitBytes_some h
+    exact ⟨k, h3⟩
+
+/-- Every inner slice `str[pos + len ..]` that `lex_numeric` takes sits after
+an ASCII-only prefix, where a byte count is a char count. -/
+theorem ascii_boundary (cs : List Char) (k : Nat)
+    (h : ∀ c ∈ cs.take k, u8 c = 1) : bytes (cs.take k) = (cs.take k).length := by
+  generalize cs.take k = l at h
+  induction l with
+  | nil => rfl
+  | cons c r ih =>
+    simp only [bytes, List.length_cons]
+    rw [h c (by simp), ih (fun x hx => h x (by simp [hx]))]; omega
+
+/-! ## 2. `read_spaces` (lexer.rs)
+
+The Rust walks bytes with a cursor `end`:
+whitespace advances it, `//` jumps past the next `'\n'` (or to `str.len()`),
+`/*` jumps past the first `*/` after it, and anything else — a lone `/`, an
+unterminated `/*` — `break`s with `end` on that `/`. `end` only ever moves
+over whole ASCII chars or to just after a `'\n'` / `*/`, so it is always a
+char boundary (`rs_boundary`) and `bytes.get(end) == Some(b'/')` is "the char
+at `end` is `/`"; the model therefore works on chars. `rs` is the outer
+`loop`, `rsSlash` the `Some(b'/')` arm, `rsLine` the `find('\n')` jump and
+`rsBlock` the `find("*/")` jump (`none` = not found ⇒ `break`). -/
+
+/-- `b' ' | b'\t' | b'\r' | b'\n'`, lexer.rs (`\r` since #2910, `dba677942`). -/
+def isWs (c : Char) : Bool := c == ' ' || c == '\t' || c == '\r' || c == '\n'
+
+mutual
+/-- `read_spaces(str, pos)` on `str[pos..]`: the bytes from `pos` to the final `end`. -/
+def rs : List Char → Nat
+  | [] => 0                                         -- `_ => break` (end of input)
+  | c :: r =>
+    if isWs c then 1 + rs r                         -- `end += 1`
+    else if c = '/' then rsSlash r                  -- `Some(b'/')`
+    else 0                                          -- `_ => break`
+/-- The `Some(b'/')` arm, with the `/` behind the cursor. -/
+def rsSlash : List Char → Nat
+  | '/' :: r => 2 + rsLine r                        -- `str[end..].find('\n')`
+  | '*' :: r =>
+    match rsBlock r with                            -- `str[end + 2..].find("*/")`
+    | some n => 2 + n                               -- `end += 2 + n + 2`
+    | none => 0                                     -- `None => break`
+  | _ => 0                                          -- `_ => break`: division
+/-- After `//`: `map_or(str.len(), |n| end + n + 1)` — through the first
+`'\n'`, then back to the loop; to the end of input if there is none. -/
+def rsLine : List Char → Nat
+  | [] => 0
+  | c :: r => u8 c + (if c = '\n' then rs r else rsLine r)
+/-- After `/*`: through the first `*/`, then back to the loop. -/
+def rsBlock : List Char → Option Nat
+  | [] => none
+  | '*' :: '/' :: r => some (2 + rs r)
+  | c :: r => (rsBlock r).map (u8 c + ·)
+end
+
+theorem isWs_u8 {c : Char} (h : isWs c = true) : u8 c = 1 := by
+  simp [isWs] at h; rcases h with ((rfl | rfl) | rfl) | rfl <;> rfl
+
+theorem u8_slash : u8 '/' = 1 := by decide
+theorem u8_star : u8 '*' = 1 := by decide
+
+/-- What each piece of `read_spaces` returns is a char boundary, so the
+slices `str[end..]`, `str[end + 2..]` and the caller's `&str[pos + len..]`
+never panic. -/
+def RsB (cs : List Char) : Prop :=
+  Boundary cs (rs cs) ∧ Boundary ('/' :: cs) (rsSlash cs) ∧ Boundary cs (rsLine cs) ∧
+    ∀ n, rsBlock cs = some n → Boundary cs n
+
+theorem rsB_all : ∀ (n : Nat) (cs : List Char), cs.length ≤ n → RsB cs := by
+  intro n
+  induction n with
+  | zero =>
+    intro cs h
+    match cs, h with
+    | [], _ => exact ⟨bnd_zero _, by simp [rsSlash]; exact bnd_zero _, bnd_zero _,
+        fun n h => by simp [rsBlock] at h⟩
+  | succ n ih =>
+    intro cs h
+    match cs, h with
+    | [], _ => exact ⟨bnd_zero _, by simp [rsSlash]; exact bnd_zero _, bnd_zero _,
+        fun n h => by simp [rsBlock] at h⟩
+    | c :: r, h =>
+      have hr := ih r (by simp at h; omega)
+      obtain ⟨h1, h2, h3, h4⟩ := hr
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · -- rs
+        simp only [rs]
+        split
+        · rename_i hw; exact bnd_cons1 (isWs_u8 hw) h1
+        · split
+          · subst_vars; exact h2
+          · exact bnd_zero _
+      · -- rsSlash (c :: r)
+        by_cases hc : c = '/'
+        · subst hc; simp only [rsSlash]
+          rw [show 2 + rsLine r = u8 '/' + (u8 '/' + rsLine r) by simp only [u8_slash]; omega]
+          exact bnd_cons (bnd_cons h3)
+        · by_cases hs : c = '*'
+          · subst hs; simp only [rsSlash]
+            split
+            · rename_i m hm
+              rw [show 2 + m = u8 '/' + (u8 '*' + m) by simp only [u8_slash, u8_star]; omega]
+              exact bnd_cons (bnd_cons (h4 m hm))
+            · exact bnd_zero _
+          · have : rsSlash (c :: r) = 0 :=
+              rsSlash.eq_3 _ (by intro _ h; cases h; exact hc rfl) (by intro _ h; cases h; exact hs rfl)
+            rw [this]; exact bnd_zero _
+      · -- rsLine
+        simp only [rsLine]; split
+        · exact bnd_cons h1
+        · exact bnd_cons h3
+      · -- rsBlock
+        intro m hm
+        have hgen : rsBlock (c :: r) = (rsBlock r).map (u8 c + ·) → Boundary (c :: r) m := by
+          intro he
+          rw [he] at hm
+          cases hb : rsBlock r with
+          | none => simp [hb] at hm
+          | some k => simp [hb] at hm; subst hm; exact bnd_cons (h4 k hb)
+        by_cases hc : c = '*'
+        · subst hc
+          cases r with
+          | nil => simp [rsBlock] at hm
+          | cons d r' =>
+            by_cases hd : d = '/'
+            · subst hd
+              simp only [rsBlock, Option.some.injEq] at hm; subst hm
+              have := (ih r' (by simp at h; omega)).1
+              rw [show 2 + rs r' = u8 '*' + (u8 '/' + rs r') by simp only [u8_slash, u8_star]; omega]
+              exact bnd_cons (bnd_cons this)
+            · exact hgen (rsBlock.eq_3 _ _ (by intro _ _ h; cases h; exact hd rfl))
+        · exact hgen (rsBlock.eq_3 _ _ (by intro _ h _; exact hc h))
+
+theorem rs_boundary (cs : List Char) : RsB cs := rsB_all _ cs (Nat.le_refl _)
+
+theorem rs_top_boundary (cs : List Char) : Boundary cs (rs cs) := (rs_boundary cs).1
+
+/-- The openCypher `Comment` / `WHITESPACE` rule (Cypher.g4:697-733), for
+the four whitespace chars the Rust skips (the grammar's rule also lists VT, FF, FS, GS, RS, US
+and Unicode spaces, which `read_spaces` does not skip and this model leaves out): a block comment ends at `*/` and an
+unterminated comment or a lone `/` is not whitespace. `none` = the rest is
+not a well-formed whitespace/comment run (or the fuel ran out). -/
+def specSkip : Nat → List Char → Option Nat
+  | 0, _ => none
+  | _ + 1, [] => some 0
+  | f + 1, c :: r =>
+    if isWs c then (specSkip f r).map (1 + ·)
+    else match c, r with
+      | '/', '/' :: r' =>
+        let body := r'.takeWhile (· != '\n')
+        let rest := r'.drop body.length
+        match rest with
+        | [] => some (2 + bytes body)
+        | _ :: rest' => (specSkip f rest').map (2 + bytes body + 1 + ·)
+      | '/', '*' :: r' => blockSpec f r' 2
+      | _, _ => some 0
+where
+  /-- inside `/*`: `acc` bytes consumed so far; needs `*/`. -/
+  blockSpec : Nat → List Char → Nat → Option Nat
+  | 0, _, _ => none
+  | _ + 1, [], _ => none                      -- unterminated: syntax error
+  | f + 1, '*' :: '/' :: r, acc => (specSkip f r).map (acc + 2 + ·)
+  | f + 1, c :: r, acc => blockSpec f r (acc + u8 c)
+
+/-- The `//` jump in spec terms: up to the first `'\n'`, and past it back to the loop. -/
+theorem rsLine_spec : ∀ r : List Char,
+    rsLine r = match r.drop (r.takeWhile (· != '\n')).length with
+      | [] => bytes (r.takeWhile (· != '\n'))
+      | _ :: rest' => bytes (r.takeWhile (· != '\n')) + 1 + rs rest'
+  | [] => by simp [rsLine, bytes]
+  | c :: r => by
+    by_cases hc : c = '\n'
+    · subst hc; simp [rsLine, bytes]; rfl
+    · have ih := rsLine_spec r
+      have hne : (c != '\n') = true := by simp [hc]
+      simp only [rsLine, ite_eq_right hc, List.takeWhile_cons, hne, ite_true, List.length_cons,
+        List.drop_succ_cons, bytes]
+      rw [ih]
+      generalize List.drop (List.takeWhile (fun x => x != '\n') r).length r = d
+      cases d <;> simp <;> omega
+
+/-- **`read_spaces` is the spec's whitespace/comment rule** (fixed by #2908,
+`dfa326583`): wherever the openCypher `Comment` rule and the four-character subset of
+`WHITESPACE` modelled by `specSkip` accept the run, the Rust skips exactly that many bytes — a block comment ends at its
+first `*/`, a line comment at its `'\n'`. -/
+theorem rs_agrees_spec : ∀ f : Nat,
+    (∀ cs n, specSkip f cs = some n → rs cs = n) ∧
+    (∀ r acc n, specSkip.blockSpec f r acc = some n → ∃ m, rsBlock r = some m ∧ n = acc + m) := by
+  intro f
+  induction f with
+  | zero => exact ⟨fun _ _ h => by simp [specSkip] at h,
+      fun _ _ _ h => by simp [specSkip.blockSpec] at h⟩
+  | succ f ih =>
+    obtain ⟨ihS, ihB⟩ := ih
+    constructor
+    · intro cs n h
+      match cs with
+      | [] => simp [specSkip] at h; simp [rs, h]
+      | c :: r =>
+        simp only [specSkip] at h
+        by_cases hw : isWs c = true
+        · rw [ite_eq_left hw] at h
+          cases hs : specSkip f r with
+          | none => simp [hs] at h
+          | some k => simp [hs] at h; subst h; simp [rs, hw, ihS r k hs]
+        · rw [ite_eq_right hw] at h
+          have hrs : rs (c :: r) = if c = '/' then rsSlash r else 0 := by simp [rs, hw]
+          rw [hrs]
+          split at h
+          next _ _ r' =>
+            simp only [ite_true, rsSlash]
+            rw [rsLine_spec]
+            revert h
+            generalize List.drop (List.takeWhile (fun x => x != '\n') r').length r' = d
+            cases d with
+            | nil => intro h; simp at h; omega
+            | cons x rest' =>
+              intro h
+              cases hs : specSkip f rest' with
+              | none => simp [hs] at h
+              | some k => simp [hs] at h; simp only [ihS rest' k hs]; omega
+          · obtain ⟨m, hm, rfl⟩ := ihB _ 2 n h
+            simp [rsSlash, hm]
+          · simp at h; subst h
+            split
+            · subst_vars; unfold rsSlash; split <;> simp_all
+            · rfl
+    · intro r acc n h
+      match r with
+      | [] => simp [specSkip.blockSpec] at h
+      | c :: r =>
+        have hgen : specSkip.blockSpec (f + 1) (c :: r) acc =
+            specSkip.blockSpec f r (acc + u8 c) → rsBlock (c :: r) = (rsBlock r).map (u8 c + ·) →
+            ∃ m, rsBlock (c :: r) = some m ∧ n = acc + m := by
+          intro he hr
+          rw [he] at h
+          obtain ⟨m, hm, rfl⟩ := ihB r _ n h
+          exact ⟨u8 c + m, by simp [hr, hm], by omega⟩
+        by_cases hc : c = '*'
+        · subst hc
+          cases r with
+          | nil =>
+            exact hgen (specSkip.blockSpec.eq_4 _ _ _ _ (by intro _ _ h; cases h))
+              (rsBlock.eq_3 _ _ (by intro _ _ h; cases h))
+          | cons d r' =>
+            by_cases hd : d = '/'
+            · subst hd
+              rw [specSkip.blockSpec.eq_3] at h
+              cases hs : specSkip f r' with
+              | none => simp [hs] at h
+              | some k =>
+                simp [hs] at h; subst h
+                exact ⟨2 + k, by simp [rsBlock, ihS r' k hs], by omega⟩
+            · exact hgen (specSkip.blockSpec.eq_4 _ _ _ _ (by intro _ _ h; cases h; exact hd rfl))
+                (rsBlock.eq_3 _ _ (by intro _ _ h; cases h; exact hd rfl))
+        · exact hgen (specSkip.blockSpec.eq_4 _ _ _ _ (by intro _ h _; exact hc h))
+            (rsBlock.eq_3 _ _ (by intro _ h _; exact hc h))
+
+/-! ### The three inputs, and the Rust regression tests -/
+
+/-- The whole block comment is skipped, `/` inside it included, so
+`RETURN 5 /* a/ -1 //*/` is 5, as in C. -/
+theorem rs_block_comment_fixed :
+    rs "/* a/ -1 //*/".toList = 13 ∧ specSkip 20 "/* a/ -1 //*/".toList = some 13 :=
+  ⟨by simp [rs, rsSlash, rsBlock, isWs] <;> decide, by decide⟩
+
+/-- A lone trailing `/` is left for the parser (division, then a syntax error). -/
+theorem rs_trailing_slash_fixed :
+    rs " /".toList = 1 ∧ specSkip 5 " /".toList = some 1 :=
+  ⟨by simp [rs, rsSlash, isWs], by decide⟩
+
+/-- An unterminated `/*` is not a comment: `read_spaces` stops on its `/`, so
+the parser sees `/ *` and rejects the query, as C does. -/
+theorem rs_unterminated_fixed : rs "/* x".toList = 0 ∧ rs " /* x".toList = 1 := by
+  constructor <;> simp [rs, rsSlash, rsBlock, isWs]
+
+/-- In general: a `/*` with no `*/` after it is never skipped. -/
+theorem rs_unterminated_general (r : List Char) (h : rsBlock r = none) :
+    rs ('/' :: '*' :: r) = 0 := by
+  simp [rs, isWs, rsSlash, h]
+
+/-- `block_comment_ends_at_star_slash` / `lone_slash_is_division` (lexer.rs tests). -/
+example : rs " /* a/b */ + 1".toList = 11 ∧ rs " /*/ ** / * */ 2 /**/".toList = 15 ∧
+    rs " // a /* b\n2".toList = 11 ∧ rs " / 2".toList = 1 := by
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> simp [rs, rsSlash, rsBlock, rsLine, isWs] <;> decide
+
+/-! ### `\r` is whitespace -/
+
+/-- **CRLF is whitespace** (`carriage_return_is_whitespace`): `read_spaces`
+skips a `\r`, alone or before `\n`, exactly as the openCypher `WHITESPACE`
+rule (its `CR`) does. -/
+theorem rs_crlf (r : List Char) : rs ('\r' :: r) = 1 + rs r := by simp [rs, isWs]
+
+example : rs "\r\n2".toList = 2 ∧ rs "\r3".toList = 1 ∧ specSkip 5 "\r\n2".toList = some 2 := by
+  refine ⟨?_, ?_, by decide⟩ <;> simp [rs, isWs]
+
+/-! ## 3. Token scanners and `get_token` (lexer.rs) -/
+
+theorem bytes_append (a b : List Char) : bytes (a ++ b) = bytes a + bytes b := by
+  induction a with
+  | nil => simp [bytes]
+  | cons c r ih => simp [bytes, ih]; omega
+
+theorem bytes_take_succ {l : List Char} {k : Nat} {x : Char} {t : List Char}
+    (h : l.drop k = x :: t) : bytes (l.take (k + 1)) = bytes (l.take k) + u8 x := by
+  induction l generalizing k with
+  | nil => simp at h
+  | cons c r ih =>
+    cases k with
+    | zero => simp at h; obtain ⟨rfl, rfl⟩ := h; simp [bytes]
+    | succ k => simp at h; simp [bytes, ih h]; omega
+
+/-- `&s[i..j]`: panics unless both ends are boundaries (and `i ≤ j`). -/
+def slice (cs : List Char) (i j : Nat) : Option (List Char) :=
+  match splitBytes cs j with
+  | none => none
+  | some (a, _) => (splitBytes a i).map (·.2)
+
+theorem slice_ok (cs : List Char) {ki kj : Nat} (h : ki ≤ kj) :
+    slice cs (bytes (cs.take ki)) (bytes (cs.take kj)) = some ((cs.take kj).drop ki) := by
+  unfold slice
+  rw [splitBytes_take]
+  simp only
+  have : cs.take ki = (cs.take kj).take ki := by rw [List.take_take]; congr; omega
+  rw [this, splitBytes_take]; rfl
+
+/-- The string-literal scan of `lex_string_literal`, on the chars after the
+opening quote `q`. `some n`: the body is `n` bytes and a closing `q` follows.
+`none`: unterminated, or a `\` at end of input — both `Err`. -/
+def strScan (q : Char) : List Char → Option Nat
+  | [] => none                                  -- !end ⇒ Err("Unterminated string")
+  | c :: r =>
+    if c = '\\' then
+      match r with
+      | [] => none                              -- chars.next() = None ⇒ Err
+      | c2 :: r' => (strScan q r').map (u8 c2 + u8 c + ·)   -- len += c2; len += c
+    else if c = q then some 0                   -- end = true; break
+    else (strScan q r).map (u8 c + ·)           -- len += c.len_utf8()
+
+theorem strScan_spec {q : Char} : ∀ {r : List Char} {n : Nat}, strScan q r = some n →
+    ∃ k t, bytes (r.take k) = n ∧ r.drop k = q :: t
+  | [], _, h => by simp [strScan] at h
+  | [c], n, h => by
+    simp only [strScan] at h
+    split at h
+    · simp at h
+    · split at h
+      · subst_vars; simp at h; subst h; exact ⟨0, [], rfl, rfl⟩
+      · simp at h
+  | c :: c2 :: r, n, h => by
+    simp only [strScan] at h
+    split at h
+    · cases hs : strScan q r with
+      | none => simp [hs] at h
+      | some m =>
+        simp [hs] at h
+        obtain ⟨k, t, h1, h2⟩ := strScan_spec hs
+        refine ⟨k + 2, t, ?_, by simpa using h2⟩
+        simp [bytes, h1]; omega
+    · split at h
+      · subst_vars; simp at h; subst h; exact ⟨0, _, rfl, rfl⟩
+      · cases hs : strScan q (c2 :: r) with
+        | none => simp [hs] at h
+        | some m =>
+          simp [hs] at h
+          obtain ⟨k, t, h1, h2⟩ := strScan_spec hs
+          refine ⟨k + 1, t, ?_, by simpa using h2⟩
+          simp [bytes, h1]; omega
+
+/-- Backtick identifier scan (lexer.rs), after the opening backtick:
+`some n` = `n` body bytes, then a closing backtick. -/
+def btScan : List Char → Option Nat
+  | [] => none                                  -- !end ⇒ Err(&str[pos..pos + len])
+  | c :: r => if c = '`' then some 0 else (btScan r).map (u8 c + ·)
+
+theorem btScan_spec : ∀ {r : List Char} {n : Nat}, btScan r = some n →
+    ∃ k t, bytes (r.take k) = n ∧ r.drop k = '`' :: t
+  | [], _, h => by simp [btScan] at h
+  | c :: r, n, h => by
+    simp only [btScan] at h
+    split at h
+    · subst_vars; simp at h; subst h; exact ⟨0, _, rfl, rfl⟩
+    · cases hs : btScan r with
+      | none => simp [hs] at h
+      | some m =>
+        simp [hs] at h
+        obtain ⟨k, t, h1, h2⟩ := btScan_spec hs
+        exact ⟨k + 1, t, by simp [bytes, h1]; omega, by simpa using h2⟩
+
+/-- Backtick parameter scan (lexer.rs): the closing backtick is
+counted (`len += ch.len_utf8()` before the `==` test). -/
+def btpScan : List Char → Option Nat
+  | [] => none
+  | c :: r => if c = '`' then some (u8 c) else (btpScan r).map (u8 c + ·)
+
+theorem btpScan_spec : ∀ {r : List Char} {m : Nat}, btpScan r = some m →
+    ∃ k t, bytes (r.take k) + 1 = m ∧ r.drop k = '`' :: t
+  | [], _, h => by simp [btpScan] at h
+  | c :: r, n, h => by
+    simp only [btpScan] at h
+    split at h
+    · subst_vars; simp at h; subst h; exact ⟨0, _, rfl, rfl⟩
+    · cases hs : btpScan r with
+      | none => simp [hs] at h
+      | some m =>
+        simp [hs] at h
+        obtain ⟨k, t, h1, h2⟩ := btpScan_spec hs
+        exact ⟨k + 1, t, by simp [bytes]; omega, by simpa using h2⟩
+
+def isDigit (c : Char) : Bool := '0' ≤ c && c ≤ '9'
+def isIdStart (c : Char) : Bool := ('a' ≤ c && c ≤ 'z') || ('A' ≤ c && c ≤ 'Z') || c == '_'
+def isIdChar (c : Char) : Bool := isIdStart c || isDigit c
+
+theorem u8_ascii {c : Char} (h : c ≤ 'z') : u8 c = 1 := by
+  have h1 : c.val ≤ 127 := by
+    have := h; simp [Char.le_def] at this
+    exact UInt32.le_iff_toNat_le.mpr (by have := UInt32.le_iff_toNat_le.mp this; simp at this ⊢; omega)
+  simp [u8, Char.utf8Size, h1]
+
+theorem le_z_trans {a c : Char} (h : c ≤ a) (ha : a ≤ 'z') : c ≤ 'z' := by
+  simp [Char.le_def] at *
+  exact UInt32.le_iff_toNat_le.mpr (by
+    have := UInt32.le_iff_toNat_le.mp h; have := UInt32.le_iff_toNat_le.mp ha; omega)
+
+theorem isIdChar_u8 {c : Char} (h : isIdChar c = true) : u8 c = 1 := by
+  simp [isIdChar, isIdStart, isDigit] at h
+  rcases h with ((⟨-, h⟩ | ⟨-, h⟩) | rfl) | ⟨-, h⟩
+  · exact u8_ascii h
+  · exact u8_ascii (le_z_trans h (by decide))
+  · rfl
+  · exact u8_ascii (le_z_trans h (by decide))
+
+/-- `while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = chars.next() { len += 1 }` -/
+def identRun : List Char → Nat
+  | [] => 0
+  | c :: r => if isIdChar c then 1 + identRun r else 0
+
+theorem identRun_bytes : ∀ r : List Char, bytes (r.take (identRun r)) = identRun r
+  | [] => rfl
+  | c :: r => by
+    simp only [identRun]
+    split
+    · rename_i h
+      rw [Nat.add_comm, List.take_succ_cons]
+      simp only [bytes, isIdChar_u8 h, identRun_bytes r]; omega
+    · rfl
+
+/-- One-char tokens of `get_token` (lexer.rs). -/
+def singles : List Char := ['[', ']', '{', '}', '(', ')', '%', '^', '*', '/', '-', ',', ':', '|', ';']
+
+@[simp] theorem us_dollar : '$'.utf8Size = 1 := rfl
+@[simp] theorem us_bt : '`'.utf8Size = 1 := rfl
+@[simp] theorem us_sq : '\''.utf8Size = 1 := rfl
+@[simp] theorem us_dq : '"'.utf8Size = 1 := rfl
+@[simp] theorem us_bs : '\\'.utf8Size = 1 := rfl
+
+theorem singles_u8 : ∀ c ∈ singles, u8 c = 1 := by decide
+
+/-- `Lexer::get_token` (lexer.rs), reduced to what decides lengths
+and slices. `none` = a panic (a slice off a char boundary); `.ok n` = a token
+of `n` bytes (`0` only for `EndOfFile`); `.error` = an `Err` token, at which the
+parser stops. `num cs` is the char count `lex_numeric` settles on (≥ 1, or
+≥ 2 after `.`; its result is `str[pos..].chars().take(len).collect().len()`).
+`esc body` is whether `cypher_unescape` accepts the string body. -/
+def getTokC (num : List Char → Nat) (esc : List Char → Bool) (c : Char) (r : List Char) :
+    Option (Except Unit Nat) :=
+    if c ∈ singles then some (.ok 1)
+    else if c = '+' then some (.ok (if r.head? = some '=' then 2 else 1))
+    else if c = '=' then some (.ok (if r.head? = some '~' then 2 else 1))
+    else if c = '<' then some (.ok (if r.head? = some '=' ∨ r.head? = some '>' then 2 else 1))
+    else if c = '>' then some (.ok (if r.head? = some '=' then 2 else 1))
+    else if c = '.' then
+      if r.head? = some '.' then some (.ok 2)
+      else if r.head?.map isDigit = some true then
+        some (.ok (bytes ((c :: r).take (max 2 (num (c :: r))))))
+      else some (.ok 1)
+    else if c = '\'' ∨ c = '"' then
+      match strScan c r with
+      | none => some (.error ())
+      | some n => (slice (c :: r) 1 (1 + n)).map fun body =>
+          if esc body then .ok (n + 2) else .error ()
+    else if isDigit c then some (.ok (bytes ((c :: r).take (max 1 (num (c :: r))))))
+    else if c = '$' then
+      match r with
+      | [] => some (.error ())
+      | f :: r' =>
+        if f = '`' then
+          match btpScan r' with
+          | none => some (.error ())
+          | some m => (slice (c :: r) 2 (2 + m - 1)).map fun _ => .ok (2 + m)
+        else if isIdChar f then
+          (slice (c :: r) 1 (2 + identRun r')).map fun _ => .ok (2 + identRun r')
+        else some (.error ())
+    else if isIdStart c then
+      (slice (c :: r) 0 (1 + identRun r)).map fun _ => .ok (1 + identRun r)
+    else if c = '`' then
+      match btScan r with
+      | none => (slice (c :: r) 0 (1 + bytes r)).map fun _ => .error ()
+      | some n => (slice (c :: r) 1 (1 + n)).map fun _ => .ok (n + 2)
+    else some (.error ())
+
+def getTok (num : List Char → Nat) (esc : List Char → Bool) : List Char → Option (Except Unit Nat)
+  | [] => some (.ok 0)
+  | c :: r => getTokC num esc c r
+
+/-- What `getTok` promises: no panic, and a non-EOF token is a non-empty
+char prefix. -/
+def TokOk (cs : List Char) (res : Option (Except Unit Nat)) : Prop :=
+  ∃ e, res = some e ∧ ∀ n, e = .ok n → (n = 0 ∧ cs = []) ∨ ∃ k, 0 < k ∧ bytes (cs.take k) = n
+
+theorem bytes_take1 (c : Char) (r : List Char) : bytes ((c :: r).take 1) = u8 c := by
+  simp [bytes]
+
+theorem slice_ok' (cs : List Char) {i j ki kj : Nat} (hi : bytes (cs.take ki) = i)
+    (hj : bytes (cs.take kj) = j) (h : ki ≤ kj) : ∃ b, slice cs i j = some b := by
+  subst hi hj; exact ⟨_, slice_ok cs h⟩
+
+theorem tok_one {c : Char} {r : List Char} (hc : u8 c = 1) :
+    ∃ k, 0 < k ∧ bytes ((c :: r).take k) = 1 := ⟨1, by omega, by simp [bytes, hc]⟩
+
+theorem tok_two {c d : Char} {r t : List Char} (hc : u8 c = 1) (hr : r.head? = some d)
+    (hd : u8 d = 1) : ∃ k, 0 < k ∧ bytes ((c :: r).take k) = 2 := by
+  cases r with
+  | nil => simp at hr
+  | cons d' t => simp at hr; subst hr; exact ⟨2, by omega, by simp [bytes, hc, hd]⟩
+
+theorem getTok_ok (num : List Char → Nat) (esc : List Char → Bool) (cs : List Char) :
+    TokOk cs (getTok num esc cs) := by
+  match cs with
+  | [] => exact ⟨_, rfl, fun n h => by cases h; simp⟩
+  | c :: r =>
+    show TokOk (c :: r) (getTokC num esc c r)
+    unfold getTokC
+    by_cases h1 : c ∈ singles
+    · rw [ite_eq_left h1]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one (singles_u8 c h1))⟩
+    rw [ite_eq_right h1]
+    by_cases h2 : c = '+'
+    · rw [ite_eq_left h2]; subst h2; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+      by_cases h : r.head? = some '='
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h2]
+    by_cases h3 : c = '='
+    · rw [ite_eq_left h3]; subst h3; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+      by_cases h : r.head? = some '~'
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h3]
+    by_cases h4 : c = '<'
+    · rw [ite_eq_left h4]; subst h4; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+      by_cases h : r.head? = some '=' ∨ r.head? = some '>'
+      · rw [ite_eq_left h]; rcases h with h | h
+        · exact .inr (tok_two (t := []) rfl h rfl)
+        · exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h4]
+    by_cases h5 : c = '>'
+    · rw [ite_eq_left h5]; subst h5; refine ⟨_, rfl, fun n e => ?_⟩; cases e
+      by_cases h : r.head? = some '='
+      · rw [ite_eq_left h]; exact .inr (tok_two (t := []) rfl h rfl)
+      · rw [ite_eq_right h]; exact .inr (tok_one rfl)
+    rw [ite_eq_right h5]
+    by_cases h6 : c = '.'
+    · rw [ite_eq_left h6]; subst h6
+      by_cases h : r.head? = some '.'
+      · rw [ite_eq_left h]; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_two (t := []) rfl h rfl)⟩
+      rw [ite_eq_right h]
+      by_cases h' : r.head?.map isDigit = some true
+      · rw [ite_eq_left h']
+        exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨max 2 (num ('.' :: r)), by omega, rfl⟩⟩
+      · rw [ite_eq_right h']; exact ⟨_, rfl, fun n e => by cases e; exact .inr (tok_one rfl)⟩
+    rw [ite_eq_right h6]
+    by_cases h7 : c = '\'' ∨ c = '"'
+    · rw [ite_eq_left h7]
+      have hc : u8 c = 1 := by rcases h7 with rfl | rfl <;> rfl
+      cases hs : strScan c r with
+      | none => exact ⟨_, rfl, fun n e => by cases e⟩
+      | some n =>
+        simp only
+        obtain ⟨k, t, h1, h2⟩ := strScan_spec hs
+        obtain ⟨b, hb⟩ := slice_ok' (c :: r) (i := 1) (j := 1 + n) (ki := 1) (kj := k + 1)
+          (by simp [bytes, hc]) (by simp [bytes, h1, hc] <;> omega) (by omega)
+        rw [hb]
+        refine ⟨_, rfl, fun m e => ?_⟩
+        simp only at e
+        by_cases he : esc b = true
+        · rw [ite_eq_left he] at e
+          cases e
+          refine .inr ⟨k + 2, by omega, ?_⟩
+          have h3 : bytes (r.take (k + 1)) = bytes (r.take k) + u8 c := bytes_take_succ h2
+          simp only [List.take_succ_cons, bytes, h3, h1, hc]; omega
+        · rw [ite_eq_right he] at e; cases e
+    rw [ite_eq_right h7]
+    by_cases h8 : isDigit c = true
+    · rw [ite_eq_left h8]
+      exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨max 1 (num (c :: r)), by omega, rfl⟩⟩
+    rw [ite_eq_right h8]
+    by_cases h9 : c = '$'
+    · rw [ite_eq_left h9]; subst h9
+      match r with
+      | [] => exact ⟨_, rfl, fun n e => by cases e⟩
+      | f :: r' =>
+        simp only
+        by_cases hf : f = '`'
+        · rw [ite_eq_left hf]; subst hf
+          cases hs : btpScan r' with
+          | none => exact ⟨_, rfl, fun n e => by cases e⟩
+          | some m =>
+            simp only
+            obtain ⟨k, t, h1, h2⟩ := btpScan_spec hs
+            obtain ⟨b, hb⟩ := slice_ok' ('$' :: '`' :: r') (i := 2) (j := 2 + m - 1) (ki := 2) (kj := k + 2)
+              (by rfl) (by simp [bytes, ← h1]; omega) (by omega)
+            rw [hb]
+            refine ⟨_, rfl, fun n e => ?_⟩
+            cases e
+            refine .inr ⟨k + 3, by omega, ?_⟩
+            have h3 := bytes_take_succ h2
+            simp only [List.take_succ_cons, bytes, h3]
+            simp [u8] at h1 ⊢; omega
+        rw [ite_eq_right hf]
+        by_cases hf' : isIdChar f = true
+        · rw [ite_eq_left hf']
+          have hb2 : bytes (('$' :: f :: r').take (2 + identRun r')) = 2 + identRun r' := by
+            rw [Nat.add_comm, List.take_succ_cons, List.take_succ_cons]
+            simp only [bytes, isIdChar_u8 hf', identRun_bytes]; simp [u8]; omega
+          obtain ⟨b, hb⟩ := slice_ok' ('$' :: f :: r') (i := 1) (j := 2 + identRun r') (ki := 1) (kj := 2 + identRun r')
+            (by rfl) hb2 (by omega)
+          rw [hb]
+          exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨_, by omega, hb2⟩⟩
+        · rw [ite_eq_right hf']; exact ⟨_, rfl, fun n e => by cases e⟩
+    rw [ite_eq_right h9]
+    by_cases h10 : isIdStart c = true
+    · rw [ite_eq_left h10]
+      have hc : u8 c = 1 := isIdChar_u8 (by simp [isIdChar, h10])
+      have hb2 : bytes ((c :: r).take (1 + identRun r)) = 1 + identRun r := by
+        rw [Nat.add_comm, List.take_succ_cons]
+        simp only [bytes, hc, identRun_bytes]; omega
+      obtain ⟨b, hb⟩ := slice_ok' (c :: r) (i := 0) (j := 1 + identRun r) (ki := 0) (kj := 1 + identRun r) rfl hb2 (by omega)
+      rw [hb]
+      exact ⟨_, rfl, fun n e => by cases e; exact .inr ⟨_, by omega, hb2⟩⟩
+    rw [ite_eq_right h10]
+    by_cases h11 : c = '`'
+    · rw [ite_eq_left h11]; subst h11
+      cases hs : btScan r with
+      | none =>
+        simp only
+        obtain ⟨b, hb⟩ := slice_ok' ('`' :: r) (i := 0) (j := 1 + bytes r) (ki := 0) (kj := r.length + 1) rfl
+          (by simp [bytes] <;> omega) (by omega)
+        rw [hb]; exact ⟨_, rfl, fun n e => by cases e⟩
+      | some n =>
+        simp only
+        obtain ⟨k, t, h1, h2⟩ := btScan_spec hs
+        obtain ⟨b, hb⟩ := slice_ok' ('`' :: r) (i := 1) (j := 1 + n) (ki := 1) (kj := k + 1) rfl
+          (by simp [bytes, h1] <;> omega) (by omega)
+        rw [hb]
+        refine ⟨_, rfl, fun m e => ?_⟩
+        cases e
+        refine .inr ⟨k + 2, by omega, ?_⟩
+        have h3 := bytes_take_succ h2
+        simp only [List.take_succ_cons, bytes, h3, h1]; simp [u8]; omega
+    rw [ite_eq_right h11]
+    exact ⟨_, rfl, fun n e => by cases e⟩
+
+/-! ## 4. The token loop: never panics, and covers the input exactly -/
+
+/-- `Lexer::new` then `Lexer::next` until `EndOfFile` or an `Err` token
+(lexer.rs): skip `read_spaces`, slice there, take `get_token`, slice
+after it. Returns the whitespace runs and token texts in order, or `none` if
+any slice would panic. -/
+def lexAll (num : List Char → Nat) (esc : List Char → Bool) :
+    Nat → List Char → Option (List (List Char))
+  | 0, _ => some []
+  | f + 1, cs =>
+    match splitBytes cs (rs cs) with
+    | none => none
+    | some (sp, rest) =>
+      match getTok num esc rest with
+      | none => none
+      | some (.error _) => some [sp, rest]      -- the parser stops at an Err token
+      | some (.ok 0) => some [sp, rest]         -- EndOfFile
+      | some (.ok (n + 1)) =>
+        match splitBytes rest (n + 1) with
+        | none => none
+        | some (tok, rest') => (lexAll num esc f rest').map (sp :: tok :: ·)
+
+/-- **The lexer is total and its segments cover the input exactly**: for
+every input (any `&str`), no slice panics, and the whitespace/comment runs and
+token texts concatenate back to the input. Holds for any numeric scanner and
+any escape decoder, since neither can move a slice off a char boundary. -/
+theorem lexAll_total_cover (num : List Char → Nat) (esc : List Char → Bool) :
+    ∀ (f : Nat) (cs : List Char), cs.length < f →
+      ∃ segs, lexAll num esc f cs = some segs ∧ segs.flatten = cs
+  | 0, _, h => absurd h (Nat.not_lt_zero _)
+  | f + 1, cs, hlen => by
+    obtain ⟨k1, hk1⟩ := rs_top_boundary cs
+    have hs1 : splitBytes cs (rs cs) = some (cs.take k1, cs.drop k1) := by
+      rw [← hk1]; exact splitBytes_take cs k1
+    obtain ⟨e, he, hok⟩ := getTok_ok num esc (cs.drop k1)
+    simp only [lexAll, hs1, he]
+    match e, hok with
+    | .error _, _ => exact ⟨_, rfl, by simp⟩
+    | .ok 0, _ => exact ⟨_, rfl, by simp⟩
+    | .ok (n + 1), hok =>
+      rcases hok (n + 1) rfl with ⟨h0, -⟩ | ⟨k2, hk2pos, hk2⟩
+      · omega
+      simp only
+      rw [← hk2, splitBytes_take]
+      simp only
+      have hne : cs.drop k1 ≠ [] := by
+        intro h; rw [h] at hk2; simp [bytes] at hk2
+      have hlt : ((cs.drop k1).drop k2).length < f := by
+        have : k1 < cs.length := by simpa using hne
+        simp only [List.length_drop]; omega
+      obtain ⟨segs, h1, h2⟩ := lexAll_total_cover num esc f _ hlt
+      rw [h1]
+      refine ⟨_, rfl, ?_⟩
+      simp only [List.flatten_cons, h2, List.take_append_drop]
+
+/-- Instantiated at the fuel the loop needs: every input. -/
+theorem lexer_never_panics (num : List Char → Nat) (esc : List Char → Bool) (cs : List Char) :
+    ∃ segs, lexAll num esc (cs.length + 1) cs = some segs ∧ segs.flatten = cs :=
+  lexAll_total_cover num esc _ cs (Nat.lt_succ_self _)
+
+/-! ## 5. `cypher_unescape` against openCypher `EscapedChar` -/
+
+/-- One hex digit (`char::to_digit(16)` as `from_str_radix` uses it). -/
+def hexDigit? (c : Char) : Option Nat :=
+  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - 48)
+  else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 87)
+  else if 'A' ≤ c ∧ c ≤ 'F' then some (c.toNat - 55)
+  else none
+
+/-- All-digit value, most significant first; `none` on a non-digit. -/
+def hexVal : List Char → Nat → Option Nat
+  | [], acc => some acc
+  | c :: r, acc => (hexDigit? c).bind fun d => hexVal r (acc * 16 + d)
+
+/-- `u32::from_str_radix(s, 16)`: empty is `Err`; a leading `+` is skipped
+when something follows it; then every char must be a digit and the value must
+fit `u32`. -/
+def fromStrRadix16 (s : List Char) : Option Nat :=
+  let ds := match s with
+    | '+' :: t => if t = [] then none else some t
+    | [] => none
+    | _ => some s
+  (ds.bind (hexVal · 0)).bind fun v => if v < 2 ^ 32 then some v else none
+
+/-- The one-char escapes of string_escape.rs. -/
+def simpleEsc (e : Char) : Option Char :=
+  if e = 'a' then some '\x07' else if e = 'b' then some '\x08'
+  else if e = 'f' then some '\x0c' else if e = 'n' then some '\n'
+  else if e = 'r' then some '\r' else if e = 't' then some '\t'
+  else if e = 'v' then some '\x0b' else if e = '\\' then some '\\'
+  else if e = '\'' then some '\'' else if e = '"' then some '"'
+  else if e = '?' then some '?' else none
+
+/-- `char::is_ascii_hexdigit`. -/
+def isHexDigit (c : Char) : Bool := (hexDigit? c).isSome
+
+/-- `cypher_unescape` (string_escape.rs), with fuel (≥ input length is
+enough). `take(w).collect()` then `hex.len() != w` compares *bytes*; since #2910
+(`dba677942`) every char must also be `is_ascii_hexdigit` (string_escape.rs). -/
+def unescF : Nat → List Char → Except String (List Char)
+  | 0, _ => .error "fuel"
+  | _ + 1, [] => .ok []
+  | f + 1, c :: r =>
+    if c = '\\' then
+      match r with
+      | [] => .error "Unterminated escape sequence at end of string"
+      | e :: r' =>
+        match simpleEsc e with
+        | some d => (unescF f r').map (d :: ·)
+        | none =>
+          if e = 'u' ∨ e = 'U' then
+            let w := if e = 'u' then 4 else 8
+            let hex := r'.take w
+            if bytes hex ≠ w ∨ !(hex.all isHexDigit) then .error "Invalid unicode escape"
+            else match fromStrRadix16 hex with
+              | none => .error "Invalid unicode escape"
+              | some v =>
+                if v.isValidChar then (unescF f (r'.drop w)).map (Char.ofNat v :: ·)
+                else .error "Invalid unicode code point"   -- char::from_u32 = None
+          else (unescF f r').map (fun t => '\\' :: e :: t)  -- unknown: kept as-is
+    else (unescF f r).map (c :: ·)
+
+/-- The escapes Cypher.g4:553-554 gives a lower-case spelling to. -/
+def specSimple (e : Char) : Option Char :=
+  if e = '\\' then some '\\' else if e = '\'' then some '\''
+  else if e = '"' then some '"' else if e = 'b' then some '\x08'
+  else if e = 'f' then some '\x0c' else if e = 'n' then some '\n'
+  else if e = 'r' then some '\r' else if e = 't' then some '\t'
+  else none
+
+/-- Exactly `w` hex digits. -/
+def hexN (w : Nat) (l : List Char) : Option Nat :=
+  if l.length = w then hexVal l 0 else none
+
+/-- openCypher `StringLiteral` body decoding, lower-case escapes, with
+`\uXXXX` (UTF-16 unit, 4 digits) and `\UXXXXXXXX` (8 digits) as Neo4j reads
+the grammar's `('U'|'u')` alternatives. `none` = not a valid literal (an
+unknown escape is a syntax error in the grammar), or a hex escape naming no
+Unicode scalar value. -/
+def specUnescF : Nat → List Char → Option (List Char)
+  | 0, _ => none
+  | _ + 1, [] => some []
+  | f + 1, c :: r =>
+    if c = '\\' then
+      match r with
+      | [] => none
+      | e :: r' =>
+        match specSimple e with
+        | some d => (specUnescF f r').map (d :: ·)
+        | none =>
+          if e = 'u' ∨ e = 'U' then
+            let w := if e = 'u' then 4 else 8
+            match hexN w (r'.take w) with
+            | none => none
+            | some v => if v.isValidChar then (specUnescF f (r'.drop w)).map (Char.ofNat v :: ·)
+                        else none
+          else none
+    else (specUnescF f r).map (c :: ·)
+
+theorem specSimple_simpleEsc {e d : Char} (h : specSimple e = some d) : simpleEsc e = some d := by
+  simp only [specSimple] at h
+  split at h; · subst_vars; cases h; rfl
+  split at h; · subst_vars; cases h; rfl
+  split at h; · subst_vars; cases h; rfl
+  split at h; · subst_vars; cases h; rfl
+  split at h; · subst_vars; cases h; rfl
+  split at h; · subst_vars; cases h; rfl
+  split at h; · subst_vars; cases h; rfl
+  split at h; · subst_vars; cases h; rfl
+  cases h
+
+theorem specSimple_none_u : specSimple 'u' = none ∧ specSimple 'U' = none := by decide
+theorem simpleEsc_none_u : simpleEsc 'u' = none ∧ simpleEsc 'U' = none := by decide
+
+theorem hexDigit_ascii {c : Char} {d : Nat} (h : hexDigit? c = some d) : u8 c = 1 := by
+  unfold hexDigit? at h
+  split at h
+  · rename_i h1; exact u8_ascii (le_z_trans h1.2 (by decide))
+  split at h
+  · rename_i h1; exact u8_ascii (le_z_trans h1.2 (by decide))
+  split at h
+  · rename_i h1; exact u8_ascii (le_z_trans h1.2 (by decide))
+  · simp at h
+
+theorem hexVal_ascii : ∀ {l : List Char} {acc v : Nat}, hexVal l acc = some v → bytes l = l.length
+  | [], _, _, _ => rfl
+  | c :: r, acc, v, h => by
+    simp only [hexVal] at h
+    cases hd : hexDigit? c with
+    | none => simp [hd] at h
+    | some d =>
+      simp [hd] at h
+      simp [bytes, hexDigit_ascii hd, hexVal_ascii h]; omega
+
+theorem hexVal_not_plus {c : Char} {r : List Char} {acc v : Nat}
+    (h : hexVal (c :: r) acc = some v) : c ≠ '+' := by
+  rintro rfl; simp [hexVal, hexDigit?] at h
+
+theorem toNat_le {c d : Char} (h : c ≤ d) : c.toNat ≤ d.toNat :=
+  UInt32.le_iff_toNat_le.mp h
+
+theorem hexVal_lt : ∀ {l : List Char} {acc v : Nat}, hexVal l acc = some v →
+    v < (acc + 1) * 16 ^ l.length
+  | [], acc, v, h => by simp [hexVal] at h; subst h; simp
+  | c :: r, acc, v, h => by
+    simp only [hexVal] at h
+    cases hd : hexDigit? c with
+    | none => simp [hd] at h
+    | some d =>
+      simp [hd] at h
+      have h1 := hexVal_lt h
+      have hd16 : d < 16 := by
+        unfold hexDigit? at hd
+        split at hd
+        · rename_i hc; cases hd
+          have h1 := toNat_le hc.1; have h2 := toNat_le hc.2
+          have : ('9' : Char).toNat = 57 := rfl
+          have : ('0' : Char).toNat = 48 := rfl
+          omega
+        split at hd
+        · rename_i _ hc; cases hd
+          have h1 := toNat_le hc.1; have h2 := toNat_le hc.2
+          have : ('f' : Char).toNat = 102 := rfl
+          have : ('a' : Char).toNat = 97 := rfl
+          omega
+        split at hd
+        · rename_i _ _ hc; cases hd
+          have h1 := toNat_le hc.1; have h2 := toNat_le hc.2
+          have : ('F' : Char).toNat = 70 := rfl
+          have : ('A' : Char).toNat = 65 := rfl
+          omega
+        · cases hd
+      have : (acc * 16 + d + 1) ≤ (acc + 1) * 16 := by omega
+      calc v < (acc * 16 + d + 1) * 16 ^ r.length := h1
+        _ ≤ (acc + 1) * 16 * 16 ^ r.length := Nat.mul_le_mul_right _ this
+        _ = (acc + 1) * 16 ^ (r.length + 1) := by rw [Nat.pow_succ]; ac_rfl
+
+theorem hexN_rust {w : Nat} {l : List Char} {v : Nat} (hw0 : 0 < w) (hw : w ≤ 8) (h : hexN w l = some v) :
+    bytes l = w ∧ fromStrRadix16 l = some v := by
+  unfold hexN at h
+  split at h
+  · rename_i hl
+    refine ⟨by rw [hexVal_ascii h, hl], ?_⟩
+    have hlt : v < 2 ^ 32 := by
+      have := hexVal_lt h; simp at this
+      have h2 : 16 ^ l.length ≤ 16 ^ 8 := Nat.pow_le_pow_right (by omega) (by omega)
+      have : (16 : Nat) ^ 8 = 2 ^ 32 := by decide
+      omega
+    unfold fromStrRadix16
+    match l, h with
+    | [], h => simp at hl; omega
+    | c :: r, h =>
+      have hc := hexVal_not_plus h
+      have : (match c :: r with
+          | '+' :: t => if t = [] then none else some t
+          | [] => none
+          | _ => some (c :: r)) = some (c :: r) := by
+        split
+        · rename_i heq; simp at heq; exact absurd heq.1 hc
+        · simp at *
+        · rfl
+      simp only [this, Option.bind_some, h, hlt, ite_true]
+  · simp at h
+
+theorem hexVal_all : ∀ {l : List Char} {acc v : Nat}, hexVal l acc = some v → l.all isHexDigit = true
+  | [], _, _, _ => rfl
+  | c :: r, acc, v, h => by
+    simp only [hexVal] at h
+    cases hd : hexDigit? c with
+    | none => simp [hd] at h
+    | some d =>
+      simp [hd] at h
+      have := hexVal_all h
+      simp only [List.all_cons, isHexDigit, hd, Option.isSome_some, Bool.true_and]
+      exact this
+
+theorem hexN_all {w : Nat} {l : List Char} {v : Nat} (h : hexN w l = some v) : l.all isHexDigit = true := by
+  unfold hexN at h; split at h
+  · exact hexVal_all h
+  · simp at h
+
+/-- **`cypher_unescape` extends the openCypher decoding**: every string body
+the spec accepts (lower-case escapes, `\uXXXX`, `\UXXXXXXXX`) is decoded by
+the Rust to exactly the spec's string. -/
+theorem unesc_agrees_spec : ∀ (f : Nat) (cs out : List Char),
+    specUnescF f cs = some out → unescF f cs = .ok out
+  | 0, _, _, h => by simp [specUnescF] at h
+  | f + 1, [], out, h => by simp [specUnescF] at h; subst h; rfl
+  | f + 1, c :: r, out, h => by
+    simp only [specUnescF] at h
+    simp only [unescF]
+    by_cases hc : c = '\\'
+    · rw [ite_eq_left hc] at h ⊢
+      match r, h with
+      | [], h => simp at h
+      | e :: r', h =>
+        simp only at h ⊢
+        cases hs : specSimple e with
+        | some d =>
+          rw [hs] at h
+          rw [specSimple_simpleEsc hs]
+          simp only at h ⊢
+          cases h2 : specUnescF f r' with
+          | none => simp [h2] at h
+          | some t => simp [h2] at h; subst h; simp [unesc_agrees_spec f r' t h2, Except.map]
+        | none =>
+          rw [hs] at h
+          simp only at h
+          by_cases hu : e = 'u' ∨ e = 'U'
+          · rw [ite_eq_left hu] at h
+            have hse : simpleEsc e = none := by
+              rcases hu with rfl | rfl <;> decide
+            rw [hse]; simp only; rw [ite_eq_left hu]
+            generalize hw : (if e = 'u' then 4 else 8) = w at h ⊢
+            have hw8 : w ≤ 8 := by rw [← hw]; split <;> omega
+            have hw0 : 0 < w := by rw [← hw]; split <;> omega
+            cases hx : hexN w (r'.take w) with
+            | none => simp [hx] at h
+            | some v =>
+              rw [hx] at h
+              obtain ⟨hb, hf⟩ := hexN_rust hw0 hw8 hx
+              have hall := hexN_all hx
+              simp only [hb, hall, ne_eq, not_true_eq_false, Bool.not_true, Bool.false_eq_true,
+                or_self, ite_false, hf]
+              simp only at h
+              by_cases hv : v.isValidChar
+              · rw [ite_eq_left hv] at h; rw [ite_eq_left hv]
+                cases h2 : specUnescF f (r'.drop w) with
+                | none => simp [h2] at h
+                | some t =>
+                  simp [h2] at h; subst h
+                  simp [unesc_agrees_spec f _ t h2, Except.map]
+              · rw [ite_eq_right hv] at h; simp at h
+          · rw [ite_eq_right hu] at h; simp at h
+    · rw [ite_eq_right hc] at h ⊢
+      cases h2 : specUnescF f r with
+      | none => simp [h2] at h
+      | some t => simp [h2] at h; subst h; simp [unesc_agrees_spec f r t h2, Except.map]
+
+/-- **A `\u` / `\U` escape needs exactly its hex digits**
+(`test_unescape_unicode_requires_hex_digits`): `\u+041`, `\U+0000041`,
+`\u-041` and `\u 041` are rejected, as by the spec. -/
+theorem unesc_plus_rejected :
+    (unescF 10 "\\u+041".toList).toOption = none ∧ (unescF 14 "\\U+0000041".toList).toOption = none ∧
+    (unescF 10 "\\u-041".toList).toOption = none ∧ (unescF 10 "\\u 041".toList).toOption = none ∧
+    (unescF 10 "\\u0041".toList).toOption = some ['A'] := by decide
+
+/-- In general the hex check makes `from_str_radix` agree with the spec's
+`hexN`: on a run of `w ≤ 8` chars that passes both checks, the decoded value is
+the spec's. With `unesc_agrees_spec` this makes the `\u`/`\U` arm exact. -/
+theorem hexRun_spec {w : Nat} {l : List Char} (hw0 : 0 < w) (hw : w ≤ 8)
+    (hb : bytes l = w) (hall : l.all isHexDigit = true) :
+    ∃ v, hexN w l = some v ∧ fromStrRadix16 l = some v := by
+  have hdig : ∀ c ∈ l, ∃ d, hexDigit? c = some d := by
+    intro c hc
+    have := List.all_eq_true.mp hall c hc
+    simp only [isHexDigit, Option.isSome_iff_exists] at this
+    exact this
+  have hval : ∀ (l : List Char) acc, (∀ c ∈ l, ∃ d, hexDigit? c = some d) → ∃ v, hexVal l acc = some v := by
+    intro l
+    induction l with
+    | nil => intro acc _; exact ⟨acc, rfl⟩
+    | cons c r ih =>
+      intro acc h
+      obtain ⟨d, hd⟩ := h c (by simp)
+      obtain ⟨v, hv⟩ := ih (acc * 16 + d) (fun x hx => h x (by simp [hx]))
+      exact ⟨v, by simp [hexVal, hd, hv]⟩
+  obtain ⟨v, hv⟩ := hval l 0 hdig
+  have hlen : l.length = w := by rw [← hb, hexVal_ascii hv]
+  have hn : hexN w l = some v := by simp [hexN, hlen, hv]
+  exact ⟨v, hn, (hexN_rust hw0 hw hn).2⟩
+
+/-- The grammar's `\N`, `\B`, … (upper-case) are kept verbatim, as in C
+FalkorDB; the grammar reads `\N` as a newline. -/
+theorem unesc_upper_kept : (unescF 5 "\\N".toList).toOption = some ['\\', 'N'] := by decide
+
+/-- `\uD800` (a lone surrogate) and `\U00110000` are rejected by both. -/
+example : (unescF 10 "\\uD800".toList).toOption = none ∧ specUnescF 10 "\\uD800".toList = none ∧
+    (unescF 12 "\\U00110000".toList).toOption = none := by decide
+
+example : (unescF 10 "\\u00e9\\t".toList).toOption = some ['é', '\t'] := by decide
+
+/-! ## 6. Integer literals: overflow is rejected, not wrapped -/
+
+def I64MIN : Int := -2 ^ 63
+def I64MAX : Int := 2 ^ 63 - 1
+
+/-- Value of a digit string, most significant first (`from_str_radix`'s
+accumulation, before its overflow check). -/
+def digitsVal (radix : Nat) (ds : List Nat) : Nat := ds.foldl (fun a d => a * radix + d) 0
+
+/-- Canonical digits of `n` (no leading zeros); fuel `f` > `n` suffices. -/
+def canonF (radix : Nat) : Nat → Nat → List Nat
+  | 0, _ => []
+  | f + 1, n => if n < radix then [n] else canonF radix f (n / radix) ++ [n % radix]
+
+def canon (radix n : Nat) : List Nat := canonF radix (n + 1) n
+
+/-- `Lexer::str2number_token`, integer half (lexer.rs), on the digits
+after the radix prefix (`0x`, `0o`, `0b`, or the leading `0` of an octal).
+Since #2910 (`dba677942`) `2^63` is recognised by value, however it is spelled
+(`u64::from_str_radix(number_str, radix) == Ok(1 << 63)`, lexer.rs), and
+returned as `i64::MIN` for the parser to sort out. `u64::from_str_radix` errs on
+the empty string and on any value past `u64::MAX`, so the test is exactly
+"non-empty and worth `2^63`". A digit `≥ radix` (not a digit of that radix) makes
+`from_str_radix` fail with `InvalidDigit`, so it is an `Invalid input` error here too. -/
+def str2int (radix : Nat) (ds : List Nat) : Except String Int :=
+  if ds = [] ∨ ds.any (fun d => radix ≤ d) = true then .error "Invalid input"
+  else if digitsVal radix ds = 2 ^ 63 then .ok I64MIN
+  else if (digitsVal radix ds : Int) ≤ I64MAX then .ok (digitsVal radix ds)
+  else .error "Integer overflow"                -- IntErrorKind::PosOverflow
+
+/-- Level 9 of `parse_expr_inner` (cypher.rs) — and
+`parse_literal` (cypher.rs), which has the same three cases — applied
+to one literal token, optionally preceded by `-`; a `Negate` node over a
+constant then evaluates by `checked_neg`, which cannot fail on `0..=i64::MAX`. -/
+def evalLit (neg : Bool) : Except String Int → Except String Int
+  | .error e => .error e
+  | .ok v =>
+    if neg then (if v = I64MIN then .ok I64MIN else .ok (-v))
+    else if v = I64MIN then .error "Integer overflow '9223372036854775808'"
+    else .ok v
+
+/-- openCypher: the literal's value, negated if asked, if it fits `i64`; a digit string
+that is empty or has a digit `≥ radix` is not a literal. -/
+def specLit (neg : Bool) (radix : Nat) (ds : List Nat) : Option Int :=
+  if ds = [] ∨ ds.any (fun d => radix ≤ d) = true then none else
+  let w : Int := if neg then -(digitsVal radix ds : Int) else digitsVal radix ds
+  if I64MIN ≤ w ∧ w ≤ I64MAX then some w else none
+
+@[simp] theorem toOption_ok {ε α : Type} (v : α) : (Except.ok v : Except ε α).toOption = some v := rfl
+@[simp] theorem toOption_err {ε α : Type} (e : ε) : (Except.error e : Except ε α).toOption = none := rfl
+
+theorem canon_min_val : ∀ r ∈ [2, 8, 10, 16], digitsVal r (canon r (2 ^ 63)) = 2 ^ 63 := by decide
+
+/-- **Integer literals are exact** (since #2910, for *every* spelling): for a
+non-empty digit string, leading zeros or not, negated or not, the parser
+produces the literal's value when it fits `i64` and an error otherwise. The digit values are
+arbitrary: a digit `≥ radix` is an error on both sides (`from_str_radix`'s `InvalidDigit`), so
+no hypothesis ties `ds` to the scanner (`lex_numeric` only hands digits of the radix on). -/
+theorem int_literal_correct (neg : Bool) (radix : Nat) (ds : List Nat) (hne : ds ≠ []) :
+    (evalLit neg (str2int radix ds)).toOption = specLit neg radix ds := by
+  by_cases hb : ds.any (fun d => radix ≤ d) = true
+  · simp [str2int, specLit, hb, evalLit]
+  have hc : ¬ (ds = [] ∨ ds.any (fun d => radix ≤ d) = true) := by simp [hne, hb]
+  unfold str2int specLit
+  rw [ite_eq_right hc, ite_eq_right hc]
+  simp only
+  generalize digitsVal radix ds = v
+  have e1 : I64MIN = -9223372036854775808 := rfl
+  have e2 : I64MAX = 9223372036854775807 := rfl
+  have e3 : (2 : Nat) ^ 63 = 9223372036854775808 := rfl
+  rw [e3]
+  by_cases hv : v = 9223372036854775808
+  · subst hv
+    cases neg
+    · simp only [ite_true, evalLit, Bool.false_eq_true, ite_false]
+      rw [ite_eq_right (by rw [e1, e2]; omega)]; rfl
+    · simp only [ite_true, evalLit]
+      rw [ite_eq_left (by rw [e1, e2]; omega)]; rfl
+  · simp only [hv, ite_false]
+    by_cases hle : (v : Int) ≤ I64MAX
+    · rw [ite_eq_left hle]
+      have h0 : (v : Int) ≠ I64MIN := by rw [e1]; omega
+      cases neg
+      · simp only [evalLit, ite_eq_right h0, Bool.false_eq_true, ite_false, toOption_ok]
+        rw [ite_eq_left (by rw [e1, e2] at *; omega)]
+      · simp only [evalLit, ite_eq_right h0, ite_true, toOption_ok]
+        rw [ite_eq_left (by rw [e1, e2] at *; omega)]
+    · rw [ite_eq_right hle]
+      cases neg
+      · simp only [evalLit, toOption_err, Bool.false_eq_true, ite_false]
+        rw [ite_eq_right (by rw [e1, e2] at *; omega)]
+      · simp only [evalLit, toOption_err, ite_true]
+        rw [ite_eq_right (by rw [e1, e2] at *; omega)]
+
+/-- `every_spelling_of_two_to_the_63_lexes_as_min`: `-0x08000000000000000`
+(a leading zero) is `-2^63`, as in C FalkorDB. -/
+theorem min_noncanonical_fixed :
+    (evalLit true (str2int 16 (0 :: canon 16 (2 ^ 63)))).toOption = some I64MIN ∧
+    specLit true 16 (0 :: canon 16 (2 ^ 63)) = some I64MIN := by decide
+
+/-- The tree shapes level 9 inspects (cypher.rs). -/
+inductive LitTree
+  | const (v : Int)
+  | negate (e : LitTree)
+  | post (e : LitTree)          -- `.x`, `[i]`, `{..}`, `:L` wrapped at level 10
+
+/-- The level-9 check: `Negate(Constant(MIN))` → `MIN`; a bare
+`Constant(MIN)` → overflow; anything else passes. -/
+def level9 : LitTree → Except String LitTree
+  | .negate (.const v) => if v = I64MIN then .ok (.const I64MIN) else .ok (.negate (.const v))
+  | .const v => if v = I64MIN then .error "Integer overflow" else .ok (.const v)
+  | e => .ok e
+
+/-- Level 10 since #2910 (`dba677942`, cypher.rs): a bare
+`Constant(i64::MIN)` followed by a postfix token (`[`, `.`, `{`, `:`) is the
+unnegated literal `2^63` and is an overflow, before the postfix loop wraps
+it. Otherwise the postfix (if any) wraps the tree. -/
+def level10 (e : LitTree) (pf : Bool) : Except String LitTree :=
+  match e with
+  | .const v => if v = I64MIN ∧ pf then .error "Integer overflow"
+    else .ok (if pf then .post (.const v) else .const v)
+  | e => .ok (if pf then .post e else e)
+
+/-- A literal, an optional postfix (level 10, binds tightest), an optional
+unary `-` (level 9), and level 9's check. -/
+def litExpr (neg pf : Bool) (v : Int) : Except String LitTree :=
+  match level10 (.const v) pf with
+  | .error e => .error e
+  | .ok t => level9 (if neg then .negate t else t)
+
+/-- **`2^63` is accepted exactly when it is directly negated**
+(`unnegated_min_literal_overflows_under_postfix`): with or without a pf,
+`litExpr` fails on `I64MIN` unless it is `-2^63` with no postfix in between —
+`9223372036854775808.x`, `…[0]`, `…{.x}`, `…:L` and `-9223372036854775808.x`
+all overflow — and every other value passes. -/
+theorem litExpr_min (neg pf : Bool) :
+    (∃ e, litExpr neg pf I64MIN = .error e) ↔ (pf = true ∨ neg = false) := by
+  cases neg <;> cases pf <;> simp [litExpr, level10, level9, I64MIN]
+
+theorem litExpr_other (neg pf : Bool) (v : Int) (hv : v ≠ I64MIN) :
+    ∃ t, litExpr neg pf v = .ok t := by
+  cases neg <;> cases pf <;> simp [litExpr, level10, level9, hv]
+
+/-! ### A run of signs and `i64::MIN` (#3525)
+
+Since #3525 (`56d00c3d8`) a run of `+`/`-` folds to `0`, `1` or `2` `Negate` frames by the parity
+of its `-` (cypher.rs); every frame is popped through level 9's check. -/
+
+/-- The `Negate` frames a run of `n` `-` pushes: none for `0`, else `2 - n % 2`. -/
+def negFrames (n : Nat) : Nat := if n = 0 then 0 else 2 - n % 2
+
+/-- Pop `k` `Negate` frames over `t`, innermost first, each through `level9`. -/
+def applyFrames : Nat → LitTree → Except String LitTree
+  | 0, t => .ok t
+  | k + 1, t => (level9 (.negate t)).bind (applyFrames k)
+
+/-- A literal with a postfix and a run of `n` `-` (level 10, then the frames of level 9). -/
+def signedLit (n : Nat) (pf : Bool) (v : Int) : Except String LitTree :=
+  match level10 (.const v) pf with
+  | .error e => .error e
+  | .ok t => if n = 0 then level9 t else applyFrames (negFrames n) t
+
+/-- The runtime value of a literal tree: `Negate` is `checked_neg`, `none` its overflow. -/
+def evalT : LitTree → Option Int
+  | .const v => some v
+  | .negate e => (evalT e).bind fun w => if w = I64MIN then none else some (-w)
+  | .post e => evalT e
+
+/-- For every digit string that is not `2^63`, a run of `n` signs is read as the literal negated
+`n` times: its value is `v` for even `n` and `-v` for odd `n`. -/
+theorem signedLit_exact (n : Nat) (v : Int) (h0 : 0 ≤ v) (hv : v ≤ I64MAX) :
+    ((signedLit n false v).toOption.bind evalT) = some (if n % 2 = 0 then v else -v) := by
+  have hne : v ≠ I64MIN := by unfold I64MIN I64MAX at *; omega
+  have hnm : -v ≠ I64MIN := by unfold I64MIN I64MAX at *; omega
+  rcases Nat.eq_zero_or_pos n with rfl | hn
+  · simp [signedLit, level10, level9, hne, evalT]
+  · have hn0 : n ≠ 0 := by omega
+    by_cases he : n % 2 = 0
+    · have : negFrames n = 2 := by simp [negFrames, he, hn0]
+      simp [signedLit, level10, this, applyFrames, level9, hne, he, evalT, hnm, hn0, Except.bind, Except.toOption, Option.bind]
+    · have : negFrames n = 1 := by simp [negFrames, hn0]; omega
+      simp [signedLit, level10, this, applyFrames, level9, hne, he, evalT, hn0, Except.bind, Except.toOption, Option.bind]
+
+/-- **`- -9223372036854775808` is `i64::MIN`, not an overflow** (confirmed live: Rust and the C
+module both answer `-9223372036854775808` for `RETURN --9223372036854775808`; the explicit
+`-(-9223372036854775808)` is "integer overflow in unary minus" in Rust). The inner frame collapses
+`Negate(Constant(MIN))` to `Constant(MIN)`, which the outer frame takes for another `2^63` literal
+and collapses again. The mathematical value is `+2^63`, out of `i64` range. A run of an odd length
+is right (`-2^63`). -/
+theorem neg_run_min_wraps :
+    ((signedLit 2 false I64MIN).toOption.bind evalT) = some I64MIN ∧
+    ((signedLit 1 false I64MIN).toOption.bind evalT) = some I64MIN ∧
+    ¬ ((2 : Int) ^ 63 ≤ I64MAX) := by
+  refine ⟨?_, ?_, ?_⟩
+  · simp [signedLit, level10, level9, applyFrames, negFrames, evalT, I64MIN, Except.bind, Except.toOption, Option.bind]
+  · simp [signedLit, level10, level9, applyFrames, negFrames, evalT, I64MIN, Except.bind, Except.toOption, Option.bind]
+  · unfold I64MAX; omega
+
+/-- `i as u32` on an `i64` hop count (cypher.rs). -/
+def asU32 (i : Int) : Nat := (i % 2 ^ 32).toNat
+
+/-- `*4294967298` is `*2` and `*4294967296` is `*0`; the i64::MIN token of
+`*9223372036854775808` becomes 0. Silent truncation (C FalkorDB truncates the
+same way; openCypher has no such wrap). -/
+theorem hop_truncation_bug :
+    asU32 4294967298 = 2 ∧ asU32 4294967296 = 0 ∧ asU32 I64MIN = 0 := by decide
+
+/-! ## 7. The expression-height bound of `e7daadac8`
+
+`parse_expr_inner` builds trees on an explicit stack of `(level, tree, height)`
+frames. The recorded `height` is an *estimate*; `check_depth` compares it
+with `MAX_TREE_DEPTH`. What has to be true for the bound to mean anything is
+that the estimate never falls below the real height, on any path. `Reach t e`
+lists every way the Rust gives a tree `t` the estimate `e`, each with the
+check it performs. -/
+
+/-- An expression tree; only the shape matters. -/
+inductive T
+  | mk (kids : List T)
+
+mutual
+/-- `Parser::tree_height` (cypher.rs): a lone root is 1. -/
+def height : T → Nat
+  | .mk ks => 1 + hl ks
+def hl : List T → Nat
+  | [] => 0
+  | k :: ks => max (height k) (hl ks)
+end
+
+def MAX_TREE_DEPTH : Nat := 256
+def PRIMARY_LEVELS : Nat := 2
+
+theorem hl_append (a b : List T) : hl (a ++ b) = max (hl a) (hl b) := by
+  induction a with
+  | nil => simp [hl]
+  | cons k ks ih => simp [hl, ih, Nat.max_assoc]
+
+theorem le_hl {k : T} {ks : List T} (h : k ∈ ks) : height k ≤ hl ks := by
+  induction ks with
+  | nil => simp at h
+  | cons k' ks ih =>
+    simp only [hl]
+    rcases List.mem_cons.mp h with rfl | h
+    · exact Nat.le_max_left _ _
+    · exact Nat.le_trans (ih h) (Nat.le_max_right _ _)
+
+theorem hl_le {ks : List T} {n : Nat} (h : ∀ k ∈ ks, height k ≤ n) : hl ks ≤ n := by
+  induction ks with
+  | nil => simp [hl]
+  | cons k ks ih =>
+    simp only [hl]
+    exact Nat.max_le.mpr ⟨h k (by simp), ih (fun x hx => h x (by simp [hx]))⟩
+
+/-- Every way a frame of `parse_expr_inner` (and its helpers) comes to hold
+tree `t` with recorded height `e`. Each constructor names the Rust site and
+carries that site's `check_depth` as the premise `e ≤ MAX_TREE_DEPTH` — or
+has none when the site performs none. -/
+inductive Reach : T → Nat → Prop
+  /-- A complete primary (cypher.rs): whatever `parse_primary_expr`
+  built above the sub-expressions it parsed — each `parse_expr` result
+  `(cᵢ, eᵢ)` — is charged `max eᵢ + PRIMARY_LEVELS` and checked. The premise
+  `hshape` is the per-constructor fact `primary_levels` checks. -/
+  | primary (cs : List (T × Nat)) (t : T) (m : Nat)
+      (hc : ∀ p ∈ cs, Reach p.1 p.2) (hm : ∀ p ∈ cs, p.2 ≤ m)
+      (hshape : height t ≤ hl (cs.map Prod.fst) + PRIMARY_LEVELS)
+      (hck : m + PRIMARY_LEVELS ≤ MAX_TREE_DEPTH) : Reach t (m + PRIMARY_LEVELS)
+  /-- A run of `NOT`s (one frame for an odd count, two for an even one since #3060,
+  cypher.rs), unary `-`, a recursing `(`/`[` primary, `NOT IN`'s pushed `Not`
+  (cypher.rsff): each a childless node at 1. -/
+  | opener : Reach (.mk []) 1
+  /-- `tree!(Op, res)` then `height + 1` and `check_depth`: `parse_operators!`
+  (macro.rs), the comparison and predicate wraps (cypher.rs). -/
+  | wrap {t : T} {e : Nat} : Reach t e → e + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [t]) (e + 1)
+  /-- `parse_expr_return!`'s `Some(expr)` arm: `push_child_tree(res)`,
+  `*h = max(*h, height + 1)`, `check_depth(*h)`. Also an n-ary operator's next
+  operand (`parse_operators!` keeps the node, then this attaches). -/
+  | attach {ks : List T} {ep : Nat} {c : T} {ec : Nat} : Reach (.mk ks) ep → Reach c ec →
+      max ep (ec + 1) ≤ MAX_TREE_DEPTH → Reach (.mk (ks ++ [c])) (max ep (ec + 1))
+  /-- `((x))` → `(x)` (cypher.rs): the inner `Paren` is taken out,
+  `height.saturating_sub(1)`; no check (the estimate shrinks). -/
+  | collapse {ks : List T} {e : Nat} : Reach (.mk [.mk ks]) e → Reach (.mk ks) (e - 1)
+  /-- The chained comparison's cloned middle operand (cypher.rs):
+  measured exactly by `tree_height`, plus one for the new comparison. -/
+  | chainMid (m : T) : height m + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [m]) (height m + 1)
+  /-- Postfix `[i]` / `[a..b]` (cypher.rs): `GetElement(s)(lhs, idx…)`,
+  `height = max(height + 1, index_height + 1)`, checked. -/
+  | index {t e} {is : List T} {ei : Nat} : Reach t e → (∀ i ∈ is, height i ≤ ei) →
+      max (e + 1) (ei + 1) ≤ MAX_TREE_DEPTH → Reach (.mk (t :: is)) (max (e + 1) (ei + 1))
+  /-- Postfix `.prop` (cypher.rs): `height += 1`, checked at the
+  end of the step. -/
+  | prop {t : T} {e : Nat} : Reach t e → e + 1 ≤ MAX_TREE_DEPTH → Reach (.mk [t]) (e + 1)
+  /-- Postfix map projection `{k: v, .p, .*}` (cypher.rs):
+  `MapProjection(base, Constant(k) → v …)`, `max(height + 1, value_height + 2)`. -/
+  | mapProj {t e} {vs : List T} {ev : Nat} : Reach t e → (∀ v ∈ vs, height v ≤ ev) →
+      max (e + 1) (ev + 2) ≤ MAX_TREE_DEPTH →
+      Reach (.mk (t :: vs.map (fun v => .mk [v]))) (max (e + 1) (ev + 2))
+  /-- `x:L1:L2` (cypher.rs): `hasLabels(res, List(Constant…))`,
+  `max(height + 1, 3)`. -/
+  | labels {t : T} {e n : Nat} : Reach t e → max (e + 1) 3 ≤ MAX_TREE_DEPTH →
+      Reach (.mk [t, .mk (List.replicate n (.mk []))]) (max (e + 1) 3)
+
+theorem hl_replicate_leaf (n : Nat) : hl (List.replicate n (T.mk [])) ≤ 1 := by
+  induction n with
+  | zero => simp [hl]
+  | succ n ih => simp [List.replicate, hl, height]; omega
+
+/-- **The estimate is sound**: whatever path built it, a frame's recorded
+height is at least the height of its tree. -/
+theorem height_sound : ∀ {t e}, Reach t e → height t ≤ e
+  | _, _, .primary cs t m hc hm hshape _ => by
+    have : hl (cs.map Prod.fst) ≤ m := hl_le (by
+      intro k hk
+      obtain ⟨p, hp, rfl⟩ := List.mem_map.mp hk
+      exact Nat.le_trans (height_sound (hc p hp)) (hm p hp))
+    simp [PRIMARY_LEVELS] at hshape ⊢; omega
+  | _, _, .opener => by simp [height, hl]
+  | _, _, .wrap h _ => by have := height_sound h; simp [height, hl]; omega
+  | _, _, .attach (ks := ks) (c := c) hp hc _ => by
+    have h1 := height_sound hp; have h2 := height_sound hc
+    simp only [height, hl_append, hl] at h1 ⊢; omega
+  | _, _, .collapse h => by have := height_sound h; simp [height, hl] at this ⊢; omega
+  | _, _, .chainMid m _ => by simp [height, hl]; omega
+  | _, _, .index (is := is) h hi _ => by
+    have h1 := height_sound h
+    have h2 : hl is ≤ _ := hl_le hi
+    simp only [height, hl]; omega
+  | _, _, .prop h _ => by have := height_sound h; simp [height, hl]; omega
+  | _, _, .mapProj (vs := vs) (ev := ev) h hv _ => by
+    have h1 := height_sound h
+    have h2 : hl (vs.map (fun v => T.mk [v])) ≤ ev + 1 := hl_le (by
+      intro k hk
+      obtain ⟨v, hv', rfl⟩ := List.mem_map.mp hk
+      have := hv v hv'; simp [height, hl]; omega)
+    simp only [height, hl]; omega
+  | _, _, .labels (n := n) h _ => by
+    have h1 := height_sound h
+    have := hl_replicate_leaf n
+    simp only [height, hl]; omega
+
+/-- ... and every recorded height passed its check. -/
+theorem guarded : ∀ {t e}, Reach t e → e ≤ MAX_TREE_DEPTH
+  | _, _, .primary _ _ _ _ _ _ hck => hck
+  | _, _, .opener => by decide
+  | _, _, .wrap _ h => h
+  | _, _, .attach _ _ h => h
+  | _, _, .collapse h => Nat.le_trans (Nat.sub_le _ _) (guarded h)
+  | _, _, .chainMid _ h => h
+  | _, _, .index _ _ h => h
+  | _, _, .prop _ h => h
+  | _, _, .mapProj _ _ h => h
+  | _, _, .labels _ h => h
+
+/-- **The bound holds on every path `Reach` models**: no expression tree
+`parse_expr_inner` accepts is taller than `MAX_TREE_DEPTH`. -/
+theorem guarded_height_le {t : T} {e : Nat} (h : Reach t e) : height t ≤ MAX_TREE_DEPTH :=
+  Nat.le_trans (height_sound h) (guarded h)
+
+/-- `PRIMARY_LEVELS = 2` covers each shape `parse_primary_expr` builds over its
+sub-expressions `cs` (read off cypher.rs): `FuncInvocation(Distinct(args…), placeholder)`,
+`Map(Constant(k) → v…)`, `Case(subject, List(conds…), else)`,
+`ListComprehension(l, c, e)`, `Quantifier(l, c)`, `Reduce(i, l, b)`,
+`PatternComprehension(c, e)`, and `count(*)`'s two leaves. -/
+theorem primary_levels (cs : List T) :
+    height (.mk [.mk cs, .mk []]) ≤ hl cs + PRIMARY_LEVELS ∧              -- f(DISTINCT args…)
+    height (.mk (cs.map fun v => .mk [v])) ≤ hl cs + PRIMARY_LEVELS ∧     -- Map(Constant(k) → v…)
+    height (.mk [.mk cs]) ≤ hl cs + PRIMARY_LEVELS ∧                      -- Case(…, List(conds…), …)
+    height (.mk cs) ≤ hl cs + PRIMARY_LEVELS ∧                            -- comprehensions, calls
+    height (.mk [.mk [], .mk []]) ≤ hl [] + PRIMARY_LEVELS := by          -- count(*)
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · simp [height, hl, PRIMARY_LEVELS]; omega
+  · have : hl (cs.map fun v => T.mk [v]) ≤ hl cs + 1 := hl_le (by
+      intro k hk
+      obtain ⟨v, hv, rfl⟩ := List.mem_map.mp hk
+      have := le_hl hv; simp [height, hl]; omega)
+    simp only [height, PRIMARY_LEVELS]; omega
+  · simp [height, hl, PRIMARY_LEVELS]; omega
+  · simp [height, PRIMARY_LEVELS]; omega
+  · simp [height, hl, PRIMARY_LEVELS]
+
+/-- Property chain `n.a.a…a` (`k` steps). -/
+def chain : Nat → T
+  | 0 => .mk []
+  | k + 1 => .mk [chain k]
+
+theorem chain_height (k : Nat) : height (chain k) = k + 1 := by
+  induction k with
+  | zero => simp [chain, height, hl]
+  | succ k ih => simp [chain, height, hl, ih]; omega
+
+/-- Inside `parse_expr_inner` the chain is bounded: `Reach` cannot hold
+`chain 256`… -/
+theorem chain_rejected : ¬ ∃ e, Reach (chain 256) e := by
+  rintro ⟨e, h⟩
+  have := guarded_height_le h
+  rw [chain_height] at this
+  simp [MAX_TREE_DEPTH] at this
+
+/-- The `.prop` chain of `parse_update_target` (cypher.rs, new in #2900): each lookup
+wraps the tree, adds one to the estimate and runs `check_depth`, as the postfix chain of
+`parse_expr_inner` does (`Reach.prop`). `error` is the "too deep" refusal. -/
+def lookups : Nat → T → Nat → Except String (T × Nat)
+  | 0, t, e => .ok (t, e)
+  | k + 1, t, e =>
+    if e + 1 ≤ MAX_TREE_DEPTH then lookups k (.mk [t]) (e + 1) else .error "too deep"
+
+/-- `parse_update_target` (cypher.rs): the target (a `Reach` tree and estimate: either
+`parse_primary_expr` charged `child + PRIMARY_LEVELS`, or the `parse_expr` of a parenthesised
+target with its `expr_height`), `check_depth` on it, then the chain. -/
+def updateTarget (t : T) (e : Nat) (k : Nat) : Except String (T × Nat) :=
+  if e ≤ MAX_TREE_DEPTH then lookups k t e else .error "too deep"
+
+theorem lookups_reach : ∀ (k : Nat) (t : T) (e : Nat), Reach t e → ∀ t' e',
+    lookups k t e = .ok (t', e') → Reach t' e'
+  | 0, t, e, h, t', e', hk => by
+    simp only [lookups, Except.ok.injEq, Prod.mk.injEq] at hk
+    obtain ⟨rfl, rfl⟩ := hk; exact h
+  | k + 1, t, e, h, t', e', hk => by
+    simp only [lookups] at hk
+    split at hk
+    · rename_i hc
+      exact lookups_reach k _ _ (.prop h hc) t' e' hk
+    · simp at hk
+
+/-- **The SET/REMOVE target is bounded** (#2900): whatever
+chain `parse_update_target` accepts on a target the expression parser built is a `Reach` tree,
+so it is no taller than `MAX_TREE_DEPTH`. -/
+theorem updateTarget_bounded {t : T} {e : Nat} (h : Reach t e) (k : Nat) {t' : T} {e' : Nat}
+    (hk : updateTarget t e k = .ok (t', e')) : height t' ≤ MAX_TREE_DEPTH := by
+  unfold updateTarget at hk
+  split at hk
+  · exact guarded_height_le (lookups_reach k t e h t' e' hk)
+  · simp at hk
+
+/-- A variable `n` (estimate `0 + PRIMARY_LEVELS = 2`) takes a chain of 254 lookups and refuses
+255 (`MAX_TREE_DEPTH = 256`): `MATCH (n) SET n.a.a…(5000) = 1` is now "too deep". -/
+theorem updateTarget_chain_limit :
+    (updateTarget (.mk []) 2 254).toBool = true ∧ (updateTarget (.mk []) 2 255).toBool = false := by
+  refine ⟨?_, ?_⟩ <;> decide +kernel
+
+/-- Without a chain the target is only charged for itself (`update_target_without_property_is_bounded`
+in cypher.rs): an estimate over the cap is refused with no lookup to blame. -/
+theorem updateTarget_self_checked (t : T) (e : Nat) (h : MAX_TREE_DEPTH < e) :
+    ∃ m, updateTarget t e 0 = .error m := by
+  unfold updateTarget; rw [if_neg (by omega)]; exact ⟨_, rfl⟩
+
+/-! ## 8. Call-stack recursion: `MAX_NESTING` and `FOREACH` -/
+
+/-- The parser's call-recursive descents. `expr` is a `parse_expr` (or
+`parse_literal_list/map`, `CALL {}`) — all routed through `Parser::nested`;
+`direct` is `parse_foreach_clause` entered from `parse_writing_clause` (cypher.rs), and
+`foreach` one entered from a FOREACH body (cypher.rs), which since #2900 goes through
+`nested` too. -/
+inductive Call
+  | leaf
+  | expr (kids : List Call)
+  | direct (body : Call)
+  | foreach (body : Call)
+
+def MAX_NESTING : Nat := 100
+
+mutual
+/-- `Parser::nested` (cypher.rs): refuse at `depth ≥ MAX_NESTING`,
+else `depth + 1` for the callee. `direct` passes `depth` through unchanged. -/
+def runCall : Nat → Call → Bool
+  | _, .leaf => true
+  | d, .expr ks => if d ≥ MAX_NESTING then false else runAll (d + 1) ks
+  | d, .direct b => runCall d b
+  | d, .foreach b => if d ≥ MAX_NESTING then false else runCall (d + 1) b
+def runAll : Nat → List Call → Bool
+  | _, [] => true
+  | d, k :: ks => runCall d k && runAll d ks
+end
+
+mutual
+/-- Nesting of `nested` levels. -/
+def exprDepth : Call → Nat
+  | .leaf => 0
+  | .expr ks => 1 + exprDepthL ks
+  | .direct b => exprDepth b
+  | .foreach b => 1 + exprDepth b
+def exprDepthL : List Call → Nat
+  | [] => 0
+  | k :: ks => max (exprDepth k) (exprDepthL ks)
+end
+
+mutual
+/-- Rust call-stack depth: every descent is a frame. -/
+def stackDepth : Call → Nat
+  | .leaf => 0
+  | .expr ks => 1 + stackDepthL ks
+  | .direct b => 1 + stackDepth b
+  | .foreach b => 1 + stackDepth b
+def stackDepthL : List Call → Nat
+  | [] => 0
+  | k :: ks => max (stackDepth k) (stackDepthL ks)
+end
+
+mutual
+theorem nested_bound : ∀ (d : Nat) (c : Call), runCall d c = true → d ≤ MAX_NESTING →
+    d + exprDepth c ≤ MAX_NESTING
+  | d, .leaf, _, hd => by simp [exprDepth]; exact hd
+  | d, .expr ks, h, _ => by
+    simp only [runCall] at h
+    split at h
+    · simp at h
+    · rename_i hlt
+      have := nested_boundL (d + 1) ks h (by omega)
+      simp only [exprDepth]; omega
+  | d, .direct b, h, hd => by
+    simp only [runCall] at h
+    simpa [exprDepth] using nested_bound d b h hd
+  | d, .foreach b, h, _ => by
+    simp only [runCall] at h
+    split at h
+    · simp at h
+    · rename_i hlt
+      have := nested_bound (d + 1) b h (by omega)
+      simp only [exprDepth]; omega
+theorem nested_boundL : ∀ (d : Nat) (ks : List Call), runAll d ks = true → d ≤ MAX_NESTING →
+    d + exprDepthL ks ≤ MAX_NESTING
+  | d, [], _, hd => by simp [exprDepthL]; exact hd
+  | d, k :: ks, h, hd => by
+    simp only [runAll, Bool.and_eq_true] at h
+    have h1 := nested_bound d k h.1 hd
+    have h2 := nested_boundL d ks h.2 hd
+    simp only [exprDepthL]; omega
+end
+
+/-- **`MAX_NESTING` bounds every `nested` descent**: a parse that gets
+through has at most 100 levels of `parse_expr` / literal / `CALL {}` / nested `FOREACH`
+nesting (the last since #2900). -/
+theorem nested_depth_bound (c : Call) (h : runCall 0 c = true) : exprDepth c ≤ MAX_NESTING := by
+  have := nested_bound 0 c h (by decide); omega
+
+/-- `FOREACH (x IN [1] | FOREACH (… | CREATE ()))`, `n + 1` clauses deep: the outer one is
+entered directly, the `n` inner ones from a body. -/
+def foreachChain : Nat → Call
+  | 0 => .expr [.leaf]                  -- the innermost `CREATE ()` clause's expression
+  | n + 1 => .foreach (foreachChain n)
+
+/-- The chain's outermost clause, entered directly. -/
+def foreachClause (n : Nat) : Call := .direct (foreachChain n)
+
+theorem runCall_foreachChain : ∀ n d : Nat,
+    runCall d (foreachChain n) = decide (d + n < MAX_NESTING)
+  | 0, d => by
+    by_cases h : d ≥ MAX_NESTING
+    · simp [foreachChain, runCall, h]
+    · simp [foreachChain, runCall, runAll, h]; omega
+  | n + 1, d => by
+    by_cases h : d ≥ MAX_NESTING
+    · simp [foreachChain, runCall, h]; omega
+    · have := runCall_foreachChain n (d + 1)
+      simp only [foreachChain, runCall, h, if_false, this]
+      simp only [decide_eq_decide]; omega
+
+theorem stackDepth_foreachChain : ∀ n : Nat, stackDepth (foreachChain n) = n + 1
+  | 0 => by simp [foreachChain, stackDepth, stackDepthL]
+  | n + 1 => by simp [foreachChain, stackDepth, stackDepth_foreachChain n]; omega
+
+/-- **Nested `FOREACH` is bounded** (#2900): a chain of `n + 1`
+clauses is accepted iff `n < MAX_NESTING`, so an accepted chain has a call stack of at most
+`MAX_NESTING + 1` frames, not one as deep as the text. -/
+theorem foreach_bounded (n : Nat) (h : runCall 0 (foreachClause n) = true) :
+    n < MAX_NESTING ∧ stackDepth (foreachClause n) ≤ MAX_NESTING + 1 := by
+  have h1 : runCall 0 (foreachChain n) = true := by simpa [foreachClause, runCall] using h
+  rw [runCall_foreachChain] at h1
+  have h2 : n < MAX_NESTING := by simpa using h1
+  refine ⟨h2, ?_⟩
+  simp [foreachClause, stackDepth, stackDepth_foreachChain]; omega
+
+/-- Depth 99 is accepted, 100 is refused ("too deep"). -/
+theorem foreach_limit : runCall 0 (foreachClause 99) = true ∧ runCall 0 (foreachClause 100) = false := by
+  refine ⟨?_, ?_⟩ <;> simp [foreachClause, runCall, runCall_foreachChain, MAX_NESTING]
+
+end FalkorLexer

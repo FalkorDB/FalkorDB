@@ -41,7 +41,7 @@ RUN rm -f /etc/apt/apt.conf.d/70debconf \
 
 # Assert the redis tooling is present instead of installing Debian's.
 #
-# The base image's redis 8.6.3 lives in /usr/local/bin and is NOT a dpkg package,
+# The base image's redis lives in /usr/local/bin and is NOT a dpkg package,
 # so `apt-get install redis-tools` does not no-op as first assumed — it installs
 # Debian's build into /usr/bin, leaving two redis-benchmark versions in the image.
 # PATH order means /usr/local/bin still wins today, so the measurement was

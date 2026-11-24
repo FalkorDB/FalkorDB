@@ -54,14 +54,13 @@ impl<'a> EdgeByFulltextScanOp<'a> {
         record_cap: Option<usize>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
-        let mut emitter = BatchedResultEmitter::with_binding(ScoredColumn {
-            id: edge.id,
-            score: score.as_ref().map(|v| v.id),
-        });
-        // A downstream Skip/Limit lowers how many rows are needed; shrink the
-        // pack ceiling so the first emit drains just enough index results
-        // instead of a full BATCH_SIZE worth of work.
-        emitter.apply_record_cap(record_cap);
+        let emitter = BatchedResultEmitter::with_binding(
+            ScoredColumn {
+                id: edge.id,
+                score: score.as_ref().map(|v| v.id),
+            },
+            record_cap,
+        );
         Self {
             runtime,
             child,
@@ -90,7 +89,8 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    return Err("fulltext query expects a string relationship type".into());
+                    // A non-string relationship type matches nothing: this row yields no rows.
+                    return Ok(None);
                 };
                 let Value::String(query_str) = ExprEval::from_runtime(self.runtime).eval(
                     self.query,
@@ -99,9 +99,10 @@ impl<'a> Iterator for EdgeByFulltextScanOp<'a> {
                     None,
                 )?
                 else {
-                    return Err("fulltext query expects a string query".into());
+                    // Likewise a non-string query.
+                    return Ok(None);
                 };
-                let g = self.runtime.g.borrow();
+                let g = self.runtime.graph();
                 let iter = Box::new(
                     g.fulltext_query_edges(&label_str, &query_str)?
                         .map(|(_src, _dst, edge_id, score)| (edge_id, score)),

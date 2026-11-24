@@ -45,10 +45,7 @@ use std::sync::Arc;
 
 use orx_tree::{Bfs, Dyn, DynTree, NodeIdx, NodeRef};
 
-use crate::{
-    parser::ast::{ExprIR, Variable},
-    tree,
-};
+use crate::parser::ast::{ExprIR, Variable};
 
 use super::super::IR;
 use super::collect_expr_variables;
@@ -139,19 +136,16 @@ pub(super) fn absorb_edge_filters_into_vlt(optimized_plan: &mut DynTree<IR>) {
             }
 
             // Build the edge filter expression
-            let edge_filter_expr: Arc<DynTree<ExprIR<Variable>>> = if edge_conjuncts.len() == 1 {
-                Arc::new(edge_conjuncts.into_iter().next().unwrap())
-            } else {
-                Arc::new(tree!(ExprIR::And; edge_conjuncts))
-            };
+            let edge_filter_expr = Arc::new(ExprIR::and_of(edge_conjuncts));
 
             // Merge with existing edge_filter if present
             match optimized_plan.node_mut(vlt_idx).data_mut() {
                 IR::CondVarLenTraverse { edge_filter, .. } => {
                     if let Some(existing) = edge_filter.take() {
-                        *edge_filter = Some(Arc::new(
-                            tree!(ExprIR::And; [(*existing).clone(), (*edge_filter_expr).clone()]),
-                        ));
+                        *edge_filter = Some(Arc::new(ExprIR::and_of([
+                            (*existing).clone(),
+                            (*edge_filter_expr).clone(),
+                        ])));
                     } else {
                         *edge_filter = Some(edge_filter_expr);
                     }
@@ -162,12 +156,9 @@ pub(super) fn absorb_edge_filters_into_vlt(optimized_plan: &mut DynTree<IR>) {
             // Update or remove the original Filter
             if remaining.is_empty() {
                 optimized_plan.node_mut(idx).take_out();
-            } else if remaining.len() == 1 {
-                *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
             } else {
                 *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+                    IR::Filter(Arc::new(ExprIR::and_of(remaining)));
             }
 
             changed = true;

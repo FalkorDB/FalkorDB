@@ -37,7 +37,9 @@ class testCmdReg(FlowTestsBase):
                 result = script(args=[cmd])
                 self.env.assertFalse(True and "Expecting script invocation to fail")
             except ResponseError as e:
-                self.env.assertContains("This Redis command is not allowed from script", str(e))
+                # The server words this error: "This Redis command ..." or
+                # "This Valkey command ...".
+                self.env.assertContains("command is not allowed from script", str(e))
 
     def test_command_metadata_flags(self):
         def _command_flags(command):
@@ -55,3 +57,18 @@ class testCmdReg(FlowTestsBase):
         self.env.assertContains("allow_busy", _command_flags("graph.config"))
         self.env.assertContains("allow_busy", _command_flags("graph.slowlog"))
         self.env.assertNotContains("allow_busy", _command_flags("graph.query"))
+
+    def test_info_has_no_redisearch_sections(self):
+        """RediSearch registers an INFO callback on the graph module when it
+        initialises; ours must replace it, as C's does, or `INFO` reports
+        RediSearch's version as `graph_version` (#2915)."""
+
+        # the module itself is still loaded
+        names = [m[b"name"] if b"name" in m else m.get("name")
+                 for m in self.conn.module_list()]
+        self.env.assertTrue(any(n in ("graph", b"graph") for n in names))
+
+        # and adds no sections of its own outside a crash report
+        leaked = [k for k in self.conn.info("everything") if k.startswith("graph_")]
+        self.env.assertEqual(leaked, [])
+        self.env.assertEqual(self.conn.info("graph"), {})

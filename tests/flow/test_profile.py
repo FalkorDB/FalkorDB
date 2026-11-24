@@ -11,7 +11,12 @@ class testProfile(FlowTestsBase):
         q = """UNWIND range(1, 3) AS x CREATE (p:Person {v:x})"""
         profile = self.graph.profile(q)
 
-        create_op = profile.structured_plan
+        # A write query's plan is rooted at Commit: it builds a CommitOp and
+        # runs, so the profile lists it like any other operator.
+        commit_op = profile.structured_plan
+        self.env.assertEqual(commit_op.name, 'Commit')
+
+        create_op = commit_op.children[0]
         self.env.assertEqual(create_op.name, 'Create')
 
         unwind_op = create_op.children[0]
@@ -40,7 +45,10 @@ class testProfile(FlowTestsBase):
         q = """MATCH (a:L)-[*]->() SET a.v = 5"""
         profile = self.graph.profile(q)
 
-        update_op = profile.structured_plan
+        commit_op = profile.structured_plan
+        self.env.assertEqual(commit_op.name, 'Commit')
+
+        update_op = commit_op.children[0]
         self.env.assertEqual(update_op.name, 'Update')
         self.env.assertEqual(update_op.records_produced, 0)
 

@@ -45,6 +45,7 @@
 //! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
 
 pub mod falkordb;
+pub mod index_docs;
 pub mod indexer;
 pub mod redisearch;
 pub mod text_index_options;
@@ -92,7 +93,7 @@ use redisearch::{
 };
 
 /// Type of index for a property.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum IndexType {
     /// B-tree range index for numeric/string/geo comparisons
     Range,
@@ -120,9 +121,9 @@ pub struct Field {
 impl Field {
     fn make_arr_names(
         name: &CString,
-        ty: &IndexType,
+        ty: IndexType,
     ) -> (Option<CString>, Option<CString>) {
-        if *ty == IndexType::Range {
+        if ty == IndexType::Range {
             let base = name.to_str().unwrap_or("");
             (
                 CString::new(format!("{base}:numeric:arr")).ok(),
@@ -139,7 +140,7 @@ impl Field {
         ty: IndexType,
         options: Option<TextIndexOptions>,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -156,7 +157,7 @@ impl Field {
         ty: IndexType,
         vector_options: VectorIndexOptions,
     ) -> Self {
-        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, &ty);
+        let (numeric_arr_name, string_arr_name) = Self::make_arr_names(&name, ty);
         Self {
             name,
             ty,
@@ -713,15 +714,31 @@ impl Document {
         self.id
     }
 
+    #[allow(
+        clippy::match_same_arms,
+        reason = "temporal values and vectors are skipped for different reasons, each commented"
+    )]
     pub fn set(
         &mut self,
         field: &Field,
         value: &Value,
     ) {
         unsafe {
-            // Vector fields only accept VecF32 values; skip everything else.
+            // Vector fields only accept VecF32 values of the index's dimension;
+            // skip everything else, including a field whose dimension is unknown
+            // (no vector options, or dimension 0): such a field is created in
+            // RediSearch without vector params. RediSearch rejects a whole
+            // document whose vector it cannot index, so adding it would drop the
+            // entity from every other index on the label too (C skips it the
+            // same way: `index.c` "vector dimension mis-match, can't index this
+            // vector").
             if field.ty == IndexType::Vector {
-                if let Value::VecF32(vec) = value {
+                if let Value::VecF32(vec) = value
+                    && field
+                        .vector_options
+                        .as_ref()
+                        .is_some_and(|o| o.dimension != 0 && o.dimension == vec.len() as u64)
+                {
                     RediSearch_DocumentAddFieldVector(
                         self.rs_doc,
                         field.name.as_ptr().cast::<c_char>(),
@@ -782,14 +799,13 @@ impl Document {
                         RSFLDTYPE_TAG,
                     );
                 }
-                Value::Datetime(ts) | Value::Date(ts) | Value::Time(ts) | Value::Duration(ts) => {
-                    RediSearch_DocumentAddFieldNumber(
-                        self.rs_doc,
-                        field.name.as_ptr().cast::<c_char>(),
-                        *ts as f64,
-                        RSFLDTYPE_NUMERIC,
-                    );
-                }
+                // Temporals are not indexed. Stored as their raw number in the
+                // numeric field they would match numeric queries (`n.v > 0`
+                // returned dates), and no index query is ever built for a
+                // temporal value: the scan ops refuse them (`can_utilize_index`), so
+                // a temporal predicate is answered by a label scan and its
+                // retained filter.
+                Value::Datetime(_) | Value::Date(_) | Value::Time(_) | Value::Duration(_) => {}
                 Value::List(items) => {
                     // Index array elements in separate fields for contains queries.
                     // Numeric elements go to "range:{attr}:numeric:arr",
@@ -940,7 +956,9 @@ impl Drop for OwnedIndex {
     fn drop(&mut self) {
         // No global lock, even for the last release: `IndexSpec_Free` touches no
         // Redis timer (it asserts the temporary-index timer is already stopped, and
-        // the ForkGC timer self-terminates by not rescheduling — RediSearch `gc.c`).
+        // the ForkGC timer self-terminates by not rescheduling — RediSearch `gc.c`)
+        // and no Redis object another thread can reach (its index errors borrow the
+        // shared "N/A" key rather than refcount it: a refcount is not atomic, #3483).
         // Only index *creation* needs it, via `RM_CreateTimer`.
         //
         // That is load-bearing for #726: an index-scan iterator drops its cloned
@@ -984,10 +1002,11 @@ impl SpecHandle {
 impl Drop for SpecHandle {
     fn drop(&mut self) {
         // No global lock, for the same reason as `OwnedIndex::drop`: nothing here
-        // stops a timer. Load-bearing too — a reader holding the per-graph read lock
-        // can be the last holder of the spec (a concurrent `drop_index_bg` swaps the
-        // index map under it), and taking the global lock there is the #726
-        // inversion.
+        // stops a timer on this thread (`RediSearch_DropIndex` hands the GC stop to
+        // the main thread) or touches a shared Redis object. Load-bearing too — a
+        // reader holding the per-graph read lock can be the last holder of the spec
+        // (a concurrent `drop_index_bg` swaps the index map under it), and taking
+        // the global lock there is the #726 inversion.
         //
         // `DropIndex` invalidates the spec *and* releases the creation ref, so pass
         // the raw pointer via `into_raw` to avoid a second release from `OwnedIndex`.
@@ -1092,6 +1111,27 @@ impl Index {
         stopwords: Option<&Vec<Arc<String>>>,
         language: Option<&Arc<String>>,
     ) -> Result<(), String> {
+        // Every fallible conversion runs before the options block is
+        // allocated, so an early return cannot leak it.
+        let c_stopwords: Option<Vec<CString>> = stopwords
+            .map(|words| {
+                words
+                    .iter()
+                    .map(|s| CString::new(s.as_str()).map_err(|e| e.to_string()))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
+        // `RediSearch_IndexOptionsSetLanguage` only stores the raw pointer
+        // (`options->lang = lang`); `_CreateIndex` later reads it via
+        // `RSLanguage_Find` to convert to an enum, so this `CString` must
+        // outlive that call.
+        // (Bug uncovered by ASAN: heap-use-after-free in `RSLanguage_Find`
+        // when the inner `c_lang` was dropped at end of its if-let block.)
+        let c_lang: Option<CString> = language
+            .map(|lang| CString::new(lang.as_str()).map_err(|e| e.to_string()))
+            .transpose()?;
+        let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
+
         unsafe {
             // Requires the global lock (the host's module GIL):
             // `RediSearch_CreateIndex` registers a GC timer in the host event loop
@@ -1104,13 +1144,9 @@ impl Index {
             // `RediSearch_IndexOptionsSetStopwords` deep-copies via
             // `rm_strdup`, so our CStrings can drop as soon as the call
             // returns.
-            if let Some(stop_words) = stopwords {
-                let c_stopwords: Vec<CString> = stop_words
-                    .iter()
-                    .map(|s| CString::new(s.as_str()).map_err(|e| e.to_string()))
-                    .collect::<Result<Vec<_>, _>>()?;
+            if let Some(stopword_cstrs) = &c_stopwords {
                 let mut ptrs: Vec<*const c_char> =
-                    c_stopwords.iter().map(|cs| cs.as_ptr()).collect();
+                    stopword_cstrs.iter().map(|cs| cs.as_ptr()).collect();
                 RediSearch_IndexOptionsSetStopwords(
                     options,
                     ptrs.as_mut_ptr(),
@@ -1120,24 +1156,14 @@ impl Index {
                 RediSearch_IndexOptionsSetStopwords(options, null_mut(), 0);
             }
 
-            // `RediSearch_IndexOptionsSetLanguage`, in contrast, only stores
-            // the raw pointer (`options->lang = lang`); `_CreateIndex` later
-            // reads it via `RSLanguage_Find` to convert to an enum, so the
-            // backing `CString` must outlive that call.
-            // (Bug uncovered by ASAN: heap-use-after-free in `RSLanguage_Find`
-            // when the inner `c_lang` was dropped at end of its if-let block.)
-            let _language_owner: Option<CString> = if let Some(lang) = language {
-                let c_lang = CString::new(lang.as_str()).map_err(|e| e.to_string())?;
+            if let (Some(lang), Some(c_lang)) = (language, &c_lang) {
                 if RediSearch_IndexOptionsSetLanguage(options, c_lang.as_ptr()) != 0 {
+                    RediSearch_FreeIndexOptions(options);
                     return Err(format!("Language is not supported: {lang}"));
                 }
-                Some(c_lang)
             } else {
                 RediSearch_IndexOptionsSetLanguage(options, null_mut());
-                None
-            };
-
-            let clabel = CString::new(label.as_str()).map_err(|e| e.to_string())?;
+            }
 
             // GIL is already held at the top of this unsafe block, covering
             // CreateIndex's transitive RM_CreateTimer call.
@@ -1230,7 +1256,11 @@ impl Index {
                             if options.nostem.unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTNOSTEM;
                             }
-                            if options.phonetic.unwrap_or(false) {
+                            // Any code but empty or C's "no" turns phonetic
+                            // matching on. RediSearch takes a flag, not an
+                            // algorithm, so which code it is cannot reach it —
+                            // see `TextIndexOptions::phonetic`.
+                            if options.phonetic_enabled() {
                                 field_options_flag |= RSFLDOPT_TXTPHONETIC;
                             }
                         }
@@ -1382,6 +1412,10 @@ impl Index {
         let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
+        // An absent bound is unbounded, so it must include the infinity
+        // that stands in for it: `n.v > 0` selects a stored `+inf`.
+        let include_min = include_min || min.is_none();
+        let include_max = include_max || max.is_none();
         unsafe {
             RediSearch_CreateNumericNode(
                 self.rs_ptr(),
@@ -1407,6 +1441,16 @@ impl Index {
         let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
+
+        // Equal bounds with an exclusive side (`> 'a' AND < 'a'`, `>= 'a'
+        // AND < 'a'`) select nothing; the exact-match shortcut below is
+        // only right when both sides are inclusive.
+        if let (Some(lo), Some(hi)) = (min, max)
+            && lo == hi
+            && !(include_min && include_max)
+        {
+            return unsafe { RediSearch_CreateEmptyNode(self.rs_ptr()) };
+        }
 
         let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
 

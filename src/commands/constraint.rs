@@ -1,11 +1,25 @@
-use crate::query_session::{QuerySession, WriteFacts};
-use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+use crate::dispatch::must_run_inline;
+use crate::query_session::{QuerySession, WriteAbort, WriteFacts};
+use crate::{
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{
+        BlockedClient, CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph,
+    },
+    redis_type::{GRAPH_TYPE, key_holds_graph, wrong_type_compat},
+};
+use graph::effects::EffectsBuffer;
+use graph::effects::announce::{AnnouncedConstraint, SchemaBaseline};
 use graph::entity_type::EntityType;
-use graph::graph::constraint::ConstraintType;
+use graph::graph::constraint::{ConstraintStatus, ConstraintType};
 use graph::identifier_limits::validate_identifier_len;
+use graph::threadpool::spawn;
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use valkey_module::logging::{log_notice, log_warning};
+use valkey_module::{
+    Context, ContextFlags, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
+};
 
 /// Validate that a name is a valid identifier: starts with a letter or underscore,
 /// followed by letters, digits, or underscores.
@@ -20,25 +34,370 @@ fn is_valid_identifier(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// The status of a constraint that is still there, or `None` if it is not.
+///
+/// `None` is a real answer, not a missing one, and both callers need it as such.
+/// A create record carries the status this node reached — `create_constraint`
+/// has already decided Operational or Failed for a small label, and leaves a
+/// large one under construction for the settling thread — while a drop record
+/// carries no status field at all. So a `None` on the announce path means the
+/// constraint is gone and there is nothing to announce, rather than a value to
+/// substitute a default for.
+/// Intern the constraint's label and property names.
+///
+/// Deliberately here and not in `Graph::create_constraint`, which is a state
+/// mutation and stores names rather than ids. Three consumers need the ids to
+/// exist, and none of them can create one: the RDB encoder takes `&self`,
+/// `build_constraint_buffer` runs after the commit, and C's `Constraint_New`
+/// takes `AttributeID *fields` outright. So it has to happen on the write path,
+/// and this is the only caller of `create_constraint`.
+///
+/// **After** the create succeeds, not before: `create_constraint` refuses a
+/// duplicate and a UNIQUE without its supporting index, and neither should leave
+/// a name interned. Dropping the fork would discard it either way — everything
+/// here runs on the private version `MvccGraph::fork` handed out, and a refused
+/// create never commits it — but not interning on a refused create keeps that
+/// independent of the MVCC model rather than reliant on it.
+///
+/// **Before** the announcement, and after the baseline: the effect diffs against
+/// the baseline to decide what to announce.
+///
+/// Without this, a constraint on a not-yet-seen property is persisted with
+/// attribute id 0 — `encode_constraint_block` resolves each property with
+/// `position(..).unwrap_or(0)` — and reads back as a different property across
+/// any RDB save or replica sync. Measured on `main`: `MANDATORY Q [z]` becomes
+/// `MANDATORY Q [a]` after `DEBUG RELOAD`. That is #2749.
+fn register_constraint_schema(
+    g: &mut graph::graph::graph::Graph,
+    entity_type: EntityType,
+    label: &Arc<String>,
+    properties: &[Arc<String>],
+) {
+    match entity_type {
+        EntityType::Node => {
+            g.get_label_id_mut(label);
+        }
+        EntityType::Relationship => {
+            g.get_type_id_mut(label);
+        }
+    }
+    for property in properties {
+        g.add_node_attribute_name(property);
+    }
+}
+
+fn find_status(
+    g: &graph::graph::graph::Graph,
+    ct: ConstraintType,
+    entity_type: EntityType,
+    label: &Arc<String>,
+    properties: &[Arc<String>],
+) -> Option<ConstraintStatus> {
+    g.constraints()
+        .iter()
+        .find(|c| c.matches(&ct, &entity_type, label, properties))
+        .map(|c| c.status)
+}
+
+/// Drive a constraint left UNDER CONSTRUCTION to the status validation settles
+/// on, then announce it.
+///
+/// Runs on a dedicated OS thread rather than the query threadpool: validation can
+/// take seconds on a large label, and a query worker blocked here would also
+/// block unrelated reads queued behind it on the shared MPMC dispatch.
+///
+/// Two phases under different locks. The scan runs as a *reader*, so concurrent
+/// `db.constraints()` keeps seeing the constraint UNDER CONSTRUCTION; the write
+/// lock is taken only to publish the outcome.
+///
+/// Retried while the refusal is transient, because giving up leaves the
+/// constraint UNDER CONSTRUCTION: the master never enforces it and
+/// `GRAPH.CONSTRAINT CREATE` answers `Constraint already exists` from then on,
+/// since `create_constraint` only clears a FAILED one out of the way. A
+/// `CLIENT PAUSE ... WRITE` or an in-flight `FAILOVER` refuses the escalation,
+/// and both end on their own.
+///
+/// **Bounded by [`RETRY_BUDGET`], not unbounded.** Nothing bounds a
+/// `CLIENT PAUSE` — its timeout is whatever the caller passed — so retrying
+/// until it lifts means an OS thread that may never exit, one per pending
+/// constraint. On exhaustion the thread logs what happened and stops.
+///
+/// Stranded is recoverable, which is what makes stopping safe:
+/// [`Graph::drop_constraint`] has no status guard, so `GRAPH.CONSTRAINT DROP`
+/// removes a constraint stuck UNDER CONSTRUCTION and it can then be created
+/// again. The give-up log says exactly that, because nothing else will.
+///
+/// Publishing FAILED instead is not available here: that is a write, and a
+/// write being refused is the reason we are giving up.
+///
+/// **C has no equivalent, because C has nothing here that can fail.** Its
+/// enforcement thread sets the status in place under a *read* lock
+/// (`Constraint_SetStatus`, "assuming under lock") and then calls
+/// `RedisModule_Replicate` straight from that thread (`Constraint_Replicate`),
+/// never asking for a write lock and never checking whether propagating is
+/// currently allowed. Two things make that possible for it and not for us: it
+/// has no MVCC, so publishing a status is a field assignment rather than a
+/// version commit; and it has no pause check.
+///
+/// That second one is not a feature we are missing. Replicating from a worker
+/// thread inside a `CLIENT PAUSE` window is what trips Redis's `propagateNow`
+/// assertion — reproduced against the `edge-c` image, exit 133, twice out of
+/// two. So C's answer to the situation this loop handles is to abort the
+/// process. The pause check exists so we do not, and once a write is refused
+/// rather than crashed through, something has to be done with the refusal:
+/// abandoning it strands the constraint permanently. Hence retrying.
+pub struct Settling {
+    pub ct: ConstraintType,
+    pub entity_type: EntityType,
+    pub label: Arc<String>,
+    pub properties: Vec<Arc<String>>,
+}
+
+/// How long a settling thread will keep trying before it gives up.
+///
+/// Long enough that no ordinary `CLIENT PAUSE` or failover outlasts it — both
+/// are measured in seconds — and short enough that a thread cannot outlive the
+/// reason it exists. There is no principled value, because there is no bound on
+/// a pause; what matters is that one exists.
+const RETRY_BUDGET: Duration = Duration::from_secs(300);
+
+/// Between attempts. Flat rather than exponential: the wait is for an external
+/// window to close, so backing off further only delays noticing that it has.
+const BACKOFF: Duration = Duration::from_millis(100);
+
+/// Take a constraint from UNDER CONSTRUCTION to its final status.
+///
+/// Blocking, and deliberately so: this is the body a spawned OS thread runs,
+/// not an `async fn` and not something a runtime polls. It validates as a
+/// reader, then publishes the status as a writer, retrying while the write is
+/// refused because replication traffic is paused.
+///
+/// The caller runs it on a thread of its own because validation can take
+/// seconds and must not occupy a query worker — reads queued behind it on the
+/// shared dispatch would stall for reasons they have nothing to do with.
+pub fn settle_constraint(
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    announce: &[Settling],
+    key: &[u8],
+    was_replicated: bool,
+) {
+    // Bytes, because this is what the announcement is addressed to. A Redis key
+    // is binary and need not be UTF-8 — `test_binary_key_name_scan_skip` keeps a
+    // graph under `\xc3\x28` — so rendering it through a `String` first and
+    // replicating `as_bytes()` of that would announce the settled constraint
+    // under a key holding U+FFFD instead, which is a key nothing else addresses.
+    // Rendered lossily below for the log lines, where it is only being read.
+    let key_display = String::from_utf8_lossy(key);
+    // A detached thread-safe context, made once for this thread and freed at the
+    // end — the same shape as `telemetry`'s flusher, which is the other
+    // background thread in the process that has to reach the dataset with no
+    // client behind it. A worker serving a query builds its context from the
+    // blocked client instead (`ffi::get_thread_safe_context(bc.inner)`); this
+    // thread has no client, which is the only reason it differs.
+    //
+    // It is a handle, not a lock: the GIL is taken by `upgrade_to_write` inside
+    // each attempt and released with the session, and this context is never
+    // locked or unlocked. That is what keeps #2371 shut — the crash there came
+    // from a *second* GIL acquire whose `RM_ThreadSafeContextUnlock` ran
+    // `postExecutionUnitOperations` outside the pause check, not from the
+    // existence of a second context.
+    //
+    // SAFETY: a null blocked-client yields a detached context, which is what is
+    // wanted here — the GIL and the dataset, not a client to reply to.
+    let ctx = unsafe { ffi::get_thread_safe_context(std::ptr::null_mut()) };
+    let ctx = Context::new(ctx);
+
+    let deadline = Instant::now() + RETRY_BUDGET;
+    let mut attempts = 0_u32;
+
+    loop {
+        attempts += 1;
+        match attempt_settle(graph, &ctx, announce, key, was_replicated) {
+            // Transient: the window closes on its own. Nothing is held here —
+            // `attempt_settle` has dropped its session, and with it the GIL and
+            // the write lock — so sleeping is safe. A pause or failover ends, and
+            // a stale version is rebuilt on top of the commit that overtook it.
+            Err(reason @ (WriteAbort::ReplicaTrafficPaused | WriteAbort::Stale)) => {
+                if Instant::now() >= deadline {
+                    for c in announce {
+                        log_warning(format!(
+                            "constraint on {:?} {} ({}) is stuck UNDER CONSTRUCTION: writes were \
+                             refused for {}s across {attempts} attempts, so validation could not \
+                             publish its result. It is not being enforced. Recover with \
+                             GRAPH.CONSTRAINT DROP on graph '{key_display}' followed by CREATE.",
+                            c.entity_type,
+                            c.label,
+                            c.properties
+                                .iter()
+                                .map(|p| p.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            RETRY_BUDGET.as_secs(),
+                        ));
+                    }
+                    break;
+                }
+                // Once, on the first deferral. Not per iteration — the budget
+                // allows three thousand of them — and not silent either: a
+                // constraint that validated but cannot yet say so is worth a
+                // line, and it is the only signal that this path ran at all,
+                // which is what lets a test assert it was exercised rather
+                // than pass because the window was never hit.
+                if attempts == 1 {
+                    log_notice(format!(
+                        "constraint announcement on graph '{key_display}' is deferred ({reason}); \
+                         retrying for up to {}s",
+                        RETRY_BUDGET.as_secs(),
+                    ));
+                }
+                std::thread::sleep(BACKOFF);
+            }
+            // Settled; or the graph is gone, or this node is no longer a master.
+            // Neither of the last two resolves by waiting: on a demoted node the
+            // constraint is the new master's to finish, and
+            // `enforce_pending_constraints_after_promotion` is what picks it up.
+            Ok(()) | Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => break,
+            // The version failed its own validation, so it was never published.
+            // Permanent: retrying re-runs the same arithmetic on the same graph.
+            // Logged loudly because the constraint is left unenforced and the id
+            // space it was refused over is an engine fault, not a user error.
+            Err(WriteAbort::Invalid(e)) => {
+                log_warning(format!(
+                    "constraint announcement on graph '{key_display}' was refused: {e}. \
+                     The constraint is not being enforced."
+                ));
+                break;
+            }
+        }
+    }
+
+    // Every exit above `break`s rather than returns, so this runs on all of
+    // them. SAFETY: the context was made by this thread at the top and has not
+    // been freed; nothing borrows it past here.
+    unsafe { ffi::free_thread_safe_context(ctx.ctx) };
+}
+
+/// One attempt at the two-phase settle. Takes a fresh session each time, so
+/// every attempt validates the graph as it is then, and a refused session —
+/// back to a reader if escalation refused it, still a writer if its commit was
+/// refused — is dropped before the caller sleeps.
+fn attempt_settle(
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    ctx: &Context,
+    announce: &[Settling],
+    key: &[u8],
+    was_replicated: bool,
+) -> Result<(), WriteAbort> {
+    let key_display = String::from_utf8_lossy(key);
+    // `replicates: !was_replicated` — this thread re-announces the settled
+    // constraint, so escalation has to run the pause check that makes
+    // propagating safe. `originated_here: false` — it also runs on a replica
+    // applying the master's `GRAPH.CONSTRAINT`, where a READONLY rejection would
+    // strand the constraint and diverge.
+    let session = QuerySession::begin_with(
+        graph,
+        WriteFacts {
+            replicates: !was_replicated,
+            originated_here: false,
+        },
+    );
+    let results = session.with_graph(|tg| tg.graph.read().compute_pending_constraint_results());
+    if results.is_empty() {
+        return Ok(());
+    }
+
+    // Escalation takes the global lock before the write lock (#726) and keeps the
+    // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
+    // shape as bulk_insert's Phase 2.
+    session.upgrade_to_write(None)?;
+    // A refusal from `commit` comes back as the `WriteAbort` it maps to, not
+    // flattened: the retry loop treats a stale version (retry) and an invalid
+    // one (permanent) as opposites. Answering one bool for refusals once made
+    // a permanent engine fault retry for the full five-minute budget, and an
+    // early return that answered `Ok(())` once reported a constraint settled
+    // that was still UNDER CONSTRUCTION, with nothing to re-drive it.
+    session
+        .with_graph_mut(|tg| -> Result<(), WriteAbort> {
+            let mut fork = tg.graph.fork();
+            fork.apply_constraint_validation_results(results);
+            let g = tg.graph.commit(fork)?;
+
+            if was_replicated {
+                return Ok(());
+            }
+            for c in announce {
+                // The constraint may have been dropped while validation ran:
+                // `drop_constraint` has no UNDER CONSTRUCTION guard and
+                // `apply_constraint_validation_results` matches on the constraint
+                // id, so it silently did nothing. Announcing anyway would send a
+                // CREATE — this path always builds one — and the replica would
+                // install and enforce a constraint the master no longer has.
+                let Some(status) = find_status(&g, c.ct, c.entity_type, &c.label, &c.properties)
+                else {
+                    continue;
+                };
+                let mut buf = EffectsBuffer::new();
+                // Re-announce with the status validation settled on. The GIL is
+                // still held here, from `upgrade_to_write`'s pause check
+                // through this replicate, which is what keeps the check sound:
+                // the propagation is flushed when the session's guard releases
+                // it, inside the window the check validated.
+                match buf.build_constraint(
+                    &g,
+                    true,
+                    &AnnouncedConstraint {
+                        ct: c.ct,
+                        entity_type: c.entity_type,
+                        status: Some(status),
+                        label: &c.label,
+                        properties: &c.properties,
+                    },
+                    &SchemaBaseline::of(&g),
+                ) {
+                    Ok(()) => buf.replicate(&CtxSink(ctx), key),
+                    // Swallowing this left the replica's constraint UNDER
+                    // CONSTRUCTION permanently: the master has settled it, the
+                    // announcement that would carry that never went out, and
+                    // nothing can re-drive it because `GRAPH.CONSTRAINT CREATE`
+                    // answers "already exists". Silent, and only visible as a
+                    // replica that enforces a constraint the master does not.
+                    Err(e) => log_warning(format!(
+                        "constraint on {:?} {} ({}) settled locally but could not be \
+                         announced ({e}); replicas will keep reporting it UNDER \
+                         CONSTRUCTION. Recover with GRAPH.CONSTRAINT DROP on graph \
+                         '{key_display}' followed by CREATE.",
+                        c.entity_type,
+                        c.label,
+                        c.properties
+                            .iter()
+                            .map(|p| p.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )),
+                }
+            }
+            Ok(())
+        })
+        .expect("writer mode after upgrade_to_write")
+}
+
 pub fn graph_constraint(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     // GRAPH.CONSTRAINT CREATE|DROP <key> UNIQUE|MANDATORY NODE|RELATIONSHIP <label> PROPERTIES <count> <prop1>...
     if args.len() < 8 {
-        return Err(redis_module::RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let mut args = args.into_iter().skip(1);
 
     // Operation: CREATE or DROP
     let op_str = args.next_str()?;
-    let is_create = match op_str.to_uppercase().as_str() {
+    let is_create = match op_str.to_ascii_uppercase().as_str() {
         "CREATE" => true,
         "DROP" => false,
         _ => {
-            return Err(redis_module::RedisError::String(
-                "Invalid constraint operation".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint operation".into()));
         }
     };
 
@@ -47,33 +406,29 @@ pub fn graph_constraint(
 
     // Constraint type
     let ct_str = args.next_str()?;
-    let ct = match ct_str.to_uppercase().as_str() {
+    let ct = match ct_str.to_ascii_uppercase().as_str() {
         "UNIQUE" => ConstraintType::Unique,
         "MANDATORY" => ConstraintType::Mandatory,
         _ => {
-            return Err(redis_module::RedisError::String(
-                "Invalid constraint type".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint type".into()));
         }
     };
 
     // Entity type
     let et_str = args.next_str()?;
-    let entity_type = match et_str.to_uppercase().as_str() {
-        "NODE" | "LABEL" => EntityType::Node,
-        "RELATIONSHIP" | "EDGE" => EntityType::Relationship,
+    let entity_type = match et_str.to_ascii_uppercase().as_str() {
+        "NODE" => EntityType::Node,
+        "RELATIONSHIP" => EntityType::Relationship,
         _ => {
-            return Err(redis_module::RedisError::String(
-                "Invalid constraint entity type".into(),
-            ));
+            return Err(ValkeyError::String("Invalid constraint entity type".into()));
         }
     };
 
     // Label name
     let label_str = args.next_str()?;
-    validate_identifier_len(label_str, "Label name").map_err(redis_module::RedisError::String)?;
+    validate_identifier_len(label_str, "Label name").map_err(ValkeyError::String)?;
     if !is_valid_identifier(label_str) {
-        return Err(redis_module::RedisError::String(format!(
+        return Err(ValkeyError::String(format!(
             "Label name {label_str} is invalid"
         )));
     }
@@ -81,21 +436,16 @@ pub fn graph_constraint(
 
     // PROPERTIES keyword
     let props_kw = args.next_str()?;
-    if props_kw.to_uppercase() != "PROPERTIES" {
-        return Err(redis_module::RedisError::String(
-            "Expected PROPERTIES keyword".into(),
-        ));
+    if !props_kw.eq_ignore_ascii_case("PROPERTIES") {
+        return Err(ValkeyError::String("Expected PROPERTIES keyword".into()));
     }
 
-    // Property count
-    let prop_count_str = args.next_str()?;
-    let prop_count: i64 = prop_count_str.parse().map_err(|_| {
-        redis_module::RedisError::String(
-            "Number of properties must be an integer between 1 and 255".into(),
-        )
+    // Property count: Redis `string2ll` as in C (canonical decimal, no `+1` / `01`)
+    let prop_count: i64 = args.next_arg()?.parse_integer().map_err(|_| {
+        ValkeyError::String("Number of properties must be an integer between 1 and 255".into())
     })?;
     if !(1..=255).contains(&prop_count) {
-        return Err(redis_module::RedisError::String(
+        return Err(ValkeyError::String(
             "Number of properties must be an integer between 1 and 255".into(),
         ));
     }
@@ -104,16 +454,15 @@ pub fn graph_constraint(
     let mut properties = Vec::with_capacity(prop_count as usize);
     for _ in 0..prop_count {
         let prop_str = args.next_str()?;
-        validate_identifier_len(prop_str, "Property name")
-            .map_err(redis_module::RedisError::String)?;
+        validate_identifier_len(prop_str, "Property name").map_err(ValkeyError::String)?;
         if !is_valid_identifier(prop_str) {
-            return Err(redis_module::RedisError::String(format!(
+            return Err(ValkeyError::String(format!(
                 "Property name {prop_str} is invalid"
             )));
         }
         let prop = Arc::new(prop_str.to_string());
         if properties.contains(&prop) {
-            return Err(redis_module::RedisError::String(
+            return Err(ValkeyError::String(
                 "Properties cannot contain duplicates".into(),
             ));
         }
@@ -122,52 +471,174 @@ pub fn graph_constraint(
 
     // Reject trailing tokens
     if args.next().is_some() {
-        return Err(redis_module::RedisError::String(
-            "Unexpected extra arguments".into(),
-        ));
+        return Err(ValkeyError::String("Unexpected extra arguments".into()));
     }
 
-    // Open or create graph
-    let key = ctx.open_key_writable(&key_str);
-    let graph = if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        g.clone()
+    // Open or create graph. `graph_key` is the key that holds it.
+    let key = ctx.open_key_writable(&key_str)?;
+    let (graph, graph_key) = if let Some(g) = key
+        .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)
+        .map_err(wrong_type_compat)?
+    {
+        (g.clone(), key_str.as_slice().to_vec())
     } else {
         if !is_create {
-            return Err(redis_module::RedisError::String(
+            return Err(ValkeyError::String(
                 "Unable to drop constraint, no such constraint.".into(),
             ));
         }
+        let name = c_graph_name(&key_str);
         let g = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
+            &name,
         )));
-        key.set_value(&GRAPH_TYPE, g.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), g.clone());
-        g
+        // Created under the name C derives from the key, and stored at the key
+        // rebuilt from that name (`GraphContext_SetKey`) — not at the key the
+        // command addressed, which differs once it holds a NUL.
+        let created_at = c_graph_key(ctx, &key_str);
+        let create_key = ctx.open_key_writable(&created_at)?;
+        create_key
+            .set_value(&GRAPH_TYPE, g.clone())
+            .map_err(wrong_type_compat)?;
+        register_graph(name, g.clone());
+        (g, created_at.as_slice().to_vec())
     };
 
-    let mut tg = graph.write();
-    let Some(g_arc) = tg.graph.write() else {
-        return Err(redis_module::RedisError::String(
-            "ERR another write is in progress, retry the query".into(),
-        ));
+    // Not for replication: nothing propagates `GRAPH.CONSTRAINT` any more, so
+    // this can only be set while replaying an AOF written by a build that did.
+    // Such a file holds the command **twice** per create — the old verbatim pair,
+    // where the second copy was the activation signal — so both the announce
+    // suppression and the `Constraint already exists` arm in `apply_constraint`
+    // exist to load one without erroring. Read here, on the command's own
+    // context: a worker's context has no client behind it.
+    let is_replayed = ctx.get_flags().contains(ContextFlags::REPLICATED);
+    let request = ConstraintRequest {
+        is_create,
+        ct,
+        entity_type,
+        label,
+        properties,
     };
+    // The command's own key bytes, not a lossy render of them.
+    let key = key_str.as_slice().to_vec();
 
-    let is_replicated = ctx.get_flags().contains(ContextFlags::REPLICATED);
+    // Contexts that cannot block run inline — the same rules as GRAPH.QUERY, see
+    // `must_run_inline`. Redis's dispatch authorized the command, and no pause or
+    // role change can land while it holds the main thread.
+    if must_run_inline(ctx) {
+        let tg = graph.write();
+        return apply_constraint(ctx, &graph, &tg, &request, &key, is_replayed);
+    }
+
+    // Otherwise on the thread pool, as a write query: the command waits for the
+    // write lock behind every read running on the graph, and waiting for it on
+    // the main thread stopped the server answering anything, PING included,
+    // until those reads ended (#3781). `upgrade_to_write` waits in slices and
+    // gives the GIL back between them, re-checking the graph key, the replica
+    // pause and the role before each one. This is C's `Async_Constraint_Op`
+    // (#3763).
+    //
+    // That check asks the module's registry, which can still list the graph
+    // after a RENAME, an async FLUSHALL, MOVE or SWAPDB during the wait. The
+    // command announces under the key it was sent to, so the worker also asks
+    // the keyspace whether that key still holds the graph: an announcement for
+    // a key that doesn't would create a graph there on a replica, or on an AOF
+    // replay, that this node does not have.
+    let bc = unsafe { BlockedClient::new(ctx.ctx) };
+    spawn(
+        move || {
+            let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
+            let ctx = Context::new(ts_ctx);
+            let result = {
+                let session = QuerySession::begin(&graph);
+                match session.upgrade_to_write(None) {
+                    // Under the GIL `upgrade_to_write` took, which nothing that
+                    // moves or drops the key can pass until this command has
+                    // committed and announced.
+                    Ok(()) if !key_holds_graph(&ctx, &graph_key, &graph) => Err(
+                        ValkeyError::String(WriteAbort::GraphUnregistered.to_string()),
+                    ),
+                    Ok(()) => session
+                        .with_graph_mut(|tg| {
+                            let reply =
+                                apply_constraint(&ctx, &graph, tg, &request, &key, is_replayed);
+                            // The key handle the main thread opened was closed at
+                            // dispatch, before this commit, so WATCH learns of it
+                            // here, as it does for a write query.
+                            if reply.is_ok() {
+                                unsafe { ffi::signal_modified_key(ts_ctx, &graph_key) };
+                            }
+                            reply
+                        })
+                        .expect("writer mode after upgrade_to_write"),
+                    Err(abort) => Err(ValkeyError::String(abort.to_string())),
+                }
+                // The session ends here: it releases the write lock and then the
+                // GIL, which flushes what `apply_constraint` replicated.
+            };
+            ctx.reply(result);
+            drop(bc);
+            unsafe { ffi::free_thread_safe_context(ts_ctx) };
+        },
+        None,
+    );
+    Ok(ValkeyValue::NoReply)
+}
+
+/// What a `GRAPH.CONSTRAINT` command asks for, parsed and validated.
+struct ConstraintRequest {
+    is_create: bool,
+    ct: ConstraintType,
+    entity_type: EntityType,
+    label: Arc<String>,
+    properties: Vec<Arc<String>>,
+}
+
+/// Create or drop the constraint, commit, and announce it. The caller holds the
+/// GIL and the graph's write lock, which `tg` is borrowed from.
+fn apply_constraint(
+    ctx: &Context,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+    tg: &ThreadedGraph,
+    request: &ConstraintRequest,
+    key: &[u8],
+    is_replayed: bool,
+) -> ValkeyResult {
+    let ConstraintRequest {
+        is_create,
+        ct,
+        entity_type,
+        ref label,
+        ref properties,
+    } = *request;
+    let mut fork = tg.graph.fork();
+
+    // Captured before the registration below, because the announcement is a
+    // diff against it: an entry interned after this point is new, and travels
+    // as `ADD_SCHEMA`/`ADD_ATTRIBUTE` ahead of the record whose ids depend on
+    // it. Taking the baseline *after* registering would hide exactly the
+    // entries that need announcing.
+    let baseline = SchemaBaseline::of(&fork);
 
     let result: Result<bool, String> = {
-        let mut g = g_arc.borrow_mut();
+        let g = &mut fork;
         if is_create {
-            g.create_constraint(ct, entity_type, label, properties)
+            match g.create_constraint(ct, entity_type, label, properties) {
+                Ok(needs_background_validation) => {
+                    register_constraint_schema(g, entity_type, label, properties);
+                    Ok(needs_background_validation)
+                }
+                Err(e) => Err(e),
+            }
         } else {
-            g.drop_constraint(&ct, &entity_type, &label, &properties)
+            g.drop_constraint(&ct, &entity_type, label, properties)
                 .map(|()| false)
         }
     };
 
     match result {
-        Ok(needs_async_validation) => {
-            tg.graph.commit(g_arc);
+        Ok(needs_background_validation) => {
+            let mutated = tg.graph.commit(fork).map_err(WriteAbort::from)?;
 
             // Spawn background validation for large datasets on a dedicated
             // OS thread (not the query threadpool). Validation can take
@@ -180,88 +651,116 @@ pub fn graph_constraint(
             // so concurrent `db.constraints()` queries continue to see the
             // constraint in UNDER CONSTRUCTION state. The outer write lock is
             // taken only briefly at the end to commit the status update.
-            if needs_async_validation {
-                let graph_clone = graph.clone();
-                std::thread::spawn(move || {
-                    // Phase 1: the long-running validation runs as a reader, so
-                    // concurrent `db.constraints()` still sees the constraint UNDER
-                    // CONSTRUCTION.
-                    //
-                    // `replicates: false` — this thread emits no replication of its
-                    // own, so no pause window can be propagated into. #2419 adds a
-                    // GRAPH.EFFECT re-announce here, and must flip this to `true` in
-                    // the same commit.
-                    //
-                    // `originated_here: false` — it also runs on a replica, applying
-                    // the master's replicated GRAPH.CONSTRAINT, where a READONLY
-                    // rejection would strand the constraint UNDER CONSTRUCTION and
-                    // diverge. Covered by testConstraintReplication::
-                    // test_02_async_validation_reaches_operational_on_replica.
-                    let session = QuerySession::begin_with(
-                        &graph_clone,
-                        WriteFacts {
-                            replicates: false,
-                            originated_here: false,
-                        },
-                    );
-                    let results = session.with_graph(|tg| {
-                        tg.graph
-                            .read()
-                            .borrow()
-                            .compute_pending_constraint_results()
-                    });
-                    // Phase 2: publish the status update as a writer. Escalation
-                    // takes the global lock before the write lock (#726) and keeps the
-                    // commit Arc-swap under it, so it cannot race a BGSAVE fork
-                    // (#452) — same shape as bulk_insert's Phase 2.
-                    if session.upgrade_to_write().is_ok() {
-                        session
-                            .with_graph_mut(|tg| {
-                                if let Some(g_arc) = tg.graph.write() {
-                                    g_arc
-                                        .borrow_mut()
-                                        .apply_constraint_validation_results(results);
-                                    tg.graph.commit(g_arc);
-                                }
-                            })
-                            .expect("writer mode after upgrade_to_write");
+            if needs_background_validation {
+                std::thread::spawn({
+                    let graph = graph.clone();
+                    let label = Arc::clone(label);
+                    let properties = properties.clone();
+                    let key = key.to_vec();
+                    let was_replicated = is_replayed;
+                    move || {
+                        settle_constraint(
+                            &graph,
+                            &[Settling {
+                                ct,
+                                entity_type,
+                                label,
+                                properties,
+                            }],
+                            &key,
+                            was_replicated,
+                        );
                     }
-                    // `session` releases both locks here.
                 });
             }
 
-            if !is_replicated {
-                // Two-phase replication protocol (matches C FalkorDB):
-                //   1. The CREATE/DROP itself.
-                //   2. A second copy of the same command, which the replica
-                //      treats as the "activation" signal — its handler hits
-                //      the `Constraint already exists` branch below and
-                //      silently succeeds.
-                // Calling `replicate_verbatim()` twice queues two separate
-                // entries via `alsoPropagate`. We use verbatim (not the
-                // parameterized `RM_Replicate`) because in this Redis
-                // version `RM_Replicate` from a module command handler
-                // returns OK but does not actually propagate to replicas.
-                ctx.replicate_verbatim();
-                if is_create {
-                    ctx.replicate_verbatim();
+            if !is_replayed {
+                // Announce the outcome, not the command. The replica installs
+                // the status this node reached rather than validating on its
+                // own — it would scan at a different time against different
+                // interleavings and could legitimately disagree.
+                //
+                // Under v3 that is one GRAPH.EFFECT. A second one follows from
+                // the validation thread below when there is validation to wait
+                // for, carrying the final status; the apply side upserts, so it
+                // converges on this one instead of duplicating it.
+                //
+                // A drop carries no status. A create carries the one this node
+                // reached: still building if the caller spawned validation,
+                // otherwise whatever `create_constraint` decided inline — read
+                // back rather than assumed, and present because the graph write
+                // lock has been held since it was created.
+                // Not `expect`. The status is an invariant — the graph write
+                // lock has been held since `create_constraint` stored the
+                // constraint, so it is there — but the write has already
+                // committed by this point, and a panic would take the server
+                // down over a bookkeeping surprise rather than lose an
+                // announcement. That is the same trade the `Err` arm below
+                // makes, so this makes it the same way: say so, and skip the
+                // announcement rather than the process.
+                let status = if !is_create {
+                    Some(None)
+                } else if needs_background_validation {
+                    Some(Some(ConstraintStatus::UnderConstruction))
+                } else {
+                    find_status(&mutated, ct, entity_type, label, properties).map(Some)
+                };
+                let Some(status) = status else {
+                    log_warning(format!(
+                        "constraint CREATE on {entity_type:?} '{label}' was applied but its \
+                         status could not be read back, so it was not announced; it will not \
+                         reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
+                         graph '{}' followed by CREATE.",
+                        String::from_utf8_lossy(key),
+                    ));
+                    return if is_create {
+                        Ok(ValkeyValue::SimpleStringStatic("PENDING"))
+                    } else {
+                        Ok(ValkeyValue::SimpleStringStatic("OK"))
+                    };
+                };
+                let mut buf = EffectsBuffer::new();
+                match buf.build_constraint(
+                    &mutated,
+                    is_create,
+                    &AnnouncedConstraint {
+                        ct,
+                        entity_type,
+                        status,
+                        label,
+                        properties,
+                    },
+                    &baseline,
+                ) {
+                    Ok(()) => {
+                        buf.replicate(&CtxSink(ctx), key);
+                    }
+                    // The write has already committed, so there is nothing to
+                    // undo and an error reply would be a lie — the constraint
+                    // does exist here. What is lost is the announcement, which
+                    // means it exists *only* here, on every replica and in the
+                    // AOF. Same shape as `graph_core`'s "modified but produced
+                    // no effects payload", and loud for the same reason: it is
+                    // divergence that nothing else will report.
+                    Err(e) => log_warning(format!(
+                        "constraint {} on {entity_type:?} '{label}' was applied but could \
+                         not be announced ({e}); it will not reach replicas or the AOF",
+                        if is_create { "CREATE" } else { "DROP" },
+                    )),
                 }
             }
             if is_create {
-                Ok(RedisValue::SimpleStringStatic("PENDING"))
+                Ok(ValkeyValue::SimpleStringStatic("PENDING"))
             } else {
-                Ok(RedisValue::SimpleStringStatic("OK"))
+                Ok(ValkeyValue::SimpleStringStatic("OK"))
             }
         }
-        Err(e) if is_replicated && e == "Constraint already exists" => {
-            // Activation signal on replica — constraint already created by
-            // the first replicated command, silently succeed.
-            tg.graph.rollback();
-            Ok(RedisValue::SimpleStringStatic("OK"))
+        Err(e) if is_replayed && e == "Constraint already exists" => {
+            // The second half of a v2-era AOF's verbatim pair: the constraint
+            // was created by the first copy, so this one has nothing to do.
+            // Erroring here would fail the load of an otherwise valid file.
+            Ok(ValkeyValue::SimpleStringStatic("OK"))
         }
-        Err(e) => {
-            tg.graph.rollback();
-            Err(redis_module::RedisError::String(e))
-        }
+        Err(e) => Err(ValkeyError::String(e)),
     }
 }

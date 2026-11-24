@@ -63,7 +63,7 @@
 //!           Var("b")
 //! ```
 
-use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
+use std::{collections::HashSet, fmt::Display, hash::Hash, mem::discriminant, sync::Arc};
 
 use itertools::Itertools;
 use orx_tree::{Dfs, DynTree, NodeRef};
@@ -78,19 +78,92 @@ use crate::{
     },
 };
 
+/// A variable as the parser writes it, before binding.
+///
+/// An unnamed pattern entity has no name: it is identified by a number the
+/// parser hands out, so the pattern graph can still tell two of them apart
+/// without any string a query could spell (not even a backquoted one).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Alias {
+    /// A name the query wrote.
+    Named(Arc<String>),
+    /// An unnamed node, relationship or path, numbered per query.
+    Anon(u32),
+}
+
+impl Alias {
+    /// The name the query wrote, or `None` for an unnamed entity.
+    #[must_use]
+    pub const fn name(&self) -> Option<&Arc<String>> {
+        match self {
+            Self::Named(name) => Some(name),
+            Self::Anon(_) => None,
+        }
+    }
+}
+
+impl From<Arc<String>> for Alias {
+    fn from(name: Arc<String>) -> Self {
+        Self::Named(name)
+    }
+}
+
+impl Display for Alias {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match self {
+            Self::Named(name) => write!(f, "{name}"),
+            Self::Anon(id) => write_anon(f, *id),
+        }
+    }
+}
+
+/// Writes how plans show unnamed entity `id`. This is the only place the
+/// spelling exists: no variable ever carries it as a name.
+fn write_anon(
+    f: &mut std::fmt::Formatter<'_>,
+    id: u32,
+) -> std::fmt::Result {
+    write!(f, "@anon_{id}")
+}
+
+/// The variable type of an AST stage, and what names a pattern entity there.
+///
+/// Before binding, a pattern entity is an [`Alias`]: a name, or a number for
+/// an unnamed one. An expression can only ever refer to a name, so
+/// [`ExprIR::Variable`] holds the plain variable type. After binding, every
+/// entity is a [`Variable`].
+pub trait VarKind {
+    type Alias: Clone + std::fmt::Debug + Display + Eq + Hash;
+}
+
+impl VarKind for Arc<String> {
+    type Alias = Alias;
+}
+
+impl VarKind for Variable {
+    type Alias = Self;
+}
+
 /// A variable in a Cypher query, either named or anonymous.
 ///
 /// Variables are assigned unique IDs during binding to distinguish between
 /// variables with the same name in different scopes.
 ///
 /// # Fields
-/// - `name`: The variable name as it appears in the query (None for anonymous)
+/// - `alias`: What the query called it: a name, or the parser's number for an
+///   unnamed pattern entity. `None` for a planner temporary, which the query
+///   never wrote
 /// - `id`: Unique identifier assigned during binding
 /// - `scope_id`: The scope in which this variable was defined
 /// - `ty`: The inferred or declared type of the variable
 #[derive(Clone, Debug)]
 pub struct Variable {
-    pub name: Option<Arc<String>>,
+    /// The name the query wrote or the number the parser gave an unnamed
+    /// pattern entity; `None` for a planner temporary (shown as `?{id}`).
+    pub alias: Option<Alias>,
     pub id: u32,
     pub scope_id: u32,
     pub ty: Type,
@@ -101,10 +174,9 @@ impl Display for Variable {
         &self,
         f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
-        if let Some(name) = &self.name {
-            write!(f, "{name}")
-        } else {
-            write!(f, "?{}", self.id)
+        match &self.alias {
+            Some(alias) => write!(f, "{alias}"),
+            None => write!(f, "?{}", self.id),
         }
     }
 }
@@ -129,10 +201,40 @@ impl Hash for Variable {
     }
 }
 
+/// A variable's identity. Ids restart in every scope, so the id alone names
+/// different variables in different scopes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VarKey {
+    pub id: u32,
+    pub scope_id: u32,
+}
+
 impl Variable {
     #[must_use]
+    pub const fn key(&self) -> VarKey {
+        VarKey {
+            id: self.id,
+            scope_id: self.scope_id,
+        }
+    }
+
+    /// The name the query wrote, or `None` for an unnamed pattern entity or a
+    /// planner temporary.
+    #[must_use]
+    pub fn name(&self) -> Option<&Arc<String>> {
+        self.alias.as_ref().and_then(Alias::name)
+    }
+
+    /// Whether no query can refer to this variable: an unnamed pattern entity
+    /// or a planner temporary.
+    #[must_use]
+    pub fn is_unnamed(&self) -> bool {
+        self.name().is_none()
+    }
+
+    #[must_use]
     pub fn as_str(&self) -> &str {
-        self.name.as_ref().map_or("?", |n| n.as_str())
+        self.name().map_or("?", |n| n.as_str())
     }
 }
 
@@ -152,7 +254,7 @@ impl Variable {
 /// # Type Parameter
 /// - `TVar`: Variable type (`Arc<String>` before binding, `Variable` after)
 #[derive(Clone, Debug)]
-pub enum ExprIR<TVar> {
+pub enum ExprIR<TVar: VarKind> {
     /// Literal/constant value. Carries any runtime [`Value`] including
     /// Null/Bool/Int/Float/String literals as well as folded values like
     /// Date, Duration, Map, etc.
@@ -264,6 +366,17 @@ pub enum ExprIR<TVar> {
     /// Pattern predicate should be rewritten in planner (boxed; see
     /// `PatternComprehension`).
     Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
+    /// A pattern comprehension that reads a variable bound inside the
+    /// enclosing expression (a list comprehension, quantifier or `reduce`
+    /// variable), so it cannot be hoisted into an Apply below the operator.
+    /// The planner turns it into a nested plan that the evaluator runs each
+    /// time the expression is evaluated, with the current row (loop bindings
+    /// included) as the plan's argument row.
+    /// Children: the variables it reads, so passes that ask which variables
+    /// an expression uses still see them.
+    ///
+    /// Boxed: rare, and an inline `TVar` would widen the enum.
+    NestedPlan(Box<NestedPlanRef<TVar>>),
     /// shortestPath((a)-[*]->(b))
     /// Children: [source_var_expr, dest_var_expr]
     ///
@@ -315,8 +428,63 @@ pub struct ShortestPathInfo {
     pub directed: bool,
 }
 
+impl<TVar: VarKind + Clone> ExprIR<TVar> {
+    /// `a AND b AND …` over `conjuncts`, kept flat.
+    ///
+    /// AND is associative, so an operand that is itself an AND contributes
+    /// its operands in place: `and_of([a AND b, c])` is `AND(a, b, c)`, not
+    /// `AND(AND(a, b), c)`. Every pass that reads a filter one conjunct at a
+    /// time (index use, node-by-id seeks, filter push-down) then sees all of
+    /// them. Left-to-right order, and with it evaluation order and
+    /// short-circuiting, is unchanged.
+    ///
+    /// One operand is returned as it is. No operands give `true`, the
+    /// identity of AND and what an empty `And` evaluates to; callers that
+    /// would rather drop an empty filter check for that first.
+    pub fn and_of(conjuncts: impl IntoIterator<Item = DynTree<Self>>) -> DynTree<Self> {
+        Self::flat(Self::And, conjuncts, true)
+    }
+
+    /// `a OR b OR …` over `disjuncts`, kept flat: the OR counterpart of
+    /// [`Self::and_of`]. No operands give `false`, the identity of OR.
+    pub fn or_of(disjuncts: impl IntoIterator<Item = DynTree<Self>>) -> DynTree<Self> {
+        Self::flat(Self::Or, disjuncts, false)
+    }
+
+    /// `op` over `operands`, splicing in the operands of any operand whose
+    /// root is `op` itself. Only AND into AND and OR into OR: merging across
+    /// operators would change the meaning, and XOR and NOT are left alone.
+    fn flat(
+        op: Self,
+        operands: impl IntoIterator<Item = DynTree<Self>>,
+        identity: bool,
+    ) -> DynTree<Self> {
+        debug_assert!(matches!(op, Self::And | Self::Or));
+        let kind = discriminant(&op);
+        let is_op = |e: &Self| discriminant(e) == kind;
+        let mut operands = operands.into_iter().collect::<Vec<_>>();
+        if operands.len() == 1 && !is_op(operands[0].root().data()) {
+            return operands.pop().unwrap();
+        }
+        let mut tree = DynTree::new(op);
+        let mut root = tree.root_mut();
+        for operand in operands {
+            let splice = is_op(operand.root().data());
+            root.push_child_tree(operand);
+            if splice {
+                root.child_mut(root.num_children() - 1).take_out();
+            }
+        }
+        match tree.root().num_children() {
+            0 => DynTree::new(Self::Constant(Value::Bool(identity))),
+            1 => tree.root().child(0).clone_as_tree(),
+            _ => tree,
+        }
+    }
+}
+
 #[cfg_attr(tarpaulin, skip)]
-impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
+impl<TVar: VarKind + Display + std::fmt::Debug> Display for ExprIR<TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -377,6 +545,7 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
+            Self::NestedPlan(nested) => write!(f, "nested plan #{}", nested.id),
             Self::ShortestPath(_) => write!(f, "shortestPath()"),
             Self::MapProjection => write!(f, "map_projection"),
             Self::CompiledRegex(rf) => match rf.kind {
@@ -389,8 +558,18 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
     }
 }
 
-/// Quantifier types for list predicates (all, any, none, single).
+/// Where a [`ExprIR::NestedPlan`] finds its plan and its result.
 #[derive(Clone, Debug)]
+pub struct NestedPlanRef<TVar> {
+    /// Index of the plan among the query's nested plans (the children after
+    /// the first of the plan's `NestedPlans` root).
+    pub id: u32,
+    /// The variable the plan collects the comprehension's list into.
+    pub result: TVar,
+}
+
+/// Quantifier types for list predicates (all, any, none, single).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QuantifierType {
     All,
     Any,
@@ -449,14 +628,14 @@ impl SupportAggregation for DynTree<ExprIR<Arc<String>>> {
 /// - `labels` contains `Person`
 /// - `attrs` contains the property filter expression
 #[derive(Debug)]
-pub struct QueryNode<L, TVar> {
-    pub alias: TVar,
+pub struct QueryNode<L, TVar: VarKind> {
+    pub alias: TVar::Alias,
     pub labels: OrderSet<L>,
     pub attrs: QueryExpr<TVar>,
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<L: Display + PartialEq, TVar: Display + PartialEq> Display for QueryNode<L, TVar> {
+impl<L: Display + PartialEq, TVar: VarKind> Display for QueryNode<L, TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -468,10 +647,10 @@ impl<L: Display + PartialEq, TVar: Display + PartialEq> Display for QueryNode<L,
     }
 }
 
-impl<L, TVar> QueryNode<L, TVar> {
+impl<L, TVar: VarKind> QueryNode<L, TVar> {
     #[must_use]
     pub const fn new(
-        alias: TVar,
+        alias: TVar::Alias,
         labels: OrderSet<L>,
         attrs: QueryExpr<TVar>,
     ) -> Self {
@@ -492,8 +671,8 @@ impl<L, TVar> QueryNode<L, TVar> {
 /// - `bidirectional` is true for undirected patterns `-[]-`
 /// - `min_hops`/`max_hops` are set for variable-length patterns like `[*1..3]`
 #[derive(Debug)]
-pub struct QueryRelationship<T, L, TVar> {
-    pub alias: TVar,
+pub struct QueryRelationship<T, L, TVar: VarKind> {
+    pub alias: TVar::Alias,
     pub types: Vec<T>,
     pub attrs: QueryExpr<TVar>,
     pub from: Arc<QueryNode<L, TVar>>,
@@ -517,7 +696,7 @@ pub enum AllShortestPaths {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, TVar> {
+impl<T: Display, L: Display, TVar: VarKind> Display for QueryRelationship<T, L, TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -543,11 +722,11 @@ impl<T: Display, L: Display, TVar: Display> Display for QueryRelationship<T, L, 
     }
 }
 
-impl<T, L, TVar> QueryRelationship<T, L, TVar> {
+impl<T, L, TVar: VarKind> QueryRelationship<T, L, TVar> {
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub const fn new(
-        alias: TVar,
+        alias: TVar::Alias,
         types: Vec<T>,
         attrs: QueryExpr<TVar>,
         from: Arc<QueryNode<L, TVar>>,
@@ -576,16 +755,16 @@ impl<T, L, TVar> QueryRelationship<T, L, TVar> {
 /// - `var` is the path variable `p`
 /// - `vars` contains all variables in the path pattern
 #[derive(Debug)]
-pub struct QueryPath<TVar> {
-    pub var: TVar,
-    pub vars: Vec<TVar>,
+pub struct QueryPath<TVar: VarKind> {
+    pub var: TVar::Alias,
+    pub vars: Vec<TVar::Alias>,
 }
 
-impl<TVar> QueryPath<TVar> {
+impl<TVar: VarKind> QueryPath<TVar> {
     #[must_use]
     pub const fn new(
-        var: TVar,
-        vars: Vec<TVar>,
+        var: TVar::Alias,
+        vars: Vec<TVar::Alias>,
     ) -> Self {
         Self { var, vars }
     }
@@ -599,13 +778,13 @@ impl<TVar> QueryPath<TVar> {
 /// Uses `Arc` for sharing patterns between different parts of the query plan,
 /// avoiding expensive cloning of complex patterns.
 #[derive(Clone, Debug)]
-pub struct QueryGraph<T, L, TVar> {
+pub struct QueryGraph<T, L, TVar: VarKind> {
     nodes: Vec<Arc<QueryNode<L, TVar>>>,
     relationships: Vec<Arc<QueryRelationship<T, L, TVar>>>,
     paths: Vec<Arc<QueryPath<TVar>>>,
 }
 
-impl<T, L, TVar> Default for QueryGraph<T, L, TVar> {
+impl<T, L, TVar: VarKind> Default for QueryGraph<T, L, TVar> {
     fn default() -> Self {
         Self {
             nodes: Vec::default(),
@@ -616,7 +795,7 @@ impl<T, L, TVar> Default for QueryGraph<T, L, TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<T: Display + PartialEq, L: Display + PartialEq, TVar: Display + PartialEq + Eq + Hash> Display
+impl<T: Display + PartialEq, L: Display + PartialEq, TVar: VarKind> Display
     for QueryGraph<T, L, TVar>
 {
     fn fmt(
@@ -642,7 +821,7 @@ impl<T: Display + PartialEq, L: Display + PartialEq, TVar: Display + PartialEq +
 /// holding its value expression as its single child. Repeated keys are kept as
 /// separate entries: `{v: 1}` merged with `{v: 2}` becomes `{v: 1, v: 2}`,
 /// which the planner turns into `n.v = 1 AND n.v = 2`.
-fn merge_attr_maps<TVar: Clone>(
+fn merge_attr_maps<TVar: VarKind + Clone>(
     lhs: &QueryExpr<TVar>,
     rhs: &QueryExpr<TVar>,
 ) -> QueryExpr<TVar> {
@@ -659,7 +838,7 @@ fn merge_attr_maps<TVar: Clone>(
     Arc::new(merged)
 }
 
-impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
+impl<T, L, TVar: VarKind> QueryGraph<T, L, TVar> {
     pub fn add_node(
         &mut self,
         node: Arc<QueryNode<L, TVar>>,
@@ -700,7 +879,7 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
 
     pub fn replace_node(
         &mut self,
-        alias: &TVar,
+        alias: &TVar::Alias,
         node: Arc<QueryNode<L, TVar>>,
     ) {
         if let Some(pos) = self.nodes.iter().position(|n| n.alias == *alias) {
@@ -736,7 +915,7 @@ impl<T, L, TVar: Clone + Hash + Eq> QueryGraph<T, L, TVar> {
         }
     }
 
-    pub fn variables(&self) -> impl Iterator<Item = TVar> + '_ {
+    pub fn variables(&self) -> impl Iterator<Item = TVar::Alias> + '_ {
         self.nodes
             .iter()
             .map(|n| n.alias.clone())
@@ -772,7 +951,7 @@ impl<T, L> QueryGraph<T, L, Variable> {
     #[must_use]
     pub fn filter_visited(
         &self,
-        visited: &HashSet<(u32, u32)>,
+        visited: &HashSet<VarKey>,
     ) -> Self
     where
         T: Default,
@@ -780,17 +959,17 @@ impl<T, L> QueryGraph<T, L, Variable> {
     {
         let mut res = Self::default();
         for node in &self.nodes {
-            if !visited.contains(&(node.alias.id, node.alias.scope_id)) {
+            if !visited.contains(&node.alias.key()) {
                 res.add_node(node.clone());
             }
         }
         for relationship in &self.relationships {
-            if !visited.contains(&(relationship.alias.id, relationship.alias.scope_id)) {
+            if !visited.contains(&relationship.alias.key()) {
                 res.add_relationship(relationship.clone());
             }
         }
         for path in &self.paths {
-            if !visited.contains(&(path.var.id, path.var.scope_id)) {
+            if !visited.contains(&path.var.key()) {
                 res.add_path(path.clone());
             }
         }
@@ -859,7 +1038,7 @@ pub type QueryExpr<TVar> = Arc<DynTree<ExprIR<TVar>>>;
 
 /// An item in a SET clause - either property assignment or label modification.
 #[derive(Clone, Debug)]
-pub enum SetItem<L, TVar> {
+pub enum SetItem<L, TVar: VarKind> {
     /// Property assignment: `n.prop = value` (replace=true) or `n += {props}` (replace=false)
     Attribute {
         target: QueryExpr<TVar>,
@@ -871,7 +1050,9 @@ pub enum SetItem<L, TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetItem<L, TVar> {
+impl<L: Display + PartialEq, TVar: VarKind + Display + std::fmt::Debug> Display
+    for SetItem<L, TVar>
+{
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -906,7 +1087,7 @@ impl<L: Display + PartialEq, TVar: Display + std::fmt::Debug> Display for SetIte
 /// A complete query is a sequence of these clauses. The planner converts
 /// this AST into an execution plan.
 #[derive(Debug)]
-pub enum QueryIR<TVar> {
+pub enum QueryIR<TVar: VarKind> {
     /// CALL procedure(args) YIELD outputs WHERE filter
     /// The bool indicates whether YIELD was explicitly written (true) or default outputs are used (false).
     /// yield_aliases stores the original field names when AS aliasing is used;
@@ -1016,7 +1197,7 @@ pub enum QueryIR<TVar> {
 }
 
 #[cfg_attr(tarpaulin, skip)]
-impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
+impl<TVar: VarKind + Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>,
@@ -1125,7 +1306,7 @@ impl<TVar: Display + std::fmt::Debug + Eq + Hash> Display for QueryIR<TVar> {
     }
 }
 
-impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
+impl<TVar: VarKind + Eq + Hash + Display> QueryIR<TVar> {
     pub fn validate(&self) -> Result<(), String> {
         self.inner_validate(std::iter::empty())
     }
@@ -1170,7 +1351,19 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                         }
                     }
                 }
-                Ok(())
+                // The planner turns this call into a DropIndex on a label
+                // known at plan time, so it has to be a string literal.
+                if proc.name == "db.idx.fulltext.drop"
+                    && !args.first().is_some_and(|label| {
+                        matches!(label.root().data(), ExprIR::Constant(Value::String(_)))
+                    })
+                {
+                    return Err(String::from(
+                        "The first argument of db.idx.fulltext.drop must be a string literal",
+                    ));
+                }
+                iter.next()
+                    .map_or(Ok(()), |first| first.inner_validate(iter))
             }
             Self::Match { pattern, .. } => {
                 Self::validate_inlined_properties(pattern)?;
@@ -1235,7 +1428,12 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
-            Self::With { exprs: _, orderby: _orderby, .. } | Self::Return { exprs: _, orderby: _orderby, .. } => {
+            Self::With { .. } => {
+                iter.next().map_or_else(|| Err(String::from(
+                        "Query cannot conclude with WITH (must be a RETURN clause, an update clause, a procedure call or a non-returning subquery)",
+                    )), |first| first.inner_validate(iter))
+            }
+            Self::Return { .. } => {
                 iter.next()
                     .map_or(Ok(()), |first| first.inner_validate(iter))
             }
@@ -1364,3 +1562,98 @@ pub type RawQueryIR = QueryIR<Arc<String>>;
 
 /// Type alias for bound query IR (variables have resolved IDs and types).
 pub type BoundQueryIR = QueryIR<Variable>;
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use orx_tree::{DynTree, NodeRef};
+
+    use super::ExprIR;
+    use crate::{runtime::value::Value, tree};
+
+    type Expr = DynTree<ExprIR<Arc<String>>>;
+
+    fn var(name: &str) -> Expr {
+        tree!(ExprIR::Variable(Arc::new(name.to_string())))
+    }
+
+    fn op(
+        data: ExprIR<Arc<String>>,
+        children: Vec<Expr>,
+    ) -> Expr {
+        tree!(data; children)
+    }
+
+    fn show(e: &Expr) -> String {
+        let root = e.root();
+        let children: Vec<String> = root.children().map(|c| show(&c.clone_as_tree())).collect();
+        if children.is_empty() {
+            format!("{}", root.data())
+        } else {
+            format!("{}({})", root.data(), children.join(", "))
+        }
+    }
+
+    #[test]
+    fn nested_and_is_flattened_in_order() {
+        let ab = op(ExprIR::And, vec![var("a"), var("b")]);
+        let de = op(ExprIR::And, vec![var("d"), var("e")]);
+        let flat = op(
+            ExprIR::And,
+            vec![var("a"), var("b"), var("c"), var("d"), var("e")],
+        );
+        assert_eq!(show(&ExprIR::and_of([ab, var("c"), de])), show(&flat));
+    }
+
+    #[test]
+    fn nested_or_is_flattened() {
+        let ab = op(ExprIR::Or, vec![var("a"), var("b")]);
+        let flat = op(ExprIR::Or, vec![var("a"), var("b"), var("c")]);
+        assert_eq!(show(&ExprIR::or_of([ab, var("c")])), show(&flat));
+    }
+
+    #[test]
+    fn different_operators_are_not_merged() {
+        let a_or_b = op(ExprIR::Or, vec![var("a"), var("b")]);
+        let a_and_b = op(ExprIR::And, vec![var("a"), var("b")]);
+        let a_xor_b = op(ExprIR::Xor, vec![var("a"), var("b")]);
+        let not_and = op(ExprIR::Not, vec![a_and_b.clone()]);
+
+        let and = ExprIR::and_of([a_or_b.clone(), a_xor_b.clone(), not_and.clone(), var("c")]);
+        let expected = op(
+            ExprIR::And,
+            vec![a_or_b, a_xor_b.clone(), not_and, var("c")],
+        );
+        assert_eq!(show(&and), show(&expected));
+
+        let or = ExprIR::or_of([a_and_b, a_xor_b, var("c")]);
+        assert_eq!(root_children(&or), 3);
+        assert!(matches!(or.root().child(0).data(), ExprIR::And));
+    }
+
+    #[test]
+    fn single_operand_collapses() {
+        assert_eq!(show(&ExprIR::and_of([var("a")])), "a");
+        assert_eq!(show(&ExprIR::or_of([var("a")])), "a");
+        // A lone operand of the same operator is returned as is, not wrapped.
+        let ab = op(ExprIR::And, vec![var("a"), var("b")]);
+        assert_eq!(show(&ExprIR::and_of([ab.clone()])), show(&ab));
+    }
+
+    #[test]
+    fn no_operands_give_the_identity() {
+        assert!(matches!(
+            ExprIR::<Arc<String>>::and_of([]).root().data(),
+            ExprIR::Constant(Value::Bool(true))
+        ));
+        assert!(matches!(
+            ExprIR::<Arc<String>>::or_of([]).root().data(),
+            ExprIR::Constant(Value::Bool(false))
+        ));
+    }
+
+    fn root_children(e: &Expr) -> usize {
+        e.root().num_children()
+    }
+}

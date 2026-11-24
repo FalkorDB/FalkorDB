@@ -1,0 +1,46 @@
+# `native-deps` is deliberately its own workspace.
+#
+# The Docker dep stages build it with
+#   cargo build --locked --manifest-path native-deps/Cargo.toml
+# and that must work with *only* this directory present in the build context.
+# If it were a member of the root workspace, cargo would demand the root
+# Cargo.toml, Cargo.lock and every sibling manifest -- so editing
+# graph/Cargo.toml would invalidate the GraphBLAS layer, which is exactly the
+# coupling this crate exists to remove. The root workspace lists it in
+# `exclude` so `graph` can still take it as an ordinary path build-dependency.
+[workspace]
+
+[package]
+name = "native-deps"
+version = "0.1.0"
+edition = "2024"
+description = "Builds and caches FalkorDB's native dependencies (GraphBLAS, LAGraph, RediSearch)"
+license = "SSPL-1.0 OR AGPL-3.0-only"
+repository = "https://github.com/FalkorDB/FalkorDB"
+publish = false
+
+# The clippy lints CI enforces (with `-D warnings`): the same set as the main
+# workspace's `[workspace.lints]` (this crate is its own workspace).
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"
+
+[lib]
+name = "native_deps"
+path = "src/lib.rs"
+
+[[bin]]
+name = "native-deps"
+path = "src/main.rs"
+
+[dependencies]
+sha2 = "0.10"
+thiserror = "2"
+
+# build.rs `include!`s src/hash.rs to compute the recipe hash.
+[build-dependencies]
+sha2 = "0.10"

@@ -56,13 +56,26 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// enclosing `Apply` propagates through `Argument`. Returns `None` for
 /// operators that pass their input environment through unchanged, where the
 /// subtree's variables are the right answer.
-fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>> {
+fn branch_output_variables(
+    node: &orx_tree::DynNode<IR>,
+    include_copies: bool,
+) -> Option<HashSet<u32>> {
+    // A copy is `(read from, written to)`: a later reader finds it in the
+    // written-to slot. The same-clause WHERE / ORDER BY reads it there, but no
+    // later clause can name it, so `branch_visible_variables` leaves copies out.
+    let copied = |copies: &[(Variable, Variable)]| -> Vec<u32> {
+        if include_copies {
+            copies.iter().map(|(_, v)| v.id).collect()
+        } else {
+            vec![]
+        }
+    };
     match node.data() {
         IR::Project { exprs, copies } => Some(
             exprs
                 .iter()
                 .map(|(v, _)| v.id)
-                .chain(copies.iter().map(|(v, _)| v.id))
+                .chain(copied(copies))
                 .collect(),
         ),
         IR::Aggregate {
@@ -71,11 +84,58 @@ fn branch_output_variables(node: &orx_tree::DynNode<IR>) -> Option<HashSet<u32>>
             names
                 .iter()
                 .map(|v| v.id)
-                .chain(projections.iter().map(|(v, _)| v.id))
+                .chain(copied(projections))
                 .collect(),
         ),
         _ => None,
     }
+}
+
+/// Variables a branch makes visible to the right branch of an `Apply` or
+/// `Optional`: every variable of the subtree, except those hidden beneath a
+/// `Project`/`Aggregate`, which only exposes the variables it names (ids are
+/// per scope, so a hidden variable's id may belong to a different variable
+/// further up). A `SemiApply`/`AntiSemiApply`/`OrApplyMultiplexer` contributes only its first child.
+fn branch_visible_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
+    if let Some(outputs) = branch_output_variables(node, false) {
+        return outputs;
+    }
+    let mut vars = collect_subtree_variables(&DynTree::new(node.data().clone()).root());
+    // A (anti) semi-join, or an `OrApplyMultiplexer`, emits only its first
+    // child's rows: the others are existence sub-plans, whose variables never
+    // reach the output.
+    let output_children = if matches!(
+        node.data(),
+        IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_)
+    ) {
+        1
+    } else {
+        usize::MAX
+    };
+    for child in node.children().take(output_children) {
+        vars.extend(branch_visible_variables(&child));
+    }
+    vars
+}
+
+/// Operators that change the graph (or its schema) when they run.
+///
+/// A `Filter` is never moved below one of these, nor into a branch that
+/// feeds a sibling subtree containing one: the write must still happen for
+/// every row that reaches it, whatever a later `WHERE` says.
+const fn is_write(ir: &IR) -> bool {
+    matches!(
+        ir,
+        IR::Create(_)
+            | IR::Merge { .. }
+            | IR::Delete { .. }
+            | IR::Set(_)
+            | IR::Remove(_)
+            | IR::Commit
+            | IR::ForEach { .. }
+            | IR::CreateIndex { .. }
+            | IR::DropIndex { .. }
+    )
 }
 
 /// Pushes filter conjuncts down through nodes.
@@ -117,9 +177,15 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let filter = filter.clone();
                 let child_idx = child.idx();
 
-                // Flatten conjuncts from both filters
+                // Flatten conjuncts from both filters. The child's conjuncts run first:
+                // it was evaluated first before the merge, and `And` stops at
+                // the first false conjunct, so a conjunct pushed down onto it
+                // must still be guarded by it (`n.v <> 1` before
+                // `1 / (n.v - 1) = 0`, or the merge raises "Division by zero").
+                // A `null` verdict does not stop `And`, here or in a single
+                // `WHERE a AND b`: the merged filter behaves like that one.
                 let mut conjuncts: Vec<DynTree<ExprIR<Variable>>> = vec![];
-                for f in [&filter, &child_filter] {
+                for f in [&child_filter, &filter] {
                     if matches!(f.root().data(), ExprIR::And) {
                         conjuncts.extend(f.root().children().map(|c| c.clone_as_tree()));
                     } else {
@@ -127,11 +193,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                     }
                 }
 
-                let merged = if conjuncts.len() == 1 {
-                    Arc::new(conjuncts.into_iter().next().unwrap())
-                } else {
-                    Arc::new(tree!(ExprIR::And; conjuncts))
-                };
+                let merged = Arc::new(ExprIR::and_of(conjuncts));
                 *optimized_plan.node_mut(idx).data_mut() = IR::Filter(merged);
                 optimized_plan.node_mut(child_idx).take_out();
 
@@ -169,6 +231,12 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         IR::Project { .. }
                             | IR::Aggregate { .. }
                             | IR::Merge { .. }
+                            | IR::Create(_)
+                            | IR::Delete { .. }
+                            | IR::Set(_)
+                            | IR::Remove(_)
+                            | IR::Commit
+                            | IR::ForEach { .. }
                             | IR::Argument(_)
                             | IR::IncludePending { .. }
                             | IR::SemiApply
@@ -180,13 +248,26 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 for grandchild in child.children() {
                     // `resets_env` branches expose only their named outputs, so
                     // they must not inherit Argument-propagated variables below.
-                    let (vars, resets_env) = match branch_output_variables(&grandchild) {
-                        Some(outputs) => (outputs, true),
-                        None => (collect_subtree_variables(&grandchild), false),
-                    };
+                    let (vars, resets_env) = branch_output_variables(&grandchild, true)
+                        .map_or_else(
+                            || (collect_subtree_variables(&grandchild), false),
+                            |outputs| (outputs, true),
+                        );
                     children.push((grandchild.idx(), vars, resets_env));
                 }
             }
+
+            // A branch is locked when a sibling subtree writes: filtering that
+            // branch would starve the write of rows it must see (an `Apply`
+            // runs its right side once per left row), e.g. `CALL { CREATE () }
+            // MATCH () WHERE false` must still create its node.
+            let holds_write: Vec<bool> = children
+                .iter()
+                .map(|(i, ..)| subtree_contains(optimized_plan, *i, is_write))
+                .collect();
+            let locked: Vec<bool> = (0..children.len())
+                .map(|i| holds_write.iter().enumerate().any(|(j, w)| *w && j != i))
+                .collect();
 
             // Compute inherited variables from Apply context.
             // When Apply propagates bound variables via Argument leaves,
@@ -204,17 +285,28 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 inherited.extend(left_vars.iter());
             }
 
-            // Case 2: Filter is inside an Apply's right branch.
-            // The left branch's variables are available in the right branch
-            // via Argument propagation. Only applies when the filter is
-            // actually in the right subtree (not the left subtree itself).
+            // Case 2: Filter is inside the right branch of an Apply or an
+            // Optional (both feed their left branch's rows to the right one
+            // through Argument). The left branch's variables are available
+            // in the right branch. Only applies when the filter is actually
+            // in the right subtree (not the left subtree itself). The walk
+            // stops at the nearest such operator: an outer one's variables
+            // only reach this branch through the inner one's left branch, and
+            // ids are per scope, so inheriting them directly would let a
+            // `CALL {}` body variable pass for an outer one with the same id.
+            // When the left branch is a `Project`/`Aggregate` (a `CALL {}`
+            // import), only the variables it names are inherited.
             // Stop the ancestor walk at Merge nodes — Merge's internal
             // match sub-plan has its own Argument leaves that receive
             // variables from Merge's input, not from an enclosing Apply.
             {
                 let mut ancestor = idx;
                 while let Some(parent) = optimized_plan.node(ancestor).parent() {
-                    if matches!(parent.data(), IR::Apply) {
+                    // A single-child `Optional` takes no input of its own: the
+                    // `Apply` above it feeds the row through, so keep walking.
+                    if matches!(parent.data(), IR::Apply)
+                        || (matches!(parent.data(), IR::Optional(_)) && parent.num_children() > 1)
+                    {
                         // Only inherit left-branch variables if the filter
                         // is NOT inside the left branch (child 0) itself.
                         let left_child_idx = parent.child(0).idx();
@@ -235,8 +327,8 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                             }
                         };
                         if !filter_in_left {
-                            let left_vars = collect_subtree_variables(&parent.child(0));
-                            inherited.extend(left_vars);
+                            let left = parent.child(0);
+                            inherited.extend(branch_visible_variables(&left));
                         }
                         break;
                     }
@@ -269,7 +361,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let conj_vars = collect_expr_variables(&conjunct);
                 let mut matched_any = false;
                 for (i, (_, child_vars, _)) in children.iter().enumerate() {
-                    if conj_vars.iter().all(|v| child_vars.contains(v)) {
+                    if !locked[i] && conj_vars.iter().all(|v| child_vars.contains(v)) {
                         child_conjuncts[i].push(conjunct.clone());
                         matched_any = true;
                     }
@@ -285,6 +377,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             // CP wrapped with that conjunct as a filter.
             if !remaining.is_empty()
                 && child_conjuncts.iter().all(Vec::is_empty)
+                && !holds_write.contains(&true)
                 && let Some(filter_child) = optimized_plan.node(idx).get_child(0)
                 && matches!(filter_child.data(), IR::CartesianProduct)
                 && filter_child.num_children() > 2
@@ -348,11 +441,7 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let child_idx = children[i].0;
 
                 // Build the filter expression for this child
-                let filter_expr = if conjuncts.len() == 1 {
-                    Arc::new(conjuncts.into_iter().next().unwrap())
-                } else {
-                    Arc::new(tree!(ExprIR::And; conjuncts))
-                };
+                let filter_expr = Arc::new(ExprIR::and_of(conjuncts));
 
                 // Insert the new filter node above the child
                 optimized_plan
@@ -363,12 +452,9 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
             // Update or remove the original Filter
             if remaining.is_empty() {
                 optimized_plan.node_mut(idx).take_out();
-            } else if remaining.len() == 1 {
-                *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(remaining.into_iter().next().unwrap()));
             } else {
                 *optimized_plan.node_mut(idx).data_mut() =
-                    IR::Filter(Arc::new(tree!(ExprIR::And; remaining)));
+                    IR::Filter(Arc::new(ExprIR::and_of(remaining)));
             }
 
             changed = true;
@@ -431,12 +517,7 @@ fn rebuild_with_cp_split(
             if remaining_conjuncts.is_empty() {
                 tree!(IR::CartesianProduct; new_children)
             } else {
-                let remaining_filter = if remaining_conjuncts.len() == 1 {
-                    Arc::new(remaining_conjuncts[0].clone())
-                } else {
-                    #[allow(clippy::unnecessary_to_owned)]
-                    Arc::new(tree!(ExprIR::And; remaining_conjuncts.to_vec()))
-                };
+                let remaining_filter = Arc::new(ExprIR::and_of(remaining_conjuncts.to_vec()));
                 let cp = tree!(IR::CartesianProduct; new_children);
                 tree!(IR::Filter(remaining_filter), cp)
             }
@@ -464,4 +545,125 @@ fn rebuild_with_cp_split(
         solving_set,
         remaining_conjuncts,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use orx_tree::{Bfs, Dfs, DynTree, NodeRef};
+
+    use super::push_filters_down;
+    use crate::parser::ast::{ExprIR, Variable};
+    use crate::parser::cypher::Parser;
+    use crate::planner::{IR, Planner, binder::Binder};
+
+    /// One conjunct, written out node by node in pre-order: `a.p = 1` is
+    /// `= property(p) a 1`.
+    fn render(expr: &DynTree<ExprIR<Variable>>) -> String {
+        expr.root()
+            .indices::<Dfs>()
+            .map(|idx| expr.node(idx).data().to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Plans `query` and merges its stacked filters, returning the conjuncts
+    /// of each surviving `Filter`, rendered and sorted.
+    ///
+    /// Only the Graph-free part of the pipeline runs. `push_filters_down` is
+    /// the pass that flattens stacked filters into one `And`, which is where a
+    /// duplicated predicate would become visible.
+    fn filters_after_merge(query: &str) -> Vec<Vec<String>> {
+        // Binding a call resolves it against the process-global registry.
+        let _ = crate::runtime::functions::init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let mut plan = Planner::new(scope_vars).plan(ir);
+        push_filters_down(&mut plan);
+
+        plan.root()
+            .indices::<Bfs>()
+            .filter_map(|idx| match plan.node(idx).data() {
+                IR::Filter(f) => {
+                    let mut conjuncts: Vec<String> = if matches!(f.root().data(), ExprIR::And) {
+                        f.root()
+                            .children()
+                            .map(|c| render(&c.clone_as_tree()))
+                            .collect()
+                    } else {
+                        vec![render(f)]
+                    };
+                    conjuncts.sort();
+                    Some(conjuncts)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Both endpoints carrying attrs is two distinct predicates, not a
+    /// duplicate. The planner stacks one `Filter` per endpoint and the pass
+    /// merges them, so the merge must keep each one — not two copies of one.
+    #[test]
+    fn distinct_endpoint_attrs_both_survive() {
+        assert_eq!(
+            filters_after_merge("MATCH (a:L {p: 1})-[:R]->(b:L {q: 2}) RETURN b"),
+            vec![vec!["= property(p) a 1", "= property(q) b 2"]],
+        );
+    }
+
+    /// A user-written duplicate is legal Cypher and must be left alone: it is
+    /// the planner's duplicates this file cares about, and the merge point
+    /// cannot tell the two apart — another reason the check lives in a test.
+    /// The inline `{p: 0}` gives the planner a `Filter` of its own under the
+    /// WHERE, so the duplicate goes through the merge rather than around it.
+    #[test]
+    fn user_written_duplicate_is_not_touched() {
+        assert_eq!(
+            filters_after_merge("MATCH (a:L {p: 0}) WHERE a.p = 1 AND a.p = 1 RETURN a"),
+            vec![vec![
+                "= property(p) a 0",
+                "= property(p) a 1",
+                "= property(p) a 1",
+            ]],
+        );
+    }
+    /// A `WHERE` after a `CALL {}` that writes must not reach the rows feeding
+    /// the write: the `Apply` runs its right side once per left row, so a
+    /// filter on the left starves the write (#748, #997).
+    #[test]
+    fn filter_never_lands_on_the_input_of_a_write() {
+        for query in [
+            "CALL { CREATE () } UNWIND 0 AS x MATCH () WHERE false RETURN 0",
+            "WITH 0 AS n0 CALL { MERGE () RETURN 0 AS n1 } MATCH () WHERE false RETURN 0",
+        ] {
+            let _ = crate::runtime::functions::init_functions();
+            let mut parser = Parser::new(query);
+            parser.parse_parameters().expect("parse parameters");
+            let raw = parser.parse().expect("parse");
+            let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+            let mut plan = Planner::new(scope_vars).plan(ir);
+            push_filters_down(&mut plan);
+
+            for idx in plan.root().indices::<Bfs>() {
+                let node = plan.node(idx);
+                if !matches!(node.data(), IR::Apply) || node.num_children() != 2 {
+                    continue;
+                }
+                let writes = node
+                    .child(1)
+                    .indices::<Bfs>()
+                    .any(|i| super::is_write(plan.node(i).data()));
+                let filtered_input = node
+                    .child(0)
+                    .indices::<Bfs>()
+                    .any(|i| matches!(plan.node(i).data(), IR::Filter(_)));
+                assert!(
+                    !(writes && filtered_input),
+                    "a Filter sits on the input of a write in {query}"
+                );
+            }
+        }
+    }
 }

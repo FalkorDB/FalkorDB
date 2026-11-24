@@ -1,0 +1,22 @@
+name = "falkor-native-index"
+defaultTargets = ["FalkorNativeIndex"]
+
+[[lean_lib]]
+name = "FalkorNativeIndex"
+
+# cow_btree's entry encoding and sorted-list lemmas are imported, not copied.
+[[require]]
+name = "falkor-cow-btree"
+path = "../cow_btree"
+
+# proofs/core's `roundNat`/`bitlen` (IEEE round-to-nearest-even) are imported, not copied.
+[[require]]
+name = "falkor-core"
+path = "../core"
+
+# proofs/pending_commit proves the staged attribute lists have unique keys (`PA.inv_huniq`); Bridge.lean
+# discharges the staging functions' caller premise from it (pending_commit requires neither this project
+# nor cow_btree/core in a way that makes a cycle).
+[[require]]
+name = "falkor-pending-commit"
+path = "../pending_commit"

@@ -69,21 +69,74 @@
 #![allow(clippy::derive_partial_eq_without_eq)]
 
 #[cfg(test)]
+mod block_scaling_bench;
+#[cfg(test)]
+mod degree_bench;
+#[cfg(test)]
 mod fold_cost_bench;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;
+#[cfg(test)]
+mod me_delta_bench;
 pub mod serialization;
 pub mod tensor;
 pub mod vector;
 pub mod versioned_matrix;
+
+/// The instruction counter the benches in this directory measure with.
+///
+/// One declaration, shared, for the same reason as [`test_init`]: benches that
+/// disagreed on a field offset would report numbers that cannot be compared.
+#[cfg(test)]
+pub(crate) mod instr {
+    /// Running instruction total for this process, or `None` where the platform
+    /// has no cheap equivalent.
+    ///
+    /// macOS exposes `proc_pid_rusage(RUSAGE_INFO_V4)` to any caller for its own
+    /// pid with no privileges; `ri_instructions` is `u64` field 29 of the struct
+    /// body, which starts after the 16-byte `ri_uuid`. Same offsets as
+    /// `bench/src/falkorbench/counters.py::read_rusage`, so engine-level and
+    /// data-structure-level numbers are on one scale.
+    #[cfg(target_os = "macos")]
+    pub fn read_instr() -> Option<u64> {
+        const RUSAGE_INFO_V4: i32 = 4;
+        const RI_INSTRUCTIONS_OFF: usize = 16 + 29 * 8;
+
+        unsafe extern "C" {
+            fn proc_pid_rusage(
+                pid: i32,
+                flavor: i32,
+                buffer: *mut u8,
+            ) -> i32;
+            fn getpid() -> i32;
+        }
+        let mut buf = [0u8; 1024];
+        // SAFETY: `buf` is 1024 bytes, far larger than `struct rusage_info_v4`
+        // (~0x150 bytes), and the kernel writes at most that flavor's size.
+        if unsafe { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, buf.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        Some(u64::from_le_bytes(
+            buf[RI_INSTRUCTIONS_OFF..RI_INSTRUCTIONS_OFF + 8]
+                .try_into()
+                .expect("8 bytes"),
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn read_instr() -> Option<u64> {
+        None
+    }
+}
 
 /// Process-wide GraphBLAS initialization for unit tests. `GrB_init` may only
 /// be called once per process, so every `#[cfg(test)]` module must go through
 /// this shared guard rather than owning its own `Once`.
 #[cfg(test)]
 pub(crate) mod test_init {
-    use std::sync::Once;
+    use std::sync::{Once, mpsc};
+    use std::thread;
 
     static INIT: Once = Once::new();
 
@@ -98,27 +151,35 @@ pub(crate) mod test_init {
             size: usize,
         ) -> *mut std::ffi::c_void;
         fn free(p: *mut std::ffi::c_void);
+        fn omp_get_max_threads() -> i32;
     }
 
     pub fn ensure_init() {
         INIT.call_once(|| {
-            super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
             // libtest runs every test on its own freshly spawned thread. With
-            // libomp linked statically (the Linux toolchain image and CI —
+            // libomp linked statically (the Linux toolchain image and CI;
             // macOS resolves it dynamically, which is why this never
             // reproduces there), the OpenMP runtime is torn down when the
-            // first GraphBLAS-using test's thread exits, leaving the
-            // jitifyer's `omp_lock_t` destroyed. The next test to reach a JIT
-            // kernel lookup then segfaults inside `__kmpc_set_lock`, called
-            // from `GB_jitifyer_load` — observed as
-            // `tensor::tests::bulk_remove_and_extract_edge_id_zero` dying
-            // under `GrB_transpose` whenever any other GraphBLAS test ran
-            // first. The shipped module never hits this: redis-server's main
-            // thread outlives every query, so the runtime is never torn down.
-            //
-            // `GxB_JIT_OFF` keeps the lookup from happening at all. Tests then
-            // exercise generic kernels rather than the vendored PreJIT ones —
-            // a correctness-equivalent path, and these are correctness tests.
+            // thread that started it exits. Every later parallel region then
+            // segfaults: a JIT kernel lookup in `__kmpc_set_lock`, or any
+            // kernel that really runs on several threads. The shipped module
+            // never hits this: redis-server's main thread outlives every
+            // query. So GraphBLAS is started here on a thread that never
+            // exits, and the first OpenMP call binds the runtime to it.
+            let (started, wait) = mpsc::channel();
+            thread::spawn(move || {
+                super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
+                // SAFETY: a plain query of the OpenMP runtime.
+                unsafe { omp_get_max_threads() };
+                started.send(()).unwrap();
+                loop {
+                    thread::park();
+                }
+            });
+            wait.recv().unwrap();
+            // `GxB_JIT_OFF` keeps tests on generic kernels rather than the
+            // vendored PreJIT ones: a correctness-equivalent path, and these
+            // are correctness tests.
             let info = unsafe {
                 super::GrB_Global_set_INT32(
                     super::GrB_GLOBAL,

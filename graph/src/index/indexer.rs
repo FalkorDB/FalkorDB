@@ -31,9 +31,10 @@
 //!    |      and background population batches with write-path
 //!    |      commit_index calls so they never run concurrently.
 //!    |
-//!    +-- graph: Mutex<Option<Arc<Graph>>>
-//!           Latest committed graph snapshot shared with
-//!           background index population threads.
+//!    +-- graph: Arc<ArcSwapOption<Graph>>
+//!           Latest committed graph snapshot, shared by every clone of
+//!           this Indexer (each graph version and each background
+//!           population thread holds one), so a commit reaches them all.
 //! ```
 //!
 //! # Concurrency
@@ -56,7 +57,6 @@ use std::{
 };
 
 use arc_swap::{ArcSwap, ArcSwapOption};
-use atomic_refcell::AtomicRefCell;
 use parking_lot::Mutex;
 use roaring::RoaringTreemap;
 
@@ -124,7 +124,7 @@ impl IndexOptions {
                     Some(TextIndexOptions {
                         weight: opts.weight,
                         nostem: opts.nostem,
-                        phonetic: opts.phonetic,
+                        phonetic: opts.phonetic.clone(),
                         ..Default::default()
                     })
                 } else {
@@ -157,7 +157,7 @@ pub struct Indexer {
     cancelled: Arc<AtomicBool>,
     /// Latest committed graph, shared with background index population.
     /// Updated by `MvccGraph::commit()` so background batches see fresh data.
-    graph: Arc<ArcSwapOption<AtomicRefCell<Graph>>>,
+    graph: Arc<ArcSwapOption<Graph>>,
 }
 
 unsafe impl Send for Indexer {}
@@ -275,13 +275,13 @@ impl Indexer {
             let field = if let Some(ref vopts) = vector_options {
                 Arc::new(Field::new_with_vector_options(
                     CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
-                    index_type.clone(),
+                    *index_type,
                     vopts.clone(),
                 ))
             } else {
                 Arc::new(Field::new(
                     CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
-                    index_type.clone(),
+                    *index_type,
                     field_options.clone(),
                 ))
             };
@@ -344,6 +344,22 @@ impl Indexer {
 
         label_indexes.set_progress(0, total);
 
+        // Every field added to an existing entry starts a new population
+        // generation, not only the vector rebuild above. A populate job still
+        // running for the previous generation holds a field snapshot without
+        // the new field. Bumping makes that job bail at its next batch
+        // (`is_ticket_current`), and the job `populate_index` spawns for this
+        // generation indexes everything from the start. Without the bump both
+        // jobs share one generation: the new job can see two pending tickets
+        // and bail first, and the old job then finishes with its stale
+        // snapshot, so the index goes OPERATIONAL with the new field never
+        // populated. The bump comes after every fallible step because the
+        // pending counters are shared with the published entry, and a bump
+        // on an entry that is never published would desynchronize them.
+        if existing.is_some() {
+            label_indexes.bump_id();
+        }
+
         let mut new_map = (*map).clone();
         new_map.insert(label.clone(), Arc::new(label_indexes));
         self.index.store(Arc::new(new_map));
@@ -405,15 +421,21 @@ impl Indexer {
         Some((before - after, after))
     }
 
-    /// Remove the whole per-label index entry.
+    /// Remove the per-label index entry a `DROP INDEX` left without fields.
+    ///
+    /// Only if it still has none. This runs later than the drop that asked for
+    /// it, on the query pool, and a `CREATE INDEX` on the label can get in
+    /// first: it lands on the fieldless entry and gives it a field again.
+    /// Before this fix, it was removed regardless, so the new index was gone
+    /// after `CREATE INDEX` had answered `Indices created: 1`.
     ///
     /// Caller must hold [`Self::write_lock`] (see `drop_index_bg`).
-    pub fn remove(
+    pub fn remove_if_empty(
         &self,
         label: &Arc<String>,
     ) {
         let map = self.index.load_full();
-        if !map.contains_key(label) {
+        if map.get(label).is_none_or(|index| index.index_count() != 0) {
             return;
         }
         let mut new_map = (*map).clone();
@@ -514,6 +536,19 @@ impl Indexer {
         Ok(super::ScoredEdgeTripleIter::empty())
     }
 
+    /// Whether the index on `label` has no pending changes. A label with no
+    /// index has none to wait for, so it counts as operational.
+    #[must_use]
+    pub fn is_operational(
+        &self,
+        label: &Arc<String>,
+    ) -> bool {
+        self.index
+            .load()
+            .get(label)
+            .is_none_or(|index| index.is_operational())
+    }
+
     /// Execute a KNN vector query against the per-label index and
     /// yield `(entity_id, distance)` pairs ordered by ascending
     /// distance. Returns an empty iterator if no index exists for
@@ -586,7 +621,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
         attr: &Arc<String>,
-    ) -> Option<u32> {
+    ) -> Option<u64> {
         let guard = self.index.load();
         let index = guard.get(label)?;
         let fields = index.get_fields(attr)?;
@@ -774,8 +809,7 @@ impl Indexer {
         self.index
             .load()
             .get(label)
-            .map(|index| index.fields().clone())
-            .unwrap_or_default()
+            .map_or_default(|index| index.fields().clone())
     }
 
     /// Get fields for all labels.
@@ -891,22 +925,16 @@ impl Indexer {
         Ok(())
     }
 
-    /// Only touches the `Indexer`'s own lock-free `graph` slot, so this takes
-    /// `&self` deliberately: it must be callable while the caller holds only
-    /// an immutable borrow of the enclosing `Graph` (see
-    /// `Graph::set_indexer_graph`), so that background index population
-    /// (which also just needs an immutable borrow of the committed graph)
-    /// never races with this call and panics with "already mutably
-    /// borrowed".
+    /// Point background population at the published version `graph`.
     pub fn set_graph(
         &self,
-        graph: Arc<AtomicRefCell<Graph>>,
+        graph: Arc<Graph>,
     ) {
         self.graph.store(Some(graph));
     }
 
     #[must_use]
-    pub fn get_graph(&self) -> Option<Arc<AtomicRefCell<Graph>>> {
+    pub fn get_graph(&self) -> Option<Arc<Graph>> {
         self.graph.load_full()
     }
 }

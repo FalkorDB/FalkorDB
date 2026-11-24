@@ -25,12 +25,12 @@
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
-use super::reduce_expand_into::ir_references_variable;
+use super::references::ir_references_variable;
 
 pub(super) fn reduce_bound_edge(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
     for idx in indices {
-        let (alias_id, alias_scope_id) = match plan.node(idx).data() {
+        let alias = match plan.node(idx).data() {
             // A fused chain binds no edge at all, so there is nothing to
             // reduce; `chain` non-empty already suppresses the lookup.
             IR::CondTraverse {
@@ -38,7 +38,7 @@ pub(super) fn reduce_bound_edge(plan: &mut DynTree<IR>) {
                 relationship,
                 chain,
                 ..
-            } if chain.is_empty() => (relationship.alias.id, relationship.alias.scope_id),
+            } if chain.is_empty() => relationship.alias.key(),
             _ => continue,
         };
 
@@ -46,7 +46,7 @@ pub(super) fn reduce_bound_edge(plan: &mut DynTree<IR>) {
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), alias_id, alias_scope_id) {
+            if ir_references_variable(parent.data(), alias) {
                 referenced = true;
                 break;
             }

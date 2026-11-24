@@ -80,6 +80,21 @@ def test_unary_minus_normal_values_still_work():
     assert res.result_set == [[-5, 7, -1.25, None]]
 
 
+def test_chained_unary_minus():
+    # Regression (#2309): a sign applied to an already-signed operand was
+    # rejected with "Invalid input Dash". C folds any run of signs.
+    res = common.g.query(
+        "RETURN - -5, --5, - - -5, -+5, +-5, ++5, - -1.5, - -NULL")
+    assert res.result_set == [[5, 5, -5, -5, -5, 5, 1.5, None]]
+    res = common.g.query("RETURN --9223372036854775808, - - 9223372036854775807")
+    assert res.result_set == [[-9223372036854775808, 9223372036854775807]]
+    res = common.g.query("UNWIND [0, 1, 2] AS x WITH x WHERE x > - -1 RETURN x")
+    assert res.result_set == [[2]]
+    # Two negations still type-check the operand, as one does.
+    with pytest.raises(ResponseError, match="Type mismatch"):
+        common.g.query("RETURN - -'a'")
+
+
 def test_range_normal_values_still_work():
     res = common.g.query("RETURN range(1, 5)")
     assert res.result_set == [[[1, 2, 3, 4, 5]]]
@@ -108,6 +123,30 @@ def test_unwind_range_normal_values_still_work():
     assert res.result_set == [[[1, 2, 3, 4, 5]]]
     res = common.g.query("UNWIND range(10, 2, -2) AS x RETURN collect(x)")
     assert res.result_set == [[[10, 8, 6, 4, 2]]]
+
+
+
+# The lazy UNWIND iterator used to step past the last element with an
+# unchecked add: next to i64::MAX/MIN it wrapped around and never terminated
+# (release) or panicked (debug). Results must match the eager range().
+@pytest.mark.parametrize("args, expected", [
+    ("9223372036854775806, 9223372036854775807",
+     [9223372036854775806, 9223372036854775807]),
+    ("9223372036854775800, 9223372036854775807, 3",
+     [9223372036854775800, 9223372036854775803, 9223372036854775806]),
+    ("-9223372036854775807, -9223372036854775807 - 1, -1",
+     [-9223372036854775807, -9223372036854775808]),
+    ("-9223372036854775801, -9223372036854775807 - 1, -4",
+     [-9223372036854775801, -9223372036854775805]),
+    ("0, -10, -9223372036854775807 - 1", [0]),
+    ("-1, 9223372036854775807, 9223372036854775807",
+     [-1, 9223372036854775806]),
+])
+def test_unwind_range_near_i64_bounds(args, expected):
+    res = common.g.query(f"UNWIND range({args}) AS x RETURN collect(x)")
+    assert res.result_set == [[expected]]
+    res = common.g.query(f"RETURN range({args})")
+    assert res.result_set == [[expected]]
 
 
 # --- Duration overflow tests --------------------------------------------------

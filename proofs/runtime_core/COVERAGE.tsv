@@ -1,0 +1,65 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/runtime.rs	deref	141	PROVEN	QueryGraph.GraphRef.deref: deref_spec (both arms deref to the graph they hold); graph_deref/graph_same_result (whatever graph() returns derefs to Rt.cur). Re-targeted to #3683 (08616ec29); Cell.deref (HeldRead) is history
+graph/src/runtime/runtime.rs	get_variables	257	PROVEN	Plan.getVariables/nodeVars/expand (trait decl): getVariables_spec, getVariables_mem, getVariables_stops, getVariables_sibling
+graph/src/runtime/runtime.rs	get_variables	268	PROVEN	Plan.getVariables/nodeVars/expand: getVariables_spec, getVariables_mem, getVariables_stops, getVariables_sibling, pre3521_hidden_reported
+graph/src/runtime/runtime.rs	get_return_names	399	PROVEN	Plan.returnNames (trait decl): returnNames_spec
+graph/src/runtime/runtime.rs	get_return_names	403	PROVEN	Plan.returnNames/skipApply: returnNames_spec
+graph/src/runtime/runtime.rs	inspect_batch	449	PROVEN	Plan.inspectBatch: inspectBatch_spec
+graph/src/runtime/runtime.rs	new	471	PROVEN	QueryGraph.new: new_published, new_fork, new_write_iff (write = fork.is_some()), new_inv (never both a published version and a fork), new_cur; Plan.rtNew: rtNew_spec; Misc.checkTimeout_spec (deadline). #3683: QueryGraph::{Published,Fork}; Cell.new/DropOrder/Proto.readNew (HeldRead) are history
+graph/src/runtime/runtime.rs	check_timeout	538	PROVEN	Misc.checkTimeout_spec
+graph/src/runtime/runtime.rs	check_mem_capacity	548	PROVEN	Misc.checkMem_spec, checkMem_disabled, checkMem_wrap
+graph/src/runtime/runtime.rs	graph	563	PROVEN	QueryGraph.graph: graph_published/read_graph_total (a published version is read with no borrow and no state change), graph_fork/graph_fork_release (shared borrow of the fork cell), graph_panics_iff, graph_deref, graph_same_result, graphMut_while_reading, graph_while_writing, graph_after_publish, graph_after_refusal; Reuse.read_plan_no_update (premise discharged on RedisLayer.Ro). #3683; Cell.graph/Proto.reader_guard_sound (HeldRead) are history
+graph/src/runtime/runtime.rs	graph_mut	583	PROVEN	QueryGraph.graphMut: graphMut_panics_iff, graphMut_read_panics (read runtime has no fork), graphMut_write, graphMut_release, graphMut_after_publish. #3683; Cell.graphMut (assert!(write)) is history
+graph/src/runtime/runtime.rs	publish	600	PROVEN	QueryGraph.publish: publish_ok, publish_refused, publish_write (the write flag stays), publish_inv, publish_twice_panics, publish_read_panics, graph_after_publish, graphMut_after_publish, graph_after_refusal
+graph/src/runtime/runtime.rs	from	125	PROVEN	QueryGraph.QueryGraph.published/.fork: new_published, new_fork (From<Arc<Graph>> / From<Graph> pick the arm)
+graph/src/runtime/runtime.rs	from	119	PROVEN	QueryGraph.QueryGraph.published/.fork: new_published, new_fork (From<Arc<Graph>> / From<Graph> pick the arm)
+graph/src/runtime/runtime.rs	upgrade_to_write	626	PROVEN	QueryGraph.upgradeToWrite: upgrade_spec (the host receives exactly the fork and its answer is returned), upgrade_release (the RefMut temporary leaves no borrow), upgrade_read_panics
+graph/src/runtime/runtime.rs	resync_published_indexes	633	PROVEN	Plan.resyncPublished (delegates to Pending, proofs/pending_commit): delegates_spec
+graph/src/runtime/runtime.rs	commit_deferred_indexes	643	PROVEN	Plan.commitDeferred (delegates to Pending): delegates_spec
+graph/src/runtime/runtime.rs	query	649	PROVEN	Query.query_rows, Query.capLoop_flatten, Query.keep_exact, Query.query_write_pulls_all
+graph/src/runtime/runtime.rs	default_batch	699	PROVEN	Plan.defaultBatch: defaultBatch_spec
+graph/src/runtime/runtime.rs	effective_limit	710	PROVEN	Budget.recordCap_sound_oneSkip; bug B1 Budget.hard_cap_unsound_expandInto/condTraverse/through_traverse
+graph/src/runtime/runtime.rs	effective_skip	745	PROVEN	Budget.recordCap_sound_oneSkip; bug B2 Budget.hard_cap_unsound_stacked_skip
+graph/src/runtime/runtime.rs	record_cap	777	PROVEN	Budget.recordCap_hardCap_sound_oneSkip, Budget.need_sound; soft use Emitter.drive_flatten
+graph/src/runtime/runtime.rs	children_to_recurse	787	PROVEN	RunBatch.childrenToRecurse: childrenToRecurse_spec
+graph/src/runtime/runtime.rs	run_nested_plan	813	PROVEN	Plan.runNested: runNested_spec
+graph/src/runtime/runtime.rs	run_batch	845	PROVEN	RunBatch.runBatch_eq_rec, RunBatch.runBatch_ok_single
+graph/src/runtime/runtime.rs	build_batch_op	913	PROVEN	Plan.buildOp/popOrOnce/popOrArgument: buildOp_spec; RunBatch.runBatch_eq_rec
+graph/src/runtime/runtime.rs	set_pending_node_attr	1517	PROVEN	RelAccessors.setPendingAttr: setPendingAttr_spec
+graph/src/runtime/runtime.rs	set_pending_relationship_attr	1536	PROVEN	RelAccessors.setPendingAttr (rel tables): setPendingAttr_spec
+graph/src/runtime/runtime.rs	memo_lookup	1553	PROVEN	Accessors.memoLookup_ok
+graph/src/runtime/runtime.rs	memo_insert	1563	PROVEN	Accessors.attrIdM_correct (validity + 32-entry cap)
+graph/src/runtime/runtime.rs	node_attr_id	1578	PROVEN	Accessors.attrIdM_correct, memo_ok_mono
+graph/src/runtime/runtime.rs	rel_attr_id	1592	PROVEN	Accessors.attrIdM_correct (same code over rel memo)
+graph/src/runtime/runtime.rs	get_node_attribute	1605	CONDITIONAL	Accessors.getNodeAttribute; attrs_agree, materialize_eq; Discharge.attrs_agree_discharged (nameOk, hc, hbg proved from the name-table/store models: Discharge.nameOk_of_reach, hc_of_reach, hbg_rfl) || CONDITIONAL on two facts about Pending, not the graph: hdisj (a node id is in at most one of Pending.new_nodes_attrs / existing_nodes_attrs; held only if a deleted id is not re-issued within the query, #2876 which GitHub shows closed; the proof is pending_commit/id_space's, not linked) and huniq (each pending attribute list has unique keys) || hdisj/huniq proved for every reachable Pending state in proofs/pending_commit (PendingCommit/AttrInv.lean PA.inv_hdisj, PA.inv_huniq; AccessorBridge.lean attrs_agree_pending, relAttrs_agree_pending, *_discharged_pending; caller premises in AttrCallers.lean, AttrAlloc.lean). Left CONDITIONAL: AttrAlloc.exLive_stageEx assumes SET/REMOVE only stage attrs on a live entity, the deleted-entity guard proved in proofs/ops_apply (SetRemove) but not linked
+graph/src/runtime/runtime.rs	get_node_attribute_no_delete_check	1625	CONDITIONAL	Accessors.noDelete; attrs_agree; Discharge.attrs_agree_discharged (nameOk, hc proved) || CONDITIONAL on hdisj and huniq about Pending (see get_node_attribute) || hdisj/huniq proved for every reachable Pending state in proofs/pending_commit (PendingCommit/AttrInv.lean PA.inv_hdisj, PA.inv_huniq; AccessorBridge.lean attrs_agree_pending, relAttrs_agree_pending, *_discharged_pending; caller premises in AttrCallers.lean, AttrAlloc.lean). Left CONDITIONAL: AttrAlloc.exLive_stageEx assumes SET/REMOVE only stage attrs on a live entity, the deleted-entity guard proved in proofs/ops_apply (SetRemove) but not linked
+graph/src/runtime/runtime.rs	get_relationship_attribute_no_delete_check	1639	PROVEN	RelAccessors.relNoDelete: relNoDelete_eq, relNoDelete_spec
+graph/src/runtime/runtime.rs	get_relationship_attribute	1656	PROVEN	RelAccessors.getRelAttribute: getRelAttribute_eq; Discharge.getRelAttribute_discharged (hName proved: Discharge.hName_of_reach, from the model of the name-table fns getOrCreate/nmInsert and the u16 id read; copied from graph_queries Attrs)
+graph/src/runtime/runtime.rs	materialize_node_property	1688	PROVEN	RelAccessors.materializeNodeProp: materializeNodeProp_eq; Discharge.materializeNodeProp_discharged (hbg proved: Discharge.hbg_rfl, get_node_attributes_by_idx is the per-id read)
+graph/src/runtime/runtime.rs	materialize_relationship_property	1750	PROVEN	RelAccessors.materializeRelProp: materializeRelProp_eq; Discharge.materializeRelProp_discharged (hName: Discharge.hName_of_reach, hbg: Discharge.hbg_rfl)
+graph/src/runtime/runtime.rs	materialize_relationship_property_values	1762	PROVEN	RelAccessors.materializeRel: materializeRel_eq; Discharge.materializeRel_discharged (hName: Discharge.hName_of_reach, hbg: Discharge.hbg_rfl)
+graph/src/runtime/runtime.rs	node_differs_from_committed	1812	PROVEN	Accessors.differs_spec, not_differs_labels (guard false ⇒ get_node_labels = committed labels), not_differs_attrs (⇒ get_node_attrs = committed all-attrs), reads_differ_imp_differs; differs_overapprox (sufficient, not exact; #3464); Pending side proofs/pending_commit PC.nodeHasChanges_spec
+graph/src/runtime/runtime.rs	get_node_labels	1821	PROVEN	Accessors.getLabelIds; hasLabelId_iff, hasLabel_iff
+graph/src/runtime/runtime.rs	node_has_label	1851	PROVEN	Accessors.hasLabel_iff
+graph/src/runtime/runtime.rs	label_id	1872	PROVEN	RelAccessors.labelIdOf: labelIdOf_spec
+graph/src/runtime/runtime.rs	node_has_label_id	1886	PROVEN	Accessors.hasLabelId_iff
+graph/src/runtime/runtime.rs	get_node_attrs	1900	CONDITIONAL	Accessors.attrs_agree (and reuse_diverges witness); Discharge.attrs_agree_discharged (nameOk, hc proved) || CONDITIONAL on hdisj and huniq about Pending (see get_node_attribute) || hdisj/huniq proved for every reachable Pending state in proofs/pending_commit (PendingCommit/AttrInv.lean PA.inv_hdisj, PA.inv_huniq; AccessorBridge.lean attrs_agree_pending, relAttrs_agree_pending, *_discharged_pending; caller premises in AttrCallers.lean, AttrAlloc.lean). Left CONDITIONAL: AttrAlloc.exLive_stageEx assumes SET/REMOVE only stage attrs on a live entity, the deleted-entity guard proved in proofs/ops_apply (SetRemove) but not linked
+graph/src/runtime/runtime.rs	get_relationship_attrs	1918	CONDITIONAL	RelAccessors.getRelAttrs: relAttrs_agree; Discharge.relAttrs_agree_discharged (nameOk, hc, hName proved) || CONDITIONAL on hdisj (one pending map per relationship id) and huniq about Pending (see get_node_attribute) || hdisj/huniq proved for every reachable Pending state in proofs/pending_commit (PendingCommit/AttrInv.lean PA.inv_hdisj, PA.inv_huniq; AccessorBridge.lean attrs_agree_pending, relAttrs_agree_pending, *_discharged_pending; caller premises in AttrCallers.lean, AttrAlloc.lean). Left CONDITIONAL: AttrAlloc.exLive_stageEx assumes SET/REMOVE only stage attrs on a live entity, the deleted-entity guard proved in proofs/ops_apply (SetRemove) but not linked
+graph/src/runtime/runtime.rs	get_relationship_endpoints	1938	PROVEN	RelAccessors.relEndpoints: relEndpoints_spec
+graph/src/runtime/runtime.rs	get_relationship_type	1951	PROVEN	RelAccessors.relType: relType_spec
+graph/src/runtime/runtime.rs	get_node_indegree	1965	PROVEN	Accessors.degree_exact (endp = dst, types = [])
+graph/src/runtime/runtime.rs	get_node_indegree_by_type	1982	PROVEN	Accessors.degree_exact (endp = dst)
+graph/src/runtime/runtime.rs	get_node_outdegree	2000	PROVEN	Accessors.degree_exact (endp = src, types = [])
+graph/src/runtime/runtime.rs	get_node_outdegree_by_type	2017	PROVEN	Accessors.degree_exact (endp = src)
+graph/src/runtime/ops/mod.rs	edge_already_used	155	PROVEN	Misc.edgeAlreadyUsed_iff
+graph/src/runtime/ops/batched_result_emitter.rs	one	458	PROVEN	Emitter.RowIter.one; reused: proofs/columnar Gather.RowIter.one: rowIter_spec
+graph/src/runtime/ops/batched_result_emitter.rs	spread	464	PROVEN	Emitter.RowIter.spread; reused: proofs/columnar Gather.RowIter.spread: rowIter_spec
+graph/src/runtime/ops/batched_result_emitter.rs	many	469	PROVEN	Emitter.RowIter.many; reused: proofs/columnar Gather.RowIter.many: rowIter_spec
+graph/src/runtime/ops/batched_result_emitter.rs	seed	577	PROVEN	Emitter.seed, remaining_seed, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs; reused: proofs/columnar Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
+graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	output = packed (row,item) pairs; gather not modelled; reused: proofs/columnar Emitter batch_rows_active (gather never panics), finishLen_eq
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
+graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)

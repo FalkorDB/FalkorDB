@@ -37,8 +37,9 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
+use crate::effects::EffectsBuffer;
 use crate::{
-    graph::graph::{Graph, NodeId, RelationshipId},
+    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
@@ -61,14 +62,13 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
-use atomic_refcell::AtomicRefCell;
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
-use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
+    cell::{Cell, OnceCell, Ref, RefCell, RefMut},
+    collections::{HashMap, VecDeque},
     marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
@@ -106,6 +106,46 @@ pub struct QueryStatistics {
 /// name-map lookup for the excess.
 const ATTR_ID_MEMO_CAP: usize = 32;
 
+/// The graph a [`Runtime`] is created on: a read query's published version,
+/// or a write query's fork.
+// Moved once, into `Runtime::new`: boxing the fork would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum QueryGraph {
+    Published(Arc<Graph>),
+    Fork(Graph),
+}
+
+impl From<Arc<Graph>> for QueryGraph {
+    fn from(g: Arc<Graph>) -> Self {
+        Self::Published(g)
+    }
+}
+
+impl From<Graph> for QueryGraph {
+    fn from(fork: Graph) -> Self {
+        Self::Fork(fork)
+    }
+}
+
+/// Shared access to the graph a [`Runtime`] reads; see [`Runtime::graph`].
+pub enum GraphRef<'r> {
+    /// A published version needs no borrow: nothing can change it.
+    Published(&'r Graph),
+    /// A write query's fork, borrowed so it is not changed meanwhile.
+    Fork(Ref<'r, Graph>),
+}
+
+impl std::ops::Deref for GraphRef<'_> {
+    type Target = Graph;
+
+    fn deref(&self) -> &Graph {
+        match self {
+            Self::Published(g) => g,
+            Self::Fork(g) => g,
+        }
+    }
+}
+
 /// The query execution context.
 ///
 /// Runtime holds all state needed to execute a query plan:
@@ -122,8 +162,13 @@ const ATTR_ID_MEMO_CAP: usize = 32;
 pub struct Runtime<'a> {
     /// Query parameters ($param syntax)
     pub parameters: HashMap<String, Value>,
-    /// Graph being queried (shared, thread-safe reference)
-    pub g: Arc<AtomicRefCell<Graph>>,
+    /// The published version this query reads: a read query's from the
+    /// start, a write query's once [`Self::publish`] published its fork.
+    published: OnceCell<Arc<Graph>>,
+    /// A write query's fork, until [`Self::publish`] takes it. Operators reach
+    /// the runtime through shared references, hence the cell. Read both
+    /// through [`Self::graph`] / [`Self::graph_mut`].
+    fork: RefCell<Option<Graph>>,
     /// Whether this is a write query
     pub write: bool,
     /// Batched mutations (lazy-initialized)
@@ -132,6 +177,8 @@ pub struct Runtime<'a> {
     pub stats: RefCell<QueryStatistics>,
     /// Query execution plan tree
     pub plan: Arc<DynTree<IR>>,
+    /// Root of each nested plan, by id (see `IR::NestedPlans`).
+    nested_plans: Vec<NodeIdx<Dyn<IR>>>,
     /// The host value holding this query's locks (see [`crate::locks`]). Reached
     /// through [`Runtime::write_escalation`] by the operators that mutate shared
     /// state, so the dependency is explicit at the point of use.
@@ -156,8 +203,12 @@ pub struct Runtime<'a> {
     pub deleted_nodes: RefCell<HashMap<NodeId, DeletedNode>>,
     /// Cache of deleted relationships for result consistency
     pub deleted_relationships: RefCell<HashMap<RelationshipId, DeletedRelationship>>,
-    /// Cache for MERGE pattern matching — stores only the created entity bindings (variable id → value)
-    pub merge_pattern_cache: RefCell<HashMap<u64, Vec<(u32, Value)>>>,
+    /// Cache for MERGE pattern matching — stores only the created entity
+    /// bindings (variable id → value), keyed by the MERGE operator's plan node
+    /// and the pattern hash. Per operator, like C's `unique_entities`: another
+    /// MERGE clause with an equal pattern binds different variable ids and must
+    /// do its own match-or-create.
+    pub merge_pattern_cache: RefCell<HashMap<(NodeIdx<Dyn<IR>>, u64), Vec<(u32, Value)>>>,
     /// Pointer-identity memo of resolved node attribute ids. Plan
     /// expressions hold the same `Arc<String>` across all rows, so after
     /// the first resolution a lookup is a short pointer scan instead of a
@@ -171,13 +222,16 @@ pub struct Runtime<'a> {
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
     /// Effects buffer built before commit, for replication.
-    pub effects_buffer: RefCell<Option<Vec<u8>>>,
+    pub effects_buffer: RefCell<Option<EffectsBuffer>>,
     /// Total number of effect records across all commits in this query.
     pub effects_count: Cell<u64>,
-    /// Whether commits should serialize an effects buffer. Callers clear
-    /// this when replication has no possible consumer (no AOF, no replica
-    /// has ever attached); the replication layer then falls back to
-    /// verbatim query propagation, which Redis discards for free.
+    /// Whether commits should serialize an effects buffer.
+    ///
+    /// Cleared only when replication has no possible consumer — no AOF, and no
+    /// replica has ever attached — because there is no fallback behind it any
+    /// more: with verbatim query propagation gone, a write that builds no
+    /// buffer is a write nothing can replay. `REPLICATION_CONSUMERS` is
+    /// therefore sticky once set, and defaults to set.
     pub build_effects: Cell<bool>,
     /// Timestamp captured at the start of the transaction/query.
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
@@ -204,10 +258,18 @@ pub trait GetVariables {
 }
 
 impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
+    /// The variables the rows leaving this subtree can carry.
+    ///
+    /// `Project` and `Aggregate` start a fresh environment, so the walk stops
+    /// at them: only what they name survives, which is the output variable of
+    /// each projection and of each `(source, output)` copy. Variable ids
+    /// restart in every scope, so a variable hidden below a `WITH` would
+    /// otherwise pass for the later variable that reuses its id.
     fn get_variables(&self) -> Vec<Variable> {
         let mut vars = vec![];
-        for node in self.walk::<Bfs>() {
-            match node {
+        let mut queue = VecDeque::from([self.clone()]);
+        while let Some(node) = queue.pop_front() {
+            match node.data() {
                 IR::Optional(variables) => vars.extend(variables.iter().cloned()),
                 IR::ProcedureCall {
                     yields: named_outputs,
@@ -242,10 +304,8 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::CartesianProduct
                 | IR::ValueHashJoin { .. }
                 | IR::Union
+                | IR::NestedPlans
                 | IR::Apply
-                | IR::SemiApply
-                | IR::AntiSemiApply
-                | IR::OrApplyMultiplexer(_)
                 | IR::Sort(_)
                 | IR::Skip(_)
                 | IR::Limit(_)
@@ -254,6 +314,13 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
+                // Child 0 is the input; the other children are existence
+                // checks whose variables never reach the rows leaving the
+                // operator, and their ids may be reused later.
+                IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => {
+                    queue.extend(node.children().next());
+                    continue;
+                }
                 IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
@@ -310,15 +377,19 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     }
                 }
                 IR::Aggregate {
-                    names: variables, ..
+                    names, projections, ..
                 } => {
-                    vars.extend(variables.iter().cloned());
+                    vars.extend(names.iter().cloned());
+                    vars.extend(projections.iter().map(|(_, v)| v.clone()));
+                    continue;
                 }
-                IR::Project { exprs: items, .. } => {
-                    vars.extend(items.iter().map(|v| v.0.clone()));
-                    break;
+                IR::Project { exprs, copies } => {
+                    vars.extend(exprs.iter().map(|(v, _)| v.clone()));
+                    vars.extend(copies.iter().map(|(_, v)| v.clone()));
+                    continue;
                 }
             }
+            queue.extend(node.children());
         }
         vars
     }
@@ -355,14 +426,57 @@ impl ReturnNames for DynNode<'_, IR> {
                 }
                 v
             }
-            IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
+            // A Sort may sit on the Apply chain binding its ORDER BY pattern
+            // comprehensions; the columns are those of the chain's input.
+            IR::Sort(_) => {
+                let mut child = self.child(0);
+                while matches!(child.data(), IR::Apply) {
+                    child = child.child(0);
+                }
+                child.get_return_names()
+            }
+            IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Union | IR::NestedPlans => {
                 self.child(0).get_return_names()
             }
-            IR::Union => self.child(0).get_return_names(),
             IR::Aggregate { names, .. } => names.clone(),
             _ => vec![],
         }
     }
+}
+
+/// The smallest integer `i` in `i64::MIN..=i64::MAX + 1` whose `f64` image is
+/// not below `f`, or `i64::MAX + 1` when none is.
+///
+/// The `Filter` a seek replaces compares an integer id with a float by first
+/// casting the id to `f64`, which is exact up to 2^53 and rounds beyond it, so
+/// the cast is searched (it is monotonic) rather than `f.ceil()` assumed.
+fn first_id_where(reached: impl Fn(f64) -> bool) -> i128 {
+    let (mut lo, mut hi) = (i128::from(i64::MIN), i128::from(i64::MAX) + 1);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if reached(mid as f64) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    lo
+}
+
+/// The smallest id `i` with `(i as f64) >= f`.
+fn first_id_ge(f: f64) -> i128 {
+    if f.abs() < 9_007_199_254_740_992.0 {
+        return f.ceil() as i128;
+    }
+    first_id_where(|x| x >= f)
+}
+
+/// The largest id `i` with `(i as f64) <= f`.
+fn last_id_le(f: f64) -> i128 {
+    if f.abs() < 9_007_199_254_740_992.0 {
+        return f.floor() as i128;
+    }
+    first_id_where(|x| x > f) - 1
 }
 
 impl<'a> Runtime<'a> {
@@ -390,9 +504,8 @@ impl<'a> Runtime<'a> {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        g: Arc<AtomicRefCell<Graph>>,
+        g: impl Into<QueryGraph>,
         parameters: HashMap<String, Value>,
-        write: bool,
         plan: Arc<DynTree<IR>>,
         inspect: bool,
         import_folder: String,
@@ -404,17 +517,30 @@ impl<'a> Runtime<'a> {
         write_escalation: &'a dyn crate::locks::WriteEscalation,
     ) -> Self {
         let return_names = plan.root().get_return_names();
+        let nested_plans = if matches!(plan.root().data(), IR::NestedPlans) {
+            plan.root().children().skip(1).map(|c| c.idx()).collect()
+        } else {
+            vec![]
+        };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
-        if write {
-            pending.borrow_mut().set_schema_baseline(&g);
+        // A write query runs on its own fork, a read query on a published version.
+        let (published, fork) = match g.into() {
+            QueryGraph::Published(g) => (OnceCell::from(g), None),
+            QueryGraph::Fork(fork) => (OnceCell::new(), Some(fork)),
+        };
+        let write = fork.is_some();
+        if let Some(fork) = &fork {
+            pending.borrow_mut().set_schema_baseline(fork);
         }
         Self {
             parameters,
-            g,
+            published,
+            fork: RefCell::new(fork),
             write,
             pending,
             stats: RefCell::new(QueryStatistics::default()),
             plan,
+            nested_plans,
             write_escalation,
             return_names,
             value_dedupers: RefCell::new(rustc_hash::FxHashMap::default()),
@@ -464,37 +590,101 @@ impl<'a> Runtime<'a> {
         Ok(())
     }
 
-    /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
-    /// shared state (the index, or the published graph version).
+    /// The graph this query reads.
+    ///
+    /// A published version needs no borrow: nothing can change it. A write
+    /// query's fork is borrowed per access, since it is also borrowed mutably.
+    #[must_use]
+    pub fn graph(&self) -> GraphRef<'_> {
+        self.published.get().map_or_else(
+            || {
+                GraphRef::Fork(Ref::map(self.fork.borrow(), |fork| {
+                    fork.as_ref()
+                        .expect("a write query's fork was refused at commit")
+                }))
+            },
+            |g| GraphRef::Published(g),
+        )
+    }
+
+    /// The graph this write query mutates, borrowed exclusively.
+    ///
+    /// # Panics
+    ///
+    /// On a read query, or a write query whose fork was published: a
+    /// published version is never changed. Plans that write are run as write
+    /// queries, so this is a planner bug.
+    #[must_use]
+    pub fn graph_mut(&self) -> RefMut<'_, Graph> {
+        RefMut::map(self.fork.borrow_mut(), |fork| {
+            fork.as_mut().expect("graph_mut on a published version")
+        })
+    }
+
+    /// Publish this write query's fork with `commit`, which takes it by value
+    /// and returns the version it published. The query reads that version from
+    /// then on, e.g. to serialize its reply.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `commit` returns. The fork is gone then: `commit` consumed it.
+    ///
+    /// # Panics
+    ///
+    /// On a read query, or if the fork was published already.
+    pub fn publish<E>(
+        &self,
+        commit: impl FnOnce(Graph) -> Result<Arc<Graph>, E>,
+    ) -> Result<(), E> {
+        let fork = self
+            .fork
+            .borrow_mut()
+            .take()
+            .expect("a write query's fork is published once");
+        let published = commit(fork)?;
+        assert!(self.published.set(published).is_ok(), "published once");
+        Ok(())
+    }
+
+    /// Become a writer before mutating shared state (the index), handing the
+    /// host this query's fork to check and rebase ([`WriteEscalation`]).
     ///
     /// Not a guard: the host owns the locks for the whole query — they must
     /// outlive `query()` so the host can commit — so this only *changes mode*,
     /// never releases.
-    #[must_use]
-    pub fn write_escalation(&self) -> &'a dyn crate::locks::WriteEscalation {
+    ///
+    /// # Errors
+    ///
+    /// If the host refuses the escalation.
+    ///
+    /// [`WriteEscalation`]: crate::locks::WriteEscalation
+    pub fn upgrade_to_write(&self) -> Result<(), String> {
         self.write_escalation
+            .upgrade_to_write(&mut self.graph_mut())
     }
 
     /// Undo the index documents earlier `Commit`s published, after this query
     /// failed. See [`Pending::resync_published_indexes`].
     pub fn resync_published_indexes(
         &self,
-        committed: &Arc<AtomicRefCell<Graph>>,
+        committed: &Graph,
     ) {
         self.pending
             .borrow_mut()
-            .resync_published_indexes(committed, &self.g);
+            .resync_published_indexes(committed, &self.graph());
     }
 
     /// Write this `Commit`'s index documents to RediSearch. Writer mode only.
     pub fn commit_deferred_indexes(&self) {
-        self.pending.borrow_mut().commit_deferred_indexes(&self.g);
+        self.pending
+            .borrow_mut()
+            .commit_deferred_indexes(&mut self.graph_mut());
     }
 
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
-        let labels_count = self.g.borrow().labels_count();
+        let labels_count = self.graph().labels_count();
         let mut result = vec![];
         let mut batch_op = self.run_batch(idx)?;
         if self.result_set_size >= 0 {
@@ -532,7 +722,7 @@ impl<'a> Runtime<'a> {
         }
         let run_duration = start.elapsed();
 
-        self.stats.borrow_mut().labels_added += self.g.borrow().labels_count() - labels_count;
+        self.stats.borrow_mut().labels_added += self.graph().labels_count() - labels_count;
         self.stats.borrow_mut().execution_time = run_duration.as_secs_f64() * 1000.0;
         Ok(ResultSummary {
             stats: self.stats.take(),
@@ -649,8 +839,34 @@ impl<'a> Runtime<'a> {
                     Vec::new()
                 }
             }
-            _ => node.get_child(0).map(|c| vec![c.idx()]).unwrap_or_default(),
+            _ => node.get_child(0).map_or_default(|c| vec![c.idx()]),
         }
+    }
+
+    /// Run nested plan `id` with `row` as its argument row and return the
+    /// list it collects into `result`.
+    pub fn run_nested_plan(
+        &'a self,
+        id: u32,
+        result: &Variable,
+        row: &Row,
+    ) -> Result<Value, String> {
+        let idx = *self
+            .nested_plans
+            .get(id as usize)
+            .ok_or_else(|| format!("nested plan #{id} not found"))?;
+        let mut op = self.run_batch(idx)?;
+        let mut arg = BatchBuilder::new();
+        arg.push_row(row);
+        op.set_argument_batch(arg.finish());
+        // The plan's root is the comprehension's keyless collect (see
+        // `Planner::build_pattern_comprehension_plan`), which drains its
+        // input and yields a single batch of a single row: the list, empty
+        // when nothing matched. Anything else is a planner bug.
+        let missing = || format!("nested plan #{id} produced no result");
+        let batch = op.next().ok_or_else(missing)??;
+        let row = batch.active_indices().next().ok_or_else(missing)?;
+        batch.value_at(result.id, row).ok_or_else(missing)
     }
 
     /// Iteratively builds a batch-mode operator tree for the given IR node.
@@ -717,11 +933,13 @@ impl<'a> Runtime<'a> {
                     IR::AllNodeScan(n) => n,
                     _ => unreachable!(),
                 };
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
                     self,
                     Box::new(child),
                     node_pattern,
                     idx,
+                    record_cap,
                 )))
             }
             IR::IncludePending { node } => {
@@ -917,6 +1135,7 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeByIndexScan { node, index, query } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByIndexScan(NodeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -924,6 +1143,7 @@ impl<'a> Runtime<'a> {
                     index,
                     query,
                     idx,
+                    record_cap,
                 )))
             }
             IR::EdgeByIndexScan {
@@ -932,6 +1152,7 @@ impl<'a> Runtime<'a> {
                 transposed,
             } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::EdgeByIndexScan(EdgeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -939,6 +1160,7 @@ impl<'a> Runtime<'a> {
                     query,
                     *transposed,
                     idx,
+                    record_cap,
                 )))
             }
             IR::CartesianProduct => {
@@ -1053,6 +1275,8 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Union => Ok(BatchOp::Union(UnionOp::new(self, idx))),
+            // The query's plan is child 0; the nested plans run on demand.
+            IR::NestedPlans => Ok(pop_or_once(&mut children)),
             IR::PathBuilder(paths) => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::PathBuilder(PathBuilderOp::new(
@@ -1180,12 +1404,14 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeByLabelAndIdScan { node, filter } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByLabelAndIdScan(NodeByLabelAndIdScanOp::new(
                     self,
                     Box::new(child),
                     node,
                     filter,
                     idx,
+                    record_cap,
                 )))
             }
             IR::CondVarLenTraverse {
@@ -1196,6 +1422,7 @@ impl<'a> Runtime<'a> {
                 ..
             } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
                     self,
                     Box::new(child),
@@ -1204,6 +1431,7 @@ impl<'a> Runtime<'a> {
                     *emit_path,
                     path_var.as_ref().map(|v| v.id),
                     idx,
+                    record_cap,
                 )))
             }
             IR::AllShortestPaths(relationship_pattern) => {
@@ -1231,126 +1459,85 @@ impl<'a> Runtime<'a> {
                 index_type,
                 entity_type,
                 options,
-            } => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-                let index_options = match options {
-                    Some(expr) => {
-                        let val = {
-                            let this = &self;
-                            let idx = expr.root().idx();
-                            super::eval::ExprEval::from_runtime(this).eval(
-                                expr,
-                                idx,
-                                super::eval::NO_ROW,
-                                None,
-                            )
-                        }?;
-                        match val {
-                            Value::Map(map) => map_to_index_options(index_type, &map)?,
-                            _ => return Err("Index options must be a map".into()),
-                        }
-                    }
-                    None => None,
-                };
-                // Index DDL mutates the shared, non-MVCC index directly (not via
-                // `pending`) and calls host FFI that needs the global lock, so
-                // become a writer first — same contract as `CommitOp`.
-                self.write_escalation().upgrade_to_write()?;
-                self.g.borrow_mut().create_index(
-                    index_type,
-                    entity_type,
-                    label,
-                    attrs,
-                    index_options,
-                )?;
-                self.stats.borrow_mut().indexes_created += attrs.len();
-                Ok(BatchOp::Once(None))
-            }
+            } => super::index_ddl::create_index(
+                self,
+                label,
+                attrs,
+                *index_type,
+                *entity_type,
+                options.as_ref(),
+            ),
             IR::DropIndex {
                 label,
                 attrs,
                 index_type,
                 entity_type,
-            } => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-
-                // See `CreateIndex` above: DDL runs in writer mode.
-                self.write_escalation().upgrade_to_write()?;
-                let dropped =
-                    self.g
-                        .borrow_mut()
-                        .drop_index(index_type, entity_type, label, attrs)?;
-                self.stats.borrow_mut().indexes_dropped += dropped;
-                Ok(BatchOp::Once(None))
-            }
+            } => super::index_ddl::drop_index(self, label, attrs, *index_type, *entity_type),
         }
     }
 
+    /// Narrow the id range `[0, max_node_id]` by every `id(n) <op> expr`
+    /// conjunct the optimizer folded into a seek, or `None` when no id can
+    /// satisfy them all.
+    ///
+    /// The seek must return exactly the rows the `Filter` it replaced would
+    /// keep, so each bound follows Cypher's comparison of an integer id:
+    /// a negative bound is simply below every id (`id(n) > -1` keeps them
+    /// all, `id(n) <= -1` none), a float compares numerically (`id(n) = 1.0`
+    /// is node 1, `id(n) > 1.5` starts at 2), and a null, NaN or
+    /// non-numeric bound never compares true, so no row survives.
     pub fn evaluate_id_filter<R: super::row::RowView + ?Sized>(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
-        let mut min = 0u64;
-        let mut max = self.g.borrow().max_node_id();
+        // Inclusive bounds, widened to i128 so that any `i64` and any finite
+        // float fit; `±inf` saturates, and the `± 1` below saturates with it.
+        // Bound the seek by where the id space ends, not by `max_node_id`,
+        // which is 0 both when id 0 is the only id and when no id was ever
+        // handed out. With an empty id space `max` is 0 here, and the
+        // `node_count() == 0` check below returns no ids.
+        let mut min = 0i128;
+        let mut max = i128::from(self.graph().node_id_bound().saturating_sub(1));
         for (expr, op) in filter {
-            let id = match {
-                let this = &self;
+            let value = {
                 let idx = expr.root().idx();
-                super::eval::ExprEval::from_runtime(this).eval(expr, idx, Some(vars), None)
-            }? {
-                Value::Int(id) => id as u64,
-                _ => {
-                    return Err(String::from("Node ID must be an integer"));
-                }
+                super::eval::ExprEval::from_runtime(self).eval(expr, idx, Some(vars), None)
+            }?;
+            // The smallest id `>=` and the largest id `<=` the bound, so that a
+            // non-integer bound turns every operator into an integer one:
+            // `id > 1.5` is `id >= 2`, `id <= 1.5` is `id <= 1`, and
+            // `id = 1.5` has no solution because `ceil > floor`.
+            let (ceil, floor) = match value {
+                Value::Int(id) => (i128::from(id), i128::from(id)),
+                Value::Float(f) if !f.is_nan() => (first_id_ge(f), last_id_le(f)),
+                _ => return Ok(None),
             };
             match op {
                 ExprIR::Eq => {
-                    if id < min || id > max {
-                        return Ok(None);
-                    }
-                    min = id;
-                    max = id;
+                    min = min.max(ceil);
+                    max = max.min(floor);
                 }
-                ExprIR::Gt => {
-                    if id >= max {
-                        return Ok(None);
-                    }
-                    min = std::cmp::max(min, id + 1);
-                }
-                ExprIR::Ge => {
-                    if id > max {
-                        return Ok(None);
-                    }
-                    min = std::cmp::max(min, id);
-                }
-                ExprIR::Lt => {
-                    if id <= min {
-                        return Ok(None);
-                    }
-                    max = std::cmp::min(max, id - 1);
-                }
-                ExprIR::Le => {
-                    if id < min {
-                        return Ok(None);
-                    }
-                    max = std::cmp::min(max, id);
-                }
+                ExprIR::Gt => min = min.max(floor.saturating_add(1)),
+                ExprIR::Ge => min = min.max(ceil),
+                ExprIR::Lt => max = max.min(ceil.saturating_sub(1)),
+                ExprIR::Le => max = max.min(floor),
                 _ => {
                     unreachable!()
                 }
             }
+            if min > max {
+                return Ok(None);
+            }
         }
+        // No live nodes means nothing to seek, including the case where ids
+        // were handed out before but every node has since been deleted.
+        if self.graph().node_count() == 0 {
+            return Ok(None);
+        }
+        // `0 <= min <= max < node_id_bound`, so both fit in a `u64`.
         let mut result = RoaringTreemap::new();
-        result.insert_range(min..=max);
+        result.insert_range(min as u64..=max as u64);
         Ok(Some(result))
     }
 
@@ -1364,7 +1551,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
         let attr_id = Self::memo_lookup(&self.node_attr_id_memo, key).unwrap_or_else(|| {
-            let attr_id = self.g.borrow_mut().get_or_create_node_attr_id(key);
+            let attr_id = self.graph_mut().get_or_create_node_attr_id(key);
             Self::memo_insert(&self.node_attr_id_memo, key, attr_id);
             attr_id
         });
@@ -1383,7 +1570,7 @@ impl<'a> Runtime<'a> {
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
         let attr_id = Self::memo_lookup(&self.rel_attr_id_memo, key).unwrap_or_else(|| {
-            let attr_id = self.g.borrow_mut().get_or_create_rel_attr_id(key);
+            let attr_id = self.graph_mut().get_or_create_rel_attr_id(key);
             Self::memo_insert(&self.rel_attr_id_memo, key, attr_id);
             attr_id
         });
@@ -1469,7 +1656,7 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        let g = self.g.borrow();
+        let g = self.graph();
         let attr_id = self.node_attr_id(&g, attr)?;
         if let Some(value) = self.pending.borrow().get_node_attribute(id, attr_id) {
             return Some(value.clone());
@@ -1483,7 +1670,7 @@ impl<'a> Runtime<'a> {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        let g = self.g.borrow();
+        let g = self.graph();
         let attr_id = self.rel_attr_id(&g, attr)?;
         if let Some(value) = self
             .pending
@@ -1510,7 +1697,7 @@ impl<'a> Runtime<'a> {
             return None;
         }
         drop(deleted);
-        let g = self.g.borrow();
+        let g = self.graph();
         if let Some(attr_id) = self.rel_attr_id(&g, attr)
             && let Some(value) = self
                 .pending
@@ -1546,7 +1733,7 @@ impl<'a> Runtime<'a> {
         node_ids: &[NodeId],
         attr: &Arc<String>,
     ) -> Vec<Value> {
-        let g = self.g.borrow();
+        let g = self.graph();
         let attr_idx = self.node_attr_id(&g, attr);
 
         let deleted = self.deleted_nodes.borrow();
@@ -1606,7 +1793,7 @@ impl<'a> Runtime<'a> {
         rel_ids: &[RelationshipId],
         attr: &Arc<String>,
     ) -> Vec<Value> {
-        let g = self.g.borrow();
+        let g = self.graph();
         let attr_idx = self.rel_attr_id(&g, attr);
 
         let deleted = self.deleted_relationships.borrow();
@@ -1645,11 +1832,26 @@ impl<'a> Runtime<'a> {
         values
     }
 
+    /// Whether node `id` reads differently through this runtime than from the
+    /// committed graph: it was deleted earlier in the query (answered from the
+    /// snapshot) or has staged label/attribute changes. When it does not, a
+    /// caller can read the committed graph directly and skip building the
+    /// [`Self::get_node_labels`] / [`Self::get_node_attrs`] copies.
+    #[must_use]
+    pub fn node_differs_from_committed(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        let deleted = self.deleted_nodes.borrow();
+        (!deleted.is_empty() && deleted.contains_key(&id))
+            || self.pending.borrow().node_has_changes(id)
+    }
+
     pub fn get_node_labels(
         &self,
         id: NodeId,
     ) -> OrderSet<Arc<String>> {
-        let g = self.g.borrow();
+        let g = self.graph();
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             return dn.labels.iter().map(|l| g.get_label_by_id(*l)).collect();
         }
@@ -1657,6 +1859,71 @@ impl<'a> Runtime<'a> {
         self.pending.borrow().update_node_labels(id, &mut labels);
 
         labels.iter().map(|l| g.get_label_by_id(*l)).collect()
+    }
+
+    /// Whether `id` carries the label named `name` — the whole answer, for
+    /// every node this query can see, without building the node's label set.
+    ///
+    /// This is the single place a label test is decided, and it decides it in
+    /// the same order [`Self::get_node_labels`] does: a node deleted by this
+    /// query answers from the labels captured at the delete, a label this query
+    /// staged answers from the staged state, and everything else is one bit of
+    /// the committed label matrix.
+    ///
+    /// `n:Person` reaches the runtime as a `hasLabels` call, and answering it
+    /// through `get_node_labels` costs two `OrderSet`s and an `Arc<String>`
+    /// clone per stored label, then compares label *names*, for every row. On
+    /// the benchmark graph `MATCH (n) WHERE n:Person RETURN count(n)` spent
+    /// 48.9M instructions over 15k nodes — 3.3k a row — against 22.4M on the C
+    /// engine, while the same scan filtering on a property (`n.id < 5`) costs
+    /// 2.0M. A label test is one bit in the label matrix; this reads that bit.
+    pub fn node_has_label(
+        &self,
+        id: NodeId,
+        name: &str,
+    ) -> bool {
+        // A name the graph has never registered is on no node at all, not even
+        // one this query just created: `CREATE (:L)` registers `L` before it
+        // stages the label. Resolving a known name is a walk over the label
+        // names — a handful of entries, no allocation.
+        let Some(label_id) = self.label_id(name) else {
+            return false;
+        };
+        self.node_has_label_id(id, label_id)
+    }
+
+    /// The registered id for a label name, or `None` when the graph has never
+    /// seen it.
+    ///
+    /// Split out so a caller testing the same label across many rows resolves
+    /// the name once instead of per row — see the `hasLabels` column kernel.
+    #[must_use]
+    pub fn label_id(
+        &self,
+        name: &str,
+    ) -> Option<LabelId> {
+        self.graph().get_label_id(name)
+    }
+
+    /// [`Self::node_has_label`] with the name already resolved.
+    ///
+    /// Same three-way answer in the same order: a node this query deleted
+    /// answers from the labels captured at the delete, a label this query
+    /// staged answers from the staged state, and everything else is one bit of
+    /// the committed label matrix.
+    #[must_use]
+    pub fn node_has_label_id(
+        &self,
+        id: NodeId,
+        label_id: LabelId,
+    ) -> bool {
+        if let Some(deleted) = self.deleted_nodes.borrow().get(&id) {
+            return deleted.labels.contains(&label_id);
+        }
+        self.pending
+            .borrow()
+            .node_has_label(id, label_id)
+            .unwrap_or_else(|| self.graph().node_has_label_id(id, label_id))
     }
 
     pub fn get_node_attrs(
@@ -1671,7 +1938,7 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let mut actual = OrderMap::from_unique_keys(g.get_node_all_attrs(id));
         self.pending.borrow().update_node_attrs(id, &mut actual, &g);
         actual
@@ -1689,7 +1956,7 @@ impl<'a> Runtime<'a> {
                 .collect();
             return attrs;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let mut actual = OrderMap::from_unique_keys(g.get_relationship_all_attrs(id));
         self.pending
             .borrow()
@@ -1707,7 +1974,7 @@ impl<'a> Runtime<'a> {
         if let Some(endpoints) = self.pending.borrow().get_created_relationship_endpoints(id) {
             return endpoints;
         }
-        self.g.borrow().get_relationship_endpoints(id)
+        self.graph().get_relationship_endpoints(id)
     }
 
     pub fn get_relationship_type(
@@ -1720,7 +1987,7 @@ impl<'a> Runtime<'a> {
         if let Some(type_name) = self.pending.borrow().get_relationship_type(id) {
             return Some(type_name);
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         g.get_type(g.get_relationship_type_id(id))
     }
 
@@ -1733,7 +2000,7 @@ impl<'a> Runtime<'a> {
         {
             return 0;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let base = g.get_node_indegree(id);
         let pending = self.pending.borrow();
         let added = pending.pending_indegree(id, &[]);
@@ -1751,7 +2018,7 @@ impl<'a> Runtime<'a> {
         {
             return 0;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let base = g.get_node_indegree_by_type(id, types);
         let pending = self.pending.borrow();
         let added = pending.pending_indegree(id, types);
@@ -1768,7 +2035,7 @@ impl<'a> Runtime<'a> {
         {
             return 0;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let base = g.get_node_outdegree(id);
         let pending = self.pending.borrow();
         let added = pending.pending_outdegree(id, &[]);
@@ -1786,7 +2053,7 @@ impl<'a> Runtime<'a> {
         {
             return 0;
         }
-        let g = self.g.borrow();
+        let g = self.graph();
         let base = g.get_node_outdegree_by_type(id, types);
         let pending = self.pending.borrow();
         let added = pending.pending_outdegree(id, types);
@@ -1795,7 +2062,13 @@ impl<'a> Runtime<'a> {
     }
 }
 
-fn map_to_index_options(
+/// Convert a Cypher `OPTIONS {...}` map into typed index options.
+///
+/// Public because the v3 effects apply path needs it too: v3 carries the
+/// options map on the wire (v2 dropped it), and the replica has to turn it back
+/// into the same `IndexOptions` the master built, not a re-derived
+/// approximation.
+pub fn map_to_index_options(
     index_type: &IndexType,
     kv_map: &OrderMap<Arc<String>, Value>,
 ) -> Result<Option<IndexOptions>, String> {
@@ -1806,6 +2079,18 @@ fn map_to_index_options(
     };
     match index_type {
         IndexType::Fulltext => {
+            // Reject keys this engine does not know, as C does: a misspelt
+            // option would otherwise be silently ignored.
+            const FULLTEXT_OPTIONS: [&str; 5] =
+                ["weight", "nostem", "phonetic", "language", "stopwords"];
+            if let Some((key, _)) = kv_map
+                .iter()
+                .find(|(k, _)| !FULLTEXT_OPTIONS.contains(&k.as_str()))
+            {
+                return Err(format!(
+                    "Invalid fulltext index configuration: unknown option '{key}'"
+                ));
+            }
             let weight = match get("weight") {
                 Some(Value::Float(f)) => Some(*f),
                 Some(Value::Int(i)) => Some(*i as f64),
@@ -1822,11 +2107,19 @@ fn map_to_index_options(
             // sets only RediSearch's default phonetic flag, which maps
             // to Double Metaphone English — other algorithm codes
             // (dm:fr / dm:pt / dm:es) aren't wired up here.
+            // Stored as the algorithm code, but the accepted set is unchanged:
+            // a bool for on/off, or the one code this engine implements. C can
+            // send `dm:fr` and the wire can carry it — that is refused when it
+            // is applied, not when it is parsed here.
             let phonetic = match get("phonetic") {
-                Some(Value::Bool(b)) => Some(*b),
+                Some(Value::Bool(b)) => Some(if *b {
+                    "dm:en".to_owned()
+                } else {
+                    String::new()
+                }),
                 Some(Value::String(s)) => {
                     if s.eq_ignore_ascii_case("dm:en") {
-                        Some(true)
+                        Some("dm:en".to_owned())
                     } else {
                         return Err(format!(
                             "Unsupported phonetic algorithm '{s}'; only 'dm:en' is supported"
@@ -1873,24 +2166,45 @@ fn map_to_index_options(
                     if *n < 0 {
                         return Err("Invalid vector index configuration: dimension must be a non-negative integer".into());
                     }
-                    *n as u32
+                    *n as u64
                 }
-                None => 0,
+                // Required, as in C: without it no vector can be indexed.
+                None => {
+                    return Err("Invalid vector index configuration: dimension is required".into());
+                }
                 _ => {
                     return Err(
                         "Invalid vector index configuration: dimension must be an integer".into(),
                     );
                 }
             };
-            let similarity_function =
-                match get("similarityFunction") {
-                    Some(Value::String(s)) => Some(s.to_string()),
-                    None => None,
-                    _ => return Err(
+            // Required and case-insensitive, as in C (`strcasecmp`); stored
+            // lowercase, the form the rest of the engine matches on. An
+            // unknown name is refused here, whatever the dimension: the index
+            // build only reads it once the dimension is non-zero. `ip` is a
+            // Rust extension; C knows only euclidean and cosine.
+            let similarity_function = match get("similarityFunction") {
+                Some(Value::String(s)) => {
+                    let lower = s.to_ascii_lowercase();
+                    if !matches!(lower.as_str(), "euclidean" | "cosine" | "ip") {
+                        return Err(format!(
+                            "Invalid vector index configuration: unknown similarityFunction '{s}', expected 'euclidean', 'cosine' or 'ip'"
+                        ));
+                    }
+                    Some(lower)
+                }
+                None => {
+                    return Err(
+                        "Invalid vector index configuration: similarityFunction is required".into(),
+                    );
+                }
+                _ => {
+                    return Err(
                         "Invalid vector index configuration: similarityFunction must be a string"
                             .into(),
-                    ),
-                };
+                    );
+                }
+            };
             let m = match get("M") {
                 Some(Value::Int(n)) if *n < 0 => {
                     return Err(
@@ -1935,5 +2249,27 @@ fn map_to_index_options(
                 ef_runtime,
             })))
         }
+    }
+}
+
+#[cfg(test)]
+mod id_bound_tests {
+    use super::{first_id_ge, last_id_le};
+
+    #[test]
+    fn float_bounds_follow_the_f64_cast_of_the_id() {
+        // Below 2^53 the cast is exact: plain ceil / floor.
+        assert_eq!((first_id_ge(1.5), last_id_le(1.5)), (2, 1));
+        assert_eq!((first_id_ge(-1.5), last_id_le(-1.5)), (-1, -2));
+        assert_eq!((first_id_ge(3.0), last_id_le(3.0)), (3, 3));
+        // 2^53 + 1 rounds to 2^53 (ties to even), so both ids equal 2^53.0.
+        let b = 9_007_199_254_740_992_i128;
+        assert_eq!((first_id_ge(b as f64), last_id_le(b as f64)), (b, b + 1));
+        assert_ne!((b - 1) as f64, b as f64);
+        // Infinities saturate past every id.
+        assert_eq!(first_id_ge(f64::INFINITY), i128::from(i64::MAX) + 1);
+        assert_eq!(last_id_le(f64::INFINITY), i128::from(i64::MAX));
+        assert_eq!(first_id_ge(f64::NEG_INFINITY), i128::from(i64::MIN));
+        assert_eq!(last_id_le(f64::NEG_INFINITY), i128::from(i64::MIN) - 1);
     }
 }

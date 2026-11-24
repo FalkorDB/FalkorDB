@@ -1,0 +1,16 @@
+name = "falkor-replication"
+defaultTargets = ["FalkorReplication"]
+
+[[lean_lib]]
+name = "FalkorReplication"
+globs = ["FalkorReplication", "FalkorReplication.IdLink"]
+
+# effects_emit_apply's memo loop (`FalkorEA.memoGroup`) is imported, not copied.
+[[require]]
+name = "falkor-effects-emit-apply"
+path = "../effects_emit_apply"
+
+# `IdLink` discharges the `IdSpace::release` count premise with id_space's `release_no_underflow`.
+[[require]]
+name = "falkor-id-space"
+path = "../id_space"
