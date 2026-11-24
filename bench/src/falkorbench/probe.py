@@ -33,11 +33,19 @@ For each shape, the ratio candidate p50 / baseline p50 at every size, and
     growth_ratio = ratio at the largest size / ratio at the smallest size
 
 which equals the candidate's own slowdown from the smallest to the largest
-graph divided by the baseline's. Above `THRESHOLD` the shape is re-measured at
-the smallest and largest size with the order swapped, and it is a regression
-only when the re-run alone crosses again (else `info`). Below 1 / `THRESHOLD` it is an
-improvement. A constant-factor change (the candidate 2x slower at every size)
-does not move the growth ratio; the micro tier is where that shows.
+graph divided by the baseline's, and
+
+    excess = candidate p50 at the largest size
+             - baseline p50 there x the ratio at the smallest size
+
+the milliseconds per request the candidate adds at the largest size beyond
+what its ratio at the smallest size predicts. A shape crosses when the growth
+ratio is above `THRESHOLD` and the excess above `EXCESS_FLOOR_MS`. It is then
+re-measured at the smallest and largest size with the order swapped, and it
+is a regression only when the re-run alone crosses again (else `info`).
+Mirrored, below 1 / `THRESHOLD` and `-EXCESS_FLOOR_MS`, it is an improvement.
+A constant-factor change (the candidate 2x slower at every size) does not
+move the growth ratio; the micro tier is where that shows.
 
 Correctness needs no re-run: a shape that errors, times out or loses its
 server on the candidate while the baseline answers is a `completed`
@@ -76,6 +84,7 @@ from datetime import UTC
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from typing import NamedTuple
 
 CHECK = "size-probe"
 SIDES = ("candidate", "baseline")
@@ -86,6 +95,18 @@ SIZES = (10_000, 100_000, 500_000)
 # A shape crosses when its growth ratio passes this, or improves below its
 # inverse. 6.2.0's regression grows by an order of magnitude over this span.
 THRESHOLD = 1.5
+
+# ...and when the candidate adds more than this many milliseconds per request
+# at the largest size beyond what its ratio at the smallest size predicts (or,
+# for an improvement, saves more). The controls are 0.1-0.4 ms requests whose
+# wall clock is bimodal, so a ratio of four such medians swings: in the
+# workflow's proof run (45388515425) a same-image `create node` read 1.66x at
+# +0.12 ms. There, every same-image cell's excess lay in -0.54..+0.47 ms and
+# every regressed shape's in +67.6..+77.0 ms. 1.0 ms is about 1.9x the
+# same-image spread and about 67x below the real regressions. The limit: a
+# shape whose per-request cost grows by under 1 ms from 10k to 500k nodes is
+# not flagged (a 0.2 ms lookup reaching 1.0 ms, say).
+EXCESS_FLOOR_MS = 1.0
 
 # A block stops early once it has run this long, but never below MIN_REPS.
 MIN_REPS = 5
@@ -683,19 +704,27 @@ def ratio(cand: float | None, base: float | None) -> float | None:
     return cand / base
 
 
-def growth(small: Cell, large: Cell) -> tuple[float, float, float] | None:
-    """(candidate growth, baseline growth, growth ratio) between two cells."""
+class Growth(NamedTuple):
+    """How a shape's cost changes from the smallest to the largest graph."""
+
+    candidate: float  # the candidate's own p50 at the largest size / at the smallest
+    baseline: float  # the same for the baseline
+    ratio: float  # candidate / baseline: the growth ratio
+    excess_ms: float  # what the candidate adds at the largest size beyond its small ratio
+
+
+def growth(small: Cell, large: Cell) -> Growth | None:
     cs, cl = p50(small.runs["candidate"].wall), p50(large.runs["candidate"].wall)
     bs, bl = p50(small.runs["baseline"].wall), p50(large.runs["baseline"].wall)
     if not (cs and cl and bs and bl):
         return None
-    return cl / cs, bl / bs, (cl / bl) / (cs / bs)
+    return Growth(cl / cs, bl / bs, (cl / bl) / (cs / bs), cl - bl * cs / bs)
 
 
-def crosses(g: float) -> str | None:
-    if g > THRESHOLD:
+def crosses(g: Growth) -> str | None:
+    if g.ratio > THRESHOLD and g.excess_ms > EXCESS_FLOOR_MS:
         return "regression"
-    if g < 1 / THRESHOLD:
+    if g.ratio < 1 / THRESHOLD and g.excess_ms < -EXCESS_FLOOR_MS:
         return "improvement"
     return None
 
@@ -735,8 +764,8 @@ def finding(
 class ShapeResult:
     shape: str
     status: str | None = None  # of the growth finding: regression/improvement/ok/info
-    growth: tuple[float, float, float] | None = None
-    confirm_growth: float | None = None
+    growth: Growth | None = None
+    confirm: Growth | None = None
 
 
 @dataclass
@@ -861,13 +890,13 @@ def assess(
         res.growth = growth(lo, hi) if measured(lo) and measured(hi) else None
         if res.growth is None:
             continue
-        cand_g, base_g, g = res.growth
-        res.status = crosses(g) or "ok"
+        cand_g, base_g, g, _ = res.growth
+        res.status = crosses(res.growth) or "ok"
         if res.status == "regression":
             clo, chi = confirm.get((shape.name, small)), confirm.get((shape.name, large))
             again = growth(clo, chi) if measured(clo) and measured(chi) else None
-            res.confirm_growth = again[2] if again else None
-            if again is None or again[2] <= THRESHOLD:
+            res.confirm = again
+            if again is None or crosses(again) != "regression":
                 res.status = "info"
             if again is None and not rerun_failed:
                 errors.append(
@@ -950,26 +979,32 @@ def summarize(
             f"{len(correctness)} correctness finding(s), first {first['name']} ({first['metric']})"
         )
     if regressed:
-        worst = max(regressed, key=lambda s: s.growth[2])
+        worst = max(regressed, key=lambda s: s.growth.ratio)
         parts.append(
             f"{len(regressed)} shape(s) slow down with graph size on the candidate, worst "
-            f"{worst.shape}: its candidate/baseline ratio grows {worst.growth[2]:.2f}x from "
-            f"{span} (re-run {worst.confirm_growth:.2f}x)"
+            f"{worst.shape}: its candidate/baseline ratio grows {worst.growth.ratio:.2f}x from "
+            f"{span}, {worst.growth.excess_ms:+.1f} ms per request (re-run "
+            f"{worst.confirm.ratio:.2f}x, {worst.confirm.excess_ms:+.1f} ms)"
         )
     if verdict == "pass" and settled:
-        worst = max(settled, key=lambda s: s.growth[2])
+        worst = max(settled, key=lambda s: s.growth.ratio)
         parts.append(
-            f"no shape's candidate/baseline ratio grew more than {THRESHOLD}x from {span} "
-            f"({len(settled)} shapes, highest {worst.shape} {worst.growth[2]:.2f}x)"
+            f"no shape slowed down with graph size on the candidate (growth over {THRESHOLD}x "
+            f"and over {EXCESS_FLOOR_MS:g} ms per request from {span}; {len(settled)} shapes, "
+            f"highest growth {worst.shape} {worst.growth.ratio:.2f}x at "
+            f"{worst.growth.excess_ms:+.2f} ms)"
         )
     if improved:
-        best = min(improved, key=lambda s: s.growth[2])
+        best = min(improved, key=lambda s: s.growth.ratio)
         parts.append(
-            f"{len(improved)} shape(s) improved with size, best {best.shape} {best.growth[2]:.3f}x"
+            f"{len(improved)} shape(s) improved with size, best {best.shape} "
+            f"{best.growth.ratio:.3f}x, {best.growth.excess_ms:+.1f} ms"
         )
     for s in unconfirmed:
-        again = f"{s.confirm_growth:.2f}x" if s.confirm_growth is not None else "not measured"
-        parts.append(f"{s.shape} crossed once ({s.growth[2]:.2f}x) but not on the re-run ({again})")
+        again = f"{s.confirm.ratio:.2f}x" if s.confirm is not None else "not measured"
+        parts.append(
+            f"{s.shape} crossed once ({s.growth.ratio:.2f}x) but not on the re-run ({again})"
+        )
     if assessment.unsupported:
         parts.append(f"left out, the baseline cannot run them: {_names(assessment.unsupported)}")
     if assessment.both_broken:
@@ -1042,6 +1077,32 @@ def write_summary(path: Path, cells: Iterable[Cell]) -> None:
                     "" if mismatch is None else f"request {mismatch[0]}: {mismatch[1]} vs {mismatch[2]}",
                 ]
             )  # fmt: skip
+
+
+def write_growth(
+    path: Path,
+    screen: dict[tuple[str, int], Cell],
+    confirm: dict[tuple[str, int], Cell],
+    sizes: Sequence[int],
+) -> None:
+    """Per shape and phase: the two growths, the growth ratio and the excess
+    that the crossing rule reads, so a reader need not recompute them."""
+    with path.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(
+            ["phase", "shape", "candidate_growth", "baseline_growth", "growth_ratio",
+             "excess_ms", "crosses"]
+        )  # fmt: skip
+        for phase, table in (("screen", screen), ("confirm", confirm)):
+            for shape in SHAPES:
+                lo = table.get((shape.name, sizes[0]))
+                hi = table.get((shape.name, sizes[-1]))
+                g = growth(lo, hi) if measured(lo) and measured(hi) else None
+                if g is not None:
+                    w.writerow(
+                        [phase, shape.name, f"{g.candidate:.4f}", f"{g.baseline:.4f}",
+                         f"{g.ratio:.4f}", f"{g.excess_ms:.4f}", crosses(g) or ""]
+                    )  # fmt: skip
 
 
 # --- the run -----------------------------------------------------------------
@@ -1151,7 +1212,7 @@ def run(
     screen: dict[tuple[str, int], Cell] = {}
     confirm: dict[tuple[str, int], Cell] = {}
     servers: dict[str, Server] = {}
-    artifacts = ["raw/rows.csv", "raw/summary.csv", "raw/setup.csv"]
+    artifacts = ["raw/rows.csv", "raw/summary.csv", "raw/growth.csv", "raw/setup.csv"]
 
     for side, image in images.items():
         if not DIGEST_RE.fullmatch(image):
@@ -1336,7 +1397,7 @@ def run(
             for shape in SHAPES:
                 lo, hi = screen.get((shape.name, sizes[0])), screen.get((shape.name, sizes[-1]))
                 g = growth(lo, hi) if measured(lo) and measured(hi) else None
-                if g is not None and crosses(g[2]) == "regression":
+                if g is not None and crosses(g) == "regression":
                     crossed.append(shape)
             if crossed:
                 ends = (sizes[0], sizes[-1])  # the two sizes the growth ratio reads
@@ -1363,8 +1424,9 @@ def run(
         setup_fh.close()
         try:
             write_summary(raw / "summary.csv", [*screen.values(), *confirm.values()])
+            write_growth(raw / "growth.csv", screen, confirm, sizes)
         except OSError as e:
-            errors.append(f"could not write raw/summary.csv: {e}")
+            errors.append(f"could not write raw/summary.csv or raw/growth.csv: {e}")
         # The verdict goes down before the Docker cleanup, which can be slow
         # exactly when the run was stopped for being slow; the KILL comes 60 s
         # after the TERM. It is written again below, with the server logs.

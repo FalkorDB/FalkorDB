@@ -168,9 +168,56 @@ def test_unwind_shapes_are_micros_3963_rows():
 def test_growth_is_ratio_at_largest_over_ratio_at_smallest():
     small = cell(UNWIND_ID_1, 10_000, 2.0, 0.5)  # ratio 4
     large = cell(UNWIND_ID_1, 500_000, 40.0, 0.5)  # ratio 80
-    cand_g, base_g, g = probe.growth(small, large)
-    assert (cand_g, base_g) == (20.0, 1.0)
-    assert g == pytest.approx(20.0)
+    g = probe.growth(small, large)
+    assert (g.candidate, g.baseline) == (20.0, 1.0)
+    assert g.ratio == pytest.approx(20.0)
+    # At 500k the candidate takes 40 ms where its 10k ratio predicts 0.5 x 4 = 2.
+    assert g.excess_ms == pytest.approx(38.0)
+
+
+def floor_grid(excess_ms, faster=False):
+    """`create node` at 1 ms everywhere, except at 500k, where the candidate
+    is `excess_ms` slower (or, `faster`, the baseline is): a growth ratio of
+    1 + excess_ms (or its inverse), always past THRESHOLD here, so only the
+    excess floor decides."""
+
+    def latency(shape, size):
+        if shape != "create node" or size != SIZES[-1]:
+            return 1.0, 1.0
+        return (1.0, 1.0 + excess_ms) if faster else (1.0 + excess_ms, 1.0)
+
+    return grid(latency)
+
+
+@pytest.mark.parametrize(("excess", "crosses"), [(0.9, False), (1.1, True)])
+def test_a_growth_needs_more_than_the_excess_floor(excess, crosses):
+    assert probe.EXCESS_FLOOR_MS == 1.0
+    res = result(floor_grid(excess), floor_grid(excess) if crosses else None)
+    (row,) = [f for f in res["findings"] if f["name"] == "create node"]
+    assert row["ratio"] == pytest.approx(1 + excess) and row["ratio"] > probe.THRESHOLD
+    assert row["status"] == ("regression" if crosses else "ok")
+    assert res["verdict"] == ("regression" if crosses else "pass")
+
+
+@pytest.mark.parametrize(("saved", "improves"), [(0.9, False), (1.1, True)])
+def test_an_improvement_needs_more_than_the_excess_floor(saved, improves):
+    res = result(floor_grid(saved, faster=True))
+    (row,) = [f for f in res["findings"] if f["name"] == "create node"]
+    assert row["ratio"] < 1 / probe.THRESHOLD
+    assert row["status"] == ("improvement" if improves else "ok")
+    assert res["verdict"] == "pass"
+
+
+def test_the_re_run_must_clear_the_floor_too():
+    res = result(floor_grid(1.1), floor_grid(0.9))  # re-run: growth 1.9x, only +0.9 ms
+    (row,) = [f for f in res["findings"] if f["name"] == "create node"]
+    assert row["status"] == "info" and res["verdict"] == "pass"
+
+
+def test_readme_states_the_floor_the_code_uses():
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    assert f"`EXCESS_FLOOR_MS` = {probe.EXCESS_FLOOR_MS:g} ms" in readme
+    assert f"`THRESHOLD` = {probe.THRESHOLD:g}" in readme
 
 
 def test_flat_a_a_passes_with_no_loud_finding():
@@ -178,7 +225,7 @@ def test_flat_a_a_passes_with_no_loud_finding():
     assert res["verdict"] == "pass" and res["error"] is None and not res["confirmed"]
     assert all(f["status"] == "ok" for f in res["findings"])
     assert {f["metric"] for f in res["findings"]} == {"growth_ratio"}
-    assert "no shape's candidate/baseline ratio grew" in res["summary"]
+    assert "no shape slowed down with graph size on the candidate" in res["summary"]
 
 
 def test_constant_factor_slowdown_does_not_cross():
@@ -209,9 +256,8 @@ def test_crossing_not_repeated_by_the_rerun_is_info():
     assert growth_rows[0]["status"] == "info"
     assert f"{UNWIND_ID_1} crossed once (50.00x) but not on the re-run (1.00x)" in res["summary"]
     # "highest" reads the shapes that settled, not the one that crossed once.
-    assert (
-        "highest" in res["summary"] and "highest UNWIND id MATCH edge 1 row" not in res["summary"]
-    )
+    assert "highest growth" in res["summary"]
+    assert "highest growth UNWIND id MATCH edge 1 row" not in res["summary"]
 
 
 def test_crossing_the_rerun_could_not_measure_is_an_error():
@@ -634,6 +680,7 @@ def test_end_to_end_same_image_passes_and_cleans_up(tmp_path, fake_docker):
     assert set(res["artifacts"]) == {
         "raw/rows.csv",
         "raw/summary.csv",
+        "raw/growth.csv",
         "raw/setup.csv",
         "raw/docker-stats-before.txt",
         "raw/plans.txt",

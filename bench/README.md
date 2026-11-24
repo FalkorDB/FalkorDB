@@ -187,13 +187,22 @@ other unit. Both sides get the same parameters, request for request. A latency
 is the client's wall clock around one request on a plain socket, never re-sent
 (the server's own execution time is kept beside it).
 
-**What it decides.** Per shape, `growth_ratio` = (candidate p50 / baseline
-p50 at 500k) ÷ (the same at 10k): how much more the candidate slows down from
-10k to 500k nodes than the baseline does. Above 1.5 the shape is re-measured at
-10k and 500k with the order swapped, and is a `regression` only when the re-run
-crosses again; below 1/1.5 it is an `improvement`. The per-size ratios are
-`info` findings for the crossed shapes (whole triples, worst first, within the
-contract's ten), and every number is in `raw/summary.csv`. A candidate that
+**What it decides.** Per shape:
+
+- `growth_ratio` = (candidate p50 / baseline p50 at 500k) ÷ (the same at 10k):
+  how much more the candidate slows down from 10k to 500k nodes than the
+  baseline does;
+- the excess = candidate p50 at 500k − baseline p50 at 500k × the ratio at
+  10k: the milliseconds per request the candidate adds at 500k beyond what its
+  10k ratio predicts.
+
+A shape crosses when the growth ratio is above `THRESHOLD` = 1.5 **and** the
+excess above `EXCESS_FLOOR_MS` = 1 ms. It is then re-measured at 10k and 500k
+with the order swapped, and is a `regression` only when the re-run crosses
+again. Below 1/1.5 with the excess below −1 ms it is an `improvement`. The
+per-size ratios are `info` findings for the crossed shapes (whole triples,
+worst first, within the contract's ten). Every number is in `raw/summary.csv`
+(per unit) and `raw/growth.csv` (per shape: growths, ratio, excess). A candidate that
 errors, times out (120 s) or loses its server on a shape the baseline runs is
 a `completed` regression at once; a request whose rows or relationships
 created differ between the sides is a `rows` mismatch. A shape both sides fail
@@ -205,9 +214,16 @@ compared is never a pass. So is Docker refusing to start either container.
 
 Wall clock is the measure here (the VM has no PMU access), which is acceptable
 because the signal is a large ratio of medians from the same machine and run.
-**Its limit:** a constant-factor change (the candidate 2x slower at every
+**Its limits:** a constant-factor change (the candidate 2x slower at every
 size) leaves the growth ratio at 1 and is not this check's to find; the micro
-tier measures it.
+tier measures it. And a shape whose per-request cost grows by under 1 ms from
+10k to 500k nodes is not flagged (a 0.2 ms lookup reaching 1.0 ms, say). The
+floor is there because the controls are 0.1-0.4 ms requests whose wall clock
+is bimodal, so a ratio of four such medians swings: in the workflow's proof
+run a same-image `create node` read 1.66x at only +0.12 ms. In that run every
+same-image cell's excess lay within −0.54 to +0.47 ms, and every regressed
+shape's within +67.6 to +77.0 ms; 1 ms is about 1.9x the first and 67x below
+the second.
 
 `--mode` changes only how long each unit runs; sizes and shapes are the same:
 
@@ -228,20 +244,18 @@ at most one 120 s request and a 120 s wait for the graph), and the result says
 at least 110 when phase 3 runs it. `--sizes` and `--reps` exist for
 development only.
 
-Measured on an n4-standard-16 (`nightly`, 2026-11-24, two rounds on one VM),
-a whole run took 1-3 minutes plus the image pulls:
+Measured on n4-standard-16 VMs (`nightly`, 2026-11-24): two runs on one
+hand-made VM and one through `_perf-vm.yml` (run 45388515425, one VM per
+pair). A whole run took 1-3 minutes plus the image pulls:
 
-| candidate vs baseline | verdict, both rounds | UNWIND shapes' growth ratio |
-|---|---|---|
-| 6.2.0 vs 6.0.4 | regression, all four confirmed by the re-run | 6.16x-9.77x |
-| main@4c1088949 vs 6.2.0 | pass, four improvements | 0.135x-0.176x |
-| main@4c1088949 vs itself | pass | all six shapes 0.880x-1.082x |
-| C v4.22.4 vs itself | pass | all six shapes 0.906x-1.061x |
+| candidate vs baseline | verdict, every run | UNWIND shapes' growth ratio, every run | controls' growth ratio, workflow run |
+|---|---|---|---|
+| 6.2.0 vs 6.0.4 | regression, all four confirmed by the re-run | 5.89x-9.77x | 0.94x, 1.13x |
+| main@4c1088949 vs 6.2.0 | pass, four improvements | 0.125x-0.176x | 0.72x, 1.00x |
+| main@4c1088949 vs itself | pass | 0.959x-1.082x | 0.80x, 1.66x (+0.12 ms; re-run 0.97x) |
+| C v4.22.4 vs itself | pass | 0.951x-1.050x | 1.21x, 1.33x |
 
-The same-image runs moved no growth ratio further than 1.14x (1/0.880) from 1,
-against the 1.5 threshold.
-
-Artifacts: `raw/rows.csv` (every request), `raw/summary.csv` (per unit:
+Artifacts: `raw/rows.csv` (every request), `raw/growth.csv` (per shape), `raw/summary.csv` (per unit:
 p50, p95, ratio, failures), `raw/setup.csv` (build times), `raw/plans.txt`
 (`GRAPH.EXPLAIN` of every shape on both sides at 500k nodes), and each
 server's log. Tests: `bench/tests/test_probe.py`, no server needed. They
