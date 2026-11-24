@@ -32,7 +32,7 @@ Every variable id is minted as the **current size of its scope table**. The bind
 **3. Does a `WITH`/`RETURN` scope contain exactly its aliases?**
 
 - **Without ORDER BY, yes.** `projectItems_keys` proves a projection scope starts with exactly its aliases, in order; `with_plain` and `where_copy_removed` check the common cases.
-- **With ORDER BY, no.** In `MATCH (n) WITH n.v AS k ORDER BY n.v RETURN n`, the ORDER BY copy of `n` survives into the next clause, so the query is accepted and `RETURN *` returns `k, n` (`orderBy_leaks`). openCypher and C give the scope `[k]`.
+- **With ORDER BY, no.** In `MATCH (n) WITH n.v AS k ORDER BY n.w RETURN n`, the ORDER BY copy of `n` survives into the next clause, so the query is accepted and `RETURN *` returns `k, n` (`orderBy_leaks`, `orderBy_unprojected_leaks`). openCypher and C give the scope `[k]`. Since #3011 a key equal to a projection (`ORDER BY n.v`) is rewritten to its alias and makes no copy (`orderBy_projected_no_leak`).
 
 **4. Do consecutive clauses bind in order?**
 
@@ -69,6 +69,8 @@ openCypher binds a pattern left to right, clause by clause.
 | `nodeToValue_sound`, `foldCall_sound` | Constant folding gives the same value as evaluation | `Fold.lean` |
 | `exprIrEq_exact`, `exprIrEq_exact_any_kind` | `expr_ir_eq` is exact on expressions it can compare by value; constants of different kinds never match | `AggEq.lean` |
 | `order_by_float_rejected`, `order_by_float_equal` | `ORDER BY max(n.v % 4.0)` does not match `max(n.v % 3)`; `% 3.0` still does | `AggEq.lean` |
+| `matchItem_spec`, `matchRw_spec`, `replaceProjected_id` | Every ORDER BY rewrite to an alias is justified by structural equality (with `same_type` outside aggregates); with nothing to match, ORDER BY is unchanged | `AggEq.lean` |
+| `order_by_shadowed_kept`, `order_by_div_float_kept`, `order_by_local_kept` | A shadowed alias, `2` vs `2.0`, and a comprehension body are not rewritten | `AggEq.lean` |
 | `importProj_spec`, `entry_ids_below`, `body_import_value` | A `CALL {}` body's entry projection imports exactly the listed variables, below the body's own ids | `CallBoundary.lean` |
 
 ### How `mint_fresh_iff` and the covering lemmas fit together
@@ -116,7 +118,7 @@ There are no CONDITIONAL rows in this project.
 | `BindIR.lean` | Per-clause rules of `bind_ir` (`RC`, `bindIR`): shortestPath, MERGE, YIELD, `CALL {}` subqueries, CREATE |
 | `Types.lean` | `mayBool`, `mayEntity`, `validate` |
 | `Fold.lean` | Constant folding (`nodeToValue`, `foldCall`), struct-constructor and regex rewrites |
-| `AggEq.lean` | `expr_ir_eq` (`exprIrEq`), structural equality, `replaceAgg` |
+| `AggEq.lean` | `expr_ir_eq` (`exprIrEq`), structural equality, `replaceProjected` (`replace_projected_subtrees`, `is_alias_rewritable`) |
 | `CallBoundary.lean` | The `CALL {}` entry projection (namespace `Pr2845`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -128,7 +130,7 @@ The project has no Lake dependencies.
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 44 |
+| PROVEN | 63 |
 
 Every function in `binder.rs` (and `Planner::fresh_var`) is PROVEN. "PROVEN" here means the function's model has theorems stating what it does; for the functions involved in the bugs above, those theorems include the counterexamples.
 
@@ -139,7 +141,7 @@ Every function in `binder.rs` (and `Planner::fresh_var`) is PROVEN. "PROVEN" her
 - `date({year:2020, month:null})`, `duration({days:null})`, `localtime({hour:null})`: Rust treats a null field as absent, C errors. Not caused by `rewrite_struct_constructor` (the map path agrees).
 - Rust follows openCypher and C does not: `MATCH p=(a)-->(b) MATCH (p)` rejected; `reduce(a = 0, a IN …)` rejected; `RETURN [(n)-->(m)|m], m` rejected; within one MATCH `(a)-[r]->(), (a)-[s]->()` enforces r≠s.
 - Both accept what openCypher rejects: `WITH 1 AS a MATCH (a)` (`ensureType_accepts_any_binding`), `WITH n.v AS k WHERE n.v > 0`.
-- #3011 (not in `256ab4d3f`) generalises `replace_agg_subtrees` to `replace_projected_subtrees`, guarded by `is_alias_rewritable`, which admits `Constant(Bool|Int|Float|String)`; `expr_ir_eq` compares constants by value and kind (`const_kinds_distinguished`).
+- #3011 (not in `256ab4d3f`) generalises `replace_agg_subtrees` to `replace_projected_subtrees`, guarded by `is_alias_rewritable`, which admits `Constant(Null|Bool|Int|Float|String)`; outside aggregates constants must also have the same type (`same_type_int_float_rejected`). The aggregate ORDER BY slot is now `ExprIR::AggOrderByPlaceholder`, bound as an unnamed variable (`bindNode_aggSlot`).
 
 ## What the model does not cover
 

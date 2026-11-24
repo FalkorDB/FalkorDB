@@ -92,6 +92,8 @@ inductive EOp
   | case_ (subject : Bool) | quant (q : Nat) (v : Nat) | listComp (v : Nat)
   | reduce (acc it : Nat) | patComp | shortest (types : List Nat) (mn : Nat) (mx : Option Nat) (directed : Bool)
   | pattern | other (n : Nat)
+  /-- `ExprIR::AggOrderByPlaceholder` (ast.rs, #3011): the slot appended to every aggregate call -/
+  | aggSlot
   deriving DecidableEq, Repr
 
 inductive ET
@@ -134,7 +136,7 @@ theorem aggName_sound : ∀ t : ET, (aggName t).isSome → HasAgg t
   | .node .map cs, h | .node .paren cs, h | .node .distinct cs, h
   | .node (.case_ _) cs, h | .node (.quant _ _) cs, h | .node (.listComp _) cs, h
   | .node (.reduce _ _) cs, h | .node .patComp cs, h | .node (.shortest _ _ _ _) cs, h
-  | .node .pattern cs, h
+  | .node .pattern cs, h | .node .aggSlot cs, h
   | .node (.other _) cs, h => .inner _ cs (aggNameL_sound cs (by simpa [aggName] using h))
 theorem aggNameL_sound : ∀ cs : List ET, (aggNameL cs).isSome → HasAggL cs
   | [], h => by simp [aggNameL] at h

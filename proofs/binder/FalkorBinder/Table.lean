@@ -231,6 +231,22 @@ theorem pushUnnamed_covers {e : Env} (h : e.Covers) (k : Nat) (t : Ty) (s : Nat)
   · have := h i hi; omega
   · simp [freshAnon] at hi; omega
 
+/-- The variable `bind_expr_node` mints for `ExprIR::AggOrderByPlaceholder` (binder.rs, #3011):
+`fresh_var(None, Type::Any, scope)`, no name and no parser number. -/
+def freshSlot (e : Env) (scope : Nat) : Var :=
+  { name := none, id := e.length, scope, ty := .any }
+
+/-- Pushing the aggregate order-by slot keeps the table covering. -/
+theorem pushUnnamed_slot_covers {e : Env} (h : e.Covers) (s : Nat) :
+    (e.pushUnnamed (freshSlot e s)).Covers := by
+  intro i hi
+  simp only [Env.pushUnnamed, Env.ids, List.map_append, List.mem_append, List.map_cons,
+    List.map_nil, List.mem_singleton] at hi
+  simp only [Env.pushUnnamed, List.length_append, List.length_singleton]
+  rcases hi with hi | hi
+  · have := h i hi; omega
+  · simp [freshSlot] at hi; omega
+
 theorem Env.insert_new_eq {e : Env} {k : Name} {v : Var} (h : e.has k = false) :
     e.insert k v = e ++ [(.nm k, v)] := by
   simp [Env.insert, h]
@@ -282,7 +298,7 @@ theorem fresh_not_used {e : Env} (h : e.Covers) (n : Name) (t : Ty) (s : Nat) :
 
 /-- Minting under a *new* key (every `fresh_var` + `insert` pair in the
 binder: `define_name_in_scope`, `project_name`, the `_quant_`, `_lc_`,
-`_reduce_`, `__agg_placeholder_` and `_hidden_` reservations, and
+`_reduce_` and `_hidden_` reservations, and
 the parent copy in `resolve_name`) keeps the table covering. -/
 theorem mint_new_covers {e : Env} (h : e.Covers) {k : Name} (hk : e.has k = false)
     (n : Name) (t : Ty) (s : Nat) :

@@ -1,10 +1,15 @@
 import FalkorBinder.Resolve
+import FalkorBinder.AggEq
 /-
 # WITH / RETURN: `bind_projection` (binder.rs)
 
 An expression is abstracted to the names it mentions (in DFS order), whether
 it is an aggregation, and whether it is a bare variable (the case that
 records a `parent_to_child_scope` entry, binder.rs).
+
+ORDER BY keys are first rewritten by `replace_projected_subtrees` (`AggEq.lean`):
+`bindProjectionR` takes the names of the rewritten raw tree (`reVars`), so a
+key equal to a projection reads its alias.
 -/
 namespace FalkorBinder
 
@@ -110,14 +115,46 @@ theorem with_plain :
       .ok (specProjectionScope { items := [("k", { vars := ["n"] })] }) := by
   decide
 
-/-- **Root cause 4** — `MATCH (n) WITH n.v AS k ORDER BY n.v`: the ORDER BY
+/-- **Root cause 4** — `MATCH (n) WITH n.v AS k ORDER BY n.w`: the ORDER BY
 copy of `n` is made before the snapshot, so it survives step 7 and the next
 clause sees `n` (binder accepts `RETURN n`; `RETURN *` returns `k, n`).
-openCypher and C: the scope is `[k]`. -/
+openCypher and C: the scope is `[k]`. (Since #3011 `ORDER BY n.v` itself is
+rewritten to `k` and no longer leaks: `orderBy_projected_no_leak`.) -/
 theorem orderBy_leaks :
     (bindProjection st0 { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] }).map keys
       = .ok ["k", "n"] ∧
     specProjectionScope { items := [("k", { vars := ["n"] })], orderBy := [{ vars := ["n"] }] } = ["k"] := by
+  decide
+
+/- The names of a raw expression, in DFS order (what `bind_expr` resolves). -/
+mutual
+def reVars : Agg.RE → List Name
+  | .node d cs => (match d with | .var v => [v] | _ => []) ++ reVarsL cs
+def reVarsL : List Agg.RE → List Name
+  | [] => []
+  | e :: es => reVars e ++ reVarsL es
+end
+
+/-- `bind_projection` with its ORDER BY step: each key is rewritten by
+`replace_projected_subtrees` against the raw items, then bound. -/
+def bindProjectionR (c : Agg.Ctx) (st : St) (items : List (Name × PExpr × Agg.RE))
+    (orderBy : List Agg.RE) (tail : List PExpr := []) : Except String St :=
+  bindProjection st
+    { items := items.map (fun it => (it.1, it.2.1)),
+      orderBy := orderBy.map (fun e =>
+        { vars := reVars (Agg.replaceProjected c (items.map (fun it => (it.1, it.2.2, it.2.1.agg))) e) }),
+      tail }
+
+/-- #3011: `MATCH (n) WITH n.v AS k ORDER BY n.v` sorts by `k`, so no copy of
+`n` is made and the scope is `[k]`, as specified. -/
+theorem orderBy_projected_no_leak :
+    (bindProjectionR Agg.c0 st0 [("k", { vars := ["n"] }, Agg.nv)] [Agg.nv]).map keys = .ok ["k"] := by
+  decide
+
+/-- …but a key that is not a projection, `ORDER BY n.w`, still leaks `n` (W2-binder-5). -/
+theorem orderBy_unprojected_leaks :
+    (bindProjectionR Agg.c0 st0 [("k", { vars := ["n"] }, Agg.nv)]
+      [.node (.prop "w") [.node (.var "n") []]]).map keys = .ok ["k", "n"] := by
   decide
 
 /-- The WHERE copy, by contrast, is removed from the table … -/

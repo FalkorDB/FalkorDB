@@ -2057,6 +2057,49 @@ def test_optional_match_null_merge():
 
 
 
+def test_alias_spelled_like_an_aggregate_slot_key_is_ordinary():
+    """An alias that looks like the key the binder once used to reserve an
+    aggregate's ORDER BY slot is an ordinary alias: it neither panics nor is
+    replaced."""
+    res = query("WITH 7 AS __agg_placeholder_1 RETURN count(*) AS c, __agg_placeholder_1 AS saved")
+    assert res.result_set == [[1, 7]]
+    res = query("UNWIND [1, 2] AS x WITH x AS __agg_placeholder_1 "
+                "RETURN __agg_placeholder_1, count(*) AS c ORDER BY c, __agg_placeholder_1")
+    assert res.result_set == [[1, 1], [2, 1]]
+    # and the slot is not a column of `*`
+    res = query("WITH 5 AS a RETURN *, count(*) AS c")
+    assert [h[1] for h in res.header] == ["a", "c"]
+    assert res.result_set == [[5, 1]]
+
+
+def test_order_by_expression_with_a_different_constant_is_not_the_projection():
+    """`ORDER BY n.v % 4.0` is not the projected `n.v % 3`: it must sort by
+    its own key, and so must `n.v % 3.0` (a float key, not the projected int
+    one)."""
+    query("UNWIND range(1, 8) AS i CREATE (:O {v: i})", write=True)
+    try:
+        res = query("MATCH (n:O) RETURN n.v % 3 AS k, n.v AS v ORDER BY n.v % 4.0, v")
+        assert [r[1] for r in res.result_set] == [4, 8, 1, 5, 2, 6, 3, 7]
+        res = query("MATCH (n:O) RETURN n.v % 3 AS k, n.v AS v ORDER BY n.v % 3.0, v")
+        assert [r[1] for r in res.result_set] == [3, 6, 1, 4, 7, 2, 5, 8]
+    finally:
+        query("MATCH (n:O) DELETE n", write=True)
+
+
+def test_order_by_key_with_a_float_literal_is_not_the_projected_int_expression():
+    """`v / 2` truncates and `v / 2.0` does not, so ORDER BY `v / 2.0` must not
+    read the projected `v / 2` (they tie at 1 for 2 and 3)."""
+    res = query("UNWIND [2, 3] AS v RETURN v / 2 AS k, v ORDER BY v / 2.0 DESC, v")
+    assert res.result_set == [[1, 3], [1, 2]]
+    res = query("UNWIND [2, 3] AS v RETURN v / 2 AS k, v ORDER BY v / 2, v DESC")
+    assert res.result_set == [[1, 3], [1, 2]]
+
+
+def test_order_by_expression_with_a_null_literal_reads_the_projection():
+    res = query("UNWIND [3, 1, 2] AS v RETURN coalesce(null, v) AS c ORDER BY coalesce(null, v)")
+    assert res.result_set == [[1], [2], [3]]
+
+
 def test_order_by_aggregate_matches_projection_only_on_equal_constants():
     """An ORDER BY aggregate binds to a projected aggregate only when their
     constants are equal values, as in C (#3236): `3` matches `3.0`, but `4.0`
