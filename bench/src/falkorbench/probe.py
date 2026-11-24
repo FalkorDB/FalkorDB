@@ -101,15 +101,17 @@ BUILD_BATCH = 50_000  # nodes (and edges) per building request
 MAX_FINDINGS = 50
 MAX_QUIET = 10
 
-# Docker's reference grammar with the digest required, as the contract's
-# validator reads it: a registry only when it has a dot or a port or is
-# localhost, then a lowercase repository path, an optional tag, the digest.
+# Docker's image reference grammar with the digest required, exactly as the
+# contract's validator (tests/perf/validate.py) reads it: a registry only when
+# it has a dot or a port or is localhost, lowercase path components, an
+# optional tag, the digest. Used with fullmatch, as the validator does.
+_PATH = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_DOMAIN = r"(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
 DIGEST_RE = re.compile(
-    r"^(?:(?:localhost|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(?::[0-9]+)?/|[A-Za-z0-9-]+:[0-9]+/)?"
-    r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*"
-    r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[0-9a-f]{64}$"
+    rf"(?:(?:localhost|{_DOMAIN}(?:\.{_DOMAIN})+)(?::[0-9]+)?/|{_DOMAIN}:[0-9]+/)?"
+    rf"{_PATH}(?:/{_PATH})*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{{0,127}})?@sha256:[0-9a-f]{{64}}"
 )
-COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True)
@@ -128,11 +130,13 @@ class ModeSpec:
 #
 # The caps bound a candidate that is slow everywhere. A run has at most 30
 # units (18, plus 12 re-run: 6 shapes x 2 sizes), each a warm-up per side and
-# four blocks, and each of those six stops at block_seconds. While a request
-# takes under block_seconds / MIN_REPS, that is at most 30 x 6 x block_seconds:
-# 9, 18 and 45 minutes for queue, nightly and long. Slower requests stretch a
-# block to MIN_REPS of them; the budget then stops the run inside the block,
-# late by at most one request and one settle, and the result says error.
+# four blocks, and each of those six stops at the first request that ends
+# past block_seconds. While a request takes under block_seconds / MIN_REPS,
+# a stretch lasts at most 1.2 x block_seconds, so a run measures for at most
+# 30 x 6 x 1.2 x block_seconds: 10.8, 21.6 and 54 minutes for queue, nightly
+# and long. Slower requests stretch a block to MIN_REPS of them; the budget
+# then stops the run inside the block, late by at most one request, one
+# settle and a `docker inspect`, and the result says error.
 # `long`'s budget assumes its own timeout_minutes of at least 110 (phase 3).
 MODES = {
     "queue": ModeSpec(warmup=3, reps=30, block_seconds=3.0, budget_minutes=20.0),
@@ -452,10 +456,9 @@ class Server:
             self.conn = None
             raise
 
-    def query(
-        self, graph: str, cypher: str, timeout: float = REQUEST_TIMEOUT_S
-    ) -> tuple[Reply, float]:
+    def query(self, graph: str, cypher: str, timeout: float | None = None) -> tuple[Reply, float]:
         """One GRAPH.QUERY and its round trip in milliseconds."""
+        timeout = timeout or REQUEST_TIMEOUT_S
         if self.down:
             raise Gone(self.down)
         try:
@@ -762,6 +765,25 @@ def completed_finding(name: str, cand_ok: bool, base_ok: bool) -> dict:
     )
 
 
+# Error replies that describe the server's state, not the query: never "the
+# engine cannot run this shape".
+STATE_ERRORS = ("OOM", "READONLY", "MISCONF", "LOADING", "BUSY", "MASTERDOWN", "NOREPLICAS")
+
+
+def baseline_cannot_run(cells: Sequence[Cell]) -> bool:
+    """Rule 1: the baseline's engine cannot run a shape when it refuses the
+    very first request at every size, with the same error each time, and the
+    error is about the query rather than the server's state. Anything less
+    consistent was simply not measured."""
+    runs = [c.runs["baseline"] for c in cells]
+    if not runs or any(r.failure_kind != "error" or r.counts for r in runs):
+        return False
+    if len({r.failure for r in runs}) != 1:
+        return False
+    message = (runs[0].failure or "").removeprefix("error reply: ").lstrip("-").upper()
+    return not message.startswith(STATE_ERRORS)
+
+
 def where(shape: str, size: int, phase: str = "screen") -> str:
     return f"{shape} @{size_label(size)}" + (" (re-run)" if phase == "confirm" else "")
 
@@ -794,14 +816,10 @@ def assess(
         res = ShapeResult(shape.name)
         results.append(res)
         cells = [screen[(shape.name, z)] for z in sizes if (shape.name, z) in screen]
-        # Rule 1: a shape the baseline answers with an error at every size is
-        # one its engine cannot run. Anything less consistent was not measured.
-        cannot_run = len(cells) == len(sizes) and all(
-            c.runs["baseline"].failure_kind == "error" for c in cells
-        )
+        cannot_run = len(cells) == len(sizes) and baseline_cannot_run(cells)
         if cannot_run:
-            unsupported.append(shape.name)
             cand_ok = not any(c.runs["candidate"].failure for c in cells)
+            (unsupported if cand_ok else both_broken).append(shape.name)
             left_out.append(completed_finding(shape.name, cand_ok, False))
 
         rerun_failed = False
@@ -812,15 +830,25 @@ def assess(
                     continue
                 name = where(shape.name, size, phase)
                 c, b = cell.runs["candidate"], cell.runs["baseline"]
-                if c.failure and not b.failure:
-                    correctness.append(completed_finding(name, False, True))
+                # A candidate server that dies is a regression whatever the
+                # baseline did, unless the baseline's died too.
+                crash = c.failure_kind == "down" and b.failure_kind != "down"
+                if c.failure and (crash or not b.failure):
+                    correctness.append(
+                        completed_finding(name, False, True)
+                        if not b.failure
+                        else finding(
+                            name, "completed", 0, None, "regression", direction="lower_is_worse"
+                        )
+                    )
                     rerun_failed |= phase == "confirm"
-                elif c.failure and b.failure and not cannot_run:
+                elif c.failure and not cannot_run:
                     both_broken.append(name)
                     left_out.append(completed_finding(name, False, False))
-                elif b.failure and not cannot_run:
-                    errors.append(f"baseline {b.failure} ({name})")
-                if b.failure_kind == "down" and c.failure:
+                # The baseline not measured where the candidate was (or crashed),
+                # or its server gone: something was not compared.
+                unmeasured = b.failure and not cannot_run and (crash or not c.failure)
+                if unmeasured or b.failure_kind == "down":
                     errors.append(f"baseline {b.failure} ({name})")
                 mismatch = first_mismatch(cell)
                 if mismatch:
@@ -1035,17 +1063,21 @@ class Setup:
         """A setup step failed on one side or both. The candidate alone is a
         regression at once (contract §1: a crash needs no re-run); anything
         that fails on the baseline leaves nothing to compare with. A side in
-        `infra` failed outside its engine (Docker refused the container), which
-        says nothing about the image: an error."""
-        if infra:
-            self.errors += [f"{what} failed on the {side}: {failed[side]}" for side in infra]
-            return
-        if "baseline" not in failed:
+        `infra` failed outside its engine (Docker refused the container),
+        which says nothing about the image: an error, and the other side's own
+        failure is still reported."""
+        self.errors += [f"{what} failed on the {side}: {failed[side]}" for side in infra]
+        cand = "candidate" in failed and "candidate" not in infra
+        base = "baseline" in failed and "baseline" not in infra
+        if cand and "baseline" not in failed:
             self.loud.append(completed_finding(what, False, True))
             return
-        if "candidate" in failed:
+        if cand and base:
             self.quiet.append(completed_finding(what, False, False))
-        self.errors.append(f"{what} failed on the baseline: {failed['baseline']}")
+        if cand:
+            self.errors.append(f"{what} failed on the candidate: {failed['candidate']}")
+        if base:
+            self.errors.append(f"{what} failed on the baseline: {failed['baseline']}")
 
 
 def build_graph(server: Server, size: int, log: Callable[[dict], None]) -> None:
@@ -1119,9 +1151,9 @@ def run(
     artifacts = ["raw/rows.csv", "raw/summary.csv", "raw/setup.csv"]
 
     for side, image in images.items():
-        if not DIGEST_RE.match(image):
+        if not DIGEST_RE.fullmatch(image):
             errors.append(f"--{side} must be pinned by digest (name@sha256:<64 hex>): {image}")
-        if commits[side] and not COMMIT_RE.match(commits[side]):
+        if commits[side] and not COMMIT_RE.fullmatch(commits[side]):
             errors.append(f"--{side}-commit must be 40 lowercase hex: {commits[side]}")
             commits[side] = None
     spec = MODES.get(mode)
@@ -1131,11 +1163,13 @@ def run(
         spec = ModeSpec(min(spec.warmup, reps), reps, spec.block_seconds, spec.budget_minutes)
     if len(sizes) < 2:
         errors.append(f"growth needs at least two sizes, got {sizes}")
+    # Reported, but never a reason not to measure: a regression still outranks it.
+    late_errors: list[str] = []
     try:
         machine_obj = machine()
     except (OSError, ValueError) as e:
         machine_obj = local_machine()
-        errors.append(f"PERF_MACHINE_JSON unreadable: {e}")
+        late_errors.append(f"PERF_MACHINE_JSON unreadable: {e}")
     refs = {
         "candidate": side_ref(candidate, candidate_label, commits["candidate"]),
         "baseline": side_ref(baseline, baseline_label, commits["baseline"]),
@@ -1153,9 +1187,12 @@ def run(
             started=started,
             artifacts=listed,
             setup=setup,
-            errors=errors,
+            errors=[*errors, *late_errors],
         )
-        (out / "result.json").write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
+        # Atomic: a KILL mid-write must not leave half a file.
+        tmp = out / "result.json.tmp"
+        tmp.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
+        os.replace(tmp, out / "result.json")
         return result
 
     # Replaced at the end. If the process is killed before that (timeout's
@@ -1319,18 +1356,23 @@ def run(
         errors.append("stopped by SIGTERM (the workflow's timeout) before finishing")
     finally:
         armed[0] = False
+        rows_fh.close()
+        setup_fh.close()
+        try:
+            write_summary(raw / "summary.csv", [*screen.values(), *confirm.values()])
+        except OSError as e:
+            errors.append(f"could not write raw/summary.csv: {e}")
+        # The verdict goes down before the Docker cleanup, which can be slow
+        # exactly when the run was stopped for being slow; the KILL comes 60 s
+        # after the TERM. It is written again below, with the server logs.
+        with contextlib.suppress(Exception):
+            write(screen, confirm, setup, errors)
         for side, server in servers.items():
             server.save_logs(raw / f"{side}.log")
             server.stop()
             if server.created:
                 artifacts.append(f"raw/{side}.log")
-        rows_fh.close()
-        setup_fh.close()
 
-    try:
-        write_summary(raw / "summary.csv", [*screen.values(), *confirm.values()])
-    except OSError as e:
-        errors.append(f"could not write raw/summary.csv: {e}")
     result = write(screen, confirm, setup, errors)
     signal.signal(signal.SIGTERM, previous)
     return result

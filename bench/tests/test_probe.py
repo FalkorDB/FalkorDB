@@ -7,8 +7,13 @@ When the perf contract's validator is present (tests/perf/validate.py, from
 
 from __future__ import annotations
 
+import contextlib
+import csv
 import importlib.util
 import json
+import os
+import signal
+import sys
 from pathlib import Path
 
 import pytest
@@ -245,9 +250,10 @@ def test_candidate_error_is_an_immediate_completed_regression():
 
 
 def fail(screen, shape, sizes, side, kind, why="boom"):
+    """`side` fails `shape` at `sizes` on its very first request."""
     for size in sizes:
         run = screen[(shape, size)].runs[side]
-        run.wall = []
+        run.wall, run.server, run.counts = [], [], {}
         run.fail(kind, why)
     return screen
 
@@ -260,6 +266,43 @@ def test_shape_the_baseline_cannot_run_is_left_out_as_info():
     assert left["name"] == UNWIND_ID_1 and left["status"] == "info"
     assert (left["candidate"], left["baseline"], left["ratio"]) == (1, 0, None)
     assert f"the baseline cannot run them: {UNWIND_ID_1}" in res["summary"]
+
+
+def test_cannot_run_needs_the_same_query_error_on_the_first_request_everywhere():
+    """N4: a server-state error, a changing message or a failure after some
+    answers is not an engine that cannot run the shape."""
+    for why in ("error reply: OOM command not allowed", "error reply: READONLY replica"):
+        res = result(fail(grid(flat), UNWIND_ID_1, SIZES, "baseline", "error", why))
+        assert res["verdict"] == "error", why
+    screen = fail(grid(flat), UNWIND_ID_1, SIZES, "baseline", "error", "unknown function")
+    screen[(UNWIND_ID_1, SIZES[-1])].runs["baseline"].counts = {0: 1}  # answered once first
+    assert result(screen)["verdict"] == "error"
+    screen = fail(grid(flat), UNWIND_ID_1, SIZES, "baseline", "error", "unknown function")
+    screen[(UNWIND_ID_1, SIZES[-1])].runs["baseline"].failure = "error reply: other"
+    assert result(screen)["verdict"] == "error"
+
+
+def test_candidate_crash_is_a_regression_whatever_the_baseline_did():
+    """N3: a candidate server that dies beside a baseline timeout is not
+    'broken on both sides'."""
+    screen = fail(grid(flat), "create node", SIZES[-1:], "baseline", "timeout")
+    fail(screen, "create node", SIZES[-1:], "candidate", "down", "container exited exit 139")
+    res = result(screen)
+    assert res["verdict"] == "regression"
+    (crash,) = [f for f in by_status(res, "regression") if f["metric"] == "completed"]
+    assert (crash["candidate"], crash["baseline"]) == (0, None)
+    assert "broken on both sides" not in res["summary"]
+
+
+def test_infra_on_one_side_still_reports_the_other_sides_failure():
+    """N1."""
+    setup = Setup()
+    setup.side_failed(
+        "server starts", {"baseline": "docker refused", "candidate": "no PONG"}, ["baseline"]
+    )
+    res = result({}, setup=setup)
+    assert res["verdict"] == "error"
+    assert "docker refused" in res["error"] and "no PONG" in res["error"]
 
 
 @pytest.mark.parametrize(
@@ -415,9 +458,11 @@ def test_default_label_and_digest_rule():
     assert probe.default_label("localhost:5000/x:tag@sha256:" + "c" * 64) == (
         "localhost:5000/x@cccccccccccc"
     )
-    assert probe.DIGEST_RE.match(IMAGE_B) and not probe.DIGEST_RE.match("falkordb/x:6.2.0")
-    assert probe.DIGEST_RE.match("localhost:5000/x:tag@sha256:" + "c" * 64)
-    assert not probe.DIGEST_RE.match("FalkorDB/x@sha256:" + "c" * 64)  # docker refuses it
+    assert probe.DIGEST_RE.fullmatch(IMAGE_B) and not probe.DIGEST_RE.fullmatch("falkordb/x:6.2.0")
+    assert probe.DIGEST_RE.fullmatch("localhost:5000/x:tag@sha256:" + "c" * 64)
+    assert not probe.DIGEST_RE.fullmatch("FalkorDB/x@sha256:" + "c" * 64)  # docker refuses it
+    assert not probe.DIGEST_RE.fullmatch(IMAGE_B + "\n")
+    assert not probe.DIGEST_RE.fullmatch("-x.io/y@sha256:" + "c" * 64)
 
 
 def test_run_with_a_tag_writes_an_error_result(tmp_path):
@@ -446,7 +491,7 @@ def test_run_with_an_unknown_mode_writes_an_error_result(tmp_path):
 def test_every_mode_fits_its_budget_when_every_block_hits_its_cap(mode):
     """30 units (18 + 12 re-run), each a warm-up per side and four blocks."""
     spec = probe.MODES[mode]
-    worst = (len(SHAPES) * 3 + len(SHAPES) * 2) * 6 * spec.block_seconds
+    worst = (len(SHAPES) * 3 + len(SHAPES) * 2) * 6 * 1.2 * spec.block_seconds
     assert worst <= 0.9 * spec.budget_minutes * 60
     assert spec.reps >= probe.MIN_REPS
 
@@ -535,3 +580,112 @@ def test_run_without_docker_still_writes_an_error_result(tmp_path, monkeypatch):
     )
     assert res["verdict"] == "error" and "FileNotFoundError" in res["error"]
     assert json.loads((tmp_path / "out" / "result.json").read_text())["verdict"] == "error"
+
+
+# --- run(), end to end against a fake docker -----------------------------------
+
+FAKE_DOCKER = Path(__file__).with_name("fake_docker.py")
+
+
+@pytest.fixture
+def fake_docker(tmp_path, monkeypatch):
+    """`docker` on PATH is tests/fake_docker.py; its containers are small RESP
+    servers. Yields the state directory (one <name>.pid per live container)."""
+    bin_dir, state = tmp_path / "bin", tmp_path / "state"
+    bin_dir.mkdir()
+    state.mkdir()
+    shim = bin_dir / "docker"
+    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" -I "{FAKE_DOCKER}" "$@"\n')
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_DOCKER_STATE", str(state))
+    for var in ("PERF_SERVER_CPUS", "PERF_MACHINE_JSON"):
+        monkeypatch.delenv(var, raising=False)
+    yield state
+    for record in state.glob("*.pid"):  # a failed test must not leave servers behind
+        with contextlib.suppress(ProcessLookupError, ValueError):
+            os.kill(int(record.read_text()), signal.SIGKILL)
+
+
+def run_fake(tmp_path, **kw):
+    res = probe.run(
+        candidate=IMAGE_A,
+        baseline=IMAGE_B,
+        out=tmp_path / "out",
+        mode="nightly",
+        sizes=[1000, 8000],
+        reps=5,
+        echo=lambda _: None,
+        **kw,
+    )
+    validator = _validator()
+    if validator is not None:
+        _, problems = validator.validate_file(tmp_path / "out" / "result.json", "result")
+        assert not problems, problems
+    assert json.loads((tmp_path / "out" / "result.json").read_text()) == res
+    assert not (tmp_path / "out" / "result.json.tmp").exists()
+    return res
+
+
+def test_end_to_end_same_image_passes_and_cleans_up(tmp_path, fake_docker):
+    res = run_fake(tmp_path)
+    assert res["verdict"] == "pass", res["summary"]
+    out = tmp_path / "out"
+    assert set(res["artifacts"]) == {
+        "raw/rows.csv",
+        "raw/summary.csv",
+        "raw/setup.csv",
+        "raw/docker-stats-before.txt",
+        "raw/plans.txt",
+        "raw/candidate.log",
+        "raw/baseline.log",
+    }
+    assert all((out / a).is_file() for a in res["artifacts"])
+    assert "Fake Plan" in (out / "raw" / "plans.txt").read_text()
+    assert list(fake_docker.glob("*.pid")) == []  # every container removed
+
+
+def test_end_to_end_growth_on_the_candidate_is_a_confirmed_regression(
+    tmp_path, fake_docker, monkeypatch
+):
+    monkeypatch.setenv("FAKE_DOCKER_SLOW", "a" * 64)  # IMAGE_A, the candidate
+    res = run_fake(tmp_path)
+    assert res["verdict"] == "regression" and res["confirmed"], res["summary"]
+    assert {f["name"] for f in by_status(res, "regression")} == {s.name for s in SHAPES[:4]}
+    phases = {r["phase"] for r in csv.DictReader((tmp_path / "out/raw/summary.csv").open())}
+    assert phases == {"screen", "confirm"}
+
+
+def test_end_to_end_candidate_that_does_not_finish(tmp_path, fake_docker, monkeypatch):
+    monkeypatch.setattr(probe, "REQUEST_TIMEOUT_S", 0.5)
+    monkeypatch.setenv("FAKE_DOCKER_HANG", "a" * 64)
+    monkeypatch.setenv("FAKE_DOCKER_HANG_QUERY", "RETURN n.id")  # indexed lookup
+    res = run_fake(tmp_path)
+    assert res["verdict"] == "regression" and res["confirmed"]
+    names = {f["name"] for f in by_status(res, "regression") if f["metric"] == "completed"}
+    assert names == {"indexed lookup @1k", "indexed lookup @8k"}
+
+
+def test_end_to_end_docker_refusing_a_container_is_an_error(tmp_path, fake_docker, monkeypatch):
+    monkeypatch.setenv("FAKE_DOCKER_REFUSE", "candidate")
+    res = run_fake(tmp_path)
+    assert res["verdict"] == "error" and "docker run failed" in res["error"]
+    assert not by_status(res, "regression")
+    assert list(fake_docker.glob("*.pid")) == []
+
+
+def test_end_to_end_budget_out_is_an_error(tmp_path, fake_docker, monkeypatch):
+    spec = probe.MODES["nightly"]
+    monkeypatch.setitem(
+        probe.MODES, "nightly", probe.ModeSpec(spec.warmup, spec.reps, spec.block_seconds, 0.0)
+    )
+    res = run_fake(tmp_path)
+    assert res["verdict"] == "error" and "budget" in res["error"]
+
+
+def test_end_to_end_unreadable_machine_file_still_measures(tmp_path, fake_docker, monkeypatch):
+    monkeypatch.setenv("PERF_MACHINE_JSON", str(tmp_path / "missing.json"))
+    monkeypatch.setenv("FAKE_DOCKER_SLOW", "a" * 64)
+    res = run_fake(tmp_path)
+    assert res["verdict"] == "regression", res["summary"]  # outranks the machine error
+    assert "PERF_MACHINE_JSON unreadable" in res["summary"]

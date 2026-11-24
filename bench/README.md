@@ -217,10 +217,11 @@ tier measures it.
 | `nightly` | 5 | 60 | 6 s | 35 min |
 | `long` | 10 | 150 | 15 s | 100 min |
 
-Every block, and each side's warm-up, stops at its cap once it has its
-minimum (5 requests, 1 for the warm-up). A run has at most 30 units (18, plus
-12 re-run), each six capped stretches, so while a request takes under a fifth
-of the cap a run measures for at most 9, 18 and 45 minutes. Slower requests
+Every block, and each side's warm-up, stops at the first request that ends
+past its cap once it has its minimum (5 requests, 1 for the warm-up). A run
+has at most 30 units (18, plus 12 re-run), each six capped stretches, so while
+a request takes under a fifth of the cap a stretch lasts at most 1.2 caps and
+a run measures for at most 10.8, 21.6 and 54 minutes. Slower requests
 stretch a block to 5 of them; the budget then stops the run mid-block (late by
 at most one 120 s request and a 120 s wait for the graph), and the result says
 `error`, not `regression`. `long`'s budget needs its own `timeout_minutes` of
@@ -243,7 +244,9 @@ against the 1.5 threshold.
 Artifacts: `raw/rows.csv` (every request), `raw/summary.csv` (per unit:
 p50, p95, ratio, failures), `raw/setup.csv` (build times), `raw/plans.txt`
 (`GRAPH.EXPLAIN` of every shape on both sides at 500k nodes), and each
-server's log. Tests: `bench/tests/test_probe.py` (no server needed).
+server's log. Tests: `bench/tests/test_probe.py`, no server needed. They
+include end-to-end runs of `bench probe` against `tests/fake_docker.py`, a
+stand-in `docker` whose containers are small RESP servers.
 
 ## pmc_tool (optional, for branch/L1D columns)
 
