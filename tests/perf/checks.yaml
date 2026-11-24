@@ -1,19 +1,21 @@
 # The perf checks the nightly run (.github/workflows/perf-nightly.yml) measures,
-# besides the micro tier, which it always calls through _perf-micro.yml.
+# besides micro-hw, which it runs through _perf-micro.yml.
 #
 # The list starts empty: this file holds only comments, which parses as no
 # checks. Each check's PR appends exactly one entry at the end and touches
 # nothing else here (an explicit `[]` would turn the first append into invalid
 # YAML):
 #
-#   - name: size-probe                 # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$, no "--"
+#   - name: pokec                      # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$, no "--"
 #     runner: vm                       # vm (_perf-vm.yml on a GCE VM) | hosted (ubuntu-latest)
-#     command: uv run --project bench bench probe
-#     timeout_minutes: 45              # 1-330
+#     command: python3 -I tests/perf/pokec/pokec.py
+#     timeout_minutes: 75              # 1-330
 #     machine_type: n4-standard-16     # vm only; optional
 #
-# The workflow appends --candidate, --baseline (both image@sha256), the four
-# optional --candidate-/--baseline-label/-commit flags, --out and --mode to the
-# command. tests/perf/merge.py reads this file, and tests/perf/test_merge.py
-# fails on an entry it cannot use. At night, such an entry (or a file that does
-# not parse) is reported as an error rather than skipped.
+# Both runners run the command through tests/perf/vm/run-check.sh: it is split on
+# spaces (no shell syntax; `$PERF_VM_TOOLS` names tests/perf/vm), and --candidate,
+# --baseline (both image@sha256), the optional --candidate-/--baseline-label and
+# -commit flags, --out and --mode are appended. tests/perf/merge.py reads this
+# file, and tests/perf/test_merge.py fails on an entry it cannot use. At night,
+# such an entry (or a file that does not parse) is reported as an error rather
+# than skipped.

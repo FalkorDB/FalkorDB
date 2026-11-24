@@ -8,6 +8,7 @@ checked together.
 import importlib.util
 import json
 import math
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -113,7 +114,6 @@ def run_merge(tmp_path, plan, ctx=None):
             "--context", str(tmp_path / "context.json"),
             "--plan", str(tmp_path / "plan.json"),
             "--results", str(tmp_path / "results"),
-            "--validator", str(HERE / "validate.py"),
             "--out", str(out),
         ]
     )
@@ -125,10 +125,10 @@ def run_merge(tmp_path, plan, ctx=None):
 
 MICRO_HW = [{"check": "micro-hw", "runner": "micro-hw"}]
 VM_ENTRY = {
-    "name": "size-probe",
+    "name": "pokec",
     "runner": "vm",
-    "command": "uv run --project bench bench probe",
-    "timeout_minutes": 45,
+    "command": "python3 -I tests/perf/pokec/pokec.py",
+    "timeout_minutes": 75,
     "machine_type": "n4-standard-16",
 }
 HOSTED_ENTRY = {"name": "ldbc", "runner": "hosted", "command": "true", "timeout_minutes": 30}
@@ -153,13 +153,13 @@ def test_empty_registry_plans_micro_hw_with_placeholder_matrices():
 
 def test_registry_entries_become_matrix_rows():
     plan = merge.build_plan([VM_ENTRY, HOSTED_ENTRY], "")
-    assert [row["check"] for row in plan] == ["micro-hw", "size-probe", "ldbc"]
+    assert [row["check"] for row in plan] == ["micro-hw", "pokec", "ldbc"]
     out = merge.plan_outputs(plan)
     assert json.loads(out["vm_matrix"]) == [
         {
-            "check": "size-probe",
-            "command": "uv run --project bench bench probe",
-            "timeout_minutes": 45,
+            "check": "pokec",
+            "command": "python3 -I tests/perf/pokec/pokec.py",
+            "timeout_minutes": 75,
             "machine_type": "n4-standard-16",
         }
     ]
@@ -184,7 +184,7 @@ def test_the_removed_micro_check_is_an_unknown_name():
 
 @pytest.mark.parametrize(
     "select, run_micro",
-    [("micro-hw", "true"), ("micro-hw,size-probe", "true"), ("size-probe", "false")],
+    [("micro-hw", "true"), ("micro-hw,pokec", "true"), ("pokec", "false")],
 )
 def test_the_micro_call_runs_only_when_micro_hw_is_planned(select, run_micro):
     """_perf-micro.yml always runs micro-hw, so a selection without it must not
@@ -218,8 +218,8 @@ def test_malformed_entry_is_planned_as_a_stub(entry, why):
         ([{**HOSTED_ENTRY, "name": "ldbc--x"}, VM_ENTRY], "entry 0: name 'ldbc--x' is not a check name"),
         ([{**HOSTED_ENTRY, "name": "micro-hw"}, VM_ENTRY], "entry 0: name 'micro-hw' is reserved"),
         ([{**HOSTED_ENTRY, "name": "checks-yaml"}, VM_ENTRY], "entry 0: name 'checks-yaml' is reserved"),
-        ([VM_ENTRY, VM_ENTRY], "entry 1: name 'size-probe' is reserved or already used"),
-        (["size-probe", VM_ENTRY], "entry 0 is not a mapping"),
+        ([VM_ENTRY, VM_ENTRY], "entry 1: name 'pokec' is reserved or already used"),
+        (["pokec", VM_ENTRY], "entry 0 is not a mapping"),
     ],
 )
 def test_registry_problems_are_reported_not_fatal(registry, why):
@@ -288,7 +288,7 @@ def test_every_planned_check_appears_once(tmp_path):
     plan = merge.build_plan([VM_ENTRY, HOSTED_ENTRY], "")
     code, nightly = run_merge(tmp_path, plan)
     assert code == 0
-    assert [c["check"] for c in nightly["checks"]] == ["micro-hw", "size-probe", "ldbc"]
+    assert [c["check"] for c in nightly["checks"]] == ["micro-hw", "pokec", "ldbc"]
     assert nightly["checks"][0] == result("micro-hw")
     assert [c["error"] for c in nightly["checks"][1:]] == ["no result.json"] * 2
 
@@ -358,9 +358,9 @@ def test_unparsable_result_becomes_a_stub(tmp_path):
 
 
 def test_result_naming_another_check_becomes_a_stub(tmp_path):
-    measured(tmp_path / "results", "micro-hw", result("size-probe"))
+    measured(tmp_path / "results", "micro-hw", result("pokec"))
     _, nightly = run_merge(tmp_path, MICRO_HW)
-    assert nightly["checks"][0]["error"] == "result.json names check 'size-probe'"
+    assert nightly["checks"][0]["error"] == "result.json names check 'pokec'"
 
 
 def test_result_below_the_artifact_root_is_reported_as_misplaced(tmp_path):
@@ -384,10 +384,10 @@ def test_result_below_the_artifact_root_is_reported_as_misplaced(tmp_path):
     ],
 )
 def test_perf_vm_json_explains_a_missing_result(tmp_path, vm, reason):
-    plan = merge.build_plan([VM_ENTRY], "size-probe")
-    put(tmp_path / "results", "size-probe", vm, name="perf-vm.json")
+    plan = merge.build_plan([VM_ENTRY], "pokec")
+    put(tmp_path / "results", "pokec", vm, name="perf-vm.json")
     _, nightly = run_merge(tmp_path, plan)
-    assert nightly["checks"] == [{"check": "size-probe", "verdict": "error", "error": reason}]
+    assert nightly["checks"] == [{"check": "pokec", "verdict": "error", "error": reason}]
 
 
 def test_planned_stub_keeps_its_reason(tmp_path):
@@ -414,7 +414,6 @@ def test_unplanned_and_internal_artifacts_are_ignored(tmp_path):
     assert nightly["status"] == "green"
 
 
-@pytest.mark.parametrize("facts", ["perf-hosted.json", "perf-vm.json"])
 @pytest.mark.parametrize(
     "ran, verdict, kept",
     [
@@ -425,13 +424,13 @@ def test_unplanned_and_internal_artifacts_are_ignored(tmp_path):
         ({"command_exit": 1, "timed_out": False}, "error", True),
     ],
 )
-def test_a_pass_from_a_check_that_crashed_is_not_green(tmp_path, facts, ran, verdict, kept):
+def test_a_pass_from_a_check_that_crashed_is_not_green(tmp_path, ran, verdict, kept):
     """Exit 0 whenever result.json was written (contract §1): a non-zero exit
     or a timeout after writing it means the check crashed, so its `pass` is
     not a measurement. A regression or error it wrote still stands."""
     results = tmp_path / "results"
     put(results, "ldbc", result("ldbc", verdict))
-    put(results, "ldbc", ran, name=facts)
+    put(results, "ldbc", ran, name="perf-vm.json")
     _, nightly = run_merge(tmp_path, [{"check": "ldbc", "runner": "hosted"}])
     (entry,) = nightly["checks"]
     if kept:
@@ -446,7 +445,7 @@ def test_a_pass_from_a_check_that_crashed_is_not_green(tmp_path, facts, ran, ver
 @pytest.mark.parametrize(
     "facts",
     [
-        None,  # the job was cancelled before writing perf-hosted.json
+        None,  # the job was cancelled before writing perf-vm.json
         {"create_error": None, "command_exit": None, "timed_out": False},  # _perf-vm.yml, run job cancelled
         {"command_exit": "0"},
         {"command_exit": False},
@@ -458,7 +457,7 @@ def test_a_pass_needs_a_recorded_clean_exit(tmp_path, runner, facts):
     results = tmp_path / "results"
     put(results, "ldbc", result("ldbc"))
     if facts is not None:
-        put(results, "ldbc", facts, name="perf-hosted.json" if runner == "hosted" else "perf-vm.json")
+        put(results, "ldbc", facts, name="perf-vm.json")
     _, nightly = run_merge(tmp_path, [{"check": "ldbc", "runner": runner}])
     assert nightly["checks"][0]["error"] == (
         "result.json says pass, but nothing records that the check's command finished (no exit status)"
@@ -495,6 +494,51 @@ def test_skipped_night_lists_no_checks(tmp_path):
 def test_json_out_refuses_nan(tmp_path):
     with pytest.raises(ValueError):
         merge.write_json(tmp_path / "x.json", {"ratio": math.nan})
+
+
+# --- the workflow file -----------------------------------------------------------
+
+WORKFLOWS = HERE.parent.parent / ".github" / "workflows"
+
+
+def workflow(name):
+    doc = parse_yaml(WORKFLOWS / name)
+    if True in doc:  # PyYAML reads the key `on` as True
+        doc["on"] = doc.pop(True)
+    return doc
+
+
+def test_each_reusable_workflow_gets_only_its_inputs():
+    """GitHub rejects, at startup, a call that passes an input the callee does
+    not declare, and actionlint cannot see across an owner/repo@ref call: one
+    stale `micro_hw:` would fail every night before any job runs."""
+    jobs = workflow("perf-nightly.yml")["jobs"]
+    called = {name: job for name, job in jobs.items() if "uses" in job}
+    files = {name: job["uses"].split("@")[0].rsplit("/", 1)[-1] for name, job in called.items()}
+    assert files == {"micro": "_perf-micro.yml", "vm": "_perf-vm.yml"}
+    for name, job in called.items():
+        declared = workflow(files[name])["on"]["workflow_call"]["inputs"]
+        passed = set(job.get("with", {}))
+        assert passed <= set(declared), (name, sorted(passed - set(declared)))
+        assert {key for key, spec in declared.items() if spec.get("required")} <= passed, name
+        assert job.get("secrets") == "inherit", name
+
+
+def test_every_resolve_output_a_job_reads_is_declared():
+    """An undeclared needs.resolve.outputs.<name> reads as '' without an error."""
+    read = set(re.findall(r"needs\.resolve\.outputs\.([a-z_]+)", (WORKFLOWS / "perf-nightly.yml").read_text()))
+    declared = set(workflow("perf-nightly.yml")["jobs"]["resolve"]["outputs"])
+    assert read and read <= declared, sorted(read - declared)
+
+
+def test_micro_is_called_only_when_planned_and_conclude_runs_last():
+    jobs = workflow("perf-nightly.yml")["jobs"]
+    assert "needs.resolve.outputs.run_micro == 'true'" in jobs["micro"]["if"]
+    steps = jobs["report"]["steps"]
+    # The run fails for a red or error night even when the report step failed.
+    assert "merge.py conclude" in steps[-1]["run"] and "!cancelled()" in steps[-1]["if"]
+    post = next(step for step in steps if "post.py" in step.get("run", ""))
+    assert "GH_TOKEN" not in post.get("env", {})
 
 
 # --- context: skip and previous green --------------------------------------------
@@ -625,6 +669,9 @@ def test_context_cli_reads_downloaded_history(tmp_path):
     [
         ("--candidate-image", "ghcr.io/falkordb/falkordb-server:rc-mg-x-valkey", "candidate image"),
         ("--baseline-image", "falkordb/falkordb-server@sha256:44eb4a6d", "baseline image"),
+        # Pinned, but not a reference validate.py accepts (upper case): taking
+        # it would make every result of the night invalid.
+        ("--candidate-image", "GHCR.io/FalkorDB/Server@sha256:" + "a" * 64, "candidate image"),
         ("--baseline-commit", "d8c329b", "baseline commit"),
         ("--candidate-label", "", "candidate label"),
     ],

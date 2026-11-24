@@ -1,36 +1,13 @@
 #!/usr/bin/env python3
-"""The bookkeeping steps of the nightly perf run (.github/workflows/perf-nightly.yml).
+"""The nightly perf run's bookkeeping. What a night does and promises is in the
+header of .github/workflows/perf-nightly.yml; each step calls one subcommand:
 
-Four subcommands, one per step that needs them:
+  plan      checks.yaml (as JSON) + the `checks` input -> plan.json, job matrices
+  context   pinned images + earlier nightlies -> context.json (skip, previous green)
+  merge     context + plan + each planned perf-result-<check> -> nightly.json
+  conclude  nightly.json -> the run's exit status (0 green or skipped, 1 otherwise)
 
-  plan     tests/perf/checks.yaml (as JSON) + the `checks` input
-           -> plan.json, and the job matrices on $GITHUB_OUTPUT
-  context  the resolved candidate and baseline + the earlier nightlies
-           -> context.json: skip_reason and previous_green_commit
-  merge    context.json + plan.json + each planned check's perf-result-<check>
-           artifact -> nightly.json
-  conclude nightly.json -> the run's exit status: 0 for green or skipped,
-           1 for red or error (the report job's last step)
-
-The shapes are perf-judge's tests/perf/validate.py, which `merge` runs on every
-result.json it embeds and on the nightly.json it writes.
-
-What `merge` guarantees, whatever the check jobs did:
-
-  * every planned check appears exactly once in nightly.json, micro-hw
-    included, and nothing unplanned does;
-  * a check that left no result.json, an unreadable one, one the validator
-    rejects, one that names another check, or a `pass` from a run that crashed
-    or timed out (perf-vm.json / perf-hosted.json), appears as the stub
-    {"check": name, "verdict": "error", "error": reason}, so a missing
-    measurement can never make a night green;
-  * the night's status is derived from the checks (red > error > green), or
-    `skipped` with an empty checks list when `context` decided to skip.
-
-A checks.yaml that does not parse, or an entry without a usable name, does not
-stop the night either: it is planned as the error `checks-yaml`.
-
-Stdlib only: it runs under `python -I` on a bare ubuntu-latest runner.
+Stdlib only; it runs under `python3 -I` and loads validate.py from beside it.
 """
 
 import argparse
@@ -60,8 +37,6 @@ CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,42}$")
 RUNNERS = ("vm", "hosted")
 MAX_TIMEOUT = 330
 
-DIGEST_REF = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
-COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 NO_RESULT = "no result.json"
 
@@ -72,6 +47,19 @@ PLACEHOLDER = [{"check": "none"}]
 
 class PlanError(Exception):
     pass
+
+
+def _load_validate():
+    """perf-judge's validate.py, beside this file (tests/perf is not a package)."""
+    spec = importlib.util.spec_from_file_location("perf_validate", Path(__file__).with_name("validate.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# The contract's own checker: merge.py reuses its image and commit patterns and
+# its result rules instead of keeping copies that could drift.
+validate = _load_validate()
 
 
 # --- plan ------------------------------------------------------------------------
@@ -210,9 +198,9 @@ def strict_load(path):
 
 
 def side(image, commit, label, what):
-    if not DIGEST_REF.match(image or ""):
+    if not isinstance(image, str) or not validate.IMAGE_RE.fullmatch(image):
         raise PlanError(f"{what} image {image!r} is not pinned by a full sha256 digest")
-    if commit and not COMMIT.match(commit):
+    if commit and not validate.COMMIT_RE.fullmatch(commit):
         raise PlanError(f"{what} commit {commit!r} is not 40 lowercase hex")
     if not label or "\n" in label:
         raise PlanError(f"{what} label {label!r} is empty or not one line")
@@ -266,7 +254,7 @@ def previous_green_commit(history):
     for _, nightly in history:
         if nightly and nightly["status"] == "green":
             commit = nightly["candidate"].get("commit")
-            return commit if isinstance(commit, str) and COMMIT.match(commit) else None
+            return commit if isinstance(commit, str) and validate.COMMIT_RE.fullmatch(commit) else None
     return None
 
 
@@ -307,40 +295,31 @@ def skip_reason(history, candidate, baseline):
 # --- merge -----------------------------------------------------------------------
 
 
-def load_validator(path):
-    """perf-judge's validate.py, loaded by path (tests/perf is not a package)."""
-    spec = importlib.util.spec_from_file_location("perf_validate", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# How the check's command ended, written next to result.json: perf-vm.json by
-# _perf-vm.yml (contract v1.3), perf-hosted.json by this workflow's hosted job.
-RUN_FACTS = ("perf-vm.json", "perf-hosted.json")
+# How the check's command ended, beside result.json: tests/perf/vm/vm.py's
+# `record` writes it on every runner (_perf-vm.yml for vm and micro-hw, this
+# workflow's hosted job for hosted).
+RUN_FACTS = "perf-vm.json"
 
 
 def how_it_ended(artifact):
-    """(clean, why): clean is True when a run-facts file says the command exited
-    0 in time, False when one says it did not, None when nothing says either
-    (no file, or no exit status: the job was cancelled or killed first)."""
-    for name in RUN_FACTS:
-        try:
-            facts = strict_load(artifact / name)
-        except (OSError, ValueError):
-            continue
-        if not isinstance(facts, dict):
-            continue
-        exit_status = facts.get("command_exit")
-        if facts.get("create_error"):
-            return False, f"no VM came up: {facts['create_error']}"
-        if facts.get("timed_out"):
-            return False, "the check timed out"
-        if isinstance(exit_status, int) and not isinstance(exit_status, bool):
-            if exit_status == 0:
-                return True, ""
-            return False, f"the check exited {exit_status}"
-    return None, "nothing records that the check's command finished (no exit status)"
+    """(clean, why): clean is True when perf-vm.json says the command exited 0
+    in time, False when it says it did not, None when nothing says either (no
+    file, or no exit status: the job was cancelled or killed first)."""
+    unknown = None, "nothing records that the check's command finished (no exit status)"
+    try:
+        facts = strict_load(artifact / RUN_FACTS)
+    except (OSError, ValueError):
+        return unknown
+    if not isinstance(facts, dict):
+        return unknown
+    exit_status = facts.get("command_exit")
+    if facts.get("create_error"):
+        return False, f"no VM came up: {facts['create_error']}"
+    if facts.get("timed_out"):
+        return False, "the check timed out"
+    if isinstance(exit_status, int) and not isinstance(exit_status, bool):
+        return (True, "") if exit_status == 0 else (False, f"the check exited {exit_status}")
+    return unknown
 
 
 def one_line(text):
@@ -351,17 +330,26 @@ def stub(check, reason):
     return {"check": check, "verdict": "error", "error": one_line(reason) or NO_RESULT}
 
 
-def own_error(path):
-    """The `error` text an invalid result.json carries, if it parses at all."""
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ""
+def own_error(doc):
+    """The `error` text an invalid result.json carries, if it parsed at all."""
     error = doc.get("error") if isinstance(doc, dict) else None
     return error.strip() if isinstance(error, str) else ""
 
 
-def collect(check, artifact, validator):
+def read_result(path):
+    """(document or None, validator problem codes): parsed once, checked once."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None, ["unreadable"]
+    try:
+        doc = validate.load_json(text)
+    except (ValueError, RecursionError):
+        return None, ["invalid-json"]
+    return doc, list(dict.fromkeys(problem.code for problem in validate.validate_result(doc)))
+
+
+def collect(check, artifact):
     """The result.json in one artifact directory, or a stub saying why not."""
     path = artifact / "result.json"
     clean, why = how_it_ended(artifact)
@@ -370,25 +358,17 @@ def collect(check, artifact, validator):
         if nested:
             return stub(check, f"{NO_RESULT} at the artifact root (found {', '.join(nested)})")
         return stub(check, f"{NO_RESULT}: {why}" if clean is False else NO_RESULT)
-    if validator is not None:
-        _, problems = validator.validate_file(str(path), kind="result")
-        if problems:
-            codes = ", ".join(dict.fromkeys(getattr(p, "code", str(p)) for p in problems))
-            said = own_error(path)
-            return stub(check, f"invalid result.json ({codes})" + (f"; check said: {said}" if said else ""))
-    try:
-        result = strict_load(path)
-    except (OSError, ValueError) as err:
-        return stub(check, f"result.json is unreadable: {err}")
-    if not isinstance(result, dict):
-        return stub(check, "result.json is not an object")
-    if result.get("check") != check:
+    result, codes = read_result(path)
+    if codes:
+        said = own_error(result)
+        return stub(check, f"invalid result.json ({', '.join(codes)})" + (f"; check said: {said}" if said else ""))
+    if result["check"] != check:
         return stub(check, f"result.json names check {result.get('check')!r}")
     # The contract exits 0 whenever result.json was written, so a check that did
     # not end cleanly crashed after writing it: its `pass` is not a measurement.
-    # Every runner records the exit (vm and micro-hw in perf-vm.json, hosted in
-    # perf-hosted.json), and a `pass` needs that record to say 0: a job
-    # cancelled mid-command uploads result.json with no exit status at all.
+    # Every runner records the exit in perf-vm.json, and a `pass` needs that
+    # record to say 0: a job cancelled mid-command uploads result.json with no
+    # exit status at all.
     # A regression or error the check wrote still stands.
     if result.get("verdict") == "pass" and clean is not True:
         return stub(check, f"result.json says pass, but {why}")
@@ -396,6 +376,8 @@ def collect(check, artifact, validator):
 
 
 def status_of(checks):
+    # The rule validate.py checks a nightly against (nightly-status-mismatch);
+    # it keeps no function of its own to call.
     verdicts = {entry.get("verdict") for entry in checks}
     if "regression" in verdicts:
         return "red"
@@ -404,7 +386,7 @@ def status_of(checks):
     return "green"
 
 
-def build_nightly(context, plan, results_dir, validator):
+def build_nightly(context, plan, results_dir):
     nightly = {
         "schema": SCHEMA,
         "date": context["date"],
@@ -429,7 +411,7 @@ def build_nightly(context, plan, results_dir, validator):
         # name, and the reusable workflows' internal <artifact>--* ones are not
         # checks.
         artifact = results_dir / f"perf-result-{row['check']}"
-        checks.append(collect(row["check"], artifact, validator))
+        checks.append(collect(row["check"], artifact))
 
     nightly["checks"] = checks
     nightly["status"] = status_of(checks)
@@ -514,15 +496,14 @@ def cmd_context(args):
 def cmd_merge(args):
     context = strict_load(args.context)
     plan = strict_load(args.plan) if not context["skip_reason"] else []
-    validator = load_validator(args.validator) if args.validator else None
-    nightly = build_nightly(context, plan, args.results, validator)
+    nightly = build_nightly(context, plan, args.results)
     write_json(args.out, nightly)
-    if validator is not None:
-        _, problems = validator.validate_file(args.out, kind="nightly")
-        if problems:
-            for problem in problems:
-                print(f"{args.out}: {problem}", file=sys.stderr)
-            return 1
+    # The file as written, read back the way the reporter will read it.
+    _, problems = validate.validate_file(args.out, kind="nightly")
+    if problems:
+        for problem in problems:
+            print(f"{args.out}: {problem}", file=sys.stderr)
+        return 1
     print(f"status: {nightly['status']}")
     for entry in nightly["checks"]:
         print(f"  {entry['check']}: {entry['verdict']} {entry.get('error') or entry.get('summary', '')}")
@@ -575,7 +556,6 @@ def main(argv=None):
     p.add_argument("--context", required=True)
     p.add_argument("--plan", required=True)
     p.add_argument("--results", required=True, help="holds perf-result-<check>/ directories")
-    p.add_argument("--validator", default="", help="path to tests/perf/validate.py")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_merge)
 
