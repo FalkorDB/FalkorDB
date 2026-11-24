@@ -7,7 +7,9 @@ import PlannerBuild.Nested
   nested comprehension (in order, the first innermost) over the `PathBuilder`
   over `plan_match(pattern)`; `acc` is minted in the comprehension's scope
   after the nested ones'; `visited` is restored.
-* `interleave_length`: an existential pattern's path has `n` nodes and `n-1` rels.
+* `pathComps_length`, `pathComps_start`, `pathComps_rel`, `pathComps_stop`: an existential
+  pattern's path is `2k+1` components, relationship `i` at `2i+1` between its written
+  start and end (#3460), also when an alias is revisited (`pathComps_revisit`).
 * `chain_*`: `extract_clause_expr_comprehensions` (mod.rs) builds
   `Apply(…Apply(sub_k)…, sub_1)`: the innermost Apply single-child (stitching
   fills it, `descend_clause_expr_applies`), the first comprehension outermost.
@@ -33,7 +35,7 @@ theorem buildL_eq (st : PSt) (sub : CP) (l : List EC) :
   | cons i is ih => simp only [buildL, buildPlans, List.foldl_cons]; rw [ih]
 
 theorem build_shape (st : PSt) (var : V) (g : QG) (wh : Option Ex) (res : Ex)
-    (path : Option (V × List V)) (nested : List EC) :
+    (path : Option (V × List V × List Bool)) (nested : List EC) :
     let b := buildPlans { st with visited := st.visited ++ g.vars } nested
     build st (.mk var g wh res path nested) =
       (.agg var ⟨b.2.lens var.scope, var.scope⟩ res
@@ -45,28 +47,53 @@ theorem build_shape (st : PSt) (var : V) (g : QG) (wh : Option Ex) (res : Ex)
   simp only [build, buildL_eq, fresh]
   rfl
 
-theorem interleave_length : ∀ (ns rs : List V), rs.length + 1 = ns.length →
-    (interleave ns rs).length = ns.length + rs.length
-  | [], _, h => by simp at h
-  | [n], [], _ => rfl
-  | n :: m :: ns, [], h => by simp at h
-  | n :: ns, r :: rs, h => by
-    simp only [List.length_cons, Nat.add_right_cancel_iff] at h
-    simp only [interleave, List.length_cons]
-    rw [interleave_length ns rs h]; omega
+theorem pathComps_flat_length (rs : List ERel) :
+    (rs.flatMap fun x => [x.alias, x.stop]).length = 2 * rs.length := by
+  induction rs with
+  | nil => rfl
+  | cons r rs ih => rw [List.flatMap_cons, List.length_append, ih]; simp; omega
 
-theorem interleave_nodes : ∀ (ns rs : List V) (i : Nat), i < ns.length → rs.length + 1 = ns.length →
-    (interleave ns rs)[2 * i]? = ns[i]?
-  | [], _, i, h, _ => by simp at h
-  | [n], [], 0, _, _ => rfl
-  | [n], [], i + 1, h, _ => by simp at h
-  | n :: m :: ns, [], _, _, h => by simp at h
-  | n :: ns, r :: rs, 0, _, _ => rfl
-  | n :: ns, r :: rs, i + 1, h, hl => by
-    simp only [List.length_cons, Nat.add_right_cancel_iff, Nat.add_lt_add_iff_right] at h hl
-    have : 2 * (i + 1) = (2 * i) + 1 + 1 := by omega
-    simp only [interleave, this, List.getElem?_cons_succ]
-    exact interleave_nodes ns rs i h hl
+theorem pathComps_length (rs : List ERel) (h : rs ≠ []) :
+    (pathComps rs).length = 2 * rs.length + 1 := by
+  cases rs with
+  | nil => exact absurd rfl h
+  | cons r rs =>
+    simp only [pathComps, List.length_cons]
+    rw [pathComps_flat_length (r :: rs)]; simp
+
+theorem pathComps_start (r : ERel) (rs : List ERel) : (pathComps (r :: rs))[0]? = some r.start := rfl
+
+theorem pathComps_flat_get (rs : List ERel) : ∀ i,
+    (rs.flatMap fun x => [x.alias, x.stop])[2 * i]? = (rs[i]?).map (·.alias) ∧
+    (rs.flatMap fun x => [x.alias, x.stop])[2 * i + 1]? = (rs[i]?).map (·.stop) := by
+  induction rs with
+  | nil => intro i; simp
+  | cons r rs ih =>
+    intro i
+    cases i with
+    | zero => simp
+    | succ i =>
+      have e1 : 2 * (i + 1) = 2 * i + 2 := by omega
+      simp only [List.flatMap_cons, e1, List.getElem?_cons_succ]
+      exact ih i
+
+/-- Relationship `i` sits at `2i+1`. -/
+theorem pathComps_rel (r : ERel) (rs : List ERel) (i : Nat) :
+    (pathComps (r :: rs))[2 * i + 1]? = ((r :: rs)[i]?).map (·.alias) := by
+  simp only [pathComps, List.getElem?_cons_succ]
+  exact (pathComps_flat_get (r :: rs) i).1
+
+/-- …followed by the end it was written towards. -/
+theorem pathComps_stop (r : ERel) (rs : List ERel) (i : Nat) :
+    (pathComps (r :: rs))[2 * i + 2]? = ((r :: rs)[i]?).map (·.stop) := by
+  simp only [pathComps, List.getElem?_cons_succ]
+  exact (pathComps_flat_get (r :: rs) i).2
+
+/-- A pattern that revisits an alias, `(a)-[r1]->(b)<-[r2]-(a)` (`r2` stored `a → b`):
+the path is `[a, r1, b, r2, a]`, though `graph.nodes()` holds `a` once. -/
+theorem pathComps_revisit :
+    pathComps [⟨⟨0, 0⟩, ⟨1, 0⟩, ⟨2, 0⟩, false⟩, ⟨⟨0, 0⟩, ⟨3, 0⟩, ⟨2, 0⟩, true⟩] =
+      [⟨0, 0⟩, ⟨1, 0⟩, ⟨2, 0⟩, ⟨3, 0⟩, ⟨0, 0⟩] := by decide
 
 /-! ## `extract_clause_expr_comprehensions` -/
 

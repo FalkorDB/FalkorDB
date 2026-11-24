@@ -630,3 +630,111 @@ class testVariableLengthTraversals(FlowTestsBase):
 
         self.env.assertEqual(without_path, [[4]])
         self.env.assertEqual(with_path, without_path)
+
+    def test19_incoming_path_follows_pattern(self):
+        # a named path over an incoming var-len pattern lists its nodes and
+        # relationships in pattern order, also when both ends are the same
+        # node (#3451)
+        g = self.db.select_graph("vlt_incoming_cycle")
+        try:
+            g.delete()
+        except ResponseError:
+            # the graph does not exist yet on a fresh server
+            pass
+        g.query("""CREATE (a:N {id: 0})-[:R {w: 1}]->(b:N {id: 1}),
+                          (b)-[:R {w: 2}]->(c:N {id: 2}),
+                          (c)-[:R {w: 3}]->(a),
+                          (a)-[:R {w: 4}]->(:N {id: 3})""")
+
+        try:
+            ret = "RETURN [n IN nodes(p) | n.id], [r IN relationships(p) | r.w]"
+            incoming = [[[0, 2, 1, 0], [3, 2, 1]]]
+            outgoing = [[[0, 1, 2, 0], [1, 2, 3]]]
+            queries = [
+                # one variable at both ends
+                ("MATCH p = (a:N {id: 0})<-[:R*3..3]-(a) " + ret, incoming),
+                ("MATCH p = (a:N {id: 0})-[:R*3..3]->(a) " + ret, outgoing),
+                # two variables bound to the same node
+                ("MATCH (a:N {id: 0}), (b:N {id: 0}) "
+                 "MATCH p = (a)<-[:R*3..3]-(b) " + ret, incoming),
+                # the cycle after a fixed-length hop (on an edge outside the cycle)
+                ("MATCH p = (x:N {id: 3})<-[:R]-(a:N {id: 0})<-[:R*3..3]-(a) " + ret,
+                 [[[3, 0, 2, 1, 0], [4, 3, 2, 1]]]),
+                # not a cycle
+                ("MATCH p = (a:N {id: 0})<-[:R*2..2]-() " + ret,
+                 [[[0, 2, 1], [3, 2]]]),
+            ]
+            for q, expected in queries:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+            # the same paths built inside a pattern comprehension
+            queries = [
+                ("MATCH (a:N {id: 0}) "
+                 "RETURN [p = (a)<-[:R*3..3]-(a) | [n IN nodes(p) | n.id]]",
+                 [[[[0, 2, 1, 0]]]]),
+                ("MATCH (a:N {id: 0}) "
+                 "RETURN [p = (a)<-[:R*2..2]-() | [n IN nodes(p) | n.id]]",
+                 [[[[0, 2, 1]]]]),
+                ("MATCH (a:N {id: 0}) "
+                 "RETURN [p = (a)<-[:R]-()<-[:R]-() | [n IN nodes(p) | n.id]]",
+                 [[[[0, 2, 1]]]]),
+                ("MATCH (a:N {id: 0}) "
+                 "RETURN [p IN (a)<-[:R*2..2]-() | [n IN nodes(p) | n.id]]",
+                 [[[[0, 2, 1]]]]),
+                # a bare pattern that is an incoming cycle
+                ("MATCH (a:N {id: 0}) "
+                 "RETURN [p IN (a)<-[:R*3..3]-(a) | [n IN nodes(p) | n.id]]",
+                 [[[[0, 2, 1, 0]]]]),
+                ("MATCH (a:N {id: 0}) "
+                 "RETURN [p IN (a)-[:R*3..3]->(a) | [n IN nodes(p) | n.id]]",
+                 [[[[0, 1, 2, 0]]]]),
+                # a bare pattern that revisits an alias before an incoming segment
+                ("MATCH (a:N {id: 0}) "
+                 "RETURN [p IN (a)-[:R*0..0]->(a)<-[:R*2..2]-() | [n IN nodes(p) | n.id]]",
+                 [[[[0, 2, 1]]]]),
+            ]
+            for q, expected in queries:
+                self.env.assertEqual(g.query(q).result_set, expected, message=q)
+        finally:
+            g.delete()
+
+    def test20_incoming_path_segments_chained_on_one_node(self):
+        # three var-len segments through the same two nodes, with the middle
+        # one forward, incoming or undirected; each is spliced in its written
+        # direction (#3451)
+        g = self.db.select_graph("vlt_incoming_chain")
+        try:
+            g.delete()
+        except ResponseError:
+            # the graph does not exist yet on a fresh server
+            pass
+        # b -> p1 -> p2 -> a, a -> q1 -> q2 -> b and the cycle b -> c1 -> c2 -> b
+        g.query("""CREATE (a:A {id: 'a'}), (b:B {id: 'b'}),
+                          (p1:M {id: 'p1'}), (p2:M {id: 'p2'}),
+                          (c1:M {id: 'c1'}), (c2:M {id: 'c2'}),
+                          (q1:M {id: 'q1'}), (q2:M {id: 'q2'}),
+                          (b)-[:R]->(p1), (p1)-[:R]->(p2), (p2)-[:R]->(a),
+                          (a)-[:R]->(q1), (q1)-[:R]->(q2), (q2)-[:R]->(b),
+                          (b)-[:R]->(c1), (c1)-[:R]->(c2), (c2)-[:R]->(b)""")
+
+        try:
+            ret = " RETURN [n IN nodes(p) | n.id]"
+            head = ["a", "p2", "p1", "b"]
+            tail = ["b", "q2", "q1", "a"]
+            forward = ["b", "c1", "c2", "b"]
+            backward = ["b", "c2", "c1", "b"]
+            queries = [
+                ("(a:A)<-[:R*3..3]-(b:B)-[:R*3..3]->(b)<-[:R*3..3]-(a)",
+                 [head + forward[1:] + tail[1:]]),
+                ("(a:A)<-[:R*3..3]-(b:B)<-[:R*3..3]-(b)<-[:R*3..3]-(a)",
+                 [head + backward[1:] + tail[1:]]),
+                ("(a:A)<-[:R*3..3]-(b:B)-[:R*3..3]-(b)<-[:R*3..3]-(a)",
+                 [head + forward[1:] + tail[1:],
+                  head + backward[1:] + tail[1:]]),
+            ]
+            for pattern, expected in queries:
+                q = "MATCH p = " + pattern + ret
+                res = [r[0] for r in g.query(q).result_set]
+                self.env.assertEqual(sorted(res), sorted(expected), message=q)
+        finally:
+            g.delete()

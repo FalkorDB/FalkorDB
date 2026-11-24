@@ -44,6 +44,13 @@ structure Comp where
   nodes : List QN
   rels : List QR
   paths : List (V × List V) := []
+  /-- `QueryPath::incoming` of each path (keyed by its variable): per relationship,
+  whether it was written `<-` (#3460). -/
+  incoming : List (V × List Bool) := []
+
+/-- `QueryPath::is_incoming` (ast.rs) of path `pv`: `incoming.get(i / 2)`, `false` past the end. -/
+def Comp.isIncoming (c : Comp) (pv : V) (i : Nat) : Bool :=
+  (((c.incoming.find? (·.1 == pv)).map (·.2)).bind (·[i / 2]?)).getD false
 
 structure MSt where
   visited : List V

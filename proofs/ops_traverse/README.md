@@ -64,7 +64,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `asp_sound`, `asp_minimal`, `asp_complete'`, `asp_nodup` | allShortestPaths (source ≠ destination) returns every shortest path, once, and nothing else | `ShortestPaths.lean`, `ASPMain.lean`, `ASPFuel.lean` |
 | `fin_drained` | The allShortestPaths BFS terminates within `|univ| + 1` steps (`univ` = source and every edge endpoint, repeats included, an upper bound on the node count) | `ASPFuel.lean` |
 | `buildNodes_walk` | PathBuilder's "other endpoint" rule rebuilds a walk's nodes, given unique edge ids | `ShortestPaths.lean` |
-| `revWalk_reconstructs`, `vltFix_follows` | PathBuilder's reversed var-length branch rebuilds any walk backwards; with the pattern direction as input it always follows the pattern | `PathVlt.lean` |
+| `vltNext_follows` | PathBuilder splices a var-length segment in the direction the pattern was written (`QueryPath::incoming`, #3460), cycles included (#3451) | `PathVlt.lean` |
 | `expandIntoP_live`, `expandIntoP_not_delRel` | main's ExpandInto (with its pending-deleted endpoint check) only matches live edges and never a pending-deleted one | `ExpandIntoPending.lean` |
 | `drive_flatten`, `capDrive_flatten` | Output batching never loses, duplicates or reorders rows; LIMIT is exact | `Drive.lean` |
 | `run_complete` | The variable-length frame machine yields every frame's items | `VarLenGlue.lean` |
@@ -95,7 +95,6 @@ Every bug was reproduced against a live server and compared with C before it was
 | W2-traverse-3 | `bidir_collapse_duplicates_pair`, `expandInto_bidir_collapse_two_rows` | An undirected anonymous hop collapses per direction, not per pair. With `a→b`, `b→a`, `a→b`, `MATCH (a)-[]-(b) RETURN a.id, b.id`: Rust 4 rows, C 2 | **Open** |
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |
 | #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4; C's 4 is the figure from the issue report, not re-run here); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
-| #3451 | `bug3451_main_violates`, `bug3451_cycle_not_reversed` | PathBuilder infers a var-length segment's direction by comparing its first node with the previous path node (`path_builder.rs:102-110`); on a cycle they are equal, so an incoming `(a)<-[:R*3..3]-(a)` on `0→1→2→0` comes out `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]` (C: `[0,2,1,0]`/`[1,2,3]`: right nodes, but its relationship list is also in the wrong order). Property `PathFollowsPattern`; main is right on non-cyclic walks (`vltMain_follows_of_ne`), the plan-time direction flag fixes it (`vltFix_follows`) | **Open** |
 | W2-traverse-11 | `EIP.bug_condTraverse_matches_doomed_edge`, `bug_condTraverse_main_violates` (property `LiveCondTraverse`) | `cond_traverse.rs` never reads `Pending`, so with one endpoint unbound (`MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)`) CondTraverse matches the doomed edge of a pending-deleted node; ExpandInto does not (`expandIntoP_live`) | **Open** |
 | W2-index-3 | `IndexScan.evalIQ_inList` | `IN [date, 2]` on an indexed property drops the non-scalar member before the index is asked | **Open** |
 
@@ -124,7 +123,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | `ASPFold.lean`, `ASPInv.lean`, `ASPStep.lean`, `ASPFinal.lean`, `ASPMain.lean`, `ASPFuel.lean` | The allShortestPaths proof: relaxation, the invariant `Inv`, one BFS step, the backtrack, minimality/completeness/no duplicates, termination |
 | `Scans.lean` | Label scan, id seek, label + id-range scan |
 | `IndexScan.lean` | Node and edge index scans under the `IndexSound` contract, fulltext and vector scans, undirected edge orientation |
-| `PathVlt.lean` | PathBuilder's `Value::Path` branch (splicing a var-length segment, reversed for `<-`); property `PathFollowsPattern` and the #3451 counterexample |
+| `PathVlt.lean` | PathBuilder's `Value::Path` branch (splicing a var-length segment, reversed for `<-`); property `PathFollowsPattern` (`vltNext_follows`, the #3451 cycle `fixed3451_cycle_reversed`) |
 | `ExpandIntoPending.lean` | ExpandInto with pending deletes; property `LiveExpandInto`, proved for main |
 | `SlotFeed.lean` | How an Aggregate output row feeds a later CondTraverse across `WITH`: binder slot ids, the Aggregate row, the endpoint reads; property `ScopedRow` and the #3372 counterexamples |
 | `Drive.lean` | The emitter-driven `next` loops and LIMIT propagation |

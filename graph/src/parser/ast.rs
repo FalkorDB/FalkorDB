@@ -681,6 +681,9 @@ pub struct QueryRelationship<T, L, TVar: VarKind> {
     pub min_hops: Option<u32>,
     pub max_hops: Option<u32>,
     pub all_shortest_paths: AllShortestPaths,
+    /// Written `<-`: `from`/`to` are stored swapped. The endpoints alone cannot
+    /// tell it from `->` when both are the same node, as in `(a)<-[*]-(a)`.
+    pub written_incoming: bool,
 }
 
 /// Whether this relationship is part of an allShortestPaths pattern,
@@ -745,6 +748,7 @@ impl<T, L, TVar: VarKind> QueryRelationship<T, L, TVar> {
             min_hops,
             max_hops,
             all_shortest_paths: AllShortestPaths::No,
+            written_incoming: false,
         }
     }
 }
@@ -754,10 +758,16 @@ impl<T, L, TVar: VarKind> QueryRelationship<T, L, TVar> {
 /// Represents patterns like `p = (a)-[*]->(b)` where:
 /// - `var` is the path variable `p`
 /// - `vars` contains all variables in the path pattern
+/// - `incoming` has one entry per relationship of the path, in pattern order:
+///   whether it was written `<-`. The parser stores such a relationship with
+///   `from`/`to` swapped, so its variable-length binding runs against the
+///   path. Recorded here because the endpoints cannot tell it apart when both
+///   are the same node, as in `p = (a)<-[*]-(a)`.
 #[derive(Debug)]
 pub struct QueryPath<TVar: VarKind> {
     pub var: TVar::Alias,
     pub vars: Vec<TVar::Alias>,
+    pub incoming: Vec<bool>,
 }
 
 impl<TVar: VarKind> QueryPath<TVar> {
@@ -765,8 +775,22 @@ impl<TVar: VarKind> QueryPath<TVar> {
     pub const fn new(
         var: TVar::Alias,
         vars: Vec<TVar::Alias>,
+        incoming: Vec<bool>,
     ) -> Self {
-        Self { var, vars }
+        Self {
+            var,
+            vars,
+            incoming,
+        }
+    }
+
+    /// Whether the relationship at `vars[var_idx]` was written `<-`.
+    #[must_use]
+    pub fn is_incoming(
+        &self,
+        var_idx: usize,
+    ) -> bool {
+        self.incoming.get(var_idx / 2).copied().unwrap_or(false)
     }
 }
 
