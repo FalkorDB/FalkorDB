@@ -85,6 +85,25 @@ class Spans(unittest.TestCase):
         ends = pr_impact.ends_of(fns, lines)
         self.assertEqual(pr_impact.owner(fns, ends, 2), 0)
 
+    def test_code_between_block_comments_is_kept(self):
+        lines = ['fn a() -> u8 {', '    /* before */ let x = 1; /* after */', '    fn b() {}', '    x', '}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 2), 0)
+
+    def test_code_after_an_attribute_is_kept(self):
+        lines = ['fn a() -> u8 {', '    #[allow(unused)] let v = W[0]', '    fn b() {}', '}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 2), 0)
+
+    def test_standalone_block_comments_belong_to_neither(self):
+        lines = ['fn a() {}', '/* one */ /* two */', '/* a', '   b */', 'fn b() {}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        for line in (2, 3, 4):
+            self.assertIsNone(pr_impact.owner(fns, ends, line), f'line {line}')
+
 
 @unittest.skipUnless(shutil.which('git') and shutil.which('tar') and shutil.which('python3'),
                      'needs git, tar and python3')
