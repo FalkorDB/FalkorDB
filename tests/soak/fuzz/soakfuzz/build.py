@@ -62,7 +62,7 @@ def build_run(opts: dict, info: dict, tag: str, scale: float, rdir: str) -> dict
                 hung = running and harness.server_hung(server.port)
                 out["server_alive"], out["exit_code"], out["hung"] = running and not hung, None if running else code, hung
             except harness.DockerError:
-                pass
+                pass  # docker could not say: server_alive stays None, so the run is unmeasured
     finally:
         with open(os.path.join(rdir, "server-tail.log"), "w") as f:
             f.write(server.stop())

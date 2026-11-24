@@ -570,8 +570,8 @@ def main(argv=None) -> int:
     finally:
         try:
             cleanup(prefix)
-        except Exception:
-            pass
+        except Exception as e:  # result.json is already written; say what may be left running
+            print(f"warning: removing the {prefix}-* containers failed: {e}", file=sys.stderr, flush=True)
         signal.signal(signal.SIGTERM, previous)
         if harness_mod is not None:
             harness_mod.STOPPING = False

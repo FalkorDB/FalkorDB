@@ -579,3 +579,14 @@ def test_a_relative_out_is_resolved_where_the_check_starts(tmp_path, monkeypatch
     doc = json.loads((start / "out" / "result.json").read_text())
     assert doc["verdict"] == "error" and "no docker" in doc["error"]
     assert (start / "out" / "raw" / "rows.csv").exists() and not (elsewhere / "out").exists()
+
+
+def test_a_failed_clean_up_is_reported_and_the_result_still_written(tmp_path, monkeypatch, capsys):
+    def boom(prefix):
+        raise RuntimeError("docker is gone")
+
+    monkeypatch.setattr(check, "cleanup", boom)
+    out = tmp_path / "out"
+    assert check.main(["--candidate", "x:latest", "--baseline", DIGEST_B, "--out", str(out), "--mode", "queue"]) == 0
+    assert json.loads((out / "result.json").read_text())["verdict"] == "error"
+    assert "docker is gone" in capsys.readouterr().err

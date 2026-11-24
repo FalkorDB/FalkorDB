@@ -80,7 +80,7 @@ def server_hung(port: int, tries: int = 3) -> bool:
             if r.ping():
                 return False
         except Exception:
-            pass
+            pass  # a timeout or a refused connection is no answer: try again
         finally:
             r.close()
     return True
@@ -200,7 +200,7 @@ class Server:
                 if int(r.info("persistence").get("loading", 1)) == 0:
                     return r
             except Exception:
-                pass
+                pass  # not accepting connections yet, or still loading: poll again
             time.sleep(0.5)
         raise RuntimeError("server did not finish loading: " + self.logs(50))
 
@@ -216,7 +216,7 @@ class Server:
         try:
             docker("rm", "-f", self.name, check=False)
         except DockerError:
-            pass
+            pass  # best effort; the check's final clean-up removes what is left
         return tail
 
 
@@ -289,13 +289,13 @@ async def _prober(ports, out_path, hang_path, stop):
                         with open(hang_path, "w") as h:
                             h.write(f"{now():.3f}\n")
             except (ConnectionError, OSError):
-                pass
+                pass  # the server dropped the connection: logged as down below, then reconnect
             finally:
                 rt.cancel()
                 try:
                     writer.close()
                 except Exception:
-                    pass
+                    pass  # the transport is already broken: nothing left to close
             if not stop.is_set():
                 f.write(f"{name},{now():.4f},down\n")
                 await asyncio.sleep(1)
@@ -399,7 +399,7 @@ def async_proc(cfg: dict, stop, scanning, out_path: str):
         _soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
     except Exception:
-        pass
+        pass  # keep the soft limit: requests past it fail as connection errors, which no_error_replies reports
     asyncio.run(_async_main(cfg, stop, scanning, out_path))
     os._exit(0)
 
@@ -598,7 +598,8 @@ def idx_drop(label, props):
 def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, constraint_info: dict):
     """Index creation, constraints, deliberate violations and BGSAVE, during the epoch."""
     if ep.get("churn"):
-        return constraint_churn(port, epoch_s, ep, ng, stop, events, t_start, constraint_info)
+        constraint_churn(port, epoch_s, ep, ng, stop, events, t_start, constraint_info)
+        return
     r = connect(port, timeout=ADMIN_TIMEOUT_S)
     rng = random.Random(f"{ep['seed']}-events")
     plan = []

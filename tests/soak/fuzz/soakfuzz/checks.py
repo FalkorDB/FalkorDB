@@ -66,7 +66,7 @@ def read_pings(path, t0, t1):
                 else:
                     out[name].append((sched, float(lat)))
     except FileNotFoundError:
-        pass
+        pass  # the prober wrote nothing: no pings, which the checks report as zero pings
     return out, downs
 
 
