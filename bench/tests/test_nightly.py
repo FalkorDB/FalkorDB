@@ -1,10 +1,11 @@
-"""Tests for post.py and missed_run.py: one test per rule, each failing when its rule breaks.
+"""Tests for falkorbench.nightly.report and .missed_run: one test per rule, each failing when its rule breaks.
 
-Standard library only: `python -m pytest tests/perf/report`. See tests/perf/report/README.md.
+`uv run --project bench --group dev python -I -B -m pytest bench/tests/test_nightly.py`; see bench/README.md.
 """
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import http.client
 import io
@@ -23,12 +24,16 @@ from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import missed_run
-import post
+from click.testing import CliRunner
+
+import falkorbench.nightly
+from falkorbench.cli import cli
+from falkorbench.nightly import missed_run
+from falkorbench.nightly import report
 
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[2]
-FIXTURES = REPO_ROOT / "tests" / "perf" / "fixtures"
+REPO_ROOT = HERE.parents[1]
+FIXTURES = HERE / "fixtures"
 
 CANDIDATE_IMAGE = ("ghcr.io/falkordb/falkordb-server@sha256:"
                    "95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed")
@@ -84,9 +89,9 @@ class Workspace(unittest.TestCase):
 
     def setUp(self):
         self.directory = Path(self.enter(tempfile.TemporaryDirectory()))
-        self.enter(unittest.mock.patch.object(post, "POST_RETRY_DELAYS", (0.0, 0.0)))
+        self.enter(unittest.mock.patch.object(report, "POST_RETRY_DELAYS", (0.0, 0.0)))
         # No commit lookups unless a test asks for them.
-        self.enter(unittest.mock.patch.object(post, "CHECKOUT", self.directory))
+        self.enter(unittest.mock.patch.object(report, "CHECKOUT", self.directory))
 
     def enter(self, context):
         """TestCase.enterContext, which needs Python 3.11."""
@@ -103,7 +108,7 @@ class Workspace(unittest.TestCase):
         path = content if isinstance(content, Path) else self.write(content)
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            code = post.main(["--nightly", str(path)], dict(environ or {}))
+            code = report.run(path, dict(environ or {}))
         return code, stdout.getvalue(), stderr.getvalue()
 
     def summary(self, content, environ: dict | None = None) -> tuple[int, str, str]:
@@ -163,7 +168,7 @@ class NewIssueLink(Workspace):
     def issue(self, night: dict) -> dict:
         _, line, _ = self.summary(night)
         url = line.split(" · <")[-1].removesuffix("|new issue>")
-        self.assertLessEqual(len(url), post.ISSUE_URL_CHARACTERS)
+        self.assertLessEqual(len(url), report.ISSUE_URL_CHARACTERS)
         return {key: values[0] for key, values in urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).items()}
 
     def test_it_is_prefilled_from_nightly_json_only(self):
@@ -190,7 +195,7 @@ class NewIssueLink(Workspace):
 
 
 class GuardsThatNeedNoValidator(Workspace):
-    """The only cases where post.py exits 1: it could not report the night as written."""
+    """The only cases where the report exits 1: it could not report the night as written."""
 
     def test_a_file_that_cannot_be_read_is_an_error(self):
         cases = {"": "could not read nightly.json", "{": "could not read nightly.json",
@@ -215,7 +220,7 @@ class GuardsThatNeedNoValidator(Workspace):
                 self.assertTrue(line.startswith(f"Perf nightly 2026-11-24: ERROR (unknown status {status!r}"), line)
 
     def test_a_crash_inside_the_reporter_still_reports_and_exits_1(self):
-        with unittest.mock.patch.object(post, "summary_markdown", side_effect=RuntimeError("boom <users/all>")):
+        with unittest.mock.patch.object(report, "summary_markdown", side_effect=RuntimeError("boom <users/all>")):
             code, stdout, stderr = self.run_post(GREEN, {"GITHUB_RUN_ID": "77"})
         self.assertEqual(code, 1)
         self.assertEqual(stdout, "Perf nightly: ERROR (the reporter crashed: RuntimeError: boom ‹users/all>) "
@@ -315,14 +320,14 @@ class CommitList(Workspace):
         for subject in ("base (#1)", "fix: a < b (#3887) (#3889)", "direct push", "perf: x (#3963)"):
             git(self.repository, "commit", "-q", "--allow-empty", "-m", subject)
             self.shas.append(git(self.repository, "rev-parse", "HEAD"))
-        self.enter(unittest.mock.patch.object(post, "CHECKOUT", self.repository))
+        self.enter(unittest.mock.patch.object(report, "CHECKOUT", self.repository))
 
     def red(self, previous, candidate) -> dict:
         return nightly("red", [result("micro-hw", "regression", [UNWIND])], previous_green=previous,
                        candidate_commit=candidate)
 
     def test_newest_first_with_the_last_pr_number_of_each_title(self):
-        commits, why = post.commits_since_green(self.red(self.shas[0], self.shas[3]))
+        commits, why = report.commits_since_green(self.red(self.shas[0], self.shas[3]))
         self.assertEqual(why, "")
         self.assertEqual(commits, [(self.shas[3], "perf: x", 3963), (self.shas[2], "direct push", None),
                                    (self.shas[1], "fix: a < b (#3887)", 3889)])
@@ -345,7 +350,7 @@ class CommitList(Workspace):
                 self.assertIn(f"Commits since the last green night: {why}", summary)
 
     def test_a_value_that_is_not_a_hash_never_reaches_git(self):
-        commits, why = post.commits_since_green(self.red("--output=/tmp/x", self.shas[3]))
+        commits, why = report.commits_since_green(self.red("--output=/tmp/x", self.shas[3]))
         self.assertEqual((commits, why), ([], "no earlier green night is recorded"))
 
     @unittest.skipUnless(
@@ -355,8 +360,8 @@ class CommitList(Workspace):
                            capture_output=True, check=False).returncode == 0,
         "this checkout lacks the history of main around 4c1088949")
     def test_a_real_range_on_main(self):
-        with unittest.mock.patch.object(post, "CHECKOUT", REPO_ROOT):
-            commits, _ = post.commits_since_green(self.red(PREVIOUS_GREEN, CANDIDATE_COMMIT))
+        with unittest.mock.patch.object(report, "CHECKOUT", REPO_ROOT):
+            commits, _ = report.commits_since_green(self.red(PREVIOUS_GREEN, CANDIDATE_COMMIT))
         self.assertEqual([pull for _, _, pull in commits], [3963, 3017, 3889, 3930])
 
 
@@ -460,7 +465,7 @@ class Delivery(Workspace):
 
     def test_a_connect_timeout_is_retried_because_nothing_was_sent(self):
         timeout = urllib.error.URLError(TimeoutError("timed out"))
-        with unittest.mock.patch.object(post.urllib.request, "urlopen", side_effect=timeout) as urlopen:
+        with unittest.mock.patch.object(report.urllib.request, "urlopen", side_effect=timeout) as urlopen:
             code, _, stderr = self.run_post(GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
         self.assertEqual((code, urlopen.call_count), (0, 3))
         self.assertIn("posting to Chat failed: connection failed: TimeoutError", stderr)
@@ -469,7 +474,7 @@ class Delivery(Workspace):
         # urllib raises these bare (not as URLError) only once the request went out.
         for error in (TimeoutError("timed out"), ConnectionResetError(54, "reset"), http.client.BadStatusLine("x")):
             with self.subTest(error=type(error).__name__):
-                with unittest.mock.patch.object(post.urllib.request, "urlopen", side_effect=error) as urlopen:
+                with unittest.mock.patch.object(report.urllib.request, "urlopen", side_effect=error) as urlopen:
                     code, _, stderr = self.run_post(GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
                 self.assertEqual((code, urlopen.call_count), (0, 1))
                 self.assertIn(f"no answer from Chat: {type(error).__name__} (not retried: the message may have arrived)",
@@ -486,7 +491,7 @@ class Delivery(Workspace):
             def read(self, *arguments):
                 raise http.client.IncompleteRead(b"")
 
-        with unittest.mock.patch.object(post.urllib.request, "urlopen", return_value=Answer()) as urlopen:
+        with unittest.mock.patch.object(report.urllib.request, "urlopen", return_value=Answer()) as urlopen:
             code, _, stderr = self.run_post(GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
         self.assertEqual((code, urlopen.call_count), (0, 1))
         self.assertIn("Posted to Chat.", stderr)
@@ -501,7 +506,7 @@ class Delivery(Workspace):
                 self.assertNotIn("SECRET", stderr)
 
     def test_any_other_failure_while_posting_is_a_warning(self):
-        with unittest.mock.patch.object(post, "post_to_chat", side_effect=RuntimeError("boom")):
+        with unittest.mock.patch.object(report, "post_to_chat", side_effect=RuntimeError("boom")):
             code, stdout, stderr = self.run_post(GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
         self.assertEqual(code, 0)
         self.assertTrue(stdout.startswith("Perf nightly 2026-11-24: GREEN"))
@@ -518,9 +523,9 @@ class Delivery(Workspace):
             def read(self, *arguments):
                 raise http.client.IncompleteRead(b"{")
 
-        with unittest.mock.patch.object(post.urllib.request, "urlopen", return_value=Answer()), \
-                self.assertRaises(post.GitHubError) as raised:
-            post.github_get("https://api.github.com/repos/x/y", "")
+        with unittest.mock.patch.object(report.urllib.request, "urlopen", return_value=Answer()), \
+                self.assertRaises(report.GitHubError) as raised:
+            report.github_get("https://api.github.com/repos/x/y", "")
         self.assertIn("IncompleteRead", str(raised.exception))
 
 
@@ -544,7 +549,7 @@ class JudgeFixtures(Workspace):
                 for check in data["checks"]:
                     if check["verdict"] == verdict:
                         self.assertIn(check["check"], line)
-                    self.assertIn(f"| {post.markdown_plain(check['check'])} | {check['verdict']} |", summary)
+                    self.assertIn(f"| {report.markdown_plain(check['check'])} | {check['verdict']} |", summary)
 
 
 # ---------------------------------------------------------------------------
@@ -567,12 +572,12 @@ def artifacts(*names: str, expired: bool = False) -> dict:
 
 
 class MissedRun(Workspace):
-    def alarm(self, routes: dict, arguments: list | None = None, environ: dict | None = None):
+    def alarm(self, routes: dict, options: dict | None = None, environ: dict | None = None):
         with StubServer(routes) as server:
             environ = {"GITHUB_API_URL": server.url, **(environ or {})}
             stdout, stderr = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                code = missed_run.main(["--date", NIGHT.isoformat(), *(arguments or [])], environ, now=NOW)
+                code = missed_run.run(environ, NIGHT, now=NOW, **(options or {}))
         return code, stdout.getvalue(), stderr.getvalue(), server.requests
 
     def test_quiet_when_tonights_run_has_the_artifact(self):
@@ -692,7 +697,7 @@ class MissedRun(Workspace):
             "/repos/FalkorDB/FalkorDB/actions/workflows/rust-push.yml/runs": (
                 200, {"workflow_runs": [run(16, "2026-11-24T01:00:00Z", branch="dev", event="push")]}),
             "/repos/FalkorDB/FalkorDB/actions/runs/16/artifacts": (200, artifacts("coverage-binary")),
-        }, ["--workflow", "rust-push.yml", "--branch", "dev", "--event", "push", "--artifact", "coverage-binary"])
+        }, {"workflow": "rust-push.yml", "branch": "dev", "event": "push", "artifact": "coverage-binary"})
         self.assertEqual(code, 0)
         query = urllib.parse.parse_qs(requests[0]["query"])
         self.assertEqual((query["branch"], query["event"]), (["dev"], ["push"]))
@@ -702,9 +707,9 @@ class MissedRun(Workspace):
                   "/repos/FalkorDB/FalkorDB/actions/runs/99": (200, {"id": 99, "created_at": "2026-11-24T05:03:00Z"})}
         with StubServer(routes) as server:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                missed_run.main([], {"GITHUB_API_URL": server.url, "GITHUB_EVENT_NAME": "schedule",
-                                     "GITHUB_RUN_ID": "99"},
-                                now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
+                missed_run.run({"GITHUB_API_URL": server.url, "GITHUB_EVENT_NAME": "schedule",
+                                "GITHUB_RUN_ID": "99"},
+                               now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
         runs = [request for request in server.requests if request["path"] == RUNS_PATH]
         self.assertEqual(urllib.parse.parse_qs(runs[0]["query"])["created"],
                          ["2026-11-23T05:00:00Z..2026-11-24T05:00:00Z"])
@@ -719,8 +724,8 @@ class MissedRun(Workspace):
                           "/repos/FalkorDB/FalkorDB/actions/runs/99": (200, {"created_at": "2026-11-20T05:03:00Z"})}
                 with StubServer(routes) as server:
                     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                        missed_run.main([], {"GITHUB_API_URL": server.url, **environ},
-                                        now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
+                        missed_run.run({"GITHUB_API_URL": server.url, **environ},
+                                       now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
                 runs = [request for request in server.requests if request["path"] == RUNS_PATH]
                 self.assertEqual(urllib.parse.parse_qs(runs[0]["query"])["created"],
                                  ["2026-11-25T05:00:00Z..2026-11-26T05:00:00Z"])
@@ -730,9 +735,9 @@ class MissedRun(Workspace):
                   "/repos/FalkorDB/FalkorDB/actions/runs/99": (200, {"created_at": "2026-11-24T05:03:00Z"})}
         with StubServer(routes) as server:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                missed_run.main(["--date", "2026-11-10"], {"GITHUB_API_URL": server.url,
-                                                           "GITHUB_EVENT_NAME": "schedule", "GITHUB_RUN_ID": "99"},
-                                now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
+                missed_run.run({"GITHUB_API_URL": server.url, "GITHUB_EVENT_NAME": "schedule",
+                                "GITHUB_RUN_ID": "99"}, date(2026, 11, 10),
+                               now=datetime(2026, 11, 26, 9, 30, 0, tzinfo=timezone.utc))
         self.assertEqual([request["path"] for request in server.requests], [RUNS_PATH])
         self.assertEqual(urllib.parse.parse_qs(server.requests[0]["query"])["created"],
                          ["2026-11-09T05:00:00Z..2026-11-10T05:00:00Z"])
@@ -740,8 +745,8 @@ class MissedRun(Workspace):
     def test_the_default_night_is_today_in_utc(self):
         with StubServer({RUNS_PATH: (200, {"workflow_runs": []})}) as server:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                missed_run.main([], {"GITHUB_API_URL": server.url},
-                                now=datetime(2026, 11, 25, 5, 0, 3, tzinfo=timezone.utc))
+                missed_run.run({"GITHUB_API_URL": server.url},
+                               now=datetime(2026, 11, 25, 5, 0, 3, tzinfo=timezone.utc))
         self.assertEqual(urllib.parse.parse_qs(server.requests[0]["query"])["created"],
                          ["2026-11-24T05:00:00Z..2026-11-25T05:00:00Z"])
 
@@ -757,28 +762,64 @@ class AlarmWorkflow(unittest.TestCase):
 
 
 class CommandLine(unittest.TestCase):
-    """The scripts run as the workflows run them: `python -I <path>`."""
+    """`bench nightly report` and `bench nightly missed-run`, as the workflows run them."""
 
-    def run_isolated(self, document: dict) -> subprocess.CompletedProcess:
+    # Never let a test write to a real job summary or post to a real webhook.
+    QUIET = {"GITHUB_STEP_SUMMARY": None, "PERF_CHAT_WEBHOOK": None}
+
+    def bench(self, *arguments: str, env: dict | None = None):
+        return CliRunner().invoke(cli, list(arguments), env={**self.QUIET, **(env or {})}, catch_exceptions=False)
+
+    def test_bench_nightly_report_exits_1_only_when_it_could_not_report(self):
+        lines, codes = [], []
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "nightly.json"
-            path.write_text(json.dumps(document))
-            return subprocess.run(
-                [sys.executable, "-I", str(HERE / "post.py"), "--nightly", str(path)],
-                capture_output=True, text=True, check=False, cwd=directory, env={"PATH": os.environ.get("PATH", "")})
+            for document in (GREEN, RED, nightly("x", [])):
+                path.write_text(json.dumps(document))
+                run = self.bench("nightly", "report", "--nightly", str(path))
+                codes.append(run.exit_code)
+                lines.append(run.stdout)
+        self.assertEqual(codes, [0, 0, 1])
+        self.assertTrue(lines[0].startswith("Perf nightly 2026-11-24: GREEN"), lines[0])
+        self.assertTrue(lines[1].startswith("Perf nightly 2026-11-24: RED (micro-hw)"), lines[1])
+        self.assertTrue(lines[2].startswith("Perf nightly 2026-11-24: ERROR (unknown status 'x'"), lines[2])
 
-    def test_post_runs_isolated_and_exits_1_only_when_it_could_not_report(self):
-        green, red, unknown = self.run_isolated(GREEN), self.run_isolated(RED), self.run_isolated(nightly("x", []))
-        self.assertEqual((green.returncode, red.returncode, unknown.returncode), (0, 0, 1), green.stderr + red.stderr)
-        self.assertTrue(green.stdout.startswith("Perf nightly 2026-11-24: GREEN"), green.stdout)
-        self.assertTrue(red.stdout.startswith("Perf nightly 2026-11-24: RED (micro-hw)"), red.stdout)
-        self.assertTrue(unknown.stdout.startswith("Perf nightly 2026-11-24: ERROR (unknown status 'x'"), unknown.stdout)
+    def test_bench_nightly_missed_run_passes_its_options_through(self):
+        path = "/repos/FalkorDB/FalkorDB/actions/workflows/rust-push.yml/runs"
+        with StubServer({path: (200, {"workflow_runs": []})}) as server:
+            run = self.bench("nightly", "missed-run", "--date", "2026-11-10", "--workflow", "rust-push.yml",
+                             "--branch", "dev", "--event", "push", "--artifact", "coverage-binary",
+                             env={"GITHUB_API_URL": server.url})
+        self.assertEqual(run.exit_code, 1)
+        self.assertIn("No push run of rust-push.yml on dev between 2026-11-09 05:00 and 2026-11-10 05:00 UTC.",
+                      run.stdout)
+        query = urllib.parse.parse_qs(server.requests[0]["query"])
+        self.assertEqual((query["branch"], query["event"]), (["dev"], ["push"]))
 
-    def test_missed_run_imports_post_when_isolated(self):
-        completed = subprocess.run(
-            [sys.executable, "-I", str(HERE / "missed_run.py"), "--help"],
-            capture_output=True, text=True, check=False, env={"PATH": os.environ.get("PATH", "")})
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+class StandardLibraryOnly(unittest.TestCase):
+    """The reporting path never depends on a package (bench/README.md, the toolset rule)."""
+
+    # The package's own modules these may import, each standard library only itself.
+    ALLOWED = {"falkorbench", "falkorbench.contract", "falkorbench.nightly", "falkorbench.nightly.report"}
+
+    def test_the_nightly_modules_import_only_the_standard_library(self):
+        for module in (falkorbench.nightly, report, missed_run):
+            with self.subTest(module=module.__name__):
+                for node in ast.walk(ast.parse(Path(module.__file__).read_text(encoding="utf-8"))):
+                    if isinstance(node, ast.Import):
+                        names = [alias.name for alias in node.names]
+                    elif isinstance(node, ast.ImportFrom):
+                        self.assertEqual(node.level, 0, "a relative import pulls in the rest of the package")
+                        names = [f"{node.module}.{alias.name}" if node.module in self.ALLOWED else node.module
+                                 for alias in node.names]
+                    else:
+                        continue
+                    for name in names:
+                        if name.split(".")[0] == "falkorbench":
+                            self.assertIn(name, self.ALLOWED)
+                        else:
+                            self.assertIn(name.split(".")[0], sys.stdlib_module_names, name)
 
 
 if __name__ == "__main__":

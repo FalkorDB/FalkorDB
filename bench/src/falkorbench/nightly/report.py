@@ -1,18 +1,14 @@
-#!/usr/bin/env python3
 """Report one perf nightly: one line to Chat, the details on the run page.
 
-    python -I tests/perf/report/post.py --nightly <path/to/nightly.json>
-
-See tests/perf/report/README.md.
+`bench nightly report --nightly <nightly.json>`; see bench/README.md, "Nightly report and
+missed-run alarm". Standard library only (and falkorbench.contract, which is too).
 """
 
 from __future__ import annotations
 
-import argparse
 import http.client
 import json
 import math
-import os
 import re
 import subprocess
 import sys
@@ -21,7 +17,10 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
+
+from falkorbench import contract
 
 DEFAULT_REPOSITORY = "FalkorDB/FalkorDB"
 DEFAULT_SERVER_URL = "https://github.com"
@@ -32,13 +31,11 @@ ISSUE_LABELS = "performance,perf-regression"
 # GitHub refuses very long URLs (414); the body is cut to stay well under that.
 ISSUE_URL_CHARACTERS = 2000
 
-STATUSES = ("green", "red", "error", "skipped")
 TEXT_CHARACTERS = 300
 NAME_CHARACTERS = 80
 RUN_URL_CHARACTERS = 300  # a run link is about 70
 WORST_ROWS = 5
 COMMITS_SHOWN = 30
-COMMIT_HASH = re.compile(r"^[0-9a-f]{7,40}$")
 TRAILING_PULL_REQUEST = re.compile(r"^(?P<title>.*?)\s*\(#(?P<number>\d+)\)\s*$")
 # A URL that can sit inside Chat's `<url|text>` and Markdown's `[text](url)` intact.
 SAFE_URL = re.compile(r"https?://[^\s<>|\"'`()\[\]]+")
@@ -87,23 +84,23 @@ def markdown_link(url: str, text: str) -> str:
 # The environment: which repository, which run, which API.
 
 
-def server_url(environ: dict) -> str:
+def server_url(environ: Mapping[str, str]) -> str:
     return (environ.get("GITHUB_SERVER_URL") or DEFAULT_SERVER_URL).rstrip("/")
 
 
-def api_url(environ: dict) -> str:
+def api_url(environ: Mapping[str, str]) -> str:
     return (environ.get("GITHUB_API_URL") or DEFAULT_API_URL).rstrip("/")
 
 
-def repository(environ: dict) -> str:
+def repository(environ: Mapping[str, str]) -> str:
     return environ.get("GITHUB_REPOSITORY") or DEFAULT_REPOSITORY
 
 
-def github_token(environ: dict) -> str:
+def github_token(environ: Mapping[str, str]) -> str:
     return environ.get("GH_TOKEN") or environ.get("GITHUB_TOKEN") or ""
 
 
-def current_run_url(environ: dict) -> str:
+def current_run_url(environ: Mapping[str, str]) -> str:
     run_id = environ.get("GITHUB_RUN_ID") or ""
     url = f"{server_url(environ)}/{repository(environ)}/actions/runs/{run_id}"
     return url if run_id.isdigit() and SAFE_URL.fullmatch(url) and len(url) <= RUN_URL_CHARACTERS else ""
@@ -146,7 +143,7 @@ def read_night(path: Path) -> tuple[dict, str, str]:
     if not isinstance(night, dict):
         return {}, "error", f"{path.name} is not a JSON object"
     status = night.get("status")
-    if status not in STATUSES:
+    if status not in contract.NIGHTLY_STATUSES:
         return night, "error", shorten(f"unknown status {status!r} in {path.name}", TEXT_CHARACTERS)
     return night, status, ""
 
@@ -165,7 +162,7 @@ def label(side: object) -> str:
     return one_line(side.get("label"), one_line(side.get("image"), "unknown", NAME_CHARACTERS), NAME_CHARACTERS)
 
 
-def run_url_of(night: dict, environ: dict) -> str:
+def run_url_of(night: dict, environ: Mapping[str, str]) -> str:
     url = night.get("run_url")
     if (isinstance(url, str) and url.startswith("https://") and SAFE_URL.fullmatch(url)
             and len(url) <= RUN_URL_CHARACTERS):
@@ -177,7 +174,7 @@ def regressed_checks(night: dict) -> list[dict]:
     return [check for check in checks_of(night) if check.get("verdict") == "regression"]
 
 
-def issue_url(night: dict, environ: dict) -> str:
+def issue_url(night: dict, environ: Mapping[str, str]) -> str:
     """A pre-filled new issue for a red night, built only from nightly.json, in plain text.
 
     The body is cut line by line (and then shortened) so the URL stays under
@@ -204,7 +201,7 @@ def issue_url(night: dict, environ: dict) -> str:
     return build(text)
 
 
-def chat_line(night: dict, status: str, reason: str, environ: dict) -> str:
+def chat_line(night: dict, status: str, reason: str, environ: Mapping[str, str]) -> str:
     """Perf nightly 2026-11-24: RED (micro-hw, pokec), main@4c10889 vs 6.2.0 · details · new issue"""
     date = one_line(night.get("date"), "date unknown", 20)
     checks = checks_of(night)
@@ -266,9 +263,9 @@ def commits_since_green(night: dict) -> tuple[list[tuple[str, str, int | None]],
     """(sha, title, PR number) newest first from this checkout's git log, or why there are none."""
     previous = night.get("previous_green_commit")
     candidate = candidate_commit(night)
-    if not (isinstance(previous, str) and COMMIT_HASH.match(previous)):
+    if not (isinstance(previous, str) and contract.COMMIT_RE.fullmatch(previous)):
         return [], "no earlier green night is recorded"
-    if not (isinstance(candidate, str) and COMMIT_HASH.match(candidate)):
+    if not (isinstance(candidate, str) and contract.COMMIT_RE.fullmatch(candidate)):
         return [], "the candidate's commit is unknown"
     if previous == candidate:
         return [], "same candidate commit as the last green night: nothing new was merged on main"
@@ -302,7 +299,7 @@ def regression_lines(check: dict) -> list[str]:
     return [*lines, ""]
 
 
-def commit_lines(night: dict, environ: dict) -> list[str]:
+def commit_lines(night: dict, environ: Mapping[str, str]) -> list[str]:
     server, repo = server_url(environ), repository(environ)
     commits, why = commits_since_green(night)
     compare = f"{server}/{repo}/compare/{night.get('previous_green_commit')}...{candidate_commit(night)}"
@@ -318,7 +315,7 @@ def commit_lines(night: dict, environ: dict) -> list[str]:
     return [*lines, ""]
 
 
-def summary_markdown(night: dict, status: str, reason: str, environ: dict) -> str:
+def summary_markdown(night: dict, status: str, reason: str, environ: Mapping[str, str]) -> str:
     checks = checks_of(night)
     url = run_url_of(night, environ)
     date = one_line(night.get("date"), "date unknown", 20)
@@ -349,7 +346,7 @@ def summary_markdown(night: dict, status: str, reason: str, environ: dict) -> st
 # Delivery.
 
 
-def warn(message: str, environ: dict) -> None:
+def warn(message: str, environ: Mapping[str, str]) -> None:
     prefix = "::warning::" if environ.get("GITHUB_ACTIONS") == "true" else "warning: "
     print(f"{prefix}{message}", file=sys.stderr)
 
@@ -395,7 +392,7 @@ def post_to_chat(webhook: str, text: str) -> str:
     return failure
 
 
-def deliver(chat: str, markdown: str, environ: dict, post: bool = True) -> None:
+def deliver(chat: str, markdown: str, environ: Mapping[str, str], post: bool = True) -> None:
     print(chat)
     summary = environ.get("GITHUB_STEP_SUMMARY")
     if summary:
@@ -420,13 +417,10 @@ def deliver(chat: str, markdown: str, environ: dict, post: bool = True) -> None:
         print("Posted to Chat.", file=sys.stderr)
 
 
-def main(argv: list[str] | None = None, environ: dict | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
-    parser.add_argument("--nightly", required=True, type=Path, help="path to nightly.json")
-    arguments = parser.parse_args(argv)
-    environ = dict(os.environ) if environ is None else environ
+def run(path: Path, environ: Mapping[str, str]) -> int:
+    """Report the night in `path`. 0 when it was reported, 1 when it could not be."""
     try:
-        night, status, reason = read_night(arguments.nightly)
+        night, status, reason = read_night(path)
         chat, markdown = chat_line(night, status, reason, environ), summary_markdown(night, status, reason, environ)
     except Exception as exc:  # noqa: BLE001  (a broken reporter must still say so, not go silent)
         traceback.print_exc()
@@ -437,7 +431,3 @@ def main(argv: list[str] | None = None, environ: dict | None = None) -> int:
     deliver(chat, markdown, environ)
     # `reason` is set exactly when the night could not be reported as written.
     return 1 if reason else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
