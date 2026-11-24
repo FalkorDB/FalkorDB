@@ -590,7 +590,9 @@ def test_a_latency_crossing_waits_for_the_re_run():
     noise = []
     for p in range(5):
         noise += pair(p, base={"ms": 10.0, "phase": "rerun"}, cand={"ms": 11.0, "phase": "rerun"})
-    assert {f["status"] for f in ck.confirm("IC3", v.crossed, noise).findings} == {"ok"}
+    settled = ck.confirm("IC3", v.crossed, noise)
+    assert settled.findings == [] and not settled.inconclusive
+    assert {r["status"] for r in settled.rows} == {"not repeated"}  # raw/rows.csv only
 
 
 def test_a_candidate_that_stops_finishing_in_the_re_run_is_a_regression():
@@ -628,13 +630,10 @@ def test_findings_put_every_crossing_first_and_cap_the_informative_rows():
         return ck._finding(name, "p50_ms", ratio, 1.0, direction="higher_is_worse", status=status)
 
     crossings = [f("a", "regression", 3.0), f("b", "regression", 9.0), f("c", "improvement", 0.2)]
-    info = [f(f"i{n}", "info", 1.0) for n in range(4)]
-    ok = [f(f"o{n}", "ok", 1.0 + n / 10) for n in range(12)]
-    chosen = ck.select_findings(crossings + info, ok)
+    info = [f(f"i{n}", "info", 1.0) for n in range(12)]
+    chosen = ck.select_findings(crossings + info)
     assert [x["name"] for x in chosen[:3]] == ["b", "a", "c"]
-    informative = [x for x in chosen if x["status"] in ("ok", "info")]
-    assert len(informative) == 10
-    assert [x["name"] for x in informative[:5]] == ["i0", "i1", "i2", "i3", "o11"]
+    assert [x["status"] for x in chosen[3:]] == ["info"] * 10
 
 
 def test_a_regression_outranks_an_error():
@@ -795,6 +794,12 @@ def test_an_a_a_run_passes_and_its_result_is_valid(tmp_path):
     assert result["baseline"] == {"image": OTHER, "commit": None, "label": "6.2.0"}
     assert "2 of 2 LDBC complex reads compared at SF0.1" in result["summary"]
     assert "raw/samples.csv" in result["artifacts"]
+    # Findings carry regression / improvement / info only; the rows that
+    # crossed nothing are in raw/rows.csv (contract v1.12).
+    assert {f["status"] for f in result["findings"]} <= {"regression", "improvement", "info"}
+    assert "raw/rows.csv" in result["artifacts"]
+    rows = list(csv.DictReader((check.opts.out / "raw/rows.csv").read_text().splitlines()))
+    assert {r["status"] for r in rows} == {"ok"} and len(rows) == 4  # 2 queries x p50, p95
     assert_valid(check.opts.out / "result.json")
 
 

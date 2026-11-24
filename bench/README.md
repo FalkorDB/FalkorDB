@@ -337,7 +337,7 @@ re-sends (redis-py's retries are off), with the query's server-side `TIMEOUT`.
 
 | finding | metric | when |
 |---|---|---|
-| `IC3 p50`, `IC3 p95` | `p50_ms`, `p95_ms` | the ratio candidate/baseline over the requests both sides finished (the same parameter row in the same round) is more than 2x **and** the difference is more than 0.5 ms (p50) / 2 ms (p95). A crossing is measured again (two more swapped rounds); it is a `regression` only when the re-run crosses too, otherwise `ok` with the re-run's numbers. A re-run that returns no rows, or does not time every row the main rounds timed, settles nothing and makes the result an `error`. Wall clock, hence the wide band. |
+| `IC3 p50`, `IC3 p95` | `p50_ms`, `p95_ms` | the ratio candidate/baseline over the requests both sides finished (the same parameter row in the same round) is more than 2x **and** the difference is more than 0.5 ms (p50) / 2 ms (p95). A crossing is measured again (two more swapped rounds); it is a `regression` only when the re-run crosses too; otherwise it is no finding, and `raw/rows.csv` keeps the re-run as "not repeated". A re-run that returns no rows, or does not time every row the main rounds timed, settles nothing and makes the result an `error`. Wall clock, hence the wide band. |
 | `IC9 rows` | `rows` (`mismatch`) | the two sides return a different number of rows for the same request (parameter row and round, re-runs included). A regression at once, and the query gets no latency finding: the two sides did different work (6.0.4's IC9 "ran" 93x faster by returning nothing, #2557). |
 | `IC3 completed` | `completed` | judged per request (parameter row and round): the candidate timing out, erroring or losing its server on a request the baseline finished is a regression at once; failures on both sides with no such request are `info`. A parameter row that timed out is skipped on both sides from then on, and a side stops a query after two timeouts. |
 | `server up` | `completed` | a server that went down at any point, also after its last reply (its container exited): the candidate's is a regression, the baseline's makes the result an `error`. |
@@ -405,7 +405,7 @@ in that order (IC12 to IC14) can miss the deadline before their first round;
 they are reported as not measured, so the night is `error` or `regression`,
 never `pass`.
 
-**Artifacts** under `<out>/raw/`: `samples.csv` (every request: phase, round,
+**Artifacts** under `<out>/raw/`: `rows.csv` (every latency comparison, crossing or not; findings carry only regressions, improvements and `info`), `samples.csv` (every request: phase, round,
 query, parameter row, side, outcome, latency, rows), `summary.csv`
 (per query and side), `params.json`, `load.json`, `explain/<side>/<IC>.txt`
 (`GRAPH.EXPLAIN` of every query on both sides), `<side>-server.log`, and

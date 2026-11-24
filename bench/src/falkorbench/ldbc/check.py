@@ -609,6 +609,23 @@ def analyse(query: str, main: list[Sample]) -> QueryVerdict:
     return verdict
 
 
+def latency_row(query: str, phase: str, cmp: LatencyCompare, status: str) -> dict[str, Any]:
+    """One latency comparison for raw/rows.csv, whatever its outcome."""
+    ratio = cmp.ratio
+    return {
+        "query": query,
+        "phase": phase,
+        "metric": cmp.metric,
+        "candidate": round(cmp.candidate, 3),
+        "baseline": round(cmp.baseline, 3),
+        "ratio": "" if ratio is None else round(ratio, 3),
+        "status": status,
+    }
+
+
+ROW_FIELDS = ("query", "phase", "metric", "candidate", "baseline", "ratio", "status")
+
+
 def _latency_finding(query: str, cmp: LatencyCompare, status: str) -> dict[str, Any]:
     label = cmp.metric.removesuffix("_ms")
     return _finding(
@@ -625,6 +642,8 @@ def _latency_finding(query: str, cmp: LatencyCompare, status: str) -> dict[str, 
 @dataclass
 class Confirmation:
     findings: list[dict[str, Any]] = field(default_factory=list)
+    #: Every re-run comparison of a crossed metric, for raw/rows.csv.
+    rows: list[dict[str, Any]] = field(default_factory=list)
     #: Why the re-run settles nothing, when it does not; the result is then
     #: an `error` unless something else regressed.
     inconclusive: str = ""
@@ -639,8 +658,8 @@ def confirm(
     """The re-run's verdict on the metrics the main rounds crossed.
 
     A metric that crosses again is a regression (`confirmed`). One that does
-    not is reported as `ok` with the re-run's numbers: the first crossing was
-    noise, or too small to repeat. That claim needs the re-run to have timed
+    not was noise, or too small to repeat: no finding, and raw/rows.csv keeps
+    the re-run's numbers as "not repeated". That claim needs the re-run to have timed
     every parameter row the main rounds timed (`timed_rows`), on both sides,
     and to have returned rows; otherwise the re-run is inconclusive.
     """
@@ -673,25 +692,28 @@ def confirm(
         if cmp is None:
             result.inconclusive = f"the re-run did not measure {metric}"
             continue
-        status = "regression" if cmp.crossing() == "regression" else "ok"
-        out.append(_latency_finding(query, cmp, status))
+        repeated = cmp.crossing() == "regression"
+        if repeated:
+            out.append(_latency_finding(query, cmp, "regression"))
+        result.rows.append(
+            latency_row(query, "rerun", cmp, "regression" if repeated else "not repeated")
+        )
     return result
 
 
 # --- findings and verdict ----------------------------------------------------
 
-_STATUS_ORDER = {"regression": 0, "improvement": 1, "info": 2, "ok": 3}
+_STATUS_ORDER = {"regression": 0, "improvement": 1, "info": 2}
 
 
 def select_findings(
     findings: list[dict[str, Any]],
-    ok_rows: list[dict[str, Any]],
     *,
     max_total: int = 50,
     max_informative: int = 10,
 ) -> list[dict[str, Any]]:
-    """Every crossing first, worst ratio first; then the informative rows
-    (`info` before the largest non-crossing ratios), at most ten of them."""
+    """Every crossing first, worst ratio first; then at most ten `info` rows.
+    Rows that crossed nothing are not findings: they are in raw/rows.csv."""
 
     def worst(f: dict[str, Any]) -> tuple[int, float]:
         ratio = f["ratio"]
@@ -703,10 +725,8 @@ def select_findings(
     crossing = sorted(
         (f for f in findings if f["status"] in ("regression", "improvement")), key=worst
     )
-    informative = sorted((f for f in findings if f["status"] in ("info", "ok")), key=worst)
-    extra = sorted(ok_rows, key=lambda f: -(f["ratio"] or 0.0))
-    chosen = crossing + (informative + extra)[:max_informative]
-    return chosen[:max_total]
+    informative = sorted((f for f in findings if f["status"] == "info"), key=worst)
+    return (crossing + informative[:max_informative])[:max_total]
 
 
 def decide(
@@ -792,7 +812,8 @@ class Check:
         self.t0 = time.monotonic()
         self.raw = opts.out / "raw"
         self.findings: list[dict[str, Any]] = []
-        self.ok_rows: list[dict[str, Any]] = []
+        #: Every latency comparison, crossing or not: raw/rows.csv.
+        self.latency_rows: list[dict[str, Any]] = []
         self.problems: list[str] = []
         self.left_out: dict[str, str] = {}
         self.notes: list[str] = []
@@ -826,7 +847,7 @@ class Check:
         return {"image": image, "commit": commit or None, "label": label or default_label(image)}
 
     def result(self, *, error: str | None = None) -> dict[str, Any]:
-        findings = select_findings(self.findings, self.ok_rows)
+        findings = select_findings(self.findings)
         problems = [*self.problems, *([error] if error else [])]
         verdict, confirmed = decide(findings, problems)
         return {
@@ -929,6 +950,14 @@ class Check:
         self.artifacts.append("raw/samples.csv")
 
     def write_summary(self) -> None:
+        if self.latency_rows:
+            path = self.raw / "rows.csv"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", newline="") as fh:
+                writer = csv.DictWriter(fh, fieldnames=ROW_FIELDS)
+                writer.writeheader()
+                writer.writerows(self.latency_rows)
+            self.artifacts.append("raw/rows.csv")
         if not self.summary_rows:
             return
         path = self.raw / "summary.csv"
@@ -1202,9 +1231,10 @@ class Check:
                 confirmed = confirm(q.name, v.crossed, reruns.get(q.name, []), timed)
                 if confirmed.inconclusive:
                     self.problem(f"{q.name}: re-run inconclusive: {confirmed.inconclusive}")
-                elif not confirmed.findings:
+                elif not confirmed.findings and not confirmed.rows:
                     self.problem(f"{q.name}: the re-run did not finish on both sides")
                 self.findings += confirmed.findings
+                self.latency_rows += confirmed.rows
             self.record_summary(q.name, main[q.name], reruns.get(q.name))
 
         if self.deadline_skips:
@@ -1220,14 +1250,14 @@ class Check:
         if self.compared_queries == 0:
             self.problem("no query could be compared on both sides")
 
-        # The rows that did not cross, as candidates for the informative slots.
+        # Every main-round comparison, crossing or not, for raw/rows.csv.
         for q in self.queries:
             v = verdicts[q.name]
             if v.left_out or not v.measured or v.rows_differ or v.no_rows:
                 continue
             for cmp in compare_latency(v.cand, v.base):
-                if cmp.metric not in v.crossed and cmp.crossing() is None:
-                    self.ok_rows.append(_latency_finding(q.name, cmp, "ok"))
+                status = "crossed: re-run" if cmp.metric in v.crossed else cmp.crossing() or "ok"
+                self.latency_rows.append(latency_row(q.name, "main", cmp, status))
 
     def warmup(self, q: query_mod.ComplexRead) -> list[Sample]:
         """One untimed call per side: GraphBLAS compiles kernels on first use.
