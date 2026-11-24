@@ -149,7 +149,6 @@ flake cannot hide a total breakage.
 | s03 `in-load: updated_ann_miss_top10 == 0` | #3886 | A chunk updated under load is missing from its own top-10 vector neighbours (HNSW leaves nodes unreachable, Rust and C). |
 | s05 `steady state: used_memory plateau`, `used_memory returns to baseline after deleting all` | #3078 | On Rust, about 15–18 KB of `used_memory` stays behind for every GRAPH.COPY, even after the copies are deleted. s05 makes about 3,200 copies at scale 0.25, leaving +52.5 MB; C leaves none. |
 | s11 `deeply nested expressions are answered within 60 s` (C images) | #650, #2400 | C spins on a query with thousands of nested parentheses (#650, fixed in Rust only) and recurses without bound on deep expressions (#2400). The probe gives up after 60 s instead of holding the scenario. |
-| s11 `CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)` | unfiled | A read query (`UNWIND range(1, 1000000000) AS x RETURN sum(x)`, 15 s timeout) keeps the server busy after its client is killed, until its own timeout (idle after 16 s). |
 
 A side that runs longer than its hang cap did not finish (a `completed` regression on
 the candidate, even when the deadline then leaves no time for the baseline). The cap is
