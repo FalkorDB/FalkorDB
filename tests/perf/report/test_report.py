@@ -715,6 +715,53 @@ class ChatBudget(Workspace):
                     text = post.chat_text(night, commits, {})
                     self.assertLessEqual(len(text), post.CHAT_CHARACTER_BUDGET, (regressed, errored, summary))
 
+    def test_fifty_long_check_names_keep_the_headline_and_a_short_issue_link(self):
+        # Contract v1.4 allows check names of 43 characters; a title listing 50 of them
+        # used to make the issue link alone longer than the whole budget.
+        names = [f"check-{index:02d}-" + "x" * 34 for index in range(50)]
+        self.assertEqual({len(name) for name in names}, {43})
+        night = nightly("red", [result(name, "regression", [UNWIND]) for name in names])
+        with unittest.mock.patch.object(post, "commits_since_green", return_value=post.CommitRange([], 0, "x")):
+            text = self.chat(night).rstrip("\n")
+        self.assertLessEqual(len(text), post.CHAT_CHARACTER_BUDGET)
+        self.assertTrue(text.startswith("*Perf nightly 2026-11-24: REGRESSION* — main@4c10889 vs 6.2.0: "
+                                        "50 of 50 checks regressed."), text[:200])
+        last = text.splitlines()[-1]
+        self.assertTrue(last.endswith("|open an issue>"), last[-200:])
+        url = last.split(" · <", 1)[1].rsplit("|open an issue>", 1)[0]
+        self.assertLessEqual(len(url), post.CHAT_LIMITS[-1].issue_url_characters)
+        title = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["title"][0]
+        self.assertLessEqual(len(title), 220)
+        self.assertRegex(title, r"regression in (check-\d\d-x+(, )?)+ and \d+ more|regression in 50 checks")
+
+    def test_the_issue_title_summarizes_long_check_names_even_when_the_url_has_room(self):
+        names = [f"check-{index:02d}-" + "x" * 34 for index in range(4)]
+        night = post.read_night(self.write(nightly("red", [result(name, "regression", [UNWIND]) for name in names])), {})
+        url = post.issue_link(night, {}, post.SUMMARY_LIMITS)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        self.assertEqual(query["title"][0], f"perf: nightly 2026-11-24 regression in {names[0]}, {names[1]} and 2 more "
+                                            "(main@4c10889 vs 6.2.0)")
+        self.assertIn(f"found a regression in {names[0]}, {names[1]} and 2 more.", query["body"][0])
+        self.assertIn(names[3], query["body"][0], "the findings in the body still name every check")
+
+    def test_an_issue_link_too_long_for_half_the_budget_is_left_out_of_the_trimmed_tail(self):
+        checks = [result(f"check-{c}", "regression", [UNWIND], summary="s" * 290) for c in range(4)]
+        checks += [{"check": f"stub-{c}", "verdict": "error", "error": "e" * 400} for c in range(14)]
+        night = post.read_night(self.write(nightly("red", checks)), {})
+        huge = "https://github.com/FalkorDB/FalkorDB/issues/new?title=" + "x" * 3000
+        with unittest.mock.patch.object(post, "issue_link", return_value=huge):
+            text = post.chat_text(night, post.CommitRange([], 0, "x"), {})
+        self.assertLessEqual(len(text), post.CHAT_CHARACTER_BUDGET)
+        self.assertTrue(text.startswith("*Perf nightly 2026-11-24: REGRESSION*"), text[:100])
+        self.assertTrue(text.endswith(f"(trimmed: the full report is in the run's job summary) <{RUN_URL}|run>"),
+                        text[-200:])
+
+    def test_summarize_names(self):
+        self.assertEqual(post.summarize_names(["micro", "pokec"], 100), "micro, pokec")
+        self.assertEqual(post.summarize_names(["a" * 40, "b" * 40, "c" * 40], 100), f"{'a' * 40}, {'b' * 40} and 1 more")
+        self.assertEqual(post.summarize_names(["a" * 200, "b"], 100), "2 checks")
+        self.assertEqual(post.summarize_names([], 100), "")
+
     def test_the_cap_counts_a_kept_blank_line(self):
         # A blank line just before the cut used to be stripped when measuring but kept
         # in the final text: one character over. Sweep the first line across the edge.

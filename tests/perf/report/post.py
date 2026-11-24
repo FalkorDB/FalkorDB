@@ -766,9 +766,25 @@ def commit_lines(night: Night, commits: CommitRange, environ: dict, limits: Limi
     return lines
 
 
+def summarize_names(names: list[str], limit: int) -> str:
+    """The names joined by ", " in at most `limit` characters, else as many as fit + "and N more"."""
+    joined = ", ".join(names)
+    if len(joined) <= limit:
+        return joined
+    shown: list[str] = []
+    for name in names:
+        rest = len(names) - len(shown) - 1
+        if len(", ".join([*shown, name])) + len(f" and {rest} more") > limit:
+            break
+        shown.append(name)
+    if not shown:
+        return f"{len(names)} checks"
+    return f"{', '.join(shown)} and {len(names) - len(shown)} more"
+
+
 def issue_link(night: Night, environ: dict, limits: Limits) -> str:
     regressed = [check for check in night.checks if check.verdict == "regression"]
-    names = ", ".join(check.name for check in regressed) or "unknown check"
+    names = summarize_names([check.name for check in regressed], 100) or "unknown check"
     title = f"perf: nightly {night.date} regression in {names} ({night.candidate_label} vs {night.baseline_label})"
     body = [
         f"The nightly perf run of {night.date} found a regression in {names}.",
@@ -787,14 +803,18 @@ def issue_link(night: Night, environ: dict, limits: Limits) -> str:
             body.append(f"- {check.name}: {describe_finding(finding)}")
     base = f"{server_url(environ)}/{repository(environ)}/issues/new?"
 
-    def build(lines: list[str]) -> str:
+    def build(title: str, lines: list[str]) -> str:
         query = {"title": title, "labels": ISSUE_LABEL, "body": "\n".join(lines)}
         return base + urllib.parse.urlencode(query, quote_via=urllib.parse.quote)
 
-    url = build(body)
+    url = build(title, body)
     while len(url) > limits.issue_url_characters and len(body) > 1:
         body = body[:-1]
-        url = build(body + ["", "(trimmed: see the run)"])
+        url = build(title, [*body, "", "(trimmed: see the run)"])
+    if len(url) > limits.issue_url_characters:
+        # Even one line is too long: the run link alone still lets someone file it.
+        url = build(f"perf: nightly {night.date} regression in {len(regressed)} checks",
+                    [f"Run: {night.run_url or 'unknown'}"])
     return url
 
 
@@ -830,10 +850,13 @@ def chat_text(night: Night, commits: CommitRange | None, environ: dict) -> str:
         text = render_chat(lines)
         if len(text) <= CHAT_CHARACTER_BUDGET:
             return text
-    # Still too long: keep whole lines from the top and say where the rest is.
+    # Still too long: keep whole lines from the top and say where the rest is. The tail
+    # never takes more than half the budget, so the headline always fits beside it.
     tail = Line(["(trimmed: the full report is in the run's job summary) ", run_link(night)])
     if night.status == "red":
-        tail.segments += [" · ", Link(issue_link(night, environ, CHAT_LIMITS[-1]), "open an issue")]
+        with_issue = Line([*tail.segments, " · ", Link(issue_link(night, environ, CHAT_LIMITS[-1]), "open an issue")])
+        if len(render_chat([with_issue])) <= CHAT_CHARACTER_BUDGET // 2:
+            tail = with_issue
     kept: list[Line] = []
     for line in lines:
         if len(render_chat([*kept, line, tail])) > CHAT_CHARACTER_BUDGET:
