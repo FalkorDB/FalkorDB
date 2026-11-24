@@ -1,15 +1,31 @@
-"""Substitution parameters for the complex reads, sampled from the loaded graph.
+"""Substitution parameters for the complex reads.
 
-Seeded and deterministic, so two runs compare against each other; not
-comparable to published LDBC results. bench/README.md says how the sampler
-picks people and dates.
+LDBC ships *substitution parameters* generated alongside each dataset, chosen so
+that the queries hit a representative spread of the data rather than whichever
+person happens to be first. Running with hand-picked ids produces numbers that
+are not comparable to anything, because the cost of these queries varies by
+orders of magnitude with how well-connected the chosen person is.
+
+Two sources, in order:
+
+1. `--params DIR` — an official `interactive_N_param.txt` set. This is the only
+   source whose numbers are comparable with published LDBC results.
+2. Sampling the loaded graph, seeded. Deterministic, so two runs of the same
+   scale factor compare against each other, but **not** comparable to published
+   results: the sampler picks arbitrary well-connected entities rather than
+   LDBC's calibrated ones.
+
+The distinction is carried on `ParamSet.official` so a report can state which
+was used, rather than leaving a reader to assume the stronger one.
 """
 
 from __future__ import annotations
 
+import csv
 import random
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from falkorbench.client import BenchClient
@@ -17,7 +33,9 @@ from falkorbench.ldbc import queries as query_mod
 
 Echo = Callable[[str], None]
 
-#: A day in milliseconds; the sampled windows are whole days.
+#: A day in milliseconds. IC3 and IC4 ship `durationDays`, but the queries take
+#: an `endDate`; upstream drivers derive it. Doing that here keeps the query
+#: texts equal to upstream.
 _DAY_MS = 86_400_000
 
 
@@ -27,13 +45,92 @@ class ParamError(RuntimeError):
 
 @dataclass
 class ParamSet:
-    """Parameter rows for each query number, and where they came from."""
+    """Parameter rows for each query number.
+
+    official  True only when these came from an LDBC-generated parameter set.
+              Reported with the results; sampled parameters do not support a
+              comparison against published numbers.
+    """
 
     rows: dict[int, list[dict[str, Any]]]
+    official: bool
     source: str
 
     def for_query(self, number: int) -> list[dict[str, Any]]:
         return self.rows.get(number, [])
+
+    def caveat(self) -> str:
+        if self.official:
+            return f"official LDBC substitution parameters ({self.source})"
+        return (
+            f"parameters sampled from the loaded graph ({self.source}); "
+            f"deterministic and self-comparable, but NOT comparable to "
+            f"published LDBC results"
+        )
+
+
+def load(
+    client: BenchClient,
+    *,
+    directory: Path | None,
+    count: int,
+    seed: int,
+    echo: Echo = print,
+) -> ParamSet:
+    """Official parameters from `directory` if given, else sampled ones."""
+    if directory is not None:
+        return from_directory(directory, echo=echo)
+    return sample(client, count=count, seed=seed, echo=echo)
+
+
+def from_directory(directory: Path, *, echo: Echo = print) -> ParamSet:
+    """Parse an LDBC `interactive_N_param.txt` set.
+
+    The files are pipe-separated with a header naming each column; dates are
+    epoch milliseconds. IC3 and IC4 supply `durationDays` rather than an
+    `endDate`, which is derived here.
+    """
+    if not directory.is_dir():
+        raise ParamError(f"parameter directory not found: {directory}")
+
+    rows: dict[int, list[dict[str, Any]]] = {}
+    for n in query_mod.COMPLEX_READS:
+        path = directory / f"interactive_{n}_param.txt"
+        if not path.exists():
+            raise ParamError(f"missing {path.name} in {directory}")
+        with path.open(encoding="utf-8", newline="") as fh:
+            parsed = [_coerce(n, row) for row in csv.DictReader(fh, delimiter="|")]
+        if not parsed:
+            raise ParamError(f"{path.name} has no rows")
+        for row in parsed:
+            query_mod.validate(n, row)
+        rows[n] = parsed
+        echo(f"  IC{n:<3} {len(parsed):>6,} parameter rows")
+    return ParamSet(rows=rows, official=True, source=str(directory))
+
+
+def _coerce(number: int, row: dict[str, str]) -> dict[str, Any]:
+    """Convert one raw parameter row to the query's parameter map."""
+    out: dict[str, Any] = {}
+    duration_days: int | None = None
+    for key, raw in row.items():
+        if key is None or raw is None:
+            continue
+        if key == "durationDays":
+            duration_days = int(raw)
+            continue
+        out[key] = int(raw) if _is_int(raw) else raw
+
+    if duration_days is not None:
+        start = out.get("startDate")
+        if not isinstance(start, int):
+            raise ParamError(f"IC{number}: durationDays given without an integer startDate")
+        out["endDate"] = start + duration_days * _DAY_MS
+    return out
+
+
+def _is_int(text: str) -> bool:
+    return bool(text) and (text[1:] if text[0] in "+-" else text).isdigit()
 
 
 def sample(
@@ -183,7 +280,7 @@ def sample(
             query_mod.validate(n, row)
 
     echo(f"sampled {count} parameter rows per query (seed {seed})")
-    return ParamSet(rows=rows, source=f"seed={seed}, n={count}")
+    return ParamSet(rows=rows, official=False, source=f"seed={seed}, n={count}")
 
 
 def _column(client: BenchClient, cypher: str, params: dict[str, Any]) -> list[Any]:

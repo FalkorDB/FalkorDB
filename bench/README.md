@@ -146,7 +146,7 @@ locally against a real base build.
 | `src/falkorbench/flow.py` | per-flow-test-file measurement |
 | `src/falkorbench/cli.py` | the `bench` command |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
-| `src/falkorbench/ldbc/` | LDBC SNB Interactive v1 — dataset fetch/prepare, loader, parameters, the nightly check, and the vendored query texts |
+| `src/falkorbench/ldbc/` | LDBC SNB Interactive v1 — dataset fetch/prepare, loader, parameters, the nightly check, the local runner, and the vendored query texts |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
 | `pmc_tool.c` | Apple Silicon PMU counters (kperf/kperfdata private frameworks) |
 | `tests/` | the guards above, over CSV fixtures |
@@ -431,3 +431,57 @@ both engines. `durationDays` is an explicit LDBC parameter, so widening it stays
 inside the query's own contract. A uniformly drawn person is usually isolated
 and a uniformly drawn window usually lands in the sparse early history; either
 returns nothing in microseconds and measures none of the work.
+
+### Running it locally: `bench ldbc fetch` and `bench ldbc run`
+
+The same queries can be run by hand against one local module:
+
+```bash
+bench ldbc fetch --sf 0.1                 # download + prepare (~18 MB)
+bench ldbc run --sf 0.1                   # load, then measure all 14
+bench ldbc run --sf 1 IC1 IC13            # a subset, at SF1 (~230 MB)
+bench ldbc run --params ./substitution_parameters   # official parameters
+```
+
+Results go to `results/ldbc_sf<SF>.csv` (p50/p95/p99 per query, and where the
+parameters came from) and are deliberately **not** merged into
+`results/current.csv`: LDBC's metric is response time, and mixing it into the
+file the `compare` thresholds gate would distort the micro-benchmark gate.
+`--params DIR` takes an official LDBC substitution parameter set; only those
+numbers are comparable with published LDBC results. Without it, parameters are
+sampled as above. `run` treats a query that returns zero rows on every
+parameter row as a failure, not as a fast query, and refuses to load into a
+graph that already holds nodes.
+
+### What the first run found
+
+Running the 14 complex reads against SF0.1 was worth doing for the bugs alone.
+All fourteen now produce a measurement — IC3 needs `--timeout` above the default
+— and four of them (IC1, IC10, IC13, IC14) do not run on the C engine at all.
+Every query except IC3 and IC10 is in the same order of magnitude as C or
+faster. Four defects came out of the exercise, each confirmed against the C
+engine before being filed:
+
+| issue | what |
+|---|---|
+| [#2555](https://github.com/FalkorDB/FalkorDB/issues/2555) | aggregation over a bare map property returns empty — `collect`→`[]`, `count`→`0`, silently |
+| [#2556](https://github.com/FalkorDB/FalkorDB/issues/2556) | inline property filter under `UNWIND` raises a spurious type mismatch |
+| [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) | `WHERE` on a node matched from an `UNWIND`-bound anchor silently returns zero rows |
+| [#2558](https://github.com/FalkorDB/FalkorDB/issues/2558) | a variable-length traversal loses its indexed anchor when the `MATCH` has a second pattern — 19,000x |
+
+**#2558 is the one that matters.** On the same parameter row, returning the
+identical 2 rows, IC3 takes **136.72 ms** on C and **271,817.66 ms** on Rust —
+1,988x — and IC10 takes 86 s. Both plans abandon a unique-index seed in favour
+of scanning the unbound side. No other measured query is affected, so a single
+planner decision accounts for the entire Rust-vs-C gap on this workload.
+
+Three of the four are **silent** — wrong or empty results with no error. They
+were caught only because the runner treats "zero rows on every run" as a failure
+rather than as a fast query. A harness that reported latency alone would have
+called that run a success.
+
+Following the file-level convention above, a ranked latency table is not kept
+here; regenerate it from a live run. `results/ldbc_sf<SF>.csv` is written per run
+and deliberately not merged into `current.csv` — these runtimes are orders of
+magnitude larger than the micro-benchmark's and would distort its regression
+thresholds.

@@ -73,6 +73,26 @@ def load(
     return stats
 
 
+def refuse_a_loaded_graph(client: BenchClient) -> None:
+    """Fail rather than load a second copy on top of the first.
+
+    Every node and edge is a `CREATE`, so loading into a graph that already
+    holds the dataset (`bench ldbc run --reuse --load`, or a retry after a
+    partial load) would duplicate it, and every query would then measure a
+    different graph.
+    """
+    if not client.command("EXISTS", client.graph_name):
+        return
+    res = client.graph.ro_query("MATCH (n) RETURN count(n)")
+    held = int(res.result_set[0][0]) if res.result_set else 0
+    if held:
+        raise LoadError(
+            f"graph {client.graph_name!r} already holds {held:,} nodes; loading would "
+            f"duplicate them. GRAPH.DELETE it and load again (a graph left by a failed "
+            f"load is partial); run without --load only on a graph whose load completed"
+        )
+
+
 #: Edge endpoint labels that no unique constraint covers. The edge phase
 #: checks only that a file created as many relationships as it has rows; with
 #: a duplicated id on one of these labels, a row matching two nodes could
