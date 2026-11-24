@@ -221,6 +221,99 @@ checks `acceptance.yaml` against the format and the query set.
 `.github/workflows/perf-contract.yml` runs `bench/tests` on pull requests that
 touch `bench/`.
 
+### Shared check kit
+
+`src/falkorbench/kit.py` holds what two or more checks would otherwise each
+write: the flags, `result.json`, the threshold test and the docker calls. It is
+functions only and standard library only. Each check keeps its own measuring
+and judging. `args` is anything with the flags as attributes: argparse's
+namespace from `add_args`, or `types.SimpleNamespace(**kwargs)` in a click command.
+
+* Flags: `add_args(parser)`; `input_errors(args) -> [str]` (an image that is not
+  pinned by digest, a bad commit, a label that is not one line, an unknown mode);
+  `side(args, "candidate")`; `default_label(image)`; `out_dir(out) -> Path`
+  (absolute path, `raw/` created); `machine()` (`$PERF_MACHINE_JSON`, else this
+  host as `local`); `utc_now()`.
+* Findings: `finding(name, metric, candidate, baseline, status, *, direction,
+  threshold, ratio)` (it computes the ratio and turns NaN into null);
+  `correctness_status(candidate, baseline)` (the 0/1 rule);
+  `crossed(candidate, baseline, threshold, floor, direction) -> +1 | -1 | 0`.
+  A row crosses when worse/better > threshold *and* the difference > floor, both
+  strict. `floor` is required: with a zero baseline the ratio is infinite, so the
+  floor alone decides.
+* Result: `select(findings)` keeps regressions, improvements, then at most 10
+  info rows, 50 in all, in the order given. `ok` rows stay in `raw/rows.csv`; a
+  status the contract does not know raises. `verdict(findings, errors)` is
+  regression > error > pass. `result(check, args, *, started, findings, summary,
+  errors, artifacts, machine_info)` also reports `input_errors`. Then
+  `error_result(check, args, started, error)` and `write_result(out, result)`
+  (temp file + rename).
+* Always a result: `run_check(check, args, work, build, cleanup=None)`.
+  * It writes an error result first, so a SIGKILL still leaves one.
+  * The first SIGTERM or SIGINT raises `Stopped`, a `BaseException`, so a
+    check's `except Exception` cannot swallow it. Every later signal is ignored,
+    so the check's own teardown and the final write finish.
+  * `Stopped` (even one the check swallowed) or any exception, `sys.exit`
+    included, becomes the error passed to `build(error)`. `build` turns what was measured so far into the result, so a
+    confirmed regression still outranks the stop.
+  * If `build` fails, says pass despite the error, or its result cannot be
+    written, `run_check` writes `error_result` instead.
+  * Then `cleanup()` runs and the old signal handlers come back. `args.out` is
+    made absolute.
+  * `stopping()` says whether a signal arrived, so a check can skip graceful stops.
+* Docker (`DockerError` on any failure): `pull(image, attempts=3)`;
+  `image_env(image)`; `start(image, name, *, env, volumes, labels, cpus,
+  entrypoint, command, extra, port, host_network, foreground, output) ->
+  Container(name, port, proc)`.
+  * By default `start` runs detached with `-p 127.0.0.1::6379` and reads the
+    port back with `docker port`, so docker picks a free one (no race, never 6379).
+  * A server that exits at start comes back with `port` 0, and its container is
+    kept for `state` and `logs`.
+  * `host_network` takes the server's own port, which must not be 6379 or
+    already be in use. `foreground` keeps `docker run` as a child process.
+  * `ping(port)` and `wait_ping(port, timeout_s, container)`: one PING each
+    time, never re-sent. The wait stops early once the container is no longer
+    running.
+  * `logs(name, tail)` (stdout and stderr interleaved), `state(name)`
+    (`running`, `exited 139`, `gone`), `host_pid(name)`, `remove(*names)` and
+    `remove_labelled("key=value")`.
+
+```python
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(prog="bench example")
+    kit.add_args(parser)
+    args = parser.parse_args(argv)
+    started, findings, run_id = kit.utc_now(), [], str(os.getpid())
+    cpus = os.environ.get("PERF_SERVER_CPUS")
+
+    def work():
+        if kit.input_errors(args):
+            return  # result() reports them; nothing is pulled
+        up, times = {}, {}
+        for side in kit.SIDES:
+            image = getattr(args, side)
+            kit.pull(image)
+            server = kit.start(image, f"ex-{side}-{run_id}", labels={"ex": run_id}, cpus=cpus)
+            up[side] = int(kit.wait_ping(server.port, 120, server))
+            times[side] = measure_p50_ms(server.port) if up[side] else None  # the check's own
+        c, b = up["candidate"], up["baseline"]  # a server that never answers: completed 0
+        status = kit.correctness_status(c, b)
+        findings.append(kit.finding("up", "completed", c, b, status, direction="lower_is_worse"))
+        if c and b:
+            c, b = times["candidate"], times["baseline"]
+            status = {1: "regression", -1: "improvement", 0: "ok"}[kit.crossed(c, b, 1.5, 2.0)]
+            findings.append(kit.finding("q1", "p50_ms", c, b, status, threshold=1.5))  # + re-run
+
+    def build(error):
+        summary = f"{len(findings)} rows compared"
+        return kit.result(
+            "ex", args, started=started, findings=findings, summary=summary, errors=[error]
+        )
+
+    kit.run_check("ex", args, work, build, cleanup=lambda: kit.remove_labelled(f"ex={run_id}"))
+    return 0  # result.json was written
+```
+
 ## Layout
 
 | file | purpose |
@@ -238,6 +331,7 @@ touch `bench/`.
 | `src/falkorbench/flow.py` | per-flow-test-file measurement |
 | `src/falkorbench/cli.py` | the `bench` command |
 | `src/falkorbench/contract.py` | the nightly perf checks' `result.json` / `nightly.json` format and its checker (`bench validate`) |
+| `src/falkorbench/kit.py` | what the nightly perf checks share: flags, `result.json`, the threshold test, docker |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
 | `pmc_tool.c` | Apple Silicon PMU counters (kperf/kperfdata private frameworks) |
