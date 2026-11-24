@@ -1,0 +1,104 @@
+# TEMPORARY: proof runs of the pokec check (#3981) through _perf-vm.yml on
+# ci/perf-vm (#3988), one VM at a time. Removed in a normal commit once the
+# runs are in, before the PR is marked ready.
+#
+# Each leg uses its own check name so the three perf-result-<check> artifacts
+# do not collide in one run; the command and the result.json are the real
+# check's ("check": "pokec").
+name: perf pokec proof
+
+on:
+  pull_request:
+    paths:
+      - tests/perf/pokec/**
+      - .github/workflows/perf-pokec-proof.yml
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: perf-pokec-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  aa-main:
+    uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
+    with:
+      check: pokec-aa-main
+      command: python3 -I tests/perf/pokec/pokec.py
+      candidate_image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+      baseline_image: ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed
+      candidate_label: main@4c1088949
+      baseline_label: main@4c1088949
+      candidate_commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+      baseline_commit: 4c1088949a5852e3949c05bfb3d92a603c4cd4ca
+      mode: nightly
+      timeout_minutes: 75
+    secrets: inherit
+
+  v604-vs-v601:
+    needs: aa-main
+    if: ${{ !cancelled() }}
+    uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
+    with:
+      check: pokec-604-vs-601
+      command: python3 -I tests/perf/pokec/pokec.py
+      candidate_image: falkordb/falkordb-server@sha256:698a6e748b42699c1f63af01f8902652b764582e363731de56c7d566c322c209
+      baseline_image: falkordb/falkordb-server@sha256:f4f60c62532b67f8651d0f4f50bbb4db7548717b502bd05abd80e668f2d974c6
+      candidate_label: "6.0.4"
+      baseline_label: "6.0.1"
+      mode: nightly
+      timeout_minutes: 75
+    secrets: inherit
+
+  aa-c:
+    needs: v604-vs-v601
+    if: ${{ !cancelled() }}
+    uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
+    with:
+      check: pokec-aa-c
+      command: python3 -I tests/perf/pokec/pokec.py
+      candidate_image: falkordb/falkordb-server@sha256:4e651dac5dbabf3169d91af06db4be13ee7679ffc392f14bac5fa730349b5dbf
+      baseline_image: falkordb/falkordb-server@sha256:4e651dac5dbabf3169d91af06db4be13ee7679ffc392f14bac5fa730349b5dbf
+      candidate_label: v4.22.4
+      baseline_label: v4.22.4
+      mode: nightly
+      timeout_minutes: 75
+    secrets: inherit
+
+  evidence:
+    needs: [aa-main, v604-vs-v601, aa-c]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: perf-result-pokec-*
+          path: artifacts
+
+      - name: Check out the contract's validator (perf/judge, #3986)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: perf/judge
+          path: judge
+          sparse-checkout: tests/perf/validate.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Validate and summarise each leg
+        run: |
+          set -uo pipefail
+          bad=0
+          for leg in aa-main 604-vs-601 aa-c; do
+            dir=artifacts/perf-result-pokec-$leg
+            echo "== $leg"
+            cat "$dir/perf-vm.json" 2>/dev/null || echo "(no perf-vm.json)"
+            if [[ -f $dir/result.json ]]; then
+              python3 -I judge/tests/perf/validate.py --kind result "$dir/result.json" || bad=1
+              python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["verdict"], "|", r["summary"]); [print("  ", f["status"], f["metric"], f["name"], f["candidate"], f["baseline"], f["ratio"]) for f in r["findings"]]' "$dir/result.json"
+            else
+              echo "(no result.json)"; bad=1
+            fi
+          done
+          exit "$bad"
