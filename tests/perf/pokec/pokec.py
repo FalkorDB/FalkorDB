@@ -583,11 +583,11 @@ def ensure_build_packages(log: Log, setup_log: Path) -> None:
     )
 
 
-def ensure_rust(log: Log, setup_log: Path) -> Path:
+def ensure_rust(tools_dir: Path, log: Log, setup_log: Path) -> Path:
     """rustup with RUST_TOOLCHAIN installed; returns the rustup binary."""
     rustup = shutil.which("rustup") or str(Path.home() / ".cargo" / "bin" / "rustup")
     if not Path(rustup).exists():
-        script = setup_log.parent / "rustup-init.sh"
+        script = tools_dir / "rustup-init.sh"
         with urllib.request.urlopen(RUSTUP_URL, timeout=60) as response:
             script.write_bytes(response.read())
         run_cmd(
@@ -632,7 +632,7 @@ def build_benchmark(tools_dir: Path, log: Log, setup_log: Path) -> Path:
     source = tools_dir / "benchmark"
     fetch_commit(BENCHMARK_REPO, BENCHMARK_COMMIT, source, log, setup_log)
     ensure_build_packages(log, setup_log)
-    rustup = ensure_rust(log, setup_log)
+    rustup = ensure_rust(tools_dir, log, setup_log)
     started = time.monotonic()
     run_cmd(
         [str(rustup), "run", RUST_TOOLCHAIN, "cargo", "build", "--release", "--locked"],
@@ -1280,7 +1280,8 @@ class Check:
         if args.reps:
             self.mode = Mode(self.mode.datasets, args.reps, self.mode.rerun_reps, self.mode.latency_gates)
         self.workloads = [w for w in WORKLOADS if not args.workloads or w.key in args.workloads.split(",")]
-        self.out = Path(args.out)
+        # Absolute: the tools run from other directories (the workflow passes `--out out`).
+        self.out = Path(args.out).resolve()
         self.raw = self.out / "raw"
         self.raw.mkdir(parents=True, exist_ok=True)
         self.log = Log(self.raw / "check.log")

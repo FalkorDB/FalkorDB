@@ -578,3 +578,13 @@ def test_sigterm_during_a_checkpoint_keeps_the_findings(tmp_path):
     check.error = "stopped by a signal"
     result = check.write_result()
     assert result["verdict"] == "regression" and result["findings"]
+
+
+def test_a_relative_out_is_made_absolute(tmp_path, monkeypatch):
+    # _perf-vm.yml passes `--out out`; the benchmark runs from other directories, and a
+    # relative query-file path made `generate-queries` fail with NotFound on the first VM leg.
+    monkeypatch.chdir(tmp_path)
+    check = make_check(tmp_path)
+    check.args.out = "out"
+    check = pokec.Check(check.args)
+    assert check.out == tmp_path / "out" and check.raw.is_absolute()
