@@ -304,8 +304,16 @@ exit 1
 # format asks for the machine type), describe and delete.
 FAKE_GCLOUD = r"""#!/usr/bin/env bash
 touch "$STATE/vms"
+echo "$*" >> "$STATE/gcloud"
+[[ $CLOUDSDK_CORE_DISABLE_PROMPTS == 1 ]] || { echo "prompts enabled" >&2; exit 9; }
+if [[ $1 == components && $2 == install ]]; then
+  [[ -n ${BETA_INSTALLABLE:-} ]] && touch "$STATE/beta"
+  exit 0
+fi
 if [[ $1 == beta ]]; then
+  [[ -n ${BETA_MISSING:-} && ! -e $STATE/beta ]] && { echo "beta Not Installed" >&2; exit 1; }
   shift
+  [[ $3 == create && $* == *--help* ]] && exit 0
   [[ $3 == describe && $* == *performanceMonitoringUnit* ]] && { echo STANDARD; exit 0; }
 fi
 case "$3" in
@@ -334,7 +342,8 @@ class CreateVmTest(unittest.TestCase):
 
     LABEL = "perf-smoke-1-1"
 
-    def create(self, zones, types, succeed="", notready="", partial="", token_bad="", describe_fails="", pmu=""):
+    def create(self, zones, types, succeed="", notready="", partial="", token_bad="", describe_fails="", pmu="",
+               beta_missing="", beta_installable=""):
         self.attempt_args = []
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -347,7 +356,8 @@ class CreateVmTest(unittest.TestCase):
             outputs = tmp / "outputs"
             env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", STATE=str(tmp),
                        SUCCEED=succeed, NOTREADY=notready, PARTIAL=partial, TOKEN_BAD=token_bad,
-                       DESCRIBE_FAILS=describe_fails, PMU=pmu,
+                       DESCRIBE_FAILS=describe_fails, PMU=pmu, BETA_MISSING=beta_missing,
+                       BETA_INSTALLABLE=beta_installable,
                        GITHUB_OUTPUT=str(outputs), GITHUB_REPOSITORY="FalkorDB/FalkorDB",
                        GH_SA_TOKEN="t", GCP_PROJECT_ID=PROJECT, GCP_SA_KEY="{}",
                        DELETE_VMS_POLL_S="0", DELETE_VMS_GIVE_UP_S="2")
@@ -435,6 +445,18 @@ class CreateVmTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertNotIn("--performance_monitoring_unit", self.attempt_args[0])
         self.assertEqual(out["pmu"], "")
+
+    def test_missing_beta_track_is_installed_once(self):
+        proc, out, attempts, _ = self.create("z1", ["c4-standard-16"], succeed="c4-standard-16@z1", pmu="standard",
+                                             beta_missing="1", beta_installable="1")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual((attempts, out["pmu"]), (["c4-standard-16@z1"], "STANDARD"))
+
+    def test_beta_track_that_cannot_be_installed_stops_before_any_vm(self):
+        proc, out, attempts, _ = self.create("z1,z2", ["c4-standard-16"], succeed="c4-standard-16@z1",
+                                             pmu="standard", beta_missing="1")
+        self.assertEqual((proc.returncode, attempts), (1, []))
+        self.assertIn("no beta track", out["create_error"])
 
     def test_failed_describe_keeps_the_ready_vm(self):
         proc, out, attempts, _ = self.create("z1,z2", ["n2-standard-16"], succeed="n2-standard-16@z1",

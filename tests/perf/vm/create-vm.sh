@@ -52,6 +52,10 @@ if [[ -n $fallback && $fallback != "$primary" ]]; then
   types+=("$fallback")
 fi
 
+# Never stop at a gcloud prompt: a missing component would otherwise ask
+# "Do you want to continue (Y/n)?" and wait on a shell that cannot answer.
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1
+
 pmu_flag=()
 if [[ -n ${PMU:-} ]]; then pmu_flag=(--performance_monitoring_unit="$PMU"); fi
 
@@ -83,6 +87,17 @@ reason_from() {
 if ! curl -fsS --retry 3 -o /dev/null -X POST -H "Authorization: Bearer $GH_SA_TOKEN" \
     "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/registration-token"; then
   give_up "GH_SA_TOKEN cannot create a runner registration token for $GITHUB_REPOSITORY"
+fi
+
+# The vPMU field exists only on gcloud's beta track, which the pmu action
+# uses. Make sure it is there before any attempt, instead of every zone
+# failing the same way.
+if [[ -n ${PMU:-} ]] && ! gcloud beta compute instances create --help >/dev/null 2>&1; then
+  echo "gcloud has no beta track; installing it"
+  gcloud components install beta --quiet || true
+  if ! gcloud beta compute instances create --help >/dev/null 2>&1; then
+    give_up "gcloud has no beta track, which the vPMU needs, and installing it failed"
+  fi
 fi
 
 for type in "${types[@]}"; do
