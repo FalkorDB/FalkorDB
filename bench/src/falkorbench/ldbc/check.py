@@ -960,6 +960,11 @@ class Check:
             parts.append(f"error: {problems[0]}")
         elif verdict == "pass":
             parts.append("no regression")
+        elif problems:
+            # A regression outranks an error, so `error` stays null; the
+            # summary still says the run was cut short, not only raw/run.json.
+            more = f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""
+            parts.append(f"also not fully measured: {problems[0]}{more}")
         return _one_line("; ".join(parts))
 
     def machine(self) -> dict[str, Any]:

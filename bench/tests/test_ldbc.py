@@ -1702,3 +1702,16 @@ def test_a_ping_reply_after_the_grace_deadline_does_not_count(monkeypatch):
     side = ck.Side(ck.CANDIDATE, MAIN)
     side.container = SimpleNamespace(port=1, state=lambda: "running")
     assert side._answers() is False
+
+
+def test_a_regression_that_was_also_cut_short_says_so_in_the_summary(tmp_path):
+    """6.0.4 vs 6.2.0 on GCE: regressions, plus a deadline that cut IC12's re-run."""
+    check = scripted_check(tmp_path, _ok(ms=5.0), _ok(ms=50.0), names=("IC2",))
+    check.measure()
+    check.problem(
+        "the 35 min deadline passed before every query had its rounds (22 parameter-row runs skipped)"
+    )
+    result = check.write()
+    assert result["verdict"] == "regression" and result["error"] is None
+    assert "also not fully measured: the 35 min deadline passed" in result["summary"]
+    assert_valid(check.opts.out / "result.json")
