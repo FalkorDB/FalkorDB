@@ -37,11 +37,11 @@ zones=${3:?zones}
 primary=${4:?machine type}
 fallback=${5:-}
 
-# n4 and c4 boot only from Hyperdisk; the other families' default is the slow
-# pd-standard, so name the disk type either way.
+# N4, C4 and M4 boot only from Hyperdisk; the other families' default is the
+# slow pd-standard, so name the disk type either way.
 disk_type() {
   case $1 in
-    n4-* | n4a-* | n4d-* | c4-* | c4a-* | c4d-*) echo hyperdisk-balanced ;;
+    n4-* | n4a-* | n4d-* | c4-* | c4a-* | c4d-* | m4-*) echo hyperdisk-balanced ;;
     *) echo pd-balanced ;;
   esac
 }
@@ -111,8 +111,12 @@ for type in "${types[@]}"; do
       give_up "stopped trying after ${SECONDS}s"
     fi
     # A failed attempt leaves a VM behind only if the action's own delete
-    # failed; clear it so at most one VM ever carries the label.
-    "$here/delete-vms.sh" "$label" 0 || true
+    # failed. Clear it, and stop if it will not go: a second VM with the same
+    # label could take the run job while perf-vm.json and the deadline timer
+    # name the new one.
+    if ! "$here/delete-vms.sh" "$label" 0; then
+      give_up "a VM left by an earlier attempt could not be deleted, so another would share its runner label"
+    fi
 
     log=$(mktemp)
     action_out=$(mktemp)

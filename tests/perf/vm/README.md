@@ -19,7 +19,7 @@ jobs:
       candidate_image: ghcr.io/falkordb/falkordb-server@sha256:…
       baseline_image: falkordb/falkordb-server@sha256:…
       mode: nightly                              # queue | nightly | long
-      timeout_minutes: 45                        # default 60
+      timeout_minutes: 45                        # default 60, at most 300 (the VM deletes itself 6 h after boot)
       machine_type: ''                           # n4-standard-16, or c4-standard-16 with pmu
       pmu: false                                 # true: hardware counters (below)
       # optional: candidate_label, baseline_label, candidate_commit,
@@ -69,7 +69,7 @@ n4-standard-16 (8 cores, CPU n and n+8 share a core) that is `0-3,8-11` and
 `4-7,12-15`. A check must also run without these variables (on a laptop,
 unpinned).
 
-The VM is Debian 12 with Docker, git, python3 and uv, a 100 GB boot disk, and
+The VM is Debian 12 with Docker, git, python3 and uv, a 100 GB boot disk (Hyperdisk on N4, C4 and M4, which have no Persistent Disk), and
 4 GB of memory per vCPU on the default type. Its service account token is
 scoped to Compute only (`compute-rw`): enough to label and delete itself.
 

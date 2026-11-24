@@ -39,7 +39,12 @@ if [[ -n ${BASELINE_COMMIT:-} ]]; then args+=(--baseline-commit "$BASELINE_COMMI
 pin=()
 if [[ -n ${PERF_CLIENT_CPUS:-} ]]; then pin=(taskset -c "$PERF_CLIENT_CPUS"); fi
 
-rm -rf out && mkdir out
+# A stale out/ could hold an earlier result.json, which would hide this
+# run's missing one: run the check only in an empty out/.
+if ! { rm -rf out && mkdir out; }; then
+  echo "::error::could not empty out/ for $CHECK"
+  exit 2
+fi
 # Lets the workflow tell "stopped by the step timeout" from "never started".
 echo "started=true" >> "$GITHUB_OUTPUT"
 echo "running${PERF_CLIENT_CPUS:+ on CPUs $PERF_CLIENT_CPUS}: ${cmd[*]} ${args[*]}"

@@ -39,7 +39,8 @@ from pathlib import Path
 
 DIGEST = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
 ORDER = ("candidate", "baseline", "baseline", "candidate")
-START_TIMEOUT_S = 60
+# A start must answer PING and the query, all of it, within this long.
+START_TIMEOUT_S = float(os.environ.get("SMOKE_START_TIMEOUT_S", "60"))
 PINGS = 50
 
 
@@ -69,20 +70,65 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def command(sock: socket.socket, *words: str) -> bytes:
-    """Send one RESP command and return the first line of the reply."""
+class ReplyError(Exception):
+    """The server answered with a RESP error."""
+
+
+def _line(stream) -> bytes:
+    line = stream.readline()
+    if not line.endswith(b"\r\n"):
+        raise ConnectionError("reply cut short")
+    return line[:-2]
+
+
+def read_reply(stream):
+    """Read one complete RESP2/RESP3 reply from a binary stream.
+
+    Returns bytes for a scalar, a list for an aggregate (a map as its flat
+    key, value list), None for a null. Raises ReplyError for an error reply
+    and ConnectionError for a reply cut short, such as an array header whose
+    elements never come.
+    """
+    line = _line(stream)
+    kind, rest = line[:1], line[1:]
+    if kind == b"-":
+        raise ReplyError(rest.decode(errors="replace"))
+    if kind in (b"+", b":", b",", b"#", b"("):
+        return rest
+    if kind == b"_":
+        return None
+    if kind in (b"$", b"=", b"!"):
+        size = int(rest)
+        if size < 0:
+            return None
+        data = stream.read(size + 2)
+        if len(data) != size + 2 or not data.endswith(b"\r\n"):
+            raise ConnectionError("reply cut short")
+        if kind == b"!":
+            raise ReplyError(data[:-2].decode(errors="replace"))
+        return data[:-2]
+    if kind in (b"*", b"~", b">", b"%"):
+        count = int(rest)
+        if count < 0:
+            return None
+        return [read_reply(stream) for _ in range(count * 2 if kind == b"%" else count)]
+    raise ConnectionError(f"not a RESP reply: {line[:40]!r}")
+
+
+def call(sock: socket.socket, stream, deadline: float, *words: str):
+    """Send one command and read its whole reply, all before `deadline`."""
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("out of time")
+    # Each read waits at most until the deadline, so a slow reply cannot
+    # stretch the probe past it.
+    sock.settimeout(left)
     payload = f"*{len(words)}\r\n".encode()
     for word in words:
         data = word.encode()
         payload += b"$%d\r\n%s\r\n" % (len(data), data)
     sock.sendall(payload)
-    reply = b""
-    while b"\r\n" not in reply:
-        chunk = sock.recv(4096)
-        if not chunk:
-            raise ConnectionError("server closed the connection")
-        reply += chunk
-    return reply.split(b"\r\n", 1)[0]
+    return read_reply(stream)
 
 
 def machine() -> dict:
@@ -95,6 +141,27 @@ def machine() -> dict:
         "cpu": platform.processor() or platform.machine() or "unknown",
         "cores": os.cpu_count() or 1,
     }
+
+
+def probe(sock: socket.socket, stream, deadline: float) -> tuple[bool, float | None, str]:
+    """PING the ready server PINGS times, then ask it a query; all by `deadline`."""
+    timings = []
+    try:
+        for _ in range(PINGS):
+            t0 = time.perf_counter()
+            if call(sock, stream, deadline, "PING") != b"PONG":
+                return False, None, "PING stopped answering PONG"
+            timings.append((time.perf_counter() - t0) * 1000)
+        reply = call(sock, stream, deadline, "GRAPH.QUERY", "smoke", "RETURN 1")
+    except ReplyError as error:
+        return False, None, f"error reply: {str(error)[:120]}"
+    except (OSError, ConnectionError) as error:
+        return False, None, f"probe failed: {error or type(error).__name__}"
+    if not isinstance(reply, list):
+        return False, None, f"GRAPH.QUERY replied {reply!r:.120}"
+    if time.monotonic() > deadline:
+        return False, None, f"probe took longer than {START_TIMEOUT_S:g} s"
+    return True, max(timings), f"ping median {statistics.median(timings):.3f} ms"
 
 
 def run_once(image: str, name: str, raw: Path) -> tuple[bool, float | None, str]:
@@ -110,23 +177,20 @@ def run_once(image: str, name: str, raw: Path) -> tuple[bool, float | None, str]
         deadline = time.monotonic() + START_TIMEOUT_S
         while True:
             try:
-                with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
-                    if command(sock, "PING") != b"+PONG":
-                        raise ConnectionError("no PONG yet")
-                    timings = []
-                    for _ in range(PINGS):
-                        t0 = time.perf_counter()
-                        if command(sock, "PING") != b"+PONG":
-                            return False, None, "PING stopped answering PONG"
-                        timings.append((time.perf_counter() - t0) * 1000)
-                    first = command(sock, "GRAPH.QUERY", "smoke", "RETURN 1")
-                    if not first.startswith(b"*"):
-                        return False, None, f"GRAPH.QUERY replied {first[:120]!r}"
-                    return True, max(timings), f"ping median {statistics.median(timings):.3f} ms"
-            except (OSError, ConnectionError):
-                if time.monotonic() > deadline:
-                    return False, None, f"no PONG within {START_TIMEOUT_S} s"
-                time.sleep(0.5)
+                sock = socket.create_connection(("127.0.0.1", port), timeout=max(0.1, deadline - time.monotonic()))
+            except OSError:
+                sock = None
+            if sock is not None:
+                with sock, sock.makefile("rb") as stream:
+                    try:
+                        ready = call(sock, stream, deadline, "PING") == b"PONG"
+                    except (OSError, ConnectionError, ReplyError):
+                        ready = False  # still loading, or not listening yet
+                    if ready:
+                        return probe(sock, stream, deadline)
+            if time.monotonic() > deadline:
+                return False, None, f"no PONG within {START_TIMEOUT_S:g} s"
+            time.sleep(0.5)
     finally:
         logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True)
         (raw / f"{name}.log").write_text(logs.stdout + logs.stderr)
@@ -150,7 +214,8 @@ def main(argv: list[str] | None = None) -> int:
         if not DIGEST.match(image):
             parser.error(f"--{side} must be pinned by digest (name@sha256:<64 hex>): {image}")
 
-    out = Path(args.out)
+    # Contract v1.8: --out may be relative to where the check starts.
+    out = Path(args.out).resolve()
     raw = out / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     started = now()

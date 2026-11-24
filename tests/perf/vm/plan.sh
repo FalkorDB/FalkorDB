@@ -8,6 +8,8 @@
 # GCE_GITHUB_RUNNER_REF and GCE_GITHUB_RUNNER_PMU_REF (the action's commit
 # without and with a vPMU), GITHUB_OUTPUT.
 #
+# timeout_minutes is at most 300 (the action deletes the VM 6 h after boot).
+#
 # Writes outputs zones, machine_type, fallback, pmu (the vPMU type to ask
 # for, empty without counters), action_ref, command_timeout_s, step_timeout,
 # job_timeout and deadline; or error, and exits 1.
@@ -40,6 +42,12 @@ for image in "$CANDIDATE" "$BASELINE"; do
 done
 if ! [[ $TIMEOUT =~ ^[1-9][0-9]*$ ]]; then
   fail "timeout_minutes '$TIMEOUT' is not a whole number of minutes"
+fi
+# gce-github-runner's startup script deletes the VM 6 h after boot, whatever
+# the job is doing. Booting, setup, the step and job backstops and the upload
+# need the last hour, so a check gets at most 5 h.
+if (( TIMEOUT > 300 )); then
+  fail "timeout_minutes $TIMEOUT is over 300: the VM deletes itself 6 h after boot, and booting, setup and upload need the rest"
 fi
 [[ -n ${ZONES//[ ,]/} ]] || fail "no zones: set the zones input or vars.GCP_ZONES"
 

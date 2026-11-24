@@ -168,6 +168,28 @@ class PmuProbeTest(unittest.TestCase):
             self.assertTrue(out, name)
 
 
+class RespReplyTest(unittest.TestCase):
+    """smoke.read_reply takes a whole reply or none."""
+
+    def read(self, data):
+        return smoke.read_reply(io.BytesIO(data))
+
+    def test_complete_replies(self):
+        self.assertEqual(self.read(b"+PONG\r\n"), b"PONG")
+        self.assertEqual(self.read(b"*2\r\n$3\r\nabc\r\n*1\r\n:1\r\n"), [b"abc", [b"1"]])
+        self.assertEqual(self.read(b"%1\r\n+k\r\n:2\r\n"), [b"k", b"2"])
+        self.assertIsNone(self.read(b"$-1\r\n"))
+
+    def test_cut_short(self):
+        for data in (b"*3\r\n", b"*2\r\n:1\r\n", b"$5\r\nab", b"+PON"):
+            with self.assertRaises(ConnectionError, msg=data):
+                self.read(data)
+
+    def test_error_reply(self):
+        with self.assertRaises(smoke.ReplyError):
+            self.read(b"-ERR unknown command\r\n")
+
+
 class SmokeLabelTest(unittest.TestCase):
     DIGEST = "sha256:" + "ab" * 32
 
@@ -185,7 +207,8 @@ class SmokeLabelTest(unittest.TestCase):
 FAKE_DOCKER = r'''#!/usr/bin/env python3
 import os, signal, subprocess, sys
 SERVER = r"""
-import socket, sys
+import os, socket, sys, time
+mode = os.environ.get("FAKE_SERVER_MODE", "")
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", int(sys.argv[1])))
@@ -195,6 +218,12 @@ while True:
     while True:
         data = c.recv(4096)
         if not data:
+            break
+        if mode == "slow":
+            time.sleep(0.1)
+        if b"GRAPH.QUERY" in data and mode == "truncate":
+            c.sendall(b"*3\r\n")  # an array header whose elements never come
+            c.close()
             break
         c.sendall(b"*1\r\n:1\r\n" if b"GRAPH.QUERY" in data else b"+PONG\r\n")
 """
@@ -228,7 +257,7 @@ class SmokeEndToEndTest(unittest.TestCase):
     GOOD = "example/falkordb-server@sha256:" + "1" * 64
     DEAD = "example/dead-server@sha256:" + "2" * 64
 
-    def run_smoke(self, candidate, baseline, *extra, env_extra=None):
+    def run_smoke(self, candidate, baseline, *extra, env_extra=None, relative_out=False):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             docker = tmp / "bin" / "docker"
@@ -241,8 +270,8 @@ class SmokeEndToEndTest(unittest.TestCase):
             out = tmp / "out"
             proc = subprocess.run(
                 [sys.executable, "-I", str(HERE / "smoke.py"), "--candidate", candidate,
-                 "--baseline", baseline, "--out", str(out), "--mode", "nightly", *extra],
-                capture_output=True, text=True, env=env, timeout=120,
+                 "--baseline", baseline, "--out", "out" if relative_out else str(out), "--mode", "nightly", *extra],
+                capture_output=True, text=True, env=env, timeout=120, cwd=tmp,
             )
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             result_path = out / "result.json"
@@ -287,6 +316,24 @@ class SmokeEndToEndTest(unittest.TestCase):
         self.assertEqual(result["verdict"], "error")
         self.assertIn("docker pull failed", result["error"])
         self.assertEqual(result["findings"][0]["status"], "improvement")
+
+    def test_relative_out_is_under_the_start_directory(self):
+        # Contract v1.8: _perf-vm.yml passes `--out out`.
+        result, _, raw = self.run_smoke(self.GOOD, self.GOOD, relative_out=True)
+        self.assertEqual(result["verdict"], "pass")
+        self.assertIn("smoke.csv", raw)
+
+    def test_truncated_query_reply_is_not_a_completed_start(self):
+        result, _, _ = self.run_smoke(self.GOOD, self.GOOD, env_extra={"FAKE_SERVER_MODE": "truncate"})
+        self.assertEqual(result["verdict"], "error")
+        self.assertIn("reply cut short", result["error"])
+
+    def test_a_probe_slower_than_the_limit_is_not_a_completed_start(self):
+        # 51 replies at 0.1 s each cannot finish inside a 2 s limit, though each one succeeds.
+        result, _, _ = self.run_smoke(self.GOOD, self.GOOD,
+                                      env_extra={"FAKE_SERVER_MODE": "slow", "SMOKE_START_TIMEOUT_S": "2"})
+        self.assertEqual(result["verdict"], "error")
+        self.assertRegex(result["error"], r"probe failed|took longer")
 
     def test_dead_on_both_sides_is_info_not_regression(self):
         result, _, _ = self.run_smoke(self.DEAD, self.DEAD.replace("2" * 64, "4" * 64))
@@ -337,6 +384,10 @@ FAKE_GCLOUD = r"""#!/usr/bin/env bash
 touch "$STATE/vms"
 echo "$*" >> "$STATE/gcloud"
 [[ $CLOUDSDK_CORE_DISABLE_PROMPTS == 1 ]] || { echo "prompts enabled" >&2; exit 9; }
+if [[ $3 == delete && -n ${DELETE_FAILS:-} ]]; then
+  echo "ERROR: delete refused" >&2
+  exit 1
+fi
 if [[ $1 == components && $2 == install ]]; then
   [[ -n ${BETA_INSTALLABLE:-} ]] && touch "$STATE/beta"
   exit 0
@@ -378,7 +429,7 @@ class CreateVmTest(unittest.TestCase):
     LABEL = "perf-smoke-1-1"
 
     def create(self, zones, types, succeed="", notready="", partial="", token_bad="", describe_fails="", pmu="",
-               beta_missing="", beta_installable="", beta_old=""):
+               beta_missing="", beta_installable="", beta_old="", delete_fails=""):
         self.attempt_args = []
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -392,7 +443,7 @@ class CreateVmTest(unittest.TestCase):
             env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", STATE=str(tmp),
                        SUCCEED=succeed, NOTREADY=notready, PARTIAL=partial, TOKEN_BAD=token_bad,
                        DESCRIBE_FAILS=describe_fails, PMU=pmu, BETA_MISSING=beta_missing,
-                       BETA_INSTALLABLE=beta_installable, BETA_OLD=beta_old,
+                       BETA_INSTALLABLE=beta_installable, BETA_OLD=beta_old, DELETE_FAILS=delete_fails,
                        GITHUB_OUTPUT=str(outputs), GITHUB_REPOSITORY="FalkorDB/FalkorDB",
                        GH_SA_TOKEN="t", GCP_PROJECT_ID=PROJECT, GCP_SA_KEY="{}",
                        DELETE_VMS_POLL_S="0", DELETE_VMS_GIVE_UP_S="2")
@@ -446,6 +497,11 @@ class CreateVmTest(unittest.TestCase):
         self.create("z1", ["n4-standard-16", "n2-standard-16"])
         n4, n2 = self.attempt_args
         self.assertEqual((n4["--boot_disk_type"], n2["--boot_disk_type"]), ("hyperdisk-balanced", "pd-balanced"))
+        # M4 has no Persistent Disk at all.
+        self.create("z1", ["m4-megamem-28"], pmu="standard")
+        self.assertEqual(self.attempt_args[0]["--boot_disk_type"], "hyperdisk-balanced")
+        self.create("z1", ["n4-standard-16", "n2-standard-16"])
+        n4, n2 = self.attempt_args
         for args in (n4, n2):
             self.assertEqual(args["--disk_size"], "100GB")
             self.assertEqual(args["--ephemeral"], "true")
@@ -509,6 +565,14 @@ class CreateVmTest(unittest.TestCase):
         self.assertEqual(attempts, ["n2-standard-16@z1"])
         self.assertEqual((out["vm_name"], out["machine_type"]), ("gce-gh-1", "n2-standard-16"))
 
+    def test_vm_that_will_not_delete_stops_before_a_second_shares_its_label(self):
+        proc, out, attempts, vms = self.create("z1,z2", ["n4-standard-16"], succeed="n4-standard-16@z2",
+                                               partial="n4-standard-16@z1", delete_fails="1")
+        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(attempts, ["n4-standard-16@z1"])
+        self.assertIn("could not be deleted", out["create_error"])
+        self.assertEqual(len(vms), 1)
+
     def test_vm_left_by_a_failed_attempt_is_deleted_before_the_next(self):
         proc, out, _, vms = self.create("z1,z2", ["n4-standard-16"],
                                         succeed="n4-standard-16@z2", partial="n4-standard-16@z1")
@@ -542,6 +606,10 @@ class PlanTest(unittest.TestCase):
         self.assertEqual((out["command_timeout_s"], out["step_timeout"], out["job_timeout"], out["deadline"]),
                          ("2700", "50", "65", "75"))
 
+    def test_longest_timeout_fits_the_vm_lifetime(self):
+        rc, out = self.plan(TIMEOUT="300")
+        self.assertEqual((rc, out["deadline"]), (0, "330"))
+
     def test_n4_size_falls_back_to_the_same_n2_size(self):
         _, out = self.plan(MACHINE_TYPE="n4-highcpu-32")
         self.assertEqual(out["fallback"], "n2-highcpu-32")
@@ -569,7 +637,8 @@ class PlanTest(unittest.TestCase):
     def test_bad_inputs(self):
         for extra, words in [({"CHECK": "micro--x"}, "single dashes"), ({"CHECK": "Size"}, "lowercase"),
                              ({"MODE": "fast"}, "mode"), ({"CANDIDATE": "falkordb/falkordb-server:6.2.0"}, "digest"),
-                             ({"TIMEOUT": "0"}, "timeout_minutes"), ({"ZONES": " , "}, "no zones"),
+                             ({"TIMEOUT": "0"}, "timeout_minutes"), ({"TIMEOUT": "301"}, "over 300"),
+                             ({"ZONES": " , "}, "no zones"),
                              ({"PMU": "yes"}, "pmu"), ({"MACHINE_TYPE": "c4-standard-16 x", "PMU": "true"}, "name"),
                              ({"FALLBACK": "n2-standard-16;true"}, "name")]:
             rc, out = self.plan(**extra)
@@ -603,6 +672,28 @@ class RunCheckTest(unittest.TestCase):
             argv_file = tmp / "out" / "argv"
             argv = argv_file.read_text().splitlines() if argv_file.exists() else []
             return proc, out, argv
+
+    def test_out_that_cannot_be_emptied_stops_before_the_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            work = tmp / "work"
+            (work / "out").mkdir(parents=True)
+            (work / "out" / "result.json").write_text("{}")  # an earlier run's
+            marker = tmp / "ran"
+            work.chmod(0o555)  # out/ can be emptied but not removed or recreated
+            try:
+                env = dict(os.environ, GITHUB_OUTPUT=str(tmp / "outputs"), CHECK="smoke",
+                           COMMAND=f"touch {marker}", CANDIDATE="c@sha256:" + "1" * 64,
+                           BASELINE="b@sha256:" + "2" * 64, MODE="nightly", TIMEOUT_SECONDS="30",
+                           PERF_CLIENT_CPUS="")
+                proc = subprocess.run(["bash", "-e", "-c", str(HERE / "run-check.sh")], cwd=work,
+                                      capture_output=True, text=True, env=env)
+            finally:
+                work.chmod(0o755)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("could not empty out/", proc.stdout)
+            self.assertFalse(marker.exists())
+            self.assertFalse((tmp / "outputs").exists())
 
     def test_failing_command_is_recorded_and_returned(self):
         proc, out, _ = self.run_check("bash {dir}/record.sh", EXIT="3")
