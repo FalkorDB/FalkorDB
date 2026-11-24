@@ -144,11 +144,98 @@ locally against a real base build.
 | `src/falkorbench/report.py` | the CI comment, and the run's pass/fail decision |
 | `src/falkorbench/profile.py` | samply profile of one query |
 | `src/falkorbench/flow.py` | per-flow-test-file measurement |
+| `src/falkorbench/probe.py` | the nightly size probe (`bench probe`): two images' own servers, 10k-500k nodes, growth ratios, `result.json` |
 | `src/falkorbench/cli.py` | the `bench` command |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
 | `pmc_tool.c` | Apple Silicon PMU counters (kperf/kperfdata private frameworks) |
 | `tests/` | the guards above, over CSV fixtures |
+
+## Nightly size probe
+
+`bench probe` is the nightly perf check `size-probe` (`tests/perf/checks.yaml`,
+run on a GCE VM by `_perf-vm.yml`). It finds costs that grow with the graph.
+The rest of this harness measures on 10k nodes (1k under callgrind), where
+6.2.0's `UNWIND … MATCH … MATCH … CREATE` regression (#3887, #3965) does not
+show: one hash join over a 1k-10k label scan costs about what 100 index seeks
+cost. At 200k nodes it was 28.6 ms per batch against 6.0.4's 0.8 ms.
+
+```bash
+uv run --project bench bench probe \
+    --candidate ghcr.io/falkordb/falkordb-server@sha256:… \
+    --baseline falkordb/falkordb-server@sha256:… \
+    --out out --mode nightly   # + optional --candidate-label/-commit, --baseline-label/-commit
+```
+
+**What it runs.** Both images, pinned by digest, each its own server
+(`docker run`, `--cpuset-cpus $PERF_SERVER_CPUS` when set, a free port, never
+6379, `save` and `appendonly` off), side by side on one machine. Each server
+gets three graphs, 10k, 100k and 500k nodes: an index on `:N(id)` created on
+the empty label, the nodes, and a ring of as many edges. Nothing is measured
+until the index is OPERATIONAL on both. Then six shapes at each size:
+
+| shape | query (`e` is one row of `$rows`, ids drawn from the whole graph) |
+|---|---|
+| `UNWIND index MATCH edge 1 row` / `100 rows` | `MATCH (a:N {id: e.s}) MATCH (b:N {id: e.d}) CREATE (a)-[r:UWE]->(b) WITH r DELETE r` |
+| `UNWIND id MATCH edge 1 row` / `100 rows` | `MATCH (a) WHERE id(a) = e.s MATCH (b) WHERE id(b) = e.d CREATE …` |
+| `indexed lookup` (control) | `MATCH (n:N {id: $id}) RETURN n.id` |
+| `create node` (control) | `CREATE (:W {v: $v})` |
+
+The four UNWIND shapes are the micro tier's #3963 rows. A (size, shape) unit
+is a warm-up on each side, then blocks A B B A, with A the candidate in every
+other unit. Both sides get the same parameters, request for request. A latency
+is the client's wall clock around one request on a plain socket, never re-sent
+(the server's own execution time is kept beside it).
+
+**What it decides.** Per shape, `growth_ratio` = (candidate p50 / baseline
+p50 at 500k) ÷ (the same at 10k): how much more the candidate slows down from
+10k to 500k nodes than the baseline does. Above 1.5 the shape is re-measured at
+every size with the order swapped, and is a `regression` only when the re-run
+crosses again; below 1/1.5 it is an `improvement`. The per-size ratios are
+`info` findings for the crossed shapes (whole triples, worst first, within the
+contract's ten), and every number is in `raw/summary.csv`. A candidate that
+errors, times out (120 s) or loses its server on a shape the baseline runs is
+a `completed` regression at once; a request whose rows or relationships
+created differ between the sides is a `rows` mismatch. A shape the baseline
+cannot run is left out as `info` (a C image may lack one); a baseline server
+that dies, or a setup step that fails on the baseline, is `error`.
+
+Wall clock is the measure here (the VM has no PMU access), which is acceptable
+because the signal is a large ratio of medians from the same machine and run.
+**Its limit:** a constant-factor change (the candidate 2x slower at every
+size) leaves the growth ratio at 1 and is not this check's to find; the micro
+tier measures it.
+
+`--mode` changes only how long each unit runs; sizes and shapes are the same:
+
+| mode | warm-up | requests per block (4 blocks per unit) | block cap | budget |
+|---|---|---|---|---|
+| `queue` | 3 | 30 | 4 s | 20 min |
+| `nightly` | 5 | 60 | 8 s | 35 min |
+| `long` | 10 | 150 | 20 s | 100 min |
+
+A block stops at its cap once it has 5 requests, so a candidate that is slow
+everywhere still finishes: at most 36 units (18 plus 18 re-run) x 4 blocks x
+the cap, 19 minutes for `nightly`. No unit starts past the budget, and the
+result then says `error`. `--sizes` and `--reps` exist for development only.
+
+Measured on an n4-standard-16 (`nightly`, 2026-11-24), a whole run took
+1-3 minutes plus the image pulls:
+
+| candidate vs baseline | verdict | UNWIND shapes' growth ratio | controls |
+|---|---|---|---|
+| 6.2.0 vs 6.0.4 | regression, all four confirmed | 6.16x-9.77x | 1.01x |
+| main@4c1088949 vs 6.2.0 | pass, four improvements | 0.145x-0.160x | 1.05x |
+| main@4c1088949 vs itself | pass | 0.959x-1.082x | 0.880x-0.886x |
+| C v4.22.4 vs itself | pass | 0.951x-1.050x | 1.006x-1.014x |
+
+The same-image runs moved no growth ratio further than 1.14x (1/0.880) from 1,
+against the 1.5 threshold.
+
+Artifacts: `raw/rows.csv` (every request), `raw/summary.csv` (per unit:
+p50, p95, ratio, failures), `raw/setup.csv` (build times), `raw/plans.txt`
+(`GRAPH.EXPLAIN` of every shape on both sides at 500k nodes), and each
+server's log. Tests: `bench/tests/test_probe.py` (no server needed).
 
 ## pmc_tool (optional, for branch/L1D columns)
 

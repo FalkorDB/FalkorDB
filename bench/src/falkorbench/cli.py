@@ -20,6 +20,7 @@ from falkorbench import coverage as coverage_mod
 from falkorbench import flow as flow_mod
 from falkorbench import measure as measure_mod
 from falkorbench import metrics
+from falkorbench import probe as probe_mod
 from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
@@ -352,6 +353,68 @@ def report(measure_specs, cg_specs, provenance, coverage, strict):
         for reason in rep.fatal:
             click.echo(f"::error::{reason}", err=True)
         raise SystemExit(1)
+
+
+# --- probe (the nightly size probe) --------------------------------------------
+
+
+@cli.command()
+@click.option("--candidate", required=True, help="falkordb-server image@sha256:…")
+@click.option("--baseline", required=True, help="falkordb-server image@sha256:…")
+@click.option("--out", required=True, type=click.Path(file_okay=False, path_type=Path))
+@click.option("--mode", required=True, help="queue, nightly or long")
+@click.option("--candidate-label", default=None)
+@click.option("--baseline-label", default=None)
+@click.option("--candidate-commit", default=None)
+@click.option("--baseline-commit", default=None)
+@click.option(
+    "--sizes",
+    default=None,
+    help="development only: comma-separated node counts instead of 10000,100000,500000",
+)
+@click.option("--reps", default=None, type=int, help="development only: requests per block")
+def probe(
+    candidate,
+    baseline,
+    out,
+    mode,
+    candidate_label,
+    baseline_label,
+    candidate_commit,
+    baseline_commit,
+    sizes,
+    reps,
+):
+    """Costs that grow with the graph: perf check `size-probe`.
+
+    Runs both images' own servers side by side, builds 10k, 100k and 500k-node
+    graphs on each, and compares how each shape's candidate/baseline latency
+    ratio changes with graph size. Writes <out>/result.json (contract v1) and
+    exits 0 whenever it did, including when it could not measure.
+    """
+    try:
+        node_counts = [int(n) for n in sizes.split(",")] if sizes else None
+    except ValueError as e:
+        raise click.ClickException(f"--sizes: {e}") from e
+    res = probe_mod.run(
+        candidate=candidate,
+        baseline=baseline,
+        out=out,
+        mode=mode,
+        candidate_label=candidate_label,
+        baseline_label=baseline_label,
+        candidate_commit=candidate_commit,
+        baseline_commit=baseline_commit,
+        sizes=node_counts,
+        reps=reps,
+        echo=click.echo,
+    )
+    click.echo(f"{res['verdict']}: {res['summary']}")
+    for f in res["findings"]:
+        shown = f"{f['ratio']:.3f}x" if f["ratio"] is not None else "-"
+        click.echo(f"  [{f['status']}] {f['name']} {f['metric']} {shown}")
+    if res["error"]:
+        click.echo(f"error: {res['error']}")
 
 
 # --- coverage ----------------------------------------------------------------
