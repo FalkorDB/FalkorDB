@@ -145,6 +145,9 @@ flake cannot hide a total breakage.
 | check(s) | issue | what breaks |
 | --- | --- | --- |
 | s10 `after build person_age` / `person_city: indexed result == ground truth`, `during build person_age` / `person_city: result == ground truth`, `before restart: Person.age indexed results == ground truth` | #3512 (root cause) | A range-index lookup of value 0 returns no rows (`eq 0: got 0 want 1945`) once a fulltext index on the same label has been dropped (Avi's ledger F3). The cause is RediSearch's union-aliasing skip of a numeric `+0.0`; the fix, FalkorDB/RediSearch#31, is not in the submodule yet. #3512 describes only the reload trigger. |
+| s03 `range index finds chunks by cid (0, 1, mid, last)`, `range index finds every initial chunk` | #3512 (root cause) | `cid` 0 is not found through the range index on `:Chunk`, a label that also has fulltext and vector indexes (Avi's ledger F3, second trigger). |
+| s03 `in-load: updated_ann_miss_top10 == 0` | #3886 | A chunk updated under load is missing from its own top-10 vector neighbours (HNSW leaves nodes unreachable, Rust and C). |
+| s05 `steady state: used_memory plateau`, `used_memory returns to baseline after deleting all` | unfiled | During tenant churn (graphs created, queried and deleted), `used_memory` grows 75 MB over the second half. It keeps 52.5 MB after every graph is deleted (base 3.1 MB). This is logical memory, not the RSS retention of #1867. |
 | s11 `CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)` | unfiled | A read query (`UNWIND range(1, 1000000000) AS x RETURN sum(x)`, 15 s timeout) keeps the server busy after its client is killed, until its own timeout (idle after 16 s). |
 
 A side that runs longer than its hang cap did not finish (a `completed` regression on

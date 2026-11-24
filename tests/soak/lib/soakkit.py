@@ -108,10 +108,11 @@ def _remove_containers():
 
 
 # ---------------------------------------------------------------- client utils
-def connect(port: int) -> redis.Redis:
-    # No client timeout and no retries: redis-py's default timeout + retry silently
-    # re-issues slow commands (a slow CREATE could apply twice) — never in a soak.
-    return redis.Redis(port=port, socket_timeout=None, retry=Retry(NoBackoff(), 0),
+def connect(port: int, timeout: float | None = None) -> redis.Redis:
+    # No retries ever: redis-py's default timeout + retry silently re-issues slow commands
+    # (a slow CREATE could apply twice) — never in a soak. No client timeout either, unless
+    # the caller bounds one probe on purpose (it then sees redis.exceptions.TimeoutError).
+    return redis.Redis(port=port, socket_timeout=timeout, retry=Retry(NoBackoff(), 0),
                        decode_responses=False)
 
 

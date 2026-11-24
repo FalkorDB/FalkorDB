@@ -826,6 +826,7 @@ srv.stop()
 # ---------------------------------------------------------------- extreme-depth probes on a throwaway server
 # (a C build overflows its stack on deeply nested expressions; Rust must reject them cleanly)
 probe_dir = out / "depthprobe"
+PROBE_TIMEOUT_S = 60
 res_probe = {}
 for name, q in (("parens5000", "RETURN " + "(" * 5000 + "1" + ")" * 5000),
                 ("lists5000", "RETURN " + "[" * 5000 + "1" + "]" * 5000),
@@ -834,12 +835,16 @@ for name, q in (("parens5000", "RETURN " + "(" * 5000 + "1" + ")" * 5000),
                 ("maps2000", "RETURN " + "{a:" * 2000 + "1" + "}" * 2000)):
     try:
         ps = sk.Server(a.module, PORT + 5, probe_dir, name=f"probe-{name}")
-        pc = ps.client()
+        # bounded: C v4.22.4 spins for minutes on parens5000 without answering, which would
+        # hold the whole scenario to its cap
+        pc = sk.connect(PORT + 5, timeout=PROBE_TIMEOUT_S)
         try:
             pc.execute_command("GRAPH.QUERY", "p", q)
             res_probe[name] = "ok"
         except redis.exceptions.ResponseError as e:
             res_probe[name] = "error-reply: " + str(e)[:60]
+        except redis.exceptions.TimeoutError:
+            res_probe[name] = f"no reply in {PROBE_TIMEOUT_S} s (hung)"
         except redis.exceptions.ConnectionError:
             res_probe[name] = "CONNECTION LOST (crash)"
         pa = ps.alive()
@@ -854,6 +859,8 @@ dead = [k for k, v in res_probe.items() if "crash" in v or "dead" in v or "panic
 cc = sk.Checks(out)
 cc.items = list(checks.items)
 cc.add("deeply nested expressions never crash the server", not dead, f"{res_probe}", "critical")
+hung = [k for k, v in res_probe.items() if "hung" in v]
+cc.add(f"deeply nested expressions are answered within {PROBE_TIMEOUT_S} s", not hung, f"{res_probe}", "critical")
 s = sk.analyze(out, None)
 s["server_log_crash_markers"] = crash
 s["meta"] = meta
