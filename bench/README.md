@@ -294,8 +294,10 @@ engine too so that a genuine bug is not filed away as a dialect gap:
 | IC10 | `datetime({epochMillis: ...}).month` → *"Unknown function 'datetime'"*. The loader derives `birthdayMonth`/`birthdayDay` instead. |
 | IC7 | `not((liker)-[:KNOWS]-(person))` → *"Type mismatch: expected Boolean or Null but was List"*. A traversal pattern is not a boolean-valued expression in a projection, and `exists()` explicitly refuses traversal patterns, so this becomes `size(<pattern>) = 0`. |
 
-IC1, IC7, IC13 and IC14 fail identically on the C engine, so those four are
-dialect gaps rather than regressions. IC6 and IC9 were rewritten too at first,
+In their upstream form, IC1, IC7, IC13 and IC14 fail identically on the C
+engine, so those four are dialect gaps rather than regressions. With the
+rewrites, C runs IC7 but still not IC1, IC13 or IC14, nor IC10 (the nightly
+check below lists each error). IC6 and IC9 were rewritten too at first,
 and were not dialect gaps: both ran correctly on C and hit two Rust
 wrong-result bugs ([#2556](https://github.com/FalkorDB/FalkorDB/issues/2556),
 [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557)). Both are fixed, and
@@ -312,6 +314,115 @@ note `db.constraints()` reports `UNDER CONSTRUCTION`, never `PENDING`).
 
 The CSVs are pipe-separated. FalkorDB has no `DELIMITER` keyword — the
 standard-Cypher spelling is `FIELDTERMINATOR`, and it goes *after* `AS <var>`.
+
+### The nightly check: `bench ldbc check`
+
+The nightly perf run (epic #3974) compares main's newest image with the latest
+release through several independent checks; this is the LDBC one. It is one
+command, with the contract every nightly check shares:
+
+```bash
+uv run --project bench bench ldbc check \
+  --candidate ghcr.io/falkordb/falkordb-server@sha256:… \
+  --baseline falkordb/falkordb-server@sha256:… \
+  --out out --mode nightly \
+  [--candidate-label main@4c10889] [--baseline-label 6.2.0] \
+  [--candidate-commit <40 hex>] [--baseline-commit <40 hex>]
+```
+
+Both arguments are images pinned by digest, and nothing is compiled: each image
+runs as its own server in docker (its own redis or valkey and allocator),
+side by side on this machine, on ports docker picks (never 6379). The dataset is
+bind-mounted read-only as the module's `IMPORT_FOLDER`. On the VM the servers
+are pinned to `PERF_SERVER_CPUS`; locally they run unpinned and the result says
+`runner: local`.
+
+**How it measures.** The dataset is loaded into the baseline, then the
+candidate. Parameters are sampled once, from the baseline, and both sides run
+the same rows (`raw/params.json`). Per parameter row the two servers run back to
+back, in two rounds with the order swapped, after one warm-up call per query
+and side. Each latency is one `GRAPH.RO_QUERY` on a connection that never
+re-sends (redis-py's retries are off), with the query's server-side `TIMEOUT`.
+
+**What it reports** (`<out>/result.json`, contract schema 1), per query:
+
+| finding | metric | when |
+|---|---|---|
+| `IC3 p50`, `IC3 p95` | `p50_ms`, `p95_ms` | the ratio candidate/baseline over the rows both sides finished crosses 2x **and** the difference is at least 0.5 ms (p50) / 2 ms (p95). A crossing is measured again (two more swapped rounds); it is a `regression` only when the re-run crosses too, otherwise `ok` with the re-run's numbers. Wall clock, hence the wide band. |
+| `IC9 rows` | `rows` (`mismatch`) | the two sides return a different number of rows for the same parameter row. A regression at once, and the query gets no latency finding: the two sides did different work (6.0.4's IC9 "ran" 93x faster by returning nothing, #2557). |
+| `IC3 completed` | `completed` | judged per parameter row: the candidate timed out, errored or lost its server on a row the baseline finished is a regression at once; rows failing on both sides are `info`. A parameter row that timed out is skipped on both sides from then on, and a side stops a query after two timeouts. |
+| `server up` | `completed` | a server that went down at any point, also after its last reply (its container exited): the candidate's is a regression, the baseline's makes the result an `error`. |
+| `IC6 returns rows` | `invariant` | zero rows on every parameter row, on both sides: it measured nothing (`info`). |
+| `IC14 same rows` | `invariant` | the counts agree but the row contents differ, between two images of the same engine (`info`; see below). |
+| `load` | `throughput` | entities loaded per second, per side: one sample each, so `info` only. |
+
+Row contents are compared as a digest of the sorted rows with doubles rounded
+to nine significant digits (`raw/samples.csv`), so tie order and the engines'
+different float spelling do not count. IC14 returns every shortest path, and
+paths of equal weight have no defined order, which the sorted digest absorbs.
+A difference is reported as `info` only, until it has proven stable across
+nights.
+
+**Thresholds.** The ratio and the floors come from three A/A runs (main@4c1088949
+against itself twice, C v4.22.4 against itself once; nightly mode, unpinned,
+on an n4-standard-16 dev VM). The worst ratio either way was 1.19x (IC11 p95),
+the worst p50 difference on a query under 5 ms 0.061 ms, and the worst p95
+difference on a query under 10 ms 0.65 ms; 2x is 1.68x above the first, 0.5 ms
+8x the second, 2 ms 3x the third. The judge's pinned A/A runs on the VM
+workflow are the independent check of these values.
+
+**Queries an engine cannot run** are left out rather than failing the check: a
+query on which the *baseline* errors on every parameter row is reported as one
+`info` finding (`completed`, baseline 0) and is not compared. On the C engine
+that is IC1, IC10, IC13 and IC14, measured on v4.22.4 (C against itself, every
+parameter row):
+
+| query | the C engine's error |
+|---|---|
+| IC1, IC13 | *"FalkorDB does not currently support undirected shortestPath traversals"* |
+| IC14 | *"allShortestPaths(...) does not support a minimal length different from 1"* |
+| IC10 | *"Type mismatch: expected Null but was Pointer"* |
+
+The same query failing on the *candidate* only is a regression.
+
+**Verdict.** `regression` (confirmed) if any finding is one; otherwise `error`
+when something could not be measured (an image not pinned by digest, a pull or
+a dataset download that failed, a baseline that did not start, load or stay
+up, no query that finished on both sides, a deadline that cut any query's
+rounds); otherwise `pass`. The summary counts as compared only the queries
+with at least one parameter row finished on both sides. `result.json` is written
+first as an `error` and replaced at the end, so a run stopped from outside
+still leaves one. The command exits 0 whenever `result.json` was written.
+
+**Modes** set only the length, never the method:
+
+| mode | dataset | parameter rows per query | rounds (+ re-run) | per-query timeout | deadline |
+|---|---|---|---|---|---|
+| `queue` | SF0.1 (18 MB) | 10 | 2 (+2) | 30 s | 25 min |
+| `nightly` | SF0.1 (18 MB) | 25 | 2 (+2) | 60 s | 35 min |
+| `long` | SF1 (230 MB) | 25 | 2 (+2) | 300 s | 150 min |
+
+How long `nightly` takes, measured on an n4-standard-16 dev VM (unpinned), before
+the per-round budget was raised to 300 s: main@4c1088949 against itself 9.3 min,
+C v4.22.4 against itself 3.7 min, 6.0.4 against 6.2.0 (nine regressions
+confirmed, so nine re-runs) 20.6 min. Most of it is the two loads (about 70 s
+each) and the queries that time out (IC3 and one IC14 row on the Rust engine).
+The 35-minute deadline stops new measurement well inside the 45 minutes the
+check gets in `tests/perf/checks.yaml`. `queue` and `long` are accepted and set
+as above but not yet measured end to end; `long` at SF1 is untimed.
+
+**Artifacts** under `<out>/raw/`: `samples.csv` (every request: phase, round,
+query, parameter row, side, outcome, latency, rows, digest), `summary.csv`
+(per query and side), `params.json`, `load.json`, `explain/<side>/<IC>.txt`
+(`GRAPH.EXPLAIN` of every query on both sides), `<side>-server.log`, and
+`run.json` (mode, thresholds, engines, rewrites, notes).
+
+**Tests.** `bench/tests/test_ldbc.py` covers the analysis, the measurement
+loop (with scripted servers) and every result shape, holding each result.json
+to the contract's validator (`tests/perf/validate.py`, from #3986; set
+`PERF_VALIDATE_PY` to use another copy, and the tests that need it skip without
+it). `perf-contract.yml` (#3986) runs them with
+`uv run --project bench pytest bench/tests`.
 
 ### Substitution parameters
 

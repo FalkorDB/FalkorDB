@@ -13,15 +13,23 @@ row.
 """
 
 import csv
+import importlib.util
 import io
+import json
+import os
 import re
 import shutil
 import subprocess
 import tarfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from click.testing import CliRunner
 
+from falkorbench import cli as cli_mod
+from falkorbench.ldbc import check as ck
+from falkorbench.ldbc import containers
 from falkorbench.ldbc import dataset
 from falkorbench.ldbc import loader as loader_mod
 from falkorbench.ldbc import params as params_mod
@@ -517,3 +525,676 @@ def test_only_plain_files_and_directories_are_extracted():
     with pytest.raises(dataset.DatasetError, match="outside the cache"):
         dataset._refuse_unsafe(tarfile.TarInfo("/etc/passwd"))
     dataset._refuse_unsafe(tarfile.TarInfo("ds/static/a.csv"))
+
+
+# --- the nightly check (`bench ldbc check`) ----------------------------------
+#
+# Everything below runs without docker: the analysis is pure, and the
+# measurement loop is driven through scripted sides. Each result.json the
+# tests write is held to the perf contract's reference validator
+# (tests/perf/validate.py) when it is present in the tree; PERF_VALIDATE_PY
+# points at another copy (e.g. a checkout of the perf/judge branch).
+
+MAIN = "ghcr.io/falkordb/falkordb-server@sha256:" + "a" * 64
+OTHER = "falkordb/falkordb-server@sha256:" + "b" * 64
+
+
+def _validator():
+    candidates = [os.environ.get("PERF_VALIDATE_PY", "")]
+    candidates.append(str(Path(__file__).resolve().parents[2] / "tests/perf/validate.py"))
+    for path in candidates:
+        if path and Path(path).is_file():
+            spec = importlib.util.spec_from_file_location("perf_validate", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    return None
+
+
+def assert_valid(path: Path) -> None:
+    validate = _validator()
+    if validate is None:
+        pytest.skip("tests/perf/validate.py is not in this tree (set PERF_VALIDATE_PY)")
+    _kind, problems = validate.validate_file(str(path), kind="result")
+    assert problems == [], problems
+
+
+def S(side, param, outcome="ok", ms=10.0, rows=3, digest="d", phase="main", rnd=0, q="IC2"):
+    """A scripted sample."""
+    latency = ms if outcome == "ok" else None
+    return ck.Sample(
+        phase,
+        rnd,
+        q,
+        param,
+        side,
+        outcome,
+        latency,
+        rows if outcome == "ok" else None,
+        digest if outcome == "ok" else None,
+        "" if outcome == "ok" else f"{outcome} here",
+    )
+
+
+def pair(param, *, base=None, cand=None, rounds=2):
+    """Both sides on one parameter row, `rounds` times."""
+    base, cand = base or {}, cand or {}
+    out = []
+    for r in range(rounds):
+        out.append(S(ck.BASELINE, param, rnd=r, **base))
+        out.append(S(ck.CANDIDATE, param, rnd=r, **cand))
+    return out
+
+
+def test_percentile_is_nearest_rank():
+    assert ck.percentile([], 50) is None
+    assert ck.percentile([5.0], 95) == 5.0
+    values = [float(v) for v in range(1, 51)]
+    assert ck.percentile(values, 50) == 25.0
+    assert ck.percentile(values, 95) == 48.0
+
+
+def test_digest_ignores_row_order_and_float_spelling():
+    """C prints 0.1 as `0.10000000000000001`; Rust prints `0.1`."""
+    a = [[b"x", 1, b"0.1"], [b"y", 2, b"2.5"]]
+    b = [[b"y", 2, b"2.50"], [b"x", 1, b"0.10000000000000001"]]
+    assert ck.digest(a) == ck.digest(b)
+    assert ck.digest(a) != ck.digest([[b"x", 1, b"0.2"], [b"y", 2, b"2.5"]])
+    assert ck.digest([[b"x", 1]]) != ck.digest([[b"x", 1], [b"x", 1]])
+
+
+def test_params_header_uses_plain_names_and_quotes_strings():
+    header = ck.params_header({"personId": 7, "tagName": 'a "b"'})
+    assert header == 'CYPHER personId=7 tagName="a \\"b\\"" '
+    assert ck.params_header({}) == ""
+    with pytest.raises(ValueError, match="plain identifier"):
+        ck.params_header({"a b": 1})
+
+
+def test_engine_is_read_from_the_module_version():
+    listing = [[b"name", b"lua", b"ver", 1], [b"name", b"graph", b"ver", 42204, b"path", b"/x"]]
+    assert ck.module_version(listing) == 42204
+    assert ck.module_version([{"name": "graph", "ver": 999999}]) == 999999
+    assert ck.module_version([]) is None
+    assert ck.engine_of(42204) == "c"
+    assert ck.engine_of(60004) == "rust"
+    assert ck.engine_of(999999) == "rust"
+    assert ck.engine_of(None) == "unknown"
+
+
+def test_default_label_is_repo_and_twelve_hex():
+    assert ck.default_label(MAIN) == "ghcr.io/falkordb/falkordb-server@" + "a" * 12
+    tagged = "localhost:5000/x/falkordb-server:v1@sha256:" + "c" * 64
+    assert ck.default_label(tagged) == "localhost:5000/x/falkordb-server@" + "c" * 12
+
+
+@pytest.mark.parametrize(
+    ("metric", "cand", "base", "expected"),
+    [
+        ("p50_ms", 1.0, 0.5, "regression"),  # 2.0x and exactly the 0.5 ms floor
+        ("p50_ms", 1.2, 0.6, "regression"),  # IC13's size: 2x is 0.6 ms
+        ("p50_ms", 0.8, 0.35, None),  # 2.3x but 0.45 ms, under the floor
+        ("p50_ms", 30.0, 20.0, None),  # 10 ms slower but only 1.5x
+        ("p95_ms", 3.0, 1.0, "regression"),
+        ("p95_ms", 2.5, 1.0, None),  # 2.5x but 1.5 ms, under the 2 ms p95 floor
+        ("p50_ms", 5.0, 10.0, "improvement"),
+        ("p50_ms", 0.2, 0.6, None),  # 3x faster but only 0.4 ms
+    ],
+)
+def test_a_latency_crosses_only_outside_both_the_ratio_and_the_floor(metric, cand, base, expected):
+    assert ck.LatencyCompare(metric, cand, base).crossing() == expected
+
+
+def test_baseline_that_cannot_run_a_query_leaves_it_out_as_info():
+    """C's dialect gaps: the baseline errors on every row."""
+    samples = []
+    for p in range(3):
+        samples += pair(p, base={"outcome": "error"})
+    v = ck.analyse("IC1", samples, same_engine=False)
+    assert v.left_out and v.measured and not v.crossed
+    assert [(f["name"], f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [
+        ("IC1 completed", "info", 1, 0)
+    ]
+
+
+def test_a_query_neither_side_can_run_is_info_on_both():
+    samples = []
+    for p in range(2):
+        samples += pair(p, base={"outcome": "error"}, cand={"outcome": "error"})
+    v = ck.analyse("IC13", samples, same_engine=True)
+    assert v.left_out
+    assert [(f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [("info", 0, 0)]
+
+
+def test_a_candidate_timeout_where_the_baseline_finished_is_a_regression_at_once():
+    samples = [*pair(0), S(ck.BASELINE, 1), S(ck.CANDIDATE, 1, outcome="timeout")]
+    v = ck.analyse("IC3", samples, same_engine=True)
+    assert not v.left_out
+    (f,) = [f for f in v.findings if f["metric"] == "completed"]
+    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
+
+
+def test_a_timeout_on_both_sides_is_info_not_a_regression():
+    samples = [S(ck.BASELINE, 0, outcome="timeout"), S(ck.CANDIDATE, 0, outcome="timeout")]
+    v = ck.analyse("IC3", samples, same_engine=True)
+    assert [(f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [("info", 0, 0)]
+
+
+def test_one_error_on_the_baseline_is_not_a_dialect_gap():
+    samples = [*pair(0), S(ck.BASELINE, 1, outcome="error"), S(ck.CANDIDATE, 1)]
+    v = ck.analyse("IC5", samples, same_engine=True)
+    assert not v.left_out
+    (f,) = [f for f in v.findings if f["metric"] == "completed"]
+    assert (f["status"], f["candidate"], f["baseline"]) == ("improvement", 1, 0)
+
+
+def test_a_row_count_difference_is_a_regression_with_the_totals():
+    samples = pair(0, cand={"rows": 2}) + pair(1)
+    v = ck.analyse("IC9", samples, same_engine=True)
+    (f,) = [f for f in v.findings if f["metric"] == "rows"]
+    assert (f["name"], f["candidate"], f["baseline"], f["status"]) == (
+        "IC9 rows",
+        5,
+        6,
+        "regression",
+    )
+    assert f["direction"] == "mismatch" and f["ratio"] is None
+
+
+def test_row_differences_that_cancel_out_name_the_parameter_row():
+    samples = pair(0, cand={"rows": 2}) + pair(1, cand={"rows": 4})
+    v = ck.analyse("IC9", samples, same_engine=True)
+    (f,) = [f for f in v.findings if f["metric"] == "rows"]
+    assert (f["name"], f["candidate"], f["baseline"]) == ("IC9 rows (param 0)", 2, 3)
+
+
+def test_zero_rows_on_every_run_on_both_sides_is_reported_as_info():
+    samples = pair(0, base={"rows": 0}, cand={"rows": 0}) + pair(
+        1, base={"rows": 0}, cand={"rows": 0}
+    )
+    v = ck.analyse("IC6", samples, same_engine=True)
+    assert [(f["name"], f["metric"], f["status"]) for f in v.findings] == [
+        ("IC6 returns rows", "invariant", "info")
+    ]
+
+
+def test_zero_rows_on_the_candidate_only_is_a_row_mismatch():
+    samples = pair(0, cand={"rows": 0}) + pair(1, cand={"rows": 0})
+    v = ck.analyse("IC6", samples, same_engine=True)
+    assert [f["status"] for f in v.findings if f["metric"] == "rows"] == ["regression"]
+
+
+def test_different_contents_with_equal_counts_is_info_between_like_engines_only():
+    samples = pair(0, cand={"digest": "other"}) + pair(1)
+    same = ck.analyse("IC14", samples, same_engine=True)
+    assert [(f["name"], f["status"], f["candidate"]) for f in same.findings] == [
+        ("IC14 same rows", "info", None)
+    ]
+    assert ck.analyse("IC14", samples, same_engine=False).findings == []
+
+
+def test_a_latency_crossing_waits_for_the_re_run():
+    samples = []
+    for p in range(5):
+        samples += pair(p, base={"ms": 10.0}, cand={"ms": 40.0})
+    v = ck.analyse("IC3", samples, same_engine=True)
+    assert v.crossed == ["p50_ms", "p95_ms"]
+    assert [f for f in v.findings if f["metric"].endswith("_ms")] == []
+
+    repeated = []
+    for p in range(5):
+        repeated += pair(
+            p, base={"ms": 10.0, "phase": "rerun"}, cand={"ms": 35.0, "phase": "rerun"}
+        )
+    confirmed = ck.confirm("IC3", v.crossed, repeated)
+    assert [(f["name"], f["status"], f["ratio"]) for f in confirmed] == [
+        ("IC3 p50", "regression", 3.5),
+        ("IC3 p95", "regression", 3.5),
+    ]
+
+    noise = []
+    for p in range(5):
+        noise += pair(p, base={"ms": 10.0, "phase": "rerun"}, cand={"ms": 11.0, "phase": "rerun"})
+    assert {f["status"] for f in ck.confirm("IC3", v.crossed, noise)} == {"ok"}
+
+
+def test_a_candidate_that_stops_finishing_in_the_re_run_is_a_regression():
+    rerun = [S(ck.BASELINE, 0, phase="rerun"), S(ck.CANDIDATE, 0, outcome="timeout", phase="rerun")]
+    found = ck.confirm("IC3", ["p50_ms"], rerun)
+    assert [(f["name"], f["status"]) for f in found] == [("IC3 completed", "regression")]
+
+
+def test_an_improvement_needs_no_re_run():
+    samples = []
+    for p in range(4):
+        samples += pair(p, base={"ms": 50.0}, cand={"ms": 10.0})
+    v = ck.analyse("IC10", samples, same_engine=True)
+    assert v.crossed == []
+    assert {f["status"] for f in v.findings} == {"improvement"}
+
+
+def test_warmup_latencies_are_not_measured():
+    samples = [
+        S(ck.BASELINE, 0, ms=900.0, phase="warmup"),
+        S(ck.CANDIDATE, 0, ms=1.0, phase="warmup"),
+    ]
+    samples += pair(0)
+    assert ck.analyse("IC2", samples, same_engine=True).crossed == []
+
+
+def test_nothing_measured_is_not_a_pass():
+    skipped = [S(ck.BASELINE, 0, outcome="skipped"), S(ck.CANDIDATE, 0, outcome="skipped")]
+    v = ck.analyse("IC2", skipped, same_engine=True)
+    assert not v.measured
+
+
+def test_findings_put_every_crossing_first_and_cap_the_informative_rows():
+    def f(name, status, ratio):
+        return ck._finding(name, "p50_ms", ratio, 1.0, direction="higher_is_worse", status=status)
+
+    crossings = [f("a", "regression", 3.0), f("b", "regression", 9.0), f("c", "improvement", 0.2)]
+    info = [f(f"i{n}", "info", 1.0) for n in range(4)]
+    ok = [f(f"o{n}", "ok", 1.0 + n / 10) for n in range(12)]
+    chosen = ck.select_findings(crossings + info, ok)
+    assert [x["name"] for x in chosen[:3]] == ["b", "a", "c"]
+    informative = [x for x in chosen if x["status"] in ("ok", "info")]
+    assert len(informative) == 10
+    assert [x["name"] for x in informative[:5]] == ["i0", "i1", "i2", "i3", "o11"]
+
+
+def test_a_regression_outranks_an_error():
+    reg = [{"status": "regression"}]
+    assert ck.decide(reg, ["IC4 not measured"]) == ("regression", True)
+    assert ck.decide([], ["IC4 not measured"]) == ("error", False)
+    assert ck.decide([{"status": "info"}], []) == ("pass", False)
+
+
+def test_docker_port_output_gives_the_host_port():
+    assert containers.parse_port("127.0.0.1:32771\n") == 32771
+    assert containers.parse_port("0.0.0.0:49153\n[::]:49153\n") == 49153
+    with pytest.raises(ValueError):
+        containers.parse_port("")
+
+
+# --- the measurement loop, with scripted sides --------------------------------
+
+
+class ScriptedSide(ck.Side):
+    """A side whose replies come from a function of (query, params, call no.)."""
+
+    def __init__(self, side, script):
+        super().__init__(side, MAIN)
+        self.script = script
+        self.calls = []
+
+    def run(self, cypher, params, timeout_ms):
+        self.calls.append((cypher, dict(params)))
+        return self.script(cypher, params, len(self.calls))
+
+
+def _ok(ms=5.0, rows=2, digest="d"):
+    return lambda *_: ck.Sample("", 0, "", 0, "", ck.OK, ms, rows, digest)
+
+
+def scripted_check(
+    tmp_path, base_script, cand_script, *, names=("IC2", "IC7"), params=3, mode=None
+):
+    opts = ck.Options(
+        candidate=MAIN,
+        baseline=OTHER,
+        out=tmp_path / "out",
+        mode=mode or ck.MODES["nightly"],
+        candidate_label="main@4c1088949",
+        baseline_label="6.2.0",
+        candidate_commit="4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+        queries=names,
+    )
+    check = ck.Check(opts, echo=lambda _: None)
+    check.queries = query_mod.select(names)
+    check.param_set = params_mod.ParamSet(
+        rows={q.number: [{"personId": i} for i in range(params)] for q in check.queries},
+        official=False,
+        source="test",
+    )
+    base = ScriptedSide(ck.BASELINE, base_script)
+    cand = ScriptedSide(ck.CANDIDATE, cand_script)
+    for side in (base, cand):
+        side.engine = "rust"
+        side.side = side.side  # the scripted sample's side is filled in below
+    check.sides = {ck.BASELINE: base, ck.CANDIDATE: cand}
+    for side in (base, cand):
+        original = side.script
+
+        def stamped(cypher, p, n, _orig=original, _side=side.side):
+            sample = _orig(cypher, p, n)
+            sample.side = _side
+            return sample
+
+        side.script = stamped
+    return check
+
+
+def test_the_rounds_interleave_the_sides_and_swap_their_order(tmp_path):
+    order = []
+
+    def recorder(name):
+        def script(cypher, params, n):
+            order.append((name, params["personId"]))
+            return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2, "d")
+
+        return script
+
+    check = scripted_check(tmp_path, recorder("b"), recorder("c"), names=("IC2",), params=2)
+    check.measure()
+    # warm-up b,c on row 0; round 0 baseline first; round 1 candidate first.
+    assert order == [("b", 0), ("c", 0), ("b", 0), ("c", 0), ("b", 1), ("c", 1),
+                     ("c", 0), ("b", 0), ("c", 1), ("b", 1)]  # fmt: skip
+    assert check.problems == []
+    assert check.compared_queries == 1
+
+
+def test_a_timed_out_row_is_skipped_on_both_sides_and_reported_at_once(tmp_path):
+    def cand(cypher, params, n):
+        if params["personId"] == 1:
+            return ck.Sample("", 0, "", 0, "", ck.TIMEOUT, error="Query timed out")
+        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2, "d")
+
+    check = scripted_check(tmp_path, _ok(), cand, names=("IC2",), params=3)
+    check.measure()
+    # warm-up row 0; round 0 rows 0, 1 (timed out), 2; round 1 rows 0 and 2 only.
+    assert [p["personId"] for _, p in check.sides[ck.CANDIDATE].calls] == [0, 0, 1, 2, 0, 2]
+    assert [p["personId"] for _, p in check.sides[ck.BASELINE].calls] == [0, 0, 1, 2, 0, 2]
+    assert [(f["name"], f["status"]) for f in check.findings] == [("IC2 completed", "regression")]
+    skipped = [s for s in check.samples if s.outcome == ck.SKIPPED]
+    assert len(skipped) == 2 and all("timed out on this parameter row" in s.error for s in skipped)
+
+
+def test_a_side_stops_a_query_after_its_second_timeout(tmp_path):
+    def hangs(cypher, params, n):
+        return ck.Sample("", 0, "", 0, "", ck.TIMEOUT, error="Query timed out")
+
+    def ic3_hangs(cypher, params, n):
+        if "countryXName" in cypher:
+            return hangs(cypher, params, n)
+        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2, "d")
+
+    check = scripted_check(tmp_path, ic3_hangs, ic3_hangs, names=("IC2", "IC3"), params=25)
+    check.measure()
+    # IC3: warm-up row 0 and round 0 row 1 time out; nothing else is sent.
+    sent = [c for c, _ in check.sides[ck.CANDIDATE].calls if "countryXName" in c]
+    assert len(sent) == ck.MAX_TIMEOUTS == 2
+    result = check.write()
+    assert result["verdict"] == "pass"
+    assert result["summary"].startswith("1 of 2 LDBC complex reads compared")
+    assert "broken on both sides (not new): IC3" in result["summary"]
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_a_slow_candidate_is_re_run_and_confirmed(tmp_path):
+    check = scripted_check(tmp_path, _ok(ms=5.0), _ok(ms=50.0), names=("IC2",), params=4)
+    check.measure()
+    phases = {s.phase for s in check.samples}
+    assert phases == {"warmup", "main", "rerun"}
+    names = [(f["name"], f["status"]) for f in check.findings]
+    assert ("IC2 p50", "regression") in names and ("IC2 p95", "regression") in names
+
+
+def test_the_deadline_leaves_the_rest_unmeasured_and_says_error(tmp_path):
+    check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2", "IC7"))
+    check.t0 -= check.opts.mode.deadline_s + 1
+    check.measure()
+    assert any("not measured" in p for p in check.problems)
+    result = check.write()
+    assert result["verdict"] == "error"
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_an_a_a_run_passes_and_its_result_is_valid(tmp_path):
+    check = scripted_check(tmp_path, _ok(), _ok())
+    check.findings.append(
+        ck._finding("load", "throughput", 1000.0, 1010.0, direction="lower_is_worse", status="info")
+    )
+    check.measure()
+    check.write_samples()
+    check.write_summary()
+    result = check.write()
+    assert result["verdict"] == "pass", result
+    assert result["confirmed"] is False and result["error"] is None
+    assert result["candidate"]["commit"] == "4c1088949a5852e3949c05bfb3d92a603c4cd4ca"
+    assert result["baseline"] == {"image": OTHER, "commit": None, "label": "6.2.0"}
+    assert "2 of 2 LDBC complex reads compared at SF0.1" in result["summary"]
+    assert "raw/samples.csv" in result["artifacts"]
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_a_confirmed_regression_result_is_valid(tmp_path):
+    check = scripted_check(tmp_path, _ok(ms=5.0), _ok(ms=50.0))
+    check.measure()
+    result = check.write()
+    assert result["verdict"] == "regression" and result["confirmed"] is True
+    assert result["summary"].count("\n") == 0
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_the_c_gaps_are_left_out_and_the_run_still_passes(tmp_path):
+    def c_engine(cypher, params, n):
+        if "shortestPath" in cypher:
+            return ck.Sample("", 0, "", 0, "", ck.ERROR, error="unsupported")
+        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2, "d")
+
+    check = scripted_check(tmp_path, c_engine, c_engine, names=("IC1", "IC2", "IC13"))
+    check.measure()
+    result = check.write()
+    assert result["verdict"] == "pass", result
+    assert "IC1, IC13 left out (baseline cannot run)" in result["summary"]
+    assert {(f["name"], f["status"]) for f in result["findings"] if f["metric"] == "completed"} == {
+        ("IC1 completed", "info"),
+        ("IC13 completed", "info"),
+    }
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_an_image_not_pinned_by_digest_is_an_error_result_not_a_crash(tmp_path):
+    out = tmp_path / "out"
+    res = CliRunner().invoke(
+        cli_mod.cli,
+        ["ldbc", "check", "--candidate", "falkordb/falkordb-server:edge", "--baseline", OTHER,
+         "--out", str(out)],
+    )  # fmt: skip
+    assert res.exit_code == 0, res.output
+    result = json.loads((out / "result.json").read_text())
+    assert result["verdict"] == "error"
+    assert "not pinned by digest" in result["error"]
+
+
+def test_a_baseline_that_cannot_load_is_an_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(containers, "pull", lambda image: None)
+
+    class FakeContainer(containers.Container):
+        def state(self):
+            return "running"
+
+        def logs(self):
+            return "log\n"
+
+        def remove(self):
+            pass
+
+    monkeypatch.setattr(
+        containers, "start", lambda image, name, d, cpus=None: FakeContainer(name, image, 1)
+    )
+    monkeypatch.setattr(ck.Check, "connect", lambda self, s: SimpleNamespace())
+
+    def boom(client, root, *, import_root, echo):
+        raise loader_mod.LoadError("person_0_0.csv: created 1 of 2 rows")
+
+    monkeypatch.setattr(ck.loader_mod, "load", boom)
+    monkeypatch.setattr(ck.Check, "fetch", lambda self: tmp_path)
+    opts = ck.Options(MAIN, MAIN, tmp_path / "out", ck.MODES["nightly"], queries=("IC2",))
+    result = ck.run_check(opts, echo=lambda _: None)
+    assert result["verdict"] == "error"
+    assert "baseline could not load the dataset" in result["error"]
+    assert (tmp_path / "out/raw/baseline-server.log").exists()
+    assert_valid(tmp_path / "out/result.json")
+
+
+def test_a_candidate_that_cannot_load_is_a_regression(tmp_path, monkeypatch):
+    monkeypatch.setattr(containers, "pull", lambda image: None)
+
+    class FakeContainer(containers.Container):
+        def state(self):
+            return "running"
+
+        def logs(self):
+            return ""
+
+        def remove(self):
+            pass
+
+    monkeypatch.setattr(
+        containers, "start", lambda image, name, d, cpus=None: FakeContainer(name, image, 1)
+    )
+    monkeypatch.setattr(ck.Check, "connect", lambda self, s: s.side)
+
+    def load(client, root, *, import_root, echo):
+        if client == ck.CANDIDATE:
+            raise loader_mod.LoadError("comment_0_0.csv: created 0 of 151043 rows")
+        return loader_mod.LoadStats(nodes=10, edges=20, seconds=1.0)
+
+    monkeypatch.setattr(ck.loader_mod, "load", load)
+    monkeypatch.setattr(ck.Check, "fetch", lambda self: tmp_path)
+    opts = ck.Options(MAIN, OTHER, tmp_path / "out", ck.MODES["nightly"], queries=("IC2",))
+    result = ck.run_check(opts, echo=lambda _: None)
+    assert result["verdict"] == "regression"
+    assert [(f["name"], f["status"]) for f in result["findings"]] == [
+        ("load completed", "regression")
+    ]
+    assert_valid(tmp_path / "out/result.json")
+
+
+# --- what the independent review found ---------------------------------------
+
+
+def test_a_candidate_failure_is_judged_per_row_not_hidden_by_another_rows_baseline_error():
+    """Candidate times out on row 1, baseline errors on unrelated row 2."""
+    samples = [*pair(0), S(ck.BASELINE, 1), S(ck.CANDIDATE, 1, outcome="timeout")]
+    samples += [S(ck.BASELINE, 2, outcome="error"), S(ck.CANDIDATE, 2)]
+    v = ck.analyse("IC2", samples, same_engine=True)
+    (f,) = [f for f in v.findings if f["metric"] == "completed"]
+    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
+
+
+def test_failures_on_the_same_row_on_both_sides_are_info():
+    samples = [
+        *pair(0),
+        S(ck.BASELINE, 1, outcome="timeout"),
+        S(ck.CANDIDATE, 1, outcome="timeout"),
+    ]
+    v = ck.analyse("IC2", samples, same_engine=True)
+    (f,) = [f for f in v.findings if f["metric"] == "completed"]
+    assert (f["status"], f["candidate"], f["baseline"]) == ("info", 0, 0)
+
+
+def test_a_baseline_that_runs_nothing_is_an_error_not_a_pass(tmp_path):
+    def broken(cypher, params, n):
+        return ck.Sample("", 0, "", 0, "", ck.ERROR, error="unknown argument TIMEOUT")
+
+    check = scripted_check(tmp_path, broken, _ok(), names=("IC2", "IC7"))
+    check.measure()
+    result = check.write()
+    assert result["verdict"] == "error"
+    assert "no query could be compared" in result["error"]
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_a_deadline_that_cuts_the_rounds_is_an_error(tmp_path):
+    check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",), params=2)
+    real = check.past_deadline
+    calls = {"n": 0}
+
+    def after_round_zero():
+        calls["n"] += 1
+        return calls["n"] > 3 or real()  # warm-up and round 0 run, round 1 does not
+
+    check.past_deadline = after_round_zero
+    check.measure()
+    assert any(s.error == "past the check's deadline" for s in check.samples)
+    result = check.write()
+    assert result["verdict"] == "error"
+    assert "deadline passed" in result["error"]
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_a_candidate_server_that_died_after_its_last_reply_is_a_regression(tmp_path):
+    check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",))
+    check.measure()
+    check.sides[ck.CANDIDATE].down = "container exited 139"
+    check.server_findings(set(ck.SIDES))
+    result = check.write()
+    assert result["verdict"] == "regression"
+    assert ("server up", "regression") in [(f["name"], f["status"]) for f in result["findings"]]
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_a_baseline_server_that_died_is_an_error(tmp_path):
+    check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",))
+    check.measure()
+    check.sides[ck.BASELINE].down = "container exited 137 (OOM-killed)"
+    check.server_findings(set(ck.SIDES))
+    result = check.write()
+    assert result["verdict"] == "error"
+    assert "baseline server went down" in result["error"]
+    assert_valid(check.opts.out / "result.json")
+
+
+def test_a_bad_commit_is_reported_and_dropped_so_the_result_stays_valid(tmp_path):
+    out = tmp_path / "out"
+    res = CliRunner().invoke(
+        cli_mod.cli,
+        ["ldbc", "check", "--candidate", MAIN, "--baseline", OTHER, "--out", str(out),
+         "--candidate-commit", "4c10889"],
+    )  # fmt: skip
+    assert res.exit_code == 0, res.output
+    result = json.loads((out / "result.json").read_text())
+    assert result["verdict"] == "error" and "not a 40-hex commit" in result["error"]
+    assert result["candidate"]["commit"] is None
+    assert_valid(out / "result.json")
+
+
+def test_only_the_first_sigterm_interrupts():
+    """`timeout` and uv can each deliver one: teardown must survive the rest."""
+    import signal
+
+    def spin():
+        for _ in range(10_000):  # a pending handler runs between bytecodes
+            pass
+
+    with ck._term_as_interrupt():
+        with pytest.raises(KeyboardInterrupt):
+            os.kill(os.getpid(), signal.SIGTERM)
+            spin()
+        os.kill(os.getpid(), signal.SIGTERM)  # ignored: no second interrupt
+        spin()
+    assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL
+
+
+def test_no_latency_finding_for_a_query_whose_rows_differ():
+    """6.0.4's IC9 returned nothing (#2557), in 2 ms instead of 210 ms."""
+    samples = []
+    for p in range(4):
+        samples += pair(p, base={"ms": 210.0, "rows": 20}, cand={"ms": 2.0, "rows": 0})
+    v = ck.analyse("IC9", samples, same_engine=True)
+    assert v.rows_differ and v.crossed == []
+    assert [(f["name"], f["status"]) for f in v.findings] == [("IC9 rows", "regression")]
+
+
+def test_a_query_that_finished_on_neither_side_alone_is_not_a_comparison(tmp_path):
+    def hangs(cypher, params, n):
+        return ck.Sample("", 0, "", 0, "", ck.TIMEOUT, error="Query timed out")
+
+    check = scripted_check(tmp_path, hangs, hangs, names=("IC3",), params=5)
+    check.measure()
+    result = check.write()
+    assert result["verdict"] == "error"
+    assert "no query could be compared" in result["error"]
+    assert_valid(check.opts.out / "result.json")
