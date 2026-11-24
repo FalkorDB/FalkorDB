@@ -1,35 +1,5 @@
-"""The soak's synthetic graph, its queries, and the seeded parameters of each epoch.
-
-Everything here is pure: no server, no redis-py. `harness.py` sends what these functions build.
-
-The graph
----------
-14 labels, `L0` .. `L13`. Label `Li` holds 1,200,000 / 2^i nodes at scale 1 (rounded to hundreds,
-at least 100): 2.4M nodes in all. Every node has an integer key `k` (0 .. size-1, consecutive ids
-within a label), `g = k % 16`, `h = k % 1000` and a timestamp `ts`. `L4` also has `k2`, `L6` also
-has `m = k % 5`.
-
-Edges, about 3.6M at scale 1, each with `w = j % 100` and `ts`:
-
-* every `L0` node points at an `L4` node, spread over the eight types `R0` .. `R7` by `j % 8`;
-* every `L0` node is pointed at by an `L5` node (type `S`);
-* a chain: every node of `L1` .. `L8` points at a node of the label before it (types `R0` .. `R7`);
-* two small pairs that the upserts keep extending: `L11 -[A]-> L10` and `L9 -[B]-> L12`.
-
-All edges are wired by node id (`MATCH (a) WHERE id(a) = … MATCH (b) WHERE id(b) = … CREATE`),
-which is also what the graph-build timing measures.
-
-The traffic, per graph (at read_mult = write_mult = 1)
------------------------------------------------------
-* long reads, in their own streams: a full edge scan with a selective filter that returns about
-  3% of the edges (it visits every edge, so it holds the read lock for seconds), or a full count
-  followed by one count per relationship type;
-* cheap reads, open loop, each with its own TIMEOUT: keyed lookups, a filtered sort and a
-  distinct; and an unindexed lookup that scans the largest label (too slow to be judged as cheap
-  on a full-size graph);
-* writes, open loop: MERGE upserts of a node pair and the edge between them, or of a single node;
-  and a bulk SET over a small label.
-"""
+"""The soak's synthetic graph (14 labels from a halving series, edges wired by node id), its
+queries, and the seeded parameters of each epoch (README, "What one run is"). Pure: no server."""
 
 from __future__ import annotations
 
@@ -257,6 +227,17 @@ def epoch_params(seed: str, h: int, e: int, ng: int) -> dict:
         "write_timeout_ms": rng.choice([500, 1500, 3000]) if rng.random() < 1 / 3 else 0,
         "bgsave": (not constraints) and rng.random() < 0.5,
     }
+
+
+def epoch_seconds(epoch_s: float, drain_s: float, ep: dict) -> float:
+    """What one epoch takes at most: the load, its drain, the end-of-epoch checks (120 s), and up
+    to 300 s after the load for an index step and for a constraint step still building."""
+    return epoch_s + drain_s + 120 + 300 * (bool(ep.get("indexes")) + bool(ep.get("constraints")))
+
+
+def hour_seconds(epoch_s: float, drain_s: float, hp: dict, eps: list) -> float:
+    """A server-hour: start and calibration (120 s), the build (about 120 s per unit of scale), its epochs."""
+    return 120 + 120 * sum(hp["scales"]) + sum(epoch_seconds(epoch_s, drain_s, ep) for ep in eps)
 
 
 #: the control epoch's graphs: a busy one at full scale and a quiet one beside it

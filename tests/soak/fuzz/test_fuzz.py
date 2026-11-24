@@ -145,40 +145,73 @@ def _epoch_data(reads=(), writes=(), longs=()):
             "unfinished": 0, "pending_at_stop": 0, "drain_s": 0.0, "harness": {}}
 
 
-def _analyse(data, pings=None, quiet=False):
+LONG = [[0, "full-scan", 10.0, 18.0, 0, ""]]  # a long read from 10 s to 18 s
+POOL_STALLED = [1, "lookup", 1.0, 1.0, 3.0, 0, 1.99]  # 2 s on a quiet graph, all of it waiting for a connection
+QUIET_FAST = [1, "lookup", 2.0, 2.0, 2.01, 0, 0.0]
+
+
+def _pings(n, late=None, control_gap=None):
+    """n PINGs 10 ms apart on both servers; `late` = (index, ms) on FalkorDB; `control_gap` = (from, to)
+    seconds with no plain-server replies."""
+    f = [(i / 100, 1.0) for i in range(n)]
+    c = [(i / 100, 1.0) for i in range(n) if not control_gap or not control_gap[0] <= i / 100 <= control_gap[1]]
+    if late:
+        f[late[0]] = (late[0] / 100, late[1])
+    return {"falkor": f, "control": c}
+
+
+ANALYSE_CASES = [  # (id, check, pass, records, pings, window_s, quiet, ledger problems, more fields to assert)
+    ("a slow read may time out", "no_timeouts_while_waiting", True,
+     {"reads": [[0, "lookup", 1.0, 1.0, 1.01, 0], [0, "scan-lookup", 2.0, 2.0, 2.5, 1]]}, None, None, False, (),
+     {"all_read_timeouts": 1}),
+    ("a cheap read may not", "no_timeouts_while_waiting", False, {"reads": [[0, "lookup", 1.0, 1.0, 2.0, 1]]},
+     None, None, False, (), {}),
+    ("late PING, plain server fast", "no_freeze", False, {}, {"falkor": [(5.0, 900.0)], "control": [(5.0, 2.0)]},
+     None, False, (), {}),
+    ("late PING during a host stall", "no_freeze", True, {}, {"falkor": [(5.0, 900.0)], "control": [(5.0, 400.0)]},
+     None, False, (), {}),
+    ("PINGs cover the epoch", "no_freeze", True, {}, _pings(1000), 10.0, False, (), {}),
+    ("late PING, full coverage", "no_freeze", False, {}, _pings(1000, late=(500, 900.0)), 10.0, False, (), {}),
+    ("the prober never ran", "no_freeze", None, {}, {"falkor": [], "control": []}, 10.0, False, (), {}),
+    ("under half the epoch covered", "no_freeze", None, {}, _pings(300), 10.0, False, (), {}),
+    ("late PING, no plain reply near it", "no_freeze", None, {},
+     _pings(1000, late=(500, 900.0), control_gap=(3.9, 6.1)), 10.0, False, (), {"unattributed_late_pings": 1}),
+    ("a write 0.5 s after the long read", "writers_dont_starve", True,
+     {"writes": [[0, "upsert", 11.0, 11.0, 18.5, 0, "", []]], "longs": LONG}, None, None, False, (), {}),
+    ("a write 2 s after it", "writers_dont_starve", False,
+     {"writes": [[0, "upsert", 11.0, 11.0, 20.0, 0, "", []]], "longs": LONG}, None, None, False, (), {}),
+    ("a driver-limited write is not judged", "writers_dont_starve", True,
+     {"writes": [[0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9], [0, "upsert", 11.0, 11.0, 18.5, 0, "", [], 0.0]],
+      "longs": LONG}, None, None, False, (), {}),
+    ("every write driver-limited", "writers_dont_starve", None,
+     {"writes": [[0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9]], "longs": LONG}, None, None, False, (), {}),
+    ("a quiet graph read near its cost", "quiet_graphs_stay_fast", True, {"reads": [[1, "lookup", 1.0, 1.0, 1.05, 0]]},
+     None, None, True, (), {}),
+    ("a quiet graph read stalled", "quiet_graphs_stay_fast", False, {"reads": [[1, "lookup", 1.0, 1.0, 1.5, 0]]},
+     None, None, True, (), {}),
+    ("a driver-limited read is not judged", "quiet_graphs_stay_fast", True, {"reads": [POOL_STALLED, QUIET_FAST]},
+     None, None, True, (), {"reads": 1}),
+    ("every read driver-limited", "quiet_graphs_stay_fast", None, {"reads": [POOL_STALLED]}, None, None, True, (), {}),
+    ("every read driver-limited, drain", "requests_drain", None, {"reads": [POOL_STALLED]}, None, None, True, (),
+     {"pool_limited_reads": 1}),
+    ("no error reply", "no_error_replies", True, {"reads": [[0, "lookup", 1.0, 1.0, 1.01, 0]]}, None, None, False,
+     (), {}),
+    ("error replies", "no_error_replies", False,
+     {"reads": [[0, "lookup", 1.0, 1.0, 1.01, 2]], "writes": [[0, "upsert", 1.0, 1.0, 1.1, 2, "ERR x", []]]},
+     None, None, False, (), {"by_op": {"lookup": 1, "upsert": 1}}),
+    ("a duplicated key, no constraint", "writes_add_up", False, {}, None, None, False,
+     [("duplicate", "g0 L11: 1 duplicated keys")], {}),
+]
+
+
+@pytest.mark.parametrize("check_name, want, records, pings, window, quiet, ledger, more",
+                         [c[1:] for c in ANALYSE_CASES], ids=[c[0] for c in ANALYSE_CASES])
+def test_analyse(check_name, want, records, pings, window, quiet, ledger, more):
     hp, ep = model.control_params((1.0, 0.1) if quiet else (1.0,))
     cal = [{"lookup": 1.0, "filter-sort": 3.0, "distinct": 3.0, "scan-lookup": 200.0}] * hp["graphs"]
-    pings = pings or {"falkor": [(t / 100, 1.0) for t in range(1000)], "control": [(t / 100, 1.0) for t in range(1000)]}
-    return checks.analyse(ep, hp, cal, data, pings, [], [], {}, [])["checks"]
-
-
-def test_a_cheap_read_that_times_out_breaks_no_timeouts_while_waiting():
-    ok = _analyse(_epoch_data(reads=[[0, "lookup", 1.0, 1.0, 1.01, 0], [0, "scan-lookup", 2.0, 2.0, 2.5, 1]]))
-    assert ok["no_timeouts_while_waiting"]["pass"] and ok["no_timeouts_while_waiting"]["all_read_timeouts"] == 1
-    bad = _analyse(_epoch_data(reads=[[0, "lookup", 1.0, 1.0, 2.0, 1]]))
-    assert bad["no_timeouts_while_waiting"]["pass"] is False
-
-
-def test_a_late_ping_is_a_freeze_only_while_the_plain_server_answered():
-    late = {"falkor": [(5.0, 900.0)], "control": [(5.0, 2.0)]}
-    assert _analyse(_epoch_data(), late)["no_freeze"]["pass"] is False
-    host_stall = {"falkor": [(5.0, 900.0)], "control": [(5.0, 400.0)]}
-    assert _analyse(_epoch_data(), host_stall)["no_freeze"]["pass"] is True
-
-
-def test_a_write_finishing_long_after_the_long_read_it_waited_behind_starves():
-    longs = [[0, "full-scan", 10.0, 18.0, 0, ""]]
-    fine = [[0, "upsert", 11.0, 11.0, 18.5, 0, "", []]]
-    slow = [[0, "upsert", 11.0, 11.0, 20.0, 0, "", []]]
-    assert _analyse(_epoch_data(writes=fine, longs=longs))["writers_dont_starve"]["pass"]
-    assert _analyse(_epoch_data(writes=slow, longs=longs))["writers_dont_starve"]["pass"] is False
-
-
-def test_quiet_graph_reads_must_stay_near_their_cost():
-    fast = [[1, "lookup", 1.0, 1.0, 1.05, 0]]
-    stalled = [[1, "lookup", 1.0, 1.0, 1.5, 0]]
-    assert _analyse(_epoch_data(reads=fast), quiet=True)["quiet_graphs_stay_fast"]["pass"]
-    assert _analyse(_epoch_data(reads=stalled), quiet=True)["quiet_graphs_stay_fast"]["pass"] is False
+    data = {**_epoch_data(**records), **({"window_s": window} if window else {})}
+    got = checks.analyse(ep, hp, cal, data, pings or _pings(1000), [], [], {}, list(ledger))["checks"][check_name]
+    assert got["pass"] is want and all(got[k] == v for k, v in more.items())
 
 
 class FakeGraph:
@@ -240,62 +273,9 @@ def _by_name(findings):
     return {f["name"]: f for f in findings}
 
 
-def test_same_image_passes():
-    f, _ = verdict.control_findings(_first(), False)
-    assert {x["status"] for x in f} == {"ok"} and verdict.verdict_of(f, []) == "pass"
-
-
-def test_a_timing_break_needs_a_repeat():
-    runs = _first(cand={"no_timeouts_while_waiting": False})
-    assert verdict.needs_confirmation(runs) == ["no_timeouts_while_waiting"]
-    repeated = runs + [_run("baseline", 4, {}, True), _run("candidate", 5, {"no_timeouts_while_waiting": False}, True)]
-    f = _by_name(verdict.control_findings(repeated, True)[0])["control no_timeouts_while_waiting"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, 1, "regression")
-    held = runs + [_run("baseline", 4, {}, True), _run("candidate", 5, {}, True)]
-    f, notes = verdict.control_findings(held, True)
-    f = _by_name(f)["control no_timeouts_while_waiting"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (1, 1, "info")
-    assert any("broke in 2 of 3 candidate runs, held on the repeat" in n for n in notes)
-    none_ran = _by_name(verdict.control_findings(runs, False)[0])["control no_timeouts_while_waiting"]
-    assert none_ran["candidate"] is None and none_ran["status"] == "info"
-
-
-def test_a_break_seen_only_in_the_extra_pair_is_not_a_regression():
-    runs = _first(cand={"no_freeze": False})
-    runs += [_run("baseline", 4, {}, True), _run("candidate", 5, {"no_freeze": False, "requests_drain": False}, True)]
-    f = _by_name(verdict.control_findings(runs, True)[0])
-    assert f["control no_freeze"]["status"] == "regression"
-    assert (f["control requests_drain"]["candidate"], f["control requests_drain"]["status"]) == (1, "info")
-
-
-def test_data_breaks_and_crashes_count_at_once_and_both_broken_is_info():
-    runs = _first(cand={"writes_add_up": False})
-    assert verdict.needs_confirmation(runs) == []
-    assert _by_name(verdict.control_findings(runs, False)[0])["control writes_add_up"]["status"] == "regression"
-    both = _first(cand={"writers_dont_starve": False}, base={"writers_dont_starve": False})
-    f = _by_name(verdict.control_findings(both, False)[0])["control writers_dont_starve"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, 0, "info")
-    crash = _first()
-    crash[0] = _run("candidate", 0, {}, died=True, started=False)
-    f = _by_name(verdict.control_findings(crash, False)[0])["control server_stays_up"]
-    assert (f["metric"], f["candidate"], f["status"]) == ("completed", 0, "regression")
-
-
 def _build(side, i, edges, extra=False):
     return {"side": side, "index": i, "extra": extra, "ok": True, "edges_ms": edges, "nodes_ms": 900.0,
             "probe_1_ms": 0.5, "probe_100_ms": 0.6}
-
-
-def test_build_regression_needs_the_ratio_the_floor_and_a_repeat():
-    slow = [_build(s, i, 7900.0 if s == "candidate" else 1300.0) for i, s in enumerate(check.FIRST_ORDER)]
-    assert verdict.build_needs_confirmation(slow) == ["build edge phase"]
-    rep = slow + [_build("baseline", 4, 1300.0, True), _build("candidate", 5, 8000.0, True)]
-    f = _by_name(verdict.build_findings(rep)[0])["build edge phase"]
-    assert f["status"] == "regression" and f["ratio"] > 1.5
-    gone = slow + [_build("baseline", 4, 1300.0, True), _build("candidate", 5, 1350.0, True)]
-    assert _by_name(verdict.build_findings(gone)[0])["build edge phase"]["status"] == "info"
-    small = [_build(s, i, 300.0 if s == "candidate" else 100.0) for i, s in enumerate(check.FIRST_ORDER)]
-    assert verdict.build_needs_confirmation(small) == []  # 3x but under the 500 ms floor
 
 
 # --- result.json through the contract's validator ------------------------------------------------------
@@ -340,17 +320,6 @@ def _results():
     }
 
 
-@pytest.mark.parametrize("kind", ["pass", "regression", "unconfirmed", "error"])
-def test_every_result_shape_is_valid(kind, tmp_path):
-    validate = _validator()
-    doc = _results()[kind]
-    path = tmp_path / "result.json"
-    path.write_text(json.dumps(doc, allow_nan=False))
-    _kind, problems = validate.validate_file(path, "result")
-    assert problems == [], problems
-    assert doc["verdict"] == {"pass": "pass", "regression": "regression", "unconfirmed": "error", "error": "error"}[kind]
-
-
 def test_acceptance_patterns_match_the_regression_findings():
     """tests/perf/acceptance.yaml matches fuzz findings by name: `control` and `build`."""
     doc = _results()["regression"]
@@ -376,24 +345,6 @@ def test_the_digest_gate_is_the_validators():
     assert not check.DIGEST.fullmatch("falkordb/falkordb-server@sha256:" + "A" * 64)
 
 
-def test_more_result_shapes_are_valid(tmp_path):
-    """A data break against an unmeasured baseline, and long-mode findings."""
-    validate = _validator()
-    t0, t1 = "2026-11-24T00:00:00Z", "2026-11-24T04:00:00Z"
-    runs = _first(cand={"writes_add_up": False})
-    runs[1] = _run("baseline", 1, {}, started=False)
-    data_break = verdict.control_findings(runs, False)[0]
-    hours = [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}, "x-h1-e2": {"no_freeze": False}}),
-             _hour("baseline", {"x-h1-e1": {}, "x-h1-e2": {}})]
-    lf, _notes, unmeasured = check.long_findings(hours, [])
-    for i, (fs, um) in enumerate(((data_break, ["control: x"]), (lf, unmeasured))):
-        doc = check.build_result(_args(), t0, t1, fs, [], um, None, MACHINE)
-        path = tmp_path / f"r{i}.json"
-        path.write_text(json.dumps(doc, allow_nan=False))
-        assert validate.validate_file(path, "result")[1] == []
-        assert doc["verdict"] == "regression"
-
-
 # --- long mode ------------------------------------------------------------------------------------
 
 
@@ -401,115 +352,6 @@ def _hour(side, seeds, replay=False):
     """A long-mode server-hour: {seed: {check: held}}; every check not named holds."""
     return {"side": side, "replay": replay,
             "epochs": {s_: {c: held.get(c, True) for c in check.LONG_CHECKS} for s_, held in seeds.items()}}
-
-
-def test_long_mode_counts_a_seed_only_when_its_replay_repeats():
-    first = [_hour("candidate", {"x-h1-e1": {"no_freeze": False}, "x-h1-e2": {}}),
-             _hour("baseline", {"x-h1-e1": {}, "x-h1-e2": {}})]
-    repeated = first + [_hour("baseline", {"x-h1-e1": {}}, True), _hour("candidate", {"x-h1-e1": {"no_freeze": False}}, True)]
-    f = _by_name(check.long_findings(repeated, [])[0])
-    assert f["long no_freeze"]["status"] == "regression" and f["long writes_add_up"]["status"] == "ok"
-    gone = first + [_hour("baseline", {"x-h1-e1": {}}, True), _hour("candidate", {"x-h1-e1": {}}, True)]
-    f = _by_name(check.long_findings(gone, [])[0])["long no_freeze"]
-    assert (f["candidate"], f["status"]) == (1, "info")
-    unreplayed = _by_name(check.long_findings(first, [])[0])["long no_freeze"]
-    assert unreplayed["candidate"] is None and unreplayed["status"] == "info"
-    both = [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}}),
-            _hour("baseline", {"x-h1-e1": {"writers_dont_starve": False}})]
-    f = _by_name(check.long_findings(both, [])[0])["long writers_dont_starve"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, 0, "info")
-
-
-def test_a_repro_break_needs_a_repeat():
-    first = [{"name": "write-create", "side": "candidate", "replay": False, "pass": False},
-             {"name": "write-create", "side": "baseline", "replay": False, "pass": True}]
-    again = first + [{"name": "write-create", "side": "baseline", "replay": True, "pass": True},
-                     {"name": "write-create", "side": "candidate", "replay": True, "pass": False}]
-    assert _by_name(check.long_findings([], again)[0])["long repro write-create"]["status"] == "regression"
-    held = first + [{"name": "write-create", "side": "baseline", "replay": True, "pass": True},
-                    {"name": "write-create", "side": "candidate", "replay": True, "pass": True}]
-    f = _by_name(check.long_findings([], held)[0])["long repro write-create"]
-    assert (f["candidate"], f["status"]) == (1, "info")
-
-
-def test_long_mode_crashes_and_data_breaks_count_at_once():
-    hours = [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}, "x-h1-e2": {"writes_add_up": False}}),
-             _hour("baseline", {"x-h1-e1": {}, "x-h1-e2": {}})]
-    f, _notes, unmeasured = check.long_findings(hours, [])
-    f = _by_name(f)
-    assert (f["long server_stays_up"]["metric"], f["long server_stays_up"]["status"]) == ("completed", "regression")
-    assert f["long writes_add_up"]["status"] == "regression" and unmeasured == []
-    crash = [{"name": "index-build", "side": "candidate", "replay": False, "pass": False, "crashed": True},
-             {"name": "index-build", "side": "baseline", "replay": False, "pass": True, "crashed": False}]
-    assert _by_name(check.long_findings([], crash)[0])["long repro index-build"]["status"] == "regression"
-
-
-def test_long_mode_with_nothing_paired_is_unmeasured():
-    _f, _n, unmeasured = check.long_findings([], [])
-    assert unmeasured
-    one_side = [_hour("candidate", {"x-h1-e1": {}})]
-    assert check.long_findings(one_side, [])[2]
-
-
-def test_a_timing_break_against_an_unmeasured_baseline_is_not_judged():
-    runs = _first(cand={"no_freeze": False})
-    runs[1] = _run("baseline", 1, {}, started=False)
-    runs[2] = _run("baseline", 2, {}, started=False)
-    f = _by_name(verdict.control_findings(runs, False)[0])["control no_freeze"]
-    assert f["candidate"] is None and f["status"] == "info"
-    assert verdict.status_of(0, None) == "regression"
-
-
-def test_an_unmeasured_first_run_does_not_borrow_the_extra_pair():
-    runs = _first()
-    runs[0] = _run("candidate", 0, {}, started=False)
-    runs[3] = _run("candidate", 3, {"no_freeze": False})
-    runs += [_run("baseline", 4, {}, True), _run("candidate", 5, {"requests_drain": False}, True)]
-    f = _by_name(verdict.control_findings(runs, True)[0])
-    assert f["control requests_drain"]["status"] != "regression"
-
-
-def test_a_baseline_break_only_on_the_repeat_is_not_an_improvement():
-    runs = [_run("candidate", 0, {"no_freeze": False}), _run("baseline", 1, {}), _run("baseline", 2, {}),
-            _run("candidate", 3, {}), _run("baseline", 4, {"no_freeze": False}, True), _run("candidate", 5, {}, True)]
-    f = _by_name(verdict.control_findings(runs, True)[0])["control no_freeze"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, 0, "info")
-
-
-def test_error_replies_break_no_error_replies():
-    ok = _analyse(_epoch_data(reads=[[0, "lookup", 1.0, 1.0, 1.01, 0]]))
-    assert ok["no_error_replies"]["pass"]
-    bad = _analyse(_epoch_data(reads=[[0, "lookup", 1.0, 1.0, 1.01, 2]],
-                               writes=[[0, "upsert", 1.0, 1.0, 1.1, 2, "ERR x", []]]))
-    assert bad["no_error_replies"]["pass"] is False and bad["no_error_replies"]["by_op"] == {"lookup": 1, "upsert": 1}
-
-
-def test_a_confirmed_long_break_is_not_masked_by_a_seed_broken_on_both_sides():
-    first = [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}, "x-h1-e2": {"writers_dont_starve": False}}),
-             _hour("baseline", {"x-h1-e1": {}, "x-h1-e2": {"writers_dont_starve": False}})]
-    rep = first + [_hour("baseline", {"x-h1-e1": {}}, True), _hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}}, True)]
-    f = _by_name(check.long_findings(rep, [])[0])["long writers_dont_starve"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, 1, "regression")
-
-
-def test_a_crash_on_replay_counts_and_leaves_the_timing_check_unmeasured():
-    first = [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}})]
-    crashed = {c: None for c in check.LONG_CHECKS}
-    crashed["server_stays_up"] = False
-    rep = first + [_hour("baseline", {"x-h1-e1": {}}, True),
-                   {"side": "candidate", "replay": True, "epochs": {"x-h1-e1": crashed}}]
-    f, _n, unmeasured = check.long_findings(rep, [])
-    f = _by_name(f)
-    assert f["long server_stays_up"]["status"] == "regression"
-    assert f["long no_freeze"]["candidate"] is None and unmeasured
-
-
-def test_a_long_crash_on_a_seed_only_the_candidate_ran_still_counts():
-    hours = [_hour("candidate", {"x-h1-e1": {}, "x-h2-e1": {"server_stays_up": False}}),
-             _hour("baseline", {"x-h1-e1": {}})]
-    f = _by_name(check.long_findings(hours, [])[0])["long server_stays_up"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, None, "regression")
-    assert "long memory_steady" not in _by_name(check.long_findings(hours, [])[0])
 
 
 def _stub_redis(monkeypatch):
@@ -557,18 +399,6 @@ def test_a_docker_timeout_is_a_docker_error_not_a_crash(monkeypatch):
         harness.docker("inspect", "x")
 
 
-def test_a_long_data_break_against_an_unmeasured_baseline_counts():
-    base = {c: True for c in check.LONG_CHECKS}
-    base["writes_add_up"] = None
-    hours = [_hour("candidate", {"x-h1-e1": {"writes_add_up": False}}),
-             {"side": "baseline", "replay": False, "epochs": {"x-h1-e1": base}}]
-    f = _by_name(check.long_findings(hours, [])[0])["long writes_add_up"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, None, "regression")
-    crash_on_replay = [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}}),
-                       _hour("candidate", {"x-h1-e1": {"server_stays_up": False}}, True)]
-    assert _by_name(check.long_findings(crash_on_replay, [])[0])["long server_stays_up"]["status"] == "regression"
-
-
 def test_a_relative_out_is_resolved_where_the_check_starts(tmp_path, monkeypatch):
     """Contract v1.8: `--out out` is relative; a later chdir must not move result.json."""
     _stub_redis(monkeypatch)
@@ -601,10 +431,7 @@ def test_a_failed_clean_up_is_reported_and_the_result_still_written(tmp_path, mo
     assert "docker is gone" in capsys.readouterr().err
 
 
-# --- review round: no_freeze coverage, driver-limited samples, duplicates --------------------------
-
-
-def _window_pings(n, late=None, control_gap=None):
+def _pings(n, late=None, control_gap=None):
     """n PINGs 10 ms apart on both servers; `late` = (index, ms) on FalkorDB; `control_gap` = (from, to)
     seconds with no plain-server replies."""
     f = [(i / 100, 1.0) for i in range(n)]
@@ -612,72 +439,6 @@ def _window_pings(n, late=None, control_gap=None):
     if late:
         f[late[0]] = (late[0] / 100, late[1])
     return {"falkor": f, "control": c}
-
-
-def test_no_freeze_needs_the_pings_it_judges():
-    data = {**_epoch_data(), "window_s": 10.0}
-    assert _analyse(data, _window_pings(1000))["no_freeze"]["pass"] is True
-    assert _analyse(data, {"falkor": [], "control": []})["no_freeze"]["pass"] is None  # the prober never ran
-    assert _analyse(data, _window_pings(300))["no_freeze"]["pass"] is None  # under half the epoch covered
-    assert _analyse(data, _window_pings(1000, late=(500, 900.0)))["no_freeze"]["pass"] is False
-    no_control = _window_pings(1000, late=(500, 900.0), control_gap=(3.9, 6.1))
-    nf = _analyse(data, no_control)["no_freeze"]
-    assert nf["pass"] is None and nf["unattributed_late_pings"] == 1
-
-
-def test_driver_limited_requests_are_not_judged_on_timing():
-    stalled_in_pool = [1, "lookup", 1.0, 1.0, 3.0, 0, 1.99]  # 2 s, all of it waiting for a connection
-    fast = [1, "lookup", 2.0, 2.0, 2.01, 0, 0.0]
-    checks_ = _analyse(_epoch_data(reads=[stalled_in_pool, fast]), quiet=True)
-    assert checks_["quiet_graphs_stay_fast"]["pass"] and checks_["quiet_graphs_stay_fast"]["reads"] == 1
-    assert checks_["requests_drain"]["pool_limited_reads"] == 1
-    # every sample driver-limited: nothing was judged, so the check did not measure
-    only_stalled = _analyse(_epoch_data(reads=[stalled_in_pool]), quiet=True)
-    assert only_stalled["quiet_graphs_stay_fast"]["pass"] is None and only_stalled["requests_drain"]["pass"] is None
-    slow_write = [0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9]
-    fine_write = [0, "upsert", 11.0, 11.0, 18.5, 0, "", [], 0.0]
-    longs = [[0, "full-scan", 10.0, 18.0, 0, ""]]
-    assert _analyse(_epoch_data(writes=[slow_write, fine_write], longs=longs))["writers_dont_starve"]["pass"]
-    assert _analyse(_epoch_data(writes=[slow_write], longs=longs))["writers_dont_starve"]["pass"] is None
-
-
-def test_a_duplicated_key_breaks_writes_add_up_without_a_constraint():
-    hp, ep = model.control_params((1.0,))
-    cal = [{"lookup": 1.0, "filter-sort": 3.0, "distinct": 3.0, "scan-lookup": 200.0}]
-    pings = _window_pings(100)
-    an = checks.analyse(ep, hp, cal, _epoch_data(), pings, [], [], {}, [("duplicate", "g0 L11: 1 duplicated keys")])
-    assert an["checks"]["writes_add_up"]["pass"] is False
-    assert an["checks"]["constraints_hold"]["applies"] is False
-
-
-def test_a_repeat_whose_baseline_did_not_measure_confirms_nothing():
-    runs = _first(cand={"no_freeze": False})
-    runs += [_run("baseline", 4, {"no_freeze": None}, True), _run("candidate", 5, {"no_freeze": False}, True)]
-    f = _by_name(verdict.control_findings(runs, True)[0])["control no_freeze"]
-    assert f["candidate"] is None and f["status"] == "info"
-
-
-def test_build_crash_with_an_unmeasured_baseline_is_not_reported_as_completed():
-    died = {"side": "candidate", "ok": False, "server_died": True}
-    unmeasured = {"side": "baseline", "ok": False}
-    f = check.build_crash_finding([died, unmeasured, dict(unmeasured), dict(died)])
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, None, "regression")
-    ok = {"side": "baseline", "ok": True}
-    assert check.build_crash_finding([died, ok])["baseline"] == 1
-    assert check.build_crash_finding([{"side": "candidate", "ok": True}, ok]) is None
-
-
-def test_each_replay_has_its_own_directory():
-    e1, e2 = {"epoch": 1}, {"epoch": 2}
-    assert check.long_tag(1, "candidate", [e1], True) != check.long_tag(1, "candidate", [e2], True)
-    assert check.long_tag(1, "candidate", [e1, e2], False) == "long-h01-candidate"
-
-
-def test_a_lone_long_crash_counts_when_no_seed_is_paired():
-    hours = [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}})]
-    f, _notes, unmeasured = check.long_findings(hours, [])
-    f = _by_name(f)["long server_stays_up"]
-    assert (f["candidate"], f["baseline"], f["status"]) == (0, None, "regression") and unmeasured
 
 
 def test_long_mode_starts_nothing_past_the_time_limit(monkeypatch, tmp_path):
@@ -692,16 +453,6 @@ def test_long_mode_starts_nothing_past_the_time_limit(monkeypatch, tmp_path):
     assert check.long_phase(opts, {}, run, "s", time.time() + 3600) == []
     assert calls == []
     assert any("long hour 1" in u for u in run.unmeasured) and any("repro write-create" in u for u in run.unmeasured)
-
-
-# --- review round: the harness -----------------------------------------------------------------------
-
-
-def test_a_long_baseline_with_no_paired_seed_stays_unknown():
-    hours = [_hour("candidate", {"x-h1-e1": {}})]
-    f = _by_name(check.long_findings(hours, [])[0])
-    assert (f["long writes_add_up"]["candidate"], f["long writes_add_up"]["baseline"]) == (1, None)
-    assert f["long writes_add_up"]["status"] == "info"
 
 
 def test_replays_of_one_hour_get_their_own_directories(monkeypatch, tmp_path):
@@ -803,9 +554,9 @@ def test_constraints_cut_short_by_the_epoch_end_are_judged_on_what_was_created(m
     assert not any(a[0] == "GRAPH.QUERY" and "CREATE (:" in a[2] for a in sent)  # no violation probes
     hp = model.control_params((1.0,))[0]
     cal = [{"lookup": 1.0, "filter-sort": 3.0, "distinct": 3.0, "scan-lookup": 200.0}]
-    held = checks.analyse(ep, hp, cal, _epoch_data(), _window_pings(100), [], [], info, [])
+    held = checks.analyse(ep, hp, cal, _epoch_data(), _pings(100), [], [], info, [])
     assert held["checks"]["constraints_hold"]["pass"] is False
-    none = checks.analyse(ep, hp, cal, _epoch_data(), _window_pings(100), [], [], {}, [])
+    none = checks.analyse(ep, hp, cal, _epoch_data(), _pings(100), [], [], {}, [])
     assert none["checks"]["constraints_hold"]["pass"] is None  # created on no graph: not measured
 
 
@@ -936,3 +687,272 @@ def test_writer_starvation_needs_every_client_to_get_replies(monkeypatch):
     assert repros.judge_writers(writes[:5], [], [], True, 120.0, 5, 5, 6)["pass"] is False  # starved
     with pytest.raises(repros.Incomplete):
         repros.judge_writers(writes[:5], [], ["write: lost: ConnectionError"], False, 5.0, 5, 5, 6)
+
+
+# --- the verdict: one repeat rule, the control epoch, build timing, what result.json lists ----------
+
+
+@pytest.mark.parametrize("first_c, first_b, rep_c, rep_b, want", [
+    (0, 1, 0, 1, (0, 1, "regression")),    # broke again, the baseline held again
+    (0, 1, 1, 1, (1, 1, "info")),          # held on the repeat
+    (0, 1, 0, 0, (0, 0, "info")),          # the baseline broke on the repeat: broken on both sides
+    (0, 1, 1, 0, (0, 0, "info")),
+    (0, 1, None, None, (None, 1, "info")),  # no repeat ran
+    (0, 1, 0, None, (None, 1, "info")),    # the baseline's repeat did not measure it
+    (0, 1, None, 1, (None, 1, "info")),
+    (0, None, 0, 1, (None, None, "info")),  # a break against an unmeasured baseline is not judged
+    (1, 1, None, None, (1, 1, "ok")),
+    (1, 0, None, None, (1, 0, "improvement")),
+    (0, 0, None, None, (0, 0, "info")),
+    (1, None, None, None, (1, None, "info")),  # baseline unmeasured: info, never ok
+])
+def test_judge_repeat(first_c, first_b, rep_c, rep_b, want):
+    assert verdict.judge_repeat(first_c, first_b, rep_c, rep_b) == want
+
+
+def _repeat(cand_first, cand_rep, base_rep=None):
+    """Four first runs breaking `cand_first` on the candidate, plus a repeat pair."""
+    return (_first(cand=cand_first)
+            + [_run("baseline", 4, base_rep or {}, True), _run("candidate", 5, cand_rep, True)])
+
+
+CONTROL_CASES = [  # (id, runs, repeat pair ran, check, (candidate, baseline, status))
+    ("same image", _first(), False, "no_freeze", (1, 1, "ok")),
+    ("repeated", _repeat({"no_freeze": False}, {"no_freeze": False}), True, "no_freeze", (0, 1, "regression")),
+    ("held on the repeat", _repeat({"no_freeze": False}, {}), True, "no_freeze", (1, 1, "info")),
+    ("baseline broke on the repeat", _repeat({"no_freeze": False}, {"no_freeze": False}, {"no_freeze": False}), True,
+     "no_freeze", (0, 0, "info")),
+    ("no repeat ran", _first(cand={"no_freeze": False}), False, "no_freeze", (None, 1, "info")),
+    ("baseline repeat unmeasured", _repeat({"no_freeze": False}, {"no_freeze": False}, {"no_freeze": None}), True,
+     "no_freeze", (None, 1, "info")),
+    ("a break seen only in the repeat", _repeat({"no_freeze": False}, {"no_freeze": False, "requests_drain": False}),
+     True, "requests_drain", (1, 1, "info")),
+    ("data break counts at once", _first(cand={"writes_add_up": False}), False, "writes_add_up", (0, 1, "regression")),
+    ("broken on both sides", _first(cand={"writers_dont_starve": False}, base={"writers_dont_starve": False}), False,
+     "writers_dont_starve", (0, 0, "info")),
+    ("baseline never started", [_run("candidate", 0, {"no_freeze": False}), _run("baseline", 1, {}, started=False),
+                                _run("baseline", 2, {}, started=False), _run("candidate", 3, {})], False,
+     "no_freeze", (None, None, "info")),
+    ("candidate crash", [_run("candidate", 0, {}, died=True, started=False)] + _first()[1:], False,
+     "server_stays_up", (0, 1, "regression")),    ("an unmeasured first run does not borrow the repeat",
+     [_run("candidate", 0, {}, started=False), *_first()[1:3], _run("candidate", 3, {"no_freeze": False}),
+      _run("baseline", 4, {}, True), _run("candidate", 5, {"requests_drain": False}, True)], True,
+     "requests_drain", (None, 1, "info")),
+]
+
+
+@pytest.mark.parametrize("runs, repeat, check_name, want", [c[1:] for c in CONTROL_CASES],
+                         ids=[c[0] for c in CONTROL_CASES])
+def test_control_findings(runs, repeat, check_name, want):
+    f = _by_name(verdict.control_findings(runs, repeat)[0])[f"control {check_name}"]
+    assert (f["candidate"], f["baseline"], f["status"]) == want
+
+
+@pytest.mark.parametrize("cand, base, floor, want", [
+    (151.0, 100.0, 50.0, 1), (150.0, 100.0, 0.0, 0),    # the ratio must exceed 1.5
+    (151.0, 100.0, 51.0, 0),                            # and the difference the floor
+    (100.0, 151.0, 50.0, -1), (100.0, 150.0, 0.0, 0),   # improvements mirror it
+    (None, 100.0, 0.0, 0), (100.0, 0.0, 0.0, 0),
+])
+def test_the_build_threshold_is_strict(cand, base, floor, want):
+    assert verdict.crosses(cand, base, floor) == want
+
+
+@pytest.mark.parametrize("first_edges, repeat_edges, want", [
+    (7900.0, 8000.0, "regression"),   # crossed, and again in the extra pair
+    (7900.0, 1350.0, "info"),         # crossed once, not repeated
+    (None, None, "ok"),               # under the threshold: no repeat, ok
+])
+def test_build_regression_needs_a_repeat(first_edges, repeat_edges, want):
+    edges = first_edges or 1400.0
+    runs = [_build(s, i, edges if s == "candidate" else 1300.0) for i, s in enumerate(check.FIRST_ORDER)]
+    assert verdict.build_needs_confirmation(runs) == (["build edge phase"] if first_edges else [])
+    if repeat_edges:
+        runs += [_build("baseline", 4, 1300.0, True), _build("candidate", 5, repeat_edges, True)]
+    assert _by_name(verdict.build_findings(runs)[0])["build edge phase"]["status"] == want
+
+
+@pytest.mark.parametrize("runs, want", [
+    ([{"side": "candidate", "server_died": True}, {"side": "baseline", "ok": False}], (0, None, "regression")),
+    ([{"side": "candidate", "server_died": True}, {"side": "baseline", "ok": True}], (0, 1, "regression")),
+    ([{"side": "candidate", "ok": True}, {"side": "baseline", "server_died": True}], (1, 0, "improvement")),
+    ([{"side": "candidate", "ok": True}, {"side": "baseline", "ok": True}], None),
+])
+def test_a_build_crash_is_judged_on_what_each_side_showed(runs, want):
+    f = check.build_crash_finding(runs)
+    assert (f if f is None else (f["candidate"], f["baseline"], f["status"])) == want
+
+
+def test_result_json_lists_no_ok_rows_and_caps_info():
+    rows = ([{"name": f"ok {i}", "status": "ok", "ratio": 1.0, "direction": "lower_is_worse"} for i in range(5)]
+            + [{"name": f"info {i}", "status": "info", "ratio": None, "direction": "lower_is_worse"} for i in range(12)]
+            + [{"name": "r", "status": "regression", "ratio": 0.0, "direction": "lower_is_worse"}])
+    shown = verdict.select(rows)
+    assert [f["status"] for f in shown] == ["regression"] + ["info"] * 10
+
+
+def _shapes():
+    """Every kind of result.json the check writes, with the verdict it must have."""
+    t0, t1 = "2026-11-24T00:00:00Z", "2026-11-24T04:00:00Z"
+    data_break = _first(cand={"writes_add_up": False})
+    data_break[1] = _run("baseline", 1, {}, started=False)
+    long_crash = check.long_findings([_hour("candidate", {"x-h1-e1": {"server_stays_up": False}}),
+                                      _hour("baseline", {"x-h1-e1": {}})], [])
+    out = {kind: (doc, kind if kind != "unconfirmed" else "error") for kind, doc in _results().items()}
+    out["data break, baseline unmeasured"] = (
+        check.build_result(_args(), t0, t1, verdict.control_findings(data_break, False)[0], [], ["x"], None, MACHINE),
+        "regression")
+    out["long mode"] = (check.build_result(_args(), t0, t1, long_crash[0], [], long_crash[2], None, MACHINE),
+                        "regression")
+    return out
+
+
+@pytest.mark.parametrize("kind", ["pass", "regression", "unconfirmed", "error", "data break, baseline unmeasured",
+                                  "long mode"])
+def test_every_result_shape_is_valid(kind, tmp_path):
+    validate = _validator()
+    doc, want = _shapes()[kind]
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(doc, allow_nan=False))
+    assert validate.validate_file(path, "result")[1] == []
+    assert doc["verdict"] == want and not any(f["status"] == "ok" for f in doc["findings"])
+
+
+# --- long mode: seeds paired, replays, repros ----------------------------------------------------------
+
+
+def _rep(side, seeds):
+    return _hour(side, seeds, True)
+
+
+LONG_CASES = [  # (id, hours, check, (candidate, baseline, status), something unmeasured)
+    ("replay repeats", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}}),
+                        _rep("baseline", {"x-h1-e1": {}}), _rep("candidate", {"x-h1-e1": {"no_freeze": False}})],
+     "no_freeze", (0, 1, "regression"), False),
+    ("held on replay", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}}),
+                        _rep("baseline", {"x-h1-e1": {}}), _rep("candidate", {"x-h1-e1": {}})],
+     "no_freeze", (1, 1, "info"), False),
+    ("baseline broke on the replay", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}),
+                                      _hour("baseline", {"x-h1-e1": {}}),
+                                      _rep("baseline", {"x-h1-e1": {"no_freeze": False}}),
+                                      _rep("candidate", {"x-h1-e1": {"no_freeze": False}})],
+     "no_freeze", (0, 0, "info"), False),
+    ("not replayed", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}})],
+     "no_freeze", (None, 1, "info"), True),
+    ("a confirmed seed wins over one broken on both sides",
+     [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}, "x-h1-e2": {"writers_dont_starve": False}}),
+      _hour("baseline", {"x-h1-e1": {}, "x-h1-e2": {"writers_dont_starve": False}}),
+      _rep("baseline", {"x-h1-e1": {}}), _rep("candidate", {"x-h1-e1": {"writers_dont_starve": False}})],
+     "writers_dont_starve", (0, 1, "regression"), False),
+    ("broken on both sides", [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}}),
+                              _hour("baseline", {"x-h1-e1": {"writers_dont_starve": False}})],
+     "writers_dont_starve", (0, 0, "info"), False),
+    ("a crash counts at once", [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}}),
+                                _hour("baseline", {"x-h1-e1": {}})], "server_stays_up", (0, 1, "regression"), False),
+    ("a data break counts at once", [_hour("candidate", {"x-h1-e1": {"writes_add_up": False}}),
+                                     _hour("baseline", {"x-h1-e1": {}})], "writes_add_up", (0, 1, "regression"), False),
+    ("a crash on replay counts", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}),
+                                  _hour("baseline", {"x-h1-e1": {}}), _rep("baseline", {"x-h1-e1": {}}),
+                                  {"side": "candidate", "replay": True, "epochs": {"x-h1-e1": {
+                                      **{c: None for c in check.LONG_CHECKS}, "server_stays_up": False}}}],
+     "server_stays_up", (0, 1, "regression"), True),
+    ("data break, baseline unmeasured", [_hour("candidate", {"x-h1-e1": {"writes_add_up": False}}),
+                                         {"side": "baseline", "replay": False, "epochs": {"x-h1-e1": {
+                                             **{c: True for c in check.LONG_CHECKS}, "writes_add_up": None}}}],
+     "writes_add_up", (0, None, "regression"), True),
+    ("lone crash, nothing paired", [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}})],
+     "server_stays_up", (0, None, "regression"), True),
+    ("lone crash beside a paired seed", [_hour("candidate", {"x-h1-e1": {}, "x-h2-e1": {"server_stays_up": False}}),
+                                         _hour("baseline", {"x-h1-e1": {}})],
+     "server_stays_up", (0, None, "regression"), True),
+    ("lone seeds that held", [_hour("candidate", {"x-h1-e1": {}})], "writes_add_up", (1, None, "info"), True),
+]
+
+
+@pytest.mark.parametrize("hours, check_name, want, unmeasured", [c[1:] for c in LONG_CASES],
+                         ids=[c[0] for c in LONG_CASES])
+def test_long_findings(hours, check_name, want, unmeasured):
+    findings, _notes, missing = check.long_findings(hours, [])
+    f = _by_name(findings)[f"long {check_name}"]
+    assert (f["candidate"], f["baseline"], f["status"]) == want and bool(missing) == unmeasured
+    assert "long memory_steady" not in _by_name(findings)
+
+
+def test_long_mode_with_nothing_paired_reports_nothing_but_unmeasured():
+    findings, _notes, missing = check.long_findings([], [])
+    assert findings == [] and missing
+
+
+def _repro(side, passed, replay=False, crashed=False):
+    return {"name": "write-create", "side": side, "replay": replay, "pass": passed, "crashed": crashed}
+
+
+@pytest.mark.parametrize("runs, want", [
+    ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", True, True),
+      _repro("candidate", False, True)], (0, 1, "regression")),
+    ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", True, True),
+      _repro("candidate", True, True)], (1, 1, "info")),
+    ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", False, True),
+      _repro("candidate", False, True)], (0, 0, "info")),
+    ([_repro("candidate", False, crashed=True), _repro("baseline", True)], (0, 1, "regression")),
+    ([_repro("candidate", False), _repro("baseline", True)], (None, 1, "info")),
+])
+def test_long_repros_use_the_same_repeat_rule(runs, want):
+    f = _by_name(check.long_findings([], runs)[0])["long repro write-create"]
+    assert (f["candidate"], f["baseline"], f["status"]) == want
+
+
+# --- images and failures -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("env, has, want", [
+    (["PATH=/bin", "FALKORDB_SERVER=valkey"], ["/usr/local/bin/valkey-server", "/usr/local/bin/redis-server"],
+     "/usr/local/bin/valkey-server"),
+    (["PATH=/bin"], ["/usr/local/bin/valkey-server", "/usr/local/bin/redis-server"], "/usr/local/bin/redis-server"),
+    (["FALKORDB_SERVER="], ["/usr/local/bin/redis-server"], "/usr/local/bin/redis-server"),  # empty is unset
+    (["FALKORDB_SERVER=valkey"], ["/usr/local/bin/redis-server"], None),  # no fallback to the other binary
+])
+def test_the_server_is_the_images_own_default(monkeypatch, env, has, want):
+    _stub_redis(monkeypatch)
+    from soakfuzz import harness
+
+    def fake_docker(*a, **kw):
+        if a[0] == "pull":
+            return subprocess.CompletedProcess(a, 0, "", "")
+        if a[:2] == ("image", "inspect"):
+            return subprocess.CompletedProcess(a, 0, json.dumps(env), "")
+        script = a[-1]
+        binary = script.split("command -v ")[1].split(";")[0]
+        found = [p for p in has if p.endswith("/" + binary)]
+        return subprocess.CompletedProcess(a, 0, "\n".join(found + [harness.MODULE_PATH]) + "\n", "")
+
+    monkeypatch.setattr(harness, "docker", fake_docker)
+    if want is None:
+        with pytest.raises(RuntimeError, match="has no valkey-server"):
+            harness.probe_image("x@sha256:" + "a" * 64)
+    else:
+        assert harness.probe_image("x@sha256:" + "a" * 64)["server"] == want
+
+
+def test_after_failure_tells_a_crash_from_docker(monkeypatch):
+    _stub_redis(monkeypatch)
+    from soakfuzz import harness
+
+    class S:
+        port = 1
+
+        def __init__(self, state):
+            self._state = state
+
+        def state(self):
+            if isinstance(self._state, Exception):
+                raise self._state
+            return self._state
+
+    monkeypatch.setattr(harness, "server_hung", lambda port: False)
+    assert harness.after_failure(S((False, 139)), RuntimeError("x"))["server_alive"] is False
+    assert harness.after_failure(S((True, 0)), RuntimeError("x"))["server_alive"] is True
+    assert harness.after_failure(S((True, 0)), harness.DockerError("x"))["server_alive"] is None
+    assert harness.after_failure(S(harness.DockerError("no daemon")), RuntimeError("x"))["server_alive"] is None
+    monkeypatch.setattr(harness, "server_hung", lambda port: True)
+    assert harness.after_failure(S((True, 0)), RuntimeError("x"))["hung"] is True

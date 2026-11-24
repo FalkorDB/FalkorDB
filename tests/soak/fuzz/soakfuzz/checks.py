@@ -36,6 +36,9 @@ TIMING_CHECKS = ("no_freeze", "no_timeouts_while_waiting", "writers_dont_starve"
                  "requests_drain", "no_error_replies")
 #: checks on what the graph holds, or whether the server stayed up (a break counts at once)
 DATA_CHECKS = ("writes_add_up", "upsert_edges_complete")
+#: long mode judges these too (timing-like, then data-like); a crash counts at once everywhere
+LONG_TIMING_CHECKS = (*TIMING_CHECKS, "no_unexpected_errors")
+LONG_DATA_CHECKS = (*DATA_CHECKS, "timed_out_writes_leave_nothing", "constraints_hold", "index_matches_scan")
 
 
 def pct(v, p):

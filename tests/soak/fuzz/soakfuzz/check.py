@@ -1,16 +1,5 @@
-"""The fuzz check: the seeded soak of long reads, writes and cheap reads, as one contract command.
-
-    soak-fuzz --candidate <image@sha256:…> --baseline <image@sha256:…> --out <dir>
-              --mode <queue|nightly|long> [--candidate-label …] [--baseline-label …]
-              [--candidate-commit …] [--baseline-commit …]
-
-queue    the control epoch: candidate, baseline, baseline, candidate, each on a fresh server
-nightly  the control epoch, then graph-build timing (the same order, fresh servers)
-long     both, then seeded random epochs and the targeted repros until about 3.5 h have passed
-
-Writes <out>/result.json (contract schema 1) whatever happens, and exits 0 once it is written.
-See ../README.md for what each finding means.
-"""
+"""The fuzz check as one contract command (`soak-fuzz --candidate … --baseline … --out … --mode
+queue|nightly|long`; README). Writes <out>/result.json whatever happens, then exits 0."""
 
 from __future__ import annotations
 
@@ -28,7 +17,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import model, verdict
+from . import checks, model, verdict
 
 CHECK = "fuzz"
 # Docker's image reference with a digest, as the contract's validator (tests/perf/validate.py) reads it
@@ -227,28 +216,10 @@ def build_crash_finding(runs) -> dict | None:
 
 #: memory_steady is recorded in epoch.json but not judged: it exists only on an hour's last epoch,
 #: so a one-epoch replay could never confirm it
-LONG_CHECKS = ("no_freeze", "no_timeouts_while_waiting", "writers_dont_starve", "quiet_graphs_stay_fast",
-               "requests_drain", "no_error_replies", "writes_add_up", "upsert_edges_complete",
-               "timed_out_writes_leave_nothing", "constraints_hold", "index_matches_scan", "no_unexpected_errors",
-               "server_stays_up")
-#: long-mode checks that count at once (what the graph holds, and the server staying up); the rest
-#: depend on timing and need their seed to break again on replay
-LONG_IMMEDIATE = ("writes_add_up", "upsert_edges_complete", "timed_out_writes_leave_nothing", "constraints_hold",
-                  "index_matches_scan", "server_stays_up")
-NA = "n/a"  # a check that does not apply to an epoch (None: it applied but was not measured)
-
-
-def _epoch_checks(epoch) -> dict:
-    out = {}
-    for c in LONG_CHECKS:
-        v = epoch.get("checks", {}).get(c)
-        if v is None:
-            out[c] = None
-        elif v.get("applies") is False:
-            out[c] = NA
-        else:
-            out[c] = v.get("pass") if v.get("pass") in (True, False) else None
-    return out
+#: memory_steady is recorded in epoch.json but not judged: it exists only on an hour's last epoch
+LONG_CHECKS = (*checks.LONG_TIMING_CHECKS, *checks.LONG_DATA_CHECKS, "server_stays_up")
+LONG_IMMEDIATE = (*checks.LONG_DATA_CHECKS, "server_stays_up")  # a break counts at once
+NA = verdict.NA
 
 
 REPRO_S = 90  # about what one repro takes on one side (build, a ~30 s long read, server start/stop)
@@ -270,7 +241,7 @@ def long_hour(opts, info, run: Run, side, h, seed, deadline, epochs=None, replay
     res = {"side": side, "hour": h, "replay": replay, "error": hour.get("error"),
            "server_died": hour.get("server_alive") is False, "epochs": {}}
     for e in hour["epochs"]:
-        res["epochs"][e["params"]["seed"]] = _epoch_checks(e)
+        res["epochs"][e["params"]["seed"]] = verdict.epoch_values(e.get("checks", {}), LONG_CHECKS, NA)
     if res["server_died"] and not hour["epochs"]:  # died before its first epoch: a crash on every seed
         for e in eps:
             res["epochs"][e["seed"]] = {**{c: None for c in LONG_CHECKS}, "server_stays_up": False}
@@ -281,11 +252,10 @@ def long_hour(opts, info, run: Run, side, h, seed, deadline, epochs=None, replay
 
 
 def _pair_estimate(opts, seed, h) -> float:
-    """Seconds a server-hour pair should take: its epochs, drains, checks, index waits and builds."""
+    """Seconds a server-hour pair should take (model.hour_seconds on each side)."""
     hp = model.hour_params(seed, h, opts["long_scale_range"])
     eps = [model.epoch_params(seed, h, e, hp["graphs"]) for e in range(1, LONG_EPOCHS_PER_HOUR + 1)]
-    one = sum(opts["epoch_s"] + opts["drain_s"] + 90 + 300 * (ep["indexes"] + ep["constraints"]) for ep in eps)
-    return 2 * (one + 120 + 120 * sum(hp["scales"]))
+    return 2 * model.hour_seconds(opts["epoch_s"], opts["drain_s"], hp, eps)
 
 
 def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
@@ -338,8 +308,7 @@ def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
         h_, e_ = (int(x[1:]) for x in s_.split("-")[-2:])
         hp = model.hour_params(seed, h_, opts["long_scale_range"])
         ep = model.epoch_params(seed, h_, e_, hp["graphs"])
-        one = (opts["epoch_s"] + opts["drain_s"] + 90 + 300 * (ep["indexes"] + ep["constraints"])
-               + 120 + 120 * sum(hp["scales"]))
+        one = model.hour_seconds(opts["epoch_s"], opts["drain_s"], hp, [ep])
         if not time_for(opts, 2 * one * slow, f"replay of {s_}", run):  # as slow as the hours ran
             continue
         replayed.add(s_)
@@ -361,15 +330,31 @@ def _seeds_where(hours, check):
     return sorted(s_ for s_ in c if s_ in b and c[s_].get(check) is False and b[s_].get(check) is True)
 
 
-def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
-    """Per check, epochs paired by seed. Returns findings, notes and what was not measured.
+def _v(x):
+    """True / False / None / NA -> 1 / 0 / None (as judge_repeat takes them)."""
+    return None if x in (None, NA) else int(x)
 
-    Immediate checks (`LONG_IMMEDIATE`) count every epoch, replays included: a seed where the
-    candidate broke and the baseline held (or did not run) makes it 0 against 1 (or null).
-    Timing checks: the candidate is 0 only if a seed where it broke and the baseline held broke
-    again on replay with the baseline holding again; a seed whose replay did not measure the check
-    leaves it unmeasured. Otherwise a seed broken on both sides makes both 0 (info), and a seed
-    where only the baseline broke makes the baseline 0 (improvement)."""
+
+def _long_timing(chk, vals, sus, c_rep, b_rep):
+    """A timing check across seeds: a candidate-only break counts only if its replay repeats it
+    (verdict.judge_repeat); otherwise seeds broken on both sides give info, baseline-only breaks an
+    improvement."""
+    judged = [verdict.judge_repeat(0, 1, _v(c_rep.get(s_, {}).get(chk)), _v(b_rep.get(s_, {}).get(chk)))
+              for s_ in sus]
+    if any(st == "regression" for _, _, st in judged):
+        return 0, 1
+    if any(c is None for c, _, _ in judged):
+        return None, 0 if any(b is False for _, b in vals) else 1
+    if any(c == 0 for c, _, _ in judged) or any(c is False and b is False for c, b in vals):
+        return 0, 0
+    if any(b is False and c is True for c, b in vals):
+        return 1, 0
+    return 1, 1
+
+
+def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
+    """Long-mode findings, paired by seed (README, "How a check becomes a finding"); also returns
+    the summary notes and what was not measured."""
     findings, notes, unmeasured = [], [], []
     c_first, b_first = _by_seed(hours, "candidate", False), _by_seed(hours, "baseline", False)
     c_rep, b_rep = _by_seed(hours, "candidate", True), _by_seed(hours, "baseline", True)
@@ -393,7 +378,6 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
             continue
         if any(None in v for v in vals):
             unmeasured.append(f"long {chk}: not measured on every seed")
-        sus = _seeds_where(hours, chk)
         if chk in LONG_IMMEDIATE and not vals:  # only seeds the baseline never ran: its value is unknown
             cand = 0 if any(c is False for c in lone_c) else (1 if all(c is True for c in lone_c) else None)
             base = None
@@ -410,24 +394,12 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
             else:
                 cand, base = 1, 1
         else:
-            confirmed = [s_ for s_ in sus if c_rep.get(s_, {}).get(chk) is False and b_rep.get(s_, {}).get(chk) is True]
-            unreplayed = [s_ for s_ in sus if c_rep.get(s_, {}).get(chk) in (None, NA)
-                          or b_rep.get(s_, {}).get(chk) in (None, NA)]
-            if confirmed:
-                cand, base = 0, 1
-            elif unreplayed:
-                cand = None
-                base = 0 if any(b is False for _, b in vals) else 1
-                unmeasured.append(f"long {chk}: {len(unreplayed)} candidate-only breaks not replayed")
-            elif any(c is False and b is False for c, b in vals):
-                cand, base = 0, 0
-            elif any(b is False and c is True for c, b in vals):
-                cand, base = 1, 0
-            else:
-                cand, base = 1, 1
+            sus = _seeds_where(hours, chk)
+            cand, base = _long_timing(chk, vals, sus, c_rep, b_rep)
+            if cand is None:
+                unmeasured.append(f"long {chk}: a candidate-only break was not replayed")
             if sus:
-                notes.append(f"long {chk}: candidate-only on {len(sus)} of {len(vals)} seeds, "
-                             f"{len(confirmed)} repeated on replay")
+                notes.append(f"long {chk}: candidate-only on {len(sus)} of {len(vals)} seeds")
         status = verdict.status_of(cand, base)
         if status == "ok" and any(c is False for c, _ in vals):
             status = "info"
@@ -440,22 +412,16 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
         def pick(side, replay):
             return next((r for r in sides.get(side, []) if bool(r.get("replay")) == replay), {})
         c, b = pick("candidate", False), pick("baseline", False)
-        cv = None if c.get("pass") is None else int(c["pass"])
-        bv = None if b.get("pass") is None else int(b["pass"])
-        status = None
-        if cv == 0 and not c.get("crashed") and bv != 0:  # a timing break: it must repeat
+        cv, bv = _v(c.get("pass")), _v(b.get("pass"))
+        if cv == 0 and c.get("crashed"):  # a crash counts at once
+            status = verdict.status_of(cv, bv)
+        else:  # a timing break: it must repeat (a crash on the repeat counts as breaking again)
             ca, ba = pick("candidate", True), pick("baseline", True)
-            if ca.get("crashed"):
-                pass  # it crashed on the repeat: a break at once
-            elif bv is None or ca.get("pass") is None or ba.get("pass") is None:
-                cv = None
-            elif ca["pass"] is True:
-                cv, status = 1, "info"
-            elif ba["pass"] is False:
-                bv = 0
+            cv, bv, status = verdict.judge_repeat(cv, bv, 0 if ca.get("crashed") else _v(ca.get("pass")),
+                                                  _v(ba.get("pass")))
         if cv is None or bv is None:
             unmeasured.append(f"long repro {name}: not measured on both sides")
-        findings.append(verdict._invariant(f"long repro {name}", "invariant", cv, bv, status or verdict.status_of(cv, bv)))
+        findings.append(verdict._invariant(f"long repro {name}", "invariant", cv, bv, status))
     return findings, notes, unmeasured
 
 
@@ -589,6 +555,9 @@ def main(argv=None) -> int:
         error = f"{type(e).__name__}: {e}"[:500]
         (run.raw / "error.txt").write_text(traceback.format_exc())
     signal.signal(signal.SIGTERM, signal.SIG_IGN)  # what follows must finish
+    for f in findings:  # every finding, ok rows included (result.json lists only the others)
+        for side in verdict.SIDES:
+            run.row(f"finding ({f['status']})", side, "", False, f["name"], f[side])
     try:
         run.save()
         result = build_result(args, started, utc_now(), findings, run.notes, run.unmeasured, error, machine())

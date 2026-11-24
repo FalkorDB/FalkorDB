@@ -124,19 +124,44 @@ def docker(*a, check=True, timeout=120):
 
 
 def probe_image(image: str) -> dict:
-    """Pull the image and find its server binary and module. Raises RuntimeError on failure."""
+    """Pull the image and find its server and module. The server is the image's own default, as its
+    run.sh picks it: `${FALKORDB_SERVER:-redis}-server` from the image's config env (empty counts as
+    unset), with no fallback to the other binary. Raises RuntimeError if either is missing."""
     p = docker("pull", "-q", image, check=False, timeout=900)
     if p.returncode != 0:
         raise DockerError(f"docker pull failed: {(p.stderr or p.stdout).strip()[:300]}")
-    script = ("command -v valkey-server || command -v redis-server; "
+    p = docker("image", "inspect", "--format", "{{json .Config.Env}}", image, check=False, timeout=60)
+    if p.returncode != 0:
+        raise DockerError(f"docker image inspect failed: {(p.stderr or p.stdout).strip()[:300]}")
+    env = dict(x.split("=", 1) for x in (json.loads(p.stdout or "null") or []) if "=" in x)
+    flavour = env.get("FALKORDB_SERVER") or None
+    binary = f"{flavour or 'redis'}-server"
+    script = (f"command -v {binary}; "
               f"if [ -f {MODULE_PATH} ]; then echo {MODULE_PATH}; else find / -name falkordb.so 2>/dev/null | head -1; fi")
     p = docker("run", "--rm", "--entrypoint", "sh", image, "-c", script, check=False, timeout=300)
     lines = [x.strip() for x in p.stdout.splitlines() if x.strip()]
-    server = next((x for x in lines if x.endswith(("valkey-server", "redis-server"))), None)
+    server = next((x for x in lines if x.endswith("/" + binary)), None)
     module = next((x for x in lines if x.endswith("falkordb.so")), None)
-    if not server or not module:
-        raise DockerError(f"no server binary or module in the image: {lines} {p.stderr.strip()[:200]}")
+    if not server:
+        raise RuntimeError(f"image {image} has no {binary} (FALKORDB_SERVER={flavour or 'unset'})")
+    if not module:
+        raise RuntimeError(f"image {image} has no falkordb.so")
     return {"image": image, "server": server, "module": module}
+
+
+def after_failure(server, exc, hang_path: str | None = None) -> dict:
+    """What a failed step says about the engine: server_alive False (it exited, or it is hung: the
+    prober's marker or no PONG to 3 PINGs), True, or None when Docker failed and nothing is known."""
+    out = {"server_alive": None, "exit_code": None, "hung": False}
+    if isinstance(exc, DockerError):
+        return out
+    try:
+        running, code = server.state()
+        hung = running and ((hang_path is not None and os.path.exists(hang_path)) or server_hung(server.port))
+        out.update(server_alive=running and not hung, exit_code=None if running else code, hung=hung)
+    except DockerError:
+        pass  # docker cannot say either: nothing is known about the engine
+    return out
 
 
 class Server:
@@ -1054,9 +1079,7 @@ def run_server_hour(opts: dict, info: dict, tag: str, hp: dict, epochs: list[dic
         log(f"{tag}: built {out['build']}, cal={cal}")
         ledger = checks.Ledger(sizes)
         for ep in epochs:
-            # an index or a constraint still building gets up to 300 s each after the load
-            after_load = 300 * (bool(ep.get("indexes")) + bool(ep.get("constraints")))
-            if deadline and time.time() + opts["epoch_s"] + opts["drain_s"] + 120 + after_load > deadline:
+            if deadline and time.time() + model.epoch_seconds(opts["epoch_s"], opts["drain_s"], ep) > deadline:
                 log("deadline: no time for another epoch")
                 break
             res = run_epoch(opts, server, hp, ep, sizes, cal, ledger, ping_path, hang_path, hdir)
@@ -1073,14 +1096,7 @@ def run_server_hour(opts: dict, info: dict, tag: str, hp: dict, epochs: list[dic
             x["failed"] = sorted(k for k, v in x.get("checks", {}).items() if v.get("pass", True) is False)
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"[:500]
-        out["server_alive"] = None  # docker failed: nothing learnt about the engine
-        if not isinstance(e, DockerError):
-            try:
-                running, code = server.state()
-                hung = running and (os.path.exists(hang_path) or server_hung(server.port))
-                out["server_alive"], out["exit_code"], out["hung"] = running and not hung, None if running else code, hung
-            except DockerError:
-                pass  # docker cannot say either: server_alive stays None and the run is unmeasured
+        out.update(after_failure(server, e, hang_path))
         log(f"{tag}: {out['error']} (server alive: {out['server_alive']})")
         with open(os.path.join(hdir, "error.txt"), "w") as f:
             f.write(traceback.format_exc())

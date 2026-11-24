@@ -353,14 +353,10 @@ def run_repro(opts: dict, info: dict, tag: str, name: str) -> dict:
         res = {**fn(server.port, *args), "crashed": False}
     except Exception as e:
         res = {"pass": None, "crashed": False, "error": f"{type(e).__name__}: {e}"[:300]}
-        if not isinstance(e, harness.DockerError):
-            try:
-                running, code = server.state()
-                if not running or harness.server_hung(server.port):
-                    res.update(server_alive=False, exit_code=None if running else code)
-                    res["pass"], res["crashed"] = False, True
-            except harness.DockerError:
-                pass  # docker cannot say either: the repro stays unmeasured (pass None)
+        state = harness.after_failure(server, e)
+        if state["server_alive"] is False:  # exited or hung: a crash; otherwise unmeasured
+            res.update(server_alive=False, exit_code=state["exit_code"], crashed=True)
+            res["pass"] = False
     finally:
         res_tail = server.stop()
     res["server_tail"] = res_tail[-2000:]

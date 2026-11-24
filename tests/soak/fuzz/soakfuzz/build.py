@@ -55,14 +55,7 @@ def build_run(opts: dict, info: dict, tag: str, scale: float, rdir: str) -> dict
         out["ok"] = True
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"[:500]
-        out["server_alive"] = None  # docker failed: nothing learnt about the engine
-        if not isinstance(e, harness.DockerError):
-            try:
-                running, code = server.state()
-                hung = running and harness.server_hung(server.port)
-                out["server_alive"], out["exit_code"], out["hung"] = running and not hung, None if running else code, hung
-            except harness.DockerError:
-                pass  # docker could not say: server_alive stays None, so the run is unmeasured
+        out.update(harness.after_failure(server, e))
     finally:
         with open(os.path.join(rdir, "server-tail.log"), "w") as f:
             f.write(server.stop())

@@ -34,8 +34,8 @@ control run). `timeout_minutes` in `checks.yaml` is 90.
 
 A run is one server-hour on one side:
 
-1. A fresh container from the image, started with the image's own server binary
-   (`valkey-server` or `redis-server`) and `--loadmodule /var/lib/falkordb/bin/falkordb.so
+1. A fresh container from the image, started with the image's own default server,
+   `${FALKORDB_SERVER:-redis}-server` from the image's config env, and `--loadmodule /var/lib/falkordb/bin/falkordb.so
    THREAD_COUNT <n> CACHE_SIZE 200 EFFECTS_THRESHOLD 0`, pinned to `PERF_SERVER_CPUS`, on a free
    port (never 6379). Beside it, a second container from the same image with no module: the plain
    server that tells a stall of the host from a freeze of FalkorDB. It is pinned to
@@ -105,13 +105,13 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
 * **Timing checks** (`no_freeze`, `no_timeouts_while_waiting`, `writers_dont_starve`,
   `quiet_graphs_stay_fast`, `requests_drain`, `no_error_replies`) depend on timing, so a break
   needs a repeat. They are judged on the first four runs. When the candidate broke in either of its
-  two runs and the baseline held in both, one more pair runs (baseline, candidate). The candidate's
-  value is 0 only if it broke again (and the baseline held again; if the baseline broke on the
-  repeat, both sides are 0). If it held, its value is 1, the finding is `info`, and the summary
-  says "broke in i of n candidate runs, held on the repeat". A break seen only in the extra pair
-  makes a finding `info`, never a regression or an improvement. A timing break against a baseline
-  that was not measured, or a repeat that did not measure the check, is not judged (the
-  candidate's value is null). A request that waited more than 50 ms to be sent or for a free
+  two runs and the baseline held in both, one more pair runs (baseline, candidate), and one rule
+  (`verdict.judge_repeat`, the same for long-mode seeds and repros) decides: the candidate breaks
+  again and the baseline holds → regression (0 vs 1); the baseline breaks on the repeat → 0 vs 0,
+  `info`; the candidate holds → 1 vs 1, `info`; the repeat did not run or measure the check → the
+  candidate is null. A break seen only in the extra pair makes a finding `info`, never a
+  regression or an improvement. A timing break against a baseline that was not measured is not
+  judged (both null). A request that waited more than 50 ms to be sent or for a free
   connection in the driver is driver-limited and left out of the timing judgments (counted in
   `epoch.json`); a check with every sample driver-limited is unmeasured.
 * **Data checks** (`writes_add_up`, `upsert_edges_complete`) and a crash count at once.
@@ -120,8 +120,8 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
 * **Graph-build timing**, metric `p50_ms` (the median over a side's runs):
   `build edge phase` and `build node phase` (total wall time of the phase), and
   `build edge query 1 row` and `build edge query 100 rows`. These run the edge-wiring shape on
-  its own after the build, 5 times, median. A regression needs ratio ≥ 1.5 and a difference of at
-  least 500 ms (a phase) or 2 ms (a query), in the first four runs and again in an extra pair.
+  its own after the build, 5 times, median. A regression needs ratio > 1.5 and a difference over
+  500 ms (a phase) or 2 ms (a query), in the first four runs and again in an extra pair.
   The wiring query's plan is in each build run's `build.json`.
 * **Long mode** pairs epochs by seed. A timing check (the ones above and `no_unexpected_errors`)
   counts against the candidate only on a seed where it broke on the candidate, held on the
@@ -137,8 +137,8 @@ The verdict is `regression` if any finding is a regression. Otherwise it is `err
 was not measured, with the reason in `error`: a run whose harness or Docker failed, a check that a
 run could not judge, a build phase with no measured run on one side (a baseline that did not start,
 or crashed in every build run), a long-mode seed that ran on one side only, a run skipped for the
-time limit. Otherwise it is `pass`. `result.json` lists the
-regressions and improvements, then up to 10 `info`/`ok` rows.
+time limit. Otherwise it is `pass`. `result.json` lists the regressions and improvements, then up
+to 10 `info` rows; every finding, `ok` ones included, is in `raw/rows.csv` (phase "finding (…)").
 
 ### Reading a result
 
@@ -160,8 +160,9 @@ found in each image.
 ## Engines
 
 The check runs C images (Redis-based) and Rust images (Valkey- or Redis-based) alike. It needs
-only the module at `/var/lib/falkordb/bin/falkordb.so` (or anywhere in the image) and a
-`valkey-server` or `redis-server` binary. An engine that rejects a long-mode feature (for example
+only the module at `/var/lib/falkordb/bin/falkordb.so` (or anywhere in the image) and the server its
+`FALKORDB_SERVER` names (default `redis`): an image without that binary is an error, never a switch
+to the other one. An engine that rejects a long-mode feature (for example
 a constraint command) fails `no_unexpected_errors` on that epoch. That is `info` when both sides
 reject it.
 

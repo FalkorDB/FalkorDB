@@ -1,22 +1,5 @@
-"""From runs to contract findings (result.json schema 1, contract v1.5). Pure: no server.
-
-A run is one server-hour on one side. Every check of the control epoch comes out of a run as
-True (held), False (broke) or None (not measured, or does not apply).
-
-How a check becomes a finding (metric `invariant`, 1 held, 0 broke; `completed` for the server):
-
-* Timing checks (`checks.TIMING_CHECKS`): a side broke if it broke in any of its runs. When the
-  candidate broke and the baseline held in every run, one more pair runs (`needs_confirmation`):
-  the candidate's value is 0 only if it broke again there. If it held, its value is 1 and the
-  finding is `info`, with "broke in i of n candidate runs" in the summary.
-* Data checks (`checks.DATA_CHECKS`) and the server staying up: a break counts at once.
-* Graph-build timing: the median over a side's runs, per phase; a regression needs the ratio at or
-  above the threshold and the difference above a floor, in the first runs and again in the extra
-  pair (`build_needs_confirmation`).
-
-Status follows contract v1.4: 0 on the candidate only is `regression`, 0 on both is `info`, 0 on
-the baseline only is `improvement`.
-"""
+"""From runs to findings: the 0/1 checks, the one rule for confirming a break on a repeat, and
+the graph-build timing (README, "How a check becomes a finding"). Pure: no server."""
 
 from __future__ import annotations
 
@@ -45,6 +28,30 @@ def status_of(candidate: int | None, baseline: int | None) -> str:
     return "ok"
 
 
+def judge_repeat(first_c, first_b, rep_c, rep_b) -> tuple[int | None, int | None, str]:
+    """The one rule for a timing break (control epoch, long-mode seed, repro): it counts only if it
+    repeats. Values are 1 held, 0 broke, None not measured; rep_* are the repeat's (None when no
+    repeat ran). Returns (candidate, baseline, status).
+
+    Only a candidate break the baseline did not show needs the repeat (first 0 vs 1):
+      the baseline breaks on the repeat     -> (0, 0)       broken on both sides: info
+      the repeat did not run or measure     -> (None, 1)    not judged: info
+      the candidate breaks again            -> (0, 1)       regression
+      the candidate holds on the repeat     -> (1, 1)       info (it broke once)
+    A candidate break against an unmeasured baseline is not judged: (None, None)."""
+    if first_c == 0 and first_b is None:
+        return None, None, "info"
+    if not (first_c == 0 and first_b == 1):
+        return first_c, first_b, status_of(first_c, first_b)
+    if rep_b == 0:
+        return 0, 0, "info"
+    if rep_c is None or rep_b is None:
+        return None, 1, "info"
+    if rep_c == 0:
+        return 0, 1, "regression"
+    return 1, 1, "info"
+
+
 def side_value(values: list) -> int | None:
     """0 if any run broke, 1 if every run held, None if a run did not measure it."""
     if any(v is False for v in values):
@@ -54,19 +61,27 @@ def side_value(values: list) -> int | None:
     return None
 
 
-def run_checks(run: dict) -> dict:
-    """{check: True/False/None} for one run (None: not measured or does not apply)."""
+NA = "n/a"  # a check that does not apply to an epoch (None: it applied but was not measured)
+
+
+def epoch_values(checks_: dict, names, na=None) -> dict:
+    """{check: True / False / None, or `na` when it does not apply} from an epoch's checks."""
     out = {}
+    for c in names:
+        v = checks_.get(c)
+        if v is not None and v.get("applies") is False:
+            out[c] = na
+        else:
+            out[c] = v.get("pass") if v is not None and v.get("pass") in (True, False) else None
+    return out
+
+
+def run_checks(run: dict) -> dict:
+    """{check: True/False/None} for one control run (None: not measured or does not apply)."""
     if run.get("started") is False:
         return {**{c: None for c in CONTROL_CHECKS}, SERVER_CHECK: False if run.get("server_died") else None}
-    ep = run.get("epoch") or {}
-    cks = ep.get("checks", {})
-    for c in CONTROL_CHECKS:
-        v = cks.get(c, {})
-        p = v.get("pass")
-        if v.get("applies") is False:
-            p = None
-        out[c] = p if p in (True, False) else None
+    cks = (run.get("epoch") or {}).get("checks", {})
+    out = epoch_values(cks, CONTROL_CHECKS)
     if run.get("server_died"):
         out[SERVER_CHECK] = False
     elif "server_stays_up" in cks:
@@ -99,8 +114,8 @@ def control_findings(runs: list[dict], confirmed_pair: bool) -> tuple[list[dict]
     """Findings for the control epoch, and notes for the summary. `confirmed_pair`: an extra
     (baseline, candidate) pair ran after the first runs (runs with "extra": True).
 
-    Timing checks are judged on the first runs; the extra pair only decides whether a candidate
-    break that the baseline did not show repeats. Data checks and the server count every run."""
+    Timing checks are judged on the first runs, the extra pair only deciding (judge_repeat) whether
+    a break repeats. Data checks and the server count every run."""
     findings, notes = [], []
     first = [r for r in runs if not r.get("extra")]
     extra = [r for r in runs if r.get("extra")]
@@ -111,31 +126,13 @@ def control_findings(runs: list[dict], confirmed_pair: bool) -> tuple[list[dict]
             cand, base = side_value(allv["candidate"]), side_value(allv["baseline"])
             findings.append(_invariant(name, "invariant", cand, base, status_of(cand, base)))
             continue
-        cand, base = side_value(firstv["candidate"]), side_value(firstv["baseline"])
-        status = None
-        if cand == 0 and base == 1:  # needs the repeat
+        first_c, first_b = side_value(firstv["candidate"]), side_value(firstv["baseline"])
+        ext = by_side(extra, c) if confirmed_pair else {"candidate": [], "baseline": []}
+        cand, base, status = judge_repeat(first_c, first_b, side_value(ext["candidate"]), side_value(ext["baseline"]))
+        if first_c == 0 and first_b == 1:
             broke = sum(1 for v in allv["candidate"] if v is False)
-            n = len(allv["candidate"])
-            ext = by_side(extra, c) if confirmed_pair and extra else {"candidate": [], "baseline": []}
-            ext_c, ext_b = side_value(ext["candidate"]), side_value(ext["baseline"])
-            if not ext["candidate"] or not ext["baseline"]:
-                cand = None  # the repeat could not run: neither a regression nor a pass
-                notes.append(f"{name}: broke in {broke} of {n} candidate runs, no repeat could run")
-            elif ext_b == 0:
-                base = 0  # the baseline broke on the repeat: broken on both sides
-                notes.append(f"{name}: broke on the candidate and, on the repeat, on the baseline")
-            elif ext_b is None or ext_c is None:
-                cand = None  # a repeat that did not measure the check confirms nothing
-                notes.append(f"{name}: broke in {broke} of {n} candidate runs, the repeat did not measure it")
-            elif ext_c == 0:
-                notes.append(f"{name}: broke in {broke} of {n} candidate runs, held in "
-                             f"{sum(1 for v in allv['baseline'] if v is True)} of {len(allv['baseline'])} baseline runs")
-            else:
-                cand, status = 1, "info"
-                notes.append(f"{name}: broke in {broke} of {n} candidate runs, held on the repeat")
-        elif cand == 0 and base is None:
-            cand = None  # a timing break against an unmeasured baseline cannot be judged
-        status = status or status_of(cand, base)
+            notes.append(f"{name}: broke in {broke} of {len(allv['candidate'])} candidate runs, "
+                         + {"regression": "and again on the repeat", "info": "not confirmed by the repeat"}[status])
         if status == "ok" and any(v is False for v in allv["candidate"]):
             status = "info"
         findings.append(_invariant(name, "invariant", cand, base, status))
@@ -165,12 +162,12 @@ def build_side(runs: list[dict], key: str, side: str, extra: bool | None = None)
 
 
 def crosses(cand: float | None, base: float | None, floor: float) -> int:
-    """+1 regression, -1 improvement, 0 neither (ratio 1.5x either way and a difference > floor)."""
+    """+1 regression, -1 improvement, 0 neither: ratio > 1.5 and difference > floor, either way."""
     if cand is None or base is None or base <= 0 or cand <= 0:
         return 0
-    if cand / base >= BUILD_THRESHOLD and cand - base >= floor:
+    if cand / base > BUILD_THRESHOLD and cand - base > floor:
         return 1
-    if base / cand >= BUILD_THRESHOLD and base - cand >= floor:
+    if base / cand > BUILD_THRESHOLD and base - cand > floor:
         return -1
     return 0
 
@@ -210,18 +207,19 @@ def _r(x):
 
 # --- the whole result --------------------------------------------------------------------------------
 
-ORDER = {"regression": 0, "improvement": 1, "info": 2, "ok": 3}
+ORDER = {"regression": 0, "improvement": 1, "info": 2}
 
 
 def select(findings: list[dict], cap_informative: int = 10, cap_total: int = 50) -> list[dict]:
-    """Regressions and improvements first (worst ratio first), then up to 10 info/ok rows."""
+    """What result.json lists: regressions and improvements (worst ratio first), then up to 10 info
+    rows. `ok` rows are left out (they are in raw/rows.csv)."""
     def key(f):
         r = f.get("ratio")
         worse = -(r if r is not None else 0) if f["direction"] == "higher_is_worse" else (r if r is not None else 2)
         return ORDER[f["status"]], worse
     out, informative = [], 0
-    for f in sorted(findings, key=key):
-        if f["status"] in ("ok", "info"):
+    for f in sorted((f for f in findings if f["status"] != "ok"), key=key):
+        if f["status"] == "info":
             if informative >= cap_informative:
                 continue
             informative += 1
