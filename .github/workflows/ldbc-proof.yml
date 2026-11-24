@@ -10,7 +10,7 @@
 # which contains this file, and `workflow_dispatch` works only for a file on
 # the default branch. To prove a new commit, change that line deliberately,
 # after telling the coordinator.
-# Proof of: review round 4.
+# Proof of: final code at e33153081.
 
 name: TEMPORARY ldbc proof
 
