@@ -204,12 +204,20 @@ def test_ledger_tells_missing_upsert_edges_from_wrong_counts():
     exact[f"(x:{dst}) RETURN count(x)"] = n[dst] + 1
     for s_, tt, d in model.PAIRS:
         exact[f"[e:{tt}]"] = n[d]
+    exact["WITH DISTINCT p"] = 0  # the acknowledged pair's edge, looked up by its keys
     missing = led.check(FakeGraph(exact))
-    assert [k for k, _ in missing] == ["missing"]
+    assert [k for k, _ in missing] == ["missing", "missing"]
     exact[f"[e:{t}]"] = n[dst] + 1
+    exact["WITH DISTINCT p"] = 1
     assert led.check(FakeGraph(exact)) == []
     exact[f"[e:{t}]"] = n[dst] + 2
     assert [k for k, _ in led.check(FakeGraph(exact))] == ["count"]
+    # the count is right, but only because an unknown-outcome write added an edge the acknowledged
+    # one lost: the pair lookup still finds the loss
+    exact[f"[e:{t}]"] = n[dst] + 1
+    exact["WITH DISTINCT p"] = 0
+    assert [m for k, m in led.check(FakeGraph(exact)) if k == "missing"] == [
+        f"g0 {t}: 1 of 1 acknowledged new pairs have no edge"]
 
 
 # --- the verdict ----------------------------------------------------------------------------------
@@ -343,7 +351,8 @@ def test_every_result_shape_is_valid(kind, tmp_path):
     assert doc["verdict"] == {"pass": "pass", "regression": "regression", "unconfirmed": "error", "error": "error"}[kind]
 
 
-def test_proof_patterns_match_the_regression_findings():
+def test_acceptance_patterns_match_the_regression_findings():
+    """tests/perf/acceptance.yaml matches fuzz findings by name: `control` and `build`."""
     doc = _results()["regression"]
     regs = [f["name"] for f in doc["findings"] if f["status"] == "regression"]
     assert any(re.search("control", n, re.I) for n in regs) and any(re.search("build", n, re.I) for n in regs)
@@ -590,3 +599,198 @@ def test_a_failed_clean_up_is_reported_and_the_result_still_written(tmp_path, mo
     assert check.main(["--candidate", "x:latest", "--baseline", DIGEST_B, "--out", str(out), "--mode", "queue"]) == 0
     assert json.loads((out / "result.json").read_text())["verdict"] == "error"
     assert "docker is gone" in capsys.readouterr().err
+
+
+# --- review round: no_freeze coverage, driver-limited samples, duplicates --------------------------
+
+
+def _window_pings(n, late=None, control_gap=None):
+    """n PINGs 10 ms apart on both servers; `late` = (index, ms) on FalkorDB; `control_gap` = (from, to)
+    seconds with no plain-server replies."""
+    f = [(i / 100, 1.0) for i in range(n)]
+    c = [(i / 100, 1.0) for i in range(n) if not control_gap or not control_gap[0] <= i / 100 <= control_gap[1]]
+    if late:
+        f[late[0]] = (late[0] / 100, late[1])
+    return {"falkor": f, "control": c}
+
+
+def test_no_freeze_needs_the_pings_it_judges():
+    data = {**_epoch_data(), "window_s": 10.0}
+    assert _analyse(data, _window_pings(1000))["no_freeze"]["pass"] is True
+    assert _analyse(data, {"falkor": [], "control": []})["no_freeze"]["pass"] is None  # the prober never ran
+    assert _analyse(data, _window_pings(300))["no_freeze"]["pass"] is None  # under half the epoch covered
+    assert _analyse(data, _window_pings(1000, late=(500, 900.0)))["no_freeze"]["pass"] is False
+    no_control = _window_pings(1000, late=(500, 900.0), control_gap=(3.9, 6.1))
+    nf = _analyse(data, no_control)["no_freeze"]
+    assert nf["pass"] is None and nf["unattributed_late_pings"] == 1
+
+
+def test_driver_limited_requests_are_not_judged_on_timing():
+    stalled_in_pool = [[1, "lookup", 1.0, 1.0, 3.0, 0, 1.99]]  # 2 s, all of it waiting for a connection
+    checks_ = _analyse(_epoch_data(reads=stalled_in_pool), quiet=True)
+    assert checks_["quiet_graphs_stay_fast"]["pass"] and checks_["quiet_graphs_stay_fast"]["reads"] == 0
+    assert checks_["requests_drain"]["pool_limited_reads"] == 1
+    slow_write = [[0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9]]
+    longs = [[0, "full-scan", 10.0, 18.0, 0, ""]]
+    assert _analyse(_epoch_data(writes=slow_write, longs=longs))["writers_dont_starve"]["pass"]
+
+
+def test_a_duplicated_key_breaks_writes_add_up_without_a_constraint():
+    hp, ep = model.control_params((1.0,))
+    cal = [{"lookup": 1.0, "filter-sort": 3.0, "distinct": 3.0, "scan-lookup": 200.0}]
+    pings = _window_pings(100)
+    an = checks.analyse(ep, hp, cal, _epoch_data(), pings, [], [], {}, [("duplicate", "g0 L11: 1 duplicated keys")])
+    assert an["checks"]["writes_add_up"]["pass"] is False
+    assert an["checks"]["constraints_hold"]["applies"] is False
+
+
+def test_a_repeat_whose_baseline_did_not_measure_confirms_nothing():
+    runs = _first(cand={"no_freeze": False})
+    runs += [_run("baseline", 4, {"no_freeze": None}, True), _run("candidate", 5, {"no_freeze": False}, True)]
+    f = _by_name(verdict.control_findings(runs, True)[0])["control no_freeze"]
+    assert f["candidate"] is None and f["status"] == "info"
+
+
+def test_build_crash_with_an_unmeasured_baseline_is_not_reported_as_completed():
+    died = {"side": "candidate", "ok": False, "server_died": True}
+    unmeasured = {"side": "baseline", "ok": False}
+    f = check.build_crash_finding([died, unmeasured, dict(unmeasured), dict(died)])
+    assert (f["candidate"], f["baseline"], f["status"]) == (0, None, "regression")
+    ok = {"side": "baseline", "ok": True}
+    assert check.build_crash_finding([died, ok])["baseline"] == 1
+    assert check.build_crash_finding([{"side": "candidate", "ok": True}, ok]) is None
+
+
+def test_each_replay_has_its_own_directory():
+    e1, e2 = {"epoch": 1}, {"epoch": 2}
+    assert check.long_tag(1, "candidate", [e1], True) != check.long_tag(1, "candidate", [e2], True)
+    assert check.long_tag(1, "candidate", [e1, e2], False) == "long-h01-candidate"
+
+
+def test_a_lone_long_crash_counts_when_no_seed_is_paired():
+    hours = [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}})]
+    f, _notes, unmeasured = check.long_findings(hours, [])
+    f = _by_name(f)["long server_stays_up"]
+    assert (f["candidate"], f["baseline"], f["status"]) == (0, None, "regression") and unmeasured
+
+
+def test_long_mode_starts_nothing_past_the_time_limit(monkeypatch, tmp_path):
+    _stub_redis(monkeypatch)
+    from soakfuzz import repros
+    calls = []
+    monkeypatch.setattr(check, "long_hour", lambda *a, **kw: calls.append(("hour", a[3])) or {})
+    monkeypatch.setattr(repros, "run_repro", lambda *a, **kw: calls.append(("repro", a[2])) or {"pass": True})
+    run = check.Run(tmp_path)
+    opts = {"epoch_s": 300, "drain_s": 60, "long_scale_range": (0.25, 2.0, 4.0), "repros": ["write-create"],
+            "deadline": time.time() - 1}
+    assert check.long_phase(opts, {}, run, "s", time.time() + 3600) == []
+    assert calls == []
+    assert any("long hour 1" in u for u in run.unmeasured) and any("repro write-create" in u for u in run.unmeasured)
+
+
+# --- review round: the harness -----------------------------------------------------------------------
+
+
+def test_a_failed_docker_inspect_is_not_a_crash(monkeypatch):
+    _stub_redis(monkeypatch)
+    from soakfuzz import harness
+    server = harness.Server({"image": "x", "server": "s", "module": "m"}, "n", None, "host")
+    reply = {}
+    monkeypatch.setattr(harness, "docker", lambda *a, **kw: subprocess.CompletedProcess(a, reply["rc"], reply["out"], reply["err"]))
+    reply.update(rc=1, out="", err="Cannot connect to the Docker daemon at unix:///var/run/docker.sock")
+    with pytest.raises(harness.DockerError):
+        server.state()
+    reply.update(rc=1, out="", err="Error: No such object: n")
+    assert server.state() == (False, -1)
+    reply.update(rc=0, out="false 139\n", err="")
+    assert server.state() == (False, 139)
+
+
+def test_an_aligned_write_is_recorded_or_never_sent(monkeypatch):
+    _stub_redis(monkeypatch)
+    from soakfuzz import harness
+    gate = harness.SnapshotGate()
+    assert gate.admit(["before"])
+    seen = []
+    gate.close(lambda records: seen.append(list(records)))
+    assert seen == [[["before"]]] and gate.admit(["after"]) is False
+
+
+def test_schema_commands_stop_when_the_epoch_ends(monkeypatch):
+    _stub_redis(monkeypatch)
+    import threading
+    from soakfuzz import harness
+    stop, sent = threading.Event(), []
+
+    class Conn:
+        def execute_command(self, *a):
+            sent.append(a)
+            stop.set()  # the epoch ends while the first index is being created
+            return [[], []]
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(harness, "connect", lambda *a, **kw: Conn())
+    ep = {**model.control_params((1.0,))[1], "indexes": True}
+    harness.epoch_events(0, 0.0, ep, 3, stop, [], time.monotonic(), {})
+    assert {a[1] for a in sent} == {"soak_g0"}  # nothing for graphs 1 and 2
+
+
+def test_clean_up_runs_even_when_the_counting_fails(monkeypatch):
+    _stub_redis(monkeypatch)
+    from soakfuzz import harness
+    dropped, schema = [], {"left": 0}
+
+    class Conn:
+        def execute_command(self, cmd, graph=None, q=""):
+            if cmd == "GRAPH.CONFIG":
+                return "OK"
+            if "DROP INDEX" in q:
+                dropped.append(q)
+                return [[], []]
+            if "CALL db.indexes()" in q:
+                return [[], [["x"]] * schema["left"]]
+            if "CALL db.constraints()" in q:
+                return [[], []]
+            raise ConnectionError("the count query failed")
+
+        def info(self, section):
+            return {"used_memory": 1, "used_memory_rss": 2}
+
+    n = model.label_sizes(0.01)
+    ep = {**model.control_params((0.01,))[1], "indexes": True}
+    events = []
+    out = harness.end_of_epoch(Conn(), ep, 1, [n], checks.Ledger([n]), events, time.monotonic())
+    assert out["ledger_problems"][0][0] == "harness" and dropped and out["reusable"]
+    schema["left"] = 1  # an index survived the clean-up: the server must not run another epoch
+    out = harness.end_of_epoch(Conn(), ep, 1, [n], checks.Ledger([n]), events, time.monotonic())
+    assert out["reusable"] is False and events[-1]["event"] == "cleanup_incomplete"
+
+
+def test_a_failed_long_read_is_no_freeze_evidence(monkeypatch):
+    _stub_redis(monkeypatch)
+    from soakfuzz import repros
+
+    class Pinger:
+        def during(self, a, b):
+            return [1.0, 1.0]
+
+    with pytest.raises(repros.Incomplete):
+        repros._freeze_verdict(Pinger(), [(0.0, 1.0, "ConnectionError: closed")], {})
+    with pytest.raises(repros.Incomplete):
+        repros._freeze_verdict(Pinger(), [], {})
+    assert repros._freeze_verdict(Pinger(), [(0.0, 30.0, None)], {})["pass"] is True
+
+
+def test_reads_behind_writer_needs_every_reply(monkeypatch):
+    _stub_redis(monkeypatch)
+    from soakfuzz import repros
+    reads = [("before-writer", 5.0, "ok")] * 2 + [("behind-writer", 5.0, "ok")] * 2
+    wr, lr = [(1.0, 0.5, None)], [(0.0, 30.0, None)]
+    assert repros.judge_reads(reads, wr, lr, 2)["pass"] is True
+    assert repros.judge_reads(reads[:3] + [("behind-writer", 1000.0, "timeout")], wr, lr, 2)["pass"] is False
+    for bad in ((reads[:3], wr, lr), (reads[:3] + [("behind-writer", 1.0, "failed: ConnectionError")], wr, lr),
+                (reads, [], lr), (reads, [(1.0, 0.5, "ConnectionError")], lr), (reads, wr, [(0.0, 1.0, "x")])):
+        with pytest.raises(repros.Incomplete):
+            repros.judge_reads(*bad, 2)

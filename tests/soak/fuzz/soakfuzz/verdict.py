@@ -117,22 +117,22 @@ def control_findings(runs: list[dict], confirmed_pair: bool) -> tuple[list[dict]
             broke = sum(1 for v in allv["candidate"] if v is False)
             n = len(allv["candidate"])
             ext = by_side(extra, c) if confirmed_pair and extra else {"candidate": [], "baseline": []}
-            base_all = side_value(allv["baseline"])
-            if not ext["candidate"]:
+            ext_c, ext_b = side_value(ext["candidate"]), side_value(ext["baseline"])
+            if not ext["candidate"] or not ext["baseline"]:
                 cand = None  # the repeat could not run: neither a regression nor a pass
                 notes.append(f"{name}: broke in {broke} of {n} candidate runs, no repeat could run")
-            elif base_all == 0:
+            elif ext_b == 0:
                 base = 0  # the baseline broke on the repeat: broken on both sides
                 notes.append(f"{name}: broke on the candidate and, on the repeat, on the baseline")
-            elif any(v is False for v in ext["candidate"]):
+            elif ext_b is None or ext_c is None:
+                cand = None  # a repeat that did not measure the check confirms nothing
+                notes.append(f"{name}: broke in {broke} of {n} candidate runs, the repeat did not measure it")
+            elif ext_c == 0:
                 notes.append(f"{name}: broke in {broke} of {n} candidate runs, held in "
                              f"{sum(1 for v in allv['baseline'] if v is True)} of {len(allv['baseline'])} baseline runs")
-            elif all(v is True for v in ext["candidate"]):
+            else:
                 cand, status = 1, "info"
                 notes.append(f"{name}: broke in {broke} of {n} candidate runs, held on the repeat")
-            else:
-                cand = None
-                notes.append(f"{name}: broke in {broke} of {n} candidate runs, the repeat did not measure it")
         elif cand == 0 and base is None:
             cand = None  # a timing break against an unmeasured baseline cannot be judged
         status = status or status_of(cand, base)

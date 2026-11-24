@@ -3,9 +3,10 @@
 Pure: no server and no redis-py. `Ledger.check` takes any object with `execute_command`.
 
 Records (lists, as the driver processes dump them to JSON):
-  read   [graph, op, scheduled, sent, replied | None, outcome]
-  write  [graph, op, scheduled, sent, replied | None, outcome, error message, keys]
+  read   [graph, op, scheduled, sent, replied | None, outcome, pool wait]
+  write  [graph, op, scheduled, sent, replied | None, outcome, error message, keys, pool wait]
   long   [graph, op, sent, replied, outcome, error message]
+Pool wait: seconds the request waited for a free connection in the driver (absent: 0).
 Outcome: 0 ok, 1 timed out, 2 error reply, 3 unknown (still open when the epoch ended),
 4 connection or other error. Times are time.monotonic() of the driver host.
 """
@@ -20,6 +21,9 @@ import statistics
 
 from . import model
 
+PING_INTERVAL_S = 0.010  # the prober sends a PING to each server this often
+PING_COVERAGE = 0.5  # no_freeze needs at least half the PINGs the epoch should have had, on each server
+DRIVER_LAG_S = 0.05  # a request sent, or given a connection, this late is driver-limited: not judged on timing
 FREEZE_PING_MS = 500  # a FalkorDB PING this late ...
 CONTROL_OK_MS = 100  # ... while the plain server beside it answered within this, is a freeze
 STARVE_S = 1.0  # a write may finish at most this long after the long reads it waited behind
@@ -71,6 +75,9 @@ def read_pings(path, t0, t1):
 
 
 # --- ledger -------------------------------------------------------------------------------------
+
+
+PAIR_BATCH = 500  # acknowledged pairs looked up per query
 
 
 class Ledger:
@@ -136,6 +143,18 @@ class Ledger:
                         problems.append(("count", f"g{g} {typ}: {c} edges, expected at most {hi}"))
                     elif c < lo:
                         problems.append(("missing", f"g{g} {typ}: {c} edges, expected at least {lo}"))
+                    # the count can hide a lost edge behind one an unknown-outcome write added: look
+                    # each acknowledged new pair up
+                    acked = sorted(new_ok)
+                    found = 0
+                    for b0 in range(0, len(acked), PAIR_BATCH):
+                        batch = [list(p) for p in acked[b0:b0 + PAIR_BATCH]]
+                        found += one(f"CYPHER pairs={json.dumps(batch)} UNWIND $pairs AS p "
+                                     f"MATCH (a:{src} {{k: p[0]}})-[:{typ}]->(b:{dst} {{k: p[1]}}) "
+                                     "WITH DISTINCT p RETURN count(p)")
+                    if found < len(acked):
+                        problems.append(("missing", f"g{g} {typ}: {len(acked) - found} of {len(acked)} "
+                                                    "acknowledged new pairs have no edge"))
                 # a timed-out write between existing nodes leaves no new node behind, only its edge
                 gone = sorted({p for p in self.timeout[g][typ] if not model.initial_pair(n, src, dst, *p)}
                               - self.ok[g][typ] - self.unknown[g][typ])
@@ -155,24 +174,40 @@ def gname(g: int) -> str:
 # --- the checks ----------------------------------------------------------------------------------
 
 
+def _pool_wait(rec, index):
+    return rec[index] if len(rec) > index else 0.0
+
+
 def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_problems) -> dict:
-    """Every check of one epoch: {"checks": {name: {"pass": bool, ...}}, "info": {...}}."""
+    """Every check of one epoch: {"checks": {name: {"pass": bool | None, ...}}, "info": {...}}.
+    data["window_s"], when given, is how long the prober ran for the epoch (for no_freeze's coverage)."""
     reads, writes, longs = data["reads"], data["writes"], data["longs"]
     ng = hp["graphs"]
     checks = {}
 
-    # freeze: a FalkorDB PING later than 500 ms while the plain server answered within 100 ms
+    # freeze: a FalkorDB PING later than 500 ms while the plain server answered within 100 ms (a
+    # reply from it within 1 s either side is needed: without one the late PING is not attributed)
     ctl = sorted(pings["control"])
     ctl_t = [x[0] for x in ctl]
     late = [(s_, l_) for s_, l_ in pings["falkor"] if l_ > FREEZE_PING_MS]
-    freeze = []
+    freeze, unattributed = [], 0
     for s_, l_ in late:
         i, j = bisect.bisect_left(ctl_t, s_ - 1), bisect.bisect_right(ctl_t, s_ + 1)
-        if not ctl or max((ctl[k][1] for k in range(i, j)), default=0) < CONTROL_OK_MS:
+        if i == j:
+            unattributed += 1
+        elif max(ctl[k][1] for k in range(i, j)) < CONTROL_OK_MS:
             freeze.append((s_, l_))
     fl = [l_ for _, l_ in pings["falkor"]]
     cl = [l_ for _, l_ in pings["control"]]
-    checks["no_freeze"] = {"pass": not freeze, "freeze_pings": len(freeze),
+    need = PING_COVERAGE * data["window_s"] / PING_INTERVAL_S if data.get("window_s") else 1
+    if len(fl) < need or len(cl) < need:
+        frozen = None  # the prober did not measure enough of the epoch to say
+    elif freeze:
+        frozen = False
+    else:
+        frozen = None if unattributed else True
+    checks["no_freeze"] = {"pass": frozen, "freeze_pings": len(freeze), "unattributed_late_pings": unattributed,
+                           "pings_needed": int(need),
                            "worst_ping_ms": round(max(fl, default=0), 1),
                            "worst_control_ms": round(max(cl, default=0), 1),
                            "p99_ping_ms": round(pct(fl, 99), 2), "pings": len(fl), "control_pings": len(cl)}
@@ -181,6 +216,7 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     cheap = {(g, op) for g in range(ng) for op, (_, tmo) in model.READ_OPS.items()
              if cal[g].get(op, 1e9) < model.CHEAP_SHARE * tmo * 1000}
     tos = collections.Counter((r_[0], r_[1]) for r_ in reads if r_[5] == 1)
+    pool_limited_reads = [r_ for r_ in reads if _pool_wait(r_, 6) > DRIVER_LAG_S]
     spurious = sum(c for k, c in tos.items() if k in cheap)
     nreads = len(reads)
     checks["no_timeouts_while_waiting"] = {
@@ -220,7 +256,7 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
             run_max[g] = max(run_max[g], reply)
     for i, w in enumerate(writes):
         g, op, sched, send, reply, oc = w[:6]
-        if oc != 0:
+        if oc != 0 or _pool_wait(w, 8) > DRIVER_LAG_S:  # a write that waited for a connection: driver-limited
             continue
         wlat.append((reply - send) * 1000)
         head = head_of[i]
@@ -237,8 +273,9 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     quiet = [g for g in range(ng) if g not in ep["busy"]]
     qviol = 0
     qlat = []
-    for g, op, sched, send, reply, oc in reads:
-        if g in quiet and oc == 0 and (send - sched) < 0.05:
+    for r_ in reads:
+        g, op, sched, send, reply, oc = r_[:6]
+        if g in quiet and oc == 0 and (send - sched) < DRIVER_LAG_S and _pool_wait(r_, 6) <= DRIVER_LAG_S:
             lat = (reply - sched) * 1000
             qlat.append(lat)
             if lat > cal[g].get(op, 0) + QUIET_SLACK_MS:
@@ -250,7 +287,7 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     # requests drain: every read completes within 5 s (+ backlog) after the long reads it waited
     # behind (writes are judged by writers_dont_starve, which accounts for their queue)
     tc = hp["thread_count"]
-    all_req = [(r_[0], r_[1], r_[3], r_[4], r_[5]) for r_ in reads]
+    all_req = [(r_[0], r_[1], r_[3], r_[4], r_[5]) for r_ in reads if _pool_wait(r_, 6) <= DRIVER_LAG_S]
     sends = sorted((x[2], cal[x[0]].get(x[1], 1.0) / 1000) for x in all_req)
     st = [x[0] for x in sends]
     cum = [0.0]
@@ -267,6 +304,7 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
         if excess > DRAIN_S + backlog:
             jam.append(round(excess, 2))
     checks["requests_drain"] = {"pass": not jam and data["unfinished"] == 0, "late_requests": len(jam),
+                                "pool_limited_reads": len(pool_limited_reads),
                                 "worst_excess_s": max(jam, default=0), "unfinished_at_end": data["unfinished"],
                                 "pending_at_stop": data["pending_at_stop"], "drain_s": round(data["drain_s"], 1)}
 
@@ -276,8 +314,9 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
         by_kind[kind].append(msg)
     # "harness": the end-of-epoch queries themselves failed, so nothing was counted (pass None)
     unknown = by_kind["harness"]
-    checks["writes_add_up"] = {"pass": None if unknown else not by_kind["count"],
-                               "problems": by_kind["count"] + unknown}
+    # a duplicated key is wrong whether or not a constraint is installed, so it counts here in every epoch
+    checks["writes_add_up"] = {"pass": None if unknown else not (by_kind["count"] or by_kind["duplicate"]),
+                               "problems": by_kind["count"] + by_kind["duplicate"] + unknown}
     checks["upsert_edges_complete"] = {"pass": None if unknown else not by_kind["missing"],
                                        "problems": by_kind["missing"] + unknown}
     wto = sum(1 for w in writes if w[5] == 1)
@@ -311,7 +350,8 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     err_reads = sum(1 for r_ in reads if r_[5] in (2, 4))
     err_writes = sum(1 for w in writes if w[5] in (2, 4))
     ev_bad = [e for e in events if e["event"] in ("index_error", "constraint_error", "events_died",
-                                                    "bgsave_error", "violation_odd_error", "indexes_stuck")]
+                                                    "bgsave_error", "violation_odd_error", "indexes_stuck",
+                                                    "events_stuck", "cleanup_incomplete")]
     checks["no_unexpected_errors"] = {"pass": not (errs or died or other_long or err_reads or err_writes or ev_bad),
                                       "error_messages": errs, "died": died, "long_read_errors": len(other_long),
                                       "read_errors": err_reads, "write_errors": err_writes, "event_errors": ev_bad}
@@ -320,7 +360,8 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     for g, op, a, b, oc, _ in longs:
         long_d[op].append(b - a)
     rl = collections.defaultdict(list)
-    for g, op, sched, send, reply, oc in reads:
+    for r_ in reads:
+        g, op, sched, send, reply, oc = r_[:6]
         if oc == 0:
             rl[op].append((reply - sched) * 1000)
     info = {

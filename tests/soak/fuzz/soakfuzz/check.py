@@ -209,11 +209,17 @@ def build_phase(opts, info, run: Run, scale) -> list[dict]:
 
 
 def build_crash_finding(runs) -> dict | None:
-    """A server that died during a build run: completed 0 (a crash is a regression at once)."""
-    died = {side: any(r.get("server_died") for r in runs if r["side"] == side) for side in verdict.SIDES}
-    if not any(died.values()):
+    """A server that died during a build run: completed 0 (a crash is a regression at once). A side
+    is 1 only if one of its builds finished, and unknown (null) if none died and none finished."""
+    def completed(side):
+        rs = [r for r in runs if r["side"] == side]
+        if any(r.get("server_died") for r in rs):
+            return 0
+        return 1 if any(r.get("ok") for r in rs) else None
+
+    c, b = completed("candidate"), completed("baseline")
+    if 0 not in (c, b):
         return None
-    c, b = (0 if died["candidate"] else 1), (0 if died["baseline"] else 1)
     return verdict._invariant("build server_stays_up", "completed", c, b, verdict.status_of(c, b))
 
 
@@ -248,12 +254,18 @@ def _epoch_checks(epoch) -> dict:
 REPRO_S = 90  # about what one repro takes on one side (build, a ~30 s long read, server start/stop)
 
 
+def long_tag(h, side, eps, replay) -> str:
+    """A server-hour's tag and directory; a replay names its epochs, so two replays never share one."""
+    tag = f"long-h{h:02d}-{side}"
+    return tag + "-replay-" + "-".join(f"e{e['epoch']}" for e in eps) if replay else tag
+
+
 def long_hour(opts, info, run: Run, side, h, seed, deadline, epochs=None, replay=False) -> dict:
     from . import harness
     hp = model.hour_params(seed, h, opts["long_scale_range"])
     hp["seed"] = seed
     eps = epochs or [model.epoch_params(seed, h, e, hp["graphs"]) for e in range(1, LONG_EPOCHS_PER_HOUR + 1)]
-    tag = f"long-h{h:02d}-{side}" + ("-replay" if replay else "")
+    tag = long_tag(h, side, eps, replay)
     hour = harness.run_server_hour(opts, info[side], tag, hp, eps, str(run.raw / tag), deadline=deadline)
     res = {"side": side, "hour": h, "replay": replay, "error": hour.get("error"),
            "server_died": hour.get("server_alive") is False, "epochs": {}}
@@ -290,6 +302,8 @@ def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
         est = _pair_estimate(opts, seed, h) * slow
         if h > 1 and time.time() + est > t_end - reserve:
             break
+        if not time_for(opts, est, f"long hour {h} on both sides", run):  # the hard limit, first pair included
+            break
         order = ("candidate", "baseline") if h % 2 else ("baseline", "candidate")
         t0 = time.time()
         for side in order:
@@ -297,6 +311,8 @@ def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
         slow = max(slow, (time.time() - t0) / _pair_estimate(opts, seed, h))
         h += 1
     for i, name in enumerate(names):
+        if not time_for(opts, 2 * REPRO_S, f"repro {name}", run):
+            continue
         order = ("candidate", "baseline") if i % 2 == 0 else ("baseline", "candidate")
         for side in order:
             res = repros.run_repro(opts, info[side], f"repro-{name}-{side}", name)
@@ -305,7 +321,8 @@ def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
     first = {(r["name"], r["side"]): r for r in run.runs["repros"]}
     for name in names:
         c, b = first.get((name, "candidate"), {}), first.get((name, "baseline"), {})
-        if c.get("pass") is False and not c.get("crashed") and b.get("pass") is True:
+        if (c.get("pass") is False and not c.get("crashed") and b.get("pass") is True
+                and time_for(opts, 2 * REPRO_S, f"repro {name} repeat", run)):
             for side in ("baseline", "candidate"):
                 res = repros.run_repro(opts, info[side], f"repro-{name}-{side}-replay", name)
                 run.runs["repros"].append({"name": name, "side": side, "replay": True, **res})
@@ -316,12 +333,15 @@ def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
             suspects += [(s_, c) for s_ in _seeds_where(hours, c)]
     replayed = set()
     for s_, _c in suspects:
-        if len(replayed) >= LONG_REPLAYS or s_ in replayed or time.time() > opts["deadline"] - 30 * 60:
+        if len(replayed) >= LONG_REPLAYS or s_ in replayed:
             continue
-        replayed.add(s_)
         h_, e_ = (int(x[1:]) for x in s_.split("-")[-2:])
         hp = model.hour_params(seed, h_, opts["long_scale_range"])
         ep = model.epoch_params(seed, h_, e_, hp["graphs"])
+        one = opts["epoch_s"] + opts["drain_s"] + 90 + (300 if ep["indexes"] else 0) + 120 + 120 * sum(hp["scales"])
+        if not time_for(opts, 2 * one, f"replay of {s_}", run):
+            continue
+        replayed.add(s_)
         for side in ("baseline", "candidate"):
             hours.append(long_hour(opts, info, run, side, h_, seed, None, epochs=[ep], replay=True))
     return hours
@@ -363,15 +383,18 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
             out = [(cs[s_].get(chk), bs.get(s_, {}).get(chk)) for s_ in seeds]
             return [(c, b) for c, b in out if c != NA and b != NA]
         vals = pairs(c_first, b_first, paired)
-        if not vals:
+        # immediate checks also count seeds (and replays) the baseline never ran
+        lone_c = [c for c in ([c_first[s_].get(chk) for s_ in c_first if s_ not in b_first]
+                              + [c_rep[s_].get(chk) for s_ in c_rep if s_ not in b_rep]) if c != NA]
+        if chk not in LONG_IMMEDIATE:
+            lone_c = []
+        if not vals and not lone_c:
             continue
         if any(None in v for v in vals):
             unmeasured.append(f"long {chk}: not measured on every seed")
         sus = _seeds_where(hours, chk)
         if chk in LONG_IMMEDIATE:
             seen = vals + pairs(c_rep, b_rep, [s_ for s_ in c_rep if s_ in b_rep])
-            lone_c = ([c_first[s_].get(chk) for s_ in c_first if s_ not in b_first]
-                      + [c_rep[s_].get(chk) for s_ in c_rep if s_ not in b_rep])
             if any(c is False and b is True for c, b in seen):
                 cand, base = 0, 1
             elif any(c is False and b is None for c, b in seen) or any(c is False for c in lone_c):

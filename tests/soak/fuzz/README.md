@@ -68,20 +68,23 @@ long-read streams per busy graph, read multiplier 0.5–10 (capped at 400 reques
 multiplier 0.25–4, holdoff or Poisson, indexes (half the epochs), unique constraints (a third,
 with deliberate violations), a write TIMEOUT of 0.5, 1.5 or 3 s (a third), BGSAVE (half of those
 without constraints). Each server-hour (`model.hour_params`) has 2–4 graphs at scales 0.25–2.0
-(4.0 in all) and THREAD_COUNT 4, 8, 16 or 32. The default seed comes from the candidate's digest,
+(4.0 in all) and THREAD_COUNT 4, 8, 16 or 32. A server is reused for the next epoch only if the
+last one put its schema back: an epoch whose index or constraint commands are still running 60 s
+after the load, or whose indexes and constraints could not all be dropped, ends the server-hour
+there and fails `no_unexpected_errors`. The default seed comes from the candidate's digest,
 so a re-run of the same candidate repeats it (`--seed` overrides).
 
 ## The checks
 
 | check | holds when |
 | --- | --- |
-| `no_freeze` | no FalkorDB PING is answered more than 500 ms after it was due while the plain server answered within 100 ms (±1 s) |
+| `no_freeze` | no FalkorDB PING is answered more than 500 ms after it was due while the plain server answered within 100 ms (a reply from it within ±1 s is needed). Unmeasured (null) when the prober got fewer than half the PINGs the epoch should have had from either server, or when a late PING had no plain-server reply near it |
 | `no_timeouts_while_waiting` | no cheap read times out. Cheap: its calibrated cost is under 5% of its TIMEOUT. A read that is not cheap is listed under `not_judged`, never counted |
 | `writers_dont_starve` | every write finishes within 1 s of the end of the long reads it waited behind, counted from when it reached the head of its graph's write queue |
 | `quiet_graphs_stay_fast` | on a graph with no long reads and no writes, every read finishes within 100 ms of its calibrated cost |
 | `requests_drain` | every read finishes within 5 s, plus the time to work off the reads queued with it, of the end of the long reads it waited behind; nothing is still open 60 s after the load stops |
-| `writes_add_up` | node counts of the upserted labels and edge counts of their pairs are within what the committed writes allow (between "committed" and "committed + outcome unknown"), with no extra edge |
-| `upsert_edges_complete` | no pair type has fewer edges than the committed upserts created (an engine that drops the upsert's final MATCH rows loses them, #3082) |
+| `writes_add_up` | node counts of the upserted labels and edge counts of their pairs are within what the committed writes allow (between "committed" and "committed + outcome unknown"), with no extra edge and no key on two nodes |
+| `upsert_edges_complete` | no pair type has fewer edges than the committed upserts created, and every acknowledged new pair has its edge (an engine that drops the upsert's final MATCH rows loses them, #3082) |
 | `no_error_replies` | no request gets an error reply or loses its connection (an engine that rejects or drops a query breaks it) |
 | `server_stays_up` | the server neither exits nor stops answering: no PING unanswered for 60 s during the load, and a PONG to one of 3 PINGs (10 s each) after it and after any failed step (`completed` 0 if it does). A container Docker could not start, or a Docker command that timed out, is not a crash: that run is unmeasured |
 
@@ -105,7 +108,10 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
   repeat, both sides are 0). If it held, its value is 1, the finding is `info`, and the summary
   says "broke in i of n candidate runs, held on the repeat". A break seen only in the extra pair
   makes a finding `info`, never a regression or an improvement. A timing break against a baseline
-  that was not measured is not judged (the candidate's value is null).
+  that was not measured, or a repeat that did not measure the check, is not judged (the
+  candidate's value is null). A request that waited more than 50 ms to be sent or for a free
+  connection in the driver is driver-limited and left out of the timing judgments (counted in
+  `epoch.json`).
 * **Data checks** (`writes_add_up`, `upsert_edges_complete`) and a crash count at once.
 * Contract v1.4 sets the status: 0 on the candidate only is `regression`, 0 on both sides is `info`
   ("broken on both sides (not new)"), 0 on the baseline only is `improvement`.
@@ -172,7 +178,7 @@ uv run --project tests/soak/fuzz soak-fuzz --candidate … --baseline … --out 
 Tests (stdlib and pytest only, no server). `perf-contract.yml` runs them:
 
 ```
-uv run --no-project --python 3.12 --with pytest==9.2.0 --with jsonschema==4.26.0 --with pyyaml==6.0.4 \
+uv run --no-project --python 3.12 --with pytest==9.2.0 --with pyyaml==6.0.4 \
     python -I -m pytest tests/soak -v -p no:cacheprovider
 ```
 

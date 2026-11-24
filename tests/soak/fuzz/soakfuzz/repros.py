@@ -27,6 +27,10 @@ WAIT_S = 300  # every request and wait in a repro gives up after this (a hung se
 LONG_READ = "MATCH (n:N) WITH n LIMIT {limit} UNWIND range(1, 200000) AS x RETURN count(x)"
 
 
+class Incomplete(RuntimeError):
+    """A request the repro depends on did not complete; run_repro decides crash or unmeasured."""
+
+
 def _conn(port):
     return harness.connect(port, timeout=WAIT_S)
 
@@ -36,7 +40,7 @@ def _no_timeouts(r):
         try:
             r.execute_command("GRAPH.CONFIG", "SET", k, "0")
         except ResponseError:
-            pass
+            pass  # an engine without this setting has no such timeout to turn off
 
 
 def _fill(r, nodes):
@@ -89,16 +93,21 @@ class _Pinger:
 
 
 def _long_read(port, limit, out):
+    """Appends (start, end, error or None): a failed read's interval is no evidence of anything."""
     c = _conn(port)
     t = time.perf_counter()
+    err = None
     try:
         c.execute_command("GRAPH.RO_QUERY", "q", LONG_READ.format(limit=limit))
-    finally:
-        out.append((t, time.perf_counter()))
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"[:200]
+    out.append((t, time.perf_counter(), err))
 
 
 def _freeze_verdict(pinger, lr, extra):
-    a, b = lr[0]
+    if not lr or lr[0][2] is not None:
+        raise Incomplete(f"the long read did not complete: {lr[0][2] if lr else 'no reply'}")
+    a, b, _ = lr[0]
     during = pinger.during(a, b)
     late = sum(1 for x in during if x > FREEZE_MS)
     return {"pass": late == 0 if during else None,
@@ -166,7 +175,7 @@ def index_build_behind_long_read(port, nodes=2_000_000):
         _join(reader)
         time.sleep(0.5)
     return _freeze_verdict(pinger, lr, {"index_ready_s": round(t_ready - t_idx, 1),
-                                        "ready_before_read_ended": t_ready < lr[0][1]})
+                                        "ready_before_read_ended": t_ready < lr[0][1] if lr else None})
 
 
 def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
@@ -235,21 +244,24 @@ def reads_behind_writer(port, nodes=1_000_000, n_reads=8):
     out, lock, lr, wr = [], threading.Lock(), [], []
 
     def cheap(tag, t0):
-        c = _conn(port)
         a = time.perf_counter()
         try:
-            c.execute_command("GRAPH.RO_QUERY", "q", cheap_q, "TIMEOUT", "1000")
+            _conn(port).execute_command("GRAPH.RO_QUERY", "q", cheap_q, "TIMEOUT", "1000")
             res = "ok"
         except ResponseError as e:
             res = "timeout" if "timed out" in str(e).lower() else f"error: {str(e)[:80]}"
+        except Exception as e:  # no reply at all (connection lost): the run is incomplete
+            res = f"failed: {type(e).__name__}"
         with lock:
             out.append((tag, round((time.perf_counter() - a) * 1000, 1), res))
 
     def write(t0):
-        c = _conn(port)
         a = time.perf_counter()
-        c.execute_command("GRAPH.QUERY", "q", "CREATE (:W {i: 1})")
-        wr.append((round(a - t0, 1), round(time.perf_counter() - a, 1)))
+        try:
+            _conn(port).execute_command("GRAPH.QUERY", "q", "CREATE (:W {i: 1})")
+            wr.append((round(a - t0, 1), round(time.perf_counter() - a, 1), None))
+        except Exception as e:
+            wr.append((round(a - t0, 1), round(time.perf_counter() - a, 1), f"{type(e).__name__}: {e}"[:120]))
 
     t0 = time.perf_counter()
     ths = [threading.Thread(target=_long_read, args=(port, 2000, lr))]
@@ -266,12 +278,25 @@ def reads_behind_writer(port, nodes=1_000_000, n_reads=8):
         ths.append(threading.Thread(target=cheap, args=("behind-writer", t0)))
         ths[-1].start()
     _join(*ths)
+    return judge_reads(out, wr, lr, n_reads)
+
+
+def judge_reads(out, wr, lr, n_reads) -> dict:
+    """reads-behind-writer's verdict: every cheap read answered (no timeout, no error reply). It is
+    judged only when all 2 * n_reads reads, the write and the long read completed; otherwise the
+    run is incomplete (a crash or an unmeasured repro, as run_repro finds)."""
+    failed = [x for x in out if x[2].startswith("failed")]
+    if len(out) != 2 * n_reads or failed:
+        raise Incomplete(f"{len(out) - len(failed)} of {2 * n_reads} cheap reads got a reply")
+    if not wr or wr[0][2] is not None:
+        raise Incomplete(f"the write did not complete: {wr[0][2] if wr else 'no reply'}")
+    if not lr or lr[0][2] is not None:
+        raise Incomplete(f"the long read did not complete: {lr[0][2] if lr else 'no reply'}")
     timeouts = sum(1 for x in out if x[2] == "timeout")
     other = [x for x in out if x[2] not in ("ok", "timeout")]
     return {"pass": timeouts == 0 and not other,
             "detail": {"timeouts": timeouts, "other": other[:3], "write": wr[:1],
-                       "long_read_s": round(lr[0][1] - lr[0][0], 1) if lr else None,
-                       "reads": sorted(out)}}
+                       "long_read_s": round(lr[0][1] - lr[0][0], 1), "reads": sorted(out)}}
 
 
 #: name -> (THREAD_COUNT, function, args)
@@ -301,7 +326,7 @@ def run_repro(opts: dict, info: dict, tag: str, name: str) -> dict:
                     res.update(server_alive=False, exit_code=None if running else code)
                     res["pass"], res["crashed"] = False, True
             except harness.DockerError:
-                pass
+                pass  # docker cannot say either: the repro stays unmeasured (pass None)
     finally:
         res_tail = server.stop()
     res["server_tail"] = res_tail[-2000:]

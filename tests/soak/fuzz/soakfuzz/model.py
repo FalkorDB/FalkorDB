@@ -103,9 +103,6 @@ BULK_SET = "MATCH (n:{label}) WHERE n.g = $g SET n.c = $c, n.u = $now"
 EPOCH_INDEXES = ((FILTERED, ("g", "h", "k")), (WIDE, ("k", "k2")), (HUB, ("k", "h")))
 #: unique constraints of constraint epochs, on the upsert keys
 CONSTRAINTS = (("L11", ("k", "g")), ("L10", ("k", "g")), ("L9", ("k", "g")), ("L12", ("k", "g")), (SINGLE, ("k",)))
-#: constraint-churn epochs (#3763): a UNIQUE key the upserts keep unique and a MANDATORY property
-CHURN_UNIQUE = ("L11", ("k", "g"))
-CHURN_MANDATORY = ("L11", ("k",))
 #: (label, property) pairs whose index lookups must match a scan
 INDEX_PROBES = ((FILTERED, "k"), (WIDE, "k"), (HUB, "k"))
 
