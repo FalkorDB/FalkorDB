@@ -279,9 +279,11 @@ def read_night(path: Path, environ: dict) -> Night:
         problems.append("`checks` is not a list")
         raw_checks = []
     checks = [read_check(index, entry) for index, entry in enumerate(raw_checks or [])]
-    names = [check.name for check in checks]
+    # Compare the names as written: the display name is shortened and its spaces collapsed.
+    names = [entry["check"] for entry in raw_checks or []
+             if isinstance(entry, dict) and isinstance(entry.get("check"), str)]
     for name in sorted({name for name in names if names.count(name) > 1}):
-        problems.append(f"check {name!r} appears {names.count(name)} times")
+        problems.append(f"check {text_or(name, repr(name), LABEL_CHARACTERS)!r} appears {names.count(name)} times")
     if readable:
         problems.extend(contract_problems(path))
 
@@ -927,7 +929,9 @@ def post_to_chat(webhook: str, text: str) -> str:
             # A malformed or cut-short answer after the request went out: it may have arrived.
             return f"bad answer from Chat: {type(exc).__name__} (not retried: the message may have arrived)"
         except (OSError, ValueError) as exc:
-            failure = f"request failed: {type(exc).__name__}"
+            # urllib wraps every error raised while sending in URLError, so a bare one
+            # came while waiting for the answer (e.g. a reset): the message may have arrived.
+            return f"connection lost waiting for Chat: {type(exc).__name__} (not retried: the message may have arrived)"
     return failure
 
 

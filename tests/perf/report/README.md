@@ -71,10 +71,11 @@ Delivery:
   with a pointer to the job summary.
 
 A failed post is a warning, and the exit code stays 0: only a crash of the script is
-a failure. A post is retried twice on 429, 5xx and connection errors (nothing was
-sent yet), and not after timing out while waiting for Chat's answer, when it may
-have arrived. A trimmed red message still ends with the run and issue links. The webhook URL is the credential and is
-never printed. Only `https://` webhooks are used.
+a failure. A post is retried twice on 429, 5xx and errors while connecting or
+sending (nothing was sent yet). It is not retried after a timeout, a lost connection
+or a malformed answer while waiting for Chat, because the message may have arrived. A
+trimmed red message still ends with the run and issue links. The webhook URL is the
+credential and is never printed. Only `https://` webhooks are used.
 
 ## `missed_run.py`: the 05:00 UTC alarm
 

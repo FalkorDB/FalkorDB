@@ -318,6 +318,16 @@ class StatusIsNeverBetterThanTheEvidence(Workspace):
         self.assertTrue(stub.startswith("*Perf nightly 2026-11-24: ERROR*"), stub)
         self.assertIn("- *pokec*: says pass but carries no result", stub)
 
+    def test_distinct_names_that_display_alike_are_not_duplicates(self):
+        # The validator compares names as written; so must the guard. The display name is
+        # cut to 300 characters and its spaces collapsed.
+        for first, second in (("a" * 300 + "x", "a" * 300 + "y"), ("soak  a", "soak a")):
+            with self.subTest(first=first[-5:], second=second[-5:]):
+                with unittest.mock.patch.object(post, "contract_problems", return_value=[]):
+                    text = self.chat(nightly("green", [result(first, "pass"), result(second, "pass")]))
+                self.assertTrue(text.startswith("*Perf nightly 2026-11-24: green*"), text[:200])
+                self.assertNotIn("appears", text)
+
     def test_a_validator_that_cannot_run_is_an_error_not_a_pass(self):
         for validator in (self.directory / "absent.py", self.write("raise RuntimeError('boom')", "broken.py")):
             with self.subTest(validator=validator.name), unittest.mock.patch.object(post, "VALIDATOR", validator):
@@ -598,6 +608,21 @@ class Delivery(Workspace):
             code, _, stderr = self.run_post(self.GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
         self.assertEqual((code, urlopen.call_count), (0, 1))
         self.assertIn("Posted to Chat.", stderr)
+
+    def test_a_connection_lost_while_waiting_for_the_answer_is_not_retried(self):
+        # urllib raises it bare (not as URLError) only after the request went out.
+        with unittest.mock.patch.object(post.urllib.request, "urlopen",
+                                        side_effect=ConnectionResetError(54, "Connection reset by peer")) as urlopen:
+            code, _, stderr = self.run_post(self.GREEN, {"PERF_CHAT_WEBHOOK": "https://chat.example/hook"})
+        self.assertEqual((code, urlopen.call_count), (0, 1))
+        self.assertIn("posting to Chat failed: connection lost waiting for Chat: ConnectionResetError "
+                      "(not retried: the message may have arrived)", stderr)
+
+    def test_the_alarm_runs_one_concurrency_group_per_run(self):
+        # A group shared by scheduled runs keeps one pending run: a later one would cancel it.
+        workflow = (REPO_ROOT / ".github" / "workflows" / "perf-missed-run.yml").read_text()
+        groups = [line.strip() for line in workflow.splitlines() if line.strip().startswith("group:")]
+        self.assertEqual(groups, ["group: perf-missed-run-${{ github.run_id }}"])
 
     def test_a_malformed_answer_is_a_warning_and_not_retried(self):
         with unittest.mock.patch.object(post.urllib.request, "urlopen",
