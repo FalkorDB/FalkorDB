@@ -453,18 +453,40 @@ def test_default_label_is_repo_and_twelve_hex():
 @pytest.mark.parametrize(
     ("metric", "cand", "base", "expected"),
     [
-        ("p50_ms", 1.0, 0.5, "regression"),  # 2.0x and exactly the 0.5 ms floor
-        ("p50_ms", 1.2, 0.6, "regression"),  # IC13's size: 2x is 0.6 ms
+        ("p50_ms", 1.0, 0.5, None),  # exactly 2.0x and exactly the floor: strict >
+        ("p50_ms", 1.25, 0.6, "regression"),  # IC13's size: 2.08x and 0.65 ms
+        ("p50_ms", 2.0, 0.9, "regression"),  # 2.2x and 1.1 ms
         ("p50_ms", 0.8, 0.35, None),  # 2.3x but 0.45 ms, under the floor
         ("p50_ms", 30.0, 20.0, None),  # 10 ms slower but only 1.5x
-        ("p95_ms", 3.0, 1.0, "regression"),
+        ("p95_ms", 3.0, 1.0, None),  # 3x but exactly the 2 ms p95 floor
+        ("p95_ms", 3.1, 1.0, "regression"),
         ("p95_ms", 2.5, 1.0, None),  # 2.5x but 1.5 ms, under the 2 ms p95 floor
-        ("p50_ms", 5.0, 10.0, "improvement"),
+        ("p50_ms", 5.0, 10.0, None),  # exactly 0.5x
+        ("p50_ms", 4.0, 10.0, "improvement"),
         ("p50_ms", 0.2, 0.6, None),  # 3x faster but only 0.4 ms
     ],
 )
 def test_a_latency_crosses_only_outside_both_the_ratio_and_the_floor(metric, cand, base, expected):
     assert ck.LatencyCompare(metric, cand, base).crossing() == expected
+
+
+@pytest.mark.parametrize(
+    ("image", "ok"),
+    [
+        (MAIN, True),
+        (OTHER, True),
+        ("localhost:5000/x/falkordb-server:v1@sha256:" + "c" * 64, True),
+        ("ghcr.io/FalkorDB/falkordb-server@sha256:" + "a" * 64, False),  # uppercase repo
+        (MAIN + "\n", False),  # trailing newline
+        ("falkordb/falkordb-server:edge", False),  # a tag, no digest
+    ],
+)
+def test_the_image_rule_is_the_validator_s(image, ok):
+    """Looser than validate.py, the check wrote results the validator rejected."""
+    assert bool(ck.IMAGE_RE.fullmatch(image)) is ok
+    validate = _validator()
+    if validate is not None:
+        assert ck.IMAGE_RE.pattern == validate.IMAGE_RE.pattern
 
 
 def test_baseline_that_cannot_run_a_query_leaves_it_out_as_info():

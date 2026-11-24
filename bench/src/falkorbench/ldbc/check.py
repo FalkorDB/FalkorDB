@@ -118,8 +118,16 @@ PING_GRACE_S = 60.0
 #: it fires, the server ignored its own timeout and is treated as hung.
 SOCKET_SLACK_S = 30.0
 
-IMAGE_RE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
-COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+# The contract validator's rules (tests/perf/validate.py), applied with
+# fullmatch: a looser check lets the check write a result the validator
+# rejects (an uppercase repository, a trailing newline).
+_PATH_PART = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_HOST_PART = r"(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
+IMAGE_RE = re.compile(
+    rf"(?:(?:localhost|{_HOST_PART}(?:\.{_HOST_PART})+)(?::[0-9]+)?/|{_HOST_PART}:[0-9]+/)?"
+    rf"{_PATH_PART}(?:/{_PATH_PART})*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{{0,127}})?@sha256:[0-9a-f]{{64}}"
+)
+COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True)
@@ -407,15 +415,18 @@ class LatencyCompare:
         return self.candidate / self.baseline if self.baseline > 0 else None
 
     def crossing(self) -> str | None:
-        """`regression` or `improvement` when outside the band, else None."""
+        """`regression` or `improvement` when outside the band, else None.
+
+        Strictly outside: ratio > RATIO and difference > floor (contract).
+        """
         floor = FLOOR_MS[self.metric]
         delta = self.candidate - self.baseline
         if self.baseline <= 0:
-            return "regression" if delta >= floor else None
+            return "regression" if delta > floor else None
         ratio = self.candidate / self.baseline
-        if ratio >= RATIO and delta >= floor:
+        if ratio > RATIO and delta > floor:
             return "regression"
-        if ratio <= 1 / RATIO and -delta >= floor:
+        if ratio < 1 / RATIO and -delta > floor:
             return "improvement"
         return None
 
@@ -806,7 +817,7 @@ class Check:
         image = o.candidate if side == CANDIDATE else o.baseline
         label = o.candidate_label if side == CANDIDATE else o.baseline_label
         commit = o.candidate_commit if side == CANDIDATE else o.baseline_commit
-        if commit and not COMMIT_RE.match(commit):
+        if commit and not COMMIT_RE.fullmatch(commit):
             commit = None  # reported as a problem; null keeps result.json valid
         return {"image": image, "commit": commit or None, "label": label or default_label(image)}
 
@@ -937,10 +948,10 @@ class Check:
             self.problem(str(e))
             return self.write()
         for side, image in ((CANDIDATE, o.candidate), (BASELINE, o.baseline)):
-            if not IMAGE_RE.match(image):
+            if not IMAGE_RE.fullmatch(image):
                 self.problem(f"--{side} {image!r} is not pinned by digest (name@sha256:<64 hex>)")
         for side, commit in ((CANDIDATE, o.candidate_commit), (BASELINE, o.baseline_commit)):
-            if commit and not COMMIT_RE.match(commit):
+            if commit and not COMMIT_RE.fullmatch(commit):
                 self.problem(f"--{side}-commit {commit!r} is not a 40-hex commit")
         if self.problems:
             return self.write()
