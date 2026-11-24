@@ -98,9 +98,11 @@ graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	412	PROVEN	Gather.giVa
 graph/src/runtime/ops/batched_result_emitter.rs	push_into	419	PROVEN	Gather.giValue push: giValue_lawful, gather_value
 graph/src/runtime/ops/batched_result_emitter.rs	finish	427	PROVEN	Gather.giValue finish: giValue_lawful, gather_value
 graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Gather.rowIterNext/drainIt: rowIter_spec
-graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter withBinding_le_batch (#2973: clamp form replaces the guarded arm); miscompiled_differs (#2922)
-graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	676	PROVEN	Emitter packRows_spec, stream_rows_active
-graph/src/runtime/ops/batched_result_emitter.rs	batch	759	PROVEN	Gather.emBatch: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	with_binding	560	PROVEN	Emitter withBinding_le_batch (#2973: clamp form replaces the guarded arm); miscompiled_differs (#2922)
+graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	686	PROVEN	Emitter packRows_spec, stream_rows_active
+graph/src/runtime/ops/batched_result_emitter.rs	batch	787	PROVEN	Gather.emBatch: emNew_spec
 # runtime.rs attribute reads (RuntimeReads, 2026-10-21): the bulk fetch is the per-row read, with the graph batch / by-name reads modelled as their definitions (proofs/runtime_core models the same fns with hbg/hName as hypotheses).
 graph/src/runtime/runtime.rs	materialize_node_property_values	1702	PROVEN	RuntimeReads.matNode: matNode_eq (= get_node_attribute per id, fast and deleted/pending paths)
 # eval.rs eval_batch (EvalBatch): expr_semantics BatchLaws discharged for the real batch and runtime.
+graph/src/runtime/ops/batched_result_emitter.rs	BatchedResultEmitter::record_parent_rows	765	PROVEN	Emitter parentRows (flag set): parentRows_spec; runtime_core Emitter.emitRec: emitRec_emit, emitRec_parents
+graph/src/runtime/ops/batched_result_emitter.rs	BatchedResultEmitter::parent_rows	772	PROVEN	Emitter parentRows: parentRows_spec, parentRows_active (every recorded row is an active row < len); runtime_core Emitter.emitRec_parents, parents_runs

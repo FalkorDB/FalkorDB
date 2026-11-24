@@ -10,6 +10,7 @@
 | `drain`                   | `drain_pending_entry` |
 | `loop`, `emit`            | `emit_lazy` (loop + ceiling doubling) |
 | `seed`, `reset`           | `seed`; `reset` |
+| `emitRec`                 | `emit_lazy` with `record_parent_rows` (#3110): the batch plus `parent_rows` |
 | `drive`                   | the operator's pull loop: `emit_lazy` until `None`, then pull the next child batch and `seed` (e.g. `ExpandIntoOp::next`, `ops/expand_into.rs`) |
 
 Abstractions. Output batches are the list of `(parent_row, item)` pairs that
@@ -465,5 +466,55 @@ theorem reset_remaining (f : Nat → Option (RowIter β)) (s : St β) :
 theorem initCeiling_cases :
     initCeiling (some 0) = 1 ∧ initCeiling (some 10) = 10 ∧ initCeiling (some 1024) = 1024 ∧
     initCeiling (some 5000) = 1024 ∧ initCeiling none = 1024 := by decide
+
+/-! ### `parent_rows` (#3110) -/
+
+/-- `emit_lazy` with the `record_parent_rows` flag: the packed batch, the new state, and
+`parent_rows` afterwards. `start_batch`/`drain_pending_entry` push the parent row of every packed
+item into `indices` when `should_expand || record_parent_rows`; `finish_batch` still gathers on
+`should_expand` alone, so the batch is the one `emit` gives; with the flag set `parent_rows`
+becomes `indices` (empty when nothing was packed), else it keeps its previous value. -/
+def emitRec (f : Nat → Option (RowIter β)) (record : Bool) (prev : List Nat) (s : St β) :
+    Option (List (Nat × β)) × St β × List Nat :=
+  let r := emit f s
+  (r.1, r.2, if record then (r.1.getD []).map Prod.fst else prev)
+
+/-- **PROVEN**: recording parent rows never changes what `emit_lazy` emits or its state. -/
+theorem emitRec_emit (f : Nat → Option (RowIter β)) (record : Bool) (prev : List Nat) (s : St β) :
+    (emitRec f record prev s).1 = (emit f s).1 ∧ (emitRec f record prev s).2.1 = (emit f s).2 :=
+  ⟨rfl, rfl⟩
+
+/-- **PROVEN**: with the flag set, `parent_rows` is, row for row, the parent row of each item of
+the emitted batch (so it has the batch's length); without it, `parent_rows` is untouched. -/
+theorem emitRec_parents (f : Nat → Option (RowIter β)) (prev : List Nat) (s : St β) :
+    (emitRec f true prev s).2.2 = ((emit f s).1.getD []).map Prod.fst ∧
+    (emitRec f true prev s).2.2.length = ((emit f s).1.getD []).length ∧
+    (emitRec f false prev s).2.2 = prev := by
+  simp [emitRec]
+
+/-- The parent rows of a seeded batch's expansion are runs: row `r` repeated once per result,
+rows in order. -/
+theorem flatRows_fst (f : Nat → Option (RowIter β)) :
+    ∀ rows : List Nat, (flatRows f rows).map Prod.fst =
+      rows.flatMap (fun r => List.replicate (rowOut f r).length r)
+  | [] => by simp [flatRows]
+  | r :: rows => by
+    have ih := flatRows_fst f rows
+    simp only [flatRows, List.flatMap_cons, List.map_append] at ih ⊢
+    rw [ih]
+    congr 1
+    simp only [rowOut, List.map_map]
+    generalize ((Option.map RowIter.toList (f r)).getD []) = l
+    induction l <;> simp_all [List.replicate_succ]
+
+/-- **PROVEN** (the lineage premise of proofs/ops_traverse `BidirDedup.dedup_exact`): the parent
+rows of everything an emitter emits from a seeded batch are runs `(row, #results)` over the
+batch's active rows, in order. -/
+theorem parents_runs (f : Nat → Option (RowIter β)) (rows : List Nat) :
+    (flatRows f rows).map Prod.fst =
+        (rows.map fun r => (r, (rowOut f r).length)).flatMap (fun p => List.replicate p.2 p.1) ∧
+      (rows.map fun r => (r, (rowOut f r).length)).map Prod.fst = rows := by
+  refine ⟨?_, by induction rows <;> simp_all⟩
+  rw [flatRows_fst]; simp [List.flatMap_map]
 
 end RuntimeCore.Emitter

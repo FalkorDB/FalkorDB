@@ -53,8 +53,7 @@ A bug is **confirmed** only if a repro against the real Rust shows it, and it is
 - **W2-rewrites-3**: the hash join drops Int/Float pairs near 2^53 (`value_hash_join.rs:137` `keys_match` / `:153` `key_as_i64` compare keys exactly, while `=` goes through `as f64`).
 - **#2925**: `ORDER BY … LIMIT k` is about 15% slower than C (the top-k builder re-evaluates keys; the Project fast path is off). Fix pending in #3011 (open).
 - **W2-apply-5** (low): batched Optional moves the NULL rows after the matched rows, which `collect()` exposes.
-- **W9-apply-1** (minor, the #3070 family) — an OPTIONAL MATCH inside `CALL {}` is batched, so rows come back in a different order than C: `MATCH (a:A) WITH a ORDER BY a.v CALL { WITH a OPTIONAL MATCH (a)-[r:R]->(b) RETURN b.v AS bv } RETURN a.v, bv` on `(:A {v:1}), (:A {v:2})-[:R]->(:B {v:7})` → Rust (2,7),(1,null), C (1,null),(2,7). Lean `ops_apply` `OpSep.optF_not_exact` (batched equals per-row only up to permutation). The same agent re-confirmed #3106 (W2-traverse-2) as a batching break: `MATCH (a:P) UNWIND [1,2] AS x MATCH (a)--()--(b) RETURN x, labels(b)` → Rust 2 rows, C 4 (`OpSep.dedupF_not_separable`).
-- **W2-traverse-2**: the bidirectional dedup (`cond_traverse.rs:213-221` `bidir_dedup`/`dedup_source_alias`, set up at `:402-440`, used at `:1092-1100` and `:1473`) ignores other columns, keys on an intermediate node at 3 or more hops, and resets per batch. Fix pending in #3110 (open, #3106).
+- **W9-apply-1** (minor, the #3070 family) — an OPTIONAL MATCH inside `CALL {}` is batched, so rows come back in a different order than C: `MATCH (a:A) WITH a ORDER BY a.v CALL { WITH a OPTIONAL MATCH (a)-[r:R]->(b) RETURN b.v AS bv } RETURN a.v, bv` on `(:A {v:1}), (:A {v:2})-[:R]->(:B {v:7})` → Rust (2,7),(1,null), C (1,null),(2,7). Lean `ops_apply` `OpSep.optF_not_exact` (batched equals per-row only up to permutation).
 - **W2-traverse-3**: an undirected anonymous collapse gives one row per direction (`cond_traverse.rs:402-440`, `expand_into.rs:181-184` `npairs`): 4 rows where C gives 2. Fix pending in #3111 (open, #3107).
 - #3452 residual (rt/traverse; from the code, not yet run live; needs an owner): `CondTraverseOp` never reads `Pending`, so `DETACH DELETE a MERGE (a)-[r:R]->(x:B)` still matches the doomed edge (`EIP.bug_condTraverse_main_violates`).
 - #3451 (rt/path_builder): PathBuilder infers a var-length segment's direction by comparing the VLT path's first node with the previous path node (`path_builder.rs:102-110`); on a cycle (n = m) that says "forward", so `MATCH p=(a{id:0})<-[:R*3..3]-(a)` on `0→1→2→0` gives `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]`. Main is correct on every non-cyclic walk (`vltMain_follows_of_ne`). Lean bug3451_main_violates, bug3451_cycle_not_reversed; property PathFollowsPattern; fix vltFix_follows. Fix pending in #3460 (open).
@@ -162,7 +161,7 @@ Open (Rust follows the grammar or TCK, C differs):
 
 Decided:
 - 2026-09-25 (Avi): a deleted entity keeps returning **all** its details (labels, properties, type, endpoints) for the rest of the query. Rust's current behaviour stays even where C returns `[]` for labels. PRs must not strip them; #3043 already leaves this alone.
-- Traversal fixes are filed as #3106–#3109 with PRs #3110–#3113; #3106 (PR #3110) and #3107 (PR #3111) are still open. All PRs from this work carry the `6.0` label.
+- Traversal fixes are filed as #3106–#3109 with PRs #3110–#3113; #3107 (PR #3111) is still open. All PRs from this work carry the `6.0` label.
 - The DISTINCT/MERGE 64-bit FxHash collision (DISTINCT, `count(DISTINCT)` and MERGE drop rows on a collision) was closed as not planned (#2780); `Value::eq` NaN/2^53 quirks are harmless since grouping and sorting use `sort_cmp`.
 
 ## Modelling gaps and limits
