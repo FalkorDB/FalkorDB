@@ -415,6 +415,12 @@ row, on the Rust engine). The 35-minute deadline stops new measurement well
 inside the 45 minutes the check gets in `tests/perf/checks.yaml`. `long` (SF1)
 is accepted and set as above but not yet run end to end.
 
+The queries run in a fixed order (IC1 to IC14), every query's main rounds
+before any re-run. If several queries are pathologically slow, the last ones
+in that order (IC12 to IC14) can miss the deadline before their first round;
+they are reported as not measured, so the night is `error` or `regression`,
+never `pass`.
+
 **Artifacts** under `<out>/raw/`: `samples.csv` (every request: phase, round,
 query, parameter row, side, outcome, latency, rows, digest), `summary.csv`
 (per query and side), `params.json`, `load.json`, `explain/<side>/<IC>.txt`
