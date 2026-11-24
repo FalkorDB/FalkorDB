@@ -342,18 +342,13 @@ re-sends (redis-py's retries are off), with the query's server-side `TIMEOUT`.
 | `IC3 completed` | `completed` | judged per request (parameter row and round): the candidate timing out, erroring or losing its server on a request the baseline finished is a regression at once; failures on both sides with no such request are `info`. A parameter row that timed out is skipped on both sides from then on, and a side stops a query after two timeouts. |
 | `server up` | `completed` | a server that went down at any point, also after its last reply (its container exited): the candidate's is a regression, the baseline's makes the result an `error`. |
 | `IC6 returns rows` | `invariant` | zero rows on every parameter row, on both sides: it measured nothing (`info`), and its latency is not compared. |
-| `IC14 same rows` | `invariant` | the counts agree but the row contents differ, between two images of the same engine (`info`; see below). |
 | `load` | `throughput` | entities loaded per second, per side: one sample each, so `info` only. |
 
-Row contents are compared as a digest of the sorted rows with doubles rounded
-to nine significant digits (`raw/samples.csv`), so tie order and the engines'
-different float spelling do not count. IC14 returns every shortest path, and
-paths of equal weight have no defined order, which the sorted digest absorbs.
-A difference is reported as `info` only, until it has proven stable across
-nights, and only between images of the same engine: across engines the
-contents can differ for reasons outside the query (the C engine's `LOAD CSV`
-drops a field's trailing whitespace, #4003, which changes IC9's message
-contents).
+Row contents are not compared, only row counts. A digest of each request's
+rows (sorted, with doubles rounded so the engines' float spelling does not
+count) is a possible follow-up; it would only ever be `info`, and across
+engines it has to allow for the C engine's `LOAD CSV` dropping a field's
+trailing whitespace (#4003).
 
 **Thresholds.** The ratio and the floors come from three A/A runs (main@4c1088949
 against itself twice, C v4.22.4 against itself once; nightly mode, unpinned,
@@ -411,10 +406,10 @@ they are reported as not measured, so the night is `error` or `regression`,
 never `pass`.
 
 **Artifacts** under `<out>/raw/`: `samples.csv` (every request: phase, round,
-query, parameter row, side, outcome, latency, rows, digest), `summary.csv`
+query, parameter row, side, outcome, latency, rows), `summary.csv`
 (per query and side), `params.json`, `load.json`, `explain/<side>/<IC>.txt`
 (`GRAPH.EXPLAIN` of every query on both sides), `<side>-server.log`, and
-`run.json` (mode, thresholds, engines, rewrites, notes).
+`run.json` (mode, thresholds, servers, rewrites, notes).
 
 **Tests.** `bench/tests/test_ldbc.py` covers the analysis, the measurement
 loop (with scripted servers) and every result shape, holding each result.json

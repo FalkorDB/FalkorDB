@@ -437,7 +437,7 @@ def assert_valid(path: Path) -> None:
     assert problems == [], problems
 
 
-def S(side, param, outcome="ok", ms=10.0, rows=3, digest="d", phase="main", rnd=0, q="IC2"):
+def S(side, param, outcome="ok", ms=10.0, rows=3, phase="main", rnd=0, q="IC2"):
     """A scripted sample."""
     latency = ms if outcome == "ok" else None
     return ck.Sample(
@@ -449,7 +449,6 @@ def S(side, param, outcome="ok", ms=10.0, rows=3, digest="d", phase="main", rnd=
         outcome,
         latency,
         rows if outcome == "ok" else None,
-        digest if outcome == "ok" else None,
         "" if outcome == "ok" else f"{outcome} here",
     )
 
@@ -472,32 +471,12 @@ def test_percentile_is_nearest_rank():
     assert ck.percentile(values, 95) == 48.0
 
 
-def test_digest_ignores_row_order_and_float_spelling():
-    """C prints 0.1 as `0.10000000000000001`; Rust prints `0.1`."""
-    a = [[b"x", 1, b"0.1"], [b"y", 2, b"2.5"]]
-    b = [[b"y", 2, b"2.50"], [b"x", 1, b"0.10000000000000001"]]
-    assert ck.digest(a) == ck.digest(b)
-    assert ck.digest(a) != ck.digest([[b"x", 1, b"0.2"], [b"y", 2, b"2.5"]])
-    assert ck.digest([[b"x", 1]]) != ck.digest([[b"x", 1], [b"x", 1]])
-
-
 def test_params_header_uses_plain_names_and_quotes_strings():
     header = ck.params_header({"personId": 7, "tagName": 'a "b"'})
     assert header == 'CYPHER personId=7 tagName="a \\"b\\"" '
     assert ck.params_header({}) == ""
     with pytest.raises(ValueError, match="plain identifier"):
         ck.params_header({"a b": 1})
-
-
-def test_engine_is_read_from_the_module_version():
-    listing = [[b"name", b"lua", b"ver", 1], [b"name", b"graph", b"ver", 42204, b"path", b"/x"]]
-    assert ck.module_version(listing) == 42204
-    assert ck.module_version([{"name": "graph", "ver": 999999}]) == 999999
-    assert ck.module_version([]) is None
-    assert ck.engine_of(42204) == "c"
-    assert ck.engine_of(60004) == "rust"
-    assert ck.engine_of(999999) == "rust"
-    assert ck.engine_of(None) == "unknown"
 
 
 def test_default_label_is_repo_and_twelve_hex():
@@ -528,7 +507,7 @@ def test_baseline_that_cannot_run_a_query_leaves_it_out_as_info():
     samples = []
     for p in range(3):
         samples += pair(p, base={"outcome": "error"})
-    v = ck.analyse("IC1", samples, same_engine=False)
+    v = ck.analyse("IC1", samples)
     assert v.left_out and v.measured and not v.crossed
     assert [(f["name"], f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [
         ("IC1 completed", "info", 1, 0)
@@ -539,14 +518,14 @@ def test_a_query_neither_side_can_run_is_info_on_both():
     samples = []
     for p in range(2):
         samples += pair(p, base={"outcome": "error"}, cand={"outcome": "error"})
-    v = ck.analyse("IC13", samples, same_engine=True)
+    v = ck.analyse("IC13", samples)
     assert v.left_out
     assert [(f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [("info", 0, 0)]
 
 
 def test_a_candidate_timeout_where_the_baseline_finished_is_a_regression_at_once():
     samples = [*pair(0), S(ck.BASELINE, 1), S(ck.CANDIDATE, 1, outcome="timeout")]
-    v = ck.analyse("IC3", samples, same_engine=True)
+    v = ck.analyse("IC3", samples)
     assert not v.left_out
     (f,) = [f for f in v.findings if f["metric"] == "completed"]
     assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
@@ -554,13 +533,13 @@ def test_a_candidate_timeout_where_the_baseline_finished_is_a_regression_at_once
 
 def test_a_timeout_on_both_sides_is_info_not_a_regression():
     samples = [S(ck.BASELINE, 0, outcome="timeout"), S(ck.CANDIDATE, 0, outcome="timeout")]
-    v = ck.analyse("IC3", samples, same_engine=True)
+    v = ck.analyse("IC3", samples)
     assert [(f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [("info", 0, 0)]
 
 
 def test_one_error_on_the_baseline_is_not_a_dialect_gap():
     samples = [*pair(0), S(ck.BASELINE, 1, outcome="error"), S(ck.CANDIDATE, 1)]
-    v = ck.analyse("IC5", samples, same_engine=True)
+    v = ck.analyse("IC5", samples)
     assert not v.left_out
     (f,) = [f for f in v.findings if f["metric"] == "completed"]
     assert (f["status"], f["candidate"], f["baseline"]) == ("improvement", 1, 0)
@@ -568,7 +547,7 @@ def test_one_error_on_the_baseline_is_not_a_dialect_gap():
 
 def test_a_row_count_difference_is_a_regression_with_the_totals():
     samples = pair(0, cand={"rows": 2}) + pair(1)
-    v = ck.analyse("IC9", samples, same_engine=True)
+    v = ck.analyse("IC9", samples)
     (f,) = [f for f in v.findings if f["metric"] == "rows"]
     assert (f["name"], f["candidate"], f["baseline"], f["status"]) == (
         "IC9 rows",
@@ -581,7 +560,7 @@ def test_a_row_count_difference_is_a_regression_with_the_totals():
 
 def test_row_differences_that_cancel_out_name_the_parameter_row():
     samples = pair(0, cand={"rows": 2}) + pair(1, cand={"rows": 4})
-    v = ck.analyse("IC9", samples, same_engine=True)
+    v = ck.analyse("IC9", samples)
     (f,) = [f for f in v.findings if f["metric"] == "rows"]
     assert (f["name"], f["candidate"], f["baseline"]) == ("IC9 rows (param 0)", 2, 3)
 
@@ -590,7 +569,7 @@ def test_zero_rows_on_every_run_on_both_sides_is_reported_as_info():
     samples = pair(0, base={"rows": 0}, cand={"rows": 0}) + pair(
         1, base={"rows": 0}, cand={"rows": 0}
     )
-    v = ck.analyse("IC6", samples, same_engine=True)
+    v = ck.analyse("IC6", samples)
     assert [(f["name"], f["metric"], f["status"]) for f in v.findings] == [
         ("IC6 returns rows", "invariant", "info")
     ]
@@ -598,24 +577,15 @@ def test_zero_rows_on_every_run_on_both_sides_is_reported_as_info():
 
 def test_zero_rows_on_the_candidate_only_is_a_row_mismatch():
     samples = pair(0, cand={"rows": 0}) + pair(1, cand={"rows": 0})
-    v = ck.analyse("IC6", samples, same_engine=True)
+    v = ck.analyse("IC6", samples)
     assert [f["status"] for f in v.findings if f["metric"] == "rows"] == ["regression"]
-
-
-def test_different_contents_with_equal_counts_is_info_between_like_engines_only():
-    samples = pair(0, cand={"digest": "other"}) + pair(1)
-    same = ck.analyse("IC14", samples, same_engine=True)
-    assert [(f["name"], f["status"], f["candidate"]) for f in same.findings] == [
-        ("IC14 same rows", "info", None)
-    ]
-    assert ck.analyse("IC14", samples, same_engine=False).findings == []
 
 
 def test_a_latency_crossing_waits_for_the_re_run():
     samples = []
     for p in range(5):
         samples += pair(p, base={"ms": 10.0}, cand={"ms": 40.0})
-    v = ck.analyse("IC3", samples, same_engine=True)
+    v = ck.analyse("IC3", samples)
     assert v.crossed == ["p50_ms", "p95_ms"]
     assert [f for f in v.findings if f["metric"].endswith("_ms")] == []
 
@@ -646,7 +616,7 @@ def test_an_improvement_needs_no_re_run():
     samples = []
     for p in range(4):
         samples += pair(p, base={"ms": 50.0}, cand={"ms": 10.0})
-    v = ck.analyse("IC10", samples, same_engine=True)
+    v = ck.analyse("IC10", samples)
     assert v.crossed == []
     assert {f["status"] for f in v.findings} == {"improvement"}
 
@@ -657,12 +627,12 @@ def test_warmup_latencies_are_not_measured():
         S(ck.CANDIDATE, 0, ms=1.0, phase="warmup"),
     ]
     samples += pair(0)
-    assert ck.analyse("IC2", samples, same_engine=True).crossed == []
+    assert ck.analyse("IC2", samples).crossed == []
 
 
 def test_nothing_measured_is_not_a_pass():
     skipped = [S(ck.BASELINE, 0, outcome="skipped"), S(ck.CANDIDATE, 0, outcome="skipped")]
-    v = ck.analyse("IC2", skipped, same_engine=True)
+    v = ck.analyse("IC2", skipped)
     assert not v.measured
 
 
@@ -710,8 +680,8 @@ class ScriptedSide(ck.Side):
         return self.script(cypher, params, len(self.calls))
 
 
-def _ok(ms=5.0, rows=2, digest="d"):
-    return lambda *_: ck.Sample("", 0, "", 0, "", ck.OK, ms, rows, digest)
+def _ok(ms=5.0, rows=2):
+    return lambda *_: ck.Sample("", 0, "", 0, "", ck.OK, ms, rows)
 
 
 def scripted_check(
@@ -735,8 +705,6 @@ def scripted_check(
     )
     base = ScriptedSide(ck.BASELINE, base_script)
     cand = ScriptedSide(ck.CANDIDATE, cand_script)
-    for side in (base, cand):
-        side.engine = "rust"
     check.sides = {ck.BASELINE: base, ck.CANDIDATE: cand}
     for side in (base, cand):
         original = side.script
@@ -756,7 +724,7 @@ def test_the_rounds_interleave_the_sides_and_swap_their_order(tmp_path):
     def recorder(name):
         def script(cypher, params, n):
             order.append((name, params["personId"]))
-            return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2, "d")
+            return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2)
 
         return script
 
@@ -773,7 +741,7 @@ def test_a_timed_out_row_is_skipped_on_both_sides_and_reported_at_once(tmp_path)
     def cand(cypher, params, n):
         if params["personId"] == 1:
             return ck.Sample("", 0, "", 0, "", ck.TIMEOUT, error="Query timed out")
-        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2, "d")
+        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2)
 
     check = scripted_check(tmp_path, _ok(), cand, names=("IC2",), params=3)
     check.measure()
@@ -792,7 +760,7 @@ def test_a_side_stops_a_query_after_its_second_timeout(tmp_path):
     def ic3_hangs(cypher, params, n):
         if "countryXName" in cypher:
             return hangs(cypher, params, n)
-        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2, "d")
+        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2)
 
     check = scripted_check(tmp_path, ic3_hangs, ic3_hangs, names=("IC2", "IC3"), params=25)
     check.measure()
@@ -856,7 +824,7 @@ def test_the_c_gaps_are_left_out_and_the_run_still_passes(tmp_path):
     def c_engine(cypher, params, n):
         if "shortestPath" in cypher:
             return ck.Sample("", 0, "", 0, "", ck.ERROR, error="unsupported")
-        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2, "d")
+        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2)
 
     check = scripted_check(tmp_path, c_engine, c_engine, names=("IC1", "IC2", "IC13"))
     check.measure()
@@ -955,7 +923,7 @@ def test_a_candidate_failure_is_judged_per_row_not_hidden_by_another_rows_baseli
     """Candidate times out on row 1, baseline errors on unrelated row 2."""
     samples = [*pair(0), S(ck.BASELINE, 1), S(ck.CANDIDATE, 1, outcome="timeout")]
     samples += [S(ck.BASELINE, 2, outcome="error"), S(ck.CANDIDATE, 2)]
-    v = ck.analyse("IC2", samples, same_engine=True)
+    v = ck.analyse("IC2", samples)
     (f,) = [f for f in v.findings if f["metric"] == "completed"]
     assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
 
@@ -966,7 +934,7 @@ def test_failures_on_the_same_row_on_both_sides_are_info():
         S(ck.BASELINE, 1, outcome="timeout"),
         S(ck.CANDIDATE, 1, outcome="timeout"),
     ]
-    v = ck.analyse("IC2", samples, same_engine=True)
+    v = ck.analyse("IC2", samples)
     (f,) = [f for f in v.findings if f["metric"] == "completed"]
     assert (f["status"], f["candidate"], f["baseline"]) == ("info", 0, 0)
 
@@ -1059,7 +1027,7 @@ def test_no_latency_finding_for_a_query_whose_rows_differ():
     samples = []
     for p in range(4):
         samples += pair(p, base={"ms": 210.0, "rows": 20}, cand={"ms": 2.0, "rows": 0})
-    v = ck.analyse("IC9", samples, same_engine=True)
+    v = ck.analyse("IC9", samples)
     assert v.rows_differ and v.crossed == []
     assert [(f["name"], f["status"]) for f in v.findings] == [("IC9 rows", "regression")]
 
@@ -1131,7 +1099,7 @@ def test_row_counts_are_compared_per_request_not_from_the_warm_up():
         S(ck.CANDIDATE, 0, rows=1, phase="warmup"),
     ]
     samples += pair(0, base={"rows": 1}, cand={"rows": 0})
-    v = ck.analyse("IC2", samples, same_engine=True)
+    v = ck.analyse("IC2", samples)
     assert [(f["metric"], f["status"]) for f in v.findings] == [("rows", "regression")]
 
 
@@ -1151,7 +1119,7 @@ def test_a_query_that_returns_nothing_on_both_sides_gets_no_latency_finding():
     samples = []
     for p in range(4):
         samples += pair(p, base={"rows": 0, "ms": 1.0}, cand={"rows": 0, "ms": 5.0})
-    v = ck.analyse("IC6", samples, same_engine=True)
+    v = ck.analyse("IC6", samples)
     assert v.no_rows and v.crossed == []
     assert [f["name"] for f in v.findings] == ["IC6 returns rows"]
 
@@ -1365,7 +1333,7 @@ def test_a_candidate_failure_is_judged_against_the_same_request():
     candidate finishes round 0 and fails round 1."""
     samples = [S(ck.BASELINE, 0, outcome="error", rnd=0), S(ck.CANDIDATE, 0, rnd=0)]
     samples += [S(ck.BASELINE, 0, rnd=1), S(ck.CANDIDATE, 0, outcome="timeout", rnd=1)]
-    v = ck.analyse("IC2", samples, same_engine=True)
+    v = ck.analyse("IC2", samples)
     (f,) = [f for f in v.findings if f["metric"] == "completed"]
     assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
 
@@ -1377,7 +1345,7 @@ def test_a_warm_up_with_rows_does_not_make_empty_rounds_worth_timing():
     ]
     for p in range(3):
         samples += pair(p, base={"rows": 0, "ms": 1.0}, cand={"rows": 0, "ms": 9.0})
-    v = ck.analyse("IC2", samples, same_engine=True)
+    v = ck.analyse("IC2", samples)
     assert v.no_rows and v.crossed == []
 
 
@@ -1406,7 +1374,7 @@ def test_a_re_run_that_did_not_retime_a_row_does_not_clear_the_crossing():
 
 def test_an_inconclusive_re_run_is_an_error_in_the_result(tmp_path):
     def fast_then_empty(cypher, params, n):
-        return ck.Sample("", 0, "", 0, "", ck.OK, 50.0 if n <= 7 else 5.0, 2 if n <= 7 else 0, "d")
+        return ck.Sample("", 0, "", 0, "", ck.OK, 50.0 if n <= 7 else 5.0, 2 if n <= 7 else 0)
 
     check = scripted_check(tmp_path, _ok(ms=5.0), fast_then_empty, names=("IC2",), params=3)
     check.measure()

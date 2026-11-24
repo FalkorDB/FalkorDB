@@ -27,9 +27,6 @@ What it reports, per query:
   at once; 0 on both sides is `info`.
 * `invariant` "returns rows": a query that returns zero rows on every
   parameter row, on both sides, measured nothing (`info`).
-* `invariant` "same rows": the row contents differ although the counts agree,
-  between two images of the same engine (`info` while it proves itself; see
-  the README).
 
 A query the baseline cannot run at all (an error on every parameter row: the C
 engine's dialect gaps) is left out with an `info` finding. The load's
@@ -44,7 +41,6 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
-import hashlib
 import json
 import os
 import platform
@@ -125,13 +121,6 @@ SOCKET_SLACK_S = 30.0
 IMAGE_RE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 
-#: Queries whose result legitimately depends on tie order: IC14 returns every
-#: shortest path, and paths of equal weight have no defined order, so a
-#: changed plan can list them differently. Row contents are compared as a
-#: sorted multiset, which absorbs that; the note is kept for the reader of a
-#: "same rows" finding.
-TIE_DEPENDENT = frozenset({"IC14"})
-
 
 @dataclass(frozen=True)
 class Mode:
@@ -185,7 +174,6 @@ class Sample:
     outcome: str
     latency_ms: float | None = None
     rows: int | None = None
-    digest: str | None = None
     error: str = ""
 
 
@@ -199,34 +187,6 @@ def percentile(values: list[float], p: float) -> float | None:
     ordered = sorted(values)
     rank = max(1, min(len(ordered), -(-p * len(ordered) // 100)))
     return ordered[int(rank) - 1]
-
-
-def normalise(value: Any) -> Any:
-    """A reply value in a form both engines print the same way.
-
-    Doubles come back as text, and the engines format them differently
-    (`0.1` vs `0.10000000000000001`), so anything that reads as a
-    non-integral number is rounded to nine significant digits. Both sides go
-    through the same function, so a string that happens to look like a
-    number is changed identically on each.
-    """
-    if isinstance(value, bytes):
-        value = value.decode("utf-8", errors="replace")
-    if isinstance(value, str):
-        if re.fullmatch(r"[-+]?(\d+\.\d*|\.\d+|\d+(\.\d*)?[eE][-+]?\d+|inf|nan)", value):
-            return f"{float(value):.9g}"
-        return value
-    if isinstance(value, float):
-        return f"{value:.9g}"
-    if isinstance(value, (list, tuple)):
-        return [normalise(v) for v in value]
-    return value
-
-
-def digest(rows: list[Any]) -> str:
-    """A digest of the rows as a sorted multiset (order-independent)."""
-    lines = sorted(json.dumps(normalise(row), separators=(",", ":")) for row in rows)
-    return hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]
 
 
 def params_header(params: dict[str, Any]) -> str:
@@ -254,8 +214,6 @@ class Side:
     container: containers.Container | None = None
     container_name: str = ""
     conn: Redis | None = None
-    engine: str = ""
-    module_version: int | None = None
     down: str = ""  # why it stopped answering, once it has
     timeouts: dict[str, int] = field(default_factory=dict)  # per query
 
@@ -301,7 +259,6 @@ class Side:
             return _error_sample(sample, str(reply[-1]))
         rows = reply[1] if isinstance(reply, list) and len(reply) == 3 else []
         sample.rows = len(rows)
-        sample.digest = digest(rows)
         return sample
 
     def _answers(self) -> bool:
@@ -345,36 +302,6 @@ def _error_sample(sample: Sample, message: str) -> Sample:
     return sample
 
 
-def module_version(reply: Any) -> int | None:
-    """The graph module's `ver` from a MODULE LIST reply.
-
-    redis-py hands it back as a list of flat `[name, …, ver, …]` lists, or as
-    dicts when a response callback has parsed it; both are accepted.
-    """
-    for module in reply or []:
-        if isinstance(module, dict):
-            info = {_text(k): v for k, v in module.items()}
-        else:
-            info = {_text(k): v for k, v in zip(module[::2], module[1::2], strict=False)}
-        if _text(info.get("name", "")) == "graph":
-            try:
-                return int(_text(info.get("ver", "")))
-            except ValueError:
-                return None
-    return None
-
-
-def engine_of(version: int | None) -> str:
-    """`c` or `rust`, from the module version MODULE LIST reports.
-
-    The C engine is the 4.x line (42204 for v4.22.4); the Rust engine
-    reports 5.x and up, and 999999 on a development build.
-    """
-    if version is None:
-        return "unknown"
-    return "c" if version < 50000 else "rust"
-
-
 # --- analysis ----------------------------------------------------------------
 
 
@@ -398,7 +325,6 @@ class SideStats:
     #: count never stands in for a later round's, and a latency only counts
     #: when the other side finished the same request too.
     rows: dict[Key, int] = field(default_factory=dict)
-    digests: dict[Key, str] = field(default_factory=dict)
     latencies: dict[Key, float] = field(default_factory=dict)
 
     @property
@@ -455,8 +381,6 @@ def side_stats(samples: list[Sample]) -> SideStats:
             key = (s.phase, s.round, s.param)
             stats.ok_keys.add(key)
             stats.rows[key] = s.rows or 0
-            if s.digest is not None:
-                stats.digests[key] = s.digest
             if s.latency_ms is not None and s.phase != "warmup":
                 stats.latencies[key] = s.latency_ms
             continue
@@ -573,7 +497,7 @@ class RowCheck:
     empty: bool = False
 
 
-def compare_rows(query: str, cand: SideStats, base: SideStats, *, same_engine: bool) -> RowCheck:
+def compare_rows(query: str, cand: SideStats, base: SideStats) -> RowCheck:
     """Row counts (and, between like engines, contents), request by request.
 
     A count that differs on any request both sides finished is a `rows`
@@ -615,31 +539,10 @@ def compare_rows(query: str, cand: SideStats, base: SideStats, *, same_engine: b
                 status="info",
             )
         )
-    differing = [
-        k
-        for k in common
-        if k in cand.digests and k in base.digests and cand.digests[k] != base.digests[k]
-    ]
-    if differing and same_engine:
-        out.findings.append(
-            _finding(
-                f"{query} same rows",
-                "invariant",
-                None,
-                None,
-                direction="lower_is_worse",
-                status="info",
-            )
-        )
     return out
 
 
-def analyse(
-    query: str,
-    main: list[Sample],
-    *,
-    same_engine: bool,
-) -> QueryVerdict:
+def analyse(query: str, main: list[Sample]) -> QueryVerdict:
     """Findings from the main rounds (latency crossings still unconfirmed)."""
     verdict = QueryVerdict(query)
     base = side_stats([s for s in main if s.side == BASELINE])
@@ -673,7 +576,7 @@ def analyse(
         elif done["status"] == "info":
             verdict.note = "did not finish on either side"
 
-    rows = compare_rows(query, cand, base, same_engine=same_engine)
+    rows = compare_rows(query, cand, base)
     verdict.compared = rows.compared
     verdict.findings += rows.findings
 
@@ -735,7 +638,7 @@ def confirm(
         out.append(done)
     # A re-run that returns different rows is that regression, not a timing:
     # a candidate that returns nothing is fast for the wrong reason.
-    rows = compare_rows(query, cand, base, same_engine=False)
+    rows = compare_rows(query, cand, base)
     if rows.differ:
         out += [f for f in rows.findings if f["status"] == "regression"]
         return result
@@ -1108,9 +1011,7 @@ class Check:
                 )
                 self.notes.append(f"candidate server did not start: {e}")
                 return
-            self.echo(
-                f"{side}: {s.engine} engine (module {s.module_version}), port {s.container.port}"
-            )
+            self.echo(f"{side}: port {s.container.port}")
             try:
                 stats = loader_mod.load(client, root, import_root=self.opts.cache, echo=self.echo)
             except (loader_mod.LoadError, RedisError) as e:
@@ -1189,8 +1090,6 @@ class Check:
         # The images keep redis's default save points; one would fork a
         # BGSAVE a minute into the measurement, on one side only.
         db.connection.config_set("save", "")
-        s.module_version = module_version(db.connection.execute_command("MODULE", "LIST"))
-        s.engine = engine_of(s.module_version)
         s.conn = Redis(
             host="127.0.0.1",
             port=port,
@@ -1265,16 +1164,7 @@ class Check:
             for q in self.queries:
                 main[q.name] += self.round(q, "main", rnd, order)
 
-        # Row contents are compared only between images of the same engine:
-        # across engines they can differ for reasons outside the query (the
-        # C engine's LOAD CSV drops a field's trailing whitespace, #4003).
-        same_engine = (
-            self.sides[BASELINE].engine == self.sides[CANDIDATE].engine
-            and self.sides[BASELINE].engine != "unknown"
-        )
-        verdicts = {
-            q.name: analyse(q.name, main[q.name], same_engine=same_engine) for q in self.queries
-        }
+        verdicts = {q.name: analyse(q.name, main[q.name]) for q in self.queries}
         reruns: dict[str, list[Sample]] = {}
         for q in self.queries:
             v = verdicts[q.name]
@@ -1462,14 +1352,7 @@ class Check:
             except containers.DockerError as e:
                 self.notes.append(f"{side} container not removed: {e}")
         self.server_findings(started)
-        engines = {
-            side: {
-                "engine": self.sides[side].engine,
-                "module_version": self.sides[side].module_version,
-                "down": self.sides[side].down or None,
-            }
-            for side in SIDES
-        }
+        engines = {side: {"down": self.sides[side].down or None} for side in SIDES}
         self.artifact(
             "raw/run.json",
             json.dumps(
@@ -1483,7 +1366,6 @@ class Check:
                     "notes": self.notes,
                     "problems": self.problems,
                     "rewrites": {f"IC{n}": why for n, why in sorted(query_mod.REWRITES.items())},
-                    "tie_dependent": sorted(TIE_DEPENDENT),
                 },
                 indent=2,
             )
