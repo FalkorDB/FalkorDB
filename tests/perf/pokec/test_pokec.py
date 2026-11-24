@@ -397,8 +397,24 @@ def test_cross_check_catches_a_log_parser_that_misses_failures(tmp_path):
     check._cross_check(run, metrics, qfiles()[("medium", "write5")], [])
 
 
-def test_digest_required(tmp_path):
-    assert pokec.DIGEST_RE.match(CAND) and not pokec.DIGEST_RE.match("falkordb/falkordb-server:6.2.0")
+def test_images_and_commits_follow_the_validator_s_rules():
+    assert pokec.IMAGE_RE.fullmatch(CAND) and pokec.IMAGE_RE.fullmatch(BASE)
+    for bad in ("falkordb/falkordb-server:6.2.0", "FalkorDB/falkordb-server@sha256:" + "b" * 64, BASE + "\n"):
+        assert not pokec.IMAGE_RE.fullmatch(bad), bad
+    assert not pokec.COMMIT_RE.fullmatch("6ca3adc9d0418f76c5a15f820552e0603a65e553\n")
+    if VALIDATE.exists():  # the same rules, not a look-alike
+        validator = load("perf_validate", VALIDATE)
+        assert (pokec.IMAGE_RE.pattern, pokec.COMMIT_RE.pattern) == (validator.IMAGE_RE.pattern, validator.COMMIT_RE.pattern)
+
+
+def test_an_uppercase_image_is_an_error_not_an_invalid_result(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
+    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: None)
+    out = tmp_path / "out"
+    pokec.main(["--candidate", "FalkorDB/falkordb-server@sha256:" + "a" * 64, "--baseline", BASE, "--out", str(out),
+                "--mode", "nightly", "--tools-dir", str(tmp_path / "tools")])
+    result = json.loads((out / "result.json").read_text())
+    assert result["verdict"] == "error" and "not pinned by digest" in result["error"]
 
 
 # --- the RESP client and the PING probe, against a fake server ----------------
@@ -725,14 +741,14 @@ def test_a_failed_benchmark_start_still_stops_the_probe(tmp_path, monkeypatch):
     assert (tmp_path / "ping.csv").exists() and run.ping is not None
 
 
-def test_an_earlier_run_s_files_are_not_this_run_s_artifacts(tmp_path):
+def test_only_this_run_s_files_are_artifacts(tmp_path):
     out = tmp_path / "out"
     (out / "raw").mkdir(parents=True)
-    (out / "raw" / "queries-medium-read.jsonl").write_text("old")
-    (out / "result.json").write_text("{}")
+    (out / "raw" / "queries-large-read.jsonl").write_text("an earlier run's")
     check = make_check(tmp_path)
-    assert not (out / "raw" / "queries-medium-read.jsonl").exists() and not (out / "result.json").exists()
-    assert "raw/queries-medium-read.jsonl" not in check.result()["artifacts"]
+    artifacts = check.result()["artifacts"]
+    assert "raw/queries-large-read.jsonl" not in artifacts
+    assert {"raw/check.log", "raw/rows.csv", "raw/runs.csv"} <= set(artifacts)
 
 
 def test_a_signal_during_the_first_checkpoint_still_writes_the_result(tmp_path, monkeypatch):
@@ -835,25 +851,31 @@ def test_a_short_run_is_not_finished_before_the_log_cross_check(tmp_path):
     assert not run.finished and "ended" in run.stop_reason
 
 
-def test_a_failed_cleanup_of_out_is_an_error_result(tmp_path, monkeypatch):
-    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
-    monkeypatch.setattr(pokec.Docker, "remove_all", lambda self: None)
-    out = tmp_path / "out"
-    (out / "raw").mkdir(parents=True)
-
-    def rmtree(path, *args, **kwargs):
-        raise PermissionError(13, "Permission denied", str(path))
-
-    monkeypatch.setattr(pokec.shutil, "rmtree", rmtree)
-    assert pokec.main(["--candidate", CAND, "--baseline", BASE, "--out", str(out), "--mode", "nightly",
-                       "--tools-dir", str(tmp_path / "tools")]) == 0
-    result = json.loads((out / "result.json").read_text())
-    assert result["verdict"] == "error" and "could not remove an earlier run's files" in result["error"]
-
-
 def test_the_probe_stops_even_when_its_csv_cannot_be_written(tmp_path):
     server = FakeServer()
     probe = pokec.PingProbe(server.port, tmp_path / "no-such-dir" / "ping.csv")
     probe.start()
     probe.stop()  # an OSError here would replace a stop signal unwinding through _drive
     assert probe.summary()["ping_samples"] >= 0
+
+
+# --- cut round: alignment rules ------------------------------------------------------
+
+
+def test_the_threshold_is_strict_on_ratio_and_floor():
+    # exactly 1.3x, or exactly the floor's delta, does not cross
+    assert pokec.crossed("p50_ms", 13.0, 10.0, "higher_is_worse") == 0       # ratio 1.3, delta 3 > 1
+    assert pokec.crossed("p99_ms", 65.0, 50.0, "higher_is_worse") == 0       # ratio 1.3, delta 15 = floor
+    assert pokec.crossed("p99_ms", 66.0, 50.0, "higher_is_worse") == 1       # 1.32x, +16 ms
+    assert pokec.crossed("p99_ms", 40.0, 25.0, "higher_is_worse") == 0       # 1.6x, +15 ms = floor
+    assert pokec.crossed("throughput", 100.0, 130.0, "lower_is_worse") == 0  # exactly 1/1.3
+    assert pokec.crossed("throughput", 100.0, 131.0, "lower_is_worse") == 1
+
+
+def test_findings_carry_no_ok_rows(tmp_path):
+    check = make_check(tmp_path)
+    check.runs = pass_runs(1, 3) + pass_runs(1, 3, baseline={"workload": "read"}, candidate={"workload": "read"})
+    result = check.result()
+    assert result["verdict"] == "pass" and result["findings"] == []
+    rows = (Path(check.out) / "raw" / "rows.csv").read_text()
+    assert "benchmark run finished [5% writes],completed,1,1" in rows  # the ok rows live here

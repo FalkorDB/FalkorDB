@@ -252,8 +252,8 @@ worst first, at most 50. Every comparison is in `raw/rows.csv`, every run in
   had no PING answered, or no run was made at all;
 * else `pass`. Queries that failed on both sides are named in the summary.
 
-An earlier invocation's `raw/` and `result.json` in the same `--out` are
-removed first, so only this run's files are listed as artifacts.
+`artifacts` lists only the files this run wrote (an `--out` reused by hand may
+hold an earlier run's; `_perf-vm.yml` starts from an empty one).
 
 `result.json` is written at the start and rewritten after every run as an
 `error` checkpoint ("the check did not finish"), so a check killed by the

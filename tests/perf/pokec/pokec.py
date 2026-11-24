@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
-"""Pokec check: FalkorDB/benchmark on the Pokec dataset, candidate against baseline.
+"""Pokec check: FalkorDB/benchmark on Pokec, candidate against baseline (tests/perf/pokec/README.md).
 
-    pokec.py --candidate <image@sha256:…> --baseline <image@sha256:…> \\
-             --out <dir> --mode <queue|nightly|long> \\
-             [--candidate-label …] [--baseline-label …] \\
+    pokec.py --candidate <image@sha256:…> --baseline <image@sha256:…> --out <dir> \\
+             --mode <queue|nightly|long> [--candidate-label …] [--baseline-label …] \\
              [--candidate-commit …] [--baseline-commit …]
 
-One check of the nightly perf contract (tests/perf/README.md, tests/perf/pokec/README.md).
-On one machine and in one run it starts each image's own server (`docker run`, pinned to
-`PERF_SERVER_CPUS`), bulk-loads Pokec into a fresh server for every run, drives
-FalkorDB/benchmark's mixed workload (read-only, then 5% writes) against it while a PING probe
-watches for server freezes, and compares the two sides per query type. It always writes
-`<out>/result.json`, also when it could not measure (`verdict: error`).
-
-The tools are pinned by commit and set up by the check itself (README: "Tools"): the benchmark
-is built from source, the bulk loader runs from its own uv.lock, the dataset is checked by
-sha256. Standard library only; run it with `python3 -I`.
+Standard library only; run it with `python3 -I`.
 """
 
 from __future__ import annotations
@@ -169,8 +159,15 @@ MODES = {
     "long": Mode(("medium", "large"), reps=3, rerun_reps=2, latency_gates=True),
 }
 
-DIGEST_RE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
-COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+# tests/perf/validate.py's IMAGE_RE and COMMIT_RE, used with fullmatch as it does: a looser
+# rule here (uppercase repo, trailing newline) would write a result the validator rejects.
+_PATH_PART = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+_HOST_PART = r"(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
+IMAGE_RE = re.compile(
+    rf"(?:(?:localhost|{_HOST_PART}(?:\.{_HOST_PART})+)(?::[0-9]+)?/|{_HOST_PART}:[0-9]+/)?"
+    rf"{_PATH_PART}(?:/{_PATH_PART})*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{{0,127}})?@sha256:[0-9a-f]{{64}}"
+)
+COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -1093,6 +1090,15 @@ def analyse(
         rerun.add(key)
         rerun_why[key].append(why)
 
+    def record(dataset: str, workload: Workload, name: str, metric: str, cand: float | None, base: float | None,
+               direction: str, status: str, threshold: float | None, sort: float, **extra: Any) -> None:
+        """One comparison: always a raw/rows.csv row; a finding unless it is ok."""
+        rows.append({"dataset": dataset, "workload": workload.label, "name": name, "metric": metric,
+                     "candidate": cand, "baseline": base, "ratio": ratio(cand, base), "direction": direction,
+                     "status": status, **extra})
+        if status != "ok":
+            findings.append({**make_finding(name, metric, cand, base, threshold, direction, status), "_sort": sort})
+
     groups: dict[tuple[str, str], list[Run]] = defaultdict(list)
     for run in runs:
         groups[(run.dataset, run.workload)].append(run)
@@ -1104,33 +1110,14 @@ def analyse(
         finished = {side: [r for r in rs if r.finished] for side, rs in side_runs.items()}
         qfile = query_files.get((dataset, wl_key))
 
-        def add_row(name: str, metric: str, cand: float | None, base: float | None, direction: str,
-                    status: str, threshold: float | None, **extra: Any) -> dict[str, Any]:
-            row = {"dataset": dataset, "workload": workload.label, "name": name, "metric": metric,
-                   "candidate": cand, "baseline": base, "ratio": ratio(cand, base),
-                   "direction": direction, "status": status, **extra}
-            rows.append(row)
-            finding = make_finding(name, metric, cand, base, threshold, direction, status)
-            finding["_sort"] = extra.get("sort", 0.0)
-            findings.append(finding)
-            return row
-
         # Did every run finish?
         if not side_runs["candidate"] or not side_runs["baseline"]:
             continue
         done = {side: int(all(r.finished for r in rs)) for side, rs in side_runs.items()}
         reasons = sorted({r.stop_reason for r in group if r.stop_reason})
-        add_row(
-            f"benchmark run finished [{where}]",
-            "completed",
-            done["candidate"],
-            done["baseline"],
-            "lower_is_worse",
-            completed_status(done["candidate"], done["baseline"]),
-            None,
-            sort=10.0,
-            detail="; ".join(f"{r.side} {r.pass_no}.{r.rep}: {r.stop_reason}" for r in group if r.stop_reason),
-        )
+        record(dataset, workload, f"benchmark run finished [{where}]", "completed", done["candidate"],
+               done["baseline"], "lower_is_worse", completed_status(done["candidate"], done["baseline"]), None, 10.0,
+               detail="; ".join(f"{r.side} {r.pass_no}.{r.rep}: {r.stop_reason}" for r in group if r.stop_reason))
         if not finished["candidate"] or not finished["baseline"]:
             unmeasured.append(f"{where}: " + ("; ".join(reasons) or "no finished run"))
         elif not done["baseline"]:
@@ -1156,23 +1143,18 @@ def analyse(
             detail = "; ".join(
                 f"{side}: {f} errors, {t} timeouts in {tr} of {n} runs" for side, (f, t, tr, n) in counts.items()
             )
-            if status != "ok":
-                add_row(label, "completed", cand_ok, base_ok, "lower_is_worse", status, None,
-                        sort=9.0, detail=detail)
-            else:
-                rows.append({"dataset": dataset, "workload": workload.label, "name": label,
-                             "metric": "completed", "candidate": 1, "baseline": 1, "ratio": 1.0,
-                             "direction": "lower_is_worse", "status": "ok", "detail": detail})
-                # Timeouts in one candidate run: re-run to see whether they repeat. Also when the
-                # baseline timed out once too: only a repeat decides which side is broken.
-                f, t, tr, n = counts["candidate"]
-                if tr == 1:
-                    if (dataset, wl_key) not in rerun_done:
-                        want_rerun((dataset, wl_key), f"{label}: timeouts in 1 candidate run")
-                    else:
-                        findings.append({**make_finding(label, "completed", 1, 1, None, "lower_is_worse", "info"),
-                                         "_sort": 1.0})
-                        notes.append(f"{label}: {t} timeouts in 1 of {n} candidate runs, not repeated")
+            sort = 9.0
+            # Timeouts in one candidate run: re-run to see whether they repeat. Also when the
+            # baseline timed out once too: only a repeat decides which side is broken.
+            f, t, tr, n = counts["candidate"]
+            if status == "ok" and tr == 1:
+                if (dataset, wl_key) not in rerun_done:
+                    want_rerun((dataset, wl_key), f"{label}: timeouts in 1 candidate run")
+                else:
+                    status, sort = "info", 1.0
+                    notes.append(f"{label}: {t} timeouts in 1 of {n} candidate runs, not repeated")
+            record(dataset, workload, label, "completed", cand_ok, base_ok, "lower_is_worse", status, None, sort,
+                   detail=detail)
 
         # Latency, throughput and PING: from the finished runs.
         if not finished["candidate"] or not finished["baseline"]:
@@ -1217,15 +1199,10 @@ def analyse(
                 status = "improvement"
             else:
                 status = "ok"
-            row = {"dataset": dataset, "workload": workload.label, "name": name, "metric": metric,
-                   "candidate": rounded(cand), "baseline": rounded(base), "ratio": r, "direction": direction,
-                   "status": status, "first_pass": first, "re_run": second, "use": use}
-            rows.append(row)
-            if status != "ok":
-                finding = make_finding(name, metric, rounded(cand), rounded(base), RATIO_THRESHOLD, direction, status)
-                # Crossed rows rank by ratio; an info row ranks below the other info lines.
-                finding["_sort"] = severity if status != "info" else 0.4 + min(severity, 100.0) / 1000
-                findings.append(finding)
+            # Crossed rows rank by ratio; an info row ranks below the other info lines.
+            sort = 0.4 + min(severity, 100.0) / 1000 if status == "info" else severity
+            record(dataset, workload, name, metric, rounded(cand), rounded(base), direction, status,
+                   RATIO_THRESHOLD, sort, first_pass=first, re_run=second, use=use)
 
         # queue: every latency row is reported, none fails the run. nightly/long: the
         # whole-workload rows gate in both workloads; per query, every row gates read-only,
@@ -1284,16 +1261,10 @@ def analyse(
             status = "improvement"
         else:
             status = "ok"
-        rows.append({"dataset": dataset, "workload": workload.label, "name": name, "metric": "ping_max_ms",
-                     "candidate": rounded(cand), "baseline": rounded(base), "ratio": ratio(cand, base),
-                     "direction": "higher_is_worse", "status": status,
-                     "detail": f"candidate froze (>1 s) in {froze} of {len(values['candidate'])} runs, "
-                               f"baseline in {base_froze} of {len(values['baseline'])}"})
-        if status != "ok":
-            finding = make_finding(name, "ping_max_ms", rounded(cand), rounded(base), PING_LIMIT_MS,
-                                   "higher_is_worse", status)
-            finding["_sort"] = 8.0 if status == "regression" else 0.5
-            findings.append(finding)
+        record(dataset, workload, name, "ping_max_ms", rounded(cand), rounded(base), "higher_is_worse", status,
+               PING_LIMIT_MS, 8.0 if status == "regression" else 0.5,
+               detail=f"candidate froze (>1 s) in {froze} of {len(values['candidate'])} runs, "
+                      f"baseline in {base_froze} of {len(values['baseline'])}")
 
     # A workload whose candidate already did not finish a run is a regression; re-running it
     # would only spend more deadlines (6.0.4: up to 272 s a run) to confirm rows beside it.
@@ -1426,19 +1397,8 @@ class Check:
         # Absolute: the tools run from other directories (the workflow passes `--out out`).
         self.out = Path(args.out).resolve()
         self.raw = self.out / "raw"
-        # Only this invocation's files may become its artifacts: drop an earlier run's.
-        stale = self.raw.exists() or (self.out / "result.json").exists()
-        cleanup_error = None
-        try:
-            if self.raw.exists():
-                shutil.rmtree(self.raw)
-            (self.out / "result.json").unlink(missing_ok=True)
-        except OSError as exc:
-            cleanup_error = f"could not remove an earlier run's files from {self.out}: {exc}"
         self.raw.mkdir(parents=True, exist_ok=True)
         self.log = Log(self.raw / "check.log")
-        if stale and not cleanup_error:
-            self.log(f"removed an earlier run's raw/ and result.json from {self.out}")
         self.started = now()
         self.started_mono = time.monotonic()
         self.run_id = f"{os.getpid()}-{int(time.time())}"
@@ -1451,8 +1411,6 @@ class Check:
         self.rerun_done: set[tuple[str, str]] = set()
         self.error: str | None = None
         self.notes: list[str] = []
-        # Set before main(): main() raises it, so the result is an error, not a traceback.
-        self.cleanup_error = cleanup_error
         self.stopping = False
         self.machine: dict[str, Any] = machine_object()
 
@@ -1791,7 +1749,10 @@ class Check:
         verdict, error = verdict_of(selected, analysis, self.error or unfinished or nothing)
         counts = {"runs": len(self.runs), "rows": len(analysis.rows)}
         self.write_tables(analysis)
-        artifacts = [p.relative_to(self.out).as_posix() for p in sorted(self.raw.glob("*")) if p.is_file()]
+        # Only what this run wrote: an --out reused by hand may hold an earlier run's files.
+        written = [self.raw / n for n in ("check.log", "setup.log", "rows.csv", "runs.csv", "servers.json", "notes.txt")]
+        written += [q.path for q in self.query_files.values()]
+        artifacts = [p.relative_to(self.out).as_posix() for p in written if p.is_file() and p.is_relative_to(self.out)]
         if self.runs:
             artifacts.append("raw/runs")
         sides = {side: self.side_object(side) for side in ("candidate", "baseline")}
@@ -1842,7 +1803,7 @@ class Check:
         commit = getattr(self.args, f"{side}_commit")
         return {
             "image": self.images[side],
-            "commit": commit if commit and COMMIT_RE.match(commit) else None,
+            "commit": commit if commit and COMMIT_RE.fullmatch(commit) else None,
             "label": getattr(self.args, f"{side}_label") or default_label(self.images[side]),
         }
 
@@ -1877,12 +1838,10 @@ class Check:
             self.log(f"checkpoint failed: {exc}")
 
     def main(self) -> None:
-        if self.cleanup_error:
-            raise SetupError(self.cleanup_error)
         self.log(f"pokec check, mode {self.args.mode}: candidate {self.images['candidate']}, "
                  f"baseline {self.images['baseline']}")
         for side, image in self.images.items():
-            if not DIGEST_RE.match(image):
+            if not IMAGE_RE.fullmatch(image):
                 raise SetupError(f"the {side} image {image!r} is not pinned by digest (name@sha256:<64 hex>)")
         tools = self.setup()
         for name in self.mode.datasets:
