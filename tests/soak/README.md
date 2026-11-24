@@ -82,7 +82,7 @@ It pulls both images and runs each scenario once per side on this machine, one s
 after the other, flipping the order every other scenario. Servers are pinned to
 `$PERF_SERVER_CPUS` when set (the VM workflow sets it). It always writes
 `out/result.json`; `out/raw/` holds `rows.csv` (every comparison), `runs.csv` (every run:
-exit code, wall time, setup time, max load), `servers.json` (server binary and
+exit code, wall time, setup time), `servers.json` (server binary and
 `--version` per side) and each run's scenario output (`summary.json`, `checks.json`,
 logs, latency series; RDB/AOF files are deleted).
 
@@ -92,9 +92,9 @@ Findings, named `sNN ...`:
 | --- | --- | --- |
 | `sNN completed` | completed | 0 when the scenario raised, outlived its cap or a server log shows a crash; candidate-only is a regression at once |
 | `sNN <check>` | invariant | each check the scenario records (1 held, 0 broken). A correctness check broken on the candidate only is a regression at once; broken on both sides it is info (not new). A latency or resource check (`TIMING_RE`: p99, SLO, schedule kept, RSS/used_memory plateaus, drift, replication lag...) counts as broken only when every pair of runs, first pass and re-run, has it broken on the candidate and held on the baseline. Generous hang bounds (recovery < 180 s, replica sync ≤ 900 s, an index reaching OPERATIONAL) are correctness: missing one is a run that did not finish |
-| `sNN <op>` | p50_ms, throughput | each worker op with at least 200 successful samples on the baseline (an op the candidate nearly stopped doing still compares, at its throughput); crosses at p50 ≥ 2.0x and ≥ 2 ms slower (worst A/A swing 1.81x), or throughput ≤ 0.7x (worst A/A 0.82x) |
-| `sNN <op> (p99 shift, not gated)` | p99_ms | info only: a p99 shift of ≥ 2x and ≥ 10 ms on an op with ≥ 1,000 baseline samples is reported, never gated (worst A/A swing 56x) |
-| `sNN setup wall time` | p50_ms | the scenario's ingest phase; crosses at ≥ 1.5x and ≥ 5 s slower (worst A/A 1.03x) |
+| `sNN <op>` | p50_ms, throughput | each worker op with at least 200 successful samples on the baseline (an op the candidate nearly stopped doing still compares, at its throughput); crosses at p50 > 2.0x and > 2 ms slower (worst A/A swing 1.81x), or throughput < 0.7x (worst A/A 0.82x) |
+| `sNN <op> (p99 shift, not gated)` | p99_ms | info only: a p99 shift of > 2x and > 10 ms on an op with ≥ 1,000 baseline samples is reported, never gated (worst A/A swing 56x) |
+| `sNN setup wall time` | p50_ms | the scenario's ingest phase; crosses at > 1.5x and > 5 s slower (worst A/A 1.03x) |
 
 A perf crossing (and a timing check broken on the candidate only) is a regression only
 when a re-run of that scenario, both sides with the order swapped, crosses again; the
@@ -139,6 +139,7 @@ flake cannot hide a total breakage.
 | check | issue | evidence |
 | --- | --- | --- |
 | `s10 Live (under writes) index == scan during build/after` | #3095 | One index entry missing during or after a build under writes (`idx=1242 scan=1243`). main against itself: broke on both sides in a nightly run, on neither in a queue run. 6.2.0 vs 6.2.1 (run 45401220445): broke on 6.2.0 only. |
+| `s10 Live: index-path count == scan-path count (same query)` | #3095 | The same loss within one query (`idx=4056 scan=4057`). 6.2.1: broke in run 45477499408, held in run 45401220445. |
 
 **Known breaks on both sides** (reported as `info`; neither image introduced them):
 
@@ -164,7 +165,6 @@ the candidate, even when the deadline then leaves no time for the baseline). The
 | long | 1200 | 1.0 | gated, re-runs | must be sharded further (about 8 h for all 12) |
 
 The nightly registers two entries in `tests/perf/checks.yaml`, `soak-a` (s01–s06) and
-`soak-b` (s07–s12), each on its own VM. Outside the VM the check runs unpinned, waits
-for a quiet machine (1-minute load under half the cores for 30 s) and runs a scenario
-again when the load passed 1.25x the cores during it (`--no-quiet-gate` skips both).
+`soak-b` (s07–s12), each on its own VM. Outside the VM the check runs unpinned; nothing
+waits for a quiet machine, so read local numbers with that in mind.
 Unit tests: `python -I -m pytest tests/soak` (no server or Docker needed).

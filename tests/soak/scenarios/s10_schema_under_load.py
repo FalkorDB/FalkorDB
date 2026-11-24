@@ -470,9 +470,9 @@ def live_cmp_op(ctx):
                    {"a": lo, "b": hi}, ro=True)
     row = sk.rows(res)[0]
     x, y = sk.cval(row[0]), sk.cval(row[1])
-    if x != y:
-        finding("Live: index-path count == scan-path count (same query)", False, f"[{lo},{hi}] idx={x} scan={y}",
-                "critical")
+    # every comparison is recorded, so "k of n runs failed" has a real n (KNOWN_FLAKY, #3095)
+    finding("Live: index-path count == scan-path count (same query)", x == y,
+            "" if x == y else f"[{lo},{hi}] idx={x} scan={y}", "critical")
     return "live_cmp"
 
 

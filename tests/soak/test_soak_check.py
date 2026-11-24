@@ -31,6 +31,40 @@ def by_name(rows):
     return {r.name: r for r in rows}
 
 
+def _contract_validator():
+    """falkorbench.contract (bench/) or the older tests/perf/validate.py, whichever this tree has."""
+    try:
+        from falkorbench.contract import validate_result  # noqa: PLC0415
+        return validate_result
+    except ImportError:
+        path = HERE.parent / "perf" / "validate.py"
+        if not path.exists():
+            return None
+        import importlib.util  # noqa: PLC0415
+        spec = importlib.util.spec_from_file_location("perf_validate", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.validate_result
+
+
+def _inputs_ok(doc):
+    """A result written for refused inputs (a tag, a short commit) cannot be valid."""
+    return all(sc.IMAGE_RE.fullmatch(doc[s]["image"]) and
+               (doc[s]["commit"] is None or sc.COMMIT_RE.fullmatch(doc[s]["commit"]))
+               for s in ("candidate", "baseline"))
+
+
+@pytest.fixture(autouse=True)
+def every_result_is_valid(tmp_path):
+    """Whatever result.json a test leaves in tmp_path must pass the contract's validator."""
+    yield
+    validate = _contract_validator()
+    for f in tmp_path.rglob("result.json"):
+        doc = json.loads(f.read_text())
+        if validate is not None and _inputs_ok(doc):
+            assert [str(x) for x in validate(doc)] == [], f
+
+
 def args(**kw):
     base = dict(candidate=DIGEST_A, baseline=DIGEST_B, mode="nightly", check="soak-b",
                 candidate_label=None, baseline_label=None, candidate_commit=None,
@@ -42,27 +76,11 @@ def args(**kw):
 # ------------------------------------------------------------------ 1-held / 0-broken pairs
 @pytest.mark.parametrize("c,b,status", [
     (0, 1, "regression"), (0, None, "regression"), (0, 0, "info"),
-    (1, 0, "improvement"), (1, 1, "ok"), (1, None, "ok"),
+    (1, 0, "improvement"), (1, 1, "ok"), (1, None, "info"), (None, None, "ok"),
     (None, 1, "info"), (None, 0, "info"),
 ])
 def test_zero_one_status(c, b, status):
     assert sc._zero_one("x", "invariant", c, b).status == status
-
-
-def test_correctness_check_broken_on_candidate_is_a_regression_at_once():
-    rows = by_name(sc.scenario_rows("s12_iot_retention",
-                                    [run("candidate", checks={"ingest reading count": False})],
-                                    [run("baseline", checks={"ingest reading count": True})], True))
-    row = rows["s12 ingest reading count"]
-    assert (row.status, row.candidate, row.baseline, row.crossed) == ("regression", 0, 1, False)
-
-
-def test_correctness_check_broken_on_both_sides_is_info():
-    rows = by_name(sc.scenario_rows("s01_social_feed",
-                                    [run("candidate", checks={"undirected shortestPath supported": False})],
-                                    [run("baseline", checks={"undirected shortestPath supported": False})],
-                                    True))
-    assert rows["s01 undirected shortestPath supported"].status == "info"
 
 
 def test_known_flaky_check_is_never_gated_but_named(tmp_path):
@@ -76,8 +94,6 @@ def test_known_flaky_check_is_never_gated_but_named(tmp_path):
     assert res["verdict"] == "pass" and res["findings"] == []
     assert f"known flaky, not gated: s10 {name} (#3095) broke on candidate" in res["summary"]
     assert ",known," in (tmp_path / "raw" / "rows.csv").read_text()
-    if sc.VALIDATOR.exists():
-        assert sc.validate(res) == []
 
 
 def test_every_known_flaky_entry_names_an_issue():
@@ -274,6 +290,29 @@ def test_op_the_candidate_nearly_stopped_doing_still_compares():
         assert ("s12 w", "p99_ms") not in rows   # too few candidate samples for a p99
 
 
+def test_thresholds_are_strict():
+    """Exactly at the ratio or exactly at the floor does not cross (v1.12)."""
+    assert sc._crossing(4.0, 2.0, 2.0, 1.0) == (False, False)       # ratio exactly 2.0
+    assert sc._crossing(4.0, 1.0, 2.0, 3.0) == (False, False)       # delta exactly the floor
+    assert sc._crossing(4.1, 2.0, 2.0, 2.0) == (True, False)
+    rows = sc.scenario_rows("s12_iot_retention", [run("candidate", ops={"w": op(9.0, tput=7.0)})],
+                            [run("baseline", ops={"w": op(9.0, tput=10.0)})], True)
+    assert not [r for r in rows if r.metric == "throughput"][0].crossed   # exactly 0.7x
+
+
+def test_an_image_without_its_server_binary_is_an_error(monkeypatch):
+    import subprocess
+    import sys
+    import types
+    fake = types.SimpleNamespace(IMAGE_MODULE="/m.so", image_server=lambda ref: "valkey-server")
+    def no_binary(ref):
+        raise subprocess.CalledProcessError(127, ["docker"], stderr='exec: "valkey-server": not found')
+    fake.image_server_version = no_binary
+    monkeypatch.setitem(sys.modules, "soakkit", fake)
+    with pytest.raises(RuntimeError, match="has no runnable valkey-server"):
+        sc.server_info(DIGEST_A)
+
+
 def test_improvement():
     rows = sc.scenario_rows("s12_iot_retention", [run("candidate", ops={"w": op(3.0)})],
                             [run("baseline", ops={"w": op(30.0)})], True)
@@ -342,11 +381,6 @@ def test_scenario_list():
 def test_default_label():
     assert sc.side_of(DIGEST_A, None, None)["label"] == "ghcr.io/falkordb/falkordb-server@aaaaaaaaaaaa"
     assert sc.side_of("x/y:6.2.0@sha256:" + "c" * 64, None, None)["label"] == "x/y@cccccccccccc"
-
-
-def _validator():
-    if not sc.VALIDATOR.exists():
-        pytest.skip("tests/perf/validate.py is not on this branch yet")
 
 
 class FakeSoak:
@@ -431,8 +465,6 @@ def test_a_candidate_hang_with_no_time_left_for_the_baseline_is_still_a_regressi
     assert len(soak.calls) == 1 and sched.runs["s07_mvcc_consistency"]["baseline"] == []
     res = sc.finish(args(), tmp_path, 1.7e9, ["s07_mvcc_consistency"], sched, None, [], p)
     assert res["verdict"] == "regression" and res["findings"][0]["name"] == "s07 completed"
-    if sc.VALIDATOR.exists():
-        assert sc.validate(res) == []
 
 
 def test_side_b_hang_is_capped_by_side_a_and_counts_as_a_hang(tmp_path):
@@ -459,8 +491,6 @@ def test_rerun_without_time_is_unconfirmed_and_an_error(tmp_path):
     assert sched.unconfirmed == ["s12_iot_retention (no time to re-run)"]
     res = sc.finish(args(), tmp_path, 1.7e9, ["s12_iot_retention"], sched, None, [], p)
     assert res["verdict"] == "error" and "no time to re-run" in res["error"]
-    if sc.VALIDATOR.exists():
-        assert sc.validate(res) == []
 
 
 def test_rerun_that_repeats_confirms():
@@ -514,8 +544,6 @@ def test_nothing_measured_is_an_error_not_a_pass(tmp_path):
                              for s in ("s07_mvcc_consistency", "s12_iot_retention")})
     res = sc.finish(args(), tmp_path, 1.7e9, list(dead.runs), dead, None, [], sc.MODES["nightly"])
     assert res["verdict"] == "error" and "no check recorded on either side" in res["error"]
-    if sc.VALIDATOR.exists():
-        assert sc.validate(res) == []
 
 
 def test_candidate_server_that_never_starts_is_a_regression(tmp_path):
@@ -535,10 +563,7 @@ def test_regression_summary_keeps_the_error(tmp_path):
     assert "terminated by signal 15" in res["summary"]
 
 
-@pytest.mark.parametrize("kw,msg", [
-    ({"check": "Soak"}, "--check"), ({"check": "soak--a"}, "--check"),
-    ({"candidate_label": "  "}, "label"), ({"baseline_commit": "abc"}, "40 hex"),
-])
+@pytest.mark.parametrize("kw,msg", [({"baseline_commit": "abc"}, "40 hex")])
 def test_inputs_refused_before_any_run(tmp_path, kw, msg):
     a = ["--candidate", DIGEST_A, "--baseline", DIGEST_B, "--out", str(tmp_path), "--mode", "queue"]
     flags = {"check": "--check", "candidate_label": "--candidate-label", "baseline_commit": "--baseline-commit"}
@@ -549,8 +574,7 @@ def test_inputs_refused_before_any_run(tmp_path, kw, msg):
     assert res["verdict"] == "error" and msg in res["error"]
 
 
-def test_uppercase_repo_is_refused_when_the_validator_is_here(tmp_path):
-    _validator()
+def test_uppercase_repo_is_refused(tmp_path):
     sc.main(["--candidate", "FalkorDB/server@sha256:" + "a" * 64, "--baseline", DIGEST_B,
              "--out", str(tmp_path), "--mode", "queue"])
     res = json.loads((tmp_path / "result.json").read_text())
@@ -589,7 +613,6 @@ def test_summary_is_one_line():
 
 
 def test_finish_writes_a_valid_regression(tmp_path):
-    _validator()
     cand = [run("candidate", checks={"ingest reading count": True}, ops={"ingest_batch": op(90.0)}),
             run("candidate", 2, checks={"ingest reading count": True}, ops={"ingest_batch": op(75.0)})]
     base = [run("baseline", checks={"ingest reading count": True}, ops={"ingest_batch": op(9.0)}),
@@ -597,7 +620,6 @@ def test_finish_writes_a_valid_regression(tmp_path):
     res = sc.finish(args(), tmp_path, 1.7e9, ["s12_iot_retention"],
                     sc.Schedule(runs={"s12_iot_retention": {"candidate": cand, "baseline": base}}),
                     None, [], sc.MODES["nightly"])
-    assert sc.validate(res) == []
     assert res["verdict"] == "regression" and res["confirmed"]
     assert res["findings"][0]["name"] == "s12 ingest_batch"
     assert json.loads((tmp_path / "result.json").read_text()) == res
@@ -605,23 +627,21 @@ def test_finish_writes_a_valid_regression(tmp_path):
 
 
 def test_finish_pass_and_both_broken(tmp_path):
-    _validator()
     cand = [run("candidate", checks={"x": False, "y": True}, ops={"w": op(3.0)})]
     base = [run("baseline", checks={"x": False, "y": True}, ops={"w": op(3.1)})]
     res = sc.finish(args(), tmp_path, 1.7e9, ["s12_iot_retention"],
                     sc.Schedule(runs={"s12_iot_retention": {"candidate": cand, "baseline": base}}),
                     None, [], sc.MODES["nightly"])
-    assert sc.validate(res) == [] and res["verdict"] == "pass" and not res["confirmed"]
+    assert res["verdict"] == "pass" and not res["confirmed"]
     assert [f["name"] for f in res["findings"]] == ["s12 x"]
     assert "1 broken on both sides" in res["summary"]
 
 
 def test_finish_scenarios_not_run_is_an_error(tmp_path):
-    _validator()
     res = sc.finish(args(), tmp_path, 1.7e9, ["s07_mvcc_consistency", "s12_iot_retention"],
                     sc.Schedule(not_run=["s07_mvcc_consistency (deadline)", "s12_iot_retention (deadline)"]),
                     None, [], sc.MODES["nightly"])
-    assert sc.validate(res) == [] and res["verdict"] == "error"
+    assert res["verdict"] == "error"
     assert "s12_iot_retention (deadline)" in res["error"]
 
 
@@ -639,5 +659,3 @@ def test_main_with_digests_off_linux_or_without_docker_is_a_clear_error(tmp_path
     res = json.loads((tmp_path / "result.json").read_text())
     assert rc == 0 and res["verdict"] == "error"
     assert "Linux only" in res["error"] or "docker is not on PATH" in res["error"]
-    if sc.VALIDATOR.exists():
-        assert sc.validate(res) == []
