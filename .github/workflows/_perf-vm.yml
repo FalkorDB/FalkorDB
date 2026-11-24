@@ -255,9 +255,9 @@ jobs:
           $sudo systemctl list-timers perf-vm-deadline.timer --no-pager
 
       - name: Install git and python3
-        # Without git, checkout falls back to the REST API, and python3 is
-        # only needed for the helpers; a failed install is worth a warning,
-        # not the night.
+        # Debian 12's GCE image already ships python3 and git (seen in the
+        # proof run); this only makes sure. A failed install is worth a
+        # warning, not the night.
         continue-on-error: true
         run: |
           set -euo pipefail
