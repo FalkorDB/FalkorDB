@@ -62,8 +62,8 @@ Delivery:
   `*bold*`, `` `code` ``, `<url|text>` and `- ` bullets. Text from results and
   commit titles has `<` replaced, so it cannot become a mention or a disguised
   link (a bare URL in it still shows as itself). A link whose URL holds `<`, `>`,
-  `|`, quotes, brackets or spaces is shown as plain text, and a `run_url` like that
-  is replaced by the current run's. Google caps a message at 32,000 bytes ("The
+  `|`, quotes, brackets or spaces is shown as plain text, and a `run_url` like that,
+  or one longer than 300 characters, is replaced by the current run's. Google caps a message at 32,000 bytes ("The
   maximum message size (including any text or cards) is 32,000 bytes",
   developers.google.com/workspace/chat/create-messages, an API page; the webhook
   page states no limit). The message stays under 4,000 characters: fewer rows, free

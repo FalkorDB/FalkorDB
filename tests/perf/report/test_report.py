@@ -619,6 +619,29 @@ class Delivery(Workspace):
         self.assertNotIn("evil.example", stdout)
         self.assertIn("<https://github.com/FalkorDB/FalkorDB/actions/runs/5|run>", stdout)
 
+    def test_an_oversized_run_url_is_replaced_and_every_kind_of_night_fits(self):
+        huge = "https://github.com/FalkorDB/FalkorDB/actions/runs/1?" + "a" * 40_000
+        nights = {
+            "green": nightly("green", [result("micro", "pass")]),
+            "error": nightly("error", [{"check": "pokec", "verdict": "error", "error": "no result.json"}]),
+            "red": nightly("red", [result("micro", "regression", [UNWIND])]),
+            "skipped": nightly("skipped", [], skip_reason="main has not moved"),
+        }
+        for status, night in nights.items():
+            for environ, link in (({"GITHUB_RUN_ID": "5"}, "<https://github.com/FalkorDB/FalkorDB/actions/runs/5|run>"),
+                                  ({}, "run link unknown")):
+                with self.subTest(status=status, environ=environ):
+                    night["run_url"] = huge
+                    with unittest.mock.patch.object(post, "contract_problems", return_value=[]), \
+                            unittest.mock.patch.object(post, "commits_since_green",
+                                                       return_value=post.CommitRange([], 0, "x")):
+                        code, stdout, _ = self.run_post(night, environ)
+                    self.assertEqual(code, 0)
+                    self.assertLessEqual(len(stdout.rstrip("\n")), post.CHAT_CHARACTER_BUDGET)
+                    self.assertTrue(stdout.startswith("*Perf nightly 2026-11-24: "), stdout[:100])
+                    self.assertIn(link, stdout)
+                    self.assertNotIn("a" * 100, stdout)
+
     def test_commit_titles_cannot_mention_or_link_in_chat(self):
         night = nightly("red", [result("micro", "regression", [UNWIND])])
         commits = post.CommitRange([post.Commit("1" * 40, "fix <users/all> <https://evil.example|x>", 12)], 1)

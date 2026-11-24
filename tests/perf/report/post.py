@@ -48,6 +48,8 @@ USER_AGENT = "falkordb-perf-report"
 CHAT_CHARACTER_BUDGET = 4000
 FREE_TEXT_CHARACTERS = 300
 LABEL_CHARACTERS = 80
+# A run link is about 70 characters; anything far longer is not one to print.
+RUN_URL_CHARACTERS = 300
 
 VERDICTS = ("pass", "regression", "error")
 STATUS_RANK = {"green": 0, "error": 1, "red": 2}
@@ -287,7 +289,8 @@ def read_night(path: Path, environ: dict) -> Night:
     declared = shorten(declared, LABEL_CHARACTERS)
 
     run_url = raw.get("run_url")
-    if not (isinstance(run_url, str) and run_url.startswith("https://") and is_safe_url(run_url)):
+    if not (isinstance(run_url, str) and run_url.startswith("https://") and is_safe_url(run_url)
+            and len(run_url) <= RUN_URL_CHARACTERS):
         run_url = run_url_from_environment(environ)
 
     unknown_candidate = text_or(candidate.get("image"), "candidate unknown", LABEL_CHARACTERS)
@@ -376,7 +379,7 @@ def run_url_from_environment(environ: dict) -> str:
     if not run_id:
         return ""
     url = f"{server_url(environ)}/{repository(environ)}/actions/runs/{run_id}"
-    return url if is_safe_url(url) else ""
+    return url if is_safe_url(url) and len(url) <= RUN_URL_CHARACTERS else ""
 
 
 def server_url(environ: dict) -> str:
