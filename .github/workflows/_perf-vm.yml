@@ -10,6 +10,10 @@
 # create   ubuntu-latest. Creates the VM through FalkorDB/gce-github-runner,
 #          every zone for machine_type, then every zone for the fallback type
 #          (tests/perf/vm/create-vm.sh).
+# Its own scripts (tests/perf/vm) come from the commit this file was read
+# from (job.workflow_sha), so a caller on any branch gets the matching ones;
+# the check's code comes from the calling commit.
+#
 # run      The VM. Runs the command on a checkout of the calling commit, the
 #          client pinned to half the cores and PERF_SERVER_CPUS naming the
 #          other half, then uploads out/ as perf-result-<check>, also when
@@ -170,11 +174,36 @@ jobs:
             echo "deadline=$((TIMEOUT + 30))"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Check out the VM scripts
+      - name: Check out this workflow's own VM scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The commit this workflow file was read from, not the caller's:
+          # a caller on another branch, or older than the workflow, may not
+          # have tests/perf/vm at all.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .perf-vm-tools
           sparse-checkout: tests/perf/vm
           persist-credentials: false
+
+      - name: Confirm the scripts are this workflow's commit
+        env:
+          WANT_REPO: ${{ job.workflow_repository }}
+          WANT_SHA: ${{ job.workflow_sha }}
+          CALLER: ${{ github.repository }}@${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Exported before the comparison: on a mismatch this step fails the
+          # job, but cleanup must still find its delete script.
+          echo "PERF_VM_TOOLS=$GITHUB_WORKSPACE/.perf-vm-tools/tests/perf/vm" >> "$GITHUB_ENV"
+          got=$(git -C .perf-vm-tools rev-parse HEAD || echo none)
+          echo "VM scripts: $WANT_REPO@$got (workflow $WANT_SHA; caller $CALLER)"
+          # An empty job.workflow_sha would make checkout fall back to the
+          # caller's commit, which is the bug this checkout exists to avoid.
+          if [[ -z $WANT_SHA || $got != "$WANT_SHA" ]]; then
+            echo "::error::VM scripts are at '$got', not this workflow's commit '$WANT_SHA'"
+            exit 1
+          fi
 
       - name: Check out FalkorDB/gce-github-runner
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -209,7 +238,7 @@ jobs:
           # which ubuntu-latest's shared addresses can exhaust; ask with a token.
           RUNNER_VER=$(gh api repos/actions/runner/releases/latest --jq '.tag_name | ltrimstr("v")') || RUNNER_VER=latest
           export RUNNER_VER
-          tests/perf/vm/create-vm.sh "$PWD/.gce-github-runner" "$PERF_VM_LABEL" "$ZONES" "$MACHINE_TYPE" "$FALLBACK"
+          "$PERF_VM_TOOLS/create-vm.sh" "$PWD/.gce-github-runner" "$PERF_VM_LABEL" "$ZONES" "$MACHINE_TYPE" "$FALLBACK"
 
       - name: Summary
         if: always()
@@ -269,9 +298,44 @@ jobs:
           "${apt[@]}" install -y --no-install-recommends git python3 ca-certificates
 
       - name: Check out the calling commit
+        # The check's own code. It comes first: checkout empties a workspace
+        # that is not its repository, which would remove the scripts below.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Check out this workflow's own VM scripts
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit this workflow file was read from, not the caller's:
+          # a caller on another branch, or older than the workflow, may not
+          # have tests/perf/vm at all.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .perf-vm-tools
+          sparse-checkout: tests/perf/vm
+          persist-credentials: false
+
+      - name: Confirm the scripts are this workflow's commit
+        if: always()
+        env:
+          WANT_REPO: ${{ job.workflow_repository }}
+          WANT_SHA: ${{ job.workflow_sha }}
+          CALLER: ${{ github.repository }}@${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Exported before the comparison: on a mismatch this step fails the
+          # job, but cleanup must still find its delete script.
+          echo "PERF_VM_TOOLS=$GITHUB_WORKSPACE/.perf-vm-tools/tests/perf/vm" >> "$GITHUB_ENV"
+          got=$(git -C .perf-vm-tools rev-parse HEAD || echo none)
+          echo "VM scripts: $WANT_REPO@$got (workflow $WANT_SHA; caller $CALLER)"
+          # An empty job.workflow_sha would make checkout fall back to the
+          # caller's commit, which is the bug this checkout exists to avoid.
+          if [[ -z $WANT_SHA || $got != "$WANT_SHA" ]]; then
+            echo "::error::VM scripts are at '$got', not this workflow's commit '$WANT_SHA'"
+            exit 1
+          fi
 
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -288,7 +352,7 @@ jobs:
       - name: Machine and cores
         run: |
           set -euo pipefail
-          perf_env=$(python3 -I tests/perf/vm/vm.py env --machine-json "$RUNNER_TEMP/machine.json")
+          perf_env=$(python3 -I "$PERF_VM_TOOLS/vm.py" env --machine-json "$RUNNER_TEMP/machine.json")
           echo "$perf_env" | tee -a "$GITHUB_ENV"
           {
             echo "Machine: \`$(cat "$RUNNER_TEMP/machine.json")\`"
@@ -310,7 +374,7 @@ jobs:
           CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
           BASELINE_COMMIT: ${{ inputs.baseline_commit }}
           TIMEOUT_SECONDS: ${{ needs.create.outputs.command_timeout_s }}
-        run: tests/perf/vm/run-check.sh
+        run: '"$PERF_VM_TOOLS/run-check.sh"'
 
       - name: Record the VM
         if: always()
@@ -324,7 +388,7 @@ jobs:
           # Started, no exit code, failed: the step timeout stopped it.
           TIMED_OUT: ${{ steps.check.outputs.timed_out || (steps.check.outputs.started == 'true' && steps.check.outcome == 'failure' && 'true') || 'false' }}
         run: |
-          python3 -I tests/perf/vm/vm.py record --out out/perf-vm.json --check "$CHECK" \
+          python3 -I "$PERF_VM_TOOLS/vm.py" record --out out/perf-vm.json --check "$CHECK" \
             --vm-name "$VM_NAME" --zone "$ZONE" --machine-type "$TYPE" \
             --fallback-used "$FALLBACK_USED" --command-exit "$COMMAND_EXIT" --timed-out "$TIMED_OUT"
 
@@ -345,12 +409,38 @@ jobs:
     # Every step says always(): a cancel that lands while this job runs
     # skips any step that does not, and the delete must still happen.
     steps:
-      - name: Check out the VM scripts
+      - name: Check out this workflow's own VM scripts
         if: always()
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The commit this workflow file was read from, not the caller's:
+          # a caller on another branch, or older than the workflow, may not
+          # have tests/perf/vm at all.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .perf-vm-tools
           sparse-checkout: tests/perf/vm
           persist-credentials: false
+
+      - name: Confirm the scripts are this workflow's commit
+        if: always()
+        env:
+          WANT_REPO: ${{ job.workflow_repository }}
+          WANT_SHA: ${{ job.workflow_sha }}
+          CALLER: ${{ github.repository }}@${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Exported before the comparison: on a mismatch this step fails the
+          # job, but cleanup must still find its delete script.
+          echo "PERF_VM_TOOLS=$GITHUB_WORKSPACE/.perf-vm-tools/tests/perf/vm" >> "$GITHUB_ENV"
+          got=$(git -C .perf-vm-tools rev-parse HEAD || echo none)
+          echo "VM scripts: $WANT_REPO@$got (workflow $WANT_SHA; caller $CALLER)"
+          # An empty job.workflow_sha would make checkout fall back to the
+          # caller's commit, which is the bug this checkout exists to avoid.
+          if [[ -z $WANT_SHA || $got != "$WANT_SHA" ]]; then
+            echo "::error::VM scripts are at '$got', not this workflow's commit '$WANT_SHA'"
+            exit 1
+          fi
 
       - name: Authenticate gcloud
         if: always()
@@ -375,12 +465,24 @@ jobs:
           if [[ $CREATE_RESULT == success || $PLANNED == failure ]]; then grace=0; fi
           # Every attempt's label: "Re-run failed jobs" may re-run only this
           # job, after an earlier attempt's cleanup failed.
+          delete=${PERF_VM_TOOLS:-.perf-vm-tools/tests/perf/vm}/delete-vms.sh
           failed=0
           for attempt in $(seq 1 "$GITHUB_RUN_ATTEMPT"); do
             label=${PERF_VM_LABEL%-*}-$attempt
             wait=0
             if [[ $attempt == "$GITHUB_RUN_ATTEMPT" ]]; then wait=$grace; fi
-            tests/perf/vm/delete-vms.sh "$label" "$wait" || failed=1
+            if [[ -x $delete ]]; then
+              "$delete" "$label" "$wait" || failed=1
+            else
+              # No scripts (a checkout that failed): delete anyway, then fail.
+              echo "::error::$delete is missing; deleting $label inline"
+              failed=1
+              gcloud compute instances list --filter="labels.${label}=1" \
+                  --format='value(name,zone.basename())' \
+                | while read -r name zone; do
+                    gcloud compute instances delete "$name" --zone="$zone" --quiet </dev/null
+                  done
+            fi
           done
           (( failed == 0 )) || exit 1
           echo "No VM labelled \`${PERF_VM_LABEL%-*}-<1..$GITHUB_RUN_ATTEMPT>\` remains." >> "$GITHUB_STEP_SUMMARY"
@@ -398,7 +500,7 @@ jobs:
           CREATE_RESULT: ${{ needs.create.result }}
           CREATE_ERROR: ${{ needs.create.outputs.create_error }}
         run: |
-          python3 -I tests/perf/vm/vm.py record --out out/perf-vm.json --check "$CHECK" \
+          python3 -I "$PERF_VM_TOOLS/vm.py" record --out out/perf-vm.json --check "$CHECK" \
             --create-error "${CREATE_ERROR:-the create job ended ($CREATE_RESULT) before a VM came up}"
 
       - name: Upload perf-result-${{ inputs.check }}

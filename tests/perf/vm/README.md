@@ -41,6 +41,15 @@ The VM job runs, in a checkout of the calling commit:
 
 A label or commit flag is passed only when its input is non-empty. `command` is
 split on spaces and run directly, so it cannot hold quotes, pipes or `VAR=x`.
+The one word it may contain is `$PERF_VM_TOOLS` (or `${PERF_VM_TOOLS}`), which
+is replaced with the path of this workflow's own `tests/perf/vm` (below).
+
+Two checkouts: the check's code is the **calling commit**, while this
+workflow's scripts (`tests/perf/vm`) come from the commit the workflow file was
+read from (`job.workflow_repository` at `job.workflow_sha`), in
+`.perf-vm-tools/`. A caller on another branch, or one older than these
+scripts, still gets the matching ones. Each job logs and checks that commit
+("VM scripts: …") and fails if it differs.
 
 ## What the check gets (contract v1.3)
 
@@ -50,6 +59,7 @@ split on spaces and run directly, so it cannot hold quotes, pipes or `VAR=x`.
 | `PERF_CLIENT_CPUS` | CPUs the command already runs on (`taskset`), so the client side needs nothing |
 | `PERF_ZONE`, `PERF_MACHINE_TYPE` | where the VM is, read from the metadata server |
 | `PERF_MACHINE_JSON` | a file holding the result.json `machine` object: `{"runner": "gce", "type", "cpu", "cores"}` |
+| `PERF_VM_TOOLS` | absolute path of this workflow's own `tests/perf/vm` (e.g. `smoke.py`) |
 
 The split is by physical core: hyperthread siblings stay together, the
 servers get the first half of the cores and the client the rest. On an
@@ -154,6 +164,8 @@ the same, and its result.json always says `"check": "smoke"`, so register it
 under that name. Use it to try the VM path without a real check:
 
 ```yaml
-command: python3 -I tests/perf/vm/smoke.py
-timeout_minutes: 10
+- name: smoke            # result.json always says "check": "smoke"
+  runner: vm
+  command: python3 -I $PERF_VM_TOOLS/smoke.py
+  timeout_minutes: 15
 ```

@@ -441,13 +441,14 @@ class RunCheckTest(unittest.TestCase):
             (tmp / "slow.sh").write_text("sleep 30\n")
             outputs = tmp / "outputs"
             env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="smoke",
-                       COMMAND=command.format(dir=tmp),
+                       COMMAND=command.replace("{dir}", str(tmp)),
                        CANDIDATE="c@sha256:" + "1" * 64, BASELINE="b@sha256:" + "2" * 64,
                        MODE="nightly", TIMEOUT_SECONDS=timeout, PERF_CLIENT_CPUS="")
-            for key in ("CANDIDATE_LABEL", "BASELINE_LABEL", "CANDIDATE_COMMIT", "BASELINE_COMMIT", "EXIT"):
+            for key in ("CANDIDATE_LABEL", "BASELINE_LABEL", "CANDIDATE_COMMIT", "BASELINE_COMMIT", "EXIT",
+                        "PERF_VM_TOOLS"):
                 env.pop(key, None)
-            env.update(extra)
-            # The step is `run: tests/perf/vm/run-check.sh`, which GitHub hands to
+            env.update({key: value.replace("{dir}", str(tmp)) for key, value in extra.items()})
+            # The step is `run: "$PERF_VM_TOOLS/run-check.sh"`, which GitHub hands to
             # `bash -e`: the file is executed, so it must be executable.
             proc = subprocess.run(["bash", "-e", "-c", str(HERE / "run-check.sh")], cwd=tmp,
                                   capture_output=True, text=True, env=env)
@@ -467,6 +468,18 @@ class RunCheckTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 124)
         self.assertEqual(out, {"started": "true", "command_exit": "124", "timed_out": "true"})
 
+    def test_command_may_name_the_workflow_scripts(self):
+        for spelling in ("$PERF_VM_TOOLS", "${PERF_VM_TOOLS}"):
+            proc, out, argv = self.run_check(f"bash {spelling}/record.sh", PERF_VM_TOOLS="{dir}")
+            self.assertEqual(proc.returncode, 0, spelling + proc.stdout + proc.stderr)
+            self.assertEqual(argv[:2], ["--candidate", "c@sha256:" + "1" * 64], spelling)
+
+    def test_unset_tools_path_is_an_error_not_a_wrong_path(self):
+        proc, out, _ = self.run_check("bash $PERF_VM_TOOLS/record.sh")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("PERF_VM_TOOLS", proc.stdout)
+        self.assertEqual(out, {})
+
     def test_contract_flags_and_only_non_empty_labels(self):
         proc, out, argv = self.run_check("bash {dir}/record.sh", CANDIDATE_LABEL="main@4c10889",
                                          BASELINE_COMMIT="", BASELINE_LABEL="6.2.0")
@@ -483,6 +496,36 @@ class ScriptModeTest(unittest.TestCase):
             self.assertTrue(os.access(script, os.X_OK), f"{script.name} is not executable")
 
 
+class WorkflowScriptsTest(unittest.TestCase):
+    """Every job runs tests/perf/vm from the workflow's own commit, not the caller's."""
+
+    def test_scripts_come_from_the_workflow_commit(self):
+        text = (HERE.parents[2] / ".github" / "workflows" / "_perf-vm.yml").read_text()
+        jobs = dict(zip(*[iter(re.split(r"^  (create|run|cleanup):$", text, flags=re.M)[1:])] * 2))
+        self.assertEqual(sorted(jobs), ["cleanup", "create", "run"])
+        for name, body in jobs.items():
+            self.assertIn("repository: ${{ job.workflow_repository }}", body, name)
+            self.assertIn("ref: ${{ job.workflow_sha }}", body, name)
+            self.assertIn("path: .perf-vm-tools", body, name)
+            self.assertIn('[[ -z $WANT_SHA || $got != "$WANT_SHA" ]]', body, name)
+            # PERF_VM_TOOLS is exported before the comparison can fail the step.
+            self.assertLess(body.index("PERF_VM_TOOLS=$GITHUB_WORKSPACE"), body.index("[[ -z $WANT_SHA"), name)
+        # The calling commit is checked out first: checkout empties a workspace
+        # that is not its repository, which would remove .perf-vm-tools.
+        run = jobs["run"]
+        self.assertLess(run.index("- name: Check out the calling commit"), run.index("path: .perf-vm-tools"))
+        # Every cleanup step survives a cancel.
+        steps = re.split(r"^      - ", jobs["cleanup"].split("    steps:\n", 1)[1], flags=re.M)[1:]
+        self.assertGreaterEqual(len(steps), 5)
+        for step in steps:
+            self.assertRegex(step, r"\n        if: always\(\)", step.splitlines()[0])
+        # Outside comments and the checkout itself, no step names the caller's copy.
+        for line in text.splitlines():
+            code = line.split("#", 1)[0]
+            if "tests/perf/vm" in code:
+                self.assertTrue("sparse-checkout:" in code or ".perf-vm-tools/tests/perf/vm" in code, line)
+
+
 class WorkflowLabelTest(unittest.TestCase):
     """The runner label is spelled the same where it is created, used and deleted."""
 
@@ -492,12 +535,13 @@ class WorkflowLabelTest(unittest.TestCase):
         runs_on = re.findall(r"^    runs-on: (perf-.+)$", text, re.M)
         self.assertEqual(runs_on, [label])
         create, rest = text.split("\n  run:\n")
-        self.assertIn('create-vm.sh "$PWD/.gce-github-runner" "$PERF_VM_LABEL"', create)
+        self.assertIn('create-vm.sh" "$PWD/.gce-github-runner" "$PERF_VM_LABEL"', create)
         cleanup = rest.split("\n  cleanup:\n")[1]
         # Cleanup deletes every attempt's label: the template with its last part replaced.
         self.assertTrue(label.endswith("-${{ github.run_attempt }}"), label)
         self.assertIn('label=${PERF_VM_LABEL%-*}-$attempt', cleanup)
-        self.assertIn('delete-vms.sh "$label"', cleanup)
+        self.assertIn("delete=${PERF_VM_TOOLS:-.perf-vm-tools/tests/perf/vm}/delete-vms.sh", cleanup)
+        self.assertIn('"$delete" "$label"', cleanup)
 
 
 class DeleteVmsTest(unittest.TestCase):

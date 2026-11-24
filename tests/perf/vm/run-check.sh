@@ -3,7 +3,9 @@
 #
 #   run-check.sh
 #
-# Environment: COMMAND (split on spaces, no shell syntax), CHECK, CANDIDATE,
+# Environment: COMMAND (split on spaces, no shell syntax; `$PERF_VM_TOOLS`
+# or `${PERF_VM_TOOLS}` in it is replaced with that variable, the workflow's
+# own tests/perf/vm, so a caller can run e.g. `$PERF_VM_TOOLS/smoke.py`), CHECK, CANDIDATE,
 # BASELINE, MODE, optional CANDIDATE_LABEL, BASELINE_LABEL,
 # CANDIDATE_COMMIT, BASELINE_COMMIT (each flag passed only when non-empty),
 # TIMEOUT_SECONDS, optional PERF_CLIENT_CPUS (the command runs under
@@ -16,7 +18,18 @@
 set -uo pipefail
 set +e
 
-read -r -a cmd <<< "$COMMAND"
+read -r -a words <<< "$COMMAND"
+cmd=()
+# shellcheck disable=SC2016 # the variable's name, matched literally
+for word in "${words[@]}"; do
+  if [[ $word == *'$PERF_VM_TOOLS'* || $word == *'${PERF_VM_TOOLS}'* ]] && [[ -z ${PERF_VM_TOOLS:-} ]]; then
+    echo "::error::the command names \$PERF_VM_TOOLS, but it is not set"
+    exit 2
+  fi
+  word=${word//'${PERF_VM_TOOLS}'/"${PERF_VM_TOOLS:-}"}
+  word=${word//'$PERF_VM_TOOLS'/"${PERF_VM_TOOLS:-}"}
+  cmd+=("$word")
+done
 args=(--candidate "$CANDIDATE" --baseline "$BASELINE" --out out --mode "$MODE")
 if [[ -n ${CANDIDATE_LABEL:-} ]]; then args+=(--candidate-label "$CANDIDATE_LABEL"); fi
 if [[ -n ${BASELINE_LABEL:-} ]]; then args+=(--baseline-label "$BASELINE_LABEL"); fi
