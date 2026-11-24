@@ -19,8 +19,9 @@ Reported:
             PROVEN / CONDITIONAL / MODELLED row: their model may be stale
   added     new production fns no COVERAGE.tsv row lists
   removed   fns the diff deletes or renames that still have rows
-A fn spans from its `fn` line to the line before the next `fn` in the file;
-fns are matched to rows by (file, name), the row's line only breaking ties
+A fn spans from its `fn` line to the line before the next fn's leading
+attributes, comments and blank lines (or to the end of the file), so a diff that
+only adds `#[allow(..)]` or a doc comment above a fn touches no fn; fns are matched to rows by (file, name), the row's line only breaking ties
 between same-name fns of one file.
 """
 import argparse
@@ -69,14 +70,86 @@ def fns_of(proofs, root, rel):
     return res
 
 
-def owner(fns, line):
-    """Index of the fn whose span holds `line`, or None before the first fn."""
+def read_lines(root, rel):
+    """The lines of one Rust file of an extracted tree ([] if it is absent)."""
+    p = os.path.join(root, rel)
+    if not os.path.exists(p):
+        return []
+    with open(p, encoding='utf-8', errors='replace') as f:
+        return f.read().split('\n')
+
+
+def attr_start(lines, j):
+    """1-based line of the `#[` that opens a multi-line attribute ending on line
+    `j` (`)]`), or None when line `j` does not close an attribute."""
+    for k in range(j, 0, -1):
+        s = lines[k - 1].strip()
+        if s.startswith(('#[', '#![')):
+            text = ' '.join(lines[i - 1].strip() for i in range(k, j + 1))
+            depth = 0
+            for n, ch in enumerate(text):
+                depth += (ch == '[') - (ch == ']')
+                if depth == 0 and ch == ']':
+                    # the attribute's own `]` must be the last character
+                    return k if n == len(text) - 1 else None
+            return None
+        if not s or s.endswith((';', '{', '}')):
+            return None
+    return None
+
+
+def lead_start(lines, start):
+    """First line of the attributes, comments and blank lines directly above the
+    `fn` on line `start`: lines that belong to no fn's body."""
+    j = start - 1
+    while j >= 1:
+        s = lines[j - 1].strip()
+        if not s or s.startswith('//') or (s.startswith(('#[', '#![')) and s.endswith(']')):
+            j -= 1
+        elif s.endswith('*/') and ('/*' not in s or s.startswith('/*')):
+            # a block comment, possibly multi-line: back to the line it opens on
+            k = j
+            while k >= 1 and not lines[k - 1].strip().startswith('/*'):
+                if k < j and '*/' in lines[k - 1]:
+                    k = 0                         # another comment's end: not one block
+                    break
+                k -= 1
+            if k < 1:
+                break
+            j = k - 1
+        elif s.endswith(']') and (k := attr_start(lines, j)) is not None:
+            j = k - 1
+        else:
+            break
+    return j + 1
+
+
+def ends_of(fns, lines):
+    """Last line of each fn's span: the line before the next fn's leading
+    attributes and comments, or the end of the file for the last fn. Lines
+    between two fns therefore belong to neither, so adding `#[allow(..)]` or a
+    doc comment above a fn does not touch the fn before it."""
+    ends = []
+    for i, (start, _, _) in enumerate(fns):
+        if i + 1 < len(fns):
+            nxt = fns[i + 1][0]
+            ends.append(max(start, lead_start(lines, nxt) - 1))
+        else:
+            ends.append(max(start, len(lines)))
+    return ends
+
+
+def owner(fns, ends, line):
+    """Index of the fn whose span holds `line`, or None when no fn's does
+    (before the first fn, or in the attributes and comments above a fn)."""
     best = None
     for i, (start, _, _) in enumerate(fns):
         if start <= line:
             best = i
         else:
             break
+    if best is None or line > ends[best]:
+        return None
     return best
 
 
@@ -133,6 +206,8 @@ def _analyse(repo, base, head, proofs, base_root, head_root):
             continue
         old_fns = fns_of(proofs, base_root, old_rel) if status[0] != 'A' else []
         new_fns = fns_of(proofs, head_root, new_rel) if status[0] != 'D' else []
+        old_ends = ends_of(old_fns, read_lines(base_root, old_rel))
+        new_ends = ends_of(new_fns, read_lines(head_root, new_rel))
         diff = git(repo, 'diff', '-U0', '-M', base, head, '--', *dict.fromkeys([old_rel, new_rel]))
         touched_new, touched_old = set(), set()
         for l in diff.splitlines():
@@ -141,11 +216,11 @@ def _analyse(repo, base, head, proofs, base_root, head_root):
                 continue
             os_, oc, ns, nc = int(m[1]), int(m[2] or 1), int(m[3]), int(m[4] or 1)
             for ln in range(ns, ns + nc):
-                i = owner(new_fns, ln)
+                i = owner(new_fns, new_ends, ln)
                 if i is not None:
                     touched_new.add(i)
             for ln in range(os_, os_ + oc):   # a pure insertion (-N,0) removes no old line
-                i = owner(old_fns, ln)
+                i = owner(old_fns, old_ends, ln)
                 if i is not None:
                     touched_old.add(i)
         old_names = defaultdict(list)
