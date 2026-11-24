@@ -1722,13 +1722,6 @@ impl<'a> Parser<'a> {
         // list expression
         let list_expr = self.parse_expr(allow_pattern_predicate)?;
 
-        // Check for aggregate functions in the list expression
-        if let Some(func) = Self::find_aggregate_name(&list_expr) {
-            return Err(self
-                .lexer
-                .format_error(&format!("Invalid use of aggregating function '{func}'")));
-        }
-
         // '|'
         if !optional_match_token!(self.lexer, Pipe) {
             return Err(self.lexer.format_error("Unknown function 'reduce'"));
