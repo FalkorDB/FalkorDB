@@ -7,6 +7,7 @@ have been run first. The shared options are defined once, in `common_options`.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,11 +20,13 @@ from falkorbench import compare as compare_mod
 from falkorbench import contract
 from falkorbench import coverage as coverage_mod
 from falkorbench import flow as flow_mod
+from falkorbench import hw as hw_mod
 from falkorbench import measure as measure_mod
 from falkorbench import metrics
 from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
+from falkorbench import verdict as verdict_mod
 from falkorbench.counters import select_backend
 
 # bench/ is the project root; the repo is its parent.
@@ -87,8 +90,9 @@ def cli() -> None:
 @click.option("--reuse", is_flag=True, help="attach to a server already on --port")
 @click.option("--setup/--no-setup", default=None, help="build the graph (implied unless --reuse)")
 @click.option("--c-compat", is_flag=True, help="measuring the C engine: skip what it cannot do")
+@click.option("--module-args", multiple=True, help="extra --loadmodule args, e.g. THREAD_COUNT 4")
 @click.argument("names", nargs=-1)
-def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, names):
+def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, module_args, names):
     """Measure queries and write a CSV.
 
     Named queries are merged into an existing CSV, so a subset re-run patches
@@ -119,6 +123,7 @@ def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, 
             RESULTS / "server_dir",
             Path(query_set.IMPORT_DIR),
             appendonly=once,
+            module_args=list(module_args),
         )
 
     exit_code = 0
@@ -353,6 +358,56 @@ def report(measure_specs, cg_specs, provenance, coverage, strict):
         for reason in rep.fatal:
             click.echo(f"::error::{reason}", err=True)
         raise SystemExit(1)
+
+
+# --- hw (the nightly micro-hw check) -------------------------------------------
+
+
+@cli.command()
+@click.option("--bench-image", required=True, help="the measurement image, by digest")
+@click.option("--candidate", "cand_image", required=True)
+@click.option("--baseline", "base_image", required=True)
+@click.option("--out", required=True, type=click.Path(file_okay=False, path_type=Path))
+@click.option("--mode", required=True)
+@click.option("--candidate-label", default=None)
+@click.option("--baseline-label", default=None)
+@click.option("--candidate-commit", default=None)
+@click.option("--baseline-commit", default=None)
+def hw(
+    bench_image,
+    cand_image,
+    base_image,
+    out,
+    mode,
+    candidate_label,
+    baseline_label,
+    candidate_commit,
+    baseline_commit,
+):
+    """The micro-hw check: hardware counters on both images, on this host.
+
+    Needs docker and a PMU (a GCE C4 VM through _perf-vm.yml with pmu: true).
+    Servers run on $PERF_SERVER_CPUS when it is set. Always writes
+    <out>/result.json; exits 0 whenever it did.
+    """
+    run = hw_mod.HwRun(
+        bench_image=bench_image,
+        candidate=verdict_mod.ImageRef(cand_image, candidate_label, candidate_commit),
+        baseline=verdict_mod.ImageRef(base_image, baseline_label, baseline_commit),
+        mode=mode,
+        out=out,
+        repo_root=REPO_ROOT,
+        server_cpus=os.environ.get("PERF_SERVER_CPUS") or None,
+        queries=query_set.QUERIES,
+        echo=click.echo,
+    )
+    res = hw_mod.run_check(run)
+    click.echo(f"{res['verdict']}: {res['summary']}")
+    for f in res["findings"]:
+        ratio = f"{f['ratio']:.3f}x" if f["ratio"] is not None else "-"
+        click.echo(f"  [{f['status']}] {f['name']} {f['metric']} {ratio}")
+    if res["error"]:
+        click.echo(f"error: {res['error']}")
 
 
 # --- coverage ----------------------------------------------------------------

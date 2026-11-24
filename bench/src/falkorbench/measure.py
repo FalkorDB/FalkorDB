@@ -182,8 +182,11 @@ def measure_queries(
                 k: _adjust(v, cal.event_rates.get(k, 0.0), reading.elapsed, n) or 0.0
                 for k, v in reading.events.items()
             }
-            row["branches"] = adj.get("INST_BRANCH")
-            row["br_miss"] = adj.get("BRANCH_MISPRED_NONSPEC")
+            # pmc_tool (macOS) names events by their Apple PMU names; the perf
+            # backend (Linux) already names them by column (counters.PERF_EVENTS).
+            row["branches"] = adj.get("INST_BRANCH", adj.get("branches"))
+            row["br_miss"] = adj.get("BRANCH_MISPRED_NONSPEC", adj.get("br_miss"))
+            row["l2_miss"] = adj.get("l2_miss")
             l1_ld = adj.get("L1D_CACHE_MISS_LD")
             l1_st = adj.get("L1D_CACHE_MISS_ST")
             if l1_ld is not None and l1_st is not None:

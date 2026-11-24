@@ -32,12 +32,20 @@ FROM ${C_IMAGE}
 # not contain, so every apt call prints "/usr/sbin/dpkg-preconfigure: not found"
 # and carries on. DEBIAN_FRONTEND does not suppress it (it is a hook, not a
 # frontend); removing the hook file does.
+#
+# linux-perf is for the micro-hw check (bench hw), which runs this image
+# --privileged on a VM with a PMU and reads counters through `perf stat -p`.
+# Everywhere else it finds no PMU (hosted runners expose none, and an
+# unprivileged container cannot open counters), so `bench measure` keeps
+# reporting instr/cycles as absent there, exactly as without it.
 RUN rm -f /etc/apt/apt.conf.d/70debconf \
  && apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends \
       valgrind \
+      linux-perf \
       ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && perf --version
 
 # Assert the redis tooling is present instead of installing Debian's.
 #

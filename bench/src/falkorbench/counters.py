@@ -22,6 +22,7 @@ work into the numbers. Whatever drives the measured queries stays a C binary.
 from __future__ import annotations
 
 import ctypes
+import os
 import shutil
 import subprocess
 import sys
@@ -153,6 +154,35 @@ class RusageBackend:
 # --- Linux: perf -------------------------------------------------------------
 
 
+# perf event name -> CSV column, for the events counted beside instructions and
+# cycles. Generic perf names: an event the host does not expose comes back
+# "<not supported>" and its column stays empty.
+PERF_EVENTS: dict[str, str] = {
+    "branch-misses": "br_miss",
+}
+
+# L2 misses (column l2_miss): demand requests that miss L2. A GCE PMU of type
+# `standard` exposes core/L2 events and no last-level-cache events, so there is
+# no cache-misses here (contract v1.7); this is the L2 event it counted on a
+# c4-standard-8 (Xeon Platinum 8581C, 2026-11-24, the first of five candidates
+# probed). One event, never a substitute: a host that cannot count it is an
+# error in `bench hw`. It has no generic perf name, and perf rejects a name it
+# does not know outright, so it is opt-in: `bench hw` passes it as
+# $BENCH_L2_EVENT once its probe has seen it count.
+L2_MISS_EVENT = "l2_rqsts.all_demand_miss"
+L2_EVENT_ENV = "BENCH_L2_EVENT"
+
+
+def perf_events() -> dict[str, str]:
+    """The extra events to count on this run: PERF_EVENTS, plus the L2 event
+    when $BENCH_L2_EVENT names one."""
+    events = dict(PERF_EVENTS)
+    l2 = os.environ.get(L2_EVENT_ENV)
+    if l2:
+        events[l2] = "l2_miss"
+    return events
+
+
 class PerfBackend:
     name = "perf"
 
@@ -160,15 +190,17 @@ class PerfBackend:
         self.perf = perf
 
     def run_and_count(self, pid: int, cmd: Sequence[str]) -> Reading:
-        """instructions/cycles for `pid` while `cmd` runs, plus elapsed seconds.
+        """Counters for `pid` while `cmd` runs, plus elapsed seconds.
 
         `perf stat -p PID -- CMD` attaches to PID, runs CMD, and stops counting
         when CMD exits, so the counters cover exactly the benchmark window.
         `-x,` gives machine-readable `value,unit,event,...` lines on stderr.
         """
+        extra_events = perf_events()
+        events = ",".join(["instructions", "cycles", *extra_events])
         t0 = time.time()
         out = subprocess.run(
-            [self.perf, "stat", "-x,", "-e", "instructions,cycles", "-p", str(pid), "--", *cmd],
+            [self.perf, "stat", "-x,", "-e", events, "-p", str(pid), "--", *cmd],
             capture_output=True,
             text=True,
         )
@@ -181,7 +213,8 @@ class PerfBackend:
                 "exposes the PMU (bare metal or a VM with vPMU enabled). "
                 f"stderr: {out.stderr.strip()[:300]}"
             )
-        return Reading(vals["instructions"], vals["cycles"], elapsed, {})
+        extra = {col: vals[ev] for ev, col in extra_events.items() if ev in vals}
+        return Reading(vals["instructions"], vals["cycles"], elapsed, extra)
 
 
 def _parse_perf(stderr: str) -> dict[str, float]:
