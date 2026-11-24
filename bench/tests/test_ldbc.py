@@ -510,26 +510,52 @@ def test_a_query_neither_side_can_run_is_info_on_both():
     assert [(f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [("info", 0, 0)]
 
 
-def test_a_candidate_timeout_where_the_baseline_finished_is_a_regression_at_once():
-    samples = [*pair(0), S(ck.BASELINE, 1), S(ck.CANDIDATE, 1, outcome="timeout")]
-    v = ck.analyse("IC3", samples)
+B, C = ck.BASELINE, ck.CANDIDATE
+
+
+@pytest.mark.parametrize(
+    ("samples", "expected"),
+    [
+        pytest.param(
+            [*pair(0), S(B, 1), S(C, 1, outcome="timeout")],
+            ("regression", 0, 1),
+            id="candidate-times-out-where-the-baseline-finished",
+        ),
+        pytest.param(
+            [S(B, 0, outcome="timeout"), S(C, 0, outcome="timeout")],
+            ("info", 0, 0),
+            id="both-time-out-on-the-same-row",
+        ),
+        pytest.param(
+            [*pair(0), S(B, 1, outcome="error"), S(C, 1)],
+            ("improvement", 1, 0),
+            id="one-baseline-error-is-not-a-dialect-gap",
+        ),
+        pytest.param(  # review: a baseline error on another row hid this
+            [*pair(0), S(B, 1), S(C, 1, outcome="timeout"), S(B, 2, outcome="error"), S(C, 2)],
+            ("regression", 0, 1),
+            id="not-hidden-by-another-rows-baseline-error",
+        ),
+        pytest.param(  # review: per parameter row, a failure in another round hid this
+            [
+                S(B, 0, outcome="error", rnd=0),
+                S(C, 0, rnd=0),
+                S(B, 0, rnd=1),
+                S(C, 0, outcome="timeout", rnd=1),
+            ],
+            ("regression", 0, 1),
+            id="judged-per-request-not-per-row",
+        ),
+    ],
+)
+def test_completion_is_judged_request_by_request(samples, expected):
+    """A candidate failure on a request the baseline finished is a regression
+    at once; failures on both sides are info; the baseline failing where the
+    candidate finished is an improvement."""
+    v = ck.analyse("IC2", samples)
     assert not v.left_out
     (f,) = [f for f in v.findings if f["metric"] == "completed"]
-    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
-
-
-def test_a_timeout_on_both_sides_is_info_not_a_regression():
-    samples = [S(ck.BASELINE, 0, outcome="timeout"), S(ck.CANDIDATE, 0, outcome="timeout")]
-    v = ck.analyse("IC3", samples)
-    assert [(f["status"], f["candidate"], f["baseline"]) for f in v.findings] == [("info", 0, 0)]
-
-
-def test_one_error_on_the_baseline_is_not_a_dialect_gap():
-    samples = [*pair(0), S(ck.BASELINE, 1, outcome="error"), S(ck.CANDIDATE, 1)]
-    v = ck.analyse("IC5", samples)
-    assert not v.left_out
-    (f,) = [f for f in v.findings if f["metric"] == "completed"]
-    assert (f["status"], f["candidate"], f["baseline"]) == ("improvement", 1, 0)
+    assert (f["status"], f["candidate"], f["baseline"]) == expected
 
 
 def test_a_row_count_difference_is_a_regression_with_the_totals():
@@ -908,29 +934,6 @@ def test_a_candidate_that_cannot_load_is_a_regression(tmp_path, monkeypatch):
     assert_valid(tmp_path / "out/result.json")
 
 
-# --- what the independent review found ---------------------------------------
-
-
-def test_a_candidate_failure_is_judged_per_row_not_hidden_by_another_rows_baseline_error():
-    """Candidate times out on row 1, baseline errors on unrelated row 2."""
-    samples = [*pair(0), S(ck.BASELINE, 1), S(ck.CANDIDATE, 1, outcome="timeout")]
-    samples += [S(ck.BASELINE, 2, outcome="error"), S(ck.CANDIDATE, 2)]
-    v = ck.analyse("IC2", samples)
-    (f,) = [f for f in v.findings if f["metric"] == "completed"]
-    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
-
-
-def test_failures_on_the_same_row_on_both_sides_are_info():
-    samples = [
-        *pair(0),
-        S(ck.BASELINE, 1, outcome="timeout"),
-        S(ck.CANDIDATE, 1, outcome="timeout"),
-    ]
-    v = ck.analyse("IC2", samples)
-    (f,) = [f for f in v.findings if f["metric"] == "completed"]
-    assert (f["status"], f["candidate"], f["baseline"]) == ("info", 0, 0)
-
-
 def test_a_baseline_that_runs_nothing_is_an_error_not_a_pass(tmp_path):
     def broken(cypher, params, n):
         return ck.Sample("", 0, "", 0, "", ck.ERROR, error="unknown argument TIMEOUT")
@@ -1066,9 +1069,6 @@ def test_only_an_exited_container_counts_as_a_server_that_went_down(tmp_path, st
     assert_valid(check.opts.out / "result.json")
 
 
-# --- the third review round ----------------------------------------------------
-
-
 def test_row_counts_are_compared_per_request_not_from_the_warm_up():
     """Both sides return one row in the warm-up; the candidate then returns none."""
     samples = [
@@ -1135,26 +1135,66 @@ def test_a_budget_cut_is_an_error_not_a_pass(tmp_path):
     assert_valid(check.opts.out / "result.json")
 
 
-def test_one_missed_ping_does_not_make_a_busy_server_down(monkeypatch):
+def _ping_after(fails=0, late=False, step=5.0):
+    """A PING that fails `fails` times (each costing `step` seconds), then
+    answers; `late` makes it answer only after the grace has run out."""
+
+    def make(now, calls):
+        class Probe:
+            def __init__(self, **kwargs):
+                pass
+
+            def ping(self):
+                calls["ping"] += 1
+                if late:
+                    now["t"] += ck.PING_GRACE_S + 10
+                    return True
+                if calls["ping"] <= fails:
+                    now["t"] += step
+                    raise ck.RedisTimeoutError("busy")
+                return True
+
+        return Probe
+
+    return make
+
+
+def _inspect_fails_once():
     calls = {"n": 0}
 
-    class SlowThenUp:
-        def __init__(self, **kwargs):
-            pass
+    def state():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise containers.DockerError("`docker inspect` did not return within 120s")
+        return "running"
 
-        def ping(self):
-            calls["n"] += 1
-            if calls["n"] < 3:
-                raise ck.RedisTimeoutError("busy")
-            return True
+    return state
 
-    monkeypatch.setattr(ck, "Redis", SlowThenUp)
-    monkeypatch.setattr(ck.time, "sleep", lambda s: None)
+
+@pytest.mark.parametrize(
+    ("probe", "state", "answers"),
+    [
+        pytest.param(_ping_after(fails=2), lambda: "running", True, id="busy-then-answers"),
+        pytest.param(_ping_after(), lambda: "exited 139", False, id="container-exited"),
+        pytest.param(_ping_after(), _inspect_fails_once(), True, id="inspect-fails-is-not-a-crash"),
+        pytest.param(_ping_after(fails=10**6), lambda: "running", False, id="never-answers"),
+        pytest.param(
+            _ping_after(late=True), lambda: "running", False, id="answers-after-the-grace"
+        ),
+    ],
+)
+def test_the_ping_grace(monkeypatch, probe, state, answers):
+    """After a client-side timeout a side is down only if it does not answer
+    PING within PING_GRACE_S (or its container exited); one missed PING of a
+    busy server is not enough, and a reply after the grace does not count."""
+    now, calls = {"t": 0.0}, {"ping": 0}
+    monkeypatch.setattr(ck.time, "monotonic", lambda: now["t"])
+    monkeypatch.setattr(ck.time, "sleep", lambda s: now.__setitem__("t", now["t"] + s))
+    monkeypatch.setattr(ck, "Redis", probe(now, calls))
     side = ck.Side(ck.CANDIDATE, MAIN)
-    side.container = SimpleNamespace(port=1, state=lambda: "running")
-    assert side._answers() is True and calls["n"] == 3
-    side.container = SimpleNamespace(port=1, state=lambda: "exited 139")
-    assert side._answers() is False
+    side.container = SimpleNamespace(port=1, state=state)
+    assert side._answers() is answers
+    assert now["t"] <= ck.PING_GRACE_S + 10  # ends at the grace (plus one late reply)
 
 
 def test_docker_rm_failures_are_reported_and_a_missing_container_is_fine(monkeypatch):
@@ -1302,19 +1342,6 @@ def test_a_relative_out_is_resolved_against_the_caller_s_directory(tmp_path, mon
     assert seen["out"] == tmp_path.resolve() / "out" and seen["out"].is_absolute()
 
 
-# --- the fourth review round ---------------------------------------------------
-
-
-def test_a_candidate_failure_is_judged_against_the_same_request():
-    """Baseline fails row 0 in round 0 but finishes it in round 1; the
-    candidate finishes round 0 and fails round 1."""
-    samples = [S(ck.BASELINE, 0, outcome="error", rnd=0), S(ck.CANDIDATE, 0, rnd=0)]
-    samples += [S(ck.BASELINE, 0, rnd=1), S(ck.CANDIDATE, 0, outcome="timeout", rnd=1)]
-    v = ck.analyse("IC2", samples)
-    (f,) = [f for f in v.findings if f["metric"] == "completed"]
-    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
-
-
 def test_a_warm_up_with_rows_does_not_make_empty_rounds_worth_timing():
     samples = [
         S(ck.BASELINE, 0, rows=1, phase="warmup"),
@@ -1392,52 +1419,6 @@ def test_the_summary_keeps_warm_ups_out_of_the_main_rows(tmp_path):
     assert by[("main", ck.BASELINE)]["rows_total"] == 6
 
 
-def test_a_failed_inspect_during_the_ping_grace_is_not_a_crash(monkeypatch):
-    calls = {"n": 0}
-
-    def state():
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise containers.DockerError("`docker inspect` did not return within 120s")
-        return "running"
-
-    class Up:
-        def __init__(self, **kwargs):
-            pass
-
-        def ping(self):
-            return True
-
-    monkeypatch.setattr(ck, "Redis", Up)
-    side = ck.Side(ck.CANDIDATE, MAIN)
-    side.container = SimpleNamespace(port=1, state=state)
-    assert side._answers() is True
-
-
-def test_the_ping_grace_ends_at_its_deadline(monkeypatch):
-    now = {"t": 0.0}
-    monkeypatch.setattr(ck.time, "monotonic", lambda: now["t"])
-
-    def sleep(s):
-        now["t"] += max(s, 1.0)
-
-    monkeypatch.setattr(ck.time, "sleep", sleep)
-
-    class Down:
-        def __init__(self, **kwargs):
-            pass
-
-        def ping(self):
-            now["t"] += 5.0
-            raise ck.RedisTimeoutError("no")
-
-    monkeypatch.setattr(ck, "Redis", Down)
-    side = ck.Side(ck.CANDIDATE, MAIN)
-    side.container = SimpleNamespace(port=1, state=lambda: "running")
-    assert side._answers() is False
-    assert now["t"] <= ck.PING_GRACE_S + 5.0
-
-
 def test_the_cache_root_is_searchable_by_the_server(tmp_path, monkeypatch):
     cache = tmp_path / "cache"
     old = os.umask(0o077)
@@ -1448,25 +1429,6 @@ def test_the_cache_root_is_searchable_by_the_server(tmp_path, monkeypatch):
     finally:
         os.umask(old)
     assert cache.stat().st_mode & 0o055 == 0o055
-
-
-def test_a_ping_reply_after_the_grace_deadline_does_not_count(monkeypatch):
-    now = {"t": 0.0}
-    monkeypatch.setattr(ck.time, "monotonic", lambda: now["t"])
-    monkeypatch.setattr(ck.time, "sleep", lambda s: now.__setitem__("t", now["t"] + s))
-
-    class Late:
-        def __init__(self, **kwargs):
-            pass
-
-        def ping(self):
-            now["t"] += ck.PING_GRACE_S + 10  # answers, but long after the grace
-            return True
-
-    monkeypatch.setattr(ck, "Redis", Late)
-    side = ck.Side(ck.CANDIDATE, MAIN)
-    side.container = SimpleNamespace(port=1, state=lambda: "running")
-    assert side._answers() is False
 
 
 def test_a_regression_that_was_also_cut_short_says_so_in_the_summary(tmp_path):
