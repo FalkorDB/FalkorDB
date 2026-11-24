@@ -924,9 +924,11 @@ def live_schema_step(ctx):
                        {"a": lo, "b": hi}, ro=True)
         row = sk.rows(res)[0]
         n_cmp += 1
-        if sk.cval(row[0]) != sk.cval(row[1]):
-            finding("Live (under writes) index == scan during build/after", False,
-                    f"[{lo},{hi}] idx={sk.cval(row[0])} scan={sk.cval(row[1])}", "critical")
+        # every comparison is recorded, so the check's "k of n runs failed" has a real n
+        # (soak_check tells #3095's intermittent misses from a total breakage by it)
+        same = sk.cval(row[0]) == sk.cval(row[1])
+        finding("Live (under writes) index == scan during build/after", same,
+                "" if same else f"[{lo},{hi}] idx={sk.cval(row[0])} scan={sk.cval(row[1])}", "critical")
     cmp_once()
     sk.query(ctx.r, G, "CREATE INDEX FOR (n:Live) ON (n.k)")
     dt, nb = wait_index(ctx, "Live", "k", "NODE", cmp_once)

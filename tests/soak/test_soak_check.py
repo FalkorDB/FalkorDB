@@ -4,6 +4,7 @@
 """
 import argparse
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,54 @@ def test_correctness_check_broken_on_both_sides_is_info():
                                     [run("baseline", checks={"undirected shortestPath supported": False})],
                                     True))
     assert rows["s01 undirected shortestPath supported"].status == "info"
+
+
+def test_known_flaky_check_is_never_gated_but_named(tmp_path):
+    name = "Live (under writes) index == scan during build/after"
+    assert f"s10 {name}" in sc.KNOWN_FLAKY
+    c = run("candidate", checks={name: False, "y": True}, scenario="s10_schema_under_load")
+    c.details = {name: "1 of 40 runs failed; first: [567,667] idx=1242 scan=1243"}
+    sched = sc.Schedule(runs={"s10_schema_under_load": {
+        "candidate": [c], "baseline": [run("baseline", checks={name: True, "y": True}, scenario="s10_schema_under_load")]}})
+    res = sc.finish(args(), tmp_path, 1.7e9, ["s10_schema_under_load"], sched, None, [], sc.MODES["nightly"])
+    assert res["verdict"] == "pass" and res["findings"] == []
+    assert f"known flaky, not gated: s10 {name} (#3095) broke on candidate" in res["summary"]
+    assert ",known," in (tmp_path / "raw" / "rows.csv").read_text()
+    if sc.VALIDATOR.exists():
+        assert sc.validate(res) == []
+
+
+def test_every_known_flaky_entry_names_an_issue():
+    for name, issue in sc.KNOWN_FLAKY.items():
+        assert re.fullmatch(r"#[1-9][0-9]*", issue), (name, issue)
+        assert re.fullmatch(r"s\d\d .+", name), name
+
+
+def test_known_flaky_broken_every_time_on_every_run_is_still_a_regression():
+    name = "Live (under writes) index == scan during build/after"
+    def cand(rep, k, n):
+        r = run("candidate", rep, checks={name: False}, scenario="s10_schema_under_load")
+        r.details = {name: f"{k} of {n} runs failed; first: [1,2] idx=1 scan=2"}
+        return r
+    base = [run("baseline", checks={name: True}), run("baseline", 2, checks={name: True})]
+    rows = {r.name: r for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 26, 26), cand(2, 30, 30)], base, True)}
+    assert rows[f"s10 {name}"].status == "regression"
+    # the old failure-only recording ("3 of 3") is under the 10-check floor: the known flake
+    rows = {r.name: r for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 3, 3)], base[:1], True)}
+    assert rows[f"s10 {name}"].status == "known"
+    # broke every time in one run, only sometimes in the other: the known flake
+    rows = {r.name: r for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 26, 26), cand(2, 3, 30)], base, True)}
+    assert rows[f"s10 {name}"].status == "known"
+    # one run, a few misses of many: the known flake; every time: a regression
+    assert {r.name: r for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 1, 40)], base[:1], True)}[
+        f"s10 {name}"].status == "known"
+    assert {r.name: r for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 40, 40)], base[:1], True)}[
+        f"s10 {name}"].status == "regression"
+    # broke on both sides: still known, and the summary says both
+    b = run("baseline", checks={name: False})
+    b.details = {name: "2 of 40 runs failed"}
+    row = {r.name: r for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 1, 40)], [b], True)}[f"s10 {name}"]
+    assert row.status == "known" and row.note.endswith("broke on candidate and baseline")
 
 
 def test_correctness_breaks_in_the_rerun_count_too():

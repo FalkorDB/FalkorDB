@@ -88,6 +88,19 @@ TIMING_RE = re.compile(
     r"within time budget|replication lag|fires promptly|stays fast|CPU idle|churn volume|"
     r"concurrent connections were reached|no marker timeouts", re.I)
 
+# Correctness checks that an open bug breaks intermittently (contract v1.9). An entry needs
+# an open issue and same-image evidence of the intermittent break; remove it when the issue
+# closes. A listed check is not gated for that break: kept in raw/rows.csv with status
+# "known" and named in the summary. It is still a regression when the candidate breaks it
+# every time it is checked (the scenario records "k of n runs failed": k == n >= 10) in
+# every run of the pass, so a known flake cannot hide a total breakage.
+KNOWN_FLAKY = {
+    # one entry missing from the index during/after a build under writes, e.g.
+    # "[567,667] idx=1242 scan=1243"; broke on both sides, neither, or one side in runs of
+    # the same pair (main vs main; 6.2.0 vs 6.2.1, run 45401220445)
+    "s10 Live (under writes) index == scan during build/after": "#3095",
+}
+
 # Server-log lines that mean the server process crashed (not just a failed query).
 CRASH_RE = re.compile(r"crashed by signal|panicked at|=== (?:REDIS|VALKEY) BUG REPORT|"
                       r"Segmentation fault|ASSERTION FAILED|Guru Meditation", re.I)
@@ -112,6 +125,7 @@ class Run:
     completed: bool
     reason: str = ""               # why not completed
     checks: dict[str, bool] = field(default_factory=dict)
+    details: dict[str, str] = field(default_factory=dict)   # check -> its first failing detail
     ops: dict[str, dict] = field(default_factory=dict)  # op -> {p99_ms, throughput, ok}
     setup_s: float | None = None
     wall_s: float = 0.0
@@ -197,6 +211,7 @@ def read_run(run_dir: Path, scenario: str, side: str, rep: int, rc: int | None,
               f"server crash: {crashes[0]}" if crashes else "")
     return Run(scenario=scenario, side=side, rep=rep, completed=not reason, reason=reason,
                checks=checks_by_name(checks), ops=ops_of(summary or {}),
+               details={c["name"]: c.get("detail", "") for c in checks if not c["ok"]},
                setup_s=setup_seconds(phases), wall_s=round(wall_s, 1),
                server_ran=server_ran(run_dir), cut=cut, rc=rc)
 
@@ -236,6 +251,23 @@ def _correctness_value(runs: list[Run], name: str) -> int | None:
     """1 held on every run that recorded it, 0 broken on any; None if no run recorded it."""
     vals = [r.checks[name] for r in runs if name in r.checks]
     return None if not vals else int(all(vals))
+
+
+_K_OF_N = re.compile(r"^(\d+) of (\d+) runs failed")
+
+
+def _always_broken(runs: list[Run], name: str) -> bool:
+    """Every run recorded the check and broke it every time it was checked (k == n >= 10).
+    A detail without "k of n" counts as always broken: gate rather than hide."""
+    if not runs or not all(name in r.checks for r in runs):
+        return False
+    for r in runs:
+        if r.checks[name]:
+            return False
+        m = _K_OF_N.match(r.details.get(name, ""))
+        if m and not (int(m.group(1)) == int(m.group(2)) >= 10):
+            return False
+    return True
 
 
 def _timing_row(tag: str, name: str, cand: list[Run], base: list[Run], perf_gate: bool) -> Row:
@@ -279,9 +311,15 @@ def scenario_rows(scn: str, cand: list[Run], base: list[Run], perf_gate: bool) -
     for n in names:
         if is_timing_check(n):
             rows.append(_timing_row(tag, n, cand, base, perf_gate))
-        else:
-            rows.append(_zero_one(f"{tag} {n}", "invariant", _correctness_value(cand, n),
-                                  _correctness_value(base, n)))
+            continue
+        row = _zero_one(f"{tag} {n}", "invariant", _correctness_value(cand, n), _correctness_value(base, n))
+        if row.name in KNOWN_FLAKY and not _always_broken(cand, n):
+            row.status = "known"
+            row.note = (f"known flaky ({KNOWN_FLAKY[row.name]}), not gated; broke on "
+                        + (" and ".join(side for side, v in (("candidate", row.candidate),
+                                                             ("baseline", row.baseline)) if v == 0)
+                           or "neither side"))
+        rows.append(row)
 
     # perf: per-op p99 and throughput, setup wall time
     rows += _perf_rows(tag, cand, base, perf_gate)
@@ -407,6 +445,7 @@ def summary_line(rows: list[Row], scenarios: list[str], not_run: list[str], mode
     both = [r for r in rows if r.status == "info" and r.candidate == 0 and r.baseline == 0]
     unconf = [r for r in rows if r.status == "info" and r.note.startswith(("not re", "re-run", "broke in"))]
     tails = [r for r in rows if r.note.startswith("tail shift")]
+    known = [r for r in rows if r.status == "known" and 0 in (r.candidate, r.baseline)]
     missing = {n.split(" ")[0] for n in not_run}
     parts = [f"{len([s for s in scenarios if s not in missing])} of {len(scenarios)} scenarios "
              f"measured, {mode} ({duration:.0f} s per side)"]
@@ -420,6 +459,9 @@ def summary_line(rows: list[Row], scenarios: list[str], not_run: list[str], mode
         parts.append(f"{len(both)} broken on both sides (not new)")
     if unconf:
         parts.append(f"{len(unconf)} perf signal(s) not confirmed")
+    if known:
+        parts.append("known flaky, not gated: " + ", ".join(
+            f"{r.name} ({KNOWN_FLAKY[r.name]}) {r.note.split('; ', 1)[1]}" for r in known))
     if tails:
         worst = max(tails, key=lambda r: abs(math.log(r.ratio)) if r.ratio and r.ratio > 0 else 0)
         parts.append(f"{len(tails)} p99 shift(s) reported, not gated (largest {worst.name.split(' (')[0]} "

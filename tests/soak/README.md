@@ -123,6 +123,30 @@ check's (`no_freeze`, `no_timeouts_while_waiting`) and Pokec's PING-freeze check
 The p50 gate sits only 1.1x above its worst A/A swing, so it is re-derived from each
 A/A evidence set (the PR's proof runs); a wider swing there moves the gate first.
 
+**Known flaky checks** (`KNOWN_FLAKY` in `soak_check.py`, contract v1.9). These are
+correctness checks that an open bug breaks intermittently. An entry needs two things: an
+open issue, and same-image evidence that the break is intermittent. It is removed when the
+issue closes, and a unit test fails if an entry names no issue. A listed check is not gated
+for that break:
+
+- the summary names it, its issue and the side(s) that broke it;
+- `raw/rows.csv` keeps it with status `known`.
+
+It is still a regression when the candidate breaks it every time it is checked (the
+scenario's "k of n runs failed" with k = n ≥ 10) in every run of the pass, so a known
+flake cannot hide a total breakage.
+
+| check | issue | evidence |
+| --- | --- | --- |
+| `s10 Live (under writes) index == scan during build/after` | #3095 | One index entry missing during or after a build under writes (`idx=1242 scan=1243`). main against itself: broke on both sides in a nightly run, on neither in a queue run. 6.2.0 vs 6.2.1 (run 45401220445): broke on 6.2.0 only. |
+
+**Known breaks on both sides** (reported as `info`; neither image introduced them):
+
+| check(s) | issue | what breaks |
+| --- | --- | --- |
+| s10 `after build person_age` / `person_city: indexed result == ground truth`, `during build person_age` / `person_city: result == ground truth`, `before restart: Person.age indexed results == ground truth` | #3512 (root cause) | A range-index lookup of value 0 returns no rows (`eq 0: got 0 want 1945`) once a fulltext index on the same label has been dropped (Avi's ledger F3). The cause is RediSearch's union-aliasing skip of a numeric `+0.0`; the fix, FalkorDB/RediSearch#31, is not in the submodule yet. #3512 describes only the reload trigger. |
+| s11 `CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)` | unfiled | A read query (`UNWIND range(1, 1000000000) AS x RETURN sum(x)`, 15 s timeout) keeps the server busy after its client is killed, until its own timeout (idle after 16 s). |
+
 A side that runs longer than its hang cap did not finish (a `completed` regression on
 the candidate, even when the deadline then leaves no time for the baseline). The cap is
 6x the load time (at least load + 15 min) until one side of the scenario has run, then
