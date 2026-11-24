@@ -10,12 +10,7 @@ unavoidable rather than stylistic:
 * **Derived birthday parts.** IC10 needs the month and day of a person's
   birthday and FalkorDB has no `datetime()`, so two columns are appended.
 
-Both are done by rewriting the file once, in Python. The pre-existing
-`tests/test_ldbc.py` used `sed -i "" ...` for the header rewrite, which is the
-BSD/macOS spelling and exits 2 under GNU sed — so that path only ever worked on
-one platform.
-
-Files are rewritten in place and a marker file records that it happened, so a
+Both are done by rewriting the file once, in Python. Files are rewritten in place and a marker file records that it happened, so a
 re-run is a no-op rather than double-appending columns.
 """
 

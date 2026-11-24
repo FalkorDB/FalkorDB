@@ -1,15 +1,8 @@
-"""The LDBC query set, its parameters, and the rewrites applied to it.
+"""The LDBC query set, the dataset preparation, and `bench ldbc check`.
 
-The value of this benchmark rests entirely on the vendored query texts still
-being the LDBC queries. These tests pin the three ways that can quietly stop
-being true: a query text that no longer parses out of its file, a rewrite that
-is applied but not declared, and a parameter set that does not match what the
-queries actually take.
-
-Nothing here needs a server. The behaviours that do — that the rewrites are
-accepted by the engine and the originals are not — are covered by
-`bench ldbc run`, which fails when a query returns no rows on every parameter
-row.
+Nothing here needs a server or docker: the check's analysis is pure, and its
+measurement loop runs against scripted sides. Every result.json a test writes
+is held to the contract's validator (tests/perf/validate.py) when present.
 """
 
 import csv

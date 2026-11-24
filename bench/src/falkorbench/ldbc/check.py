@@ -1,40 +1,9 @@
 """`bench ldbc check`: the LDBC complex reads, candidate image against baseline.
 
-One command of the nightly perf run (contract v1.5):
-
-    bench ldbc check --candidate <image@sha256:…> --baseline <image@sha256:…>
-                     --out <dir> --mode <queue|nightly|long>
-                     [--candidate-label …] [--baseline-label …]
-                     [--candidate-commit …] [--baseline-commit …]
-
-Both images run as their own server, side by side on this machine (see
-`containers`). The dataset is loaded into each, the substitution parameters are
-sampled once, from the baseline, and both sides then run the same parameter
-rows: per row, one side and then the other, in two rounds whose order is
-swapped. Every latency is one request on a connection that never re-sends.
-
-What it reports, per query:
-
-* `p50_ms` / `p95_ms`: the latency ratio candidate/baseline over the parameter
-  rows both sides finished. Wall clock, so the band is wide: it crosses at
-  `RATIO` and only when the difference is also at least the absolute floor
-  (`FLOOR_MS`). A crossing is measured again (the re-run) and is a regression
-  only when the re-run crosses too.
-* `rows` (`mismatch`): a parameter row on which the two sides return a
-  different number of rows. A regression at once.
-* `completed`: 0 when the side timed out, errored, or its server went down on
-  any parameter row. Candidate 0 where the baseline finished is a regression
-  at once; 0 on both sides is `info`.
-* `invariant` "returns rows": a query that returns zero rows on every
-  parameter row, on both sides, measured nothing (`info`).
-
-A query the baseline cannot run at all (an error on every parameter row: the C
-engine's dialect gaps) is left out with an `info` finding. The load's
-throughput is reported as `info`: it is one sample per side.
-
-`result.json` is always written. It is written first as an `error` ("did not
-finish"), so a run killed from outside still leaves one, and replaced at the
-end.
+The nightly perf check for LDBC (contract v1.12): each image runs as its own
+server, both load the dataset and run the same sampled parameter rows, and the
+result goes to `<out>/result.json`. What it measures, the findings, the
+thresholds and the modes are in bench/README.md ("The nightly check").
 """
 
 from __future__ import annotations
