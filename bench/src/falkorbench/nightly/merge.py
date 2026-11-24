@@ -7,15 +7,18 @@ header of .github/workflows/perf-nightly.yml; each step calls one subcommand:
   merge     context + plan + each planned perf-result-<check> -> nightly.json
   conclude  nightly.json -> the run's exit status (0 green or skipped, 1 otherwise)
 
-Stdlib only; it runs under `python3 -I` and loads validate.py from beside it.
+Standard library only (with contract and kit, which are too): `bench nightly merge`.
 """
 
 import argparse
-import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+from falkorbench import contract
+from falkorbench import kit
 
 SCHEMA = 1
 
@@ -23,7 +26,7 @@ SCHEMA = 1
 # which runs its one check, `micro-hw` (hardware counters and allocations on a
 # C4 VM, through a nested _perf-vm.yml).
 MICRO_HW = "micro-hw"
-# A problem with tests/perf/checks.yaml itself is reported under this name, so a
+# A problem with bench/checks.yaml itself is reported under this name, so a
 # bad registry shows up in the night's report instead of stopping the night.
 REGISTRY = "checks-yaml"
 RESERVED = (MICRO_HW, REGISTRY)
@@ -49,19 +52,6 @@ class PlanError(Exception):
     pass
 
 
-def _load_validate():
-    """perf-judge's validate.py, beside this file (tests/perf is not a package)."""
-    spec = importlib.util.spec_from_file_location("perf_validate", Path(__file__).with_name("validate.py"))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-# The contract's own checker: merge.py reuses its image and commit patterns and
-# its result rules instead of keeping copies that could drift.
-validate = _load_validate()
-
-
 # --- plan ------------------------------------------------------------------------
 
 
@@ -73,7 +63,7 @@ def registry_entry(name, entry):
     """One checks.yaml entry as a plan row; a malformed one becomes a stub row."""
 
     def invalid(why):
-        return {"check": name, "runner": None, "error": f"invalid tests/perf/checks.yaml entry: {why}"}
+        return {"check": name, "runner": None, "error": f"invalid bench/checks.yaml entry: {why}"}
 
     known = {"name", "runner", "command", "timeout_minutes", "machine_type"}
     unknown = sorted(set(entry) - known)
@@ -146,7 +136,7 @@ def build_plan(registry, select, registry_error=None):
     by_name.update((row["check"], row) for row in rows)
     registry_stub = []
     if problems:
-        why = "tests/perf/checks.yaml: " + "; ".join(problems)
+        why = "bench/checks.yaml: " + "; ".join(problems)
         registry_stub = [{"check": REGISTRY, "runner": None, "error": why}]
 
     wanted = [name.strip() for name in (select or "").split(",") if name.strip()]
@@ -157,7 +147,7 @@ def build_plan(registry, select, registry_error=None):
         if name in by_name:
             plan.append(by_name[name])
         elif is_check_name(name) and name != REGISTRY:
-            plan.append({"check": name, "runner": None, "error": "not in tests/perf/checks.yaml"})
+            plan.append({"check": name, "runner": None, "error": "not in bench/checks.yaml"})
         else:
             raise PlanError(f"checks input: {name!r} is not a check name")
     return plan + registry_stub
@@ -197,14 +187,18 @@ def strict_load(path):
         return json.load(handle, parse_constant=refuse)
 
 
-def side(image, commit, label, what):
-    if not isinstance(image, str) or not validate.IMAGE_RE.fullmatch(image):
-        raise PlanError(f"{what} image {image!r} is not pinned by a full sha256 digest")
-    if commit and not validate.COMMIT_RE.fullmatch(commit):
-        raise PlanError(f"{what} commit {commit!r} is not 40 lowercase hex")
-    if not label or "\n" in label:
-        raise PlanError(f"{what} label {label!r} is empty or not one line")
-    return {"image": image, "commit": commit or None, "label": label}
+def sides(args):
+    """The pinned candidate and baseline as result.json's sides, checked by kit's
+    rules (the same every check applies to its own flags)."""
+    flags = SimpleNamespace(mode="nightly", **{
+        f"{which}{suffix}": getattr(args, f"{which}_{field}")
+        for which in kit.SIDES
+        for suffix, field in (("", "image"), ("_commit", "commit"), ("_label", "label"))
+    })
+    errors = kit.input_errors(flags)
+    if errors:
+        raise PlanError("; ".join(errors))
+    return kit.side(flags, "candidate"), kit.side(flags, "baseline")
 
 
 def read_history(runs_file, history_dir):
@@ -254,7 +248,7 @@ def previous_green_commit(history):
     for _, nightly in history:
         if nightly and nightly["status"] == "green":
             commit = nightly["candidate"].get("commit")
-            return commit if isinstance(commit, str) and validate.COMMIT_RE.fullmatch(commit) else None
+            return commit if isinstance(commit, str) and contract.COMMIT_RE.fullmatch(commit) else None
     return None
 
 
@@ -343,10 +337,10 @@ def read_result(path):
     except (OSError, UnicodeDecodeError):
         return None, ["unreadable"]
     try:
-        doc = validate.load_json(text)
+        doc = contract.load_json(text)
     except (ValueError, RecursionError):
         return None, ["invalid-json"]
-    return doc, list(dict.fromkeys(problem.code for problem in validate.validate_result(doc)))
+    return doc, list(dict.fromkeys(problem.code for problem in contract.validate_result(doc)))
 
 
 def collect(check, artifact):
@@ -376,7 +370,7 @@ def collect(check, artifact):
 
 
 def status_of(checks):
-    # The rule validate.py checks a nightly against (nightly-status-mismatch);
+    # The rule contract.py checks a nightly against (nightly-status-mismatch);
     # it keeps no function of its own to call.
     verdicts = {entry.get("verdict") for entry in checks}
     if "regression" in verdicts:
@@ -466,8 +460,7 @@ def cmd_plan(args):
 
 
 def cmd_context(args):
-    candidate = side(args.candidate_image, args.candidate_commit, args.candidate_label, "candidate")
-    baseline = side(args.baseline_image, args.baseline_commit, args.baseline_label, "baseline")
+    candidate, baseline = sides(args)
     history = read_history(args.history_runs, args.history_dir)
     for run_id, nightly in history:
         if nightly is None:
@@ -499,7 +492,7 @@ def cmd_merge(args):
     nightly = build_nightly(context, plan, args.results)
     write_json(args.out, nightly)
     # The file as written, read back the way the reporter will read it.
-    _, problems = validate.validate_file(args.out, kind="nightly")
+    _, problems = contract.validate_file(args.out, kind="nightly")
     if problems:
         for problem in problems:
             print(f"{args.out}: {problem}", file=sys.stderr)
@@ -531,8 +524,8 @@ def main(argv=None):
 
     p = sub.add_parser("plan", help="checks.json + selection -> plan.json and job matrices")
     registry = p.add_mutually_exclusive_group(required=True)
-    registry.add_argument("--registry", help="tests/perf/checks.yaml converted to JSON")
-    registry.add_argument("--registry-error", help="why tests/perf/checks.yaml could not be parsed")
+    registry.add_argument("--registry", help="bench/checks.yaml converted to JSON")
+    registry.add_argument("--registry-error", help="why bench/checks.yaml could not be parsed")
     p.add_argument("--select", default="", help="comma list of checks; empty for all")
     p.add_argument("--out", required=True)
     p.add_argument("--github-output", default="")
