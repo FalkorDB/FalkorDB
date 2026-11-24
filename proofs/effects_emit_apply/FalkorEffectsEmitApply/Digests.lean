@@ -2,9 +2,8 @@ import FalkorEffectsEmitApply.Emit
 /-!
 # The remaining digests of `emit.rs`, column for column
 
-`digest_created_edges` (`:576`), `digest_deleted_edges` (`:637`),
-`digest_updates` (`:688`), `digest_labels` (`:855`), `digest_cancelled`
-(`:397`). The `FxHashMap` grouping is first-appearance `groupBy` here — the
+`digest_created_edges`, `digest_deleted_edges`,
+`digest_updates`, `digest_labels`, `digest_cancelled`. The `FxHashMap` grouping is first-appearance `groupBy` here — the
 hash map's iteration order is unspecified in Rust, so every theorem below is
 order-insensitive (a permutation or a per-record property).
 -/
@@ -147,7 +146,7 @@ structure UpdRec where
   attrIds : List Nat
   rows : List Val
 
-/-- The grouping key of `digest_updates` (`:713-735`). -/
+/-- The grouping key of `digest_updates`. -/
 def updKey (node : Bool) (labelsOf : Nat → List Nat) (typeOf : Nat → Nat) (q : Nat × List (Nat × Val)) :
     List Nat × Option Nat × List Nat :=
   (if node then sortDedup (labelsOf q.1) else [], if node then none else some (typeOf q.1), q.2.map (·.1))
@@ -231,7 +230,7 @@ theorem digestLabels_perm (labels : List (Nat × List Nat)) (skip : Nat → Bool
   rw [List.map_flatMap]
   exact perm_flatMap_congr fun q _ => List.mergeSort_perm _ _
 
-/-- No label record is empty (`debug_assert!` at `:880` holds). -/
+/-- No label record is empty (`debug_assert!` holds). -/
 theorem digestLabels_nonempty (labels skip) : ∀ r ∈ digestLabels labels skip, r.1 ≠ [] := by
   intro r hr
   simp only [digestLabels, List.mem_map] at hr

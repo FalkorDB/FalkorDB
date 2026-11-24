@@ -529,6 +529,11 @@ impl<T> Encode<19> for Matrix<T> {
         &self,
         w: &mut dyn Writer,
     ) {
+        // Unloading empties the matrix it is applied to, and a foreground SAVE,
+        // DUMP or GRAPH.COPY encodes the published version while read queries
+        // traverse it lock-free. So unload a private copy — a memcpy of the
+        // arrays — and free it with the container, never touching `self`.
+        let copy = self.dup();
         unsafe {
             let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
             let info = GxB_Container_new(container.as_mut_ptr());
@@ -539,7 +544,7 @@ impl<T> Encode<19> for Matrix<T> {
             );
             let container = container.assume_init();
 
-            let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
+            let info = GxB_unload_Matrix_into_Container(copy.inner(), container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             // Write container struct bytes. Its pointer fields are heap
@@ -568,9 +573,7 @@ impl<T> Encode<19> for Matrix<T> {
             ManuallyDrop::new(Vector::<bool>::from((*container).i)).encode(w);
             ManuallyDrop::new(Vector::<bool>::from((*container).b)).encode(w);
 
-            let info = GxB_load_Matrix_from_Container(self.inner(), container, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-
+            // Frees the copy's arrays with the container; `copy` is left empty.
             let mut c = container;
             let info = GxB_Container_free(&raw mut c);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -956,6 +959,7 @@ impl<T> Matrix<T> {
         self.has_pending.store(false, Ordering::Relaxed);
     }
 
+    /// `self = self - struct(b)`
     pub fn remove_all<U>(
         &mut self,
         b: &Matrix<U>,
@@ -966,7 +970,7 @@ impl<T> Matrix<T> {
                 b.inner(),
                 null_mut(),
                 self.inner(),
-                GrB_DESC_RCT0,
+                GrB_DESC_RSCT0,
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -997,6 +1001,8 @@ impl<T> Matrix<T> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    // NOTE: despite the name this is a set difference, not a selection:
+    // `self<¬mask, replace> = a`, i.e. `self = a - struct(mask)`.
     pub fn select(
         &mut self,
         mask: &Matrix<bool>,
@@ -1008,7 +1014,7 @@ impl<T> Matrix<T> {
                 mask.inner(),
                 null_mut(),
                 a.inner(),
-                GrB_DESC_RCT0,
+                GrB_DESC_RSCT0,
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
@@ -1032,11 +1038,11 @@ impl<T> Matrix<T> {
         unsafe {
             let info = GrB_Matrix_eWiseAdd_BinaryOp(
                 self.inner(),
-                mask.map_or(null_mut(), |m| m.inner()),
+                mask.map_or(null_mut(), Matrix::inner),
                 null_mut(),
                 T::add_op(),
-                a.map_or(self.inner(), |a| a.inner()),
-                b.map_or(self.inner(), |b| b.inner()),
+                a.map_or_else(|| self.inner(), Matrix::inner),
+                b.map_or_else(|| self.inner(), Matrix::inner),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1054,11 +1060,11 @@ impl<T> Matrix<T> {
         unsafe {
             let info = GrB_Matrix_eWiseMult_Semiring(
                 self.inner(),
-                mask.map_or(null_mut(), |m| m.inner()),
+                mask.map_or(null_mut(), Matrix::inner),
                 null_mut(),
                 GxB_ANY_PAIR_BOOL,
-                a.map_or(self.inner(), |a| a.inner()),
-                b.map_or(self.inner(), |b| b.inner()),
+                a.map_or_else(|| self.inner(), Matrix::inner),
+                b.map_or_else(|| self.inner(), Matrix::inner),
                 descriptor.map_or(null_mut(), std::convert::Into::into),
             );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
@@ -1083,7 +1089,7 @@ impl<T> Matrix<T> {
         unsafe {
             let info = GrB_Matrix_apply(
                 self.inner(),
-                mask.map_or(null_mut(), |m| m.inner()),
+                mask.map_or(null_mut(), Matrix::inner),
                 GxB_ANY_BOOL,
                 GxB_ONE_BOOL,
                 a.inner(),
@@ -2153,8 +2159,8 @@ mod tests {
             GrB_Matrix_wait, GrB_WaitMode, GxB_ANY_BOOL, GxB_Matrix_iso, GxB_Matrix_memoryUsage,
         };
 
-        ensure_init();
         const N: u64 = 4096;
+        ensure_init();
         let rows: Vec<u64> = (0..N).collect();
         let cols: Vec<u64> = (0..N).map(|i| (i * 7) % N).collect();
 
@@ -2266,6 +2272,57 @@ mod tests {
             );
         }
         // encoding unloads and reloads the matrix; it must be intact
+        assert_eq!(m.get(1, 2), Some(true));
+    }
+
+    /// A foreground SAVE / DUMP / GRAPH.COPY encodes a matrix that read queries
+    /// share (a shallow clone) while they traverse it. The source must stay
+    /// readable for the whole encode, not only after it returns: a Writer
+    /// holding a clone reads the entries from inside `write_buffer`.
+    #[test]
+    fn source_matrix_stays_readable_while_encoding() {
+        struct ReadsSource {
+            reader: Matrix<bool>,
+            seen: usize,
+        }
+        impl super::Writer for ReadsSource {
+            fn write_unsigned(
+                &mut self,
+                _: u64,
+            ) {
+            }
+            fn write_signed(
+                &mut self,
+                _: i64,
+            ) {
+            }
+            fn write_double(
+                &mut self,
+                _: f64,
+            ) {
+            }
+            fn write_buffer(
+                &mut self,
+                _: &[u8],
+            ) {
+                assert_eq!(self.reader.get(1, 2), Some(true));
+                assert_eq!(self.reader.get(5, 6), Some(true));
+                assert_eq!(self.reader.get(3, 3), None);
+                self.seen += 1;
+            }
+        }
+
+        ensure_init();
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(1, 2, true);
+        m.set(5, 6, true);
+        m.wait();
+        let mut w = ReadsSource {
+            reader: m.clone(),
+            seen: 0,
+        };
+        super::Encode::encode(&m, &mut w);
+        assert!(w.seen > 0, "the writer never ran");
         assert_eq!(m.get(1, 2), Some(true));
     }
 }

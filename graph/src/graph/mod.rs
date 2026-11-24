@@ -11,7 +11,7 @@
 //!                    │  (mvcc_graph.rs)          │  Snapshot isolation for readers,
 //!                    │                           │  stale forks refused at commit
 //!                    └────────────┬──────────────┘
-//!                                 │ Arc<AtomicRefCell<Graph>>
+//!                                 │ Arc<Graph> (published); a fork is a Graph
 //!                                 ▼
 //!                    ┌──────────────────────────┐
 //!                    │         Graph             │  Core storage (graph.rs)
@@ -68,3 +68,5 @@ pub mod graph;
 pub mod graphblas;
 pub mod id_space;
 pub mod mvcc_graph;
+pub mod schema;
+pub mod schema_hash;

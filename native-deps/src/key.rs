@@ -4,6 +4,7 @@
 //! the `.stamp`, so diffing two stamps names the input that moved.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use crate::dep::Dep;
 use crate::err;
@@ -11,7 +12,7 @@ use crate::error::Result;
 use crate::hash::{hash_file, hash_tree, sha256_hex};
 use crate::recipes::Ctx;
 use crate::recipes::graphblas::PREJIT_DIR;
-use crate::util::is_prejit_kernel;
+use crate::util::{env_opt, is_prejit_kernel};
 
 /// Hash of the recipe sources, embedded by build.rs, so a flag change in Rust
 /// is a key change.
@@ -32,7 +33,10 @@ impl Manifest {
 
     #[must_use]
     pub fn render(&self) -> String {
-        self.0.iter().map(|(k, v)| format!("{k}={v}\n")).collect()
+        self.0.iter().fold(String::new(), |mut out, (k, v)| {
+            let _ = writeln!(out, "{k}={v}");
+            out
+        })
     }
 
     /// The first 16 hex characters (64 bits) of the manifest's SHA-256.
@@ -43,8 +47,8 @@ impl Manifest {
 }
 
 impl Ctx<'_> {
-    /// The manifest for `dep`. LAGraph needs `graphblas_key`: it links the
-    /// archive of that exact GraphBLAS build.
+    /// The manifest for `dep`. `LAGraph` needs `graphblas_key`: it links the
+    /// archive of that exact `GraphBLAS` build.
     pub fn manifest(
         &self,
         dep: Dep,
@@ -58,6 +62,15 @@ impl Ctx<'_> {
         m.set("cc", &self.toolchain.cc_version);
         m.set("cxx", &self.toolchain.cxx_version);
         m.set("openmp", self.toolchain.openmp.key());
+        // The oldest macOS the archives may run on: cmake and rustc read it from
+        // the environment and stamp it into every object. Read here rather than
+        // in toolchain.rs, which feeds RECIPE_HASH: added only when set on
+        // macOS, every other key -- all of Linux -- stays what it was.
+        if cfg!(target_os = "macos")
+            && let Some(min) = env_opt("MACOSX_DEPLOYMENT_TARGET")
+        {
+            m.set("macos_deployment_target", min);
+        }
         match dep {
             Dep::GraphBlas => {
                 let patch = self.root.join("build/graphblas/GB_control.patch");

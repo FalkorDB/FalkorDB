@@ -15,7 +15,8 @@
 //!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
 //!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
 //!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE,
-//!   CMD_INFO, MAX_INFO_QUERIES, ASYNC_DELETE, DELAY_INDEXING
+//!   CMD_INFO, MAX_INFO_QUERIES, ASYNC_DELETE, DELAY_INDEXING,
+//!   WRITE_LOCK_POLL_INTERVAL
 //!
 //! Read-only (SET returns an error):
 //!   THREAD_COUNT, INDEX_WORKER_THREADS, OMP_THREAD_COUNT, CACHE_SIZE,
@@ -23,8 +24,8 @@
 //!
 //! ASYNC_DELETE and DELAY_INDEXING are settable, as they are in C, but nothing in
 //! this engine reads either one yet: graph teardown is always off-thread (see
-//! `graph_core::graph_free`, which cannot free inline — `Index::drop` takes the GIL,
-//! which the main thread already holds while the free callback runs), and the
+//! `graph_core::graph_free`, which hands the free to a spawned thread so a large
+//! graph does not stall the main thread), and the
 //! decoders always build indexes eagerly. So `SET` on them records a value and
 //! changes no behaviour; C reads both.
 //!
@@ -42,13 +43,14 @@ use crate::config::{
     CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
     EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
     MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
-    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    TIMEOUT_DEFAULT, TIMEOUT_MAX, WRITE_LOCK_POLL_INTERVAL, get_thread_count,
+    normalize_node_creation_buffer,
 };
-use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
+use valkey_module::{Context, NextArg, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
 
 /// C's reply for a name it does not know, in GET and SET alike.
-pub(crate) const UNKNOWN_FIELD: &str = "Unknown configuration field";
+pub const UNKNOWN_FIELD: &str = "Unknown configuration field";
 
 /// Smallest `JS_HEAP_SIZE` / `JS_STACK_SIZE` C accepts: 1MB.
 const JS_MIN_SIZE: i64 = 1_048_576;
@@ -57,61 +59,68 @@ const JS_MIN_SIZE: i64 = 1_048_576;
 fn config_get_one(
     ctx: &Context,
     name: &str,
-) -> Result<RedisValue, String> {
-    let val: RedisValue = match name {
-        "TIMEOUT" => RedisValue::Integer(TIMEOUT.load(Ordering::Relaxed)),
-        "TIMEOUT_DEFAULT" => RedisValue::Integer(TIMEOUT_DEFAULT.load(Ordering::Relaxed)),
-        "TIMEOUT_MAX" => RedisValue::Integer(TIMEOUT_MAX.load(Ordering::Relaxed)),
-        "CACHE_SIZE" => RedisValue::Integer(*CONFIGURATION_CACHE_SIZE.lock(ctx)),
-        "ASYNC_DELETE" => RedisValue::Integer(ASYNC_DELETE.load(Ordering::Relaxed)),
+) -> Result<ValkeyValue, String> {
+    let val: ValkeyValue = match name {
+        "TIMEOUT" => ValkeyValue::Integer(TIMEOUT.load(Ordering::Relaxed)),
+        "TIMEOUT_DEFAULT" => ValkeyValue::Integer(TIMEOUT_DEFAULT.load(Ordering::Relaxed)),
+        "TIMEOUT_MAX" => ValkeyValue::Integer(TIMEOUT_MAX.load(Ordering::Relaxed)),
+        "CACHE_SIZE" => ValkeyValue::Integer(*CONFIGURATION_CACHE_SIZE.lock(ctx)),
+        "ASYNC_DELETE" => ValkeyValue::Integer(ASYNC_DELETE.load(Ordering::Relaxed)),
         "OMP_THREAD_COUNT" => {
             let v = OMP_THREAD_COUNT.load(Ordering::Relaxed);
             let v = if v > 0 { v } else { get_thread_count(ctx) };
-            RedisValue::Integer(v)
+            ValkeyValue::Integer(v)
         }
-        "THREAD_COUNT" => RedisValue::Integer(get_thread_count(ctx)),
+        "THREAD_COUNT" => ValkeyValue::Integer(get_thread_count(ctx)),
         "INDEX_WORKER_THREADS" => {
-            RedisValue::Integer(*CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx))
+            ValkeyValue::Integer(*CONFIGURATION_INDEX_WORKER_THREADS.lock(ctx))
         }
-        "RESULTSET_SIZE" => RedisValue::Integer(RESULTSET_SIZE.load(Ordering::Relaxed)),
+        "RESULTSET_SIZE" => ValkeyValue::Integer(RESULTSET_SIZE.load(Ordering::Relaxed)),
         "VKEY_MAX_ENTITY_COUNT" => {
-            RedisValue::Integer(*CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(ctx))
+            ValkeyValue::Integer(*CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(ctx))
         }
         "MAX_QUEUED_QUERIES" => {
-            RedisValue::Integer(MAX_QUEUED_QUERIES.load(Ordering::Relaxed) as i64)
+            ValkeyValue::Integer(MAX_QUEUED_QUERIES.load(Ordering::Relaxed) as i64)
         }
-        "QUERY_MEM_CAPACITY" => RedisValue::Integer(QUERY_MEM_CAPACITY.load(Ordering::Relaxed)),
+        "QUERY_MEM_CAPACITY" => ValkeyValue::Integer(QUERY_MEM_CAPACITY.load(Ordering::Relaxed)),
         "DELTA_MAX_PENDING_CHANGES" => {
-            RedisValue::Integer(DELTA_MAX_PENDING_CHANGES.load(Ordering::Relaxed))
+            ValkeyValue::Integer(DELTA_MAX_PENDING_CHANGES.load(Ordering::Relaxed))
         }
-        "NODE_CREATION_BUFFER" => RedisValue::Integer(normalize_node_creation_buffer(
+        "NODE_CREATION_BUFFER" => ValkeyValue::Integer(normalize_node_creation_buffer(
             *CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx),
         )),
         "CMD_INFO" => {
-            RedisValue::Integer(i64::from(CONFIGURATION_CMD_INFO.load(Ordering::Relaxed)))
+            ValkeyValue::Integer(i64::from(CONFIGURATION_CMD_INFO.load(Ordering::Relaxed)))
         }
-        "MAX_INFO_QUERIES" => RedisValue::Integer(MAX_INFO_QUERIES.load(Ordering::Relaxed)),
-        "EFFECTS_COMPRESSION" => RedisValue::Integer(EFFECTS_COMPRESSION.load(Ordering::Relaxed)),
+        "MAX_INFO_QUERIES" => ValkeyValue::Integer(MAX_INFO_QUERIES.load(Ordering::Relaxed)),
+        "EFFECTS_COMPRESSION" => ValkeyValue::Integer(EFFECTS_COMPRESSION.load(Ordering::Relaxed)),
         // Deprecated and read by nothing; reported so a GET round-trips a SET.
         "EFFECTS_THRESHOLD" => {
-            RedisValue::Integer(EFFECTS_THRESHOLD_DEPRECATED.load(Ordering::Relaxed))
+            ValkeyValue::Integer(EFFECTS_THRESHOLD_DEPRECATED.load(Ordering::Relaxed))
         }
-        "BOLT_PORT" => RedisValue::Integer(BOLT_PORT.load(Ordering::Relaxed)),
-        "DELAY_INDEXING" => RedisValue::Integer(i64::from(*CONFIGURATION_DELAY_INDEXING.lock(ctx))),
-        "IMPORT_FOLDER" => RedisValue::BulkString((*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone()),
-        "TEMP_FOLDER" => RedisValue::BulkString((*CONFIGURATION_TEMP_FOLDER.lock(ctx)).clone()),
-        "JS_HEAP_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_HEAP_SIZE.lock(ctx)),
-        "JS_STACK_SIZE" => RedisValue::Integer(*CONFIGURATION_JS_STACK_SIZE.lock(ctx)),
+        "BOLT_PORT" => ValkeyValue::Integer(BOLT_PORT.load(Ordering::Relaxed)),
+        "DELAY_INDEXING" => {
+            ValkeyValue::Integer(i64::from(*CONFIGURATION_DELAY_INDEXING.lock(ctx)))
+        }
+        "IMPORT_FOLDER" => {
+            ValkeyValue::BulkString((*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone())
+        }
+        "TEMP_FOLDER" => ValkeyValue::BulkString((*CONFIGURATION_TEMP_FOLDER.lock(ctx)).clone()),
+        "JS_HEAP_SIZE" => ValkeyValue::Integer(*CONFIGURATION_JS_HEAP_SIZE.lock(ctx)),
+        "JS_STACK_SIZE" => ValkeyValue::Integer(*CONFIGURATION_JS_STACK_SIZE.lock(ctx)),
+        "WRITE_LOCK_POLL_INTERVAL" => {
+            ValkeyValue::Integer(WRITE_LOCK_POLL_INTERVAL.load(Ordering::Relaxed))
+        }
         _ => return Err(UNKNOWN_FIELD.to_string()),
     };
-    Ok(RedisValue::Array(vec![
-        RedisValue::BulkString(name.to_string()),
+    Ok(ValkeyValue::Array(vec![
+        ValkeyValue::BulkString(name.to_string()),
         val,
     ]))
 }
 
 /// Validate and parse a config SET request. Returns the parsed value or error.
-pub(crate) fn validate_config_set(
+pub fn validate_config_set(
     name: &str,
     value: &str,
 ) -> Result<ConfigValue, String> {
@@ -123,7 +132,8 @@ pub(crate) fn validate_config_set(
         | "QUERY_MEM_CAPACITY"
         | "DELTA_MAX_PENDING_CHANGES"
         | "EFFECTS_COMPRESSION"
-        | "EFFECTS_THRESHOLD" => {
+        | "EFFECTS_THRESHOLD"
+        | "WRITE_LOCK_POLL_INTERVAL" => {
             let v: i64 = value
                 .parse()
                 .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
@@ -217,7 +227,7 @@ fn validate_timeout_cross_constraints(validated: &[(&str, ConfigValue)]) -> Resu
 /// - Cannot set deprecated TIMEOUT when TIMEOUT_DEFAULT or TIMEOUT_MAX are active
 /// - TIMEOUT_DEFAULT cannot exceed TIMEOUT_MAX (when TIMEOUT_MAX > 0)
 /// - TIMEOUT_MAX cannot be lower than TIMEOUT_DEFAULT (when TIMEOUT_DEFAULT > 0)
-pub(crate) fn check_timeout_constraints(
+pub fn check_timeout_constraints(
     timeout_default: &mut i64,
     timeout_max: &mut i64,
     validated: &[(&str, ConfigValue)],
@@ -252,13 +262,13 @@ pub(crate) fn check_timeout_constraints(
     Ok(())
 }
 
-pub(crate) enum ConfigValue {
+pub enum ConfigValue {
     Int(i64),
     Uint(u64),
 }
 
 /// Apply a validated config value.
-pub(crate) fn apply_config_set(
+pub fn apply_config_set(
     ctx: &Context,
     name: &str,
     val: &ConfigValue,
@@ -278,6 +288,9 @@ pub(crate) fn apply_config_set(
             EFFECTS_THRESHOLD_DEPRECATED.store(val.as_i64(), Ordering::Relaxed);
         }
         "ASYNC_DELETE" => ASYNC_DELETE.store(val.as_i64(), Ordering::Relaxed),
+        "WRITE_LOCK_POLL_INTERVAL" => {
+            WRITE_LOCK_POLL_INTERVAL.store(val.as_i64(), Ordering::Relaxed);
+        }
         "CMD_INFO" => CONFIGURATION_CMD_INFO.store(val.as_i64() != 0, Ordering::Relaxed),
         "MAX_INFO_QUERIES" => MAX_INFO_QUERIES.store(val.as_i64(), Ordering::Relaxed),
         "DELAY_INDEXING" => {
@@ -317,11 +330,11 @@ impl ConfigValue {
 
 pub fn graph_config(
     ctx: &Context,
-    args: Vec<RedisString>,
-) -> RedisResult {
+    args: Vec<ValkeyString>,
+) -> ValkeyResult {
     // Arity as C's `Graph_Config`: `GET <name>` exactly, `SET` with name/value pairs.
     if args.len() < 3 {
-        return Err(redis_module::RedisError::WrongArity);
+        return Err(ValkeyError::WrongArity);
     }
     let argc = args.len();
     let mut args = args.into_iter().skip(1);
@@ -332,54 +345,48 @@ pub fn graph_config(
     match sub_command.to_ascii_uppercase().as_str() {
         "GET" => {
             if argc != 3 {
-                return Err(redis_module::RedisError::WrongArity);
+                return Err(ValkeyError::WrongArity);
             }
             let name = args.next_str()?;
             if name == "*" {
                 // Return all configs in order.
                 let mut result = Vec::with_capacity(CONFIG_NAMES.len());
                 for &cfg_name in CONFIG_NAMES {
-                    result.push(
-                        config_get_one(ctx, cfg_name).map_err(redis_module::RedisError::String)?,
-                    );
+                    result.push(config_get_one(ctx, cfg_name).map_err(ValkeyError::String)?);
                 }
-                Ok(RedisValue::Array(result))
+                Ok(ValkeyValue::Array(result))
             } else {
                 let upper = name.to_ascii_uppercase();
-                config_get_one(ctx, &upper).map_err(redis_module::RedisError::String)
+                config_get_one(ctx, &upper).map_err(ValkeyError::String)
             }
         }
         "SET" => {
             if argc < 4 || argc % 2 == 1 {
-                return Err(redis_module::RedisError::WrongArity);
+                return Err(ValkeyError::WrongArity);
             }
             // Collect all name-value pairs.
             let mut pairs = Vec::new();
             while let Ok(n) = args.next_str() {
                 let name = n.to_ascii_uppercase();
-                let value = args.next_str().map_err(|_| {
-                    redis_module::RedisError::Str("Missing value for configuration parameter")
-                })?;
+                let value = args
+                    .next_str()
+                    .map_err(|_| ValkeyError::Str("Missing value for configuration parameter"))?;
                 pairs.push((name, value.to_string()));
             }
 
             if pairs.is_empty() {
-                return Err(redis_module::RedisError::Str(
-                    "Missing configuration parameter name",
-                ));
+                return Err(ValkeyError::Str("Missing configuration parameter name"));
             }
 
             // Validate all pairs first (for atomic multi-set).
             let mut validated = Vec::with_capacity(pairs.len());
             for (name, value) in &pairs {
-                let v =
-                    validate_config_set(name, value).map_err(redis_module::RedisError::String)?;
+                let v = validate_config_set(name, value).map_err(ValkeyError::String)?;
                 validated.push((name.as_str(), v));
             }
 
             // Cross-validate timeout configuration constraints.
-            validate_timeout_cross_constraints(&validated)
-                .map_err(redis_module::RedisError::String)?;
+            validate_timeout_cross_constraints(&validated).map_err(ValkeyError::String)?;
 
             // Apply all validated values.
             let mut js_config_changed = false;
@@ -396,9 +403,9 @@ pub fn graph_config(
                 graph::udf::get_udf_repo().bump_version();
             }
 
-            Ok(RedisValue::SimpleStringStatic("OK"))
+            Ok(ValkeyValue::SimpleStringStatic("OK"))
         }
-        _ => Err(redis_module::RedisError::String(
+        _ => Err(ValkeyError::String(
             "Unknown subcommand for GRAPH.CONFIG".to_string(),
         )),
     }

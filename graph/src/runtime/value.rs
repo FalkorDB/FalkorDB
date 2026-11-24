@@ -1325,6 +1325,10 @@ impl ValueTypeOf for Value {
         arg_type: &Type,
     ) -> Option<(Type, Type)> {
         match (self, arg_type) {
+            // `List(Any)` accepts every element, so skip the walk: it made
+            // each `size(list)` / `head(list)` call O(len) and any per-row
+            // use of a large list variable quadratic.
+            (Self::List(_), Type::List(ty)) if matches!(**ty, Type::Any) => None,
             (Self::List(vs), Type::List(ty)) => {
                 for v in vs.iter() {
                     if let Some(res) = v.value_of_type(ty) {
@@ -1932,10 +1936,8 @@ pub fn sort_cmp_f64(
     a: f64,
     b: f64,
 ) -> Ordering {
-    match a.partial_cmp(&b) {
-        Some(ordering) => ordering,
-        None => a.is_nan().cmp(&b.is_nan()),
-    }
+    a.partial_cmp(&b)
+        .unwrap_or_else(|| a.is_nan().cmp(&b.is_nan()))
 }
 
 /// [`sort_cmp_f64`] for `f32` (points and vectors), except that `-0.0` sorts
@@ -1956,7 +1958,7 @@ fn sort_cmp_f32(
 /// The bits [`Value::hash`] uses for an `f32` component: one value for every
 /// NaN, as [`sort_cmp_f32`] treats them as equal.
 #[inline]
-fn f32_hash_bits(f: f32) -> u32 {
+const fn f32_hash_bits(f: f32) -> u32 {
     if f.is_nan() {
         f32::NAN.to_bits()
     } else {
@@ -2000,6 +2002,10 @@ fn sort_cmp_int_float(
 /// then the first element where `x != y` decides by `x > y`. So a NaN element
 /// never compares equal (not even to NaN) and orders `Less` in both
 /// directions.
+#[allow(
+    clippy::needless_bitwise_bool,
+    reason = "`|`, not `||`: the block compare must stay branch-free to vectorize"
+)]
 fn compare_vecf32(
     a: &[f32],
     b: &[f32],
@@ -2592,10 +2598,14 @@ mod sort_cmp_tests {
             Value::VecF32(Arc::new([1.0, f32::NAN].into_iter().collect())),
             Value::VecF32(Arc::new([1.0, -f32::NAN].into_iter().collect())),
             Value::VecF32(Arc::new([1.0, 2.0].into_iter().collect())),
-            Value::VecF32(Arc::new([-0.0].into_iter().collect())),
-            Value::VecF32(Arc::new([0.0].into_iter().collect())),
-            list(vec![Value::VecF32(Arc::new([-0.0].into_iter().collect()))]),
-            list(vec![Value::VecF32(Arc::new([0.0].into_iter().collect()))]),
+            Value::VecF32(Arc::new(std::iter::once(-0.0).collect())),
+            Value::VecF32(Arc::new(std::iter::once(0.0).collect())),
+            list(vec![Value::VecF32(Arc::new(
+                std::iter::once(-0.0).collect(),
+            ))]),
+            list(vec![Value::VecF32(Arc::new(
+                std::iter::once(0.0).collect(),
+            ))]),
             point(-0.0, 0.0),
             point(0.0, 0.0),
             point(f32::NAN, 1.0),
@@ -2633,7 +2643,7 @@ mod sort_cmp_tests {
                 }
             }
         }
-        let vec = |f: f32| Value::VecF32(Arc::new([f].into_iter().collect()));
+        let vec = |f: f32| Value::VecF32(Arc::new(std::iter::once(f).collect()));
         assert_eq!(vec(f32::NAN).sort_cmp(&vec(-f32::NAN)), Ordering::Equal);
         assert_ne!(vec(-0.0).sort_cmp(&vec(0.0)), Ordering::Equal);
         assert_ne!(point(-0.0, 0.0).sort_cmp(&point(0.0, 0.0)), Ordering::Equal);
@@ -2927,5 +2937,65 @@ mod date_format_tests {
             Value::format_datetime(i64::MIN),
             "-292277022657-01-27T08:29:52"
         );
+    }
+}
+
+#[cfg(test)]
+mod value_of_type_tests {
+    use super::{Type, Value, ValueTypeOf};
+    use std::sync::Arc;
+    use thin_vec::thin_vec;
+
+    fn list(items: impl IntoIterator<Item = Value>) -> Value {
+        Value::List(Arc::new(items.into_iter().collect()))
+    }
+
+    #[test]
+    fn list_of_any_accepts_every_element() {
+        let any = Type::List(Box::new(Type::Any));
+        let mixed = list([
+            Value::Int(1),
+            Value::Null,
+            list([Value::Bool(true)]),
+            Value::Float(1.5),
+        ]);
+        assert!(mixed.value_of_type(&any).is_none());
+        assert!(list([]).value_of_type(&any).is_none());
+        // A non-list is still rejected.
+        assert!(Value::Int(1).value_of_type(&any).is_some());
+    }
+
+    #[test]
+    fn typed_list_still_checks_elements() {
+        let ints = Type::List(Box::new(Type::Int));
+        assert!(
+            list([Value::Int(1), Value::Int(2)])
+                .value_of_type(&ints)
+                .is_none()
+        );
+        assert!(
+            list([Value::Int(1), Value::Bool(true)])
+                .value_of_type(&ints)
+                .is_some()
+        );
+        // Nested: the walk still reaches the inner elements.
+        let nested = Type::List(Box::new(Type::List(Box::new(Type::Int))));
+        assert!(
+            list([list([Value::Int(1)])])
+                .value_of_type(&nested)
+                .is_none()
+        );
+        assert!(
+            list([list([Value::Bool(true)])])
+                .value_of_type(&nested)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn size_signature_accepts_a_list_without_walking_it() {
+        let sig = Type::union([Type::List(Box::new(Type::Any)), Type::String, Type::Null]);
+        let big = Value::List(Arc::new(thin_vec![Value::Int(0); 1000]));
+        assert!(big.value_of_type(&sig).is_none());
     }
 }

@@ -119,66 +119,32 @@ use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
+use super::schema::NameMap;
 use crate::runtime::value::Value;
 
-/// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
-/// (`USHRT_MAX`, `src/graph/entities/attribute_set.h`). Never a valid id, so an id
-/// this large in an RDB is malformed rather than merely out of our range.
+/// Highest `u16`, reserved as "no attribute".
+///
+/// C's `ATTRIBUTE_ID_NONE` (`USHRT_MAX`, `src/graph/entities/attribute_set.h`).
+/// Never a valid id, so an id this large in an RDB is malformed rather than
+/// merely out of our range.
 pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
 
 /// How many distinct attribute names a graph can hold, given that
 /// [`ATTRIBUTE_ID_NONE`] is reserved: ids run `0..MAX_ATTRIBUTES`.
 pub const MAX_ATTRIBUTES: usize = ATTRIBUTE_ID_NONE as usize;
 
-/// Insertion-ordered map of attribute names to attribute indices.
-///
-/// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
-/// deterministic iteration order) and a `FxHashMap<Arc<String>, u16>` for
-/// O(1) name → index resolution on the hot read path.
-#[derive(Default, Clone)]
-pub struct AttrNameMap {
-    vec: Vec<Arc<String>>,
-    index: FxHashMap<Arc<String>, u16>,
-}
-
-impl<'a> IntoIterator for &'a AttrNameMap {
-    type Item = &'a Arc<String>;
-    type IntoIter = std::slice::Iter<'a, Arc<String>>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
+/// The property-key names, one list for the whole graph (see
+/// [`Schema::property_keys`](super::schema::Schema::property_keys)): a
+/// [`NameMap::PropertyKeys`], whose ids fit a `u16`.
+pub type AttrNameMap = NameMap;
 
 impl AttrNameMap {
-    #[must_use]
-    pub const fn len(&self) -> usize {
-        self.vec.len()
-    }
-
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.vec.is_empty()
-    }
-
-    #[must_use]
-    pub fn get(
-        &self,
-        idx: usize,
-    ) -> Option<&Arc<String>> {
-        self.vec.get(idx)
-    }
-
-    pub fn iter(&self) -> std::slice::Iter<'_, Arc<String>> {
-        self.vec.iter()
-    }
-
     #[must_use]
     pub fn get_index_of(
         &self,
         name: &Arc<String>,
     ) -> Option<usize> {
-        self.index.get(name).map(|&i| i as usize)
+        self.id_of(name)
     }
 
     /// Intern `name`, doing nothing if the dictionary is already full.
@@ -188,27 +154,18 @@ impl AttrNameMap {
     /// `get_or_create` and compare against [`ATTRIBUTE_ID_NONE`].
     pub fn insert(
         &mut self,
-        name: Arc<String>,
+        name: &Arc<String>,
     ) {
-        if self.index.contains_key(&name) {
-            return;
-        }
-        if self.vec.len() >= MAX_ATTRIBUTES {
-            return;
-        }
-        let idx = self.vec.len() as u16;
-        self.vec.push(name.clone());
-        self.index.insert(name, idx);
+        self.get_or_insert(name);
     }
 
     /// Resolve `name` to its id, interning it if this graph has not seen it.
     ///
-    /// The single place ids are minted. There is exactly one of these tables per
-    /// graph — shared by the node and relationship stores — so an id means the same
-    /// attribute wherever it appears: in a span, in the RDB, in a `GRAPH.EFFECT`, or
-    /// in a compact reply. Per-store tables would number the same name differently
-    /// for nodes and relationships, and a bare id on the wire would then land on the
-    /// wrong attribute on a replica (#2457).
+    /// There is exactly one of these tables per graph — shared by the node and
+    /// relationship stores — so an id means the same attribute wherever it appears: in
+    /// a span, in the RDB, in a `GRAPH.EFFECT`, or in a compact reply. Per-store tables
+    /// would number the same name differently for nodes and relationships, and a bare
+    /// id on the wire would then land on the wrong attribute on a replica (#2457).
     ///
     /// Matches C, whose `GraphContext_FindOrAddAttribute` likewise takes no entity
     /// type and mints from one array.
@@ -216,36 +173,19 @@ impl AttrNameMap {
     /// Returns [`ATTRIBUTE_ID_NONE`] once [`MAX_ATTRIBUTES`] names are interned,
     /// as C's `GraphContext_FindOrAddAttribute` does when its table is full. The
     /// id space is `u16`, so without the cap the 65,537th distinct name would take
-    /// `self.vec.len() as u16` == 0 and **alias attribute 0** — reads of an
-    /// unrelated, long-established property would start returning the new one's
-    /// values. Refusing to mint keeps the failure confined to the name that could
-    /// not be added: `ATTRIBUTE_ID_NONE` resolves to no entry, so the property
-    /// reads as absent, and `decode_with_count` already rejects it on the wire.
+    /// `len as u16` == 0 and **alias attribute 0** — reads of an unrelated,
+    /// long-established property would start returning the new one's values. Refusing
+    /// to mint keeps the failure confined to the name that could not be added:
+    /// `ATTRIBUTE_ID_NONE` resolves to no entry, so the property reads as absent, and
+    /// `decode_with_count` already rejects it on the wire. The cap is the property-key
+    /// list's capacity, which [`NameMap::get_or_insert`] enforces.
     pub fn get_or_create(
         &mut self,
         name: &Arc<String>,
     ) -> u16 {
-        if let Some(&idx) = self.index.get(name) {
-            return idx;
-        }
-        if self.vec.len() >= MAX_ATTRIBUTES {
-            return ATTRIBUTE_ID_NONE;
-        }
-        let idx = self.vec.len() as u16;
-        self.vec.push(Arc::clone(name));
-        self.index.insert(Arc::clone(name), idx);
-        idx
-    }
-}
-
-impl std::ops::Index<usize> for AttrNameMap {
-    type Output = Arc<String>;
-
-    fn index(
-        &self,
-        idx: usize,
-    ) -> &Arc<String> {
-        &self.vec[idx]
+        self.get_or_insert(name)
+            .and_then(|id| u16::try_from(id).ok())
+            .unwrap_or(ATTRIBUTE_ID_NONE)
     }
 }
 
@@ -1430,15 +1370,27 @@ impl AttributeStore {
         count: u64,
         offset: u64,
     ) {
-        let mut skipped = 0u64;
-        let mut encoded = 0u64;
+        if count == 0 {
+            return;
+        }
+        // Seek straight to the `offset`-th live id. Walking from id 0 and skipping
+        // `offset` live ids one by one made a multi-key save quadratic: each of the
+        // ~N / VKEY_MAX_ENTITY_COUNT virtual keys re-walked every id before its
+        // slice, which for a 117M-edge graph was ~90% of a 90 s SAVE.
+        let Some(start) = nth_live_id(deleted, max_id, offset) else {
+            return;
+        };
 
-        for id in 0..=max_id {
-            if deleted.contains(id) {
-                continue;
-            }
-            if skipped < offset {
-                skipped += 1;
+        // Deleted ids are visited in order alongside the id walk, rather than
+        // probed with `contains` for every id.
+        let mut deleted_iter = deleted.iter();
+        deleted_iter.advance_to(start);
+        let mut next_deleted = deleted_iter.next();
+
+        let mut encoded = 0u64;
+        for id in start..=max_id {
+            if next_deleted == Some(id) {
+                next_deleted = deleted_iter.next();
                 continue;
             }
 
@@ -1460,6 +1412,35 @@ impl AttributeStore {
             }
         }
     }
+}
+
+/// The `n`-th (0-based) id in `0..=max_id` that is not in `deleted`, or `None`
+/// when there are not that many.
+///
+/// The number of live ids in `0..=x` is `x + 1 - deleted.rank(x)`, which is
+/// monotone in `x`, so the answer is the smallest `x` where it exceeds `n` —
+/// found by binary search in `O(log max_id)` rank queries.
+fn nth_live_id(
+    deleted: &RoaringTreemap,
+    max_id: u64,
+    n: u64,
+) -> Option<u64> {
+    // `rank(x) <= x + 1`, so this neither underflows nor overflows in u128.
+    let live_through = |x: u64| u128::from(x) + 1 - u128::from(deleted.rank(x));
+    let n128 = u128::from(n);
+    if live_through(max_id) <= n128 {
+        return None;
+    }
+    let (mut lo, mut hi) = (n, max_id);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if live_through(mid) > n128 {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    Some(lo)
 }
 
 impl Decode<19> for AttributeStore {
@@ -1515,6 +1496,7 @@ impl Decode<19> for AttributeStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::schema::NameList;
 
     fn name(s: &str) -> Arc<String> {
         Arc::new(s.to_string())
@@ -1526,7 +1508,7 @@ mod tests {
     /// across versions — not where the dictionary lives, so pairing the two here keeps
     /// them in their original shape. `Deref` forwards everything that does not need the
     /// dictionary; the handful of methods that do are shadowed below.
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct TestStore {
         names: AttrNameMap,
         store: AttributeStore,
@@ -1534,7 +1516,10 @@ mod tests {
 
     impl TestStore {
         fn new() -> Self {
-            Self::default()
+            Self {
+                names: AttrNameMap::PropertyKeys(NameList::default()),
+                store: AttributeStore::new(),
+            }
         }
 
         /// Clones the dictionary alongside the store, which is what `Graph::new_version`
@@ -1692,7 +1677,7 @@ mod tests {
         let store = store_with(&[(1, &pairs)]);
         assert_eq!(store.entity_memory_usage(1), 4 * 12);
         assert_eq!(store.entity_memory_usage(2), 0);
-        assert!(store.data.block(0).unwrap().heap.is_empty());
+        assert_eq!(store.data.block(0).unwrap().heap, [] as [Value; 0]);
     }
 
     #[test]
@@ -1730,7 +1715,7 @@ mod tests {
         // The old string's heap slot must be recycled, not leaked.
         let block = store.data.block(0).unwrap();
         assert_eq!(block.heap.len(), 1);
-        assert!(block.heap_free.is_empty());
+        assert_eq!(block.heap_free, [] as [u32; 0]);
     }
 
     #[test]
@@ -1974,7 +1959,7 @@ mod tests {
         ops: Vec<Op>,
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug, PartialEq)]
     enum Op {
         Unsigned(u64),
         Signed(i64),
@@ -2095,8 +2080,8 @@ mod tests {
             ],
         );
 
-        let mut dict = AttrNameMap::default();
-        dict.insert(Arc::new("a".to_string()));
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
+        dict.insert(&Arc::new("a".to_string()));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
@@ -2148,9 +2133,9 @@ mod tests {
     #[test]
     fn minting_stops_at_the_id_space_rather_than_wrapping() {
         // Fill the dictionary to capacity, then ask for one more name.
-        let mut dict = AttrNameMap::default();
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
         for i in 0..MAX_ATTRIBUTES {
-            dict.insert(Arc::new(format!("a{i}")));
+            dict.insert(&Arc::new(format!("a{i}")));
         }
         assert_eq!(dict.len(), MAX_ATTRIBUTES);
 
@@ -2164,7 +2149,7 @@ mod tests {
              GraphContext_FindOrAddAttribute does"
         );
         // What the cap prevents, in the order it would go wrong without it:
-        // `self.vec.len() as u16` is ATTRIBUTE_ID_NONE at 65_535 entries — a real
+        // `len as u16` is ATTRIBUTE_ID_NONE at 65_535 entries — a real
         // name minted onto the reserved sentinel, which `decode_with_count` then
         // rejects on the wire — and 0 at 65_536, aliasing attribute 0 so that reads
         // of a long-established property return the new one's values. The guard
@@ -2180,7 +2165,7 @@ mod tests {
             "the refused name must not be resolvable to any id"
         );
 
-        dict.insert(Arc::clone(&overflow));
+        dict.insert(&overflow);
         assert_eq!(
             dict.len(),
             MAX_ATTRIBUTES,
@@ -2194,8 +2179,8 @@ mod tests {
         let mut r = span_stream(7, &[(0, Value::Int(10)), (5, Value::Int(20))]);
 
         // A dictionary holding a single name: id 0 is real, id 5 resolves to nothing.
-        let mut dict = AttrNameMap::default();
-        dict.insert(Arc::new("a".to_string()));
+        let mut dict = AttrNameMap::PropertyKeys(NameList::default());
+        dict.insert(&Arc::new("a".to_string()));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
@@ -2219,5 +2204,65 @@ mod tests {
             1,
             "only the in-range attribute should have been stored"
         );
+    }
+
+    /// A store split across virtual keys is encoded one `(count, offset)` slice
+    /// at a time. However the live ids are sliced — deleted ids at the start, in
+    /// runs, at the end, slices wider than what is left — the slices must
+    /// concatenate to exactly the walk over every live id in order.
+    #[test]
+    fn encode_slices_concatenate_to_the_full_walk() {
+        let max_id = 60u64;
+        let deleted: RoaringTreemap = [0u64, 1, 7, 8, 9, 23, 40, 59, 60].into_iter().collect();
+        let mut store = AttributeStore::default();
+        // Every third id has an attribute, so spans and empty entities interleave.
+        let mut data: Vec<(u64, Vec<(u16, Value)>)> = (0..=max_id)
+            .filter(|id| id % 3 == 0 && !deleted.contains(*id))
+            .map(|id| (id, vec![(0, Value::Int(id as i64))]))
+            .collect();
+        store.import_attrs_resolved(&mut data);
+
+        let mut expected = Recorder::default();
+        let live: Vec<u64> = (0..=max_id).filter(|id| !deleted.contains(*id)).collect();
+        for &id in &live {
+            expected.write_unsigned(id);
+            if id % 3 == 0 {
+                expected.write_unsigned(1);
+                expected.write_unsigned(0);
+                Value::Int(id as i64).encode(&mut expected);
+            } else {
+                expected.write_unsigned(0);
+            }
+        }
+
+        let total = live.len() as u64;
+        for slice in [1u64, 2, 5, 13, total, total + 7] {
+            let mut got = Recorder::default();
+            let mut offset = 0;
+            while offset < total {
+                let count = slice.min(total - offset);
+                store.encode_with_range(&mut got, &deleted, max_id, count, offset);
+                offset += count;
+            }
+            assert_eq!(got.ops, expected.ops, "slices of {slice} disagree");
+        }
+
+        // An offset past the last live id writes nothing.
+        let mut past = Recorder::default();
+        store.encode_with_range(&mut past, &deleted, max_id, 5, total);
+        assert_eq!(past.ops, [] as [Op; 0]);
+    }
+
+    #[test]
+    fn nth_live_id_skips_deleted_ids() {
+        let deleted: RoaringTreemap = [0u64, 1, 4, 9, 10].into_iter().collect();
+        let live: Vec<u64> = (0..=10).filter(|id| !deleted.contains(*id)).collect();
+        for (n, &id) in live.iter().enumerate() {
+            assert_eq!(nth_live_id(&deleted, 10, n as u64), Some(id));
+        }
+        assert_eq!(nth_live_id(&deleted, 10, live.len() as u64), None);
+        assert_eq!(nth_live_id(&RoaringTreemap::new(), 0, 0), Some(0));
+        let all: RoaringTreemap = (0u64..=5).collect();
+        assert_eq!(nth_live_id(&all, 5, 0), None);
     }
 }

@@ -49,7 +49,7 @@ use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use super::super::IR;
 use super::references::subtree_references_variable;
 
-fn get_id_filter(
+pub(super) fn get_id_filter(
     filter: &DynNode<ExprIR<Variable>>,
     node_alias: &Variable,
 ) -> Option<(QueryExpr<Variable>, ExprIR<Variable>)> {
@@ -59,9 +59,8 @@ fn get_id_filter(
     ) && let ExprIR::FuncInvocation(inner_func) = filter.child(0).data()
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(0).child(0).data()
-        && var.id == node_alias.id
-        && var.scope_id == node_alias.scope_id
-        && !subtree_references_variable(&filter.child(1), node_alias.id, node_alias.scope_id)
+        && var.key() == node_alias.key()
+        && !subtree_references_variable(&filter.child(1), node_alias.key())
     {
         Some((
             Arc::new(filter.child(1).clone_as_tree()),
@@ -73,9 +72,8 @@ fn get_id_filter(
     ) && let ExprIR::FuncInvocation(inner_func) = filter.child(1).data()
         && inner_func.name == "id"
         && let ExprIR::Variable(var) = filter.child(1).child(0).data()
-        && var.id == node_alias.id
-        && var.scope_id == node_alias.scope_id
-        && !subtree_references_variable(&filter.child(0), node_alias.id, node_alias.scope_id)
+        && var.key() == node_alias.key()
+        && !subtree_references_variable(&filter.child(0), node_alias.key())
     {
         let op = match filter.data() {
             ExprIR::Eq => ExprIR::Eq,
@@ -121,12 +119,12 @@ pub(super) fn utilize_node_by_id(optimized_plan: &mut DynTree<IR>) {
                 let mut new_op = optimized_plan.node_mut(idx);
                 if node.labels.is_empty() {
                     *new_op.data_mut() = IR::NodeByIdSeek {
-                        node: node.clone(),
+                        node,
                         filter: filters,
                     };
                 } else {
                     *new_op.data_mut() = IR::NodeByLabelAndIdScan {
-                        node: node.clone(),
+                        node,
                         filter: filters,
                     };
                 }

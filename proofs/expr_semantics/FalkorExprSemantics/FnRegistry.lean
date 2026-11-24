@@ -1,9 +1,9 @@
 /-!
 # Function registry completeness against C (#2724) — gap closed 2026-10-20
 
-`Functions::get` (`graph/src/runtime/functions/mod.rs:1048`) is proven elsewhere
+`Functions::get` (`graph/src/runtime/functions/mod.rs`) is proven elsewhere
 (`value_math` `regGet_lower`: lookup by lowercase name). What it can find is whatever
-`init_functions` (`mod.rs:1103-1120`) registered, and no property related that set to
+`init_functions` (`mod.rs`) registered, and no property related that set to
 the functions C offers. This file states that property.
 
 | here | there |

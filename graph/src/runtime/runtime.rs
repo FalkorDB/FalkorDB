@@ -62,14 +62,13 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
-use atomic_refcell::{AtomicRef, AtomicRefCell, AtomicRefMut};
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
-use orx_tree::{Bfs, Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
+use orx_tree::{Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
 use roaring::RoaringTreemap;
 use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
+    cell::{Cell, OnceCell, Ref, RefCell, RefMut},
+    collections::{HashMap, VecDeque},
     marker::PhantomData,
     sync::Arc,
     time::{Duration, Instant},
@@ -107,22 +106,33 @@ pub struct QueryStatistics {
 /// name-map lookup for the excess.
 const ATTR_ID_MEMO_CAP: usize = 32;
 
-/// A read query's borrow of its graph together with an owner of the cell it
-/// borrows. The guard is lifetime-extended to `'static`; it is sound because
-/// `_owner` keeps that cell alive for as long as the guard exists — fields drop
-/// in declaration order, so `guard` is released before `_owner` — whatever
-/// happens to anything else holding the graph.
-struct HeldRead {
-    guard: AtomicRef<'static, Graph>,
-    _owner: Arc<AtomicRefCell<Graph>>,
+/// The graph a [`Runtime`] is created on: a read query's published version,
+/// or a write query's fork.
+// Moved once, into `Runtime::new`: boxing the fork would only add an allocation.
+#[allow(clippy::large_enum_variant)]
+pub enum QueryGraph {
+    Published(Arc<Graph>),
+    Fork(Graph),
+}
+
+impl From<Arc<Graph>> for QueryGraph {
+    fn from(g: Arc<Graph>) -> Self {
+        Self::Published(g)
+    }
+}
+
+impl From<Graph> for QueryGraph {
+    fn from(fork: Graph) -> Self {
+        Self::Fork(fork)
+    }
 }
 
 /// Shared access to the graph a [`Runtime`] reads; see [`Runtime::graph`].
 pub enum GraphRef<'r> {
-    /// The read query's borrow, taken once for the query's whole life.
-    Held(&'r Graph),
-    /// A write query's per-access borrow.
-    Borrowed(AtomicRef<'r, Graph>),
+    /// A published version needs no borrow: nothing can change it.
+    Published(&'r Graph),
+    /// A write query's fork, borrowed so it is not changed meanwhile.
+    Fork(Ref<'r, Graph>),
 }
 
 impl std::ops::Deref for GraphRef<'_> {
@@ -130,8 +140,8 @@ impl std::ops::Deref for GraphRef<'_> {
 
     fn deref(&self) -> &Graph {
         match self {
-            Self::Held(g) => g,
-            Self::Borrowed(g) => g,
+            Self::Published(g) => g,
+            Self::Fork(g) => g,
         }
     }
 }
@@ -152,13 +162,13 @@ impl std::ops::Deref for GraphRef<'_> {
 pub struct Runtime<'a> {
     /// Query parameters ($param syntax)
     pub parameters: HashMap<String, Value>,
-    /// A read query's one borrow of its graph, held for the query's whole
-    /// life; see [`Self::graph`].
-    read_guard: Option<HeldRead>,
-    /// Graph being queried. Private, so it cannot be replaced or detached:
-    /// read it through [`Self::graph`] / [`Self::graph_mut`], or keep it with
-    /// [`Self::graph_arc`].
-    g: Arc<AtomicRefCell<Graph>>,
+    /// The published version this query reads: a read query's from the
+    /// start, a write query's once [`Self::publish`] published its fork.
+    published: OnceCell<Arc<Graph>>,
+    /// A write query's fork, until [`Self::publish`] takes it. Operators reach
+    /// the runtime through shared references, hence the cell. Read both
+    /// through [`Self::graph`] / [`Self::graph_mut`].
+    fork: RefCell<Option<Graph>>,
     /// Whether this is a write query
     pub write: bool,
     /// Batched mutations (lazy-initialized)
@@ -248,10 +258,18 @@ pub trait GetVariables {
 }
 
 impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
+    /// The variables the rows leaving this subtree can carry.
+    ///
+    /// `Project` and `Aggregate` start a fresh environment, so the walk stops
+    /// at them: only what they name survives, which is the output variable of
+    /// each projection and of each `(source, output)` copy. Variable ids
+    /// restart in every scope, so a variable hidden below a `WITH` would
+    /// otherwise pass for the later variable that reuses its id.
     fn get_variables(&self) -> Vec<Variable> {
         let mut vars = vec![];
-        for node in self.walk::<Bfs>() {
-            match node {
+        let mut queue = VecDeque::from([self.clone()]);
+        while let Some(node) = queue.pop_front() {
+            match node.data() {
                 IR::Optional(variables) => vars.extend(variables.iter().cloned()),
                 IR::ProcedureCall {
                     yields: named_outputs,
@@ -288,9 +306,6 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Union
                 | IR::NestedPlans
                 | IR::Apply
-                | IR::SemiApply
-                | IR::AntiSemiApply
-                | IR::OrApplyMultiplexer(_)
                 | IR::Sort(_)
                 | IR::Skip(_)
                 | IR::Limit(_)
@@ -299,6 +314,13 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::IncludePending { .. }
                 | IR::CreateIndex { .. }
                 | IR::DropIndex { .. } => {}
+                // Child 0 is the input; the other children are existence
+                // checks whose variables never reach the rows leaving the
+                // operator, and their ids may be reused later.
+                IR::SemiApply | IR::AntiSemiApply | IR::OrApplyMultiplexer(_) => {
+                    queue.extend(node.children().next());
+                    continue;
+                }
                 IR::NodeByLabelScan { node, .. }
                 | IR::AllNodeScan(node)
                 | IR::NodeByIndexScan { node, .. }
@@ -355,15 +377,19 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     }
                 }
                 IR::Aggregate {
-                    names: variables, ..
+                    names, projections, ..
                 } => {
-                    vars.extend(variables.iter().cloned());
+                    vars.extend(names.iter().cloned());
+                    vars.extend(projections.iter().map(|(_, v)| v.clone()));
+                    continue;
                 }
-                IR::Project { exprs: items, .. } => {
-                    vars.extend(items.iter().map(|v| v.0.clone()));
-                    break;
+                IR::Project { exprs, copies } => {
+                    vars.extend(exprs.iter().map(|(v, _)| v.clone()));
+                    vars.extend(copies.iter().map(|(_, v)| v.clone()));
+                    continue;
                 }
             }
+            queue.extend(node.children());
         }
         vars
     }
@@ -409,12 +435,48 @@ impl ReturnNames for DynNode<'_, IR> {
                 }
                 child.get_return_names()
             }
-            IR::Skip(_) | IR::Limit(_) | IR::Distinct => self.child(0).get_return_names(),
-            IR::Union | IR::NestedPlans => self.child(0).get_return_names(),
+            IR::Skip(_) | IR::Limit(_) | IR::Distinct | IR::Union | IR::NestedPlans => {
+                self.child(0).get_return_names()
+            }
             IR::Aggregate { names, .. } => names.clone(),
             _ => vec![],
         }
     }
+}
+
+/// The smallest integer `i` in `i64::MIN..=i64::MAX + 1` whose `f64` image is
+/// not below `f`, or `i64::MAX + 1` when none is.
+///
+/// The `Filter` a seek replaces compares an integer id with a float by first
+/// casting the id to `f64`, which is exact up to 2^53 and rounds beyond it, so
+/// the cast is searched (it is monotonic) rather than `f.ceil()` assumed.
+fn first_id_where(reached: impl Fn(f64) -> bool) -> i128 {
+    let (mut lo, mut hi) = (i128::from(i64::MIN), i128::from(i64::MAX) + 1);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if reached(mid as f64) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    lo
+}
+
+/// The smallest id `i` with `(i as f64) >= f`.
+fn first_id_ge(f: f64) -> i128 {
+    if f.abs() < 9_007_199_254_740_992.0 {
+        return f.ceil() as i128;
+    }
+    first_id_where(|x| x >= f)
+}
+
+/// The largest id `i` with `(i as f64) <= f`.
+fn last_id_le(f: f64) -> i128 {
+    if f.abs() < 9_007_199_254_740_992.0 {
+        return f.floor() as i128;
+    }
+    first_id_where(|x| x > f) - 1
 }
 
 impl<'a> Runtime<'a> {
@@ -442,9 +504,8 @@ impl<'a> Runtime<'a> {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        g: Arc<AtomicRefCell<Graph>>,
+        g: impl Into<QueryGraph>,
         parameters: HashMap<String, Value>,
-        write: bool,
         plan: Arc<DynTree<IR>>,
         inspect: bool,
         import_folder: String,
@@ -462,35 +523,19 @@ impl<'a> Runtime<'a> {
             vec![]
         };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
-        if write {
-            pending.borrow_mut().set_schema_baseline(&g.borrow());
+        // A write query runs on its own fork, a read query on a published version.
+        let (published, fork) = match g.into() {
+            QueryGraph::Published(g) => (OnceCell::from(g), None),
+            QueryGraph::Fork(fork) => (OnceCell::new(), Some(fork)),
+        };
+        let write = fork.is_some();
+        if let Some(fork) = &fork {
+            pending.borrow_mut().set_schema_baseline(fork);
         }
-        // A read query runs on a published version and can take its borrow once
-        // here instead of on every access. Writers mutate a private fork, and
-        // nothing borrows a published version mutably (`MvccGraph`), so this
-        // borrow can be held for the whole query. Were that to change, the
-        // `borrow_mut` would panic rather than race.
-        //
-        let read_guard = (!write).then(|| {
-            let owner = Arc::clone(&g);
-            // SAFETY: the guard borrows the cell inside `owner`'s allocation,
-            // and `HeldRead` keeps `owner` alive for the guard's whole life
-            // (the guard is declared first, so it drops first). Moving the
-            // `Arc` does not move the cell it points to.
-            let guard = unsafe {
-                std::mem::transmute::<AtomicRef<'_, Graph>, AtomicRef<'static, Graph>>(
-                    owner.borrow(),
-                )
-            };
-            HeldRead {
-                guard,
-                _owner: owner,
-            }
-        });
         Self {
             parameters,
-            read_guard,
-            g,
+            published,
+            fork: RefCell::new(fork),
             write,
             pending,
             stats: RefCell::new(QueryStatistics::default()),
@@ -547,61 +592,82 @@ impl<'a> Runtime<'a> {
 
     /// The graph this query reads.
     ///
-    /// Concurrent read queries share one published version, so a borrow per
-    /// access made every one of them write the same borrow counter — a cache
-    /// line bounced between cores once per property read, which capped read
-    /// throughput at a few cores. A read query hands out the borrow it took
-    /// once in [`Self::new`]; a write query, which also borrows `g` mutably,
-    /// still borrows per access.
+    /// A published version needs no borrow: nothing can change it. A write
+    /// query's fork is borrowed per access, since it is also borrowed mutably.
     #[must_use]
     pub fn graph(&self) -> GraphRef<'_> {
-        match &self.read_guard {
-            Some(held) => GraphRef::Held(&held.guard),
-            None => GraphRef::Borrowed(self.g.borrow()),
-        }
+        self.published.get().map_or_else(
+            || {
+                GraphRef::Fork(Ref::map(self.fork.borrow(), |fork| {
+                    fork.as_ref()
+                        .expect("a write query's fork was refused at commit")
+                }))
+            },
+            |g| GraphRef::Published(g),
+        )
     }
 
     /// The graph this write query mutates, borrowed exclusively.
     ///
     /// # Panics
     ///
-    /// On a read query: its graph is a published version, which a reader
-    /// only ever borrows shared (it holds that borrow for its whole life, see
-    /// [`Self::graph`]). Plans that write are run as write queries, so this
-    /// is a planner bug, reported by name rather than as the cell's
-    /// "already immutably borrowed".
+    /// On a read query, or a write query whose fork was published: a
+    /// published version is never changed. Plans that write are run as write
+    /// queries, so this is a planner bug.
     #[must_use]
-    pub fn graph_mut(&self) -> AtomicRefMut<'_, Graph> {
-        assert!(self.write, "graph_mut on a read query");
-        self.g.borrow_mut()
+    pub fn graph_mut(&self) -> RefMut<'_, Graph> {
+        RefMut::map(self.fork.borrow_mut(), |fork| {
+            fork.as_mut().expect("graph_mut on a published version")
+        })
     }
 
-    /// An owner of this query's graph, for code that keeps the graph past
-    /// the call that needs it: the version a write query publishes, and the
-    /// JS UDF context's callbacks. Everything else reads through
-    /// [`Self::graph`] / [`Self::graph_mut`]. The handle is a clone, so the
-    /// graph this runtime runs on cannot be replaced through it.
-    #[must_use]
-    pub fn graph_arc(&self) -> Arc<AtomicRefCell<Graph>> {
-        Arc::clone(&self.g)
+    /// Publish this write query's fork with `commit`, which takes it by value
+    /// and returns the version it published. The query reads that version from
+    /// then on, e.g. to serialize its reply.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `commit` returns. The fork is gone then: `commit` consumed it.
+    ///
+    /// # Panics
+    ///
+    /// On a read query, or if the fork was published already.
+    pub fn publish<E>(
+        &self,
+        commit: impl FnOnce(Graph) -> Result<Arc<Graph>, E>,
+    ) -> Result<(), E> {
+        let fork = self
+            .fork
+            .borrow_mut()
+            .take()
+            .expect("a write query's fork is published once");
+        let published = commit(fork)?;
+        assert!(self.published.set(published).is_ok(), "published once");
+        Ok(())
     }
 
-    /// Call `runtime.write_escalation().upgrade_to_write()?` before mutating
-    /// shared state (the index).
+    /// Become a writer before mutating shared state (the index), handing the
+    /// host this query's fork to check and rebase ([`WriteEscalation`]).
     ///
     /// Not a guard: the host owns the locks for the whole query — they must
     /// outlive `query()` so the host can commit — so this only *changes mode*,
     /// never releases.
-    #[must_use]
-    pub fn write_escalation(&self) -> &'a dyn crate::locks::WriteEscalation {
+    ///
+    /// # Errors
+    ///
+    /// If the host refuses the escalation.
+    ///
+    /// [`WriteEscalation`]: crate::locks::WriteEscalation
+    pub fn upgrade_to_write(&self) -> Result<(), String> {
         self.write_escalation
+            .upgrade_to_write(&mut self.graph_mut())
     }
 
     /// Undo the index documents earlier `Commit`s published, after this query
     /// failed. See [`Pending::resync_published_indexes`].
     pub fn resync_published_indexes(
         &self,
-        committed: &Arc<AtomicRefCell<Graph>>,
+        committed: &Graph,
     ) {
         self.pending
             .borrow_mut()
@@ -773,7 +839,7 @@ impl<'a> Runtime<'a> {
                     Vec::new()
                 }
             }
-            _ => node.get_child(0).map(|c| vec![c.idx()]).unwrap_or_default(),
+            _ => node.get_child(0).map_or_default(|c| vec![c.idx()]),
         }
     }
 
@@ -1397,8 +1463,8 @@ impl<'a> Runtime<'a> {
                 self,
                 label,
                 attrs,
-                index_type,
-                entity_type,
+                *index_type,
+                *entity_type,
                 options.as_ref(),
             ),
             IR::DropIndex {
@@ -1406,73 +1472,72 @@ impl<'a> Runtime<'a> {
                 attrs,
                 index_type,
                 entity_type,
-            } => super::index_ddl::drop_index(self, label, attrs, index_type, entity_type),
+            } => super::index_ddl::drop_index(self, label, attrs, *index_type, *entity_type),
         }
     }
 
+    /// Narrow the id range `[0, max_node_id]` by every `id(n) <op> expr`
+    /// conjunct the optimizer folded into a seek, or `None` when no id can
+    /// satisfy them all.
+    ///
+    /// The seek must return exactly the rows the `Filter` it replaced would
+    /// keep, so each bound follows Cypher's comparison of an integer id:
+    /// a negative bound is simply below every id (`id(n) > -1` keeps them
+    /// all, `id(n) <= -1` none), a float compares numerically (`id(n) = 1.0`
+    /// is node 1, `id(n) > 1.5` starts at 2), and a null, NaN or
+    /// non-numeric bound never compares true, so no row survives.
     pub fn evaluate_id_filter<R: super::row::RowView + ?Sized>(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
-        let mut min = 0u64;
-        let mut max = self.graph().max_node_id();
+        // Inclusive bounds, widened to i128 so that any `i64` and any finite
+        // float fit; `±inf` saturates, and the `± 1` below saturates with it.
+        // Bound the seek by where the id space ends, not by `max_node_id`,
+        // which is 0 both when id 0 is the only id and when no id was ever
+        // handed out. With an empty id space `max` is 0 here, and the
+        // `node_count() == 0` check below returns no ids.
+        let mut min = 0i128;
+        let mut max = i128::from(self.graph().node_id_bound().saturating_sub(1));
         for (expr, op) in filter {
-            let id = match {
-                let this = &self;
+            let value = {
                 let idx = expr.root().idx();
-                super::eval::ExprEval::from_runtime(this).eval(expr, idx, Some(vars), None)
-            }? {
-                Value::Int(id) => id as u64,
-                _ => {
-                    return Err(String::from("Node ID must be an integer"));
-                }
+                super::eval::ExprEval::from_runtime(self).eval(expr, idx, Some(vars), None)
+            }?;
+            // The smallest id `>=` and the largest id `<=` the bound, so that a
+            // non-integer bound turns every operator into an integer one:
+            // `id > 1.5` is `id >= 2`, `id <= 1.5` is `id <= 1`, and
+            // `id = 1.5` has no solution because `ceil > floor`.
+            let (ceil, floor) = match value {
+                Value::Int(id) => (i128::from(id), i128::from(id)),
+                Value::Float(f) if !f.is_nan() => (first_id_ge(f), last_id_le(f)),
+                _ => return Ok(None),
             };
             match op {
                 ExprIR::Eq => {
-                    if id < min || id > max {
-                        return Ok(None);
-                    }
-                    min = id;
-                    max = id;
+                    min = min.max(ceil);
+                    max = max.min(floor);
                 }
-                ExprIR::Gt => {
-                    if id >= max {
-                        return Ok(None);
-                    }
-                    min = std::cmp::max(min, id + 1);
-                }
-                ExprIR::Ge => {
-                    if id > max {
-                        return Ok(None);
-                    }
-                    min = std::cmp::max(min, id);
-                }
-                ExprIR::Lt => {
-                    if id <= min {
-                        return Ok(None);
-                    }
-                    max = std::cmp::min(max, id - 1);
-                }
-                ExprIR::Le => {
-                    if id < min {
-                        return Ok(None);
-                    }
-                    max = std::cmp::min(max, id);
-                }
+                ExprIR::Gt => min = min.max(floor.saturating_add(1)),
+                ExprIR::Ge => min = min.max(ceil),
+                ExprIR::Lt => max = max.min(ceil.saturating_sub(1)),
+                ExprIR::Le => max = max.min(floor),
                 _ => {
                     unreachable!()
                 }
             }
+            if min > max {
+                return Ok(None);
+            }
         }
-        // `max_node_id()` is 0 both when id 0 is the only id and when no id
-        // was ever handed out, so `min..=max` would seek a node 0 that was
-        // never created.
+        // No live nodes means nothing to seek, including the case where ids
+        // were handed out before but every node has since been deleted.
         if self.graph().node_count() == 0 {
             return Ok(None);
         }
+        // `0 <= min <= max < node_id_bound`, so both fit in a `u64`.
         let mut result = RoaringTreemap::new();
-        result.insert_range(min..=max);
+        result.insert_range(min as u64..=max as u64);
         Ok(Some(result))
     }
 
@@ -2114,9 +2179,20 @@ pub fn map_to_index_options(
                 }
             };
             // Required and case-insensitive, as in C (`strcasecmp`); stored
-            // lowercase, the form the rest of the engine matches on.
+            // lowercase, the form the rest of the engine matches on. An
+            // unknown name is refused here, whatever the dimension: the index
+            // build only reads it once the dimension is non-zero. `ip` is a
+            // Rust extension; C knows only euclidean and cosine.
             let similarity_function = match get("similarityFunction") {
-                Some(Value::String(s)) => Some(s.to_ascii_lowercase()),
+                Some(Value::String(s)) => {
+                    let lower = s.to_ascii_lowercase();
+                    if !matches!(lower.as_str(), "euclidean" | "cosine" | "ip") {
+                        return Err(format!(
+                            "Invalid vector index configuration: unknown similarityFunction '{s}', expected 'euclidean', 'cosine' or 'ip'"
+                        ));
+                    }
+                    Some(lower)
+                }
                 None => {
                     return Err(
                         "Invalid vector index configuration: similarityFunction is required".into(),
@@ -2173,5 +2249,27 @@ pub fn map_to_index_options(
                 ef_runtime,
             })))
         }
+    }
+}
+
+#[cfg(test)]
+mod id_bound_tests {
+    use super::{first_id_ge, last_id_le};
+
+    #[test]
+    fn float_bounds_follow_the_f64_cast_of_the_id() {
+        // Below 2^53 the cast is exact: plain ceil / floor.
+        assert_eq!((first_id_ge(1.5), last_id_le(1.5)), (2, 1));
+        assert_eq!((first_id_ge(-1.5), last_id_le(-1.5)), (-1, -2));
+        assert_eq!((first_id_ge(3.0), last_id_le(3.0)), (3, 3));
+        // 2^53 + 1 rounds to 2^53 (ties to even), so both ids equal 2^53.0.
+        let b = 9_007_199_254_740_992_i128;
+        assert_eq!((first_id_ge(b as f64), last_id_le(b as f64)), (b, b + 1));
+        assert_ne!((b - 1) as f64, b as f64);
+        // Infinities saturate past every id.
+        assert_eq!(first_id_ge(f64::INFINITY), i128::from(i64::MAX) + 1);
+        assert_eq!(last_id_le(f64::INFINITY), i128::from(i64::MAX));
+        assert_eq!(first_id_ge(f64::NEG_INFINITY), i128::from(i64::MIN));
+        assert_eq!(last_id_le(f64::NEG_INFINITY), i128::from(i64::MIN) - 1);
     }
 }

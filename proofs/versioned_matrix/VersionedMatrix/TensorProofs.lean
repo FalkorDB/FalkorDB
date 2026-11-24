@@ -224,7 +224,7 @@ theorem q_step {L : List Nat} (hL : L.Nodup) {pre : List Nat} {st : Plan × List
   · obtain ⟨hP, hdel⟩ := qm h2
     obtain ⟨P, del⟩ := st
     simp only at hP hdel; subst hP
-    simp only [planStep]; rw [if_pos hin]
+    simp only [planStep]; rw [ite_eq_left hin]
     generalize hE : (rem L pre).erase id = E at hstep
     refine ⟨ps', ?_, ?_, ?_⟩ <;> simp only [hstep]
     · intro h2'
@@ -540,7 +540,7 @@ theorem count_correct (s : PairSt) (h : Inv s) :
           have hme := h5 (by simp [effV]); simp only at hme; subst hme
           simp [partials, b2i, effV, edges]
 
-/-- Backward iteration (`Iter::next`, :1720-1732, and `col_degree`): a pair
+/-- Backward iteration (`Iter::next`, :1794-1806, and `col_degree`): a pair
 reached through `mt` always has a forward inline value, so the
 `unreachable!` there is unreachable. -/
 theorem mt_has_forward (s : PairSt) (h : Inv s) (hmt : s.mt = true) : (effV s).isSome = true := by

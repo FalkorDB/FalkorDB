@@ -1,7 +1,7 @@
 import PendingCommit.Props
 import PendingCommit.ContentCompact
 /-
-# `Pending` property staging, validation and reads (pending.rs: validation and `flatten_label_map` :61-144, node attributes :568-662, relationship attributes :979-1066)
+# `Pending` property staging, validation and reads (pending.rs: validation and `flatten_label_map` , node attributes :568-662, relationship attributes :979-1066)
 
 * `rustUpsert_eq` — the `binary_search_by_key` + `entry[pos].1 = value` /
   `Vec::insert(pos, …)` in `set_node_attribute` (:595) and
@@ -11,9 +11,8 @@ import PendingCommit.ContentCompact
 * `validate_spec`, `validate_depth`, `validate_nest` — `is_valid_property` (:79),
   `validate_list_property` (:108), `validate_property` (:125), `validate_*` (:134, :139):
   scalars, `String`, `Point`, `VecF32`, temporal values, and lists whose elements are
-  (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep (#3339,
-  b080a44c1); `Null` only at top level. Every accepted value was valid before (`isValid`, the
-  pre-#3339 check) and has depth ≤ 4096. (Same as C on
+  (recursively) valid and non-null, nested at most `MAX_VALUE_NESTING` (4096) deep;
+  `Null` only at top level. Every accepted value is `isValid` (the check without the depth bound) and has depth ≤ 4096. (Same as C on
   live servers: `[[1]]` accepted, `[1, null]`, maps and lists of maps rejected.)
 * `flatten_spec` — `flatten_label_map` (:61) emits parallel arrays whose zip
   is every `(node, label)` pair, total length = Σ labels.
@@ -74,13 +73,13 @@ theorem upsert_pre (pre post : List Entry) (k : Nat) (v : Val) (h : ∀ e ∈ pr
   | cons e es ih =>
     have he := h e (by simp)
     simp only [List.cons_append, upsert]
-    rw [if_neg (by omega), if_neg (by omega), ih (fun x hx => h x (by simp [hx]))]
+    rw [ite_eq_right (by omega), ite_eq_right (by omega), ih (fun x hx => h x (by simp [hx]))]
 
 theorem upsert_lt (post : List Entry) (k : Nat) (v : Val) (h : ∀ e ∈ post, k < e.1) :
     upsert post k v = (k, v) :: post := by
   cases post with
   | nil => rfl
-  | cons e es => simp only [upsert]; rw [if_pos (h e (by simp))]
+  | cons e es => simp only [upsert]; rw [ite_eq_left (h e (by simp))]
 
 theorem keys_getD (l : List Entry) (j : Nat) (hj : j < l.length) : (l.map (·.1)).getD j 0 = l[j].1 := by
   simp [List.getD_eq_getElem?_getD, hj]
@@ -102,7 +101,7 @@ theorem rustUpsert_eq (l : List Entry) (hs : Sorted l) (k : Nat) (v : Val) : rus
       exact (List.pairwise_iff_getElem.1 hs) j pos (by omega) hp (by omega)
     show l.set pos (k, v) = _
     conv => rhs; rw [← List.take_append_drop pos l]
-    rw [upsert_pre _ _ k v hpre, List.drop_eq_getElem_cons hp, List.set_eq_take_append_cons_drop, if_pos hp]
+    rw [upsert_pre _ _ k v hpre, List.drop_eq_getElem_cons hp, List.set_eq_take_append_cons_drop, ite_eq_left hp]
     congr 1
     simp only [upsert, hk]; simp
   | err pos =>
@@ -176,7 +175,7 @@ def validateProperty : PV → Except PErr Unit
 
 def validate (v : PV) : Bool := (validateProperty v).toBool
 
-/-- Historical `is_valid_property` before #3339 (`is_valid_property` at 4a4f2a72f): lists of any depth. -/
+/-- The shape check without the depth bound (what `is_valid_property` accepted before #3339): lists of any depth. -/
 def isValid : PV → Bool → Bool
   | .null, allowNull => allowNull
   | .bool, _ | .int, _ | .float, _ | .string, _ | .point, _ | .vecf32, _
@@ -248,7 +247,7 @@ theorem validate_depth (v : PV) (h : validateProperty v = .ok ()) :
     split at h
     · cases h
     · have := validateItem_ok (sizeOf (PV.list xs) + 1) (.list xs) 0 (by omega) (by decide)
-        (by simp only [validateItem]; rw [if_neg (by decide)]; exact h)
+        (by simp only [validateItem]; rw [ite_eq_right (by decide)]; exact h)
       exact ⟨by simpa [isValid] using this.1, by omega⟩
   | null => exact ⟨rfl, by simp [depth]⟩
   | map | node | rel | path | other => simp [validateProperty, isValidP] at h
@@ -272,7 +271,7 @@ theorem validateItems_nest (k d : Nat) (hd : d ≤ MAX_VALUE_NESTING) :
     by_cases h : d + 1 > MAX_VALUE_NESTING
     · have : ¬ d + (k + 1) ≤ MAX_VALUE_NESTING := by omega
       simp [h, this]
-    · rw [if_neg h, ih (d + 1) (by omega), show d + 1 + k = d + (k + 1) by omega]
+    · rw [ite_eq_right h, ih (d + 1) (by omega), show d + 1 + k = d + (k + 1) by omega]
       by_cases h2 : d + (k + 1) ≤ MAX_VALUE_NESTING <;> simp [h2, validateItems]
 
 /-- **#3339**: `k` nested lists are a valid property iff `k ≤ MAX_VALUE_NESTING`; past it the
@@ -280,7 +279,7 @@ error is the nesting message (`a_property_at_the_cap_is_valid` / `…_past_the_c
 theorem validate_nest (k : Nat) :
     validateProperty (nest (k + 1)) = if k + 1 ≤ MAX_VALUE_NESTING then .ok () else .error .nesting := by
   simp only [nest, validateProperty, validateListProperty]
-  rw [if_neg (by decide), validateItems_nest k 1 (by decide), Nat.add_comm 1 k]
+  rw [ite_eq_right (by decide), validateItems_nest k 1 (by decide), Nat.add_comm 1 k]
 
 /-- **`isValid_spec`** (now `validate_spec`): NULL only at top level, lists of primitives, no
 maps — as before #3339 — on concrete shapes. -/

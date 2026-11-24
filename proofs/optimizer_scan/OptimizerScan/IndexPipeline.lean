@@ -38,6 +38,13 @@ theorem cu_merge (a b : IQ) (ha : canUtilize (evalIQ a) = true) (hb : canUtilize
         rcases hi' with _ | h' <;> simp_all
   · rw [cu_and2, ha, hb]; rfl
 
+theorem isArrayContains_good (a : A) (h : goodA a = true) : isArrayContains a = false := by
+  match a, h with
+  | .cmp _ (.prop _) (.lit _), _ => rfl
+  | .cmp _ (.lit _) (.prop _), _ => rfl
+  | .inn (.prop _) (.list _), _ => rfl
+  | .opq _, _ => rfl
+
 def mSem (m : Option (Nat × IQ)) (n : Node) : Bool :=
   match m with
   | none => true
@@ -66,6 +73,8 @@ theorem pushAnd_spec (opq : Nat → Node → Bool) :
     · next L' q hs =>
       obtain ⟨hL', hex, hro, hcu, -⟩ := trySingle_spec idx L opq a L' q hga.1 hs
       subst L'
+      -- A good conjunct is never an array-contains, so it leaves the leftovers alone.
+      simp only [isArrayContains_good a hga.1, Bool.false_eq_true, ite_false]
       have hm' : ∀ L0 q0, mergeInto m L q = some (L0, q0) →
             L0 = L ∧ rangeOK idx L q0 = true := by
         intro L0 q0 h
@@ -139,13 +148,6 @@ theorem pushOr_spec (opq : Nat → Node → Bool) :
       · simp only [evalIQs, canAll]
         rw [hcu (hni a (by simp)), ih5 (fun b hb => hni b (by simp [hb]))]; rfl
     · simp at h
-
-theorem isArrayContains_good (a : A) (h : goodA a = true) : isArrayContains a = false := by
-  match a, h with
-  | .cmp _ (.prop _) (.lit _), _ => rfl
-  | .cmp _ (.lit _) (.prop _), _ => rfl
-  | .inn (.prop _) (.list _), _ => rfl
-  | .opq _, _ => rfl
 
 theorem needsPost_inn (a : A) (h : goodA a = true) (hi : isInn a = true) : nonIdxA a = true := by
   match a, h with
@@ -226,8 +228,9 @@ values are Null/Int/String, for filters built from `n.k op literal`, `literal op
 AND (no strict string bound) or OR, the rewritten plan selects exactly the nodes the original
 `Filter → NodeByLabelScan` does. Every counterexample in `IndexCex` breaks one hypothesis:
 two labels (C5, C6), a Bool value (C1; C2, temporal, fixed by #3076), a Date literal or computed
-constant (C3, C4), a computed attribute side (C7, C7', C8), a Date inside IN (C9), array-contains
-(C10); C11 (strict string bound in an AND) was fixed by #3072. -/
+constant (C3, C4), a computed attribute side (C7, C7', C8: fixed by #3068, now agree), a Date inside IN (C9), array-contains
+(C10, the hypothesis only: array-contains in an AND keeps its filter since #3736); C11 (strict
+string bound in an AND) was fixed by #3072. -/
 theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true)
     (n : Node) (hn : Faithful n) :
     (utilize idx [L] f).sel idx opq n = (reference [L] f).sel idx opq n := by
@@ -271,7 +274,7 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
     have hsel : ∀ q, (Plan.idxScan [L] L q).sel idx opq n =
         (if canUtilize (evalIQ q) then qsem idx L q n else true) := by
       intro q
-      simp [Plan.sel, hasAll_single, hL, qsem, hasAll]
+      simp [Plan.sel, hL, qsem, hasAll]
     have href : (reference [L] f).sel idx opq n = evalF opq n f := by
       simp [reference, Plan.sel, hasAll_single, hL]
     rw [href]
@@ -346,11 +349,11 @@ theorem utilize_sound (opq : Nat → Node → Bool) (f : F) (hf : goodF f = true
       have sel_filter : ∀ (g : F) (p : Plan), (Plan.filter g p).sel idx opq n =
           (p.sel idx opq n && evalF opq n g) := fun _ _ => rfl
       cases hk : needsPost f <;> cases hr : rem.isEmpty <;>
-        simp only [hk, hr, ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
-      · rw [if_pos (hcu hk)]; exact hs
+        simp only [ite_true, ite_false, Bool.false_eq_true, sel_filter, hsel]
+      · rw [ite_eq_left (hcu hk)]; exact hs
       · have : rem = [] := List.isEmpty_iff.mp hr
         subst this
-        rw [if_pos (hcu hk)]; simpa using hs
+        rw [ite_eq_left (hcu hk)]; simpa using hs
       · split <;> cases hq : qsem idx L' q n <;> cases hf' : evalF opq n f <;> simp_all
       · split <;> cases hq : qsem idx L' q n <;> cases hf' : evalF opq n f <;> simp_all
 

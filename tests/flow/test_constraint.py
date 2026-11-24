@@ -1,8 +1,12 @@
 import time
+import asyncio
 import threading
 from common import *
 from index_utils import *
 from constraint_utils import *
+from long_read_utils import *
+from falkordb.asyncio import FalkorDB as AsyncFalkorDB
+from redis.asyncio import Redis as AsyncRedis
 
 GRAPH_ID = "constraints"
 
@@ -667,6 +671,26 @@ class testConstraintNodes():
         self.env.assertEqual(result.labels_removed, 1)
         self.env.assertEqual(self.g.query("MATCH (n:Mandate) RETURN count(n)").result_set[0][0], 0)
 
+    def test10_constraint_in_multi(self):
+        # a client's GRAPH.CONSTRAINT runs on a worker with the client blocked,
+        # and a client inside MULTI can't be blocked: there the command must
+        # run inline and answer in the EXEC reply
+        create = constraint_cmd("CREATE", GRAPH_ID, "MANDATORY", "NODE", "InMulti", "v")
+        drop   = constraint_cmd("DROP",   GRAPH_ID, "MANDATORY", "NODE", "InMulti", "v")
+
+        def exec_in_multi(cmd):
+            pipe = self.con.pipeline(transaction=True)
+            pipe.execute_command(*cmd)
+            return [r.decode() if isinstance(r, bytes) else r for r in pipe.execute()]
+
+        self.env.assertEqual(exec_in_multi(create), ["PENDING"])
+        wait_on_constraint(self.g, "MANDATORY", "NODE", "InMulti", "v")
+        c = get_constraint(self.g, "MANDATORY", "NODE", "InMulti", "v")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        self.env.assertEqual(exec_in_multi(drop), ["OK"])
+        self.env.assertEqual(get_constraint(self.g, "MANDATORY", "NODE", "InMulti", "v"), None)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
@@ -1212,6 +1236,80 @@ class testCompositeUniqueConstraintNulls():
 
         self.env.assertEqual(g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0], 3)
 
+BULK_UNIQUE_GRAPH_ID = "unique_bulk_writes"
+
+class testUniqueConstraintBulkWrites():
+    """UNIQUE enforcement for write queries that touch many entities at once:
+    duplicates among the query's own entities and against existing ones are
+    caught, and enforcement is linear in the label size (it used to rescan the
+    whole label for every affected entity)."""
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(BULK_UNIQUE_GRAPH_ID)
+        self.g = self.db.select_graph(BULK_UNIQUE_GRAPH_ID)
+
+    def _rejects(self, q, msg):
+        try:
+            self.g.query(q)
+            self.env.assertTrue(False, message=q)
+        except ResponseError as e:
+            self.env.assertContains(msg, str(e))
+
+    def _assert_operational(self):
+        # a constraint that is not OPERATIONAL enforces nothing, which would
+        # make every rejection check below meaningless
+        constraints = list_constraints(self.g)
+        self.env.assertGreaterEqual(len(constraints), 1)
+        for c in constraints:
+            self.env.assertEqual(c.status, "OPERATIONAL")
+
+    def test01_nodes(self):
+        g = self.g
+        create_unique_node_constraint(g, "B", "v", sync=True)
+        self._assert_operational()
+
+        # 20k nodes in one query: seconds-to-minutes when enforcement was
+        # quadratic, tens of milliseconds now
+        start = time.time()
+        g.query("UNWIND range(1, 20000) AS x CREATE (:B {v: x, id: x})")
+        self.env.assertLess(time.time() - start, 10)
+
+        msg = "unique constraint violation on node of type B"
+        # duplicate within the query's own nodes
+        self._rejects("UNWIND [-1, -2, -1] AS x CREATE (:B {v: x})", msg)
+        # duplicate of an existing node, among many new ones
+        self._rejects("UNWIND range(20001, 21000) + [500] AS x CREATE (:B {v: x})", msg)
+        # an existing node updated to another existing node's value
+        self._rejects("MATCH (n:B {v: 1}) SET n.v = 20000", msg)
+        # the rejected SET changed nothing
+        self.env.assertEqual(g.query("MATCH (n:B {id: 1}) RETURN n.v").result_set, [[1]])
+        self.env.assertEqual(g.query("MATCH (n:B {v: 20000}) RETURN count(n)").result_set[0][0], 1)
+        # swapping two values in one query leaves no duplicate
+        g.query("MATCH (a:B {v: 1}), (b:B {v: 2}) SET a.v = 2, b.v = 1")
+        self.env.assertEqual(g.query("MATCH (n:B {id: 1}) RETURN n.v").result_set, [[2]])
+        self.env.assertEqual(g.query("MATCH (n:B {id: 2}) RETURN n.v").result_set, [[1]])
+        self.env.assertEqual(g.query("MATCH (n:B) RETURN count(n)").result_set[0][0], 20000)
+
+    def test02_edges(self):
+        g = self.g
+        create_unique_edge_constraint(g, "T", "v", sync=True)
+        self._assert_operational()
+        g.query("CREATE (:A), (:Z)")
+
+        start = time.time()
+        g.query("MATCH (a:A), (z:Z) UNWIND range(1, 20000) AS x CREATE (a)-[:T {v: x, id: x}]->(z)")
+        self.env.assertLess(time.time() - start, 10)
+
+        msg = "unique constraint violation, on edge of relationship-type T"
+        self._rejects("MATCH (a:A), (z:Z) UNWIND [-1, -2, -1] AS x CREATE (a)-[:T {v: x}]->(z)", msg)
+        self._rejects("MATCH (a:A), (z:Z) UNWIND range(20001, 21000) + [500] AS x CREATE (a)-[:T {v: x}]->(z)", msg)
+        self._rejects("MATCH ()-[e:T {v: 1}]->() SET e.v = 20000", msg)
+        # the rejected SET changed nothing
+        self.env.assertEqual(g.query("MATCH ()-[e:T {id: 1}]->() RETURN e.v").result_set, [[1]])
+        self.env.assertEqual(g.query("MATCH ()-[e:T {v: 20000}]->() RETURN count(e)").result_set[0][0], 1)
+        self.env.assertEqual(g.query("MATCH ()-[e:T]->() RETURN count(e)").result_set[0][0], 20000)
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():
@@ -1302,7 +1400,14 @@ class testConstraintReplication():
         deadline = time.time() + 30
         while time.time() < deadline:
             self.source.execute_command("WAIT", 1, 0)
-            cs = list_constraints(replica_g)
+            try:
+                cs = list_constraints(replica_g)
+            except ResponseError as e:
+                # The replica can answer before it has applied the effect that
+                # creates the graph; keep polling until the deadline.
+                if "empty key" not in str(e):
+                    raise
+                cs = []
             if len(cs) == 6 and all(c.status == 'OPERATIONAL' for c in cs):
                 break
             time.sleep(0.25)
@@ -1552,3 +1657,356 @@ class testUniqueConstraintLookup():
         self._violates("CREATE (:S {tenant: 1, id: 'u7'})", msg)
         g.query("CREATE (:S {tenant: 2, id: 'u7'})")
         self.env.assertEqual(self._count("MATCH (n:S) RETURN count(n)"), 20001)
+
+# GRAPH.CONSTRAINT CREATE / DROP need both the GIL and the graph WRITE lock.
+# run inline on the main thread, the command waited for the write lock there,
+# and the whole server (PING included) froze for as long as a long read held
+# the READ lock (#3781). the command now runs on a worker thread and waits for
+# the write lock in GIL-yielding slices, so the main thread keeps running while
+# it waits - and can change state the command relies on.
+#
+# every test keeps a few long reads holding the READ lock, sends the command
+# behind them, and checks either that the server stayed responsive, or that a
+# change made on the main thread during the wait (CLIENT PAUSE, DEL, a second
+# CREATE) is re-checked before the command mutates the graph and replicates.
+
+WRITE_LOCK_GRAPH_ID = "constraint_write_lock"
+WRITE_LOCK_RENAMED_ID = WRITE_LOCK_GRAPH_ID + "_renamed"
+
+# target duration of one lock-holding read
+READ_TARGET_SEC = 3.0
+
+CREATE_UNIQUE    = constraint_cmd("CREATE", WRITE_LOCK_GRAPH_ID, "UNIQUE",    "NODE", "P", "v")
+CREATE_MANDATORY = constraint_cmd("CREATE", WRITE_LOCK_GRAPH_ID, "MANDATORY", "NODE", "P", "v")
+DROP_UNIQUE      = constraint_cmd("DROP",   WRITE_LOCK_GRAPH_ID, "UNIQUE",    "NODE", "P", "v")
+
+# shared harness: runs constraint commands behind calibrated long reads
+class ConstraintBehindLongReads():
+    def __init__(self, **env_args):
+        # enough worker threads that the reads + the commands never queue on a
+        # small runner
+        self.env, self.db = Env(moduleArgs="THREAD_COUNT 8", **env_args)
+
+        # timing assertions are unreliable under instrumentation
+        if SANITIZER:
+            self.env.skip()
+
+        self.conn  = self.env.getConnection()
+        self.graph = self.db.select_graph(WRITE_LOCK_GRAPH_ID)
+
+        self.graph.query("CREATE ()")  # a read needs an existing graph
+        n, self.read_dur = calibrate_long_read(self.graph, READ_TARGET_SEC)
+        self.long_read = long_read_query(n)
+        self.env.debugPrint(f"long read: n={n} dur={self.read_dur:.2f}s",
+                            force=True)
+
+    def setUp(self):
+        self.conn.delete(WRITE_LOCK_GRAPH_ID, WRITE_LOCK_RENAMED_ID)
+        with redis.Redis(host=self.env.host, port=self.env.port, db=1) as db1:
+            db1.delete(WRITE_LOCK_GRAPH_ID)
+
+    def _populate(self, unique_index=False, without_v=False):
+        self.graph.query("UNWIND range(1, 50000) AS x CREATE (:P {v:x})")
+        if without_v:
+            # MANDATORY enforcement of v ends FAILED. keeps the validation
+            # thread's re-announcement out of the pause test, which is about
+            # the command's own GRAPH.EFFECT
+            self.graph.query("CREATE (:P)")
+        if unique_index:
+            self.graph.query("CREATE INDEX FOR (p:P) ON (p.v)")
+            wait_for_indices_to_sync(self.graph)
+
+    # keep 3 long reads holding the READ lock, send `cmds` concurrently behind
+    # them, optionally run `action` on another connection while they wait, and
+    # (with probe=True) sample PING throughout.
+    #
+    # new reads stop before `action`: the ones in flight keep holding the lock,
+    # so the commands are still waiting when the action lands, and no new read
+    # hits a deleted / paused graph.
+    #
+    # `after` runs on the same connection as `action` once the commands have
+    # replied; what it returns is kept in self.after_result.
+    #
+    # returns (replies, latencies, worst_ping)
+    def _behind_long_reads(self, cmds, action=None, probe=False, after=None):
+        host, port = self.env.host, self.env.port
+
+        async def run():
+            pool = async_pool(self.env, 64, socket_timeout=120)
+            g = AsyncFalkorDB(connection_pool=pool).select_graph(WRITE_LOCK_GRAPH_ID)
+            # one client per command, plus one to run `action`
+            clients = [AsyncRedis(host=host, port=port, decode_responses=True,
+                                  socket_timeout=120) for _ in cmds + [None]]
+            admin = clients.pop()
+            loop = asyncio.get_running_loop()
+
+            ping = PingProbe(port, host=host) if probe else None
+            if ping:
+                await ping.start()
+
+            reads = ReadLockHolder(g, self.long_read)
+            reads.start()
+            await asyncio.sleep(0.5)  # the reads hold the read lock
+
+            async def send(client, cmd):
+                t0 = loop.time()
+                try:
+                    reply = await client.execute_command(*cmd)
+                except Exception as e:
+                    reply = e
+                return reply, loop.time() - t0
+            cmd_tasks = []
+            for client, cmd in zip(clients, cmds):
+                cmd_tasks.append(asyncio.create_task(send(client, cmd)))
+                await asyncio.sleep(0.05)  # keep the send order deterministic
+
+            if action is not None:
+                await asyncio.sleep(0.5)  # the commands are waiting
+                await reads.stop()
+                await action(admin)
+            results = await asyncio.gather(*cmd_tasks)
+            self.after_result = await after(admin) if after is not None else None
+
+            await asyncio.sleep(0.3)  # keep probing a little past the replies
+            worst = await ping.stop() if ping else 0.0
+            read_errors = await reads.drain()
+
+            for c in clients + [admin]:
+                await c.aclose()
+            await pool.aclose()
+            return results, read_errors, worst
+
+        results, read_errors, worst = asyncio.run(run())
+
+        # the reads exist only to hold the lock; an error means the setup broke
+        # (or the server died), which would make the assertions vacuous
+        self.env.assertEqual(read_errors, [], message=str(read_errors[:3]))
+
+        replies   = [r for r, _ in results]
+        latencies = [l for _, l in results]
+        self.env.debugPrint(f"replies={replies!r} latencies="
+                f"{[round(l, 2) for l in latencies]} "
+                f"worst_ping={worst*1000:.1f}ms", force=True)
+        return replies, latencies, worst
+
+    # run `cmd` behind the reads: it must reply `expected`, having really
+    # waited for the read lock, and no PING may stall for a large part of that
+    # wait (with the freeze, the worst PING ~= the command's latency)
+    def _assert_waits_without_freezing(self, cmd, expected):
+        replies, latencies, worst = self._behind_long_reads([cmd], probe=True)
+        self.env.assertEqual(replies[0], expected)
+        self.env.assertGreater(latencies[0], 0.3 * self.read_dur)
+        self.env.assertLess(worst, 0.5 * latencies[0])
+
+    # run `cmd` behind the reads with `action` landing while it waits: it must
+    # fail with an error containing `expected_err`
+    def _assert_aborted_by(self, cmd, action, expected_err):
+        replies, _, _ = self._behind_long_reads([cmd], action=action)
+        self.env.assertTrue(isinstance(replies[0], ResponseError),
+                            message=repr(replies[0]))
+        self.env.assertContains(expected_err, str(replies[0]))
+
+    def _constraint_count(self, graph=None):
+        if graph is None:
+            graph = self.graph
+        res = graph.ro_query("CALL db.constraints() YIELD type RETURN count(1)")
+        return res.result_set[0][0]
+
+    def _assert_operational(self, ct_type):
+        wait_on_constraint(self.graph, ct_type, 'NODE', 'P', 'v')
+        c = get_constraint(self.graph, ct_type, 'NODE', 'P', 'v')
+        self.env.assertEqual(c.status, 'OPERATIONAL')
+
+class testConstraintWriteLock(ConstraintBehindLongReads):
+    def __init__(self):
+        super().__init__()
+
+    def test_01_create_unique_stays_responsive(self):
+        self._populate(unique_index=True)
+        self._assert_waits_without_freezing(CREATE_UNIQUE, "PENDING")
+        self._assert_operational('UNIQUE')
+
+    def test_02_create_mandatory_stays_responsive(self):
+        self._populate()
+        self._assert_waits_without_freezing(CREATE_MANDATORY, "PENDING")
+        self._assert_operational('MANDATORY')
+
+    def test_03_drop_stays_responsive(self):
+        self._populate(unique_index=True)
+        create_unique_node_constraint(self.graph, 'P', 'v', sync=True)
+        self._assert_waits_without_freezing(DROP_UNIQUE, "OK")
+        self.env.assertEqual(self._constraint_count(), 0)
+
+    def test_04_duplicate_create_during_wait(self):
+        # two identical CREATEs queue behind the same reads. the second must be
+        # rejected once it holds the write lock, without disturbing the first
+        self._populate(unique_index=True)
+        replies, _, _ = self._behind_long_reads([CREATE_UNIQUE, CREATE_UNIQUE])
+
+        errs = [r for r in replies if isinstance(r, ResponseError)]
+        self.env.assertEqual(replies.count("PENDING"), 1)
+        self.env.assertEqual(len(errs), 1)
+        self.env.assertContains("Constraint already exists", str(errs[0]))
+
+        self._assert_operational('UNIQUE')
+        self.env.assertEqual(self._constraint_count(), 1)
+
+        # the graph still accepts writes and enforces the constraint
+        self.graph.query("CREATE (:P {v:-1})")
+        try:
+            self.graph.query("CREATE (:P {v:-1})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation", str(e))
+
+    def test_05_watch_sees_the_commit(self):
+        # a client WATCHes the graph while CREATE waits: CREATE's commit
+        # modifies the key, so that client's EXEC after CREATE replies must
+        # abort
+        self._populate()
+        async def watch(admin):
+            await admin.execute_command("WATCH", WRITE_LOCK_GRAPH_ID)
+        async def exec_after(admin):
+            await admin.execute_command("MULTI")
+            await admin.execute_command("PING")
+            return await admin.execute_command("EXEC")
+
+        replies, _, _ = self._behind_long_reads([CREATE_MANDATORY],
+                action=watch, after=exec_after)
+        self.env.assertEqual(replies[0], "PENDING")
+        self.env.assertEqual(self.after_result, None)
+
+# a server of its own with AOF on: a GRAPH.EFFECT replicated at the wrong time
+# either crashes the server (inside a pause) or is replayed by DEBUG LOADAOF.
+# no constraint is ever created here, so the AOF holds no enforcement
+# re-announcements, which aren't re-checked against a deleted graph either
+class testConstraintWriteLockStateChanges(ConstraintBehindLongReads):
+    def __init__(self):
+        super().__init__(enableDebugCommand=True)
+        self.conn.config_set("appendonly", "yes")
+        self._wait_for_aof_rewrite()
+
+    def _wait_for_aof_rewrite(self, timeout=30):
+        # turning AOF on starts a background rewrite; a rewrite can be
+        # scheduled and not yet started, so wait for both
+        deadline = time.time() + timeout
+        while True:
+            p = self.conn.info("persistence")
+            if not (p.get("aof_rewrite_in_progress", 0) or
+                    p.get("aof_rewrite_scheduled", 0)):
+                return
+            self.env.assertLess(time.time(), deadline,
+                                message="AOF rewrite did not finish")
+            time.sleep(0.1)
+
+    def test_01_client_pause_during_wait(self):
+        # a CLIENT PAUSE WRITE window opens while CREATE waits. CREATE must not
+        # replicate GRAPH.EFFECT inside it: with AOF on, the server asserts on
+        # propagation during a pause and crashes
+        self._populate(without_v=True)
+
+        # long enough to cover the whole wait; lifted right after CREATE replies
+        pause_ms = int((3 * self.read_dur + 10) * 1000)
+        async def pause(admin):
+            await admin.execute_command("CLIENT", "PAUSE", pause_ms, "WRITE")
+
+        try:
+            self._assert_aborted_by(CREATE_MANDATORY, pause,
+                                    "replica traffic is currently paused")
+        finally:
+            self.conn.execute_command("CLIENT", "UNPAUSE")
+
+        self.env.assertTrue(self.conn.ping())
+        self.env.assertEqual(self._constraint_count(), 0)
+
+    # `action` deletes the graph's key, or moves the graph off it, while
+    # CREATE waits. CREATE announces under the key it was sent to, and a
+    # GRAPH.EFFECT creates a missing graph, so replicating there would bring
+    # back an empty graph at that key on a replica (or an AOF replay) and
+    # apply the constraint to it. CREATE must be refused, and replaying the
+    # AOF must neither crash nor bring back a graph at the key.
+    # `check_live` runs between the two, on the state in memory.
+    def _assert_refused_when_key_loses_graph(self, action, check_live=None):
+        self._populate()
+        self._assert_aborted_by(CREATE_MANDATORY, action,
+                                "graph was deleted or replaced")
+        self.env.assertEqual(self.conn.exists(WRITE_LOCK_GRAPH_ID), 0)
+        if check_live is not None:
+            check_live()
+
+        self.conn.execute_command("DEBUG", "LOADAOF")
+        self.env.assertEqual(self.conn.exists(WRITE_LOCK_GRAPH_ID), 0)
+
+    def test_02_graph_deleted_during_wait(self):
+        async def delete(admin):
+            await admin.delete(WRITE_LOCK_GRAPH_ID)
+
+        self._assert_refused_when_key_loses_graph(delete)
+
+    def test_03_graph_renamed_during_wait(self):
+        async def rename(admin):
+            await admin.rename(WRITE_LOCK_GRAPH_ID, WRITE_LOCK_RENAMED_ID)
+
+        # the refused CREATE did not apply the constraint to the graph, now
+        # at the new key: not in memory, and not after the AOF replay
+        renamed = self.db.select_graph(WRITE_LOCK_RENAMED_ID)
+        no_constraint = lambda: self.env.assertEqual(
+            self._constraint_count(renamed), 0)
+        self._assert_refused_when_key_loses_graph(rename, check_live=no_constraint)
+        self.env.assertEqual(self.conn.exists(WRITE_LOCK_RENAMED_ID), 1)
+        no_constraint()
+
+    def test_04_graph_moved_during_wait(self):
+        # MOVE doesn't go through the module's registry, so only the keyspace
+        # can tell that the key CREATE was sent to no longer holds the graph
+        async def move(admin):
+            await admin.move(WRITE_LOCK_GRAPH_ID, 1)
+
+        self._assert_refused_when_key_loses_graph(move)
+        # the graph lives on in the other database
+        with redis.Redis(host=self.env.host, port=self.env.port, db=1) as db1:
+            self.env.assertEqual(db1.exists(WRITE_LOCK_GRAPH_ID), 1)
+
+# a constraint on a large label is validated in the background: the settle reads
+# one version of the graph and publishes its verdict on whatever version is
+# current by then. a write that committed in between was not looked at by the
+# settle, and was not enforced either while only OPERATIONAL constraints bound
+# writes — so the constraint went OPERATIONAL over data that violates it (17 of
+# 20 tries on a million-node label; never on C, which enforces a constraint from
+# the moment it is created)
+class testConstraintSettleRace():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.g = self.db.select_graph("constraint_settle_race")
+        # above the size a constraint is validated inline at
+        self.g.query("UNWIND range(0, 499999) AS x CREATE (:L {v: x})")
+        create_node_range_index(self.g, "L", "v", sync=True)
+
+    def _race(self, ct_type, create, violating_write, violations):
+        con = self.env.getConnection()
+        for _ in range(5):
+            create(self.g, "L", "v")
+            try:
+                # refused, unless it gets in before the constraint is created
+                self.g.query(violating_write)
+            except ResponseError as e:
+                self.env.assertContains("constraint violation", str(e))
+            wait_on_constraint(self.g, ct_type, "NODE", "L", "v")
+            c = get_constraint(self.g, ct_type, "NODE", "L", "v")
+            bad = self.g.ro_query(violations).result_set[0][0]
+            # OPERATIONAL means the data satisfies it
+            self.env.assertFalse(c.status == "OPERATIONAL" and bad > 0,
+                                 message=f"{ct_type} is OPERATIONAL over {bad} violating nodes")
+            drop_constraint(self.g, ct_type, "NODE", "L", "v")
+            con.execute_command("GRAPH.QUERY", "constraint_settle_race",
+                                "MATCH (n:L) WHERE n.w = 1 DELETE n")
+
+    def test01_mandatory(self):
+        self._race("MANDATORY", create_mandatory_node_constraint,
+                   "CREATE (:L {w: 1})",
+                   "MATCH (n:L) WHERE n.v IS NULL RETURN count(n)")
+
+    def test02_unique(self):
+        self._race("UNIQUE", create_unique_node_constraint,
+                   "CREATE (:L {v: 0, w: 1})",
+                   "MATCH (n:L) WITH n.v AS v, count(*) AS c WHERE c > 1 RETURN count(v)")

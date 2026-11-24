@@ -46,7 +46,7 @@
 
 use std::cmp::Ordering;
 
-use crate::parser::ast::ExprIR;
+use crate::parser::ast::{ExprIR, VarKind};
 use crate::runtime::batch::NullBitmap;
 use crate::runtime::value::{CompareValue, DisjointOrNull, Value};
 
@@ -67,7 +67,7 @@ pub enum CmpOp {
 
 impl CmpOp {
     /// Converts from an `ExprIR` comparison node to a `CmpOp`.
-    pub const fn from_expr_ir<T>(ir: &ExprIR<T>) -> Option<Self> {
+    pub const fn from_expr_ir<T: VarKind>(ir: &ExprIR<T>) -> Option<Self> {
         match ir {
             ExprIR::Eq => Some(Self::Eq),
             ExprIR::Neq => Some(Self::Neq),
@@ -305,7 +305,6 @@ mod tests {
     use crate::runtime::eval::{ExprEval, NO_ROW};
     use crate::runtime::ordermap::OrderMap;
     use crate::runtime::value::Point;
-    use orx_tree::NodeMut;
 
     #[test]
     fn test_cmp_op_flip() {

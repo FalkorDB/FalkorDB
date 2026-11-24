@@ -28,7 +28,6 @@ use std::{cell::RefCell, sync::Arc};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
@@ -76,7 +75,7 @@ const INVALID_PROPERTY_MSG: &str =
 
 /// Whether a non-list value is a valid property: a primitive, or NULL when
 /// `allow_null`. Lists are checked by [`validate_list_property`].
-fn is_valid_property(
+const fn is_valid_property(
     value: &Value,
     allow_null: bool,
 ) -> bool {
@@ -378,8 +377,15 @@ pub struct Pending {
     pub(crate) existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Labels to add: node_id → [label_ids]
     pub(crate) set_labels: FxHashMap<u64, Vec<u64>>,
-    /// Labels to remove: node_id → [label_ids]
+    /// Labels to remove: node_id → [label_ids]. Only labels the committed
+    /// node carries: a removal of a label this query staged itself just
+    /// cancels the add (see [`Self::remove_node_labels`]), so no created or
+    /// cancelled node ever has an entry here.
     pub(crate) remove_labels: FxHashMap<u64, Vec<u64>>,
+    /// Removals that cancelled an add staged by this query rather than staging
+    /// a removal. They change nothing at commit, but C counts them in
+    /// `Labels removed`, and so does this.
+    pub(crate) staged_labels_removed: usize,
     /// Index documents this `Commit` produced.
     pub(crate) index_docs: IndexDocs,
     /// Index documents accumulated across the query's commits, applied only
@@ -531,6 +537,7 @@ impl Pending {
             existing_relationships_attrs: FxHashMap::default(),
             set_labels: FxHashMap::default(),
             remove_labels: FxHashMap::default(),
+            staged_labels_removed: 0,
             index_docs: IndexDocs::default(),
             published: IndexDocs::default(),
             deferred_docs: IndexDocs::default(),
@@ -725,22 +732,38 @@ impl Pending {
     /// Stage label removals for `id`, cancelling any add of those same labels
     /// staged earlier in this query — the mirror image of
     /// [`Self::stage_node_labels`], keeping the two sets disjoint per node.
+    ///
+    /// `labels` must all be on the node as this query sees it. A label the
+    /// query only staged (any label of a created node, or a `SET n:L` of a
+    /// label the committed node lacks) has nothing to remove at commit, so
+    /// cancelling the add is the whole effect: staging a removal too would
+    /// ship a `RemoveLabels` for a node the replica may not have yet.
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
         labels: &[LabelId],
+        g: &Graph,
     ) {
         let raw_id: u64 = id.into();
         for label in labels {
             let label_id = usize::from(*label) as u64;
             // Remove from pending set labels
+            let mut was_staged = false;
             if let Some(set) = self.set_labels.get_mut(&raw_id) {
+                let len = set.len();
                 set.retain(|&l| l != label_id);
+                was_staged = set.len() != len;
                 if set.is_empty() {
                     self.set_labels.remove(&raw_id);
                 }
             }
-            self.remove_labels.entry(raw_id).or_default().push(label_id);
+            if was_staged
+                && (self.created_nodes.contains(raw_id) || !g.node_has_label_id(id, *label))
+            {
+                self.staged_labels_removed += 1;
+            } else {
+                self.remove_labels.entry(raw_id).or_default().push(label_id);
+            }
         }
     }
 
@@ -751,6 +774,7 @@ impl Pending {
     /// `set_labels` and `remove_labels` are disjoint per node (see
     /// [`Self::stage_node_labels`]), so at most one of the two branches below can
     /// match and the order they are consulted in carries no meaning.
+    #[must_use]
     pub fn node_has_label(
         &self,
         id: NodeId,
@@ -870,6 +894,7 @@ impl Pending {
         let mut label_ids = OrderSet::default();
         self.update_node_labels(id, &mut label_ids);
         self.set_labels.remove(&id.into());
+        self.remove_labels.remove(&id.into());
 
         // Collect pending attrs
         let attrs = self
@@ -926,11 +951,9 @@ impl Pending {
             self.created_rel_types.remove(&rel_id);
             if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
                 entries.retain(|(rid, _, _)| *rid != rel_id);
-                // And drop the group once it is empty. A type whose every edge
-                // was cascaded away was never registered on the graph — nothing
-                // of that type reached `create_relationships_bulk` — so leaving
-                // the key behind hands the effects emitter a type name it
-                // cannot resolve.
+                // And drop the group once it is empty, so commit creates no
+                // edges for it. The type itself is still registered at commit,
+                // from `cancelled_relationships`.
                 if entries.is_empty() {
                     self.created_rels_by_type.remove(&type_name);
                 }
@@ -944,6 +967,13 @@ impl Pending {
             // The graph's half of the same event. Paired here so a caller cannot
             // unwind the pending side and leave the id unreturned.
             g.cancel_relationship_id(rel_id)?;
+            // The id stays held back for the rest of the query, so a later
+            // relationship takes the next one. The replica is told about the
+            // cancelled id as a create/delete pair of its type, which needs the
+            // type to exist: a type whose every edge was cancelled would
+            // otherwise never be registered and the pair skipped, leaving a
+            // hole before the next id that the replica refuses.
+            g.get_type_id_mut(&type_name);
             // The one durable record that this id was ever handed out, the same
             // role `cancelled_nodes` plays for the node above.
             self.cancelled_relationships.push(CancelledRelationship {
@@ -1359,6 +1389,18 @@ impl Pending {
                     .map_err(|e| e.to_string())?;
             }
         }
+        // A type whose every edge a cascade cancelled never reached the loop
+        // above, yet it was named by this segment: the snapshot a reply reads
+        // states it by id, and so does the cancelled pair the effects carry to
+        // the replica. Register it, as C does when the edge is created.
+        // Once per type: a bulk cascade cancels many edges of the same few
+        // types, and each lookup scans the schema.
+        let mut cancelled_types: FxHashSet<&Arc<String>> = FxHashSet::default();
+        for r in &self.cancelled_relationships {
+            if cancelled_types.insert(&r.type_name) {
+                g.get_type_id_mut(&r.type_name);
+            }
+        }
         if !self.set_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.set_labels);
             // Pairs for nodes created in this transaction cannot already be
@@ -1370,6 +1412,7 @@ impl Pending {
                 .all(|id| self.created_nodes.contains(*id));
             g.set_nodes_labels_bulk(&rows, &cols, &mut self.index_docs, all_new);
         }
+        stats.borrow_mut().labels_removed += self.staged_labels_removed;
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
@@ -1525,9 +1568,18 @@ impl Pending {
             affected_edge_ids.remove(rel_id);
         }
 
-        // Check each OPERATIONAL constraint
+        // Check each constraint that has not failed: one UNDER CONSTRUCTION
+        // binds writes too, as in C (`Schema_EnforceConstraints` skips only
+        // `CT_FAILED`). The settle validates the version it read and publishes
+        // the result on whatever version is current by then, without looking
+        // at what was committed in between. Enforced only once OPERATIONAL, a
+        // write that committed in that window was checked by neither side, and
+        // the constraint went OPERATIONAL over data that violates it — 17 of
+        // 20 tries with a million-node label, never on C. Enforcing from
+        // creation closes the window from the writer's side, so the settle
+        // has only the data that predates the constraint left to judge.
         for constraint in constraints {
-            if constraint.status != ConstraintStatus::Operational {
+            if constraint.status == ConstraintStatus::Failed {
                 continue;
             }
 
@@ -1623,7 +1675,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(NodeId::from)
+                        read_once.candidates(&candidates).map(NodeId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -1681,10 +1733,10 @@ impl Pending {
             // would materialize the delta's pending tuples on every commit.
             // An edge's type never changes, so created under a different
             // type means not a member.
-            match self.created_rel_types.get(&edge_id.into()) {
-                Some(created_type) => created_type.as_str() == type_name.as_str(),
-                None => g.edge_has_type(edge_id.into(), type_name),
-            }
+            self.created_rel_types.get(&edge_id.into()).map_or_else(
+                || g.edge_has_type(edge_id.into(), type_name),
+                |created_type| created_type.as_str() == type_name.as_str(),
+            )
         });
 
         match constraint.ct {
@@ -1718,7 +1770,7 @@ impl Pending {
                         )
                     },
                     |candidates: Vec<EqualCandidates<'_>>| {
-                        read_once.candidates(candidates).map(RelationshipId::from)
+                        read_once.candidates(&candidates).map(RelationshipId::from)
                     },
                 );
                 #[cfg(not(feature = "index-falkordb"))]
@@ -1784,14 +1836,14 @@ impl Pending {
     /// edge's document key comes from there, since committed state no longer has the
     /// edge at all.
     ///
-    /// `committed` is only borrowed immutably: RediSearch's documents live behind the
+    /// `committed` is only read: RediSearch's documents live behind the
     /// indexer, which every version shares, so rewriting them changes no version, and
-    /// a reader holding its borrow of `committed` is never disturbed.
+    /// a reader of `committed` is never disturbed.
     ///
     /// Writer mode only, and before the write lock is released.
     pub fn resync_published_indexes(
         &mut self,
-        committed: &AtomicRefCell<Graph>,
+        committed: &Graph,
         private: &Graph,
     ) {
         let (nodes, edges) = std::mem::take(&mut self.published).ids_by_slot();
@@ -1804,7 +1856,7 @@ impl Pending {
         let mut edge_adds: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
         let mut edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>> = FxHashMap::default();
         {
-            let g = committed.borrow();
+            let g = committed;
             for (slot, ids) in &nodes {
                 for id in ids {
                     if g.node_has_label_id(NodeId::from(id), LabelId(*slot as usize)) {
@@ -1834,10 +1886,10 @@ impl Pending {
         // they keep its batches out of RediSearch while both kinds are rewritten.
         // Concurrent readers are kept out of RediSearch by the write lock this query
         // holds.
-        let (node_lock, edge_lock) = committed.borrow().index_locks();
+        let (node_lock, edge_lock) = committed.index_locks();
         let node_guard = node_lock.lock();
         let edge_guard = edge_lock.lock();
-        let g = committed.borrow();
+        let g = committed;
         g.commit_index_locked(&node_guard, &mut node_adds, &mut node_removes);
         g.commit_edge_index_locked(&edge_guard, &mut edge_adds, &mut edge_removes);
     }
@@ -1931,6 +1983,7 @@ impl Pending {
         self.deleted_endpoints.clear();
         self.deleted_node_labels.clear();
         self.cancelled_nodes.clear();
+        self.staged_labels_removed = 0;
         self.taken_relationship_ids.clear();
         self.cancelled_relationships.clear();
         self.index_docs.node_adds.clear();
@@ -1962,6 +2015,11 @@ impl Pending {
             + self.created_rel_types.len() as u64
             + self.deleted_nodes.len()
             + self.deleted_relationships.len()
+            // A cancelled entity is emitted as a create and a delete, and its
+            // type (registered at commit) as a schema addition: a commit holding
+            // nothing else must still build its buffer.
+            + 2 * self.cancelled_nodes.len()
+            + 2 * self.cancelled_relationships.len() as u64
             + self.new_nodes_attrs.len() as u64
             + self.existing_nodes_attrs.len() as u64
             + self.new_relationships_attrs.len() as u64
@@ -1976,6 +2034,9 @@ impl Pending {
                 .values()
                 .map(|v| v.len() as u64)
                 .sum::<u64>()
+            // No record of its own, but the cancelled add may have registered
+            // its label, and the buffer that ships that is gated on this count.
+            + self.staged_labels_removed as u64
     }
 }
 
@@ -1992,15 +2053,12 @@ mod label_effect_tests {
     /// A graph whose only labels are `names`, and a `Pending` that has already
     /// taken its schema baseline — so the emitter announces no schema, and the
     /// label records are the whole of what it produces.
-    fn fixture(names: &[&str]) -> (AtomicRefCell<Graph>, Vec<LabelId>, Pending) {
+    fn fixture(names: &[&str]) -> (Graph, Vec<LabelId>, Pending) {
         ensure_init();
-        let g = AtomicRefCell::new(Graph::new(16, 16, 1, 0, "label_effects"));
-        let labels: Vec<LabelId> = {
-            let mut graph = g.borrow_mut();
-            names.iter().map(|n| graph.get_label_id_mut(n)).collect()
-        };
+        let mut g = Graph::new(16, 16, 1, 0, "label_effects");
+        let labels: Vec<LabelId> = names.iter().map(|n| g.get_label_id_mut(n)).collect();
         let mut pending = Pending::new();
-        pending.set_schema_baseline(&g.borrow());
+        pending.set_schema_baseline(&g);
         (g, labels, pending)
     }
 
@@ -2012,10 +2070,10 @@ mod label_effect_tests {
     /// tightly, which is the half that matters here.
     fn records(
         pending: &Pending,
-        g: &AtomicRefCell<Graph>,
+        g: &Graph,
     ) -> Vec<Record> {
         let mut out = Vec::new();
-        for_each_record(pending, &g.borrow(), |r| out.push(r));
+        for_each_record(pending, g, |r| out.push(r));
         out
     }
 
@@ -2025,7 +2083,7 @@ mod label_effect_tests {
         add: bool,
         labels: &[LabelId],
     ) -> Record {
-        let ids: IdList = [NODE].into_iter().collect();
+        let ids: IdList = std::iter::once(NODE).collect();
         let mut shape: Vec<u32> = labels.iter().map(|l| usize::from(*l) as u32).collect();
         shape.sort_unstable();
         shape.dedup();
@@ -2045,7 +2103,7 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert_eq!(records(&pending, &g), vec![labelled(true, &[l])]);
     }
@@ -2057,13 +2115,13 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.remove_node_labels(NODE.into(), &[l], &g);
 
         assert_eq!(records(&pending, &g), vec![labelled(false, &[l])]);
     }
 
-    /// `SET n:L REMOVE n:L`: the removal cancels the staged add, and the
-    /// emptied `set_labels` entry goes with it.
+    /// `SET n:L REMOVE n:L` on a node without a committed `L`: the removal
+    /// cancels the staged add, and the emptied `set_labels` entry goes with it.
     ///
     /// Two layers keep the cancelled add off the wire, and this checks both.
     /// The map assertion is the one this fix owns: dropping the emptied entry
@@ -2071,24 +2129,32 @@ mod label_effect_tests {
     /// assertion is the outcome, which `digest_labels` also defends by
     /// suppressing an empty label set — so it holds even if the cleanup here
     /// regresses, and only the map assertion would catch that.
+    ///
+    /// Nor is a removal staged (#3448): there is no committed `L` to remove,
+    /// and a `RemoveLabels` for a node the replica lacks is refused.
     #[test]
     fn cancelled_add_emits_no_set_labels() {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
-        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
+        pending.remove_node_labels(NODE.into(), &[l], &g);
 
         assert!(
             !pending.set_labels.contains_key(&NODE),
             "the emptied set_labels entry must be dropped, not left empty"
         );
+        assert!(
+            !pending.remove_labels.contains_key(&NODE),
+            "a label that was only staged must not be staged for removal"
+        );
         assert_eq!(
             records(&pending, &g),
-            vec![labelled(false, &[l])],
-            "the cancelled add must leave no SetLabels behind"
+            vec![],
+            "the cancelled add must leave no label record behind"
         );
-        assert_eq!(pending.node_has_label(NODE.into(), l), Some(false));
+        assert_eq!(pending.node_has_label(NODE.into(), l), None);
+        assert_eq!(pending.staged_labels_removed, 1);
     }
 
     /// `REMOVE n:L SET n:L`, the mirror direction and the #2777 report: the add
@@ -2099,8 +2165,8 @@ mod label_effect_tests {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
-        pending.remove_node_labels(NODE.into(), &[l]);
-        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.remove_node_labels(NODE.into(), &[l], &g);
+        pending.set_node_labels(NODE.into(), &std::iter::once(l).collect());
 
         assert!(
             !pending.remove_labels.contains_key(&NODE),
@@ -2126,58 +2192,10 @@ mod label_effect_tests {
         let (l, m) = (labels[0], labels[1]);
 
         pending.set_node_labels(NODE.into(), &[l, m].into_iter().collect());
-        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.remove_node_labels(NODE.into(), &[l], &g);
 
         assert_eq!(pending.node_has_label(NODE.into(), m), Some(true));
-        assert_eq!(
-            records(&pending, &g),
-            vec![labelled(true, &[m]), labelled(false, &[l])]
-        );
-    }
-}
-
-#[cfg(test)]
-mod resync_tests {
-    use super::*;
-    use crate::graph::graphblas::test_init::ensure_init;
-    use crate::graph::mvcc_graph::MvccGraph;
-
-    /// A failed write's repair runs while a reader holds its borrow of the published
-    /// version, as every read runtime does for its whole query (`HeldRead` in
-    /// `Runtime::new`). The repair must leave that version alone: a `borrow_mut` of
-    /// it meets the reader's borrow and `AtomicRefCell` panics, which the module's
-    /// panic hook turns into a dead server.
-    #[test]
-    fn the_repair_does_not_borrow_the_published_version_mutably() {
-        ensure_init();
-        let mvcc = MvccGraph::new(16, 16, 0, "resync");
-        let first = mvcc.fork();
-        let label = first.borrow_mut().get_label_id_mut("L");
-        mvcc.commit(first).expect("a new label commits");
-
-        let published = mvcc.read();
-        let reader = published.borrow();
-
-        // A `Commit` published a document for node 0 under `L`, then the query failed.
-        // A removal, so no RediSearch document is built: the label has no index.
-        let private = mvcc.fork();
-        let mut pending = Pending::new();
-        pending
-            .deferred_docs
-            .node_removes
-            .entry(usize::from(label) as u64)
-            .or_default()
-            .insert(0);
-        pending.commit_deferred_indexes(&mut private.borrow_mut());
-        // Without documents to rewrite, the repair would return before borrowing anything,
-        // and this test would prove nothing.
-        assert!(!pending.published.is_empty());
-
-        // The observable is a panic: a `borrow_mut` of `published` here meets
-        // `reader` and `AtomicRefCell` panics.
-        pending.resync_published_indexes(&published, &private.borrow());
-
-        drop(reader);
+        assert_eq!(records(&pending, &g), vec![labelled(true, &[m])]);
     }
 }
 
@@ -2331,7 +2349,7 @@ mod native_unique_tests {
     fn a_numeric_duplicate_is_found_by_the_native_lookup() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2361,7 +2379,7 @@ mod native_unique_tests {
     fn a_string_duplicate_on_a_numeric_column_is_found_by_the_scan() {
         let mut g = graph();
         g.falkordb_index
-            .create_numeric(EntityType::Node, &arc("U"), &arc("id"));
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
         let ids = nodes(
             &mut g,
             &[
@@ -2414,7 +2432,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["s", "n"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         let ids = nodes(
             &mut g,
@@ -2448,7 +2466,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         // 50 nodes of one tenant, then a duplicate of node 3's key.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
@@ -2469,7 +2487,7 @@ mod native_unique_tests {
                 values,
             )
             .expect("both columns answer");
-            fewest_candidates(lookups).count()
+            fewest_candidates(&lookups).count()
         };
         let (tenant, three, absent) = (Value::Int(7), Value::Int(3), Value::Int(99));
         assert_eq!(
@@ -2504,7 +2522,7 @@ mod native_unique_tests {
         let mut g = graph();
         for attr in ["tenant", "id"] {
             g.falkordb_index
-                .create_numeric(EntityType::Node, &arc("U"), &arc(attr));
+                .create_column(EntityType::Node, &arc("U"), &arc(attr));
         }
         // 50 nodes of tenant 7, a duplicate of the key of node 3, and one node of tenant 8.
         let rows: Vec<[(&str, Value); 2]> = (0..50)
@@ -2529,17 +2547,17 @@ mod native_unique_tests {
         };
         let once = ReadOnce::default();
         assert_eq!(
-            once.candidates(lookups(7, "u1")).count(),
+            once.candidates(&lookups(7, "u1")).count(),
             51,
             "the first member reads the tenant"
         );
         assert_eq!(
-            once.candidates(lookups(7, "u2")).count(),
+            once.candidates(&lookups(7, "u2")).count(),
             0,
             "a member with the same lookups reads nothing more"
         );
         assert_eq!(
-            once.candidates(lookups(8, "u9")).count(),
+            once.candidates(&lookups(8, "u9")).count(),
             1,
             "another tenant is another lookup"
         );
@@ -2551,13 +2569,50 @@ mod native_unique_tests {
         );
     }
 
+    /// While one of a composite key's columns is `Building`, as the background builder leaves a
+    /// new one, the key reads its other column: a building column has not seen every entity, so it
+    /// cannot rule a duplicate out, but a `Ready` one can. Here `tenant`'s column is created after
+    /// the nodes and never built, so it holds none of them.
+    #[test]
+    fn a_composite_key_with_a_building_column_reads_its_ready_one() {
+        let mut g = graph();
+        g.falkordb_index
+            .create_column(EntityType::Node, &arc("U"), &arc("id"));
+        let ids = nodes(
+            &mut g,
+            &[
+                &[("tenant", Value::Int(7)), ("id", Value::Int(1))],
+                &[("tenant", Value::Int(7)), ("id", Value::Int(2))],
+                &[("tenant", Value::Int(7)), ("id", Value::Int(1))],
+            ],
+        );
+        g.falkordb_index
+            .create_building(EntityType::Node, &arc("U"), &arc("tenant"));
+        let lookups = native_unique_query(
+            &g.falkordb_index,
+            EntityType::Node,
+            &arc("U"),
+            &[arc("tenant"), arc("id")],
+            &[Value::Int(7), Value::Int(1)],
+        )
+        .expect("id's column answers");
+        assert_eq!(lookups.len(), 1, "the Building column declines");
+        assert_eq!(
+            fewest_candidates(&lookups).count(),
+            2,
+            "the two holding id 1"
+        );
+        assert!(check_nodes(&g, &["tenant", "id"], ids[2]).is_err());
+        assert_eq!(check_nodes(&g, &["tenant", "id"], ids[1]), Ok(()));
+    }
+
     /// The same lookup for an edge constraint, where a column's ids are `edge_id`s.
     #[test]
     fn an_edge_duplicate_is_found_by_the_native_lookup() {
         let mut g = graph();
         let ty = arc("R");
         g.falkordb_index
-            .create_numeric(EntityType::Relationship, &ty, &arc("id"));
+            .create_column(EntityType::Relationship, &ty, &arc("id"));
         let ends = g
             .node_id_space()
             .reserve(2, &RoaringTreemap::new())

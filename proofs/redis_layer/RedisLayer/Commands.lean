@@ -3,21 +3,6 @@ import RedisLayer.QueryArgsSpec
 # Small command handlers (`src/commands/*.rs`, `origin/main`)
 
 Argument handling and reply shapes; key access, locks and replication calls are events.
-
-| here | there |
-| --- | --- |
-| `debugCmd`        | `debug.rs` `graph_debug` `:5`, `debug_aux` `:23` |
-| `deleteCmd`       | `delete.rs` `graph_delete` `:37` |
-| `effectCmd`       | `effect.rs` `graph_effect` `:25` |
-| `explainLine`, `explainCmd`, `explainCmdA` | `explain.rs` `explain` `:36`, `graph_explain` `:60` (flags `:65`) |
-| `infoSections`, `formatAvg` | `info.rs` `graph_info` `:22`, `format_avg` `:88` |
-| `cReplyName`, `scanLoop` | `list.rs` `c_reply_name` `:47`, `graph_list` `:60` |
-| `memArgs`, `memTotal`, `cSchemaName` | `memory.rs` `graph_memory` `:181` (#3053), `memory_report` `:69`, `c_schema_name` `:65` |
-| `slowlogCmd`      | `slowlog.rs` `graph_slowlog` `:16` |
-| `udfCmd`, `udfLoadArgs`, `udfListArgs` | `udf.rs` `:47-229` |
-| `exited`, `exitCode` | `copy.rs` `graph_copy` `:27` (`waitpid` status decoding) |
-| `restoreCmd`      | `restore.rs` `graph_restore` `:12` |
-| `bulkReply`       | `bulk_insert.rs` `graph_bulk_insert` success reply |
 -/
 namespace RedisLayer.Commands
 
@@ -64,7 +49,7 @@ inductive EffOut | okNoop | okApplied | failed
 
 /-- `graph_effect`: an empty payload is a no-op; otherwise fork (nothing to take since #3657),
 apply, commit and replicate, or drop the version and report through the divergence guard. Since
-#2846 the commit is folded into the result (effect.rs:85): a version `Graph::validate`
+#2846 the commit is folded into the result (effect.rs): a version `Graph::validate`
 refuses (`valid = false`) takes the same failure arm as a rejected buffer. -/
 def effectCmd (empty applyOk : Bool) (valid : Bool := true) : EffOut × List String :=
   if empty then (.okNoop, [])
@@ -133,35 +118,158 @@ theorem cReplyName_nonul (b : List Nat) : 0 ∉ cReplyName b := by
   | nil => simp [cReplyName]
   | cons x xs ih => unfold cReplyName; split <;> simp_all; omega
 
-/-- The `SCAN … TYPE graphdata` loop over a finite cursor chain: names of every page. -/
-def scanLoop (pages : List (List (List Nat))) : List (List Nat) :=
-  (pages.map fun p => p.map cReplyName).flatten
+/-- One element of a `SCAN` reply as `call_ext` hands it over: a string (any bytes, not
+necessarily UTF-8), another reply type, or an error. -/
+inductive ScanElem | str (b : List Nat) | other | err
+  deriving DecidableEq, Repr
 
-theorem scanLoop_nonul (pages : List (List (List Nat))) : ∀ n ∈ scanLoop pages, 0 ∉ n := by
-  intro n hn
-  simp only [scanLoop, List.mem_flatten, List.mem_map] at hn
-  obtain ⟨_, ⟨p, _, rfl⟩, hn⟩ := hn
-  rw [List.mem_map] at hn
-  obtain ⟨b, _, rfl⟩ := hn
-  exact cReplyName_nonul b
+/-- `reply_bytes`: a string element's bytes, unconverted; anything else is `None`, which
+`graph_list` turns into `ERR Failed to list graphs` instead of a panic. -/
+def replyBytes : ScanElem → Option (List Nat)
+  | .str b => some b
+  | _ => none
+
+theorem replyBytes_str (b : List Nat) : replyBytes (.str b) = some b := rfl
+theorem replyBytes_nonstr (e : ScanElem) (h : ∀ b, e ≠ .str b) : replyBytes e = none := by
+  cases e with
+  | str b => exact absurd rfl (h b)
+  | other => rfl
+  | err => rfl
+
+/-- One `SCAN` page as `graph_list` reads it: each element through `reply_bytes`, its
+name through `c_reply_name`; one element that is not a string makes the whole command
+`ERR Failed to list graphs` (`none`). -/
+def scanPage : List ScanElem → Option (List (List Nat))
+  | [] => some []
+  | e :: es => (replyBytes e).bind fun b => (scanPage es).map (cReplyName b :: ·)
+
+/-- `graph_list`'s `SCAN … TYPE graphdata` loop over a finite cursor chain: the names of
+every page, in order, or `none` as soon as a page has an element that is not a string.
+
+Taken as given rather than modelled: the arity check (list.rs); the shape of each reply,
+an array whose first two elements are the cursor and an array of keys; a reply that is not an
+array, or lacks those two, is also `ERR Failed to list graphs` (:86-92); a
+`SCAN` error reply, passed through as the server's own error (:86); the cursor, read through
+`reply_bytes` as well and failing the same way if it is not a string (:96); and termination,
+by handing the model the cursor chain as a finite list of pages. -/
+def scanLoop : List (List ScanElem) → Option (List (List Nat))
+  | [] => some []
+  | p :: ps => (scanPage p).bind fun ns => (scanLoop ps).map (ns ++ ·)
+
+theorem scanPage_nonul (p : List ScanElem) : ∀ ns, scanPage p = some ns → ∀ n ∈ ns, 0 ∉ n := by
+  induction p with
+  | nil => intro ns h; simp [scanPage] at h; subst h; simp
+  | cons e es ih =>
+    intro ns h n hn
+    cases e with
+    | str b =>
+      simp [scanPage, replyBytes] at h
+      cases hs : scanPage es with
+      | none => simp [hs] at h
+      | some ms =>
+        simp [hs] at h
+        subst h
+        simp only [List.mem_cons] at hn
+        rcases hn with rfl | hn
+        · exact cReplyName_nonul b
+        · exact ih ms hs n hn
+    | other => simp [scanPage, replyBytes] at h
+    | err => simp [scanPage, replyBytes] at h
+
+/-- No name `GRAPH.LIST` replies holds a NUL. -/
+theorem scanLoop_nonul (pages : List (List ScanElem)) :
+    ∀ ns, scanLoop pages = some ns → ∀ n ∈ ns, 0 ∉ n := by
+  induction pages with
+  | nil => intro ns h; simp [scanLoop] at h; subst h; simp
+  | cons p ps ih =>
+    intro ns h n hn
+    cases hp : scanPage p with
+    | none => simp [scanLoop, hp] at h
+    | some ms =>
+      cases hs : scanLoop ps with
+      | none => simp [scanLoop, hp, hs] at h
+      | some rs =>
+        simp [scanLoop, hp, hs] at h
+        subst h
+        rcases List.mem_append.mp hn with hn | hn
+        · exact scanPage_nonul p ms hp n hn
+        · exact ih rs hs n hn
+
+theorem scanPage_strs (bs : List (List Nat)) :
+    scanPage (bs.map ScanElem.str) = some (bs.map cReplyName) := by
+  induction bs with
+  | nil => rfl
+  | cons b bs ih => simp [scanPage, replyBytes, ih]
+
+/-- Pages of strings, any bytes: the reply is every key cut at its first NUL, page by
+page — the key's bytes, never a lossy or failed conversion of them. -/
+theorem scanLoop_strs (pages : List (List (List Nat))) :
+    scanLoop (pages.map (List.map ScanElem.str)) = some (pages.map (List.map cReplyName)).flatten := by
+  induction pages with
+  | nil => rfl
+  | cons p ps ih => simp [scanLoop, scanPage_strs, ih]
+
+theorem scanPage_nonstr (e : ScanElem) (he : ∀ b, e ≠ .str b) :
+    ∀ p : List ScanElem, e ∈ p → scanPage p = none := by
+  intro p
+  induction p with
+  | nil => intro h; simp at h
+  | cons x xs ih =>
+    intro h
+    simp only [List.mem_cons] at h
+    rcases h with rfl | h
+    · cases e with
+      | str b => exact absurd rfl (he b)
+      | other => simp [scanPage, replyBytes]
+      | err => simp [scanPage, replyBytes]
+    · cases x with
+      | str b => simp [scanPage, replyBytes, ih h]
+      | other => simp [scanPage, replyBytes]
+      | err => simp [scanPage, replyBytes]
+
+/-- A page that fails fails the whole listing (`ERR Failed to list graphs`), never a
+partial reply. -/
+theorem scanLoop_page_none (p : List ScanElem) (hp : scanPage p = none) :
+    ∀ pages : List (List ScanElem), p ∈ pages → scanLoop pages = none := by
+  intro pages
+  induction pages with
+  | nil => intro h; simp at h
+  | cons q qs ih =>
+    intro h
+    simp only [List.mem_cons] at h
+    rcases h with rfl | h
+    · simp [scanLoop, hp]
+    · cases hq : scanPage q with
+      | none => simp [scanLoop, hq]
+      | some ns => simp [scanLoop, hq, ih h]
 
 /-! ## GRAPH.MEMORY -/
 
 def MB : Nat := 2^20
 
-/-- `graph_memory` argument handling (`memory.rs:181-221`): arity 2 or 4, `USAGE`, optional
+/-- `up_to_nul` (`graph_core.rs`): the text before the first NUL, as C's `%s` prints it. -/
+def upToNul (s : String) : String := String.ofList (s.toList.takeWhile (· ≠ '\x00'))
+
+/-- `graph_memory` argument handling (`memory.rs`): arity 2 or 4, `USAGE`, optional
 `SAMPLES n` with any non-negative `n` (#3053, `fe619ac5f`: `parse::<u64>`, `try_into` →
 `unwrap_or(usize::MAX)`, the identity on 64-bit), default 100. `parse` is `str::parse::<u64>`.
-The clamp to `1..=10000` happens later, in `memory_usage_report`. -/
+The clamp to `1..=10000` happens later, in `memory_usage_report`. Since PR #3257 the error
+texts are C's (`Graph_Memory`, cmd_memory.c): the bad word is echoed up to its first NUL, and
+the `SAMPLES` count error has no `ERR ` prefix. -/
 def memArgs (parse : String → Option Nat) (args : List String) : Except String Nat :=
   match args with
-  | [sub, _key] => if up sub = "USAGE" then .ok 100 else .error "ERR unknown subcommand"
+  | [sub, _key] =>
+    if up sub = "USAGE" then .ok 100
+    else .error ("ERR unknown subcommand '" ++ upToNul sub ++ "'. expecting GRAPH.MEMORY USAGE <key>")
   | [sub, _key, kw, cnt] =>
-    if up sub ≠ "USAGE" then .error "ERR unknown subcommand"
-    else if up kw ≠ "SAMPLES" then .error "ERR expected SAMPLES keyword"
+    if up sub ≠ "USAGE" then
+      .error ("ERR unknown subcommand '" ++ upToNul sub ++ "'. expecting GRAPH.MEMORY USAGE <key>")
+    else if up kw ≠ "SAMPLES" then
+      .error ("ERR unknown subcommand '" ++ upToNul kw ++
+        "'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>")
     else match parse cnt with
       | some n => .ok n
-      | none => .error "ERR SAMPLES must be a non-negative integer"
+      | none => .error "SAMPLES must be a non-negative integer"
   | _ => .error "wrong arity"
 
 theorem memArgs_default (p : String → Option Nat) (k : String) : memArgs p ["usage", k] = .ok 100 := by
@@ -175,11 +283,36 @@ theorem memArgs_samples (p : String → Option Nat) (k cnt : String) (n : Nat) (
   have h2 : up "SAMPLES" = "SAMPLES" := by decide
   simp [memArgs, h, h1, h2]
 
+/-- PR #3257: C's text, no `ERR ` prefix (historical: `"ERR SAMPLES must be …"` before). -/
 theorem memArgs_samples_err (p : String → Option Nat) (k cnt : String) (h : p cnt = none) :
-    memArgs p ["USAGE", k, "SAMPLES", cnt] = .error "ERR SAMPLES must be a non-negative integer" := by
+    memArgs p ["USAGE", k, "SAMPLES", cnt] = .error "SAMPLES must be a non-negative integer" := by
   have h1 : up "USAGE" = "USAGE" := by decide
   have h2 : up "SAMPLES" = "SAMPLES" := by decide
   simp [memArgs, h, h1, h2]
+
+/-- PR #3257: an unknown subcommand is echoed back (up to its first NUL), as C does. -/
+theorem memArgs_subcmd_err (p : String → Option Nat) (sub k : String) (rest : List String)
+    (hs : up sub ≠ "USAGE") (hr : rest = [] ∨ rest.length = 2) :
+    memArgs p (sub :: k :: rest) =
+      .error ("ERR unknown subcommand '" ++ upToNul sub ++ "'. expecting GRAPH.MEMORY USAGE <key>") := by
+  rcases hr with rfl | hr
+  · simp [memArgs, hs]
+  · match rest, hr with
+    | [kw, cnt], _ => simp [memArgs, hs]
+
+/-- PR #3257: a third word other than `SAMPLES` is echoed back, as C does. -/
+theorem memArgs_kw_err (p : String → Option Nat) (k kw cnt : String) (hk : up kw ≠ "SAMPLES") :
+    memArgs p ["USAGE", k, kw, cnt] =
+      .error ("ERR unknown subcommand '" ++ upToNul kw ++
+        "'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>") := by
+  have h1 : up "USAGE" = "USAGE" := by decide
+  simp [memArgs, h1, hk]
+
+-- The exact lines `tests/flow/test_memory_usage.py` reads off the wire.
+example : memArgs (fun _ => none) ["FOO", "g"] =
+    .error "ERR unknown subcommand 'FOO'. expecting GRAPH.MEMORY USAGE <key>" := by decide
+example : memArgs (fun _ => none) ["USAGE", "g", "FOO", "3"] =
+    .error "ERR unknown subcommand 'FOO'. expecting GRAPH.MEMORY USAGE <key> SAMPLES <x>" := by decide
 
 /-- `memory_report`: each component floored to MB separately; the total is their sum. -/
 structure Mem where
@@ -241,7 +374,7 @@ def udfLoadParse : List String → Except String Udf
       | [] => .ok (.load false first a)
       | x :: _ => .error ("Unknown option given: '" ++ x ++ "'")
 
-/-- udf.rs:117-122 (#3263, e860645bb): after the option parse, an empty library name and then an
+/-- udf.rs (#3263, e860645bb): after the option parse, an empty library name and then an
 empty script are refused (before it, `LOAD "" code` registered functions named `.f` that no
 query can call: W5-udf-4). -/
 def udfLoadCheck : Udf → Except String Udf
@@ -251,7 +384,7 @@ def udfLoadCheck : Udf → Except String Udf
     else .ok (.load r lib code)
   | u => .ok u
 
-/-- `udf_load`'s argument handling (udf.rs:68-122). -/
+/-- `udf_load`'s argument handling (udf.rs). -/
 def udfLoadArgs (args : List String) : Except String Udf :=
   (udfLoadParse args).bind udfLoadCheck
 
@@ -299,7 +432,7 @@ theorem udfLoad_nonempty (args : List String) (r : Bool) (l c : String)
       · simp [h1] at h
       · by_cases h2 : c' = ""
         · simp [h1, h2] at h
-        · simp only [h1, h2, if_false, Except.ok.injEq, Udf.load.injEq] at h
+        · simp only [h1, h2, ite_false, Except.ok.injEq, Udf.load.injEq] at h
           obtain ⟨_, rfl, rfl⟩ := h
           exact ⟨h1, h2⟩
     | delete _ => simp [udfLoadCheck] at h
@@ -334,7 +467,7 @@ theorem tz_ge (j : Nat) : ∀ k s, j ≤ k → (j ≤ tz k s ↔ s % 2^j = 0) :=
     obtain ⟨k', rfl⟩ : ∃ k', k = k' + 1 := ⟨k - 1, by omega⟩
     simp only [tz]
     by_cases hs : s % 2 = 1
-    · simp only [hs, if_true]
+    · simp only [hs, ite_true]
       constructor
       · intro h; omega
       · intro h
@@ -343,7 +476,7 @@ theorem tz_ge (j : Nat) : ∀ k s, j ≤ k → (j ≤ tz k s ↔ s % 2^j = 0) :=
           rw [← this, h]
         omega
     · have he : s % 2 = 0 := by omega
-      simp only [hs, if_false]
+      simp only [hs, ite_false]
       rw [show j + 1 ≤ 1 + tz k' (s / 2) ↔ j ≤ tz k' (s / 2) by omega, ih k' (s / 2) (by omega)]
       have hs2 : s = 2 * (s / 2) := by omega
       conv => rhs; rw [hs2, Nat.pow_succ, Nat.mul_comm (2^j) 2, Nat.mul_mod_mul_left]
@@ -374,15 +507,15 @@ def bulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toStri
 def cBulkReply (n e : Nat) : String := toString n ++ " nodes created, " ++ toString e ++ " edges created"
 
 /-- **Fixed by #3301 (dd333fe32)**: the success reply names relationships as C does
-(`bulk_insert.rs:889,1044`; both bulk paths). This is `rfl` between two copies of the text, so it
+(`bulk_insert.rs`; both bulk paths). This is `rfl` between two copies of the text, so it
 records the wording only; it would not notice a change to the `format!` in `bulk_insert.rs`. -/
 theorem bulk_reply_c (n e : Nat) : bulkReply n e = cBulkReply n e := rfl
 
 /-! ## GRAPH.PROFILE / GRAPH.EXPLAIN flags (`QueryArgs.profileFront`, `explainFront`)
 
-Since `557f18868` (#3010) both go through `parse_query_flags` (`profile.rs:22`,
-`explain.rs:65`). Historical: PROFILE used its own loop that silently dropped a garbage
-timeout (`profile_timeout_garbage`, now `profile_timeout_garbage_rejected`), and EXPLAIN
+Both go through `parse_query_flags` (`profile.rs`,
+`explain.rs`). An earlier PROFILE loop silently dropped a garbage
+timeout (historical `profile_timeout_garbage`, now `profile_timeout_garbage_rejected`), and EXPLAIN
 validated no flags at all. -/
 
 theorem profile_timeout_parsed :
@@ -392,7 +525,7 @@ theorem profile_timeout_garbage_rejected :
 theorem profile_other_args_ignored :
     profileFront 0 (pre ++ [b "--compact"]) = .ok none := by decide
 
-/-- `graph_explain` (`explain.rs:60-102`): the flags are checked first, then the key. -/
+/-- `graph_explain` (`explain.rs`): the flags are checked first, then the key. -/
 def explainCmdA (tmax : Int) (args : List Bytes) (isGraph inline : Bool) : Except QErr ExOut :=
   (explainFront tmax args).map fun _ => explainCmd isGraph inline
 

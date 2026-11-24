@@ -26,10 +26,10 @@ def ymd (y : Int) (m d : Nat) (s : String) : Except String Int :=
   match C.fromYmd y m d with | some z => .ok z | none => .error s!"Invalid date: {s}"
 
 /-- `s.chars().all(|c| c.is_ascii_digit())` — the guard #3125 (`1ea868116`) added to the
-compact branches (temporal.rs:220, :335). `Char.isDigit` is ASCII `'0'..='9'`. -/
+compact branches (temporal.rs). `Char.isDigit` is ASCII `'0'..='9'`. -/
 def allDigits (s : String) : Bool := s.toList.all Char.isDigit
 
-/-- `parse_date_string` (temporal.rs:173-266). -/
+/-- `parse_date_string` (temporal.rs). -/
 def parseDate (s : String) : Except String Int :=
   if s.contains 'W' then C.parseWeek s
   else if s.startsWith "-" then .error s!"Unsupported date string: {s}"
@@ -48,7 +48,7 @@ def parseDate (s : String) : Except String Int :=
           let d ← pU32 C p2 s!"Invalid day: {s}"
           ymd C y m d s
       | _ => .error s!"Invalid date string: {s}"
-    else if !allDigits s then .error s!"Invalid date string: {s}"   -- temporal.rs:220-222 (#3125)
+    else if !allDigits s then .error s!"Invalid date string: {s}"   -- temporal.rs (#3125)
     else
       match digits.length with
       | 4 => do let y ← pI32 C digits s!"Invalid year: {s}"; ymd C y 1 1 s
@@ -127,7 +127,7 @@ theorem parseDate_negative (s : String) (hW : s.contains 'W' = false) (h : s.sta
 def optPart (parts : List String) (i : Nat) (err : String) : Except String Nat :=
   if parts.length > i then pU32 C (parts.getD i "") err else .ok 0
 
-/-- `parse_time_string` (temporal.rs:308-367). -/
+/-- `parse_time_string` (temporal.rs). -/
 def parseTime (s0 : String) : Except String Nat :=
   let s := (s0.splitOn ".").headD s0
   let hms (h m sec : Nat) : Except String Nat :=
@@ -141,7 +141,7 @@ def parseTime (s0 : String) : Except String Nat :=
       hms hour minute second
   else
     let digits := digitsOnly s
-    if !allDigits s then .error s!"Invalid time string: {s}"   -- temporal.rs:335-337 (#3125)
+    if !allDigits s then .error s!"Invalid time string: {s}"   -- temporal.rs (#3125)
     else
     match digits.length with
     | 2 => do let h ← pU32 C digits s!"Invalid hour: {s}"; hms h 0 0
@@ -178,7 +178,7 @@ theorem parseTime_ok (s : String) (t : Nat) (h : parseTime C s = .ok t) : t < 86
       obtain ⟨_, -, h⟩ := bind_ok h; exact hms_ok _ _ _ _ _ h
     · cases h
 
-/-! ## #3125 (`1ea868116`): the compact forms reject non-digits -/
+/-! ## The compact forms reject non-digits -/
 
 theorem digitsOnly_of_allDigits (s : String) (h : allDigits s = true) : digitsOnly s = s := by
   unfold digitsOnly
@@ -218,7 +218,7 @@ theorem parseTime_compact_rejects (s0 : String) (hc : ((s0.splitOn ".").headD s0
 /-- The `W` dispatch comes before the #3125 guard, so the guard does not reach
 `parse_week_date`. That used to crash on `date('2020W1é')` (`&rest[..2]`, W2-temporal-3);
 since #2950 it splits with `split_at_checked`
-(temporal.rs:279-289, `weekSlice`) and errors (`weekSlice_err_iff`, `week_slice_errors`). -/
+(temporal.rs, `weekSlice`) and errors (`weekSlice_err_iff`, `week_slice_errors`). -/
 theorem parseDate_week_first (s : String) (hW : s.contains 'W' = true) :
     parseDate C s = C.parseWeek s := by
   simp [parseDate, hW]
@@ -235,7 +235,7 @@ theorem compact_junk_examples :
    parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide),
    parseDate_compact_rejects C _ (by simp) (by simp) (by simp) (by decide)⟩
 
-/-- `parse_datetime_string` (temporal.rs:370): split at the first `T`. -/
+/-- `parse_datetime_string` (temporal.rs): split at the first `T`. -/
 def parseDatetime (s : String) : Except String (Int × Nat) :=
   match s.splitOn "T" with
   | [] | [_] => do let d ← parseDate C s; pure (d, 0)
@@ -257,7 +257,7 @@ theorem parseDatetime_noT (s : String) (h : s.splitOn "T" = [s]) :
     parseDatetime C s = (do let d ← parseDate C s; pure (d, 0)) := by
   simp [parseDatetime, h]
 
-/-! ## `parse_duration_string` (temporal.rs:388) -/
+/-! ## `parse_duration_string` (temporal.rs) -/
 
 /-- The seven accumulators `(years, months, 0, days, hours, minutes, seconds)`. -/
 structure DurAcc where
@@ -271,10 +271,12 @@ structure DurAcc where
 /-- `i64::checked_*`: `some x` iff `x` is in i64 range. -/
 def chk64 (x : Int) : Option Int := if decide (-2 ^ 63 ≤ x) && decide (x < 2 ^ 63) then some x else none
 
-/-- The date-part loop (temporal.rs:406-430): digits and `-` accumulate, a letter commits
+/-- The date-part loop (temporal.rs): digits and `-` accumulate, a letter commits
 the number; since #2987 `W`/`D` use `checked_mul`/`checked_add` and error on overflow. -/
 def dateLoop : List Char → String → DurAcc → Except String DurAcc
-  | [], _, a => .ok a
+  | [], buf, a =>
+    -- since #3574 (e0a34e480): a trailing number with no unit (`P5`, `P1Y5`, `P-`) is an error
+    if buf.isEmpty then .ok a else .error s!"Duration component has no unit: {buf}"
   | ch :: cs, buf, a =>
     if ch.isDigit || ch == '-' then dateLoop cs (buf.push ch) a
     else match C.parseI64 buf with
@@ -293,7 +295,8 @@ def dateLoop : List Char → String → DurAcc → Except String DurAcc
 
 /-- The time-part loop: also accepts `.`, and drops the fraction before parsing. -/
 def timeLoop : List Char → String → DurAcc → Except String DurAcc
-  | [], _, a => .ok a
+  | [], buf, a =>
+    if buf.isEmpty then .ok a else .error s!"Duration component has no unit: {buf}"
   | ch :: cs, buf, a =>
     if ch.isDigit || ch == '-' || ch == '.' then timeLoop cs (buf.push ch) a
     else match C.parseI64 ((buf.splitOn ".").headD buf) with
@@ -335,7 +338,32 @@ theorem parseDuration_noP (s : String) (h : s.startsWith "P" = false) :
     parseDuration C s = .error s!"Duration string must start with 'P': {s}" := by
   simp [parseDuration, h]
 
-/-! ### #2987: the week/day accumulator never wraps -/
+/-! ### A trailing number with no unit is an error -/
+
+/-- Date part ends while the number buffer is non-empty (`P5`, `P1Y5`, `P-`): error. Before
+#3574 the buffer was silently dropped and `duration('P5')` was the zero duration. -/
+theorem dateLoop_trailing_number (buf : String) (a : DurAcc) (h : buf.isEmpty = false) :
+    dateLoop C [] buf a = .error s!"Duration component has no unit: {buf}" := by
+  simp [dateLoop, h]
+
+/-- Same for the time part (`PT5`, `P1DT2H3`). -/
+theorem timeLoop_trailing_number (buf : String) (a : DurAcc) (h : buf.isEmpty = false) :
+    timeLoop C [] buf a = .error s!"Duration component has no unit: {buf}" := by
+  simp [timeLoop, h]
+
+/-- A clean end (nothing buffered) still succeeds. -/
+theorem dateLoop_end_ok (a : DurAcc) : dateLoop C [] "" a = .ok a := by simp [dateLoop]
+theorem timeLoop_end_ok (a : DurAcc) : timeLoop C [] "" a = .ok a := by simp [timeLoop]
+
+/-- The one-character string after `P` is `5`: `duration('P5')` errors. -/
+theorem parseDuration_P5 :
+    dateLoop C "5".toList "" {} = .error "Duration component has no unit: 5" := by
+  have : "5".toList = ['5'] := by decide
+  rw [this]
+  simp [dateLoop, Char.isDigit]
+  rfl
+
+/-! ### The week/day accumulator never wraps -/
 
 /-- `W` with a week count whose `n * 7` leaves i64 is an error, not a wrap
 (W2-temporal-8 fixed). -/
@@ -369,7 +397,10 @@ theorem chk64_some {x y : Int} (h : chk64 x = some y) : y = x ∧ -2 ^ 63 ≤ x 
 theorem dateLoop_days_i64 : ∀ (l : List Char) (buf : String) (a r : DurAcc),
     -2 ^ 63 ≤ a.days → a.days < 2 ^ 63 → dateLoop C l buf a = .ok r →
     -2 ^ 63 ≤ r.days ∧ r.days < 2 ^ 63
-  | [], _, a, r, h0, h1, h => by simp [dateLoop] at h; cases h; exact ⟨h0, h1⟩
+  | [], buf, a, r, h0, h1, h => by
+    simp only [dateLoop] at h; split at h
+    · cases h; exact ⟨h0, h1⟩
+    · cases h
   | ch :: cs, buf, a, r, h0, h1, h => by
     unfold dateLoop at h
     split at h

@@ -30,9 +30,11 @@
 //!
 //! ## Round-Trip Safety
 //!
-//! Graph entities (Node, Edge, Path, Point) carry hidden `__falkor_type` and
-//! `__falkor_*_id` properties on their JS objects. These markers allow
-//! [`js_to_value`] to reconstruct the correct Rust variant without ambiguity.
+//! Graph entities (Node, Edge, Path) are instances of a Rust class that holds
+//! the entity, and [`js_to_value`] reads it back from there; their visible
+//! `__falkor_type` / `__falkor_*_id` properties are informational only, so a
+//! plain JS object that copies them converts to a Map. Point carries a
+//! `__falkor_type` marker.
 //! User-supplied map keys that start with `__falkor_` are escaped during
 //! `value_to_js` and unescaped during `js_to_value` to prevent collisions.
 //!
@@ -41,7 +43,6 @@
 
 use std::sync::Arc;
 
-use atomic_refcell::AtomicRefCell;
 use rquickjs::function::This;
 use rquickjs::{Array, Ctx, IntoJs, Object, Value as JsValue};
 
@@ -97,7 +98,7 @@ pub fn udf_nesting_error() -> String {
 pub fn value_to_js<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
     value_to_js_at(ctx, value, graph, runtime, 0)
@@ -110,7 +111,7 @@ pub fn value_to_js<'js>(
 fn value_to_js_at<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
     depth: usize,
 ) -> Result<JsValue<'js>, String> {
@@ -124,7 +125,7 @@ fn value_to_js_at<'js>(
 fn value_to_js_level<'js>(
     ctx: &Ctx<'js>,
     value: &Value,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
     depth: usize,
 ) -> Result<JsValue<'js>, String> {
@@ -185,7 +186,7 @@ fn value_to_js_level<'js>(
         }
         Value::Relationship(rel_id) => {
             let (src, dst) = runtime.map_or_else(
-                || graph.borrow().get_relationship_endpoints(*rel_id),
+                || graph.get_relationship_endpoints(*rel_id),
                 |rt| rt.get_relationship_endpoints(*rel_id),
             );
             crate::udf::js_classes::create_js_edge(
@@ -345,64 +346,19 @@ fn js_to_value_level(
     if val.is_object() {
         let obj = val.as_object().unwrap();
 
-        // Check for our custom classes via hidden __falkor_type property
-        if let Ok(ftype) = obj.get::<_, String>("__falkor_type") {
-            match ftype.as_str() {
-                "node" => {
-                    let id: u64 = obj.get("__falkor_node_id").map_err(|e| format!("{e}"))?;
-                    return Ok(Value::Node(id.into()));
-                }
-                "edge" => {
-                    let id: u64 = obj.get("__falkor_edge_id").map_err(|e| format!("{e}"))?;
-                    return Ok(Value::Relationship(id.into()));
-                }
-                "path" => {
-                    // Its members are converted recursively too.
-                    if depth >= MAX_UDF_VALUE_NESTING {
-                        return Err(udf_nesting_error());
-                    }
-                    let nodes_arr: Array = obj.get("nodes").map_err(|e| format!("{e}"))?;
-                    let rels_arr: Array = obj.get("relationships").map_err(|e| format!("{e}"))?;
-                    let n_nodes = nodes_arr.len();
-                    let n_rels = rels_arr.len();
-                    if n_rels != n_nodes.saturating_sub(1) {
-                        return Err(format!(
-                            "Invalid path: expected {} relationships for {} nodes, got {}",
-                            n_nodes.saturating_sub(1),
-                            n_nodes,
-                            n_rels
-                        ));
-                    }
-                    let mut path_values = Vec::with_capacity(n_nodes + n_rels);
-                    for i in 0..n_nodes {
-                        let node_val: JsValue = nodes_arr.get(i).map_err(|e| format!("{e}"))?;
-                        let node = js_to_value_at(node_val, depth + 1)?;
-                        if !matches!(node, Value::Node(_)) {
-                            return Err(format!(
-                                "Invalid path: element at node position {i} is not a Node"
-                            ));
-                        }
-                        path_values.push(node);
-                        if i < n_rels {
-                            let rel_val: JsValue = rels_arr.get(i).map_err(|e| format!("{e}"))?;
-                            let rel = js_to_value_at(rel_val, depth + 1)?;
-                            if !matches!(rel, Value::Relationship(_)) {
-                                return Err(format!(
-                                    "Invalid path: element at relationship position {i} is not a Relationship"
-                                ));
-                            }
-                            path_values.push(rel);
-                        }
-                    }
-                    return Ok(Value::Path(Arc::new(path_values.into())));
-                }
-                "point" => {
-                    let lat: f64 = obj.get("latitude").map_err(|e| format!("{e}"))?;
-                    let lon: f64 = obj.get("longitude").map_err(|e| format!("{e}"))?;
-                    return Ok(Value::Point(Point::new(lat as f32, lon as f32)));
-                }
-                _ => {}
-            }
+        // Node, Edge and Path objects are instances of a Rust class that holds
+        // the entity; a plain object carrying the same `__falkor_type` marker
+        // is a Map (as in C), so JS cannot forge a reference to an entity.
+        if let Some(entity) = crate::udf::js_classes::entity_value(obj) {
+            return Ok(entity);
+        }
+
+        if let Ok(ftype) = obj.get::<_, String>("__falkor_type")
+            && ftype == "point"
+        {
+            let lat: f64 = obj.get("latitude").map_err(|e| format!("{e}"))?;
+            let lon: f64 = obj.get("longitude").map_err(|e| format!("{e}"))?;
+            return Ok(Value::Point(Point::new(lat as f32, lon as f32)));
         }
 
         // Date / RegExp by their internal class, not by a `constructor`
@@ -473,7 +429,6 @@ mod nesting_tests {
     use super::{MAX_UDF_VALUE_NESTING, js_to_value, udf_nesting_error, value_to_js};
     use crate::graph::{graph::Graph, graphblas::test_init::ensure_init};
     use crate::runtime::value::Value;
-    use atomic_refcell::AtomicRefCell;
     use rquickjs::{Context, Runtime, Value as JsValue};
     use std::sync::Arc;
     use thin_vec::thin_vec;
@@ -582,7 +537,7 @@ mod nesting_tests {
     fn value_to_js_respects_the_cap() {
         ensure_init();
         in_js_on_worker_stack(|ctx| {
-            let g = Arc::new(AtomicRefCell::new(Graph::new(16, 16, 1, 0, "udf_nesting")));
+            let g = Graph::new(16, 16, 1, 0, "udf_nesting");
             // At the cap: converts, and converts back to the same value.
             let v = nested(MAX_UDF_VALUE_NESTING);
             let js = value_to_js(ctx, &v, &g, None).unwrap();
@@ -601,7 +556,7 @@ mod nesting_tests {
     fn ordinary_nesting_round_trips() {
         ensure_init();
         in_js_on_worker_stack(|ctx| {
-            let g = Arc::new(AtomicRefCell::new(Graph::new(16, 16, 1, 0, "udf_nesting")));
+            let g = Graph::new(16, 16, 1, 0, "udf_nesting");
             let v = Value::List(Arc::new(thin_vec![
                 Value::Int(1),
                 Value::List(Arc::new(thin_vec![Value::String(Arc::new("a".into()))])),

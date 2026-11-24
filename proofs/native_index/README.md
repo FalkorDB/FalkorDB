@@ -12,7 +12,7 @@ MATCH (p:Person) WHERE p.age = 42 RETURN p
 
 Since #2383 the index also serves `IN [...]`, and an `OR` of equalities and `IN` lists on one attribute, as a union of point lookups (`MATCH (p:Person) WHERE p.age IN [30, 40]`).
 
-The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes,versioned,unique,mod}.rs`, the native-index parts of `graph/src/graph/graph.rs` (including `redisearch_fields`, `node_matches`, `relationship_matches`), and the index route of `graph/src/runtime/ops/{node,edge}_by_index_scan.rs`. The full Lean↔Rust mapping (every Lean name next to the Rust `file:line` it models) is in the header of [`FalkorNativeIndex.lean`](FalkorNativeIndex.lean). This README explains *what* is proven and *why it matters*.
+The Rust is `graph/src/index/falkordb/{encode,numeric,falkordb_index,pending_writes,graph_writes,versioned,unique,mod}.rs`, the native-index parts of `graph/src/graph/graph.rs` (including `redisearch_fields`, `node_matches`, `relationship_matches`), and the index route of `graph/src/runtime/ops/{node,edge}_by_index_scan.rs`. The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv) (every Rust fn with its Lean theorem). This README explains *what* is proven and *why it matters*.
 
 ## The questions this project answers
 
@@ -55,7 +55,7 @@ A column is created `Building` (`create_building`) and filled by indexer batches
 
 - **Writes.** `writerRecord_eq_sequential` states what a unit of work does to a column at any state: its staged changes, filtered by `stateLog`, applied one by one. `stateLog_removes` / `stateLog_adds` say the filter keeps every removal and an addition only for an entity `place`d below the cursor (a node by its id, an edge by its `(src, dst)` pair, `None` for an edge deleted in the unit). The filter runs *before* the collapse: `building_reuse_removed` shows a removed-then-re-added tuple for an entity at or above the cursor (a reused edge id) is still removed, where collapsing first would have kept it (`collapse_first_would_keep`). Writes never move the cursor (`applyWrites_state`).
 - **Batches.** `scanNodes_below_cursor` and `scanEdges_below_cursor` prove the entities a batch read are exactly those that `precede` the cursor it returns (with the matrices iterated in ascending order, a GraphBLAS fact), so "indexed" and "below the cursor" are the same set; a batch never stops inside a multi-edge `(src, dst)` pair (`edgeLoop_spec`). `prepareBatch_building` / `prepareBatch_idle` say a batch adds its tuples and moves the cursor (or flips `Ready`), and changes nothing on a column that is gone or not `Building`.
-- **CREATE INDEX** is one batch of unlimited size: `buildInOneBatch_entry` proves the column is then `Ready` and holds exactly `from_entries` of the live pairs, so `createIndex_nodeScan_agrees` carries `nodeScan_native_agrees` over to the new batch path.
+- **CREATE INDEX** creates each column `Building` for the background builder (#2355): `createIndex_entry`, and `createIndex_not_ready` (it serves no reads until its build is over). The RDB load builds a column in one batch of unlimited size: `buildInOneBatch_entry` proves the column is then `Ready` and holds exactly `from_entries` of the live pairs, so `buildColumns_nodeScan_agrees` carries `nodeScan_native_agrees` over to the batch path.
 
 **4c. What does a read do under `index-falkordb`, and is there a fallthrough? (#3547, #2386)**
 
@@ -109,9 +109,15 @@ No. `snapshot_isolated` proves a reader holding version `v` gets the same answer
 | `writerRecord_eq_sequential` | #3307's batched apply = applying each staged change one by one (filtered by the column's build state since #2351) | `Pending.lean` |
 | `queryNumeric_building` | a `Building` column is answered with a `ScanFilter`, never rows | `Query.lean` |
 | `scanNodes_below_cursor`, `scanEdges_below_cursor` | a batch reads exactly the entities that precede its returned cursor | `Build.lean` |
-| `buildInOneBatch_entry` | CREATE INDEX leaves a `Ready` column holding `from_entries` of the live pairs | `Ddl.lean` |
+| `buildInOneBatch_entry` | The RDB load's one-batch build leaves a `Ready` column holding `from_entries` of the live pairs; CREATE INDEX leaves it `Building` (`createIndex_entry`) | `Ddl.lean` |
 | `nodeAttrsSet_hit`, `nodesDeleted_hit` | An update replaces the old entry; a delete removes every entry | `Writes.lean` |
 | `snapshot_isolated`, `runUnit_spec` | Readers keep their version's index; a commit publishes its staged changes once | `Ddl.lean` |
+| `lookupSel_fromEntries`, `disjunction_agrees`, `combine_or_ok`, `combine_and_ok` | #2453 / #3736 / #3737: list values (a second, array tree), `Selection`, and several attributes: the scan that stands in for a building column keeps exactly what the built column returns | `Numeric.lean`, `Query.lean`, `Scan.lean` |
+| `fit_after_other_batch`, `fit_after_writer`, `commit_swap`, `commit_not_stale` | #3566: an indexer batch commits as a version of its own; the fit against what was published meanwhile | `Batch.lean` |
+| `rebase_inv`, `catchUp_inv`, `insert_inv`, `fit_catchUp_how` | #3567 / #3568: writers rebase onto indexer batches and a batch catches up on writers by Refresh or Insert (conditional on `Frame`, below) | `Rebase.lean`, `Batch.lean` |
+| `memoryUsage_add`, `EN.memoryUsage_ready` | #3569: `GRAPH.MEMORY USAGE` counts every node and edge column (CCH not counted) | `Memory.lean` |
+| `isWellFormed_iff`, `defNew_eq_of_same_members` | #3319: the CCH contract skeleton; every `unimplemented!()` body is an always-panicking function | `Cch.lean` |
+| `topoBuild_correct`, `customize_correct`, `buildCch_correct`, `cch_query_end_to_end` | CCH phases 1-3: `Cch::query` returns a shortest path (over `Nat` weights in rank space) | `CchOrder.lean` to `CchSeq.lean` |
 
 ### How `range_agrees` is proved
 
@@ -126,7 +132,7 @@ The hypotheses on `range_agrees`:
 
 - **No `Bool` data** (`NotBool`). A `Bool` shares a key with `0`/`1` (`bool_divergence`). This matches C and the RediSearch path, and is pinned in a Rust test.
 - **A guarded bound** (`GoodBound`): a non-NaN float, or an int with `|b| < 2⁵²`. The planner only routes such bounds to the index, except for `i64::MIN`.
-- **The tree contents** follow `cow_btree`'s specs. Those are proven under `TreeWF`, and since #3283 every tree the API can build satisfies it (`cow_btree` `Reachable_wf_asserted`), so this is no longer a hypothesis: `Contract.lean` (`contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_fromSorted`, `contract_range`) proves each Rust tree operation equals its `Tree.lean` model on every reachable tree.
+- **The tree contents** follow `cow_btree`'s specs. Those are proven under `TreeWF`, and every tree the API can build satisfies it (`cow_btree` `Reachable_wf_asserted`), so well-formedness is not a hypothesis. Reachability alone is not the whole premise, though: `contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch` and `contract_range` also assume the configuration assertion `constAssert c.L c.B D = true`; the inserted key (and every batch element) must be below `HI` (`contract_removeBatch` has no key bound); `contract_insertBatch` and `contract_removeBatch` require a sorted batch (`SortedLe`); `contract_range` requires a collection bound `n` at least the tree's length; and `contract_fromSorted` requires a sorted input below `HI`. `Contract.lean` (`contract_insert`, `contract_remove`, `contract_insertBatch`, `contract_removeBatch`, `contract_fromSorted`, `contract_range`) proves each Rust tree operation equals its `Tree.lean` model on every reachable tree.
 
 ## Bugs found
 
@@ -137,7 +143,7 @@ The hypotheses on `range_agrees`:
 
 Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejects 2⁵³, whose collision with 2⁵³+1 is real.
 
-**Formerly CONDITIONAL rows.** 13 `numeric.rs` and `falkordb_index.rs` rows read through the tree, whose content specs come from [`../cow_btree`](../cow_btree) under its invariant `TreeWF`. `cow_btree` Bug 3 (W7-btree-1) showed `remove_batch` could break `TreeWF`, and since #3307 `remove_batch` runs in production (`apply_writes` → `remove_encoded`). #3283 (799968a8b) fixed it; `cow_btree` proves `remove_batch`, `insert_batch` and `from_sorted` keep or build well-formed trees (`removeBatchTree_wf`, `insertBatch_wf`, `fromSorted_wf`, together `Reachable_wf_asserted`), and `Contract.lean` here connects each operation to its model. These rows are now PROVEN.
+**Tree-reading rows.** 13 `numeric.rs` and `falkordb_index.rs` rows read through the tree, whose content specs come from [`../cow_btree`](../cow_btree) under its invariant `TreeWF`. `cow_btree` proves `remove_batch`, `insert_batch` and `from_sorted` keep or build well-formed trees (`removeBatchTree_wf`, `insertBatch_wf`, `fromSorted_wf`, together `Reachable_wf_asserted`), and `Contract.lean` here connects each operation to its model. These rows are PROVEN.
 
 ## Files
 
@@ -159,6 +165,9 @@ Related: `guard_rejects_2p53` and `p53_collision` show the guard correctly rejec
 | `Scan.lean` | `nodeMatches`, `relationshipMatches`, the filtered scans, `nodeScanOp`/`edgeScanOp`, `redisearchFields` |
 | `Unique.lean` | `nativeUniqueQuery`, `fewest`, `ReadOnce` |
 | `Decline.lean` | `unsupported_by_native_index`'s `describe`, `unionMembers` |
+| `Rows.lean`, `Bridge.lean`, `Online.lean` | `Selection` row lemmas, the `sizing_batch` / `query_range` glue, and the background builder (`online_build.rs`: a job reads a snapshot and publishes against the entry published at publish time, `publish_stale` / `publish_valid`) |
+| `Batch.lean`, `Rebase.lean`, `Memory.lean` | Indexer batch commit and fit (#3566), rebase and catch-up (#3567, #3568), memory usage (#3569) |
+| `Cch.lean`, `CchOrder.lean`, `CchTopo.lean`, `CchMetric.lean`, `CchPaths.lean`, `CchSearch.lean`, `CchRoute.lean`, `CchSmall.lean`, `CchSeq.lean` | The CCH path-index contract skeleton and phases 1-3 |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entry encoding `enc` and the sorted-list lemmas, and [`../core`](../core) for `roundNat`/`bitlen` (IEEE round-to-nearest-even).
@@ -172,7 +181,7 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 | PROVEN | 187 |
 | CONDITIONAL | 3 |
 
-- The 13 rows that read or write the tree (`from_entries` (test-only since #2351), `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) were CONDITIONAL on the `cow_btree` invariant `TreeWF`, which `remove_batch` broke (W7-btree-1). #3283 fixed it, `cow_btree` now proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model, so they are PROVEN.
+- The 13 rows that read or write the tree (`from_entries` (test-only since #2351), `add`, `remove`, `add_batch`, `remove_batch`, `add_encoded`, `remove_encoded`, `is_empty`, `point`, `range`, `empty`, and `FalkorDbIndex::apply` / `apply_writes`) are PROVEN: `cow_btree` proves every reachable tree is well-formed, and `Contract.lean` ties each operation to its model.
 - Three CONDITIONAL rows (`node_attrs_set`, `new_node_attrs`, `edge_attrs_set_with`) state their per-entry result (`*_hit`) under an undischarged caller premise: each node's written attribute ids are unique. `Pending::set_node_attribute` keeps them sorted and unique; `set_node_attributes` only `debug_assert!`s it.
 
 ## What the model does not cover
@@ -183,6 +192,10 @@ Path dependencies (`lakefile.toml`): [`../cow_btree`](../cow_btree) for the entr
 - **`HashMap` order.** Iteration order is arbitrary, so theorems about a whole map are stated per key. The `bulk`, `rows` and `product` paths have exact staged-ops theorems (`*_changes`); their per-entry outcome follows from `lastOp_ops` as for the other paths.
 - **Schema.** Attribute names are assumed unique (`attrNames.Nodup`), which the single `attrs_name` dictionary guarantees.
 - **RediSearch.** Under `index-falkordb` nothing reads a Range index from RediSearch. Fulltext and Vector indexes still do (FFI, not modelled here).
+- **Array tuples in `Rebase.lean`.** `refresh` and `indexer_insert` push both kinds (`refresh_array_mem`, `indexerInsert_array_mem`), but the invariant theorems (`Inv`, `refresh_inv`, `catchUp_inv`, `insert_inv`) are stated for the scalar tree only. They are also conditional on `Frame` (outside the written set, the two versions agree on what each entity contributes and where it sits); the unconditional specs carry the COVERAGE rows.
+- **CCH (`cch/`).** Weights are `Nat` (the f64 left-fold structure is not modelled); arcs are pair-indexed and linked to the slot arrays by `arc_via_slots`; the ordering backend is an arbitrary function (its permutation is checked by `invert`); node space and rank space are related by `invert_spec`, not composed into one statement. Not proven: the slot writes of `seed` (`seedA` is its pair-level result).
+- **Counters.** The `u64` generation, commit, version and batch counters are unbounded `Nat`; a wrap at 2^64 is assumed unreachable.
+- **Matrix order and size.** `scanNodes_below_cursor` / `scanEdges_below_cursor` assume the label matrix is iterated in ascending row order and a tensor by `(src, dst)` (hypotheses `hasc` / `G.Ordered`, an assumption about GraphBLAS), `buildInOneBatch_entry` that the entity count fits `usize::MAX` (`G.Fits`), and `nodeFilteredScan_agrees` that ids fit a `u64` (`hlt`). Not proven as one induction: "a `Building` column holds exactly the current tuples of the entities below its cursor" over interleaved batches and units of work; its parts are proven separately. `idx as u16` (attribute ids above 65535) is not modelled.
 - **Scan op details.** The scan ops' label scan (the pattern's labels, `extra_labels`, the edge cache, undirected orientation) belongs to `ops_traverse`; here the scan is the index label's nodes / the type's edges.
 
 ## Build and check

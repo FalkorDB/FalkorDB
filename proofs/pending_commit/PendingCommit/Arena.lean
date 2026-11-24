@@ -39,7 +39,7 @@ structure Blk where
 def sumBy (f : Slot → Nat) (l : List Slot) : Nat := (l.map f).sum
 
 /-- `cap == 0` means "no span"; a live span has `1 <= len <= cap` (the doc
-comment on `Slot`, attribute_store.rs:319-321). -/
+comment on `Slot`, attribute_store.rs). -/
 def SlotWF (s : Slot) : Prop := (s.cap = 0 ∧ s.len = 0) ∨ (1 ≤ s.len ∧ s.len ≤ s.cap)
 
 structure Inv (b : Blk) : Prop where
@@ -234,7 +234,7 @@ theorem freeSpan_ok {b : Blk} (h : Inv b) {i : Nat} (hi : i < b.slots.length) :
     obtain ⟨b', hr, hsl, har, hd, hs⟩ := retire_ok h hi
     rw [hr]
     refine ⟨_, rfl, ?_, by simp [setSlot, hsl]⟩
-    simp only [setSlot, Option.map_some]
+    simp only [setSlot]
     rw [hsl]
     exact inv_setSlot h hi (by arith) (by arith) (.inl ⟨rfl, rfl⟩) (.inr rfl) (by arith)
 
@@ -356,7 +356,7 @@ theorem sumLen_le_sumCap : ∀ (l : List Slot), (∀ s ∈ l, SlotWF s) →
 
 /-- **`live_eq_sum_len`**: the `live` that `compact` computes is exactly the
 number of entries live spans hold, which is the
-`debug_assert_eq!(new_arena.len(), live)` at attribute_store.rs:821. -/
+`debug_assert_eq!(new_arena.len(), live)` at attribute_store.rs. -/
 theorem live_eq_sum_len {b : Blk} (h : Inv b) : live b = sumBy (·.len) b.slots := by
   unfold live
   have := sumLen_le_sumCap b.slots h.wf
@@ -399,8 +399,8 @@ theorem compact_ok {b : Blk} (h : Inv b) :
   obtain ⟨p1, p2, p3⟩ := packOffsets_props 0 b.slots h.wf
   refine ⟨{ slots := packOffsets 0 b.slots, arena := sumBy (·.len) b.slots, dead := 0, slack := 0 }, ?_, ⟨?_, ?_, ?_, ?_⟩, rfl, rfl, ?_⟩
   · simp only [compact, csub]
-    rw [if_pos (by omega)]; simp only [Option.bind_some]
-    rw [if_pos (by omega)]; rfl
+    rw [ite_eq_left (by omega)]; simp only [Option.bind_some]
+    rw [ite_eq_left (by omega)]; rfl
   · simp only; omega
   · simp only; omega
   · intro s hs'; exact (p1 s hs').1

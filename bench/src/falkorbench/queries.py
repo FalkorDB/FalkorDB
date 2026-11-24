@@ -15,6 +15,15 @@ describes, so adding a query decides its own membership.
 
 from falkorbench.model import Query as Q
 
+
+def _unwind_edges(rows: int, match: str) -> str:
+    """A batch of `rows` edges, each between the nodes `match` finds for one
+    row `e` of `$rows`, created and deleted again so the graph stays as it was.
+    """
+    batch = ", ".join(f"{{s: {i}, d: {(i + 1) % 1000}}}" for i in range(rows))
+    return f"CYPHER rows=[{batch}] UNWIND $rows AS e {match} CREATE (a)-[r:UWE]->(b) WITH r DELETE r"
+
+
 SETUP = [
     "CREATE INDEX FOR (p:Person) ON (p.id)",
     "UNWIND range(0, 9999) AS i CREATE (:Person {id: i, name: 'p' + toString(i)})",
@@ -112,6 +121,14 @@ SETUP = [
     # Edge equivalent: `wv` indexed, `ww` not, no constraint.
     "CREATE INDEX FOR ()-[r:WREL]-() ON (r.wv)",
     "MATCH (a:WIdx {id: 0}), (b:WIdx {id: 1}) CREATE (a)-[:WREL {wv: 1, ww: 1}]->(b)",
+    # Fan-out corpus for algo.BFS: 2,000 :Fan nodes, each with 6 :FAN
+    # out-edges to pseudo-random targets, so a BFS frontier grows ~6x per hop
+    # and reaches the whole corpus in a few levels — the case the :KNOWS ring
+    # (one out-edge per node, a chain) never exercises: a bitmap visited set
+    # and pull steps. Last in SETUP so no earlier entity id moves.
+    "UNWIND range(0, 1999) AS i CREATE (:Fan {id: i, v: i % 100})",
+    "CREATE INDEX FOR (f:Fan) ON (f.id)",
+    "UNWIND range(0, 1999) AS i UNWIND range(1, 6) AS j MATCH (a:Fan {id: i}), (b:Fan {id: (i * 7 + j * 131) % 2000}) CREATE (a)-[:FAN]->(b)",
 ]
 
 # Raw redis commands run after SETUP (redis-cli arg lists). {graph} is
@@ -299,6 +316,41 @@ QUERIES = [
     Q("algo.BFS",            False, "MATCH (a:Person {id: 0}) CALL algo.BFS(a, 3, 'KNOWS') YIELD nodes RETURN size(nodes)", cg=True),
     Q("algo.BFS unbounded",  False, "MATCH (a:Person {id: 0}) CALL algo.BFS(a, -1, 'KNOWS') YIELD nodes RETURN size(nodes)"),
     Q("algo.WCC",            False, "CALL algo.WCC(null) YIELD node, componentId RETURN count(DISTINCT componentId)", cg=True),
+
+    # ---- algo.BFS over a fan-out graph (the :KNOWS ring is a chain) --------
+    # Depth decides the visited-set representation (sparse for 2 hops, bitmap
+    # beyond) and whether the frontier ever gets wide enough to pull.
+    Q("BFS fan 2 hops",      False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, 2, 'FAN') YIELD nodes RETURN size(nodes)"),
+    Q("BFS fan 4 hops",      False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, 4, 'FAN') YIELD nodes RETURN size(nodes)"),
+    Q("BFS fan unbounded",   False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, -1, 'FAN') YIELD nodes RETURN size(nodes)"),
+    # `edges` needs parents, which keeps LAGraph's path; untyped goes through
+    # the materialized all-types adjacency, not a single tensor.
+    Q("BFS fan with edges",  False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, 3, 'FAN') YIELD nodes, edges RETURN size(nodes), size(edges)"),
+    Q("BFS fan untyped",     False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, 3, NULL) YIELD nodes RETURN size(nodes)"),
+    # The one.semurg.io benchmark's query shape: a filtered comprehension over
+    # the BFS result.
+    Q("BFS + filter comprehension", False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, -1, 'FAN') YIELD nodes RETURN size([n IN nodes WHERE n.id <> 0])"),
+
+    # ---- comprehensions and quantifiers over long lists -------------------
+    Q("comprehension node filter",  False, "MATCH (p:Person) WITH collect(p) AS ps RETURN size([n IN ps WHERE n.age > 40])"),
+    Q("comprehension node project", False, "MATCH (p:Person) WITH collect(p) AS ps RETURN size([n IN ps | n.score])"),
+    Q("comprehension outer var",    False, "MATCH (p:Person) WITH collect(p) AS ps, 40 AS t RETURN size([n IN ps WHERE n.age > t | n.id])"),
+    Q("any over node list",         False, "MATCH (p:Person) WITH collect(p) AS ps RETURN any(n IN ps WHERE n.id = -1)"),
+    Q("all over node list",         False, "MATCH (p:Person) WITH collect(p) AS ps RETURN all(n IN ps WHERE n.age >= 0)"),
+    Q("comprehension to string",    False, "RETURN size([x IN range(0, 9999) WHERE x % 3 = 0 | toString(x)])", cg=True),
+    Q("comprehension kept list",    False, "RETURN [x IN range(0, 9999) WHERE x % 1000 = 0 | x * 2]", cg=True),
+    Q("nested comprehension long",  False, "RETURN size([x IN range(0, 999) WHERE size([y IN range(0, 9) WHERE y < x % 10]) > 3])", cg=True),
+
+    # ---- concurrent readers -------------------------------------------------
+    # 16 clients at once: per-row reads of one shared graph version, where
+    # contention between readers (not single-query cost) decides the number.
+    Q("concurrent prop reads",  False, "MATCH (p:Person) RETURN sum(p.age)", 200, clients=16),
+    Q("concurrent BFS filter",  False, "MATCH (a:Fan {id: 0}) CALL algo.BFS(a, -1, 'FAN') YIELD nodes RETURN size([n IN nodes WHERE n.id <> 0])", 200, clients=16),
+
+    # ---- serialization ------------------------------------------------------
+    # DUMP encodes the whole graph through the RDB encoder (matrices, tensors,
+    # attribute stores) without touching disk.
+    Q("DUMP graph",             False, "DUMP {graph}", 20, raw=("DUMP", "{graph}")),
 
     # ---- coverage features (indexes, procedures, algos, temporal, CSV, UDF)
     # These run against the small Doc corpus / expressions, so they are cheap;
@@ -587,6 +639,13 @@ QUERIES = [
     # Chain reversal (select_scan_node): selective scan at the END of the
     # chain, whole chain reversed with transposed traversals.
     Q("reversed 2hop chain",  False, "MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c:Person {id: 1}) RETURN count(a)", cg=True),
+    # Start-point tie (select_scan_node): `s` (inline equality) and `n`
+    # (WHERE range) score the same, and the scan must start from the
+    # equality-pinned `s`, which the index then seeks. Starting from `n`
+    # instead label-scans every :Person and walks three hops backwards: on a
+    # 100k-node Pokec graph this query (`aggregate_expansion_3_with_filter`)
+    # went from ms to a 60 s timeout (#3822).
+    Q("seek beats late range filter", False, "MATCH (s:Person {id: 500})-->()-->()-->(n:Person) WHERE n.age >= 18 RETURN DISTINCT n.id", cg=True),
     # Same, with a mid-chain filter reinserted at the correct hop.
     Q("reversed chain mid filter", False, "MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c:Person {id: 1}) WHERE b.id > 0 RETURN count(a)"),
     # Fused consecutive anonymous bidirectional traverses with cross-row
@@ -602,6 +661,18 @@ QUERIES = [
     # Upper-bound-only index ranges (Le on node index, Lt on edge index).
     Q("index le range",       False, "MATCH (p:Person) WHERE p.id <= 50 RETURN count(p)"),
     Q("edge index lt range",  False, "MATCH ()-[r:SIMILAR]->() WHERE r.weight < 5 RETURN count(r)"),
+    # Batched edge loading: `UNWIND $rows` and two consecutive MATCH clauses
+    # that each find one endpoint, by an indexed property (#3887) or by id().
+    # The later MATCH shares no variable with the earlier one, so it is a
+    # Cartesian Product branch, and a Value Hash Join over a scan of the whole
+    # label (or of every node) once cost every such query a full scan, however
+    # small the batch. `id seek` has no UNWIND and `create edge` finds both
+    # endpoints in one MATCH, so neither showed it. Endpoint ids stay under
+    # 1,000: the first 1,000 nodes are :Person here and under CG_SETUP.
+    Q("UNWIND index MATCH edge 1 row",    True, _unwind_edges(1, "MATCH (a:Person {id: e.s}) MATCH (b:Person {id: e.d})"), cg=True),
+    Q("UNWIND index MATCH edge 100 rows", True, _unwind_edges(100, "MATCH (a:Person {id: e.s}) MATCH (b:Person {id: e.d})"), cg=True),
+    Q("UNWIND id MATCH edge 1 row",       True, _unwind_edges(1, "MATCH (a) WHERE id(a) = e.s MATCH (b) WHERE id(b) = e.d"), cg=True),
+    Q("UNWIND id MATCH edge 100 rows",    True, _unwind_edges(100, "MATCH (a) WHERE id(a) = e.s MATCH (b) WHERE id(b) = e.d"), cg=True),
 
     # ---- inline edge predicate, swept by selectivity -----------------------
     # `absorb_edge_filters_into_traverse` moves these into the CondTraverse so

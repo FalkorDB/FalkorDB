@@ -61,7 +61,7 @@ use rquickjs::{CatchResultExt, CaughtError, Context, Function, Persistent, Runti
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use crate::udf::get_udf_repo;
-use crate::udf::js_classes::clear_current_graph;
+use crate::udf::js_classes::with_graph;
 use crate::udf::js_globals;
 use crate::udf::type_convert;
 
@@ -136,11 +136,15 @@ pub fn compute_effective_js_timeout_ms() -> u64 {
     }
 }
 
+/// Fields drop in declaration order, and QuickJS aborts when the runtime is
+/// freed while objects are still alive, so the persistent functions must be
+/// declared before the context, and the context before the runtime. This
+/// order also applies when the thread-local is destroyed at thread exit.
 struct ThreadJsState {
-    runtime: JsRuntime,
-    context: Context,
     /// Cached function references: "lib.func" -> persistent JS function
     functions: HashMap<String, Persistent<Function<'static>>>,
+    context: Context,
+    runtime: JsRuntime,
     /// Version of the UdfRepo when this context was last rebuilt.
     version: u64,
 }
@@ -205,13 +209,8 @@ fn rebuild_context(
     state: &mut Option<ThreadJsState>,
     target_version: u64,
 ) -> Result<(), String> {
-    // Drop old state in correct order: functions first, then context, then runtime.
-    // Persistent references must be dropped while the runtime is still alive.
-    if let Some(old) = state.take() {
-        drop(old.functions);
-        drop(old.context);
-        drop(old.runtime);
-    }
+    // Field order drops functions, then context, then runtime (see ThreadJsState).
+    drop(state.take());
 
     let heap_size = JS_HEAP_SIZE.load(Ordering::Relaxed);
     let stack_size = JS_STACK_SIZE.load(Ordering::Relaxed);
@@ -267,9 +266,9 @@ fn rebuild_context(
     })?;
 
     *state = Some(ThreadJsState {
-        runtime: rt,
-        context: ctx,
         functions,
+        context: ctx,
+        runtime: rt,
         version: target_version,
     });
 
@@ -303,52 +302,50 @@ pub fn call_udf_bridge(
             .runtime
             .set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
 
-        let result = state.context.with(|ctx| {
-            let js_fn: Function = persistent_fn
-                .clone()
-                .restore(&ctx)
-                .map_err(|e| format!("Failed to restore UDF function: {e}"))?;
+        // The JS helpers (`getNeighbors`, `traverse`) read the graph this query
+        // runs on; it is lent to them for this call only.
+        let graph = rt.graph();
+        let result = with_graph(&graph, || {
+            state.context.with(|ctx| {
+                let js_fn: Function = persistent_fn
+                    .clone()
+                    .restore(&ctx)
+                    .map_err(|e| format!("Failed to restore UDF function: {e}"))?;
 
-            // Set graph reference for JS classes that need it
-            let graph = rt.graph_arc();
-            crate::udf::js_classes::set_current_graph(graph.clone());
+                // Convert arguments
+                let js_args: Vec<rquickjs::Value> = args
+                    .iter()
+                    .map(|v| type_convert::value_to_js(&ctx, v, &graph, Some(rt)))
+                    .collect::<Result<Vec<_>, _>>()?;
 
-            // Convert arguments
-            let js_args: Vec<rquickjs::Value> = args
-                .iter()
-                .map(|v| type_convert::value_to_js(&ctx, v, &graph, Some(rt)))
-                .collect::<Result<Vec<_>, _>>()?;
+                // Call the function
+                let result = js_fn
+                    .call::<(rquickjs::function::Rest<rquickjs::Value>,), rquickjs::Value>((
+                        rquickjs::function::Rest(js_args),
+                    ))
+                    .catch(&ctx)
+                    .map_err(|e| {
+                        let msg = caught_error_message(&e, false);
+                        if msg.contains("interrupted") {
+                            "UDF Exception: Query timed out".to_string()
+                        } else if msg.contains("out of memory")
+                            || msg.contains("InternalError: stack overflow")
+                        {
+                            "out of memory".to_string()
+                        } else {
+                            format!("UDF Exception: {msg}")
+                        }
+                    })?;
 
-            // Call the function
-            let result = js_fn
-                .call::<(rquickjs::function::Rest<rquickjs::Value>,), rquickjs::Value>((
-                    rquickjs::function::Rest(js_args),
-                ))
-                .catch(&ctx)
-                .map_err(|e| {
-                    let msg = caught_error_message(&e, false);
-                    if msg.contains("interrupted") {
-                        "UDF Exception: Query timed out".to_string()
-                    } else if msg.contains("out of memory")
-                        || msg.contains("InternalError: stack overflow")
-                    {
-                        "out of memory".to_string()
-                    } else {
-                        format!("UDF Exception: {msg}")
-                    }
-                })?;
-
-            // Convert result back
-            type_convert::js_to_value(result)
+                // Convert result back
+                type_convert::js_to_value(result)
+            })
         });
 
         // Clear interrupt handler
         state
             .runtime
             .set_interrupt_handler(None::<Box<dyn FnMut() -> bool + Send>>);
-
-        // Clear graph reference
-        clear_current_graph();
 
         result
     })

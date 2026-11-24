@@ -38,10 +38,11 @@
 //!
 //! ## Graph Context
 //!
-//! JS closures cannot directly capture Rust references with non-static
-//! lifetimes. To work around this, the current [`Graph`](crate::graph::graph::Graph)
-//! is stored in a thread-local (`CURRENT_GRAPH`) and set/cleared around each
-//! UDF invocation by [`set_current_graph`] / [`clear_current_graph`].
+//! JS closures cannot capture Rust references with non-static lifetimes, and
+//! the native helpers are created once per JS context and reused by every
+//! later call. So the query's [`Graph`](crate::graph::graph::Graph) is lent to
+//! them through a thread-local (`CURRENT_GRAPH`) for exactly the duration of
+//! one UDF invocation, by [`with_graph`].
 //!
 //! ## Traversal
 //!
@@ -51,78 +52,143 @@
 //!   configurable `maxDepth`, direction, type/label filters, and timeout
 //!   enforcement via the UDF deadline.
 
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use atomic_refcell::AtomicRefCell;
+use rquickjs::Constructor;
+use rquickjs::class::{JsClass, Readable, Trace, Tracer};
 use rquickjs::object::Property;
-use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
+use rquickjs::{Array, Class, Ctx, Function, JsLifetime, Object, Value as JsValue};
 
-use crate::graph::graph::{Graph, NodeId, RelationshipId};
+use crate::graph::graph::{EdgeDirection, Graph, NodeId, RelationshipId};
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use crate::udf::type_convert;
 
+/// The graph entity a JS Node/Edge/Path object stands for.
+///
+/// Every entity object handed to JS is an instance of this Rust class, and
+/// [`entity_value`] reads the entity back from the class data. JS code cannot
+/// create an instance, so a plain object that merely copies the visible
+/// `__falkor_type` / `__falkor_*_id` properties stays a Map, and changing
+/// those properties on a real entity object has no effect.
+///
+/// The entity is only valid for the UDF invocation that created it: the JS
+/// context outlives the call, so a script can keep an entity in a global, and a
+/// later call may run against another graph, or after the entity was deleted.
+/// Each outermost [`with_graph`] starts a new epoch, and [`entity_value`] only
+/// honours an entity of the current one.
+pub struct JsEntity {
+    value: Value,
+    epoch: u64,
+}
+
+unsafe impl JsLifetime<'_> for JsEntity {
+    type Changed<'to> = Self;
+}
+
+impl<'js> Trace<'js> for JsEntity {
+    fn trace<'a>(
+        &self,
+        _tracer: Tracer<'a, 'js>,
+    ) {
+    }
+}
+
+impl<'js> JsClass<'js> for JsEntity {
+    const NAME: &'static str = "FalkorEntity";
+
+    type Mutable = Readable;
+
+    fn constructor(_ctx: &Ctx<'js>) -> rquickjs::Result<Option<Constructor<'js>>> {
+        Ok(None)
+    }
+}
+
+fn new_entity_object<'js>(
+    ctx: &Ctx<'js>,
+    entity: Value,
+) -> Result<Object<'js>, String> {
+    let epoch = CALL_EPOCH.with(Cell::get);
+    Class::instance(
+        ctx.clone(),
+        JsEntity {
+            value: entity,
+            epoch,
+        },
+    )
+    .map(|cls| Object::clone(&cls))
+    .map_err(|e| format!("JS object error: {e}"))
+}
+
+/// The entity behind a JS object created by [`create_js_node`],
+/// [`create_js_edge`] or [`create_js_path`], or `None` for any other object.
+#[must_use]
+pub fn entity_value(obj: &Object<'_>) -> Option<Value> {
+    let cls = Class::<JsEntity>::from_object(obj)?;
+    let entity = cls.borrow();
+    (entity.epoch == CALL_EPOCH.with(Cell::get)).then(|| entity.value.clone())
+}
+
+fn node_id_of(value: &JsValue<'_>) -> Option<u64> {
+    match value.as_object().and_then(entity_value) {
+        Some(Value::Node(id)) => Some(id.into()),
+        _ => None,
+    }
+}
+
 thread_local! {
-    static CURRENT_GRAPH: RefCell<Option<Arc<AtomicRefCell<Graph>>>> = const { RefCell::new(None) };
+    /// The graph lent by the innermost [`with_graph`] on this thread, or null.
+    static CURRENT_GRAPH: Cell<*const Graph> = const { Cell::new(std::ptr::null()) };
+    /// Counts the outermost [`with_graph`] calls on this thread; see [`JsEntity`].
+    static CALL_EPOCH: Cell<u64> = const { Cell::new(0) };
 }
 
-pub fn set_current_graph(g: Arc<AtomicRefCell<Graph>>) {
-    CURRENT_GRAPH.with(|cell| {
-        *cell.borrow_mut() = Some(g);
-    });
+/// Run `f` with `graph` lent to the JS helpers on this thread
+/// ([`with_current_graph`]), and take it back when `f` returns or unwinds.
+pub fn with_graph<R>(
+    graph: &Graph,
+    f: impl FnOnce() -> R,
+) -> R {
+    /// Puts back the graph lent before, if any, when the call ends.
+    struct Restore(*const Graph);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CURRENT_GRAPH.with(|g| g.set(self.0));
+        }
+    }
+    let previous = CURRENT_GRAPH.with(|g| g.replace(graph));
+    if previous.is_null() {
+        CALL_EPOCH.with(|e| e.set(e.get().wrapping_add(1)));
+    }
+    let _restore = Restore(previous);
+    f()
 }
 
-pub fn clear_current_graph() {
-    CURRENT_GRAPH.with(|cell| {
-        *cell.borrow_mut() = None;
-    });
+fn with_current_graph<R>(f: impl FnOnce(&Graph) -> Result<R, String>) -> Result<R, String> {
+    let graph = CURRENT_GRAPH.with(Cell::get);
+    if graph.is_null() {
+        return Err("No graph context available".to_string());
+    }
+    // SAFETY: only `with_graph` sets a non-null pointer, from a `&Graph` that
+    // outlives the call it wraps, and it puts the previous value back when that
+    // call ends. A non-null pointer is therefore a live shared borrow.
+    f(unsafe { &*graph })
 }
 
-fn with_current_graph<F, R>(f: F) -> Result<R, String>
-where
-    F: FnOnce(&Arc<AtomicRefCell<Graph>>) -> Result<R, String>,
-{
-    CURRENT_GRAPH.with(|cell| {
-        let guard = cell.borrow();
-        let g = guard.as_ref().ok_or("No graph context available")?;
-        f(g)
-    })
-}
-
-/// Collect edges from a node in a given direction.
+/// Collect edges from a node in a given direction, a self-loop once.
 /// Returns vec of (rel_id, src_id, dst_id) as u64.
 fn collect_edges(
     g: &Graph,
     node_id: u64,
     direction: &str,
 ) -> Vec<(u64, u64, u64)> {
-    let nid = NodeId::from(node_id);
-    let mut edges = Vec::new();
-    for (src, dst, rel_id) in g.get_node_relationships(nid) {
-        let src_u64: u64 = src.into();
-        let dst_u64: u64 = dst.into();
-        let rel_u64: u64 = rel_id.into();
-        match direction {
-            "outgoing" => {
-                if src_u64 == node_id {
-                    edges.push((rel_u64, src_u64, dst_u64));
-                }
-            }
-            "incoming" => {
-                if dst_u64 == node_id {
-                    edges.push((rel_u64, src_u64, dst_u64));
-                }
-            }
-            _ => {
-                // "both"
-                edges.push((rel_u64, src_u64, dst_u64));
-            }
-        }
-    }
-    edges
+    let direction = direction.parse().unwrap_or(EdgeDirection::Both);
+    g.get_node_relationships_by_type(NodeId::from(node_id), &[], direction)
+        .map(|(src, dst, rel_id)| (rel_id.into(), src.into(), dst.into()))
+        .collect()
 }
 
 /// Create a JS Node object with id, labels, attributes properties and getNeighbors() method.
@@ -134,12 +200,11 @@ fn collect_edges(
 pub fn create_js_node<'js>(
     ctx: &Ctx<'js>,
     node_id: u64,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
-    let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
-
     let nid = NodeId::from(node_id);
+    let obj = new_entity_object(ctx, Value::Node(nid))?;
 
     // Hidden type markers
     obj.set("__falkor_type", "node")
@@ -163,35 +228,35 @@ pub fn create_js_node<'js>(
             runtime,
         )?;
     } else {
-        let g = graph.borrow();
-        set_node_labels(ctx, &obj, g.get_node_labels(nid))?;
-        set_node_attrs(ctx, &obj, g.get_node_all_attrs(nid), graph, None)?;
+        set_node_labels(ctx, &obj, graph.get_node_labels(nid))?;
+        set_node_attrs(ctx, &obj, graph.get_node_all_attrs(nid), graph, None)?;
     }
 
-    // .getNeighbors(config?) method. A single shared JS function reads the
-    // node id from `this.__falkor_node_id`; it is eval'd ONCE per context —
+    // .getNeighbors(config?) method. A single shared JS function passes
+    // `this` to the native helper; it is eval'd ONCE per context —
     // per-node `ctx.eval` string builds made QuickJS re-parse JS source for
     // every node/edge materialized, dominating UDF traversal profiles. The
     // native helper is captured in the closure (not looked up through a
     // global at call time), so user JS clobbering globals can't break
     // already-materialized nodes.
     let globals = ctx.globals();
-    let method: Function = match globals.get("__falkor_getNeighborsMethod") {
-        Ok(f) => f,
-        Err(_) => {
-            let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
-                .map_err(|e| format!("JS function error: {e}"))?;
-            let factory: Function = ctx
-                .eval("(h) => function(config) { return h(this.__falkor_node_id, config); }")
-                .map_err(|e| format!("JS eval error: {e}"))?;
-            let f: Function = factory
-                .call((helper,))
-                .map_err(|e| format!("JS call error: {e}"))?;
-            globals
-                .set("__falkor_getNeighborsMethod", f.clone())
-                .map_err(|e| format!("JS set error: {e}"))?;
-            f
-        }
+    let method: Function = if let Ok(f) = globals.get("__falkor_getNeighborsMethod") {
+        f
+    } else {
+        let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
+            .map_err(|e| format!("JS function error: {e}"))?;
+        let factory: Function = ctx
+            // Forward the caller's arguments as given: an omitted config
+            // must reach `h` as a missing argument, not as `undefined`.
+            .eval("(h) => function(...args) { return h(this, ...args); }")
+            .map_err(|e| format!("JS eval error: {e}"))?;
+        let f: Function = factory
+            .call((helper,))
+            .map_err(|e| format!("JS call error: {e}"))?;
+        globals
+            .set("__falkor_getNeighborsMethod", f.clone())
+            .map_err(|e| format!("JS set error: {e}"))?;
+        f
     };
     obj.prop("getNeighbors", Property::from(method))
         .map_err(|e| format!("Failed to set getNeighbors: {e}"))?;
@@ -221,7 +286,7 @@ fn set_node_attrs<'js>(
     ctx: &Ctx<'js>,
     obj: &Object<'js>,
     attrs: impl Iterator<Item = (Arc<String>, Value)>,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<(), String> {
     let attrs_obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
@@ -248,12 +313,11 @@ pub fn create_js_edge<'js>(
     rel_id: u64,
     src_id: u64,
     dst_id: u64,
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
-    let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
-
     let rid = RelationshipId::from(rel_id);
+    let obj = new_entity_object(ctx, Value::Relationship(rid))?;
 
     // Hidden type markers
     obj.set("__falkor_type", "edge")
@@ -274,8 +338,8 @@ pub fn create_js_edge<'js>(
     // handled; otherwise fall back to the committed graph.
     let type_name = runtime.map_or_else(
         || {
-            let g = graph.borrow();
-            g.get_type(g.get_relationship_type_id(rid))
+            graph
+                .get_type(graph.get_relationship_type_id(rid))
                 .unwrap_or_else(|| Arc::new(String::new()))
         },
         |rt| {
@@ -304,8 +368,7 @@ pub fn create_js_edge<'js>(
                 .map_err(|e| format!("JS set error: {e}"))?;
         }
     } else {
-        let g = graph.borrow();
-        for (attr_name, value) in g.get_relationship_all_attrs(rid) {
+        for (attr_name, value) in graph.get_relationship_all_attrs(rid) {
             let js_val = type_convert::value_to_js(ctx, &value, graph, runtime)?;
             attrs_obj
                 .set(attr_name.as_str(), js_val)
@@ -322,10 +385,13 @@ pub fn create_js_edge<'js>(
 pub fn create_js_path<'js>(
     ctx: &Ctx<'js>,
     path_values: &[Value],
-    graph: &Arc<AtomicRefCell<Graph>>,
+    graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
-    let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
+    let obj = new_entity_object(
+        ctx,
+        Value::Path(Arc::new(path_values.iter().cloned().collect())),
+    )?;
 
     obj.set("__falkor_type", "path")
         .map_err(|e| format!("JS set error: {e}"))?;
@@ -346,7 +412,7 @@ pub fn create_js_path<'js>(
             }
             Value::Relationship(rel_id) => {
                 let (src, dst) = runtime.map_or_else(
-                    || graph.borrow().get_relationship_endpoints(*rel_id),
+                    || graph.get_relationship_endpoints(*rel_id),
                     |rt| rt.get_relationship_endpoints(*rel_id),
                 );
                 let js_edge = create_js_edge(
@@ -376,15 +442,18 @@ pub fn create_js_path<'js>(
     Ok(obj.into_value())
 }
 
-/// Entry point for getNeighbors from JS. Takes (node_id, config?) as arguments.
+/// Entry point for getNeighbors from JS. Takes (this, config?) as arguments.
 /// This is a standalone function (no closure captures) so rquickjs lifetime inference works.
 #[allow(clippy::needless_pass_by_value)]
 fn js_get_neighbors_entry<'js>(
     ctx: Ctx<'js>,
-    node_id: u64,
+    this: JsValue<'js>,
     config: rquickjs::function::Opt<Object<'js>>,
 ) -> Result<JsValue<'js>, rquickjs::Error> {
-    match js_get_neighbors(&ctx, node_id, config.0.as_ref()) {
+    let result = node_id_of(&this)
+        .ok_or_else(|| "getNeighbors must be called on a node".to_string())
+        .and_then(|node_id| js_get_neighbors(&ctx, node_id, config.0.as_ref()));
+    match result {
         Ok(val) => Ok(val),
         Err(e) => {
             let msg = match rquickjs::String::from_str(ctx.clone(), &e) {
@@ -476,18 +545,18 @@ fn js_get_neighbors<'js>(
     }
 
     with_current_graph(|graph| {
-        let g = graph.borrow();
         let results = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
         let mut result_idx = 0;
 
-        let mut neighbor_edges = collect_edges(&g, node_id, &direction);
+        let mut neighbor_edges = collect_edges(graph, node_id, &direction);
 
         // Filter by relationship types
         if !type_filters.is_empty() {
             neighbor_edges.retain(|(rel_id, _, _)| {
                 let rid = RelationshipId::from(*rel_id);
-                let type_id = g.get_relationship_type_id(rid);
-                g.get_type(type_id)
+                let type_id = graph.get_relationship_type_id(rid);
+                graph
+                    .get_type(type_id)
                     .is_some_and(|tn| type_filters.iter().any(|f| f == tn.as_str()))
             });
         }
@@ -497,12 +566,11 @@ fn js_get_neighbors<'js>(
             neighbor_edges.retain(|(_rel_id, src_id, dst_id)| {
                 let neighbor_id = if *src_id == node_id { *dst_id } else { *src_id };
                 let nid = NodeId::from(neighbor_id);
-                g.get_node_labels(nid)
+                graph
+                    .get_node_labels(nid)
                     .any(|label_name| label_filters.iter().any(|f| f == label_name.as_str()))
             });
         }
-
-        drop(g);
 
         let mut seen_neighbors: HashSet<u64> = HashSet::new();
         for (rel_id, src_id, dst_id) in &neighbor_edges {
@@ -528,14 +596,12 @@ fn js_get_neighbors<'js>(
     })
 }
 
-fn throw_js_error<'js>(
-    ctx: &Ctx<'js>,
+fn throw_js_error(
+    ctx: &Ctx<'_>,
     e: &str,
 ) -> rquickjs::Error {
-    match rquickjs::String::from_str(ctx.clone(), e) {
-        Ok(s) => ctx.throw(s.into_value()),
-        Err(_) => rquickjs::Error::Exception,
-    }
+    rquickjs::String::from_str(ctx.clone(), e)
+        .map_or(rquickjs::Error::Exception, |s| ctx.throw(s.into_value()))
 }
 
 /// graph.getNodeById(id) - retrieve a node by its internal ID, or null.
@@ -569,8 +635,9 @@ fn js_get_node_by_id_impl<'js>(
 
     with_current_graph(|graph| {
         let exists = {
-            let g = graph.borrow();
-            g.node_count() > 0 && id <= g.max_node_id() && !g.is_node_deleted(NodeId::from(id))
+            graph.node_count() > 0
+                && id <= graph.max_node_id()
+                && !graph.is_node_deleted(NodeId::from(id))
         };
         if exists {
             create_js_node(ctx, id, graph, None)
@@ -607,22 +674,22 @@ fn js_iterate_nodes_impl<'js>(
 
     with_current_graph(|graph| {
         let ids: Vec<u64> = {
-            let g = graph.borrow();
-            match &label {
-                Some(l) => g
-                    .get_label_matrix(l)
-                    .map(|m| m.iter(0, u64::MAX).map(|(id, _)| id).collect())
-                    .unwrap_or_default(),
-                None => {
-                    if g.node_count() == 0 {
+            label.as_ref().map_or_else(
+                || {
+                    if graph.node_count() == 0 {
                         Vec::new()
                     } else {
-                        (0..=g.max_node_id())
-                            .filter(|id| !g.is_node_deleted(NodeId::from(*id)))
+                        (0..=graph.max_node_id())
+                            .filter(|id| !graph.is_node_deleted(NodeId::from(*id)))
                             .collect()
                     }
-                }
-            }
+                },
+                |l| {
+                    graph
+                        .get_label_matrix(l)
+                        .map_or_default(|m| m.iter(0, u64::MAX).map(|(id, _)| id).collect())
+                },
+            )
         };
 
         let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
@@ -663,17 +730,19 @@ fn js_iterate_edges_impl<'js>(
     with_current_graph(|graph| {
         // (src, dst, edge_id) triples
         let edges: Vec<(u64, u64, u64)> = {
-            let g = graph.borrow();
-            match &rel_type {
-                Some(t) => g
-                    .get_relationship_matrix(&Arc::new(t.clone()))
-                    .map(|tensor| tensor.iter(0, u64::MAX, false).collect())
-                    .unwrap_or_default(),
-                None => g
-                    .relationship_matrices_iter()
-                    .flat_map(|tensor| tensor.iter(0, u64::MAX, false).collect::<Vec<_>>())
-                    .collect(),
-            }
+            rel_type.as_ref().map_or_else(
+                || {
+                    graph
+                        .relationship_matrices_iter()
+                        .flat_map(|tensor| tensor.iter(0, u64::MAX, false).collect::<Vec<_>>())
+                        .collect()
+                },
+                |t| {
+                    graph
+                        .get_relationship_matrix(&Arc::new(t.clone()))
+                        .map_or_default(|tensor| tensor.iter(0, u64::MAX, false).collect())
+                },
+            )
         };
 
         let arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
@@ -752,10 +821,8 @@ fn js_traverse_impl<'js>(
     // Collect source node IDs
     let mut source_ids: Vec<u64> = Vec::new();
     for i in 0..nodes.len() {
-        let node: Object = nodes.get(i).map_err(|e| format!("Array get error: {e}"))?;
-        let nid: u64 = node
-            .get("__falkor_node_id")
-            .map_err(|e| format!("Node ID error: {e}"))?;
+        let node: JsValue = nodes.get(i).map_err(|e| format!("Array get error: {e}"))?;
+        let nid = node_id_of(&node).ok_or("Node ID error: traverse expects an array of nodes")?;
         source_ids.push(nid);
     }
 
@@ -797,16 +864,15 @@ fn js_traverse_impl<'js>(
                 let mut edges_to_create: Vec<(u64, u64, u64)> = Vec::new();
 
                 {
-                    let g = graph.borrow();
-
                     for &nid in &frontier {
-                        let mut neighbor_edges = collect_edges(&g, nid, &direction);
+                        let mut neighbor_edges = collect_edges(graph, nid, &direction);
 
                         if !type_filters.is_empty() {
                             neighbor_edges.retain(|(rel_id, _, _)| {
                                 let rid = RelationshipId::from(*rel_id);
-                                let type_id = g.get_relationship_type_id(rid);
-                                g.get_type(type_id)
+                                let type_id = graph.get_relationship_type_id(rid);
+                                graph
+                                    .get_type(type_id)
                                     .is_some_and(|tn| type_filters.iter().any(|f| f == tn.as_str()))
                             });
                         }
@@ -816,7 +882,7 @@ fn js_traverse_impl<'js>(
 
                             if !label_filters.is_empty() {
                                 let nb_node_id = NodeId::from(neighbor_id);
-                                let matches = g.get_node_labels(nb_node_id).any(|label_name| {
+                                let matches = graph.get_node_labels(nb_node_id).any(|label_name| {
                                     label_filters.iter().any(|f| f == label_name.as_str())
                                 });
                                 if !matches {
@@ -889,4 +955,44 @@ fn js_traverse_impl<'js>(
 
         Ok(outer_results.into_value())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{with_current_graph, with_graph};
+    use crate::graph::{graph::Graph, graphblas::test_init::ensure_init};
+
+    fn lent() -> Result<*const Graph, String> {
+        with_current_graph(|g| Ok(std::ptr::from_ref(g)))
+    }
+
+    /// The graph is lent for the call only: a nested call lends its own and
+    /// puts the outer one back, and nothing is left lent afterwards, even when
+    /// the call panics.
+    #[test]
+    fn a_graph_is_lent_for_the_call_only() {
+        ensure_init();
+        let outer = Graph::new(16, 16, 1, 0, "outer");
+        let inner = Graph::new(16, 16, 1, 0, "inner");
+        assert!(lent().is_err(), "nothing lent outside a call");
+
+        with_graph(&outer, || {
+            assert_eq!(lent(), Ok(std::ptr::from_ref(&outer)));
+            with_graph(&inner, || {
+                assert_eq!(lent(), Ok(std::ptr::from_ref(&inner)));
+            });
+            assert_eq!(
+                lent(),
+                Ok(std::ptr::from_ref(&outer)),
+                "the outer one is back"
+            );
+        });
+        assert!(lent().is_err(), "nothing lent after the call");
+
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_graph(&outer, || panic!("in the UDF"));
+        }));
+        assert!(unwound.is_err());
+        assert!(lent().is_err(), "nothing lent after a call that panicked");
+    }
 }

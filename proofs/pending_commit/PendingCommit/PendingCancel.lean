@@ -1,12 +1,11 @@
 import PendingCommit.PendingDocs
 /-
-# Unwinding a pending node, paired with the graph's id space (#2846)
+# Unwinding a pending node, paired with the graph's id space
 
-Since #2846 `delete_pending_node` (pending.rs:851) and
+`delete_pending_node` (pending.rs) and
 `remove_pending_relationships_for_node` (:902) take `g: &mut Graph` and hand
 every unwound id back through `Graph::cancel_node_id` /
-`cancel_relationship_id` (graph.rs:1549/:1562) themselves, instead of
-leaving `ops/delete.rs` to call `return_*_id` afterwards. Each call is `?`:
+`cancel_relationship_id` (graph.rs) themselves. Each call is `?`:
 the first refusal aborts the unwind.
 
 The graph is abstract here (`Gr`); what is needed of its cancel is the
@@ -14,7 +13,7 @@ hypothesis `CancelSpec freeN freeR cancel` — each id space has its own free
 predicate (`freeN` for node ids, `freeR` for relationship ids): after
 `cancel g id = some g'`, `id` is free in `g'` *in the cancel's own space*, and
 nothing free in either space stops being free. That is `IdSpace::cancel`'s
-`recycled.insert(id)` (id_space.rs:536) read through `is_free`; proofs/id_space
+`recycled.insert(id)` (id_space.rs) read through `is_free`; proofs/id_space
 owns it, and proofs/graph_queries states it as `IdSpaceContract.cancel_ok`.
 
 * `removeRelsG_spec`: on success the `Pending` side is exactly the pure
@@ -34,40 +33,64 @@ structure CancelSpec {Gr : Type} (free other : Gr → List Nat) (cancel : Gr →
   ok : ∀ g id g', cancel g id = some g' →
     id ∈ free g' ∧ (∀ x ∈ free g, x ∈ free g') ∧ ∀ x ∈ other g, x ∈ other g'
 
+/-- **Hypothesis on `Graph::get_type_id_mut`** (graph.rs; proofs/graph_queries
+`getTypeIdMut_spec`): afterwards the type is registered, every registered type stays registered,
+and neither id space loses a free id (registering a type touches names and tensors only). `types`
+is the graph's relationship-type list (names as `Nat`s here). Added for #3641, which makes
+`remove_pending_relationships_for_node` call it for every cancelled edge (:974). -/
+structure RegSpec {Gr : Type} (types freeN freeR : Gr → List Nat) (regT : Gr → Nat → Gr) : Prop where
+  ok : ∀ g t, t ∈ types (regT g t) ∧ (∀ y ∈ types g, y ∈ types (regT g t)) ∧
+    (∀ x ∈ freeN g, x ∈ freeN (regT g t)) ∧ ∀ x ∈ freeR g, x ∈ freeR (regT g t)
+
+/-- A graph cancel (`cancel_node_id` / `cancel_relationship_id`) drops no registered type. -/
+def KeepsTypes {Gr : Type} (types : Gr → List Nat) (cancel : Gr → Nat → Option Gr) : Prop :=
+  ∀ g id g', cancel g id = some g' → ∀ y ∈ types g, y ∈ types g'
+
 /-- `remove_pending_relationships_for_node` (:902): the second loop (:925-955),
 each iteration the `Pending` removals (`rmStep`) then
-`g.cancel_relationship_id(rel_id)?` (:947). -/
-def rmStepG {Gr : Type} (cancelR : Gr → Nat → Option Gr) (pg : P × Gr)
+`g.cancel_relationship_id(rel_id)?` (:947) then, since #3641, `g.get_type_id_mut(&type_name)`
+(:974; the result is discarded: `regT`). -/
+def rmStepG {Gr : Type} (cancelR : Gr → Nat → Option Gr) (regT : Gr → Nat → Gr) (pg : P × Gr)
     (x : (Nat × Nat × Nat) × Nat) : Option (P × Gr) :=
-  (cancelR pg.2 x.1.1).map (fun g' => (rmStep pg.1 x, g'))
+  (cancelR pg.2 x.1.1).map (fun g' => (rmStep pg.1 x, regT g' x.2))
 
-def removeRelsG {Gr : Type} (cancelR : Gr → Nat → Option Gr) (p : P) (g : Gr) (id : Nat) :
-    Option (P × Gr) :=
-  (collect p id).foldlM (rmStepG cancelR) (p, g)
+def removeRelsG {Gr : Type} (cancelR : Gr → Nat → Option Gr) (regT : Gr → Nat → Gr) (p : P) (g : Gr)
+    (id : Nat) : Option (P × Gr) :=
+  (collect p id).foldlM (rmStepG cancelR regT) (p, g)
 
-theorem foldlM_rmStepG {Gr : Type} (freeN freeR : Gr → List Nat) (cancelR : Gr → Nat → Option Gr)
-    (hc : CancelSpec freeR freeN cancelR) :
+/-- The type names of a collected list. -/
+def Tys (L : List ((Nat × Nat × Nat) × Nat)) : List Nat := L.map (·.2)
+
+theorem foldlM_rmStepG {Gr : Type} (types freeN freeR : Gr → List Nat) (cancelR : Gr → Nat → Option Gr)
+    (regT : Gr → Nat → Gr) (hc : CancelSpec freeR freeN cancelR) (hg : RegSpec types freeN freeR regT)
+    (hk : KeepsTypes types cancelR) :
     ∀ (L : List ((Nat × Nat × Nat) × Nat)) (p : P) (g : Gr) (p' : P) (g' : Gr),
-    L.foldlM (rmStepG cancelR) (p, g) = some (p', g') →
+    L.foldlM (rmStepG cancelR regT) (p, g) = some (p', g') →
     p' = L.foldl rmStep p ∧ (∀ r ∈ Rids L, r ∈ freeR g') ∧ (∀ x ∈ freeR g, x ∈ freeR g') ∧
-      ∀ x ∈ freeN g, x ∈ freeN g'
+      (∀ x ∈ freeN g, x ∈ freeN g') ∧ (∀ t ∈ Tys L, t ∈ types g') ∧ ∀ y ∈ types g, y ∈ types g'
   | [], p, g, p', g', h => by
     simp only [List.foldlM_nil, pure, Option.some.injEq, Prod.mk.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
-    exact ⟨rfl, by simp [Rids], fun _ hx => hx, fun _ hx => hx⟩
+    exact ⟨rfl, by simp [Rids], fun _ hx => hx, fun _ hx => hx, by simp [Tys], fun _ hx => hx⟩
   | x :: L, p, g, p', g', h => by
     simp only [List.foldlM_cons, bind, rmStepG] at h
     cases hcg : cancelR g x.1.1 with
     | none => simp [hcg] at h
     | some g1 =>
       simp only [hcg, Option.map_some, Option.bind_some] at h
-      obtain ⟨e1, e2, e3, e4⟩ := foldlM_rmStepG freeN freeR cancelR hc L _ _ _ _ h
+      obtain ⟨e1, e2, e3, e4, e5, e6⟩ := foldlM_rmStepG types freeN freeR cancelR regT hc hg hk L _ _ _ _ h
       obtain ⟨c1, c2, c3⟩ := hc.ok _ _ _ hcg
-      refine ⟨by simpa using e1, fun r hr => ?_, fun y hy => e3 y (c2 y hy), fun y hy => e4 y (c3 y hy)⟩
-      simp only [Rids, List.map_cons, List.mem_cons] at hr
-      rcases hr with rfl | hr
-      · exact e3 _ c1
-      · exact e2 r hr
+      obtain ⟨r1, r2, r3, r4⟩ := hg.ok g1 x.2
+      refine ⟨by simpa using e1, fun r hr => ?_, fun y hy => e3 y (r4 y (c2 y hy)),
+        fun y hy => e4 y (r3 y (c3 y hy)), fun t ht => ?_, fun y hy => e6 y (r2 y (hk _ _ _ hcg y hy))⟩
+      · simp only [Rids, List.map_cons, List.mem_cons] at hr
+        rcases hr with rfl | hr
+        · exact e3 _ (r4 _ c1)
+        · exact e2 r hr
+      · simp only [Tys, List.map_cons, List.mem_cons] at ht
+        rcases ht with rfl | ht
+        · exact e6 _ r1
+        · exact e5 t ht
 
 theorem foldl_rmStep_taken : ∀ (L : List ((Nat × Nat × Nat) × Nat)) (p : P),
     (L.foldl rmStep p).taken = p.taken.filter (· ∉ Rids L)
@@ -78,30 +101,33 @@ theorem foldl_rmStep_taken : ∀ (L : List ((Nat × Nat × Nat) × Nat)) (p : P)
     by_cases hx : x = e.1 <;> by_cases h2 : x ∈ Rids L <;> simp [Rids] at h2 <;> simp [Rids, hx, h2]
 
 /-- **`removeRelsG_spec`**: success means the `Pending` side is the pure
-`removeRels` and every cascaded relationship id is free in the graph's
-relationship space (and nothing free in either space is lost). -/
-theorem removeRelsG_spec {Gr : Type} (freeN freeR : Gr → List Nat) (cancelR : Gr → Nat → Option Gr)
-    (hc : CancelSpec freeR freeN cancelR) (p : P) (g : Gr) (id : Nat) (p' : P) (g' : Gr)
-    (h : removeRelsG cancelR p g id = some (p', g')) :
+`removeRels`, every cascaded relationship id is free in the graph's
+relationship space (and nothing free in either space is lost), and (#3641) every cascaded edge's
+type is registered in the graph. -/
+theorem removeRelsG_spec {Gr : Type} (types freeN freeR : Gr → List Nat) (cancelR : Gr → Nat → Option Gr)
+    (regT : Gr → Nat → Gr) (hc : CancelSpec freeR freeN cancelR) (hg : RegSpec types freeN freeR regT)
+    (hk : KeepsTypes types cancelR) (p : P) (g : Gr) (id : Nat) (p' : P) (g' : Gr)
+    (h : removeRelsG cancelR regT p g id = some (p', g')) :
     p' = removeRels p id ∧ (∀ r ∈ Rids (collect p id), r ∈ freeR g' ∧ r ∉ p'.taken) ∧
-    (∀ x ∈ freeR g, x ∈ freeR g') ∧ ∀ x ∈ freeN g, x ∈ freeN g' := by
-  obtain ⟨e1, e2, e3, e4⟩ := foldlM_rmStepG freeN freeR cancelR hc _ p g p' g' h
-  refine ⟨e1, fun r hr => ⟨e2 r hr, ?_⟩, e3, e4⟩
+    (∀ x ∈ freeR g, x ∈ freeR g') ∧ (∀ x ∈ freeN g, x ∈ freeN g') ∧
+    (∀ t ∈ Tys (collect p id), t ∈ types g') := by
+  obtain ⟨e1, e2, e3, e4, e5, -⟩ := foldlM_rmStepG types freeN freeR cancelR regT hc hg hk _ p g p' g' h
+  refine ⟨e1, fun r hr => ⟨e2 r hr, ?_⟩, e3, e4, e5⟩
   rw [e1]; rw [foldl_rmStep_taken]
   simp [hr]
 
 /-- `delete_pending_node` (:851), its effect on `Pending` and the graph:
-`created_nodes.remove(id)` (:869), `set_labels.remove` (:873), the staged
-attrs taken from `new_nodes_attrs`, else `existing_nodes_attrs` (:877-879),
-`remove_pending_relationships_for_node(id, g)?` (:882),
-`cancelled_nodes.insert(id)` (:886), `g.cancel_node_id(id)?` (:888). -/
-def deletePendingNode {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (p : P) (g : Gr)
-    (id : Nat) : Option (P × Gr) :=
-  let p1 : P := { p with created := p.created.filter (· != id), setL := frem p.setL id }
+`created_nodes.remove(id)` (:893), `set_labels.remove` (:896), `remove_labels.remove`
+(:897, #3459), the staged attrs taken from `new_nodes_attrs`, else `existing_nodes_attrs`
+(:900-904), `remove_pending_relationships_for_node(id, g)?` (:906),
+`cancelled_nodes.insert(id)` (:910), `g.cancel_node_id(id)?` (:912). -/
+def deletePendingNode {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (regT : Gr → Nat → Gr)
+    (p : P) (g : Gr) (id : Nat) : Option (P × Gr) :=
+  let p1 : P := { p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id }
   let p2 : P := match fget p1.newN id with
     | some _ => { p1 with newN := frem p1.newN id }
     | none => { p1 with existN := frem p1.existN id }
-  match removeRelsG cancelR p2 g id with
+  match removeRelsG cancelR regT p2 g id with
   | none => none
   | some (p3, g3) =>
     let p4 : P := { p3 with cancelledN := sins p3.cancelledN id }
@@ -118,13 +144,18 @@ theorem foldl_rmStep_created : ∀ (L : List ((Nat × Nat × Nat) × Nat)) (p : 
 /-- **`deletePendingNode_spec`**: on success the node is no longer created,
 is recorded as cancelled, its id is free in the graph's node space, every
 cascaded relationship id is free in its relationship space and no longer `taken`
-— the unwind is never half-done — and nothing free in either space is lost. -/
-theorem deletePendingNode_spec {Gr : Type} (freeN freeR : Gr → List Nat) (cancelN cancelR : Gr → Nat → Option Gr)
-    (hn : CancelSpec freeN freeR cancelN) (hr : CancelSpec freeR freeN cancelR) (p : P) (g : Gr) (id : Nat)
-    (p' : P) (g' : Gr) (h : deletePendingNode cancelN cancelR p g id = some (p', g')) :
+— the unwind is never half-done — and nothing free in either space is lost. Since #3641 every
+cascaded edge's type is also registered in the graph (`hty`: the node cancel drops no type). -/
+theorem deletePendingNode_spec {Gr : Type} (types freeN freeR : Gr → List Nat)
+    (cancelN cancelR : Gr → Nat → Option Gr) (regT : Gr → Nat → Gr)
+    (hn : CancelSpec freeN freeR cancelN) (hr : CancelSpec freeR freeN cancelR)
+    (hg : RegSpec types freeN freeR regT) (hkr : KeepsTypes types cancelR)
+    (hty : KeepsTypes types cancelN) (p : P) (g : Gr) (id : Nat)
+    (p' : P) (g' : Gr) (h : deletePendingNode cancelN cancelR regT p g id = some (p', g')) :
     id ∉ p'.created ∧ id ∈ p'.cancelledN ∧ id ∈ freeN g' ∧
     (∀ r ∈ Rids (collect p id), r ∈ freeR g' ∧ r ∉ p'.taken) ∧
-    (∀ x ∈ freeN g, x ∈ freeN g') ∧ ∀ x ∈ freeR g, x ∈ freeR g' := by
+    (∀ x ∈ freeN g, x ∈ freeN g') ∧ (∀ x ∈ freeR g, x ∈ freeR g') ∧
+    (∀ t ∈ Tys (collect p id), t ∈ types g') := by
   unfold deletePendingNode at h
   simp only at h
   split at h
@@ -135,37 +166,38 @@ theorem deletePendingNode_spec {Gr : Type} (freeN freeR : Gr → List Nat) (canc
     | some g4 =>
       simp only [hcn, Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
-      obtain ⟨e1, e2, e3, e4⟩ := removeRelsG_spec freeN freeR cancelR hr _ g id p3 g3 hrm
+      obtain ⟨e1, e2, e3, e4, e5⟩ := removeRelsG_spec types freeN freeR cancelR regT hr hg hkr _ g id p3 g3 hrm
       obtain ⟨c1, c2, c3⟩ := hn.ok _ _ _ hcn
       have hcol : ∀ q : P, q.relsByType = p.relsByType → collect q id = collect p id :=
         fun q hq => collect_congr q p hq id
-      have hc2 : collect (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
+      have hc2 : collect (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P).newN id with
+          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
               newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
+          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
               existN := frem p.existN id } : P)) id = collect p id := by
         apply hcol; split <;> rfl
-      have hcr : (removeRels (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
+      have hcr : (removeRels (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P).newN id with
+          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
               newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
+          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
               existN := frem p.existN id } : P)) id).created = p.created.filter (· != id) := by
         unfold removeRels; rw [(foldl_rmStep_created _ _).1]; split <;> rfl
-      rw [hc2] at e2
+      rw [hc2] at e2 e5
       refine ⟨?_, by simp [mem_sins], c1, fun r hr' => ⟨c3 r (e2 r hr').1, (e2 r hr').2⟩,
-        fun x hx => c2 x (e4 x hx), fun x hx => c3 x (e3 x hx)⟩
+        fun x hx => c2 x (e4 x hx), fun x hx => c3 x (e3 x hx), fun t ht => hty _ _ _ hcn t (e5 t ht)⟩
       simp only [e1, hcr, List.mem_filter]; simp
 
 /-- **`deletePendingNode_refused`**: a refused node cancel fails the unwind. -/
-theorem deletePendingNode_refused {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (p : P) (g : Gr)
+theorem deletePendingNode_refused {Gr : Type} (cancelN cancelR : Gr → Nat → Option Gr) (regT : Gr → Nat → Gr)
+    (p : P) (g : Gr)
     (id : Nat) (p3 : P) (g3 : Gr)
-    (hrm : removeRelsG cancelR (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P).newN id with
-          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
+    (hrm : removeRelsG cancelR regT (match fget ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P).newN id with
+          | some _ => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
               newN := frem p.newN id } : P)
-          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id } : P) with
+          | none => ({ ({ p with created := p.created.filter (· != id), setL := frem p.setL id, remL := frem p.remL id } : P) with
               existN := frem p.existN id } : P)) g id = some (p3, g3))
     (hcn : cancelN g3 id = none) :
-    deletePendingNode cancelN cancelR p g id = none := by
+    deletePendingNode cancelN cancelR regT p g id = none := by
   unfold deletePendingNode; simp only; rw [hrm]; simp [hcn]
 
 end PendingCommit.PS

@@ -15,9 +15,19 @@ name = "native-deps"
 version = "0.1.0"
 edition = "2024"
 description = "Builds and caches FalkorDB's native dependencies (GraphBLAS, LAGraph, RediSearch)"
-license = "SSPL-1.0"
+license = "SSPL-1.0 OR AGPL-3.0-only"
 repository = "https://github.com/FalkorDB/FalkorDB"
 publish = false
+
+# The clippy lints CI enforces (with `-D warnings`): the same set as the main
+# workspace's `[workspace.lints]` (this crate is its own workspace).
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+doc_markdown = "allow"
 
 [lib]
 name = "native_deps"

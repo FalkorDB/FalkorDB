@@ -4,7 +4,7 @@ import Columnar.Row
 # `Batch::concat` against its row-at-a-time definition (`BatchBuilder`)
 
 `concat` documents that it is "byte-for-byte the same result the per-row concat
-produced" (`batch.rs:965-977`). The per-row concat is: push every active row of
+produced" (`batch.rs`). The per-row concat is: push every active row of
 every batch, in order, through a `BatchBuilder` (`push_row` of
 `BatchRow::to_owned_row`) and `finish`. We model both per column slot and
 compare what a consumer can observe at every (row, slot): the `value_at`
@@ -12,18 +12,17 @@ answer and the `is_bound_at` bit.
 
 | here | there |
 | --- | --- |
-| `builderCol` | `BatchBuilder::push_row_with` (`batch.rs:577-651`, empty `extra`) + `finish` (`:750-796`), one slot |
-| `rowVals` | the fallback loop `for r in b.active_indices() { col.get(r) }` (`batch.rs:1019-1027`) |
-| `concatGeneric` | the fallback branch of `Batch::concat` (`batch.rs:1000-1048`) |
-| `typedScan`, `concatTyped` | `Batch::concat_typed_column` (`batch.rs:1076-1163`) |
-| `concatCol` | one column of `Batch::concat` (`batch.rs:995-999`) |
-| `concatOrigins` | the origin loop (`batch.rs:1051-1060`) |
+| `builderCol` | `BatchBuilder::push_row_with` (`batch.rs`, empty `extra`) + `finish`, one slot |
+| `rowVals` | the fallback loop `for r in b.active_indices() { col.get(r) }` (`batch.rs`) |
+| `concatGeneric` | the fallback branch of `Batch::concat` (`batch.rs`) |
+| `typedScan`, `concatTyped` | `Batch::concat_typed_column` (`batch.rs`) |
+| `concatCol` | one column of `Batch::concat` (`batch.rs`) |
+| `concatOrigins` | the origin loop (`batch.rs`) |
 
-Result: equal for every list of batches (`concat_obs_eq`). Since #3059 the fallback loop
-skips a batch with no active rows (`batch.rs:1008-1012`), as `concat_typed_column` always did,
-so an empty batch that binds a slot no longer makes `concat` bind it
-(`empty_batch_ignored`; before #3059 it came out bound, `Some(Null)`, where the per-row
-definition left it unbound).
+Result: equal for every list of batches (`concat_obs_eq`). The fallback loop
+skips a batch with no active rows (`batch.rs`), as `concat_typed_column` always does,
+so an empty batch that binds a slot does not make `concat` bind it
+(`empty_batch_ignored`).
 -/
 
 namespace Columnar
@@ -101,7 +100,7 @@ def concatGeneric (bs : List (Batch F)) (i : Nat) : Column F × Bool :=
   if boundAny then (classifyStored vals, false)
   else if nonnull then (.values vals, true) else (.unbound, false)
 
-/-- `Kind` of a primitive column (`batch.rs:1070-1075`). -/
+/-- `Kind` of a primitive column (`batch.rs`). -/
 def kindOf : Column F → Option Nat
   | .nodeIds _ => some 0
   | .relIds _ => some 1
@@ -109,7 +108,7 @@ def kindOf : Column F → Option Nat
   | .floats _ => some 3
   | _ => none
 
-/-- The guard loop of `concat_typed_column` (`batch.rs:1081-1107`); outer
+/-- The guard loop of `concat_typed_column` (`batch.rs`); outer
 `none` = an early `return None`. -/
 def typedScan (i : Nat) : List (Batch F) → Option Nat → Option (Option Nat)
   | [], kind => some kind
@@ -122,7 +121,7 @@ def typedScan (i : Nat) : List (Batch F) → Option Nat → Option (Option Nat)
         | none => typedScan i bs (some k)
         | some p => if p = k then typedScan i bs kind else none
 
-/-- The bulk copy of `concat_typed_column` (`batch.rs:1113-1150`). -/
+/-- The bulk copy of `concat_typed_column` (`batch.rs`). -/
 def buildTyped (bs : List (Batch F)) (i : Nat) : Nat → Column F
   | 0 => .nodeIds (bs.flatMap (fun b => match b.column i with
       | .nodeIds v => (extendActive v b.sel).getD [] | _ => []))
@@ -160,7 +159,7 @@ theorem typedScan_spec (i : Nat) :
   | b :: bs, kind, k, h => by
     unfold typedScan at h
     by_cases h0 : b.activeLen = 0
-    · rw [if_pos h0] at h
+    · rw [ite_eq_left h0] at h
       obtain ⟨h1, h2, h3⟩ := typedScan_spec i bs kind k h
       refine ⟨h1, fun hk => ?_, ?_⟩
       · obtain ⟨b', hb', hp⟩ := h2 hk; exact ⟨b', by simp [hb'], hp⟩
@@ -168,10 +167,10 @@ theorem typedScan_spec (i : Nat) :
         rcases List.mem_cons.mp hb' with rfl | hb'
         · omega
         · exact h3 b' hb' hp
-    · rw [if_neg h0] at h
+    · rw [ite_eq_right h0] at h
       by_cases hv : b.vo i = true
-      · rw [if_pos hv] at h; simp at h
-      · rw [if_neg hv] at h
+      · rw [ite_eq_left hv] at h; simp at h
+      · rw [ite_eq_right hv] at h
         cases hkb : kindOf (b.column i) with
         | none => rw [hkb] at h; simp at h
         | some k0 =>
@@ -190,7 +189,7 @@ theorem typedScan_spec (i : Nat) :
           | some p =>
             simp only at h
             by_cases hp : p = k0
-            · rw [if_pos hp] at h
+            · rw [ite_eq_left hp] at h
               obtain ⟨h1, -, h3⟩ := typedScan_spec i bs (some p) k h
               have hpk : p = k := by rcases h1 with h1 | h1 <;> simp_all
               subst hpk; subst hp
@@ -199,7 +198,7 @@ theorem typedScan_spec (i : Nat) :
               rcases List.mem_cons.mp hb' with rfl | hb'
               · exact ⟨by simpa using hv, hkb⟩
               · exact h3 b' hb' hq
-            · rw [if_neg hp] at h; simp at h
+            · rw [ite_eq_right hp] at h; simp at h
 
 /-- A typed lane's active slice, embedded as values, is the fallback's `rowVals`. -/
 theorem extendActive_rowVals {α : Type} {b : Batch F} (hw : b.WF) {i : Nat} {v : List α}
@@ -291,7 +290,7 @@ theorem concatCol_obs_generic {bs : List (Batch F)} (hw : ∀ b ∈ bs, b.WF) (i
         simp [this, hvo, hp0]
       have hbu : (buildTyped bs i kd).isUnbound = false := by
         rcases kd with _ | _ | _ | kd <;> rfl
-      simp only [colObs, concatGeneric, hbound, if_true, hbu, classifyStored_isUnbound,
+      simp only [colObs, concatGeneric, hbound, ite_true, hbu, classifyStored_isUnbound,
         Column.get?_eq_toValues hv, classifyStored_get?]
 
 /-! ## The fallback is the per-row builder when no batch is empty -/
@@ -342,7 +341,7 @@ theorem perRow_anyBound (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat
     intro r hr
     have := (toOwned_slot (hw b hb) hr i).2.1
     simp only [Function.comp] at this ⊢
-    rw [this]; simp [hpos, Bool.and_assoc]
+    rw [this]; simp [hpos]
 
 theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat) :
     (perRowRows bs).any (fun r => match r.get i with
@@ -364,10 +363,10 @@ theorem perRow_present (bs : List (Batch F)) (hw : ∀ b ∈ bs, b.WF) (i : Nat)
     intro r hr
     have := (toOwned_slot (hw b hb) hr i).2.2
     simp only [Function.comp] at this ⊢
-    rw [this]; simp [hpos, Bool.and_assoc]
+    rw [this]; simp [hpos]
 
 /-- **`concat` = per-row concat** (every slot, every row: value and bound bit), for any list
-of well-formed batches, empty ones included (#3059). -/
+of well-formed batches, empty ones included. -/
 theorem concat_obs_eq {bs : List (Batch F)} (hw : ∀ b ∈ bs, b.WF)
     (i k : Nat) : colObs (concatCol bs i) k = colObs (builderCol (perRowRows bs) i) k := by
   rw [concatCol_obs_generic hw]
@@ -396,9 +395,9 @@ theorem concat_origins (bs : List (Batch F)) :
   | some o => rfl
   | none => simp only [pushSlots_origin]
 
-/-- **Empty batches no longer bind a slot** (#3059): a batch whose rows are all filtered out
+/-- **Empty batches do not bind a slot**: a batch whose rows are all filtered out
 but which binds slot 1 leaves `concat` reporting slot 1 unbound (`None`), as the per-row
-concat does (before #3059 `concat` made it bound, reading `Some(Null)`). -/
+concat does. -/
 theorem empty_batch_ignored (s : V F) :
     let a : Batch F := { len := 1, sel := none, cols := [.ints [1]], origins := none,
                          vo := fun _ => false }

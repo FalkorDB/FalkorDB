@@ -1,19 +1,14 @@
 /-
 # Pass sequencing, tree rebuilds, and edge-filter absorption
 
-| here | there |
-| --- | --- |
-| `passes`, `optimize` | `optimize` optimizer/mod.rs:125-168 (pass order; NestedPlans recursion) |
-| `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs:80-99 |
-| `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs:389-466 |
-| `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs:58-83 |
-| `absorb`, `semChain` | `absorb_edge_filters_into_vlt` absorb_edge_filters_into_vlt.rs:90-181 |
-
 * `optimize_sound`: if every pass preserves a relation `R` (reflexive,
   transitive), so does `optimize`; `optimize_nested` — each nested plan is
-  optimized independently; `passes_order` — the exact order (reduce_var_len_path twice).
+  optimized independently; `passes_order` — the exact order (reduce_var_len_path twice);
+  `passes_index_seek_before_hash_join` (#3889).
 * `rebuildHJ_id` (no rewrite: a plain copy) and `rebuildHJ_sound` (a
-  congruence `R` + sound local rewrites ⇒ the rebuilt tree is `R`-equal).
+  congruence `R` + sound local rewrites ⇒ the rebuilt tree is `R`-equal);
+  `rebuildHJ_fires`: the rewrite is applied wherever it fires, also over a
+  CartesianProduct with an `Argument` below (no guard since #3930).
 * `rebuildCP_*`: identity off the target; at the target the CartesianProduct
   children are permuted (`splitCP_perm`) with the conjunct over the extracted ones.
 * `findVlt_spec`, `absorb_correct`: under the per-edge reading of an edge-only
@@ -28,22 +23,31 @@ namespace Falkor.Opt.Seq
 
 inductive Pass
   | reduceCount | reduceExpandInto | reduceVarLenPath | eliminateTrueFilters | selectScanNode
-  | pushFiltersDown | fuseAnonymousTraverse | replaceCartesianWithHashJoin | absorbEdgeFiltersIntoVlt
+  | pushFiltersDown | fuseAnonymousTraverse | replaceCartesianWithIndexSeek | replaceCartesianWithHashJoin
+  | absorbEdgeFiltersIntoVlt
   | utilizeIndex | utilizeNodeById | reorderLabels | fuseOptionalTraverse | reduceBoundEdge
   deriving DecidableEq, Repr
 
-/-- mod.rs:135-164, in order. -/
+/-- mod.rs, in order. -/
 def passes : List Pass :=
   [.reduceCount, .reduceExpandInto, .reduceVarLenPath, .eliminateTrueFilters, .selectScanNode,
-   .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
+   .pushFiltersDown, .fuseAnonymousTraverse, .replaceCartesianWithIndexSeek,
+   .replaceCartesianWithHashJoin, .absorbEdgeFiltersIntoVlt,
    .reduceVarLenPath, .utilizeIndex, .utilizeNodeById, .reorderLabels, .fuseOptionalTraverse,
    .reduceBoundEdge]
 
 theorem passes_order :
-    passes.length = 15 ∧ passes.count .reduceVarLenPath = 2 ∧
+    passes.length = 16 ∧ passes.count .reduceVarLenPath = 2 ∧
     passes.head? = some .reduceCount ∧ passes.getLast? = some .reduceBoundEdge ∧
-    passes.idxOf .absorbEdgeFiltersIntoVlt < 9 ∧ passes[9]? = some .reduceVarLenPath ∧
-    passes.idxOf .fuseOptionalTraverse = 13 := by decide
+    passes.idxOf .absorbEdgeFiltersIntoVlt < 10 ∧ passes[10]? = some .reduceVarLenPath ∧
+    passes.idxOf .fuseOptionalTraverse = 14 := by decide
+
+/-- #3889: `replace_cartesian_with_index_seek` runs once, right before
+`replace_cartesian_with_hash_join`. -/
+theorem passes_index_seek_before_hash_join :
+    passes.count .replaceCartesianWithIndexSeek = 1 ∧
+    passes.idxOf .replaceCartesianWithIndexSeek + 1 = passes.idxOf .replaceCartesianWithHashJoin := by
+  decide
 
 /-- A plan tree whose root may be `NestedPlans`. -/
 inductive OPlan (P : Type)
@@ -136,6 +140,15 @@ termination_by fuel t => (fuel, sizeOf t)
 decreasing_by
   · simp_wf; have := List.sizeOf_lt_of_mem ‹_ ∈ cs›; right; omega
   · simp_wf; omega
+
+/-- The local rewrite fires wherever `try_hash_join_rewrite` (`rw`) does, also over a
+CartesianProduct with an `Argument` below (#3930 dropped the `reads_argument_rows` guard): the
+result is processed again. Under a batched Apply/Optional/`CALL {}` the per-origin join keeps
+outer rows apart (ops_apply `VhjSep.vhjPO_sepT`, `applyBatched_vhjPO`), so `rw` stays sound there. -/
+theorem rebuildHJ_fires (rw : T D → Option (T D)) (fuel : Nat) (t t' : T D) (h : rw t = some t') :
+    rebuildHJ rw (fuel + 1) t = rebuildHJ rw fuel t' := by
+  cases t with
+  | node d cs => rw [rebuildHJ, h]
 
 /-! ## `rebuild_with_cp_split` -/
 

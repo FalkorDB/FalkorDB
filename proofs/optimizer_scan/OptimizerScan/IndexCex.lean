@@ -66,28 +66,30 @@ example : agree [0, 1] (.and [.cmp .eq (.prop 1) (.lit (.i 1)), .cmp .eq (.prop 
 example : agree [0, 1] (.or [.cmp .eq (.prop 1) (.lit (.i 1)), .cmp .eq (.prop 2) (.lit (.i 9))])
     (node [0, 1] [(1, .i 5), (2, .i 9)]) = false := by decide
 
-/-- C7: `n.a + 1 IN [2]` is pushed as `a IN [2]` (the IN path only asks that the left side
-*contain* a property). -/
+/-- C7 — FIXED by #3068. `n.a + 1 IN [2]` used to be pushed as `a IN [2]` (the IN path only
+asked that the left side *contain* a property). `bare_property_of` now requires `n.a` itself:
+the Filter stays and the scan agrees. -/
 example : agree [0] (.atom (.inn (.add (.prop 1) (.lit (.i 1))) (.list [.lit (.i 2)])))
-    (node [0] [(1, .i 1)]) = false := by decide
+    (node [0] [(1, .i 1)]) = true := by decide
 
-/-- C7': `abs(n.a) IN [1]` is pushed as `a IN [1]` — misses `a = -1`. -/
+/-- C7' — FIXED by #3068. `abs(n.a) IN [1]` used to be pushed as `a IN [1]`, missing `a = -1`. -/
 example : agree [0] (.atom (.inn (.abs (.prop 1)) (.list [.lit (.i 1)])))
-    (node [0] [(1, .i (-1))]) = false := by decide
+    (node [0] [(1, .i (-1))]) = true := by decide
 
-/-- C8: `2 IN [n.a, n.b]` becomes an array-contains query on `a`. -/
+/-- C8 — FIXED by #3068. `2 IN [n.a, n.b]` used to become an array-contains query on `a`. -/
 example : agree [0] (.atom (.inn (.lit (.i 2)) (.list [.prop 1, .prop 2])))
-    (node [0] [(1, .i 2), (2, .i 7)]) = false := by decide
+    (node [0] [(1, .i 2), (2, .i 7)]) = true := by decide
 
 /-- C9: `n.v IN [1, date(...)]`: the runtime drops the Date item from the `Or`, the index
 never returns the node, the retained Filter cannot add it back. -/
 example : agree [0] (.atom (.inn (.prop 0) (.list [.lit (.i 1), .lit (.date 3)])))
     (node [0] [(0, .date 3)]) = false := by decide
 
-/-- C10 (shared with C): `1 IN n.arr AND …`: array-contains keeps its Filter only at the root;
-inside AND it is dropped, and Bool/Int share the numeric array field. -/
+/-- C10 — FIXED by #3736. `1 IN n.arr AND …`: array-contains used to keep its Filter only at the
+root, so inside AND it was dropped, and Bool/Int share the numeric array field (shared with C). An
+array-contains conjunct now stays among the leftovers (`pushAnd`): the scan agrees. -/
 example : agree [0] (.and [.inn (.lit (.i 1)) (.term (.prop 3)), .opq 0])
-    (node [0] [(3, .arr [.b true])]) = false := by decide
+    (node [0] [(3, .arr [.b true])]) = true := by decide
 
 /-- C11 — FIXED by #3072 (1c9994e37). `n.v > 'B' AND n.v < 'B'` merges into
 `Range{min:'B', max:'B', exclusive}`, which `build_string_range_node` used to turn into an exact match
