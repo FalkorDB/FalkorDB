@@ -8,13 +8,14 @@ name: perf-contract
 
 on:
   pull_request:
-    # bench/tests/conftest.py fails the bench/tests run if a test reads a
-    # repository file this filter does not match.
+    # Everything these tests read: the toolset, the suites not yet moved into
+    # bench/, and the perf workflows, which some tests parse (this file included).
     paths:
       - "bench/**"
       - "tests/perf/**"
       - "tests/soak/**"
-      - ".github/workflows/perf-contract.yml"
+      - ".github/workflows/perf-*.yml"
+      - ".github/workflows/_perf-*.yml"
   merge_group:
 
 permissions:
