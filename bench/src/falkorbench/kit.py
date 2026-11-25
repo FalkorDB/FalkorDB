@@ -216,11 +216,18 @@ def crossed(
     worse, better = candidate, baseline
     if direction == "lower_is_worse":
         worse, better = baseline, candidate
-    if worse > threshold * better and worse - better > floor:
+    if _past(worse, better, threshold, floor):
         return 1
-    if better > threshold * worse and better - worse > floor:
+    if _past(better, worse, threshold, floor):
         return -1
     return 0
+
+
+def _past(high: float, low: float, threshold: float, floor: float) -> bool:
+    # The ratio itself, as finding() reports it: `high > threshold * low` rounds
+    # differently (0.9 vs 0.3 at 3.0 would cross on a ratio of exactly 3.0).
+    ratio_past = high / low > threshold if low > 0 else high > 0
+    return ratio_past and high - low > floor
 
 
 def select(findings: Iterable[dict]) -> list[dict]:

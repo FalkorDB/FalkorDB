@@ -129,6 +129,11 @@ def test_side_defaults_a_blank_label_and_nulls_a_bad_commit(tmp_path):
     assert kit.side(SimpleNamespace(baseline=V621), "baseline")["label"].endswith("@a8fb264e6b90")
 
 
+def test_side_nulls_a_commit_with_a_trailing_newline(tmp_path):
+    args = make_args(tmp_path, baseline_commit=COMMIT + "\n")
+    assert kit.side(args, "baseline")["commit"] is None  # fullmatch, not match
+
+
 def test_input_errors_accepts_the_acceptance_images(tmp_path):
     args = make_args(tmp_path, candidate_commit=COMMIT, baseline_label="6.2.1")
     assert kit.input_errors(args) == []
@@ -143,6 +148,7 @@ def test_input_errors_accepts_the_acceptance_images(tmp_path):
         ({"candidate": MAIN[:-1]}, "--candidate"),  # 63 hex
         ({"candidate_commit": COMMIT.upper()}, "--candidate-commit"),
         ({"baseline_commit": COMMIT[:12]}, "--baseline-commit"),
+        ({"candidate_commit": COMMIT + "\n"}, "--candidate-commit"),  # fullmatch, not match
         ({"candidate_label": "main\n@4c10889"}, "--candidate-label"),
         ({"baseline_label": " "}, "--baseline-label"),
         ({"mode": "weekly"}, "--mode"),
@@ -162,8 +168,53 @@ def test_out_dir_resolves_a_relative_out_against_the_start_directory(tmp_path, m
     assert (out / "raw").is_dir()
 
 
+def test_result_finished_is_never_before_started(tmp_path):
+    later = "2099-01-01T00:00:00Z"  # `started` from another clock (micro's preflight runner)
+    res = kit.result("micro-hw", make_args(tmp_path), started=later, findings=[], summary="s")
+    assert res["finished"] == later
+    assert_valid(res)
+
+
 def test_utc_now_is_a_contract_timestamp():
     assert contract.TIMESTAMP_RE.fullmatch(kit.utc_now())
+
+
+EPYC = "processor\t: 0\nmodel name\t: AMD EPYC 9B14\n"
+ARM = "processor\t: 0\nFeatures\t: fp asimd\n"  # arm64 /proc/cpuinfo has no model name
+
+
+@pytest.mark.parametrize(
+    ("system", "cpuinfo", "sysctl", "processor", "arch", "cpu"),
+    [
+        ("linux", EPYC, None, "", "x86_64", "AMD EPYC 9B14"),
+        ("linux", ARM, None, "", "aarch64", "aarch64"),
+        ("linux", OSError, None, "", "aarch64", "aarch64"),  # no /proc
+        ("darwin", None, "Apple M5\n", "arm", "arm64", "Apple M5"),
+        ("darwin", None, OSError, "arm", "arm64", "arm"),  # no sysctl
+        ("linux", OSError, None, "", "", "unknown"),
+    ],
+)
+def test_machine_cpu_from_the_host_with_its_fallbacks(
+    monkeypatch, system, cpuinfo, sysctl, processor, arch, cpu
+):
+    def read_text(path):
+        assert str(path) == "/proc/cpuinfo"
+        if cpuinfo is OSError:
+            raise OSError("no /proc")
+        return cpuinfo
+
+    def run(argv, **_kw):
+        assert argv[:2] == ["sysctl", "-n"]
+        if sysctl is OSError:
+            raise OSError("no sysctl")
+        return subprocess.CompletedProcess(argv, 0, sysctl, "")
+
+    monkeypatch.setattr(kit.sys, "platform", system)
+    monkeypatch.setattr(kit.Path, "read_text", read_text)
+    monkeypatch.setattr(kit.subprocess, "run", run)
+    monkeypatch.setattr(kit.platform, "processor", lambda: processor)
+    monkeypatch.setattr(kit.platform, "machine", lambda: arch)
+    assert kit.machine()["cpu"] == cpu
 
 
 def test_machine_copies_perf_machine_json(tmp_path, monkeypatch):
@@ -264,6 +315,10 @@ def test_correctness_status(tmp_path, candidate, baseline, status):
         (2.0, 1.0, 2.0, 0.0, "higher_is_worse", 0),  # ratio == threshold: not past it
         (2.1, 1.0, 2.0, 1.1, "higher_is_worse", 0),  # difference == floor: not past it
         (2.2, 1.0, 2.0, 1.1, "higher_is_worse", 1),
+        (0.9, 0.3, 3.0, 0.1, "higher_is_worse", 0),  # 0.9 / 0.3 is 3.0; 3.0 * 0.3 < 0.9
+        (0.9, 0.6, 1.5, 0.1, "higher_is_worse", 0),  # the same at 1.5x
+        (0.3, 0.9, 3.0, 0.1, "higher_is_worse", 0),  # and on the improvement side
+        (3668, 1310, 2.8, 2000, "higher_is_worse", 0),  # micro-hw's 2.8x tier: exactly 2.8
         (30.0, 10.0, 2.0, 25.0, "higher_is_worse", 0),  # 3x, but only 20 ms
         (1.0, 3.0, 2.0, 0.0, "higher_is_worse", -1),
         (1.0, 3.0, 2.0, 0.0, "lower_is_worse", 1),  # throughput fell to a third
@@ -994,6 +1049,7 @@ def test_wait_ping_waits_out_loading(docker, monkeypatch):
         with contextlib.suppress(OSError):
             socket.create_connection(("127.0.0.1", server.port), timeout=1).close()
             break
+        assert time.monotonic() - started < 10, f"never listened: {kit.state('kit-a')}"
         time.sleep(0.05)
     assert not kit.ping(server.port)  # -LOADING is not an answer
     assert kit.wait_ping(server.port, 10, server)
@@ -1011,23 +1067,27 @@ def test_ping_is_one_request_and_false_on_a_closed_connection():
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
-        port = listener.getsockname()[1]
+        listener.settimeout(5)  # a ping that never connects fails the test, not hangs it
+        port, received = listener.getsockname()[1], []
 
         def close_one():
             connection, _ = listener.accept()
-            connection.recv(64)
-            connection.close()
+            with connection:
+                connection.settimeout(5)
+                received.append(connection.recv(64))
 
-        thread = threading.Thread(target=close_one)
+        thread = threading.Thread(target=close_one, daemon=True)
         thread.start()
         assert not kit.ping(port, timeout=2)
-        thread.join()
+        thread.join(10)
+        assert received == [b"*1\r\n$4\r\nPING\r\n"]  # one PING, then the close
 
 
 def test_ping_keeps_one_deadline_against_a_reply_that_never_ends():
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
+        listener.settimeout(5)
         port, done = listener.getsockname()[1], threading.Event()
 
         def trickle():
@@ -1039,13 +1099,13 @@ def test_ping_keeps_one_deadline_against_a_reply_that_never_ends():
                     connection.sendall(b"+")
                     time.sleep(0.2)
 
-        thread = threading.Thread(target=trickle)
+        thread = threading.Thread(target=trickle, daemon=True)
         thread.start()
         started = time.monotonic()
         assert not kit.ping(port, timeout=1.0)
         assert time.monotonic() - started < 2
         done.set()
-        thread.join()
+        thread.join(10)
 
 
 def test_remove_tolerates_a_container_that_is_gone(docker):

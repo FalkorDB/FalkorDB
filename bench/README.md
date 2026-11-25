@@ -284,29 +284,38 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="bench example")
     kit.add_args(parser)
     args = parser.parse_args(argv)
-    started, findings, run_id = kit.utc_now(), [], str(os.getpid())
+    started, run_id = kit.utc_now(), str(os.getpid())
     cpus = os.environ.get("PERF_SERVER_CPUS")
+    up, ports, p50 = {}, {}, []  # filled as work() goes; build() judges what it reached
 
     def work():
         if kit.input_errors(args):
             return  # result() reports them; nothing is pulled
-        up, times = {}, {}
         for side in kit.SIDES:
             image = getattr(args, side)
             kit.pull(image)
             server = kit.start(image, f"ex-{side}-{run_id}", labels={"ex": run_id}, cpus=cpus)
-            up[side] = int(kit.wait_ping(server.port, 120, server))
-            times[side] = measure_p50_ms(server.port) if up[side] else None  # the check's own
-        c, b = up["candidate"], up["baseline"]  # a server that never answers: completed 0
-        status = kit.correctness_status(c, b)
-        findings.append(kit.finding("up", "completed", c, b, status, direction="lower_is_worse"))
-        if c and b:
-            c, b = times["candidate"], times["baseline"]
-            status = {1: "regression", -1: "improvement", 0: "ok"}[kit.crossed(c, b, 1.5, 2.0)]
-            findings.append(kit.finding("q1", "p50_ms", c, b, status, threshold=1.5))  # + re-run
+            up[side], ports[side] = int(kit.wait_ping(server.port, 120, server)), server.port
+        if all(up.values()):
+            for order in (kit.SIDES, kit.SIDES[::-1]):  # the re-run swaps the order
+                times = {side: measure_p50_ms(ports[side]) for side in order}  # the check's own
+                p50.append((times["candidate"], times["baseline"]))
 
     def build(error):
-        summary = f"{len(findings)} rows compared"
+        findings = []
+        if up:  # a server that never answered is completed 0, even if the run then failed
+            c, b = up.get("candidate"), up.get("baseline")
+            status = kit.correctness_status(c, b)
+            findings.append(
+                kit.finding("up", "completed", c, b, status, direction="lower_is_worse")
+            )
+        if p50:
+            crossings = [kit.crossed(c, b, 1.5, 2.0) for c, b in p50]
+            status = {1: "regression", -1: "improvement", 0: "ok"}[crossings[0]]
+            if crossings[0] and crossings[1:] != [crossings[0]]:
+                status = "info"  # the re-run did not repeat it: not confirmed
+            findings.append(kit.finding("q1", "p50_ms", *p50[0], status, threshold=1.5))
+        summary = f"{len(p50)} passes compared"
         return kit.result(
             "ex", args, started=started, findings=findings, summary=summary, errors=[error]
         )
