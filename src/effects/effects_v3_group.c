@@ -589,7 +589,7 @@ static int _cmp_attr_pair(const void *a, const void *b) {
 // Deliberately NOT an assert: ASSERT aborts, and this is the replication path,
 // so on data the encoder can now handle correctly, taking the process down is
 // the worse failure. It also makes the collapse untestable.
-static uint16_t _sort_attrs
+static uint16_t _sort_dedup_attrs
 (
 	AttrPair *out,               // n pairs
 	const AttributeID *attr_ids, // ids, any order
@@ -669,7 +669,7 @@ void EffectsV3Grouping_AddNode
 
 	if(n_attrs > 0) {
 		// the count can SHRINK here: a repeated id is collapsed
-		n_attrs = _sort_attrs(ap, attr_ids, values, n_attrs);
+		n_attrs = _sort_dedup_attrs(ap, attr_ids, values, n_attrs);
 		for(uint16_t i = 0; i < n_attrs; i++) {
 			sorted_ids[i] = ap[i].id;
 		}
@@ -721,7 +721,7 @@ void EffectsV3Grouping_AddEdge
 
 	if(n_attrs > 0) {
 		// the count can SHRINK here: a repeated id is collapsed
-		n_attrs = _sort_attrs(ap, attr_ids, values, n_attrs);
+		n_attrs = _sort_dedup_attrs(ap, attr_ids, values, n_attrs);
 		for(uint16_t i = 0; i < n_attrs; i++) {
 			sorted_ids[i] = ap[i].id;
 		}
@@ -1473,10 +1473,17 @@ static void _schema_refs_free
 
 // append one (id, name) to a record's field list
 //
-// GROWN BY ONE, not doubled: the record type carries a count and no capacity
-// beside it, so a capacity would have to live somewhere the record cannot see
-// and be kept in step by hand. A statement names a handful of fields, and this
-// runs once per field at statement time
+// A PLAIN REALLOC AND NOT arr_*, because this is not the only producer of that
+// field: the decoder builds the same EffectsV3AttrRef list with rm_calloc
+// (effects_v3_decode.c), and one free path releases a record whichever side
+// built it. An arr_ array carries a header before the data and has to be freed
+// as one, so mixing the two is a wild free, and the record type has nowhere to
+// record which kind it holds.
+//
+// GROWN BY ONE, not doubled: the record carries a count and no capacity beside
+// it, so a capacity would have to live somewhere the record cannot see and be
+// kept in step by hand. A statement names a handful of fields, and this runs
+// once per field at statement time
 static void _append_attr_ref
 (
 	EffectsV3AttrRef **attrs,  // the list to extend, NULL when empty
@@ -1644,9 +1651,6 @@ void EffectsV3Grouping_AddIndexField
 	// statement's language reached no record at all; and a range index over a
 	// label made a fulltext index over the same label look like a continuation
 	// of it, so the fulltext index lost options the primary kept.
-	// WHAT "ONCE" MEANS. Not "an earlier record exists" but "a record for THIS
-	// index already states this option", which is the only thing that makes a
-	// repeat a repeat.
 	//
 	// SCANNED WHOLE BEFORE ANYTHING IS DECIDED, because a field folds into the
 	// FIRST record whose field-level options match, which may sit earlier than
