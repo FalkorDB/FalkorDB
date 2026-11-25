@@ -1145,3 +1145,19 @@ def test_rank_puts_the_worst_first_within_a_status():
     ]
     assert [f["name"] for f in pokec.rank(rows)] == ["q2", "q3", "q1"]
     assert all(not k.startswith("_") for f in pokec.rank(rows) for k in f)
+
+
+def test_a_re_run_with_one_unmeasured_run_does_not_confirm():
+    slow = {
+        "workload": "read",
+        "overrides": {"single_vertex_read": {"p50_ms": 10.0, "p95_ms": 50.0, "p99_ms": 300.0}},
+    }
+    read = {"workload": "read"}
+    runs = pass_runs(1, 3, candidate=slow, baseline=read) + pass_runs(
+        2, 2, candidate=slow, baseline=read
+    )
+    rerun_base = [r for r in runs if r.pass_no == 2 and r.side == "baseline"]
+    rerun_base[0].per_query.pop("single_vertex_read")  # all its requests timed out in that run
+    analysis = analyse(runs, rerun_done={("medium", "read")})
+    assert not statuses(analysis, "regression")  # one measured re-run run is not the re-run
+    assert any("single_vertex_read [read-only] p99_ms" in u for u in analysis.unmeasured)

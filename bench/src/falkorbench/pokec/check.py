@@ -1169,8 +1169,11 @@ def analyse(
                 direction,
             )
             # Only the full re-run confirms: one pair of an interrupted re-run is not it.
+            # Every run of it must have measured this row: a median of the one run that did is
+            # not the re-run (a run whose requests of the query all failed has no value).
             has_second = all(
-                sum(1 for r in finished[side] if r.pass_no == 2) >= mode.rerun_reps
+                sum(1 for r in finished[side] if r.pass_no == 2 and getter(r) is not None)
+                >= mode.rerun_reps
                 for side in ("candidate", "baseline")
             )
             # A re-run with no value for this row (e.g. every request of the query failed on
