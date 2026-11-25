@@ -285,6 +285,12 @@ def test_finding_nulls_what_json_cannot_hold_and_ratios_that_mean_nothing():
     json.dumps([nan, done], allow_nan=False)
 
 
+def test_finding_ratio_comes_from_the_unrounded_measurements():
+    f = kit.finding("q", "p50_ms", 0.018518, 0.0123454, "info")
+    assert f["ratio"] == 1.499992  # rounded inputs would say 1.500041
+    assert kit.finding("q", "p50_ms", 1e-7, 4e-7, "info")["ratio"] == 0.25
+
+
 @pytest.mark.parametrize(
     ("candidate", "baseline", "status"),
     [
@@ -1002,7 +1008,15 @@ def test_a_host_network_port_held_by_a_silent_listener_is_refused(docker):
         port = listener.getsockname()[1]
         with pytest.raises(kit.DockerError, match=f"port {port} already has a server"):
             kit.start(V621, "kit-a", command=["--port", str(port)], port=port, host_network=True)
-    assert not (docker / "calls.jsonl").exists()
+    assert not calls(docker, "run")
+
+
+def test_a_leftover_of_the_same_name_holding_the_port_is_removed_first(docker):
+    port = free_port()
+    kit.start(V621, "kit-a", command=["--port", str(port)], port=port, host_network=True)
+    assert kit.wait_ping(port, 10)
+    kit.start(V621, "kit-a", command=["--port", str(port)], port=port, host_network=True)
+    assert [argv[2] for argv in calls(docker, "run")] == ["kit-a", "kit-a"]
 
 
 def test_a_host_network_port_that_already_answers_is_refused(docker):

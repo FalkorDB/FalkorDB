@@ -303,6 +303,9 @@ def main(argv=None) -> int:
 
     def build(error):
         findings = []
+        errors = [error]
+        if up and not all(up.values()):  # a side that never answered is not a comparison
+            errors.append(f"not every server answered: {up}")
         if up:  # a server that never answered is completed 0, even if the run then failed
             c, b = up.get("candidate"), up.get("baseline")
             status = kit.correctness_status(c, b)
@@ -317,7 +320,7 @@ def main(argv=None) -> int:
             findings.append(kit.finding("q1", "p50_ms", *p50[0], status, threshold=1.5))
         summary = f"{len(p50)} passes compared"
         return kit.result(
-            "ex", args, started=started, findings=findings, summary=summary, errors=[error]
+            "ex", args, started=started, findings=findings, summary=summary, errors=errors
         )
 
     kit.run_check("ex", args, work, build, cleanup=lambda: kit.remove_labelled(f"ex={run_id}"))

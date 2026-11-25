@@ -170,9 +170,10 @@ def finding(
 ) -> dict:
     """One finding. `ratio` defaults to candidate / baseline; none for a 0/1 metric
     or a zero baseline. NaN and infinity become null (JSON has neither)."""
+    if ratio is None and candidate is not None and baseline:  # from the unrounded values
+        quotient = float(candidate) / float(baseline)
+        ratio = quotient if math.isfinite(quotient) else None
     candidate, baseline = _number(candidate), _number(baseline)
-    if ratio is None and candidate is not None and baseline:
-        ratio = candidate / baseline
     if metric in ("completed", "invariant"):
         ratio = None
     return {
@@ -501,9 +502,9 @@ def start(
         raise ValueError("a foreground server needs host_network: its port is known up front")
     if host_network and port == 6379:
         raise ValueError("on the host network the server needs its own port: never 6379")
+    remove(name)  # a container left by an earlier run under the same name (it may hold the port)
     if host_network and _listening(port):
         raise DockerError(f"port {port} already has a server (a stale run?); remove it first")
-    remove(name)  # a container left by an earlier run under the same name
     argv = ["run", "--name", name, *([] if foreground else ["--detach"])]
     argv += [x for k, v in (labels or {}).items() for x in ("--label", f"{k}={v}")]
     argv += [x for k, v in (env or {}).items() for x in ("--env", f"{k}={v}")]
