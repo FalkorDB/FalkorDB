@@ -31,10 +31,10 @@ for word in "${words[@]}"; do
   cmd+=("$word")
 done
 args=(--candidate "$CANDIDATE" --baseline "$BASELINE" --out out --mode "$MODE")
-if [[ -n ${CANDIDATE_LABEL:-} ]]; then args+=(--candidate-label "$CANDIDATE_LABEL"); fi
-if [[ -n ${BASELINE_LABEL:-} ]]; then args+=(--baseline-label "$BASELINE_LABEL"); fi
-if [[ -n ${CANDIDATE_COMMIT:-} ]]; then args+=(--candidate-commit "$CANDIDATE_COMMIT"); fi
-if [[ -n ${BASELINE_COMMIT:-} ]]; then args+=(--baseline-commit "$BASELINE_COMMIT"); fi
+if [[ -n ${CANDIDATE_LABEL:-} ]]; then args+=("--candidate-label=$CANDIDATE_LABEL"); fi
+if [[ -n ${BASELINE_LABEL:-} ]]; then args+=("--baseline-label=$BASELINE_LABEL"); fi
+if [[ -n ${CANDIDATE_COMMIT:-} ]]; then args+=("--candidate-commit=$CANDIDATE_COMMIT"); fi
+if [[ -n ${BASELINE_COMMIT:-} ]]; then args+=("--baseline-commit=$BASELINE_COMMIT"); fi
 
 pin=()
 if [[ -n ${PERF_CLIENT_CPUS:-} ]]; then pin=(taskset -c "$PERF_CLIENT_CPUS"); fi

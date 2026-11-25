@@ -526,7 +526,12 @@ class RunCheckTest(unittest.TestCase):
         self.assertEqual(out["command_exit"], "0")
         self.assertEqual(argv, ["--candidate", "c@sha256:" + "1" * 64, "--baseline", "b@sha256:" + "2" * 64,
                                 "--out", "out", "--mode", "nightly",
-                                "--candidate-label", "main@4c10889", "--baseline-label", "6.2.0"])
+                                "--candidate-label=main@4c10889", "--baseline-label=6.2.0"])
+
+    def test_dash_prefixed_label_stays_one_argument(self):
+        proc, _, argv = self.run_check("bash {dir}/record.sh", CANDIDATE_LABEL="--release")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("--candidate-label=--release", argv)
 
 
 class ScriptModeTest(unittest.TestCase):
