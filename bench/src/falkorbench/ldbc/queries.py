@@ -1,7 +1,7 @@
 """The 14 Interactive v1 complex reads, and the parameters they are run with.
 
 The query texts are vendored verbatim from
-`ldbc/ldbc_snb_interactive_v1_impls` (`cypher/queries/`), with four rewrites
+`ldbc/ldbc_snb_interactive_v1_impls` (`cypher/queries/`), with five rewrites
 that FalkorDB's dialect requires. Each rewrite is commented in the `.cypher`
 file next to the line it replaces, and `REWRITES` below records them in one
 place so a report can state exactly how far the run departs from upstream.
@@ -29,12 +29,8 @@ COMPLEX_READS = tuple(range(1, 15))
 #: without reading the diff.
 REWRITES: dict[int, str] = {
     1: "shortestPath() moved from MATCH into WITH (unsupported in MATCH)",
-    6: "inline id filter on :Tag moved into WHERE (works around a wrong-result "
-    "bug under UNWIND; see the note in the query)",
     7: "not(<traversal pattern>) replaced by size(<pattern>) = 0 "
     "(a pattern is not a boolean-valued expression in a projection)",
-    9: "collect(distinct ...) + UNWIND replaced by WITH DISTINCT (works around "
-    "a silent zero-rows bug; see the note in the query)",
     10: "datetime({epochMillis: ...}).month/.day replaced by loader-derived "
     "birthdayMonth/birthdayDay properties (no temporal type)",
     13: "shortestPath() moved from MATCH into WITH (unsupported in MATCH)",

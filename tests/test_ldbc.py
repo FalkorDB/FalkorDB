@@ -1,5 +1,4 @@
 import os
-import shutil
 import subprocess
 
 import common
@@ -7,12 +6,9 @@ import common
 
 def download_ldbc_data(filename):
     if not os.path.exists(f"data/{filename}"):
-        # datasets.ldbcouncil.org, not repository.surfsara.nl: the SURF host no
-        # longer completes a TLS handshake at all (curl reports http=000), so
-        # this download could never succeed from it.
-        url = f"https://datasets.ldbcouncil.org/snb-interactive-v1/{filename}"
+        url = f"https://repository.surfsara.nl/datasets/cwi/ldbc-snb-interactive-v1-datagen-v100/files/{filename}"
         subprocess.run(
-            ["wget", url, "-O", filename],
+            ["wget", "--no-check-certificate", url, "-O", filename],
             check=True,
             stdin=subprocess.PIPE,
             cwd="data",
@@ -353,43 +349,12 @@ edge_files = [
 ]
 
 
-def rewrite_self_edge_header(path, from_id, to_id):
-    """Give a self-referencing edge file distinct endpoint column names.
-
-    These files are headed `Person.id|Person.id`; parsed into a per-row map the
-    second column shadows the first, so both endpoints resolve to the same node
-    and every edge becomes a self-loop.
-
-    Done in Python rather than with `sed -i ""`, which is the BSD/macOS spelling
-    — GNU sed reads the `""` as the script and exits 2, so this only ever worked
-    on macOS. Only the header line is rewritten; the body is copied unchanged.
-    """
-    if not os.path.exists(path):
-        raise FileNotFoundError(path)
-
-    with open(path, newline="") as f:
-        header = f.readline()
-        body_offset = f.tell()
-
-    fields = header.rstrip("\r\n").split("|")
-    if fields[:2] == [from_id, to_id]:
-        return
-    fields[:2] = [from_id, to_id]
-
-    tmp = f"{path}.tmp"
-    with open(path, "rb") as src, open(tmp, "wb") as dst:
-        dst.write(("|".join(fields) + "\n").encode())
-        src.seek(body_offset)
-        shutil.copyfileobj(src, dst)
-    os.replace(tmp, path)
-
-
 def test_load_csv():
     total_time = 0
     for file in node_files:
         common.g.query(f"CREATE INDEX FOR (n:{file['label']}) ON (n.id)")
         query = f"""
-            LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|'
+            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
             RETURN count(row)
             """
         res = common.g.query(
@@ -403,7 +368,7 @@ def test_load_csv():
             f"{key}: {value}" for key, value in file["properties"].items()
         )
         query = f"""
-            LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|'
+            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
             CREATE (:{file['label']} {{{properties_str}}})
             """
         res = common.g.query(
@@ -418,11 +383,15 @@ def test_load_csv():
 
     for file in edge_files:
         if file["from_label"] == file["to_label"]:
-            rewrite_self_edge_header(
-                f"data/{base_path}/{file['file']}", file["from_id"], file["to_id"]
-            )
+            with open(f"data/{base_path}/{file['file']}") as f:
+                line = f.readline().split("|")
+                line[0] = file["from_id"]
+                line[1] = file["to_id"]
+                line = "|".join(line)
+                line = line.replace("\n", "")
+                subprocess.run(["sed", "-i", "", f"1s/.*/{line}/", f"data/{base_path}/{file['file']}"], check=True)
         query = f"""
-            LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|'
+            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
             RETURN count(row)
             """
         res = common.g.query(
@@ -436,7 +405,7 @@ def test_load_csv():
             f"{key}: {value}" for key, value in file["properties"].items()
         )
         query = f"""
-            LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|'
+            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
             MATCH (f:{file['from_label']} {{id: toInteger(row.`{file['from_id']}`)}})
             WITH f, row
             MATCH (t:{file['to_label']} {{id: toInteger(row.`{file['to_id']}`)}})

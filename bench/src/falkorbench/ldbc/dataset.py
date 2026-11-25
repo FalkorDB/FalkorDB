@@ -10,19 +10,16 @@ unavoidable rather than stylistic:
 * **Derived birthday parts.** IC10 needs the month and day of a person's
   birthday and FalkorDB has no `datetime()`, so two columns are appended.
 
-Both are done by rewriting the file once, in Python. The pre-existing
-`tests/test_ldbc.py` used `sed -i "" ...` for the header rewrite, which is the
-BSD/macOS spelling and exits 2 under GNU sed — so that path only ever worked on
-one platform.
-
-Files are rewritten in place and a marker file records that it happened, so a
-re-run is a no-op rather than double-appending columns.
+Both are done by rewriting the file once, in Python. Files are rewritten in
+place and a marker file records that it happened, so a re-run is a no-op
+rather than double-appending columns.
 """
 
 from __future__ import annotations
 
 import csv
 import datetime as dt
+import os
 import shutil
 import subprocess
 import tarfile
@@ -57,12 +54,20 @@ def fetch(cache: Path, sf: str, *, echo: Echo = print) -> Path:
     if sf not in schema.SCALE_FACTORS:
         raise DatasetError(f"unknown scale factor {sf!r}; known: {', '.join(schema.SCALE_FACTORS)}")
 
+    cache.mkdir(parents=True, exist_ok=True)
+    # The cache itself is the server's IMPORT_FOLDER (bind-mounted at
+    # /import), so the server's user must be able to search it even under a
+    # umask of 077. Only group/other read and search are added, also on a
+    # cache the caller supplied; nothing else about it changes.
+    try:
+        cache.chmod(cache.stat().st_mode | 0o055)
+    except OSError as e:
+        raise DatasetError(f"could not make the cache {cache} readable: {e}") from e
     target = dataset_dir(cache, sf)
     if target.is_dir():
         echo(f"dataset already extracted: {target}")
         return target
 
-    cache.mkdir(parents=True, exist_ok=True)
     tarball = cache / schema.DATASET_TARBALL.format(sf=sf)
     expected = schema.SCALE_FACTORS[sf]
 
@@ -86,10 +91,43 @@ def fetch(cache: Path, sf: str, *, echo: Echo = print) -> Path:
         part.rename(tarball)
 
     echo(f"extracting {tarball.name}...")
-    _extract_zst(tarball, cache)
-    if not target.is_dir():
-        raise DatasetError(f"{tarball.name} did not contain {target.name}")
+    # Into a scratch directory first, renamed into place only once complete:
+    # `target` existing is what marks the dataset as extracted, so a run
+    # stopped mid-extraction must not leave a partial tree under that name.
+    scratch = cache / f".extracting-{target.name}"
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir()
+    try:
+        _extract_zst(tarball, scratch)
+        if not (scratch / target.name).is_dir():
+            raise DatasetError(f"{tarball.name} did not contain {target.name}")
+        _readable_by_all(scratch / target.name)
+        (scratch / target.name).rename(target)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
     return target
+
+
+def _readable_by_all(root: Path) -> None:
+    """Directories 0755, files readable by everyone, whatever the umask.
+
+    The server that reads the dataset runs as another user (uid 999 in the
+    container). Under a umask such as 077, `tarfile` creates directories
+    0700 even with `filter="data"`, so the tree is opened up before it is
+    published; nothing gains write or execute it did not have.
+    """
+    try:
+        for dirpath, _dirnames, filenames in os.walk(root):
+            os.chmod(dirpath, 0o755)
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                os.chmod(path, (os.stat(path).st_mode & 0o7755) | 0o444)
+    except OSError as e:
+        raise DatasetError(f"could not make {root} readable: {e}") from e
+
+
+#: Seconds a download may go without receiving a byte before it fails.
+_DOWNLOAD_STALL_S = 120
 
 
 def _download(url: str, dest: Path) -> None:
@@ -100,7 +138,10 @@ def _download(url: str, dest: Path) -> None:
     `Python-urllib/3.x` with 403 while serving the same URL to curl.
     """
     request = urllib.request.Request(url, headers={"User-Agent": "falkorbench-ldbc/1.0"})
-    with urllib.request.urlopen(request) as response, dest.open("wb") as fh:
+    with (
+        urllib.request.urlopen(request, timeout=_DOWNLOAD_STALL_S) as response,
+        dest.open("wb") as fh,
+    ):
         shutil.copyfileobj(response, fh)
 
 
@@ -110,21 +151,35 @@ def _extract_zst(tarball: Path, dest: Path) -> None:
     Python's tarfile has no zstd support before 3.14, so decompression goes
     through the `zstd` binary and only the tar step is done in-process.
     """
+    if not hasattr(tarfile, "data_filter"):
+        # The data filter arrived in Python 3.11.4 (Debian 12 ships 3.11.2).
+        # Without it an archive could write outside the cache; stop instead.
+        raise DatasetError("extracting the LDBC dataset safely needs Python 3.11.4 or newer")
     if not shutil.which("zstd"):
         raise DatasetError("`zstd` not found on PATH; install zstd to extract the dataset")
+    proc: subprocess.Popen[bytes] | None = None
     try:
         proc = subprocess.Popen(
             ["zstd", "--decompress", "--stdout", str(tarball)],
             stdout=subprocess.PIPE,
         )
         with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
-            # `filter="data"` refuses absolute paths and ../ escapes. Default in
-            # 3.14; set explicitly so behaviour does not depend on the runtime.
+            # `filter="data"` refuses absolute paths, ../ escapes and links that escape,
+            # and strips setuid and group/other write.
             tar.extractall(dest, filter="data")
         if proc.wait() != 0:
             raise DatasetError(f"zstd exited {proc.returncode}")
     except (OSError, tarfile.TarError) as e:
         raise DatasetError(f"extracting {tarball.name} failed: {e}") from e
+    finally:
+        # A refusal or a read error stops reading mid-stream; don't leave
+        # zstd blocked on a full pipe.
+        if proc is not None:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            if proc.stdout is not None:
+                proc.stdout.close()
 
 
 def prepare(root: Path, *, echo: Echo = print) -> None:
@@ -138,12 +193,18 @@ def prepare(root: Path, *, echo: Echo = print) -> None:
         echo("dataset already prepared")
         return
 
-    for edge in schema.EDGE_FILES:
-        if edge.from_label == edge.to_label:
-            _rewrite_header(root / edge.file, [edge.from_id, edge.to_id])
+    try:
+        for edge in schema.EDGE_FILES:
+            if edge.from_label == edge.to_label:
+                _rewrite_header(root / edge.file, [edge.from_id, edge.to_id])
 
-    _derive_birthday_parts(root / "dynamic/person_0_0.csv")
-    marker.write_text(_MARKER_VERSION + "\n")
+        _derive_birthday_parts(root / "dynamic/person_0_0.csv")
+        marker.write_text(_MARKER_VERSION + "\n")
+    except OSError as e:
+        # A full disk or a permission problem is a dataset that is not ready,
+        # reported like every other one. The per-file guards make a retry
+        # pick up where this stopped.
+        raise DatasetError(f"preparing {root.name} failed: {e}") from e
     echo(f"prepared {root.name}")
 
 
@@ -157,11 +218,14 @@ def _rewrite_header(path: Path, names: list[str]) -> None:
     if not path.exists():
         raise DatasetError(f"missing dataset file: {path}")
 
-    with path.open("r", encoding="utf-8", newline="") as fh:
-        header = fh.readline()
-        if not header:
+    # Binary, so `tell()` is a byte offset: a text-mode `tell()` is an opaque
+    # cookie, not a position the binary copy below may seek to.
+    with path.open("rb") as fh:
+        raw = fh.readline()
+        if not raw:
             raise DatasetError(f"empty dataset file: {path}")
         rest_offset = fh.tell()
+    header = raw.decode("utf-8")
 
     fields = header.rstrip("\r\n").split("|")
     if len(fields) < len(names):
@@ -176,6 +240,7 @@ def _rewrite_header(path: Path, names: list[str]) -> None:
         dst.write(new_header.encode("utf-8"))
         src.seek(rest_offset)
         shutil.copyfileobj(src, dst)
+    shutil.copymode(path, tmp)  # not the umask's: the server reads it as another user
     tmp.replace(path)
 
 
@@ -212,4 +277,5 @@ def _derive_birthday_parts(path: Path) -> None:
                 raise DatasetError(f"{path.name}: bad birthday in row {row[:1]}: {e}") from e
             date = dt.datetime.fromtimestamp(millis / 1000, tz=dt.UTC)
             writer.writerow([*row, date.month, date.day])
+    shutil.copymode(path, tmp)  # not the umask's: the server reads it as another user
     tmp.replace(path)

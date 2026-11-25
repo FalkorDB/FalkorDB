@@ -554,7 +554,7 @@ about 2.
 | `src/falkorbench/pokec/` | `bench pokec`, the nightly Pokec check (FalkorDB/benchmark under concurrent writes); its README is there |
 | `src/falkorbench/nightly/` | `bench nightly`: the night's report (Chat line and run page) and the missed-run alarm |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
-| `src/falkorbench/ldbc/` | LDBC SNB Interactive v1 — dataset fetch/prepare, loader, parameters, runner, and the vendored query texts |
+| `src/falkorbench/ldbc/` | LDBC SNB Interactive v1 — dataset fetch/prepare, loader, parameters, the nightly check, and the vendored query texts |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
 | `pmc_tool.c` | Apple Silicon PMU counters (kperf/kperfdata private frameworks) |
 | `acceptance.yaml` | the nightly perf checks' acceptance pairs |
@@ -637,6 +637,8 @@ Three deliberate deviations:
 CLAUDE.md) is p99 latency. `redis-benchmark` computes a latency distribution and
 this harness currently discards it, so the p99 bar is not measured here yet.
 
+## Known gaps
+
 One structural gap is worth recording because closing it needs a design decision
 rather than a patch: the MVCC copy-on-write `GrB_Matrix_dup` of delta matrices in
 `create_nodes` / `set_nodes_labels_bulk` waits on pending work first, so it scales
@@ -665,19 +667,8 @@ Network Benchmark, run against the real SNB dataset. The micro-benchmark set
 above measures narrow operations on a synthetic ring; these measure whole
 realistic queries — multi-hop traversals, aggregation, `OPTIONAL MATCH`,
 variable-length paths — on a graph with realistic degree skew. A planner
-regression that a single-op query cannot see tends to show up here.
-
-```bash
-bench ldbc fetch --sf 0.1                 # download + prepare (~18 MB)
-bench ldbc run --sf 0.1                   # load, then measure all 14
-bench ldbc run --sf 1 IC1 IC13            # a subset, at SF1 (~230 MB)
-bench ldbc run --params ./substitution_parameters   # official parameters
-```
-
-Results go to `results/ldbc_sf<SF>.csv` (p50/p95/p99 per query) and are
-deliberately **not** merged into `results/current.csv`: LDBC's metric is
-response time, and mixing it into the file the `compare` thresholds gate would
-distort the micro-benchmark gate.
+regression that a single-op query cannot see tends to show up here. It runs as
+`bench ldbc check`, one of the nightly perf checks (below).
 
 ### This is not an auditable LDBC result
 
@@ -687,10 +678,10 @@ membership, and an audit commissioned from a certified auditor. What this gives
 you is an internal, repeatable number on a standard dataset and standard
 queries.
 
-### Seven queries differ from the reference text
+### Five queries differ from the reference text
 
 Each departure is annotated in the `.cypher` file next to the line it replaced,
-and listed in `ldbc/queries.py::REWRITES` so a run always prints them. All seven
+and listed in `ldbc/queries.py::REWRITES` so a run always prints them. All five
 were confirmed against a running engine, and each was checked against the C
 engine too so that a genuine bug is not filed away as a dialect gap:
 
@@ -700,12 +691,15 @@ engine too so that a genuine bug is not filed away as a dialect gap:
 | IC14 | `allShortestPaths()` with inline endpoint patterns → *"Source and destination must already be resolved"*. Endpoints pre-bound in a preceding `MATCH`. Also, a pattern comprehension's `WHERE` cannot see the enclosing list comprehension's variable, so the per-relationship weights are computed over `UNWIND`ed relationships with their endpoints hoisted into plain variables. |
 | IC10 | `datetime({epochMillis: ...}).month` → *"Unknown function 'datetime'"*. The loader derives `birthdayMonth`/`birthdayDay` instead. |
 | IC7 | `not((liker)-[:KNOWS]-(person))` → *"Type mismatch: expected Boolean or Null but was List"*. A traversal pattern is not a boolean-valued expression in a projection, and `exists()` explicitly refuses traversal patterns, so this becomes `size(<pattern>) = 0`. |
-| IC6 | **A bug, not a dialect gap.** An inline property filter on a pattern followed by further patterns fails under `UNWIND` with *"Type mismatch: expected Map, Node, Edge, ... but was List"*; the C engine runs it correctly. The filter moves into `WHERE`. Tracked as [#2556](https://github.com/FalkorDB/FalkorDB/issues/2556) — revert when fixed. |
-| IC9 | **A bug, not a dialect gap.** A `WHERE` on a node reached from an `UNWIND`-bound anchor silently returns zero rows — no error, just nothing, while the same query without the `WHERE` returns 81,897. The C engine is correct. `WITH DISTINCT` in place of `collect(DISTINCT ...)` + `UNWIND` avoids it. Tracked as [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) — revert when fixed. |
 
-IC1, IC7, IC13 and IC14 fail identically on the C engine, so those four are
-dialect gaps rather than regressions. IC6 and IC9 look like the same kind of
-thing and are not: both run correctly on C. That distinction only exists because
+In their upstream form, IC1, IC7, IC13 and IC14 fail identically on the C
+engine, so those four are dialect gaps rather than regressions. With the
+rewrites, C runs IC7 but still not IC1, IC13 or IC14, nor IC10 (the nightly
+check below lists each error). IC6 and IC9 were rewritten too at first,
+and were not dialect gaps: both ran correctly on C and hit two Rust
+wrong-result bugs ([#2556](https://github.com/FalkorDB/FalkorDB/issues/2556),
+[#2557](https://github.com/FalkorDB/FalkorDB/issues/2557)). Both are fixed, and
+both queries run the upstream text again. That distinction only exists because
 every failure was re-checked against `falkordb/falkordb-server:edge-c` before
 being classified — without that step two real regressions would have been
 written off as dialect gaps, and two dialect gaps filed as false bugs.
@@ -719,60 +713,130 @@ note `db.constraints()` reports `UNDER CONSTRUCTION`, never `PENDING`).
 The CSVs are pipe-separated. FalkorDB has no `DELIMITER` keyword — the
 standard-Cypher spelling is `FIELDTERMINATOR`, and it goes *after* `AS <var>`.
 
+### The nightly check: `bench ldbc check`
+
+The nightly perf run (epic #3974) compares main's newest image with the latest
+release through several independent checks; this is the LDBC one. It is one
+command, with the contract every nightly check shares:
+
+```bash
+uv run --project bench bench ldbc check \
+  --candidate ghcr.io/falkordb/falkordb-server@sha256:… \
+  --baseline falkordb/falkordb-server@sha256:… \
+  --out out --mode nightly \
+  [--candidate-label main@4c10889] [--baseline-label 6.2.0] \
+  [--candidate-commit <40 hex>] [--baseline-commit <40 hex>]
+```
+
+Both arguments are images pinned by digest, and nothing is compiled: each image
+runs as its own server in docker (its own redis or valkey and allocator),
+side by side on this machine, on ports docker picks (never 6379). The dataset is
+bind-mounted read-only as the module's `IMPORT_FOLDER`. On the VM the servers
+are pinned to `PERF_SERVER_CPUS`; locally they run unpinned and the result says
+`runner: local`.
+
+**How it measures.** The dataset is loaded into the baseline, then the
+candidate. Parameters are sampled once, from the baseline, and both sides run
+the same rows (`raw/params.json`). Per parameter row the two servers run back to
+back, in two rounds with the order swapped, after one warm-up call per query
+and side. Each latency is one `GRAPH.RO_QUERY` on a connection that never
+re-sends (redis-py's retries are off), with the query's server-side `TIMEOUT`.
+
+**What it reports** (`<out>/result.json`, contract schema 1), per query:
+
+| finding | metric | when |
+|---|---|---|
+| `IC3 p50`, `IC3 p95` | `p50_ms`, `p95_ms` | the ratio candidate/baseline over the requests both sides finished (the same parameter row in the same round) is more than 2x **and** the difference is more than 0.5 ms (p50) / 2 ms (p95). A crossing is measured again (two more swapped rounds); it is a `regression` only when the re-run crosses too; otherwise it is no finding, and `raw/rows.csv` keeps the re-run as "not repeated". A re-run that returns no rows, or does not time every row the main rounds timed, settles nothing and makes the result an `error`. Wall clock, hence the wide band. |
+| `IC9 rows` | `rows` (`mismatch`) | the two sides return a different number of rows for the same request (parameter row and round, re-runs included). A regression at once, and the query gets no latency finding: the two sides did different work (6.0.4's IC9 "ran" 93x faster by returning nothing, #2557). |
+| `IC3 completed` | `completed` | judged per request (parameter row and round): the candidate timing out, erroring or losing its server on a request the baseline finished is a regression at once; failures on both sides with no such request are `info`. A parameter row that timed out is skipped on both sides from then on, and a side stops a query after two timeouts. |
+| `server up` | `completed` | a server that went down at any point, also after its last reply (its container exited): the candidate's is a regression, the baseline's makes the result an `error`. |
+| `IC6 returns rows` | `invariant` | zero rows on every parameter row, on both sides: it measured nothing (`info`), and its latency is not compared. |
+| `load` | `throughput` | entities loaded per second, per side: one sample each, so `info` only. |
+
+Row contents are not compared, only row counts. A digest of each request's
+rows (sorted, with doubles rounded so the engines' float spelling does not
+count) is a possible follow-up; it would only ever be `info`, and across
+engines it has to allow for the C engine's `LOAD CSV` dropping a field's
+trailing whitespace (#4003).
+
+**Thresholds.** The ratio and the floors come from three A/A runs (main@4c1088949
+against itself twice, C v4.22.4 against itself once; nightly mode, unpinned,
+on an n4-standard-16 dev VM). The worst ratio either way was 1.19x (IC11 p95),
+the worst p50 difference on a query under 5 ms 0.061 ms, and the worst p95
+difference on a query under 10 ms 0.65 ms; 2x is 1.68x above the first, 0.5 ms
+8x the second, 2 ms 3x the third. The judge's pinned A/A runs on the VM
+workflow are the independent check of these values.
+
+**Queries an engine cannot run** are left out rather than failing the check: a
+query on which the *baseline* errors on every parameter row is reported as one
+`info` finding (`completed`, baseline 0) and is not compared. On the C engine
+that is IC1, IC10, IC13 and IC14, measured on v4.22.4 (C against itself, every
+parameter row):
+
+| query | the C engine's error |
+|---|---|
+| IC1, IC13 | *"FalkorDB does not currently support undirected shortestPath traversals"* |
+| IC14 | *"allShortestPaths(...) does not support a minimal length different from 1"* |
+| IC10 | *"Type mismatch: expected Null but was Pointer"* |
+
+The same query failing on the *candidate* only is a regression.
+
+**Verdict.** `regression` (confirmed) if any finding is one; otherwise `error`
+when something could not be measured (an image not pinned by digest, a pull or
+a dataset download that failed, a baseline that did not start, load or stay
+up, no query that finished on both sides, a deadline or a per-round budget
+that cut any query's rounds); otherwise `pass`. The summary counts as compared only the queries
+with at least one parameter row finished on both sides. `result.json` is written
+first as an `error` and replaced at the end, so a run stopped from outside
+still leaves one. The command exits 0 whenever `result.json` was written.
+
+**Modes** set only the length, never the method:
+
+| mode | dataset | parameter rows per query | rounds (+ re-run) | per-query timeout | deadline |
+|---|---|---|---|---|---|
+| `queue` | SF0.1 (18 MB) | 10 | 2 (+2) | 30 s | 25 min |
+| `nightly` | SF0.1 (18 MB) | 25 | 2 (+2) | 60 s | 35 min |
+| `long` | SF1 (230 MB) | 25 | 2 (+2) | 300 s | 150 min |
+
+How long it takes, measured on an n4-standard-16 dev VM (unpinned), with the
+settings above: main@4c1088949 against itself took 13.5 min in `nightly` and
+7.7 min in `queue`. Earlier runs, before the per-round budget was raised to
+300 s: C v4.22.4 against itself 3.7 min, 6.0.4 against 6.2.0 (nine
+regressions confirmed, so nine re-runs) 20.6 min. Most of it is the two loads
+(about 70 s each) and the queries that time out (IC3 on every row, #4001, and one IC14
+row, on the Rust engine). The 35-minute deadline stops new measurement well
+inside the 45 minutes the check gets in `tests/perf/checks.yaml`. `long` (SF1)
+is accepted and set as above but not yet run end to end.
+
+The queries run in a fixed order (IC1 to IC14), every query's main rounds
+before any re-run. If several queries are pathologically slow, the last ones
+in that order (IC12 to IC14) can miss the deadline before their first round;
+they are reported as not measured, so the night is `error` or `regression`,
+never `pass`.
+
+**Artifacts** under `<out>/raw/`: `rows.csv` (every latency comparison, crossing or not; findings carry only regressions, improvements and `info`), `samples.csv` (every request: phase, round,
+query, parameter row, side, outcome, latency, rows), `summary.csv`
+(per query and side), `params.json`, `load.json`, `explain/<side>/<IC>.txt`
+(`GRAPH.EXPLAIN` of every query on both sides), `<side>-server.log`, and
+`run.json` (mode, thresholds, servers, rewrites, notes).
+
+**Tests.** `bench/tests/test_ldbc.py` covers the analysis, the measurement
+loop (with scripted servers) and every result shape, holding each result.json
+to the contract's validator (`tests/perf/validate.py`, from #3986; set
+`PERF_VALIDATE_PY` to use another copy, and the tests that need it skip without
+it). `perf-contract.yml` (#3986) runs them with
+`uv run --project bench pytest bench/tests`.
+
 ### Substitution parameters
 
-LDBC generates parameters chosen so the queries hit a representative spread of
-the data; the cost of these queries varies by orders of magnitude with how
-well-connected the chosen person is, so the parameter set matters as much as the
-query text. Pass an official set with `--params DIR`.
-
-Without it, the harness samples the loaded graph with a fixed seed. Those runs
-are deterministic and comparable **to each other**, but not to published LDBC
-numbers — the CSV and the console output both say which source was used, and
-that caveat should travel with any number taken from it.
-
-Sampling deliberately draws from where the data is dense: people from the
-most-connected end of the `KNOWS` degree distribution, and dates from the last
-quarter of the corpus. IC3 gets a much wider window than the rest — it counts
-friends who are *not* resident in either country yet posted from both inside the
-window, and at SF0.1 a 30-day window returns 0 rows where 365 returns 1 and 730
-returns 2. Both engines agree on those counts, so it is a property of the
-dataset, not of either engine; `durationDays` is an explicit LDBC parameter, so
-widening it stays inside the query's own contract. A uniformly drawn person is usually isolated and a
-uniformly drawn date window usually lands in the sparse early history; either
-returns nothing in microseconds, which would report the benchmark as fast while
-measuring almost none of the work it exists to measure. `runner.problems()`
-treats "returned zero rows on every run" as a failure for the same reason.
-
-### What the first run found
-
-Running the 14 complex reads against SF0.1 was worth doing for the bugs alone.
-All fourteen now produce a measurement — IC3 needs `--timeout` above the default
-— and four of them (IC1, IC10, IC13, IC14) do not run on the C engine at all.
-Every query except IC3 and IC10 is in the same order of magnitude as C or
-faster. Four defects came out of the exercise, each confirmed against the C
-engine before being filed:
-
-| issue | what |
-|---|---|
-| [#2555](https://github.com/FalkorDB/FalkorDB/issues/2555) | aggregation over a bare map property returns empty — `collect`→`[]`, `count`→`0`, silently |
-| [#2556](https://github.com/FalkorDB/FalkorDB/issues/2556) | inline property filter under `UNWIND` raises a spurious type mismatch |
-| [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) | `WHERE` on a node matched from an `UNWIND`-bound anchor silently returns zero rows |
-| [#2558](https://github.com/FalkorDB/FalkorDB/issues/2558) | a variable-length traversal loses its indexed anchor when the `MATCH` has a second pattern — 19,000x |
-
-**#2558 is the one that matters.** On the same parameter row, returning the
-identical 2 rows, IC3 takes **136.72 ms** on C and **271,817.66 ms** on Rust —
-1,988x — and IC10 takes 86 s. Both plans abandon a unique-index seed in favour
-of scanning the unbound side. No other measured query is affected, so a single
-planner decision accounts for the entire Rust-vs-C gap on this workload.
-
-Three of the four are **silent** — wrong or empty results with no error. They
-were caught only because the runner treats "zero rows on every run" as a failure
-rather than as a fast query. A harness that reported latency alone would have
-called that run a success.
-
-Following the file-level convention above, a ranked latency table is not kept
-here; regenerate it from a live run. `results/ldbc_sf<SF>.csv` is written per run
-and deliberately not merged into `current.csv` — these runtimes are orders of
-magnitude larger than the micro-benchmark's and would distort its regression
-thresholds.
+The check samples the loaded graph with a fixed seed, so two runs compare
+against each other; the numbers are not comparable to published LDBC results.
+Sampling draws from where the data is dense: people from the most-connected end
+of the `KNOWS` degree distribution, and dates from the last quarter of the
+corpus. IC3 gets a much wider window than the rest: it counts friends who are
+*not* resident in either country yet posted from both inside the window, and at
+SF0.1 a 30-day window returns 0 rows where 365 returns 1 and 730 returns 2, on
+both engines. `durationDays` is an explicit LDBC parameter, so widening it stays
+inside the query's own contract. A uniformly drawn person is usually isolated
+and a uniformly drawn window usually lands in the sparse early history; either
+returns nothing in microseconds and measures none of the work.
