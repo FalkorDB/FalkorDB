@@ -64,7 +64,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.29 /uv /uvx /usr/local/bin/
 # harness *source* is bind-mounted at run time, so installing it here would make
 # the image stale on every source edit and defeat the content-addressed tag.
 WORKDIR /bench
-COPY bench/pyproject.toml bench/uv.lock /bench/
+COPY bench/.python-version bench/pyproject.toml bench/uv.lock /bench/
 RUN uv sync --frozen --no-dev --no-install-project
 
 # `bench ...` means the same thing inside this image as it does on a laptop, so

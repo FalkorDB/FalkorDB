@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "check": "micro",
+  "verdict": "regression",
+  "confirmed": true,
+  "summary": "3 UNWIND ... MATCH edge rows regressed (1.5x-6.9x instructions) and repeated on re-run.",
+  "candidate": {
+    "image": "falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923",
+    "commit": "d8c329b777c177fc7343d959157d6acdf7398fa5",
+    "label": "6.2.0"
+  },
+  "baseline": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
+    "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+    "label": "main@4c1088949"
+  },
+  "machine": {
+    "runner": "hosted",
+    "type": "ubuntu-latest",
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "cores": 4
+  },
+  "started": "2026-11-24T02:10:03Z",
+  "finished": "2026-11-24T02:58:41Z",
+  "findings": [
+    {
+      "name": "UNWIND id MATCH edge 1 row [writes]",
+      "metric": "instructions",
+      "candidate": 5865812,
+      "baseline": 848682,
+      "ratio": 6.9117,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "UNWIND id MATCH edge 100 rows [writes]",
+      "metric": "instructions",
+      "candidate": 8492954,
+      "baseline": 3622440,
+      "ratio": 2.3445,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "UNWIND index MATCH edge 1 row [writes]",
+      "metric": "instructions",
+      "candidate": 1421630,
+      "baseline": 921308,
+      "ratio": 1.5431,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "regression"
+    },
+    {
+      "name": "index lookup [reads]",
+      "metric": "instructions",
+      "candidate": 512330,
+      "baseline": 509874,
+      "ratio": 1.0048,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "ok"
+    },
+    {
+      "name": "two-hop [reads]",
+      "metric": "instructions",
+      "candidate": 8790115,
+      "baseline": 8811402,
+      "ratio": 0.9976,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "ok"
+    },
+    {
+      "name": "UNWIND index MATCH edge 100 rows [writes]",
+      "metric": "instructions",
+      "candidate": 5611840,
+      "baseline": 5715944,
+      "ratio": 0.9818,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "ok"
+    }
+  ],
+  "error": null,
+  "artifacts": [
+    "rows.csv",
+    "rerun/rows.csv",
+    "callgrind/"
+  ]
+}

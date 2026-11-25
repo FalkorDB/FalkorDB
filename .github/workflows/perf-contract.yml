@@ -1,0 +1,81 @@
+# Tests for the nightly perf runs and their checks: bench/tests/ (the bench
+# toolset, incl. the result contract, its example files and acceptance.yaml),
+# plus whatever has not moved into bench/ yet: tests/perf/ (the VM scripts) and
+# tests/soak/ (the soak and fuzz checks). Nothing here builds or runs the engine
+# or a server; it takes about a minute.
+
+name: perf-contract
+
+on:
+  pull_request:
+    # Everything these tests read: the toolset, the suites not yet moved into
+    # bench/, and the perf workflows, which some tests parse (this file included).
+    paths:
+      - "bench/**"
+      - "tests/perf/**"
+      - "tests/soak/**"
+      - ".github/workflows/perf-*.yml"
+      - ".github/workflows/_perf-*.yml"
+  merge_group:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same pinned uv as benchmark-cov.yml. Every step below runs in bench's
+      # environment: bench/uv.lock, on the Python bench/.python-version pins.
+      - name: Install uv
+        run: |
+          set -euo pipefail
+          mkdir -p .bin
+          cid=$(docker create ghcr.io/astral-sh/uv:0.9.29)
+          docker cp "$cid:/uv" .bin/uv
+          docker rm -f "$cid" >/dev/null
+          chmod +x .bin/uv
+
+      # The command the checks and the nightly call, through its real entry point.
+      - name: bench validate on the example results
+        run: .bin/uv run --project bench --frozen bench validate bench/tests/fixtures/valid/*.json
+
+      # Separate runs per suite: test files with the same basename in two
+      # suites would collide in one run (pytest's default prepend import mode),
+      # and a failure names its suite.
+      - name: pytest bench/tests
+        run: >-
+          .bin/uv run --project bench --frozen --group dev
+          python -I -B -m pytest bench/tests -v -p no:cacheprovider
+
+      # tests/perf/ keeps the VM scripts' tests, which arrive with the VM PR.
+      - name: pytest tests/perf
+        run: |
+          set -euo pipefail
+          if [ -z "$(find tests/perf -name 'test_*.py' 2>/dev/null)" ]; then
+            echo "::notice::no tests under tests/perf on this branch; nothing to run"
+            exit 0
+          fi
+          .bin/uv run --project bench --frozen --group dev \
+            python -I -B -m pytest tests/perf -v -p no:cacheprovider
+
+      # tests/soak/ arrives with the soak and fuzz checks' PRs, until they move
+      # into bench/.
+      - name: pytest tests/soak
+        run: |
+          set -euo pipefail
+          if [ ! -d tests/soak ]; then
+            echo "::notice::tests/soak does not exist on this branch; nothing to run"
+            exit 0
+          fi
+          .bin/uv run --project bench --frozen --group dev --group soak --group fuzz \
+            python -I -B -m pytest tests/soak -v -p no:cacheprovider
