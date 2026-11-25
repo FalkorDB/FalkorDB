@@ -71,6 +71,17 @@ struct _EffectsBuffer {
 	const EffectsWriter *w;
 };
 
+// whether the grouping arm is the live one
+//
+// The version and the arm both, because the arm field only exists on a v3
+// buffer: reading eb->v3.body on a v2 one reads the v2 sink's bytes pointer.
+static inline bool _is_grouping
+(
+	const EffectsBuffer *eb  // effects-buffer
+) {
+	return eb->version >= 3 && eb->v3.body == BODY_GROUPING;
+}
+
 // the sink this buffer writes bytes into, or NULL while it is accumulating
 static const RecordSink *_sink_const
 (
@@ -441,7 +452,7 @@ static const EffectsWriter *_writer_for
 (
 	const EffectsBuffer *eb  // effects-buffer
 ) {
-	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+	if(_is_grouping(eb)) {
 		return &EFFECTS_WRITER_V3;
 	}
 
@@ -453,7 +464,7 @@ static void _release_body
 (
 	EffectsBuffer *eb  // effects-buffer
 ) {
-	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+	if(_is_grouping(eb)) {
 		EffectsV3Grouping_Free(eb->v3.grouping);
 		return;
 	}
@@ -528,7 +539,7 @@ EffectsV3Grouping *EffectsBuffer_V3
 ) {
 	ASSERT(eb != NULL);
 
-	return (eb->version >= 3 && eb->v3.body == BODY_GROUPING)
+	return _is_grouping(eb)
 		? eb->v3.grouping
 		: NULL;
 }
@@ -602,7 +613,7 @@ EffectsBytes *EffectsBuffer_TakeBody
 ) {
 	ASSERT(eb != NULL);
 
-	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+	if(_is_grouping(eb)) {
 		if(EffectsV3Grouping_RecordCount(eb->v3.grouping) > 0) {
 			return NULL;
 		}
@@ -654,7 +665,7 @@ unsigned char *EffectsBuffer_Buffer
 	EffectsBytes *body    = NULL;
 	EffectsBytes *v3_body = NULL;
 
-	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+	if(_is_grouping(eb)) {
 		v3_body = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
 		EffectsV3Grouping_Encode(eb->v3.grouping, v3_body);
 		body = v3_body;
@@ -745,11 +756,6 @@ void EffectsBuffer_AddDeleteEdgeEffect
 
 	EffectsBuffer_Writer (eb)->DeleteEdge(eb, edge) ;
 }
-
-
-// add an entity update effect to buffer
-
-
 
 // add an entity attribute removal effect to buffer
 void EffectsBuffer_AddEntityRemoveAttributeEffect
