@@ -28,6 +28,8 @@ from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
 from falkorbench.counters import select_backend
+from falkorbench.nightly import missed_run
+from falkorbench.nightly import report as nightly_report
 
 # bench/ is the project root; the repo is its parent.
 BENCH_DIR = Path(__file__).resolve().parents[2]
@@ -537,6 +539,53 @@ def validate(kind, files):
     """
     if contract.check_files(files, kind, echo=click.echo):
         raise SystemExit(1)
+
+
+@cli.group()
+def nightly() -> None:
+    """The nightly perf pipeline: merge the checks, report the night, alarm on a missed one."""
+
+
+@nightly.command("report")
+@click.option(
+    "--nightly",
+    "path",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="the night's nightly.json",
+)
+def nightly_report_command(path):
+    """One line to Chat ($PERF_CHAT_WEBHOOK), the details to $GITHUB_STEP_SUMMARY.
+
+    Exits 0 when the night was reported, whatever its status; 1 when it could not be.
+    """
+    raise SystemExit(nightly_report.run(path, os.environ))
+
+
+@nightly.command("missed-run")
+@click.option(
+    "--date",
+    "night",
+    default=None,
+    type=click.DateTime(["%Y-%m-%d"]),
+    help="the night to check (UTC); default: the night a scheduled run was created for, else today",
+)
+@click.option("--workflow", default="perf-nightly.yml", show_default=True)
+@click.option("--branch", default="main", show_default=True)
+@click.option("--event", default="schedule", show_default=True, help="the runs' trigger")
+@click.option("--artifact", default="perf-nightly", show_default=True)
+def missed_run_command(night, workflow, branch, event, artifact):
+    """Alarm (and exit 1) when the night's scheduled run left no perf-nightly artifact."""
+    raise SystemExit(
+        missed_run.run(
+            os.environ,
+            night.date() if night else None,
+            workflow=workflow,
+            branch=branch,
+            event=event,
+            artifact=artifact,
+        )
+    )
 
 
 def main() -> int:
