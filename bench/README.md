@@ -378,12 +378,13 @@ the credential and is never printed. Only `https://` webhooks are used.
 
 ### `bench nightly missed-run`: the 08:30 UTC alarm
 
-It lists the scheduled runs of `perf-nightly.yml` on `main` created in the 24 hours
-before `<date> 08:30 UTC`. `perf-nightly.yml` starts at 00:00, and the longest night
-its job caps allow (resolve, the longest check chain, then merge and report) ends
-before 08:30; a test adds up those caps from the workflow files and pins the gap. It is quiet when any of those runs has an unexpired
-`perf-nightly` artifact; a skipped night uploads one too, and a re-run of the
-night's jobs is the same run. A hand-started run does not count: one given its own
+It lists the scheduled runs of `perf-nightly.yml` on `main` created on `<date>`
+between 00:00 UTC, when `perf-nightly.yml` starts, and 08:30, so a late run from the
+night before cannot stand in for this one. The longest night its job caps allow
+(resolve, the longest check chain, then merge and report) ends before 08:30; a test
+adds up those caps from the workflow files and pins the gap. It is quiet when any of
+those runs has an unexpired `perf-nightly` artifact; a skipped night uploads one
+too, and a re-run of the night's jobs is the same run. A hand-started run does not count: one given its own
 images uploads nightly.json but posts nothing. A run still going is "not yet", not
 missed: the alarm says so in the job summary, posts nothing and exits 0, and the
 run posts its own report when it ends. Otherwise it posts an alarm naming the case

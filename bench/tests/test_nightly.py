@@ -856,7 +856,7 @@ class MissedRun(Workspace):
         query = urllib.parse.parse_qs(requests[0]["query"])
         self.assertEqual(query["branch"], ["main"])
         self.assertEqual(query["event"], ["schedule"])
-        self.assertEqual(query["created"], ["2026-11-23T08:30:00Z..2026-11-24T08:30:00Z"])
+        self.assertEqual(query["created"], ["2026-11-24T00:00:00Z..2026-11-24T08:30:00Z"])
         self.assertEqual(urllib.parse.parse_qs(requests[1]["query"])["name"], ["perf-nightly"])
 
     def test_quiet_on_a_skipped_night_too(self):
@@ -877,7 +877,7 @@ class MissedRun(Workspace):
         self.assertEqual(code, 1)
         self.assertIn(
             "*Perf nightly alarm 2026-11-24*: no nightly result. No schedule run of perf-nightly.yml on main "
-            "between 2026-11-23 08:30 and 2026-11-24 08:30 UTC.",
+            "between 2026-11-24 00:00 and 2026-11-24 08:30 UTC.",
             stdout,
         )
 
@@ -889,7 +889,7 @@ class MissedRun(Workspace):
                     {
                         "workflow_runs": [
                             run(1, "2026-11-24T08:30:00Z"),  # the window ends at 08:30, exclusive
-                            run(2, "2026-11-23T08:29:59Z"),
+                            run(2, "2026-11-23T23:59:59Z"),  # the window starts at 00:00
                             run(3, "2026-11-24T00:00:05Z", branch="ci/perf-nightly"),
                         ]
                     },
@@ -899,13 +899,30 @@ class MissedRun(Workspace):
         self.assertEqual(code, 1)
         self.assertIn("No schedule run of perf-nightly.yml on main", stdout)
 
+    def test_a_late_run_from_the_night_before_cannot_clear_this_night(self):
+        # GitHub can delay a scheduled run by hours and drop the next one: the 23rd's run,
+        # created at 09:00 on the 23rd, must not stand in for the 24th's.
+        code, stdout, _, _ = self.alarm(
+            {
+                RUNS_PATH: (200, {"workflow_runs": [run(5, "2026-11-23T09:00:00Z")]}),
+                "/repos/FalkorDB/FalkorDB/actions/runs/5/artifacts": (
+                    200,
+                    artifacts("perf-nightly"),
+                ),
+            }
+        )
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "No schedule run of perf-nightly.yml on main between 2026-11-24 00:00", stdout
+        )
+
     def test_a_hand_started_run_with_the_artifact_does_not_stand_in_for_the_night(self):
         # A dispatch given its own images uploads nightly.json but posts nothing.
         code, stdout, _, _ = self.alarm(
             {
                 RUNS_PATH: (
                     200,
-                    {"workflow_runs": [run(4, "2026-11-23T14:00:00Z", event="workflow_dispatch")]},
+                    {"workflow_runs": [run(4, "2026-11-24T01:00:00Z", event="workflow_dispatch")]},
                 ),
                 "/repos/FalkorDB/FalkorDB/actions/runs/4/artifacts": (
                     200,
@@ -922,7 +939,7 @@ class MissedRun(Workspace):
             {
                 RUNS_PATH: (
                     200,
-                    {"workflow_runs": [run(9, "2026-11-23T08:30:00Z", "in_progress", None)]},
+                    {"workflow_runs": [run(9, "2026-11-24T00:00:00Z", "in_progress", None)]},
                 ),
                 "/repos/FalkorDB/FalkorDB/actions/runs/9/artifacts": (200, artifacts()),
             },
@@ -931,7 +948,7 @@ class MissedRun(Workspace):
         self.assertEqual(code, 0)
         self.assertIn(
             "Perf nightly 2026-11-24: not yet. <https://github.com/FalkorDB/FalkorDB/actions/runs/9|run> "
-            "The run (started 2026-11-23 08:30 UTC) is still in_progress at 2026-11-24 08:30 UTC; "
+            "The run (started 2026-11-24 00:00 UTC) is still in_progress at 2026-11-24 08:30 UTC; "
             "its report follows when it ends.",
             stdout,
         )
@@ -1087,7 +1104,7 @@ class MissedRun(Workspace):
         runs = [request for request in server.requests if request["path"] == RUNS_PATH]
         self.assertEqual(
             urllib.parse.parse_qs(runs[0]["query"])["created"],
-            ["2026-11-23T08:30:00Z..2026-11-24T08:30:00Z"],
+            ["2026-11-24T00:00:00Z..2026-11-24T08:30:00Z"],
         )
 
     def test_today_when_the_run_cannot_be_looked_up_or_was_not_scheduled(self):
@@ -1117,7 +1134,7 @@ class MissedRun(Workspace):
                 runs = [request for request in server.requests if request["path"] == RUNS_PATH]
                 self.assertEqual(
                     urllib.parse.parse_qs(runs[0]["query"])["created"],
-                    ["2026-11-25T08:30:00Z..2026-11-26T08:30:00Z"],
+                    ["2026-11-26T00:00:00Z..2026-11-26T08:30:00Z"],
                 )
 
     def test_an_explicit_date_wins_over_the_scheduled_night(self):
@@ -1145,7 +1162,7 @@ class MissedRun(Workspace):
         self.assertEqual([request["path"] for request in server.requests], [RUNS_PATH])
         self.assertEqual(
             urllib.parse.parse_qs(server.requests[0]["query"])["created"],
-            ["2026-11-09T08:30:00Z..2026-11-10T08:30:00Z"],
+            ["2026-11-10T00:00:00Z..2026-11-10T08:30:00Z"],
         )
 
     def test_the_default_night_is_today_in_utc(self):
@@ -1159,7 +1176,7 @@ class MissedRun(Workspace):
             )
         self.assertEqual(
             urllib.parse.parse_qs(server.requests[0]["query"])["created"],
-            ["2026-11-24T08:30:00Z..2026-11-25T08:30:00Z"],
+            ["2026-11-25T00:00:00Z..2026-11-25T08:30:00Z"],
         )
 
 
@@ -1195,6 +1212,8 @@ class AlarmWorkflow(unittest.TestCase):
         (start,) = [
             entry["cron"] for entry in nightly[True]["schedule"]
         ]  # yaml reads `on:` as True
+        begin = missed_run.NIGHTLY_START_UTC
+        self.assertEqual(self.minutes(start), begin.hour * 60 + begin.minute, "the window's start")
         vm = yaml.safe_load((self.WORKFLOWS / "_perf-vm.yml").read_text())["jobs"]
         micro = yaml.safe_load((self.WORKFLOWS / "_perf-micro.yml").read_text())["jobs"]
         plan = (REPO_ROOT / "tests" / "perf" / "vm" / "plan.sh").read_text()
@@ -1280,7 +1299,7 @@ class CommandLine(unittest.TestCase):
             )
         self.assertEqual(run.exit_code, 1)
         self.assertIn(
-            "No push run of rust-push.yml on dev between 2026-11-09 08:30 and 2026-11-10 08:30 UTC.",
+            "No push run of rust-push.yml on dev between 2026-11-10 00:00 and 2026-11-10 08:30 UTC.",
             run.stdout,
         )
         query = urllib.parse.parse_qs(server.requests[0]["query"])

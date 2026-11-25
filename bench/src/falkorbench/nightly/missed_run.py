@@ -13,12 +13,13 @@ from datetime import UTC
 from datetime import date
 from datetime import datetime
 from datetime import time
-from datetime import timedelta
 
 from falkorbench.nightly import report
 
-# perf-missed-run.yml's cron. A night's runs are the scheduled ones created in the 24 hours
-# before it; the nightly starts at 00:00 and fits before it (a test pins the gap).
+# perf-nightly.yml's cron and perf-missed-run.yml's. A night's runs are the scheduled ones
+# created from the nightly's start to the alarm, so a late run from the night before cannot
+# stand in for this one; the longest night fits before the alarm (tests pin both).
+NIGHTLY_START_UTC = time(0, 0)
 ALARM_TIME_UTC = time(8, 30)
 
 
@@ -30,8 +31,8 @@ class Outcome:
 
 
 def window(night: date) -> tuple[datetime, datetime]:
-    end = datetime.combine(night, ALARM_TIME_UTC, tzinfo=UTC)
-    return end - timedelta(days=1), end
+    start = datetime.combine(night, NIGHTLY_START_UTC, tzinfo=UTC)
+    return start, datetime.combine(night, ALARM_TIME_UTC, tzinfo=UTC)
 
 
 def iso(moment: datetime) -> str:
