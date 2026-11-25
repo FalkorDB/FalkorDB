@@ -9,7 +9,11 @@ from __future__ import annotations
 import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC
+from datetime import date
+from datetime import datetime
+from datetime import time
+from datetime import timedelta
 
 from falkorbench.nightly import report
 
@@ -24,7 +28,7 @@ class Outcome:
 
 
 def window(night: date) -> tuple[datetime, datetime]:
-    end = datetime.combine(night, time(ALARM_HOUR_UTC), tzinfo=timezone.utc)
+    end = datetime.combine(night, time(ALARM_HOUR_UTC), tzinfo=UTC)
     return end - timedelta(days=1), end
 
 
@@ -36,22 +40,32 @@ def parse_time(text: object) -> datetime | None:
     if not isinstance(text, str):
         return None
     try:
-        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     except ValueError:
         return None
 
 
-def runs_in_window(environ: Mapping[str, str], workflow: str, branch: str, event: str, start: datetime,
-                   end: datetime) -> list[dict]:
-    query = urllib.parse.urlencode({
-        "branch": branch,
-        "event": event,
-        "created": f"{iso(start)}..{iso(end)}",
-        "per_page": 100,
-        "exclude_pull_requests": "true",
-    })
-    url = (f"{report.api_url(environ)}/repos/{report.repository(environ)}/actions/workflows/"
-           f"{urllib.parse.quote(workflow)}/runs?{query}")
+def runs_in_window(
+    environ: Mapping[str, str],
+    workflow: str,
+    branch: str,
+    event: str,
+    start: datetime,
+    end: datetime,
+) -> list[dict]:
+    query = urllib.parse.urlencode(
+        {
+            "branch": branch,
+            "event": event,
+            "created": f"{iso(start)}..{iso(end)}",
+            "per_page": 100,
+            "exclude_pull_requests": "true",
+        }
+    )
+    url = (
+        f"{report.api_url(environ)}/repos/{report.repository(environ)}/actions/workflows/"
+        f"{urllib.parse.quote(workflow)}/runs?{query}"
+    )
     data = report.github_get(url, report.github_token(environ))
     runs = data.get("workflow_runs") if isinstance(data, dict) else None
     if not isinstance(runs, list):
@@ -60,8 +74,12 @@ def runs_in_window(environ: Mapping[str, str], workflow: str, branch: str, event
     kept = []
     for run in runs:
         created = parse_time(run.get("created_at")) if isinstance(run, dict) else None
-        if (created is not None and start <= created < end and run.get("head_branch") == branch
-                and run.get("event") == event):
+        if (
+            created is not None
+            and start <= created < end
+            and run.get("head_branch") == branch
+            and run.get("event") == event
+        ):
             kept.append(run)
     return sorted(kept, key=lambda run: run["created_at"], reverse=True)
 
@@ -73,8 +91,10 @@ def has_artifact(environ: Mapping[str, str], run: dict, artifact: str) -> bool:
     artifacts = data.get("artifacts") if isinstance(data, dict) else None
     if not isinstance(artifacts, list):
         raise report.GitHubError(None, "unexpected response listing artifacts")
-    return any(isinstance(item, dict) and item.get("name") == artifact and not item.get("expired")
-               for item in artifacts)
+    return any(
+        isinstance(item, dict) and item.get("name") == artifact and not item.get("expired")
+        for item in artifacts
+    )
 
 
 def runs_page(environ: Mapping[str, str], workflow: str, branch: str) -> str:
@@ -84,13 +104,22 @@ def runs_page(environ: Mapping[str, str], workflow: str, branch: str) -> str:
 
 def alarm(night: date, reason: str, link: str, link_text: str) -> Outcome:
     title, text = f"Perf nightly alarm {night.isoformat()}", f": no nightly result. {reason} "
-    return Outcome(True,
-                   f"*{report.chat_plain(title)}*{report.chat_plain(text)}{report.chat_link(link, link_text)}",
-                   f"**{report.markdown_plain(title)}**{report.markdown_plain(text)}{report.markdown_link(link, link_text)}")
+    return Outcome(
+        True,
+        f"*{report.chat_plain(title)}*{report.chat_plain(text)}{report.chat_link(link, link_text)}",
+        f"**{report.markdown_plain(title)}**{report.markdown_plain(text)}{report.markdown_link(link, link_text)}",
+    )
 
 
-def check(environ: Mapping[str, str], night: date, workflow: str, branch: str, event: str, artifact: str,
-          now: datetime) -> Outcome:
+def check(
+    environ: Mapping[str, str],
+    night: date,
+    workflow: str,
+    branch: str,
+    event: str,
+    artifact: str,
+    now: datetime,
+) -> Outcome:
     start, end = window(night)
     span = f"between {start:%Y-%m-%d %H:%M} and {end:%Y-%m-%d %H:%M} UTC"
     listing = runs_page(environ, workflow, branch)
@@ -98,23 +127,49 @@ def check(environ: Mapping[str, str], night: date, workflow: str, branch: str, e
         runs = runs_in_window(environ, workflow, branch, event, start, end)
     except report.GitHubError as exc:
         if exc.status == 404:
-            return alarm(night, f"{workflow} was not found in {report.repository(environ)}.", listing, "workflow")
-        return alarm(night, f"Could not ask GitHub for {workflow} runs ({exc}), so it is unknown whether one ran.",
-                     listing, "workflow runs")
+            return alarm(
+                night,
+                f"{workflow} was not found in {report.repository(environ)}.",
+                listing,
+                "workflow",
+            )
+        return alarm(
+            night,
+            f"Could not ask GitHub for {workflow} runs ({exc}), so it is unknown whether one ran.",
+            listing,
+            "workflow runs",
+        )
     if not runs:
-        return alarm(night, f"No {event} run of {workflow} on {branch} {span}.", listing, "workflow runs")
+        return alarm(
+            night, f"No {event} run of {workflow} on {branch} {span}.", listing, "workflow runs"
+        )
 
     try:
         for run in runs:
             if has_artifact(environ, run, artifact):
                 url, run_id = str(run.get("html_url") or listing), str(run.get("id"))
-                before, after = f"Perf nightly {night.isoformat()}: run ", f" has the {artifact} artifact; no alarm."
-                chat = report.chat_plain(before) + report.chat_link(url, run_id) + report.chat_plain(after)
-                markdown = report.markdown_plain(before) + report.markdown_link(url, run_id) + report.markdown_plain(after)
+                before, after = (
+                    f"Perf nightly {night.isoformat()}: run ",
+                    f" has the {artifact} artifact; no alarm.",
+                )
+                chat = (
+                    report.chat_plain(before)
+                    + report.chat_link(url, run_id)
+                    + report.chat_plain(after)
+                )
+                markdown = (
+                    report.markdown_plain(before)
+                    + report.markdown_link(url, run_id)
+                    + report.markdown_plain(after)
+                )
                 return Outcome(False, chat, markdown)
     except report.GitHubError as exc:
-        return alarm(night, f"Could not list the artifacts of tonight's run ({exc}).",
-                     str(runs[0].get("html_url") or listing), "run")
+        return alarm(
+            night,
+            f"Could not list the artifacts of tonight's run ({exc}).",
+            str(runs[0].get("html_url") or listing),
+            "run",
+        )
 
     newest = runs[0]
     link = str(newest.get("html_url") or listing)
@@ -122,10 +177,14 @@ def check(environ: Mapping[str, str], night: date, workflow: str, branch: str, e
     started = parse_time(newest.get("run_started_at")) or parse_time(newest.get("created_at"))
     started_text = f" (started {started:%Y-%m-%d %H:%M} UTC)" if started else ""
     if newest.get("status") != "completed":
-        reason = (f"The run{started_text} is still {newest.get('status')} at {now:%Y-%m-%d %H:%M} UTC and has not "
-                  f"uploaded {artifact}.{others}")
+        reason = (
+            f"The run{started_text} is still {newest.get('status')} at {now:%Y-%m-%d %H:%M} UTC and has not "
+            f"uploaded {artifact}.{others}"
+        )
     else:
-        reason = f"The run finished `{newest.get('conclusion')}` without uploading {artifact}.{others}"
+        reason = (
+            f"The run finished `{newest.get('conclusion')}` without uploading {artifact}.{others}"
+        )
     return alarm(night, reason, link, "run")
 
 
@@ -147,14 +206,21 @@ def scheduled_night(environ: Mapping[str, str]) -> date | None:
     return created.date() if created else None
 
 
-def run(environ: Mapping[str, str], night: date | None = None, *, workflow: str = "perf-nightly.yml",
-        branch: str = "main", event: str = "schedule", artifact: str = "perf-nightly",
-        now: datetime | None = None) -> int:
+def run(
+    environ: Mapping[str, str],
+    night: date | None = None,
+    *,
+    workflow: str = "perf-nightly.yml",
+    branch: str = "main",
+    event: str = "schedule",
+    artifact: str = "perf-nightly",
+    now: datetime | None = None,
+) -> int:
     """Check one night (default: the night a scheduled run was created for, else today).
 
     0 when the night has its result, 1 when the alarm went out.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     night = night or scheduled_night(environ) or now.date()
     outcome = check(environ, night, workflow, branch, event, artifact, now)
     report.deliver(outcome.chat, outcome.markdown, environ, post=outcome.alarm)

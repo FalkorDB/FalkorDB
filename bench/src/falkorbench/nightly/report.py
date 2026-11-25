@@ -103,7 +103,11 @@ def github_token(environ: Mapping[str, str]) -> str:
 def current_run_url(environ: Mapping[str, str]) -> str:
     run_id = environ.get("GITHUB_RUN_ID") or ""
     url = f"{server_url(environ)}/{repository(environ)}/actions/runs/{run_id}"
-    return url if run_id.isdigit() and SAFE_URL.fullmatch(url) and len(url) <= RUN_URL_CHARACTERS else ""
+    return (
+        url
+        if run_id.isdigit() and SAFE_URL.fullmatch(url) and len(url) <= RUN_URL_CHARACTERS
+        else ""
+    )
 
 
 class GitHubError(Exception):
@@ -113,11 +117,14 @@ class GitHubError(Exception):
 
 
 def github_get(url: str, token: str) -> object:
-    request = urllib.request.Request(url, headers={
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": USER_AGENT,
-    })
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": USER_AGENT,
+        },
+    )
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     try:
@@ -150,7 +157,9 @@ def read_night(path: Path) -> tuple[dict, str, str]:
 
 def checks_of(night: dict) -> list[dict]:
     checks = night.get("checks")
-    return [check for check in checks if isinstance(check, dict)] if isinstance(checks, list) else []
+    return (
+        [check for check in checks if isinstance(check, dict)] if isinstance(checks, list) else []
+    )
 
 
 def name_of(check: dict) -> str:
@@ -159,13 +168,19 @@ def name_of(check: dict) -> str:
 
 def label(side: object) -> str:
     side = side if isinstance(side, dict) else {}
-    return one_line(side.get("label"), one_line(side.get("image"), "unknown", NAME_CHARACTERS), NAME_CHARACTERS)
+    return one_line(
+        side.get("label"), one_line(side.get("image"), "unknown", NAME_CHARACTERS), NAME_CHARACTERS
+    )
 
 
 def run_url_of(night: dict, environ: Mapping[str, str]) -> str:
     url = night.get("run_url")
-    if (isinstance(url, str) and url.startswith("https://") and SAFE_URL.fullmatch(url)
-            and len(url) <= RUN_URL_CHARACTERS):
+    if (
+        isinstance(url, str)
+        and url.startswith("https://")
+        and SAFE_URL.fullmatch(url)
+        and len(url) <= RUN_URL_CHARACTERS
+    ):
         return url
     return current_run_url(environ)
 
@@ -184,8 +199,15 @@ def issue_url(night: dict, environ: Mapping[str, str]) -> str:
     names = ", ".join(name_of(check) for check in regressed_checks(night)) or "unknown check"
     title = shorten(f"Perf regression {date}: {names}", 150)
     url = run_url_of(night, environ)
-    body = [f"{label(night.get('candidate'))} vs {label(night.get('baseline'))}", f"Run: {url or 'unknown'}", ""]
-    body += [f"- {name_of(check)}: {one_line(check.get('summary'), 'no summary')}" for check in regressed_checks(night)]
+    body = [
+        f"{label(night.get('candidate'))} vs {label(night.get('baseline'))}",
+        f"Run: {url or 'unknown'}",
+        "",
+    ]
+    body += [
+        f"- {name_of(check)}: {one_line(check.get('summary'), 'no summary')}"
+        for check in regressed_checks(night)
+    ]
     base = f"{server_url(environ)}/{repository(environ)}/issues/new?"
 
     def build(text: str) -> str:
@@ -208,7 +230,9 @@ def chat_line(night: dict, status: str, reason: str, environ: Mapping[str, str])
     if reason:
         detail = reason
     elif status == "red":
-        detail = ", ".join(name_of(check) for check in checks if check.get("verdict") == "regression")
+        detail = ", ".join(
+            name_of(check) for check in checks if check.get("verdict") == "regression"
+        )
     elif status == "error":
         detail = ", ".join(name_of(check) for check in checks if check.get("verdict") == "error")
     elif status == "skipped":
@@ -270,8 +294,13 @@ def commits_since_green(night: dict) -> tuple[list[tuple[str, str, int | None]],
     if previous == candidate:
         return [], "same candidate commit as the last green night: nothing new was merged on main"
     try:
-        log = subprocess.run(["git", "-C", str(CHECKOUT), "log", "--format=%H%x1f%s", f"{previous}..{candidate}"],
-                             capture_output=True, text=True, timeout=60, check=False)
+        log = subprocess.run(
+            ["git", "-C", str(CHECKOUT), "log", "--format=%H%x1f%s", f"{previous}..{candidate}"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         return [], f"git failed: {type(exc).__name__}"
     if log.returncode != 0:
@@ -280,20 +309,35 @@ def commits_since_green(night: dict) -> tuple[list[tuple[str, str, int | None]],
     for row in log.stdout.splitlines():
         sha, _, subject = row.partition("\x1f")
         match = TRAILING_PULL_REQUEST.match(subject)
-        title, pull = (match.group("title"), int(match.group("number"))) if match else (subject, None)
+        title, pull = (
+            (match.group("title"), int(match.group("number"))) if match else (subject, None)
+        )
         commits.append((sha, " ".join(title.split()), pull))
     return commits, ""
 
 
 def regression_lines(check: dict) -> list[str]:
-    rows = [row for row in check.get("findings") or [] if isinstance(row, dict) and row.get("status") == "regression"]
-    lines = [f"**{markdown_plain(name_of(check))}**, worst regression rows (in the check's order):", ""]
+    rows = [
+        row
+        for row in check.get("findings") or []
+        if isinstance(row, dict) and row.get("status") == "regression"
+    ]
+    lines = [
+        f"**{markdown_plain(name_of(check))}**, worst regression rows (in the check's order):",
+        "",
+    ]
     for row in rows[:WORST_ROWS]:
         threshold = ratio(row.get("threshold"))
-        extras = ", ".join(part for part in (ratio(row.get("ratio")), threshold and f"threshold {threshold}") if part)
-        lines.append(f"- {markdown_plain(one_line(row.get('name'), 'unnamed'))}: "
-                     f"{markdown_plain(one_line(row.get('metric'), '?', 40))} {number(row.get('candidate'))} vs "
-                     f"{number(row.get('baseline'))}" + (f" ({extras})" if extras else ""))
+        extras = ", ".join(
+            part
+            for part in (ratio(row.get("ratio")), threshold and f"threshold {threshold}")
+            if part
+        )
+        lines.append(
+            f"- {markdown_plain(one_line(row.get('name'), 'unnamed'))}: "
+            f"{markdown_plain(one_line(row.get('metric'), '?', 40))} {number(row.get('candidate'))} vs "
+            f"{number(row.get('baseline'))}" + (f" ({extras})" if extras else "")
+        )
     if len(rows) > WORST_ROWS:
         lines.append(f"- {len(rows) - WORST_ROWS} more in the check's result.json")
     return [*lines, ""]
@@ -302,11 +346,20 @@ def regression_lines(check: dict) -> list[str]:
 def commit_lines(night: dict, environ: Mapping[str, str]) -> list[str]:
     server, repo = server_url(environ), repository(environ)
     commits, why = commits_since_green(night)
-    compare = f"{server}/{repo}/compare/{night.get('previous_green_commit')}...{candidate_commit(night)}"
+    compare = (
+        f"{server}/{repo}/compare/{night.get('previous_green_commit')}...{candidate_commit(night)}"
+    )
     if why:
-        link = f" {markdown_link(compare, 'compare')}" if why == "the commits are not in this checkout" else ""
+        link = (
+            f" {markdown_link(compare, 'compare')}"
+            if why == "the commits are not in this checkout"
+            else ""
+        )
         return [f"Commits since the last green night: {markdown_plain(why)}.{link}", ""]
-    lines = [f"Commits since the last green night ({len(commits)}, {markdown_link(compare, 'compare')}):", ""]
+    lines = [
+        f"Commits since the last green night ({len(commits)}, {markdown_link(compare, 'compare')}):",
+        "",
+    ]
     for sha, title, pull in commits[:COMMITS_SHOWN]:
         what = markdown_link(f"{server}/{repo}/pull/{pull}", f"#{pull}") if pull else f"`{sha[:7]}`"
         lines.append(f"- {what} {markdown_plain(shorten(title, 100))}")
@@ -326,13 +379,18 @@ def summary_markdown(night: dict, status: str, reason: str, environ: Mapping[str
         versus = f"{markdown_plain(label(night.get('candidate')))} vs {markdown_plain(label(night.get('baseline')))}"
         lines += [versus + (f" · {markdown_link(url, 'run')}" if url else ""), ""]
     if status == "skipped":
-        lines += [f"Skipped: {markdown_plain(one_line(night.get('skip_reason'), 'no reason given'))}", ""]
+        lines += [
+            f"Skipped: {markdown_plain(one_line(night.get('skip_reason'), 'no reason given'))}",
+            "",
+        ]
     if checks:
         lines += ["| check | verdict | summary |", "| --- | --- | --- |"]
         for check in checks:
             text = check.get("error") if check.get("verdict") == "error" else check.get("summary")
-            lines.append(f"| {markdown_plain(name_of(check))} | {markdown_plain(one_line(check.get('verdict'), '?'))} "
-                         f"| {markdown_plain(one_line(text, ''))} |")
+            lines.append(
+                f"| {markdown_plain(name_of(check))} | {markdown_plain(one_line(check.get('verdict'), '?'))} "
+                f"| {markdown_plain(one_line(text, ''))} |"
+            )
         lines.append("")
     for check in regressed_checks(night):
         lines += regression_lines(check)
@@ -358,7 +416,10 @@ def post_to_chat(webhook: str, text: str) -> str:
     """
     try:
         parts = urllib.parse.urlsplit(webhook)
-        loopback = parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")  # the tests' stub
+        loopback = parts.scheme == "http" and parts.hostname in (
+            "127.0.0.1",
+            "localhost",
+        )  # the tests' stub
     except ValueError:
         return "PERF_CHAT_WEBHOOK is not a valid URL"
     if parts.scheme != "https" and not loopback:
@@ -368,10 +429,15 @@ def post_to_chat(webhook: str, text: str) -> str:
     for attempt in range(len(POST_RETRY_DELAYS) + 1):
         if attempt:
             time.sleep(POST_RETRY_DELAYS[attempt - 1])
-        request = urllib.request.Request(webhook, data=body, method="POST", headers={
-            "Content-Type": "application/json; charset=UTF-8",
-            "User-Agent": USER_AGENT,
-        })
+        request = urllib.request.Request(
+            webhook,
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json; charset=UTF-8",
+                "User-Agent": USER_AGENT,
+            },
+        )
         try:
             # The answer's body is not used, so it is not read: a body cut short after
             # a 2xx must not turn a delivered message into a failure.
@@ -409,7 +475,7 @@ def deliver(chat: str, markdown: str, environ: Mapping[str, str], post: bool = T
         return
     try:
         failure = post_to_chat(webhook, chat)
-    except Exception as exc:  # noqa: BLE001  (a failed post is a warning, never a failed report)
+    except Exception as exc:
         failure = f"unexpected {type(exc).__name__}"
     if failure:
         warn(f"posting to Chat failed: {failure}", environ)
@@ -421,12 +487,19 @@ def run(path: Path, environ: Mapping[str, str]) -> int:
     """Report the night in `path`. 0 when it was reported, 1 when it could not be."""
     try:
         night, status, reason = read_night(path)
-        chat, markdown = chat_line(night, status, reason, environ), summary_markdown(night, status, reason, environ)
-    except Exception as exc:  # noqa: BLE001  (a broken reporter must still say so, not go silent)
+        chat, markdown = (
+            chat_line(night, status, reason, environ),
+            summary_markdown(night, status, reason, environ),
+        )
+    except Exception as exc:
         traceback.print_exc()
-        reason = one_line(f"the reporter crashed: {type(exc).__name__}: {exc}", "the reporter crashed")
+        reason = one_line(
+            f"the reporter crashed: {type(exc).__name__}: {exc}", "the reporter crashed"
+        )
         status, url = "error", current_run_url(environ)
-        chat = chat_plain(f"Perf nightly: ERROR ({reason})") + (f" · {chat_link(url, 'details')}" if url else "")
+        chat = chat_plain(f"Perf nightly: ERROR ({reason})") + (
+            f" · {chat_link(url, 'details')}" if url else ""
+        )
         markdown = f"## Perf nightly: ERROR\n\n**Not green:** {markdown_plain(reason)}\n"
     deliver(chat, markdown, environ)
     # `reason` is set exactly when the night could not be reported as written.
