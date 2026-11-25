@@ -282,17 +282,17 @@ int Schema_RemoveIndex
 	// if a pending index exists use it otherwise use the active index
 	Index active  = ACTIVE_IDX(s);
 	Index pending = PENDING_IDX(s);
-	Index idx     = pending;
 
-	// both pending and active indicies do not exists
-	if(pending == NULL) {
-		if(active == NULL) {
-			return INDEX_FAIL;
-		}
-		// use active
-		pending = Index_Clone(active);
-		PENDING_IDX(s) = pending;
-		idx = pending;
+	// inspect the index WITHOUT mutating the schema: a refused drop must leave
+	// the schema exactly as it was. validate against the pending index if one
+	// exists, otherwise the active index - cloning the active into a new pending
+	// index before these checks would orphan an unpopulated clone (NULL
+	// RediSearch spec) on refusal, crashing the next db.indexes() or write
+	Index idx = (pending != NULL) ? pending : active;
+
+	// neither a pending nor an active index exists
+	if(idx == NULL) {
+		return INDEX_FAIL;
 	}
 
 	// index doesn't containts attribute
@@ -316,6 +316,18 @@ int Schema_RemoveIndex
 			}
 		}
 	}
+
+	//--------------------------------------------------------------------------
+	// all checks passed - safe to mutate
+	//--------------------------------------------------------------------------
+
+	// operate on a pending index: when only an active index exists, clone it so
+	// the active stays queryable while the modified copy is rebuilt
+	if(pending == NULL) {
+		pending = Index_Clone(active);
+		PENDING_IDX(s) = pending;
+	}
+	idx = pending;
 
 	Index_RemoveField(idx, attr_id, t);
 
