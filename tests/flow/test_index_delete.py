@@ -1,5 +1,6 @@
 from common import *
 from index_utils import *
+from constraint_utils import create_unique_node_constraint
 from collections import OrderedDict
 
 GRAPH_ID = "index_delete"
@@ -323,6 +324,47 @@ class testNodeIndexDeletionFlow():
                               RETURN [f in info['fields'] | f.name]""")
 
         self.env.assertEquals(len(res.result_set), 0)
+
+    def test_09_refused_constraint_index_drop_keeps_index_intact(self):
+        # Regression for #4006: dropping a single field of a composite range
+        # index that backs a unique constraint is refused ("Index supports
+        # constraint"). The refusal must leave the index unchanged - it used to
+        # clone the active index into a pending slot *before* the constraint
+        # check, orphaning an unpopulated clone (NULL RediSearch spec) on
+        # refusal, so the next db.indexes() or write to the label crashed the
+        # server (SIGSEGV in RediSearch_IndexInfo / Index_IndexNode).
+
+        # some data on the label with unique (name, realm) pairs
+        self.g.query("""UNWIND range(0, 99) AS i
+                        CREATE (:Team {name: 'team-' + toString(i), realm: 'r'})""")
+
+        # composite range index on (name, realm), then a unique constraint on it
+        create_node_range_index(self.g, 'Team', 'name', 'realm', sync=True)
+        create_unique_node_constraint(self.g, 'Team', 'name', 'realm', sync=True)
+
+        # dropping a field used by the constraint is refused
+        try:
+            drop_node_range_index(self.g, 'Team', 'name')
+            self.env.assertTrue(False)  # expected a refusal
+        except ResponseError as e:
+            self.env.assertContains("Index supports constraint", str(e))
+
+        # the index must still be intact and db.indexes() must not crash
+        res = self.g.query("""CALL db.indexes()
+                              YIELD label, info
+                              WHERE label = 'Team'
+                              RETURN [f in info['fields'] | f.name]""")
+        fields = res.result_set[0][0]
+        self.env.assertIn("range:name",  fields)
+        self.env.assertIn("range:realm", fields)
+
+        # a write to the label must not crash and must keep the index usable
+        self.g.query("CREATE (:Team {name: 'new-1', realm: 'r'})")
+        res = self.g.query("MATCH (n:Team {name: 'new-1'}) RETURN count(n)")
+        self.env.assertEquals(res.result_set[0][0], 1)
+
+        # server is still responsive
+        self.env.assertTrue(self.redis_con.ping())
 
 class testEdgeIndexDeletionFlow():
     def __init__(self):
