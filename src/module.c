@@ -25,6 +25,7 @@
 #include "redisearch_api.h"
 #include "arithmetic/func_desc.h"
 #include "util/thpool/pool.h"
+#include "util/redis_gil.h"
 #include "commands/commands.h"
 #include "graph/graphcontext.h"
 #include "util/redis_version.h"
@@ -86,6 +87,8 @@ static int _ExportAPIs
 	EXPORT_API ("GraphContextRedisModuleType_Get", GraphContextRedisModuleType_Get)
 	EXPORT_API ("Graph_EncodingVersion",          Graph_EncodingVersion)
 	EXPORT_API ("Graph_GetDecoder",               Graph_GetDecoder)
+	EXPORT_API ("GIL_Lock",                       GIL_Lock)
+	EXPORT_API ("GIL_Unlock",                     GIL_Unlock)
 
 #undef EXPORT_API
 

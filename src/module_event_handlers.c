@@ -42,10 +42,6 @@ extern RedisModuleType *GraphMetaRedisModuleType;
 // this field is used to represent when the module is replicating its graphs
 uint aux_field_counter = 0 ;
 
-// holds the id of the Redis Main thread in order to figure out the context
-// the fork is running on
-pthread_t redis_main_thread_id ;
-
 // this callback invokes once rename for a graph is done
 // since the key value is a graph context
 // which saves the name of the graph for later key accesses
@@ -481,7 +477,7 @@ static void _ForkPrepare() {
 	// BGSAVE is invoked from Redis main thread
 	// return if we have half-baked graphs
 	bool sync_graphs_before_fork =
-		pthread_equal (pthread_self (), redis_main_thread_id) != 0 &&
+		ThreadIsMain () &&
 		!INTERMEDIATE_GRAPHS ;
 
 	if (!sync_graphs_before_fork) {
@@ -567,7 +563,7 @@ static void _ForkPrepare() {
 // after fork at parent
 static void _AfterForkParent(void) {
 	bool release_graphs_after_fork =
-		pthread_equal (pthread_self (), redis_main_thread_id) &&
+		ThreadIsMain () &&
 		!INTERMEDIATE_GRAPHS ;
 
 	if (!release_graphs_after_fork) {
@@ -620,7 +616,7 @@ static void _AfterForkChild() {
 	// after fork(), the child inherits the forking thread's ID (POSIX)
 	// so pthread_self() here matches the thread that called fork()
 	bool validate_graphs_after_fork =
-		pthread_equal (pthread_self (), redis_main_thread_id) != 0 &&
+		ThreadIsMain () &&
 		!INTERMEDIATE_GRAPHS ;
 
 	if (!validate_graphs_after_fork) {
@@ -659,9 +655,6 @@ static void _AfterForkChild() {
 }
 
 static void _RegisterForkHooks() {
-	// this function is being called on the main thread context.
-	redis_main_thread_id = pthread_self () ;
-
 	// register handlers to control the behavior of fork calls
 	int res = pthread_atfork (
 			_ForkPrepare,
