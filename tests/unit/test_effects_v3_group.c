@@ -13,10 +13,13 @@
 //
 // The four rules under test are all invisible in the wire format:
 //
-//   1. one record per (opcode, shape); shape is the attribute IDS, never the
-//      values, plus labels for a node and relationship type for an edge
-//   2. groups sorted by key before emission - a hash order differs between
-//      runs, let alone between engines
+//   1. one record per (run, opcode, shape); shape is the attribute IDS, never
+//      the values, plus labels for a node and relationship type for an edge.
+//      A RUN is a stretch of the query's writes that creates or deletes but
+//      never both, so one payload may carry the same (opcode, shape) twice
+//   2. runs in the order they opened, and inside one the stages and then the
+//      key - a hash order differs between executions, let alone between
+//      engines
 //   3. label sets normalised ascending, so [7,8] and [8,7] are one shape
 //   4. a new attribute announced ONCE per payload - the only rule that spans
 //      groups, so the one a per-group implementation gets locally right and
@@ -61,6 +64,50 @@ static unsigned char *_encode(EffectsV3Grouping *g, size_t *n) {
 	EffectsBytes_CopyInto(out, b);
 	EffectsBytes_Free(out);
 	return b;
+}
+
+// encode, then read the payload back as a record list
+//
+// THE DECODER WALKS IT, not this file. A record's length depends on its
+// opcode, its widths and its values, so a hand-rolled skip is a second encoder
+// - and one written from the same assumption as the first agrees with it even
+// when both are wrong. Everything above that needs only record 0 reads the
+// bytes directly; a test about SEQUENCE cannot.
+//
+// The two bytes prepended are the payload header - version, then flags - which
+// the accumulator does not write: it emits the body alone and
+// EffectsBuffer_Buffer stamps the header in front of it.
+static EffectsV3Records *_decode(EffectsV3Grouping *g) {
+	size_t n = 0;
+	unsigned char *body = _encode(g, &n);
+
+	unsigned char *buf = malloc(n + 2);
+	buf[0] = 3;     // version
+	buf[1] = 0;     // flags: nothing this build emits is compressed
+	memcpy(buf + 2, body, n);
+
+	EffectsV3Records *records = NULL;
+	EffectsV3Status status =
+		EffectsV3_Decode((const char *)buf, n + 2, &records);
+
+	TEST_ASSERT_(status == EFFECTS_V3_OK && records != NULL,
+			"the accumulator emitted a payload its own decoder refuses: "
+			"status %d", (int)status);
+
+	free(buf);
+	free(body);
+
+	return records;
+}
+
+// the opcodes of a payload's records, as one line, for a failure message
+static void _opcode_line(const EffectsV3Records *r, char *out, size_t n) {
+	size_t w = 0;
+	out[0] = '\0';
+	for(uint32_t i = 0; i < r->n && w + 8 < n; i++) {
+		w += (size_t)snprintf(out + w, n - w, "%s%d",
+				(i == 0) ? "" : ", ", (int)r->records[i].opcode);
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -342,6 +389,12 @@ void test_effectsV3Group_recordsAreSortedByKey(void) {
 //
 // this is the property the sort exists for, and it is stronger than checking a
 // particular order: it fails for any ordering that depends on arrival
+//
+// WITHIN ONE RUN, which is as far as the property goes. A payload that both
+// creates and deletes DOES depend on arrival, and has to - the records either
+// side of the switch cannot be swapped without naming a live id in a create or
+// a dead one in an update. These three shapes are all creates, so they are one
+// run and the key alone decides.
 void test_effectsV3Group_insertionOrderDoesNotChangeBytes(void) {
 	AttributeID attrs[] = { 7 };
 	SIValue v = SI_LongVal(1);
@@ -1976,6 +2029,420 @@ void test_effectsV3Group_edgeDeletedBeforeNode(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+//------------------------------------------------------------------------------
+// runs: a payload that both creates and deletes
+//------------------------------------------------------------------------------
+//
+// WHY A STAGE ORDER OVER THE WHOLE PAYLOAD CANNOT BE RIGHT. C's DataBlock
+// hands a freed id back to the query that freed it, so one payload can name
+// one id for two different entities - and nothing in either record says which
+// of the two it means. Sorting creates ahead of deletes ships CREATE id N for
+// an id the replica still has live; sorting deletes ahead of creates breaks
+// the same pair written the other way round. The records have to go out in the
+// order the query made them, and a RUN is how much of that order is kept.
+//
+// These assert the OPCODE SEQUENCE of the payload rather than a byte layout,
+// because that is the whole of the claim: which record a replica meets first.
+
+// the opcode of every record, in order
+static void _assert_opcodes
+(
+	const EffectsV3Records *r,  // decoded payload
+	const int *want,            // expected opcodes
+	uint32_t n,                 // how many
+	const char *what            // what this payload is
+) {
+	char line[256];
+	_opcode_line(r, line, sizeof(line));
+
+	TEST_ASSERT_(r->n == n,
+			"%s: expected %u records, got %u - [%s]", what, n, r->n, line);
+
+	for(uint32_t i = 0; i < n; i++) {
+		TEST_ASSERT_(r->records[i].opcode == (EffectType)want[i],
+				"%s: record %u is opcode %d, wanted %d - [%s]",
+				what, i, (int)r->records[i].opcode, want[i], line);
+	}
+}
+
+// A DELETE IS NOT OVERTAKEN BY THE CREATE THAT REUSES ITS ID
+//
+// `MATCH (n:A) DELETE n CREATE (:B)` - the measured shape. The delete frees an
+// id and the create is handed it straight back, so both records name it. With
+// the creates staged first the replica meets CREATE_NODE for a node it still
+// has, refuses the whole payload and resyncs; the delete behind it is never
+// reached, because apply stops at the first failure.
+void test_effectsV3Group_aDeleteIsNotOvertakenByACreate(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID A = 1, B = 2;
+
+	// the SAME id in both records, which is what the allocator does here
+	EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &A, 1, 1, NULL, NULL, 0);
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 1, NULL, NULL, 0);
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = { EFFECT_DELETE_NODE, EFFECT_CREATE_NODE };
+	_assert_opcodes(r, want, 2, "delete then create of one id");
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
+// AND THE MIRROR, WHICH IS WHY NO FIXED STAGE ORDER WORKS
+//
+// `CREATE (n:B) DELETE n` emits a create and a delete of the same id in the
+// other order. Deletes-first would carry this one and break the test above by
+// exactly the same mechanism, so the pair of them is what rules out ordering
+// by opcode altogether.
+void test_effectsV3Group_aCreateIsNotOvertakenByADelete(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID B = 2;
+
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 1, NULL, NULL, 0);
+	EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &B, 1, 1, NULL, NULL, 0);
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = { EFFECT_CREATE_NODE, EFFECT_DELETE_NODE };
+	_assert_opcodes(r, want, 2, "create then delete of one id");
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
+// AND AN EDGE ID IS REUSED THE SAME WAY A NODE ID IS
+//
+// Not a restatement of the node case: the edge id space is its own DataBlock
+// and the refusal is its own code path - _ApplyCreateEdge claims the stated
+// ids and reports "names an edge id that is already live on this replica"
+// where _ApplyCreateNode reports the node equivalent. A fix that filed only
+// node records into runs would pass every test above and still resync on
+// `MATCH ()-[e:R]->() DELETE e CREATE ()-[:R]->()`.
+void test_effectsV3Group_aDeletedEdgeIdIsNotOvertakenByACreate(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	// the edge at id 1 goes, and the edge created after it is handed that id
+	EffectsV3Grouping_AddEdge(g, EFFECT_DELETE_EDGE, 3, 1, 10, 11, NULL, NULL,
+			0);
+	EffectsV3Grouping_AddEdge(g, EFFECT_CREATE_EDGE, 3, 1, 12, 13, NULL, NULL,
+			0);
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = { EFFECT_DELETE_EDGE, EFFECT_CREATE_EDGE };
+	_assert_opcodes(r, want, 2, "delete then create of one edge id");
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
+// AN ENTITY FILED LATE DOES NOT JOIN A GROUP EMITTED EARLY
+//
+// This is the case group-level appearance order alone does not cover, and it
+// is measured rather than imagined: `MATCH (n:A) CREATE (:B {n:'b1'}) DELETE n
+// CREATE (:B {n:'b2'})` puts both CREATE clauses in ONE group whose first
+// member predates the delete, and the second clause is handed the ids the
+// delete just freed. Appending it to that group emits it ahead of the delete
+// again - the bug, with the groups in arrival order.
+//
+// So the two creates are two records here, not one, and the delete sits
+// between them. The payload is one record larger and is the only sequence a
+// replica can apply.
+void test_effectsV3Group_aLaterCreateDoesNotJoinAnEarlierRun(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID A = 1, B = 2;
+
+	// b1, at an id of its own
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 3, NULL, NULL, 0);
+
+	// the delete frees id 1
+	EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &A, 1, 1, NULL, NULL, 0);
+
+	// b2, handed it back - SAME shape as b1, so one group would swallow it
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 1, NULL, NULL, 0);
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = {
+		EFFECT_CREATE_NODE, EFFECT_DELETE_NODE, EFFECT_CREATE_NODE
+	};
+	_assert_opcodes(r, want, 3, "a create either side of a delete");
+
+	// ONE ENTITY EACH, which is what says the second create opened its own
+	// record rather than folding into the first: two records of the right
+	// opcodes with counts 2 and 0 would pass the sequence check above
+	TEST_ASSERT_(r->records[0].create_node.count == 1 &&
+			r->records[2].create_node.count == 1,
+			"the two creates should hold one node each, got %u and %u",
+			r->records[0].create_node.count, r->records[2].create_node.count);
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
+// EVERY CREATED NODE STILL PRECEDES EVERY CREATED EDGE, ACROSS CLAUSES
+//
+// The run keeps the payload's halves apart; INSIDE a run the stages still
+// decide, and this is why. A group accepts entities for as long as its run is
+// open, so the edge record opened by the first clause is reused by the second
+// and emitted where the FIRST clause put it - ahead of the record creating the
+// second clause's endpoints. _ApplyCreateEdge checks both endpoints exist
+// before it claims anything, so that payload is refused.
+void test_effectsV3Group_createdNodesPrecedeCreatedEdgesAcrossClauses(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID A = 1, B = 2;
+
+	// CREATE (:A)-[:R]->(:A)
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &A, 1, 0, NULL, NULL, 0);
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &A, 1, 1, NULL, NULL, 0);
+	EffectsV3Grouping_AddEdge(g, EFFECT_CREATE_EDGE, 1, 0, 0, 1, NULL, NULL, 0);
+
+	// CREATE (:B)-[:R]->(:B), the same relationship type and a new label
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 2, NULL, NULL, 0);
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 3, NULL, NULL, 0);
+	EffectsV3Grouping_AddEdge(g, EFFECT_CREATE_EDGE, 1, 1, 2, 3, NULL, NULL, 0);
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = {
+		EFFECT_CREATE_NODE, EFFECT_CREATE_NODE, EFFECT_CREATE_EDGE
+	};
+	_assert_opcodes(r, want, 3, "two create clauses sharing a relationship");
+
+	// the two edges are still ONE record: a run that both creates nodes and
+	// creates edges does not split, it sorts
+	TEST_ASSERT_(r->records[2].create_edge.count == 2,
+			"both edges share a shape and should be one record of two, got %u",
+			r->records[2].create_edge.count);
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
+// AND THE MIRROR ON THE WAY OUT: every deleted edge precedes every deleted node
+//
+// op_delete unhooks before it removes, and it does so once per batch - so two
+// delete clauses interleave edge and node records the way the two create
+// clauses above interleave node and edge ones.
+void test_effectsV3Group_deletedEdgesPrecedeDeletedNodesAcrossClauses(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID A = 1, B = 2;
+
+	EffectsV3Grouping_AddEdge(g, EFFECT_DELETE_EDGE, 1, 0, 0, 1, NULL, NULL, 0);
+	EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &A, 1, 0, NULL, NULL, 0);
+
+	EffectsV3Grouping_AddEdge(g, EFFECT_DELETE_EDGE, 1, 1, 2, 3, NULL, NULL, 0);
+	EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &B, 1, 2, NULL, NULL, 0);
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = {
+		EFFECT_DELETE_EDGE, EFFECT_DELETE_NODE, EFFECT_DELETE_NODE
+	};
+	_assert_opcodes(r, want, 3, "two delete clauses sharing a relationship");
+
+	TEST_ASSERT_(r->records[0].delete_edge.count == 2,
+			"both edges share a shape and should be one record of two, got %u",
+			r->records[0].delete_edge.count);
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
+// A STAGED UPDATE IS EMITTED WHERE THE QUERY STAGED IT, NOT AT THE END
+//
+// An update is the one record type that cannot be filed on arrival - its shape
+// is the entity's whole attribute set, which is not known until the query
+// stops producing attributes for it - so it is folded into a group at the
+// flush, after every create and delete has already been filed. Appending it
+// there would put `MATCH (n:A) SET n.v = 1 DELETE n` on the wire as a delete
+// followed by an update of a node that is gone.
+//
+// It carries the run it was staged in instead, and the stage order inside that
+// run does the rest.
+void test_effectsV3Group_anUpdateIsEmittedInTheRunItWasStagedIn(void) {
+	{
+		// MATCH (n:A) SET n.v = 1 DELETE n - one run, stages decide
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		const LabelID A = 1;
+
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 1, &A, 1, 0, 7,
+				SI_LongVal(1));
+		EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &A, 1, 1, NULL, NULL,
+				0);
+
+		EffectsV3Records *r = _decode(g);
+
+		const int want[] = { EFFECT_UPDATE_NODE, EFFECT_DELETE_NODE };
+		_assert_opcodes(r, want, 2, "an update of a node the query deletes");
+
+		EffectsV3_RecordsFree(r);
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// MATCH (n:A) DELETE n CREATE (m:B) SET m.v = 1 - the update belongs to
+		// the SECOND run, behind the create that made the node it names
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		const LabelID A = 1, B = 2;
+
+		EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &A, 1, 1, NULL, NULL,
+				0);
+		EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 1, NULL, NULL,
+				0);
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 1, &B, 1, 0, 7,
+				SI_LongVal(1));
+
+		EffectsV3Records *r = _decode(g);
+
+		const int want[] = {
+			EFFECT_DELETE_NODE, EFFECT_CREATE_NODE, EFFECT_UPDATE_NODE
+		};
+		_assert_opcodes(r, want, 3, "an update of a node the query created "
+				"over a freed id");
+
+		EffectsV3_RecordsFree(r);
+		EffectsV3Grouping_Free(g);
+	}
+}
+
+// AN UPDATE DOES NOT FOLLOW AN ID ACROSS THE ENTITY THAT REUSED IT
+//
+// `MATCH (n:A) SET n.v = 1 DELETE n CREATE (m:B) SET m.w = 2` stages TWO
+// updates under ONE id, for two different entities, because the create is
+// handed the id the delete just freed. Staged per entity id alone they merge,
+// and the merged record carries the FIRST entity's labels and the FIRST
+// entity's run - so m's property is written to n, ahead of the delete that
+// removes it, and never reaches m at all.
+//
+// WHAT MAKES THIS THE WORST OF THE FAMILY: nothing refuses it. The payload is
+// well formed, every record applies, no divergence is logged and no resync
+// follows - the replica is simply a property short. Measured on a live pair
+// before this was keyed on the run: master {w: 9}, replica {}.
+void test_effectsV3Group_anUpdateDoesNotCrossIntoAReusedId(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID A = 1, B = 2;
+
+	// SET n.v = 1   (attribute 7 on the :A node at id 1)
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 1, &A, 1, 0, 7,
+			SI_LongVal(1));
+
+	// DELETE n, then CREATE (m:B) on the id it just freed
+	EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, &A, 1, 1, NULL, NULL, 0);
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 1, NULL, NULL, 0);
+
+	// SET m.w = 2   (attribute 8, SAME id, different entity)
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 1, &B, 1, 0, 8,
+			SI_LongVal(2));
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = {
+		EFFECT_UPDATE_NODE, EFFECT_DELETE_NODE,
+		EFFECT_CREATE_NODE, EFFECT_UPDATE_NODE
+	};
+	_assert_opcodes(r, want, 4, "an update either side of a reused id");
+
+	// THE ATTRIBUTES ARE WHAT DISCRIMINATES, not the record count alone: a
+	// merged entry emits one UPDATE_NODE holding BOTH attributes, under the
+	// label set of the entity that is about to be deleted
+	TEST_ASSERT_(r->records[0].update_node.n_attrs == 1 &&
+			r->records[0].update_node.attr_ids[0] == 7,
+			"the first update should carry n's attribute alone, got %u "
+			"attribute(s) starting with %u",
+			r->records[0].update_node.n_attrs,
+			r->records[0].update_node.n_attrs
+				? r->records[0].update_node.attr_ids[0] : 0);
+
+	TEST_ASSERT_(r->records[3].update_node.n_attrs == 1 &&
+			r->records[3].update_node.attr_ids[0] == 8,
+			"the second update should carry m's attribute alone, got %u "
+			"attribute(s) starting with %u",
+			r->records[3].update_node.n_attrs,
+			r->records[3].update_node.n_attrs
+				? r->records[3].update_node.attr_ids[0] : 0);
+
+	// and each names the labels of the entity it is actually about
+	TEST_ASSERT_(r->records[0].update_node.n_labels == 1 &&
+			r->records[0].update_node.labels[0] == A,
+			"the first update should name :A");
+	TEST_ASSERT_(r->records[3].update_node.n_labels == 1 &&
+			r->records[3].update_node.labels[0] == B,
+			"the second update should name :B");
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
+// AND THE SAME ENTITY WRITTEN TWICE INSIDE ONE RUN IS STILL ONE RECORD
+//
+// The guard on the line above. Keying the staging index on the run splits an
+// entity's updates whenever the payload switches; it must not split them when
+// it does not, or every `SET n.a = 1, n.b = 2` becomes two records.
+void test_effectsV3Group_twoWritesToOneEntityInOneRunAreOneRecord(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID A = 1;
+
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 1, &A, 1, 0, 7,
+			SI_LongVal(1));
+	// a create in between, which does NOT switch the run: nothing has deleted
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &A, 1, 2, NULL, NULL, 0);
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 1, &A, 1, 0, 8,
+			SI_LongVal(2));
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = { EFFECT_CREATE_NODE, EFFECT_UPDATE_NODE };
+	_assert_opcodes(r, want, 2, "two writes to one entity in one run");
+
+	TEST_ASSERT_(r->records[1].update_node.n_attrs == 2,
+			"both attributes belong to one record, got %u",
+			r->records[1].update_node.n_attrs);
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
+// A PAYLOAD THAT ONLY CREATES IS STILL ONE RUN
+//
+// The guard against the opposite mistake. Runs cost a record every time they
+// split, so a rule that opened one per clause, per batch or per shape would
+// turn a bulk create into a record per entity and pass every test above while
+// undoing what the grouping is for. Nothing here switches between creating and
+// deleting, so nothing may split.
+void test_effectsV3Group_aCreateOnlyPayloadIsOneRun(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	const LabelID A = 1, B = 2;
+	AttributeID attrs[] = { 7 };
+
+	// the two shapes ALTERNATE, which is what `CREATE (:A), (:B)` over many
+	// rows produces: a rule keyed on "the shape changed" splits here
+	for(int i = 0; i < 50; i++) {
+		SIValue v = SI_LongVal(i);
+		EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &A, 1, 2 * i, attrs,
+				&v, 1);
+		EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, &B, 1, 2 * i + 1,
+				attrs, &v, 1);
+	}
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+			"a hundred nodes over two shapes is two records, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	EffectsV3Records *r = _decode(g);
+
+	const int want[] = { EFFECT_CREATE_NODE, EFFECT_CREATE_NODE };
+	_assert_opcodes(r, want, 2, "an alternating create-only payload");
+
+	TEST_ASSERT_(r->records[0].create_node.count == 50 &&
+			r->records[1].create_node.count == 50,
+			"each shape should hold fifty nodes, got %u and %u",
+			r->records[0].create_node.count, r->records[1].create_node.count);
+
+	EffectsV3_RecordsFree(r);
+	EffectsV3Grouping_Free(g);
+}
+
 // a vector statement's options survive the conversion, codes and all
 void test_effectsV3Group_vectorOptions(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
@@ -2065,6 +2532,26 @@ TEST_LIST = {
 		test_effectsV3Group_dropIndexFoldsWithNoOptions },
 	{ "EffectsV3Group:createPrecedesUpdate",
 		test_effectsV3Group_createPrecedesUpdate },
+	{ "EffectsV3Group:aDeleteIsNotOvertakenByACreate",
+			test_effectsV3Group_aDeleteIsNotOvertakenByACreate },
+	{ "EffectsV3Group:aCreateIsNotOvertakenByADelete",
+			test_effectsV3Group_aCreateIsNotOvertakenByADelete },
+	{ "EffectsV3Group:aDeletedEdgeIdIsNotOvertakenByACreate",
+			test_effectsV3Group_aDeletedEdgeIdIsNotOvertakenByACreate },
+	{ "EffectsV3Group:aLaterCreateDoesNotJoinAnEarlierRun",
+			test_effectsV3Group_aLaterCreateDoesNotJoinAnEarlierRun },
+	{ "EffectsV3Group:createdNodesPrecedeCreatedEdgesAcrossClauses",
+			test_effectsV3Group_createdNodesPrecedeCreatedEdgesAcrossClauses },
+	{ "EffectsV3Group:deletedEdgesPrecedeDeletedNodesAcrossClauses",
+			test_effectsV3Group_deletedEdgesPrecedeDeletedNodesAcrossClauses },
+	{ "EffectsV3Group:anUpdateIsEmittedInTheRunItWasStagedIn",
+			test_effectsV3Group_anUpdateIsEmittedInTheRunItWasStagedIn },
+	{ "EffectsV3Group:anUpdateDoesNotCrossIntoAReusedId",
+			test_effectsV3Group_anUpdateDoesNotCrossIntoAReusedId },
+	{ "EffectsV3Group:twoWritesToOneEntityInOneRunAreOneRecord",
+			test_effectsV3Group_twoWritesToOneEntityInOneRunAreOneRecord },
+	{ "EffectsV3Group:aCreateOnlyPayloadIsOneRun",
+			test_effectsV3Group_aCreateOnlyPayloadIsOneRun },
 	{ "EffectsV3Group:edgeDeletedBeforeNode",
 		test_effectsV3Group_edgeDeletedBeforeNode },
 	{ "EffectsV3Group:differentIndexesNeverFold",
