@@ -984,6 +984,40 @@ def test_no_latency_finding_for_a_query_whose_rows_differ():
     assert [(f["name"], f["status"]) for f in v.findings] == [("IC9 rows", "regression")]
 
 
+def test_a_warm_up_alone_is_not_a_comparison(tmp_path):
+    """The warm-up finishes on both sides, every timed request times out on both."""
+
+    def warm_then_hang(cypher, params, n):
+        if n == 1:
+            return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2)
+        return ck.Sample("", 0, "", 0, "", ck.TIMEOUT, error="Query timed out")
+
+    check = scripted_check(tmp_path, warm_then_hang, warm_then_hang, names=("IC2",), params=3)
+    check.measure()
+    result = check.result()
+    assert check.compared_queries == 0
+    assert result["verdict"] == "error" and "no query could be compared" in result["error"]
+    assert_valid(result)
+
+
+def test_a_candidate_that_times_out_in_the_warm_up_is_a_regression(tmp_path):
+    """The warm-up is judged with the rounds: the baseline finished it."""
+
+    def cand(cypher, params, n):
+        if n == 1:
+            return ck.Sample("", 0, "", 0, "", ck.TIMEOUT, error="Query timed out")
+        return ck.Sample("", 0, "", 0, "", ck.OK, 5.0, 2)
+
+    check = scripted_check(tmp_path, _ok(), cand, names=("IC2",), params=3)
+    check.measure()
+    result = check.result()
+    assert result["verdict"] == "regression"
+    assert [(f["name"], f["status"]) for f in result["findings"]] == [
+        ("IC2 completed", "regression")
+    ]
+    assert_valid(result)
+
+
 def test_a_query_that_finished_on_neither_side_alone_is_not_a_comparison(tmp_path):
     def hangs(cypher, params, n):
         return ck.Sample("", 0, "", 0, "", ck.TIMEOUT, error="Query timed out")

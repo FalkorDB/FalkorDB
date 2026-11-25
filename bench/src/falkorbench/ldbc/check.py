@@ -421,7 +421,10 @@ def compare_rows(query: str, cand: SideStats, base: SideStats) -> RowCheck:
     """
     out = RowCheck()
     common = sorted(set(cand.rows) & set(base.rows))
-    out.compared = bool(common)
+    # Compared means a timed request finished on both sides: the warm-up is
+    # untimed, so on its own it is no comparison (nor a claim of no rows).
+    timed = [k for k in common if k[0] != "warmup"]
+    out.compared = bool(timed)
     mismatched = [k for k in common if cand.rows[k] != base.rows[k]]
     out.differ = bool(mismatched)
     if mismatched:
@@ -438,10 +441,9 @@ def compare_rows(query: str, cand: SideStats, base: SideStats) -> RowCheck:
         mismatch["ratio"] = None  # two row counts that differ: no slowdown to show as Nx
         out.findings.append(mismatch)
         return out
-    # Whether the query returned anything is decided on the measured requests:
+    # Whether the query returned anything is decided on the timed requests:
     # a warm-up that returned rows does not make empty rounds worth timing.
-    measured = [k for k in common if k[0] != "warmup"] or common
-    if measured and all(base.rows[k] == 0 for k in measured):
+    if timed and all(base.rows[k] == 0 for k in timed):
         out.empty = True
         name = f"{query} returns rows"
         out.findings.append(
