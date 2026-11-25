@@ -103,6 +103,9 @@ CHANGES = [(c.name, c.start, c.path, c.value, [(c.code, c.at)]) for c in example
     ("red night said error", RED, ("status",), "error", [("nightly-status-mismatch", "$.status")]),
     ("embedded unconfirmed regression", RED, ("checks", 0, "confirmed"), False, [("regression-unconfirmed", "$.checks[0].confirmed")]),
     ("check entry not an object", GREEN, ("checks", 1), "pokec", [("wrong-type", "$.checks[1]")]),
+    ("incomplete as a number", MICRO_REGRESSION, ("incomplete",), 3, [("wrong-type", "$.incomplete")]),
+    ("incomplete as a line", MICRO_REGRESSION, ("incomplete",), "findings truncated: 50 of 80 kept", []),
+    ("incomplete as null", MICRO_REGRESSION, ("incomplete",), None, []),
 ]
 
 

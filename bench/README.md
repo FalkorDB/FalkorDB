@@ -181,6 +181,9 @@ The rules the contract adds to "every field present and well formed"
 * a run that did not finish (`completed` 0) or a broken invariant (`invariant`
   0) is a regression, unless the baseline broke too (then `info`); a `rows`
   finding with direction `mismatch` whose sides differ is a regression;
+* `incomplete` is optional: null, or a non-empty one-line string saying what was not
+  measured or was cut (a regression outranks an error, so this is where a regressed
+  result says its run was partial); validate checks only that it is a string or null;
 * no `NaN` or `Infinity` (Python's `json.dump` writes them for a 0 baseline);
 * at most 50 findings;
 * a nightly's `status` is red if any check regressed, else error if any check

@@ -302,6 +302,8 @@ class _Checker:
         findings = value.get("findings") if isinstance(value.get("findings"), list) else []
         regressions = [i for i, f in enumerate(findings) if isinstance(f, dict) and f.get("status") == "regression"]
         error = value.get("error")
+        if "incomplete" in value:  # optional: only its type is checked
+            self.string_or_null(value["incomplete"], _child(path, "incomplete"))
         if verdict == "regression":
             if "confirmed" in value and value["confirmed"] is not True:
                 self.add("regression-unconfirmed", _child(path, "confirmed"),
