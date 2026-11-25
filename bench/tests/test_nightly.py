@@ -34,6 +34,7 @@ from click.testing import CliRunner
 
 from falkorbench import nightly as nightly_package
 from falkorbench.cli import cli
+from falkorbench.nightly import dashboard
 from falkorbench.nightly import missed_run
 from falkorbench.nightly import report
 
@@ -1315,7 +1316,7 @@ class StandardLibraryOnly(unittest.TestCase):
     )
 
     def test_the_nightly_modules_import_only_the_standard_library(self):
-        for module in (nightly_package, report, missed_run):
+        for module in (nightly_package, report, missed_run, dashboard):
             with self.subTest(module=module.__name__):
                 for node in ast.walk(ast.parse(Path(module.__file__).read_text(encoding="utf-8"))):
                     if isinstance(node, ast.Import):
