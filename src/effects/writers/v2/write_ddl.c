@@ -5,8 +5,17 @@
 
 // the v2 DDL writers
 //
-// BYTE-FROZEN: shipped and read by engines this build will never see. The
-// payload capture in .handover/capture_v2_payloads.py is what holds that.
+// BYTE-FROZEN: shipped and read by engines this build will never see, so a
+// field may not move, widen or change order here.
+//
+// Nothing in this repository pins the bytes themselves. What covers v2 is
+// replication to a C replica, in two different files: tests/flow/test_effects.py
+// for the index and constraint records (test26 and test27 read the replica's
+// constraints back), and tests/flow/test_cch.py for the CCH pair below
+// (test01_create_update_drop_replicate, which is the only coverage those two
+// writers have - test_effects.py mentions CCH nowhere). Both catch a change
+// that breaks C against C; neither would catch one that only breaks an older
+// engine.
 
 #include "../../../RG.h"
 #include "../../effects.h"
@@ -85,32 +94,33 @@ void EffectsWriteV2_DropIndex
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-void EffectsWriteV2_CreateConstraint
+// constraint DDL, create and drop
+//
+// Identical encodings behind two opcodes, so they share a writer - the same
+// reason the CCH pair below shares one. v2 has no status field, so the create
+// carries nothing the drop does not.
+//
+// effect format:
+//    effect type
+//    constraint type
+//    entity type
+//    label id
+//    label name
+//    attribute count
+//    (attribute id, attribute name) pairs
+static void _v2_WriteConstraint
 (
 	EffectsBuffer *buff,          // effect buffer
+	EffectType opcode,            // CREATE_CONSTRAINT or DROP_CONSTRAINT
 	ConstraintType ct,            // constraint type (unique/mandatory)
 	GraphEntityType et,           // entity type (node/edge)
-	uint32_t status,              // unused: v2 has no status field
 	int label_id,                 // label/relationship-type id
 	const char *label,            // label/relationship-type name
 	const AttributeID *attr_ids,  // constrained attribute ids
 	const char **attrs,           // constrained attribute names
 	uint8_t n                     // number of constrained attributes
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// constraint type
-	// entity type
-	// label id
-	// label name
-	// attribute count
-	// (attribute id, attribute name) pairs
-	//--------------------------------------------------------------------------
-
-	EffectType eff_t = EFFECT_CREATE_CONSTRAINT ;
-
-	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
+	EffectsBuffer_WriteBytes (&opcode, sizeof (opcode), buff) ;
 
 	EffectsBuffer_WriteBytes (&ct, sizeof (ct), buff) ;
 	EffectsBuffer_WriteBytes (&et, sizeof (et), buff) ;
@@ -126,6 +136,22 @@ void EffectsWriteV2_CreateConstraint
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
+void EffectsWriteV2_CreateConstraint
+(
+	EffectsBuffer *buff,          // effect buffer
+	ConstraintType ct,            // constraint type (unique/mandatory)
+	GraphEntityType et,           // entity type (node/edge)
+	uint32_t status,              // unused: v2 has no status field
+	int label_id,                 // label/relationship-type id
+	const char *label,            // label/relationship-type name
+	const AttributeID *attr_ids,  // constrained attribute ids
+	const char **attrs,           // constrained attribute names
+	uint8_t n                     // number of constrained attributes
+) {
+	_v2_WriteConstraint (buff, EFFECT_CREATE_CONSTRAINT, ct, et, label_id,
+			label, attr_ids, attrs, n) ;
+}
+
 void EffectsWriteV2_DropConstraint
 (
 	EffectsBuffer *buff,          // effect buffer
@@ -137,33 +163,8 @@ void EffectsWriteV2_DropConstraint
 	const char **attrs,           // constrained attribute names
 	uint8_t n                     // number of constrained attributes
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// constraint type
-	// entity type
-	// label id
-	// label name
-	// attribute count
-	// (attribute id, attribute name) pairs
-	//--------------------------------------------------------------------------
-
-	EffectType eff_t = EFFECT_DROP_CONSTRAINT ;
-
-	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
-
-	EffectsBuffer_WriteBytes (&ct, sizeof (ct), buff) ;
-	EffectsBuffer_WriteBytes (&et, sizeof (et), buff) ;
-	EffectsBuffer_WriteBytes (&label_id, sizeof (label_id), buff) ;
-	EffectsBuffer_WriteString (label, buff) ;
-
-	EffectsBuffer_WriteBytes (&n, sizeof (n), buff) ;
-	for (uint8_t i = 0; i < n; i++) {
-		EffectsBuffer_WriteBytes (attr_ids + i, sizeof (AttributeID), buff) ;
-		EffectsBuffer_WriteString (attrs [i], buff) ;
-	}
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	_v2_WriteConstraint (buff, EFFECT_DROP_CONSTRAINT, ct, et, label_id,
+			label, attr_ids, attrs, n) ;
 }
 
 // the CCH path index, create and drop
