@@ -25,6 +25,7 @@ METRIC_NAMES = (
     "branches",
     "br_miss",
     "l1d_miss",
+    "l2_miss",
     "alloc_bytes",
     "dealloc_bytes",
     "ms",

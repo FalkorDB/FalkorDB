@@ -23,6 +23,7 @@ from redis.exceptions import ResponseError
 
 from falkorbench import client as client_mod
 from falkorbench.counters import Backend
+from falkorbench.counters import MeasuredRunFailed
 from falkorbench.metrics import Row
 from falkorbench.metrics import read_rows
 from falkorbench.metrics import write_rows
@@ -170,7 +171,18 @@ def measure_queries(
         # Memory snapshots sit outside the counter window so the MALLOC-STATS
         # call's own work does not land in the instruction counts.
         alloc0, dealloc0 = bench.jemalloc_totals()
-        reading = backend.run_and_count(pid, cmd)
+        try:
+            reading = backend.run_and_count(pid, cmd)
+        except MeasuredRunFailed as e:
+            # The warmup answered but the measured run did not finish: never a row
+            # (its counters cover a run cut short). Like a warmup error, it is a
+            # failure, except on the C engine, where the row is skipped.
+            if c_compat:
+                echo(f"{query.name:<20} SKIPPED (C, measured run: {e})")
+            else:
+                echo(f"{query.name:<20} FAILED (measured run: {e})")
+                failures.append((query.name, f"measured run: {e}"))
+            continue
         alloc1, dealloc1 = bench.jemalloc_totals()
 
         row = Row.fromkeys(CSV_FIELDS[1:], None)
@@ -182,8 +194,11 @@ def measure_queries(
                 k: _adjust(v, cal.event_rates.get(k, 0.0), reading.elapsed, n) or 0.0
                 for k, v in reading.events.items()
             }
-            row["branches"] = adj.get("INST_BRANCH")
-            row["br_miss"] = adj.get("BRANCH_MISPRED_NONSPEC")
+            # pmc_tool (macOS) names events by their Apple PMU names; the perf
+            # backend (Linux) already names them by column (counters.PERF_EVENTS).
+            row["branches"] = adj.get("INST_BRANCH", adj.get("branches"))
+            row["br_miss"] = adj.get("BRANCH_MISPRED_NONSPEC", adj.get("br_miss"))
+            row["l2_miss"] = adj.get("l2_miss")
             l1_ld = adj.get("L1D_CACHE_MISS_LD")
             l1_st = adj.get("L1D_CACHE_MISS_ST")
             if l1_ld is not None and l1_st is not None:

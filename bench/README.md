@@ -327,6 +327,130 @@ def main(argv=None) -> int:
     return 0  # result.json was written
 ```
 
+## Nightly micro check (`micro-hw`)
+
+`.github/workflows/_perf-micro.yml` takes a candidate and a baseline
+falkordb-server image, both pinned by digest, and runs `bench micro-hw` on a GCE
+c4-standard-8 with its PMU exposed, through `_perf-vm.yml` (`pmu: true`).
+`perf-nightly.yml` calls it. The result is the nightly contract's `result.json`
+with check `micro-hw`, in artifact `perf-result-micro-hw`.
+
+```bash
+bench micro-hw --bench-image ghcr.io/falkordb/falkordb-bench@sha256:… \
+    --candidate IMAGE@sha256:… --baseline IMAGE@sha256:… --out out --mode nightly
+```
+
+**What it measures.** The full query set through `bench measure`, inside the
+bench image (the same redis and jemalloc as `benchmark-cov`), with each image's
+module copied out and loaded into it. Per query and per execution:
+
+| metric | read from |
+|---|---|
+| instructions | `perf stat`: `instructions` |
+| cycles | `perf stat`: `cycles` |
+| branch_misses | `perf stat`: `branch-misses` |
+| l2_misses | `perf stat`: `l2_rqsts.all_demand_miss` (demand requests that miss L2) |
+| alloc_bytes | jemalloc, `MEMORY MALLOC-STATS` before and after |
+
+The counters are read on the server process from inside the container, which
+runs `--privileged`: Docker's default seccomp profile blocks `perf_event_open`.
+The VM's PMU type is `standard`, which has "most documented core/L2 events" and
+no last-level-cache events (gcloud's help for `--performance-monitoring-unit`),
+so `cache-misses` reads `<not supported>` there. The L2 event is the one the C4
+counted, and it is never swapped for another. Before the first pass a probe
+needs every counter to read above 0; a host that cannot count one gives
+`error`, never a pass on the rest.
+
+**How it runs.**
+
+- **Both images on one VM.** Candidate, baseline, baseline, candidate: two passes
+  a side, order swapped once.
+- **Threads pinned.** `THREAD_COUNT 4` and `OMP_NUM_THREADS=4`. Unpinned, the
+  engine's pool and GraphBLAS follow the host, and per-thread workspaces made
+  main's write rows allocate ~1.02 MB on a 16-vCPU VM against ~36 KB on a 4-vCPU
+  runner. Pinned, the C4 matches a hosted runner: median 1.000 over 373 rows.
+- **A row that regresses is measured again.** The whole set runs a second time,
+  baseline first, and the row is a regression only if that second run crosses
+  too; one that crossed once is `info`. A single query run alone would not
+  rebuild the graph state the full set measured against. Improvements are
+  reported as measured, not re-run, and never fail the run.
+- **A query that errors on the candidate in every pass and answers on the
+  baseline in every pass** is a regression at once (metric `completed`). One
+  that errors in some passes only, in either run, is `info`, and so is one the
+  baseline also fails sometimes. A pass in which every query errored still
+  counts as a pass. A row whose prerequisite (`needs`) errored on one side only,
+  or in some passes, is not compared: the two sides measured different graphs.
+- **A gap is never a pass.** A missing pass, a row missing a reading in a pass
+  it ran in, or a crossed row the second run could not fully measure makes the
+  verdict `error`, unless a confirmed regression outranks it. A measured run
+  that does not finish is a failed query, never a row.
+- **Per-class rows.** A small fixed cost on every query crosses no per-row
+  threshold, so reads and writes each get an `info` finding with the median
+  per-row ratio and how many rows went up and down, for instructions, cycles and
+  allocated bytes.
+- **The C engine.** When either image is C, both sides run `--c-compat` (both
+  build the same graph) and the C gates below apply.
+
+**The gates.** +10% on instructions, cycles and allocated bytes, +25% on the
+miss counters (bench's thresholds), with the passes not overlapping and the
+second run repeating it, and an absolute change per execution of more than the
+floor; or a steeper ratio over a smaller floor. Every bound is strict: a row
+exactly on one does not cross. Every value sits above the worst
+split two runs of the same image could produce: the top two of a row's four
+readings against the bottom two, over runs 45376924910, 45376924661, 45403484617
+and 45403484657 (Rust) and 45376924684 and 45403484855 (C), first and second
+runs.
+
+| engine | metric | floor (worst same-image change past the threshold) | steep tier | its basis: worst same-image ratio of a change at least that floor | margin |
+|---|---|---|---|---|---|
+| Rust | instructions | 250,000 (+103,619, edge index lt range 1.49x) | — | | |
+| Rust | cycles | 20,000,000 (+9,781,665, labelPropagation all types 1.113x) | 1.8x over 250,000 | 1.113x (labelPropagation all types) | 1.62x |
+| Rust | branch_misses | 12,000 (+5,598, maxFlow KNOWS 1.27x) | 2.8x over 2,000 | 1.716x (WCC typed) | 1.63x |
+| Rust | l2_misses | 225,000 (+111,503, labelPropagation all types 1.82x) | 3.0x over 15,000 | 1.816x (labelPropagation all types) | 1.65x |
+| Rust | alloc_bytes | 65,536 (+17,655, create delete indexed 2.16x) | 8x over 4,096 | 2.620x (delete path) | 3.05x |
+| C | instructions | 1,300,000 (+629,577, cross product filter 3.66x) | — | | |
+| C | cycles | 270,000 (+134,843, cross product filter 1.68x) | — | | |
+| C | branch_misses | 40,000 (+20,159, betweenness default 1.31x) | — | (algo.pageRank 3.58x at +10,998 rules one out) | |
+| C | l2_misses | 665,000 (+332,270, algo.labelPropagation 1.53x) | 3.1x over 15,000 | 1.534x (algo.labelPropagation) | 2.02x |
+| C | alloc_bytes | 3,100,000 (none past 1.10x; betweenness default 1.097x at +1,537,039) | 8x over 4,096 | 1.097x (betweenness default) | 7.3x |
+
+A steep tier sits at least 1.6x above its basis. The C engine has its own set
+because its worker thread's busy-wait is counted here: it moved `cross product
+filter` between 237,470 and 866,391 instructions on one image. C's allocations
+are far steadier than Rust's, but one large row came within 0.3% of the
+threshold, hence its 3.1 MB floor. Two Rust rows are bimodal by pass position
+(`edge index lt range` reads ~314k instructions in passes 1-2 and ~210k in 3-4);
+the interleaved order and the floors absorb that.
+
+**What the gates cost.** A change smaller than a metric's floor flags only at its
+steep ratio, and a change smaller than the steep floor never does: cycles under
++20M need 1.8x, branch misses under +12,000 need 2.8x, L2 misses under +225,000
+need 3x, allocations under 64 KiB need 8x (none under 4 KiB), and instructions
+under +250,000 do not flag. So small-query instruction regressions are not caught
+at night; `benchmark-cov`'s per-PR callgrind table is where they show. On 6.2.0 vs
+main, `UNWIND index MATCH edge 1 row` (2.72x branch misses) does not flag on
+branch misses alone; its cycles (4.3x), instructions, L2 misses and allocated
+bytes do. L2 demand misses are the noisiest counter: 61% of same-image
+row-splits pass 1.25x.
+
+**Modes.** `queue`, `nightly` and `long` are accepted and checked; today they are
+one parameter set: the full query set, two passes a side, one second run.
+Measured on the acceptance runs: about 15 minutes on the VM when nothing crosses,
+29 when the set runs a second time, and 38 for two C images; creating the VM adds
+about 2.
+
+**Its limits:**
+
+- It copies each image's module into the bench image's own redis-server, so
+  both are measured with the same redis and the same jemalloc. That measures the
+  module. A server or Valkey version change inside an image does not show here;
+  the other VM checks, which run each image's own server, cover that.
+- A night with no C4 capacity in any zone gives no result, which reads as
+  `error`, never as a pass.
+- A server crash reads as error, never pass. The contract would call a crash a
+  regression; telling a candidate crash from an infrastructure failure needs
+  crash reporting inside `bench measure`, which it does not have yet.
+
 ## Layout
 
 | file | purpose |
@@ -340,6 +464,8 @@ def main(argv=None) -> int:
 | `src/falkorbench/callgrind.py` | deterministic counts by differencing two instrumented runs |
 | `src/falkorbench/compare.py` | local regression gate |
 | `src/falkorbench/report.py` | the CI comment, and the run's pass/fail decision |
+| `src/falkorbench/verdict.py` | the nightly micro check's `result.json`: its gates, and the crossing, second-run and correctness rules |
+| `src/falkorbench/hw.py` | `bench micro-hw`, the nightly micro check, run on a VM with a PMU |
 | `src/falkorbench/profile.py` | samply profile of one query |
 | `src/falkorbench/flow.py` | per-flow-test-file measurement |
 | `src/falkorbench/cli.py` | the `bench` command |
