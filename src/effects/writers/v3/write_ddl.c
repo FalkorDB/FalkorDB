@@ -127,6 +127,11 @@ static void _v3_StageCCH
 
 	// a schema id travels as a u32 where a RelationID is an int; widened here
 	// rather than cast through the list, which would reinterpret the array
+	//
+	// RelationID IS SIGNED ON PURPOSE and cannot just be made unsigned:
+	// GRAPH_NO_RELATION is -1 and GRAPH_UNKNOWN_RELATION is -2 (graph.h), so
+	// the sign bit carries two sentinels the whole engine reads. Every id that
+	// reaches here names a live schema, which is what makes the widening safe
 	uint32_t *ids = rm_malloc (rel_count * sizeof (uint32_t)) ;
 	for (uint i = 0 ; i < rel_count ; i++) {
 		ids [i] = (uint32_t) rel_ids [i] ;
