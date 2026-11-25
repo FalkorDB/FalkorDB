@@ -1086,3 +1086,62 @@ def test_bench_soak_command_writes_a_result(tmp_path):
     assert out.exit_code == 0, out.output
     res = json.loads((tmp_path / "result.json").read_text())
     assert res["check"] == "soak" and res["verdict"] == "error" and "a digest" in res["error"]
+
+
+def _resp_commands(buffer: bytes) -> tuple[list[list[bytes]], bytes]:
+    """The complete RESP commands at the head of `buffer`, and what is left of it."""
+    commands = []
+    while buffer.startswith(b"*") and b"\r\n" in buffer:
+        head, rest = buffer.split(b"\r\n", 1)
+        args = []
+        for _ in range(int(head[1:])):
+            if b"\r\n" not in rest:
+                return commands, buffer
+            size, rest = rest.split(b"\r\n", 1)
+            n = int(size[1:])
+            if len(rest) < n + 2:
+                return commands, buffer
+            args.append(rest[:n])
+            rest = rest[n + 2 :]
+        commands.append(args)
+        buffer = rest
+    return commands, buffer
+
+
+def test_soak_clients_speak_resp2():
+    """Every check measures RESP2, as the falkordb client speaks it: soakkit's client sends
+    no HELLO (redis-py 8.1 defaults to RESP3 and would send HELLO 3 first)."""
+    import socket
+    import threading
+
+    names: list[bytes] = []
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        port = listener.getsockname()[1]
+
+        def serve():
+            conn, _ = listener.accept()
+            with conn:
+                conn.settimeout(5)
+                pending = b""
+                while chunk := conn.recv(1024):
+                    commands, pending = _resp_commands(pending + chunk)
+                    for args in commands:
+                        names.append(args[0].upper())
+                        if names[-1] == b"HELLO":
+                            conn.sendall(b"-ERR this test refuses HELLO\r\n")
+                        elif names[-1] == b"PING":
+                            conn.sendall(b"+PONG\r\n")
+                            return
+                        else:  # CLIENT SETINFO and the like
+                            conn.sendall(b"+OK\r\n")
+
+        server = threading.Thread(target=serve, daemon=True)
+        server.start()
+        client = soakkit.connect(port, timeout=5)
+        try:
+            assert client.ping() is True
+        finally:
+            client.close()
+        server.join(5)
+    assert client.connection_pool.connection_kwargs["protocol"] == 2
+    assert b"HELLO" not in names and names[-1] == b"PING", names

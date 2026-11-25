@@ -113,8 +113,9 @@ def connect(port: int, timeout: float | None = None) -> redis.Redis:
     # No retries ever: redis-py's default timeout + retry silently re-issues slow commands
     # (a slow CREATE could apply twice) — never in a soak. No client timeout either, unless
     # the caller bounds one probe on purpose (it then sees redis.exceptions.TimeoutError).
+    # RESP2, as the falkordb client speaks it (redis-py 8.1 would otherwise send HELLO 3).
     return redis.Redis(port=port, socket_timeout=timeout, retry=Retry(NoBackoff(), 0),
-                       decode_responses=False)
+                       decode_responses=False, protocol=2)
 
 
 def lit(v) -> str:
