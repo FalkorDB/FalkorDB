@@ -1995,7 +1995,8 @@ def test_a_partial_reading_is_never_waived(tmp_path):
     waived = write(tmp_path, "w.json", [waiver(check="benchmark-cov", pattern="cross .*")])
     argv = ["conclude", "--gate", "--result", str(tmp_path / "out" / "result.json")]
     argv += ["--waivers", waived]
-    assert merge.main(argv) == 0  # what the contract alone would let through
+    assert doc["incomplete"]  # the result says it itself, so a waiver cannot cover it
+    assert merge.main(argv) == 1
     assert merge.main([*argv, "--unfinished", str(tmp_path / "unfinished.json")]) == 1
 
 
