@@ -97,6 +97,7 @@ def async_pool(base, port: int, max_conns: int, **kw):
 
 
 ADMIN_TIMEOUT_S = 300
+INDEX_WAIT_S = 300.0  # after the load, for every index still building, together
 
 
 def server_hung(port: int, tries: int = 3) -> bool:
@@ -747,6 +748,28 @@ def wait_indexes(r, graph, timeout_s=300, stop=None) -> tuple[bool | None, float
     return False, now() - t0
 
 
+def wait_pending_indexes(r, events, t_start, budget_s=INDEX_WAIT_S):
+    """Indexes still building when the load stopped get budget_s more, shared by every graph
+    (model.epoch_seconds reserves it once), before they count as stuck."""
+    deadline = now() + budget_s
+    for e in [x for x in events if x["event"] == "indexes_pending_at_epoch_end"]:
+        try:
+            ok, took = wait_indexes(r, gname(e["graph"]), max(0.0, deadline - now()))
+            events.append(
+                {
+                    "t": round(now() - t_start, 2),
+                    "event": "indexes_ready" if ok else "indexes_stuck",
+                    "graph": e["graph"],
+                    "seconds": round(e["seconds"] + took, 1),
+                    "after_load": True,
+                }
+            )
+        except Exception as exc:
+            events.append(
+                {"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]}
+            )
+
+
 def constraint_status(r, graph) -> list[str]:
     rows = r.execute_command(
         "GRAPH.RO_QUERY", graph, "CALL db.constraints() YIELD status RETURN status"
@@ -1065,23 +1088,7 @@ def run_epoch(
             events.append(
                 {"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]}
             )
-    # an index still building when the load stopped gets 300 s more before it counts as stuck
-    for e in [x for x in events if x["event"] == "indexes_pending_at_epoch_end"]:
-        try:
-            ok, took = wait_indexes(r, gname(e["graph"]), 300)
-            events.append(
-                {
-                    "t": round(now() - t_start, 2),
-                    "event": "indexes_ready" if ok else "indexes_stuck",
-                    "graph": e["graph"],
-                    "seconds": round(e["seconds"] + took, 1),
-                    "after_load": True,
-                }
-            )
-        except Exception as exc:
-            events.append(
-                {"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]}
-            )
+    wait_pending_indexes(r, events, t_start)
     t_end = now()
     data = {
         "reads": [],
@@ -1167,11 +1174,7 @@ def run_epoch(
                     "pass": None,
                     "skipped": "a driver result file was lost earlier on this server",
                 }
-        an["checks"]["index_matches_scan"] = {
-            "pass": not ivs,
-            "applies": ep["indexes"] or ep["constraints"],
-            "problems": ivs,
-        }
+        an["checks"]["index_matches_scan"] = index_check(ep, ivs)
         result.update(an)
         result["notes"] = notes
     result["reusable"] = reusable
@@ -1207,6 +1210,15 @@ def schema_left(r, ng) -> dict:
     return left
 
 
+def index_check(ep, ivs) -> dict:
+    """index_matches_scan from index_vs_scan's problems; None (the comparison failed) is unmeasured."""
+    return {
+        "pass": None if ivs is None else not ivs,
+        "applies": ep["indexes"] or ep["constraints"],
+        "problems": ivs or [],
+    }
+
+
 def end_of_epoch(r, ep, ng, sizes, ledger, events, t_start) -> dict:
     """After the load: count what the graphs hold (the ledger), compare index lookups with scans,
     then put the schema back. The clean-up runs even when the counting failed, and `reusable` is
@@ -1217,13 +1229,17 @@ def end_of_epoch(r, ep, ng, sizes, ledger, events, t_start) -> dict:
         r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", "0")
         r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", "0")
         out["ledger_problems"] = ledger.check(r)
-        if ep["indexes"] or ep["constraints"]:
-            out["ivs"] = index_vs_scan(r, ng, sizes, ep["seed"])
     except Exception as e:
         out["ledger_problems"] = [
             ("harness", f"end-of-epoch checks failed: {type(e).__name__}: {e}")
         ]
         out["notes"].append(traceback.format_exc()[-500:])
+    if ep["indexes"] or ep["constraints"]:
+        try:
+            out["ivs"] = index_vs_scan(r, ng, sizes, ep["seed"])
+        except Exception as e:  # not compared: index_matches_scan is not measured (None)
+            out["ivs"] = None
+            out["notes"].append(f"index comparison failed: {type(e).__name__}: {e}"[:300])
     try:
         end_of_epoch_cleanup(r, ep, ng, out["notes"])
         left = schema_left(r, ng)

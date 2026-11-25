@@ -96,7 +96,9 @@ could never confirm it. The repros are
 a write, a constraint command and an index build while a long read runs (no freeze), writers
 behind a flood of reads at THREAD_COUNT 10, and cheap reads with TIMEOUT behind a waiting writer.
 An error reply fails a repro (the engine refused the request); a request that got no reply at all
-makes it a crash (the server died or hung) or unmeasured.
+makes it a crash (the server died or hung) or unmeasured. A freeze repro whose scenario did not
+form is unmeasured too: the command reached the engine after the long read ended, the index was
+ready before the read started, or the PING probe stopped.
 
 ## How a check becomes a finding
 
@@ -112,9 +114,13 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
   `info`; the candidate holds → 1 vs 1, `info`; the repeat did not run or measure the check → the
   candidate is null. A break seen only in the extra pair makes a finding `info`, never a
   regression or an improvement. A timing break against a baseline that was not measured is not
-  judged (both null). A request that waited more than 50 ms to be sent or for a free
-  connection in the driver is driver-limited and left out of the timing judgments (counted in
-  `epoch.json`); a check with every sample driver-limited is unmeasured.
+  judged (both null). A request that waited more than 50 ms in the driver for a free
+  connection is driver-limited and left out of `writers_dont_starve`, `quiet_graphs_stay_fast`
+  and `requests_drain`; `quiet_graphs_stay_fast`, which times a read from its schedule, also
+  counts the time it waited to be sent. Each count is in `epoch.json`, and a check with every
+  sample driver-limited, or a quiet graph with no read answered in time to judge, is unmeasured.
+  `no_timeouts_while_waiting` counts every TIMEOUT reply: the engine's TIMEOUT starts when the
+  query reaches it, so time in the driver cannot cause one.
 * **Data checks** (`writes_add_up`, `upsert_edges_complete`) and a crash count at once.
 * Contract v1.4 sets the status: 0 on the candidate only is `regression`, 0 on both sides is `info`
   ("broken on both sides (not new)"), 0 on the baseline only is `improvement`.

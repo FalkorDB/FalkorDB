@@ -333,12 +333,13 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
 
     # C runs a graph's writes one at a time, each taking the lock on its own, so a write first
     # waits for the writes queued ahead of it. Starvation is judged from the moment it reaches the
-    # head of its graph's queue: max(send, last reply of the writes sent before it).
+    # head of its graph's queue: max(send, last reply of the writes that reached the server before
+    # it). A write reaches the server once it has a connection: its send plus its pool wait.
     starve = []
     wlat, qwait = [], []
     head_of = {}
     run_max = collections.defaultdict(float)
-    for i, w in sorted(enumerate(writes), key=lambda x: x[1][3]):
+    for i, w in sorted(enumerate(writes), key=lambda x: x[1][3] + _pool_wait(x[1], 8)):
         g, send, reply = w[0], w[3], w[4]
         head_of[i] = max(send, run_max[g])
         if reply is not None:
@@ -370,21 +371,17 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     quiet = [g for g in range(ng) if g not in ep["busy"]]
     qviol = 0
     qlat = []
-    quiet_ok = sum(1 for r_ in reads if r_[0] in quiet and r_[5] == 0)
     for r_ in reads:
         g, op, sched, send, reply, oc = r_[:6]
-        if (
-            g in quiet
-            and oc == 0
-            and (send - sched) < DRIVER_LAG_S
-            and _pool_wait(r_, 6) <= DRIVER_LAG_S
-        ):
+        # timed from its schedule: the wait to be sent and the wait for a connection both count
+        if g in quiet and oc == 0 and (send - sched) + _pool_wait(r_, 6) <= DRIVER_LAG_S:
             lat = (reply - sched) * 1000
             qlat.append(lat)
             if lat > cal[g].get(op, 0) + QUIET_SLACK_MS:
                 qviol += 1
     checks["quiet_graphs_stay_fast"] = {
-        "pass": None if quiet_ok and not qlat else qviol == 0,
+        # a quiet graph with no read answered in time to judge: not measured
+        "pass": None if quiet and not qlat else qviol == 0,
         "applies": bool(quiet),
         "quiet_graphs": quiet,
         "slow_reads": qviol,
@@ -444,7 +441,7 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     }
     wto = sum(1 for w in writes if w[5] == 1)
     checks["timed_out_writes_leave_nothing"] = {
-        "pass": not by_kind["timed-out"],
+        "pass": None if unknown else not by_kind["timed-out"],
         "applies": ep["write_timeout_ms"] > 0,
         "timed_out_writes": wto,
         "problems": by_kind["timed-out"],

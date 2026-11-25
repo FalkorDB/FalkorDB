@@ -174,6 +174,11 @@ LONG = [[0, "full-scan", 10.0, 18.0, 0, ""]]  # a long read from 10 s to 18 s
 # 2 s on a quiet graph, all of it waiting for a connection
 POOL_STALLED = [1, "lookup", 1.0, 1.0, 3.0, 0, 1.99]
 QUIET_FAST = [1, "lookup", 2.0, 2.0, 2.01, 0, 0.0]
+# 30 ms late to be sent, then 30 ms for a connection: 60 ms in the driver
+QUIET_LATE_TWICE = [1, "lookup", 1.0, 1.03, 1.2, 0, 0.03]
+# a write that waited 3 s for a connection, and one sent after it that reached the server first
+WRITE_POOL_STALLED = [0, "upsert", 0.0, 0.0, 4.1, 0, "", [], 3.0]
+WRITE_ARRIVED_FIRST = [0, "upsert", 1.0, 1.0, 2.5, 0, "", [], 0.0]
 
 
 def _pings(n, late=None, control_gap=None):
@@ -190,228 +195,58 @@ def _pings(n, late=None, control_gap=None):
     return {"falkor": f, "control": c}
 
 
+# fmt: off
 ANALYSE_CASES = [  # (id, check, pass, records, pings, window_s, quiet, ledger problems, more fields to assert)
-    (
-        "a slow read may time out",
-        "no_timeouts_while_waiting",
-        True,
-        {"reads": [[0, "lookup", 1.0, 1.0, 1.01, 0], [0, "scan-lookup", 2.0, 2.0, 2.5, 1]]},
-        None,
-        None,
-        False,
-        (),
-        {"all_read_timeouts": 1},
-    ),
-    (
-        "a cheap read may not",
-        "no_timeouts_while_waiting",
-        False,
-        {"reads": [[0, "lookup", 1.0, 1.0, 2.0, 1]]},
-        None,
-        None,
-        False,
-        (),
-        {},
-    ),
-    (
-        "late PING, plain server fast",
-        "no_freeze",
-        False,
-        {},
-        {"falkor": [(5.0, 900.0)], "control": [(5.0, 2.0)]},
-        None,
-        False,
-        (),
-        {},
-    ),
-    (
-        "late PING during a host stall",
-        "no_freeze",
-        True,
-        {},
-        {"falkor": [(5.0, 900.0)], "control": [(5.0, 400.0)]},
-        None,
-        False,
-        (),
-        {},
-    ),
+    ("a slow read may time out", "no_timeouts_while_waiting", True,
+     {"reads": [[0, "lookup", 1.0, 1.0, 1.01, 0], [0, "scan-lookup", 2.0, 2.0, 2.5, 1]]}, None, None, False, (),
+     {"all_read_timeouts": 1}),
+    ("a cheap read may not", "no_timeouts_while_waiting", False, {"reads": [[0, "lookup", 1.0, 1.0, 2.0, 1]]},
+     None, None, False, (), {}),
+    ("late PING, plain server fast", "no_freeze", False, {}, {"falkor": [(5.0, 900.0)], "control": [(5.0, 2.0)]},
+     None, False, (), {}),
+    ("late PING during a host stall", "no_freeze", True, {}, {"falkor": [(5.0, 900.0)], "control": [(5.0, 400.0)]},
+     None, False, (), {}),
     ("PINGs cover the epoch", "no_freeze", True, {}, _pings(1000), 10.0, False, (), {}),
-    (
-        "late PING, full coverage",
-        "no_freeze",
-        False,
-        {},
-        _pings(1000, late=(500, 900.0)),
-        10.0,
-        False,
-        (),
-        {},
-    ),
-    (
-        "the prober never ran",
-        "no_freeze",
-        None,
-        {},
-        {"falkor": [], "control": []},
-        10.0,
-        False,
-        (),
-        {},
-    ),
+    ("late PING, full coverage", "no_freeze", False, {}, _pings(1000, late=(500, 900.0)), 10.0, False, (), {}),
+    ("the prober never ran", "no_freeze", None, {}, {"falkor": [], "control": []}, 10.0, False, (), {}),
     ("under half the epoch covered", "no_freeze", None, {}, _pings(300), 10.0, False, (), {}),
-    (
-        "late PING, no plain reply near it",
-        "no_freeze",
-        None,
-        {},
-        _pings(1000, late=(500, 900.0), control_gap=(3.9, 6.1)),
-        10.0,
-        False,
-        (),
-        {"unattributed_late_pings": 1},
-    ),
-    (
-        "a write 0.5 s after the long read",
-        "writers_dont_starve",
-        True,
-        {"writes": [[0, "upsert", 11.0, 11.0, 18.5, 0, "", []]], "longs": LONG},
-        None,
-        None,
-        False,
-        (),
-        {},
-    ),
-    (
-        "a write 2 s after it",
-        "writers_dont_starve",
-        False,
-        {"writes": [[0, "upsert", 11.0, 11.0, 20.0, 0, "", []]], "longs": LONG},
-        None,
-        None,
-        False,
-        (),
-        {},
-    ),
-    (
-        "a driver-limited write is not judged",
-        "writers_dont_starve",
-        True,
-        {
-            "writes": [
-                [0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9],
-                [0, "upsert", 11.0, 11.0, 18.5, 0, "", [], 0.0],
-            ],
-            "longs": LONG,
-        },
-        None,
-        None,
-        False,
-        (),
-        {},
-    ),
-    (
-        "every write driver-limited",
-        "writers_dont_starve",
-        None,
-        {"writes": [[0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9]], "longs": LONG},
-        None,
-        None,
-        False,
-        (),
-        {},
-    ),
-    (
-        "a quiet graph read near its cost",
-        "quiet_graphs_stay_fast",
-        True,
-        {"reads": [[1, "lookup", 1.0, 1.0, 1.05, 0]]},
-        None,
-        None,
-        True,
-        (),
-        {},
-    ),
-    (
-        "a quiet graph read stalled",
-        "quiet_graphs_stay_fast",
-        False,
-        {"reads": [[1, "lookup", 1.0, 1.0, 1.5, 0]]},
-        None,
-        None,
-        True,
-        (),
-        {},
-    ),
-    (
-        "a driver-limited read is not judged",
-        "quiet_graphs_stay_fast",
-        True,
-        {"reads": [POOL_STALLED, QUIET_FAST]},
-        None,
-        None,
-        True,
-        (),
-        {"reads": 1},
-    ),
-    (
-        "every read driver-limited",
-        "quiet_graphs_stay_fast",
-        None,
-        {"reads": [POOL_STALLED]},
-        None,
-        None,
-        True,
-        (),
-        {},
-    ),
-    (
-        "every read driver-limited, drain",
-        "requests_drain",
-        None,
-        {"reads": [POOL_STALLED]},
-        None,
-        None,
-        True,
-        (),
-        {"pool_limited_reads": 1},
-    ),
-    (
-        "no error reply",
-        "no_error_replies",
-        True,
-        {"reads": [[0, "lookup", 1.0, 1.0, 1.01, 0]]},
-        None,
-        None,
-        False,
-        (),
-        {},
-    ),
-    (
-        "error replies",
-        "no_error_replies",
-        False,
-        {
-            "reads": [[0, "lookup", 1.0, 1.0, 1.01, 2]],
-            "writes": [[0, "upsert", 1.0, 1.0, 1.1, 2, "ERR x", []]],
-        },
-        None,
-        None,
-        False,
-        (),
-        {"by_op": {"lookup": 1, "upsert": 1}},
-    ),
-    (
-        "a duplicated key, no constraint",
-        "writes_add_up",
-        False,
-        {},
-        None,
-        None,
-        False,
-        [("duplicate", "g0 L11: 1 duplicated keys")],
-        {},
-    ),
+    ("late PING, no plain reply near it", "no_freeze", None, {},
+     _pings(1000, late=(500, 900.0), control_gap=(3.9, 6.1)), 10.0, False, (), {"unattributed_late_pings": 1}),
+    ("a write 0.5 s after the long read", "writers_dont_starve", True,
+     {"writes": [[0, "upsert", 11.0, 11.0, 18.5, 0, "", []]], "longs": LONG}, None, None, False, (), {}),
+    ("a write 2 s after it", "writers_dont_starve", False,
+     {"writes": [[0, "upsert", 11.0, 11.0, 20.0, 0, "", []]], "longs": LONG}, None, None, False, (), {}),
+    ("a driver-limited write is not judged", "writers_dont_starve", True,
+     {"writes": [[0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9], [0, "upsert", 11.0, 11.0, 18.5, 0, "", [], 0.0]],
+      "longs": LONG}, None, None, False, (), {}),
+    ("every write driver-limited", "writers_dont_starve", None,
+     {"writes": [[0, "upsert", 11.0, 11.0, 20.0, 0, "", [], 8.9]], "longs": LONG}, None, None, False, (), {}),
+    ("a quiet graph read near its cost", "quiet_graphs_stay_fast", True, {"reads": [[1, "lookup", 1.0, 1.0, 1.05, 0]]},
+     None, None, True, (), {}),
+    ("a quiet graph read stalled", "quiet_graphs_stay_fast", False, {"reads": [[1, "lookup", 1.0, 1.0, 1.5, 0]]},
+     None, None, True, (), {}),
+    ("a driver-limited read is not judged", "quiet_graphs_stay_fast", True, {"reads": [POOL_STALLED, QUIET_FAST]},
+     None, None, True, (), {"reads": 1}),
+    ("every read driver-limited", "quiet_graphs_stay_fast", None, {"reads": [POOL_STALLED]}, None, None, True, (), {}),
+    ("late to send and late for a connection", "quiet_graphs_stay_fast", True,
+     {"reads": [QUIET_LATE_TWICE, QUIET_FAST]}, None, None, True, (), {"reads": 1}),
+    ("every quiet read timed out", "quiet_graphs_stay_fast", None, {"reads": [[1, "lookup", 1.0, 1.0, 2.0, 1]]},
+     None, None, True, (), {}),
+    ("a write still waiting for a connection queues nobody", "writers_dont_starve", False,
+     {"writes": [WRITE_POOL_STALLED, WRITE_ARRIVED_FIRST]}, None, None, False, (), {}),
+    ("every read driver-limited, drain", "requests_drain", None, {"reads": [POOL_STALLED]}, None, None, True, (),
+     {"pool_limited_reads": 1}),
+    ("no error reply", "no_error_replies", True, {"reads": [[0, "lookup", 1.0, 1.0, 1.01, 0]]}, None, None, False,
+     (), {}),
+    ("error replies", "no_error_replies", False,
+     {"reads": [[0, "lookup", 1.0, 1.0, 1.01, 2]], "writes": [[0, "upsert", 1.0, 1.0, 1.1, 2, "ERR x", []]]},
+     None, None, False, (), {"by_op": {"lookup": 1, "upsert": 1}}),
+    ("a duplicated key, no constraint", "writes_add_up", False, {}, None, None, False,
+     [("duplicate", "g0 L11: 1 duplicated keys")], {}),
+    ("no count, no word on timed-out writes", "timed_out_writes_leave_nothing", None, {}, None, None, False,
+     [("harness", "end-of-epoch checks failed: ConnectionError")], {}),
 ]
+# fmt: on
 
 
 @pytest.mark.parametrize(
@@ -745,6 +580,34 @@ def test_replays_of_one_hour_get_their_own_directories(monkeypatch, tmp_path):
     assert len(set(dirs)) == 2
 
 
+def test_a_server_that_dies_mid_hour_is_a_crash_on_the_epochs_it_did_not_finish(
+    monkeypatch, tmp_path
+):
+    """One epoch done, then the server dies (an error with server_alive False): the two epochs it
+    did not finish are crashes, and long mode reports the server did not stay up."""
+    hp = model.hour_params("s", 1)
+    eps = [model.epoch_params("s", 1, e, hp["graphs"]) for e in (1, 2, 3)]
+    done = {"params": eps[0], "checks": {c: {"pass": True} for c in check.LONG_CHECKS}}
+
+    def died(opts, info, tag, hp, eps, hdir, deadline=None):
+        return {
+            "epochs": [done],
+            "build": [],
+            "error": "ConnectionError: closed",
+            "server_alive": False,
+        }
+
+    monkeypatch.setattr(harness, "run_server_hour", died)
+    run, opts = check.Run(tmp_path), {"long_scale_range": (0.25, 2.0, 4.0)}
+    cand = check.long_hour(opts, {"candidate": {}}, run, "candidate", 1, "s", None)
+    assert [cand["epochs"][e["seed"]]["server_stays_up"] for e in eps] == [True, False, False]
+    held = {c: True for c in check.LONG_CHECKS}
+    base = {**cand, "side": "baseline", "epochs": {e["seed"]: held for e in eps}}
+    f = _by_name(check.long_findings([cand, base], [])[0])["long server_stays_up"]
+    assert (f["candidate"], f["baseline"], f["status"]) == (0, 1, "regression")
+    assert run.unmeasured == []  # a crash, not a failure to measure
+
+
 def test_a_stale_hang_marker_is_cleared(monkeypatch, tmp_path):
     class NoDocker:
         def __init__(self, info, name, *a, **kw):
@@ -800,14 +663,17 @@ def test_every_container_carries_the_run_label(monkeypatch, tmp_path):
 
 
 def test_the_pool_wait_is_the_wait_for_a_slot_only(monkeypatch):
+    clock = [100.0]  # a fake clock: the test does not depend on how fast the runner is
+    monkeypatch.setattr(harness, "now", lambda: clock[0])
+
     class Base:  # a slot after 0.10 s, then 0.20 s to open the connection (a server round trip)
         async def get_connection(self, *a, **kw):
-            await asyncio.sleep(0.10)
+            clock[0] += 0.10
             await self.ensure_connection("c")
             return "c"
 
         async def ensure_connection(self, connection):
-            await asyncio.sleep(0.20)
+            clock[0] += 0.20
 
     waits = {}
 
@@ -815,8 +681,7 @@ def test_the_pool_wait_is_the_wait_for_a_slot_only(monkeypatch):
         await harness.timed_pool_class(Base, waits)().get_connection("PING")
 
     asyncio.run(main())
-    (wait,) = waits.values()
-    assert 0.08 < wait < 0.18
+    assert list(waits.values()) == [pytest.approx(0.10)]
 
     class Refused(Base):  # opening the connection fails: no wait recorded, nothing left behind
         async def ensure_connection(self, connection):
@@ -830,6 +695,56 @@ def test_the_pool_wait_is_the_wait_for_a_slot_only(monkeypatch):
 
     asyncio.run(refused())
     assert pool._opening == {}
+
+
+def test_index_waits_after_the_load_share_one_budget(monkeypatch):
+    """Three graphs' indexes still building at the load's end: 300 s for all of them, not each."""
+    clock, given = [0.0], []
+
+    def wait_indexes(r, graph, timeout_s=300, stop=None):
+        given.append(timeout_s)
+        clock[0] += min(timeout_s, 200.0)
+        return False, min(timeout_s, 200.0)
+
+    monkeypatch.setattr(harness, "now", lambda: clock[0])
+    monkeypatch.setattr(harness, "wait_indexes", wait_indexes)
+    events = [
+        {"event": "indexes_pending_at_epoch_end", "graph": g, "seconds": 1.0} for g in range(3)
+    ]
+    harness.wait_pending_indexes(None, events, 0.0)
+    assert given == [300.0, 100.0, 0.0]
+    assert [e["event"] for e in events[3:]] == ["indexes_stuck"] * 3
+
+
+def test_a_failed_index_comparison_is_unmeasured_and_keeps_the_count(monkeypatch):
+    """The ledger finds a wrong count, then the index comparison fails: the count stays a failure,
+    and index_matches_scan is not measured (rather than held)."""
+    n = model.label_sizes(0.01)
+
+    class Conn:
+        def execute_command(self, *a):
+            if a[0] == "GRAPH.CONFIG":
+                return "OK"
+            q = a[2]
+            if "+ 0 =" in q:  # the comparison's scan
+                raise ConnectionError("the comparison failed")
+            if "CALL db." in q or "DROP" in q:
+                return [[], []]
+            return [[], [[0]]]  # every count 0: the graph lost its nodes
+
+        def info(self, section):
+            return {"used_memory": 1, "used_memory_rss": 2}
+
+    ep = {**model.control_params((0.01,))[1], "indexes": True}
+    out = harness.end_of_epoch(Conn(), ep, 1, [n], checks.Ledger([n]), [], time.monotonic())
+    assert out["ivs"] is None and "the comparison failed" in " ".join(out["notes"])
+    kinds = {kind for kind, _ in out["ledger_problems"]}
+    assert "count" in kinds and "harness" not in kinds
+    assert harness.index_check(ep, out["ivs"])["pass"] is None
+    assert (
+        harness.index_check(ep, [])["pass"] is True
+        and harness.index_check(ep, ["x"])["pass"] is False
+    )
 
 
 def test_constraints_cut_short_by_the_epoch_end_are_judged_on_what_was_created(monkeypatch):
@@ -958,25 +873,49 @@ def test_clean_up_runs_even_when_the_counting_fails(monkeypatch):
 
 def test_a_failed_long_read_is_no_freeze_evidence(monkeypatch):
     class Pinger:
+        error = None
+
         def during(self, a, b):
             return [1.0, 1.0]
 
+    verdict_of = repros._freeze_verdict
     with pytest.raises(repros.Incomplete):
-        repros._freeze_verdict(Pinger(), [(0.0, 1.0, "lost: ConnectionError: closed")], {})
+        verdict_of(Pinger(), [(0.0, 1.0, "lost: ConnectionError: closed")], {})
     with pytest.raises(repros.Incomplete):
-        repros._freeze_verdict(Pinger(), [], {})
-    assert repros._freeze_verdict(Pinger(), [(0.0, 30.0, None)], {})["pass"] is True
+        verdict_of(Pinger(), [], {})
+    assert verdict_of(Pinger(), [(0.0, 30.0, None)], {})["pass"] is True
     # an error reply is an answer: the engine refused the long read, or the command sent during it
-    assert (
-        repros._freeze_verdict(Pinger(), [(0.0, 1.0, "reply: ResponseError: x")], {})["pass"]
-        is False
-    )
-    assert (
-        repros._freeze_verdict(Pinger(), [(0.0, 30.0, None)], {"error": "reply: ResponseError: y"})[
-            "pass"
-        ]
-        is False
-    )
+    assert verdict_of(Pinger(), [(0.0, 1.0, "reply: ResponseError: x")], {})["pass"] is False
+    refused = {"error": "reply: ResponseError: y"}
+    assert verdict_of(Pinger(), [(0.0, 30.0, None)], refused)["pass"] is False
+
+
+def test_a_freeze_repro_needs_its_scenario_to_form():
+    """The command must reach the engine during the read, the index must still be building when
+    the read starts, and the PING probe must keep running; otherwise the run is incomplete."""
+
+    class Pinger:
+        error = None
+
+        def during(self, a, b):
+            return [1.0, 1.0]
+
+    read = [(10.0, 40.0, None)]
+    got = repros._freeze_verdict(Pinger(), read, {}, sent=11.0)
+    assert got["pass"] is True and got["detail"]["sent_into_read_s"] == 1.0
+    with pytest.raises(repros.Incomplete, match="after the long read ended"):
+        repros._freeze_verdict(Pinger(), read, {}, sent=41.0)
+    with pytest.raises(repros.Incomplete, match="index was ready"):
+        repros._freeze_verdict(Pinger(), read, {}, building=False)
+    stopped = Pinger()
+    stopped.error = "lost: ConnectionError: closed"
+    with pytest.raises(repros.Incomplete, match="PING probe stopped"):
+        repros._freeze_verdict(stopped, read, {})
+    # an error reply still fails it: the engine refused the command, whatever the probe saw
+    assert repros._freeze_verdict(stopped, read, {"error": "reply: x"}, sent=41.0)["pass"] is False
+    probe = repros._Pinger(harness.free_port())  # nothing listens there: its first PING fails
+    probe._run()
+    assert probe.error.startswith("lost: ConnectionError") and probe.pings == []
 
 
 def test_reads_behind_writer_needs_every_reply(monkeypatch):
@@ -1014,29 +953,25 @@ def test_writer_starvation_needs_every_client_to_get_replies(monkeypatch):
 # --- the verdict: one repeat rule, the control epoch, build timing, what result.json lists ----------
 
 
-@pytest.mark.parametrize(
-    "first_c, first_b, rep_c, rep_b, want",
-    [
-        (0, 1, 0, 1, (0, 1, "regression")),  # broke again, the baseline held again
-        (0, 1, 1, 1, (1, 1, "info")),  # held on the repeat
-        (0, 1, 0, 0, (0, 0, "info")),  # the baseline broke on the repeat: broken on both sides
-        (0, 1, 1, 0, (0, 0, "info")),
-        (0, 1, None, None, (None, 1, "info")),  # no repeat ran
-        (0, 1, 0, None, (None, 1, "info")),  # the baseline's repeat did not measure it
-        (0, 1, None, 1, (None, 1, "info")),
-        (
-            0,
-            None,
-            0,
-            1,
-            (None, None, "info"),
-        ),  # a break against an unmeasured baseline is not judged
-        (1, 1, None, None, (1, 1, "ok")),
-        (1, 0, None, None, (1, 0, "improvement")),
-        (0, 0, None, None, (0, 0, "info")),
-        (1, None, None, None, (1, None, "info")),  # baseline unmeasured: info, never ok
-    ],
-)
+# fmt: off
+JUDGE_REPEAT_CASES = [
+    (0, 1, 0, 1, (0, 1, "regression")),    # broke again, the baseline held again
+    (0, 1, 1, 1, (1, 1, "info")),          # held on the repeat
+    (0, 1, 0, 0, (0, 0, "info")),          # the baseline broke on the repeat: broken on both sides
+    (0, 1, 1, 0, (0, 0, "info")),
+    (0, 1, None, None, (None, 1, "info")),  # no repeat ran
+    (0, 1, 0, None, (None, 1, "info")),    # the baseline's repeat did not measure it
+    (0, 1, None, 1, (None, 1, "info")),
+    (0, None, 0, 1, (None, None, "info")),  # a break against an unmeasured baseline is not judged
+    (1, 1, None, None, (1, 1, "ok")),
+    (1, 0, None, None, (1, 0, "improvement")),
+    (0, 0, None, None, (0, 0, "info")),
+    (1, None, None, None, (1, None, "info")),  # baseline unmeasured: info, never ok
+]
+# fmt: on
+
+
+@pytest.mark.parametrize("first_c, first_b, rep_c, rep_b, want", JUDGE_REPEAT_CASES)
 def test_judge_repeat(first_c, first_b, rep_c, rep_b, want):
     assert verdict.judge_repeat(first_c, first_b, rep_c, rep_b) == want
 
@@ -1050,85 +985,32 @@ def _repeat(cand_first, cand_rep, base_rep=None):
     ]
 
 
+# fmt: off
 CONTROL_CASES = [  # (id, runs, repeat pair ran, check, (candidate, baseline, status))
     ("same image", _first(), False, "no_freeze", (1, 1, "ok")),
-    (
-        "repeated",
-        _repeat({"no_freeze": False}, {"no_freeze": False}),
-        True,
-        "no_freeze",
-        (0, 1, "regression"),
-    ),
+    ("repeated", _repeat({"no_freeze": False}, {"no_freeze": False}), True, "no_freeze", (0, 1, "regression")),
     ("held on the repeat", _repeat({"no_freeze": False}, {}), True, "no_freeze", (1, 1, "info")),
-    (
-        "baseline broke on the repeat",
-        _repeat({"no_freeze": False}, {"no_freeze": False}, {"no_freeze": False}),
-        True,
-        "no_freeze",
-        (0, 0, "info"),
-    ),
+    ("baseline broke on the repeat", _repeat({"no_freeze": False}, {"no_freeze": False}, {"no_freeze": False}), True,
+     "no_freeze", (0, 0, "info")),
     ("no repeat ran", _first(cand={"no_freeze": False}), False, "no_freeze", (None, 1, "info")),
-    (
-        "baseline repeat unmeasured",
-        _repeat({"no_freeze": False}, {"no_freeze": False}, {"no_freeze": None}),
-        True,
-        "no_freeze",
-        (None, 1, "info"),
-    ),
-    (
-        "a break seen only in the repeat",
-        _repeat({"no_freeze": False}, {"no_freeze": False, "requests_drain": False}),
-        True,
-        "requests_drain",
-        (1, 1, "info"),
-    ),
-    (
-        "data break counts at once",
-        _first(cand={"writes_add_up": False}),
-        False,
-        "writes_add_up",
-        (0, 1, "regression"),
-    ),
-    (
-        "broken on both sides",
-        _first(cand={"writers_dont_starve": False}, base={"writers_dont_starve": False}),
-        False,
-        "writers_dont_starve",
-        (0, 0, "info"),
-    ),
-    (
-        "baseline never started",
-        [
-            _run("candidate", 0, {"no_freeze": False}),
-            _run("baseline", 1, {}, started=False),
-            _run("baseline", 2, {}, started=False),
-            _run("candidate", 3, {}),
-        ],
-        False,
-        "no_freeze",
-        (None, None, "info"),
-    ),
-    (
-        "candidate crash",
-        [_run("candidate", 0, {}, died=True, started=False), *_first()[1:]],
-        False,
-        "server_stays_up",
-        (0, 1, "regression"),
-    ),
-    (
-        "an unmeasured first run does not borrow the repeat",
-        [
-            _run("candidate", 0, {}, started=False),
-            *_first()[1:3],
-            _run("candidate", 3, {"no_freeze": False}),
-            _run("baseline", 4, {}, True),
-            _run("candidate", 5, {"requests_drain": False}, True),
-        ],
-        True,
-        "requests_drain",
-        (None, 1, "info"),
-    ),
+    ("baseline repeat unmeasured", _repeat({"no_freeze": False}, {"no_freeze": False}, {"no_freeze": None}), True,
+     "no_freeze", (None, 1, "info")),
+    ("a break seen only in the repeat", _repeat({"no_freeze": False}, {"no_freeze": False, "requests_drain": False}),
+     True, "requests_drain", (1, 1, "info")),
+    ("data break counts at once", _first(cand={"writes_add_up": False}), False, "writes_add_up", (0, 1, "regression")),
+    ("broken on both sides", _first(cand={"writers_dont_starve": False}, base={"writers_dont_starve": False}), False,
+     "writers_dont_starve", (0, 0, "info")),
+    ("baseline never started", [_run("candidate", 0, {"no_freeze": False}), _run("baseline", 1, {}, started=False),
+                                _run("baseline", 2, {}, started=False), _run("candidate", 3, {})], False,
+     "no_freeze", (None, None, "info")),
+    ("candidate crash", [_run("candidate", 0, {}, died=True, started=False), *_first()[1:]], False,
+     "server_stays_up", (0, 1, "regression")),
+    ("an unmeasured first run does not borrow the repeat",
+     [_run("candidate", 0, {}, started=False), *_first()[1:3], _run("candidate", 3, {"no_freeze": False}),
+      _run("baseline", 4, {}, True), _run("candidate", 5, {"requests_drain": False}, True)], True,
+     "requests_drain", (None, 1, "info")),
 ]
+# fmt: on
 
 
 @pytest.mark.parametrize(
@@ -1141,31 +1023,32 @@ def test_control_findings(runs, repeat, check_name, want):
     assert (f["candidate"], f["baseline"], f["status"]) == want
 
 
-@pytest.mark.parametrize(
-    "cand, base, floor, want",
-    [
-        (151.0, 100.0, 50.0, 1),
-        (150.0, 100.0, 0.0, 0),  # the ratio must exceed 1.5
-        (151.0, 100.0, 51.0, 0),  # and the difference the floor
-        (100.0, 151.0, 50.0, -1),
-        (100.0, 150.0, 0.0, 0),  # improvements mirror it
-        (None, 100.0, 0.0, 0),
-        (100.0, 0.0, 0.0, 1),
-        (100.0, 0.0, 100.0, 0),  # a zero baseline: the floor alone decides (kit)
-    ],
-)
+# fmt: off
+THE_BUILD_THRESHOLD_IS_STRICT_CASES = [
+    (151.0, 100.0, 50.0, 1), (150.0, 100.0, 0.0, 0),    # the ratio must exceed 1.5
+    (151.0, 100.0, 51.0, 0),                            # and the difference the floor
+    (100.0, 151.0, 50.0, -1), (100.0, 150.0, 0.0, 0),   # improvements mirror it
+    (None, 100.0, 0.0, 0),
+    (100.0, 0.0, 0.0, 1), (100.0, 0.0, 100.0, 0),     # a zero baseline: the floor alone decides (kit)
+]
+# fmt: on
+
+
+@pytest.mark.parametrize("cand, base, floor, want", THE_BUILD_THRESHOLD_IS_STRICT_CASES)
 def test_the_build_threshold_is_strict(cand, base, floor, want):
     assert verdict.crosses(cand, base, floor) == want
 
 
-@pytest.mark.parametrize(
-    "first_edges, repeat_edges, want",
-    [
-        (7900.0, 8000.0, "regression"),  # crossed, and again in the extra pair
-        (7900.0, 1350.0, "info"),  # crossed once, not repeated
-        (None, None, "ok"),  # under the threshold: no repeat, ok
-    ],
-)
+# fmt: off
+BUILD_REGRESSION_NEEDS_A_REPEAT_CASES = [
+    (7900.0, 8000.0, "regression"),   # crossed, and again in the extra pair
+    (7900.0, 1350.0, "info"),         # crossed once, not repeated
+    (None, None, "ok"),               # under the threshold: no repeat, ok
+]
+# fmt: on
+
+
+@pytest.mark.parametrize("first_edges, repeat_edges, want", BUILD_REGRESSION_NEEDS_A_REPEAT_CASES)
 def test_build_regression_needs_a_repeat(first_edges, repeat_edges, want):
     edges = first_edges or 1400.0
     runs = [
@@ -1177,24 +1060,17 @@ def test_build_regression_needs_a_repeat(first_edges, repeat_edges, want):
     assert _by_name(verdict.build_findings(runs)[0])["build edge phase"]["status"] == want
 
 
-@pytest.mark.parametrize(
-    "runs, want",
-    [
-        (
-            [{"side": "candidate", "server_died": True}, {"side": "baseline", "ok": False}],
-            (0, None, "regression"),
-        ),
-        (
-            [{"side": "candidate", "server_died": True}, {"side": "baseline", "ok": True}],
-            (0, 1, "regression"),
-        ),
-        (
-            [{"side": "candidate", "ok": True}, {"side": "baseline", "server_died": True}],
-            (1, 0, "improvement"),
-        ),
-        ([{"side": "candidate", "ok": True}, {"side": "baseline", "ok": True}], None),
-    ],
-)
+# fmt: off
+A_BUILD_CRASH_IS_JUDGED_ON_WHAT_EACH_SIDE_SHOWED_CASES = [
+    ([{"side": "candidate", "server_died": True}, {"side": "baseline", "ok": False}], (0, None, "regression")),
+    ([{"side": "candidate", "server_died": True}, {"side": "baseline", "ok": True}], (0, 1, "regression")),
+    ([{"side": "candidate", "ok": True}, {"side": "baseline", "server_died": True}], (1, 0, "improvement")),
+    ([{"side": "candidate", "ok": True}, {"side": "baseline", "ok": True}], None),
+]
+# fmt: on
+
+
+@pytest.mark.parametrize("runs, want", A_BUILD_CRASH_IS_JUDGED_ON_WHAT_EACH_SIDE_SHOWED_CASES)
 def test_a_build_crash_is_judged_on_what_each_side_showed(runs, want):
     f = check.build_crash_finding(runs)
     assert (f if f is None else (f["candidate"], f["baseline"], f["status"])) == want
@@ -1284,157 +1160,50 @@ def _rep(side, seeds):
     return _hour(side, seeds, True)
 
 
+# fmt: off
 LONG_CASES = [  # (id, hours, check, (candidate, baseline, status), something unmeasured)
-    (
-        "replay repeats",
-        [
-            _hour("candidate", {"x-h1-e1": {"no_freeze": False}}),
-            _hour("baseline", {"x-h1-e1": {}}),
-            _rep("baseline", {"x-h1-e1": {}}),
-            _rep("candidate", {"x-h1-e1": {"no_freeze": False}}),
-        ],
-        "no_freeze",
-        (0, 1, "regression"),
-        False,
-    ),
-    (
-        "held on replay",
-        [
-            _hour("candidate", {"x-h1-e1": {"no_freeze": False}}),
-            _hour("baseline", {"x-h1-e1": {}}),
-            _rep("baseline", {"x-h1-e1": {}}),
-            _rep("candidate", {"x-h1-e1": {}}),
-        ],
-        "no_freeze",
-        (1, 1, "info"),
-        False,
-    ),
-    (
-        "baseline broke on the replay",
-        [
-            _hour("candidate", {"x-h1-e1": {"no_freeze": False}}),
-            _hour("baseline", {"x-h1-e1": {}}),
-            _rep("baseline", {"x-h1-e1": {"no_freeze": False}}),
-            _rep("candidate", {"x-h1-e1": {"no_freeze": False}}),
-        ],
-        "no_freeze",
-        (0, 0, "info"),
-        False,
-    ),
-    (
-        "not replayed",
-        [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}})],
-        "no_freeze",
-        (None, 1, "info"),
-        True,
-    ),
-    (
-        "a confirmed seed wins over one broken on both sides",
-        [
-            _hour(
-                "candidate",
-                {
-                    "x-h1-e1": {"writers_dont_starve": False},
-                    "x-h1-e2": {"writers_dont_starve": False},
-                },
-            ),
-            _hour("baseline", {"x-h1-e1": {}, "x-h1-e2": {"writers_dont_starve": False}}),
-            _rep("baseline", {"x-h1-e1": {}}),
-            _rep("candidate", {"x-h1-e1": {"writers_dont_starve": False}}),
-        ],
-        "writers_dont_starve",
-        (0, 1, "regression"),
-        False,
-    ),
-    (
-        "broken on both sides",
-        [
-            _hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}}),
-            _hour("baseline", {"x-h1-e1": {"writers_dont_starve": False}}),
-        ],
-        "writers_dont_starve",
-        (0, 0, "info"),
-        False,
-    ),
-    (
-        "a crash counts at once",
-        [
-            _hour("candidate", {"x-h1-e1": {"server_stays_up": False}}),
-            _hour("baseline", {"x-h1-e1": {}}),
-        ],
-        "server_stays_up",
-        (0, 1, "regression"),
-        False,
-    ),
-    (
-        "a data break counts at once",
-        [
-            _hour("candidate", {"x-h1-e1": {"writes_add_up": False}}),
-            _hour("baseline", {"x-h1-e1": {}}),
-        ],
-        "writes_add_up",
-        (0, 1, "regression"),
-        False,
-    ),
-    (
-        "a crash on replay counts",
-        [
-            _hour("candidate", {"x-h1-e1": {"no_freeze": False}}),
-            _hour("baseline", {"x-h1-e1": {}}),
-            _rep("baseline", {"x-h1-e1": {}}),
-            {
-                "side": "candidate",
-                "replay": True,
-                "epochs": {
-                    "x-h1-e1": {**{c: None for c in check.LONG_CHECKS}, "server_stays_up": False}
-                },
-            },
-        ],
-        "server_stays_up",
-        (0, 1, "regression"),
-        True,
-    ),
-    (
-        "data break, baseline unmeasured",
-        [
-            _hour("candidate", {"x-h1-e1": {"writes_add_up": False}}),
-            {
-                "side": "baseline",
-                "replay": False,
-                "epochs": {
-                    "x-h1-e1": {**{c: True for c in check.LONG_CHECKS}, "writes_add_up": None}
-                },
-            },
-        ],
-        "writes_add_up",
-        (0, None, "regression"),
-        True,
-    ),
-    (
-        "lone crash, nothing paired",
-        [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}})],
-        "server_stays_up",
-        (0, None, "regression"),
-        True,
-    ),
-    (
-        "lone crash beside a paired seed",
-        [
-            _hour("candidate", {"x-h1-e1": {}, "x-h2-e1": {"server_stays_up": False}}),
-            _hour("baseline", {"x-h1-e1": {}}),
-        ],
-        "server_stays_up",
-        (0, None, "regression"),
-        True,
-    ),
-    (
-        "lone seeds that held",
-        [_hour("candidate", {"x-h1-e1": {}})],
-        "writes_add_up",
-        (1, None, "info"),
-        True,
-    ),
+    ("replay repeats", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}}),
+                        _rep("baseline", {"x-h1-e1": {}}), _rep("candidate", {"x-h1-e1": {"no_freeze": False}})],
+     "no_freeze", (0, 1, "regression"), False),
+    ("held on replay", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}}),
+                        _rep("baseline", {"x-h1-e1": {}}), _rep("candidate", {"x-h1-e1": {}})],
+     "no_freeze", (1, 1, "info"), False),
+    ("baseline broke on the replay", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}),
+                                      _hour("baseline", {"x-h1-e1": {}}),
+                                      _rep("baseline", {"x-h1-e1": {"no_freeze": False}}),
+                                      _rep("candidate", {"x-h1-e1": {"no_freeze": False}})],
+     "no_freeze", (0, 0, "info"), False),
+    ("not replayed", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}})],
+     "no_freeze", (None, 1, "info"), True),
+    ("a confirmed seed wins over one broken on both sides",
+     [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}, "x-h1-e2": {"writers_dont_starve": False}}),
+      _hour("baseline", {"x-h1-e1": {}, "x-h1-e2": {"writers_dont_starve": False}}),
+      _rep("baseline", {"x-h1-e1": {}}), _rep("candidate", {"x-h1-e1": {"writers_dont_starve": False}})],
+     "writers_dont_starve", (0, 1, "regression"), False),
+    ("broken on both sides", [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}}),
+                              _hour("baseline", {"x-h1-e1": {"writers_dont_starve": False}})],
+     "writers_dont_starve", (0, 0, "info"), False),
+    ("a crash counts at once", [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}}),
+                                _hour("baseline", {"x-h1-e1": {}})], "server_stays_up", (0, 1, "regression"), False),
+    ("a data break counts at once", [_hour("candidate", {"x-h1-e1": {"writes_add_up": False}}),
+                                     _hour("baseline", {"x-h1-e1": {}})], "writes_add_up", (0, 1, "regression"), False),
+    ("a crash on replay counts", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}),
+                                  _hour("baseline", {"x-h1-e1": {}}), _rep("baseline", {"x-h1-e1": {}}),
+                                  {"side": "candidate", "replay": True, "epochs": {"x-h1-e1": {
+                                      **{c: None for c in check.LONG_CHECKS}, "server_stays_up": False}}}],
+     "server_stays_up", (0, 1, "regression"), True),
+    ("data break, baseline unmeasured", [_hour("candidate", {"x-h1-e1": {"writes_add_up": False}}),
+                                         {"side": "baseline", "replay": False, "epochs": {"x-h1-e1": {
+                                             **{c: True for c in check.LONG_CHECKS}, "writes_add_up": None}}}],
+     "writes_add_up", (0, None, "regression"), True),
+    ("lone crash, nothing paired", [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}})],
+     "server_stays_up", (0, None, "regression"), True),
+    ("lone crash beside a paired seed", [_hour("candidate", {"x-h1-e1": {}, "x-h2-e1": {"server_stays_up": False}}),
+                                         _hour("baseline", {"x-h1-e1": {}})],
+     "server_stays_up", (0, None, "regression"), True),
+    ("lone seeds that held", [_hour("candidate", {"x-h1-e1": {}})], "writes_add_up", (1, None, "info"), True),
 ]
+# fmt: on
 
 
 @pytest.mark.parametrize(
@@ -1464,43 +1233,21 @@ def _repro(side, passed, replay=False, crashed=False):
     }
 
 
-@pytest.mark.parametrize(
-    "runs, want",
-    [
-        (
-            [
-                _repro("candidate", False),
-                _repro("baseline", True),
-                _repro("baseline", True, True),
-                _repro("candidate", False, True),
-            ],
-            (0, 1, "regression"),
-        ),
-        (
-            [
-                _repro("candidate", False),
-                _repro("baseline", True),
-                _repro("baseline", True, True),
-                _repro("candidate", True, True),
-            ],
-            (1, 1, "info"),
-        ),
-        (
-            [
-                _repro("candidate", False),
-                _repro("baseline", True),
-                _repro("baseline", False, True),
-                _repro("candidate", False, True),
-            ],
-            (0, 0, "info"),
-        ),
-        (
-            [_repro("candidate", False, crashed=True), _repro("baseline", True)],
-            (0, 1, "regression"),
-        ),
-        ([_repro("candidate", False), _repro("baseline", True)], (None, 1, "info")),
-    ],
-)
+# fmt: off
+LONG_REPROS_USE_THE_SAME_REPEAT_RULE_CASES = [
+    ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", True, True),
+      _repro("candidate", False, True)], (0, 1, "regression")),
+    ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", True, True),
+      _repro("candidate", True, True)], (1, 1, "info")),
+    ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", False, True),
+      _repro("candidate", False, True)], (0, 0, "info")),
+    ([_repro("candidate", False, crashed=True), _repro("baseline", True)], (0, 1, "regression")),
+    ([_repro("candidate", False), _repro("baseline", True)], (None, 1, "info")),
+]
+# fmt: on
+
+
+@pytest.mark.parametrize("runs, want", LONG_REPROS_USE_THE_SAME_REPEAT_RULE_CASES)
 def test_long_repros_use_the_same_repeat_rule(runs, want):
     f = _by_name(check.long_findings([], runs)[0])["long repro write-create"]
     assert (f["candidate"], f["baseline"], f["status"]) == want
@@ -1509,31 +1256,18 @@ def test_long_repros_use_the_same_repeat_rule(runs, want):
 # --- images and failures -------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "env, has, want",
-    [
-        (
-            ["PATH=/bin", "FALKORDB_SERVER=valkey"],
-            ["/usr/local/bin/valkey-server", "/usr/local/bin/redis-server"],
-            "/usr/local/bin/valkey-server",
-        ),
-        (
-            ["PATH=/bin"],
-            ["/usr/local/bin/valkey-server", "/usr/local/bin/redis-server"],
-            "/usr/local/bin/redis-server",
-        ),
-        (
-            ["FALKORDB_SERVER="],
-            ["/usr/local/bin/redis-server"],
-            "/usr/local/bin/redis-server",
-        ),  # empty is unset
-        (
-            ["FALKORDB_SERVER=valkey"],
-            ["/usr/local/bin/redis-server"],
-            None,
-        ),  # no fallback to the other binary
-    ],
-)
+# fmt: off
+THE_SERVER_IS_THE_IMAGES_OWN_DEFAULT_CASES = [
+    (["PATH=/bin", "FALKORDB_SERVER=valkey"], ["/usr/local/bin/valkey-server", "/usr/local/bin/redis-server"],
+     "/usr/local/bin/valkey-server"),
+    (["PATH=/bin"], ["/usr/local/bin/valkey-server", "/usr/local/bin/redis-server"], "/usr/local/bin/redis-server"),
+    (["FALKORDB_SERVER="], ["/usr/local/bin/redis-server"], "/usr/local/bin/redis-server"),  # empty is unset
+    (["FALKORDB_SERVER=valkey"], ["/usr/local/bin/redis-server"], None),  # no fallback to the other binary
+]
+# fmt: on
+
+
+@pytest.mark.parametrize("env, has, want", THE_SERVER_IS_THE_IMAGES_OWN_DEFAULT_CASES)
 def test_the_server_is_the_images_own_default(monkeypatch, env, has, want):
     def fake_docker(*a, **kw):
         script = a[-1]

@@ -53,13 +53,15 @@ def _fill(r, nodes):
         )
 
 
+def _operational(r, proc):
+    rows = r.execute_command("GRAPH.RO_QUERY", "q", f"CALL {proc}() YIELD status RETURN status")[1]
+    return bool(rows) and all(harness.s(x[0]) == "OPERATIONAL" for x in rows)
+
+
 def _wait_status(r, proc):
     t0 = time.perf_counter()
     while time.perf_counter() - t0 < WAIT_S:
-        rows = r.execute_command(
-            "GRAPH.RO_QUERY", "q", f"CALL {proc}() YIELD status RETURN status"
-        )[1]
-        if rows and all(harness.s(x[0]) == "OPERATIONAL" for x in rows):
+        if _operational(r, proc):
             return
         time.sleep(0.05)
     raise TimeoutError(f"{proc}: not OPERATIONAL after {WAIT_S} s")
@@ -75,15 +77,19 @@ def _join(*threads):
 class _Pinger:
     def __init__(self, port):
         self.port, self.pings, self.stop = port, [], threading.Event()
+        self.error = None  # why the probe stopped early, if it did
         self.t = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
-        p = _conn(self.port)
-        while not self.stop.is_set():
-            t = time.perf_counter()
-            p.ping()
-            self.pings.append((t, (time.perf_counter() - t) * 1000))
-            time.sleep(0.01)
+        try:
+            p = _conn(self.port)
+            while not self.stop.is_set():
+                t = time.perf_counter()
+                p.ping()
+                self.pings.append((t, (time.perf_counter() - t) * 1000))
+                time.sleep(0.01)
+        except Exception as e:  # no PING after this: the freeze verdict lacks its evidence
+            self.error = _outcome(e)
 
     def __enter__(self):
         self.t.start()
@@ -121,14 +127,26 @@ def _answered(what, rec):
         raise Incomplete(f"the {what} did not complete: {rec[0][2] if rec else 'no reply'}")
 
 
-def _freeze_verdict(pinger, lr, extra):
+def _freeze_verdict(pinger, lr, extra, sent=None, building=True):
     """No PING over 500 ms during a long read that answered. An error reply to the long read, or to
-    the command sent during it (extra["error"]), fails the repro: the engine refused it."""
+    the command sent during it (extra["error"]), fails the repro: the engine refused it. Otherwise
+    the run is incomplete when the scenario did not form: the command was sent (`sent`, None for
+    the read alone) after the read ended, the index was ready before the read started
+    (`building`), or the PING probe stopped."""
     _answered("long read", lr)
     a, b, err = lr[0]
     during = pinger.during(a, b)
     late = sum(1 for x in during if x > FREEZE_MS)
     refused = err or extra.get("error")
+    if not refused:
+        if pinger.error:
+            raise Incomplete(f"the PING probe stopped: {pinger.error}")
+        if sent is not None and sent >= b:
+            raise Incomplete(f"the command was sent {sent - b:.1f} s after the long read ended")
+        if not building:
+            raise Incomplete("the index was ready before the long read started")
+    if sent is not None:
+        extra["sent_into_read_s"] = round(sent - a, 1)
     return {
         "pass": False if refused else (late == 0 if during else None),
         "detail": {
@@ -151,6 +169,7 @@ def write_during_long_read(port, mode, nodes=1_000_000):
         th.start()
         time.sleep(1.0)
         q = {"create": "CREATE (:W {i: 1})", "set": "MATCH (n:N {v: 1}) SET n.w = 1"}.get(mode)
+        t_w = None
         if q:
             t_w = time.perf_counter()
             try:
@@ -160,7 +179,7 @@ def write_during_long_read(port, mode, nodes=1_000_000):
             extra["write_s"] = round(time.perf_counter() - t_w, 1)
         _join(th)
         time.sleep(0.5)
-    return _freeze_verdict(pinger, lr, extra)
+    return _freeze_verdict(pinger, lr, extra, sent=t_w)
 
 
 def constraint_during_long_read(port, mode, nodes=1_000_000):
@@ -186,6 +205,7 @@ def constraint_during_long_read(port, mode, nodes=1_000_000):
         th = threading.Thread(target=_long_read, args=(port, 2000, lr))
         th.start()
         time.sleep(1.0)
+        t_c = None
         if mode != "none":
             t_c = time.perf_counter()
             try:
@@ -198,7 +218,7 @@ def constraint_during_long_read(port, mode, nodes=1_000_000):
             extra["command_s"] = round(time.perf_counter() - t_c, 1)
         _join(th)
         time.sleep(0.5)
-    return _freeze_verdict(pinger, lr, extra)
+    return _freeze_verdict(pinger, lr, extra, sent=t_c)
 
 
 def index_build_behind_long_read(port, nodes=2_000_000):
@@ -213,18 +233,16 @@ def index_build_behind_long_read(port, nodes=2_000_000):
         t_idx = time.perf_counter()
         r.execute_command("GRAPH.QUERY", "q", "CREATE INDEX FOR (n:N) ON (n.v)")
         reader.start()
+        building = not _operational(r, "db.indexes")  # still populating as the read starts
         _wait_status(r, "db.indexes")
         t_ready = time.perf_counter()
         _join(reader)
         time.sleep(0.5)
-    return _freeze_verdict(
-        pinger,
-        lr,
-        {
-            "index_ready_s": round(t_ready - t_idx, 1),
-            "ready_before_read_ended": t_ready < lr[0][1] if lr else None,
-        },
-    )
+    extra = {
+        "index_ready_s": round(t_ready - t_idx, 1),
+        "ready_before_read_ended": t_ready < lr[0][1] if lr else None,
+    }
+    return _freeze_verdict(pinger, lr, extra, building=building)
 
 
 def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
@@ -250,9 +268,8 @@ def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
                 c.execute_command("GRAPH.RO_QUERY", "q", read_q(k))
             except ResponseError as e:
                 errs.append(f"read: {e}")
-            except (
-                Exception
-            ) as e:  # no reply at all: this client is done, and the run is incomplete
+            except Exception as e:
+                # no reply at all: this client is done, and the run is incomplete
                 lost.append(f"read: {_outcome(e)}")
                 return
 
@@ -285,9 +302,8 @@ def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
     for t in rs:
         t.join(timeout=60)
     n_w = r.execute_command("GRAPH.RO_QUERY", "q", "MATCH (n:W) RETURN count(n)")[1][0][0]
-    n_d = r.execute_command("GRAPH.RO_QUERY", "q", "MATCH (n:W) RETURN count(DISTINCT [n.w, n.i])")[
-        1
-    ][0][0]
+    distinct = "MATCH (n:W) RETURN count(DISTINCT [n.w, n.i])"
+    n_d = r.execute_command("GRAPH.RO_QUERY", "q", distinct)[1][0][0]
     return judge_writers(writes, errs, lost, starved, took, n_w, n_d, writers * per)
 
 

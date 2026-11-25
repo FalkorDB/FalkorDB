@@ -266,11 +266,13 @@ def long_hour(opts, info, run: Run, side, h, seed, deadline, epochs=None, replay
         res["epochs"][e["params"]["seed"]] = verdict.epoch_values(
             e.get("checks", {}), LONG_CHECKS, NA
         )
-    # died before its first epoch: a crash on every seed
-    if res["server_died"] and not hour["epochs"]:
+    # the server died during the hour: every epoch it did not finish is a crash on that seed
+    if res["server_died"]:
         for e in eps:
-            res["epochs"][e["seed"]] = {**{c: None for c in LONG_CHECKS}, "server_stays_up": False}
-    elif res["error"] and not res["server_died"]:
+            res["epochs"].setdefault(
+                e["seed"], {**{c: None for c in LONG_CHECKS}, "server_stays_up": False}
+            )
+    elif res["error"]:
         run.unmeasured.append(f"{tag}: {res['error'][:160]}")
     run.runs["long"].append(res)
     return res
