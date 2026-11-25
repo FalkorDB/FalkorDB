@@ -50,10 +50,23 @@
 //
 // WHERE THE HEADER'S FOUR RULES ARE ENFORCED
 //
-//   1  one record per (opcode, shape)   _group_for, via _cmp_group
-//   2  groups sorted by key             Encode, the qsort - NOT the scan
-//   3  label sets normalised ascending  on the way in: AddNode, StageUpdate
-//   4  an attribute announced once      AddAttribute, the scan before appending
+//   1  one record per (run, opcode, shape)  _group_for, via _cmp_group
+//   2  runs, then stages, then keys        Encode, the qsort - NOT the scan
+//   3  label sets normalised ascending     on the way in: AddNode, StageUpdate
+//   4  an attribute announced once         AddAttribute, the scan
+//
+// A RUN is a stretch of the query's writes that never reverses direction:
+// creates or deletes but not both, adds labels or removes them but not both.
+// _note_arrival opens a new one the moment either reverses and a group belongs
+// to the run it was opened in, which is what lets one payload name a subject
+// twice - a freed id handed back to a later create, a label put back.
+//
+// WHY A RUN IS ENOUGH. Every create, delete and label change files its effect
+// inside the call that changes the graph (CommitNewEntities, op_delete,
+// GraphHub_LabelNodes), so nothing is freed inside a create run and nothing
+// allocated inside a delete run. Only a DEFERRED record can cross a run, and
+// the staged property update is the only deferred kind - which is why the
+// staging index is keyed on the run as well.
 //
 // Rule 2 sits at the exit because _group_for finds groups in ARRIVAL order, a
 // property of the query text rather than of the data; the canonical order is
@@ -113,7 +126,86 @@ static GroupShape _shape_of(EffectType opcode) {
 	return SHAPE_NONE;
 }
 
-// one (opcode, shape) group, with its rows accumulating
+// which direction a record moves something in, on whichever axis it touches
+//
+// TWO AXES. On the id axis C's DataBlock hands a freed id back to the same
+// query, so `DELETE n CREATE (:B)` names one id for two entities. On the label
+// axis a (node, label) pair can be given and taken away repeatedly, and
+// _stage_of puts SET_LABELS (4) ahead of REMOVE_LABELS (5) always - so
+// `REMOVE n:Z SET n:Z` over an (:S:Z) node ships the SET first and the replica
+// ends up without the label. Neither can be fixed by any fixed opcode order;
+// only the query's sequence is right.
+//
+// The label fault is PRE-EXISTING on 9ae723573, which has the same fixed stage
+// order. It is usually silent - both records are well formed and both apply -
+// though the three-op `SET n:Z REMOVE n:Z SET n:Z` folds two SETs into one
+// record naming the node twice, which _VerifyDistinctIds refuses, costing a
+// resync instead.
+//
+// REVERSING ON EITHER LABEL SWITCH IS ROBUSTNESS, NOT NECESSITY: only
+// remove-then-set can invert a pair, so the asymmetric rule would do today.
+// The symmetry keeps correctness off the fact that stage 4 is below stage 5,
+// and the two rules emit identical sequences.
+//
+// UPDATES ARE ON NEITHER AXIS: the entity exists either side and its
+// attributes are stated whole rather than moved. The record's label block is
+// informational - _ApplyUpdateNode only checks those schemas resolve.
+typedef enum {
+	RUN_NEUTRAL,       // moves nothing in either direction
+	RUN_CREATE,
+	RUN_DELETE,
+	RUN_LABEL_ADD,
+	RUN_LABEL_REMOVE,
+} RunKind;
+
+static RunKind _run_kind_of(EffectType opcode) {
+	switch(opcode) {
+		case EFFECT_CREATE_NODE:
+		case EFFECT_CREATE_EDGE:
+			return RUN_CREATE;
+
+		case EFFECT_DELETE_NODE:
+		case EFFECT_DELETE_EDGE:
+			return RUN_DELETE;
+
+		case EFFECT_SET_LABELS:
+			return RUN_LABEL_ADD;
+
+		case EFFECT_REMOVE_LABELS:
+			return RUN_LABEL_REMOVE;
+
+		case EFFECT_UPDATE_NODE:
+		case EFFECT_UPDATE_EDGE:
+			break;
+
+		// announcements and DDL: emitted ahead of every group and never filed
+		// into one, so they have no run
+		case EFFECT_UNKNOWN:
+		case EFFECT_ADD_SCHEMA:
+		case EFFECT_ADD_ATTRIBUTE:
+		case EFFECT_CREATE_INDEX:
+		case EFFECT_DROP_INDEX:
+		case EFFECT_CREATE_CONSTRAINT:
+		case EFFECT_DROP_CONSTRAINT:
+		case EFFECT_CREATE_CCH:
+		case EFFECT_DROP_CCH:
+			break;
+	}
+
+	// NEUTRAL is the fail-safe answer the way SHAPE_NONE is: it keeps the open
+	// run rather than splitting, and nothing reaching it becomes a group
+	return RUN_NEUTRAL;
+}
+
+// is this kind on the id axis, rather than the label one?
+//
+// Each axis keeps its own last-direction: one history would open a run on
+// `CREATE (:A) SET n:Z CREATE (:B)`, which reverses nothing.
+static bool _is_id_axis(RunKind k) {
+	return k == RUN_CREATE || k == RUN_DELETE;
+}
+
+// one (run, opcode, shape) group, with its rows accumulating
 //
 // The opcode is the DISCRIMINATOR and is compared first everywhere, so by the
 // time any arm is read both sides are known to be the same kind. That is what
@@ -121,6 +213,12 @@ static GroupShape _shape_of(EffectType opcode) {
 // an arm without having established the opcode.
 typedef struct {
 	EffectType opcode;
+
+	// which run this group belongs to; not part of the shape and not on the
+	// wire. Keeps a group from absorbing an entity filed after the payload
+	// reversed direction, and compared FIRST in _cmp_group so it also orders
+	// the records
+	uint32_t run;
 
 	// the half of the shape that depends on the entity kind
 	union {
@@ -175,6 +273,11 @@ typedef struct {
 	EffectType opcode;
 	uint64_t   id;
 
+	// the run this entity was staged in, so the flush files it where the query
+	// put it rather than at the end of the payload. One entry per
+	// (entity, run), so this is the run of every attribute in 'attrs'
+	uint32_t run;
+
 	union {
 		struct {
 			LabelID *labels;   // owned, ascending
@@ -196,15 +299,24 @@ typedef struct {
 typedef struct {
 	uint64_t   id;
 	uint32_t   op;
+
+	// PART OF THE KEY. An entity id names one entity only within a run, so
+	// `SET n.v = 1 DELETE n CREATE (m) SET m.w = 2` stages two updates under
+	// one id for two entities. Merged, m's write lands on n ahead of the
+	// delete and is lost, with nothing refusing the payload - measured on a
+	// live pair, master {w: 9} and replica {}
+	uint32_t   run;
+
 	uint32_t   idx1;   // index into 'updates', plus one
 } UpdateSlot;
 
-// mix an (opcode, id) pair into a slot
+// mix an (opcode, run, id) triple into a slot
 //
 // splitmix64's finaliser: entity ids are dense and sequential, and the low bits
 // alone would put a bulk create into one probe chain
-static inline uint64_t _slot_hash(uint32_t op, uint64_t id) {
-	uint64_t x = id + 0x9E3779B97F4A7C15ULL * (uint64_t)(op + 1);
+static inline uint64_t _slot_hash(uint32_t op, uint32_t run, uint64_t id) {
+	uint64_t x = id + 0x9E3779B97F4A7C15ULL * (uint64_t)(op + 1)
+		+ 0xD1B54A32D192ED03ULL * (uint64_t)(run + 1);
 	x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
 	x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
 	return x ^ (x >> 31);
@@ -219,7 +331,7 @@ static inline uint64_t _slot_hash(uint32_t op, uint64_t id) {
 typedef struct {
 	PendingUpdate *updates;  // arr
 
-	// (opcode, entity id) -> index into 'updates', plus one
+	// (opcode, run, entity id) -> index into 'updates', plus one
 	//
 	// Open addressed, so not an arr: power-of-two capacity for mask probing,
 	// grown at 70% load. Chosen for its TEARDOWN rather than its lookups - it is
@@ -236,7 +348,7 @@ typedef struct {
 	// call either way.
 	//
 	// What dict does NOT cost more of is BYTES: below ~100 entities it holds
-	// fewer than this table does, because the 256-slot floor is 4 KB whatever
+	// fewer than this table does, because the 256-slot floor is 6 KB whatever
 	// the payload turns out to hold. The win here is cycles and block count.
 	//
 	// An INDEX rather than a pointer because 'updates' is reallocated, and
@@ -271,6 +383,18 @@ struct EffectsV3Grouping {
 	// dangle and usually still work. UINT32_MAX means nothing memoed.
 	uint32_t    last_group;
 
+	// the open run, and the last direction taken on each axis - scalars only,
+	// no set of live ids and no per-entity bookkeeping
+	uint32_t    run;
+	RunKind     run_kind;    // last create/delete seen
+	RunKind     label_kind;  // last label set/remove seen
+
+	// where the open run's groups start: the floor for _group_for's scan, so a
+	// query that alternates does not walk every group it has ever opened. A
+	// closed run's groups can never match, and live arrivals open at or after
+	// this index
+	uint32_t    run_first;
+
 	//--------------------------------------------------------------------------
 	// scratch for computing it - dead once the flush has run
 	//--------------------------------------------------------------------------
@@ -286,7 +410,7 @@ static int _cmp_u32(uint32_t a, uint32_t b) {
 	return (a < b) ? -1 : (a > b) ? 1 : 0;
 }
 
-// WHERE A GROUP'S OPCODE PUTS IT IN THE PAYLOAD.
+// WHERE A GROUP'S OPCODE PUTS IT WITHIN ITS RUN.
 //
 // NOT the opcode's own value. The numbering is v2's and says nothing about
 // order - UPDATE_NODE is 1 and CREATE_NODE is 3 - so sorting on it emits the
@@ -296,22 +420,20 @@ static int _cmp_u32(uint32_t a, uint32_t b) {
 // property, because a CREATE_NODE with no attributes states that the node has
 // none.
 //
-// The sequence is Rust's, which is normative: for_each_record (emit.rs) emits
-// created nodes, created edges, updates, label changes, deleted edges and
-// deleted nodes, in that order, and states that this is "the only ordering the
-// format requires".
+// The sequence is Rust's: for_each_record (emit.rs) emits created nodes,
+// created edges, updates, label changes, deleted edges and deleted nodes.
 //
-// WHAT THAT DOES AND DOES NOT BUY. It settles the STAGES, and the same
-// sentence in Rust goes on to say that within a stage "their order among
-// themselves carries no meaning and is not imposed" - digest_created_nodes
-// walks its shapes in first-seen order while this file sorts them by key, so
-// CREATE (:B), (:A) still puts B first on one engine and A first on the other.
-// Record order across stages matches; record order inside one does not, and a
-// cross-engine byte fixture must not assume it. What this fixes is an order no
-// replica could apply, which is a bug on either engine's terms.
+// WITHIN A RUN, AND ONLY WITHIN ONE. Across runs the stages must say nothing,
+// or a create of a reused id sorts ahead of the delete that freed it. Inside
+// one they are still needed: a group accepts entities for as long as its run
+// is open, so `CREATE (:A)-[:R]->(:A) CREATE (:B)-[:R]->(:B)` files the second
+// edge into the :R group the first clause opened, ahead of the record creating
+// :B - and _ApplyCreateEdge refuses an edge whose endpoints are not there yet.
 //
-// Edges are deleted before nodes so the replica unhooks before it removes, and
-// nodes are created before edges for the mirror of that reason.
+// Rust does not impose an order within a stage and walks its shapes in
+// first-seen order, so CREATE (:B), (:A) emits those two records in a
+// different order there than here; a cross-engine byte fixture must not
+// assume it.
 //
 // EXHAUSTIVE AND WITHOUT A default:, deliberately, exactly as _shape_of above
 // is and for the same reason - a new opcode has to be placed in the sequence
@@ -353,7 +475,12 @@ static uint32_t _stage_of(EffectType opcode) {
 static int _cmp_group(const void *va, const void *vb) {
 	const Group *a = va, *b = vb;
 
-	int c = _cmp_u32(_stage_of(a->opcode), _stage_of(b->opcode));
+	// THE RUN OUTRANKS THE STAGE: groups in different runs are ordered by when
+	// the query opened them and by nothing else
+	int c = _cmp_u32(a->run, b->run);
+	if(c != 0) return c;
+
+	c = _cmp_u32(_stage_of(a->opcode), _stage_of(b->opcode));
 	if(c != 0) return c;
 
 	// A BACKSTOP, and unreachable while _stage_of is a bijection over the eight
@@ -450,6 +577,10 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	// the first time a query mentions it
 	g->announcements = arr_new(EffectsV3Record, 1);
 	g->last_group    = UINT32_MAX;
+	g->run           = 0;
+	g->run_kind      = RUN_NEUTRAL;
+	g->label_kind    = RUN_NEUTRAL;
+	g->run_first     = 0;
 
 	g->staging.updates   = arr_new(PendingUpdate, 4);
 	g->staging.index_cap = 256;   // power of two
@@ -459,15 +590,51 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	return g;
 }
 
-// find the group matching this shape, or open one
+// close the open run if this record cannot share one, and report the run to
+// file it into
+//
+// Closed by the SWITCH and not by the opcode: a second delete joins the open
+// delete run, so a query that never reverses pays one comparison per entity
+// and no extra records. This runs once per entity on the write path, which is
+// why the state is scalars rather than a set of ids.
+static uint32_t _note_arrival
+(
+	EffectsV3Grouping *g,  // accumulator
+	EffectType opcode      // the arriving record's type
+) {
+	const RunKind k = _run_kind_of(opcode);
+
+	// moves nothing, so it joins whatever is open and leaves the run as it
+	// found it
+	if(k == RUN_NEUTRAL) {
+		return g->run;
+	}
+
+	// a pointer rather than two branches, so the compare-and-store is stated
+	// once and the axes cannot drift apart
+	RunKind *open = _is_id_axis(k) ? &g->run_kind : &g->label_kind;
+
+	if(*open != RUN_NEUTRAL && *open != k) {
+		g->run++;
+		g->run_first = arr_len(g->groups);
+	}
+
+	*open = k;
+
+	return g->run;
+}
+
+// find the group matching this shape IN THIS RUN, or open one
 //
 // A linear scan rather than a hash, deliberately: the number of distinct shapes
 // in a query is small - a label set is parsed rather than computed, so it is
 // bounded by the query text - and a scan has no iteration order to get wrong.
-// See _update_for for why its lookup is the other way round.
+// See _update_for for why its lookup is the other way round. The run is a
+// parameter because the flush files into runs that are closed by then.
 static Group *_group_for
 (
 	EffectsV3Grouping *g,         // accumulator
+	uint32_t run,                 // the run this entity belongs to
 	EffectType opcode,            // record type
 	const LabelID *labels,        // labels, already normalised
 	uint16_t n_labels,            // how many
@@ -477,6 +644,7 @@ static Group *_group_for
 ) {
 	Group probe = {
 		.opcode   = opcode,
+		.run      = run,
 		.attr_ids = (AttributeID *)attr_ids,
 		.n_attrs  = n_attrs,
 	};
@@ -498,7 +666,11 @@ static Group *_group_for
 		return g->groups + g->last_group;
 	}
 
-	for(uint32_t i = 0; i < n_groups; i++) {
+	// skip the closed runs on a live arrival - their groups cannot match. The
+	// flush cannot, since a group of its run can sit anywhere in the array
+	const uint32_t from = (run == g->run) ? g->run_first : 0;
+
+	for(uint32_t i = from; i < n_groups; i++) {
 		if(_cmp_group(&probe, g->groups + i) == 0) {
 			g->last_group = i;
 			return g->groups + i;
@@ -512,6 +684,7 @@ static Group *_group_for
 	Group *grp = g->groups + n_groups;
 
 	grp->opcode = opcode;
+	grp->run    = run;
 
 	if(_shape_of(opcode) == SHAPE_EDGE) {
 		grp->shape.edge.relation_id = relation_id;
@@ -557,7 +730,7 @@ typedef struct {
 //
 // qsort is not stable, so without the second key two entries sharing an id
 // could come out either way round and the collapse below would keep a
-// different value on two runs of the same query. The wire would still be
+// different value on two executions of the same query. The wire would still be
 // well-formed and the two engines would hold different data.
 static int _cmp_attr_pair(const void *a, const void *b) {
 	const AttrPair *x = (const AttrPair *)a;
@@ -675,7 +848,10 @@ void EffectsV3Grouping_AddNode
 		}
 	}
 
-	Group *grp = _group_for(g, opcode, norm, n_labels, 0, sorted_ids, n_attrs);
+	const uint32_t run = _note_arrival(g, opcode);
+
+	Group *grp =
+		_group_for(g, run, opcode, norm, n_labels, 0, sorted_ids, n_attrs);
 
 	EffectsV3IdListBuilder_Push(grp->ids, id);
 	if(n_attrs > 0) {
@@ -727,7 +903,9 @@ void EffectsV3Grouping_AddEdge
 		}
 	}
 
-	Group *grp = _group_for(g, opcode, NULL, 0, relation_id, sorted_ids,
+	const uint32_t run = _note_arrival(g, opcode);
+
+	Group *grp = _group_for(g, run, opcode, NULL, 0, relation_id, sorted_ids,
 			n_attrs);
 
 	EffectsV3IdListBuilder_Push(grp->ids, id);
@@ -829,20 +1007,21 @@ static int _cmp_staged_attr(const void *a, const void *b) {
 	return (x < y) ? -1 : (x > y) ? 1 : 0;
 }
 
-// find the slot for (op, id): the entry if present, else where it would go
+// find the slot for (op, run, id): the entry if present, else where it would go
 static inline UpdateSlot *_index_probe
 (
 	UpdateSlot *tbl,   // table
 	uint32_t cap,      // capacity, a power of two
 	uint32_t op,       // opcode
+	uint32_t run,      // the run the entity is being staged in
 	uint64_t id        // entity id
 ) {
 	uint32_t m = cap - 1;
-	uint32_t i = (uint32_t)_slot_hash(op, id) & m;
+	uint32_t i = (uint32_t)_slot_hash(op, run, id) & m;
 
 	// linear probing: the table never fills past 70%, so this terminates
 	while(tbl[i].idx1 != 0) {
-		if(tbl[i].id == id && tbl[i].op == op) {
+		if(tbl[i].id == id && tbl[i].op == op && tbl[i].run == run) {
 			return tbl + i;
 		}
 		i = (i + 1) & m;
@@ -874,7 +1053,7 @@ static void _index_grow(EffectsV3Grouping *g) {
 			continue;
 		}
 		UpdateSlot *d = _index_probe(tbl, cap, g->staging.index[i].op,
-			g->staging.index[i].id);
+			g->staging.index[i].run, g->staging.index[i].id);
 		*d = g->staging.index[i];
 	}
 
@@ -887,8 +1066,13 @@ static void _index_grow(EffectsV3Grouping *g) {
 //
 // The mirror of _group_for: that one is keyed by VALUE, this one by IDENTITY.
 //
-//   _group_for    (opcode, shape)       one per distinct SHAPE    memo + scan
-//   _update_for   (opcode, entity id)   one per ENTITY            hash probe
+//   _group_for  (run, opcode, shape)    one per distinct SHAPE    memo + scan
+//   _update_for (run, opcode, entity)   one per (ENTITY, RUN)     hash probe
+//
+// The run is part of the key for the reason given at UpdateSlot. The price is
+// that an entity written either side of a switch becomes two records applied
+// in order - same end state, but it is named twice and its values serialised
+// twice, so over N such entities the row count doubles.
 //
 // Which is what decides the lookup. Shapes are few and bounded by the query
 // text, so a scan wins on constant factors; ENTITIES are unbounded and
@@ -898,6 +1082,7 @@ static void _index_grow(EffectsV3Grouping *g) {
 static PendingUpdate *_update_for
 (
 	EffectsV3Grouping *g,   // accumulator
+	uint32_t run,           // the run this entity is being staged in
 	EffectType opcode,      // UPDATE_NODE or UPDATE_EDGE
 	uint64_t id,            // entity id
 	const LabelID *labels,  // normalised labels
@@ -905,7 +1090,7 @@ static PendingUpdate *_update_for
 	RelationID relation_id  // relationship type
 ) {
 	UpdateSlot *slot = _index_probe(g->staging.index, g->staging.index_cap,
-			(uint32_t)opcode, id);
+			(uint32_t)opcode, run, id);
 	if(slot->idx1 != 0) {
 		return g->staging.updates + (slot->idx1 - 1);
 	}
@@ -920,15 +1105,17 @@ static PendingUpdate *_update_for
 	if((g->staging.index_n + 1) * 10 >= g->staging.index_cap * 7) {
 		_index_grow(g);
 		slot = _index_probe(g->staging.index, g->staging.index_cap,
-				(uint32_t)opcode, id);
+				(uint32_t)opcode, run, id);
 	}
 	slot->id   = id;
 	slot->op   = (uint32_t)opcode;
+	slot->run  = run;
 	slot->idx1 = idx + 1;
 	g->staging.index_n++;
 
 	u->opcode    = opcode;
 	u->id        = id;
+	u->run       = run;
 	u->attrs     = arr_new(StagedAttr, 4);
 
 	if(_shape_of(opcode) == SHAPE_EDGE) {
@@ -1004,8 +1191,12 @@ void EffectsV3Grouping_StageUpdate
 		n_labels = _dedup_labels(norm, n_labels);
 	}
 
+	// an update neither creates nor destroys an id, so this never closes a run
+	// - it only reads which one is open, for the flush to file into later
+	const uint32_t run = _note_arrival(g, opcode);
+
 	PendingUpdate *u =
-		_update_for(g, opcode, id, norm, n_labels, relation_id);
+		_update_for(g, run, opcode, id, norm, n_labels, relation_id);
 
 	if(norm != sorted) {
 		rm_free(norm);
@@ -1106,7 +1297,7 @@ static void _flush_updates(EffectsV3Grouping *g) {
 		}
 
 		const bool is_edge = (_shape_of(u->opcode) == SHAPE_EDGE);
-		Group *grp = _group_for(g, u->opcode,
+		Group *grp = _group_for(g, u->run, u->opcode,
 				is_edge ? NULL : u->shape.node.labels,
 				is_edge ? 0    : u->shape.node.n_labels,
 				is_edge ? u->shape.edge.relation_id : 0,
@@ -2009,9 +2200,22 @@ void EffectsV3Grouping_Encode
 		}
 	}
 
-	// RULE 2: sorted by key. A scan finds groups in arrival order, which is a
-	// property of the query rather than of the ids, so it is sorted here
+	// RULE 2: runs in the order they opened, stages and then keys within one.
+	// A scan finds one run's groups in arrival order, a property of the query
+	// rather than of the ids, so that much is sorted here.
+	//
+	// A TOTAL ORDER AND NOT MERELY A SORT KEY, which is what makes an unstable
+	// qsort safe: no two groups can be equal on (run, opcode, shape, attrs).
+	// The run_first floor does not weaken that - a group of the open run is
+	// always appended at or after it, so the shortened scan still sees every
+	// candidate
 	qsort(g->groups, arr_len(g->groups), sizeof(Group), _cmp_group);
+
+	// the sort permutes 'groups', so both indices into it are now meaningless.
+	// Nothing files a group after this today, but honouring a stale position
+	// could open a second group with a key an existing one already has
+	g->last_group = UINT32_MAX;
+	g->run_first  = 0;
 
 	for(uint32_t i = 0; i < arr_len(g->groups); i++) {
 		Group *grp = g->groups + i;

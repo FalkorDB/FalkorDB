@@ -372,9 +372,11 @@ bool DataBlock_ClaimIds
 
 	// NO CEILING ON THE ID, deliberately, and this is the second time that
 	// lesson has been paid for. A record's ids are NOT dense in the id space
-	// and cannot be made to be: v3 emits one record per (opcode, shape) and
-	// sorts the groups by key, so one query's ids are split across records and
-	// every record's list is sparse. CREATE (:A), (:B), (:A) allocates 0,1,2
+	// and cannot be made to be: v3 emits one record per (run, opcode, shape)
+	// and sorts the groups by run and then by key, so one query's ids are
+	// split across records and every record's list is sparse - and a query
+	// that reverses direction splits them further still. CREATE (:A), (:B),
+	// (:A) allocates 0,1,2
 	// and sends TWO records - ':A' holding {0, 2} and ':B' holding {1} - so a
 	// bound of "high water plus this record's count" refuses the first of them
 	// on an empty graph. Rust shipped two such ceilings and both fired on

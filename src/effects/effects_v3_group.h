@@ -19,22 +19,32 @@
 // visible in the wire format, so the conformance corpus cannot arbitrate any of
 // them: a fixture pins what one record looks like, not which entities are in it.
 //
-//   1. ONE RECORD PER (opcode, shape). Shape is the attribute IDS and never the
-//      values, plus the labels for a node and the relationship type for an edge.
+//   1. ONE RECORD PER (run, opcode, shape). Shape is the attribute IDS and
+//      never the values, plus the labels for a node and the relationship type
+//      for an edge. A RUN is a stretch of the query's writes that never
+//      reverses direction - creates or deletes but not both, adds labels or
+//      removes them but not both - and a new one opens the moment either
+//      switches. So one payload MAY carry the same (opcode, shape) more than
+//      once, applied in arrival order: `DELETE n CREATE (:B)` names one id for
+//      two entities and `REMOVE n:Z SET n:Z` names one (node, label) pair
+//      twice, and only the sequence says which is which.
 //
-//   2. GROUPS GO OUT IN APPLY ORDER, AND BY KEY WITHIN IT. The stages are
-//      Rust's for_each_record: created nodes, created edges, updates, label
-//      changes, deleted edges, deleted nodes - so a node exists before it is
-//      updated, and an edge is unhooked before the node it hangs off goes.
-//      The opcode NUMBERING is v2's and is not that order - UPDATE_NODE is 1
-//      where CREATE_NODE is 3 - so sorting on the opcode itself sends
-//      CREATE (n) SET n.x = 1 backwards. Within a stage the key decides,
-//      because a hash table iterates arbitrarily and the same query would
-//      otherwise emit its records in a different order on two runs of one
-//      engine. Note the STAGES are what the two engines agree on: Rust does
-//      not impose an order within a stage and walks its shapes in first-seen
-//      order, so CREATE (:B), (:A) emits those two records in a different
-//      order there than here.
+//   2. RUNS GO OUT IN THE ORDER THEY OPENED, STAGES AND THEN KEYS WITHIN ONE.
+//      The stages are Rust's for_each_record: created nodes, created edges,
+//      updates, label changes, deleted edges, deleted nodes - so a node exists
+//      before it is updated, and an edge is unhooked before the node it hangs
+//      off goes. The opcode NUMBERING is v2's and is not that order -
+//      UPDATE_NODE is 1 where CREATE_NODE is 3 - so sorting on the opcode
+//      itself sends CREATE (n) SET n.x = 1 backwards. Within a stage the key
+//      decides, because a hash table iterates arbitrarily and the same query
+//      would otherwise emit its records in a different order on two
+//      executions of one engine. The stages hold WITHIN a run and say nothing
+//      across runs: sorting a whole payload by stage sends a create of a
+//      reused id ahead of the delete that freed it. The stage agreement with
+//      Rust therefore covers SINGLE-RUN payloads only, which costs nothing
+//      since the two engines hand back freed ids differently anyway. Within a
+//      stage Rust imposes no order either, so CREATE (:B), (:A) emits those
+//      two records in a different order there than here.
 //
 //   3. LABEL SETS ARE NORMALISED ASCENDING. Callers keep their own order, so
 //      [7,8] and [8,7] arrive for the same set; they are ONE shape.
@@ -127,6 +137,10 @@ void EffectsV3Grouping_AddEdge
 //
 // A T_NULL value is a removal and is staged like any other: the attribute is
 // part of the shape and the null is what instructs the replica to drop it.
+//
+// ONE RECORD PER (ENTITY, RUN), not per entity: an id names one entity only
+// within a run, so an entity written either side of a switch produces two
+// records applied in order rather than one under an id that changed hands.
 void EffectsV3Grouping_StageUpdate
 (
 	EffectsV3Grouping *g,   // accumulator
@@ -238,7 +252,7 @@ uint32_t EffectsV3Grouping_RecordCount
 );
 
 // write every record, schema and attribute announcements first, then the
-// groups in key order
+// groups: run by run, and by stage and key within each run
 void EffectsV3Grouping_Encode
 (
 	EffectsV3Grouping *g,  // accumulator
