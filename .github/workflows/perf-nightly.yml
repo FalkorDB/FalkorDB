@@ -332,6 +332,9 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: perf-plan
+          # A re-run's attempt replaces the earlier one's (upload-artifact
+          # refuses an existing name otherwise).
+          overwrite: true
           path: ${{ runner.temp }}/plan/
           if-no-files-found: error
 
@@ -445,6 +448,7 @@ jobs:
         if: always()
         with:
           name: perf-result-${{ matrix.check }}
+          overwrite: true
           path: out/
 
   merge:
@@ -522,6 +526,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: perf-nightly
+          overwrite: true
           path: ${{ runner.temp }}/nightly/nightly.json
           if-no-files-found: error
           retention-days: 90

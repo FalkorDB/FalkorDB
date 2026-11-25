@@ -1108,3 +1108,18 @@ esac
     assert outputs["candidate_commit"] == main[0]
     assert outputs["candidate_label"] == f"main@{main[0][:7]} (tip {main[2][:7]} has no image)"
     assert outputs["baseline_label"] == "6.2.1"
+
+
+def test_every_upload_replaces_an_earlier_attempts_artifact():
+    """upload-artifact refuses a name an earlier attempt of the same run already
+    uploaded, so without `overwrite` a re-run's merge (or plan, or hosted check)
+    fails at its upload and the night is never reported."""
+    uploads = [
+        (job, step)
+        for job, spec in workflow("perf-nightly.yml")["jobs"].items()
+        for step in spec.get("steps", [])
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    ]
+    assert len(uploads) == 3, [step["with"]["name"] for _, step in uploads]
+    for job, step in uploads:
+        assert step["with"].get("overwrite") is True, (job, step["with"]["name"])
