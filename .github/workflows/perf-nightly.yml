@@ -674,6 +674,8 @@ jobs:
       # The full history, so a red night's page lists the commits since the last green one.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 0
           filter: blob:none
           persist-credentials: false
