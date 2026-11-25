@@ -1174,7 +1174,7 @@ impl<'a> ExprEval<'a> {
     /// bulk-fetch the property for all active rows in one shot and classify it
     /// losslessly. Returns `None` for any other shape, so the caller falls back
     /// to per-row evaluation.
-    fn try_eval_batch_property(
+    pub(crate) fn try_eval_batch_property(
         &self,
         tree: &DynTree<ExprIR<Variable>>,
         batch: &Batch<'_>,
