@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 
 S = Path(__file__).resolve().parent
-sys.path.insert(0, str(S / "lib"))
 FULL = S / "full"
 ORDER = ["s07_mvcc_consistency", "s05_multitenant_churn", "s12_iot_retention", "s04_recommendation",
          "s01_social_feed", "s02_fraud_realtime", "s10_schema_under_load", "s09_replication",

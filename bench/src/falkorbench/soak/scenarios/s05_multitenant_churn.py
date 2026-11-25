@@ -10,14 +10,12 @@ compared to a fresh baseline.
 import argparse
 import multiprocessing as mp
 import random
-import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import psutil  # noqa: E402
 import redis  # noqa: E402
-import soakkit as sk  # noqa: E402
+from falkorbench.soak import soakkit as sk
 
 ap = argparse.ArgumentParser()
 sk.add_engine_args(ap)  # --module PATH | --image REF

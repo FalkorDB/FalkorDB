@@ -7,12 +7,10 @@ It must: load data, run timed load through soakkit.run_load, record correctness
 checks with Checks, monitor the server with Monitor, and finish with analyze().
 """
 import argparse
-import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-import soakkit as sk  # noqa: E402
+from falkorbench.soak import soakkit as sk
 
 ap = argparse.ArgumentParser()
 sk.add_engine_args(ap)  # --module PATH | --image REF

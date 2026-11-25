@@ -12,14 +12,12 @@ CLI: --module --port --out --duration --scale   (scale 1.0 = ~2M nodes / ~5.4M e
 """
 import argparse
 import json
-import sys
 import threading
 import time
 from collections import Counter
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-import soakkit as sk  # noqa: E402
+from falkorbench.soak import soakkit as sk
 
 ap = argparse.ArgumentParser()
 sk.add_engine_args(ap)  # --module PATH | --image REF
@@ -924,7 +922,7 @@ def live_schema_step(ctx):
         row = sk.rows(res)[0]
         n_cmp += 1
         # every comparison is recorded, so the check's "k of n runs failed" has a real n
-        # (soak_check tells #3095's intermittent misses from a total breakage by it)
+        # (check.py tells #3095's intermittent misses from a total breakage by it)
         same = sk.cval(row[0]) == sk.cval(row[1])
         finding("Live (under writes) index == scan during build/after", same,
                 "" if same else f"[{lo},{hi}] idx={sk.cval(row[0])} scan={sk.cval(row[1])}", "critical")

@@ -2,7 +2,8 @@
 # Rerun every C scenario on a released C module; old runs archived as <dir>@jul-master.
 S=$(cd "$(dirname "$0")" && pwd); mkdir -p "$S/full"
 MOD=${1:?usage: run_c_rerun.sh <c-module> <label>}; LABEL=${2:?label}
-[ -n "$VIRTUAL_ENV" ] || source "$S/../../venv/bin/activate"
+# the scenarios run in bench's environment, with its soak dependency group
+PY=(uv run --project "$S/../../.." --frozen --group soak python)
 echo "$(date +%T) C RERUN START on $LABEL" >> "$S/full/progress.log"
 run() { # n suffix dur
   n=$1; o=$S/full/$n-$2; dur=$3; f=$S/scenarios/$n.py
@@ -13,7 +14,7 @@ run() { # n suffix dur
   mkdir -p "$o"; echo "$LABEL" > "$o/.commit"
   pkill -9 -f 'redis-server \*:19' 2>/dev/null; sleep 1
   echo "$(date +%T) START $n $2 dur=$dur ($LABEL)" >> "$S/full/progress.log"; start=$(date +%s)
-  timeout $((dur * 3 + 2400)) python -I "$f" --module "$MOD" --port 19000 --out "$o" --duration "$dur" --scale 1.0 > "$o/stdout.log" 2>&1
+  timeout $((dur * 3 + 2400)) "${PY[@]}" -I "$f" --module "$MOD" --port 19000 --out "$o" --duration "$dur" --scale 1.0 > "$o/stdout.log" 2>&1
   rc=$?; echo "$rc" > "$o/.rc"; touch "$o/.done"
   echo "$(date +%T) END   $n $2 rc=$rc wall=$(( $(date +%s) - start ))s ($LABEL)" >> "$S/full/progress.log"
   pkill -9 -f 'redis-server \*:19' 2>/dev/null

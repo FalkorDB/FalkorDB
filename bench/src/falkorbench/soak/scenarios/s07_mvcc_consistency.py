@@ -11,13 +11,11 @@ ledger is replayed in Python and compared with the final graph.
 """
 import argparse
 import json
-import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 import redis  # noqa: E402
-import soakkit as sk  # noqa: E402
+from falkorbench.soak import soakkit as sk
 
 ap = argparse.ArgumentParser()
 sk.add_engine_args(ap)  # --module PATH | --image REF

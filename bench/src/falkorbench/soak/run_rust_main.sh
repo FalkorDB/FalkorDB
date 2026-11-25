@@ -7,7 +7,8 @@
 # moved to full/<scn>-rust-<label>-contended-<n> and repeated (up to 3 attempts).
 S=$(cd "$(dirname "$0")" && pwd); mkdir -p "$S/full"
 MOD=$1; LABEL=$2
-[ -n "$VIRTUAL_ENV" ] || source "$S/../../venv/bin/activate"
+# the scenarios run in bench's environment, with its soak dependency group
+PY=(uv run --project "$S/../../.." --frozen --group soak python)
 log() { echo "$(date +%T) $*" >> "$S/full/progress.log"; }
 # 1-minute load average: /proc/loadavg on Linux, vm.loadavg on macOS
 load1() { if [ -r /proc/loadavg ]; then awk '{print $1}' /proc/loadavg; else sysctl -n vm.loadavg | awk '{print $2}'; fi; }
@@ -37,7 +38,7 @@ for f in "$S"/scenarios/s[0-9][0-9]_*.py; do [ "$(basename "$f")" = s00_pilot.py
     start=$(date +%s)
     ( while true; do echo "$(date +%s) $(load1)" >> "$o/load.log"; sleep 30; done ) &
     sampler=$!
-    timeout 6000 python -I "$f" --module "$MOD" --port 19000 --out "$o" --duration 1200 --scale 1.0 > "$o/stdout.log" 2>&1
+    timeout 6000 "${PY[@]}" -I "$f" --module "$MOD" --port 19000 --out "$o" --duration 1200 --scale 1.0 > "$o/stdout.log" 2>&1
     rc=$?
     kill $sampler 2>/dev/null
     pkill -9 -f 'redis-server \*:19' 2>/dev/null

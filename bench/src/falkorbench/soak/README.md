@@ -25,26 +25,29 @@ renders the HTML report.
 
 - Redis 8.x `redis-server` on `PATH`, or set `SOAK_REDIS` (module mode).
 - Or, on Linux, Docker and a `falkordb-server` image (image mode, below).
-- The repo venv (`tests/requirements.txt`) plus `numpy` and `psutil`, or
-  `tests/soak/requirements.txt` (what the nightly check installs).
+- bench's environment with its soak dependency group (`numpy`, `psutil`): from the
+  repository root, `uv run --project bench --group soak python -I …` (the commands below
+  are run from this directory, with `PY="uv run --project ../../.. --group soak python"`).
 
 ## Running
 
 One scenario, against a module path or (Linux) an image:
 
 ```bash
-python -I scenarios/s01_social_feed.py --module <path/to/module> --port 19000 \
+$PY -I scenarios/s01_social_feed.py --module <path/to/module> --port 19000 \
   --out full/s01_social_feed-rust --duration 1200 --scale 1.0
-python -I scenarios/s01_social_feed.py --image <falkordb-server image@sha256:...> --port 19000 \
+$PY -I scenarios/s01_social_feed.py --image <falkordb-server image@sha256:...> --port 19000 \
   --out full/s01_social_feed-img --duration 300 --scale 0.25
 ```
 
-With `--image`, `lib/soakkit.py` runs the image's own server binary
+With `--image`, `soakkit.py` runs the image's own server binary
 (`${FALKORDB_SERVER:-redis}-server`, as its `run.sh` picks it: `valkey-server` on 6.2+
 Rust images, `redis-server` on C and older ones) and its module
 (`/var/lib/falkordb/bin/falkordb.so`) in a container with host networking, as the
 calling user, with the scenario's work directory bind-mounted at the same path, so
 RDB/AOF files, logs, kill/restart (s08) and a replica (s09) behave as in module mode.
+It starts, probes and removes the container with bench's shared check kit
+(`falkorbench.kit`: `start`, `host_pid`, `wait_ping`, `remove`).
 It passes the scenario's own module arguments and nothing else: the image's `run.sh`
 and its default `FALKORDB_ARGS` (`MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE
 10000` on the falkordb-server images) are deliberately not applied, so both sides of a
@@ -58,7 +61,7 @@ under 8 for 5 minutes; a run that sees load above 20 is discarded and retried):
 ```bash
 ./run_rust_main.sh <path/to/libfalkordb.dylib> <commit-label>
 ./run_c_rerun.sh <path/to/falkordb.so> <c-label>      # C baseline
-python -I score.py full && python -I gen_final.py    # score and report
+$PY -I score.py full && $PY -I gen_final.py          # score and report
 ```
 
 Results go to `full/<scenario>-<engine>/` (ignored by git); a previous run of the
@@ -68,15 +71,19 @@ bugs found so far, which the report reads.
 Check the load average (`/proc/loadavg`, or `sysctl vm.loadavg` on macOS) before
 trusting any numbers: outside load produces bogus p50/p99 regressions.
 
-## Nightly check (`soak_check.py`)
+## Nightly check (`bench soak`, `check.py`)
 
-`soak_check.py` is the soak as a perf check in the nightly contract
-(`tests/perf/README.md`, results schema 1):
+`bench soak` is the soak as a perf check in the nightly contract (`bench/README.md`,
+results schema 1). From the repository root:
 
 ```bash
-python -I tests/soak/soak_check.py --candidate <image@sha256:...> --baseline <image@sha256:...> \
-  --out out --mode nightly --check soak-b --scenarios s07,s08,s09,s10,s11,s12
+uv run --project bench --group soak bench soak --candidate <image@sha256:...> \
+  --baseline <image@sha256:...> --out out --mode nightly --check soak-b \
+  --scenarios s07,s08,s09,s10,s11,s12
 ```
+
+The flags, the input checks, result.json and the stop signals are bench's shared check
+kit (`falkorbench.kit`); the scheduling, the comparison and the gates below are the soak's.
 
 It pulls both images and runs each scenario once per side on this machine, one side
 after the other, flipping the order every other scenario. Servers are pinned to
@@ -123,7 +130,7 @@ check's (`no_freeze`, `no_timeouts_while_waiting`) and Pokec's PING-freeze check
 The p50 gate sits only 1.1x above its worst A/A swing, so it is re-derived from each
 A/A evidence set (the PR's acceptance runs); a wider swing there moves the gate first.
 
-**Known flaky checks** (`KNOWN_FLAKY` in `soak_check.py`, contract v1.9). These are
+**Known flaky checks** (`KNOWN_FLAKY` in `check.py`, contract v1.9). These are
 correctness checks that an open bug breaks intermittently. An entry needs two things: an
 open issue, and same-image evidence that the break is intermittent. It is removed when the
 issue closes, and a unit test fails if an entry names no issue. A listed check is not gated
@@ -164,7 +171,9 @@ the candidate, even when the deadline then leaves no time for the baseline). The
 | nightly | 300 | 0.25 | gated, re-runs | 2 shards (`soak-a`, `soak-b`) |
 | long | 1200 | 1.0 | gated, re-runs | must be sharded further (about 8 h for all 12) |
 
-The nightly registers two entries in `tests/perf/checks.yaml`, `soak-a` (s01–s06) and
-`soak-b` (s07–s12), each on its own VM. Outside the VM the check runs unpinned; nothing
-waits for a quiet machine, so read local numbers with that in mind.
-Unit tests: `python -I -m pytest tests/soak` (no server or Docker needed).
+The nightly registers two entries in `bench/checks.yaml`, `soak-a` (s01–s06) and
+`soak-b` (s07–s12), each on its own n4-standard-16 VM with a 120 min timeout (the
+nightly deadline stops starting runs at 110 min and cuts a run at 115). Outside the VM
+the check runs unpinned; nothing waits for a quiet machine, so read local numbers with
+that in mind. Unit tests (no server or Docker needed):
+`uv run --project bench --group dev --group soak python -I -B -m pytest bench/tests/test_soak.py`.

@@ -31,13 +31,11 @@ import math
 import os
 import shutil
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-import soakkit as sk  # noqa: E402
+from falkorbench.soak import soakkit as sk
 import redis  # noqa: E402
 
 ap = argparse.ArgumentParser()

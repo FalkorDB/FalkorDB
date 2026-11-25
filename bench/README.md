@@ -32,7 +32,7 @@ Every command below can be run as `uv run --project bench bench …`. From insid
 `bench/` it is just `uv run bench …`. The tests:
 
 ```bash
-uv run --project bench --group dev python -I -B -m pytest bench/tests
+uv run --project bench --group dev --group soak python -I -B -m pytest bench/tests
 ```
 
 ## The loop

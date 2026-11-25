@@ -12,14 +12,12 @@ price spot values and per-type edge counts are compared at start (after ingest) 
 at the end (after the soak).
 """
 import argparse
-import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-import soakkit as sk  # noqa: E402
+from falkorbench.soak import soakkit as sk
 
 ap = argparse.ArgumentParser()
 sk.add_engine_args(ap)  # --module PATH | --image REF

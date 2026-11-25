@@ -58,6 +58,16 @@ packages = ["src/falkorbench"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+# The release soak's scenarios, kit and report tools came with their author's
+# history and style; lint and format leave them as written. soak/check.py and
+# its tests are checked like the rest.
+extend-exclude = [
+    "src/falkorbench/soak/scenarios",
+    "src/falkorbench/soak/soakkit.py",
+    "src/falkorbench/soak/gen_final.py",
+    "src/falkorbench/soak/gen_live.py",
+    "src/falkorbench/soak/score.py",
+]
 
 [tool.ruff.format]
 # queries.py is a data table whose columns are hand-aligned so a reader can scan

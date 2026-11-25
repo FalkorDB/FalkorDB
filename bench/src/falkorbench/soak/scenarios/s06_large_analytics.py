@@ -31,8 +31,7 @@ from pathlib import Path
 import numpy as np
 import redis
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-import soakkit as sk  # noqa: E402
+from falkorbench.soak import soakkit as sk
 
 G_NAME = "citeroad"
 CITES_K = 12
