@@ -1349,6 +1349,16 @@ impl<'a> Batch<'a> {
         !matches!(self.column(var_id), Column::Unbound) && !self.value_only.test(var_id as usize)
     }
 
+    /// Whether `var_id` holds values that are present but not bound (see
+    /// [`value_only`](Self::value_only)).
+    #[must_use]
+    pub fn is_value_only(
+        &self,
+        var_id: u32,
+    ) -> bool {
+        self.value_only.test(var_id as usize)
+    }
+
     /// Write an entire column of values into the active rows.
     /// `values.len()` must equal `self.active_len()`.
     pub fn write_column(
