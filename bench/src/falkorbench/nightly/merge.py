@@ -507,8 +507,13 @@ def cmd_context(args):
                 f"history: run {run_id} {nightly.get('date')} {nightly['status']} "
                 f"candidate {nightly['candidate'].get('commit')}"
             )
-    planned = [row["check"] for row in strict_load(args.plan)]
-    reason = skip_reason(history, candidate, baseline, planned) if args.may_skip else None
+    rows = strict_load(args.plan)
+    planned = [row["check"] for row in rows]
+    # A registry entry that cannot run keeps its name, so the names alone would
+    # match the last measured night and the error would never be reported.
+    broken = any(row.get("error") for row in rows)
+    may_skip = args.may_skip and not broken
+    reason = skip_reason(history, candidate, baseline, planned) if may_skip else None
     context = {
         "date": args.date,
         "run_url": args.run_url,
@@ -537,9 +542,10 @@ def cmd_merge(args):
         return 1
     print(f"status: {nightly['status']}")
     for entry in nightly["checks"]:
-        print(
-            f"  {entry['check']}: {entry['verdict']} {entry.get('error') or entry.get('summary', '')}"
-        )
+        line = f"  {entry['check']}: {entry['verdict']} {entry.get('error') or entry.get('summary', '')}"
+        # JSON allows a lone surrogate a strict UTF-8 console cannot encode; the
+        # night is already written, so the log must not be what fails it.
+        print(line.encode("utf-8", "replace").decode("utf-8"))
     return 0
 
 

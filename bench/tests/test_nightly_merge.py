@@ -6,6 +6,7 @@ Every nightly.json these tests build is also run through the result contract
 checked together.
 """
 
+import io
 import json
 import math
 import re
@@ -748,6 +749,15 @@ def test_context_cli_reads_downloaded_history(tmp_path):
     assert ctx["previous_green_commit"] == MAIN
     assert output.read_text() == "skip=true\n"
 
+    # A registry error keeps the check's name but must be reported, not skipped.
+    broken = [
+        {**row, "runner": None, "error": "invalid bench/checks.yaml entry"} for row in MICRO_HW
+    ]
+    (tmp_path / "plan.json").write_text(json.dumps(broken))
+    assert merge.main([*args, "--may-skip"]) == 0
+    assert json.loads((tmp_path / "context.json").read_text())["skip_reason"] is None
+    (tmp_path / "plan.json").write_text(json.dumps(MICRO_HW))
+
     output.write_text("")
     assert merge.main(args) == 0  # a dispatch never skips
     assert json.loads((tmp_path / "context.json").read_text())["skip_reason"] is None
@@ -801,6 +811,18 @@ def test_only_green_and_skipped_nights_succeed(tmp_path, capsys, status, code):
     assert merge.main(["conclude", "--nightly", str(path)]) == code
     out = capsys.readouterr().out
     assert out.startswith("::error::the night is ") if code else out.startswith("the night is ")
+
+
+def test_a_lone_surrogate_in_a_summary_does_not_fail_the_merge(tmp_path, monkeypatch):
+    doc = result("micro-hw")
+    doc["summary"] = "bad SURROGATE text"
+    text = json.dumps(doc).replace("SURROGATE", "\\ud800")  # the JSON escape, not the character
+    measured(tmp_path / "results", "micro-hw", text=text)
+    strict = io.TextIOWrapper(io.BytesIO(), encoding="utf-8", errors="strict")
+    monkeypatch.setattr("sys.stdout", strict)
+    code, nightly = run_merge(tmp_path, MICRO_HW)
+    assert code == 0
+    assert nightly["status"] == "green"
 
 
 def test_conclude_on_a_real_nightly(tmp_path):
