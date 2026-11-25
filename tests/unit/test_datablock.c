@@ -168,7 +168,11 @@ void test_dataBlockRemoveItem() {
 	DataBlock_DeleteItem(dataBlock, 0);
 
 	// Add a new item, expecting deleted cell to be reused.
+	// The write that freed the cell has to end first: a write is never handed
+	// back an id it freed itself.
+	DataBlock_ReleaseFreedIds(dataBlock);
 	int *newItem = (int *)DataBlock_AllocateItem(dataBlock, NULL);
+
 	TEST_ASSERT(dataBlock->itemCount == itemCount);
 	TEST_ASSERT(arr_len(dataBlock->deletedIdx) == 0);
 	TEST_ASSERT((void *)newItem == (void *)((dataBlock->blocks[0]->data) + ITEM_HEADER_SIZE));
@@ -503,10 +507,260 @@ void test_dataBlockClaimFreesTheIdsItSkips() {
 	TEST_ASSERT(db->deletedIdx[0] == 4);
 	TEST_ASSERT(DataBlock_GetItem(db, 4) == NULL);  // marked deleted, not lost
 
-	// so the next ordinary allocation reuses it rather than losing it
+	// so the id is not lost - but it is not handed out again until the write
+	// that freed it is over, exactly like any other id that write freed. Until
+	// then an allocation goes past it
 	uint64_t idx;
 	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(idx == 6);                              // first never handed out
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 1);  // 4 is still on the list
+
+	// and once the write is over it is reused rather than lost
+	DataBlock_ReleaseFreedIds(db);
+	DataBlock_AllocateItem(db, &idx);
 	TEST_ASSERT(idx == 4);
+
+	DataBlock_Free(db);
+}
+
+// A WRITE NEVER REUSES AN ID IT FREED ITSELF.
+//
+// Freeing an id and allocating in the same write used to hand that id straight
+// back, which is what lands a create and a delete of one id in a single effects
+// payload - and no replica can apply that pair, because the create arrives
+// while the entity the delete names is still live there
+void test_dataBlockHoldsBackIdsFreedSinceTheLastRelease() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	uint64_t idx;
+	for(int i = 0; i < 3; i++) {
+		DataBlock_AllocateItem(db, &idx);
+	}
+	// live: 0, 1, 2
+
+	DataBlock_DeleteItem(db, 1);
+
+	// THE FREED ID IS STILL ON THE FREE LIST - it is held back, not dropped
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 1);
+
+	// yet this write gets a fresh id rather than the one it just freed, and
+	// that id is one no entity holds: 2 is live, so counting live items alone
+	// would have named it
+	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(idx == 3);
+	TEST_ASSERT(DataBlock_GetItem(db, 2) != NULL);
+
+	// the next write reuses it, which is the whole point of holding rather
+	// than dropping
+	DataBlock_ReleaseFreedIds(db);
+	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(idx == 1);
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 0);
+
+	DataBlock_Free(db);
+}
+
+// the free list still hands out the most recently freed id first
+//
+// Holding ids back moves entries around inside the list, and the order it hands
+// them out in is observable - it is which id a new entity gets
+void test_dataBlockReleasedIdsComeBackMostRecentlyFreedFirst() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	uint64_t idx;
+	for(int i = 0; i < 5; i++) {
+		DataBlock_AllocateItem(db, &idx);
+	}
+
+	DataBlock_DeleteItem(db, 1);
+	DataBlock_DeleteItem(db, 3);
+	DataBlock_ReleaseFreedIds(db);
+
+	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(idx == 3);
+	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(idx == 1);
+
+	DataBlock_Free(db);
+}
+
+// deleting and allocating, interleaved, never names a live slot twice
+//
+// The hole left by a reused id is closed by moving the last entry of the free
+// list into it. Walking one delete and one allocation at a time is what catches
+// a move that puts a held-back id within reach, or loses a reusable one
+void test_dataBlockInterleavedDeleteAndAllocateKeepIdsDistinct() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	const uint64_t n = 64;
+	uint64_t idx;
+
+	for(uint64_t i = 0; i < n; i++) {
+		DataBlock_AllocateItem(db, &idx);
+	}
+
+	// free every third id, allocating after each one, all inside one write
+	uint64_t handed[64];
+	uint64_t handed_n = 0;
+
+	for(uint64_t i = 0; i < n; i += 3) {
+		DataBlock_DeleteItem(db, i);
+		DataBlock_AllocateItem(db, &idx);
+
+		// not an id this write freed
+		TEST_ASSERT(idx % 3 != 0 || idx >= n);
+
+		// and not an id already handed out
+		for(uint64_t j = 0; j < handed_n; j++) {
+			TEST_ASSERT(handed[j] != idx);
+		}
+		handed[handed_n++] = idx;
+	}
+
+	// every freed id is still on the list, and the next write gets all of them
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == handed_n);
+
+	DataBlock_ReleaseFreedIds(db);
+	for(uint64_t i = 0; i < handed_n; i++) {
+		DataBlock_AllocateItem(db, &idx);
+		TEST_ASSERT(idx % 3 == 0 && idx < n);
+	}
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 0);
+
+	DataBlock_Free(db);
+}
+
+// the reserved index is the one allocation actually gives
+//
+// Reserving predicts an id without taking it. A prediction made from the whole
+// free list rather than the reusable part of it would name an id this write
+// cannot have
+void test_dataBlockReservedIdxAgreesWithAllocation() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	uint64_t idx;
+	for(int i = 0; i < 4; i++) {
+		DataBlock_AllocateItem(db, &idx);
+	}
+
+	DataBlock_DeleteItem(db, 2);   // held back: this write freed it
+
+	const uint64_t predicted = DataBlock_GetReservedIdx(db, 0);
+	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(predicted == idx);
+	TEST_ASSERT(idx != 2);
+
+	// and after the write ends the prediction follows the reuse
+	DataBlock_ReleaseFreedIds(db);
+	TEST_ASSERT(DataBlock_GetReservedIdx(db, 0) == 2);
+
+	DataBlock_Free(db);
+}
+
+// "room for k items" counts the ids this write cannot reuse
+//
+// DataBlock_Accommodate grows the block, and the graph sizes its matrices from
+// the capacity that leaves, then commits with the matrix sync policy set to
+// NOP so they never grow again. Counting an index this write freed as a free
+// slot leaves the block - and every matrix with it - too small, and the nodes
+// created past the matrix dimension are labelled into nothing: gone from a
+// label scan while the statistics still count them
+void test_dataBlockAccommodateCountsHeldBackIds() {
+	DataBlock *db = DataBlock_New(4, 4, sizeof(int), NULL);
+
+	uint64_t idx;
+	for(int i = 0; i < 4; i++) {
+		DataBlock_AllocateItem(db, &idx);
+	}
+	TEST_ASSERT(db->itemCap == 4);
+
+	// this write frees all four, so they are on the list and out of its reach
+	for(uint64_t i = 0; i < 4; i++) {
+		DataBlock_DeleteItem(db, i);
+	}
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 4);
+
+	// room for four more. The live count is 0 against a capacity of 4, so
+	// counting free slots finds room already there - and is wrong, because
+	// this write cannot have any of those four slots
+	DataBlock_Accommodate(db, 4);
+
+	const uint64_t cap = db->itemCap;
+	TEST_ASSERT(cap > DataBlock_GetReservedIdx(db, 3));
+
+	// and that capacity covers all four allocations, with no further growth -
+	// which is the part the caller relies on, having already sized its
+	// matrices from it
+	for(int i = 0; i < 4; i++) {
+		DataBlock_AllocateItem(db, &idx);
+		TEST_ASSERT(idx < cap);
+	}
+	TEST_ASSERT(db->itemCap == cap);
+
+	DataBlock_Free(db);
+}
+
+// the room counted with some ids reusable and some held back
+//
+// The boundary between DataBlock_GetReservedIdx's two branches is where an
+// under-allocation of exactly one block hides: the run of allocations crosses
+// out of the reusable front into fresh ids, and only the fresh ones need room
+void test_dataBlockAccommodateCountsAMixOfReusableAndFresh() {
+	DataBlock *db = DataBlock_New(4, 4, sizeof(int), NULL);
+
+	uint64_t idx;
+	for(int i = 0; i < 4; i++) {
+		DataBlock_AllocateItem(db, &idx);
+	}
+
+	// two ids freed by a write that has ended, so they are reusable
+	DataBlock_DeleteItem(db, 0);
+	DataBlock_DeleteItem(db, 2);
+	DataBlock_ReleaseFreedIds(db);
+
+	// and two freed by the write running now, which are not
+	DataBlock_DeleteItem(db, 1);
+	DataBlock_DeleteItem(db, 3);
+
+	TEST_ASSERT(DataBlock_DeletedItemsCount(db) == 4);
+
+	// four allocations: the two reusable ones, then two fresh ids that start
+	// above the whole free list
+	DataBlock_Accommodate(db, 4);
+
+	const uint64_t cap = db->itemCap;
+
+	uint64_t handed[4];
+	for(int i = 0; i < 4; i++) {
+		DataBlock_AllocateItem(db, handed + i);
+		TEST_ASSERT(handed[i] < cap);
+	}
+
+	// no further growth was needed - which is what the caller relies on,
+	// having already sized its matrices from this capacity
+	TEST_ASSERT(db->itemCap == cap);
+
+	TEST_ASSERT(handed[2] == 4);
+	TEST_ASSERT(handed[3] == 5);
+
+	DataBlock_Free(db);
+}
+
+// a decoder's deleted ids are reusable the moment it records them
+//
+// DataBlock_MarkAsDeletedOutOfOrder rebuilds a free list an earlier run already
+// froze. Holding those ids back would mean a loaded graph could not reuse any
+// of them until something else wrote to it first
+void test_dataBlockDecodedDeletedIdsAreReusableAtOnce() {
+	DataBlock *db = DataBlock_New(DATABLOCK_BLOCK_CAP, 16, sizeof(int), NULL);
+
+	DataBlock_AllocateItemOutOfOrder(db, 0);
+	DataBlock_AllocateItemOutOfOrder(db, 2);
+	DataBlock_MarkAsDeletedOutOfOrder(db, 1);
+
+	uint64_t idx;
+	DataBlock_AllocateItem(db, &idx);
+	TEST_ASSERT(idx == 1);
 
 	DataBlock_Free(db);
 }
@@ -552,6 +806,14 @@ TEST_LIST = {
 	{"dataBlockClaimRefusesTheInvalidId", test_dataBlockClaimRefusesTheInvalidId},
 	{"dataBlockClaimFreesTheIdsItSkips", test_dataBlockClaimFreesTheIdsItSkips},
 	{"dataBlockClaimRefusesAWalkThatDisagreesWithItsCount", test_dataBlockClaimRefusesAWalkThatDisagreesWithItsCount},
+	{"dataBlockHoldsBackIdsFreedSinceTheLastRelease", test_dataBlockHoldsBackIdsFreedSinceTheLastRelease},
+	{"dataBlockReleasedIdsComeBackMostRecentlyFreedFirst", test_dataBlockReleasedIdsComeBackMostRecentlyFreedFirst},
+	{"dataBlockInterleavedDeleteAndAllocateKeepIdsDistinct", test_dataBlockInterleavedDeleteAndAllocateKeepIdsDistinct},
+	{"dataBlockReservedIdxAgreesWithAllocation", test_dataBlockReservedIdxAgreesWithAllocation},
+	{"dataBlockAccommodateCountsHeldBackIds", test_dataBlockAccommodateCountsHeldBackIds},
+	{"dataBlockAccommodateCountsAMixOfReusableAndFresh", test_dataBlockAccommodateCountsAMixOfReusableAndFresh},
+	{"dataBlockDecodedDeletedIdsAreReusableAtOnce", test_dataBlockDecodedDeletedIdsAreReusableAtOnce},
+
 	{NULL, NULL}
 };
 
