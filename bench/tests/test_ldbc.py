@@ -1,12 +1,11 @@
 """The LDBC query set, the dataset preparation, and `bench ldbc check`.
 
-Nothing here needs a server or docker: the check's analysis is pure, and its
-measurement loop runs against scripted sides. Every result.json a test writes
-is held to the contract's validator (tests/perf/validate.py) when present.
+Nothing here needs a server or docker: the check's analysis is pure, its
+measurement loop runs against scripted sides, and kit's docker calls are
+replaced. Every result a test makes is held to falkorbench.contract.
 """
 
 import csv
-import importlib.util
 import io
 import json
 import os
@@ -21,8 +20,9 @@ import pytest
 from click.testing import CliRunner
 
 from falkorbench import cli as cli_mod
+from falkorbench import contract
+from falkorbench import kit
 from falkorbench.ldbc import check as ck
-from falkorbench.ldbc import containers
 from falkorbench.ldbc import dataset
 from falkorbench.ldbc import loader as loader_mod
 from falkorbench.ldbc import params as params_mod
@@ -377,34 +377,27 @@ def test_an_interrupted_extraction_does_not_pass_for_a_dataset(tmp_path, monkeyp
 
 # --- the nightly check (`bench ldbc check`) ----------------------------------
 #
-# Everything below runs without docker: the analysis is pure, and the
-# measurement loop is driven through scripted sides. Each result.json the
-# tests write is held to the perf contract's reference validator
-# (tests/perf/validate.py) when it is present in the tree; PERF_VALIDATE_PY
-# points at another copy (e.g. a checkout of the perf/judge branch).
+# Everything below runs without docker: the analysis is pure, the measurement
+# loop is driven through scripted sides, and kit's docker calls are replaced.
+# Each result is held to the perf contract (falkorbench.contract).
 
 MAIN = "ghcr.io/falkordb/falkordb-server@sha256:" + "a" * 64
 OTHER = "falkordb/falkordb-server@sha256:" + "b" * 64
 
 
-def _validator():
-    candidates = [os.environ.get("PERF_VALIDATE_PY", "")]
-    candidates.append(str(Path(__file__).resolve().parents[2] / "tests/perf/validate.py"))
-    for path in candidates:
-        if path and Path(path).is_file():
-            spec = importlib.util.spec_from_file_location("perf_validate", path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return module
-    return None
-
-
-def assert_valid(path: Path) -> None:
-    validate = _validator()
-    if validate is None:
-        pytest.skip("tests/perf/validate.py is not in this tree (set PERF_VALIDATE_PY)")
-    _kind, problems = validate.validate_file(str(path), kind="result")
+def assert_valid(result) -> None:
+    """Hold a result (or the path of a result.json) to the contract."""
+    if isinstance(result, Path):
+        _kind, problems = contract.validate_file(result, "result")
+    else:
+        _kind, problems = contract.validate_document(result, "result")
     assert problems == [], problems
+
+
+def args(tmp_path, *extra, candidate=MAIN, baseline=OTHER, mode="nightly"):
+    """The check's flags, as `bench ldbc check` parses them."""
+    flags = ["--candidate", candidate, "--baseline", baseline, "--out", str(tmp_path / "out")]
+    return ck.parse_args([*flags, "--mode", mode, "--cache", str(tmp_path), *extra])
 
 
 def S(side, param, outcome="ok", ms=10.0, rows=3, phase="main", rnd=0, q="IC2"):
@@ -449,12 +442,6 @@ def test_params_header_uses_plain_names_and_quotes_strings():
         ck.params_header({"a b": 1})
 
 
-def test_default_label_is_repo_and_twelve_hex():
-    assert ck.default_label(MAIN) == "ghcr.io/falkordb/falkordb-server@" + "a" * 12
-    tagged = "localhost:5000/x/falkordb-server:v1@sha256:" + "c" * 64
-    assert ck.default_label(tagged) == "localhost:5000/x/falkordb-server@" + "c" * 12
-
-
 @pytest.mark.parametrize(
     ("metric", "cand", "base", "expected"),
     [
@@ -477,25 +464,6 @@ def test_default_label_is_repo_and_twelve_hex():
 )
 def test_a_latency_crosses_only_outside_both_the_ratio_and_the_floor(metric, cand, base, expected):
     assert ck.LatencyCompare(metric, cand, base).crossing() == expected
-
-
-@pytest.mark.parametrize(
-    ("image", "ok"),
-    [
-        (MAIN, True),
-        (OTHER, True),
-        ("localhost:5000/x/falkordb-server:v1@sha256:" + "c" * 64, True),
-        ("ghcr.io/FalkorDB/falkordb-server@sha256:" + "a" * 64, False),  # uppercase repo
-        (MAIN + "\n", False),  # trailing newline
-        ("falkordb/falkordb-server:edge", False),  # a tag, no digest
-    ],
-)
-def test_the_image_rule_is_the_validator_s(image, ok):
-    """Looser than validate.py, the check wrote results the validator rejected."""
-    assert bool(ck.IMAGE_RE.fullmatch(image)) is ok
-    validate = _validator()
-    if validate is not None:
-        assert ck.IMAGE_RE.pattern == validate.IMAGE_RE.pattern
 
 
 def test_baseline_that_cannot_run_a_query_leaves_it_out_as_info():
@@ -667,27 +635,13 @@ def test_nothing_measured_is_not_a_pass():
 
 def test_findings_put_every_crossing_first_and_cap_the_informative_rows():
     def f(name, status, ratio):
-        return ck._finding(name, "p50_ms", ratio, 1.0, direction="higher_is_worse", status=status)
+        return kit.finding(name, "p50_ms", ratio, 1.0, status)
 
     crossings = [f("a", "regression", 3.0), f("b", "regression", 9.0), f("c", "improvement", 0.2)]
     info = [f(f"i{n}", "info", 1.0) for n in range(12)]
-    chosen = ck.select_findings(crossings + info)
+    chosen = kit.select(ck.worst_first(crossings + info))
     assert [x["name"] for x in chosen[:3]] == ["b", "a", "c"]
     assert [x["status"] for x in chosen[3:]] == ["info"] * 10
-
-
-def test_a_regression_outranks_an_error():
-    reg = [{"status": "regression"}]
-    assert ck.decide(reg, ["IC4 not measured"]) == ("regression", True)
-    assert ck.decide([], ["IC4 not measured"]) == ("error", False)
-    assert ck.decide([{"status": "info"}], []) == ("pass", False)
-
-
-def test_docker_port_output_gives_the_host_port():
-    assert containers.parse_port("127.0.0.1:32771\n") == 32771
-    assert containers.parse_port("0.0.0.0:49153\n[::]:49153\n") == 49153
-    with pytest.raises(ValueError):
-        containers.parse_port("")
 
 
 # --- the measurement loop, with scripted sides --------------------------------
@@ -710,20 +664,10 @@ def _ok(ms=5.0, rows=2):
     return lambda *_: ck.Sample("", 0, "", 0, "", ck.OK, ms, rows)
 
 
-def scripted_check(
-    tmp_path, base_script, cand_script, *, names=("IC2", "IC7"), params=3, mode=None
-):
-    opts = ck.Options(
-        candidate=MAIN,
-        baseline=OTHER,
-        out=tmp_path / "out",
-        mode=mode or ck.MODES["nightly"],
-        candidate_label="main@4c1088949",
-        baseline_label="6.2.0",
-        candidate_commit="4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
-        queries=names,
-    )
-    check = ck.Check(opts, echo=lambda _: None)
+def scripted_check(tmp_path, base_script, cand_script, *, names=("IC2", "IC7"), params=3):
+    labels = ["--candidate-label", "main@4c1088949", "--baseline-label", "6.2.0"]
+    commit = ["--candidate-commit", "4c1088949a5852e3949c05bfb3d92a603c4cd4ca"]
+    check = ck.Check(args(tmp_path, *labels, *commit, *names), echo=lambda _: None)
     check.queries = query_mod.select(names)
     check.param_set = params_mod.ParamSet(
         rows={q.number: [{"personId": i} for i in range(params)] for q in check.queries},
@@ -793,11 +737,11 @@ def test_a_side_stops_a_query_after_its_second_timeout(tmp_path):
     # IC3: warm-up row 0 and round 0 row 1 time out; nothing else is sent.
     sent = [c for c, _ in check.sides[ck.CANDIDATE].calls if "countryXName" in c]
     assert len(sent) == ck.MAX_TIMEOUTS == 2
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "pass"
     assert result["summary"].startswith("1 of 2 LDBC complex reads compared")
     assert "broken on both sides (not new): IC3" in result["summary"]
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_a_slow_candidate_is_re_run_and_confirmed(tmp_path):
@@ -811,23 +755,21 @@ def test_a_slow_candidate_is_re_run_and_confirmed(tmp_path):
 
 def test_the_deadline_leaves_the_rest_unmeasured_and_says_error(tmp_path):
     check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2", "IC7"))
-    check.t0 -= check.opts.mode.deadline_s + 1
+    check.t0 -= check.mode.deadline_s + 1
     check.measure()
     assert any("not measured" in p for p in check.problems)
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "error"
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_an_a_a_run_passes_and_its_result_is_valid(tmp_path):
     check = scripted_check(tmp_path, _ok(), _ok())
     check.findings.append(
-        ck._finding("load", "throughput", 1000.0, 1010.0, direction="lower_is_worse", status="info")
+        kit.finding("load", "throughput", 1000.0, 1010.0, "info", direction="lower_is_worse")
     )
     check.measure()
-    check.write_samples()
-    check.write_summary()
-    result = check.write()
+    result = check.build(None)
     assert result["verdict"] == "pass", result
     assert result["confirmed"] is False and result["error"] is None
     assert result["candidate"]["commit"] == "4c1088949a5852e3949c05bfb3d92a603c4cd4ca"
@@ -838,18 +780,19 @@ def test_an_a_a_run_passes_and_its_result_is_valid(tmp_path):
     # crossed nothing are in raw/rows.csv (contract v1.12).
     assert {f["status"] for f in result["findings"]} <= {"regression", "improvement", "info"}
     assert "raw/rows.csv" in result["artifacts"]
-    rows = list(csv.DictReader((check.opts.out / "raw/rows.csv").read_text().splitlines()))
+    rows = list(csv.DictReader((check.out / "raw/rows.csv").read_text().splitlines()))
     assert {r["status"] for r in rows} == {"ok"} and len(rows) == 4  # 2 queries x p50, p95
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_a_confirmed_regression_result_is_valid(tmp_path):
-    check = scripted_check(tmp_path, _ok(ms=5.0), _ok(ms=50.0))
+    check = scripted_check(tmp_path, _ok(ms=3.0), _ok(ms=10.0))
     check.measure()
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "regression" and result["confirmed"] is True
     assert result["summary"].count("\n") == 0
-    assert_valid(check.opts.out / "result.json")
+    assert "regression: IC2 p50 3.333x" in result["summary"]  # ratios to 3 places
+    assert_valid(result)
 
 
 def test_the_c_gaps_are_left_out_and_the_run_still_passes(tmp_path):
@@ -860,14 +803,14 @@ def test_the_c_gaps_are_left_out_and_the_run_still_passes(tmp_path):
 
     check = scripted_check(tmp_path, c_engine, c_engine, names=("IC1", "IC2", "IC13"))
     check.measure()
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "pass", result
     assert "IC1, IC13 left out (baseline cannot run)" in result["summary"]
     assert {(f["name"], f["status"]) for f in result["findings"] if f["metric"] == "completed"} == {
         ("IC1 completed", "info"),
         ("IC13 completed", "info"),
     }
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_an_image_not_pinned_by_digest_is_an_error_result_not_a_crash(tmp_path):
@@ -875,61 +818,53 @@ def test_an_image_not_pinned_by_digest_is_an_error_result_not_a_crash(tmp_path):
     res = CliRunner().invoke(
         cli_mod.cli,
         ["ldbc", "check", "--candidate", "falkordb/falkordb-server:edge", "--baseline", OTHER,
-         "--out", str(out)],
+         "--out", str(out), "--mode", "nightly"],
     )  # fmt: skip
     assert res.exit_code == 0, res.output
     result = json.loads((out / "result.json").read_text())
     assert result["verdict"] == "error"
-    assert "not an image pinned by digest" in result["error"]
+    assert "--candidate 'falkordb/falkordb-server:edge' is not" in result["error"]
 
 
-def test_a_baseline_that_cannot_load_is_an_error(tmp_path, monkeypatch):
-    monkeypatch.setattr(containers, "pull", lambda image: None)
+@pytest.fixture
+def docker(monkeypatch):
+    """kit's docker calls, replaced: every container runs, and what was
+    started and removed is recorded."""
+    seen = {"started": [], "removed": []}
 
-    class FakeContainer(containers.Container):
-        def state(self):
-            return "running"
+    def start(image, name, **kwargs):
+        seen["started"].append((name, kwargs["volumes"], kwargs["env"]))
+        return kit.Container(name, 1)
 
-        def logs(self):
-            return "log\n"
+    monkeypatch.setattr(kit, "pull", lambda image: None)
+    monkeypatch.setattr(kit, "start", start)
+    monkeypatch.setattr(kit, "logs", lambda name: "log\n")
+    monkeypatch.setattr(kit, "state", lambda name: "running")
+    monkeypatch.setattr(kit, "remove", lambda *names: seen["removed"].extend(names))
+    monkeypatch.setattr(ck.Check, "fetch", lambda self: self.args.cache)
+    return seen
 
-        def remove(self):
-            pass
 
-    monkeypatch.setattr(
-        containers, "start", lambda image, name, d, cpus=None: FakeContainer(name, image, 1)
-    )
+def test_a_baseline_that_cannot_load_is_an_error(tmp_path, monkeypatch, docker):
     monkeypatch.setattr(ck.Check, "connect", lambda self, s: SimpleNamespace())
 
     def boom(client, root, *, import_root, echo):
         raise loader_mod.LoadError("person_0_0.csv: created 1 of 2 rows")
 
     monkeypatch.setattr(ck.loader_mod, "load", boom)
-    monkeypatch.setattr(ck.Check, "fetch", lambda self: tmp_path)
-    opts = ck.Options(MAIN, MAIN, tmp_path / "out", ck.MODES["nightly"], queries=("IC2",))
-    result = ck.run_check(opts, echo=lambda _: None)
+    result = ck.run_check(args(tmp_path, "IC2", baseline=MAIN), echo=lambda _: None)
     assert result["verdict"] == "error"
     assert "baseline could not load the dataset" in result["error"]
     assert (tmp_path / "out/raw/baseline-server.log").exists()
+    # The image's own server, with the dataset mounted where IMPORT_FOLDER points.
+    assert docker["started"] == [
+        (f"perf-ldbc-baseline-{os.getpid()}", {tmp_path: "/import:ro"}, ck.SERVER_ENV)
+    ]
+    assert docker["removed"] == [f"perf-ldbc-baseline-{os.getpid()}"]
     assert_valid(tmp_path / "out/result.json")
 
 
-def test_a_candidate_that_cannot_load_is_a_regression(tmp_path, monkeypatch):
-    monkeypatch.setattr(containers, "pull", lambda image: None)
-
-    class FakeContainer(containers.Container):
-        def state(self):
-            return "running"
-
-        def logs(self):
-            return ""
-
-        def remove(self):
-            pass
-
-    monkeypatch.setattr(
-        containers, "start", lambda image, name, d, cpus=None: FakeContainer(name, image, 1)
-    )
+def test_a_candidate_that_cannot_load_is_a_regression(tmp_path, monkeypatch, docker):
     monkeypatch.setattr(ck.Check, "connect", lambda self, s: s.side)
 
     def load(client, root, *, import_root, echo):
@@ -938,13 +873,38 @@ def test_a_candidate_that_cannot_load_is_a_regression(tmp_path, monkeypatch):
         return loader_mod.LoadStats(nodes=10, edges=20, seconds=1.0)
 
     monkeypatch.setattr(ck.loader_mod, "load", load)
-    monkeypatch.setattr(ck.Check, "fetch", lambda self: tmp_path)
-    opts = ck.Options(MAIN, OTHER, tmp_path / "out", ck.MODES["nightly"], queries=("IC2",))
-    result = ck.run_check(opts, echo=lambda _: None)
+    result = ck.run_check(args(tmp_path, "IC2"), echo=lambda _: None)
     assert result["verdict"] == "regression"
     assert [(f["name"], f["status"]) for f in result["findings"]] == [
         ("load completed", "regression")
     ]
+    assert len(docker["removed"]) == 2
+    assert_valid(tmp_path / "out/result.json")
+
+
+def test_a_stop_during_startup_is_an_error_result_and_removes_both_servers(
+    tmp_path, monkeypatch, docker
+):
+    """kit.run_check() turns the stop into the error; cleanup() removes the
+    container named before kit.start() returned."""
+    import signal
+
+    def connect(self, s):
+        if s.side == ck.CANDIDATE:
+            os.kill(os.getpid(), signal.SIGTERM)
+            for _ in range(10_000):  # a pending handler runs between bytecodes
+                pass
+        return s.side
+
+    monkeypatch.setattr(ck.Check, "connect", connect)
+    monkeypatch.setattr(
+        ck.loader_mod, "load", lambda *a, **k: loader_mod.LoadStats(nodes=1, edges=1, seconds=1.0)
+    )
+    result = ck.run_check(args(tmp_path, "IC2"), echo=lambda _: None)
+    assert result["verdict"] == "error" and "stopped by signal 15" in result["error"]
+    assert sorted(docker["removed"]) == sorted(
+        f"perf-ldbc-{side}-{os.getpid()}" for side in ck.SIDES
+    )
     assert_valid(tmp_path / "out/result.json")
 
 
@@ -954,10 +914,10 @@ def test_a_baseline_that_runs_nothing_is_an_error_not_a_pass(tmp_path):
 
     check = scripted_check(tmp_path, broken, _ok(), names=("IC2", "IC7"))
     check.measure()
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "error"
     assert "no query could be compared" in result["error"]
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_a_deadline_that_cuts_the_rounds_is_an_error(tmp_path):
@@ -972,10 +932,10 @@ def test_a_deadline_that_cuts_the_rounds_is_an_error(tmp_path):
     check.past_deadline = after_round_zero
     check.measure()
     assert any(s.error == "past the check's deadline" for s in check.samples)
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "error"
     assert "deadline passed" in result["error"]
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_a_candidate_server_that_died_after_its_last_reply_is_a_regression(tmp_path):
@@ -983,10 +943,10 @@ def test_a_candidate_server_that_died_after_its_last_reply_is_a_regression(tmp_p
     check.measure()
     check.sides[ck.CANDIDATE].down = "container exited 139"
     check.server_findings(set(ck.SIDES))
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "regression"
     assert ("server up", "regression") in [(f["name"], f["status"]) for f in result["findings"]]
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_a_baseline_server_that_died_is_an_error(tmp_path):
@@ -994,10 +954,10 @@ def test_a_baseline_server_that_died_is_an_error(tmp_path):
     check.measure()
     check.sides[ck.BASELINE].down = "container exited 137 (OOM-killed)"
     check.server_findings(set(ck.SIDES))
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "error"
     assert "baseline server went down" in result["error"]
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_a_bad_commit_is_reported_and_dropped_so_the_result_stays_valid(tmp_path):
@@ -1005,30 +965,13 @@ def test_a_bad_commit_is_reported_and_dropped_so_the_result_stays_valid(tmp_path
     res = CliRunner().invoke(
         cli_mod.cli,
         ["ldbc", "check", "--candidate", MAIN, "--baseline", OTHER, "--out", str(out),
-         "--candidate-commit", "4c10889"],
+         "--mode", "nightly", "--candidate-commit", "4c10889"],
     )  # fmt: skip
     assert res.exit_code == 0, res.output
     result = json.loads((out / "result.json").read_text())
-    assert result["verdict"] == "error" and "not a 40-hex commit" in result["error"]
+    assert result["verdict"] == "error" and "--candidate-commit '4c10889'" in result["error"]
     assert result["candidate"]["commit"] is None
     assert_valid(out / "result.json")
-
-
-def test_only_the_first_sigterm_interrupts():
-    """`timeout` and uv can each deliver one: teardown must survive the rest."""
-    import signal
-
-    def spin():
-        for _ in range(10_000):  # a pending handler runs between bytecodes
-            pass
-
-    with ck._term_as_interrupt():
-        with pytest.raises(KeyboardInterrupt):
-            os.kill(os.getpid(), signal.SIGTERM)
-            spin()
-        os.kill(os.getpid(), signal.SIGTERM)  # ignored: no second interrupt
-        spin()
-    assert signal.getsignal(signal.SIGTERM) == signal.SIG_DFL
 
 
 def test_no_latency_finding_for_a_query_whose_rows_differ():
@@ -1047,40 +990,30 @@ def test_a_query_that_finished_on_neither_side_alone_is_not_a_comparison(tmp_pat
 
     check = scripted_check(tmp_path, hangs, hangs, names=("IC3",), params=5)
     check.measure()
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "error"
     assert "no query could be compared" in result["error"]
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 @pytest.mark.parametrize(
     ("state", "verdict"), [("gone", "pass"), ("exited 139", "regression"), ("running", "pass")]
 )
-def test_only_an_exited_container_counts_as_a_server_that_went_down(tmp_path, state, verdict):
-    """`gone` is `docker inspect` failing, which says nothing about the server."""
-
-    class Fake(containers.Container):
-        def __init__(self, name, state):
-            super().__init__(name, MAIN, 1)
-            self._state = state
-
-        def state(self):
-            return self._state
-
-        def logs(self):
-            return ""
-
-        def remove(self):
-            pass
-
+def test_only_an_exited_container_counts_as_a_server_that_went_down(
+    tmp_path, monkeypatch, state, verdict
+):
+    """`gone` (no such container) says nothing about how the server ran."""
+    states = {"b": "running", "c": state}
+    monkeypatch.setattr(kit, "state", states.__getitem__)
+    monkeypatch.setattr(kit, "logs", lambda name: "")
     check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",))
     check.measure()
-    check.sides[ck.BASELINE].container = Fake("b", "running")
-    check.sides[ck.CANDIDATE].container = Fake("c", state)
-    check.teardown()
-    result = check.write()
+    check.sides[ck.BASELINE].container = kit.Container("b", 1)
+    check.sides[ck.CANDIDATE].container = kit.Container("c", 1)
+    check.collect()
+    result = check.result()
     assert result["verdict"] == verdict, result
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_row_counts_are_compared_per_request_not_from_the_warm_up():
@@ -1134,155 +1067,60 @@ def test_a_budget_cut_is_an_error_not_a_pass(tmp_path):
     ck.time.monotonic = lambda: float(next(clock))
     try:
         check.t0 = 0.0
-        check.opts = ck.Options(
-            **{
-                **check.opts.__dict__,
-                "mode": ck.Mode("nightly", "0.1", 3, 2, 2, 60_000, 300.0, 10**9, 600.0),
-            }
-        )
+        check.mode = ck.Mode("nightly", "0.1", 3, 2, 2, 60_000, 300.0, 10**9, 600.0)
         check.measure()
     finally:
         ck.time.monotonic = real
     assert check.budget_skips > 0
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "error" and "per-round budget cut" in result["error"]
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
-def _ping_after(fails=0, late=False, step=5.0):
-    """A PING that fails `fails` times (each costing `step` seconds), then
-    answers; `late` makes it answer only after the grace has run out."""
+@pytest.mark.parametrize(("answers", "down"), [(True, ""), (False, "no answer to PING for 60s")])
+def test_a_client_side_timeout_gives_the_server_the_ping_grace(monkeypatch, answers, down):
+    """After a client-side timeout the side is down only if it does not answer
+    PING within PING_GRACE_S; a busy server that answers keeps its row timeout."""
+    waits = []
 
-    def make(now, calls):
-        class Probe:
-            def __init__(self, **kwargs):
-                pass
+    def wait_ping(port, timeout_s, container):
+        waits.append((port, timeout_s, container.name))
+        return answers
 
-            def ping(self):
-                calls["ping"] += 1
-                if late:
-                    now["t"] += ck.PING_GRACE_S + 10
-                    return True
-                if calls["ping"] <= fails:
-                    now["t"] += step
-                    raise ck.RedisTimeoutError("busy")
-                return True
+    def hangs(*command):
+        raise ck.RedisTimeoutError("Timeout reading from socket")
 
-        return Probe
-
-    return make
-
-
-def _inspect_fails_once():
-    calls = {"n": 0}
-
-    def state():
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise containers.DockerError("`docker inspect` did not return within 120s")
-        return "running"
-
-    return state
-
-
-G = ck.PING_GRACE_S
-
-
-@pytest.mark.parametrize(
-    ("probe", "state", "answers", "pings", "ends_by"),
-    [
-        pytest.param(_ping_after(fails=2), lambda: "running", True, 3, G, id="busy-then-answers"),
-        pytest.param(_ping_after(), lambda: "exited 139", False, 0, 0, id="container-exited"),
-        pytest.param(
-            _ping_after(), _inspect_fails_once(), True, 1, G, id="inspect-fails-is-not-a-crash"
-        ),
-        pytest.param(
-            _ping_after(fails=10**6), lambda: "running", False, None, G + 5, id="never-answers"
-        ),
-        pytest.param(
-            _ping_after(late=True),
-            lambda: "running",
-            False,
-            1,
-            G + 10,
-            id="answers-after-the-grace",
-        ),
-    ],
-)
-def test_the_ping_grace(monkeypatch, probe, state, answers, pings, ends_by):
-    """After a client-side timeout a side is down only if it does not answer
-    PING within PING_GRACE_S (or its container exited); one missed PING of a
-    busy server is not enough, and a reply after the grace does not count."""
-    now, calls = {"t": 0.0}, {"ping": 0}
-    monkeypatch.setattr(ck.time, "monotonic", lambda: now["t"])
-    monkeypatch.setattr(ck.time, "sleep", lambda s: now.__setitem__("t", now["t"] + s))
-    monkeypatch.setattr(ck, "Redis", probe(now, calls))
-    side = ck.Side(ck.CANDIDATE, MAIN)
-    side.container = SimpleNamespace(port=1, state=state)
-    assert side._answers() is answers
-    if pings is not None:
-        assert calls["ping"] == pings
-    assert now["t"] <= ends_by
-
-
-def test_docker_rm_failures_are_reported_and_a_missing_container_is_fine(monkeypatch):
-    def proc(rc, err):
-        return SimpleNamespace(returncode=rc, stdout="", stderr=err)
-
-    monkeypatch.setattr(
-        containers, "_docker", lambda *a, **k: proc(1, "Error: No such container: x")
+    monkeypatch.setattr(kit, "wait_ping", wait_ping)
+    side = ck.Side(ck.CANDIDATE, MAIN, container=kit.Container("c", 7))
+    side.conn = SimpleNamespace(
+        execute_command=hangs, connection_pool=SimpleNamespace(disconnect=lambda: None)
     )
-    containers.remove_by_name("x")
-    monkeypatch.setattr(containers, "_docker", lambda *a, **k: proc(1, "Error: daemon is busy"))
-    with pytest.raises(containers.DockerError, match="docker rm x"):
-        containers.remove_by_name("x")
+    sample = side.run("RETURN 1", {}, 1000)
+    assert sample.outcome == ck.TIMEOUT
+    assert waits == [(7, ck.PING_GRACE_S, "c")]
+    assert side.down.startswith(down) and bool(side.down) is not answers
 
 
-def test_an_interrupt_during_startup_still_removes_the_container(monkeypatch, tmp_path):
-    removed = []
+def test_the_state_is_read_even_when_the_logs_fail(tmp_path, monkeypatch):
+    def logs(name):
+        raise kit.DockerError("`docker logs` did not return within 60 s")
 
-    def docker(*args, **kwargs):
-        if args[0] == "port":
-            raise KeyboardInterrupt("signal 15")
-        if args[0] == "rm":
-            removed.append(args[-1])
-        return SimpleNamespace(returncode=0, stdout="cid\n", stderr="")
-
-    monkeypatch.setattr(containers, "_docker", docker)
-    with pytest.raises(KeyboardInterrupt):
-        containers.start(MAIN, "perf-ldbc-candidate-1", tmp_path)
-    assert removed[-1] == "perf-ldbc-candidate-1"
-
-
-def test_teardown_reads_the_state_even_when_logs_fail(tmp_path):
-    class Exited(containers.Container):
-        def logs(self):
-            raise containers.DockerError("`docker logs` did not return within 60s")
-
-        def state(self):
-            return "exited 139"
-
-        def remove(self):
-            pass
-
-    class Running(Exited):
-        def state(self):
-            return "running"
-
+    monkeypatch.setattr(kit, "logs", logs)
+    monkeypatch.setattr(kit, "state", {"b": "running", "c": "exited 139"}.__getitem__)
     check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",))
     check.measure()
-    check.sides[ck.BASELINE].container = Running("b", MAIN, 1)
-    check.sides[ck.CANDIDATE].container = Exited("c", MAIN, 1)
-    check.teardown()
+    check.sides[ck.BASELINE].container = kit.Container("b", 1)
+    check.sides[ck.CANDIDATE].container = kit.Container("c", 1)
+    check.collect()
     assert ("server up", "regression") in [(f["name"], f["status"]) for f in check.findings]
 
 
-def test_teardown_removes_a_container_that_was_named_but_never_handed_over(tmp_path, monkeypatch):
+def test_cleanup_removes_a_container_that_was_named_but_never_handed_over(tmp_path, monkeypatch):
     removed = []
-    monkeypatch.setattr(containers, "remove_by_name", removed.append)
+    monkeypatch.setattr(kit, "remove", lambda *names: removed.extend(names))
     check = scripted_check(tmp_path, _ok(), _ok(), names=("IC2",))
     check.sides[ck.CANDIDATE].container_name = "perf-ldbc-candidate-7"
-    check.teardown()
+    check.cleanup()
     assert removed == ["perf-ldbc-candidate-7"]
 
 
@@ -1353,23 +1191,6 @@ def test_a_duplicated_endpoint_id_fails_the_load():
         loader_mod._assert_unique_endpoint_ids(client(2))
 
 
-def test_a_relative_out_is_resolved_against_the_caller_s_directory(tmp_path, monkeypatch):
-    """`_perf-vm.yml` passes `--out out`, relative (contract v1.8)."""
-    seen = {}
-
-    def fake_run(opts, echo):
-        seen["out"] = opts.out
-        return {"verdict": "error", "summary": "s"}
-
-    monkeypatch.setattr(ck, "run_check", fake_run)
-    monkeypatch.chdir(tmp_path)
-    res = CliRunner().invoke(
-        cli_mod.cli, ["ldbc", "check", "--candidate", MAIN, "--baseline", OTHER, "--out", "out"]
-    )
-    assert res.exit_code == 0, res.output
-    assert seen["out"] == tmp_path.resolve() / "out" and seen["out"].is_absolute()
-
-
 def test_a_warm_up_with_rows_does_not_make_empty_rounds_worth_timing():
     samples = [
         S(ck.BASELINE, 0, rows=1, phase="warmup"),
@@ -1410,9 +1231,9 @@ def test_an_inconclusive_re_run_is_an_error_in_the_result(tmp_path):
 
     check = scripted_check(tmp_path, _ok(ms=5.0), fast_then_empty, names=("IC2",), params=3)
     check.measure()
-    result = check.write()
+    result = check.result()
     assert result["verdict"] in ("error", "regression")
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)
 
 
 def test_rows_excluded_by_the_timeout_rules_are_not_budget_skips(tmp_path, monkeypatch):
@@ -1427,12 +1248,7 @@ def test_rows_excluded_by_the_timeout_rules_are_not_budget_skips(tmp_path, monke
 
     check = scripted_check(tmp_path, hangs, hangs, names=("IC3",), params=6)
     check.t0 = 0.0
-    check.opts = ck.Options(
-        **{
-            **check.opts.__dict__,
-            "mode": ck.Mode("nightly", "0.1", 6, 2, 2, 60_000, 300.0, 1e9, 600.0),
-        }
-    )
+    check.mode = ck.Mode("nightly", "0.1", 6, 2, 2, 60_000, 300.0, 1e9, 600.0)
     check.measure()
     assert check.budget_skips == 0
     assert not any("budget" in p for p in check.problems)
@@ -1466,7 +1282,7 @@ def test_a_regression_that_was_also_cut_short_says_so_in_the_summary(tmp_path):
     check.problem(
         "the 35 min deadline passed before every query had its rounds (22 parameter-row runs skipped)"
     )
-    result = check.write()
+    result = check.result()
     assert result["verdict"] == "regression" and result["error"] is None
     assert "also not fully measured: the 35 min deadline passed" in result["summary"]
-    assert_valid(check.opts.out / "result.json")
+    assert_valid(result)

@@ -37,10 +37,6 @@ from falkorbench.nightly import report as nightly_report
 BENCH_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = BENCH_DIR.parent
 RESULTS = BENCH_DIR / "results"
-#: Where LDBC datasets are downloaded and extracted. Also the server's
-#: IMPORT_FOLDER for an LDBC run, since `LOAD CSV` resolves `file://` against
-#: it — a dataset outside this tree is not reachable by the server.
-LDBC_CACHE = BENCH_DIR / "ldbc-data"
 
 
 def _select(names: tuple[str, ...], *, cg_only: bool = False):
@@ -643,67 +639,23 @@ def ldbc() -> None:
     """
 
 
-@ldbc.command("check")
-@click.option("--candidate", required=True, help="candidate image, name@sha256:<64 hex>")
-@click.option("--baseline", required=True, help="baseline image, name@sha256:<64 hex>")
-@click.option("--out", required=True, type=click.Path(), help="directory for result.json and raw/")
-@click.option(
-    "--mode",
-    type=click.Choice(sorted(ldbc_check.MODES)),
-    default="nightly",
-    show_default=True,
-    help="length: queue and nightly at SF0.1, long at SF1",
+@ldbc.command(
+    "check",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
 )
-@click.option("--candidate-label", default=None, help="result.json label (default <repo>@<12 hex>)")
-@click.option("--baseline-label", default=None, help="result.json label (default <repo>@<12 hex>)")
-@click.option("--candidate-commit", default=None, help="40-hex commit the candidate was built from")
-@click.option("--baseline-commit", default=None, help="40-hex commit the baseline was built from")
-@click.option("--cache", default=None, type=click.Path(), help="dataset cache directory")
-@click.option(
-    "--param-count",
-    default=None,
-    type=click.IntRange(min=1),
-    help="parameter rows per query (default: the mode's); for development runs",
-)
-@click.argument("names", nargs=-1)
-def ldbc_check_cmd(
-    candidate,
-    baseline,
-    out,
-    mode,
-    candidate_label,
-    baseline_label,
-    candidate_commit,
-    baseline_commit,
-    cache,
-    param_count,
-    names,
-):
-    """Compare a candidate image with a baseline image on the complex reads.
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def ldbc_check_command(args):
+    """Compare a candidate image with a baseline image on the complex reads (--help: the flags).
 
-    The nightly perf check (contract v1.5): starts each image's own server in
-    docker, loads the dataset into both, and writes OUT/result.json plus raw/.
-    Exits 0 whenever result.json was written, whatever its verdict. NAMES
-    selects a subset, for development runs.
+    The nightly perf check: each image runs as its own server in docker, both
+    load the dataset, and OUT/result.json plus raw/ are written. Exits 0 whenever
+    result.json was written, whatever its verdict.
     """
-    opts = ldbc_check.Options(
-        candidate=candidate,
-        baseline=baseline,
-        # Absolute from the start: the VM workflow passes `--out out`, and
-        # nothing later may resolve it against another directory.
-        out=Path(out).resolve(),
-        mode=ldbc_check.MODES[mode],
-        candidate_label=candidate_label,
-        baseline_label=baseline_label,
-        candidate_commit=candidate_commit,
-        baseline_commit=baseline_commit,
-        cache=(Path(cache) if cache else LDBC_CACHE).resolve(),
-        queries=tuple(names),
-        param_count=param_count,
-    )
-    result = ldbc_check.run_check(opts, echo=click.echo)
-    click.echo(f"\n{result['verdict']}: {result['summary']}")
-    click.echo(f"wrote {Path(out) / 'result.json'}")
+    raise SystemExit(ldbc_check.main(list(args)))
 
 
 def main() -> int:

@@ -8,18 +8,14 @@ thresholds and the modes are in bench/README.md ("The nightly check").
 
 from __future__ import annotations
 
+import argparse
 import csv
-import datetime as dt
+import functools
 import json
 import os
-import platform
 import re
-import signal
-import subprocess
 import time
 from collections.abc import Callable
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import field
@@ -36,19 +32,19 @@ from redis.exceptions import ResponseError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 from redis.retry import Retry
 
+from falkorbench import kit
 from falkorbench.client import BenchClient
 from falkorbench.client import Server
-from falkorbench.ldbc import containers
 from falkorbench.ldbc import dataset as dataset_mod
 from falkorbench.ldbc import loader as loader_mod
 from falkorbench.ldbc import params as params_mod
 from falkorbench.ldbc import queries as query_mod
 
 Echo = Callable[[str], None]
+say: Echo = functools.partial(print, flush=True)
 
 CHECK = "ldbc"
 GRAPH = "ldbc"
-SCHEMA = 1
 BASELINE = "baseline"
 CANDIDATE = "candidate"
 SIDES = (BASELINE, CANDIDATE)
@@ -87,16 +83,15 @@ PING_GRACE_S = 60.0
 #: it fires, the server ignored its own timeout and is treated as hung.
 SOCKET_SLACK_S = 30.0
 
-# The contract validator's rules (tests/perf/validate.py), applied with
-# fullmatch: a looser check lets the check write a result the validator
-# rejects (an uppercase repository, a trailing newline).
-_PATH_PART = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
-_HOST_PART = r"(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
-IMAGE_RE = re.compile(
-    rf"(?:(?:localhost|{_HOST_PART}(?:\.{_HOST_PART})+)(?::[0-9]+)?/|{_HOST_PART}:[0-9]+/)?"
-    rf"{_PATH_PART}(?:/{_PATH_PART})*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{{0,127}})?@sha256:[0-9a-f]{{64}}"
-)
-COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+#: The dataset cache, beside the bench project (bench/ldbc-data).
+CACHE = Path(__file__).resolve().parents[3] / "ldbc-data"
+
+#: Each side is the image's own server (its redis or valkey, its allocator,
+#: its entrypoint). The entrypoint appends FALKORDB_ARGS to `--loadmodule`;
+#: the dataset is mounted read-only at /import, and the trailing slash
+#: matters (the C module joins folder and file name with no separator).
+#: BROWSER=0 keeps the images that bundle the browser from starting it.
+SERVER_ENV = {"BROWSER": "0", "FALKORDB_ARGS": "IMPORT_FOLDER /import/"}
 
 
 @dataclass(frozen=True)
@@ -188,7 +183,7 @@ class Side:
 
     side: str
     image: str
-    container: containers.Container | None = None
+    container: kit.Container | None = None
     container_name: str = ""
     conn: Redis | None = None
     down: str = ""  # why it stopped answering, once it has
@@ -224,8 +219,8 @@ class Side:
             return sample
         except (RedisConnectionError, OSError) as e:
             try:
-                state = self.container.state() if self.container else "unknown"
-            except containers.DockerError as inspect_error:
+                state = kit.state(self.container.name) if self.container else "unknown"
+            except kit.DockerError as inspect_error:
                 state = f"unknown ({inspect_error})"
             self.down = f"connection lost ({e}); container {state}"
             sample.outcome = DOWN
@@ -246,30 +241,7 @@ class Side:
         down would turn every later request on this side into a failure.
         """
         assert self.container is not None
-        deadline = time.monotonic() + PING_GRACE_S
-        while (left := deadline - time.monotonic()) > 0:
-            try:
-                if self.container.state().startswith(("exited", "dead")):
-                    return False
-            except containers.DockerError:
-                pass  # inspect failed: says nothing either way, keep probing
-            left = deadline - time.monotonic()
-            if left <= 0:
-                break
-            try:
-                probe = Redis(
-                    host="127.0.0.1",
-                    port=self.container.port,
-                    socket_timeout=min(5.0, left),
-                    socket_connect_timeout=min(5.0, left),
-                    retry=Retry(NoBackoff(), 0),
-                )
-                if probe.ping() and time.monotonic() <= deadline:
-                    return True
-            except RedisError:
-                pass  # not answering yet: try again until the grace runs out
-            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
-        return False
+        return kit.wait_ping(self.container.port, PING_GRACE_S, self.container)
 
 
 def _error_sample(sample: Sample, message: str) -> Sample:
@@ -342,9 +314,7 @@ def completion(query: str, cand: SideStats, base: SideStats) -> dict[str, Any] |
         status, c, b = "improvement", 1, 0
     else:
         return None
-    return _finding(
-        f"{query} completed", "completed", c, b, direction="lower_is_worse", status=status
-    )
+    return kit.finding(f"{query} completed", "completed", c, b, status, direction="lower_is_worse")
 
 
 def side_stats(samples: list[Sample]) -> SideStats:
@@ -384,20 +354,10 @@ class LatencyCompare:
         return self.candidate / self.baseline if self.baseline > 0 else None
 
     def crossing(self) -> str | None:
-        """`regression` or `improvement` when outside the band, else None.
-
-        Strictly outside: ratio > RATIO and difference > floor (contract).
-        """
-        floor = FLOOR_MS[self.metric]
-        delta = self.candidate - self.baseline
-        if self.baseline <= 0:
-            return "regression" if delta > floor else None
-        ratio = self.candidate / self.baseline
-        if ratio > RATIO and delta > floor:
-            return "regression"
-        if ratio < 1 / RATIO and -delta > floor:
-            return "improvement"
-        return None
+        """`regression` or `improvement` when outside the band (strictly: ratio
+        > RATIO and difference > the metric's floor), else None."""
+        crossed = kit.crossed(self.candidate, self.baseline, RATIO, FLOOR_MS[self.metric])
+        return {1: "regression", -1: "improvement"}.get(crossed)
 
 
 def compare_latency(cand: SideStats, base: SideStats) -> list[LatencyCompare]:
@@ -414,36 +374,6 @@ def compare_latency(cand: SideStats, base: SideStats) -> list[LatencyCompare]:
         assert cv is not None and bv is not None
         out.append(LatencyCompare(metric, cv, bv))
     return out
-
-
-def _finding(
-    name: str,
-    metric: str,
-    candidate: float | None,
-    baseline: float | None,
-    *,
-    direction: str,
-    status: str,
-    threshold: float | None = None,
-) -> dict[str, Any]:
-    def num(v: float | None) -> float | None:
-        return None if v is None else round(float(v), 3)
-
-    ratio = None
-    if candidate is not None and baseline not in (None, 0) and metric not in ("rows",):
-        ratio = round(float(candidate) / float(baseline), 3)
-    if metric in ("completed", "invariant"):
-        ratio = None
-    return {
-        "name": name,
-        "metric": metric,
-        "candidate": candidate if isinstance(candidate, int) else num(candidate),
-        "baseline": baseline if isinstance(baseline, int) else num(baseline),
-        "ratio": ratio,
-        "threshold": threshold,
-        "direction": direction,
-        "status": status,
-    }
 
 
 @dataclass
@@ -504,24 +434,18 @@ def compare_rows(query: str, cand: SideStats, base: SideStats) -> RowCheck:
         if c_total == b_total:
             k = mismatched[0]
             name, c_total, b_total = f"{query} rows (param {k[2]})", cand.rows[k], base.rows[k]
-        out.findings.append(
-            _finding(name, "rows", c_total, b_total, direction="mismatch", status="regression")
-        )
+        mismatch = kit.finding(name, "rows", c_total, b_total, "regression", direction="mismatch")
+        mismatch["ratio"] = None  # two row counts that differ: no slowdown to show as Nx
+        out.findings.append(mismatch)
         return out
     # Whether the query returned anything is decided on the measured requests:
     # a warm-up that returned rows does not make empty rounds worth timing.
     measured = [k for k in common if k[0] != "warmup"] or common
     if measured and all(base.rows[k] == 0 for k in measured):
         out.empty = True
+        name = f"{query} returns rows"
         out.findings.append(
-            _finding(
-                f"{query} returns rows",
-                "invariant",
-                0,
-                0,
-                direction="lower_is_worse",
-                status="info",
-            )
+            kit.finding(name, "invariant", 0, 0, "info", direction="lower_is_worse")
         )
     return out
 
@@ -539,15 +463,9 @@ def analyse(query: str, main: list[Sample]) -> QueryVerdict:
 
     if base.cannot_run:
         verdict.left_out = base.first_failure
+        name = f"{query} completed"
         verdict.findings.append(
-            _finding(
-                f"{query} completed",
-                "completed",
-                cand.completed,
-                0,
-                direction="lower_is_worse",
-                status="info",
-            )
+            kit.finding(name, "completed", cand.completed, 0, "info", direction="lower_is_worse")
         )
         verdict.note = "left out: the baseline cannot run it"
         return verdict
@@ -596,16 +514,8 @@ ROW_FIELDS = ("query", "phase", "metric", "candidate", "baseline", "ratio", "sta
 
 
 def _latency_finding(query: str, cmp: LatencyCompare, status: str) -> dict[str, Any]:
-    label = cmp.metric.removesuffix("_ms")
-    return _finding(
-        f"{query} {label}",
-        cmp.metric,
-        cmp.candidate,
-        cmp.baseline,
-        direction="higher_is_worse",
-        status=status,
-        threshold=RATIO,
-    )
+    name = f"{query} {cmp.metric.removesuffix('_ms')}"
+    return kit.finding(name, cmp.metric, cmp.candidate, cmp.baseline, status, threshold=RATIO)
 
 
 @dataclass
@@ -670,116 +580,62 @@ def confirm(
     return result
 
 
-# --- findings and verdict ----------------------------------------------------
-
-_STATUS_ORDER = {"regression": 0, "improvement": 1, "info": 2}
+# --- findings ----------------------------------------------------------------
 
 
-def select_findings(
-    findings: list[dict[str, Any]],
-    *,
-    max_total: int = 50,
-    max_informative: int = 10,
-) -> list[dict[str, Any]]:
-    """Every crossing first, worst ratio first; then at most ten `info` rows.
-    Rows that crossed nothing are not findings: they are in raw/rows.csv."""
+def worst_first(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The order kit.select() keeps within each status: the worst ratio first
+    (the highest for a regression, the lowest for an improvement)."""
 
-    def worst(f: dict[str, Any]) -> tuple[int, float]:
+    def worst(f: dict[str, Any]) -> float:
         ratio = f["ratio"]
-        key = -ratio if isinstance(ratio, (int, float)) else 0.0
-        if f["status"] == "improvement" and isinstance(ratio, (int, float)):
-            key = ratio
-        return (_STATUS_ORDER[f["status"]], key)
+        if not isinstance(ratio, (int, float)):
+            return 0.0
+        return ratio if f["status"] == "improvement" else -ratio
 
-    crossing = sorted(
-        (f for f in findings if f["status"] in ("regression", "improvement")), key=worst
-    )
-    informative = sorted((f for f in findings if f["status"] == "info"), key=worst)
-    return (crossing + informative[:max_informative])[:max_total]
-
-
-def decide(
-    findings: list[dict[str, Any]],
-    problems: list[str],
-) -> tuple[str, bool]:
-    """(verdict, confirmed). A regression outranks an error (contract v1.4)."""
-    if any(f["status"] == "regression" for f in findings):
-        return "regression", True
-    if problems:
-        return "error", False
-    return "pass", False
+    return sorted(findings, key=worst)
 
 
 # --- the run -----------------------------------------------------------------
 
 
-def _now() -> str:
-    return dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """The contract's flags (kit.add_args), the dataset cache, and for
+    development runs a parameter row count and a subset of the queries."""
+    parser = argparse.ArgumentParser(
+        prog="bench ldbc check",
+        description="Compare a candidate image with a baseline image on the LDBC complex reads.",
+    )
+    kit.add_args(parser)
+    parser.add_argument("--cache", type=Path, default=CACHE, help="dataset cache directory")
+    parser.add_argument(
+        "--param-count",
+        type=_positive,
+        default=None,
+        help="parameter rows per query (default: the mode's); for development runs",
+    )
+    parser.add_argument("names", nargs="*", help="a subset of IC1..IC14 (default: all)")
+    args = parser.parse_args(argv)
+    args.cache = args.cache.resolve()
+    return args
 
 
-def default_label(image: str) -> str:
-    """`<repo>@<first 12 hex of the digest>` (contract v1.2)."""
-    name, _, dig = image.partition("@")
-    repo = name.rsplit(":", 1)[0] if ":" in name.rsplit("/", 1)[-1] else name
-    return f"{repo}@{dig.removeprefix('sha256:')[:12]}"
-
-
-def machine() -> dict[str, Any]:
-    """`PERF_MACHINE_JSON` on the VM (copied as is), else this host as `local`."""
-    path = os.environ.get("PERF_MACHINE_JSON")
-    if path:
-        return json.loads(Path(path).read_text())
-    cpu = platform.processor() or platform.machine()
-    try:
-        if platform.system() == "Linux":
-            for line in Path("/proc/cpuinfo").read_text().splitlines():
-                if line.startswith("model name"):
-                    cpu = line.split(":", 1)[1].strip()
-                    break
-        elif platform.system() == "Darwin":
-            cpu = (
-                subprocess.run(
-                    ["sysctl", "-n", "machdep.cpu.brand_string"],
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                ).stdout.strip()
-                or cpu
-            )
-    except OSError:
-        pass  # best effort: the CPU model falls back to platform's answer
-    return {
-        "runner": "local",
-        "type": f"{platform.system().lower()}-{platform.machine()}",
-        "cpu": cpu or "unknown",
-        "cores": os.cpu_count() or 1,
-    }
-
-
-@dataclass
-class Options:
-    candidate: str
-    baseline: str
-    out: Path
-    mode: Mode
-    candidate_label: str | None = None
-    baseline_label: str | None = None
-    candidate_commit: str | None = None
-    baseline_commit: str | None = None
-    cache: Path = Path("ldbc-data")
-    queries: tuple[str, ...] = ()
-    param_count: int | None = None
+def _positive(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{value} is not a positive count")
+    return value
 
 
 class Check:
     """One run of the check, from images to result.json."""
 
-    def __init__(self, opts: Options, echo: Echo = print) -> None:
-        self.opts = opts
+    def __init__(self, args: argparse.Namespace, echo: Echo = say) -> None:
+        self.args = args
+        self.mode = MODES[args.mode]
         self.echo = echo
-        self.started = _now()
+        self.started = kit.utc_now()
         self.t0 = time.monotonic()
-        self.raw = opts.out / "raw"
         self.findings: list[dict[str, Any]] = []
         #: Every latency comparison, crossing or not: raw/rows.csv.
         self.latency_rows: list[dict[str, Any]] = []
@@ -790,8 +646,8 @@ class Check:
         self.summary_rows: list[dict[str, Any]] = []
         self.artifacts: list[str] = []
         self.sides = {
-            BASELINE: Side(BASELINE, opts.baseline),
-            CANDIDATE: Side(CANDIDATE, opts.candidate),
+            BASELINE: Side(BASELINE, args.baseline),
+            CANDIDATE: Side(CANDIDATE, args.candidate),
         }
         self.queries: list[query_mod.ComplexRead] = []
         self.param_set: params_mod.ParamSet | None = None
@@ -804,41 +660,34 @@ class Check:
         #: budget: the comparison covers fewer rows than the mode asks for.
         self.budget_skips = 0
 
+    @property
+    def out(self) -> Path:
+        return Path(self.args.out)  # made absolute by kit.run_check()
+
+    @property
+    def raw(self) -> Path:
+        return self.out / "raw"
+
     # -- result -----------------------------------------------------------
 
-    def image_block(self, side: str) -> dict[str, Any]:
-        o = self.opts
-        image = o.candidate if side == CANDIDATE else o.baseline
-        label = o.candidate_label if side == CANDIDATE else o.baseline_label
-        commit = o.candidate_commit if side == CANDIDATE else o.baseline_commit
-        if commit and not COMMIT_RE.fullmatch(commit):
-            commit = None  # reported as a problem; null keeps result.json valid
-        return {"image": image, "commit": commit or None, "label": label or default_label(image)}
-
     def result(self, *, error: str | None = None) -> dict[str, Any]:
-        findings = select_findings(self.findings)
+        """The result.json value: kit.result() over this run's findings and problems."""
+        findings = kit.select(worst_first(self.findings))
         problems = [*self.problems, *([error] if error else [])]
-        verdict, confirmed = decide(findings, problems)
-        return {
-            "schema": SCHEMA,
-            "check": CHECK,
-            "verdict": verdict,
-            "confirmed": confirmed,
-            "summary": self.summary_line(verdict, findings, problems),
-            "candidate": self.image_block(CANDIDATE),
-            "baseline": self.image_block(BASELINE),
-            "machine": self.machine(),
-            "started": self.started,
-            "finished": _now(),
-            "findings": findings,
-            "error": _one_line("; ".join(problems)) if verdict == "error" else None,
-            "artifacts": sorted(set(self.artifacts)),
-        }
+        return kit.result(
+            CHECK,
+            self.args,
+            started=self.started,
+            findings=findings,
+            summary=self.summary_line(kit.verdict(findings, problems), findings, problems),
+            errors=problems,
+            artifacts=self.artifacts,
+        )
 
     def summary_line(
         self, verdict: str, findings: list[dict[str, Any]], problems: list[str]
     ) -> str:
-        mode = self.opts.mode
+        mode = self.mode
         scope = (
             f"{self.compared_queries} of {len(self.queries) or 14} LDBC complex reads compared "
             f"at SF{mode.sf} ({mode.name})"
@@ -873,25 +722,7 @@ class Check:
             # summary still says the run was cut short, not only raw/run.json.
             more = f" (+{len(problems) - 1} more)" if len(problems) > 1 else ""
             parts.append(f"also not fully measured: {problems[0]}{more}")
-        return _one_line("; ".join(parts))
-
-    def machine(self) -> dict[str, Any]:
-        try:
-            return machine()
-        except (OSError, ValueError) as e:
-            note = f"PERF_MACHINE_JSON unreadable ({e}); recorded this host as local"
-            if note not in self.notes:
-                self.notes.append(note)
-            os.environ.pop("PERF_MACHINE_JSON", None)
-            return machine()
-
-    def write(self, *, error: str | None = None) -> dict[str, Any]:
-        self.opts.out.mkdir(parents=True, exist_ok=True)
-        result = self.result(error=error)
-        tmp = self.opts.out / "result.json.tmp"
-        tmp.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
-        tmp.replace(self.opts.out / "result.json")
-        return result
+        return "; ".join(parts)
 
     def problem(self, message: str) -> None:
         self.echo(f"error: {message}")
@@ -900,7 +731,7 @@ class Check:
     # -- artifacts ----------------------------------------------------------
 
     def artifact(self, rel: str, text: str) -> None:
-        path = self.opts.out / rel
+        path = self.out / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         self.artifacts.append(rel)
@@ -939,50 +770,43 @@ class Check:
     # -- phases -------------------------------------------------------------
 
     def past_deadline(self) -> bool:
-        return time.monotonic() - self.t0 > self.opts.mode.deadline_s
+        return time.monotonic() - self.t0 > self.mode.deadline_s
 
-    def run(self) -> dict[str, Any]:
-        o = self.opts
-        self.write(error="the check did not finish (it was stopped, or it crashed)")
+    def work(self) -> None:
+        """From the images to the samples; kit.run_check() runs it, then build()."""
+        for error in kit.input_errors(self.args):
+            self.problem(error)
         try:
-            self.queries = query_mod.select(o.queries)
+            self.queries = query_mod.select(tuple(self.args.names))
         except ValueError as e:
             self.problem(str(e))
-            return self.write()
-        for side, image in ((CANDIDATE, o.candidate), (BASELINE, o.baseline)):
-            if not IMAGE_RE.fullmatch(image):
-                self.problem(
-                    f"--{side} {image!r} is not an image pinned by digest as the contract "
-                    f"writes one (lowercase name[:tag]@sha256:<64 hex>)"
-                )
-        for side, commit in ((CANDIDATE, o.candidate_commit), (BASELINE, o.baseline_commit)):
-            if commit and not COMMIT_RE.fullmatch(commit):
-                self.problem(f"--{side}-commit {commit!r} is not a 40-hex commit")
         if self.problems:
-            return self.write()
+            return
+        root = self.fetch()
+        if root is not None:
+            self.start_and_load(root)
+        if not self.problems and not _regressed(self.findings):
+            self.sample_params()
+            self.explain()
+            self.measure()
 
-        try:
-            root = self.fetch()
-            if root is not None:
-                self.start_and_load(root)
-            if not self.problems and not _regressed(self.findings):
-                self.sample_params()
-                self.explain()
-                self.measure()
-        finally:
-            # A first SIGTERM arriving here is held until teardown is done,
-            # so the containers are still removed and the logs still kept.
-            with _sigterm_deferred():
-                self.teardown()
+    def build(self, error: str | None) -> dict[str, Any]:
+        """The result from what work() measured, also when it was stopped or crashed
+        (`error`). kit.run_check() calls it with the stop signals ignored."""
+        self.collect()
         self.write_samples()
         self.write_summary()
-        return self.write()
+        return self.result(error=error)
+
+    def cleanup(self) -> None:
+        """Remove both servers, also one named but stopped before kit.start() returned."""
+        kit.remove(*(s.container_name for s in self.sides.values() if s.container_name))
 
     def fetch(self) -> Path | None:
-        sf = self.opts.mode.sf
-        self.echo(f"dataset: SF{sf} into {self.opts.cache}")
+        sf = self.mode.sf
+        self.echo(f"dataset: SF{sf} into {self.args.cache}")
         try:
-            root = dataset_mod.fetch(self.opts.cache, sf, echo=self.echo)
+            root = dataset_mod.fetch(self.args.cache, sf, echo=self.echo)
             dataset_mod.prepare(root, echo=self.echo)
         except dataset_mod.DatasetError as e:
             self.problem(f"dataset: {e}")
@@ -995,8 +819,8 @@ class Check:
             image = self.sides[side].image
             self.echo(f"{side}: pulling {image}")
             try:
-                containers.pull(image)
-            except containers.DockerError as e:
+                kit.pull(image)
+            except kit.DockerError as e:
                 self.problem(f"{side} image: {e}")
         if self.problems:
             return
@@ -1005,18 +829,19 @@ class Check:
         for side in SIDES:  # baseline first: a broken baseline stops the run early
             s = self.sides[side]
             name = f"perf-ldbc-{side}-{os.getpid()}"
-            # Named before it exists, so teardown can remove it even when a
+            # Named before it exists, so cleanup() can remove it even when a
             # SIGTERM lands between `docker run` and `start` returning.
             s.container_name = name
             try:
-                s.container = containers.start(s.image, name, self.opts.cache, cpus=cpus)
+                volumes = {self.args.cache: "/import:ro"}
+                s.container = kit.start(s.image, name, env=SERVER_ENV, volumes=volumes, cpus=cpus)
                 client = self.connect(s)
-            except (containers.DockerError, RuntimeError, RedisError) as e:
+            except (kit.DockerError, RuntimeError, RedisError) as e:
                 self.side_failed(side, "server start", f"server did not start: {e}")
                 return
             self.echo(f"{side}: port {s.container.port}")
             try:
-                stats = loader_mod.load(client, root, import_root=self.opts.cache, echo=self.echo)
+                stats = loader_mod.load(client, root, import_root=self.args.cache, echo=self.echo)
             except (loader_mod.LoadError, RedisError) as e:
                 load[side] = {"error": str(e)}
                 self.artifact("raw/load.json", json.dumps(load, indent=2) + "\n")
@@ -1029,16 +854,9 @@ class Check:
                 "entities_per_s": round((stats.nodes + stats.edges) / stats.seconds, 1),
             }
         self.artifact("raw/load.json", json.dumps(load, indent=2) + "\n")
-        b, c = load[BASELINE], load[CANDIDATE]
+        c, b = load[CANDIDATE]["entities_per_s"], load[BASELINE]["entities_per_s"]
         self.findings.append(
-            _finding(
-                "load",
-                "throughput",
-                c["entities_per_s"],
-                b["entities_per_s"],
-                direction="lower_is_worse",
-                status="info",
-            )
+            kit.finding("load", "throughput", c, b, "info", direction="lower_is_worse")
         )
 
     def side_failed(self, side: str, name: str, why: str) -> None:
@@ -1048,7 +866,7 @@ class Check:
             self.problem(f"baseline {why}")
             return
         self.findings.append(
-            _finding(name, "completed", 0, 1, direction="lower_is_worse", status="regression")
+            kit.finding(name, "completed", 0, 1, "regression", direction="lower_is_worse")
         )
         self.notes.append(f"candidate {why}")
 
@@ -1056,37 +874,16 @@ class Check:
         """Wait for the server and switch off its background saves."""
         assert s.container is not None
         port = s.container.port
-        deadline = time.monotonic() + STARTUP_S
-        last: Exception | None = None
-        while time.monotonic() < deadline:
-            state = s.container.state()
-            if state != "running":
-                raise RuntimeError(f"container {state}: {s.container.logs()[-400:]}")
-            try:
-                # Bounded by what is left of the readiness window: a server
-                # that accepts but never answers must not hold one attempt
-                # past it.
-                left = max(1.0, deadline - time.monotonic())
-                FalkorDB(
-                    host="127.0.0.1",
-                    port=port,
-                    retry=Retry(NoBackoff(), 0),
-                    socket_timeout=min(5.0, left),
-                    socket_connect_timeout=min(5.0, left),
-                ).connection.ping()
-                break
-            except RedisError as e:
-                last = e
-                time.sleep(0.5)
-        else:
-            raise RuntimeError(f"no answer on :{port} within {STARTUP_S:.0f}s ({last})")
+        if not port or not kit.wait_ping(port, STARTUP_S, s.container):
+            # port 0: the server exited before docker published its port.
+            raise RuntimeError(f"no answer to PING within {STARTUP_S:.0f}s; {_how_it_ended(s)}")
         db = FalkorDB(
             host="127.0.0.1",
             port=port,
             retry=Retry(NoBackoff(), 0),
             # A load or sampling request that never returns is a load that
             # did not finish, not a check that hangs until it is killed.
-            socket_timeout=self.opts.mode.load_request_s,
+            socket_timeout=self.mode.load_request_s,
         )
         # The images keep redis's default save points; one would fork a
         # BGSAVE a minute into the measurement, on one side only.
@@ -1095,14 +892,14 @@ class Check:
             host="127.0.0.1",
             port=port,
             retry=Retry(NoBackoff(), 0),
-            socket_timeout=self.opts.mode.timeout_ms / 1000 + SOCKET_SLACK_S,
+            socket_timeout=self.mode.timeout_ms / 1000 + SOCKET_SLACK_S,
         )
         client = BenchClient(db=db, server=Server(port=port))
         client.graph_name = GRAPH
         return client
 
     def sample_params(self) -> None:
-        o, mode = self.opts, self.opts.mode
+        mode = self.mode
         base = self.sides[BASELINE]
         assert base.container is not None
         client = BenchClient(
@@ -1115,7 +912,7 @@ class Check:
             server=Server(port=base.container.port),
             graph_name=GRAPH,
         )
-        count = o.param_count or mode.params
+        count = self.args.param_count or mode.params
         try:
             self.param_set = params_mod.sample(client, count=count, seed=SEED, echo=self.echo)
         except (params_mod.ParamError, RedisError) as e:
@@ -1156,7 +953,7 @@ class Check:
     def measure(self) -> None:
         if self.param_set is None:
             return
-        mode = self.opts.mode
+        mode = self.mode
         main: dict[str, list[Sample]] = {q.name: [] for q in self.queries}
         for q in self.queries:
             main[q.name] += self.warmup(q)
@@ -1211,12 +1008,12 @@ class Check:
 
         if self.deadline_skips:
             self.problem(
-                f"the {self.opts.mode.deadline_s / 60:.0f} min deadline passed before every "
+                f"the {self.mode.deadline_s / 60:.0f} min deadline passed before every "
                 f"query had its rounds ({self.deadline_skips} parameter-row runs skipped)"
             )
         if self.budget_skips:
             self.problem(
-                f"the {self.opts.mode.query_budget_s:.0f}s per-round budget cut "
+                f"the {self.mode.query_budget_s:.0f}s per-round budget cut "
                 f"{self.budget_skips} parameter-row runs"
             )
         if self.compared_queries == 0:
@@ -1257,7 +1054,7 @@ class Check:
         order: tuple[str, ...],
     ) -> list[Sample]:
         assert self.param_set is not None
-        mode = self.opts.mode
+        mode = self.mode
         rows = self.param_set.for_query(q.number)
         out: list[Sample] = []
         started = time.monotonic()
@@ -1293,7 +1090,7 @@ class Check:
         params: dict[str, Any],
         side: Side,
     ) -> Sample:
-        sample = side.run(q.cypher, params, self.opts.mode.timeout_ms)
+        sample = side.run(q.cypher, params, self.mode.timeout_ms)
         sample.phase, sample.round, sample.query, sample.param = phase, rnd, q.name, param
         if sample.outcome == TIMEOUT:
             # Both sides skip this row from now on (the other side still runs
@@ -1329,45 +1126,36 @@ class Check:
                     }
                 )
 
-    def teardown(self) -> None:
+    def collect(self) -> None:
+        """Each server's log and how it ended, the server findings, raw/run.json."""
         started = {side for side in SIDES if self.sides[side].container is not None}
         for side in SIDES:
             s = self.sides[side]
             if s.container is None:
-                if s.container_name:  # started, but stopped before it was ours
-                    try:
-                        containers.remove_by_name(s.container_name)
-                    except containers.DockerError as e:
-                        self.notes.append(f"{side} container not removed: {e}")
                 continue
             try:
-                self.artifact(f"raw/{side}-server.log", s.container.logs())
-            except (containers.DockerError, OSError) as e:
+                self.artifact(f"raw/{side}-server.log", kit.logs(s.container.name))
+            except (kit.DockerError, OSError) as e:
                 self.notes.append(f"{side} logs: {e}")
             try:
-                state = s.container.state()
-                # Only an exit is a server that went down. "gone" means
-                # `docker inspect` itself failed, which says nothing about
-                # the server (a daemon hiccup must not turn a night red).
+                state = kit.state(s.container.name)
+                # Only an exit is a server that went down; `gone` (no such
+                # container) says nothing about how the server ran.
                 if state.startswith(("exited", "dead")) and not s.down:
                     s.down = f"container {state}"
-                elif state not in ("running",) and not s.down:
-                    self.notes.append(f"{side} container state unreadable at teardown: {state}")
-            except (containers.DockerError, OSError) as e:
+                elif state != "running" and not s.down:
+                    self.notes.append(f"{side} container at the end: {state}")
+            except kit.DockerError as e:
                 self.notes.append(f"{side} state: {e}")
             if s.down:
                 self.notes.append(f"{side} server: {s.down}")
-            try:
-                s.container.remove()
-            except containers.DockerError as e:
-                self.notes.append(f"{side} container not removed: {e}")
         self.server_findings(started)
         engines = {side: {"down": self.sides[side].down or None} for side in SIDES}
         self.artifact(
             "raw/run.json",
             json.dumps(
                 {
-                    "mode": asdict(self.opts.mode),
+                    "mode": asdict(self.mode),
                     "ratio": RATIO,
                     "floor_ms": FLOOR_MS,
                     "seed": SEED,
@@ -1394,7 +1182,7 @@ class Check:
         if cand:
             c, b, status = (0, 0, "info") if base else (0, 1, "regression")
             self.findings.append(
-                _finding("server up", "completed", c, b, direction="lower_is_worse", status=status)
+                kit.finding("server up", "completed", c, b, status, direction="lower_is_worse")
             )
         if base:
             self.problem(f"the baseline server went down: {base}")
@@ -1411,16 +1199,12 @@ def describe(f: dict[str, Any]) -> str:
     if f["metric"] == "rows":
         return f"{f['name']} {f['candidate']} vs {f['baseline']}"
     if f["ratio"] is not None:
-        return f"{f['name']} {f['ratio']}x"
+        return f"{f['name']} {round(f['ratio'], 3)}x"
     return f"{f['name']} {f['candidate']} vs {f['baseline']}"
 
 
 def _text(value: Any) -> str:
     return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value)
-
-
-def _one_line(text: str) -> str:
-    return " | ".join(line.strip() for line in text.splitlines() if line.strip()) or "unknown"
 
 
 def _fmt(value: float | None) -> str:
@@ -1431,49 +1215,26 @@ def _qnum(name: str) -> int:
     return int(name.removeprefix("IC"))
 
 
-@contextmanager
-def _term_as_interrupt() -> Iterator[None]:
-    """`timeout` stops the command with SIGTERM; turn it into an exception so
-    the containers are removed and result.json says what happened."""
-
-    def handler(signum: int, frame: object) -> None:
-        # `timeout` may signal the whole process group, and uv forwards the
-        # signal too: one interrupt, then the rest are ignored so teardown
-        # and the final write are not cut short.
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
-        raise KeyboardInterrupt(f"signal {signum}")
-
-    previous = signal.signal(signal.SIGTERM, handler)
+def _how_it_ended(s: Side) -> str:
+    """The container's state and the end of its log, for a server that never answered."""
+    assert s.container is not None
     try:
-        yield
-    finally:
-        signal.signal(signal.SIGTERM, previous)
+        return f"container {kit.state(s.container.name)}: {kit.logs(s.container.name)[-400:]}"
+    except kit.DockerError as e:
+        return f"container state unknown ({e})"
 
 
-@contextmanager
-def _sigterm_deferred() -> Iterator[None]:
-    """Hold SIGTERM while the block runs; it is delivered when it ends."""
-    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
-    try:
-        yield
-    finally:
-        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
+def run_check(args: argparse.Namespace, echo: Echo = say) -> dict[str, Any]:
+    """Run the check through kit.run_check(): `<out>/result.json` is written
+    whatever happens, and both servers are removed afterwards."""
+    check = Check(args, echo)
+    return kit.run_check(CHECK, args, check.work, check.build, check.cleanup)
 
 
-def run_check(opts: Options, echo: Echo = print) -> dict[str, Any]:
-    """Run the check and write `<out>/result.json`; never raises once that
-    file can be written."""
-    check = Check(opts, echo)
-    # The handler stays in place through the final write below: after the
-    # first SIGTERM it ignores the rest, so that write is not cut short.
-    with _term_as_interrupt():
-        try:
-            return check.run()
-        except (KeyboardInterrupt, Exception) as e:
-            reason = "stopped" if isinstance(e, KeyboardInterrupt) else "crashed"
-            try:
-                check.write_samples()
-                check.write_summary()
-            except OSError:
-                pass  # raw files are a bonus here; result.json below is the must
-            return check.write(error=f"the check {reason}: {type(e).__name__}: {e}")
+def main(argv: list[str] | None = None) -> int:
+    """`bench ldbc check`: exits 0 whenever result.json was written, whatever its verdict."""
+    args = parse_args(argv)
+    result = run_check(args)
+    say(f"\n{result['verdict']}: {result['summary']}")
+    say(f"wrote {Path(args.out) / 'result.json'}")
+    return 0

@@ -717,7 +717,7 @@ standard-Cypher spelling is `FIELDTERMINATOR`, and it goes *after* `AS <var>`.
 
 The nightly perf run (epic #3974) compares main's newest image with the latest
 release through several independent checks; this is the LDBC one. It is one
-command, with the contract every nightly check shares:
+command, with the contract flags every nightly check shares (`kit.add_args`):
 
 ```bash
 uv run --project bench bench ldbc check \
@@ -725,13 +725,18 @@ uv run --project bench bench ldbc check \
   --baseline falkordb/falkordb-server@sha256:… \
   --out out --mode nightly \
   [--candidate-label main@4c10889] [--baseline-label 6.2.0] \
-  [--candidate-commit <40 hex>] [--baseline-commit <40 hex>]
+  [--candidate-commit <40 hex>] [--baseline-commit <40 hex>] \
+  [--cache DIR] [--param-count N] [IC2 IC7 …]
 ```
+
+`--cache` (default `bench/ldbc-data`), `--param-count` and a query subset are
+for development runs; `bench/checks.yaml` runs it with none of them.
 
 Both arguments are images pinned by digest, and nothing is compiled: each image
 runs as its own server in docker (its own redis or valkey and allocator),
-side by side on this machine, on ports docker picks (never 6379). The dataset is
-bind-mounted read-only as the module's `IMPORT_FOLDER`. On the VM the servers
+side by side on this machine, started with `kit.start` on ports docker picks
+(never 6379). The dataset is bind-mounted read-only as the module's
+`IMPORT_FOLDER`. On the VM the servers
 are pinned to `PERF_SERVER_CPUS`; locally they run unpinned and the result says
 `runner: local`.
 
@@ -786,9 +791,11 @@ when something could not be measured (an image not pinned by digest, a pull or
 a dataset download that failed, a baseline that did not start, load or stay
 up, no query that finished on both sides, a deadline or a per-round budget
 that cut any query's rounds); otherwise `pass`. The summary counts as compared only the queries
-with at least one parameter row finished on both sides. `result.json` is written
-first as an `error` and replaced at the end, so a run stopped from outside
-still leaves one. The command exits 0 whenever `result.json` was written.
+with at least one parameter row finished on both sides. The run goes through
+`kit.run_check`: `result.json` is written first as an `error` and replaced at
+the end, a SIGTERM still leaves one with what was measured so far, and both
+containers are removed afterwards. The command exits 0 whenever `result.json`
+was written.
 
 **Modes** set only the length, never the method:
 
@@ -805,7 +812,7 @@ settings above: main@4c1088949 against itself took 13.5 min in `nightly` and
 regressions confirmed, so nine re-runs) 20.6 min. Most of it is the two loads
 (about 70 s each) and the queries that time out (IC3 on every row, #4001, and one IC14
 row, on the Rust engine). The 35-minute deadline stops new measurement well
-inside the 45 minutes the check gets in `tests/perf/checks.yaml`. `long` (SF1)
+inside the 45 minutes the check gets in `bench/checks.yaml`. `long` (SF1)
 is accepted and set as above but not yet run end to end.
 
 The queries run in a fixed order (IC1 to IC14), every query's main rounds
@@ -821,11 +828,9 @@ query, parameter row, side, outcome, latency, rows), `summary.csv`
 `run.json` (mode, thresholds, servers, rewrites, notes).
 
 **Tests.** `bench/tests/test_ldbc.py` covers the analysis, the measurement
-loop (with scripted servers) and every result shape, holding each result.json
-to the contract's validator (`tests/perf/validate.py`, from #3986; set
-`PERF_VALIDATE_PY` to use another copy, and the tests that need it skip without
-it). `perf-contract.yml` (#3986) runs them with
-`uv run --project bench pytest bench/tests`.
+loop (with scripted servers and kit's docker calls replaced) and every result
+shape, holding each result to `falkorbench.contract`. `perf-contract.yml` runs
+them with the rest of `bench/tests`.
 
 ### Substitution parameters
 
