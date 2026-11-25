@@ -1,4 +1,4 @@
-"""The 06:30 UTC alarm: did the night's perf-nightly run leave its result?
+"""The 08:30 UTC alarm: did the night's perf-nightly run leave its result?
 
 `bench nightly missed-run [--date YYYY-MM-DD]`; see bench/README.md, "Nightly report and
 missed-run alarm". Standard library only (and falkorbench.nightly.report, which is too).
@@ -19,7 +19,7 @@ from falkorbench.nightly import report
 
 # perf-missed-run.yml's cron. A night's runs are the scheduled ones created in the 24 hours
 # before it; the nightly starts at 00:00 and fits before it (a test pins the gap).
-ALARM_TIME_UTC = time(6, 30)
+ALARM_TIME_UTC = time(8, 30)
 
 
 @dataclass
