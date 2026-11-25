@@ -166,6 +166,71 @@ class testDeleteAndCreateInOneQuery(EffectsV3ApplyBase):
         self._assert_reused(freed, created, "a delete and a create in one query")
 
 
+class testCreateAndDeleteTheSameEntity(EffectsV3ApplyBase):
+    GRAPH = "effects_v3_apply_create_delete_same"
+
+    def test01_an_entity_created_and_deleted_in_one_query(self):
+        # THE OTHER HALF OF THE ARGUMENT, and the one nothing else here
+        # covers. Every other class deletes first and creates afterwards, so a
+        # deletes-first emitter would carry all of them -- it would put the
+        # delete in front, which is where those queries wanted it anyway. This
+        # one is written the other way round: the entity is created and then
+        # destroyed, so the CREATE must reach the replica first. A fixed order
+        # that favoured deletes would send DELETE for an id the replica has
+        # never seen, refuse, and resync. That pair is why the records go out
+        # in the query's sequence rather than in any order at all.
+        self._applied_without_resync(
+                "UNWIND range(0, 9) AS i CREATE (n:Gone {v: i}) DELETE n",
+                "an entity created and deleted in one query")
+
+        for side, graph in (("master", self.master_graph),
+                            ("replica", self.replica_graph)):
+            self.env.assertEqual(
+                    graph.ro_query(
+                        "MATCH (n:Gone) RETURN count(n)").result_set[0][0],
+                    0, message=f"the :Gone nodes survived on the {side}")
+
+        # AND THE SAME ENTITY WITH SOMETHING LEFT BEHIND TO LOOK AT. The bare
+        # shape above leaves an empty graph, which a replica that applied
+        # nothing at all also leaves -- so this one creates, deletes the thing
+        # it just created, and creates again onto the ids that freed. Three
+        # records name the same ids, in three runs, and the survivors are
+        # visible on both sides.
+        self._applied_without_resync(
+                "UNWIND range(0, 9) AS i CREATE (:Keep {v: i})",
+                "create-delete-create setup")
+
+        self._applied_without_resync("""
+            MATCH (k:Keep)
+            CREATE (t:Temp {v: k.v})
+            DELETE t
+            CREATE (s:Survivor {v: k.v})
+        """, "an entity created, deleted and its id created over")
+
+        survivors, replica_survivors = self._ids("Survivor")
+        self.env.assertEqual(survivors, replica_survivors,
+                message="the ids under :Survivor differ between master and "
+                        "replica")
+        self.env.assertEqual(len(survivors), 10)
+
+        for side, graph in (("master", self.master_graph),
+                            ("replica", self.replica_graph)):
+            self.env.assertEqual(
+                    graph.ro_query(
+                        "MATCH (n:Temp) RETURN count(n)").result_set[0][0],
+                    0, message=f"the :Temp nodes survived on the {side}")
+
+        # THE REUSE, STATED. That query created twenty nodes over ten :Keep
+        # ids, so without the ids coming back the survivors would sit at 20
+        # and above. Below that they are the ids :Temp held, which is what
+        # makes the payload name one id in a CREATE, a DELETE and a CREATE
+        # again -- and what makes this more than a smoke test.
+        self.env.assertTrue(max(survivors) < 20,
+                message=f"the :Survivor nodes did not take the ids :Temp "
+                        f"freed ({survivors}), so this payload never named "
+                        f"one id in both directions")
+
+
 class testTwoCreateClausesEitherSideOfADelete(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_create_delete_create"
 
@@ -244,6 +309,11 @@ class testCreateEdgesAcrossTwoClauses(EffectsV3ApplyBase):
         # creating the second clause's endpoints. _ApplyCreateEdge checks that
         # both endpoints exist before it claims anything, so the payload is
         # refused.
+        #
+        # A GUARD, NOT A REGRESSION TEST. This query never switches between
+        # creating and deleting, so it passes on the emitter this change
+        # replaces as well. What it rules out is emitting groups in the order
+        # they were opened and dropping the stage order within a run.
         self._applied_without_resync("""
             UNWIND range(0, 19) AS i
             CREATE (:L {v: i})-[:E {v: i}]->(:L {v: i})
@@ -328,10 +398,19 @@ class testSeveralSwitchesInOnePayload(EffectsV3ApplyBase):
     def test01_two_delete_create_pairs_in_one_query(self):
         # MORE THAN ONE SWITCH IN A PAYLOAD. Each clause pair deletes a label
         # and creates another on the ids it just freed, so one payload carries
-        # four stretches and names two sets of ids twice over. A rule that
-        # separated the first delete from the first create but then let the
-        # second create rejoin the first one's record would pass the
-        # single-switch cases above and fail here.
+        # four stretches and names two sets of ids twice over.
+        #
+        # WHAT THIS CATCHES that the single-switch classes do not: a rule that
+        # reverses once and then stops -- a flag rather than a counter, or a
+        # run that is opened at the first delete and never again. Such a rule
+        # orders the first pair correctly and emits the second create back in
+        # the first run, ahead of the delete that freed its ids.
+        #
+        # It is NOT about two creates sharing a record: :B and :D are
+        # different shapes and could never be one group whatever the run rule
+        # said. The case where a later create rejoins an earlier create's
+        # record is testTwoCreateClausesEitherSideOfADelete, where both
+        # clauses create the same label.
         #
         # WRITTEN AS CHAINED CLAUSES AND NOT AS `CALL {}`, deliberately. A
         # writing subquery looks like the natural way to get many switches,
@@ -443,6 +522,46 @@ class testUpdateAcrossAReusedId(EffectsV3ApplyBase):
                         f"updates the test is for")
 
 
+class testALabelTakenOffAndPutBack(EffectsV3ApplyBase):
+    GRAPH = "effects_v3_apply_label_reversal"
+
+    def test01_a_label_removed_and_set_again_in_one_query(self):
+        # THE SAME FAULT AS A REUSED ID, ONE LAYER UP. A (node, label) pair can
+        # be given and taken away repeatedly in one query, and the stage order
+        # is fixed -- SET_LABELS is stage 4 and REMOVE_LABELS is stage 5 -- so
+        # sorting a run by stage emits the SET first whatever the query did.
+        # `REMOVE n:Z SET n:Z` then reaches the replica as set-then-remove and
+        # the replica ends without a label the master kept.
+        #
+        # THE UNIT TEST IS THE DETERMINISTIC GUARD. aLabelPutBackOpensANewRun
+        # asserts the record sequence and fails every time the split is
+        # reverted. The end state here does not: on the emitter this change
+        # replaces the same two records came out every run, but the replica
+        # diverged in four of six measured instances and matched in the other
+        # two. So this runs the shape several times -- one agreement no longer
+        # hides the fault -- and exists for the end-to-end half of the claim
+        # rather than as the primary regression test.
+        self._applied_without_resync(
+                "CREATE (:S:Z {k: 1})", "label reversal setup")
+
+        for i in range(5):
+            self._applied_without_resync(
+                    "MATCH (n {k: 1}) REMOVE n:Z SET n:Z",
+                    f"a label removed and set again, pass {i}")
+
+            m = self.master_graph.ro_query(
+                    "MATCH (n {k: 1}) RETURN labels(n)").result_set[0][0]
+            r = self.replica_graph.ro_query(
+                    "MATCH (n {k: 1}) RETURN labels(n)").result_set[0][0]
+            self.env.assertEqual(sorted(m), sorted(r),
+                    message=f"pass {i}: the labels differ -- master {m}, "
+                            f"replica {r}")
+            self.env.assertTrue("Z" in m,
+                    message=f"pass {i}: the master lost :Z, so the query no "
+                            f"longer ends with the label set and this shape "
+                            f"tests nothing")
+
+
 class testUpdateOfADeletedNode(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_update_delete"
 
@@ -451,6 +570,12 @@ class testUpdateOfADeletedNode(EffectsV3ApplyBase):
         # whole attribute set, which is not known until the query stops writing
         # to it, so it joins a record at the very end. Appended there it would
         # follow the delete of the node it names.
+        #
+        # A GUARD, NOT A REGRESSION TEST. The emitter this change replaces
+        # sorts updates (stage 2) ahead of deletes (stage 7) and gets this one
+        # right; it is here so the run mechanism does not break what already
+        # worked, by filing a staged update wherever the flush happens to
+        # reach it.
         self._applied_without_resync(
                 "UNWIND range(0, 19) AS i CREATE (:Doomed {v: i})",
                 "update-then-delete setup")
