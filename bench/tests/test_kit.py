@@ -415,6 +415,22 @@ def test_result_regression_outranks_its_errors(tmp_path):
     )
     assert_valid(res)
     assert (res["verdict"], res["confirmed"], res["error"]) == ("regression", True, None)
+    assert res["incomplete"] == "IC12 not re-timed"
+
+
+def test_result_incomplete_names_the_cut_and_is_null_when_nothing_is_missing(tmp_path):
+    args, started = make_args(tmp_path), kit.utc_now()
+    cut = kit.result("ldbc", args, started=started, findings=rows("regression", 40) + rows("improvement", 20), summary="s")
+    assert_valid(cut)
+    assert len(cut["findings"]) == 50 and cut["incomplete"] == "findings truncated: 50 of 60 kept"
+    both = kit.result("ldbc", args, started=started, findings=rows("regression", 51), summary="s", errors=["a\nb"])
+    assert both["incomplete"] == "a b; findings truncated: 50 of 51 kept"
+    # info rows are capped by design; an error verdict says its reason in `error`; a pass is clean
+    info = kit.result("ldbc", args, started=started, findings=rows("info", 30), summary="s")
+    assert info["incomplete"] is None
+    failed = kit.result("ldbc", args, started=started, findings=rows("improvement", 1), summary="s", errors=["x"])
+    assert (failed["verdict"], failed["incomplete"]) == ("error", None)
+    assert kit.result("ldbc", args, started=started, findings=rows("ok", 3), summary="s")["incomplete"] is None
 
 
 def test_result_error_carries_every_reason_once_and_on_one_line(tmp_path):
@@ -440,7 +456,7 @@ def test_blank_errors_are_no_errors_and_a_blank_error_result_still_says_error(tm
     assert res["verdict"] == "pass" and kit.verdict([], [" \n"]) == "pass"
     res = kit.error_result("pokec", args, started, str(TimeoutError()))
     assert_valid(res)
-    assert (res["verdict"], res["error"]) == ("error", "unknown error")
+    assert (res["verdict"], res["error"], res["incomplete"]) == ("error", "unknown error", None)
 
 
 def test_result_caps_the_summary(tmp_path):

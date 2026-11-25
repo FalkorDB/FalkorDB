@@ -268,7 +268,8 @@ def result(
 ) -> dict:
     """A schema-1 result. The flags' own input_errors() count as errors; `findings`
     go through select(); the verdict comes from verdict() on what is kept."""
-    kept = select(findings)
+    rows = list(findings)
+    kept = select(rows)
     given = [_one_line(e) for e in errors if e]
     problems = list(dict.fromkeys([*input_errors(args), *(e for e in given if e)]))
     outcome = verdict(kept, problems)
@@ -285,8 +286,23 @@ def result(
         "finished": max(utc_now(), started),
         "findings": kept,
         "error": _one_line("; ".join(problems)) if outcome == "error" else None,
+        "incomplete": incomplete(outcome, problems, rows, kept),
         "artifacts": sorted({str(a) for a in artifacts}),
     }
+
+
+def incomplete(outcome: str, problems: list[str], rows: list[dict], kept: list[dict]) -> str | None:
+    """One line on what a result did not measure or cut, else None. A regression outranks
+    an error, so its `error` is null and the unmeasured parts are said here; so is a
+    cut of regression or improvement findings by the cap (info rows are capped by design)."""
+    notes = []
+    if outcome == "regression" and problems:
+        notes.append("; ".join(problems))
+    wanted = sum(f["status"] in ("regression", "improvement") for f in rows)
+    shown = sum(f["status"] in ("regression", "improvement") for f in kept)
+    if shown < wanted:
+        notes.append(f"findings truncated: {shown} of {wanted} kept")
+    return _one_line("; ".join(notes)) or None
 
 
 def error_result(check: str, args: Any, started: str, error: str) -> dict:
