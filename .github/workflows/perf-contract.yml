@@ -8,6 +8,8 @@ name: perf-contract
 
 on:
   pull_request:
+    # bench/tests/conftest.py fails the bench/tests run if a test reads a
+    # repository file this filter does not match.
     paths:
       - "bench/**"
       - "tests/perf/**"
