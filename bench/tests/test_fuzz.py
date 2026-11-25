@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import collections
+import io
 import json
 import os
 import random
@@ -106,6 +107,14 @@ def test_the_full_scan_stays_a_label_less_scan_without_a_limit():
     """It holds the read lock because it visits every edge: no label, no LIMIT, a selective filter."""
     q = model.FULL_SCAN
     assert q.startswith("MATCH (a)-[r]->(b) WHERE") and "LIMIT" not in q
+
+
+def test_a_scale_range_the_cap_cannot_fit_is_refused():
+    with pytest.raises(ValueError, match="exceed the cap"):
+        model.hour_params("s", 1, (0.25, 2.0, 0.4))
+    assert model.hour_params("s", 1, (0.25, 0.3, 0.6))["graphs"] == 2  # only two fit
+    for h in range(1, 20):  # the default range draws the graph count as before
+        assert model.hour_params("s", h)["graphs"] == random.Random(f"s-h{h}").choice([2, 3, 4])
 
 
 def test_the_control_epoch_is_fixed():
@@ -202,6 +211,8 @@ ANALYSE_CASES = [  # (id, check, pass, records, pings, window_s, quiet, ledger p
      {"all_read_timeouts": 1}),
     ("a cheap read may not", "no_timeouts_while_waiting", False, {"reads": [[0, "lookup", 1.0, 1.0, 2.0, 1]]},
      None, None, False, (), {}),
+    ("no cheap read answered", "no_timeouts_while_waiting", None,
+     {"reads": [[0, "lookup", 1.0, 1.0, 2.0, 2], [0, "scan-lookup", 2.0, 2.0, 2.5, 0]]}, None, None, False, (), {}),
     ("late PING, plain server fast", "no_freeze", False, {}, {"falkor": [(5.0, 900.0)], "control": [(5.0, 2.0)]},
      None, False, (), {}),
     ("late PING during a host stall", "no_freeze", True, {}, {"falkor": [(5.0, 900.0)], "control": [(5.0, 400.0)]},
@@ -212,6 +223,8 @@ ANALYSE_CASES = [  # (id, check, pass, records, pings, window_s, quiet, ledger p
     ("under half the epoch covered", "no_freeze", None, {}, _pings(300), 10.0, False, (), {}),
     ("late PING, no plain reply near it", "no_freeze", None, {},
      _pings(1000, late=(500, 900.0), control_gap=(3.9, 6.1)), 10.0, False, (), {"unattributed_late_pings": 1}),
+    ("a freeze with little coverage is still a freeze", "no_freeze", False, {}, _pings(300, late=(100, 900.0)),
+     10.0, False, (), {"freeze_pings": 1}),
     ("a write 0.5 s after the long read", "writers_dont_starve", True,
      {"writes": [[0, "upsert", 11.0, 11.0, 18.5, 0, "", []]], "longs": LONG}, None, None, False, (), {}),
     ("a write 2 s after it", "writers_dont_starve", False,
@@ -290,6 +303,7 @@ def test_ledger_tells_missing_upsert_edges_from_wrong_counts():
     for _s, tt, d in model.PAIRS:
         exact[f"[e:{tt}]"] = n[d]
     exact["WITH DISTINCT p"] = 0  # the acknowledged pair's edge, looked up by its keys
+    exact["count(DISTINCT x.k)"] = 1  # the acknowledged new node, looked up by its key
     missing = led.check(FakeGraph(exact))
     assert [k for k, _ in missing] == ["missing", "missing"]
     exact[f"[e:{t}]"] = n[dst] + 1
@@ -303,6 +317,12 @@ def test_ledger_tells_missing_upsert_edges_from_wrong_counts():
     exact["WITH DISTINCT p"] = 0
     assert [m for k, m in led.check(FakeGraph(exact)) if k == "missing"] == [
         f"g0 {t}: 1 of 1 acknowledged new pairs have no edge"
+    ]
+    # the same for a node: the label's count is right, but the acknowledged new key has no node
+    exact["WITH DISTINCT p"] = 1
+    exact["count(DISTINCT x.k)"] = 0
+    assert led.check(FakeGraph(exact)) == [
+        ("count", f"g0 {dst}: 1 of 1 acknowledged new keys have no node")
     ]
 
 
@@ -583,8 +603,9 @@ def test_replays_of_one_hour_get_their_own_directories(monkeypatch, tmp_path):
 def test_a_server_that_dies_mid_hour_is_a_crash_on_the_epochs_it_did_not_finish(
     monkeypatch, tmp_path
 ):
-    """One epoch done, then the server dies (an error with server_alive False): the two epochs it
-    did not finish are crashes, and long mode reports the server did not stay up."""
+    """One epoch done, then the server dies (an error with server_alive False): the epoch it did
+    not finish is a crash, the one after it never ran, and long mode reports the server did not
+    stay up."""
     hp = model.hour_params("s", 1)
     eps = [model.epoch_params("s", 1, e, hp["graphs"]) for e in (1, 2, 3)]
     done = {"params": eps[0], "checks": {c: {"pass": True} for c in check.LONG_CHECKS}}
@@ -600,7 +621,8 @@ def test_a_server_that_dies_mid_hour_is_a_crash_on_the_epochs_it_did_not_finish(
     monkeypatch.setattr(harness, "run_server_hour", died)
     run, opts = check.Run(tmp_path), {"long_scale_range": (0.25, 2.0, 4.0)}
     cand = check.long_hour(opts, {"candidate": {}}, run, "candidate", 1, "s", None)
-    assert [cand["epochs"][e["seed"]]["server_stays_up"] for e in eps] == [True, False, False]
+    stayed_up = [cand["epochs"].get(e["seed"], {}).get("server_stays_up") for e in eps]
+    assert stayed_up == [True, False, None]
     held = {c: True for c in check.LONG_CHECKS}
     base = {**cand, "side": "baseline", "epochs": {e["seed"]: held for e in eps}}
     f = _by_name(check.long_findings([cand, base], [])[0])["long server_stays_up"]
@@ -695,6 +717,66 @@ def test_the_pool_wait_is_the_wait_for_a_slot_only(monkeypatch):
 
     asyncio.run(refused())
     assert pool._opening == {}
+
+
+def test_the_servers_are_stopped_even_when_their_log_cannot_be_written(monkeypatch, tmp_path):
+    stopped = []
+
+    class NoDocker:
+        def __init__(self, info, name, *a, **kw):
+            self.port, self.name = 1, name
+
+        def start(self):
+            raise kit.DockerError("no docker here")
+
+        def stop(self):
+            stopped.append(self.name)
+            return "log"
+
+    monkeypatch.setattr(harness, "Server", NoDocker)
+    opts = {"name_prefix": "t", "server_cpus": None, "client_cpus": None, "net": "host"}
+    for d in ("b", "h"):  # a directory where the log file should go: writing it fails
+        (tmp_path / d / "server-tail.log").mkdir(parents=True)
+    with pytest.raises(IsADirectoryError):
+        build.build_run(opts, {}, "b", 0.01, str(tmp_path / "b"))
+    hour = {"thread_count": 4, "hour": 1, "scales": []}
+    with pytest.raises(IsADirectoryError):
+        harness.run_server_hour(opts, {}, "h", hour, [], str(tmp_path / "h"))
+    assert stopped == ["t-b", "t-h", "t-h-plain"]
+
+
+def test_a_reply_that_is_not_pong_is_no_ping_sample():
+    async def main():
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"-LOADING the dataset is loading\r\n+PONG\r\n")
+        reader.feed_eof()
+        f, alive = io.StringIO(), [True]
+        await harness._replies(f, "control", reader, collections.deque([1.0, 2.0]), alive)
+        return f.getvalue().splitlines(), alive[0]
+
+    lines, alive = asyncio.run(main())
+    assert [x.split(",")[:2] for x in lines] == [["control", "2.0000"]] and alive is False
+
+
+def test_a_driver_result_left_by_an_earlier_attempt_is_removed(tmp_path):
+    (tmp_path / "long.json").write_text('{"longs": [], "writes": [[0, "stale"]]}')
+    (tmp_path / "async.json").write_text("{}")
+    lp, ap = harness.driver_results(str(tmp_path))
+    assert (lp, ap) == (str(tmp_path / "long.json"), str(tmp_path / "async.json"))
+    assert not os.path.exists(lp) and not os.path.exists(ap)
+
+
+def test_an_aligned_write_still_waiting_at_the_end_is_unfinished():
+    gate, release = harness.SnapshotGate(), threading.Event()
+    done = threading.Thread(target=lambda: None)
+    stuck = threading.Thread(target=release.wait, daemon=True)
+    for t in (done, stuck):
+        t.start()
+    try:
+        assert harness.finish_aligned(gate, [done, stuck], harness.now() + 0.05) == 1
+        assert gate.admit(["after the drain"]) is False  # no aligned write starts any more
+    finally:
+        release.set()
 
 
 def test_index_waits_after_the_load_share_one_budget(monkeypatch):
@@ -916,6 +998,12 @@ def test_a_freeze_repro_needs_its_scenario_to_form():
     probe = repros._Pinger(harness.free_port())  # nothing listens there: its first PING fails
     probe._run()
     assert probe.error.startswith("lost: ConnectionError") and probe.pings == []
+    blocked = repros._Pinger(1)  # a PING still waiting for its reply after the read
+    blocked.t = threading.Thread(target=threading.Event().wait, daemon=True)
+    blocked.t.start()
+    blocked.t.join = lambda timeout=None: None
+    blocked.__exit__(None, None, None)
+    assert blocked.error == "a PING still had no reply after the long read ended"
 
 
 def test_reads_behind_writer_needs_every_reply(monkeypatch):
@@ -1024,7 +1112,7 @@ def test_control_findings(runs, repeat, check_name, want):
 
 
 # fmt: off
-THE_BUILD_THRESHOLD_IS_STRICT_CASES = [
+BUILD_THRESHOLD_CASES = [
     (151.0, 100.0, 50.0, 1), (150.0, 100.0, 0.0, 0),    # the ratio must exceed 1.5
     (151.0, 100.0, 51.0, 0),                            # and the difference the floor
     (100.0, 151.0, 50.0, -1), (100.0, 150.0, 0.0, 0),   # improvements mirror it
@@ -1034,13 +1122,13 @@ THE_BUILD_THRESHOLD_IS_STRICT_CASES = [
 # fmt: on
 
 
-@pytest.mark.parametrize("cand, base, floor, want", THE_BUILD_THRESHOLD_IS_STRICT_CASES)
+@pytest.mark.parametrize("cand, base, floor, want", BUILD_THRESHOLD_CASES)
 def test_the_build_threshold_is_strict(cand, base, floor, want):
     assert verdict.crosses(cand, base, floor) == want
 
 
 # fmt: off
-BUILD_REGRESSION_NEEDS_A_REPEAT_CASES = [
+BUILD_REPEAT_CASES = [
     (7900.0, 8000.0, "regression"),   # crossed, and again in the extra pair
     (7900.0, 1350.0, "info"),         # crossed once, not repeated
     (None, None, "ok"),               # under the threshold: no repeat, ok
@@ -1048,7 +1136,25 @@ BUILD_REGRESSION_NEEDS_A_REPEAT_CASES = [
 # fmt: on
 
 
-@pytest.mark.parametrize("first_edges, repeat_edges, want", BUILD_REGRESSION_NEEDS_A_REPEAT_CASES)
+def test_a_build_row_shows_the_values_that_decided_it():
+    """First runs 100 and 8,000 ms against 2,000 and 3,000 (medians 4,050 vs 2,500: crossed), then
+    a repeat of 1,000 vs 100 (crossed again): a regression. Pooled, the medians would be 1,000 vs
+    2,000 and show the candidate faster; the row shows the first runs' medians instead."""
+    first = [
+        ("candidate", 100.0),
+        ("baseline", 2000.0),
+        ("baseline", 3000.0),
+        ("candidate", 8000.0),
+    ]
+    runs = [_build(s, i, ms) for i, (s, ms) in enumerate(first)]
+    runs += [_build("baseline", 4, 100.0, True), _build("candidate", 5, 1000.0, True)]
+    findings, notes = verdict.build_findings(runs)
+    row = _by_name(findings)["build edge phase"]
+    assert (row["status"], row["candidate"], row["baseline"]) == ("regression", 4050.0, 2500.0)
+    assert row["ratio"] == pytest.approx(1.62) and "repeat 1000 vs 100 ms" in notes[0]
+
+
+@pytest.mark.parametrize("first_edges, repeat_edges, want", BUILD_REPEAT_CASES)
 def test_build_regression_needs_a_repeat(first_edges, repeat_edges, want):
     edges = first_edges or 1400.0
     runs = [
@@ -1061,7 +1167,7 @@ def test_build_regression_needs_a_repeat(first_edges, repeat_edges, want):
 
 
 # fmt: off
-A_BUILD_CRASH_IS_JUDGED_ON_WHAT_EACH_SIDE_SHOWED_CASES = [
+BUILD_CRASH_CASES = [
     ([{"side": "candidate", "server_died": True}, {"side": "baseline", "ok": False}], (0, None, "regression")),
     ([{"side": "candidate", "server_died": True}, {"side": "baseline", "ok": True}], (0, 1, "regression")),
     ([{"side": "candidate", "ok": True}, {"side": "baseline", "server_died": True}], (1, 0, "improvement")),
@@ -1070,7 +1176,7 @@ A_BUILD_CRASH_IS_JUDGED_ON_WHAT_EACH_SIDE_SHOWED_CASES = [
 # fmt: on
 
 
-@pytest.mark.parametrize("runs, want", A_BUILD_CRASH_IS_JUDGED_ON_WHAT_EACH_SIDE_SHOWED_CASES)
+@pytest.mark.parametrize("runs, want", BUILD_CRASH_CASES)
 def test_a_build_crash_is_judged_on_what_each_side_showed(runs, want):
     f = check.build_crash_finding(runs)
     assert (f if f is None else (f["candidate"], f["baseline"], f["status"])) == want
@@ -1202,6 +1308,9 @@ LONG_CASES = [  # (id, hours, check, (candidate, baseline, status), something un
                                          _hour("baseline", {"x-h1-e1": {}})],
      "server_stays_up", (0, None, "regression"), True),
     ("lone seeds that held", [_hour("candidate", {"x-h1-e1": {}})], "writes_add_up", (1, None, "info"), True),
+    ("a seed the candidate did not measure", [_hour("candidate", {"x-h1-e1": {"no_freeze": None}}),
+                                              _hour("baseline", {"x-h1-e1": {}})],
+     "no_freeze", (None, 1, "info"), True),
 ]
 # fmt: on
 
@@ -1234,7 +1343,7 @@ def _repro(side, passed, replay=False, crashed=False):
 
 
 # fmt: off
-LONG_REPROS_USE_THE_SAME_REPEAT_RULE_CASES = [
+REPRO_CASES = [
     ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", True, True),
       _repro("candidate", False, True)], (0, 1, "regression")),
     ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", True, True),
@@ -1243,11 +1352,16 @@ LONG_REPROS_USE_THE_SAME_REPEAT_RULE_CASES = [
       _repro("candidate", False, True)], (0, 0, "info")),
     ([_repro("candidate", False, crashed=True), _repro("baseline", True)], (0, 1, "regression")),
     ([_repro("candidate", False), _repro("baseline", True)], (None, 1, "info")),
+    # a crash counts at once against the baseline's crashes, in the repeat too
+    ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", None, True),
+      _repro("candidate", False, True, crashed=True)], (0, 1, "regression")),
+    ([_repro("candidate", False, crashed=True), _repro("baseline", False)], (0, 1, "regression")),
+    ([_repro("candidate", False, crashed=True), _repro("baseline", False, crashed=True)], (0, 0, "info")),
 ]
 # fmt: on
 
 
-@pytest.mark.parametrize("runs, want", LONG_REPROS_USE_THE_SAME_REPEAT_RULE_CASES)
+@pytest.mark.parametrize("runs, want", REPRO_CASES)
 def test_long_repros_use_the_same_repeat_rule(runs, want):
     f = _by_name(check.long_findings([], runs)[0])["long repro write-create"]
     assert (f["candidate"], f["baseline"], f["status"]) == want
@@ -1257,7 +1371,7 @@ def test_long_repros_use_the_same_repeat_rule(runs, want):
 
 
 # fmt: off
-THE_SERVER_IS_THE_IMAGES_OWN_DEFAULT_CASES = [
+SERVER_BINARY_CASES = [
     (["PATH=/bin", "FALKORDB_SERVER=valkey"], ["/usr/local/bin/valkey-server", "/usr/local/bin/redis-server"],
      "/usr/local/bin/valkey-server"),
     (["PATH=/bin"], ["/usr/local/bin/valkey-server", "/usr/local/bin/redis-server"], "/usr/local/bin/redis-server"),
@@ -1267,7 +1381,7 @@ THE_SERVER_IS_THE_IMAGES_OWN_DEFAULT_CASES = [
 # fmt: on
 
 
-@pytest.mark.parametrize("env, has, want", THE_SERVER_IS_THE_IMAGES_OWN_DEFAULT_CASES)
+@pytest.mark.parametrize("env, has, want", SERVER_BINARY_CASES)
 def test_the_server_is_the_images_own_default(monkeypatch, env, has, want):
     def fake_docker(*a, **kw):
         script = a[-1]

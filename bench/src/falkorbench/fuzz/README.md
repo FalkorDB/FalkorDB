@@ -79,12 +79,12 @@ so a re-run of the same candidate repeats it (`--seed` overrides).
 
 | check | holds when |
 | --- | --- |
-| `no_freeze` | no FalkorDB PING is answered more than 500 ms after it was due while the plain server answered within 100 ms (a reply from it within ±1 s is needed). Unmeasured (null) when the prober got fewer than half the PINGs the epoch should have had from either server, or when a late PING had no plain-server reply near it |
-| `no_timeouts_while_waiting` | no cheap read times out. Cheap: its calibrated cost is under 5% of its TIMEOUT. A read that is not cheap is listed under `not_judged`, never counted |
-| `writers_dont_starve` | every write finishes within 1 s of the end of the long reads it waited behind, counted from when it reached the head of its graph's write queue |
+| `no_freeze` | no FalkorDB PING is answered more than 500 ms after it was due while the plain server answered within 100 ms (a reply from it within ±1 s is needed). A freeze seen counts however few PINGs came back; holding is unmeasured (null) when the prober got fewer than half the PINGs the epoch should have had from either server, or when a late PING had no plain-server reply near it. Only a PONG is a sample |
+| `no_timeouts_while_waiting` | no cheap read times out. Cheap: its calibrated cost is under 5% of its TIMEOUT. A read that is not cheap is listed under `not_judged`, never counted. Unmeasured when no cheap read was answered or timed out |
+| `writers_dont_starve` | every write finishes within 1 s of the end of the long reads it waited behind, counted from when it reached the head of its graph's write queue (writes queue in the order they reached the server) |
 | `quiet_graphs_stay_fast` | on a graph with no long reads and no writes, every read finishes within 100 ms of its calibrated cost |
-| `requests_drain` | every read finishes within 5 s, plus the time to work off the reads queued with it, of the end of the long reads it waited behind; nothing is still open 60 s after the load stops |
-| `writes_add_up` | node counts of the upserted labels and edge counts of their pairs are within what the committed writes allow (between "committed" and "committed + outcome unknown"), with no extra edge and no key on two nodes |
+| `requests_drain` | every read finishes within 5 s, plus the time to work off the reads queued with it, of the end of the long reads it waited behind; nothing, a long read or a write sent with one, is still open 60 s after the load stops |
+| `writes_add_up` | node counts of the upserted labels and edge counts of their pairs are within what the committed writes allow (between "committed" and "committed + outcome unknown"), every acknowledged new key has its node, with no extra edge and no key on two nodes |
 | `upsert_edges_complete` | no pair type has fewer edges than the committed upserts created, and every acknowledged new pair has its edge (an engine that drops the upsert's final MATCH rows loses them, #3082) |
 | `no_error_replies` | no request gets an error reply or loses its connection (an engine that rejects or drops a query breaks it) |
 | `server_stays_up` | the server neither exits nor stops answering: no PING unanswered for 60 s during the load, and a PONG to one of 3 PINGs (10 s each) after it and after any failed step (`completed` 0 if it does). A container Docker could not start, or a Docker command that timed out, is not a crash: that run is unmeasured |
@@ -124,7 +124,8 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
 * **Data checks** (`writes_add_up`, `upsert_edges_complete`) and a crash count at once.
 * Contract v1.4 sets the status: 0 on the candidate only is `regression`, 0 on both sides is `info`
   ("broken on both sides (not new)"), 0 on the baseline only is `improvement`.
-* **Graph-build timing**, metric `p50_ms` (the median over a side's runs):
+* **Graph-build timing**, metric `p50_ms` (the median over a side's first runs, the values that
+  decide the row's status; the extra pair's medians are in the summary):
   `build edge phase` and `build node phase` (total wall time of the phase), and
   `build edge query 1 row` and `build edge query 100 rows`. These run the edge-wiring shape on
   its own after the build, 5 times, median. A regression needs ratio > 1.5 and a difference over
@@ -138,7 +139,8 @@ Every check is a finding with metric `invariant` (1 held, 0 broke) named `contro
   `constraints_hold`, `index_matches_scan`) or a crash counts at once, in any epoch, replays
   included, and also on a seed (or replay) the baseline never ran or did not measure. A seed
   where the candidate broke and the baseline held is a regression however the other seeds went. A
-  repro is a timing check unless the server crashed in it.
+  repro is a timing check unless the server crashed in it, in its first run or its repeat. A server
+  that dies during a server-hour is a crash on the epoch it did not finish.
 
 The verdict is `regression` if any finding is a regression. Otherwise it is `error` if something
 was not measured, with the reason in `error`: a run whose harness or Docker failed, a check that a

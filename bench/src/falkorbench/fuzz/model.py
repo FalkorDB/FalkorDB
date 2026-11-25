@@ -248,8 +248,13 @@ def hour_params(
     """A server-hour: a fresh server with THREAD_COUNT drawn, and 2-4 graphs at their own scales
     (their sum capped)."""
     rng = random.Random(f"{seed}-h{h}")
-    ng = rng.choice([2, 3, 4])
     lo, hi, cap = scale_range
+    fits = [k for k in (2, 3, 4) if round(lo, 2) * k <= cap]  # graph counts the cap allows
+    if not fits:
+        raise ValueError(
+            f"scale range {scale_range}: two graphs of at least {lo} exceed the cap {cap}"
+        )
+    ng = rng.choice(fits)
     while True:
         scales = [round(rng.uniform(lo, hi), 2) for _ in range(ng)]
         if sum(scales) <= cap:

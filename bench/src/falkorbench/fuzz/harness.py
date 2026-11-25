@@ -323,7 +323,8 @@ async def _replies(f, name, reader, pending, alive):
             t = now()
             if pending:
                 sched = pending.popleft()
-                f.write(f"{name},{sched:.4f},{(t - sched) * 1000:.2f}\n")
+                if line.startswith(b"+PONG"):  # an error reply (-LOADING) is no sample of a PONG
+                    f.write(f"{name},{sched:.4f},{(t - sched) * 1000:.2f}\n")
     finally:
         alive[0] = False
 
@@ -386,6 +387,11 @@ class SnapshotGate:
             self.records.append(rec)
             return True
 
+    def shut(self):
+        """Admit no more writes; those already admitted keep their records."""
+        with self.lock:
+            self.closed = True
+
     def close(self, write):
         """Stop admitting writes and call write(records) under the lock (no record changes meanwhile)."""
         with self.lock:
@@ -393,11 +399,20 @@ class SnapshotGate:
             write(self.records)
 
 
+def finish_aligned(gate, timers, deadline) -> int:
+    """Admit no more aligned writes, give those in flight until the drain's deadline, and return
+    how many are still waiting: they count as unfinished, like a long read still running."""
+    gate.shut()
+    for t in timers:
+        t.join(max(0.0, deadline - now()))
+    return sum(t.is_alive() for t in timers)
+
+
 def long_proc(cfg: dict, stop, scanning, out_path: str):
     ep, sizes, port = cfg["ep"], cfg["sizes"], cfg["port"]
-    longs, died = [], []
+    longs, died, timers = [], [], []
     lock = threading.Lock()
-    gate = SnapshotGate()  # the aligned writes: their timer threads are not joined
+    gate = SnapshotGate()  # the aligned writes, each on a timer thread
 
     def aligned_write(g, rng):
         cypher, params, keys = model.make_upsert(sizes[g], rng)
@@ -432,9 +447,12 @@ def long_proc(cfg: dict, stop, scanning, out_path: str):
                     scanning[g] += 1
                 try:
                     if rng.random() < model.SCAN_WRITE_P:
-                        threading.Timer(
+                        timer = threading.Timer(
                             0.001, aligned_write, args=(g, random.Random(rng.random()))
-                        ).start()
+                        )
+                        with lock:
+                            timers.append(timer)
+                        timer.start()
                     for op, cypher, params in batch:
                         if stop.is_set():
                             break
@@ -474,7 +492,9 @@ def long_proc(cfg: dict, stop, scanning, out_path: str):
     deadline = now() + cfg["drain_s"]
     for t in threads:
         t.join(max(0.1, deadline - now()))
-    unfinished = sum(t.is_alive() for t in threads)
+    with lock:
+        started = list(timers)
+    unfinished = sum(t.is_alive() for t in threads) + finish_aligned(gate, started, deadline)
 
     def dump(writes):
         with lock, open(out_path, "w") as f:
@@ -983,6 +1003,16 @@ def calibrate(r, ng, sizes, seed) -> list[dict]:
 # --- running one epoch ----------------------------------------------------------------------------
 
 
+def driver_results(edir) -> tuple[str, str]:
+    """Where the long-read and the async driver write their results; a file an earlier attempt
+    left there is removed, so a driver that writes nothing is never read as this epoch's."""
+    paths = os.path.join(edir, "long.json"), os.path.join(edir, "async.json")
+    for p in paths:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(p)
+    return paths
+
+
 def run_epoch(
     opts: dict,
     server: Server,
@@ -1014,7 +1044,7 @@ def run_epoch(
         "max_conns": opts["max_conns"],
         "max_inflight_writes": ep.get("max_inflight_writes", MAX_INFLIGHT_WRITES),
     }
-    lp, ap = os.path.join(edir, "long.json"), os.path.join(edir, "async.json")
+    lp, ap = driver_results(edir)
     p_long = mp.Process(target=long_proc, args=(base_cfg, stop, scanning, lp), daemon=True)
     p_async = mp.Process(target=async_proc, args=(base_cfg, stop, scanning, ap), daemon=True)
     t_start = now()
@@ -1376,9 +1406,10 @@ def run_server_hour(
             prober.join(5)
             if prober.is_alive():
                 prober.kill()
-        with open(os.path.join(hdir, "server-tail.log"), "w") as f:
-            f.write(server.stop())
+        tail = server.stop()  # first: both servers go even if the log cannot be written
         control.stop()
+        with open(os.path.join(hdir, "server-tail.log"), "w") as f:
+            f.write(tail)
     with open(os.path.join(hdir, "hour.json"), "w") as f:
         json.dump({k: v for k, v in out.items() if k != "epochs"}, f, indent=1, default=str)
     return out

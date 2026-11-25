@@ -99,6 +99,8 @@ class _Pinger:
     def __exit__(self, *a):
         self.stop.set()
         self.t.join(5)
+        if self.t.is_alive() and not self.error:  # still waiting for a PONG after the read
+            self.error = "a PING still had no reply after the long read ended"
 
     def during(self, a, b):
         return [lat for t, lat in self.pings if a <= t <= b]

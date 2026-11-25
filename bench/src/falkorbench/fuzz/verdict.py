@@ -194,11 +194,12 @@ def build_needs_confirmation(runs: list[dict]) -> list[str]:
 
 
 def build_findings(runs: list[dict]) -> tuple[list[dict], list[str]]:
+    """A row per build metric, showing the first runs' medians: the values that decide its status.
+    A repeat pair only confirms a crossing; its medians are in the notes."""
     findings, notes = [], []
     has_extra = any(r.get("extra") for r in runs)
     for name, key, floor in BUILD_METRICS:
         c1, b1 = build_side(runs, key, "candidate", False), build_side(runs, key, "baseline", False)
-        cand, base = build_side(runs, key, "candidate"), build_side(runs, key, "baseline")
         first = crosses(c1, b1, floor)
         if first > 0:
             ce, be = (
@@ -219,9 +220,9 @@ def build_findings(runs: list[dict]) -> tuple[list[dict], list[str]]:
         elif first < 0:
             status = "improvement"
         else:
-            status = "ok" if cand is not None and base is not None else "info"
+            status = "ok" if c1 is not None and b1 is not None else "info"
         findings.append(
-            kit.finding(name, "p50_ms", _r(cand), _r(base), status, threshold=BUILD_THRESHOLD)
+            kit.finding(name, "p50_ms", _r(c1), _r(b1), status, threshold=BUILD_THRESHOLD)
         )
     return findings, notes
 

@@ -76,8 +76,9 @@ def build_run(opts: dict, info: dict, tag: str, scale: float, rdir: str) -> dict
         out["error"] = f"{type(e).__name__}: {e}"[:500]
         out.update(harness.after_failure(server, e))
     finally:
+        tail = server.stop()  # first: the server goes even if its log cannot be written
         with open(os.path.join(rdir, "server-tail.log"), "w") as f:
-            f.write(server.stop())
+            f.write(tail)
     with open(os.path.join(rdir, "build.json"), "w") as f:
         json.dump(out, f, indent=1)
     harness.log(

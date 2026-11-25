@@ -164,6 +164,20 @@ class Ledger:
                             + (f"..{hi}" if hi != lo else ""),
                         )
                     )
+                # the count can hide a lost node behind one an unknown-outcome write added: look
+                # each acknowledged new key up
+                if not self.incomplete:
+                    acked = sorted(new_ok)
+                    found = sum(
+                        one(
+                            f"CYPHER keys={json.dumps(acked[b0 : b0 + PAIR_BATCH])} "
+                            f"MATCH (x:{label}) WHERE x.k IN $keys RETURN count(DISTINCT x.k)"
+                        )
+                        for b0 in range(0, len(acked), PAIR_BATCH)
+                    )
+                    if found < len(acked):
+                        lost = f"{len(acked) - found} of {len(acked)} acknowledged new keys"
+                        problems.append(("count", f"g{g} {label}: {lost} have no node"))
                 dup = one(
                     f"MATCH (x:{label}) WITH x.k AS k, count(*) AS c WHERE c > 1 RETURN count(k)"
                 )
@@ -274,10 +288,10 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     fl = [l_ for _, l_ in pings["falkor"]]
     cl = [l_ for _, l_ in pings["control"]]
     need = PING_COVERAGE * data["window_s"] / PING_INTERVAL_S if data.get("window_s") else 1
-    if len(fl) < need or len(cl) < need:
-        frozen = None  # the prober did not measure enough of the epoch to say
-    elif freeze:
+    if freeze:  # a freeze seen is a freeze, however much of the epoch the prober covered
         frozen = False
+    elif len(fl) < need or len(cl) < need:
+        frozen = None  # the prober did not measure enough of the epoch to say it held
     else:
         frozen = None if unattributed else True
     checks["no_freeze"] = {
@@ -303,8 +317,10 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     pool_limited_reads = [r_ for r_ in reads if _pool_wait(r_, 6) > DRIVER_LAG_S]
     spurious = sum(c for k, c in tos.items() if k in cheap)
     nreads = len(reads)
+    answered = sum(1 for r_ in reads if (r_[0], r_[1]) in cheap and r_[5] in (0, 1))
     checks["no_timeouts_while_waiting"] = {
-        "pass": spurious == 0,
+        # no cheap read answered (or timed out): nothing was measured under load
+        "pass": None if not answered else spurious == 0,
         "spurious_timeouts": spurious,
         "reads": nreads,
         "timeout_rate": round(sum(tos.values()) / nreads, 5) if nreads else 0,

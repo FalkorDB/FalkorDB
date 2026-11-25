@@ -266,12 +266,15 @@ def long_hour(opts, info, run: Run, side, h, seed, deadline, epochs=None, replay
         res["epochs"][e["params"]["seed"]] = verdict.epoch_values(
             e.get("checks", {}), LONG_CHECKS, NA
         )
-    # the server died during the hour: every epoch it did not finish is a crash on that seed
+    # the server died during the hour: the first epoch it did not finish is a crash on that seed
+    # (the ones after it never ran)
     if res["server_died"]:
-        for e in eps:
-            res["epochs"].setdefault(
-                e["seed"], {**{c: None for c in LONG_CHECKS}, "server_stays_up": False}
-            )
+        lost = next((e for e in eps if e["seed"] not in res["epochs"]), None)
+        if lost is not None:
+            res["epochs"][lost["seed"]] = {
+                **{c: None for c in LONG_CHECKS},
+                "server_stays_up": False,
+            }
     elif res["error"]:
         run.unmeasured.append(f"{tag}: {res['error'][:160]}")
     run.runs["long"].append(res)
@@ -395,7 +398,11 @@ def _long_timing(chk, vals, sus, c_rep, b_rep):
         return 0, 0
     if any(b is False and c is True for c, b in vals):
         return 1, 0
-    return 1, 1
+    # held wherever measured: a side held only if it was measured on every seed
+    return (
+        None if any(c is None for c, _ in vals) else 1,
+        None if any(b is None for _, b in vals) else 1,
+    )
 
 
 def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
@@ -474,14 +481,15 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
             return next((r for r in sides.get(side, []) if bool(r.get("replay")) == replay), {})
 
         c, b = pick("candidate", False), pick("baseline", False)
+        ca, ba = pick("candidate", True), pick("baseline", True)
         cv, bv = _v(c.get("pass")), _v(b.get("pass"))
-        if cv == 0 and c.get("crashed"):  # a crash counts at once
+        if c.get("crashed") or ca.get("crashed"):
+            # a crash counts at once, in the first run or the repeat, against the baseline's crashes
+            ran = b.get("pass") is not None or ba.get("pass") is not None
+            cv, bv = 0, 0 if b.get("crashed") or ba.get("crashed") else (1 if ran else None)
             status = kit.correctness_status(cv, bv)
-        else:  # a timing break: it must repeat (a crash on the repeat counts as breaking again)
-            ca, ba = pick("candidate", True), pick("baseline", True)
-            cv, bv, status = verdict.judge_repeat(
-                cv, bv, 0 if ca.get("crashed") else _v(ca.get("pass")), _v(ba.get("pass"))
-            )
+        else:  # a timing break: it must repeat
+            cv, bv, status = verdict.judge_repeat(cv, bv, _v(ca.get("pass")), _v(ba.get("pass")))
         if cv is None or bv is None:
             unmeasured.append(f"long repro {name}: not measured on both sides")
         findings.append(verdict._invariant(f"long repro {name}", "invariant", cv, bv, status))
