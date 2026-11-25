@@ -246,28 +246,36 @@ class testReplication(FlowTestsBase):
         n = 300
         props = ", ".join(f"p{i}: {i}" for i in range(n))
 
-        for version in (2, 3):
+        # EFFECTS_VERSION is server state, so it has to be put back whatever
+        # happens here: left at 3, every test that runs after this one in the
+        # class would get v3 without asking for it, and a failure there would
+        # be blamed on that test
+        try:
+            for version in (2, 3):
+                source_con.execute_command("GRAPH.CONFIG", "SET",
+                                           "EFFECTS_VERSION", version)
+
+                key = f"wide-{version}"
+                src     = Graph(source_con,  key)
+                replica = Graph(replica_con, key)
+
+                src.query(f"CREATE (:Wide {{{props}}})")
+                src.query(f"CREATE (:S)-[:R {{{props}}}]->(:T)")
+                source_con.execute_command("WAIT", "1", "0")
+
+                for what, q in (("node", "MATCH (n:Wide) RETURN size(keys(n))"),
+                                ("edge", "MATCH ()-[r:R]->() RETURN size(keys(r))")):
+                    on_src     = src.query(q).result_set[0][0]
+                    on_replica = replica.query(q).result_set[0][0]
+
+                    env.assertEquals(on_src, n,
+                            message=f"v{version} {what}: master lost properties")
+                    env.assertEquals(on_replica, on_src,
+                            message=f"v{version} {what}: replica has {on_replica} "
+                                    f"of the master's {on_src} properties")
+        finally:
             source_con.execute_command("GRAPH.CONFIG", "SET",
-                                       "EFFECTS_VERSION", version)
-
-            key = f"wide-{version}"
-            src     = Graph(source_con,  key)
-            replica = Graph(replica_con, key)
-
-            src.query(f"CREATE (:Wide {{{props}}})")
-            src.query(f"CREATE (:S)-[:R {{{props}}}]->(:T)")
-            source_con.execute_command("WAIT", "1", "0")
-
-            for what, q in (("node", "MATCH (n:Wide) RETURN size(keys(n))"),
-                            ("edge", "MATCH ()-[r:R]->() RETURN size(keys(r))")):
-                on_src     = src.query(q).result_set[0][0]
-                on_replica = replica.query(q).result_set[0][0]
-
-                env.assertEquals(on_src, n,
-                        message=f"v{version} {what}: master lost properties")
-                env.assertEquals(on_replica, on_src,
-                        message=f"v{version} {what}: replica has {on_replica} "
-                                f"of the master's {on_src} properties")
+                                       "EFFECTS_VERSION", 2)
 
     def test_computed_string_update_replication(self):
         # a string the QUERY allocated, not one the parser folded
@@ -288,30 +296,36 @@ class testReplication(FlowTestsBase):
         replica_con = env.getSlaveConnection()
         replica_con.config_set("slave-read-only", "no")
 
-        for version in (2, 3):
+        # put EFFECTS_VERSION back whatever happens - see the note in
+        # test_wide_entity_replication
+        try:
+            for version in (2, 3):
+                source_con.execute_command("GRAPH.CONFIG", "SET",
+                                           "EFFECTS_VERSION", version)
+
+                key = f"computed-{version}"
+                src     = Graph(source_con,  key)
+                replica = Graph(replica_con, key)
+
+                src.query("CREATE (:V {s: 'a', t: 'x'})")
+
+                for q, expect in (
+                        ("MATCH (n:V) SET n.s = n.s + '!'",            "a!"),
+                        ("MATCH (n:V) SET n.s = toUpper(n.s)",         "A!"),
+                        ("MATCH (n:V) SET n.s = n.t + '?'",            "x?"),
+                        ("MATCH (n:V) SET n.s = n.s + '1', n.s = n.s + '2'", "x?2")):
+                    src.query(q)
+                    source_con.execute_command("WAIT", "1", "0")
+
+                    on_src = src.query("MATCH (n:V) RETURN n.s").result_set[0][0]
+                    env.assertEquals(on_src, expect,
+                            message=f"v{version}: {q}")
+
+                    on_replica = replica.query(
+                            "MATCH (n:V) RETURN n.s").result_set[0][0]
+                    env.assertEquals(on_replica, on_src,
+                            message=f"v{version}: replica has {on_replica!r}, "
+                                    f"master {on_src!r} after {q}")
+        finally:
             source_con.execute_command("GRAPH.CONFIG", "SET",
-                                       "EFFECTS_VERSION", version)
-
-            key = f"computed-{version}"
-            src     = Graph(source_con,  key)
-            replica = Graph(replica_con, key)
-
-            src.query("CREATE (:V {s: 'a', t: 'x'})")
-
-            for q, expect in (
-                    ("MATCH (n:V) SET n.s = n.s + '!'",            "a!"),
-                    ("MATCH (n:V) SET n.s = toUpper(n.s)",         "A!"),
-                    ("MATCH (n:V) SET n.s = n.t + '?'",            "x?"),
-                    ("MATCH (n:V) SET n.s = n.s + '1', n.s = n.s + '2'", "x?2")):
-                src.query(q)
-                source_con.execute_command("WAIT", "1", "0")
-
-                on_src = src.query("MATCH (n:V) RETURN n.s").result_set[0][0]
-                env.assertEquals(on_src, expect,
-                        message=f"v{version}: {q}")
-
-                on_replica = replica.query(
-                        "MATCH (n:V) RETURN n.s").result_set[0][0]
-                env.assertEquals(on_replica, on_src,
-                        message=f"v{version}: replica has {on_replica!r}, "
-                                f"master {on_src!r} after {q}")
+                                       "EFFECTS_VERSION", 2)
