@@ -333,8 +333,7 @@ jobs:
       # On a cache miss it builds the bench image and pushes it to ghcr; the
       # VM pulls with read.
       packages: write
-    # TEMPORARY: perf-micro's branch until _perf-micro.yml is on main (#3977); then ./.github/workflows/_perf-micro.yml
-    uses: FalkorDB/FalkorDB/.github/workflows/_perf-micro.yml@ci/perf-micro
+    uses: ./.github/workflows/_perf-micro.yml
     with:
       candidate_image: ${{ needs.resolve.outputs.candidate_image }}
       baseline_image: ${{ needs.resolve.outputs.baseline_image }}
@@ -357,8 +356,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.resolve.outputs.vm_matrix) }}
-    # TEMPORARY: perf-gce-runner's branch until _perf-vm.yml is on main (#3979); then ./.github/workflows/_perf-vm.yml
-    uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
+    uses: ./.github/workflows/_perf-vm.yml
     with:
       check: ${{ matrix.check }}
       command: ${{ matrix.command }}
