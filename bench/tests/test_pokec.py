@@ -1067,3 +1067,81 @@ def test_a_finished_run_without_a_succeeded_query_s_percentiles_is_rejected(tmp_
     run = pokec.Run("medium", "write5", "candidate", 1, 1)
     with pytest.raises(pokec.SetupError, match="single_vertex_read"):
         check._read_output(run, qfile, folder, 0)
+
+
+# --- the move into bench (falkorbench.kit), kept as tests ---------------------------
+
+
+def test_the_log_survives_a_closed_stdout(tmp_path, monkeypatch):
+    class Closed:
+        def write(self, _):
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self):
+            raise BrokenPipeError(32, "Broken pipe")
+
+    log = pokec.Log(tmp_path / "check.log")
+    monkeypatch.setattr("sys.stdout", Closed())
+    log("verdict regression")  # `| tee` closed: the result write must still happen
+    assert "verdict regression" in (tmp_path / "check.log").read_text()
+
+
+def test_a_relative_out_is_made_absolute(tmp_path, monkeypatch):
+    # _perf-vm.yml passes `--out out`; the benchmark runs from other directories (contract v1.8).
+    monkeypatch.chdir(tmp_path)
+    args = make_check(tmp_path).args
+    args.out = "out"
+    check = pokec.Check(args)
+    assert check.out == tmp_path / "out" and check.raw.is_absolute()
+
+
+def test_every_container_carries_the_label_cleanup_removes(tmp_path, monkeypatch):
+    seen = {}
+
+    def start(image, name, **kwargs):
+        seen.update(kwargs)
+        return kit.Container(name, 12345)
+
+    monkeypatch.setattr(kit, "start", start)
+    monkeypatch.setattr(kit, "image_env", lambda image: {"FALKORDB_ARGS": "TIMEOUT 1000"})
+    check = make_check(tmp_path)
+    check.start("candidate", "probe")
+    assert [f"{k}={v}" for k, v in seen["labels"].items()] == [check.label]
+    assert seen["env"] == {"FALKORDB_ARGS": "TIMEOUT 1000 THREAD_COUNT 10"}
+
+
+def test_a_docker_failure_is_an_error_not_a_crash(tmp_path, monkeypatch):
+    monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
+    monkeypatch.setattr(kit, "remove_labelled", lambda label: None)
+
+    def main(self):
+        raise kit.DockerError("docker run failed (exit 125): no space left on device")
+
+    monkeypatch.setattr(pokec.Check, "main", main)
+    out = tmp_path / "out"
+    pokec.main(
+        [
+            "--candidate",
+            CAND,
+            "--baseline",
+            BASE,
+            "--out",
+            str(out),
+            "--mode",
+            "nightly",
+            "--tools-dir",
+            str(tmp_path / "tools"),
+        ]
+    )
+    result = json.loads((out / "result.json").read_text())
+    assert result["verdict"] == "error" and "no space left on device" in result["error"]
+    assert "crashed" not in result["error"]
+
+
+def test_rank_puts_the_worst_first_within_a_status():
+    rows = [
+        {**kit.finding(f"q{i}", "p99_ms", 2.0, 1.0, "regression"), "_sort": s}
+        for i, s in ((1, 1.5), (2, 9.0), (3, 3.0))
+    ]
+    assert [f["name"] for f in pokec.rank(rows)] == ["q2", "q3", "q1"]
+    assert all(not k.startswith("_") for f in pokec.rank(rows) for k in f)

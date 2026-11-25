@@ -40,6 +40,7 @@ from typing import Any
 from falkorbench import kit
 
 CHECK = "pokec"
+LABEL = "perf-pokec"  # docker label key on every container this check starts
 
 # --- pinned tools and data ---------------------------------------------------
 
@@ -197,7 +198,8 @@ class Log:
 
     def __call__(self, message: str) -> None:
         line = f"[{datetime.now(UTC).strftime('%H:%M:%S')}] {message}"
-        print(line, flush=True)
+        with contextlib.suppress(OSError):  # a closed stdout (`| tee`, ^C) must not cost the result
+            print(line, flush=True)
         try:
             self.file.write(line + "\n")
             self.file.flush()
@@ -1193,7 +1195,7 @@ def analyse(
                 if second == 1:
                     status = "regression"
                 elif second is None and key not in rerun_done:
-                    want_rerun(key, f"{name} {metric} {r}x")
+                    want_rerun(key, f"{name} {metric} {r:.2f}x")
                     status = "info"
                 elif second is None:
                     # Crossed once and never re-measured: neither a pass nor a regression.
@@ -1441,7 +1443,9 @@ class Check:
         self.log = Log(self.raw / "check.log")
         self.started = kit.utc_now()
         self.run_id = f"{os.getpid()}-{int(time.time())}"
-        self.label = f"perf-pokec={self.run_id}"  # every container this run starts
+        self.label = (
+            f"{LABEL}={self.run_id}"  # every container this run starts; cleanup removes them
+        )
         self.server_cpus = os.environ.get("PERF_SERVER_CPUS") or None
         self.env_cache: dict[str, str] = {}
         self.containers = 0
@@ -1482,7 +1486,7 @@ class Check:
             image,
             name,
             env=server_env(image, self.env_cache),
-            labels={"perf-pokec": self.run_id},
+            labels={LABEL: self.run_id},
             cpus=self.server_cpus,
         )
 
@@ -2087,7 +2091,7 @@ def main(argv: list[str] | None = None) -> int:
             return  # kit.result reports them; nothing is pulled
         try:
             check.main()
-        except SetupError as exc:
+        except (SetupError, kit.DockerError) as exc:
             check.error = str(exc)
 
     def build(error: str | None) -> dict[str, Any]:
