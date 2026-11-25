@@ -17,13 +17,9 @@
 #     max_ratio: 1.35                            # optional: only up to this ratio
 #
 # A regression from a check that did not finish cleanly is never waived, nor an
-# error, nor a benchmark-cov reading that missed rows.
-#
-# Known limit: a waiver never covers a check whose result also had unmeasured
-# parts, but a VM check (micro-hw) that regresses on a waived row, fails to
-# measure other rows and still exits cleanly carries no trace of them (the
-# contract drops `error` under a regression). Until the follow-up to #4004 lands,
-# review a waived night's summary and raw/ by hand before trusting the pass.
+# error, nor a benchmark-cov reading that missed rows, nor a regression from a
+# result whose `incomplete` field is set (it left parts unmeasured or its
+# findings were cut): such a night fails, naming the check and the reason.
 #
 # Remove an entry when its issue closes, or once the release that carries the
 # regression is the baseline (from then on the gate no longer sees it).

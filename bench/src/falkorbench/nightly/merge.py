@@ -552,7 +552,9 @@ def conclude(nightly, waivers, gate=False, unfinished=None):
     waiver names its check, its pattern matches the WHOLE finding name, and its
     metric and max_ratio (when given) hold; it is still reported. An error is
     never waived, nor a regression verdict with no regression finding to name,
-    nor one from a run that did not finish (`unfinished`: {check: why})."""
+    nor one from a run that did not finish (`unfinished`: {check: why}), nor one
+    from a result whose `incomplete` is not null (it left parts unmeasured or
+    cut its findings)."""
     unfinished = unfinished or {}
     status = nightly.get("status") if isinstance(nightly, dict) else None
     if status == "green" or (status == "skipped" and not gate):
@@ -574,6 +576,12 @@ def conclude(nightly, waivers, gate=False, unfinished=None):
         if check in unfinished:
             blocking.append(
                 f"{check}: regression from a run that did not finish ({unfinished[check]})"
+            )
+            continue
+        if entry.get("incomplete") is not None:
+            blocking.append(
+                f"{check}: regression from a result that did not measure everything"
+                f" ({one_line(str(entry['incomplete']))})"
             )
             continue
         found = [

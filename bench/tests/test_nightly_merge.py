@@ -975,6 +975,40 @@ def test_a_regression_from_a_run_that_did_not_finish_is_not_waived():
     )
 
 
+def incomplete_night(check, reason):
+    entry = regressed(check, "cross product filter [reads]")
+    return red_night({**entry, "incomplete": reason})
+
+
+def test_a_waived_regression_from_an_incomplete_result_is_not_waived():
+    """A result that says it left parts unmeasured or cut its findings is not
+    trusted with a waiver: the night fails, naming the check and the reason."""
+    night = incomplete_night("micro-hw", "3 rows not measured")
+    code, lines = decide(night, waiver())
+    assert code == 1
+    assert lines[-1] == (
+        "not waived: micro-hw: regression from a result that did not measure"
+        " everything (3 rows not measured)"
+    )
+    assert not any(line.startswith("waived") for line in lines)
+
+
+def test_a_waived_regression_with_a_null_or_absent_incomplete_still_passes():
+    plain = regressed("micro-hw", "cross product filter [reads]")
+    for entry in (plain, {**plain, "incomplete": None}):
+        code, lines = decide(red_night(entry), waiver())
+        assert code == 0
+        assert lines[1].startswith("waived (reported, not gated)")
+
+
+def test_an_incomplete_cov_gate_result_is_not_waived(tmp_path):
+    entry = {**regressed("benchmark-cov", "UNWIND id seek"), "incomplete": "findings cut at 50"}
+    night = red_night(entry)
+    assert decide(night, waiver(check="benchmark-cov", pattern="UNWIND id seek"))[0] == 1
+    entry["incomplete"] = None
+    assert decide(night, waiver(check="benchmark-cov", pattern="UNWIND id seek"))[0] == 0
+
+
 @pytest.mark.parametrize(
     "facts, unfinished",
     [

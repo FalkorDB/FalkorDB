@@ -459,10 +459,10 @@ record is unmeasured, an error. `bench cov-gate` also writes `unfinished.json`
 when its reading is partial (a row the PR did not measure, or more regressions
 than result.json lists), so a waiver never passes it.
 
-Known limit: a VM check that regresses on a waived row, fails to measure other
-rows, and still exits cleanly. Contract v1.4 drops its `error` under the
-regression, so nothing tells `conclude` that the reading was partial. Until the
-follow-up lands, review a waived night's summary by hand. Also, a pull request
+A waiver never turns a night green when the result it would waive has a
+non-null `incomplete` (a regression that also left parts unmeasured, or whose
+findings the cap cut): that night fails, naming the check and the reason. A
+result without the field (an older one) is judged as before. A pull request
 from a fork into a version branch has no image, so its gate fails.
 
 ## Nightly micro check (`micro-hw`)
