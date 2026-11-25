@@ -57,7 +57,12 @@ static void _StageV3Update
 
 		for(uint16_t i = 0; i < n; i++) {
 			AttributeID a_id;
+
+			// 'v' is a required out parameter and is deliberately dropped:
+			// this is the remove-all arm, so every attribute is staged with
+			// a null value whatever it currently holds
 			SIValue v;
+
 			AttributeSet_GetIdx(attrs, i, &a_id, &v);
 			EffectsV3Grouping_StageUpdate(EffectsBuffer_V3(buff), opcode, id, lbls,
 					n_labels, rel, a_id, SI_NullVal());
@@ -82,12 +87,8 @@ static void _StageV3Labels
 	GrB_Vector nodes,     // nodes the label applies to
 	EffectType opcode     // SET_LABELS or REMOVE_LABELS
 ) {
-	// a real buffer, not a pointer's address. GrB_get with GrB_NAME COPIES the
-	// name into what you hand it, so passing &lbl_name wrote the label's
-	// characters into the pointer variable itself and the next line
-	// dereferenced them as an address - strcmp on a pointer built out of the
-	// label's own letters. The (char *) cast I had here is what silenced the
-	// char** / char* mismatch that would otherwise have caught it
+	// GrB_get with GrB_NAME copies into the buffer, so pass a char array, not
+	// &ptr
 	char lbl_name[MAX_IDENTIFIER_LEN + 1] = {0};
 	GrB_OK(GrB_get(nodes, lbl_name, GrB_NAME));
 
@@ -98,9 +99,17 @@ static void _StageV3Labels
 	LabelID lbl = Schema_GetID(sch);
 
 	GxB_Iterator it;
-	GxB_Iterator_new(&it);
+	GrB_OK(GxB_Iterator_new(&it));
 	GrB_OK(GxB_Vector_Iterator_attach(it, nodes, NULL));
 
+	// NO FAST PATH FOR THE GROUP LOOKUP, though every node in this vector does
+	// share one group: (opcode, this one label, no attributes). _group_for
+	// already memoizes the group its last lookup found, so after the first node
+	// the lookup itself costs a single comparison.
+	//
+	// What a bulk path WOULD save is the rest of AddNode's per-node work - a
+	// memcpy and a sort of a one-element label array. Unmeasured, and small
+	// against the vector iteration driving it
 	GrB_Info info = GxB_Vector_Iterator_seek(it, 0);
 	while(info != GxB_EXHAUSTED) {
 		GrB_Index node_id = GxB_Vector_Iterator_getIndex(it);
@@ -113,51 +122,55 @@ static void _StageV3Labels
 }
 
 
-// flatten an entity's attributes into parallel arrays for the accumulator
+// an entity's attributes, flattened into the two parallel arrays the
+// accumulator takes
 //
 // SIZED BY THE ENTITY. A fixed AttributeID[256] with the count clamped to match
 // silently dropped every attribute past the 256th - measured on a live pair at
 // 300 properties, replica 256, with no error, log or resync.
 //
-// Not a VLA either: n_attrs is a uint16_t, so 65,535 SIValues is a megabyte of
-// stack. Small sets stay on the stack, larger go to the heap.
+// Not a VLA either: n is a uint16_t, so 65,535 SIValues is a megabyte of stack.
+// Small sets stay in the struct's own scratch, larger go to the heap - which is
+// why the scratch lives HERE and not at the call site: whether 'ids' is the
+// scratch is what _FlatAttrs_Free reads to decide whether to free it, so the
+// two cannot be separated.
 #define ATTRS_STACK 64
 
-static uint16_t _flatten_attrs
+typedef struct {
+	AttributeID id_buf[ATTRS_STACK];  // scratch, used while n <= ATTRS_STACK
+	SIValue     val_buf[ATTRS_STACK];
+	AttributeID *ids;                 // the ids: 'id_buf', or the heap
+	SIValue     *vals;                // their values, parallel to 'ids'
+	uint16_t    n;                    // how many
+} FlatAttrs;
+
+static void _FlatAttrs_Fill
 (
-	AttributeSet attrs,    // the entity's attributes
-	AttributeID **ids,     // out: ids, caller releases
-	SIValue **vals,        // out: values, caller releases
-	AttributeID *id_buf,   // caller's ATTRS_STACK-sized scratch
-	SIValue *val_buf       // caller's ATTRS_STACK-sized scratch
+	FlatAttrs *f,       // uninitialised; filled here
+	AttributeSet attrs  // the entity's attributes
 ) {
-	uint16_t n = AttributeSet_Count(attrs);
+	f->n = AttributeSet_Count(attrs);
 
-	if(n > ATTRS_STACK) {
-		*ids  = rm_malloc(sizeof(AttributeID) * n);
-		*vals = rm_malloc(sizeof(SIValue) * n);
+	if(f->n > ATTRS_STACK) {
+		f->ids  = rm_malloc(sizeof(AttributeID) * f->n);
+		f->vals = rm_malloc(sizeof(SIValue) * f->n);
 	} else {
-		*ids  = id_buf;
-		*vals = val_buf;
+		f->ids  = f->id_buf;
+		f->vals = f->val_buf;
 	}
 
-	for(uint16_t i = 0; i < n; i++) {
-		AttributeSet_GetIdx(attrs, i, (*ids) + i, (*vals) + i);
+	for(uint16_t i = 0; i < f->n; i++) {
+		AttributeSet_GetIdx(attrs, i, f->ids + i, f->vals + i);
 	}
-
-	return n;
 }
 
-static void _release_attrs
+static void _FlatAttrs_Free
 (
-	AttributeID *ids,      // ids from _flatten_attrs
-	SIValue *vals,         // values from _flatten_attrs
-	uint16_t n,            // how many
-	AttributeID *id_buf    // the scratch that was offered
+	FlatAttrs *f  // from _FlatAttrs_Fill
 ) {
-	if(ids != id_buf) {
-		rm_free(ids);
-		rm_free(vals);
+	if(f->ids != f->id_buf) {
+		rm_free(f->ids);
+		rm_free(f->vals);
 	}
 }
 
@@ -168,19 +181,14 @@ void EffectsWriteV3_CreateNode
 	const LabelID *labels,  // node labels
 	ushort label_count      // number of labels
 ) {
-	AttributeID id_buf[ATTRS_STACK];
-	SIValue     val_buf[ATTRS_STACK];
-	AttributeID *ids;
-	SIValue     *vals;
-
-	uint16_t n_attrs = _flatten_attrs(*n->attributes, &ids, &vals, id_buf,
-			val_buf);
+	FlatAttrs f;
+	_FlatAttrs_Fill(&f, *n->attributes);
 
 	EffectsV3Grouping_AddNode(EffectsBuffer_V3(buff), EFFECT_CREATE_NODE, labels,
-			label_count, ENTITY_GET_ID(n), ids, vals, n_attrs);
+			label_count, ENTITY_GET_ID(n), f.ids, f.vals, f.n);
 	EffectsBuffer_IncEffectCount(buff);
 
-	_release_attrs(ids, vals, n_attrs, id_buf);
+	_FlatAttrs_Free(&f);
 }
 
 
@@ -189,21 +197,16 @@ void EffectsWriteV3_CreateEdge
 	EffectsBuffer *buff,  // effect buffer
 	const Edge *edge      // edge created
 ) {
-	AttributeID id_buf[ATTRS_STACK];
-	SIValue     val_buf[ATTRS_STACK];
-	AttributeID *ids;
-	SIValue     *vals;
-
-	uint16_t n_attrs = _flatten_attrs(*edge->attributes, &ids, &vals, id_buf,
-			val_buf);
+	FlatAttrs f;
+	_FlatAttrs_Fill(&f, *edge->attributes);
 
 	EffectsV3Grouping_AddEdge(EffectsBuffer_V3(buff), EFFECT_CREATE_EDGE,
 			Edge_GetRelationID(edge), ENTITY_GET_ID(edge),
 			Edge_GetSrcNodeID(edge), Edge_GetDestNodeID(edge),
-			ids, vals, n_attrs);
+			f.ids, f.vals, f.n);
 	EffectsBuffer_IncEffectCount(buff);
 
-	_release_attrs(ids, vals, n_attrs, id_buf);
+	_FlatAttrs_Free(&f);
 }
 
 
