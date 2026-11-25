@@ -1329,3 +1329,41 @@ def test_s11_counts_a_null_unicode_param_reply_as_a_wrong_result():
     rng.randrange = lambda n: 1  # the unicode-parameter branch
     with pytest.raises(Wrong, match="unicode param mangled: None"):
         namespace["params_op"](types.SimpleNamespace(rng=rng))
+
+
+class _FakeServer:
+    port = 1
+
+
+class _FakeRedis:
+    pass
+
+
+def _ok_op(ctx):
+    return "op"
+
+
+def _boom_init(ctx):
+    raise RuntimeError("init failed")
+
+
+@pytest.fixture
+def fake_connect(monkeypatch):
+    monkeypatch.setattr(soakkit, "connect", lambda port: _FakeRedis())
+
+
+def test_run_load_passes_when_workers_finish(tmp_path, fake_connect):
+    soakkit.run_load(_FakeServer(), tmp_path, [soakkit.WorkerSpec(_ok_op, rate=50)], 0.3)
+
+
+def test_run_load_fails_when_a_worker_exits_nonzero(tmp_path, fake_connect):
+    specs = [soakkit.WorkerSpec(_ok_op, rate=50), soakkit.WorkerSpec(_ok_op, init=_boom_init, name="bad")]
+    with pytest.raises(RuntimeError, match="worker failure"):
+        soakkit.run_load(_FakeServer(), tmp_path, specs, 0.3)
+
+
+def test_run_load_fails_when_a_grouped_worker_dies(tmp_path, fake_connect, monkeypatch):
+    monkeypatch.setenv("SOAK_MAX_WORKERS", "1")
+    specs = [soakkit.WorkerSpec(_ok_op, rate=50), soakkit.WorkerSpec(_ok_op, init=_boom_init, name="bad")]
+    with pytest.raises(RuntimeError, match="worker failure"):
+        soakkit.run_load(_FakeServer(), tmp_path, specs, 0.3)

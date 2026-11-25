@@ -34,6 +34,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -551,11 +552,22 @@ def _worker(spec_bytes, port, wid, out, t0, t_end, seed):
 
 
 def _worker_group(jobs):
-    ths = [threading.Thread(target=_worker, args=j) for j in jobs]
+    failed = []
+
+    def guarded(job):
+        try:
+            _worker(*job)
+        except BaseException:
+            traceback.print_exc()
+            failed.append(job[2])
+
+    ths = [threading.Thread(target=guarded, args=(j,)) for j in jobs]
     for t in ths:
         t.start()
     for t in ths:
         t.join()
+    if failed:
+        raise SystemExit(f"load worker(s) {sorted(failed)} died")
 
 
 def run_load(server: Server, out: Path | str, workers: list[WorkerSpec], duration: float,
@@ -587,10 +599,21 @@ def run_load(server: Server, out: Path | str, workers: list[WorkerSpec], duratio
             p = mp.get_context("fork").Process(target=_worker, args=j)
             p.start()
             procs.append(p)
+    bad = []
     for p in procs:
         p.join(duration + 600)
         if p.is_alive():
             p.kill()
+            p.join()
+            bad.append(f"pid {p.pid} killed after timeout")
+        elif p.exitcode != 0:
+            bad.append(f"pid {p.pid} exited {p.exitcode}")
+    if bad:
+        for p in procs:  # a dead worker voids the run: stop the rest before failing
+            if p.is_alive():
+                p.kill()
+                p.join()
+        raise RuntimeError(f"run_load{' ' + tag if tag else ''}: worker failure: " + "; ".join(bad))
     meta = out / "load_runs.json"
     runs = json.loads(meta.read_text()) if meta.exists() else []
     runs.append({"tag": tag, "start": t0, "duration": duration,
