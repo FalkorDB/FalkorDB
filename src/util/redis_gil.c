@@ -1,22 +1,31 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2024 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
 #include "redis_gil.h"
-#include "thpool/pool.h"  // MAIN_THREAD_ID
+#include "../RG.h"          // ASSERT
+#include "thpool/pool.h"    // ThreadIsMain
 
-#include <pthread.h>
-
-// per-thread GIL acquisition depth; > 0 means this thread holds the GIL
+// per-thread GIL acquisition depth; > 0 means this thread took the GIL
 static __thread int t_gil_depth = 0;
+
+// the GIL must not be (re-)locked when the calling thread already holds it: the
+// main thread holds it implicitly (the event loop owns it). the module API is
+// unresolved in a standalone unit test - nothing to lock there either
+static inline bool _gil_noop(void) {
+	return RedisModule_ThreadSafeContextLock == NULL || ThreadIsMain();
+}
 
 void GIL_Lock
 (
 	RedisModuleCtx *ctx  // thread-safe context used to lock the GIL
 ) {
-	// only the outermost acquisition actually locks; nested calls just count
+	if(_gil_noop()) {
+		return;
+	}
+
+	// only the outermost acquisition on this thread takes the real lock
 	if(t_gil_depth++ == 0) {
 		RedisModule_ThreadSafeContextLock(ctx);
 	}
@@ -26,6 +35,11 @@ int GIL_TryLock
 (
 	RedisModuleCtx *ctx  // thread-safe context used to lock the GIL
 ) {
+	// already held (main thread) or nothing to lock (no module API)
+	if(_gil_noop()) {
+		return REDISMODULE_OK;
+	}
+
 	// already held by this thread - just count the nested acquisition
 	if(t_gil_depth > 0) {
 		t_gil_depth++;
@@ -45,62 +59,23 @@ void GIL_Unlock
 (
 	RedisModuleCtx *ctx  // thread-safe context used to unlock the GIL
 ) {
-	// guard against an unbalanced release
-	if(t_gil_depth == 0) {
+	if(_gil_noop()) {
 		return;
+	}
+
+	// reaching here at depth 0 is an unbalanced release - a bug
+	ASSERT(t_gil_depth > 0);
+	if(t_gil_depth == 0) {
+		return;  // defensive: never underflow in release builds
 	}
 
 	// release the GIL on the outermost unlock, but keep the depth counter
 	// nonzero until RedisModule_ThreadSafeContextUnlock returns: Redis may run
 	// post-execution jobs on this thread during the unlock while the mutex is
-	// still held, and if such a job frees a graph its callback must see the GIL
-	// as held (depth > 0) rather than try to re-lock it and deadlock
+	// still held, and if such a job frees a graph its GIL_Lock must see the GIL
+	// as held (depth > 0) rather than re-lock it and deadlock
 	if(t_gil_depth == 1) {
 		RedisModule_ThreadSafeContextUnlock(ctx);
 	}
 	t_gil_depth--;
-}
-
-bool GIL_HeldByCurrentThread(void) {
-	// the main thread holds the GIL implicitly (the event loop owns it);
-	// background threads hold it only after acquiring via GIL_Lock / GIL_TryLock
-	return ThreadIsMain() || t_gil_depth > 0;
-}
-
-RedisModuleCtx *GIL_AcquireContext
-(
-	bool *took_gil  // out: true if this call took the GIL
-) {
-	*took_gil = false;
-
-	// the Redis module API may be unresolved (e.g. a standalone unit test that
-	// frees a fake graph); there's no keyspace to mutate and nothing to lock, so
-	// return a NULL context - GIL_ReleaseContext tolerates it
-	if(RedisModule_GetThreadSafeContext == NULL) {
-		return NULL;
-	}
-
-	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
-
-	// take the GIL only when this thread doesn't already hold it
-	if(!GIL_HeldByCurrentThread()) {
-		GIL_Lock(ctx);
-		*took_gil = true;
-	}
-
-	return ctx;
-}
-
-void GIL_ReleaseContext
-(
-	RedisModuleCtx *ctx,  // context returned by GIL_AcquireContext
-	bool took_gil         // the flag GIL_AcquireContext reported
-) {
-	if(ctx == NULL) {
-		return;  // nothing was acquired
-	}
-	if(took_gil) {
-		GIL_Unlock(ctx);
-	}
-	RedisModule_FreeThreadSafeContext(ctx);
 }

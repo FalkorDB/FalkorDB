@@ -1949,14 +1949,19 @@ void GraphContext_DeleteTelemetryStream
 		return;  // already deleted
 	}
 
-	bool took_gil;
-	RedisModuleCtx *ctx = GIL_AcquireContext(&took_gil);
+	// RedisModule_DeleteKey mutates the keyspace, so the GIL must be held;
+	// GIL_Lock takes it only when this thread doesn't already hold it. a
+	// telemetry stream only exists on a live graph, so the module API is
+	// resolved here
+	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
 
+	GIL_Lock(ctx);
 	_DeleteTelemetryStream(ctx, gc);
 	RedisModule_FreeString(ctx, gc->telemetry_stream);
 	gc->telemetry_stream = NULL;
+	GIL_Unlock(ctx);
 
-	GIL_ReleaseContext(ctx, took_gil);
+	RedisModule_FreeThreadSafeContext(ctx);
 }
 
 // free all data associated with graph
@@ -1976,9 +1981,13 @@ void GraphContext_Free
 	}
 
 	// the GIL must be held while freeing schemas/indexes (RediSearch mutates
-	// Redis data structures) and while deleting the telemetry stream
-	bool took_gil;
-	RedisModuleCtx *ctx = GIL_AcquireContext(&took_gil);
+	// Redis data structures) and while deleting the telemetry stream; GIL_Lock
+	// takes it only when this thread doesn't already hold it. standalone unit
+	// tests free fake graphs with the module API unresolved and no keyspace -
+	// skip the context there
+	RedisModuleCtx *ctx = (RedisModule_GetThreadSafeContext != NULL)
+		? RedisModule_GetThreadSafeContext(NULL) : NULL;
+	GIL_Lock(ctx);
 
 	//--------------------------------------------------------------------------
 	// delete graph telemetry stream
@@ -2016,7 +2025,10 @@ void GraphContext_Free
 	arr_free_cb (gc->relation_schemas, Schema_Free) ;
 	gc->relation_schemas = NULL ;
 
-	GIL_ReleaseContext (ctx, took_gil) ;
+	GIL_Unlock (ctx) ;
+	if(ctx != NULL) {
+		RedisModule_FreeThreadSafeContext (ctx) ;
+	}
 
 	arr_free_cb (gc->attributes, rm_free) ;
 	gc->attributes = NULL ;
