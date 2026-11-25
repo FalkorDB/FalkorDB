@@ -903,6 +903,7 @@ def test_relative_out_is_resolved_before_use(tmp_path, monkeypatch):
     """_perf-vm.yml passes `--out out`: the result lands there, and Soak (whose run dirs are
     handed to the scenario subprocesses) sees the absolute path."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sc.shutil, "which", lambda _: None)  # no docker pull of the fake digests
     seen = {}
     real = sc.Soak
 
@@ -922,8 +923,6 @@ def test_relative_out_is_resolved_before_use(tmp_path, monkeypatch):
                 "out",
                 "--mode",
                 "queue",
-                "--check",
-                "Bad",
             ]
         )
         == 0
@@ -1145,3 +1144,157 @@ def test_soak_clients_speak_resp2():
         server.join(5)
     assert client.connection_pool.connection_kwargs["protocol"] == 2
     assert b"HELLO" not in names and names[-1] == b"PING", names
+
+
+def test_reruns_go_to_perf_moves_before_one_off_timing_breaks():
+    """With time for one re-run, a 10x p50 move is re-run before a timing check that broke
+    once (it did not move: a 0/1 row held on both sides after the first pass)."""
+    timing = "p99 does not drift up: ingest_batch"
+
+    class Soak(FakeSoak):
+        def run_one(self, scn, side, image, rep, hang_cap_s, stop_at):
+            r = super().run_one(scn, side, image, rep, hang_cap_s, stop_at)
+            if scn == "s02_fraud_realtime":
+                r.ops, r.checks = {"w": op(9.0)}, {timing: side == "baseline"}
+            return r
+
+    clock = Clock()
+    soak = Soak(clock, {"s01_social_feed": 400.0, "s02_fraud_realtime": 400.0})
+    scns = ["s01_social_feed", "s02_fraud_realtime"]
+    sched = sc.run_all(soak, scns, IMGS, dict(sc.MODES["nightly"]), deadline=3060.0, clock=clock)
+    assert [c[0] for c in soak.calls[4:]] == ["s01_social_feed", "s01_social_feed"]
+    assert sched.unconfirmed == ["s02_fraud_realtime (no time to re-run)"]
+
+
+def test_unconfirmed_info_rows_put_perf_moves_before_timing_breaks():
+    timing = sc.Row(
+        "s02 t (broke in 1 of 2 candidate runs)",
+        "invariant",
+        1,
+        1,
+        None,
+        None,
+        "lower_is_worse",
+        "info",
+        kind="unconfirmed",
+    )
+    perf = sc.Row(
+        "s01 w (not repeated on re-run)",
+        "p50_ms",
+        30.0,
+        3.0,
+        10.0,
+        2.0,
+        "higher_is_worse",
+        "info",
+        kind="unconfirmed",
+    )
+    assert [f["name"] for f in sc.worst_first([timing, perf])] == [perf.name, timing.name]
+
+
+def test_a_docker_hiccup_removing_a_run_is_tried_again(monkeypatch):
+    calls = []
+
+    def busy_once(label):
+        calls.append(label)
+        if len(calls) == 1:
+            raise kit.DockerError("removal of container soak-x is already in progress")
+
+    monkeypatch.setattr(kit, "remove_labelled", busy_once)
+    sc.remove_run_containers("falkordb-soak=r1", delay_s=0)
+    assert calls == ["falkordb-soak=r1", "falkordb-soak=r1"]
+
+    def gone(label):
+        raise kit.DockerError("Cannot connect to the Docker daemon")
+
+    monkeypatch.setattr(kit, "remove_labelled", gone)
+    with pytest.raises(kit.DockerError, match="Docker daemon"):
+        sc.remove_run_containers("falkordb-soak=r1", attempts=2, delay_s=0)
+
+
+def test_kill9_of_a_container_already_being_removed_waits_for_it(monkeypatch):
+    def busy(*names):
+        raise kit.DockerError("removal of container soak-x is already in progress")
+
+    class Proc:
+        waited = False
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            Proc.waited = True
+            return 137
+
+    monkeypatch.setattr(kit, "remove", busy)
+    server = object.__new__(soakkit.Server)
+    server.image, server.container, server.proc = soakkit.Image(DIGEST_A), "soak-x", Proc()
+    server.kill9()
+    assert Proc.waited
+
+
+def test_the_stop_reason_survives_the_500_character_cut(tmp_path):
+    """With a regression verdict the error field is null: the summary must still say why the
+    run stopped, however long the regression names and the not-measured list are."""
+    names = [
+        f"A{i}-strict-kill9+bgrewriteaof: led graph identical and every row present after "
+        f"restart number {i}"
+        for i in range(4)
+    ]
+    scn = "s08_durability_recovery"
+    cand = [run("candidate", checks=dict.fromkeys(names, False), scenario=scn)]
+    base = [run("baseline", checks=dict.fromkeys(names, True), scenario=scn)]
+    rest = [
+        "s07_mvcc_consistency",
+        "s09_replication",
+        "s10_schema_under_load",
+        "s11_client_chaos",
+        "s12_iot_retention",
+    ]
+    sched = sc.Schedule(
+        runs={scn: {"candidate": cand, "baseline": base}},
+        not_run=[f"{s} (not reached)" for s in rest],
+    )
+    stop = "stopped by signal 15 (SIGTERM); partial data in raw/"
+    res = finish(args(), tmp_path, STARTED, [scn, *rest], sched, stop, [], sc.MODES["nightly"])
+    assert res["verdict"] == "regression" and res["error"] is None
+    assert stop in res["summary"] and len(res["summary"]) <= 500
+
+
+def test_sigterm_mid_run_still_reports_what_was_measured(tmp_path, monkeypatch):
+    import os
+    import signal
+    import sys
+    import time
+
+    def run_all(soak, scenarios, imgs, p, deadline, sched):
+        sched.runs["s12_iot_retention"] = {
+            "candidate": [run("candidate", checks={"x": False})],
+            "baseline": [run("baseline", checks={"x": True})],
+        }
+        os.kill(os.getpid(), signal.SIGTERM)  # the workflow's timeout, mid-run
+        time.sleep(5)
+        raise AssertionError("SIGTERM did not stop the run")
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sc.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(kit, "pull", lambda image: None)
+    monkeypatch.setattr(sc, "server_info", lambda image: {"image": image})
+    monkeypatch.setattr(sc, "run_all", run_all)
+    argv = [
+        "--candidate",
+        DIGEST_A,
+        "--baseline",
+        DIGEST_B,
+        "--out",
+        str(tmp_path),
+        "--mode",
+        "nightly",
+        "--scenarios",
+        "s12,s07",
+    ]
+    assert sc.main(argv) == 0
+    res = json.loads((tmp_path / "result.json").read_text())
+    assert res["verdict"] == "regression" and res["findings"][0]["name"] == "s12 x"
+    assert "stopped by signal 15 (SIGTERM)" in res["summary"]
+    assert "s07_mvcc_consistency (not reached)" in res["summary"]

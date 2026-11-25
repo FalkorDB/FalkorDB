@@ -447,14 +447,20 @@ def _perf_rows(tag: str, cand: list[Run], base: list[Run], perf_gate: bool) -> l
     return rows
 
 
+def move_size(r: Row) -> float:
+    """How far a row moved, for ordering findings and re-runs: |log ratio|. A 0/1 row held
+    on both sides (a timing check that broke in one run only) did not move: 0, after every
+    perf move. Any other 0/1 row, and a perf value that fell to zero, moved all the way."""
+    if r.metric in ("invariant", "completed"):
+        return 0.0 if r.candidate == r.baseline == 1 else math.inf
+    return abs(math.log(r.ratio)) if r.ratio and r.ratio > 0 else math.inf
+
+
 def worst_first(rows: list[Row]) -> list[dict]:
     """The findings result.json can carry, in the order kit.select() keeps within a status:
     regressions and improvements by the size of the move, info rows unconfirmed first, then
     broken on both sides, then p99 shifts. ok and known rows stay in raw/rows.csv."""
-
-    def size(r: Row):
-        return math.inf if r.ratio is None or r.ratio <= 0 else abs(math.log(r.ratio))
-
+    size = move_size
     rank = {"unconfirmed": 0, "incomplete": 0, "tail": 2}
 
     def info_rank(r: Row):
@@ -465,6 +471,10 @@ def worst_first(rows: list[Row]) -> list[dict]:
     imp = sorted((r for r in rows if r.status == "improvement"), key=size, reverse=True)
     info = sorted((r for r in rows if r.status == "info"), key=info_rank)
     return [r.finding() for r in reg + imp + info]
+
+
+def _short(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def summary_line(
@@ -486,22 +496,25 @@ def summary_line(
         f"{len([s for s in scenarios if s not in missing])} of {len(scenarios)} scenarios "
         f"measured, {mode} ({duration:.0f} s per side)"
     ]
+    # What went wrong first: the summary is cut at 500 characters, and with a regression
+    # verdict it is the only place that says it (result.json's error is null then).
+    if error:
+        parts.append(error)
     if reg:
+        names = [
+            _short(r.name, 80)
+            + (f" {r.ratio:.2f}x" if r.metric not in ("invariant", "completed") and r.ratio else "")
+            for r in reg[:4]
+        ]
         parts.append(
-            f"{len(reg)} regression(s): "
-            + ", ".join(
-                r.name
-                + (
-                    f" {r.ratio:.2f}x"
-                    if r.ratio and r.metric not in ("invariant", "completed")
-                    else ""
-                )
-                for r in reg[:4]
-            )
-            + (" …" if len(reg) > 4 else "")
+            f"{len(reg)} regression(s): " + ", ".join(names) + (" …" if len(reg) > 4 else "")
         )
     else:
         parts.append("no regression")
+    if not_run:
+        parts.append("not measured: " + ", ".join(not_run))
+    if unconfirmed:
+        parts.append("unconfirmed: " + ", ".join(unconfirmed))
     if both:
         parts.append(f"{len(both)} broken on both sides (not new)")
     if unconf:
@@ -517,12 +530,6 @@ def summary_line(
             f"{len(tails)} p99 shift(s) reported, not gated "
             f"(largest {top.name.split(' (')[0]} {top.ratio:.2f}x)"
         )
-    if not_run:
-        parts.append("not measured: " + ", ".join(not_run))
-    if unconfirmed:
-        parts.append("unconfirmed: " + ", ".join(unconfirmed))
-    if error:
-        parts.append(error)
     return "; ".join(parts)  # kit.result() makes it one line
 
 
@@ -607,6 +614,21 @@ def mode_params(a: argparse.Namespace) -> dict:
     return params
 
 
+def remove_run_containers(label: str, attempts: int = 3, delay_s: float = 5.0) -> None:
+    """kit.remove_labelled, tried again on a docker error: a container that is exiting under
+    --rm answers "removal already in progress" for a moment. Still failing, it raises: the
+    next run must not share the machine with a server nobody removed."""
+    for attempt in range(1, attempts + 1):
+        try:
+            kit.remove_labelled(label)
+            return
+        except kit.DockerError as e:
+            if attempt == attempts:
+                raise
+            print(f"removing {label} failed ({e}); trying again in {delay_s:.0f} s", flush=True)
+            time.sleep(delay_s)
+
+
 class Soak:
     def __init__(self, a: argparse.Namespace):
         self.raw = Path(a.out).resolve() / "raw"
@@ -662,7 +684,7 @@ class Soak:
                         timed_out = True
             finally:  # also on kit.Stopped: the scenario and its servers go first
                 self.kill_current()
-                kit.remove_labelled(f"falkordb-soak={label}")
+                remove_run_containers(f"falkordb-soak={label}")
             wall = time.time() - t0
             self.port += 10
             for f in list(run_dir.rglob("*.rdb")) + list(run_dir.rglob("*.aof")):
@@ -806,14 +828,7 @@ def run_all(
             continue  # a crash is a regression already; an unmeasured baseline cannot confirm
         crossed = [r for r in scenario_rows(scn, c, b, True) if r.crossed]
         if crossed:
-            want.append(
-                (
-                    max(
-                        abs(math.log(r.ratio)) if r.ratio and r.ratio > 0 else 9.9 for r in crossed
-                    ),
-                    scn,
-                )
-            )
+            want.append((max(move_size(r) for r in crossed), scn))
     for _, scn in sorted(want, reverse=True):
         sides = sched.runs[scn]
         need = 1.2 * sum(r.wall_s for side in sides.values() for r in side)

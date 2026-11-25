@@ -315,7 +315,10 @@ class Server:
         if self.proc:
             if self.proc.poll() is None:
                 if self.image:
-                    kit.remove(self.container)   # docker rm --force: SIGKILL, then gone
+                    try:
+                        kit.remove(self.container)   # docker rm --force: SIGKILL, then gone
+                    except kit.DockerError:
+                        pass   # already being removed (it exited, --rm): wait() sees it go
                 else:
                     self.proc.send_signal(signal.SIGKILL)
             self.proc.wait()
