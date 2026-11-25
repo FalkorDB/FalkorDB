@@ -3,31 +3,18 @@ writes them. Each test names the wrong answer it prevents."""
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
 
+from falkorbench import contract
 from falkorbench import verdict as v
 from falkorbench.counters import L2_MISS_EVENT
 from falkorbench.metrics import read_rows
 from falkorbench.metrics import write_rows
 from falkorbench.model import Query
-
-
-def _load_validator():
-    """tests/perf/validate.py, the contract's reference, by path: bench does not
-    import tests/perf, but every result written here must pass it."""
-    path = Path(__file__).resolve().parents[2] / "tests" / "perf" / "validate.py"
-    spec = importlib.util.spec_from_file_location("perf_validate", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-validate = _load_validator()
 
 CAND = "ghcr.io/falkordb/falkordb-server@sha256:" + "a" * 64
 BASE = "falkordb/falkordb-server:6.2.0@sha256:" + "b" * 64
@@ -84,7 +71,7 @@ def run(root: Path, queries=QUERIES) -> dict:
         machine={"runner": "gce", "type": "c4-standard-8", "cpu": "x", "cores": 8},
         finished="2026-11-24T00:30:00Z",
     )
-    assert validate.validate_result(res) == []
+    assert contract.validate_result(res) == []
     return res
 
 
@@ -445,8 +432,8 @@ class TestLabels:
         assert any("commit" in e for e in v.input_errors(ref, v.ImageRef(BASE), "nightly"))
 
     def test_image_and_commit_rules_are_the_validators(self):
-        assert v.IMAGE_RE.pattern == validate.IMAGE_RE.pattern
-        assert v.COMMIT_RE.pattern == validate.COMMIT_RE.pattern
+        assert v.IMAGE_RE.pattern == contract.IMAGE_RE.pattern
+        assert v.COMMIT_RE.pattern == contract.COMMIT_RE.pattern
 
     @pytest.mark.parametrize(
         ("image", "commit", "says"),
@@ -598,7 +585,7 @@ class TestHw:
         def checked(run, **kwargs):
             res = real(run, **kwargs)
             if all(v.IMAGE_RE.fullmatch(r.image) for r in (run.candidate, run.baseline)):
-                assert validate.validate_result(res) == []
+                assert contract.validate_result(res) == []
             return res
 
         monkeypatch.setattr(hw, "run_check", checked)
