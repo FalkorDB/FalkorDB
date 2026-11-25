@@ -78,28 +78,33 @@ typedef struct {
 	//
 	// 'options' is the v2 wire and 'stated' the subset the statement named;
 	// each arm reads one of them and says which
+	//
+	// 'label_id' is an int rather than a LabelID because it is NEITHER type
+	// on its own: 'st' decides whether it names a label or a relationship
+	// type, and LabelID and RelationID are both int (node.h, edge.h). Naming
+	// one of them here would be wrong for half the calls
 	void (*CreateIndex)
 	(
-		EffectsBuffer *buff,
-		SchemaType st,
-		int label_id,
-		const char *label,
-		AttributeID attr_id,
-		const char *attr,
-		IndexFieldType t,
-		SIValue options,
-		SIValue stated
+		EffectsBuffer *buff,    // effect buffer
+		SchemaType st,          // SCHEMA_NODE or SCHEMA_EDGE
+		int label_id,           // label id, or relationship-type id per 'st'
+		const char *label,      // its name
+		AttributeID attr_id,    // the indexed attribute
+		const char *attr,       // its name
+		IndexFieldType t,       // field type: range, fulltext, vector
+		SIValue options,        // the field's full option map - v2 reads this
+		SIValue stated          // only the options the statement named - v3
 	);
 
 	void (*DropIndex)
 	(
-		EffectsBuffer *buff,
-		SchemaType st,
-		int label_id,
-		const char *label,
-		AttributeID attr_id,
-		const char *attr,
-		IndexFieldType t
+		EffectsBuffer *buff,    // effect buffer
+		SchemaType st,          // SCHEMA_NODE or SCHEMA_EDGE
+		int label_id,           // label id, or relationship-type id per 'st'
+		const char *label,      // its name
+		AttributeID attr_id,    // the dropped attribute
+		const char *attr,       // its name
+		IndexFieldType t        // field type: range, fulltext, vector
 	);
 
 	// the CCH path index
@@ -109,22 +114,22 @@ typedef struct {
 	// subset of them describes a different index.
 	void (*CreateCCH)
 	(
-		EffectsBuffer *buff,
-		const RelationID *rel_ids,
-		const char **rel_names,
-		uint rel_count,
-		AttributeID weight_attr,
-		const char *weight_name
+		EffectsBuffer *buff,         // effect buffer
+		const RelationID *rel_ids,   // relationship-type ids the index spans
+		const char **rel_names,      // their names, parallel to 'rel_ids'
+		uint rel_count,              // number of relationship types
+		AttributeID weight_attr,     // edge weight attribute
+		const char *weight_name      // its name
 	);
 
 	void (*DropCCH)
 	(
-		EffectsBuffer *buff,
-		const RelationID *rel_ids,
-		const char **rel_names,
-		uint rel_count,
-		AttributeID weight_attr,
-		const char *weight_name
+		EffectsBuffer *buff,         // effect buffer
+		const RelationID *rel_ids,   // relationship-type ids the index spans
+		const char **rel_names,      // their names, parallel to 'rel_ids'
+		uint rel_count,              // number of relationship types
+		AttributeID weight_attr,     // edge weight attribute
+		const char *weight_name      // its name
 	);
 
 	// constraint DDL
@@ -132,27 +137,27 @@ typedef struct {
 	// 'status' is a ConstraintStatus that only v3 has a field for
 	void (*CreateConstraint)
 	(
-		EffectsBuffer *buff,
-		ConstraintType ct,
-		GraphEntityType et,
-		uint32_t status,
-		int label_id,
-		const char *label,
-		const AttributeID *attr_ids,
-		const char **attrs,
-		uint8_t n
+		EffectsBuffer *buff,          // effect buffer
+		ConstraintType ct,            // unique or mandatory
+		GraphEntityType et,           // node or edge constraint
+		uint32_t status,              // ConstraintStatus - v3 only
+		int label_id,                 // label id, or relationship-type id
+		const char *label,            // its name
+		const AttributeID *attr_ids,  // the constrained attributes
+		const char **attrs,           // their names, parallel to 'attr_ids'
+		uint8_t n                     // number of attributes
 	);
 
 	void (*DropConstraint)
 	(
-		EffectsBuffer *buff,
-		ConstraintType ct,
-		GraphEntityType et,
-		int label_id,
-		const char *label,
-		const AttributeID *attr_ids,
-		const char **attrs,
-		uint8_t n
+		EffectsBuffer *buff,          // effect buffer
+		ConstraintType ct,            // unique or mandatory
+		GraphEntityType et,           // node or edge constraint
+		int label_id,                 // label id, or relationship-type id
+		const char *label,            // its name
+		const AttributeID *attr_ids,  // the constrained attributes
+		const char **attrs,           // their names, parallel to 'attr_ids'
+		uint8_t n                     // number of attributes
 	);
 } EffectsWriter;
 
