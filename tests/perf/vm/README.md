@@ -100,10 +100,11 @@ and only when it is created with a virtual PMU. With `pmu: true`:
  "command_exit": 0, "timed_out": false, "pmu": null}
 ```
 
-It is uploaded when the command fails or times out too. When no VM came up,
-the artifact holds only `perf-vm.json`, with `create_error` naming each zone
-and type tried and why it failed. The merge step then stubs the check as
-`error` and can quote that. The workflow also outputs `zone`, `machine_type`,
+It is uploaded when the command fails or times out too. When the check never
+ran, the artifact holds only `perf-vm.json`, uploaded by the cleanup job, and
+`create_error` says why. Either no VM came up (each zone and type tried, and
+why it failed), or one did but the run job never started (its VM fields are
+filled in). The merge step then stubs the check as `error` and can quote that. The workflow also outputs `zone`, `machine_type`,
 `fallback_used`, `vm_name` and `command_exit`. A matrix caller sees only one
 leg's outputs, so read `perf-vm.json` instead.
 

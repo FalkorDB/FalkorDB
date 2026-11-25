@@ -570,6 +570,24 @@ class WorkflowScriptsTest(unittest.TestCase):
         self.assertIn('uv run --project .perf-vm-tools/bench --frozen --no-dev bash "$PERF_VM_TOOLS/plan.sh"', create)
 
 
+class WorkflowArtifactTest(unittest.TestCase):
+    """Every run uploads perf-vm.json: the run job once it starts, cleanup when it never does."""
+
+    def test_cleanup_records_a_run_job_that_never_started(self):
+        text = (HERE.parents[2] / ".github" / "workflows" / "_perf-vm.yml").read_text()
+        jobs = dict(zip(*[iter(re.split(r"^  (create|run|cleanup):$", text, flags=re.M)[1:])] * 2))
+        run, cleanup = jobs["run"], jobs["cleanup"]
+        self.assertIn("started: ${{ steps.deadline.outputs.started }}", run)
+        first = re.split(r"^      - ", run.split("    steps:\n", 1)[1], flags=re.M)[1]
+        self.assertIn("id: deadline", first)
+        self.assertRegex(first, r"run: \|\n +echo \"started=true\" >> \"\$GITHUB_OUTPUT\"\n")
+        condition = ("always() && (needs.create.result != 'success' || "
+                     "(needs.run.result != 'skipped' && needs.run.outputs.started != 'true'))")
+        for step in ("- name: Record why the check never ran", "- name: Upload perf-result-"):
+            body = cleanup.split(step, 1)[1]
+            self.assertEqual(re.search(r"\n +if: (.+)\n", body).group(1), condition, step)
+
+
 class WorkflowLabelTest(unittest.TestCase):
     """The runner label is spelled the same where it is created, used and deleted."""
 
