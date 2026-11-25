@@ -21,13 +21,15 @@
 //
 //   1. ONE RECORD PER (run, opcode, shape). Shape is the attribute IDS and
 //      never the values, plus the labels for a node and the relationship type
-//      for an edge. A RUN is a stretch of the query's writes that creates or
-//      deletes but never both, and a new one opens the moment that switches -
-//      so one payload MAY carry the same (opcode, shape) more than once, and a
-//      reader applies the records in the order they arrive. C's DataBlock hands
-//      a freed id back inside the same query, so `MATCH (n:A) DELETE n
-//      CREATE (:B)` names one id for two entities and only the sequence can
-//      say which is which.
+//      for an edge. A RUN is a stretch of the query's writes that never
+//      reverses direction: it creates or deletes but not both, and it adds
+//      labels or removes them but not both. A new one opens the moment either
+//      switches - so one payload MAY carry the same (opcode, shape) more than
+//      once, and a reader applies the records in the order they arrive. C's
+//      DataBlock hands a freed id back inside the same query, so
+//      `MATCH (n:A) DELETE n CREATE (:B)` names one id for two entities; and
+//      `MATCH (n) REMOVE n:Z SET n:Z` names one (node, label) pair twice in
+//      opposite directions. Only the sequence says which is which.
 //
 //   2. RUNS GO OUT IN THE ORDER THEY OPENED, STAGES AND THEN KEYS WITHIN ONE.
 //      The stages are Rust's for_each_record: created nodes, created edges,
@@ -40,10 +42,18 @@
 //      would otherwise emit its records in a different order on two
 //      executions of one engine. The stages hold WITHIN a run and say nothing
 //      across runs: sorting the whole payload by stage is what sends a create
-//      of a reused id ahead of the delete that freed it. Note the STAGES are
-//      what the two engines agree on: Rust does not impose an order within a
-//      stage and walks its shapes in first-seen order, so CREATE (:B), (:A)
-//      emits those two records in a different order there than here.
+//      of a reused id ahead of the delete that freed it, and a SET_LABELS
+//      (stage 4) ahead of the REMOVE_LABELS (stage 5) it was meant to follow.
+//      The stage agreement with Rust holds for a
+//      SINGLE-RUN payload and no further: Rust sorts its whole payload by
+//      stage and never carries one (opcode, shape) twice, so a payload that
+//      reverses direction has no cross-engine record sequence to agree on at
+//      all. That costs nothing, because the two engines hand back freed ids
+//      differently - C the most recently freed, Rust the smallest - so the
+//      reversal case does not arise identically on both anyway. And even
+//      within a stage Rust imposes no order, walking its shapes in first-seen
+//      order, so CREATE (:B), (:A) emits those two records in a different
+//      order there than here.
 //
 //   3. LABEL SETS ARE NORMALISED ASCENDING. Callers keep their own order, so
 //      [7,8] and [8,7] arrive for the same set; they are ONE shape.
