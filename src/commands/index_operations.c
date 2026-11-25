@@ -437,6 +437,33 @@ static const char **_index_reltype_names(const cypher_astnode_t *op) {
 	return names;
 }
 
+// whether a CCH statement names more relationship types than the wire can state
+//
+// THE EFFECT STATES THIS COUNT IN TWO BYTES, and the names arrive verbatim:
+// ()-[e:A|A]->() is two of them, because only CCHIndex_New de-duplicates and
+// that runs after the effect is staged. So what a statement can present is not
+// bounded by the graph's relationship-type ceiling, and a wide enough one has to
+// be refused by its CALLER - the last place that still has one to refuse it to.
+// What holds below BOTH call sites is that the writer returns void and can only
+// stop the process. The create path is tighter still: by the time it reaches the
+// writer the schema and attribute effects are already emitted and the index is
+// built. The drop path has mutated nothing by then - it only resolves ids - so
+// there the refusal is merely early, not load-bearing.
+//
+// Sets the error and answers true; the caller still owns 'rel_names'.
+static bool _cch_too_many_reltypes
+(
+	const char **rel_names  // relationship-type names the statement presented
+) {
+	if(arr_len(rel_names) <= UINT16_MAX) {
+		return false;
+	}
+
+	ErrorCtx_SetError("a CCH index cannot span more than %d relationship "
+			"types", UINT16_MAX);
+	return true;
+}
+
 // CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.weight)
 // builds a Customizable Contraction Hierarchy path index over the relationship
 // types for the weight property. unknown relationship types / weight attribute
@@ -465,6 +492,11 @@ static void cch_index_create
 					index_op, 0)));
 
 	const char **rel_names = _index_reltype_names(index_op);   // >= 1 (grammar)
+
+	if(_cch_too_many_reltypes(rel_names)) {
+		arr_free(rel_names);
+		return;
+	}
 
 	QueryCtx_AcquireWriteLock();
 
@@ -523,6 +555,12 @@ static bool cch_index_drop
 				cypher_ast_drop_pattern_props_index_get_property_operator(op, 0)));
 
 	const char **rel_names = _index_reltype_names(op);
+
+	// refused before the write lock, as on the create path
+	if(_cch_too_many_reltypes(rel_names)) {
+		arr_free(rel_names);
+		return false;
+	}
 
 	// resolve ids -- all must already exist to match a live index
 	uint rc = arr_len(rel_names);
@@ -632,7 +670,11 @@ static void index_create
 	ASSERT(result_set != NULL);
 
 	for(uint i = 0; i < nfields; i++) {
-		idx = GraphHub_AddIndex(gc, label, fields[i], et, idx_type, options, true);
+		// one map for both: the CREATE INDEX ... OPTIONS syntax carries exactly
+		// what the statement wrote, with nothing pre-filled, so what the index
+		// is built from and what was stated are the same thing here
+		idx = GraphHub_AddIndex(gc, label, fields[i], et, idx_type, options,
+				options, true);
 		if(idx != NULL) {
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {

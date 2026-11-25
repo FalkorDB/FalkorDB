@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "writers/effects_writer.h"
 #include "../util/wire_string.h"
 #include "../util/arr.h"
 #include "../graph/graph_hub.h"
@@ -15,6 +16,8 @@
 #include <stdio.h>
 
 // add an index field creation effect to buffer
+//
+// forwards to the version's writer; see writers/effects_writer.h
 void EffectsBuffer_AddCreateIndexEffect
 (
 	EffectsBuffer *buff,   // effect buffer
@@ -24,32 +27,11 @@ void EffectsBuffer_AddCreateIndexEffect
 	AttributeID attr_id,   // attribute id
 	const char *attr,      // attribute name
 	IndexFieldType t,      // index field type (range/fulltext/vector)
-	SIValue options        // index options
+	SIValue options,       // index options - THE V2 WIRE, byte-frozen
+	SIValue stated         // the subset the statement named - v3 only
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// schema type
-	// label id
-	// label name
-	// attribute id
-	// attribute name
-	// index field type
-	// options (map)
-	//--------------------------------------------------------------------------
-
-	EffectType eff_t = EFFECT_CREATE_INDEX ;
-	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
-
-	EffectsBuffer_WriteBytes (&st, sizeof (st), buff) ;
-	EffectsBuffer_WriteBytes (&label_id, sizeof (label_id), buff) ;
-	EffectsBuffer_WriteString (label, buff) ;
-	EffectsBuffer_WriteBytes (&attr_id, sizeof (attr_id), buff) ;
-	EffectsBuffer_WriteString (attr, buff) ;
-	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
-	EffectsBuffer_WriteSIValue (&options, buff) ;
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->CreateIndex (buff, st, label_id, label,
+			attr_id, attr, t, options, stated) ;
 }
 
 // process CreateIndex effect
@@ -139,7 +121,10 @@ bool ApplyCreateIndex
 	// create index field
 	//--------------------------------------------------------------------------
 
-	Index idx = GraphHub_AddIndex (gc, label, attr, et, t, options, false) ;
+	// log=false, so no effect is emitted and 'stated' is never read; the
+	// decoded map is passed for both rather than inventing a second one
+	Index idx = GraphHub_AddIndex (gc, label, attr, et, t, options, options,
+			false) ;
 
 	if (idx == NULL) {
 		RedisModule_Log (NULL, "warning",

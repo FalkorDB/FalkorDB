@@ -909,3 +909,58 @@ class testIndexCreationFlow():
         self.env.assertEqual(res[0][3], 'english')           # language
         self.env.assertEqual(res[0][7], 'OPERATIONAL')       # status
 
+    def test19_fulltext_option_types_are_all_validated(self):
+        # EVERY option in the map is type-checked, not just the one the
+        # validator happens to reach first.
+        #
+        # _validateOptions re-scanned the map from the top on each of its n
+        # iterations, so a 'weight' that was present answered on every one of
+        # them and nothing below it in the ladder was ever reached. That made
+        # OPTIONS {weight: 1, phonetic: 123} valid, and Index_FulltextCreate
+        # then read that integer's union as 'stringval'.
+        #
+        # phonetic and nostem are the two that reach _validateOptions past a
+        # present weight, so they are the regression cases - phonetic is the
+        # one that used to segfault the server. language and stopwords are
+        # refused earlier, by IndexOperation_ExtractLevelConfig, and a badly
+        # typed weight was caught by the old first rung too; they are here so
+        # the whole option surface is covered, not because they ever broke.
+        #
+        # An unrecognised key is NOT in this list: a stray key alongside a
+        # known one is still ignored, deliberately, because the v2 effect
+        # carries the options map whole and refusing it would make a replica
+        # skip an index its primary created. _validateOptions says why.
+        label = "FTOPT"
+
+        bad = [
+            "{weight: 1, phonetic: 123}",
+            "{weight: 1, nostem: 'yes'}",
+            "{weight: 1, language: 7}",
+            "{weight: 1, stopwords: 'the'}",
+            "{weight: 'heavy'}",
+        ]
+
+        accepted = []
+        for options in bad:
+            try:
+                self.graph.query(f"CREATE FULLTEXT INDEX FOR (n:{label}) "
+                                 f"ON (n.v) OPTIONS {options}")
+                accepted.append(options)
+            except ResponseError:
+                pass
+
+        # assertEqual rather than assertTrue: it names the offenders
+        self.env.assertEqual(accepted, [])
+
+        # a stray key alongside a known one is ignored, not refused - pinned
+        # because it is a deliberate choice, not an oversight
+        self.graph.query(f"CREATE FULLTEXT INDEX FOR (n:{label}) ON (n.w) "
+                         "OPTIONS {weight: 1, bogus: 2}")
+
+        # and the same shape, well typed throughout, is still accepted
+        self.graph.query(f"CREATE FULLTEXT INDEX FOR (n:{label}) ON (n.v) "
+                         "OPTIONS {weight: 1, phonetic: 'dm:en', nostem: true}")
+        wait_for_indices_to_sync(self.graph)
+
+        res = list_indicies(self.graph, label).result_set
+        self.env.assertEqual(len(res), 1)

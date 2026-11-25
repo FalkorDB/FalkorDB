@@ -22,9 +22,19 @@
 //   1. ONE RECORD PER (opcode, shape). Shape is the attribute IDS and never the
 //      values, plus the labels for a node and the relationship type for an edge.
 //
-//   2. GROUPS ARE SORTED BY KEY before emission. A hash table iterates
-//      arbitrarily, so the same query could emit its records in a different
-//      order on two runs of one engine, let alone on two engines.
+//   2. GROUPS GO OUT IN APPLY ORDER, AND BY KEY WITHIN IT. The stages are
+//      Rust's for_each_record: created nodes, created edges, updates, label
+//      changes, deleted edges, deleted nodes - so a node exists before it is
+//      updated, and an edge is unhooked before the node it hangs off goes.
+//      The opcode NUMBERING is v2's and is not that order - UPDATE_NODE is 1
+//      where CREATE_NODE is 3 - so sorting on the opcode itself sends
+//      CREATE (n) SET n.x = 1 backwards. Within a stage the key decides,
+//      because a hash table iterates arbitrarily and the same query would
+//      otherwise emit its records in a different order on two runs of one
+//      engine. Note the STAGES are what the two engines agree on: Rust does
+//      not impose an order within a stage and walks its shapes in first-seen
+//      order, so CREATE (:B), (:A) emits those two records in a different
+//      order there than here.
 //
 //   3. LABEL SETS ARE NORMALISED ASCENDING. Callers keep their own order, so
 //      [7,8] and [8,7] arrive for the same set; they are ONE shape.
@@ -127,6 +137,94 @@ void EffectsV3Grouping_StageUpdate
 	RelationID relation_id, // relationship type; ignored for a node
 	AttributeID attr_id,    // the attribute being set
 	SIValue value           // its new value, or a null to remove it
+);
+
+
+// file a constraint DDL record
+//
+// Singular like a schema announcement - one statement, one record, no count and
+// no statement-level accumulation, because C hands over the whole property list
+// in one call.
+//
+// 'status' is the one field v3 states that C's own writer never received: a
+// replica never validates, so the announcement is the only thing that can tell
+// an enforcing constraint from one still building, and it is what makes the
+// second announcement converge on the first rather than duplicate it. DROP
+// ignores it.
+void EffectsV3Grouping_AddConstraint
+(
+	EffectsV3Grouping *g,         // accumulator
+	EffectType opcode,            // CREATE_CONSTRAINT or DROP_CONSTRAINT
+	uint32_t constraint_type,     // unique or mandatory
+	uint32_t entity_type,         // 1-BASED - a node is 1, not 0
+	uint32_t status,              // ConstraintStatus; CREATE only
+	int label_id,                 // label/relationship-type id
+	const char *label,            // its name, the cross-check
+	const AttributeID *attr_ids,  // constrained attribute ids
+	const char **attr_names,      // their names
+	uint8_t n                     // how many
+);
+
+// file ONE FIELD of an index statement
+//
+// The per-attribute problem again. C emits one effect per FIELD, while a v3
+// CREATE_INDEX is one record per STATEMENT with a counted field list - so
+// `CREATE INDEX FOR (n:P) ON (n.a, n.b)` arrives as two calls that must become
+// one record, and the field list is not known until the statement stops
+// producing fields.
+//
+// Fields fold into an existing record when they agree on EVERY component of its
+// key: opcode, schema, field type AND the options. The options are part of the
+// key because a record carries ONE options block that apply hands to every field
+// in it, so two fields disagreeing about weight cannot share a record without
+// one silently taking the other's. C reaches that case through
+// db.idx.fulltext.createNodeIndex, which rebuilds weight, phonetic and nostem
+// per field (proc_fulltext_create_index.c:320-327); CREATE INDEX ... OPTIONS
+// passes one map to every field (index_operations.c:457) and so always makes
+// exactly one record.
+//
+// INDEX-LEVEL OPTIONS ARE STATED ONCE PER INDEX PER PAYLOAD. language and
+// stopwords belong to the index rather than the field, and their setters are
+// asymmetric: Index_SetLanguage objects only if the language DIFFERS, but
+// Index_SetStopwords objects if stopwords are set AT ALL - so a statement that
+// splits into two records would fail on the second. They are dropped from every
+// record after the first naming the same index.
+//
+// 'options' is C's own options map, where a key PRESENT is exactly an option the
+// statement STATED - the conversion is a lookup per key and never a default.
+// DROP_INDEX ignores it.
+void EffectsV3Grouping_AddIndexField
+(
+	EffectsV3Grouping *g,   // accumulator
+	EffectType opcode,      // CREATE_INDEX or DROP_INDEX
+	SchemaType schema_type, // node or edge
+	int schema_id,          // label/relationship-type id
+	const char *label,      // its name, the cross-check
+	uint32_t field_type,    // IndexFieldType, a BIT SET - test with &
+	AttributeID attr_id,    // the field being indexed
+	const char *attr_name,  // its name
+	SIValue options         // C's options map; ignored for a drop
+);
+
+// stage a CCH path index as one index record
+//
+// A CCH statement is NOT a new opcode. It is a CREATE_INDEX or DROP_INDEX
+// carrying INDEX_FLD_CCH, whose schema list is the relationship types it spans
+// and whose single field is the weight attribute - which is what the schema
+// list was added for.
+//
+// ONE RECORD, built whole, rather than a field folded into an existing one: the
+// statement names its relationship types together, and a record naming a subset
+// of them describes a different index.
+void EffectsV3Grouping_AddCCHIndex
+(
+	EffectsV3Grouping *g,        // accumulator
+	EffectType opcode,           // CREATE_INDEX or DROP_INDEX
+	const uint32_t *rel_ids,     // relationship-type ids the index spans
+	const char **rel_names,      // their names, the cross-check
+	uint16_t n_rels,             // how many
+	AttributeID weight_attr,     // the edge weight attribute
+	const char *weight_name      // its name, the cross-check
 );
 
 // how many records the accumulator would emit
