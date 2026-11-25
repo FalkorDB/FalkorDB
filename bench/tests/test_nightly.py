@@ -30,7 +30,7 @@ from typing import ClassVar
 
 from click.testing import CliRunner
 
-import falkorbench.nightly
+from falkorbench import nightly as nightly_package
 from falkorbench.cli import cli
 from falkorbench.nightly import missed_run
 from falkorbench.nightly import report
@@ -621,6 +621,22 @@ class Delivery(Workspace):
         self.assertEqual(code, 0)
         self.assertIn("PERF_CHAT_WEBHOOK is not set: not posted to Chat.", stderr)
         self.assertTrue(stdout.startswith("Perf nightly 2026-11-24: GREEN"))
+
+    def test_text_utf8_cannot_encode_is_replaced_and_the_night_still_posted(self):
+        # JSON may escape a lone surrogate ("\\ud800"); writing it as UTF-8 would raise.
+        night = nightly("red", [result("micro-hw", "regression", [UNWIND], summary="out: \ud800")])
+        night["checks"][0]["check"] = "micro-hw\udfff"
+        summary = self.directory / "summary.md"
+        with StubServer({"/hook": (200, {})}) as server:
+            code, stdout, stderr = self.run_post(
+                night,
+                {"PERF_CHAT_WEBHOOK": f"{server.url}/hook", "GITHUB_STEP_SUMMARY": str(summary)},
+            )
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(len(server.requests), 1)
+        self.assertIn("Posted to Chat.", stderr)
+        self.assertIn("RED (micro-hw?)", stdout)
+        self.assertIn("| micro-hw? | regression | out: ? |", summary.read_text(encoding="utf-8"))
 
     def test_a_failed_post_is_a_warning_retried_and_never_shows_the_webhook(self):
         with StubServer({"/hook": (500, {"error": "boom"})}) as server:
@@ -1214,7 +1230,7 @@ class StandardLibraryOnly(unittest.TestCase):
     )
 
     def test_the_nightly_modules_import_only_the_standard_library(self):
-        for module in (falkorbench.nightly, report, missed_run):
+        for module in (nightly_package, report, missed_run):
             with self.subTest(module=module.__name__):
                 for node in ast.walk(ast.parse(Path(module.__file__).read_text(encoding="utf-8"))):
                     if isinstance(node, ast.Import):

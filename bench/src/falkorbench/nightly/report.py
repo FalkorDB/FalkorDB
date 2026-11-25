@@ -145,6 +145,9 @@ def read_night(path: Path) -> tuple[dict, str, str]:
     """The nightly document, the status to report, and why it is ERROR if it had to be."""
     try:
         night = json.loads(path.read_text(encoding="utf-8"))
+        # JSON may escape a lone surrogate ("\\ud800"), which no UTF-8 output can take
+        # (stdout, the summary, a URL): replace it once, here, so nothing later fails on it.
+        night = json.loads(json.dumps(night, ensure_ascii=False).encode("utf-8", "replace"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         return {}, "error", shorten(f"could not read {path.name}: {exc}", TEXT_CHARACTERS)
     if not isinstance(night, dict):
