@@ -99,14 +99,14 @@ jobs:
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::could not resolve $image ($digest)"; exit 1; }
           echo "image=${image%:*}@$digest" | tee -a "$GITHUB_OUTPUT"
 
-  # By branch until #3988 is on main; then `./.github/workflows/_perf-vm.yml`,
-  # once a cross-branch call shows `./` resolving to this file's commit.
+  # `./` is this file's commit, so the VM scripts and the measurement image
+  # (preflight) come from one commit.
   hardware:
     needs: preflight
     permissions:
       contents: read
       packages: read
-    uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
+    uses: ./.github/workflows/_perf-vm.yml
     with:
       check: micro-hw
       command: uv run --project bench bench micro-hw --bench-image ${{ needs.preflight.outputs.bench_image }}
