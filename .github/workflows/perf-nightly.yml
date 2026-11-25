@@ -101,10 +101,8 @@ jobs:
       has_hosted: ${{ steps.plan.outputs.has_hosted }}
       hosted_matrix: ${{ steps.plan.outputs.hosted_matrix }}
     steps:
-      # Deep enough for the WALK-commit first-parent fallback below.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 25
           persist-credentials: false
 
       # The bench project's pinned Python (bench/.python-version) and lock.
@@ -162,12 +160,13 @@ jobs:
             pin_input "$CANDIDATE_INPUT"
             note="given by hand"
           else
-            # On schedule (and a dispatch from main) HEAD is main's tip. On the
-            # TEMPORARY pull_request trigger it is the PR's merge commit, which has
-            # no rc-mg image, so the fallback below runs for real.
-            tip=$(git rev-parse HEAD)
+            # Always main's newest image, whatever ref the run came from: a
+            # dispatch from another branch, or the TEMPORARY pull_request
+            # trigger, still measures main (and labels it main@…).
+            git fetch --quiet --no-tags --depth="$((WALK + 5))" origin main
+            tip=$(git rev-parse FETCH_HEAD)
             found=""
-            for sha in $(git rev-list --first-parent -n "$WALK" HEAD); do
+            for sha in $(git rev-list --first-parent -n "$WALK" "$tip"); do
               if digest=$(digest_of "$CANDIDATE_REPO:rc-mg-$sha-valkey"); then
                 found=$sha
                 break
@@ -275,6 +274,23 @@ jobs:
             if [[ $status == green ]]; then break; fi
           done < "$HISTORY/runs.txt"
 
+      - name: Plan the checks
+        id: plan
+        env:
+          CHECKS: ${{ inputs.checks }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plan"
+          # A registry that does not parse is reported as the check `checks-yaml`
+          # (an error) instead of stopping the night.
+          if yq -o=json '.' bench/checks.yaml > "$RUNNER_TEMP/checks.json" 2> "$RUNNER_TEMP/yq.err"; then
+            registry=(--registry "$RUNNER_TEMP/checks.json")
+          else
+            registry=(--registry-error "yq: $(tr '\n' ' ' < "$RUNNER_TEMP/yq.err")")
+          fi
+          uv run --project bench --frozen bench nightly merge plan "${registry[@]}" --select "$CHECKS" \
+            --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
+
       - name: Decide whether tonight runs
         id: context
         env:
@@ -289,7 +305,6 @@ jobs:
           BASELINE_LABEL: ${{ steps.images.outputs.baseline_label }}
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/plan"
           skip=()
           if [[ $MAY_SKIP == true ]]; then skip=(--may-skip); fi
           out=$GITHUB_OUTPUT
@@ -297,6 +312,7 @@ jobs:
           uv run --project bench --frozen bench nightly merge context \
             --candidate "$CANDIDATE_IMAGE" --candidate-commit "$CANDIDATE_COMMIT" --candidate-label "$CANDIDATE_LABEL" \
             --baseline "$BASELINE_IMAGE" --baseline-commit "$BASELINE_COMMIT" --baseline-label "$BASELINE_LABEL" \
+            --plan "$RUNNER_TEMP/plan/plan.json" \
             --history-runs "$HISTORY/runs.txt" --history-dir "$HISTORY" "${skip[@]}" \
             --date "$(date -u +%F)" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --out "$RUNNER_TEMP/plan/context.json" --github-output "$out" \
@@ -312,22 +328,6 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "skip (pull_request run, overrides the line above): $reason" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-
-      - name: Plan the checks
-        id: plan
-        env:
-          CHECKS: ${{ inputs.checks }}
-        run: |
-          set -euo pipefail
-          # A registry that does not parse is reported as the check `checks-yaml`
-          # (an error) instead of stopping the night.
-          if yq -o=json '.' bench/checks.yaml > "$RUNNER_TEMP/checks.json" 2> "$RUNNER_TEMP/yq.err"; then
-            registry=(--registry "$RUNNER_TEMP/checks.json")
-          else
-            registry=(--registry-error "yq: $(tr '\n' ' ' < "$RUNNER_TEMP/yq.err")")
-          fi
-          uv run --project bench --frozen bench nightly merge plan "${registry[@]}" --select "$CHECKS" \
-            --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -490,8 +490,11 @@ jobs:
             dir=$RUNNER_TEMP/results/$name
             # The newest artifact of that name: after "Re-run jobs" the previous
             # attempt's is still listed beside the new one.
-            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$name&per_page=100" \
-              --jq '[.artifacts[] | select(.expired | not)] | max_by(.id) | .id // empty')
+            if ! id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$name&per_page=100" \
+                --jq '[.artifacts[] | select(.expired | not)] | max_by(.id) | .id // empty'); then
+              echo "::warning::$name: could not list its artifacts"
+              continue
+            fi
             if [[ -z $id ]]; then
               echo "::warning::$name: no artifact"
               continue
@@ -499,8 +502,11 @@ jobs:
             mkdir -p "$dir"
             if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$name.zip" \
                 && unzip -q -o "$RUNNER_TEMP/$name.zip" -d "$dir"; then
-              find "$dir" -maxdepth 1 -printf "$name (artifact $id): %f\n"
+              for file in "$dir"/*; do echo "$name (artifact $id): ${file##*/}"; done
             else
+              # A partly extracted artifact could still hold a result.json: drop
+              # it, so the check is the stub merge writes for a missing result.
+              rm -rf "$dir"
               echo "::warning::$name: artifact $id did not download"
             fi
           done

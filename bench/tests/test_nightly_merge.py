@@ -9,8 +9,6 @@ checked together.
 import json
 import math
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -194,7 +192,7 @@ def test_the_micro_call_runs_only_when_micro_hw_is_planned(select, run_micro):
         ({**HOSTED_ENTRY, "runner": "gce"}, "runner 'gce'"),
         ({**HOSTED_ENTRY, "command": " "}, "command is missing"),
         ({**HOSTED_ENTRY, "timeout_minutes": "30"}, "timeout_minutes '30'"),
-        ({**HOSTED_ENTRY, "timeout_minutes": 331}, "from 1 to 330"),
+        ({**HOSTED_ENTRY, "timeout_minutes": 331}, "from 1 to 330 (hosted)"),
         ({**HOSTED_ENTRY, "timeout_minutes": True}, "timeout_minutes True"),
         ({**HOSTED_ENTRY, "machine_type": "n4-standard-16"}, "only for runner: vm"),
         ({**HOSTED_ENTRY, "env": {}}, "unknown key(s) env"),
@@ -265,14 +263,36 @@ def test_registry_with_no_checks_plans_micro_hw_alone(tmp_path, converted):
 
 
 def parse_yaml(path):
-    """The way the workflow reads checks.yaml (yq), else PyYAML."""
-    if shutil.which("yq"):
-        text = subprocess.run(
-            ["yq", "-o=json", ".", str(path)], check=True, capture_output=True, text=True
-        ).stdout
-        return json.loads(text) if text.strip() else None
-    yaml = pytest.importorskip("yaml", reason="needs yq or PyYAML to parse checks.yaml")
-    return yaml.safe_load(path.read_text())
+    """A YAML file the strict way (PyYAML, from bench's dev group). A key given
+    twice is an append gone wrong, and PyYAML's own loader would keep the last
+    value, so this one refuses it."""
+    import yaml
+
+    class Strict(yaml.SafeLoader):
+        pass
+
+    def mapping(loader, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = loader.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"duplicate key {key!r}", key_node.start_mark
+                )
+            seen.add(key)
+        return yaml.SafeLoader.construct_mapping(loader, node, deep)
+
+    Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+    return yaml.load(path.read_text(), Loader=Strict)
+
+
+def test_the_registry_parser_refuses_a_duplicate_key(tmp_path):
+    import yaml
+
+    path = tmp_path / "checks.yaml"
+    path.write_text("- name: ldbc\n  command: a\n  command: b\n")
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key 'command'"):
+        parse_yaml(path)
 
 
 def test_the_real_registry_is_usable():
@@ -512,7 +532,8 @@ def test_perf_judges_valid_results_pass_through_whole(tmp_path, fixture):
     doc = json.loads((FIXTURES / fixture).read_text())
     measured(tmp_path / "results", doc["check"], doc)
     plan = [{"check": doc["check"], "runner": "vm"}]
-    _, nightly = run_merge(tmp_path, plan)
+    ctx = {**context(), "candidate": doc["candidate"], "baseline": doc["baseline"]}
+    _, nightly = run_merge(tmp_path, plan, ctx)
     assert nightly["checks"] == [doc]
 
 
@@ -602,9 +623,12 @@ def history(*nights):
     return [(str(100 - i), n) for i, n in enumerate(nights)]
 
 
+PLANNED = ["micro-hw"]
+
+
 @pytest.mark.parametrize("status", ["green", "red", "skipped"])
 def test_unchanged_pair_after_a_settled_night_skips(status):
-    reason = merge.skip_reason(history(night(status), night("green")), CANDIDATE, BASELINE)
+    reason = merge.skip_reason(history(night(status), night("green")), CANDIDATE, BASELINE, PLANNED)
     assert reason is not None and "main has not moved" in reason
 
 
@@ -614,7 +638,7 @@ def test_skip_reason_names_the_night_that_measured(tmp_path):
         night("skipped", date="2026-11-22"),
         night("red", date="2026-11-21"),
     )
-    reason = merge.skip_reason(nights, CANDIDATE, BASELINE)
+    reason = merge.skip_reason(nights, CANDIDATE, BASELINE, PLANNED)
     assert "the 2026-11-21 nightly (red, https://" in reason
     assert "same candidate main@4c10889 and baseline 6.2.0" in reason
 
@@ -642,12 +666,12 @@ def test_skip_reason_names_the_night_that_measured(tmp_path):
     ],
 )
 def test_runs_when_anything_is_new_or_unsettled(nights):
-    assert merge.skip_reason(nights, CANDIDATE, BASELINE) is None
+    assert merge.skip_reason(nights, CANDIDATE, BASELINE, PLANNED) is None
 
 
 def test_candidate_without_commit_never_skips():
     nights = history(night("green", commit=None))
-    assert merge.skip_reason(nights, {**CANDIDATE, "commit": None}, BASELINE) is None
+    assert merge.skip_reason(nights, {**CANDIDATE, "commit": None}, BASELINE, PLANNED) is None
 
 
 @pytest.mark.parametrize(
@@ -668,7 +692,7 @@ def test_an_unusable_earlier_nightly_counts_as_missing(tmp_path, broken):
     (tmp_path / "runs.txt").write_text("30\n")
     history = merge.read_history(tmp_path / "runs.txt", tmp_path / "prev")
     assert history == [("30", None)]
-    assert merge.skip_reason(history, CANDIDATE, BASELINE) is None
+    assert merge.skip_reason(history, CANDIDATE, BASELINE, PLANNED) is None
 
 
 def test_previous_green_is_the_newest_green_night():
@@ -688,8 +712,11 @@ def test_context_cli_reads_downloaded_history(tmp_path):
     runs = tmp_path / "runs.txt"
     runs.write_text("30\n25\n20\n")
     output = tmp_path / "github_output"
+    (tmp_path / "plan.json").write_text(json.dumps(MICRO_HW))
     args = [
         "context",
+        "--plan",
+        str(tmp_path / "plan.json"),
         "--candidate",
         CAND,
         "--candidate-commit",
@@ -750,6 +777,8 @@ def test_context_refuses_unpinned_or_malformed_sides(tmp_path, capsys, flag, val
     }
     args[flag] = value
     argv = ["context"] + [x for pair in args.items() for x in pair]
+    (tmp_path / "plan.json").write_text(json.dumps(MICRO_HW))
+    argv += ["--plan", str(tmp_path / "plan.json")]
     argv += ["--date", "2026-11-24", "--run-url", "https://x/y", "--out", str(tmp_path / "c.json")]
     assert merge.main(argv) == 1
     # kit.input_errors' wording: the same check every perf check runs on its flags.
@@ -839,3 +868,243 @@ def test_bench_nightly_merge_runs_the_subcommands(tmp_path):
     night.write_text(json.dumps({"status": "red"}))
     run = CliRunner().invoke(cli, ["nightly", "merge", "conclude", "--nightly", str(night)])
     assert run.exit_code == 1
+
+
+# --- review round: registry edges, skip edges, the pinned pair -------------------
+
+
+@pytest.mark.parametrize("runner, limit", [("vm", 300), ("hosted", 330)])
+def test_timeout_limit_is_the_runners(runner, limit):
+    """tests/perf/vm/plan.sh refuses more than 300 minutes (the VM deletes itself
+    6 h after boot), so a VM entry over that must fail here, not every night."""
+    entry = {**(VM_ENTRY if runner == "vm" else HOSTED_ENTRY), "timeout_minutes": limit}
+    (row,) = [r for r in merge.build_plan([entry], "") if r["check"] == entry["name"]]
+    assert row["runner"] == runner
+    (row,) = [
+        r
+        for r in merge.build_plan([{**entry, "timeout_minutes": limit + 1}], "")
+        if r["check"] == entry["name"]
+    ]
+    assert row["runner"] is None and f"from 1 to {limit} ({runner})" in row["error"]
+
+
+def test_a_name_with_a_trailing_newline_is_not_a_check_name():
+    """`$` also matches before a final newline; a YAML block scalar can carry one."""
+    plan = merge.build_plan([{**HOSTED_ENTRY, "name": "pokec\n"}], "")
+    assert plan[-1]["check"] == "checks-yaml" and "is not a check name" in plan[-1]["error"]
+
+
+def test_a_command_over_several_lines_runs_as_one_line():
+    """run-check.sh reads one line: a folded command must not lose its tail."""
+    entry = {**HOSTED_ENTRY, "command": "uv run --project bench\n  --frozen bench ldbc\n"}
+    (row,) = [r for r in merge.build_plan([entry], "") if r["check"] == "ldbc"]
+    assert row["command"] == "uv run --project bench --frozen bench ldbc"
+
+
+def test_previous_green_survives_a_stretch_with_no_green_night():
+    """The workflow reads a bounded number of earlier runs: with none of them
+    green, the newest recorded previous green is handed on."""
+    nights = history(
+        night("red"), night("skipped"), {**night("red"), "previous_green_commit": OLDER}
+    )
+    assert merge.previous_green_commit(nights) == OLDER
+    assert merge.previous_green_commit(history(night("red"), night("skipped"))) is None
+
+
+@pytest.mark.parametrize(
+    "nights, planned",
+    [
+        # Same commit, rebuilt image: new bytes to measure.
+        (history({**night("green"), "candidate": {**CANDIDATE, "image": OTHER_BASE}}), PLANNED),
+        # A check added to the registry while the pair stayed put.
+        (history(night("green")), [*PLANNED, "pokec"]),
+        # A registry that stopped parsing.
+        (history(night("green")), [*PLANNED, "checks-yaml"]),
+        # The night that measured the pair left no artifact: nothing says what it ran.
+        (history(night("skipped"), None), PLANNED),
+    ],
+)
+def test_no_skip_unless_the_measured_night_matches_tonight(nights, planned):
+    assert merge.skip_reason(nights, CANDIDATE, BASELINE, planned) is None
+
+
+def test_a_result_for_another_pair_is_not_tonights(tmp_path):
+    """An earlier attempt's artifact, say: a pass for another candidate must not
+    make tonight green."""
+    other = {**CANDIDATE, "image": "ghcr.io/falkordb/falkordb-server@sha256:" + "c" * 64}
+    measured(tmp_path / "results", "micro-hw", result("micro-hw", candidate=other))
+    _, nightly = run_merge(tmp_path, MICRO_HW)
+    (entry,) = nightly["checks"]
+    assert entry["verdict"] == "error"
+    assert entry["error"] == (
+        f"result.json measured candidate sha256:{'c' * 64}, but the night pinned {CAND.rpartition('@')[2]}"
+    )
+    assert nightly["status"] == "error"
+
+
+# --- the workflow's own shell steps, run for real with fake gh / docker -----------
+
+
+def step_script(job, name):
+    """The `run:` text of one step of perf-nightly.yml."""
+    for step in workflow("perf-nightly.yml")["jobs"][job]["steps"]:
+        if step.get("name", "").startswith(name) or step.get("id") == name:
+            return step["run"]
+    raise AssertionError(f"no step {name!r} in job {job!r}")
+
+
+def fake_tool(bin_dir, name, script):
+    path = bin_dir / name
+    path.write_text("#!/bin/bash\n" + script)
+    path.chmod(0o755)
+
+
+def run_step(script, cwd, env):
+    import os
+    import subprocess
+
+    return subprocess.run(
+        ["bash", "-e", "-c", script],
+        cwd=cwd,
+        env={**os.environ, **env, "PATH": f"{env['BIN']}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_plan_runs_before_the_skip_decision_that_reads_it():
+    steps = workflow("perf-nightly.yml")["jobs"]["resolve"]["steps"]
+    order = [s.get("id") for s in steps]
+    assert order.index("plan") < order.index("context")
+    assert '--plan "$RUNNER_TEMP/plan/plan.json"' in step_script("resolve", "context")
+
+
+def test_the_results_download_turns_failures_into_missing_results(tmp_path):
+    """One artifact lookup failing, or one archive broken, must not stop the
+    step: those checks are left without a result.json (merge stubs them) and
+    the others still download."""
+    import zipfile
+
+    bin_dir, temp = tmp_path / "bin", tmp_path / "temp"
+    bin_dir.mkdir()
+    (temp / "plan").mkdir(parents=True)
+    (temp / "plan" / "plan.json").write_text(
+        json.dumps([{"check": c, "runner": "vm"} for c in ("lost", "broken", "fine")])
+    )
+    good = tmp_path / "good.zip"
+    with zipfile.ZipFile(good, "w") as archive:
+        archive.writestr("result.json", "{}")
+        archive.writestr("perf-vm.json", "{}")
+    fake_tool(
+        bin_dir,
+        "gh",
+        f"""case "$*" in
+  *artifacts?name=perf-result-lost*) echo "HTTP 502" >&2; exit 1 ;;
+  *artifacts?name=perf-result-broken*) echo 11 ;;
+  *artifacts?name=perf-result-fine*) echo 12 ;;
+  *artifacts/11/zip*) printf 'PK\\003\\004 not a zip' ;;
+  *artifacts/12/zip*) cat {good} ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+""",
+    )
+    run = run_step(
+        step_script("merge", "Download the results"),
+        tmp_path,
+        {
+            "BIN": str(bin_dir),
+            "RUNNER_TEMP": str(temp),
+            "GITHUB_REPOSITORY": "o/r",
+            "GITHUB_RUN_ID": "1",
+        },
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "perf-result-lost: could not list its artifacts" in run.stdout
+    assert "perf-result-broken: artifact 11 did not download" in run.stdout
+    results = temp / "results"
+    assert not (results / "perf-result-lost").exists()
+    assert not (results / "perf-result-broken").exists()
+    assert (results / "perf-result-fine" / "result.json").is_file()
+
+
+def test_the_candidate_is_mains_newest_image_whatever_ref_runs(tmp_path):
+    """A dispatch from another branch (or a pull_request run, whose merge commit
+    may sit many commits above main) still measures main's newest image, and
+    falls back along main's first-parent history when the tip has none."""
+    import os
+    import subprocess
+
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    def git(*args, cwd):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, env=git_env, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    origin, work = tmp_path / "origin.git", tmp_path / "work"
+    git("init", "--quiet", "--bare", "--initial-branch=main", str(origin), cwd=tmp_path)
+    git("clone", "--quiet", str(origin), str(work), cwd=tmp_path)
+    main = []
+    for n in range(3):
+        git("commit", "--quiet", "--allow-empty", "-m", f"main {n}", cwd=work)
+        main.append(git("rev-parse", "HEAD", cwd=work))
+    git("push", "--quiet", "origin", "HEAD:main", cwd=work)
+    git("checkout", "--quiet", "-b", "elsewhere", cwd=work)
+    git("commit", "--quiet", "--allow-empty", "-m", "not main", cwd=work)
+    elsewhere = git("rev-parse", "HEAD", cwd=work)
+
+    bin_dir, temp = tmp_path / "bin", tmp_path / "temp"
+    bin_dir.mkdir()
+    temp.mkdir()
+    # Only main's first commit has an image; so does the release tag.
+    fake_tool(
+        bin_dir,
+        "docker",
+        f"""ref=$4
+case "$ref" in
+  *rc-mg-{main[0]}-valkey|*:6.2.1) echo '{{"digest": "sha256:{"a" * 64}"}}' ;;
+  *{elsewhere}*) echo '{{"digest": "sha256:{"e" * 64}"}}' ;;
+  *) echo "ERROR: $ref: not found" >&2; exit 1 ;;
+esac
+""",
+    )
+    fake_tool(
+        bin_dir,
+        "gh",
+        f"""case "$*" in
+  *releases/latest*) echo v6.2.1 ;;
+  *releases?per_page*) printf 'v6.2.1\\nv6.2.0\\n' ;;
+  *commits/v6.2.1*) echo {"d" * 40} ;;
+  *) echo "unexpected gh $*" >&2; exit 9 ;;
+esac
+""",
+    )
+    out = temp / "output"
+    run = run_step(
+        step_script("resolve", "images"),
+        work,
+        {
+            "BIN": str(bin_dir),
+            "RUNNER_TEMP": str(temp),
+            "GITHUB_OUTPUT": str(out),
+            "GITHUB_STEP_SUMMARY": str(temp / "summary"),
+            "GITHUB_REPOSITORY": "o/r",
+            "WALK": "20",
+            "CANDIDATE_REPO": "ghcr.io/falkordb/falkordb-server",
+            "BASELINE_REPO": "falkordb/falkordb-server",
+            "CANDIDATE_INPUT": "",
+            "BASELINE_INPUT": "",
+        },
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    assert outputs["candidate_commit"] == main[0]
+    assert outputs["candidate_label"] == f"main@{main[0][:7]} (tip {main[2][:7]} has no image)"
+    assert outputs["baseline_label"] == "6.2.1"

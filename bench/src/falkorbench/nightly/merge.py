@@ -34,10 +34,13 @@ MICRO_TIER = {MICRO_HW: {"check": MICRO_HW, "runner": "micro-hw"}}
 # A check's name becomes a GCE label, a runner label and part of an artifact name
 # (_perf-vm.yml), so it is held to the narrowest of the three. `--` is reserved
 # besides: the reusable workflows name their internal artifacts <artifact>--*.
-CHECK_NAME = re.compile(r"^[a-z][a-z0-9-]{0,42}$")
+CHECK_NAME = re.compile(r"[a-z][a-z0-9-]{0,42}")
 
 RUNNERS = ("vm", "hosted")
-MAX_TIMEOUT = 330
+# Minutes a check's command may run. A VM deletes itself 6 h after boot, so
+# tests/perf/vm/plan.sh refuses more than 300; the hosted job's limit is 360,
+# and 330 keeps run-check.sh's own `timeout` (and so the exit record) first.
+MAX_TIMEOUT = {"vm": 300, "hosted": 330}
 
 
 NO_RESULT = "no result.json"
@@ -55,7 +58,7 @@ class PlanError(Exception):
 
 
 def is_check_name(name):
-    return isinstance(name, str) and bool(CHECK_NAME.match(name)) and "--" not in name
+    return isinstance(name, str) and bool(CHECK_NAME.fullmatch(name)) and "--" not in name
 
 
 def registry_entry(name, entry):
@@ -75,10 +78,11 @@ def registry_entry(name, entry):
     if not isinstance(command, str) or not command.strip():
         return invalid("command is missing or empty")
     timeout = entry.get("timeout_minutes")
-    # Below the hosted job's 360-minute limit, so the step's own `timeout` fires
-    # first and the exit is still recorded.
-    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_TIMEOUT:
-        return invalid(f"timeout_minutes {timeout!r} is not an integer from 1 to {MAX_TIMEOUT}")
+    limit = MAX_TIMEOUT[runner]
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= limit:
+        return invalid(
+            f"timeout_minutes {timeout!r} is not an integer from 1 to {limit} ({runner})"
+        )
     machine_type = entry.get("machine_type", "")
     if machine_type is None:
         machine_type = ""
@@ -89,7 +93,9 @@ def registry_entry(name, entry):
     return {
         "check": name,
         "runner": runner,
-        "command": command.strip(),
+        # run-check.sh reads one line and splits it on blanks: a command written
+        # over several YAML lines is the same words on one line.
+        "command": " ".join(command.split()),
         "timeout_minutes": timeout,
         "machine_type": machine_type,
     }
@@ -245,25 +251,36 @@ def left_unmeasured(nightly):
     return any(not isinstance(c, dict) or c.get("verdict") == "error" for c in nightly["checks"])
 
 
+def _commit(value):
+    return value if isinstance(value, str) and contract.COMMIT_RE.fullmatch(value) else None
+
+
 def previous_green_commit(history):
+    """The newest green night's candidate commit. The workflow reads a bounded
+    number of earlier runs, so when none of them was green, the newest night that
+    recorded a previous green commit hands it on: a long red or skipped stretch
+    keeps the commit range of the next report."""
     for _, nightly in history:
         if nightly and nightly["status"] == "green":
-            commit = nightly["candidate"].get("commit")
-            return (
-                commit if isinstance(commit, str) and contract.COMMIT_RE.fullmatch(commit) else None
-            )
+            return _commit(nightly["candidate"].get("commit"))
+    for _, nightly in history:
+        if nightly and _commit(nightly.get("previous_green_commit")):
+            return nightly["previous_green_commit"]
     return None
 
 
-def skip_reason(history, candidate, baseline):
+def skip_reason(history, candidate, baseline, planned):
     """Why tonight need not run, or None.
 
     Skipped only when there is nothing new to measure AND the last answer stands:
     the newest earlier nightly left a nightly.json, none of its checks said
     `error` (a transient failure gets retried, even beside a regression), and it
-    measured the same candidate commit against the same baseline digest. A
-    skipped night counts too, since it carries the pair it skipped, so a quiet
-    stretch keeps skipping.
+    had the same candidate (commit and digest) and baseline digest. A skipped
+    night counts too, since it carries the pair it skipped, so a quiet stretch
+    keeps skipping. The night that measured that pair must be at hand and must
+    have run exactly tonight's planned checks (`planned`, their names): a check
+    added to the registry, or a registry that no longer parses, is measured even
+    when the image pair has not moved.
     """
     if not history or candidate["commit"] is None:
         return None
@@ -272,16 +289,19 @@ def skip_reason(history, candidate, baseline):
         return None
     if last["candidate"].get("commit") != candidate["commit"]:
         return None
+    if last["candidate"].get("image") != candidate["image"]:
+        return None
     if last["baseline"].get("image") != baseline["image"]:
         return None
-    # Name the night that actually measured this pair, not the last skip. Every
-    # night between it and now skipped, so they all carry the same pair.
-    measured = last
-    for _, nightly in history:
-        if nightly is None or nightly["status"] != "skipped":
-            if nightly is not None:
-                measured = nightly
-            break
+    # The night that actually measured this pair: every night after it skipped
+    # and carries the same pair. If its artifact is gone, nothing says what it
+    # measured, so tonight runs.
+    measured = next((n for _, n in history if n is None or n["status"] != "skipped"), None)
+    if measured is None:
+        return None
+    ran = {c.get("check") for c in measured["checks"] if isinstance(c, dict)}
+    if ran != set(planned):
+        return None
     return one_line(
         f"main has not moved since the {measured.get('date')} nightly "
         f"({measured.get('status')}, {measured.get('run_url')}): "
@@ -346,8 +366,14 @@ def read_result(path):
     return doc, list(dict.fromkeys(problem.code for problem in contract.validate_result(doc)))
 
 
-def collect(check, artifact):
-    """The result.json in one artifact directory, or a stub saying why not."""
+def _digest(image):
+    return image.rpartition("@")[2] if isinstance(image, str) else None
+
+
+def collect(check, artifact, pinned):
+    """The result.json in one artifact directory, or a stub saying why not.
+    `pinned` is the night's candidate and baseline: a result that measured
+    another pair (an earlier attempt's artifact, say) is not tonight's."""
     path = artifact / "result.json"
     clean, why = how_it_ended(artifact)
     if not path.is_file():
@@ -364,6 +390,10 @@ def collect(check, artifact):
         )
     if result["check"] != check:
         return stub(check, f"result.json names check {result.get('check')!r}")
+    for which, side in pinned.items():
+        got, want = _digest(result[which]["image"]), _digest(side["image"])
+        if got != want:
+            return stub(check, f"result.json measured {which} {got}, but the night pinned {want}")
     # The contract exits 0 whenever result.json was written, so a check that did
     # not end cleanly crashed after writing it: its `pass` is not a measurement.
     # Every runner records the exit in perf-vm.json, and a `pass` needs that
@@ -411,7 +441,8 @@ def build_nightly(context, plan, results_dir):
         # name, and the reusable workflows' internal <artifact>--* ones are not
         # checks.
         artifact = results_dir / f"perf-result-{row['check']}"
-        checks.append(collect(row["check"], artifact))
+        pinned = {"candidate": context["candidate"], "baseline": context["baseline"]}
+        checks.append(collect(row["check"], artifact, pinned))
 
     nightly["checks"] = checks
     nightly["status"] = status_of(checks)
@@ -476,7 +507,8 @@ def cmd_context(args):
                 f"history: run {run_id} {nightly.get('date')} {nightly['status']} "
                 f"candidate {nightly['candidate'].get('commit')}"
             )
-    reason = skip_reason(history, candidate, baseline) if args.may_skip else None
+    planned = [row["check"] for row in strict_load(args.plan)]
+    reason = skip_reason(history, candidate, baseline, planned) if args.may_skip else None
     context = {
         "date": args.date,
         "run_url": args.run_url,
@@ -546,6 +578,7 @@ def main(argv=None):
         p.add_argument(f"--{which}", required=True, help="image, name[:tag]@sha256:<64 hex>")
         p.add_argument(f"--{which}-commit", default="")
         p.add_argument(f"--{which}-label", required=True)
+    p.add_argument("--plan", required=True, help="tonight's plan.json (`plan` writes it)")
     p.add_argument("--history-runs", default="", help="earlier run ids, newest first")
     p.add_argument("--history-dir", default="", help="holds <run id>/nightly.json")
     p.add_argument("--may-skip", action="store_true", help="tonight may be skipped")
