@@ -40,12 +40,12 @@
 # check, or a `pass` whose perf-vm.json does not record exit 0. A checks.yaml it
 # cannot use is reported as the error check `checks-yaml`; the night goes on.
 #
-# The release gate (#4004) is this workflow, called. A pull request into a
-# version branch (rust-pr.yml) and a release tag (release-tag.yml) call it at
-# @main with the image to judge, a version the baseline release must be below,
-# and a mode. A call runs the checks in GATE_CHECKS, never skips, posts nothing
-# to Chat, and fails unless every regression is waived in bench/waivers.yaml and
-# no check said error. Every job runs this workflow's own commit (main's), not
+# The release gate (#4004) is this workflow, called. The merge queue of a
+# version branch (rust-pr.yml) calls it at @main with the queue's image, a
+# version the baseline release must be below, and `nightly` as the mode. A call
+# runs every registered check as a night does, never skips, posts nothing to
+# Chat, and fails unless every regression is waived in bench/waivers.yaml and no
+# check said error. Every job runs this workflow's own commit (main's), not
 # the caller's, which has no perf code: the checkouts below name
 # job.workflow_sha, and _perf-micro.yml / _perf-vm.yml get it as code_ref.
 
@@ -85,7 +85,7 @@ on:
         type: string
         default: ""
       mode:
-        description: "queue | nightly | long"
+        description: "nightly (the gate runs the nightly flow); queue and long are the checks' other modes"
         type: string
         required: true
 
@@ -96,16 +96,13 @@ permissions: {}
 # (only one run per group waits; a newer one cancels it). Every leg runs on its
 # own runner or VM, so a dispatch beside a nightly measures nothing differently.
 # A call (the gate) takes the caller's event, so it gets a group of its own run:
-# one version-branch pull request must not queue behind, or displace, another.
+# one queue entry must not queue behind, or displace, another.
 concurrency:
   group: ${{ inputs.mode && format('perf-gate-{0}', github.run_id) || format('perf-nightly-{0}', github.event_name) }}
   cancel-in-progress: false
 
 env:
   WALK: 20
-  # The checks a call (the release gate) runs: micro-hw first; each other
-  # check's queue and long modes are added once accepted (#4004).
-  GATE_CHECKS: micro-hw
   CANDIDATE_REPO: ghcr.io/falkordb/falkordb-server
   BASELINE_REPO: falkordb/falkordb-server
 
@@ -327,7 +324,7 @@ jobs:
       - name: Plan the checks
         id: plan
         env:
-          CHECKS: ${{ inputs.mode && env.GATE_CHECKS || inputs.checks }}
+          CHECKS: ${{ inputs.checks }}
           CODE_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail

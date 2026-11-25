@@ -50,8 +50,8 @@ jobs:
       # eleven call sites; a missed one fails closed in the ugliest way — a PR
       # that mostly works.
       toolchain_tag: ${{ steps.toolchain.outputs.tag }}
-      # X.Y+1.0 on a pull request into version branch X.Y, else empty: the perf
-      # gate runs only when it is set (the `perf` job).
+      # X.Y+1.0 in the merge queue of version branch X.Y, else empty: the release
+      # gate runs only when it is set (the `perf` and `perf-cov` jobs).
       perf_below: ${{ steps.key.outputs.perf_below }}
     steps:
       - name: Checkout repository
@@ -65,7 +65,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           PR_NUM: ${{ github.event.pull_request.number }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          QUEUE_BASE_REF: ${{ github.event.merge_group.base_ref }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "merge_group" ]; then
@@ -73,10 +73,12 @@ jobs:
           else
             echo "ci_key=pr-${PR_NUM}" >> "$GITHUB_OUTPUT"
           fi
-          # Into version branch X.Y, the perf gate's baseline is the newest
-          # release below X.Y+1.0: the newest X.Y.z, or the line before when
-          # X.Y has none yet.
-          if [[ $EVENT == pull_request && $BASE_REF =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+          # In the merge queue of version branch X.Y, the release gate's baseline
+          # is the newest release below X.Y+1.0: the newest X.Y.z, or the line
+          # before when X.Y has none yet. A pull request and main's queue get
+          # no gate.
+          queue_branch=${QUEUE_BASE_REF#refs/heads/}
+          if [[ $EVENT == merge_group && $queue_branch =~ ^([0-9]+)\.([0-9]+)$ ]]; then
             echo "perf_below=${BASH_REMATCH[1]}.$((BASH_REMATCH[2] + 1)).0" >> "$GITHUB_OUTPUT"
           fi
           cat "$GITHUB_OUTPUT"
@@ -478,20 +480,25 @@ jobs:
             echo "No fuzz artifacts found or directory is empty"           
           fi                                                                
 
-  # The release gate (#4004) on a pull request into a version branch, in two
-  # parts, both after the CI suites passed. `perf-cov` (benchmark-cov.yml):
-  # callgrind instructions and allocated bytes, this PR's image against its base
-  # branch's. `perf`: the perf checks (micro-hw), against the newest release on
-  # that line, in `queue` mode. ci-gate requires both there and accepts
-  # `skipped` everywhere else. Not in the merge queue, which gives a check 60
-  # minutes to report: its CI and a VM check together can take longer.
-  # release-tag.yml judges the merged commit's image before it is released.
+  # The release gate (#4004), in two parts, only in the merge queue of a version
+  # branch X.Y (a release is one pull request into X.Y that cherry-picks from
+  # main, and that pull request is the release candidate), after its CI suites
+  # passed. `perf`: the nightly flow (perf-nightly.yml, `nightly` mode: every
+  # registered check, gated, with the re-runs a night has) on the queue's image
+  # rc-mg-<sha>-valkey, against the newest release on that line. `perf-cov`
+  # (benchmark-cov.yml): callgrind instructions and allocated bytes of the same
+  # image against the same line. ci-gate requires both there and accepts
+  # `skipped` everywhere else: nothing runs on a pull request or on main's
+  # queue, and nothing at tagging.
+  #
+  # The queue's required-check timeout must cover this run's CI and the
+  # nightly together, about 180 minutes; an admin sets it in the version
+  # branch's ruleset.
+  #
   # The perf code lives only on main, so a version branch runs main's workflows
-  # (@main) and carries only these jobs and ci-gate's rule. A fork's pull
-  # request has no image (no `use_image`), so its gate fails: a maintainer
-  # re-opens the change from a branch here. An infrastructure error fails the
-  # gate too; "Re-run all jobs" clears it (tests/perf/vm/README.md says why not
-  # "failed").
+  # (@main) and carries only these jobs and ci-gate's rule. An infrastructure
+  # error fails the gate too; "Re-run all jobs" clears it
+  # (tests/perf/vm/README.md says why not "failed").
   perf-cov:
     needs: [check-files, ci-pipeline]
     if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.ci-pipeline.result == 'success' }}
@@ -520,7 +527,7 @@ jobs:
     with:
       candidate_image: ghcr.io/falkordb/falkordb-server:rc-${{ needs.check-files.outputs.ci_key }}-valkey
       baseline_below: ${{ needs.check-files.outputs.perf_below }}
-      mode: queue
+      mode: nightly
     secrets: inherit
 
   # THE required status check. This is the one name to put in the ruleset; it
@@ -570,8 +577,8 @@ jobs:
           # skip: `docker` runs only when the toolchain changed, and `macos`
           # runs on a pull request only when labelled. In the merge queue
           # `macos` must succeed: the release publishes the file it uploads.
-          # `perf` and `perf-cov` (the release gate) must succeed on a pull
-          # request into a version branch, and are skipped everywhere else.
+          # `perf` and `perf-cov` (the release gate) must succeed in the merge
+          # queue of a version branch, and are skipped everywhere else.
           echo "$RESULTS" | jq -e --arg event "$EVENT" --arg perf "$PERF_REQUIRED" '
             (.docker.result | . == "success" or . == "skipped")
             and (.macos.result | . == "success" or (. == "skipped" and $event != "merge_group"))

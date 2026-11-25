@@ -70,9 +70,9 @@
 #
 # ## As the release gate (#4004)
 #
-# A pull request into a version branch calls this workflow (rust-pr.yml `perf-cov`,
-# after its CI suites pass) with the PR's image. A call differs from the label in
-# four ways, and the label's run is unchanged:
+# The merge queue of a version branch calls this workflow (rust-pr.yml `perf-cov`,
+# after its CI suites pass) with the queue's image; that run has no pull request.
+# A call differs from the label in four ways, and the label's run is unchanged:
 #
 #   - its base is the base branch's own image: the merge queue's
 #     rc-mg-<base tip>-valkey, else the newest release on that line;

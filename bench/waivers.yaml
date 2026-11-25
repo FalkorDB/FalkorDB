@@ -1,7 +1,7 @@
 # Accepted perf regressions (#4004). A regression finding that an entry here
 # names is still reported, but it no longer fails a run: not the release gate
-# (`perf` and `perf-cov` on a pull request into a version branch, a release
-# tag), and not the nightly.
+# (`perf` and `perf-cov` in the merge queue of a version branch), and not the
+# nightly.
 # Errors are never waived. `bench nightly merge conclude` applies this file at
 # the gate commit's version (main's, for a version branch), so a waiver lands on
 # main through a reviewed pull request.

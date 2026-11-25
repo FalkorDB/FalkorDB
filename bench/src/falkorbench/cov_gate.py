@@ -1,8 +1,8 @@
 """benchmark-cov's reading as the release gate's result.json (#4004).
 
-On a pull request into a version branch, benchmark-cov.yml measures the PR's
-image and its base branch's image on hosted runners: callgrind instructions over
-the `cg` subset (sharded) and jemalloc's allocated bytes over every query
+In the merge queue of a version branch, benchmark-cov.yml measures the queue's
+image and the newest release on that line on hosted runners: callgrind
+instructions over the `cg` subset (sharded) and jemalloc's allocated bytes over every query
 (`measure`). This turns those CSVs into one contract result.json, check
 `benchmark-cov`, which `bench nightly merge conclude --result` judges against
 bench/waivers.yaml.

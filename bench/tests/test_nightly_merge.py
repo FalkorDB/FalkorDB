@@ -1621,7 +1621,7 @@ esac
 # --- the release gate's callers (#4004) ------------------------------------------
 
 
-GATE_CALLERS = {("rust-pr.yml", "perf"): "queue", ("release-tag.yml", "perf"): "long"}
+GATE_CALLERS = {("rust-pr.yml", "perf"): "nightly"}
 
 
 @pytest.mark.parametrize("caller, mode", GATE_CALLERS.items())
@@ -1673,37 +1673,50 @@ def test_a_call_concludes_as_a_gate_with_the_waivers():
 
 
 @pytest.mark.parametrize(
-    "event, base, below",
+    "event, pull_base, queue_ref, below",
     [
-        ("pull_request", "6.2", "6.3.0"),
-        ("pull_request", "6.0", "6.1.0"),
-        ("pull_request", "6.9", "6.10.0"),
-        ("pull_request", "main", None),
-        ("pull_request", "perf/fuzz-scenario", None),  # a stacked branch
-        # The queue (release-tag.yml judges the merge); base.ref is empty there, and
-        # the event alone keeps the gate out.
-        ("merge_group", "6.2", None),
+        # Only the queue of a version branch X.Y gets the gate, whatever the ref's spelling.
+        ("merge_group", "", "refs/heads/6.2", "6.3.0"),
+        ("merge_group", "", "refs/heads/6.0", "6.1.0"),
+        ("merge_group", "", "refs/heads/6.9", "6.10.0"),
+        ("merge_group", "", "refs/heads/main", None),
+        ("merge_group", "", "refs/heads/perf/fuzz-scenario", None),  # a stacked branch
+        ("merge_group", "", "refs/heads/6.2.1", None),
+        ("merge_group", "", "refs/heads/x6.2", None),
+        # A pull request never does, even into a version branch (its CI is the cherry-pick's).
+        ("pull_request", "6.2", "", None),
+        ("pull_request", "6.0", "", None),
+        ("pull_request", "main", "", None),
     ],
 )
-def test_only_a_pull_request_into_a_version_branch_gets_the_gate(tmp_path, event, base, below):
+def test_only_the_queue_of_a_version_branch_gets_the_gate(
+    tmp_path, event, pull_base, queue_ref, below
+):
     run_job = workflow("rust-pr.yml")["jobs"]["check-files"]
-    script = next(s for s in run_job["steps"] if s.get("id") == "key")["run"]
+    step = next(s for s in run_job["steps"] if s.get("id") == "key")
+    assert step["env"]["QUEUE_BASE_REF"] == "${{ github.event.merge_group.base_ref }}"
     (tmp_path / "bin").mkdir()
     out = tmp_path / "output"
     env = {"BIN": str(tmp_path / "bin"), "GITHUB_OUTPUT": str(out), "GITHUB_SHA": "a" * 40}
-    run = run_step(script, tmp_path, {**env, "EVENT": event, "PR_NUM": "7", "BASE_REF": base})
+    env = {**env, "EVENT": event, "PR_NUM": "7", "BASE_REF": pull_base, "QUEUE_BASE_REF": queue_ref}
+    run = run_step(step["run"], tmp_path, env)
     assert run.returncode == 0, run.stderr
     outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
     assert outputs.get("perf_below") == below
+    assert outputs["ci_key"] == ("mg-" + "a" * 40 if event == "merge_group" else "pr-7")
 
 
 @pytest.mark.parametrize("job_name", ["perf", "perf-cov"])
 @pytest.mark.parametrize(
     "perf_required, perf, passes",
     [
-        ("false", "skipped", True),  # a pull request into main, or the queue
+        ("false", "skipped", True),  # a pull request, or main's queue
         ("true", "success", True),
-        ("true", "skipped", False),  # the CI suites failed, or the gate never ran
+        (
+            "true",
+            "skipped",
+            False,
+        ),  # the CI suites failed, or the gate never ran in the version queue
         ("true", "failure", False),
         ("true", "cancelled", False),
         ("false", "failure", False),
@@ -1729,26 +1742,36 @@ def test_ci_gate_requires_the_perf_gate_only_where_it_runs(
     env = {
         "BIN": str(tmp_path / "bin"),
         "RESULTS": json.dumps(results),
-        "EVENT": "pull_request",
+        "EVENT": "merge_group" if perf_required == "true" else "pull_request",
         "PERF_REQUIRED": perf_required,
     }
     run = run_step(step["run"], tmp_path, env)
     assert (run.returncode == 0) == passes, run.stdout + run.stderr
 
 
-def test_nothing_is_released_before_the_gate_passes():
+def test_release_tag_has_no_perf_gate():
+    """The gate runs in the version branch's merge queue, never at tagging."""
     jobs = workflow("release-tag.yml")["jobs"]
-    publishing = {"create-release", "publish-images"}
-    for name in publishing:
-        assert "perf" in jobs[name]["needs"]
-        assert "needs.perf.result == 'success'" in jobs[name]["if"]
-    # Every other job that publishes runs after create-release.
-    for name in ("publish-artifacts", "image"):
-        assert "create-release" in jobs[name]["needs"]
-    assert "needs.image.result == 'success'" in jobs["browser-tests"]["if"]
-    gate = jobs["perf"]["with"]
-    assert gate["candidate_image"].endswith(":rc-mg-${{ needs.guard.outputs.commit_sha }}-valkey")
-    assert gate["baseline_below"] == "${{ needs.guard.outputs.semver }}"
+    assert "perf" not in jobs
+    for name, job in jobs.items():
+        assert "perf" not in job.get("needs", []), name
+        assert "needs.perf." not in str(job.get("if", "")), name
+    assert not any("perf-nightly" in str(job.get("uses", "")) for job in jobs.values())
+
+
+def test_the_perf_gate_runs_the_nightly_flow_on_the_queues_image():
+    jobs = workflow("rust-pr.yml")["jobs"]
+    assert jobs["perf"]["with"]["mode"] == "nightly"
+    assert "checks" not in jobs["perf"]["with"]  # every registered check
+    for name in ("perf", "perf-cov"):
+        assert jobs[name]["needs"] == ["check-files", "ci-pipeline"]
+        assert "needs.check-files.outputs.perf_below != ''" in jobs[name]["if"]
+        assert jobs[name]["with"]["candidate_image"] == (
+            "ghcr.io/falkordb/falkordb-server:rc-${{ needs.check-files.outputs.ci_key }}-valkey"
+        )
+        assert jobs[name]["with"]["baseline_below"] == "${{ needs.check-files.outputs.perf_below }}"
+    # Nothing narrows the checks inside the called workflow either.
+    assert "GATE_CHECKS" not in (WORKFLOWS / "perf-nightly.yml").read_text()
 
 
 # --- benchmark-cov as the release gate (#4004) -----------------------------------
@@ -1916,6 +1939,24 @@ def test_benchmark_cov_runs_its_own_commit_and_keeps_the_label_run():
         "Fail the gate unless every regression is waived",
     ]
     assert "--gate --result out/result.json --waivers waivers.json" in gate_steps[-1]["run"]
+
+
+def test_a_benchmark_cov_call_from_the_queue_has_no_pull_request_to_read():
+    """Under merge_group the PR number is empty: nothing a call runs may need it."""
+    jobs = workflow("benchmark-cov.yml")["jobs"]
+    pre = {s.get("name"): s for s in jobs["preflight"]["steps"]}
+    assert pre["Acknowledge the request"]["if"] == "inputs.candidate_image == ''"
+    assert (
+        pre["Wait for the PR image to be built from this commit"]["if"]
+        == "inputs.candidate_image == ''"
+    )
+    images = pre["Resolve the three images"]["env"]
+    assert images["PR_IMAGE"] == "${{ steps.gate.outputs.pr_image || env.PR_IMAGE }}"
+    assert images["HEAD_SHA"].startswith("${{ inputs.candidate_image == '' &&")
+    post = next(
+        s for s in jobs["report"]["steps"] if s.get("name") == "Post or update the PR comment"
+    )
+    assert post["if"] == "github.event.pull_request.number != ''"
 
 
 def test_a_benchmark_cov_call_has_a_concurrency_group_of_its_own_run():

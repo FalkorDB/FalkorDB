@@ -410,20 +410,21 @@ uv run --project bench bench nightly report --nightly bench/tests/fixtures/valid
 
 ## Release gate (#4004)
 
-A change to a version branch is judged twice before a release carries it, and
-the release once more. Every caller runs main's code (`@main` from a version
-branch, `./` on main), because the perf code lives only there:
+A release is one pull request into a version branch X.Y that cherry-picks
+commits from main; that pull request is the release candidate. The gate runs
+only in the merge queue of X.Y: not on pull requests, not on main's queue, not
+at tagging. It calls main's code (`@main`, because the perf code lives only
+there) with the queue's image `rc-mg-<sha>-valkey`, in two jobs of `rust-pr.yml`
+that start after its CI suites pass:
 
-| caller | when | candidate | baseline | judges |
-| --- | --- | --- | --- | --- |
-| `rust-pr.yml` job `perf-cov` → `benchmark-cov.yml` | a pull request into version branch X.Y, after its CI suites pass | the PR's image `rc-pr-<N>-valkey` | the base branch tip's `rc-mg-<sha>-valkey`, else the newest release below X.Y+1.0 | callgrind instructions and allocated bytes (`bench cov-gate`) |
-| `rust-pr.yml` job `perf` → `perf-nightly.yml` | the same | the same | the newest stable release below X.Y+1.0 | the checks in `GATE_CHECKS` (micro-hw), `queue` mode |
-| `release-tag.yml` job `perf` → `perf-nightly.yml` (every publishing job waits for it) | a release tag vX.Y.Z | the image the release retags, `rc-mg-<sha>-valkey` | the newest stable release below X.Y.Z | `GATE_CHECKS`, `long` mode |
+| job | runs | judges |
+| --- | --- | --- |
+| `perf` -> `perf-nightly.yml`, `nightly` mode | the nightly flow: every registered check, gated, with the re-runs a night has | the image against the newest stable release below X.Y+1.0 |
+| `perf-cov` -> `benchmark-cov.yml` | callgrind instructions and allocated bytes (`bench cov-gate`) | the same two images |
 
-`ci-gate` requires `perf` and `perf-cov` on a pull request into a version branch
-and accepts `skipped` everywhere else. The merge queue does not run them: it
-gives a check 60 minutes to report, which its CI and a VM check together can
-exceed.
+`ci-gate` requires both in the queue of a version branch and accepts `skipped`
+everywhere else. The queue's required-check timeout must cover the CI and the
+nightly together, about 180 minutes; an admin sets it in the branch's ruleset.
 
 **`bench cov-gate`** turns benchmark-cov's PR-vs-base CSVs into a `result.json`
 (check `benchmark-cov`, findings named `<row> [<reads|writes>]`). Instructions
@@ -462,8 +463,7 @@ than result.json lists), so a waiver never passes it.
 A waiver never turns a night green when the result it would waive has a
 non-null `incomplete` (a regression that also left parts unmeasured, or whose
 findings the cap cut): that night fails, naming the check and the reason. A
-result without the field (an older one) is judged as before. A pull request
-from a fork into a version branch has no image, so its gate fails.
+result without the field (an older one) is judged as before.
 
 ## Nightly micro check (`micro-hw`)
 
