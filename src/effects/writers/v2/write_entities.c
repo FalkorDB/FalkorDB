@@ -15,8 +15,8 @@
 #include "../../../graph/graphcontext.h"
 
 
-// add an entity update effect to buffer
-static void EffectsBuffer_AddNodeUpdateEffect
+// one attribute of one node, set to one value
+static void _v2_WriteNodeUpdate
 (
 	EffectsBuffer *buff,  // effect buffer
 	Node *node,           // updated node
@@ -55,8 +55,8 @@ static void EffectsBuffer_AddNodeUpdateEffect
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-// add an entity update effect to buffer
-static void EffectsBuffer_AddEdgeUpdateEffect
+// one attribute of one edge, set to one value
+static void _v2_WriteEdgeUpdate
 (
 	EffectsBuffer *buff,  // effect buffer
 	Edge *edge,           // updated edge
@@ -70,8 +70,8 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	//    relation ID
 	//    src ID
 	//    dest ID
-	//    attribute count (=n)
-	//    attributes (id,value) pair
+	//    attribute id
+	//    attribute value
 	//--------------------------------------------------------------------------
 
 	#pragma pack(push, 1)
@@ -278,9 +278,9 @@ void EffectsWriteV2_UpdateEntity
 ) {
 
 	if(entity_type == GETYPE_NODE) {
-		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
+		_v2_WriteNodeUpdate(buff, (Node*)entity, attr_id, value);
 	} else {
-		EffectsBuffer_AddEdgeUpdateEffect(buff, (Edge*)entity, attr_id, value);
+		_v2_WriteEdgeUpdate(buff, (Edge*)entity, attr_id, value);
 	}
 }
 
