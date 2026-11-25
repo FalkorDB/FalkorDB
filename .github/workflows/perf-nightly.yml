@@ -39,6 +39,15 @@
 # when it left no result.json, one the contract rejects, one that names another
 # check, or a `pass` whose perf-vm.json does not record exit 0. A checks.yaml it
 # cannot use is reported as the error check `checks-yaml`; the night goes on.
+#
+# The release gate (#4004) is this workflow, called. A pull request into a
+# version branch (rust-pr.yml) and a release tag (release-tag.yml) call it at
+# @main with the image to judge, a version the baseline release must be below,
+# and a mode. A call runs the checks in GATE_CHECKS, never skips, posts nothing
+# to Chat, and fails unless every regression is waived in bench/waivers.yaml and
+# no check said error. Every job runs this workflow's own commit (main's), not
+# the caller's, which has no perf code: the checkouts below name
+# job.workflow_sha, and _perf-micro.yml / _perf-vm.yml get it as code_ref.
 
 name: Perf nightly
 
@@ -59,6 +68,26 @@ on:
         description: "Comma list of checks to run (micro-hw, or names in bench/checks.yaml); empty = all"
         type: string
         default: ""
+  # The release gate (header). `mode` is a call's alone: it is how every job
+  # tells a call from a night.
+  workflow_call:
+    inputs:
+      candidate_image:
+        description: "Image to judge (tag or digest), e.g. ghcr.io/falkordb/falkordb-server:rc-pr-<N>-valkey"
+        type: string
+        required: true
+      baseline_image:
+        description: "Baseline image (tag or digest); empty = the highest stable release below baseline_below"
+        type: string
+        default: ""
+      baseline_below:
+        description: "X.Y.Z[-pre]: the baseline is the highest stable release below this version; empty = the highest"
+        type: string
+        default: ""
+      mode:
+        description: "queue | nightly | long"
+        type: string
+        required: true
 
 permissions: {}
 
@@ -66,12 +95,17 @@ permissions: {}
 # queued scheduled run must not be displaced by dispatches queueing behind it
 # (only one run per group waits; a newer one cancels it). Every leg runs on its
 # own runner or VM, so a dispatch beside a nightly measures nothing differently.
+# A call (the gate) takes the caller's event, so it gets a group of its own run:
+# one version-branch pull request must not queue behind, or displace, another.
 concurrency:
-  group: perf-nightly-${{ github.event_name }}
+  group: ${{ inputs.mode && format('perf-gate-{0}', github.run_id) || format('perf-nightly-{0}', github.event_name) }}
   cancel-in-progress: false
 
 env:
   WALK: 20
+  # The checks a call (the release gate) runs: micro-hw first; each other
+  # check's queue and long modes are added once accepted (#4004).
+  GATE_CHECKS: micro-hw
   CANDIDATE_REPO: ghcr.io/falkordb/falkordb-server
   BASELINE_REPO: falkordb/falkordb-server
 
@@ -96,9 +130,12 @@ jobs:
       vm_matrix: ${{ steps.plan.outputs.vm_matrix }}
       has_hosted: ${{ steps.plan.outputs.has_hosted }}
       hosted_matrix: ${{ steps.plan.outputs.hosted_matrix }}
+      code_sha: ${{ steps.plan.outputs.code_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       # The bench project's pinned Python (bench/.python-version) and lock.
@@ -112,6 +149,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_INPUT: ${{ inputs.candidate_image }}
           BASELINE_INPUT: ${{ inputs.baseline_image }}
+          BASELINE_BELOW: ${{ inputs.baseline_below }}
         run: |
           set -euo pipefail
 
@@ -202,14 +240,23 @@ jobs:
             # published later but lower: a 6.0.x backport, or one of the C
             # engine's v4.x releases that share this repository (a C release is
             # not a baseline for main). When the two differ, the run says so.
-            tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
-              --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(test("^v([5-9]|[1-9][0-9])[.][0-9]+[.][0-9]+$"))' \
-              | sort -V | tail -n 1)
-            flagged=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-            note="highest stable release ($tag)"
-            if [[ $flagged != "$tag" ]]; then
-              note="$note; the release marked Latest is $flagged"
-              echo "::notice::baseline: $note"
+            # A gate names a version instead: the highest stable release
+            # below it. A pull request into 6.2 (below 6.3.0) is judged against
+            # the newest 6.2.x, a tag v6.2.2 against 6.2.1: never itself, and
+            # never a later line.
+            releases=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+              --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(test("^v([5-9]|[1-9][0-9])[.][0-9]+[.][0-9]+$"))')
+            if [[ -n $BASELINE_BELOW ]]; then
+              tag=$(uv run --project bench --frozen bench nightly merge release --below "$BASELINE_BELOW" <<<"$releases")
+              note="highest stable release below $BASELINE_BELOW ($tag)"
+            else
+              tag=$(sort -V <<<"$releases" | tail -n 1)
+              flagged=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+              note="highest stable release ($tag)"
+              if [[ $flagged != "$tag" ]]; then
+                note="$note; the release marked Latest is $flagged"
+                echo "::notice::baseline: $note"
+              fi
             fi
             version=${tag#v}
             if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -249,9 +296,17 @@ jobs:
           # Nightlies are scheduled runs on main.
           HISTORY_EVENT: schedule
           HISTORY_BRANCH: main
+          GATE_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
           mkdir -p "$HISTORY"
+          # A call never skips and has no earlier nights: the runs it would list
+          # are the caller's.
+          if [[ -n $GATE_MODE ]]; then
+            : > "$HISTORY/runs.txt"
+            echo "a call (the release gate): no earlier nightlies"
+            exit 0
+          fi
           # By this run's workflow id, which exists on any branch (a lookup by
           # file name needs the file on the default branch).
           workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
@@ -272,9 +327,18 @@ jobs:
       - name: Plan the checks
         id: plan
         env:
-          CHECKS: ${{ inputs.checks }}
+          CHECKS: ${{ inputs.mode && env.GATE_CHECKS || inputs.checks }}
+          CODE_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail
+          # The commit every check runs its code from: this workflow's, which
+          # for a call (the gate) is not the caller's. An empty one would fall
+          # back to the caller's commit, so it is checked here.
+          if ! [[ $CODE_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::job.workflow_sha '$CODE_SHA' is not a commit"
+            exit 1
+          fi
+          echo "code_sha=$CODE_SHA" >> "$GITHUB_OUTPUT"
           mkdir -p "$RUNNER_TEMP/plan"
           # A registry that does not parse is reported as the check `checks-yaml`
           # (an error) instead of stopping the night.
@@ -333,6 +397,8 @@ jobs:
       # On a cache miss it builds the bench image and pushes it to ghcr; the
       # VM pulls with read.
       packages: write
+    # From this workflow's commit, as is code_ref: a call from a version branch
+    # still runs main's micro-hw.
     uses: ./.github/workflows/_perf-micro.yml
     with:
       candidate_image: ${{ needs.resolve.outputs.candidate_image }}
@@ -341,7 +407,8 @@ jobs:
       baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
       candidate_label: ${{ needs.resolve.outputs.candidate_label }}
       baseline_label: ${{ needs.resolve.outputs.baseline_label }}
-      mode: nightly
+      mode: ${{ inputs.mode || 'nightly' }}
+      code_ref: ${{ needs.resolve.outputs.code_sha }}
     secrets: inherit
 
   vm:
@@ -368,7 +435,8 @@ jobs:
       baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
       candidate_label: ${{ needs.resolve.outputs.candidate_label }}
       baseline_label: ${{ needs.resolve.outputs.baseline_label }}
-      mode: nightly
+      mode: ${{ inputs.mode || 'nightly' }}
+      code_ref: ${{ needs.resolve.outputs.code_sha }}
     secrets: inherit
 
   hosted:
@@ -386,6 +454,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -407,7 +477,7 @@ jobs:
           BASELINE_COMMIT: ${{ needs.resolve.outputs.baseline_commit }}
           CANDIDATE_LABEL: ${{ needs.resolve.outputs.candidate_label }}
           BASELINE_LABEL: ${{ needs.resolve.outputs.baseline_label }}
-          MODE: nightly
+          MODE: ${{ inputs.mode || 'nightly' }}
         run: |
           PERF_VM_TOOLS=$GITHUB_WORKSPACE/tests/perf/vm TIMEOUT_SECONDS=$((TIMEOUT_MINUTES * 60)) \
             tests/perf/vm/run-check.sh
@@ -447,6 +517,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       # The bench project's pinned Python (bench/.python-version) and lock.
@@ -502,13 +574,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/results" "$RUNNER_TEMP/nightly"
           uv run --project bench --frozen bench nightly merge results \
             --context "$RUNNER_TEMP/plan/context.json" --plan "$RUNNER_TEMP/plan/plan.json" \
-            --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/nightly/nightly.json"
+            --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/nightly/nightly.json" \
+            --unfinished-out "$RUNNER_TEMP/nightly/unfinished.json"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: perf-nightly
           overwrite: true
-          path: ${{ runner.temp }}/nightly/nightly.json
+          # nightly.json, and unfinished.json for the gate (the regressions whose
+          # check did not finish, which no waiver covers).
+          path: |
+            ${{ runner.temp }}/nightly/nightly.json
+            ${{ runner.temp }}/nightly/unfinished.json
           if-no-files-found: error
           retention-days: 90
 
@@ -524,6 +601,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 0
           filter: blob:none
           persist-credentials: false
@@ -546,15 +625,25 @@ jobs:
           # Chat hears about real nights only: the schedule, and a dispatch that
           # picked its own images is a by-hand comparison, so it goes to the step
           # summary alone.
-          PERF_CHAT_WEBHOOK: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
+          PERF_CHAT_WEBHOOK: ${{ inputs.mode == '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
         run: uv run --project bench --frozen bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
 
       # Last, once the report is out and nightly.json is uploaded (merge job), so
       # a failing run never loses either: a red or error night fails the run.
       # The list of runs then reads as a timeline, and a failed scheduled run
-      # sends GitHub's email. Green and skipped nights succeed. It runs even when
-      # the report step failed, so a red or error night fails the run whatever
-      # the reporter did.
-      - name: Fail the run unless the night is green or skipped
+      # sends GitHub's email. Green and skipped nights succeed, and so does a red
+      # one whose every regression bench/waivers.yaml waives (each still shown
+      # as a warning). A call (the gate) also fails a skipped night. It runs even
+      # when the report step failed, so a red or error night fails the run
+      # whatever the reporter did.
+      - name: Fail the run unless the night passes
         if: ${{ !cancelled() }}
-        run: uv run --project bench --frozen bench nightly merge conclude --nightly "$RUNNER_TEMP/nightly/nightly.json"
+        env:
+          GATE_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          yq -o=json '.' bench/waivers.yaml > "$RUNNER_TEMP/waivers.json"
+          gate=()
+          if [[ -n $GATE_MODE ]]; then gate=(--gate); fi
+          uv run --project bench --frozen bench nightly merge conclude --nightly "$RUNNER_TEMP/nightly/nightly.json" \
+            --waivers "$RUNNER_TEMP/waivers.json" --unfinished "$RUNNER_TEMP/nightly/unfinished.json" "${gate[@]}"

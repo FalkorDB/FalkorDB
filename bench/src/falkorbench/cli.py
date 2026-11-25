@@ -19,6 +19,7 @@ from falkorbench import callgrind as cg
 from falkorbench import client as client_mod
 from falkorbench import compare as compare_mod
 from falkorbench import contract
+from falkorbench import cov_gate
 from falkorbench import coverage as coverage_mod
 from falkorbench import flow as flow_mod
 from falkorbench import hw as hw_mod
@@ -627,6 +628,20 @@ def missed_run_command(night, workflow, branch, event, artifact):
 def nightly_merge_command(args):
     """The night's bookkeeping: plan | context | results | conclude (each takes --help)."""
     raise SystemExit(nightly_merge.main(list(args)))
+
+
+@cli.command(
+    "cov-gate",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def cov_gate_command(args):
+    """benchmark-cov's PR-vs-base CSVs -> the release gate's result.json (--help: the flags)."""
+    raise SystemExit(cov_gate.main(list(args)))
 
 
 # --- ldbc --------------------------------------------------------------------

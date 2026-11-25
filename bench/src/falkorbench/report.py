@@ -332,7 +332,8 @@ def provenance_section(rep: Report, path: str | None) -> None:
 
     rep.add("<details><summary>What was measured</summary>", "")
     head = prov.get("_head_sha")
-    if head:
+    gate = prov.get("_gate")
+    if head and not gate:
         rep.add(
             f"PR head `{head[:9]}` — the `rc-pr` image below was confirmed built from "
             f"this commit before measuring.",
@@ -354,17 +355,18 @@ def provenance_section(rep: Report, path: str | None) -> None:
     if bench_image:
         rep.add("", f"Measured inside `{bench_image}`.")
 
-    rep.add(
-        "",
-        "The **base** side is the `edge-rs` image — the tip of the trunk at the time the "
+    base_note = (
+        "The release gate (#4004): the **base** side is the base branch's own image (its "
+        "merge queue's `rc-mg` image for the branch tip, or the newest release on that "
+        "line), and the gate's verdict is the `perf-cov` job's."
+        if gate
+        else "The **base** side is the `edge-rs` image — the tip of the trunk at the time the "
         "images were built, which is not necessarily this PR's merge base. Rebuilding both "
         "sides from source would be exact but costs ~10 minutes of compile per side; if a "
         "row looks surprising, re-measure it locally against a base build before acting "
-        "on it.",
-        "",
-        "</details>",
-        "",
+        "on it."
     )
+    rep.add("", base_note, "", "</details>", "")
 
 
 def coverage_section(rep: Report, path: str | None) -> None:

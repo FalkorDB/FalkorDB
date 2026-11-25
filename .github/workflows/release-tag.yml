@@ -38,6 +38,10 @@
 #   6. publish-images    — push the per-OS server images, one multi-arch index
 #                          each, as <semver>-<os>-<server>
 #   7. browser-tests     — exercise the published image
+#      perf              — the release gate (#4004): nothing above publishes
+#                          unless the perf checks pass on the rc-mg image it
+#                          retags, in `long` mode, against the release below
+#                          this one (perf-nightly.yml, called at @main)
 #
 # build/publish_tags.py works out every tag pushed here.
 #
@@ -150,10 +154,11 @@ jobs:
   # and every job after it state their conditions instead of relying on the
   # default success(), which a skipped job upstream would turn false.
   create-release:
-    needs: [guard, macos-from-queue, macos-rebuild]
+    needs: [guard, macos-from-queue, macos-rebuild, perf]
     if: >-
       !cancelled() &&
       needs.guard.result == 'success' &&
+      needs.perf.result == 'success' &&
       (needs.macos-from-queue.result == 'success' || needs.macos-rebuild.result == 'success')
     runs-on: ubuntu-latest
     permissions:
@@ -175,6 +180,30 @@ jobs:
           if [ "$PRERELEASE" = "true" ]; then FLAGS+=(--prerelease); fi
           gh release create "$TAG" "${FLAGS[@]}"
           echo "Created release $TAG"
+
+  # The release gate (#4004). A tag push cannot be refused, so the release is:
+  # create-release and publish-images wait for this job, and every other job
+  # that publishes waits for create-release. It judges the exact image `image`
+  # retags (rc-mg-<sha>-valkey, pinned by digest) against the highest stable
+  # release below this version, so never against itself. The perf code lives
+  # only on main (@main). An error fails it like a regression; re-run the
+  # workflow ("Re-run all jobs") once the cause is gone. An accepted
+  # regression is waived in main's bench/waivers.yaml.
+  perf:
+    needs: guard
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    # Main holds the perf code, so main's copy names `./`. A version branch has
+    # none: its copy of this job (the backport) names
+    # FalkorDB/FalkorDB/.github/workflows/perf-nightly.yml@main instead.
+    uses: ./.github/workflows/perf-nightly.yml
+    with:
+      candidate_image: ghcr.io/falkordb/falkordb-server:rc-mg-${{ needs.guard.outputs.commit_sha }}-valkey
+      baseline_below: ${{ needs.guard.outputs.semver }}
+      mode: long
+    secrets: inherit
 
   # Per-platform .so assets. BUILD (fan-out) and PUBLISH (fan-in) are separate so
   # a partial matrix failure never leaves a half-populated release: the build
@@ -383,10 +412,12 @@ jobs:
   # pushed by digest with no tag of their own. No latest-<os> tag: these are
   # pinned by version.
   publish-images:
-    needs: [guard, build-artifacts, macos-from-queue, macos-rebuild]
-    # Held back with create-release until the macOS file is in hand.
+    needs: [guard, build-artifacts, macos-from-queue, macos-rebuild, perf]
+    # Held back with create-release until the macOS file is in hand and the
+    # perf gate passed.
     if: >-
       !cancelled() &&
+      needs.perf.result == 'success' &&
       needs.build-artifacts.result == 'success' &&
       (needs.macos-from-queue.result == 'success' || needs.macos-rebuild.result == 'success')
     # Pinned: the push needs podman and skopeo, which this image ships

@@ -1,0 +1,165 @@
+"""benchmark-cov's reading as the release gate's result.json (#4004).
+
+On a pull request into a version branch, benchmark-cov.yml measures the PR's
+image and its base branch's image on hosted runners: callgrind instructions over
+the `cg` subset (sharded) and jemalloc's allocated bytes over every query
+(`measure`). This turns those CSVs into one contract result.json, check
+`benchmark-cov`, which `bench nightly merge conclude --result` judges against
+bench/waivers.yaml.
+
+Gates, PR against base, both bounds strict:
+
+  instructions  > 1.10x, no floor. Callgrind counts repeat to about 0.2%, so a
+                10% move on any row is the code. #3996 (1.30x on a query of
+                about 240k instructions) is far below micro-hw's hardware floor
+                and well above this one.
+  alloc_bytes   > 1.10x and > 64 KiB per query, or > 8x and > 4 KiB: micro-hw's
+                Rust allocation gate (verdict.HW_GATES), on the same counter.
+
+Both counters are deterministic for an image, so a crossing is a regression
+without a re-run. A side with no rows, or a row measured on the base and not on
+the PR, is an error: the gate fails, and a re-run clears an infrastructure
+failure. The contract drops `error` when a regression outranks it, so the
+reading's completeness goes to `--unfinished-out` too: a regression in a
+partial reading, or one with more regressions than result.json lists, is never
+waived (`bench nightly merge conclude --unfinished`).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from falkorbench import kit
+from falkorbench import metrics
+from falkorbench.contract import MAX_FINDINGS
+from falkorbench.queries import QUERIES
+from falkorbench.verdict import HW_GATES
+
+CHECK = "benchmark-cov"
+INSTR_THRESHOLD = metrics.THRESHOLDS["instr"]
+ALLOC_THRESHOLD = metrics.THRESHOLDS["alloc_bytes"]
+ALLOC_FLOOR, ALLOC_STEEP, ALLOC_STEEP_FLOOR = HW_GATES["rust"]["alloc_bytes"]
+CLASS = {q.name: "writes" if q.write else "reads" for q in QUERIES}
+
+# (CSV column, contract metric, tiers [(threshold, floor)], where the rows come from)
+GATES = (
+    ("instr", "instructions", ((INSTR_THRESHOLD, 0.0),), "callgrind"),
+    (
+        "alloc_bytes",
+        "alloc_bytes",
+        ((ALLOC_THRESHOLD, ALLOC_FLOOR), (ALLOC_STEEP, ALLOC_STEEP_FLOOR)),
+        "measure",
+    ),
+)
+
+
+def name_of(query: str) -> str:
+    """micro-hw's finding name, `<row> [<reads|writes>]`, so one waiver pattern
+    style serves both checks."""
+    klass = CLASS.get(query)
+    return f"{query} [{klass}]" if klass else query
+
+
+def judge(sources: dict[str, dict[str, dict[str, metrics.Row]]]) -> tuple[list[dict], list[str]]:
+    """(findings, errors) from {"callgrind"|"measure": {"pr"|"base": rows}}."""
+    findings, errors = [], []
+    for column, metric, tiers, source in GATES:
+        pr, base = sources[source].get("pr", {}), sources[source].get("base", {})
+        if not pr or not base:
+            missing = " and ".join(side for side, rows in (("pr", pr), ("base", base)) if not rows)
+            errors.append(f"no {source} rows for {missing}")
+            continue
+        unmeasured = []
+        for query, base_row in base.items():
+            b = base_row.get(column)
+            if b is None:
+                continue
+            c = pr.get(query, metrics.Row()).get(column)
+            if c is None:
+                unmeasured.append(query)
+                continue
+            moved = {kit.crossed(c, b, threshold, floor) for threshold, floor in tiers}
+            status = "regression" if 1 in moved else "improvement" if -1 in moved else None
+            if status:
+                findings.append(
+                    kit.finding(name_of(query), metric, c, b, status, threshold=tiers[0][0])
+                )
+        if unmeasured:
+            shown = ", ".join(unmeasured[:5]) + (" ..." if len(unmeasured) > 5 else "")
+            errors.append(f"{len(unmeasured)} {source} row(s) measured on base, not on pr: {shown}")
+
+    def worst(f: dict) -> float:
+        ratio = f["ratio"] or 1.0
+        return -ratio if f["status"] == "regression" else ratio
+
+    return sorted(findings, key=worst), errors
+
+
+def incomplete(findings: list[dict], errors: list[str]) -> str:
+    """Why a waiver cannot be trusted with this reading, or "" when it can."""
+    regressions = sum(f["status"] == "regression" for f in findings)
+    reasons = list(errors)
+    if regressions > MAX_FINDINGS:
+        reasons.append(f"{regressions} regressions, more than the {MAX_FINDINGS} result.json lists")
+    return "; ".join(reasons)
+
+
+def summary(findings: list[dict], errors: list[str]) -> str:
+    regressed = [f for f in findings if f["status"] == "regression"]
+    improved = len(findings) - len(regressed)
+    if regressed:
+        f = regressed[0]
+        head = f"{len(regressed)} regression(s), worst {f['name']} {f['metric']} {f['ratio']:.2f}x"
+    else:
+        head = "no regression"
+    tail = f"; could not measure: {'; '.join(errors)}" if errors else ""
+    return f"{head}; {improved} improvement(s) (PR vs base, callgrind and allocations){tail}"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="bench cov-gate", description=__doc__.split("\n")[0])
+    kit.add_args(parser)
+    for side in ("pr", "base"):
+        parser.add_argument(f"--measure-{side}", required=True, help=f"full-{side}.csv")
+        parser.add_argument(f"--callgrind-{side}", required=True, help=f"glob of cg-{side}-*.csv")
+    parser.add_argument(
+        "--unfinished-out", default="", help="{benchmark-cov: why} when the reading is partial"
+    )
+    args = parser.parse_args(argv)
+    started = kit.utc_now()
+    out = kit.out_dir(args.out)
+    sources = {
+        "callgrind": {
+            s: metrics.read_rows(getattr(args, f"callgrind_{s}")) for s in ("pr", "base")
+        },
+        "measure": {s: metrics.read_rows(getattr(args, f"measure_{s}")) for s in ("pr", "base")},
+    }
+    findings, errors = judge(sources)
+    # The measuring ran on separate hosted runners, one per side and shard; both
+    # counters are the same on any of them. This describes the runner that judged.
+    host = kit.machine()
+    machine = {**host, "runner": "hosted", "type": "ubuntu-latest"}
+    result = kit.result(
+        CHECK,
+        args,
+        started=started,
+        findings=findings,
+        summary=summary(findings, errors),
+        errors=errors,
+        machine_info=machine,
+    )
+    kit.write_result(Path(out), result)
+    if args.unfinished_out:
+        why = incomplete(findings, errors)
+        Path(args.unfinished_out).write_text(json.dumps({CHECK: why} if why else {}) + "\n")
+    print(f"{result['verdict']}: {result['summary']}")
+    for f in result["findings"]:
+        print(f"  [{f['status']}] {f['name']} {f['metric']} {f['ratio']}x")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,24 @@
+# Accepted perf regressions (#4004). A regression finding that an entry here
+# names is still reported, but it no longer fails a run: not the release gate
+# (`perf` and `perf-cov` on a pull request into a version branch, a release
+# tag), and not the nightly.
+# Errors are never waived. `bench nightly merge conclude` applies this file at
+# the gate commit's version (main's, for a version branch), so a waiver lands on
+# main through a reviewed pull request.
+#
+# The list starts empty: this file holds only comments, which parses as no
+# waivers. An entry needs the first four keys and may add the last two:
+#
+#   - check: benchmark-cov                       # result.json "check", exactly
+#     finding: 'cross product filter \[reads\]'  # a Python regex that must match the WHOLE finding name
+#     issue: 3996                                # the open issue that tracks the regression
+#     reason: one line on what was accepted, by whom, and why
+#     metric: instructions                       # optional: only this metric's finding
+#     max_ratio: 1.35                            # optional: only up to this ratio
+#
+# A regression from a check that did not finish cleanly is never waived, nor an
+# error.
+#
+# Remove an entry when its issue closes, or once the release that carries the
+# regression is the baseline (from then on the gate no longer sees it).
+# bench/tests/test_nightly_merge.py fails on an entry `conclude` cannot use.

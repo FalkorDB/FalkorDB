@@ -60,6 +60,14 @@ on:
       baseline_commit:
         type: string
         default: ""
+      code_ref:
+        description: >-
+          Commit to run the check's code from. Empty means the calling commit
+          (a check's own branch, under development). perf-nightly.yml passes
+          its own commit, so a release gate called from a version branch, which
+          has no perf code, runs main's.
+        type: string
+        default: ""
     secrets:
       GH_SA_TOKEN:
         description: Registers the VM as a self-hosted runner.
@@ -271,11 +279,13 @@ jobs:
           "${apt[@]}" update
           "${apt[@]}" install -y --no-install-recommends git python3 ca-certificates
 
-      - name: Check out the calling commit
-        # The check's own code. It comes first: checkout empties a workspace
-        # that is not its repository, which would remove the scripts below.
+      - name: Check out the check's code
+        # The calling commit, or code_ref. It comes first: checkout empties a
+        # workspace that is not its repository, which would remove the scripts
+        # below.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.code_ref }}
           persist-credentials: false
 
       - name: Check out this workflow's own VM scripts
