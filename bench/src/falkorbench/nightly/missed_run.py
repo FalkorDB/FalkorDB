@@ -1,4 +1,4 @@
-"""The 05:00 UTC alarm: did the night's perf-nightly run leave its result?
+"""The 06:30 UTC alarm: did the night's perf-nightly run leave its result?
 
 `bench nightly missed-run [--date YYYY-MM-DD]`; see bench/README.md, "Nightly report and
 missed-run alarm". Standard library only (and falkorbench.nightly.report, which is too).
@@ -17,7 +17,9 @@ from datetime import timedelta
 
 from falkorbench.nightly import report
 
-ALARM_HOUR_UTC = 5
+# perf-missed-run.yml's cron. A night's runs are the scheduled ones created in the 24 hours
+# before it; the nightly starts at 00:00 and fits before it (a test pins the gap).
+ALARM_TIME_UTC = time(6, 30)
 
 
 @dataclass
@@ -28,7 +30,7 @@ class Outcome:
 
 
 def window(night: date) -> tuple[datetime, datetime]:
-    end = datetime.combine(night, time(ALARM_HOUR_UTC), tzinfo=UTC)
+    end = datetime.combine(night, ALARM_TIME_UTC, tzinfo=UTC)
     return end - timedelta(days=1), end
 
 
@@ -177,9 +179,23 @@ def check(
     started = parse_time(newest.get("run_started_at")) or parse_time(newest.get("created_at"))
     started_text = f" (started {started:%Y-%m-%d %H:%M} UTC)" if started else ""
     if newest.get("status") != "completed":
-        reason = (
-            f"The run{started_text} is still {newest.get('status')} at {now:%Y-%m-%d %H:%M} UTC and has not "
-            f"uploaded {artifact}.{others}"
+        # Not yet, not missed: a running night still writes and posts its result when it
+        # ends (the merge and report jobs run after any check fails or times out).
+        before = f"Perf nightly {night.isoformat()}: not yet. "
+        after = (
+            f"The run{started_text} is still {newest.get('status')} at {now:%Y-%m-%d %H:%M} UTC; "
+            f"its report follows when it ends."
+        )
+        return Outcome(
+            False,
+            report.chat_plain(before)
+            + report.chat_link(link, "run")
+            + " "
+            + report.chat_plain(after),
+            report.markdown_plain(before)
+            + report.markdown_link(link, "run")
+            + " "
+            + report.markdown_plain(after),
         )
     else:
         reason = (

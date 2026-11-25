@@ -1,11 +1,11 @@
-# The 05:00 UTC missed-night alarm: `bench nightly missed-run`, described in
+# The 06:30 UTC missed-night alarm: `bench nightly missed-run`, described in
 # bench/README.md. `date` (workflow_dispatch) re-checks an earlier night.
 
 name: perf missed-run alarm
 
 on:
   schedule:
-    - cron: "0 5 * * *"
+    - cron: "30 6 * * *"
   workflow_dispatch:
     inputs:
       date:

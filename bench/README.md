@@ -335,7 +335,7 @@ Both are standard library only (`src/falkorbench/nightly/`), like the contract.
 | command | called by | does |
 | --- | --- | --- |
 | `bench nightly report --nightly <nightly.json>` | the report job of `perf-nightly.yml` | reports one night |
-| `bench nightly missed-run [--date YYYY-MM-DD]` | `perf-missed-run.yml`, 05:00 UTC | alarms when a night left no result |
+| `bench nightly missed-run [--date YYYY-MM-DD]` | `perf-missed-run.yml`, 06:30 UTC | alarms when a night left no result |
 
 ### `bench nightly report`: one night
 
@@ -376,18 +376,20 @@ yet. It is not retried after a timeout, a lost connection or a malformed answer
 while waiting for Chat, because the message may have arrived. The webhook URL is
 the credential and is never printed. Only `https://` webhooks are used.
 
-### `bench nightly missed-run`: the 05:00 UTC alarm
+### `bench nightly missed-run`: the 06:30 UTC alarm
 
 It lists the scheduled runs of `perf-nightly.yml` on `main` created in the 24 hours
-before `<date> 05:00 UTC` (`perf-nightly.yml` starts at 00:00). It is quiet when
-any of them has an unexpired `perf-nightly` artifact; a skipped night uploads one
-too, and a re-run of the night's jobs is the same run. A hand-started run does not
-count: one given its own images uploads nightly.json but posts nothing. Otherwise
-it posts an alarm naming the case and exits 1, so the run is red even without a
-webhook:
+before `<date> 06:30 UTC`. `perf-nightly.yml` starts at 00:00, and its longest legal
+night (a check of up to 330 minutes, then merge and report) ends before 06:30; a
+test pins that gap. It is quiet when any of those runs has an unexpired
+`perf-nightly` artifact; a skipped night uploads one too, and a re-run of the
+night's jobs is the same run. A hand-started run does not count: one given its own
+images uploads nightly.json but posts nothing. A run still going is "not yet", not
+missed: the alarm says so in the job summary, posts nothing and exits 0, and the
+run posts its own report when it ends. Otherwise it posts an alarm naming the case
+and exits 1, so the run is red even without a webhook:
 
 * no scheduled run in the window;
-* the newest run is still going;
 * the newest run finished (with its conclusion) without the artifact;
 * `perf-nightly.yml` does not exist, or GitHub could not be asked.
 

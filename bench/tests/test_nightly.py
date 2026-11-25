@@ -11,6 +11,7 @@ import http.client
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -797,7 +798,7 @@ class JudgeFixtures(Workspace):
 # The missed-run alarm.
 
 NIGHT = date(2026, 11, 24)
-NOW = datetime(2026, 11, 24, 5, 0, 7, tzinfo=UTC)
+NOW = datetime(2026, 11, 24, 6, 30, 7, tzinfo=UTC)
 RUNS_PATH = "/repos/FalkorDB/FalkorDB/actions/workflows/perf-nightly.yml/runs"
 
 
@@ -854,7 +855,7 @@ class MissedRun(Workspace):
         query = urllib.parse.parse_qs(requests[0]["query"])
         self.assertEqual(query["branch"], ["main"])
         self.assertEqual(query["event"], ["schedule"])
-        self.assertEqual(query["created"], ["2026-11-23T05:00:00Z..2026-11-24T05:00:00Z"])
+        self.assertEqual(query["created"], ["2026-11-23T06:30:00Z..2026-11-24T06:30:00Z"])
         self.assertEqual(urllib.parse.parse_qs(requests[1]["query"])["name"], ["perf-nightly"])
 
     def test_quiet_on_a_skipped_night_too(self):
@@ -875,7 +876,7 @@ class MissedRun(Workspace):
         self.assertEqual(code, 1)
         self.assertIn(
             "*Perf nightly alarm 2026-11-24*: no nightly result. No schedule run of perf-nightly.yml on main "
-            "between 2026-11-23 05:00 and 2026-11-24 05:00 UTC.",
+            "between 2026-11-23 06:30 and 2026-11-24 06:30 UTC.",
             stdout,
         )
 
@@ -886,8 +887,8 @@ class MissedRun(Workspace):
                     200,
                     {
                         "workflow_runs": [
-                            run(1, "2026-11-24T05:00:00Z"),  # the window ends at 05:00, exclusive
-                            run(2, "2026-11-23T04:59:59Z"),
+                            run(1, "2026-11-24T06:30:00Z"),  # the window ends at 06:30, exclusive
+                            run(2, "2026-11-23T06:29:59Z"),
                             run(3, "2026-11-24T00:00:05Z", branch="ci/perf-nightly"),
                         ]
                     },
@@ -914,22 +915,26 @@ class MissedRun(Workspace):
         self.assertEqual(code, 1)
         self.assertIn("No schedule run of perf-nightly.yml on main", stdout)
 
-    def test_a_run_still_going(self):
-        code, stdout, _, _ = self.alarm(
+    def test_a_run_still_going_is_not_yet_an_alarm(self):
+        # It still posts its own report when it ends; the alarm neither fires nor posts.
+        code, stdout, stderr, _ = self.alarm(
             {
                 RUNS_PATH: (
                     200,
-                    {"workflow_runs": [run(9, "2026-11-23T05:00:00Z", "in_progress", None)]},
+                    {"workflow_runs": [run(9, "2026-11-23T06:30:00Z", "in_progress", None)]},
                 ),
                 "/repos/FalkorDB/FalkorDB/actions/runs/9/artifacts": (200, artifacts()),
-            }
+            },
+            environ={"PERF_CHAT_WEBHOOK": "http://127.0.0.1:9/never"},
         )
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 0)
         self.assertIn(
-            "The run (started 2026-11-23 05:00 UTC) is still in_progress at 2026-11-24 05:00 UTC and has "
-            "not uploaded perf-nightly. <https://github.com/FalkorDB/FalkorDB/actions/runs/9|run>",
+            "Perf nightly 2026-11-24: not yet. <https://github.com/FalkorDB/FalkorDB/actions/runs/9|run> "
+            "The run (started 2026-11-23 06:30 UTC) is still in_progress at 2026-11-24 06:30 UTC; "
+            "its report follows when it ends.",
             stdout,
         )
+        self.assertNotIn("Chat", stderr)
 
     def test_a_failed_run_without_the_artifact(self):
         code, stdout, _, _ = self.alarm(
@@ -1081,7 +1086,7 @@ class MissedRun(Workspace):
         runs = [request for request in server.requests if request["path"] == RUNS_PATH]
         self.assertEqual(
             urllib.parse.parse_qs(runs[0]["query"])["created"],
-            ["2026-11-23T05:00:00Z..2026-11-24T05:00:00Z"],
+            ["2026-11-23T06:30:00Z..2026-11-24T06:30:00Z"],
         )
 
     def test_today_when_the_run_cannot_be_looked_up_or_was_not_scheduled(self):
@@ -1111,7 +1116,7 @@ class MissedRun(Workspace):
                 runs = [request for request in server.requests if request["path"] == RUNS_PATH]
                 self.assertEqual(
                     urllib.parse.parse_qs(runs[0]["query"])["created"],
-                    ["2026-11-25T05:00:00Z..2026-11-26T05:00:00Z"],
+                    ["2026-11-25T06:30:00Z..2026-11-26T06:30:00Z"],
                 )
 
     def test_an_explicit_date_wins_over_the_scheduled_night(self):
@@ -1139,7 +1144,7 @@ class MissedRun(Workspace):
         self.assertEqual([request["path"] for request in server.requests], [RUNS_PATH])
         self.assertEqual(
             urllib.parse.parse_qs(server.requests[0]["query"])["created"],
-            ["2026-11-09T05:00:00Z..2026-11-10T05:00:00Z"],
+            ["2026-11-09T06:30:00Z..2026-11-10T06:30:00Z"],
         )
 
     def test_the_default_night_is_today_in_utc(self):
@@ -1149,15 +1154,60 @@ class MissedRun(Workspace):
             contextlib.redirect_stderr(io.StringIO()),
         ):
             missed_run.run(
-                {"GITHUB_API_URL": server.url}, now=datetime(2026, 11, 25, 5, 0, 3, tzinfo=UTC)
+                {"GITHUB_API_URL": server.url}, now=datetime(2026, 11, 25, 6, 30, 3, tzinfo=UTC)
             )
         self.assertEqual(
             urllib.parse.parse_qs(server.requests[0]["query"])["created"],
-            ["2026-11-24T05:00:00Z..2026-11-25T05:00:00Z"],
+            ["2026-11-24T06:30:00Z..2026-11-25T06:30:00Z"],
         )
 
 
 class AlarmWorkflow(unittest.TestCase):
+    # The nightly starts at 00:00 UTC; a check may run up to 330 minutes (bench/checks.yaml's
+    # hosted limit; 300 on a VM), and merge and report follow. The alarm comes after all that.
+    NIGHTLY_CRON = "0 0 * * *"
+    LONGEST_CHECK_MINUTES = 330
+    AFTER_THE_CHECKS_MINUTES = 30
+
+    @staticmethod
+    def minutes(cron: str) -> int:
+        minute, hour = cron.split()[:2]
+        return int(hour) * 60 + int(minute)
+
+    def alarm_cron(self) -> str:
+        workflow = (REPO_ROOT / ".github" / "workflows" / "perf-missed-run.yml").read_text()
+        crons = re.findall(r"cron:\s*[\"']([^\"']+)[\"']", workflow)
+        self.assertEqual(len(crons), 1, crons)
+        return crons[0]
+
+    def test_the_alarm_comes_after_the_longest_legal_night(self):
+        latest_end = (
+            self.minutes(self.NIGHTLY_CRON)
+            + self.LONGEST_CHECK_MINUTES
+            + self.AFTER_THE_CHECKS_MINUTES
+        )
+        self.assertGreaterEqual(self.minutes(self.alarm_cron()), latest_end)
+
+    def test_the_alarm_runs_when_its_window_ends(self):
+        end = missed_run.ALARM_TIME_UTC
+        self.assertEqual(self.minutes(self.alarm_cron()), end.hour * 60 + end.minute)
+
+    @unittest.skipUnless(
+        (REPO_ROOT / ".github" / "workflows" / "perf-nightly.yml").exists()
+        and (REPO_ROOT / "bench" / "checks.yaml").exists(),
+        "perf-nightly.yml and bench/checks.yaml arrive with #3991, above this PR",
+    )
+    def test_the_real_nightly_still_fits_before_the_alarm(self):
+        nightly = (REPO_ROOT / ".github" / "workflows" / "perf-nightly.yml").read_text()
+        checks = (REPO_ROOT / "bench" / "checks.yaml").read_text()
+        (start,) = re.findall(r"cron:\s*[\"']([^\"']+)[\"']", nightly)
+        timeouts = [int(t) for t in re.findall(r"^\s*timeout_minutes:\s*(\d+)", checks, re.M)]
+        self.assertLessEqual(max(timeouts, default=0), self.LONGEST_CHECK_MINUTES)
+        latest_end = (
+            self.minutes(start) + self.LONGEST_CHECK_MINUTES + self.AFTER_THE_CHECKS_MINUTES
+        )
+        self.assertGreaterEqual(self.minutes(self.alarm_cron()), latest_end)
+
     def test_the_alarm_runs_one_concurrency_group_per_run(self):
         # A group shared by scheduled runs keeps one pending run: a later one would cancel it.
         workflow = (REPO_ROOT / ".github" / "workflows" / "perf-missed-run.yml").read_text()
@@ -1214,7 +1264,7 @@ class CommandLine(unittest.TestCase):
             )
         self.assertEqual(run.exit_code, 1)
         self.assertIn(
-            "No push run of rust-push.yml on dev between 2026-11-09 05:00 and 2026-11-10 05:00 UTC.",
+            "No push run of rust-push.yml on dev between 2026-11-09 06:30 and 2026-11-10 06:30 UTC.",
             run.stdout,
         )
         query = urllib.parse.parse_qs(server.requests[0]["query"])
