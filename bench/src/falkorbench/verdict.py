@@ -1,49 +1,33 @@
 """micro-hw's verdict: two images' measure passes in, one contract `result.json` out.
 
-Apart from reading the pass CSVs, the machine file and the clock, and writing
-the result, it is pure, so every rule is covered by tests/test_verdict.py
-without a server. What the check measures, its
-rules and the basis of each gate: bench/README.md, "Nightly micro check".
+Apart from reading the pass CSVs and writing rows.csv, it is pure (kit.result
+builds the result; kit.run_check writes it), so every rule is covered by
+tests/test_verdict.py without a server. What the check measures, its rules and
+the basis of each gate: bench/README.md, "Nightly micro check".
 """
 
 from __future__ import annotations
 
 import csv
-import json
 import math
-import os
-import re
 import statistics
 from collections.abc import Iterable
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
-from datetime import UTC
-from datetime import datetime
 from pathlib import Path
+from typing import Any
 
+from falkorbench import kit
+from falkorbench.contract import MAX_FINDINGS
 from falkorbench.metrics import THRESHOLDS
 from falkorbench.metrics import Row
 from falkorbench.metrics import read_rows
 from falkorbench.model import Query
 
 CHECK = "micro-hw"
-SIDES = ("candidate", "baseline")
+SIDES = kit.SIDES
 REPS = 2
-
-# The contract's limits on findings; tests/perf/validate.py checks the 50.
-MAX_FINDINGS = 50
-MAX_QUIET_FINDINGS = 10
-
-# tests/perf/validate.py's rules, copied because bench runs without tests/perf;
-# test_verdict checks the copy is exact. Used with fullmatch.
-_PATH_PART = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
-_HOST_PART = r"(?:[A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]*[A-Za-z0-9])"
-IMAGE_RE = re.compile(
-    rf"(?:(?:localhost|{_HOST_PART}(?:\.{_HOST_PART})+)(?::[0-9]+)?/|{_HOST_PART}:[0-9]+/)?"
-    rf"{_PATH_PART}(?:/{_PATH_PART})*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{{0,127}})?@sha256:[0-9a-f]{{64}}"
-)
-COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True)
@@ -131,7 +115,7 @@ HW_METRICS = hw_metrics("rust")
 
 
 def screen_path(root: Path, side: str, rep: int) -> Path:
-    """Where a pass's CSV lives. One convention, shared by `bench hw` (which
+    """Where a pass's CSV lives. One convention, shared by `bench micro-hw` (which
     writes these names) and `load` (which checks them)."""
     return root / f"measure-{side}-r{rep}.csv"
 
@@ -209,34 +193,20 @@ def crossing(
 ) -> str | None:
     """'regression', 'improvement' or None for one row's reps.
 
-    Both directions need the reps not to overlap. Then the ratio must pass
-    `threshold` with the medians more than `floor` apart, or pass `steep` (when
-    given) with them more than `steep_floor` apart; every bound is strict. A
-    zero baseline cannot give a ratio, so a row going from 0 to something is
-    judged on `floor` or `steep_floor` alone.
+    The medians must cross `threshold` by more than `floor`, or `steep` (when
+    given) by more than `steep_floor` (kit.crossed: both bounds strict, and with
+    a zero baseline the floor alone decides); and the reps must not overlap. Over
+    a zero baseline a tier with no floor never crosses, or any reading would.
     """
     if not cand or not base:
         return None
     mc, mb = statistics.median(cand), statistics.median(base)
-    r = ratio_of(cand, base)
-    up, down = mc - mb, mb - mc
-    if r is None:
-        # The baseline median is 0, so any growth is steeper than `steep`; it
-        # still needs a positive absolute floor, or any non-zero reading flags.
-        worse = (floor > 0 and up > floor) or (
-            steep is not None and steep_floor > 0 and up > steep_floor
-        )
-        better = False
-    else:
-        worse = (r > threshold and up > floor) or (
-            steep is not None and r > steep and up > steep_floor
-        )
-        better = (r < 1 / threshold and down > floor) or (
-            steep is not None and r < 1 / steep and down > steep_floor
-        )
-    if worse and min(cand) > max(base):
+    tiers = [(threshold, floor), *([(steep, steep_floor)] if steep is not None else [])]
+    tiers = [(t, f) for t, f in tiers if f > 0 or mb > 0]
+    moved = {kit.crossed(mc, mb, t, f) for t, f in tiers}
+    if 1 in moved and min(cand) > max(base):
         return "regression"
-    if better and max(cand) < min(base):
+    if -1 in moved and max(cand) < min(base):
         return "improvement"
     return None
 
@@ -385,37 +355,12 @@ def _confirm(inp: Inputs, results: list[RowResult], errors: list[str]) -> None:
 # --- findings ----------------------------------------------------------------
 
 
-def _num(v: float | None) -> float | None:
-    if v is None or not math.isfinite(v):
-        return None
-    return round(v, 6) if abs(v) < 1e6 else round(v, 1)
-
-
-def _finding(
-    name: str,
-    metric: str,
-    cand: float | None,
-    base: float | None,
-    ratio: float | None,
-    threshold: float | None,
-    status: str,
-    direction: str = "higher_is_worse",
-) -> dict:
-    return {
-        "name": name,
-        "metric": metric,
-        "candidate": _num(cand),
-        "baseline": _num(base),
-        "ratio": _num(ratio),
-        "threshold": _num(threshold),
-        "direction": direction,
-        "status": status,
-    }
-
-
 def _badness(f: dict) -> float:
-    """How bad a finding is, for 'worst first': the ratio, inverted for
-    lower-is-worse metrics. A finding with no ratio sorts last."""
+    """How bad a finding is, for 'worst first': a query that errors on the
+    candidate only first, then the ratio, inverted for lower-is-worse metrics.
+    A finding with no ratio sorts last."""
+    if f["metric"] == "completed" and f["status"] == "regression":
+        return math.inf
     r = f["ratio"]
     if r is None:
         return -math.inf
@@ -441,7 +386,8 @@ def row_finding(r: RowResult) -> dict:
     mc = statistics.median(cand) if cand else None
     mb = statistics.median(base) if base else None
     ratio = mc / mb if mc is not None and mb else None
-    return _finding(f"{r.query} [{r.klass}]", r.metric, mc, mb, ratio, r.threshold, r.status)
+    name = f"{r.query} [{r.klass}]"
+    return kit.finding(name, r.metric, mc, mb, r.status, threshold=r.threshold, ratio=ratio)
 
 
 # The metrics that get per-class rows: where a small fixed per-query cost shows.
@@ -468,167 +414,78 @@ def class_findings(results: Sequence[RowResult], metrics: Sequence[MetricSpec]) 
             up = sum(1 for x in ratios if x > 1)
             down = sum(1 for x in ratios if x < 1)
             same = len(ratios) - up - down
+            name = (
+                f"{klass}: median per-row ratio over {len(ratios)} rows "
+                f"({up} up, {down} down, {same} unchanged)"
+            )
             out.append(
-                _finding(
-                    f"{klass}: median per-row ratio over {len(ratios)} rows "
-                    f"({up} up, {down} down, {same} unchanged)",
-                    spec.name,
-                    None,
-                    None,
-                    statistics.median(ratios),
-                    None,
-                    "info",
-                )
+                kit.finding(name, spec.name, None, None, "info", ratio=statistics.median(ratios))
             )
     return out
 
 
-def correctness_findings(
-    failed: dict[str, set[str]], flaky: set[str] = frozenset()
-) -> tuple[list[dict], list[dict]]:
-    """(regressions, info): candidate-only errors fail the run at once.
+def correctness_findings(failed: dict[str, set[str]], flaky: set[str] = frozenset()) -> list[dict]:
+    """Queries that errored, as `completed` findings with kit.correctness_status:
+    each candidate-only error is a regression at once; errors on the baseline
+    only, on both sides, or on the candidate in some passes only are one
+    finding each.
 
     `flaky` are queries that errored on the candidate in some passes only, while
     the baseline answered in every pass. Reported, not failed on: an error that
     does not repeat is what an A/A pair can also produce.
     """
-    regress = [
-        _finding(
-            f"{name} [errors on candidate only]",
-            "completed",
-            0,
-            1,
-            0,
-            None,
-            "regression",
-            "lower_is_worse",
+
+    def completed(name: str, candidate: int | None, baseline: int) -> dict:
+        status = kit.correctness_status(candidate, baseline)
+        return kit.finding(
+            name, "completed", candidate, baseline, status, direction="lower_is_worse"
         )
+
+    out = [
+        completed(f"{name} [errors on candidate only]", 0, 1)
         for name in sorted(failed["candidate"] - failed["baseline"])
     ]
-    info = []
     base_only = failed["baseline"] - failed["candidate"]
     both = failed["candidate"] & failed["baseline"]
     if flaky:
-        info.append(
-            _finding(
-                f"{len(flaky)} queries error on the candidate in some passes only "
-                f"(e.g. {sorted(flaky)[0]})",
-                "completed",
-                None,
-                1,
-                None,
-                None,
-                "info",
-                "lower_is_worse",
-            )
+        name = (
+            f"{len(flaky)} queries error on the candidate in some passes only "
+            f"(e.g. {sorted(flaky)[0]})"
         )
+        out.append(completed(name, None, 1))
     if base_only:
-        info.append(
-            _finding(
-                f"{len(base_only)} queries error on the baseline only "
-                f"(e.g. {sorted(base_only)[0]})",
-                "completed",
-                1,
-                0,
-                None,
-                None,
-                "info",
-                "lower_is_worse",
-            )
-        )
+        name = f"{len(base_only)} queries error on the baseline only (e.g. {sorted(base_only)[0]})"
+        out.append(completed(name, 1, 0))
     if both:
-        info.append(
-            _finding(
-                f"{len(both)} queries error on both sides (e.g. {sorted(both)[0]})",
-                "completed",
-                0,
-                0,
-                None,
-                None,
-                "info",
-                "lower_is_worse",
-            )
+        out.append(
+            completed(f"{len(both)} queries error on both sides (e.g. {sorted(both)[0]})", 0, 0)
         )
-    return regress, info
+    return out
 
 
-def select_findings(
+def ordered(
     regressions: list[dict],
     improvements: list[dict],
     classes: list[dict],
     notices: list[dict],
 ) -> list[dict]:
-    """At most 50, at most 10 ok/info, regressions kept before improvements,
-    then ordered worst first.
-
-    Of the 10 ok/info slots, `notices` (queries that error, rows with no
-    reading, rows that crossed once and not on the second run) come first, in
-    the order given; the per-class rows fill what is left.
-    """
-    quiet = (notices + classes)[:MAX_QUIET_FINDINGS]
-    room = MAX_FINDINGS - len(quiet)
-    loud = sorted(regressions, key=_badness, reverse=True)[:room]
-    room -= len(loud)
-    # Improvements: the largest gain first, so the cut drops the smallest.
-    loud += sorted(improvements, key=lambda f: f["ratio"] if f["ratio"] is not None else 1)[:room]
-    return sorted([*loud, *quiet], key=lambda f: (f["status"] in ("ok", "info"), -_badness(f)))
+    """The findings in the order kit.select keeps them: regressions worst first
+    (a query that errors on the candidate only first of all); the improvements
+    that fit, largest gain kept, least gain listed first; then the 10 info
+    slots, filled by `notices` (queries that error, rows with no reading, rows
+    that crossed once and not on the second run) before the per-class rows, and
+    listed by ratio, a row with none last."""
+    room = max(MAX_FINDINGS - len(regressions), 0)
+    gains = sorted(improvements, key=lambda f: f["ratio"] if f["ratio"] is not None else 1)[:room]
+    quiet = (notices + classes)[: kit.MAX_INFORMATIVE]
+    return [
+        *sorted(regressions, key=_badness, reverse=True),
+        *sorted(gains, key=_badness, reverse=True),
+        *sorted(quiet, key=_badness, reverse=True),
+    ]
 
 
 # --- result.json -------------------------------------------------------------
-
-
-@dataclass
-class ImageRef:
-    image: str
-    label: str | None = None
-    commit: str | None = None
-
-    def as_json(self) -> dict:
-        # A malformed commit is reported in `error` (input_errors) and written as
-        # null, so the result stays valid; a blank label falls back to the default.
-        label = (self.label or "").strip() or default_label(self.image)
-        commit = self.commit if self.commit and COMMIT_RE.fullmatch(self.commit) else None
-        return {"image": self.image, "commit": commit, "label": label}
-
-
-def default_label(image: str) -> str:
-    """`<repo>@<first 12 hex of the digest>` (contract v1.2)."""
-    name, _, digest = image.partition("@")
-    repo = name.rsplit(":", 1)[0] if ":" in name.rsplit("/", 1)[-1] else name
-    hexpart = digest.removeprefix("sha256:")[:12]
-    return f"{repo}@{hexpart}" if hexpart else repo
-
-
-def input_errors(candidate: ImageRef, baseline: ImageRef, mode: str) -> list[str]:
-    errs = []
-    for side, ref in (("candidate", candidate), ("baseline", baseline)):
-        if not IMAGE_RE.fullmatch(ref.image):
-            errs.append(f"{side} image {ref.image!r} is not name[:tag]@sha256:<64 hex>, a digest")
-        if ref.commit and not COMMIT_RE.fullmatch(ref.commit):
-            errs.append(f"{side} commit {ref.commit!r} is not 40 lowercase hex")
-    if mode not in ("queue", "nightly", "long"):
-        errs.append(f"mode {mode!r} is not queue, nightly or long")
-    return errs
-
-
-def now_utc() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def vm_machine() -> dict | None:
-    """The `machine` object `_perf-vm.yml` writes to $PERF_MACHINE_JSON, or None
-    when that is unset, unreadable or not a machine object."""
-    env = os.environ.get("PERF_MACHINE_JSON")
-    if not env:
-        return None
-    try:
-        m = json.loads(Path(env).read_text())
-    except (OSError, ValueError):
-        # A file that cannot be read or parsed describes no machine. The caller
-        # then describes the host it can see, rather than failing a result over
-        # its machine field.
-        return None
-    return m if isinstance(m, dict) and m.get("runner") else None
 
 
 def write_rows_csv(path: Path, results: Sequence[RowResult]) -> None:
@@ -713,24 +570,21 @@ def summary_line(
 
 def build_result(
     inp: Inputs | None,
+    args: Any,
     *,
-    candidate: ImageRef,
-    baseline: ImageRef,
-    mode: str,
     started: str,
-    machine: dict,
-    finished: str | None = None,
+    machine: dict | None = None,
     extra_errors: Sequence[str] = (),
     artifacts: Sequence[str] = (),
-    check: str = CHECK,
     metrics: tuple[MetricSpec, ...] = HW_METRICS,
 ) -> tuple[dict, list[RowResult]]:
-    """The contract-v1 result, and the per-row table behind it.
+    """The contract result (kit.result), and the per-row table behind it.
 
-    `metrics` must match `inp.metrics`; it is separate so a run with no inputs
-    at all still names the check's metrics in its summary.
+    `args` carries the contract flags (candidate, baseline, labels, commits,
+    mode). `metrics` must match `inp.metrics`; it is separate so a run with no
+    inputs at all still names the check's metrics in its summary.
     """
-    errors = [*input_errors(candidate, baseline, mode), *extra_errors]
+    errors = list(extra_errors)
     results: list[RowResult] = []
     findings: list[dict] = []
     broken_on_both = 0
@@ -739,61 +593,41 @@ def build_result(
         errors += assess_errors
         flaky = failed_sometimes(inp.screen["candidate"], [q.name for q in inp.queries])
         flaky -= failed_sometimes(inp.screen["baseline"], flaky) | failed["baseline"]
-        regress_c, info_c = correctness_findings(failed, flaky)
+        correctness = correctness_findings(failed, flaky)
         broken_on_both = len(failed["candidate"] & failed["baseline"])
-        regressions = [row_finding(r) for r in results if r.status == "regression"] + regress_c
+        by_status = {
+            s: [f for f in correctness if f["status"] == s]
+            for s in ("regression", "improvement", "info")
+        }
+        regressions = [row_finding(r) for r in results if r.status == "regression"]
         improvements = [row_finding(r) for r in results if r.status == "improvement"]
         unconfirmed = [row_finding(r) for r in results if r.crossed and r.status == "info"]
         unmeasured = [r for r in results if r.note.startswith("unmeasured")]
-        notices = list(info_c)
+        notices = by_status["info"]
         if unmeasured:
-            notices.append(
-                _finding(
-                    f"{len(unmeasured)} rows unmeasured (e.g. {unmeasured[0].query} "
-                    f"[{unmeasured[0].metric}])",
-                    unmeasured[0].metric,
-                    None,
-                    None,
-                    None,
-                    None,
-                    "info",
-                )
-            )
+            first = unmeasured[0]
+            name = f"{len(unmeasured)} rows unmeasured (e.g. {first.query} [{first.metric}])"
+            notices.append(kit.finding(name, first.metric, None, None, "info"))
         notices += sorted(unconfirmed, key=_badness, reverse=True)
-        findings = select_findings(
-            regressions, improvements, class_findings(results, inp.metrics), notices
+        findings = ordered(
+            regressions + by_status["regression"],
+            improvements + by_status["improvement"],
+            class_findings(results, inp.metrics),
+            notices,
         )
-
-    # A confirmed regression outranks an error (contract v1.4): the night is red
-    # either way, and `error` may not carry a regression finding.
-    if any(f["status"] == "regression" for f in findings):
-        verdict = "regression"
-    elif errors:
-        verdict = "error"
-    else:
-        verdict = "pass"
-
-    result = {
-        "schema": 1,
-        "check": check,
-        "verdict": verdict,
-        "confirmed": verdict == "regression",
-        "summary": summary_line(
-            verdict, findings, results, errors, broken_on_both, metrics
-        ).replace("\n", " "),
-        "candidate": candidate.as_json(),
-        "baseline": baseline.as_json(),
-        "machine": machine,
-        "started": started,
-        # Never before `started`: that comes from preflight's runner clock.
-        "finished": max(finished or now_utc(), started),
-        "findings": findings,
-        "error": "; ".join(errors).replace("\n", " ") if verdict == "error" else None,
-        "artifacts": list(artifacts),
-    }
+    kept = kit.select(findings)
+    all_errors = [*kit.input_errors(args), *errors]
+    summary = summary_line(
+        kit.verdict(kept, all_errors), kept, results, all_errors, broken_on_both, metrics
+    )
+    result = kit.result(
+        CHECK,
+        args,
+        started=started,
+        findings=findings,
+        summary=summary,
+        errors=errors,
+        artifacts=artifacts,
+        machine_info=machine,
+    )
     return result, results
-
-
-def dump(result: dict, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")

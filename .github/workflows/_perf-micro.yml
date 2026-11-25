@@ -1,11 +1,11 @@
 # The nightly perf micro check, `micro-hw` (epic #3974), called by
 # perf-nightly.yml with two falkordb-server images pinned by digest. `preflight`
-# checks the inputs and builds (or finds) the measurement image; `hardware` runs
-# `bench hw` on a GCE C4 through _perf-vm.yml (`pmu: true`), which uploads
+# builds (or finds) the measurement image; `hardware` runs
+# `bench micro-hw` on a GCE C4 through _perf-vm.yml (`pmu: true`), which uploads
 # artifact `perf-result-micro-hw`. What it measures and its gates: bench/README.md.
 #
 # _perf-vm.yml runs the check's command from the CALLING commit, so a caller on
-# a branch without `bench hw` gets an error result until this is on main.
+# a branch without `bench micro-hw` gets an error result until this is on main.
 name: Perf micro check
 
 on:
@@ -59,28 +59,6 @@ jobs:
     outputs:
       bench_image: ${{ steps.bake.outputs.image }}
     steps:
-      # The images must be pinned (contract rule 1). Failing here skips the
-      # hardware job, and the caller's merge step reports the missing result.
-      - name: Check the inputs
-        env:
-          CANDIDATE: ${{ inputs.candidate_image }}
-          BASELINE: ${{ inputs.baseline_image }}
-          MODE: ${{ inputs.mode }}
-        run: |
-          set -euo pipefail
-          ok=1
-          for ref in "$CANDIDATE" "$BASELINE"; do
-            if ! [[ "$ref" =~ ^[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
-              echo "::error::$ref is not pinned by a full sha256 digest"
-              ok=0
-            fi
-          done
-          case "$MODE" in
-            queue|nightly|long) ;;
-            *) echo "::error::mode '$MODE' is not queue, nightly or long"; ok=0 ;;
-          esac
-          [ "$ok" = 1 ]
-
       # bench/Dockerfile comes from the commit this workflow file was read
       # from, not the caller's.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -130,7 +108,7 @@ jobs:
     uses: FalkorDB/FalkorDB/.github/workflows/_perf-vm.yml@ci/perf-vm
     with:
       check: micro-hw
-      command: uv run --project bench bench hw --bench-image ${{ needs.preflight.outputs.bench_image }}
+      command: uv run --project bench bench micro-hw --bench-image ${{ needs.preflight.outputs.bench_image }}
       candidate_image: ${{ inputs.candidate_image }}
       baseline_image: ${{ inputs.baseline_image }}
       mode: ${{ inputs.mode }}

@@ -1,15 +1,17 @@
-"""micro-hw's verdict and `bench hw`, over CSV fixtures laid out the way `bench hw`
+"""micro-hw's verdict and `bench micro-hw`, over CSV fixtures laid out the way it
 writes them. Each test names the wrong answer it prevents."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
 
 from falkorbench import contract
+from falkorbench import kit
 from falkorbench import verdict as v
 from falkorbench.counters import L2_MISS_EVENT
 from falkorbench.metrics import read_rows
@@ -18,6 +20,23 @@ from falkorbench.model import Query
 
 CAND = "ghcr.io/falkordb/falkordb-server@sha256:" + "a" * 64
 BASE = "falkordb/falkordb-server:6.2.0@sha256:" + "b" * 64
+MACHINE = {"runner": "gce", "type": "c4-standard-8", "cpu": "x", "cores": 8}
+
+
+def flags(cand=CAND, base=BASE, *, out="out", mode="nightly", **labels) -> SimpleNamespace:
+    """The contract flags `bench micro-hw` takes, as kit reads them."""
+    return SimpleNamespace(
+        candidate=cand,
+        baseline=base,
+        out=str(out),
+        mode=mode,
+        **{
+            f"{side}_{what}": labels.get(f"{side}_{what}")
+            for side in v.SIDES
+            for what in ("label", "commit")
+        },
+    )
+
 
 QUERIES = [
     Query("RETURN 1", False, "RETURN 1"),
@@ -64,12 +83,9 @@ def inputs(root: Path, queries=QUERIES, engine: str = "rust") -> v.Inputs:
 def run(root: Path, queries=QUERIES) -> dict:
     res, _ = v.build_result(
         inputs(root, queries),
-        candidate=v.ImageRef(CAND),
-        baseline=v.ImageRef(BASE, "6.2.0"),
-        mode="nightly",
+        flags(baseline_label="6.2.0"),
         started="2026-11-24T00:00:00Z",
-        machine={"runner": "gce", "type": "c4-standard-8", "cpu": "x", "cores": 8},
-        finished="2026-11-24T00:30:00Z",
+        machine=MACHINE,
     )
     assert contract.validate_result(res) == []
     return res
@@ -251,6 +267,22 @@ class TestVerdict:
         assert (f["metric"], f["candidate"], f["baseline"]) == ("completed", 0, 1)
         assert f["direction"] == "lower_is_worse"
 
+    def test_a_query_erroring_on_the_candidate_is_the_worst_regression(self, tmp_path):
+        """It has no ratio, yet lists before a 2x row and the summary names it."""
+        write_side(tmp_path, "candidate", without(scaled(ROWS, "write a", "instr", 2.0), "write b"))
+        write_side(tmp_path, "baseline", ROWS)
+        write_side(
+            tmp_path,
+            "candidate",
+            without(scaled(ROWS, "write a", "instr", 2.0), "write b"),
+            confirm=True,
+        )
+        write_side(tmp_path, "baseline", ROWS, confirm=True)
+        res = run(tmp_path)
+        regs = by_status(res, "regression")
+        assert [f["metric"] for f in regs[:2]] == ["completed", "instructions"]
+        assert "worst write b [errors on candidate only] completed" in res["summary"]
+
     def test_query_erroring_on_both_sides_is_information(self, tmp_path):
         write_side(tmp_path, "candidate", without(ROWS, "write b"))
         write_side(tmp_path, "baseline", without(ROWS, "write b"))
@@ -259,6 +291,50 @@ class TestVerdict:
         (f,) = [f for f in by_status(res, "info") if "both sides" in f["name"]]
         assert (f["candidate"], f["baseline"]) == (0, 0), "v1.4: 0 and 0 is info"
         assert "1 queries error on both images" in res["summary"]
+
+    def test_improvements_that_do_not_fit_drop_the_smallest_gains(self):
+        """With 48 regressions there is room for 2 improvements: the two largest
+        gains stay, the least of them listed first."""
+        regs = [kit.finding(f"r{i}", "cycles", 3.0, 1.0, "regression") for i in range(48)]
+        gains = [
+            kit.finding(f"g{r}", "cycles", r, 1.0, "improvement") for r in (0.9, 0.5, 0.7, 0.6)
+        ]
+        kept = kit.select(v.ordered(regs, gains, [], []))
+        assert [f["name"] for f in kept if f["status"] == "improvement"] == ["g0.6", "g0.5"]
+
+    def test_finished_is_never_before_started(self):
+        """`started` comes from the caller's clock; a result finishing before it
+        would be invalid."""
+        res, _ = v.build_result(None, flags(), started="2999-01-01T00:00:00Z", machine=MACHINE)
+        assert res["finished"] == res["started"]
+
+    @pytest.mark.parametrize(
+        ("change", "says"),
+        [
+            ({"cand": CAND.replace("falkordb/", "FalkorDB/")}, "digest"),
+            ({"cand": CAND + "\n"}, "digest"),
+            ({"candidate_commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca\n"}, "commit"),
+        ],
+    )
+    def test_what_the_contract_rejects_is_an_input_error(self, change, says):
+        """An uppercase repo or a trailing newline once passed micro-hw's own
+        looser rule and gave a result the validator rejected. A bad commit is an
+        error and is written as null."""
+        res, _ = v.build_result(
+            None, flags(**change), started="2026-11-24T00:00:00Z", machine=MACHINE
+        )
+        assert res["verdict"] == "error" and says in res["error"]
+        assert res["candidate"]["commit"] is None
+
+    def test_query_erroring_on_baseline_only_is_an_improvement(self, tmp_path):
+        """kit.correctness_status, the rule every check shares: the candidate
+        answers what the baseline could not. It never fails the run."""
+        write_side(tmp_path, "candidate", ROWS)
+        write_side(tmp_path, "baseline", without(ROWS, "write b"))
+        res = run(tmp_path)
+        assert res["verdict"] == "pass"
+        (f,) = [f for f in res["findings"] if "baseline only" in f["name"]]
+        assert (f["status"], f["candidate"], f["baseline"]) == ("improvement", 1, 0)
 
     def test_one_row_with_no_reading_is_an_error(self, tmp_path):
         """A counter missing on one side is a gap, not a pass on the rest."""
@@ -352,27 +428,12 @@ class TestVerdict:
         write_side(tmp_path, "baseline", ROWS)
         res, _ = v.build_result(
             inputs(tmp_path),
-            candidate=v.ImageRef("falkordb/falkordb-server:edge"),
-            baseline=v.ImageRef(BASE),
-            mode="weekly",
+            flags("falkordb/falkordb-server:edge", mode="weekly"),
             started="2026-11-24T00:00:00Z",
-            machine={"runner": "gce", "type": "c4-standard-8", "cpu": "x", "cores": 8},
+            machine=MACHINE,
         )
         assert res["verdict"] == "error"
         assert "digest" in res["error"] and "mode" in res["error"]
-
-    def test_finished_is_never_before_started(self, tmp_path):
-        """`started` and `finished` can come from two clocks; a result whose
-        finish precedes its start would be invalid."""
-        res, _ = v.build_result(
-            None,
-            candidate=v.ImageRef(CAND),
-            baseline=v.ImageRef(BASE),
-            mode="nightly",
-            started="2999-01-01T00:00:00Z",
-            machine={"runner": "gce", "type": "c4-standard-8", "cpu": "x", "cores": 8},
-        )
-        assert res["finished"] == res["started"]
 
     def test_no_nan_or_infinity(self, tmp_path):
         """A zero baseline gives ratio null, never inf; run() validates the rest."""
@@ -412,49 +473,6 @@ class TestFindings:
         )
         r.confirm_cand, r.confirm_base = [1e6, 1e6], [1e6, 1e6]
         assert v.row_finding(r)["ratio"] == pytest.approx(3.0)
-
-
-class TestLabels:
-    def test_default_label_is_repo_and_twelve_hex(self):
-        assert v.default_label(BASE) == "falkordb/falkordb-server@" + "b" * 12
-        assert v.ImageRef(CAND).as_json() == {
-            "image": CAND,
-            "commit": None,
-            "label": "ghcr.io/falkordb/falkordb-server@" + "a" * 12,
-        }
-
-    def test_malformed_commit_and_blank_label_keep_the_result_valid(self):
-        """The bad value is reported in `error`, never written where the
-        contract wants 40 hex or a non-empty label."""
-        ref = v.ImageRef(CAND, "  ", "4c10889")
-        assert ref.as_json()["commit"] is None
-        assert ref.as_json()["label"] == v.default_label(CAND)
-        assert any("commit" in e for e in v.input_errors(ref, v.ImageRef(BASE), "nightly"))
-
-    def test_image_and_commit_rules_are_the_validators(self):
-        assert v.IMAGE_RE.pattern == contract.IMAGE_RE.pattern
-        assert v.COMMIT_RE.pattern == contract.COMMIT_RE.pattern
-
-    @pytest.mark.parametrize(
-        ("image", "commit", "says"),
-        [
-            (CAND.replace("falkordb/", "FalkorDB/"), None, "digest"),
-            (CAND + "\n", None, "digest"),
-            (CAND, "4c1088949a5852e3949c05bfb3d92a603c4cd4ca\n", "commit"),
-        ],
-    )
-    def test_what_the_validator_rejects_is_an_input_error(self, image, commit, says):
-        """An uppercase repo or a trailing newline passed the old `^...$` rule,
-        so the check went on and wrote a result the validator rejects. Now it is
-        an input error, and a bad commit is written as null."""
-        ref = v.ImageRef(image, commit=commit)
-        assert any(says in e for e in v.input_errors(ref, v.ImageRef(BASE), "nightly"))
-        assert ref.as_json()["commit"] is None
-
-    def test_given_label_and_commit_win(self):
-        ref = v.ImageRef(CAND, "main@4c10889", "4c1088949a5852e3949c05bfb3d92a603c4cd4ca")
-        assert ref.as_json()["label"] == "main@4c10889"
-        assert ref.as_json()["commit"] == "4c1088949a5852e3949c05bfb3d92a603c4cd4ca"
 
 
 class FakeDocker:
@@ -553,10 +571,7 @@ def hw_run(tmp_path, docker, *, cand=CAND, base=BASE, server_cpus="0-1,4-5"):
 
     return hw.HwRun(
         bench_image="ghcr.io/falkordb/falkordb-bench@sha256:" + "c" * 64,
-        candidate=v.ImageRef(cand),
-        baseline=v.ImageRef(base),
-        mode="nightly",
-        out=tmp_path / "out",
+        args=flags(cand, base, out=tmp_path / "out"),
         repo_root=tmp_path,
         server_cpus=server_cpus,
         queries=QUERIES,
@@ -576,7 +591,7 @@ def measure_calls(docker):
 class TestHw:
     @pytest.fixture(autouse=True)
     def _every_result_passes_the_validator(self, monkeypatch):
-        """`bench hw`'s own path (its machine, artifacts and errors) is checked
+        """`bench micro-hw`'s own path (its machine, artifacts and errors) is checked
         too; an image the validator rejects cannot be written validly."""
         from falkorbench import hw
 
@@ -584,7 +599,7 @@ class TestHw:
 
         def checked(run, **kwargs):
             res = real(run, **kwargs)
-            if all(v.IMAGE_RE.fullmatch(r.image) for r in (run.candidate, run.baseline)):
+            if all(contract.IMAGE_RE.fullmatch(i) for i in (run.args.candidate, run.args.baseline)):
                 assert contract.validate_result(res) == []
             return res
 
@@ -784,10 +799,7 @@ class TestHw:
         docker = FakeDocker(start / "out" / "raw", self.readings())
         run = hw.HwRun(
             bench_image="ghcr.io/falkordb/falkordb-bench@sha256:" + "c" * 64,
-            candidate=v.ImageRef(CAND),
-            baseline=v.ImageRef(BASE),
-            mode="nightly",
-            out=Path("out"),
+            args=flags(out="out"),
             repo_root=Path("."),
             queries=QUERIES,
             runner=docker,
@@ -880,8 +892,6 @@ class TestHw:
         assert res["verdict"] == "error"
         assert "measure-baseline-r2.csv counted no instr, cycles, br_miss, l2_miss" in res["error"]
 
-
-class TestMachine:
     def test_a_vm_reports_its_own_machine(self, tmp_path, monkeypatch):
         """On a _perf-vm.yml VM the result names the VM from $PERF_MACHINE_JSON."""
         from falkorbench import hw
@@ -889,8 +899,8 @@ class TestMachine:
         vm = {"runner": "gce", "type": "c4-standard-8", "cpu": "Intel Xeon 8581C", "cores": 8}
         (tmp_path / "machine.json").write_text(json.dumps(vm))
         monkeypatch.setenv("PERF_MACHINE_JSON", str(tmp_path / "machine.json"))
-        assert v.vm_machine() == vm
-        assert hw.machine() == vm
+        docker = FakeDocker(tmp_path / "out" / "raw", self.readings())
+        assert hw.run_check(hw_run(tmp_path, docker))["machine"] == vm
 
 
 def worst_split(readings):
@@ -1014,22 +1024,3 @@ class TestHwGates:
         assert run.metrics == v.hw_metrics("rust")
         run.c_compat = True
         assert run.metrics == v.hw_metrics("c")
-
-    def test_an_unreadable_machine_file_falls_back(self, tmp_path, monkeypatch):
-        """A $PERF_MACHINE_JSON that is not JSON describes no machine; the
-        result still gets one instead of failing over it."""
-        (tmp_path / "machine.json").write_text("{not json")
-        monkeypatch.setenv("PERF_MACHINE_JSON", str(tmp_path / "machine.json"))
-        assert v.vm_machine() is None
-
-    def test_no_lscpu_still_names_the_host(self, monkeypatch):
-        from falkorbench import hw
-
-        def no_lscpu(*_a, **_k):
-            raise OSError("lscpu: not found")
-
-        monkeypatch.delenv("PERF_MACHINE_JSON", raising=False)
-        monkeypatch.setattr(hw.subprocess, "run", no_lscpu)
-        m = hw.machine()
-        assert m["runner"] == "local"
-        assert m["cpu"] and m["cores"] >= 1

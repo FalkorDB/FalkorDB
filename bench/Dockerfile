@@ -33,7 +33,7 @@ FROM ${C_IMAGE}
 # and carries on. DEBIAN_FRONTEND does not suppress it (it is a hook, not a
 # frontend); removing the hook file does.
 #
-# linux-perf is for the micro-hw check (bench hw), which runs this image
+# linux-perf is for the micro-hw check (bench micro-hw), which runs this image
 # --privileged on a VM with a PMU and reads counters through `perf stat -p`.
 # Everywhere else it finds no PMU (hosted runners expose none, and an
 # unprivileged container cannot open counters), so `bench measure` keeps

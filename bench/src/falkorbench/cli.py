@@ -7,6 +7,7 @@ have been run first. The shared options are defined once, in `common_options`.
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -26,7 +27,6 @@ from falkorbench import metrics
 from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
-from falkorbench import verdict as verdict_mod
 from falkorbench.counters import select_backend
 
 # bench/ is the project root; the repo is its parent.
@@ -360,30 +360,20 @@ def report(measure_specs, cg_specs, provenance, coverage, strict):
         raise SystemExit(1)
 
 
-# --- hw (the nightly micro-hw check) -------------------------------------------
+# --- micro-hw (the nightly micro check) ---------------------------------------
 
 
-@cli.command()
+@cli.command("micro-hw")
 @click.option("--bench-image", required=True, help="the measurement image, by digest")
-@click.option("--candidate", "cand_image", required=True)
-@click.option("--baseline", "base_image", required=True)
-@click.option("--out", required=True, type=click.Path(file_okay=False, path_type=Path))
-@click.option("--mode", required=True)
+@click.option("--candidate", required=True, help="image, name[:tag]@sha256:<64 hex>")
+@click.option("--baseline", required=True, help="image, name[:tag]@sha256:<64 hex>")
+@click.option("--out", required=True, help="directory for result.json and raw/")
+@click.option("--mode", required=True, help="queue, nightly or long")
 @click.option("--candidate-label", default=None)
 @click.option("--baseline-label", default=None)
 @click.option("--candidate-commit", default=None)
 @click.option("--baseline-commit", default=None)
-def hw(
-    bench_image,
-    cand_image,
-    base_image,
-    out,
-    mode,
-    candidate_label,
-    baseline_label,
-    candidate_commit,
-    baseline_commit,
-):
+def micro_hw(bench_image, **flags):
     """The micro-hw check: hardware counters on both images, on this host.
 
     Needs docker and a PMU (a GCE C4 VM through _perf-vm.yml with pmu: true).
@@ -392,10 +382,7 @@ def hw(
     """
     run = hw_mod.HwRun(
         bench_image=bench_image,
-        candidate=verdict_mod.ImageRef(cand_image, candidate_label, candidate_commit),
-        baseline=verdict_mod.ImageRef(base_image, baseline_label, baseline_commit),
-        mode=mode,
-        out=out,
+        args=argparse.Namespace(**flags),
         repo_root=REPO_ROOT,
         server_cpus=os.environ.get("PERF_SERVER_CPUS") or None,
         queries=query_set.QUERIES,

@@ -166,8 +166,8 @@ PERF_EVENTS: dict[str, str] = {
 # no cache-misses here (contract v1.7); this is the L2 event it counted on a
 # c4-standard-8 (Xeon Platinum 8581C, 2026-11-24, the first of five candidates
 # probed). One event, never a substitute: a host that cannot count it is an
-# error in `bench hw`. It has no generic perf name, and perf rejects a name it
-# does not know outright, so it is opt-in: `bench hw` passes it as
+# error in `bench micro-hw`. It has no generic perf name, and perf rejects a name it
+# does not know outright, so it is opt-in: `bench micro-hw` passes it as
 # $BENCH_L2_EVENT once its probe has seen it count.
 L2_MISS_EVENT = "l2_rqsts.all_demand_miss"
 L2_EVENT_ENV = "BENCH_L2_EVENT"

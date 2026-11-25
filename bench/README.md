@@ -330,13 +330,13 @@ def main(argv=None) -> int:
 ## Nightly micro check (`micro-hw`)
 
 `.github/workflows/_perf-micro.yml` takes a candidate and a baseline
-falkordb-server image, both pinned by digest, and runs `bench hw` on a GCE
+falkordb-server image, both pinned by digest, and runs `bench micro-hw` on a GCE
 c4-standard-8 with its PMU exposed, through `_perf-vm.yml` (`pmu: true`).
 `perf-nightly.yml` calls it. The result is the nightly contract's `result.json`
 with check `micro-hw`, in artifact `perf-result-micro-hw`.
 
 ```bash
-bench hw --bench-image ghcr.io/falkordb/falkordb-bench@sha256:… \
+bench micro-hw --bench-image ghcr.io/falkordb/falkordb-bench@sha256:… \
     --candidate IMAGE@sha256:… --baseline IMAGE@sha256:… --out out --mode nightly
 ```
 
@@ -461,7 +461,7 @@ about 2.
 | `src/falkorbench/compare.py` | local regression gate |
 | `src/falkorbench/report.py` | the CI comment, and the run's pass/fail decision |
 | `src/falkorbench/verdict.py` | the nightly micro check's `result.json`: its gates, and the crossing, second-run and correctness rules |
-| `src/falkorbench/hw.py` | `bench hw`, the nightly micro check, run on a VM with a PMU |
+| `src/falkorbench/hw.py` | `bench micro-hw`, the nightly micro check, run on a VM with a PMU |
 | `src/falkorbench/profile.py` | samply profile of one query |
 | `src/falkorbench/flow.py` | per-flow-test-file measurement |
 | `src/falkorbench/cli.py` | the `bench` command |

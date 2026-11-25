@@ -1,4 +1,4 @@
-"""`bench hw`: the micro-hw check's command, on a VM that exposes its PMU.
+"""`bench micro-hw`: the micro-hw check's command, on a VM that exposes its PMU.
 
 Runs the full query set for both images through `perf stat`, runs it a second
 time when a row crosses, and always writes `<out>/result.json`; verdict.py
@@ -9,8 +9,6 @@ micro check".
 from __future__ import annotations
 
 import json
-import os
-import platform
 import shutil
 import subprocess
 import time
@@ -19,7 +17,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field
 from pathlib import Path
+from typing import Any
 
+from falkorbench import kit
 from falkorbench import verdict
 from falkorbench.counters import L2_EVENT_ENV
 from falkorbench.counters import L2_MISS_EVENT
@@ -58,38 +58,11 @@ def is_c_module(path: Path) -> bool:
     return RUST_MARKER not in path.read_bytes()
 
 
-def machine() -> dict:
-    """result.json `machine`: `$PERF_MACHINE_JSON` on a `_perf-vm.yml` VM,
-    otherwise this host, marked `local`."""
-    vm = verdict.vm_machine()
-    if vm is not None:
-        return vm
-    cpu = ""
-    try:
-        out = subprocess.run(["lscpu"], capture_output=True, text=True).stdout
-        cpu = next(
-            (ln.split(":", 1)[1].strip() for ln in out.splitlines() if ln.startswith("Model name")),
-            "",
-        )
-    except OSError:
-        # No lscpu (macOS, a minimal image): the CPU falls back to what
-        # platform.processor() says below.
-        cpu = ""
-    return {
-        "runner": "local",
-        "type": platform.node() or "unknown",
-        "cpu": cpu or platform.processor() or "unknown",
-        "cores": os.cpu_count() or 1,
-    }
-
-
 @dataclass
 class HwRun:
     bench_image: str
-    candidate: verdict.ImageRef
-    baseline: verdict.ImageRef
-    mode: str
-    out: Path
+    # The contract flags: candidate, baseline, out, mode, labels and commits.
+    args: Any
     repo_root: Path
     server_cpus: str | None = None
     queries: Sequence[Query] = ()
@@ -113,11 +86,15 @@ class HwRun:
         # `_perf-vm.yml` passes `--out out`, relative to where the check starts
         # (contract v1.8). Resolved now, before a docker mount or anything that
         # changes directory can read it against some other directory.
-        self.out = Path(self.out).resolve()
+        self.args.out = str(Path(self.args.out).resolve())
         self.repo_root = Path(self.repo_root).resolve()
 
     def _call(self, argv: Sequence[str]) -> subprocess.CompletedProcess:
         return (self.runner or default_runner)(argv)
+
+    @property
+    def out(self) -> Path:
+        return Path(self.args.out)
 
     @property
     def raw(self) -> Path:
@@ -292,10 +269,10 @@ class HwRun:
         # read as its old self. Every pass starts from no file.
         for old in [*self.raw.glob("measure-*.csv"), *self.raw.glob("confirm-measure-*.csv")]:
             old.unlink()
-        for image in (self.bench_image, self.candidate.image, self.baseline.image):
+        for image in (self.bench_image, self.args.candidate, self.args.baseline):
             self.pull(image)
-        for side, ref in (("candidate", self.candidate), ("baseline", self.baseline)):
-            self.extract(ref.image, self.raw / f"{side}.so")
+        for side in verdict.SIDES:
+            self.extract(getattr(self.args, side), self.raw / f"{side}.so")
         c_sides = [s for s in verdict.SIDES if is_c_module(self.raw / f"{s}.so")]
         # Both sides, or the two would measure different graphs.
         self.c_compat = bool(c_sides)
@@ -317,46 +294,44 @@ class HwRun:
 
 
 def run_check(hw: HwRun, *, started: str | None = None) -> dict:
-    """Run the check and write result.json, whatever happens."""
-    started = started or verdict.now_utc()
+    """Run the check and write result.json, whatever happens (kit.run_check)."""
+    started = started or kit.utc_now()
+    measured: list[verdict.Inputs] = []
     errors: list[str] = []
-    inp = None
-    try:
-        if verdict.input_errors(hw.candidate, hw.baseline, hw.mode):
-            # Reported by build_result; nothing is pulled for an unpinned image.
-            raise HwError("inputs rejected")
-        if shutil.which("docker") is None and hw.runner is None:
-            raise HwError("docker is not on PATH")
-        inp = hw.execute()
-    except HwError as e:
-        errors.append(str(e))
-    except Exception as e:  # anything unexpected is still an error result, never a crash
-        errors.append(f"{type(e).__name__}: {e}")
-    if inp is None and hw.screened is not None:
-        # A pass failed after the screen finished: judge the screen with the
-        # second-run passes that did complete. Crossed rows with no second-run
-        # reading are errors there; a correctness failure, or a regression the
-        # completed passes repeat, still outranks the error.
-        inp = hw.screened
-        inp.confirm = hw.second_run()
-    hw.raw.mkdir(parents=True, exist_ok=True)
-    (hw.raw / "hw.json").write_text(json.dumps(hw.notes, indent=2, default=str) + "\n")
-    # The modules are inputs, not results; keep the artifact to what was measured.
-    for side in verdict.SIDES:
-        (hw.raw / f"{side}.so").unlink(missing_ok=True)
-    artifacts = ["raw/rows.csv", *sorted(f"raw/{p.name}" for p in hw.raw.iterdir() if p.is_file())]
-    res, rows = verdict.build_result(
-        inp,
-        candidate=hw.candidate,
-        baseline=hw.baseline,
-        mode=hw.mode,
-        started=started,
-        machine=machine(),
-        extra_errors=errors,
-        artifacts=sorted(set(artifacts)),
-        check=verdict.CHECK,
-        metrics=hw.metrics,
-    )
-    verdict.write_rows_csv(hw.raw / "rows.csv", rows)
-    verdict.dump(res, hw.out / "result.json")
-    return res
+
+    def work() -> None:
+        if kit.input_errors(hw.args):
+            return  # the result says why; nothing is pulled for an unpinned image
+        try:
+            if shutil.which("docker") is None and hw.runner is None:
+                raise HwError("docker is not on PATH")
+            measured.append(hw.execute())
+        except HwError as e:
+            errors.append(str(e))
+
+    def build(error: str | None) -> dict:
+        inp = measured[0] if measured else hw.screened
+        if not measured and inp is not None:
+            # A pass failed after the screen finished: judge the screen with the
+            # second-run passes that did complete. Crossed rows with no second-run
+            # reading are errors there; a correctness failure, or a regression the
+            # completed passes repeat, still outranks the error.
+            inp.confirm = hw.second_run()
+        hw.raw.mkdir(parents=True, exist_ok=True)
+        (hw.raw / "hw.json").write_text(json.dumps(hw.notes, indent=2, default=str) + "\n")
+        # The modules are inputs, not results; keep the artifact to what was measured.
+        for side in verdict.SIDES:
+            (hw.raw / f"{side}.so").unlink(missing_ok=True)
+        files = sorted(f"raw/{p.name}" for p in hw.raw.iterdir() if p.is_file())
+        res, rows = verdict.build_result(
+            inp,
+            hw.args,
+            started=started,
+            extra_errors=[*errors, *([error] if error else [])],
+            artifacts=["raw/rows.csv", *files],
+            metrics=hw.metrics,
+        )
+        verdict.write_rows_csv(hw.raw / "rows.csv", rows)
+        return res
+
+    return kit.run_check(verdict.CHECK, hw.args, work, build)
