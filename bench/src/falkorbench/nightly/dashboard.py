@@ -1,7 +1,7 @@
 """The perf dashboard: one static site built from every stored run.
 
 `bench nightly dashboard --data <dir> --out <site>`. <dir> holds one folder per run,
-`<date>-<run id>/`, as perf-nightly.yml's publish job stores it on the gh-pages branch:
+`<date>-<run id>/`, as perf-dashboard.yml stores it on the gh-pages branch:
 `nightly.json`; `run.json`, {"trigger": "nightly", "scope": "main"} (what started the run, and
 which line it measures: main, a version branch, the C engine; without it the trigger is unknown
 and the scope main); and per check `<check>/` with its result.json and the files its `artifacts`

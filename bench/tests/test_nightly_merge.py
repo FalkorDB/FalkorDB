@@ -1652,7 +1652,7 @@ def test_every_job_runs_the_gate_workflows_own_commit():
         for step in job.get("steps", [])
         if step.get("uses", "").startswith("actions/checkout@")
     ]
-    assert len(checkouts) == 5
+    assert len(checkouts) == 4
     for step in checkouts:
         assert step["with"]["repository"] == "${{ job.workflow_repository }}"
         assert step["with"]["ref"] == "${{ job.workflow_sha }}"

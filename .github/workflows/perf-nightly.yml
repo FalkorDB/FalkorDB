@@ -373,6 +373,16 @@ jobs:
             --out "$RUNNER_TEMP/plan/context.json" --github-output "$out" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Whether a dispatch named its own images, for perf-dashboard.yml: only a run that
+      # measures the default pair belongs on the dashboard.
+      - name: Record the image overrides
+        env:
+          CANDIDATE_INPUT: ${{ inputs.candidate_image }}
+          BASELINE_INPUT: ${{ inputs.baseline_image }}
+        run: |
+          jq -n --arg c "$CANDIDATE_INPUT" --arg b "$BASELINE_INPUT" \
+            '{image_overrides: ($c != "" or $b != "")}' > "$RUNNER_TEMP/plan/dispatch.json"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: perf-plan
@@ -644,111 +654,3 @@ jobs:
           if [[ -n $GATE_MODE ]]; then gate=(--gate); fi
           uv run --project bench --frozen bench nightly merge conclude --nightly "$RUNNER_TEMP/nightly/nightly.json" \
             --waivers "$RUNNER_TEMP/waivers.json" --unfinished "$RUNNER_TEMP/nightly/unfinished.json" "${gate[@]}"
-
-  # The perf dashboard (#4005): this run's files go to data/<date>-<run id>/ on the
-  # gh-pages branch (nightly.json, run.json, and per check its result.json, the runner's
-  # record and the files the check lists as artifacts), and `bench nightly dashboard`
-  # rebuilds the site there from every stored run. Only the runs that report to Chat
-  # publish. Never the night's verdict: the job may fail (continue-on-error) and says so
-  # as a warning. One publish at a time, repository-wide (a future gate workflow joins
-  # the same group), so two pushes never race. GitHub keeps one publish waiting: a third
-  # cancels it, and re-running that run's publish job later stores its night.
-  publish:
-    needs: [merge, report]
-    if: >-
-      ${{ !cancelled() && needs.merge.result == 'success'
-      && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch'
-      && inputs.candidate_image == '' && inputs.baseline_image == '')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-    concurrency:
-      group: perf-dashboard
-      cancel-in-progress: false
-    permissions:
-      # Push to the gh-pages branch.
-      contents: write
-      # This run's artifacts.
-      actions: read
-    steps:
-      # The full history, so a red night's page lists the commits since the last green one.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          fetch-depth: 0
-          filter: blob:none
-          persist-credentials: false
-
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: "0.9.29"
-
-      - name: Store the run on gh-pages and rebuild the dashboard
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TRIGGER: ${{ github.event_name == 'schedule' && 'nightly' || 'manual' }}
-        run: |
-          set -Eeuo pipefail
-          trap 'echo "::warning::perf dashboard: not published (line $LINENO failed); the night itself is unaffected"' ERR
-          # fetch NAME DIR: this run's newest artifact of that name, unzipped into DIR.
-          fetch() {
-            local id
-            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$1&per_page=100" \
-              --jq '[.artifacts[] | select(.expired | not)] | max_by(.id) | .id // empty')
-            [[ -n $id ]] && gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/artifact.zip" \
-              && mkdir -p "$2" && unzip -q -o "$RUNNER_TEMP/artifact.zip" -d "$2"
-          }
-          fetch perf-nightly "$RUNNER_TEMP/night"
-          night=$RUNNER_TEMP/night/nightly.json
-          folder="$(jq -r .date "$night")-$GITHUB_RUN_ID"
-          [[ $folder =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]+$ ]]
-
-          site=$RUNNER_TEMP/site
-          remote=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
-          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          git init -q "$site"
-          cd "$site"
-          if git -c http.extraheader="$auth" fetch -q --depth=1 "$remote" gh-pages; then
-            git checkout -q -B gh-pages FETCH_HEAD
-          else
-            # The first publish starts the branch. Any other fetch failure ends at the
-            # push below: it is never forced, so it cannot replace a branch it did not see.
-            git checkout -q --orphan gh-pages
-          fi
-
-          # A re-run of the workflow replaces what its first attempt stored (under any date).
-          replaced=$(ls -d data/*-"$GITHUB_RUN_ID" 2>/dev/null || true)
-          rm -rf data/*-"$GITHUB_RUN_ID"
-          dest=data/$folder
-          mkdir -p "$dest"
-          cp "$night" "$dest/nightly.json"
-          jq -n --arg trigger "$TRIGGER" '{trigger: $trigger, scope: "main"}' > "$dest/run.json"
-          dotdot='(^|/)\.\.(/|$)'
-          for check in $(jq -r '.checks[].check' "$night"); do
-            [[ $check =~ ^[a-z][a-z0-9-]{0,42}$ ]] || continue
-            src=$RUNNER_TEMP/results/$check
-            fetch "perf-result-$check" "$src" || {
-              echo "::warning::perf dashboard: no perf-result-$check"
-              # Replacing a stored run: a failed download must not commit its deletion.
-              [[ -z $replaced ]] || { echo "::error::perf dashboard: not replacing $replaced without perf-result-$check"; exit 1; }
-              continue
-            }
-            mkdir -p "$dest/$check"
-            files=$(cd "$src" && { ls -1 result.json perf-vm.json perf-hosted.json 2>/dev/null
-                                   jq -r '.artifacts[]? | strings' result.json 2>/dev/null; } | sort -u) || true
-            while IFS= read -r file; do
-              # Relative paths only, none through "..": the check's own files and nothing else.
-              [[ -n $file && $file != /* && ! $file =~ $dotdot ]] || continue
-              (cd "$src" && cp -R --parents -- "$file" "$site/$dest/$check/") \
-                || echo "::warning::perf dashboard: $check/$file did not copy"
-            done <<< "$files"
-          done
-
-          (cd "$GITHUB_WORKSPACE" && uv run --project bench --frozen bench nightly dashboard --data "$site/data" --out "$site")
-          git add -A
-          # A re-run of this job stores the same files: nothing to commit, nothing to push.
-          git diff --cached --quiet || git -c user.name='github-actions[bot]' \
-            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q -m "perf run $folder ($TRIGGER)"
-          git -c http.extraheader="$auth" push -q "$remote" HEAD:gh-pages
-          echo "published $dest and the dashboard to gh-pages"

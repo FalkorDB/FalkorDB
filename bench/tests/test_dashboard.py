@@ -1,7 +1,7 @@
 """`bench nightly dashboard`: the static site built from the stored runs (falkorbench.nightly.dashboard).
 
 The runs are the example nightlies (tests/fixtures) with a few fake raw/rows.csv files, laid out as
-perf-nightly.yml's publish job stores them: data/<date>-<run id>/{nightly.json,run.json,<check>/}.
+perf-dashboard.yml stores them: data/<date>-<run id>/{nightly.json,run.json,<check>/}.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def micro_hw(passed: bool, summary: str = "1 confirmed regression") -> dict:
 
 
 def store(data: Path, folder: str, night: dict, run: dict | None, rows: str | None = None) -> None:
-    """One run as the publish job stores it; `rows` is micro-hw's raw/rows.csv body."""
+    """One run as perf-dashboard.yml stores it; `rows` is micro-hw's raw/rows.csv body."""
     (data / folder).mkdir(parents=True)
     (data / folder / "nightly.json").write_text(json.dumps(night), encoding="utf-8")
     if run is not None:
@@ -420,3 +420,70 @@ def test_a_missing_data_folder_fails_and_keeps_the_site(tmp_path):
     )
     assert result.exit_code != 0
     assert page.read_text() == "a good page"
+
+
+# --- the workflow that publishes it --------------------------------------------------
+
+WORKFLOWS = BENCH.parent / ".github" / "workflows"
+LEVELS = {"none": 0, "read": 1, "write": 2}
+
+
+def load_workflow(name):
+    doc = yaml.safe_load((WORKFLOWS / name).read_text(encoding="utf-8"))
+    if True in doc:  # PyYAML reads the key `on` as True
+        doc["on"] = doc.pop(True)
+    return doc
+
+
+def test_perf_nightly_asks_for_no_write_beyond_what_its_callers_grant():
+    """perf-nightly.yml is called (the release gate) with the caller's grant as a ceiling,
+    and GitHub checks every job's permissions against it before evaluating `if`: one job
+    asking for more makes every call invalid. So what writes lives in perf-dashboard.yml."""
+    callers = [
+        load_workflow(file)["jobs"]["perf"]["permissions"]
+        for file in ("rust-pr.yml", "release-tag.yml")
+    ]
+    ceiling = {
+        scope: min(LEVELS[grant.get(scope, "none")] for grant in callers)
+        for grant in callers
+        for scope in grant
+    }
+    for name, job in load_workflow("perf-nightly.yml")["jobs"].items():
+        for scope, level in job.get("permissions", {}).items():
+            assert LEVELS[level] <= ceiling.get(scope, 0), (name, scope, level)
+
+
+def test_the_dashboard_is_published_by_its_own_workflow_after_the_night():
+    nightly = load_workflow("perf-nightly.yml")
+    assert "publish" not in nightly["jobs"]
+    flow = load_workflow("perf-dashboard.yml")
+    assert flow["on"] == {"workflow_run": {"workflows": [nightly["name"]], "types": ["completed"]}}
+    assert flow["concurrency"] == {"group": "perf-dashboard", "cancel-in-progress": False}
+    job = flow["jobs"]["publish"]
+    assert job["permissions"] == {
+        "contents": "write",
+        "actions": "read",
+        "pages": "write",
+        "id-token": "write",
+    }
+    assert job["environment"]["name"] == "github-pages"
+    for step in job["steps"]:
+        if "uses" in step:  # pinned by SHA, like the repo's other workflows
+            assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
+    uses = [step["uses"].split("@")[0] for step in job["steps"] if "uses" in step]
+    assert "actions/upload-pages-artifact" in uses
+    assert "actions/deploy-pages" in uses
+
+
+def test_the_run_is_stored_only_for_runs_that_report_to_chat():
+    """A scheduled night, or a dispatch that named no image: the nightly records which."""
+    job = load_workflow("perf-dashboard.yml")["jobs"]["publish"]
+    assert "'schedule'" in job["if"] and "'workflow_dispatch'" in job["if"]
+    text = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "dispatch.json" in text and "image_overrides" in text
+    record = next(
+        step["run"]
+        for step in load_workflow("perf-nightly.yml")["jobs"]["resolve"]["steps"]
+        if step.get("name") == "Record the image overrides"
+    )
+    assert "dispatch.json" in record and "image_overrides" in record
