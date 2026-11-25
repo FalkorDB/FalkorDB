@@ -2022,3 +2022,108 @@ jq -r "$jqexpr" {temp / "releases.json"}
         "6.2.0": "falkordb/falkordb-server@sha256:" + "a" * 64,
     }[base_label]
     assert outputs["base_image"] == want
+
+
+# --- benchmark-cov: queries a side does not answer (Pokec's rule) ------------------
+
+
+def failed_sources():
+    """`geo` is new on main and neither 6.2 side answers it; `MATCH all` broke on
+    the PR; `reduce` failed on the base only."""
+    instr = {"RETURN 1": 60000.0, "reduce": 5000.0}
+    measure_pr = {"RETURN 1": 1000.0, "reduce": 1000.0}
+    measure_base = {"RETURN 1": 1000.0, "MATCH all": 1000.0}
+    sources = cov_sources(
+        instr, {"RETURN 1": 60000.0, "MATCH all": 7000.0}, measure_pr, measure_base
+    )
+    failed = {
+        "pr": {"geo": "unknown function", "MATCH all": "crashed"},
+        "base": {"geo": "unknown function", "reduce": "timed out"},
+    }
+    return sources, failed
+
+
+def test_a_query_no_side_answers_is_info_and_one_the_pr_broke_is_a_regression():
+    sources, failed = failed_sources()
+    findings, errors = cov_gate.judge(sources, failed)
+    got = {(f["name"], f["metric"]): (f["candidate"], f["baseline"], f["status"]) for f in findings}
+    assert got == {
+        ("geo", "completed"): (0, 0, "info"),  # not supported on this branch
+        ("MATCH all", "completed"): (0, 1, "regression"),  # answers on the base, not on the PR
+        ("reduce [reads]", "completed"): (1, None, "info"),  # not measured on the base
+    }
+    # The rows those three explain are not "unmeasured" errors in either source.
+    assert errors == []
+
+
+def test_without_the_failed_records_the_same_rows_are_unmeasured():
+    sources, _ = failed_sources()
+    _, errors = cov_gate.judge(sources)
+    assert errors == [
+        "1 callgrind row(s) measured on base, not on pr: MATCH all",
+        "1 measure row(s) measured on base, not on pr: MATCH all",
+    ]
+
+
+def test_a_query_failed_on_one_side_and_unmeasured_on_the_other_stays_unmeasured():
+    findings, explained = cov_gate.answered({"pr": {}, "base": {}}, {"pr": {"x": "e"}})
+    assert (findings, explained) == ([], set())
+
+
+def test_cov_gate_end_to_end_with_failed_queries(tmp_path):
+    art = tmp_path / "art"
+    art.mkdir()
+    write_csv(art / "cg-pr-1.csv", "instr", {"RETURN 1": 63797})
+    write_csv(art / "cg-base-1.csv", "instr", {"RETURN 1": 63797})
+    write_csv(art / "full-pr.csv", "alloc_bytes", {"RETURN 1": 1258})
+    write_csv(art / "full-base.csv", "alloc_bytes", {"RETURN 1": 1258, "MATCH all": 900})
+    (art / "failed-pr.json").write_text(json.dumps({"geo": "e", "MATCH all": "crashed"}))
+    (art / "failed-base.json").write_text(json.dumps({"geo": "e"}))
+    argv = ["--mode", "queue", "--out", str(tmp_path / "out"), "--candidate", CAND]
+    argv += ["--baseline", BASE, "--unfinished-out", str(tmp_path / "unfinished.json")]
+    argv += ["--measure-pr", str(art / "full-pr.csv"), "--measure-base", str(art / "full-base.csv")]
+    argv += ["--callgrind-pr", str(art / "cg-pr-*.csv")]
+    argv += ["--callgrind-base", str(art / "cg-base-*.csv")]
+    argv += [
+        "--failed-pr",
+        str(art / "failed-pr.json"),
+        "--failed-base",
+        str(art / "failed-base.json"),
+    ]
+    assert cov_gate.main(argv) == 0
+    doc = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert contract.validate_result(doc) == []
+    assert doc["verdict"] == "regression"
+    assert doc["summary"].startswith("1 regression(s), worst MATCH all completed;")
+    assert json.loads((tmp_path / "unfinished.json").read_text()) == {}
+    # Only `geo` failing on both sides: a pass, with the info row.
+    (art / "failed-pr.json").write_text(json.dumps({"geo": "e"}))
+    write_csv(art / "full-base.csv", "alloc_bytes", {"RETURN 1": 1258})
+    assert cov_gate.main(argv) == 0
+    doc = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert (doc["verdict"], [f["status"] for f in doc["findings"]]) == ("pass", ["info"])
+
+
+def test_bench_measure_records_the_queries_that_did_not_answer(tmp_path):
+    from falkorbench import measure as measure_mod
+
+    path = tmp_path / "failed.json"
+    measure_mod.write_failures(path, [("geo", "unknown function"), ("MATCH all", "crashed")])
+    assert json.loads(path.read_text()) == {"MATCH all": "crashed", "geo": "unknown function"}
+
+
+def test_only_a_call_records_failures_instead_of_failing():
+    """The label's run still fails on a query that does not answer."""
+    measure = workflow("benchmark-cov.yml")["jobs"]["measure"]
+    step = next(s for s in measure["steps"] if s.get("name") == "Measure")
+    assert step["env"]["GATE"] == "${{ inputs.candidate_image != '' }}"
+    assert (
+        'if [ "$GATE" = true ]; then flags+=(--failed-out "/w/failed-$SIDE.json"); fi'
+        in step["run"]
+    )
+    judge_step = next(
+        s
+        for s in workflow("benchmark-cov.yml")["jobs"]["report"]["steps"]
+        if s.get("name") == "Judge the reading (release gate)"
+    )
+    assert "--failed-pr art/failed-pr.json --failed-base art/failed-base.json" in judge_step["run"]

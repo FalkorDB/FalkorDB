@@ -447,14 +447,18 @@ jobs:
         env:
           BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
           SIDE: ${{ matrix.side }}
+          GATE: ${{ inputs.candidate_image != '' }}
         run: |
           set -euo pipefail
           # --c-compat for the C side: it skips the setup commands and queries the
           # C engine does not implement (UDFs are Rust-only) instead of aborting.
-          COMPAT=""
-          if [ "$SIDE" = c ]; then COMPAT="--c-compat"; fi
+          flags=()
+          if [ "$SIDE" = c ]; then flags+=(--c-compat); fi
+          # A call (the gate) records the queries that did not answer instead of
+          # failing on them: `bench cov-gate` judges them on both sides.
+          if [ "$GATE" = true ]; then flags+=(--failed-out "/w/failed-$SIDE.json"); fi
           docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
-            bench measure $COMPAT --module /w/module.so --out "/w/full-$SIDE.csv" \
+            bench measure "${flags[@]}" --module /w/module.so --out "/w/full-$SIDE.csv" \
             2>&1 | tee "measure-$SIDE.log" | tail -30
           grep -c SKIPPED "measure-$SIDE.log" \
             | sed 's/^/queries the engine skipped: /' || true
@@ -466,6 +470,7 @@ jobs:
           path: |
             full-${{ matrix.side }}.csv
             measure-${{ matrix.side }}.log
+            failed-${{ matrix.side }}.json
           retention-days: 7
 
   # Deterministic instruction counts, PR vs base.
@@ -741,6 +746,7 @@ jobs:
               --baseline "$BASE_IMAGE" --baseline-label "$BASE_LABEL" \
               --measure-pr art/full-pr.csv --measure-base art/full-base.csv \
               --callgrind-pr 'art/cg-pr-*.csv' --callgrind-base 'art/cg-base-*.csv' \
+              --failed-pr art/failed-pr.json --failed-base art/failed-base.json \
               --unfinished-out out/unfinished.json
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

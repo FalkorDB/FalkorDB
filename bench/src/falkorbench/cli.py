@@ -98,8 +98,27 @@ def cli() -> None:
 @click.option("--setup/--no-setup", default=None, help="build the graph (implied unless --reuse)")
 @click.option("--c-compat", is_flag=True, help="measuring the C engine: skip what it cannot do")
 @click.option("--module-args", multiple=True, help="extra --loadmodule args, e.g. THREAD_COUNT 4")
+@click.option(
+    "--failed-out",
+    default=None,
+    type=click.Path(),
+    help="write {query: why} for the queries that did not answer, and exit 0 for them",
+)
 @click.argument("names", nargs=-1)
-def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, module_args, names):
+def measure(
+    module,
+    port,
+    out,
+    reps,
+    once,
+    keep_server,
+    reuse,
+    setup,
+    c_compat,
+    module_args,
+    failed_out,
+    names,
+):
     """Measure queries and write a CSV.
 
     Named queries are merged into an existing CSV, so a subset re-run patches
@@ -168,6 +187,12 @@ def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, 
         )
         measure_mod.merge_into_csv(out_path, rows)
         click.echo(f"wrote {out_path}")
+        if failed_out:
+            # The release gate judges them (bench cov-gate): a query neither side
+            # answers is not this pull request's doing.
+            measure_mod.write_failures(Path(failed_out), failures)
+            click.echo(f"wrote {failed_out} ({len(failures)} query(ies) did not answer)")
+            failures = []
         if failures:
             # A query in the set that does not answer is a real problem, and the
             # CSV is now missing that row rather than carrying a wrong one.

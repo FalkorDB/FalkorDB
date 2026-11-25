@@ -19,7 +19,11 @@ Gates, PR against base, both bounds strict:
 Both counters are deterministic for an image, so a crossing is a regression
 without a re-run. A side with no rows, or a row measured on the base and not on
 the PR, is an error: the gate fails, and a re-run clears an infrastructure
-failure. The contract drops `error` when a regression outranks it, so the
+failure. Which queries did not answer comes from `bench measure --failed-out`
+on each side, by Pokec's rule: a query neither side answers is info (not
+supported on this branch: a query main added that the line's engine lacks), one
+the base answers and the PR does not is a regression, and one only the base
+fails is info (not measured on the base). The contract drops `error` when a regression outranks it, so the
 reading's completeness goes to `--unfinished-out` too: a regression in a
 partial reading, or one with more regressions than result.json lists, is never
 waived (`bench nightly merge conclude --unfinished`).
@@ -63,9 +67,44 @@ def name_of(query: str) -> str:
     return f"{query} [{klass}]" if klass else query
 
 
-def judge(sources: dict[str, dict[str, dict[str, metrics.Row]]]) -> tuple[list[dict], list[str]]:
-    """(findings, errors) from {"callgrind"|"measure": {"pr"|"base": rows}}."""
-    findings, errors = [], []
+def answered(
+    rows: dict[str, dict[str, metrics.Row]], failed: dict[str, dict[str, str]]
+) -> tuple[list[dict], set[str]]:
+    """(findings, the queries they explain) from which queries did not answer.
+
+    `rows` is the measure source's {"pr"|"base": rows}; `failed` is each side's
+    `bench measure --failed-out`. A query failed on one side and not measured
+    on the other is left to the comparison, which calls it unmeasured.
+    """
+    pr_failed, base_failed = failed.get("pr", {}), failed.get("base", {})
+    findings, explained = [], set()
+    for query in sorted(set(pr_failed) | set(base_failed)):
+        if query in pr_failed and query in base_failed:
+            candidate, baseline = 0, 0  # not supported on this branch: info
+        elif query in pr_failed and query in rows.get("base", {}):
+            candidate, baseline = 0, 1  # the PR broke it: a regression
+        elif query in base_failed and query in rows.get("pr", {}):
+            candidate, baseline = 1, None  # not measured on the base: info
+        else:
+            continue
+        status = kit.correctness_status(candidate, baseline)
+        findings.append(
+            kit.finding(
+                name_of(query), "completed", candidate, baseline, status, direction="lower_is_worse"
+            )
+        )
+        explained.add(query)
+    return findings, explained
+
+
+def judge(
+    sources: dict[str, dict[str, dict[str, metrics.Row]]],
+    failed: dict[str, dict[str, str]] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """(findings, errors) from {"callgrind"|"measure": {"pr"|"base": rows}} and
+    each side's failed queries ({"pr"|"base": {query: why}})."""
+    findings, explained = answered(sources["measure"], failed or {})
+    errors = []
     for column, metric, tiers, source in GATES:
         pr, base = sources[source].get("pr", {}), sources[source].get("base", {})
         if not pr or not base:
@@ -75,7 +114,7 @@ def judge(sources: dict[str, dict[str, dict[str, metrics.Row]]]) -> tuple[list[d
         unmeasured = []
         for query, base_row in base.items():
             b = base_row.get(column)
-            if b is None:
+            if b is None or query in explained:
                 continue
             c = pr.get(query, metrics.Row()).get(column)
             if c is None:
@@ -91,9 +130,10 @@ def judge(sources: dict[str, dict[str, dict[str, metrics.Row]]]) -> tuple[list[d
             shown = ", ".join(unmeasured[:5]) + (" ..." if len(unmeasured) > 5 else "")
             errors.append(f"{len(unmeasured)} {source} row(s) measured on base, not on pr: {shown}")
 
-    def worst(f: dict) -> float:
+    def worst(f: dict) -> tuple[int, float]:
+        rank = {"regression": 0, "improvement": 1}.get(f["status"], 2)
         ratio = f["ratio"] or 1.0
-        return -ratio if f["status"] == "regression" else ratio
+        return rank, -ratio if f["status"] == "regression" else ratio
 
     return sorted(findings, key=worst), errors
 
@@ -109,14 +149,17 @@ def incomplete(findings: list[dict], errors: list[str]) -> str:
 
 def summary(findings: list[dict], errors: list[str]) -> str:
     regressed = [f for f in findings if f["status"] == "regression"]
-    improved = len(findings) - len(regressed)
     if regressed:
         f = regressed[0]
-        head = f"{len(regressed)} regression(s), worst {f['name']} {f['metric']} {f['ratio']:.2f}x"
+        ratio = f" {f['ratio']:.2f}x" if f["ratio"] is not None else ""
+        head = f"{len(regressed)} regression(s), worst {f['name']} {f['metric']}{ratio}"
     else:
         head = "no regression"
+    improved = sum(f["status"] == "improvement" for f in findings)
+    unsupported = sum(f["status"] == "info" for f in findings)
+    info = f", {unsupported} quer(ies) not answered on the base" if unsupported else ""
     tail = f"; could not measure: {'; '.join(errors)}" if errors else ""
-    return f"{head}; {improved} improvement(s) (PR vs base, callgrind and allocations){tail}"
+    return f"{head}; {improved} improvement(s){info} (PR vs base, callgrind and allocations){tail}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -125,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     for side in ("pr", "base"):
         parser.add_argument(f"--measure-{side}", required=True, help=f"full-{side}.csv")
         parser.add_argument(f"--callgrind-{side}", required=True, help=f"glob of cg-{side}-*.csv")
+        parser.add_argument(f"--failed-{side}", default="", help="bench measure --failed-out")
     parser.add_argument(
         "--unfinished-out", default="", help="{benchmark-cov: why} when the reading is partial"
     )
@@ -137,7 +181,12 @@ def main(argv: list[str] | None = None) -> int:
         },
         "measure": {s: metrics.read_rows(getattr(args, f"measure_{s}")) for s in ("pr", "base")},
     }
-    findings, errors = judge(sources)
+    failed = {}
+    for side in ("pr", "base"):
+        path = Path(getattr(args, f"failed_{side}") or "/nonexistent")
+        # No file: that side's measure job did not finish, and its rows are missing too.
+        failed[side] = json.loads(path.read_text()) if path.is_file() else {}
+    findings, errors = judge(sources, failed)
     # The measuring ran on separate hosted runners, one per side and shard; both
     # counters are the same on any of them. This describes the runner that judged.
     host = kit.machine()

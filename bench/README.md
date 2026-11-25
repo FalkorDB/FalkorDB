@@ -450,15 +450,20 @@ warning on the run page. The nightly's own run applies the same waivers. An
 infrastructure error fails the gate like a regression: "Re-run all jobs" clears
 it (see tests/perf/vm/README.md for why "Re-run failed jobs" does not).
 
-`bench cov-gate` also writes `unfinished.json` when its reading is partial (a row
-the PR side did not measure, or more regressions than result.json lists), so a
-waiver never passes it. Not covered yet: a VM check that regresses on a waived row,
-fails to measure other rows, and still exits cleanly. Contract v1.4 drops its
-`error` under the regression, so nothing tells `conclude` the reading was partial.
-Two other limits: a query added to `queries.py` on main must also run on every
-supported version branch's engine, or `perf-cov` fails there (closed, with the
-query named); and a pull request from a fork into a version branch has no image,
-so its gate fails.
+A query a side does not answer is judged by Pokec's rule, from each side's
+`bench measure --failed-out`: if neither side answers it (a query main added
+that the line's engine lacks), it is info, "not supported on this branch". If
+the base answers and the PR does not, it is a regression. If only the base
+fails, it is info, "not measured on the base". A row missing with no such
+record is unmeasured, an error. `bench cov-gate` also writes `unfinished.json`
+when its reading is partial (a row the PR did not measure, or more regressions
+than result.json lists), so a waiver never passes it.
+
+Known limit: a VM check that regresses on a waived row, fails to measure other
+rows, and still exits cleanly. Contract v1.4 drops its `error` under the
+regression, so nothing tells `conclude` that the reading was partial. Until the
+follow-up lands, review a waived night's summary by hand. Also, a pull request
+from a fork into a version branch has no image, so its gate fails.
 
 ## Nightly micro check (`micro-hw`)
 
