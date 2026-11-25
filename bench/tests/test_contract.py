@@ -13,7 +13,6 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-import falkorbench
 from falkorbench import contract
 from falkorbench.cli import cli
 from falkorbench.queries import QUERIES
@@ -175,11 +174,11 @@ def _imported_roots(path: Path) -> set[str]:
     return roots
 
 
-@pytest.mark.parametrize("module", [contract, falkorbench], ids=["contract", "falkorbench"])
-def test_contract_imports_only_the_standard_library(module):
+@pytest.mark.parametrize("name", ["contract.py", "__init__.py"])
+def test_contract_imports_only_the_standard_library(name):
     # The reporting path must never depend on a package: importing falkorbench.contract
     # runs falkorbench/__init__.py first, so both stay standard library only.
-    roots = _imported_roots(Path(module.__file__))
+    roots = _imported_roots(Path(contract.__file__).with_name(name))
     assert roots <= sys.stdlib_module_names, sorted(roots - sys.stdlib_module_names)
 
 
