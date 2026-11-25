@@ -1024,3 +1024,26 @@ class TestHwGates:
         assert run.metrics == v.hw_metrics("rust")
         run.c_compat = True
         assert run.metrics == v.hw_metrics("c")
+
+
+class TestBenchImageKey:
+    """_perf-micro.yml finds the measurement image by a hash of what the build
+    reads; a bench/ file the Dockerfile copies but the key skips would let a
+    change to it reuse a stale image (bench/.python-version once did)."""
+
+    ROOT = Path(__file__).resolve().parents[2]
+
+    def test_the_key_hashes_every_bench_file_the_build_copies(self):
+        dockerfile = (self.ROOT / "bench" / "Dockerfile").read_text().splitlines()
+        copied = {
+            w
+            for ln in dockerfile
+            if ln.startswith("COPY")
+            for w in ln.split()
+            if w.startswith("bench/")
+        }
+        workflow = (self.ROOT / ".github" / "workflows" / "_perf-micro.yml").read_text()
+        key = workflow[workflow.index("key=$(") :].split("sha256sum", 1)[0]
+        hashed = {w.rstrip(";") for w in key.split()}
+        assert copied and copied <= hashed, copied - hashed
+        assert "bench/Dockerfile" in hashed
