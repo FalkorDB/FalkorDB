@@ -412,7 +412,9 @@ def params_op(ctx):
         if not ok:
             fail(op, f"unicode param rejected: {r}")
         got = sk.scalar(r)
-        if "世界" not in got or "😀" not in got:
+        # a null or non-string reply is mangled too (and `in` on it would raise as "params",
+        # an op no check reads)
+        if not isinstance(got, str) or "世界" not in got or "😀" not in got:
             wrong(ctx, f"unicode param mangled: {got!r}")
     elif k == 2:
         for q in ("RETURN 0.0/0.0", "RETURN 1e308*10", "RETURN -1e308*10", "CYPHER p=1e999 RETURN $p",

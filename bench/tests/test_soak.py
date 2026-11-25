@@ -1298,3 +1298,34 @@ def test_sigterm_mid_run_still_reports_what_was_measured(tmp_path, monkeypatch):
     assert res["verdict"] == "regression" and res["findings"][0]["name"] == "s12 x"
     assert "stopped by signal 15 (SIGTERM)" in res["summary"]
     assert "s07_mvcc_consistency (not reached)" in res["summary"]
+
+
+def test_s11_counts_a_null_unicode_param_reply_as_a_wrong_result():
+    """s11 is a script that needs a server, so its params_op runs here alone, against a reply
+    with no row: that is a wrong result (which a critical check reads), not a TypeError
+    recorded under an op no check reads."""
+    import ast
+    import random
+    import types
+
+    source = (Path(sc.__file__).parent / "scenarios" / "s11_client_chaos.py").read_text()
+    tree = ast.parse(source)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "params_op")
+
+    class Wrong(Exception):
+        pass
+
+    def wrong(ctx, what):
+        raise Wrong(what)
+
+    namespace = {
+        "sk": soakkit,
+        "wrong": wrong,
+        "fail": lambda op, msg: None,
+        "raw_cypher": lambda ctx, op, q: (True, [[b"$p"], [], [b"stats"]]),
+    }
+    exec(compile(ast.Module([fn], type_ignores=[]), "s11_client_chaos.py", "exec"), namespace)
+    rng = random.Random()
+    rng.randrange = lambda n: 1  # the unicode-parameter branch
+    with pytest.raises(Wrong, match="unicode param mangled: None"):
+        namespace["params_op"](types.SimpleNamespace(rng=rng))
