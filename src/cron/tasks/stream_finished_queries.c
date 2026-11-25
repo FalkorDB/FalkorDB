@@ -5,6 +5,7 @@
  */
 
 #include "globals.h"
+#include "../../util/redis_gil.h"
 #include "cron/cron.h"
 #include "redismodule.h"
 #include "../../util/rmalloc.h"
@@ -29,8 +30,6 @@
 #define FLD_NAME_RECEIVED_TIMESTAMP  "Received at"
 #define FLD_NAME_REPORT_DURATION     "Report duration"
 #define FLD_NAME_EXECUTION_DURATION  "Execution duration"
-
-#define TELEMETRY_STREAM_TTL 1000 * 60 * 30  // stream TTL ms, 30 minutes
 
 // event field:value pairs
 static RedisModuleString *_event[FLD_COUNT * 2] = {0};
@@ -272,7 +271,7 @@ bool CronTask_streamFinishedQueries
 	while (!gil_acquired &&
 			TIMER_GET_ELAPSED_MILLISECONDS (stopwatch) < deadline) {
 		gil_acquired =
-			(RedisModule_ThreadSafeContextTryLock (rm_ctx) == REDISMODULE_OK) ;
+			(GIL_TryLock (rm_ctx) == REDISMODULE_OK) ;
 
 		if (gil_acquired == false) {
 		   	usleep (100) ;
@@ -369,7 +368,7 @@ bool CronTask_streamFinishedQueries
 cleanup:
 	// release GIL and free thread safe context
 	if (gil_acquired == true) {
-		RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
+		GIL_Unlock (rm_ctx) ;
 		gil_acquired = false ;
 	}
 

@@ -4,6 +4,7 @@
  */
 
 #include "cmd_memory.h"
+#include "../util/redis_gil.h"
 #include "../enterprise_api.h"
 #include "../util/thpool/pool.h"
 #include "../errors/error_msgs.h"
@@ -139,7 +140,7 @@ static void _Graph_Memory
 	// just to answer GRAPH.MEMORY, even for a graph that got offloaded
 	// after Graph_Memory blocked the client but before this worker got to
 	// run
-	RedisModule_ThreadSafeContextLock (rm_ctx) ;
+	GIL_Lock (rm_ctx) ;
 	RedisModuleKey  *rkey = RedisModule_OpenKey (rm_ctx, ctx->graph_id,
 			REDISMODULE_READ) ;
 	RedisModuleType *type = RedisModule_ModuleTypeGetType (rkey) ;
@@ -148,7 +149,7 @@ static void _Graph_Memory
 	}
 	bool is_stub = (GraphStubType_Get != NULL && type == GraphStubType_Get ()) ;
 	RedisModule_CloseKey (rkey) ;
-	RedisModule_ThreadSafeContextUnlock (rm_ctx) ;
+	GIL_Unlock (rm_ctx) ;
 
 	if (is_stub) {
 		// a stub isn't loaded, so it consumes no RAM right now
