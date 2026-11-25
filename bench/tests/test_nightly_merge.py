@@ -2127,3 +2127,28 @@ def test_only_a_call_records_failures_instead_of_failing():
         if s.get("name") == "Judge the reading (release gate)"
     )
     assert "--failed-pr art/failed-pr.json --failed-base art/failed-base.json" in judge_step["run"]
+
+
+def test_cov_gate_compares_a_pair_both_sides_read_even_when_the_query_is_explained():
+    sources = cov_sources(
+        {"arithmetic": 2000.0}, {"arithmetic": 1000.0}, {"arithmetic": 1000.0}, {"RETURN 1": 1000.0}
+    )
+    findings, _ = cov_gate.judge(sources, {"base": {"arithmetic": "timed out"}})
+    assert by_name(findings)[("arithmetic [reads]", "instructions")] == "regression"
+
+
+def test_cov_gate_errors_when_a_baseline_counter_is_missing():
+    sources = cov_sources({}, {}, {"RETURN 1": 1000.0}, {"RETURN 1": None})
+    _, errors = cov_gate.judge(sources)
+    assert any("no baseline alloc_bytes: RETURN 1" in e for e in errors)
+
+
+def test_cov_gate_does_not_call_a_failed_measured_run_unsupported():
+    sources = cov_sources({}, {})
+    failed = {
+        "pr": {"reduce": "measured run: timeout"},
+        "base": {"reduce": "measured run: timeout"},
+    }
+    findings, errors = cov_gate.judge(sources, failed)
+    assert findings == []
+    assert any("failed their measured run: reduce" in e for e in errors)

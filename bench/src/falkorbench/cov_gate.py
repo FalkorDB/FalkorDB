@@ -67,6 +67,9 @@ def name_of(query: str) -> str:
     return f"{query} [{klass}]" if klass else query
 
 
+MEASURED_RUN = "measured run"  # measure.py's failure prefix: warmup answered, run did not finish
+
+
 def answered(
     rows: dict[str, dict[str, metrics.Row]], failed: dict[str, dict[str, str]]
 ) -> tuple[list[dict], set[str]]:
@@ -79,6 +82,12 @@ def answered(
     pr_failed, base_failed = failed.get("pr", {}), failed.get("base", {})
     findings, explained = [], set()
     for query in sorted(set(pr_failed) | set(base_failed)):
+        if any(
+            why.startswith(MEASURED_RUN)
+            for why in (pr_failed.get(query), base_failed.get(query))
+            if why
+        ):
+            continue  # the warmup answered: a broken measurement, not an unsupported query
         if query in pr_failed and query in base_failed:
             candidate, baseline = 0, 0  # not supported on this branch: info
         elif query in pr_failed and query in rows.get("base", {}):
@@ -105,20 +114,37 @@ def judge(
     each side's failed queries ({"pr"|"base": {query: why}})."""
     findings, explained = answered(sources["measure"], failed or {})
     errors = []
+    unfinished = sorted(
+        {
+            q
+            for side in (failed or {}).values()
+            for q, why in side.items()
+            if why.startswith(MEASURED_RUN)
+        }
+    )
+    if unfinished:
+        errors.append(
+            f"{len(unfinished)} query(ies) failed their measured run: {', '.join(unfinished[:5])}"
+        )
     for column, metric, tiers, source in GATES:
         pr, base = sources[source].get("pr", {}), sources[source].get("base", {})
         if not pr or not base:
             missing = " and ".join(side for side, rows in (("pr", pr), ("base", base)) if not rows)
             errors.append(f"no {source} rows for {missing}")
             continue
-        unmeasured = []
+        unmeasured, no_baseline = [], []
         for query, base_row in base.items():
             b = base_row.get(column)
-            if b is None or query in explained:
+            if b is None:
+                if query not in explained:
+                    no_baseline.append(query)
                 continue
             c = pr.get(query, metrics.Row()).get(column)
             if c is None:
-                unmeasured.append(query)
+                # An explained query has no reading on the side that failed; a pair
+                # that both sides did read is still compared.
+                if query not in explained:
+                    unmeasured.append(query)
                 continue
             moved = {kit.crossed(c, b, threshold, floor) for threshold, floor in tiers}
             status = "regression" if 1 in moved else "improvement" if -1 in moved else None
@@ -126,6 +152,9 @@ def judge(
                 findings.append(
                     kit.finding(name_of(query), metric, c, b, status, threshold=tiers[0][0])
                 )
+        if no_baseline:
+            shown = ", ".join(no_baseline[:5]) + (" ..." if len(no_baseline) > 5 else "")
+            errors.append(f"{len(no_baseline)} {source} row(s) with no baseline {column}: {shown}")
         if unmeasured:
             shown = ", ".join(unmeasured[:5]) + (" ..." if len(unmeasured) > 5 else "")
             errors.append(f"{len(unmeasured)} {source} row(s) measured on base, not on pr: {shown}")
