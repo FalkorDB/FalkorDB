@@ -591,7 +591,11 @@ def missed_run_command(night, workflow, branch, event, artifact):
 
 @nightly.command(
     "merge",
-    context_settings={"ignore_unknown_options": True, "allow_extra_args": True, "help_option_names": []},
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def nightly_merge_command(args):

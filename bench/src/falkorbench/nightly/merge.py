@@ -189,11 +189,14 @@ def strict_load(path):
 def sides(args):
     """The pinned candidate and baseline as result.json's sides, checked by kit's
     rules (the same every check applies to its own flags)."""
-    flags = SimpleNamespace(mode="nightly", **{
-        f"{which}{suffix}": getattr(args, f"{which}_{field}")
-        for which in kit.SIDES
-        for suffix, field in (("", "image"), ("_commit", "commit"), ("_label", "label"))
-    })
+    flags = SimpleNamespace(
+        mode="nightly",
+        **{
+            f"{which}{suffix}": getattr(args, f"{which}_{field}")
+            for which in kit.SIDES
+            for suffix, field in (("", "image"), ("_commit", "commit"), ("_label", "label"))
+        },
+    )
     errors = kit.input_errors(flags)
     if errors:
         raise PlanError("; ".join(errors))
@@ -247,7 +250,9 @@ def previous_green_commit(history):
     for _, nightly in history:
         if nightly and nightly["status"] == "green":
             commit = nightly["candidate"].get("commit")
-            return commit if isinstance(commit, str) and contract.COMMIT_RE.fullmatch(commit) else None
+            return (
+                commit if isinstance(commit, str) and contract.COMMIT_RE.fullmatch(commit) else None
+            )
     return None
 
 
@@ -354,7 +359,10 @@ def collect(check, artifact):
     result, codes = read_result(path)
     if codes:
         said = own_error(result)
-        return stub(check, f"invalid result.json ({', '.join(codes)})" + (f"; check said: {said}" if said else ""))
+        return stub(
+            check,
+            f"invalid result.json ({', '.join(codes)})" + (f"; check said: {said}" if said else ""),
+        )
     if result["check"] != check:
         return stub(check, f"result.json names check {result.get('check')!r}")
     # The contract exits 0 whenever result.json was written, so a check that did
@@ -498,7 +506,9 @@ def cmd_merge(args):
         return 1
     print(f"status: {nightly['status']}")
     for entry in nightly["checks"]:
-        print(f"  {entry['check']}: {entry['verdict']} {entry.get('error') or entry.get('summary', '')}")
+        print(
+            f"  {entry['check']}: {entry['verdict']} {entry.get('error') or entry.get('summary', '')}"
+        )
     return 0
 
 
@@ -511,7 +521,9 @@ def cmd_conclude(args):
     status = nightly.get("status") if isinstance(nightly, dict) else None
     code = run_exit_status(status)
     if code:
-        print(f"::error::the night is {status}: failing the run (the report and nightly.json are already out)")
+        print(
+            f"::error::the night is {status}: failing the run (the report and nightly.json are already out)"
+        )
     else:
         print(f"the night is {status}: the run succeeds")
     return code
