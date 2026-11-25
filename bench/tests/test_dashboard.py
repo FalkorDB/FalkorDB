@@ -441,9 +441,12 @@ def test_perf_nightly_asks_for_no_write_beyond_what_its_callers_grant():
     and GitHub checks every job's permissions against it before evaluating `if`: one job
     asking for more makes every call invalid. So what writes lives in perf-dashboard.yml."""
     callers = [
-        load_workflow(file)["jobs"]["perf"]["permissions"]
-        for file in ("rust-pr.yml", "release-tag.yml")
+        job["permissions"]
+        for file in sorted(WORKFLOWS.glob("*.yml"))
+        for job in load_workflow(file.name)["jobs"].values()
+        if job.get("uses", "").endswith("/perf-nightly.yml")
     ]
+    assert callers
     ceiling = {
         scope: min(LEVELS[grant.get(scope, "none")] for grant in callers)
         for grant in callers
