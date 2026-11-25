@@ -45,6 +45,11 @@ typedef struct {
 	uint itemSize;              // Size of a single item in bytes.
 	Block **blocks;             // Array of blocks.
 	uint64_t *deletedIdx;       // Array of free indicies.
+	uint64_t reusableCount;     // how many of 'deletedIdx', counted from the
+	                            // front, may be handed out again right now.
+	                            // The entries past it were freed by the write
+	                            // currently holding the lock, and are held
+	                            // back until DataBlock_ReleaseFreedIds
 	fpDestructor destructor;    // Function pointer to a clean-up function of an item.
 } DataBlock;
 
@@ -147,6 +152,17 @@ void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx);
 
 // Returns the number of deleted items.
 uint DataBlock_DeletedItemsCount(const DataBlock *dataBlock);
+
+// make every freed index available for reuse again
+//
+// A WRITE NEVER REUSES AN INDEX IT FREED ITSELF. DataBlock_DeleteItem puts the
+// index on the free list but out of reach, and this is what brings it back.
+// The caller is whoever knows where one write ends and the next begins -
+// GraphContext_ReleaseLock - not this file, which cannot see a query.
+void DataBlock_ReleaseFreedIds
+(
+	DataBlock *dataBlock  // datablock
+);
 
 // Returns true if the given item has been deleted.
 bool DataBlock_ItemIsDeleted(void *item);

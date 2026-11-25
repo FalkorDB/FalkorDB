@@ -96,6 +96,7 @@ DataBlock *DataBlock_New
 	dataBlock->blockCount = 0;
 	dataBlock->blockCap   = blockCap;
 	dataBlock->deletedIdx = arr_new(uint64_t, 128);
+	dataBlock->reusableCount = 0;
 	dataBlock->destructor = fp;
 
 	_DataBlock_AddBlocks(dataBlock,
@@ -142,15 +143,31 @@ void DataBlock_Accommodate
 	DataBlock *dataBlock,
 	int64_t k
 ) {
-	// compute number of free slots
-	int64_t freeSlotsCount  = dataBlock->itemCap - dataBlock->itemCount ;
-	int64_t additionalItems = k - freeSlotsCount ;
+	ASSERT (dataBlock != NULL) ;
 
-	if (additionalItems > 0) {
-		int64_t additionalBlocks =
-			ITEM_COUNT_TO_BLOCK_COUNT (additionalItems, dataBlock->blockCap) ;
-		_DataBlock_AddBlocks (dataBlock, additionalBlocks) ;
+	if (k <= 0) {
+		return ;
 	}
+
+	// THE HIGHEST INDEX THE NEXT 'k' ALLOCATIONS CAN RETURN, which is what
+	// "room for k items" has to mean. Counting free slots as
+	// 'itemCap - itemCount' counts the indices this write freed as available,
+	// and they are not: the allocation goes PAST them, so the room it needs
+	// reaches further than the live count suggests.
+	//
+	// This is not a detail of the datablock. The caller grows the block and
+	// then sizes the graph's matrices from its capacity
+	// (Graph_RequiredMatrixDim is Graph_NodeCap), with the sync policy set to
+	// NOP for the commit itself - so a block that came back too small gives
+	// matrices too small, and every node created past their dimension is
+	// labelled into nothing and silently lost.
+	//
+	// ASKING DataBlock_GetReservedIdx rather than repeating its arithmetic:
+	// it is the one place that says which index the n-th allocation gets, and
+	// a second copy of that sum is a second thing to get wrong. A reusable
+	// index it names already owns a slot, so ensuring that one is a no-op -
+	// which is right, since no fresh index is needed in that case either.
+	DataBlock_Ensure (dataBlock, DataBlock_GetReservedIdx (dataBlock, k - 1)) ;
 }
 
 void DataBlock_Ensure(DataBlock *dataBlock, uint64_t idx) {
@@ -199,12 +216,25 @@ uint64_t DataBlock_GetReservedIdx
 ) {
 	ASSERT (dataBlock != NULL) ;
 
-	uint deleted = DataBlock_DeletedItemsCount (dataBlock) ;
-	if (n < deleted) {
-		return dataBlock->deletedIdx[deleted - n - 1] ;
-	} 
+	// ONLY THE REUSABLE PART OF THE FREE LIST, matching DataBlock_AllocateItem
+	// below. An index the current write freed is on the list but out of its
+	// reach, so predicting that the write will get it back would be wrong
+	const uint64_t reusable = dataBlock->reusableCount ;
+	if (n < reusable) {
+		return dataBlock->deletedIdx[reusable - n - 1] ;
+	}
 
-	return DataBlock_ItemCount (dataBlock) + n ;
+	// PAST THE REUSABLE ONES the ids are fresh, and a fresh id starts above the
+	// whole free list rather than above the live count - the same mark
+	// DataBlock_AllocateItem uses, and for the same reason: an id held back for
+	// the rest of this write is missing from the live count while still holding
+	// its slot
+	//
+	// That mark does not move as the reusable ids are consumed: each one takes
+	// an entry off the list and adds one to the count
+	return DataBlock_ItemCount (dataBlock)
+		+ arr_len (dataBlock->deletedIdx)
+		+ (n - reusable) ;
 }
 
 void *DataBlock_AllocateItem
@@ -212,19 +242,29 @@ void *DataBlock_AllocateItem
 	DataBlock *dataBlock,
 	uint64_t *idx
 ) {
-	// make sure we've got room for items
-	if (unlikely (dataBlock->itemCount >= dataBlock->itemCap)) {
-		// allocate an additional block
-		_DataBlock_AddBlocks (dataBlock, 1) ;
-	}
-
-	ASSERT (dataBlock->itemCap > dataBlock->itemCount) ;
-
 	// get index into which to store item,
 	// prefer reusing free indicies
-	uint pos = dataBlock->itemCount ;
-	if (arr_len (dataBlock->deletedIdx) > 0) {
-		pos = arr_pop (dataBlock->deletedIdx) ;
+	//
+	// ONLY THE REUSABLE PART OF THE FREE LIST, which is its front. The entries
+	// past 'reusableCount' were freed by the write running right now, and
+	// handing one of them back to that same write is what this skip exists to
+	// stop: an effects payload would then hold a create and a delete naming one
+	// index, and no replica can apply that pair - the create lands there while
+	// the entity the delete names is still live
+	//
+	// CLOSING THE HOLE WITH THE LAST ENTRY loses nothing, because the list is a
+	// set and its order carries no meaning beyond which index comes next. It
+	// keeps the reusable entries contiguous at the front, and it keeps the most
+	// recently freed reusable index the next one handed out: with nothing held
+	// back, 'take' IS the last entry and the move is a self-assignment
+	uint64_t pos ;
+	if (dataBlock->reusableCount > 0) {
+		const uint64_t last = arr_len (dataBlock->deletedIdx) - 1 ;
+		const uint64_t take = --dataBlock->reusableCount ;
+
+		pos = dataBlock->deletedIdx[take] ;
+		dataBlock->deletedIdx[take] = dataBlock->deletedIdx[last] ;
+		arr_pop (dataBlock->deletedIdx) ;
 
 		// trim array if number of free entries is greater than 20%
 		if (unlikely (
@@ -234,7 +274,23 @@ void *DataBlock_AllocateItem
 			dataBlock->deletedIdx = arr_trimm_cap (dataBlock->deletedIdx,
 					arr_len (dataBlock->deletedIdx)) ;
 		}
+	} else {
+		// THE FIRST INDEX NEVER HANDED OUT, which is the live count PLUS the
+		// free list and not the live count alone.
+		//
+		// 'itemCount' counts live items only, so it names the next unused slot
+		// just when nothing is free. That used to hold here by construction -
+		// the branch above ran whenever the list was non-empty, so reaching
+		// this line meant an empty list. It does not hold now: an index held
+		// back for the rest of this write is deleted, so it is out of the count
+		// while still occupying its slot, and 'itemCount' would name a slot
+		// that is live
+		pos = dataBlock->itemCount + arr_len (dataBlock->deletedIdx) ;
 	}
+
+	// make sure the slot exists. Reusing an index needs no room - it has a slot
+	// already - but a fresh index past the held-back ones can be beyond the cap
+	DataBlock_Ensure (dataBlock, pos) ;
 
 	dataBlock->itemCount++ ;
 
@@ -264,12 +320,28 @@ void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx) {
 
 	MARK_HEADER_AS_DELETED(item_header);
 
+	// APPENDED PAST 'reusableCount', so the write that freed this index cannot
+	// be handed it back. DataBlock_ReleaseFreedIds brings it into reach once
+	// that write is over
 	arr_append(dataBlock->deletedIdx, idx);
 	dataBlock->itemCount--;
 }
 
 uint DataBlock_DeletedItemsCount(const DataBlock *dataBlock) {
 	return arr_len(dataBlock->deletedIdx);
+}
+
+// make every freed index available for reuse again
+void DataBlock_ReleaseFreedIds
+(
+	DataBlock *dataBlock  // datablock
+) {
+	ASSERT (dataBlock != NULL) ;
+
+	// THE WHOLE LIST, not the entries this write added. The front of the list
+	// is already reusable, so raising the mark to the length is the same
+	// statement either way, and it holds even if a caller releases twice
+	dataBlock->reusableCount = arr_len (dataBlock->deletedIdx) ;
 }
 
 inline bool DataBlock_ItemIsDeleted(void *item) {
@@ -496,15 +568,27 @@ bool DataBlock_ClaimIds
 	// order carries no meaning and compacting in place preserves it. A replica
 	// never allocates while it is a replica, so the order is only observable
 	// after promotion, and then only as which free id is reused first.
+	//
+	// THE MARK IS CARRIED ACROSS rather than recomputed: an entry that survives
+	// keeps the side of 'reusableCount' it was on, so ids a claim did not take
+	// stay as reusable - or as held back - as they were. The gap ids appended
+	// just above sit past the end of the old list, so they count as held back,
+	// which is what they are: this apply freed them
 	const uint32_t k = arr_len (dataBlock->deletedIdx) ;
 	uint32_t w = 0 ;
+	uint64_t reusable = 0 ;
 
 	for (uint32_t i = 0 ; i < k ; i++) {
 		const uint64_t free_id = dataBlock->deletedIdx[i] ;
 		if (IS_ITEM_DELETED (DataBlock_GetItemHeader (dataBlock, free_id))) {
+			if (i < dataBlock->reusableCount) {
+				reusable++ ;
+			}
 			dataBlock->deletedIdx[w++] = free_id ;
 		}
 	}
+
+	dataBlock->reusableCount = reusable ;
 
 	for (uint32_t i = w ; i < k ; i++) {
 		arr_pop (dataBlock->deletedIdx) ;
@@ -552,7 +636,19 @@ void DataBlock_MarkAsDeletedOutOfOrder
 
 	// delete
 	MARK_HEADER_AS_DELETED(item_header);
+
+	// NOTHING IS HELD BACK WHILE A DECODER RUNS, which is what lets the
+	// append below land inside the reusable front rather than after it. A
+	// decoder rebuilds a free list an earlier run already froze; it never
+	// calls DataBlock_DeleteItem, so the mark has never fallen behind
+	ASSERT (dataBlock->reusableCount == arr_len (dataBlock->deletedIdx)) ;
+
 	arr_append(dataBlock->deletedIdx, idx);
+
+	// REUSABLE AT ONCE, unlike DataBlock_DeleteItem's append. This is a decoder
+	// rebuilding a free list that an earlier run already froze, not a write
+	// freeing an index of its own, so there is no write to hold it back from
+	dataBlock->reusableCount++ ;
 }
 
 size_t DataBlock_memoryUsage
