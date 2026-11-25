@@ -398,13 +398,23 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEquals(res.result_set[0][0], 0)
 
     def test22_delete_reserve_id(self):
+        # A QUERY NEVER REUSES AN ID IT FREED ITSELF. The freed ids go back on
+        # the free list when the query ends, so the NEXT query reuses them and
+        # the id space stays dense.
+        #
+        # Pinned because it is what keeps a create and a delete of one id out
+        # of a single effects payload. Sorted into wire order a payload puts
+        # creates ahead of deletes, so such a pair reaches a replica as a
+        # create landing on an id that is still live there, and the replica
+        # refuses it and resyncs.
+
         # clean the db
         self.graph.delete()
 
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
         self.env.assertEquals(res.nodes_created, 11)
 
-        # expecting IDs to be reused
+        # 0-10 are freed by this query, so the nodes it creates start above them
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
@@ -413,8 +423,9 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEquals(res.nodes_deleted, 11)
         self.env.assertEquals(res.nodes_created, 11)
-        self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+        self.env.assertEquals(res.result_set, [[i] for i in range(11, 22)])
 
+        # and the next query does reuse them
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
@@ -423,7 +434,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEquals(res.nodes_deleted, 11)
         self.env.assertEquals(res.nodes_created, 11)
-        self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+        self.env.assertEquals(res.result_set, [[i] for i in range(0, 11)])
 
         # clean the db
         self.graph.delete()
@@ -431,6 +442,8 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("UNWIND range(0, 9) AS i CREATE (:A {id: i})")
         self.env.assertEquals(res.nodes_created, 10)
 
+        # the same through MERGE, which creates here because the node it looks
+        # for was deleted earlier in this very query
         res = self.graph.query("""
             MATCH (a:A)
             WITH a, a.id as id
@@ -440,8 +453,16 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEquals(res.nodes_deleted, 10)
         self.env.assertEquals(res.nodes_created, 10)
-        self.env.assertEquals(res.result_set, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9]])
 
+        # NOT THE PERMUTATION, which row order makes incidental, but the two
+        # things the rule actually states: none of the ids this query freed
+        # comes back in it, and every original id lands on exactly one new node
+        ids = sorted(row[0] for row in res.result_set)
+        self.env.assertEquals(ids, list(range(10, 20)))
+        self.env.assertEquals(sorted(row[1] for row in res.result_set),
+                              list(range(0, 10)))
+
+        # the next query reuses 0-9
         res = self.graph.query("""
             MATCH (a:A)
             WITH a, a.id as id
@@ -451,9 +472,12 @@ class testGraphDeletionFlow(FlowTestsBase):
         )
         self.env.assertEquals(res.nodes_deleted, 10)
         self.env.assertEquals(res.nodes_created, 10)
-        expected = [[i,i] for i in range(0, 10)]
-        expected.reverse()
-        self.env.assertEquals(res.result_set, expected)
+
+        returned = [row[0] for row in res.result_set]
+        self.env.assertEquals(returned, sorted(returned, reverse=True))
+        self.env.assertEquals(sorted(returned), list(range(0, 10)))
+        self.env.assertEquals(sorted(row[1] for row in res.result_set),
+                              list(range(0, 10)))
 
     def test23_delete_edges(self):
         # clean the db
@@ -554,6 +578,70 @@ class testGraphDeletionFlow(FlowTestsBase):
         # regression: property access on labeled result must not hit undefined attribute
         res = self.graph.query("MATCH (x:BOO) WHERE x.id = 0 RETURN x")
         self.env.assertEquals(res.result_set, [])
+
+    def test26_delete_and_create_past_the_block_boundary(self):
+        # EVERYTHING A DELETE-AND-CREATE QUERY CREATES IS IN THE MATRICES.
+        #
+        # A query is never handed back an id it freed, so the entities it
+        # creates land above the ids it just freed. The room the commit asks
+        # for has to cover THOSE ids: it grows the node block, sizes the
+        # label, relation and adjacency matrices from the capacity that
+        # leaves, and only then commits - with the matrix sync policy set to
+        # NOP, so the matrices never grow again. Ask for too little and
+        # whatever is written past their dimension is dropped: gone from a
+        # scan, while the statistics still count it.
+        #
+        # The capacity moves in whole blocks, so the size is derived from the
+        # block rather than written down. At n = one block the query ends up
+        # needing two, which a handful of entities would never show.
+        n = int(self.db.config_get("NODE_CREATION_BUFFER"))
+
+        self.graph.delete()
+
+        res = self.graph.query(f"UNWIND range(1, {n}) AS i CREATE (:Before)")
+        self.env.assertEquals(res.nodes_created, n)
+
+        res = self.graph.query("MATCH (n:Before) DELETE n CREATE (:After)")
+        self.env.assertEquals(res.nodes_deleted, n)
+        self.env.assertEquals(res.nodes_created, n)
+
+        # the statistics and an actual label scan have to agree - the bug
+        # showed up as exactly this disagreement
+        counted = self.graph.query(
+                "MATCH (n:After) RETURN count(n)").result_set[0][0]
+        self.env.assertEquals(counted, n)
+
+        scanned = self.graph.query(
+                "MATCH (n:After) RETURN count(n), max(id(n))").result_set[0]
+        self.env.assertEquals(scanned[0], n)
+
+        # and the unlabeled scan, which reads the node block rather than a
+        # matrix, sees the same nodes. This half does not depend on which of
+        # the two queries above the planner answers from statistics
+        res = self.graph.query("MATCH (n) RETURN count(n), max(id(n))")
+        self.env.assertEquals(res.result_set[0][0], n)
+        self.env.assertEquals(res.result_set[0][1], scanned[1])
+
+        # THE SAME FOR EDGES, because their endpoints are node ids: the
+        # relation and adjacency matrices are sized from the node capacity
+        # too, and sized before the nodes are committed. An endpoint past
+        # their dimension loses the edge, not just the node
+        self.graph.delete()
+
+        res = self.graph.query(f"UNWIND range(1, {n}) AS i CREATE (:Before)")
+        self.env.assertEquals(res.nodes_created, n)
+
+        res = self.graph.query(
+                "MATCH (b:Before) DELETE b CREATE (:Left)-[:R]->(:Right)")
+        self.env.assertEquals(res.nodes_deleted, n)
+        self.env.assertEquals(res.nodes_created, 2 * n)
+        self.env.assertEquals(res.relationships_created, n)
+
+        # traversed through its endpoints, so the adjacency matrix has to hold
+        # every one of them
+        res = self.graph.query(
+                "MATCH (a:Left)-[r:R]->(b:Right) RETURN count(r)")
+        self.env.assertEquals(res.result_set[0][0], n)
 
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):

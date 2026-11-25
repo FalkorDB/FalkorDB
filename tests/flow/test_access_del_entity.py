@@ -382,11 +382,24 @@ class testAccessDelEdge():
         self.env.assertEquals(res.nodes_created, 2)
         self.env.assertEquals(res.relationships_created, 1)
 
+        # 'e' still names the edge this query deleted, so reading it back gives
+        # the value that edge carried - 1 - and the edge MERGE creates from it
+        # carries 3.
+        #
+        # It used to read 3 here, and that was the two edges being one entity:
+        # the created edge was handed the id the delete had just freed, and
+        # every read through 'e' found the new edge. A query no longer reuses
+        # an id it freed, so the two are distinct and each reads as itself
         q = "MATCH (a)-[e]->(b) DELETE e MERGE (a)-[:R {v:e.v+2}]->(b) RETURN e.v"
         res = self.graph.query(q)
-        self.env.assertEquals(res.result_set[0][0], 3)
+        self.env.assertEquals(res.result_set[0][0], 1)
         self.env.assertEquals(res.relationships_deleted, 1)
         self.env.assertEquals(res.relationships_created, 1)
+
+        # the merged edge is in the graph, on its own, carrying e.v + 2
+        res = self.graph.query("MATCH ()-[e]->() RETURN e.v ORDER BY e.v")
+        self.env.assertEquals(res.result_set, [[3]])
+
 
     def test07_dobule_edge_delete(self):
         # clear graph

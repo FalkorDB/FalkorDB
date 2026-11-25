@@ -167,3 +167,56 @@ class testReuseAfterDelete(EffectsV3ApplyBase):
 
         m, r = self._ids("Churn2")
         self.env.assertEqual(m, r, message="the ids under :Churn2 differ")
+
+
+class testDeleteAndCreateInOneQuery(EffectsV3ApplyBase):
+    GRAPH = "effects_v3_apply_delete_create"
+
+    def test01_a_delete_and_a_create_in_one_query_apply_without_a_resync(self):
+        # THE SHAPE THE WIRE ORDER CANNOT CARRY IF AN ID IS REUSED. A payload
+        # is sorted into stages and created nodes come before deleted ones, so
+        # a query that hands a freed id to a node it creates ships CREATE id
+        # ahead of DELETE id. The replica still has that id live, so it refuses
+        # the create and resyncs -- every such query costs a full sync.
+        #
+        # What makes the pair impossible is the allocator, not the ordering: a
+        # query is never handed back an id it freed, so one payload can never
+        # name an id in both stages. The ordering itself is the format's and is
+        # not ours to change.
+        self._applied_without_resync(
+                "UNWIND range(0, 49) AS i CREATE (:Before {v: i})",
+                "delete-and-create setup")
+
+        freed = sorted(r[0] for r in self.master_graph.ro_query(
+            "MATCH (n:Before) WHERE n.v % 2 = 0 RETURN id(n)").result_set)
+        self.env.assertEqual(len(freed), 25)
+
+        # one query doing both halves, which is the whole point: split across
+        # two queries these are two payloads and nothing can be reordered past
+        # anything
+        self._applied_without_resync("""
+            MATCH (n:Before) WHERE n.v % 2 = 0
+            DELETE n
+            CREATE (:After)
+        """, "a delete and a create in one query")
+
+        created, replica_created = self._ids("After")
+        self.env.assertEqual(created, replica_created,
+                message="the ids under :After differ between master and replica")
+
+        reused = sorted(set(created) & set(freed))
+        self.env.assertEqual(reused, [],
+                message=f"the query was handed back ids it had freed: {reused}")
+
+        # AND THE IDS ARE NOT LOST, which is the other half of holding them
+        # rather than dropping them: the next query reuses every one
+        self._applied_without_resync(
+                "UNWIND range(0, 24) AS i CREATE (:Later)",
+                "the freed ids come back")
+
+        later, replica_later = self._ids("Later")
+        self.env.assertEqual(later, replica_later,
+                message="the ids under :Later differ between master and replica")
+        self.env.assertEqual(sorted(later), freed,
+                message="the next query did not reuse the ids the previous one "
+                        "freed")
