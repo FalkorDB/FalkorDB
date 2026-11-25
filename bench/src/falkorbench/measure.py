@@ -23,6 +23,7 @@ from redis.exceptions import ResponseError
 
 from falkorbench import client as client_mod
 from falkorbench.counters import Backend
+from falkorbench.counters import MeasuredRunFailed
 from falkorbench.metrics import Row
 from falkorbench.metrics import read_rows
 from falkorbench.metrics import write_rows
@@ -170,7 +171,18 @@ def measure_queries(
         # Memory snapshots sit outside the counter window so the MALLOC-STATS
         # call's own work does not land in the instruction counts.
         alloc0, dealloc0 = bench.jemalloc_totals()
-        reading = backend.run_and_count(pid, cmd)
+        try:
+            reading = backend.run_and_count(pid, cmd)
+        except MeasuredRunFailed as e:
+            # The warmup answered but the measured run did not finish: never a row
+            # (its counters cover a run cut short). Like a warmup error, it is a
+            # failure, except on the C engine, where the row is skipped.
+            if c_compat:
+                echo(f"{query.name:<20} SKIPPED (C, measured run: {e})")
+            else:
+                echo(f"{query.name:<20} FAILED (measured run: {e})")
+                failures.append((query.name, f"measured run: {e}"))
+            continue
         alloc1, dealloc1 = bench.jemalloc_totals()
 
         row = Row.fromkeys(CSV_FIELDS[1:], None)

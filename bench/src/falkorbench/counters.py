@@ -138,7 +138,7 @@ class RusageBackend:
         else:
             events = {}
             t0 = time.time()
-            subprocess.run(cmd, capture_output=True)
+            _finished(subprocess.run(cmd, capture_output=True), cmd)
             elapsed = time.time() - t0
         after = read_rusage(pid)
         if before is None or after is None:
@@ -174,13 +174,22 @@ L2_EVENT_ENV = "BENCH_L2_EVENT"
 
 
 def perf_events() -> dict[str, str]:
-    """The extra events to count on this run: PERF_EVENTS, plus the L2 event
-    when $BENCH_L2_EVENT names one."""
-    events = dict(PERF_EVENTS)
+    """The events counted beside instructions and cycles: micro-hw's miss
+    counters (PERF_EVENTS and the L2 event) when $BENCH_L2_EVENT names its L2
+    event, otherwise none. A local `bench compare` gates every column both sides
+    carry, with no floor, so it only sees these columns when micro-hw asks."""
     l2 = os.environ.get(L2_EVENT_ENV)
-    if l2:
-        events[l2] = "l2_miss"
-    return events
+    return {**PERF_EVENTS, l2: "l2_miss"} if l2 else {}
+
+
+class MeasuredRunFailed(OSError):
+    """The measured command exited non-zero: its counters and time cover a run
+    that did not finish, so they are no reading of the query."""
+
+
+def _finished(proc: subprocess.CompletedProcess, cmd: Sequence[str]) -> None:
+    if proc.returncode != 0:
+        raise MeasuredRunFailed(f"{cmd[0]} exited {proc.returncode}")
 
 
 class PerfBackend:
@@ -213,6 +222,9 @@ class PerfBackend:
                 "exposes the PMU (bare metal or a VM with vPMU enabled). "
                 f"stderr: {out.stderr.strip()[:300]}"
             )
+        # perf stat exits with the command's status: counters from a run that
+        # failed part-way would read as a cheap, normal row.
+        _finished(out, cmd)
         extra = {col: vals[ev] for ev, col in extra_events.items() if ev in vals}
         return Reading(vals["instructions"], vals["cycles"], elapsed, extra)
 
@@ -267,7 +279,7 @@ class NullBackend:
 
     def run_and_count(self, pid: int, cmd: Sequence[str]) -> Reading:
         t0 = time.time()
-        subprocess.run(cmd, capture_output=True)
+        _finished(subprocess.run(cmd, capture_output=True), cmd)
         return Reading(None, None, time.time() - t0, {})
 
 

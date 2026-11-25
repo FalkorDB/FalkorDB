@@ -4,6 +4,9 @@ writes them. Each test names the wrong answer it prevents."""
 from __future__ import annotations
 
 import json
+import os
+import signal
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
@@ -11,7 +14,9 @@ from typing import ClassVar
 import pytest
 
 from falkorbench import contract
+from falkorbench import counters
 from falkorbench import kit
+from falkorbench import measure
 from falkorbench import verdict as v
 from falkorbench.counters import L2_MISS_EVENT
 from falkorbench.metrics import read_rows
@@ -302,6 +307,15 @@ class TestVerdict:
         kept = kit.select(v.ordered(regs, gains, [], []))
         assert [f["name"] for f in kept if f["status"] == "improvement"] == ["g0.6", "g0.5"]
 
+    def test_a_regression_with_no_ratio_lists_first(self):
+        """0 -> 50 KB has no ratio; it still outranks a 2x row and every
+        improvement, so a cap never drops it first."""
+        grown = kit.finding("grown [writes]", "alloc_bytes", 5e4, 0.0, "regression")
+        doubled = kit.finding("doubled [reads]", "instructions", 2e6, 1e6, "regression")
+        better = kit.finding("better [reads]", "cycles", 5e5, 1e6, "improvement")
+        kept = kit.select(v.ordered([doubled, grown], [better], [], []))
+        assert [f["name"] for f in kept] == ["grown [writes]", "doubled [reads]", "better [reads]"]
+
     def test_finished_is_never_before_started(self):
         """`started` comes from the caller's clock; a result finishing before it
         would be invalid."""
@@ -344,11 +358,146 @@ class TestVerdict:
         assert res["verdict"] == "error"
         assert "read a" in res["error"]
 
-    def test_a_row_missing_from_one_rep_is_still_compared(self, tmp_path):
-        """One rep is enough to compare; only a side with none is a gap."""
+    def test_a_cell_missing_from_one_pass_is_a_gap(self, tmp_path):
+        """The row ran in both passes but one has no reading: judging it on the
+        other pass alone would weaken the overlap rule to one reading."""
         write_side(tmp_path, "candidate", [ROWS, blank(ROWS, "read a", "l2_miss")])
         write_side(tmp_path, "baseline", ROWS)
-        assert run(tmp_path)["verdict"] == "pass"
+        res = run(tmp_path)
+        assert res["verdict"] == "error"
+        assert "l2_misses row(s) miss a reading on a side (e.g. read a)" in res["error"]
+        _, rows = v.build_result(
+            inputs(tmp_path), flags(), started="2026-11-24T00:00:00Z", machine=MACHINE
+        )
+        (r,) = [r for r in rows if (r.query, r.metric) == ("read a", "l2_misses")]
+        assert r.note == "unmeasured on candidate"
+
+    def test_a_gap_in_the_second_run_is_an_error_not_a_confirmation(self, tmp_path):
+        crossed = scaled(ROWS, "write a", "instr", 2.0)
+        write_side(tmp_path, "candidate", crossed)
+        write_side(tmp_path, "baseline", ROWS)
+        write_side(
+            tmp_path, "candidate", [crossed, blank(crossed, "write a", "instr")], confirm=True
+        )
+        write_side(tmp_path, "baseline", ROWS, confirm=True)
+        res = run(tmp_path)
+        assert res["verdict"] == "error"
+        assert "write a (instructions) crossed but the re-run has a gap" in res["error"]
+
+    def test_a_crossed_row_missing_from_a_second_run_pass_is_an_error(self, tmp_path):
+        """The query errored in one second-run pass: one reading cannot confirm."""
+        crossed = scaled(ROWS, "write a", "instr", 2.0)
+        write_side(tmp_path, "candidate", crossed)
+        write_side(tmp_path, "baseline", ROWS)
+        write_side(tmp_path, "candidate", [crossed, without(crossed, "write a")], confirm=True)
+        write_side(tmp_path, "baseline", ROWS, confirm=True)
+        res = run(tmp_path)
+        assert res["verdict"] == "error"
+        assert "write a (instructions) crossed but the re-run has a gap" in res["error"]
+
+    def test_a_missing_pass_is_not_a_pass_where_everything_errored(self, tmp_path):
+        write_side(tmp_path, "candidate", ROWS)
+        write_side(tmp_path, "baseline", ROWS)
+        v.screen_path(tmp_path, "candidate", 2).unlink()
+        res = run(tmp_path)
+        assert res["verdict"] == "error" and "missing measure-candidate-r2.csv" in res["error"]
+        assert not [f for f in res["findings"] if f["metric"] == "completed"]
+
+    @pytest.mark.parametrize(
+        "candidate",
+        [ROWS, [ROWS, without(ROWS, "write b")]],
+        ids=["candidate-answers", "candidate-also-sometimes"],
+    )
+    def test_an_error_the_baseline_has_in_some_passes_is_reported(self, tmp_path, candidate):
+        write_side(tmp_path, "candidate", candidate)
+        write_side(tmp_path, "baseline", [without(ROWS, "write b"), ROWS])
+        res = run(tmp_path)
+        assert res["verdict"] == "pass"
+        names = [f["name"] for f in by_status(res, "info")]
+        assert "1 queries error on the baseline in some passes (e.g. write b)" in names
+
+    def test_a_pass_where_every_query_errored_still_counts(self, tmp_path):
+        """A header-only CSV is a pass that ran and failed everything, not a
+        pass that never happened."""
+        write_side(tmp_path, "candidate", [ROWS, {}])
+        write_side(tmp_path, "baseline", ROWS)
+        res = run(tmp_path)
+        (f,) = [f for f in by_status(res, "info") if "some passes" in f["name"]]
+        assert f["name"].startswith(f"{len(QUERIES)} queries")
+
+    def test_both_passes_erroring_everything_is_a_regression(self, tmp_path):
+        write_side(tmp_path, "candidate", [{}, {}])
+        write_side(tmp_path, "baseline", ROWS)
+        res = run(tmp_path)
+        assert res["verdict"] == "regression"
+        assert len(by_status(res, "regression")) == len(QUERIES)
+
+    def test_an_error_only_in_the_second_run_is_reported(self, tmp_path):
+        for confirm in (False, True):
+            write_side(tmp_path, "baseline", ROWS, confirm=confirm)
+        write_side(tmp_path, "candidate", ROWS)
+        write_side(tmp_path, "candidate", without(ROWS, "write b"), confirm=True)
+        res = run(tmp_path)
+        assert res["verdict"] == "pass"
+        assert any("some passes only (e.g. write b)" in f["name"] for f in by_status(res, "info"))
+
+    def test_an_error_the_baseline_also_has_sometimes_is_not_the_candidate_s(self, tmp_path):
+        """Candidate [error, error] against baseline [answer, error]: the same
+        flaky image could do that to itself, so it is an error on both sides."""
+        write_side(tmp_path, "candidate", without(ROWS, "write b"))
+        write_side(tmp_path, "baseline", [ROWS, without(ROWS, "write b")])
+        res = run(tmp_path)
+        assert res["verdict"] == "pass"
+        assert any("error on both sides" in f["name"] for f in by_status(res, "info"))
+
+    def test_a_row_whose_prerequisite_errored_on_one_side_is_not_compared(self, tmp_path):
+        """`dep` runs on the graph `write b` builds; with `write b` failing on
+        the baseline the two sides measured different graphs."""
+        qs = [*QUERIES, Query("dep", False, "MATCH (n) RETURN n", needs=("write b",))]
+        rows = {**ROWS, "dep": row(1e6, 2e6, 5e3, 2e4, 1e5)}
+        for confirm in (False, True):
+            write_side(tmp_path, "candidate", scaled(rows, "dep", "instr", 3.0), confirm=confirm)
+            write_side(tmp_path, "baseline", without(rows, "write b"), confirm=confirm)
+        res = run(tmp_path, queries=qs)
+        assert res["verdict"] == "pass"
+        assert not [f for f in res["findings"] if f["name"].startswith("dep ")]
+        reads = [f["name"] for f in res["findings"] if f["name"].startswith("reads: ")]
+        assert reads and all(" over 2 rows " in n for n in reads), reads
+        # RETURN 1, read a, write a: write b errored on the baseline, dep was not compared.
+        assert "; 3 rows on " in res["summary"], res["summary"]
+
+    def test_a_prerequisite_erroring_in_the_second_run_blocks_the_confirmation(self, tmp_path):
+        qs = [*QUERIES, Query("dep", False, "MATCH (n) RETURN n", needs=("write b",))]
+        rows = {**ROWS, "dep": row(1e6, 2e6, 5e3, 2e4, 1e5)}
+        slow = scaled(rows, "dep", "instr", 3.0)
+        write_side(tmp_path, "candidate", slow)
+        write_side(tmp_path, "baseline", rows)
+        write_side(tmp_path, "candidate", without(slow, "write b"), confirm=True)
+        write_side(tmp_path, "baseline", rows, confirm=True)
+        res = run(tmp_path, queries=qs)
+        assert res["verdict"] == "error"
+        assert (
+            "dep (instructions) crossed but the re-run has write b erroring on a side"
+            in res["error"]
+        )
+
+    def test_a_prerequisite_erroring_on_both_sides_leaves_the_row_compared(self, tmp_path):
+        """Both sides then measured the same graph (C's skipped rows)."""
+        qs = [*QUERIES, Query("dep", False, "MATCH (n) RETURN n", needs=("write b",))]
+        rows = without({**ROWS, "dep": row(1e6, 2e6, 5e3, 2e4, 1e5)}, "write b")
+        for confirm in (False, True):
+            write_side(tmp_path, "candidate", scaled(rows, "dep", "instr", 3.0), confirm=confirm)
+            write_side(tmp_path, "baseline", rows, confirm=confirm)
+        res = run(tmp_path, queries=qs)
+        assert [f["name"] for f in by_status(res, "regression")] == ["dep [reads]"]
+
+    def test_a_pass_csv_is_read_by_its_literal_path(self, tmp_path):
+        """`--out 'out[ab]'` is a glob for `outa`; an earlier run's CSVs there
+        must not stand in for this run's."""
+        write_side(tmp_path / "out[ab]", "candidate", ROWS)
+        write_side(tmp_path / "outa", "candidate", scaled(ROWS, "read a", "instr", 9.0))
+        reps = v.load(tmp_path / "out[ab]", "candidate").reps
+        assert [t["read a"]["instr"] for t in reps] == [ROWS["read a"]["instr"]] * 2
 
     def test_an_error_on_some_candidate_passes_is_reported(self, tmp_path):
         """Not a regression (an A/A pair can produce one), but never silent."""
@@ -879,6 +1028,8 @@ class TestHw:
         (f,) = by_status(res, "regression")
         assert (f["name"], f["metric"]) == ("read a [reads]", "cycles")
         assert "confirm-measure-baseline-r2.csv" in res["summary"]
+        # The pass that died is no pass: not one in which every query errored.
+        assert not [f for f in res["findings"] if f["metric"] == "completed"]
 
     def test_one_pass_that_counted_nothing_is_an_error(self, tmp_path):
         """bench measure falls back to no counters by itself; one such pass
@@ -891,6 +1042,48 @@ class TestHw:
         res = hw.run_check(hw_run(tmp_path, docker))
         assert res["verdict"] == "error"
         assert "measure-baseline-r2.csv counted no instr, cycles, br_miss, l2_miss" in res["error"]
+
+    def test_the_per_pass_check_reads_its_own_csv(self, tmp_path):
+        """With `--out 'out[ab]'`, a glob would read `outa`'s CSVs instead."""
+        from falkorbench import hw
+
+        out = tmp_path / "out[ab]"
+        zeroed = {q: {**r, "instr": 0.0} for q, r in HW_ROWS.items()}
+        write_side(tmp_path / "outa" / "raw", "candidate", zeroed)
+        docker = FakeDocker(out / "raw", self.readings())
+        run = hw.HwRun(
+            bench_image="ghcr.io/falkordb/falkordb-bench@sha256:" + "c" * 64,
+            args=flags(out=out),
+            repo_root=tmp_path,
+            queries=QUERIES,
+            runner=docker,
+            echo=lambda _: None,
+        )
+        assert hw.run_check(run)["verdict"] == "pass"
+
+    def test_a_stop_signal_mid_pass_still_writes_a_result(self, tmp_path):
+        """_perf-vm.yml's timeout sends SIGTERM; kit.run_check turns it into an
+        error result instead of a run that leaves no result.json."""
+        from falkorbench import hw
+
+        docker = FakeDocker(tmp_path / "out" / "raw", self.readings())
+
+        def stopped_mid_pass(argv):
+            if "measure" in argv:
+                os.kill(os.getpid(), signal.SIGTERM)
+            return docker(argv)
+
+        res = hw.run_check(hw_run(tmp_path, stopped_mid_pass))
+        assert res["verdict"] == "error" and "SIGTERM" in res["error"]
+        assert json.loads((tmp_path / "out" / "result.json").read_text()) == res
+
+    def test_an_incomplete_machine_file_describes_this_host(self, tmp_path, monkeypatch):
+        from falkorbench import hw
+
+        (tmp_path / "machine.json").write_text(json.dumps({"runner": "gce"}))
+        monkeypatch.setenv("PERF_MACHINE_JSON", str(tmp_path / "machine.json"))
+        docker = FakeDocker(tmp_path / "out" / "raw", self.readings())
+        assert hw.run_check(hw_run(tmp_path, docker))["machine"]["runner"] == "local"
 
     def test_a_vm_reports_its_own_machine(self, tmp_path, monkeypatch):
         """On a _perf-vm.yml VM the result names the VM from $PERF_MACHINE_JSON."""
@@ -1024,6 +1217,69 @@ class TestHwGates:
         assert run.metrics == v.hw_metrics("rust")
         run.c_compat = True
         assert run.metrics == v.hw_metrics("c")
+
+
+class TestMeasuredRun:
+    """`bench measure` on the counters backends: a measured run that does not
+    finish is a failure, never a row."""
+
+    PERF_OUT = "1000,,instructions,,\n2000,,cycles,,\n"
+
+    def test_perf_refuses_counters_from_a_failed_run(self, monkeypatch):
+        def failed(argv, **_):
+            return subprocess.CompletedProcess(argv, 1, "", self.PERF_OUT)
+
+        monkeypatch.setattr(counters.subprocess, "run", failed)
+        with pytest.raises(counters.MeasuredRunFailed):
+            counters.PerfBackend("perf").run_and_count(1, ["redis-benchmark"])
+
+    def test_no_counters_refuses_a_failed_run_too(self, monkeypatch):
+        monkeypatch.setattr(
+            counters.subprocess, "run", lambda argv, **_: subprocess.CompletedProcess(argv, 1)
+        )
+        with pytest.raises(counters.MeasuredRunFailed):
+            counters.NullBackend().run_and_count(1, ["redis-benchmark"])
+
+    def test_a_failed_measured_run_is_a_failure_not_a_row(self, monkeypatch):
+        rows, failures = self._measure(monkeypatch)
+        assert list(rows) == ["RETURN 1"]
+        assert [name for name, _ in failures] == ["read a"]
+
+    @staticmethod
+    def _measure(monkeypatch, *, c_compat=False):
+        class Backend:
+            name = "fake"
+
+            def run_and_count(self, pid, cmd):
+                if "MATCH (n) RETURN n" in cmd:
+                    raise counters.MeasuredRunFailed("redis-benchmark exited 1")
+                return counters.Reading(1e9, 2e9, 1.0, {})
+
+        bench = SimpleNamespace(
+            pid=1,
+            server=SimpleNamespace(port=1),
+            graph_name="g",
+            run=lambda *_a, **_k: None,
+            jemalloc_totals=lambda: (0, 0),
+        )
+        monkeypatch.setattr(measure.shutil, "which", lambda _: "/usr/bin/redis-benchmark")
+        monkeypatch.setattr(measure.subprocess, "run", lambda *_a, **_k: None)
+        return measure.measure_queries(
+            bench, Backend(), QUERIES[:2], default_reps=1, c_compat=c_compat, echo=lambda _: None
+        )
+
+    def test_on_the_c_engine_a_failed_measured_run_is_skipped(self, monkeypatch):
+        """Like a warmup error there, so `bench measure --c-compat` still exits 0."""
+        rows, failures = self._measure(monkeypatch, c_compat=True)
+        assert list(rows) == ["RETURN 1"]
+        assert failures == []
+
+    def test_the_miss_counters_are_micro_hw_s_only(self, monkeypatch):
+        """A local `bench compare` gates every column, with no floor."""
+        monkeypatch.delenv(counters.L2_EVENT_ENV, raising=False)
+        assert counters.perf_events() == {}
+        monkeypatch.setenv(counters.L2_EVENT_ENV, L2_MISS_EVENT)
+        assert counters.perf_events() == {"branch-misses": "br_miss", L2_MISS_EVENT: "l2_miss"}
 
 
 class TestBenchImageKey:

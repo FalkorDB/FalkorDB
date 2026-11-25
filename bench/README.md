@@ -375,11 +375,15 @@ needs every counter to read above 0; a host that cannot count one gives
   rebuild the graph state the full set measured against. Improvements are
   reported as measured, not re-run, and never fail the run.
 - **A query that errors on the candidate in every pass and answers on the
-  baseline** is a regression at once (metric `completed`). One that errors in
-  some passes only is `info`.
-- **A gap is never a pass.** A missing pass, a row with no reading on one side,
-  or a crossed row the second run could not measure makes the verdict `error`,
-  unless a confirmed regression outranks it.
+  baseline in every pass** is a regression at once (metric `completed`). One
+  that errors in some passes only, in either run, is `info`, and so is one the
+  baseline also fails sometimes. A pass in which every query errored still
+  counts as a pass. A row whose prerequisite (`needs`) errored on one side only,
+  or in some passes, is not compared: the two sides measured different graphs.
+- **A gap is never a pass.** A missing pass, a row missing a reading in a pass
+  it ran in, or a crossed row the second run could not fully measure makes the
+  verdict `error`, unless a confirmed regression outranks it. A measured run
+  that does not finish is a failed query, never a row.
 - **Per-class rows.** A small fixed cost on every query crosses no per-row
   threshold, so reads and writes each get an `info` finding with the median
   per-row ratio and how many rows went up and down, for instructions, cycles and

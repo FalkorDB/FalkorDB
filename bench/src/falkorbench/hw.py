@@ -25,7 +25,6 @@ from falkorbench.counters import L2_EVENT_ENV
 from falkorbench.counters import L2_MISS_EVENT
 from falkorbench.counters import PERF_EVENTS
 from falkorbench.counters import _parse_perf
-from falkorbench.metrics import read_rows
 from falkorbench.model import Query
 
 MODULE_PATH = "/var/lib/falkordb/bin/falkordb.so"
@@ -220,7 +219,7 @@ class HwRun:
         # Each pass must have counted. `bench measure` falls back to no counters
         # on its own when perf fails, and one such pass among four would leave
         # the verdict reading the others as if nothing were missing.
-        rows = verdict.read_rows(str(csv))
+        rows = verdict.read_pass(csv)
         silent = [
             spec.column
             for spec in self.metrics
@@ -253,9 +252,9 @@ class HwRun:
         return {
             side: verdict.Passes(
                 reps=[
-                    read_rows(str(verdict.confirm_path(self.raw, side, rep)))
+                    verdict.read_pass(verdict.confirm_path(self.raw, side, rep))
                     if (side, rep) in self.second_run_done
-                    else {}
+                    else None
                     for rep in range(1, verdict.REPS + 1)
                 ]
             )
