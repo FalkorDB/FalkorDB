@@ -521,6 +521,29 @@ def flow(module, out, baseline, current, names):
             tmp.cleanup()
 
 
+# --- pokec -------------------------------------------------------------------
+
+
+@cli.command(
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+    add_help_option=False,
+)
+@click.argument("argv", nargs=-1, type=click.UNPROCESSED)
+def pokec(argv):
+    """The pokec check: FalkorDB/benchmark on Pokec, candidate against baseline.
+
+    Takes the contract's flags (`bench pokec --help` lists them) and always writes
+    <out>/result.json; exits 0 whenever it did. See src/falkorbench/pokec/README.md.
+    """
+    from falkorbench.pokec import check as pokec_check  # its flags are argparse's (kit.add_args)
+
+    raise SystemExit(pokec_check.main(list(argv)))
+
+
 # --- validate ----------------------------------------------------------------
 
 
