@@ -2,8 +2,8 @@
 #
 # Every night it measures main's newest merge-queue image against the latest
 # release with every perf check, and posts one message to the core team's Chat
-# space. The contract (check interface, result.json, nightly.json) is checked by
-# perf-judge's tests/perf/validate.py.
+# space. The contract (check interface, result.json, nightly.json) is
+# falkorbench.contract; every step runs as `uv run --project bench bench …`.
 #
 #   candidate  ghcr.io/falkordb/falkordb-server:rc-mg-<sha>-valkey for main's tip,
 #              the image the merge queue built and tested for that commit. A
@@ -18,9 +18,9 @@
 # same two images even if a tag moves mid-run.
 #
 # Jobs: resolve -> micro (_perf-micro.yml, whose one check, micro-hw, runs on a C4 VM),
-# vm (_perf-vm.yml, one leg per `runner: vm` entry of tests/perf/checks.yaml),
-# hosted (one leg per `runner: hosted` entry) -> merge (tests/perf/merge.py ->
-# nightly.json, artifact perf-nightly) -> report (tests/perf/report/post.py).
+# vm (_perf-vm.yml, one leg per `runner: vm` entry of bench/checks.yaml),
+# hosted (one leg per `runner: hosted` entry) -> merge (`bench nightly merge` ->
+# nightly.json, artifact perf-nightly) -> report (`bench nightly report`).
 #
 # Skipped nights. A scheduled run whose candidate commit AND baseline digest equal
 # the last nightly's does not measure: there is nothing new. It still writes a
@@ -36,7 +36,7 @@
 #
 # A missing measurement is never green. merge.py puts every planned check in
 # nightly.json exactly once, and stubs it as {check, verdict: error, error: <why>}
-# when it left no result.json, one validate.py rejects, one that names another
+# when it left no result.json, one the contract rejects, one that names another
 # check, or a `pass` whose perf-vm.json does not record exit 0. A checks.yaml it
 # cannot use is reported as the error check `checks-yaml`; the night goes on.
 
@@ -56,7 +56,7 @@ on:
         type: string
         default: ""
       checks:
-        description: "Comma list of checks to run (micro-hw, or names in tests/perf/checks.yaml); empty = all"
+        description: "Comma list of checks to run (micro-hw, or names in bench/checks.yaml); empty = all"
         type: string
         default: ""
   # TEMPORARY: runs the workflow on its own PR (dispatch and schedule only work
@@ -106,6 +106,9 @@ jobs:
         with:
           fetch-depth: 25
           persist-credentials: false
+
+      # The bench project's pinned Python (bench/.python-version) and lock.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Pin the candidate and baseline images
         id: images
@@ -289,7 +292,7 @@ jobs:
           if [[ $MAY_SKIP == true ]]; then skip=(--may-skip); fi
           out=$GITHUB_OUTPUT
           if [[ $GITHUB_EVENT_NAME == pull_request ]]; then out=$RUNNER_TEMP/context.out; fi  # TEMPORARY, below
-          python3 -I tests/perf/merge.py context \
+          uv run --project bench bench nightly merge context \
             --candidate-image "$CANDIDATE_IMAGE" --candidate-commit "$CANDIDATE_COMMIT" --candidate-label "$CANDIDATE_LABEL" \
             --baseline-image "$BASELINE_IMAGE" --baseline-commit "$BASELINE_COMMIT" --baseline-label "$BASELINE_LABEL" \
             --history-runs "$HISTORY/runs.txt" --history-dir "$HISTORY" "${skip[@]}" \
@@ -316,12 +319,12 @@ jobs:
           set -euo pipefail
           # A registry that does not parse is reported as the check `checks-yaml`
           # (an error) instead of stopping the night.
-          if yq -o=json '.' tests/perf/checks.yaml > "$RUNNER_TEMP/checks.json" 2> "$RUNNER_TEMP/yq.err"; then
+          if yq -o=json '.' bench/checks.yaml > "$RUNNER_TEMP/checks.json" 2> "$RUNNER_TEMP/yq.err"; then
             registry=(--registry "$RUNNER_TEMP/checks.json")
           else
             registry=(--registry-error "yq: $(tr '\n' ' ' < "$RUNNER_TEMP/yq.err")")
           fi
-          python3 -I tests/perf/merge.py plan "${registry[@]}" --select "$CHECKS" \
+          uv run --project bench bench nightly merge plan "${registry[@]}" --select "$CHECKS" \
             --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -457,12 +460,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # TEMPORARY: perf-judge's validator until it is on main (#3975).
-      - name: Fetch validate.py from perf/judge
-        run: |
-          set -euo pipefail
-          git fetch --no-tags --depth=1 origin perf/judge
-          git checkout FETCH_HEAD -- tests/perf/validate.py
+      # The bench project's pinned Python (bench/.python-version) and lock.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -504,7 +503,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/results" "$RUNNER_TEMP/nightly"
-          python3 -I tests/perf/merge.py merge \
+          uv run --project bench bench nightly merge results \
             --context "$RUNNER_TEMP/plan/context.json" --plan "$RUNNER_TEMP/plan/plan.json" \
             --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/nightly/nightly.json"
 
@@ -521,7 +520,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      # post.py lists the commits since previous_green_commit with `git log` in
+      # The reporter lists the commits since previous_green_commit with `git log` in
       # this checkout (else it links the compare page).
       contents: read
     steps:
@@ -531,20 +530,15 @@ jobs:
           filter: blob:none
           persist-credentials: false
 
-      # TEMPORARY: perf-chat's reporter (#3978), until it is on main.
-      - name: Fetch the reporter
-        run: |
-          set -euo pipefail
-          # No --depth: it would graft a shallow boundary into the full history above.
-          git fetch --no-tags origin ci/perf-chat
-          git checkout FETCH_HEAD -- tests/perf/report
+      # The bench project's pinned Python (bench/.python-version) and lock.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: perf-nightly
           path: ${{ runner.temp }}/nightly
 
-      # post.py exits 0 for any night it reported (red and error included) and 1
+      # The reporter exits 0 for any night it reported (red and error included) and 1
       # only when it could not report; failing the run for a red or error night
       # is the next step's job alone.
       - name: Post the night's result
@@ -553,7 +547,7 @@ jobs:
           # picked its own images is a by-hand comparison, so it goes to the step
           # summary alone (as does the TEMPORARY pull_request trigger).
           PERF_CHAT_WEBHOOK: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
-        run: python3 -I tests/perf/report/post.py --nightly "$RUNNER_TEMP/nightly/nightly.json"
+        run: uv run --project bench bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
 
       # Last, once the report is out and nightly.json is uploaded (merge job), so
       # a failing run never loses either: a red or error night fails the run.
@@ -563,4 +557,4 @@ jobs:
       # the reporter did.
       - name: Fail the run unless the night is green or skipped
         if: ${{ !cancelled() }}
-        run: python3 -I tests/perf/merge.py conclude --nightly "$RUNNER_TEMP/nightly/nightly.json"
+        run: uv run --project bench bench nightly merge conclude --nightly "$RUNNER_TEMP/nightly/nightly.json"

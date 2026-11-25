@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 """The nightly perf run's bookkeeping. What a night does and promises is in the
 header of .github/workflows/perf-nightly.yml; each step calls one subcommand:
 
   plan      checks.yaml (as JSON) + the `checks` input -> plan.json, job matrices
   context   pinned images + earlier nightlies -> context.json (skip, previous green)
-  merge     context + plan + each planned perf-result-<check> -> nightly.json
+  results   context + plan + each planned perf-result-<check> -> nightly.json
   conclude  nightly.json -> the run's exit status (0 green or skipped, 1 otherwise)
 
 Standard library only (with contract and kit, which are too): `bench nightly merge`.
@@ -519,7 +518,7 @@ def cmd_conclude(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="bench nightly merge", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("plan", help="checks.json + selection -> plan.json and job matrices")
@@ -545,7 +544,7 @@ def main(argv=None):
     p.add_argument("--github-output", default="")
     p.set_defaults(func=cmd_context)
 
-    p = sub.add_parser("merge", help="context + plan + perf-result-* -> nightly.json")
+    p = sub.add_parser("results", help="context + plan + perf-result-* -> nightly.json")
     p.add_argument("--context", required=True)
     p.add_argument("--plan", required=True)
     p.add_argument("--results", required=True, help="holds perf-result-<check>/ directories")

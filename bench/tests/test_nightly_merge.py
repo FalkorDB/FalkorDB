@@ -1,11 +1,11 @@
-"""tests/perf/merge.py: the plan, skip and merge rules of the nightly perf run.
+"""`bench nightly merge` (falkorbench.nightly.merge): the plan, skip and merge
+rules of the nightly perf run.
 
-Every nightly.json these tests build is also run through perf-judge's
-tests/perf/validate.py, so "merge wrote it" and "the contract accepts it" are
+Every nightly.json these tests build is also run through the result contract
+(falkorbench.contract), so "merge wrote it" and "the contract accepts it" are
 checked together.
 """
 
-import importlib.util
 import json
 import math
 import re
@@ -15,18 +15,10 @@ from pathlib import Path
 
 import pytest
 
+from falkorbench import contract
+from falkorbench.nightly import merge
+
 HERE = Path(__file__).resolve().parent
-
-
-def load(name):
-    spec = importlib.util.spec_from_file_location(f"perf_{name}", HERE / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-merge = load("merge")
-validate = load("validate")
 
 MAIN = "4c1088949a5852e3949c05bfb3d92a603c4cd4ca"
 OLDER = "4ac2af3103ae5a293baef097b749fb8338bc0bfd"
@@ -110,7 +102,7 @@ def run_merge(tmp_path, plan, ctx=None):
     out = tmp_path / "nightly.json"
     code = merge.main(
         [
-            "merge",
+            "results",
             "--context", str(tmp_path / "context.json"),
             "--plan", str(tmp_path / "plan.json"),
             "--results", str(tmp_path / "results"),
@@ -119,7 +111,7 @@ def run_merge(tmp_path, plan, ctx=None):
     )
     nightly = json.loads(out.read_text())
     # Independent of merge's own check: the contract accepts what it wrote.
-    assert validate.validate_nightly(nightly) == []
+    assert contract.validate_nightly(nightly) == []
     return code, nightly
 
 
@@ -127,7 +119,7 @@ MICRO_HW = [{"check": "micro-hw", "runner": "micro-hw"}]
 VM_ENTRY = {
     "name": "pokec",
     "runner": "vm",
-    "command": "python3 -I tests/perf/pokec/pokec.py",
+    "command": "uv run --project bench bench pokec",
     "timeout_minutes": 75,
     "machine_type": "n4-standard-16",
 }
@@ -158,7 +150,7 @@ def test_registry_entries_become_matrix_rows():
     assert json.loads(out["vm_matrix"]) == [
         {
             "check": "pokec",
-            "command": "python3 -I tests/perf/pokec/pokec.py",
+            "command": "uv run --project bench bench pokec",
             "timeout_minutes": 75,
             "machine_type": "n4-standard-16",
         }
@@ -170,7 +162,7 @@ def test_registry_entries_become_matrix_rows():
 def test_selection_keeps_order_and_plans_unknown_names_as_stubs():
     plan = merge.build_plan([VM_ENTRY, HOSTED_ENTRY], " ldbc, typo ,micro-hw,ldbc")
     assert [row["check"] for row in plan] == ["ldbc", "typo", "micro-hw"]
-    assert plan[1] == {"check": "typo", "runner": None, "error": "not in tests/perf/checks.yaml"}
+    assert plan[1] == {"check": "typo", "runner": None, "error": "not in bench/checks.yaml"}
     assert merge.plan_outputs(plan)["has_vm"] == "false"
 
 
@@ -178,7 +170,7 @@ def test_the_removed_micro_check_is_an_unknown_name():
     """`micro` (callgrind on hosted runners) is gone (contract v1.11): a
     dispatch that still asks for it gets an error saying so, not a silent gap."""
     plan = merge.build_plan([], "micro")
-    assert plan == [{"check": "micro", "runner": None, "error": "not in tests/perf/checks.yaml"}]
+    assert plan == [{"check": "micro", "runner": None, "error": "not in bench/checks.yaml"}]
     assert merge.plan_outputs(plan)["run_micro"] == "false"
 
 
@@ -239,7 +231,7 @@ def test_registry_that_does_not_parse_still_plans_micro_hw(tmp_path):
     assert merge.main(argv + ["--github-output", str(out)]) == 0
     plan = json.loads((tmp_path / "plan.json").read_text())
     assert plan == MICRO_HW + [
-        {"check": "checks-yaml", "runner": None, "error": "tests/perf/checks.yaml: yq: bad indentation"},
+        {"check": "checks-yaml", "runner": None, "error": "bench/checks.yaml: yq: bad indentation"},
     ]
     assert "run_micro=true\n" in out.read_text()
 
@@ -264,9 +256,9 @@ def parse_yaml(path):
 
 
 def test_the_real_registry_is_usable():
-    """Every check PR appends to tests/perf/checks.yaml; this is where a bad
+    """Every check PR appends to bench/checks.yaml; this is where a bad
     append fails, before it can turn a night into an error."""
-    plan = merge.build_plan(parse_yaml(HERE / "checks.yaml"), "")
+    plan = merge.build_plan(parse_yaml(HERE.parent / "checks.yaml"), "")
     assert plan[0]["check"] == "micro-hw"
     assert [row for row in plan if row["runner"] is None] == []
 
@@ -397,7 +389,7 @@ def test_planned_stub_keeps_its_reason(tmp_path):
     assert nightly["checks"][1] == {
         "check": "typo",
         "verdict": "error",
-        "error": "not in tests/perf/checks.yaml",
+        "error": "not in bench/checks.yaml",
     }
 
 
@@ -536,8 +528,8 @@ def test_micro_is_called_only_when_planned_and_conclude_runs_last():
     assert "needs.resolve.outputs.run_micro == 'true'" in jobs["micro"]["if"]
     steps = jobs["report"]["steps"]
     # The run fails for a red or error night even when the report step failed.
-    assert "merge.py conclude" in steps[-1]["run"] and "!cancelled()" in steps[-1]["if"]
-    post = next(step for step in steps if "post.py" in step.get("run", ""))
+    assert "bench nightly merge conclude" in steps[-1]["run"] and "!cancelled()" in steps[-1]["if"]
+    post = next(step for step in steps if "bench nightly report" in step.get("run", ""))
     assert "GH_TOKEN" not in post.get("env", {})
 
 
@@ -667,13 +659,13 @@ def test_context_cli_reads_downloaded_history(tmp_path):
 @pytest.mark.parametrize(
     "flag, value, said",
     [
-        ("--candidate-image", "ghcr.io/falkordb/falkordb-server:rc-mg-x-valkey", "candidate image"),
-        ("--baseline-image", "falkordb/falkordb-server@sha256:44eb4a6d", "baseline image"),
-        # Pinned, but not a reference validate.py accepts (upper case): taking
+        ("--candidate-image", "ghcr.io/falkordb/falkordb-server:rc-mg-x-valkey", "--candidate "),
+        ("--baseline-image", "falkordb/falkordb-server@sha256:44eb4a6d", "--baseline "),
+        # Pinned, but not a reference the contract accepts (upper case): taking
         # it would make every result of the night invalid.
-        ("--candidate-image", "GHCR.io/FalkorDB/Server@sha256:" + "a" * 64, "candidate image"),
-        ("--baseline-commit", "d8c329b", "baseline commit"),
-        ("--candidate-label", "", "candidate label"),
+        ("--candidate-image", "GHCR.io/FalkorDB/Server@sha256:" + "a" * 64, "--candidate "),
+        ("--baseline-commit", "d8c329b", "--baseline-commit "),
+        ("--candidate-label", "", "--candidate-label "),
     ],
 )
 def test_context_refuses_unpinned_or_malformed_sides(tmp_path, capsys, flag, value, said):
@@ -685,7 +677,8 @@ def test_context_refuses_unpinned_or_malformed_sides(tmp_path, capsys, flag, val
     argv = ["context"] + [x for pair in args.items() for x in pair]
     argv += ["--date", "2026-11-24", "--run-url", "https://x/y", "--out", str(tmp_path / "c.json")]
     assert merge.main(argv) == 1
-    assert f"::error::{said} " in capsys.readouterr().err
+    # kit.input_errors' wording: the same check every perf check runs on its flags.
+    assert f"::error::{said}" in capsys.readouterr().err
     assert not (tmp_path / "c.json").exists()
 
 
@@ -733,3 +726,26 @@ def test_no_c4_capacity_is_a_micro_hw_stub_with_the_vm_reason(tmp_path):
         {"check": "micro-hw", "verdict": "error", "error": "no result.json: no VM came up: no C4 in any zone"}
     ]
     assert nightly["status"] == "error"
+
+
+# --- the command line ------------------------------------------------------------
+
+
+def test_bench_nightly_merge_runs_the_subcommands(tmp_path):
+    """The workflow calls `uv run --project bench bench nightly merge <sub> …`:
+    the click command passes every argument through to merge.main unchanged."""
+    from click.testing import CliRunner
+
+    from falkorbench.cli import cli
+
+    (tmp_path / "checks.json").write_text("null\n")
+    plan = tmp_path / "plan.json"
+    run = CliRunner().invoke(
+        cli, ["nightly", "merge", "plan", "--registry", str(tmp_path / "checks.json"), "--out", str(plan)]
+    )
+    assert run.exit_code == 0, run.output
+    assert json.loads(plan.read_text()) == MICRO_HW
+    night = tmp_path / "nightly.json"
+    night.write_text(json.dumps({"status": "red"}))
+    run = CliRunner().invoke(cli, ["nightly", "merge", "conclude", "--nightly", str(night)])
+    assert run.exit_code == 1

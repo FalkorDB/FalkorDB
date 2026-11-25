@@ -28,6 +28,7 @@ from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
 from falkorbench.counters import select_backend
+from falkorbench.nightly import merge as nightly_merge
 from falkorbench.nightly import missed_run
 from falkorbench.nightly import report as nightly_report
 
@@ -586,6 +587,16 @@ def missed_run_command(night, workflow, branch, event, artifact):
             artifact=artifact,
         )
     )
+
+
+@nightly.command(
+    "merge",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True, "help_option_names": []},
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def nightly_merge_command(args):
+    """The night's bookkeeping: plan | context | results | conclude (each takes --help)."""
+    raise SystemExit(nightly_merge.main(list(args)))
 
 
 def main() -> int:
