@@ -491,8 +491,16 @@ class Waiver(NamedTuple):
             return False
         if self.metric is not None and finding.get("metric") != self.metric:
             return False
-        # A bound needs a ratio under it: a finding with none is not covered.
-        return self.max_ratio is None or (_is_number(ratio) and ratio <= self.max_ratio)
+        if self.max_ratio is None:
+            return True
+        # A bound needs a ratio under it: a finding with none is not covered. It
+        # bounds how much worse the row is, so a lower-is-worse ratio (throughput,
+        # candidate / baseline) is inverted: 0.7x is 1.43x worse, and 0x is unbounded.
+        if not _is_number(ratio):
+            return False
+        if finding.get("direction") == "lower_is_worse":
+            return ratio > 0 and 1 / ratio <= self.max_ratio
+        return ratio <= self.max_ratio
 
 
 def _is_number(value):

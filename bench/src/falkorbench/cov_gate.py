@@ -72,15 +72,15 @@ MEASURED_RUN = "measured run"  # measure.py's failure prefix: warmup answered, r
 
 def answered(
     rows: dict[str, dict[str, metrics.Row]], failed: dict[str, dict[str, str]]
-) -> tuple[list[dict], set[str]]:
-    """(findings, the queries they explain) from which queries did not answer.
+) -> tuple[list[dict], dict[str, set[str]]]:
+    """(findings, {query: the sides whose missing reading they explain}) from which queries did not answer.
 
     `rows` is the measure source's {"pr"|"base": rows}; `failed` is each side's
     `bench measure --failed-out`. A query failed on one side and not measured
     on the other is left to the comparison, which calls it unmeasured.
     """
     pr_failed, base_failed = failed.get("pr", {}), failed.get("base", {})
-    findings, explained = [], set()
+    findings, explained = [], {}
     for query in sorted(set(pr_failed) | set(base_failed)):
         if any(
             why.startswith(MEASURED_RUN)
@@ -102,7 +102,7 @@ def answered(
                 name_of(query), "completed", candidate, baseline, status, direction="lower_is_worse"
             )
         )
-        explained.add(query)
+        explained[query] = {side for side, side_failed in failed.items() if query in side_failed}
     return findings, explained
 
 
@@ -136,14 +136,14 @@ def judge(
         for query, base_row in base.items():
             b = base_row.get(column)
             if b is None:
-                if query not in explained:
+                if "base" not in explained.get(query, ()):
                     no_baseline.append(query)
                 continue
             c = pr.get(query, metrics.Row()).get(column)
             if c is None:
-                # An explained query has no reading on the side that failed; a pair
-                # that both sides did read is still compared.
-                if query not in explained:
+                # A failed side has no reading to excuse; a missing reading on the
+                # side that did not fail is still an error, and a pair both read is compared.
+                if "pr" not in explained.get(query, ()):
                     unmeasured.append(query)
                 continue
             moved = {kit.crossed(c, b, threshold, floor) for threshold, floor in tiers}

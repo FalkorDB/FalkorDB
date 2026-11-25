@@ -949,6 +949,7 @@ def test_a_regression_with_no_finding_cannot_be_waived():
         ({"max_ratio": 1.35}, "instructions", 1.36, False),  # the row got worse again
         ({"max_ratio": 1.35}, "instructions", None, False),  # no ratio to bound
         ({"metric": "instructions", "max_ratio": 1.35}, "instructions", 1.35, True),
+        ({"max_ratio": 1.5}, "instructions", 0.7, True),  # higher-is-worse: a faster row
     ],
 )
 def test_a_waiver_can_name_its_metric_and_bound_its_ratio(extra, metric, ratio, waived):
@@ -2067,7 +2068,7 @@ def test_without_the_failed_records_the_same_rows_are_unmeasured():
 
 def test_a_query_failed_on_one_side_and_unmeasured_on_the_other_stays_unmeasured():
     findings, explained = cov_gate.answered({"pr": {}, "base": {}}, {"pr": {"x": "e"}})
-    assert (findings, explained) == ([], set())
+    assert (findings, explained) == ([], {})
 
 
 def test_cov_gate_end_to_end_with_failed_queries(tmp_path):
@@ -2152,3 +2153,22 @@ def test_cov_gate_does_not_call_a_failed_measured_run_unsupported():
     findings, errors = cov_gate.judge(sources, failed)
     assert findings == []
     assert any("failed their measured run: reduce" in e for e in errors)
+
+
+@pytest.mark.parametrize(
+    "ratio, waived",
+    [(0.7, True), (0.5, False), (0.1, False), (0.0, False), (0.67, True)],
+)
+def test_a_max_ratio_bounds_a_lower_is_worse_row_in_the_worse_direction(ratio, waived):
+    row = {**finding("cross product filter [reads]", metric="throughput"), "ratio": ratio}
+    row["direction"] = "lower_is_worse"
+    night = red_night({"check": "micro-hw", "verdict": "regression", "findings": [row]})
+    assert decide(night, {**waiver(), "max_ratio": 1.5})[0] == (0 if waived else 1)
+
+
+def test_a_failure_on_one_side_does_not_excuse_a_missing_reading_on_the_other():
+    # `x` failed on the base only; the PR's callgrind run dropped it. The base
+    # has an instruction row, so the PR's missing one must not pass quietly.
+    sources = cov_sources({"y": 1.0}, {"x": 5000.0, "y": 1.0}, {"x": 1.0}, {})
+    _, errors = cov_gate.judge(sources, {"base": {"x": "timed out"}})
+    assert any("measured on base, not on pr" in e and "x" in e for e in errors)
