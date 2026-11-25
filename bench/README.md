@@ -232,15 +232,15 @@ namespace from `add_args`, or `types.SimpleNamespace(**kwargs)` in a click comma
 * Flags: `add_args(parser)`; `input_errors(args) -> [str]` (an image that is not
   pinned by digest, a bad commit, a label that is not one line, an unknown mode);
   `side(args, "candidate")`; `default_label(image)`; `out_dir(out) -> Path`
-  (absolute path, `raw/` created); `machine()` (`$PERF_MACHINE_JSON`, else this
-  host as `local`); `utc_now()`.
+  (absolute path, `raw/` created); `machine()` (the four fields of a well-formed
+  `$PERF_MACHINE_JSON`, else this host as `local`); `utc_now()`.
 * Findings: `finding(name, metric, candidate, baseline, status, *, direction,
   threshold, ratio)` (it computes the ratio and turns NaN into null);
   `correctness_status(candidate, baseline)` (the 0/1 rule);
   `crossed(candidate, baseline, threshold, floor, direction) -> +1 | -1 | 0`.
   A row crosses when worse/better > threshold *and* the difference > floor, both
   strict. `floor` is required: with a zero baseline the ratio is infinite, so the
-  floor alone decides.
+  floor alone decides. A missing, negative or non-finite value never crosses.
 * Result: `select(findings)` keeps regressions, improvements, then at most 10
   info rows, 50 in all, in the order given. `ok` rows stay in `raw/rows.csv`; a
   status the contract does not know raises. `verdict(findings, errors)` is
@@ -272,8 +272,9 @@ namespace from `add_args`, or `types.SimpleNamespace(**kwargs)` in a click comma
   * `host_network` takes the server's own port, which must not be 6379 or
     already be in use. `foreground` keeps `docker run` as a child process.
   * `ping(port)` and `wait_ping(port, timeout_s, container)`: one PING each
-    time, never re-sent. The wait stops early once the container is no longer
-    running.
+    time, never re-sent. The wait keeps to its timeout and stops early once the
+    container is no longer running. A foreground `docker run` that docker itself
+    refused (exit 125) raises `DockerError`: no server ran.
   * `logs(name, tail)` (stdout and stderr interleaved), `state(name)`
     (`running`, `exited 139`, `gone`), `host_pid(name)`, `remove(*names)` and
     `remove_labelled("key=value")`.

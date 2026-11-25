@@ -110,11 +110,11 @@ def machine() -> dict:
     if path:
         try:
             value = json.loads(Path(path).read_text())
-            if isinstance(value, dict) and all(value.get(k) for k in MACHINE_FIELDS):
-                return value
-            raise ValueError(f"not a machine object with {', '.join(MACHINE_FIELDS)}")
+            if _is_machine(value):
+                return {k: value[k] for k in MACHINE_FIELDS}  # nothing else: no stray NaN
+            raise ValueError("not a machine object (runner, type, cpu as text; cores >= 1)")
         except (OSError, ValueError) as exc:
-            print(f"PERF_MACHINE_JSON {path}: {exc}; describing this host", file=sys.stderr)
+            _say(f"PERF_MACHINE_JSON {path}: {exc}; describing this host")
     cpu = ""
     try:
         if sys.platform == "darwin":
@@ -132,6 +132,15 @@ def machine() -> dict:
         "cpu": cpu or platform.processor() or platform.machine() or "unknown",
         "cores": os.cpu_count() or 1,
     }
+
+
+def _is_machine(value: Any) -> bool:
+    if not isinstance(value, dict) or not all(k in value for k in MACHINE_FIELDS):
+        return False
+    texts = [value[k] for k in MACHINE_FIELDS if k != "cores"]
+    cores = value["cores"]
+    text_ok = all(isinstance(t, str) and t.strip() for t in texts)
+    return text_ok and type(cores) is int and cores >= 1
 
 
 # --- findings, verdict, result.json -------------------------------------------
@@ -197,11 +206,12 @@ def crossed(
 ) -> int:
     """+1 worse, -1 better, 0 neither. Crossing needs both, strictly: the worse value over
     the better one > threshold, and their difference > floor (required: with a zero
-    baseline the ratio is infinite, so the floor alone decides). A missing or negative
-    value never crosses."""
+    baseline the ratio is infinite, so the floor alone decides). A missing, negative or
+    non-finite value never crosses (finding() writes it as null)."""
     if direction not in ("higher_is_worse", "lower_is_worse"):
         raise ValueError(f"crossed() compares magnitudes, not direction {direction!r}")
-    if candidate is None or baseline is None or candidate < 0 or baseline < 0:
+    values = (candidate, baseline)
+    if any(v is None or not math.isfinite(v) or v < 0 for v in values):
         return 0
     worse, better = candidate, baseline
     if direction == "lower_is_worse":
@@ -316,7 +326,7 @@ def _on_stop_signal(signum: int, _frame: object) -> None:
 
 
 def _say(text: str) -> None:
-    with contextlib.suppress(OSError):  # a closed stderr (`| tee`, ^C) must not stop the write
+    with contextlib.suppress(OSError, ValueError):  # a broken or closed stderr must not stop it
         print(text, end="" if text.endswith("\n") or not text else "\n", file=sys.stderr)
 
 
@@ -355,7 +365,7 @@ def run_check(
                 work()
             except Stopped:
                 pass  # _stopped says why
-            except BaseException as exc:  # a crash or a sys.exit: still a result.json
+            except (Exception, SystemExit, KeyboardInterrupt) as exc:  # still a result.json
                 error = f"the check crashed: {type(exc).__name__}: {exc}"
                 trace = traceback.format_exc()
             if on_main:
@@ -371,7 +381,7 @@ def run_check(
                 raise TypeError(f"build() returned {type(value).__name__}, not a result")
             if error and value.get("verdict") == "pass":  # build() dropped the error
                 value = error_result(check, args, started, error)
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:  # a sys.exit in build() too
             _say(traceback.format_exc())
             why = f"building the result failed: {type(exc).__name__}: {exc}"
             value = error_result(check, args, started, f"{error}; {why}" if error else why)
@@ -386,7 +396,7 @@ def run_check(
         if cleanup is not None:
             try:
                 cleanup()
-            except BaseException as exc:  # the result is written: say what may be left behind
+            except (Exception, SystemExit, KeyboardInterrupt) as exc:  # result is written
                 _say(f"cleanup failed: {type(exc).__name__}: {exc}")
         for signum, handler in previous.items():
             signal.signal(signum, signal.SIG_DFL if handler is None else handler)
@@ -516,7 +526,7 @@ def start(
                 raise DockerError(f"no host port for {name}:{port} in {text!r}")
             container.port = int(ports[0])
         return container
-    except BaseException as exc:  # Stopped too: the container may exist, and nobody holds it
+    except (Exception, Stopped) as exc:  # the container may exist, and nobody holds it yet
         died = False
         try:  # a Stopped landing in here still removes the container
             died = isinstance(exc, DockerError) and _ended(container, gone=False)
@@ -541,25 +551,36 @@ def _remove_quietly(name: str) -> None:
         remove(name)
 
 
-def _ended(container: Container, gone: bool = True) -> bool:
+def _ended(container: Container, gone: bool = True, timeout: float = 60.0) -> bool:
     """Whether the server has stopped: its `docker run` exited (foreground), or its
-    container exited, died or (`gone`) was removed, as with --rm. Unknown is False."""
+    container exited, died or (`gone`) was removed, as with --rm. Unknown is False.
+    A foreground `docker run` that docker itself refused (exit 125) raises DockerError:
+    no server ran, so it is not a server that stopped."""
     if container.proc is not None:
-        return container.proc.poll() is not None
+        code = container.proc.poll()
+        if code == 125:
+            raise DockerError(f"docker run {container.name} failed (exit 125): no server started")
+        return code is not None
+    ends = ("exited", "dead", *(["gone"] if gone else []))
     try:
-        return state(container.name).startswith(("exited", "dead", *(["gone"] if gone else [])))
+        return state(container.name, timeout).startswith(ends)
     except DockerError:
         return False  # inspect failed: says nothing about the server
 
 
 def ping(port: int, timeout: float = 5.0) -> bool:
-    """One PING to 127.0.0.1:port, never re-sent. False on anything but +PONG
-    (refused, timeout, LOADING)."""
+    """One PING to 127.0.0.1:port, never re-sent, all within `timeout`. False on
+    anything but +PONG (refused, timeout, LOADING, a reply that never ends)."""
+    deadline = time.monotonic() + timeout
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
             sock.sendall(b"*1\r\n$4\r\nPING\r\n")
             reply = b""
-            while not reply.endswith(b"\r\n"):
+            while not reply.endswith(b"\r\n") and len(reply) < 64:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                sock.settimeout(left)
                 chunk = sock.recv(64)
                 if not chunk:
                     return False
@@ -571,16 +592,18 @@ def ping(port: int, timeout: float = 5.0) -> bool:
 
 def wait_ping(port: int, timeout_s: float = 120.0, container: Container | None = None) -> bool:
     """PING every 0.5 s until +PONG (True) or timeout_s (False). With `container`, a
-    server that stopped ends the wait at once."""
+    server that stopped ends the wait at once; a foreground `docker run` that docker
+    refused raises DockerError. Every step, `docker inspect` included, keeps to timeout_s."""
     deadline = time.monotonic() + timeout_s
     while True:
         if ping(port, timeout=max(0.1, min(5.0, deadline - time.monotonic()))):
             return True
-        if container is not None and _ended(container):
+        left = deadline - time.monotonic()
+        if container is not None and left > 0 and _ended(container, timeout=max(0.5, left)):
             return False
         if time.monotonic() >= deadline:
             return False
-        time.sleep(0.5)
+        time.sleep(max(0.0, min(0.5, deadline - time.monotonic())))
 
 
 def logs(name: str, tail: int | None = None) -> str:
@@ -590,11 +613,11 @@ def logs(name: str, tail: int | None = None) -> str:
     return _ok(proc, f"docker logs {name}")
 
 
-def state(name: str) -> str:
+def state(name: str, timeout: float = 60.0) -> str:
     """`running`, how it ended (`exited 139`, `exited 137 (OOM-killed)`), or `gone`.
     A docker that does not answer raises DockerError: it says nothing about the server."""
     fmt = "{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}}"
-    proc = _docker("inspect", "--type", "container", "--format", fmt, name, timeout=60)
+    proc = _docker("inspect", "--type", "container", "--format", fmt, name, timeout=timeout)
     if proc.returncode != 0 and _no_such_container(proc):
         return "gone"
     status, code, oom = [*_ok(proc, f"docker inspect {name}").split(), "", "", ""][:3]
@@ -622,8 +645,9 @@ def remove(*names: str) -> None:
     if not names:
         return
     proc = _docker("rm", "--force", "--volumes", *names, timeout=300)
-    failed = [ln for ln in proc.stderr.splitlines() if "no such container" not in ln.lower()]
-    if proc.returncode != 0 and any(ln.strip() for ln in failed):
+    said = [ln for ln in proc.stderr.splitlines() if ln.strip()]
+    only_gone = bool(said) and all("no such container" in ln.lower() for ln in said)
+    if proc.returncode != 0 and not only_gone:  # a silent failure is a failure too
         _ok(proc, f"docker rm {' '.join(names)}")
 
 

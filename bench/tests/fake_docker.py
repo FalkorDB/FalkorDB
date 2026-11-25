@@ -15,6 +15,7 @@ Environment:
   FAKE_DOCKER_NO_PORT       `docker port` prints nothing
   FAKE_DOCKER_LOADING_S     the server answers -LOADING for this many seconds
   FAKE_DOCKER_INSPECT_DOWN  `docker inspect` cannot reach the daemon
+  FAKE_DOCKER_INSPECT_HANG  `docker inspect` answers only after this many seconds
   FAKE_DOCKER_ENV           JSON list `docker image inspect` reports as Config.Env
 """
 
@@ -157,6 +158,8 @@ def main(argv: list[str]) -> int:
                 os.kill(json.loads(record(name).read_text())["pid"], signal.SIGKILL)
             record(name).unlink()
         return code
+    if cmd == "inspect" and knob("INSPECT_HANG") != NEVER:
+        time.sleep(float(knob("INSPECT_HANG")))
     if cmd == "inspect" and knob("INSPECT_DOWN") != NEVER:
         print("Cannot connect to the Docker daemon. Is the docker daemon running?", file=sys.stderr)
         return 1

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import io
 import json
 import math
 import os
@@ -167,13 +168,28 @@ def test_utc_now_is_a_contract_timestamp():
 
 def test_machine_copies_perf_machine_json(tmp_path, monkeypatch):
     vm = {"runner": "gce", "type": "n4-standard-16", "cpu": "INTEL(R) XEON(R)", "cores": 16}
-    (tmp_path / "machine.json").write_text(json.dumps(vm))
+    (tmp_path / "machine.json").write_text(json.dumps({**vm, "zone": math.nan}))
     monkeypatch.setenv("PERF_MACHINE_JSON", str(tmp_path / "machine.json"))
-    assert kit.machine() == vm
+    assert kit.machine() == vm  # only the contract's four fields: a stray NaN stays out
+
+
+VM = '"runner": "gce", "type": "n4-standard-16", "cpu": "x"'
 
 
 @pytest.mark.parametrize(
-    "content", [None, "{not json", '["a list"]', '{"type": "no runner"}', '{"runner": "gce"}']
+    "content",
+    [
+        None,
+        "{not json",
+        '["a list"]',
+        '{"type": "no runner"}',
+        '{"runner": "gce"}',
+        "{" + VM + ', "cores": "16"}',
+        "{" + VM + ', "cores": true}',
+        "{" + VM + ', "cores": NaN}',
+        "{" + VM + ', "cores": 0}',
+        '{"runner": "gce", "type": " ", "cpu": "x", "cores": 16}',
+    ],
 )
 def test_machine_describes_this_host_when_perf_machine_json_is_unusable(
     tmp_path, monkeypatch, capsys, content
@@ -257,6 +273,8 @@ def test_correctness_status(tmp_path, candidate, baseline, status):
         (None, 1.0, 2.0, 0.0, "higher_is_worse", 0),
         (5.0, -1.0, 2.0, 0.0, "higher_is_worse", 0),
         (math.nan, 1.0, 2.0, 0.0, "higher_is_worse", 0),
+        (math.inf, 1.0, 2.0, 0.0, "higher_is_worse", 0),  # finding() writes it as null
+        (1.0, math.inf, 2.0, 0.0, "lower_is_worse", 0),
     ],
 )
 def test_crossed_is_strict_on_ratio_and_floor(
@@ -573,22 +591,31 @@ def test_a_stop_the_check_swallows_is_still_a_stop(tmp_path, sentinel):
         try:
             os.kill(os.getpid(), signal.SIGTERM)
             time.sleep(5)
-        except BaseException:  # a bare except in the check (or Python's in a __del__)
+        except kit.Stopped:  # as a bare except in the check (or Python's in a __del__) would
             pass
 
     res = kit.run_check("pokec", args, work, builder(tmp_path, args, [], seen))
     assert seen["error"].startswith("stopped by signal 15") and res["verdict"] == "error"
 
 
-def test_a_closed_stderr_cannot_stop_the_write(tmp_path, monkeypatch):
-    class Closed:
-        def write(self, _text):
-            raise BrokenPipeError(32, "Broken pipe")
+class BrokenPipe:
+    def write(self, _text):
+        raise BrokenPipeError(32, "Broken pipe")
 
-        def flush(self):
-            raise BrokenPipeError(32, "Broken pipe")
+    def flush(self):
+        raise BrokenPipeError(32, "Broken pipe")
 
-    monkeypatch.setattr(sys, "stderr", Closed())
+
+def closed_stream():
+    stream = io.StringIO()
+    stream.close()  # writing raises ValueError, not OSError
+    return stream
+
+
+@pytest.mark.parametrize("stderr", [BrokenPipe, closed_stream], ids=["broken-pipe", "closed"])
+def test_a_broken_or_closed_stderr_cannot_stop_the_write(tmp_path, monkeypatch, stderr):
+    monkeypatch.setattr(sys, "stderr", stderr())
+    monkeypatch.setenv("PERF_MACHINE_JSON", str(tmp_path / "missing.json"))  # warns, too
     args = make_args(tmp_path)
 
     def work():
@@ -613,6 +640,15 @@ def test_a_cleanup_that_exits_still_restores_the_handlers(tmp_path, sentinel):
     res = kit.run_check("pokec", args, lambda: None, builder(tmp_path, args, [], {}), cleanup)
     assert res["verdict"] == "pass"
     assert all(signal.getsignal(s) is sentinel for s in kit.STOP_SIGNALS)
+
+
+def test_a_sys_exit_in_build_still_ends_in_a_result(tmp_path):
+    def build(error):
+        sys.exit(4)
+
+    res = kit.run_check("pokec", make_args(tmp_path), lambda: None, build)
+    assert res == read_result(tmp_path)
+    assert res["error"] == "building the result failed: SystemExit: 4"
 
 
 def test_a_build_that_returns_nothing_is_an_error(tmp_path):
@@ -821,6 +857,14 @@ def test_a_foreground_server_on_the_host_network(docker, tmp_path):
     assert server.proc.wait(10) != 0  # the `docker run` child ends with its container
 
 
+def test_a_foreground_run_docker_refused_is_a_docker_error_not_a_dead_server(docker, monkeypatch):
+    monkeypatch.setenv("FAKE_DOCKER_REFUSE", "kit-")
+    port = free_port()
+    server = kit.start(MAIN, "kit-fg", port=port, host_network=True, foreground=True)
+    with pytest.raises(kit.DockerError, match=r"exit 125"):
+        kit.wait_ping(port, 10, server)
+
+
 def test_a_foreground_server_needs_the_host_network_and_never_6379(docker):
     with pytest.raises(ValueError, match="needs host_network"):
         kit.start(MAIN, "kit-fg", foreground=True)
@@ -843,6 +887,20 @@ def test_a_stop_while_start_handles_a_failure_still_removes_the_container(docker
         raise kit.Stopped("stopped by signal 15 (SIGTERM)")
 
     monkeypatch.setattr(kit, "_ended", stopped_here)
+    with pytest.raises(kit.Stopped):
+        kit.start(MAIN, "kit-a")
+    assert not list(docker.glob("*.json"))
+
+
+def test_a_stop_during_start_removes_the_container(docker, monkeypatch):
+    real = kit._docker
+
+    def stopped_at_port(*argv, **kwargs):
+        if argv[0] == "port":
+            raise kit.Stopped("stopped by signal 15 (SIGTERM)")
+        return real(*argv, **kwargs)
+
+    monkeypatch.setattr(kit, "_docker", stopped_at_port)
     with pytest.raises(kit.Stopped):
         kit.start(MAIN, "kit-a")
     assert not list(docker.glob("*.json"))
@@ -920,6 +978,14 @@ def test_a_docker_that_does_not_answer_is_not_a_dead_server(docker, monkeypatch)
     assert time.monotonic() - started >= 1.4  # inspect failing did not end the wait early
 
 
+def test_wait_ping_keeps_its_budget_while_docker_inspect_hangs(docker, monkeypatch):
+    server = kit.start(V621, "kit-a")
+    monkeypatch.setenv("FAKE_DOCKER_INSPECT_HANG", "10")
+    started = time.monotonic()
+    assert not kit.wait_ping(free_port(), 1.0, server)
+    assert time.monotonic() - started < 3
+
+
 def test_wait_ping_waits_out_loading(docker, monkeypatch):
     monkeypatch.setenv("FAKE_DOCKER_LOADING_S", "3")
     server = kit.start(V621, "kit-a")
@@ -958,6 +1024,30 @@ def test_ping_is_one_request_and_false_on_a_closed_connection():
         thread.join()
 
 
+def test_ping_keeps_one_deadline_against_a_reply_that_never_ends():
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port, done = listener.getsockname()[1], threading.Event()
+
+        def trickle():
+            connection, _ = listener.accept()
+            with connection, contextlib.suppress(OSError):
+                connection.recv(64)
+                t0 = time.monotonic()  # one byte at a time, never a line end (for 5 s)
+                while not done.is_set() and time.monotonic() - t0 < 5:
+                    connection.sendall(b"+")
+                    time.sleep(0.2)
+
+        thread = threading.Thread(target=trickle)
+        thread.start()
+        started = time.monotonic()
+        assert not kit.ping(port, timeout=1.0)
+        assert time.monotonic() - started < 2
+        done.set()
+        thread.join()
+
+
 def test_remove_tolerates_a_container_that_is_gone(docker):
     kit.remove("never-started")
     kit.remove()
@@ -972,6 +1062,14 @@ def test_remove_labelled_removes_only_its_run(docker):
     assert sorted(p.stem for p in docker.glob("*.json")) == ["kit-other"]
     kit.remove_labelled("perf-kit=run-1")  # nothing left: no docker rm at all
     assert calls(docker, "rm")[-1] == ["rm", "--force", "--volumes", "kit-mine-1", "kit-mine-2"]
+
+
+def test_a_silent_docker_rm_failure_is_a_failure(monkeypatch):
+    monkeypatch.setattr(
+        kit, "_docker", lambda *argv, **kw: subprocess.CompletedProcess(argv, 137, "", "")
+    )
+    with pytest.raises(kit.DockerError, match=r"docker rm kit-a failed \(exit 137\)"):
+        kit.remove("kit-a")
 
 
 def test_docker_that_cannot_be_started_is_a_docker_error(monkeypatch):
