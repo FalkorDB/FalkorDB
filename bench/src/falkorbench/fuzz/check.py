@@ -206,6 +206,15 @@ def build_phase(opts, info, run: Run, scale) -> list[dict]:
     return runs
 
 
+def unconfirmed_builds(notes: list[str]) -> list[str]:
+    """A build timing that crossed but whose confirming repeat did not run is unmeasured."""
+    return [
+        f"{n.split(':')[0]}: the confirming repeat was not measured"
+        for n in notes
+        if "no repeat ran" in n
+    ]
+
+
 def build_crash_finding(runs) -> dict | None:
     """A server that died during a build run: completed 0 (a crash is a regression at once). A side
     is 1 only if one of its builds finished, and unknown (null) if none died and none finished."""
@@ -606,6 +615,7 @@ class Check:
             for f in bf:
                 if f["candidate"] is None or f["baseline"] is None:
                     run.unmeasured.append(f"{f['name']}: not measured on both sides")
+            run.unmeasured += unconfirmed_builds(notes)
             crash = build_crash_finding(bruns)
             if crash:
                 self.findings.append(crash)

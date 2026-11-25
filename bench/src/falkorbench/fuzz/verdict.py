@@ -209,7 +209,7 @@ def build_findings(runs: list[dict]) -> tuple[list[dict], list[str]]:
             again = crosses(ce, be, floor) > 0 if has_extra else False
             status = "regression" if again else "info"
             notes.append(
-                f"{name}: {c1:.0f} vs {b1:.0f} ms ({c1 / b1:.2f}x)"
+                f"{name}: {c1:.0f} vs {b1:.0f} ms" + (f" ({c1 / b1:.2f}x)" if b1 else "")
                 + (
                     f", repeat {ce:.0f} vs {be:.0f} ms"
                     if has_extra and ce and be

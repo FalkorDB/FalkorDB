@@ -1587,3 +1587,12 @@ def test_replies_are_parsed_by_hiredis():
     """The full scan returns ~100k rows; the pure-Python parser would add seconds to each. The
     fuzz group installs hiredis, and redis-py 8.1 uses only 3.2 or later."""
     assert redis.utils.HIREDIS_AVAILABLE
+
+
+def test_a_crossing_whose_repeat_did_not_run_is_unmeasured_and_a_zero_baseline_does_not_divide():
+    runs = [_build(s, i, 100.0 if s == "baseline" else 4000.0) for i, s in enumerate(check.FIRST_ORDER)]
+    runs += [{"side": "baseline", "index": 4, "extra": True, "ok": False}]
+    notes = verdict.build_findings(runs)[1]
+    assert check.unconfirmed_builds(notes) == ["build edge phase: the confirming repeat was not measured"]
+    zero = [_build(s, i, 0.0 if s == "baseline" else 4000.0) for i, s in enumerate(check.FIRST_ORDER)]
+    assert verdict.build_findings(zero)[1]  # no ZeroDivisionError
