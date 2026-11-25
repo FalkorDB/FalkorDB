@@ -926,11 +926,15 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                         info = r.info("persistence")
                         if not info.get("rdb_bgsave_in_progress") or stop.wait(0.5):
                             break
-                    ev(
-                        "bgsave_done",
-                        seconds=round(now() - t0, 1),
-                        status=info.get("rdb_last_bgsave_status"),
-                    )
+                    status = info.get("rdb_last_bgsave_status")
+                    if status == "ok":
+                        ev("bgsave_done", seconds=round(now() - t0, 1), status=status)
+                    else:  # a failed save is a persistence failure, not a completion
+                        ev(
+                            "bgsave_error",
+                            msg=f"rdb_last_bgsave_status={status}"[:200],
+                            seconds=round(now() - t0, 1),
+                        )
                 except Exception as e:
                     ev("bgsave_error", msg=str(e)[:200])
     except Exception as e:
@@ -962,11 +966,28 @@ def drop_index(r, g, label, props, notes):
             notes.append(f"g{g} drop index {label}.{p_}: {str(e)[:120]}")
 
 
+def probed_indexes(r, g) -> list[tuple[str, str]]:
+    """(label, property) of the operational indexes graph g holds that cover the probe property:
+    the indexes the epoch actually installed (index epochs and constraint backing indexes alike)."""
+    out = []
+    for row in r.execute_command("GRAPH.RO_QUERY", gname(g), "CALL db.indexes()")[1]:
+        if any("UNDER CONSTRUCTION" in s(x) for x in row if isinstance(x, (bytes, str))):
+            continue
+        if model.PROBE_PROPERTY in [s(p_) for p_ in row[1]] and s(row[0]) in model.COUNTS:
+            out.append((s(row[0]), model.PROBE_PROPERTY))
+    return out
+
+
 def index_vs_scan(r, ng, sizes, seed) -> list[str]:
+    """Index lookups against scans on the indexes each graph holds. A graph with none to probe
+    raises: a scan agreeing with a scan is no evidence, so the comparison is unmeasured."""
     rng = random.Random(f"{seed}-ivs")
     problems = []
     for g in range(ng):
-        for label, prop in model.INDEX_PROBES:
+        probes = probed_indexes(r, g)
+        if not probes:
+            raise RuntimeError(f"g{g} has no operational index to probe")
+        for label, prop in probes:
             for _ in range(5):
                 v = rng.randrange(sizes[g][label])
                 a = r.execute_command(

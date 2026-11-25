@@ -810,6 +810,8 @@ def test_a_failed_index_comparison_is_unmeasured_and_keeps_the_count(monkeypatch
             q = a[2]
             if "+ 0 =" in q:  # the comparison's scan
                 raise ConnectionError("the comparison failed")
+            if "CALL db.indexes()" in q:
+                return [[], [[b"L0", [b"k"], {}, {}, {}, {}, b"NODE", b"OPERATIONAL"]]]
             if "CALL db." in q or "DROP" in q:
                 return [[], []]
             return [[], [[0]]]  # every count 0: the graph lost its nodes
@@ -1308,6 +1310,9 @@ LONG_CASES = [  # (id, hours, check, (candidate, baseline, status), something un
                                          _hour("baseline", {"x-h1-e1": {}})],
      "server_stays_up", (0, None, "regression"), True),
     ("lone seeds that held", [_hour("candidate", {"x-h1-e1": {}})], "writes_add_up", (1, None, "info"), True),
+    ("data check unmeasured on the candidate, held on the baseline",
+     [_hour("candidate", {"x-h1-e1": {"writes_add_up": None}}), _hour("baseline", {"x-h1-e1": {}})],
+     "writes_add_up", (None, 1, "info"), True),
     ("a seed the candidate did not measure", [_hour("candidate", {"x-h1-e1": {"no_freeze": None}}),
                                               _hour("baseline", {"x-h1-e1": {}})],
      "no_freeze", (None, 1, "info"), True),
@@ -1596,3 +1601,54 @@ def test_a_crossing_whose_repeat_did_not_run_is_unmeasured_and_a_zero_baseline_d
     assert check.unconfirmed_builds(notes) == ["build edge phase: the confirming repeat was not measured"]
     zero = [_build(s, i, 0.0 if s == "baseline" else 4000.0) for i, s in enumerate(check.FIRST_ORDER)]
     assert verdict.build_findings(zero)[1]  # no ZeroDivisionError
+
+
+def test_index_probes_follow_the_indexes_the_epoch_installed():
+    """A constraint epoch indexes L9-L13: the comparison probes those, not fixed labels, and a graph
+    with no operational index to probe is unmeasured (it raises), never a scan agreeing with a scan."""
+    asked, rows = [], []
+
+    class Conn:
+        def execute_command(self, *a):
+            q = a[2]
+            if "CALL db.indexes()" in q:
+                return [[], rows]
+            asked.append(q)
+            return [[], [[1]]]
+
+    n = model.label_sizes(0.01)
+    rows[:] = [[b"L9", [b"k", b"g"], {}, {}, {}, {}, b"NODE", b"OPERATIONAL"],
+               [b"L11", [b"k"], {}, {}, {}, {}, b"NODE", b"UNDER CONSTRUCTION"]]
+    assert harness.index_vs_scan(Conn(), 1, [n], "s") == []
+    assert asked and all("(n:L9" in q or "n:L9)" in q for q in asked)
+    rows.clear()
+    with pytest.raises(RuntimeError, match="no operational index"):
+        harness.index_vs_scan(Conn(), 1, [n], "s")
+
+
+def test_a_failed_background_save_is_recorded_as_failed(monkeypatch):
+    class Conn:
+        def execute_command(self, *a):
+            return "Background saving started"
+
+        def info(self, section):
+            return {"rdb_bgsave_in_progress": 0, "rdb_last_bgsave_status": status["v"]}
+
+        def close(self):
+            pass
+
+    status = {"v": "err"}
+    for want in ("bgsave_error", "bgsave_done"):
+        events = []
+        ep = {**model.control_params((0.01,))[1], "indexes": False, "constraints": False, "bgsave": True}
+        monkeypatch.setattr(harness, "connect", lambda *a, **k: Conn())
+        harness.epoch_events(1, 0.01, ep, 1, threading.Event(), events, time.monotonic(), {})
+        assert [e["event"] for e in events] == [want]
+        status["v"] = "ok"
+
+
+def test_a_repeat_that_measured_zero_is_not_unmeasured():
+    runs = [_build(s, i, 100.0 if s == "baseline" else 4000.0) for i, s in enumerate(check.FIRST_ORDER)]
+    runs += [_build("baseline", 4, 1.0, True), _build("candidate", 5, 0.0, True)]
+    notes = verdict.build_findings(runs)[1]
+    assert not any("no repeat ran" in n for n in notes) and check.unconfirmed_builds(notes) == []

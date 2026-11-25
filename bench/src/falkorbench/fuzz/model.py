@@ -96,8 +96,8 @@ CONSTRAINTS = (
     ("L12", ("k", "g")),
     (SINGLE, ("k",)),
 )
-#: (label, property) pairs whose index lookups must match a scan
-INDEX_PROBES = ((FILTERED, "k"), (WIDE, "k"), (HUB, "k"))
+#: the property whose index lookups must match a scan, on every index the epoch installed
+PROBE_PROPERTY = "k"
 
 
 def label_sizes(scale: float) -> dict:

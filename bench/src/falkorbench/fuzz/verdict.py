@@ -212,7 +212,7 @@ def build_findings(runs: list[dict]) -> tuple[list[dict], list[str]]:
                 f"{name}: {c1:.0f} vs {b1:.0f} ms" + (f" ({c1 / b1:.2f}x)" if b1 else "")
                 + (
                     f", repeat {ce:.0f} vs {be:.0f} ms"
-                    if has_extra and ce and be
+                    if has_extra and ce is not None and be is not None
                     else ", no repeat ran"
                 )
                 + ("" if again else ", not repeated")

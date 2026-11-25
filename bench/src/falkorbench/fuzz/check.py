@@ -467,8 +467,9 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
                 cand, base = 0, 0
             elif any(b is False and c is True for c, b in seen):
                 cand, base = 1, 0
-            else:
-                cand, base = 1, 1
+            else:  # held only on a side that measured: a side with a None has no evidence of a hold
+                cand = None if any(c is None for c, _ in seen) else 1
+                base = None if any(b is None for _, b in seen) else 1
         else:
             sus = _seeds_where(hours, chk)
             cand, base = _long_timing(chk, vals, sus, c_rep, b_rep)
