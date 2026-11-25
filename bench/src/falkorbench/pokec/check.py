@@ -16,6 +16,7 @@ import csv
 import gzip
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -820,7 +821,8 @@ def parse_prom(text: str) -> list[tuple[str, dict[str, str], float]]:
             value = float(match.group(3))
         except ValueError:
             continue
-        samples.append((match.group(1), labels, value))
+        if math.isfinite(value):  # NaN/Inf from the exporter is no measurement
+            samples.append((match.group(1), labels, value))
     return samples
 
 
@@ -1321,7 +1323,7 @@ def analyse(
             rounded(base),
             "higher_is_worse",
             status,
-            PING_LIMIT_MS,
+            RATIO_THRESHOLD,  # the ratio the freeze must pass; the 1 s limit is in the rule (README)
             8.0 if status == "regression" else 0.5,
             detail=f"candidate froze (>1 s) in {froze} of {len(values['candidate'])} runs, "
             f"baseline in {base_froze} of {len(values['baseline'])}",
@@ -1942,7 +1944,10 @@ class Check:
             self.info,
             self.rerun_done | {(r.dataset, r.workload) for r in self.runs},
         )
-        self.write_tables(analysis)
+        try:
+            self.write_tables(analysis)
+        except OSError as exc:  # raw/ is evidence; result.json (with the findings) is what counts
+            self.log(f"could not write the raw tables: {exc}")
         errors = [e for e in (error, self.error) if e]
         if not self.runs:
             errors.append("no benchmark run was made")

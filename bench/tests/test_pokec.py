@@ -1161,3 +1161,35 @@ def test_a_re_run_with_one_unmeasured_run_does_not_confirm():
     analysis = analyse(runs, rerun_done={("medium", "read")})
     assert not statuses(analysis, "regression")  # one measured re-run run is not the re-run
     assert any("single_vertex_read [read-only] p99_ms" in u for u in analysis.unmeasured)
+
+
+# --- bot review of f0cbf018a ---------------------------------------------------------
+
+
+def test_a_raw_table_that_cannot_be_written_keeps_the_regression(tmp_path):
+    check = make_check(tmp_path)
+    hung = {
+        "finished": False,
+        "ping": 5100.0,
+        "errors": {THREE_HOP: {"timeouts": 30, "failures": 0}},
+    }
+    check.runs = pass_runs(1, 3, candidate=hung)
+    (check.raw / "rows.csv").mkdir()  # cannot be opened as a file
+    result = check.build()
+    assert result["verdict"] == "regression" and result["findings"]
+    assert "raw/rows.csv" not in result["artifacts"]
+
+
+def test_the_ping_finding_s_threshold_is_the_ratio_it_must_pass():
+    analysis = analyse(pass_runs(1, 3, candidate={"finished": False, "ping": 30000.0}))
+    finding = next(f for f in analysis.findings if f["metric"] == "ping_max_ms")
+    assert finding["status"] == "regression" and finding["threshold"] == pokec.RATIO_THRESHOLD
+
+
+def test_non_finite_exporter_values_are_not_measurements():
+    metrics = pokec.parse_metrics(
+        'falkordb_query_latency_pct_us{pct="99",query="q"} +Inf\n'
+        'falkordb_query_latency_pct_us{pct="50",query="q"} 400\n'
+        "falkordb_latency_p99_us NaN\n"
+    )
+    assert metrics["per_query"] == {"q": {"p50_ms": 0.4}} and "p99_ms" not in metrics["overall"]
