@@ -10,6 +10,7 @@ import copy
 import html
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -487,3 +488,148 @@ def test_the_run_is_stored_only_for_runs_that_report_to_chat():
         if step.get("name") == "Record the image overrides"
     )
     assert "dispatch.json" in record and "image_overrides" in record
+
+
+# --- the publish steps, run for real against a fake gh --------------------------------
+
+FAKE_GH = r"""#!/usr/bin/env bash
+# `gh run download` lays out the plan and nightly artifacts from $FAKE_RUN; `gh api` lists
+# $FAKE_ARTIFACTS (applying --jq like the real one) and serves a zip that names its id.
+set -euo pipefail
+if [[ $1 == run ]]; then
+  dir=
+  while [[ $# -gt 0 ]]; do [[ $1 == --dir ]] && dir=$2; shift; done
+  cp -R "$FAKE_RUN"/. "$dir"/
+  exit 0
+fi
+url=$2
+if [[ $url == */zip ]]; then
+  id=$(basename "$(dirname "$url")")
+  work=$(mktemp -d); echo "$id" > "$work/result.json"
+  (cd "$work" && zip -q -r - result.json)
+  exit 0
+fi
+jqexpr=
+while [[ $# -gt 0 ]]; do [[ $1 == --jq ]] && jqexpr=$2; shift; done
+name=${url#*name=}; name=${name%%&*}
+jq --arg n "$name" ".artifacts |= map(select(.name == \$n))" "$FAKE_ARTIFACTS" | jq -r "$jqexpr"
+"""
+
+
+def publish_step(name):
+    steps = load_workflow("perf-dashboard.yml")["jobs"]["publish"]["steps"]
+    return next(step["run"] for step in steps if step.get("name") == name)
+
+
+def run_download(tmp_path, event, dispatch):
+    """Run the download step; return (stored?, results dir)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(FAKE_GH)
+    (bin_dir / "gh").chmod(0o755)
+    fake_run = tmp_path / "fake_run"
+    (fake_run / "perf-plan").mkdir(parents=True)
+    (fake_run / "perf-nightly").mkdir()
+    (fake_run / "perf-nightly" / "nightly.json").write_text(
+        json.dumps({"date": "2026-11-20", "checks": [{"check": "alpha"}, {"check": "beta"}]})
+    )
+    if dispatch is not None:
+        (fake_run / "perf-plan" / "dispatch.json").write_text(dispatch)
+    artifacts = tmp_path / "artifacts.json"
+    artifacts.write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {"id": 11, "name": "perf-result-alpha", "expired": False},
+                    {"id": 42, "name": "perf-result-alpha", "expired": False},
+                    {"id": 99, "name": "perf-result-alpha", "expired": True},
+                ]
+            }
+        )
+    )
+    temp, out = tmp_path / "temp", tmp_path / "out"
+    temp.mkdir()
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+        "RUN_ID": "7",
+        "RUN_EVENT": event,
+        "GITHUB_REPOSITORY": "o/r",
+        "GITHUB_OUTPUT": str(out),
+        "RUNNER_TEMP": str(temp),
+        "FAKE_RUN": str(fake_run),
+        "FAKE_ARTIFACTS": str(artifacts),
+    }
+    subprocess.run(
+        ["bash", "-c", publish_step("Download the night's artifacts")],
+        env=env, check=True, capture_output=True,
+    )
+    return "store=true" in out.read_text(), temp / "results"
+
+
+@pytest.mark.parametrize(
+    ("event", "dispatch", "stored"),
+    [
+        ("schedule", None, True),
+        ("workflow_dispatch", '{"image_overrides": false}', True),
+        ("workflow_dispatch", '{"image_overrides": true}', False),
+        ("workflow_dispatch", None, False),
+        ("workflow_dispatch", "not json", False),
+        ("workflow_dispatch", "{}", False),
+    ],
+)
+def test_a_dispatch_is_stored_only_when_it_records_no_image_overrides(
+    tmp_path, event, dispatch, stored
+):
+    assert run_download(tmp_path, event, dispatch)[0] is stored
+
+
+def test_a_rerun_stores_the_newest_attempts_artifact(tmp_path):
+    _, results = run_download(tmp_path, "schedule", None)
+    assert (results / "perf-result-alpha" / "result.json").read_text().strip() == "42"
+    assert not (results / "perf-result-beta").exists()
+
+
+def run_store(tmp_path, stored_run):
+    """Run the store step for a check with no artifact, against a local gh-pages remote."""
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=x"]
+    seed = tmp_path / "seed"
+    (seed / "data" / "2026-11-20-7").mkdir(parents=True)
+    for rel in stored_run:
+        (seed / "data" / "2026-11-20-7" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (seed / "data" / "2026-11-20-7" / rel).write_text("{}")
+    subprocess.run([*git, "init", "-q", "-b", "gh-pages", str(seed)], check=True)
+    subprocess.run([*git, "-C", str(seed), "add", "-A"], check=True)
+    subprocess.run([*git, "-C", str(seed), "commit", "-q", "-m", "seed"], check=True)
+    subprocess.run([*git, "-C", str(seed), "config", "receive.denyCurrentBranch", "ignore"], check=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "base64").write_text("#!/bin/sh\nexec /usr/bin/base64\n")  # no -w0 on macOS
+    (bin_dir / "uv").write_text("#!/bin/sh\nexit 0\n")  # the renderer has its own tests
+    for shim in ("base64", "uv"):
+        (bin_dir / shim).chmod(0o755)
+    temp = tmp_path / "temp"
+    (temp / "run" / "perf-nightly").mkdir(parents=True)
+    (temp / "run" / "perf-nightly" / "nightly.json").write_text(
+        json.dumps({"date": "2026-11-20", "checks": [{"check": "alpha"}]})
+    )
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+        "HOME": str(tmp_path),
+        "RUN_ID": "7", "TRIGGER": "nightly", "GH_TOKEN": "x",
+        "GITHUB_SERVER_URL": f"file://{tmp_path}", "GITHUB_REPOSITORY": "seed",
+        "GITHUB_WORKSPACE": str(tmp_path), "RUNNER_TEMP": str(temp),
+    }
+    return subprocess.run(
+        ["bash", "-c", publish_step("Store the run on gh-pages and rebuild the dashboard")],
+        env=env, capture_output=True, text=True,
+    )
+
+
+def test_a_retry_goes_through_when_the_stored_run_never_had_the_missing_check(tmp_path):
+    done = run_store(tmp_path, ["nightly.json", "run.json"])
+    assert done.returncode == 0, done.stderr
+
+
+def test_a_missing_artifact_never_deletes_a_check_the_stored_run_has(tmp_path):
+    done = run_store(tmp_path, ["nightly.json", "alpha/result.json"])
+    assert done.returncode != 0 and "not replacing" in done.stdout + done.stderr
