@@ -59,10 +59,6 @@ on:
         description: "Comma list of checks to run (micro-hw, or names in bench/checks.yaml); empty = all"
         type: string
         default: ""
-  # TEMPORARY: runs the workflow on its own PR (dispatch and schedule only work
-  # from the default branch). Removed, with every other TEMPORARY line, once the
-  # PRs below it in the stack are on main.
-  pull_request:
 
 permissions: {}
 
@@ -161,8 +157,8 @@ jobs:
             note="given by hand"
           else
             # Always main's newest image, whatever ref the run came from: a
-            # dispatch from another branch, or the TEMPORARY pull_request
-            # trigger, still measures main (and labels it main@…).
+            # dispatch from another branch, still measures main (and labels it
+            # main@…).
             git fetch --quiet --no-tags --depth="$((WALK + 5))" origin main
             tip=$(git rev-parse FETCH_HEAD)
             found=""
@@ -250,10 +246,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HISTORY: ${{ runner.temp }}/history
-          # Nightlies are scheduled runs on main. TEMPORARY: on this PR its own
-          # runs play that part.
-          HISTORY_EVENT: ${{ github.event_name == 'pull_request' && 'pull_request' || 'schedule' }}
-          HISTORY_BRANCH: ${{ github.head_ref || 'main' }}
+          # Nightlies are scheduled runs on main.
+          HISTORY_EVENT: schedule
+          HISTORY_BRANCH: main
         run: |
           set -euo pipefail
           mkdir -p "$HISTORY"
@@ -308,7 +303,6 @@ jobs:
           skip=()
           if [[ $MAY_SKIP == true ]]; then skip=(--may-skip); fi
           out=$GITHUB_OUTPUT
-          if [[ $GITHUB_EVENT_NAME == pull_request ]]; then out=$RUNNER_TEMP/context.out; fi  # TEMPORARY, below
           uv run --project bench --frozen bench nightly merge context \
             --candidate "$CANDIDATE_IMAGE" --candidate-commit "$CANDIDATE_COMMIT" --candidate-label "$CANDIDATE_LABEL" \
             --baseline "$BASELINE_IMAGE" --baseline-commit "$BASELINE_COMMIT" --baseline-label "$BASELINE_LABEL" \
@@ -317,17 +311,6 @@ jobs:
             --date "$(date -u +%F)" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --out "$RUNNER_TEMP/plan/context.json" --github-output "$out" \
             | tee -a "$GITHUB_STEP_SUMMARY"
-          # TEMPORARY (goes with the pull_request trigger): a PR push measures
-          # nothing, so it starts no C4 VM. It writes a skipped night saying why
-          # and still runs merge, the report and the run's conclusion; the
-          # acceptance runs that measured are linked from the PR.
-          if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
-            reason="pull_request run: a push to the PR measures nothing (no C4 VM per push); the acceptance runs are linked from the PR"
-            jq --arg reason "$reason" '.skip_reason = $reason' "$RUNNER_TEMP/plan/context.json" > "$RUNNER_TEMP/context.json"
-            mv "$RUNNER_TEMP/context.json" "$RUNNER_TEMP/plan/context.json"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "skip (pull_request run, overrides the line above): $reason" | tee -a "$GITHUB_STEP_SUMMARY"
-          fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -564,7 +547,7 @@ jobs:
         env:
           # Chat hears about real nights only: the schedule, and a dispatch that
           # picked its own images is a by-hand comparison, so it goes to the step
-          # summary alone (as does the TEMPORARY pull_request trigger).
+          # summary alone.
           PERF_CHAT_WEBHOOK: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
         run: uv run --project bench --frozen bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
 

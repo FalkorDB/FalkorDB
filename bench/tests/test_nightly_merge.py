@@ -1051,9 +1051,9 @@ esac
 
 
 def test_the_candidate_is_mains_newest_image_whatever_ref_runs(tmp_path):
-    """A dispatch from another branch (or a pull_request run, whose merge commit
-    may sit many commits above main) still measures main's newest image, and
-    falls back along main's first-parent history when the tip has none."""
+    """A dispatch from another branch (whose checkout may sit many commits above
+    main) still measures main's newest image, and falls back along main's
+    first-parent history when the tip has none."""
     import os
     import subprocess
 
