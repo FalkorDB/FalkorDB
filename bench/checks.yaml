@@ -23,4 +23,9 @@
   runner: vm
   command: uv run --project bench --frozen bench pokec
   timeout_minutes: 75
+
+- name: ldbc
+  runner: vm
+  command: uv run --project bench --frozen bench ldbc check
+  timeout_minutes: 45
   machine_type: n4-standard-16
