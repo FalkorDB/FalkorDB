@@ -345,6 +345,17 @@ uint64_t Graph_NodeCount
 	const Graph *g
 );
 
+// let the next write reuse the ids this one freed
+//
+// A WRITE NEVER REUSES AN ID IT FREED ITSELF, so that a create and a delete of
+// one id cannot end up in a single effects payload - a pair no replica can
+// apply, since the create lands on an id that is still live there. The ids go
+// back into circulation here, which is the end of the write that freed them
+void Graph_ReleaseFreedIds
+(
+	Graph *g  // graph
+);
+
 // returns number of deleted nodes in the graph
 uint Graph_DeletedNodeCount
 (

@@ -1244,6 +1244,20 @@ uint64_t Graph_NodeCount
 	return g->nodes->itemCount;
 }
 
+// let the next write reuse the ids this one freed
+void Graph_ReleaseFreedIds
+(
+	Graph *g  // graph
+) {
+	ASSERT (g != NULL) ;
+
+	// BOTH DATABLOCKS, because both id spaces have the problem. An edge id is
+	// recycled by the same allocator, and the v3 payload sorts created edges
+	// ahead of deleted edges exactly as it does for nodes
+	DataBlock_ReleaseFreedIds (g->nodes) ;
+	DataBlock_ReleaseFreedIds (g->edges) ;
+}
+
 // returns number of deleted nodes in the graph
 uint Graph_DeletedNodeCount
 (

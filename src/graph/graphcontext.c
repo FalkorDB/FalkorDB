@@ -465,6 +465,17 @@ void GraphContext_ReleaseLock
 
 	_GraphContext_CommitPendings (gc) ;
 
+	// THE IDS THIS WRITE FREED GO BACK INTO CIRCULATION, now that the write is
+	// over. They were held back so that no single write could be handed back an
+	// id it had freed itself - see Graph_ReleaseFreedIds
+	//
+	// HERE AND NOT IN QueryCtx, because a replica applying GRAPH.EFFECT never
+	// builds one: cmd_effect.c takes and drops this lock directly. This is the
+	// one point every writer passes through, and the lock is still held
+	if (gc->writelocked == true) {
+		Graph_ReleaseFreedIds (gc->g) ;
+	}
+
 	// set writelocked to false BEFORE unlocking
 	// if this is a reader thread no harm done,
 	// if this is a writer thread the writer is about to unlock so once again
