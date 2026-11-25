@@ -395,3 +395,28 @@ def test_the_example_nightlies_are_valid():
     # The site's runs are only as honest as their nightlies: these must pass the contract.
     assert contract.validate_nightly(examples.nightly("red", [micro_hw(False, HOSTILE)])) == []
     assert contract.validate_nightly(examples.nightly("green", [micro_hw(True)])) == []
+
+
+def test_a_rejected_night_with_numbers_for_lists_still_renders(tmp_path):
+    data = tmp_path / "data"
+    night = examples.nightly("green", [micro_hw(True)])
+    night["checks"][0].update(verdict="regression", findings=1, artifacts=1)
+    store(data, "2026-11-25-108", night, None)
+    out = tmp_path / "site"
+    result = CliRunner().invoke(
+        cli, ["nightly", "dashboard", "--data", str(data), "--out", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert (out / "run" / "2026-11-25-108.html").is_file()
+
+
+def test_a_missing_data_folder_fails_and_keeps_the_site(tmp_path):
+    out = tmp_path / "site"
+    (out / "run").mkdir(parents=True)
+    page = out / "run" / "2026-11-21-100.html"
+    page.write_text("a good page")
+    result = CliRunner().invoke(
+        cli, ["nightly", "dashboard", "--data", str(tmp_path / "typo"), "--out", str(out)]
+    )
+    assert result.exit_code != 0
+    assert page.read_text() == "a good page"

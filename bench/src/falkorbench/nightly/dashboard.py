@@ -319,6 +319,11 @@ def link(href: str, text: str) -> str:
     return f"<a href='{esc(href)}'>{esc(text)}</a>"
 
 
+def as_list(value) -> list:
+    """A rejected document may hold a number where a list belongs: render it as empty."""
+    return value if isinstance(value, list) else []
+
+
 def files_of(run: Run, check: dict, data_href: str, data: Path) -> str:
     """Links to the check's own files as stored: result.json, the runner's record, its artifacts."""
     name = check.get("check")
@@ -326,7 +331,7 @@ def files_of(run: Run, check: dict, data_href: str, data: Path) -> str:
         return ""
     root = (data / run.folder / name).resolve()
     paths = ["result.json", "perf-vm.json", "perf-hosted.json"]
-    paths += [a for a in check.get("artifacts") or [] if isinstance(a, str) and "\0" not in a]
+    paths += [a for a in as_list(check.get("artifacts")) if isinstance(a, str) and "\0" not in a]
     found = [
         p
         for p in dict.fromkeys(paths)
@@ -344,7 +349,7 @@ def regressions(run: Run, check: dict) -> str:
     """The check's regression rows, each with its re-run from raw/rows.csv when that holds one."""
     rows = run.rows.get(str(check.get("check")), {})
     lines = []
-    for f in check.get("findings") or []:
+    for f in as_list(check.get("findings")):
         if not isinstance(f, dict) or f.get("status") != "regression":
             continue
         name, metric = f.get("name"), f.get("metric")

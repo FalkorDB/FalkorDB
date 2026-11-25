@@ -674,7 +674,7 @@ def cov_gate_command(args):
 @click.option(
     "--data",
     required=True,
-    type=click.Path(file_okay=False, path_type=Path),
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="the stored runs: one <date>-<run id>/ folder each",
 )
 @click.option(

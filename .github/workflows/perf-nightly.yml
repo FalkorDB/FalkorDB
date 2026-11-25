@@ -718,6 +718,7 @@ jobs:
           fi
 
           # A re-run of the workflow replaces what its first attempt stored (under any date).
+          replaced=$(ls -d data/*-"$GITHUB_RUN_ID" 2>/dev/null || true)
           rm -rf data/*-"$GITHUB_RUN_ID"
           dest=data/$folder
           mkdir -p "$dest"
@@ -727,14 +728,19 @@ jobs:
           for check in $(jq -r '.checks[].check' "$night"); do
             [[ $check =~ ^[a-z][a-z0-9-]{0,42}$ ]] || continue
             src=$RUNNER_TEMP/results/$check
-            fetch "perf-result-$check" "$src" || { echo "::warning::perf dashboard: no perf-result-$check"; continue; }
+            fetch "perf-result-$check" "$src" || {
+              echo "::warning::perf dashboard: no perf-result-$check"
+              # Replacing a stored run: a failed download must not commit its deletion.
+              [[ -z $replaced ]] || { echo "::error::perf dashboard: not replacing $replaced without perf-result-$check"; exit 1; }
+              continue
+            }
             mkdir -p "$dest/$check"
             files=$(cd "$src" && { ls -1 result.json perf-vm.json perf-hosted.json 2>/dev/null
                                    jq -r '.artifacts[]? | strings' result.json 2>/dev/null; } | sort -u) || true
             while IFS= read -r file; do
               # Relative paths only, none through "..": the check's own files and nothing else.
               [[ -n $file && $file != /* && ! $file =~ $dotdot ]] || continue
-              (cd "$src" && cp --parents -- "$file" "$site/$dest/$check/") \
+              (cd "$src" && cp -R --parents -- "$file" "$site/$dest/$check/") \
                 || echo "::warning::perf dashboard: $check/$file did not copy"
             done <<< "$files"
           done
