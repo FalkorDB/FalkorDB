@@ -22,14 +22,12 @@
 //   1. ONE RECORD PER (run, opcode, shape). Shape is the attribute IDS and
 //      never the values, plus the labels for a node and the relationship type
 //      for an edge. A RUN is a stretch of the query's writes that never
-//      reverses direction: it creates or deletes but not both, and it adds
-//      labels or removes them but not both. A new one opens the moment either
-//      switches - so one payload MAY carry the same (opcode, shape) more than
-//      once, and a reader applies the records in the order they arrive. C's
-//      DataBlock hands a freed id back inside the same query, so
-//      `MATCH (n:A) DELETE n CREATE (:B)` names one id for two entities; and
-//      `MATCH (n) REMOVE n:Z SET n:Z` names one (node, label) pair twice in
-//      opposite directions. Only the sequence says which is which.
+//      reverses direction - creates or deletes but not both, adds labels or
+//      removes them but not both - and a new one opens the moment either
+//      switches. So one payload MAY carry the same (opcode, shape) more than
+//      once, applied in arrival order: `DELETE n CREATE (:B)` names one id for
+//      two entities and `REMOVE n:Z SET n:Z` names one (node, label) pair
+//      twice, and only the sequence says which is which.
 //
 //   2. RUNS GO OUT IN THE ORDER THEY OPENED, STAGES AND THEN KEYS WITHIN ONE.
 //      The stages are Rust's for_each_record: created nodes, created edges,
@@ -41,19 +39,12 @@
 //      decides, because a hash table iterates arbitrarily and the same query
 //      would otherwise emit its records in a different order on two
 //      executions of one engine. The stages hold WITHIN a run and say nothing
-//      across runs: sorting the whole payload by stage is what sends a create
-//      of a reused id ahead of the delete that freed it, and a SET_LABELS
-//      (stage 4) ahead of the REMOVE_LABELS (stage 5) it was meant to follow.
-//      The stage agreement with Rust holds for a
-//      SINGLE-RUN payload and no further: Rust sorts its whole payload by
-//      stage and never carries one (opcode, shape) twice, so a payload that
-//      reverses direction has no cross-engine record sequence to agree on at
-//      all. That costs nothing, because the two engines hand back freed ids
-//      differently - C the most recently freed, Rust the smallest - so the
-//      reversal case does not arise identically on both anyway. And even
-//      within a stage Rust imposes no order, walking its shapes in first-seen
-//      order, so CREATE (:B), (:A) emits those two records in a different
-//      order there than here.
+//      across runs: sorting a whole payload by stage sends a create of a
+//      reused id ahead of the delete that freed it. The stage agreement with
+//      Rust therefore covers SINGLE-RUN payloads only, which costs nothing
+//      since the two engines hand back freed ids differently anyway. Within a
+//      stage Rust imposes no order either, so CREATE (:B), (:A) emits those
+//      two records in a different order there than here.
 //
 //   3. LABEL SETS ARE NORMALISED ASCENDING. Callers keep their own order, so
 //      [7,8] and [8,7] arrive for the same set; they are ONE shape.
@@ -147,11 +138,9 @@ void EffectsV3Grouping_AddEdge
 // A T_NULL value is a removal and is staged like any other: the attribute is
 // part of the shape and the null is what instructs the replica to drop it.
 //
-// ONE RECORD PER (ENTITY, RUN), not per entity. An entity id names one entity
-// only within a run - C hands a freed id back inside the query - so an entity
-// written either side of a create/delete switch produces two records rather
-// than one merged record under an id that has changed hands. They apply in
-// order and the later write still wins.
+// ONE RECORD PER (ENTITY, RUN), not per entity: an id names one entity only
+// within a run, so an entity written either side of a switch produces two
+// records applied in order rather than one under an id that changed hands.
 void EffectsV3Grouping_StageUpdate
 (
 	EffectsV3Grouping *g,   // accumulator
@@ -263,8 +252,7 @@ uint32_t EffectsV3Grouping_RecordCount
 );
 
 // write every record, schema and attribute announcements first, then the
-// groups: run by run in the order the query opened them, and by stage and key
-// within each run
+// groups: run by run, and by stage and key within each run
 void EffectsV3Grouping_Encode
 (
 	EffectsV3Grouping *g,  // accumulator

@@ -51,36 +51,22 @@
 // WHERE THE HEADER'S FOUR RULES ARE ENFORCED
 //
 //   1  one record per (run, opcode, shape)  _group_for, via _cmp_group
-//   2  runs in the order they opened,       Encode, the qsort - NOT the scan
-//      stages and then keys within one
-//   3  label sets normalised ascending      on the way in: AddNode, StageUpdate
-//   4  an attribute announced once          AddAttribute, the scan before
-//                                           appending
+//   2  runs, then stages, then keys        Encode, the qsort - NOT the scan
+//   3  label sets normalised ascending     on the way in: AddNode, StageUpdate
+//   4  an attribute announced once         AddAttribute, the scan
 //
-// A RUN is a stretch of the query's writes that never reverses direction: it
-// creates or deletes but not both, and it adds labels or removes them but not
-// both. _note_arrival opens a new one the moment either axis switches, and a
-// group belongs to the run it was opened in - so an entity filed late can
-// never join a group that was emitted before the records in between. That is
-// what lets ONE PAYLOAD NAME A SUBJECT TWICE and mean something different each
-// time: C's DataBlock hands a freed id back inside the same query, so the
-// create that reuses it lands in a later run than the delete that freed it;
-// and a label taken off a node and put back lands in a later run than the
-// removal, which is the one order a replica can apply.
+// A RUN is a stretch of the query's writes that never reverses direction:
+// creates or deletes but not both, adds labels or removes them but not both.
+// _note_arrival opens a new one the moment either reverses and a group belongs
+// to the run it was opened in, which is what lets one payload name a subject
+// twice - a freed id handed back to a later create, a label put back.
 //
-// WHY A RUN IS ENOUGH, which is an argument and not a hope. Every create,
-// delete and label change that logs an effect files it inside the same call
-// that changes the graph: CommitNewEntities (create_functions.c:322) runs
-// _CommitNodes to completion and only then _CommitEdges, under one write lock;
-// op_delete unhooks its edges before it removes its nodes; and
-// EffectsBuffer_AddLabelsEffect is called from inside GraphHub_LabelNodes.
-// Nothing is buffered between the write and the record. So inside a create run
-// no id is freed and inside a delete run none is allocated, and inside a
-// label-adding run no label is taken away - two records of one run can share a
-// subject only by naming the same thing in the same direction, which the stage
-// order below already settles. Only a DEFERRED record can cross a run, and the
-// staged property update is the one deferred kind, which is why the staging
-// index is keyed on the run as well.
+// WHY A RUN IS ENOUGH. Every create, delete and label change files its effect
+// inside the call that changes the graph (CommitNewEntities, op_delete,
+// GraphHub_LabelNodes), so nothing is freed inside a create run and nothing
+// allocated inside a delete run. Only a DEFERRED record can cross a run, and
+// the staged property update is the only deferred kind - which is why the
+// staging index is keyed on the run as well.
 //
 // Rule 2 sits at the exit because _group_for finds groups in ARRIVAL order, a
 // property of the query text rather than of the data; the canonical order is
@@ -142,50 +128,28 @@ static GroupShape _shape_of(EffectType opcode) {
 
 // which direction a record moves something in, on whichever axis it touches
 //
-// TWO AXES, NOT ONE, because a payload has two things it can say twice about
-// one subject and mean something different each time.
+// TWO AXES. On the id axis C's DataBlock hands a freed id back to the same
+// query, so `DELETE n CREATE (:B)` names one id for two entities. On the label
+// axis a (node, label) pair can be given and taken away repeatedly, and
+// _stage_of puts SET_LABELS (4) ahead of REMOVE_LABELS (5) always - so
+// `REMOVE n:Z SET n:Z` over an (:S:Z) node ships the SET first and the replica
+// ends up without the label. Neither can be fixed by any fixed opcode order;
+// only the query's sequence is right.
 //
-// THE ID AXIS. C's DataBlock hands a freed id back to the same query, so
-// `MATCH (n:A) DELETE n CREATE (:B)` gives the new node the id the delete just
-// freed and one payload names that id twice, for two different entities.
-// Nothing about either record says so, so no fixed order of the opcodes can be
-// right: creates-first ships the create of a live id, and deletes-first breaks
-// `CREATE (n:B) DELETE n`, which is the same pair the other way round.
+// The label fault is PRE-EXISTING on 9ae723573, which has the same fixed stage
+// order. It is usually silent - both records are well formed and both apply -
+// though the three-op `SET n:Z REMOVE n:Z SET n:Z` folds two SETs into one
+// record naming the node twice, which _VerifyDistinctIds refuses, costing a
+// resync instead.
 //
-// THE LABEL AXIS, which is the same problem a layer up. A (node, label) pair
-// can be given and taken away repeatedly in one query, and _stage_of puts
-// SET_LABELS ahead of REMOVE_LABELS always - so `MATCH (n) REMOVE n:Z SET n:Z`
-// over an (:S:Z) node ships the SET first and the replica ends up without the
-// label the master kept. The records come out inverted every time; the
-// DIVERGENCE they cause showed up in four of six measured instances on a live
-// pair and the other two matched, so the reliable evidence is the record
-// sequence rather than the end state. When it does bite it is silent: master
-// [S, Z], replica [S], sync_full unmoved, link up, nothing logged, because
-// both records are well formed and both apply.
+// REVERSING ON EITHER LABEL SWITCH IS ROBUSTNESS, NOT NECESSITY: only
+// remove-then-set can invert a pair, so the asymmetric rule would do today.
+// The symmetry keeps correctness off the fact that stage 4 is below stage 5,
+// and the two rules emit identical sequences.
 //
-// The three-op `SET n:Z REMOVE n:Z SET n:Z` over an (:S) node is the louder
-// version: the two SETs fold into one record naming the node twice, which
-// _VerifyDistinctIds refuses, and that one costs a forced resync (measured,
-// sync_full 1 -> 2) rather than a quiet disagreement.
-//
-// This is NOT new here - 9ae723573 has the same fixed stage order and the same
-// shapes fail on it. The run mechanism is what makes it fixable.
-//
-// REVERSING ON EITHER SWITCH, not only on remove-then-set. Only
-// remove-then-set can actually invert a pair, because the stages already emit
-// a set ahead of a remove - so the asymmetric rule would be sufficient TODAY.
-// The symmetry is here so that correctness does not rest on stage 4 being
-// less than stage 5; renumbering the stages would otherwise be a silent
-// correctness change. The cost is run boundaries that change no record's
-// position, and no unit test can tell the two rules apart.
-//
-// Only the SEQUENCE the query made them in is correct on either axis, and a
-// run is how much of that sequence has to be kept.
-//
-// UPDATES ARE ON NEITHER AXIS. An updated entity exists on both sides of the
-// update and its attribute set is stated whole rather than moved in a
-// direction, so an update never forces a run open - the stage order inside a
-// run already puts it after a create and before a delete of the same entity.
+// UPDATES ARE ON NEITHER AXIS: the entity exists either side and its
+// attributes are stated whole rather than moved. The record's label block is
+// informational - _ApplyUpdateNode only checks those schemas resolve.
 typedef enum {
 	RUN_NEUTRAL,       // moves nothing in either direction
 	RUN_CREATE,
@@ -210,8 +174,6 @@ static RunKind _run_kind_of(EffectType opcode) {
 		case EFFECT_REMOVE_LABELS:
 			return RUN_LABEL_REMOVE;
 
-		// an updated entity was already there and is still there afterwards,
-		// and the record states its attributes rather than moving them
 		case EFFECT_UPDATE_NODE:
 		case EFFECT_UPDATE_EDGE:
 			break;
@@ -230,18 +192,15 @@ static RunKind _run_kind_of(EffectType opcode) {
 			break;
 	}
 
-	// NEUTRAL is the fail-safe answer the way SHAPE_NONE is: it keeps the
-	// current run open rather than splitting the payload, and the opcodes that
-	// reach it here never become a group at all
+	// NEUTRAL is the fail-safe answer the way SHAPE_NONE is: it keeps the open
+	// run rather than splitting, and nothing reaching it becomes a group
 	return RUN_NEUTRAL;
 }
 
 // is this kind on the id axis, rather than the label one?
 //
-// The two axes are independent: a create says nothing about labels and a label
-// change says nothing about ids, so each keeps its own last-direction and
-// either one on its own can close a run. Collapsing them into one history
-// would open a run on `CREATE ... SET n:Z`, which needs none.
+// Each axis keeps its own last-direction: one history would open a run on
+// `CREATE (:A) SET n:Z CREATE (:B)`, which reverses nothing.
 static bool _is_id_axis(RunKind k) {
 	return k == RUN_CREATE || k == RUN_DELETE;
 }
@@ -255,13 +214,10 @@ static bool _is_id_axis(RunKind k) {
 typedef struct {
 	EffectType opcode;
 
-	// which stretch of the query's writes this group belongs to
-	//
-	// NOT part of the shape and not on the wire: it is the key that keeps a
-	// group from absorbing an entity filed after the payload has reversed
-	// direction - creating to deleting or back, adding a label to taking one
-	// away or back. Compared FIRST in _cmp_group, so it also orders the
-	// records
+	// which run this group belongs to; not part of the shape and not on the
+	// wire. Keeps a group from absorbing an entity filed after the payload
+	// reversed direction, and compared FIRST in _cmp_group so it also orders
+	// the records
 	uint32_t run;
 
 	// the half of the shape that depends on the entity kind
@@ -317,14 +273,9 @@ typedef struct {
 	EffectType opcode;
 	uint64_t   id;
 
-	// the run this entity was staged in, carried so the flush can file it
-	// where the query put it rather than at the end of the payload
-	//
-	// ONE ENTRY PER (ENTITY, RUN) and not per entity: the staging index is
-	// keyed on the run as well, so this is the run of every attribute in
-	// 'attrs' rather than the first of several. `MATCH (n:A) SET n.v = 1
-	// DELETE n` stages in the run the delete then joins, and the stage order
-	// inside that run is what puts the update ahead of it
+	// the run this entity was staged in, so the flush files it where the query
+	// put it rather than at the end of the payload. One entry per
+	// (entity, run), so this is the run of every attribute in 'attrs'
 	uint32_t run;
 
 	union {
@@ -349,14 +300,11 @@ typedef struct {
 	uint64_t   id;
 	uint32_t   op;
 
-	// PART OF THE KEY, not a payload field. An entity id names ONE entity only
-	// within a run: C hands a freed id back inside the query, so `SET n.v = 1
-	// DELETE n CREATE (m) SET m.w = 2` stages two updates under one id for two
-	// different entities. Keyed without this they merge, and the merged record
-	// carries n's labels and n's run - so m's write is applied to n, ahead of
-	// the delete that removes it, and is lost. Nothing refuses that payload:
-	// it is well formed, it applies cleanly, and the replica is silently a
-	// property short. Measured on a live pair: master {w: 9}, replica {}.
+	// PART OF THE KEY. An entity id names one entity only within a run, so
+	// `SET n.v = 1 DELETE n CREATE (m) SET m.w = 2` stages two updates under
+	// one id for two entities. Merged, m's write lands on n ahead of the
+	// delete and is lost, with nothing refusing the payload - measured on a
+	// live pair, master {w: 9} and replica {}
 	uint32_t   run;
 
 	uint32_t   idx1;   // index into 'updates', plus one
@@ -435,25 +383,16 @@ struct EffectsV3Grouping {
 	// dangle and usually still work. UINT32_MAX means nothing memoed.
 	uint32_t    last_group;
 
-	// the run currently open, and the last direction taken on each axis
-	//
-	// SCALARS AND NOTHING ELSE - no set of live ids, no set of labels moved,
-	// no per-entity bookkeeping. The question a new run answers is only "could
-	// a record filed now be emitted ahead of one it has to follow", and the
-	// answer turns on whether the payload has switched direction, which is one
-	// bit of history per axis
+	// the open run, and the last direction taken on each axis - scalars only,
+	// no set of live ids and no per-entity bookkeeping
 	uint32_t    run;
 	RunKind     run_kind;    // last create/delete seen
 	RunKind     label_kind;  // last label set/remove seen
 
-	// where the open run's groups start in 'groups'
-	//
-	// THE SCAN'S FLOOR, and the reason a run costs nothing on a query that
-	// never alternates. A closed run's groups can never match again - the
-	// comparator rejects them on the run alone - so scanning them is pure
-	// waste, and a query that alternates once per row would otherwise make the
-	// scan grow with the rows already written. Live arrivals open at or after
-	// this index, so starting here cannot miss one
+	// where the open run's groups start: the floor for _group_for's scan, so a
+	// query that alternates does not walk every group it has ever opened. A
+	// closed run's groups can never match, and live arrivals open at or after
+	// this index
 	uint32_t    run_first;
 
 	//--------------------------------------------------------------------------
@@ -482,34 +421,19 @@ static int _cmp_u32(uint32_t a, uint32_t b) {
 // none.
 //
 // The sequence is Rust's: for_each_record (emit.rs) emits created nodes,
-// created edges, updates, label changes, deleted edges and deleted nodes, in
-// that order.
+// created edges, updates, label changes, deleted edges and deleted nodes.
 //
-// WITHIN A RUN, AND ONLY WITHIN ONE. A run never reverses on either axis, so
-// the only dependencies left inside it are the structural ones - a node before
-// the edge hanging off it on the way in, the edge before the node on the way
-// out - and those the stages settle. Across runs the stages say nothing and
-// must not: a payload whose second run deletes what its first run created has
-// to ship those records in that order, and so does one whose second run gives
-// back a label its first run took away. That is exactly what sorting by stage
-// over the whole payload undoes - SET_LABELS is stage 4 and REMOVE_LABELS is
-// stage 5 unconditionally, so `REMOVE n:Z SET n:Z` comes out backwards and the
-// replica loses a label the master kept, with nothing refused and nothing
-// logged.
+// WITHIN A RUN, AND ONLY WITHIN ONE. Across runs the stages must say nothing,
+// or a create of a reused id sorts ahead of the delete that freed it. Inside
+// one they are still needed: a group accepts entities for as long as its run
+// is open, so `CREATE (:A)-[:R]->(:A) CREATE (:B)-[:R]->(:B)` files the second
+// edge into the :R group the first clause opened, ahead of the record creating
+// :B - and _ApplyCreateEdge refuses an edge whose endpoints are not there yet.
 //
-// WHY THE STAGES ARE NOT JUST ARRIVAL ORDER inside a run either. A group
-// accepts entities for as long as its run is open, so an edge filed into a
-// group opened early is emitted early - `CREATE (:A)-[:R]->(:A) CREATE
-// (:B)-[:R]->(:B)` reuses the :R group for the second edge and would send it
-// ahead of the record creating :B. Sorting the run by stage puts every created
-// node ahead of every created edge however the clauses interleaved.
-//
-// WHAT THAT DOES AND DOES NOT BUY ACROSS ENGINES. Rust says of its own stages
-// that within one "their order among themselves carries no meaning and is not
-// imposed" - digest_created_nodes walks its shapes in first-seen order while
-// this file sorts them by key, so CREATE (:B), (:A) still puts B first on one
-// engine and A first on the other. A cross-engine byte fixture must not assume
-// record order inside a stage.
+// Rust does not impose an order within a stage and walks its shapes in
+// first-seen order, so CREATE (:B), (:A) emits those two records in a
+// different order there than here; a cross-engine byte fixture must not
+// assume it.
 //
 // EXHAUSTIVE AND WITHOUT A default:, deliberately, exactly as _shape_of above
 // is and for the same reason - a new opcode has to be placed in the sequence
@@ -551,10 +475,8 @@ static uint32_t _stage_of(EffectType opcode) {
 static int _cmp_group(const void *va, const void *vb) {
 	const Group *a = va, *b = vb;
 
-	// THE RUN OUTRANKS THE STAGE, which is the whole of the fix: two groups in
-	// different runs are ordered by when the query opened them and by nothing
-	// else, so a create that reuses a freed id stays behind the delete that
-	// freed it however the two opcodes are staged
+	// THE RUN OUTRANKS THE STAGE: groups in different runs are ordered by when
+	// the query opened them and by nothing else
 	int c = _cmp_u32(a->run, b->run);
 	if(c != 0) return c;
 
@@ -671,17 +593,10 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 // close the open run if this record cannot share one, and report the run to
 // file it into
 //
-// FOUR SCALARS OF STATE AND NOTHING ELSE: the run, the last direction taken on
-// each of the two axes, and where the open run's groups start. No set of ids
-// the payload has created, no set it has deleted, no set of labels it has
-// moved, nothing that grows with the query - which matters because this runs
-// once per entity on the write path.
-//
-// A run is closed by the SWITCH and not by the opcode: a second delete joins
-// the open delete run however many shapes it brings with it, and the cost of a
-// query that never reverses on either axis is one comparison per entity and no
-// extra records at all. A query that alternates pays one run per switch, which
-// is also exactly how many times its subject can mean two different things.
+// Closed by the SWITCH and not by the opcode: a second delete joins the open
+// delete run, so a query that never reverses pays one comparison per entity
+// and no extra records. This runs once per entity on the write path, which is
+// why the state is scalars rather than a set of ids.
 static uint32_t _note_arrival
 (
 	EffectsV3Grouping *g,  // accumulator
@@ -689,15 +604,14 @@ static uint32_t _note_arrival
 ) {
 	const RunKind k = _run_kind_of(opcode);
 
-	// moves nothing in either direction, so it cannot be what makes a subject
-	// ambiguous - it joins whatever is open and leaves the run as it found it
+	// moves nothing, so it joins whatever is open and leaves the run as it
+	// found it
 	if(k == RUN_NEUTRAL) {
 		return g->run;
 	}
 
-	// the history this kind belongs to, written back below. A pointer rather
-	// than two branches so the open/compare/store is stated once and the two
-	// axes cannot drift apart
+	// a pointer rather than two branches, so the compare-and-store is stated
+	// once and the axes cannot drift apart
 	RunKind *open = _is_id_axis(k) ? &g->run_kind : &g->label_kind;
 
 	if(*open != RUN_NEUTRAL && *open != k) {
@@ -715,11 +629,8 @@ static uint32_t _note_arrival
 // A linear scan rather than a hash, deliberately: the number of distinct shapes
 // in a query is small - a label set is parsed rather than computed, so it is
 // bounded by the query text - and a scan has no iteration order to get wrong.
-// See _update_for for why its lookup is the other way round.
-//
-// THE RUN IS A PARAMETER rather than read off the accumulator because the
-// flush is the one caller that does not file into the open run: a staged update
-// belongs to the run it was staged in, which by then is usually closed.
+// See _update_for for why its lookup is the other way round. The run is a
+// parameter because the flush files into runs that are closed by then.
 static Group *_group_for
 (
 	EffectsV3Grouping *g,         // accumulator
@@ -755,12 +666,8 @@ static Group *_group_for
 		return g->groups + g->last_group;
 	}
 
-	// SKIP THE CLOSED RUNS when this is a live arrival. Their groups cannot
-	// match - the comparator rejects them on the run before it reads a shape -
-	// so a query that alternates once per row would otherwise walk every group
-	// it had already opened, once per entity. The flush does not take this
-	// shortcut because it files into runs that are closed by then, and a group
-	// of ITS run can sit anywhere in the array.
+	// skip the closed runs on a live arrival - their groups cannot match. The
+	// flush cannot, since a group of its run can sit anywhere in the array
 	const uint32_t from = (run == g->run) ? g->run_first : 0;
 
 	for(uint32_t i = from; i < n_groups; i++) {
@@ -1162,21 +1069,10 @@ static void _index_grow(EffectsV3Grouping *g) {
 //   _group_for  (run, opcode, shape)    one per distinct SHAPE    memo + scan
 //   _update_for (run, opcode, entity)   one per (ENTITY, RUN)     hash probe
 //
-// THE RUN IS PART OF THE KEY HERE TOO, because an entity id names ONE entity
-// only within a run. `MATCH (n:A) SET n.v = 1 DELETE n CREATE (m:B) SET
-// m.w = 2` hands m the id n just freed, so both SETs arrive under one id for
-// two different entities; keyed on the id alone they merge into one entry
-// carrying n's LABELS and n's RUN, and the record that comes out writes m's
-// property to n, ahead of the delete that removes it. The payload is well
-// formed and applies without a murmur - measured on a live pair, master
-// {w: 9} and replica {}.
-//
-// The price is that `SET n.v = 1 ... DELETE (something else) ... SET n.w = 2`
-// becomes two records for one entity instead of one. They apply in order and
-// the later still wins, so the end state is the same - but the cost is a
-// record AND a row: over N entities written either side of a switch, every
-// one of them is named twice and has its values serialised twice, so the row
-// count doubles rather than the payload growing by a single record.
+// The run is part of the key for the reason given at UpdateSlot. The price is
+// that an entity written either side of a switch becomes two records applied
+// in order - same end state, but it is named twice and its values serialised
+// twice, so over N such entities the row count doubles.
 //
 // Which is what decides the lookup. Shapes are few and bounded by the query
 // text, so a scan wins on constant factors; ENTITIES are unbounded and
@@ -2305,31 +2201,19 @@ void EffectsV3Grouping_Encode
 	}
 
 	// RULE 2: runs in the order they opened, stages and then keys within one.
-	// A scan finds the groups of ONE run in arrival order, which is a property
-	// of the query rather than of the ids, so that much is sorted here; the
-	// runs themselves are already in the order the query made them and the
-	// comparator keeps them that way.
+	// A scan finds one run's groups in arrival order, a property of the query
+	// rather than of the ids, so that much is sorted here.
 	//
 	// A TOTAL ORDER AND NOT MERELY A SORT KEY, which is what makes an unstable
-	// qsort safe: no two groups can be equal on (run, opcode, shape, attrs),
-	// so there is no tie whose resolution could differ between runs.
-	//
-	// THE SHORTENED SCAN DOES NOT WEAKEN THAT, which is worth spelling out
-	// because _group_for no longer compares against every group: it starts at
-	// run_first for a live arrival. A group of the open run can only have been
-	// appended at or after the index run_first was set to, so the scan still
-	// sees all of them, and a group it skipped is in a closed run and would
-	// have been rejected on the run anyway. Uniqueness therefore survives the
-	// floor rather than being asserted in spite of it.
+	// qsort safe: no two groups can be equal on (run, opcode, shape, attrs).
+	// The run_first floor does not weaken that - a group of the open run is
+	// always appended at or after it, so the shortened scan still sees every
+	// candidate
 	qsort(g->groups, arr_len(g->groups), sizeof(Group), _cmp_group);
 
-	// THE SORT INVALIDATES BOTH INDICES INTO 'groups'. Nothing files a group
-	// after this today - EffectsBuffer_Buffer is the only caller and runs once
-	// at the end of the query - but the memo and the scan floor are positions
-	// in an array that has just been permuted, and a later arrival honouring
-	// them could open a second group with a key an existing one already has.
-	// Clearing them costs two stores and makes that impossible rather than
-	// merely unreached
+	// the sort permutes 'groups', so both indices into it are now meaningless.
+	// Nothing files a group after this today, but honouring a stale position
+	// could open a second group with a key an existing one already has
 	g->last_group = UINT32_MAX;
 	g->run_first  = 0;
 

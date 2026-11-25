@@ -15,11 +15,9 @@
 //
 //   1. one record per (run, opcode, shape); shape is the attribute IDS, never
 //      the values, plus labels for a node and relationship type for an edge.
-//      A RUN is a stretch of the query's writes that creates or deletes but
-//      never both, so one payload may carry the same (opcode, shape) twice
-//   2. runs in the order they opened, and inside one the stages and then the
-//      key - a hash order differs between executions, let alone between
-//      engines
+//      A RUN never reverses direction, so one payload may carry the same
+//      (opcode, shape) twice
+//   2. runs in the order they opened, and inside one the stages then the key
 //   3. label sets normalised ascending, so [7,8] and [8,7] are one shape
 //   4. a new attribute announced ONCE per payload - the only rule that spans
 //      groups, so the one a per-group implementation gets locally right and
@@ -68,24 +66,14 @@ static unsigned char *_encode(EffectsV3Grouping *g, size_t *n) {
 
 // encode, then read the payload back as a record list
 //
-// THE DECODER WALKS IT, not this file. A record's length depends on its
-// opcode, its widths and its values, so a hand-rolled skip is a second encoder
-// - and one written from the same assumption as the first agrees with it even
-// when both are wrong. Everything above that needs only record 0 reads the
-// bytes directly; a test about SEQUENCE cannot.
+// The decoder walks it rather than this file: a record's length depends on its
+// opcode, widths and values, so a hand-rolled skip is a second encoder that
+// agrees with the first even when both are wrong. The two prepended bytes are
+// the payload header, which the accumulator does not write.
 //
-// The two bytes prepended are the payload header - version, then flags - which
-// the accumulator does not write: it emits the body alone and
-// EffectsBuffer_Buffer stamps the header in front of it.
-//
-// INT VALUES ONLY. setup() runs Alloc_Reset and nothing else, and a decoded
-// STRING goes through SI_InternStringVal into the global string pool, whose
-// StringPool_rent guards an uninitialised pool with an ASSERT that compiles
-// away in release - so a string fixture segfaults INSIDE the decoder rather
-// than failing, which test_effects_v3_decode.c records as having cost a false
-// alarm once already. Decoding a string here needs ThreadPool_Init,
-// ThreadPool_CreatePool and Globals_Init first (effects_v3.h). Every caller
-// below stages SI_LongVal.
+// INT VALUES ONLY: setup() runs Alloc_Reset alone, and a decoded string needs
+// the global string pool (ThreadPool_Init, ThreadPool_CreatePool,
+// Globals_Init) or it segfaults inside the decoder.
 static EffectsV3Records *_decode(EffectsV3Grouping *g) {
 	size_t n = 0;
 	unsigned char *body = _encode(g, &n);
@@ -2039,18 +2027,10 @@ void test_effectsV3Group_edgeDeletedBeforeNode(void) {
 }
 
 //------------------------------------------------------------------------------
-// runs: a payload that both creates and deletes
+// runs: a payload that reverses direction
 //------------------------------------------------------------------------------
 //
-// WHY A STAGE ORDER OVER THE WHOLE PAYLOAD CANNOT BE RIGHT. C's DataBlock
-// hands a freed id back to the query that freed it, so one payload can name
-// one id for two different entities - and nothing in either record says which
-// of the two it means. Sorting creates ahead of deletes ships CREATE id N for
-// an id the replica still has live; sorting deletes ahead of creates breaks
-// the same pair written the other way round. The records have to go out in the
-// order the query made them, and a RUN is how much of that order is kept.
-//
-// These assert the OPCODE SEQUENCE of the payload rather than a byte layout,
+// These assert the payload's OPCODE SEQUENCE rather than a byte layout,
 // because that is the whole of the claim: which record a replica meets first.
 
 // the opcode of every record, in order
@@ -2076,11 +2056,9 @@ static void _assert_opcodes
 
 // A DELETE IS NOT OVERTAKEN BY THE CREATE THAT REUSES ITS ID
 //
-// `MATCH (n:A) DELETE n CREATE (:B)` - the measured shape. The delete frees an
-// id and the create is handed it straight back, so both records name it. With
-// the creates staged first the replica meets CREATE_NODE for a node it still
-// has, refuses the whole payload and resyncs; the delete behind it is never
-// reached, because apply stops at the first failure.
+// `MATCH (n:A) DELETE n CREATE (:B)` - the create is handed the id the delete
+// just freed, so creates-first ships CREATE for an id the replica still has
+// and the whole payload is refused.
 void test_effectsV3Group_aDeleteIsNotOvertakenByACreate(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID A = 1, B = 2;
@@ -2098,17 +2076,12 @@ void test_effectsV3Group_aDeleteIsNotOvertakenByACreate(void) {
 	EffectsV3Grouping_Free(g);
 }
 
-// AND THE MIRROR, WHICH IS WHY NO FIXED STAGE ORDER WORKS
+// AND THE MIRROR: `CREATE (n:B) DELETE n` emits the same pair the other way
+// round, so deletes-first breaks exactly what creates-first breaks in reverse.
 //
-// `CREATE (n:B) DELETE n` emits a create and a delete of the same id in the
-// other order. Deletes-first would carry this one and break the test above by
-// exactly the same mechanism, so the pair of them is what rules out ordering
-// by opcode altogether.
-//
-// A GUARD, NOT A REGRESSION TEST. It passes on the old emitter too - stage
-// order puts CREATE_NODE at 0 and DELETE_NODE at 7, which is this sequence by
-// luck rather than by rule. What it rules out is the obvious wrong fix for
-// the test above: flipping the stages so deletes lead.
+// A GUARD, NOT A REGRESSION TEST - it passes on the old emitter too, where
+// stage 0 before stage 7 gets this sequence by luck. It rules out the obvious
+// wrong fix for the test above.
 void test_effectsV3Group_aCreateIsNotOvertakenByADelete(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID B = 2;
@@ -2127,22 +2100,10 @@ void test_effectsV3Group_aCreateIsNotOvertakenByADelete(void) {
 
 // A LABEL PUT BACK AFTER IT WAS TAKEN OFF IS THE SAME FAULT ONE LAYER UP
 //
-// `MATCH (n) REMOVE n:Z SET n:Z` names one (node, label) pair twice in
-// opposite directions, the way a delete and a create name one id twice. The
-// stage order is fixed - SET_LABELS is 4 and REMOVE_LABELS is 5 - so sorting
-// a run by stage emits the SET first whatever the query did, and a replica
-// applying that loses a label the master kept.
-//
-// MEASURED ON A LIVE PAIR rather than reasoned about, because the severity
-// matters: over an (:S:Z) node the master ends [S, Z] and the replica [S],
-// with sync_full UNMOVED and nothing logged. Both records are well formed and
-// both apply, so no guard fires. (The three-op `SET n:Z REMOVE n:Z SET n:Z`
-// over an (:S) node is the louder cousin: the two SETs fold into one record
-// naming the node twice, _VerifyDistinctIds refuses it, and that one costs a
-// forced resync instead.)
-//
-// PRE-EXISTING, not introduced by the run mechanism: 9ae723573 has the same
-// fixed stage order and fails the same two shapes.
+// SET_LABELS is stage 4 and REMOVE_LABELS is 5, so a run sorted by stage emits
+// `REMOVE n:Z SET n:Z` backwards and the replica loses a label the master
+// kept. Pre-existing on 9ae723573, and usually silent - both records are well
+// formed and both apply.
 void test_effectsV3Group_aLabelPutBackOpensANewRun(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID Z = 4;
@@ -2160,19 +2121,11 @@ void test_effectsV3Group_aLabelPutBackOpensANewRun(void) {
 	EffectsV3Grouping_Free(g);
 }
 
-// AND THE OTHER DIRECTION, WHICH THE STAGES ALREADY GET RIGHT
+// AND THE OTHER DIRECTION, WHICH THE STAGES ALREADY GET RIGHT.
 //
-// `SET n:Z REMOVE n:Z` is the mirror, and stage order alone emits it
-// correctly - SET is 4 and REMOVE is 5, which is the query's order.
-//
-// A GUARD, AND IT CANNOT BE MORE THAN ONE. _note_arrival reverses on either
-// switch, but a rule that reversed only on REMOVE-then-SET would emit this
-// sequence too: the SET and the REMOVE would share a run and the stage sort
-// would put them in exactly this order. The two rules are indistinguishable
-// from the records, so no assertion here can tell them apart - symmetry is
-// chosen so that correctness does not rest on 4 being less than 5, not
-// because the asymmetric rule is wrong today. What this does catch is a
-// reversal rule that over-reaches and reorders the pair.
+// A GUARD, AND IT CANNOT BE MORE. An asymmetric rule that reversed only on
+// remove-then-set would emit this sequence too, so nothing here can tell the
+// two rules apart; the symmetry is robustness, not necessity.
 void test_effectsV3Group_aLabelSetThenTakenOffKeepsThatOrder(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID Z = 4;
@@ -2191,17 +2144,10 @@ void test_effectsV3Group_aLabelSetThenTakenOffKeepsThatOrder(void) {
 
 // A LABEL MOVED THREE TIMES IS THREE RECORDS, NOT TWO WITH A REPEATED ID
 //
-// The other failure mode, and a different mechanism from every ordering test
-// here. `SET n:Z REMOVE n:Z SET n:Z` over an (:S) node moves one label three
-// times. Without runs the two SETs share a group and the record names the
-// node TWICE - and _VerifyDistinctIds refuses a record whose id list repeats,
-// so the replica does not misapply it, it rejects the payload and resyncs.
-//
-// Measured on a live pair before the split: sync_full 1 -> 2, master [S, Z]
-// and replica [S]. That is the loud cousin of the silent reordering above,
-// and asserting the record COUNTS rather than only the opcode sequence is
-// what separates them: without runs this is two records, the first holding
-// two ids.
+// The other failure mode: without runs the two SETs share a group and the
+// record names the node twice, which _VerifyDistinctIds refuses outright -
+// a forced resync rather than a silent reordering. Asserting the COUNTS is
+// what separates the two.
 void test_effectsV3Group_aLabelMovedThreeTimesIsThreeRecords(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID Z = 4;
@@ -2227,14 +2173,10 @@ void test_effectsV3Group_aLabelMovedThreeTimesIsThreeRecords(void) {
 	EffectsV3Grouping_Free(g);
 }
 
-// THE TWO AXES ARE INDEPENDENT, AND A LABEL CHANGE DOES NOT SPLIT A CREATE RUN
+// THE TWO AXES ARE INDEPENDENT: a label change does not split a create run.
 //
-// The guard against collapsing the id axis and the label axis into one
-// history. `CREATE (:A) SET n:Z CREATE (:B)` reverses nothing: it creates
-// throughout and only ever adds a label. One history would read the SET as a
-// switch away from creating and open a run, splitting the two creates into
-// two records for no reason - and the same mistake the other way would let a
-// label reversal ride inside a create run.
+// `CREATE (:A) SET n:Z CREATE (:B)` reverses nothing, so one history for both
+// axes would read the SET as a switch and split the creates for no reason.
 void test_effectsV3Group_aLabelChangeDoesNotSplitACreateRun(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID A = 1, Z = 4;
@@ -2256,14 +2198,9 @@ void test_effectsV3Group_aLabelChangeDoesNotSplitACreateRun(void) {
 	EffectsV3Grouping_Free(g);
 }
 
-// AND AN EDGE ID IS REUSED THE SAME WAY A NODE ID IS
-//
-// Not a restatement of the node case: the edge id space is its own DataBlock
-// and the refusal is its own code path - _ApplyCreateEdge claims the stated
-// ids and reports "names an edge id that is already live on this replica"
-// where _ApplyCreateNode reports the node equivalent. A fix that filed only
-// node records into runs would pass every test above and still resync on
-// `MATCH ()-[e:R]->() DELETE e CREATE ()-[:R]->()`.
+// AND AN EDGE ID IS REUSED THE SAME WAY A NODE ID IS. Its own DataBlock and
+// its own refusal path, so a fix that filed only node records into runs would
+// pass every test above.
 void test_effectsV3Group_aDeletedEdgeIdIsNotOvertakenByACreate(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 
@@ -2284,16 +2221,9 @@ void test_effectsV3Group_aDeletedEdgeIdIsNotOvertakenByACreate(void) {
 
 // AN ENTITY FILED LATE DOES NOT JOIN A GROUP EMITTED EARLY
 //
-// This is the case group-level appearance order alone does not cover, and it
-// is measured rather than imagined: `MATCH (n:A) CREATE (:B {n:'b1'}) DELETE n
-// CREATE (:B {n:'b2'})` puts both CREATE clauses in ONE group whose first
-// member predates the delete, and the second clause is handed the ids the
-// delete just freed. Appending it to that group emits it ahead of the delete
-// again - the bug, with the groups in arrival order.
-//
-// So the two creates are two records here, not one, and the delete sits
-// between them. The payload is one record larger and is the only sequence a
-// replica can apply.
+// Both CREATE clauses share a shape, so one group would swallow the second -
+// and that group's first member predates the delete. Group-level appearance
+// order alone does not cover this.
 void test_effectsV3Group_aLaterCreateDoesNotJoinAnEarlierRun(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID A = 1, B = 2;
@@ -2328,17 +2258,10 @@ void test_effectsV3Group_aLaterCreateDoesNotJoinAnEarlierRun(void) {
 
 // EVERY CREATED NODE STILL PRECEDES EVERY CREATED EDGE, ACROSS CLAUSES
 //
-// The run keeps the payload's halves apart; INSIDE a run the stages still
-// decide, and this is why. A group accepts entities for as long as its run is
-// open, so the edge record opened by the first clause is reused by the second
-// and emitted where the FIRST clause put it - ahead of the record creating the
-// second clause's endpoints. _ApplyCreateEdge checks both endpoints exist
-// before it claims anything, so that payload is refused.
-//
-// A GUARD ON THE FIX, NOT A TEST OF IT. There is no create/delete switch
-// here, so this passes on the old emitter and on the new one alike. What it
-// rules out is deleting _stage_of and emitting groups in the order they were
-// opened, which is the shape the fix could most plausibly have taken.
+// The second clause's edge reuses the :R group the first opened, which sits
+// ahead of the record creating :B, and _ApplyCreateEdge refuses an edge whose
+// endpoints are missing. A GUARD, green on the old emitter: it rules out
+// dropping _stage_of and emitting groups in the order they were opened.
 void test_effectsV3Group_createdNodesPrecedeCreatedEdgesAcrossClauses(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID A = 1, B = 2;
@@ -2370,14 +2293,8 @@ void test_effectsV3Group_createdNodesPrecedeCreatedEdgesAcrossClauses(void) {
 	EffectsV3Grouping_Free(g);
 }
 
-// AND THE MIRROR ON THE WAY OUT: every deleted edge precedes every deleted node
-//
-// op_delete unhooks before it removes, and it does so once per batch - so two
-// delete clauses interleave edge and node records the way the two create
-// clauses above interleave node and edge ones.
-//
-// Green on the old emitter too, and for the same reason: one run, no switch.
-// It guards the within-run stage order, not the run mechanism.
+// AND THE MIRROR ON THE WAY OUT: every deleted edge precedes every deleted
+// node. Green on the old emitter too - one run, no switch.
 void test_effectsV3Group_deletedEdgesPrecedeDeletedNodesAcrossClauses(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID A = 1, B = 2;
@@ -2405,15 +2322,8 @@ void test_effectsV3Group_deletedEdgesPrecedeDeletedNodesAcrossClauses(void) {
 
 // A STAGED UPDATE IS EMITTED WHERE THE QUERY STAGED IT, NOT AT THE END
 //
-// An update is the one record type that cannot be filed on arrival - its shape
-// is the entity's whole attribute set, which is not known until the query
-// stops producing attributes for it - so it is folded into a group at the
-// flush, after every create and delete has already been filed. Appending it
-// there would put `MATCH (n:A) SET n.v = 1 DELETE n` on the wire as a delete
-// followed by an update of a node that is gone.
-//
-// It carries the run it was staged in instead, and the stage order inside that
-// run does the rest.
+// An update joins a group only at the flush, after every create and delete has
+// been filed; appended there it would follow the delete of the node it names.
 void test_effectsV3Group_anUpdateIsEmittedInTheRunItWasStagedIn(void) {
 	{
 		// MATCH (n:A) SET n.v = 1 DELETE n - one run, stages decide. GREEN ON
@@ -2465,17 +2375,10 @@ void test_effectsV3Group_anUpdateIsEmittedInTheRunItWasStagedIn(void) {
 
 // AN UPDATE DOES NOT FOLLOW AN ID ACROSS THE ENTITY THAT REUSED IT
 //
-// `MATCH (n:A) SET n.v = 1 DELETE n CREATE (m:B) SET m.w = 2` stages TWO
-// updates under ONE id, for two different entities, because the create is
-// handed the id the delete just freed. Staged per entity id alone they merge,
-// and the merged record carries the FIRST entity's labels and the FIRST
-// entity's run - so m's property is written to n, ahead of the delete that
-// removes it, and never reaches m at all.
-//
-// WHAT MAKES THIS THE WORST OF THE FAMILY: nothing refuses it. The payload is
-// well formed, every record applies, no divergence is logged and no resync
-// follows - the replica is simply a property short. Measured on a live pair
-// before this was keyed on the run: master {w: 9}, replica {}.
+// Two SETs under one id for two entities. Merged, the record carries the first
+// entity's labels and run, so the second's property is written to a node about
+// to be deleted and never reaches the node it belongs to - and nothing refuses
+// that payload. Asserting the per-record attributes is what catches it.
 void test_effectsV3Group_anUpdateDoesNotCrossIntoAReusedId(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID A = 1, B = 2;
@@ -2531,11 +2434,8 @@ void test_effectsV3Group_anUpdateDoesNotCrossIntoAReusedId(void) {
 	EffectsV3Grouping_Free(g);
 }
 
-// AND THE SAME ENTITY WRITTEN TWICE INSIDE ONE RUN IS STILL ONE RECORD
-//
-// The guard on the line above. Keying the staging index on the run splits an
-// entity's updates whenever the payload switches; it must not split them when
-// it does not, or every `SET n.a = 1, n.b = 2` becomes two records.
+// AND THE SAME ENTITY WRITTEN TWICE INSIDE ONE RUN IS STILL ONE RECORD - the
+// guard on the line above, or every `SET n.a = 1, n.b = 2` becomes two.
 void test_effectsV3Group_twoWritesToOneEntityInOneRunAreOneRecord(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID A = 1;
@@ -2562,12 +2462,9 @@ void test_effectsV3Group_twoWritesToOneEntityInOneRunAreOneRecord(void) {
 
 // A PAYLOAD THAT ONLY CREATES IS STILL ONE RUN
 //
-// The guard against the opposite mistake. Runs cost a record every time they
-// split, so a rule that opened one per clause, per batch or per shape would
-// turn a bulk create into a record per entity and pass every test above while
-// undoing what the grouping is for. Nothing here reverses on either axis, so
-// nothing may split - and like the two guards above it is green on the old
-// emitter, which had no runs to split at all.
+// The guard against the opposite mistake: a rule that split per clause, batch
+// or shape would turn a bulk create into a record per entity. The two shapes
+// alternate here, which is what `CREATE (:A), (:B)` over many rows produces.
 void test_effectsV3Group_aCreateOnlyPayloadIsOneRun(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	const LabelID A = 1, B = 2;

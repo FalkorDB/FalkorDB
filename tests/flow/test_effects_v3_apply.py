@@ -6,35 +6,20 @@ from graph_utils import graph_eq
 #
 # A v3 payload is a LIST of records applied in order, and the emitter decides
 # that order. These assert that the order it picks is one a replica can apply,
-# for the query shapes where the question is open:
+# for the shapes where the question is open: a query that both creates and
+# deletes (C's DataBlock hands a freed id straight back, so one payload names
+# one id for two entities), the structural pairs a clause, MERGE or FOREACH can
+# break, and a label or a staged update written either side of a reversal.
 #
-#   * a query that deletes and creates in one statement. C's DataBlock hands a
-#     freed id straight back, so one payload names the same id in a DELETE and
-#     in a CREATE, for two different entities. Ordering by opcode cannot carry
-#     that - creates-first ships the create of an id the replica still has, and
-#     deletes-first breaks the same pair written the other way round.
+# COMPARING THE TWO GRAPHS IS NOT ENOUGH, and that is the design here. A
+# replica that refuses an effect resyncs and ends up holding the master's data
+# anyway, so a state comparison passes either way. The discriminating assertion
+# is the master's 'sync_full' counter -- except for the update and label cases,
+# which apply cleanly and leave the replica quietly wrong, so those compare the
+# data instead.
 #
-#   * the structural pairs: a node before the edge hanging off it on the way
-#     in, the edge before the node on the way out. Those hold within a run, and
-#     the shapes below are the ones where a clause, a MERGE or a FOREACH can
-#     file an entity into a record its endpoints are not in yet.
-#
-#   * a staged property update on either side of a reused id. That one does
-#     not refuse: the payload applies cleanly and leaves the replica a
-#     property short, so it is caught by comparing properties rather than by
-#     the resync counter.
-#
-# COMPARING THE TWO GRAPHS IS NOT ENOUGH, and that is the whole design here. A
-# replica that refuses an effect logs the divergence and forces a full resync,
-# after which it holds the master's data anyway -- so a state comparison passes
-# either way, just more slowly. It is the recovery that makes the bug invisible.
-# The assertion that discriminates is the master's 'sync_full' counter: a
-# legitimate write has to be APPLIED, not recovered from.
-#
-# WHAT IS DELIBERATELY NOT ASSERTED: which ids the query hands out. C reuses an
-# id inside the query that freed it and Rust does not, and the two engines are
-# allowed to disagree about id(n). What has to agree is the master and its own
-# replica, which is what the id comparisons below check.
+# NOT ASSERTED: which ids the query hands out. C and Rust may disagree on
+# id(n); what has to agree is a master and its own replica.
 
 
 # ONE CLASS PER SCENARIO, and that is not tidiness. RLTest gives a class one
@@ -74,16 +59,11 @@ class EffectsV3ApplyBase():
         self.master_graph.query(q)
         self.master.wait(1, 400)
 
-        # A refusal is not synchronous with the write: the replica logs it,
-        # drops the link and reconnects, so the counter moves some time after
-        # the write returns and racing it would pass on a broken build.
-        #
-        # THE WAIT ENDS ON A POSITIVE SIGNAL, not on the deadline. sync_full
-        # is incremented when the master STARTS a full sync, before it sends
-        # anything -- so a replica already holding the new data while the
-        # counter has not moved can only have got there by applying the
-        # effect. Waiting out the five seconds on every green call cost this
-        # file a minute and a half of pure sleeping.
+        # A refusal is not synchronous with the write, so the wait ends on a
+        # positive signal instead of the deadline: sync_full is incremented
+        # when the master STARTS a full sync, so a replica already holding the
+        # new data while the counter has not moved can only have applied the
+        # effect.
         deadline = time.time() + 5
         while time.time() < deadline:
             if self.master.info()["sync_full"] > before:
@@ -118,12 +98,9 @@ class EffectsV3ApplyBase():
         r = [r[0] for r in self.replica_graph.ro_query(q).result_set]
         return m, r
 
-    # the master handed the freed ids back inside the one query, which is the
-    # precondition the ordering has to survive
-    #
-    # STATED RATHER THAN ASSUMED: if the allocator stops reusing ids within a
-    # query the payload no longer names one id twice, and the scenario silently
-    # becomes a test of nothing.
+    # the ids really were handed back inside the one query -- stated, because
+    # if the allocator stops reusing them the payload no longer names one id
+    # twice and the scenario silently tests nothing
     def _assert_reused(self, freed, created, what):
         self.env.assertTrue(len(set(freed) & set(created)) > 0,
                 message=f"{what}: the query did not reuse any of the ids it "
@@ -136,12 +113,9 @@ class testDeleteAndCreateInOneQuery(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_delete_create"
 
     def test01_a_delete_and_a_create_in_one_query_apply_without_a_resync(self):
-        # THE SHAPE AN OPCODE ORDER CANNOT CARRY. C's DataBlock hands a query
-        # back the ids it just freed, so the new nodes land on the ids the
-        # delete released and the payload names each of them twice. With the
-        # creates staged ahead of the deletes the replica meets CREATE_NODE for
-        # an id it still has live, refuses the payload and resyncs -- and apply
-        # stops at the first failure, so the delete behind it is never reached.
+        # The new nodes land on the ids the delete released, so the payload
+        # names each of them twice. Creates-first ships CREATE for an id the
+        # replica still has live, and apply stops at the first failure.
         self._applied_without_resync(
                 "UNWIND range(0, 49) AS i CREATE (:Before {v: i})",
                 "delete-and-create setup")
@@ -170,15 +144,10 @@ class testCreateAndDeleteTheSameEntity(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_create_delete_same"
 
     def test01_an_entity_created_and_deleted_in_one_query(self):
-        # THE OTHER HALF OF THE ARGUMENT, and the one nothing else here
-        # covers. Every other class deletes first and creates afterwards, so a
-        # deletes-first emitter would carry all of them -- it would put the
-        # delete in front, which is where those queries wanted it anyway. This
-        # one is written the other way round: the entity is created and then
-        # destroyed, so the CREATE must reach the replica first. A fixed order
-        # that favoured deletes would send DELETE for an id the replica has
-        # never seen, refuse, and resync. That pair is why the records go out
-        # in the query's sequence rather than in any order at all.
+        # THE OTHER HALF OF THE ARGUMENT. Every other class deletes first and
+        # creates afterwards, so a deletes-first emitter would carry them all.
+        # Here the entity is created and then destroyed, so the CREATE has to
+        # reach the replica first.
         self._applied_without_resync(
                 "UNWIND range(0, 9) AS i CREATE (n:Gone {v: i}) DELETE n",
                 "an entity created and deleted in one query")
@@ -190,12 +159,9 @@ class testCreateAndDeleteTheSameEntity(EffectsV3ApplyBase):
                         "MATCH (n:Gone) RETURN count(n)").result_set[0][0],
                     0, message=f"the :Gone nodes survived on the {side}")
 
-        # AND THE SAME ENTITY WITH SOMETHING LEFT BEHIND TO LOOK AT. The bare
-        # shape above leaves an empty graph, which a replica that applied
-        # nothing at all also leaves -- so this one creates, deletes the thing
-        # it just created, and creates again onto the ids that freed. Three
-        # records name the same ids, in three runs, and the survivors are
-        # visible on both sides.
+        # The bare shape leaves an empty graph, which a replica that applied
+        # nothing also leaves -- so this one creates, deletes what it created,
+        # and creates again onto the freed ids, leaving survivors to compare.
         self._applied_without_resync(
                 "UNWIND range(0, 9) AS i CREATE (:Keep {v: i})",
                 "create-delete-create setup")
@@ -220,11 +186,9 @@ class testCreateAndDeleteTheSameEntity(EffectsV3ApplyBase):
                         "MATCH (n:Temp) RETURN count(n)").result_set[0][0],
                     0, message=f"the :Temp nodes survived on the {side}")
 
-        # THE REUSE, STATED. That query created twenty nodes over ten :Keep
-        # ids, so without the ids coming back the survivors would sit at 20
-        # and above. Below that they are the ids :Temp held, which is what
-        # makes the payload name one id in a CREATE, a DELETE and a CREATE
-        # again -- and what makes this more than a smoke test.
+        # twenty nodes over ten :Keep ids, so survivors below 20 are the ids
+        # :Temp held -- which is what makes the payload name one id in a
+        # CREATE, a DELETE and a CREATE again
         self.env.assertTrue(max(survivors) < 20,
                 message=f"the :Survivor nodes did not take the ids :Temp "
                         f"freed ({survivors}), so this payload never named "
@@ -235,11 +199,9 @@ class testTwoCreateClausesEitherSideOfADelete(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_create_delete_create"
 
     def test01_two_create_clauses_either_side_of_a_delete(self):
-        # BOTH CREATE CLAUSES SHARE A SHAPE, so they would be one record -- and
-        # that record's first entity predates the delete, so it is emitted
-        # ahead of it while holding the ids the delete freed. Appearance order
-        # at the group level does not cover this; the emitter has to stop the
-        # second clause joining the first clause's record at all.
+        # Both CREATE clauses share a shape, so they would be one record --
+        # whose first entity predates the delete, while it holds the ids the
+        # delete freed. Group-level appearance order does not cover this.
         self._applied_without_resync(
                 "UNWIND range(0, 29) AS i CREATE (:Victim {v: i})",
                 "create-delete-create setup")
@@ -266,11 +228,9 @@ class testDeleteWithIncidentEdges(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_incident_edges"
 
     def test01_a_detach_delete_and_a_create_in_one_query(self):
-        # EDGES BEFORE NODES ON THE WAY OUT, with the id reuse on top: the
-        # edges are implicit (collected from the nodes being deleted) and the
-        # creates afterwards take the freed node ids. A replica that meets
-        # DELETE_NODE before the DELETE_EDGE that unhooks it refuses, and so
-        # does one that meets the creates first.
+        # Edges before nodes on the way out, with id reuse on top: the edges
+        # are implicit, collected from the nodes being deleted, and the creates
+        # afterwards take the freed node ids.
         self._applied_without_resync("""
             UNWIND range(0, 19) AS i
             CREATE (:Hub {v: i})-[:LINK {v: i}]->(:Spoke {v: i})
@@ -303,17 +263,13 @@ class testCreateEdgesAcrossTwoClauses(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_two_edge_clauses"
 
     def test01_two_create_clauses_sharing_a_relationship_type(self):
-        # NODES BEFORE EDGES ON THE WAY IN, across clauses. Both clauses create
-        # the same relationship type, so both edges want one record -- and that
-        # record was opened by the first clause, which is ahead of the record
-        # creating the second clause's endpoints. _ApplyCreateEdge checks that
-        # both endpoints exist before it claims anything, so the payload is
-        # refused.
+        # Nodes before edges on the way in, across clauses: both clauses
+        # create the same relationship type, so the second edge wants the
+        # record the first clause opened -- which is ahead of the record
+        # creating its endpoints.
         #
-        # A GUARD, NOT A REGRESSION TEST. This query never switches between
-        # creating and deleting, so it passes on the emitter this change
-        # replaces as well. What it rules out is emitting groups in the order
-        # they were opened and dropping the stage order within a run.
+        # A GUARD, green on the emitter this change replaces: nothing here
+        # switches direction. It rules out emitting groups in opening order.
         self._applied_without_resync("""
             UNWIND range(0, 19) AS i
             CREATE (:L {v: i})-[:E {v: i}]->(:L {v: i})
@@ -330,11 +286,9 @@ class testMerge(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_merge"
 
     def test01_a_merge_and_a_delete_in_one_query(self):
-        # MERGE creates through the same commit path as CREATE -- nodes, then
-        # edges -- but it decides per row whether to create at all, so the
-        # payload interleaves whatever the match found with whatever the
-        # create made. Run alongside a delete of the same label, it is the
-        # create half that lands on the freed ids.
+        # MERGE commits through the same path as CREATE but decides per row
+        # whether to create at all, so the payload interleaves what the match
+        # found with what the create made.
         self._applied_without_resync(
                 "UNWIND range(0, 19) AS i CREATE (:Seed {v: i})",
                 "merge setup")
@@ -363,10 +317,9 @@ class testForeach(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_foreach"
 
     def test01_a_foreach_that_deletes_and_creates(self):
-        # FOREACH drains its body ONCE over the whole record list, so its write
-        # ops commit the way a top-level clause does -- but the body's clauses
-        # still interleave, and the delete inside it frees ids the create
-        # inside it is handed back.
+        # FOREACH drains its body once over the whole record list, so its
+        # write ops commit the way a top-level clause does -- but the body's
+        # clauses still interleave.
         self._applied_without_resync(
                 "UNWIND range(0, 19) AS i CREATE (:Loop {v: i})",
                 "foreach setup")
@@ -396,34 +349,23 @@ class testSeveralSwitchesInOnePayload(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_switches"
 
     def test01_two_delete_create_pairs_in_one_query(self):
-        # MORE THAN ONE SWITCH IN A PAYLOAD. Each clause pair deletes a label
-        # and creates another on the ids it just freed, so one payload carries
-        # four stretches and names two sets of ids twice over.
+        # MORE THAN ONE SWITCH IN A PAYLOAD: each clause pair deletes a label
+        # and creates another on the ids it just freed. What this catches that
+        # the single-switch classes do not is a rule that reverses once and
+        # then stops -- a flag rather than a counter.
         #
-        # WHAT THIS CATCHES that the single-switch classes do not: a rule that
-        # reverses once and then stops -- a flag rather than a counter, or a
-        # run that is opened at the first delete and never again. Such a rule
-        # orders the first pair correctly and emits the second create back in
-        # the first run, ahead of the delete that freed its ids.
+        # It is NOT about two creates sharing a record: :B and :D are different
+        # shapes and could never be one group. That case is
+        # testTwoCreateClausesEitherSideOfADelete.
         #
-        # It is NOT about two creates sharing a record: :B and :D are
-        # different shapes and could never be one group whatever the run rule
-        # said. The case where a later create rejoins an earlier create's
-        # record is testTwoCreateClausesEitherSideOfADelete, where both
-        # clauses create the same label.
-        #
-        # WRITTEN AS CHAINED CLAUSES AND NOT AS `CALL {}`, deliberately. A
-        # writing subquery looks like the natural way to get many switches,
-        # but on C it acts on the first outer row only: Delete, Merge and
-        # MergeCreate register no reset callback (op_delete.c:239,
+        # WRITTEN AS CHAINED CLAUSES AND NOT `CALL {}`, deliberately: on C a
+        # writing subquery acts on the first outer row only -- Delete, Merge
+        # and MergeCreate register no reset callback (op_delete.c:239,
         # op_merge.c:94, op_merge_create.c:77) and OpBase_PropagateReset skips
-        # an op that has none (op.c:233), so rows 2..N find DeleteConsume
-        # already in handoff mode. Measured: twenty :Outer nodes through
-        # `CALL { WITH n DELETE n CREATE (:Inner) }` leave nineteen :Outer and
-        # one :Inner, where Rust gives 0 and 20. That is a pre-existing engine
-        # defect with nothing to do with the emitter, and a test built on it
-        # would either fail for the wrong reason or pass without exercising
-        # anything. Do not put it back.
+        # an op that has none (op.c:233). Twenty :Outer nodes through
+        # `CALL { WITH n DELETE n CREATE (:Inner) }` leave nineteen and one,
+        # where Rust gives none and twenty. Pre-existing, unrelated to the
+        # emitter, and a test built on it would prove nothing. Do not add it.
         self._applied_without_resync(
                 "UNWIND range(0, 9) AS i CREATE (:A {v: i})",
                 "switches setup, first label")
@@ -468,17 +410,12 @@ class testUpdateAcrossAReusedId(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_update_reuse"
 
     def test01_an_update_either_side_of_a_reused_id(self):
-        # THE ONE FAILURE IN THIS FILE THAT IS NOT A REFUSAL. Both SETs name
-        # the same id -- the second node was handed the id the delete freed --
-        # for two different entities. Staged under the id alone they merge into
-        # one record carrying the FIRST entity's labels and position, so the
-        # second node's property is written to the node about to be deleted and
-        # never reaches the node it belongs to.
-        #
-        # Nothing refuses that payload. It is well formed, every record
-        # applies, sync_full does not move and no divergence is logged: the
-        # replica is simply a property short. So the assertion that catches it
-        # is the property comparison, not the resync counter.
+        # THE ONE FAILURE HERE THAT IS NOT A REFUSAL. Both SETs name the same
+        # id -- the second node took the id the delete freed -- for two
+        # different entities. Merged, the second node's property is written to
+        # the node about to be deleted and never reaches the one it belongs to.
+        # Nothing refuses that payload, so the property comparison catches it,
+        # not the resync counter.
         self._applied_without_resync(
                 "UNWIND range(0, 19) AS i CREATE (:Old {v: i})",
                 "update-across-reuse setup")
@@ -487,9 +424,8 @@ class testUpdateAcrossAReusedId(EffectsV3ApplyBase):
             "MATCH (n:Old) RETURN id(n)").result_set)
         self.env.assertEqual(len(freed), 20)
 
-        # 'v' is carried across the delete in a WITH: reading n.v after the
-        # DELETE gives null and sets nothing, which would leave the second
-        # update out of the payload altogether
+        # 'v' is carried across the delete in a WITH: reading n.v afterwards
+        # gives null and the second update would not be in the payload at all
         self._applied_without_resync("""
             MATCH (n:Old)
             WITH n, n.v AS v
@@ -526,21 +462,14 @@ class testALabelTakenOffAndPutBack(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_label_reversal"
 
     def test01_a_label_removed_and_set_again_in_one_query(self):
-        # THE SAME FAULT AS A REUSED ID, ONE LAYER UP. A (node, label) pair can
-        # be given and taken away repeatedly in one query, and the stage order
-        # is fixed -- SET_LABELS is stage 4 and REMOVE_LABELS is stage 5 -- so
-        # sorting a run by stage emits the SET first whatever the query did.
-        # `REMOVE n:Z SET n:Z` then reaches the replica as set-then-remove and
-        # the replica ends without a label the master kept.
+        # THE SAME FAULT AS A REUSED ID, ONE LAYER UP: SET_LABELS is stage 4
+        # and REMOVE_LABELS is 5, so a run sorted by stage emits
+        # `REMOVE n:Z SET n:Z` backwards and the replica loses a label.
         #
-        # THE UNIT TEST IS THE DETERMINISTIC GUARD. aLabelPutBackOpensANewRun
-        # asserts the record sequence and fails every time the split is
-        # reverted. The end state here does not: on the emitter this change
-        # replaces the same two records came out every run, but the replica
-        # diverged in four of six measured instances and matched in the other
-        # two. So this runs the shape several times -- one agreement no longer
-        # hides the fault -- and exists for the end-to-end half of the claim
-        # rather than as the primary regression test.
+        # The unit test aLabelPutBackOpensANewRun is the deterministic guard --
+        # the records came out inverted every time on the old emitter, but the
+        # replica diverged in only four of six measured instances. Hence five
+        # passes here, so one agreement cannot hide the fault.
         self._applied_without_resync(
                 "CREATE (:S:Z {k: 1})", "label reversal setup")
 
@@ -566,16 +495,12 @@ class testUpdateOfADeletedNode(EffectsV3ApplyBase):
     GRAPH = "effects_v3_apply_update_delete"
 
     def test01_an_update_of_a_node_the_query_deletes(self):
-        # AN UPDATE IS STAGED, not filed on arrival: its shape is the entity's
-        # whole attribute set, which is not known until the query stops writing
-        # to it, so it joins a record at the very end. Appended there it would
-        # follow the delete of the node it names.
+        # An update joins a record only at the flush, after every create and
+        # delete has been filed; appended there it would follow the delete of
+        # the node it names.
         #
-        # A GUARD, NOT A REGRESSION TEST. The emitter this change replaces
-        # sorts updates (stage 2) ahead of deletes (stage 7) and gets this one
-        # right; it is here so the run mechanism does not break what already
-        # worked, by filing a staged update wherever the flush happens to
-        # reach it.
+        # A GUARD: the old emitter sorts updates (2) ahead of deletes (7) and
+        # gets this right. It is here so the run mechanism does not break it.
         self._applied_without_resync(
                 "UNWIND range(0, 19) AS i CREATE (:Doomed {v: i})",
                 "update-then-delete setup")
