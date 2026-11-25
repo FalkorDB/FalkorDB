@@ -35,7 +35,12 @@ BUILD_BATCH = 100_000
 #: cheap reads: name -> (requests/s per graph, TIMEOUT in s)
 #: scan-lookup's budget keeps its cost (a scan of the largest label) well above 5% of it at scale 1
 #: and well below it at scale 0.1, so whether it is judged never hangs on a few milliseconds
-READ_OPS = {"lookup": (30.0, 1.0), "filter-sort": (10.0, 1.0), "distinct": (4.0, 1.0), "scan-lookup": (1.0, 0.6)}
+READ_OPS = {
+    "lookup": (30.0, 1.0),
+    "filter-sort": (10.0, 1.0),
+    "distinct": (4.0, 1.0),
+    "scan-lookup": (1.0, 0.6),
+}
 WRITE_RATE = {"upsert": 10.0, "bulk-set": 2.0}  # requests/s per busy graph
 LONG_TIMEOUT = {"full-scan": 6.0, "full-count": 6.0, "type-count": 6.0}  # TIMEOUT in s
 SCAN_SHARE = 0.6  # of long reads, the share that are full scans (the rest: a count batch)
@@ -50,29 +55,47 @@ SINCE = BASE_TS - 100_000_000  # every timestamp in the graph is after this
 SCAN_W = 3  # the full scan returns edges with w < 3
 COUNT_W = 96  # the full count counts edges with w >= 96
 
-FULL_SCAN = ("MATCH (a)-[r]->(b) WHERE r.w < $w RETURN type(r), id(a), labels(a), a.k, a.h, "
-             "id(b), labels(b), b.k, b.h, r.ts")
-FULL_COUNT = ("MATCH (a)-[r]->(b) WHERE r.w >= $w RETURN labels(a)[0] AS src, type(r) AS t, "
-              "labels(b)[0] AS dst, count(r) AS n")
+FULL_SCAN = (
+    "MATCH (a)-[r]->(b) WHERE r.w < $w RETURN type(r), id(a), labels(a), a.k, a.h, "
+    "id(b), labels(b), b.k, b.h, r.ts"
+)
+FULL_COUNT = (
+    "MATCH (a)-[r]->(b) WHERE r.w >= $w RETURN labels(a)[0] AS src, type(r) AS t, "
+    "labels(b)[0] AS dst, count(r) AS n"
+)
 TYPE_COUNT = "MATCH (a)-[r:{t}]->(b) WHERE r.w >= $w RETURN labels(a)[0] AS src, labels(b)[0] AS dst, count(r) AS n"
 LOOKUP = "MATCH (n:{label} {{k: $k}}) WHERE n.ts >= $since RETURN n.h"
-FILTER_SORT = (f"MATCH (s:{FILTERED}) WHERE s.g = {{g}} AND s.h = {{h}} AND s.k = {{k}} WITH DISTINCT s "
-               "WHERE s.ts >= $since RETURN s ORDER BY s.h, s.k, s.ts LIMIT 100")
-DISTINCT = f"MATCH (n:{FILTERED}) WHERE n.m = {{m}} AND n.ts >= $since RETURN DISTINCT n.k LIMIT 20000"
-SCAN_LOOKUP = f"MATCH (n:{HUB}) WHERE n.k = $k RETURN n.h LIMIT 1"  # a key past the end: every node is read
+FILTER_SORT = (
+    f"MATCH (s:{FILTERED}) WHERE s.g = {{g}} AND s.h = {{h}} AND s.k = {{k}} WITH DISTINCT s "
+    "WHERE s.ts >= $since RETURN s ORDER BY s.h, s.k, s.ts LIMIT 100"
+)
+DISTINCT = (
+    f"MATCH (n:{FILTERED}) WHERE n.m = {{m}} AND n.ts >= $since RETURN DISTINCT n.k LIMIT 20000"
+)
+# a key past the end: every node is read
+SCAN_LOOKUP = f"MATCH (n:{HUB}) WHERE n.k = $k RETURN n.h LIMIT 1"
 UPSERT_PAIR = (
     "MERGE (a:{src} {{k: $ka, g: $ga}}) ON CREATE SET a.ts = $now, a.h = $ha SET a.c = $c, a.u = $now "
     "WITH count(*) AS _ MERGE (b:{dst} {{k: $kb, g: $gb}}) ON CREATE SET b.ts = $now, b.h = $hb "
     "SET b.c = $c, b.u = $now WITH count(*) AS _ "
     "MATCH (a:{src} {{k: $ka, g: $ga}}), (b:{dst} {{k: $kb, g: $gb}}) "
-    "MERGE (a)-[r:{t}]->(b) ON CREATE SET r.ts = $now SET r.c = $c, r.u = $now RETURN 1")
-UPSERT_SINGLE = f"MERGE (n:{SINGLE} {{k: $k, g: $g}}) ON CREATE SET n.ts = $now, n.h = $h RETURN id(n)"
+    "MERGE (a)-[r:{t}]->(b) ON CREATE SET r.ts = $now SET r.c = $c, r.u = $now RETURN 1"
+)
+UPSERT_SINGLE = (
+    f"MERGE (n:{SINGLE} {{k: $k, g: $g}}) ON CREATE SET n.ts = $now, n.h = $h RETURN id(n)"
+)
 BULK_SET = "MATCH (n:{label}) WHERE n.g = $g SET n.c = $c, n.u = $now"
 
 #: indexes of index epochs (read-path labels)
 EPOCH_INDEXES = ((FILTERED, ("g", "h", "k")), (WIDE, ("k", "k2")), (HUB, ("k", "h")))
 #: unique constraints of constraint epochs, on the upsert keys
-CONSTRAINTS = (("L11", ("k", "g")), ("L10", ("k", "g")), ("L9", ("k", "g")), ("L12", ("k", "g")), (SINGLE, ("k",)))
+CONSTRAINTS = (
+    ("L11", ("k", "g")),
+    ("L10", ("k", "g")),
+    ("L9", ("k", "g")),
+    ("L12", ("k", "g")),
+    (SINGLE, ("k",)),
+)
 #: (label, property) pairs whose index lookups must match a scan
 INDEX_PROBES = ((FILTERED, "k"), (WIDE, "k"), (HUB, "k"))
 
@@ -103,14 +126,18 @@ def node_query(label: str, lo: int, hi: int) -> str:
         extra = ", k2: i + 10000000"
     elif label == FILTERED:
         extra = f", m: i % {MODES}"
-    return (f"UNWIND range({lo}, {hi}) AS i CREATE (:{label} {{k: i, g: i % {GROUPS}, h: i % {BUCKETS}, "
-            f"ts: {BASE_TS} - i{extra}}})")
+    return (
+        f"UNWIND range({lo}, {hi}) AS i CREATE (:{label} {{k: i, g: i % {GROUPS}, h: i % {BUCKETS}, "
+        f"ts: {BASE_TS} - i{extra}}})"
+    )
 
 
 def edge_query(t: str, lo: int, hi: int, src_expr: str, dst_expr: str, where: str = "") -> str:
     """The id-wiring query: the UNWIND + two id() seeks + CREATE shape the build timing measures."""
-    return (f"UNWIND range({lo}, {hi}) AS j WITH j{where} MATCH (a) WHERE id(a) = {src_expr} "
-            f"MATCH (b) WHERE id(b) = {dst_expr} CREATE (a)-[:{t} {{w: j % 100, ts: {BASE_TS} - j}}]->(b)")
+    return (
+        f"UNWIND range({lo}, {hi}) AS j WITH j{where} MATCH (a) WHERE id(a) = {src_expr} "
+        f"MATCH (b) WHERE id(b) = {dst_expr} CREATE (a)-[:{t} {{w: j % 100, ts: {BASE_TS} - j}}]->(b)"
+    )
 
 
 def build_plan(n: dict, base: dict | None = None, batch: int = BUILD_BATCH):
@@ -131,7 +158,11 @@ def build_plan(n: dict, base: dict | None = None, batch: int = BUILD_BATCH):
                 yield "edges", types[0], edge_query(types[0], lo, hi, s_expr, d_expr)
             else:
                 for i, t in enumerate(types):
-                    yield "edges", t, edge_query(t, lo, hi, s_expr, d_expr, f" WHERE j % {len(types)} = {i}")
+                    yield (
+                        "edges",
+                        t,
+                        edge_query(t, lo, hi, s_expr, d_expr, f" WHERE j % {len(types)} = {i}"),
+                    )
 
 
 def initial_pair(n: dict, src: str, dst: str, a: int, b: int) -> bool:
@@ -162,7 +193,8 @@ def make_long(kind: str) -> list[tuple[str, str, dict]]:
     if kind == "full-scan":
         return [("full-scan", FULL_SCAN, {"w": SCAN_W})]
     return [("full-count", FULL_COUNT, {"w": COUNT_W})] + [
-        ("type-count", TYPE_COUNT.format(t=t), {"w": COUNT_W}) for t in REL_TYPES]
+        ("type-count", TYPE_COUNT.format(t=t), {"w": COUNT_W}) for t in REL_TYPES
+    ]
 
 
 def make_upsert(n: dict, rng: random.Random) -> tuple[str, dict, list]:
@@ -170,20 +202,37 @@ def make_upsert(n: dict, rng: random.Random) -> tuple[str, dict, list]:
     x = rng.random()
     now = BASE_TS + rng.randrange(1_000_000)
     c = rng.randrange(1000)
-    for (src, t, dst), cut in zip(PAIRS, (UPSERT_MIX[0], UPSERT_MIX[0] + UPSERT_MIX[1])):
+    for (src, t, dst), cut in zip(
+        PAIRS, (UPSERT_MIX[0], UPSERT_MIX[0] + UPSERT_MIX[1]), strict=True
+    ):
         if x < cut:
             ka = rng.randrange(int(n[src] * KEY_GROWTH))
             kb = rng.randrange(int(n[dst] * KEY_GROWTH))
-            params = {"ka": ka, "ga": ka % GROUPS, "ha": ka % BUCKETS, "kb": kb, "gb": kb % GROUPS,
-                      "hb": kb % BUCKETS, "c": c, "now": now}
-            return UPSERT_PAIR.format(src=src, dst=dst, t=t), params, [(src, ka), (dst, kb), (t, ka, kb)]
+            params = {
+                "ka": ka,
+                "ga": ka % GROUPS,
+                "ha": ka % BUCKETS,
+                "kb": kb,
+                "gb": kb % GROUPS,
+                "hb": kb % BUCKETS,
+                "c": c,
+                "now": now,
+            }
+            return (
+                UPSERT_PAIR.format(src=src, dst=dst, t=t),
+                params,
+                [(src, ka), (dst, kb), (t, ka, kb)],
+            )
     k = rng.randrange(int(n[SINGLE] * KEY_GROWTH))
     return UPSERT_SINGLE, {"k": k, "g": k % GROUPS, "h": k % BUCKETS, "now": now}, [(SINGLE, k)]
 
 
 def make_bulk_set(rng: random.Random) -> tuple[str, dict]:
-    return BULK_SET.format(label=rng.choice(BULK_LABELS)), {"g": rng.randrange(GROUPS), "c": rng.randrange(1000),
-                                                           "now": BASE_TS + rng.randrange(1_000_000)}
+    return BULK_SET.format(label=rng.choice(BULK_LABELS)), {
+        "g": rng.randrange(GROUPS),
+        "c": rng.randrange(1000),
+        "now": BASE_TS + rng.randrange(1_000_000),
+    }
 
 
 def pair_of(edge_type: str) -> tuple[str, str, str]:
@@ -193,7 +242,9 @@ def pair_of(edge_type: str) -> tuple[str, str, str]:
 # --- parameters --------------------------------------------------------------------------------------
 
 
-def hour_params(seed: str, h: int, scale_range: tuple[float, float, float] = (0.25, 2.0, 4.0)) -> dict:
+def hour_params(
+    seed: str, h: int, scale_range: tuple[float, float, float] = (0.25, 2.0, 4.0)
+) -> dict:
     """A server-hour: a fresh server with THREAD_COUNT drawn, and 2-4 graphs at their own scales
     (their sum capped)."""
     rng = random.Random(f"{seed}-h{h}")
@@ -217,8 +268,11 @@ def epoch_params(seed: str, h: int, e: int, ng: int) -> dict:
     read_mult = min(read_mult, MAX_READ_RATE / (base_read * ng))
     constraints = rng.random() < 1 / 3
     return {
-        "hour": h, "epoch": e, "seed": f"{seed}-h{h}-e{e}",
-        "busy": busy, "long_streams": {str(g): k for g, k in long_k.items()},
+        "hour": h,
+        "epoch": e,
+        "seed": f"{seed}-h{h}-e{e}",
+        "busy": busy,
+        "long_streams": {str(g): k for g, k in long_k.items()},
         "write_mult": round(math.exp(rng.uniform(math.log(0.25), math.log(4))), 3),
         "read_mult": round(read_mult, 3),
         "write_pattern": "holdoff" if rng.random() < 0.5 else "poisson",
@@ -248,7 +302,18 @@ def control_params(scales: tuple[float, ...] = CONTROL_SCALES) -> tuple[dict, di
     """The fixed-seed control epoch: graph 0 busy (one long-read stream, Poisson writes arriving
     during the long reads), graph 1 quiet (reads only), THREAD_COUNT 32."""
     hp = {"hour": 0, "graphs": len(scales), "scales": list(scales), "thread_count": 32}
-    ep = {"hour": 0, "epoch": 0, "seed": "control", "busy": [0], "long_streams": {"0": 1},
-          "write_mult": 1.0, "read_mult": 1.0, "write_pattern": "poisson", "indexes": False,
-          "constraints": False, "write_timeout_ms": 0, "bgsave": False}
+    ep = {
+        "hour": 0,
+        "epoch": 0,
+        "seed": "control",
+        "busy": [0],
+        "long_streams": {"0": 1},
+        "write_mult": 1.0,
+        "read_mult": 1.0,
+        "write_pattern": "poisson",
+        "indexes": False,
+        "constraints": False,
+        "write_timeout_ms": 0,
+        "bgsave": False,
+    }
     return hp, ep

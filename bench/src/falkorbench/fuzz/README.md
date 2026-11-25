@@ -1,12 +1,12 @@
 # The fuzz check: a seeded soak of long reads, writes and cheap reads
 
-`tests/soak/fuzz` is one check of the perf nightly (`tests/perf/checks.yaml`, name `fuzz`,
-`runner: vm`). It starts each image's own server, loads it with long reads, open-loop writes and
+`bench fuzz` (this package, `falkorbench.fuzz`) is one check of the perf nightly
+(`bench/checks.yaml`, name `fuzz`, `runner: vm`). It starts each image's own server, loads it with long reads, open-loop writes and
 cheap reads on several graphs while a separate process PINGs it every 10 ms, and reports which of
 its checks held on the candidate and on the baseline.
 
 ```
-uv run --project tests/soak/fuzz soak-fuzz --candidate <image@sha256:…> --baseline <image@sha256:…> \
+uv run --project bench --frozen --group fuzz bench fuzz --candidate <image@sha256:…> --baseline <image@sha256:…> \
     --out <dir> --mode <queue|nightly|long> \
     [--candidate-label …] [--baseline-label …] [--candidate-commit …] [--baseline-commit …]
 ```
@@ -40,11 +40,12 @@ A run is one server-hour on one side:
    port (never 6379). Beside it, a second container from the same image with no module: the plain
    server that tells a stall of the host from a freeze of FalkorDB. It is pinned to
    `PERF_CLIENT_CPUS`.
-2. The graphs are built (`soakfuzz/model.py`: 14 labels from a halving series, 2.4M nodes and
+2. The graphs are built (`model.py`: 14 labels from a halving series, 2.4M nodes and
    3.6M edges at scale 1, edges wired by node id). Each cheap read is then timed alone, 7 times,
    on a quiet server (its calibrated cost).
 3. One or more epochs. The drivers run under `taskset` on the client CPUs (the VM workflow does
-   that). No client re-sends: no socket timeout and no retries on measured requests. Reads and
+   that). No client re-sends: no socket timeout and no retries on measured requests (redis-py 8
+   retries by default, so retries are off explicitly), and every client speaks RESP2. Reads and
    writes are open loop, sent at their scheduled time whether or not earlier ones have returned,
    and timed from that schedule.
    * long reads, in their own streams: a full edge scan that visits every edge and returns about
@@ -89,7 +90,7 @@ so a re-run of the same candidate repeats it (`--seed` overrides).
 | `server_stays_up` | the server neither exits nor stops answering: no PING unanswered for 60 s during the load, and a PONG to one of 3 PINGs (10 s each) after it and after any failed step (`completed` 0 if it does). A container Docker could not start, or a Docker command that timed out, is not a crash: that run is unmeasured |
 
 Long mode adds `timed_out_writes_leave_nothing`, `constraints_hold`, `index_matches_scan`,
-`no_unexpected_errors` and the repros (`soakfuzz/repros.py`). Memory growth over a server-hour
+`no_unexpected_errors` and the repros (`repros.py`). Memory growth over a server-hour
 (`memory_steady` in an hour's last `epoch.json`) is recorded but not judged: a one-epoch replay
 could never confirm it. The repros are
 a write, a constraint command and an index build while a long read runs (no freeze), writers
@@ -174,18 +175,19 @@ reject it.
 and `machine.runner` is `local`. A quick local smoke:
 
 ```
-uv run --project tests/soak/fuzz soak-fuzz --candidate … --baseline … --out /tmp/fuzz --mode nightly \
+uv run --project bench --frozen --group fuzz bench fuzz --candidate … --baseline … --out /tmp/fuzz --mode nightly \
     --epoch-s 40 --drain-s 20 --control-scales 0.05,0.02 --build-scale 0.02
 ```
 
-Tests (stdlib and pytest only, no server). `perf-contract.yml` runs them:
+Tests (no server, no Docker), in `bench/tests/test_fuzz.py`. `perf-contract.yml` runs them with the
+rest of `bench/tests`:
 
 ```
-uv run --no-project --python 3.12 --with pytest==9.2.0 --with pyyaml==6.0.4 \
-    python -I -m pytest tests/soak -v -p no:cacheprovider
+uv run --project bench --frozen --group dev --group fuzz \
+    python -I -B -m pytest bench/tests/test_fuzz.py -v -p no:cacheprovider
 ```
 
-They validate every result shape with `tests/perf/validate.py` and fail if it is missing.
+They validate every result shape with the contract's validator (`falkorbench.contract`).
 
 ## Limits
 

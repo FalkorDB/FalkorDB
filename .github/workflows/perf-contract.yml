@@ -1,6 +1,6 @@
 # Tests for the nightly perf runs and their checks: bench/tests/ (the bench
 # toolset, incl. the result contract, its example files, acceptance.yaml and the
-# soak check), plus whatever has not moved into bench/ yet: tests/perf/ (the VM
+# soak and fuzz checks), plus whatever has not moved into bench/ yet: tests/perf/ (the VM
 # scripts). Nothing here builds or runs the engine or a server; it takes about a
 # minute.
 
@@ -51,10 +51,11 @@ jobs:
       # Separate runs per suite: test files with the same basename in two
       # suites would collide in one run (pytest's default prepend import mode),
       # and a failure names its suite.
-      # --group soak: test_soak imports the soak's kit (psutil).
+      # --group soak: test_soak imports the soak's kit (psutil); --group fuzz:
+      # test_fuzz checks that redis-py parses with hiredis.
       - name: pytest bench/tests
         run: >-
-          .bin/uv run --project bench --frozen --group dev --group soak
+          .bin/uv run --project bench --frozen --group dev --group soak --group fuzz
           python -I -B -m pytest bench/tests -v -p no:cacheprovider
 
       # tests/perf/ keeps the VM scripts' tests, which arrive with the VM PR.

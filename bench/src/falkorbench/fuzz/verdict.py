@@ -5,27 +5,21 @@ from __future__ import annotations
 
 import statistics
 
-from .checks import DATA_CHECKS, TIMING_CHECKS
+from falkorbench import kit
+
+from .checks import DATA_CHECKS
+from .checks import TIMING_CHECKS
 
 CONTROL_CHECKS = (*TIMING_CHECKS, *DATA_CHECKS)
 SERVER_CHECK = "server_stays_up"
-SIDES = ("candidate", "baseline")
 BUILD_THRESHOLD = 1.5
 #: (finding name, key in a build run, minimum difference in ms for a regression or improvement)
-BUILD_METRICS = (("build edge phase", "edges_ms", 500.0), ("build node phase", "nodes_ms", 500.0),
-                 ("build edge query 1 row", "probe_1_ms", 2.0), ("build edge query 100 rows", "probe_100_ms", 2.0))
-
-
-def status_of(candidate: int | None, baseline: int | None) -> str:
-    """Contract v1.4 for a 0/1 metric: 0 on the candidate is a regression unless the baseline is 0
-    too (the validator requires it whenever the baseline is not 0, null included)."""
-    if candidate == 0:
-        return "info" if baseline == 0 else "regression"
-    if baseline == 0 and candidate == 1:
-        return "improvement"
-    if candidate is None or baseline is None:
-        return "info"
-    return "ok"
+BUILD_METRICS = (
+    ("build edge phase", "edges_ms", 500.0),
+    ("build node phase", "nodes_ms", 500.0),
+    ("build edge query 1 row", "probe_1_ms", 2.0),
+    ("build edge query 100 rows", "probe_100_ms", 2.0),
+)
 
 
 def judge_repeat(first_c, first_b, rep_c, rep_b) -> tuple[int | None, int | None, str]:
@@ -42,7 +36,7 @@ def judge_repeat(first_c, first_b, rep_c, rep_b) -> tuple[int | None, int | None
     if first_c == 0 and first_b is None:
         return None, None, "info"
     if not (first_c == 0 and first_b == 1):
-        return first_c, first_b, status_of(first_c, first_b)
+        return first_c, first_b, kit.correctness_status(first_c, first_b)
     if rep_b == 0:
         return 0, 0, "info"
     if rep_c is None or rep_b is None:
@@ -79,7 +73,10 @@ def epoch_values(checks_: dict, names, na=None) -> dict:
 def run_checks(run: dict) -> dict:
     """{check: True/False/None} for one control run (None: not measured or does not apply)."""
     if run.get("started") is False:
-        return {**{c: None for c in CONTROL_CHECKS}, SERVER_CHECK: False if run.get("server_died") else None}
+        return {
+            **{c: None for c in CONTROL_CHECKS},
+            SERVER_CHECK: False if run.get("server_died") else None,
+        }
     cks = (run.get("epoch") or {}).get("checks", {})
     out = epoch_values(cks, CONTROL_CHECKS)
     if run.get("server_died"):
@@ -92,7 +89,7 @@ def run_checks(run: dict) -> dict:
 
 
 def by_side(runs: list[dict], check: str, first_only: bool = False) -> dict[str, list]:
-    out = {side: [] for side in SIDES}
+    out = {side: [] for side in kit.SIDES}
     for run in runs:
         if first_only and run.get("extra"):
             continue
@@ -124,28 +121,38 @@ def control_findings(runs: list[dict], confirmed_pair: bool) -> tuple[list[dict]
         allv, firstv = by_side(runs, c), by_side(first, c)
         if c not in TIMING_CHECKS:
             cand, base = side_value(allv["candidate"]), side_value(allv["baseline"])
-            findings.append(_invariant(name, "invariant", cand, base, status_of(cand, base)))
+            findings.append(
+                _invariant(name, "invariant", cand, base, kit.correctness_status(cand, base))
+            )
             continue
         first_c, first_b = side_value(firstv["candidate"]), side_value(firstv["baseline"])
         ext = by_side(extra, c) if confirmed_pair else {"candidate": [], "baseline": []}
-        cand, base, status = judge_repeat(first_c, first_b, side_value(ext["candidate"]), side_value(ext["baseline"]))
+        cand, base, status = judge_repeat(
+            first_c, first_b, side_value(ext["candidate"]), side_value(ext["baseline"])
+        )
         if first_c == 0 and first_b == 1:
             broke = sum(1 for v in allv["candidate"] if v is False)
-            notes.append(f"{name}: broke in {broke} of {len(allv['candidate'])} candidate runs, "
-                         + {"regression": "and again on the repeat", "info": "not confirmed by the repeat"}[status])
+            notes.append(
+                f"{name}: broke in {broke} of {len(allv['candidate'])} candidate runs, "
+                + {"regression": "and again on the repeat", "info": "not confirmed by the repeat"}[
+                    status
+                ]
+            )
         if status == "ok" and any(v is False for v in allv["candidate"]):
             status = "info"
         findings.append(_invariant(name, "invariant", cand, base, status))
     svr = by_side(runs, SERVER_CHECK)
     cand, base = side_value(svr["candidate"]), side_value(svr["baseline"])
-    findings.append(_invariant(f"control {SERVER_CHECK}", "completed", cand, base, status_of(cand, base)))
+    findings.append(
+        _invariant(
+            f"control {SERVER_CHECK}", "completed", cand, base, kit.correctness_status(cand, base)
+        )
+    )
     return findings, notes
 
 
 def _invariant(name, metric, cand, base, status) -> dict:
-    return {"name": name, "metric": metric, "candidate": cand, "baseline": base,
-            "ratio": round(cand / base, 4) if cand is not None and base else None,
-            "threshold": None, "direction": "lower_is_worse", "status": status}
+    return kit.finding(name, metric, cand, base, status, direction="lower_is_worse")
 
 
 # --- graph-build timing ----------------------------------------------------------------------------
@@ -157,24 +164,33 @@ def _median(xs):
 
 
 def build_side(runs: list[dict], key: str, side: str, extra: bool | None = None) -> float | None:
-    return _median([r.get(key) for r in runs if r["side"] == side and r.get("ok")
-                    and (extra is None or bool(r.get("extra")) == extra)])
+    return _median(
+        [
+            r.get(key)
+            for r in runs
+            if r["side"] == side
+            and r.get("ok")
+            and (extra is None or bool(r.get("extra")) == extra)
+        ]
+    )
 
 
 def crosses(cand: float | None, base: float | None, floor: float) -> int:
     """+1 regression, -1 improvement, 0 neither: ratio > 1.5 and difference > floor, either way."""
-    if cand is None or base is None or base <= 0 or cand <= 0:
-        return 0
-    if cand / base > BUILD_THRESHOLD and cand - base > floor:
-        return 1
-    if base / cand > BUILD_THRESHOLD and base - cand > floor:
-        return -1
-    return 0
+    return kit.crossed(cand, base, BUILD_THRESHOLD, floor)
 
 
 def build_needs_confirmation(runs: list[dict]) -> list[str]:
-    return [name for name, key, floor in BUILD_METRICS
-            if crosses(build_side(runs, key, "candidate", False), build_side(runs, key, "baseline", False), floor) > 0]
+    return [
+        name
+        for name, key, floor in BUILD_METRICS
+        if crosses(
+            build_side(runs, key, "candidate", False),
+            build_side(runs, key, "baseline", False),
+            floor,
+        )
+        > 0
+    ]
 
 
 def build_findings(runs: list[dict]) -> tuple[list[dict], list[str]]:
@@ -185,19 +201,28 @@ def build_findings(runs: list[dict]) -> tuple[list[dict], list[str]]:
         cand, base = build_side(runs, key, "candidate"), build_side(runs, key, "baseline")
         first = crosses(c1, b1, floor)
         if first > 0:
-            ce, be = build_side(runs, key, "candidate", True), build_side(runs, key, "baseline", True)
+            ce, be = (
+                build_side(runs, key, "candidate", True),
+                build_side(runs, key, "baseline", True),
+            )
             again = crosses(ce, be, floor) > 0 if has_extra else False
             status = "regression" if again else "info"
-            notes.append(f"{name}: {c1:.0f} vs {b1:.0f} ms ({c1 / b1:.2f}x)"
-                         + (f", repeat {ce:.0f} vs {be:.0f} ms" if has_extra and ce and be else ", no repeat ran")
-                         + ("" if again else ", not repeated"))
+            notes.append(
+                f"{name}: {c1:.0f} vs {b1:.0f} ms ({c1 / b1:.2f}x)"
+                + (
+                    f", repeat {ce:.0f} vs {be:.0f} ms"
+                    if has_extra and ce and be
+                    else ", no repeat ran"
+                )
+                + ("" if again else ", not repeated")
+            )
         elif first < 0:
             status = "improvement"
         else:
             status = "ok" if cand is not None and base is not None else "info"
-        findings.append({"name": name, "metric": "p50_ms", "candidate": _r(cand), "baseline": _r(base),
-                         "ratio": round(cand / base, 4) if cand and base else None,
-                         "threshold": BUILD_THRESHOLD, "direction": "higher_is_worse", "status": status})
+        findings.append(
+            kit.finding(name, "p50_ms", _r(cand), _r(base), status, threshold=BUILD_THRESHOLD)
+        )
     return findings, notes
 
 
@@ -207,29 +232,18 @@ def _r(x):
 
 # --- the whole result --------------------------------------------------------------------------------
 
-ORDER = {"regression": 0, "improvement": 1, "info": 2}
+ORDER = {"regression": 0, "improvement": 1, "info": 2, "ok": 3}
 
 
-def select(findings: list[dict], cap_informative: int = 10, cap_total: int = 50) -> list[dict]:
-    """What result.json lists: regressions and improvements (worst ratio first), then up to 10 info
-    rows. `ok` rows are left out (they are in raw/rows.csv)."""
+def worst_first(findings: list[dict]) -> list[dict]:
+    """Findings in the order kit.select keeps them: by status, then the worst first. A timing by its
+    ratio, largest first; a 0/1 check (no ratio) broken against held (0 vs 1) first, then held on
+    both, then the rest."""
+
     def key(f):
-        r = f.get("ratio")
-        worse = -(r if r is not None else 0) if f["direction"] == "higher_is_worse" else (r if r is not None else 2)
-        return ORDER[f["status"]], worse
-    out, informative = [], 0
-    for f in sorted((f for f in findings if f["status"] != "ok"), key=key):
-        if f["status"] == "info":
-            if informative >= cap_informative:
-                continue
-            informative += 1
-        out.append(f)
-    return out[:cap_total]
+        c, b, r = f["candidate"], f["baseline"], f["ratio"]
+        if f["metric"] in ("invariant", "completed"):
+            return ORDER[f["status"]], c / b if c is not None and b else 2
+        return ORDER[f["status"]], -(r if r is not None else 0)
 
-
-def verdict_of(findings: list[dict], unmeasured: list[str]) -> str:
-    if any(f["status"] == "regression" for f in findings):
-        return "regression"
-    if unmeasured:
-        return "error"
-    return "pass"
+    return sorted(findings, key=key)

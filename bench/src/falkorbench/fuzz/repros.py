@@ -15,6 +15,7 @@ Each returns {"pass": True/False/None, "detail": ...}:
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 
@@ -37,22 +38,27 @@ def _conn(port):
 
 def _no_timeouts(r):
     for k in ("TIMEOUT", "TIMEOUT_MAX", "TIMEOUT_DEFAULT"):
-        try:
+        # an engine without this setting has no such timeout to turn off
+        with contextlib.suppress(ResponseError):
             r.execute_command("GRAPH.CONFIG", "SET", k, "0")
-        except ResponseError:
-            pass  # an engine without this setting has no such timeout to turn off
 
 
 def _fill(r, nodes):
     r.delete("q")
     for lo in range(0, nodes, 500_000):
-        r.execute_command("GRAPH.QUERY", "q", f"UNWIND range({lo}, {min(nodes, lo + 500_000) - 1}) AS i CREATE (:N {{v: i}})")
+        r.execute_command(
+            "GRAPH.QUERY",
+            "q",
+            f"UNWIND range({lo}, {min(nodes, lo + 500_000) - 1}) AS i CREATE (:N {{v: i}})",
+        )
 
 
 def _wait_status(r, proc):
     t0 = time.perf_counter()
     while time.perf_counter() - t0 < WAIT_S:
-        rows = r.execute_command("GRAPH.RO_QUERY", "q", f"CALL {proc}() YIELD status RETURN status")[1]
+        rows = r.execute_command(
+            "GRAPH.RO_QUERY", "q", f"CALL {proc}() YIELD status RETURN status"
+        )[1]
         if rows and all(harness.s(x[0]) == "OPERATIONAL" for x in rows):
             return
         time.sleep(0.05)
@@ -123,9 +129,16 @@ def _freeze_verdict(pinger, lr, extra):
     during = pinger.during(a, b)
     late = sum(1 for x in during if x > FREEZE_MS)
     refused = err or extra.get("error")
-    return {"pass": False if refused else (late == 0 if during else None),
-            "detail": {"long_read_s": round(b - a, 1), "worst_ping_ms": round(max(during, default=0), 1),
-                       "pings_over_500ms": late, "long_read_error": err, **extra}}
+    return {
+        "pass": False if refused else (late == 0 if during else None),
+        "detail": {
+            "long_read_s": round(b - a, 1),
+            "worst_ping_ms": round(max(during, default=0), 1),
+            "pings_over_500ms": late,
+            "long_read_error": err,
+            **extra,
+        },
+    }
 
 
 def write_during_long_read(port, mode, nodes=1_000_000):
@@ -156,7 +169,15 @@ def constraint_during_long_read(port, mode, nodes=1_000_000):
     _fill(r, nodes)
     r.execute_command("GRAPH.QUERY", "q", "CREATE INDEX FOR (n:N) ON (n.v)")
     _wait_status(r, "db.indexes")
-    constraint = ("q", "MANDATORY" if mode == "mandatory" else "UNIQUE", "NODE", "N", "PROPERTIES", "1", "v")
+    constraint = (
+        "q",
+        "MANDATORY" if mode == "mandatory" else "UNIQUE",
+        "NODE",
+        "N",
+        "PROPERTIES",
+        "1",
+        "v",
+    )
     if mode == "drop":  # the constraint must exist (and be enforced) before the long read starts
         r.execute_command("GRAPH.CONSTRAINT", "CREATE", *constraint)
         _wait_status(r, "db.constraints")
@@ -168,7 +189,9 @@ def constraint_during_long_read(port, mode, nodes=1_000_000):
         if mode != "none":
             t_c = time.perf_counter()
             try:
-                rep = r.execute_command("GRAPH.CONSTRAINT", "DROP" if mode == "drop" else "CREATE", *constraint)
+                rep = r.execute_command(
+                    "GRAPH.CONSTRAINT", "DROP" if mode == "drop" else "CREATE", *constraint
+                )
                 extra["reply"] = harness.s(rep)
             except ResponseError as e:
                 extra["error"] = _outcome(e)
@@ -194,8 +217,14 @@ def index_build_behind_long_read(port, nodes=2_000_000):
         t_ready = time.perf_counter()
         _join(reader)
         time.sleep(0.5)
-    return _freeze_verdict(pinger, lr, {"index_ready_s": round(t_ready - t_idx, 1),
-                                        "ready_before_read_ended": t_ready < lr[0][1] if lr else None})
+    return _freeze_verdict(
+        pinger,
+        lr,
+        {
+            "index_ready_s": round(t_ready - t_idx, 1),
+            "ready_before_read_ended": t_ready < lr[0][1] if lr else None,
+        },
+    )
 
 
 def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
@@ -221,7 +250,9 @@ def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
                 c.execute_command("GRAPH.RO_QUERY", "q", read_q(k))
             except ResponseError as e:
                 errs.append(f"read: {e}")
-            except Exception as e:  # no reply at all: this client is done, and the run is incomplete
+            except (
+                Exception
+            ) as e:  # no reply at all: this client is done, and the run is incomplete
                 lost.append(f"read: {_outcome(e)}")
                 return
 
@@ -254,7 +285,9 @@ def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
     for t in rs:
         t.join(timeout=60)
     n_w = r.execute_command("GRAPH.RO_QUERY", "q", "MATCH (n:W) RETURN count(n)")[1][0][0]
-    n_d = r.execute_command("GRAPH.RO_QUERY", "q", "MATCH (n:W) RETURN count(DISTINCT [n.w, n.i])")[1][0][0]
+    n_d = r.execute_command("GRAPH.RO_QUERY", "q", "MATCH (n:W) RETURN count(DISTINCT [n.w, n.i])")[
+        1
+    ][0][0]
     return judge_writers(writes, errs, lost, starved, took, n_w, n_d, writers * per)
 
 
@@ -265,9 +298,18 @@ def judge_writers(writes, errs, lost, starved, took, n_w, n_d, expected) -> dict
         raise Incomplete(f"{len(lost)} clients lost their connection: {lost[0]}")
     lat = sorted(x[2] for x in writes)
     ok = not starved and not errs and n_w == n_d == len(writes) == expected
-    return {"pass": ok, "detail": {"acked": len(writes), "took_s": round(took, 1), "starved": starved,
-                                   "write_max_ms": round(lat[-1] * 1000, 1) if lat else None,
-                                   "count_w": n_w, "distinct_w": n_d, "errors": errs[:3]}}
+    return {
+        "pass": ok,
+        "detail": {
+            "acked": len(writes),
+            "took_s": round(took, 1),
+            "starved": starved,
+            "write_max_ms": round(lat[-1] * 1000, 1) if lat else None,
+            "count_w": n_w,
+            "distinct_w": n_d,
+            "errors": errs[:3],
+        },
+    }
 
 
 def reads_behind_writer(port, nodes=1_000_000, n_reads=8):
@@ -326,17 +368,30 @@ def judge_reads(out, wr, lr, n_reads) -> dict:
     _answered("write", wr)
     _answered("long read", lr)
     timeouts = sum(1 for x in out if x[2] == "timeout")
-    other = [x for x in out if x[2] not in ("ok", "timeout")] + [("write", 0, wr[0][2])] * bool(wr[0][2]) \
+    other = (
+        [x for x in out if x[2] not in ("ok", "timeout")]
+        + [("write", 0, wr[0][2])] * bool(wr[0][2])
         + [("long read", 0, lr[0][2])] * bool(lr[0][2])
-    return {"pass": timeouts == 0 and not other,
-            "detail": {"timeouts": timeouts, "other": other[:3], "write": wr[:1],
-                       "long_read_s": round(lr[0][1] - lr[0][0], 1), "reads": sorted(out)}}
+    )
+    return {
+        "pass": timeouts == 0 and not other,
+        "detail": {
+            "timeouts": timeouts,
+            "other": other[:3],
+            "write": wr[:1],
+            "long_read_s": round(lr[0][1] - lr[0][0], 1),
+            "reads": sorted(out),
+        },
+    }
 
 
 #: name -> (THREAD_COUNT, function, args)
 REPROS = {
     **{f"write-{m}": (32, write_during_long_read, (m,)) for m in ("none", "create", "set")},
-    **{f"constraint-{m}": (32, constraint_during_long_read, (m,)) for m in ("none", "create", "drop", "mandatory")},
+    **{
+        f"constraint-{m}": (32, constraint_during_long_read, (m,))
+        for m in ("none", "create", "drop", "mandatory")
+    },
     "index-build": (32, index_build_behind_long_read, ()),
     "writer-starvation": (10, writer_starvation, ()),
     "reads-behind-writer": (32, reads_behind_writer, ()),
@@ -347,7 +402,14 @@ def run_repro(opts: dict, info: dict, tag: str, name: str) -> dict:
     """One repro on a fresh server: {"pass", "detail", "crashed"}. A server that exits or stops
     answering is pass False with crashed True; a repro that could not run is pass None."""
     tc, fn, args = REPROS[name]
-    server = harness.Server(info, f"{opts['name_prefix']}-{tag}", opts.get("server_cpus"), opts["net"], tc)
+    server = harness.Server(
+        info,
+        f"{opts['name_prefix']}-{tag}",
+        opts.get("server_cpus"),
+        opts["net"],
+        tc,
+        labels=opts.get("labels"),
+    )
     try:
         server.start()
         res = {**fn(server.port, *args), "crashed": False}
@@ -360,5 +422,7 @@ def run_repro(opts: dict, info: dict, tag: str, name: str) -> dict:
     finally:
         res_tail = server.stop()
     res["server_tail"] = res_tail[-2000:]
-    harness.log(f"{tag}: repro {name}: pass={res.get('pass')} {str(res.get('detail', res.get('error')))[:300]}")
+    harness.log(
+        f"{tag}: repro {name}: pass={res.get('pass')} {str(res.get('detail', res.get('error')))[:300]}"
+    )
     return res

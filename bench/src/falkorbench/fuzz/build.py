@@ -14,7 +14,8 @@ import os
 import statistics
 import time
 
-from . import harness, model
+from . import harness
+from . import model
 
 GRAPH = "soak_build"
 PROBE_REPS = 5
@@ -23,14 +24,23 @@ BUILD_THREADS = 16
 
 
 def probe_query(n: dict, base: dict, rows: int) -> str:
-    return model.edge_query("PROBE", 0, rows - 1, f"{base[model.HUB]} + j", f"{base[model.FAN]} + j % {n[model.FAN]}")
+    return model.edge_query(
+        "PROBE", 0, rows - 1, f"{base[model.HUB]} + j", f"{base[model.FAN]} + j % {n[model.FAN]}"
+    )
 
 
 def build_run(opts: dict, info: dict, tag: str, scale: float, rdir: str) -> dict:
     """One fresh server, one build. Returns {"ok", "nodes_ms", "edges_ms", "probe_1_ms",
     "probe_100_ms", ...} or {"ok": False, "error", "server_alive"}."""
     os.makedirs(rdir, exist_ok=True)
-    server = harness.Server(info, f"{opts['name_prefix']}-{tag}", opts.get("server_cpus"), opts["net"], BUILD_THREADS)
+    server = harness.Server(
+        info,
+        f"{opts['name_prefix']}-{tag}",
+        opts.get("server_cpus"),
+        opts["net"],
+        BUILD_THREADS,
+        labels=opts.get("labels"),
+    )
     out = {"tag": tag, "scale": scale, "ok": False}
     try:
         r = server.start()
@@ -39,9 +49,18 @@ def build_run(opts: dict, info: dict, tag: str, scale: float, rdir: str) -> dict
         out.update(timing)
         out["nodes_ms"] = round(timing["nodes_s"] * 1000, 1)
         out["edges_ms"] = round(timing["edges_s"] * 1000, 1)
-        plan = r.execute_command("GRAPH.EXPLAIN", GRAPH, model.edge_query(
-            "PROBE", 0, model.BUILD_BATCH - 1, f"{base[model.HUB]} + j", f"{base[model.FAN]} + j % {n[model.FAN]}",
-            f" WHERE j % {len(model.LINK_TYPES)} = 0"))
+        plan = r.execute_command(
+            "GRAPH.EXPLAIN",
+            GRAPH,
+            model.edge_query(
+                "PROBE",
+                0,
+                model.BUILD_BATCH - 1,
+                f"{base[model.HUB]} + j",
+                f"{base[model.FAN]} + j % {n[model.FAN]}",
+                f" WHERE j % {len(model.LINK_TYPES)} = 0",
+            ),
+        )
         out["plan"] = [harness.s(x) for x in plan]
         for rows in PROBE_ROWS:
             q = probe_query(n, base, rows)
@@ -61,5 +80,7 @@ def build_run(opts: dict, info: dict, tag: str, scale: float, rdir: str) -> dict
             f.write(server.stop())
     with open(os.path.join(rdir, "build.json"), "w") as f:
         json.dump(out, f, indent=1)
-    harness.log(f"{tag}: build {json.dumps({k: out.get(k) for k in ('ok', 'nodes_ms', 'edges_ms', 'probe_1_ms', 'probe_100_ms', 'error')})}")
+    harness.log(
+        f"{tag}: build {json.dumps({k: out.get(k) for k in ('ok', 'nodes_ms', 'edges_ms', 'probe_1_ms', 'probe_100_ms', 'error')})}"
+    )
     return out

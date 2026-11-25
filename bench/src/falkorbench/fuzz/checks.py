@@ -22,8 +22,10 @@ import statistics
 from . import model
 
 PING_INTERVAL_S = 0.010  # the prober sends a PING to each server this often
-PING_COVERAGE = 0.5  # no_freeze needs at least half the PINGs the epoch should have had, on each server
-DRIVER_LAG_S = 0.05  # a request sent, or given a connection, this late is driver-limited: not judged on timing
+# no_freeze needs at least half the PINGs the epoch should have had, on each server
+PING_COVERAGE = 0.5
+# a request sent, or given a connection, this late is driver-limited: not judged on timing
+DRIVER_LAG_S = 0.05
 FREEZE_PING_MS = 500  # a FalkorDB PING this late ...
 CONTROL_OK_MS = 100  # ... while the plain server beside it answered within this, is a freeze
 STARVE_S = 1.0  # a write may finish at most this long after the long reads it waited behind
@@ -32,20 +34,42 @@ QUIET_SLACK_MS = 100  # a read on a quiet graph may take at most this much over 
 
 #: checks that depend on timing (a repeat is needed before a break counts as a regression); error
 #: replies are here too, since an overloaded server can refuse a request on one run and not another
-TIMING_CHECKS = ("no_freeze", "no_timeouts_while_waiting", "writers_dont_starve", "quiet_graphs_stay_fast",
-                 "requests_drain", "no_error_replies")
+TIMING_CHECKS = (
+    "no_freeze",
+    "no_timeouts_while_waiting",
+    "writers_dont_starve",
+    "quiet_graphs_stay_fast",
+    "requests_drain",
+    "no_error_replies",
+)
 #: checks on what the graph holds, or whether the server stayed up (a break counts at once)
 DATA_CHECKS = ("writes_add_up", "upsert_edges_complete")
 #: long mode judges these too (timing-like, then data-like); a crash counts at once everywhere
 LONG_TIMING_CHECKS = (*TIMING_CHECKS, "no_unexpected_errors")
-LONG_DATA_CHECKS = (*DATA_CHECKS, "timed_out_writes_leave_nothing", "constraints_hold", "index_matches_scan")
+LONG_DATA_CHECKS = (
+    *DATA_CHECKS,
+    "timed_out_writes_leave_nothing",
+    "constraints_hold",
+    "index_matches_scan",
+)
+#: epoch events that fail no_unexpected_errors: the schema, BGSAVE and the harness's own steps
+BAD_EVENTS = (
+    "index_error",
+    "constraint_error",
+    "events_died",
+    "bgsave_error",
+    "violation_odd_error",
+    "indexes_stuck",
+    "events_stuck",
+    "cleanup_incomplete",
+)
 
 
 def pct(v, p):
     if not v:
         return 0.0
     v = sorted(v)
-    return v[min(len(v) - 1, int(math.ceil(p / 100 * len(v))) - 1)]
+    return v[min(len(v) - 1, math.ceil(p / 100 * len(v)) - 1)]
 
 
 def outcome_of(exc: Exception | None, response_error: type = Exception) -> tuple[int, str]:
@@ -95,14 +119,22 @@ class Ledger:
 
     def __init__(self, sizes: list[dict]):
         self.n0 = sizes
-        self.ok = [collections.defaultdict(set) for _ in sizes]       # label/type -> keys committed
+        self.ok = [collections.defaultdict(set) for _ in sizes]  # label/type -> keys committed
         self.timeout = [collections.defaultdict(set) for _ in sizes]  # ... of timed-out writes
         self.unknown = [collections.defaultdict(set) for _ in sizes]  # ... with unknown outcome
-        self.extra = [collections.Counter() for _ in sizes]           # accepted constraint violations
+        self.extra = [collections.Counter() for _ in sizes]  # accepted constraint violations
         self.incomplete = False  # a driver result file was lost: counts can no longer be predicted
 
     def add(self, g, keys, oc):
-        bucket = self.ok if oc == 0 else self.timeout if oc == 1 else self.unknown if oc in (3, 4) else None
+        bucket = (
+            self.ok
+            if oc == 0
+            else self.timeout
+            if oc == 1
+            else self.unknown
+            if oc in (3, 4)
+            else None
+        )
         if bucket is None:  # error reply: nothing committed
             return
         for k in keys:
@@ -125,48 +157,87 @@ class Ledger:
                 hi = lo + len(new_unk)
                 c = one(f"MATCH (x:{label}) RETURN count(x)")
                 if not self.incomplete and not lo <= c <= hi:
-                    problems.append(("count", f"g{g} {label}: {c} nodes, expected {lo}" + (f"..{hi}" if hi != lo else "")))
-                dup = one(f"MATCH (x:{label}) WITH x.k AS k, count(*) AS c WHERE c > 1 RETURN count(k)")
+                    problems.append(
+                        (
+                            "count",
+                            f"g{g} {label}: {c} nodes, expected {lo}"
+                            + (f"..{hi}" if hi != lo else ""),
+                        )
+                    )
+                dup = one(
+                    f"MATCH (x:{label}) WITH x.k AS k, count(*) AS c WHERE c > 1 RETURN count(k)"
+                )
                 if dup - self.extra[g][label] > 0:
                     problems.append(("duplicate", f"g{g} {label}: {dup} duplicated keys"))
-                gone = sorted({k for k in self.timeout[g][label] if k >= n[label]} - self.ok[g][label]
-                              - self.unknown[g][label])
+                gone = sorted(
+                    {k for k in self.timeout[g][label] if k >= n[label]}
+                    - self.ok[g][label]
+                    - self.unknown[g][label]
+                )
                 if gone and not self.incomplete:
-                    c2 = one(f"CYPHER keys={json.dumps(gone)} MATCH (x:{label}) WHERE x.k IN $keys RETURN count(x)")
+                    c2 = one(
+                        f"CYPHER keys={json.dumps(gone)} MATCH (x:{label}) WHERE x.k IN $keys RETURN count(x)"
+                    )
                     if c2:
-                        problems.append(("timed-out", f"g{g} {label}: {c2} of {len(gone)} timed-out new keys exist"))
+                        problems.append(
+                            (
+                                "timed-out",
+                                f"g{g} {label}: {c2} of {len(gone)} timed-out new keys exist",
+                            )
+                        )
             for src, typ, dst in model.PAIRS:
                 base = n[dst]
                 new_ok = {p for p in self.ok[g][typ] if not model.initial_pair(n, src, dst, *p)}
-                new_unk = {p for p in self.unknown[g][typ] if not model.initial_pair(n, src, dst, *p)} - new_ok
+                new_unk = {
+                    p for p in self.unknown[g][typ] if not model.initial_pair(n, src, dst, *p)
+                } - new_ok
                 lo, hi = base + len(new_ok), base + len(new_ok) + len(new_unk)
                 c = one(f"MATCH ()-[e:{typ}]->() RETURN count(e)")
                 if not self.incomplete:
                     if c > hi:
                         problems.append(("count", f"g{g} {typ}: {c} edges, expected at most {hi}"))
                     elif c < lo:
-                        problems.append(("missing", f"g{g} {typ}: {c} edges, expected at least {lo}"))
+                        problems.append(
+                            ("missing", f"g{g} {typ}: {c} edges, expected at least {lo}")
+                        )
                     # the count can hide a lost edge behind one an unknown-outcome write added: look
                     # each acknowledged new pair up
                     acked = sorted(new_ok)
                     found = 0
                     for b0 in range(0, len(acked), PAIR_BATCH):
-                        batch = [list(p) for p in acked[b0:b0 + PAIR_BATCH]]
-                        found += one(f"CYPHER pairs={json.dumps(batch)} UNWIND $pairs AS p "
-                                     f"MATCH (a:{src} {{k: p[0]}})-[:{typ}]->(b:{dst} {{k: p[1]}}) "
-                                     "WITH DISTINCT p RETURN count(p)")
+                        batch = [list(p) for p in acked[b0 : b0 + PAIR_BATCH]]
+                        found += one(
+                            f"CYPHER pairs={json.dumps(batch)} UNWIND $pairs AS p "
+                            f"MATCH (a:{src} {{k: p[0]}})-[:{typ}]->(b:{dst} {{k: p[1]}}) "
+                            "WITH DISTINCT p RETURN count(p)"
+                        )
                     if found < len(acked):
-                        problems.append(("missing", f"g{g} {typ}: {len(acked) - found} of {len(acked)} "
-                                                    "acknowledged new pairs have no edge"))
+                        problems.append(
+                            (
+                                "missing",
+                                f"g{g} {typ}: {len(acked) - found} of {len(acked)} "
+                                "acknowledged new pairs have no edge",
+                            )
+                        )
                 # a timed-out write between existing nodes leaves no new node behind, only its edge
-                gone = sorted({p for p in self.timeout[g][typ] if not model.initial_pair(n, src, dst, *p)}
-                              - self.ok[g][typ] - self.unknown[g][typ])
+                gone = sorted(
+                    {p for p in self.timeout[g][typ] if not model.initial_pair(n, src, dst, *p)}
+                    - self.ok[g][typ]
+                    - self.unknown[g][typ]
+                )
                 if gone and not self.incomplete:
                     pairs = [list(p) for p in gone]
-                    c2 = one(f"CYPHER pairs={json.dumps(pairs)} UNWIND $pairs AS p "
-                             f"MATCH (a:{src} {{k: p[0]}})-[e:{typ}]->(b:{dst} {{k: p[1]}}) RETURN count(e)")
+                    c2 = one(
+                        f"CYPHER pairs={json.dumps(pairs)} UNWIND $pairs AS p "
+                        f"MATCH (a:{src} {{k: p[0]}})-[e:{typ}]->(b:{dst} {{k: p[1]}}) RETURN count(e)"
+                    )
                     if c2:
-                        problems.append(("timed-out", f"g{g} {typ}: {c2} of {len(gone)} timed-out new pairs exist"))
+                        problems.append(
+                            (
+                                "timed-out",
+                                f"g{g} {typ}: {c2} of {len(gone)} timed-out new pairs exist",
+                            )
+                        )
         return problems
 
 
@@ -209,28 +280,43 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
         frozen = False
     else:
         frozen = None if unattributed else True
-    checks["no_freeze"] = {"pass": frozen, "freeze_pings": len(freeze), "unattributed_late_pings": unattributed,
-                           "pings_needed": int(need),
-                           "worst_ping_ms": round(max(fl, default=0), 1),
-                           "worst_control_ms": round(max(cl, default=0), 1),
-                           "p99_ping_ms": round(pct(fl, 99), 2), "pings": len(fl), "control_pings": len(cl)}
+    checks["no_freeze"] = {
+        "pass": frozen,
+        "freeze_pings": len(freeze),
+        "unattributed_late_pings": unattributed,
+        "pings_needed": int(need),
+        "worst_ping_ms": round(max(fl, default=0), 1),
+        "worst_control_ms": round(max(cl, default=0), 1),
+        "p99_ping_ms": round(pct(fl, 99), 2),
+        "pings": len(fl),
+        "control_pings": len(cl),
+    }
 
     # timeouts while waiting: a read whose cost alone is under 5% of its budget must never time out
-    cheap = {(g, op) for g in range(ng) for op, (_, tmo) in model.READ_OPS.items()
-             if cal[g].get(op, 1e9) < model.CHEAP_SHARE * tmo * 1000}
+    cheap = {
+        (g, op)
+        for g in range(ng)
+        for op, (_, tmo) in model.READ_OPS.items()
+        if cal[g].get(op, 1e9) < model.CHEAP_SHARE * tmo * 1000
+    }
     tos = collections.Counter((r_[0], r_[1]) for r_ in reads if r_[5] == 1)
     pool_limited_reads = [r_ for r_ in reads if _pool_wait(r_, 6) > DRIVER_LAG_S]
     spurious = sum(c for k, c in tos.items() if k in cheap)
     nreads = len(reads)
     checks["no_timeouts_while_waiting"] = {
-        "pass": spurious == 0, "spurious_timeouts": spurious,
-        "reads": nreads, "timeout_rate": round(sum(tos.values()) / nreads, 5) if nreads else 0,
+        "pass": spurious == 0,
+        "spurious_timeouts": spurious,
+        "reads": nreads,
+        "timeout_rate": round(sum(tos.values()) / nreads, 5) if nreads else 0,
         "all_read_timeouts": sum(tos.values()),
-        "not_judged": sorted(f"g{g}:{op}" for g in range(ng) for op in model.READ_OPS if (g, op) not in cheap)}
+        "not_judged": sorted(
+            f"g{g}:{op}" for g in range(ng) for op in model.READ_OPS if (g, op) not in cheap
+        ),
+    }
 
     # writer starvation: a write completes within 1 s after the long reads it waited behind
     by_graph = collections.defaultdict(list)
-    for g, op, a, b, oc, _ in longs:
+    for g, _op, a, b, _oc, _ in longs:
         by_graph[g].append((a, b))
     for g in by_graph:
         by_graph[g].sort()
@@ -259,7 +345,8 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
             run_max[g] = max(run_max[g], reply)
     for i, w in enumerate(writes):
         g, op, sched, send, reply, oc = w[:6]
-        if oc != 0 or _pool_wait(w, 8) > DRIVER_LAG_S:  # a write that waited for a connection: driver-limited
+        # a write that waited for a connection: driver-limited
+        if oc != 0 or _pool_wait(w, 8) > DRIVER_LAG_S:
             continue
         wlat.append((reply - send) * 1000)
         head = head_of[i]
@@ -269,10 +356,15 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
             starve.append(round(excess, 2))
     acked = sum(1 for w in writes if w[5] == 0)
     # every acknowledged write driver-limited: nothing was judged, so the check did not measure
-    checks["writers_dont_starve"] = {"pass": None if acked and not wlat else not starve, "slow_writes": len(starve),
-                                     "worst_excess_s": max(starve, default=0), "writes": len(wlat),
-                                     "write_p99_ms": round(pct(wlat, 99), 1), "write_max_ms": round(max(wlat, default=0), 1),
-                                     "queue_wait_max_s": round(max(qwait, default=0), 2)}
+    checks["writers_dont_starve"] = {
+        "pass": None if acked and not wlat else not starve,
+        "slow_writes": len(starve),
+        "worst_excess_s": max(starve, default=0),
+        "writes": len(wlat),
+        "write_p99_ms": round(pct(wlat, 99), 1),
+        "write_max_ms": round(max(wlat, default=0), 1),
+        "queue_wait_max_s": round(max(qwait, default=0), 2),
+    }
 
     # quiet graphs: graphs with no long reads and no writes this epoch
     quiet = [g for g in range(ng) if g not in ep["busy"]]
@@ -281,20 +373,32 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     quiet_ok = sum(1 for r_ in reads if r_[0] in quiet and r_[5] == 0)
     for r_ in reads:
         g, op, sched, send, reply, oc = r_[:6]
-        if g in quiet and oc == 0 and (send - sched) < DRIVER_LAG_S and _pool_wait(r_, 6) <= DRIVER_LAG_S:
+        if (
+            g in quiet
+            and oc == 0
+            and (send - sched) < DRIVER_LAG_S
+            and _pool_wait(r_, 6) <= DRIVER_LAG_S
+        ):
             lat = (reply - sched) * 1000
             qlat.append(lat)
             if lat > cal[g].get(op, 0) + QUIET_SLACK_MS:
                 qviol += 1
-    checks["quiet_graphs_stay_fast"] = {"pass": None if quiet_ok and not qlat else qviol == 0,
-                                        "applies": bool(quiet), "quiet_graphs": quiet,
-                                        "slow_reads": qviol, "reads": len(qlat),
-                                        "p99_ms": round(pct(qlat, 99), 1), "max_ms": round(max(qlat, default=0), 1)}
+    checks["quiet_graphs_stay_fast"] = {
+        "pass": None if quiet_ok and not qlat else qviol == 0,
+        "applies": bool(quiet),
+        "quiet_graphs": quiet,
+        "slow_reads": qviol,
+        "reads": len(qlat),
+        "p99_ms": round(pct(qlat, 99), 1),
+        "max_ms": round(max(qlat, default=0), 1),
+    }
 
     # requests drain: every read completes within 5 s (+ backlog) after the long reads it waited
     # behind (writes are judged by writers_dont_starve, which accounts for their queue)
     tc = hp["thread_count"]
-    all_req = [(r_[0], r_[1], r_[3], r_[4], r_[5]) for r_ in reads if _pool_wait(r_, 6) <= DRIVER_LAG_S]
+    all_req = [
+        (r_[0], r_[1], r_[3], r_[4], r_[5]) for r_ in reads if _pool_wait(r_, 6) <= DRIVER_LAG_S
+    ]
     drainable = sum(1 for r_ in reads if r_[5] in (0, 1))
     judged = sum(1 for x in all_req if x[4] in (0, 1))
     sends = sorted((x[2], cal[x[0]].get(x[1], 1.0) / 1000) for x in all_req)
@@ -303,7 +407,7 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     for _, c in sends:
         cum.append(cum[-1] + c)
     jam = []
-    for g, op, send, reply, oc in all_req:
+    for g, _op, send, reply, oc in all_req:
         if oc not in (0, 1):
             continue
         bound = wait_bound(g, send, reply)
@@ -313,10 +417,15 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
         if excess > DRAIN_S + backlog:
             jam.append(round(excess, 2))
     drained = False if data["unfinished"] else (None if drainable and not judged else not jam)
-    checks["requests_drain"] = {"pass": drained, "late_requests": len(jam),
-                                "pool_limited_reads": len(pool_limited_reads),
-                                "worst_excess_s": max(jam, default=0), "unfinished_at_end": data["unfinished"],
-                                "pending_at_stop": data["pending_at_stop"], "drain_s": round(data["drain_s"], 1)}
+    checks["requests_drain"] = {
+        "pass": drained,
+        "late_requests": len(jam),
+        "pool_limited_reads": len(pool_limited_reads),
+        "worst_excess_s": max(jam, default=0),
+        "unfinished_at_end": data["unfinished"],
+        "pending_at_stop": data["pending_at_stop"],
+        "drain_s": round(data["drain_s"], 1),
+    }
 
     # what the graphs hold, from the ledger
     by_kind = collections.defaultdict(list)
@@ -325,25 +434,40 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     # "harness": the end-of-epoch queries themselves failed, so nothing was counted (pass None)
     unknown = by_kind["harness"]
     # a duplicated key is wrong whether or not a constraint is installed, so it counts here in every epoch
-    checks["writes_add_up"] = {"pass": None if unknown else not (by_kind["count"] or by_kind["duplicate"]),
-                               "problems": by_kind["count"] + by_kind["duplicate"] + unknown}
-    checks["upsert_edges_complete"] = {"pass": None if unknown else not by_kind["missing"],
-                                       "problems": by_kind["missing"] + unknown}
+    checks["writes_add_up"] = {
+        "pass": None if unknown else not (by_kind["count"] or by_kind["duplicate"]),
+        "problems": by_kind["count"] + by_kind["duplicate"] + unknown,
+    }
+    checks["upsert_edges_complete"] = {
+        "pass": None if unknown else not by_kind["missing"],
+        "problems": by_kind["missing"] + unknown,
+    }
     wto = sum(1 for w in writes if w[5] == 1)
-    checks["timed_out_writes_leave_nothing"] = {"pass": not by_kind["timed-out"], "applies": ep["write_timeout_ms"] > 0,
-                                                "timed_out_writes": wto, "problems": by_kind["timed-out"]}
+    checks["timed_out_writes_leave_nothing"] = {
+        "pass": not by_kind["timed-out"],
+        "applies": ep["write_timeout_ms"] > 0,
+        "timed_out_writes": wto,
+        "problems": by_kind["timed-out"],
+    }
 
     # constraints
     dups = by_kind["duplicate"]
     if ep["constraints"]:
         states = constraint_info.get("states", {})  # the graphs they were created on
-        bad_state = {g: st for g, st in states.items() if not st or any(x != "OPERATIONAL" for x in st)}
+        bad_state = {
+            g: st for g, st in states.items() if not st or any(x != "OPERATIONAL" for x in st)
+        }
         acc = constraint_info.get("violations_accepted", [])
         held = not bad_state and not acc and not dups
-        checks["constraints_hold"] = {"pass": held if states or bad_state or acc or dups else None, "applies": True,
-                                      "not_operational": bad_state, "seconds": constraint_info.get("seconds"),
-                                      "violations_rejected": constraint_info.get("violations_rejected", 0),
-                                      "violations_accepted": acc, "duplicates": dups}
+        checks["constraints_hold"] = {
+            "pass": held if states or bad_state or acc or dups else None,
+            "applies": True,
+            "not_operational": bad_state,
+            "seconds": constraint_info.get("seconds"),
+            "violations_rejected": constraint_info.get("violations_rejected", 0),
+            "violations_accepted": acc,
+            "duplicates": dups,
+        }
     else:
         checks["constraints_hold"] = {"pass": not dups, "applies": False, "duplicates": dups}
 
@@ -351,8 +475,12 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     by_op = collections.Counter(r_[1] for r_ in reads if r_[5] in (2, 4))
     by_op.update(w[1] for w in writes if w[5] in (2, 4))
     by_op.update(x[1] for x in longs if x[4] in (2, 4))
-    checks["no_error_replies"] = {"pass": not by_op, "by_op": dict(by_op), "first_messages": dict(data["errors"]),
-                                  "long_read_messages": sorted({x[5] for x in longs if x[4] in (2, 4)})[:5]}
+    checks["no_error_replies"] = {
+        "pass": not by_op,
+        "by_op": dict(by_op),
+        "first_messages": dict(data["errors"]),
+        "long_read_messages": sorted({x[5] for x in longs if x[4] in (2, 4)})[:5],
+    }
 
     # unexpected errors (long mode): error replies, driver failures and failed epoch events
     errs = dict(data["errors"])
@@ -360,15 +488,19 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
     other_long = [x for x in longs if x[4] in (2, 4)]
     err_reads = sum(1 for r_ in reads if r_[5] in (2, 4))
     err_writes = sum(1 for w in writes if w[5] in (2, 4))
-    ev_bad = [e for e in events if e["event"] in ("index_error", "constraint_error", "events_died",
-                                                    "bgsave_error", "violation_odd_error", "indexes_stuck",
-                                                    "events_stuck", "cleanup_incomplete")]
-    checks["no_unexpected_errors"] = {"pass": not (errs or died or other_long or err_reads or err_writes or ev_bad),
-                                      "error_messages": errs, "died": died, "long_read_errors": len(other_long),
-                                      "read_errors": err_reads, "write_errors": err_writes, "event_errors": ev_bad}
+    ev_bad = [e for e in events if e["event"] in BAD_EVENTS]
+    checks["no_unexpected_errors"] = {
+        "pass": not (errs or died or other_long or err_reads or err_writes or ev_bad),
+        "error_messages": errs,
+        "died": died,
+        "long_read_errors": len(other_long),
+        "read_errors": err_reads,
+        "write_errors": err_writes,
+        "event_errors": ev_bad,
+    }
 
     long_d = collections.defaultdict(list)
-    for g, op, a, b, oc, _ in longs:
+    for _g, op, a, b, _oc, _ in longs:
         long_d[op].append(b - a)
     rl = collections.defaultdict(list)
     for r_ in reads:
@@ -376,11 +508,25 @@ def analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_pro
         if oc == 0:
             rl[op].append((reply - sched) * 1000)
     info = {
-        "reads_by_op": {op: {"n": len(v), "p50_ms": round(pct(v, 50), 1), "p99_ms": round(pct(v, 99), 1),
-                             "max_ms": round(max(v, default=0), 1)} for op, v in rl.items()},
-        "long_reads": {op: {"n": len(v), "mean_s": round(statistics.mean(v), 2) if v else 0,
-                            "max_s": round(max(v, default=0), 2),
-                            "timed_out": sum(1 for x in longs if x[1] == op and x[4] == 1)} for op, v in long_d.items()},
-        "harness": data["harness"], "server_downs": len(downs),
+        "reads_by_op": {
+            op: {
+                "n": len(v),
+                "p50_ms": round(pct(v, 50), 1),
+                "p99_ms": round(pct(v, 99), 1),
+                "max_ms": round(max(v, default=0), 1),
+            }
+            for op, v in rl.items()
+        },
+        "long_reads": {
+            op: {
+                "n": len(v),
+                "mean_s": round(statistics.mean(v), 2) if v else 0,
+                "max_s": round(max(v, default=0), 2),
+                "timed_out": sum(1 for x in longs if x[1] == op and x[4] == 1),
+            }
+            for op, v in long_d.items()
+        },
+        "harness": data["harness"],
+        "server_downs": len(downs),
     }
     return {"checks": checks, "info": info}

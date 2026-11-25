@@ -6,15 +6,17 @@ image without the module beside it (the PING control), 1-4 graphs at their own s
 busy graphs, long-read streams, write and read rates, write pattern, indexes, constraints, write
 timeouts and BGSAVE, all from the epoch's parameters (`model.epoch_params`).
 
-Clients never re-send (no socket timeout, no retries). Reads and writes are open loop: sent at
-their scheduled time whether or not earlier ones have returned, and timed from that schedule. A
-separate process PINGs FalkorDB and the plain server every 10 ms, timed from the scheduled send.
+Clients never re-send (no socket timeout, no retries) and speak RESP2. Reads and writes are open
+loop: sent at their scheduled time whether or not earlier ones have returned, and timed from that
+schedule. A separate process PINGs FalkorDB and the plain server every 10 ms, timed from the
+scheduled send.
 """
 
 from __future__ import annotations
 
 import asyncio
 import collections
+import contextlib
 import gzip
 import json
 import multiprocessing as mp
@@ -29,17 +31,22 @@ import time
 import traceback
 
 import redis
+from redis.asyncio.retry import Retry as AsyncRetry
 from redis.backoff import NoBackoff
 from redis.exceptions import ResponseError
 from redis.retry import Retry
 
-from . import checks, model
+from falkorbench import kit
+from falkorbench.soak import soakkit as sk
+
+from . import checks
+from . import model
 from .checks import gname
 
-MODULE_PATH = "/var/lib/falkordb/bin/falkordb.so"
 PING_INTERVAL_S = checks.PING_INTERVAL_S
 HANG_S = 60  # a FalkorDB PING unanswered this long: the server is hung
 MAX_INFLIGHT_WRITES = 900  # per graph; C crashes when a graph's 1,024-entry write queue overflows
+CONTAINER_PORT = 6379  # the server's port inside its own network namespace (published mode)
 
 
 def now() -> float:
@@ -54,22 +61,42 @@ def s(v) -> str:
     return v.decode() if isinstance(v, bytes) else str(v)
 
 
+#: redis-py 8 speaks RESP3 unless told otherwise (HELLO 3 on connect); the engines are measured on
+#: RESP2's replies, as the check's acceptance runs were
+PROTOCOL = 2
+
+
 def connect(port: int, host="127.0.0.1", timeout: float | None = None) -> redis.Redis:
-    """No retries. Measured requests use no socket timeout (a latency is one request, however long);
+    """Never re-sends: redis-py 8 retries a failed command by default, so retries are off
+    explicitly. Measured requests use no socket timeout (a latency is one request, however long);
     setup and checking connections pass one, so a hung server cannot block the run forever."""
-    return redis.Redis(host=host, port=port, socket_timeout=timeout, socket_connect_timeout=10,
-                       retry=Retry(NoBackoff(), 0))
+    return redis.Redis(
+        host=host,
+        port=port,
+        socket_timeout=timeout,
+        socket_connect_timeout=10,
+        retry=Retry(NoBackoff(), 0),
+        protocol=PROTOCOL,
+    )
+
+
+def async_pool(base, port: int, max_conns: int, **kw):
+    """The async driver's pool (`base` a redis.asyncio pool class), set up as connect(): async
+    connections take their retry and protocol from the pool, and the retry must be asyncio's."""
+    return base(
+        host="127.0.0.1",
+        port=port,
+        max_connections=max_conns,
+        timeout=None,
+        socket_timeout=None,
+        socket_connect_timeout=10,
+        retry=AsyncRetry(NoBackoff(), 0),
+        protocol=PROTOCOL,
+        **kw,
+    )
 
 
 ADMIN_TIMEOUT_S = 300
-
-
-class DockerError(RuntimeError):
-    """Docker itself failed or timed out (pull, run, inspect): nothing about the engine was learnt."""
-
-
-#: set by the check's SIGTERM handler: containers are removed at once, without a graceful stop
-STOPPING = False
 
 
 def server_hung(port: int, tries: int = 3) -> bool:
@@ -90,18 +117,11 @@ def outcome_of(exc):
     return checks.outcome_of(exc, ResponseError)
 
 
-def cypher_params(params: dict) -> str:
-    def lit(v):
-        if v is None:
-            return "null"
-        if isinstance(v, str):
-            return "'" + v.replace("\\", "\\\\").replace("'", "\\'") + "'"
-        return str(v)
-    return "CYPHER " + " ".join(f"{k}={lit(v)}" for k, v in params.items()) + " " if params else ""
-
-
 def qargs(graph, cypher, params, write, timeout_ms):
-    a = ["GRAPH.QUERY" if write else "GRAPH.RO_QUERY", graph, cypher_params(params) + cypher]
+    prefix = (
+        "CYPHER " + " ".join(f"{k}={sk.lit(v)}" for k, v in params.items()) + " " if params else ""
+    )
+    a = ["GRAPH.QUERY" if write else "GRAPH.RO_QUERY", graph, prefix + cypher]
     if timeout_ms:
         a += ["TIMEOUT", str(int(timeout_ms))]
     return a
@@ -116,129 +136,156 @@ def free_port() -> int:
 # --- images and servers ----------------------------------------------------------------------------
 
 
-def docker(*a, check=True, timeout=120):
+def docker(*a, timeout=120) -> subprocess.CompletedProcess:
+    """A docker call the kit has no helper for (stop, kill, a one-off `run --rm`). Its exit code is
+    the caller's to read; docker missing or not returning in time is kit.DockerError."""
     try:
-        return subprocess.run(["docker", *a], check=check, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(["docker", *a], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise DockerError(f"docker {a[0]} did not return within {timeout} s") from None
+        raise kit.DockerError(f"docker {a[0]} did not return within {timeout} s") from None
+    except OSError as e:
+        raise kit.DockerError(f"docker could not be started: {e}") from None
 
 
 def probe_image(image: str) -> dict:
-    """Pull the image and find its server and module. The server is the image's own default, as its
-    run.sh picks it: `${FALKORDB_SERVER:-redis}-server` from the image's config env (empty counts as
-    unset), with no fallback to the other binary. Raises RuntimeError if either is missing."""
-    p = docker("pull", "-q", image, check=False, timeout=900)
-    if p.returncode != 0:
-        raise DockerError(f"docker pull failed: {(p.stderr or p.stdout).strip()[:300]}")
-    p = docker("image", "inspect", "--format", "{{json .Config.Env}}", image, check=False, timeout=60)
-    if p.returncode != 0:
-        raise DockerError(f"docker image inspect failed: {(p.stderr or p.stdout).strip()[:300]}")
-    env = dict(x.split("=", 1) for x in (json.loads(p.stdout or "null") or []) if "=" in x)
-    flavour = env.get("FALKORDB_SERVER") or None
-    binary = f"{flavour or 'redis'}-server"
-    script = (f"command -v {binary}; "
-              f"if [ -f {MODULE_PATH} ]; then echo {MODULE_PATH}; else find / -name falkordb.so 2>/dev/null | head -1; fi")
-    p = docker("run", "--rm", "--entrypoint", "sh", image, "-c", script, check=False, timeout=300)
+    """Pull the image and find its server and module. The server is the image's own default, as
+    the soak picks it (soakkit.image_server: `${FALKORDB_SERVER:-redis}-server`, no fallback to the
+    other binary); the module is where every falkordb-server image keeps it. Raises RuntimeError if
+    either is missing."""
+    kit.pull(image)
+    binary = sk.image_server(image)
+    script = f"command -v {binary}; if [ -f {sk.IMAGE_MODULE} ]; then echo {sk.IMAGE_MODULE}; fi"
+    p = docker(
+        "run", "--rm", "--network", "none", "--entrypoint", "sh", image, "-c", script, timeout=300
+    )
     lines = [x.strip() for x in p.stdout.splitlines() if x.strip()]
     server = next((x for x in lines if x.endswith("/" + binary)), None)
-    module = next((x for x in lines if x.endswith("falkordb.so")), None)
     if not server:
-        raise RuntimeError(f"image {image} has no {binary} (FALKORDB_SERVER={flavour or 'unset'})")
-    if not module:
-        raise RuntimeError(f"image {image} has no falkordb.so")
-    return {"image": image, "server": server, "module": module}
+        raise RuntimeError(f"image {image} has no {binary} (the server its FALKORDB_SERVER names)")
+    if sk.IMAGE_MODULE not in lines:
+        raise RuntimeError(f"image {image} has no {sk.IMAGE_MODULE}")
+    return {"image": image, "server": server, "module": sk.IMAGE_MODULE}
 
 
 def after_failure(server, exc, hang_path: str | None = None) -> dict:
     """What a failed step says about the engine: server_alive False (it exited, or it is hung: the
     prober's marker or no PONG to 3 PINGs), True, or None when Docker failed and nothing is known."""
     out = {"server_alive": None, "exit_code": None, "hung": False}
-    if isinstance(exc, DockerError):
+    if isinstance(exc, kit.DockerError):
         return out
     try:
         running, code = server.state()
-        hung = running and ((hang_path is not None and os.path.exists(hang_path)) or server_hung(server.port))
-        out.update(server_alive=running and not hung, exit_code=None if running else code, hung=hung)
-    except DockerError:
+        hung = running and (
+            (hang_path is not None and os.path.exists(hang_path)) or server_hung(server.port)
+        )
+        out.update(
+            server_alive=running and not hung, exit_code=None if running else code, hung=hung
+        )
+    except kit.DockerError:
         pass  # docker cannot say either: nothing is known about the engine
     return out
 
 
+#: every server, with the module or without: no persistence, room for the drivers' connections
+SERVER_FLAGS = {
+    "--maxclients": "200000",
+    "--save": "",
+    "--appendonly": "no",
+    "--dir": "/tmp",
+    "--protected-mode": "no",
+}
+
+
+def _flags(pairs: dict) -> list[str]:
+    return [x for pair in pairs.items() for x in pair]
+
+
 class Server:
     """One container from the image: its own server binary, with the module (FalkorDB) or without
-    (the plain server that tells a host stall from a FalkorDB freeze)."""
+    (the plain server that tells a host stall from a FalkorDB freeze). On the host network it
+    listens on a free port of 127.0.0.1; published (macOS), on CONTAINER_PORT behind a host port
+    docker picks."""
 
-    def __init__(self, info: dict, name: str, cpus: str | None, net: str, thread_count: int | None = None,
-                 module: bool = True, module_args: tuple = ()):
+    def __init__(
+        self,
+        info: dict,
+        name: str,
+        cpus: str | None,
+        net: str,
+        thread_count: int | None = None,
+        module: bool = True,
+        module_args: tuple = (),
+        labels: dict | None = None,
+    ):
         self.info, self.name, self.cpus, self.net = info, name, cpus, net
         self.tc, self.module, self.module_args = thread_count, module, module_args
-        self.port = free_port()
+        self.labels = labels
+        self.port = 0  # set by start()
 
     def start(self, wait_s: float = 60) -> redis.Redis:
-        docker("rm", "-f", self.name, check=False)
-        net = ["--network", "host"] if self.net == "host" else ["-p", f"127.0.0.1:{self.port}:{self.port}"]
-        cpus = ["--cpuset-cpus", self.cpus] if self.cpus else []
-        cmd = ["run", "-d", "--name", self.name, *net, *cpus, "--ulimit", "nofile=1048576",
-               "--entrypoint", self.info["server"], self.info["image"],
-               "--port", str(self.port), "--bind", "127.0.0.1" if self.net == "host" else "0.0.0.0", "--maxclients", "200000", "--save", "",
-               "--appendonly", "no", "--dir", "/tmp", "--protected-mode", "no"]
+        host = self.net == "host"
+        listen = free_port() if host else CONTAINER_PORT
+        bind = "127.0.0.1" if host else "0.0.0.0"
+        cmd = _flags({"--port": str(listen), "--bind": bind, **SERVER_FLAGS})
         if self.module:
-            cmd += ["--loadmodule", self.info["module"], "THREAD_COUNT", str(self.tc), "CACHE_SIZE", "200",
-                    "EFFECTS_THRESHOLD", "0", *self.module_args]
-        p = docker(*cmd, check=False)
-        if p.returncode != 0:
-            raise DockerError(f"docker run failed: {p.stderr.strip()[:300]}")
-        r = connect(self.port, timeout=ADMIN_TIMEOUT_S)
-        t0 = now()
-        while now() - t0 < wait_s:
-            try:
-                r.ping()
-                return r
-            except Exception:
-                running, _ = self.state()
-                if not running:
-                    break
-                time.sleep(0.1)
+            conf = {"THREAD_COUNT": str(self.tc), "CACHE_SIZE": "200", "EFFECTS_THRESHOLD": "0"}
+            cmd += ["--loadmodule", self.info["module"], *_flags(conf), *self.module_args]
+        container = kit.start(
+            self.info["image"],
+            self.name,
+            labels=self.labels,
+            cpus=self.cpus,
+            entrypoint=self.info["server"],
+            command=cmd,
+            extra=["--ulimit", "nofile=1048576"],
+            port=listen,
+            host_network=host,
+        )
+        self.port = container.port
+        if self.port and kit.wait_ping(self.port, wait_s, container):
+            return connect(self.port, timeout=ADMIN_TIMEOUT_S)
         raise RuntimeError("server did not start: " + self.logs(50)[-1500:])
 
     def state(self) -> tuple[bool, int]:
-        """(running, exit code). A container Docker no longer knows is (False, -1); any other failure
-        of `docker inspect` (its daemon unreachable) raises DockerError, never reads as a crash."""
-        p = docker("inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", self.name, check=False)
-        if p.returncode != 0:
-            if any(s_ in (p.stderr + p.stdout).lower() for s_ in ("no such object", "no such container")):
-                return False, -1
-            raise DockerError(f"docker inspect failed: {(p.stderr or p.stdout).strip()[:200]}")
-        run, code = p.stdout.split()
-        return run == "true", int(code)
+        """(running, exit code); a container docker no longer knows is (False, -1). A docker that
+        does not answer raises kit.DockerError: it never reads as a crash."""
+        state = kit.state(self.name)
+        if state == "running":
+            return True, 0
+        code = state.split()[1] if len(state.split()) > 1 else ""
+        return False, int(code) if code.lstrip("-").isdigit() else -1
 
     def pid(self) -> int:
-        return int(docker("inspect", "-f", "{{.State.Pid}}", self.name).stdout.strip())
+        return kit.host_pid(self.name)
 
     def logs(self, tail=400) -> str:
-        p = docker("logs", "--tail", str(tail), self.name, check=False)
-        return (p.stdout or "") + (p.stderr or "")
+        try:
+            return kit.logs(self.name, tail)
+        except kit.DockerError as e:
+            return f"(no log: {e})"
 
     def stop(self) -> str:
-        """Stop and remove the container; returns its log tail. Best effort: never raises."""
-        tail = ""
+        """Stop and remove the container; returns its log tail. Best effort: never raises. Once the
+        check is stopping (its time limit), the container goes at once, without a graceful stop."""
         try:
-            if not STOPPING:
-                docker("stop", "-t", "20", self.name, check=False, timeout=60)
-            tail = self.logs(200)
-        except DockerError as e:
-            tail = f"(no log: {e})"
-        try:
-            docker("rm", "-f", self.name, check=False)
-        except DockerError:
-            pass  # best effort; the check's final clean-up removes what is left
+            if not kit.stopping():
+                docker("stop", "-t", "20", self.name, timeout=60)
+        except kit.DockerError:
+            pass  # removed below either way
+        tail = self.logs(200)
+        with contextlib.suppress(kit.DockerError):  # the check's clean-up removes what is left
+            kit.remove(self.name)
         return tail
 
 
 def module_version(r) -> str:
     ver = "?"
     for m in r.execute_command("MODULE", "LIST"):
-        d = dict(zip(map(s, m[::2]), m[1::2])) if isinstance(m, list) else {s(k): v for k, v in m.items()}
+        d = (
+            dict(zip(map(s, m[::2]), m[1::2], strict=False))
+            if isinstance(m, list)
+            else {s(k): v for k, v in m.items()}
+        )
         if s(d.get("name", "")) in ("graph", "falkordb"):
             ver = s(d.get("ver"))
     return ver
@@ -247,7 +294,7 @@ def module_version(r) -> str:
 def server_config(r) -> dict:
     try:
         flat = [s(x) for p in r.execute_command("GRAPH.CONFIG", "GET", "*") for x in p]
-        return dict(zip(flat[::2], flat[1::2]))
+        return dict(zip(flat[::2], flat[1::2], strict=False))
     except Exception as e:
         return {"error": str(e)[:200]}
 
@@ -260,63 +307,63 @@ def prober_proc(ports: dict, out_path: str, hang_path: str, stop):
 
 
 async def _prober(ports, out_path, hang_path, stop):
-    f = open(out_path, "a", buffering=1)  # line-buffered: an epoch reads the file while this writes
+    # line-buffered: an epoch reads it while this writes
+    with open(out_path, "a", buffering=1) as f:
+        await asyncio.gather(*(_probe(f, n, p, hang_path, stop) for n, p in ports.items()))
 
-    async def one(name, port):
-        while not stop.is_set():
-            try:
-                reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            except OSError:
-                f.write(f"{name},{now():.4f},down\n")
-                await asyncio.sleep(1)
-                continue
-            pending = collections.deque()
-            alive = [True]
 
-            async def read_loop():
-                try:
-                    while True:
-                        line = await reader.readline()
-                        if not line:
-                            break
-                        t = now()
-                        if pending:
-                            sched = pending.popleft()
-                            f.write(f"{name},{sched:.4f},{(t - sched) * 1000:.2f}\n")
-                finally:
-                    alive[0] = False
+async def _replies(f, name, reader, pending, alive):
+    """Time each PONG from its PING's scheduled send; alive[0] goes False when the connection ends."""
+    try:
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            t = now()
+            if pending:
+                sched = pending.popleft()
+                f.write(f"{name},{sched:.4f},{(t - sched) * 1000:.2f}\n")
+    finally:
+        alive[0] = False
 
-            rt = asyncio.create_task(read_loop())
-            nxt = now()
-            hung = False
-            try:
-                while alive[0] and not stop.is_set():
-                    nxt += PING_INTERVAL_S
-                    d = nxt - now()
-                    if d > 0:
-                        await asyncio.sleep(d)
-                    else:
-                        nxt = now()  # we fell behind (the prober itself stalled); do not burst
-                    pending.append(nxt)
-                    writer.write(b"PING\r\n")
-                    if name == "falkor" and pending and now() - pending[0] > HANG_S and not hung:
-                        hung = True
-                        with open(hang_path, "w") as h:
-                            h.write(f"{now():.3f}\n")
-            except (ConnectionError, OSError):
-                pass  # the server dropped the connection: logged as down below, then reconnect
-            finally:
-                rt.cancel()
-                try:
-                    writer.close()
-                except Exception:
-                    pass  # the transport is already broken: nothing left to close
-            if not stop.is_set():
-                f.write(f"{name},{now():.4f},down\n")
-                await asyncio.sleep(1)
 
-    await asyncio.gather(*(one(n, p) for n, p in ports.items()))
-    f.close()
+async def _probe(f, name, port, hang_path, stop):
+    while not stop.is_set():
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        except OSError:
+            f.write(f"{name},{now():.4f},down\n")
+            await asyncio.sleep(1)
+            continue
+        pending = collections.deque()
+        alive = [True]
+        rt = asyncio.create_task(_replies(f, name, reader, pending, alive))
+        nxt = now()
+        hung = False
+        try:
+            while alive[0] and not stop.is_set():
+                nxt += PING_INTERVAL_S
+                d = nxt - now()
+                if d > 0:
+                    await asyncio.sleep(d)
+                else:
+                    nxt = now()  # we fell behind (the prober itself stalled); do not burst
+                pending.append(nxt)
+                writer.write(b"PING\r\n")
+                if name == "falkor" and pending and now() - pending[0] > HANG_S and not hung:
+                    hung = True
+                    with open(hang_path, "w") as h:
+                        h.write(f"{now():.3f}\n")
+        except (ConnectionError, OSError):
+            pass  # the server dropped the connection: logged as down below, then reconnect
+        finally:
+            rt.cancel()
+            # the transport is already broken: nothing to close
+            with contextlib.suppress(Exception):
+                writer.close()
+        if not stop.is_set():
+            f.write(f"{name},{now():.4f},down\n")
+            await asyncio.sleep(1)
 
 
 # --- long-read process (threads) ---------------------------------------------------------------------
@@ -384,14 +431,19 @@ def long_proc(cfg: dict, stop, scanning, out_path: str):
                     scanning[g] += 1
                 try:
                     if rng.random() < model.SCAN_WRITE_P:
-                        threading.Timer(0.001, aligned_write, args=(g, random.Random(rng.random()))).start()
+                        threading.Timer(
+                            0.001, aligned_write, args=(g, random.Random(rng.random()))
+                        ).start()
                     for op, cypher, params in batch:
                         if stop.is_set():
                             break
                         t0 = now()
                         try:
-                            r.execute_command(*qargs(gname(g), cypher, params, False,
-                                                     model.LONG_TIMEOUT[op] * 1000))
+                            r.execute_command(
+                                *qargs(
+                                    gname(g), cypher, params, False, model.LONG_TIMEOUT[op] * 1000
+                                )
+                            )
                             exc = None
                         except Exception as e:
                             exc = e
@@ -437,6 +489,7 @@ def long_proc(cfg: dict, stop, scanning, out_path: str):
 def async_proc(cfg: dict, stop, scanning, out_path: str):
     try:
         import resource
+
         _soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
     except Exception:
@@ -449,6 +502,7 @@ def timed_pool_class(base, waits: dict):
     """A connection pool that records, per task, how long it waited for a free connection: the time
     in get_connection less the time spent opening a connection (a connect plus a handshake the
     server answers, which is server time, not the driver's)."""
+
     class TimedPool(base):
         async def get_connection(self, *a, **kw):
             task = asyncio.current_task()
@@ -477,17 +531,26 @@ def timed_pool_class(base, waits: dict):
 
 async def _async_main(cfg, stop, scanning, out_path):
     import redis.asyncio as aredis
+
     ep, sizes, port = cfg["ep"], cfg["sizes"], cfg["port"]
     ng = len(sizes)
     pool_waits = {}  # task -> seconds it waited for a free connection (the pool is full at max_conns)
-    pool = timed_pool_class(aredis.BlockingConnectionPool, pool_waits)(host="127.0.0.1", port=port, max_connections=cfg["max_conns"], timeout=None,
-                     socket_timeout=None, socket_connect_timeout=10, retry=Retry(NoBackoff(), 0))
+    pool = async_pool(
+        timed_pool_class(aredis.BlockingConnectionPool, pool_waits), port, cfg["max_conns"]
+    )
     r = aredis.Redis(connection_pool=pool)
     reads, writes, errors, died = [], [], {}, []
     inflight = set()
-    lag = {"late_sends": 0, "max_send_lag_ms": 0.0, "max_write_wait_s": 0.0, "max_pool_wait_s": 0.0,
-           "pool_waits_over_50ms": 0}
-    wsem = {g: asyncio.Semaphore(cfg.get("max_inflight_writes", MAX_INFLIGHT_WRITES)) for g in range(ng)}
+    lag = {
+        "late_sends": 0,
+        "max_send_lag_ms": 0.0,
+        "max_write_wait_s": 0.0,
+        "max_pool_wait_s": 0.0,
+        "pool_waits_over_50ms": 0,
+    }
+    wsem = {
+        g: asyncio.Semaphore(cfg.get("max_inflight_writes", MAX_INFLIGHT_WRITES)) for g in range(ng)
+    }
 
     async def do(kind, g, op, args, sched, keys=None):
         send = now()
@@ -558,7 +621,8 @@ async def _async_main(cfg, stop, scanning, out_path):
             if d > 0:
                 await asyncio.sleep(min(d, 0.5))
                 continue
-            if holdoff:  # writes that stay clear of long reads: hold, then send (timed from the send)
+            # writes that stay clear of long reads: hold, then send (timed from the send)
+            if holdoff:
                 while scanning[g] > 0 and not stop.is_set():
                     await asyncio.sleep(0.02)
                 if stop.is_set():
@@ -571,7 +635,9 @@ async def _async_main(cfg, stop, scanning, out_path):
             else:
                 (cypher, params), keys = model.make_bulk_set(rng), []
             await wsem[g].acquire()
-            spawn(capped(g, do("w", g, op, qargs(gname(g), cypher, params, True, None), sched, keys)))
+            spawn(
+                capped(g, do("w", g, op, qargs(gname(g), cypher, params, True, None), sched, keys))
+            )
             nxt += rng.expovariate(rate)
             if holdoff and nxt < now() - 1.0:  # no burst of the writes held back during a long read
                 nxt = now()
@@ -601,9 +667,16 @@ async def _async_main(cfg, stop, scanning, out_path):
     unfinished = len(inflight)
     drain_s = now() - t_stop
     # write results now: tearing down tens of thousands of open requests can outlast the join
-    res = {"reads": reads, "writes": writes, "errors": errors, "died": died,
-           "pending_at_stop": pending_at_stop, "unfinished": unfinished, "drain_s": drain_s,
-           "harness": lag}
+    res = {
+        "reads": reads,
+        "writes": writes,
+        "errors": errors,
+        "died": died,
+        "pending_at_stop": pending_at_stop,
+        "unfinished": unfinished,
+        "drain_s": drain_s,
+        "harness": lag,
+    }
     with open(out_path + ".tmp", "w") as f:
         json.dump(res, f)
     os.replace(out_path + ".tmp", out_path)
@@ -613,12 +686,20 @@ async def _async_main(cfg, stop, scanning, out_path):
 # --- building ------------------------------------------------------------------------------------
 
 
-def build_graph(r, graph: str, scale: float, batch: int = model.BUILD_BATCH) -> tuple[dict, dict, dict]:
+def build_graph(
+    r, graph: str, scale: float, batch: int = model.BUILD_BATCH
+) -> tuple[dict, dict, dict]:
     """A fresh graph: labels get consecutive ids, so edges are wired by id. Returns the label sizes,
     the build's timing (wall seconds and query counts of the node phase and the edge phase) and
     each label's first node id."""
     n = model.label_sizes(scale)
-    timing = {"nodes_s": 0.0, "edges_s": 0.0, "node_queries": 0, "edge_queries": 0, "nodes": sum(n.values())}
+    timing = {
+        "nodes_s": 0.0,
+        "edges_s": 0.0,
+        "node_queries": 0,
+        "edge_queries": 0,
+        "nodes": sum(n.values()),
+    }
     r.delete(graph)
 
     def run(phase, q):
@@ -631,10 +712,13 @@ def build_graph(r, graph: str, scale: float, batch: int = model.BUILD_BATCH) -> 
         run(phase, q)
     base = {}
     for label in n:
-        lo_id, hi_id, c = r.execute_command("GRAPH.RO_QUERY", graph,
-                                            f"MATCH (x:{label}) RETURN min(id(x)), max(id(x)), count(x)")[1][0]
+        lo_id, hi_id, c = r.execute_command(
+            "GRAPH.RO_QUERY", graph, f"MATCH (x:{label}) RETURN min(id(x)), max(id(x)), count(x)"
+        )[1][0]
         if hi_id - lo_id + 1 != c or c != n[label]:
-            raise RuntimeError(f"{graph}: {label} ids not consecutive ({lo_id}..{hi_id}, {c} nodes)")
+            raise RuntimeError(
+                f"{graph}: {label} ids not consecutive ({lo_id}..{hi_id}, {c} nodes)"
+            )
         base[label] = lo_id
     for phase, _t, q in model.build_plan(n, base, batch):
         if phase == "edges":
@@ -651,7 +735,9 @@ def wait_indexes(r, graph, timeout_s=300, stop=None) -> tuple[bool | None, float
     t0 = now()
     while now() - t0 < timeout_s:
         rows = r.execute_command("GRAPH.RO_QUERY", graph, "CALL db.indexes()")[1]
-        if not any("UNDER CONSTRUCTION" in s(x) for row in rows for x in row if isinstance(x, (bytes, str))):
+        if not any(
+            "UNDER CONSTRUCTION" in s(x) for row in rows for x in row if isinstance(x, (bytes, str))
+        ):
             return True, now() - t0
         if stop is not None:
             if stop.wait(0.5):
@@ -662,7 +748,9 @@ def wait_indexes(r, graph, timeout_s=300, stop=None) -> tuple[bool | None, float
 
 
 def constraint_status(r, graph) -> list[str]:
-    rows = r.execute_command("GRAPH.RO_QUERY", graph, "CALL db.constraints() YIELD status RETURN status")[1]
+    rows = r.execute_command(
+        "GRAPH.RO_QUERY", graph, "CALL db.constraints() YIELD status RETURN status"
+    )[1]
     return [s(row[0]) for row in rows]
 
 
@@ -672,6 +760,21 @@ def idx_create(label, props):
 
 def idx_drop(label, props):
     return f"DROP INDEX FOR (n:{label}) ON (" + ", ".join(f"n.{p}" for p in props) + ")"
+
+
+def unique_constraint(op, graph, label, props) -> list:
+    """GRAPH.CONSTRAINT CREATE|DROP of a unique node constraint."""
+    return [
+        "GRAPH.CONSTRAINT",
+        op,
+        graph,
+        "UNIQUE",
+        "NODE",
+        label,
+        "PROPERTIES",
+        str(len(props)),
+        *props,
+    ]
 
 
 def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, constraint_info: dict):
@@ -704,9 +807,16 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                             r.execute_command("GRAPH.QUERY", gname(g), idx_create(label, props))
                         except ResponseError as e:
                             ev("index_error", graph=g, label=label, msg=str(e)[:200])
-                for g in range(ng):  # every graph gets an event; once the epoch ends the rest are pending
-                    ok, took = (None, 0.0) if stop.is_set() else wait_indexes(r, gname(g), stop=stop)
-                    kind_ = {True: "indexes_ready", False: "indexes_stuck", None: "indexes_pending_at_epoch_end"}[ok]
+                # every graph gets an event; once the epoch ends the rest are pending
+                for g in range(ng):
+                    ok, took = (
+                        (None, 0.0) if stop.is_set() else wait_indexes(r, gname(g), stop=stop)
+                    )
+                    kind_ = {
+                        True: "indexes_ready",
+                        False: "indexes_stuck",
+                        None: "indexes_pending_at_epoch_end",
+                    }[ok]
                     ev(kind_, graph=g, seconds=round(now() - t_created if ok is None else took, 1))
             elif kind == "constraints":
                 created = []  # the graphs the constraints were created on (the epoch may end first)
@@ -717,26 +827,34 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                     for label, props in model.CONSTRAINTS:
                         try:
                             r.execute_command("GRAPH.QUERY", gname(g), idx_create(label, props))
-                            r.execute_command("GRAPH.CONSTRAINT", "CREATE", gname(g), "UNIQUE", "NODE", label,
-                                              "PROPERTIES", str(len(props)), *props)
+                            r.execute_command(*unique_constraint("CREATE", gname(g), label, props))
                         except ResponseError as e:
                             ev("constraint_error", graph=g, label=label, msg=str(e)[:200])
                 t0 = now()
                 states = {}
                 while now() - t0 < 180:
                     states = {g: constraint_status(r, gname(g)) for g in created}
-                    if all(st and all(x != "UNDER CONSTRUCTION" for x in st) for st in states.values()):
+                    if all(
+                        st and all(x != "UNDER CONSTRUCTION" for x in st) for st in states.values()
+                    ):
                         break
                     if stop.wait(1):
                         break
                 took = now() - t0
                 constraint_info["states"] = {str(g): st for g, st in states.items()}
                 constraint_info["seconds"] = round(took, 1)
-                ev("constraints_state", seconds=round(took, 1), states={str(g): st for g, st in states.items()})
+                ev(
+                    "constraints_state",
+                    seconds=round(took, 1),
+                    states={str(g): st for g, st in states.items()},
+                )
                 if stop.is_set() and any("UNDER CONSTRUCTION" in st for st in states.values()):
-                    constraint_info["pending_at_epoch_end"] = True  # run_epoch waits for them after the load
+                    # run_epoch waits for them after the load
+                    constraint_info["pending_at_epoch_end"] = True
                     return
-                operational = {g for g, st in states.items() if st and all(x == "OPERATIONAL" for x in st)}
+                operational = {
+                    g for g, st in states.items() if st and all(x == "OPERATIONAL" for x in st)
+                }
                 # deliberate violations on operational graphs: existing keys, must be rejected
                 label = model.CONSTRAINTS[0][0]
                 for g in sorted(operational):
@@ -744,8 +862,11 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                         break
                     for k in range(3):
                         try:
-                            r.execute_command("GRAPH.QUERY", gname(g),
-                                              f"CREATE (:{label} {{k: {k}, g: {k % model.GROUPS}}})")
+                            r.execute_command(
+                                "GRAPH.QUERY",
+                                gname(g),
+                                f"CREATE (:{label} {{k: {k}, g: {k % model.GROUPS}}})",
+                            )
                             constraint_info.setdefault("violations_accepted", []).append([g, k])
                             ev("violation_accepted", graph=g, key=k)
                         except ResponseError as e:
@@ -762,7 +883,11 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                         info = r.info("persistence")
                         if not info.get("rdb_bgsave_in_progress") or stop.wait(0.5):
                             break
-                    ev("bgsave_done", seconds=round(now() - t0, 1), status=info.get("rdb_last_bgsave_status"))
+                    ev(
+                        "bgsave_done",
+                        seconds=round(now() - t0, 1),
+                        status=info.get("rdb_last_bgsave_status"),
+                    )
                 except Exception as e:
                     ev("bgsave_error", msg=str(e)[:200])
     except Exception as e:
@@ -776,8 +901,7 @@ def end_of_epoch_cleanup(r, ep, ng, notes):
         if ep["constraints"]:
             for label, props in model.CONSTRAINTS:
                 try:
-                    r.execute_command("GRAPH.CONSTRAINT", "DROP", gname(g), "UNIQUE", "NODE", label,
-                                      "PROPERTIES", str(len(props)), *props)
+                    r.execute_command(*unique_constraint("DROP", gname(g), label, props))
                 except ResponseError as e:
                     notes.append(f"g{g} drop constraint {label}: {str(e)[:120]}")
                 drop_index(r, g, label, props, notes)
@@ -802,8 +926,14 @@ def index_vs_scan(r, ng, sizes, seed) -> list[str]:
         for label, prop in model.INDEX_PROBES:
             for _ in range(5):
                 v = rng.randrange(sizes[g][label])
-                a = r.execute_command("GRAPH.RO_QUERY", gname(g), f"MATCH (n:{label} {{{prop}: {v}}}) RETURN count(n)")[1][0][0]
-                b = r.execute_command("GRAPH.RO_QUERY", gname(g), f"MATCH (n:{label}) WHERE n.{prop} + 0 = {v} RETURN count(n)")[1][0][0]
+                a = r.execute_command(
+                    "GRAPH.RO_QUERY", gname(g), f"MATCH (n:{label} {{{prop}: {v}}}) RETURN count(n)"
+                )[1][0][0]
+                b = r.execute_command(
+                    "GRAPH.RO_QUERY",
+                    gname(g),
+                    f"MATCH (n:{label}) WHERE n.{prop} + 0 = {v} RETURN count(n)",
+                )[1][0][0]
                 if a != b:
                     problems.append(f"g{g} {label}.{prop}={v}: index {a}, scan {b}")
     return problems
@@ -830,8 +960,18 @@ def calibrate(r, ng, sizes, seed) -> list[dict]:
 # --- running one epoch ----------------------------------------------------------------------------
 
 
-def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Ledger, ping_path, hang_path,
-              hdir) -> dict:
+def run_epoch(
+    opts: dict,
+    server: Server,
+    hp,
+    ep,
+    sizes,
+    cal,
+    ledger: checks.Ledger,
+    ping_path,
+    hang_path,
+    hdir,
+) -> dict:
     port = server.port
     r = connect(port, timeout=ADMIN_TIMEOUT_S)
     ng = hp["graphs"]
@@ -843,8 +983,14 @@ def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Led
         r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", str(ep["write_timeout_ms"]))
     stop = mp.Event()
     scanning = mp.Array("i", ng)
-    base_cfg = {"ep": ep, "sizes": sizes, "port": port, "drain_s": opts["drain_s"],
-                "max_conns": opts["max_conns"], "max_inflight_writes": ep.get("max_inflight_writes", MAX_INFLIGHT_WRITES)}
+    base_cfg = {
+        "ep": ep,
+        "sizes": sizes,
+        "port": port,
+        "drain_s": opts["drain_s"],
+        "max_conns": opts["max_conns"],
+        "max_inflight_writes": ep.get("max_inflight_writes", MAX_INFLIGHT_WRITES),
+    }
     lp, ap = os.path.join(edir, "long.json"), os.path.join(edir, "async.json")
     p_long = mp.Process(target=long_proc, args=(base_cfg, stop, scanning, lp), daemon=True)
     p_async = mp.Process(target=async_proc, args=(base_cfg, stop, scanning, ap), daemon=True)
@@ -853,9 +999,11 @@ def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Led
     p_async.start()
     events, constraint_info = [], {}
     ev_stop = threading.Event()
-    ev_thread = threading.Thread(target=epoch_events,
-                                 args=(port, opts["epoch_s"], ep, ng, ev_stop, events, t_start, constraint_info),
-                                 daemon=True)
+    ev_thread = threading.Thread(
+        target=epoch_events,
+        args=(port, opts["epoch_s"], ep, ng, ev_stop, events, t_start, constraint_info),
+        daemon=True,
+    )
     ev_thread.start()
     crash = hang = None
     try:
@@ -871,7 +1019,8 @@ def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Led
             if not p_async.is_alive() or not p_long.is_alive():
                 log("driver process died early")
                 break
-    except BaseException:  # stopped (SIGTERM) or docker failed: the drivers must not outlive the epoch
+    except BaseException:
+        # stopped (SIGTERM) or docker failed: the drivers must not outlive the epoch
         stop.set()
         ev_stop.set()
         for p in (p_async, p_long):
@@ -882,7 +1031,7 @@ def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Led
     t_stopped = now()
     if hang:
         hang["backtrace_file"] = grab_backtrace(server, edir)
-        docker("kill", server.name, check=False)
+        docker("kill", server.name)
     p_async.join(opts["drain_s"] + 180)
     p_long.join(opts["drain_s"] + 60)
     for p in (p_async, p_long):
@@ -903,23 +1052,65 @@ def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Led
                     break
                 time.sleep(1)
             constraint_info["states"] = states
-            events.append({"t": round(now() - t_start, 2), "event": "constraints_state", "states": states,
-                           "seconds": round(now() - t0, 1), "after_load": True})
+            events.append(
+                {
+                    "t": round(now() - t_start, 2),
+                    "event": "constraints_state",
+                    "states": states,
+                    "seconds": round(now() - t0, 1),
+                    "after_load": True,
+                }
+            )
         except Exception as exc:
-            events.append({"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]})
+            events.append(
+                {"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]}
+            )
     # an index still building when the load stopped gets 300 s more before it counts as stuck
     for e in [x for x in events if x["event"] == "indexes_pending_at_epoch_end"]:
         try:
             ok, took = wait_indexes(r, gname(e["graph"]), 300)
-            events.append({"t": round(now() - t_start, 2), "event": "indexes_ready" if ok else "indexes_stuck",
-                           "graph": e["graph"], "seconds": round(e["seconds"] + took, 1), "after_load": True})
+            events.append(
+                {
+                    "t": round(now() - t_start, 2),
+                    "event": "indexes_ready" if ok else "indexes_stuck",
+                    "graph": e["graph"],
+                    "seconds": round(e["seconds"] + took, 1),
+                    "after_load": True,
+                }
+            )
         except Exception as exc:
-            events.append({"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]})
+            events.append(
+                {"t": round(now() - t_start, 2), "event": "events_died", "msg": str(exc)[:200]}
+            )
     t_end = now()
-    data = {"reads": [], "writes": [], "longs": [], "errors": {}, "died": [], "unfinished": 0,
-            "pending_at_stop": 0, "drain_s": 0.0, "harness": {}, "window_s": t_end - t_start}
-    for path, keys in ((ap, ("reads", "writes", "errors", "died", "unfinished", "pending_at_stop", "drain_s", "harness")),
-                       (lp, ("longs", "writes", "died", "unfinished"))):
+    data = {
+        "reads": [],
+        "writes": [],
+        "longs": [],
+        "errors": {},
+        "died": [],
+        "unfinished": 0,
+        "pending_at_stop": 0,
+        "drain_s": 0.0,
+        "harness": {},
+        "window_s": t_end - t_start,
+    }
+    for path, keys in (
+        (
+            ap,
+            (
+                "reads",
+                "writes",
+                "errors",
+                "died",
+                "unfinished",
+                "pending_at_stop",
+                "drain_s",
+                "harness",
+            ),
+        ),
+        (lp, ("longs", "writes", "died", "unfinished")),
+    ):
         try:
             with open(path) as f:
                 d = json.load(f)
@@ -939,8 +1130,13 @@ def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Led
         ledger.extra[g][model.CONSTRAINTS[0][0]] += 1
     pings, downs = checks.read_pings(ping_path, t_start, t_end)
 
-    result = {"params": ep, "hour": hp, "calibration": cal, "events": events,
-              "duration_s": round(t_stopped - t_start, 1)}
+    result = {
+        "params": ep,
+        "hour": hp,
+        "calibration": cal,
+        "events": events,
+        "duration_s": round(t_stopped - t_start, 1),
+    }
     if crash or hang:
         result["crash"] = crash
         result["hang"] = hang
@@ -954,33 +1150,47 @@ def run_epoch(opts: dict, server: Server, hp, ep, sizes, cal, ledger: checks.Led
         reusable = reusable and end["reusable"]
         if end["memory"]:
             result["memory"] = end["memory"]
-        an = checks.analyse(ep, hp, cal, data, pings, downs, events, constraint_info, ledger_problems)
+        an = checks.analyse(
+            ep, hp, cal, data, pings, downs, events, constraint_info, ledger_problems
+        )
         running, code = server.state()
         # a server that stopped answering after the load (the prober's marker, or no PONG now) did not stay up
         hung = running and (os.path.exists(hang_path) or server_hung(port))
-        an["checks"]["server_stays_up"] = {"pass": running and not hung, "exit_code": None if running else code,
-                                           "hang": hung}
+        an["checks"]["server_stays_up"] = {
+            "pass": running and not hung,
+            "exit_code": None if running else code,
+            "hang": hung,
+        }
         if ledger.incomplete:
             for k in ("writes_add_up", "upsert_edges_complete", "timed_out_writes_leave_nothing"):
-                an["checks"][k] = {"pass": None, "skipped": "a driver result file was lost earlier on this server"}
-        an["checks"]["index_matches_scan"] = {"pass": not ivs, "applies": ep["indexes"] or ep["constraints"],
-                                              "problems": ivs}
+                an["checks"][k] = {
+                    "pass": None,
+                    "skipped": "a driver result file was lost earlier on this server",
+                }
+        an["checks"]["index_matches_scan"] = {
+            "pass": not ivs,
+            "applies": ep["indexes"] or ep["constraints"],
+            "problems": ivs,
+        }
         result.update(an)
         result["notes"] = notes
     result["reusable"] = reusable
-    result["failed"] = sorted(k for k, v in result["checks"].items() if v.get("pass", True) is False)
+    result["failed"] = sorted(
+        k for k, v in result["checks"].items() if v.get("pass", True) is False
+    )
     with open(os.path.join(edir, "epoch.json"), "w") as f:
         json.dump(result, f, indent=1, default=str)
     with gzip.open(os.path.join(edir, "raw.json.gz"), "wt") as f:
         json.dump({"reads": data["reads"], "writes": data["writes"], "longs": data["longs"]}, f)
     for p in (lp, ap):
-        try:
+        # that driver never wrote its file (already reported as "no results from ...")
+        with contextlib.suppress(FileNotFoundError):
             os.remove(p)
-        except FileNotFoundError:
-            pass  # that driver never wrote its file (already reported as "no results from ...")
-    log(f"epoch {ep['seed']} failed={result['failed']} "
+    log(
+        f"epoch {ep['seed']} failed={result['failed']} "
         f"worst_ping={result['checks'].get('no_freeze', {}).get('worst_ping_ms')}ms "
-        f"read_timeouts={result['checks'].get('no_timeouts_while_waiting', {}).get('all_read_timeouts')}")
+        f"read_timeouts={result['checks'].get('no_timeouts_while_waiting', {}).get('all_read_timeouts')}"
+    )
     return result
 
 
@@ -989,8 +1199,9 @@ def schema_left(r, ng) -> dict:
     have none, so after an epoch's clean-up there should be none either."""
     left = {}
     for g in range(ng):
-        n = (len(r.execute_command("GRAPH.RO_QUERY", gname(g), "CALL db.indexes()")[1])
-             + len(r.execute_command("GRAPH.RO_QUERY", gname(g), "CALL db.constraints()")[1]))
+        n = len(r.execute_command("GRAPH.RO_QUERY", gname(g), "CALL db.indexes()")[1]) + len(
+            r.execute_command("GRAPH.RO_QUERY", gname(g), "CALL db.constraints()")[1]
+        )
         if n:
             left[g] = n
     return left
@@ -1009,7 +1220,9 @@ def end_of_epoch(r, ep, ng, sizes, ledger, events, t_start) -> dict:
         if ep["indexes"] or ep["constraints"]:
             out["ivs"] = index_vs_scan(r, ng, sizes, ep["seed"])
     except Exception as e:
-        out["ledger_problems"] = [("harness", f"end-of-epoch checks failed: {type(e).__name__}: {e}")]
+        out["ledger_problems"] = [
+            ("harness", f"end-of-epoch checks failed: {type(e).__name__}: {e}")
+        ]
         out["notes"].append(traceback.format_exc()[-500:])
     try:
         end_of_epoch_cleanup(r, ep, ng, out["notes"])
@@ -1021,7 +1234,10 @@ def end_of_epoch(r, ep, ng, sizes, ledger, events, t_start) -> dict:
         events.append({"t": round(now() - t_start, 2), "event": "cleanup_incomplete", "left": left})
     try:
         mem = r.info("memory")
-        out["memory"] = {"used_memory": mem.get("used_memory"), "used_memory_rss": mem.get("used_memory_rss")}
+        out["memory"] = {
+            "used_memory": mem.get("used_memory"),
+            "used_memory_rss": mem.get("used_memory_rss"),
+        }
     except Exception as e:
         out["notes"].append(f"no memory figure: {type(e).__name__}: {e}"[:200])
     return out
@@ -1032,8 +1248,12 @@ def grab_backtrace(server: Server, edir: str) -> str:
     try:
         pid = server.pid()
         with open(path, "w") as f:
-            subprocess.run(["gdb", "-p", str(pid), "-batch", "-ex", "thread apply all bt"], stdout=f,
-                           stderr=subprocess.STDOUT, timeout=120)
+            subprocess.run(
+                ["gdb", "-p", str(pid), "-batch", "-ex", "thread apply all bt"],
+                stdout=f,
+                stderr=subprocess.STDOUT,
+                timeout=120,
+            )
     except Exception as e:
         with open(path, "a") as f:
             f.write(f"\nbacktrace failed: {e}\n")
@@ -1043,30 +1263,55 @@ def grab_backtrace(server: Server, edir: str) -> str:
 # --- server-hour --------------------------------------------------------------------------------
 
 
-def run_server_hour(opts: dict, info: dict, tag: str, hp: dict, epochs: list[dict], hdir: str,
-                    deadline: float | None = None) -> dict:
+def run_server_hour(
+    opts: dict,
+    info: dict,
+    tag: str,
+    hp: dict,
+    epochs: list[dict],
+    hdir: str,
+    deadline: float | None = None,
+) -> dict:
     """Start a server and its plain PING control from the image, build the hour's graphs, run its
     epochs. Returns {"hour", "build": [...], "epochs": [...], "module_version", "config"}, plus
     "error" and "server_alive" when something failed before the epochs finished (a server that
     would not start, died during the build, or a harness fault)."""
     os.makedirs(hdir, exist_ok=True)
     log(f"{tag}: server-hour {hp}")
-    server = Server(info, f"{opts['name_prefix']}-{tag}", opts.get("server_cpus"), opts["net"], hp["thread_count"])
-    control = Server(info, f"{opts['name_prefix']}-{tag}-plain", opts.get("client_cpus"), opts["net"], module=False)
+    server = Server(
+        info,
+        f"{opts['name_prefix']}-{tag}",
+        opts.get("server_cpus"),
+        opts["net"],
+        hp["thread_count"],
+        labels=opts.get("labels"),
+    )
+    control = Server(
+        info,
+        f"{opts['name_prefix']}-{tag}-plain",
+        opts.get("client_cpus"),
+        opts["net"],
+        module=False,
+        labels=opts.get("labels"),
+    )
     out = {"hour": hp, "tag": tag, "build": [], "epochs": []}
     prober = None
     stop = mp.Event()
     ping_path = os.path.join(hdir, "pings.csv")
     hang_path = os.path.join(hdir, "HANG")
-    if os.path.exists(hang_path):  # a marker left by an earlier run in this directory is not this server's
+    # a marker left by an earlier run in this directory is not this server's
+    if os.path.exists(hang_path):
         os.remove(hang_path)
     try:
         r = server.start()
         control.start()
         out["module_version"] = module_version(r)
         out["config"] = server_config(r)
-        prober = mp.Process(target=prober_proc, args=({"falkor": server.port, "control": control.port},
-                                                      ping_path, hang_path, stop), daemon=True)
+        prober = mp.Process(
+            target=prober_proc,
+            args=({"falkor": server.port, "control": control.port}, ping_path, hang_path, stop),
+            daemon=True,
+        )
         prober.start()
         sizes = []
         for g, sc in enumerate(hp["scales"]):
@@ -1079,7 +1324,11 @@ def run_server_hour(opts: dict, info: dict, tag: str, hp: dict, epochs: list[dic
         log(f"{tag}: built {out['build']}, cal={cal}")
         ledger = checks.Ledger(sizes)
         for ep in epochs:
-            if deadline and time.time() + model.epoch_seconds(opts["epoch_s"], opts["drain_s"], ep) > deadline:
+            if (
+                deadline
+                and time.time() + model.epoch_seconds(opts["epoch_s"], opts["drain_s"], ep)
+                > deadline
+            ):
                 log("deadline: no time for another epoch")
                 break
             res = run_epoch(opts, server, hp, ep, sizes, cal, ledger, ping_path, hang_path, hdir)
@@ -1090,10 +1339,15 @@ def run_server_hour(opts: dict, info: dict, tag: str, hp: dict, epochs: list[dic
         mems = [x.get("memory", {}).get("used_memory") for x in res_list if x.get("memory")]
         if len(mems) >= 2 and mems[0]:
             growth = (mems[-1] - mems[0]) / mems[0]
-            res_list[-1]["checks"]["memory_steady"] = {"pass": growth < 0.10, "growth": round(growth, 4),
-                                                      "used_memory_by_epoch": mems}
+            res_list[-1]["checks"]["memory_steady"] = {
+                "pass": growth < 0.10,
+                "growth": round(growth, 4),
+                "used_memory_by_epoch": mems,
+            }
         for x in res_list:
-            x["failed"] = sorted(k for k, v in x.get("checks", {}).items() if v.get("pass", True) is False)
+            x["failed"] = sorted(
+                k for k, v in x.get("checks", {}).items() if v.get("pass", True) is False
+            )
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"[:500]
         out.update(after_failure(server, e, hang_path))
@@ -1116,7 +1370,5 @@ def run_server_hour(opts: dict, info: dict, tag: str, hp: dict, epochs: list[dic
 
 def set_start_method():
     if sys.platform != "win32":
-        try:
+        with contextlib.suppress(RuntimeError):  # already set by an earlier call in this process
             mp.set_start_method("fork")
-        except RuntimeError:
-            pass  # already set by an earlier call in this process
