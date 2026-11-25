@@ -8,7 +8,7 @@
 #
 #   - name: pokec                      # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$, no "--"
 #     runner: vm                       # vm (_perf-vm.yml on a GCE VM) | hosted (ubuntu-latest)
-#     command: uv run --project bench bench pokec    # + --group <name> when it needs one
+#     command: uv run --project bench --frozen bench pokec   # a group goes before `bench`: --group <name>
 #     timeout_minutes: 75              # 1-330
 #     machine_type: n4-standard-16     # vm only; optional
 #

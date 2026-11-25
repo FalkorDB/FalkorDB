@@ -186,17 +186,16 @@ def strict_load(path):
         return json.load(handle, parse_constant=refuse)
 
 
+SIDE_FLAGS = tuple(
+    f"{which}{suffix}" for which in kit.SIDES for suffix in ("", "_commit", "_label")
+)
+
+
 def sides(args):
     """The pinned candidate and baseline as result.json's sides, checked by kit's
     rules (the same every check applies to its own flags)."""
-    flags = SimpleNamespace(
-        mode="nightly",
-        **{
-            f"{which}{suffix}": getattr(args, f"{which}_{field}")
-            for which in kit.SIDES
-            for suffix, field in (("", "image"), ("_commit", "commit"), ("_label", "label"))
-        },
-    )
+    # The context step takes kit's flag names, so kit's messages name its flags.
+    flags = SimpleNamespace(mode="nightly", **{key: getattr(args, key) for key in SIDE_FLAGS})
     errors = kit.input_errors(flags)
     if errors:
         raise PlanError("; ".join(errors))
@@ -544,7 +543,7 @@ def main(argv=None):
 
     p = sub.add_parser("context", help="resolved images + earlier nightlies -> context.json")
     for which in ("candidate", "baseline"):
-        p.add_argument(f"--{which}-image", required=True)
+        p.add_argument(f"--{which}", required=True, help="image, name[:tag]@sha256:<64 hex>")
         p.add_argument(f"--{which}-commit", default="")
         p.add_argument(f"--{which}-label", required=True)
     p.add_argument("--history-runs", default="", help="earlier run ids, newest first")

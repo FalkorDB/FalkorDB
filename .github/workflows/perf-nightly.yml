@@ -3,7 +3,7 @@
 # Every night it measures main's newest merge-queue image against the latest
 # release with every perf check, and posts one message to the core team's Chat
 # space. The contract (check interface, result.json, nightly.json) is
-# falkorbench.contract; every step runs as `uv run --project bench bench …`.
+# falkorbench.contract; every step runs as `uv run --project bench --frozen bench …`.
 #
 #   candidate  ghcr.io/falkordb/falkordb-server:rc-mg-<sha>-valkey for main's tip,
 #              the image the merge queue built and tested for that commit. A
@@ -109,6 +109,8 @@ jobs:
 
       # The bench project's pinned Python (bench/.python-version) and lock.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
 
       - name: Pin the candidate and baseline images
         id: images
@@ -292,9 +294,9 @@ jobs:
           if [[ $MAY_SKIP == true ]]; then skip=(--may-skip); fi
           out=$GITHUB_OUTPUT
           if [[ $GITHUB_EVENT_NAME == pull_request ]]; then out=$RUNNER_TEMP/context.out; fi  # TEMPORARY, below
-          uv run --project bench bench nightly merge context \
-            --candidate-image "$CANDIDATE_IMAGE" --candidate-commit "$CANDIDATE_COMMIT" --candidate-label "$CANDIDATE_LABEL" \
-            --baseline-image "$BASELINE_IMAGE" --baseline-commit "$BASELINE_COMMIT" --baseline-label "$BASELINE_LABEL" \
+          uv run --project bench --frozen bench nightly merge context \
+            --candidate "$CANDIDATE_IMAGE" --candidate-commit "$CANDIDATE_COMMIT" --candidate-label "$CANDIDATE_LABEL" \
+            --baseline "$BASELINE_IMAGE" --baseline-commit "$BASELINE_COMMIT" --baseline-label "$BASELINE_LABEL" \
             --history-runs "$HISTORY/runs.txt" --history-dir "$HISTORY" "${skip[@]}" \
             --date "$(date -u +%F)" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --out "$RUNNER_TEMP/plan/context.json" --github-output "$out" \
@@ -324,7 +326,7 @@ jobs:
           else
             registry=(--registry-error "yq: $(tr '\n' ' ' < "$RUNNER_TEMP/yq.err")")
           fi
-          uv run --project bench bench nightly merge plan "${registry[@]}" --select "$CHECKS" \
+          uv run --project bench --frozen bench nightly merge plan "${registry[@]}" --select "$CHECKS" \
             --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -403,6 +405,8 @@ jobs:
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
 
       # The same runner script as on a VM: the command is split on spaces (no
       # shell), `$PERF_VM_TOOLS` names tests/perf/vm, the contract's flags are
@@ -462,6 +466,8 @@ jobs:
 
       # The bench project's pinned Python (bench/.python-version) and lock.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -503,7 +509,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/results" "$RUNNER_TEMP/nightly"
-          uv run --project bench bench nightly merge results \
+          uv run --project bench --frozen bench nightly merge results \
             --context "$RUNNER_TEMP/plan/context.json" --plan "$RUNNER_TEMP/plan/plan.json" \
             --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/nightly/nightly.json"
 
@@ -532,6 +538,8 @@ jobs:
 
       # The bench project's pinned Python (bench/.python-version) and lock.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -547,7 +555,7 @@ jobs:
           # picked its own images is a by-hand comparison, so it goes to the step
           # summary alone (as does the TEMPORARY pull_request trigger).
           PERF_CHAT_WEBHOOK: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
-        run: uv run --project bench bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
+        run: uv run --project bench --frozen bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
 
       # Last, once the report is out and nightly.json is uploaded (merge job), so
       # a failing run never loses either: a red or error night fails the run.
@@ -557,4 +565,4 @@ jobs:
       # the reporter did.
       - name: Fail the run unless the night is green or skipped
         if: ${{ !cancelled() }}
-        run: uv run --project bench bench nightly merge conclude --nightly "$RUNNER_TEMP/nightly/nightly.json"
+        run: uv run --project bench --frozen bench nightly merge conclude --nightly "$RUNNER_TEMP/nightly/nightly.json"

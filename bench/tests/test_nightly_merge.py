@@ -690,13 +690,13 @@ def test_context_cli_reads_downloaded_history(tmp_path):
     output = tmp_path / "github_output"
     args = [
         "context",
-        "--candidate-image",
+        "--candidate",
         CAND,
         "--candidate-commit",
         MAIN,
         "--candidate-label",
         "main@4c10889",
-        "--baseline-image",
+        "--baseline",
         BASE,
         "--baseline-commit",
         RELEASE,
@@ -730,21 +730,21 @@ def test_context_cli_reads_downloaded_history(tmp_path):
 @pytest.mark.parametrize(
     "flag, value, said",
     [
-        ("--candidate-image", "ghcr.io/falkordb/falkordb-server:rc-mg-x-valkey", "--candidate "),
-        ("--baseline-image", "falkordb/falkordb-server@sha256:44eb4a6d", "--baseline "),
+        ("--candidate", "ghcr.io/falkordb/falkordb-server:rc-mg-x-valkey", "--candidate "),
+        ("--baseline", "falkordb/falkordb-server@sha256:44eb4a6d", "--baseline "),
         # Pinned, but not a reference the contract accepts (upper case): taking
         # it would make every result of the night invalid.
-        ("--candidate-image", "GHCR.io/FalkorDB/Server@sha256:" + "a" * 64, "--candidate "),
+        ("--candidate", "GHCR.io/FalkorDB/Server@sha256:" + "a" * 64, "--candidate "),
         ("--baseline-commit", "d8c329b", "--baseline-commit "),
         ("--candidate-label", "", "--candidate-label "),
     ],
 )
 def test_context_refuses_unpinned_or_malformed_sides(tmp_path, capsys, flag, value, said):
     args = {
-        "--candidate-image": CAND,
+        "--candidate": CAND,
         "--candidate-commit": MAIN,
         "--candidate-label": "main@4c10889",
-        "--baseline-image": BASE,
+        "--baseline": BASE,
         "--baseline-commit": RELEASE,
         "--baseline-label": "6.2.0",
     }
