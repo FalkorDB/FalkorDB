@@ -319,7 +319,27 @@ void QueryCtx_Rollback (void) {
 	if (ctx->undo_log == NULL) {
 		return ;
 	}
-	
+
+	// THE HOLD IS LIFTED BEFORE UNDOING, because undoing a delete re-creates
+	// the entity through the ordinary allocator and has to land on its original
+	// id. The undo runs in reverse, so the id wanted first is the one freed
+	// last, which is the order the free list hands them out - but only for the
+	// ids it is willing to hand out at all, and this query's are held back
+	//
+	// Ids the undo itself frees - from undoing a create - are appended after
+	// this point, so they stay held and cannot be mistaken for an id the
+	// rollback is trying to restore
+	//
+	// ONLY WHEN THIS QUERY HOLDS THE WRITE LOCK. A rollback can land here
+	// holding only the read lock: a label the query invents puts a schema in
+	// the undo log from CreateConsume, which runs before the commit takes the
+	// write lock. There is nothing to release in that case - an entity is only
+	// ever freed under the write lock - and releasing would be reaching into a
+	// graph this query has not locked for writing
+	if (ctx->internal_exec_ctx.write_locked == true) {
+		Graph_ReleaseFreedIds (GraphContext_GetGraph (ctx->gc)) ;
+	}
+
 	UndoLog_Rollback (&ctx->undo_log) ;
 }
 
