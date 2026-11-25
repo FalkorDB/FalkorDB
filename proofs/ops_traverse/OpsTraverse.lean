@@ -33,6 +33,7 @@ import OpsTraverse.EnumSpec
 import OpsTraverse.BidirBfs
 import OpsTraverse.BfsSingle
 import OpsTraverse.AlgoSearch
+import OpsTraverse.BfsGraph
 import OpsTraverse.BspWire
 
 /-

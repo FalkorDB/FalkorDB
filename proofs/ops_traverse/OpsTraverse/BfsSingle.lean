@@ -498,7 +498,8 @@ theorem LI_init (sf sb : Step ε) (degF degB : Nat → Nat) (src tgt : Nat) (hsd
 /-- **PROVEN** (`bfs_single_path`, soundness): for `source ≠ target`, a returned edge list is a
 non-empty walk `source → target` along `sf` (the forward `node_successors`) that visits distinct
 nodes; `hrev`: the backward side's successors are the converse of the forward ones (a property of
-`get_node_relationships_by_type`, see `AlgoSearch.stepOf_rev`). -/
+`get_node_relationships_by_type`, see `AlgoSearch.stepOf_rev`, proved for the real lists in
+`BfsGraph.relsG_hg`). -/
 theorem bfsSingle_sound (sf sb : Step ε) (hrev : ∀ u v e, (v, e) ∈ sb u → (u, e) ∈ sf v)
     (degF degB : Nat → Nat) (src tgt fuel : Nat) (hsd : src ≠ tgt) (es : List (Nat × ε))
     (h : bfsSingle sf sb degF degB src tgt fuel = some (some es)) :
