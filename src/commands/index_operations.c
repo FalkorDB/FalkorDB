@@ -437,6 +437,33 @@ static const char **_index_reltype_names(const cypher_astnode_t *op) {
 	return names;
 }
 
+// whether a CCH statement names more relationship types than the wire can state
+//
+// THE EFFECT STATES THIS COUNT IN TWO BYTES, and the names arrive verbatim:
+// ()-[e:A|A]->() is two of them, because only CCHIndex_New de-duplicates and
+// that runs after the effect is staged. So what a statement can present is not
+// bounded by the graph's relationship-type ceiling, and a wide enough one has to
+// be refused by its CALLER - the last place that still has one to refuse it to.
+// What holds below BOTH call sites is that the writer returns void and can only
+// stop the process. The create path is tighter still: by the time it reaches the
+// writer the schema and attribute effects are already emitted and the index is
+// built. The drop path has mutated nothing by then - it only resolves ids - so
+// there the refusal is merely early, not load-bearing.
+//
+// Sets the error and answers true; the caller still owns 'rel_names'.
+static bool _cch_too_many_reltypes
+(
+	const char **rel_names  // relationship-type names the statement presented
+) {
+	if(arr_len(rel_names) <= UINT16_MAX) {
+		return false;
+	}
+
+	ErrorCtx_SetError("a CCH index cannot span more than %d relationship "
+			"types", UINT16_MAX);
+	return true;
+}
+
 // CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.weight)
 // builds a Customizable Contraction Hierarchy path index over the relationship
 // types for the weight property. unknown relationship types / weight attribute
@@ -466,16 +493,7 @@ static void cch_index_create
 
 	const char **rel_names = _index_reltype_names(index_op);   // >= 1 (grammar)
 
-	// THE EFFECT STATES THIS COUNT IN TWO BYTES, and the names arrive verbatim:
-	// ()-[e:A|A]->() is two of them, because only CCHIndex_New de-duplicates
-	// and that runs after the effect is staged. So what a statement can present
-	// is not bounded by the graph's relationship-type ceiling, and a wide
-	// enough one has to be refused HERE - this is the last place that still has
-	// a caller to refuse it to. Below, the index is built and the schema and
-	// attribute effects are already emitted, and the writer returns void.
-	if(arr_len(rel_names) > UINT16_MAX) {
-		ErrorCtx_SetError("a CCH index cannot span more than %d relationship "
-				"types", UINT16_MAX);
+	if(_cch_too_many_reltypes(rel_names)) {
 		arr_free(rel_names);
 		return;
 	}
@@ -538,14 +556,8 @@ static bool cch_index_drop
 
 	const char **rel_names = _index_reltype_names(op);
 
-	// THE SAME TWO-BYTE COUNT THE CREATE PATH IS BOUNDED BY. A drop stages its
-	// record through the same writer and the names are not de-duplicated on
-	// the way in either, so ()-[e:A|A| ... ]->() reaches the cast here too.
-	// Refused before the write lock, for the same reason: past this point the
-	// writer returns void and can only stop the process.
-	if(arr_len(rel_names) > UINT16_MAX) {
-		ErrorCtx_SetError("a CCH index cannot span more than %d relationship "
-				"types", UINT16_MAX);
+	// refused before the write lock, as on the create path
+	if(_cch_too_many_reltypes(rel_names)) {
 		arr_free(rel_names);
 		return false;
 	}
