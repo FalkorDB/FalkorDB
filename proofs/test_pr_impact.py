@@ -222,6 +222,43 @@ class Spans(unittest.TestCase):
         self.assertEqual(pr_impact.owner(fns, ends, 5), 0)
         self.assertEqual(pr_impact.owner(fns, ends, 6), 0)
 
+    def test_inner_cfg_of_a_mod_touches_its_fns(self):
+        lines = ['mod m {', '    #![cfg(feature = "x")]', '    fn proven() {}', '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owners(fns, ends, 2), [0])
+
+    def test_file_level_inner_cfg_touches_every_fn(self):
+        lines = ['#![cfg(feature = "x")]', '', 'fn a() {}', 'fn b() {}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owners(fns, ends, 1), [0, 1])
+
+    def test_cfg_on_an_impl_touches_its_methods(self):
+        lines = ['fn z() {}', '#[cfg(feature = "x")]', 'impl<T: Into<u8>> A<{ N }> for B', 'where', '    T: Copy,', '{',
+                 '    fn p() {}', '    fn q() {}', '}', 'fn after() {}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owners(fns, ends, 2), [1, 2])
+
+    def test_lint_attribute_on_an_impl_touches_nothing(self):
+        lines = ['#[allow(unused)]', 'impl A {', '    fn p() {}', '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owners(fns, ends, 1), [])
+
+    def test_attribute_on_a_variant_or_field_touches_no_fn(self):
+        lines = ['enum E {', '    #[default]', '    A,', '}', 'struct S {', '    #[cfg(test)]', '    f: u8,', '}',
+                 'impl S {', '    fn p() {}', '}']
+        fns, ends = self.spans(lines)
+        for line in (2, 6):
+            self.assertEqual(pr_impact.owners(fns, ends, line), [], f'line {line}')
+
+    def test_cfg_attr_adding_only_cosmetic_attributes_touches_nothing(self):
+        lines = ['#[cfg_attr(tarpaulin, skip)]', 'impl A {', '    fn p() {}', '}',
+                 '#[cfg_attr(feature = "x", allow(unused), inline)]', 'fn q() {}',
+                 '#[cfg_attr(feature = "x", target_feature(enable = "avx2"))]', 'fn r() {}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owners(fns, ends, 1), [])
+        self.assertEqual(pr_impact.owners(fns, ends, 5), [])
+        self.assertEqual(pr_impact.owners(fns, ends, 7), [2])
+
     def test_standalone_block_comments_belong_to_neither(self):
         lines = ['fn a() {}', '/* one */ /* two */', '/* a', '   b */', 'fn b() {}']
         fns = fns_in(lines)
@@ -315,6 +352,21 @@ class Analyse(unittest.TestCase):
             f.write('graph/src/lib.rs\tbb\t5\tPROVEN\tP.bb_spec\n')
         self.base = self.commit(base)
         self.assertEqual(self.changed(base.replace('mod tests', '#[allow(dead_code)]\nmod tests')), [])
+
+    def test_cfg_on_an_enclosing_impl_is_reported(self):
+        base = 'pub struct S;\n\nimpl S {\n    pub fn a(x: u8) -> u8 {\n        x + 1\n    }\n}\n'
+        with open(os.path.join(self.proofs, 'p', 'COVERAGE.tsv'), 'w') as f:
+            f.write('file\tfunction\tline\tbucket\tlean\n')
+            f.write('graph/src/lib.rs\ta\t4\tPROVEN\tP.a_spec\n')
+        self.base = self.commit(base)
+        self.assertEqual(self.changed(base.replace('impl S', '#[cfg(feature = "x")]\nimpl S')), ['a'])
+
+    def test_pure_rename_reports_the_rows_left_at_the_old_path(self):
+        self.git('mv', 'graph/src/lib.rs', 'graph/src/lib2.rs')
+        self.git('commit', '-q', '-m', 'mv')
+        res = pr_impact.analyse(self.repo, self.base, self.git('rev-parse', 'HEAD'), self.proofs)
+        self.assertEqual(res['changed'], [])
+        self.assertEqual([(r['file'], r['fn']) for r in res['removed']], [('graph/src/lib.rs', 'a'), ('graph/src/lib.rs', 'b')])
 
     def test_renamed_file_body_edit_is_reported(self):
         self.git('mv', 'graph/src/lib.rs', 'graph/src/lib2.rs')
