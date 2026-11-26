@@ -308,7 +308,7 @@ def _always_broken(runs: list[Run], name: str) -> bool:
 def _timing_row(tag: str, name: str, cand: list[Run], base: list[Run], perf_gate: bool) -> Row:
     """Broken on the candidate only when every pair (at least two: the first run asks for a
     re-run) has it broken there, whatever the baseline did; the baseline broke it too when it
-    did in every pair. The release gate counts it only when every pair has it held on the
+    did in any pair. The release gate counts it only when every pair has it held on the
     baseline. Otherwise a side counts as broken only if every run (at least two) broke it."""
     pairs = [
         (c.checks.get(name), b.checks.get(name)) for c, b in zip(cand, base, strict=False)
@@ -319,7 +319,7 @@ def _timing_row(tag: str, name: str, cand: list[Run], base: list[Run], perf_gate
     confirmed = perf_gate and len(pairs) >= 2 and all(cv is False for cv, _ in pairs)
     if confirmed:
         cv = 0
-        bv = 0 if all(bv is False for _, bv in pairs) else (1 if b_seen else None)
+        bv = 0 if any(bv is False for _, bv in pairs) else (1 if b_seen else None)
     else:
         cv = 1 if c_seen else None
         bv = None if not b_seen else int(not (len(b_seen) >= 2 and all(v is False for v in b_seen)))

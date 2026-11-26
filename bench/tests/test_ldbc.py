@@ -545,6 +545,15 @@ def test_completion_is_judged_request_by_request(samples, expected):
         assert gate is (expected[2] == 1)
 
 
+def test_a_baseline_failure_on_another_request_is_not_baseline_too():
+    """The candidate fails row 1, which the baseline never ran; the baseline fails row 2."""
+    samples = [*pair(0), S(C, 1, outcome="timeout"), S(B, 2, outcome="timeout"), S(C, 2)]
+    v = ck.analyse("IC2", samples)
+    (f,) = [f for f in v.findings if f["metric"] == "completed"]
+    assert (f["status"], f["candidate"], f["baseline"]) == ("regression", 0, 1)
+    assert f[kit.INTRODUCED] is False  # the older rule did not count it either
+
+
 def test_a_candidate_failure_on_a_request_the_baseline_never_ran_is_not_new_for_the_gate():
     v = ck.analyse("IC2", [*pair(0), S(C, 1, outcome="timeout")])
     (f,) = [f for f in v.findings if f["metric"] == "completed"]

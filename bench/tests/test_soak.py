@@ -250,7 +250,8 @@ def test_timing_check_in_queue_mode_never_fails_and_stays_valid():
 
 def test_timing_confirmation_pairs_the_runs():
     """Broken on the candidate twice: a regression (#4065). The baseline also broke in the
-    re-run, so the release gate does not count it: it may be noise that hit both sides."""
+    re-run, so it breaks it too, and the release gate does not count it: it may be noise that
+    hit both sides."""
     name = "p99 does not drift up: ingest_batch"
     cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
     base = [run("baseline", checks={name: True}), run("baseline", 2, checks={name: False})]
@@ -259,7 +260,7 @@ def test_timing_confirmation_pairs_the_runs():
         for r in sc.scenario_rows("s12_iot_retention", cand, base, True)
         if r.metric == "invariant"
     )
-    assert (row.status, row.candidate, row.baseline, row.introduced) == ("regression", 0, 1, False)
+    assert (row.status, row.candidate, row.baseline, row.introduced) == ("regression", 0, 0, False)
 
 
 def test_timing_check_broken_on_both_sides_in_one_pair_asks_for_a_rerun():

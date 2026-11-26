@@ -464,9 +464,12 @@ def summary_markdown(night: dict, status: str, reason: str, environ: Mapping[str
         lines.append("")
     broken = [(check, entry) for check in checks for entry in broken_of(check)]
     if broken:
-        lines += [
+        heading = (
             "**Pass/fail checks broken on the candidate** (each makes the night red, whatever "
-            "the baseline did; the issue is reporting only):",
+            "the baseline did; the issue is reporting only):"
+        )
+        lines += [
+            heading,
             "",
             "| check | broken check | baseline too | issue |",
             "| --- | --- | --- | --- |",

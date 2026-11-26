@@ -314,8 +314,9 @@ def completion(query: str, cand: SideStats, base: SideStats) -> dict[str, Any] |
     if only(cand, base):
         status, c, b = "regression", 0, 1
     elif cand.failed_keys:
-        # failed where the baseline failed too, or on requests it never ran
-        status, c, b = "regression", 0, 0 if base.failed_keys else 1
+        # failed where the baseline failed too, or on requests it never ran: the older rule
+        # did not count either; the baseline breaks it too only on the same request
+        status, c, b = "regression", 0, 0 if cand.failed_keys & base.failed_keys else 1
         introduced = False
     elif only(base, cand):
         status, c, b = "improvement", 1, 0
