@@ -123,6 +123,24 @@ def is_timing_check(name: str) -> bool:
     return bool(TIMING_RE.search(name))
 
 
+def unknown_breaks(result: dict) -> list[str]:
+    """bench/acceptance.yaml's `regressions_only_known_breaks` for a soak result: the regression
+    findings it does not allow. Allowed is only a correctness row (invariant) that ISSUES names
+    (KNOWN_FLAKY's rows among them) and that the result's `broken` list names with that issue;
+    any performance row, crash or other correctness break is not."""
+    broken = {b.get("name"): b.get("issue") for b in result.get("broken") or []}
+    return [
+        f.get("name")
+        for f in result.get("findings") or []
+        if f.get("status") == "regression"
+        and not (
+            f.get("metric") == "invariant"
+            and f.get("name") in ISSUES
+            and broken.get(f.get("name")) == ISSUES[f.get("name")]
+        )
+    ]
+
+
 # ------------------------------------------------------------------ one run's record
 @dataclass
 class Run:

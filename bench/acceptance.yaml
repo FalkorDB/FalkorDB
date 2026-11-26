@@ -32,6 +32,15 @@
 # expect.no_regression_findings_matching
 #                     no finding with status regression has a name matching
 #                     this pattern (same matching as name_regex)
+# expect.regressions_only_known_breaks
+#                     true: every regression finding is a known break, a
+#                     correctness row that soak's ISSUES map names (its
+#                     KNOWN_FLAKY rows among them) and that the result's
+#                     `broken` list names with that issue; a performance row,
+#                     a crash or any other break fails the pair. The verdict
+#                     may be regression (contract v1.14: a break on the
+#                     candidate is red). falkorbench.soak.check.unknown_breaks
+#                     lists the findings that fail it. Soak's A/A pairs only.
 # judge               what a person checks by hand in the findings and
 #                     artifacts, beyond the fields above
 
@@ -152,48 +161,47 @@ checks:
   # soak runs one check per scenario, soak-s01 ... soak-s12 (bench/checks.yaml).
   soak-s01:
     - {id: soak-s01-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s02:
     - {id: soak-s02-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s03:
     - {id: soak-s03-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s04:
     - {id: soak-s04-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s05:
     - {id: soak-s05-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s06:
     - {id: soak-s06-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s07:
     - {id: soak-s07-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s08:
     - {id: soak-s08-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s09:
     - {id: soak-s09-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s10:
     - id: soak-s10-a-a
       candidate: *main-4c1088949
       baseline: *main-4c1088949
       mode: nightly
-      expect: {verdict: pass, no_regression_findings: true}
+      expect: {regressions_only_known_breaks: true}
       judge: >-
-        s10's known flaky checks (#3095, #3512) can break on main against itself.
-        Under contract v1.14 such a break is a regression on the candidate, named
-        with its issue and `introduced: false` (the release gate leaves it out):
-        it says the flake fired, not that the pair failed.
+        s10's known flaky checks (#3095, #3512) can break on main against itself:
+        red under contract v1.14, named with its issue and `introduced: false`
+        (the release gate leaves it out). The flake fired; the pair holds.
   soak-s11:
     - {id: soak-s11-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
   soak-s12:
     - {id: soak-s12-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
-       expect: {verdict: pass, no_regression_findings: true}}
+       expect: {regressions_only_known_breaks: true}}
     - id: soak-s12-6.2.0-vs-6.0.4
       candidate: *v6-2-0
       baseline: *v6-0-4

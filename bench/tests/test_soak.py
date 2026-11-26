@@ -173,6 +173,43 @@ def test_known_flaky_check_is_a_regression_the_release_gate_leaves_out(tmp_path,
     assert ",known," in (tmp_path / "raw" / "rows.csv").read_text()
 
 
+def test_a_same_image_pair_allows_only_the_known_breaks(tmp_path):
+    """acceptance.yaml's soak A/A rule (contract v1.14): a known break may be red, named with its
+    issue; any other correctness break, a crash or a performance regression fails the pair."""
+    known = "Live (under writes) index == scan during build/after"
+    c = run("candidate", checks={known: False, "y": False}, scenario="s10_schema_under_load")
+    c.details = {known: "1 of 40 runs failed; first: [567,667] idx=1242 scan=1243"}
+    b = run("baseline", checks={known: True, "y": True}, scenario="s10_schema_under_load")
+    sched = sc.Schedule(runs={"s10_schema_under_load": {"candidate": [c], "baseline": [b]}})
+    res = finish(
+        args(check="soak-s10"),
+        tmp_path,
+        STARTED,
+        ["s10_schema_under_load"],
+        sched,
+        None,
+        [],
+        sc.MODES["nightly"],
+    )
+    assert {f["name"] for f in res["findings"] if f["status"] == "regression"} == {
+        f"s10 {known}",
+        "s10 y",
+    }
+    assert sc.unknown_breaks(res) == ["s10 y"]  # outside the maps
+    res["findings"] = [f for f in res["findings"] if f["name"] != "s10 y"]
+    assert sc.unknown_breaks(res) == []  # the known break alone, named with #3095
+    entry = next(b for b in res["broken"] if b["name"] == f"s10 {known}")
+    assert entry["issue"] == 3095
+    for broken in ([], [{**entry, "issue": 3512}]):  # unnamed, or under the wrong issue
+        assert sc.unknown_breaks({**res, "broken": broken}) == [f"s10 {known}"]
+
+    def regressed(name, metric):
+        return {"findings": [{"name": name, "metric": metric, "status": "regression"}]}
+
+    assert sc.unknown_breaks(regressed("s12 ingest_batch", "p50_ms")) == ["s12 ingest_batch"]
+    assert sc.unknown_breaks(regressed("s10 completed", "completed")) == ["s10 completed"]
+
+
 @pytest.mark.parametrize("check", ["soak-s10", "soak"])
 @pytest.mark.parametrize("records", [2, 12])  # 12: k == n >= 10, still not a total break
 def test_a_failure_only_flake_against_a_baseline_that_held_is_not_new_at_the_gate(
