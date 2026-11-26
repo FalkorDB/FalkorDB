@@ -88,7 +88,7 @@ A bug is **confirmed** only if a repro against the real Rust shows it, and it is
 - #1334 (binder): the Pattern arm of bind_expr_node mints unknown aliases fresh, so WHERE () -- (n1) with no n1 in scope is accepted (C errors). Lean bug1334_pattern_predicate_declares_var; property PatternPredDeclaresNothing. Fix pending in #3528 (open).
 - #3450 (binder REMOVE/WITH labels): `bind_ir` QueryIR::Remove (binder.rs:477-482) leaves `node_labels` alone; `bind_projection` copies the parent's labels to the WITH child (:1132-1141/:1159-1168) and `update_all_node_labels` (:122-134) stamps them on the next MATCH, so `MATCH (a:A) REMOVE a:A WITH a MATCH (a)-[:R]->(b)` scans `(a:A)` (Rust 0 rows, C 1). Lean bug3450_remove_label_kept_across_with; property StampedLabelsHeld. Fix pending in #3457 (open).
 - **W4-plan-2** (binder): the unary minus is not accepted as a boolean operand (`binder.rs:2603`, `Negate` in `expr_may_return_boolean`; live on 256ab4d3f): `RETURN true AND -null` → Rust "Type mismatch: expected Boolean", C null. (`WHERE true AND -null` is refused by both.)
-- Minor divergences: `false AND (1+2)` → false (C type error); `WITH r WHERE r.w = 1` on a var-length `r` is rejected (C 1).
+- Minor divergences: `WITH r WHERE r.w = 1` on a var-length `r` is rejected (C 1).
 - **W9-parse-1** (minor) — a run of signs over `i64::MIN` collapses twice (`cypher.rs:2550-2559`, since #3525): `RETURN --9223372036854775808` → `-9223372036854775808` on both engines (the value is +2^63, out of range); `RETURN -(-9223372036854775808)` → Rust "integer overflow in unary minus", C `-9223372036854775808`. Lean `lexer` `neg_run_min_wraps`.
 - Same as C, not filed: hop counts truncated to u32, and the doubled-backtick escape.
 
