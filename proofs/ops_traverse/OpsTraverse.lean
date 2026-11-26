@@ -19,6 +19,7 @@ import OpsTraverse.PathVlt
 import OpsTraverse.ExpandIntoPending
 import OpsTraverse.UnionStream
 import OpsTraverse.UnionGlue
+import OpsTraverse.CondTraversePending
 import OpsTraverse.AlgoPaths
 import OpsTraverse.EvalSP
 import OpsTraverse.NeighborIter

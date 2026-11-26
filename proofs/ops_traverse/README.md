@@ -66,6 +66,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `buildNodes_walk` | PathBuilder's "other endpoint" rule rebuilds a walk's nodes, given unique edge ids | `ShortestPaths.lean` |
 | `revWalk_reconstructs`, `vltFix_follows` | PathBuilder's reversed var-length branch rebuilds any walk backwards; with the pattern direction as input it always follows the pattern | `PathVlt.lean` |
 | `expandIntoP_live`, `expandIntoP_not_delRel` | main's ExpandInto (with its pending-deleted endpoint check) only matches live edges and never a pending-deleted one | `ExpandIntoPending.lean` |
+| `condTraverseP_live`, `expandUnionRowP_live`, `pend_emit_directed_iff`, `pend_emit_bidir_iff`, `batchedP_eq_collapse` | CondTraverse (#3576) reads `Pending`: per-row, multi-type and batched paths only match live edges (no deleted edge, no edge of a deleted node), emit mode is exactly the live match set, and with nothing pending each model is the committed one (`condTraverseP_empty`) | `CondTraversePending.lean` |
 | `drive_flatten`, `capDrive_flatten` | Output batching never loses, duplicates or reorders rows; LIMIT is exact | `Drive.lean` |
 | `run_complete` | The variable-length frame machine yields every frame's items | `VarLenGlue.lean` |
 | `labelIdScan_correct` | The label + id-range scan returns exactly labelled ∩ range | `Scans.lean` |
@@ -96,7 +97,6 @@ Every bug was reproduced against a live server and compared with C before it was
 | W2-binder-1 | none here (see `proofs/binder`) | Consecutive MATCH clauses are merged into one pattern by the parser, so relationship uniqueness spans both. `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)`: Rust 2 rows, C 4 | **Open** |
 | #3372 | `bug3372_slot_reuse_drops_rows`, `bug3372_split_product_zero`, `bug3372_aggregate_leaks_preprojection_slot`, `bug3372_shift_probes` | After `WITH c, count(*) AS k`, Aggregate re-binds `c` at its pre-projection slot (`aggregate.rs:1187-1196`); the binder numbers each scope from 0, so the next MATCH's fresh `d` gets the same slot and CondTraverse treats it as already bound to `c` (`cond_traverse.rs:648-652`, `:771-777`). The issue's `sum(in2 * out2)` is 0 (expected 4; C's 4 is the figure from the issue report, not re-run here); the property a fix must establish is `ScopedRow` (`scoped_inputRow` shows it suffices) | **Open** |
 | #3451 | `bug3451_main_violates`, `bug3451_cycle_not_reversed` | PathBuilder infers a var-length segment's direction by comparing its first node with the previous path node (`path_builder.rs:102-110`); on a cycle they are equal, so an incoming `(a)<-[:R*3..3]-(a)` on `0→1→2→0` comes out `[0,1,2,0]`/`[1,2,3]` instead of `[0,2,1,0]`/`[3,2,1]` (C: `[0,2,1,0]`/`[1,2,3]`: right nodes, but its relationship list is also in the wrong order). Property `PathFollowsPattern`; main is right on non-cyclic walks (`vltMain_follows_of_ne`), the plan-time direction flag fixes it (`vltFix_follows`) | **Open** |
-| W2-traverse-11 | `EIP.bug_condTraverse_matches_doomed_edge`, `bug_condTraverse_main_violates` (property `LiveCondTraverse`) | `cond_traverse.rs` never reads `Pending`, so with one endpoint unbound (`MATCH (a:A) DETACH DELETE a MERGE (a)-[r:R]->(x:B)`) CondTraverse matches the doomed edge of a pending-deleted node; ExpandInto does not (`expandIntoP_live`) | **Open** |
 | W2-index-3 | `IndexScan.evalIQ_inList` | `IN [date, 2]` on an indexed property drops the non-scalar member before the index is asked | **Open** |
 
 ### Shared with C, not filed as Rust bugs
@@ -126,6 +126,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | `IndexScan.lean` | Node and edge index scans under the `IndexSound` contract, fulltext and vector scans, undirected edge orientation |
 | `PathVlt.lean` | PathBuilder's `Value::Path` branch (splicing a var-length segment, reversed for `<-`); property `PathFollowsPattern` and the #3451 counterexample |
 | `ExpandIntoPending.lean` | ExpandInto with pending deletes; property `LiveExpandInto`, proved for main |
+| `CondTraversePending.lean` | CondTraverse (`process_pairs`, `expand_row`, `expand_union_row`, `expand_batch`) with pending deletes; property `LiveCondTraverse`, proved for main |
 | `SlotFeed.lean` | How an Aggregate output row feeds a later CondTraverse across `WITH`: binder slot ids, the Aggregate row, the endpoint reads; property `ScopedRow` and the #3372 counterexamples |
 | `Drive.lean` | The emitter-driven `next` loops and LIMIT propagation |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
