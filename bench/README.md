@@ -413,14 +413,56 @@ uv run --project bench bench nightly report --nightly bench/tests/fixtures/valid
 `perf-dashboard.yml` runs when a `Perf nightly` run completes (`workflow_run`, from
 the default branch, with its own permissions: `perf-nightly.yml` is also the release
 gate's callee and holds no write grant). For a scheduled night, or a dispatch that
-named no image of its own, it downloads the run's artifacts, stores them at
-`data/<date>-<run id>/` on the `gh-pages` branch (the archive), rebuilds the site
-with `bench nightly dashboard` and deploys it with `actions/deploy-pages`. A push
+named no image of its own, it stores the run at `data/<date>-<run id>/` on the
+`gh-pages` branch (the archive) with `bench nightly store`, rebuilds the site with
+`bench nightly dashboard` and deploys it with `actions/deploy-pages`. A push
 with `GITHUB_TOKEN` does not start a Pages build, hence the explicit deploy. It
 never touches a night's verdict: the night has finished.
 
 One-time admin step: **Settings → Pages → Source: GitHub Actions** (not "deploy from
 a branch"), and let the `github-pages` environment accept the default branch.
+
+**`bench nightly store --nightly <nightly.json> --run-id <id> --data <dir> --trigger T
+--scope S`** downloads each check's newest `perf-result-<check>` artifact of that run
+(`gh`; after a re-run, the last attempt's) and writes `<dir>/<date>-<id>/`:
+`nightly.json` as given, `run.json` `{"trigger": T, "scope": S}`, and per check its
+`result.json`, `perf-vm.json` / `perf-hosted.json` and the files its result lists as
+`artifacts` (relative paths only, none through `..`). A folder of the same run already
+there is replaced, except by a store that could not download a check the old folder
+has: then it changes nothing and exits 1. A `/perf` run lays out its own site with
+the same command.
+
+## `/perf` on a pull request (#4037)
+
+A comment whose first line is
+
+```
+/perf <checks> [baseline <main | X.Y.Z>]      e.g. /perf micro-hw,pokec baseline 4.22.4
+```
+
+runs the nightly flow (`perf-nightly.yml`, called by `perf-comment.yml`) with the pull
+request's `rc-pr-<N>-valkey` image as the candidate. `<checks>` is `all` or a comma list
+of `micro-hw` and the names in `checks.yaml`. The baseline is `main` (main's newest
+`rc-mg` image, found by the nightly's own walk; the default), a release `X.Y.Z` with
+X >= 5 (`falkordb/falkordb-server:X.Y.Z`), or a C engine release `4.Y.Z`
+(`falkordb/falkordb-server:v4.Y.Z`).
+
+`bench nightly pr-comment resolve` decides whether it runs, and replies when it does
+not: only people with write, maintain or admin access (bots are ignored), only a
+pull request from this repository that is open, one `/perf` run per pull request at
+a time, and the candidate only when `rust-pr.yml`'s Valkey `build-rc-image` succeeded
+for the head commit, pinned by digest, with the head re-read after pinning (a head
+that moved is refused). A request that runs gets a 🚀 reaction. When it ends,
+`bench nightly pr-comment answer` posts one comment: each check's verdict, both
+images and commits, the run, and the run's own dashboard (`bench nightly store` +
+`bench nightly dashboard`, uploaded as the run's `perf-dashboard` artifact: open its
+`index.html`). A run that left no `nightly.json` is answered as an error, never green.
+
+A `/perf` run is a call, not a night: it posts nothing to Chat, never counts for the
+skip rule or the previous green commit (those read only scheduled runs of
+`perf-nightly.yml` itself), and never reaches the public dashboard
+(`perf-dashboard.yml` runs only on completed `Perf nightly` runs). The checks run
+from main's copy of the workflows and of `bench/`, as every `issue_comment` run does.
 
 ## Release gate (#4004)
 
@@ -624,7 +666,7 @@ about 2.
 | `src/falkorbench/contract.py` | the nightly perf checks' `result.json` / `nightly.json` format and its checker (`bench validate`) |
 | `src/falkorbench/kit.py` | what the nightly perf checks share: flags, `result.json`, the threshold test, docker |
 | `src/falkorbench/pokec/` | `bench pokec`, the nightly Pokec check (FalkorDB/benchmark under concurrent writes); its README is there |
-| `src/falkorbench/nightly/` | `bench nightly`: the night's report (Chat line and run page) and the missed-run alarm |
+| `src/falkorbench/nightly/` | `bench nightly`: the night's bookkeeping, report (Chat line and run page), missed-run alarm, dashboard (`store`, `dashboard`) and the `/perf` comment (`pr-comment`) |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
 | `src/falkorbench/ldbc/` | LDBC SNB Interactive v1 — dataset fetch/prepare, loader, parameters, the nightly check, and the vendored query texts |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |

@@ -48,6 +48,11 @@
 # check said error. Every job runs this workflow's own commit (main's), not
 # the caller's, which has no perf code: the checkouts below name
 # job.workflow_sha, and _perf-micro.yml / _perf-vm.yml get it as code_ref.
+#
+# A `/perf` comment on a pull request (perf-comment.yml, #4037) calls it the same
+# way, with the pull request's image pinned by digest, the checks it asked for and
+# a baseline: a release pinned by digest, or `main` (main's newest rc-mg image,
+# found by the walk above, here). Its labels and commits come with the call.
 
 name: Perf nightly
 
@@ -61,7 +66,7 @@ on:
         type: string
         default: ""
       baseline_image:
-        description: "Baseline image (tag or digest); empty = the latest release"
+        description: "Baseline image (tag or digest); main = main's newest rc-mg image; empty = the latest release"
         type: string
         default: ""
       checks:
@@ -77,7 +82,7 @@ on:
         type: string
         required: true
       baseline_image:
-        description: "Baseline image (tag or digest); empty = the highest stable release below baseline_below"
+        description: "Baseline image (tag or digest); main = main's newest rc-mg image; empty = the highest stable release below baseline_below"
         type: string
         default: ""
       baseline_below:
@@ -88,6 +93,26 @@ on:
         description: "nightly (the gate runs the nightly flow); queue and long are the checks' other modes"
         type: string
         required: true
+      checks:
+        description: "Comma list of checks to run (micro-hw, or names in bench/checks.yaml); empty = all"
+        type: string
+        default: ""
+      # The caller's names for its images, which a digest does not carry: empty = what
+      # the pinning step derives (a tag, rc-mg@<sha>, or <repo>@<12 hex>).
+      candidate_label:
+        type: string
+        default: ""
+      candidate_commit:
+        description: "40-hex commit the candidate was built from"
+        type: string
+        default: ""
+      baseline_label:
+        type: string
+        default: ""
+      baseline_commit:
+        description: "40-hex commit the baseline was built from"
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -147,6 +172,10 @@ jobs:
           CANDIDATE_INPUT: ${{ inputs.candidate_image }}
           BASELINE_INPUT: ${{ inputs.baseline_image }}
           BASELINE_BELOW: ${{ inputs.baseline_below }}
+          CANDIDATE_LABEL_INPUT: ${{ inputs.candidate_label }}
+          CANDIDATE_COMMIT_INPUT: ${{ inputs.candidate_commit }}
+          BASELINE_LABEL_INPUT: ${{ inputs.baseline_label }}
+          BASELINE_COMMIT_INPUT: ${{ inputs.baseline_commit }}
         run: |
           set -euo pipefail
 
@@ -187,16 +216,13 @@ jobs:
             fi
           }
 
-          if [[ -n $CANDIDATE_INPUT ]]; then
-            pin_input "$CANDIDATE_INPUT"
-            note="given by hand"
-          else
-            # Always main's newest image, whatever ref the run came from: a
-            # dispatch from another branch, still measures main (and labels it
-            # main@…).
+          # newest_main SIDE sets image/commit/label/note to main's newest image:
+          # always main's, whatever ref the run came from (a dispatch from another
+          # branch still measures main, and labels it main@…).
+          newest_main() {
+            local tip found="" sha rc back
             git fetch --quiet --no-tags --depth="$((WALK + 5))" origin main
             tip=$(git rev-parse FETCH_HEAD)
-            found=""
             for sha in $(git rev-list --first-parent -n "$WALK" "$tip"); do
               if digest=$(digest_of "$CANDIDATE_REPO:rc-mg-$sha-valkey"); then
                 found=$sha
@@ -222,12 +248,37 @@ jobs:
               back=$(git rev-list --first-parent --count "$found..$tip")
               label="$label (tip ${tip:0:7} has no image)"
               note="fallback: tip $tip has no rc-mg image; newest first-parent commit with one is $back back"
-              echo "::notice::candidate $note"
+              echo "::notice::$1 $note"
             fi
+          }
+
+          # by_caller SIDE LABEL COMMIT replaces the derived label and commit with
+          # the caller's (a /perf call names the pull request and its commit).
+          by_caller() {
+            if [[ $2 == *$'\n'* || $2 == *$'\r'* ]]; then
+              echo "::error::the $1 label is not one line"
+              exit 1
+            fi
+            if [[ -n $3 && ! $3 =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::the $1 commit '$3' is not 40 lowercase hex"
+              exit 1
+            fi
+            label=${2:-$label}
+            commit=${3:-$commit}
+          }
+
+          if [[ -n $CANDIDATE_INPUT ]]; then
+            pin_input "$CANDIDATE_INPUT"
+            note="given by hand"
+          else
+            newest_main candidate
           fi
+          by_caller candidate "${CANDIDATE_LABEL_INPUT-}" "${CANDIDATE_COMMIT_INPUT-}"
           candidate_image=$image candidate_commit=$commit candidate_label=$label candidate_note=$note
 
-          if [[ -n $BASELINE_INPUT ]]; then
+          if [[ $BASELINE_INPUT == main ]]; then
+            newest_main baseline
+          elif [[ -n $BASELINE_INPUT ]]; then
             pin_input "$BASELINE_INPUT"
             note="given by hand"
           else
@@ -267,6 +318,7 @@ jobs:
             commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
             label=$version
           fi
+          by_caller baseline "${BASELINE_LABEL_INPUT-}" "${BASELINE_COMMIT_INPUT-}"
 
           {
             echo "candidate_image=$candidate_image"

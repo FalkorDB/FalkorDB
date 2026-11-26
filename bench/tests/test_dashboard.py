@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import copy
 import html
+import io
 import json
 import re
+import shutil
 import subprocess
+import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -26,6 +30,7 @@ from falkorbench.fuzz import checks as fuzz_checks
 from falkorbench.fuzz import verdict as fuzz_verdict
 from falkorbench.ldbc import check as ldbc
 from falkorbench.nightly import dashboard
+from falkorbench.nightly import store as nightly_store
 from falkorbench.pokec import check as pokec
 from falkorbench.soak import check as soak
 from fixtures import examples
@@ -497,7 +502,7 @@ def test_the_run_is_stored_only_for_runs_that_report_to_chat():
 
 FAKE_GH = r"""#!/usr/bin/env bash
 # `gh run download` lays out the plan and nightly artifacts from $FAKE_RUN; `gh api` lists
-# $FAKE_ARTIFACTS (applying --jq like the real one) and serves a zip that names its id.
+# $FAKE_ARTIFACTS by name and serves a zip whose result.json names the artifact's id.
 set -euo pipefail
 if [[ $1 == run ]]; then
   dir=
@@ -512,11 +517,24 @@ if [[ $url == */zip ]]; then
   (cd "$work" && zip -q -r - result.json)
   exit 0
 fi
-jqexpr=
-while [[ $# -gt 0 ]]; do [[ $1 == --jq ]] && jqexpr=$2; shift; done
 name=${url#*name=}; name=${name%%&*}
-jq --arg n "$name" ".artifacts |= map(select(.name == \$n))" "$FAKE_ARTIFACTS" | jq -r "$jqexpr"
+jq --arg n "$name" ".artifacts |= map(select(.name == \$n))" "$FAKE_ARTIFACTS"
 """
+
+# `uv run --project bench --frozen bench <args>`: bench's own CLI in this interpreter, so the
+# workflow step runs the real `bench nightly store`; the renderer has its own tests.
+FAKE_UV = f"""#!/bin/sh
+shift 4
+[ "$1" = bench ] && shift
+[ "$1 $2" = "nightly dashboard" ] && exit 0
+exec {sys.executable} -c 'import sys; from falkorbench.cli import main; sys.exit(main())' "$@"
+"""
+
+
+def fake_artifacts(tmp_path, entries):
+    path = tmp_path / "artifacts.json"
+    path.write_text(json.dumps({"artifacts": entries}))
+    return path
 
 
 def publish_step(name):
@@ -525,7 +543,7 @@ def publish_step(name):
 
 
 def run_download(tmp_path, event, dispatch):
-    """Run the download step; return (stored?, results dir)."""
+    """Run the download step; return whether it stores the run."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "gh").write_text(FAKE_GH)
@@ -538,18 +556,6 @@ def run_download(tmp_path, event, dispatch):
     )
     if dispatch is not None:
         (fake_run / "perf-plan" / "dispatch.json").write_text(dispatch)
-    artifacts = tmp_path / "artifacts.json"
-    artifacts.write_text(
-        json.dumps(
-            {
-                "artifacts": [
-                    {"id": 11, "name": "perf-result-alpha", "expired": False},
-                    {"id": 42, "name": "perf-result-alpha", "expired": False},
-                    {"id": 99, "name": "perf-result-alpha", "expired": True},
-                ]
-            }
-        )
-    )
     temp, out = tmp_path / "temp", tmp_path / "out"
     temp.mkdir()
     env = {
@@ -560,13 +566,14 @@ def run_download(tmp_path, event, dispatch):
         "GITHUB_OUTPUT": str(out),
         "RUNNER_TEMP": str(temp),
         "FAKE_RUN": str(fake_run),
-        "FAKE_ARTIFACTS": str(artifacts),
     }
     subprocess.run(
         ["bash", "-c", publish_step("Download the night's artifacts")],
-        env=env, check=True, capture_output=True,
+        env=env,
+        check=True,
+        capture_output=True,
     )
-    return "store=true" in out.read_text(), temp / "results"
+    return "store=true" in out.read_text()
 
 
 @pytest.mark.parametrize(
@@ -583,17 +590,13 @@ def run_download(tmp_path, event, dispatch):
 def test_a_dispatch_is_stored_only_when_it_records_no_image_overrides(
     tmp_path, event, dispatch, stored
 ):
-    assert run_download(tmp_path, event, dispatch)[0] is stored
+    assert run_download(tmp_path, event, dispatch) is stored
 
 
-def test_a_rerun_stores_the_newest_attempts_artifact(tmp_path):
-    _, results = run_download(tmp_path, "schedule", None)
-    assert (results / "perf-result-alpha" / "result.json").read_text().strip() == "42"
-    assert not (results / "perf-result-beta").exists()
-
-
-def run_store(tmp_path, stored_run):
-    """Run the store step for a check with no artifact, against a local gh-pages remote."""
+def run_store(tmp_path, stored_run, artifacts=()):
+    """Run the store step against a local gh-pages remote whose stored run 7 holds
+    `stored_run`; the night has checks alpha and beta, and the run's artifacts are
+    `artifacts`. Returns (the step, the gh-pages checkout after it)."""
     git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=x"]
     seed = tmp_path / "seed"
     (seed / "data" / "2026-11-20-7").mkdir(parents=True)
@@ -603,36 +606,277 @@ def run_store(tmp_path, stored_run):
     subprocess.run([*git, "init", "-q", "-b", "gh-pages", str(seed)], check=True)
     subprocess.run([*git, "-C", str(seed), "add", "-A"], check=True)
     subprocess.run([*git, "-C", str(seed), "commit", "-q", "-m", "seed"], check=True)
-    subprocess.run([*git, "-C", str(seed), "config", "receive.denyCurrentBranch", "ignore"], check=True)
+    subprocess.run(
+        [*git, "-C", str(seed), "config", "receive.denyCurrentBranch", "ignore"], check=True
+    )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "base64").write_text("#!/bin/sh\nexec /usr/bin/base64\n")  # no -w0 on macOS
-    (bin_dir / "uv").write_text("#!/bin/sh\nexit 0\n")  # the renderer has its own tests
-    for shim in ("base64", "uv"):
+    (bin_dir / "uv").write_text(FAKE_UV)
+    (bin_dir / "gh").write_text(FAKE_GH)
+    for shim in ("base64", "uv", "gh"):
         (bin_dir / shim).chmod(0o755)
     temp = tmp_path / "temp"
     (temp / "run" / "perf-nightly").mkdir(parents=True)
     (temp / "run" / "perf-nightly" / "nightly.json").write_text(
-        json.dumps({"date": "2026-11-20", "checks": [{"check": "alpha"}]})
+        json.dumps({"date": "2026-11-21", "checks": [{"check": "alpha"}, {"check": "beta"}]})
     )
     env = {
         "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
         "HOME": str(tmp_path),
-        "RUN_ID": "7", "TRIGGER": "nightly", "GH_TOKEN": "x",
-        "GITHUB_SERVER_URL": f"file://{tmp_path}", "GITHUB_REPOSITORY": "seed",
-        "GITHUB_WORKSPACE": str(tmp_path), "RUNNER_TEMP": str(temp),
+        "RUN_ID": "7",
+        "TRIGGER": "nightly",
+        "GH_TOKEN": "x",
+        "GITHUB_SERVER_URL": f"file://{tmp_path}",
+        "GITHUB_REPOSITORY": "seed",
+        "GITHUB_WORKSPACE": str(tmp_path),
+        "RUNNER_TEMP": str(temp),
+        "FAKE_ARTIFACTS": str(fake_artifacts(tmp_path, list(artifacts))),
+        "PYTHONPATH": str(BENCH / "src"),
     }
-    return subprocess.run(
+    done = subprocess.run(
         ["bash", "-c", publish_step("Store the run on gh-pages and rebuild the dashboard")],
-        env=env, capture_output=True, text=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    after = tmp_path / "after"
+    subprocess.run([*git, "clone", "-q", "-b", "gh-pages", str(seed), str(after)], check=True)
+    return done, after
+
+
+ALPHA = [
+    {"id": 11, "name": "perf-result-alpha", "expired": False},
+    {"id": 42, "name": "perf-result-alpha", "expired": False},
+    {"id": 99, "name": "perf-result-alpha", "expired": True},
+]
+
+
+def test_the_store_step_stores_the_newest_attempts_artifact_with_bench_nightly_store(tmp_path):
+    done, after = run_store(tmp_path, ["nightly.json", "run.json"], ALPHA)
+    assert done.returncode == 0, done.stderr
+    # A re-run of the night replaces what its first attempt stored, under the night's new date.
+    assert not (after / "data" / "2026-11-20-7").exists()
+    stored = after / "data" / "2026-11-21-7"
+    assert (stored / "alpha" / "result.json").read_text().strip() == "42"
+    assert not (stored / "beta").exists()  # beta left no artifact: warned, not stored
+    assert json.loads((stored / "run.json").read_text()) == {"trigger": "nightly", "scope": "main"}
+    assert (
+        "perf run 2026-11-21-7 (nightly)"
+        in subprocess.run(
+            ["git", "-C", str(after), "log", "-1", "--format=%s"], capture_output=True, text=True
+        ).stdout
     )
 
 
 def test_a_retry_goes_through_when_the_stored_run_never_had_the_missing_check(tmp_path):
-    done = run_store(tmp_path, ["nightly.json", "run.json"])
+    done, after = run_store(tmp_path, ["nightly.json", "run.json"])
     assert done.returncode == 0, done.stderr
+    assert (after / "data" / "2026-11-21-7" / "nightly.json").is_file()
 
 
 def test_a_missing_artifact_never_deletes_a_check_the_stored_run_has(tmp_path):
-    done = run_store(tmp_path, ["nightly.json", "alpha/result.json"])
+    done, after = run_store(tmp_path, ["nightly.json", "alpha/result.json"])
     assert done.returncode != 0 and "not replacing" in done.stdout + done.stderr
+    # Nothing was pushed: the stored run is as it was.
+    assert (after / "data" / "2026-11-20-7" / "alpha" / "result.json").read_text() == "{}"
+    assert not (after / "data" / "2026-11-21-7").exists()
+
+
+# --- bench nightly store: one run's files, laid out as the dashboard reads them ----------
+
+
+def check_artifact(root: Path, result: dict, extra: dict[str, str]) -> Path:
+    """An extracted perf-result-<check>: result.json and other files by relative path."""
+    root.mkdir(parents=True)
+    (root / "result.json").write_text(json.dumps(result), encoding="utf-8")
+    for rel, text in extra.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    return root
+
+
+def downloads(tmp_path: Path, artifacts: dict[str, Path]):
+    """`download(name, dest)` serving these extracted artifacts by name, recording each ask."""
+    asked = []
+
+    def download(name, dest):
+        asked.append(name)
+        if name not in artifacts:
+            return False
+        shutil.copytree(artifacts[name], dest)
+        return True
+
+    return download, asked
+
+
+def test_store_lays_out_exactly_what_perf_dashboard_stored(tmp_path):
+    result = micro_hw(False)
+    result["artifacts"] = ["raw/rows.csv", "../escape.txt", "/etc/passwd", "raw/missing.csv"]
+    art = check_artifact(
+        tmp_path / "art" / "micro-hw",
+        result,
+        {"perf-vm.json": "{}", "raw/rows.csv": ROWS_HEADER, "raw/unlisted.log": "x"},
+    )
+    (tmp_path / "art" / "escape.txt").write_text("outside")
+    night = examples.nightly("red", [result, {"check": "pokec", "verdict": "error", "error": "x"}])
+    night_path = tmp_path / "nightly.json"
+    night_path.write_text(json.dumps(night, indent=1), encoding="utf-8")
+    download, asked = downloads(tmp_path, {"perf-result-micro-hw": art})
+    data = tmp_path / "data"
+    folder = nightly_store.store(night_path, "555", data, "pr-comment", "pr-3967", download)
+    assert folder == f"{night['date']}-555"
+    assert asked == ["perf-result-micro-hw", "perf-result-pokec"]
+    dest = data / folder
+    files = sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file())
+    # The listed artifacts that exist, the records, nothing unlisted, nothing outside.
+    assert files == [
+        "micro-hw/perf-vm.json",
+        "micro-hw/raw/rows.csv",
+        "micro-hw/result.json",
+        "nightly.json",
+        "run.json",
+    ]
+    assert (dest / "nightly.json").read_bytes() == night_path.read_bytes()
+    # Byte for byte what `jq -n '{trigger: $t, scope: $s}'` wrote before this command.
+    assert (dest / "run.json").read_text() == (
+        '{\n  "trigger": "pr-comment",\n  "scope": "pr-3967"\n}\n'
+    )
+
+
+def test_a_stored_run_renders_with_each_checks_files(tmp_path):
+    result = micro_hw(False)
+    art = check_artifact(
+        tmp_path / "art", result, {"perf-vm.json": "{}", "raw/rows.csv": ROWS_HEADER}
+    )
+    night_path = tmp_path / "nightly.json"
+    night_path.write_text(json.dumps(examples.nightly("red", [result])), encoding="utf-8")
+    site = tmp_path / "site"
+    download, _ = downloads(tmp_path, {"perf-result-micro-hw": art})
+    folder = nightly_store.store(night_path, "9", site / "data", "pr-comment", "pr-1", download)
+    assert dashboard.build(site / "data", site) == 1
+    page = (site / "run" / f"{folder}.html").read_text()
+    assert "pr-1 · pr-comment" in page
+    for name in ("result.json", "perf-vm.json", "raw/rows.csv"):
+        href = f"../data/{folder}/micro-hw/{name}"
+        assert f"href='{href}'" in page or f'href="{href}"' in page, name
+        assert (site / "run" / href).resolve().is_file()
+
+
+def test_a_store_that_lost_a_stored_check_changes_nothing(tmp_path):
+    data = tmp_path / "data"
+    old = data / "2026-11-20-7"
+    (old / "micro-hw").mkdir(parents=True)
+    (old / "micro-hw" / "result.json").write_text("old")
+    night_path = tmp_path / "nightly.json"
+    night_path.write_text(json.dumps(examples.nightly("green", [micro_hw(True)])))
+    download, _ = downloads(tmp_path, {})
+    with pytest.raises(
+        nightly_store.StoreError, match="not replacing 2026-11-20-7 without perf-result-micro-hw"
+    ):
+        nightly_store.store(night_path, "7", data, "nightly", "main", download)
+    assert (old / "micro-hw" / "result.json").read_text() == "old"
+    assert [p.name for p in data.iterdir()] == ["2026-11-20-7"]
+
+
+@pytest.mark.parametrize(
+    ("night", "why"),
+    [
+        ({"date": "2026-11-2", "checks": []}, "is not YYYY-MM-DD"),
+        ({"checks": []}, "is not YYYY-MM-DD"),
+        ("not json", "cannot read"),
+    ],
+)
+def test_a_night_with_no_usable_date_is_not_stored(tmp_path, night, why):
+    path = tmp_path / "nightly.json"
+    path.write_text(night if isinstance(night, str) else json.dumps(night))
+    with pytest.raises(nightly_store.StoreError, match=why):
+        nightly_store.store(path, "1", tmp_path / "data", "nightly", "main", lambda n, d: False)
+    with pytest.raises(nightly_store.StoreError, match="is not a number"):
+        nightly_store.store(path, "1; rm", tmp_path / "data", "nightly", "main", lambda n, d: False)
+
+
+def fake_run(listing, archive: bytes | None, rc_list=0, rc_zip=0):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv[2])
+        if argv[2].endswith("/zip"):
+            if archive is not None:
+                kwargs["stdout"].write(archive)
+            return subprocess.CompletedProcess(argv, rc_zip, None, b"")
+        return subprocess.CompletedProcess(argv, rc_list, json.dumps(listing), "")
+
+    return run, calls
+
+
+def zipped(members: dict[str, str]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, text in members.items():
+            archive.writestr(name, text)
+    return buffer.getvalue()
+
+
+def test_fetch_takes_the_newest_live_artifact(tmp_path):
+    run, calls = fake_run({"artifacts": ALPHA}, zipped({"result.json": "{}", "raw/a": "z"}))
+    dest = tmp_path / "x" / "perf-result-alpha"
+    assert nightly_store.fetch("o/r", "7", "perf-result-alpha", dest, run)
+    assert calls == [
+        "repos/o/r/actions/runs/7/artifacts?name=perf-result-alpha&per_page=100",
+        "repos/o/r/actions/artifacts/42/zip",
+    ]
+    assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == [
+        "raw/a",
+        "result.json",
+    ]
+
+
+def corrupt(members: dict[str, str]) -> bytes:
+    """A deflated zip whose directory is intact but whose first member's data is not:
+    extracting it raises zlib.error, not BadZipFile."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, text in members.items():
+            archive.writestr(name, text * 5000)
+    data = bytearray(buffer.getvalue())
+    first = zipfile.ZipFile(io.BytesIO(bytes(data))).infolist()[0]
+    start = first.header_offset + 30 + len(first.filename)
+    for i in range(start, start + 8):
+        data[i] ^= 0xFF
+    return bytes(data)
+
+
+@pytest.mark.parametrize(
+    ("listing", "archive", "rc_list", "rc_zip"),
+    [
+        ({"artifacts": []}, None, 0, 0),
+        ({"artifacts": [{"id": 5, "expired": True}]}, None, 0, 0),
+        ({}, None, 1, 0),
+        ({"artifacts": [{"id": 5}]}, b"half a zip", 0, 0),
+        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}"}), 0, 1),
+        # A member that would land outside fails the whole artifact, as unzip did.
+        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}", "../evil": "x"}), 0, 0),
+        ({"artifacts": [{"id": 5}]}, zipped({"result.json": "{}", "/abs": "x"}), 0, 0),
+        ({"artifacts": [{"id": 5}]}, corrupt({"result.json": "x"}), 0, 0),
+    ],
+)
+def test_fetch_that_fails_leaves_no_partial_result(tmp_path, listing, archive, rc_list, rc_zip):
+    run, _ = fake_run(listing, archive, rc_list, rc_zip)
+    dest = tmp_path / "x" / "perf-result-alpha"
+    assert not nightly_store.fetch("o/r", "7", "perf-result-alpha", dest, run)
+    assert not dest.exists()
+    assert not (tmp_path / "x" / "evil").exists()
+
+
+def test_the_dashboard_and_a_perf_comment_run_share_the_store_command():
+    publish = publish_step("Store the run on gh-pages and rebuild the dashboard")
+    comment = next(
+        step["run"]
+        for step in load_workflow("perf-comment.yml")["jobs"]["answer"]["steps"]
+        if step.get("name") == "Build this run's dashboard"
+    )
+    for text in (publish, comment):
+        assert "bench nightly store" in text and "bench nightly dashboard" in text
+        assert "cp -R --parents" not in text and "artifacts?name=" not in text
+    assert "--trigger pr-comment" in comment and '--scope "pr-$PR"' in comment

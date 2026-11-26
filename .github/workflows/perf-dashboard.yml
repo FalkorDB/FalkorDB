@@ -3,8 +3,9 @@
 # perf-nightly.yml is a reusable workflow (the release gate calls it with read-only
 # permissions), so it cannot hold a job that writes. This workflow runs when a nightly
 # completes: it stores that run's files at data/<date>-<run id>/ on the gh-pages branch
-# (nightly.json, run.json, and per check its result.json, the runner's record and the
-# files the check lists as artifacts), rebuilds the site from every stored run with
+# with `bench nightly store` (nightly.json, run.json, and per check its result.json, the
+# runner's record and the files the check lists as artifacts; perf-comment.yml lays out a
+# /perf run with the same command), rebuilds the site from every stored run with
 # `bench nightly dashboard`, and deploys it with the Pages actions. A GITHUB_TOKEN push
 # does not start a Pages build, so the deploy is explicit; the repository's
 # Settings -> Pages -> Source is "GitHub Actions". The gh-pages branch is the archive.
@@ -82,29 +83,6 @@ jobs:
             echo "store=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Every perf-result-<check> the run left (a check that died leaves none). After a
-          # re-run several artifacts share a name: take the newest by id, as the merge job does.
-          for check in $(jq -r '.checks[].check' "$run/perf-nightly/nightly.json"); do
-            [[ $check =~ ^[a-z][a-z0-9-]{0,42}$ ]] || continue
-            name=perf-result-$check
-            dir=$RUNNER_TEMP/results/$name
-            if ! id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=$name&per_page=100" \
-                --jq '[.artifacts[] | select(.expired | not)] | max_by(.id) | .id // empty'); then
-              echo "::warning::$name: could not list its artifacts"
-              continue
-            fi
-            if [[ -z $id ]]; then
-              echo "::warning::$name: no artifact"
-              continue
-            fi
-            mkdir -p "$dir"
-            if ! { gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$name.zip" \
-                && unzip -q -o "$RUNNER_TEMP/$name.zip" -d "$dir"; }; then
-              # A partly extracted artifact must not pass for a result.
-              rm -rf "$dir"
-              echo "::warning::$name: artifact $id did not download"
-            fi
-          done
           echo "store=true" >> "$GITHUB_OUTPUT"
 
       - name: Store the run on gh-pages and rebuild the dashboard
@@ -114,8 +92,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           night=$RUNNER_TEMP/run/perf-nightly/nightly.json
-          folder="$(jq -r .date "$night")-$RUN_ID"
-          [[ $folder =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]+$ ]]
 
           site=$RUNNER_TEMP/site
           remote=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
@@ -130,37 +106,12 @@ jobs:
             git checkout -q --orphan gh-pages
           fi
 
-          # A re-run of the night replaces what its first attempt stored (under any date).
-          replaced=$(ls -d data/*-"$RUN_ID" 2>/dev/null || true)
-          stored_checks=$(ls -1 data/*-"$RUN_ID"/ 2>/dev/null || true)
-          rm -rf data/*-"$RUN_ID"
+          # Every perf-result-<check> the run left, laid out at data/<date>-<run id>/. A re-run
+          # of the night replaces what its first attempt stored, but never with a check missing
+          # that the stored run has (the command exits 1 and nothing is pushed).
+          folder=$(cd "$GITHUB_WORKSPACE" && uv run --project bench --frozen bench nightly store \
+            --nightly "$night" --run-id "$RUN_ID" --data "$site/data" --trigger "$TRIGGER" --scope main)
           dest=data/$folder
-          mkdir -p "$dest"
-          cp "$night" "$dest/nightly.json"
-          jq -n --arg trigger "$TRIGGER" '{trigger: $trigger, scope: "main"}' > "$dest/run.json"
-          dotdot='(^|/)\.\.(/|$)'
-          for check in $(jq -r '.checks[].check' "$night"); do
-            [[ $check =~ ^[a-z][a-z0-9-]{0,42}$ ]] || continue
-            src=$RUNNER_TEMP/results/perf-result-$check
-            if [[ ! -d $src ]]; then
-              echo "::warning::perf dashboard: no perf-result-$check"
-              # Replacing a stored run that has this check: a missing download must not
-              # commit its deletion. A check the stored run never had (it left no artifact
-              # then either) is no loss, so a retry after a failed deploy goes through.
-              ! grep -qxF -- "$check" <<< "$stored_checks" || { echo "::error::perf dashboard: not replacing $replaced without perf-result-$check"; exit 1; }
-              continue
-            fi
-            mkdir -p "$dest/$check"
-            files=$(cd "$src" && { ls -1 result.json perf-vm.json perf-hosted.json 2>/dev/null
-                                   jq -r '.artifacts[]? | strings' result.json 2>/dev/null; } | sort -u) || true
-            while IFS= read -r file; do
-              # Relative paths only, none through "..": the check's own files and nothing else.
-              [[ -n $file && $file != /* && ! $file =~ $dotdot ]] || continue
-              (cd "$src" && cp -R --parents -- "$file" "$site/$dest/$check/") \
-                || echo "::warning::perf dashboard: $check/$file did not copy"
-            done <<< "$files"
-          done
-
           (cd "$GITHUB_WORKSPACE" && uv run --project bench --frozen bench nightly dashboard --data "$site/data" --out "$site")
           git add -A
           # A re-run of this workflow stores the same files: nothing to commit.
