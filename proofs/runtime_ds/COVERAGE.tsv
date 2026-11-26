@@ -4,26 +4,26 @@ graph/src/runtime/bitset.rs	BitSet::test	49	PROVEN	BitSet.test: test_eq_wordAt, 
 graph/src/runtime/bitset.rs	BitSet::union	63	PROVEN	BitSet.union: test_union, wf_union
 graph/src/runtime/bitset.rs	BitSet::clear	76	PROVEN	BitSet.clear: test_clear, wf_clear
 graph/src/runtime/bitset.rs	BitSet::is_empty	94	PROVEN	BitSet.isEmpty: isEmpty_iff
-graph/src/runtime/ordermap.rs	OrderMap::default	33	PROVEN	emptyM: getL_emptyM, emptyM_nodup, isEmptyM_emptyM
-graph/src/runtime/ordermap.rs	OrderMap::with_capacity	42	PROVEN	withCapacity: withCapacity_eq
-graph/src/runtime/ordermap.rs	OrderMap::from_vec	49	PROVEN	fromList: fromList_nodup, getL_fromList_snoc
-graph/src/runtime/ordermap.rs	OrderMap::from_unique_keys	66	PROVEN	fromUniqueKeys: fromUniqueKeys_eq_fromList, foldl_insert_unique
-graph/src/runtime/ordermap.rs	OrderMap::reserve_exact	78	PROVEN	reserveExact: reserveExact_eq, getL_reserveExact
-graph/src/runtime/ordermap.rs	OrderMap::insert	85	PROVEN	insertL: insertL_returns, insertL_nodup, getL_insertL, keys_insertL
-graph/src/runtime/ordermap.rs	OrderMap::remove	100	PROVEN	posL/removeL: removeL_returns, removeL_nodup, getL_removeL, removeL_eq_eraseIdx
-graph/src/runtime/ordermap.rs	OrderMap::get	111	PROVEN	getL: getL_of_mem, mem_of_getL, getL_none_of
-graph/src/runtime/ordermap.rs	OrderMap::iter	123	PROVEN	iterM: iterM_eq, iterM_insert_fresh
-graph/src/runtime/ordermap.rs	OrderMap::len	128	PROVEN	lenM: lenM_insertL, lenM_removeL
-graph/src/runtime/ordermap.rs	OrderMap::is_empty	133	PROVEN	isEmptyM: isEmptyM_iff
-graph/src/runtime/ordermap.rs	OrderMap::keys	137	PROVEN	keysM: keysM_eq, keysM_insertL
-graph/src/runtime/ordermap.rs	OrderMap::values	141	PROVEN	valuesM: keysM_zip_valuesM, length_valuesM, valuesM_insertL_fresh
-graph/src/runtime/ordermap.rs	OrderMap::get_str	149	PROVEN	getL (String keys): getL_of_mem, getL_insertL
-graph/src/runtime/ordermap.rs	OrderMap::hash	167	PROVEN	hashInput: hash_consistent, eq_of_perm_pairwise
-graph/src/runtime/ordermap.rs	OrderMap::eq	179	PROVEN	eqM: eqM_iff_perm, eqM_symm
-graph/src/runtime/ordermap.rs	OrderMap::from_iter	193	PROVEN	fromList: fromList_nodup, getL_fromList_snoc
-graph/src/runtime/ordermap.rs	OrderMap::index	209	PROVEN	indexM: indexM_eq, indexM_ok_iff, indexM_panics_iff
-graph/src/runtime/ordermap.rs	OrderMap::into_iter	221	PROVEN	intoIterM: intoIterM_eq
-graph/src/runtime/ordermap.rs	OrderMap::extend	227	PROVEN	fromList (repeated insertL): fromList_nodup, getL_fromList_snoc
+graph/src/runtime/ordermap.rs	OrderMap::default	34	PROVEN	emptyM: getL_emptyM, emptyM_nodup, isEmptyM_emptyM
+graph/src/runtime/ordermap.rs	OrderMap::with_capacity	43	PROVEN	withCapacity: withCapacity_eq
+graph/src/runtime/ordermap.rs	OrderMap::from_vec	50	PROVEN	fromList: fromList_nodup, getL_fromList_snoc
+graph/src/runtime/ordermap.rs	OrderMap::from_unique_keys	67	PROVEN	fromUniqueKeys: fromUniqueKeys_eq_fromList, foldl_insert_unique
+graph/src/runtime/ordermap.rs	OrderMap::reserve_exact	79	PROVEN	reserveExact: reserveExact_eq, getL_reserveExact
+graph/src/runtime/ordermap.rs	OrderMap::insert	86	PROVEN	insertL: insertL_returns, insertL_nodup, getL_insertL, keys_insertL
+graph/src/runtime/ordermap.rs	OrderMap::remove	101	PROVEN	posL/removeL: removeL_returns, removeL_nodup, getL_removeL, removeL_eq_eraseIdx
+graph/src/runtime/ordermap.rs	OrderMap::get	112	PROVEN	getL: getL_of_mem, mem_of_getL, getL_none_of
+graph/src/runtime/ordermap.rs	OrderMap::iter	124	PROVEN	iterM: iterM_eq, iterM_insert_fresh
+graph/src/runtime/ordermap.rs	OrderMap::len	129	PROVEN	lenM: lenM_insertL, lenM_removeL
+graph/src/runtime/ordermap.rs	OrderMap::is_empty	134	PROVEN	isEmptyM: isEmptyM_iff
+graph/src/runtime/ordermap.rs	OrderMap::keys	138	PROVEN	keysM: keysM_eq, keysM_insertL
+graph/src/runtime/ordermap.rs	OrderMap::values	142	PROVEN	valuesM: keysM_zip_valuesM, length_valuesM, valuesM_insertL_fresh
+graph/src/runtime/ordermap.rs	OrderMap::get_str	150	PROVEN	getL (String keys): getL_of_mem, getL_insertL
+graph/src/runtime/ordermap.rs	OrderMap::hash	168	PROVEN	hashInput: hash_consistent, eq_of_perm_pairwise
+graph/src/runtime/ordermap.rs	OrderMap::eq	180	PROVEN	eqM: eqM_iff_perm, eqM_symm
+graph/src/runtime/ordermap.rs	OrderMap::from_iter	194	PROVEN	fromList: fromList_nodup, getL_fromList_snoc
+graph/src/runtime/ordermap.rs	OrderMap::index	210	PROVEN	indexM: indexM_eq, indexM_ok_iff, indexM_panics_iff
+graph/src/runtime/ordermap.rs	OrderMap::into_iter	222	PROVEN	intoIterM: intoIterM_eq
+graph/src/runtime/ordermap.rs	OrderMap::extend	228	PROVEN	fromList (repeated insertL): fromList_nodup, getL_fromList_snoc
 graph/src/runtime/orderset.rs	OrderSet::default	27	PROVEN	emptyS: containsS_emptyS, emptyS_nodup
 graph/src/runtime/orderset.rs	OrderSet::from_vec	42	PROVEN	fromVecGo/fromVec: fromVec_nodup, fromVec_of_nodup, fromVec_sublist, containsS_fromVec, containsS_removeS_fromVec, fromVec_eq_fromListS, fromVec_drops_duplicates (#2905 dedup, first wins)
 graph/src/runtime/orderset.rs	OrderSet::insert	54	PROVEN	insertS: containsS_insertS, insertS_nodup, indexOf_insertS
@@ -39,11 +39,11 @@ graph/src/runtime/orderset.rs	OrderSet::get	129	PROVEN	getS: getS_eq, getS_index
 graph/src/runtime/orderset.rs	OrderSet::from_iter	138	PROVEN	fromListS: fromListS_nodup
 graph/src/runtime/orderset.rs	OrderSet::index	148	PROVEN	indexS: indexS_ok_iff, indexS_panics_iff
 graph/src/runtime/orderset.rs	OrderSet::into_iter	160	PROVEN	intoIterS: intoIterS_eq
-graph/src/runtime/string_pool.rs	StringPool::new	18	PROVEN	empty Pool: wf_empty
-graph/src/runtime/string_pool.rs	StringPool::intern	28	PROVEN	intern: intern_isInterned, intern_idem, intern_injective, reintern_fresh, wf_intern
-graph/src/runtime/string_pool.rs	StringPool::is_interned	42	PROVEN	isInterned: intern_isInterned, prune_keeps_held
-graph/src/runtime/string_pool.rs	StringPool::stats	52	PROVEN	prune (retain strong_count > 1): prune_keeps_held, wf_prune; counting part not modelled
-graph/src/runtime/string_pool.rs	global	66	PROVEN	globalPool: globalPool_spec
+graph/src/runtime/string_pool.rs	StringPool::new	19	PROVEN	empty Pool: wf_empty
+graph/src/runtime/string_pool.rs	StringPool::intern	29	PROVEN	internArc (static early return since #3966; pool path: intern): internArc_isInterned (non-empty), internArc_empty_not_interned / internArc_isInterned_fails (counterexample to intern_isInterned for the whole fn, #3966), internArc_idem, internArc_injective, wf_internArc, noEmpty_internArc; pool path: intern_isInterned, intern_idem, intern_injective, reintern_fresh, wf_intern
+graph/src/runtime/string_pool.rs	StringPool::is_interned	48	PROVEN	isInternedArc/isInterned: intern_isInterned, internArc_isInterned, internArc_empty_not_interned, prune_keeps_held
+graph/src/runtime/string_pool.rs	StringPool::stats	58	PROVEN	prune (retain strong_count > 1; statics are never entries: noEmpty_prune): prune_keeps_held, wf_prune; counting part not modelled
+graph/src/runtime/string_pool.rs	global	76	PROVEN	globalPool: globalPool_spec
 graph/src/runtime/row.rs	RowView::value_at	47	PROVEN	RowView.Lawful, rowView_lawful, Lawful.valueAt_none_iff (trait contract: snapshot answers value_at, None exactly out of range; Row impl = getById)
 graph/src/runtime/row.rs	RowView::to_owned_row	56	PROVEN	RowView.Lawful, rowView_lawful, toOwnedRow_eq (values and bound bits; origin_row not modelled)
 graph/src/runtime/row.rs	Row::new	76	PROVEN	Row.new: new_spec

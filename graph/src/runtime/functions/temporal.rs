@@ -44,11 +44,11 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{ordermap::OrderMap, runtime::Runtime, value::Value};
+use arcstr::ArcStr;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use std::sync::Arc;
 
 fn get_int_field(
-    map: &OrderMap<Arc<String>, Value>,
+    map: &OrderMap<ArcStr, Value>,
     field: &str,
 ) -> Option<i64> {
     map.get_str(field).and_then(|v| match v {
@@ -127,7 +127,7 @@ fn date_from_components(
         .ok_or_else(|| format!("Invalid date: year={year}, month={month}, day={day}"))
 }
 
-fn date_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveDate, String> {
+fn date_from_map(map: &OrderMap<ArcStr, Value>) -> Result<NaiveDate, String> {
     date_from_components(
         get_int_field(map, "year"),
         get_int_field(map, "month"),
@@ -151,7 +151,7 @@ fn time_from_components(
         .ok_or_else(|| format!("Invalid time: hour={hour}, minute={minute}, second={second}"))
 }
 
-fn time_from_map(map: &OrderMap<Arc<String>, Value>) -> Result<NaiveTime, String> {
+fn time_from_map(map: &OrderMap<ArcStr, Value>) -> Result<NaiveTime, String> {
     time_from_components(
         get_int_field(map, "hour"),
         get_int_field(map, "minute"),
@@ -905,13 +905,14 @@ pub fn register(funcs: &mut Functions) {
 mod tests {
     use super::{date_pure, date_struct_pure, localdatetime_pure};
     use crate::runtime::{ordermap::OrderMap, value::Value};
+    use arcstr::ArcStr;
     use std::sync::Arc;
 
     fn map(entries: &[(&str, i64)]) -> Value {
         Value::Map(Arc::new(OrderMap::from_vec(
             entries
                 .iter()
-                .map(|(k, v)| (Arc::new((*k).to_string()), Value::Int(*v)))
+                .map(|(k, v)| (ArcStr::from(*k), Value::Int(*v)))
                 .collect(),
         )))
     }
@@ -977,7 +978,7 @@ mod tests {
     #[test]
     fn date_week_string_with_multibyte_char_errors_instead_of_panicking() {
         for s in ["2020W1é", "2020-W1é", "2020Wé1", "2020W€", "2020W12é"] {
-            assert!(date_pure(&[Value::String(Arc::new(s.to_string()))]).is_err());
+            assert!(date_pure(&[Value::String(ArcStr::from(s))]).is_err());
         }
     }
 
@@ -987,12 +988,12 @@ mod tests {
         let sunday = date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", 7)])]).unwrap();
         assert_eq!(
             sunday,
-            date_pure(&[Value::String(Arc::new("2021-W01-7".to_string()))]).unwrap()
+            date_pure(&[Value::String(ArcStr::from("2021-W01-7"))]).unwrap()
         );
         let monday = date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", 1)])]).unwrap();
         assert_eq!(
             monday,
-            date_pure(&[Value::String(Arc::new("2021-W01-1".to_string()))]).unwrap()
+            date_pure(&[Value::String(ArcStr::from("2021-W01-1"))]).unwrap()
         );
         for dow in [0, 8, -1] {
             assert!(date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", dow)])]).is_err());
@@ -1028,7 +1029,7 @@ mod tests {
             d(1984, 12, 31)
         );
         assert_eq!(
-            date_pure(&[Value::String(Arc::new("2015-W30-2".to_string()))]).unwrap(),
+            date_pure(&[Value::String(ArcStr::from("2015-W30-2"))]).unwrap(),
             d(2015, 7, 21)
         );
     }

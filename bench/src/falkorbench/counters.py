@@ -22,6 +22,7 @@ work into the numbers. Whatever drives the measured queries stays a C binary.
 from __future__ import annotations
 
 import ctypes
+import os
 import shutil
 import subprocess
 import sys
@@ -137,7 +138,7 @@ class RusageBackend:
         else:
             events = {}
             t0 = time.time()
-            subprocess.run(cmd, capture_output=True)
+            _finished(subprocess.run(cmd, capture_output=True), cmd)
             elapsed = time.time() - t0
         after = read_rusage(pid)
         if before is None or after is None:
@@ -153,6 +154,44 @@ class RusageBackend:
 # --- Linux: perf -------------------------------------------------------------
 
 
+# perf event name -> CSV column, for the events counted beside instructions and
+# cycles. Generic perf names: an event the host does not expose comes back
+# "<not supported>" and its column stays empty.
+PERF_EVENTS: dict[str, str] = {
+    "branch-misses": "br_miss",
+}
+
+# L2 misses (column l2_miss): demand requests that miss L2. A GCE PMU of type
+# `standard` exposes core/L2 events and no last-level-cache events, so there is
+# no cache-misses here (contract v1.7); this is the L2 event it counted on a
+# c4-standard-8 (Xeon Platinum 8581C, 2026-11-24, the first of five candidates
+# probed). One event, never a substitute: a host that cannot count it is an
+# error in `bench micro-hw`. It has no generic perf name, and perf rejects a name it
+# does not know outright, so it is opt-in: `bench micro-hw` passes it as
+# $BENCH_L2_EVENT once its probe has seen it count.
+L2_MISS_EVENT = "l2_rqsts.all_demand_miss"
+L2_EVENT_ENV = "BENCH_L2_EVENT"
+
+
+def perf_events() -> dict[str, str]:
+    """The events counted beside instructions and cycles: micro-hw's miss
+    counters (PERF_EVENTS and the L2 event) when $BENCH_L2_EVENT names its L2
+    event, otherwise none. A local `bench compare` gates every column both sides
+    carry, with no floor, so it only sees these columns when micro-hw asks."""
+    l2 = os.environ.get(L2_EVENT_ENV)
+    return {**PERF_EVENTS, l2: "l2_miss"} if l2 else {}
+
+
+class MeasuredRunFailed(OSError):
+    """The measured command exited non-zero: its counters and time cover a run
+    that did not finish, so they are no reading of the query."""
+
+
+def _finished(proc: subprocess.CompletedProcess, cmd: Sequence[str]) -> None:
+    if proc.returncode != 0:
+        raise MeasuredRunFailed(f"{cmd[0]} exited {proc.returncode}")
+
+
 class PerfBackend:
     name = "perf"
 
@@ -160,15 +199,17 @@ class PerfBackend:
         self.perf = perf
 
     def run_and_count(self, pid: int, cmd: Sequence[str]) -> Reading:
-        """instructions/cycles for `pid` while `cmd` runs, plus elapsed seconds.
+        """Counters for `pid` while `cmd` runs, plus elapsed seconds.
 
         `perf stat -p PID -- CMD` attaches to PID, runs CMD, and stops counting
         when CMD exits, so the counters cover exactly the benchmark window.
         `-x,` gives machine-readable `value,unit,event,...` lines on stderr.
         """
+        extra_events = perf_events()
+        events = ",".join(["instructions", "cycles", *extra_events])
         t0 = time.time()
         out = subprocess.run(
-            [self.perf, "stat", "-x,", "-e", "instructions,cycles", "-p", str(pid), "--", *cmd],
+            [self.perf, "stat", "-x,", "-e", events, "-p", str(pid), "--", *cmd],
             capture_output=True,
             text=True,
         )
@@ -181,7 +222,11 @@ class PerfBackend:
                 "exposes the PMU (bare metal or a VM with vPMU enabled). "
                 f"stderr: {out.stderr.strip()[:300]}"
             )
-        return Reading(vals["instructions"], vals["cycles"], elapsed, {})
+        # perf stat exits with the command's status: counters from a run that
+        # failed part-way would read as a cheap, normal row.
+        _finished(out, cmd)
+        extra = {col: vals[ev] for ev, col in extra_events.items() if ev in vals}
+        return Reading(vals["instructions"], vals["cycles"], elapsed, extra)
 
 
 def _parse_perf(stderr: str) -> dict[str, float]:
@@ -234,7 +279,7 @@ class NullBackend:
 
     def run_and_count(self, pid: int, cmd: Sequence[str]) -> Reading:
         t0 = time.time()
-        subprocess.run(cmd, capture_output=True)
+        _finished(subprocess.run(cmd, capture_output=True), cmd)
         return Reading(None, None, time.time() - t0, {})
 
 

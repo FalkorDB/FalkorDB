@@ -44,6 +44,7 @@
 //! `range()` and list literals by producing values on the fly — a lazy
 //! [`RangeIter`] or an inline spread — without materializing the whole list.
 
+use arcstr::ArcStr;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -163,7 +164,7 @@ struct NeighborIter {
 impl NeighborIter {
     fn new(
         g: &crate::graph::graph::Graph,
-        rel_types: &[Arc<String>],
+        rel_types: &[ArcStr],
         directed: bool,
     ) -> Self {
         let mut fwd = Vec::new();
@@ -203,7 +204,7 @@ impl NeighborIter {
     /// holds the sources of edges pointing at `n`.
     fn new_reversed(
         g: &crate::graph::graph::Graph,
-        rel_types: &[Arc<String>],
+        rel_types: &[ArcStr],
     ) -> Self {
         let mut fwd = Vec::new();
         if rel_types.is_empty() {
@@ -1174,7 +1175,7 @@ impl<'a> ExprEval<'a> {
     /// bulk-fetch the property for all active rows in one shot and classify it
     /// losslessly. Returns `None` for any other shape, so the caller falls back
     /// to per-row evaluation.
-    fn try_eval_batch_property(
+    pub(crate) fn try_eval_batch_property(
         &self,
         tree: &DynTree<ExprIR<Variable>>,
         batch: &Batch<'_>,
@@ -1351,11 +1352,11 @@ impl<'a> ExprEval<'a> {
                     return Ok(Value::Null);
                 };
                 match replacement {
-                    None => Ok(Value::String(Arc::new(
+                    None => Ok(Value::String(ArcStr::from(
                         rf.regex.replace_all(text.as_str(), "").into_owned(),
                     ))),
                     Some(Value::Null) => Ok(Value::Null),
-                    Some(Value::String(repl)) => Ok(Value::String(Arc::new(
+                    Some(Value::String(repl)) => Ok(Value::String(ArcStr::from(
                         rf.regex
                             .replace_all(text.as_str(), NoExpand(repl.as_str()))
                             .into_owned(),
@@ -1376,7 +1377,7 @@ impl<'a> ExprEval<'a> {
         node: &ExprNode<'_>,
         env: Option<&R>,
         agg_group_key: Option<u64>,
-        rel_types: &[Arc<String>],
+        rel_types: &[ArcStr],
         min_hops: u32,
         max_hops: Option<u32>,
         directed: bool,
@@ -1465,7 +1466,7 @@ impl<'a> ExprEval<'a> {
         dst_id: crate::graph::graph::NodeId,
         max_level: u64,
         _node_cap: u64,
-        rel_types: &[Arc<String>],
+        rel_types: &[ArcStr],
         min_hops: u32,
     ) -> Value {
         use crate::graph::graph::{NodeId, RelationshipId};
@@ -1822,7 +1823,7 @@ pub(crate) const fn logical_xor(
     (a && !b) || (!a && b)
 }
 
-pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, String> {
+pub fn evaluate_param(expr: &DynNode<ExprIR<ArcStr>>) -> Result<Value, String> {
     match expr.data() {
         ExprIR::Constant(v) => Ok(v.clone()),
         ExprIR::List => Ok(Value::List(Arc::new(

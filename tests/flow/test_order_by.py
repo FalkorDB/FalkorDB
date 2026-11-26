@@ -287,3 +287,30 @@ class testOrderBy(FlowTestsBase):
             self.env.assertEqual(res[0][0], 17.0)
         finally:
             g.delete()
+
+    def test10_top_k_property_keys_match_full_sort(self):
+        """ORDER BY ... LIMIT k (the top-k heap) keeps exactly the first k rows
+        of the full sort when its keys are node properties read in bulk, with
+        nulls, missing properties, mixed types and ties on the first key."""
+        g = self.db.select_graph("order_by_top_k_props")
+        try:
+            # v: ints, floats, strings, null-by-absence; w breaks the v ties
+            g.query("""UNWIND range(0, 2999) AS i
+                       CREATE (:T {i: i,
+                                   v: CASE i % 5 WHEN 0 THEN i % 7
+                                                 WHEN 1 THEN toFloat(i % 11) / 2
+                                                 WHEN 2 THEN toString(i % 3)
+                                                 WHEN 3 THEN null
+                                                 ELSE i % 13 END,
+                                   w: (i * 7919) % 3001})""")
+            for order in ["n.v, n.w", "n.v DESC, n.w", "n.w DESC, n.v",
+                          "n.v, n.i DESC"]:
+                full = g.query(f"MATCH (n:T) RETURN n.i ORDER BY {order}").result_set
+                for k in [1, 10, 250, 1500]:
+                    top = g.query(f"MATCH (n:T) RETURN n.i ORDER BY {order} LIMIT {k}").result_set
+                    self.env.assertEqual(top, full[:k])
+                    # SKIP shares the heap (capacity skip + limit)
+                    top = g.query(f"MATCH (n:T) RETURN n.i ORDER BY {order} SKIP 7 LIMIT {k}").result_set
+                    self.env.assertEqual(top, full[7:7 + k])
+        finally:
+            g.delete()

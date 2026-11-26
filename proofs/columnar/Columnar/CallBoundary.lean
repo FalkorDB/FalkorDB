@@ -5,7 +5,8 @@
 Model of the merged (now origin/main a9377c636) graph/src/runtime/batch.rs (`rows_only` ,
 `gather` , `concat` , `origin_row` , `has_origins`
 , `BatchBuilder::push_row_with` , `BatchBuilder::finish` ),
-runtime/ops/project.rs `eval` , and
+runtime/ops/project.rs `eval` (re-checked at #4015, which adds carry-forward
+variables to the column fast path: `copyFast_eq_row`), and
 runtime/ops/batched_result_emitter.rs `start_batch` , `finish_batch` :651.
 Columns are abstracted to their bound/unbound shape plus values (`Option
 (List V)`, `none` = `Column::Unbound`) — the only thing these functions
@@ -216,5 +217,117 @@ theorem concatColless_perRow {V : Type} (bs : List (Batch V)) :
       (bs.map fun b => b.active.length).sum := by
     simp [List.length_flatMap]
   rw [hl]
+
+/-! ## #4015: carry-forward variables on the column fast path
+
+`ProjectOp::eval` (project.rs:54) now also takes the column fast path when
+there are `copy_from_parent` variables, provided none of their parent slots is
+value-only (`Batch::is_value_only`): each copy is gathered whole
+(`col.gather(active)`, `set_column`) or, if `Unbound`, left unset. The row
+path (:120-140) per active row inserts the value when it is non-null, a bound
+`Null` when `is_bound_at`, and nothing otherwise; `BatchBuilder::finish`
+(batch.rs:751) then makes the slot a bound column iff some row inserted
+(every insert binds), padding the others with `Null`. One slot is modelled:
+its parent column (`none` = `Unbound`), its `value_only` bit and the active
+rows; `classify_stored_column` only changes the representation, not the
+values read back, so it is abstracted away. -/
+
+section Pr4015
+variable {V : Type} [DecidableEq V]
+
+/-- Row path, one copy slot: the output column (`none` = `Unbound`). -/
+def copyRow (null : V) (c : Option (List V)) (vo : Bool) (rs : List Nat) : Option (List V) :=
+  let cells : List (Option V) := rs.map fun r => match c with
+    | none => none
+    | some l =>
+      let v := l.getD r null
+      if v ≠ null then some v else if !vo then some null else none
+  if cells.any Option.isSome then some (cells.map (·.getD null)) else none
+
+/-- Fast path, one copy slot: gather the parent column, or leave it unset. -/
+def copyFast (null : V) (c : Option (List V)) (rs : List Nat) : Option (List V) :=
+  c.map fun l => rs.map (l.getD · null)
+
+/-- **Parity of the copy fast path.** On a non-value-only parent slot and a
+non-empty active set, gathering the column equals the row path's output:
+same bound/unbound shape, same value on every row (nulls stay bound nulls). -/
+theorem copyFast_eq_row (null : V) (c : Option (List V)) (rs : List Nat) (hne : rs ≠ []) :
+    copyFast null c rs = copyRow null c false rs := by
+  cases c with
+  | none =>
+    simp [copyFast, copyRow]
+  | some l =>
+    have hany : (rs.map fun r =>
+        (if l.getD r null ≠ null then some (l.getD r null) else some null : Option V)).any
+          Option.isSome = true := by
+      obtain ⟨r, rs', rfl⟩ := List.exists_cons_of_ne_nil hne
+      simp only [List.map_cons, List.any_cons]
+      split <;> simp
+    simp only [copyFast, copyRow, Option.map_some, Bool.not_false, ite_true]
+    simp only [ite_not] at hany ⊢
+    rw [if_pos (by simpa using hany)]
+    simp only [List.map_map, Option.some.injEq]
+    apply List.map_congr_left
+    intro r _
+    simp only [Function.comp]
+    split <;> simp_all
+
+/-- Why the guard is needed: a value-only parent slot holding only nulls is
+unbound after the row path, while a whole-column gather would bind it. -/
+theorem copyFast_vo_differs : copyFast (0 : Nat) (some [0]) [0] ≠ copyRow 0 (some [0]) true [0] := by
+  decide
+
+/-- `ProjectOp::eval` dispatch after #4015: the column fast path (`fast`),
+then the empty-projection path, then the row path (`general`). `voOf` reads
+`batch.is_value_only(old_var.id)` for a copy. -/
+def projectPr4015 {T C : Type} (fast general : List T → List C → Batch V → Batch V)
+    (voOf : C → Bool) (trees : List T) (copies : List C) (b : Batch V) : Batch V :=
+  if b.active ≠ [] ∧ (trees ≠ [] ∨ copies ≠ []) ∧ copies.all (fun c => !voOf c) = true then
+    fast trees copies b
+  else if trees = [] ∧ copies = [] then projectEmptyFast b
+  else general trees copies b
+
+/-- A projection naming nothing still takes #2845's empty-projection path, so
+`projectEmpty_fast_eq_general` still describes it. -/
+theorem projectPr4015_empty {T C : Type} (fast general : List T → List C → Batch V → Batch V)
+    (voOf : C → Bool) (b : Batch V) :
+    projectPr4015 fast general voOf ([] : List T) ([] : List C) b = projectEmptyGeneral b := by
+  simp [projectPr4015, projectEmpty_fast_eq_general]
+
+/-- A copy reaches the fast path only when no copied parent slot is value-only. -/
+theorem projectPr4015_fast_no_vo {T C : Type} (fast general : List T → List C → Batch V → Batch V)
+    (voOf : C → Bool) (trees : List T) (copies : List C) (b : Batch V)
+    (h : ∃ c ∈ copies, voOf c = true) :
+    projectPr4015 fast general voOf trees copies b =
+      (if trees = [] ∧ copies = [] then projectEmptyFast b else general trees copies b) := by
+  obtain ⟨c, hc, hv⟩ := h
+  have : ¬ copies.all (fun c => !voOf c) = true := by
+    intro hall
+    have := List.all_eq_true.mp hall c hc
+    simp [hv] at this
+  simp [projectPr4015, this]
+
+/-- The fast path's output shell: `rows_only(active.len())` with the active
+rows' origins (kept iff some is non-zero), the same shell as the row path's
+`BatchBuilder::finish` — one row per active row, same correlation. -/
+def fastShell (b : Batch V) : Batch V := projectEmptyFast b
+
+theorem fastShell_len (b : Batch V) : (fastShell b).len = b.active.length := by
+  unfold fastShell projectEmptyFast rowsOnly setOriginRows
+  dsimp only
+  split <;> rfl
+
+theorem fastShell_originRow (b : Batch V) (k : Nat) (hk : k < b.active.length) :
+    (fastShell b).originRow k = b.originRow b.active[k] := by
+  unfold fastShell projectEmptyFast rowsOnly setOriginRows
+  dsimp only
+  split
+  · simp [originRow, List.getD_eq_getElem?_getD, hk]
+  · rename_i h
+    simp only [List.any_eq_true, List.mem_map, bne_iff_ne, ne_eq, not_exists, not_and,
+      Decidable.not_not, forall_exists_index, and_imp] at h
+    exact (h _ b.active[k] (List.getElem_mem hk) rfl).symm
+
+end Pr4015
 
 end Columnar.Pr2845

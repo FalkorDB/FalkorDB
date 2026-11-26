@@ -15,5 +15,5 @@ graph/src/parser/lexer.rs	Lexer::format_error	770	PROVEN	FalkorLexerExtra format
 graph/src/parser/lexer.rs	Lexer::set_pos	777	PROVEN	FalkorLexerExtra cacheOf, setPos_next
 graph/src/parser/string_escape.rs	cypher_unescape	71	PROVEN	unescF: unesc_agrees_spec, hexN_rust, hexRun_spec, unesc_plus_rejected (strict hex, #2910); bug fixed by #2910 dba677942; unesc_upper_kept
 graph/src/parser/string_escape.rs	cypher_escape	161	PROVEN	FalkorLexerExtra unesc_escape (cypher_unescape ∘ cypher_escape = id)
-graph/src/parser/cypher.rs	check_depth	308	PROVEN	check_depth guard in Reach: guarded, guarded_height_le, chain_rejected
-graph/src/parser/cypher.rs	nested	349	PROVEN	Call/runCall: nested_bound, nested_boundL, nested_depth_bound
+graph/src/parser/cypher.rs	check_depth	309	PROVEN	check_depth guard in Reach: guarded, guarded_height_le, chain_rejected
+graph/src/parser/cypher.rs	nested	350	PROVEN	Call/runCall: nested_bound, nested_boundL, nested_depth_bound

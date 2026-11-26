@@ -5,7 +5,7 @@
 //! the ID filter expression to produce a candidate `RoaringTreemap` of node IDs,
 //! removes deleted nodes, and yields non-deleted nodes matching the range.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use crate::graph::graph::NodeId;
 use crate::parser::ast::{ExprIR, QueryExpr, QueryNode, Variable};
@@ -32,7 +32,7 @@ impl<'a> NodeByIdSeekOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        node_pattern: &'a QueryNode<ArcStr, Variable>,
         filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {

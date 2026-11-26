@@ -1,0 +1,44 @@
+# The 08:30 UTC missed-night alarm: `bench nightly missed-run`, described in
+# bench/README.md. `date` (workflow_dispatch) re-checks an earlier night.
+
+name: perf missed-run alarm
+
+on:
+  schedule:
+    - cron: "30 8 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Night to check, YYYY-MM-DD in UTC (empty: today)"
+        required: false
+        default: ""
+
+permissions:
+  actions: read
+  contents: read
+
+# One group per run: no check (scheduled, re-run or hand-started) can displace
+# another one that is waiting; the attempts of one run stay in one group.
+concurrency:
+  group: perf-missed-run-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  alarm:
+    name: Nightly perf result exists
+    if: ${{ github.repository == 'FalkorDB/FalkorDB' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          sparse-checkout: bench
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - name: Look for the night's perf-nightly artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PERF_CHAT_WEBHOOK: ${{ secrets.PERF_CHAT_WEBHOOK }}
+          NIGHT: ${{ inputs.date }}
+        run: uv run --project bench bench nightly missed-run ${NIGHT:+--date "$NIGHT"}

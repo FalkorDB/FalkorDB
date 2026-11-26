@@ -32,14 +32,14 @@ use crate::runtime::{
     runtime::Runtime,
     value::{DeletedNode, DeletedRelationship, Value},
 };
+use arcstr::ArcStr;
 use orx_tree::{Dyn, DynTree, NodeIdx, NodeRef};
 use std::collections::HashSet;
-use std::sync::Arc;
 
 fn node_attrs_to_map(
     g: &Graph,
     attrs: Vec<(u16, Value)>,
-) -> OrderMap<Arc<String>, Value> {
+) -> OrderMap<ArcStr, Value> {
     OrderMap::from_unique_keys(
         attrs
             .into_iter()
@@ -50,7 +50,7 @@ fn node_attrs_to_map(
 fn rel_attrs_to_map(
     g: &Graph,
     attrs: Vec<(u16, Value)>,
-) -> OrderMap<Arc<String>, Value> {
+) -> OrderMap<ArcStr, Value> {
     OrderMap::from_unique_keys(
         attrs
             .into_iter()

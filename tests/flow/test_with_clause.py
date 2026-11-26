@@ -386,3 +386,43 @@ class testWithClause(FlowTestsBase):
                 self.env.assertContains("Type mismatch", str(e))
         finally:
             g.delete()
+
+    def test15_carried_variables_keep_their_values(self):
+        # A projection that carries a variable forward (here for a later
+        # ORDER BY, WHERE or MATCH) must hand on exactly the values, nulls and
+        # entities of its input, whatever the input batch's selection.
+        g = self.db.select_graph("with_carry_columns")
+        try:
+            g.query("""UNWIND range(1, 40) AS i
+                       CREATE (n:C {i: i, k: CASE WHEN i % 4 = 0 THEN null ELSE i % 5 END})
+                       WITH n, i WHERE i % 3 = 0
+                       CREATE (n)-[:R]->(:D {i: i})""")
+
+            # ORDER BY a key that is not projected carries `n` to the sort
+            res = g.query("""MATCH (n:C) WHERE n.i % 2 = 0
+                             RETURN n.i ORDER BY n.k, n.i DESC""").result_set
+            rows = [i for i in range(1, 41) if i % 2 == 0]
+            key = lambda i: (1, 0) if i % 4 == 0 else (0, i % 5)
+            self.env.assertEqual([r[0] for r in res],
+                                 sorted(rows, key=lambda i: (key(i), -i)))
+
+            # OPTIONAL MATCH nulls stay bound nulls once carried through WITH
+            res = g.query("""MATCH (n:C) OPTIONAL MATCH (n)-[:R]->(d)
+                             WITH n, d, n.i AS i WHERE i <= 6
+                             RETURN i, d IS NULL, d.i ORDER BY i""").result_set
+            self.env.assertEqual(res, [[1, True, None], [2, True, None], [3, False, 3],
+                                       [4, True, None], [5, True, None], [6, False, 6]])
+
+            # a carried node is still the same entity for a later MATCH
+            res = g.query("""MATCH (n:C) WHERE n.i > 30
+                             WITH n, n.i * 10 AS t
+                             MATCH (n)-[:R]->(d)
+                             RETURN n.i, t, d.i ORDER BY n.i""").result_set
+            self.env.assertEqual(res, [[33, 330, 33], [36, 360, 36], [39, 390, 39]])
+
+            # only carried variables, no computed projection
+            res = g.query("""MATCH (n:C)-[r:R]->(d) WITH n, r, d
+                             RETURN count(n), count(r), count(DISTINCT d)""").result_set
+            self.env.assertEqual(res, [[13, 13, 13]])
+        finally:
+            g.delete()

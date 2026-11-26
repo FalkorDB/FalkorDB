@@ -32,13 +32,13 @@ use crate::{
     index::{IndexType, indexer::IndexOptions},
     runtime::{pending::IndexDocs, value::Value},
 };
+use arcstr::ArcStr;
 // Not v3's: applying a payload can fail the same ways whatever version
 // wrote it, so the error lives beside `DecodeError`. Re-exported because
 // this is where callers have always found it.
 pub use crate::effects::error::{ApplyError, LocalName};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
 
 /// Ids expanded per label write when a `CreateNode` record has no attribute
 /// rows to bound its id count.
@@ -189,7 +189,7 @@ fn apply_record(
             // rejected correct buffers whose name was already registered.
             // `apply_add_schema` above avoids this by taking the id its getter
             // returns; this now does the same.
-            let key = Arc::new(name.clone());
+            let key = ArcStr::from(name.as_str());
             g.add_node_attribute_name(&name);
             // Not `expect`. `add_node_attribute_name` is silent when it does not
             // register: `AttrNameMap::insert` returns without inserting once the
@@ -458,8 +458,8 @@ fn apply_record(
             // record about all three, and checking only the one that fits
             // through `create_index` would report the wrong reason when the
             // dictionary has diverged on another.
-            let label = Arc::new(single_index_label(schemas)?);
-            let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
+            let label = ArcStr::from(single_index_label(schemas)?);
+            let fields: Vec<ArcStr> = fields.into_iter().map(|f| ArcStr::from(f.name)).collect();
             // Population is spawned, not run here. `populate_indexes_sync` ran
             // on the Redis main thread, so a replica applying an index over a
             // large label froze for the whole build — the same class of problem
@@ -501,8 +501,8 @@ fn apply_record(
             // caller that reaches apply without decoding gets a refusal rather
             // than a silent misclassification.
             let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
-            let label = Arc::new(single_index_label(schemas)?);
-            let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
+            let label = ArcStr::from(single_index_label(schemas)?);
+            let fields: Vec<ArcStr> = fields.into_iter().map(|f| ArcStr::from(f.name)).collect();
             g.drop_index(&index_type, &schema_type, &label, &fields)?;
             Ok(())
         }
@@ -519,8 +519,7 @@ fn apply_record(
             for AttrRef { id, name } in &props {
                 verify_attribute(g, *id, name)?;
             }
-            let properties: Vec<Arc<String>> =
-                props.into_iter().map(|p| Arc::new(p.name)).collect();
+            let properties: Vec<ArcStr> = props.into_iter().map(|p| ArcStr::from(p.name)).collect();
             // Install the master's outcome rather than re-deriving it. A replica
             // that validated independently would scan at a different time
             // against different interleavings, and could legitimately reach a
@@ -533,7 +532,7 @@ fn apply_record(
             g.upsert_constraint_raw(
                 constraint_type,
                 entity_type,
-                &Arc::new(label),
+                &ArcStr::from(label),
                 &properties,
                 status,
             );
@@ -551,8 +550,7 @@ fn apply_record(
             for AttrRef { id, name } in &props {
                 verify_attribute(g, *id, name)?;
             }
-            let properties: Vec<Arc<String>> =
-                props.into_iter().map(|p| Arc::new(p.name)).collect();
+            let properties: Vec<ArcStr> = props.into_iter().map(|p| ArcStr::from(p.name)).collect();
             g.drop_constraint(&constraint_type, &entity_type, &label, &properties)?;
             Ok(())
         }
@@ -670,7 +668,7 @@ fn resolved(
 fn resolve_type(
     g: &Graph,
     relation_id: u32,
-) -> Result<Arc<String>, ApplyError> {
+) -> Result<ArcStr, ApplyError> {
     g.get_type(TypeId(relation_id as usize))
         .ok_or_else(|| ApplyError::IdOutOfRange {
             kind: "relationship type",
@@ -1285,7 +1283,7 @@ mod tests {
         .unwrap();
         apply_effects(&mut g, &buf).expect("create must apply");
         assert_eq!(
-            g.get_node_attribute(0.into(), &Arc::new("drop".into())),
+            g.get_node_attribute(0.into(), &ArcStr::from("drop")),
             Some(Value::Int(10))
         );
 
@@ -1302,12 +1300,12 @@ mod tests {
         apply_effects(&mut g, &buf).expect("update must apply");
 
         assert_eq!(
-            g.get_node_attribute(0.into(), &Arc::new("drop".into())),
+            g.get_node_attribute(0.into(), &ArcStr::from("drop")),
             None,
             "the null must have removed it"
         );
         assert_eq!(
-            g.get_node_attribute(0.into(), &Arc::new("keep".into())),
+            g.get_node_attribute(0.into(), &ArcStr::from("keep")),
             Some(Value::Int(1)),
             "and left the rest alone"
         );
@@ -1358,7 +1356,7 @@ mod tests {
 
         assert_eq!(g.get_labels().len(), 2);
         assert_eq!(
-            g.label_node_count(&Arc::new("B".to_string())),
+            g.label_node_count(&ArcStr::from("B")),
             3,
             "every node must have picked up the new label"
         );
@@ -1636,9 +1634,9 @@ mod tests {
             labels: vec![0],
             attr_ids: vec![0],
             rows: vec![
-                Value::String(Arc::new("a".into())),
-                Value::String(Arc::new("b".into())),
-                Value::String(Arc::new("c".into())),
+                Value::String(ArcStr::from("a")),
+                Value::String(ArcStr::from("b")),
+                Value::String(ArcStr::from("c")),
             ],
         }
         .encode(&mut buf)
@@ -1810,7 +1808,7 @@ mod tests {
         .unwrap();
 
         apply_effects(&mut g, &buf).expect("must apply");
-        assert_eq!(g.label_node_count(&Arc::new("L".to_string())), 4);
+        assert_eq!(g.label_node_count(&ArcStr::from("L")), 4);
     }
 
     #[test]
@@ -1970,10 +1968,7 @@ mod tests {
             "attribute ids must line up"
         );
         assert_eq!(replica.node_count(), 600);
-        assert_eq!(
-            replica.label_node_count(&Arc::new("Person".to_string())),
-            600
-        );
+        assert_eq!(replica.label_node_count(&ArcStr::from("Person")), 600);
     }
 
     #[test]

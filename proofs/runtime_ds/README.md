@@ -46,7 +46,7 @@ Yes, with no caveat on duplicates, for elements whose equality is an equivalence
 
 **5. Does string interning give one pointer per string, and keep it stable?**
 
-Yes. `intern_injective` says two different strings never share a pointer. `intern_idem` says interning the same string twice returns the same pointer. `prune_keeps_held` says the pool's cleanup in `stats` never evicts a string that someone still holds. `reintern_fresh` says a string interned again after being pruned gets a brand-new pointer, so an old pointer can never be mistaken for it (no ABA).
+Yes for every non-empty string. Since #3966 `intern` hands a static `ArcStr` (the empty string) back unpooled, so `is_interned` is false for an interned empty string and `GRAPH.INFO ObjectPool` does not count it (`internArc_empty_not_interned`, `internArc_isInterned_fails`); every other string still gets its canonical entry (`internArc_isInterned`), and `internArc_idem`/`internArc_injective` hold for the whole fn. On the pool path, `intern_injective` says two different strings never share a pointer. `intern_idem` says interning the same string twice returns the same pointer. `prune_keeps_held` says the pool's cleanup in `stats` never evicts a string that someone still holds. `reintern_fresh` says a string interned again after being pruned gets a brand-new pointer, so an old pointer can never be mistaken for it (no ABA).
 
 **6. Does `Cow::new_version` isolate the committed version from the writer?**
 

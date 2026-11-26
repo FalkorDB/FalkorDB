@@ -54,73 +54,100 @@ theorem fmtDuration_ex2 : fmtDuration 0 0 90000 = "P1DT1H" := by decide
 
 /-! ## Memory accounting -/
 
-/-- Heap view of a value: payload lengths, capacities and `Arc` strong counts. -/
+/-- Heap view of a value: payload lengths, capacities and `Arc` strong counts.
+A string is an `arcstr::ArcStr` (since #3966): one allocation of header and bytes, no
+spare capacity; `stat` marks arcstr's static strings (the empty string, `literal!`),
+which own no heap and have no strong count (`ArcStr::strong_count` is `None`). -/
 inductive HV where
   | scalar                                              -- Null..Node: inline
   | rel                                                 -- Relationship
-  | str (len cap rc : Nat)
+  | str (len : Nat) (stat : Bool) (rc : Nat)
   | list (items : List HV) (cap rc : Nat)               -- List and Path
-  | map (entries : List (Nat × Nat × Nat × HV)) (rc : Nat) -- (key len, key cap, key rc, value)
+  | map (entries : List (Nat × Bool × Nat × HV)) (rc : Nat) -- (key len, key static, key rc, value)
   | vec (len cap rc : Nat)
 
-/-- `size_of` constants on 64-bit targets (checked by `sizes_are_as_modelled` in
-graph/tests/lean_value_math.rs). -/
+/-- `size_of` constants on 64-bit targets (`size_of::<ArcStr>() = 8` is checked by
+`value_stays_two_words` in value.rs). -/
 def SZ_VALUE : Nat := 16
-def SZ_STRING : Nat := 24
-def SZ_ARC : Nat := 8
+def SZ_ARCSTR : Nat := 8
 def SZ_REL : Nat := 24
 def ARC_HDR : Nat := 16
+/-- `ARCSTR_HDR` in `arcstr_alloc_size` (value.rs): length and refcount words. -/
+def ARCSTR_HDR : Nat := 16
+
+/-- `arcstr_alloc_size` (value.rs): a static owns no heap, else header plus bytes. -/
+def arcstrAlloc (len : Nat) (stat : Bool) : Nat := if stat then 0 else ARCSTR_HDR + len
+
+/-- `arcstr_heap_size` (value.rs): `strong_count` is `None` for a static (0), else
+the allocation divided by the `rc` shares. -/
+def arcstrShare (len : Nat) (stat : Bool) (rc : Nat) : Nat :=
+  if stat then 0 else arcstrAlloc len stat / rc
+
+theorem arcstrAlloc_static (len : Nat) : arcstrAlloc len true = 0 := rfl
+theorem arcstrAlloc_heap (len : Nat) : arcstrAlloc len false = 16 + len := rfl
+/-- One share of an unshared string is its whole allocation; a static is free. -/
+theorem arcstrShare_unshared (len : Nat) (stat : Bool) :
+    arcstrShare len stat 1 = arcstrAlloc len stat := by
+  cases stat <;> simp [arcstrShare, arcstrAlloc]
+/-- The `rc` holders of one string are charged at most its allocation in total. -/
+theorem arcstrShare_le (len rc : Nat) (stat : Bool) :
+    rc * arcstrShare len stat rc ≤ arcstrAlloc len stat := by
+  cases stat
+  · simp only [arcstrShare]; exact Nat.mul_div_le _ _
+  · simp [arcstrShare, arcstrAlloc]
 
 mutual
 def heapSize : HV → Nat
   | .scalar => 0
   | .rel => SZ_REL
-  | .str len _ _ => SZ_STRING + len
+  | .str len stat _ => arcstrAlloc len stat
   | .list items _ _ => items.length * SZ_VALUE + heapSizeList items
   | .map entries _ => heapSizeMap entries
   | .vec len _ _ => len * 4
 def heapSizeList : List HV → Nat
   | [] => 0
   | x :: xs => heapSize x + heapSizeList xs
-def heapSizeMap : List (Nat × Nat × Nat × HV) → Nat
+def heapSizeMap : List (Nat × Bool × Nat × HV) → Nat
   | [] => 0
-  | (klen, _, _, v) :: xs => (SZ_ARC + SZ_STRING + klen + SZ_VALUE + heapSize v) + heapSizeMap xs
+  | (klen, kstat, _, v) :: xs => (SZ_ARCSTR + arcstrAlloc klen kstat + SZ_VALUE + heapSize v) + heapSizeMap xs
 end
 
 mutual
 def amortized : HV → Nat
   | .scalar => 0
   | .rel => SZ_REL
-  | .str _ cap rc => (ARC_HDR + SZ_STRING + cap) / rc
+  | .str len stat rc => arcstrShare len stat rc
   | .list items cap rc => (ARC_HDR + cap * SZ_VALUE + amortizedList items) / rc
   | .map entries rc => (ARC_HDR + amortizedMap entries) / rc
   | .vec _ cap rc => (ARC_HDR + cap * 4) / rc
 def amortizedList : List HV → Nat
   | [] => 0
   | x :: xs => amortized x + amortizedList xs
-def amortizedMap : List (Nat × Nat × Nat × HV) → Nat
+def amortizedMap : List (Nat × Bool × Nat × HV) → Nat
   | [] => 0
-  | (_, kcap, krc, v) :: xs => (SZ_ARC + (ARC_HDR + SZ_STRING + kcap) / krc + SZ_VALUE + amortized v) + amortizedMap xs
+  | (klen, kstat, krc, v) :: xs => (SZ_ARCSTR + arcstrShare klen kstat krc + SZ_VALUE + amortized v) + amortizedMap xs
 end
 
-/- Unshared, well-formed (capacity ≥ length) heap views. -/
+/- Unshared, well-formed (capacity ≥ length) heap views. A static string is never
+shared in the counted sense (it has no count). -/
 mutual
 def Unshared : HV → Prop
   | .scalar | .rel => True
-  | .str len cap rc => rc = 1 ∧ len ≤ cap
+  | .str _ stat rc => stat = true ∨ rc = 1
   | .list items cap rc => rc = 1 ∧ items.length ≤ cap ∧ UnsharedList items
   | .map entries rc => rc = 1 ∧ UnsharedMap entries
   | .vec len cap rc => rc = 1 ∧ len ≤ cap
 def UnsharedList : List HV → Prop
   | [] => True
   | x :: xs => Unshared x ∧ UnsharedList xs
-def UnsharedMap : List (Nat × Nat × Nat × HV) → Prop
+def UnsharedMap : List (Nat × Bool × Nat × HV) → Prop
   | [] => True
-  | (klen, kcap, krc, v) :: xs => krc = 1 ∧ klen ≤ kcap ∧ Unshared v ∧ UnsharedMap xs
+  | (_, kstat, krc, v) :: xs => (kstat = true ∨ krc = 1) ∧ Unshared v ∧ UnsharedMap xs
 end
 
 /- For values nobody shares, `amortized_heap_size ≥ heap_size`: the amortized figure
-additionally charges the `Arc` headers and spare capacity. -/
+additionally charges the `Arc` headers and spare capacity (a string's `ArcStr` header
+is in both). -/
 theorem heap_le_amortized : ∀ (n : Nat) (h : HV), sizeOf h < n → Unshared h → heapSize h ≤ amortized h := by
   intro n
   induction n with
@@ -139,28 +166,32 @@ theorem heap_le_amortized : ∀ (n : Nat) (h : HV), sizeOf h < n → Unshared h 
         have := ih x (by simp at hsz; omega) hux.1
         have := ihx (by simp at hsz; omega) hux.2
         omega
-    have hm : ∀ es : List (Nat × Nat × Nat × HV), sizeOf es < n → UnsharedMap es →
+    have hm : ∀ es : List (Nat × Bool × Nat × HV), sizeOf es < n → UnsharedMap es →
         heapSizeMap es ≤ amortizedMap es := by
       intro es
       induction es with
       | nil => intro _ _; simp [heapSizeMap, amortizedMap]
       | cons e es ihe =>
-        obtain ⟨klen, kcap, krc, v⟩ := e
+        obtain ⟨klen, kstat, krc, v⟩ := e
         intro hsz hue
         simp only [UnsharedMap] at hue
-        obtain ⟨hk, hlen, hv, hrest⟩ := hue
-        subst hk
-        simp only [heapSizeMap, amortizedMap, Nat.div_one]
+        obtain ⟨hk, hv, hrest⟩ := hue
+        have hkey : arcstrAlloc klen kstat ≤ arcstrShare klen kstat krc := by
+          rcases hk with hk | hk
+          · subst hk; simp [arcstrShare, arcstrAlloc]
+          · subst hk; rw [arcstrShare_unshared]; exact Nat.le_refl _
+        simp only [heapSizeMap, amortizedMap]
         have := ih v (by simp at hsz; omega) hv
         have := ihe (by simp at hsz; omega) hrest
-        simp only [SZ_ARC, SZ_STRING, SZ_VALUE, ARC_HDR] at *
         omega
     cases h with
     | scalar => simp [heapSize, amortized]
     | rel => simp [heapSize, amortized]
-    | str len cap rc =>
-      simp only [Unshared] at hu; obtain ⟨rfl, hc⟩ := hu
-      simp [heapSize, amortized, SZ_STRING, ARC_HDR]; omega
+    | str len stat rc =>
+      simp only [Unshared] at hu
+      rcases hu with hu | hu
+      · subst hu; simp [heapSize, amortized, arcstrShare, arcstrAlloc]
+      · subst hu; simp only [heapSize, amortized]; rw [arcstrShare_unshared]; exact Nat.le_refl _
     | vec len cap rc =>
       simp only [Unshared] at hu; obtain ⟨rfl, hc⟩ := hu
       simp [heapSize, amortized, ARC_HDR]; omega
@@ -184,6 +215,21 @@ theorem shares_le (x rc : Nat) (h : 0 < rc) : rc * (x / rc) ≤ x ∧ x < rc * (
   · have := Nat.div_add_mod x rc
     have := Nat.mod_lt x h
     rw [Nat.mul_comm] at *; omega
+
+/-- `concat_str` (value.rs, the `String + String` arm of `add_slow` since #3966): the
+empty result is arcstr's static `ArcStr::new()`, any other one allocation written with
+`a`'s bytes then `b`'s. -/
+def concatStr (a b : String) : String :=
+  if a.isEmpty && b.isEmpty then "" else a ++ b
+
+/-- `concat_str` is concatenation, the empty case included. -/
+theorem concatStr_eq (a b : String) : concatStr a b = a ++ b := by
+  unfold concatStr
+  split
+  · rename_i h
+    simp only [Bool.and_eq_true, String.isEmpty_iff] at h
+    obtain ⟨rfl, rfl⟩ := h; rfl
+  · rfl
 
 /-- A `Relationship` value owns no heap (it is an id, value.rs), yet both
 estimates charge it 24 bytes — a fixed over-count (suspicion; no user-visible effect

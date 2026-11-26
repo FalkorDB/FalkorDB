@@ -42,17 +42,17 @@ src/redis_type.rs	graphmeta_rdb_save	1010	PROVEN	RedisType.metaSave (= saveKeySl
 src/redis_type.rs	graphmeta_free	1022	PROVEN	RedisType.metaFree: metaFree_spec
 src/redis_type.rs	graphmeta_aux_load	1032	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
 src/redis_type.rs	wrong_type_compat	933	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
-graph/src/graph/graph.rs	create_constraint	4604	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
-graph/src/graph/graph.rs	validate_mandatory_constraint	4779	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4818	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4873	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
-src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
-src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
-src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip
-src/serializers/encoder/mod.rs	vec_save_graph	59	PROVEN	Persist.encodeGraph: load_encode, truncated_payload_eof; byte layer redis_layer vec_roundtrip
-src/serializers/encoder/mod.rs	encode_graph	68	PROVEN	Persist.encodeGraph/encDir/encPayload: load_encode, key_rt, decDir_rt, payload_rt, entry_rt
-src/serializers/encoder/mod.rs	build_multi_key_payloads	95	PROVEN	Persist.buildMulti/fillKey/keysFrom: fillKey_spec, multi_key_tiles, multi_key_bound, multi_key_all_placed, multi_key_matrices
-src/serializers/encoder/mod.rs	build_payloads	192	PROVEN	Persist.buildPayloads: load_encode, fold_build, buildPayloads_bounds
+graph/src/graph/graph.rs	create_constraint	4602	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	validate_mandatory_constraint	4777	PROVEN	Constraint.mandatory_agrees
+graph/src/graph/graph.rs	validate_unique_constraint	4816	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
+graph/src/graph/graph.rs	build_composite_key	4871	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+src/serializers/encoder/mod.rs	rdb_save_graph	12	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
+src/serializers/encoder/mod.rs	rdb_save_graph_key	22	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
+src/serializers/encoder/mod.rs	pipe_save_graph	45	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip
+src/serializers/encoder/mod.rs	vec_save_graph	60	PROVEN	Persist.encodeGraph: load_encode, truncated_payload_eof; byte layer redis_layer vec_roundtrip
+src/serializers/encoder/mod.rs	encode_graph	69	PROVEN	Persist.encodeGraph/encDir/encPayload: load_encode, key_rt, decDir_rt, payload_rt, entry_rt
+src/serializers/encoder/mod.rs	build_multi_key_payloads	96	PROVEN	Persist.buildMulti/fillKey/keysFrom: fillKey_spec, multi_key_tiles, multi_key_bound, multi_key_all_placed, multi_key_matrices
+src/serializers/encoder/mod.rs	build_payloads	193	PROVEN	Persist.buildPayloads: load_encode, fold_build, buildPayloads_bounds
 src/serializers/decoder/mod.rs	push_tensor	56	PROVEN	Persist.decTn/decTns (decode a tensor, then check_type_fits on its index): decTns_rt, decTns_rt0, decTn_refuses
 src/serializers/decoder/mod.rs	check_type_fits	67	PROVEN	Persist.checkTypeFits: checkTypeFits_false (index > maxTypeId = 65534 with edges refused), decTn_refuses
 src/serializers/decoder/mod.rs	decode_payload_directory	80	PROVEN	Persist.decDir/decDirEntry/St.accepted: decDir_rt (with buildPayloads_accepted, EntryOK.accepted), decDirEntry_refuses, decDir_refuses_cch

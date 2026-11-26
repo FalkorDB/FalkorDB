@@ -35,6 +35,7 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
+use arcstr::ArcStr;
 use rand::RngExt;
 use std::sync::Arc;
 use thin_vec::thin_vec;
@@ -163,7 +164,7 @@ pub fn register(funcs: &mut Functions) {
                 u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
             );
 
-            Ok(Value::String(Arc::new(uuid)))
+            Ok(Value::String(ArcStr::from(uuid)))
         }
     );
 

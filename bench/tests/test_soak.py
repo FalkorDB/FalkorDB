@@ -1,0 +1,2011 @@
+"""`bench soak`'s comparison and result logic (falkorbench.soak.check); no server, no docker.
+
+uv run --project bench --group dev --group soak python -I -B -m pytest bench/tests/test_soak.py
+"""
+
+import argparse
+import ast
+import io
+import json
+import os
+import re
+import signal
+import socket
+import subprocess
+import threading
+import time
+import types
+from collections import Counter
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from falkorbench import kit
+from falkorbench.cli import cli
+from falkorbench.contract import COMMIT_RE
+from falkorbench.contract import IMAGE_RE
+from falkorbench.contract import validate_result
+from falkorbench.soak import check as sc
+from falkorbench.soak import gen_final
+from falkorbench.soak import score as soak_score
+from falkorbench.soak import soakkit
+
+STARTED = "2026-11-25T00:00:00Z"
+DIGEST_A = "ghcr.io/falkordb/falkordb-server@sha256:" + "a" * 64
+DIGEST_B = "falkordb/falkordb-server@sha256:" + "b" * 64
+
+
+def run(
+    side,
+    rep=1,
+    completed=True,
+    checks=None,
+    ops=None,
+    setup_s=None,
+    scenario="s12_iot_retention",
+    server_ran=True,
+    cut=False,
+    wall_s=400.0,
+):
+    return sc.Run(
+        scenario=scenario,
+        side=side,
+        rep=rep,
+        completed=completed,
+        reason="" if completed else "exit 1",
+        checks=checks or {},
+        ops=ops or {},
+        setup_s=setup_s,
+        server_ran=server_ran,
+        cut=cut,
+        wall_s=wall_s,
+    )
+
+
+def op(p99, tput=10.0, p50=None, ok=1000):
+    return {"p50_ms": p99 / 3 if p50 is None else p50, "p99_ms": p99, "throughput": tput, "ok": ok}
+
+
+def by_name(rows):
+    return {r.name: r for r in rows}
+
+
+def _inputs_ok(doc):
+    """A result written for refused inputs (a tag, a short commit) cannot be valid."""
+    return all(
+        IMAGE_RE.fullmatch(doc[s]["image"])
+        and (doc[s]["commit"] is None or COMMIT_RE.fullmatch(doc[s]["commit"]))
+        for s in ("candidate", "baseline")
+    )
+
+
+@pytest.fixture(autouse=True)
+def every_result_is_valid(tmp_path):
+    """Whatever result.json a test leaves in tmp_path must pass the contract's validator."""
+    yield
+    for f in tmp_path.rglob("result.json"):
+        doc = json.loads(f.read_text())
+        if _inputs_ok(doc):
+            assert [str(x) for x in validate_result(doc)] == [], f
+
+
+def finish(a, out, *rest):
+    """sc.finish, with its result written as kit.run_check() would (so the fixture checks it)."""
+    res = sc.finish(a, out, *rest)
+    kit.write_result(out, res)
+    return res
+
+
+def args(**kw):
+    base = dict(
+        candidate=DIGEST_A,
+        baseline=DIGEST_B,
+        mode="nightly",
+        check="soak-b",
+        candidate_label=None,
+        baseline_label=None,
+        candidate_commit=None,
+        baseline_commit=None,
+    )
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+# ------------------------------------------------------------------ 1-held / 0-broken pairs
+@pytest.mark.parametrize(
+    "c,b,status",
+    [
+        (0, 1, "regression"),
+        (0, None, "regression"),
+        (0, 0, "info"),
+        (1, 0, "improvement"),
+        (1, 1, "ok"),
+        (1, None, "info"),
+        (None, None, "info"),
+        (None, 1, "info"),
+        (None, 0, "info"),
+    ],
+)
+def test_zero_one_status(c, b, status):
+    assert sc._zero_one("x", "invariant", c, b).status == status
+
+
+def test_known_flaky_check_is_never_gated_but_named(tmp_path):
+    name = "Live (under writes) index == scan during build/after"
+    assert f"s10 {name}" in sc.KNOWN_FLAKY
+    c = run("candidate", checks={name: False, "y": True}, scenario="s10_schema_under_load")
+    c.details = {name: "1 of 40 runs failed; first: [567,667] idx=1242 scan=1243"}
+    sched = sc.Schedule(
+        runs={
+            "s10_schema_under_load": {
+                "candidate": [c],
+                "baseline": [
+                    run(
+                        "baseline", checks={name: True, "y": True}, scenario="s10_schema_under_load"
+                    )
+                ],
+            }
+        }
+    )
+    res = finish(
+        args(), tmp_path, STARTED, ["s10_schema_under_load"], sched, None, [], sc.MODES["nightly"]
+    )
+    assert res["verdict"] == "pass" and res["findings"] == []
+    assert f"known flaky, not gated: s10 {name} (#3095) broke on candidate" in res["summary"]
+    assert ",known," in (tmp_path / "raw" / "rows.csv").read_text()
+
+
+def test_every_known_flaky_entry_names_an_issue():
+    for name, issue in sc.KNOWN_FLAKY.items():
+        assert re.fullmatch(r"#[1-9][0-9]*", issue), (name, issue)
+        assert re.fullmatch(r"s\d\d .+", name), name
+
+
+def test_known_flaky_broken_every_time_on_every_run_is_still_a_regression():
+    name = "Live (under writes) index == scan during build/after"
+
+    def cand(rep, k, n):
+        r = run("candidate", rep, checks={name: False}, scenario="s10_schema_under_load")
+        r.details = {name: f"{k} of {n} runs failed; first: [1,2] idx=1 scan=2"}
+        return r
+
+    base = [run("baseline", checks={name: True}), run("baseline", 2, checks={name: True})]
+    rows = {
+        r.name: r
+        for r in sc.scenario_rows(
+            "s10_schema_under_load", [cand(1, 26, 26), cand(2, 30, 30)], base, True
+        )
+    }
+    assert rows[f"s10 {name}"].status == "regression"
+    # the old failure-only recording ("3 of 3") is under the 10-check floor: the known flake
+    rows = {
+        r.name: r
+        for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 3, 3)], base[:1], True)
+    }
+    assert rows[f"s10 {name}"].status == "known"
+    # broke every time in one run, only sometimes in the other: the known flake
+    rows = {
+        r.name: r
+        for r in sc.scenario_rows(
+            "s10_schema_under_load", [cand(1, 26, 26), cand(2, 3, 30)], base, True
+        )
+    }
+    assert rows[f"s10 {name}"].status == "known"
+    # one run, a few misses of many: the known flake; every time: a regression
+    assert {
+        r.name: r
+        for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 1, 40)], base[:1], True)
+    }[f"s10 {name}"].status == "known"
+    assert {
+        r.name: r
+        for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 40, 40)], base[:1], True)
+    }[f"s10 {name}"].status == "regression"
+    # broke on both sides: still known, and the summary says both
+    b = run("baseline", checks={name: False})
+    b.details = {name: "2 of 40 runs failed"}
+    row = {
+        r.name: r for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 1, 40)], [b], True)
+    }[f"s10 {name}"]
+    assert row.status == "known" and row.note.endswith("broke on candidate and baseline")
+
+
+def test_correctness_breaks_in_the_rerun_count_too():
+    cand = [run("candidate", checks={"x": True}), run("candidate", 2, checks={"x": False})]
+    base = [run("baseline", checks={"x": True}), run("baseline", 2, checks={"x": True})]
+    assert by_name(sc.scenario_rows("s07_mvcc", cand, base, True))["s07 x"].status == "regression"
+
+
+# ------------------------------------------------------------------ timing checks
+def test_timing_check_broken_once_is_unconfirmed_info_and_asks_for_a_rerun():
+    name = "p99 does not drift up: ingest_batch"
+    assert sc.is_timing_check(name)
+    rows = sc.scenario_rows(
+        "s12_iot_retention",
+        [run("candidate", checks={name: False})],
+        [run("baseline", checks={name: True})],
+        True,
+    )
+    row = next(r for r in rows if r.metric == "invariant")
+    assert row.status == "info" and row.crossed and row.candidate == 1
+    assert row.name == f"s12 {name} (broke in 1 of 1 candidate runs)"
+
+
+def test_timing_check_broken_on_every_run_is_a_regression():
+    name = "RSS plateaus in second half (slope projected over run length <= 10% of mean RSS)"
+    cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
+    base = [run("baseline", checks={name: True}), run("baseline", 2, checks={name: True})]
+    row = by_name(sc.scenario_rows("s12_iot_retention", cand, base, True))[f"s12 {name}"]
+    assert (row.status, row.candidate, row.baseline) == ("regression", 0, 1)
+
+
+def test_timing_check_in_queue_mode_never_fails_and_stays_valid():
+    name = "replication lag p99 < 1 s"
+    cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
+    base = [run("baseline", checks={name: True}), run("baseline", 2, checks={name: True})]
+    row = next(
+        r for r in sc.scenario_rows("s09_replication", cand, base, False) if r.metric == "invariant"
+    )
+    # candidate 0 with baseline 1 must be a regression (validator), so queue mode reports 1 + note
+    assert (row.status, row.candidate, row.baseline) == ("info", 1, 1)
+
+
+def test_timing_confirmation_pairs_the_runs():
+    """Broken on the candidate twice, but the baseline also broke in the re-run: noise that hit
+    both sides, not a confirmed regression."""
+    name = "p99 does not drift up: ingest_batch"
+    cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
+    base = [run("baseline", checks={name: True}), run("baseline", 2, checks={name: False})]
+    row = next(
+        r
+        for r in sc.scenario_rows("s12_iot_retention", cand, base, True)
+        if r.metric == "invariant"
+    )
+    assert row.status == "info" and row.candidate == 1
+
+
+def test_timing_check_broken_once_on_the_baseline_is_not_an_improvement():
+    name = "victim open-loop schedule kept (few late/missed sends)"
+    row = next(
+        r
+        for r in sc.scenario_rows(
+            "s11_client_chaos",
+            [run("candidate", checks={name: True})],
+            [run("baseline", checks={name: False})],
+            True,
+        )
+        if r.metric == "invariant"
+    )
+    assert (row.status, row.candidate, row.baseline) == ("ok", 1, 1)
+
+
+def test_timing_check_broken_on_both_sides_every_run_is_info():
+    name = "steady state: RSS plateau (2nd half growth <10%+50MB)"
+    cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
+    base = [run("baseline", checks={name: False}), run("baseline", 2, checks={name: False})]
+    row = next(
+        r
+        for r in sc.scenario_rows("s05_multitenant_churn", cand, base, True)
+        if r.metric == "invariant"
+    )
+    assert (row.status, row.candidate, row.baseline) == ("info", 0, 0)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "ingest reading count",
+        "deleted ids are reused (max(id) stays bounded)",
+        "runaway query with TIMEOUT 500 ms times out",
+        "server alive at end",
+        "recall@10 late >= 0.90",
+        "A1-strict-kill9: recovery (kill->first query) < 180s",
+        "replica initial full sync completes (<=900s)",
+        "rss_slope written",
+        "slots slope slow progress address stress",
+    ],
+)
+def test_correctness_names_are_not_timing(name):
+    assert not sc.is_timing_check(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "no missed schedule slots",
+        "SLO pay p99<=100ms",
+        "steady state: used_memory plateau (2nd half growth <10%+20MB)",
+        "RSS plateaus in second half (slope projected over run length <= 10% of mean RSS)",
+        "no memory growth between chaos rounds (RSS)",
+        "replication lag p99 < 1 s",
+        "victim open-loop schedule kept (few late/missed sends)",
+        "segments completed within time budget",
+    ],
+)
+def test_timing_names(name):
+    assert sc.is_timing_check(name)
+
+
+# ------------------------------------------------------------------ completed
+def test_crash_on_the_candidate_is_a_completed_regression():
+    rows = by_name(
+        sc.scenario_rows(
+            "s12_iot_retention", [run("candidate", completed=False)], [run("baseline")], True
+        )
+    )
+    assert rows["s12 completed"].status == "regression"
+    assert not [r for r in rows.values() if r.metric in ("p99_ms", "throughput")]
+
+
+def test_crash_on_both_sides_is_info():
+    rows = by_name(
+        sc.scenario_rows(
+            "s12_iot_retention",
+            [run("candidate", completed=False)],
+            [run("baseline", completed=False)],
+            True,
+        )
+    )
+    assert rows["s12 completed"].status == "info"
+
+
+# ------------------------------------------------------------------ perf
+def test_p50_crossing_needs_the_rerun_to_repeat_it():
+    cand1 = run("candidate", ops={"ingest_batch": op(60.0, p50=30.0)})
+    base1 = run("baseline", ops={"ingest_batch": op(9.0, p50=3.0)})
+    # first pass only: info, asks for a re-run
+    rows = {
+        (r.name, r.metric): r for r in sc.scenario_rows("s12_iot_retention", [cand1], [base1], True)
+    }
+    row = rows[("s12 ingest_batch (not re-run)", "p50_ms")]
+    assert (row.status, row.crossed) == ("info", True)
+    # repeated (milder): regression with the milder ratio
+    cand2 = run("candidate", 2, ops={"ingest_batch": op(40.0, p50=15.0)})
+    base2 = run("baseline", 2, ops={"ingest_batch": op(9.0, p50=3.0)})
+    rows = [
+        r
+        for r in sc.scenario_rows("s12_iot_retention", [cand1, cand2], [base1, base2], True)
+        if r.metric == "p50_ms"
+    ]
+    assert rows[0].status == "regression" and rows[0].name == "s12 ingest_batch"
+    assert rows[0].ratio == pytest.approx(5.0)
+    # repeated, but under the 2.0x ratio (the worst A/A p50 swing was 1.81x): not repeated
+    cand2.ops["ingest_batch"] = op(40.0, p50=5.4)
+    rows = [
+        r
+        for r in sc.scenario_rows("s12_iot_retention", [cand1, cand2], [base1, base2], True)
+        if r.metric == "p50_ms"
+    ]
+    assert rows[0].status == "info" and rows[0].name == "s12 ingest_batch (not repeated on re-run)"
+
+
+def test_p99_is_reported_never_gated():
+    """A/A: a stall episode moved p99 56x; p99 is info, never a crossing or a re-run."""
+    cand = run("candidate", ops={"q": op(550.0, p50=1.5, ok=5000)})
+    base = run("baseline", ops={"q": op(9.9, p50=1.48, ok=5000)})
+    rows = {r.metric: r for r in sc.scenario_rows("s07_mvcc_consistency", [cand], [base], True)}
+    assert rows["p99_ms"].status == "info" and not rows["p99_ms"].crossed
+    assert rows["p99_ms"].name == "s07 q (p99 shift, not gated)" and rows["p50_ms"].status == "ok"
+    assert "1 p99 shift(s) reported, not gated" in sc.summary_line(
+        list(rows.values()), ["s07"], [], "nightly", 300, None
+    )
+    # few samples: no p99 row at all
+    cand.ops["q"]["ok"] = base.ops["q"]["ok"] = 900
+    rows = {r.metric for r in sc.scenario_rows("s07_mvcc_consistency", [cand], [base], True)}
+    assert "p99_ms" not in rows
+
+
+def test_p50_below_the_absolute_floor_is_ok():
+    rows = sc.scenario_rows(
+        "s04_recommendation",
+        [run("candidate", ops={"q": op(3.0, p50=0.9)})],
+        [run("baseline", ops={"q": op(3.0, p50=0.3)})],
+        True,
+    )
+    row = next(r for r in rows if r.metric == "p50_ms")
+    assert row.ratio == pytest.approx(3.0) and row.status == "ok" and not row.crossed
+
+
+def test_throughput_drop_and_setup_time():
+    cand = run("candidate", ops={"w": op(1.0, tput=5.0)}, setup_s=100.0)
+    base = run("baseline", ops={"w": op(1.0, tput=10.0)}, setup_s=20.0)
+    rows = {
+        (r.name, r.metric): r for r in sc.scenario_rows("s12_iot_retention", [cand], [base], True)
+    }
+    assert rows[("s12 w (not re-run)", "throughput")].crossed
+    setup = rows[("s12 setup wall time (not re-run)", "p50_ms")]
+    assert (setup.candidate, setup.baseline, setup.crossed) == (100000.0, 20000.0, True)
+
+
+def test_queue_mode_reports_perf_as_info():
+    cand, base = run("candidate", ops={"w": op(50.0)}), run("baseline", ops={"w": op(5.0)})
+    rows = [
+        r
+        for r in sc.scenario_rows("s12_iot_retention", [cand], [base], False)
+        if r.metric == "p50_ms"
+    ]
+    assert rows[0].status == "info" and rows[0].crossed
+
+
+def test_op_the_candidate_nearly_stopped_doing_still_compares():
+    base = run("baseline", ops={"w": op(5.0, tput=10.0)})
+    for cand_ops in ({}, {"w": {"p99_ms": 900.0, "throughput": 0.2, "ok": 12}}):
+        rows = {
+            (r.name, r.metric): r
+            for r in sc.scenario_rows(
+                "s12_iot_retention", [run("candidate", ops=cand_ops)], [base], True
+            )
+        }
+        tput = rows[("s12 w (not re-run)", "throughput")]
+        assert tput.crossed and tput.ratio < sc.TPUT_RATIO
+        assert ("s12 w", "p99_ms") not in rows  # too few candidate samples for a p99
+
+
+@pytest.mark.parametrize(
+    "cand_p50,base_p50,crossed",
+    [
+        (8.0, 4.0, False),  # ratio exactly 2.0, delta over the floor
+        (2.5, 0.5, False),  # ratio 5.0, delta exactly the 2 ms floor
+        (8.2, 4.0, True),
+    ],
+)
+def test_p50_thresholds_are_strict(cand_p50, base_p50, crossed):
+    """Exactly at the ratio or exactly at the floor does not cross (v1.12)."""
+    rows = sc.scenario_rows(
+        "s12_iot_retention",
+        [run("candidate", ops={"w": op(9.0, p50=cand_p50)})],
+        [run("baseline", ops={"w": op(9.0, p50=base_p50)})],
+        True,
+    )
+    assert next(r for r in rows if r.metric == "p50_ms").crossed is crossed
+
+
+def test_throughput_threshold_is_strict():
+    rows = sc.scenario_rows(
+        "s12_iot_retention",
+        [run("candidate", ops={"w": op(9.0, tput=7.0)})],
+        [run("baseline", ops={"w": op(9.0, tput=10.0)})],
+        True,
+    )
+    assert not next(r for r in rows if r.metric == "throughput").crossed  # exactly 0.7x
+
+
+def test_an_image_without_its_server_binary_is_an_error(monkeypatch):
+    import subprocess
+
+    def no_binary(ref):
+        raise subprocess.CalledProcessError(
+            127, ["docker"], stderr='exec: "valkey-server": not found'
+        )
+
+    monkeypatch.setattr(soakkit, "image_server", lambda ref: "valkey-server")
+    monkeypatch.setattr(soakkit, "image_server_version", no_binary)
+    with pytest.raises(RuntimeError, match="has no runnable valkey-server"):
+        sc.server_info(DIGEST_A)
+
+
+def test_improvement():
+    rows = sc.scenario_rows(
+        "s12_iot_retention",
+        [run("candidate", ops={"w": op(3.0)})],
+        [run("baseline", ops={"w": op(30.0)})],
+        True,
+    )
+    assert next(r for r in rows if r.metric == "p50_ms").status == "improvement"
+
+
+# ------------------------------------------------------------------ per-run parsing
+def test_read_run(tmp_path):
+    (tmp_path / "summary.json").write_text(
+        json.dumps(
+            {
+                "ops": {
+                    "ingest_batch": {
+                        "count": 500,
+                        "errors": 0,
+                        "p99_ms": 4.0,
+                        "throughput_ops_s": 2.0,
+                    },
+                    "_late_start": {
+                        "count": 900,
+                        "errors": 0,
+                        "p99_ms": 60.0,
+                        "throughput_ops_s": 3.0,
+                    },
+                    "rare": {"count": 20, "errors": 0, "p99_ms": 9.0, "throughput_ops_s": 0.1},
+                }
+            }
+        )
+    )
+    (tmp_path / "checks.json").write_text(
+        json.dumps(
+            [{"name": "a", "ok": True}, {"name": "a", "ok": False}, {"name": "b", "ok": True}]
+        )
+    )
+    (tmp_path / "phases.json").write_text(
+        json.dumps([{"t": 0.0, "phase": "ingest"}, {"t": 42.5, "phase": "soak"}])
+    )
+    r = sc.read_run(tmp_path, "s12_iot_retention", "candidate", 1, 0, False, 400.0)
+    assert r.completed and r.checks == {"a": False, "b": True}
+    assert (
+        set(r.ops) == {"ingest_batch", "rare"} and r.ops["rare"]["ok"] == 20 and r.setup_s == 42.5
+    )
+    assert not r.server_ran and not r.measured  # no monitor.csv: no server seen alive
+    (tmp_path / "monitor.csv").write_text(
+        "t,cpu_pct,rss_mb,used_mem_mb,threads,clients,alive,phase\n"
+        "0.0,nan,nan,nan,nan,nan,0,setup\n1.0,5,50,3,9,1,1,ingest\n"
+    )
+    r = sc.read_run(tmp_path, "s12_iot_retention", "candidate", 1, 0, False, 400.0)
+    assert r.server_ran and r.measured
+    cut = sc.read_run(tmp_path, "s12_iot_retention", "candidate", 1, None, True, 400.0, cut=True)
+    assert cut.cut and not cut.completed and cut.reason == "stopped at the deadline"
+
+
+def test_compress_large_keeps_small_files(tmp_path):
+    import gzip
+
+    (tmp_path / "ledger-0.jsonl").write_text("x" * (1 << 20))
+    (tmp_path / "checks.json").write_text("[]")
+    sc.compress_large(tmp_path)
+    assert sorted(f.name for f in tmp_path.iterdir()) == ["checks.json", "ledger-0.jsonl.gz"]
+    with gzip.open(tmp_path / "ledger-0.jsonl.gz") as f:
+        data = f.read()
+    assert data == b"x" * (1 << 20)
+
+
+def test_read_run_crash_and_exit(tmp_path):
+    (tmp_path / "summary.json").write_text("{}")
+    (tmp_path / "server-21000.log").write_text(
+        "1:M 24 Nov 2026 * Ready\n1:M ------ crashed by signal: 11 ------\n"
+    )
+    r = sc.read_run(tmp_path, "s01_social_feed", "candidate", 1, 0, False, 1.0)
+    assert not r.completed and "crashed by signal" in r.reason
+    (tmp_path / "server-21000.log").write_text("fine\n")
+    assert (
+        sc.read_run(tmp_path, "s01_social_feed", "candidate", 1, 1, False, 1.0).reason == "exit 1"
+    )
+    assert (
+        sc.read_run(tmp_path, "s01_social_feed", "candidate", 1, None, True, 1.0).reason
+        == "timed out"
+    )
+
+
+# ------------------------------------------------------------------ findings and result
+def test_findings_caps_and_order():
+    rows = [
+        sc.Row(f"i{i}", "invariant", 0, 0, None, None, "lower_is_worse", "info") for i in range(15)
+    ]
+    rows += [
+        sc.Row(f"r{i}", "p99_ms", 2.0 + i, 1.0, 2.0 + i, 1.5, "higher_is_worse", "regression")
+        for i in range(45)
+    ]
+    rows += [sc.Row("known", "invariant", 0, 1, None, None, "lower_is_worse", "known")]
+    out = kit.select(sc.worst_first(rows))
+    assert len(out) == 50 and out[0]["name"] == "r44"
+    assert sum(1 for f in out if f["status"] == "info") == 5
+
+
+def test_scenario_list():
+    assert sc.list_scenarios("s12,s01_social_feed") == ["s12_iot_retention", "s01_social_feed"]
+    assert "s00_pilot" not in sc.list_scenarios(None) and len(sc.list_scenarios(None)) == 12
+    with pytest.raises(ValueError):
+        sc.list_scenarios("s99")
+
+
+class FakeSoak:
+    """run_one stub on a fake clock. walls: scn or (scn, side) or (scn, side, rep) -> seconds a
+    run would take (a run longer than its cap is stopped there); crash: keys whose run exits 1."""
+
+    def __init__(self, clock, walls, crash=()):
+        self.clock, self.walls, self.crash, self.calls = clock, walls, set(crash), []
+
+    def _get(self, d, scn, side, rep):
+        for k in ((scn, side, rep), (scn, side), scn):
+            if k in d:
+                return d[k]
+        return None
+
+    def run_one(self, scn, side, image, rep, hang_cap_s, stop_at):
+        cap = max(60.0, min(hang_cap_s, stop_at - self.clock()))
+        self.calls.append((scn, side, rep, round(cap)))
+        wall = self._get(self.walls, scn, side, rep)
+        timed_out = wall > cap
+        crashed = not timed_out and any(k in self.crash for k in ((scn, side, rep), (scn, side)))
+        self.clock.t += min(wall, cap)
+        r = run(
+            side,
+            rep,
+            completed=not (timed_out or crashed),
+            checks={"x": True},
+            scenario=scn,
+            cut=timed_out and cap < hang_cap_s,
+            ops={"w": op(9.0 if side == "baseline" else 90.0)},
+            wall_s=min(wall, cap),
+        )
+        r.rc = None if timed_out else 1 if crashed else 0
+        r.reason = (
+            "stopped at the deadline"
+            if r.cut
+            else "timed out"
+            if timed_out
+            else "exit 1"
+            if crashed
+            else ""
+        )
+        return r
+
+
+class Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+IMGS = {"candidate": "c", "baseline": "b"}
+
+
+def test_a_side_the_deadline_would_cut_is_not_started():
+    clock = Clock()
+    p = dict(sc.MODES["nightly"])
+    scns = [
+        "s07_mvcc_consistency",
+        "s08_durability_recovery",
+        "s09_replication",
+        "s10_schema_under_load",
+    ]
+    soak = FakeSoak(clock, dict.fromkeys(scns, 950.0))
+    sched = sc.run_all(soak, scns, IMGS, p, deadline=3500.0, clock=clock)
+    # 2 x 950 s fit; then 1.2 x 950 no longer fits before the second side of the second scenario
+    assert list(sched.runs) == ["s07_mvcc_consistency"]
+    assert [n.split(" ")[0] for n in sched.not_run] == scns[1:]
+    assert all(not r.cut for sides in sched.runs.values() for side in sides.values() for r in side)
+
+
+def test_a_run_cut_by_the_deadline_drops_its_scenario():
+    clock = Clock()
+    p = dict(sc.MODES["nightly"], reruns=False)
+    # the baseline side starts with 400 s left before stop_at: it is cut, not hung
+    soak = FakeSoak(
+        clock,
+        {("s12_iot_retention", "candidate"): 400.0, ("s12_iot_retention", "baseline"): 5000.0},
+    )
+    sched = sc.run_all(soak, ["s12_iot_retention"], IMGS, p, deadline=1200.0, clock=clock)
+    assert soak.calls[1][3] == 1100 < 3 * 400  # stop_at (deadline + 300) bound it, not the hang cap
+    assert sched.runs == {} and sched.not_run == ["s12_iot_retention (deadline)"]
+
+
+def test_a_candidate_hang_is_a_regression_not_a_deadline(tmp_path):
+    clock = Clock()
+    p = dict(sc.MODES["nightly"])
+    full = sc.run_cap(p)
+    # the candidate (side A of s07) hangs to the full cap; the baseline still runs
+    soak = FakeSoak(
+        clock,
+        {("s07_mvcc_consistency", "candidate"): 1e9, ("s07_mvcc_consistency", "baseline"): 380.0},
+    )
+    sched = sc.run_all(soak, ["s07_mvcc_consistency"], IMGS, p, deadline=6600.0, clock=clock)
+    assert soak.calls[0][3] == round(full) and len(soak.calls) == 2
+    res = finish(args(), tmp_path, STARTED, ["s07_mvcc_consistency"], sched, None, [], p)
+    assert res["verdict"] == "regression" and res["findings"][0]["name"] == "s07 completed"
+
+
+def test_a_candidate_hang_with_no_time_left_for_the_baseline_is_still_a_regression(tmp_path):
+    clock = Clock()
+    p = dict(sc.MODES["nightly"])
+    soak = FakeSoak(
+        clock,
+        {("s07_mvcc_consistency", "candidate"): 1e9, ("s07_mvcc_consistency", "baseline"): 380.0},
+    )
+    sched = sc.run_all(soak, ["s07_mvcc_consistency"], IMGS, p, deadline=2000.0, clock=clock)
+    assert len(soak.calls) == 1 and sched.runs["s07_mvcc_consistency"]["baseline"] == []
+    res = finish(args(), tmp_path, STARTED, ["s07_mvcc_consistency"], sched, None, [], p)
+    assert res["verdict"] == "regression" and res["findings"][0]["name"] == "s07 completed"
+
+
+def test_side_b_hang_is_capped_by_side_a_and_counts_as_a_hang(tmp_path):
+    clock = Clock()
+    p = dict(sc.MODES["nightly"])
+    # s08 is index 1: baseline first (380 s), then the candidate hangs
+    soak = FakeSoak(
+        clock,
+        {
+            "s07_mvcc_consistency": 380.0,
+            ("s08_durability_recovery", "baseline"): 430.0,
+            ("s08_durability_recovery", "candidate"): 1e9,
+        },
+    )
+    sched = sc.run_all(
+        soak,
+        ["s07_mvcc_consistency", "s08_durability_recovery"],
+        IMGS,
+        dict(p, reruns=False),
+        deadline=6600.0,
+        clock=clock,
+    )
+    hang = sched.runs["s08_durability_recovery"]["candidate"][0]
+    assert soak.calls[-1][3] == 430 * 3 and not hang.cut and not hang.completed
+    res = finish(
+        args(),
+        tmp_path,
+        STARTED,
+        ["s07_mvcc_consistency", "s08_durability_recovery"],
+        sched,
+        None,
+        [],
+        dict(p, reruns=False),
+    )
+    assert res["verdict"] == "regression" and res["findings"][0]["name"] == "s08 completed"
+
+
+def test_rerun_without_time_is_unconfirmed_and_an_error(tmp_path):
+    clock = Clock()
+    p = dict(sc.MODES["nightly"])
+    soak = FakeSoak(clock, {"s12_iot_retention": 400.0})
+    sched = sc.run_all(soak, ["s12_iot_retention"], IMGS, p, deadline=1200.0, clock=clock)
+    assert sched.unconfirmed == ["s12_iot_retention (no time to re-run)"]
+    res = finish(args(), tmp_path, STARTED, ["s12_iot_retention"], sched, None, [], p)
+    assert res["verdict"] == "error" and "no time to re-run" in res["error"]
+
+
+def test_rerun_that_repeats_confirms():
+    clock = Clock()
+    p = dict(sc.MODES["nightly"])
+    soak = FakeSoak(clock, {"s12_iot_retention": 400.0})
+    sched = sc.run_all(soak, ["s12_iot_retention"], IMGS, p, deadline=1e6, clock=clock)
+    assert [c[1:3] for c in soak.calls] == [
+        ("candidate", 1),
+        ("baseline", 1),
+        ("baseline", 2),
+        ("candidate", 2),
+    ]
+    rows = sc.scenario_rows(
+        "s12_iot_retention",
+        sched.runs["s12_iot_retention"]["candidate"],
+        sched.runs["s12_iot_retention"]["baseline"],
+        True,
+    )
+    assert sorted((r.name, r.metric) for r in rows if r.status == "regression") == [
+        ("s12 w", "p50_ms")
+    ]
+
+
+def test_a_rerun_whose_baseline_crashed_is_unconfirmed(tmp_path):
+    clock = Clock()
+    p = dict(sc.MODES["nightly"])
+    soak = FakeSoak(
+        clock, {"s12_iot_retention": 400.0}, crash={("s12_iot_retention", "baseline", 2)}
+    )
+    sched = sc.run_all(soak, ["s12_iot_retention"], IMGS, p, deadline=1e6, clock=clock)
+    res = finish(args(), tmp_path, STARTED, ["s12_iot_retention"], sched, None, [], p)
+    assert res["verdict"] == "error" and "re-run incomplete" in res["error"]
+    assert any(f["name"] == "s12 w (re-run incomplete)" for f in res["findings"])
+
+
+def test_timing_pair_with_a_missing_baseline_value_is_not_confirmed():
+    name = "victim open-loop schedule kept (few late/missed sends)"
+    cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
+    base = [run("baseline", checks={name: True}), run("baseline", 2, checks={})]
+    row = next(
+        r for r in sc.scenario_rows("s11_client_chaos", cand, base, True) if r.metric == "invariant"
+    )
+    assert row.status == "info" and row.candidate == 1
+
+
+def test_both_sides_killed_outside_the_engine_is_not_measured(tmp_path):
+    def killed(side):
+        r = run(side, completed=False, checks={"ingest": True})
+        r.rc, r.reason = -9, "exit -9"
+        return r
+
+    sched = sc.Schedule(
+        runs={
+            "s12_iot_retention": {
+                "candidate": [killed("candidate")],
+                "baseline": [killed("baseline")],
+            }
+        }
+    )
+    res = finish(
+        args(), tmp_path, STARTED, ["s12_iot_retention"], sched, None, [], sc.MODES["nightly"]
+    )
+    assert res["verdict"] == "error" and "ended outside the engine" in res["error"]
+
+
+def test_summary_does_not_repeat_the_not_measured_list(tmp_path):
+    res = finish(
+        args(),
+        tmp_path,
+        STARTED,
+        ["s12_iot_retention"],
+        sc.Schedule(not_run=["s12_iot_retention (deadline)"]),
+        None,
+        [],
+        sc.MODES["nightly"],
+    )
+    assert res["summary"].count("s12_iot_retention (deadline)") == 1
+
+
+def test_nothing_measured_is_an_error_not_a_pass(tmp_path):
+    dead = sc.Schedule(
+        runs={
+            s: {
+                "candidate": [run("candidate", completed=False, server_ran=False, scenario=s)],
+                "baseline": [run("baseline", completed=False, server_ran=False, scenario=s)],
+            }
+            for s in ("s07_mvcc_consistency", "s12_iot_retention")
+        }
+    )
+    res = finish(args(), tmp_path, STARTED, list(dead.runs), dead, None, [], sc.MODES["nightly"])
+    assert res["verdict"] == "error" and "no check recorded on either side" in res["error"]
+
+
+def test_candidate_server_that_never_starts_is_a_regression(tmp_path):
+    sched = sc.Schedule(
+        runs={
+            "s12_iot_retention": {
+                "candidate": [run("candidate", completed=False, server_ran=False)],
+                "baseline": [run("baseline", checks={"x": True})],
+            }
+        }
+    )
+    res = finish(
+        args(), tmp_path, STARTED, ["s12_iot_retention"], sched, None, [], sc.MODES["nightly"]
+    )
+    assert res["verdict"] == "regression" and res["findings"][0]["name"] == "s12 completed"
+
+
+def test_regression_summary_keeps_the_error(tmp_path):
+    sched = sc.Schedule(
+        runs={
+            "s12_iot_retention": {
+                "candidate": [run("candidate", checks={"x": False})],
+                "baseline": [run("baseline", checks={"x": True})],
+            }
+        }
+    )
+    res = finish(
+        args(),
+        tmp_path,
+        STARTED,
+        ["s12_iot_retention"],
+        sched,
+        "terminated by signal 15",
+        [],
+        sc.MODES["nightly"],
+    )
+    assert res["verdict"] == "regression" and res["error"] is None
+    assert "terminated by signal 15" in res["summary"]
+
+
+@pytest.mark.parametrize("kw,msg", [({"baseline_commit": "abc"}, "40 lowercase hex")])
+def test_inputs_refused_before_any_run(tmp_path, kw, msg):
+    a = ["--candidate", DIGEST_A, "--baseline", DIGEST_B, "--out", str(tmp_path), "--mode", "queue"]
+    flags = {
+        "check": "--check",
+        "candidate_label": "--candidate-label",
+        "baseline_commit": "--baseline-commit",
+    }
+    for k, v in kw.items():
+        a += [flags[k], v]
+    assert sc.main(a) == 0
+    res = json.loads((tmp_path / "result.json").read_text())
+    assert res["verdict"] == "error" and msg in res["error"]
+
+
+def test_uppercase_repo_is_refused(tmp_path):
+    sc.main(
+        [
+            "--candidate",
+            "FalkorDB/server@sha256:" + "a" * 64,
+            "--baseline",
+            DIGEST_B,
+            "--out",
+            str(tmp_path),
+            "--mode",
+            "queue",
+        ]
+    )
+    res = json.loads((tmp_path / "result.json").read_text())
+    assert "is not name[:tag]@sha256:<64 hex>, a digest" in res["error"]
+
+
+def test_relative_out_is_resolved_before_use(tmp_path, monkeypatch):
+    """_perf-vm.yml passes `--out out`: the result lands there, and Soak (whose run dirs are
+    handed to the scenario subprocesses) sees the absolute path."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sc.shutil, "which", lambda _: None)  # no docker pull of the fake digests
+    seen = {}
+    real = sc.Soak
+
+    def spy(a):
+        seen["out"] = a.out
+        return real(a)
+
+    monkeypatch.setattr(sc, "Soak", spy)
+    assert (
+        sc.main(
+            [
+                "--candidate",
+                DIGEST_A,
+                "--baseline",
+                DIGEST_B,
+                "--out",
+                "out",
+                "--mode",
+                "queue",
+            ]
+        )
+        == 0
+    )
+    assert Path(seen["out"]).is_absolute() and Path(seen["out"]) == tmp_path / "out"
+    assert (
+        real(
+            argparse.Namespace(
+                **{
+                    **vars(args()),
+                    "out": seen["out"],
+                    "duration": None,
+                    "scale": None,
+                    "deadline_minutes": None,
+                    "no_quiet_gate": True,
+                }
+            )
+        ).raw
+        == tmp_path / "out" / "raw"
+    )
+    assert json.loads((tmp_path / "out" / "result.json").read_text())["verdict"] == "error"
+
+
+def test_main_restores_the_sigterm_handler(tmp_path):
+    import signal
+
+    before = signal.getsignal(signal.SIGTERM)
+    sc.main(
+        ["--candidate", "x:1", "--baseline", DIGEST_B, "--out", str(tmp_path), "--mode", "queue"]
+    )
+    assert signal.getsignal(signal.SIGTERM) == before
+
+
+def test_summary_is_one_line(tmp_path):
+    res = finish(
+        args(),
+        tmp_path,
+        STARTED,
+        ["s12_iot_retention"],
+        sc.Schedule(),
+        "boom\u2028and\rmore\x85x\ny",
+        [],
+        sc.MODES["nightly"],
+    )
+    assert "boom and more x y" in res["summary"] and len(res["summary"].splitlines()) == 1
+
+
+def test_finish_writes_a_valid_regression(tmp_path):
+    cand = [
+        run("candidate", checks={"ingest reading count": True}, ops={"ingest_batch": op(90.0)}),
+        run("candidate", 2, checks={"ingest reading count": True}, ops={"ingest_batch": op(75.0)}),
+    ]
+    base = [
+        run("baseline", checks={"ingest reading count": True}, ops={"ingest_batch": op(9.0)}),
+        run("baseline", 2, checks={"ingest reading count": True}, ops={"ingest_batch": op(9.0)}),
+    ]
+    res = finish(
+        args(),
+        tmp_path,
+        STARTED,
+        ["s12_iot_retention"],
+        sc.Schedule(runs={"s12_iot_retention": {"candidate": cand, "baseline": base}}),
+        None,
+        [],
+        sc.MODES["nightly"],
+    )
+    assert res["verdict"] == "regression" and res["confirmed"]
+    assert res["findings"][0]["name"] == "s12 ingest_batch"
+    assert (tmp_path / "raw" / "rows.csv").exists()
+
+
+def test_finish_pass_and_both_broken(tmp_path):
+    cand = [run("candidate", checks={"x": False, "y": True}, ops={"w": op(3.0)})]
+    base = [run("baseline", checks={"x": False, "y": True}, ops={"w": op(3.1)})]
+    res = finish(
+        args(),
+        tmp_path,
+        STARTED,
+        ["s12_iot_retention"],
+        sc.Schedule(runs={"s12_iot_retention": {"candidate": cand, "baseline": base}}),
+        None,
+        [],
+        sc.MODES["nightly"],
+    )
+    assert res["verdict"] == "pass" and not res["confirmed"]
+    assert [f["name"] for f in res["findings"]] == ["s12 x"]
+    assert "1 broken on both sides" in res["summary"]
+
+
+def test_finish_scenarios_not_run_is_an_error(tmp_path):
+    res = finish(
+        args(),
+        tmp_path,
+        STARTED,
+        ["s07_mvcc_consistency", "s12_iot_retention"],
+        sc.Schedule(not_run=["s07_mvcc_consistency (deadline)", "s12_iot_retention (deadline)"]),
+        None,
+        [],
+        sc.MODES["nightly"],
+    )
+    assert res["verdict"] == "error"
+    assert "s12_iot_retention (deadline)" in res["error"]
+
+
+def test_main_rejects_a_tag_and_still_writes_result(tmp_path):
+    rc = sc.main(
+        [
+            "--candidate",
+            "falkordb/falkordb-server:6.2.0",
+            "--baseline",
+            DIGEST_B,
+            "--out",
+            str(tmp_path),
+            "--mode",
+            "nightly",
+            "--scenarios",
+            "s12",
+        ]
+    )
+    res = json.loads((tmp_path / "result.json").read_text())
+    assert rc == 0 and res["verdict"] == "error" and "a digest" in res["error"]
+
+
+def test_main_with_digests_off_linux_or_without_docker_is_a_clear_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(sc.shutil, "which", lambda _: None)
+    rc = sc.main(
+        [
+            "--candidate",
+            DIGEST_A,
+            "--baseline",
+            DIGEST_B,
+            "--out",
+            str(tmp_path),
+            "--mode",
+            "queue",
+            "--scenarios",
+            "s12",
+        ]
+    )
+    res = json.loads((tmp_path / "result.json").read_text())
+    assert rc == 0 and res["verdict"] == "error"
+    assert "Linux only" in res["error"] or "docker is not on PATH" in res["error"]
+
+
+def test_bench_soak_command_writes_a_result(tmp_path):
+    out = CliRunner().invoke(
+        cli,
+        [
+            "soak",
+            "--candidate",
+            "falkordb/falkordb-server:6.2.0",
+            "--baseline",
+            DIGEST_B,
+            "--out",
+            str(tmp_path),
+            "--mode",
+            "queue",
+        ],
+    )
+    assert out.exit_code == 0, out.output
+    res = json.loads((tmp_path / "result.json").read_text())
+    assert res["check"] == "soak" and res["verdict"] == "error" and "a digest" in res["error"]
+
+
+def _resp_commands(buffer: bytes) -> tuple[list[list[bytes]], bytes]:
+    """The complete RESP commands at the head of `buffer`, and what is left of it."""
+    commands = []
+    while buffer.startswith(b"*") and b"\r\n" in buffer:
+        head, rest = buffer.split(b"\r\n", 1)
+        args = []
+        for _ in range(int(head[1:])):
+            if b"\r\n" not in rest:
+                return commands, buffer
+            size, rest = rest.split(b"\r\n", 1)
+            n = int(size[1:])
+            if len(rest) < n + 2:
+                return commands, buffer
+            args.append(rest[:n])
+            rest = rest[n + 2 :]
+        commands.append(args)
+        buffer = rest
+    return commands, buffer
+
+
+def test_soak_clients_speak_resp2():
+    """Every check measures RESP2, as the falkordb client speaks it: soakkit's client sends
+    no HELLO (redis-py 8.1 defaults to RESP3 and would send HELLO 3 first)."""
+    import socket
+    import threading
+
+    names: list[bytes] = []
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        port = listener.getsockname()[1]
+
+        def serve():
+            conn, _ = listener.accept()
+            with conn:
+                conn.settimeout(5)
+                pending = b""
+                while chunk := conn.recv(1024):
+                    commands, pending = _resp_commands(pending + chunk)
+                    for args in commands:
+                        names.append(args[0].upper())
+                        if names[-1] == b"HELLO":
+                            conn.sendall(b"-ERR this test refuses HELLO\r\n")
+                        elif names[-1] == b"PING":
+                            conn.sendall(b"+PONG\r\n")
+                            return
+                        else:  # CLIENT SETINFO and the like
+                            conn.sendall(b"+OK\r\n")
+
+        server = threading.Thread(target=serve, daemon=True)
+        server.start()
+        client = soakkit.connect(port, timeout=5)
+        try:
+            assert client.ping() is True
+        finally:
+            client.close()
+        server.join(5)
+    assert client.connection_pool.connection_kwargs["protocol"] == 2
+    assert b"HELLO" not in names and names[-1] == b"PING", names
+
+
+def test_reruns_go_to_perf_moves_before_one_off_timing_breaks():
+    """With time for one re-run, a 10x p50 move is re-run before a timing check that broke
+    once (it did not move: a 0/1 row held on both sides after the first pass)."""
+    timing = "p99 does not drift up: ingest_batch"
+
+    class Soak(FakeSoak):
+        def run_one(self, scn, side, image, rep, hang_cap_s, stop_at):
+            r = super().run_one(scn, side, image, rep, hang_cap_s, stop_at)
+            if scn == "s02_fraud_realtime":
+                r.ops, r.checks = {"w": op(9.0)}, {timing: side == "baseline"}
+            return r
+
+    clock = Clock()
+    soak = Soak(clock, {"s01_social_feed": 400.0, "s02_fraud_realtime": 400.0})
+    scns = ["s01_social_feed", "s02_fraud_realtime"]
+    sched = sc.run_all(soak, scns, IMGS, dict(sc.MODES["nightly"]), deadline=3060.0, clock=clock)
+    assert [c[0] for c in soak.calls[4:]] == ["s01_social_feed", "s01_social_feed"]
+    assert sched.unconfirmed == ["s02_fraud_realtime (no time to re-run)"]
+
+
+def test_unconfirmed_info_rows_put_perf_moves_before_timing_breaks():
+    timing = sc.Row(
+        "s02 t (broke in 1 of 2 candidate runs)",
+        "invariant",
+        1,
+        1,
+        None,
+        None,
+        "lower_is_worse",
+        "info",
+        kind="unconfirmed",
+    )
+    perf = sc.Row(
+        "s01 w (not repeated on re-run)",
+        "p50_ms",
+        30.0,
+        3.0,
+        10.0,
+        2.0,
+        "higher_is_worse",
+        "info",
+        kind="unconfirmed",
+    )
+    assert [f["name"] for f in sc.worst_first([timing, perf])] == [perf.name, timing.name]
+
+
+def test_a_docker_hiccup_removing_a_run_is_tried_again(monkeypatch):
+    calls = []
+
+    def busy_once(label):
+        calls.append(label)
+        if len(calls) == 1:
+            raise kit.DockerError("removal of container soak-x is already in progress")
+
+    monkeypatch.setattr(kit, "remove_labelled", busy_once)
+    sc.remove_run_containers("falkordb-soak=r1", delay_s=0)
+    assert calls == ["falkordb-soak=r1", "falkordb-soak=r1"]
+
+    def gone(label):
+        raise kit.DockerError("Cannot connect to the Docker daemon")
+
+    monkeypatch.setattr(kit, "remove_labelled", gone)
+    with pytest.raises(kit.DockerError, match="Docker daemon"):
+        sc.remove_run_containers("falkordb-soak=r1", attempts=2, delay_s=0)
+
+
+def test_kill9_of_a_container_already_being_removed_waits_for_it(monkeypatch):
+    def busy(*names):
+        raise kit.DockerError("removal of container soak-x is already in progress")
+
+    class Proc:
+        waited = False
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            Proc.waited = True
+            return 137
+
+    monkeypatch.setattr(kit, "remove", busy)
+    server = object.__new__(soakkit.Server)
+    server.image, server.container, server.proc = soakkit.Image(DIGEST_A), "soak-x", Proc()
+    server.kill9()
+    assert Proc.waited
+
+
+def test_the_stop_reason_survives_the_500_character_cut(tmp_path):
+    """With a regression verdict the error field is null: the summary must still say why the
+    run stopped, however long the regression names and the not-measured list are."""
+    names = [
+        f"A{i}-strict-kill9+bgrewriteaof: led graph identical and every row present after "
+        f"restart number {i}"
+        for i in range(4)
+    ]
+    scn = "s08_durability_recovery"
+    cand = [run("candidate", checks=dict.fromkeys(names, False), scenario=scn)]
+    base = [run("baseline", checks=dict.fromkeys(names, True), scenario=scn)]
+    rest = [
+        "s07_mvcc_consistency",
+        "s09_replication",
+        "s10_schema_under_load",
+        "s11_client_chaos",
+        "s12_iot_retention",
+    ]
+    sched = sc.Schedule(
+        runs={scn: {"candidate": cand, "baseline": base}},
+        not_run=[f"{s} (not reached)" for s in rest],
+    )
+    stop = "stopped by signal 15 (SIGTERM); partial data in raw/"
+    res = finish(args(), tmp_path, STARTED, [scn, *rest], sched, stop, [], sc.MODES["nightly"])
+    assert res["verdict"] == "regression" and res["error"] is None
+    assert stop in res["summary"] and len(res["summary"]) <= 500
+
+
+def test_sigterm_mid_run_still_reports_what_was_measured(tmp_path, monkeypatch):
+    import os
+    import signal
+    import sys
+    import time
+
+    def run_all(soak, scenarios, imgs, p, deadline, sched):
+        sched.runs["s12_iot_retention"] = {
+            "candidate": [run("candidate", checks={"x": False})],
+            "baseline": [run("baseline", checks={"x": True})],
+        }
+        os.kill(os.getpid(), signal.SIGTERM)  # the workflow's timeout, mid-run
+        time.sleep(5)
+        raise AssertionError("SIGTERM did not stop the run")
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(sc.shutil, "which", lambda _: "/usr/bin/docker")
+    monkeypatch.setattr(kit, "pull", lambda image: None)
+    monkeypatch.setattr(sc, "server_info", lambda image: {"image": image})
+    monkeypatch.setattr(sc, "run_all", run_all)
+    argv = [
+        "--candidate",
+        DIGEST_A,
+        "--baseline",
+        DIGEST_B,
+        "--out",
+        str(tmp_path),
+        "--mode",
+        "nightly",
+        "--scenarios",
+        "s12,s07",
+    ]
+    assert sc.main(argv) == 0
+    res = json.loads((tmp_path / "result.json").read_text())
+    assert res["verdict"] == "regression" and res["findings"][0]["name"] == "s12 x"
+    assert "stopped by signal 15 (SIGTERM)" in res["summary"]
+    assert "s07_mvcc_consistency (not reached)" in res["summary"]
+
+
+def test_s11_counts_a_null_unicode_param_reply_as_a_wrong_result():
+    """s11 is a script that needs a server, so its params_op runs here alone, against a reply
+    with no row: that is a wrong result (which a critical check reads), not a TypeError
+    recorded under an op no check reads."""
+    import ast
+    import random
+    import types
+
+    source = (Path(sc.__file__).parent / "scenarios" / "s11_client_chaos.py").read_text()
+    tree = ast.parse(source)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "params_op")
+
+    class Wrong(Exception):
+        pass
+
+    def wrong(ctx, what):
+        raise Wrong(what)
+
+    namespace = {
+        "sk": soakkit,
+        "wrong": wrong,
+        "fail": lambda op, msg: None,
+        "raw_cypher": lambda ctx, op, q: (True, [[b"$p"], [], [b"stats"]]),
+    }
+    exec(compile(ast.Module([fn], type_ignores=[]), "s11_client_chaos.py", "exec"), namespace)
+    rng = random.Random()
+    rng.randrange = lambda n: 1  # the unicode-parameter branch
+    with pytest.raises(Wrong, match="unicode param mangled: None"):
+        namespace["params_op"](types.SimpleNamespace(rng=rng))
+
+
+class _FakeServer:
+    port = 1
+
+
+class _FakeRedis:
+    pass
+
+
+def _ok_op(ctx):
+    return "op"
+
+
+def _boom_init(ctx):
+    raise RuntimeError("init failed")
+
+
+@pytest.fixture
+def fake_connect(monkeypatch):
+    monkeypatch.setattr(soakkit, "connect", lambda port: _FakeRedis())
+
+
+def test_run_load_passes_when_workers_finish(tmp_path, fake_connect):
+    soakkit.run_load(_FakeServer(), tmp_path, [soakkit.WorkerSpec(_ok_op, rate=50)], 0.3)
+
+
+def test_run_load_fails_when_a_worker_exits_nonzero(tmp_path, fake_connect):
+    specs = [soakkit.WorkerSpec(_ok_op, rate=50), soakkit.WorkerSpec(_ok_op, init=_boom_init, name="bad")]
+    with pytest.raises(RuntimeError, match="worker failure"):
+        soakkit.run_load(_FakeServer(), tmp_path, specs, 0.3)
+
+
+def test_run_load_fails_when_a_grouped_worker_dies(tmp_path, fake_connect, monkeypatch):
+    monkeypatch.setenv("SOAK_MAX_WORKERS", "1")
+    specs = [soakkit.WorkerSpec(_ok_op, rate=50), soakkit.WorkerSpec(_ok_op, init=_boom_init, name="bad")]
+    with pytest.raises(RuntimeError, match="worker failure"):
+        soakkit.run_load(_FakeServer(), tmp_path, specs, 0.3)
+
+
+# ---------------------------------------------------------------- release-soak run scripts
+
+SOAK_DIR = Path(soakkit.__file__).parent
+# A stand-in for a scenario: it starts a "server" titled like a soak redis-server, the way
+# soakkit.Server starts one (a child process), writes its pid to $1, runs for $2 seconds,
+# and exits 3 leaving the server behind.
+FAKE_SCENARIO = """
+bash -c 'exec -a "redis-server *:19000" sleep 300' &
+echo $! > "$1"
+sleep "${2:-0}"
+exit 3
+"""
+
+
+def _gone(pid, timeout=10.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _in_bash(tmp_path, body):
+    """argv of a bash that sources process_group.sh, as the run scripts do, then runs body;
+    the fake scenario is at tmp_path/scenario.sh."""
+    (tmp_path / "scenario.sh").write_text(FAKE_SCENARIO)
+    return ["bash", "-c", f'source "{SOAK_DIR / "process_group.sh"}"\n{body}']
+
+
+@pytest.fixture
+def unrelated_soak_server():
+    """A server this run did not start, titled the way a soak server on 19xxx is."""
+    proc = subprocess.Popen(["bash", "-c", 'exec -a "redis-server *:19001" sleep 300'])
+    yield proc
+    proc.kill()
+    proc.wait()
+
+
+def test_a_release_soak_run_kills_the_servers_its_scenario_left_and_no_other(
+    tmp_path, unrelated_soak_server
+):
+    pidfile = tmp_path / "server.pid"
+    argv = _in_bash(
+        tmp_path, f'run_in_group bash "{tmp_path / "scenario.sh"}" "{pidfile}"; echo "rc=$?"'
+    )
+    out = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    assert "rc=3" in out.stdout, out
+    assert _gone(int(pidfile.read_text()))
+    assert unrelated_soak_server.poll() is None
+
+
+def test_a_release_soak_script_stopped_midway_kills_its_running_scenario(
+    tmp_path, unrelated_soak_server
+):
+    pidfile, group_file = tmp_path / "server.pid", tmp_path / ".scenario-group"
+    argv = _in_bash(
+        tmp_path,
+        f'SOAK_GROUP_FILE="{group_file}"\n'
+        f'run_in_group bash "{tmp_path / "scenario.sh"}" "{pidfile}" 300',
+    )
+    script = subprocess.Popen(argv)
+    try:
+        deadline = time.time() + 30
+        while not (pidfile.exists() and pidfile.read_text().strip()) and time.time() < deadline:
+            time.sleep(0.05)
+        server = int(pidfile.read_text())
+        # what a SIGKILLed script leaves to stop by hand: the group its scenario runs in
+        assert int(group_file.read_text()) == os.getpgid(server)
+        script.send_signal(signal.SIGTERM)
+        assert script.wait(30) == 143
+        assert _gone(server)
+        assert not group_file.exists()
+        assert unrelated_soak_server.poll() is None
+    finally:
+        script.kill()
+        script.wait()
+
+
+@pytest.mark.parametrize("name", ["run_rust_main.sh", "run_c_rerun.sh"])
+def test_a_release_soak_script_runs_each_scenario_in_a_group_of_its_own(name):
+    text = (SOAK_DIR / name).read_text()
+    assert "pkill" not in text
+    assert 'source "$S/process_group.sh"' in text
+    assert re.search(r'run_in_group timeout .+ "\$\{PY\[@\]\}" -I "\$f"', text)
+    # s09 uses --port and --port+1, and reserves --port+2
+    assert text.index("refuse_busy_ports 19000 19001 19002 ||") < text.index("run_in_group ")
+    # every attempt starts in an empty run directory, or the script stops
+    assert re.search(
+        r'fresh_run_dir "\$o" \|\| \{ .*exit 1; \}\n *echo "\$LABEL" > "\$o/\.commit"', text
+    )
+    assert "rm -f" not in text and 'mkdir -p "$o"' not in text
+
+
+def test_a_release_soak_load_sampler_ends_with_its_script():
+    text = (SOAK_DIR / "run_rust_main.sh").read_text()
+    assert '( while kill -0 $$ 2>/dev/null; do echo "$(date +%s) $(load1)" >> "$o/load.log"' in text
+
+
+def test_a_release_soak_attempt_never_starts_in_an_earlier_runs_directory(tmp_path):
+    run = tmp_path / "s01_social_feed-rust"
+    run.mkdir()
+    for name, text in ((".commit", "old\n"), (".done", ""), (".rc", "0\n"), ("summary.json", "{}")):
+        (run / name).write_text(text)
+    fresh = tmp_path / "s02_fraud_realtime-rust"  # no earlier run
+    out = subprocess.run(
+        _in_bash(tmp_path, f'fresh_run_dir "{run}" && fresh_run_dir "{fresh}"'),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert out.returncode == 0, out.stderr
+    assert list(run.iterdir()) == [] and list(fresh.iterdir()) == []
+    (moved,) = tmp_path.glob("s01_social_feed-rust-superseded-*")
+    assert (moved / "summary.json").exists() and "@" not in moved.name  # not an archive
+
+
+def test_a_release_soak_attempt_stops_when_the_old_run_cannot_be_moved(tmp_path):
+    full = tmp_path / "full"
+    run = full / "s01_social_feed-rust"
+    run.mkdir(parents=True)
+    (run / "summary.json").write_text("{}")
+    full.chmod(0o555)  # nothing in full/ can be renamed
+    try:
+        out = subprocess.run(
+            _in_bash(tmp_path, f'fresh_run_dir "{run}"; echo "rc=$?"'),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    finally:
+        full.chmod(0o755)
+    assert "rc=1" in out.stdout
+    assert [p.name for p in full.iterdir()] == [run.name]
+    assert (run / "summary.json").exists()  # untouched, and the attempt does not start in it
+
+
+def test_a_release_soak_run_refuses_to_start_on_a_port_that_answers(tmp_path):
+    group_file = tmp_path / ".scenario-group"
+    group_file.write_text("4242\n")  # left by an earlier run that was SIGKILLed
+    with socket.socket() as gone:
+        gone.bind(("127.0.0.1", 0))
+        free = gone.getsockname()[1]
+    with socket.socket() as listening:
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        busy = listening.getsockname()[1]
+
+        def refuse(*ports):
+            body = f'SOAK_GROUP_FILE="{group_file}"\nrefuse_busy_ports {" ".join(map(str, ports))}'
+            return subprocess.run(
+                _in_bash(tmp_path, body + '; echo "rc=$?"'),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        out = refuse(free, busy)
+        assert "rc=1" in out.stdout
+        assert f"a server already answers on port(s) {busy}; stop it first" in out.stderr
+        assert "an earlier run's scenario may still run: kill -9 -- -4242" in out.stderr
+        assert "rc=0" in refuse(free).stdout
+
+
+def _soak_run(root, name, summary=None, rc=0, done_at=None):
+    """A run directory as run_*.sh leave it: summary.json, then .rc and .done once finished
+    (rc None: still running)."""
+    d = root / name
+    d.mkdir()
+    if summary is not None:
+        (d / "summary.json").write_text(json.dumps(summary))
+    if rc is not None:
+        (d / ".rc").write_text(f"{rc}\n")
+        (d / ".done").touch()
+        if done_at is not None:
+            os.utime(d / ".done", (done_at, done_at))
+    return d
+
+
+def _score(root, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["score.py", str(root)])
+    monkeypatch.setattr(soak_score, "OVERRIDES", [])
+    soak_score.main()
+    return json.loads((root / "scores.json").read_text())
+
+
+def _check(severity):
+    return {"name": f"a {severity} check", "ok": False, "severity": severity}
+
+
+def test_soak_scoring_keeps_the_newest_finished_archive_of_a_run_in_progress(tmp_path, monkeypatch):
+    # the current run has summarised part way (a critical failure so far); the scorer takes
+    # the newest finished archive, whatever its label, and never the partial summary
+    _soak_run(tmp_path, "s01_feed-rust", {"checks": [_check("critical")]}, rc=None)
+    _soak_run(tmp_path, "s01_feed-rust@older", {}, done_at=1_000)
+    _soak_run(tmp_path, "s01_feed-rust@newer", {"checks": [_check("minor")]}, done_at=2_000)
+    _soak_run(tmp_path, "s01_feed-rust@unfinished", {"checks": [_check("major")]}, rc=None)
+    _soak_run(tmp_path, "s01_feed-c", {})
+    _soak_run(tmp_path, "s02_mixed-rust", {}, rc=None)  # first run, still going
+    _soak_run(tmp_path, "s02_mixed-c", {})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["scenarios"]["s01_feed"]["correctness"] == 38  # the minor failure of @newer
+    assert scores["scenarios"]["s01_feed"]["run"] == "s01_feed-rust@newer"
+    assert scores["blocked_by"] == []
+    assert "s02_mixed" not in scores["scenarios"]
+    assert scores["pending"] == ["s02_mixed"]
+
+
+def test_soak_scoring_blocks_on_a_rust_run_that_did_not_exit_0(tmp_path, monkeypatch):
+    _soak_run(tmp_path, "s03_timeout-rust", {}, rc=124)  # timed out after summarising
+    _soak_run(tmp_path, "s03_timeout-c", {})
+    _soak_run(tmp_path, "s04_crash-rust", None, rc=1)  # died before it summarised
+    _soak_run(tmp_path, "s05_clean-rust", {})
+    _soak_run(tmp_path, "s05_clean-c", {})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["blocked_by"] == ["s03_timeout", "s04_crash"]
+    assert scores["failed_runs"] == {
+        "s03_timeout": "s03_timeout-rust exited 124",
+        "s04_crash": "s04_crash-rust exited 1",
+    }
+    assert "run failed: s03_timeout-rust exited 124" in scores["scenarios"]["s03_timeout"]["notes"]
+    assert "s04_crash" not in scores["scenarios"]
+
+
+def test_soak_scoring_never_takes_a_failed_c_run_as_its_baseline(tmp_path, monkeypatch):
+    rust = {"monitor": {"rss_max_mb": 150}}
+    _soak_run(tmp_path, "s06_old-rust", rust)
+    _soak_run(tmp_path, "s06_old-c", {"monitor": {"rss_max_mb": 100}}, rc=124)
+    _soak_run(tmp_path, "s06_old-c@jul-master", {"monitor": {"rss_max_mb": 300}})
+    _soak_run(tmp_path, "s07_none-rust", rust)
+    _soak_run(tmp_path, "s07_none-c", {"monitor": {"rss_max_mb": 100}}, rc=1)
+    _soak_run(tmp_path, "s08_same-rust", rust)
+    _soak_run(tmp_path, "s08_same-c", {"monitor": {"rss_max_mb": 100}})
+    _soak_run(tmp_path, "s08_same-c-samewindow", {"monitor": {"rss_max_mb": 50}}, rc=137)
+    scores = _score(tmp_path, monkeypatch)["scenarios"]
+    assert scores["s06_old"]["rss_vs_c"] == 0.5  # the older baseline that exited 0
+    assert scores["s06_old"]["c_run"] == "s06_old-c@jul-master"
+    assert scores["s07_none"]["rss_vs_c"] is None
+    assert "no C baseline exited 0: scored without C ratios" in scores["s07_none"]["notes"]
+    assert scores["s07_none"]["c_run"] is None
+    assert scores["s08_same"]["rss_vs_c"] == 1.5  # the short baseline, not the failed rerun
+
+
+@pytest.fixture
+def soak_report(tmp_path, monkeypatch):
+    """gen_final.build() over tmp_path/full with the scores.json a test writes (score.py
+    is not run); returns full/ and build(scores, findings, campaign) -> report.html."""
+    full = tmp_path / "full"
+    full.mkdir()
+    monkeypatch.setattr(gen_final, "S", tmp_path)
+    monkeypatch.setattr(gen_final, "FULL", full)
+    scoring = types.SimpleNamespace(returncode=0, stderr="")
+    monkeypatch.setattr(gen_final.subprocess, "run", lambda *args, **kwargs: scoring)
+
+    def build(scores, findings=(), campaign=None, score_py=None):
+        if score_py is not None:  # how score.py ended: (exit status, stderr)
+            scoring.returncode, scoring.stderr = score_py
+        (full / "scores.json").write_text(json.dumps(scores))
+        (tmp_path / "findings.json").write_text(json.dumps(list(findings)))
+        if campaign is not None:
+            (tmp_path / "campaign.json").write_text(json.dumps(campaign))
+        gen_final.build()
+        return (tmp_path / "report.html").read_text()
+
+    return full, build
+
+
+def _scored(total, rust="s01_social_feed-rust", c="s01_social_feed-c"):
+    return {"total": total, "run": rust, "c_run": c, "notes": []}
+
+
+ALL_SCENARIOS = [scn for scn, *_ in gen_final.SCN]
+
+
+def test_the_soak_report_says_not_blocked_when_nothing_blocks(soak_report):
+    full, build = soak_report
+    _soak_run(full, "s01_social_feed-rust", {})
+    _soak_run(full, "s01_social_feed-c", {"server_log_crash_markers": ["panic"]})
+    every = {scn: _scored(95.0, rust=f"{scn}-rust", c=f"{scn}-c") for scn in ALL_SCENARIOS}
+    page = build({"scenarios": every, "release_score": 95.0, "blocked_by": []})
+    assert (
+        "Not blocked: no open critical Rust bug, and no critical check or Rust run failed." in page
+    )
+    assert 'class="verdict pass"' in page
+    assert "Blocked:" not in page
+    assert "<b>0 / 1</b><span>scenarios that crashed: Rust / C</span>" in page
+    assert "d070f1f9b" not in page
+    assert "20f9a45ee" not in page
+
+
+def test_the_soak_report_counts_a_c_crash_the_scores_left_out(soak_report):
+    """A C run that crashed is no baseline (score.py drops it), but the crash tile counts it."""
+    full, build = soak_report
+    _soak_run(full, "s01_social_feed-rust", {})
+    _soak_run(
+        full, "s01_social_feed-c", {"server_log_crash_markers": ["crashed by signal"]}, rc=134
+    )
+    scores = {"scenarios": {"s01_social_feed": _scored(90.0, c=None)}, "blocked_by": []}
+    page = build(scores)
+    assert "<b>0 / 1</b><span>scenarios that crashed: Rust / C</span>" in page
+
+
+def test_the_soak_report_names_what_blocks_the_release(soak_report):
+    _, build = soak_report
+    findings = [
+        {
+            "id": "F3",
+            "engine": "rust",
+            "severity": "critical",
+            "title": "loses 0",
+            "scenario": "s03",
+        },
+        {
+            "id": "F4",
+            "engine": "rust",
+            "severity": "critical",
+            "title": "gone",
+            "status": "FIXED by #1",
+        },
+    ]
+    scores = {
+        "scenarios": {},
+        "release_score": None,
+        "blocked_by": ["s09_replication"],
+        "failed_runs": {"s09_replication": "s09_replication-rust exited 124"},
+        "pending": ["s12_iot_retention"],
+    }
+    page = build(scores, findings)
+    rest = ", ".join(scn for scn in ALL_SCENARIOS if scn != "s09_replication")
+    assert (
+        "Blocked: 1 open critical Rust bug (F3); a critical check failed or the run failed in"
+        f" s09_replication. Scenario score —/100 over 0 of 12 scenarios. Not scored yet: {rest}."
+    ) in page
+    assert 'class="verdict"' in page
+
+
+def test_the_soak_report_decides_nothing_on_scores_it_does_not_have(soak_report):
+    _, build = soak_report
+    one = {"scenarios": {"s01_social_feed": _scored(95.0)}, "release_score": 95.0, "blocked_by": []}
+    page = build(one)
+    assert "Not decided: 11 of 12 scenarios are not scored yet." in page
+    assert "Not blocked" not in page and 'class="verdict"' in page
+    # score.py failed: the scores.json it left from an earlier run says nothing about this one
+    every = {scn: _scored(95.0) for scn in ALL_SCENARIOS}
+    stale = {"scenarios": every, "release_score": 95.0, "blocked_by": []}
+    page = build(
+        stale, score_py=(1, "Traceback ...\njson.decoder.JSONDecodeError: Expecting value")
+    )
+    assert (
+        "Not decided: score.py failed (exit 1): json.decoder.JSONDecodeError: Expecting value."
+        " Scenario score —/100 over 0 of 12 scenarios."
+    ) in page
+    assert "Not blocked" not in page
+
+
+def test_the_soak_report_shows_campaign_notes_as_written_for_their_campaign(soak_report):
+    full, build = soak_report
+    (_soak_run(full, "s01_social_feed-rust", {}) / ".commit").write_text("bbb\n")
+    (_soak_run(full, "s02_fraud_realtime-rust", {}) / ".commit").write_text("aaa\n")
+    (full / "scores-aaa.json").write_text(
+        json.dumps({"scenarios": {"s01_social_feed": {"total": 80.0}}})
+    )
+    campaign = {
+        "label": "bbb",
+        "previous": "aaa",
+        "c_baseline": "C v9",
+        "notes": {"written_for": "aaa", "html": "the <b>aaa</b> runs"},
+    }
+    scores = {
+        "scenarios": {
+            "s01_social_feed": _scored(90.0, c=None),
+            "s02_fraud_realtime": _scored(70.0, rust="s02_fraud_realtime-rust", c=None),
+        },
+        "release_score": 80.0,
+        "blocked_by": [],
+    }
+    page = build(scores, campaign=campaign)
+    assert "Notes written for the aaa campaign</b>" in page
+    assert "the <b>aaa</b> runs" in page
+    assert "on bbb · was 80.0 on aaa" in page
+    assert "on aaa · bbb re-run pending" in page
+    assert "Release readiness · FalkorDB-rs main · bbb (compared with aaa)" in page
+    assert "scenarios that crashed: Rust / C v9" in page
+
+
+def test_the_shipped_soak_campaign_notes_render(soak_report):
+    _, build = soak_report
+    campaign = json.loads((SOAK_DIR / "campaign.json").read_text())
+    page = build({"scenarios": {}, "release_score": None, "blocked_by": []}, campaign=campaign)
+    assert f"Notes written for the {campaign['notes']['written_for']} campaign" in page
+    assert campaign["caveats"] in page
+
+
+# ---------------------------------------------------------------- scenario fixes, run alone
+
+
+def _scenario_functions(name, *functions, **namespace):
+    """Top-level functions of a scenario script compiled alone into `namespace`: a scenario
+    runs against a server when imported, so its functions are taken from the source."""
+    tree = ast.parse((SOAK_DIR / "scenarios" / f"{name}.py").read_text())
+    found = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in functions]
+    assert sorted(n.name for n in found) == sorted(functions)
+    exec(compile(ast.Module(found, type_ignores=[]), f"{name}.py", "exec"), namespace)
+    return namespace
+
+
+def _int(v):
+    return [3, v]  # a compact int cell
+
+
+def test_s04_spot_prices_fail_when_the_lookup_drops_or_adds_an_id():
+    ns = _scenario_functions(
+        "s04_recommendation", "spot_price_problems", sk=soakkit, Counter=Counter
+    )
+    problems = ns["spot_price_problems"]
+    price = [100, 200, 300]
+    rows = [[_int(0), _int(100)], [_int(2), _int(300)]]
+    assert problems([0, 2], rows, price) == []
+    assert problems([0, 1, 2], rows, price) == ["spot ids: missing [1] unexpected []"]
+    assert problems([0, 2, 2], rows, price) == ["spot ids: missing [2] unexpected []"]
+    assert problems([2], rows, price) == ["spot ids: missing [] unexpected [0]"]
+    assert problems([0, 2], [[_int(0), _int(100)], [_int(2), _int(301)]], price) == ["price 2"]
+
+
+def test_s04_and_s12_record_operation_errors_before_their_summary(tmp_path):
+    checks = soakkit.Checks(tmp_path)
+    soakkit.check_no_operation_errors(
+        checks, {"ops": {"_missed_schedule": {"errors": 3}, "read": {"errors": 0}}}
+    )
+    soakkit.check_no_operation_errors(checks, {"ops": {"write_view": {"errors": 2}}})
+    assert [(c["name"], c["ok"], c["detail"]) for c in checks.items] == [
+        ("no operation errors", True, "{}"),
+        ("no operation errors", False, "{'write_view': 2}"),
+    ]
+    for name, out in (("s04_recommendation", "out"), ("s12_iot_retention", "OUT")):
+        source = (SOAK_DIR / "scenarios" / f"{name}.py").read_text()
+        recorded = source.index("sk.check_no_operation_errors(checks, s)")
+        assert recorded < source.index(f"s = sk.analyze({out}, srv)", recorded)  # summarised again
+        assert recorded < source.index('"summary.json").write_text(')
+
+
+def test_s07_counts_an_empty_heavy_read_as_a_violation():
+    written = io.StringIO()
+    sk = types.SimpleNamespace(
+        query=lambda *args, **kwargs: [[b"t"], [], [b"stats"]], rows=soakkit.rows, cval=soakkit.cval
+    )
+    ns = _scenario_functions(
+        "s07_mvcc_consistency",
+        "heavy_op",
+        "ints",
+        "violation",
+        sk=sk,
+        G="g",
+        Q_HEAVY="MATCH heavy",
+        T_TOTAL=0,
+        MAX_VIOL=10,
+        json=json,
+        time=time,
+    )
+    ctx = types.SimpleNamespace(r=None, state={"nviol": 0, "viol": written})
+    assert ns["heavy_op"](ctx) == "read_invariants_VIOLATION"
+    assert json.loads(written.getvalue())["kind"] == "snapshot invariant"
+
+
+def _s09_compare(tmp_path, stale_attempts):
+    """s09's compare() with a replica whose first `stale_attempts` checksums lag."""
+    seen = {1: 0, 2: 0}
+
+    def checksum(port):
+        seen[port] += 1
+        lagging = port == 2 and seen[port] <= stale_attempts
+        return {"count:Event": 9 if lagging else 10, "ids:Event": 5}
+
+    checks = soakkit.Checks(tmp_path)
+    ns = _scenario_functions(
+        "s09_replication",
+        "compare",
+        threading=threading,
+        a=types.SimpleNamespace(port=1),
+        PORT_R=2,
+        CS_QUERIES=["count:Event", "ids:Event"],
+        checks=checks,
+        checksum=checksum,
+        log=lambda *x: None,
+    )
+    return ns["compare"], checks, seen
+
+
+def test_s09_records_only_the_last_attempt_of_a_compare(tmp_path):
+    compare, checks, seen = _s09_compare(tmp_path, stale_attempts=1)
+    assert compare("mid-soak Q1", retry=lambda: None)[0] is True
+    assert seen == {1: 2, 2: 2}
+    held = sc.checks_by_name(checks.items)
+    assert held == {
+        "mid-soak Q1: replica content == primary (counts/props/structure/indexes)": True,
+        "mid-soak Q1: internal ids (sum id(n)/id(e)) identical": True,
+        "mid-soak Q1: checksum queries ran without error": True,
+    }
+    assert checks.items[0]["detail"].startswith("first attempt differed (count:Event: primary=10")
+
+
+def test_s09_a_compare_still_differing_after_its_retry_fails_once(tmp_path):
+    compare, checks, _ = _s09_compare(tmp_path, stale_attempts=2)
+    assert compare("final", retry=lambda: None)[0] is False
+    assert [c["name"] for c in checks.items if not c["ok"]] == [
+        "final: replica content == primary (counts/props/structure/indexes)"
+    ]
+    compare, checks, seen = _s09_compare(tmp_path / "no-retry", stale_attempts=1)
+    (tmp_path / "no-retry").mkdir()
+    assert compare("after initial sync")[0] is False  # no retry asked: one attempt
+    assert seen == {1: 1, 2: 1}
+
+
+@pytest.mark.parametrize("raised", [RuntimeError("worker failure"), SystemExit("load worker died")])
+def test_s09_a_load_thread_that_failed_fails_the_scenario(raised):
+    def run_load(*args, **kwargs):
+        raise raised
+
+    ns = _scenario_functions(
+        "s09_replication",
+        "load_thread",
+        "join_load",
+        threading=threading,
+        sk=types.SimpleNamespace(run_load=run_load),
+    )
+    t = ns["load_thread"]("srv", "out", [], 1.0, tag="drill_")
+    t.start()
+    with pytest.raises(type(raised), match=str(raised)):
+        ns["join_load"](t, 30)
+
+
+def test_s09_a_load_thread_that_finished_or_hangs(tmp_path):
+    seen = []
+    release = threading.Event()
+
+    def run_load(*args, **kwargs):
+        seen.append((args, kwargs))
+        if kwargs.get("tag") == "hang":
+            release.wait(30)
+
+    ns = _scenario_functions(
+        "s09_replication",
+        "load_thread",
+        "join_load",
+        threading=threading,
+        sk=types.SimpleNamespace(run_load=run_load),
+    )
+    done = ns["load_thread"]("srv", "out", [], 1.0)
+    done.start()
+    ns["join_load"](done, 30)
+    assert seen == [(("srv", "out", [], 1.0), {})]
+    hung = ns["load_thread"]("srv", "out", [], 1.0, tag="hang")
+    hung.start()
+    try:
+        with pytest.raises(RuntimeError, match="load did not finish within 0s"):
+            ns["join_load"](hung, 0.1)
+    finally:
+        release.set()
+
+
+def test_s12_writes_each_ack_whole_before_its_name_exists(tmp_path):
+    renamed = []
+
+    def replace(src, dst):
+        assert not Path(dst).exists()
+        assert json.loads(Path(src).read_text())  # whole before checkpoint() can see it
+        renamed.append((Path(src).name, Path(dst).name))
+        os.replace(src, dst)
+
+    ns = _scenario_functions(
+        "s12_iot_retention",
+        "paused",
+        OUT=tmp_path,
+        PAUSE=types.SimpleNamespace(read_text=lambda: "3", exists=lambda: False),
+        json=json,
+        time=time,
+        os=types.SimpleNamespace(replace=replace),
+    )
+    ctx = types.SimpleNamespace(wid=4, state={"nk": {"1": 2}, "last": 7})
+    assert ns["paused"](ctx, "w") is True
+    assert renamed == [("ack-w-4-3.tmp", "ack-w-4-3")]
+    assert json.loads((tmp_path / "ack-w-4-3").read_text()) == {"nk": {"1": 2}, "last": 7}
+    assert [p.name for p in tmp_path.iterdir()] == ["ack-w-4-3"]
+
+
+def test_soak_scoring_blocks_on_an_unreadable_summary_and_waits_for_c(tmp_path, monkeypatch):
+    (_soak_run(tmp_path, "s01_cut-rust", None, rc=124) / "summary.json").write_text('{"ops": {')
+    _soak_run(tmp_path, "s02_waiting-rust", {})
+    _soak_run(tmp_path, "s02_waiting-c", {}, rc=None)  # the C baseline is still running
+    rust = _soak_run(tmp_path, "s03_bad_c-rust", {"monitor": {"rss_max_mb": 150}})
+    c = _soak_run(tmp_path, "s03_bad_c-c", None)
+    (c / "summary.json").write_text("{")
+    for run, rss in ((rust, 100), (c, 200)):  # RSS at equal data, which C ratios also read
+        rows = [f"0,1,{rss},0,0,0,0,ingest", f"1,1,{rss},0,0,0,0,soak"]
+        (run / "monitor.csv").write_text("\n".join(["t,cpu,rss,a,b,c,d,phase", *rows]) + "\n")
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["blocked_by"] == ["s01_cut"]
+    assert scores["failed_runs"] == {"s01_cut": "s01_cut-rust exited 124"}
+    assert scores["pending"] == ["s02_waiting"]
+    bad_c = scores["scenarios"]["s03_bad_c"]
+    assert bad_c["rss_vs_c"] is None
+    assert "s03_bad_c-c left no readable summary.json: scored without C ratios" in bad_c["notes"]
+    assert bad_c["c_run"] is None
+    assert list(scores["scenarios"]) == ["s03_bad_c"]
+
+
+def test_soak_scoring_waits_for_a_c_run_in_progress_rather_than_score_without_c(
+    tmp_path, monkeypatch
+):
+    _soak_run(tmp_path, "s05_churn-rust", {})
+    _soak_run(tmp_path, "s05_churn-c", {}, rc=None)  # the C rerun is still going
+    _soak_run(tmp_path, "s05_churn-c@jul-master", {}, rc=124)  # the old one failed
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["pending"] == ["s05_churn"] and scores["scenarios"] == {}
+
+
+def test_soak_scoring_takes_a_same_window_baseline_while_the_short_one_reruns(
+    tmp_path, monkeypatch
+):
+    _soak_run(tmp_path, "s12_iot-rust", {"monitor": {"rss_max_mb": 150}})
+    _soak_run(tmp_path, "s12_iot-c", {}, rc=None)  # the short C baseline runs again
+    _soak_run(tmp_path, "s12_iot-c-samewindow", {"monitor": {"rss_max_mb": 100}})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["pending"] == []
+    assert scores["scenarios"]["s12_iot"]["c_run"] == "s12_iot-c-samewindow"
+    assert scores["scenarios"]["s12_iot"]["rss_vs_c"] == 1.5

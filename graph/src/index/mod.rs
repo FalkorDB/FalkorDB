@@ -44,6 +44,7 @@
 //! - [`Document`] -- wraps a RediSearch document for inserting/updating entities.
 //! - [`IndexResultsIter`] -- lazy pull-based iterator over C query results.
 
+use arcstr::ArcStr;
 pub mod falkordb;
 pub mod index_docs;
 pub mod indexer;
@@ -210,29 +211,29 @@ impl Hash for Field {
 }
 
 pub struct IndexInfo {
-    pub label: Arc<String>,
+    pub label: ArcStr,
     pub pending: i32,
     pub progress: u64,
     pub total: u64,
-    pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+    pub fields: HashMap<ArcStr, Vec<Arc<Field>>>,
     /// Attribute names in insertion order. Mirrors `fields.keys()` but
     /// preserves the order the user added them, since `HashMap` iteration
     /// is non-deterministic and `CALL db.indexes()` must surface
     /// properties in the order they were declared for parity with edge.
-    pub field_order: Vec<Arc<String>>,
-    pub language: Option<Arc<String>>,
-    pub stopwords: Option<Vec<Arc<String>>>,
+    pub field_order: Vec<ArcStr>,
+    pub language: Option<ArcStr>,
+    pub stopwords: Option<Vec<ArcStr>>,
     pub entity_type: String,
 }
 
 #[derive(Debug)]
 pub enum IndexQuery<T> {
     Equal {
-        key: Arc<String>,
+        key: ArcStr,
         value: T,
     },
     Range {
-        key: Arc<String>,
+        key: ArcStr,
         min: Option<T>,
         max: Option<T>,
         include_min: bool,
@@ -241,20 +242,20 @@ pub enum IndexQuery<T> {
     And(Vec<Self>),
     Or(Vec<Self>),
     Point {
-        key: Arc<String>,
+        key: ArcStr,
         point: T,
         radius: T,
     },
     /// IN list query: `property IN [v1, v2, ...]`
     /// The list expression is evaluated at runtime and expanded to `Or(Equal(...), ...)`.
     InList {
-        key: Arc<String>,
+        key: ArcStr,
         list: T,
     },
     /// Array contains query: `value IN property` where property holds an array.
     /// Queries the array sub-fields (numeric:arr or string:arr) based on value type.
     ArrayContains {
-        key: Arc<String>,
+        key: ArcStr,
         value: T,
     },
 }
@@ -889,18 +890,18 @@ pub struct Index {
     /// `RediSearch_DropIndex` in [`SpecHandle::drop`]) when the last
     /// generation holding it goes away.
     spec: Option<Arc<SpecHandle>>,
-    fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+    fields: HashMap<ArcStr, Vec<Arc<Field>>>,
     /// Attribute keys in insertion order. Tracked alongside `fields` so
     /// `CALL db.indexes()` can return `properties` in declaration order.
-    field_order: Vec<Arc<String>>,
+    field_order: Vec<ArcStr>,
     /// Shared across `clone_for_update` generations so population tickets
     /// acquired against an older published generation are released against
     /// the same counters.
     pending_slots: Arc<Mutex<PendingSlots>>,
     progress: AtomicU64,
     total: AtomicU64,
-    language: Option<Arc<String>>,
-    stopwords: Option<Vec<Arc<String>>>,
+    language: Option<ArcStr>,
+    stopwords: Option<Vec<ArcStr>>,
 }
 
 #[derive(Debug, Default)]
@@ -1107,9 +1108,9 @@ impl Index {
     /// Should only be called when `!self.has_rs_index()`.
     pub fn create_rs_index(
         &mut self,
-        label: &Arc<String>,
-        stopwords: Option<&Vec<Arc<String>>>,
-        language: Option<&Arc<String>>,
+        label: &ArcStr,
+        stopwords: Option<&Vec<ArcStr>>,
+        language: Option<&ArcStr>,
     ) -> Result<(), String> {
         // Every fallible conversion runs before the options block is
         // allocated, so an early return cannot leak it.
@@ -1194,7 +1195,7 @@ impl Index {
     /// Register fields in the RediSearch index. Must be called after `create_rs_index`.
     pub fn register_fields(
         &self,
-        fields: &HashMap<Arc<String>, Vec<Arc<Field>>>,
+        fields: &HashMap<ArcStr, Vec<Arc<Field>>>,
         field_options: Option<&TextIndexOptions>,
     ) -> Result<(), String> {
         unsafe {
@@ -1389,7 +1390,7 @@ impl Index {
     /// Build a RediSearch numeric range node for numeric values.
     fn build_numeric_range_node(
         &self,
-        key: &Arc<String>,
+        key: &ArcStr,
         min: Option<&Value>,
         max: Option<&Value>,
         include_min: bool,
@@ -1432,7 +1433,7 @@ impl Index {
     /// Matches C FalkorDB's `_StringRangeToQueryNode` in index_query.c.
     fn build_string_range_node(
         &self,
-        key: &Arc<String>,
+        key: &ArcStr,
         min: Option<&str>,
         max: Option<&str>,
         include_min: bool,
@@ -1990,7 +1991,7 @@ impl Index {
     #[must_use]
     pub fn contains_field(
         &self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> bool {
         self.fields.contains_key(attr)
     }
@@ -1999,7 +2000,7 @@ impl Index {
     #[must_use]
     pub fn has_field_with_type(
         &self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
         index_type: &IndexType,
     ) -> bool {
         self.fields
@@ -2011,7 +2012,7 @@ impl Index {
     #[must_use]
     pub fn get_fields(
         &self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<&Vec<Arc<Field>>> {
         self.fields.get(attr)
     }
@@ -2019,7 +2020,7 @@ impl Index {
     /// Push a field to an existing attribute's field list.
     pub fn add_field_to_existing(
         &mut self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
         field: Arc<Field>,
     ) {
         if let Some(fields) = self.fields.get_mut(attr) {
@@ -2030,7 +2031,7 @@ impl Index {
     /// Insert a new attribute with its initial field.
     pub fn insert_field(
         &mut self,
-        attr: Arc<String>,
+        attr: ArcStr,
         field: Arc<Field>,
     ) {
         if !self.fields.contains_key(&attr) {
@@ -2042,7 +2043,7 @@ impl Index {
     /// Remove all fields for an attribute. Returns true if the attr existed.
     pub fn remove_field(
         &mut self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> bool {
         let removed = self.fields.remove(attr).is_some();
         if removed {
@@ -2054,7 +2055,7 @@ impl Index {
     /// Retain only fields that don't match the given index type for a specific attribute.
     pub fn retain_fields(
         &mut self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
         index_type: &IndexType,
     ) {
         if let Some(fields) = self.fields.get_mut(attr) {
@@ -2070,19 +2071,19 @@ impl Index {
 
     /// Get all attribute names.
     #[must_use]
-    pub fn field_keys(&self) -> Vec<Arc<String>> {
+    pub fn field_keys(&self) -> Vec<ArcStr> {
         self.fields.keys().cloned().collect()
     }
 
     /// Get a reference to all fields.
     #[must_use]
-    pub const fn fields(&self) -> &HashMap<Arc<String>, Vec<Arc<Field>>> {
+    pub const fn fields(&self) -> &HashMap<ArcStr, Vec<Arc<Field>>> {
         &self.fields
     }
 
     /// Attribute keys in insertion order.
     #[must_use]
-    pub fn field_order(&self) -> &[Arc<String>] {
+    pub fn field_order(&self) -> &[ArcStr] {
         &self.field_order
     }
 
@@ -2184,14 +2185,14 @@ impl Index {
 
     /// Get a reference to the language setting, if any.
     #[must_use]
-    pub const fn language(&self) -> Option<&Arc<String>> {
+    pub const fn language(&self) -> Option<&ArcStr> {
         self.language.as_ref()
     }
 
     /// Set the language for this index.
     pub fn set_language(
         &mut self,
-        language: Option<Arc<String>>,
+        language: Option<ArcStr>,
     ) {
         self.language = language;
     }
@@ -2200,14 +2201,14 @@ impl Index {
 
     /// Get a reference to the stopwords list, if any.
     #[must_use]
-    pub const fn stopwords(&self) -> Option<&Vec<Arc<String>>> {
+    pub const fn stopwords(&self) -> Option<&Vec<ArcStr>> {
         self.stopwords.as_ref()
     }
 
     /// Set the stopwords for this index.
     pub fn set_stopwords(
         &mut self,
-        stopwords: Option<Vec<Arc<String>>>,
+        stopwords: Option<Vec<ArcStr>>,
     ) {
         self.stopwords = stopwords;
     }
@@ -2232,7 +2233,7 @@ impl Index {
 
     pub fn recreate_index(
         &mut self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> Result<(), String> {
         // Release this generation's reference to the old spec. The actual
         // `RediSearch_DropIndex` (invalidate + release the creation ref)

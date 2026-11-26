@@ -47,6 +47,7 @@
 //! Background population uses `write_lock` to avoid racing with
 //! per-transaction commit calls and schema changes.
 
+use arcstr::ArcStr;
 use std::{
     collections::HashMap,
     ffi::CString,
@@ -74,13 +75,13 @@ pub enum IndexOptions {
 
 #[derive(Clone, Debug)]
 pub struct PopulationTicket {
-    label: Arc<String>,
+    label: ArcStr,
     generation_id: u64,
 }
 
 #[derive(Clone, Debug)]
 pub struct PopulationSnapshot {
-    pub fields: HashMap<Arc<String>, Vec<Arc<Field>>>,
+    pub fields: HashMap<ArcStr, Vec<Arc<Field>>>,
     pub ticket: PopulationTicket,
 }
 
@@ -91,7 +92,7 @@ impl PopulationTicket {
     }
 
     #[must_use]
-    pub const fn label(&self) -> &Arc<String> {
+    pub const fn label(&self) -> &ArcStr {
         &self.label
     }
 }
@@ -99,7 +100,7 @@ impl PopulationTicket {
 impl IndexOptions {
     /// Extract language from the options (only applicable for Text index options).
     #[must_use]
-    pub const fn language(&self) -> &Option<Arc<String>> {
+    pub const fn language(&self) -> &Option<ArcStr> {
         match self {
             Self::Text(opts) => &opts.language,
             Self::Vector(_) => &None,
@@ -108,7 +109,7 @@ impl IndexOptions {
 
     /// Extract stopwords from the options (only applicable for Text index options).
     #[must_use]
-    pub const fn stopwords(&self) -> &Option<Vec<Arc<String>>> {
+    pub const fn stopwords(&self) -> &Option<Vec<ArcStr>> {
         match self {
             Self::Text(opts) => &opts.stopwords,
             Self::Vector(_) => &None,
@@ -150,7 +151,7 @@ pub struct Indexer {
     /// Lock-free snapshot of the per-label indexes. Readers `load()` the
     /// current map; schema mutations clone the map, modify the copy (via
     /// [`Index::clone_for_update`]), and `store()` it under `write_lock`.
-    index: Arc<ArcSwap<HashMap<Arc<String>, Arc<Index>>>>,
+    index: Arc<ArcSwap<HashMap<ArcStr, Arc<Index>>>>,
     /// Serializes map mutations and background index population batches with
     /// write-path `commit_index` calls so they never run concurrently.
     write_lock: Arc<Mutex<()>>,
@@ -181,8 +182,8 @@ impl Indexer {
     pub fn create_index(
         &self,
         index_type: &IndexType,
-        label: &Arc<String>,
-        attrs: &Vec<Arc<String>>,
+        label: &ArcStr,
+        attrs: &Vec<ArcStr>,
         total: u64,
         options: Option<IndexOptions>,
     ) -> Result<(), String> {
@@ -203,7 +204,7 @@ impl Indexer {
                 let stopwords = text_opts.stopwords.as_ref().map(|words| {
                     words
                         .iter()
-                        .map(|w| Arc::new(w.to_lowercase()))
+                        .map(|w| ArcStr::from(w.to_lowercase()))
                         .collect::<Vec<_>>()
                 });
                 (language, stopwords, Some(text_opts), None)
@@ -263,13 +264,13 @@ impl Indexer {
         // published generation) to mutate and publish below.
         let mut label_indexes = existing.map_or_else(Index::default, Index::clone_for_update);
 
-        let mut new_fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
+        let mut new_fields: HashMap<ArcStr, Vec<Arc<Field>>> = HashMap::new();
 
         for attr in attrs {
             let field_name = match index_type {
-                IndexType::Range => Arc::new(format!("range:{attr}")),
+                IndexType::Range => ArcStr::from(format!("range:{attr}")),
                 IndexType::Fulltext => attr.clone(),
-                IndexType::Vector => Arc::new(format!("vector:{attr}")),
+                IndexType::Vector => ArcStr::from(format!("vector:{attr}")),
             };
 
             let field = if let Some(ref vopts) = vector_options {
@@ -333,7 +334,7 @@ impl Indexer {
         if label_indexes.language().is_none() && *index_type == IndexType::Fulltext {
             match language {
                 Some(lang) => label_indexes.set_language(Some(lang)),
-                None => label_indexes.set_language(Some(Arc::new(String::from("english")))),
+                None => label_indexes.set_language(Some(ArcStr::from("english"))),
             }
         } else if language.is_some() && label_indexes.language().is_none() {
             label_indexes.set_language(language);
@@ -374,8 +375,8 @@ impl Indexer {
     #[must_use]
     pub fn drop_index(
         &self,
-        label: &Arc<String>,
-        attrs: &[Arc<String>],
+        label: &ArcStr,
+        attrs: &[ArcStr],
         index_type: &IndexType,
         total: u64,
     ) -> Option<(usize, usize)> {
@@ -386,7 +387,7 @@ impl Indexer {
         // Empty `attrs` means "drop all fields of this index_type"
         // (e.g. db.idx.fulltext.drop('L') drops every fulltext field
         // on label L without requiring callers to enumerate them).
-        let target_attrs: Vec<Arc<String>> = if attrs.is_empty() {
+        let target_attrs: Vec<ArcStr> = if attrs.is_empty() {
             index
                 .fields()
                 .iter()
@@ -432,7 +433,7 @@ impl Indexer {
     /// Caller must hold [`Self::write_lock`] (see `drop_index_bg`).
     pub fn remove_if_empty(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) {
         let map = self.index.load_full();
         if map.get(label).is_none_or(|index| index.index_count() != 0) {
@@ -446,8 +447,8 @@ impl Indexer {
     #[must_use]
     pub fn has_field_for_label(
         &self,
-        label: &Arc<String>,
-        field: &Arc<String>,
+        label: &ArcStr,
+        field: &ArcStr,
         index_type: &IndexType,
     ) -> bool {
         if let Some(index) = self.index.load().get(label) {
@@ -459,8 +460,8 @@ impl Indexer {
     #[must_use]
     pub fn is_label_indexed(
         &self,
-        label: &Arc<String>,
-        field: &Arc<String>,
+        label: &ArcStr,
+        field: &ArcStr,
         index_type: &IndexType,
     ) -> bool {
         if let Some(index) = self.index.load().get(label)
@@ -474,8 +475,8 @@ impl Indexer {
     #[must_use]
     pub fn is_attr_indexed(
         &self,
-        label: &Arc<String>,
-        field: &Arc<String>,
+        label: &ArcStr,
+        field: &ArcStr,
     ) -> bool {
         if let Some(index) = self.index.load().get(label)
             && index.is_operational()
@@ -488,7 +489,7 @@ impl Indexer {
     #[must_use]
     pub fn query(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
         query: IndexQuery<Value>,
     ) -> IdIter {
         if let Some(index) = self.index.load().get(label) {
@@ -502,7 +503,7 @@ impl Indexer {
     #[must_use]
     pub fn query_edges(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
         query: IndexQuery<Value>,
     ) -> super::EdgeTripleIter {
         if let Some(index) = self.index.load().get(label) {
@@ -513,7 +514,7 @@ impl Indexer {
 
     pub fn fulltext_query(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
         query: &str,
     ) -> Result<ScoredIdIter, String> {
         if let Some(index) = self.index.load().get(label) {
@@ -527,7 +528,7 @@ impl Indexer {
     /// document key plus the RediSearch relevance score.
     pub fn fulltext_query_edges(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
         query: &str,
     ) -> Result<super::ScoredEdgeTripleIter, String> {
         if let Some(index) = self.index.load().get(label) {
@@ -541,7 +542,7 @@ impl Indexer {
     #[must_use]
     pub fn is_operational(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> bool {
         self.index
             .load()
@@ -559,7 +560,7 @@ impl Indexer {
     /// [`super::Index::vector_query`].
     pub fn vector_query(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
         field: &str,
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
@@ -574,7 +575,7 @@ impl Indexer {
     /// `(src, dst, edge_id, distance)` tuples.
     pub fn vector_query_edges(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
         field: &str,
         vector: Arc<thin_vec::ThinVec<f32>>,
         k: usize,
@@ -596,8 +597,8 @@ impl Indexer {
     #[must_use]
     pub fn get_vector_metric(
         &self,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> Option<String> {
         let guard = self.index.load();
         let index = guard.get(label)?;
@@ -619,8 +620,8 @@ impl Indexer {
     #[must_use]
     pub fn get_vector_dimension(
         &self,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> Option<u64> {
         let guard = self.index.load();
         let index = guard.get(label)?;
@@ -642,7 +643,7 @@ impl Indexer {
     #[must_use]
     pub fn acquire_population_ticket(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> Option<PopulationTicket> {
         let index = self.index.load();
         let index = index.get(label)?;
@@ -660,7 +661,7 @@ impl Indexer {
     #[must_use]
     pub fn acquire_population_snapshot(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> Option<PopulationSnapshot> {
         let index = self.index.load();
         let index = index.get(label)?;
@@ -738,7 +739,7 @@ impl Indexer {
     #[must_use]
     pub fn enabled(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> bool {
         if let Some(index) = self.index.load().get(label) {
             return index.pending_count() == 0;
@@ -748,8 +749,8 @@ impl Indexer {
 
     pub fn commit(
         &self,
-        add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
-        remove_docs: &mut HashMap<Arc<String>, RoaringTreemap>,
+        add_docs: &mut HashMap<ArcStr, Vec<Document>>,
+        remove_docs: &mut HashMap<ArcStr, RoaringTreemap>,
     ) {
         let index = self.index.load();
         for (label, add_docs) in add_docs {
@@ -778,8 +779,8 @@ impl Indexer {
     /// `Graph::commit_edge_index` before this call.
     pub fn commit_edge(
         &self,
-        add_docs: &mut HashMap<Arc<String>, Vec<Document>>,
-        remove_docs: &mut HashMap<Arc<String>, std::collections::HashMap<u64, (u64, u64)>>,
+        add_docs: &mut HashMap<ArcStr, Vec<Document>>,
+        remove_docs: &mut HashMap<ArcStr, std::collections::HashMap<u64, (u64, u64)>>,
     ) {
         let index = self.index.load();
         for (label, add_docs) in add_docs {
@@ -804,8 +805,8 @@ impl Indexer {
     #[must_use]
     pub fn get_fields(
         &self,
-        label: &Arc<String>,
-    ) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+        label: &ArcStr,
+    ) -> HashMap<ArcStr, Vec<Arc<Field>>> {
         self.index
             .load()
             .get(label)
@@ -814,7 +815,7 @@ impl Indexer {
 
     /// Get fields for all labels.
     #[must_use]
-    pub fn get_all_fields(&self) -> Vec<(Arc<String>, HashMap<Arc<String>, Vec<Arc<Field>>>)> {
+    pub fn get_all_fields(&self) -> Vec<(ArcStr, HashMap<ArcStr, Vec<Arc<Field>>>)> {
         self.index
             .load()
             .iter()
@@ -854,7 +855,7 @@ impl Indexer {
     #[must_use]
     pub fn has_index(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> bool {
         self.index.load().contains_key(label)
     }
@@ -862,8 +863,8 @@ impl Indexer {
     #[must_use]
     pub fn has_indexed_attr(
         &self,
-        label: &Arc<String>,
-        field: &Arc<String>,
+        label: &ArcStr,
+        field: &ArcStr,
     ) -> bool {
         if let Some(index) = self.index.load().get(label) {
             return index.contains_field(field);
@@ -873,7 +874,7 @@ impl Indexer {
 
     pub fn update_progress(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
         progress: u64,
     ) {
         if let Some(index) = self.index.load().get(label) {
@@ -912,7 +913,7 @@ impl Indexer {
     /// published via clone-and-swap.
     pub fn recreate_index(
         &self,
-        label: &Arc<String>,
+        label: &ArcStr,
     ) -> Result<(), String> {
         let map = self.index.load_full();
         if let Some(index) = map.get(label) {

@@ -1349,6 +1349,16 @@ impl<'a> Batch<'a> {
         !matches!(self.column(var_id), Column::Unbound) && !self.value_only.test(var_id as usize)
     }
 
+    /// Whether `var_id` holds values that are present but not bound (see
+    /// [`value_only`](Self::value_only)).
+    #[must_use]
+    pub fn is_value_only(
+        &self,
+        var_id: u32,
+    ) -> bool {
+        self.value_only.test(var_id as usize)
+    }
+
     /// Write an entire column of values into the active rows.
     /// `values.len()` must equal `self.active_len()`.
     pub fn write_column(
@@ -1884,7 +1894,7 @@ impl<'a> Iterator for BatchOp<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use arcstr::ArcStr;
 
     use super::{Batch, BatchBuilder, BatchRow, Column};
     use crate::runtime::row::RowView;
@@ -1899,7 +1909,7 @@ mod tests {
         // A `Values` column keeps column 1 off the typed fast path.
         let mut b = Batch::from_columns([
             Column::Ints(vec![2]),
-            Column::Values(vec![Value::String(Arc::new(String::from("s")))]),
+            Column::Values(vec![Value::String(ArcStr::from("s"))]),
         ]);
         b.set_selection(vec![]);
         let concat = Batch::concat(&[a.clone(), b.clone()]);

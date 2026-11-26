@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "check": "soak-b",
+  "verdict": "pass",
+  "confirmed": false,
+  "summary": "No regression. One invariant is broken on both sides (pre-existing, not from this candidate): s7 MERGE re-run creates no duplicate :Device.",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:95b610a600682533d854b6ece6bddbea80b49d0b89e2cd0b2cf19bd0a8142aed",
+    "commit": "4c1088949a5852e3949c05bfb3d92a603c4cd4ca",
+    "label": "main@4c1088949"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:44eb4a6d48ef6f2b06aeefea46c5f4c17cd2310d3832135be18fd7fc8ba30923",
+    "commit": "d8c329b777c177fc7343d959157d6acdf7398fa5",
+    "label": "6.2.0"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "n4-standard-16",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+    "cores": 16
+  },
+  "started": "2026-11-24T00:10:03Z",
+  "finished": "2026-11-24T00:47:12Z",
+  "findings": [
+    {
+      "name": "s7 MERGE re-run creates no duplicate :Device",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s12 IoT ingest",
+      "metric": "throughput",
+      "candidate": 188.0,
+      "baseline": 41.5,
+      "ratio": 4.5301,
+      "threshold": 0.8,
+      "direction": "lower_is_worse",
+      "status": "improvement"
+    }
+  ],
+  "error": null,
+  "artifacts": [
+    "raw/scenarios.csv",
+    "raw/s7-invariants.log"
+  ]
+}

@@ -19,7 +19,7 @@
 //! edge of an entire input stream up front; it pulls one parent batch at a time
 //! and yields as soon as a batch is ready.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use crate::graph::graph::{Graph, RelationshipId};
 use crate::parser::ast::{QueryRelationship, Variable};
@@ -37,7 +37,7 @@ use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
 pub struct ExpandIntoOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
     /// Shared incremental emitter: holds the current input batch plus a queue
     /// of per-input-row matched-edge-id iterators, and packs them into gathered
     /// output batches. For the synthetic label-check it binds no relationship
@@ -72,7 +72,7 @@ impl<'a> ExpandIntoOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
         emit_relationship: bool,
         sibling_edges: &'a [u32],
         idx: NodeIdx<Dyn<IR>>,
@@ -123,7 +123,7 @@ impl<'a> ExpandIntoOp<'a> {
     /// `from` carries all the required labels.
     #[allow(clippy::too_many_arguments)]
     fn expand_row(
-        rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        rp: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
         synthetic_label: bool,
         emit_relationship: bool,
         sibling_edges: &'a [u32],

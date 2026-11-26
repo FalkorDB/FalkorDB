@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use graph::entity_type::EntityType;
 use graph::graph::endpoint_index::MAX_TYPE_ID;
@@ -461,7 +461,7 @@ fn rebuild_indexes(
             for field in fields {
                 // The Field.name includes the type prefix (e.g. "range:val").
                 // The attr_name key in the HashMap is the raw attribute name.
-                let attr = Arc::new(attr_name.to_string());
+                let attr = ArcStr::from(attr_name);
 
                 let options = field.vector_options().map_or_else(
                     || {
@@ -708,7 +708,7 @@ mod tests {
     /// (`GRAPH.COPY`) and `rdb_load_graph` read the directory with the same function.
     #[test]
     fn a_v20_value_with_a_cch_index_is_refused_at_the_directory() {
-        let name = |s: &str| Arc::new(s.to_string());
+        let name = |s: &str| ArcStr::from(s);
         let mut w = VecWriter::new();
         Encode::<19>::encode(
             &Header {

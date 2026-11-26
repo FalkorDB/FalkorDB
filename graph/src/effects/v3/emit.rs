@@ -20,9 +20,9 @@
 use super::records::IndexFieldOptions;
 use crate::index::indexer::IndexOptions as EngineIndexOptions;
 use crate::runtime::runtime::map_to_index_options;
+use arcstr::ArcStr;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
 
 use crate::{
     effects::EffectWrite,
@@ -439,9 +439,12 @@ fn digest_cancelled(
     // Grouped by type, because `CreateEdge` states one relationship id for the
     // whole record.
     let graph = g;
-    let mut by_type: FxHashMap<Arc<String>, Vec<&CancelledRelationship>> = FxHashMap::default();
+    let mut by_type: FxHashMap<ArcStr, Vec<&CancelledRelationship>> = FxHashMap::default();
     for r in &p.cancelled_relationships {
-        by_type.entry(Arc::clone(&r.type_name)).or_default().push(r);
+        by_type
+            .entry(ArcStr::clone(&r.type_name))
+            .or_default()
+            .push(r);
     }
     let mut pairs: Vec<(u32, IdList, IdList, IdList)> = Vec::with_capacity(by_type.len());
     for (type_name, mut rels) in by_type {
@@ -964,7 +967,7 @@ mod tests {
     /// The `AnnouncedIndex` the two index tests announce.
     fn announced<'a>(
         label: &'a str,
-        fields: &'a [Arc<String>],
+        fields: &'a [ArcStr],
         index_type: &'a IndexType,
         options: Option<&'a Value>,
     ) -> AnnouncedIndex<'a> {
@@ -985,11 +988,11 @@ mod tests {
             let mut graph = g.borrow_mut();
             graph.get_label_id_mut("D");
         }
-        let fields = vec![Arc::new(String::from("body"))];
+        let fields = vec![ArcStr::from("body")];
         let options = Value::Map(Arc::new(
             std::iter::once((
-                Arc::new(String::from("language")),
-                Value::String(Arc::new(String::from("german"))),
+                ArcStr::from("language"),
+                Value::String(ArcStr::from("german")),
             ))
             .collect(),
         ));
@@ -1031,7 +1034,10 @@ mod tests {
         // this is the assertion the old `matches!(Some(Value::Map(_)))` could
         // not make: it proved a map was present, not that its contents
         // survived.
-        assert_eq!(o.text.language.as_ref().map(|l| l.as_str()), Some("german"));
+        assert_eq!(
+            o.text.language.as_ref().map(arcstr::ArcStr::as_str),
+            Some("german")
+        );
         // And the keys the statement omitted travel as omitted. Filling them
         // with the RDB's defaults here is what diverged a replica: applying
         // `language` a second time is refused once one is set for the label,
@@ -1054,7 +1060,7 @@ mod tests {
         // A bare id on the wire is only safe if the replica agrees on the
         // numbering, so an unresolvable name must not become a guessed id.
         let g = graph();
-        let fields = vec![Arc::new(String::from("nope"))];
+        let fields = vec![ArcStr::from("nope")];
         let mut buf = v3::new_buffer();
         let err = build_index_buffer(
             &Pending::default(),
@@ -1811,9 +1817,9 @@ mod cancelled {
         for id in 0..4u64 {
             p.stage_created_node(id, &[0], &[]);
         }
-        let t = Arc::new(String::from("R"));
+        let t = ArcStr::from("R");
         p.created_rels_by_type
-            .entry(Arc::clone(&t))
+            .entry(ArcStr::clone(&t))
             .or_default()
             .push((
                 crate::graph::graph::RelationshipId::from(0_u64),
@@ -1945,7 +1951,7 @@ mod cancelled {
         let mut p = Pending::default();
         p.set_schema_baseline(&g.borrow());
         p.stage_created_node(1, &[0], &[]);
-        let t = Arc::new(String::from("R"));
+        let t = ArcStr::from("R");
         p.created_rels_by_type.entry(t).or_default().push((
             crate::graph::graph::RelationshipId::from(0_u64),
             NodeId::from(0_u64),
@@ -2018,7 +2024,6 @@ mod cascade {
     use crate::graph::endpoint_index::MAX_TYPE_ID;
     use crate::graph::graph::{NodeId, RelationshipId};
     use crate::runtime::pending::Pending;
-    use std::sync::Arc;
 
     /// `CREATE (a)-[:R]->(b) DELETE a` — the delete cascades to the edge before
     /// either reaches the graph.
@@ -2033,7 +2038,7 @@ mod cascade {
             RelationshipId::from(0_u64),
             NodeId::from(0_u64),
             NodeId::from(1_u64),
-            Arc::new("R".to_owned()),
+            ArcStr::from("R"),
         );
         p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
             .expect("a consistent space");
@@ -2073,7 +2078,7 @@ mod cascade {
             RelationshipId::from(0_u64),
             NodeId::from(0_u64),
             NodeId::from(1_u64),
-            Arc::new("T".to_owned()),
+            ArcStr::from("T"),
         );
         let res = p
             .remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
@@ -2122,7 +2127,7 @@ mod cascade {
                 RelationshipId::from(id),
                 NodeId::from(0_u64),
                 NodeId::from(1_u64),
-                Arc::new(ty.to_owned()),
+                ArcStr::from(ty),
             );
         }
         let res = p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut());
@@ -2162,7 +2167,7 @@ mod cascade {
             RelationshipId::from(0_u64),
             NodeId::from(0_u64),
             NodeId::from(1_u64),
-            Arc::new(past.clone()),
+            ArcStr::from(past.as_str()),
         );
         let res = p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut());
         assert!(
@@ -2191,8 +2196,7 @@ mod cascade {
         // must be registered" on a legitimate query.
         let g = graph_cell();
         let mut p = cascaded();
-        p.created_rels_by_type
-            .insert(Arc::new("R".to_owned()), Vec::new());
+        p.created_rels_by_type.insert(ArcStr::from("R"), Vec::new());
 
         let records = digest(&p, &g);
         assert!(

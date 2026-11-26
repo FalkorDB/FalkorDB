@@ -16,7 +16,7 @@
 //! RediSearch index is created.  `weight`, `nostem`, and `phonetic` are
 //! per-field settings applied when registering each fulltext field.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct TextIndexOptions {
@@ -32,8 +32,8 @@ pub struct TextIndexOptions {
     /// representation in the chain, and it silently rewrote any other
     /// algorithm to `dm:en` on an RDB round trip.
     pub phonetic: Option<String>,
-    pub language: Option<Arc<String>>,
-    pub stopwords: Option<Vec<Arc<String>>>,
+    pub language: Option<ArcStr>,
+    pub stopwords: Option<Vec<ArcStr>>,
 }
 
 /// C's code for "phonetic matching off" (`INDEX_FIELD_DEFAULT_PHONETIC`). C stores it

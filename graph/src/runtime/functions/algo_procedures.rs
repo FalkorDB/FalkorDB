@@ -82,9 +82,11 @@ use crate::{
         value::Value,
     },
 };
+use arcstr::ArcStr;
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::collections::hash_map::Entry;
 use std::mem::swap;
 use std::ptr::null_mut;
 use std::sync::Arc;
@@ -278,7 +280,7 @@ unsafe extern "C" fn msf_score_of(
 fn opt_string(
     v: &Value,
     name: &str,
-) -> Result<Option<Arc<String>>, String> {
+) -> Result<Option<ArcStr>, String> {
     match v {
         Value::Null => Ok(None),
         Value::String(s) => Ok(Some(s.clone())),
@@ -288,7 +290,7 @@ fn opt_string(
 
 /// Validate a map-style config for the given allowed keys.
 fn validate_config_map(
-    map: &OrderMap<Arc<String>, Value>,
+    map: &OrderMap<ArcStr, Value>,
     allowed: &[&str],
 ) -> Result<(), String> {
     for key in map.keys() {
@@ -300,8 +302,8 @@ fn validate_config_map(
 }
 
 /// Extract `nodeLabels` from config map. Must be a list of strings if present.
-fn extract_node_labels(map: &OrderMap<Arc<String>, Value>) -> Result<Vec<Arc<String>>, String> {
-    match map.get(&Arc::new(String::from("nodeLabels"))) {
+fn extract_node_labels(map: &OrderMap<ArcStr, Value>) -> Result<Vec<ArcStr>, String> {
+    match map.get(&ArcStr::from("nodeLabels")) {
         None | Some(Value::Null) => Ok(vec![]),
         Some(Value::List(list)) => {
             let mut labels = Vec::with_capacity(list.len());
@@ -318,8 +320,8 @@ fn extract_node_labels(map: &OrderMap<Arc<String>, Value>) -> Result<Vec<Arc<Str
 }
 
 /// Extract `relationshipTypes` from config map. Must be a list of strings if present.
-fn extract_rel_types(map: &OrderMap<Arc<String>, Value>) -> Result<Vec<Arc<String>>, String> {
-    match map.get(&Arc::new(String::from("relationshipTypes"))) {
+fn extract_rel_types(map: &OrderMap<ArcStr, Value>) -> Result<Vec<ArcStr>, String> {
+    match map.get(&ArcStr::from("relationshipTypes")) {
         None | Some(Value::Null) => Ok(vec![]),
         Some(Value::List(list)) => {
             let mut types = Vec::with_capacity(list.len());
@@ -342,7 +344,7 @@ fn extract_rel_types(map: &OrderMap<Arc<String>, Value>) -> Result<Vec<Arc<Strin
 }
 
 /// Parse config from a single argument: either Null (no config) or a Map.
-fn parse_config(args: &[Value]) -> Result<OrderMap<Arc<String>, Value>, String> {
+fn parse_config(args: &[Value]) -> Result<OrderMap<ArcStr, Value>, String> {
     if args.is_empty() {
         return Ok(OrderMap::default());
     }
@@ -479,8 +481,8 @@ const fn node_value(id: NodeId) -> Value {
 /// not have, with the procedure's C error message for each.
 fn check_known_labels_and_types(
     g: &Graph,
-    labels: &[Arc<String>],
-    rel_types: &[Arc<String>],
+    labels: &[ArcStr],
+    rel_types: &[ArcStr],
     unknown_label: impl Fn(&str) -> String,
     unknown_type: impl Fn(&str) -> String,
 ) -> Result<(), String> {
@@ -497,11 +499,11 @@ fn check_known_labels_and_types(
 /// If labels is empty, returns all active node IDs.
 fn collect_node_ids(
     g: &Graph,
-    labels: &[Arc<String>],
+    labels: &[ArcStr],
 ) -> Vec<u64> {
     use crate::runtime::orderset::OrderSet;
     if labels.is_empty() {
-        let empty: OrderSet<Arc<String>> = OrderSet::default();
+        let empty: OrderSet<ArcStr> = OrderSet::default();
         return g.get_nodes(&empty, 0).map(u64::from).collect();
     }
     // Union: collect nodes matching any of the labels
@@ -521,7 +523,7 @@ fn collect_node_ids(
 /// Build a HashSet of all active node IDs (regardless of label).
 fn active_node_set(g: &Graph) -> FxHashSet<u64> {
     use crate::runtime::orderset::OrderSet;
-    let empty: OrderSet<Arc<String>> = OrderSet::default();
+    let empty: OrderSet<ArcStr> = OrderSet::default();
     g.get_nodes(&empty, 0).map(u64::from).collect()
 }
 
@@ -623,7 +625,7 @@ unsafe fn cache_transpose(
 /// The caller owns the returned GrB_Matrix and must free it.
 unsafe fn build_compact_adj_from_tensors(
     g: &crate::graph::graph::Graph,
-    rel_types: &[Arc<String>],
+    rel_types: &[ArcStr],
     active: &FxHashSet<u64>,
 ) -> (
     crate::graph::graphblas::GrB_Matrix,
@@ -688,7 +690,7 @@ unsafe fn build_compact_adj_from_tensors(
 /// The caller owns the returned GrB_Matrix and must free it.
 unsafe fn build_compact_adj_symmetric_from_tensors(
     g: &crate::graph::graph::Graph,
-    rel_types: &[Arc<String>],
+    rel_types: &[ArcStr],
     active: &FxHashSet<u64>,
 ) -> (
     crate::graph::graphblas::GrB_Matrix,
@@ -788,7 +790,7 @@ fn register_pagerank(funcs: &mut Functions) {
                 return Ok(empty_procedure_batch());
             }
 
-            let rel_types: Vec<Arc<String>> = rel_type.into_iter().collect();
+            let rel_types: Vec<ArcStr> = rel_type.into_iter().collect();
 
             unsafe {
                 use crate::graph::graphblas::{
@@ -1003,7 +1005,7 @@ fn register_betweenness(funcs: &mut Functions) {
             let rel_types = extract_rel_types(&config)?;
 
             // Parse samplingSize
-            let sampling_size: usize = match config.get(&Arc::new(String::from("samplingSize"))) {
+            let sampling_size: usize = match config.get(&ArcStr::from("samplingSize")) {
                 None | Some(Value::Null) => 16,
                 Some(Value::Int(n)) => {
                     if *n <= 0 {
@@ -1015,7 +1017,7 @@ fn register_betweenness(funcs: &mut Functions) {
             } as usize;
 
             // Parse samplingSeed
-            let sampling_seed: u64 = match config.get(&Arc::new(String::from("samplingSeed"))) {
+            let sampling_seed: u64 = match config.get(&ArcStr::from("samplingSeed")) {
                 None | Some(Value::Null) => 0,
                 Some(Value::Int(n)) => *n as u64,
                 _ => return Err(String::from("samplingSeed must be an integer")),
@@ -1171,7 +1173,7 @@ fn register_bfs(funcs: &mut Functions) {
                 return Err(String::from("Source node not found in graph"));
             }
 
-            let rel_types: Vec<Arc<String>> = rel_type.into_iter().collect();
+            let rel_types: Vec<ArcStr> = rel_type.into_iter().collect();
             let adj = g.build_adjacency_matrix(&rel_types);
 
             // Parent tracking is only needed to reconstruct edges; skip it
@@ -1305,7 +1307,7 @@ fn register_cdlp(funcs: &mut Functions) {
             let rel_types = extract_rel_types(&config)?;
 
             // Parse maxIterations
-            let max_iterations: i32 = match config.get(&Arc::new(String::from("maxIterations"))) {
+            let max_iterations: i32 = match config.get(&ArcStr::from("maxIterations")) {
                 None | Some(Value::Null) => 10,
                 Some(Value::Int(n)) => {
                     if *n <= 0 {
@@ -1434,14 +1436,14 @@ fn register_msf(funcs: &mut Functions) {
             }
 
             // Parse weightAttribute
-            let weight_attr: Option<Arc<String>> = match config.get(&Arc::new(String::from("weightAttribute"))) {
+            let weight_attr: Option<ArcStr> = match config.get(&ArcStr::from("weightAttribute")) {
                 None | Some(Value::Null) => None,
                 Some(Value::String(s)) => Some(s.clone()),
                 _ => return Err(String::from("weightAttribute must be a string")),
             };
 
             // Parse objective (minimize or maximize)
-            let maximize = match config.get(&Arc::new(String::from("objective"))) {
+            let maximize = match config.get(&ArcStr::from("objective")) {
                 None | Some(Value::Null) => false, // default: minimize
                 Some(Value::String(s)) => match s.as_str() {
                     "minimize" => false,
@@ -2018,21 +2020,21 @@ fn register_msf(funcs: &mut Functions) {
 struct PathAlgoConfig {
     source: NodeId,
     target: Option<NodeId>,
-    rel_types: Vec<Arc<String>>,
+    rel_types: Vec<ArcStr>,
     rel_direction: EdgeDirection,
     max_len: u32,
-    weight_prop: Option<Arc<String>>,
-    cost_prop: Option<Arc<String>>,
+    weight_prop: Option<ArcStr>,
+    cost_prop: Option<ArcStr>,
     max_cost: Option<f64>,
     path_count: i64,
 }
 
 fn parse_common_path_config(
-    config: &OrderMap<Arc<String>, Value>,
+    config: &OrderMap<ArcStr, Value>,
     source: NodeId,
     target: Option<NodeId>,
 ) -> Result<PathAlgoConfig, String> {
-    let rel_types = match config.get(&Arc::new(String::from("relTypes"))) {
+    let rel_types = match config.get(&ArcStr::from("relTypes")) {
         None | Some(Value::Null) => vec![],
         Some(Value::List(list)) => {
             let mut types = Vec::with_capacity(list.len());
@@ -2047,7 +2049,7 @@ fn parse_common_path_config(
         _ => return Err(String::from("relTypes must be array of strings")),
     };
 
-    let rel_direction = match config.get(&Arc::new(String::from("relDirection"))) {
+    let rel_direction = match config.get(&ArcStr::from("relDirection")) {
         None | Some(Value::Null) => EdgeDirection::Outgoing,
         Some(Value::String(s)) => s.parse().map_err(|()| {
             String::from("relDirection values must be 'incoming', 'outgoing' or 'both'")
@@ -2059,7 +2061,7 @@ fn parse_common_path_config(
         }
     };
 
-    let max_len = match config.get(&Arc::new(String::from("maxLen"))) {
+    let max_len = match config.get(&ArcStr::from("maxLen")) {
         None | Some(Value::Null) => u32::MAX,
         Some(Value::Int(n)) => {
             if *n < 0 {
@@ -2070,26 +2072,26 @@ fn parse_common_path_config(
         _ => return Err(String::from("maxLen must be integer")),
     };
 
-    let weight_prop = match config.get(&Arc::new(String::from("weightProp"))) {
+    let weight_prop = match config.get(&ArcStr::from("weightProp")) {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(s.clone()),
         _ => return Err(String::from("weightProp must be string")),
     };
 
-    let cost_prop = match config.get(&Arc::new(String::from("costProp"))) {
+    let cost_prop = match config.get(&ArcStr::from("costProp")) {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(s.clone()),
         _ => return Err(String::from("costProp must be string")),
     };
 
-    let max_cost = match config.get(&Arc::new(String::from("maxCost"))) {
+    let max_cost = match config.get(&ArcStr::from("maxCost")) {
         None | Some(Value::Null) => None,
         Some(Value::Int(n)) => Some(*n as f64),
         Some(Value::Float(f)) => Some(*f),
         _ => return Err(String::from("maxCost must be numeric")),
     };
 
-    let path_count = match config.get(&Arc::new(String::from("pathCount"))) {
+    let path_count = match config.get(&ArcStr::from("pathCount")) {
         None | Some(Value::Null) => 1,
         Some(Value::Int(n)) => {
             if *n < 0 {
@@ -2116,8 +2118,8 @@ fn parse_common_path_config(
 fn parse_sp_config(args: &[Value]) -> Result<PathAlgoConfig, String> {
     let config = parse_config(args)?;
 
-    let source_key = Arc::new(String::from("sourceNode"));
-    let target_key = Arc::new(String::from("targetNode"));
+    let source_key = ArcStr::from("sourceNode");
+    let target_key = ArcStr::from("targetNode");
 
     let source_val = config.get(&source_key);
     let target_val = config.get(&target_key);
@@ -2152,7 +2154,7 @@ fn parse_sp_config(args: &[Value]) -> Result<PathAlgoConfig, String> {
 fn parse_ss_config(args: &[Value]) -> Result<PathAlgoConfig, String> {
     let config = parse_config(args)?;
 
-    let source_key = Arc::new(String::from("sourceNode"));
+    let source_key = ArcStr::from("sourceNode");
     let source_val = config.get(&source_key);
 
     let source_present = matches!(source_val, Some(v) if !matches!(v, Value::Null));
@@ -2205,7 +2207,7 @@ fn cmp_found_path(
 fn edge_numeric_attr(
     g: &Graph,
     edge_id: RelationshipId,
-    prop: Option<&Arc<String>>,
+    prop: Option<&ArcStr>,
     default: f64,
 ) -> f64 {
     prop.map_or(default, |p| {
@@ -2413,6 +2415,203 @@ fn dijkstra_single_path(
     });
 
     Ok(Some((edges, labels[&target].weight, cost)))
+}
+
+/// One side of [`bfs_single_path`]'s bidirectional search.
+struct BfsSide {
+    /// Direction this side walks: the configured one from the source, its
+    /// reverse from the target.
+    dir: EdgeDirection,
+    /// node -> (its depth on this side, the node it was reached from, the
+    /// edge between them in original orientation). Doubles as the visited
+    /// set; the root is in it with depth 0 and no link.
+    seen: FxHashMap<NodeId, (u32, Option<(NodeId, (RelationshipId, NodeId, NodeId))>)>,
+    frontier: Vec<NodeId>,
+    /// Relationships the frontier's next expansion will inspect — the sum of
+    /// its nodes' degrees in `dir` — while the frontier is small enough to
+    /// count them; see [`BfsSide::cost`].
+    work: Option<u64>,
+    depth: u32,
+}
+
+/// Largest frontier whose degrees [`bfs_single_path`] sums to pick the side
+/// to grow. A degree probe costs about as much as expanding the node, so
+/// summing every frontier made the search several times slower; but a hub
+/// only distorts the choice while frontiers are tiny, where one node with a
+/// million relationships outweighs everything else on the board.
+const BFS_DEGREE_PROBE_MAX: usize = 8;
+
+/// Per-node cap on a degree probe; see [`degree_capped`].
+const BFS_DEGREE_PROBE_CAP: usize = 1024;
+
+impl BfsSide {
+    fn new(
+        g: &Graph,
+        types: &[ArcStr],
+        root: NodeId,
+        dir: EdgeDirection,
+    ) -> Self {
+        let mut seen = FxHashMap::default();
+        seen.insert(root, (0, None));
+        Self {
+            dir,
+            seen,
+            frontier: vec![root],
+            work: Some(degree_capped(g, root, types, dir, BFS_DEGREE_PROBE_CAP)),
+            depth: 0,
+        }
+    }
+
+    /// Sum the frontier's degrees if it is small enough to be worth it.
+    fn measure(
+        &mut self,
+        g: &Graph,
+        types: &[ArcStr],
+    ) {
+        self.work = (self.frontier.len() <= BFS_DEGREE_PROBE_MAX).then(|| {
+            self.frontier
+                .iter()
+                .map(|&n| degree_capped(g, n, types, self.dir, BFS_DEGREE_PROBE_CAP))
+                .sum()
+        });
+    }
+
+    /// The edges from `node` back to this side's root, nearest `node` first.
+    fn chain(
+        &self,
+        mut node: NodeId,
+    ) -> Vec<(RelationshipId, NodeId, NodeId)> {
+        let mut edges = Vec::new();
+        while let Some((_, Some((prev, edge)))) = self.seen.get(&node) {
+            edges.push(*edge);
+            node = *prev;
+        }
+        edges
+    }
+}
+
+/// How many `types` relationships `node` has in direction `dir`, counting
+/// no further than `cap`: the side choice only needs to know that a node is
+/// heavy, not how heavy, and an exact degree costs as much as the hub's
+/// whole expansion.
+fn degree_capped(
+    g: &Graph,
+    node: NodeId,
+    types: &[ArcStr],
+    dir: EdgeDirection,
+    cap: usize,
+) -> u64 {
+    g.get_node_relationships_by_type(node, types, dir)
+        .take(cap)
+        .count() as u64
+}
+
+/// The unit-weight case of [`dijkstra_single_path`]: with no `weightProp`
+/// every edge weighs 1, so the fewest-hops path is the cheapest one and a
+/// BFS finds it.
+///
+/// The search runs from both ends at once — forward from the source along the
+/// configured direction, backward from the target against it — and always
+/// grows the side whose frontier has fewer relationships to inspect (not
+/// fewer nodes: one hub on a side can outweigh a frontier of leaves; see
+/// [`BFS_DEGREE_PROBE_MAX`] for when it counts nodes instead). A path of length L then costs
+/// two searches of about L/2 hops instead of one of L, which on a social
+/// graph is the difference between touching a neighbourhood and touching
+/// most of the graph. It also ends early when there is no path: as soon as
+/// either side runs out of nodes, which for a target with few incoming edges
+/// is almost at once.
+///
+/// When a level expansion first reaches a node the other side has seen, the
+/// level is still finished and the shortest join kept: the other side's seen
+/// set spans several depths, so the first meeting is not necessarily the
+/// shortest one.
+fn bfs_single_path(
+    runtime: &Runtime,
+    g: &Graph,
+    config: &PathAlgoConfig,
+    target: NodeId,
+) -> Result<Option<FoundPath>, String> {
+    let reverse = match config.rel_direction {
+        EdgeDirection::Outgoing => EdgeDirection::Incoming,
+        EdgeDirection::Incoming => EdgeDirection::Outgoing,
+        EdgeDirection::Both => EdgeDirection::Both,
+    };
+    let types = &config.rel_types;
+    let mut fwd = BfsSide::new(g, types, config.source, config.rel_direction);
+    let mut bwd = BfsSide::new(g, types, target, reverse);
+    let mut next: Vec<NodeId> = Vec::new();
+    let mut iters: u64 = 0;
+    // (path length, node where the two sides meet)
+    let mut best: Option<(u32, NodeId)> = None;
+
+    while best.is_none() && !fwd.frontier.is_empty() && !bwd.frontier.is_empty() {
+        // Fewer relationships to inspect when both sides know their count,
+        // otherwise fewer nodes.
+        let fwd_first = match (fwd.work, bwd.work) {
+            (Some(f), Some(b)) => f <= b,
+            _ => fwd.frontier.len() <= bwd.frontier.len(),
+        };
+        let (side, other) = if fwd_first {
+            (&mut fwd, &bwd)
+        } else {
+            (&mut bwd, &fwd)
+        };
+        let depth = side.depth + 1;
+        for &node in &side.frontier {
+            // Polled per relationship, not per node: one node with millions
+            // of relationships must not run unchecked.
+            for (edge_src, edge_dst, edge_id) in
+                g.get_node_relationships_by_type(node, types, side.dir)
+            {
+                iters += 1;
+                if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
+                    runtime.check_timeout()?;
+                    runtime.check_mem_capacity()?;
+                }
+                let Some(far) = far_endpoint(node, edge_src, edge_dst, side.dir) else {
+                    continue;
+                };
+                match side.seen.entry(far) {
+                    Entry::Occupied(_) => continue,
+                    Entry::Vacant(slot) => {
+                        slot.insert((depth, Some((node, (edge_id, edge_src, edge_dst)))));
+                    }
+                }
+                if let Some(&(other_depth, _)) = other.seen.get(&far) {
+                    let len = depth + other_depth;
+                    if best.is_none_or(|(b, _)| len < b) {
+                        best = Some((len, far));
+                    }
+                }
+                next.push(far);
+            }
+        }
+        side.depth = depth;
+        swap(&mut side.frontier, &mut next);
+        next.clear();
+        side.measure(g, types);
+    }
+
+    let Some((_, meet)) = best else {
+        return Ok(None);
+    };
+
+    // source .. meet, then meet .. target; both chains are already in
+    // original edge orientation.
+    let mut edges = fwd.chain(meet);
+    edges.reverse();
+    edges.extend(bwd.chain(meet));
+
+    // Same reporting as `dijkstra_single_path`: weight is the hop count, and
+    // cost sums `costProp` over the winning path (1 per edge lacking it), or
+    // 0 when no `costProp` was given.
+    let weight = edges.len() as f64;
+    let missing_cost = if config.cost_prop.is_some() { 1.0 } else { 0.0 };
+    let cost = edges.iter().fold(0.0, |acc, &(edge_id, _, _)| {
+        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), missing_cost)
+    });
+
+    Ok(Some((edges, weight, cost)))
 }
 
 /// Level-synchronised BFS from `config.source` looking for `target`, honouring
@@ -2728,7 +2927,13 @@ fn run_path_algo(
         && config.max_len == u32::MAX
         && config.source != target
     {
-        let found = dijkstra_single_path(runtime, &g, config, target)?;
+        // Without `weightProp` every edge weighs 1, and Dijkstra is a BFS that
+        // pays for a heap it does not need and finds the target late.
+        let found = if config.weight_prop.is_none() {
+            bfs_single_path(runtime, &g, config, target)?
+        } else {
+            dijkstra_single_path(runtime, &g, config, target)?
+        };
         return Ok(build_path_batch(config, found.into_iter().collect()));
     }
 
@@ -2982,7 +3187,7 @@ fn register_maxflow(funcs: &mut Functions) {
             }
 
             let parse_nodes = |key: &str| -> Result<Vec<NodeId>, String> {
-                match config.get(&Arc::new(String::from(key))) {
+                match config.get(&ArcStr::from(key)) {
                     Some(Value::List(list)) => {
                         let mut nodes = Vec::with_capacity(list.len());
                         for v in list.iter() {
@@ -3018,8 +3223,8 @@ fn register_maxflow(funcs: &mut Functions) {
                 ));
             }
 
-            let capacity_attr: Arc<String> = match config
-                .get(&Arc::new(String::from("capacityProperty")))
+            let capacity_attr: ArcStr = match config
+                .get(&ArcStr::from("capacityProperty"))
             {
                 Some(Value::String(s)) => s.clone(),
                 _ => return Err(String::from(
@@ -3028,7 +3233,7 @@ fn register_maxflow(funcs: &mut Functions) {
             };
 
             let default_cap: Option<f64> = match config
-                .get(&Arc::new(String::from("defaultCapacity")))
+                .get(&ArcStr::from("defaultCapacity"))
             {
                 None | Some(Value::Null) => None,
                 Some(Value::Float(f)) if *f >= 0.0 => Some(*f),

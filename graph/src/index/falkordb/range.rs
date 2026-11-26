@@ -17,7 +17,7 @@
 //! because there is no other index to try. The three outcomes are kept apart deliberately: an empty
 //! answer that should have been a decline is exactly how an unimplemented kind hides.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 use std::{iter, slice};
 
 use rustc_hash::FxHashSet;
@@ -398,7 +398,7 @@ fn on_one_attribute(queries: &[&IndexQuery<Value>]) -> bool {
 /// column, where the kinds live.
 pub(super) fn attributes_of<'a>(
     query: &'a IndexQuery<Value>,
-    out: &mut Vec<&'a Arc<String>>,
+    out: &mut Vec<&'a ArcStr>,
 ) -> bool {
     match query {
         IndexQuery::Equal { key, .. }
@@ -666,10 +666,11 @@ mod tests {
     use super::*;
     use crate::graph::graph::{NodeId, RelationshipId};
     use crate::runtime::value::Point;
+    use std::sync::Arc;
     use thin_vec::ThinVec;
 
-    fn attr() -> Arc<String> {
-        Arc::new("v".to_string())
+    fn attr() -> ArcStr {
+        ArcStr::from("v")
     }
 
     fn eq(value: Value) -> IndexQuery<Value> {
@@ -725,7 +726,7 @@ mod tests {
             (Value::Float(2.5), 2),
             (Value::Int(7), 3),
             (list(vec![Value::Int(1), Value::Int(9)]), 4),
-            (Value::String(Arc::new("x".to_string())), 5),
+            (Value::String(ArcStr::from("x")), 5),
             (list(vec![Value::Int(1), Value::Int(7)]), 6),
         ];
         let mut idx = RangeIndex::new();
@@ -763,15 +764,12 @@ mod tests {
             ids(&idx, &range(Some(Value::Null), None), &vs),
             [] as [u64; 0]
         );
-        assert!(
-            idx.query(&eq(Value::String(Arc::new("x".to_string()))))
-                .is_none()
-        );
+        assert!(idx.query(&eq(Value::String(ArcStr::from("x")))).is_none());
         assert!(idx.query(&eq(list(vec![Value::Int(1)]))).is_none());
         assert!(
             idx.query(&range(
                 Some(Value::Null),
-                Some(Value::String(Arc::new("x".to_string())))
+                Some(Value::String(ArcStr::from("x")))
             ))
             .is_none(),
             "a bound no kind holds declines, even beside a NULL one"
@@ -794,7 +792,7 @@ mod tests {
         assert!(
             idx.query(&IndexQuery::Or(vec![
                 eq(Value::Int(1)),
-                eq(Value::String(Arc::new("x".to_string())))
+                eq(Value::String(ArcStr::from("x")))
             ]))
             .is_none()
         );
@@ -906,7 +904,7 @@ mod tests {
             Value::Float(2.5),
             Value::Float(-0.0),
             Value::Float(f64::NAN),
-            Value::String(Arc::new("x".to_string())),
+            Value::String(ArcStr::from("x")),
             list(vec![Value::Int(1)]),
             Value::Map(Arc::default()),
             Value::Node(NodeId::from(1)),
