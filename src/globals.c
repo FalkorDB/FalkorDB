@@ -17,7 +17,6 @@ struct Globals {
 	CommandCtx **command_ctxs;          // list of CommandCtxs
 	GraphContext **graphs_in_keyspace;  // list of graphs in keyspace
 	StringPool string_pool;             // pool of reusable strings
-	pthread_t main_thread_id;           // process main thread id
 };
 
 struct Globals _globals = {0};
@@ -95,11 +94,6 @@ void Globals_Set_ProcessIsChild
 	// and pthread rwlock handling in a multi process environment we're
 	// better off not guarding with a lock
 	_globals.process_is_child =	process_is_child;
-}
-
-// get main thread id
-pthread_t Globals_Get_MainThreadId(void) {
-	return _globals.main_thread_id;
 }
 
 // collect graphs

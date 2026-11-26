@@ -13,6 +13,7 @@
 #include "../redismodule.h"
 #include "../util/rwlock.h"
 #include "../util/rmalloc.h"
+#include "../util/redis_gil.h"
 #include "graph_memoryUsage.h"
 #include "../util/thpool/pool.h"
 #include "../errors/errors.h"
@@ -1929,25 +1930,18 @@ void GraphContext_DeleteTelemetryStream
 		return;  // already deleted
 	}
 
-	// Redis main thread is 0
-	extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
-	bool main_thread = (pthread_equal(pthread_self(), MAIN_THREAD_ID) != 0);
-	// off the main thread we don't hold the GIL; RedisModule_DeleteKey mutates
-	// the keyspace, so acquire it (same convention as GraphContext_Free)
-	bool should_lock = !main_thread && RedisModule_GetThreadSafeContext != NULL;
-
+	// RedisModule_DeleteKey mutates the keyspace, so the GIL must be held;
+	// GIL_Lock takes it only when this thread doesn't already hold it. a
+	// telemetry stream only exists on a live graph, so the module API is
+	// resolved here
 	RedisModuleCtx *ctx = RedisModule_GetThreadSafeContext(NULL);
-	if(should_lock) {
-		RedisModule_ThreadSafeContextLock(ctx);
-	}
 
+	GIL_Lock(ctx);
 	_DeleteTelemetryStream(ctx, gc);
 	RedisModule_FreeString(ctx, gc->telemetry_stream);
 	gc->telemetry_stream = NULL;
+	GIL_Unlock(ctx);
 
-	if(should_lock) {
-		RedisModule_ThreadSafeContextUnlock(ctx);
-	}
 	RedisModule_FreeThreadSafeContext(ctx);
 }
 
@@ -1967,34 +1961,23 @@ void GraphContext_Free
 		Graph_PartialFree (gc->g) ;
 	}
 
-	// Redis main thread is 0
-	RedisModuleCtx *ctx = NULL;
-	extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
-	bool main_thread = (pthread_equal(pthread_self(), MAIN_THREAD_ID) != 0);
-	bool should_lock = !main_thread && RedisModule_GetThreadSafeContext != NULL;
-
-	if(should_lock) {
-		ctx = RedisModule_GetThreadSafeContext(NULL);
-		// GIL need to be acquire because RediSearch change Redis data structure
-		RedisModule_ThreadSafeContextLock(ctx);
-	}
+	// the GIL must be held while freeing schemas/indexes (RediSearch mutates
+	// Redis data structures) and while deleting the telemetry stream; GIL_Lock
+	// takes it only when this thread doesn't already hold it. standalone unit
+	// tests free fake graphs with the module API unresolved and no keyspace -
+	// skip the context there
+	RedisModuleCtx *ctx = (RedisModule_GetThreadSafeContext != NULL)
+		? RedisModule_GetThreadSafeContext(NULL) : NULL;
+	GIL_Lock(ctx);
 
 	//--------------------------------------------------------------------------
 	// delete graph telemetry stream
 	//--------------------------------------------------------------------------
 
-	if(gc->telemetry_stream != NULL) {
-		bool should_create = (ctx == NULL);
-		if(should_create) {
-			ctx = RedisModule_GetThreadSafeContext(NULL);
-		}
-		_DeleteTelemetryStream(ctx, gc);
-		RedisModule_FreeString(ctx, gc->telemetry_stream);
-		if (should_create) {
-			RedisModule_FreeThreadSafeContext(ctx);
-			ctx = NULL;
-		}
-	}
+	// idempotent: a no-op when already deleted (e.g. synchronously by
+	// _GraphContextType_Free). manages the GIL itself and sees this thread
+	// already holds it here, so it won't re-lock
+	GraphContext_DeleteTelemetryStream(gc);
 
 	//--------------------------------------------------------------------------
 	// free node schemas
@@ -2023,8 +2006,8 @@ void GraphContext_Free
 	arr_free_cb (gc->relation_schemas, Schema_Free) ;
 	gc->relation_schemas = NULL ;
 
-	if (should_lock) {
-		RedisModule_ThreadSafeContextUnlock (ctx) ;
+	GIL_Unlock (ctx) ;
+	if(ctx != NULL) {
 		RedisModule_FreeThreadSafeContext (ctx) ;
 	}
 

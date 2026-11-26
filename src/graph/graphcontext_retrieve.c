@@ -4,15 +4,16 @@
  */
 
 #include "RG.h"
+#include "../util/redis_gil.h"
 #include "graphcontext.h"
 #include "../redismodule.h"
 #include "graph_load_queue.h"
 #include "../enterprise_api.h"
+#include "../util/thpool/pool.h"  // MAIN_THREAD_ID
 #include "../errors/error_msgs.h"
 #include "graphcontext_retrieve.h"
 
 extern uint aux_field_counter ;
-extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
 
 // GraphContext type as registered with Redis.
 extern RedisModuleType *GraphContextRedisModuleType ;
@@ -191,7 +192,7 @@ static GraphRetrieveStatus _GraphContext_Retrieve
 		return GraphRetrieve_FAILED ;
 	}
 
-	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
+	bool from_thread = !ThreadIsMain() ;
 
 	// when loading from disk the initial open is always READ (type check only);
 	// a successful load re-fetches with the caller's readOnly flag
@@ -206,7 +207,7 @@ static GraphRetrieveStatus _GraphContext_Retrieve
 	bool is_stub = false ;
 
 	if (from_thread) {
-		RedisModule_ThreadSafeContextLock (ctx) ;
+		GIL_Lock (ctx) ;
 	}
 
 	RedisModuleKey *key      = RedisModule_OpenKey (ctx, graphID, rw_flag) ;
@@ -243,7 +244,7 @@ static GraphRetrieveStatus _GraphContext_Retrieve
 	RedisModule_CloseKey (key) ;
 
 	if (from_thread) {
-		RedisModule_ThreadSafeContextUnlock (ctx) ;
+		GIL_Unlock (ctx) ;
 	}
 
 	//--------------------------------------------------------------------------

@@ -5,6 +5,7 @@
  */
 
 #include "query_ctx.h"
+#include "util/redis_gil.h"
 #include "RG.h"
 #include "errors.h"
 #include "globals.h"
@@ -384,10 +385,9 @@ static void _QueryCtx_ThreadSafeContextLock
 	// acquire GIL if we're running with a blocked client
 	// implicates we're running on a worker thread and not on Redis main thread
 	if (ctx->global_exec_ctx.bc) {
-		RedisModule_ThreadSafeContextLock (ctx->global_exec_ctx.redis_ctx) ;
+		GIL_Lock (ctx->global_exec_ctx.redis_ctx) ;
 	} else {
 		// no blocked client, most likely we're running on Redis main thread
-		// ASSERT(pthread_equal(Globals_Get_MainThreadId(), pthread_self()) != 0);
 
 		// yield only during AOF/RDB loading so that Redis can respond to
 		// health-check PINGs (e.g. from Sentinel or external monitors)
@@ -410,7 +410,7 @@ static void _QueryCtx_ThreadSafeContextUnlock
 	QueryCtx *ctx
 ) {
 	if (ctx->global_exec_ctx.bc != NULL) {
-		RedisModule_ThreadSafeContextUnlock (ctx->global_exec_ctx.redis_ctx) ;
+		GIL_Unlock (ctx->global_exec_ctx.redis_ctx) ;
 	}
 }
 

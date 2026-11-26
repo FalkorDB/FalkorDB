@@ -5,6 +5,7 @@
  */
 
 #include "RG.h"
+#include "../util/redis_gil.h"
 #include "cmd_context.h"
 #include "../util/rmalloc.h"
 #include "../util/blocked_client.h"
@@ -153,7 +154,7 @@ void CommandCtx_ThreadSafeContextLock
 	// no need to acquire lock
 	ASSERT(cmd_ctx != NULL && cmd_ctx->ctx != NULL);
 	if(cmd_ctx->bc) {
-		RedisModule_ThreadSafeContextLock(cmd_ctx->ctx);
+		GIL_Lock(cmd_ctx->ctx);
 	}
 }
 
@@ -166,7 +167,7 @@ void CommandCtx_ThreadSafeContextUnlock
 	// no need to release lock
 	ASSERT(cmd_ctx != NULL && cmd_ctx->ctx != NULL);
 	if(cmd_ctx->bc) {
-		RedisModule_ThreadSafeContextUnlock(cmd_ctx->ctx);
+		GIL_Unlock(cmd_ctx->ctx);
 	}
 }
 
