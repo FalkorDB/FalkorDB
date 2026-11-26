@@ -63,6 +63,7 @@
 //! destination nodes) are preserved and reattached as soon as the variables
 //! they reference are bound.
 
+use arcstr::ArcStr;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -108,7 +109,7 @@ use crate::runtime::runtime::GetVariables;
 ///
 /// When those are equal, the endpoint with fewer label nodes is preferred.
 fn score_endpoint(
-    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    node: &Arc<QueryNode<ArcStr, Variable>>,
     filtered_vars: &FilteredVars,
     bound_vars: &HashSet<u32>,
     graph: &Graph,
@@ -266,7 +267,7 @@ fn collect_filtered_vars(
 /// `Filter` operators salvaged from the subtree this one replaces — see
 /// [`filters_of`].
 fn make_scan_subtree(
-    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    node: &Arc<QueryNode<ArcStr, Variable>>,
     include_pending: bool,
     argument: Option<DynTree<IR>>,
     filters: Vec<IR>,
@@ -424,10 +425,10 @@ fn planner_scan_idx(
 
 /// Creates a new `QueryRelationship` with from and to swapped.
 fn swap_relationship(
-    rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-    new_from: Arc<QueryNode<Arc<String>, Variable>>,
-    new_to: Arc<QueryNode<Arc<String>, Variable>>,
-) -> Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+    rel: &Arc<QueryRelationship<ArcStr, ArcStr, Variable>>,
+    new_from: Arc<QueryNode<ArcStr, Variable>>,
+    new_to: Arc<QueryNode<ArcStr, Variable>>,
+) -> Arc<QueryRelationship<ArcStr, ArcStr, Variable>> {
     let mut swapped = QueryRelationship::new(
         rel.alias.clone(),
         rel.types.clone(),
@@ -954,7 +955,7 @@ pub(super) fn select_scan_node(
         // Collect all candidate endpoints from the chain.
         // Each endpoint is (node, chain_position, is_from).
         // chain_position 0 = bottom, higher = closer to root.
-        let mut candidates: Vec<(Arc<QueryNode<Arc<String>, Variable>>, usize, bool)> = vec![];
+        let mut candidates: Vec<(Arc<QueryNode<ArcStr, Variable>>, usize, bool)> = vec![];
 
         // Track which alias IDs we've already seen to avoid duplicates
         // (a node that is the `to` of one CT and `from` of the next).
@@ -1085,17 +1086,15 @@ pub(super) fn select_scan_node(
 
         // Collect relationship data from each CT in the chain (bottom to root).
         let mut rels: Vec<(
-            Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+            Arc<QueryRelationship<ArcStr, ArcStr, Variable>>,
             bool,
             Vec<u32>,
         )> = Vec::new();
         // Also collect Filter nodes between CTs (keyed by destination alias).
         // These are inline attribute filters on destination nodes.
         let mut inter_ct_filters: Vec<(usize, DynTree<IR>)> = Vec::new();
-        let mut rels_snapshot: Vec<(
-            Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-            bool,
-        )> = Vec::new();
+        let mut rels_snapshot: Vec<(Arc<QueryRelationship<ArcStr, ArcStr, Variable>>, bool)> =
+            Vec::new();
         for (i, &ct_idx) in chain.iter().enumerate() {
             if let IR::CondTraverse {
                 relationship,
@@ -1221,7 +1220,7 @@ pub(super) fn select_scan_node(
         let mut pending_hops = rels;
         let hop_count = pending_hops.len();
         let mut ordered: Vec<(
-            Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+            Arc<QueryRelationship<ArcStr, ArcStr, Variable>>,
             bool,
             Vec<u32>,
             bool, // transposed

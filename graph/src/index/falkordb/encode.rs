@@ -122,6 +122,7 @@ const fn decode_f64(key: u64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arcstr::ArcStr;
 
     /// Strictly increasing keys across a representative sweep of the f64 domain
     /// (a single zero — the two-zero collision is checked separately).
@@ -199,10 +200,7 @@ mod tests {
     #[test]
     fn nan_and_non_numeric_reject() {
         assert_eq!(encode_numeric(&Value::Float(f64::NAN)), None);
-        assert_eq!(
-            encode_numeric(&Value::String(std::sync::Arc::new("x".to_string()))),
-            None
-        );
+        assert_eq!(encode_numeric(&Value::String(ArcStr::from("x"))), None);
     }
 
     /// The encoded order must agree with the evaluator's own `compare_value`, because the index

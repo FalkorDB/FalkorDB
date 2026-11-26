@@ -12,7 +12,7 @@
 //! Property changes are skipped when the new value equals the existing
 //! value (change-detection optimization).
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use once_cell::unsync::OnceCell;
 
@@ -31,7 +31,7 @@ use orx_tree::{Dyn, NodeIdx, NodeRef};
 pub struct SetOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    items: &'a [SetItem<Arc<String>, Variable>],
+    items: &'a [SetItem<ArcStr, Variable>],
     resolved_items: OnceCell<Vec<SetItem<LabelId, Variable>>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
@@ -40,7 +40,7 @@ impl<'a> SetOp<'a> {
     pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        items: &'a [SetItem<Arc<String>, Variable>],
+        items: &'a [SetItem<ArcStr, Variable>],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -95,7 +95,7 @@ impl Runtime<'_> {
 
     pub fn resolve_set_items(
         &self,
-        items: &[SetItem<Arc<String>, Variable>],
+        items: &[SetItem<ArcStr, Variable>],
     ) -> Vec<SetItem<LabelId, Variable>> {
         items
             .iter()
@@ -127,7 +127,7 @@ impl Runtime<'_> {
         id: NodeId,
     ) -> Result<(), String> {
         self.pending.borrow_mut().clear_node_attributes(id);
-        let keys: Vec<Arc<String>> = self.graph().get_node_attrs(id).collect();
+        let keys: Vec<ArcStr> = self.graph().get_node_attrs(id).collect();
         for key in keys {
             self.set_pending_node_attr(id, &key, Value::Null)?;
         }
@@ -140,7 +140,7 @@ impl Runtime<'_> {
         id: RelationshipId,
     ) -> Result<(), String> {
         self.pending.borrow_mut().clear_relationship_attributes(id);
-        let keys: Vec<Arc<String>> = self.graph().get_relationship_attrs(id).collect();
+        let keys: Vec<ArcStr> = self.graph().get_relationship_attrs(id).collect();
         for key in keys {
             self.set_pending_relationship_attr(id, &key, Value::Null)?;
         }

@@ -10,7 +10,7 @@
 //! writes shared, non-MVCC RediSearch state directly. So it also cannot ride
 //! `CommitOp`'s effects emission, and emits its own.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::{
@@ -29,8 +29,8 @@ use orx_tree::NodeRef;
 /// `CREATE INDEX`, with its `OPTIONS {...}` map if it carried one.
 pub(crate) fn create_index<'a>(
     runtime: &'a Runtime<'a>,
-    label: &Arc<String>,
-    attrs: &Vec<Arc<String>>,
+    label: &ArcStr,
+    attrs: &Vec<ArcStr>,
     index_type: IndexType,
     entity_type: EntityType,
     options: Option<&QueryExpr<Variable>>,
@@ -86,8 +86,8 @@ pub(crate) fn create_index<'a>(
 /// `DROP INDEX`.
 pub(crate) fn drop_index<'a>(
     runtime: &'a Runtime<'a>,
-    label: &Arc<String>,
-    attrs: &Vec<Arc<String>>,
+    label: &ArcStr,
+    attrs: &Vec<ArcStr>,
     index_type: IndexType,
     entity_type: EntityType,
 ) -> Result<BatchOp<'a>, String> {
@@ -114,8 +114,8 @@ pub(crate) fn drop_index<'a>(
 fn emit_effect(
     runtime: &Runtime<'_>,
     create: bool,
-    label: &Arc<String>,
-    attrs: &Vec<Arc<String>>,
+    label: &ArcStr,
+    attrs: &Vec<ArcStr>,
     index_type: IndexType,
     entity_type: EntityType,
     options: Option<&Value>,

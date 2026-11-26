@@ -4,11 +4,11 @@
 //! a name back to its id, and the list's schema-hash chain ([`super::schema_hash`]).
 //! [`Schema`] holds the three and computes the hash over them.
 
+use arcstr::ArcStr;
 use std::{
     borrow::Borrow,
     hash::{Hash, Hasher},
     ops::Index,
-    sync::Arc,
 };
 
 use rustc_hash::FxHashMap;
@@ -20,7 +20,7 @@ use super::{
 
 /// A name as a map key, looked up by `&str` so a lookup needn't build an `Arc`.
 #[derive(Clone, PartialEq, Eq)]
-struct Key(Arc<String>);
+struct Key(ArcStr);
 
 /// Hashes the `str` it borrows as, which `Borrow` requires.
 impl Hash for Key {
@@ -43,7 +43,7 @@ impl Borrow<str> for Key {
 /// apart.
 #[derive(Clone, Default)]
 pub struct NameList {
-    names: Vec<Arc<String>>,
+    names: Vec<ArcStr>,
     /// The reverse of `names`. A label test runs per row (`n:Person` for every row of
     /// a scan), so finding a name must not walk the list: with 500 labels registered,
     /// `MATCH (n) WHERE n:Person RETURN count(n)` over 10k nodes measured 2.1x the same
@@ -75,7 +75,7 @@ impl NameMap {
     #[must_use]
     pub fn from_names(
         list: fn(NameList) -> Self,
-        mut names: Vec<Arc<String>>,
+        mut names: Vec<ArcStr>,
     ) -> Self {
         let mut map = list(NameList::default());
         names.truncate(map.capacity());
@@ -83,9 +83,9 @@ impl NameMap {
         let inner = map.inner_mut();
         inner.ids.reserve(names.len());
         for (id, name) in names.iter().enumerate() {
-            inner.ids.entry(Key(Arc::clone(name))).or_insert(id);
+            inner.ids.entry(Key(ArcStr::clone(name))).or_insert(id);
         }
-        inner.chain = chain_of(tag, names.iter().map(|name| name.as_str()));
+        inner.chain = chain_of(tag, names.iter().map(arcstr::ArcStr::as_str));
         inner.names = names;
         map
     }
@@ -137,7 +137,7 @@ impl NameMap {
 
     /// The names in id order: position is the id.
     #[must_use]
-    pub fn names(&self) -> &[Arc<String>] {
+    pub fn names(&self) -> &[ArcStr] {
         &self.inner().names
     }
 
@@ -146,11 +146,11 @@ impl NameMap {
     pub fn get(
         &self,
         id: usize,
-    ) -> Option<&Arc<String>> {
+    ) -> Option<&ArcStr> {
         self.inner().names.get(id)
     }
 
-    pub fn iter(&self) -> std::slice::Iter<'_, Arc<String>> {
+    pub fn iter(&self) -> std::slice::Iter<'_, ArcStr> {
         self.inner().names.iter()
     }
 
@@ -167,7 +167,7 @@ impl NameMap {
     /// list is full, which only the property keys can be.
     pub fn get_or_insert(
         &mut self,
-        name: &Arc<String>,
+        name: &ArcStr,
     ) -> Option<usize> {
         if let Some(id) = self.id_of(name) {
             return Some(id);
@@ -179,8 +179,8 @@ impl NameMap {
         let inner = self.inner_mut();
         let id = inner.names.len();
         inner.chain = extend_chain(tag, inner.chain, name);
-        inner.names.push(Arc::clone(name));
-        inner.ids.insert(Key(Arc::clone(name)), id);
+        inner.names.push(ArcStr::clone(name));
+        inner.ids.insert(Key(ArcStr::clone(name)), id);
         Some(id)
     }
 
@@ -192,19 +192,19 @@ impl NameMap {
 }
 
 impl Index<usize> for NameMap {
-    type Output = Arc<String>;
+    type Output = ArcStr;
 
     fn index(
         &self,
         id: usize,
-    ) -> &Arc<String> {
+    ) -> &ArcStr {
         &self.inner().names[id]
     }
 }
 
 impl<'a> IntoIterator for &'a NameMap {
-    type Item = &'a Arc<String>;
-    type IntoIter = std::slice::Iter<'a, Arc<String>>;
+    type Item = &'a ArcStr;
+    type IntoIter = std::slice::Iter<'a, ArcStr>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -255,17 +255,15 @@ impl Schema {
 mod tests {
     use super::*;
 
-    fn names(list: &[&str]) -> Vec<Arc<String>> {
-        list.iter()
-            .map(|name| Arc::new((*name).to_string()))
-            .collect()
+    fn names(list: &[&str]) -> Vec<ArcStr> {
+        list.iter().map(|name| ArcStr::from(*name)).collect()
     }
 
     #[test]
     fn get_or_insert_numbers_by_position_and_extends_the_chain_once() {
         let mut labels = NameMap::Labels(NameList::default());
-        let person = Arc::new("Person".to_string());
-        let city = Arc::new("City".to_string());
+        let person = ArcStr::from("Person");
+        let city = ArcStr::from("City");
         assert_eq!(labels.get_or_insert(&person), Some(0));
         assert_eq!(labels.get_or_insert(&city), Some(1));
         let chain = labels.chain();
@@ -299,8 +297,8 @@ mod tests {
     /// the chain matches what `get_or_insert` would have built.
     #[test]
     fn from_names_drops_names_past_the_capacity() {
-        let all: Vec<Arc<String>> = (0..=MAX_ATTRIBUTES)
-            .map(|i| Arc::new(format!("k{i}")))
+        let all: Vec<ArcStr> = (0..=MAX_ATTRIBUTES)
+            .map(|i| ArcStr::from(format!("k{i}")))
             .collect();
         let keys = NameMap::from_names(NameMap::PropertyKeys, all.clone());
         assert_eq!(keys.len(), MAX_ATTRIBUTES);
@@ -318,15 +316,13 @@ mod tests {
         let mut schema = Schema::default();
         assert_eq!(schema.hash(), 0);
         for name in ["Person", "City"] {
-            schema.labels.get_or_insert(&Arc::new(name.to_string()));
+            schema.labels.get_or_insert(&ArcStr::from(name));
         }
         schema
             .relationship_types
-            .get_or_insert(&Arc::new("LIVES_IN".to_string()));
+            .get_or_insert(&ArcStr::from("LIVES_IN"));
         for name in ["name", "age"] {
-            schema
-                .property_keys
-                .get_or_create(&Arc::new(name.to_string()));
+            schema.property_keys.get_or_create(&ArcStr::from(name));
         }
         // The value `schema_hash::tests::golden_values` pins for these lists.
         assert_eq!(schema.hash(), 17_300_287_264_737_141_393);

@@ -33,11 +33,11 @@ graph/src/runtime/batch.rs	Batch::origin_row	1305	PROVEN	BatchRows.originRow_spe
 graph/src/runtime/batch.rs	Batch::gather	898	PROVEN	BatchRows.gather_row, gather_cell (row j is row idx[j] with its origin; no selection; sidecar kept only when some origin is non-zero)
 graph/src/runtime/batch.rs	BatchRow::to_owned_row	1449	PROVEN	MergeSlot.ofCells_slot, ofCells_vals/bnd/length, ofCells_trailing_unbound (one slot per column: Unbound -> unbound Null, bound -> bound value, value_only -> value with bit cleared; #3059); BUGs #3368/#3369 fixed for the filed repro by #3050 (bug3368_filed_repro_fixed_by_3050)
 graph/src/runtime/batch.rs	BatchOp::set_argument_batch	1613	PROVEN	BatchRows.slots_setArg, slots_setArg_idem (every Argument leaf holds the batch, or its compaction below a CartesianProduct/ValueHashJoin right child), setArg_vhj_perOrigin (per_origin = len > 1, #3035), setArg_resets, shape_setArg
-graph/src/runtime/ops/create.rs	build_attr_template	55	PROVEN	CreateAttrs.tplSet/tplBuild/rank: tplBuild_nodup, tplSet_ids, tplSet_lookup, tplBuild_lookup, rank_strict, rank_lt
-graph/src/runtime/ops/create.rs	resolve_map_attrs	84	PROVEN	CreateAttrs.resolveMap: resolveMap_spec
-graph/src/runtime/ops/create.rs	new	102	PROVEN	CreateBatch.CreateSt.new: createNew_spec
-graph/src/runtime/ops/create.rs	next	121	PROVEN	CreateBatch.createNext: createNext_spec; RowWrites.pipeline/step: PartitionInvariant refuted by bug2729_batch_split_flips_endpoint_check (streams per batch against pending deletes)
-graph/src/runtime/ops/create.rs	create_batch	139	PROVEN	CreateBatch.createBatch/createNode/createRel: createNode_spec, createRel_spec, createRel_gone, endpoint_spec, setAttrs_prefix
+graph/src/runtime/ops/create.rs	build_attr_template	56	PROVEN	CreateAttrs.tplSet/tplBuild/rank: tplBuild_nodup, tplSet_ids, tplSet_lookup, tplBuild_lookup, rank_strict, rank_lt
+graph/src/runtime/ops/create.rs	resolve_map_attrs	85	PROVEN	CreateAttrs.resolveMap: resolveMap_spec
+graph/src/runtime/ops/create.rs	new	103	PROVEN	CreateBatch.CreateSt.new: createNew_spec
+graph/src/runtime/ops/create.rs	next	122	PROVEN	CreateBatch.createNext: createNext_spec; RowWrites.pipeline/step: PartitionInvariant refuted by bug2729_batch_split_flips_endpoint_check (streams per batch against pending deletes)
+graph/src/runtime/ops/create.rs	create_batch	140	PROVEN	CreateBatch.createBatch/createNode/createRel: createNode_spec, createRel_spec, createRel_gone, endpoint_spec, setAttrs_prefix
 graph/src/runtime/ops/create.rs	resolve_pattern	353	PROVEN	CreateAttrs.resolveLabels/resolveNodes: resolveLabels_spec, resolveLabels_length, resolveNodes_shape
 graph/src/runtime/ops/delete.rs	node_attrs_to_map	39	PROVEN	Delete.attrsToMap: attrsToMap_spec
 graph/src/runtime/ops/delete.rs	rel_attrs_to_map	50	PROVEN	Delete.attrsToMap: attrsToMap_spec

@@ -1,3 +1,4 @@
+use arcstr::ArcStr;
 pub mod buffered_io;
 pub mod decoder;
 pub mod encoder;
@@ -243,9 +244,9 @@ impl Header {
 
 /// Graph schema — shared between RDB encode and decode.
 pub struct Schema {
-    pub attribute_names: Vec<Arc<String>>,
-    pub node_labels: Vec<Arc<String>>,
-    pub relationship_types: Vec<Arc<String>>,
+    pub attribute_names: Vec<ArcStr>,
+    pub node_labels: Vec<ArcStr>,
+    pub relationship_types: Vec<ArcStr>,
     pub indexes: Vec<IndexInfo>,
     pub constraints: Vec<Constraint>,
 }
@@ -362,7 +363,7 @@ fn encode_schema_index_block(
     let stopwords: Vec<&str> = infos
         .first()
         .and_then(|info| info.stopwords.as_ref())
-        .map_or_default(|sw| sw.iter().map(|s| s.as_str()).collect());
+        .map_or_default(|sw| sw.iter().map(arcstr::ArcStr::as_str).collect());
     w.write_unsigned(stopwords.len() as u64);
     for sw in &stopwords {
         w.write_buffer(&null_terminated(sw));
@@ -452,7 +453,7 @@ fn encode_schema_index_block(
 fn encode_constraint_block(
     w: &mut dyn Writer,
     constraints: &[&Constraint],
-    attribute_names: &[Arc<String>],
+    attribute_names: &[ArcStr],
 ) {
     let active = constraints
         .iter()
@@ -483,7 +484,7 @@ impl Decode<19> for Schema {
         let mut attribute_names = Vec::with_capacity(attr_count as usize);
         for _ in 0..attr_count {
             let buf = r.read_buffer()?;
-            attribute_names.push(Arc::new(strip_null_terminator(&buf)));
+            attribute_names.push(ArcStr::from(strip_null_terminator(&buf)));
         }
 
         // --- Node schemas ---
@@ -493,7 +494,7 @@ impl Decode<19> for Schema {
         let mut constraints = Vec::new();
         for _ in 0..node_schema_count {
             let (label, info, mut schema_constraints) = decode_schema_entry(r, &attribute_names)?;
-            let label = Arc::new(label);
+            let label = ArcStr::from(label);
             if let Some(mut info) = info {
                 info.label = label.clone();
                 info.entity_type = String::from("NODE");
@@ -516,7 +517,7 @@ impl Decode<19> for Schema {
         for _ in 0..rel_schema_count {
             let (type_name, info, mut schema_constraints) =
                 decode_schema_entry(r, &attribute_names)?;
-            let type_name = Arc::new(type_name);
+            let type_name = ArcStr::from(type_name);
             if let Some(mut info) = info {
                 info.label = type_name.clone();
                 info.entity_type = String::from("RELATIONSHIP");
@@ -541,7 +542,7 @@ impl Decode<19> for Schema {
 
 fn decode_schema_entry(
     r: &mut dyn Reader,
-    attribute_names: &[Arc<String>],
+    attribute_names: &[ArcStr],
 ) -> Result<(String, Option<IndexInfo>, Vec<Constraint>), String> {
     let _schema_id = r.read_unsigned()?;
     let name_buf = r.read_buffer()?;
@@ -557,12 +558,12 @@ fn decode_schema_entry(
         let mut stopwords = Vec::with_capacity(sw_count as usize);
         for _ in 0..sw_count {
             let sw_buf = r.read_buffer()?;
-            stopwords.push(Arc::new(strip_null_terminator(&sw_buf)));
+            stopwords.push(ArcStr::from(strip_null_terminator(&sw_buf)));
         }
 
         let field_count = r.read_unsigned()?;
-        let mut fields: HashMap<Arc<String>, Vec<Arc<Field>>> = HashMap::new();
-        let mut field_order: Vec<Arc<String>> = Vec::new();
+        let mut fields: HashMap<ArcStr, Vec<Arc<Field>>> = HashMap::new();
+        let mut field_order: Vec<ArcStr> = Vec::new();
         for _ in 0..field_count {
             let (attr_name, decoded) = decode_index_field(r)?;
             if !fields.contains_key(&attr_name) {
@@ -575,13 +576,13 @@ fn decode_schema_entry(
         }
 
         Some(IndexInfo {
-            label: Arc::new(String::new()),
+            label: ArcStr::new(),
             pending: 0,
             progress: 0,
             total: 0,
             fields,
             field_order,
-            language: Some(Arc::new(language)),
+            language: Some(ArcStr::from(language)),
             stopwords: if stopwords.is_empty() {
                 None
             } else {
@@ -614,14 +615,14 @@ fn decode_schema_entry(
             let prop_name = if attr_id < attribute_names.len() {
                 attribute_names[attr_id].clone()
             } else {
-                Arc::new(format!("attr_{attr_id}"))
+                ArcStr::from(format!("attr_{attr_id}"))
             };
             properties.push(prop_name);
         }
         let mut c = Constraint::new(
             ct,
             EntityType::Node, // placeholder, caller stamps entity type
-            Arc::new(schema_name.clone()),
+            ArcStr::from(schema_name.clone()),
             properties,
         );
         // `Constraint::new` starts at `UnderConstruction`, which is right for a constraint
@@ -641,7 +642,7 @@ fn decode_schema_entry(
 /// `index_field.c`): an attribute with a range and a fulltext index is a single
 /// `FULLTEXT | NUMERIC | GEO | STR` entry. So every set type becomes a field;
 /// keeping only one dropped the other index on a C-written RDB (#3484).
-fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), String> {
+fn decode_index_field(r: &mut dyn Reader) -> Result<(ArcStr, Vec<Field>), String> {
     use index_field_type::{
         INDEX_FLD_FULLTEXT, INDEX_FLD_GEO, INDEX_FLD_NUMERIC, INDEX_FLD_STR, INDEX_FLD_VECTOR,
     };
@@ -727,13 +728,13 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Vec<Field>), S
         ));
     }
 
-    Ok((Arc::new(name), fields))
+    Ok((ArcStr::from(name), fields))
 }
 
 impl Schema {
     pub fn from_graph(
         graph: &Graph,
-        attribute_names: Vec<Arc<String>>,
+        attribute_names: Vec<ArcStr>,
     ) -> Self {
         let node_labels = graph.get_labels().to_vec();
         let relationship_types = graph.get_types().to_vec();

@@ -7,6 +7,7 @@ use crate::{
     },
     redis_type::{GRAPH_TYPE, key_holds_graph, wrong_type_compat},
 };
+use arcstr::ArcStr;
 use graph::effects::EffectsBuffer;
 use graph::effects::announce::{AnnouncedConstraint, SchemaBaseline};
 use graph::entity_type::EntityType;
@@ -70,8 +71,8 @@ fn is_valid_identifier(name: &str) -> bool {
 fn register_constraint_schema(
     g: &mut graph::graph::graph::Graph,
     entity_type: EntityType,
-    label: &Arc<String>,
-    properties: &[Arc<String>],
+    label: &ArcStr,
+    properties: &[ArcStr],
 ) {
     match entity_type {
         EntityType::Node => {
@@ -90,8 +91,8 @@ fn find_status(
     g: &graph::graph::graph::Graph,
     ct: ConstraintType,
     entity_type: EntityType,
-    label: &Arc<String>,
-    properties: &[Arc<String>],
+    label: &ArcStr,
+    properties: &[ArcStr],
 ) -> Option<ConstraintStatus> {
     g.constraints()
         .iter()
@@ -149,8 +150,8 @@ fn find_status(
 pub struct Settling {
     pub ct: ConstraintType,
     pub entity_type: EntityType,
-    pub label: Arc<String>,
-    pub properties: Vec<Arc<String>>,
+    pub label: ArcStr,
+    pub properties: Vec<ArcStr>,
 }
 
 /// How long a settling thread will keep trying before it gives up.
@@ -229,7 +230,7 @@ pub fn settle_constraint(
                             c.label,
                             c.properties
                                 .iter()
-                                .map(|p| p.as_str())
+                                .map(arcstr::ArcStr::as_str)
                                 .collect::<Vec<_>>()
                                 .join(", "),
                             RETRY_BUDGET.as_secs(),
@@ -370,7 +371,7 @@ fn attempt_settle(
                         c.label,
                         c.properties
                             .iter()
-                            .map(|p| p.as_str())
+                            .map(arcstr::ArcStr::as_str)
                             .collect::<Vec<_>>()
                             .join(", "),
                     )),
@@ -432,7 +433,7 @@ pub fn graph_constraint(
             "Label name {label_str} is invalid"
         )));
     }
-    let label = Arc::new(label_str.to_string());
+    let label = ArcStr::from(label_str);
 
     // PROPERTIES keyword
     let props_kw = args.next_str()?;
@@ -460,7 +461,7 @@ pub fn graph_constraint(
                 "Property name {prop_str} is invalid"
             )));
         }
-        let prop = Arc::new(prop_str.to_string());
+        let prop = ArcStr::from(prop_str);
         if properties.contains(&prop) {
             return Err(ValkeyError::String(
                 "Properties cannot contain duplicates".into(),
@@ -590,8 +591,8 @@ struct ConstraintRequest {
     is_create: bool,
     ct: ConstraintType,
     entity_type: EntityType,
-    label: Arc<String>,
-    properties: Vec<Arc<String>>,
+    label: ArcStr,
+    properties: Vec<ArcStr>,
 }
 
 /// Create or drop the constraint, commit, and announce it. The caller holds the
@@ -654,7 +655,7 @@ fn apply_constraint(
             if needs_background_validation {
                 std::thread::spawn({
                     let graph = graph.clone();
-                    let label = Arc::clone(label);
+                    let label = ArcStr::clone(label);
                     let properties = properties.clone();
                     let key = key.to_vec();
                     let was_replicated = is_replayed;
