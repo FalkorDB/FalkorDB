@@ -41,7 +41,7 @@ use crate::runtime::{
     vector_expr::VectorEval,
 };
 use ahash::RandomState;
-use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -180,12 +180,8 @@ enum AggInputKind {
 /// Such an input cannot be materialised as a column: the inner aggregate needs
 /// the per-row path's group-aware evaluation, so those trees keep falling back.
 fn subtree_has_aggregate(node: &DynNode<'_, ExprIR<Variable>>) -> bool {
-    if let ExprIR::FuncInvocation(func) = node.data()
-        && func.is_aggregate()
-    {
-        return true;
-    }
-    node.children().any(|child| subtree_has_aggregate(&child))
+    node.walk::<Dfs>()
+        .any(|expr| matches!(expr, ExprIR::FuncInvocation(func) if func.is_aggregate()))
 }
 
 /// One implicit grouping key: an aggregate-free subtree of an aggregation item.
@@ -223,33 +219,68 @@ struct ImplicitKeys {
 /// quantifier's or `reduce`'s own variables take row slots while it is
 /// evaluated, so a fresh slot must not reuse one either.
 fn max_variable_id(node: &DynNode<'_, ExprIR<Variable>>) -> u32 {
-    let own = match node.data() {
-        ExprIR::Variable(var) | ExprIR::Quantifier { var, .. } | ExprIR::ListComprehension(var) => {
-            var.id
-        }
-        ExprIR::Reduce(reduce) => reduce.accumulator.id.max(reduce.iterator.id),
-        _ => 0,
-    };
-    node.children()
-        .map(|child| max_variable_id(&child))
-        .fold(own, u32::max)
+    node.walk::<Dfs>()
+        .flat_map(|expr| {
+            let read = match expr {
+                ExprIR::Variable(var) => Some(var),
+                _ => None,
+            };
+            read.into_iter().chain(expr.loop_vars().0)
+        })
+        .map(|var| var.id)
+        .max()
+        .unwrap_or(0)
 }
 
-/// A copy of the tree with each subtree listed in `slots` replaced by a read
-/// of its slot variable.
+/// The variables `node` reads from the row, each once: those its own list
+/// comprehensions, quantifiers and `reduce`s bind (`v` in `[v IN [1] | v]`)
+/// are left out. The binder gives every loop variable a fresh id, read only
+/// inside the node that binds it, so leaving out every id bound anywhere in
+/// the subtree drops exactly those.
+fn free_variables(node: &DynNode<'_, ExprIR<Variable>>) -> Vec<Variable> {
+    let bound: Vec<&Variable> = node
+        .walk::<Dfs>()
+        .flat_map(|expr| expr.loop_vars().0)
+        .collect();
+    let mut read: Vec<Variable> = Vec::new();
+    for expr in node.walk::<Dfs>() {
+        if let ExprIR::Variable(var) = expr
+            && !bound.contains(&var)
+            && !read.contains(var)
+        {
+            read.push(var.clone());
+        }
+    }
+    read
+}
+
+/// A copy of `tree` with each subtree listed in `slots` replaced by a read of
+/// its slot variable. The subtrees are disjoint (each is a maximal
+/// aggregate-free one).
 fn replace_with_slots(
-    node: &DynNode<'_, ExprIR<Variable>>,
+    tree: &DynTree<ExprIR<Variable>>,
     slots: &[(NodeIdx<Dyn<ExprIR<Variable>>>, Variable)],
 ) -> DynTree<ExprIR<Variable>> {
-    if let Some((_, slot)) = slots.iter().find(|(idx, _)| *idx == node.idx()) {
-        return DynTree::new(ExprIR::Variable(slot.clone()));
+    let mut copy = tree.clone();
+    // A copy has its own node indices; both trees list them in the same
+    // depth-first order.
+    let targets: Vec<_> = tree
+        .root()
+        .indices::<Dfs>()
+        .zip(copy.root().indices::<Dfs>())
+        .filter_map(|(original, copied)| {
+            slots
+                .iter()
+                .find(|(idx, _)| *idx == original)
+                .map(|(_, slot)| (copied, slot))
+        })
+        .collect();
+    for (idx, slot) in targets {
+        let mut node = copy.node_mut(idx);
+        *node.data_mut() = ExprIR::Variable(slot.clone());
+        node.remove_children();
     }
-    let mut tree = DynTree::new(node.data().clone());
-    let mut root = tree.root_mut();
-    for child in node.children() {
-        root.push_child_tree(replace_with_slots(&child, slots));
-    }
-    tree
+    copy
 }
 
 /// Implicit grouping keys of the aggregation items.
@@ -263,106 +294,75 @@ fn implicit_keys(
     keys: &[(Variable, QueryExpr<Variable>)],
     agg: &[(Variable, QueryExpr<Variable>)],
 ) -> ImplicitKeys {
-    /// The variables `node` binds for its children: a list comprehension's or
-    /// quantifier's element, `reduce`'s accumulator and element.
-    fn binds(node: &DynNode<'_, ExprIR<Variable>>) -> Vec<Variable> {
-        match node.data() {
-            ExprIR::Quantifier { var, .. } | ExprIR::ListComprehension(var) => vec![var.clone()],
-            ExprIR::Reduce(reduce) => vec![reduce.accumulator.clone(), reduce.iterator.clone()],
-            _ => Vec::new(),
-        }
-    }
-    /// The variables `node` reads from the row: those bound inside it
-    /// (`v` in `[v IN [1] | v]`) are left out.
-    fn variables(
-        node: &DynNode<'_, ExprIR<Variable>>,
-        local: &[Variable],
-        out: &mut Vec<Variable>,
-    ) {
-        if let ExprIR::Variable(var) = node.data()
-            && !local.contains(var)
-            && !out.contains(var)
-        {
-            out.push(var.clone());
-        }
-        let bound = binds(node);
-        let inner = if bound.is_empty() {
-            local.to_vec()
-        } else {
-            [local, &bound].concat()
-        };
-        for child in node.children() {
-            variables(&child, &inner, out);
-        }
-    }
-    fn walk(
-        item: usize,
-        node: &DynNode<'_, ExprIR<Variable>>,
-        bound: &[Variable],
-        guarded: bool,
-        keys: &mut Vec<(usize, NodeIdx<Dyn<ExprIR<Variable>>>, bool)>,
-        vars: &mut Vec<Variable>,
-    ) {
-        if subtree_has_aggregate(node) {
-            // An aggregate call's arguments are aggregated, not grouped by.
-            if matches!(node.data(), ExprIR::FuncInvocation(func) if func.is_aggregate()) {
-                return;
-            }
-        } else {
-            let mut read = Vec::new();
-            variables(node, &[], &mut read);
-            if read.is_empty() {
-                return; // a constant: the same in every group
-            }
-            // A subtree reading a variable that an enclosing quantifier,
-            // list comprehension or `reduce` binds (`ok` in
-            // `all(ok IN collect(x) WHERE ok)`) has no value of its own in the
-            // input row; only its other parts can be grouping terms.
-            if !read.iter().any(|var| bound.contains(var)) {
-                keys.push((item, node.idx(), guarded));
-                if guarded {
-                    for var in read {
-                        if !vars.contains(&var) {
-                            vars.push(var);
+    // `(item, subtree root, guarded)`, in depth-first order.
+    let mut found = Vec::new();
+    let mut lazy_vars: Vec<Variable> = Vec::new();
+    for (item, (_, tree)) in agg.iter().enumerate() {
+        // Every loop variable of the item. A subtree's free variables that
+        // are among them are bound by an enclosing comprehension, quantifier
+        // or `reduce` (see `free_variables`).
+        let loop_vars: Vec<&Variable> = tree
+            .root()
+            .walk::<Dfs>()
+            .flat_map(|expr| expr.loop_vars().0)
+            .collect();
+        // Depth-first, children pushed in reverse so they pop in order.
+        let mut stack = vec![(tree.root(), false)];
+        while let Some((node, guarded)) = stack.pop() {
+            if subtree_has_aggregate(&node) {
+                // An aggregate call's arguments are aggregated, not grouped by.
+                if matches!(node.data(), ExprIR::FuncInvocation(func) if func.is_aggregate()) {
+                    continue;
+                }
+            } else {
+                let read = free_variables(&node);
+                if read.is_empty() {
+                    continue; // a constant: the same in every group
+                }
+                // A subtree reading a variable that an enclosing quantifier,
+                // list comprehension or `reduce` binds (`ok` in
+                // `all(ok IN collect(x) WHERE ok)`) has no value of its own in
+                // the input row; only its other parts can be grouping terms.
+                if !read.iter().any(|var| loop_vars.contains(&var)) {
+                    found.push((item, node.idx(), guarded));
+                    if guarded {
+                        for var in read {
+                            if !lazy_vars.contains(&var) {
+                                lazy_vars.push(var);
+                            }
                         }
                     }
+                    continue;
                 }
-                return;
+            }
+            // Under a CASE any term may be skipped, the first condition
+            // included when it is not the one that holds. AND / OR skip their
+            // later operands, and a comprehension, quantifier or `reduce` body
+            // does not run on an empty list, so those are guarded the same way.
+            let guarded = guarded
+                || matches!(
+                    node.data(),
+                    ExprIR::Case { .. }
+                        | ExprIR::And
+                        | ExprIR::Or
+                        | ExprIR::Quantifier { .. }
+                        | ExprIR::ListComprehension(_)
+                        | ExprIR::Reduce(_)
+                );
+            let is_map = matches!(node.data(), ExprIR::Map | ExprIR::MapProjection);
+            for child in (0..node.num_children()).rev().map(|i| node.child(i)) {
+                // A map entry is a key constant whose one child is the value;
+                // the value, not the key node, is what groups.
+                if is_map
+                    && matches!(child.data(), ExprIR::Constant(Value::String(_)))
+                    && child.num_children() == 1
+                {
+                    stack.push((child.child(0), guarded));
+                } else {
+                    stack.push((child, guarded));
+                }
             }
         }
-        let inner = [bound, &binds(node)].concat();
-        // Under a CASE any term may be skipped, the first condition included
-        // when it is not the one that holds. AND / OR skip their later
-        // operands, and a comprehension, quantifier or `reduce` body does not
-        // run on an empty list, so those are guarded the same way.
-        let guarded = guarded
-            || matches!(
-                node.data(),
-                ExprIR::Case { .. }
-                    | ExprIR::And
-                    | ExprIR::Or
-                    | ExprIR::Quantifier { .. }
-                    | ExprIR::ListComprehension(_)
-                    | ExprIR::Reduce(_)
-            );
-        let is_map = matches!(node.data(), ExprIR::Map | ExprIR::MapProjection);
-        for child in node.children() {
-            // A map entry is a key constant whose one child is the value; the
-            // value, not the key node, is what groups.
-            if is_map
-                && matches!(child.data(), ExprIR::Constant(Value::String(_)))
-                && child.num_children() == 1
-            {
-                walk(item, &child.child(0), &inner, guarded, keys, vars);
-            } else {
-                walk(item, &child, &inner, guarded, keys, vars);
-            }
-        }
-    }
-    let mut found = Vec::new();
-    let mut lazy_vars = Vec::new();
-    for (item, (_, tree)) in agg.iter().enumerate() {
-        walk(item, &tree.root(), &[], false, &mut found, &mut lazy_vars);
     }
     // Slots take ids above every id the aggregation reads, so a slot can never
     // be read as a variable of the old scope.
@@ -398,10 +398,7 @@ fn implicit_keys(
                 if slots.is_empty() {
                     (name.clone(), tree.clone())
                 } else {
-                    (
-                        name.clone(),
-                        Arc::new(replace_with_slots(&tree.root(), slots)),
-                    )
+                    (name.clone(), Arc::new(replace_with_slots(tree, slots)))
                 }
             })
             .collect()

@@ -429,6 +429,20 @@ pub struct ShortestPathInfo {
 }
 
 impl<TVar: VarKind + Clone> ExprIR<TVar> {
+    /// The loop variables this node binds for its children: a list
+    /// comprehension's or quantifier's element, `reduce`'s accumulator and
+    /// element; none for any other node. They are in scope from the returned
+    /// child index on: the list, and `reduce`'s initial value, are evaluated
+    /// outside them.
+    pub fn loop_vars(&self) -> (impl Iterator<Item = &TVar>, usize) {
+        let (vars, first_scoped) = match self {
+            Self::ListComprehension(var) | Self::Quantifier { var, .. } => ([Some(var), None], 1),
+            Self::Reduce(vars) => ([Some(&vars.accumulator), Some(&vars.iterator)], 2),
+            _ => ([None, None], usize::MAX),
+        };
+        (vars.into_iter().flatten(), first_scoped)
+    }
+
     /// `a AND b AND …` over `conjuncts`, kept flat.
     ///
     /// AND is associative, so an operand that is itself an AND contributes
