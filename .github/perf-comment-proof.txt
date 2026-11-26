@@ -3,4 +3,4 @@
 # file runs perf-comment.yml as if the comment below had been posted on pull request
 # `pr`, and answers as a dry run in the job summary: no reaction, no comment.
 pr: 3967
-comment: /perf micro-hw,pokec baseline 4.22.4
+comment: /perf micro-hw,pokec baseline main
