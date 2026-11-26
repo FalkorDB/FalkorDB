@@ -32,9 +32,13 @@ from falkorbench.counters import select_backend
 from falkorbench.fuzz import check as fuzz_check
 from falkorbench.ldbc import check as ldbc_check
 from falkorbench.nightly import dashboard as nightly_dashboard
+from falkorbench.nightly import failures as nightly_failures
 from falkorbench.nightly import merge as nightly_merge
 from falkorbench.nightly import missed_run
+from falkorbench.nightly import pr_comment
 from falkorbench.nightly import report as nightly_report
+from falkorbench.nightly import store as nightly_store
+from falkorbench.nightly import unlisted as nightly_unlisted
 from falkorbench.soak import check as soak_check
 
 # bench/ is the project root; the repo is its parent.
@@ -683,6 +687,49 @@ def cov_gate_command(args):
 def nightly_dashboard_command(data, out):
     """Build the perf dashboard, a static site, from every stored run."""
     click.echo(f"{nightly_dashboard.build(data, out)} run(s) -> {out}")
+
+
+PASS_THROUGH = {
+    "ignore_unknown_options": True,
+    "allow_extra_args": True,
+    "help_option_names": [],
+}
+
+
+@nightly.command("store", context_settings=PASS_THROUGH)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def nightly_store_command(args):
+    """Download one run's perf-result-* and lay them out as the dashboard reads them (--help)."""
+    raise SystemExit(nightly_store.main(list(args)))
+
+
+@nightly.command("failures", context_settings=PASS_THROUGH)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def nightly_failures_command(args):
+    """One stored run's regressions, broken correctness checks and errors, vs earlier nights."""
+    raise SystemExit(nightly_failures.main(list(args)))
+
+
+@nightly.command("trim")
+@click.option("--from", "src", required=True, type=click.Path(path_type=Path), help="stored runs")
+@click.option("--to", "dest", required=True, type=click.Path(path_type=Path), help="the copy")
+def nightly_trim_command(src, dest):
+    """Copy stored runs with only what their pages need (what a deploy publishes)."""
+    click.echo(f"{nightly_store.trim(src, dest)} run(s) -> {dest}")
+
+
+@nightly.command("unlisted", context_settings=PASS_THROUGH)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def nightly_unlisted_command(args):
+    """Unlisted pages of the last 30 days' manual and /perf runs; `url` prints one's address."""
+    raise SystemExit(nightly_unlisted.main(list(args)))
+
+
+@nightly.command("pr-comment", context_settings=PASS_THROUGH)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def nightly_pr_comment_command(args):
+    """A `/perf` comment on a pull request: resolve | answer (each takes --help)."""
+    raise SystemExit(pr_comment.main(list(args)))
 
 
 # --- ldbc --------------------------------------------------------------------

@@ -52,6 +52,11 @@
 # known flaky one, is reported and does not fail it (result.json's `broken`). Every job runs this workflow's own commit (main's), not
 # the caller's, which has no perf code: the checkouts below name
 # job.workflow_sha, and _perf-micro.yml / _perf-vm.yml get it as code_ref.
+#
+# A `/perf` comment on a pull request (perf-comment.yml, #4037) calls it the same
+# way, with the pull request's image pinned by digest, the checks it asked for and
+# a baseline: a release pinned by digest, or `main` (main's newest rc-mg image,
+# found by the walk above, here). Its labels and commits come with the call.
 
 name: Perf nightly
 
@@ -65,16 +70,16 @@ on:
         type: string
         default: ""
       baseline_image:
-        description: "Baseline image (tag or digest); empty = the latest release"
+        description: "Baseline image (tag or digest); main = main's newest rc-mg image; empty = the latest release"
         type: string
         default: ""
       checks:
         description: "Comma list of checks to run (micro-hw, or names in bench/checks.yaml); empty = all"
         type: string
         default: ""
-  # The release gate (header). `mode` is a call's alone: it is how every job
-  # tells a call from a night. `gate` is the release gate's alone: another
-  # caller (/perf) leaves it false and is judged as a night is.
+  # The release gate and `/perf` (header). `mode` is a call's alone: it is how every job
+  # tells a call from a night. `gate` is the release gate's alone: another caller
+  # (/perf) leaves it false and is judged as a night is.
   workflow_call:
     inputs:
       candidate_image:
@@ -82,7 +87,7 @@ on:
         type: string
         required: true
       baseline_image:
-        description: "Baseline image (tag or digest); empty = the highest stable release below baseline_below"
+        description: "Baseline image (tag or digest); main = main's newest rc-mg image; empty = the highest stable release below baseline_below"
         type: string
         default: ""
       baseline_below:
@@ -97,6 +102,26 @@ on:
         description: "true only for the release gate: it blocks only what the candidate introduced"
         type: boolean
         default: false
+      checks:
+        description: "Comma list of checks to run (micro-hw, or names in bench/checks.yaml); empty = all"
+        type: string
+        default: ""
+      # The caller's names for its images, which a digest does not carry: empty = what
+      # the pinning step derives (a tag, rc-mg@<sha>, or <repo>@<12 hex>).
+      candidate_label:
+        type: string
+        default: ""
+      candidate_commit:
+        description: "40-hex commit the candidate was built from"
+        type: string
+        default: ""
+      baseline_label:
+        type: string
+        default: ""
+      baseline_commit:
+        description: "40-hex commit the baseline was built from"
+        type: string
+        default: ""
 
 permissions: {}
 
@@ -104,7 +129,7 @@ permissions: {}
 # queued scheduled run must not be displaced by dispatches queueing behind it
 # (only one run per group waits; a newer one cancels it). Every leg runs on its
 # own runner or VM, so a dispatch beside a nightly measures nothing differently.
-# A call (the gate) takes the caller's event, so it gets a group of its own run:
+# A call (the gate, `/perf`) takes the caller's event, so it gets a group of its own run:
 # one queue entry must not queue behind, or displace, another.
 concurrency:
   group: ${{ inputs.mode && format('perf-gate-{0}', github.run_id) || format('perf-nightly-{0}', github.event_name) }}
@@ -156,6 +181,10 @@ jobs:
           CANDIDATE_INPUT: ${{ inputs.candidate_image }}
           BASELINE_INPUT: ${{ inputs.baseline_image }}
           BASELINE_BELOW: ${{ inputs.baseline_below }}
+          CANDIDATE_LABEL_INPUT: ${{ inputs.candidate_label }}
+          CANDIDATE_COMMIT_INPUT: ${{ inputs.candidate_commit }}
+          BASELINE_LABEL_INPUT: ${{ inputs.baseline_label }}
+          BASELINE_COMMIT_INPUT: ${{ inputs.baseline_commit }}
         run: |
           set -euo pipefail
 
@@ -196,16 +225,13 @@ jobs:
             fi
           }
 
-          if [[ -n $CANDIDATE_INPUT ]]; then
-            pin_input "$CANDIDATE_INPUT"
-            note="given by hand"
-          else
-            # Always main's newest image, whatever ref the run came from: a
-            # dispatch from another branch, still measures main (and labels it
-            # main@…).
+          # newest_main SIDE sets image/commit/label/note to main's newest image:
+          # always main's, whatever ref the run came from (a dispatch from another
+          # branch still measures main, and labels it main@…).
+          newest_main() {
+            local tip found="" sha rc back
             git fetch --quiet --no-tags --depth="$((WALK + 5))" origin main
             tip=$(git rev-parse FETCH_HEAD)
-            found=""
             for sha in $(git rev-list --first-parent -n "$WALK" "$tip"); do
               if digest=$(digest_of "$CANDIDATE_REPO:rc-mg-$sha-valkey"); then
                 found=$sha
@@ -231,12 +257,37 @@ jobs:
               back=$(git rev-list --first-parent --count "$found..$tip")
               label="$label (tip ${tip:0:7} has no image)"
               note="fallback: tip $tip has no rc-mg image; newest first-parent commit with one is $back back"
-              echo "::notice::candidate $note"
+              echo "::notice::$1 $note"
             fi
+          }
+
+          # by_caller SIDE LABEL COMMIT replaces the derived label and commit with
+          # the caller's (a /perf call names the pull request and its commit).
+          by_caller() {
+            if [[ $2 == *$'\n'* || $2 == *$'\r'* ]]; then
+              echo "::error::the $1 label is not one line"
+              exit 1
+            fi
+            if [[ -n $3 && ! $3 =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::the $1 commit '$3' is not 40 lowercase hex"
+              exit 1
+            fi
+            label=${2:-$label}
+            commit=${3:-$commit}
+          }
+
+          if [[ -n $CANDIDATE_INPUT ]]; then
+            pin_input "$CANDIDATE_INPUT"
+            note="given by hand"
+          else
+            newest_main candidate
           fi
+          by_caller candidate "${CANDIDATE_LABEL_INPUT-}" "${CANDIDATE_COMMIT_INPUT-}"
           candidate_image=$image candidate_commit=$commit candidate_label=$label candidate_note=$note
 
-          if [[ -n $BASELINE_INPUT ]]; then
+          if [[ $BASELINE_INPUT == main ]]; then
+            newest_main baseline
+          elif [[ -n $BASELINE_INPUT ]]; then
             pin_input "$BASELINE_INPUT"
             note="given by hand"
           else
@@ -276,6 +327,7 @@ jobs:
             commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
             label=$version
           fi
+          by_caller baseline "${BASELINE_LABEL_INPUT-}" "${BASELINE_COMMIT_INPUT-}"
 
           {
             echo "candidate_image=$candidate_image"
@@ -310,7 +362,7 @@ jobs:
           # are the caller's.
           if [[ -n $GATE_MODE ]]; then
             : > "$HISTORY/runs.txt"
-            echo "a call (the release gate): no earlier nightlies"
+            echo "a call (the release gate or /perf): no earlier nightlies"
             exit 0
           fi
           # By this run's workflow id, which exists on any branch (a lookup by
@@ -338,7 +390,7 @@ jobs:
         run: |
           set -euo pipefail
           # The commit every check runs its code from: this workflow's, which
-          # for a call (the gate) is not the caller's. An empty one would fall
+          # for a call (the gate, `/perf`) is not the caller's. An empty one would fall
           # back to the caller's commit, so it is checked here.
           if ! [[ $CODE_SHA =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::job.workflow_sha '$CODE_SHA' is not a commit"
@@ -642,16 +694,32 @@ jobs:
           # picked its own images is a by-hand comparison, so it goes to the step
           # summary alone.
           PERF_CHAT_WEBHOOK: ${{ inputs.mode == '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
+          # The runs perf-dashboard.yml stores (its own rule): the schedule, and a dispatch from
+          # the default branch that named no images. Their line links the run's dashboard page.
+          PERF_ON_DASHBOARD: ${{ inputs.mode == '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch && inputs.candidate_image == '' && inputs.baseline_image == '')) }}
+          PERF_PAGES_URL: ${{ vars.PERF_PAGES_URL }}
         run: uv run --project bench --frozen bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
+
+      # A dispatch that named its own images is not on the dashboard's runs page: it gets an
+      # unlisted page (perf-dashboard.yml, kept 30 days), linked here.
+      - name: Link the run's page
+        if: ${{ !cancelled() && inputs.mode == '' && github.event_name == 'workflow_dispatch' && (inputs.candidate_image != '' || inputs.baseline_image != '') }}
+        env:
+          PERF_PAGES_URL: ${{ vars.PERF_PAGES_URL }}
+        run: |
+          set -euo pipefail
+          url=$(uv run --project bench --frozen bench nightly unlisted url --kind manual \
+            --nightly "$RUNNER_TEMP/nightly/nightly.json" --run-id "$GITHUB_RUN_ID")
+          echo "Page: $url (appears within minutes of this run's end; kept 30 days)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # Last, once the report is out and nightly.json is uploaded (merge job), so
       # a failing run never loses either: a red or error night fails the run.
       # The list of runs then reads as a timeline, and a failed scheduled run
       # sends GitHub's email. Green and skipped nights succeed, and so does a red
       # one whose every regression bench/waivers.yaml waives (each still shown
-      # as a warning). The release gate (`gate: true`) also fails a skipped
-      # night, and does not fail on a break the candidate did not introduce
-      # (#4065). It runs even when the report step failed, so a red or error
+      # as a warning). A call (the gate, `/perf`) also fails a skipped night, and the
+      # release gate (`gate: true`) does not fail on a break the candidate did not
+      # introduce (#4065). It runs even when the report step failed, so a red or error
       # night fails the run whatever the reporter did.
       - name: Fail the run unless the night passes
         if: ${{ !cancelled() }}

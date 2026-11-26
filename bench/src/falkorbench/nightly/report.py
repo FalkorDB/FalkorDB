@@ -41,6 +41,7 @@ COMMITS_SHOWN = 30
 TRAILING_PULL_REQUEST = re.compile(r"^(?P<title>.*?)\s*\(#(?P<number>\d+)\)\s*$")
 # A URL that can sit inside Chat's `<url|text>` and Markdown's `[text](url)` intact.
 SAFE_URL = re.compile(r"https?://[^\s<>|\"'`()\[\]]+")
+DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 # The checkout whose `git log` lists the commits since the last green night.
 CHECKOUT = Path(__file__).resolve().parent
@@ -55,6 +56,16 @@ HTTP_TIMEOUT_SECONDS = 20
 
 def shorten(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def listed(names: list[str], limit: int = TEXT_CHARACTERS) -> str:
+    """The names, comma-separated, cut at a whole name with "+N more" to fit `limit`."""
+    text = ", ".join(names)
+    for kept in range(len(names) - 1, 0, -1):
+        if len(text) <= limit:
+            break
+        text = f"{', '.join(names[:kept])}, +{len(names) - kept} more"
+    return text if len(text) <= limit else f"+{len(names)} more"
 
 
 def one_line(value: object, fallback: str, limit: int = TEXT_CHARACTERS) -> str:
@@ -96,6 +107,30 @@ def api_url(environ: Mapping[str, str]) -> str:
 
 def repository(environ: Mapping[str, str]) -> str:
     return environ.get("GITHUB_REPOSITORY") or DEFAULT_REPOSITORY
+
+
+def pages_url(repo: str, environ: Mapping[str, str]) -> str:
+    """The dashboard site's root, ending in `/`: $PERF_PAGES_URL (a repository variable, for a
+    custom domain), else GitHub's default for a project site, which is what the repository's
+    Pages API reports for it."""
+    given = (environ.get("PERF_PAGES_URL") or "").strip()
+    if given:
+        return given.rstrip("/") + "/"
+    owner, _, name = repo.partition("/")
+    return f"https://{owner.lower()}.github.io/{name}/"
+
+
+def dashboard_url(night: dict, environ: Mapping[str, str]) -> str:
+    """The run's page on the dashboard, `<site>/run/<date>-<run id>.html`, for a run that
+    perf-dashboard.yml stores ($PERF_ON_DASHBOARD is true: the schedule, or a dispatch from the
+    default branch that named no images); else "". It appears minutes after this run ends."""
+    date, run_id = night.get("date"), environ.get("GITHUB_RUN_ID") or ""
+    if environ.get("PERF_ON_DASHBOARD") != "true" or not run_id.isdigit():
+        return ""
+    if not (isinstance(date, str) and DATE.fullmatch(date)):
+        return ""
+    url = f"{pages_url(repository(environ), environ)}run/{date}-{run_id}.html"
+    return url if SAFE_URL.fullmatch(url) and len(url) <= RUN_URL_CHARACTERS else ""
 
 
 def github_token(environ: Mapping[str, str]) -> str:
@@ -264,26 +299,25 @@ def issue_url(night: dict, environ: Mapping[str, str]) -> str:
 
 def chat_line(night: dict, status: str, reason: str, environ: Mapping[str, str]) -> str:
     """Perf nightly 2026-11-24: RED (micro-hw; soak-a: s03 x (baseline too: yes, #3512)),
-    main@4c10889 vs 6.2.0 · details · new issue
+    main@4c10889 vs 6.2.0 · details · dashboard · new issue
 
     A red night names every pass/fail check broken on the candidate, whatever the
-    baseline did (#4065), as far as Chat's limit allows; past it, "+N more, see run"."""
+    baseline did (#4065), as far as Chat's limit allows; past it, "+N more, see run".
+    "dashboard" (a run the dashboard stores) sits in the tail, inside that limit."""
     date = one_line(night.get("date"), "date unknown", 20)
     checks = checks_of(night)
     broken: list[str] = []
     if reason:
         detail = reason
     elif status == "red":
-        detail = ", ".join(
-            name_of(check) for check in checks if check.get("verdict") == "regression"
-        )
+        detail = listed([name_of(c) for c in checks if c.get("verdict") == "regression"])
         broken = [
             f"{name_of(check)}: {broken_label(entry)}"
             for check in checks
             for entry in broken_of(check)
         ]
     elif status == "error":
-        detail = ", ".join(name_of(check) for check in checks if check.get("verdict") == "error")
+        detail = listed([name_of(c) for c in checks if c.get("verdict") == "error"])
     elif status == "skipped":
         detail = one_line(night.get("skip_reason"), "no reason given")
     else:
@@ -293,6 +327,8 @@ def chat_line(night: dict, status: str, reason: str, environ: Mapping[str, str])
     tail = chat_plain(")" + (f", {versus}" if versus else ""))
     url = run_url_of(night, environ)
     tail += f" · {chat_link(url, 'details')}" if url else ""
+    page = dashboard_url(night, environ)
+    tail += f" · {chat_link(page, 'dashboard')}" if page else ""
     if status == "red" and not reason:
         tail += f" · {chat_link(issue_url(night, environ), 'new issue')}"
     return (
@@ -448,6 +484,12 @@ def summary_markdown(night: dict, status: str, reason: str, environ: Mapping[str
     if night:
         versus = f"{markdown_plain(label(night.get('candidate')))} vs {markdown_plain(label(night.get('baseline')))}"
         lines += [versus + (f" · {markdown_link(url, 'run')}" if url else ""), ""]
+    page = dashboard_url(night, environ)
+    if page:
+        lines += [
+            f"{markdown_link(page, 'Dashboard page')} (appears within minutes of this run's end)",
+            "",
+        ]
     if status == "skipped":
         lines += [
             f"Skipped: {markdown_plain(one_line(night.get('skip_reason'), 'no reason given'))}",

@@ -1,0 +1,227 @@
+# A `/perf` comment on a pull request runs the perf checks on its image (#4037, epic
+# #3974), and answers on the pull request:
+#
+#   /perf <checks> [baseline <main | X.Y.Z>]      e.g. /perf micro-hw,pokec baseline 6.2.1
+#
+# on the comment's first line. <checks> is `all` or a comma list of micro-hw and the
+# names in bench/checks.yaml; the baseline is main's newest merge-queue image (`main`,
+# the default), a release X.Y.Z (5.0.0 and later), or a C engine release 4.Y.Z
+# (falkordb/falkordb-server:v4.Y.Z). `bench nightly pr-comment` holds the rules.
+#
+#   resolve  Who asked (write, maintain or admin access; bots are ignored), on which
+#            pull request (this repository's, open), whether a /perf run on it is
+#            still going (then it refuses: one at a time), and its head commit. The
+#            candidate is rc-pr-<N>-valkey, pinned by digest, and only when rust-pr.yml's
+#            build-rc-image succeeded for that commit and the head did not move while
+#            the image was pinned. A release baseline is pinned here; `main` by the
+#            nightly's own walk in the called workflow. A refusal is a reply; a request
+#            that runs gets a reaction.
+#   measure  perf-nightly.yml, called: the nightly's resolve -> checks -> merge path,
+#            with these images and checks. A call posts nothing to Chat, reads no earlier
+#            nights, and is no night: the skip rule and the previous green commit read only
+#            runs of perf-nightly.yml itself, and perf-dashboard.yml gives this run an
+#            unlisted page, never a place on the runs page.
+#   answer   The run's perf-nightly artifact, laid out with `bench nightly store` as the
+#            dashboard stores a night (run.json: trigger pr-comment, scope pr-<N>), built
+#            with `bench nightly dashboard` into a site uploaded as this run's
+#            perf-dashboard artifact, and one comment: each check's verdict, both images
+#            and commits, the run, and the run's unlisted page (pr/<N>/<date>-<run id>/ on
+#            the dashboard's site, which perf-dashboard.yml publishes when this run ends and
+#            keeps 30 days; the artifact is the fallback). A run that left no nightly.json is
+#            answered as such, never as green.
+#
+# issue_comment runs this file from the default branch, so a request measures the pull
+# request's engine with main's checks and workflows; nothing of the pull request is
+# checked out or run. The comment reaches a script only through `env:`.
+
+name: Perf PR comment
+
+# "/perf on #<N>" for every request, so resolve finds an earlier run on the same pull
+# request by its title. Other comments get a title of their own, so they never count.
+run-name: >-
+  ${{ startsWith(github.event.comment.body, '/perf')
+  && format('/perf on #{0}', github.event.issue.number)
+  || 'Comment, not /perf' }}
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  resolve:
+    # The cheap filter, so other comments cost nothing: a person's comment on a pull
+    # request that starts with the command.
+    if: >-
+      github.event.issue.pull_request
+      && github.event.comment.user.type != 'Bot'
+      && startsWith(github.event.comment.body, '/perf')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # This workflow's other runs, and rust-pr.yml's runs and jobs.
+      actions: read
+      # The reply and the reaction.
+      pull-requests: write
+    outputs:
+      go: ${{ steps.resolve.outputs.go }}
+      pr: ${{ steps.resolve.outputs.pr }}
+      request: ${{ steps.resolve.outputs.request }}
+      checks: ${{ steps.resolve.outputs.checks }}
+      candidate_image: ${{ steps.resolve.outputs.candidate_image }}
+      candidate_label: ${{ steps.resolve.outputs.candidate_label }}
+      candidate_commit: ${{ steps.resolve.outputs.candidate_commit }}
+      baseline_image: ${{ steps.resolve.outputs.baseline_image }}
+      baseline_label: ${{ steps.resolve.outputs.baseline_label }}
+      baseline_commit: ${{ steps.resolve.outputs.baseline_commit }}
+    steps:
+      # The default branch's bench code (issue_comment); nothing of the pull request.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
+
+      - name: Check the request and pin the images
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          PR: ${{ github.event.issue.number }}
+          ACTOR: ${{ github.event.comment.user.login }}
+          ACTOR_TYPE: ${{ github.event.comment.user.type }}
+        run: |
+          set -euo pipefail
+          yq -o=json '.' bench/checks.yaml > "$RUNNER_TEMP/checks.json"
+          uv run --project bench --frozen bench nightly pr-comment resolve \
+            --registry "$RUNNER_TEMP/checks.json" --github-output "$GITHUB_OUTPUT"
+
+  measure:
+    needs: resolve
+    if: needs.resolve.outputs.go == 'true'
+    # resolve refuses a second request while one runs; this keeps two from measuring at
+    # once if both pass that check together.
+    concurrency:
+      group: perf-comment-${{ needs.resolve.outputs.pr }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      # micro-hw's measurement image: built and pushed on a cache miss.
+      packages: write
+    uses: ./.github/workflows/perf-nightly.yml
+    with:
+      candidate_image: ${{ needs.resolve.outputs.candidate_image }}
+      candidate_label: ${{ needs.resolve.outputs.candidate_label }}
+      candidate_commit: ${{ needs.resolve.outputs.candidate_commit }}
+      baseline_image: ${{ needs.resolve.outputs.baseline_image }}
+      baseline_label: ${{ needs.resolve.outputs.baseline_label }}
+      baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
+      checks: ${{ needs.resolve.outputs.checks }}
+      mode: nightly
+    secrets: inherit
+
+  answer:
+    needs: [resolve, measure]
+    # Whatever measure did: a red night fails it, and a run that left nothing is answered too.
+    if: always() && needs.resolve.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # This run's perf-result-<check> artifacts.
+      actions: read
+      # The answer.
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ needs.resolve.outputs.pr }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
+
+      # Absent when the call ended before its merge job: the answer says so.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: perf-nightly
+          path: ${{ runner.temp }}/nightly
+
+      # A re-run keeps the earlier attempt's perf-nightly when this attempt never reached its
+      # merge: only one made since this attempt started is this run's, for the dashboard and
+      # the answer alike. A lookup that fails proves nothing: the results are left out and the
+      # answer says the run left none, rather than giving none at all. Always: a run cancelled
+      # after the download must not skip the check, since the answer still runs.
+      - name: Keep only this attempt's nightly.json
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          night=$RUNNER_TEMP/nightly/nightly.json
+          [[ -f $night ]] || exit 0
+          started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at) || started=""
+          made=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=perf-nightly" \
+            --jq '[.artifacts[] | select(.expired | not) | .created_at] | max // ""') || made=""
+          if [[ -z $started || -z $made || $made < $started ]]; then
+            echo "::warning::perf-nightly (${made:-unknown}) is not known to be this attempt's (started ${started:-unknown}): left out"
+            rm -f "$night"
+          fi
+
+      - name: Build this run's dashboard
+        id: site
+        run: |
+          set -euo pipefail
+          night=$RUNNER_TEMP/nightly/nightly.json
+          if [[ ! -f $night ]]; then
+            echo "no nightly.json: no dashboard"
+            exit 0
+          fi
+          site=$RUNNER_TEMP/site
+          uv run --project bench --frozen bench nightly store --nightly "$night" --run-id "$GITHUB_RUN_ID" \
+            --data "$site/data" --trigger pr-comment --scope "pr-$PR"
+          uv run --project bench --frozen bench nightly dashboard --data "$site/data" --out "$site"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        if: steps.site.outputs.built == 'true'
+        with:
+          name: perf-dashboard
+          overwrite: true
+          path: ${{ runner.temp }}/site/
+          if-no-files-found: error
+          retention-days: 90
+
+      # Whatever the dashboard did: the answer goes out without its link then.
+      # The page perf-dashboard.yml publishes once this run ends, at a known address. Always,
+      # also when the run was cancelled: a request that started is answered.
+      - name: Answer on the pull request
+        if: ${{ always() }}
+        env:
+          REQUEST: ${{ needs.resolve.outputs.request }}
+          DASHBOARD_URL: ${{ steps.upload.outputs.artifact-url }}
+          MEASURED: ${{ needs.measure.result }}
+          PERF_PAGES_URL: ${{ vars.PERF_PAGES_URL }}
+        run: |
+          set -euo pipefail
+          night=$RUNNER_TEMP/nightly/nightly.json
+          page=""
+          if [[ -f $night ]]; then
+            # No address (a night with no usable date): the answer goes out without it.
+            page=$(uv run --project bench --frozen bench nightly unlisted url --kind pr \
+              --nightly "$night" --run-id "$GITHUB_RUN_ID" --pr "$PR") || page=""
+          else
+            night=""
+          fi
+          uv run --project bench --frozen bench nightly pr-comment answer --nightly "$night" \
+            --request "$REQUEST" --pr "$PR" --dashboard-url "$DASHBOARD_URL" --page-url "$page" \
+            --measured "$MEASURED"

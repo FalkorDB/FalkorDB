@@ -1501,6 +1501,124 @@ esac
     assert outputs["baseline_label"] == "6.2.1"
 
 
+def walk_fixture(tmp_path):
+    """main with three commits of which only the first has an rc-mg image, a fake docker
+    that also knows a pull request's digest, and the resolve step's environment."""
+    import os
+    import subprocess
+
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+
+    def git(*args, cwd):
+        return subprocess.run(
+            ["git", *args], cwd=cwd, env=git_env, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    origin, work = tmp_path / "origin.git", tmp_path / "work"
+    git("init", "--quiet", "--bare", "--initial-branch=main", str(origin), cwd=tmp_path)
+    git("clone", "--quiet", str(origin), str(work), cwd=tmp_path)
+    main = []
+    for n in range(3):
+        git("commit", "--quiet", "--allow-empty", "-m", f"main {n}", cwd=work)
+        main.append(git("rev-parse", "HEAD", cwd=work))
+    git("push", "--quiet", "origin", "HEAD:main", cwd=work)
+    bin_dir, temp = tmp_path / "bin", tmp_path / "temp"
+    bin_dir.mkdir()
+    temp.mkdir()
+    fake_tool(
+        bin_dir,
+        "docker",
+        f"""ref=$4
+case "$ref" in
+  *rc-mg-{main[0]}-valkey) echo '{{"digest": "sha256:{"a" * 64}"}}' ;;
+  *@sha256:{"b" * 64}) echo '{{"digest": "sha256:{"b" * 64}"}}' ;;
+  *) echo "ERROR: $ref: not found" >&2; exit 1 ;;
+esac
+""",
+    )
+    fake_tool(bin_dir, "gh", 'echo "unexpected gh $*" >&2; exit 9\n')
+    env = {
+        "BIN": str(bin_dir),
+        "RUNNER_TEMP": str(temp),
+        "GITHUB_OUTPUT": str(temp / "output"),
+        "GITHUB_STEP_SUMMARY": str(temp / "summary"),
+        "GITHUB_REPOSITORY": "o/r",
+        "WALK": "20",
+        "CANDIDATE_REPO": "ghcr.io/falkordb/falkordb-server",
+        "BASELINE_REPO": "falkordb/falkordb-server",
+        "CANDIDATE_INPUT": f"ghcr.io/falkordb/falkordb-server@sha256:{'b' * 64}",
+        "BASELINE_INPUT": "main",
+        "BASELINE_BELOW": "",
+    }
+    return work, main, env
+
+
+def test_a_main_baseline_is_found_by_the_candidates_walk(tmp_path):
+    """A /perf call names `main` for the baseline: main's newest rc-mg image, the same
+    walk (and fallback) a night uses for its candidate."""
+    work, main, env = walk_fixture(tmp_path)
+    run = run_step(step_script("resolve", "images"), work, env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    outputs = dict(
+        line.split("=", 1) for line in Path(env["GITHUB_OUTPUT"]).read_text().splitlines()
+    )
+    assert outputs["baseline_image"] == f"ghcr.io/falkordb/falkordb-server@sha256:{'a' * 64}"
+    assert outputs["baseline_commit"] == main[0]
+    assert outputs["baseline_label"] == f"main@{main[0][:7]} (tip {main[2][:7]} has no image)"
+    assert f"::notice::baseline fallback: tip {main[2]}" in run.stdout
+    # The candidate was given by digest: no tag, so no label or commit of its own.
+    assert outputs["candidate_label"] == f"falkordb-server@{'b' * 12}"
+    assert outputs["candidate_commit"] == ""
+
+
+def test_the_callers_labels_and_commits_replace_the_derived_ones(tmp_path):
+    work, main, env = walk_fixture(tmp_path)
+    env.update(
+        CANDIDATE_LABEL_INPUT="pr-3967@727e385",
+        CANDIDATE_COMMIT_INPUT="7" * 40,
+        BASELINE_LABEL_INPUT="",
+        BASELINE_COMMIT_INPUT="",
+    )
+    run = run_step(step_script("resolve", "images"), work, env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    outputs = dict(
+        line.split("=", 1) for line in Path(env["GITHUB_OUTPUT"]).read_text().splitlines()
+    )
+    assert (outputs["candidate_label"], outputs["candidate_commit"]) == (
+        "pr-3967@727e385",
+        "7" * 40,
+    )
+    # An empty one keeps what the step found.
+    assert outputs["baseline_commit"] == main[0]
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "said"),
+    [
+        ("CANDIDATE_LABEL_INPUT", "pr\nbaseline_image=evil", "the candidate label is not one line"),
+        ("BASELINE_LABEL_INPUT", "a\rb", "the baseline label is not one line"),
+        ("CANDIDATE_COMMIT_INPUT", "727e385", "the candidate commit '727e385' is not 40"),
+        ("BASELINE_COMMIT_INPUT", "A" * 40, f"the baseline commit '{'A' * 40}' is not 40"),
+    ],
+)
+def test_a_callers_label_or_commit_that_could_forge_an_output_is_refused(
+    tmp_path, name, value, said
+):
+    work, _, env = walk_fixture(tmp_path)
+    env[name] = value
+    run = run_step(step_script("resolve", "images"), work, env)
+    assert run.returncode != 0
+    assert f"::error::{said}" in run.stdout + run.stderr
+    # Refused before anything is written: no output line can be forged.
+    assert not Path(env["GITHUB_OUTPUT"]).exists()
+
+
 def test_every_upload_replaces_an_earlier_attempts_artifact():
     """upload-artifact refuses a name an earlier attempt of the same run already
     uploaded, so without `overwrite` a re-run's merge (or plan, or hosted check)
@@ -1622,7 +1740,8 @@ esac
 # --- the release gate's callers (#4004) ------------------------------------------
 
 
-GATE_CALLERS = {("rust-pr.yml", "perf"): "nightly"}
+# The release gate, and a /perf comment (perf-comment.yml), which calls the same path.
+GATE_CALLERS = {("rust-pr.yml", "perf"): "nightly", ("perf-comment.yml", "measure"): "nightly"}
 
 
 @pytest.mark.parametrize("caller, mode", GATE_CALLERS.items())

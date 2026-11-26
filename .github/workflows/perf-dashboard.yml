@@ -1,57 +1,136 @@
-# The perf dashboard (#4005), built after each nightly, never part of it.
+# The perf dashboard (#4005), built after each perf run, never part of it.
 #
 # perf-nightly.yml is a reusable workflow (the release gate calls it with read-only
-# permissions), so it cannot hold a job that writes. This workflow runs when a nightly
-# completes: it stores that run's files at data/<date>-<run id>/ on the gh-pages branch
-# (nightly.json, run.json, and per check its result.json, the runner's record and the
-# files the check lists as artifacts), rebuilds the site from every stored run with
-# `bench nightly dashboard`, and deploys it with the Pages actions. A GITHUB_TOKEN push
-# does not start a Pages build, so the deploy is explicit; the repository's
-# Settings -> Pages -> Source is "GitHub Actions". The gh-pages branch is the archive.
+# permissions), so it cannot hold a job that writes. This workflow runs when a Perf nightly
+# or a `/perf` run (perf-comment.yml, "Perf PR comment") completes, from the default branch:
 #
-# Only the runs that report to Chat are stored: a scheduled night, or a dispatch that
-# named no image of its own (perf-plan's dispatch.json). A gate call, which runs as the
-# caller's event, never triggers this workflow. It runs from the default branch.
-# Nothing here can change a night's verdict: the night has finished.
+#   decide  which run it is: a scheduled night, or a dispatch that named no image of its own
+#           (perf-plan's dispatch.json), is stored; a dispatch that named its images, and a
+#           `/perf` run that measured, get an unlisted page; anything else does nothing.
+#   store   a stored run only: `bench nightly store` lays it out at data/<date>-<run id>/ on
+#           the gh-pages branch (the archive), with only what its page reads or links
+#           (nightly.json, run.json, per check result.json, raw/rows.csv and the runner's
+#           record; about 0.5 MB a night, the rest stays in the run's artifacts), and
+#           `bench nightly dashboard` rebuilds the listed pages there.
+#   deploy  every run that decide passes: the listed pages from gh-pages, plus the unlisted
+#           pages of the last 30 days' manual and `/perf` runs (`bench nightly unlisted`,
+#           manual/<date>-<run id>/ and pr/<N>/<date>-<run id>/: noindex, linked from no listed
+#           page, never stored on gh-pages), deployed with the Pages actions. A deploy
+#           replaces the whole site, so every deploy rebuilds the unlisted pages, and a page
+#           whose run is older than 30 days is gone at the next one.
+#
+# A GITHUB_TOKEN push does not start a Pages build, so the deploy is explicit; the
+# repository's Settings -> Pages -> Source is "GitHub Actions". A gate call, which runs as
+# the caller's event, never triggers this workflow. Nothing here can change a run's verdict.
 
 name: Perf dashboard
 
 on:
   workflow_run:
-    workflows: ["Perf nightly"]
+    workflows: ["Perf nightly", "Perf PR comment"]
     types: [completed]
 
 permissions: {}
 
-# One publish at a time, repository-wide, so two pushes never race. GitHub keeps one
-# waiting; a third cancels it (re-running that run's night stores it later).
-concurrency:
-  group: perf-dashboard
-  cancel-in-progress: false
-
 jobs:
-  publish:
-    # The night's own result is not the dashboard's business: a red night is stored too.
-    # A run that never produced nightly.json (cancelled early) fails the download below.
+  decide:
+    # Every comment on the repository completes a Perf PR comment run: only one titled as a
+    # /perf request goes on. The night's own result is not the dashboard's business: a red
+    # night is stored too. Runs are told apart by their workflow file: a run's `name` is its
+    # run-name (perf-comment.yml's is "/perf on #N"), not the workflow's.
     if: >-
-      ${{ (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')
-      && github.event.workflow_run.conclusion != 'skipped' }}
+      ${{ github.event.workflow_run.conclusion != 'skipped' && (
+      (github.event.workflow_run.path == '.github/workflows/perf-nightly.yml'
+       && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch'))
+      || (github.event.workflow_run.path == '.github/workflows/perf-comment.yml'
+       && github.event.workflow_run.event == 'issue_comment'
+       && startsWith(github.event.workflow_run.display_title, '/perf on #'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # The triggering run's artifacts.
+      actions: read
+      # Whether its commit is on the default branch (the compare API).
+      contents: read
+    outputs:
+      store: ${{ steps.download.outputs.store }}
+      publish: ${{ steps.download.outputs.publish }}
+    env:
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_EVENT: ${{ github.event.workflow_run.event }}
+      RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      WORKFLOW: ${{ github.event.workflow_run.path }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download the night's artifacts
+        id: download
+        run: |
+          set -euo pipefail
+          run=$RUNNER_TEMP/run
+          mkdir -p "$run"
+          if [[ $WORKFLOW == .github/workflows/perf-comment.yml ]]; then
+            # A /perf request that ran left a perf-nightly artifact; a refused one did not.
+            count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=perf-nightly" \
+              --jq '[.artifacts[] | select(.expired | not)] | length')
+            if [[ $count -gt 0 ]]; then
+              echo "/perf run $RUN_ID: an unlisted page"
+              echo "store=false" >> "$GITHUB_OUTPUT"
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "/perf run $RUN_ID measured nothing: no page"
+              echo "store=false" >> "$GITHUB_OUTPUT"
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir "$run" --name perf-plan --name perf-nightly
+          # A dispatch is stored only when its dispatch.json says, as the boolean false, that
+          # it named no image. One that says true gets an unlisted page instead. A missing or
+          # unreadable record (an older branch's run, a run whose upload failed) is neither.
+          if [[ $RUN_EVENT == workflow_dispatch ]] \
+              && ! jq -e '.image_overrides == false' "$run/perf-plan/dispatch.json" > /dev/null 2>&1; then
+            echo "run $RUN_ID did not record that it used no image overrides: not stored"
+            echo "store=false" >> "$GITHUB_OUTPUT"
+            if jq -e '.image_overrides == true' "$run/perf-plan/dispatch.json" > /dev/null 2>&1; then
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          # Only the default branch's runs are nights: a dispatch from a feature branch runs
+          # that branch's checks, and would be stored (and labelled) as main's. The name alone
+          # is not enough (a tag can share it): the commit must be on the branch too.
+          on_branch=$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$RUN_SHA" --jq .status 2>/dev/null || echo unknown)
+          if [[ $RUN_BRANCH != "$DEFAULT_BRANCH" || ( $on_branch != identical && $on_branch != behind ) ]]; then
+            echo "run $RUN_ID ran from $RUN_BRANCH at $RUN_SHA ($on_branch against $DEFAULT_BRANCH): not a night, not stored"
+            echo "store=false" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "store=true" >> "$GITHUB_OUTPUT"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+  store:
+    needs: decide
+    if: needs.decide.outputs.store == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    # One push at a time, repository-wide, so two never race. GitHub keeps one waiting; a
+    # third cancels it (re-running that run's night stores it later). Only stored runs queue
+    # here: a /perf run never displaces a night.
+    concurrency:
+      group: perf-dashboard-store
+      cancel-in-progress: false
     permissions:
       # Push to the gh-pages branch.
       contents: write
       # The triggering run's artifacts.
       actions: read
-      # Deploy the site.
-      pages: write
-      id-token: write
     env:
       RUN_ID: ${{ github.event.workflow_run.id }}
-      RUN_EVENT: ${{ github.event.workflow_run.event }}
       GH_TOKEN: ${{ github.token }}
     steps:
       # The default branch's bench code, with the full history so a red night's page lists
@@ -66,57 +145,11 @@ jobs:
         with:
           version: "0.9.29"
 
-      - name: Download the night's artifacts
-        id: download
-        run: |
-          set -euo pipefail
-          run=$RUNNER_TEMP/run
-          mkdir -p "$run"
-          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --dir "$run" --name perf-plan --name perf-nightly
-          # A dispatch is stored only when its dispatch.json says, as the boolean false, that
-          # it named no image. A missing or unreadable record (an older branch's run, a run
-          # whose upload failed) is no such statement: not stored.
-          if [[ $RUN_EVENT == workflow_dispatch ]] \
-              && ! jq -e '.image_overrides == false' "$run/perf-plan/dispatch.json" > /dev/null 2>&1; then
-            echo "run $RUN_ID did not record that it used no image overrides: not stored"
-            echo "store=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # Every perf-result-<check> the run left (a check that died leaves none). After a
-          # re-run several artifacts share a name: take the newest by id, as the merge job does.
-          for check in $(jq -r '.checks[].check' "$run/perf-nightly/nightly.json"); do
-            [[ $check =~ ^[a-z][a-z0-9-]{0,42}$ ]] || continue
-            name=perf-result-$check
-            dir=$RUNNER_TEMP/results/$name
-            if ! id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?name=$name&per_page=100" \
-                --jq '[.artifacts[] | select(.expired | not)] | max_by(.id) | .id // empty'); then
-              echo "::warning::$name: could not list its artifacts"
-              continue
-            fi
-            if [[ -z $id ]]; then
-              echo "::warning::$name: no artifact"
-              continue
-            fi
-            mkdir -p "$dir"
-            if ! { gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$name.zip" \
-                && unzip -q -o "$RUNNER_TEMP/$name.zip" -d "$dir"; }; then
-              # A partly extracted artifact must not pass for a result.
-              rm -rf "$dir"
-              echo "::warning::$name: artifact $id did not download"
-            fi
-          done
-          echo "store=true" >> "$GITHUB_OUTPUT"
-
       - name: Store the run on gh-pages and rebuild the dashboard
-        if: steps.download.outputs.store == 'true'
         env:
           TRIGGER: ${{ github.event.workflow_run.event == 'schedule' && 'nightly' || 'manual' }}
         run: |
           set -Eeuo pipefail
-          night=$RUNNER_TEMP/run/perf-nightly/nightly.json
-          folder="$(jq -r .date "$night")-$RUN_ID"
-          [[ $folder =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]+$ ]]
-
           site=$RUNNER_TEMP/site
           remote=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
           auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
@@ -130,37 +163,12 @@ jobs:
             git checkout -q --orphan gh-pages
           fi
 
-          # A re-run of the night replaces what its first attempt stored (under any date).
-          replaced=$(ls -d data/*-"$RUN_ID" 2>/dev/null || true)
-          stored_checks=$(ls -1 data/*-"$RUN_ID"/ 2>/dev/null || true)
-          rm -rf data/*-"$RUN_ID"
+          # The run's page files, laid out at data/<date>-<run id>/. A re-run of the night
+          # replaces what its first attempt stored, but never with a check missing that the
+          # stored run has (the command exits 1 and nothing is pushed).
+          folder=$(cd "$GITHUB_WORKSPACE" && uv run --project bench --frozen bench nightly store \
+            --run-id "$RUN_ID" --data "$site/data" --trigger "$TRIGGER" --scope main)
           dest=data/$folder
-          mkdir -p "$dest"
-          cp "$night" "$dest/nightly.json"
-          jq -n --arg trigger "$TRIGGER" '{trigger: $trigger, scope: "main"}' > "$dest/run.json"
-          dotdot='(^|/)\.\.(/|$)'
-          for check in $(jq -r '.checks[].check' "$night"); do
-            [[ $check =~ ^[a-z][a-z0-9-]{0,42}$ ]] || continue
-            src=$RUNNER_TEMP/results/perf-result-$check
-            if [[ ! -d $src ]]; then
-              echo "::warning::perf dashboard: no perf-result-$check"
-              # Replacing a stored run that has this check: a missing download must not
-              # commit its deletion. A check the stored run never had (it left no artifact
-              # then either) is no loss, so a retry after a failed deploy goes through.
-              ! grep -qxF -- "$check" <<< "$stored_checks" || { echo "::error::perf dashboard: not replacing $replaced without perf-result-$check"; exit 1; }
-              continue
-            fi
-            mkdir -p "$dest/$check"
-            files=$(cd "$src" && { ls -1 result.json perf-vm.json perf-hosted.json 2>/dev/null
-                                   jq -r '.artifacts[]? | strings' result.json 2>/dev/null; } | sort -u) || true
-            while IFS= read -r file; do
-              # Relative paths only, none through "..": the check's own files and nothing else.
-              [[ -n $file && $file != /* && ! $file =~ $dotdot ]] || continue
-              (cd "$src" && cp -R --parents -- "$file" "$site/$dest/$check/") \
-                || echo "::warning::perf dashboard: $check/$file did not copy"
-            done <<< "$files"
-          done
-
           (cd "$GITHUB_WORKSPACE" && uv run --project bench --frozen bench nightly dashboard --data "$site/data" --out "$site")
           git add -A
           # A re-run of this workflow stores the same files: nothing to commit.
@@ -168,16 +176,94 @@ jobs:
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -q -m "perf run $folder ($TRIGGER)"
           git -c http.extraheader="$auth" push -q "$remote" HEAD:gh-pages
           echo "stored $dest on gh-pages"
-          # Only the site goes to Pages, not the archive's git metadata.
-          mkdir -p "$RUNNER_TEMP/pages"
-          cp -R "$site/." "$RUNNER_TEMP/pages/"
-          rm -rf "$RUNNER_TEMP/pages/.git"
+
+  deploy:
+    needs: [decide, store]
+    # After the store, when there was one; a store that failed deploys nothing (the run says
+    # why), so the site never hides a night it did not store.
+    if: >-
+      ${{ !cancelled() && needs.decide.outputs.publish == 'true'
+      && (needs.store.result == 'success' || needs.store.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    # The unlisted pages stop starting runs after 20 minutes (bench nightly unlisted), and an
+    # in-flight download is bounded by its retries: the listed pages always go out.
+    timeout-minutes: 60
+    # One deploy at a time. A newer waiting deploy replacing an older one loses nothing: each
+    # rebuilds the whole site from gh-pages and the last 30 days' runs.
+    concurrency:
+      group: perf-dashboard-deploy
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      # Read the gh-pages branch.
+      contents: read
+      # The manual and /perf runs' artifacts.
+      actions: read
+      # Deploy the site.
+      pages: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
+
+      - name: Build the site
+        run: |
+          set -Eeuo pipefail
+          site=$RUNNER_TEMP/site
+          pages=$RUNNER_TEMP/pages
+          remote=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git init -q "$site"
+          # Only a branch that is not there yet means no stored nights: any other failure to
+          # read it fails the deploy, so it never publishes a dashboard without its nights.
+          if git -C "$site" -c http.extraheader="$auth" ls-remote --exit-code --heads "$remote" gh-pages > /dev/null; then
+            git -C "$site" -c http.extraheader="$auth" fetch -q --depth=1 "$remote" gh-pages
+            git -C "$site" checkout -q -B gh-pages FETCH_HEAD
+          else
+            status=$?
+            [[ $status == 2 ]] || { echo "::error::could not read the gh-pages branch (git exit $status)"; exit 1; }
+            echo "no gh-pages branch yet: no stored nights"
+          fi
+          mkdir -p "$site/data" "$pages"
+          # What a page needs of each stored night, whatever the archive holds (nights stored
+          # before the store kept only that are kept in full there).
+          uv run --project bench --frozen bench nightly trim --from "$site/data" --to "$pages/data"
+          uv run --project bench --frozen bench nightly dashboard --data "$pages/data" --out "$pages"
+          # The last deployed site, whose unlisted pages stand in for a run this deploy cannot
+          # rebuild (out of time, a download that failed). Best effort: none is no failure.
+          previous=$RUNNER_TEMP/previous
+          mkdir -p "$previous"
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/perf-dashboard.yml/runs?status=success&per_page=20" \
+              --jq '.workflow_runs[].id' 2>/dev/null || true); do
+            rm -rf "$RUNNER_TEMP/previous-zip"
+            if gh run download "$id" -R "$GITHUB_REPOSITORY" -n github-pages -D "$RUNNER_TEMP/previous-zip" 2>/dev/null \
+                && tar -xf "$RUNNER_TEMP/previous-zip/artifact.tar" -C "$previous" 2>/dev/null; then
+              echo "the last deployed site: run $id"
+              break
+            fi
+            rm -rf "$previous" && mkdir -p "$previous"
+          done
+          # The last 30 days' manual and /perf runs, under manual/ and pr/: rebuilt every time,
+          # since the deploy replaces the whole site.
+          uv run --project bench --frozen bench nightly unlisted --out "$pages" --days 30 --previous "$previous"
+          du -sh "$pages"
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        if: steps.download.outputs.store == 'true'
         with:
           path: ${{ runner.temp }}/pages
+          # The next deploy reads this one's unlisted pages (above): kept past their 30 days.
+          retention-days: 35
 
       - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
         id: deployment
-        if: steps.download.outputs.store == 'true'

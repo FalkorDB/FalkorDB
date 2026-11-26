@@ -363,10 +363,15 @@ green.
 
 * **Chat:** one line every night, posted to the incoming webhook in
   `$PERF_CHAT_WEBHOOK` when that is set, and printed to stdout, for example
-  `Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 · details · new issue`.
+  `Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 · details · dashboard · new issue`.
   The parentheses hold the regressed checks on a red night, the checks that could
-  not measure on an error night, the reason on a skipped night, and the number of
-  checks on a green night. "details" links to the run page. A red night also gets
+  not measure on an error night (either list cut at a whole name, `+N more`, to stay
+  under 300 characters), the reason on a skipped night, and the number of checks on a
+  green night. "details" links to the GitHub run. "dashboard" links the run's page on
+  the dashboard (`<site>/run/<date>-<run id>.html`, `$PERF_PAGES_URL` or the
+  repository's github.io site) for a run the dashboard stores: the schedule, and a
+  dispatch from the default branch that named no images (`$PERF_ON_DASHBOARD`). The
+  page appears within minutes of the run's end, as the step summary says. A red night also gets
   "new issue": a new GitHub issue pre-filled from nightly.json only (title
   `Perf regression <date>: <checks>`, labels `performance` and `perf-regression`, a
   plain-text body with candidate vs baseline, the run link and each regressed
@@ -428,14 +433,81 @@ uv run --project bench bench nightly report --nightly bench/tests/fixtures/valid
 `perf-dashboard.yml` runs when a `Perf nightly` run completes (`workflow_run`, from
 the default branch, with its own permissions: `perf-nightly.yml` is also the release
 gate's callee and holds no write grant). For a scheduled night, or a dispatch that
-named no image of its own, it downloads the run's artifacts, stores them at
-`data/<date>-<run id>/` on the `gh-pages` branch (the archive), rebuilds the site
-with `bench nightly dashboard` and deploys it with `actions/deploy-pages`. A push
+named no image of its own, it stores the run at `data/<date>-<run id>/` on the
+`gh-pages` branch (the archive) with `bench nightly store`, rebuilds the site with
+`bench nightly dashboard` and deploys it with `actions/deploy-pages`. A push
 with `GITHUB_TOKEN` does not start a Pages build, hence the explicit deploy. It
 never touches a night's verdict: the night has finished.
 
 One-time admin step: **Settings → Pages → Source: GitHub Actions** (not "deploy from
 a branch"), and let the `github-pages` environment accept the default branch.
+
+**`bench nightly store [--nightly <nightly.json>] --run-id <id> --data <dir> --trigger T
+--scope S [--full]`** downloads the run's `perf-nightly` artifact (unless `--nightly` is
+given) and each check's newest `perf-result-<check>` artifact (`gh`, under a timeout, tried
+again when a download stalls; after a re-run, the last attempt's) and writes
+`<dir>/<date>-<id>/`: `nightly.json`, `run.json` `{"trigger": T, "scope": S}`, and per
+check what its page reads or links: `result.json`, `raw/rows.csv` and `perf-vm.json` /
+`perf-hosted.json`, of types `.json`, `.csv`, `.txt`, `.log` only. That is about 0.5 MB of
+a full night's 80 MB (soak's per-scenario logs are most of it); the full files stay in the
+run's artifacts for 90 days. `--full` stores every file each check lists instead (relative
+paths only, none through `..`), for reading a run locally. A folder of the same run already
+there is replaced, except by a store that could not download a check the old folder has:
+then it changes nothing and exits 1. A `/perf` run lays out its own site with the same
+command.
+
+**Unlisted pages.** A dispatch that named its own images and a `/perf` run are not on the
+runs page. Every deploy also builds, with `bench nightly unlisted --out <site> --days 30`,
+one page for each such run created in the last 30 days, at `manual/<date>-<run id>/` and
+`pr/<N>/<date>-<run id>/`. Each page is the run's page itself, with `noindex`, over the run
+stored as above. No listed page links to them, and they are never stored on `gh-pages`: a
+page is gone at the first deploy after its run is 30 days old. A run a deploy cannot rebuild
+(a download that failed, or past the build's 20-minute budget) keeps the page the last deployed
+site had for it (that deploy's Pages artifact, kept 35 days), so a link lives its 30 days. `bench nightly unlisted url`
+prints a run's page address (`$PERF_PAGES_URL`, a repository variable for a custom domain,
+else `https://<owner>.github.io/<repo>/`). The `/perf` answer and a manual run's summary link it.
+
+**`bench nightly failures --data <dir> --run <date>-<run id> [--json]`** lists one stored
+run's failures: every regression (including rows a capped `result.json` left in
+`raw/rows.csv` only), every correctness check the candidate broke (also when it is broken on
+the baseline too, a known flaky check, or a timing check that broke in some runs: each says
+which), and every check that could not measure. Each is `new` or failing `since` a date
+against the scheduled nights stored before it, and the previous night's failures that are
+gone are listed as fixed. The core team's `/core:perf-run` skill (FalkorDB/handbook) uses it
+to read any run locally (a night, a manual run, a `/perf` run, a release-gate run) and drafts
+the missing issues; it posts nothing.
+
+## `/perf` on a pull request (#4037)
+
+A comment whose first line is
+
+```
+/perf <checks> [baseline <main | X.Y.Z>]      e.g. /perf micro-hw,pokec baseline 4.22.4
+```
+
+runs the nightly flow (`perf-nightly.yml`, called by `perf-comment.yml`) with the pull
+request's `rc-pr-<N>-valkey` image as the candidate. `<checks>` is `all` or a comma list
+of `micro-hw` and the names in `checks.yaml`. The baseline is `main` (main's newest
+`rc-mg` image, found by the nightly's own walk; the default), a release `X.Y.Z` with
+X >= 5 (`falkordb/falkordb-server:X.Y.Z`), or a C engine release `4.Y.Z`
+(`falkordb/falkordb-server:v4.Y.Z`).
+
+`bench nightly pr-comment resolve` decides whether it runs, and replies when it does
+not: only people with write, maintain or admin access (bots are ignored), only a
+pull request from this repository that is open, one `/perf` run per pull request at
+a time, and the candidate only when `rust-pr.yml`'s Valkey `build-rc-image` succeeded
+for the head commit, pinned by digest, with the head re-read after pinning (a head
+that moved is refused). A request that runs gets a 🚀 reaction. When it ends,
+`bench nightly pr-comment answer` posts one comment: each check's verdict, both
+images and commits, the run, and the run's own dashboard (`bench nightly store` +
+`bench nightly dashboard`, uploaded as the run's `perf-dashboard` artifact: open its
+`index.html`). A run that left no `nightly.json` is answered as an error, never green.
+
+A `/perf` run is a call, not a night: it posts nothing to Chat, never counts for the
+skip rule or the previous green commit (those read only scheduled runs of
+`perf-nightly.yml` itself), and never reaches the public dashboard
+(`perf-dashboard.yml` runs only on completed `Perf nightly` runs). The checks run
+from main's copy of the workflows and of `bench/`, as every `issue_comment` run does.
 
 ## Release gate (#4004)
 
@@ -645,7 +717,7 @@ about 2.
 | `src/falkorbench/contract.py` | the nightly perf checks' `result.json` / `nightly.json` format and its checker (`bench validate`) |
 | `src/falkorbench/kit.py` | what the nightly perf checks share: flags, `result.json`, the threshold test, docker |
 | `src/falkorbench/pokec/` | `bench pokec`, the nightly Pokec check (FalkorDB/benchmark under concurrent writes); its README is there |
-| `src/falkorbench/nightly/` | `bench nightly`: the night's report (Chat line and run page) and the missed-run alarm |
+| `src/falkorbench/nightly/` | `bench nightly`: the night's bookkeeping, report (Chat line and run page), missed-run alarm, dashboard (`store`, `dashboard`) and the `/perf` comment (`pr-comment`) |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
 | `src/falkorbench/ldbc/` | LDBC SNB Interactive v1 — dataset fetch/prepare, loader, parameters, the nightly check, and the vendored query texts |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
