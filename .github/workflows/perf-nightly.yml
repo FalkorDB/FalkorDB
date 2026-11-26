@@ -158,8 +158,10 @@ jobs:
           set -uo pipefail
           set +e  # one failed read must not hide the others
           export CLOUDSDK_CORE_DISABLE_PROMPTS=1
-          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null
-          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null
+          # Quiet: gcloud names the account on stderr.
+          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null 2>&1 \
+            || echo "could not activate the service account"
+          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null 2>&1
           echo "== compute quotas, region $REGION (metric, limit, usage)"
           gcloud compute regions describe "$REGION" --flatten=quotas \
             --format='csv[no-heading](quotas.metric,quotas.limit,quotas.usage)' \
