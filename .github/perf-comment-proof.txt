@@ -1,0 +1,6 @@
+# TEMPORARY (#4037 acceptance; removed with perf-comment.yml's push trigger in one commit
+# once the coordinator has judged the runs). A push to ci/perf-comment that changes this
+# file runs perf-comment.yml as if the comment below had been posted on pull request
+# `pr`, and answers as a dry run in the job summary: no reaction, no comment.
+pr: 3967
+comment: /perf micro-hw,pokec baseline 4.22.4
