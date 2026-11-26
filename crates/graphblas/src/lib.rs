@@ -21,12 +21,14 @@
 //! * **Operators carry their domains.** [`UnaryOp<X, Z>`],
 //!   [`BinaryOp<X, Y, Z>`], [`IndexUnaryOp<X, Y, Z>`], [`Monoid<T>`] and
 //!   [`Semiring<X, Y, Z>`] are typed handles, checked against the matrices
-//!   they are applied to through [`Accepts`].
-//! * **No implicit casts.** GraphBLAS casts among built-in types silently;
+//!   they are applied to through [`Accepts`] and [`Produces`].
+//! * **No silent casts.** GraphBLAS casts among built-in types silently;
 //!   this layer refuses, exactly as GraphBLAS itself refuses for user-defined
-//!   types. The two exceptions are explicit: operators that never read a value
-//!   are typed with [`Pattern`] and accept any input type, and
-//!   [`matrix::cast`] / [`vector::cast`] change an element type on purpose.
+//!   types. A cast is spelled where it happens: `&op.typecast()` lets
+//!   GraphBLAS cast at that operator's edges in that call, with no copy
+//!   ([`Typecast`]), and [`matrix::cast`] / [`vector::cast`] store a
+//!   converted copy. Operators that never read a value are typed with
+//!   [`Pattern`] and accept any input type.
 //! * **Aliasing is spelled.** `&mut c` with `&a` cannot alias; the marker
 //!   [`Output`] in an input or mask slot says "the output matrix here".
 //! * **Built-ins need no `unsafe`.** Each is a [`Lazy`] static that reads
@@ -48,9 +50,10 @@
 //!
 //! # What does not compile
 //!
-//! An operator over one type on a matrix of another (GraphBLAS would cast):
+//! An operator over one type on a matrix of another (GraphBLAS would cast;
+//! `&PLUS_TIMES_SEMIRING_FP64.typecast()` says so and compiles):
 //!
-//! ```compile_fail,E0277
+//! ```compile_fail,E0271
 //! use graphblas::*;
 //! let a = Matrix::<i64>::new(2, 2).unwrap();
 //! let mut c = Matrix::<f64>::new(2, 2).unwrap();
@@ -87,7 +90,8 @@
 //! matrix::apply(&mut c, Mask::NONE, Some(&PLUS_UINT64), &IDENTITY_FP64, &a, Desc::NONE).unwrap();
 //! ```
 //!
-//! A union of two element types (`ewise_add` copies entries through):
+//! A union of two element types (`ewise_add` copies entries through; again
+//! `&PLUS_UINT64.typecast()` compiles):
 //!
 //! ```compile_fail,E0271
 //! use graphblas::*;
@@ -138,8 +142,9 @@ pub mod scalar;
 mod settings;
 mod types;
 
-/// The supertrait that keeps [`GrbType`], [`Operand`] and [`AsMask`] closed
-/// to this crate: every implementation hands a raw pointer to C.
+/// The supertraits that keep [`GrbType`], [`Operand`], [`AsMask`] and the
+/// typecast rules closed to this crate: every implementation hands a raw
+/// pointer to C, or says what C will do with one.
 mod sealed {
     /// Closes the element-type and freezable traits. Re-exported, hidden,
     /// because `user_type!` implements it for the caller's type.
@@ -156,6 +161,25 @@ mod sealed {
     /// method, and none can implement the trait.
     #[derive(Clone, Copy)]
     pub struct Token;
+
+    /// The cases of [`TypecastFrom`](crate::TypecastFrom), GraphBLAS's
+    /// typecast rule. Never re-exported: no other crate can add a cast
+    /// GraphBLAS does not make.
+    pub trait Casts<Source> {}
+
+    /// The cases of [`Produces`](crate::Produces). Never re-exported:
+    /// `reduce` into a user-defined scalar trusts them for the size of what
+    /// GraphBLAS writes.
+    #[diagnostic::on_unimplemented(
+        message = "an operator whose output is `{Self}` does not write `{C}` elements",
+        label = "the output's elements are `{C}`, the operator produces `{Self}`",
+        note = "GraphBLAS would cast one built-in type to another silently; write `.typecast()` on the operator to allow it in this call"
+    )]
+    pub trait ProducesRule<C> {}
+
+    /// The cases of [`PassesThrough`](crate::PassesThrough). Never
+    /// re-exported.
+    pub trait PassesThroughRule<E, Z> {}
 }
 
 pub mod matrix;
@@ -179,5 +203,8 @@ pub use operand::{Operand, Output};
 pub use ops::*;
 pub use scalar::Scalar;
 pub use settings::{IntegerWidth, Orientation, Sparsity};
-pub use types::{Accepts, BuiltinPattern, BuiltinType, GrbType, Pattern};
+pub use types::{
+    Accepts, BuiltinPattern, BuiltinType, GrbType, MonoidTypecast, PassesThrough, Pattern,
+    Produces, Typecast, TypecastFrom,
+};
 pub use vector::{Vector, mxv, vxm};
