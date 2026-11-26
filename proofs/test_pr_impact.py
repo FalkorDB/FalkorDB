@@ -97,6 +97,55 @@ class Spans(unittest.TestCase):
         ends = pr_impact.ends_of(fns, lines)
         self.assertEqual(pr_impact.owner(fns, ends, 2), 0)
 
+    def test_code_after_a_nested_fn_belongs_to_the_outer_fn(self):
+        self.assertEqual(self.own(21), 'c')  # v.len(); after `fn nested() {}`
+        self.assertEqual(self.own(22), 'c')  # c's closing brace
+
+    def test_behavioural_attribute_belongs_to_the_fn_below(self):
+        lines = ['fn a() {', '}', '', '#[cfg(feature = "x")]', '#[allow(unused)]', 'fn b() {}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 4), 1)  # #[cfg]: changes which b compiles
+        self.assertEqual(pr_impact.owner(fns, ends, 5), 1)  # below the #[cfg], so inside b's span
+        self.assertIsNone(pr_impact.owner(fns, ends, 3))
+
+    def test_attribute_with_a_trailing_comment_belongs_to_neither(self):
+        lines = ['fn a() {', '}', '#[allow(unused)] // why', '#[doc = "see [x"] /* note */', 'fn b() {}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        for line in (3, 4):
+            self.assertIsNone(pr_impact.owner(fns, ends, line), f'line {line}')
+
+    def test_item_after_the_last_fn_belongs_to_neither(self):
+        lines = ['pub fn z() {', '    1;', '}', '', '#[allow(dead_code)]', 'mod tests {', '}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 3), 0)
+        for line in (5, 6, 7):
+            self.assertIsNone(pr_impact.owner(fns, ends, line), f'line {line}')
+
+    def test_lint_attribute_on_a_nested_fn_belongs_to_neither(self):
+        lines = ['fn a() {', '    let x = 1;', '    #[allow(unused)]', '    fn b() {}', '    x;', '}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        self.assertIsNone(pr_impact.owner(fns, ends, 3))
+        self.assertEqual(pr_impact.owner(fns, ends, 2), 0)
+        self.assertEqual(pr_impact.owner(fns, ends, 5), 0)
+
+    def test_unformatted_fn_ends_before_the_next_fns_lead(self):
+        lines = ['fn a() { let x = 1;', 'x; }', '', '/// doc', 'fn b() {}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 2), 0)
+        self.assertIsNone(pr_impact.owner(fns, ends, 4))
+
+    def test_bodyless_trait_fns(self):
+        lines = ['trait T {', '    fn a(&self);', '    /// doc', '    fn b(', '        &self,', '    ) -> u8;', '}']
+        fns = fns_in(lines)
+        ends = pr_impact.ends_of(fns, lines)
+        self.assertEqual([e[1:] for e in ends], [(2, 2), (4, 6)])
+        self.assertIsNone(pr_impact.owner(fns, ends, 3))
+
     def test_standalone_block_comments_belong_to_neither(self):
         lines = ['fn a() {}', '/* one */ /* two */', '/* a', '   b */', 'fn b() {}']
         fns = fns_in(lines)
@@ -167,6 +216,37 @@ class Analyse(unittest.TestCase):
 
     def test_body_edit_is_still_reported(self):
         self.assertEqual(self.changed(self.BASE.replace('x + 1', 'x + 2')), ['a'])
+
+    def test_cfg_above_a_proven_fn_is_reported(self):
+        self.assertEqual(self.changed(self.BASE.replace('pub fn a', '#[cfg(feature = "x")]\npub fn a')), ['a'])
+
+    def test_target_feature_above_a_proven_fn_is_reported(self):
+        self.assertEqual(self.changed(self.BASE.replace('pub fn a', '#[target_feature(enable = "avx2")]\npub fn a')), ['a'])
+
+    def test_deleted_attribute_above_the_next_fn_changes_nothing(self):
+        with_attr = self.BASE.replace('pub fn b', '#[allow(clippy::too_many_lines)]\npub fn b')
+        self.base = self.commit(with_attr)
+        self.assertEqual(self.changed(self.BASE), [])
+
+    def test_deleted_line_in_a_body_is_reported(self):
+        two = self.BASE.replace('    x + 1\n', '    let y = x;\n    y + 1\n')
+        self.base = self.commit(two)
+        self.assertEqual(self.changed(two.replace('    let y = x;\n', '').replace('y + 1', 'x + 1')), ['a'])
+
+    def test_item_after_the_last_fn_changes_nothing(self):
+        base = self.BASE.replace('pub fn b', 'pub fn bb') + '\nmod tests {\n}\n'
+        with open(os.path.join(self.proofs, 'p', 'COVERAGE.tsv'), 'a') as f:
+            f.write('graph/src/lib.rs\tbb\t5\tPROVEN\tP.bb_spec\n')
+        self.base = self.commit(base)
+        self.assertEqual(self.changed(base.replace('mod tests', '#[allow(dead_code)]\nmod tests')), [])
+
+    def test_renamed_file_body_edit_is_reported(self):
+        self.git('mv', 'graph/src/lib.rs', 'graph/src/lib2.rs')
+        self.write('graph/src/lib2.rs', self.BASE.replace('x + 1', 'x + 2'))
+        self.git('add', '-A')
+        self.git('commit', '-q', '-m', 'mv')
+        res = pr_impact.analyse(self.repo, self.base, self.git('rev-parse', 'HEAD'), self.proofs)
+        self.assertEqual([(c['file'], c['fn']) for c in res['changed']], [('graph/src/lib2.rs', 'a')])
 
 
 if __name__ == '__main__':

@@ -19,9 +19,10 @@ Reported:
             PROVEN / CONDITIONAL / MODELLED row: their model may be stale
   added     new production fns no COVERAGE.tsv row lists
   removed   fns the diff deletes or renames that still have rows
-A fn spans from its `fn` line to the line before the next fn's leading
-attributes, comments and blank lines (or to the end of the file), so a diff that
-only adds `#[allow(..)]` or a doc comment above a fn touches no fn; fns are matched to rows by (file, name), the row's line only breaking ties
+A fn spans from its `fn` line (or the topmost attribute above it that changes
+behaviour, such as `#[cfg]`) to its closing brace, so a diff that only adds a
+lint or inlining attribute such as `#[allow(..)]`, or a doc comment, touches no fn.
+Fns are matched to rows by (file, name), the row's line only breaking ties
 between same-name fns of one file.
 """
 import argparse
@@ -79,13 +80,54 @@ def read_lines(root, rel):
         return f.read().split('\n')
 
 
+# Attributes that leave what a fn computes unchanged (lints, docs, inlining
+# hints): editing one above a fn touches no fn. Any other attribute (`cfg`,
+# `cfg_attr`, `test`, `no_mangle`, `target_feature`, ...) can change which body
+# is compiled or how it runs, so it belongs to the fn below it.
+COSMETIC_ATTRS = frozenset(('allow', 'warn', 'expect', 'deny', 'forbid', 'doc',
+                            'must_use', 'inline', 'cold', 'rustfmt::skip'))
+ATTR_PATH = re.compile(r'#!?\[\s*([A-Za-z_][A-Za-z0-9_]*(?:\s*::\s*[A-Za-z_][A-Za-z0-9_]*)*)')
+
+
+def scan(text):
+    """(code, depth_ok) for one line or joined lines: `text` with string and char
+    literals blanked and a trailing `//` or `/* */` comment cut off, so brackets
+    and line endings can be read without being fooled by `"[x"` or a comment."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == '\\' else 1
+            out.append('""')
+            i = j + 1
+        elif ch == "'" and i + 2 < n and (text[i + 2] == "'" or text[i + 1] == '\\'):
+            j = text.find("'", i + 2 if text[i + 1] != '\\' else i + 3)
+            out.append("''")
+            i = (j if j >= 0 else n) + 1
+        elif text.startswith('//', i):
+            break
+        elif text.startswith('/*', i):
+            j = text.find('*/', i + 2)
+            if j < 0:
+                break
+            out.append(' ')
+            i = j + 2
+        else:
+            out.append(ch)
+            i += 1
+    return ''.join(out).rstrip()
+
+
 def attr_start(lines, j):
-    """1-based line of the `#[` that opens a multi-line attribute ending on line
-    `j` (`)]`), or None when line `j` does not close an attribute."""
+    """1-based line of the `#[` that opens an attribute ending on line `j`
+    (possibly multi-line, possibly followed by a comment), or None when line `j`
+    does not close an attribute that fills its lines."""
     for k in range(j, 0, -1):
         s = lines[k - 1].strip()
         if s.startswith(('#[', '#![')):
-            text = ' '.join(lines[i - 1].strip() for i in range(k, j + 1))
+            text = scan(' '.join(lines[i - 1].strip() for i in range(k, j + 1)))
             depth = 0
             for n, ch in enumerate(text):
                 depth += (ch == '[') - (ch == ']')
@@ -93,9 +135,15 @@ def attr_start(lines, j):
                     # the attribute's own `]` must be the last character
                     return k if n == len(text) - 1 else None
             return None
-        if not s or s.endswith((';', '{', '}')):
+        if not s or scan(s).endswith((';', '{', '}')):
             return None
     return None
+
+
+def is_cosmetic(lines, k):
+    """True when the attribute opening on line `k` is one of COSMETIC_ATTRS."""
+    m = ATTR_PATH.match(lines[k - 1].strip())
+    return bool(m) and re.sub(r'\s+', '', m[1]) in COSMETIC_ATTRS
 
 
 def only_comments(text):
@@ -115,10 +163,12 @@ def only_comments(text):
     return depth == 0
 
 
-def lead_start(lines, start):
-    """First line of the attributes, comments and blank lines directly above the
-    `fn` on line `start`: lines that belong to no fn's body."""
-    j = start - 1
+def lead_of(lines, start):
+    """(first, code) for the attributes, comments and blank lines directly above
+    the item on line `start`: `first` is the lead's first line, `code` the first
+    line of its topmost non-cosmetic attribute (`start` when there is none).
+    Lines in [first, code) belong to no fn; [code, start) to the item below."""
+    j, code = start - 1, start
     while j >= 1:
         s = lines[j - 1].strip()
         if not s or s.startswith('//'):
@@ -134,39 +184,104 @@ def lead_start(lines, start):
             if k < 1 or not only_comments('\n'.join(lines[k - 1:j])):
                 break                             # code shares a line with the comment
             j = k - 1
-        elif s.endswith(']') and (k := attr_start(lines, j)) is not None:
+        elif s.startswith(('#[', '#![')) or scan(s).endswith(']'):
+            k = attr_start(lines, j)
+            if k is None:
+                break
+            if not is_cosmetic(lines, k):
+                code = k
             j = k - 1
         else:
             break
-    return j + 1
+    return j + 1, code
+
+
+def lead_start(lines, start):
+    """First line of the attributes, comments and blank lines above line `start`."""
+    return lead_of(lines, start)[0]
+
+
+def indent(line):
+    return len(line) - len(line.lstrip())
+
+
+ITEM = re.compile(r'(pub(\([^)]*\))?\s+)?(unsafe\s+)?'
+                  r'(mod|impl|struct|enum|union|trait|const|static|type|use|extern|macro_rules!)\b')
+
+
+def close_of(lines, start):
+    """Line of the `}` closing the fn on line `start`, read from rustfmt's layout:
+    the first later line at the fn's own indent that starts with `}` once the
+    body has opened. None when the layout is not that (the caller then ends the
+    span at the next item), so an odd shape over-reports instead of hiding code."""
+    base = indent(lines[start - 1])
+    head = scan(lines[start - 1].strip())
+    opened = '{' in head
+    if opened and head.count('{') == head.count('}'):
+        return start                              # `fn b() {}` on one line
+    if not opened and head.endswith(';'):
+        return start                              # a bodyless trait fn
+    for k in range(start + 1, len(lines) + 1):
+        s = scan(lines[k - 1].strip())
+        if not s:
+            continue
+        ind = indent(lines[k - 1])
+        if ind < base:
+            return None
+        if ind > base:
+            continue
+        if opened:
+            return k if s.startswith('}') else None
+        if '{' in s:
+            if s.count('{') == s.count('}'):
+                return k                          # `) -> u8 {}`
+            opened = True
+        elif s.endswith(';'):
+            return k                              # a multi-line bodyless signature
+        elif not s.startswith((')', 'where', '-', '>')):
+            return None
+    return None
 
 
 def ends_of(fns, lines):
-    """Last line of each fn's span: the line before the next fn's leading
-    attributes and comments, or the end of the file for the last fn. Lines
-    between two fns therefore belong to neither, so adding `#[allow(..)]` or a
-    doc comment above a fn does not touch the fn before it."""
-    ends = []
+    """(lead, first, last) for each fn: its span is [first, last], and
+    [lead, first) is the comments and cosmetic attributes above it. `last` is the fn's closing brace, or
+    when its layout is not rustfmt's, the line before the leading attributes and
+    comments of the next item at the fn's indent or shallower (the end of the
+    file for the last one). `first` is the fn line, or the topmost attribute
+    above it that can change behaviour (`#[cfg]`, `#[target_feature]`, ...). Comments, blank
+    lines and lint attributes between two fns therefore belong to neither."""
+    spans = []
     for i, (start, _, _) in enumerate(fns):
-        if i + 1 < len(fns):
-            nxt = fns[i + 1][0]
-            ends.append(max(start, lead_start(lines, nxt) - 1))
-        else:
-            ends.append(max(start, len(lines)))
-    return ends
+        lead, first = lead_of(lines, start)
+        last = close_of(lines, start)
+        if last is None:
+            base = indent(lines[start - 1])
+            last = len(lines)
+            for k in range(start + 1, len(lines) + 1):
+                l = lines[k - 1]
+                if not l.strip() or indent(l) > base:
+                    continue
+                s = l.strip()
+                if any(f[0] == k for f in fns[i + 1:]) or ITEM.match(s) or s.startswith('}'):
+                    last = (lead_start(lines, k) - 1) if not s.startswith('}') else k
+                    break
+        spans.append((lead, first, max(start, last)))
+    return spans
 
 
 def owner(fns, ends, line):
-    """Index of the fn whose span holds `line`, or None when no fn's does
-    (before the first fn, or in the attributes and comments above a fn)."""
+    """Index of the innermost fn whose span holds `line`, or None when none
+    does (between fns, or in the comments and lint attributes above any fn,
+    nested ones included).
+    Innermost, so code after a nested fn still belongs to the outer fn."""
     best = None
     for i, (start, _, _) in enumerate(fns):
-        if start <= line:
+        lead, first, last = ends[i]
+        if lead <= line < first:
+            return None                           # a doc comment or lint attribute, even on a nested fn
+        if first <= line <= last and (best is None or start > fns[best][0]):
             best = i
-        else:
-            break
-    if best is None or line > ends[best]:
-        return None
     return best
 
 
