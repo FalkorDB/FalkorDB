@@ -94,7 +94,6 @@ A bug is **confirmed** only if a repro against the real Rust shows it, and it is
 
 ## Storage, persistence & replication
 
-- **W2-effects-1**: a write that only registers a name ships no payload (`runtime/ops/commit.rs:107`, `pending.rs:2013` `effects_count`; Lean `gate_drops_schema_only`). Example: `OPTIONAL MATCH (n:Nope) SET n:L6`. The next payload is refused, which forces a full resync, and during AOF load the server exits.
 - **W2-effects-4**: a refused buffer's CREATE_INDEX is not rolled back, because the Indexer is shared by `Arc` across versions (`effects/v3/apply.rs:435`, `index/indexer.rs:148-161`).
 - #2653 (store): a non-UTF-8 graph key is replicated and signalled through from_utf8_lossy (`\xc3(bin` → `\xef\xbf\xbd(bin`), so the replica writes a different key. Lean bug2653_nonutf8_key_mangled; property ReplicatedKeyIsStored. Fix pending in #3485 (open).
 - #2537, wider: any truncated GRAPH.RESTORE payload calls `LoadStringBuffer(NULL)` (fix open as #3167), not only an empty one; a payload cut at a record boundary SIGSEGVs in `RM_LoadStringBuffer` (`decoder/mod.rs:426` → `buffered_io.rs:212`), a cut inside a record errors cleanly; C crashes on both.

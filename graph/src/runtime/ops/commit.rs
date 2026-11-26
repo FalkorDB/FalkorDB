@@ -104,29 +104,35 @@ impl<'a> Iterator for CommitOp<'a> {
             // Commit succeeded — build effects buffer from pending data, then clear.
             {
                 let pending = self.runtime.pending.borrow();
-                let estimated = pending.effects_count();
-                if estimated > 0 {
-                    if self.runtime.build_effects.get() {
-                        let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
-                        let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
-                        // A refusal here means the emitter built a record this
-                        // buffer cannot carry. Failing the write is the point:
-                        // the alternative is a commit that succeeded locally
-                        // and shipped a payload the replica reads differently.
-                        let n_effects = match buf.build(&pending, &self.runtime.graph()) {
-                            Ok(n) => n,
-                            Err(e) => return Some(Err(e)),
-                        };
-                        self.runtime
-                            .effects_count
-                            .set(self.runtime.effects_count.get() + n_effects);
-                    } else {
-                        // Keep the count accurate for `modified` bookkeeping
-                        // even when the buffer itself is not needed.
-                        self.runtime
-                            .effects_count
-                            .set(self.runtime.effects_count.get() + estimated);
-                    }
+                if self.runtime.build_effects.get() {
+                    // Not gated on `effects_count`. The emitter is the only
+                    // thing that knows what a commit implies: a write that
+                    // only registers a name (`OPTIONAL MATCH (n:Nope) SET
+                    // n:L`) counts zero there, yet moves the schema, and a
+                    // replica that is not told refuses the next payload
+                    // (cancelled entities are counted, but the names they
+                    // register are schema additions the count cannot see).
+                    // What the emitter wrote is the answer; a buffer left
+                    // empty is dropped by `take_effects_buffer`.
+                    let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
+                    let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
+                    // A refusal here means the emitter built a record this
+                    // buffer cannot carry. Failing the write is the point:
+                    // the alternative is a commit that succeeded locally
+                    // and shipped a payload the replica reads differently.
+                    let n_effects = match buf.build(&pending, &self.runtime.graph()) {
+                        Ok(n) => n,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    self.runtime
+                        .effects_count
+                        .set(self.runtime.effects_count.get() + n_effects);
+                } else {
+                    // Keep the count accurate for `modified` bookkeeping
+                    // even when the buffer itself is not needed.
+                    self.runtime
+                        .effects_count
+                        .set(self.runtime.effects_count.get() + pending.effects_count());
                 }
             }
             // Ends the segment in both senses: this `Pending`'s accumulated

@@ -15,15 +15,11 @@ The full Lean↔Rust mapping is in the header of [`FalkorEffectsEmitApply.lean`]
 
 **1. Does every write that changes the master ship a payload?**
 
-**No, and this is still open (W2-effects-1).** `commit.rs` calls the emitter only when `Pending::effects_count()` is positive. That count does not include labels, types and attribute names registered by the query. But the emitter would ship something for them:
+**Yes (since #2970).** `commit.rs` runs the emitter on every commit when effects are built, no longer gated on `Pending::effects_count()`; an empty buffer is dropped by `take_effects_buffer`. The gate had to go because that count does not include labels, types and attribute names registered by the query:
 
-- `gate_zero_stream`: when the count is 0, the records the emitter would write are exactly the schema additions plus the cancelled create/delete pairs;
-- `commitShips_eq_iff`: the gate is correct exactly when that residue is empty.
-
-The counterexamples are concrete queries:
-
-- `OPTIONAL MATCH (n:Nope) SET n:L6` registers `L6` and ships nothing (`gate_drops_schema_only`);
-- the next write's `ADD_SCHEMA 1 "K6"` is then refused by the replica, which would assign id 0 (`next_payload_refused`). That forces a full resync, and during AOF load the server exits;
+- `gate_zero_stream`: when the count is 0, the records the emitter writes are exactly the schema additions plus the cancelled create/delete pairs;
+- `commitShips_eq`, `commitShips_ne_nil`: the commit ships exactly the emitter's stream, so it ships whenever that stream is non-empty;
+- `gate_ships_schema_only`: `OPTIONAL MATCH (n:Nope) SET n:L6` (count 0) ships `ADD_SCHEMA 0 "L6"`, and the replica then accepts the next write's `ADD_SCHEMA 1 "K6"` (`schema_only_then_next_applies`; `next_payload_refused` shows the refusal when the registration is dropped).
 
 **2. Can a payload that the replica accepts leave its graph broken?**
 
@@ -56,7 +52,7 @@ Not for indexes, and this is still open (W2-effects-4). `apply_effects` applies 
 | `apply_wf` | Any accepted list of records, followed by a passing `validate`, keeps the replica well formed | `Liveness.lean` |
 | `applyRec_binv`, `wf_of_validate` | The two steps of `apply_wf`: each checked record keeps a weaker mid-batch invariant, and `validate` closes the gap | `Liveness.lean` |
 | `memoGroup_eq_groupBy` | The emitter's memoised grouping loop is exactly first-appearance `groupBy` | `Basic.lean` |
-| `gate_zero_stream`, `commitShips_eq_iff` | When `effects_count` is 0, the emitter would still write the schema additions and cancelled pairs; the gate is correct only when those are empty | `Emit.lean` |
+| `gate_zero_stream`, `commitShips_eq`, `commitShips_ne_nil` | When `effects_count` is 0, the emitter still writes the schema additions and cancelled pairs; the commit ships the emitter's whole stream regardless of the count | `Emit.lean` |
 | `mergeRow_eq_lookup`, `gatherRows_length` | `gather_rows`' linear merge gives the same cells as a lookup per cell, and its rows have the shape `check_attr_shape` wants | `Emit.lean` |
 | `digestCreatedEdges_perm`, `digestUpdates_perm`, `digestLabels_perm`, `digestCancelled_pairs` | Each digest loses nothing and invents nothing; a deleted entity never appears as updated | `Digests.lean` |
 | `replayNames_suffix` | A replica at the master's baseline accepts every schema addition and ends with the master's dictionary | `EmitDDL.lean` |
@@ -79,7 +75,6 @@ All were reproduced in Rust and against a live server (see [`../FINDINGS.md`](..
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-effects-1 | `gate_drops_schema_only`, `next_payload_refused` | A write that only registers a name ships nothing. The next payload is refused (full resync; AOF load exits). 134 of 200 random seeds diverge | **Open** (schema-only writes are still dropped: `gate_drops_schema_only`) |
 | W2-effects-4 | none (the model has no indexes) | A refused buffer's `CREATE_INDEX` is not rolled back, because the `Indexer` is shared by `Arc` across versions | **Open** (PR #3235) |
 
 One smaller observation, not filed:
@@ -93,7 +88,7 @@ One smaller observation, not filed:
 |---|---|
 | `FalkorEffectsEmitApply.lean` | Root: imports and a short header |
 | `Basic.lean` | The values the emitter moves around, canonical label sets (`sortDedup`), first-appearance `groupBy`, the memo loop and `memoGroup_eq_groupBy` |
-| `Emit.lean` | `gather_rows` (`mergeRow`, `gatherRows`), the record stream `forEachRecord`, `effectsCount`, the commit gate `commitShips`; the W2-effects-1 counterexample (`gate_drops_schema_only`) |
+| `Emit.lean` | `gather_rows` (`mergeRow`, `gatherRows`), the record stream `forEachRecord`, `effectsCount`, the commit gate `commitShips` (`commitShips_eq`, `gate_ships_schema_only`) |
 | `Digests.lean` | `digest_created_edges`, `digest_deleted_edges`, `digest_updates`, `digest_labels`, `digest_cancelled`, column by column |
 | `EmitDDL.lean` | Schema additions (`replayNames_suffix`), `encode_all`, index/constraint DDL buffers and their verification |
 | `Apply.lean` | The apply arms over a simple replica (`Apply.RG`), its well-formedness, and counterexamples for the pre-liveness-check arms |
@@ -112,7 +107,7 @@ The project has no Lake dependencies. [`../replication`](../replication) require
 |---|---|
 | PROVEN | 36 |
 
-Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, including that it is wrong for schema-only writes. Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models.
+Every row is PROVEN. For `effects_count` and the gate, "PROVEN" means the model is exact and the theorems say what it does, including that schema-only writes ship. Likewise `for_each_record`, `digest_cancelled` and `digest_labels` are PROVEN as models.
 
 ## What the model does not cover
 
@@ -139,4 +134,4 @@ bash proofs/coverage.sh                       # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-A fix for W2-effects-1 should replace `gate_drops_schema_only` and prove that the new gate ships whenever `forEachRecord` is non-empty (the right-hand side of `commitShips_eq_iff`). If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR.

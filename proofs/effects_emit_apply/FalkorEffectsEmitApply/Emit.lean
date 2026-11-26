@@ -292,11 +292,13 @@ def forEachRecord (p : Pending) (g : Schema) : List Rec :=
   ++ (if p.deletedNodes.isEmpty then [] else [Rec.deleteNode p.deletedNodes []])
   ++ digestCancelled p g
 
-/-- `CommitOp` (`runtime/ops/commit.rs`): `if estimated > 0 { buf.build(..) }`. -/
+/-- `CommitOp` (`runtime/ops/commit.rs`): with `build_effects` set, `buf.build(..)` runs on
+    every commit, not gated on `effects_count`; a buffer left empty is dropped by
+    `take_effects_buffer`, so what ships is exactly what the emitter wrote. -/
 def commitShips (p : Pending) (g : Schema) : List Rec :=
-  if effectsCount p > 0 then forEachRecord p g else []
+  forEachRecord p g
 
-/-! ## What the gate drops -/
+/-! ## What `effects_count` does not see -/
 
 theorem sum_zero_nil : ∀ l : List (Nat × List Nat),
     (l.map (fun q => q.2.length)).sum = 0 → ∀ q ∈ l, q.2 = [] := by
@@ -313,12 +315,10 @@ theorem sum_zero_nil : ∀ l : List (Nat × List Nat),
 theorem filter_nil_of_sub {α} (p : α → Bool) (l : List α) (h : l = []) : l.filter p = [] := by
   subst h; rfl
 
-/-- **The gate is complete for everything it counts, and blind to exactly two
-    things.** When `effects_count` is zero, the stream the emitter *would* have
-    written consists of the schema additions and the cancelled pairs, nothing
-    else. So `commitShips` drops a non-empty payload precisely when the query
-    registered a name or cancelled an entity and did nothing `effects_count`
-    sees. -/
+/-- **`effects_count` is blind to the schema additions.** When it is zero, the
+    stream the emitter writes consists of the schema additions and the
+    cancelled pairs, nothing else. This is why the commit gate must not be
+    `effects_count > 0` (W2-effects-1, fixed by #2970). -/
 theorem gate_zero_stream (p : Pending) (g : Schema) (h : effectsCount p = 0) :
     forEachRecord p g = schemaAdditions g p.baseline ++ digestCancelled p g := by
   unfold effectsCount at h
@@ -339,22 +339,17 @@ theorem gate_zero_stream (p : Pending) (g : Schema) (h : effectsCount p = 0) :
   simp [forEachRecord, h1, h2, h3, h4, h6, h8, hr]
   exact fun a b hm => h9 (a, b) hm
 
-/-- Soundness of the gate, stated the way a fix would need it: the commit ships
-    what the emitter would write **iff** the count is positive or the would-be
-    stream is empty. -/
-theorem commitShips_eq_iff (p : Pending) (g : Schema) :
-    commitShips p g = forEachRecord p g ↔ effectsCount p > 0 ∨ forEachRecord p g = [] := by
-  unfold commitShips
-  by_cases h : effectsCount p > 0
-  · simp [h]
-  · simp only [h, ↓reduceIte, false_or]
-    exact ⟨fun e => e.symm, fun e => e.symm⟩
+/-- **#2970 (W2-effects-1 fixed)**: the commit ships exactly what the emitter
+    writes, whatever `effects_count` says. -/
+theorem commitShips_eq (p : Pending) (g : Schema) : commitShips p g = forEachRecord p g := rfl
 
-/-! ### Counterexamples (both reproduced against the real code)
+/-- The old gate was correct only when `effectsCount p > 0` or the stream was empty;
+    now, whenever the emitter's stream is non-empty, it ships. -/
+theorem commitShips_ne_nil (p : Pending) (g : Schema) (h : forEachRecord p g ≠ []) :
+    commitShips p g ≠ [] := by
+  rw [commitShips_eq]; exact h
 
-    `graph/tests/lean_effects_emit_apply.rs`:
-    `fully_cancelled_write_ships_nothing_and_next_payload_is_refused` and
-    `schema_only_write_ships_nothing_and_next_payload_is_refused`. -/
+/-! ### The W2-effects-1 writes (fully cancelled, schema only) now ship -/
 
 /-- `CREATE (a:A {p: 1}) DELETE a` on an empty graph: label `A` and attribute
     `p` are registered, node 0 is reserved and cancelled; `effects_count = 0`. -/
@@ -376,30 +371,27 @@ theorem gate_ships_cancelled :
 /-- **#3461**: any segment that cancelled a node or a relationship passes the
     gate, so its cancelled pairs (and the schema it registered) ship. -/
 theorem gate_ships_of_cancelled (p : Pending) (g : Schema)
-    (h : p.cancelledNodes ≠ [] ∨ p.cancelledRels ≠ []) : commitShips p g = forEachRecord p g := by
-  have hpos : effectsCount p > 0 := by
-    unfold effectsCount
-    rcases h with h | h
-    · have := List.length_pos_iff.mpr h; omega
-    · have := List.length_pos_iff.mpr h; omega
-  simp [commitShips, hpos]
+    (_h : p.cancelledNodes ≠ [] ∨ p.cancelledRels ≠ []) : commitShips p g = forEachRecord p g :=
+  commitShips_eq p g
 
 /-- `OPTIONAL MATCH (n:Nope) SET n:L6`: `L6` registered, nothing else. -/
 def pSchemaOnly : Pending := { pCancelled with cancelledNodes := [] }
 def gSchemaOnly : Schema := ⟨["L6"], [], []⟩
 
-theorem gate_drops_schema_only :
+/-- **#2970**: `effects_count` is still 0, and the registration of `L6` ships. -/
+theorem gate_ships_schema_only :
     effectsCount pSchemaOnly = 0 ∧
-    forEachRecord pSchemaOnly gSchemaOnly = [.addLabel 0 "L6"] ∧
-    commitShips pSchemaOnly gSchemaOnly = [] := by
-  refine ⟨rfl, ?_, rfl⟩
+    commitShips pSchemaOnly gSchemaOnly = [.addLabel 0 "L6"] := by
+  refine ⟨rfl, ?_⟩
   decide
 
-/-! ### Why a dropped payload is a divergence and not a no-op
+/-! ### Why a dropped payload was a divergence and not a no-op
 
     The replica checks every `ADD_SCHEMA` id against the id its own dictionary
     assigns (`apply_add_schema`, `apply.rs`; `verify_id`, `apply.rs`).
-    One dropped registration shifts every later id by one. -/
+    One dropped registration shifts every later id by one (`next_payload_refused`);
+    shipping it, as #2970 does, keeps the dictionaries aligned
+    (`schema_only_then_next_applies`). -/
 
 /-- `get_label_id_mut` then `verify_id`: get-or-create, and the id must match. -/
 def applyAddName (dict : List Name) (id : Nat) (n : Name) : Option (List Name) :=
@@ -411,6 +403,12 @@ def applyAddName (dict : List Name) (id : Nat) (n : Name) : Option (List Name) :
     dictionary is `[L6, K6]`); the replica never saw `L6` and assigns `0`. -/
 theorem next_payload_refused :
     applyAddName [] 1 "K6" = none ∧ applyAddName ["L6"] 1 "K6" = some ["L6", "K6"] := by
+  decide
+
+/-- **#2970**: the replica applies the schema-only payload `ADD_SCHEMA 0 "L6"`
+    (`gate_ships_schema_only`) and then the next query's `ADD_SCHEMA 1 "K6"`. -/
+theorem schema_only_then_next_applies :
+    ((applyAddName [] 0 "L6").bind (fun d => applyAddName d 1 "K6")) = some ["L6", "K6"] := by
   decide
 
 /-- **#3461**: the same write, with `T1` now registered at commit, ships `T1`,
