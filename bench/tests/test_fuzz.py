@@ -1749,7 +1749,7 @@ def test_a_background_save_still_running_when_the_wait_ends_is_unfinished(monkey
     ]
     clock = itertools.chain([0.0, 0.0], itertools.repeat(301.0))  # one poll, then past 300 s
     assert _bgsave_events(saving, _NeverSet(), monkeypatch, clock) == [
-        ("bgsave_unfinished", "still saving after 300 s")
+        ("bgsave_stuck", "still saving after 300 s")
     ]
     done = {"rdb_bgsave_in_progress": 0, "rdb_last_bgsave_status": "ok"}
     assert _bgsave_events(done, threading.Event(), monkeypatch) == [("bgsave_done", None)]
@@ -1763,3 +1763,16 @@ class _NeverSet:
 
     def is_set(self):
         return False
+
+
+@pytest.mark.parametrize("event, fails", [("bgsave_stuck", True), ("bgsave_unfinished", False)])
+def test_a_stuck_background_save_is_an_unexpected_error(event, fails):
+    """Still saving after 300 s fails no_unexpected_errors; a save the epoch's end cut short
+    is the harness's doing, not the server's."""
+    hp, ep = model.control_params((1.0,))
+    cal = [{"lookup": 1.0, "filter-sort": 3.0, "distinct": 3.0, "scan-lookup": 200.0}] * hp[
+        "graphs"
+    ]
+    events = [{"t": 1.0, "event": event, "seconds": 300.0}]
+    got = checks.analyse(ep, hp, cal, _epoch_data(), _pings(1000), [], events, {}, [])
+    assert got["checks"]["no_unexpected_errors"]["pass"] is not fails

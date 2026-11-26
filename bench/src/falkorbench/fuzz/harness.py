@@ -930,8 +930,9 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
 
 def bgsave(r, stop, ev):
     """BGSAVE, then wait for it to end (at most 300 s, or until the epoch stops). A save still
-    running when the wait ends is unfinished: rdb_last_bgsave_status still describes the
-    previous save, so it says nothing about this one."""
+    running when the wait ends has no status of its own (rdb_last_bgsave_status is still the
+    previous save's): one the epoch's end cut short is bgsave_unfinished, which the harness
+    caused; one still saving after 300 s is bgsave_stuck, a failed event."""
     r.execute_command("BGSAVE")
     t0 = now()
     info = {}
@@ -940,8 +941,10 @@ def bgsave(r, stop, ev):
         if not info.get("rdb_bgsave_in_progress") or stop.wait(0.5):
             break
     if info.get("rdb_bgsave_in_progress"):
-        why = "the epoch ended" if stop.is_set() else "still saving after 300 s"
-        ev("bgsave_unfinished", seconds=round(now() - t0, 1), why=why)
+        if stop.is_set():
+            ev("bgsave_unfinished", seconds=round(now() - t0, 1), why="the epoch ended")
+        else:
+            ev("bgsave_stuck", seconds=round(now() - t0, 1), why="still saving after 300 s")
         return
     status = info.get("rdb_last_bgsave_status")
     if status == "ok":

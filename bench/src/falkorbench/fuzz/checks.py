@@ -58,6 +58,7 @@ BAD_EVENTS = (
     "constraint_error",
     "events_died",
     "bgsave_error",
+    "bgsave_stuck",
     "violation_odd_error",
     "indexes_stuck",
     "events_stuck",
