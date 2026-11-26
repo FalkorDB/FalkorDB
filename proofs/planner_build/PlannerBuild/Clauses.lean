@@ -38,6 +38,10 @@ pattern comprehensions excluded (see the gaps list). -/
 structure ProjC where
   p : Nat
   agg : Bool
+  /-- `rows_distinct` (mod.rs, since #3579): every aggregation item is a bare aggregate call
+  (`count(x)`), so no item adds an implicit grouping key and the aggregate's rows are distinct.
+  `false` when some item mixes an aggregate with other terms (`count(*) > x`). -/
+  rowsDistinct : Bool
   distinct : Bool
   order : Option Nat
   skip : Option Nat
@@ -50,11 +54,12 @@ def wrapOpt (mk : Nat → Op) : Option Nat → Plan → Plan
   | none, p => p
 
 /-- mod.rs, in the same order: Project/Aggregate [Commit], then
-Distinct (only without aggregation, mod.rs), Sort, Skip, Limit, Filter. -/
+Distinct (dropped only over an aggregation whose items are all bare aggregate calls,
+`rows_distinct`, mod.rs since #3579), Sort, Skip, Limit, Filter. -/
 def planProject (c : ProjC) : Plan :=
   let base := Plan.node (if c.agg then .aggregate c.p else .project c.p)
     (if c.write then [.node .commit []] else [])
-  let d := if c.distinct && !c.agg then Plan.node .distinct [base] else base
+  let d := if c.distinct && !(c.agg && c.rowsDistinct) then Plan.node .distinct [base] else base
   wrapOpt .filter c.filter (wrapOpt .limit c.limit (wrapOpt .skip c.skip (wrapOpt .sort c.order d)))
 
 def optApply {A : Type} (f : Nat → A → A) : Option Nat → A → A
@@ -72,7 +77,9 @@ def specProject (c : ProjC) (r : Rec V) (T : Res V G) : Res V G :=
   (optApply (fun φ rs => rs.filter fun row => S.test φ row T.2) c.filter rows5, T.2)
 
 /-- `DISTINCT` over an aggregation is the identity (groups have distinct keys);
-the planner relies on it to drop the `Distinct` (mod.rs). -/
+the planner relies on it to drop the `Distinct` (mod.rs), since #3579 only when every item is a
+bare aggregate call (`rowsDistinct`): an implicit grouping key (`count(*) > x`) lets two groups
+project the same row, so `AggDistinct` need not hold then. -/
 def AggDistinct (c : ProjC) : Prop := ∀ r rows, S.dedup (S.agg c.p r rows) = S.agg c.p r rows
 
 /-! ## Generic machinery: implementing a clause at the insertion point -/
@@ -694,15 +701,17 @@ theorem forRows_filter' (k : Nat) (T : Res V G) :
     forRows (S.step (.filter k)) T.1 T.2 = (T.1.filter fun row => S.test k row T.2, T.2) :=
   forRows_filter S k T.1 T.2
 
-/-- **WITH / RETURN are correct** (either walk), given that DISTINCT over an
-aggregation is the identity. -/
-theorem project_correct (w : Plan → Path) (hw : GoodWalk w) (c : ProjC) (hc : AggDistinct S c)
+/-- **WITH / RETURN are correct** (either walk), given that DISTINCT over an aggregation is
+the identity whenever the planner drops the `Distinct` (`rowsDistinct`, #3579): with an implicit
+grouping key the `Distinct` is kept, so nothing is assumed there. -/
+theorem project_correct_rows (w : Plan → Path) (hw : GoodWalk w) (c : ProjC)
+    (hc : c.agg = true → c.rowsDistinct = true → AggDistinct S c)
     (ok : Plan → Prop) (q y : Plan) (r : Rec V) (g : G) (hq : ok q) :
     ev S (refill (planProject c) (slotWith w (planProject c)) q y) r g =
       specProject S c r (ev S y r g) := by
   have h0 := implements_projBase S w hw c ok
-  have h1 : Implements S w ok (if c.distinct && !c.agg then Plan.node .distinct [projBase c] else projBase c)
-      (fun r T => if c.distinct && !c.agg then bagSem S .distinct r (projSem S c r T) else projSem S c r T) := by
+  have h1 : Implements S w ok (if c.distinct && !(c.agg && c.rowsDistinct) then Plan.node .distinct [projBase c] else projBase c)
+      (fun r T => if c.distinct && !(c.agg && c.rowsDistinct) then bagSem S .distinct r (projSem S c r T) else projSem S c r T) := by
     split
     · exact implements_step S w hw.valid .distinct hw.distinct _ (unary_bag S _ rfl) ok _ _ h0
     · exact h0
@@ -715,7 +724,7 @@ theorem project_correct (w : Plan → Path) (hw : GoodWalk w) (c : ProjC) (hc : 
   have h5 := implements_wrapOpt S w hw .filter hw.filter.2 (fun k => rowSem S (.filter k))
     (fun k => unary_row S _ rfl (by simp [Op.isCorr])) ok c.filter _ _ h4
   have e : planProject c = wrapOpt .filter c.filter (wrapOpt .limit c.limit (wrapOpt .skip c.skip
-      (wrapOpt .sort c.order (if c.distinct && !c.agg then Plan.node .distinct [projBase c]
+      (wrapOpt .sort c.order (if c.distinct && !(c.agg && c.rowsDistinct) then Plan.node .distinct [projBase c]
         else projBase c)))) := by
     unfold planProject projBase projOp; rfl
   rw [e, h5 q y r g hq]
@@ -730,14 +739,25 @@ theorem project_correct (w : Plan → Path) (hw : GoodWalk w) (c : ProjC) (hc : 
     intro X; cases c.filter
     · rfl
     · exact forRows_filter' S _ X
-  have sBase : (if c.distinct && !c.agg then bagSem S .distinct r (projSem S c r (ev S y r g))
+  have sBase : (if c.distinct && !(c.agg && c.rowsDistinct) then bagSem S .distinct r (projSem S c r (ev S y r g))
       else projSem S c r (ev S y r g)) =
       (let rows1 := if c.agg then S.agg c.p r (ev S y r g).1
           else (ev S y r g).1.map fun row => S.proj c.p row (ev S y r g).2
        if c.distinct then S.dedup rows1 else rows1, (ev S y r g).2) := by
     unfold projSem bagSem
-    cases ha : c.agg <;> cases hd : c.distinct <;> simp [Sem.bag, hc r]
+    cases ha : c.agg <;> cases hd : c.distinct <;> cases hr : c.rowsDistinct <;>
+      first
+        | (simp [Sem.bag, hc ha hr r]; done)
+        | simp [Sem.bag]
   simp only [sSort, sSkip, sLimit, sFilter, sBase]
   rfl
+
+/-- **WITH / RETURN are correct** (either walk), given that DISTINCT over an
+aggregation is the identity. -/
+theorem project_correct (w : Plan → Path) (hw : GoodWalk w) (c : ProjC) (hc : AggDistinct S c)
+    (ok : Plan → Prop) (q y : Plan) (r : Rec V) (g : G) (hq : ok q) :
+    ev S (refill (planProject c) (slotWith w (planProject c)) q y) r g =
+      specProject S c r (ev S y r g) :=
+  project_correct_rows S w hw c (fun _ _ => hc) ok q y r g hq
 
 end PlannerBuild

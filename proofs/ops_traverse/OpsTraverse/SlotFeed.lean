@@ -11,29 +11,27 @@ row the Aggregate emits, and the slot reads in CondTraverse.
 | --- | --- |
 | `Val`, `Slots`, `get`, `ins` | a batch row: `Batch::value_at` (`runtime/batch.rs`) reads a column by `Variable.id` alone, never by `scope_id` |
 | `declare`, `declareAll` | `Binder::fresh_var` (`planner/binder.rs`: the id is the current scope's env length) via `define_name_in_scope` and `project_name`; a projection opens a fresh scope (`push_scope`) so its ids restart at 0; `bind_graph` declares nodes before relationships |
-| `aggRow` | `AggregateOp::next` (`runtime/ops/aggregate.rs`): agg outputs, then the *pre-projection* slot of every bare-variable key, then the projected keys |
+| `aggRow` | `AggregateOp::next` (`runtime/ops/aggregate.rs`, since #3579): the projected keys, then the agg outputs |
 | `inputRow` | the endpoint reads of `CondTraverseOp::expand_row` (`runtime/ops/cond_traverse.rs`), and the same destination read on the batched path (skip on mismatch) |
 | `hopOut` | `expandRow` in collapse mode (anonymous edge) on that `RowIn`, then `set_column(to_alias.id, …)` (`cond_traverse.rs`) |
 
-## The bug
+## The bug (#3372, fixed by #3579)
 
 The binder numbers each scope from 0, and a batch slot is keyed by id only.
-`aggregate.rs` re-binds every bare-variable grouping key at its
-*pre-projection* id ("so downstream operators can find them"), an id of the
-previous scope. A variable that the next MATCH declares fresh can get that same
-id; CondTraverse then reads the stale node as an already-bound destination and
-keeps only edges that end there (`cond_traverse.rs`).
+Before #3579 `aggregate.rs` re-bound every bare-variable grouping key at its
+*pre-projection* id, an id of the previous scope. A variable that the next
+MATCH declares fresh could get that same id; CondTraverse then read the stale
+node as an already-bound destination and kept only edges that end there
+(`cond_traverse.rs`).
 
 `MATCH (a)-[:E]->(b)-[:E]->(c) WITH c, count(*) AS k MATCH (c)-[:E]->(d)`:
 scope 0 is `[a, b, c, _anon, _anon]`, so the old `c` is slot 2; scope 1 is
-`[c, k]`, so `d` is slot 2. Every row carries `d = c`, and with no self-loop
-nothing matches.
+`[c, k]`, so `d` is slot 2. Before #3579 every row carried `d = c`, and with no
+self-loop nothing matched (live on 9d3869aa8: 0, expected 4).
 
-Live (Rust main 9d3869aa8, port 6660, the issue's graph): the issue query
-returns 0 (expected 4; C 4.20.7 returns 4 per the issue); the narrowed query 0
-(expected 4); `WITH c, count(*) AS k, 1 AS z …` returns 4 (`d` moves to slot 3);
-a three-hop prefix (old `c` = slot 3) returns 2 without `z` and 0 with it. Each
-of those numbers is a theorem below.
+Since #3579 the Aggregate row binds only the new scope's ids (the keys, then the
+outputs), so it is `ScopedRow` (`aggRow_scoped`) and the queries give the
+expected counts (`fixed3579_*`).
 
 Gap closed 2026-10-20.
 -/
@@ -97,17 +95,13 @@ structure Key where
   newId : Nat
   oldId : Option Nat
 
-/-- `AggregateOp::next`, one group (`aggregate.rs`): `acc` starts
-with the aggregate outputs; every bare-variable key is inserted at
-its pre-projection id unless an output owns that id; then the
-projected keys are merged in. The accumulator unbind and the output
-re-bind touch only accumulator/output slots and are omitted. -/
+/-- `AggregateOp::next`, one group (`aggregate.rs`, since #3579): the emitted row starts as
+the key row (`let mut out = key`: every projected key at its new-scope id), then every
+aggregate output is inserted, so an output wins over a key sharing its id. No pre-projection
+slot and no accumulator is written. -/
 def aggRow (keys : List (Key × Val)) (aggs : List (Nat × Val)) : Slots :=
-  let acc1 := keys.foldl (fun acc kv =>
-    match kv.1.oldId with
-    | some o => if aggs.any (·.1 == o) then acc else ins acc o kv.2
-    | none => acc) aggs
-  keys.foldl (fun acc kv => ins acc kv.1.newId kv.2) acc1
+  aggs.foldl (fun acc p => ins acc p.1 p.2)
+    (keys.foldl (fun acc kv => ins acc kv.1.newId kv.2) [])
 
 /-! ## What CondTraverse reads -/
 
@@ -132,9 +126,9 @@ def hopOut (g : Graph) (fromId toId : Nat) (r : Slots) : List Slots :=
   | none => []
   | some ri => (expandRow g false false ri).map fun t => ins r toId (.node t.2.1)
 
-/-! ## The property a fix must establish -/
+/-! ## The property the Aggregate row satisfies -/
 
-/-- **Property (should hold).** Crossing a `WITH`, the row an operator emits
+/-- **Property (holds since #3579).** Crossing a `WITH`, the row an operator emits
 binds only the slots the new scope declared. Then a variable the next clause
 declares fresh starts unbound, whatever id it gets. -/
 def ScopedRow (declared : List Nat) (r : Slots) : Prop := ∀ p ∈ r, p.1 ∈ declared
@@ -148,14 +142,46 @@ theorem get_none_of_not_mem {r : Slots} {i : Nat} (h : ∀ p ∈ r, p.1 ≠ i) :
 /-- **What the property buys.** On a scoped row a fresh destination slot is
 free, so the traverse reads exactly `⟨source, none, []⟩` and the existing
 single-hop theorems (`collapse_directed_iff`, `batched_eq_collapse`) give the
-source's true out-neighbours. A fix that makes `aggRow` scoped proves #3372
-closed through this lemma. -/
+source's true out-neighbours. With `aggRow_scoped` this closes #3372. -/
 theorem scoped_inputRow {declared : List Nat} {r : Slots} (hs : ScopedRow declared r)
     {fromId toId n : Nat} (hf : get r fromId = some (.node n)) (ht : toId ∉ declared) :
     inputRow r fromId toId = some ⟨some n, none, []⟩ := by
   have hn : get r toId = none :=
     get_none_of_not_mem fun p hp he => ht (he ▸ hs p hp)
   simp [inputRow, hf, hn, nodeOf]
+
+theorem ins_scoped {declared : List Nat} {r : Slots} (hs : ScopedRow declared r) {i : Nat}
+    (hi : i ∈ declared) (v : Val) : ScopedRow declared (ins r i v) := by
+  intro p hp
+  simp only [ins, List.mem_cons, List.mem_filter] at hp
+  rcases hp with rfl | ⟨hp, _⟩
+  · exact hi
+  · exact hs p hp
+
+/-- **The Aggregate row is scoped (#3372 fixed by #3579).** When every key's new-scope id and
+every output id is declared by the projection, the emitted row binds only declared slots. -/
+theorem aggRow_scoped (declared : List Nat) (keys : List (Key × Val)) (aggs : List (Nat × Val))
+    (hk : ∀ kv ∈ keys, kv.1.newId ∈ declared) (ha : ∀ p ∈ aggs, p.1 ∈ declared) :
+    ScopedRow declared (aggRow keys aggs) := by
+  have hkeys : ∀ (ks : List (Key × Val)) (r : Slots), ScopedRow declared r →
+      (∀ kv ∈ ks, kv.1.newId ∈ declared) →
+      ScopedRow declared (ks.foldl (fun acc kv => ins acc kv.1.newId kv.2) r) := by
+    intro ks; induction ks with
+    | nil => intro r hr _; exact hr
+    | cons kv ks ih =>
+      intro r hr hks
+      exact ih _ (ins_scoped hr (hks kv (List.mem_cons_self ..)) _)
+        (fun x hx => hks x (List.mem_cons_of_mem _ hx))
+  have haggs : ∀ (as : List (Nat × Val)) (r : Slots), ScopedRow declared r →
+      (∀ p ∈ as, p.1 ∈ declared) →
+      ScopedRow declared (as.foldl (fun acc p => ins acc p.1 p.2) r) := by
+    intro as; induction as with
+    | nil => intro r hr _; exact hr
+    | cons p ps ih =>
+      intro r hr hps
+      exact ih _ (ins_scoped hr (hps p (List.mem_cons_self ..)) _)
+        (fun x hx => hps x (List.mem_cons_of_mem _ hx))
+  exact haggs aggs _ (hkeys keys [] (fun _ h => by cases h) hk) ha
 
 /-! ## The query, parameterised by the binder layout -/
 
@@ -176,14 +202,14 @@ def Q.e (q : Q) : Nat := slot q.env1 .e
 /-- The slots the projection declared (what a scoped row may bind). -/
 def Q.declared (q : Q) : List Nat := q.proj.map (slot q.env1)
 
-/-- The row Aggregate emits for group `(c, n)` on main. Extra projected
+/-- The row Aggregate emits for group `(c, n)` (since #3579). Extra projected
 constants are keys with no pre-projection slot. -/
 def Q.groupRow (q : Q) (c n : Nat) : Slots :=
   aggRow ((⟨q.cNew, some q.cOld⟩, .node c) ::
       ((q.proj.filter fun y => y != .c && y != .k).map fun y => (⟨slot q.env1 y, none⟩, .int 1)))
     [(q.k, .int n)]
 
-/-- The same row restricted to the declared slots: what a fix must emit. -/
+/-- The same row restricted to the declared slots (equal to `groupRow` since #3579). -/
 def Q.scopedRow (q : Q) (c n : Nat) : Slots :=
   (q.groupRow c n).filter fun p => q.declared.contains p.1
 
@@ -229,44 +255,42 @@ def cs2 : List Nat := walkEnds gDag nodes7 2
 def cs3 : List Nat := walkEnds gDag nodes7 3
 
 /-- The binder layout: the old `c` and the fresh `d` share slot 2. -/
-theorem bug3372_layout :
+theorem layout3372 :
     (q2 [] [.c, .d, .e, .anon 2, .anon 3]).cOld = 2 ∧
     (q2 [] [.c, .d, .e, .anon 2, .anon 3]).d = 2 ∧
     (q2 [] [.c, .d, .e, .anon 2, .anon 3]).e = 3 ∧
     (q2 [] [.c, .d, .e, .anon 2, .anon 3]).cNew = 0 := by decide
 
-/-- **Bug #3372, the cause.** The Aggregate row for group `c = v3` binds slot 2
-(the pre-projection `c`), which scope 1 never declared: `ScopedRow` fails. -/
-theorem bug3372_aggregate_leaks_preprojection_slot :
-    ¬ ScopedRow (q2 [] [.c, .d, .anon 2]).declared
-      ((q2 [] [.c, .d, .anon 2]).groupRow 2 2) := by
-  intro h
-  exact absurd (h (2, .node 2) (by decide)) (by decide)
+/-- **#3372 fixed by #3579, the cause.** The Aggregate row for group `c = v3` no longer binds
+slot 2 (the pre-projection `c`): `ScopedRow` holds, and the row is its own scoped restriction. -/
+theorem fixed3579_aggregate_scoped :
+    ScopedRow (q2 [] [.c, .d, .anon 2]).declared ((q2 [] [.c, .d, .anon 2]).groupRow 2 2) ∧
+    (q2 [] [.c, .d, .anon 2]).groupRow 2 2 = (q2 [] [.c, .d, .anon 2]).scopedRow 2 2 := by
+  refine ⟨?_, by decide⟩
+  unfold ScopedRow
+  decide
 
-/-- **Bug #3372, the issue query.** `sum(in2 * out2)` is 0 on main; on scoped
-rows it is 4 (the continuous 4-hop count, Neo4j, Memgraph, C 4.20.7). Live
-Rust main: 0. -/
-theorem bug3372_split_product_zero :
+/-- **#3372 fixed by #3579, the issue query.** `sum(in2 * out2)` is 4 (the continuous 4-hop
+count, Neo4j, Memgraph, C 4.20.7; before: 0). -/
+theorem fixed3579_split_product :
     let q := q2 [] [.c, .d, .e, .anon 2, .anon 3]
-    splitProduct q gDag q.groupRow cs2 = 0 ∧
+    splitProduct q gDag q.groupRow cs2 = 4 ∧
     splitProduct q gDag q.scopedRow cs2 = 4 := by decide
 
-/-- **Bug #3372, narrowed.** `WITH c, count(*) AS k MATCH (c)-[:E]->(d)
-RETURN count(*)`: main 0, scoped 4 (live: 0). -/
-theorem bug3372_slot_reuse_drops_rows :
+/-- **#3372 fixed by #3579, narrowed.** `WITH c, count(*) AS k MATCH (c)-[:E]->(d)
+RETURN count(*)`: 4 (before: 0). -/
+theorem fixed3579_slot_reuse :
     let q := q2 [] [.c, .d, .anon 2]
-    oneHopCount q gDag q.groupRow cs2 = 0 ∧
+    oneHopCount q gDag q.groupRow cs2 = 4 ∧
     oneHopCount q gDag q.scopedRow cs2 = 4 := by decide
 
-/-- The live probes that pin the cause to the slot collision, not to the
-traverse: one extra projected constant moves `d` to slot 3 and the two-hop
-query recovers (live 4); a three-hop prefix puts the old `c` at slot 3, so it
-is right without the constant (live 2) and wrong with it (live 0). -/
-theorem bug3372_shift_probes :
+/-- The probes that pinned the cause to the slot collision now all agree with the scoped
+answer: an extra projected constant (4), a three-hop prefix (2) and both (2; before: 0). -/
+theorem fixed3579_shift_probes :
     let q2z := q2 [.z] [.c, .d, .anon 2]
     oneHopCount q2z gDag q2z.groupRow cs2 = 4 ∧
     oneHopCount (q3 []) gDag (q3 []).groupRow cs3 = 2 ∧
-    oneHopCount (q3 [.z]) gDag (q3 [.z]).groupRow cs3 = 0 ∧
+    oneHopCount (q3 [.z]) gDag (q3 [.z]).groupRow cs3 = 2 ∧
     oneHopCount (q3 [.z]) gDag (q3 [.z]).scopedRow cs3 = 2 := by decide
 
 end OpsTraverse.SlotFeed

@@ -1341,15 +1341,8 @@ impl Planner {
                 let child_mode = mode.descend(node.data());
                 // The loop variables this node binds, and the child from
                 // which on they are in scope (the list itself is not).
-                let (bound, first_scoped): (Vec<Variable>, usize) = match node.data() {
-                    ExprIR::ListComprehension(var) | ExprIR::Quantifier { var, .. } => {
-                        (vec![var.clone()], 1)
-                    }
-                    ExprIR::Reduce(vars) => {
-                        (vec![vars.accumulator.clone(), vars.iterator.clone()], 2)
-                    }
-                    _ => (vec![], usize::MAX),
-                };
+                let (bound, first_scoped) = node.data().loop_vars();
+                let bound: Vec<Variable> = bound.cloned().collect();
                 let mut new_tree = DynTree::new(node.data().clone());
                 for (i, child) in node.children().enumerate() {
                     let outer_len = self.loop_vars.len();
@@ -2836,7 +2829,17 @@ impl Planner {
                 res.node_mut(insert_idx).push_child_tree(chain);
             }
         }
-        if distinct && !matches!(res.root().data(), IR::Aggregate { .. }) {
+        // An Aggregate emits one row per group, so its rows are already
+        // distinct, unless an item mixing an aggregate with other terms
+        // (`count(*) > x`) adds hidden grouping keys: two groups can then
+        // project the same row.
+        let rows_distinct = match res.root().data() {
+            IR::Aggregate { aggregations, .. } => aggregations.iter().all(|(_, expr)| {
+                matches!(expr.root().data(), ExprIR::FuncInvocation(func) if func.is_aggregate())
+            }),
+            _ => false,
+        };
+        if distinct && !rows_distinct {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {

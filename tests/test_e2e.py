@@ -1435,6 +1435,267 @@ def test_aggregation():
     assert_result_set_equal_no_order(res, [[1, 7.0, 6.0], [2, 7.0, 6.0]])
 
 
+def test_aggregate_binds_only_the_new_scope():
+    # The binder numbers each scope from zero and a row is keyed by slot id
+    # alone, so what an Aggregate emits (or evaluates against) must hold only
+    # the ids of the scope it opens. Slots from the scope before it used to
+    # leak into the new one.
+
+    # An aggregation's output overwrote a later aggregation's accumulator once
+    # the grouping keys outnumbered the variables bound before the projection:
+    # the sum came back as the count and avg panicked the server (#3375).
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x), sum(x), min(x), max(x)"
+    )
+    assert res.result_set == [["a", "b", 3, 6, 1, 3]]
+    res = query("UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x), avg(x)")
+    assert res.result_set == [["a", "b", 3, 2.0]]
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN 'a' AS k1, 'b' AS k2, count(x) + 0, sum(x) + 0"
+    )
+    assert res.result_set == [["a", "b", 3, 6]]
+
+    # A grouping key must not be read as the old-scope variable sharing its
+    # slot id (#3571): `p.name` in the item is read from `p`, not from the key
+    # `p.name` at that id. It is an implicit grouping key, so the item is
+    # `p.name` + the count of its group, a string concatenation. (C leaves
+    # `p` unbound and returns null.)
+    query("CREATE (:Person {name: 'Tom'})-[:loves]->(:Person {name: 'Judy'})", write=True)
+    res = query("MATCH (p) RETURN p.name, p.name + COUNT(p)", compare_results=False)
+    assert_result_set_equal_no_order(res, [["Tom", "Tom1"], ["Judy", "Judy1"]])
+
+    # Implicit grouping keys are hidden: two groups can project the same row,
+    # so DISTINCT (RETURN and WITH) must still remove the duplicates.
+    res = query(
+        "UNWIND [1, 2] AS x RETURN DISTINCT count(*) > x AS b", compare_results=False
+    )
+    assert res.result_set == [[False]]
+    res = query(
+        "UNWIND [1, 2] AS x WITH DISTINCT count(*) > x AS b RETURN b",
+        compare_results=False,
+    )
+    assert res.result_set == [[False]]
+    res = query("UNWIND [1, 2] AS x RETURN DISTINCT count(*) AS c")
+    assert res.result_set == [[2]]
+
+    # A MATCH after a WITH that aggregates must not see the old scope's slots
+    # as bound: `b` shared the slot id of the old `m`, so the traversal was
+    # taken as an expand-into of a bound pair and found nothing (#3333, #3372).
+    query(
+        "CREATE (:V {id: 1})-[:R]->(:V {id: 2})-[:R]->(:V {id: 3})-[:R]->(:V {id: 4})",
+        write=True,
+    )
+    res = query(
+        "MATCH (a:V {id: 1})-[:R]->(x:V)-[:R]->(m:V) WITH m, count(*) AS c1 "
+        "MATCH (m)-[r:R]->(b:V {id: 4}) RETURN m.id AS mid, c1, b.id AS bid"
+    )
+    assert res.result_set == [[3, 1, 4]]
+
+
+def test_aggregation_item_implicit_grouping_keys():
+    # In an item that mixes an aggregate with other terms, each maximal
+    # aggregate-free subexpression that reads a variable is a grouping key
+    # (openCypher), and its variables are bound when the item is computed.
+    # (C leaves those variables unbound and returns null.)
+    # A variable from the outer scope inside CALL {}:
+    res = query(
+        "WITH 10 AS x CALL { WITH x UNWIND [1, 2] AS y RETURN y, x + sum(y) AS z } "
+        "RETURN y, z ORDER BY y"
+    )
+    assert res.result_set == [[1, 11], [2, 12]]
+    # The implicit key splits groups the explicit key would merge:
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN x % 2 AS k, x + count(*) AS v ORDER BY k, v"
+    )
+    assert res.result_set == [[0, 3], [1, 2], [1, 4]]
+    # With no explicit key at all, and inside a map literal:
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN x % 2 + sum(x) AS v ORDER BY v"
+    )
+    assert res.result_set == [[2], [5]]
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN {s: sum(x), k: x % 2} AS m ORDER BY m.k"
+    )
+    assert res.result_set == [[{"s": 2, "k": 0}], [{"s": 4, "k": 1}]]
+    # A variable that a list comprehension or quantifier binds is not a key;
+    # an outer variable beside it is.
+    res = query(
+        "UNWIND [1, 2, 3] AS x WITH x, 10 AS y RETURN [v IN collect(x) | v + y] AS l"
+    )
+    assert res.result_set == [[[11, 12, 13]]]
+    res = query(
+        "UNWIND [1, 2, 3] AS x RETURN x % 2 AS k, all(ok IN collect(x > 0) WHERE ok) AS a "
+        "ORDER BY k"
+    )
+    assert res.result_set == [[0, True], [1, True]]
+    # An implicit key is a key: an empty input has no group and no row, while
+    # a constant term leaves the aggregation keyless (one row).
+    res = query("UNWIND [] AS x RETURN x + count(*)")
+    assert res.result_set == []
+    res = query("UNWIND [] AS x RETURN 1 + count(*)")
+    assert res.result_set == [[1]]
+    # A term that reads only its own comprehension variable is a constant too.
+    res = query("UNWIND [] AS x RETURN size([v IN [1] | v]) + count(*) AS n")
+    assert res.result_set == [[1]]
+    # Writes before the aggregation are committed before any group forms, so
+    # a group's implicit key and its item read the same property value.
+    query("CREATE (:IK {v: 1}), (:IK {v: 1}), (:IK {v: 2})", write=True)
+    res = query(
+        "MATCH (n:IK) SET n.v = n.v * 10 WITH n.v + count(*) AS c RETURN c ORDER BY c",
+        write=True,
+    )
+    assert res.result_set == [[12], [21]]
+
+
+def test_aggregation_item_implicit_key_value_is_the_grouped_value():
+    # A group reports the value its implicit key grouped by. A volatile key
+    # used to be drawn again when the item was computed, so both groups could
+    # report the same first element and a count could sit beside the wrong key.
+    res = query(
+        "UNWIND range(1, 1000) AS x "
+        "RETURN [toInteger(rand() * 2) + 0 * x, count(*)] AS r",
+        compare_results=False,
+    )
+    assert sorted(row[0][0] for row in res.result_set) == [0, 1]
+    assert sum(row[0][1] for row in res.result_set) == 1000
+
+
+def test_aggregation_item_implicit_key_under_case_is_lazy():
+    # CASE takes only the branch that holds, so an implicit key in a branch
+    # that is not taken cannot fail the query.
+    res = query(
+        "UNWIND [0] AS x "
+        "RETURN CASE WHEN x = 0 THEN 1 WHEN false THEN 1 / x ELSE count(*) END AS v"
+    )
+    assert res.result_set == [[1]]
+    res = query(
+        "UNWIND [1] AS x "
+        "RETURN CASE WHEN count(*) > 0 THEN count(*) ELSE x.foo END AS v"
+    )
+    assert res.result_set == [[1]]
+    # The branch is still evaluated, and still raises, when it is taken.
+    query_exception(
+        "UNWIND [1] AS x "
+        "RETURN CASE WHEN count(*) < 0 THEN count(*) ELSE x.foo END AS v",
+        "Type mismatch",
+    )
+    # A key under a CASE still groups.
+    res = query(
+        "UNWIND [1, 2, 3] AS x "
+        "RETURN CASE WHEN count(*) > 0 THEN x + count(*) ELSE 0 END AS v ORDER BY v"
+    )
+    assert res.result_set == [[2], [3], [4]]
+
+
+def test_aggregation_item_implicit_key_under_and_or_and_comprehension_is_lazy():
+    # AND / OR skip their later operand, a map projection its entries when its
+    # base is null, and a comprehension body does not run on an empty list, so
+    # a key there cannot fail the query when it is skipped.
+    res = query("UNWIND [1] AS x RETURN count(*) > 0 OR x.foo AS v")
+    assert res.result_set == [[True]]
+    res = query("UNWIND [1] AS x RETURN count(*) < 0 AND x.foo AS v")
+    assert res.result_set == [[False]]
+    res = query("UNWIND [1] AS x RETURN [v IN [] | x.foo] + [count(*)] AS v")
+    assert res.result_set == [[[1]]]
+    res = query(
+        "UNWIND [1] AS x RETURN (count(*) > 0 AND null) XOR x.foo AS v",
+        compare_results=False,
+    )
+    assert res.result_set == [[None]]
+    res = query("UNWIND [1] AS x WITH null AS m, x RETURN m{v: x.foo, c: count(*)} AS v")
+    assert res.result_set == [[None]]
+    res = query(
+        "UNWIND [1, 2] AS x WITH {a: 1} AS m, x RETURN m{v: x, c: count(*)} AS v",
+        compare_results=False,
+    )
+    assert sorted(res.result_set, key=lambda r: r[0]["v"]) == [
+        [{"v": 1, "c": 1}],
+        [{"v": 2, "c": 1}],
+    ]
+
+
+def test_aggregation_item_guarded_volatile_key_reports_its_grouped_value():
+    # A guarded key keeps the value it grouped by, as an unguarded one does:
+    # re-drawing rand() at finalize could give two groups the same key.
+    for _ in range(5):
+        res = query(
+            "UNWIND range(1, 1000) AS x RETURN "
+            "[CASE WHEN count(*) > 0 THEN toInteger(rand() * 2) + 0 * x ELSE 0 END, "
+            "count(*)] AS r",
+            compare_results=False,
+        )
+        rows = [r[0] for r in res.result_set]
+        assert sorted(row[0] for row in rows) == [0, 1]
+        assert sum(row[1] for row in rows) == 1000
+
+
+def test_aggregation_item_guarded_key_error_does_not_join_a_null_group():
+    # A row whose guarded key failed and one whose key is null group apart, so
+    # the taken branch raises whichever row comes first.
+    for xs in ("[null, 1]", "[1, null]"):
+        query_exception(
+            f"UNWIND {xs} AS x "
+            "RETURN CASE WHEN count(*) > 0 THEN x.foo ELSE 0 END AS v",
+            "Type mismatch",
+        )
+
+
+def test_aggregation_slot_does_not_reuse_a_comprehension_variable():
+    # A key's slot must not take the id a comprehension variable binds while
+    # the item is evaluated, even when the body never reads that variable.
+    res = query(
+        "UNWIND [10, 20] AS x "
+        "RETURN [x + 1, [w IN [1, 2] | 0], x + 2, count(*)] AS r",
+        compare_results=False,
+    )
+    assert sorted(res.result_set) == [[[11, [0, 0], 12, 1]], [[21, [0, 0], 22, 1]]]
+
+
+def test_pipelined_match_after_aggregating_with():
+    # #3372: a path split by an aggregating WITH, joined on the middle node.
+    query(
+        "CREATE (v1:W {id: 1}), (v2:W {id: 2}), (v3:W {id: 3}), (v4:W {id: 4}), "
+        "(v5:W {id: 5}), (v6:W {id: 6}), (v7:W {id: 7}), "
+        "(v1)-[:E]->(v2), (v2)-[:E]->(v3), (v1)-[:E]->(v6), (v6)-[:E]->(v3), "
+        "(v3)-[:E]->(v4), (v4)-[:E]->(v5), (v3)-[:E]->(v7), (v7)-[:E]->(v5)",
+        write=True,
+    )
+    res = query(
+        "MATCH (a:W)-[:E]->(b:W)-[:E]->(c:W) WITH c, count(*) AS in2 "
+        "MATCH (c)-[:E]->(d:W)-[:E]->(e:W) WITH c, in2, count(*) AS out2 "
+        "RETURN sum(in2 * out2) AS s"
+    )
+    full = query(
+        "MATCH (a:W)-[:E]->(b:W)-[:E]->(c:W)-[:E]->(d:W)-[:E]->(e:W) RETURN count(*)"
+    )
+    assert res.result_set == full.result_set == [[4]]
+
+
+def test_merge_after_two_aggregations():
+    # #3368 / #3369: slots of an earlier aggregation's scope must not leak into
+    # a later MERGE or UNWIND.
+    res = query(
+        "UNWIND [{id:'a1'}] AS r0 MERGE (a:A {id: r0.id}) WITH count(*) AS c0 "
+        "UNWIND [{id:'b1'}] AS r1 MERGE (b:B {id: r1.id}) WITH b, r1 "
+        "WITH count(*) AS c1 UNWIND [{id:'c1'}] AS r2 MERGE (c:C {id: r2.id}) "
+        "RETURN labels(c), c.id",
+        write=True,
+    )
+    assert res.result_set == [[["C"], "c1"]]
+    res = query("MATCH (n) RETURN labels(n), n.id", compare_results=False)
+    assert_result_set_equal_no_order(res, [[["A"], "a1"], [["B"], "b1"], [["C"], "c1"]])
+
+    common.g.delete()
+    res = query(
+        "UNWIND [{id:'a1'}] AS r0 MERGE (a:A {id: r0.id}) WITH count(*) AS c0 "
+        "UNWIND [{id:'b1'}] AS r1 MERGE (b:B {id: r1.id}) WITH c0, count(*) AS c1 "
+        "UNWIND [{id:'c1'}] AS r2 MERGE (c:C {id: r2.id}) "
+        "WITH c0, c1, collect(c.id) AS ids UNWIND ids AS id RETURN id",
+        write=True,
+    )
+    assert res.result_set == [["c1"]]
+
+
 @given(st.lists(st.integers(-10, 10)))
 def test_avg_integers(a):
     res = query("UNWIND $a AS x RETURN avg(x)", params={"a": a})

@@ -68,7 +68,8 @@ def isLCQ : D → Bool
   | .listComp _ | .quant _ => true
   | _ => false
 
-/-- Loop variables a node binds, and the first child they scope over. -/
+/-- Loop variables a node binds, and the first child they scope over: `ExprIR::loop_vars`
+(ast.rs; its `usize::MAX` for a non-binding node is `none`, no child being in scope). -/
 def binds : D → List V × Option Nat
   | .listComp v | .quant v => ([v], some 1)
   | .reduce acc it => ([acc, it], some 2)

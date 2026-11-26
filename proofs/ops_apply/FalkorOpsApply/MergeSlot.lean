@@ -22,10 +22,10 @@ a label scan that writes the slot and never reads it (live: `OPTIONAL MATCH (c:C
 returns null in the same position, #3368). `MergeOp::next`'s all-bound shortcut
 (merge.rs) uses `is_bound_by_id` and is only reached when matches exist.
 
-Where does a value-only slot at a MERGE variable's id come from?  ops_aggregate
-`FalkorAggOps.AggPlan.bug3368_count_acc_in_merge_slot` / `bug3369_count_acc_in_merge_slot`
-(property `EmitsOnlyScope`): a keyless `count(*)` over a 2-variable scope leaves its
-accumulator, unbound but present, at slot 2; `WITH c0, count(*) AS c1` over `c0, r1, b` leaves
+Where did a value-only slot at a MERGE variable's id come from?  Before #3579, ops_aggregate's
+Aggregate `next` (property `EmitsOnlyScope`, now proved there: `fixed3579_3368_merge_slot_free`,
+`fixed3579_3369_merge_slot_free`): a keyless `count(*)` over a 2-variable scope left its
+accumulator, unbound but present, at slot 2; `WITH c0, count(*) AS c1` over `c0, r1, b` left
 it at slot 3. That row shape is restated here (`row2`, `row3_68`, `row3_69`), not imported.
 
 Properties a fix should prove: `KeyFromBoundNodeOnly` (MERGE takes a pattern variable as given
@@ -372,12 +372,12 @@ def st0 : St := ⟨[], 0, []⟩
 def row1 : Row := Row.ofCells [.bound (.map 10)]
 
 /-- Segment 2's MERGE input: `c0` = 1, `r1`, and the first `count(*)`'s accumulator left at
-slot 2 (= `b`), value-only (ops_aggregate `countAcc_left_at_2`). `acc` is its value. -/
+slot 2 (= `b`), value-only (before #3579; ops_aggregate `fixed3579_countAcc_not_left`). `acc` is its value. -/
 def row2 (acc : MV) : Row := Row.ofCells [.bound (.int 1), .bound (.map 11), .valueOnly acc]
 /-- #3368's last MERGE input: `c1` = 1, `r2`, the second count's accumulator at slot 2 (= `c`). -/
 def row3_68 (acc : MV) : Row := Row.ofCells [.bound (.int 1), .bound (.map 12), .valueOnly acc]
 /-- #3369's last MERGE input: `c0`, `c1`, `r2`, and `WITH c0, count(*)`'s accumulator at slot 3
-(= `c`), value-only (ops_aggregate `bug3369_count_acc_in_merge_slot`). -/
+(= `c`), value-only (before #3579; ops_aggregate `fixed3579_3369_merge_slot_free`). -/
 def row3_69 (acc : MV) : Row :=
   Row.ofCells [.bound (.int 1), .bound (.int 1), .bound (.map 12), .valueOnly acc]
 
