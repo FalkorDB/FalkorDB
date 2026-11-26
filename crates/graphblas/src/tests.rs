@@ -16,8 +16,10 @@ use std::{
 };
 
 use crate::{
-    JitControl, Lazy,
+    AsBool, Desc, Error, ErrorKind, JitControl, Lazy, Mask, Matrix,
     init::{init, is_initialized, set_jit},
+    mask::{MaskMode, descriptor},
+    matrix,
     ops::*,
     sys::{self, GrB_Index, GrB_Info},
     types::{GrbType, Pattern},
@@ -45,6 +47,345 @@ fn setup() {
         wait.recv().expect("GraphBLAS started");
     });
     assert!(is_initialized());
+}
+
+fn matrix<T: GrbType>(
+    nrows: GrB_Index,
+    ncols: GrB_Index,
+    entries: &[(GrB_Index, GrB_Index, T)],
+) -> Matrix<T> {
+    let mut m = Matrix::new(nrows, ncols).unwrap();
+    for &(i, j, x) in entries {
+        m.set_element(i, j, x).unwrap();
+    }
+    m
+}
+
+/// Every entry, sorted by position.
+fn entries<T: GrbType + PartialOrd>(m: &Matrix<T>) -> Vec<(GrB_Index, GrB_Index, T)> {
+    let (rows, cols, vals) = m.extract_tuples().unwrap();
+    let mut out: Vec<_> = rows
+        .into_iter()
+        .zip(cols)
+        .zip(vals)
+        .map(|((i, j), x)| (i, j, x))
+        .collect();
+    out.sort_by_key(|e| (e.0, e.1));
+    out
+}
+
+// ───────────────────────────── handles ─────────────────────────────
+
+#[test]
+fn the_linked_library_is_the_release_the_bindings_describe() {
+    setup();
+    let version = |field: sys::GxB_Option_Field| {
+        let mut part = -1;
+        // SAFETY: the global object, a valid out-pointer and one of its
+        // integer fields.
+        let info =
+            unsafe { sys::GrB_Global_get_INT32(sys::GrB_GLOBAL, &raw mut part, field as c_int) };
+        assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        u32::try_from(part).expect("a version part is not negative")
+    };
+    assert_eq!(
+        [
+            version(sys::GxB_Option_Field::GrB_LIBRARY_VER_MAJOR),
+            version(sys::GxB_Option_Field::GrB_LIBRARY_VER_MINOR),
+            version(sys::GxB_Option_Field::GrB_LIBRARY_VER_PATCH),
+        ],
+        [
+            sys::GxB_IMPLEMENTATION_MAJOR,
+            sys::GxB_IMPLEMENTATION_MINOR,
+            sys::GxB_IMPLEMENTATION_SUB,
+        ],
+        "regenerate crates/graphblas-sys/src/bindings.rs for this GraphBLAS"
+    );
+}
+
+#[test]
+fn new_matrix_is_empty_with_its_dimensions() {
+    setup();
+    let m = Matrix::<u64>::new(3, 4).unwrap();
+    assert_eq!((m.nrows(), m.ncols(), m.nvals()), (3, 4, 0));
+    assert_eq!(
+        format!("{m:?}").split(" @ ").next(),
+        Some("Matrix<GrB_UINT64>(3x4")
+    );
+}
+
+#[test]
+fn set_extract_remove_contains() {
+    setup();
+    let mut m = Matrix::<f64>::new(2, 2).unwrap();
+    m.set_element(1, 0, 2.5).unwrap();
+    assert_eq!(m.extract_element(1, 0).unwrap(), Some(2.5));
+    assert_eq!(m.extract_element(0, 0).unwrap(), None);
+    assert!(m.contains(1, 0).unwrap());
+    assert!(!m.contains(0, 1).unwrap());
+    m.remove_element(1, 0).unwrap();
+    assert_eq!(m.nvals(), 0);
+    assert!(matches!(
+        m.set_element(2, 0, 1.0),
+        Err(Error {
+            kind: ErrorKind::InvalidIndex,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn build_and_extract_tuples_round_trip() {
+    setup();
+    let mut m = Matrix::<i64>::new(4, 4).unwrap();
+    m.build(&[3, 0, 2], &[1, 0, 2], &[30, 1, 20], None).unwrap();
+    assert_eq!(entries(&m), vec![(0, 0, 1), (2, 2, 20), (3, 1, 30)]);
+}
+
+#[test]
+fn build_duplicates_need_a_dup_operator() {
+    setup();
+    let mut m = Matrix::<u64>::new(2, 2).unwrap();
+    let err = m.build(&[0, 0], &[1, 1], &[1, 2], None).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::InvalidValue);
+
+    let mut m = Matrix::<u64>::new(2, 2).unwrap();
+    m.build(&[0, 0], &[1, 1], &[1, 2], Some(&PLUS_UINT64))
+        .unwrap();
+    assert_eq!(entries(&m), vec![(0, 1, 3)]);
+}
+
+#[test]
+fn dup_clear_resize() {
+    setup();
+    let a = matrix(3, 3, &[(0, 0, 1u64), (2, 2, 2)]);
+    let mut b = a.dup().unwrap();
+    assert_eq!(entries(&b), entries(&a));
+    b.resize(1, 1).unwrap();
+    assert_eq!(entries(&b), vec![(0, 0, 1)]);
+    b.clear().unwrap();
+    assert_eq!(b.nvals(), 0);
+    assert_eq!(a.nvals(), 2, "the copy is independent");
+}
+
+#[test]
+fn wait_finishes_pending_work() {
+    setup();
+    let mut m = Matrix::<u64>::new(10, 10).unwrap();
+    for i in 0..10 {
+        m.set_element(i, i, i).unwrap();
+    }
+    m.wait(crate::WaitMode::Materialize).unwrap();
+    assert!(!m.is_pending());
+    assert_eq!(m.nvals(), 10);
+    assert!(m.memory_usage() > 0);
+}
+
+#[test]
+fn into_raw_and_from_raw_hand_the_handle_over() {
+    setup();
+    let m = matrix(2, 2, &[(1, 1, 7u64)]);
+    let raw = m.into_raw();
+    // SAFETY: `raw` came from a `Matrix<u64>` that gave up ownership.
+    let m = unsafe { Matrix::<u64>::from_raw(raw) };
+    assert_eq!(m.extract_element(1, 1).unwrap(), Some(7));
+}
+
+// ───────────────────────────── masks and descriptors ─────────────────────────────
+
+#[test]
+fn as_bool_lets_a_counted_matrix_mask_by_value() {
+    setup();
+    // counts(0,0) = 0 and counts(1,1) = 2: a structural mask keeps both
+    // positions, a valued one through `AsBool` keeps only the non-zero.
+    let counts = matrix::<u64>(2, 2, &[(0, 0, 0), (1, 1, 2)]);
+    let a = matrix::<u64>(2, 2, &[(0, 0, 7), (1, 1, 8), (0, 1, 9)]);
+
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::transpose(&mut c, Mask::structural(&counts), None, &a, Desc::T0).unwrap();
+    assert_eq!(entries(&c), vec![(0, 0, 7), (1, 1, 8)]);
+
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::transpose(&mut c, Mask::valued(AsBool(&counts)), None, &a, Desc::T0).unwrap();
+    assert_eq!(entries(&c), vec![(1, 1, 8)], "the stored zero is out");
+
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::transpose(
+        &mut c,
+        Mask::valued_complement(AsBool(&counts)),
+        None,
+        &a,
+        Desc::T0,
+    )
+    .unwrap();
+    assert_eq!(entries(&c), vec![(0, 0, 7), (0, 1, 9)]);
+}
+
+#[test]
+fn contains_reports_an_index_out_of_range() {
+    setup();
+    let m = matrix::<bool>(2, 2, &[(1, 0, true)]);
+    assert_eq!(m.contains(1, 0), Ok(true));
+    assert_eq!(m.contains(0, 0), Ok(false));
+    assert_eq!(m.contains(2, 0).unwrap_err().kind, ErrorKind::InvalidIndex);
+}
+
+#[test]
+fn a_failed_read_carries_no_message_from_an_earlier_call() {
+    setup();
+    let mut m = Matrix::<f64>::new(2, 2).unwrap();
+    let written = m.set_element(2, 0, 1.0).unwrap_err();
+    assert!(
+        written.message.contains("Row index 2 out of range"),
+        "{written}"
+    );
+    // GraphBLAS logs into an object only when it is the output, so that
+    // text is still attached to `m`. A read must not report it as its own.
+    let read = m.extract_element(0, 9).unwrap_err();
+    assert_eq!(read.kind, ErrorKind::InvalidIndex);
+    assert_eq!(read.message, "");
+    assert_eq!(m.contains(0, 9).unwrap_err().message, "");
+}
+
+#[test]
+fn transpose_with_no_descriptor_transposes() {
+    setup();
+    let a = matrix::<u64>(2, 3, &[(0, 2, 9), (1, 0, 4)]);
+    let mut t = Matrix::<u64>::new(3, 2).unwrap();
+    matrix::transpose(&mut t, Mask::NONE, None, &a, Desc::NONE).unwrap();
+    assert_eq!(entries(&t), [(0, 1, 4), (2, 0, 9)]);
+}
+
+#[test]
+fn structural_and_valued_masks_differ_on_a_stored_false() {
+    setup();
+    let a = matrix(2, 2, &[(0, 0, 1u64), (1, 1, 2), (0, 1, 3)]);
+    let m = matrix(2, 2, &[(0, 0, true), (1, 1, false)]);
+
+    // `C<M> = A` is `transpose` with `T0`; the GraphBLAS idiom for a masked copy.
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::transpose(&mut c, Mask::structural(&m), None, &a, Desc::T0).unwrap();
+    assert_eq!(
+        entries(&c),
+        vec![(0, 0, 1), (1, 1, 2)],
+        "structural: both entries"
+    );
+
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::transpose(&mut c, Mask::valued(&m), None, &a, Desc::T0).unwrap();
+    assert_eq!(
+        entries(&c),
+        vec![(0, 0, 1)],
+        "valued: the stored false is out"
+    );
+
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::transpose(&mut c, Mask::structural_complement(&m), None, &a, Desc::T0).unwrap();
+    assert_eq!(entries(&c), vec![(0, 1, 3)]);
+
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::transpose(&mut c, Mask::valued_complement(&m), None, &a, Desc::T0).unwrap();
+    assert_eq!(entries(&c), vec![(0, 1, 3), (1, 1, 2)]);
+}
+
+#[test]
+fn replace_clears_outside_the_mask() {
+    setup();
+    let a = matrix(2, 2, &[(0, 0, 1u64)]);
+    let m = matrix(2, 2, &[(0, 0, true)]);
+    let mut c = matrix(2, 2, &[(1, 1, 9u64), (0, 0, 5)]);
+    matrix::transpose(&mut c, Mask::structural(&m), None, &a, Desc::T0.replace()).unwrap();
+    assert_eq!(
+        entries(&c),
+        vec![(0, 0, 1)],
+        "replace drops (1,1), which the mask excludes"
+    );
+
+    let mut c = matrix(2, 2, &[(1, 1, 9u64), (0, 0, 5)]);
+    matrix::transpose(&mut c, Mask::structural(&m), None, &a, Desc::T0).unwrap();
+    assert_eq!(
+        entries(&c),
+        vec![(0, 0, 1), (1, 1, 9)],
+        "without replace it stays"
+    );
+}
+
+#[test]
+fn descriptor_table_covers_all_32_combinations() {
+    setup();
+    let modes = [
+        (MaskMode::NONE, ""),
+        (
+            MaskMode {
+                structural: true,
+                complement: false,
+            },
+            "S",
+        ),
+        (
+            MaskMode {
+                structural: false,
+                complement: true,
+            },
+            "C",
+        ),
+        (
+            MaskMode {
+                structural: true,
+                complement: true,
+            },
+            "SC",
+        ),
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for (mode, mode_name) in modes {
+        for bits in 0..8u8 {
+            let desc = Desc {
+                replace: bits & 1 != 0,
+                transpose_first: bits & 2 != 0,
+                transpose_second: bits & 4 != 0,
+            };
+            let got = descriptor(mode, desc);
+            let mut expected_name = String::from("GrB_DESC_");
+            if desc.replace {
+                expected_name.push('R');
+            }
+            expected_name.push_str(mode_name);
+            if desc.transpose_first {
+                expected_name.push_str("T0");
+            }
+            if desc.transpose_second {
+                expected_name.push_str("T1");
+            }
+            if expected_name == "GrB_DESC_" {
+                assert!(got.is_null(), "all-default is the null descriptor");
+                continue;
+            }
+            assert!(!got.is_null(), "{expected_name}");
+            assert!(
+                seen.insert(got as usize),
+                "{expected_name} handed out twice"
+            );
+            let name = handle_name(got);
+            assert_eq!(name, expected_name);
+        }
+    }
+    assert_eq!(seen.len(), 31);
+}
+
+/// The name GraphBLAS reports for a built-in descriptor.
+fn handle_name(d: sys::GrB_Descriptor) -> String {
+    let mut buf = [0 as c_char; sys::GxB_MAX_NAME_LEN as usize];
+    // SAFETY: `d` is a live built-in descriptor and the buffer has the size
+    // GraphBLAS requires for a name.
+    let info = unsafe {
+        sys::GrB_Descriptor_get_String(d, buf.as_mut_ptr(), sys::GxB_Option_Field::GrB_NAME as _)
+    };
+    assert_eq!(info, GrB_Info::GrB_SUCCESS);
+    // SAFETY: GraphBLAS wrote a NUL-terminated string into `buf`.
+    unsafe { CStr::from_ptr(buf.as_ptr()) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 // ───────────────────────────── user-defined objects ─────────────────────────────
@@ -93,12 +434,12 @@ fn user_defined_type_round_trips_by_value() {
         weight: 1.5,
         id: 42,
     };
-    assert_eq!((e.weight, e.id), (1.5, 42));
-    assert_eq!(
-        size_of::<Edge>(),
-        16,
-        "#[repr(C)]: no padding between the fields"
-    );
+    let mut m = Matrix::<Edge>::new(2, 2).unwrap();
+    m.set_element(0, 1, e).unwrap();
+    assert_eq!(m.extract_element(0, 1).unwrap(), Some(e));
+    assert_eq!(m.extract_element(1, 1).unwrap(), None);
+    let (_, _, vals) = m.extract_tuples().unwrap();
+    assert_eq!(vals, vec![e]);
 }
 
 crate::user_ops! {

@@ -217,3 +217,23 @@ pub fn set_jit(control: JitControl) -> Result<()> {
         sys::GxB_Option_Field::GxB_JIT_C_CONTROL as c_int,
     )
 }
+
+/// What `wait` finishes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitMode {
+    /// `GrB_COMPLETE`, which SuiteSparse treats as a no-op: pending work may
+    /// remain, and the object is not yet safe to read from several threads.
+    Complete,
+    /// `GrB_MATERIALIZE`: finish pending work and build the final storage,
+    /// after which the object is safe to read from several threads.
+    Materialize,
+}
+
+impl WaitMode {
+    pub(crate) const fn raw(self) -> c_int {
+        match self {
+            Self::Complete => sys::GrB_WaitMode::GrB_COMPLETE as _,
+            Self::Materialize => sys::GrB_WaitMode::GrB_MATERIALIZE as _,
+        }
+    }
+}
