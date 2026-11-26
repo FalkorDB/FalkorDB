@@ -557,6 +557,7 @@ dependencies = [
  "graphblas-sys",
  "itertools 0.15.0",
  "json-escape",
+ "lagraph-sys",
  "lru",
  "native-deps",
  "num_enum",
@@ -731,6 +732,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef6fd1644b881a0cb8030578c318e14840e543876e98f7bc9215270fd55ca5db"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "lagraph-sys"
+version = "0.1.0"
+dependencies = [
+ "graphblas-sys",
+ "native-deps",
 ]
 
 [[package]]

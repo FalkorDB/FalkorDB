@@ -37,11 +37,9 @@ fn main() {
 
     assert_sanitizer_agrees(&request);
 
-    let lagraph = deps.get(Dep::LaGraph).expect("lagraph resolved");
     let redisearch = deps.get(Dep::RediSearch).expect("redisearch resolved");
 
     link_openmp_search_paths();
-    link_lagraph(lagraph);
     link_cxx_and_openssl();
     link_redisearch(redisearch);
 }
@@ -133,18 +131,6 @@ fn link_openmp_search_paths() {
 
 fn libomp_prefix() -> String {
     std::env::var("LIBOMP_PREFIX").unwrap_or_else(|_| "/opt/libomp".to_string())
-}
-
-fn link_lagraph(lagraph: &Resolved) {
-    println!("cargo:rustc-link-search=native={}", lagraph.lib().display());
-
-    // Link order is load-bearing: GNU ld resolves static archives left-to-right,
-    // so dependents must precede dependencies -- lagraphx -> lagraph -> graphblas
-    // -> omp. The last two are linked by the `graphblas-sys` crate, and rustc
-    // places a dependency's libraries after those of the crate that depends on
-    // it, so they follow these two.
-    println!("cargo:rustc-link-lib=static=lagraphx");
-    println!("cargo:rustc-link-lib=static=lagraph");
 }
 
 fn link_cxx_and_openssl() {

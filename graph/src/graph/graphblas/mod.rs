@@ -3,6 +3,7 @@
 //! This module is the foundation for FalkorDB's graph storage layer. It provides
 //! raw C bindings to SuiteSparse:GraphBLAS (the `graphblas-sys` crate, which
 //! also links the library) and safe Rust abstractions built on top of them.
+//! LAGraph's bindings come from the `lagraph-sys` crate, which links LAGraph.
 //!
 //! ## Module Layout
 //!
@@ -13,8 +14,6 @@
 //!   vector.rs               <-- Safe wrapper around GrB_Vector (boolean sparse vector)
 //!   tensor.rs               <-- 3D sparse structure for multi-edge storage
 //!   versioned_matrix.rs     <-- Copy-on-write matrix with MVCC delta tracking
-//!   lagraph_bindings.rs     <-- Auto-generated LAGraph FFI bindings
-//!   lagraphx_bindings.rs    <-- Auto-generated LAGraphX FFI bindings
 //! ```
 //!
 //! ## How the Graph Uses GraphBLAS
@@ -45,8 +44,6 @@ mod block_scaling_bench;
 mod degree_bench;
 #[cfg(test)]
 mod fold_cost_bench;
-pub mod lagraph_bindings;
-pub mod lagraphx_bindings;
 pub mod matrix;
 #[cfg(test)]
 mod me_delta_bench;
