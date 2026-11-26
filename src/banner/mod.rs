@@ -21,7 +21,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{IsTerminal, Write},
     os::{
-        fd::{AsRawFd, RawFd},
+        fd::{AsFd, AsRawFd, BorrowedFd, RawFd},
         unix::fs::OpenOptionsExt,
     },
     thread,
@@ -120,21 +120,25 @@ pub fn print() {
     }
 }
 
-/// Writes `text` to `tty` a line at a time, each line only once the previous
-/// one has left the output queue; stops at the first line the terminal does
-/// not take within `wait`. Returns whether all of `text` was written.
+/// Writes `text` to `tty` a line at a time. Before each line it waits up to
+/// `wait` for the output queue to empty, and it stops at the first line it
+/// cannot send. Returns whether all of `text` was written.
+///
+/// Waiting before each line rather than after it means `tty` is not touched
+/// after the last line: if the terminal closes as soon as it has read all of
+/// `text`, the result is still true.
 fn write_bounded(
-    tty: &mut File,
+    tty: &mut (impl Write + AsFd),
     text: &str,
     wait: Duration,
 ) -> bool {
     text.split_inclusive('\n')
-        .all(|line| tty.write_all(line.as_bytes()).is_ok() && drained(tty, wait))
+        .all(|line| drained(tty.as_fd(), wait) && tty.write_all(line.as_bytes()).is_ok())
 }
 
 /// Waits up to `wait` for the terminal's output queue to empty.
 fn drained(
-    tty: &File,
+    tty: BorrowedFd<'_>,
     wait: Duration,
 ) -> bool {
     let deadline = Instant::now() + wait;
@@ -177,8 +181,8 @@ fn reopen_nonblocking(fd: RawFd) -> Option<File> {
 mod tests {
     use std::{
         fs::File,
-        io::Read,
-        os::fd::{FromRawFd, OwnedFd},
+        io::{self, Read, Write},
+        os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd},
         thread,
         time::{Duration, Instant},
     };
@@ -359,6 +363,68 @@ mod tests {
             .filter(|&b| b != b'\r')
             .collect();
         assert_eq!(String::from_utf8(got).unwrap(), banner);
+    }
+
+    /// A terminal that reads every write at once and closes as soon as it has
+    /// the whole banner, before `write_bounded` returns. The reader thread in
+    /// `whole_banner_reaches_a_draining_terminal` does the same when it beats
+    /// the writer on a busy machine (#4073). On Linux, closing the master end
+    /// hangs up the slave end, and every later call on it fails with EIO. macOS
+    /// still answers TIOCOUTQ after that, so this test guards Linux only.
+    struct ClosesOnceItHasEverything {
+        tty: File,
+        master: Option<File>,
+        want: usize,
+        sent: usize,
+        got: Vec<u8>,
+    }
+
+    impl Write for ClosesOnceItHasEverything {
+        fn write(
+            &mut self,
+            buf: &[u8],
+        ) -> io::Result<usize> {
+            let master = self.master.as_mut().expect("written to after closing");
+            let n = self.tty.write(buf)?;
+            self.sent += n;
+            let mut chunk = [0u8; 4096];
+            // The pty turns each \n into \r\n on the way out.
+            while self.got.len() < self.sent {
+                let read = master.read(&mut chunk)?;
+                assert_ne!(read, 0, "pty closed");
+                self.got
+                    .extend(chunk[..read].iter().filter(|&&b| b != b'\r'));
+            }
+            if self.sent == self.want {
+                self.master = None;
+            }
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.tty.flush()
+        }
+    }
+
+    impl AsFd for ClosesOnceItHasEverything {
+        fn as_fd(&self) -> BorrowedFd<'_> {
+            self.tty.as_fd()
+        }
+    }
+
+    #[test]
+    fn whole_banner_reaches_a_terminal_that_closes_once_it_has_it() {
+        let (master, slave) = pty();
+        let banner = banner();
+        let mut tty = ClosesOnceItHasEverything {
+            tty: reopen_nonblocking(slave.as_raw_fd()).expect("reopen"),
+            master: Some(master),
+            want: banner.len(),
+            sent: 0,
+            got: Vec::new(),
+        };
+        assert!(write_bounded(&mut tty, &banner, Duration::from_secs(5)));
+        assert_eq!(String::from_utf8(tty.got).unwrap(), banner);
     }
 
     #[test]
