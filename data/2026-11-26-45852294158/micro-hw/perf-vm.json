@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "check": "micro-hw",
+  "vm_name": "gce-gh-45852294158-43-5243",
+  "zone": "us-central1-a",
+  "machine_type": "c4-standard-8",
+  "fallback_used": false,
+  "create_error": null,
+  "command_exit": 0,
+  "timed_out": false,
+  "pmu": "STANDARD"
+}

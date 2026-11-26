@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "check": "micro-hw",
+  "verdict": "pass",
+  "confirmed": false,
+  "summary": "no confirmed regression past its threshold; 5 improvement(s); 373 rows on instructions, cycles, branch_misses, l2_misses, alloc_bytes",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+    "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+    "label": "main@2720220"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "c4-standard-8",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.30GHz",
+    "cores": 8
+  },
+  "started": "2026-11-26T15:49:07Z",
+  "finished": "2026-11-26T16:04:50Z",
+  "findings": [
+    {
+      "name": "WITH order limit [reads]",
+      "metric": "instructions",
+      "candidate": 16441357.0,
+      "baseline": 18735595.1,
+      "ratio": 0.877547,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "labelPropagation all types [reads]",
+      "metric": "branch_misses",
+      "candidate": 160022.410666,
+      "baseline": 216608.784784,
+      "ratio": 0.738762,
+      "threshold": 1.25,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "ORDER BY + LIMIT [reads]",
+      "metric": "instructions",
+      "candidate": 19613205.6,
+      "baseline": 27910899.6,
+      "ratio": 0.702708,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "SKIP + LIMIT [reads]",
+      "metric": "cycles",
+      "candidate": 2143435.4,
+      "baseline": 3999077.4,
+      "ratio": 0.535982,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "SKIP + LIMIT [reads]",
+      "metric": "instructions",
+      "candidate": 6401037.9,
+      "baseline": 12149911.9,
+      "ratio": 0.526838,
+      "threshold": 1.1,
+      "direction": "higher_is_worse",
+      "status": "improvement"
+    },
+    {
+      "name": "reads: median per-row ratio over 305 rows (158 up, 147 down, 0 unchanged)",
+      "metric": "cycles",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 1.00116,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "reads: median per-row ratio over 305 rows (145 up, 160 down, 0 unchanged)",
+      "metric": "alloc_bytes",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.999961,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "writes: median per-row ratio over 68 rows (33 up, 35 down, 0 unchanged)",
+      "metric": "alloc_bytes",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.999949,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "writes: median per-row ratio over 68 rows (15 up, 53 down, 0 unchanged)",
+      "metric": "instructions",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.998646,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "reads: median per-row ratio over 305 rows (57 up, 248 down, 0 unchanged)",
+      "metric": "instructions",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.99853,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "writes: median per-row ratio over 68 rows (29 up, 39 down, 0 unchanged)",
+      "metric": "cycles",
+      "candidate": null,
+      "baseline": null,
+      "ratio": 0.989898,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    }
+  ],
+  "error": null,
+  "incomplete": null,
+  "artifacts": [
+    "raw/hw.json",
+    "raw/measure-baseline-r1.csv",
+    "raw/measure-baseline-r1.log",
+    "raw/measure-baseline-r2.csv",
+    "raw/measure-baseline-r2.log",
+    "raw/measure-candidate-r1.csv",
+    "raw/measure-candidate-r1.log",
+    "raw/measure-candidate-r2.csv",
+    "raw/measure-candidate-r2.log",
+    "raw/perf-probe.txt",
+    "raw/rows.csv"
+  ]
+}
