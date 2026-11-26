@@ -255,10 +255,13 @@ jobs:
           CANDIDATE: ${{ inputs.candidate_image }}
           BASELINE: ${{ inputs.baseline_image }}
           BASELINE_BELOW: ${{ inputs.baseline_below }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # The gate's caller runs in the merge queue, where the base is the merge group's
+          # (base_ref there is refs/heads/<branch>).
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
         run: |
           set -euo pipefail
+          BASE_REF=${BASE_REF#refs/heads/}
           # pin REF prints name@digest; exit 3 when the registry says REF does not
           # exist, 1 for any other failure (which must not read as "no image").
           pin() {

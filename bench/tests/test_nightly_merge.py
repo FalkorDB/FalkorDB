@@ -1774,6 +1774,41 @@ def test_the_perf_gate_runs_the_nightly_flow_on_the_queues_image():
     assert "GATE_CHECKS" not in (WORKFLOWS / "perf-nightly.yml").read_text()
 
 
+GITHUB_EXPRESSION_TOKEN = re.compile(
+    r"'(?:[^']|'')*'|&&|\|\||==|!=|!|\(|\)|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*"
+)
+
+
+def github_expression(expr, context):
+    """A GitHub Actions expression of the shapes these workflows use (&&, ||, ==, !=, !,
+    string literals, context paths, cancelled()), evaluated against `context` (nested
+    dicts; a missing path is ''). Python's `and`/`or` return an operand, as `&&`/`||` do."""
+    expr = expr.strip()
+    if expr.startswith("${{") and expr.endswith("}}"):
+        expr = expr[3:-2]
+    assert not GITHUB_EXPRESSION_TOKEN.sub("", expr).strip(), f"unsupported syntax: {expr}"
+    python = []
+    for token in GITHUB_EXPRESSION_TOKEN.findall(expr):
+        if token.startswith("'"):
+            python.append(repr(token[1:-1].replace("''", "'")))
+        elif token in ("==", "!=", "(", ")"):
+            python.append(token)
+        else:
+            python.append(
+                {"&&": " and ", "||": " or ", "!": " not ", "cancelled()": "False"}.get(
+                    token, f"_get({token!r})"
+                )
+            )
+
+    def _get(path):
+        value = context
+        for part in path.split("."):
+            value = value.get(part, "") if isinstance(value, dict) else ""
+        return value
+
+    return eval("".join(python), {"_get": _get, "__builtins__": {}})
+
+
 def test_every_perf_result_and_gate_upload_replaces_an_earlier_attempts_artifact():
     """As in perf-nightly.yml: a re-run uploads each name again, which upload-artifact
     refuses without `overwrite`, and the merge would keep the first attempt's result."""
@@ -1787,6 +1822,26 @@ def test_every_perf_result_and_gate_upload_replaces_an_earlier_attempts_artifact
         assert uploads, name
         for step in uploads:
             assert step["with"].get("overwrite") is True, (name, step["with"]["name"])
+
+
+@pytest.mark.parametrize(
+    "event, base_sha, base_ref",
+    [
+        (
+            {"merge_group": {"base_sha": "b" * 40, "base_ref": "refs/heads/6.2"}},
+            "b" * 40,
+            "refs/heads/6.2",
+        ),
+        ({"pull_request": {"base": {"sha": "c" * 40, "ref": "6.2"}}}, "c" * 40, "6.2"),
+    ],
+)
+def test_benchmark_cov_reads_the_base_of_a_merge_group_too(event, base_sha, base_ref):
+    """The gate's caller runs only in the merge queue, where there is no pull_request."""
+    steps = workflow("benchmark-cov.yml")["jobs"]["preflight"]["steps"]
+    env = next(step for step in steps if step.get("id") == "gate")["env"]
+    context = {"github": {"event": event}}
+    assert github_expression(env["BASE_SHA"], context) == base_sha
+    assert github_expression(env["BASE_REF"], context) == base_ref
 
 
 # --- benchmark-cov as the release gate (#4004) -----------------------------------
@@ -2041,16 +2096,26 @@ BENCH_COV_RELEASES = [
 
 
 @pytest.mark.parametrize(
-    "baseline, base_sha, inspect, code, base_label",
+    "baseline, base_sha, inspect, code, base_label, base_ref",
     [
-        ("", "b" * 40, "found", 0, "6.2@bbbbbbb"),  # the base tip's queue image
-        ("", "b" * 40, "missing", 0, "6.2.1"),  # swept or never queued: the newest release
-        ("", "", "missing", 0, "6.2.1"),  # no base sha (a push caller): the release
-        ("", "b" * 40, "broken", 1, None),  # a registry error is not "no image"
-        ("falkordb/falkordb-server:6.2.0@sha256:" + "c" * 64, "b" * 40, "found", 0, "6.2.0"),
+        ("", "b" * 40, "found", 0, "6.2@bbbbbbb", "6.2"),  # the base tip's queue image
+        ("", "b" * 40, "found", 0, "6.2@bbbbbbb", "refs/heads/6.2"),  # the merge group's spelling
+        ("", "b" * 40, "missing", 0, "6.2.1", "6.2"),  # swept or never queued: the newest release
+        ("", "", "missing", 0, "6.2.1", "6.2"),  # no base sha (a push caller): the release
+        ("", "b" * 40, "broken", 1, None, "6.2"),  # a registry error is not "no image"
+        (
+            "falkordb/falkordb-server:6.2.0@sha256:" + "c" * 64,
+            "b" * 40,
+            "found",
+            0,
+            "6.2.0",
+            "6.2",
+        ),
     ],
 )
-def test_benchmark_cov_pins_the_gates_base(tmp_path, baseline, base_sha, inspect, code, base_label):
+def test_benchmark_cov_pins_the_gates_base(
+    tmp_path, baseline, base_sha, inspect, code, base_label, base_ref
+):
     """benchmark-cov's "Pin the gate's images" step, with fake docker, gh and uv."""
     import shutil
 
@@ -2098,7 +2163,7 @@ jq -r "$jqexpr" {temp / "releases.json"}
             "BASELINE": baseline,
             "BASELINE_BELOW": "6.3.0",
             "BASE_SHA": base_sha,
-            "BASE_REF": "6.2",
+            "BASE_REF": base_ref,
         },
     )
     assert run.returncode == code, run.stdout + run.stderr
