@@ -23,6 +23,7 @@ import time
 import traceback
 from collections.abc import Callable
 from collections.abc import Iterable
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
@@ -34,6 +35,7 @@ from falkorbench.contract import FINDING_STATUSES
 from falkorbench.contract import IMAGE_RE
 from falkorbench.contract import MACHINE_FIELDS
 from falkorbench.contract import MAX_FINDINGS
+from falkorbench.contract import PASS_FAIL_METRICS
 
 MAX_INFORMATIVE = 10  # info findings kept beside the crossings (contract §2)
 MODES = ("queue", "nightly", "long")
@@ -189,13 +191,27 @@ def finding(
 
 
 def correctness_status(candidate: int | None, baseline: int | None) -> str:
-    """A 0/1 metric (completed, invariant; 1 held), contract v1.4: broken on the candidate
-    only is a regression, on both info; a side not measured is info, never ok."""
+    """A 0/1 metric (completed, invariant; 1 held), contract v1.14: broken on the candidate is
+    a regression whether or not the baseline broke it too; held on the candidate where the
+    baseline broke it is an improvement (fixed); a side not measured is info, never ok."""
     if candidate == 0:
-        return "info" if baseline == 0 else "regression"
+        return "regression"
     if candidate is None or baseline is None:
         return "info"
     return "improvement" if baseline == 0 else "ok"
+
+
+#: A finding's optional key, never written to result.json: the release gate's answer for that
+#: pass/fail break when it is not introduced()'s (a known flaky check, a timing check that must
+#: repeat against a baseline that held). result() moves it into `broken`.
+INTRODUCED = "_introduced"
+
+
+def introduced(candidate: int | None, baseline: int | None) -> bool:
+    """The release gate's rule for a broken 0/1 row (contract v1.14): the candidate broke what
+    the baseline did not. A check whose rule is finer (a known flaky check, a timing check)
+    marks the finding with INTRODUCED."""
+    return candidate == 0 and baseline != 0
 
 
 def crossed(
@@ -265,11 +281,15 @@ def result(
     errors: Iterable[str] = (),
     artifacts: Iterable[str | Path] = (),
     machine_info: dict | None = None,
+    issues: Mapping[str, int] | None = None,
 ) -> dict:
     """A schema-1 result. The flags' own input_errors() count as errors; `findings`
-    go through select(); the verdict comes from verdict() on what is kept."""
-    rows = list(findings)
-    kept = select(rows)
+    go through select(); the verdict comes from verdict() on what is kept. `broken`
+    lists the kept pass/fail regressions (see broken()); `issues` maps a finding name
+    to its open issue."""
+    marked = list(findings)  # a mark stays on its finding: two findings may share a name
+    kept_marked = select(marked)
+    rows, kept = [_unmarked(f) for f in marked], [_unmarked(f) for f in kept_marked]
     given = [_one_line(e) for e in errors if e]
     problems = list(dict.fromkeys([*input_errors(args), *(e for e in given if e)]))
     outcome = verdict(kept, problems)
@@ -287,8 +307,31 @@ def result(
         "findings": kept,
         "error": _one_line("; ".join(problems)) if outcome == "error" else None,
         "incomplete": incomplete(outcome, problems, rows, kept),
+        "broken": broken(kept_marked, issues),
         "artifacts": sorted({str(a) for a in artifacts}),
     }
+
+
+def _unmarked(finding: dict) -> dict:
+    return {k: v for k, v in finding.items() if k != INTRODUCED}
+
+
+def broken(findings: Iterable[dict], issues: Mapping[str, int] | None = None) -> list[dict]:
+    """One entry per pass/fail check broken on the candidate (a `completed` or `invariant`
+    finding with status regression), in the findings' order: whether the baseline broke it
+    too, its open issue (reporting only, else null), and whether the release gate counts it
+    as introduced: the finding's own INTRODUCED mark, else introduced()."""
+    issues = issues or {}
+    return [
+        {
+            "name": f["name"],
+            "baseline_too": f["baseline"] == 0,
+            "issue": issues.get(f["name"]),
+            "introduced": bool(f.get(INTRODUCED, introduced(f["candidate"], f["baseline"]))),
+        }
+        for f in findings
+        if f["status"] == "regression" and f["metric"] in PASS_FAIL_METRICS
+    ]
 
 
 def incomplete(outcome: str, problems: list[str], rows: list[dict], kept: list[dict]) -> str | None:

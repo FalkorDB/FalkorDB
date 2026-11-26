@@ -63,6 +63,10 @@ RATIO = 2.0
 #: still has to repeat a crossing.
 FLOOR_MS = {"p50_ms": 0.5, "p95_ms": 2.0}
 
+#: The open issue of a query that fails today, for the report only: it never
+#: changes a verdict (#4065). A query not listed has no issue known.
+ISSUES = {"IC3 completed": 4001}
+
 #: The sampling seed. Fixed, so two nights sample the same parameter rows.
 SEED = 1
 
@@ -297,24 +301,31 @@ class SideStats:
 def completion(query: str, cand: SideStats, base: SideStats) -> dict[str, Any] | None:
     """The `completed` finding, decided request by request.
 
-    The candidate regressed when it failed a request (a parameter row in a
-    given round) that the baseline finished. Failures on both sides with no
-    such request are `info`; the baseline failing a request the candidate
-    finished is an improvement.
+    A request (a parameter row in a given round) the candidate failed is a
+    regression, whether or not the baseline failed too (#4065). The release
+    gate counts it only when the baseline finished that request. The baseline
+    failing a request the candidate finished is an improvement.
     """
 
     def only(a: SideStats, b: SideStats) -> list[Key]:
         return sorted(a.failed_keys & b.ok_keys)
 
+    introduced = None
     if only(cand, base):
         status, c, b = "regression", 0, 1
-    elif cand.failed_keys and base.failed_keys:
-        status, c, b = "info", 0, 0
+    elif cand.failed_keys:
+        # failed where the baseline failed too, or on requests it never ran: the older rule
+        # did not count either; the baseline breaks it too only on the same request
+        status, c, b = "regression", 0, 0 if cand.failed_keys & base.failed_keys else 1
+        introduced = False
     elif only(base, cand):
         status, c, b = "improvement", 1, 0
     else:
         return None
-    return kit.finding(f"{query} completed", "completed", c, b, status, direction="lower_is_worse")
+    f = kit.finding(f"{query} completed", "completed", c, b, status, direction="lower_is_worse")
+    if introduced is not None:
+        f[kit.INTRODUCED] = introduced
+    return f
 
 
 def side_stats(samples: list[Sample]) -> SideStats:
@@ -445,10 +456,8 @@ def compare_rows(query: str, cand: SideStats, base: SideStats) -> RowCheck:
     # a warm-up that returned rows does not make empty rounds worth timing.
     if timed and all(base.rows[k] == 0 for k in timed):
         out.empty = True
-        name = f"{query} returns rows"
-        out.findings.append(
-            kit.finding(name, "invariant", 0, 0, "info", direction="lower_is_worse")
-        )
+        name = f"{query} returns rows"  # 0 rows on both sides: a note, not a broken check
+        out.findings.append(kit.finding(name, "rows", 0, 0, "info", direction="mismatch"))
     return out
 
 
@@ -466,8 +475,11 @@ def analyse(query: str, main: list[Sample]) -> QueryVerdict:
     if base.cannot_run:
         verdict.left_out = base.first_failure
         name = f"{query} completed"
+        # not compared, so not judged: a candidate that failed too shows null, not a 0 (#4065)
         verdict.findings.append(
-            kit.finding(name, "completed", cand.completed, 0, "info", direction="lower_is_worse")
+            kit.finding(
+                name, "completed", cand.completed or None, 0, "info", direction="lower_is_worse"
+            )
         )
         verdict.note = "left out: the baseline cannot run it"
         return verdict
@@ -476,9 +488,9 @@ def analyse(query: str, main: list[Sample]) -> QueryVerdict:
     if done is not None:
         verdict.findings.append(done)
         if done["status"] == "regression":
-            verdict.note = f"candidate {cand.first_failure}"
-        elif done["status"] == "info":
-            verdict.note = "did not finish on either side"
+            verdict.note = f"candidate {cand.first_failure}" + (
+                ", baseline too" if done["baseline"] == 0 else ""
+            )
 
     rows = compare_rows(query, cand, base)
     verdict.compared = rows.compared
@@ -557,8 +569,9 @@ def confirm(
     if rows.differ:
         out += [f for f in rows.findings if f["status"] == "regression"]
         return result
-    if out:
-        return result  # the candidate stopped finishing: that is the finding
+    if any(f.get(kit.INTRODUCED, True) for f in out):
+        return result  # the candidate stopped finishing where the baseline did not: that is it
+    # a failure the baseline shares (#4065) is a finding too, but the crossing is still judged
     if rows.empty:
         result.inconclusive = "the re-run returned no rows on either side"
         return result
@@ -684,6 +697,7 @@ class Check:
             summary=self.summary_line(kit.verdict(findings, problems), findings, problems),
             errors=problems,
             artifacts=self.artifacts,
+            issues=ISSUES,
         )
 
     def summary_line(
@@ -704,17 +718,6 @@ class Check:
             parts.append(
                 f"{', '.join(sorted(self.left_out, key=_qnum))} left out (baseline cannot run)"
             )
-        both = [
-            f["name"].split()[0]
-            for f in findings
-            if f["status"] == "info"
-            and f["metric"] in ("completed", "invariant")
-            and f["candidate"] == 0
-            and f["baseline"] == 0
-            and f["name"].split()[0] not in self.left_out
-        ]
-        if both:
-            parts.append(f"broken on both sides (not new): {', '.join(both)}")
         if verdict == "error":
             parts.append(f"error: {problems[0]}")
         elif verdict == "pass":
@@ -1182,9 +1185,15 @@ class Check:
             return  # a side that never started is reported where it failed
         cand, base = self.sides[CANDIDATE].down, self.sides[BASELINE].down
         if cand:
-            c, b, status = (0, 0, "info") if base else (0, 1, "regression")
             self.findings.append(
-                kit.finding("server up", "completed", c, b, status, direction="lower_is_worse")
+                kit.finding(
+                    "server up",
+                    "completed",
+                    0,
+                    0 if base else 1,
+                    "regression",
+                    direction="lower_is_worse",
+                )
             )
         if base:
             self.problem(f"the baseline server went down: {base}")
@@ -1197,7 +1206,8 @@ def _regressed(findings: list[dict[str, Any]]) -> bool:
 def describe(f: dict[str, Any]) -> str:
     """One finding in a few words, for the summary line."""
     if f["metric"] == "completed":
-        return f"{f['name'].removesuffix(' completed')} did not finish"
+        both = " (baseline too)" if f["baseline"] == 0 else ""
+        return f"{f['name'].removesuffix(' completed')} did not finish{both}"
     if f["metric"] == "rows":
         return f"{f['name']} {f['candidate']} vs {f['baseline']}"
     if f["ratio"] is not None:

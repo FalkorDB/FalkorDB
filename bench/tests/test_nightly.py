@@ -176,6 +176,39 @@ class Workspace(unittest.TestCase):
         return code, stdout.rstrip("\n"), path.read_text(encoding="utf-8")
 
 
+def broken_result(check: str, entries: list[tuple[str, bool, int | None]]) -> dict:
+    """A regression result whose pass/fail checks broke on the candidate (contract v1.14)."""
+    doc = result(
+        check,
+        "regression",
+        [
+            finding(name, "invariant", 0, 0 if too else 1, None, None)
+            | {"direction": "lower_is_worse"}
+            for name, too, _ in entries
+        ],
+    )
+    doc["broken"] = [
+        {"name": name, "baseline_too": too, "issue": issue, "introduced": not too}
+        for name, too, issue in entries
+    ]
+    return doc
+
+
+# The 25 Nov shards (run 45614251560) as #4065 judges them.
+SOAK_A = [
+    ("s03 in-load: updated_ann_miss_top10 == 0", True, 3886),
+    ("s03 range index finds chunks by cid (0, 1, mid, last)", True, 3512),
+    ("s03 range index finds every initial chunk", True, 3512),
+]
+SOAK_B = [
+    ("s10 after build person_age: indexed result == ground truth", True, 3512),
+    ("s10 Live: index-path count == scan-path count (same query)", False, 3095),
+    ("s11 CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)", True, 4051),
+    ("s10 a check with no issue", True, None),
+]
+BROKEN = nightly("red", [broken_result("soak-a", SOAK_A), broken_result("soak-b", SOAK_B)])
+
+
 # ---------------------------------------------------------------------------
 # One line in Chat, and the exit code.
 
@@ -220,6 +253,32 @@ class ChatLineAndExitCode(Workspace):
             line,
         )
         self.assertTrue(line.endswith("|new issue>"), line)
+
+    def test_red_names_every_pass_fail_check_broken_on_the_candidate(self):
+        """#4065: each with whether the baseline breaks it too, and its issue where one exists."""
+        _, line, _ = self.summary(BROKEN)
+        self.assertTrue(line.startswith("Perf nightly 2026-11-24: RED (soak-a, soak-b; broken on "
+                                        "the candidate: soak-a: s03 in-load: updated_ann_miss_top10"
+                                        " == 0 (baseline too: yes, #3886); "), line)  # fmt: skip
+        for check, entries in (("soak-a", SOAK_A), ("soak-b", SOAK_B)):
+            for name, too, issue in entries:
+                said = f"{check}: {name} (baseline too: {'yes' if too else 'no'}"
+                said += f", #{issue})" if issue else ")"
+                self.assertIn(said, line)
+        self.assertNotIn("more, see run", line)
+
+    def test_a_list_past_chats_limit_ends_with_how_many_more(self):
+        many = [(f"s10 check number {i} " + "x" * 60, True, 3512) for i in range(80)]
+        _, line, _ = self.summary(nightly("red", [broken_result("soak-b", many)]))
+        self.assertLessEqual(len(line), report.CHAT_CHARACTERS)
+        shown = line.count("(baseline too: yes, #3512)")
+        self.assertGreater(shown, 10)
+        self.assertIn(f"; +{80 - shown} more, see run), main@4c10889 vs 6.2.0", line)
+        self.assertTrue(line.endswith("|new issue>"), line)
+
+    def test_a_night_without_broken_lists_still_names_its_checks(self):
+        _, line, _ = self.summary(RED)  # an older result: no `broken`
+        self.assertNotIn("broken on the candidate", line)
 
     def test_error_names_the_checks_that_could_not_measure(self):
         code, line, _ = self.summary(ERROR)
@@ -376,6 +435,27 @@ class RunPage(Workspace):
         self.assertIn("- 2 more in the check's result.json", summary)
         self.assertNotIn("steady", summary)
         self.assertNotIn("None", summary)
+
+    def test_a_red_night_tables_every_broken_check_with_baseline_too_and_issue(self):
+        _, _, page = self.summary(BROKEN)
+        self.assertIn("| check | broken check | baseline too | issue |", page)
+        self.assertIn(
+            "| soak-b | s10 Live: index-path count == scan-path count (same query) | no "
+            "| [\\#3095](https://github.com/FalkorDB/FalkorDB/issues/3095) |",  # renders #3095
+            page,
+        )
+        self.assertIn("| soak-b | s10 a check with no issue | yes | none known |", page)
+        self.assertEqual(page.count("| soak-a | s03 "), 3)
+
+    def test_a_check_fixed_on_the_candidate_is_reported(self):
+        fixed = finding("s03 range index finds every initial chunk", "invariant", 1, 0, None, None,
+                        "improvement")  # fmt: skip
+        _, _, page = self.summary(nightly("green", [result("soak-a", "pass", [fixed])]))
+        self.assertIn(
+            "**Fixed on the candidate** (the baseline breaks it): soak-a: s03 range index finds "
+            "every initial chunk",
+            page,
+        )
 
     def test_only_a_red_night_ends_with_an_issue_link(self):
         _, _, summary = self.summary(RED)

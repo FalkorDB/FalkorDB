@@ -333,11 +333,10 @@ def long_phase(opts, info, run: Run, seed, t_end) -> list[dict]:
             )
     first = {(r["name"], r["side"]): r for r in run.runs["repros"]}
     for name in names:
-        c, b = first.get((name, "candidate"), {}), first.get((name, "baseline"), {})
+        c = first.get((name, "candidate"), {})
         if (
             c.get("pass") is False
             and not c.get("crashed")
-            and b.get("pass") is True
             and time_for(opts, 2 * REPRO_S, f"repro {name} repeat", run)
         ):
             for side in ("baseline", "candidate"):
@@ -380,10 +379,9 @@ def _by_seed(hours, side, replay):
 
 
 def _seeds_where(hours, check):
+    """Paired seeds whose first epoch broke `check` on the candidate, whatever the baseline did."""
     c, b = _by_seed(hours, "candidate", False), _by_seed(hours, "baseline", False)
-    return sorted(
-        s_ for s_ in c if s_ in b and c[s_].get(check) is False and b[s_].get(check) is True
-    )
+    return sorted(s_ for s_ in c if s_ in b and c[s_].get(check) is False)
 
 
 def _v(x):
@@ -391,20 +389,26 @@ def _v(x):
     return None if x in (None, NA) else int(x)
 
 
-def _long_timing(chk, vals, sus, c_rep, b_rep):
-    """A timing check across seeds: a candidate-only break counts only if its replay repeats it
-    (verdict.judge_repeat); otherwise seeds broken on both sides give info, baseline-only breaks an
-    improvement."""
+def _long_timing(chk, vals, sus, b_first, c_rep, b_rep):
+    """A timing check across seeds: a candidate break counts only if its replay repeats it
+    (verdict.judge_repeat), whatever the baseline did (#4065); otherwise baseline-only breaks are
+    an improvement. The baseline is 0 when it broke on every seed whose break repeated, so the
+    release gate (kit.introduced) counts the break when one such seed's baseline held or was not
+    measured, as the older rule did."""
     judged = [
-        verdict.judge_repeat(0, 1, _v(c_rep.get(s_, {}).get(chk)), _v(b_rep.get(s_, {}).get(chk)))
+        verdict.judge_repeat(
+            0,
+            _v(b_first.get(s_, {}).get(chk)),
+            _v(c_rep.get(s_, {}).get(chk)),
+            _v(b_rep.get(s_, {}).get(chk)),
+        )
         for s_ in sus
     ]
-    if any(st == "regression" for _, _, st in judged):
-        return 0, 1
+    repeated = [b for _c, b, st in judged if st == "regression"]
+    if repeated:
+        return 0, 0 if all(b == 0 for b in repeated) else 1 if 1 in repeated else None
     if any(c is None for c, _, _ in judged):
         return None, 0 if any(b is False for _, b in vals) else 1
-    if any(c == 0 for c, _, _ in judged) or any(c is False and b is False for c, b in vals):
-        return 0, 0
     if any(b is False and c is True for c, b in vals):
         return 1, 0
     # held wherever measured: a side held only if it was measured on every seed
@@ -472,14 +476,16 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
                 base = None if any(b is None for _, b in seen) else 1
         else:
             sus = _seeds_where(hours, chk)
-            cand, base = _long_timing(chk, vals, sus, c_rep, b_rep)
+            cand, base = _long_timing(chk, vals, sus, b_first, c_rep, b_rep)
             if cand is None:
-                unmeasured.append(f"long {chk}: a candidate-only break was not replayed")
+                unmeasured.append(f"long {chk}: a candidate break was not replayed")
             if sus:
-                notes.append(f"long {chk}: candidate-only on {len(sus)} of {len(vals)} seeds")
+                notes.append(
+                    f"long {chk}: broke on the candidate on {len(sus)} of {len(vals)} seeds"
+                )
         status = kit.correctness_status(cand, base)
-        if status == "ok" and any(c is False for c, _ in vals):
-            status = "info"
+        if status in ("ok", "improvement") and any(c is False for c, _ in vals):
+            status = "info"  # the candidate broke it too (not repeated): neither held nor fixed
         metric = "completed" if chk == "server_stays_up" else "invariant"
         findings.append(verdict._invariant(f"long {chk}", metric, cand, base, status))
     by = {}
@@ -510,11 +516,16 @@ def long_findings(hours, repro_runs) -> tuple[list[dict], list[str], list[str]]:
 
 
 def summarise(verdict_s, findings, notes, errors) -> str:
-    regs = [f["name"] for f in findings if f["status"] == "regression"]
-    both = [
+    def named(f):
+        if f["metric"] not in kit.PASS_FAIL_METRICS:
+            return f["name"]
+        return f"{f['name']} (baseline too: {'yes' if f['baseline'] == 0 else 'no'})"
+
+    regs = [named(f) for f in findings if f["status"] == "regression"]
+    fixed = [
         f["name"]
         for f in findings
-        if f["status"] == "info" and f["candidate"] == 0 and f["baseline"] == 0
+        if f["status"] == "improvement" and f["metric"] in kit.PASS_FAIL_METRICS
     ]
     parts = []
     if verdict_s == "regression":
@@ -522,12 +533,9 @@ def summarise(verdict_s, findings, notes, errors) -> str:
     elif verdict_s == "error":
         parts.append("could not measure: " + "; ".join(errors[:2]))
     else:
-        parts.append("no check broke on the candidate where it held on the baseline")
-    if both:
-        parts.append(
-            f"{len(both)} broken on both sides (not new): "
-            + ", ".join(b.replace("control ", "") for b in both)
-        )
+        parts.append("no check broke on the candidate")
+    if fixed:
+        parts.append("fixed on the candidate (the baseline breaks it): " + ", ".join(fixed))
     parts += notes
     return "; ".join(parts)  # kit.result makes it one line and cuts it
 

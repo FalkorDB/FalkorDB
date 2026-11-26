@@ -1666,11 +1666,214 @@ def test_every_job_runs_the_gate_workflows_own_commit():
     assert hardware["with"]["code_ref"] == "${{ inputs.code_ref }}"
 
 
-def test_a_call_concludes_as_a_gate_with_the_waivers():
+def test_the_gate_concludes_as_a_gate_with_the_waivers():
     conclude_step = workflow("perf-nightly.yml")["jobs"]["report"]["steps"][-1]
-    assert conclude_step["env"]["GATE_MODE"] == "${{ inputs.mode }}"
+    assert conclude_step["env"]["GATE"] == "${{ inputs.gate }}"
     assert "--waivers" in conclude_step["run"] and "--gate" in conclude_step["run"]
     assert "yq -o=json '.' bench/waivers.yaml" in conclude_step["run"]
+    declared = workflow("perf-nightly.yml")["on"]["workflow_call"]["inputs"]["gate"]
+    assert declared == {
+        "description": declared["description"],
+        "type": "boolean",
+        "default": False,
+    }
+    assert workflow("rust-pr.yml")["jobs"]["perf"]["with"]["gate"] is True
+
+
+# --- which caller gets what: the expressions, evaluated as GitHub does ------------
+
+
+def gha(text, context):
+    """A `${{ }}` expression's value, as GitHub Actions evaluates the subset these
+    workflows use: literals, context paths, !, ==, !=, &&, || (which return an
+    operand, JavaScript-like), parentheses and format(). Loose equality: strings
+    compare case-insensitively; other mixed types compare as numbers (null 0,
+    '' 0)."""
+    token = re.compile(r"\s*(\(|\)|,|!=|==|&&|\|\||!|'(?:[^']|'')*'|[A-Za-z_][\w.-]*|\d+)")
+    tokens, at = [], 0
+    while at < len(text.strip()):
+        m = token.match(text.strip(), at)
+        assert m, f"cannot read {text[at:]!r}"
+        tokens.append(m.group(1))
+        at = m.end()
+
+    def number(v):
+        if v is None or v == "":
+            return 0
+        if isinstance(v, bool):
+            return int(v)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return math.nan
+
+    def equal(a, b):
+        if isinstance(a, str) and isinstance(b, str):
+            return a.lower() == b.lower()
+        if type(a) is type(b):
+            return a == b
+        return number(a) == number(b)
+
+    def truthy(v):
+        return v not in (None, False, "", 0) and not (isinstance(v, float) and math.isnan(v))
+
+    def primary(i):
+        t = tokens[i]
+        if t == "(":
+            v, i = either(i + 1)
+            assert tokens[i] == ")"
+            return v, i + 1
+        if t == "!":
+            v, i = primary(i + 1)
+            return not truthy(v), i
+        if t.startswith("'"):
+            return t[1:-1].replace("''", "'"), i + 1
+        if t.isdigit():
+            return int(t), i + 1
+        if t in ("true", "false", "null"):
+            return {"true": True, "false": False, "null": None}[t], i + 1
+        if t == "format" and tokens[i + 1] == "(":
+            args, i = [], i + 2
+            while tokens[i] != ")":
+                v, i = either(i)
+                args.append(v)
+                i += tokens[i] == ","
+            fmt = args[0]
+            for n, v in enumerate(args[1:]):
+                fmt = fmt.replace(f"{{{n}}}", "" if v is None else str(v))
+            return fmt, i + 1
+        value = context
+        for part in t.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        return value, i + 1
+
+    def comparison(i):
+        a, i = primary(i)
+        while i < len(tokens) and tokens[i] in ("==", "!="):
+            op, (b, i) = tokens[i], primary(i + 1)
+            a = equal(a, b) if op == "==" else not equal(a, b)
+        return a, i
+
+    def both(i):
+        a, i = comparison(i)
+        while i < len(tokens) and tokens[i] == "&&":
+            b, i = comparison(i + 1)
+            a = b if truthy(a) else a
+        return a, i
+
+    def either(i):
+        a, i = both(i)
+        while i < len(tokens) and tokens[i] == "||":
+            b, i = both(i + 1)
+            a = a if truthy(a) else b
+        return a, i
+
+    value, end = either(0)
+    assert end == len(tokens), f"unread: {tokens[end:]}"
+    return value
+
+
+def interpolate(field, context):
+    """A workflow string with its `${{ }}` parts evaluated (null is '', booleans 'true'/'false')."""
+
+    def one(m):
+        v = gha(m.group(1), context)
+        return "" if v is None else str(v).lower() if isinstance(v, bool) else str(v)
+
+    return re.sub(r"\$\{\{(.*?)\}\}", one, field)
+
+
+@pytest.mark.parametrize(
+    "text, want",
+    [
+        ("inputs.mode && 'a' || 'b'", "b"),
+        ("inputs.mode == ''", True),  # null == '' (both 0)
+        ("format('x-{0}', github.run_id)", "x-7"),
+        ("!(github.event_name == 'SCHEDULE')", False),  # strings ignore case
+        ("inputs.gate", None),
+    ],
+)
+def test_the_expression_reader_follows_github(text, want):
+    assert gha(text, {"github": {"run_id": 7, "event_name": "schedule"}, "inputs": {}}) == want
+
+
+SECRET = "https://chat.example/hook"
+CALLERS = {
+    # a night: no inputs at all
+    "schedule": {"github": {"event_name": "schedule", "run_id": 1}, "inputs": {}},
+    # the release gate, from a version branch's merge queue (rust-pr.yml)
+    "gate": {
+        "github": {"event_name": "merge_group", "run_id": 2},
+        "inputs": {
+            "candidate_image": "ghcr.io/falkordb/falkordb-server:rc-mg-x-valkey",
+            "baseline_image": "",
+            "baseline_below": "6.3.0",
+            "mode": "nightly",
+            "gate": True,
+        },
+    },
+    # /perf (#4039): a call with `mode` and no `gate` (its default, false)
+    "/perf": {
+        "github": {"event_name": "issue_comment", "run_id": 3},
+        "inputs": {
+            "candidate_image": "ghcr.io/falkordb/falkordb-server:rc-pr-1-valkey",
+            "baseline_image": "",
+            "baseline_below": "",
+            "mode": "nightly",
+            "gate": False,
+        },
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "caller, chat, history, may_skip, gate_rule, group",
+    [
+        ("schedule", SECRET, True, "true", False, "perf-nightly-schedule"),
+        ("gate", "", False, "false", True, "perf-gate-2"),
+        ("/perf", "", False, "false", False, "perf-gate-3"),
+    ],
+)
+def test_each_caller_gets_its_switches(tmp_path, caller, chat, history, may_skip, gate_rule, group):
+    """A call (`mode` set) posts nothing to Chat, reads no earlier nights, never skips and
+    has its own concurrency group; only `gate: true` gets the release gate's rule (#4065)."""
+    import shutil
+
+    context = {**CALLERS[caller], "secrets": {"PERF_CHAT_WEBHOOK": SECRET}}
+    doc = workflow("perf-nightly.yml")
+    assert interpolate(doc["concurrency"]["group"], context) == group
+    report = {s.get("name"): s for s in doc["jobs"]["report"]["steps"]}
+    post = report["Post the night's result"]["env"]["PERF_CHAT_WEBHOOK"]
+    assert interpolate(post, context) == chat
+    resolve = {s.get("name") or s.get("id"): s for s in doc["jobs"]["resolve"]["steps"]}
+    assert (
+        interpolate(resolve["Decide whether tonight runs"]["env"]["MAY_SKIP"], context) == may_skip
+    )
+
+    (tmp_path / "bin").mkdir()
+    calls = tmp_path / "calls"
+    for tool in ("gh", "yq", "uv"):  # record each call; gh lists no earlier runs
+        fake_tool(tmp_path / "bin", tool, f'echo "{tool} $*" >> "{calls}"\n')
+    step = resolve["Download the earlier nightlies"]
+    env = {k: interpolate(str(v), context) for k, v in step["env"].items()}
+    env.update(BIN=str(tmp_path / "bin"), HISTORY=str(tmp_path / "history"), GITHUB_RUN_ID="9")
+    env.update(GITHUB_REPOSITORY="FalkorDB/FalkorDB")
+    run = run_step(step["run"], tmp_path, env)
+    assert run.returncode == 0, run.stderr
+    read = calls.exists() and "gh api" in calls.read_text()
+    assert read is history
+
+    if shutil.which("bash") is None:
+        pytest.skip("bash is not installed")
+    calls.unlink(missing_ok=True)
+    step = report["Fail the run unless the night passes"]
+    env = {k: interpolate(str(v), context) for k, v in step["env"].items()}
+    env.update(BIN=str(tmp_path / "bin"), RUNNER_TEMP=str(tmp_path))
+    (tmp_path / "bench").mkdir(exist_ok=True)
+    run = run_step(step["run"], tmp_path, env)
+    assert run.returncode == 0, run.stderr
+    conclude = next(line for line in calls.read_text().splitlines() if "conclude" in line)
+    assert (" --gate" in conclude) is gate_rule
 
 
 @pytest.mark.parametrize(
@@ -2399,7 +2602,7 @@ def test_a_query_no_side_answers_is_info_and_one_the_pr_broke_is_a_regression():
     findings, errors = cov_gate.judge(sources, failed)
     got = {(f["name"], f["metric"]): (f["candidate"], f["baseline"], f["status"]) for f in findings}
     assert got == {
-        ("geo", "completed"): (0, 0, "info"),  # not supported on this branch
+        ("geo", "completed"): (None, 0, "info"),  # not supported on this branch: not judged
         ("MATCH all", "completed"): (0, 1, "regression"),  # answers on the base, not on the PR
         ("reduce [reads]", "completed"): (1, None, "info"),  # not measured on the base
     }
@@ -2522,3 +2725,134 @@ def test_a_failure_on_one_side_does_not_excuse_a_missing_reading_on_the_other():
     sources = cov_sources({"y": 1.0}, {"x": 5000.0, "y": 1.0}, {"x": 1.0}, {})
     _, errors = cov_gate.judge(sources, {"base": {"x": "timed out"}})
     assert any("measured on base, not on pr" in e and "x" in e for e in errors)
+
+
+# --- #4065: a night is green only when every pass/fail check passes on the candidate ---
+
+
+FLAKY = "Live (under writes) index == scan during build/after"  # soak KNOWN_FLAKY, #3095
+
+
+def soak_result(tmp_path, mode, candidate, baseline):
+    """`bench soak`'s result for one s10 run a side recording these checks."""
+    import argparse
+
+    from falkorbench.soak import check as soak
+
+    def run(side, checks):
+        # a flake breaks some of the scenario's many checks of it, never all
+        details = {n: "1 of 40 runs failed" for n, held in checks.items() if not held}
+        return soak.Run("s10_schema_under_load", side, 1, True, checks=checks, details=details)
+
+    sched = soak.Schedule(
+        runs={
+            "s10_schema_under_load": {
+                "candidate": [run("candidate", candidate)],
+                "baseline": [run("baseline", baseline)],
+            }
+        }
+    )
+    args = argparse.Namespace(
+        candidate=CAND, baseline=BASE, mode=mode, check="soak-b", candidate_label=None,
+        baseline_label=None, candidate_commit=MAIN, baseline_commit=RELEASE,
+    )  # fmt: skip
+    doc = soak.finish(
+        args, tmp_path, "2026-11-24T00:05:00Z", ["s10_schema_under_load"], sched, None, [],
+        soak.MODES[mode],
+    )  # fmt: skip
+    assert contract.validate_result(doc) == []
+    return doc
+
+
+@pytest.mark.parametrize("mode", ["queue", "nightly"])  # --mode is the length, never the rule
+@pytest.mark.parametrize(
+    "case, candidate, baseline, status, night_code, gate_code, said",
+    [
+        ("candidate only", {"x": False}, {"x": True}, "red", 1, 1, "not waived: soak-b: s10 x"),
+        ("both sides", {"x": False}, {"x": False}, "red", 1, 0,
+         "not introduced (reported, the gate does not block): soak-b: s10 x (invariant 0 vs 0): "
+         "the baseline breaks it too"),
+        ("known flaky", {FLAKY: False}, {FLAKY: True}, "red", 1, 0,
+         f"not introduced (reported, the gate does not block): soak-b: s10 {FLAKY} "
+         "(invariant 0 vs 1): not new by its check's rule, #3095"),
+        ("baseline only", {"x": True}, {"x": False}, "green", 0, 0, "the night is green"),
+    ],
+)  # fmt: skip
+def test_a_pass_fail_break_on_the_candidate_is_red_and_the_gate_keeps_its_rule(
+    tmp_path, mode, case, candidate, baseline, status, night_code, gate_code, said
+):
+    """Red on a night whatever the baseline did or whichever issue exists; the release gate
+    blocks only what the candidate introduced (KNOWN_FLAKY included); a break on the baseline
+    only is green and reported as fixed."""
+    doc = soak_result(tmp_path, mode, candidate, baseline)
+    night = {"status": merge.status_of([doc]), "checks": [doc]}
+    assert night["status"] == status
+    assert merge.conclude(night, [], gate=False)[0] == night_code
+    code, lines = merge.conclude(night, [], gate=True)
+    assert code == gate_code
+    assert any(line.startswith(said) for line in lines), lines
+    if case == "baseline only":
+        assert "fixed on the candidate (the baseline breaks it): s10 x" in doc["summary"]
+
+
+def test_a_regression_the_candidate_introduced_beside_a_shared_one_still_fails_the_gate(tmp_path):
+    doc = soak_result(tmp_path, "nightly", {"x": False, "y": False}, {"x": False, "y": True})
+    night = {"status": merge.status_of([doc]), "checks": [doc]}
+    code, lines = merge.conclude(night, [], gate=True)
+    assert code == 1
+    assert [line.split(": ")[0] for line in lines[1:]] == ["not introduced (reported, the gate does not block)", "not waived"]  # fmt: skip
+
+
+def shared_break(name="s10 x", metric="invariant"):
+    return {
+        "name": name, "metric": metric, "candidate": 0, "baseline": 0, "ratio": None,
+        "threshold": None, "direction": "lower_is_worse", "status": "regression",
+    }  # fmt: skip
+
+
+def test_the_gate_ignores_broken_marks_on_a_night():
+    """A nightly run (`gate` false) never reads `broken`: every regression counts."""
+    doc = result("soak-b", "regression")
+    doc["findings"] = [shared_break()]
+    doc["broken"] = [{"name": "s10 x", "baseline_too": True, "issue": None, "introduced": False}]
+    assert contract.validate_result(doc) == []
+    assert decide(red_night(doc), gate=False)[0] == 1
+    assert decide(red_night(doc), gate=True)[0] == 0
+
+
+def test_a_mark_never_excuses_a_latency_row_of_the_same_name():
+    """Pokec names a query's completed row and its latency rows alike: the shared break is
+    excused at the gate, the p50 regression is not."""
+    doc = result("pokec", "regression")
+    p50 = {**doc["findings"][0], "name": "2-hop [5% writes]", "metric": "p50_ms"}
+    doc["findings"] = [p50, shared_break("2-hop [5% writes]", "completed")]
+    doc["broken"] = [
+        {"name": "2-hop [5% writes]", "baseline_too": True, "issue": None, "introduced": False}
+    ]
+    assert contract.validate_result(doc) == []
+    code, lines = decide(red_night(doc), gate=True)
+    assert code == 1
+    assert "not waived: pokec: 2-hop [5% writes] (p50_ms 3.0x)" in lines
+
+
+def test_marks_pair_with_findings_by_position_when_names_repeat(tmp_path):
+    """LDBC adds a second `ICn completed` from the re-run: each keeps its own gate answer."""
+    from falkorbench import kit
+
+    own = {**shared_break("IC3 completed", "completed"), "baseline": 1}
+    shared = {**shared_break("IC3 completed", "completed"), kit.INTRODUCED: False}
+    for order in ([shared, own], [own, shared]):
+        args = type("A", (), {"candidate": CAND, "baseline": BASE, "mode": "nightly",
+                               "candidate_label": None, "baseline_label": None,
+                               "candidate_commit": MAIN, "baseline_commit": RELEASE})()  # fmt: skip
+        doc = kit.result("ldbc", args, started="2026-11-24T00:05:00Z", findings=order, summary="s")
+        assert contract.validate_result(doc) == []
+        assert all(kit.INTRODUCED not in f for f in doc["findings"])
+        assert [b["introduced"] for b in doc["broken"]] == [
+            f.get(kit.INTRODUCED, True) for f in order
+        ]
+        code, lines = decide(red_night(doc), gate=True)
+        assert code == 1 and any(line.startswith("not waived: ldbc: IC3") for line in lines)
+    # a list that does not pair up excuses nothing
+    doc["broken"] = doc["broken"][:1]
+    assert merge.gate_marks(doc) == {}

@@ -330,6 +330,8 @@ def _soak() -> list[str]:
         f"(past {soak.P99_INFO_RATIO:g}x and {soak.P99_INFO_FLOOR_MS:g} ms, with "
         f"{soak.MIN_P99_SAMPLES:,} baseline samples)",
         *sorted(set(soak.KNOWN_FLAKY.values())),
+        f"unless the candidate broke it every time it was checked (at least "
+        f"{soak.ALWAYS_BROKEN_MIN_CHECKS} times) in every run",
     ]
 
 
@@ -636,3 +638,29 @@ def test_a_retry_goes_through_when_the_stored_run_never_had_the_missing_check(tm
 def test_a_missing_artifact_never_deletes_a_check_the_stored_run_has(tmp_path):
     done = run_store(tmp_path, ["nightly.json", "alpha/result.json"])
     assert done.returncode != 0 and "not replacing" in done.stdout + done.stderr
+
+
+def test_a_run_page_names_each_pass_fail_check_broken_on_the_candidate(tmp_path):
+    """#4065: the run page names every pass/fail check broken on the candidate, whether the
+    baseline breaks it too, and its issue where one exists."""
+    doc = examples.example("result-soak-both-broken.json")
+    doc["broken"][0]["issue"] = 3512
+    doc["findings"].insert(
+        1,
+        {**doc["findings"][0], "name": "s10 <b>x</b>", "baseline": 1},
+    )
+    doc["broken"].append(
+        {"name": "s10 <b>x</b>", "baseline_too": False, "issue": None, "introduced": True}
+    )
+    night = examples.nightly("red", [doc])
+    assert contract.validate_nightly(night) == []
+    data = tmp_path / "data"
+    store(data, "2026-11-25-200", night, {"trigger": "nightly", "scope": "main"})
+    page = dashboard.run_page(dashboard.load(data)[0], "data", data)
+    rows = re.findall(r"<tr><td>[^<]*(?:&lt;[^<]*)*</td><td>(?:yes|no)</td>.*?</tr>", page)
+    assert [cells(r) for r in rows] == [
+        ["s7 MERGE re-run creates no duplicate :Device", "yes", "#3512"],
+        ["s10 <b>x</b>", "no", "none known"],
+    ]
+    assert "https://github.com/FalkorDB/FalkorDB/issues/3512" in page
+    assert "<b>x</b>" not in page  # escaped
