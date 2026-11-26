@@ -1988,6 +1988,78 @@ class test_udf_javascript():
         self.env.assertEqual(v, None)
 
 
+    def test_traverse_self_loop_reports_start_node(self):
+        """
+        graph.traverse([a]) reports a when a is its own neighbour (self-loop).
+        """
+
+        script = """
+        falkor.register('t', function(n, d) {
+            return graph.traverse([n], {direction: d})[0].map(function(x) { return x.id; });
+        });
+        """
+        self.db.udf_load("lib_tsl", script)
+        self.graph.query("CREATE (a {id:0})-[:R]->(a), (a)-[:R]->(:B {id:1})")
+
+        for d in ['outgoing', 'incoming', 'both']:
+            res = self.graph.query(f"MATCH (a {{id:0}}) RETURN lib_tsl.t(a, '{d}')").result_set
+            expected = [0] if d == 'incoming' else [0, 1]
+            self.env.assertEqual(sorted(res[0][0]), expected)
+
+    def test_traverse_node_list_at_depth_two(self):
+        """
+        The start node is never reported by walking back to it: only a
+        self-loop (a depth-1 neighbour, as in C) reports it, once. Past depth 1
+        this is our own design (C ignores `distance` and has no maxDepth).
+        """
+
+        script = """
+        falkor.register('td', function(n, d) {
+            return graph.traverse([n], {direction: d, maxDepth: 2})[0].map(function(x) { return x.attributes.id; });
+        });
+        """
+        self.db.udf_load("lib_td", script)
+
+        # single edge 0->1: walking out and back over it must not report 0
+        self.graph.query("CREATE (:S {id:0})-[:R]->(:S {id:1})")
+        # cycle 0->1->0 (disjoint from the above)
+        self.graph.query("CREATE (a:C {id:10})-[:R]->(b:C {id:11})-[:R]->(a)")
+        # self-loop plus an edge out: the start is reported once, at depth 1
+        self.graph.query("CREATE (a:L {id:20})-[:R]->(a), (a)-[:R]->(:L {id:21})")
+
+        cases = {
+            'S': {'outgoing': [1], 'incoming': [], 'both': [1]},
+            'C': {'outgoing': [11], 'incoming': [11], 'both': [11]},
+            'L': {'outgoing': [20, 21], 'incoming': [20], 'both': [20, 21]},
+        }
+        start = {'S': 0, 'C': 10, 'L': 20}
+        for lbl, per_dir in cases.items():
+            for d, expected in per_dir.items():
+                res = self.graph.query(
+                    f"MATCH (a:{lbl} {{id:{start[lbl]}}}) RETURN lib_td.td(a, '{d}')").result_set
+                self.env.assertEqual(sorted(res[0][0]), expected, message=f"{lbl} {d}: {res}")
+
+    def test_traverse_edges_not_reemitted_when_cycle_returns_to_start(self):
+        """
+        Re-admitting the start node to the frontier must not make
+        returnType 'edges' emit an edge twice (self-loop, a->b->a cycle).
+        """
+
+        script = """
+        falkor.register('te', function(n, d) {
+            return graph.traverse([n], {direction: d, returnType: 'edges', maxDepth: 3})[0].map(function(e) { return e.id; });
+        });
+        """
+        self.db.udf_load("lib_tre", script)
+        self.graph.query("CREATE (a {id:7})-[:R]->(a), (a)-[:R]->(b:B), (b)-[:R]->(a)")
+        edge_count = self.graph.query("MATCH (a {id:7})-[r]->() RETURN count(r)").result_set[0][0]
+        self.env.assertEqual(edge_count, 2)
+
+        for d in ['outgoing', 'incoming', 'both']:
+            res = self.graph.query(f"MATCH (a {{id:7}}) RETURN lib_tre.te(a, '{d}')").result_set[0][0]
+            self.env.assertEqual(len(res), len(set(res)), message=f"{d}: {res}")
+            self.env.assertEqual(len(res), 3, message=f"{d}: {res}")
+
     def test_forged_entity_by_prototype_tricks(self):
         """
         An object that shares a real entity's prototype or constructor is still

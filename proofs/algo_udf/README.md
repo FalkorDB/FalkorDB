@@ -74,7 +74,7 @@ Yes. The algorithms run on a compact adjacency matrix (index 0..n) and map resul
 | `lifecycle_frees_once` | The LAGraph adjacency handle is freed exactly once on every path, success or failure | `AlgoGlue.lean` |
 | `fromJs_frames`, `toJs_frames`, `fromJs_past_cap`, `toJs_past_cap` | UDF value conversion is depth-bounded in both directions; past the cap it errors | `MarshalCap.lean` |
 | `float_rt_iff`, `neg_zero_rt`, `vecf32_inf_rt`, `constructor_key_roundtrips` | Values round-trip through JavaScript | `MarshalThm.lean`, `Marshal.lean` |
-| `traverse_nodes_nodup`, `traverse_both_edges_nodup` | `graph.traverse` never lists a node twice, nor an edge twice in `both` mode | `UdfTraverse.lean` |
+| `traverse_nodes_nodup`, `fixed3253_traverse_self_neighbour`, `traverse_both_edges_nodup` | `graph.traverse` never lists a node twice, nor an edge twice in `both` mode; it lists the start node exactly when the start is its own neighbour (#3253) | `UdfTraverse.lean` |
 | `deserialize_atomic`, `serialize_roundtrip` | The UDF repository saves and loads as a unit | `UdfRepoOps.lean` |
 | `validate_runtime_same_globals` | The validation context and the runtime context define the same globals, `graph` included | `UdfGlobals.lean` |
 
@@ -93,7 +93,6 @@ Every bug was confirmed against live Rust and C servers (see [`../FINDINGS.md`](
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| 15 | `traverse_drops_self_neighbour` | `graph.traverse([a])` leaves `a` out when it is its own neighbour: Rust `[1]`, C `[0,1]` (W5-udf-2) | **Open** |
 | 17 | `empty_lib_name_mismatch` | `GRAPH.UDF LOAD ""` is accepted, but its functions can never be called (registered as `.f`, stored as `f`); C refuses the empty name (W5-udf-4) | **Open** |
 | 18 | `bug3380_default_size_16`, `bug3380_seedless_deterministic`, `bug3380_seeded_fewer_sources` (`Betweenness.lean`) | betweenness defaults to 16 sources (C 32), never randomises without a seed (C seeds from the clock), and drops colliding seeded draws: `samplingSize:20, samplingSeed:7` on 40 nodes uses 15 sources (C 20). Properties `DefaultSizeMatchesC`, `SeedlessRunVaries`, `SourcesExact` | **Open** (#3380) |
 
