@@ -166,8 +166,11 @@ def build():
         sc = scores["scenarios"].get(scn, {})
         dirs = run_dirs(scn, sc)
         sm = {e: jl(dirs[e] / "summary.json") if dirs[e] else None for e, _, _ in ENG}
-        for e in crashes:
-            crashes[e] += bool((sm[e] or {}).get("server_log_crash_markers"))
+        crashes["rust"] += bool((sm["rust"] or {}).get("server_log_crash_markers"))
+        # a C run that crashed is no baseline (score.py drops it), but it still crashed: count
+        # this campaign's C run as well as the one the scores compare with
+        c_runs = (sm["c"], jl(cdir(scn) / "summary.json"))
+        crashes["c"] += any((c or {}).get("server_log_crash_markers") for c in c_runs)
         r = sm["rust"] or {}
         mon_r, mon_c = r.get("monitor", {}), (sm["c"] or {}).get("monitor", {})
         crit = len(sc.get("critical_failures", []))

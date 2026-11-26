@@ -1651,6 +1651,18 @@ def test_the_soak_report_says_not_blocked_when_nothing_blocks(soak_report):
     assert "20f9a45ee" not in page
 
 
+def test_the_soak_report_counts_a_c_crash_the_scores_left_out(soak_report):
+    """A C run that crashed is no baseline (score.py drops it), but the crash tile counts it."""
+    full, build = soak_report
+    _soak_run(full, "s01_social_feed-rust", {})
+    _soak_run(
+        full, "s01_social_feed-c", {"server_log_crash_markers": ["crashed by signal"]}, rc=134
+    )
+    scores = {"scenarios": {"s01_social_feed": _scored(90.0, c=None)}, "blocked_by": []}
+    page = build(scores)
+    assert "<b>0 / 1</b><span>scenarios that crashed: Rust / C</span>" in page
+
+
 def test_the_soak_report_names_what_blocks_the_release(soak_report):
     _, build = soak_report
     findings = [
@@ -1938,8 +1950,12 @@ def test_soak_scoring_blocks_on_an_unreadable_summary_and_waits_for_c(tmp_path, 
     (_soak_run(tmp_path, "s01_cut-rust", None, rc=124) / "summary.json").write_text('{"ops": {')
     _soak_run(tmp_path, "s02_waiting-rust", {})
     _soak_run(tmp_path, "s02_waiting-c", {}, rc=None)  # the C baseline is still running
-    _soak_run(tmp_path, "s03_bad_c-rust", {"monitor": {"rss_max_mb": 150}})
-    (_soak_run(tmp_path, "s03_bad_c-c", None) / "summary.json").write_text("{")
+    rust = _soak_run(tmp_path, "s03_bad_c-rust", {"monitor": {"rss_max_mb": 150}})
+    c = _soak_run(tmp_path, "s03_bad_c-c", None)
+    (c / "summary.json").write_text("{")
+    for run, rss in ((rust, 100), (c, 200)):  # RSS at equal data, which C ratios also read
+        rows = [f"0,1,{rss},0,0,0,0,ingest", f"1,1,{rss},0,0,0,0,soak"]
+        (run / "monitor.csv").write_text("\n".join(["t,cpu,rss,a,b,c,d,phase", *rows]) + "\n")
     scores = _score(tmp_path, monkeypatch)
     assert scores["blocked_by"] == ["s01_cut"]
     assert scores["failed_runs"] == {"s01_cut": "s01_cut-rust exited 124"}
@@ -1947,4 +1963,17 @@ def test_soak_scoring_blocks_on_an_unreadable_summary_and_waits_for_c(tmp_path, 
     bad_c = scores["scenarios"]["s03_bad_c"]
     assert bad_c["rss_vs_c"] is None
     assert "s03_bad_c-c left no readable summary.json: scored without C ratios" in bad_c["notes"]
+    assert bad_c["c_run"] is None
     assert list(scores["scenarios"]) == ["s03_bad_c"]
+
+
+def test_soak_scoring_takes_a_same_window_baseline_while_the_short_one_reruns(
+    tmp_path, monkeypatch
+):
+    _soak_run(tmp_path, "s12_iot-rust", {"monitor": {"rss_max_mb": 150}})
+    _soak_run(tmp_path, "s12_iot-c", {}, rc=None)  # the short C baseline runs again
+    _soak_run(tmp_path, "s12_iot-c-samewindow", {"monitor": {"rss_max_mb": 100}})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["pending"] == []
+    assert scores["scenarios"]["s12_iot"]["c_run"] == "s12_iot-c-samewindow"
+    assert scores["scenarios"]["s12_iot"]["rss_vs_c"] == 1.5

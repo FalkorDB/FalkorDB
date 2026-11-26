@@ -218,10 +218,10 @@ def main():
             failed.setdefault(name, f"{rdir.name} left no readable summary.json")
             continue
         base = [root / f"{name}-c", root / f"{name}-c@jul-master"]  # C re-run in progress: the old one meanwhile
-        if not any(finished(d) for d in base):
-            pending.append(name)  # score only once the C baseline has finished
-            continue
         same = [root / f"{name}-c-samewindow", root / f"{name}-c-samewindow@jul-master"]
+        if not any(finished(d) for d in base + same):
+            pending.append(name)  # score only once a C baseline has finished
+            continue
         # a C run that timed out or crashed is no baseline: the first that exited 0, the
         # same-size C rerun before the short baseline
         cdir = next((d for d in same if succeeded(d)), None)
@@ -234,8 +234,9 @@ def main():
                      and (o.get("build") != "jul-master" or not (cdir / ".commit").exists()) for o in OVERRIDES):
                 cdir = None  # C baseline not comparable: score without C ratios
         c = read_summary(cdir / "summary.json") if cdir else None
-        if cdir and c is None:
+        if cdir and c is None:  # no C ratios at all: not even RSS from its monitor.csv
             notes.append(f"{cdir.name} left no readable summary.json: scored without C ratios")
+            cdir = None
         res[name] = score(rust, c, rdir, cdir)
         if name in failed:
             notes.append(f"run failed: {failed[name]}")
