@@ -590,6 +590,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphblas"
+version = "0.1.0"
+dependencies = [
+ "graphblas-sys",
+]
+
+[[package]]
 name = "graphblas-sys"
 version = "0.1.0"
 dependencies = [

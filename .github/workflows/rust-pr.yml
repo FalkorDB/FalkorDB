@@ -271,6 +271,13 @@ jobs:
         # --workspace, so graph's tests and build script are linted too.
         run: |
           CXX=clang++-23 cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test the crates under crates/
+        # The engine depends on graphblas-sys alone, so `cargo test -p graph`
+        # never builds the typed crates. Every package under crates/ is tested
+        # here; the directory name is the package name.
+        run: |
+          packages=$(for manifest in crates/*/Cargo.toml; do printf -- '-p %s ' "$(basename "$(dirname "$manifest")")"; done)
+          CXX=clang++-23 cargo test --locked $packages
       - name: Format (native-deps)
         run: cargo fmt --all --check --manifest-path native-deps/Cargo.toml
       - name: Lint (native-deps)

@@ -1,0 +1,16 @@
+[package]
+name = "graphblas"
+version = "0.1.0"
+edition = "2024"
+description = "A thin, typed, safe layer over the GraphBLAS C API"
+license = "SSPL-1.0"
+repository = "https://github.com/FalkorDB/FalkorDB"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+graphblas-sys = { path = "../graphblas-sys" }
+
+[dev-dependencies]
