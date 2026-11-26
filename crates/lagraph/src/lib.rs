@@ -16,7 +16,9 @@
 //!   `LAGraph_CheckGraph` rejects a matrix held by column, and GraphBLAS
 //!   holds every `n x 1` matrix by column, the `1 x 1` matrix of a one-node
 //!   graph included. [`Graph::new`] pins the adjacency matrix and
-//!   [`Graph::cache_transpose`] pins the transpose LAGraph allocates.
+//!   [`Graph::cache_transpose`] pins the transpose LAGraph allocates. A
+//!   matrix an algorithm builds for itself is out of reach: [`max_flow`]
+//!   fails on a one-node graph for that reason.
 //! * **A graph is checked when it is built**, not when the first algorithm
 //!   runs on it.
 //! * **An algorithm does not compute what it needs behind the caller's
@@ -27,6 +29,13 @@
 //!   outputs; each is adopted as the `Vector<T>` its documentation states
 //!   only after its element type has been compared with `T`'s.
 //!
+//! # Layout
+//!
+//! Everything is exported at the root. [`page_rank`], [`betweenness`] and
+//! [`connected_components`] wrap LAGraph's stable algorithms; the rest wrap
+//! functions from its `experimental` folder, whose contract is whatever the
+//! C source says at the pinned revision.
+//!
 //! # Order of initialisation
 //!
 //! [`init`] alone, in place of [`graphblas::init`]: `LAGr_Init` starts
@@ -34,21 +43,23 @@
 //! is ever shut down; both stay up until the process exits.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]
-#![allow(
-    clippy::redundant_pub_crate,
-    reason = "`pub(crate)` marks what is internal in a crate whose `pub` items are its API"
-)]
 
 /// The generated bindings, reachable from inside this crate only.
 pub(crate) use lagraph_sys as sys;
 
 mod algorithm;
 mod error;
+mod experimental;
 mod graph;
 mod init;
 mod output;
 
 pub use algorithm::{betweenness, connected_components, page_rank};
 pub use error::{Error, Result, Status};
+pub use experimental::{
+    BreadthFirstSearch, EdgeWeight, FlowOutputs, HarmonicCentrality, MaxFlow, NodeWeight,
+    SpanningForest, Traversal, breadth_first_search_extended,
+    community_detection_label_propagation, harmonic_centrality, max_flow, minimum_spanning_forest,
+};
 pub use graph::{Graph, Kind};
 pub use init::{init, is_initialized};
