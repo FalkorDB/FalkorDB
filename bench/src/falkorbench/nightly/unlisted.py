@@ -151,9 +151,13 @@ def candidates(repo: str, now: datetime, days: int, run: store.Runner) -> list[C
 
 def named_images(repo: str, run_id: str, run: store.Runner) -> bool:
     """Whether a dispatch named its own images: its perf-plan's dispatch.json says so, as true.
-    A dispatch that named none is a night on the public dashboard; one with no record is neither."""
+    A dispatch that named none is a night on the public dashboard; one with no record is neither.
+    A record that did not download raises: the run is not rebuilt, so it keeps its last page."""
     with tempfile.TemporaryDirectory() as scratch:
-        if store.download(repo, run_id, "perf-plan", Path(scratch) / "plan", run) != "ok":
+        got = store.download(repo, run_id, "perf-plan", Path(scratch) / "plan", run)
+        if got == "failed":
+            raise store.StoreError(f"perf-plan of run {run_id} did not download")
+        if got != "ok":
             return False
         try:
             record = json.loads(

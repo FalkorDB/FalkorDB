@@ -2217,6 +2217,29 @@ def test_a_run_not_rebuilt_keeps_the_page_the_last_deploy_had(tmp_path, actions,
     assert not (site / "pr" / "3900").exists()
 
 
+def test_a_manual_run_whose_plan_did_not_download_keeps_its_last_page(tmp_path, actions, no_wait):
+    """Its perf-plan (which says whether it named images) failed to download: that is no answer,
+    so the run is not taken for a public night and dropped; it keeps the page it had."""
+    prev = previous_site(tmp_path)
+    (prev / "manual/2026-11-25-601").mkdir(parents=True)
+    (prev / "manual/2026-11-25-601/index.html").write_text("old page manual/2026-11-25-601")
+
+    def failing(argv, **kwargs):
+        if "/runs/601/artifacts?name=perf-plan" in argv[2]:
+            return subprocess.CompletedProcess(argv, 1, "", "HTTP 502")
+        return actions(argv, **kwargs)
+
+    site = tmp_path / "site"
+    made = nightly_unlisted.build(site, "o/r", 30, NOW, failing, previous=prev)
+    assert sorted(p.relative_to(site).as_posix() for p in made) == [
+        "manual/2026-11-25-601/index.html",
+        "pr/3967/2026-11-20-501/index.html",
+    ]
+    assert (
+        site / "manual/2026-11-25-601/index.html"
+    ).read_text() == "old page manual/2026-11-25-601"
+
+
 def test_out_of_time_every_run_keeps_its_last_page(tmp_path, actions, no_wait):
     prev = previous_site(tmp_path)
     site = tmp_path / "site"
