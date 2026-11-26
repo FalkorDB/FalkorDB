@@ -24,6 +24,7 @@ import socket
 import subprocess
 import threading
 import time
+import types
 from argparse import Namespace
 from pathlib import Path
 
@@ -1749,6 +1750,12 @@ def test_a_background_save_still_running_when_the_wait_ends_is_unfinished(monkey
     ]
     clock = itertools.chain([0.0, 0.0], itertools.repeat(301.0))  # one poll, then past 300 s
     assert _bgsave_events(saving, _NeverSet(), monkeypatch, clock) == [
+        ("bgsave_stuck", "still saving after 300 s")
+    ]
+    # the epoch ends just after the 300 s limit did: the limit ended the wait, so stuck
+    late_stop = types.SimpleNamespace(wait=lambda timeout: False, is_set=lambda: True)
+    clock = itertools.chain([0.0, 0.0], itertools.repeat(301.0))
+    assert _bgsave_events(saving, late_stop, monkeypatch, clock) == [
         ("bgsave_stuck", "still saving after 300 s")
     ]
     done = {"rdb_bgsave_in_progress": 0, "rdb_last_bgsave_status": "ok"}

@@ -936,12 +936,16 @@ def bgsave(r, stop, ev):
     r.execute_command("BGSAVE")
     t0 = now()
     info = {}
+    stopped = False  # the epoch's end, not the 300 s limit, ended the wait
     while now() - t0 < 300:
         info = r.info("persistence")
-        if not info.get("rdb_bgsave_in_progress") or stop.wait(0.5):
+        if not info.get("rdb_bgsave_in_progress"):
+            break
+        if stop.wait(0.5):
+            stopped = True
             break
     if info.get("rdb_bgsave_in_progress"):
-        if stop.is_set():
+        if stopped:
             ev("bgsave_unfinished", seconds=round(now() - t0, 1), why="the epoch ended")
         else:
             ev("bgsave_stuck", seconds=round(now() - t0, 1), why="still saving after 300 s")
