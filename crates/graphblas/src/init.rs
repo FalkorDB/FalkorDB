@@ -221,11 +221,13 @@ pub fn set_jit(control: JitControl) -> Result<()> {
 /// What `wait` finishes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitMode {
-    /// `GrB_COMPLETE`, which SuiteSparse treats as a no-op: pending work may
-    /// remain, and the object is not yet safe to read from several threads.
+    /// `GrB_COMPLETE`. The specification's "computed, but the storage may
+    /// still be lazy"; SuiteSparse does **nothing** for it, so pending
+    /// tuples and zombies stay. It does not make an object safe to share.
     Complete,
-    /// `GrB_MATERIALIZE`: finish pending work and build the final storage,
-    /// after which the object is safe to read from several threads.
+    /// `GrB_MATERIALIZE`: finish all pending work and build the
+    /// hyper-hash. After it the object can be an input on several threads;
+    /// [`Frozen`](crate::Frozen) is the typed form of that.
     Materialize,
 }
 

@@ -12,12 +12,13 @@
 use std::{
     ffi::{CStr, c_char},
     os::raw::c_int,
-    sync::Once,
+    sync::{Barrier, Once, mpsc},
+    thread,
 };
 
 use crate::{
-    AsBool, Desc, Error, ErrorKind, Indices, JitControl, Lazy, Mask, Matrix, Output, Scalar,
-    Sparsity, Vector,
+    AsBool, Desc, Error, ErrorKind, Frozen, Indices, JitControl, Lazy, Mask, Matrix, Output,
+    Scalar, Sparsity, Vector,
     init::{init, is_initialized, set_jit},
     mask::{MaskMode, descriptor},
     matrix, mxm, mxv,
@@ -26,8 +27,6 @@ use crate::{
     types::{GrbType, Pattern},
     vector, vxm,
 };
-use std::sync::mpsc;
-use std::thread;
 
 fn setup() {
     static ONCE: Once = Once::new();
@@ -1363,4 +1362,147 @@ fn a_semiring_can_multiply_with_an_operator_that_reads_no_values() {
     let semiring: Semiring<Pattern, Pattern, bool> =
         Semiring::new(&LOR_MONOID_BOOL, &PAIR_BOOL).unwrap();
     assert!(!semiring.add().identity());
+}
+
+#[test]
+fn freeze_does_no_work_and_the_first_read_finishes_it() {
+    setup();
+    let m = matrix::<u64>(4, 4, &[(0, 1, 7), (2, 3, 9)]);
+    assert!(m.is_pending(), "set_element left pending tuples");
+
+    let frozen = m.freeze();
+    assert!(!frozen.is_materialized());
+
+    let m = frozen.read().unwrap();
+    assert!(frozen.is_materialized());
+    assert!(!m.is_pending());
+    assert_eq!(entries(m), [(0, 1, 7), (2, 3, 9)]);
+}
+
+#[test]
+fn a_frozen_matrix_is_an_input_and_a_mask_on_several_threads() {
+    const READERS: usize = 8;
+    setup();
+    // A path 0 -> 1 -> 2 -> 3, read while its inserts are still pending.
+    let edges = matrix::<bool>(4, 4, &[(0, 1, true), (1, 2, true), (2, 3, true)]).freeze();
+    let seen = vector::<bool>(4, &[(1, true)]).freeze();
+
+    let start = Barrier::new(READERS);
+    thread::scope(|scope| {
+        for _ in 0..READERS {
+            let edges = edges.clone();
+            let (seen, start) = (&seen, &start);
+            scope.spawn(move || {
+                start.wait();
+                let edges = edges.read().unwrap();
+                let seen = seen.read().unwrap();
+
+                let mut two_hops = Matrix::<bool>::new(4, 4).unwrap();
+                mxm(
+                    &mut two_hops,
+                    Mask::structural_complement(edges),
+                    None,
+                    &ANY_PAIR_BOOL,
+                    edges,
+                    edges,
+                    Desc::NONE,
+                )
+                .unwrap();
+                assert_eq!(entries(&two_hops), [(0, 2, true), (1, 3, true)]);
+
+                let mut next = Vector::<bool>::new(4).unwrap();
+                vxm(
+                    &mut next,
+                    Mask::structural_complement(seen),
+                    None,
+                    &ANY_PAIR_BOOL,
+                    seen,
+                    edges,
+                    Desc::NONE,
+                )
+                .unwrap();
+                assert_eq!(vector_entries(&next), [(2, true)]);
+
+                assert_eq!(edges.extract_element(1, 2).unwrap(), Some(true));
+                assert_eq!(edges.nvals(), 3);
+            });
+        }
+    });
+}
+
+#[test]
+fn a_frozen_hypersparse_matrix_is_read_through_its_hyper_hash() {
+    const READERS: usize = 8;
+    // More non-empty rows than the 1024 at which GraphBLAS builds, and then
+    // looks rows up through, the hyper-hash.
+    const ROWS: GrB_Index = 5000;
+    const SIDE: GrB_Index = 1 << 40;
+    setup();
+    // Row `i << 20` points at column `i`.
+    let mut wide = Matrix::<bool>::new(SIDE, SIDE).unwrap();
+    for i in 0..ROWS {
+        wide.set_element(i << 20, i, true).unwrap();
+    }
+    let wide = wide.freeze();
+
+    let start = Barrier::new(READERS);
+    thread::scope(|scope| {
+        for _ in 0..READERS {
+            let (wide, start) = (&wide, &start);
+            scope.spawn(move || {
+                start.wait();
+                let wide = wide.read().unwrap();
+                assert_eq!(wide.sparsity(), Sparsity::Hypersparse);
+                for i in (0..ROWS).step_by(97) {
+                    assert_eq!(wide.extract_element(i << 20, i).unwrap(), Some(true));
+                    assert_eq!(wide.extract_element((i << 20) + 1, i).unwrap(), None);
+                }
+                // Two hops need a row that is also a column: only row 0.
+                let mut two_hops = Matrix::<bool>::new(SIDE, SIDE).unwrap();
+                mxm(
+                    &mut two_hops,
+                    Mask::NONE,
+                    None,
+                    &ANY_PAIR_BOOL,
+                    wide,
+                    wide,
+                    Desc::NONE,
+                )
+                .unwrap();
+                assert_eq!(entries(&two_hops), [(0, 0, true)]);
+            });
+        }
+    });
+}
+
+#[test]
+fn thaw_gives_the_matrix_back_for_writing() {
+    setup();
+    let frozen = matrix::<u64>(2, 2, &[(0, 0, 1)]).freeze();
+    let reader = frozen.clone();
+    assert_eq!(reader.read().unwrap().nvals(), 1);
+
+    // Another clone still reads: copy to write.
+    let frozen = frozen.try_thaw().expect_err("a reader holds a clone");
+    let mut copy = frozen.read().unwrap().dup().unwrap();
+    copy.set_element(1, 1, 2).unwrap();
+    assert_eq!(
+        reader.read().unwrap().nvals(),
+        1,
+        "the frozen one is untouched"
+    );
+    assert_eq!(copy.nvals(), 2);
+
+    drop(reader);
+    let mut m = frozen.try_thaw().expect("the last clone");
+    m.set_element(1, 0, 3).unwrap();
+    assert_eq!(entries(&m), [(0, 0, 1), (1, 0, 3)]);
+}
+
+/// `Frozen` is the only shareable form: the bounds, checked by the compiler.
+#[test]
+fn only_the_frozen_form_is_sync() {
+    fn shareable<S: Send + Sync + Clone>() {}
+    shareable::<Frozen<Matrix<u64>>>();
+    shareable::<Frozen<Vector<Edge>>>();
 }
