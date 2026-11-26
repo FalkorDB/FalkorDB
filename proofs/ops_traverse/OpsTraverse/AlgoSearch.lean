@@ -6,13 +6,16 @@ import OpsTraverse.Dijkstra
 import OpsTraverse.DijkstraNat
 import OpsTraverse.Enum
 import OpsTraverse.EnumSpec
+import OpsTraverse.BfsSingle
 /-
-# The three path searches of `algo_procedures.rs`, instantiated at the Rust data
+# The four path searches of `algo_procedures.rs`, instantiated at the Rust data
 
-`BfsFind.bfsFindBound`, `Dijkstra.dijkstra` and `Enum.enumerate` read the graph through a `Step`; here
+`BfsFind.bfsFindBound`, `Dijkstra.dijkstra`, `BfsSingle.bfsSingle` and `Enum.enumerate` read the graph through a `Step`; here
 the step is `node_successors` (`AlgoPaths.successors` over the node's relationships
 `g.get_node_relationships_by_type(node, rel_types, direction)`, `rels node`), so a walk over it is a
 walk over edges of the requested types that leave each node in the requested direction.
+`bfs_single_path` also walks backwards from the target: `relsRev node` is
+`g.get_node_relationships_by_type(node, rel_types, reverse)`.
 `record_found_path` is `RecordFound.record` over `Found` triples. `RunAlgo.runAlgo_ok_good` then gives
 the end-to-end statement for `run_path_algo`.
 
@@ -21,7 +24,7 @@ standing for the query timeout / memory cap that bounds the real loops.
 -/
 namespace OpsTraverse.AlgoSearch
 open OpsTraverse.Search OpsTraverse.AlgoPaths OpsTraverse.RecordFound OpsTraverse.RunAlgo
-  OpsTraverse.BfsFind OpsTraverse.Dijkstra OpsTraverse.Enum OpsTraverse.EnumSpec
+  OpsTraverse.BfsFind OpsTraverse.Dijkstra OpsTraverse.Enum OpsTraverse.EnumSpec OpsTraverse.BfsSingle
 
 variable {F : Type}
 
@@ -65,6 +68,50 @@ theorem walk_edges (dir : Dir) (rels : Nat → List (Nat × Nat × Nat)) :
       have := (mem_stepOf dir rels u far id s d).mp hx
       exact ⟨u, by simpa using this.1, by simpa using this.2⟩
     | succ i => exact ih x.1 w hw i (by simpa using hi)
+
+/-- `bfs_single_path`'s `reverse` of `config.rel_direction`. -/
+def revDir : Dir → Dir
+  | .outgoing => .incoming
+  | .incoming => .outgoing
+  | .both => .both
+
+/-- An edge `far_endpoint` accepts from `u` in the reversed direction leads back to `u` from its far
+end in the configured one. -/
+theorem farEndpoint_rev (dir : Dir) (u v s d : Nat) (h : farEndpoint u s d (revDir dir) = some v) :
+    farEndpoint v s d dir = some u := by
+  cases dir <;> simp only [revDir, farEndpoint] at h ⊢
+  · split at h
+    · next hd => simp only [Option.some.injEq] at h; subst h hd; simp
+    · cases h
+  · split at h
+    · next hs => simp only [Option.some.injEq] at h; subst h hs; simp
+    · cases h
+  · split at h
+    · next hs =>
+      simp only [Option.some.injEq] at h; subst h hs
+      by_cases hsd : s = d
+      · subst hsd; simp
+      · simp [hsd, Ne.symm hsd]
+    · next hs =>
+      split at h
+      · next hd => simp only [Option.some.injEq] at h; subst h hd; simp
+      · cases h
+
+/-- **PROVEN** (the backward side of `bfs_single_path` walks the forward step backwards): if every
+relationship `get_node_relationships_by_type(u, types, reverse)` yields is also yielded, for the
+same types and the configured direction, at its far end (`hg`), then a step along
+`stepOf (revDir dir) relsRev` is a step along `stepOf dir rels` read backwards. `hg` holds for the
+lists the Rust reads: `Graph::get_node_relationships_by_type` (graph.rs) takes each selected
+`Tensor`'s row (`Tensor::iter(id, id, false)`, outgoing) and/or column (`Tensor::iter(id, id, true)`,
+incoming) of the node, both views of the same `(src, dst, id)` entries, so an edge seen at one end in
+one direction is seen at the other end in the reverse direction; `BfsGraph.relsG_hg` proves it over
+graph_queries' `GQ.nodeRelsByType`. -/
+theorem stepOf_rev (dir : Dir) (rels relsRev : Nat → List (Nat × Nat × Nat))
+    (hg : ∀ u v s d id, (s, d, id) ∈ relsRev u → farEndpoint u s d (revDir dir) = some v → (s, d, id) ∈ rels v)
+    (u v : Nat) (e : Edge) (h : (v, e) ∈ stepOf (revDir dir) relsRev u) : (u, e) ∈ stepOf dir rels v := by
+  obtain ⟨id, s, d⟩ := e
+  obtain ⟨h1, h2⟩ := (mem_stepOf _ _ u v id s d).mp h
+  exact (mem_stepOf _ _ v u id s d).mpr ⟨hg u v s d id h1 h2, farEndpoint_rev dir u v s d h2⟩
 
 /-- The `f64` operations the searches use. -/
 structure Fl (F : Type) where
@@ -189,6 +236,81 @@ theorem dijR_valid (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels : Nat → List (
     (wattr o cfg a) (cattrD o cfg a) fuel es w c h
   exact this
 
+/-- `BFS_DEGREE_PROBE_CAP` -/
+def probeCap : Nat := 1024
+
+/-- `bfs_single_path`: weight = the hop count (`edges.len() as f64`), cost = the left fold of
+`costProp` (default `1.0`, or `0.0` without `costProp`, as in `dijkstra_single_path`). `degree_capped`
+counts the node's relationships up to `BFS_DEGREE_PROBE_CAP`. -/
+def bspR (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels relsRev : Nat → List (Nat × Nat × Nat)) (t fuel : Nat) :
+    Option (Option (List (Nat × Edge) × F × F)) :=
+  (bfsSingle (stepC cfg rels) (stepOf (revDir cfg.dir) relsRev) (fun u => min probeCap (rels u).length)
+      (fun u => min probeCap (relsRev u).length) cfg.source t fuel).map
+    (Option.map fun es => (es, o.ofInt es.length, fsum o.add o.zero (cattrD o cfg a) es))
+
+/-- **PROVEN** (`bfs_single_path` at the Rust data): for a target other than the source, a returned
+path is a non-empty walk over `node_successors` edges from the source to the target with distinct
+nodes, weight its hop count and cost the left fold of `costProp` (default `1.0`, or `0.0` without
+`costProp`) in path order; `hg` as in `stepOf_rev` (discharged at the real lists:
+`BfsGraph.bspG_valid`). -/
+theorem bspR_valid (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels relsRev : Nat → List (Nat × Nat × Nat))
+    (hg : ∀ u v s d id, (s, d, id) ∈ relsRev u → farEndpoint u s d (revDir cfg.dir) = some v → (s, d, id) ∈ rels v)
+    (t fuel : Nat) (ht : t ≠ cfg.source) (es : List (Nat × Edge)) (w c : F)
+    (h : bspR o cfg a rels relsRev t fuel = some (some (es, w, c))) :
+    WalkTo (stepC cfg rels) cfg.source es t ∧ (nodesOf cfg.source es).Nodup ∧ es ≠ [] ∧
+      w = o.ofInt es.length ∧ c = fsum o.add o.zero (cattrD o cfg a) es := by
+  unfold bspR at h
+  rcases hb : bfsSingle (stepC cfg rels) (stepOf (revDir cfg.dir) relsRev) (fun u => min probeCap (rels u).length)
+      (fun u => min probeCap (relsRev u).length) cfg.source t fuel with _ | _ | es'
+  · rw [hb] at h; simp at h
+  · rw [hb] at h; simp at h
+  · rw [hb] at h
+    simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := h
+    obtain ⟨h1, h2, h3⟩ := bfsSingle_sound (stepC cfg rels) (stepOf (revDir cfg.dir) relsRev)
+      (fun u v e he => stepOf_rev cfg.dir rels relsRev hg u v e he) _ _ cfg.source t fuel (Ne.symm ht) es' hb
+    exact ⟨h1, h2, h3, rfl, rfl⟩
+
+theorem revDir_revDir (dir : Dir) : revDir (revDir dir) = dir := by cases dir <;> rfl
+
+/-- The converse of `stepOf_rev`: with `hg'` (every forward relationship is yielded at its far end in
+the reversed direction), a forward step read backwards is a step of the backward side. -/
+theorem stepOf_fwd (dir : Dir) (rels relsRev : Nat → List (Nat × Nat × Nat))
+    (hg' : ∀ u v s d id, (s, d, id) ∈ rels u → farEndpoint u s d dir = some v → (s, d, id) ∈ relsRev v)
+    (u v : Nat) (e : Edge) (h : (v, e) ∈ stepOf dir rels u) : (u, e) ∈ stepOf (revDir dir) relsRev v := by
+  obtain ⟨id, s, d⟩ := e
+  obtain ⟨h1, h2⟩ := (mem_stepOf _ _ u v id s d).mp h
+  have h3 : farEndpoint v s d (revDir dir) = some u := by
+    have := farEndpoint_rev (revDir dir) u v s d (by rw [revDir_revDir]; exact h2)
+    exact this
+  exact (mem_stepOf _ _ v u id s d).mpr ⟨hg' u v s d id h1 h2, h3⟩
+
+/-- **PROVEN** (`bfs_single_path`, optimality and completeness at the Rust data): for a target other
+than the source, a returned path has the fewest edges of any walk over `node_successors` edges from
+the source to the target (its weight is that hop count: every edge weighs `1` without `weightProp`),
+and `Ok(None)` comes back only when no such walk exists. `hg'`: the reversed relationship lists
+contain the converse of the forward ones (`stepOf_fwd`; discharged at the real lists:
+`BfsGraph.bspG_opt`). -/
+theorem bspR_opt (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels relsRev : Nat → List (Nat × Nat × Nat))
+    (hg' : ∀ u v s d id, (s, d, id) ∈ rels u → farEndpoint u s d cfg.dir = some v → (s, d, id) ∈ relsRev v)
+    (t fuel : Nat) (ht : t ≠ cfg.source) :
+    (∀ es w c, bspR o cfg a rels relsRev t fuel = some (some (es, w, c)) →
+      ∀ es', WalkTo (stepC cfg rels) cfg.source es' t → es.length ≤ es'.length) ∧
+    (bspR o cfg a rels relsRev t fuel = some none → ∀ es', ¬ WalkTo (stepC cfg rels) cfg.source es' t) := by
+  have hrev2 := fun u v e he => stepOf_fwd cfg.dir rels relsRev hg' u v e he
+  unfold bspR
+  rcases hb : bfsSingle (stepC cfg rels) (stepOf (revDir cfg.dir) relsRev) (fun u => min probeCap (rels u).length)
+      (fun u => min probeCap (relsRev u).length) cfg.source t fuel with _ | _ | es'
+  · simp
+  · refine ⟨fun _ _ _ h => by simp at h, fun _ => ?_⟩
+    exact bfsSingle_none (stepC cfg rels) (stepOf (revDir cfg.dir) relsRev) hrev2 _ _ cfg.source t fuel
+      (Ne.symm ht) hb
+  · refine ⟨fun es w c h => ?_, fun h => by simp at h⟩
+    simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+    obtain ⟨rfl, -, -⟩ := h
+    exact bfsSingle_min (stepC cfg rels) (stepOf (revDir cfg.dir) relsRev) hrev2 _ _ cfg.source t fuel
+      (Ne.symm ht) es' hb
+
 /-- What a reported path is. -/
 def Good (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels : Nat → List (Nat × Nat × Nat)) (x : Fnd Edge F) : Prop :=
   (∃ e, WalkTo (stepC cfg rels) cfg.source x.1 e) ∧ (nodesOf cfg.source x.1).Nodup ∧ o.fin x.2.1 = true ∧
@@ -225,6 +347,12 @@ def dijE (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels : Nat → List (Nat × Nat
   | some none => .ok none
   | some (some (es, w, c)) => .ok (some (es, w, c))
 
+def bspE (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels relsRev : Nat → List (Nat × Nat × Nat)) (fuel : Nat)
+    (t : Nat) : Except String (Option (Fnd Edge F)) :=
+  match bspR o cfg a rels relsRev t fuel with
+  | none => .error "out of fuel"
+  | some r => .ok r
+
 def bfsE (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels : Nat → List (Nat × Nat × Nat)) (t : Nat) :
     Except String (Option (F × F)) := .ok (bfsBoundR o cfg a rels t)
 
@@ -238,18 +366,77 @@ def enumE (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels : Nat → List (Nat × Na
 def sortR (o : Fl F) (l : List (Fnd Edge F)) : List (Fnd Edge F) :=
   l.mergeSort (fun x y => cmpF o x y != .gt)
 
-/-- **PROVEN** (`run_path_algo`, end to end at the Rust data): with the three searches instantiated by
-`dijR` / `bfsBoundR` / `enumR` and `sort_by(cmp_found_path)`, every batch it returns is `build_path_batch`
-of a list of paths each of which is a walk over `node_successors` edges (relTypes and direction as
-configured) from the source with distinct nodes and finite weight, whose cost is the left fold of its
-edges' costs; `build` is `build_path_batch` (any function of the list). -/
-theorem runAlgoR_good (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels : Nat → List (Nat × Nat × Nat))
+/-- A list of distinct naturals below `B` has at most `B` entries. -/
+theorem len_le_filter_ne (B : Nat) : ∀ l : List Nat, l.Nodup → l.length ≤ (l.filter (· != B)).length + 1
+  | [], _ => by simp
+  | x :: r, hn => by
+    rw [List.nodup_cons] at hn
+    by_cases hx : x = B
+    · subst hx
+      have : r.filter (· != x) = r :=
+        List.filter_eq_self.2 (fun a ha => by simp only [bne_iff_ne, ne_eq]; intro h; subst h; exact hn.1 ha)
+      simp [this]
+    · have := len_le_filter_ne B r hn.2
+      simp [hx]
+      omega
+
+theorem nodup_len_le : ∀ (B : Nat) (l : List Nat), l.Nodup → (∀ x ∈ l, x < B) → l.length ≤ B
+  | 0, [], _, _ => Nat.le_refl _
+  | 0, x :: _, _, h => absurd (h x List.mem_cons_self) (Nat.not_lt_zero _)
+  | B + 1, l, hn, h => by
+    have h1 := nodup_len_le B (l.filter (· != B)) (hn.sublist List.filter_sublist) (fun x hx => by
+      simp only [List.mem_filter, bne_iff_ne, ne_eq] at hx
+      have := h x hx.1
+      omega)
+    have h2 := len_le_filter_ne B l hn
+    omega
+
+/-- Every node a walk over `stepOf` reaches is an endpoint of a relationship. -/
+theorem walk_nodes_lt (dir : Dir) (rels : Nat → List (Nat × Nat × Nat)) (B : Nat)
+    (hb : ∀ u x, x ∈ rels u → x.1 < B ∧ x.2.1 < B) :
+    ∀ (es : List (Nat × Edge)) (u w : Nat), WalkTo (stepOf dir rels) u es w → ∀ n ∈ es.map (·.1), n < B
+  | [], _, _, _, n, hn => by simp at hn
+  | (v, id, s, d) :: r, u, w, ⟨hx, hr⟩, n, hn => by
+    obtain ⟨hm, hf⟩ := (mem_stepOf dir rels u v id s d).mp hx
+    have hbd := hb u _ hm
+    simp only [List.map_cons, List.mem_cons] at hn
+    rcases hn with rfl | hn
+    · cases dir <;> simp only [farEndpoint] at hf <;> split at hf <;> (try split at hf) <;>
+        simp_all
+    · exact walk_nodes_lt dir rels B hb r v w hr n hn
+
+/-- With node ids below `2^64`, a walk with distinct nodes has fewer than `2^64` edges. -/
+theorem walk_len_lt (dir : Dir) (rels : Nat → List (Nat × Nat × Nat))
+    (hb : ∀ u x, x ∈ rels u → x.1 < 2 ^ 64 ∧ x.2.1 < 2 ^ 64) (es : List (Nat × Edge)) (u w : Nat)
+    (hu : u < 2 ^ 64) (hw : WalkTo (stepOf dir rels) u es w) (hnd : (nodesOf u es).Nodup) :
+    es.length < 2 ^ 64 := by
+  have := nodup_len_le (2 ^ 64) (nodesOf u es) hnd (fun n hn => by
+    simp only [nodesOf, List.mem_cons] at hn
+    rcases hn with rfl | hn
+    · exact hu
+    · exact walk_nodes_lt dir rels (2 ^ 64) hb es u w hw n hn)
+  simp only [nodesOf, List.length_cons, List.length_map] at this
+  omega
+
+/-- **PROVEN** (`run_path_algo`, end to end at the Rust data): with the four searches instantiated by
+`dijR` / `bspR` / `bfsBoundR` / `enumR` and `sort_by(cmp_found_path)`, every batch it returns is
+`build_path_batch` of a list of paths each of which is a walk over `node_successors` edges (relTypes and
+direction as configured) from the source with distinct nodes and finite weight, whose cost is the left
+fold of its edges' costs; `build` is `build_path_batch` (any function of the list). `hg`: the reversed
+relationship lists are the converse of the forward ones (`stepOf_rev`; discharged at the real lists by
+`BfsGraph.runAlgoG_good`); `hfin`: `usize as f64` is finite below `2^64` (`f64::MAX` is about `2^1024`);
+`hb`/`hsrc`: node ids are `u64`, so a path with distinct nodes has fewer than `2^64` edges
+(`walk_len_lt`) and its hop count converts to a finite weight. -/
+theorem runAlgoR_good (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels relsRev : Nat → List (Nat × Nat × Nat))
+    (hg : ∀ u v s d id, (s, d, id) ∈ relsRev u → farEndpoint u s d (revDir cfg.dir) = some v → (s, d, id) ∈ rels v)
+    (hfin : ∀ n : Nat, n < 2 ^ 64 → o.fin (o.ofInt n) = true)
+    (hb : ∀ u x, x ∈ rels u → x.1 < 2 ^ 64 ∧ x.2.1 < 2 ^ 64) (hsrc : cfg.source < 2 ^ 64)
     (fuel : Nat) {R : Type} (build : List (Fnd Edge F) → R) (out : R)
-    (h : runAlgo cfg o.inf o.le (dijE o cfg a rels fuel) (bfsE o cfg a rels) (enumE o cfg a rels fuel)
-      (sortR o) build = .ok out) :
+    (h : runAlgo cfg o.inf o.le (dijE o cfg a rels fuel) (bspE o cfg a rels relsRev fuel) (bfsE o cfg a rels)
+      (enumE o cfg a rels fuel) (sortR o) build = .ok out) :
     ∃ L, out = build L ∧ ∀ x ∈ L, Good o cfg a rels x := by
-  refine runAlgo_ok_good cfg o.inf o.le (dijE o cfg a rels fuel) (bfsE o cfg a rels) (enumE o cfg a rels fuel)
-    (sortR o) build (Good o cfg a rels) ?_ ?_ ?_ out h
+  refine runAlgo_ok_good cfg o.inf o.le (dijE o cfg a rels fuel) (bspE o cfg a rels relsRev fuel) (bfsE o cfg a rels)
+    (enumE o cfg a rels fuel) (sortR o) build (Good o cfg a rels) ?_ ?_ ?_ ?_ out h
   · intro t f hd
     unfold dijE at hd
     rcases hq : dijR o cfg a rels t fuel with _ | _ | ⟨es, w, c⟩
@@ -260,6 +447,17 @@ theorem runAlgoR_good (o : Fl F) (cfg : Cfg F) (a : Attrs F) (rels : Nat → Lis
       subst hd
       obtain ⟨_, hw, hnd, hc, hf⟩ := dijR_valid o cfg a rels t fuel es w c hq
       exact ⟨⟨t, hw⟩, hnd, hf, Or.inr hc⟩
+  · intro t f hst hd
+    unfold bspE at hd
+    rcases hq : bspR o cfg a rels relsRev t fuel with _ | _ | ⟨es, w, c⟩
+    · rw [hq] at hd; simp at hd
+    · rw [hq] at hd; simp at hd
+    · rw [hq] at hd
+      simp only [Except.ok.injEq, Option.some.injEq] at hd
+      subst hd
+      obtain ⟨hw, hnd, _, hwt, hc⟩ := bspR_valid o cfg a rels relsRev hg t fuel (Ne.symm hst) es w c hq
+      exact ⟨⟨t, hw⟩, hnd, by rw [hwt]; exact hfin _ (walk_len_lt cfg.dir rels hb _ _ _ hsrc hw hnd),
+        Or.inr hc⟩
   · intro b rs he x hx
     unfold enumE at he
     rcases hq : enumR o cfg a rels b fuel with _ | ⟨r, b'⟩

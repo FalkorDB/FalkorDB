@@ -85,6 +85,7 @@ use crate::{
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::collections::hash_map::Entry;
 use std::mem::swap;
 use std::ptr::null_mut;
 use std::sync::Arc;
@@ -2415,6 +2416,203 @@ fn dijkstra_single_path(
     Ok(Some((edges, labels[&target].weight, cost)))
 }
 
+/// One side of [`bfs_single_path`]'s bidirectional search.
+struct BfsSide {
+    /// Direction this side walks: the configured one from the source, its
+    /// reverse from the target.
+    dir: EdgeDirection,
+    /// node -> (its depth on this side, the node it was reached from, the
+    /// edge between them in original orientation). Doubles as the visited
+    /// set; the root is in it with depth 0 and no link.
+    seen: FxHashMap<NodeId, (u32, Option<(NodeId, (RelationshipId, NodeId, NodeId))>)>,
+    frontier: Vec<NodeId>,
+    /// Relationships the frontier's next expansion will inspect — the sum of
+    /// its nodes' degrees in `dir` — while the frontier is small enough to
+    /// count them; see [`BfsSide::cost`].
+    work: Option<u64>,
+    depth: u32,
+}
+
+/// Largest frontier whose degrees [`bfs_single_path`] sums to pick the side
+/// to grow. A degree probe costs about as much as expanding the node, so
+/// summing every frontier made the search several times slower; but a hub
+/// only distorts the choice while frontiers are tiny, where one node with a
+/// million relationships outweighs everything else on the board.
+const BFS_DEGREE_PROBE_MAX: usize = 8;
+
+/// Per-node cap on a degree probe; see [`degree_capped`].
+const BFS_DEGREE_PROBE_CAP: usize = 1024;
+
+impl BfsSide {
+    fn new(
+        g: &Graph,
+        types: &[Arc<String>],
+        root: NodeId,
+        dir: EdgeDirection,
+    ) -> Self {
+        let mut seen = FxHashMap::default();
+        seen.insert(root, (0, None));
+        Self {
+            dir,
+            seen,
+            frontier: vec![root],
+            work: Some(degree_capped(g, root, types, dir, BFS_DEGREE_PROBE_CAP)),
+            depth: 0,
+        }
+    }
+
+    /// Sum the frontier's degrees if it is small enough to be worth it.
+    fn measure(
+        &mut self,
+        g: &Graph,
+        types: &[Arc<String>],
+    ) {
+        self.work = (self.frontier.len() <= BFS_DEGREE_PROBE_MAX).then(|| {
+            self.frontier
+                .iter()
+                .map(|&n| degree_capped(g, n, types, self.dir, BFS_DEGREE_PROBE_CAP))
+                .sum()
+        });
+    }
+
+    /// The edges from `node` back to this side's root, nearest `node` first.
+    fn chain(
+        &self,
+        mut node: NodeId,
+    ) -> Vec<(RelationshipId, NodeId, NodeId)> {
+        let mut edges = Vec::new();
+        while let Some((_, Some((prev, edge)))) = self.seen.get(&node) {
+            edges.push(*edge);
+            node = *prev;
+        }
+        edges
+    }
+}
+
+/// How many `types` relationships `node` has in direction `dir`, counting
+/// no further than `cap`: the side choice only needs to know that a node is
+/// heavy, not how heavy, and an exact degree costs as much as the hub's
+/// whole expansion.
+fn degree_capped(
+    g: &Graph,
+    node: NodeId,
+    types: &[Arc<String>],
+    dir: EdgeDirection,
+    cap: usize,
+) -> u64 {
+    g.get_node_relationships_by_type(node, types, dir)
+        .take(cap)
+        .count() as u64
+}
+
+/// The unit-weight case of [`dijkstra_single_path`]: with no `weightProp`
+/// every edge weighs 1, so the fewest-hops path is the cheapest one and a
+/// BFS finds it.
+///
+/// The search runs from both ends at once — forward from the source along the
+/// configured direction, backward from the target against it — and always
+/// grows the side whose frontier has fewer relationships to inspect (not
+/// fewer nodes: one hub on a side can outweigh a frontier of leaves; see
+/// [`BFS_DEGREE_PROBE_MAX`] for when it counts nodes instead). A path of length L then costs
+/// two searches of about L/2 hops instead of one of L, which on a social
+/// graph is the difference between touching a neighbourhood and touching
+/// most of the graph. It also ends early when there is no path: as soon as
+/// either side runs out of nodes, which for a target with few incoming edges
+/// is almost at once.
+///
+/// When a level expansion first reaches a node the other side has seen, the
+/// level is still finished and the shortest join kept: the other side's seen
+/// set spans several depths, so the first meeting is not necessarily the
+/// shortest one.
+fn bfs_single_path(
+    runtime: &Runtime,
+    g: &Graph,
+    config: &PathAlgoConfig,
+    target: NodeId,
+) -> Result<Option<FoundPath>, String> {
+    let reverse = match config.rel_direction {
+        EdgeDirection::Outgoing => EdgeDirection::Incoming,
+        EdgeDirection::Incoming => EdgeDirection::Outgoing,
+        EdgeDirection::Both => EdgeDirection::Both,
+    };
+    let types = &config.rel_types;
+    let mut fwd = BfsSide::new(g, types, config.source, config.rel_direction);
+    let mut bwd = BfsSide::new(g, types, target, reverse);
+    let mut next: Vec<NodeId> = Vec::new();
+    let mut iters: u64 = 0;
+    // (path length, node where the two sides meet)
+    let mut best: Option<(u32, NodeId)> = None;
+
+    while best.is_none() && !fwd.frontier.is_empty() && !bwd.frontier.is_empty() {
+        // Fewer relationships to inspect when both sides know their count,
+        // otherwise fewer nodes.
+        let fwd_first = match (fwd.work, bwd.work) {
+            (Some(f), Some(b)) => f <= b,
+            _ => fwd.frontier.len() <= bwd.frontier.len(),
+        };
+        let (side, other) = if fwd_first {
+            (&mut fwd, &bwd)
+        } else {
+            (&mut bwd, &fwd)
+        };
+        let depth = side.depth + 1;
+        for &node in &side.frontier {
+            // Polled per relationship, not per node: one node with millions
+            // of relationships must not run unchecked.
+            for (edge_src, edge_dst, edge_id) in
+                g.get_node_relationships_by_type(node, types, side.dir)
+            {
+                iters += 1;
+                if iters.is_multiple_of(PATH_ALGO_CHECK_INTERVAL) {
+                    runtime.check_timeout()?;
+                    runtime.check_mem_capacity()?;
+                }
+                let Some(far) = far_endpoint(node, edge_src, edge_dst, side.dir) else {
+                    continue;
+                };
+                match side.seen.entry(far) {
+                    Entry::Occupied(_) => continue,
+                    Entry::Vacant(slot) => {
+                        slot.insert((depth, Some((node, (edge_id, edge_src, edge_dst)))));
+                    }
+                }
+                if let Some(&(other_depth, _)) = other.seen.get(&far) {
+                    let len = depth + other_depth;
+                    if best.is_none_or(|(b, _)| len < b) {
+                        best = Some((len, far));
+                    }
+                }
+                next.push(far);
+            }
+        }
+        side.depth = depth;
+        swap(&mut side.frontier, &mut next);
+        next.clear();
+        side.measure(g, types);
+    }
+
+    let Some((_, meet)) = best else {
+        return Ok(None);
+    };
+
+    // source .. meet, then meet .. target; both chains are already in
+    // original edge orientation.
+    let mut edges = fwd.chain(meet);
+    edges.reverse();
+    edges.extend(bwd.chain(meet));
+
+    // Same reporting as `dijkstra_single_path`: weight is the hop count, and
+    // cost sums `costProp` over the winning path (1 per edge lacking it), or
+    // 0 when no `costProp` was given.
+    let weight = edges.len() as f64;
+    let missing_cost = if config.cost_prop.is_some() { 1.0 } else { 0.0 };
+    let cost = edges.iter().fold(0.0, |acc, &(edge_id, _, _)| {
+        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), missing_cost)
+    });
+
+    Ok(Some((edges, weight, cost)))
+}
+
 /// Level-synchronised BFS from `config.source` looking for `target`, honouring
 /// `relTypes` / `relDirection` / `maxLen`, keeping one parent record per node.
 ///
@@ -2728,7 +2926,13 @@ fn run_path_algo(
         && config.max_len == u32::MAX
         && config.source != target
     {
-        let found = dijkstra_single_path(runtime, &g, config, target)?;
+        // Without `weightProp` every edge weighs 1, and Dijkstra is a BFS that
+        // pays for a heap it does not need and finds the target late.
+        let found = if config.weight_prop.is_none() {
+            bfs_single_path(runtime, &g, config, target)?
+        } else {
+            dijkstra_single_path(runtime, &g, config, target)?
+        };
         return Ok(build_path_batch(config, found.into_iter().collect()));
     }
 
