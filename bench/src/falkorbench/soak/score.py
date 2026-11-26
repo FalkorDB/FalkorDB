@@ -228,6 +228,7 @@ def main():
         if name in failed:
             notes.append(f"run failed: {failed[name]}")
         res[name]["notes"] += notes
+        res[name]["run"], res[name]["c_run"] = rdir.name, cdir.name if cdir else None  # what was scored
     tot = [v["total"] for v in res.values()]
     blocked = sorted({k for k, v in res.items() if v["critical_failures"] or v["crashed"]} | set(failed))
     summary = {"scenarios": res, "release_score": round(sum(tot) / len(tot), 1) if tot else None,

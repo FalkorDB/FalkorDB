@@ -21,6 +21,7 @@ from falkorbench.contract import COMMIT_RE
 from falkorbench.contract import IMAGE_RE
 from falkorbench.contract import validate_result
 from falkorbench.soak import check as sc
+from falkorbench.soak import gen_final
 from falkorbench.soak import score as soak_score
 from falkorbench.soak import soakkit
 
@@ -1494,6 +1495,7 @@ def test_soak_scoring_keeps_the_newest_finished_archive_of_a_run_in_progress(tmp
     _soak_run(tmp_path, "s02_mixed-c", {})
     scores = _score(tmp_path, monkeypatch)
     assert scores["scenarios"]["s01_feed"]["correctness"] == 38  # the minor failure of @newer
+    assert scores["scenarios"]["s01_feed"]["run"] == "s01_feed-rust@newer"
     assert scores["blocked_by"] == []
     assert "s02_mixed" not in scores["scenarios"]
     assert scores["pending"] == ["s02_mixed"]
@@ -1527,6 +1529,121 @@ def test_soak_scoring_never_takes_a_failed_c_run_as_its_baseline(tmp_path, monke
     _soak_run(tmp_path, "s08_same-c-samewindow", {"monitor": {"rss_max_mb": 50}}, rc=137)
     scores = _score(tmp_path, monkeypatch)["scenarios"]
     assert scores["s06_old"]["rss_vs_c"] == 0.5  # the older baseline that exited 0
+    assert scores["s06_old"]["c_run"] == "s06_old-c@jul-master"
     assert scores["s07_none"]["rss_vs_c"] is None
     assert "no C baseline exited 0: scored without C ratios" in scores["s07_none"]["notes"]
+    assert scores["s07_none"]["c_run"] is None
     assert scores["s08_same"]["rss_vs_c"] == 1.5  # the short baseline, not the failed rerun
+
+
+@pytest.fixture
+def soak_report(tmp_path, monkeypatch):
+    """gen_final.build() over tmp_path/full with the scores.json a test writes (score.py
+    is not run); returns full/ and build(scores, findings, campaign) -> report.html."""
+    full = tmp_path / "full"
+    full.mkdir()
+    monkeypatch.setattr(gen_final, "S", tmp_path)
+    monkeypatch.setattr(gen_final, "FULL", full)
+    monkeypatch.setattr(gen_final.subprocess, "run", lambda *args, **kwargs: None)
+
+    def build(scores, findings=(), campaign=None):
+        (full / "scores.json").write_text(json.dumps(scores))
+        (tmp_path / "findings.json").write_text(json.dumps(list(findings)))
+        if campaign is not None:
+            (tmp_path / "campaign.json").write_text(json.dumps(campaign))
+        gen_final.build()
+        return (tmp_path / "report.html").read_text()
+
+    return full, build
+
+
+def _scored(total, rust="s01_social_feed-rust", c="s01_social_feed-c"):
+    return {"total": total, "run": rust, "c_run": c, "notes": []}
+
+
+def test_the_soak_report_says_not_blocked_when_nothing_blocks(soak_report):
+    full, build = soak_report
+    _soak_run(full, "s01_social_feed-rust", {})
+    _soak_run(full, "s01_social_feed-c", {"server_log_crash_markers": ["panic"]})
+    page = build(
+        {"scenarios": {"s01_social_feed": _scored(95.0)}, "release_score": 95.0, "blocked_by": []}
+    )
+    assert (
+        "Not blocked: no open critical Rust bug, and no critical check or Rust run failed." in page
+    )
+    assert 'class="verdict pass"' in page
+    assert "Blocked:" not in page
+    assert "<b>0 / 1</b><span>scenarios that crashed: Rust / C</span>" in page
+    assert "d070f1f9b" not in page
+    assert "20f9a45ee" not in page
+
+
+def test_the_soak_report_names_what_blocks_the_release(soak_report):
+    _, build = soak_report
+    findings = [
+        {
+            "id": "F3",
+            "engine": "rust",
+            "severity": "critical",
+            "title": "loses 0",
+            "scenario": "s03",
+        },
+        {
+            "id": "F4",
+            "engine": "rust",
+            "severity": "critical",
+            "title": "gone",
+            "status": "FIXED by #1",
+        },
+    ]
+    scores = {
+        "scenarios": {},
+        "release_score": None,
+        "blocked_by": ["s09_replication"],
+        "failed_runs": {"s09_replication": "s09_replication-rust exited 124"},
+        "pending": ["s12_iot_retention"],
+    }
+    page = build(scores, findings)
+    assert (
+        "Blocked: 1 open critical Rust bug (F3); a critical check failed or the run failed in"
+        " s09_replication. Scenario score —/100 over 0 scenarios; still running: s12_iot_retention."
+    ) in page
+    assert 'class="verdict"' in page
+
+
+def test_the_soak_report_shows_campaign_notes_as_written_for_their_campaign(soak_report):
+    full, build = soak_report
+    (_soak_run(full, "s01_social_feed-rust", {}) / ".commit").write_text("bbb\n")
+    (_soak_run(full, "s02_fraud_realtime-rust", {}) / ".commit").write_text("aaa\n")
+    (full / "scores-aaa.json").write_text(
+        json.dumps({"scenarios": {"s01_social_feed": {"total": 80.0}}})
+    )
+    campaign = {
+        "label": "bbb",
+        "previous": "aaa",
+        "c_baseline": "C v9",
+        "notes": {"written_for": "aaa", "html": "the <b>aaa</b> runs"},
+    }
+    scores = {
+        "scenarios": {
+            "s01_social_feed": _scored(90.0, c=None),
+            "s02_fraud_realtime": _scored(70.0, rust="s02_fraud_realtime-rust", c=None),
+        },
+        "release_score": 80.0,
+        "blocked_by": [],
+    }
+    page = build(scores, campaign=campaign)
+    assert "Notes written for the aaa campaign</b>" in page
+    assert "the <b>aaa</b> runs" in page
+    assert "on bbb · was 80.0 on aaa" in page
+    assert "on aaa · bbb re-run pending" in page
+    assert "Release readiness · FalkorDB-rs main · bbb (compared with aaa)" in page
+    assert "scenarios that crashed: Rust / C v9" in page
+
+
+def test_the_shipped_soak_campaign_notes_render(soak_report):
+    _, build = soak_report
+    campaign = json.loads((SOAK_DIR / "campaign.json").read_text())
+    page = build({"scenarios": {}, "release_score": None, "blocked_by": []}, campaign=campaign)
+    assert f"Notes written for the {campaign['notes']['written_for']} campaign" in page
+    assert campaign["caveats"] in page

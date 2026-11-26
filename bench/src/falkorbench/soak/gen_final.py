@@ -1,5 +1,10 @@
 """Build the final soak report (report.html) from full/ results, findings.json and scores.json.
-usage: python -I gen_final.py"""
+usage: python -I gen_final.py
+
+The gate line, the tiles and each scenario's labels come from scores.json and the runs it
+scored. What a person wrote about one campaign (its label, the campaign it is compared
+with, the machine, notes and caveats) lives in campaign.json beside this script, and the
+report shows the notes as written for that campaign."""
 import csv
 import html
 import json
@@ -44,8 +49,29 @@ def cdir(scn):
     return sw if (sw / ".done").exists() else FULL / f"{scn}-c"
 
 
-def edir(scn, eng):
-    return cdir(scn) if eng == "c" else FULL / f"{scn}-{eng}"
+def run_dirs(scn, sc):
+    """The Rust and C run directories score.py scored for this scenario (its `run` and
+    `c_run`; c_run None: no C baseline), or the current ones when it has not scored it."""
+    rust = FULL / sc["run"] if sc.get("run") else FULL / f"{scn}-rust"
+    if "c_run" in sc:
+        return {"rust": rust, "c": FULL / sc["c_run"] if sc["c_run"] else None}
+    return {"rust": rust, "c": cdir(scn)}
+
+
+def campaign():
+    """campaign.json: label (run_rust_main.sh's <commit-label>), previous (compared through
+    full/scores-<previous>.json), c_baseline, environment, notes {written_for, html},
+    caveats. Without a label: the one most current Rust runs carry."""
+    c = jl(S / "campaign.json") or {}
+    if not c.get("label"):
+        labels = [(FULL / f"{scn}-rust" / ".commit").read_text().strip() for scn, *_ in SCN
+                  if (FULL / f"{scn}-rust" / ".commit").exists()]
+        c["label"] = max(set(labels), key=labels.count) if labels else None
+    return c
+
+
+def label_of(d):
+    return (d / ".commit").read_text().strip() if (d / ".commit").exists() else None
 
 
 def fmt(v, nd=1, unit=""):
@@ -127,24 +153,34 @@ def main_op(summ):
 def build():
     subprocess.run([PY, "-I", str(S / "score.py"), str(FULL)], capture_output=True, timeout=300)
     scores = jl(FULL / "scores.json") or {"scenarios": {}}
-    prev = jl(FULL / "scores-d070f1f9b.json") or {"scenarios": {}}
-    rerun = {scn: (FULL / f"{scn}-rust" / ".commit").read_text().strip() for scn, *_ in SCN
-             if (FULL / f"{scn}-rust" / ".commit").exists()}
+    camp = campaign()
+    label, previous = camp.get("label"), camp.get("previous")
+    prev = (jl(FULL / f"scores-{previous}.json") if previous else None) or {"scenarios": {}}
+    crashes = {"rust": 0, "c": 0}  # scenarios whose server log has crash markers
     findings = jl(S / "findings.json") or []
     charts = []
     rows_score, cards = [], []
     for scn, title, what, size in SCN:
         sc = scores["scenarios"].get(scn, {})
-        sm = {e: jl(edir(scn, e) / "summary.json") for e, _, _ in ENG}
+        dirs = run_dirs(scn, sc)
+        sm = {e: jl(dirs[e] / "summary.json") if dirs[e] else None for e, _, _ in ENG}
+        for e in crashes:
+            crashes[e] += bool((sm[e] or {}).get("server_log_crash_markers"))
         r = sm["rust"] or {}
         mon_r, mon_c = r.get("monitor", {}), (sm["c"] or {}).get("monitor", {})
         crit = len(sc.get("critical_failures", []))
         maj = len(sc.get("major_failures", []))
-        pill = ('<span class="pill crit">BLOCKER</span>' if crit else
+        pill = ('<span class="pill crit">BLOCKER</span>' if crit or scn in scores.get("failed_runs", {}) else
                 '<span class="pill maj">PASS w/ issues</span>' if maj else '<span class="pill ok">PASS</span>')
+        on = label_of(dirs["rust"])
+        was = prev["scenarios"].get(scn, {}).get("total")
+        if on and on == label:
+            sub = f"on {on}" + (f" · was {fmt(was, 1)} on {previous}" if previous and was is not None else "")
+        else:
+            sub = f"on {on or '?'}" + (f" · {label} re-run pending" if label else "")
         rows_score.append(
             f"<tr><td><b>{title}</b><div class='sub'>{esc(size)}</div></td><td class='num big'>{fmt(sc.get('total'), 1)}"
-            f"<div class='sub'>{('on ' + rerun[scn] + ' · was ' + fmt(prev['scenarios'].get(scn, {}).get('total'), 1) + ' on d070f1f9b') if rerun.get(scn) == '20f9a45ee' else ('on ' + rerun.get(scn, '?') + ' · main 20f9a45ee re-run pending')}</div></td>"
+            f"<div class='sub'>{esc(sub)}</div></td>"
             f"<td>{pill}</td><td class='num'>{fmt(sc.get('correctness'), 0)}/40</td><td class='num'>{fmt(sc.get('stability'), 0)}/25</td>"
             f"<td class='num'>{fmt(sc.get('resources'), 1)}/15</td><td class='num'>{fmt(sc.get('performance'), 1)}/20</td>"
             f"<td class='num'>{fmt(sc.get('p99_vs_c_gmean'), 2, '×')}</td><td class='num'>{fmt(sc.get('rss_vs_c'), 2, '×')}</td>"
@@ -152,8 +188,8 @@ def build():
         op = main_op(r)
         ser = {"cpu": [], "rss": [], "p99": [], "tput": []}
         for e, name, color in ENG:
-            d = edir(scn, e)
-            if not (d / ".done").exists():
+            d = dirs[e]
+            if d is None or not (d / ".done").exists():
                 continue
             ms = mon_series(d)
             if ms:
@@ -206,6 +242,26 @@ def build():
     crit_ids = ", ".join(f["id"] for f in rust if f["severity"] == "critical" and f.get("engine") == "rust"
                          and "FIXED" not in str(f.get("status", "")))
     fixed_ids = ", ".join(f["id"] for f in rust if "FIXED" in str(f.get("status", "")))
+    nscored = len(scores["scenarios"])
+    pending = scores.get("pending", [])
+    reasons = []
+    if ncrit:
+        reasons.append(f"{ncrit} open critical Rust bug{'' if ncrit == 1 else 's'} ({crit_ids})")
+    if blocked:
+        reasons.append(f"a critical check failed or the run failed in {', '.join(blocked)}")
+    gate = (f"Blocked: {'; '.join(reasons)}." if reasons else
+            "Not blocked: no open critical Rust bug, and no critical check or Rust run failed.")
+    gate += f" Scenario score {fmt(release, 1)}/100"
+    gate += f" over {nscored} scenarios; still running: {', '.join(pending)}." if pending else "."
+    c_name = camp.get("c_baseline") or "C"
+    notes = camp.get("notes") or {}
+    notes_html = (f"<p><b>Notes written for the {esc(notes.get('written_for') or '?')} campaign</b> "
+                  f"(they describe those runs, not necessarily the scores above): {notes['html']}</p>"
+                  if notes.get("html") else "")
+    caveats = (f'<div class="card"><h3>Caveats</h3><p class="note">{esc(camp["caveats"])}</p></div>'
+               if camp.get("caveats") else "")
+    eyebrow = "Release readiness · FalkorDB-rs main" + (f" · {label}" if label else "") \
+        + (f" (compared with {previous})" if previous else "")
 
     page = f"""<title>FalkorDB Release Soak</title>
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -239,6 +295,7 @@ p{{margin:0;max-width:80ch}}
 .count{{font:500 13px var(--mono);color:var(--muted);margin-left:8px}}
 .verdict{{background:var(--badbg);border:1px solid var(--bad);border-radius:10px;padding:20px 22px;display:grid;gap:14px}}
 .verdict .big{{font:700 22px/1.25 var(--display);color:var(--bad)}}
+.verdict.pass{{background:var(--goodbg);border-color:var(--good)}} .verdict.pass .big{{color:var(--good)}}
 .tiles{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}}
 .tile{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:grid;gap:4px}}
 .tile b{{font:600 24px/1.1 var(--display);font-variant-numeric:tabular-nums}}
@@ -282,29 +339,28 @@ details ul{{margin-top:8px;font-size:13px}}
 
 <div class="wrap">
   <header style="display:grid;gap:10px">
-    <div class="eyebrow">Release readiness · FalkorDB-rs main · re-soaked on d070f1f9b (main after 19 more PRs incl. #3511, #3578, #3856, #3035, #3469; was 77ab63f48)</div>
+    <div class="eyebrow">{esc(eyebrow)}</div>
     <h1>Soak test of clean main</h1>
-    <p class="meta">Updated {now} · 12 production scenarios · Rust 20 min and C 5 min per scenario, one at a time, full scale · Redis 8.6.2 · Apple M-series, 11 cores, 36 GB</p>
+    <p class="meta">Updated {now} · {nscored} of {len(SCN)} scenarios scored{(' · ' + esc(camp['environment'])) if camp.get('environment') else ''}</p>
   </header>
 
-  <div class="verdict">
+  <div class="verdict{'' if reasons else ' pass'}">
     <div class="eyebrow">Release gate</div>
-    <div class="big">Blocked: {ncrit} critical Rust bugs ({crit_ids}). Scenario score {fmt(release, 1)}/100.</div>
-    <p>Outside the blocked areas, Rust is production-grade: no crash, panic or hang in 12 full-scale soaks, and the C baseline, <b>release v4.22.4</b>, did not crash either (the earlier local July master build crashed twice, in s03 and s11; both are gone in the release). Against v4.22.4, C still has 5 open problems of its own (C4–C7, C10). Snapshot isolation, durability across 8 kill/restart cycles, replication, and multi-tenant churn were all exact.
-    <b>Re-soak on main d070f1f9b</b> (release score {fmt(prev.get('release_score'), 1)} on 77ab63f48 → {fmt(release, 1)}), all 12 scenarios on a quiet machine; runs that overlapped outside load above 20 were discarded and repeated. No finding changed state: <b>F3</b> (range index loses numeric 0: s03, s10), <b>F9</b> (index built under writes loses entries: s10), <b>R1</b> (s12 still at ~0.45× C write throughput; fix PR #3889 still open) and <b>F10</b> (#3886, upstream HNSW, C too) still block; <b>F7</b> is unchanged by #3511 (s05 keeps 210 MB of used_memory after every graph is deleted). The s03 late ingest stall seen on 77ab63f48 did not recur (ingest p99 22 → 29 ms early to late), so s03 recovers 53.5 → 58.6. <b>Watch: p99 of light operations rose 1.25–2× in s05, s08 and s09</b> (e.g. replica 1-hop read 2.2 → 4.3 ms, ledger write 2.7 → 5.0 ms, durability lookups 6 → 8.6 ms), taking p99 vs C to 2.1× in s05, 1.72× in s09 and 1.1× in s08; this is unconfirmed (single runs) and needs an A/B of 77ab63f48 vs d070f1f9b, with #3469 (GraphBLAS 10.5.3) and #3578 (write retry) the first suspects. An s05 run on d070f1f9b lost its server to an external SIGKILL with no crash log; the repeat ran clean. Caveats: the C baseline (release v4.22.4) is built without OpenMP, so vs-C performance ratios favour Rust; after a /tmp cleanup on 2026-11-23 the scenario scripts were rebuilt from transcripts (s06 verified byte-identical to the surviving original).</p>
+    <div class="big">{esc(gate)}</div>
+    {notes_html}
     <div class="tiles">
-      <div class="tile"><b>{fmt(release, 1)}</b><span>release score (mean of 12 scenarios)</span></div>
-      <div class="tile"><b>{ncrit}</b><span>open critical Rust bugs, all with issues</span></div>
+      <div class="tile"><b>{fmt(release, 1)}</b><span>release score (mean of {nscored} scenarios)</span></div>
+      <div class="tile"><b>{ncrit}</b><span>open critical Rust bugs (findings.json)</span></div>
       <div class="tile"><b>{nmaj}</b><span>open major Rust bugs</span></div>
-      <div class="tile"><b>0 / 2</b><span>crashes: Rust / C v4.22.4 (July build: 2)</span></div>
-      <div class="tile"><b>{sum(1 for s in scores['scenarios'].values() if s.get('total', 0) >= 90)}/12</b><span>scenarios scoring ≥ 90</span></div>
+      <div class="tile"><b>{crashes['rust']} / {crashes['c']}</b><span>scenarios that crashed: Rust / {esc(c_name)}</span></div>
+      <div class="tile"><b>{sum(1 for s in scores['scenarios'].values() if s.get('total', 0) >= 90)}/{nscored}</b><span>scenarios scoring ≥ 90</span></div>
     </div>
   </div>
 
   <section>
     <h2>Scenario scores</h2>
     <p class="note">Per scenario: correctness 40 (any critical check failing gives 0), stability 25, resources 15 (memory at equal data vs C, growth per op), performance 20 (p99 and throughput vs C, drift).
-    Ratios are Rust ÷ C, so below 1 is better. Where C crashed or could not finish (s02 ingest, s03, s11), C ratios are scored as neutral. Scoring overrides with reasons are under each scenario.</p>
+    Ratios are Rust ÷ C, so below 1 is better. Where C crashed or could not finish, C ratios are scored as neutral. Scoring overrides with reasons are under each scenario.</p>
     <div class="tbl"><table><thead><tr><th>Scenario</th><th>Score</th><th>Gate</th><th>Correct</th><th>Stable</th><th>Resources</th><th>Perf</th><th>p99 vs C</th><th>RSS vs C</th><th>CPU Rust / C</th></tr></thead>
     <tbody>{''.join(rows_score)}</tbody></table></div>
   </section>
@@ -313,7 +369,7 @@ details ul{{margin-top:8px;font-size:13px}}
     <h2>Rust findings</h2>
     <div class="tbl"><table><thead><tr><th>ID</th><th>Severity</th><th>What happens</th><th>Found in</th><th>Status</th></tr></thead>
     <tbody>{''.join(frow(f) for f in rust if "FIXED" not in str(f.get("status", "")))}</tbody></table></div>
-    <details><summary>Problems in C seen while using it as a baseline ({len(cside)}; status column says whether each still happens on release v4.22.4)</summary>
+    <details><summary>Problems in C seen while using it as a baseline ({len(cside)}; status column says whether each still happens on {esc(c_name)})</summary>
     <div class="tbl" style="margin-top:8px"><table><tbody>{''.join(frow(f) for f in cside)}</tbody></table></div></details>
   </section>
 
@@ -322,15 +378,15 @@ details ul{{margin-top:8px;font-size:13px}}
   <section>
     <h2>CPU, memory, latency and throughput</h2>
     <p class="note">Each card shows the full-scale runs: server CPU (100% = one core) and RSS in 15-second bins from server start, p99 of the busiest operation (median of per-second p99 in 15-second bins, log scale), and total successful ops/s. Hover a chart for exact values.</p>
-    <div class="legend"><span><i style="background:var(--s1)"></i>Rust (main)</span><span><i style="background:var(--s2)"></i>C v4.22.4</span></div>
+    <div class="legend"><span><i style="background:var(--s1)"></i>Rust (main)</span><span><i style="background:var(--s2)"></i>{esc(c_name)}</span></div>
     {''.join(cards)}
   </section>
   <section>
     <h2>Method</h2>
     <div class="two">
-      <div class="card"><h3>Scenarios</h3><p class="note">12 agents each built one production scenario with Python ground truth (seeded data plus a ledger of every acknowledged write) and smoke-tested it on Rust and C. The coordinator then ran each one alone at full scale: Rust 20 min, C v4.22.4 5 min at the same rates (s12 also 20 min).</p></div>
+      <div class="card"><h3>Scenarios</h3><p class="note">12 agents each built one production scenario with Python ground truth (seeded data plus a ledger of every acknowledged write) and smoke-tested it on Rust and C. The coordinator then ran each one alone at full scale: Rust 20 min, {esc(c_name)} 5 min at the same rates (s12 also 20 min).</p></div>
       <div class="card"><h3>Monitoring</h3><p class="note">1 Hz: server CPU, RSS, INFO used_memory, threads, clients, liveness. Per op per second: 2%-resolution latency histograms and throughput. Latency is timed from the actual send; sends more than 50 ms behind schedule count as backpressure.</p></div>
-      <div class="card"><h3>Caveats</h3><p class="note">One macOS machine, shared at times with other jobs, so absolute latencies are indicative and the Rust/C ratios are the signal. The C baseline is release v4.22.4 (falkordb-macos-arm64v8.so from the GitHub release, module ver 42204) for all 12 scenarios; the earlier runs on a local July master build are kept as @jul-master. C runs are 5 min, so slow drift is only measured on Rust.</p></div>
+      {caveats}
     </div>
   </section>
 </div>
