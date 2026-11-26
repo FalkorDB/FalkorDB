@@ -453,9 +453,9 @@ run's failures: every regression (including rows a capped `result.json` left in
 the baseline too, a known flaky check, or a timing check that broke in some runs: each says
 which), and every check that could not measure. Each is `new` or failing `since` a date
 against the scheduled nights stored before it, and the previous night's failures that are
-gone are listed as fixed. The repo skill `.claude/skills/perf-run` uses it to read any run
-locally (a night, a manual run, a `/perf` run, a release-gate run) and drafts the missing
-issues; it posts nothing.
+gone are listed as fixed. The core team's `/core:perf-run` skill (FalkorDB/handbook) uses it
+to read any run locally (a night, a manual run, a `/perf` run, a release-gate run) and drafts
+the missing issues; it posts nothing.
 
 ## `/perf` on a pull request (#4037)
 
