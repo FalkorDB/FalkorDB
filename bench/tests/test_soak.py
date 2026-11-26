@@ -4,12 +4,17 @@ uv run --project bench --group dev --group soak python -I -B -m pytest bench/tes
 """
 
 import argparse
+import ast
+import io
 import json
 import os
 import re
 import signal
 import subprocess
+import threading
 import time
+import types
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -1647,3 +1652,195 @@ def test_the_shipped_soak_campaign_notes_render(soak_report):
     page = build({"scenarios": {}, "release_score": None, "blocked_by": []}, campaign=campaign)
     assert f"Notes written for the {campaign['notes']['written_for']} campaign" in page
     assert campaign["caveats"] in page
+
+
+# ---------------------------------------------------------------- scenario fixes, run alone
+
+
+def _scenario_functions(name, *functions, **namespace):
+    """Top-level functions of a scenario script compiled alone into `namespace`: a scenario
+    runs against a server when imported, so its functions are taken from the source."""
+    tree = ast.parse((SOAK_DIR / "scenarios" / f"{name}.py").read_text())
+    found = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in functions]
+    assert sorted(n.name for n in found) == sorted(functions)
+    exec(compile(ast.Module(found, type_ignores=[]), f"{name}.py", "exec"), namespace)
+    return namespace
+
+
+def _int(v):
+    return [3, v]  # a compact int cell
+
+
+def test_s04_spot_prices_fail_when_the_lookup_drops_or_adds_an_id():
+    ns = _scenario_functions(
+        "s04_recommendation", "spot_price_problems", sk=soakkit, Counter=Counter
+    )
+    problems = ns["spot_price_problems"]
+    price = [100, 200, 300]
+    rows = [[_int(0), _int(100)], [_int(2), _int(300)]]
+    assert problems([0, 2], rows, price) == []
+    assert problems([0, 1, 2], rows, price) == ["spot ids: missing [1] unexpected []"]
+    assert problems([0, 2, 2], rows, price) == ["spot ids: missing [2] unexpected []"]
+    assert problems([2], rows, price) == ["spot ids: missing [] unexpected [0]"]
+    assert problems([0, 2], [[_int(0), _int(100)], [_int(2), _int(301)]], price) == ["price 2"]
+
+
+def test_s04_and_s12_record_operation_errors_before_their_summary(tmp_path):
+    checks = soakkit.Checks(tmp_path)
+    soakkit.check_no_operation_errors(
+        checks, {"ops": {"_missed_schedule": {"errors": 3}, "read": {"errors": 0}}}
+    )
+    soakkit.check_no_operation_errors(checks, {"ops": {"write_view": {"errors": 2}}})
+    assert [(c["name"], c["ok"], c["detail"]) for c in checks.items] == [
+        ("no operation errors", True, "{}"),
+        ("no operation errors", False, "{'write_view': 2}"),
+    ]
+    for name, out in (("s04_recommendation", "out"), ("s12_iot_retention", "OUT")):
+        source = (SOAK_DIR / "scenarios" / f"{name}.py").read_text()
+        recorded = source.index("sk.check_no_operation_errors(checks, s)")
+        assert recorded < source.index(f"s = sk.analyze({out}, srv)", recorded)  # summarised again
+        assert recorded < source.index('"summary.json").write_text(')
+
+
+def test_s07_counts_an_empty_heavy_read_as_a_violation():
+    written = io.StringIO()
+    sk = types.SimpleNamespace(
+        query=lambda *args, **kwargs: [[b"t"], [], [b"stats"]], rows=soakkit.rows, cval=soakkit.cval
+    )
+    ns = _scenario_functions(
+        "s07_mvcc_consistency",
+        "heavy_op",
+        "ints",
+        "violation",
+        sk=sk,
+        G="g",
+        Q_HEAVY="MATCH heavy",
+        T_TOTAL=0,
+        MAX_VIOL=10,
+        json=json,
+        time=time,
+    )
+    ctx = types.SimpleNamespace(r=None, state={"nviol": 0, "viol": written})
+    assert ns["heavy_op"](ctx) == "read_invariants_VIOLATION"
+    assert json.loads(written.getvalue())["kind"] == "snapshot invariant"
+
+
+def _s09_compare(tmp_path, stale_attempts):
+    """s09's compare() with a replica whose first `stale_attempts` checksums lag."""
+    seen = {1: 0, 2: 0}
+
+    def checksum(port):
+        seen[port] += 1
+        lagging = port == 2 and seen[port] <= stale_attempts
+        return {"count:Event": 9 if lagging else 10, "ids:Event": 5}
+
+    checks = soakkit.Checks(tmp_path)
+    ns = _scenario_functions(
+        "s09_replication",
+        "compare",
+        threading=threading,
+        a=types.SimpleNamespace(port=1),
+        PORT_R=2,
+        CS_QUERIES=["count:Event", "ids:Event"],
+        checks=checks,
+        checksum=checksum,
+        log=lambda *x: None,
+    )
+    return ns["compare"], checks, seen
+
+
+def test_s09_records_only_the_last_attempt_of_a_compare(tmp_path):
+    compare, checks, seen = _s09_compare(tmp_path, stale_attempts=1)
+    assert compare("mid-soak Q1", retry=lambda: None)[0] is True
+    assert seen == {1: 2, 2: 2}
+    held = sc.checks_by_name(checks.items)
+    assert held == {
+        "mid-soak Q1: replica content == primary (counts/props/structure/indexes)": True,
+        "mid-soak Q1: internal ids (sum id(n)/id(e)) identical": True,
+        "mid-soak Q1: checksum queries ran without error": True,
+    }
+    assert checks.items[0]["detail"].startswith("first attempt differed (count:Event: primary=10")
+
+
+def test_s09_a_compare_still_differing_after_its_retry_fails_once(tmp_path):
+    compare, checks, _ = _s09_compare(tmp_path, stale_attempts=2)
+    assert compare("final", retry=lambda: None)[0] is False
+    assert [c["name"] for c in checks.items if not c["ok"]] == [
+        "final: replica content == primary (counts/props/structure/indexes)"
+    ]
+    compare, checks, seen = _s09_compare(tmp_path / "no-retry", stale_attempts=1)
+    (tmp_path / "no-retry").mkdir()
+    assert compare("after initial sync")[0] is False  # no retry asked: one attempt
+    assert seen == {1: 1, 2: 1}
+
+
+@pytest.mark.parametrize("raised", [RuntimeError("worker failure"), SystemExit("load worker died")])
+def test_s09_a_load_thread_that_failed_fails_the_scenario(raised):
+    def run_load(*args, **kwargs):
+        raise raised
+
+    ns = _scenario_functions(
+        "s09_replication",
+        "load_thread",
+        "join_load",
+        threading=threading,
+        sk=types.SimpleNamespace(run_load=run_load),
+    )
+    t = ns["load_thread"]("srv", "out", [], 1.0, tag="drill_")
+    t.start()
+    with pytest.raises(type(raised), match=str(raised)):
+        ns["join_load"](t, 30)
+
+
+def test_s09_a_load_thread_that_finished_or_hangs(tmp_path):
+    seen = []
+    release = threading.Event()
+
+    def run_load(*args, **kwargs):
+        seen.append((args, kwargs))
+        if kwargs.get("tag") == "hang":
+            release.wait(30)
+
+    ns = _scenario_functions(
+        "s09_replication",
+        "load_thread",
+        "join_load",
+        threading=threading,
+        sk=types.SimpleNamespace(run_load=run_load),
+    )
+    done = ns["load_thread"]("srv", "out", [], 1.0)
+    done.start()
+    ns["join_load"](done, 30)
+    assert seen == [(("srv", "out", [], 1.0), {})]
+    hung = ns["load_thread"]("srv", "out", [], 1.0, tag="hang")
+    hung.start()
+    try:
+        with pytest.raises(RuntimeError, match="load did not finish within 0s"):
+            ns["join_load"](hung, 0.1)
+    finally:
+        release.set()
+
+
+def test_s12_writes_each_ack_whole_before_its_name_exists(tmp_path):
+    renamed = []
+
+    def replace(src, dst):
+        assert not Path(dst).exists()
+        assert json.loads(Path(src).read_text())  # whole before checkpoint() can see it
+        renamed.append((Path(src).name, Path(dst).name))
+        os.replace(src, dst)
+
+    ns = _scenario_functions(
+        "s12_iot_retention",
+        "paused",
+        OUT=tmp_path,
+        PAUSE=types.SimpleNamespace(read_text=lambda: "3", exists=lambda: False),
+        json=json,
+        time=time,
+        os=types.SimpleNamespace(replace=replace),
+    )
+    ctx = types.SimpleNamespace(wid=4, state={"nk": {"1": 2}, "last": 7})
+    assert ns["paused"](ctx, "w") is True
+    assert renamed == [("ack-w-4-3.tmp", "ack-w-4-3")]
+    assert json.loads((tmp_path / "ack-w-4-3").read_text()) == {"nk": {"1": 2}, "last": 7}
+    assert [p.name for p in tmp_path.iterdir()] == ["ack-w-4-3"]

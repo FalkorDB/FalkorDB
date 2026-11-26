@@ -169,8 +169,12 @@ def paused(ctx, kind):
         return False
     if ctx.state.get("acked") != gen:
         st = ctx.state.get("nk")
-        (OUT / f"ack-{kind}-{ctx.wid}-{gen}").write_text(
-            json.dumps({"nk": st, "last": ctx.state.get("last")}) if st is not None else "{}")
+        # checkpoint() reads an ack as soon as its name exists: write it whole under another
+        # name, then rename it into place (atomic), so it never sees half the JSON
+        ack = OUT / f"ack-{kind}-{ctx.wid}-{gen}"
+        tmp = ack.with_name(ack.name + ".tmp")
+        tmp.write_text(json.dumps({"nk": st, "last": ctx.state.get("last")}) if st is not None else "{}")
+        os.replace(tmp, ack)
         ctx.state["acked"] = gen
     t = time.time()
     while PAUSE.exists() and time.time() - t < 300:
@@ -590,8 +594,7 @@ for op in ("ingest_batch", "ingest_single", "retention_delete", "q_recent_by_sen
         checks.add(f"p99 does not drift up: {op}", d["drift"]["ratio"] <= (1.5 if LONG else 3.0),
                    f"early={d['drift']['p99_early_ms']:.2f}ms late={d['drift']['p99_late_ms']:.2f}ms",
                    "major" if LONG else "minor")
-bad_ops = {k: v["errors"] for k, v in s["ops"].items() if v["errors"] and not k.startswith("_")}
-checks.add("no operation errors", not bad_ops, str(bad_ops), "major")
+sk.check_no_operation_errors(checks, s)
 s = sk.analyze(OUT, srv)
 s["meta"] = {"scenario": "s12_iot_retention", "sites": SITES, "devices": DEVICES, "sensors": SENSORS,
              "window_s": W_S, "live_readings_target": SENSORS * K_PRE, "ingest_s": ingest_s,
