@@ -685,6 +685,10 @@ jobs:
           # picked its own images is a by-hand comparison, so it goes to the step
           # summary alone.
           PERF_CHAT_WEBHOOK: ${{ inputs.mode == '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
+          # The runs perf-dashboard.yml stores (its own rule): the schedule, and a dispatch from
+          # the default branch that named no images. Their line links the run's dashboard page.
+          PERF_ON_DASHBOARD: ${{ inputs.mode == '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch && inputs.candidate_image == '' && inputs.baseline_image == '')) }}
+          PERF_PAGES_URL: ${{ vars.PERF_PAGES_URL }}
         run: uv run --project bench --frozen bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
 
       # A dispatch that named its own images is not on the dashboard's runs page: it gets an

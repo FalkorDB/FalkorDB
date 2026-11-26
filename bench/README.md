@@ -348,10 +348,15 @@ green.
 
 * **Chat:** one line every night, posted to the incoming webhook in
   `$PERF_CHAT_WEBHOOK` when that is set, and printed to stdout, for example
-  `Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 · details · new issue`.
+  `Perf nightly 2026-11-24: RED (micro-hw), main@4c10889 vs 6.2.0 · details · dashboard · new issue`.
   The parentheses hold the regressed checks on a red night, the checks that could
-  not measure on an error night, the reason on a skipped night, and the number of
-  checks on a green night. "details" links to the run page. A red night also gets
+  not measure on an error night (either list cut at a whole name, `+N more`, to stay
+  under 300 characters), the reason on a skipped night, and the number of checks on a
+  green night. "details" links to the GitHub run. "dashboard" links the run's page on
+  the dashboard (`<site>/run/<date>-<run id>.html`, `$PERF_PAGES_URL` or the
+  repository's github.io site) for a run the dashboard stores: the schedule, and a
+  dispatch from the default branch that named no images (`$PERF_ON_DASHBOARD`). The
+  page appears within minutes of the run's end, as the step summary says. A red night also gets
   "new issue": a new GitHub issue pre-filled from nightly.json only (title
   `Perf regression <date>: <checks>`, labels `performance` and `perf-regression`, a
   plain-text body with candidate vs baseline, the run link and each regressed

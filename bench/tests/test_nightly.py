@@ -249,6 +249,83 @@ class ChatLineAndExitCode(Workspace):
         self.assertTrue(line.startswith("Perf nightly 2026-11-24: GREEN (2 checks)"), line)
 
 
+class DashboardLink(Workspace):
+    """A night the dashboard stores links its run page next to the run (perf-nightly.yml sets
+    PERF_ON_DASHBOARD for the schedule and a plain dispatch from the default branch)."""
+
+    PAGE = "https://falkordb.github.io/FalkorDB/run/2026-11-24-99.html"
+
+    def stored(self, event: str, **more: str) -> dict:
+        return {
+            "GITHUB_EVENT_NAME": event,
+            "GITHUB_RUN_ID": "99",
+            "PERF_ON_DASHBOARD": "true",
+            **more,
+        }
+
+    def test_a_scheduled_night_and_a_plain_dispatch_link_their_run_page(self):
+        for event in ("schedule", "workflow_dispatch"):
+            with self.subTest(event=event):
+                code, line, summary = self.summary(GREEN, self.stored(event))
+                self.assertEqual(code, 0)
+                self.assertTrue(
+                    line.endswith(f"· <{RUN_URL}|details> · <{self.PAGE}|dashboard>"), line
+                )
+                # The line itself says nothing about when the page appears; the summary does.
+                self.assertNotIn("minutes", line)
+                self.assertIn(
+                    f"[Dashboard page]({self.PAGE}) (appears within minutes of this run's end)",
+                    summary,
+                )
+
+    def test_a_custom_domain_comes_from_perf_pages_url(self):
+        _, line, _ = self.summary(
+            GREEN, self.stored("schedule", PERF_PAGES_URL="https://perf.example.com")
+        )
+        self.assertTrue(
+            line.endswith("· <https://perf.example.com/run/2026-11-24-99.html|dashboard>"), line
+        )
+
+    def test_a_run_the_dashboard_does_not_store_gets_no_dashboard_link(self):
+        for environ in (
+            {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ID": "99"},
+            {**self.stored("workflow_dispatch"), "PERF_ON_DASHBOARD": "false"},
+            {**self.stored("schedule"), "GITHUB_RUN_ID": "99?x=1"},
+        ):
+            with self.subTest(environ=environ):
+                _, line, summary = self.summary(GREEN, environ)
+                self.assertNotIn("dashboard", line)
+                self.assertNotIn("Dashboard page", summary)
+        night = {**GREEN, "date": "24 Nov"}
+        _, line, _ = self.summary(night, self.stored("schedule"))
+        self.assertNotIn("dashboard", line)
+
+    def test_a_red_night_with_a_long_list_stays_within_chats_limit(self):
+        names = [f"check-{index:02d}-{'x' * 60}" for index in range(30)]
+        night = nightly(
+            "red",
+            [result(name, "regression", [UNWIND], summary="s" * 290) for name in names],
+        )
+        night["candidate"]["label"] = "c" * 200
+        night["baseline"]["label"] = "b" * 200
+        _, line, _ = self.summary(night, self.stored("schedule"))
+        detail = line.removeprefix("Perf nightly 2026-11-24: RED (").split("), ")[0]
+        listed, more = detail.rsplit(", ", 1)
+        self.assertRegex(more, r"^\+\d+ more$")
+        self.assertEqual(listed.split(", "), names[: 30 - int(more.split()[0][1:])])
+        self.assertLessEqual(len(detail), report.TEXT_CHARACTERS)
+        self.assertIn(f"· <{RUN_URL}|details> · <{self.PAGE}|dashboard> · <https://", line)
+        self.assertTrue(line.endswith("|new issue>"), line[-60:])
+        self.assertLessEqual(len(line), 4096)  # Google Chat's limit on a message's text
+
+    def test_an_error_night_cuts_its_list_the_same_way(self):
+        checks = [result(f"check-{i:02d}-{'y' * 60}", "error", error="down") for i in range(10)]
+        _, line, _ = self.summary(nightly("error", checks))
+        detail = line.removeprefix("Perf nightly 2026-11-24: ERROR (").split("), ")[0]
+        self.assertRegex(detail, r", \+\d+ more$")
+        self.assertLessEqual(len(detail), report.TEXT_CHARACTERS)
+
+
 class NewIssueLink(Workspace):
     def issue(self, night: dict) -> dict:
         _, line, _ = self.summary(night)

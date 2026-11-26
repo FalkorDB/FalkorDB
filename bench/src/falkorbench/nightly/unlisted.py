@@ -14,7 +14,7 @@ branch: every deploy rebuilds these pages from the runs created in the last <day
 page is gone at the first deploy after its run is older than that.
 
 `bench nightly unlisted url --kind manual|pr ...` prints a run's page URL (the `/perf` answer and
-a manual run's summary link it). Standard library only (with nightly.store and dashboard).
+a manual run's summary link it). Standard library only (with nightly.store, report and dashboard).
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from falkorbench.nightly import dashboard
+from falkorbench.nightly import report
 from falkorbench.nightly import store
 
 DAYS = 30
@@ -61,14 +62,8 @@ class Candidate:
     created: datetime
 
 
-def pages_url(repo: str, environ: Mapping[str, str]) -> str:
-    """The Pages site's root, ending in `/`: $PERF_PAGES_URL (a repository variable, for a custom
-    domain), else GitHub's default for a project site."""
-    given = (environ.get("PERF_PAGES_URL") or "").strip()
-    if given:
-        return given.rstrip("/") + "/"
-    owner, _, name = repo.partition("/")
-    return f"https://{owner.lower()}.github.io/{name}/"
+# The site's root, as the Chat line's dashboard link resolves it.
+pages_url = report.pages_url
 
 
 def page_path(kind: str, folder: str, pr: int | None = None) -> str:

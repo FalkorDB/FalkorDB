@@ -1869,6 +1869,24 @@ def test_a_manual_run_that_named_its_images_links_its_page():
     assert step["env"] == {"PERF_PAGES_URL": "${{ vars.PERF_PAGES_URL }}"}
 
 
+def test_the_chat_line_links_the_dashboard_page_of_the_runs_the_dashboard_stores():
+    """PERF_ON_DASHBOARD is perf-dashboard.yml's own rule (the schedule; a dispatch from the
+    default branch that named no images); a /perf or gate call (mode set) never has a page."""
+    steps = load_workflow("perf-nightly.yml")["jobs"]["report"]["steps"]
+    [step] = [s for s in steps if s.get("name") == "Post the night's result"]
+    assert step["env"]["PERF_ON_DASHBOARD"] == (
+        "${{ inputs.mode == '' && (github.event_name == 'schedule' || "
+        "(github.event_name == 'workflow_dispatch' && github.ref_name == "
+        "github.event.repository.default_branch && inputs.candidate_image == '' && "
+        "inputs.baseline_image == '')) }}"
+    )
+    assert step["env"]["PERF_PAGES_URL"] == "${{ vars.PERF_PAGES_URL }}"
+    decide = load_workflow("perf-dashboard.yml")["jobs"]["decide"]
+    text = json.dumps(decide)
+    # The same three conditions on the dashboard's side.
+    assert "image_overrides" in text and "DEFAULT_BRANCH" in text and "schedule" in text
+
+
 def test_only_githubs_404_is_a_missing_artifact(tmp_path, no_wait):
     """A 403 (rate limit, permissions) is an answer about the request, not the run: it is tried
     again and, if it lasts, a failed download, never "the run has none"."""
