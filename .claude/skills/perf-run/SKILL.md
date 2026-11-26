@@ -188,18 +188,25 @@ The run page (`$W/site/run/$FOLDER.html`) links each check's files.
 
 ## 4. Match each failure to an issue
 
-Start with what the checks already map: `bench/src/falkorbench/soak/README.md` ("Known breaks
-on both sides", measured against a Rust baseline), the known flaky checks (`bench nightly failures` names their issue), and the
-notes on queries a side cannot run in `bench/README.md` (LDBC) and each check's README under
-`bench/src/falkorbench/<check>/`. Then list every issue once, open and closed, and search the titles for the **mechanism**, not only
-the symptom: the operator, function, index type, procedure or invariant that broke (`index ==
-scan`, `CLIENT KILL`, `used_memory`, `writer starv`, `shortestPath`, `UDF`, `IC3`), as well as the
-check and scenario names (`s10`, `fuzz`, `LDBC`).
+Match in this order, and stop at the first that fits:
+
+1. **An issue about this check.** An open issue whose title names the scenario or query and the
+   check's own words (`used_memory`, `after deleting`, `CLIENT KILL`, `IC14`), newest first: it
+   is the one someone filed for exactly this failure.
+2. **What the checks already map**, as a lead to verify, not a verdict: the known flaky checks
+   (`bench nightly failures` names their issue), `bench/src/falkorbench/soak/README.md` ("Known
+   breaks on both sides", measured against a Rust baseline), the notes on queries a side cannot
+   run in `bench/README.md` (LDBC) and each check's README under `bench/src/falkorbench/<check>/`.
+   A map can predate the issue filed for the check: read the issue's body before naming it.
+3. **The mechanism**: the operator, function, index type, procedure or invariant that broke
+   (`index == scan`, `writer starv`, `shortestPath`, `UDF`), in the titles and then the bodies.
+
+List every issue once, open and closed, and search the titles:
 
 ```bash
 gh issue list -R "$REPO" --state all --limit 10000 --json number,title,state,labels > "$W/issues.json"
 jq length "$W/issues.json"      # equal to the limit: raise it, the list was cut; a network error: run it again
-jq -r '.[] | "#\(.number) [\(.state)] \(.title)"' "$W/issues.json" | grep -iE '<mechanism words>'
+jq -r '.[] | "#\(.number) [\(.state)] \(.title)"' "$W/issues.json" | grep -iE '<words of the check, then of the mechanism>'
 ```
 
 A known flaky check names its issue already. Read a candidate issue's body (`gh issue view <n>
@@ -252,3 +259,15 @@ Draft issues (not filed): <one per failure with no issue>
 
 Say what was not measured (a check that errored, files that did not download) as plainly as
 what failed: an unmeasured check is never green.
+
+## Notes from earlier readings
+
+- s05 `used_memory returns to baseline after deleting all` is #4050 (filed for that check), not
+  #3078 (a Matrix::decode leak on RDB load), although the soak README's known-breaks table names
+  #3078 for it: an agent that started from the table picked the wrong one. Check text first.
+- A `/perf` run whose pull request branch is behind `main` can be red only through fixes it
+  lacks (45799744478: #4016, #4015, #4013): the commit compare and the previous night's
+  improvements on the same rows showed it.
+- Against the C engine (45809791507) every row is a gap between engines; micro-hw's UDF queries
+  error on both sides by design (C-compat mode), and soak s05 `graph_copy_fork_fail` counts a
+  C-only error path as throughput.
