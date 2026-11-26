@@ -76,6 +76,10 @@ KNOWN_FLAKY = {
     "s10 Live: index-path count == scan-path count (same query)": "#3095",
 }
 
+# A known flaky check the candidate broke every time it was checked, at least this many times
+# in every run, is a total breakage: the release gate counts it (README "Known flaky checks").
+ALWAYS_BROKEN_MIN_CHECKS = 10
+
 # The open issue of a pass/fail check that breaks today, for the report only: it never changes a
 # verdict. README "Known breaks" is the same map with its evidence (a test keeps the two equal);
 # a check not listed has no issue known.
@@ -292,7 +296,7 @@ _K_OF_N = re.compile(r"^(\d+) of (\d+) runs failed")
 
 
 def _always_broken(runs: list[Run], name: str) -> bool:
-    """Every run broke it every time it was checked (k == n >= 10); no "k of n" counts as
+    """Every run broke it every time it was checked (k == n >= ALWAYS_BROKEN_MIN_CHECKS); no "k of n" counts as
     always broken, so a total breakage is gated rather than hidden."""
     if not runs or not all(name in r.checks for r in runs):
         return False
@@ -300,7 +304,7 @@ def _always_broken(runs: list[Run], name: str) -> bool:
         if r.checks[name]:
             return False
         m = _K_OF_N.match(r.details.get(name, ""))
-        if m and not (int(m.group(1)) == int(m.group(2)) >= 10):
+        if m and not (int(m.group(1)) == int(m.group(2)) >= ALWAYS_BROKEN_MIN_CHECKS):
             return False
     return True
 

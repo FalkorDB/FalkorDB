@@ -45,8 +45,9 @@ SOAK_RULES = (
     "issue tracks it, a crash, a scenario that did not complete; a latency or resource check "
     "broken on the candidate counts only when every run pair repeats it. Info, not gated: a "
     "p99 shift (past 2x and 10 ms, "
-    "with 1,000 baseline samples). Only the release gate leaves out a break the baseline shares "
-    "and a known flaky check while its issue is open: #3095."
+    "with 1,000 baseline samples). Only the release gate leaves out a break the baseline shares, "
+    "and a known flaky check while its issue is open (#3095) unless the candidate broke it every "
+    "time it was checked (at least 10 times) in every run."
 )
 RULES = {
     "micro-hw": (

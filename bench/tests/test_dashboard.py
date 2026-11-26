@@ -330,6 +330,8 @@ def _soak() -> list[str]:
         f"(past {soak.P99_INFO_RATIO:g}x and {soak.P99_INFO_FLOOR_MS:g} ms, with "
         f"{soak.MIN_P99_SAMPLES:,} baseline samples)",
         *sorted(set(soak.KNOWN_FLAKY.values())),
+        f"unless the candidate broke it every time it was checked (at least "
+        f"{soak.ALWAYS_BROKEN_MIN_CHECKS} times) in every run",
     ]
 
 

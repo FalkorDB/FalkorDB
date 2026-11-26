@@ -1099,8 +1099,12 @@ def analyse(
         for query in names:
             label = f"{hop_label(query)} [{where}]"
             broken = {}
+            ran = {}
             counts = {}
             for side, rs in side_runs.items():
+                # a side whose runs never got to this query (every load failed) did not
+                # complete it: unknown, not 1
+                ran[side] = any(r.finished or query in r.per_query or query in r.errors for r in rs)
                 failures = sum(r.errors.get(query, {}).get("failures", 0) for r in rs)
                 timeouts = sum(r.errors.get(query, {}).get("timeouts", 0) for r in rs)
                 timeout_runs = sum(1 for r in rs if r.errors.get(query, {}).get("timeouts", 0))
@@ -1108,7 +1112,10 @@ def analyse(
                 # An error reply is a correctness failure: at once. Timeouts are timing: they
                 # count once they happen in REPEAT_RUNS separate runs.
                 broken[side] = failures > 0 or timeout_runs >= REPEAT_RUNS
-            cand_ok, base_ok = int(not broken["candidate"]), int(not broken["baseline"])
+            cand_ok, base_ok = (
+                0 if broken[side] else 1 if ran[side] else None
+                for side in ("candidate", "baseline")
+            )
             status = kit.correctness_status(cand_ok, base_ok)
             detail = "; ".join(
                 f"{side}: {f} errors, {t} timeouts in {tr} of {n} runs"

@@ -303,6 +303,21 @@ def test_one_candidate_timeout_run_asks_for_a_re_run_even_when_the_baseline_is_b
     assert (label, "completed") in statuses(analysis, "regression")  # it repeated
 
 
+def test_a_baseline_that_never_loaded_did_not_complete_a_query():
+    """#4000 review (T20): every baseline load failed, so no baseline query ran. The
+    candidate's timeouts in 2 runs are a regression on their own (#4065); the baseline's value
+    is unknown (null), not 1, so the report does not say the baseline completed it."""
+    hung = {"errors": {THREE_HOP: {"timeouts": 40, "failures": 0}}}
+    runs = pass_runs(1, 3, candidate=hung, baseline={"finished": False})
+    analysis = analyse(runs)
+    label = f"{pokec.hop_label(THREE_HOP)} [5% writes]"
+    (row,) = [f for f in analysis.findings if (f["name"], f["metric"]) == (label, "completed")]
+    assert (row["status"], row["candidate"], row["baseline"]) == ("regression", 0, None)
+    assert analysis.unmeasured  # the baseline's runs did not finish: still said
+    quiet = [f for f in analysis.findings if f["metric"] == "completed" and f["name"] != label]
+    assert all(f["baseline"] is None for f in quiet if "benchmark run" not in f["name"]), quiet
+
+
 def test_an_error_reply_is_a_regression_at_once():
     runs = pass_runs(1, 3)
     runs[1].errors = {"single_edge_write": {"timeouts": 0, "failures": 1}}
