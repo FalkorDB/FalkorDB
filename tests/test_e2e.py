@@ -1588,14 +1588,25 @@ def test_aggregation_item_implicit_key_under_case_is_lazy():
 
 
 def test_aggregation_item_implicit_key_under_and_or_and_comprehension_is_lazy():
-    # AND / OR skip their later operand, and a comprehension body does not run
-    # on an empty list, so a key there cannot fail the query when it is skipped.
+    # AND / OR skip their later operand, a map projection its entries when its
+    # base is null, and a comprehension body does not run on an empty list, so
+    # a key there cannot fail the query when it is skipped.
     res = query("UNWIND [1] AS x RETURN count(*) > 0 OR x.foo AS v")
     assert res.result_set == [[True]]
     res = query("UNWIND [1] AS x RETURN count(*) < 0 AND x.foo AS v")
     assert res.result_set == [[False]]
     res = query("UNWIND [1] AS x RETURN [v IN [] | x.foo] + [count(*)] AS v")
     assert res.result_set == [[[1]]]
+    res = query("UNWIND [1] AS x WITH null AS m, x RETURN m{v: x.foo, c: count(*)} AS v")
+    assert res.result_set == [[None]]
+    res = query(
+        "UNWIND [1, 2] AS x WITH {a: 1} AS m, x RETURN m{v: x, c: count(*)} AS v",
+        compare_results=False,
+    )
+    assert sorted(res.result_set, key=lambda r: r[0]["v"]) == [
+        [{"v": 1, "c": 1}],
+        [{"v": 2, "c": 1}],
+    ]
 
 
 def test_aggregation_slot_does_not_reuse_a_comprehension_variable():

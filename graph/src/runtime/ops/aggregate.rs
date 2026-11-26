@@ -337,14 +337,16 @@ fn implicit_keys(
             }
             // Under a CASE any term may be skipped, the first condition
             // included when it is not the one that holds. AND / OR skip their
-            // later operands, and a comprehension, quantifier or `reduce` body
-            // does not run on an empty list, so those are guarded the same way.
+            // later operands, a map projection its entries when its base is
+            // null, and a comprehension, quantifier or `reduce` body does not
+            // run on an empty list, so those are guarded the same way.
             let guarded = guarded
                 || matches!(
                     node.data(),
                     ExprIR::Case { .. }
                         | ExprIR::And
                         | ExprIR::Or
+                        | ExprIR::MapProjection
                         | ExprIR::Quantifier { .. }
                         | ExprIR::ListComprehension(_)
                         | ExprIR::Reduce(_)
