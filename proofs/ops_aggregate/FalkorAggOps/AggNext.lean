@@ -129,7 +129,8 @@ def evalItem {E : Type} (ev : Ex Z → Env Z → Except E Z) (env : Env Z) (p : 
   | .error e => .error e
 
 /-- The evaluation loop of `next` (aggregate.rs since #3579): every item (the aggregations, or
-`implicit.items` with each slotted implicit key replaced by a read of its slot) is evaluated
+`implicit.items` with each implicit key replaced by `slot_read`: its slot, or for a guarded key
+`CASE WHEN ok THEN slot ELSE <subtree> END`) is evaluated
 over the same `eval_env`; nothing is written back between items (#3375). Returns the outputs
 in order, or the first error. -/
 def finishEval {E : Type} (ev : Ex Z → Env Z → Except E Z) (keys : List KeySpec)
