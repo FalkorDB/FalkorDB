@@ -21,6 +21,7 @@ from falkorbench.contract import COMMIT_RE
 from falkorbench.contract import IMAGE_RE
 from falkorbench.contract import validate_result
 from falkorbench.soak import check as sc
+from falkorbench.soak import score as soak_score
 from falkorbench.soak import soakkit
 
 STARTED = "2026-11-25T00:00:00Z"
@@ -1453,3 +1454,79 @@ def test_a_release_soak_script_runs_each_scenario_in_a_group_of_its_own(name):
     assert "pkill" not in text
     assert 'source "$S/process_group.sh"' in text
     assert re.search(r'run_in_group timeout .+ "\$\{PY\[@\]\}" -I "\$f"', text)
+
+
+def _soak_run(root, name, summary=None, rc=0, done_at=None):
+    """A run directory as run_*.sh leave it: summary.json, then .rc and .done once finished
+    (rc None: still running)."""
+    d = root / name
+    d.mkdir()
+    if summary is not None:
+        (d / "summary.json").write_text(json.dumps(summary))
+    if rc is not None:
+        (d / ".rc").write_text(f"{rc}\n")
+        (d / ".done").touch()
+        if done_at is not None:
+            os.utime(d / ".done", (done_at, done_at))
+    return d
+
+
+def _score(root, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["score.py", str(root)])
+    monkeypatch.setattr(soak_score, "OVERRIDES", [])
+    soak_score.main()
+    return json.loads((root / "scores.json").read_text())
+
+
+def _check(severity):
+    return {"name": f"a {severity} check", "ok": False, "severity": severity}
+
+
+def test_soak_scoring_keeps_the_newest_finished_archive_of_a_run_in_progress(tmp_path, monkeypatch):
+    # the current run has summarised part way (a critical failure so far); the scorer takes
+    # the newest finished archive, whatever its label, and never the partial summary
+    _soak_run(tmp_path, "s01_feed-rust", {"checks": [_check("critical")]}, rc=None)
+    _soak_run(tmp_path, "s01_feed-rust@older", {}, done_at=1_000)
+    _soak_run(tmp_path, "s01_feed-rust@newer", {"checks": [_check("minor")]}, done_at=2_000)
+    _soak_run(tmp_path, "s01_feed-rust@unfinished", {"checks": [_check("major")]}, rc=None)
+    _soak_run(tmp_path, "s01_feed-c", {})
+    _soak_run(tmp_path, "s02_mixed-rust", {}, rc=None)  # first run, still going
+    _soak_run(tmp_path, "s02_mixed-c", {})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["scenarios"]["s01_feed"]["correctness"] == 38  # the minor failure of @newer
+    assert scores["blocked_by"] == []
+    assert "s02_mixed" not in scores["scenarios"]
+    assert scores["pending"] == ["s02_mixed"]
+
+
+def test_soak_scoring_blocks_on_a_rust_run_that_did_not_exit_0(tmp_path, monkeypatch):
+    _soak_run(tmp_path, "s03_timeout-rust", {}, rc=124)  # timed out after summarising
+    _soak_run(tmp_path, "s03_timeout-c", {})
+    _soak_run(tmp_path, "s04_crash-rust", None, rc=1)  # died before it summarised
+    _soak_run(tmp_path, "s05_clean-rust", {})
+    _soak_run(tmp_path, "s05_clean-c", {})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["blocked_by"] == ["s03_timeout", "s04_crash"]
+    assert scores["failed_runs"] == {
+        "s03_timeout": "s03_timeout-rust exited 124",
+        "s04_crash": "s04_crash-rust exited 1",
+    }
+    assert "run failed: s03_timeout-rust exited 124" in scores["scenarios"]["s03_timeout"]["notes"]
+    assert "s04_crash" not in scores["scenarios"]
+
+
+def test_soak_scoring_never_takes_a_failed_c_run_as_its_baseline(tmp_path, monkeypatch):
+    rust = {"monitor": {"rss_max_mb": 150}}
+    _soak_run(tmp_path, "s06_old-rust", rust)
+    _soak_run(tmp_path, "s06_old-c", {"monitor": {"rss_max_mb": 100}}, rc=124)
+    _soak_run(tmp_path, "s06_old-c@jul-master", {"monitor": {"rss_max_mb": 300}})
+    _soak_run(tmp_path, "s07_none-rust", rust)
+    _soak_run(tmp_path, "s07_none-c", {"monitor": {"rss_max_mb": 100}}, rc=1)
+    _soak_run(tmp_path, "s08_same-rust", rust)
+    _soak_run(tmp_path, "s08_same-c", {"monitor": {"rss_max_mb": 100}})
+    _soak_run(tmp_path, "s08_same-c-samewindow", {"monitor": {"rss_max_mb": 50}}, rc=137)
+    scores = _score(tmp_path, monkeypatch)["scenarios"]
+    assert scores["s06_old"]["rss_vs_c"] == 0.5  # the older baseline that exited 0
+    assert scores["s07_none"]["rss_vs_c"] is None
+    assert "no C baseline exited 0: scored without C ratios" in scores["s07_none"]["notes"]
+    assert scores["s08_same"]["rss_vs_c"] == 1.5  # the short baseline, not the failed rerun
