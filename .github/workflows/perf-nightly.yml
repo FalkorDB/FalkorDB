@@ -58,6 +58,11 @@ name: Perf nightly
 on:
   schedule:
     - cron: '0 0 * * *'
+  # TEMPORARY (#4065 acceptance run; removed before merge): soak-b in nightly mode, main's
+  # newest image vs the latest release, when the request file below changes on this branch.
+  push:
+    branches: [ci/perf-green-means-pass]
+    paths: [.github/perf-green-acceptance.txt]
   workflow_dispatch:
     inputs:
       candidate_image:
@@ -333,7 +338,8 @@ jobs:
       - name: Plan the checks
         id: plan
         env:
-          CHECKS: ${{ inputs.checks }}
+          # TEMPORARY (#4065 acceptance run): a push runs soak-b only.
+          CHECKS: ${{ inputs.checks || (github.event_name == 'push' && 'soak-b' || '') }}
           CODE_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail

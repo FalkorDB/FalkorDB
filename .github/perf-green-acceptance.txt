@@ -1,0 +1,4 @@
+# TEMPORARY (#4065 acceptance run; removed before merge). A change to this file on branch
+# ci/perf-green-means-pass runs perf-nightly.yml's push trigger: soak-b only, nightly mode,
+# main's newest rc-mg image against the latest release, on one VM. No webhook (push).
+request: 1
