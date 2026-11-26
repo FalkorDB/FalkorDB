@@ -695,6 +695,9 @@ def test_every_request_that_runs_is_answered():
         < names.index("Build this run's dashboard")
         < names.index("Answer on the pull request")
     )
+    # It runs whenever the answer does: a run cancelled between the download and the check
+    # would otherwise answer with an earlier attempt's results.
+    assert jobs["answer"]["steps"][fresh]["if"] == step["if"] == "${{ always() }}"
     guard = jobs["answer"]["steps"][fresh]["run"]
     assert "run_started_at" in guard and 'rm -f "$night"' in guard
     assert '|| started=""' in guard and '|| made=""' in guard and "set -e" not in guard

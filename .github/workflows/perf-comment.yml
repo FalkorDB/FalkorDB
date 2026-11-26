@@ -160,8 +160,10 @@ jobs:
       # A re-run keeps the earlier attempt's perf-nightly when this attempt never reached its
       # merge: only one made since this attempt started is this run's, for the dashboard and
       # the answer alike. A lookup that fails proves nothing: the results are left out and the
-      # answer says the run left none, rather than giving none at all.
+      # answer says the run left none, rather than giving none at all. Always: a run cancelled
+      # after the download must not skip the check, since the answer still runs.
       - name: Keep only this attempt's nightly.json
+        if: ${{ always() }}
         run: |
           set -uo pipefail
           night=$RUNNER_TEMP/nightly/nightly.json
