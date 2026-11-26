@@ -41,6 +41,7 @@ jobs:
     outputs:
       tag: ${{ steps.derive.outputs.tag }}
       sha: ${{ steps.derive.outputs.sha }}
+      complete_sbom: ${{ steps.derive.outputs.complete_sbom }}
     steps:
       # Refuse a dispatch from anywhere except main or a version branch (X.Y).
       # This guards against a dispatch from a feature branch pushing user-facing
@@ -96,12 +97,22 @@ jobs:
             echo "::error::${SHA} predates server-named images (its build/runtime/Dockerfile sets no com.falkordb.server.name label), so it has no Valkey image to publish"
             exit 1
           fi
+          # Historical source builds can still carry BuildKit's platform- and
+          # digest-bound SPDX attestation, but cannot include embedded metadata
+          # that their source did not generate. The publish gate relaxes only
+          # package completeness for those commits.
+          COMPLETE_SBOM=false
+          if grep -q 'cargo auditable build' built-commit/build/runtime/Dockerfile && \
+             grep -q 'native_sbom.py' built-commit/build/runtime/Dockerfile; then
+            COMPLETE_SBOM=true
+          fi
           LATEST=()
           if [ "$MARK_LATEST" = "true" ]; then LATEST=(--latest); fi
           python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}"
           {
             echo "tag=${TAG}"
             echo "sha=${SHA}"
+            echo "complete_sbom=${COMPLETE_SBOM}"
           } >> "$GITHUB_OUTPUT"
 
   # The `cells:` input describes the release matrix shape (2 archs × 2 variants),
@@ -122,6 +133,7 @@ jobs:
       tag: rc-rebuild-${{ needs.prepare.outputs.sha }}-${{ matrix.server }}
       commit_sha: ${{ needs.prepare.outputs.sha }}
       cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
+      require_complete_sbom: ${{ needs.prepare.outputs.complete_sbom == 'true' }}
       browser_tag: latest
       push_to_dockerhub: false
       is_latest: false
@@ -152,6 +164,11 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      - name: Install registry inspector
+        run: |
+          go install github.com/google/go-containerregistry/cmd/crane@v0.20.6
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
       - name: Retag rc-rebuild-${{ needs.prepare.outputs.sha }}-<server> → ${{ needs.prepare.outputs.tag }}
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -166,4 +183,9 @@ jobs:
           # the push.
           LATEST=()
           if [ "$MARK_LATEST" = "true" ]; then LATEST=(--latest); fi
-          python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}" --execute
+          INCOMPLETE=()
+          if [ "${{ needs.prepare.outputs.complete_sbom }}" != "true" ]; then
+            INCOMPLETE=(--allow-incomplete-sbom)
+          fi
+          python3 build/publish_tags.py rebuild --tag "$TAG" --sha "$SHA" "${LATEST[@]}" \
+            "${INCOMPLETE[@]}" --execute

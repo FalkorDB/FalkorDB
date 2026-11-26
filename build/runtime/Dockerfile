@@ -26,6 +26,7 @@ FROM chef AS builder
 # compiler via `--build-arg CXX=<their clang++>` — keeping one build path /
 # one self-containment contract for every platform (see build/Dockerfile.<os>).
 ARG CXX=clang++-23
+RUN cargo install cargo-auditable --version 0.7.2 --locked
 COPY --from=planner /src/recipe.json recipe.json
 # cargo-chef stubs out build SCRIPTS, but cargo still has to RESOLVE every
 # manifest -- and graph/Cargo.toml carries a path build-dependency on
@@ -37,8 +38,9 @@ COPY native-deps native-deps
 COPY deps/native-deps.lock deps/native-deps.lock
 RUN CXX="$CXX" cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN CXX="$CXX" cargo build --release && \
+RUN CXX="$CXX" cargo auditable build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
+    readelf -S /out/falkordb.so | grep -F .dep-v0 && \
     echo "=== verify single-.so contract on libfalkordb.so ===" && \
     deps="$(ldd /out/falkordb.so | awk '{print $1}' | sort -u)" && \
     echo "$deps" && \
@@ -50,6 +52,16 @@ RUN CXX="$CXX" cargo build --release && \
     unresolved="$(ldd -r /out/falkordb.so 2>&1 | grep -E 'undefined symbol|not found' || true)" && \
     if [ -n "$unresolved" ]; then echo "FAIL: libraries or symbols this OS cannot resolve (the module would not load):"; echo "$unresolved"; exit 1; fi && \
     echo "OK: libfalkordb.so is self-contained ($(du -h /out/falkordb.so | cut -f1))"
+
+ARG SERVER
+ARG REDIS_VERSION
+ARG VALKEY_VERSION
+RUN case "$SERVER" in \
+      redis) version="$REDIS_VERSION" ;; \
+      valkey) version="$VALKEY_VERSION" ;; \
+      *) echo "Unsupported server: $SERVER" >&2; exit 1 ;; \
+    esac && \
+    python3 build/native_sbom.py deps/native-deps.lock "${LIBOMP_PREFIX}/source-version" "$SERVER" "$version" > /out/native.spdx.json
 
 # ---------------------------------------------------------------------------
 # Artifact export stage — yields ONLY the built falkordb.so so CI can extract
@@ -228,6 +240,7 @@ COPY ./build/runtime/run.sh       ${FALKORDB_BIN_PATH}/run.sh
 COPY ./build/runtime/gen-certs.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 RUN chmod +x ${FALKORDB_BIN_PATH}/run.sh ${FALKORDB_BIN_PATH}/gen-certs.sh
 COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
+COPY --from=builder /out/native.spdx.json /usr/local/share/falkordb/native.spdx.json
 
 # Runtime-stage sanity, on the OS the image ships (the builder stage checks
 # the .so on the toolchain image's OS). Verify falkordb.so deps and that this

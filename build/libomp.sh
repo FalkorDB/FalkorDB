@@ -141,6 +141,7 @@ cmake --build "${BUILD_DIR}" -j"${JOBS}" --target install
 # Sanity: archive present, no .so produced.
 test -f "${PREFIX}/lib/libomp.a"
 test -f "${PREFIX}/include/omp.h"
+printf '%s\n' "${LLVMORG_VERSION}" > "${PREFIX}/source-version"
 # Forbid only libomp.so* / .dylib (we only ship libomp.a).
 if find "${PREFIX}/lib" -maxdepth 1 \( -name 'libomp.so*' -o -name 'libomp.*dylib' \) | grep -q .; then
     echo "unexpected shared libomp produced under ${PREFIX}" >&2
