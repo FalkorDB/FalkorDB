@@ -471,22 +471,27 @@ def _analyse(repo, base, head, proofs, base_root, head_root):
         seen = set()
         for i in sorted(touched_new):
             ln, nm, test = new_fns[i]
-            if test or nm not in old_names:
+            if nm not in old_names:
                 continue
             k = new_names[nm].index(i)
             oi = old_names[nm][min(k, len(old_names[nm]) - 1)]
             seen.add(oi)
+            if test and old_fns[oi][2]:
+                continue                          # a test fn on both sides; a fn made test-only still counts
             r = [x for x in pick(rows.get((old_rel, nm), []), old_fns[oi][0], old_names[nm]) if x['bucket'] in CHECKED]
             if r:
                 changed.append(dict(file=new_rel, fn=nm, line=ln, rows=r))
         for oi in sorted(touched_old - seen):
             ln, nm, test = old_fns[oi]
-            if test or nm not in new_names:
+            if nm not in new_names:
                 continue
             k = old_names[nm].index(oi)
             ni = new_names[nm][min(k, len(new_names[nm]) - 1)]
+            if test and new_fns[ni][2]:
+                continue
             r = [x for x in pick(rows.get((old_rel, nm), []), ln, old_names[nm]) if x['bucket'] in CHECKED]
-            if r and not any(c['fn'] == nm and c['file'] == new_rel for c in changed):
+            if r and not any(c['fn'] == nm and c['file'] == new_rel and c['line'] == new_fns[ni][0]
+                             for c in changed):
                 changed.append(dict(file=new_rel, fn=nm, line=new_fns[ni][0], rows=r))
         for nm, idx in new_names.items():
             extra = len(idx) - len(old_names.get(nm, []))

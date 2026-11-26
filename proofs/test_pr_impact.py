@@ -361,6 +361,21 @@ class Analyse(unittest.TestCase):
         self.base = self.commit(base)
         self.assertEqual(self.changed(base.replace('impl S', '#[cfg(feature = "x")]\nimpl S')), ['a'])
 
+    def test_same_name_fns_touched_only_on_the_old_side_are_both_reported(self):
+        # deleting a file-level #![cfg] touches both `f`s; only the old side has the line
+        body = 'pub struct A;\npub struct B;\n\nimpl A {\n    pub fn f() {}\n}\n\nimpl B {\n    pub fn f() {}\n}\n'
+        with open(os.path.join(self.proofs, 'p', 'COVERAGE.tsv'), 'w') as f:
+            f.write('file\tfunction\tline\tbucket\tlean\n')
+            f.write('graph/src/lib.rs\tf\t7\tPROVEN\tP.a_f\n')
+            f.write('graph/src/lib.rs\tf\t11\tPROVEN\tP.b_f\n')
+        self.base = self.commit('#![cfg(feature = "x")]\n\n' + body)
+        head = self.commit(body)
+        res = pr_impact.analyse(self.repo, self.base, head, self.proofs)
+        self.assertEqual(sorted(r['lean'] for c in res['changed'] for r in c['rows']), ['P.a_f', 'P.b_f'])
+
+    def test_proven_fn_made_test_only_is_reported(self):
+        self.assertEqual(self.changed(self.BASE.replace('pub fn a', '#[cfg(test)]\npub fn a')), ['a'])
+
     def test_pure_rename_reports_the_rows_left_at_the_old_path(self):
         self.git('mv', 'graph/src/lib.rs', 'graph/src/lib2.rs')
         self.git('commit', '-q', '-m', 'mv')
