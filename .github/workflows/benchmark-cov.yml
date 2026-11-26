@@ -255,10 +255,13 @@ jobs:
           CANDIDATE: ${{ inputs.candidate_image }}
           BASELINE: ${{ inputs.baseline_image }}
           BASELINE_BELOW: ${{ inputs.baseline_below }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # The gate's caller runs in the merge queue, where the base is the merge group's
+          # (base_ref there is refs/heads/<branch>).
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.merge_group.base_ref }}
         run: |
           set -euo pipefail
+          BASE_REF=${BASE_REF#refs/heads/}
           # pin REF prints name@digest; exit 3 when the registry says REF does not
           # exist, 1 for any other failure (which must not read as "no image").
           pin() {
@@ -401,6 +404,8 @@ jobs:
           name: provenance
           path: provenance.json
           retention-days: 7
+          # "Re-run all jobs" uploads each name again: replace the earlier attempt's
+          overwrite: true
 
   # Full query set, one runner per side, all three at once.
   measure:
@@ -472,6 +477,7 @@ jobs:
             measure-${{ matrix.side }}.log
             failed-${{ matrix.side }}.json
           retention-days: 7
+          overwrite: true
 
   # Deterministic instruction counts, PR vs base.
   #
@@ -569,6 +575,7 @@ jobs:
           name: callgrind-${{ matrix.side }}-${{ matrix.shard }}
           path: cg-${{ matrix.side }}-${{ matrix.shard }}.csv
           retention-days: 7
+          overwrite: true
 
   # The one job that must build from source: coverage needs an instrumented
   # module, which no published image carries. Runs alongside the measurement jobs,
@@ -636,6 +643,7 @@ jobs:
           name: coverage
           path: coverage.txt
           retention-days: 7
+          overwrite: true
 
   # Fan-in. `!cancelled()` rather than `success()`: a side that failed should cost
   # its own column and nothing else, and the report is built from whatever CSVs

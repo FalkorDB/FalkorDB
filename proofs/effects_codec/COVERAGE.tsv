@@ -14,9 +14,9 @@ graph/src/effects/reader.rs	Reader::u64	111	PROVEN	rdU 8: u64_w64, rdU_noPanic
 graph/src/effects/reader.rs	Reader::i64	115	PROVEN	i64: i64_w64, i64_noPanic
 graph/src/effects/reader.rs	Reader::f32	119	PROVEN	f32 (bit pattern): f32_w32, f32_noPanic
 graph/src/effects/reader.rs	Reader::string	161	PROVEN	rString: rString_wString, rString_noPanic, rString_consumes
-graph/src/effects/v3/value.rs	EffectEncode::encode	34	PROVEN	encV/encL: decodeV_encV, encV_total, encV_len (Map arm = panic modelled as error)
-graph/src/effects/v3/value.rs	EffectDecode::decode	168	PROVEN	decodeV/loop/deliver (#3267: owed counter, owedOf invariant): decodeV_encV, decodeV_safe (no panic incl. owed -= 1, consumes, fuel enough), capTrace_linear/decode_reserves_linear (reservations <= remaining/4), hostile_refused_second_level, nest_decodes
-graph/src/effects/v3/value.rs	read_one	212	PROVEN	readOne/readBody (#3267: guard_count(n + owed)): readOne_scalar, readOne_list (honest bytes pass the whole-stack guard), good_readOne, readOne_progress, readOne_opened_bound (4(n+owed) <= remaining)
+graph/src/effects/v3/value.rs	EffectEncode::encode	35	PROVEN	encV/encL: decodeV_encV, encV_total, encV_len (Map arm = panic modelled as error)
+graph/src/effects/v3/value.rs	EffectDecode::decode	169	PROVEN	decodeV/loop/deliver (#3267: owed counter, owedOf invariant): decodeV_encV, decodeV_safe (no panic incl. owed -= 1, consumes, fuel enough), capTrace_linear/decode_reserves_linear (reservations <= remaining/4), hostile_refused_second_level, nest_decodes
+graph/src/effects/v3/value.rs	read_one	213	PROVEN	readOne/readBody (#3267: guard_count(n + owed)): readOne_scalar, readOne_list (honest bytes pass the whole-stack guard), good_readOne, readOne_progress, readOne_opened_bound (4(n+owed) <= remaining)
 graph/src/effects/v3/blocks.rs	LabelSet::encode	55	PROVEN	wLabelSet: encRec_createNode, readRec_createNode
 graph/src/effects/v3/blocks.rs	LabelSet::decode	77	PROVEN	rLabelSet: readN_u32, readRec_createNode
 graph/src/effects/v3/blocks.rs	AttrIds::encode	101	PROVEN	wAttrIds: encRec_createNode, readRec_createNode

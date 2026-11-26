@@ -9,8 +9,8 @@
 //! the buffer, `GRAPH.BULK` after each token. One application per unit instead of one per write
 //! call.
 
+use arcstr::ArcStr;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::{entity_type::EntityType, runtime::value::Value};
 
@@ -64,8 +64,8 @@ impl IndexChanges {
     pub(crate) fn remove(
         &mut self,
         index: &FalkorDbIndex,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         value: &Value,
         id: u64,
     ) {
@@ -77,8 +77,8 @@ impl IndexChanges {
     pub(crate) fn add(
         &mut self,
         index: &FalkorDbIndex,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         value: &Value,
         id: u64,
     ) {
@@ -90,8 +90,8 @@ impl IndexChanges {
     fn push(
         &mut self,
         index: &FalkorDbIndex,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         value: &Value,
         id: u64,
         add: bool,

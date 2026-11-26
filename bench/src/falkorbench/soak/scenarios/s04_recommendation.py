@@ -13,6 +13,7 @@ at the end (after the soak).
 """
 import argparse
 import time
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -174,6 +175,22 @@ def expected_also(x, PU, PP, distinct):
     return top10(cnts.astype(np.int64))
 
 
+def spot_price_problems(sample, rows, PRICE):
+    """A spot-price lookup returns every sampled id (UNWIND keeps repeats: compared as
+    multisets), each at its price; a row the index lookup dropped is a problem too."""
+    got = Counter(sk.cval(c[0]) for c in rows)
+    want = Counter(sample)
+    bad = []
+    if got != want:
+        bad.append(f"spot ids: missing {sorted((want - got).elements())[:5]} "
+                   f"unexpected {sorted((got - want).elements())[:5]}")
+    for c in rows:
+        i = sk.cval(c[0])
+        if i in want and sk.cval(c[1]) != int(PRICE[i]):
+            bad.append(f"price {i}")
+    return bad
+
+
 def verify(tag, PU, PP, RU, RP, RR, PRICE, view_total, purch_total, sev="critical"):
     bad = []
     for x in vset:
@@ -210,9 +227,7 @@ def verify(tag, PU, PP, RU, RP, RR, PRICE, view_total, purch_total, sev="critica
     sample = np.random.default_rng(7).integers(0, P, 200).tolist()
     res = sk.rows(sk.query(r, G, "UNWIND $ids AS id MATCH (p:Product {id: id}) RETURN id, p.price",
                            {"ids": sample}, ro=True))
-    for c in res:
-        if sk.cval(c[1]) != int(PRICE[sk.cval(c[0])]):
-            bad.append(f"price {sk.cval(c[0])}")
+    bad += spot_price_problems(sample, res, PRICE)
     checks.add(f"{tag}: price range counts + spot prices", not bad, "; ".join(bad[:3]), sev)
     bad = []
     for lbl, want in (("PURCHASED", purch_total), ("VIEWED", view_total), ("RATED", len(RU))):
@@ -410,6 +425,8 @@ else:
 
 mon.stop()
 s = sk.analyze(out, srv)
+sk.check_no_operation_errors(checks, s)
+s = sk.analyze(out, srv)  # again, so summary.json carries that check
 s["meta"] = {"scenario": "s04_recommendation", "scale": SC, "users": U, "products": P, "categories": NC,
              "brands": NB, "purchased": len(pu), "viewed": len(vu), "rated": len(ru),
              "interaction_edges": n_edges, "ingest_s": ingest_s, "edge_load_s": edge_load_s,

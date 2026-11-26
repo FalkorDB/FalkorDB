@@ -16,9 +16,9 @@
 //! one job, building a `Pending` through the runtime's own API, and graph
 //! fixtures are a second.
 
+use arcstr::ArcStr;
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
-use std::sync::Arc;
 
 use crate::effects::DecodeError;
 use crate::effects::v3::{self as v3, EffectEncode, Record, emit::for_each_record, open_payload};
@@ -63,7 +63,7 @@ pub fn with_edge(
 ) {
     let mut graph = g.borrow_mut();
     graph
-        .create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id])
+        .create_relationships_bulk(&ArcStr::from(type_name), &[0], &[1], &[id])
         .expect("a fixture's own ids, nothing to refuse");
 }
 

@@ -11,6 +11,7 @@
 //! ordered by ascending distance — RediSearch's `RediSearch_CreateVecSimNode`
 //! defaults to `BY_SCORE` ordering, which the graph index layer preserves.
 
+use arcstr::ArcStr;
 use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
@@ -125,7 +126,7 @@ pub(crate) fn eval_vector_args<'a, R: crate::runtime::row::RowView + ?Sized>(
     vector: &QueryExpr<Variable>,
     vars: &R,
     procedure: &str,
-) -> Result<(Arc<String>, Arc<String>, usize, Arc<ThinVec<f32>>), String> {
+) -> Result<(ArcStr, ArcStr, usize, Arc<ThinVec<f32>>), String> {
     let invalid = || format!("Invalid arguments for procedure '{procedure}'");
 
     let label_str =

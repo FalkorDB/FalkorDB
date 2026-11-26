@@ -37,6 +37,7 @@ index-falkordb = ["dep:feral-metis"]
 [dependencies]
 ahash = "0.8"
 arc-swap = "1"
+arcstr = "1.2.0"
 chrono = "0.4.45"
 crossfire = "3.1.19"
 csv = "1.4.0"

@@ -118,6 +118,11 @@ jobs:
           set -euo pipefail
           bash proofs/lean_ci.sh
 
+      # pr_impact.py decides which verified fns proof-impact.yml re-proves.
+      - name: Test proofs/pr_impact.py
+        if: steps.scope.outputs.run == 'true'
+        run: python3 proofs/test_pr_impact.py -v
+
       # coverage.sh prints a report and exits 0 whatever it finds, so read the
       # report: every Rust fn listed (0 unlisted), every row matching a fn
       # (0 unmatched), no row in an unknown bucket, no project without a

@@ -296,6 +296,7 @@ pub fn compare_value_column_3vl(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arcstr::ArcStr;
 
     use std::sync::Arc;
 
@@ -412,8 +413,8 @@ mod tests {
             Value::Int(7),
             Value::Float(7.0),
             Value::Float(f64::NAN),
-            Value::String(Arc::new("Dhaka".to_string())),
-            Value::String(Arc::new("Alice".to_string())),
+            Value::String(ArcStr::from("Dhaka")),
+            Value::String(ArcStr::from("Alice")),
             Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)].into())),
             Value::Point(Point {
                 latitude: 31.18,
@@ -451,13 +452,8 @@ mod tests {
         // Issue #2913: `{a:1} <> {a:'x'}` was false (and so was `=`), because
         // the map comparison stops at the disjoint pair with an `Equal`
         // ordering. As in C, a disjoint or NaN comparison is unequal.
-        let map = |v: Value| {
-            Value::Map(Arc::new(OrderMap::from_vec(vec![(
-                Arc::new("a".to_string()),
-                v,
-            )])))
-        };
-        let x = map(Value::String(Arc::new("x".to_string())));
+        let map = |v: Value| Value::Map(Arc::new(OrderMap::from_vec(vec![(ArcStr::from("a"), v)])));
+        let x = map(Value::String(ArcStr::from("x")));
         let data = vec![
             map(Value::Int(1)),
             x.clone(),
@@ -487,7 +483,7 @@ mod tests {
     fn test_compare_value_column_neq_keeps_disjoint_types() {
         // Issue #2582: every non-string is `<> 'Dhaka'`, not `false`.
         let data = sample_values();
-        let dhaka = Value::String(Arc::new("Dhaka".to_string()));
+        let dhaka = Value::String(ArcStr::from("Dhaka"));
         assert_eq!(
             compare_value_column(&data, CmpOp::Neq, &dhaka),
             vec![false, true, true, true, true, false, true, true, true]

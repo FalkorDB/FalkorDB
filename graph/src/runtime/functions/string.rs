@@ -25,6 +25,7 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, string_pool, value::Value};
+use arcstr::ArcStr;
 use regex::NoExpand;
 use std::sync::Arc;
 use thin_vec::thin_vec;
@@ -37,7 +38,7 @@ pub fn register(funcs: &mut Functions) {
         fn intern(_runtime, args) {
             match args.first() {
                 Some(Value::String(s)) => {
-                    Ok(Value::String(string_pool::global().intern(Arc::clone(s))))
+                    Ok(Value::String(string_pool::global().intern(ArcStr::clone(s))))
                 }
                 Some(Value::Null) => Ok(Value::Null),
                 _ => unreachable!(),
@@ -63,11 +64,11 @@ pub fn register(funcs: &mut Functions) {
                         return Err("start must be a non-negative integer".into());
                     }
                     if start >= s.len() as _ {
-                        return Ok(Value::String(Arc::new(String::new())));
+                        return Ok(Value::String(ArcStr::new()));
                     }
                     let start = start as usize;
 
-                    Ok(Value::String(Arc::new(s.chars().skip(start).collect())))
+                    Ok(Value::String(ArcStr::from(s.chars().skip(start).collect::<String>())))
                 }
 
                 // Three-argument version: (string, start, length)
@@ -78,7 +79,7 @@ pub fn register(funcs: &mut Functions) {
 
                     let start = start as usize;
                     if start >= s.len() {
-                        return Ok(Value::String(Arc::new(String::new())));
+                        return Ok(Value::String(ArcStr::new()));
                     }
 
                     if length < 0 {
@@ -87,8 +88,8 @@ pub fn register(funcs: &mut Functions) {
 
                     let length = length as usize;
 
-                    Ok(Value::String(Arc::new(
-                        s.chars().skip(start).take(length).collect(),
+                    Ok(Value::String(ArcStr::from(
+                        s.chars().skip(start).take(length).collect::<String>(),
                     )))
                 }
 
@@ -108,20 +109,20 @@ pub fn register(funcs: &mut Functions) {
             match (iter.next(), iter.next()) {
                 (Some(Value::String(string)), Some(Value::String(delimiter))) => {
                     if string.is_empty() {
-                        Ok(Value::List(Arc::new(thin_vec![Value::String(Arc::new(
+                        Ok(Value::List(Arc::new(thin_vec![Value::String(ArcStr::from(
                             String::new()
                         ))])))
                     } else if delimiter.is_empty() {
                         // split string to characters
                         let parts = string
                             .chars()
-                            .map(|c| Value::String(Arc::new(String::from(c))))
+                            .map(|c| Value::String(ArcStr::from(c.encode_utf8(&mut [0; 4]) as &str)))
                             .collect();
                         Ok(Value::List(Arc::new(parts)))
                     } else {
                         let parts = string
                             .split(delimiter.as_str())
-                            .map(|s| Value::String(Arc::new(String::from(s))))
+                            .map(|s| Value::String(ArcStr::from(s)))
                             .collect();
                         Ok(Value::List(Arc::new(parts)))
                     }
@@ -140,7 +141,7 @@ pub fn register(funcs: &mut Functions) {
             match args.first() {
                 Some(Value::String(s)) => {
                     let lower = s.to_lowercase();
-                    Ok(Value::String(Arc::new(lower)))
+                    Ok(Value::String(ArcStr::from(lower)))
                 }
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -156,7 +157,7 @@ pub fn register(funcs: &mut Functions) {
             match args.first() {
                 Some(Value::String(s)) => {
                     let upper = s.to_uppercase();
-                    Ok(Value::String(Arc::new(upper)))
+                    Ok(Value::String(ArcStr::from(upper)))
                 }
                 Some(Value::Null) => Ok(Value::Null),
 
@@ -176,7 +177,7 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter();
             match (iter.next(), iter.next(), iter.next()) {
                 (Some(Value::String(s)), Some(Value::String(search)), Some(Value::String(replacement))) => {
-                    Ok(Value::String(Arc::new(
+                    Ok(Value::String(ArcStr::from(
                         s.replace(search.as_str(), replacement.as_str()),
                     )))
                 }
@@ -202,8 +203,8 @@ pub fn register(funcs: &mut Functions) {
                     if n < 0 {
                         Err(String::from("length must be a non-negative integer"))
                     } else {
-                        Ok(Value::String(Arc::new(
-                            s.chars().take(n as usize).collect(),
+                        Ok(Value::String(ArcStr::from(
+                            s.chars().take(n as usize).collect::<String>(),
                         )))
                     }
                 }
@@ -220,9 +221,9 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::union([Type::String, Type::Null]),
         fn string_ltrim(_runtime, args) {
             match args.first() {
-                Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
+                Some(Value::String(s)) => Ok(Value::String(ArcStr::from(
                     s.trim_start_matches(' '),
-                )))),
+                ))),
                 Some(Value::Null) => Ok(Value::Null),
 
                 _ => unreachable!(),
@@ -235,9 +236,9 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::union([Type::String, Type::Null]),
         fn string_rtrim(_runtime, args) {
             match args.first() {
-                Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(
+                Some(Value::String(s)) => Ok(Value::String(ArcStr::from(
                     s.trim_end_matches(' '),
-                )))),
+                ))),
                 Some(Value::Null) => Ok(Value::Null),
 
                 _ => unreachable!(),
@@ -250,7 +251,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::union([Type::String, Type::Null]),
         fn string_trim(_runtime, args) {
             match args.first() {
-                Some(Value::String(s)) => Ok(Value::String(Arc::new(String::from(s.trim_matches(' '))))),
+                Some(Value::String(s)) => Ok(Value::String(ArcStr::from(s.trim_matches(' ')))),
                 Some(Value::Null) => Ok(Value::Null),
 
                 _ => unreachable!(),
@@ -272,7 +273,7 @@ pub fn register(funcs: &mut Functions) {
                         Err(String::from("length must be a non-negative integer"))
                     } else {
                         let start = s.chars().count().saturating_sub(n as usize);
-                        Ok(Value::String(Arc::new(s.chars().skip(start).collect())))
+                        Ok(Value::String(ArcStr::from(s.chars().skip(start).collect::<String>())))
                     }
                 }
                 (Some(Value::Null), _) => Ok(Value::Null),
@@ -290,12 +291,12 @@ pub fn register(funcs: &mut Functions) {
         ],
         ret: Type::union([Type::String, Type::Null]),
         fn string_join(_runtime, args) {
-            /// Convert Value list to Arc<String> vector, checking types
-            fn to_string_vec(values: &[Value]) -> Result<Vec<Arc<String>>, String> {
+            /// Convert Value list to ArcStr vector, checking types
+            fn to_string_vec(values: &[Value]) -> Result<Vec<ArcStr>, String> {
                 values
                     .iter()
                     .map(|value| match value {
-                        Value::String(s) => Ok(Arc::clone(s)),
+                        Value::String(s) => Ok(ArcStr::clone(s)),
                         _ => Err(format!(
                             "Type mismatch: expected String but was {}",
                             value.name()
@@ -307,7 +308,7 @@ pub fn register(funcs: &mut Functions) {
             /// Compute the total length needed, with overflow detection
             /// Uses i32 for calculations to match C implementation behavior
             fn compute_join_length(
-                strings: &[Arc<String>],
+                strings: &[ArcStr],
                 delimiter: &str,
             ) -> Result<usize, String> {
                 if strings.is_empty() {
@@ -347,7 +348,7 @@ pub fn register(funcs: &mut Functions) {
 
             /// Join strings with pre-allocated buffer
             fn join_with_preallocate(
-                strings: &[Arc<String>],
+                strings: &[ArcStr],
                 delimiter: &str,
                 capacity: usize,
             ) -> String {
@@ -379,13 +380,13 @@ pub fn register(funcs: &mut Functions) {
                     let strings = to_string_vec(vec)?;
                     let size = compute_join_length(&strings, s.as_str())?;
                     let joined = join_with_preallocate(&strings, s.as_str(), size);
-                    Ok(Value::String(Arc::new(joined)))
+                    Ok(Value::String(ArcStr::from(joined)))
                 }
                 (Value::List(vec), None) => {
                     let strings = to_string_vec(vec)?;
                     let size = compute_join_length(&strings, "")?;
                     let joined = join_with_preallocate(&strings, "", size);
-                    Ok(Value::String(Arc::new(joined)))
+                    Ok(Value::String(ArcStr::from(joined)))
                 }
                 (Value::List(_), Some(Value::Null)) | (Value::Null, _) => Ok(Value::Null),
                 _ => unreachable!(),
@@ -445,14 +446,14 @@ pub fn register(funcs: &mut Functions) {
                         // No third argument provided, default to empty string
                         None => {
                             let replaced_text = re.replace_all(text.as_str(), "").into_owned();
-                            Ok(Value::String(Arc::new(replaced_text)))
+                            Ok(Value::String(ArcStr::from(replaced_text)))
                         }
                         // NULL replacement returns NULL
                         Some(Value::Null) => Ok(Value::Null),
                         // Use provided string
                         Some(Value::String(repl)) => {
                             let replaced_text = re.replace_all(text.as_str(), NoExpand(repl.as_str())).into_owned();
-                            Ok(Value::String(Arc::new(replaced_text)))
+                            Ok(Value::String(ArcStr::from(replaced_text)))
                         }
                         // All other types should have been caught by type checking
                         Some(v) => Err(format!(
@@ -481,7 +482,7 @@ pub fn regex_captures_list(
         let mut match_list = thin_vec![];
         for i in 0..caps.len() {
             if let Some(m) = caps.get(i) {
-                match_list.push(Value::String(Arc::new(String::from(m.as_str()))));
+                match_list.push(Value::String(ArcStr::from(m.as_str())));
             } else {
                 match_list.push(Value::Null);
             }

@@ -24,10 +24,10 @@
 //! by an earlier row, the cached entity IDs are reused and `ON MATCH SET`
 //! is applied instead.
 
+use arcstr::ArcStr;
 use std::cell::OnceCell;
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
 use crate::graph::graph::LabelId;
 use crate::parser::ast::{QueryGraph, SetItem, Variable};
@@ -57,11 +57,11 @@ pub struct MergeOp<'a> {
     /// `next()` and then processed in input order.
     matched: Option<VecDeque<(Row, Vec<Row>)>>,
     merge_child_idx: NodeIdx<Dyn<IR>>,
-    pattern: &'a QueryGraph<Arc<String>, Arc<String>, Variable>,
-    resolved_pattern: OnceCell<QueryGraph<Arc<String>, LabelId, Variable>>,
-    on_create_set_items: &'a [SetItem<Arc<String>, Variable>],
+    pattern: &'a QueryGraph<ArcStr, ArcStr, Variable>,
+    resolved_pattern: OnceCell<QueryGraph<ArcStr, LabelId, Variable>>,
+    on_create_set_items: &'a [SetItem<ArcStr, Variable>],
     resolved_on_create_set_items: OnceCell<Vec<SetItem<LabelId, Variable>>>,
-    on_match_set_items: &'a [SetItem<Arc<String>, Variable>],
+    on_match_set_items: &'a [SetItem<ArcStr, Variable>],
     resolved_on_match_set_items: OnceCell<Vec<SetItem<LabelId, Variable>>>,
     is_error: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
@@ -71,9 +71,9 @@ impl<'a> MergeOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        pattern: &'a QueryGraph<Arc<String>, Arc<String>, Variable>,
-        on_create_set_items: &'a [SetItem<Arc<String>, Variable>],
-        on_match_set_items: &'a [SetItem<Arc<String>, Variable>],
+        pattern: &'a QueryGraph<ArcStr, ArcStr, Variable>,
+        on_create_set_items: &'a [SetItem<ArcStr, Variable>],
+        on_match_set_items: &'a [SetItem<ArcStr, Variable>],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         let merge_child_idx = if runtime.plan.node(idx).num_children() == 1 {
@@ -99,7 +99,7 @@ impl<'a> MergeOp<'a> {
         }
     }
 
-    fn resolve_pattern(&self) -> &QueryGraph<Arc<String>, LabelId, Variable> {
+    fn resolve_pattern(&self) -> &QueryGraph<ArcStr, LabelId, Variable> {
         self.resolved_pattern
             .get_or_init(|| self.runtime.resolve_pattern(self.pattern))
     }
@@ -183,7 +183,7 @@ impl<'a> MergeOp<'a> {
 
     fn compute_merge_pattern_hash(
         &self,
-        pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
+        pattern: &QueryGraph<ArcStr, LabelId, Variable>,
         vars: &Row,
     ) -> Result<u64, String> {
         let mut hasher = rustc_hash::FxHasher::default();

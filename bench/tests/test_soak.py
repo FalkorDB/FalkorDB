@@ -4,8 +4,18 @@ uv run --project bench --group dev --group soak python -I -B -m pytest bench/tes
 """
 
 import argparse
+import ast
+import io
 import json
+import os
 import re
+import signal
+import socket
+import subprocess
+import threading
+import time
+import types
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -17,6 +27,8 @@ from falkorbench.contract import COMMIT_RE
 from falkorbench.contract import IMAGE_RE
 from falkorbench.contract import validate_result
 from falkorbench.soak import check as sc
+from falkorbench.soak import gen_final
+from falkorbench.soak import score as soak_score
 from falkorbench.soak import soakkit
 
 STARTED = "2026-11-25T00:00:00Z"
@@ -1367,3 +1379,633 @@ def test_run_load_fails_when_a_grouped_worker_dies(tmp_path, fake_connect, monke
     specs = [soakkit.WorkerSpec(_ok_op, rate=50), soakkit.WorkerSpec(_ok_op, init=_boom_init, name="bad")]
     with pytest.raises(RuntimeError, match="worker failure"):
         soakkit.run_load(_FakeServer(), tmp_path, specs, 0.3)
+
+
+# ---------------------------------------------------------------- release-soak run scripts
+
+SOAK_DIR = Path(soakkit.__file__).parent
+# A stand-in for a scenario: it starts a "server" titled like a soak redis-server, the way
+# soakkit.Server starts one (a child process), writes its pid to $1, runs for $2 seconds,
+# and exits 3 leaving the server behind.
+FAKE_SCENARIO = """
+bash -c 'exec -a "redis-server *:19000" sleep 300' &
+echo $! > "$1"
+sleep "${2:-0}"
+exit 3
+"""
+
+
+def _gone(pid, timeout=10.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _in_bash(tmp_path, body):
+    """argv of a bash that sources process_group.sh, as the run scripts do, then runs body;
+    the fake scenario is at tmp_path/scenario.sh."""
+    (tmp_path / "scenario.sh").write_text(FAKE_SCENARIO)
+    return ["bash", "-c", f'source "{SOAK_DIR / "process_group.sh"}"\n{body}']
+
+
+@pytest.fixture
+def unrelated_soak_server():
+    """A server this run did not start, titled the way a soak server on 19xxx is."""
+    proc = subprocess.Popen(["bash", "-c", 'exec -a "redis-server *:19001" sleep 300'])
+    yield proc
+    proc.kill()
+    proc.wait()
+
+
+def test_a_release_soak_run_kills_the_servers_its_scenario_left_and_no_other(
+    tmp_path, unrelated_soak_server
+):
+    pidfile = tmp_path / "server.pid"
+    argv = _in_bash(
+        tmp_path, f'run_in_group bash "{tmp_path / "scenario.sh"}" "{pidfile}"; echo "rc=$?"'
+    )
+    out = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    assert "rc=3" in out.stdout, out
+    assert _gone(int(pidfile.read_text()))
+    assert unrelated_soak_server.poll() is None
+
+
+def test_a_release_soak_script_stopped_midway_kills_its_running_scenario(
+    tmp_path, unrelated_soak_server
+):
+    pidfile, group_file = tmp_path / "server.pid", tmp_path / ".scenario-group"
+    argv = _in_bash(
+        tmp_path,
+        f'SOAK_GROUP_FILE="{group_file}"\n'
+        f'run_in_group bash "{tmp_path / "scenario.sh"}" "{pidfile}" 300',
+    )
+    script = subprocess.Popen(argv)
+    try:
+        deadline = time.time() + 30
+        while not (pidfile.exists() and pidfile.read_text().strip()) and time.time() < deadline:
+            time.sleep(0.05)
+        server = int(pidfile.read_text())
+        # what a SIGKILLed script leaves to stop by hand: the group its scenario runs in
+        assert int(group_file.read_text()) == os.getpgid(server)
+        script.send_signal(signal.SIGTERM)
+        assert script.wait(30) == 143
+        assert _gone(server)
+        assert not group_file.exists()
+        assert unrelated_soak_server.poll() is None
+    finally:
+        script.kill()
+        script.wait()
+
+
+@pytest.mark.parametrize("name", ["run_rust_main.sh", "run_c_rerun.sh"])
+def test_a_release_soak_script_runs_each_scenario_in_a_group_of_its_own(name):
+    text = (SOAK_DIR / name).read_text()
+    assert "pkill" not in text
+    assert 'source "$S/process_group.sh"' in text
+    assert re.search(r'run_in_group timeout .+ "\$\{PY\[@\]\}" -I "\$f"', text)
+    # s09 uses --port and --port+1, and reserves --port+2
+    assert text.index("refuse_busy_ports 19000 19001 19002 ||") < text.index("run_in_group ")
+    # every attempt starts in an empty run directory, or the script stops
+    assert re.search(
+        r'fresh_run_dir "\$o" \|\| \{ .*exit 1; \}\n *echo "\$LABEL" > "\$o/\.commit"', text
+    )
+    assert "rm -f" not in text and 'mkdir -p "$o"' not in text
+
+
+def test_a_release_soak_load_sampler_ends_with_its_script():
+    text = (SOAK_DIR / "run_rust_main.sh").read_text()
+    assert '( while kill -0 $$ 2>/dev/null; do echo "$(date +%s) $(load1)" >> "$o/load.log"' in text
+
+
+def test_a_release_soak_attempt_never_starts_in_an_earlier_runs_directory(tmp_path):
+    run = tmp_path / "s01_social_feed-rust"
+    run.mkdir()
+    for name, text in ((".commit", "old\n"), (".done", ""), (".rc", "0\n"), ("summary.json", "{}")):
+        (run / name).write_text(text)
+    fresh = tmp_path / "s02_fraud_realtime-rust"  # no earlier run
+    out = subprocess.run(
+        _in_bash(tmp_path, f'fresh_run_dir "{run}" && fresh_run_dir "{fresh}"'),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert out.returncode == 0, out.stderr
+    assert list(run.iterdir()) == [] and list(fresh.iterdir()) == []
+    (moved,) = tmp_path.glob("s01_social_feed-rust-superseded-*")
+    assert (moved / "summary.json").exists() and "@" not in moved.name  # not an archive
+
+
+def test_a_release_soak_attempt_stops_when_the_old_run_cannot_be_moved(tmp_path):
+    full = tmp_path / "full"
+    run = full / "s01_social_feed-rust"
+    run.mkdir(parents=True)
+    (run / "summary.json").write_text("{}")
+    full.chmod(0o555)  # nothing in full/ can be renamed
+    try:
+        out = subprocess.run(
+            _in_bash(tmp_path, f'fresh_run_dir "{run}"; echo "rc=$?"'),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    finally:
+        full.chmod(0o755)
+    assert "rc=1" in out.stdout
+    assert [p.name for p in full.iterdir()] == [run.name]
+    assert (run / "summary.json").exists()  # untouched, and the attempt does not start in it
+
+
+def test_a_release_soak_run_refuses_to_start_on_a_port_that_answers(tmp_path):
+    group_file = tmp_path / ".scenario-group"
+    group_file.write_text("4242\n")  # left by an earlier run that was SIGKILLed
+    with socket.socket() as gone:
+        gone.bind(("127.0.0.1", 0))
+        free = gone.getsockname()[1]
+    with socket.socket() as listening:
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        busy = listening.getsockname()[1]
+
+        def refuse(*ports):
+            body = f'SOAK_GROUP_FILE="{group_file}"\nrefuse_busy_ports {" ".join(map(str, ports))}'
+            return subprocess.run(
+                _in_bash(tmp_path, body + '; echo "rc=$?"'),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        out = refuse(free, busy)
+        assert "rc=1" in out.stdout
+        assert f"a server already answers on port(s) {busy}; stop it first" in out.stderr
+        assert "an earlier run's scenario may still run: kill -9 -- -4242" in out.stderr
+        assert "rc=0" in refuse(free).stdout
+
+
+def _soak_run(root, name, summary=None, rc=0, done_at=None):
+    """A run directory as run_*.sh leave it: summary.json, then .rc and .done once finished
+    (rc None: still running)."""
+    d = root / name
+    d.mkdir()
+    if summary is not None:
+        (d / "summary.json").write_text(json.dumps(summary))
+    if rc is not None:
+        (d / ".rc").write_text(f"{rc}\n")
+        (d / ".done").touch()
+        if done_at is not None:
+            os.utime(d / ".done", (done_at, done_at))
+    return d
+
+
+def _score(root, monkeypatch):
+    monkeypatch.setattr("sys.argv", ["score.py", str(root)])
+    monkeypatch.setattr(soak_score, "OVERRIDES", [])
+    soak_score.main()
+    return json.loads((root / "scores.json").read_text())
+
+
+def _check(severity):
+    return {"name": f"a {severity} check", "ok": False, "severity": severity}
+
+
+def test_soak_scoring_keeps_the_newest_finished_archive_of_a_run_in_progress(tmp_path, monkeypatch):
+    # the current run has summarised part way (a critical failure so far); the scorer takes
+    # the newest finished archive, whatever its label, and never the partial summary
+    _soak_run(tmp_path, "s01_feed-rust", {"checks": [_check("critical")]}, rc=None)
+    _soak_run(tmp_path, "s01_feed-rust@older", {}, done_at=1_000)
+    _soak_run(tmp_path, "s01_feed-rust@newer", {"checks": [_check("minor")]}, done_at=2_000)
+    _soak_run(tmp_path, "s01_feed-rust@unfinished", {"checks": [_check("major")]}, rc=None)
+    _soak_run(tmp_path, "s01_feed-c", {})
+    _soak_run(tmp_path, "s02_mixed-rust", {}, rc=None)  # first run, still going
+    _soak_run(tmp_path, "s02_mixed-c", {})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["scenarios"]["s01_feed"]["correctness"] == 38  # the minor failure of @newer
+    assert scores["scenarios"]["s01_feed"]["run"] == "s01_feed-rust@newer"
+    assert scores["blocked_by"] == []
+    assert "s02_mixed" not in scores["scenarios"]
+    assert scores["pending"] == ["s02_mixed"]
+
+
+def test_soak_scoring_blocks_on_a_rust_run_that_did_not_exit_0(tmp_path, monkeypatch):
+    _soak_run(tmp_path, "s03_timeout-rust", {}, rc=124)  # timed out after summarising
+    _soak_run(tmp_path, "s03_timeout-c", {})
+    _soak_run(tmp_path, "s04_crash-rust", None, rc=1)  # died before it summarised
+    _soak_run(tmp_path, "s05_clean-rust", {})
+    _soak_run(tmp_path, "s05_clean-c", {})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["blocked_by"] == ["s03_timeout", "s04_crash"]
+    assert scores["failed_runs"] == {
+        "s03_timeout": "s03_timeout-rust exited 124",
+        "s04_crash": "s04_crash-rust exited 1",
+    }
+    assert "run failed: s03_timeout-rust exited 124" in scores["scenarios"]["s03_timeout"]["notes"]
+    assert "s04_crash" not in scores["scenarios"]
+
+
+def test_soak_scoring_never_takes_a_failed_c_run_as_its_baseline(tmp_path, monkeypatch):
+    rust = {"monitor": {"rss_max_mb": 150}}
+    _soak_run(tmp_path, "s06_old-rust", rust)
+    _soak_run(tmp_path, "s06_old-c", {"monitor": {"rss_max_mb": 100}}, rc=124)
+    _soak_run(tmp_path, "s06_old-c@jul-master", {"monitor": {"rss_max_mb": 300}})
+    _soak_run(tmp_path, "s07_none-rust", rust)
+    _soak_run(tmp_path, "s07_none-c", {"monitor": {"rss_max_mb": 100}}, rc=1)
+    _soak_run(tmp_path, "s08_same-rust", rust)
+    _soak_run(tmp_path, "s08_same-c", {"monitor": {"rss_max_mb": 100}})
+    _soak_run(tmp_path, "s08_same-c-samewindow", {"monitor": {"rss_max_mb": 50}}, rc=137)
+    scores = _score(tmp_path, monkeypatch)["scenarios"]
+    assert scores["s06_old"]["rss_vs_c"] == 0.5  # the older baseline that exited 0
+    assert scores["s06_old"]["c_run"] == "s06_old-c@jul-master"
+    assert scores["s07_none"]["rss_vs_c"] is None
+    assert "no C baseline exited 0: scored without C ratios" in scores["s07_none"]["notes"]
+    assert scores["s07_none"]["c_run"] is None
+    assert scores["s08_same"]["rss_vs_c"] == 1.5  # the short baseline, not the failed rerun
+
+
+@pytest.fixture
+def soak_report(tmp_path, monkeypatch):
+    """gen_final.build() over tmp_path/full with the scores.json a test writes (score.py
+    is not run); returns full/ and build(scores, findings, campaign) -> report.html."""
+    full = tmp_path / "full"
+    full.mkdir()
+    monkeypatch.setattr(gen_final, "S", tmp_path)
+    monkeypatch.setattr(gen_final, "FULL", full)
+    scoring = types.SimpleNamespace(returncode=0, stderr="")
+    monkeypatch.setattr(gen_final.subprocess, "run", lambda *args, **kwargs: scoring)
+
+    def build(scores, findings=(), campaign=None, score_py=None):
+        if score_py is not None:  # how score.py ended: (exit status, stderr)
+            scoring.returncode, scoring.stderr = score_py
+        (full / "scores.json").write_text(json.dumps(scores))
+        (tmp_path / "findings.json").write_text(json.dumps(list(findings)))
+        if campaign is not None:
+            (tmp_path / "campaign.json").write_text(json.dumps(campaign))
+        gen_final.build()
+        return (tmp_path / "report.html").read_text()
+
+    return full, build
+
+
+def _scored(total, rust="s01_social_feed-rust", c="s01_social_feed-c"):
+    return {"total": total, "run": rust, "c_run": c, "notes": []}
+
+
+ALL_SCENARIOS = [scn for scn, *_ in gen_final.SCN]
+
+
+def test_the_soak_report_says_not_blocked_when_nothing_blocks(soak_report):
+    full, build = soak_report
+    _soak_run(full, "s01_social_feed-rust", {})
+    _soak_run(full, "s01_social_feed-c", {"server_log_crash_markers": ["panic"]})
+    every = {scn: _scored(95.0, rust=f"{scn}-rust", c=f"{scn}-c") for scn in ALL_SCENARIOS}
+    page = build({"scenarios": every, "release_score": 95.0, "blocked_by": []})
+    assert (
+        "Not blocked: no open critical Rust bug, and no critical check or Rust run failed." in page
+    )
+    assert 'class="verdict pass"' in page
+    assert "Blocked:" not in page
+    assert "<b>0 / 1</b><span>scenarios that crashed: Rust / C</span>" in page
+    assert "d070f1f9b" not in page
+    assert "20f9a45ee" not in page
+
+
+def test_the_soak_report_counts_a_c_crash_the_scores_left_out(soak_report):
+    """A C run that crashed is no baseline (score.py drops it), but the crash tile counts it."""
+    full, build = soak_report
+    _soak_run(full, "s01_social_feed-rust", {})
+    _soak_run(
+        full, "s01_social_feed-c", {"server_log_crash_markers": ["crashed by signal"]}, rc=134
+    )
+    scores = {"scenarios": {"s01_social_feed": _scored(90.0, c=None)}, "blocked_by": []}
+    page = build(scores)
+    assert "<b>0 / 1</b><span>scenarios that crashed: Rust / C</span>" in page
+
+
+def test_the_soak_report_names_what_blocks_the_release(soak_report):
+    _, build = soak_report
+    findings = [
+        {
+            "id": "F3",
+            "engine": "rust",
+            "severity": "critical",
+            "title": "loses 0",
+            "scenario": "s03",
+        },
+        {
+            "id": "F4",
+            "engine": "rust",
+            "severity": "critical",
+            "title": "gone",
+            "status": "FIXED by #1",
+        },
+    ]
+    scores = {
+        "scenarios": {},
+        "release_score": None,
+        "blocked_by": ["s09_replication"],
+        "failed_runs": {"s09_replication": "s09_replication-rust exited 124"},
+        "pending": ["s12_iot_retention"],
+    }
+    page = build(scores, findings)
+    rest = ", ".join(scn for scn in ALL_SCENARIOS if scn != "s09_replication")
+    assert (
+        "Blocked: 1 open critical Rust bug (F3); a critical check failed or the run failed in"
+        f" s09_replication. Scenario score —/100 over 0 of 12 scenarios. Not scored yet: {rest}."
+    ) in page
+    assert 'class="verdict"' in page
+
+
+def test_the_soak_report_decides_nothing_on_scores_it_does_not_have(soak_report):
+    _, build = soak_report
+    one = {"scenarios": {"s01_social_feed": _scored(95.0)}, "release_score": 95.0, "blocked_by": []}
+    page = build(one)
+    assert "Not decided: 11 of 12 scenarios are not scored yet." in page
+    assert "Not blocked" not in page and 'class="verdict"' in page
+    # score.py failed: the scores.json it left from an earlier run says nothing about this one
+    every = {scn: _scored(95.0) for scn in ALL_SCENARIOS}
+    stale = {"scenarios": every, "release_score": 95.0, "blocked_by": []}
+    page = build(
+        stale, score_py=(1, "Traceback ...\njson.decoder.JSONDecodeError: Expecting value")
+    )
+    assert (
+        "Not decided: score.py failed (exit 1): json.decoder.JSONDecodeError: Expecting value."
+        " Scenario score —/100 over 0 of 12 scenarios."
+    ) in page
+    assert "Not blocked" not in page
+
+
+def test_the_soak_report_shows_campaign_notes_as_written_for_their_campaign(soak_report):
+    full, build = soak_report
+    (_soak_run(full, "s01_social_feed-rust", {}) / ".commit").write_text("bbb\n")
+    (_soak_run(full, "s02_fraud_realtime-rust", {}) / ".commit").write_text("aaa\n")
+    (full / "scores-aaa.json").write_text(
+        json.dumps({"scenarios": {"s01_social_feed": {"total": 80.0}}})
+    )
+    campaign = {
+        "label": "bbb",
+        "previous": "aaa",
+        "c_baseline": "C v9",
+        "notes": {"written_for": "aaa", "html": "the <b>aaa</b> runs"},
+    }
+    scores = {
+        "scenarios": {
+            "s01_social_feed": _scored(90.0, c=None),
+            "s02_fraud_realtime": _scored(70.0, rust="s02_fraud_realtime-rust", c=None),
+        },
+        "release_score": 80.0,
+        "blocked_by": [],
+    }
+    page = build(scores, campaign=campaign)
+    assert "Notes written for the aaa campaign</b>" in page
+    assert "the <b>aaa</b> runs" in page
+    assert "on bbb · was 80.0 on aaa" in page
+    assert "on aaa · bbb re-run pending" in page
+    assert "Release readiness · FalkorDB-rs main · bbb (compared with aaa)" in page
+    assert "scenarios that crashed: Rust / C v9" in page
+
+
+def test_the_shipped_soak_campaign_notes_render(soak_report):
+    _, build = soak_report
+    campaign = json.loads((SOAK_DIR / "campaign.json").read_text())
+    page = build({"scenarios": {}, "release_score": None, "blocked_by": []}, campaign=campaign)
+    assert f"Notes written for the {campaign['notes']['written_for']} campaign" in page
+    assert campaign["caveats"] in page
+
+
+# ---------------------------------------------------------------- scenario fixes, run alone
+
+
+def _scenario_functions(name, *functions, **namespace):
+    """Top-level functions of a scenario script compiled alone into `namespace`: a scenario
+    runs against a server when imported, so its functions are taken from the source."""
+    tree = ast.parse((SOAK_DIR / "scenarios" / f"{name}.py").read_text())
+    found = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in functions]
+    assert sorted(n.name for n in found) == sorted(functions)
+    exec(compile(ast.Module(found, type_ignores=[]), f"{name}.py", "exec"), namespace)
+    return namespace
+
+
+def _int(v):
+    return [3, v]  # a compact int cell
+
+
+def test_s04_spot_prices_fail_when_the_lookup_drops_or_adds_an_id():
+    ns = _scenario_functions(
+        "s04_recommendation", "spot_price_problems", sk=soakkit, Counter=Counter
+    )
+    problems = ns["spot_price_problems"]
+    price = [100, 200, 300]
+    rows = [[_int(0), _int(100)], [_int(2), _int(300)]]
+    assert problems([0, 2], rows, price) == []
+    assert problems([0, 1, 2], rows, price) == ["spot ids: missing [1] unexpected []"]
+    assert problems([0, 2, 2], rows, price) == ["spot ids: missing [2] unexpected []"]
+    assert problems([2], rows, price) == ["spot ids: missing [] unexpected [0]"]
+    assert problems([0, 2], [[_int(0), _int(100)], [_int(2), _int(301)]], price) == ["price 2"]
+
+
+def test_s04_and_s12_record_operation_errors_before_their_summary(tmp_path):
+    checks = soakkit.Checks(tmp_path)
+    soakkit.check_no_operation_errors(
+        checks, {"ops": {"_missed_schedule": {"errors": 3}, "read": {"errors": 0}}}
+    )
+    soakkit.check_no_operation_errors(checks, {"ops": {"write_view": {"errors": 2}}})
+    assert [(c["name"], c["ok"], c["detail"]) for c in checks.items] == [
+        ("no operation errors", True, "{}"),
+        ("no operation errors", False, "{'write_view': 2}"),
+    ]
+    for name, out in (("s04_recommendation", "out"), ("s12_iot_retention", "OUT")):
+        source = (SOAK_DIR / "scenarios" / f"{name}.py").read_text()
+        recorded = source.index("sk.check_no_operation_errors(checks, s)")
+        assert recorded < source.index(f"s = sk.analyze({out}, srv)", recorded)  # summarised again
+        assert recorded < source.index('"summary.json").write_text(')
+
+
+def test_s07_counts_an_empty_heavy_read_as_a_violation():
+    written = io.StringIO()
+    sk = types.SimpleNamespace(
+        query=lambda *args, **kwargs: [[b"t"], [], [b"stats"]], rows=soakkit.rows, cval=soakkit.cval
+    )
+    ns = _scenario_functions(
+        "s07_mvcc_consistency",
+        "heavy_op",
+        "ints",
+        "violation",
+        sk=sk,
+        G="g",
+        Q_HEAVY="MATCH heavy",
+        T_TOTAL=0,
+        MAX_VIOL=10,
+        json=json,
+        time=time,
+    )
+    ctx = types.SimpleNamespace(r=None, state={"nviol": 0, "viol": written})
+    assert ns["heavy_op"](ctx) == "read_invariants_VIOLATION"
+    assert json.loads(written.getvalue())["kind"] == "snapshot invariant"
+
+
+def _s09_compare(tmp_path, stale_attempts):
+    """s09's compare() with a replica whose first `stale_attempts` checksums lag."""
+    seen = {1: 0, 2: 0}
+
+    def checksum(port):
+        seen[port] += 1
+        lagging = port == 2 and seen[port] <= stale_attempts
+        return {"count:Event": 9 if lagging else 10, "ids:Event": 5}
+
+    checks = soakkit.Checks(tmp_path)
+    ns = _scenario_functions(
+        "s09_replication",
+        "compare",
+        threading=threading,
+        a=types.SimpleNamespace(port=1),
+        PORT_R=2,
+        CS_QUERIES=["count:Event", "ids:Event"],
+        checks=checks,
+        checksum=checksum,
+        log=lambda *x: None,
+    )
+    return ns["compare"], checks, seen
+
+
+def test_s09_records_only_the_last_attempt_of_a_compare(tmp_path):
+    compare, checks, seen = _s09_compare(tmp_path, stale_attempts=1)
+    assert compare("mid-soak Q1", retry=lambda: None)[0] is True
+    assert seen == {1: 2, 2: 2}
+    held = sc.checks_by_name(checks.items)
+    assert held == {
+        "mid-soak Q1: replica content == primary (counts/props/structure/indexes)": True,
+        "mid-soak Q1: internal ids (sum id(n)/id(e)) identical": True,
+        "mid-soak Q1: checksum queries ran without error": True,
+    }
+    assert checks.items[0]["detail"].startswith("first attempt differed (count:Event: primary=10")
+
+
+def test_s09_a_compare_still_differing_after_its_retry_fails_once(tmp_path):
+    compare, checks, _ = _s09_compare(tmp_path, stale_attempts=2)
+    assert compare("final", retry=lambda: None)[0] is False
+    assert [c["name"] for c in checks.items if not c["ok"]] == [
+        "final: replica content == primary (counts/props/structure/indexes)"
+    ]
+    compare, checks, seen = _s09_compare(tmp_path / "no-retry", stale_attempts=1)
+    (tmp_path / "no-retry").mkdir()
+    assert compare("after initial sync")[0] is False  # no retry asked: one attempt
+    assert seen == {1: 1, 2: 1}
+
+
+@pytest.mark.parametrize("raised", [RuntimeError("worker failure"), SystemExit("load worker died")])
+def test_s09_a_load_thread_that_failed_fails_the_scenario(raised):
+    def run_load(*args, **kwargs):
+        raise raised
+
+    ns = _scenario_functions(
+        "s09_replication",
+        "load_thread",
+        "join_load",
+        threading=threading,
+        sk=types.SimpleNamespace(run_load=run_load),
+    )
+    t = ns["load_thread"]("srv", "out", [], 1.0, tag="drill_")
+    t.start()
+    with pytest.raises(type(raised), match=str(raised)):
+        ns["join_load"](t, 30)
+
+
+def test_s09_a_load_thread_that_finished_or_hangs(tmp_path):
+    seen = []
+    release = threading.Event()
+
+    def run_load(*args, **kwargs):
+        seen.append((args, kwargs))
+        if kwargs.get("tag") == "hang":
+            release.wait(30)
+
+    ns = _scenario_functions(
+        "s09_replication",
+        "load_thread",
+        "join_load",
+        threading=threading,
+        sk=types.SimpleNamespace(run_load=run_load),
+    )
+    done = ns["load_thread"]("srv", "out", [], 1.0)
+    done.start()
+    ns["join_load"](done, 30)
+    assert seen == [(("srv", "out", [], 1.0), {})]
+    hung = ns["load_thread"]("srv", "out", [], 1.0, tag="hang")
+    hung.start()
+    try:
+        with pytest.raises(RuntimeError, match="load did not finish within 0s"):
+            ns["join_load"](hung, 0.1)
+    finally:
+        release.set()
+
+
+def test_s12_writes_each_ack_whole_before_its_name_exists(tmp_path):
+    renamed = []
+
+    def replace(src, dst):
+        assert not Path(dst).exists()
+        assert json.loads(Path(src).read_text())  # whole before checkpoint() can see it
+        renamed.append((Path(src).name, Path(dst).name))
+        os.replace(src, dst)
+
+    ns = _scenario_functions(
+        "s12_iot_retention",
+        "paused",
+        OUT=tmp_path,
+        PAUSE=types.SimpleNamespace(read_text=lambda: "3", exists=lambda: False),
+        json=json,
+        time=time,
+        os=types.SimpleNamespace(replace=replace),
+    )
+    ctx = types.SimpleNamespace(wid=4, state={"nk": {"1": 2}, "last": 7})
+    assert ns["paused"](ctx, "w") is True
+    assert renamed == [("ack-w-4-3.tmp", "ack-w-4-3")]
+    assert json.loads((tmp_path / "ack-w-4-3").read_text()) == {"nk": {"1": 2}, "last": 7}
+    assert [p.name for p in tmp_path.iterdir()] == ["ack-w-4-3"]
+
+
+def test_soak_scoring_blocks_on_an_unreadable_summary_and_waits_for_c(tmp_path, monkeypatch):
+    (_soak_run(tmp_path, "s01_cut-rust", None, rc=124) / "summary.json").write_text('{"ops": {')
+    _soak_run(tmp_path, "s02_waiting-rust", {})
+    _soak_run(tmp_path, "s02_waiting-c", {}, rc=None)  # the C baseline is still running
+    rust = _soak_run(tmp_path, "s03_bad_c-rust", {"monitor": {"rss_max_mb": 150}})
+    c = _soak_run(tmp_path, "s03_bad_c-c", None)
+    (c / "summary.json").write_text("{")
+    for run, rss in ((rust, 100), (c, 200)):  # RSS at equal data, which C ratios also read
+        rows = [f"0,1,{rss},0,0,0,0,ingest", f"1,1,{rss},0,0,0,0,soak"]
+        (run / "monitor.csv").write_text("\n".join(["t,cpu,rss,a,b,c,d,phase", *rows]) + "\n")
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["blocked_by"] == ["s01_cut"]
+    assert scores["failed_runs"] == {"s01_cut": "s01_cut-rust exited 124"}
+    assert scores["pending"] == ["s02_waiting"]
+    bad_c = scores["scenarios"]["s03_bad_c"]
+    assert bad_c["rss_vs_c"] is None
+    assert "s03_bad_c-c left no readable summary.json: scored without C ratios" in bad_c["notes"]
+    assert bad_c["c_run"] is None
+    assert list(scores["scenarios"]) == ["s03_bad_c"]
+
+
+def test_soak_scoring_waits_for_a_c_run_in_progress_rather_than_score_without_c(
+    tmp_path, monkeypatch
+):
+    _soak_run(tmp_path, "s05_churn-rust", {})
+    _soak_run(tmp_path, "s05_churn-c", {}, rc=None)  # the C rerun is still going
+    _soak_run(tmp_path, "s05_churn-c@jul-master", {}, rc=124)  # the old one failed
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["pending"] == ["s05_churn"] and scores["scenarios"] == {}
+
+
+def test_soak_scoring_takes_a_same_window_baseline_while_the_short_one_reruns(
+    tmp_path, monkeypatch
+):
+    _soak_run(tmp_path, "s12_iot-rust", {"monitor": {"rss_max_mb": 150}})
+    _soak_run(tmp_path, "s12_iot-c", {}, rc=None)  # the short C baseline runs again
+    _soak_run(tmp_path, "s12_iot-c-samewindow", {"monitor": {"rss_max_mb": 100}})
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["pending"] == []
+    assert scores["scenarios"]["s12_iot"]["c_run"] == "s12_iot-c-samewindow"
+    assert scores["scenarios"]["s12_iot"]["rss_vs_c"] == 1.5
