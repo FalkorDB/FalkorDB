@@ -44,6 +44,10 @@ NIGHTLY = "perf-nightly.yml"
 COMMENT = "perf-comment.yml"
 
 
+class ListingError(Exception):
+    """GitHub did not list the runs: no deploy should publish what it could not list."""
+
+
 @dataclass(frozen=True)
 class Candidate:
     run_id: str
@@ -103,9 +107,10 @@ def candidates(repo: str, now: datetime, days: int, run: store.Runner) -> list[C
     out = []
     for page in range(1, PAGES + 1):
         body = _get(repo, f"actions/artifacts?name=perf-nightly&per_page=100&page={page}", run)
-        if not isinstance(body, dict):
-            store.warn(f"could not list the perf-nightly artifacts (page {page})")
-            break
+        if not isinstance(body, dict) or not isinstance(body.get("artifacts"), list):
+            # Publishing without the unlisted pages would delete every one of them: fail the
+            # deploy instead, and the site as it is stays up.
+            raise ListingError(f"could not list the perf-nightly artifacts (page {page})")
         artifacts = [a for a in body.get("artifacts") or [] if isinstance(a, dict)]
         for artifact in artifacts:
             made = _created(artifact.get("created_at"))
@@ -194,10 +199,11 @@ def build(
 ) -> list[Path]:
     """Every unlisted page of the last `days` days, under <out>/manual and <out>/pr (both
     replaced). A run that cannot be read is left out with a warning, never a failure."""
+    found = candidates(repo, now, days, run)  # raises ListingError before anything is removed
     for area in ("manual", "pr"):
         shutil.rmtree(out / area, ignore_errors=True)
     pages = []
-    for candidate in candidates(repo, now, days, run):
+    for candidate in found:
         try:
             if candidate.kind == "manual" and not named_images(repo, candidate.run_id, run):
                 continue
@@ -248,7 +254,14 @@ def main(
         return 0
     if args.out is None:
         parser.error("--out is required")
-    build(args.out, args.repo, args.days, datetime.now(UTC), run)
+    try:
+        build(args.out, args.repo, args.days, datetime.now(UTC), run)
+    except ListingError as err:
+        print(
+            f"::error::perf dashboard: {err}: not deploying a site without its unlisted pages",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

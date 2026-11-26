@@ -79,14 +79,16 @@ if git ls-remote --exit-code --heads "https://github.com/$REPO.git" gh-pages >/d
   git -C "$W/pages" sparse-checkout set data
   cp -R "$W/pages/data/." "$W/data/"
 else
-  # No archive yet: up to three scheduled nights before this run, from their own artifacts
-  # (a night whose artifacts are gone is passed over).
+  # No archive yet: up to three scheduled nights before this run that measured, from their
+  # own artifacts (a night whose artifacts are gone is passed over; a skipped night is stored,
+  # since the comparison looks through it, but does not count).
   before=$(gh api "repos/$REPO/actions/runs/$RUN" --jq .created_at)
   stored=0
   for id in $(gh api "repos/$REPO/actions/workflows/perf-nightly.yml/runs?event=schedule&branch=main&status=completed&per_page=100" \
       --jq ".workflow_runs[] | select(.created_at < \"$before\") | .id"); do
-    uv run --project bench --frozen bench nightly store --full \
-      --run-id "$id" --data "$W/data" --trigger nightly --scope main || continue
+    night=$(uv run --project bench --frozen bench nightly store --full \
+      --run-id "$id" --data "$W/data" --trigger nightly --scope main) || continue
+    [ "$(jq -r .status "$W/data/$night/nightly.json")" = skipped ] && continue
     stored=$((stored + 1)); [ "$stored" -ge 3 ] && break
   done
 fi
@@ -99,10 +101,17 @@ the checks list (the raw files step 3 reads); without it, a store keeps only wha
 needs, as the dashboard does:
 
 ```bash
-FOLDER=$(uv run --project bench --frozen bench nightly store --full \
-  --run-id "$RUN" --data "$W/data" --trigger "$TRIGGER" --scope "$SCOPE") \
-  || FOLDER=$(find "$W/data" -maxdepth 1 -name "*-$RUN" -exec basename {} \; | head -1)
-[ -n "$FOLDER" ] || { echo "run $RUN could not be stored: read the error above"; exit 1; }
+if ! FOLDER=$(uv run --project bench --frozen bench nightly store --full \
+    --run-id "$RUN" --data "$W/data" --trigger "$TRIGGER" --scope "$SCOPE" 2> "$W/store.err"); then
+  cat "$W/store.err"
+  FOLDER=""
+  # The stored copy stands in only when the store refused to replace it, or the run's own
+  # artifacts are gone; a download that failed is run again, never read from the archive.
+  if grep -qE "not replacing|has no perf-nightly artifact" "$W/store.err"; then
+    FOLDER=$(find "$W/data" -maxdepth 1 -name "*-$RUN" -exec basename {} \; | head -1)
+  fi
+fi
+[ -n "$FOLDER" ] || { echo "run $RUN could not be stored: read the error above (a failed download: run the store again)"; exit 1; }
 uv run --project bench --frozen bench nightly dashboard --data "$W/data" --out "$W/site"
 echo "run page: $W/site/run/$FOLDER.html"
 ```

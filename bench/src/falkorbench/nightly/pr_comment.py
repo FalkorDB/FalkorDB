@@ -27,6 +27,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.parse
 from collections.abc import Callable
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -324,9 +325,22 @@ def busy_with(gh: GitHub, run_id: int) -> list[int]:
     return measuring
 
 
-def build_state(gh: GitHub, pr: int, sha: str) -> tuple[str, str]:
-    """('built' | 'building' | 'missing' | 'failed', detail) for rust-pr.yml's Valkey
-    build-rc-image jobs on `sha`, in the newest rust-pr.yml run of this pull request there."""
+@dataclass(frozen=True)
+class Build:
+    state: str  # built | building | missing | failed
+    detail: str
+    run_id: int | None = None
+    finished: str = ""  # when its last build-rc-image job finished (ISO 8601, UTC)
+
+
+def _build_jobs(gh: GitHub, run_id: object) -> list[dict]:
+    jobs = gh.get_all(f"repos/{gh.repo}/actions/runs/{run_id}/jobs", "jobs")
+    return [j for j in jobs if isinstance(j, dict) and BUILD_JOB.search(str(j.get("name", "")))]
+
+
+def build_state(gh: GitHub, pr: int, sha: str) -> Build:
+    """The state of rust-pr.yml's Valkey build-rc-image jobs on `sha`, in the newest rust-pr.yml
+    run of this pull request there."""
     runs = gh.get_all(
         f"repos/{gh.repo}/actions/runs?head_sha={sha}&event=pull_request", "workflow_runs"
     )
@@ -341,24 +355,52 @@ def build_state(gh: GitHub, pr: int, sha: str) -> tuple[str, str]:
         )
     ]
     if not ours:
-        return "missing", "no rust-pr.yml run for this commit yet"
+        return Build("missing", "no rust-pr.yml run for this commit yet")
     newest = max(ours, key=lambda run: (run.get("run_number") or 0, run.get("id") or 0))
-    jobs = gh.get_all(f"repos/{gh.repo}/actions/runs/{newest['id']}/jobs", "jobs")
-    states = [
-        job.get("conclusion") or "pending"
-        for job in jobs
-        if isinstance(job, dict) and BUILD_JOB.search(str(job.get("name", "")))
-    ]
+    jobs = _build_jobs(gh, newest["id"])
+    states = [job.get("conclusion") or "pending" for job in jobs]
     detail = (
         f"rust-pr.yml run {newest['id']}: build-rc-image {', '.join(states) or 'not scheduled'}"
     )
     if not states:
-        return "missing", detail
+        return Build("missing", detail)
     if "pending" in states:
-        return "building", detail
+        return Build("building", detail)
     if all(state == "success" for state in states):
-        return "built", detail
-    return "failed", detail
+        finished = max(str(job.get("completed_at") or "") for job in jobs)
+        return Build("built", detail, newest["id"], finished)
+    return Build("failed", detail)
+
+
+def retagged_after(gh: GitHub, pr: int, sha: str, branch: str, build: Build) -> str:
+    """Another commit's rust-pr.yml run of this pull request whose build-rc-image finished after
+    `build`'s, and so pushed rc-pr-<N>-valkey last (a re-run of an older commit, say), as
+    "<run id> on <sha>"; "" when `build` was the last to push it. The tag carries no commit, so
+    this is what binds the digest about to be pinned to the build that passed."""
+    runs = gh.get_all(
+        f"repos/{gh.repo}/actions/runs?branch={urllib.parse.quote(branch, safe='')}&event=pull_request",
+        "workflow_runs",
+    )
+    for run in runs:
+        if not (
+            isinstance(run, dict)
+            and run.get("path") == RUST_PR
+            and run.get("id") != build.run_id
+            and run.get("head_sha") != sha
+            # A run that finished a job later was updated later too.
+            and str(run.get("updated_at") or "") > build.finished
+            and any(
+                p.get("number") == pr for p in run.get("pull_requests") or [] if isinstance(p, dict)
+            )
+        ):
+            continue
+        for job in _build_jobs(gh, run["id"]):
+            if (
+                job.get("conclusion") == "success"
+                and str(job.get("completed_at") or "") > build.finished
+            ):
+                return f"{run['id']} on {str(run.get('head_sha'))[:9]}"
+    return ""
 
 
 def release_list(gh: GitHub) -> str:
@@ -430,18 +472,27 @@ def resolve(ctx: Context, gh: GitHub, digest_of: Callable[[str], str | None]) ->
             why=f"busy with run {earlier[0]}",
         )
 
-    state, detail = build_state(gh, ctx.pr, sha)
-    if state != "built":
+    build = build_state(gh, ctx.pr, sha)
+    if build.state != "built":
         why = {
             "missing": "is not built yet",
             "building": "is still being built",
             "failed": "did not build",
-        }[state]
+        }[build.state]
         return Outcome(
             False,
             f"Not started: the image for `{sha[:9]}` (the head of this pull request) {why} "
-            f"({detail}). Ask again once rust-pr.yml's build-rc-image succeeded for it.",
-            why=f"{sha}: {detail}",
+            f"({build.detail}). Ask again once rust-pr.yml's build-rc-image succeeded for it.",
+            why=f"{sha}: {build.detail}",
+        )
+    later = retagged_after(gh, ctx.pr, sha, str(head.get("ref") or ""), build)
+    if later:
+        return Outcome(
+            False,
+            f"Not started: the image tag of this pull request was pushed again after `{sha[:9]}` "
+            f"was built, by rust-pr.yml run {later}, so it may not be this commit's image. Re-run "
+            f"rust-pr.yml on the head (or push), then ask again once it is built.",
+            why=f"{sha}: retagged by {later}",
         )
     tag = f"{CANDIDATE_REPO}:rc-pr-{ctx.pr}-valkey"
     digest = digest_of(tag)

@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import statistics
 import sys
@@ -65,14 +66,14 @@ class Failure:
 
 
 def _number(value: object) -> float | None:
+    """A finite number, or None: `nan` and `inf` in a CSV are no measurement."""
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        return float(value)
     try:
-        return float(str(value))
-    except (TypeError, ValueError):
+        number = float(value) if isinstance(value, (int, float)) else float(str(value))
+    except (TypeError, ValueError, OverflowError):
         return None
+    return number if math.isfinite(number) else None
 
 
 def _is_zero(value: object) -> bool:
@@ -425,7 +426,8 @@ def check_failures(name: str, entry: dict, folder: Path) -> list[Failure]:
     """One check's failures, from its stored result.json and raw files (the night's entry when the
     check stored no result). The raw rows come first: they carry what the findings drop."""
     stored = folder / name / "result.json"
-    result = _json(stored) or entry
+    readable = _json(stored)
+    result = readable or entry
     rows = _rows(folder / name / "raw" / "rows.csv")
     fuzz = bool(rows) and "side" in rows[0] and "value" in rows[0]
     out: dict[tuple, Failure] = {}
@@ -433,6 +435,17 @@ def check_failures(name: str, entry: dict, folder: Path) -> list[Failure]:
         why = report.one_line(entry.get("error") or result.get("error"), "no reason given")
         out[(name, "error", name, "")] = Failure(
             name, "error", name, "", None, None, False, f"could not measure: {why}"
+        )
+    elif stored.is_file() and not readable:
+        out[(name, "error", name, "")] = Failure(
+            name,
+            "error",
+            name,
+            "",
+            None,
+            None,
+            False,
+            "its stored result.json cannot be read: its rows cannot be judged, so a pass here is not a pass",
         )
     elif not stored.is_file():
         out[(name, "error", name, "")] = Failure(
@@ -489,15 +502,26 @@ class Run:
 
     @property
     def measured(self) -> set[str]:
+        """The checks whose result this run holds: a pass or a regression whose files are
+        stored. One that could not measure, or whose files did not download, says nothing about
+        a failure, so it neither fixes one nor breaks a streak."""
+        unread = {f.check for f in self.failures if f.kind == "error"}
         return {
-            str(c.get("check")) for c in self.checks if c.get("verdict") in ("pass", "regression")
+            str(c.get("check"))
+            for c in self.checks
+            if c.get("verdict") in ("pass", "regression") and str(c.get("check")) not in unread
         }
 
 
 def load_run(data: Path, folder: str) -> Run:
     path = data / folder
-    night, _, _ = report.read_night(path / "nightly.json")
+    night, _, unreadable = report.read_night(path / "nightly.json")
     failures = []
+    if unreadable:
+        # Not a run with nothing wrong: one whose verdicts cannot be read at all.
+        failures.append(
+            Failure("nightly.json", "error", "nightly.json", "", None, None, False, unreadable)
+        )
     for entry in report.checks_of(night):
         name = entry.get("check")
         if isinstance(name, str) and dashboard.CHECK_RE.fullmatch(name):
@@ -544,7 +568,16 @@ def compare(data: Path, folder: str, nights: int = 7) -> Compared:
     for failure in run.failures:
         # Only the nights that measured this check say anything about it: one added since, or one
         # that could not measure that night, is no earlier result.
-        measured = [n for n in history if failure.check in n.measured or failure.kind == "error"]
+        # An error compares with the nights that planned the check (it errored there too, or
+        # measured); any other failure with the nights that measured it.
+        measured = [
+            n
+            for n in history
+            if failure.check in n.measured
+            or (
+                failure.kind == "error" and failure.check in {str(c.get("check")) for c in n.checks}
+            )
+        ]
         if not measured:
             since[failure.key] = "no earlier night"
             continue
@@ -655,7 +688,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     result = compare(args.data, args.run, args.nights)
     print(json.dumps(as_json(result), indent=2, default=str) if args.json else text(result), end="")
-    return 0
+    return 1 if any(f.check == "nightly.json" for f in result.run.failures) else 0
 
 
 if __name__ == "__main__":

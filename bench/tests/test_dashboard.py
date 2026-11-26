@@ -2029,3 +2029,109 @@ def test_a_rerun_that_lists_fewer_checks_never_drops_a_stored_one(tmp_path):
     with pytest.raises(nightly_store.StoreError, match="does not list pokec"):
         nightly_store.store(stub, "7", data, "nightly", "main", lambda name, dest: True)
     assert (old / "pokec" / "result.json").read_text() == "old"
+
+
+def test_an_artifact_without_a_result_never_replaces_a_stored_one(tmp_path):
+    """The VM died before the check wrote result.json: its upload holds only the runner's record."""
+    data = tmp_path / "data"
+    old = data / "2026-11-20-7" / "micro-hw"
+    old.mkdir(parents=True)
+    (old / "result.json").write_text("old")
+    night = tmp_path / "nightly.json"
+    night.write_text(json.dumps(examples.nightly("error", [micro_hw(True)])))
+
+    def record_only(name, dest):
+        dest.mkdir(parents=True)
+        (dest / "perf-vm.json").write_text('{"command_exit": null}')
+        return "ok"
+
+    with pytest.raises(nightly_store.StoreError, match=r"has no result\.json"):
+        nightly_store.store(night, "7", data, "nightly", "main", record_only)
+    assert (old / "result.json").read_text() == "old"
+    # A first store of that run keeps the record (the page shows why the check has no result).
+    folder = nightly_store.store(night, "8", tmp_path / "fresh", "nightly", "main", record_only)
+    assert (tmp_path / "fresh" / folder / "micro-hw" / "perf-vm.json").is_file()
+
+
+@pytest.mark.parametrize("body", ["not json", "[]", '{"total_count": 0}'])
+def test_a_listing_that_is_not_one_is_a_failure_not_a_missing_artifact(tmp_path, no_wait, body):
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, body, "")
+
+    assert nightly_store.download("o/r", "7", "perf-result-alpha", tmp_path / "x", run) == "failed"
+
+
+def test_a_failed_listing_fails_the_deploy_and_removes_nothing(tmp_path, actions, no_wait, capsys):
+    (tmp_path / "pr" / "1" / "2026-11-01-1").mkdir(parents=True)
+
+    def broken(argv, **kwargs):
+        if "/actions/artifacts?" in argv[2]:
+            return subprocess.CompletedProcess(argv, 1, "", "HTTP 502")
+        return actions(argv, **kwargs)
+
+    with pytest.raises(nightly_unlisted.ListingError):
+        nightly_unlisted.build(tmp_path, "o/r", 30, NOW, broken)
+    assert (tmp_path / "pr" / "1" / "2026-11-01-1").exists()
+    assert (
+        nightly_unlisted.main(["--repo", "o/r", "--out", str(tmp_path)], environ={}, run=broken)
+        == 1
+    )
+    assert "not deploying a site without its unlisted pages" in capsys.readouterr().err
+
+
+def test_a_measurement_that_is_no_number_is_none():
+    assert [
+        nightly_failures._number(v) for v in ("nan", "inf", "-inf", "1e999", "3", 2.5, True)
+    ] == [
+        None,
+        None,
+        None,
+        None,
+        3.0,
+        2.5,
+        None,
+    ]
+
+
+def test_a_check_whose_files_are_not_read_neither_fixes_nor_continues_a_failure(tmp_path):
+    data = tmp_path / "data"
+    soak_night(data, "2026-11-23-1", "nightly", BROKE.format(n="old"))
+    soak_night(data, "2026-11-24-2", "nightly", BROKE.format(n="old"))
+    now = soak_night(data, "2026-11-25-3", "nightly", BROKE.format(n="old"))
+    # The middle night's soak-b files did not download: not a night without the failure.
+    shutil.rmtree(data / "2026-11-24-2" / "soak-b")
+    result = nightly_failures.compare(data, "2026-11-25-3")
+    [failure] = [f for f in result.run.failures if f.name == "old"]
+    assert result.since[failure.key] == "since 2026-11-23"
+    # And when this run's files are the ones missing, the earlier failure is not "fixed".
+    shutil.rmtree(now / "soak-b")
+    result = nightly_failures.compare(data, "2026-11-25-3")
+    assert result.fixed == []
+
+
+def test_an_unreadable_result_or_night_is_an_error(tmp_path):
+    data = tmp_path / "data"
+    run = soak_night(data, "2026-11-25-3", "nightly", BROKE.format(n="x"))
+    (run / "soak-b" / "result.json").write_text("{not json")
+    [failure] = [
+        f for f in nightly_failures.load_run(data, "2026-11-25-3").failures if f.kind == "error"
+    ]
+    assert "cannot be read" in failure.detail
+    (run / "nightly.json").write_text("{not json")
+    failures = nightly_failures.load_run(data, "2026-11-25-3").failures
+    assert [(f.check, f.kind) for f in failures] == [("nightly.json", "error")]
+    argv = ["nightly", "failures", "--data", str(data), "--run", "2026-11-25-3"]
+    assert CliRunner().invoke(cli, argv).exit_code == 1
+
+
+def test_an_error_compares_only_with_nights_that_planned_the_check(tmp_path):
+    """A night that did not plan soak-b says nothing about its error: looked through, not a
+    break in the streak."""
+    data = tmp_path / "data"
+    a_night(data, "2026-11-22-1", "nightly", {"soak-b": ("error", [], None)})
+    a_night(data, "2026-11-23-2", "nightly", {"micro-hw": ("pass", [], None)})  # no soak-b
+    a_night(data, "2026-11-24-3", "nightly", {"soak-b": ("error", [], None)})
+    a_night(data, "2026-11-25-4", "nightly", {"soak-b": ("error", [], None)})
+    result = nightly_failures.compare(data, "2026-11-25-4")
+    [failure] = result.run.failures
+    assert result.since[failure.key] == "since 2026-11-22"

@@ -22,6 +22,7 @@ PR = 3967
 RUN_ID = 5000
 SHA = "727e385d70cdb4bd7a326053314cceeec7b12cd4"
 NEW_SHA = "1" * 40
+OLD_SHA = "2" * 40
 TAG_SHA = "a" * 40
 PR_DIGEST = "sha256:" + "f" * 64
 C_DIGEST = "sha256:" + "c" * 64
@@ -53,9 +54,11 @@ class Fake:
         self.pull_answers: list[dict] = []
         self.failures: dict[str, list[str]] = {}
         self.post_rc = 0
+        self.inspected: list[str] = []
 
     def __call__(self, argv, **kwargs):
         if argv[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            self.inspected.append(argv[4])
             found = self.images.get(argv[4])
             if isinstance(found, Exception):
                 return subprocess.CompletedProcess(argv, 1, "", f"ERROR: {found}")
@@ -85,14 +88,19 @@ def pull(sha=SHA, repo=REPO, state="open") -> dict:
     return {"state": state, "head": {"sha": sha, "ref": "perf/x", "repo": {"full_name": repo}}}
 
 
-def rust_pr_run(run_id=900, sha=SHA, pr=PR, number=10) -> dict:
+def rust_pr_run(run_id=900, sha=SHA, pr=PR, number=10, updated="2026-11-26T10:00:00Z") -> dict:
     return {
         "id": run_id,
         "run_number": number,
         "path": pc.RUST_PR,
         "head_sha": sha,
         "pull_requests": [{"number": pr}],
+        "updated_at": updated,
     }
+
+
+BRANCH_RUNS = f"repos/{REPO}/actions/runs?branch=perf%2Fx&event=pull_request"
+BUILT_AT = "2026-11-26T09:30:00Z"
 
 
 @pytest.fixture
@@ -108,8 +116,20 @@ def fake() -> Fake:
         "workflow_runs": [rust_pr_run()]
     }
     f.api[f"repos/{REPO}/actions/runs/900/jobs"] = {
-        "jobs": [{"name": n, "conclusion": "success"} for n in BUILD_JOBS]
+        "jobs": [{"name": n, "conclusion": "success", "completed_at": BUILT_AT} for n in BUILD_JOBS]
         + [{"name": "ci-pipeline / image-redis / build-rc-image / build (x64)", "conclusion": None}]
+    }
+    # The pull request's branch: this commit's run, and an older commit's whose build came first.
+    f.api[BRANCH_RUNS] = {
+        "workflow_runs": [
+            rust_pr_run(),
+            rust_pr_run(800, sha=OLD_SHA, number=9, updated="2026-11-25T10:00:00Z"),
+        ]
+    }
+    f.api[f"repos/{REPO}/actions/runs/800/jobs"] = {
+        "jobs": [
+            {"name": BUILD_JOBS[0], "conclusion": "success", "completed_at": "2026-11-25T09:00:00Z"}
+        ]
     }
     f.api[f"repos/{REPO}/commits/v4.22.4"] = {"sha": TAG_SHA}
     f.api[f"repos/{REPO}/releases"] = [
@@ -384,7 +404,7 @@ def test_the_head_image_is_used_only_when_built_for_that_commit(fake, change, sa
     outcome = resolve(fake, "/perf pokec")
     assert not outcome.go
     assert f"`{SHA[:9]}`" in outcome.reply and said in outcome.reply
-    assert not any("imagetools" in g for g in fake.gets)
+    assert fake.inspected == []  # no image is pinned for a commit whose build did not pass
 
 
 def test_the_newest_rust_pr_run_of_the_commit_decides(fake):
@@ -663,8 +683,11 @@ def test_every_request_that_runs_is_answered():
     assert jobs["answer"]["needs"] == ["resolve", "measure"]
     assert jobs["answer"]["if"] == "always() && needs.resolve.outputs.go == 'true'"
     [step] = [s for s in jobs["answer"]["steps"] if s.get("name") == "Answer on the pull request"]
-    # Whatever the dashboard step did: a failed dashboard must not leave the request unanswered.
-    assert step["if"] == "${{ !cancelled() }}"
+    # Whatever the dashboard did, and even when the run was cancelled: a request that started
+    # is always answered.
+    assert step["if"] == "${{ always() }}"
+    # Only this attempt's nightly.json answers it: a re-run's earlier attempt left its own.
+    assert "run_started_at" in step["run"] and 'night=""' in step["run"]
     assert jobs["measure"]["concurrency"] == {
         "group": "perf-comment-${{ needs.resolve.outputs.pr }}",
         "cancel-in-progress": False,
@@ -687,3 +710,25 @@ def test_the_answer_links_the_runs_page_with_the_artifact_as_fallback(tmp_path):
         f"[the page's files]({SITE}) (download, open `index.html`, if the page is not up)" in text
     )
     assert text.index(page) < text.index(SITE)
+
+
+@pytest.mark.parametrize(
+    ("finished", "conclusion", "go"),
+    [
+        ("2026-11-26T09:45:00Z", "success", False),  # an older commit's re-run pushed the tag after
+        ("2026-11-26T09:45:00Z", "failure", True),  # it did not build: it pushed nothing
+        ("2026-11-26T09:00:00Z", "success", True),  # it pushed before this commit's build
+    ],
+)
+def test_the_candidate_is_the_image_the_passing_build_pushed_last(fake, finished, conclusion, go):
+    """rc-pr-<N>-valkey carries no commit: a build of another commit of the pull request that
+    finished after this one's (a re-run of an older run) means the tag is not this commit's."""
+    fake.api[BRANCH_RUNS]["workflow_runs"][1]["updated_at"] = "2026-11-26T09:50:00Z"
+    fake.api[f"repos/{REPO}/actions/runs/800/jobs"] = {
+        "jobs": [{"name": BUILD_JOBS[0], "conclusion": conclusion, "completed_at": finished}]
+    }
+    outcome = resolve(fake, "/perf pokec")
+    assert outcome.go is go, outcome
+    if not go:
+        assert "pushed again after" in outcome.reply and "run 800 on 222222222" in outcome.reply
+        assert fake.inspected == []

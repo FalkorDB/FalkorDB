@@ -183,9 +183,10 @@ jobs:
           retention-days: 90
 
       # Whatever the dashboard did: the answer goes out without its link then.
-      # The page perf-dashboard.yml publishes once this run ends, at a known address.
+      # The page perf-dashboard.yml publishes once this run ends, at a known address. Always,
+      # also when the run was cancelled: a request that started is answered.
       - name: Answer on the pull request
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         env:
           REQUEST: ${{ needs.resolve.outputs.request }}
           DASHBOARD_URL: ${{ steps.upload.outputs.artifact-url }}
@@ -195,7 +196,16 @@ jobs:
           set -euo pipefail
           night=$RUNNER_TEMP/nightly/nightly.json
           page=""
-          if [[ -f $night ]]; then
+          # A re-run keeps the earlier attempt's perf-nightly when this attempt never reached its
+          # merge: only one made since this attempt started answers it.
+          started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          made=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=perf-nightly" \
+            --jq '[.artifacts[] | select(.expired | not) | .created_at] | max // ""')
+          if [[ -f $night && ( -z $made || $made < $started ) ]]; then
+            echo "perf-nightly ($made) is from an earlier attempt (this one started $started): not this run's"
+            night=""
+          fi
+          if [[ -n $night && -f $night ]]; then
             # No address (a night with no usable date): the answer goes out without it.
             page=$(uv run --project bench --frozen bench nightly unlisted url --kind pr \
               --nightly "$night" --run-id "$GITHUB_RUN_ID" --pr "$PR") || page=""

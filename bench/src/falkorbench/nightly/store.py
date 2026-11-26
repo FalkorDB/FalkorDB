@@ -133,9 +133,14 @@ def download(repo: str, run_id: str, name: str, dest: Path, run: Runner = subpro
         warn(f"{name}: GitHub has no such run ({str(listing.stderr).strip()[:200]})")
         return "missing"
     try:
-        artifacts = json.loads(listing.stdout).get("artifacts") or []
-    except (ValueError, AttributeError):
-        artifacts = []
+        body = json.loads(listing.stdout)
+    except ValueError:
+        body = None
+    if not isinstance(body, dict) or not isinstance(body.get("artifacts"), list):
+        # An answer that is not a listing says nothing about the run: never "it has none".
+        warn(f"{name}: GitHub's listing of its artifacts is not one")
+        return "failed"
+    artifacts = body["artifacts"]
     ids = [
         a["id"]
         for a in artifacts
@@ -290,11 +295,21 @@ def store(
         for check in checks:
             dest = results / f"perf-result-{check}"
             got = download(f"perf-result-{check}", dest)
-            if got is True or got == "ok":
+            if (got is True or got == "ok") and (dest / "result.json").is_file():
                 fetched[check] = dest
                 continue
             if got == "failed":
                 raise StoreError(f"perf-result-{check} did not download: run it again")
+            if got is True or got == "ok":
+                # An artifact with no result.json (the VM died before the check wrote it): its
+                # runner's record is still stored, but it never replaces a stored result.
+                fetched[check] = dest
+                if check in stored:
+                    names = ", ".join(p.name for p in replaced)
+                    raise StoreError(
+                        f"not replacing {names}: perf-result-{check} has no result.json"
+                    )
+                continue
             warn(f"no perf-result-{check}")
             # A missing download must not delete what a stored run has; a check the stored run
             # never had (it left no artifact then either) is no loss.
