@@ -362,15 +362,17 @@ fn implicit_keys(
             }
             // Under a CASE any term may be skipped, the first condition
             // included when it is not the one that holds. AND / OR skip their
-            // later operands, a map projection its entries when its base is
-            // null, and a comprehension, quantifier or `reduce` body does not
-            // run on an empty list, so those are guarded the same way.
+            // later operands, XOR its later ones after a null, a map
+            // projection its entries when its base is null, and a
+            // comprehension, quantifier or `reduce` body does not run on an
+            // empty list, so those are guarded the same way.
             let guarded = guarded
                 || matches!(
                     node.data(),
                     ExprIR::Case { .. }
                         | ExprIR::And
                         | ExprIR::Or
+                        | ExprIR::Xor
                         | ExprIR::MapProjection
                         | ExprIR::Quantifier { .. }
                         | ExprIR::ListComprehension(_)
@@ -1240,6 +1242,14 @@ impl<'a> AggregateOp<'a> {
                         Err(e) => return Err(e),
                     });
                 }
+                // A guarded key that failed and one that evaluated to null
+                // group apart: the group's first row decides whether the item
+                // reads the value or raises the error, so the two must not mix.
+                for (key, &ok) in implicit.keys.iter().zip(&evaluated) {
+                    if key.ok.is_some() {
+                        key_values.push(Value::Bool(ok));
+                    }
+                }
                 // Capture copy_from_parent values from the input row.
                 for (old_var, new_var) in copy_from_parent {
                     if let Some(val) = vars.get(old_var) {
@@ -1265,7 +1275,7 @@ impl<'a> AggregateOp<'a> {
                     // Each key keeps the value this row grouped by. The slots
                     // sit above every old-scope id, so they never collide with
                     // the accumulators.
-                    let values = &group.key().0[keys.len()..];
+                    let values = &group.key().0[keys.len()..keys.len() + implicit.keys.len()];
                     for ((key, value), &ok) in implicit.keys.iter().zip(values).zip(&evaluated) {
                         if ok {
                             acc.insert(&key.slot, value.clone());

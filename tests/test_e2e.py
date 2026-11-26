@@ -1597,6 +1597,11 @@ def test_aggregation_item_implicit_key_under_and_or_and_comprehension_is_lazy():
     assert res.result_set == [[False]]
     res = query("UNWIND [1] AS x RETURN [v IN [] | x.foo] + [count(*)] AS v")
     assert res.result_set == [[[1]]]
+    res = query(
+        "UNWIND [1] AS x RETURN (count(*) > 0 AND null) XOR x.foo AS v",
+        compare_results=False,
+    )
+    assert res.result_set == [[None]]
     res = query("UNWIND [1] AS x WITH null AS m, x RETURN m{v: x.foo, c: count(*)} AS v")
     assert res.result_set == [[None]]
     res = query(
@@ -1622,6 +1627,17 @@ def test_aggregation_item_guarded_volatile_key_reports_its_grouped_value():
         rows = [r[0] for r in res.result_set]
         assert sorted(row[0] for row in rows) == [0, 1]
         assert sum(row[1] for row in rows) == 1000
+
+
+def test_aggregation_item_guarded_key_error_does_not_join_a_null_group():
+    # A row whose guarded key failed and one whose key is null group apart, so
+    # the taken branch raises whichever row comes first.
+    for xs in ("[null, 1]", "[1, null]"):
+        query_exception(
+            f"UNWIND {xs} AS x "
+            "RETURN CASE WHEN count(*) > 0 THEN x.foo ELSE 0 END AS v",
+            "Type mismatch",
+        )
 
 
 def test_aggregation_slot_does_not_reuse_a_comprehension_variable():
