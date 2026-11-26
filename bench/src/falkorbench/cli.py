@@ -7,6 +7,8 @@ have been run first. The shared options are defined once, in `common_options`.
 
 from __future__ import annotations
 
+import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -16,14 +18,24 @@ import click
 from falkorbench import callgrind as cg
 from falkorbench import client as client_mod
 from falkorbench import compare as compare_mod
+from falkorbench import contract
+from falkorbench import cov_gate
 from falkorbench import coverage as coverage_mod
 from falkorbench import flow as flow_mod
+from falkorbench import hw as hw_mod
 from falkorbench import measure as measure_mod
 from falkorbench import metrics
 from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
 from falkorbench.counters import select_backend
+from falkorbench.fuzz import check as fuzz_check
+from falkorbench.ldbc import check as ldbc_check
+from falkorbench.nightly import dashboard as nightly_dashboard
+from falkorbench.nightly import merge as nightly_merge
+from falkorbench.nightly import missed_run
+from falkorbench.nightly import report as nightly_report
+from falkorbench.soak import check as soak_check
 
 # bench/ is the project root; the repo is its parent.
 BENCH_DIR = Path(__file__).resolve().parents[2]
@@ -86,8 +98,28 @@ def cli() -> None:
 @click.option("--reuse", is_flag=True, help="attach to a server already on --port")
 @click.option("--setup/--no-setup", default=None, help="build the graph (implied unless --reuse)")
 @click.option("--c-compat", is_flag=True, help="measuring the C engine: skip what it cannot do")
+@click.option("--module-args", multiple=True, help="extra --loadmodule args, e.g. THREAD_COUNT 4")
+@click.option(
+    "--failed-out",
+    default=None,
+    type=click.Path(),
+    help="write {query: why} for the queries that did not answer, and exit 0 for them",
+)
 @click.argument("names", nargs=-1)
-def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, names):
+def measure(
+    module,
+    port,
+    out,
+    reps,
+    once,
+    keep_server,
+    reuse,
+    setup,
+    c_compat,
+    module_args,
+    failed_out,
+    names,
+):
     """Measure queries and write a CSV.
 
     Named queries are merged into an existing CSV, so a subset re-run patches
@@ -118,6 +150,7 @@ def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, 
             RESULTS / "server_dir",
             Path(query_set.IMPORT_DIR),
             appendonly=once,
+            module_args=list(module_args),
         )
 
     exit_code = 0
@@ -155,6 +188,12 @@ def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, 
         )
         measure_mod.merge_into_csv(out_path, rows)
         click.echo(f"wrote {out_path}")
+        if failed_out:
+            # The release gate judges them (bench cov-gate): a query neither side
+            # answers is not this pull request's doing.
+            measure_mod.write_failures(Path(failed_out), failures)
+            click.echo(f"wrote {failed_out} ({len(failures)} query(ies) did not answer)")
+            failures = []
         if failures:
             # A query in the set that does not answer is a real problem, and the
             # CSV is now missing that row rather than carrying a wrong one.
@@ -354,6 +393,43 @@ def report(measure_specs, cg_specs, provenance, coverage, strict):
         raise SystemExit(1)
 
 
+# --- micro-hw (the nightly micro check) ---------------------------------------
+
+
+@cli.command("micro-hw")
+@click.option("--bench-image", required=True, help="the measurement image, by digest")
+@click.option("--candidate", required=True, help="image, name[:tag]@sha256:<64 hex>")
+@click.option("--baseline", required=True, help="image, name[:tag]@sha256:<64 hex>")
+@click.option("--out", required=True, help="directory for result.json and raw/")
+@click.option("--mode", required=True, help="queue, nightly or long")
+@click.option("--candidate-label", default=None)
+@click.option("--baseline-label", default=None)
+@click.option("--candidate-commit", default=None)
+@click.option("--baseline-commit", default=None)
+def micro_hw(bench_image, **flags):
+    """The micro-hw check: hardware counters on both images, on this host.
+
+    Needs docker and a PMU (a GCE C4 VM through _perf-vm.yml with pmu: true).
+    Servers run on $PERF_SERVER_CPUS when it is set. Always writes
+    <out>/result.json; exits 0 whenever it did.
+    """
+    run = hw_mod.HwRun(
+        bench_image=bench_image,
+        args=argparse.Namespace(**flags),
+        repo_root=REPO_ROOT,
+        server_cpus=os.environ.get("PERF_SERVER_CPUS") or None,
+        queries=query_set.QUERIES,
+        echo=click.echo,
+    )
+    res = hw_mod.run_check(run)
+    click.echo(f"{res['verdict']}: {res['summary']}")
+    for f in res["findings"]:
+        ratio = f"{f['ratio']:.3f}x" if f["ratio"] is not None else "-"
+        click.echo(f"  [{f['status']}] {f['name']} {f['metric']} {ratio}")
+    if res["error"]:
+        click.echo(f"error: {res['error']}")
+
+
 # --- coverage ----------------------------------------------------------------
 
 
@@ -473,6 +549,209 @@ def flow(module, out, baseline, current, names):
     finally:
         if tmp is not None:
             tmp.cleanup()
+
+
+# --- pokec -------------------------------------------------------------------
+
+
+@cli.command(
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+    add_help_option=False,
+)
+@click.argument("argv", nargs=-1, type=click.UNPROCESSED)
+def pokec(argv):
+    """The pokec check: FalkorDB/benchmark on Pokec, candidate against baseline.
+
+    Takes the contract's flags (`bench pokec --help` lists them) and always writes
+    <out>/result.json; exits 0 whenever it did. See src/falkorbench/pokec/README.md.
+    """
+    from falkorbench.pokec import check as pokec_check  # its flags are argparse's (kit.add_args)
+
+    raise SystemExit(pokec_check.main(list(argv)))
+
+
+# --- validate ----------------------------------------------------------------
+
+
+@cli.command()
+@click.option(
+    "--kind",
+    type=click.Choice(["result", "nightly"]),
+    default=None,
+    help="skip shape detection",
+)
+@click.argument("files", nargs=-1, required=True)
+def validate(kind, files):
+    """Check perf result.json / nightly.json files against the result contract.
+
+    Prints each problem as <file>: <code>: <path>: <message>, or <file>: ok
+    (<kind>); exits 1 if any file has a problem.
+    """
+    if contract.check_files(files, kind, echo=click.echo):
+        raise SystemExit(1)
+
+
+@cli.group()
+def nightly() -> None:
+    """The nightly perf pipeline: merge the checks, report the night, alarm on a missed one."""
+
+
+@nightly.command("report")
+@click.option(
+    "--nightly",
+    "path",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="the night's nightly.json",
+)
+def nightly_report_command(path):
+    """One line to Chat ($PERF_CHAT_WEBHOOK), the details to $GITHUB_STEP_SUMMARY.
+
+    Exits 0 when the night was reported, whatever its status; 1 when it could not be.
+    """
+    raise SystemExit(nightly_report.run(path, os.environ))
+
+
+@nightly.command("missed-run")
+@click.option(
+    "--date",
+    "night",
+    default=None,
+    type=click.DateTime(["%Y-%m-%d"]),
+    help="the night to check (UTC); default: the night a scheduled run was created for, else today",
+)
+@click.option("--workflow", default="perf-nightly.yml", show_default=True)
+@click.option("--branch", default="main", show_default=True)
+@click.option("--event", default="schedule", show_default=True, help="the runs' trigger")
+@click.option("--artifact", default="perf-nightly", show_default=True)
+def missed_run_command(night, workflow, branch, event, artifact):
+    """Alarm (and exit 1) when the night's scheduled run left no perf-nightly artifact."""
+    raise SystemExit(
+        missed_run.run(
+            os.environ,
+            night.date() if night else None,
+            workflow=workflow,
+            branch=branch,
+            event=event,
+            artifact=artifact,
+        )
+    )
+
+
+@nightly.command(
+    "merge",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def nightly_merge_command(args):
+    """The night's bookkeeping: plan | context | results | conclude (each takes --help)."""
+    raise SystemExit(nightly_merge.main(list(args)))
+
+
+@cli.command(
+    "cov-gate",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def cov_gate_command(args):
+    """benchmark-cov's PR-vs-base CSVs -> the release gate's result.json (--help: the flags)."""
+    raise SystemExit(cov_gate.main(list(args)))
+
+
+@nightly.command("dashboard")
+@click.option(
+    "--data",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="the stored runs: one <date>-<run id>/ folder each",
+)
+@click.option(
+    "--out", required=True, type=click.Path(file_okay=False, path_type=Path), help="the site"
+)
+def nightly_dashboard_command(data, out):
+    """Build the perf dashboard, a static site, from every stored run."""
+    click.echo(f"{nightly_dashboard.build(data, out)} run(s) -> {out}")
+
+
+# --- ldbc --------------------------------------------------------------------
+
+
+@cli.group()
+def ldbc() -> None:
+    """LDBC SNB Interactive v1 complex reads.
+
+    Internal instrument, not an auditable LDBC result: that needs the official
+    Java driver, LDBC membership and a commissioned audit.
+    """
+
+
+@ldbc.command(
+    "check",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def ldbc_check_command(args):
+    """Compare a candidate image with a baseline image on the complex reads (--help: the flags).
+
+    The nightly perf check: each image runs as its own server in docker, both
+    load the dataset, and OUT/result.json plus raw/ are written. Exits 0 whenever
+    result.json was written, whatever its verdict.
+    """
+    raise SystemExit(ldbc_check.main(list(args)))
+
+
+@cli.command(
+    "soak",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def soak_command(args):
+    """Compare a candidate image with a baseline image on the release soak (--help: the flags).
+
+    The nightly perf check (needs `--group soak`): each scenario runs once per image, each
+    image as its own server in docker, and OUT/result.json plus raw/ are written. Exits 0
+    whenever result.json was written, whatever its verdict.
+    """
+    raise SystemExit(soak_check.main(list(args)))
+
+
+@cli.command(
+    "fuzz",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def fuzz_command(args):
+    """Compare a candidate image with a baseline image on the seeded soak (--help: the flags).
+
+    The nightly perf check (needs `--group fuzz`): long reads, writes and cheap reads, open loop,
+    against each image's server in docker, beside a plain server from the same image. Exits 0
+    whenever OUT/result.json was written, whatever its verdict.
+    """
+    raise SystemExit(fuzz_check.main(list(args)))
 
 
 def main() -> int:

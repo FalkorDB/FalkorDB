@@ -33,8 +33,8 @@ graph/src/runtime/ops/limit.rs	next	52	PROVEN	limitOp_spec, limit_zero
 graph/src/runtime/ops/skip.rs	new	32	PROVEN	SkipSt.new: skip_new_spec
 graph/src/runtime/ops/skip.rs	next	50	PROVEN	skipOp_spec, skip_beyond, skip_limit
 graph/src/runtime/ops/project.rs	new	33	PROVEN	ProjectSt.new: project_new_spec
-graph/src/runtime/ops/project.rs	eval	54	PROVEN	project_flatten (row count per active row; the #2845 empty-projection fast path is proved equal to the general path in proofs/columnar Pr2845.projectEmpty_fast_eq_general, projectMerged_eq_main)
-graph/src/runtime/ops/project.rs	next	135	PROVEN	project_flatten
+graph/src/runtime/ops/project.rs	eval	54	PROVEN	project_flatten (row count per active row; the #2845 empty-projection fast path is proved equal to the general path in proofs/columnar Pr2845.projectEmpty_fast_eq_general, projectMerged_eq_main; #4015's carry-forward copies on the column fast path are proved equal to the row path per slot in Pr2845.copyFast_eq_row, guarded by copyFast_vo_differs, projectPr4015_empty, projectPr4015_fast_no_vo, fastShell_len, fastShell_originRow)
+graph/src/runtime/ops/project.rs	next	154	PROVEN	project_flatten
 graph/src/runtime/ops/unwind.rs	new	64	PROVEN	UnwindSt.new: unwind_new_spec, packCeiling_bounds
 graph/src/runtime/ops/unwind.rs	next	90	PROVEN	unwind_batches, chunks_flatten, unwind_null
 # value_math owns: graph/src/runtime/functions/aggregation.rs	register	49	(PROVEN there: AggScalar.aggRegistered: aggRegistered_nodup)
@@ -110,17 +110,18 @@ graph/src/runtime/batch.rs	clear	160	PROVEN	clear_isNull
 # columnar owns: graph/src/runtime/batch.rs	set_origin_rows	1326	(PROVEN there: Batch.setOriginRows: accessors_spec)
 # columnar owns: graph/src/runtime/batch.rs	num_columns	1335	(PROVEN there: Batch.numColumns: accessors_spec)
 # columnar owns: graph/src/runtime/batch.rs	is_bound_at	1343	(PROVEN there: Batch.isBound: accessors_spec)
-# columnar owns: graph/src/runtime/batch.rs	write_column	1354	(PROVEN there: Batch writeColumn_spec (gather∘scatter))
-# columnar owns: graph/src/runtime/batch.rs	extract_node_ids	1379	(PROVEN there: Batch.extractNodeIds: accessors_spec)
-# columnar owns: graph/src/runtime/batch.rs	extract_rel_ids	1392	(PROVEN there: Batch.extractRelIds: accessors_spec)
-# columnar owns: graph/src/runtime/batch.rs	new	1414	(PROVEN there: BatchRow.new: batchRowNew_spec)
-# columnar owns: graph/src/runtime/batch.rs	value_at	1424	(PROVEN there: Row viewAt)
-# columnar owns: graph/src/runtime/batch.rs	to_owned_row	1439	(PROVEN there: Row toOwned_bound_slot, toOwned_unbound_slot, toOwned_get_eq_view, toOwned_trail)
-# columnar owns: graph/src/runtime/batch.rs	next	1471	(PROVEN there: Batch.active (active_lt))
-# columnar owns: graph/src/runtime/batch.rs	size_hint	1494	(PROVEN there: sizeHint: sizeHint_spec)
-# columnar owns: graph/src/runtime/batch.rs	set_argument_batch	1603	(PROVEN there: OpTree.setArg: setArg_args, setArg_resets)
-# columnar owns: graph/src/runtime/batch.rs	inspect_context	1738	(PROVEN there: inspectCtx: inspectCtx_spec)
-# columnar owns: graph/src/runtime/batch.rs	next	1787	(PROVEN there: opNext/leafNext: opNext_spec)
+# columnar owns: graph/src/runtime/batch.rs	is_value_only	1355	(PROVEN there: Batch.isValueOnly: isValueOnly_spec)
+# columnar owns: graph/src/runtime/batch.rs	write_column	1364	(PROVEN there: Batch writeColumn_spec (gather∘scatter))
+# columnar owns: graph/src/runtime/batch.rs	extract_node_ids	1389	(PROVEN there: Batch.extractNodeIds: accessors_spec)
+# columnar owns: graph/src/runtime/batch.rs	extract_rel_ids	1402	(PROVEN there: Batch.extractRelIds: accessors_spec)
+# columnar owns: graph/src/runtime/batch.rs	new	1424	(PROVEN there: BatchRow.new: batchRowNew_spec)
+# columnar owns: graph/src/runtime/batch.rs	value_at	1434	(PROVEN there: Row viewAt)
+# columnar owns: graph/src/runtime/batch.rs	to_owned_row	1449	(PROVEN there: Row toOwned_bound_slot, toOwned_unbound_slot, toOwned_get_eq_view, toOwned_trail)
+# columnar owns: graph/src/runtime/batch.rs	next	1481	(PROVEN there: Batch.active (active_lt))
+# columnar owns: graph/src/runtime/batch.rs	size_hint	1504	(PROVEN there: sizeHint: sizeHint_spec)
+# columnar owns: graph/src/runtime/batch.rs	set_argument_batch	1613	(PROVEN there: OpTree.setArg: setArg_args, setArg_resets)
+# columnar owns: graph/src/runtime/batch.rs	inspect_context	1748	(PROVEN there: inspectCtx: inspectCtx_spec)
+# columnar owns: graph/src/runtime/batch.rs	next	1797	(PROVEN there: opNext/leafNext: opNext_spec)
 graph/src/runtime/ops/filter.rs	new	39	PROVEN	StreamOps.FilterSt.new: filterNew_spec
 graph/src/runtime/ops/filter.rs	eval	57	PROVEN	StreamOps.filterEval: filterEval_bools, filter_mem, filterEval_empty, filterEval_type_error
 graph/src/runtime/ops/filter.rs	next	121	PROVEN	StreamOps.filterNext: filterNext_skips

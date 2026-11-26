@@ -255,7 +255,7 @@ class Runner:
         """
         try:
             out = subprocess.run(
-                ["redis-cli", "-p", str(self.port), *args],
+                ["redis-cli", "--no-raw", "-p", str(self.port), *args],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -267,6 +267,11 @@ class Runner:
                 f"redis-cli {' '.join(args)} failed (exit {out.returncode}): "
                 f"{out.stderr.strip()[:200]}"
             )
+        # redis-cli exits 0 for an error reply, and with -r repeats past it; under
+        # --no-raw each one is a line starting "(error)".
+        if check and any(line.startswith("(error)") for line in out.stdout.splitlines()):
+            first = next(line for line in out.stdout.splitlines() if line.startswith("(error)"))
+            raise Skipped(f"redis-cli {' '.join(args)} got an error reply: {first[:200]}")
         return out.stdout
 
 

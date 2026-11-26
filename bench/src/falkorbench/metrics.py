@@ -34,6 +34,7 @@ THRESHOLDS: dict[str, float] = {
     "branches": 1.10,
     "br_miss": 1.25,
     "l1d_miss": 1.25,
+    "l2_miss": 1.25,
     "alloc_bytes": 1.10,
     "dealloc_bytes": 1.10,
     "ms": 1.25,

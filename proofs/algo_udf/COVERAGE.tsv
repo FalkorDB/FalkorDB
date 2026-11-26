@@ -1,50 +1,50 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/functions/algo_procedures.rs	new_msg	101	PROVEN	AlgoGlue.msgToString_new (zeroed 256-byte buffer)
-graph/src/runtime/functions/algo_procedures.rs	msg_to_string	105	PROVEN	AlgoGlue.msgToString_new, msgToString_prefix (bytes before the first NUL)
-graph/src/runtime/functions/algo_procedures.rs	msf_score	144	PROVEN	AlgoGlue.msfScore_missing, msfScore_unit, msfScore_max, missing_never_selected
-graph/src/runtime/functions/algo_procedures.rs	msf_scored_edge_index_op	176	PROVEN	AlgoGlue.indexOp_spec, ops_null_guard
-graph/src/runtime/functions/algo_procedures.rs	msf_scored_edge_value_op	200	PROVEN	AlgoGlue.valueOp_spec, ops_null_guard
-graph/src/runtime/functions/algo_procedures.rs	msf_keep_min_score	238	PROVEN	MsfFlow.keepMin_comm, identity_neutral, keepMin_nan_not_comm
-graph/src/runtime/functions/algo_procedures.rs	msf_score_of	266	PROVEN	AlgoGlue.scoreOf_spec
-graph/src/runtime/functions/algo_procedures.rs	opt_string	278	PROVEN	Config.optString (definition-level; used by strList proofs)
-graph/src/runtime/functions/algo_procedures.rs	validate_config_map	290	PROVEN	Config.validate_ok
-graph/src/runtime/functions/algo_procedures.rs	extract_node_labels	303	PROVEN	Config.strList_ok, allStrings_spec
-graph/src/runtime/functions/algo_procedures.rs	extract_rel_types	321	PROVEN	Config.strList_ok, allStrings_spec
-graph/src/runtime/functions/algo_procedures.rs	parse_config	345	PROVEN	AlgoGlue.parseConfig_spec (Config.parseConfig)
-graph/src/runtime/functions/algo_procedures.rs	create_lagraph_graph	372	PROVEN	AlgoGlue.lifecycle_frees_once (LAGraph_New ownership contract as model input)
-graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph	397	PROVEN	AlgoGlue.lifecycle_frees_once (LAGraph_Delete frees G->A)
-graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph_borrowed	404	PROVEN	AlgoGlue.lifecycle_frees_once (detach G->A first)
-graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph_maybe_borrowed	417	PROVEN	AlgoGlue.lifecycle_frees_once
-graph/src/runtime/functions/algo_procedures.rs	extract_vector_f64	429	AXIOMATISED	GrB_Vector_extractTuples_FP64: (index,value) pairs
-graph/src/runtime/functions/algo_procedures.rs	compact_to_original	449	PROVEN	Compact.compactToOriginal, compactToOriginal_none, wcc_rows_eq_spec, wcc_rows_component_is_member (#3032)
-graph/src/runtime/functions/algo_procedures.rs	extract_vector_i64	457	AXIOMATISED	GrB_Vector_extractTuples_INT64: (index,value) pairs
-graph/src/runtime/functions/algo_procedures.rs	node_value	474	PROVEN	AlgoGlue.nodeValue_spec
-graph/src/runtime/functions/algo_procedures.rs	check_known_labels_and_types	480	PROVEN	Compact.checkKnown, checkKnown_ok_iff, checkKnown_unknown_label_errors, checkKnown_unknown_type_errors, checkKnown_label_first, known_messages (Graph::get_label_id/get_type_id AXIOMATISED as the predicates)
-graph/src/runtime/functions/algo_procedures.rs	collect_node_ids	498	PROVEN	AlgoGlue.collectNodeIds_spec (get_nodes({l}) AXIOMATISED accessor), mem_activeNodes
-graph/src/runtime/functions/algo_procedures.rs	active_node_set	522	PROVEN	AlgoGlue.mem_activeNodes (Graph::get_nodes(∅), graph.rs:2177-2198)
-graph/src/runtime/functions/algo_procedures.rs	build_bool_pattern	550	AXIOMATISED	GxB_Matrix_build_Scalar iso build, duplicates collapse
-graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_from_tensors	624	PROVEN	Compact.compactEdges_sound (id_to_compact / sorted_ids); LagContract.compactBuild, compactBuild_byRow (new_compact_bool_matrix :680, pinned by row, #3572)
-graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_symmetric_from_tensors	689	PROVEN	Compact.compactEdges_sound (both orientations pushed); LagContract.compactBuild, compactBuild_byRow (new_compact_bool_matrix :749, pinned by row, #3572)
-graph/src/runtime/functions/algo_procedures.rs	register	757	PROVEN	AlgoBfsReg.register_empty, table_names_distinct
-graph/src/runtime/functions/algo_procedures.rs	register_pagerank	772	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry ePagerank; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_pagerank	777	PROVEN	Compact.pagerankPath, pagerank_unknown_label_empty, pagerank_unknown_type_empty, pagerank_compact_nonempty (fixed by #3058), unfiltered_rows_exact (matrix resized to node_id_bound, #3045); LAGr_PageRank AXIOMATISED; LagContract.projectedRun, cacheTranspose (:838), projection_total, one_node_projection_ok (#3349 fixed by #3572)
-graph/src/runtime/functions/algo_procedures.rs	register_wcc	891	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eWcc; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_wcc	896	PROVEN	Compact.wcc_rows_eq_spec, wcc_compact_component_id_member, wcc_rows_component_is_member, unfiltered_component_ids_are_members (LagWcc hypothesis); #3029 fixed by #3032; LagContract.projectedRun (LAGRAPH_INVALID_GRAPH outcome), projection_total, one_node_projection_ok (#3349 fixed by #3572)
-graph/src/runtime/functions/algo_procedures.rs	register_betweenness	992	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBetweenness; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_betweenness	997	PROVEN	Config.samplingSize_wraps, Compact.seed0_sources_lt, seed0_samples_deleted; LAGr_Betweenness AXIOMATISED; Betweenness.rustSources (seeded loop :1077-1098) — #3380 open: bug3380_default_size_16, bug3380_seedless_deterministic, bug3380_seeded_fewer_sources refute DefaultSizeMatchesC/SeedlessRunVaries/SourcesExact; also LagContract.projection_total, one_node_projection_ok (1-node projection, cacheTranspose :1069; #3349 fixed by #3572); Compact.checkKnown_ok_iff (unknown label/type errors, #3058)
-graph/src/runtime/functions/algo_procedures.rs	register_bfs	1144	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBfs; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_bfs	1149	PROVEN	AlgoBfsReg.edgesBranch_aligned, branches_agree, levelBranch_no_src, algoBfs_deleted_src, algoBfs_null (LAGr_BreadthFirstSearch_Extended AXIOMATISED)
-graph/src/runtime/functions/algo_procedures.rs	register_cdlp	1294	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eCdlp; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_cdlp	1299	PROVEN	Compact.wcc_rows_eq_spec (same assembly through compact_to_original, #3032), Config.maxIterations_wraps_to_zero; Compact.checkKnown_ok_iff (unknown label/type errors, #3058)
-graph/src/runtime/functions/algo_procedures.rs	register_msf	1413	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMsf; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_msf	1418	PROVEN	MsfFlow.keepMin_*, msf_dense_no_fallback, msf_fallback_key_space_mixed, compactOf_eq, denseTable_len (id map, #3586); GraphBLAS build/extract/LAGraph_msf AXIOMATISED
-graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2766	PROVEN	PathDispatch.algoSp_spec
-graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2773	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2778	PROVEN	PathDispatch.algoSs_spec
-graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2787	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2792	PROVEN	Compact.harmonic_complete, unfiltered_keeps_high_ids (#3044 fixed by #3045: source vector sized node_id_bound); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
-graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2956	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2961	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	new_msg	102	PROVEN	AlgoGlue.msgToString_new (zeroed 256-byte buffer)
+graph/src/runtime/functions/algo_procedures.rs	msg_to_string	106	PROVEN	AlgoGlue.msgToString_new, msgToString_prefix (bytes before the first NUL)
+graph/src/runtime/functions/algo_procedures.rs	msf_score	145	PROVEN	AlgoGlue.msfScore_missing, msfScore_unit, msfScore_max, missing_never_selected
+graph/src/runtime/functions/algo_procedures.rs	msf_scored_edge_index_op	177	PROVEN	AlgoGlue.indexOp_spec, ops_null_guard
+graph/src/runtime/functions/algo_procedures.rs	msf_scored_edge_value_op	201	PROVEN	AlgoGlue.valueOp_spec, ops_null_guard
+graph/src/runtime/functions/algo_procedures.rs	msf_keep_min_score	239	PROVEN	MsfFlow.keepMin_comm, identity_neutral, keepMin_nan_not_comm
+graph/src/runtime/functions/algo_procedures.rs	msf_score_of	267	PROVEN	AlgoGlue.scoreOf_spec
+graph/src/runtime/functions/algo_procedures.rs	opt_string	279	PROVEN	Config.optString (definition-level; used by strList proofs)
+graph/src/runtime/functions/algo_procedures.rs	validate_config_map	291	PROVEN	Config.validate_ok
+graph/src/runtime/functions/algo_procedures.rs	extract_node_labels	304	PROVEN	Config.strList_ok, allStrings_spec
+graph/src/runtime/functions/algo_procedures.rs	extract_rel_types	322	PROVEN	Config.strList_ok, allStrings_spec
+graph/src/runtime/functions/algo_procedures.rs	parse_config	346	PROVEN	AlgoGlue.parseConfig_spec (Config.parseConfig)
+graph/src/runtime/functions/algo_procedures.rs	create_lagraph_graph	373	PROVEN	AlgoGlue.lifecycle_frees_once (LAGraph_New ownership contract as model input)
+graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph	398	PROVEN	AlgoGlue.lifecycle_frees_once (LAGraph_Delete frees G->A)
+graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph_borrowed	405	PROVEN	AlgoGlue.lifecycle_frees_once (detach G->A first)
+graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph_maybe_borrowed	418	PROVEN	AlgoGlue.lifecycle_frees_once
+graph/src/runtime/functions/algo_procedures.rs	extract_vector_f64	430	AXIOMATISED	GrB_Vector_extractTuples_FP64: (index,value) pairs
+graph/src/runtime/functions/algo_procedures.rs	compact_to_original	450	PROVEN	Compact.compactToOriginal, compactToOriginal_none, wcc_rows_eq_spec, wcc_rows_component_is_member (#3032)
+graph/src/runtime/functions/algo_procedures.rs	extract_vector_i64	458	AXIOMATISED	GrB_Vector_extractTuples_INT64: (index,value) pairs
+graph/src/runtime/functions/algo_procedures.rs	node_value	475	PROVEN	AlgoGlue.nodeValue_spec
+graph/src/runtime/functions/algo_procedures.rs	check_known_labels_and_types	481	PROVEN	Compact.checkKnown, checkKnown_ok_iff, checkKnown_unknown_label_errors, checkKnown_unknown_type_errors, checkKnown_label_first, known_messages (Graph::get_label_id/get_type_id AXIOMATISED as the predicates)
+graph/src/runtime/functions/algo_procedures.rs	collect_node_ids	499	PROVEN	AlgoGlue.collectNodeIds_spec (get_nodes({l}) AXIOMATISED accessor), mem_activeNodes
+graph/src/runtime/functions/algo_procedures.rs	active_node_set	523	PROVEN	AlgoGlue.mem_activeNodes (Graph::get_nodes(∅), graph.rs:2177-2198)
+graph/src/runtime/functions/algo_procedures.rs	build_bool_pattern	551	AXIOMATISED	GxB_Matrix_build_Scalar iso build, duplicates collapse
+graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_from_tensors	625	PROVEN	Compact.compactEdges_sound (id_to_compact / sorted_ids); LagContract.compactBuild, compactBuild_byRow (new_compact_bool_matrix :680, pinned by row, #3572)
+graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_symmetric_from_tensors	690	PROVEN	Compact.compactEdges_sound (both orientations pushed); LagContract.compactBuild, compactBuild_byRow (new_compact_bool_matrix :749, pinned by row, #3572)
+graph/src/runtime/functions/algo_procedures.rs	register	758	PROVEN	AlgoBfsReg.register_empty, table_names_distinct
+graph/src/runtime/functions/algo_procedures.rs	register_pagerank	773	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry ePagerank; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_pagerank	778	PROVEN	Compact.pagerankPath, pagerank_unknown_label_empty, pagerank_unknown_type_empty, pagerank_compact_nonempty (fixed by #3058), unfiltered_rows_exact (matrix resized to node_id_bound, #3045); LAGr_PageRank AXIOMATISED; LagContract.projectedRun, cacheTranspose (:838), projection_total, one_node_projection_ok (#3349 fixed by #3572)
+graph/src/runtime/functions/algo_procedures.rs	register_wcc	892	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eWcc; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_wcc	897	PROVEN	Compact.wcc_rows_eq_spec, wcc_compact_component_id_member, wcc_rows_component_is_member, unfiltered_component_ids_are_members (LagWcc hypothesis); #3029 fixed by #3032; LagContract.projectedRun (LAGRAPH_INVALID_GRAPH outcome), projection_total, one_node_projection_ok (#3349 fixed by #3572)
+graph/src/runtime/functions/algo_procedures.rs	register_betweenness	993	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBetweenness; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_betweenness	998	PROVEN	Config.samplingSize_wraps, Compact.seed0_sources_lt, seed0_samples_deleted; LAGr_Betweenness AXIOMATISED; Betweenness.rustSources (seeded loop :1077-1098) — #3380 open: bug3380_default_size_16, bug3380_seedless_deterministic, bug3380_seeded_fewer_sources refute DefaultSizeMatchesC/SeedlessRunVaries/SourcesExact; also LagContract.projection_total, one_node_projection_ok (1-node projection, cacheTranspose :1069; #3349 fixed by #3572); Compact.checkKnown_ok_iff (unknown label/type errors, #3058)
+graph/src/runtime/functions/algo_procedures.rs	register_bfs	1145	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBfs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_bfs	1150	PROVEN	AlgoBfsReg.edgesBranch_aligned, branches_agree, levelBranch_no_src, algoBfs_deleted_src, algoBfs_null (LAGr_BreadthFirstSearch_Extended AXIOMATISED)
+graph/src/runtime/functions/algo_procedures.rs	register_cdlp	1295	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eCdlp; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_cdlp	1300	PROVEN	Compact.wcc_rows_eq_spec (same assembly through compact_to_original, #3032), Config.maxIterations_wraps_to_zero; Compact.checkKnown_ok_iff (unknown label/type errors, #3058)
+graph/src/runtime/functions/algo_procedures.rs	register_msf	1414	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMsf; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_msf	1419	PROVEN	MsfFlow.keepMin_*, msf_dense_no_fallback, msf_fallback_key_space_mixed, compactOf_eq, denseTable_len (id map, #3586); GraphBLAS build/extract/LAGraph_msf AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2970	PROVEN	PathDispatch.algoSp_spec
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2977	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2982	PROVEN	PathDispatch.algoSs_spec
+graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2991	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2996	PROVEN	Compact.harmonic_complete, unfiltered_keeps_high_ids (#3044 fixed by #3045: source vector sized node_id_bound); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
+graph/src/runtime/functions/algo_procedures.rs	register_maxflow	3160	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	3165	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
 graph/src/udf/js_classes.rs	with_graph	151	PROVEN	UdfClasses.withGraphRun (swap, epoch bump when nothing was lent, restore guard), withGraphRun_restores, withGraphRun_outermost, withGraphRun_nested, withGraphRun_sees_graph, withGraphRun_stale_entity (#2976; replaces set_current_graph/clear_current_graph)
 graph/src/udf/js_classes.rs	drop	158	PROVEN	UdfClasses.restoreDrop, restoreDrop_spec (with_graph's Restore guard puts back the graph lent before; also on unwind)
 graph/src/udf/js_classes.rs	with_current_graph	170	PROVEN	UdfClasses.withGraph_set, withGraph_clear
@@ -103,6 +103,6 @@ graph/src/udf/repository.rs	list	186	PROVEN	UdfRepoOps.list_shows_raw, list_filt
 graph/src/udf/repository.rs	get_all_libraries	221	PROVEN	UdfRepoOps.getAll_spec
 graph/src/udf/repository.rs	serialize	227	PROVEN	UdfRepoOps.serialize_roundtrip
 graph/src/udf/repository.rs	deserialize	242	PROVEN	UdfRepoOps.deserialize_atomic, serialize_roundtrip
-graph/src/runtime/functions/algo_procedures.rs	pin_row_major	584	PROVEN	LagContract.pinRowMajor (GrB_STORAGE_ORIENTATION_HINT=GrB_ROWMAJOR → by row; GrB_Matrix_set_INT32 AXIOMATISED), compactBuild_byRow, projection_total
-graph/src/runtime/functions/algo_procedures.rs	new_compact_bool_matrix	596	PROVEN	LagContract.newCompactBoolMatrix, compactBuild_byRow, lagInfo_zero
-graph/src/runtime/functions/algo_procedures.rs	cache_transpose	608	PROVEN	LagContract.cacheTranspose (LAGraph_Cached_AT AXIOMATISED as cachedAT), lagInfo_zero, at_unpinned_still_fails
+graph/src/runtime/functions/algo_procedures.rs	pin_row_major	585	PROVEN	LagContract.pinRowMajor (GrB_STORAGE_ORIENTATION_HINT=GrB_ROWMAJOR → by row; GrB_Matrix_set_INT32 AXIOMATISED), compactBuild_byRow, projection_total
+graph/src/runtime/functions/algo_procedures.rs	new_compact_bool_matrix	597	PROVEN	LagContract.newCompactBoolMatrix, compactBuild_byRow, lagInfo_zero
+graph/src/runtime/functions/algo_procedures.rs	cache_transpose	609	PROVEN	LagContract.cacheTranspose (LAGraph_Cached_AT AXIOMATISED as cachedAT), lagInfo_zero, at_unpinned_still_fails
