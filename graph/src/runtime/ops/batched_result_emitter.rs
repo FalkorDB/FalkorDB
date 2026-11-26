@@ -733,6 +733,14 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     where
         F: FnMut(&Batch<'a>, usize) -> Result<Option<RowIter<'a, I>>, String>,
     {
+        // Operators prime with an `emit_lazy` before seeding their first input.
+        // That call has nothing to pack, so return before allocating the
+        // lanes and, above all, before growing the ceiling: growing on it
+        // would size the first real batch at twice the `LIMIT` it was capped
+        // to (a var-length traverse under `LIMIT 100` walked 200 paths).
+        if self.batch.is_none() {
+            return Ok(None);
+        }
         let (should_expand, mut indices, mut lanes) = self.start_batch();
         let mut count = 0usize;
         while count < self.pack_ceiling {
@@ -802,11 +810,24 @@ mod tests {
         let mut e = BatchedResultEmitter::<NodeId>::new(0, Some(10));
         assert_eq!(e.pack_ceiling, 10, "first batch is sized to the hint");
 
-        // Each emit_lazy doubles the ceiling. Drive it directly: with no batch
-        // seeded, emit_lazy returns None but still advances the ceiling.
+        // Operators prime with an emit_lazy before seeding any input. That
+        // call emits nothing, so it must not spend the hint: the first real
+        // batch still packs exactly 10 rows.
+        assert!(e.emit_lazy(|_b, _row| Ok(None)).expect("ok").is_none());
+        assert_eq!(e.pack_ceiling, 10, "an empty emit leaves the ceiling");
+
+        // Each emitted batch doubles the ceiling. Every parent row yields one
+        // result, so a batch packs exactly the ceiling.
         let mut seen = vec![e.pack_ceiling];
         for _ in 0..12 {
-            let _ = e.emit_lazy(|_b, _row| Ok(None)).expect("no batch seeded");
+            e.reset();
+            let parents = vec![NodeId::from(0u64); BATCH_SIZE];
+            e.seed(Batch::from_columns([Column::NodeIds(parents)]));
+            let out = e
+                .emit_lazy(|_b, row| Ok(Some(RowIter::one(NodeId::from(row as u64)))))
+                .expect("ok")
+                .expect("a seeded batch emits");
+            assert_eq!(out.active_len(), *seen.last().unwrap());
             seen.push(e.pack_ceiling);
         }
         assert_eq!(&seen[..5], &[10, 20, 40, 80, 160]);

@@ -13,6 +13,8 @@ Layered so that each piece can be tested without a running server:
   report     the CI markdown comment    } and the CI comment cannot disagree
   profile    samply profile of one query
   flow       per-flow-test-file measurement
+  contract   the perf checks' result.json / nightly.json format and its checker
+             (`bench validate`) — standard library only
 
 The measurement boundary is deliberate and load-bearing: anything *inside* a
 counter window is a C binary (`redis-benchmark`, or `redis-cli -r N` under

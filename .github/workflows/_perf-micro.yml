@@ -1,0 +1,135 @@
+# The nightly perf micro check, `micro-hw` (epic #3974), called by
+# perf-nightly.yml with two falkordb-server images pinned by digest. `preflight`
+# builds (or finds) the measurement image; `hardware` runs
+# `bench micro-hw` on a GCE C4 through _perf-vm.yml (`pmu: true`), which uploads
+# artifact `perf-result-micro-hw`. What it measures and its gates: bench/README.md.
+#
+# _perf-vm.yml runs the check's command from code_ref, or else the CALLING
+# commit: a caller on a branch without `bench micro-hw` and no code_ref gets an error
+# result.
+name: Perf micro check
+
+on:
+  workflow_call:
+    inputs:
+      candidate_image:
+        description: falkordb-server image, name[:tag]@sha256:<64 hex>
+        type: string
+        required: true
+      baseline_image:
+        description: falkordb-server image, name[:tag]@sha256:<64 hex>
+        type: string
+        required: true
+      mode:
+        description: queue | nightly | long (one parameter set today)
+        type: string
+        required: true
+      candidate_label:
+        type: string
+        required: false
+        default: ""
+      baseline_label:
+        type: string
+        required: false
+        default: ""
+      candidate_commit:
+        type: string
+        required: false
+        default: ""
+      baseline_commit:
+        type: string
+        required: false
+        default: ""
+      code_ref:
+        description: >-
+          Commit to run the check's code from. Empty means the calling commit
+          (a check's own branch, under development). perf-nightly.yml passes
+          its own commit, so a release gate called from a version branch, which
+          has no perf code, runs main's.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  # The measurement image is built FROM the C engine's image: it ships redis,
+  # redis-benchmark and jemalloc. bench/Dockerfile says why.
+  C_IMAGE: docker.io/falkordb/falkordb-server:edge-c
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # write: a cache miss builds and pushes the measurement image.
+      packages: write
+    outputs:
+      bench_image: ${{ steps.bake.outputs.image }}
+    steps:
+      # bench/Dockerfile comes from the commit this workflow file was read
+      # from, not the caller's.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Content-addressed: the tag is a hash of the C image's index digest and
+      # every file the build reads, so it is built once and found after that.
+      # Built FROM that digest rather than the tag, so the base cannot move
+      # between the key and the build; handed on by digest, so the VM pulls
+      # exactly this image even if two cache misses race to push the tag.
+      - name: Bake the measurement image
+        id: bake
+        run: |
+          set -euo pipefail
+          base=$(docker buildx imagetools inspect "$C_IMAGE" --format '{{.Manifest.Digest}}')
+          [[ "$base" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::could not resolve $C_IMAGE ($base)"; exit 1; }
+          key=$( { printf '%s' "$base"; \
+                   cat bench/.python-version bench/pyproject.toml bench/uv.lock bench/Dockerfile; } \
+                 | sha256sum | cut -c1-16 )
+          image="ghcr.io/falkordb/falkordb-bench:$key"
+          if docker manifest inspect "$image" >/dev/null 2>&1; then
+            echo "cache hit: $image"
+          else
+            echo "building $image"
+            docker build --build-arg "C_IMAGE=${C_IMAGE%:*}@$base" -t "$image" -f bench/Dockerfile .
+            docker push "$image"
+          fi
+          digest=$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::could not resolve $image ($digest)"; exit 1; }
+          echo "image=${image%:*}@$digest" | tee -a "$GITHUB_OUTPUT"
+
+  # `./` is this file's commit, so the VM scripts and the measurement image
+  # (preflight) come from one commit, and code_ref says where the check's code
+  # does.
+  hardware:
+    needs: preflight
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/_perf-vm.yml
+    with:
+      check: micro-hw
+      command: uv run --project bench bench micro-hw --bench-image ${{ needs.preflight.outputs.bench_image }}
+      candidate_image: ${{ inputs.candidate_image }}
+      baseline_image: ${{ inputs.baseline_image }}
+      mode: ${{ inputs.mode }}
+      timeout_minutes: 90
+      pmu: true
+      machine_type: c4-standard-8
+      fallback_machine_type: c4-standard-16
+      candidate_label: ${{ inputs.candidate_label }}
+      baseline_label: ${{ inputs.baseline_label }}
+      candidate_commit: ${{ inputs.candidate_commit }}
+      baseline_commit: ${{ inputs.baseline_commit }}
+      code_ref: ${{ inputs.code_ref }}
+    secrets: inherit

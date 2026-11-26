@@ -209,6 +209,21 @@ class TestProvenanceAndCoverage:
         # The head SHA is shown abbreviated to 9 characters.
         assert "012345678" in out
 
+    def test_the_release_gate_says_what_its_base_is(self, tmp_path):
+        """A call (#4004) measures a version branch's own base, not edge-rs, and
+        skipped the wait that confirms the PR head built the image."""
+        path = tmp_path / "prov.json"
+        prov = {"base": {"image": "falkordb/falkordb-server@sha256:44eb", "digest": "x"}}
+        for gate in (False, True):
+            path.write_text(json.dumps({**prov, "_head_sha": "0123456789", "_gate": gate}))
+            rep = report.Report()
+            report.provenance_section(rep, str(path))
+            out = rep.text()
+            assert ("edge-rs" in out) is not gate
+            assert ("release gate (#4004)" in out) is gate
+            assert ("confirmed built from this commit" in out) is not gate
+            assert "| _gate |" not in out
+
     def test_missing_files_are_silently_skipped(self):
         rep = report.Report()
         report.provenance_section(rep, "/nonexistent.json")

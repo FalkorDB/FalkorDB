@@ -37,7 +37,7 @@ The project also proves what a correct budget looks like. `need` is the smallest
 
 **2. Does the emitter lose, duplicate or reorder rows?**
 
-No. `drive_flatten` and `fresh_drive` prove that the batches an emitter-driven operator yields, concatenated, are exactly the per-row expansions of every input row, in order, **for any initial `record_cap`**. For the emitter, the budget is only a batch-size hint, which is why the same `record_cap` is harmless there and harmful as a hard stop in traversals. The pack ceiling stays in `[1, 1024]` (`ceiling_bounds`), the emitter makes progress whenever work is left (`loop_progress`), and `reset` drops all queued work (`reset_remaining`).
+No. `drive_flatten` and `fresh_drive` prove that the batches an emitter-driven operator yields, concatenated, are exactly the per-row expansions of every input row, in order, **for any initial `record_cap`**. For the emitter, the budget is only a batch-size hint, which is why the same `record_cap` is harmless there and harmful as a hard stop in traversals. The pack ceiling stays in `[1, 1024]` (`ceiling_bounds`, `emit_ceiling_bounds`); the operator's priming `emit_lazy`, before any batch is installed, leaves it untouched, so the first real batch holds at most the `record_cap` hint (`emit_unseeded`, `primed_first_batch`); the emitter makes progress whenever work is left (`loop_progress`), and `reset` drops all queued work (`reset_remaining`).
 
 **3. Does `resultset_size` return the right rows, and do writes still run?**
 

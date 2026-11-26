@@ -1,0 +1,527 @@
+# Run one perf check on a temporary GCE VM, upload its out/ (with perf-vm.json)
+# as perf-result-<check>, and always delete the VM.
+# Jobs: create (ubuntu-latest), run (on the VM), cleanup (ubuntu-latest, always).
+# Inputs, what the check gets, and what deletes the VM: tests/perf/vm/README.md.
+
+name: Perf check on a GCE VM
+
+on:
+  workflow_call:
+    inputs:
+      check:
+        description: Check name (result.json "check"); lowercase letters, digits and dashes, at most 43 characters.
+        type: string
+        required: true
+      command:
+        description: The check's command, split on spaces (no shell syntax). The contract's flags are appended.
+        type: string
+        required: true
+      candidate_image:
+        description: Candidate falkordb-server image, name@sha256:<64 hex>.
+        type: string
+        required: true
+      baseline_image:
+        description: Baseline falkordb-server image, name@sha256:<64 hex>.
+        type: string
+        required: true
+      mode:
+        description: queue, nightly or long.
+        type: string
+        default: nightly
+      timeout_minutes:
+        description: Minutes the command may run before it is stopped.
+        type: number
+        default: 60
+      machine_type:
+        description: GCE machine type. Empty means n4-standard-16, or c4-standard-16 with pmu.
+        type: string
+        default: ""
+      fallback_machine_type:
+        description: Type to try in every zone when machine_type is out of stock in all of them. Empty means n2-<size> for an n4-<size> type, c4-standard-8 with pmu, else none.
+        type: string
+        default: ""
+      pmu:
+        description: Give the VM hardware counters (a C4 or M4 VM created with a vPMU). Never falls back to a type without counters.
+        type: boolean
+        default: false
+      zones:
+        description: Zones to try in order, comma- or space-separated. Empty means vars.GCP_ZONES.
+        type: string
+        default: ""
+      candidate_label:
+        type: string
+        default: ""
+      baseline_label:
+        type: string
+        default: ""
+      candidate_commit:
+        type: string
+        default: ""
+      baseline_commit:
+        type: string
+        default: ""
+      code_ref:
+        description: >-
+          Commit to run the check's code from. Empty means the calling commit
+          (a check's own branch, under development). perf-nightly.yml passes
+          its own commit, so a release gate called from a version branch, which
+          has no perf code, runs main's.
+        type: string
+        default: ""
+    secrets:
+      GH_SA_TOKEN:
+        description: Registers the VM as a self-hosted runner.
+        required: true
+      GCP_PROJECT_ID:
+        required: true
+      GCP_SA_KEY:
+        required: true
+    outputs:
+      vm_name:
+        value: ${{ jobs.create.outputs.vm_name }}
+      zone:
+        value: ${{ jobs.create.outputs.zone }}
+      machine_type:
+        value: ${{ jobs.create.outputs.machine_type }}
+      fallback_used:
+        value: ${{ jobs.create.outputs.fallback_used }}
+      pmu:
+        value: ${{ jobs.create.outputs.pmu }}
+      command_exit:
+        value: ${{ jobs.run.outputs.command_exit }}
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  # The VM's runner label and its GCE label key (`<label>=1`). run_attempt
+  # keeps a re-run off a VM left by the attempt before it.
+  PERF_VM_LABEL: perf-${{ inputs.check }}-${{ github.run_id }}-${{ github.run_attempt }}
+  GCE_GITHUB_RUNNER_REF: 0caf8406cd6353630fcd0b2eade420d3da124e01
+  # pmu-on-pinned: the commit above plus a performance_monitoring_unit flag,
+  # which creates through gcloud's beta track (the field is beta-only).
+  GCE_GITHUB_RUNNER_PMU_REF: ef56e4c9a1abfc80c300b33e3e1e9a3065b5905a
+
+jobs:
+  create:
+    name: Create VM
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    outputs:
+      vm_name: ${{ steps.create.outputs.vm_name }}
+      zone: ${{ steps.create.outputs.zone }}
+      machine_type: ${{ steps.create.outputs.machine_type }}
+      fallback_used: ${{ steps.create.outputs.fallback_used }}
+      pmu: ${{ steps.create.outputs.pmu }}
+      pmu_requested: ${{ steps.plan.outputs.pmu }}
+      create_error: ${{ steps.create.outputs.create_error || steps.plan.outputs.error }}
+      planned: ${{ steps.plan.outcome }}
+      attempt: ${{ github.run_attempt }}
+      job_timeout: ${{ steps.plan.outputs.job_timeout }}
+      command_timeout_s: ${{ steps.plan.outputs.command_timeout_s }}
+      step_timeout: ${{ steps.plan.outputs.step_timeout }}
+      deadline: ${{ steps.plan.outputs.deadline }}
+    steps:
+      - name: Check out this workflow's own VM scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit this workflow file was read from, not the caller's:
+          # a caller on another branch, or older than the workflow, may not
+          # have tests/perf/vm at all.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .perf-vm-tools
+          sparse-checkout: |
+            tests/perf/vm
+            bench
+          persist-credentials: false
+
+      - name: Confirm the scripts are this workflow's commit
+        env:
+          WANT_REPO: ${{ job.workflow_repository }}
+          WANT_SHA: ${{ job.workflow_sha }}
+          CALLER: ${{ github.repository }}@${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Exported before the comparison: on a mismatch this step fails the
+          # job, but cleanup must still find its delete script.
+          echo "PERF_VM_TOOLS=$GITHUB_WORKSPACE/.perf-vm-tools/tests/perf/vm" >> "$GITHUB_ENV"
+          got=$(git -C .perf-vm-tools rev-parse HEAD || echo none)
+          echo "VM scripts: $WANT_REPO@$got (workflow $WANT_SHA; caller $CALLER)"
+          # An empty job.workflow_sha would make checkout fall back to the
+          # caller's commit, which is the bug this checkout exists to avoid.
+          if [[ -z $WANT_SHA || $got != "$WANT_SHA" ]]; then
+            echo "::error::VM scripts are at '$got', not this workflow's commit '$WANT_SHA'"
+            exit 1
+          fi
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"  # the uv perf-contract.yml and benchmark-cov.yml pin
+
+      - name: Plan
+        id: plan
+        env:
+          CHECK: ${{ inputs.check }}
+          MODE: ${{ inputs.mode }}
+          TIMEOUT: ${{ inputs.timeout_minutes }}
+          ZONES: ${{ inputs.zones || vars.GCP_ZONES }}
+          MACHINE_TYPE: ${{ inputs.machine_type }}
+          FALLBACK: ${{ inputs.fallback_machine_type }}
+          PMU: ${{ inputs.pmu }}
+          CANDIDATE: ${{ inputs.candidate_image }}
+          BASELINE: ${{ inputs.baseline_image }}
+          CANDIDATE_LABEL: ${{ inputs.candidate_label }}
+          BASELINE_LABEL: ${{ inputs.baseline_label }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          BASELINE_COMMIT: ${{ inputs.baseline_commit }}
+        # In bench's environment: plan.sh checks the inputs with falkorbench.kit.
+        run: uv run --project .perf-vm-tools/bench --frozen --no-dev bash "$PERF_VM_TOOLS/plan.sh"
+
+      - name: Check out FalkorDB/gce-github-runner
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: FalkorDB/gce-github-runner
+          ref: ${{ steps.plan.outputs.action_ref }}
+          path: .gce-github-runner
+          persist-credentials: false
+
+      - name: Authenticate gcloud
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null
+          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null
+
+      - name: Create the VM
+        id: create
+        env:
+          GH_SA_TOKEN: ${{ secrets.GH_SA_TOKEN }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          ZONES: ${{ steps.plan.outputs.zones }}
+          MACHINE_TYPE: ${{ steps.plan.outputs.machine_type }}
+          FALLBACK: ${{ steps.plan.outputs.fallback }}
+          PMU: ${{ steps.plan.outputs.pmu }}
+        run: |
+          set -euo pipefail
+          # action.sh resolves `latest` through the unauthenticated GitHub API,
+          # which ubuntu-latest's shared addresses can exhaust; ask with a token.
+          RUNNER_VER=$(gh api repos/actions/runner/releases/latest --jq '.tag_name | ltrimstr("v")') || RUNNER_VER=latest
+          export RUNNER_VER
+          "$PERF_VM_TOOLS/create-vm.sh" "$PWD/.gce-github-runner" "$PERF_VM_LABEL" "$ZONES" "$MACHINE_TYPE" "$FALLBACK"
+
+      - name: Summary
+        if: always()
+        env:
+          VM_NAME: ${{ steps.create.outputs.vm_name }}
+          ZONE: ${{ steps.create.outputs.zone }}
+          TYPE: ${{ steps.create.outputs.machine_type }}
+          FALLBACK_USED: ${{ steps.create.outputs.fallback_used }}
+          PMU: ${{ steps.create.outputs.pmu }}
+          CREATE_ERROR: ${{ steps.create.outputs.create_error }}
+        run: |
+          if [[ -n $VM_NAME ]]; then
+            echo "VM \`$VM_NAME\`: **$TYPE** in **$ZONE** (fallback type used: $FALLBACK_USED${PMU:+, PMU $PMU}), label \`$PERF_VM_LABEL\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No VM: ${CREATE_ERROR:-the create step did not finish}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  run:
+    name: Run ${{ inputs.check }}
+    needs: create
+    # After "Re-run failed jobs" create is not re-run, so no VM carries this
+    # attempt's label; skip rather than wait 24 h for one.
+    if: needs.create.outputs.attempt == format('{0}', github.run_attempt)
+    runs-on: perf-${{ inputs.check }}-${{ github.run_id }}-${{ github.run_attempt }}
+    timeout-minutes: ${{ fromJSON(needs.create.outputs.job_timeout || '80') }}
+    outputs:
+      command_exit: ${{ steps.check.outputs.command_exit }}
+      # Set by the first step: once it ran, this job's own always() steps
+      # record and upload; if it never ran, cleanup does.
+      started: ${{ steps.deadline.outputs.started }}
+    steps:
+      - name: Arm the VM's own deadline
+        id: deadline
+        # A backstop: without it the cleanup job and the action's 6 h timer
+        # still delete the VM, so flag it but let the check run.
+        continue-on-error: true
+        env:
+          VM_NAME: ${{ needs.create.outputs.vm_name }}
+          ZONE: ${{ needs.create.outputs.zone }}
+          DEADLINE: ${{ needs.create.outputs.deadline }}
+        run: |
+          echo "started=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          sudo=; (( EUID == 0 )) || sudo=sudo
+          # A transient unit outside the runner's process tree: it survives
+          # the job, and deletes the VM even if no cleanup job ever runs.
+          $sudo systemd-run --unit=perf-vm-deadline --on-active="${DEADLINE}m" \
+            "$(command -v gcloud)" --quiet compute instances delete "$VM_NAME" --zone="$ZONE"
+          $sudo systemctl list-timers perf-vm-deadline.timer --no-pager
+
+      - name: Install git and python3
+        # Debian 12's GCE image already ships python3 and git (seen in the
+        # acceptance run); this only makes sure. A failed install is worth a
+        # warning, not the night.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          echo "before install: python3=$(command -v python3 || echo none) git=$(command -v git || echo none)"
+          export DEBIAN_FRONTEND=noninteractive
+          apt=(apt-get -q -o DPkg::Lock::Timeout=300)
+          (( EUID == 0 )) || apt=(sudo "${apt[@]}")
+          "${apt[@]}" update
+          "${apt[@]}" install -y --no-install-recommends git python3 ca-certificates
+
+      - name: Check out the check's code
+        # The calling commit, or code_ref. It comes first: checkout empties a
+        # workspace that is not its repository, which would remove the scripts
+        # below.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.code_ref }}
+          persist-credentials: false
+
+      - name: Check out this workflow's own VM scripts
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit this workflow file was read from, not the caller's:
+          # a caller on another branch, or older than the workflow, may not
+          # have tests/perf/vm at all.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .perf-vm-tools
+          sparse-checkout: tests/perf/vm
+          persist-credentials: false
+
+      - name: Confirm the scripts are this workflow's commit
+        if: always()
+        env:
+          WANT_REPO: ${{ job.workflow_repository }}
+          WANT_SHA: ${{ job.workflow_sha }}
+          CALLER: ${{ github.repository }}@${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Exported before the comparison: on a mismatch this step fails the
+          # job, but cleanup must still find its delete script.
+          echo "PERF_VM_TOOLS=$GITHUB_WORKSPACE/.perf-vm-tools/tests/perf/vm" >> "$GITHUB_ENV"
+          got=$(git -C .perf-vm-tools rev-parse HEAD || echo none)
+          echo "VM scripts: $WANT_REPO@$got (workflow $WANT_SHA; caller $CALLER)"
+          # An empty job.workflow_sha would make checkout fall back to the
+          # caller's commit, which is the bug this checkout exists to avoid.
+          if [[ -z $WANT_SHA || $got != "$WANT_SHA" ]]; then
+            echo "::error::VM scripts are at '$got', not this workflow's commit '$WANT_SHA'"
+            exit 1
+          fi
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"  # the uv perf-contract.yml and benchmark-cov.yml pin
+
+      - name: Install the Python bench pins
+        # Before the check's clock starts: `uv run --project bench` in the
+        # check's command would otherwise download it inside timeout_minutes.
+        run: |
+          set -euo pipefail
+          if [[ -f bench/.python-version ]]; then
+            (cd bench && uv python install && echo "bench's Python: $(uv python find)")
+          else
+            echo "::notice::the calling commit has no bench/.python-version; nothing to install"
+          fi
+
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # The falkordb-server images pull anonymously; a login only lifts limits.
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin \
+            || echo "::warning::ghcr.io login failed; pulling anonymously"
+
+      - name: Machine and cores
+        run: |
+          set -euo pipefail
+          perf_env=$(python3 -I "$PERF_VM_TOOLS/vm.py" env --machine-json "$RUNNER_TEMP/machine.json")
+          echo "$perf_env" | tee -a "$GITHUB_ENV"
+          {
+            echo "Machine: \`$(cat "$RUNNER_TEMP/machine.json")\`"
+            echo
+            echo "Server CPUs $(sed -n 's/^PERF_SERVER_CPUS=//p' <<< "$perf_env"), client CPUs $(sed -n 's/^PERF_CLIENT_CPUS=//p' <<< "$perf_env")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run ${{ inputs.check }}
+        id: check
+        timeout-minutes: ${{ fromJSON(needs.create.outputs.step_timeout || '65') }}
+        env:
+          CHECK: ${{ inputs.check }}
+          COMMAND: ${{ inputs.command }}
+          CANDIDATE: ${{ inputs.candidate_image }}
+          BASELINE: ${{ inputs.baseline_image }}
+          MODE: ${{ inputs.mode }}
+          CANDIDATE_LABEL: ${{ inputs.candidate_label }}
+          BASELINE_LABEL: ${{ inputs.baseline_label }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          BASELINE_COMMIT: ${{ inputs.baseline_commit }}
+          TIMEOUT_SECONDS: ${{ needs.create.outputs.command_timeout_s }}
+        run: '"$PERF_VM_TOOLS/run-check.sh"'
+
+      - name: Record the VM
+        if: always()
+        env:
+          CHECK: ${{ inputs.check }}
+          VM_NAME: ${{ needs.create.outputs.vm_name }}
+          ZONE: ${{ needs.create.outputs.zone }}
+          TYPE: ${{ needs.create.outputs.machine_type }}
+          FALLBACK_USED: ${{ needs.create.outputs.fallback_used }}
+          COMMAND_EXIT: ${{ steps.check.outputs.command_exit }}
+          PMU: ${{ needs.create.outputs.pmu }}
+          # Started, no exit code, failed: the step timeout stopped it.
+          TIMED_OUT: ${{ steps.check.outputs.timed_out || (steps.check.outputs.started == 'true' && steps.check.outcome == 'failure' && 'true') || 'false' }}
+        run: |
+          python3 -I "$PERF_VM_TOOLS/vm.py" record --out out/perf-vm.json --check "$CHECK" \
+            --vm-name "$VM_NAME" --zone "$ZONE" --machine-type "$TYPE" \
+            --fallback-used "$FALLBACK_USED" --command-exit "$COMMAND_EXIT" --timed-out "$TIMED_OUT" \
+            --pmu "$PMU"
+
+      - name: Upload perf-result-${{ inputs.check }}
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: perf-result-${{ inputs.check }}
+          path: out/
+          if-no-files-found: warn
+
+  cleanup:
+    name: Delete VM
+    needs: [create, run]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Every step says always(): a cancel that lands while this job runs
+    # skips any step that does not, and the delete must still happen.
+    steps:
+      - name: Check out this workflow's own VM scripts
+        if: always()
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit this workflow file was read from, not the caller's:
+          # a caller on another branch, or older than the workflow, may not
+          # have tests/perf/vm at all.
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .perf-vm-tools
+          sparse-checkout: tests/perf/vm
+          persist-credentials: false
+
+      - name: Confirm the scripts are this workflow's commit
+        if: always()
+        env:
+          WANT_REPO: ${{ job.workflow_repository }}
+          WANT_SHA: ${{ job.workflow_sha }}
+          CALLER: ${{ github.repository }}@${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Exported before the comparison: on a mismatch this step fails the
+          # job, but cleanup must still find its delete script.
+          echo "PERF_VM_TOOLS=$GITHUB_WORKSPACE/.perf-vm-tools/tests/perf/vm" >> "$GITHUB_ENV"
+          got=$(git -C .perf-vm-tools rev-parse HEAD || echo none)
+          echo "VM scripts: $WANT_REPO@$got (workflow $WANT_SHA; caller $CALLER)"
+          # An empty job.workflow_sha would make checkout fall back to the
+          # caller's commit, which is the bug this checkout exists to avoid.
+          if [[ -z $WANT_SHA || $got != "$WANT_SHA" ]]; then
+            echo "::error::VM scripts are at '$got', not this workflow's commit '$WANT_SHA'"
+            exit 1
+          fi
+
+      - name: Authenticate gcloud
+        if: always()
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null
+          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null
+
+      - name: Delete every VM of this run
+        if: always()
+        env:
+          CREATE_RESULT: ${{ needs.create.result }}
+          PLANNED: ${{ needs.create.outputs.planned }}
+        run: |
+          set -uo pipefail
+          # A create that did not succeed may have an insert still in flight;
+          # wait for it unless Plan failed or never ran, so no create began.
+          # (Empty means the create job's outputs were lost: wait.)
+          grace=120
+          if [[ $CREATE_RESULT == success || $PLANNED == failure || $PLANNED == skipped ]]; then grace=0; fi
+          # Every attempt's label: "Re-run failed jobs" may re-run only this
+          # job, after an earlier attempt's cleanup failed.
+          delete=${PERF_VM_TOOLS:-.perf-vm-tools/tests/perf/vm}/delete-vms.sh
+          failed=0
+          for attempt in $(seq 1 "$GITHUB_RUN_ATTEMPT"); do
+            label=${PERF_VM_LABEL%-*}-$attempt
+            wait=0
+            if [[ $attempt == "$GITHUB_RUN_ATTEMPT" ]]; then wait=$grace; fi
+            if [[ -x $delete ]]; then
+              "$delete" "$label" "$wait" || failed=1
+            else
+              # No scripts (a checkout that failed): delete anyway, then fail.
+              echo "::error::$delete is missing; deleting $label inline"
+              failed=1
+              gcloud compute instances list --filter="labels.${label}=1" \
+                  --format='value(name,zone.basename())' \
+                | while read -r name zone; do
+                    gcloud compute instances delete "$name" --zone="$zone" --quiet </dev/null
+                  done
+            fi
+          done
+          (( failed == 0 )) || exit 1
+          echo "No VM labelled \`${PERF_VM_LABEL%-*}-<1..$GITHUB_RUN_ATTEMPT>\` remains." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Refuse a partial re-run
+        if: always() && needs.create.result == 'success' && needs.run.result == 'skipped'
+        run: |
+          echo "::error::No VM for attempt ${{ github.run_attempt }}: create was not re-run. Use \"Re-run all jobs\"."
+          exit 1
+
+      - name: Record why the check never ran
+        # No VM came up, or one did but the run job never started (cancelled
+        # while queued, its runner gone). A skipped run job is a partial
+        # re-run: attempt 1 already uploaded this artifact.
+        if: always() && (needs.create.result != 'success' || (needs.run.result != 'skipped' && needs.run.outputs.started != 'true'))
+        env:
+          CHECK: ${{ inputs.check }}
+          CREATE_RESULT: ${{ needs.create.result }}
+          CREATE_ERROR: ${{ needs.create.outputs.create_error }}
+          RUN_RESULT: ${{ needs.run.result }}
+          VM_NAME: ${{ needs.create.outputs.vm_name }}
+          ZONE: ${{ needs.create.outputs.zone }}
+          TYPE: ${{ needs.create.outputs.machine_type }}
+          FALLBACK_USED: ${{ needs.create.outputs.fallback_used }}
+          PMU: ${{ needs.create.outputs.pmu }}
+        run: |
+          if [[ $CREATE_RESULT == success ]]; then
+            reason="the VM came up, but the run job never started ($RUN_RESULT)"
+          else
+            reason=${CREATE_ERROR:-the create job ended ($CREATE_RESULT) before a VM came up}
+          fi
+          python3 -I "$PERF_VM_TOOLS/vm.py" record --out out/perf-vm.json --check "$CHECK" \
+            --vm-name "$VM_NAME" --zone "$ZONE" --machine-type "$TYPE" \
+            --fallback-used "$FALLBACK_USED" --pmu "$PMU" --create-error "$reason"
+
+      - name: Upload perf-result-${{ inputs.check }}
+        if: always() && (needs.create.result != 'success' || (needs.run.result != 'skipped' && needs.run.outputs.started != 'true'))
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: perf-result-${{ inputs.check }}
+          path: out/
+          if-no-files-found: warn

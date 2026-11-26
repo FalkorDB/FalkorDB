@@ -59,3 +59,33 @@ class testProfile(FlowTestsBase):
         scan_op = traverse_op.children[0]
         self.env.assertEqual(scan_op.name, 'Node By Label Scan')
         self.env.assertEqual(scan_op.records_produced, 0)
+
+    def test03_limit_caps_variable_length_traverse(self):
+        # A LIMIT caps how many rows the operator under it packs into its first
+        # batch. Operators call the emitter once before seeding their first
+        # input; that empty call must not double the cap, or a var-length
+        # traverse under LIMIT n walks 2n paths.
+        g = self.db.select_graph("profile_limit_cap")
+        try:
+            g.query("""UNWIND range(1, 60) AS i
+                       CREATE (:Hub {id: i})-[:R]->(:Leaf)""")
+            g.query("""MATCH (h:Hub), (l:Leaf) WHERE h.id % 3 = 0
+                       CREATE (h)-[:R]->(l)""")
+
+            def find(op, name):
+                if op.name == name:
+                    return op
+                for child in op.children:
+                    found = find(child, name)
+                    if found is not None:
+                        return found
+                return None
+
+            for n in [1, 10, 37, 100]:
+                for q in [f"MATCH (s:Hub)-[:R*1..2]->(t) RETURN t LIMIT {n}",
+                          f"MATCH (s:Hub)-[:R*1..2]->(t) WITH t LIMIT {n} RETURN count(t)"]:
+                    plan = g.profile(q).structured_plan
+                    traverse = find(plan, 'Conditional Variable Length Traverse')
+                    self.env.assertEqual(traverse.records_produced, n, message=q)
+        finally:
+            g.delete()

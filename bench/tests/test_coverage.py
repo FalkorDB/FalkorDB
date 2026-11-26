@@ -5,6 +5,8 @@ matched any line containing `graph/src` — including llvm-cov's wrapped-path ro
 and the TOTAL row, which is why this is worth a test rather than a comment.
 """
 
+import pytest
+
 from falkorbench import coverage
 
 # Real `llvm-cov report` shape: the column order is
@@ -141,3 +143,18 @@ class TestLlvmToolDiscovery:
             assert "llvm-tools-preview" in str(e)
         else:
             raise AssertionError("expected RuntimeError")
+
+
+def test_an_error_reply_from_redis_cli_is_a_failed_query(monkeypatch, tmp_path):
+    import subprocess
+
+    from falkorbench import callgrind
+
+    def run(argv, **kw):  # redis-cli exits 0 on an error reply
+        return subprocess.CompletedProcess(argv, 0, "(error) ERR Unknown function\n", "")
+
+    monkeypatch.setattr(callgrind.subprocess, "run", run)
+    runner = callgrind.Runner(module=None, port=1, outdir=tmp_path)
+    with pytest.raises(callgrind.Skipped, match="error reply"):
+        runner._cli("-r", "3", "GRAPH.QUERY", "bench", "RETURN nope()")
+    runner._cli("shutdown", check=False)  # an unchecked call still tolerates it

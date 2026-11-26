@@ -1,0 +1,656 @@
+# Nightly perf regression run on main (epic #3974).
+#
+# Every night it measures main's newest merge-queue image against the latest
+# release with every perf check, and posts one message to the core team's Chat
+# space. The contract (check interface, result.json, nightly.json) is
+# falkorbench.contract; every step runs as `uv run --project bench --frozen bench …`.
+#
+#   candidate  ghcr.io/falkordb/falkordb-server:rc-mg-<sha>-valkey for main's tip,
+#              the image the merge queue built and tested for that commit. A
+#              commit with no such image (the queue had not finished, or
+#              cleanup-rc-images.yml swept it) falls back along main's
+#              first-parent history to the newest commit that has one, at most
+#              WALK commits back, and the candidate's label says so.
+#   baseline   falkordb/falkordb-server:<version> (Valkey), for the GitHub release
+#              marked Latest; its commit is the release tag's.
+#
+# Both are pinned by digest before anything runs, so every check measures the
+# same two images even if a tag moves mid-run.
+#
+# Jobs: resolve -> micro (_perf-micro.yml, whose one check, micro-hw, runs on a C4 VM),
+# vm (_perf-vm.yml, one leg per `runner: vm` entry of bench/checks.yaml),
+# hosted (one leg per `runner: hosted` entry) -> merge (`bench nightly merge` ->
+# nightly.json, artifact perf-nightly) -> report (`bench nightly report`).
+#
+# Skipped nights. A scheduled run whose candidate commit AND baseline digest equal
+# the last nightly's does not measure: there is nothing new. It still writes a
+# `skipped` nightly.json and calls the reporter, because perf-missed-run.yml
+# alarms on a night without a perf-nightly artifact. It never skips right after a
+# night in which any check said `error` (even beside a regression) or that left
+# no artifact, so a check that could not measure is retried. A dispatch never
+# skips.
+#
+# What counts as an earlier nightly (for the skip and for previous_green_commit):
+# completed scheduled runs of this workflow on main. A dispatch, which may measure
+# any pair of images, is reported but never feeds either.
+#
+# A missing measurement is never green. merge.py puts every planned check in
+# nightly.json exactly once, and stubs it as {check, verdict: error, error: <why>}
+# when it left no result.json, one the contract rejects, one that names another
+# check, or a `pass` whose perf-vm.json does not record exit 0. A checks.yaml it
+# cannot use is reported as the error check `checks-yaml`; the night goes on.
+#
+# The release gate (#4004) is this workflow, called. The merge queue of a
+# version branch (rust-pr.yml) calls it at @main with the queue's image, a
+# version the baseline release must be below, and `nightly` as the mode. A call
+# runs every registered check as a night does, never skips, posts nothing to
+# Chat, and fails unless every regression is waived in bench/waivers.yaml and no
+# check said error. Every job runs this workflow's own commit (main's), not
+# the caller's, which has no perf code: the checkouts below name
+# job.workflow_sha, and _perf-micro.yml / _perf-vm.yml get it as code_ref.
+
+name: Perf nightly
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      candidate_image:
+        description: "Candidate image (tag or digest); empty = main's newest rc-mg image"
+        type: string
+        default: ""
+      baseline_image:
+        description: "Baseline image (tag or digest); empty = the latest release"
+        type: string
+        default: ""
+      checks:
+        description: "Comma list of checks to run (micro-hw, or names in bench/checks.yaml); empty = all"
+        type: string
+        default: ""
+  # The release gate (header). `mode` is a call's alone: it is how every job
+  # tells a call from a night.
+  workflow_call:
+    inputs:
+      candidate_image:
+        description: "Image to judge (tag or digest), e.g. ghcr.io/falkordb/falkordb-server:rc-pr-<N>-valkey"
+        type: string
+        required: true
+      baseline_image:
+        description: "Baseline image (tag or digest); empty = the highest stable release below baseline_below"
+        type: string
+        default: ""
+      baseline_below:
+        description: "X.Y.Z[-pre]: the baseline is the highest stable release below this version; empty = the highest"
+        type: string
+        default: ""
+      mode:
+        description: "nightly (the gate runs the nightly flow); queue and long are the checks' other modes"
+        type: string
+        required: true
+
+permissions: {}
+
+# One nightly at a time, and never cancel one that is running. Per event: a
+# queued scheduled run must not be displaced by dispatches queueing behind it
+# (only one run per group waits; a newer one cancels it). Every leg runs on its
+# own runner or VM, so a dispatch beside a nightly measures nothing differently.
+# A call (the gate) takes the caller's event, so it gets a group of its own run:
+# one queue entry must not queue behind, or displace, another.
+concurrency:
+  group: ${{ inputs.mode && format('perf-gate-{0}', github.run_id) || format('perf-nightly-{0}', github.event_name) }}
+  cancel-in-progress: false
+
+env:
+  WALK: 20
+  CANDIDATE_REPO: ghcr.io/falkordb/falkordb-server
+  BASELINE_REPO: falkordb/falkordb-server
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Earlier runs of this workflow and their perf-nightly artifacts.
+      actions: read
+    outputs:
+      candidate_image: ${{ steps.images.outputs.candidate_image }}
+      candidate_commit: ${{ steps.images.outputs.candidate_commit }}
+      candidate_label: ${{ steps.images.outputs.candidate_label }}
+      baseline_image: ${{ steps.images.outputs.baseline_image }}
+      baseline_commit: ${{ steps.images.outputs.baseline_commit }}
+      baseline_label: ${{ steps.images.outputs.baseline_label }}
+      skip: ${{ steps.context.outputs.skip }}
+      run_micro: ${{ steps.plan.outputs.run_micro }}
+      has_vm: ${{ steps.plan.outputs.has_vm }}
+      vm_matrix: ${{ steps.plan.outputs.vm_matrix }}
+      has_hosted: ${{ steps.plan.outputs.has_hosted }}
+      hosted_matrix: ${{ steps.plan.outputs.hosted_matrix }}
+      code_sha: ${{ steps.plan.outputs.code_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      # The bench project's pinned Python (bench/.python-version) and lock.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
+
+      - name: Pin the candidate and baseline images
+        id: images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_INPUT: ${{ inputs.candidate_image }}
+          BASELINE_INPUT: ${{ inputs.baseline_image }}
+          BASELINE_BELOW: ${{ inputs.baseline_below }}
+        run: |
+          set -euo pipefail
+
+          # digest_of REF prints REF's manifest digest. Exit 3 means the registry
+          # says REF does not exist; any other failure (network, auth, rate limit)
+          # is 1, so it can never be taken for "no image" and walk past a commit
+          # that has one.
+          digest_of() {
+            local out
+            if out=$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2>"$RUNNER_TEMP/inspect.err"); then
+              jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$out"
+              return
+            fi
+            if grep -qiE 'not found|manifest unknown' "$RUNNER_TEMP/inspect.err"; then
+              return 3
+            fi
+            cat "$RUNNER_TEMP/inspect.err" >&2
+            return 1
+          }
+
+          # pin_input REF sets image/commit/label for an image given by hand.
+          # The commit is known only from an rc-mg-<sha>-<server> tag.
+          pin_input() {
+            local ref=$1 name tag="" last digest
+            digest=$(digest_of "$ref") || { echo "::error::$ref does not resolve to an image"; exit 1; }
+            name=${ref%@*}
+            last=${name##*/}
+            if [[ $last == *:* ]]; then tag=${last#*:}; name=${name%:*}; fi
+            image="$name@$digest"
+            commit=""
+            if [[ $tag =~ ^rc-mg-([0-9a-f]{40})- ]]; then
+              commit=${BASH_REMATCH[1]}
+              label="rc-mg@${commit:0:7}"
+            elif [[ -n $tag ]]; then
+              label=$tag
+            else
+              label="${last%%@*}@${digest:7:12}"
+            fi
+          }
+
+          if [[ -n $CANDIDATE_INPUT ]]; then
+            pin_input "$CANDIDATE_INPUT"
+            note="given by hand"
+          else
+            # Always main's newest image, whatever ref the run came from: a
+            # dispatch from another branch, still measures main (and labels it
+            # main@…).
+            git fetch --quiet --no-tags --depth="$((WALK + 5))" origin main
+            tip=$(git rev-parse FETCH_HEAD)
+            found=""
+            for sha in $(git rev-list --first-parent -n "$WALK" "$tip"); do
+              if digest=$(digest_of "$CANDIDATE_REPO:rc-mg-$sha-valkey"); then
+                found=$sha
+                break
+              else
+                rc=$?
+              fi
+              if [[ $rc != 3 ]]; then
+                echo "::error::could not look up $CANDIDATE_REPO:rc-mg-$sha-valkey"
+                exit 1
+              fi
+              echo "$CANDIDATE_REPO:rc-mg-$sha-valkey: no such image"
+            done
+            if [[ -z $found ]]; then
+              echo "::error::none of the $WALK newest first-parent commits from $tip has an rc-mg-<sha>-valkey image"
+              exit 1
+            fi
+            image="$CANDIDATE_REPO@$digest"
+            commit=$found
+            label="main@${found:0:7}"
+            note="main's tip"
+            if [[ $found != "$tip" ]]; then
+              back=$(git rev-list --first-parent --count "$found..$tip")
+              label="$label (tip ${tip:0:7} has no image)"
+              note="fallback: tip $tip has no rc-mg image; newest first-parent commit with one is $back back"
+              echo "::notice::candidate $note"
+            fi
+          fi
+          candidate_image=$image candidate_commit=$commit candidate_label=$label candidate_note=$note
+
+          if [[ -n $BASELINE_INPUT ]]; then
+            pin_input "$BASELINE_INPUT"
+            note="given by hand"
+          else
+            # The highest stable release of this engine (v5 and up): the rule
+            # build/publish_tags.py uses for the `latest` image tag. Not the
+            # GitHub "Latest" flag on its own, which can land on a release
+            # published later but lower: a 6.0.x backport, or one of the C
+            # engine's v4.x releases that share this repository (a C release is
+            # not a baseline for main). When the two differ, the run says so.
+            # A gate names a version instead: the highest stable release
+            # below it. A pull request into 6.2 (below 6.3.0) is judged against
+            # the newest 6.2.x, a tag v6.2.2 against 6.2.1: never itself, and
+            # never a later line.
+            releases=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+              --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(test("^v([5-9]|[1-9][0-9])[.][0-9]+[.][0-9]+$"))')
+            if [[ -n $BASELINE_BELOW ]]; then
+              tag=$(uv run --project bench --frozen bench nightly merge release --below "$BASELINE_BELOW" <<<"$releases")
+              note="highest stable release below $BASELINE_BELOW ($tag)"
+            else
+              tag=$(sort -V <<<"$releases" | tail -n 1)
+              flagged=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+              note="highest stable release ($tag)"
+              if [[ $flagged != "$tag" ]]; then
+                note="$note; the release marked Latest is $flagged"
+                echo "::notice::baseline: $note"
+              fi
+            fi
+            version=${tag#v}
+            if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::the baseline release tag '$tag' is not vX.Y.Z"
+              exit 1
+            fi
+            digest=$(digest_of "docker.io/$BASELINE_REPO:$version") \
+              || { echo "::error::docker.io/$BASELINE_REPO:$version does not resolve"; exit 1; }
+            image="$BASELINE_REPO@$digest"
+            # The peeled tag: release-tag.yml retags rc-mg-<this commit>.
+            commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
+            label=$version
+          fi
+
+          {
+            echo "candidate_image=$candidate_image"
+            echo "candidate_commit=$candidate_commit"
+            echo "candidate_label=$candidate_label"
+            echo "baseline_image=$image"
+            echo "baseline_commit=$commit"
+            echo "baseline_label=$label"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Images"
+            echo "| side | image | commit | label | from |"
+            echo "| --- | --- | --- | --- | --- |"
+            echo "| candidate | \`$candidate_image\` | ${candidate_commit:-null} | $candidate_label | $candidate_note |"
+            echo "| baseline | \`$image\` | ${commit:-null} | $label | $note |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "candidate: $candidate_image commit=${candidate_commit:-null} label='$candidate_label' ($candidate_note)"
+          echo "baseline:  $image commit=${commit:-null} label='$label' ($note)"
+
+      - name: Download the earlier nightlies
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HISTORY: ${{ runner.temp }}/history
+          # Nightlies are scheduled runs on main.
+          HISTORY_EVENT: schedule
+          HISTORY_BRANCH: main
+          GATE_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HISTORY"
+          # A call never skips and has no earlier nights: the runs it would list
+          # are the caller's.
+          if [[ -n $GATE_MODE ]]; then
+            : > "$HISTORY/runs.txt"
+            echo "a call (the release gate): no earlier nightlies"
+            exit 0
+          fi
+          # By this run's workflow id, which exists on any branch (a lookup by
+          # file name needs the file on the default branch).
+          workflow=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?event=$HISTORY_EVENT&branch=$HISTORY_BRANCH&status=completed&per_page=30" \
+            --jq ".workflow_runs[] | select(.id != $GITHUB_RUN_ID) | .id" > "$HISTORY/runs.txt"
+          echo "earlier $HISTORY_EVENT runs on $HISTORY_BRANCH, newest first: $(paste -sd' ' "$HISTORY/runs.txt")"
+          # Newest first, until the newest green one: that is all merge.py reads.
+          while read -r id; do
+            if ! gh run download "$id" -R "$GITHUB_REPOSITORY" -n perf-nightly -D "$HISTORY/$id" >/dev/null 2>&1; then
+              echo "run $id: no perf-nightly artifact"
+              continue
+            fi
+            status=$(jq -r .status "$HISTORY/$id/nightly.json" 2>/dev/null || echo unreadable)
+            echo "run $id: $status"
+            if [[ $status == green ]]; then break; fi
+          done < "$HISTORY/runs.txt"
+
+      - name: Plan the checks
+        id: plan
+        env:
+          CHECKS: ${{ inputs.checks }}
+          CODE_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          # The commit every check runs its code from: this workflow's, which
+          # for a call (the gate) is not the caller's. An empty one would fall
+          # back to the caller's commit, so it is checked here.
+          if ! [[ $CODE_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::job.workflow_sha '$CODE_SHA' is not a commit"
+            exit 1
+          fi
+          echo "code_sha=$CODE_SHA" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/plan"
+          # A registry that does not parse is reported as the check `checks-yaml`
+          # (an error) instead of stopping the night.
+          if yq -o=json '.' bench/checks.yaml > "$RUNNER_TEMP/checks.json" 2> "$RUNNER_TEMP/yq.err"; then
+            registry=(--registry "$RUNNER_TEMP/checks.json")
+          else
+            registry=(--registry-error "yq: $(tr '\n' ' ' < "$RUNNER_TEMP/yq.err")")
+          fi
+          uv run --project bench --frozen bench nightly merge plan "${registry[@]}" --select "$CHECKS" \
+            --out "$RUNNER_TEMP/plan/plan.json" --github-output "$GITHUB_OUTPUT"
+
+      - name: Decide whether tonight runs
+        id: context
+        env:
+          HISTORY: ${{ runner.temp }}/history
+          # Only a scheduled night may skip: a dispatch is a request to measure.
+          MAY_SKIP: ${{ github.event_name == 'schedule' }}
+          CANDIDATE_IMAGE: ${{ steps.images.outputs.candidate_image }}
+          CANDIDATE_COMMIT: ${{ steps.images.outputs.candidate_commit }}
+          CANDIDATE_LABEL: ${{ steps.images.outputs.candidate_label }}
+          BASELINE_IMAGE: ${{ steps.images.outputs.baseline_image }}
+          BASELINE_COMMIT: ${{ steps.images.outputs.baseline_commit }}
+          BASELINE_LABEL: ${{ steps.images.outputs.baseline_label }}
+        run: |
+          set -euo pipefail
+          skip=()
+          if [[ $MAY_SKIP == true ]]; then skip=(--may-skip); fi
+          out=$GITHUB_OUTPUT
+          uv run --project bench --frozen bench nightly merge context \
+            --candidate "$CANDIDATE_IMAGE" --candidate-commit "$CANDIDATE_COMMIT" --candidate-label "$CANDIDATE_LABEL" \
+            --baseline "$BASELINE_IMAGE" --baseline-commit "$BASELINE_COMMIT" --baseline-label "$BASELINE_LABEL" \
+            --plan "$RUNNER_TEMP/plan/plan.json" \
+            --history-runs "$HISTORY/runs.txt" --history-dir "$HISTORY" "${skip[@]}" \
+            --date "$(date -u +%F)" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --out "$RUNNER_TEMP/plan/context.json" --github-output "$out" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Whether a dispatch named its own images, for perf-dashboard.yml: only a run that
+      # measures the default pair belongs on the dashboard.
+      - name: Record the image overrides
+        env:
+          CANDIDATE_INPUT: ${{ inputs.candidate_image }}
+          BASELINE_INPUT: ${{ inputs.baseline_image }}
+        run: |
+          jq -n --arg c "$CANDIDATE_INPUT" --arg b "$BASELINE_INPUT" \
+            '{image_overrides: ($c != "" or $b != "")}' > "$RUNNER_TEMP/plan/dispatch.json"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: perf-plan
+          # A re-run's attempt replaces the earlier one's (upload-artifact
+          # refuses an existing name otherwise).
+          overwrite: true
+          path: ${{ runner.temp }}/plan/
+          if-no-files-found: error
+
+  # The micro tier's one check, micro-hw: hardware counters and allocations on a
+  # C4 VM, through a nested _perf-vm.yml that needs the GCE secrets.
+  # _perf-micro.yml always runs it, so it is called only when micro-hw is
+  # planned (run_micro).
+  micro:
+    needs: resolve
+    if: needs.resolve.outputs.skip == 'false' && needs.resolve.outputs.run_micro == 'true'
+    permissions:
+      contents: read
+      # On a cache miss it builds the bench image and pushes it to ghcr; the
+      # VM pulls with read.
+      packages: write
+    # From this workflow's commit, as is code_ref: a call from a version branch
+    # still runs main's micro-hw.
+    uses: ./.github/workflows/_perf-micro.yml
+    with:
+      candidate_image: ${{ needs.resolve.outputs.candidate_image }}
+      baseline_image: ${{ needs.resolve.outputs.baseline_image }}
+      candidate_commit: ${{ needs.resolve.outputs.candidate_commit }}
+      baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
+      candidate_label: ${{ needs.resolve.outputs.candidate_label }}
+      baseline_label: ${{ needs.resolve.outputs.baseline_label }}
+      mode: ${{ inputs.mode || 'nightly' }}
+      code_ref: ${{ needs.resolve.outputs.code_sha }}
+    secrets: inherit
+
+  vm:
+    needs: resolve
+    # A matrix expands before `if:` is read and an empty one fails the job, so
+    # merge.py always emits at least a placeholder leg and has_vm switches it off.
+    if: needs.resolve.outputs.skip == 'false' && needs.resolve.outputs.has_vm == 'true'
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.vm_matrix) }}
+    uses: ./.github/workflows/_perf-vm.yml
+    with:
+      check: ${{ matrix.check }}
+      command: ${{ matrix.command }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      machine_type: ${{ matrix.machine_type }}
+      candidate_image: ${{ needs.resolve.outputs.candidate_image }}
+      baseline_image: ${{ needs.resolve.outputs.baseline_image }}
+      candidate_commit: ${{ needs.resolve.outputs.candidate_commit }}
+      baseline_commit: ${{ needs.resolve.outputs.baseline_commit }}
+      candidate_label: ${{ needs.resolve.outputs.candidate_label }}
+      baseline_label: ${{ needs.resolve.outputs.baseline_label }}
+      mode: ${{ inputs.mode || 'nightly' }}
+      code_ref: ${{ needs.resolve.outputs.code_sha }}
+    secrets: inherit
+
+  hosted:
+    needs: resolve
+    if: needs.resolve.outputs.skip == 'false' && needs.resolve.outputs.has_hosted == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.hosted_matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
+
+      # The same runner script as on a VM: the command is split on spaces (no
+      # shell), `$PERF_VM_TOOLS` names tests/perf/vm, the contract's flags are
+      # appended, and its own `timeout` keeps the exit status ours to record.
+      - name: Run ${{ matrix.check }}
+        id: check
+        env:
+          TIMEOUT_MINUTES: ${{ matrix.timeout_minutes }}
+          CHECK: ${{ matrix.check }}
+          COMMAND: ${{ matrix.command }}
+          CANDIDATE: ${{ needs.resolve.outputs.candidate_image }}
+          BASELINE: ${{ needs.resolve.outputs.baseline_image }}
+          CANDIDATE_COMMIT: ${{ needs.resolve.outputs.candidate_commit }}
+          BASELINE_COMMIT: ${{ needs.resolve.outputs.baseline_commit }}
+          CANDIDATE_LABEL: ${{ needs.resolve.outputs.candidate_label }}
+          BASELINE_LABEL: ${{ needs.resolve.outputs.baseline_label }}
+          MODE: ${{ inputs.mode || 'nightly' }}
+        run: |
+          PERF_VM_TOOLS=$GITHUB_WORKSPACE/tests/perf/vm TIMEOUT_SECONDS=$((TIMEOUT_MINUTES * 60)) \
+            tests/perf/vm/run-check.sh
+
+      # How the command ended, as perf-vm.json beside result.json: merge.py does
+      # not take a `pass` without a recorded exit 0. Empty outputs (the step was
+      # cancelled or killed) record no exit status.
+      - name: Record how ${{ matrix.check }} ended
+        if: always()
+        env:
+          CHECK: ${{ matrix.check }}
+          COMMAND_EXIT: ${{ steps.check.outputs.command_exit }}
+          TIMED_OUT: ${{ steps.check.outputs.timed_out }}
+        run: |
+          python3 -I tests/perf/vm/vm.py record --out out/perf-vm.json --check "$CHECK" \
+            --command-exit "$COMMAND_EXIT" --timed-out "${TIMED_OUT:-false}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: perf-result-${{ matrix.check }}
+          overwrite: true
+          path: out/
+
+  merge:
+    needs: [resolve, micro, vm, hosted]
+    # Whatever the check jobs did: a failed or cancelled one becomes a stub. Only
+    # a failed resolve leaves nothing to merge (no pinned images), and the
+    # missed-run alarm reports that.
+    if: always() && needs.resolve.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # This run's perf-result-<check> artifacts, by name.
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+
+      # The bench project's pinned Python (bench/.python-version) and lock.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: perf-plan
+          path: ${{ runner.temp }}/plan
+
+      # Each planned check's artifact by its exact name, into its own folder. Not
+      # download-artifact with a pattern: a lone match lands without its folder,
+      # and the reusable workflows' internal <artifact>--* ones match too. A
+      # download that fails leaves that check without a result.json, so it
+      # becomes a stub: never green, and the night is still reported.
+      - name: Download the results
+        if: needs.resolve.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for check in $(jq -r '.[] | select(.runner != null) | .check' "$RUNNER_TEMP/plan/plan.json"); do
+            name=perf-result-$check
+            dir=$RUNNER_TEMP/results/$name
+            # The newest artifact of that name: after "Re-run jobs" the previous
+            # attempt's is still listed beside the new one.
+            if ! id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$name&per_page=100" \
+                --jq '[.artifacts[] | select(.expired | not)] | max_by(.id) | .id // empty'); then
+              echo "::warning::$name: could not list its artifacts"
+              continue
+            fi
+            if [[ -z $id ]]; then
+              echo "::warning::$name: no artifact"
+              continue
+            fi
+            mkdir -p "$dir"
+            if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/$name.zip" \
+                && unzip -q -o "$RUNNER_TEMP/$name.zip" -d "$dir"; then
+              for file in "$dir"/*; do echo "$name (artifact $id): ${file##*/}"; done
+            else
+              # A partly extracted artifact could still hold a result.json: drop
+              # it, so the check is the stub merge writes for a missing result.
+              rm -rf "$dir"
+              echo "::warning::$name: artifact $id did not download"
+            fi
+          done
+
+      - name: Merge the results into nightly.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/results" "$RUNNER_TEMP/nightly"
+          uv run --project bench --frozen bench nightly merge results \
+            --context "$RUNNER_TEMP/plan/context.json" --plan "$RUNNER_TEMP/plan/plan.json" \
+            --results "$RUNNER_TEMP/results" --out "$RUNNER_TEMP/nightly/nightly.json" \
+            --unfinished-out "$RUNNER_TEMP/nightly/unfinished.json"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: perf-nightly
+          overwrite: true
+          # nightly.json, and unfinished.json for the gate (the regressions whose
+          # check did not finish, which no waiver covers).
+          path: |
+            ${{ runner.temp }}/nightly/nightly.json
+            ${{ runner.temp }}/nightly/unfinished.json
+          if-no-files-found: error
+          retention-days: 90
+
+  report:
+    needs: merge
+    if: always() && needs.merge.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # The reporter lists the commits since previous_green_commit with `git log` in
+      # this checkout (else it links the compare page).
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      # The bench project's pinned Python (bench/.python-version) and lock.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.9.29"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: perf-nightly
+          path: ${{ runner.temp }}/nightly
+
+      # The reporter exits 0 for any night it reported (red and error included) and 1
+      # only when it could not report; failing the run for a red or error night
+      # is the next step's job alone.
+      - name: Post the night's result
+        env:
+          # Chat hears about real nights only: the schedule, and a dispatch that
+          # picked its own images is a by-hand comparison, so it goes to the step
+          # summary alone.
+          PERF_CHAT_WEBHOOK: ${{ inputs.mode == '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.candidate_image == '' && inputs.baseline_image == '')) && secrets.PERF_CHAT_WEBHOOK || '' }}
+        run: uv run --project bench --frozen bench nightly report --nightly "$RUNNER_TEMP/nightly/nightly.json"
+
+      # Last, once the report is out and nightly.json is uploaded (merge job), so
+      # a failing run never loses either: a red or error night fails the run.
+      # The list of runs then reads as a timeline, and a failed scheduled run
+      # sends GitHub's email. Green and skipped nights succeed, and so does a red
+      # one whose every regression bench/waivers.yaml waives (each still shown
+      # as a warning). A call (the gate) also fails a skipped night. It runs even
+      # when the report step failed, so a red or error night fails the run
+      # whatever the reporter did.
+      - name: Fail the run unless the night passes
+        if: ${{ !cancelled() }}
+        env:
+          GATE_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          yq -o=json '.' bench/waivers.yaml > "$RUNNER_TEMP/waivers.json"
+          gate=()
+          if [[ -n $GATE_MODE ]]; then gate=(--gate); fi
+          uv run --project bench --frozen bench nightly merge conclude --nightly "$RUNNER_TEMP/nightly/nightly.json" \
+            --waivers "$RUNNER_TEMP/waivers.json" --unfinished "$RUNNER_TEMP/nightly/unfinished.json" "${gate[@]}"

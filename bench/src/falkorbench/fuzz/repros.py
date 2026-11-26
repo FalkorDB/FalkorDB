@@ -1,0 +1,446 @@
+"""Targeted checks for long mode, each on a fresh server with a graph of its own (`q`, label N).
+
+Each returns {"pass": True/False/None, "detail": ...}:
+
+* write-<none|create|set>: a write sent to a graph while a ~30 s read runs on it must not freeze
+  the server (no PING over 500 ms during the read). `none` is the read alone.
+* constraint-<none|create|drop|mandatory>: the same for GRAPH.CONSTRAINT CREATE / DROP (#3763).
+* index-build: an index that finishes populating while a long read holds the graph must not freeze
+  the server (#3705).
+* writer-starvation: at THREAD_COUNT 10, four writers behind 20 clients of back-to-back ~300 ms
+  reads must finish within 120 s, every acknowledged write exactly once.
+* reads-behind-writer: cheap reads with TIMEOUT 1000 ms, sent while a write waits for a long read,
+  must not time out (#3685).
+"""
+
+from __future__ import annotations
+
+import contextlib
+import threading
+import time
+
+from redis.exceptions import ResponseError
+
+from . import harness
+
+FREEZE_MS = 500
+WAIT_S = 300  # every request and wait in a repro gives up after this (a hung server)
+LONG_READ = "MATCH (n:N) WITH n LIMIT {limit} UNWIND range(1, 200000) AS x RETURN count(x)"
+
+
+class Incomplete(RuntimeError):
+    """A request the repro depends on did not complete; run_repro decides crash or unmeasured."""
+
+
+def _conn(port):
+    return harness.connect(port, timeout=WAIT_S)
+
+
+def _no_timeouts(r):
+    for k in ("TIMEOUT", "TIMEOUT_MAX", "TIMEOUT_DEFAULT"):
+        # an engine without this setting has no such timeout to turn off
+        with contextlib.suppress(ResponseError):
+            r.execute_command("GRAPH.CONFIG", "SET", k, "0")
+
+
+def _fill(r, nodes):
+    r.delete("q")
+    for lo in range(0, nodes, 500_000):
+        r.execute_command(
+            "GRAPH.QUERY",
+            "q",
+            f"UNWIND range({lo}, {min(nodes, lo + 500_000) - 1}) AS i CREATE (:N {{v: i}})",
+        )
+
+
+def _operational(r, proc):
+    rows = r.execute_command("GRAPH.RO_QUERY", "q", f"CALL {proc}() YIELD status RETURN status")[1]
+    return bool(rows) and all(harness.s(x[0]) == "OPERATIONAL" for x in rows)
+
+
+def _wait_status(r, proc):
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < WAIT_S:
+        if _operational(r, proc):
+            return
+        time.sleep(0.05)
+    raise TimeoutError(f"{proc}: not OPERATIONAL after {WAIT_S} s")
+
+
+def _join(*threads):
+    for t in threads:
+        t.join(WAIT_S)
+        if t.is_alive():
+            raise TimeoutError(f"a client thread still waits after {WAIT_S} s")
+
+
+class _Pinger:
+    def __init__(self, port):
+        self.port, self.pings, self.stop = port, [], threading.Event()
+        self.error = None  # why the probe stopped early, if it did
+        self.t = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        try:
+            p = _conn(self.port)
+            while not self.stop.is_set():
+                t = time.perf_counter()
+                p.ping()
+                self.pings.append((t, (time.perf_counter() - t) * 1000))
+                time.sleep(0.01)
+        except Exception as e:  # no PING after this: the freeze verdict lacks its evidence
+            self.error = _outcome(e)
+
+    def __enter__(self):
+        self.t.start()
+        time.sleep(0.5)
+        return self
+
+    def __exit__(self, *a):
+        self.stop.set()
+        self.t.join(5)
+        if self.t.is_alive() and not self.error:  # still waiting for a PONG after the read
+            self.error = "a PING still had no reply after the long read ended"
+
+    def during(self, a, b):
+        return [lat for t, lat in self.pings if a <= t <= b]
+
+
+def _outcome(e: Exception) -> str:
+    """An engine's error reply is an answer ("reply: …"); anything else means no answer ("lost: …")."""
+    return f"{'reply' if isinstance(e, ResponseError) else 'lost'}: {type(e).__name__}: {e}"[:200]
+
+
+def _long_read(port, limit, out):
+    """Appends (start, end, outcome): None when the read answered, else _outcome's text."""
+    c = _conn(port)
+    t = time.perf_counter()
+    err = None
+    try:
+        c.execute_command("GRAPH.RO_QUERY", "q", LONG_READ.format(limit=limit))
+    except Exception as e:
+        err = _outcome(e)
+    out.append((t, time.perf_counter(), err))
+
+
+def _answered(what, rec):
+    """A request with no answer (lost connection, no record) makes the repro incomplete."""
+    if not rec or (rec[0][2] or "").startswith("lost"):
+        raise Incomplete(f"the {what} did not complete: {rec[0][2] if rec else 'no reply'}")
+
+
+def _freeze_verdict(pinger, lr, extra, sent=None, building=True):
+    """No PING over 500 ms during a long read that answered. An error reply to the long read, or to
+    the command sent during it (extra["error"]), fails the repro: the engine refused it. Otherwise
+    the run is incomplete when the scenario did not form: the command was sent (`sent`, None for
+    the read alone) after the read ended, the index was ready before the read started
+    (`building`), or the PING probe stopped."""
+    _answered("long read", lr)
+    a, b, err = lr[0]
+    during = pinger.during(a, b)
+    late = sum(1 for x in during if x > FREEZE_MS)
+    refused = err or extra.get("error")
+    if not refused:
+        if pinger.error:
+            raise Incomplete(f"the PING probe stopped: {pinger.error}")
+        if sent is not None and sent >= b:
+            raise Incomplete(f"the command was sent {sent - b:.1f} s after the long read ended")
+        if not building:
+            raise Incomplete("the index was ready before the long read started")
+    if sent is not None:
+        extra["sent_into_read_s"] = round(sent - a, 1)
+    return {
+        "pass": False if refused else (late == 0 if during else None),
+        "detail": {
+            "long_read_s": round(b - a, 1),
+            "worst_ping_ms": round(max(during, default=0), 1),
+            "pings_over_500ms": late,
+            "long_read_error": err,
+            **extra,
+        },
+    }
+
+
+def write_during_long_read(port, mode, nodes=1_000_000):
+    r = _conn(port)
+    _no_timeouts(r)
+    _fill(r, nodes)
+    lr, extra = [], {}
+    with _Pinger(port) as pinger:
+        th = threading.Thread(target=_long_read, args=(port, 2000, lr))
+        th.start()
+        time.sleep(1.0)
+        q = {"create": "CREATE (:W {i: 1})", "set": "MATCH (n:N {v: 1}) SET n.w = 1"}.get(mode)
+        t_w = None
+        if q:
+            t_w = time.perf_counter()
+            try:
+                r.execute_command("GRAPH.QUERY", "q", q)
+            except ResponseError as e:
+                extra["error"] = _outcome(e)
+            extra["write_s"] = round(time.perf_counter() - t_w, 1)
+        _join(th)
+        time.sleep(0.5)
+    return _freeze_verdict(pinger, lr, extra, sent=t_w)
+
+
+def constraint_during_long_read(port, mode, nodes=1_000_000):
+    r = _conn(port)
+    _no_timeouts(r)
+    _fill(r, nodes)
+    r.execute_command("GRAPH.QUERY", "q", "CREATE INDEX FOR (n:N) ON (n.v)")
+    _wait_status(r, "db.indexes")
+    constraint = (
+        "q",
+        "MANDATORY" if mode == "mandatory" else "UNIQUE",
+        "NODE",
+        "N",
+        "PROPERTIES",
+        "1",
+        "v",
+    )
+    if mode == "drop":  # the constraint must exist (and be enforced) before the long read starts
+        r.execute_command("GRAPH.CONSTRAINT", "CREATE", *constraint)
+        _wait_status(r, "db.constraints")
+    lr, extra = [], {}
+    with _Pinger(port) as pinger:
+        th = threading.Thread(target=_long_read, args=(port, 2000, lr))
+        th.start()
+        time.sleep(1.0)
+        t_c = None
+        if mode != "none":
+            t_c = time.perf_counter()
+            try:
+                rep = r.execute_command(
+                    "GRAPH.CONSTRAINT", "DROP" if mode == "drop" else "CREATE", *constraint
+                )
+                extra["reply"] = harness.s(rep)
+            except ResponseError as e:
+                extra["error"] = _outcome(e)
+            extra["command_s"] = round(time.perf_counter() - t_c, 1)
+        _join(th)
+        time.sleep(0.5)
+    return _freeze_verdict(pinger, lr, extra, sent=t_c)
+
+
+def index_build_behind_long_read(port, nodes=2_000_000):
+    r = _conn(port)
+    _no_timeouts(r)
+    _fill(r, nodes)
+    lr = []
+    with _Pinger(port) as pinger:
+        reader = threading.Thread(target=_long_read, args=(port, 3000, lr))
+        # create the index first (the CREATE itself waits for the write lock), then start the long
+        # read at once, so the index finishes populating while the read holds the graph's read lock
+        t_idx = time.perf_counter()
+        r.execute_command("GRAPH.QUERY", "q", "CREATE INDEX FOR (n:N) ON (n.v)")
+        reader.start()
+        building = not _operational(r, "db.indexes")  # still populating as the read starts
+        _wait_status(r, "db.indexes")
+        t_ready = time.perf_counter()
+        _join(reader)
+        time.sleep(0.5)
+    extra = {
+        "index_ready_s": round(t_ready - t_idx, 1),
+        "ready_before_read_ended": t_ready < lr[0][1] if lr else None,
+    }
+    return _freeze_verdict(pinger, lr, extra, building=building)
+
+
+def writer_starvation(port, readers=20, writers=4, per=25, limit_s=120):
+    r = _conn(port)
+    r.delete("q")
+    r.execute_command("GRAPH.QUERY", "q", "UNWIND range(0, 199999) AS i CREATE (:N {v: i})")
+
+    def read_q(k):
+        return f"MATCH (n:N) WITH n LIMIT {k} UNWIND range(1, 100000) AS x RETURN count(x)"
+
+    k = 50
+    for _ in range(4):  # calibrate one read to about 300 ms alone on this server
+        t = time.perf_counter()
+        r.execute_command("GRAPH.RO_QUERY", "q", read_q(k))
+        d = time.perf_counter() - t
+        k = max(1, min(20000, int(k * 0.3 / max(d, 1e-3))))
+    stop, writes, errs, lost = threading.Event(), [], [], []
+
+    def reader():
+        c = _conn(port)
+        while not stop.is_set():
+            try:
+                c.execute_command("GRAPH.RO_QUERY", "q", read_q(k))
+            except ResponseError as e:
+                errs.append(f"read: {e}")
+            except Exception as e:
+                # no reply at all: this client is done, and the run is incomplete
+                lost.append(f"read: {_outcome(e)}")
+                return
+
+    def writer(w):
+        c = _conn(port)
+        for i in range(per):
+            a = time.perf_counter()
+            try:
+                c.execute_command("GRAPH.QUERY", "q", f"CREATE (:W {{w: {w}, i: {i}}})")
+                writes.append((w, i, time.perf_counter() - a))
+            except ResponseError as e:
+                errs.append(f"write: {e}")
+            except Exception as e:
+                lost.append(f"write: {_outcome(e)}")
+                return
+
+    rs = [threading.Thread(target=reader, daemon=True) for _ in range(readers)]
+    for t in rs:
+        t.start()
+    time.sleep(3)
+    t0 = time.perf_counter()
+    ws = [threading.Thread(target=writer, args=(w,), daemon=True) for w in range(writers)]
+    for t in ws:
+        t.start()
+    for t in ws:
+        t.join(timeout=max(0.0, limit_s - (time.perf_counter() - t0)))
+    starved = any(t.is_alive() for t in ws)
+    took = time.perf_counter() - t0
+    stop.set()
+    for t in rs:
+        t.join(timeout=60)
+    n_w = r.execute_command("GRAPH.RO_QUERY", "q", "MATCH (n:W) RETURN count(n)")[1][0][0]
+    distinct = "MATCH (n:W) RETURN count(DISTINCT [n.w, n.i])"
+    n_d = r.execute_command("GRAPH.RO_QUERY", "q", distinct)[1][0][0]
+    return judge_writers(writes, errs, lost, starved, took, n_w, n_d, writers * per)
+
+
+def judge_writers(writes, errs, lost, starved, took, n_w, n_d, expected) -> dict:
+    """writer-starvation's verdict: every write acknowledged within the limit, exactly once, no
+    error reply. A client that lost its connection makes the run incomplete (crash or unmeasured)."""
+    if lost:
+        raise Incomplete(f"{len(lost)} clients lost their connection: {lost[0]}")
+    lat = sorted(x[2] for x in writes)
+    ok = not starved and not errs and n_w == n_d == len(writes) == expected
+    return {
+        "pass": ok,
+        "detail": {
+            "acked": len(writes),
+            "took_s": round(took, 1),
+            "starved": starved,
+            "write_max_ms": round(lat[-1] * 1000, 1) if lat else None,
+            "count_w": n_w,
+            "distinct_w": n_d,
+            "errors": errs[:3],
+        },
+    }
+
+
+def reads_behind_writer(port, nodes=1_000_000, n_reads=8):
+    r = _conn(port)
+    _no_timeouts(r)
+    _fill(r, nodes)
+    cheap_q = "MATCH (n:N) WHERE n.v = 7 RETURN n.v"
+    out, lock, lr, wr = [], threading.Lock(), [], []
+
+    def cheap(tag, t0):
+        a = time.perf_counter()
+        try:
+            _conn(port).execute_command("GRAPH.RO_QUERY", "q", cheap_q, "TIMEOUT", "1000")
+            res = "ok"
+        except ResponseError as e:
+            res = "timeout" if "timed out" in str(e).lower() else f"error: {str(e)[:80]}"
+        except Exception as e:  # no reply at all (connection lost): the run is incomplete
+            res = f"failed: {type(e).__name__}"
+        with lock:
+            out.append((tag, round((time.perf_counter() - a) * 1000, 1), res))
+
+    def write(t0):
+        a = time.perf_counter()
+        try:
+            _conn(port).execute_command("GRAPH.QUERY", "q", "CREATE (:W {i: 1})")
+            wr.append((round(a - t0, 1), round(time.perf_counter() - a, 1), None))
+        except Exception as e:
+            wr.append((round(a - t0, 1), round(time.perf_counter() - a, 1), _outcome(e)))
+
+    t0 = time.perf_counter()
+    ths = [threading.Thread(target=_long_read, args=(port, 2000, lr))]
+    ths[-1].start()
+    time.sleep(0.5)
+    for _ in range(n_reads):
+        ths.append(threading.Thread(target=cheap, args=("before-writer", t0)))
+        ths[-1].start()
+    time.sleep(0.5)
+    ths.append(threading.Thread(target=write, args=(t0,)))
+    ths[-1].start()
+    time.sleep(1.0)
+    for _ in range(n_reads):
+        ths.append(threading.Thread(target=cheap, args=("behind-writer", t0)))
+        ths[-1].start()
+    _join(*ths)
+    return judge_reads(out, wr, lr, n_reads)
+
+
+def judge_reads(out, wr, lr, n_reads) -> dict:
+    """reads-behind-writer's verdict: every cheap read answered (no timeout, no error reply), and
+    the write and the long read too. It is judged only when every one of them got an answer (an
+    error reply counts as one); otherwise the run is incomplete (a crash or an unmeasured repro,
+    as run_repro finds)."""
+    failed = [x for x in out if x[2].startswith("failed")]
+    if len(out) != 2 * n_reads or failed:
+        raise Incomplete(f"{len(out) - len(failed)} of {2 * n_reads} cheap reads got a reply")
+    _answered("write", wr)
+    _answered("long read", lr)
+    timeouts = sum(1 for x in out if x[2] == "timeout")
+    other = (
+        [x for x in out if x[2] not in ("ok", "timeout")]
+        + [("write", 0, wr[0][2])] * bool(wr[0][2])
+        + [("long read", 0, lr[0][2])] * bool(lr[0][2])
+    )
+    return {
+        "pass": timeouts == 0 and not other,
+        "detail": {
+            "timeouts": timeouts,
+            "other": other[:3],
+            "write": wr[:1],
+            "long_read_s": round(lr[0][1] - lr[0][0], 1),
+            "reads": sorted(out),
+        },
+    }
+
+
+#: name -> (THREAD_COUNT, function, args)
+REPROS = {
+    **{f"write-{m}": (32, write_during_long_read, (m,)) for m in ("none", "create", "set")},
+    **{
+        f"constraint-{m}": (32, constraint_during_long_read, (m,))
+        for m in ("none", "create", "drop", "mandatory")
+    },
+    "index-build": (32, index_build_behind_long_read, ()),
+    "writer-starvation": (10, writer_starvation, ()),
+    "reads-behind-writer": (32, reads_behind_writer, ()),
+}
+
+
+def run_repro(opts: dict, info: dict, tag: str, name: str) -> dict:
+    """One repro on a fresh server: {"pass", "detail", "crashed"}. A server that exits or stops
+    answering is pass False with crashed True; a repro that could not run is pass None."""
+    tc, fn, args = REPROS[name]
+    server = harness.Server(
+        info,
+        f"{opts['name_prefix']}-{tag}",
+        opts.get("server_cpus"),
+        opts["net"],
+        tc,
+        labels=opts.get("labels"),
+    )
+    try:
+        server.start()
+        res = {**fn(server.port, *args), "crashed": False}
+    except Exception as e:
+        res = {"pass": None, "crashed": False, "error": f"{type(e).__name__}: {e}"[:300]}
+        state = harness.after_failure(server, e)
+        if state["server_alive"] is False:  # exited or hung: a crash; otherwise unmeasured
+            res.update(server_alive=False, exit_code=state["exit_code"], crashed=True)
+            res["pass"] = False
+    finally:
+        res_tail = server.stop()
+    res["server_tail"] = res_tail[-2000:]
+    harness.log(
+        f"{tag}: repro {name}: pass={res.get('pass')} {str(res.get('detail', res.get('error')))[:300]}"
+    )
+    return res

@@ -22,6 +22,7 @@
 //! Any hard failure during critical init steps returns `Status::Err` so Redis
 //! can reject loading an incomplete module.
 
+use crate::banner;
 use crate::commands::constraint::{Settling, settle_constraint};
 #[cfg(feature = "index-falkordb")]
 use crate::config::CONFIGURATION_INDEX_BUILD_THREAD_COUNT;
@@ -208,6 +209,7 @@ pub fn graph_init(
     args: &[ValkeyString],
 ) -> Status {
     graph::thread_id::set_main_thread();
+    banner::print();
     panic::set_hook(Box::new(|info| {
         // Route the panic message + backtrace through RedisModule_Log so
         // it lands in the Redis log file uploaded by CI on test failure.

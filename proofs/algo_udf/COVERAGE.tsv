@@ -38,13 +38,13 @@ graph/src/runtime/functions/algo_procedures.rs	register_cdlp	1295	PROVEN	AlgoBfs
 graph/src/runtime/functions/algo_procedures.rs	algo_cdlp	1300	PROVEN	Compact.wcc_rows_eq_spec (same assembly through compact_to_original, #3032), Config.maxIterations_wraps_to_zero; Compact.checkKnown_ok_iff (unknown label/type errors, #3058)
 graph/src/runtime/functions/algo_procedures.rs	register_msf	1414	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMsf; cypher_fn! procedure arm functions/mod.rs:328-352)
 graph/src/runtime/functions/algo_procedures.rs	algo_msf	1419	PROVEN	MsfFlow.keepMin_*, msf_dense_no_fallback, msf_fallback_key_space_mixed, compactOf_eq, denseTable_len (id map, #3586); GraphBLAS build/extract/LAGraph_msf AXIOMATISED
-graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2767	PROVEN	PathDispatch.algoSp_spec
-graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2774	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2779	PROVEN	PathDispatch.algoSs_spec
-graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2788	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2793	PROVEN	Compact.harmonic_complete, unfiltered_keeps_high_ids (#3044 fixed by #3045: source vector sized node_id_bound); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
-graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2957	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
-graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2962	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2971	PROVEN	PathDispatch.algoSp_spec
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2978	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2983	PROVEN	PathDispatch.algoSs_spec
+graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2992	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2997	PROVEN	Compact.harmonic_complete, unfiltered_keeps_high_ids (#3044 fixed by #3045: source vector sized node_id_bound); Compact.checkKnown_ok_iff, known_messages (unknown label/type errors, #3058)
+graph/src/runtime/functions/algo_procedures.rs	register_maxflow	3161	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	3166	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
 graph/src/udf/js_classes.rs	with_graph	152	PROVEN	UdfClasses.withGraphRun (swap, epoch bump when nothing was lent, restore guard), withGraphRun_restores, withGraphRun_outermost, withGraphRun_nested, withGraphRun_sees_graph, withGraphRun_stale_entity (#2976; replaces set_current_graph/clear_current_graph)
 graph/src/udf/js_classes.rs	drop	159	PROVEN	UdfClasses.restoreDrop, restoreDrop_spec (with_graph's Restore guard puts back the graph lent before; also on unwind)
 graph/src/udf/js_classes.rs	with_current_graph	171	PROVEN	UdfClasses.withGraph_set, withGraph_clear

@@ -59,7 +59,7 @@ graph/src/runtime/ops/batched_result_emitter.rs	seed	577	PROVEN	Emitter.seed, re
 graph/src/runtime/ops/batched_result_emitter.rs	start_batch	604	PROVEN	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs; reused: proofs/columnar Emitter finishLen_eq, finishLen_origins_kept (#2845 has_origins) / finishLen_drops (latent); CallBoundary Pr2845.emit_origin_sound, emit_len
 graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	622	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
 graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	651	PROVEN	output = packed (row,item) pairs; gather not modelled; reused: proofs/columnar Emitter batch_rows_active (gather never panics), finishLen_eq
-graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
-graph/src/runtime/ops/batched_result_emitter.rs	reset	750	PROVEN	Emitter.reset_remaining
-graph/src/runtime/ops/batched_result_emitter.rs	new	773	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
-graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	783	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	729	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten, emit_unseeded, emit_ceiling, primed_first_batch, wf_emit
+graph/src/runtime/ops/batched_result_emitter.rs	reset	758	PROVEN	Emitter.reset_remaining, wf_reset
+graph/src/runtime/ops/batched_result_emitter.rs	new	781	PROVEN	Emitter.initCeiling via with_binding; reused: proofs/columnar Gather.emNew/emWithBinding: emNew_spec
+graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	791	PROVEN	Emitter.initCeiling via with_binding (no bound column); reused: proofs/columnar Emitter finishLen_drops (latent row loss with zero-column parent)
