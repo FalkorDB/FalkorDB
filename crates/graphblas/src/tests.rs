@@ -17,13 +17,14 @@ use std::{
 
 use crate::{
     AsBool, Desc, Error, ErrorKind, Indices, JitControl, Lazy, Mask, Matrix, Output, Scalar,
-    Sparsity,
+    Sparsity, Vector,
     init::{init, is_initialized, set_jit},
     mask::{MaskMode, descriptor},
-    matrix, mxm,
+    matrix, mxm, mxv,
     ops::*,
     sys::{self, GrB_Index, GrB_Info},
     types::{GrbType, Pattern},
+    vector, vxm,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -62,6 +63,17 @@ fn matrix<T: GrbType>(
     m
 }
 
+fn vector<T: GrbType>(
+    size: GrB_Index,
+    entries: &[(GrB_Index, T)],
+) -> Vector<T> {
+    let mut v = Vector::new(size).unwrap();
+    for &(i, x) in entries {
+        v.set_element(i, x).unwrap();
+    }
+    v
+}
+
 /// Every entry, sorted by position.
 fn entries<T: GrbType + PartialOrd>(m: &Matrix<T>) -> Vec<(GrB_Index, GrB_Index, T)> {
     let (rows, cols, vals) = m.extract_tuples().unwrap();
@@ -72,6 +84,13 @@ fn entries<T: GrbType + PartialOrd>(m: &Matrix<T>) -> Vec<(GrB_Index, GrB_Index,
         .map(|((i, j), x)| (i, j, x))
         .collect();
     out.sort_by_key(|e| (e.0, e.1));
+    out
+}
+
+fn vector_entries<T: GrbType + PartialOrd>(v: &Vector<T>) -> Vec<(GrB_Index, T)> {
+    let (idx, vals) = v.extract_tuples().unwrap();
+    let mut out: Vec<_> = idx.into_iter().zip(vals).collect();
+    out.sort_by_key(|e| e.0);
     out
 }
 
@@ -245,6 +264,27 @@ fn scalar_round_trip() {
     assert_eq!(Scalar::from_value(3i64).unwrap().get().unwrap(), Some(3));
 }
 
+#[test]
+fn vector_handle_basics() {
+    setup();
+    let mut v = vector(5, &[(1, 10u64), (3, 30)]);
+    assert_eq!((v.size(), v.nvals()), (5, 2));
+    assert_eq!(v.extract_element(3).unwrap(), Some(30));
+    assert!(v.contains(1).unwrap() && !v.contains(0).unwrap());
+    v.remove_element(1).unwrap();
+    assert_eq!(vector_entries(&v), vec![(3, 30)]);
+    let mut w = Vector::<u64>::new(3).unwrap();
+    w.build(&[2, 0], &[2, 0], None).unwrap();
+    assert_eq!(vector_entries(&w), vec![(0, 0), (2, 2)]);
+    let mut iso = Vector::<bool>::new(3).unwrap();
+    iso.build_iso(&[0, 2], true).unwrap();
+    assert!(iso.is_iso());
+    assert_eq!(
+        format!("{v:?}").split(" @ ").next(),
+        Some("Vector<GrB_UINT64>(5")
+    );
+}
+
 // ───────────────────────────── masks and descriptors ─────────────────────────────
 
 #[test]
@@ -273,6 +313,20 @@ fn as_bool_lets_a_counted_matrix_mask_by_value() {
     )
     .unwrap();
     assert_eq!(entries(&c), vec![(0, 0, 7), (0, 1, 9)]);
+
+    let v = vector::<u64>(2, &[(1, 3)]);
+    let u = vector::<u64>(2, &[(0, 1), (1, 2)]);
+    let mut w = Vector::<u64>::new(2).unwrap();
+    vector::apply(
+        &mut w,
+        Mask::valued(AsBool(&v)),
+        None,
+        &IDENTITY_UINT64,
+        &u,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&w), vec![(1, 2)]);
 }
 
 #[test]
@@ -282,6 +336,8 @@ fn contains_reports_an_index_out_of_range() {
     assert_eq!(m.contains(1, 0), Ok(true));
     assert_eq!(m.contains(0, 0), Ok(false));
     assert_eq!(m.contains(2, 0).unwrap_err().kind, ErrorKind::InvalidIndex);
+    let v = vector::<bool>(2, &[(1, true)]);
+    assert_eq!(v.contains(5).unwrap_err().kind, ErrorKind::InvalidIndex);
 }
 
 #[test]
@@ -299,6 +355,11 @@ fn a_failed_read_carries_no_message_from_an_earlier_call() {
     assert_eq!(read.kind, ErrorKind::InvalidIndex);
     assert_eq!(read.message, "");
     assert_eq!(m.contains(0, 9).unwrap_err().message, "");
+
+    let mut v = Vector::<f64>::new(2).unwrap();
+    assert_ne!(v.set_element(5, 1.0).unwrap_err().message, "");
+    assert_eq!(v.extract_element(9).unwrap_err().message, "");
+    assert_eq!(v.contains(9).unwrap_err().message, "");
 }
 
 #[test]
@@ -308,6 +369,38 @@ fn transpose_with_no_descriptor_transposes() {
     let mut t = Matrix::<u64>::new(3, 2).unwrap();
     matrix::transpose(&mut t, Mask::NONE, None, &a, Desc::NONE).unwrap();
     assert_eq!(entries(&t), [(0, 1, 4), (2, 0, 9)]);
+}
+
+#[test]
+fn vxm_and_mxv_transpose_the_matrix_by_its_position() {
+    setup();
+    // One edge 0 -> 1, and a vector holding node 0.
+    let a = matrix::<bool>(2, 2, &[(0, 1, true)]);
+    let u = vector::<bool>(2, &[(0, true)]);
+    let row_times_matrix = |desc| {
+        let mut w = Vector::<bool>::new(2).unwrap();
+        vxm(&mut w, Mask::NONE, None, &ANY_PAIR_BOOL, &u, &a, desc).unwrap();
+        vector_entries(&w)
+    };
+    let matrix_times_column = |desc| {
+        let mut w = Vector::<bool>::new(2).unwrap();
+        mxv(&mut w, Mask::NONE, None, &ANY_PAIR_BOOL, &a, &u, desc).unwrap();
+        vector_entries(&w)
+    };
+    let (followed, nothing) = (vec![(1, true)], vec![]);
+
+    // u * A follows the edge. The matrix is the second input.
+    assert_eq!(row_times_matrix(Desc::NONE), followed);
+    assert_eq!(row_times_matrix(Desc::T1), nothing);
+    assert_eq!(row_times_matrix(Desc::T0), followed, "T0 names the vector");
+    // A * u goes against the edge. The matrix is the first input.
+    assert_eq!(matrix_times_column(Desc::NONE), nothing);
+    assert_eq!(matrix_times_column(Desc::T0), followed);
+    assert_eq!(
+        matrix_times_column(Desc::T1),
+        nothing,
+        "T1 names the vector"
+    );
 }
 
 #[test]
@@ -739,6 +832,29 @@ fn reduce_to_scalar_and_to_vector() {
     matrix::reduce(&mut x, None, &PLUS_MONOID_UINT64, &empty, Desc::NONE).unwrap();
     assert_eq!(x, 0, "an empty matrix reduces to the identity");
     assert_eq!(PLUS_MONOID_UINT64.identity(), 0);
+
+    let mut rows = Vector::<u64>::new(2).unwrap();
+    matrix::reduce_rows(
+        &mut rows,
+        Mask::NONE,
+        None,
+        &PLUS_MONOID_UINT64,
+        &a,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&rows), vec![(0, 3), (1, 3)]);
+    let mut cols = Vector::<u64>::new(3).unwrap();
+    matrix::reduce_rows(
+        &mut cols,
+        Mask::NONE,
+        None,
+        &PLUS_MONOID_UINT64,
+        &a,
+        Desc::T0,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&cols), vec![(0, 1), (1, 3), (2, 2)]);
 }
 
 #[test]
@@ -755,6 +871,115 @@ fn cast_changes_the_element_type_on_purpose() {
     let mut f = Matrix::<f64>::new(2, 2).unwrap();
     matrix::cast(&mut f, Mask::NONE, None, &a, Desc::NONE).unwrap();
     assert_eq!(entries(&f), vec![(0, 0, 0.0), (1, 1, 5.0)]);
+}
+
+#[test]
+fn vector_operations_mirror_the_matrix_ones() {
+    setup();
+    // One BFS step over a 3-node path 0 -> 1 -> 2.
+    let a = matrix(3, 3, &[(0, 1, true), (1, 2, true)]);
+    let frontier = vector(3, &[(0, true)]);
+    let mut next = Vector::<bool>::new(3).unwrap();
+    vxm(
+        &mut next,
+        Mask::NONE,
+        None,
+        &ANY_PAIR_BOOL,
+        &frontier,
+        &a,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&next), vec![(1, true)]);
+    let mut back = Vector::<bool>::new(3).unwrap();
+    mxv(
+        &mut back,
+        Mask::NONE,
+        None,
+        &ANY_PAIR_BOOL,
+        &a,
+        &next,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&back), vec![(0, true)]);
+
+    // vxm with Output as the vector input, masked by the complement of the
+    // visited set: the frontier advances in place.
+    let mut f = vector(3, &[(0, true)]);
+    let visited = vector(3, &[(0, true)]);
+    vxm(
+        &mut f,
+        Mask::structural_complement(&visited),
+        None,
+        &ANY_PAIR_BOOL,
+        Output,
+        &a,
+        Desc::REPLACE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&f), vec![(1, true)]);
+
+    let u = vector(3, &[(0, 1u64), (1, 2)]);
+    let v = vector(3, &[(1, 10u64), (2, 20)]);
+    let mut w = Vector::<u64>::new(3).unwrap();
+    vector::ewise_add(&mut w, Mask::NONE, None, &PLUS_UINT64, &u, &v, Desc::NONE).unwrap();
+    assert_eq!(vector_entries(&w), vec![(0, 1), (1, 12), (2, 20)]);
+    vector::ewise_mult(&mut w, Mask::NONE, None, &PLUS_UINT64, &u, &v, Desc::NONE).unwrap();
+    assert_eq!(vector_entries(&w), vec![(1, 12)]);
+    vector::apply(&mut w, Mask::NONE, None, &IDENTITY_UINT64, &u, Desc::NONE).unwrap();
+    assert_eq!(vector_entries(&w), vec![(0, 1), (1, 2)]);
+    vector::select(
+        &mut w,
+        Mask::NONE,
+        None,
+        &VALUEEQ_UINT64,
+        Output,
+        2,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&w), vec![(1, 2)]);
+    vector::assign_scalar(
+        &mut w,
+        Mask::NONE,
+        None,
+        5,
+        Indices::List(&[0, 2]),
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&w), vec![(0, 5), (1, 2), (2, 5)]);
+    let mut sub = Vector::<u64>::new(2).unwrap();
+    vector::extract(
+        &mut sub,
+        Mask::NONE,
+        None,
+        &w,
+        Indices::List(&[2, 1]),
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&sub), vec![(0, 5), (1, 2)]);
+    vector::assign(
+        &mut w,
+        Mask::NONE,
+        None,
+        &sub,
+        Indices::List(&[1, 2]),
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(vector_entries(&w), vec![(0, 5), (1, 5), (2, 2)]);
+    let mut total = 0u64;
+    vector::reduce(&mut total, None, &PLUS_MONOID_UINT64, &w, Desc::NONE).unwrap();
+    assert_eq!(total, 12);
+    let mut b = Vector::<bool>::new(3).unwrap();
+    vector::cast(&mut b, Mask::NONE, None, &w, Desc::NONE).unwrap();
+    assert_eq!(b.nvals(), 3);
+    let mut r = Vector::<i64>::new(3).unwrap();
+    vector::apply_index(&mut r, Mask::NONE, None, &ROWINDEX_INT64, &w, 0, Desc::NONE).unwrap();
+    assert_eq!(vector_entries(&r), vec![(0, 0), (1, 1), (2, 2)]);
 }
 
 #[test]
@@ -844,6 +1069,10 @@ fn user_defined_type_round_trips_by_value() {
     let mut s = Scalar::<Edge>::new().unwrap();
     s.set(e).unwrap();
     assert_eq!(s.get().unwrap(), Some(e));
+
+    let mut v = Vector::<Edge>::new(2).unwrap();
+    v.build(&[1], &[e], None).unwrap();
+    assert_eq!(v.extract_element(1).unwrap(), Some(e));
 }
 
 crate::user_ops! {
