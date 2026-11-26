@@ -292,9 +292,19 @@ def forEachRecord (p : Pending) (g : Schema) : List Rec :=
   ++ (if p.deletedNodes.isEmpty then [] else [Rec.deleteNode p.deletedNodes []])
   ++ digestCancelled p g
 
-/-- `CommitOp` (`runtime/ops/commit.rs`): `if estimated > 0 { buf.build(..) }`. -/
+/-- `Pending::schema_grew` (`runtime/pending.rs`, #3858): a dictionary is longer
+    than its baseline. Node and relationship attribute names share one
+    dictionary (`property_keys`) and `set_schema_baseline` takes both counts
+    from it, so `max(node, rel)` is the single `baseline.attrs` length. -/
+def schemaGrew (p : Pending) (g : Schema) : Bool :=
+  decide (g.labels.length > p.baseline.labels.length)
+  || decide (g.types.length > p.baseline.types.length)
+  || decide (g.attrs.length > p.baseline.attrs.length)
+
+/-- `CommitOp` (`runtime/ops/commit.rs`):
+    `if estimated > 0 || pending.schema_grew(..) { buf.build(..) }` (#3858). -/
 def commitShips (p : Pending) (g : Schema) : List Rec :=
-  if effectsCount p > 0 then forEachRecord p g else []
+  if effectsCount p > 0 || schemaGrew p g then forEachRecord p g else []
 
 /-! ## What the gate drops -/
 
@@ -316,9 +326,9 @@ theorem filter_nil_of_sub {α} (p : α → Bool) (l : List α) (h : l = []) : l.
 /-- **The gate is complete for everything it counts, and blind to exactly two
     things.** When `effects_count` is zero, the stream the emitter *would* have
     written consists of the schema additions and the cancelled pairs, nothing
-    else. So `commitShips` drops a non-empty payload precisely when the query
-    registered a name or cancelled an entity and did nothing `effects_count`
-    sees. -/
+    else. Before #3461/#3858 the gate dropped a non-empty payload precisely when
+    the query registered a name or cancelled an entity and did nothing
+    `effects_count` sees; `commitShips_eq` proves it no longer drops any. -/
 theorem gate_zero_stream (p : Pending) (g : Schema) (h : effectsCount p = 0) :
     forEachRecord p g = schemaAdditions g p.baseline ++ digestCancelled p g := by
   unfold effectsCount at h
@@ -339,18 +349,37 @@ theorem gate_zero_stream (p : Pending) (g : Schema) (h : effectsCount p = 0) :
   simp [forEachRecord, h1, h2, h3, h4, h6, h8, hr]
   exact fun a b hm => h9 (a, b) hm
 
-/-- Soundness of the gate, stated the way a fix would need it: the commit ships
-    what the emitter would write **iff** the count is positive or the would-be
-    stream is empty. -/
-theorem commitShips_eq_iff (p : Pending) (g : Schema) :
-    commitShips p g = forEachRecord p g ↔ effectsCount p > 0 ∨ forEachRecord p g = [] := by
-  unfold commitShips
-  by_cases h : effectsCount p > 0
-  · simp [h]
-  · simp only [h, ↓reduceIte, false_or]
-    exact ⟨fun e => e.symm, fun e => e.symm⟩
+theorem schemaAdditions_nil (p : Pending) (g : Schema) (h : schemaGrew p g = false) :
+    schemaAdditions g p.baseline = [] := by
+  simp only [schemaGrew, Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+  obtain ⟨⟨h1, h2⟩, h3⟩ := h
+  simp [schemaAdditions, List.drop_eq_nil_of_le (Nat.le_of_not_gt h1),
+    List.drop_eq_nil_of_le (Nat.le_of_not_gt h2), List.drop_eq_nil_of_le (Nat.le_of_not_gt h3),
+    suffixRecs]
 
-/-! ### Counterexamples (both reproduced against the real code)
+/-- **W2-effects-1 fixed by #3858**: the gate never drops a record. Whatever the
+    emitter would write, the commit ships. -/
+theorem commitShips_eq (p : Pending) (g : Schema) : commitShips p g = forEachRecord p g := by
+  unfold commitShips
+  by_cases hc : effectsCount p > 0
+  · simp [hc]
+  by_cases hs : schemaGrew p g = true
+  · simp [hs]
+  have hs' : schemaGrew p g = false := by simpa using hs
+  have h0 : effectsCount p = 0 := by omega
+  have hn : p.cancelledNodes = [] := by
+    unfold effectsCount at h0; exact List.eq_nil_of_length_eq_zero (by omega)
+  have hr : p.cancelledRels = [] := by
+    unfold effectsCount at h0; exact List.eq_nil_of_length_eq_zero (by omega)
+  rw [gate_zero_stream p g h0, schemaAdditions_nil p g hs']
+  simp [hc, hs', digestCancelled, hn, hr]
+
+/-- The gate ships whenever the emitter has something to write. -/
+theorem gate_ships_of_nonempty (p : Pending) (g : Schema) (_h : forEachRecord p g ≠ []) :
+    commitShips p g = forEachRecord p g := commitShips_eq p g
+
+/-! ### The two W2-effects-1 writes (both reproduced against the code before
+    #3461 and #3858; both ship since)
 
     `graph/tests/lean_effects_emit_apply.rs`:
     `fully_cancelled_write_ships_nothing_and_next_payload_is_refused` and
@@ -388,11 +417,12 @@ theorem gate_ships_of_cancelled (p : Pending) (g : Schema)
 def pSchemaOnly : Pending := { pCancelled with cancelledNodes := [] }
 def gSchemaOnly : Schema := ⟨["L6"], [], []⟩
 
-theorem gate_drops_schema_only :
-    effectsCount pSchemaOnly = 0 ∧
-    forEachRecord pSchemaOnly gSchemaOnly = [.addLabel 0 "L6"] ∧
-    commitShips pSchemaOnly gSchemaOnly = [] := by
-  refine ⟨rfl, ?_, rfl⟩
+/-- **W2-effects-1, fixed by #3858**: `effects_count` is still 0, but
+    `schema_grew` opens the gate and `L6`'s registration ships. -/
+theorem gate_ships_schema_only :
+    effectsCount pSchemaOnly = 0 ∧ schemaGrew pSchemaOnly gSchemaOnly = true ∧
+    commitShips pSchemaOnly gSchemaOnly = [.addLabel 0 "L6"] := by
+  refine ⟨rfl, rfl, ?_⟩
   decide
 
 /-! ### Why a dropped payload is a divergence and not a no-op
