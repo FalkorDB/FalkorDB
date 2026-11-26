@@ -125,7 +125,6 @@ A bug is **confirmed** only if a repro against the real Rust shows it, and it is
   - a geo radius above ±85° returns nothing;
   - an indexed `n.v > i64::MIN` drops matching rows: `int_loses_f64_precision` (`index/mod.rs:1381-1383`, a `0x7FF0_0000_0000_0000` mask over `unsigned_abs`) rejects every magnitude with bits 52..62 set, but `i64::MIN` (magnitude 2^63) still passes and rounds to the same f64 as its neighbours (`i64min_hole`, #2538, fix open as #2541); C drops the same rows, and for `=` Rust is right where C returns extra rows. Suggested fix: reject when `unsigned_abs() >= 1<<52`.
 - **Constraints**:
-  - the UNIQUE key includes the value's type (`graph.rs:4141`, #2774);
   - **W4-graph-3** — constraint matching depends on property order (`constraint.rs:79`): `UNIQUE NODE L (a,b)` then `(b,a)` creates both; C says "Constraint already exists".
 
 ## Planner & optimizer

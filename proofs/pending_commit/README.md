@@ -35,7 +35,7 @@ Yes, under the model's preconditions. `encode_decode_roundtrip` assumes a well-f
 
 **5. Are UNIQUE constraints enforced correctly?**
 
-A `UNIQUE` check looks each affected member's key up through the constraint's index (`query_for` then `lookup`) instead of scanning the whole label. When the index cannot answer for a member (no operational index, or a value that is not exactly indexable, such as NaN) the whole set falls back to a label or type scan (`uniqueViolated_declined`: no lookup runs and the verdict does not depend on it). `uniqueViolated_spec` proves the check reports a violation iff two members share a full key, or a member's key is held by a live entity outside the affected set. `uniqueViolated_agrees` proves this equals the old label-scan verdict. Both rely on two separate completeness contracts (see CONDITIONAL below): `hIdx`, the index returns every live candidate carrying the key that this commit did not write, and `hScan`, the label matrix or tensor lists every live member.
+A `UNIQUE` check looks each affected member's key up through the constraint's index (`query_for` then `lookup`) instead of scanning the whole label. When the index cannot answer for a member (no operational index, or a value that is not exactly indexable, such as an integer beyond 2^53) the whole set falls back to a label or type scan (`uniqueViolated_declined`: no lookup runs and the verdict does not depend on it). A member whose key is empty (a NULL, list, point, temporal, vector or NaN value) does not participate. `uniqueViolated_spec` proves the check reports a violation iff two members share a key, or a member's key is held by a live entity outside the affected set. `uniqueViolated_agrees` proves this equals the old label-scan verdict. Both rely on two separate completeness contracts (see CONDITIONAL below): `hIdx`, the index returns every live candidate carrying the key that this commit did not write (for RediSearch, `redisearch_hIdx` derives it from per-`Equal` exactness), and `hScan`, the label matrix or tensor lists every live member.
 
 **6. Does a deleted entity keep reading correctly for the rest of the query?**
 
@@ -81,7 +81,7 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 
 Also confirmed live: property counters are net at commit in Rust and per clause in C (`CREATE (n {v:1}) SET n.v = 2`: Rust set 1, C set 2 / removed 1). That is a policy question, not a bug, and is recorded in `FINDINGS.md`. W4-fn-1 (labels staged before a `DELETE` are missing from the deleted snapshot) is also in that area; it was confirmed by another project and its repro tests are in the same test file.
 
-**CONDITIONAL rows.** `check_node_constraint` and `check_edge_constraint` rest on the index contract the Rust documents (hypotheses `hIdx`/`hScan` in `UniqueIndex.lean`): the supporting index returns every live label member not written by this commit whose key values can be matched exactly, and the label matrix (or tensor) lists every live member. The RediSearch side is FFI, so this is not proven here.
+**CONDITIONAL rows.** `check_node_constraint` and `check_edge_constraint` rest on the index contract the Rust documents (hypotheses `hIdx`/`hScan` in `UniqueIndex.lean`): the supporting index returns every live label member not written by this commit whose key values can be matched exactly (an `Equal` on a number returns every entity whose value is the same `f64`, Int, Float or Bool), and the label matrix (or tensor) lists every live member. The RediSearch side is FFI, so this is not proven here.
 
 ## Files
 
@@ -137,12 +137,12 @@ Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for t
 - **The graph and RediSearch.** Operations `Pending::commit` calls on the graph and RediSearch are uninterpreted. `get_relationship_endpoints` is a partial function, where `none` is the panic.
 - **Collections.** `FxHashMap` and `RoaringTreemap` are duplicate-free association lists and lists.
 - **Other projects.** Relationship tensors, id spaces and effects emission are proven in `versioned_matrix`, `id_space` and the effects projects.
-- **Constraint index.** The UNIQUE check's index completeness is a hypothesis (CONDITIONAL above). Composite keys are the `Debug` renderings of the values, taken as injective except that every floating-point NaN renders alike (so NaN-valued members share a key; see `UniqueIndex.lean`).
+- **Constraint index.** The UNIQUE check's index completeness is a hypothesis (CONDITIONAL above). The composite key is abstract here (`ck`, `none` for the empty key); [`../graph_persist`](../graph_persist) proves what the real `build_composite_key` equates (`Constraint.buildKey_eq_iff`, `rust_C_unique_agree`).
 
 ## Build and check
 
 ```bash
-(cd proofs/pending_commit && lake build)   # this project (also builds ../graph_queries, ../runtime_core and its ../redis_layer)
+(cd proofs/pending_commit && lake build)   # this project (also builds ../graph_queries, ../runtime_core and its ../redis_layer, ../graph_persist and its ../core)
 bash proofs/lean_ci.sh pending_commit    # build + no sorry/admit/native_decide/unmarked axiom
 bash proofs/coverage.sh                  # repo-wide coverage report
 ```

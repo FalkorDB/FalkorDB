@@ -42,10 +42,10 @@ src/redis_type.rs	graphmeta_rdb_save	1010	PROVEN	RedisType.metaSave (= saveKeySl
 src/redis_type.rs	graphmeta_free	1022	PROVEN	RedisType.metaFree: metaFree_spec
 src/redis_type.rs	graphmeta_aux_load	1032	PROVEN	RedisType.metaAuxLoad: metaAuxLoad_spec
 src/redis_type.rs	wrong_type_compat	933	PROVEN	RedisType.wrongTypeCompat: wrongTypeCompat_valkey, wrongTypeCompat_str_other, wrongTypeCompat_string, wrongTypeCompat_other, wrongTypeCompat_idem
-graph/src/graph/graph.rs	create_constraint	4622	PROVEN	Constraint.constraint_creation_diverges (counterexample vs C, confirmed live)
+graph/src/graph/graph.rs	create_constraint	4622	CONDITIONAL	Constraint.constraint_creation_agrees (constraint status over existing data = C's); CONDITIONAL on (tb : ToBits): f64::to_bits is a hypothesis (bits < 2^64 and injective on non-NaN F), but F's num/frac range over unbounded Int/Nat so no ToBits can exist for this F and the theorem is vacuous until the value domain is restricted to representable f64 values
 graph/src/graph/graph.rs	validate_mandatory_constraint	4797	PROVEN	Constraint.mandatory_agrees
-graph/src/graph/graph.rs	validate_unique_constraint	4836	PROVEN	Constraint.constraint_creation_diverges, rust_C_unique_disagree
-graph/src/graph/graph.rs	build_composite_key	4891	PROVEN	Constraint.rust_C_unique_disagree, disagreement_two_sided; repro lean_graph_persist
+graph/src/graph/graph.rs	validate_unique_constraint	4836	CONDITIONAL	Constraint.validate: validate_spec, constraint_creation_agrees; CONDITIONAL on (tb : ToBits): f64::to_bits is a hypothesis (bits < 2^64 and injective on non-NaN F), but F's num/frac range over unbounded Int/Nat so no ToBits can exist for this F and the theorem is vacuous until the value domain is restricted to representable f64 values
+graph/src/graph/graph.rs	build_composite_key	4906	CONDITIONAL	Constraint.buildKey: buildKey_eq_nil_iff, buildKey_eq_iff, rust_C_unique_agree (#2774 fixed), int_float_bool_collide; CONDITIONAL on (tb : ToBits): f64::to_bits is a hypothesis (bits < 2^64 and injective on non-NaN F), but F's num/frac range over unbounded Int/Nat so no ToBits can exist for this F and the theorem is vacuous until the value domain is restricted to representable f64 values
 src/serializers/encoder/mod.rs	rdb_save_graph	11	PROVEN	Persist.buildPayloads + encodeGraph (key_count 1): load_encode; byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	rdb_save_graph_key	21	PROVEN	Persist.encodeGraph: load_encode, key_rt (any key_count); byte layer redis_layer rdb_roundtrip
 src/serializers/encoder/mod.rs	pipe_save_graph	44	PROVEN	Persist.encodeGraph (name = graph.name): load_encode; byte layer redis_layer pipe_roundtrip

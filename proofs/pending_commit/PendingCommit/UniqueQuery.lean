@@ -14,6 +14,12 @@ Results:
 * `redisearch_hIdx` — with the index's per-`Equal` exactness as the only hypothesis (an FFI
   fact about RediSearch, `hEq`), the lookup of the query this fn builds returns every live
   candidate outside the commit carrying the key: `uniqueViolated_spec`'s `hIdx`, discharged.
+
+The key is `build_composite_key`: one component per value (`kc`, `none` for a value the
+constraint does not enforce), the key empty (`none`) when any is; equal byte keys are equal
+component lists (graph_persist `Constraint.buildKey_eq_iff`), so `ck vals = vals.mapM kc`.
+`hEq` matches on components, not on raw values: an `Equal` on `1` returns the entities
+holding `1`, `1.0` or `true`, as the numeric index does (the key equates them, #2774).
 * `checkUnique_redisearch_spec` — the UNIQUE verdict on the RediSearch path.
 * `redisearch_unindexed_scans` — unindexed ⇒ every member is declined ⇒ no lookup runs.
 -/
@@ -62,57 +68,80 @@ def evalQ (ix : Nat × V → List Nat) : Query V → List Nat
   | .equal k v => ix (k, v)
   | .and eqs => (eqs.flatMap ix).filter fun o => eqs.all fun p => decide (o ∈ ix p)
 
-/-- `mapM` over `props` pairs each property with the value read. -/
-theorem mapM_zip (attr : Nat → Option V) : ∀ (props : List Nat) (vals : List V),
-    props.mapM attr = some vals → ∀ p ∈ props.zip vals, attr p.1 = some p.2
-  | [], vals, h, p, hp => by
-    simp [List.mapM_nil] at h; subst h; simp at hp
-  | a :: props, vals, h, p, hp => by
+/-- `mapM` length. -/
+theorem mapM_length {α β : Type} (f : α → Option β) : ∀ (l : List α) (r : List β),
+    l.mapM f = some r → r.length = l.length
+  | [], r, h => by simp [List.mapM_nil] at h; subst h; rfl
+  | a :: l, r, h => by
     rw [List.mapM_cons] at h
-    cases hb : attr a with
+    cases hb : f a with
     | none => rw [hb] at h; simp at h
     | some b =>
-      cases hbs : props.mapM attr with
+      cases hbs : l.mapM f with
       | none => rw [hb, hbs] at h; simp at h
       | some bs =>
         rw [hb, hbs] at h
         simp at h
         subst h
-        simp only [List.zip_cons_cons, List.mem_cons] at hp
-        rcases hp with rfl | hp
-        · exact hb
-        · exact mapM_zip attr props bs hbs p hp
+        simp [mapM_length f l bs hbs]
 
-theorem mapM_length (attr : Nat → Option V) : ∀ (props : List Nat) (vals : List V),
-    props.mapM attr = some vals → vals.length = props.length
-  | [], vals, h => by simp [List.mapM_nil] at h; subst h; rfl
-  | a :: props, vals, h => by
-    rw [List.mapM_cons] at h
-    cases hb : attr a with
-    | none => rw [hb] at h; simp at h
-    | some b =>
-      cases hbs : props.mapM attr with
-      | none => rw [hb, hbs] at h; simp at h
-      | some bs =>
-        rw [hb, hbs] at h
-        simp at h
-        subst h
-        simp [mapM_length attr props bs hbs]
+theorem mapM_cons_some {α β : Type} (f : α → Option β) (a : α) (l : List α) (r : List β)
+    (h : (a :: l).mapM f = some r) : ∃ b bs, f a = some b ∧ l.mapM f = some bs ∧ r = b :: bs := by
+  rw [List.mapM_cons] at h
+  cases hb : f a with
+  | none => rw [hb] at h; simp at h
+  | some b =>
+    cases hbs : l.mapM f with
+    | none => rw [hb, hbs] at h; simp at h
+    | some bs =>
+      rw [hb, hbs] at h
+      simp at h
+      exact ⟨b, bs, rfl, rfl, h.symm⟩
+
+/-- A candidate `o` with the member's key: each pair `(p, v)` of the member's query has, at
+`o`, a value `w` with the same component as `v`. -/
+theorem mapM_zip_key {C : Type} (attr : Nat → Option V) (kc : V → Option C) :
+    ∀ (props : List Nat) (vals ws : List V) (k : List C), props.mapM attr = some ws →
+      ws.mapM kc = some k → vals.mapM kc = some k →
+      ∀ p ∈ props.zip vals, ∃ w c, attr p.1 = some w ∧ kc w = some c ∧ kc p.2 = some c
+  | [], _, _, _, _, _, _, p, hp => by simp at hp
+  | _ :: _, [], _, _, _, _, _, p, hp => by simp at hp
+  | a :: props, v :: vals, ws, k, hw, hwk, hvk, p, hp => by
+    obtain ⟨w, ws', hwa, hws', rfl⟩ := mapM_cons_some attr a props ws hw
+    obtain ⟨c, k', hc, hk', rfl⟩ := mapM_cons_some kc w ws' k hwk
+    obtain ⟨c2, k'', hc2, hk'', he⟩ := mapM_cons_some kc v vals _ hvk
+    simp only [List.cons.injEq] at he
+    obtain ⟨rfl, rfl⟩ := he
+    simp only [List.zip_cons_cons, List.mem_cons] at hp
+    rcases hp with rfl | hp
+    · exact ⟨w, c, hwa, hc, hc2⟩
+    · exact mapM_zip_key attr kc props vals ws' k' hws' hk' hk'' p hp
 
 /-- **`redisearch_hIdx`**: `uniqueViolated_spec`'s lookup contract, for RediSearch. `hEq` is the
-only assumption, about the index: an `Equal` on a constrained property (`p ∈ props`) and an exactly matchable value
-returns every live entity outside the commit holding that value (an FFI fact: the index lags
-only this commit and matches exactly such values). `props ≠ []` (a constraint has a property). -/
-theorem redisearch_hIdx (exact : V → Bool) (indexed : Bool) (props : List Nat)
-    (attr : Nat → Nat → Option V) (affected isCand : Nat → Bool) (ix : Nat × V → List Nat)
+only assumption, about the index: an `Equal` on a constrained property (`p ∈ props`) and an
+exactly matchable value `v` returns every live entity outside the commit whose value there has
+`v`'s key component (an FFI fact: the index lags only this commit, matches such values
+exactly, and holds Int, Float and Bool in one numeric field). `props ≠ []` (a constraint has
+a property). -/
+theorem redisearch_hIdx {C : Type} [DecidableEq C] (exact : V → Bool) (indexed : Bool)
+    (props : List Nat) (attr : Nat → Nat → Option V) (kc : V → Option C)
+    (affected isCand : Nat → Bool) (ix : Nat × V → List Nat)
     (hprops : props ≠ [])
-    (hEq : ∀ p ∈ props, ∀ (v : V), exact v = true → ∀ o, affected o = false → isCand o = true →
-      attr o p = some v → o ∈ ix (p, v)) :
-    ∀ vals q, redisearchQuery exact indexed props vals = some q → ∀ o, affected o = false →
-      isCand o = true → props.mapM (attr o) = some vals → o ∈ evalQ ix q := by
-  intro vals q hq o ha hc hk
-  have hz := mapM_zip (attr o) props vals hk
-  have hlen := mapM_length (attr o) props vals hk
+    (hEq : ∀ p ∈ props, ∀ (v : V) c, exact v = true → kc v = some c → ∀ o, affected o = false →
+      isCand o = true → ∀ w, attr o p = some w → kc w = some c → o ∈ ix (p, v)) :
+    ∀ vals k q, vals.mapM kc = some k → redisearchQuery exact indexed props vals = some q →
+      ∀ o, affected o = false → isCand o = true →
+      keyOf props attr (·.mapM kc) o = some k → o ∈ evalQ ix q := by
+  intro vals k q hvk hq o ha hc hk
+  unfold keyOf at hk
+  cases hws : props.mapM (attr o) with
+  | none => rw [hws] at hk; cases hk
+  | some ws =>
+  rw [hws] at hk
+  simp only [Option.bind_some] at hk
+  have hz := mapM_zip_key (attr o) kc props vals ws k hws hk hvk
+  have hlen : vals.length = props.length := by
+    rw [← mapM_length kc vals k hvk, mapM_length kc ws k hk, mapM_length (attr o) props ws hws]
   unfold redisearchQuery at hq
   split at hq
   · cases hq
@@ -121,8 +150,9 @@ theorem redisearch_hIdx (exact : V → Bool) (indexed : Bool) (props : List Nat)
     cases h : vals.all exact <;> simp_all
   have hex : ∀ p ∈ props.zip vals, exact p.2 = true := fun p hp =>
     List.all_eq_true.1 hv p.2 (List.of_mem_zip hp).2
-  have hmem : ∀ p ∈ props.zip vals, o ∈ ix p := fun p hp =>
-    hEq p.1 (List.of_mem_zip hp).1 p.2 (hex p hp) o ha hc (hz p hp)
+  have hmem : ∀ p ∈ props.zip vals, o ∈ ix p := fun p hp => by
+    obtain ⟨w, c, hw, hwc, hvc⟩ := hz p hp
+    exact hEq p.1 (List.of_mem_zip hp).1 p.2 c (hex p hp) hvc o ha hc w hw hwc
   cases hs : props.zip vals with
   | nil =>
     exfalso; apply hprops
@@ -148,36 +178,46 @@ theorem redisearch_hIdx (exact : V → Bool) (indexed : Bool) (props : List Nat)
       exact ⟨⟨p, by simp, hmem' p (by simp)⟩, fun x hx => hmem' x hx⟩
 
 /-- **`checkUnique_redisearch_spec`**: the UNIQUE verdict on the RediSearch path is the
-spec, assuming only the index's `Equal` exactness and that the scan lists every live member. -/
-theorem checkUnique_redisearch_spec [DecidableEq V] (exact : V → Bool) (indexed : Bool) (props affected : List Nat)
-    (member : Nat → Bool) (attr : Nat → Nat → Option V) (isCand : Nat → Bool)
+spec, assuming only the index's `Equal` exactness and that the scan lists every live
+candidate with a key. -/
+theorem checkUnique_redisearch_spec {C : Type} [DecidableEq C] (exact : V → Bool)
+    (indexed : Bool) (props affected : List Nat)
+    (member : Nat → Bool) (attr : Nat → Nat → Option V) (kc : V → Option C) (isCand : Nat → Bool)
     (ix : Nat × V → List Nat) (scan : List Nat) (hprops : props ≠ [])
-    (hEq : ∀ p ∈ props, ∀ (v : V), exact v = true → ∀ o, o ∉ affected → isCand o = true →
-      attr o p = some v → o ∈ ix (p, v))
-    (hScan : ∀ o, o ∉ affected → isCand o = true → (props.mapM (attr o)).isSome → o ∈ scan) :
-    checkUnique props affected member attr isCand (redisearchQuery exact indexed props) (evalQ ix) scan
-      = true ↔
-      ((affected.filter member).filterMap fun e => props.mapM (attr e)).Nodup ∧
-      ∀ m ∈ affected.filter member, ∀ k, props.mapM (attr m) = some k →
-        ∀ o, o ∉ affected → isCand o = true → props.mapM (attr o) ≠ some k :=
-  checkUnique_spec props affected member attr isCand _ _ scan
-    (fun vals q hq o ho hc hk =>
-      redisearch_hIdx exact indexed props attr (fun o => decide (o ∈ affected)) isCand ix hprops
-        (fun p hpm v hv o ha hc' hp => hEq p hpm v hv o (by simpa using ha) hc' hp) vals q hq o
-        (by simpa using ho) hc hk)
+    (hEq : ∀ p ∈ props, ∀ (v : V) c, exact v = true → kc v = some c → ∀ o, o ∉ affected →
+      isCand o = true → ∀ w, attr o p = some w → kc w = some c → o ∈ ix (p, v))
+    (hScan : ∀ o, o ∉ affected → isCand o = true →
+      (keyOf props attr (·.mapM kc) o).isSome → o ∈ scan) :
+    checkUnique props affected member attr (·.mapM kc) isCand
+        (redisearchQuery exact indexed props) (evalQ ix) scan = true ↔
+      ((affected.filter member).filterMap (keyOf props attr (·.mapM kc))).Nodup ∧
+      ∀ m ∈ affected.filter member, ∀ k, keyOf props attr (·.mapM kc) m = some k →
+        ∀ o, o ∉ affected → isCand o = true → keyOf props attr (·.mapM kc) o ≠ some k :=
+  checkUnique_spec props affected member attr _ isCand _ _ scan
+    (fun vals k q hk hq o ho hc hok =>
+      redisearch_hIdx exact indexed props attr kc (fun o => decide (o ∈ affected)) isCand ix
+        hprops
+        (fun p hpm v c hv hvc o ha hc' w hw hwc =>
+          hEq p hpm v c hv hvc o (by simpa using ha) hc' w hw hwc)
+        vals k q hk hq o (by simpa using ho) hc hok)
     hScan
 
-/-- Not Range-indexed: every member is declined, so (when some member participates) the
-label is scanned and no `get_indexed_*` call is made: the verdict is the same for any lookup. -/
-theorem redisearch_unindexed_scans [DecidableEq V] (exact : V → Bool) (props : List Nat) (members : List Nat)
-    (affected : Nat → Bool) (attr : Nat → Nat → Option V) (isCand : Nat → Bool)
-    (lookup lookup' : Query V → List Nat) (scan : List Nat)
-    (hm : ∃ m ∈ members, (props.mapM (attr m)).isSome) :
-    uniqueViolated props members affected attr isCand (redisearchQuery exact false props) lookup scan =
-      uniqueViolated props members affected attr isCand (redisearchQuery exact false props) lookup' scan := by
+/-- Not Range-indexed: every participating member is declined, so (when some member
+participates) the label is scanned and no `get_indexed_*` call is made: the verdict is the
+same for any lookup. -/
+theorem redisearch_unindexed_scans {K : Type} [DecidableEq K] (exact : V → Bool)
+    (props : List Nat) (members : List Nat)
+    (affected : Nat → Bool) (attr : Nat → Nat → Option V) (ck : List V → Option K)
+    (isCand : Nat → Bool) (lookup lookup' : Query V → List Nat) (scan : List Nat)
+    (hm : ∃ m ∈ members, (pvals props attr ck m).isSome) :
+    uniqueViolated props members affected attr ck isCand (redisearchQuery exact false props)
+        lookup scan =
+      uniqueViolated props members affected attr ck isCand (redisearchQuery exact false props)
+        lookup' scan := by
   apply uniqueViolated_declined
   obtain ⟨m, hm, hs⟩ := hm
   obtain ⟨k, hk⟩ := Option.isSome_iff_exists.1 hs
-  exact ⟨k, List.mem_filterMap.2 ⟨m, hm, hk⟩, (redisearchQuery_none_iff exact false props k).2 (Or.inl rfl)⟩
+  exact ⟨k, List.mem_filterMap.2 ⟨m, hm, hk⟩,
+    (redisearchQuery_none_iff exact false props k).2 (Or.inl rfl)⟩
 
 end PendingCommit.UQ
