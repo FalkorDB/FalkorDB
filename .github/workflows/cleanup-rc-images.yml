@@ -85,15 +85,37 @@ jobs:
           #     must NOT be swept — `:latest`/`:edge-rs` failing the regex
           #     fails the `all()` check and the version is preserved.
           #   - drop untagged versions (those are layer remnants, separate concern)
-          candidates=$(gh api \
+          #   - drop versions still referenced by a kept image index (below)
+          versions=$(gh api \
             -X GET "/orgs/falkordb/packages/container/${REPO}/versions?per_page=100" \
             --paginate \
             --jq '
               .[]
-              | select(.created_at < env.cutoff)
               | select(.metadata.container.tags | length > 0)
-              | select(.metadata.container.tags | all(test(env.TAG_PATTERN)))
-              | {id: .id, tags: .metadata.container.tags, created: .created_at}
+              | {id: .id, digest: .name, tags: .metadata.container.tags, created: .created_at}
+            ')
+
+          # Promotion (rust-push.yml, release-tag.yml) retags only the
+          # multi-arch index, e.g. :pr-<N> -> :latest. The per-arch manifests
+          # underneath keep only their PR-scoped tags (pr-<N>-x64, ...), so the
+          # all() check alone would sweep them and leave :latest pointing at
+          # deleted manifests ("manifest unknown"). Protect every manifest
+          # referenced by an index we keep. Fail closed: if a kept index
+          # cannot be read, delete nothing.
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin >/dev/null
+          protected=$(echo "$versions" \
+            | jq -r 'select(.tags | all(test(env.TAG_PATTERN)) | not) | .digest' \
+            | while read -r digest; do
+                raw=$(docker buildx imagetools inspect --raw "ghcr.io/falkordb/${REPO}@${digest}") || exit 1
+                echo "$raw" | jq -r '.manifests[]?.digest'
+              done | sort -u | jq -R . | jq -s -c .)
+          echo "Protecting $(echo "$protected" | jq length) manifest(s) referenced by kept indexes."
+          export protected
+
+          candidates=$(echo "$versions" | jq -c '
+              select(.created < env.cutoff)
+              | select(.tags | all(test(env.TAG_PATTERN)))
+              | select(.digest as $d | env.protected | fromjson | any(. == $d) | not)
             ')
 
           if [ -z "$candidates" ]; then
