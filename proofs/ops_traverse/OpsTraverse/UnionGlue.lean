@@ -8,7 +8,8 @@ import GraphblasWrappers.DeltaLmxm
 | here | there |
 | --- | --- |
 | `relationshipTensors`        | `relationship_tensors` (`cond_traverse.rs`) |
-| `buildUnrestricted` | `build_unrestricted_iter` (:302) and `build_transposed_iter` (:337): untyped or single type (the transposed builder is the same function over the transposed sources) |
+| `buildUnrestricted` | `build_unrestricted_iter`: untyped or single type |
+| `buildTransposed`, `Bwd`, `bwdStream` | `build_transposed_iter`, `BwdIter` (`seek`/`next`): untyped streams every type's transpose through a `UnionIter` up to `MAX_STREAMED_BWD_TYPES`, else the adjacency transpose (#3591) |
 | `buildUnion`, `transposedPairs` | `build_union_iter` (:317); `build_transposed_union_iter` (:352), whose pair set is the forward union's swapped back (`transposedPairs`) |
 | `fwdOkOf`                    | the `fwd_ok` / `rev_ok` of `build_state` (:512-531) |
 | `pickMatrix`                 | the `TraversalMatrix` selection of `expand_batch` (:615-650, chain hops :658-680) |
@@ -407,6 +408,78 @@ theorem union_bwd_emit_directed_iff {S : Graph → List (Nat × Nat)} (hS : Stru
   constructor
   · rintro ⟨x, hx, h1, h2, h3, h4, _, h5, h6⟩; exact ⟨x, hx, h1, h5, h6, h2, h3, h4⟩
   · rintro ⟨x, hx, h1, h5, h6, h2, h3, h4⟩; exact ⟨x, hx, h1, h2, h3, h4, trivial, h5, h6⟩
+
+/-! ## `build_transposed_iter` and `BwdIter` (#3591) -/
+
+/-- `BwdIter`: one transposed iterator, or a `UnionIter` over several. -/
+inductive Bwd (I U : Type)
+  | one (i : I)
+  | union (u : U)
+
+/-- `MAX_STREAMED_BWD_TYPES`. -/
+def maxStreamedBwdTypes : Nat := 16
+
+/-- `build_transposed_iter` (cond_traverse.rs): untyped streams every type's `matrix_t` through a
+`UnionIter` when the graph has at most `MAX_STREAMED_BWD_TYPES` types, else the adjacency
+transpose; a single type is its `matrix_t` (`None` when the type does not exist). `adjT` is the
+adjacency transpose, `tsT` every relationship tensor's `matrix_t`, in schema order. -/
+def buildTransposed {I Ty : Type} (adjT : I) (tsT : List I) (rel : Ty → Option I) :
+    List Ty → Option (Bwd I (List I))
+  | [] => if tsT.length ≤ maxStreamedBwdTypes then some (.union tsT) else some (.one adjT)
+  | t :: _ => (rel t).map .one
+
+theorem buildTransposed_spec {I Ty : Type} (adjT : I) (tsT : List I) (rel : Ty → Option I) (t : Ty) :
+    (tsT.length ≤ maxStreamedBwdTypes → buildTransposed adjT tsT rel [] = some (.union tsT)) ∧
+    (maxStreamedBwdTypes < tsT.length → buildTransposed adjT tsT rel [] = some (.one adjT)) ∧
+    buildTransposed adjT tsT rel [t] = (rel t).map .one := by
+  refine ⟨fun h => by simp [buildTransposed, h], fun h => ?_, rfl⟩
+  have : ¬ tsT.length ≤ maxStreamedBwdTypes := by omega
+  simp [buildTransposed, this]
+
+/-- `BwdIter::seek` then `BwdIter::next` until `None`: the one iterator's pairs in range, or the
+`UnionIter` merge after its seek. -/
+def bwdStream (p : P → Bool) : Bwd (List P) (List (List P)) → List P
+  | .one s => s.filter p
+  | .union srcs => UnionStream.drain (UnionStream.meas (UnionStream.seek p (UnionStream.new srcs)) + 1)
+      (UnionStream.seek p (UnionStream.new srcs))
+
+/-- **Untyped destination-bound stream unchanged by #3591**: with the adjacency the pair-level
+union of the relationship tensors (`adjT` holds `(d, s)` iff some type has an edge `s → d`),
+whichever arm `build_transposed_iter` takes, the stream after `seek(p)` is exactly the adjacency
+transpose's stream in range, the list the code before #3591 read (same pairs, same order, each
+once). -/
+theorem bwdStream_untyped_eq_adj {Ty : Type} {S : Graph → List (Nat × Nat)} (hS : StructIterT S)
+    (gs : List Graph) (adjT : List P) (ha : Sorted adjT)
+    (hm : ∀ d s, (d, s) ∈ adjT ↔ ∃ x ∈ gs.flatten, x.src = s ∧ x.dst = d)
+    (rel : Ty → Option (List P)) (p : P → Bool) (b : Bwd (List P) (List (List P)))
+    (hb : buildTransposed adjT (gs.map S) rel [] = some b) :
+    bwdStream p b = adjT.filter p := by
+  by_cases hl : (gs.map S).length ≤ maxStreamedBwdTypes
+  · simp only [buildTransposed, hl, ite_true, Option.some.injEq] at hb
+    subst hb
+    simp only [bwdStream]
+    have hs : ∀ l ∈ gs.map S, Sorted l := by
+      intro l hl
+      obtain ⟨g, _, rfl⟩ := List.mem_map.1 hl
+      exact hS.sorted g
+    apply union_stream_eq_merged _ hs p _ (ha.filter p)
+    rintro ⟨d, s⟩
+    rw [List.mem_filter, hm]
+    constructor
+    · rintro ⟨⟨x, hx, h1, h2⟩, hp⟩
+      obtain ⟨g, hg, hxg⟩ := List.mem_flatten.1 hx
+      exact ⟨⟨S g, List.mem_map.2 ⟨g, hg, rfl⟩, (hS.mem g d s).2 ⟨x, hxg, h1, h2⟩⟩, hp⟩
+    · rintro ⟨⟨l, hl, hk⟩, hp⟩
+      obtain ⟨g, hg, rfl⟩ := List.mem_map.1 hl
+      obtain ⟨x, hx, h1, h2⟩ := (hS.mem g d s).1 hk
+      exact ⟨⟨x, List.mem_flatten.2 ⟨g, hg, hx⟩, h1, h2⟩, hp⟩
+  · simp only [buildTransposed, hl, ite_false, Option.some.injEq] at hb; subst hb; rfl
+
+/-- A single type is its `matrix_t` stream in range, as before #3591. -/
+theorem bwdStream_single {Ty : Type} (rel : Ty → Option (List P)) (adjT : List P) (tsT : List (List P))
+    (t : Ty) (p : P → Bool) (s : List P) (h : rel t = some s) :
+    (buildTransposed adjT tsT rel [t]).map (bwdStream p) = some (s.filter p) := by
+  simp [buildTransposed, h, bwdStream]
 
 /-- The `state.union.is_some()` branch of `expand_row` (:963-990): a multi-type state expands over
 the union iterators, anything else over the single-type ones (whose model is `expandRow`). -/

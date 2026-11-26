@@ -115,7 +115,7 @@ Every bug was reproduced against a live server and compared with C before it was
 | `Basic.lean` | The graph model: edges, the pair-level matrix pattern `pairs`, `edgesBetween`, `step` |
 | `CondTraverse.lean` | Single hop (emit and collapse, directed and undirected), ExpandInto, two hops, `MxmSpec` and the batched multiply path; the collapse counterexamples |
 | `UnionStream.lean` | `UnionIter` (#3492): the k-way merge of per-type pair streams, `drain_spec`, `union_stream`, the layer-merge order (`layerStream_spec`) |
-| `UnionGlue.lean` | Multi-type matrix selection, `delta_lmxm_into` (`deltaInto_eff`), the iterator builders, `expand_union_row` (`union_emit_*_iff`, `union_collapse_directed_keys_nodup`) |
+| `UnionGlue.lean` | Multi-type matrix selection, `delta_lmxm_into` (`deltaInto_eff`), the iterator builders (incl. `build_transposed_iter`/`BwdIter` since #3591: `bwdStream_untyped_eq_adj`), `expand_union_row` (`union_emit_*_iff`, `union_collapse_directed_keys_nodup`) |
 | `CTGlue.lean` | CondTraverse/ExpandInto constructors, `build_state`, `trim_to_cap`, null padding, `next`; scan and PathBuilder constructors |
 | `BidirDedup.lean` | The bidirectional dedup block and its three counterexamples |
 | `VarLen.lean` | The variable-length DFS, `varLen_iff`, the absorbed edge filter |
