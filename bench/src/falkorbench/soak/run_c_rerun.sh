@@ -16,7 +16,8 @@ run() { # n suffix dur
   if [ -d "$o" ] && [ ! -d "$o@jul-master" ]; then mv "$o" "$o@jul-master"; fi
   free_kb=$(df -k / | tail -1 | awk '{print $4}')
   if [ "$free_kb" -lt 3000000 ]; then echo "$(date +%T) C RERUN PAUSED low disk before $n" >> "$S/full/progress.log"; exit 1; fi
-  fresh_run_dir "$o"; echo "$LABEL" > "$o/.commit"
+  fresh_run_dir "$o" || { echo "$(date +%T) C RERUN STOPPED: could not move $o aside" >> "$S/full/progress.log"; exit 1; }
+  echo "$LABEL" > "$o/.commit"
   echo "$(date +%T) START $n $2 dur=$dur ($LABEL)" >> "$S/full/progress.log"; start=$(date +%s)
   run_in_group timeout $((dur * 3 + 2400)) "${PY[@]}" -I "$f" --module "$MOD" --port 19000 --out "$o" --duration "$dur" --scale 1.0 > "$o/stdout.log" 2>&1
   rc=$?; echo "$rc" > "$o/.rc"; touch "$o/.done"

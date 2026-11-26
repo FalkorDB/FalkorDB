@@ -1470,8 +1470,10 @@ def test_a_release_soak_script_runs_each_scenario_in_a_group_of_its_own(name):
     assert re.search(r'run_in_group timeout .+ "\$\{PY\[@\]\}" -I "\$f"', text)
     # s09 uses --port and --port+1, and reserves --port+2
     assert text.index("refuse_busy_ports 19000 19001 19002 ||") < text.index("run_in_group ")
-    # every attempt starts in an empty run directory
-    assert 'fresh_run_dir "$o"; echo "$LABEL" > "$o/.commit"' in text
+    # every attempt starts in an empty run directory, or the script stops
+    assert re.search(
+        r'fresh_run_dir "\$o" \|\| \{ .*exit 1; \}\n *echo "\$LABEL" > "\$o/\.commit"', text
+    )
     assert "rm -f" not in text and 'mkdir -p "$o"' not in text
 
 
@@ -1496,6 +1498,26 @@ def test_a_release_soak_attempt_never_starts_in_an_earlier_runs_directory(tmp_pa
     assert list(run.iterdir()) == [] and list(fresh.iterdir()) == []
     (moved,) = tmp_path.glob("s01_social_feed-rust-superseded-*")
     assert (moved / "summary.json").exists() and "@" not in moved.name  # not an archive
+
+
+def test_a_release_soak_attempt_stops_when_the_old_run_cannot_be_moved(tmp_path):
+    full = tmp_path / "full"
+    run = full / "s01_social_feed-rust"
+    run.mkdir(parents=True)
+    (run / "summary.json").write_text("{}")
+    full.chmod(0o555)  # nothing in full/ can be renamed
+    try:
+        out = subprocess.run(
+            _in_bash(tmp_path, f'fresh_run_dir "{run}"; echo "rc=$?"'),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    finally:
+        full.chmod(0o755)
+    assert "rc=1" in out.stdout
+    assert [p.name for p in full.iterdir()] == [run.name]
+    assert (run / "summary.json").exists()  # untouched, and the attempt does not start in it
 
 
 def test_a_release_soak_run_refuses_to_start_on_a_port_that_answers(tmp_path):

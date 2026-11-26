@@ -37,7 +37,8 @@ for f in "$S"/scenarios/s[0-9][0-9]_*.py; do [ "$(basename "$f")" = s00_pilot.py
     [ -d "$o" ] && [ "$(cat "$o/.commit" 2>/dev/null)" = "$LABEL" ] && mv "$o" "$o-$LABEL-partial-$attempt-$$"
     free_kb=$(df -k / | tail -1 | awk '{print $4}')
     if [ "$free_kb" -lt 3000000 ]; then log "RUST RERUN PAUSED: only $((free_kb/1024)) MB free disk before $n"; exit 1; fi
-    fresh_run_dir "$o"; echo "$LABEL" > "$o/.commit"
+    fresh_run_dir "$o" || { log "RUST RERUN STOPPED: could not move $o aside"; exit 1; }
+    echo "$LABEL" > "$o/.commit"
     log "START $n rust dur=1200 ($LABEL)"
     start=$(date +%s)
     # samples only while this script lives, so a script that is stopped leaves no sampler

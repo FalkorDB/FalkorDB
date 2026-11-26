@@ -57,8 +57,10 @@ trap 'reap_group; exit 143' TERM
 # before it writes its own summary.json would be scored on the old one. The name has no
 # "@", so the scorer never takes it for an archive.
 fresh_run_dir() {
-  [ ! -e "$1" ] || mv "$1" "$1-superseded-$(date +%Y%m%dT%H%M%S)-$$"
-  mkdir -p "$1"
+  if [ -e "$1" ]; then
+    mv "$1" "$1-superseded-$(date +%Y%m%dT%H%M%S)-$$" || return 1
+  fi
+  mkdir "$1"
 }
 
 run_in_group() {
