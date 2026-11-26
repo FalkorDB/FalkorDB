@@ -28,6 +28,7 @@ from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
 from falkorbench.counters import select_backend
+from falkorbench.ldbc import check as ldbc_check
 from falkorbench.nightly import merge as nightly_merge
 from falkorbench.nightly import missed_run
 from falkorbench.nightly import report as nightly_report
@@ -624,6 +625,37 @@ def missed_run_command(night, workflow, branch, event, artifact):
 def nightly_merge_command(args):
     """The night's bookkeeping: plan | context | results | conclude (each takes --help)."""
     raise SystemExit(nightly_merge.main(list(args)))
+
+
+# --- ldbc --------------------------------------------------------------------
+
+
+@cli.group()
+def ldbc() -> None:
+    """LDBC SNB Interactive v1 complex reads.
+
+    Internal instrument, not an auditable LDBC result: that needs the official
+    Java driver, LDBC membership and a commissioned audit.
+    """
+
+
+@ldbc.command(
+    "check",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def ldbc_check_command(args):
+    """Compare a candidate image with a baseline image on the complex reads (--help: the flags).
+
+    The nightly perf check: each image runs as its own server in docker, both
+    load the dataset, and OUT/result.json plus raw/ are written. Exits 0 whenever
+    result.json was written, whatever its verdict.
+    """
+    raise SystemExit(ldbc_check.main(list(args)))
 
 
 def main() -> int:
