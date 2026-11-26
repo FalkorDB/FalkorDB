@@ -19,6 +19,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from falkorbench import kit
@@ -31,6 +32,7 @@ from falkorbench.soak import gen_final
 from falkorbench.soak import score as soak_score
 from falkorbench.soak import soakkit
 
+BENCH = Path(__file__).resolve().parents[1]
 STARTED = "2026-11-25T00:00:00Z"
 DIGEST_A = "ghcr.io/falkordb/falkordb-server@sha256:" + "a" * 64
 DIGEST_B = "falkordb/falkordb-server@sha256:" + "b" * 64
@@ -131,7 +133,10 @@ def test_zero_one_status(c, b, status):
     assert sc._zero_one("x", "invariant", c, b).status == status
 
 
-def test_known_flaky_check_is_a_regression_the_release_gate_leaves_out(tmp_path):
+@pytest.mark.parametrize("check", ["soak-s10", "soak"])
+def test_known_flaky_check_is_a_regression_the_release_gate_leaves_out(tmp_path, check):
+    """KNOWN_FLAKY is keyed by the row's name, so it holds under any check name: the scenario's
+    own check (soak-s10) or one run of every scenario (bench soak's default, soak)."""
     name = "Live (under writes) index == scan during build/after"
     assert f"s10 {name}" in sc.KNOWN_FLAKY
     c = run("candidate", checks={name: False, "y": True}, scenario="s10_schema_under_load")
@@ -149,8 +154,16 @@ def test_known_flaky_check_is_a_regression_the_release_gate_leaves_out(tmp_path)
         }
     )
     res = finish(
-        args(), tmp_path, STARTED, ["s10_schema_under_load"], sched, None, [], sc.MODES["nightly"]
+        args(check=check),
+        tmp_path,
+        STARTED,
+        ["s10_schema_under_load"],
+        sched,
+        None,
+        [],
+        sc.MODES["nightly"],
     )
+    assert res["check"] == check
     assert res["verdict"] == "regression"
     assert [(f["name"], f["status"]) for f in res["findings"]] == [(f"s10 {name}", "regression")]
     assert res["broken"] == [
@@ -160,13 +173,55 @@ def test_known_flaky_check_is_a_regression_the_release_gate_leaves_out(tmp_path)
     assert ",known," in (tmp_path / "raw" / "rows.csv").read_text()
 
 
+def test_a_same_image_pair_allows_only_the_known_breaks(tmp_path):
+    """acceptance.yaml's soak A/A rule (contract v1.14): a known break may be red, named with its
+    issue; any other correctness break, a crash or a performance regression fails the pair."""
+    known = "Live (under writes) index == scan during build/after"
+    c = run("candidate", checks={known: False, "y": False}, scenario="s10_schema_under_load")
+    c.details = {known: "1 of 40 runs failed; first: [567,667] idx=1242 scan=1243"}
+    b = run("baseline", checks={known: True, "y": True}, scenario="s10_schema_under_load")
+    sched = sc.Schedule(runs={"s10_schema_under_load": {"candidate": [c], "baseline": [b]}})
+    res = finish(
+        args(check="soak-s10"),
+        tmp_path,
+        STARTED,
+        ["s10_schema_under_load"],
+        sched,
+        None,
+        [],
+        sc.MODES["nightly"],
+    )
+    assert {f["name"] for f in res["findings"] if f["status"] == "regression"} == {
+        f"s10 {known}",
+        "s10 y",
+    }
+    assert sc.unknown_breaks(res) == ["s10 y"]  # outside the maps
+    res["findings"] = [f for f in res["findings"] if f["name"] != "s10 y"]
+    assert sc.unknown_breaks(res) == []  # the known break alone, named with #3095
+    entry = next(b for b in res["broken"] if b["name"] == f"s10 {known}")
+    assert entry["issue"] == 3095
+    for broken in ([], [{**entry, "issue": 3512}]):  # unnamed, or under the wrong issue
+        assert sc.unknown_breaks({**res, "broken": broken}) == [f"s10 {known}"]
+
+    def regressed(name, metric):
+        finding = {"name": name, "metric": metric, "status": "regression"}
+        return {"verdict": "regression", "findings": [finding]}
+
+    assert sc.unknown_breaks(regressed("s12 ingest_batch", "p50_ms")) == ["s12 ingest_batch"]
+    assert sc.unknown_breaks(regressed("s10 completed", "completed")) == ["s10 completed"]
+    # An error has no regression finding, yet it measured nothing: it fails the pair too.
+    assert sc.unknown_breaks({**res, "verdict": "error", "findings": []}) == ["verdict error"]
+
+
+@pytest.mark.parametrize("check", ["soak-s10", "soak"])
 @pytest.mark.parametrize("records", [2, 12])  # 12: k == n >= 10, still not a total break
 def test_a_failure_only_flake_against_a_baseline_that_held_is_not_new_at_the_gate(
-    tmp_path, records
+    tmp_path, records, check
 ):
     """`during build person_city` broke on 6.2.1 on 25 Nov and held on 26 Nov (#3512): the
     scenario records it only when it fails, so the baseline that held left no record (null).
-    A night is red on it (#4065); the release gate does not count it, however many records."""
+    A night is red on it (#4065); the release gate does not count it, however many records.
+    KNOWN_FLAKY, FAILURE_ONLY and ISSUES are keyed by the row's name: any check name holds."""
     from falkorbench.nightly import merge
 
     name = "during build person_city: result == ground truth"
@@ -176,9 +231,16 @@ def test_a_failure_only_flake_against_a_baseline_that_held_is_not_new_at_the_gat
     b = run("baseline", checks={"y": True}, scenario="s10_schema_under_load")
     sched = sc.Schedule(runs={"s10_schema_under_load": {"candidate": [c], "baseline": [b]}})
     res = finish(
-        args(), tmp_path, STARTED, ["s10_schema_under_load"], sched, None, [], sc.MODES["nightly"]
+        args(check=check),
+        tmp_path,
+        STARTED,
+        ["s10_schema_under_load"],
+        sched,
+        None,
+        [],
+        sc.MODES["nightly"],
     )
-    assert res["verdict"] == "regression"
+    assert res["check"] == check and res["verdict"] == "regression"
     assert [(f["name"], f["candidate"], f["baseline"]) for f in res["findings"]] == [
         (f"s10 {name}", 0, None)
     ]
@@ -780,6 +842,74 @@ def test_a_side_the_deadline_would_cut_is_not_started():
     assert list(sched.runs) == ["s07_mvcc_consistency"]
     assert [n.split(" ")[0] for n in sched.not_run] == scns[1:]
     assert all(not r.cut for sides in sched.runs.values() for side in sides.values() for r in side)
+
+
+def test_the_deadline_follows_the_checks_own_budget():
+    """In the workflows the deadline is the entry's timeout less the margin, not the mode's."""
+    a = args(duration=None, scale=None, deadline_minutes=None)
+    assert sc.mode_params(a, {"PERF_TIMEOUT_SECONDS": "2400"})["deadline_min"] == 30
+    assert sc.mode_params(a, {"PERF_TIMEOUT_SECONDS": "300"})["deadline_min"] == 0
+    for unusable in ("", "soon", "0", "-60", "inf", "nan"):
+        p = sc.mode_params(a, {"PERF_TIMEOUT_SECONDS": unusable})
+        assert p["deadline_min"] == sc.MODES["nightly"]["deadline_min"], unusable
+    assert sc.mode_params(a, {})["deadline_min"] == sc.MODES["nightly"]["deadline_min"]
+    a.deadline_minutes = 12
+    assert sc.mode_params(a, {"PERF_TIMEOUT_SECONDS": "2400"})["deadline_min"] == 12
+
+
+SOAK_ENTRIES = [
+    e
+    for e in yaml.safe_load((BENCH / "checks.yaml").read_text(encoding="utf-8")) or []
+    if e["name"].startswith("soak")
+]
+
+
+def test_each_soak_entry_runs_one_scenario_under_its_own_name():
+    scenarios = [s.split("_")[0] for s in sc.list_scenarios(None)]
+    assert [e["name"] for e in SOAK_ENTRIES] == [f"soak-{s}" for s in scenarios]
+    for e in SOAK_ENTRIES:
+        assert e["command"].split()[-4:] == ["--check", e["name"], "--scenarios", e["name"][5:]]
+        assert e["runner"] == "vm" and e["machine_type"] == "n4-standard-16", e["name"]
+
+
+# The slowest first pass (candidate, baseline wall seconds) each scenario took on n4-standard-16,
+# from raw/runs.csv of runs 45614251560, 45809791507 (a C v4.22.5 baseline: s02's 730 s setup,
+# s11), 45835452753 and 45856629586. checks.yaml sizes each timeout from these.
+SLOWEST_PAIR = {
+    "s01": (429.9, 430.1),
+    "s02": (373.7, 1052.2),
+    "s03": (394.1, 394.1),
+    "s04": (374.7, 380.7),
+    "s05": (369.9, 372.9),
+    "s06": (334.9, 345.4),
+    "s07": (388.4, 391.5),
+    "s08": (455.7, 455.0),
+    "s09": (377.5, 377.4),
+    "s10": (378.9, 379.7),
+    "s11": (500.4, 818.1),
+    "s12": (305.4, 308.4),
+}
+
+
+@pytest.mark.parametrize("entry", SOAK_ENTRIES, ids=lambda e: e["name"])
+def test_each_soak_timeout_fits_its_slowest_pair_and_a_swapped_rerun(entry):
+    """25% slower than the slowest pair seen, the first pass and its confirming re-run still fit
+    the entry's own timeout; and a candidate that hangs is called a hang, not cut."""
+    scn = sc.list_scenarios(entry["name"][5:])[0]
+    p = sc.mode_params(
+        args(duration=None, scale=None, deadline_minutes=None),
+        {"PERF_TIMEOUT_SECONDS": str(entry["timeout_minutes"] * 60)},
+    )
+    deadline = p["deadline_min"] * 60
+    cand, base = (1.25 * s for s in SLOWEST_PAIR[scn[:3]])
+    clock = Clock()
+    clock.t = 30.0  # pulling both images and reading their servers
+    soak = FakeSoak(clock, {(scn, "candidate"): cand, (scn, "baseline"): base})
+    sched = sc.run_all(soak, [scn], IMGS, p, deadline=deadline, clock=clock)
+    sides = [c[1:3] for c in soak.calls]
+    assert sides == [("candidate", 1), ("baseline", 1), ("baseline", 2), ("candidate", 2)]
+    assert sched.not_run == [] and sched.unconfirmed == []
+    assert deadline + 300 - 30 >= sc.run_cap(p)  # stop_at leaves a first-side hang its full cap
 
 
 def test_a_run_cut_by_the_deadline_drops_its_scenario():

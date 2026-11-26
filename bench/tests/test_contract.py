@@ -282,14 +282,22 @@ def test_acceptance_pairs_are_well_formed():
     assert ACCEPTANCE["schema"] == 1
     ids = [pair["id"] for _, pair in PAIRS]
     assert len(ids) == len(set(ids)), "duplicate pair id"
-    for _, pair in PAIRS:
+    for check, pair in PAIRS:
         assert set(pair) <= {"id", "candidate", "baseline", "mode", "expect", "judge"}, pair["id"]
         assert pair["mode"] == "nightly"
         for side in (pair["candidate"], pair["baseline"]):
             assert contract.IMAGE_RE.fullmatch(side["image"]), side
             assert contract.COMMIT_RE.fullmatch(side["commit"]), side
         if pair["candidate"]["image"] == pair["baseline"]["image"] and pair["expect"]:
-            assert pair["expect"] == {"verdict": "pass", "no_regression_findings": True}, pair["id"]
+            # Soak's same-image pairs allow its known breaks (contract v1.14: red, named with
+            # their issue); every other check's must pass with no regression at all.
+            same = (
+                {"regressions_only_known_breaks": True}
+                if check.startswith("soak-")
+                else {"verdict": "pass", "no_regression_findings": True}
+            )
+            assert pair["expect"] == same, pair["id"]
+        assert "regressions_only_known_breaks" not in pair["expect"] or check.startswith("soak-"), pair["id"]
         for matcher in pair["expect"].get("findings", []):
             assert set(matcher) <= {"name", "name_regex", "metric", "status"}, pair["id"]
             metrics = matcher.get("metric", [])

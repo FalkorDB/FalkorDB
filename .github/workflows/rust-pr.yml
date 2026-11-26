@@ -549,7 +549,11 @@ jobs:
   # queue, and nothing at tagging.
   #
   # The queue's required-check timeout must cover this run's CI and the
-  # nightly together, about 180 minutes; an admin sets it in the version
+  # nightly together: about 60 minutes with the VM legs capped at 8. CI took
+  # 20 (run 45357512317) and perf-cov 15 beside the nightly; the 12 soak legs
+  # took 32 (run 45873165600), and pokec, ldbc and fuzz fit the same two
+  # waves (about 35, estimated from their legs' times). A confirming re-run
+  # adds about its scenario's length again. An admin sets it in the version
   # branch's ruleset.
   #
   # The perf code lives only on main, so a version branch runs main's workflows

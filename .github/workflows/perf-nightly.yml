@@ -489,6 +489,11 @@ jobs:
       packages: read
     strategy:
       fail-fast: false
+      # At most this many VM legs at once, each an n4-standard-16 (16 N4 vCPUs)
+      # with an external IP, so the night stays inside the project's GCE quota.
+      # The repository variable raises it without a change here: tests/perf/vm/README.md.
+      # GitHub queues the legs in matrix order, longest budget first (`bench nightly merge plan`).
+      max-parallel: ${{ fromJSON(vars.PERF_VM_MAX_PARALLEL || '8') }}
       matrix:
         include: ${{ fromJSON(needs.resolve.outputs.vm_matrix) }}
     uses: ./.github/workflows/_perf-vm.yml

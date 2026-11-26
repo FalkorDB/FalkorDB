@@ -85,8 +85,8 @@ RULES = {
         "too. Info, not gated: a crossing the re-run did not repeat, a query the baseline cannot "
         "run at all."
     ),
-    "soak-a": SOAK_RULES,
-    "soak-b": SOAK_RULES,
+    # One check per soak scenario (bench/checks.yaml), all under the same rules.
+    **dict.fromkeys((f"soak-s{n:02d}" for n in range(1, 13)), SOAK_RULES),
     "fuzz": (
         "The control epoch (4 runs: candidate, baseline, baseline, candidate) checks invariants. "
         "A data invariant (writes add up, upsert edges complete) or a crash on the candidate "
@@ -288,20 +288,40 @@ def side(night: dict, which: str) -> str:
     )
 
 
+# How bad a verdict is, as the night's status ranks them: a regression (red) outranks an error.
+# Anything else is not a verdict the contract knows, and reads as an error.
+VERDICT_RANK = {"pass": 0, "error": 1, "regression": 2}
+
+
+def index_column(check: str) -> str:
+    """The runs index's column for a check. The soak runs as one check per scenario (soak-s01 ...
+    soak-s12; soak-a and soak-b on older nights): one column, `soak`, holds them all."""
+    return "soak" if check == "soak" or check.startswith("soak-") else check
+
+
+def index_cell(column: str, verdicts: list[tuple[str, object]]) -> str:
+    """One run's cell in one column: its check's verdict, or for a column that holds several
+    checks the worst of them, each check's verdict in the title."""
+    if not verdicts:
+        return "<td></td>"
+    worst = max((v for _, v in verdicts), key=lambda v: VERDICT_RANK.get(str(v), 1))
+    if [name for name, _ in verdicts] == [column]:
+        return f"<td class={state(worst)}>{esc(worst)}</td>"
+    each = ", ".join(f"{name} {verdict}" for name, verdict in sorted(verdicts, key=lambda e: e[0]))
+    return f"<td class={state(worst)} title='{esc(each)}'>{esc(worst)}</td>"
+
+
 def runs_page(runs: list[Run], scopes: list[str]) -> str:
     named = [
         [c for c in report.checks_of(run.night) if isinstance(c.get("check"), str)] for run in runs
     ]
-    checks = sorted({c["check"] for each in named for c in each})
+    checks = sorted({index_column(c["check"]) for each in named for c in each})
     lines = []
     for run, each in reversed(list(zip(runs, named, strict=True))):
-        verdicts = {c["check"]: c.get("verdict") for c in each}
-        cells = "".join(
-            f"<td class={state(verdicts[c])}>{esc(verdicts[c])}</td>"
-            if c in verdicts
-            else "<td></td>"
-            for c in checks
-        )
+        verdicts: dict[str, list[tuple[str, object]]] = {}
+        for c in each:
+            verdicts.setdefault(index_column(c["check"]), []).append((c["check"], c.get("verdict")))
+        cells = "".join(index_cell(c, verdicts.get(c, [])) for c in checks)
         lines.append(
             f"<tr data-scope=s{scopes.index(run.scope)}><td><a href='run/{run.folder}.html'>"
             f"{run.folder[:10]} · {run.folder[11:]}</a></td><td>{esc(run.scope)}</td><td>{esc(run.trigger)}</td>"

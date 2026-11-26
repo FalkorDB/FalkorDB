@@ -452,8 +452,11 @@ class RunCheckTest(unittest.TestCase):
     def run_check(self, command, timeout="30", **extra):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            # Records its arguments into out/argv, one per line, then exits with $EXIT.
-            (tmp / "record.sh").write_text('printf "%s\\n" "$@" > out/argv; exit "${EXIT:-0}"\n')
+            # Records its arguments into out/argv, one per line, and its budget into
+            # out/budget, then exits with $EXIT.
+            (tmp / "record.sh").write_text('printf "%s\\n" "$@" > out/argv; '
+                                           'printf "%s" "${PERF_TIMEOUT_SECONDS-unset}" > out/budget; '
+                                           'exit "${EXIT:-0}"\n')
             (tmp / "slow.sh").write_text("sleep 30\n")
             outputs = tmp / "outputs"
             env = dict(os.environ, GITHUB_OUTPUT=str(outputs), CHECK="pokec",
@@ -461,7 +464,7 @@ class RunCheckTest(unittest.TestCase):
                        CANDIDATE="c@sha256:" + "1" * 64, BASELINE="b@sha256:" + "2" * 64,
                        MODE="nightly", TIMEOUT_SECONDS=timeout, PERF_CLIENT_CPUS="")
             for key in ("CANDIDATE_LABEL", "BASELINE_LABEL", "CANDIDATE_COMMIT", "BASELINE_COMMIT", "EXIT",
-                        "PERF_VM_TOOLS"):
+                        "PERF_VM_TOOLS", "PERF_TIMEOUT_SECONDS"):
                 env.pop(key, None)
             env.update({key: value.replace("{dir}", str(tmp)) for key, value in extra.items()})
             # The step is `run: "$PERF_VM_TOOLS/run-check.sh"`, which GitHub hands to
@@ -471,7 +474,15 @@ class RunCheckTest(unittest.TestCase):
             out = dict(line.split("=", 1) for line in outputs.read_text().splitlines()) if outputs.exists() else {}
             argv_file = tmp / "out" / "argv"
             argv = argv_file.read_text().splitlines() if argv_file.exists() else []
+            budget_file = tmp / "out" / "budget"
+            self.budget = budget_file.read_text() if budget_file.exists() else None
             return proc, out, argv
+
+    def test_command_gets_its_own_budget(self):
+        """A check that schedules its own runs (soak) reads the seconds it has left to them."""
+        proc, out, _ = self.run_check("bash {dir}/record.sh", timeout="2700")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.budget, "2700")
 
     def test_out_that_cannot_be_emptied_stops_before_the_check(self):
         with tempfile.TemporaryDirectory() as tmp:

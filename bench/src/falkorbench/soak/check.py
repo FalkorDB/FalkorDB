@@ -27,7 +27,8 @@ from falkorbench import kit
 HERE = Path(__file__).resolve().parent
 SCENARIOS_DIR = HERE / "scenarios"
 
-# --mode sets only the length; deadline_min stops starting runs inside checks.yaml's timeout.
+# --mode sets only the length. deadline_min stops starting runs when the check runs by hand; in
+# the workflows the deadline follows the check's own budget instead (budget_deadline_min).
 MODES = {
     "queue": {
         "duration": 60,
@@ -120,6 +121,27 @@ CRASH_RE = re.compile(
 
 def is_timing_check(name: str) -> bool:
     return bool(TIMING_RE.search(name))
+
+
+def unknown_breaks(result: dict) -> list[str]:
+    """bench/acceptance.yaml's `regressions_only_known_breaks` for a soak result: what fails it.
+    An `error` verdict measured nothing to judge, so it fails as "verdict error". Otherwise the
+    regression findings it does not allow: allowed is only a correctness row (invariant) that
+    ISSUES names (KNOWN_FLAKY's rows among them) and that the result's `broken` list names with
+    that issue; any performance row, crash or other correctness break is not."""
+    if result.get("verdict") not in ("pass", "regression"):
+        return [f"verdict {result.get('verdict')}"]
+    broken = {b.get("name"): b.get("issue") for b in result.get("broken") or []}
+    return [
+        f.get("name")
+        for f in result.get("findings") or []
+        if f.get("status") == "regression"
+        and not (
+            f.get("metric") == "invariant"
+            and f.get("name") in ISSUES
+            and broken.get(f.get("name")) == ISSUES[f.get("name")]
+        )
+    ]
 
 
 # ------------------------------------------------------------------ one run's record
@@ -681,9 +703,32 @@ def compress_large(run_dir: Path, min_bytes: int = 1 << 20) -> None:
             f.unlink()
 
 
-def mode_params(a: argparse.Namespace) -> dict:
-    """The mode's settings with the development overrides (--duration, --scale, --deadline-minutes)."""
+# The check stops starting runs this long before its command's timeout, and run_all cuts a run 5
+# min before it, which leaves the rest to compare and write result.json.
+DEADLINE_MARGIN_MIN = 10
+
+
+def budget_deadline_min(environ=os.environ) -> float | None:
+    """The deadline inside the check's own budget: PERF_TIMEOUT_SECONDS, which
+    tests/perf/vm/run-check.sh sets from its checks.yaml entry's timeout_minutes, less the margin.
+    None outside the workflows (unset, or not a positive number of seconds)."""
+    try:
+        seconds = float(environ.get("PERF_TIMEOUT_SECONDS", ""))
+    except ValueError:
+        return None
+    if not (math.isfinite(seconds) and seconds > 0):
+        return None
+    return max(seconds / 60 - DEADLINE_MARGIN_MIN, 0.0)
+
+
+def mode_params(a: argparse.Namespace, environ=os.environ) -> dict:
+    """The mode's settings with the development overrides (--duration, --scale, --deadline-minutes).
+    The deadline is the budget's when the workflow gives one, so a one-scenario entry's re-run fits
+    its own timeout; --deadline-minutes still wins."""
     params = dict(MODES.get(a.mode, MODES["queue"]))
+    budget = budget_deadline_min(environ)
+    if budget is not None:
+        params["deadline_min"] = budget
     for key, value in (
         ("duration", a.duration),
         ("scale", a.scale),

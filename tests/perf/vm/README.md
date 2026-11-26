@@ -63,6 +63,7 @@ scripts, still gets the matching ones. Each job logs and checks that commit
 | `PERF_ZONE`, `PERF_MACHINE_TYPE` | where the VM is, read from the metadata server |
 | `PERF_MACHINE_JSON` | a file holding the result.json `machine` object: `{"runner": "gce", "type", "cpu", "cores"}` |
 | `PERF_VM_TOOLS` | absolute path of this workflow's own `tests/perf/vm` |
+| `PERF_TIMEOUT_SECONDS` | the seconds the command has before `timeout` stops it (`timeout_minutes` x 60; set by `run-check.sh`, also on the hosted runner), so a check that schedules its own runs can stop starting them in time |
 
 The split is by physical core: hyperthread siblings stay together, the
 servers get the first half of the cores and the client the rest. On an
@@ -137,6 +138,37 @@ The fallback is `n2-<size>` for an `n4-<size>` type, the same vCPUs and
 memory in a more plentiful family. Set `fallback_machine_type` for any other
 choice. A fallback VM is still one machine running both sides, so the
 comparison holds. Only its numbers are not comparable with another night's.
+
+## How many VMs at once
+
+`perf-nightly.yml` (also the release gate, which calls it) runs at most
+`vars.PERF_VM_MAX_PARALLEL` VM legs at once, 8 when the repository variable is
+unset. GitHub queues the legs in matrix order, which `bench nightly merge plan` sorts
+longest `timeout_minutes` first. Each leg holds, in the region of
+`vars.GCP_ZONES` (us-central1):
+
+- 16 N4 vCPUs (an n4-standard-16; 16 N2 vCPUs when it falls back to n2-standard-16),
+- one external IP (`IN_USE_ADDRESSES`),
+- a 100 GB Hyperdisk Balanced boot disk (pd-balanced on N2).
+
+micro-hw's C4 VM (`_perf-micro.yml`, 8 C4 vCPUs) runs beside the cap, not in it, and
+C's `benchmark.yml` adds two n4-highcpu-8 (16 N4 vCPUs, 2 IPs) when it overlaps. The
+cap is per run: a dispatch or a release gate running beside the night brings its own legs. Before
+the cap, at most 6 VMs had run at once (5 n4-standard-16 and the C4, 2026-11-25); with it, 8
+n4-standard-16 came up at once on the first try (run 45873165600), with no quota error. The
+region's limits as the CI service account read them that day: IN_USE_ADDRESSES 2300, N2_CPUS
+5000, DISKS_TOTAL_GB 204,800. The N4 and C4 CPU limits are not in that list; they live in
+Cloud Quotas (the console's Quotas page), which the account could not read.
+
+To raise the cap, check the region's quotas first (IAM & Admin > Quotas: N4 CPUs, in-use
+IP addresses, Hyperdisk Balanced capacity, and the global CPUs-all-regions), then a
+repository admin sets the variable, a whole number of at least 1:
+`gh variable set PERF_VM_MAX_PARALLEL --body <legs>`. No code change. A cap at or above
+the number of `runner: vm` entries in `bench/checks.yaml` runs them all at once.
+
+A quota that runs out shows per leg. N4 CPUs short: every zone fails within seconds and
+the leg falls back to n2-standard-16 (its result's summary says so). IP addresses or
+disk short: the fallback fails too, and the leg is an error ("no VM came up").
 
 ## Deleting the VM
 

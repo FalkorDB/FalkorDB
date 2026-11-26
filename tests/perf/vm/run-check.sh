@@ -12,7 +12,8 @@
 # `taskset -c` on them), GITHUB_OUTPUT.
 #
 # Runs `<command> --candidate … --baseline … --out out --mode …` in the
-# current directory, writes outputs started, command_exit and timed_out, and exits
+# current directory, with PERF_TIMEOUT_SECONDS set to TIMEOUT_SECONDS (its
+# own budget), writes outputs started, command_exit and timed_out, and exits
 # with the command's status. GitHub runs a step under `bash -e`; this
 # script does not stop at a failing command before recording it.
 set -uo pipefail
@@ -49,6 +50,9 @@ fi
 echo "started=true" >> "$GITHUB_OUTPUT"
 echo "running${PERF_CLIENT_CPUS:+ on CPUs $PERF_CLIENT_CPUS}: ${cmd[*]} ${args[*]}"
 start=$SECONDS
+# The seconds `timeout` gives the command, so a check that schedules its own
+# runs (soak) can stop starting them in time.
+export PERF_TIMEOUT_SECONDS=$TIMEOUT_SECONDS
 timeout --kill-after=60 "$TIMEOUT_SECONDS" ${pin[@]+"${pin[@]}"} "${cmd[@]}" "${args[@]}"
 rc=$?
 

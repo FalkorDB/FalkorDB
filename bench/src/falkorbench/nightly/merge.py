@@ -161,11 +161,17 @@ def build_plan(registry, select, registry_error=None):
 
 
 def matrix(plan, runner):
+    """One runner's job matrix. perf-nightly.yml caps how many VM legs run at
+    once, and GitHub queues the legs in matrix order, so the VM legs go
+    longest budget first (ties in plan order): a long leg left to the end
+    would stretch the run by its whole length."""
     rows = [
         {key: row[key] for key in ("check", "command", "timeout_minutes", "machine_type")}
         for row in plan
         if row["runner"] == runner
     ]
+    if runner == "vm":
+        rows.sort(key=lambda row: -row["timeout_minutes"])
     return rows
 
 
@@ -320,16 +326,22 @@ def skip_reason(history, candidate, baseline, planned):
 RUN_FACTS = "perf-vm.json"
 
 
+def run_facts(artifact):
+    """perf-vm.json as a dict, or None when it is missing or not an object."""
+    try:
+        facts = strict_load(artifact / RUN_FACTS)
+    except (OSError, ValueError):
+        return None
+    return facts if isinstance(facts, dict) else None
+
+
 def how_it_ended(artifact):
     """(clean, why): clean is True when perf-vm.json says the command exited 0
     in time, False when it says it did not, None when nothing says either (no
     file, or no exit status: the job was cancelled or killed first)."""
     unknown = None, "nothing records that the check's command finished (no exit status)"
-    try:
-        facts = strict_load(artifact / RUN_FACTS)
-    except (OSError, ValueError):
-        return unknown
-    if not isinstance(facts, dict):
+    facts = run_facts(artifact)
+    if facts is None:
         return unknown
     exit_status = facts.get("command_exit")
     if facts.get("create_error"):
@@ -343,6 +355,18 @@ def how_it_ended(artifact):
 
 def one_line(text):
     return " ".join(str(text).split())
+
+
+def fallback_note(artifact):
+    """What a result's summary says first when its VM was the fallback machine
+    type (perf-vm.json `fallback_used`), whose numbers do not line up with
+    other nights'; "" otherwise."""
+    facts = run_facts(artifact)
+    if facts is None or facts.get("fallback_used") is not True:
+        return ""
+    machine = facts.get("machine_type")
+    machine = one_line(machine) if isinstance(machine, str) and machine.strip() else "unknown"
+    return f"ran on {machine}, the fallback machine type: not comparable with other nights"
 
 
 def stub(check, reason):
@@ -404,6 +428,9 @@ def collect(check, artifact, pinned):
     # A regression or error the check wrote still stands.
     if result.get("verdict") == "pass" and clean is not True:
         return stub(check, f"result.json says pass, but {why}")
+    note = fallback_note(artifact)
+    if note:
+        result["summary"] = f"{note}; {result['summary']}"
     return result
 
 

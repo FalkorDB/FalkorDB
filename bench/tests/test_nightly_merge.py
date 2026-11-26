@@ -163,6 +163,26 @@ def test_registry_entries_become_matrix_rows():
     assert out["has_vm"] == out["has_hosted"] == "true"
 
 
+def test_vm_legs_start_longest_budget_first():
+    """Capped VM legs start in matrix order: the longest budget first, ties in registry
+    order; the plan itself and the hosted matrix keep registry order."""
+    entries = [
+        {**VM_ENTRY, "name": "short", "timeout_minutes": 40},
+        {**VM_ENTRY, "name": "tie-a", "timeout_minutes": 50},
+        {**HOSTED_ENTRY, "name": "hosted-short", "timeout_minutes": 5},
+        {**VM_ENTRY, "name": "long", "timeout_minutes": 90},
+        {**HOSTED_ENTRY, "name": "hosted-long", "timeout_minutes": 60},
+        {**VM_ENTRY, "name": "tie-b", "timeout_minutes": 50},
+    ]
+    plan = merge.build_plan(entries, "")
+    assert [row["check"] for row in plan] == ["micro-hw", *(e["name"] for e in entries)]
+    out = merge.plan_outputs(plan)
+    vm = [row["check"] for row in json.loads(out["vm_matrix"])]
+    hosted = [row["check"] for row in json.loads(out["hosted_matrix"])]
+    assert vm == ["long", "tie-a", "tie-b", "short"]
+    assert hosted == ["hosted-short", "hosted-long"]
+
+
 def test_selection_keeps_order_and_plans_unknown_names_as_stubs():
     plan = merge.build_plan([VM_ENTRY, HOSTED_ENTRY], " ldbc, typo ,micro-hw,ldbc")
     assert [row["check"] for row in plan] == ["ldbc", "typo", "micro-hw"]
@@ -441,6 +461,30 @@ def test_perf_vm_json_explains_a_missing_result(tmp_path, vm, reason):
     put(tmp_path / "results", "pokec", vm, name="perf-vm.json")
     _, nightly = run_merge(tmp_path, plan)
     assert nightly["checks"] == [{"check": "pokec", "verdict": "error", "error": reason}]
+
+
+@pytest.mark.parametrize(
+    "facts, summary",
+    [
+        (
+            {**CLEAN_EXIT, "machine_type": "n2-standard-16", "fallback_used": True},
+            "ran on n2-standard-16, the fallback machine type: not comparable with other "
+            "nights; steady",
+        ),
+        ({**CLEAN_EXIT, "machine_type": "n4-standard-16", "fallback_used": False}, "steady"),
+        ({**CLEAN_EXIT, "fallback_used": "true"}, "steady"),  # not a JSON true: no claim
+        (CLEAN_EXIT, "steady"),
+    ],
+)
+def test_a_leg_on_the_fallback_machine_type_says_so_in_its_summary(tmp_path, facts, summary):
+    """The run summary, the new-issue link and the dashboard's run page show a result's summary:
+    a leg whose VM fell back (n4 -> n2) says so there, since its numbers are another machine's."""
+    results = tmp_path / "results"
+    put(results, "pokec", result("pokec", summary="steady"))
+    put(results, "pokec", facts, name="perf-vm.json")
+    _, nightly = run_merge(tmp_path, merge.build_plan([VM_ENTRY], "pokec"))
+    assert nightly["checks"][0]["summary"] == summary
+    assert nightly["checks"][0]["verdict"] == "pass"
 
 
 def test_planned_stub_keeps_its_reason(tmp_path):

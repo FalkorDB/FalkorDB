@@ -180,6 +180,53 @@ def test_the_pages_exist(site):
     assert "nightly.json is not valid (image-not-digest)" in pages(site)["run/2026-11-25-106.html"]
 
 
+def test_the_index_shows_every_soak_check_in_one_column(tmp_path):
+    """Soak runs as one check per scenario (soak-s01 ... soak-s12), and older nights as soak-a and
+    soak-b: the runs index holds them all in one `soak` column with the worst verdict, and names
+    each check's verdict in the cell's title. A run's page keeps one card per check."""
+
+    def result(check: str, verdict: str) -> dict:
+        if verdict == "error":
+            return {"check": check, "verdict": "error", "error": "no VM came up"}
+        doc = micro_hw(False) if verdict == "regression" else micro_hw(True)
+        doc["check"] = check
+        return doc
+
+    data = tmp_path / "site" / "data"
+    # A regression outranks an error, as in the night's status (red, not error).
+    old = [result("micro-hw", "pass"), result("soak-a", "error"), result("soak-b", "regression")]
+    new = [result("micro-hw", "pass")]
+    new += [result(f"soak-s{n:02d}", "error" if n == 2 else "pass") for n in (12, 1, 2)]
+    green = [result(f"soak-s{n:02d}", "pass") for n in range(1, 13)]
+    for folder, status, checks in (
+        ("2026-11-25-201", "red", old),
+        ("2026-11-27-202", "error", new),
+        ("2026-11-28-203", "green", green),
+    ):
+        run = {"trigger": "nightly", "scope": "main"}
+        store(data, folder, examples.nightly(status, checks), run)
+    out = tmp_path / "site"
+    built = CliRunner().invoke(
+        cli, ["nightly", "dashboard", "--data", str(data), "--out", str(out)]
+    )
+    assert built.exit_code == 0, built.output
+    index = pages(out)["index.html"]
+    head = re.search(r"<tr>(<th>.*?)</tr>", index).group(1)
+    assert re.findall(r"<th>(.*?)</th>", head)[-2:] == ["micro-hw", "soak"]
+    soak_cells = [
+        re.findall(r"<td[^>]*>[^<]*</td>", row)[-1]
+        for row in re.findall(r"<tr data-scope=s\d>.*?</tr>", index)
+    ]
+    every = ", ".join(f"soak-s{n:02d} pass" for n in range(1, 13))
+    assert soak_cells == [  # newest first
+        f"<td class=pass title='{every}'>pass</td>",
+        "<td class=error title='soak-s01 pass, soak-s02 error, soak-s12 pass'>error</td>",
+        "<td class=regression title='soak-a error, soak-b regression'>regression</td>",
+    ]
+    run = pages(out)["run/2026-11-27-202.html"]
+    assert all(f"<h2>{name} " in run for name in ("soak-s01", "soak-s02", "soak-s12"))
+
+
 def test_scopes_filter_the_same_pages_without_javascript(site):
     for name in ("index.html", "trends.html"):
         page = pages(site)[name]
@@ -366,8 +413,7 @@ PHRASES = {
     "micro-hw": _micro_hw,
     "pokec": _pokec,
     "ldbc": _ldbc,
-    "soak-a": _soak,
-    "soak-b": _soak,
+    **dict.fromkeys((f"soak-s{n:02d}" for n in range(1, 13)), _soak),
     "fuzz": _fuzz,
 }
 
