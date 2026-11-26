@@ -46,7 +46,7 @@ use crate::graph::graphblas::{
     GrB_Vector_setElement_UINT64, GxB_Vector_build_Scalar,
 };
 
-use super::serialization::{Decode, Encode, Reader, Writer};
+use super::serialization::{Decode, ENCODING_VERSION, Encode, Reader, Writer};
 use super::{
     GrB_BOOL, GrB_Info, GrB_Type, GrB_Type_get_String, GrB_Vector, GrB_Vector_free, GrB_Vector_new,
     GrB_Vector_removeElement, GrB_Vector_resize, GrB_Vector_setElement_BOOL, GrB_Vector_size,
@@ -186,7 +186,7 @@ impl Vector<bool> {
     /// GrB_BOOL, GrB_INDEX_MAX)` with `setElement_BOOL(V, true, edge_id)`, so
     /// the edge ids are the vector's *indices*).
     ///
-    /// Distinct from `<Vector<bool> as Encode<19>>::encode`, which writes the
+    /// Distinct from `<Vector<bool> as Encode<{ ENCODING_VERSION }>>::encode`, which writes the
     /// unload-to-array form that `Matrix::encode` uses for container payloads.
     pub fn encode_blob(
         &self,
@@ -231,7 +231,7 @@ impl Vector<bool> {
     }
 }
 
-impl Encode<19> for Vector<u64> {
+impl Encode<{ ENCODING_VERSION }> for Vector<u64> {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -252,7 +252,7 @@ impl Encode<19> for Vector<u64> {
     }
 }
 
-impl Decode<19> for Vector<u64> {
+impl Decode<{ ENCODING_VERSION }> for Vector<u64> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let blob = r.read_buffer()?;
         unsafe {
@@ -276,7 +276,7 @@ impl Decode<19> for Vector<u64> {
     }
 }
 
-impl Encode<19> for Vector<bool> {
+impl Encode<{ ENCODING_VERSION }> for Vector<bool> {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -346,7 +346,7 @@ impl Encode<19> for Vector<bool> {
     }
 }
 
-impl Decode<19> for Vector<bool> {
+impl Decode<{ ENCODING_VERSION }> for Vector<bool> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let arr_data = r.read_buffer()?;
         let type_name = r.read_buffer()?;
@@ -751,7 +751,7 @@ mod decode_tests {
             buffers: VecDeque::from(vec![blob]),
             ..MockReader::default()
         };
-        assert!(<Vector<u64> as Decode<19>>::decode(&mut r).is_ok());
+        assert!(<Vector<u64> as Decode<{ ENCODING_VERSION }>>::decode(&mut r).is_ok());
     }
 
     /// Captures the single buffer an encoder writes.
@@ -786,7 +786,7 @@ mod decode_tests {
         // arr_data is 3 bytes but the payload declares n_bytes = 999: copying
         // n_bytes would over-read the buffer, so decode must reject it.
         let mut r = reader(vec![1, 2, 3], b"bool\0".to_vec(), 0, 999, 0);
-        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+        match <Vector<bool> as Decode<{ ENCODING_VERSION }>>::decode(&mut r) {
             Err(err) => assert!(
                 err.contains("does not match buffer length"),
                 "unexpected error: {err}"
@@ -799,7 +799,7 @@ mod decode_tests {
     fn decode_rejects_type_name_without_trailing_nul() {
         // No NUL anywhere: the C-string read would run off the end of the buffer.
         let mut r = reader(Vec::new(), b"Int".to_vec(), 0, 0, 0);
-        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+        match <Vector<bool> as Decode<{ ENCODING_VERSION }>>::decode(&mut r) {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name without a trailing NUL"),
         }
@@ -810,7 +810,7 @@ mod decode_tests {
         // NUL present but not the final byte: rejected so the buffer matches what
         // the encoder writes (name followed by a single trailing NUL).
         let mut r = reader(Vec::new(), vec![b'I', 0, b'X'], 0, 0, 0);
-        match <Vector<bool> as Decode<19>>::decode(&mut r) {
+        match <Vector<bool> as Decode<{ ENCODING_VERSION }>>::decode(&mut r) {
             Err(err) => assert!(err.contains("NUL-terminated"), "unexpected error: {err}"),
             Ok(_) => panic!("expected decode to reject a type name with an interior-only NUL"),
         }

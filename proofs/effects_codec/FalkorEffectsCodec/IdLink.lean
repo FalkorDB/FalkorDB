@@ -231,13 +231,13 @@ def idListCodec (ρ : IdListWire.Roaring) (hρ : IdListWire.RoaringOK ρ) : IdCo
 /-- `Payload::records` / `Records::next` over the real `IdList` codec: a payload built from
 encoded records yields those records, in order (`records_concat` at `idListCodec`). -/
 theorem records_concat_idList (ρ : IdListWire.Roaring) (hρ : IdListWire.RoaringOK ρ)
-    (utf8 I : Bytes → Bool)
+    (utf8 : Bytes → Bool) (lg : Bool) (I : Bytes → Bool)
     (items : List (Bytes × Record (idListCodec ρ hρ).T))
-    (h : ∀ p ∈ items, p.1 ≠ [] ∧ encRecord (idListCodec ρ hρ) utf8 I p.2 = .ok p.1 ∧
-      RecOk (idListCodec ρ hρ) utf8 I p.2)
+    (h : ∀ p ∈ items, p.1 ≠ [] ∧ encRecord (idListCodec ρ hρ) utf8 lg I p.2 = .ok p.1 ∧
+      RecOk (idListCodec ρ hρ) utf8 lg I p.2)
     (fuel : Nat) (hf : items.length < fuel) :
-    readAllRecords (idListCodec ρ hρ) utf8 I fuel (items.map Prod.fst).flatten =
+    readAllRecords (idListCodec ρ hρ) utf8 lg I fuel (items.map Prod.fst).flatten =
       .ok (items.map Prod.snd, []) :=
-  records_concat (idListCodec ρ hρ) utf8 I items h fuel hf
+  records_concat (idListCodec ρ hρ) utf8 lg I items h fuel hf
 
 end FalkorCodec

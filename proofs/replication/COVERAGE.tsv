@@ -22,11 +22,11 @@ graph/src/effects/v3/apply.rs	check_attr_shape	758	PROVEN	okCreate rows = ids*at
 graph/src/effects/v3/apply.rs	attr_map	802	PROVEN	faithful: proofs/effects_emit_apply attrMap_row
 graph/src/effects/v3/apply.rs	index_options	845	PROVEN	faithful: proofs/effects_emit_apply indexOptions_spec
 graph/src/effects/v3/apply.rs	single_index_label	876	PROVEN	faithful: proofs/effects_emit_apply singleIndexLabel_ok
-graph/src/effects/v3/format.rs	EffectsPayload::is_empty	25	PROVEN	faithful: proofs/effects_codec fmtIsEmpty_iff
-graph/src/effects/v3/format.rs	EffectsPayload::replicate	30	PROVEN	faithful: proofs/effects_codec fmtReplicate_transparent (sealed payload opens to the records)
-graph/src/effects/v3/format.rs	EffectsPayload::apply	106	PROVEN	applyPayload; faithful: proofs/effects_codec fmtApply_eq, proofs/effects_emit_apply applyEffects_ok
-graph/src/effects/v3/format.rs	EffectsPayload::build_index	142	PROVEN	faithful: proofs/effects_codec fmtBuildIndex_eq, proofs/effects_emit_apply buildIndexRec_verifies
-graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	152	PROVEN	faithful: proofs/effects_codec fmtBuildConstraint_eq, proofs/effects_emit_apply buildConstraintRec_verifies
+graph/src/effects/v3/format.rs	EffectsPayload::is_empty	26	PROVEN	faithful: proofs/effects_codec fmtIsEmpty_iff
+graph/src/effects/v3/format.rs	EffectsPayload::replicate	31	PROVEN	faithful: proofs/effects_codec fmtReplicate_transparent (sealed payload opens to the records)
+graph/src/effects/v3/format.rs	EffectsPayload::apply	111	PROVEN	applyPayload; faithful: proofs/effects_codec fmtApply_eq, proofs/effects_emit_apply applyEffects_ok
+graph/src/effects/v3/format.rs	EffectsPayload::build_index	147	PROVEN	faithful: proofs/effects_codec fmtBuildIndex_eq, proofs/effects_emit_apply buildIndexRec_verifies
+graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	157	PROVEN	faithful: proofs/effects_codec fmtBuildConstraint_eq, proofs/effects_emit_apply buildConstraintRec_verifies
 graph/src/graph/graph.rs	Graph::get_label_id_mut	1259	PROVEN	intern = faithful get-or-create: intern_refines, intern_fresh, intern_id_lt
 graph/src/graph/graph.rs	Graph::node_id_bound	1709	PROVEN	GState.bound = IdSpace::bound = live + recycled.len(): absIds, createOne_refines, deleteOne_refines (Faithful.Ids.bound)
 graph/src/graph/graph.rs	Graph::create_nodes	1748	PROVEN	createOne (id-space half) = IdSpace::create on one id: createOne_refines (Faithful.Ids.create1); refusals = okCreate; matrix sizing (grow_for_nodes) outside the abstract state

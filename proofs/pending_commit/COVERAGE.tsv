@@ -5,67 +5,67 @@ graph/src/graph/graph.rs	set_nodes_attributes	1864	PROVEN	via insert_attrs: Span
 graph/src/graph/graph.rs	import_node_attrs	1901	PROVEN	via import_attrs: Props.read_your_writes_new
 graph/src/graph/graph.rs	import_relationship_attrs	2064	PROVEN	via import_attrs: Props.read_your_writes_new
 graph/src/graph/graph.rs	set_relationships_attributes	2872	PROVEN	via insert_attrs: Span.mergeSpan_correct
-graph/src/graph/attribute_store.rs	get_index_of	143	PROVEN	NameMap.getIndexOf = idOf: accessors
-graph/src/graph/attribute_store.rs	insert	155	PROVEN	NameMap.insert (= getOrInsert MAX, #3757): insert_wf; schema-hash key chain: insertC_inv, insertC_model
-graph/src/graph/attribute_store.rs	get_or_create	182	PROVEN	NameMap.getOrCreate (getOrInsert MAX, then u16::try_from, else NONE; #3757): getOrCreate_spec, getOrCreate_wf, getOrCreate_prefix, mint_cast_exact, uncapped_try_from_none; schema-hash key chain: getOrCreateC_inv, getOrCreateC_model
-graph/src/graph/attribute_store.rs	heap_index	222	PROVEN	Pack.heapIndex_le32
-graph/src/graph/attribute_store.rs	len	304	PROVEN	Content.attrUpdates_view (trait decl)
-graph/src/graph/attribute_store.rs	id	305	PROVEN	Content.attrUpdates_view (trait decl)
-graph/src/graph/attribute_store.rs	value	309	PROVEN	Content.attrUpdates_view (trait decl)
-graph/src/graph/attribute_store.rs	len	316	PROVEN	Content.attrUpdates_view (slice impl)
-graph/src/graph/attribute_store.rs	id	320	PROVEN	Content.attrUpdates_view (slice impl)
-graph/src/graph/attribute_store.rs	value	327	PROVEN	Content.attrUpdates_view (slice impl)
-graph/src/graph/attribute_store.rs	len	345	PROVEN	Content.attrUpdates_view (RowUpdates)
-graph/src/graph/attribute_store.rs	id	349	PROVEN	Content.attrUpdates_view (RowUpdates)
-graph/src/graph/attribute_store.rs	value	356	PROVEN	Content.attrUpdates_view (RowUpdates)
-graph/src/graph/attribute_store.rs	pack_value	370	PROVEN	Pack.pack_unpack, Pack.pack_hinv
-graph/src/graph/attribute_store.rs	store_packed_value	411	PROVEN	Pack.store_get
-graph/src/graph/attribute_store.rs	unpack	426	PROVEN	Pack.pack_unpack, le64_roundtrip, le32_roundtrip
-graph/src/graph/attribute_store.rs	release_heap_value	450	PROVEN	Pack.release_hinv
-graph/src/graph/attribute_store.rs	release_span_values	462	PROVEN	Pack.releaseSpan_hinv
-graph/src/graph/attribute_store.rs	retire_span	475	PROVEN	Arena.retire_ok
-graph/src/graph/attribute_store.rs	resize_span_slack	488	PROVEN	Arena.setSpan_ok/mergeSpan_ok; Content.inPlace_ok
-graph/src/graph/attribute_store.rs	grow_slots	500	PROVEN	Arena.inv_grow, Content.grow_slotAt
-graph/src/graph/attribute_store.rs	set_span	513	PROVEN	Content.setSpanC_ok (+Arena.setSpan_ok; setSpan_u16_wrap, setSpan_cast_exact)
-graph/src/graph/attribute_store.rs	free_span	556	PROVEN	Content.freeSpanC_ok, Arena.freeSpan_ok
-graph/src/graph/attribute_store.rs	merge_span	576	PROVEN	Content.mergeSpanC_ok + Span.mergeSpan_correct + Arena.mergeSpan_ok
-graph/src/graph/attribute_store.rs	compact	738	PROVEN	Content.compactC_ok, Arena.compact_ok, Pack.compactHeap_unpack
-graph/src/graph/attribute_store.rs	maybe_compact	768	PROVEN	Content.maybeCompact_ok
-graph/src/graph/attribute_store.rs	entries	785	PROVEN	Content.span (spanRef_len)
-graph/src/graph/attribute_store.rs	len	791	PROVEN	Content.spanRef_len
-graph/src/graph/attribute_store.rs	get	796	PROVEN	Content.spanGet_eq
-graph/src/graph/attribute_store.rs	iter	807	PROVEN	Content.reads_spec (allAttrs = span)
-graph/src/graph/attribute_store.rs	heap_bytes	823	PROVEN	Pack.heapBytes_eq
-graph/src/graph/attribute_store.rs	default	854	PROVEN	Content.blockAt_set (fresh page = 64 None)
-graph/src/graph/attribute_store.rs	locate	873	PROVEN	Content.locate_eq
-graph/src/graph/attribute_store.rs	block	881	PROVEN	Content.blockAt_set
-graph/src/graph/attribute_store.rs	block_mut	902	PROVEN	Content.blockAt_set (blockSet/blockOf)
-graph/src/graph/attribute_store.rs	get	916	PROVEN	Content.dget_eq
-graph/src/graph/attribute_store.rs	set_span	931	PROVEN	Content.dsetSpan_ok
-graph/src/graph/attribute_store.rs	merge_span	948	PROVEN	Content.dmergeSpan_ok
-graph/src/graph/attribute_store.rs	trim	978	PROVEN	Content.dtrim_ok
-graph/src/graph/attribute_store.rs	remove	1012	PROVEN	Content.dremove_ok
-graph/src/graph/attribute_store.rs	structural_memory_usage	1042	PROVEN	Content.structural_partition
-graph/src/graph/attribute_store.rs	new	1092	PROVEN	Content.new_spec
-graph/src/graph/attribute_store.rs	new_version	1099	PROVEN	Content.newVersion_eq (value copy)
-graph/src/graph/attribute_store.rs	trim	1104	PROVEN	Content.dtrim_ok
-graph/src/graph/attribute_store.rs	get_attr_by_idx	1111	PROVEN	Content.getAttr_eq
-graph/src/graph/attribute_store.rs	get_attrs_by_idx_batch_into	1122	PROVEN	Content.getBatch_spec
-graph/src/graph/attribute_store.rs	has_attributes	1137	PROVEN	Content.reads_spec
-graph/src/graph/attribute_store.rs	attr_count	1146	PROVEN	Content.reads_spec
-graph/src/graph/attribute_store.rs	entity_memory_usage	1155	PROVEN	Content.reads_spec (+Pack.heapBytes_eq)
-graph/src/graph/attribute_store.rs	get_attr_ids	1166	PROVEN	Content.reads_spec
-graph/src/graph/attribute_store.rs	get_all_attrs_by_id	1176	PROVEN	Content.reads_spec
-graph/src/graph/attribute_store.rs	remove_all	1186	PROVEN	Content.removeAll_spec
-graph/src/graph/attribute_store.rs	insert_attrs_rows	1206	PROVEN	Content.insertAttrs_spec on insertRows (zip view: attrUpdates_view)
-graph/src/graph/attribute_store.rs	insert_attrs	1255	PROVEN	Content.insertAttrs_spec
-graph/src/graph/attribute_store.rs	import_attrs	1291	PROVEN	Content.importAttrs_spec
-graph/src/graph/attribute_store.rs	import_attrs_resolved	1328	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed
-graph/src/graph/attribute_store.rs	structural_memory_usage	1354	PROVEN	Content.structural_partition
-graph/src/graph/attribute_store.rs	encode_with_range	1365	PROVEN	Content.encode_spec (models the pre-#3438 `window … (max count 1)`), encode_decode_roundtrip; #3438 (`take count`, nth_live_id seek): SaveSlice.prEncode_spec, prEncode_eq_main (= pre-#3438 Content.encode for count > 0), count_zero_differs / count_zero_witness (count 0: new code writes nothing, old one entity; unreachable: SaveSlice.encoder_counts_pos), pr_encode_decode_roundtrip, walk_spec; roaring as SaveSlice.RSet (owners' abstraction; crate checked by the randomized test lean3438_roaring_contract)
-graph/src/graph/attribute_store.rs	nth_live_id	1423	PROVEN	SaveNthLive.nthLive_spec (n-th live id of 0..=max_id or None), nthLive_drop, nthLive_empty_deleted, nthLive_past_end, bsearch_spec, mid_bounds (no u64 overflow), rank_le / liveThrough_no_overflow (no u128 under/overflow); RSet.rank (SaveRoaring)
-graph/src/graph/attribute_store.rs	decode	1447	PROVEN	Content.decode_unimplemented
-graph/src/graph/attribute_store.rs	decode_with_count	1457	PROVEN	Content.decode_spec, encode_decode_roundtrip
+graph/src/graph/attribute_store.rs	get_index_of	144	PROVEN	NameMap.getIndexOf = idOf: accessors
+graph/src/graph/attribute_store.rs	insert	156	PROVEN	NameMap.insert (= getOrInsert MAX, #3757): insert_wf; schema-hash key chain: insertC_inv, insertC_model
+graph/src/graph/attribute_store.rs	get_or_create	183	PROVEN	NameMap.getOrCreate (getOrInsert MAX, then u16::try_from, else NONE; #3757): getOrCreate_spec, getOrCreate_wf, getOrCreate_prefix, mint_cast_exact, uncapped_try_from_none; schema-hash key chain: getOrCreateC_inv, getOrCreateC_model
+graph/src/graph/attribute_store.rs	heap_index	223	PROVEN	Pack.heapIndex_le32
+graph/src/graph/attribute_store.rs	len	305	PROVEN	Content.attrUpdates_view (trait decl)
+graph/src/graph/attribute_store.rs	id	306	PROVEN	Content.attrUpdates_view (trait decl)
+graph/src/graph/attribute_store.rs	value	310	PROVEN	Content.attrUpdates_view (trait decl)
+graph/src/graph/attribute_store.rs	len	317	PROVEN	Content.attrUpdates_view (slice impl)
+graph/src/graph/attribute_store.rs	id	321	PROVEN	Content.attrUpdates_view (slice impl)
+graph/src/graph/attribute_store.rs	value	328	PROVEN	Content.attrUpdates_view (slice impl)
+graph/src/graph/attribute_store.rs	len	346	PROVEN	Content.attrUpdates_view (RowUpdates)
+graph/src/graph/attribute_store.rs	id	350	PROVEN	Content.attrUpdates_view (RowUpdates)
+graph/src/graph/attribute_store.rs	value	357	PROVEN	Content.attrUpdates_view (RowUpdates)
+graph/src/graph/attribute_store.rs	pack_value	371	PROVEN	Pack.pack (Dur: inline -> Tag::Duration word, else heapPut, #3610): Pack.pack_unpack, Pack.unpack_inline_dur, Pack.heapPut_unpack, Pack.pack_hinv, Pack.pack_hinv_heap, Pack.pack_heap
+graph/src/graph/attribute_store.rs	store_packed_value	414	PROVEN	Pack.store_get
+graph/src/graph/attribute_store.rs	unpack	429	PROVEN	Pack.unpack (Tag::Duration -> from_inline_bits = Temporal.ofInlineBits): Pack.pack_unpack, Pack.unpack_inline_dur, le64_roundtrip, le32_roundtrip; RedisLayer.Temporal.inline_roundtrip
+graph/src/graph/attribute_store.rs	release_heap_value	455	PROVEN	Pack.release_hinv
+graph/src/graph/attribute_store.rs	release_span_values	467	PROVEN	Pack.releaseSpan_hinv
+graph/src/graph/attribute_store.rs	retire_span	480	PROVEN	Arena.retire_ok
+graph/src/graph/attribute_store.rs	resize_span_slack	493	PROVEN	Arena.setSpan_ok/mergeSpan_ok; Content.inPlace_ok
+graph/src/graph/attribute_store.rs	grow_slots	505	PROVEN	Arena.inv_grow, Content.grow_slotAt
+graph/src/graph/attribute_store.rs	set_span	518	PROVEN	Content.setSpanC_ok (+Arena.setSpan_ok; setSpan_u16_wrap, setSpan_cast_exact)
+graph/src/graph/attribute_store.rs	free_span	561	PROVEN	Content.freeSpanC_ok, Arena.freeSpan_ok
+graph/src/graph/attribute_store.rs	merge_span	581	PROVEN	Content.mergeSpanC_ok + Span.mergeSpan_correct + Arena.mergeSpan_ok
+graph/src/graph/attribute_store.rs	compact	743	PROVEN	Content.compactC_ok, Arena.compact_ok, Pack.compactHeap_unpack
+graph/src/graph/attribute_store.rs	maybe_compact	773	PROVEN	Content.maybeCompact_ok
+graph/src/graph/attribute_store.rs	entries	790	PROVEN	Content.span (spanRef_len)
+graph/src/graph/attribute_store.rs	len	796	PROVEN	Content.spanRef_len
+graph/src/graph/attribute_store.rs	get	801	PROVEN	Content.spanGet_eq
+graph/src/graph/attribute_store.rs	iter	812	PROVEN	Content.reads_spec (allAttrs = span)
+graph/src/graph/attribute_store.rs	heap_bytes	828	PROVEN	Pack.heapBytes_eq
+graph/src/graph/attribute_store.rs	default	859	PROVEN	Content.blockAt_set (fresh page = 64 None)
+graph/src/graph/attribute_store.rs	locate	878	PROVEN	Content.locate_eq
+graph/src/graph/attribute_store.rs	block	886	PROVEN	Content.blockAt_set
+graph/src/graph/attribute_store.rs	block_mut	907	PROVEN	Content.blockAt_set (blockSet/blockOf)
+graph/src/graph/attribute_store.rs	get	921	PROVEN	Content.dget_eq
+graph/src/graph/attribute_store.rs	set_span	936	PROVEN	Content.dsetSpan_ok
+graph/src/graph/attribute_store.rs	merge_span	953	PROVEN	Content.dmergeSpan_ok
+graph/src/graph/attribute_store.rs	trim	983	PROVEN	Content.dtrim_ok
+graph/src/graph/attribute_store.rs	remove	1017	PROVEN	Content.dremove_ok
+graph/src/graph/attribute_store.rs	structural_memory_usage	1047	PROVEN	Content.structural_partition
+graph/src/graph/attribute_store.rs	new	1097	PROVEN	Content.new_spec
+graph/src/graph/attribute_store.rs	new_version	1104	PROVEN	Content.newVersion_eq (value copy)
+graph/src/graph/attribute_store.rs	trim	1109	PROVEN	Content.dtrim_ok
+graph/src/graph/attribute_store.rs	get_attr_by_idx	1116	PROVEN	Content.getAttr_eq
+graph/src/graph/attribute_store.rs	get_attrs_by_idx_batch_into	1127	PROVEN	Content.getBatch_spec
+graph/src/graph/attribute_store.rs	has_attributes	1142	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	attr_count	1151	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	entity_memory_usage	1160	PROVEN	Content.reads_spec (+Pack.heapBytes_eq)
+graph/src/graph/attribute_store.rs	get_attr_ids	1171	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	get_all_attrs_by_id	1181	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	remove_all	1191	PROVEN	Content.removeAll_spec
+graph/src/graph/attribute_store.rs	insert_attrs_rows	1211	PROVEN	Content.insertAttrs_spec on insertRows (zip view: attrUpdates_view)
+graph/src/graph/attribute_store.rs	insert_attrs	1260	PROVEN	Content.insertAttrs_spec
+graph/src/graph/attribute_store.rs	import_attrs	1296	PROVEN	Content.importAttrs_spec
+graph/src/graph/attribute_store.rs	import_attrs_resolved	1333	PROVEN	Content.importResolved (#3063: sort, dedup_by_key, drop trailing ATTRIBUTE_ID_NONE): importResolved_spec (no length precondition, u16 ids), normResolved_fits (≤ 65535 entries, set_span cast exact; #2539), normResolved_get (first column of a repeated id wins; NONE dropped), normResolved_sorted, importResolved_reads, resolved_duplicate_fixed
+graph/src/graph/attribute_store.rs	structural_memory_usage	1359	PROVEN	Content.structural_partition
+graph/src/graph/attribute_store.rs	encode_with_range	1370	PROVEN	Content.encode_spec (models the pre-#3438 `window … (max count 1)`), encode_decode_roundtrip; #3438 (`take count`, nth_live_id seek): SaveSlice.prEncode_spec, prEncode_eq_main (= pre-#3438 Content.encode for count > 0), count_zero_differs / count_zero_witness (count 0: new code writes nothing, old one entity; unreachable: SaveSlice.encoder_counts_pos), pr_encode_decode_roundtrip, walk_spec; roaring as SaveSlice.RSet (owners' abstraction; crate checked by the randomized test lean3438_roaring_contract)
+graph/src/graph/attribute_store.rs	nth_live_id	1428	PROVEN	SaveNthLive.nthLive_spec (n-th live id of 0..=max_id or None), nthLive_drop, nthLive_empty_deleted, nthLive_past_end, bsearch_spec, mid_bounds (no u64 overflow), rank_le / liveThrough_no_overflow (no u128 under/overflow); RSet.rank (SaveRoaring)
+graph/src/graph/attribute_store.rs	decode	1452	PROVEN	Content.decode_unimplemented
+graph/src/graph/attribute_store.rs	decode_with_count	1462	PROVEN	Content.decode_spec, encode_decode_roundtrip
 graph/src/runtime/pending.rs	flatten_label_map	60	PROVEN	PA.flatten_spec
 graph/src/runtime/pending.rs	is_valid_property	78	PROVEN	PA.isValidP: validate_spec, validate_depth (lists moved to validate_list_property by #3339)
 graph/src/runtime/pending.rs	validate_list_property	107	PROVEN	PA.validateListProperty/validateItems/validateItem: validateItem_ok (accepted ⇒ old-valid ∧ d + depth ≤ 4096), validateItems_nest, validate_nest (#3339 b080a44c1); save/load: value_math stored_roundtrip (for vectors that fit the u32 dimension, `VecsFit`: validation accepts vectors of any length)
@@ -136,7 +136,7 @@ graph/src/runtime/pending.rs	check_edge_constraint	1723	CONDITIONAL	UQ.checkEdge
 graph/src/runtime/pending.rs	take_deferred_indexes	1822	PROVEN	PD.commitDeferred_spec (takeDeferred)
 graph/src/runtime/pending.rs	commit_deferred_indexes	1898	PROVEN	PD.commitDeferred_spec
 graph/src/runtime/pending.rs	end_segment	1939	PROVEN	PD.clear_spec (incl. staged_labels_removed = 0), endSegment_spec; CommitOpNext.commitNext_endSegment_err
-graph/src/graph/graphblas/serialization.rs	encode_with_range	185	PROVEN	SaveLayout.encRoarPR_eq (select/advance_to/take seek = skip/take = graph_persist encRoar, every count/offset), encRoarMain_eq; encodeGraphPR_eq, load_encode_pr, multi_load_pr (whole stream = pre-#3438's, so graph_persist's round trips hold); RSet.select/iterFrom (SaveRoaring)
+graph/src/graph/graphblas/serialization.rs	encode_with_range	214	PROVEN	SaveLayout.encRoarPR_eq (select/advance_to/take seek = skip/take = graph_persist encRoar, every count/offset), encRoarMain_eq; encodeGraphPR_eq, load_encode_pr, multi_load_pr (whole stream = pre-#3438's, so graph_persist's round trips hold); RSet.select/iterFrom (SaveRoaring)
 graph/src/graph/schema.rs	hash	27	PROVEN	KeyBorrow.hash_eq_str_hash (Key hashes as the str it borrows as), borrow_contract; NameMap.M.index keyed by the name is exact: KeyBorrow.lookup_insert, lookup_other
 graph/src/graph/schema.rs	borrow	36	PROVEN	KeyBorrow.borrow_eq_iff, eq_iff, borrow_contract (equal borrowed forms => equal keys and hashes: the Borrow<str> requirement of HashMap::get(&str))
 graph/src/graph/schema.rs	from_names	76	PROVEN	NameMap.fromNames (truncate to capacity, entry().or_insert = first position, chain_of): fromNames_first, fromNames_vec, fromNames_chainInv, fromNames_eq_inserts; graph_queries Ids.restore_LInv_any

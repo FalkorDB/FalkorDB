@@ -9,8 +9,8 @@ import FalkorEffectsCodec.Value
 | `wAttrIds`/`rAttrIds`   | `AttrIds` (`blocks.rs`) |
 | `wRows`/`rRows`         | `AttrValues` (`blocks.rs`) |
 | `Rec`            | `Record` (`records.rs`) — batchable variants and `ADD_ATTRIBUTE` |
-| `encRec`         | `impl EffectEncode<3> for Record` (`records.rs`) |
-| `readRec`        | `read_record` (`records.rs`) |
+| `encRec`         | `impl EffectEncode<4> for Record` (`records.rs`) |
+| `readRec`        | `read_record::<VERSION>` (`records.rs`; `lg`) |
 | `readAll`        | `Records::next` (`records.rs`) |
 
 Modelled: `CREATE_NODE`, `UPDATE_NODE`, `DELETE_NODE`, `SET_LABELS`,
@@ -30,7 +30,7 @@ structure IdCodec where
   roundtrip : ∀ t bs rest, enc t = .ok bs → dec (count t) (bs ++ rest) = .ok (t, rest)
   good : ∀ n, Good (dec n)
 
-variable (C : IdCodec) (utf8 I : Bytes → Bool)
+variable (C : IdCodec) (utf8 : Bytes → Bool) (lg : Bool) (I : Bytes → Bool)
 
 def wLabelSet (ls : List Nat) : Except EErr Bytes :=
   if ls.length < 2 ^ 16 then .ok (w16 ls.length ++ ls.flatMap w32) else .error .blockCountTooLarge
@@ -50,7 +50,7 @@ def wRows : List Val → Except EErr Bytes := encL I
 /-- `AttrValues::decode_sized` (`blocks.rs`). -/
 def rRows (count attrs : Nat) : R (List Val) := do
   let total ← guardCount (count * attrs) MIN_VALUE_BYTES
-  readN total (decodeV utf8)
+  readN total (decodeV utf8 lg)
 
 inductive Rec (T : Type) where
   | createNode (ids : T) (labels attrIds : List Nat) (rows : List Val)
@@ -84,7 +84,7 @@ def readRec : R (Rec C.T) := do
     let ls ← rLabelSet
     let as ← rAttrIds
     let ids ← C.dec count
-    let rows ← rRows utf8 count as.length
+    let rows ← rRows utf8 lg count as.length
     pure (.createNode ids ls as rows)
   else if op = OP_ADD_ATTRIBUTE then do
     let id ← u16
@@ -126,14 +126,14 @@ theorem flatMap_w16_length (ls : List Nat) : (ls.flatMap w16).length = 2 * ls.le
 
 /-- `AttrValues` roundtrip: `readN` over `decodeV`, one value at a time. -/
 theorem readN_decodeV (xs : List Val) (bs rest : Bytes) (h : encL I xs = .ok bs)
-    (hw : WFL utf8 xs) : readN xs.length (decodeV utf8) (bs ++ rest) = .ok (xs, rest) := by
+    (hw : WFL utf8 lg xs) : readN xs.length (decodeV utf8 lg) (bs ++ rest) = .ok (xs, rest) := by
   induction xs generalizing bs with
   | nil => simp [encL] at h; subst h; rfl
   | cons x xs ih =>
     obtain ⟨a, b', ha, hb, rfl⟩ := encL_cons h
     simp only [WFL] at hw
     simp only [List.length_cons, readN, List.append_assoc, bind_apply]
-    rw [decodeV_encV utf8 I x a _ ha hw.1]
+    rw [decodeV_encV utf8 lg I x a _ ha hw.1]
     simp only
     rw [ih b' hb hw.2]
     rfl
@@ -169,8 +169,8 @@ theorem readRec_createNode (ids : C.T) (ls as : List Nat) (rows : List Val) (idb
     (hid : C.enc ids = .ok idb) (hrb : encL I rows = .ok rb)
     (hc : 1 ≤ C.count ids) (hc32 : C.count ids < 2 ^ 32)
     (hls : ∀ x ∈ ls, x < 2 ^ 32) (has : ∀ x ∈ as, x < 2 ^ 16)
-    (hrows : rows.length = C.count ids * as.length) (hw : WFL utf8 rows) :
-    readRec C utf8 ((w32 OP_CREATE_NODE ++ w32 (C.count ids) ++ (w16 ls.length ++ ls.flatMap w32 ++
+    (hrows : rows.length = C.count ids * as.length) (hw : WFL utf8 lg rows) :
+    readRec C utf8 lg ((w32 OP_CREATE_NODE ++ w32 (C.count ids) ++ (w16 ls.length ++ ls.flatMap w32 ++
         (w16 as.length ++ as.flatMap w16 ++ (idb ++ (rb ++ []))))) ++ rest) =
       .ok (.createNode ids ls as rows, rest) := by
   have e1 := flatMap_w32_length ls
@@ -199,12 +199,12 @@ theorem readRec_createNode (ids : C.T) (ls as : List Nat) (rows : List Val) (idb
   have hlen := (encL_len I rows rb hrb).2
   rw [ite_eq_right (by simp [MIN_VALUE_BYTES]; omega)]
   simp only
-  rw [← hrows, readN_decodeV utf8 I rows rb rest hrb hw]
+  rw [← hrows, readN_decodeV utf8 lg I rows rb rest hrb hw]
   rfl
 
 theorem readRec_addAttribute (id : Nat) (name rest : Bytes) (hid : id < 2 ^ 16)
     (hn : name.length + 1 < 2 ^ 64) (hv : utf8 name = true) :
-    readRec C utf8 ((w32 OP_ADD_ATTRIBUTE ++ w16 id ++ wString name) ++ rest) =
+    readRec C utf8 lg ((w32 OP_ADD_ATTRIBUTE ++ w16 id ++ wString name) ++ rest) =
       .ok (.addAttribute id name, rest) := by
   unfold readRec
   simp only [List.append_assoc, bind_apply]
@@ -223,7 +223,7 @@ def readAll : Nat → R (List (Rec C.T))
   | 0 => fun _ => .error .outOfFuel
   | fuel + 1 => fun r =>
     if r = [] then .ok ([], [])
-    else match readRec C utf8 r with
+    else match readRec C utf8 lg r with
       | .error e => .error e
       | .ok (x, r') => match readAll fuel r' with
         | .error e => .error e
@@ -235,9 +235,9 @@ record whatever follows them — which `readRec_createNode` and
 list, in order, with nothing left over and nothing skipped. -/
 theorem readAll_concat :
     ∀ (items : List (Bytes × Rec C.T)),
-    (∀ p ∈ items, p.1 ≠ [] ∧ ∀ rest, readRec C utf8 (p.1 ++ rest) = .ok (p.2, rest)) →
+    (∀ p ∈ items, p.1 ≠ [] ∧ ∀ rest, readRec C utf8 lg (p.1 ++ rest) = .ok (p.2, rest)) →
     ∀ fuel, items.length < fuel →
-    readAll C utf8 fuel (items.map Prod.fst).flatten = .ok (items.map Prod.snd, [])
+    readAll C utf8 lg fuel (items.map Prod.fst).flatten = .ok (items.map Prod.snd, [])
   | [], _, fuel, hf => by
     obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by simp at hf; omega⟩
     simp [readAll]
@@ -262,7 +262,7 @@ def toyIds : IdCodec where
   good := fun _ => good_f32
 
 def encToy (r : Rec (BitVec 32)) : Except EErr Bytes := encRec toyIds (fun _ => false) r
-def readToy : R (Rec (BitVec 32)) := readRec toyIds (fun _ => true)
+def readToy : R (Rec (BitVec 32)) := readRec toyIds (fun _ => true) false
 
 def isOk {α} : Except DErr α → Bool
   | .ok _ => true

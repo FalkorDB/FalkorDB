@@ -31,7 +31,7 @@ structure JsonEnv (F F32 : Type) where
   fmtDatetime : Int → String
   fmtDate : Int → String
   fmtTime : Int → String
-  fmtDuration : Int → String
+  fmtDuration : FalkorCore.Dur → String   -- format_duration (#3610: three components)
   nodeLabels : Nat → List String
   nodeAttrs : Nat → List (String × W F F32)
   relAttrs : Nat → List (String × W F F32)
@@ -85,7 +85,7 @@ def fmtS (R : EntityR) : W F F32 → String
   | .datetime t => writeJsonString E (E.fmtDatetime t)
   | .date t => writeJsonString E (E.fmtDate t)
   | .time t => writeJsonString E (E.fmtTime t)
-  | .duration t => writeJsonString E (E.fmtDuration t)
+  | .duration d => writeJsonString E (E.fmtDuration d)
 def fmtL (R : EntityR) : List (W F F32) → List String
   | [] => []
   | v :: vs => fmtS R v :: fmtL R vs

@@ -20,6 +20,7 @@ stream *given* the lookups succeed.
 -/
 namespace RedisLayer.Resp
 open RedisLayer.Compact (R Val Env encPair encList encMap encProps)
+open RedisLayer.Temporal (Dur toLegacy)
 
 inductive V (F : Type) where
   | null
@@ -27,7 +28,7 @@ inductive V (F : Type) where
   | int (i : Int)
   | float (x : F)
   | str (s : String)
-  | datetime (t : Int) | date (t : Int) | time (t : Int) | duration (t : Int)
+  | datetime (t : Int) | date (t : Int) | time (t : Int) | duration (d : Dur)
   | list (xs : List (V F))
   | map (kvs : List (String × V F))
   | node (id : Nat) (deleted : Bool) (labels : List Nat) (props : List (Nat × V F))
@@ -63,7 +64,7 @@ def encC : V F → List (Call F)
   | .datetime t => [.ll 13, .ll t]
   | .date t => [.ll 14, .ll t]
   | .time t => [.ll 15, .ll t]
-  | .duration t => [.ll 16, .ll t]
+  | .duration d => [.ll 16, .ll (toLegacy d)]   -- `duration_to_legacy(dur)` (#3610)
   | .list xs => [.ll 6, .arr xs.length] ++ encCList xs
   | .map kvs => [.ll 10, .arr (kvs.length * 2)] ++ encCMap kvs
   | .node id del ls ps =>
@@ -106,7 +107,7 @@ def proj : V F → Val F
   | .datetime t => .datetime t
   | .date t => .date t
   | .time t => .time t
-  | .duration t => .duration t
+  | .duration d => .duration d
   | .list xs => .list (projList xs)
   | .map kvs => .map (projMap kvs)
   | .node id _ ls ps => .node id ls (projProps ps)
@@ -185,7 +186,7 @@ theorem compact_emits : ∀ v : V F, Emits E.vfmt (encC E v) (encPair E (proj v)
   | .datetime t => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
   | .date t => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
   | .time t => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
-  | .duration t => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
+  | .duration d => emits_cons E (Emits.leaf_ll _ _) (Emits.leaf_ll _ _)
   | .list xs => by
     have h := (list_emits xs).array
     rw [list_len] at h

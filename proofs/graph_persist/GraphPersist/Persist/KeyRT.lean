@@ -157,31 +157,43 @@ theorem key_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (K
     simp only [encodeGraph, List.append_assoc, List.append_nil]
   rw [e]; exact hall
 
-/-! ## The encoding-version gate (#3793) -/
+/-! ## The encoding-version gate (#3793, #3610) -/
 
 /-- `check_encoding_version` (decoder/mod.rs): `DECODE_MIN_VERSION = 19 ≤ encver ≤
-ENCODING_VERSION = 20` (serializers/mod.rs). -/
-def checkVer (encver : Int) : Bool := decide (19 ≤ encver) && decide (encver ≤ 20)
+ENCODING_VERSION = 21` (serializers/mod.rs; 21 since #3610). -/
+def checkVer (encver : Int) : Bool := decide (19 ≤ encver) && decide (encver ≤ 21)
 
-/-- `rdb_load_graph(rdb, encver, ..)` (:112): the gate, then `rdbKey`, before any read. -/
+/-- `rdb_load_graph(rdb, encver, ..)` (:115): the gate, then `rdbKey`, before any read. The
+reader is `BufferedReader::new(rdb, encver)` (:122); the only decoder that reads `encver` is a
+duration value's (`Codec.decOneAt`): `rdbKey` is the version-21 reader, which is the version
+`rdb_save` stamps on every key this build writes. -/
 def rdbLoad (C : Codecs M Tn Nm Ix Cn) (encver : Int) : Dec (Hdr Nm × Sch Nm Ix Cn × List (PR M Tn)) :=
   if checkVer encver then rdbKey C else Dec.fail
 
-theorem checkVer_iff (v : Int) : checkVer v = true ↔ v = 19 ∨ v = 20 := by
+theorem checkVer_iff (v : Int) : checkVer v = true ↔ v = 19 ∨ v = 20 ∨ v = 21 := by
   simp only [checkVer, Bool.and_eq_true, decide_eq_true_eq]; omega
 
-/-- A version-19 or -20 key reads back exactly as `key_rt` says. -/
+/-- A key this build saves (stamped `ENCODING_VERSION = 21`) reads back exactly as `key_rt` says.
+(Before #3610 the stamp was 20 and this read `v = 19 ∨ v = 20`; a 19/20 stream is one an older
+build wrote, whose durations are single offsets — `Codec.decOneAt_legacy` — and whose every
+other word reads as at 21 — `Codec.decOneAt_agree`.) -/
 theorem key_rt_ver (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g) (K : Nat)
     (hH : C.H.good (hdrOf g g.name K)) (es : List Entry) (hes : ∀ e ∈ es, EntryOK g e)
-    (hn : es.length < 2 ^ 64) (hc : ∀ e ∈ es, e.count < 2 ^ 64) (v : Int) (hv : v = 19 ∨ v = 20) :
+    (hn : es.length < 2 ^ 64) (hc : ∀ e ∈ es, e.count < 2 ^ 64) (v : Int) (hv : v = 21) :
     RT (rdbLoad C v) (encodeGraph C g g.name es K) (hdrOf g g.name K, g.sch, es.map (prOfE g)) := by
-  have : checkVer v = true := (checkVer_iff v).2 hv
+  have : checkVer v = true := (checkVer_iff v).2 (Or.inr (Or.inr hv))
   simp only [rdbLoad, this, if_true]
   exact key_rt C g hw K hH es hes hn hc
 
+/-- Versions 19 and 20 (older builds' RDBs) pass the gate too. -/
+theorem rdbLoad_accepts_legacy (C : Codecs M Tn Nm Ix Cn) (v : Int) (hv : v = 19 ∨ v = 20) :
+    rdbLoad C v = rdbKey C := by
+  have : checkVer v = true := (checkVer_iff v).2 (by omega)
+  simp only [rdbLoad, this, if_true]
+
 /-- Any other version fails without reading a word. -/
-theorem rdbLoad_refuses (C : Codecs M Tn Nm Ix Cn) (v : Int) (hv : ¬ (v = 19 ∨ v = 20)) (s : Stream) :
-    rdbLoad C v s = .err := by
+theorem rdbLoad_refuses (C : Codecs M Tn Nm Ix Cn) (v : Int) (hv : ¬ (v = 19 ∨ v = 20 ∨ v = 21))
+    (s : Stream) : rdbLoad C v s = .err := by
   have : checkVer v = false := by
     cases h : checkVer v
     · rfl

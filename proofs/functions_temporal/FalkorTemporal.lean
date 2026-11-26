@@ -1,6 +1,7 @@
 import FalkorTemporal.Calendar
 import FalkorTemporal.EraAll
 import FalkorTemporal.CalendarLaws
+import FalkorTemporal.DurationPre3610
 import FalkorTemporal.Duration
 import FalkorTemporal.Constructors
 import FalkorTemporal.VectorExpr

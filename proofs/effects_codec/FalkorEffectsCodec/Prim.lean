@@ -31,6 +31,7 @@ inductive DErr where
   | implausible (count remaining : Nat)
   | badString
   | badValueType (t : Nat)
+  | badDuration       -- `BadDuration(String)`: `Dur::new`'s message, abstracted
   | badOpcode (t : Nat)
   | emptyRecord (op : Nat)
   | badBool (v : Nat)

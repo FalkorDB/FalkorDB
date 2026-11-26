@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 use super::v3::BadFieldType;
-use super::v3::EFFECTS_VERSION;
+use super::v3::{EFFECTS_VERSION, EFFECTS_VERSION_V3};
 
 // ── encode errors ──
 
@@ -153,12 +153,19 @@ pub enum DecodeError {
     #[error("unknown SIValue type {0:#x}")]
     BadValueType(u32),
 
+    /// A `T_DURATION` whose components the engine cannot represent; the
+    /// string is the constructor's own message.
+    #[error("{0}")]
+    BadDuration(String),
+
     /// A string field that is not valid UTF-8, or is missing its NUL.
     #[error("malformed string in effects buffer")]
     BadString,
 
     /// A buffer whose version byte this build cannot read.
-    #[error("effects buffer is version {0}, this build reads {EFFECTS_VERSION}")]
+    #[error(
+        "effects buffer is version {0}, this build reads {EFFECTS_VERSION_V3} and {EFFECTS_VERSION}"
+    )]
     UnsupportedVersion(u8),
 
     /// An opcode with no record shape.

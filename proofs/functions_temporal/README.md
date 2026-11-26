@@ -58,11 +58,16 @@ Yes:
 
 | Theorem | In plain words | File |
 |---|---|---|
-| `dfc_civil`, `civil_dfc` | Day number ↔ (year, month, day) are mutually inverse: on all integers one way, on all real dates the other | `CalendarLaws.lean` |
+| `dfc_civil`, `civil_dfc` | Day number ↔ (year, month, day) are mutually inverse: on all integers one way, on all real dates the other | `DurationPre3610.lean` | The one-`i64` duration model before #3610 (history; `duration_from_legacy` replays its `decomposeDuration`) |
+| `DurationComponent.lean` | `Value::get_duration_component` over the components |
+| `CalendarLaws.lean` |
 | `civil_valid`, `dfc_injective` | Every day number maps to a real date, and no two dates share a day number | `CalendarLaws.lean` |
 | `fwdOk_all`, `bwdOk_all` | The 400-year Gregorian era checked day by day by the Lean kernel | `EraAll.lean` |
 | `daysFromCivilT_eq` | The two Rust copies of `days_from_civil` agree | `Calendar.lean` |
-| `construct_decompose` | Decomposing a duration and rebuilding it gives the same duration | `Duration.lean` |
+| `components_new`, `toLegacy_fromLegacy` | Since #3610 a duration is three signed components (months, days, seconds): `Dur::components` returns what `Dur::new` stored, and a legacy one-`i64` value read back re-encodes to itself | `Duration.lean` |
+| `durComp_total`, `durComp_years_months`, `durComp_hms`, `duration_component_far` | `duration.years` … `duration.seconds` read the components and are never null for a stored duration (#3610 fixed W9-temporal-1: null beyond about ±262,143 years) | `DurationComponent.lean` |
+| `neg_days_encoding`, `shiftMonthsC_min_year` | `date('2020-03-01') + duration({days:-1})` is 2020-02-29 since #3610; `shift_months` refuses year `i32::MIN` only for January and February | `Duration.lean` |
+| `construct_decompose` | Before #3610: decomposing a duration and rebuilding it gives the same duration | `DurationPre3610.lean` |
 | `temporal_order_total` | Date/time/duration ordering is total | `Duration.lean` |
 | `dateFromComponents_total`, `weekSlice_err_iff` | `date_from_components` is total, and the week-string split errors exactly when it would not be a valid slice | `Constructors.lean` |
 | `parseDate_ok`, `parseTime_ok` | A parsed date is a calendar date or a chrono-accepted ordinal / ISO-week result; a parsed time is below 86 400 s | `Parse.lean` |
@@ -82,13 +87,11 @@ Yes:
 
 ## Bugs found
 
-Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). The first row is an open divergence from C; the others are shared with C, suspected, or message-only.
+Each bug has a Rust repro test (`graph/tests/lean_functions_temporal.rs`, run locally and not committed) and was compared live against C. See [`../FINDINGS.md`](../FINDINGS.md). The rows are suspected or message-only. #3610 fixed W9-temporal-1 (`duration.years` null far out) and the shared negative-days divergence (`neg_days_encoding` now proves the openCypher result).
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| — | `durComp_null_but_representable`, `bug_duration_component_null` (`DurationComponent.lean`) | `Value::get_duration_component` is chrono-bounded: a duration whose instant leaves chrono's year range (about 260,174 years and up) is accepted by `check_date_range` (up to ~2.1e9 years) and printed by `decompose_duration`, but `.years`/`.days`/… return `null`. `RETURN duration({years: 262000, days: 3}).years` is `null` in Rust, `262000` in C (re-checked live on 256ab4d3f); `years: -1000000` gives `null` in Rust, 0/0/3/6 in C | **Open** (confirmed live) |
-| — | `neg_days_encoding` | `date('2020-03-01') + duration({days:-1})` is 2020-03-02 (spec: 02-29), because negative durations are encoded as an instant before 1970 | Shared with C |
-| — | `civilFromDays_trunc` | `y - 1970` in `i32` inside `decompose_duration` overflows for durations whose year wraps | Suspected, not triggered in release |
+| — | `civilFromDays_trunc` | `civil_from_days` narrows the year to `i32` for far-out day numbers; since #3610 `duration_from_legacy` checks the re-encoding and falls back to plain seconds | Suspected, not triggered in release |
 | — | `point_null_lat_msgs` | `point({latitude:null, …})` gives two different error messages for a literal map and a map value | Message only |
 
 The header also records conversion divergences found live: `toString(1.0)` is `"1"` (C `"1.000000"`), `toInteger('1e3')` is 1000 (C `null`), and `toFloat(' 1')` is `null` (C 1). They aren't modelled, since `f64` formatting and parsing are abstract. More live-only conversion divergences (`conversion.rs` is private): `toString(0.1+0.2)` is `"0.30000000000000004"` (C `"0.300000"`), `toString(0.0/0)` is `"NaN"` (C `"nan"`), `toString(1e300)` differs past 17 digits (`format!("{f}")` vs C `%f`), `toInteger(' 12')` is `null` (C 12), `toFloat('0x10')` is `null` (C 16).
@@ -106,7 +109,7 @@ This project has no CONDITIONAL rows.
 | `Calendar.lean` | `isLeap`, `daysInMonth`, both `days_from_civil` copies, `civil_from_days`, and the named era pieces |
 | `EraDefs.lean`, `EraFwd0-3.lean`, `EraBwd0-3.lean`, `EraAll.lean` | The kernel-checked enumeration of one 400-year era (`fwdOk_all`, `bwdOk_all`) |
 | `CalendarLaws.lean` | `dfc_civil`, `civil_dfc`, `civil_valid`, `dfc_injective`, the `i32` cast |
-| `Duration.lean` | Duration construct/decompose, `add_duration_to_timestamp`/`sub_duration_from_timestamp`, `Time ± Duration`, temporal ordering |
+| `Duration.lean` | The #3610 `Dur` (three components, inline/heap packing), legacy conversion, construct, `add_duration_to_timestamp`/`sub_duration_from_timestamp`, `Time ± Duration`, temporal ordering |
 | `Constructors.lean` | `date_from_components` (week, quarter and year/month/day branches) and its totality, the `W` string split |
 | `Fns.lean` | Field extractors, `*_pure` constructors, the clock functions, `register` |
 | `Parse.lean` | `parse_date_string`, `parse_time_string`, `parse_datetime_string`, `parse_duration_string` (checked `W`/`D`) |
@@ -121,11 +124,12 @@ The project is self-contained: its `lakefile.toml` has no dependencies, and it d
 
 ## Coverage
 
-`COVERAGE.tsv` has 66 rows, all PROVEN: 33 in `temporal.rs`, 21 in `value.rs`, 8 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function. `get_duration_component` is one of the `value.rs` rows (`DurationComponent.lean`), and `format_duration` is a PROVEN row of [`../value_math`](../value_math) (`fmtDuration_*`, using this project's `decompose_duration`).
+`COVERAGE.tsv` has 78 rows, 73 PROVEN: 45 in `temporal.rs` (5 NOT COVERED: `Dur` clone/drop/hash/fmt/heap_holders, memory management and formatting), 21 in `value.rs`, 8 in `spatial.rs` and 4 in `vec_distance.rs`. Two `value.rs` rows are arm rows (the `Time ± Duration` arms of `add_slow` and `Sub::sub`), pinned to the enclosing function. `get_duration_component` is one of the `value.rs` rows (`DurationComponent.lean`), and `format_duration` is a PROVEN row of [`../value_math`](../value_math) (`fmtDuration_*`, over the duration components since #3610).
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 66 |
+| PROVEN | 73 |
+| NOT COVERED | 5 |
 
 The columnar evaluator (`vector_expr.rs`) and the `f64` conversion functions (`conversion.rs`) are no longer rows of this ledger: they are covered by [`../columnar`](../columnar), [`../expr_semantics`](../expr_semantics) and [`../value_math`](../value_math).
 

@@ -3,7 +3,7 @@ import FalkorTemporal.Parse
 # Temporal constructors: `*_pure`, `*_struct_pure`, the clock `*_fn`s and `register`
 (functions/temporal.rs)
 
-`construct_duration_secs` (PROVEN in Duration.lean as `constructDuration`) and
+`construct_duration` (PROVEN in Duration.lean as `constructDuration`, since #3610 a `Dur`) and
 `date_from_components` (Constructors.lean) are parameters. `unreachable!()` is the result
 `Res.unreachable`; the theorems show it is dead for every argument the declared type
 admits. The clock is an argument (`now`, seconds; `nowMs`, milliseconds).
@@ -19,8 +19,8 @@ def ofExcept {α β : Type} (f : α → β) : Except String α → Res β
 
 variable {F : Type} (N : Num F) (C : Chrono) (dfc : DFC)
 
-/-- `construct_duration_secs` signature (PROVEN as `constructDuration`). -/
-abbrev CDS := Int → Int → Int → Int → Int → Int → Int → Except String Int
+/-- `construct_duration` signature (PROVEN as `constructDuration`; #3610: returns a `Dur`). -/
+abbrev CDS := Int → Int → Int → Int → Int → Int → Int → Except String Dur
 
 /-- `date.and_hms_opt(0,0,0).unwrap().and_utc().timestamp()`: midnight of day `d`
 (`unwrap` cannot fail: 00:00:00 is always valid). -/
@@ -62,7 +62,7 @@ def durLoop : List (String × TV F) → (String → Int) → (String → Int)
     | none => durLoop kvs acc
     | some n => durLoop kvs (if k ∈ durKeys then (fun k' => if k' = k then n else acc k') else acc)
 
-def applyCds (cds : CDS) (f : String → Int) : Except String Int :=
+def applyCds (cds : CDS) (f : String → Int) : Except String Dur :=
   cds (f "years") (f "months") (f "weeks") (f "days") (f "hours") (f "minutes") (f "seconds")
 
 /-- `duration_pure` (temporal.rs). -/

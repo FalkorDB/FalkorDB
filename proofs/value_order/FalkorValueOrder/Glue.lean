@@ -1,3 +1,5 @@
+import FalkorCore.Value
+
 /-!
 # Value glue: constructors, `Clone`, trait declarations, type names (value.rs)
 
@@ -44,7 +46,7 @@ inductive W (F F32 : Type) where
   | datetime (t : Int)
   | date (t : Int)
   | time (t : Int)
-  | duration (t : Int)
+  | duration (d : FalkorCore.Dur)   -- #3610: months, days, seconds
 
 variable {F F32 : Type}
 
@@ -116,7 +118,7 @@ def W.clone : W F F32 → W F F32
   | .datetime t => .datetime t
   | .date t => .date t
   | .time t => .time t
-  | .duration t => .duration t
+  | .duration d => .duration d    -- Dur::clone (inline copy or Rc::clone)
 
 theorem W.clone_eq (v : W F F32) : v.clone = v := by cases v <;> rfl
 

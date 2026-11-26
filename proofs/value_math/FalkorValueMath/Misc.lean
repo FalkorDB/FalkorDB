@@ -20,9 +20,9 @@ open FalkorCore
 
 /-! ## `format_duration` -/
 
-/- `format_duration` after `decompose_duration` returned `(years, months, remaining)`
-(`remaining ≥ 0`: it is `ts - anchor` with the anchor the first of the month). -/
-def fmtDuration (years months remaining : Int) : String :=
+/- Before #3610: `format_duration` after `decompose_duration` returned `(years, months,
+remaining)` (`remaining ≥ 0`: `ts - anchor` with the anchor the first of the month). -/
+def pre3610_fmtDuration (years months remaining : Int) : String :=
   let days := remaining / 86400
   let r1 := remaining % 86400
   let hours := r1 / 3600
@@ -39,6 +39,37 @@ def fmtDuration (years months remaining : Int) : String :=
           else "")
   if s.length = 1 then s ++ "T0S" else s
 
+/-- `format_duration` (value.rs, #3610): each printed field from one component, with
+Rust's truncating `/`, `%` (`Int.tdiv`, `Int.tmod`), so every field keeps the sign of
+its component (`P1M-3D`, `PT-1H-30M`). -/
+def fmtDuration (c : Dur) : String :=
+  let years := c.months.tdiv 12
+  let months := c.months.tmod 12
+  let hours := c.secs.tdiv 3600
+  let minutes := (c.secs.tmod 3600).tdiv 60
+  let seconds := c.secs.tmod 60
+  let s := "P" ++ (if years ≠ 0 then toString years ++ "Y" else "")
+      ++ (if months ≠ 0 then toString months ++ "M" else "")
+      ++ (if c.days ≠ 0 then toString c.days ++ "D" else "")
+      ++ (if c.secs ≠ 0 then
+            "T" ++ (if hours ≠ 0 then toString hours ++ "H" else "")
+                ++ (if minutes ≠ 0 then toString minutes ++ "M" else "")
+                ++ (if seconds ≠ 0 then toString seconds ++ "S" else "")
+          else "")
+  if s.length = 1 then s ++ "T0S" else s
+
+/-- The printed fields add back up to the components: `12·Y + M = months`,
+`3600·H + 60·Mi + S = seconds`. -/
+theorem fmtDuration_parts (c : Dur) :
+    c.months.tdiv 12 * 12 + c.months.tmod 12 = c.months ∧
+    c.secs.tdiv 3600 * 3600 + (c.secs.tmod 3600).tdiv 60 * 60 + c.secs.tmod 60 = c.secs := by
+  have h1 := Int.tdiv_mul_add_tmod c.months 12
+  have h2 := Int.tdiv_mul_add_tmod c.secs 3600
+  have h3 := Int.tdiv_mul_add_tmod (c.secs.tmod 3600) 60
+  have h4 : (c.secs.tmod 3600).tmod 60 = c.secs.tmod 60 := by
+    rw [Int.tmod_tmod_of_dvd]; decide
+  omega
+
 /-- The clock fields are the base-(86400, 3600, 60) digits of `remaining`. -/
 theorem fmtDuration_fields (y mo d h mi se : Int) (hd : 0 ≤ d) (hh : 0 ≤ h ∧ h < 24)
     (hm : 0 ≤ mi ∧ mi < 60) (hs : 0 ≤ se ∧ se < 60) :
@@ -47,10 +78,21 @@ theorem fmtDuration_fields (y mo d h mi se : Int) (hd : 0 ≤ d) (hh : 0 ≤ h �
   intro r; refine ⟨?_, ?_, ?_, ?_⟩ <;> omega
 
 /-- The zero duration prints `PT0S` (ISO 8601). C prints `P` (live: `toString(duration('PT0S'))`). -/
-theorem fmtDuration_zero : fmtDuration 0 0 0 = "PT0S" := by decide
+theorem fmtDuration_zero : fmtDuration default = "PT0S" := by decide
 
-theorem fmtDuration_ex : fmtDuration 1 2 (3 * 86400 + 4 * 3600 + 5 * 60 + 6) = "P1Y2M3DT4H5M6S" := by decide
-theorem fmtDuration_ex2 : fmtDuration 0 0 90000 = "P1DT1H" := by decide
+theorem fmtDuration_ex : fmtDuration ⟨14, 3, 4 * 3600 + 5 * 60 + 6, by decide⟩ = "P1Y2M3DT4H5M6S" := by decide
+theorem fmtDuration_ex2 : fmtDuration ⟨0, 1, 3600, by decide⟩ = "P1DT1H" := by decide
+/-- #3610 (Neo4j): seconds no longer roll into days, `duration({seconds:90000})` is `PT25H`
+(before: `P1DT1H`, `pre3610_fmtDuration_ex2`); signs are per component. -/
+theorem fmtDuration_neo4j : fmtDuration ⟨0, 0, 90000, by decide⟩ = "PT25H" ∧
+    fmtDuration ⟨1, -3, 0, by decide⟩ = "P1M-3D" ∧
+    fmtDuration ⟨0, 0, -5400, by decide⟩ = "PT-1H-30M" ∧
+    fmtDuration ⟨-13, 0, 0, by decide⟩ = "P-1Y-1M" := by decide
+
+theorem pre3610_fmtDuration_zero : pre3610_fmtDuration 0 0 0 = "PT0S" := by decide
+theorem pre3610_fmtDuration_ex :
+    pre3610_fmtDuration 1 2 (3 * 86400 + 4 * 3600 + 5 * 60 + 6) = "P1Y2M3DT4H5M6S" := by decide
+theorem pre3610_fmtDuration_ex2 : pre3610_fmtDuration 0 0 90000 = "P1DT1H" := by decide
 
 /-! ## Memory accounting -/
 
@@ -62,6 +104,7 @@ inductive HV where
   | list (items : List HV) (cap rc : Nat)               -- List and Path
   | map (entries : List (Nat × Nat × Nat × HV)) (rc : Nat) -- (key len, key cap, key rc, value)
   | vec (len cap rc : Nat)
+  | durHeap (rc : Nat)                                  -- #3610: a heap `Dur` (`Arc<[i64; 3]>`)
 
 /-- `size_of` constants on 64-bit targets (checked by `sizes_are_as_modelled` in
 graph/tests/lean_value_math.rs). -/
@@ -70,6 +113,7 @@ def SZ_STRING : Nat := 24
 def SZ_ARC : Nat := 8
 def SZ_REL : Nat := 24
 def ARC_HDR : Nat := 16
+def SZ_DUR3 : Nat := 24   -- `[i64; 3]`
 
 mutual
 def heapSize : HV → Nat
@@ -79,6 +123,7 @@ def heapSize : HV → Nat
   | .list items _ _ => items.length * SZ_VALUE + heapSizeList items
   | .map entries _ => heapSizeMap entries
   | .vec len _ _ => len * 4
+  | .durHeap _ => SZ_DUR3
 def heapSizeList : List HV → Nat
   | [] => 0
   | x :: xs => heapSize x + heapSizeList xs
@@ -95,6 +140,7 @@ def amortized : HV → Nat
   | .list items cap rc => (ARC_HDR + cap * SZ_VALUE + amortizedList items) / rc
   | .map entries rc => (ARC_HDR + amortizedMap entries) / rc
   | .vec _ cap rc => (ARC_HDR + cap * 4) / rc
+  | .durHeap rc => (ARC_HDR + SZ_DUR3) / rc
 def amortizedList : List HV → Nat
   | [] => 0
   | x :: xs => amortized x + amortizedList xs
@@ -111,6 +157,7 @@ def Unshared : HV → Prop
   | .list items cap rc => rc = 1 ∧ items.length ≤ cap ∧ UnsharedList items
   | .map entries rc => rc = 1 ∧ UnsharedMap entries
   | .vec len cap rc => rc = 1 ∧ len ≤ cap
+  | .durHeap rc => rc = 1
 def UnsharedList : List HV → Prop
   | [] => True
   | x :: xs => Unshared x ∧ UnsharedList xs
@@ -164,6 +211,9 @@ theorem heap_le_amortized : ∀ (n : Nat) (h : HV), sizeOf h < n → Unshared h 
     | vec len cap rc =>
       simp only [Unshared] at hu; obtain ⟨rfl, hc⟩ := hu
       simp [heapSize, amortized, ARC_HDR]; omega
+    | durHeap rc =>
+      simp only [Unshared] at hu; subst hu
+      simp [heapSize, amortized, ARC_HDR, SZ_DUR3]
     | list items cap rc =>
       simp only [Unshared] at hu; obtain ⟨rfl, hc, hi⟩ := hu
       have := hl items (by simp at hs; omega) hi
@@ -190,6 +240,11 @@ estimates charge it 24 bytes — a fixed over-count (suspicion; no user-visible 
 known, relationships are never stored as attributes). -/
 theorem rel_charged : heapSize .rel = 24 ∧ amortized .rel = 24 := ⟨rfl, rfl⟩
 
+/-- #3610: an inline duration (`.scalar`) owns no heap; a heap duration charges its
+`[i64; 3]` (24 bytes) to `heap_size` and `(16 + 24) / holders` to the amortized figure. -/
+theorem dur_heap_charged (rc : Nat) :
+    heapSize (.durHeap rc) = 24 ∧ amortized (.durHeap rc) = 40 / rc := ⟨rfl, rfl⟩
+
 /-! ## `get_attr` / components -/
 
 variable {F : Type}
@@ -210,8 +265,9 @@ theorem point_component_case (widen : F → F) (la lo : F) :
     pointComponent widen la lo "LATITUDE" = .float (widen la) := by
   simp [pointComponent, eqIC, asciiLowerStr] <;> decide
 
-/-- The part of `get_duration_component` (value.rs) before chrono is consulted:
-unknown names error, `weeks` is always `0.0`. -/
+/-- The part of `get_duration_component` that was answered before chrono was consulted
+(pre-#3610): unknown names error, `weeks` is always `0.0`. `durationComponent_pre`: the
+#3610 function still gives these answers. -/
 def durationComponentPre (zero : F) (c : String) : Option (Except String (V F)) :=
   let known := ["years", "months", "weeks", "days", "hours", "minutes", "seconds"]
   if !(known.any (fun k => eqIC c k)) then some (.error s!"unknown duration component {c}")
@@ -223,9 +279,52 @@ live; openCypher expects 2). -/
 theorem duration_weeks_zero (zero : F) : durationComponentPre zero "weeks" = some (.ok (.float zero)) := by
   simp [durationComponentPre, eqIC, asciiLowerStr] <;> decide
 
+/-- `get_duration_component` (value.rs, #3610): the field `format_duration` prints,
+as a float (`ofInt` is `as f64`). -/
+def durationComponent (ofInt : Int → F) (d : Dur) (c : String) : Except String (V F) :=
+  if eqIC c "years" then .ok (.float (ofInt (d.months.tdiv 12)))
+  else if eqIC c "months" then .ok (.float (ofInt (d.months.tmod 12)))
+  else if eqIC c "weeks" then .ok (.float (ofInt 0))
+  else if eqIC c "days" then .ok (.float (ofInt d.days))
+  else if eqIC c "hours" then .ok (.float (ofInt (d.secs.tdiv 3600)))
+  else if eqIC c "minutes" then .ok (.float (ofInt ((d.secs.tmod 3600).tdiv 60)))
+  else if eqIC c "seconds" then .ok (.float (ofInt (d.secs.tmod 60)))
+  else .error s!"unknown duration component {c}"
+
+/-- The #3610 function agrees with the pre-chrono answers (unknown name, `weeks`). -/
+theorem eqIC_excl (c a b : String) (ha : eqIC c a = true) (hb : eqIC c b = true) :
+    asciiLowerStr a.toList = asciiLowerStr b.toList := by
+  simp only [eqIC, beq_iff_eq] at ha hb; rw [← ha, hb]
+
+theorem durationComponent_pre (ofInt : Int → F) (d : Dur) (c : String)
+    (r : Except String (V F)) (h : durationComponentPre (ofInt 0) c = some r) :
+    durationComponent ofInt d c = r := by
+  unfold durationComponentPre at h
+  unfold durationComponent
+  simp only [List.any_cons, List.any_nil, Bool.or_false] at h
+  by_cases hw : eqIC c "weeks" = true
+  · have ne : ∀ k, asciiLowerStr "weeks".toList ≠ asciiLowerStr k.toList → eqIC c k = false :=
+      fun k hk => by
+        cases h' : eqIC c k
+        · rfl
+        · exact absurd (eqIC_excl _ _ _ hw h') hk
+    rw [ne "years" (by decide), ne "months" (by decide)] at h ⊢
+    simp only [hw, Bool.true_or, Bool.or_true, Bool.not_true, Bool.false_eq_true, ite_false,
+      ite_true, Option.some.injEq] at h ⊢
+    exact h
+  · by_cases hk : (eqIC c "years" || (eqIC c "months" || (eqIC c "weeks" || (eqIC c "days" ||
+        (eqIC c "hours" || (eqIC c "minutes" || eqIC c "seconds")))))) = true
+    · rw [hk] at h; simp [hw] at h
+    · rw [Bool.not_eq_true] at hk
+      simp only [Bool.or_eq_false_iff] at hk
+      obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hk
+      simp only [h1, h2, h3, h4, h5, h6, h7, Bool.or_self, Bool.not_false, ite_true,
+        Option.some.injEq, Bool.false_eq_true, ite_false] at h ⊢
+      exact h
+
 /-- `get_attr` dispatch (value.rs); temporal component extractors are parameters
 (chrono-backed). -/
-def getAttr (widen : F → F) (dt d t du : Int → String → Except String (V F)) (v : V F) (attr : String) :
+def getAttr (widen : F → F) (dt d t : Int → String → Except String (V F)) (du : Dur → String → Except String (V F)) (v : V F) (attr : String) :
     Except String (V F) :=
   match v with
   | .map m => .ok ((lookup m attr).getD .null)
@@ -237,10 +336,10 @@ def getAttr (widen : F → F) (dt d t du : Int → String → Except String (V F
   | .null => .ok .null
   | v => .error s!"Type mismatch: expected Map, Node, Edge, Datetime, Date, Time, Duration, Null, or Point but was {v.name}"
 
-theorem getAttr_null (widen : F → F) (dt d t du : Int → String → Except String (V F)) (a : String) :
+theorem getAttr_null (widen : F → F) (dt d t : Int → String → Except String (V F)) (du : Dur → String → Except String (V F)) (a : String) :
     getAttr widen dt d t du .null a = .ok .null := rfl
 
-theorem getAttr_map_missing (widen : F → F) (dt d t du : Int → String → Except String (V F))
+theorem getAttr_map_missing (widen : F → F) (dt d t : Int → String → Except String (V F)) (du : Dur → String → Except String (V F))
     (m : List (String × V F)) (a : String) (h : lookup m a = none) :
     getAttr widen dt d t du (.map m) a = .ok .null := by simp [getAttr, h]
 
@@ -310,6 +409,11 @@ def T_DATE : Nat := 2 ^ 7
 def T_TIME : Nat := 2 ^ 8
 def T_DURATION : Nat := 2 ^ 10
 
+/-- `ENCVER_DURATION_COMPONENTS` / `ENCODING_VERSION` (serialization.rs, #3610): from
+encver 21 a duration is three signed values; below it, one legacy epoch offset. -/
+def ENCVER_DURATION_COMPONENTS : Nat := 21
+def ENCODING_VERSION : Nat := 21
+
 /-- Writer calls as tokens: `write_unsigned`, `write_signed`, `write_double`, `write_buffer`. -/
 inductive Tok (F : Type) where
   | u (n : Nat)
@@ -329,6 +433,11 @@ structure CodecOps (F : Type) where
   ofBits : Nat → F
   bits_lt : ∀ x, bits x < 2 ^ 32
   ofBits_bits : ∀ x, ofBits (bits x) = x
+  /-- `Reader::encver()` of the reader being decoded (#3610). -/
+  encver : Nat
+  /-- `duration_from_legacy` (temporal.rs, `Err` ↦ `none`; proofs/functions_temporal
+  `fromLegacy`, `toLegacy_fromLegacy`). -/
+  fromLegacy : Int → Option Dur
 
 variable (co : CodecOps F)
 
@@ -355,7 +464,7 @@ def encode : V F → List (Tok F)
   | .datetime t => [.u T_DATETIME, .s t]
   | .date t => [.u T_DATE, .s t]
   | .time t => [.u T_TIME, .s t]
-  | .duration t => [.u T_DURATION, .s t]
+  | .duration c => [.u T_DURATION, .s c.months, .s c.days, .s c.secs]
   | .null => [.u T_NULL]
   | .map _ | .node _ | .rel _ | .path _ => [.u T_NULL]   -- debug_assert!(false) in debug
 def encodeList : List (V F) → List (Tok F)
@@ -370,8 +479,44 @@ def readVec (bytes : List Nat) : Option (List F) :=
   if body.length < 4 * dim then none
   else some ((List.range dim).map (fun i => co.ofBits (fromLe4 ((body.drop (4 * i)).take 4))))
 
+/-- The `T_DURATION` arm of `decode_value` (value.rs, #3610): below encver 21 one
+legacy offset through `duration_from_legacy`, else three signed values through `Dur::new`. -/
+def decDur (rest : List (Tok F)) : Option (V F × List (Tok F)) :=
+  if co.encver < ENCVER_DURATION_COMPONENTS then
+    match rest with
+    | .s x :: r => (co.fromLegacy x).map (fun c => (.duration c, r))
+    | _ => none
+  else
+    match rest with
+    | .s m :: .s d :: .s s :: r => (Dur.new? m d s).map (fun c => (.duration c, r))
+    | _ => none
+
+theorem decDur_encode (hv : ENCVER_DURATION_COMPONENTS ≤ co.encver) (c : Dur) (r : List (Tok F)) :
+    decDur co (.s c.months :: .s c.days :: .s c.secs :: r) = some (.duration c, r) := by
+  unfold decDur; rw [if_neg (by omega)]; simp [Dur.new?_self]
+
+/-- Pre-#3610 RDB/effects payloads: one legacy `i64`, through `duration_from_legacy`. -/
+theorem decDur_legacy (hv : co.encver < ENCVER_DURATION_COMPONENTS) (x : Int) (r : List (Tok F)) :
+    decDur co (.s x :: r) = (co.fromLegacy x).map (fun c => (.duration c, r)) := by
+  unfold decDur; rw [if_pos hv]
+
+theorem decDur_some {rest r : List (Tok F)} {v : V F} (h : decDur co rest = some (v, r)) :
+    ∃ c, v = .duration c := by
+  unfold decDur at h
+  split at h
+  · split at h
+    · rcases hl : co.fromLegacy _ with _ | c <;> rw [hl] at h <;> simp at h
+      exact ⟨c, h.1.symm⟩
+    · cases h
+  · split at h
+    · rename_i m d s r'
+      rcases hl : Dur.new? m d s with _ | c <;> rw [hl] at h <;> simp at h
+      exact ⟨c, h.1.symm⟩
+    · cases h
+
 /- `Decode<19>` without the nesting cap (fuel bounds the recursion). The current decoder is
-`decodeValue` (Nesting.lean), proved equal to this one on values within the cap. -/
+`decodeValue` (Nesting.lean), proved equal to this one on values within the cap. Its `T_DURATION` arm follows #3610
+(by `co.encver`), so it stays the uncapped twin of `decodeValue` (`decodeValue_agrees`). -/
 def decodeUncapped : Nat → List (Tok F) → Option (V F × List (Tok F))
   | 0, _ => none
   | fuel + 1, .u tag :: rest =>
@@ -399,8 +544,7 @@ def decodeUncapped : Nat → List (Tok F) → Option (V F × List (Tok F))
       | .s i :: r => some (.date i, r) | _ => none
     else if tag = T_TIME then match rest with
       | .s i :: r => some (.time i, r) | _ => none
-    else if tag = T_DURATION then match rest with
-      | .s i :: r => some (.duration i, r) | _ => none
+    else if tag = T_DURATION then decDur co rest
     else none
   | _ + 1, _ => none
 where
@@ -421,6 +565,38 @@ def StorableList : List (V F) → Prop
   | [] => True
   | x :: xs => Storable x ∧ StorableList xs
 end
+
+/- #3610: a duration is written as three signed values and read back as three only by a
+reader at encver ≥ 21 (below it, the legacy one-value layout is read). Values without
+durations decode at any version. -/
+mutual
+def DurReadable : V F → Prop
+  | .duration _ => ENCVER_DURATION_COMPONENTS ≤ co.encver
+  | .list l => DurReadableList l
+  | _ => True
+def DurReadableList : List (V F) → Prop
+  | [] => True
+  | x :: xs => DurReadable x ∧ DurReadableList xs
+end
+
+/-- At the version this build writes, every value is readable. -/
+theorem durReadable_current (hv : ENCVER_DURATION_COMPONENTS ≤ co.encver) :
+    ∀ (n : Nat) (v : V F), sizeOf v < n → DurReadable co v := by
+  intro n
+  induction n with
+  | zero => intro v h; omega
+  | succ n ih =>
+    intro v hs
+    have hl : ∀ l : List (V F), sizeOf l < n → DurReadableList co l := by
+      intro l
+      induction l with
+      | nil => intro _; trivial
+      | cons x xs ihl =>
+        intro h; exact ⟨ih x (by simp at h; omega), ihl (by simp at h; omega)⟩
+    cases v with
+    | duration c => exact hv
+    | list l => exact hl l (by simp at hs; omega)
+    | _ => trivial
 
 theorem utf8_zero_strip (b : List Nat) : ((b ++ [0]).getLast? = some 0) ∧ (b ++ [0]).dropLast = b := by
   simp
@@ -464,24 +640,26 @@ theorem readVec_vecBytes (v : List F) (hl : v.length < 2 ^ 32) : readVec co (vec
 
 /-- **Codec roundtrip**: every storable value decodes to itself, leaving the rest of
 the stream untouched (fuel: any bound above the value's size). -/
-theorem decodeUncapped_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel → Storable v →
+theorem decodeUncapped_encode :
+    ∀ (fuel : Nat) (v : V F) (rest : List (Tok F)), sizeOf v < fuel → Storable v → DurReadable co v →
     decodeUncapped co fuel (encode co v ++ rest) = some (v, rest) := by
   intro fuel
   induction fuel with
   | zero => intro v _ h; omega
   | succ f ih =>
-    intro v rest hs hst
-    have hN : ∀ (l : List (V F)) (r : List (Tok F)), sizeOf l < f → StorableList l →
+    intro v rest hs hst hdr
+    have hN : ∀ (l : List (V F)) (r : List (Tok F)), sizeOf l < f → StorableList l → DurReadableList co l →
         decodeUncapped.decodeN co f l.length (encodeList co l ++ r) = some (l, r) := by
       intro l
       induction l with
-      | nil => intro r _ _; simp [encodeList, decodeUncapped.decodeN]
+      | nil => intro r _ _ _; simp [encodeList, decodeUncapped.decodeN]
       | cons x xs ihl =>
-        intro r hsz hsl
+        intro r hsz hsl hdl
         simp only [StorableList] at hsl
+        simp only [DurReadableList] at hdl
         simp only [encodeList, List.length_cons, List.append_assoc, decodeUncapped.decodeN]
-        rw [ih x _ (by simp at hsz; omega) hsl.1]
-        simp [ihl r (by simp at hsz; omega) hsl.2]
+        rw [ih x _ (by simp at hsz; omega) hsl.1 hdl.1]
+        simp [ihl r (by simp at hsz; omega) hsl.2 hdl.2]
     cases v with
     | bool b => cases b <;> simp [encode, decodeUncapped, T_NULL, T_BOOL]
     | int i => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64]
@@ -491,7 +669,7 @@ theorem decodeUncapped_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F))
       simp only [Storable] at hst
       simp only [encode, List.cons_append, List.nil_append]
       simp only [decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY]
-      simp [hN l rest (by simp at hs; omega) hst]
+      simp [hN l rest (by simp at hs; omega) hst hdr]
     | point la lo =>
       simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY, T_POINT,
         co.narrow_widen]
@@ -506,7 +684,7 @@ theorem decodeUncapped_encode : ∀ (fuel : Nat) (v : V F) (rest : List (Tok F))
     | time t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
         T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME]
     | duration t => simp [encode, decodeUncapped, T_NULL, T_BOOL, T_INT64, T_DOUBLE, T_STRING, T_INTERN, T_ARRAY,
-        T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME, T_DURATION]
+        T_POINT, T_VECTOR_F32, T_DATETIME, T_DATE, T_TIME, T_DURATION, decDur_encode co hdr]
     | null =>
       simp only [encode, List.cons_append, List.nil_append]
       unfold decodeUncapped

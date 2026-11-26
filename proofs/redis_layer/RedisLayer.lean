@@ -7,6 +7,8 @@ import RedisLayer.Compact
 import RedisLayer.RoQuery
 import RedisLayer.Bulk
 import RedisLayer.RoundTrip
+import RedisLayer.BlobVersion
+import RedisLayer.Dur
 import RedisLayer.SerialProof
 import RedisLayer.SerialCLayout
 import RedisLayer.RespVerbose

@@ -26,7 +26,7 @@ It holds under any destination key name, which is what `RENAME` and `GRAPH.COPY`
 
 The leaves are proven separately:
 
-- `decOne_encode`: every scalar property value comes back as itself, with the bytes after it untouched. That covers null, bool, int, float (bit for bit), string (including interned strings), point, datetime, date, time and duration;
+- `decOne_encode`: every scalar property value comes back as itself, with the bytes after it untouched. That covers null, bool, int, float (bit for bit), string (including interned strings), point, datetime, date, time and duration (three components since #3610; an older stream's single offset loads through `duration_from_legacy`, `decOneAt_legacy`);
 - `roaring_roundtrip`: the deleted-id bitmap round-trips;
 - `stripNul_nulTerm`: NUL-terminated strings round-trip.
 
@@ -86,6 +86,7 @@ The same happens for `0.0` vs `-0.0` and `1` vs `true`. The disagreement goes bo
 | Theorem | In plain words | File |
 |---|---|---|
 | `load_encode` | Loading a single-key payload gives exactly the `Graph::restore` arguments of the saved graph, and every truncation is detected | `Persist/RoundTrip.lean` |
+| `vec_blob_rt`, `vec_blob_newer`, `vec_blob_old` | A `GRAPH.RESTORE` blob (version prefix, #3610) loads back to the saved graph; a newer version is refused; an older unprefixed blob loads as before | `Persist/RoundTrip.lean` |
 | `multi_load` | A graph saved across K ≥ 2 keys, loaded in any key order, finalizes once, at the last key, to the same graph | `Persist/MultiLoad3.lean` |
 | `multi_key_tiles`, `multi_key_bound`, `multi_key_all_placed`, `multi_key_matrices` | The multi-key layout puts each entity in exactly one key, in order, within the size limit, with matrices on key 0 only | `Persist/MultiKey.lean` |
 | `decOne_encode` | Every scalar property value round-trips through the v19 codec | `Codec.lean` |

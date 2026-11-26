@@ -307,7 +307,7 @@ structure ConvOps (F : Type) where
   fmtDatetime : Int → String
   fmtDate : Int → String
   fmtTime : Int → String
-  fmtDuration : Int → String
+  fmtDuration : Dur → String
 
 variable (c : ConvOps F)
 

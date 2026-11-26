@@ -10,7 +10,9 @@ use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
+use graph::graph::graphblas::serialization::{
+    Decode, ENCODING_VERSION as GRAPH_ENCODING_VERSION, Encode, Reader, Writer, index_field_type,
+};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::text_index_options::PHONETIC_OFF;
@@ -20,13 +22,20 @@ use roaring::RoaringTreemap;
 
 use crate::graph_core::ThreadedGraph;
 
-/// RDB encoding version written, and the newest one the decoder loads: C FalkorDB's v20.
+/// RDB encoding version written, and the newest one the decoder loads.
 ///
-/// v20 is v19 (buffered IO with type tags) plus a CCH index payload, which C writes only for
-/// a graph that has a CCH index. This module never writes that payload, so what it writes is
-/// v19's layout stamped 20; a key carrying the payload is refused, as this module has no CCH
-/// index. See `decoder::decode_payload_directory`.
-pub const ENCODING_VERSION: i32 = 20;
+/// 19 is the layout both engines shared. C moved on to 20 (v19 plus a CCH index payload,
+/// which C writes only for a graph that has a CCH index) and refuses anything above it, so
+/// this build's own change, `T_DURATION` carrying three signed components
+/// ([`graph::graph::graphblas::serialization::ENCVER_DURATION_COMPONENTS`]), takes 21
+/// rather than 20, whose meaning there is C's layout. A v20 key loads as v19 does (a key
+/// carrying the CCH payload is refused, as this module has no CCH index); see
+/// `decoder::decode_payload_directory`.
+#[allow(
+    clippy::cast_possible_wrap,
+    reason = "a const that fits an i32 by inspection, equal to the graph crate's u64"
+)]
+pub const ENCODING_VERSION: i32 = GRAPH_ENCODING_VERSION as i32;
 
 /// The oldest encoding version the decoder loads: v19, the layout v20 extends. C decodes
 /// older versions with separate decoders, which this module does not have.
@@ -140,7 +149,7 @@ pub struct Header {
     pub key_count: u64,
 }
 
-impl Encode<19> for Header {
+impl Encode<{ GRAPH_ENCODING_VERSION }> for Header {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -169,7 +178,7 @@ impl Encode<19> for Header {
     }
 }
 
-impl Decode<19> for Header {
+impl Decode<{ GRAPH_ENCODING_VERSION }> for Header {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let name_bytes = r.read_buffer()?;
         let graph_name = if name_bytes.last() == Some(&0) {
@@ -266,7 +275,7 @@ fn strip_null_terminator(buf: &[u8]) -> String {
     }
 }
 
-impl Encode<19> for Schema {
+impl Encode<{ GRAPH_ENCODING_VERSION }> for Schema {
     fn encode(
         &self,
         w: &mut dyn Writer,
@@ -476,7 +485,7 @@ fn encode_constraint_block(
     }
 }
 
-impl Decode<19> for Schema {
+impl Decode<{ GRAPH_ENCODING_VERSION }> for Schema {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         // --- Attribute keys ---
         let attr_count = r.read_unsigned()?;
@@ -754,6 +763,7 @@ impl Schema {
 mod tests {
     use super::*;
     use crate::serializers::buffered_io::{BufferedReader, VecWriter};
+    use crate::serializers::decoder::vec_load_graph;
     use index_field_type::{
         INDEX_FLD_FULLTEXT, INDEX_FLD_GEO, INDEX_FLD_NUMERIC, INDEX_FLD_STR, INDEX_FLD_VECTOR,
     };
@@ -787,6 +797,63 @@ mod tests {
             assert_eq!(name.as_str(), "g");
             fields
         })
+    }
+
+    /// A `GRAPH.RESTORE` blob names the encoding version it was written at; a
+    /// blob from a build that predates the prefix is read as the version it
+    /// was written at, and one from a newer build is refused.
+    #[test]
+    fn restore_blob_version_prefix() {
+        let blob = |first: Option<u64>| {
+            let mut w = VecWriter::new();
+            if let Some(v) = first {
+                w.write_unsigned(v);
+            }
+            w.write_buffer(b"g\0");
+            w.into_vec()
+        };
+
+        let current = blob(Some(GRAPH_ENCODING_VERSION));
+        let mut r = BufferedReader::from_blob(&current).unwrap();
+        assert_eq!(r.encver(), GRAPH_ENCODING_VERSION);
+        // The prefix is consumed: what follows is the graph's own header.
+        assert_eq!(r.read_buffer().unwrap(), b"g\0");
+
+        // An older build wrote no prefix; its first value is the name buffer.
+        let old = blob(None);
+        let mut r = BufferedReader::from_blob(&old).unwrap();
+        assert_eq!(r.encver(), 19);
+        assert_eq!(r.read_buffer().unwrap(), b"g\0");
+
+        // A prefix naming an older version is honoured, a newer one refused.
+        let mid = blob(Some(20));
+        assert_eq!(BufferedReader::from_blob(&mid).unwrap().encver(), 20);
+        let future = blob(Some(GRAPH_ENCODING_VERSION + 1));
+        let err = BufferedReader::from_blob(&future).err().unwrap();
+        assert!(err.contains("this build reads up to"), "{err}");
+        let ancient = blob(Some(18));
+        let err = BufferedReader::from_blob(&ancient).err().unwrap();
+        assert!(err.contains("this build reads from"), "{err}");
+
+        assert!(
+            BufferedReader::from_blob(&[]).is_ok(),
+            "empty is a read error later, not here"
+        );
+    }
+
+    /// A blob holding only the version prefix leaves the reader at EOF. A
+    /// blob has no Redis IO handle to load another chunk from, so reading on
+    /// must be an error rather than a call through a null handle.
+    #[test]
+    fn restore_blob_version_only_is_truncated() {
+        let mut w = VecWriter::new();
+        w.write_unsigned(GRAPH_ENCODING_VERSION);
+        let blob = w.into_vec();
+        let mut r = BufferedReader::from_blob(&blob).unwrap();
+        let err = r.read_buffer().unwrap_err();
+        assert!(err.contains("truncated"), "{err}");
+        let err = vec_load_graph(&blob, 0, "g").err().unwrap();
+        assert!(err.contains("truncated"), "{err}");
     }
 
     fn types(fields: &[Field]) -> Vec<IndexType> {
