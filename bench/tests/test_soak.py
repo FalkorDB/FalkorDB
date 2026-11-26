@@ -1590,9 +1590,12 @@ def soak_report(tmp_path, monkeypatch):
     full.mkdir()
     monkeypatch.setattr(gen_final, "S", tmp_path)
     monkeypatch.setattr(gen_final, "FULL", full)
-    monkeypatch.setattr(gen_final.subprocess, "run", lambda *args, **kwargs: None)
+    scoring = types.SimpleNamespace(returncode=0, stderr="")
+    monkeypatch.setattr(gen_final.subprocess, "run", lambda *args, **kwargs: scoring)
 
-    def build(scores, findings=(), campaign=None):
+    def build(scores, findings=(), campaign=None, score_py=None):
+        if score_py is not None:  # how score.py ended: (exit status, stderr)
+            scoring.returncode, scoring.stderr = score_py
         (full / "scores.json").write_text(json.dumps(scores))
         (tmp_path / "findings.json").write_text(json.dumps(list(findings)))
         if campaign is not None:
@@ -1607,13 +1610,15 @@ def _scored(total, rust="s01_social_feed-rust", c="s01_social_feed-c"):
     return {"total": total, "run": rust, "c_run": c, "notes": []}
 
 
+ALL_SCENARIOS = [scn for scn, *_ in gen_final.SCN]
+
+
 def test_the_soak_report_says_not_blocked_when_nothing_blocks(soak_report):
     full, build = soak_report
     _soak_run(full, "s01_social_feed-rust", {})
     _soak_run(full, "s01_social_feed-c", {"server_log_crash_markers": ["panic"]})
-    page = build(
-        {"scenarios": {"s01_social_feed": _scored(95.0)}, "release_score": 95.0, "blocked_by": []}
-    )
+    every = {scn: _scored(95.0, rust=f"{scn}-rust", c=f"{scn}-c") for scn in ALL_SCENARIOS}
+    page = build({"scenarios": every, "release_score": 95.0, "blocked_by": []})
     assert (
         "Not blocked: no open critical Rust bug, and no critical check or Rust run failed." in page
     )
@@ -1650,11 +1655,31 @@ def test_the_soak_report_names_what_blocks_the_release(soak_report):
         "pending": ["s12_iot_retention"],
     }
     page = build(scores, findings)
+    rest = ", ".join(scn for scn in ALL_SCENARIOS if scn != "s09_replication")
     assert (
         "Blocked: 1 open critical Rust bug (F3); a critical check failed or the run failed in"
-        " s09_replication. Scenario score —/100 over 0 scenarios; still running: s12_iot_retention."
+        f" s09_replication. Scenario score —/100 over 0 of 12 scenarios. Not scored yet: {rest}."
     ) in page
     assert 'class="verdict"' in page
+
+
+def test_the_soak_report_decides_nothing_on_scores_it_does_not_have(soak_report):
+    _, build = soak_report
+    one = {"scenarios": {"s01_social_feed": _scored(95.0)}, "release_score": 95.0, "blocked_by": []}
+    page = build(one)
+    assert "Not decided: 11 of 12 scenarios are not scored yet." in page
+    assert "Not blocked" not in page and 'class="verdict"' in page
+    # score.py failed: the scores.json it left from an earlier run says nothing about this one
+    every = {scn: _scored(95.0) for scn in ALL_SCENARIOS}
+    stale = {"scenarios": every, "release_score": 95.0, "blocked_by": []}
+    page = build(
+        stale, score_py=(1, "Traceback ...\njson.decoder.JSONDecodeError: Expecting value")
+    )
+    assert (
+        "Not decided: score.py failed (exit 1): json.decoder.JSONDecodeError: Expecting value."
+        " Scenario score —/100 over 0 of 12 scenarios."
+    ) in page
+    assert "Not blocked" not in page
 
 
 def test_the_soak_report_shows_campaign_notes_as_written_for_their_campaign(soak_report):
@@ -1885,3 +1910,19 @@ def test_s12_writes_each_ack_whole_before_its_name_exists(tmp_path):
     assert renamed == [("ack-w-4-3.tmp", "ack-w-4-3")]
     assert json.loads((tmp_path / "ack-w-4-3").read_text()) == {"nk": {"1": 2}, "last": 7}
     assert [p.name for p in tmp_path.iterdir()] == ["ack-w-4-3"]
+
+
+def test_soak_scoring_blocks_on_an_unreadable_summary_and_waits_for_c(tmp_path, monkeypatch):
+    (_soak_run(tmp_path, "s01_cut-rust", None, rc=124) / "summary.json").write_text('{"ops": {')
+    _soak_run(tmp_path, "s02_waiting-rust", {})
+    _soak_run(tmp_path, "s02_waiting-c", {}, rc=None)  # the C baseline is still running
+    _soak_run(tmp_path, "s03_bad_c-rust", {"monitor": {"rss_max_mb": 150}})
+    (_soak_run(tmp_path, "s03_bad_c-c", None) / "summary.json").write_text("{")
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["blocked_by"] == ["s01_cut"]
+    assert scores["failed_runs"] == {"s01_cut": "s01_cut-rust exited 124"}
+    assert scores["pending"] == ["s02_waiting"]
+    bad_c = scores["scenarios"]["s03_bad_c"]
+    assert bad_c["rss_vs_c"] is None
+    assert "s03_bad_c-c left no readable summary.json: scored without C ratios" in bad_c["notes"]
+    assert list(scores["scenarios"]) == ["s03_bad_c"]

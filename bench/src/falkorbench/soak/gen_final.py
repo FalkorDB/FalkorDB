@@ -151,8 +151,10 @@ def main_op(summ):
 
 # ------------------------------------------------------------- build
 def build():
-    subprocess.run([PY, "-I", str(S / "score.py"), str(FULL)], capture_output=True, timeout=300)
-    scores = jl(FULL / "scores.json") or {"scenarios": {}}
+    scoring = subprocess.run([PY, "-I", str(S / "score.py"), str(FULL)], capture_output=True, text=True,
+                             timeout=300)
+    # a score.py that failed left the previous scores.json (if any): none of it is this run's
+    scores = (jl(FULL / "scores.json") if scoring.returncode == 0 else None) or {"scenarios": {}}
     camp = campaign()
     label, previous = camp.get("label"), camp.get("previous")
     prev = (jl(FULL / f"scores-{previous}.json") if previous else None) or {"scenarios": {}}
@@ -243,16 +245,26 @@ def build():
                          and "FIXED" not in str(f.get("status", "")))
     fixed_ids = ", ".join(f["id"] for f in rust if "FIXED" in str(f.get("status", "")))
     nscored = len(scores["scenarios"])
-    pending = scores.get("pending", [])
+    # not scored and not blocked: a run still going, a C baseline not finished, or never run
+    unscored = [scn for scn, *_ in SCN if scn not in scores["scenarios"] and scn not in blocked]
     reasons = []
     if ncrit:
         reasons.append(f"{ncrit} open critical Rust bug{'' if ncrit == 1 else 's'} ({crit_ids})")
     if blocked:
         reasons.append(f"a critical check failed or the run failed in {', '.join(blocked)}")
-    gate = (f"Blocked: {'; '.join(reasons)}." if reasons else
-            "Not blocked: no open critical Rust bug, and no critical check or Rust run failed.")
-    gate += f" Scenario score {fmt(release, 1)}/100"
-    gate += f" over {nscored} scenarios; still running: {', '.join(pending)}." if pending else "."
+    if scoring.returncode != 0:
+        why = (scoring.stderr or "").strip().splitlines()[-1:] or ["no output"]
+        gate = f"Not decided: score.py failed (exit {scoring.returncode}): {why[0][:200]}."
+    elif reasons:
+        gate = f"Blocked: {'; '.join(reasons)}."
+    elif unscored:
+        gate = f"Not decided: {len(unscored)} of {len(SCN)} scenarios are not scored yet."
+    else:
+        gate = "Not blocked: no open critical Rust bug, and no critical check or Rust run failed."
+    gate += f" Scenario score {fmt(release, 1)}/100 over {nscored} of {len(SCN)} scenarios."
+    if unscored and scoring.returncode == 0:
+        gate += f" Not scored yet: {', '.join(unscored)}."
+    passed = gate.startswith("Not blocked")
     c_name = camp.get("c_baseline") or "C"
     notes = camp.get("notes") or {}
     notes_html = (f"<p><b>Notes written for the {esc(notes.get('written_for') or '?')} campaign</b> "
@@ -344,7 +356,7 @@ details ul{{margin-top:8px;font-size:13px}}
     <p class="meta">Updated {now} · {nscored} of {len(SCN)} scenarios scored{(' · ' + esc(camp['environment'])) if camp.get('environment') else ''}</p>
   </header>
 
-  <div class="verdict{'' if reasons else ' pass'}">
+  <div class="verdict{' pass' if passed else ''}">
     <div class="eyebrow">Release gate</div>
     <div class="big">{esc(gate)}</div>
     {notes_html}

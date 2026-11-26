@@ -171,8 +171,17 @@ def succeeded(d):
     return finished(d) and exit_status(d) == 0
 
 
+def read_summary(p):
+    """summary.json's content, or None when there is none or it does not parse (a run killed
+    while it wrote the file)."""
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def rust_runs(root):
-    """The Rust run to score per scenario, and the scenarios with none yet.
+    """The Rust run to score per scenario, and the scenarios with none finished yet.
 
     The current <scenario>-rust counts once it finished (a run in progress has written
     summary.json only part way). While it runs again, or after run_rust_main.sh discarded
@@ -204,12 +213,14 @@ def main():
         rc = exit_status(rdir)
         if rc != 0:
             failed[name] = f"{rdir.name} exited {rc if rc is not None else 'with no status'}"
-        rs = rdir / "summary.json"
-        if not rs.exists():
-            continue  # failed before it summarised: nothing to score, still a blocker
+        rust = read_summary(rdir / "summary.json")
+        if rust is None:  # nothing to score: a blocker whatever its exit status said
+            failed.setdefault(name, f"{rdir.name} left no readable summary.json")
+            continue
         base = [root / f"{name}-c", root / f"{name}-c@jul-master"]  # C re-run in progress: the old one meanwhile
         if not any(finished(d) for d in base):
-            continue  # score only once the C baseline has finished
+            pending.append(name)  # score only once the C baseline has finished
+            continue
         same = [root / f"{name}-c-samewindow", root / f"{name}-c-samewindow@jul-master"]
         # a C run that timed out or crashed is no baseline: the first that exited 0, the
         # same-size C rerun before the short baseline
@@ -222,9 +233,10 @@ def main():
             elif any(o.get("no_c_compare") and o["scenario"] == name
                      and (o.get("build") != "jul-master" or not (cdir / ".commit").exists()) for o in OVERRIDES):
                 cdir = None  # C baseline not comparable: score without C ratios
-        cs = cdir / "summary.json" if cdir else None
-        res[name] = score(json.loads(rs.read_text()), json.loads(cs.read_text()) if cs and cs.exists() else None,
-                          rdir, cdir)
+        c = read_summary(cdir / "summary.json") if cdir else None
+        if cdir and c is None:
+            notes.append(f"{cdir.name} left no readable summary.json: scored without C ratios")
+        res[name] = score(rust, c, rdir, cdir)
         if name in failed:
             notes.append(f"run failed: {failed[name]}")
         res[name]["notes"] += notes
@@ -232,7 +244,7 @@ def main():
     tot = [v["total"] for v in res.values()]
     blocked = sorted({k for k, v in res.items() if v["critical_failures"] or v["crashed"]} | set(failed))
     summary = {"scenarios": res, "release_score": round(sum(tot) / len(tot), 1) if tot else None,
-               "blocked_by": blocked, "failed_runs": failed, "pending": pending}
+               "blocked_by": blocked, "failed_runs": failed, "pending": sorted(pending)}
     (root / "scores.json").write_text(json.dumps(summary, indent=1, default=str))
     for k, v in res.items():
         print(f"{k:28} total {v['total']:5.1f}  C{v['correctness']:4} S{v['stability']:5} "
