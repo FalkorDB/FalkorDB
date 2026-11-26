@@ -11,7 +11,7 @@
 | `MatH.inner`/`isSynced` | `inner` (:762) / `is_synced` (:874) |
 | `sparsityName`    | `sparsity_status` (:1183) |
 | `posB`/`posU`     | `IterExtract::pos` (:1826, impls :1843 bool, :1863 u64) |
-| `vecFrom`/`ptr`   | `From<GrB_Vector>` (vector.rs) / `ptr` |
+| `vecFrom`/`ptr`   | `From<GrB_Vector>` for `Vector<Untyped>`/`<bool>`/`<u64>` (vector.rs) / `Vector<T>::ptr` |
 | `vIterNew`        | `vector::Iter::new` (vector.rs) |
 
 The GraphBLAS constants are named by their C meaning (`GrB_DESC_RC` =
@@ -181,11 +181,11 @@ def encodeM {M α : Type} (unload : M → Container α) (load : Container α →
 def UnloadLoad {M α : Type} (unload : M → Container α) (load : Container α → M) : Prop :=
   ∀ m, load (unload m) = m
 
-/-- C-side contract the decode relies on (data, not an axiom):
-`Matrix::decode` (matrix.rs) re-populates `x,h,p,i,b` from the payload
-and nulls `Y`, and `GxB_load_Matrix_from_Container` reads no other pointer
-field (the `*_future` arrays are reserved), so the loaded matrix does not
-depend on the pointer fields of the header. -/
+/-- C-side contract the round trip states (data, not an axiom): the loaded
+matrix does not depend on the pointer fields of the header. Since #3080
+`Matrix::decode` (matrix.rs) takes only the nine scalar fields from the payload
+and keeps the fresh container's pointers, so for decode this holds by
+construction (`GBWMatDecode.adopt_ptr_blind`). -/
 def PtrBlind {M α : Type} (load : Container α → M) : Prop :=
   ∀ c : Container α, load { c with hdr := scrub c.hdr } = load c
 
