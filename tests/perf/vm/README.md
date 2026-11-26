@@ -154,8 +154,11 @@ longest `timeout_minutes` first. Each leg holds, in the region of
 micro-hw's C4 VM (`_perf-micro.yml`, 8 C4 vCPUs) runs beside the cap, not in it, and
 C's `benchmark.yml` adds two n4-highcpu-8 (16 N4 vCPUs, 2 IPs) when it overlaps. The
 cap is per run: a dispatch or a release gate running beside the night brings its own legs. Before
-the cap, at most 6 VMs had run at once (5 n4-standard-16 and the C4, 2026-11-25), with no
-quota error.
+the cap, at most 6 VMs had run at once (5 n4-standard-16 and the C4, 2026-11-25); with it, 8
+n4-standard-16 came up at once on the first try (run 45873165600), with no quota error. The
+region's limits as the CI service account read them that day: IN_USE_ADDRESSES 2300, N2_CPUS
+5000, DISKS_TOTAL_GB 204,800. The N4 and C4 CPU limits are not in that list; they live in
+Cloud Quotas (the console's Quotas page), which the account could not read.
 
 To raise the cap, check the region's quotas first (IAM & Admin > Quotas: N4 CPUs, in-use
 IP addresses, Hyperdisk Balanced capacity, and the global CPUs-all-regions), then a

@@ -438,7 +438,12 @@ that start after its CI suites pass:
 
 `ci-gate` requires both in the queue of a version branch and accepts `skipped`
 everywhere else. The queue's required-check timeout must cover the CI and the
-nightly together, about 180 minutes; an admin sets it in the branch's ruleset.
+nightly together: about 60 minutes with the VM legs capped at 8
+(`tests/perf/vm/README.md`). CI took 20 minutes (run 45357512317) and `perf-cov`
+15 beside the nightly. The 12 soak legs took 32 (run 45873165600), and pokec, ldbc
+and fuzz fit the same two waves (about 35, estimated from their legs' times). A
+confirming re-run adds about its scenario's length again. An admin sets the timeout
+in the branch's ruleset.
 
 **`bench cov-gate`** turns benchmark-cov's PR-vs-base CSVs into a `result.json`
 (check `benchmark-cov`, findings named `<row> [<reads|writes>]`). Instructions
