@@ -840,6 +840,373 @@ def test_conclude_fails_on_an_unreadable_nightly(tmp_path, text):
     assert merge.main(["conclude", "--nightly", str(path)]) == 1
 
 
+# --- conclude as the release gate: waivers (#4004) -------------------------------
+
+
+def finding(name, status="regression", metric="instructions"):
+    return {
+        "name": name,
+        "metric": metric,
+        "candidate": 2.0,
+        "baseline": 1.0,
+        "ratio": 2.0,
+        "threshold": 1.1,
+        "direction": "higher_is_worse",
+        "status": status,
+    }
+
+
+def red_night(*checks):
+    return {"status": "red", "checks": list(checks)}
+
+
+def regressed(check, *names):
+    return {"check": check, "verdict": "regression", "findings": [finding(n) for n in names]}
+
+
+def waiver(check="micro-hw", pattern=r"cross product filter \[reads\]", issue=3996):
+    return {"check": check, "finding": pattern, "issue": issue, "reason": "accepted"}
+
+
+def decide(nightly, *waivers, gate=True):
+    return merge.conclude(nightly, merge.read_waivers(list(waivers)), gate=gate)
+
+
+def test_a_waived_regression_passes_and_is_still_reported():
+    code, lines = decide(red_night(regressed("micro-hw", "cross product filter [reads]")), waiver())
+    assert code == 0
+    assert lines == [
+        "the night is red: the run succeeds",
+        "waived (reported, not gated): micro-hw: cross product filter [reads]"
+        " (instructions 2.0x) waived by #3996",
+    ]
+
+
+def test_an_unwaived_regression_fails():
+    code, lines = decide(red_night(regressed("micro-hw", "cross product filter [reads]")))
+    assert code == 1
+    assert lines[-1] == "not waived: micro-hw: cross product filter [reads] (instructions 2.0x)"
+
+
+def test_one_unwaived_finding_fails_the_whole_night():
+    night = red_night(regressed("micro-hw", "cross product filter [reads]", "id eq join [reads]"))
+    code, lines = decide(night, waiver())
+    assert code == 1
+    assert any(line.startswith("waived") for line in lines)
+    assert lines[-1].startswith("not waived: micro-hw: id eq join [reads]")
+
+
+@pytest.mark.parametrize(
+    "pattern, name, waived",
+    [
+        # The pattern must match the whole name: a bare row does not waive the
+        # same row in another class, nor a longer name that contains it.
+        ("cross product filter", "cross product filter [reads]", False),
+        (r"cross product filter \[reads\]", "cross product filter [writes]", False),
+        (r"cross product filter \[reads\]", "big cross product filter [reads]", False),
+        (r"cross product filter \[reads\]", "Cross product filter [reads]", False),
+        (r"cross product filter \[(reads|writes)\]", "cross product filter [writes]", True),
+        (r"cross product .*", "cross product filter [reads]", True),
+    ],
+)
+def test_a_waiver_matches_the_whole_finding_name(pattern, name, waived):
+    code, _ = decide(red_night(regressed("micro-hw", name)), waiver(pattern=pattern))
+    assert code == (0 if waived else 1)
+
+
+def test_a_waiver_names_its_check():
+    code, _ = decide(red_night(regressed("soak-b", "cross product filter [reads]")), waiver())
+    assert code == 1
+
+
+def test_errors_are_never_waived():
+    """A check that could not measure fails the gate even when every regression
+    beside it is waived; a re-run is what clears an infrastructure failure."""
+    night = red_night(
+        regressed("micro-hw", "cross product filter [reads]"),
+        {"check": "soak-a", "verdict": "error", "error": "no VM came up"},
+    )
+    code, lines = decide(night, waiver(), waiver(check="soak-a", pattern=".*"))
+    assert code == 1
+    assert lines[-1] == "not waived: soak-a: error: no VM came up"
+    code, _ = decide({"status": "error", "checks": [night["checks"][1]]}, waiver(pattern=".*"))
+    assert code == 1
+
+
+def test_a_regression_with_no_finding_cannot_be_waived():
+    night = red_night({"check": "micro-hw", "verdict": "regression", "findings": []})
+    code, lines = decide(night, waiver(pattern=".*"))
+    assert code == 1
+    assert lines[-1] == "not waived: micro-hw: regression with no finding to waive"
+
+
+@pytest.mark.parametrize(
+    "extra, metric, ratio, waived",
+    [
+        ({"metric": "instructions"}, "instructions", 2.0, True),
+        ({"metric": "instructions"}, "alloc_bytes", 2.0, False),  # another metric on the row
+        ({"max_ratio": 1.35}, "instructions", 1.30, True),
+        ({"max_ratio": 1.35}, "instructions", 1.36, False),  # the row got worse again
+        ({"max_ratio": 1.35}, "instructions", None, False),  # no ratio to bound
+        ({"metric": "instructions", "max_ratio": 1.35}, "instructions", 1.35, True),
+        ({"max_ratio": 1.5}, "instructions", 0.7, True),  # higher-is-worse: a faster row
+    ],
+)
+def test_a_waiver_can_name_its_metric_and_bound_its_ratio(extra, metric, ratio, waived):
+    row = {**finding("cross product filter [reads]", metric=metric), "ratio": ratio}
+    night = red_night({"check": "micro-hw", "verdict": "regression", "findings": [row]})
+    assert decide(night, {**waiver(), **extra})[0] == (0 if waived else 1)
+
+
+def test_a_regression_from_a_run_that_did_not_finish_is_not_waived():
+    """A check killed after it found a waived regression may have measured
+    nothing else: its regression stands, unwaived."""
+    night = red_night(regressed("micro-hw", "cross product filter [reads]"))
+    assert decide(night, waiver())[0] == 0
+    code, lines = merge.conclude(
+        night,
+        merge.read_waivers([waiver()]),
+        gate=True,
+        unfinished={"micro-hw": "the check timed out"},
+    )
+    assert code == 1
+    assert lines[-1] == (
+        "not waived: micro-hw: regression from a run that did not finish (the check timed out)"
+    )
+
+
+def incomplete_night(check, reason):
+    entry = regressed(check, "cross product filter [reads]")
+    return red_night({**entry, "incomplete": reason})
+
+
+def test_a_waived_regression_from_an_incomplete_result_is_not_waived():
+    """A result that says it left parts unmeasured or cut its findings is not
+    trusted with a waiver: the night fails, naming the check and the reason."""
+    night = incomplete_night("micro-hw", "3 rows not measured")
+    code, lines = decide(night, waiver())
+    assert code == 1
+    assert lines[-1] == (
+        "not waived: micro-hw: regression from a result that did not measure"
+        " everything (3 rows not measured)"
+    )
+    assert not any(line.startswith("waived") for line in lines)
+
+
+def test_a_waived_regression_with_a_null_or_absent_incomplete_still_passes():
+    plain = regressed("micro-hw", "cross product filter [reads]")
+    for entry in (plain, {**plain, "incomplete": None}):
+        code, lines = decide(red_night(entry), waiver())
+        assert code == 0
+        assert lines[1].startswith("waived (reported, not gated)")
+
+
+def test_an_incomplete_cov_gate_result_is_not_waived(tmp_path):
+    entry = {**regressed("benchmark-cov", "UNWIND id seek"), "incomplete": "findings cut at 50"}
+    night = red_night(entry)
+    assert decide(night, waiver(check="benchmark-cov", pattern="UNWIND id seek"))[0] == 1
+    entry["incomplete"] = None
+    assert decide(night, waiver(check="benchmark-cov", pattern="UNWIND id seek"))[0] == 0
+
+
+@pytest.mark.parametrize(
+    "facts, unfinished",
+    [
+        (CLEAN_EXIT, {}),
+        ({**CLEAN_EXIT, "timed_out": True}, {"micro-hw": "the check timed out"}),
+        ({**CLEAN_EXIT, "command_exit": 143}, {"micro-hw": "the check exited 143"}),
+        (None, {"micro-hw": "nothing records that the check's command finished (no exit status)"}),
+    ],
+)
+def test_merge_lists_the_regressions_whose_check_did_not_finish(tmp_path, facts, unfinished):
+    results = tmp_path / "results"
+    put(results, "micro-hw", result("micro-hw", "regression"))
+    if facts is not None:
+        put(results, "micro-hw", facts, name="perf-vm.json")
+    (tmp_path / "context.json").write_text(json.dumps(context()))
+    (tmp_path / "plan.json").write_text(json.dumps(MICRO_HW))
+    argv = ["results", "--context", str(tmp_path / "context.json")]
+    argv += ["--plan", str(tmp_path / "plan.json"), "--results", str(results)]
+    argv += ["--out", str(tmp_path / "nightly.json")]
+    argv += ["--unfinished-out", str(tmp_path / "unfinished.json")]
+    assert merge.main(argv) == 0
+    assert json.loads((tmp_path / "unfinished.json").read_text()) == unfinished
+    # And conclude reads it back: the waived regression is refused when unfinished.
+    waivers = write(tmp_path, "w.json", [waiver(pattern="UNWIND id seek")])
+    argv = ["conclude", "--gate", "--nightly", str(tmp_path / "nightly.json")]
+    argv += ["--waivers", waivers, "--unfinished", str(tmp_path / "unfinished.json")]
+    assert merge.main(argv) == (1 if unfinished else 0)
+
+
+@pytest.mark.parametrize(
+    "verdict, waivers, code",
+    [
+        ("pass", [], 0),
+        ("regression", [], 1),
+        ("regression", [waiver(check="benchmark-cov", pattern="UNWIND id seek")], 0),
+        ("error", [waiver(check="benchmark-cov", pattern=".*")], 1),
+    ],
+)
+def test_conclude_judges_one_result(tmp_path, verdict, waivers, code):
+    """benchmark-cov's gate has one result.json, not a night: judged the same way."""
+    path = write(tmp_path, "result.json", result("benchmark-cov", verdict))
+    argv = ["conclude", "--gate", "--result", path, "--waivers", write(tmp_path, "w.json", waivers)]
+    assert merge.main(argv) == code
+
+
+def test_a_waived_single_result_must_be_valid(tmp_path, capsys):
+    doc = result("benchmark-cov", "regression")
+    doc["candidate"] = {**doc["candidate"], "image": "not-pinned:latest"}
+    path = write(tmp_path, "result.json", doc)
+    waivers = write(tmp_path, "w.json", [waiver(check="benchmark-cov", pattern=".*")])
+    assert merge.main(["conclude", "--result", path, "--waivers", waivers]) == 1
+    assert "the result is not valid" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "below, expected",
+    [
+        ("6.3.0", "v6.2.1"),  # a pull request into 6.2: the newest 6.2.x
+        ("6.2.2", "v6.2.1"),  # tag v6.2.2: the release before it
+        ("6.2.1", "v6.2.0"),  # re-releasing v6.2.1: never itself
+        ("6.10.0", "v6.2.1"),  # versions compare as numbers, not text
+        ("6.4.0-rc.1", "v6.2.1"),  # a prerelease tag of a new line
+        ("6.2.1-rc.1", "v6.2.0"),  # 6.2.1 is above its own prerelease
+        ("6.0.5", "v6.0.4"),  # the 6.0 line ignores the later 6.2
+        ("6.0.0", None),  # nothing below (v4.x is the C engine, never a baseline)
+    ],
+)
+def test_the_gate_baseline_is_the_highest_release_below_a_version(below, expected):
+    tags = ["v6.2.0", "v4.22.4", "v6.0.4", "v6.2.1", "v6.0.1", "v6.2.2-rc.1", "6.1.0", "nightly"]
+    assert merge.release_below(tags, below) == expected
+
+
+@pytest.mark.parametrize("below", ["6.2", "v6.2", "6.2.x", ""])
+def test_the_gate_baseline_needs_a_version(below):
+    with pytest.raises(merge.PlanError):
+        merge.release_below(["v6.2.1"], below)
+
+
+@pytest.mark.parametrize("status", ["red", "error"])
+@pytest.mark.parametrize("checks", [[], [{"check": "micro-hw", "verdict": "pass"}]])
+def test_a_bad_night_that_names_no_reason_does_not_pass(status, checks):
+    assert decide({"status": status, "checks": checks}, waiver(pattern=".*"))[0] == 1
+
+
+def test_only_regression_findings_are_matched():
+    """An improvement or info row a waiver happens to match explains nothing."""
+    night = red_night(
+        {
+            "check": "micro-hw",
+            "verdict": "regression",
+            "findings": [finding("a", status="improvement"), finding("b")],
+        }
+    )
+    assert decide(night, waiver(pattern="a"))[0] == 1
+    assert decide(night, waiver(pattern="b"))[0] == 0
+
+
+@pytest.mark.parametrize("gate, code", [(True, 1), (False, 0)])
+def test_a_gate_that_measured_nothing_fails(gate, code):
+    assert decide({"status": "skipped", "checks": []}, gate=gate)[0] == code
+
+
+def test_green_passes_the_gate():
+    assert decide({"status": "green", "checks": []}) == (
+        0,
+        ["the night is green: the run succeeds"],
+    )
+
+
+@pytest.mark.parametrize(
+    "entry, why",
+    [
+        ({"check": "micro-hw", "finding": "x", "issue": 1}, "needs the keys"),
+        ({**waiver(), "until": "6.2.2"}, "needs the keys"),
+        ({**waiver(), "metric": "instr"}, "not a contract metric"),
+        ({**waiver(), "max_ratio": 0}, "not a positive number"),
+        ({**waiver(), "max_ratio": True}, "not a positive number"),
+        ({**waiver(), "max_ratio": "1.5"}, "not a positive number"),
+        (waiver(check="Micro"), "not a check name"),
+        (waiver(check="checks-yaml"), "not a check name"),
+        (waiver(issue=0), "not an issue number"),
+        (waiver(issue=True), "not an issue number"),
+        (waiver(issue="3996"), "not an issue number"),
+        (waiver(pattern=""), "non-empty regex"),
+        (waiver(pattern=["x"]), "non-empty regex"),
+        (waiver(pattern="cross ["), "not a regex"),
+        ({**waiver(), "reason": "two\nlines"}, "one non-empty line"),
+        ({**waiver(), "reason": " "}, "one non-empty line"),
+    ],
+)
+def test_a_waiver_conclude_cannot_use_is_refused(entry, why):
+    with pytest.raises(merge.PlanError, match=why):
+        merge.read_waivers([entry])
+
+
+@pytest.mark.parametrize("doc", [{"check": "micro-hw"}, "micro-hw", ["x"]])
+def test_waivers_must_be_a_list_of_mappings(doc):
+    with pytest.raises(merge.PlanError):
+        merge.read_waivers(doc)
+
+
+def test_the_real_waivers_file_is_usable():
+    """The file the gate reads, as yq hands it to conclude (null when it holds
+    only comments)."""
+    merge.read_waivers(parse_yaml(HERE.parent / "waivers.yaml"))
+
+
+def write(tmp_path, name, doc):
+    path = tmp_path / name
+    path.write_text(json.dumps(doc))
+    return str(path)
+
+
+def test_conclude_end_to_end_with_a_waiver(tmp_path, capsys):
+    """The nightly.json merge writes for a regression, through the CLI: refused
+    without a waiver, passed with one, and the waived row is a warning on the
+    run page."""
+    measured(tmp_path / "results", "micro-hw", result("micro-hw", "regression"))
+    run_merge(tmp_path, MICRO_HW)
+    night = str(tmp_path / "nightly.json")
+    none = write(tmp_path, "none.json", None)
+    assert merge.main(["conclude", "--nightly", night, "--waivers", none, "--gate"]) == 1
+    waivers = write(tmp_path, "w.json", [waiver(pattern="UNWIND id seek")])
+    capsys.readouterr()
+    assert merge.main(["conclude", "--nightly", night, "--waivers", waivers, "--gate"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "the night is red: the run succeeds"
+    assert out[1].startswith("::warning::waived (reported, not gated): micro-hw: UNWIND id seek")
+
+
+def test_a_waived_pass_needs_a_valid_nightly(tmp_path, capsys):
+    night = write(
+        tmp_path, "n.json", red_night(regressed("micro-hw", "cross product filter [reads]"))
+    )
+    waivers = write(tmp_path, "w.json", [waiver()])
+    assert merge.main(["conclude", "--nightly", night, "--waivers", waivers]) == 1
+    assert "not waived: the result is not valid" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("text", ["", "\n", "null\n"])
+def test_a_comment_only_waivers_file_waives_nothing(tmp_path, text):
+    """yq prints nothing or `null` for bench/waivers.yaml as it starts."""
+    (tmp_path / "w.json").write_text(text)
+    for status, code in (("green", 0), ("red", 1)):
+        night = write(
+            tmp_path, "n.json", red_night(regressed("micro-hw", "x")) | {"status": status}
+        )
+        argv = ["conclude", "--nightly", night, "--waivers", str(tmp_path / "w.json")]
+        assert merge.main(argv) == code
+
+
+@pytest.mark.parametrize("text", ["{not json", '[{"check": "micro-hw"}]'])
+def test_unreadable_waivers_fail_the_run(tmp_path, text):
+    night = write(tmp_path, "n.json", {"status": "green", "checks": []})
+    (tmp_path / "w.json").write_text(text)
+    assert merge.main(["conclude", "--nightly", night, "--waivers", str(tmp_path / "w.json")]) == 1
+
+
 # --- micro-hw: the micro tier's one check, on a C4 VM ----------------------------
 
 
@@ -1123,6 +1490,7 @@ esac
             "BASELINE_REPO": "falkordb/falkordb-server",
             "CANDIDATE_INPUT": "",
             "BASELINE_INPUT": "",
+            "BASELINE_BELOW": "",
         },
     )
     assert run.returncode == 0, run.stdout + run.stderr
@@ -1145,3 +1513,738 @@ def test_every_upload_replaces_an_earlier_attempts_artifact():
     assert len(uploads) == 3, [step["with"]["name"] for _, step in uploads]
     for job, step in uploads:
         assert step["with"].get("overwrite") is True, (job, step["with"]["name"])
+
+
+RELEASES = [
+    {"tag_name": tag, "draft": draft, "prerelease": pre}
+    for tag, draft, pre in [
+        ("v6.2.0", False, False),
+        ("v4.22.4", False, False),  # the C engine shares the repository
+        ("v6.0.4", False, False),
+        ("v6.2.1", False, False),
+        ("v6.3.0", True, False),  # a draft
+        ("v6.2.2", False, True),  # a prerelease
+        ("v6.0.1", False, False),
+    ]
+]
+
+
+def fake_uv(bin_dir):
+    """`uv run --project bench --frozen bench <args>` as this interpreter running
+    falkorbench.cli, so the step runs this checkout's code wherever the test is."""
+    import sys
+
+    src = HERE.parent / "src"
+    fake_tool(
+        bin_dir,
+        "uv",
+        f"""[[ $1 == run && $5 == bench ]] || {{ echo "unexpected uv $*" >&2; exit 9; }}
+shift 5
+PYTHONPATH={src} exec {sys.executable} -I -m falkorbench.cli "$@"
+""",
+    )
+
+
+@pytest.mark.parametrize(
+    "below, baseline",
+    [
+        ("6.3.0", "6.2.1"),  # a pull request into 6.2: the newest 6.2.x
+        ("6.2.2", "6.2.1"),  # tag v6.2.2: the release before it, not its prerelease
+        ("6.2.1", "6.2.0"),  # re-releasing v6.2.1: never itself
+        ("6.4.0", "6.2.1"),  # the draft v6.3.0 is no release
+        ("6.0.5", "6.0.4"),  # the 6.0 line ignores the later 6.2
+        ("6.0.0", None),  # nothing below: v4.22.4 is filtered out by the step's jq
+        ("6.2", None),  # not a version
+    ],
+)
+def test_a_gate_baseline_step_picks_the_highest_release_below(tmp_path, below, baseline):
+    """The resolve step end to end: GitHub's release list through the step's own
+    jq filter (stable, v5 and up), then `bench nightly merge release`."""
+    import shutil
+
+    if shutil.which("jq") is None:
+        pytest.skip("jq is not installed")
+    bin_dir, temp = tmp_path / "bin", tmp_path / "temp"
+    bin_dir.mkdir()
+    temp.mkdir()
+    fake_uv(bin_dir)
+    fake_tool(
+        bin_dir,
+        "docker",
+        f"""case "$4" in
+  *:[46].*|*rc-pr-7-valkey) echo '{{"digest": "sha256:{"a" * 64}"}}' ;;
+  *) echo "ERROR: $4: not found" >&2; exit 1 ;;
+esac
+""",
+    )
+    (temp / "releases.json").write_text(json.dumps(RELEASES))
+    fake_tool(
+        bin_dir,
+        "gh",
+        f"""jqexpr=""
+while [[ $# -gt 0 ]]; do [[ $1 == --jq ]] && jqexpr=$2; shift; done
+case "$jqexpr" in
+  *tag_name*) jq -r "$jqexpr" {temp / "releases.json"} ;;
+  .sha) echo {"d" * 40} ;;
+  *) echo "unexpected gh --jq $jqexpr" >&2; exit 9 ;;
+esac
+""",
+    )
+    out = temp / "output"
+    run = run_step(
+        step_script("resolve", "images"),
+        tmp_path,
+        {
+            "BIN": str(bin_dir),
+            "RUNNER_TEMP": str(temp),
+            "GITHUB_OUTPUT": str(out),
+            "GITHUB_STEP_SUMMARY": str(temp / "summary"),
+            "GITHUB_REPOSITORY": "o/r",
+            "WALK": "20",
+            "CANDIDATE_REPO": "ghcr.io/falkordb/falkordb-server",
+            "BASELINE_REPO": "falkordb/falkordb-server",
+            "CANDIDATE_INPUT": "ghcr.io/falkordb/falkordb-server:rc-pr-7-valkey",
+            "BASELINE_INPUT": "",
+            "BASELINE_BELOW": below,
+        },
+    )
+    if baseline is None:
+        assert run.returncode != 0
+        assert "::error::" in run.stdout + run.stderr
+        return
+    assert run.returncode == 0, run.stdout + run.stderr
+    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    assert outputs["baseline_label"] == baseline
+    assert outputs["candidate_label"] == "rc-pr-7-valkey"
+
+
+# --- the release gate's callers (#4004) ------------------------------------------
+
+
+GATE_CALLERS = {("rust-pr.yml", "perf"): "nightly"}
+
+
+@pytest.mark.parametrize("caller, mode", GATE_CALLERS.items())
+def test_a_gate_caller_passes_only_declared_inputs(caller, mode):
+    """GitHub rejects a call with an undeclared input before any job runs, and
+    actionlint cannot see across an owner/repo@ref call."""
+    file, job_name = caller
+    job = workflow(file)["jobs"][job_name]
+    # Main's copy names `./` (its own perf code); a version branch's names @main.
+    assert job["uses"] == "./.github/workflows/perf-nightly.yml"
+    declared = workflow("perf-nightly.yml")["on"]["workflow_call"]["inputs"]
+    passed = set(job["with"])
+    assert passed <= set(declared), sorted(passed - set(declared))
+    assert {key for key, spec in declared.items() if spec.get("required")} <= passed
+    assert job["with"]["mode"] == mode
+    assert job["secrets"] == "inherit"
+    # A caller grants at least what the called jobs ask for.
+    assert job["permissions"] == {"contents": "read", "actions": "read", "packages": "write"}
+
+
+def test_every_job_runs_the_gate_workflows_own_commit():
+    """Called from a version branch, the caller's commit has no perf code: every
+    checkout names this workflow's commit, and the checks get it as code_ref."""
+    jobs = workflow("perf-nightly.yml")["jobs"]
+    checkouts = [
+        step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith("actions/checkout@")
+    ]
+    assert len(checkouts) == 4
+    for step in checkouts:
+        assert step["with"]["repository"] == "${{ job.workflow_repository }}"
+        assert step["with"]["ref"] == "${{ job.workflow_sha }}"
+    for name in ("micro", "vm"):
+        assert jobs[name]["uses"].startswith("./.github/workflows/")
+        assert jobs[name]["with"]["code_ref"] == "${{ needs.resolve.outputs.code_sha }}"
+        assert jobs[name]["with"]["mode"] == "${{ inputs.mode || 'nightly' }}"
+    hardware = workflow("_perf-micro.yml")["jobs"]["hardware"]
+    assert hardware["uses"] == "./.github/workflows/_perf-vm.yml"
+    assert hardware["with"]["code_ref"] == "${{ inputs.code_ref }}"
+
+
+def test_a_call_concludes_as_a_gate_with_the_waivers():
+    conclude_step = workflow("perf-nightly.yml")["jobs"]["report"]["steps"][-1]
+    assert conclude_step["env"]["GATE_MODE"] == "${{ inputs.mode }}"
+    assert "--waivers" in conclude_step["run"] and "--gate" in conclude_step["run"]
+    assert "yq -o=json '.' bench/waivers.yaml" in conclude_step["run"]
+
+
+@pytest.mark.parametrize(
+    "event, pull_base, queue_ref, below",
+    [
+        # Only the queue of a version branch X.Y gets the gate, whatever the ref's spelling.
+        ("merge_group", "", "refs/heads/6.2", "6.3.0"),
+        ("merge_group", "", "refs/heads/6.0", "6.1.0"),
+        ("merge_group", "", "refs/heads/6.9", "6.10.0"),
+        ("merge_group", "", "refs/heads/main", None),
+        ("merge_group", "", "refs/heads/perf/fuzz-scenario", None),  # a stacked branch
+        ("merge_group", "", "refs/heads/6.2.1", None),
+        ("merge_group", "", "refs/heads/x6.2", None),
+        # A pull request never does, even into a version branch (its CI is the cherry-pick's).
+        ("pull_request", "6.2", "", None),
+        ("pull_request", "6.0", "", None),
+        ("pull_request", "main", "", None),
+    ],
+)
+def test_only_the_queue_of_a_version_branch_gets_the_gate(
+    tmp_path, event, pull_base, queue_ref, below
+):
+    run_job = workflow("rust-pr.yml")["jobs"]["check-files"]
+    step = next(s for s in run_job["steps"] if s.get("id") == "key")
+    assert step["env"]["QUEUE_BASE_REF"] == "${{ github.event.merge_group.base_ref }}"
+    (tmp_path / "bin").mkdir()
+    out = tmp_path / "output"
+    env = {"BIN": str(tmp_path / "bin"), "GITHUB_OUTPUT": str(out), "GITHUB_SHA": "a" * 40}
+    env = {**env, "EVENT": event, "PR_NUM": "7", "BASE_REF": pull_base, "QUEUE_BASE_REF": queue_ref}
+    run = run_step(step["run"], tmp_path, env)
+    assert run.returncode == 0, run.stderr
+    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    assert outputs.get("perf_below") == below
+    assert outputs["ci_key"] == ("mg-" + "a" * 40 if event == "merge_group" else "pr-7")
+
+
+@pytest.mark.parametrize("job_name", ["perf", "perf-cov"])
+@pytest.mark.parametrize(
+    "perf_required, perf, passes",
+    [
+        ("false", "skipped", True),  # a pull request, or main's queue
+        ("true", "success", True),
+        (
+            "true",
+            "skipped",
+            False,
+        ),  # the CI suites failed, or the gate never ran in the version queue
+        ("true", "failure", False),
+        ("true", "cancelled", False),
+        ("false", "failure", False),
+    ],
+)
+def test_ci_gate_requires_the_perf_gate_only_where_it_runs(
+    tmp_path, job_name, perf_required, perf, passes
+):
+    import shutil
+
+    if shutil.which("jq") is None:
+        pytest.skip("jq is not installed")
+    job = workflow("rust-pr.yml")["jobs"]["ci-gate"]
+    assert {"perf", "perf-cov"} <= set(job["needs"])
+    step = job["steps"][0]
+    names = [*job["needs"]]
+    # The other gate job did what it does where it is required, or skipped elsewhere.
+    results = {name: {"result": "success", "outputs": {}} for name in names}
+    other = "perf-cov" if job_name == "perf" else "perf"
+    results[other]["result"] = "success" if perf_required == "true" else "skipped"
+    results[job_name]["result"] = perf
+    (tmp_path / "bin").mkdir()
+    env = {
+        "BIN": str(tmp_path / "bin"),
+        "RESULTS": json.dumps(results),
+        "EVENT": "merge_group" if perf_required == "true" else "pull_request",
+        "PERF_REQUIRED": perf_required,
+    }
+    run = run_step(step["run"], tmp_path, env)
+    assert (run.returncode == 0) == passes, run.stdout + run.stderr
+
+
+def test_release_tag_has_no_perf_gate():
+    """The gate runs in the version branch's merge queue, never at tagging."""
+    jobs = workflow("release-tag.yml")["jobs"]
+    assert "perf" not in jobs
+    for name, job in jobs.items():
+        assert "perf" not in job.get("needs", []), name
+        assert "needs.perf." not in str(job.get("if", "")), name
+    assert not any("perf-nightly" in str(job.get("uses", "")) for job in jobs.values())
+
+
+def test_the_perf_gate_runs_the_nightly_flow_on_the_queues_image():
+    jobs = workflow("rust-pr.yml")["jobs"]
+    assert jobs["perf"]["with"]["mode"] == "nightly"
+    assert "checks" not in jobs["perf"]["with"]  # every registered check
+    for name in ("perf", "perf-cov"):
+        assert jobs[name]["needs"] == ["check-files", "ci-pipeline"]
+        assert "needs.check-files.outputs.perf_below != ''" in jobs[name]["if"]
+        assert jobs[name]["with"]["candidate_image"] == (
+            "ghcr.io/falkordb/falkordb-server:rc-${{ needs.check-files.outputs.ci_key }}-valkey"
+        )
+        assert jobs[name]["with"]["baseline_below"] == "${{ needs.check-files.outputs.perf_below }}"
+    # Nothing narrows the checks inside the called workflow either.
+    assert "GATE_CHECKS" not in (WORKFLOWS / "perf-nightly.yml").read_text()
+
+
+# --- benchmark-cov as the release gate (#4004) -----------------------------------
+
+from falkorbench import cov_gate  # noqa: E402
+from falkorbench.metrics import Row  # noqa: E402
+
+
+def rows(column, **values):
+    return {query: Row({column: value}) for query, value in values.items()}
+
+
+def cov_sources(instr_pr, instr_base, alloc_pr=None, alloc_base=None):
+    alloc_pr = alloc_pr if alloc_pr is not None else {"RETURN 1": 1000.0}
+    alloc_base = alloc_base if alloc_base is not None else {"RETURN 1": 1000.0}
+    return {
+        "callgrind": {"pr": rows("instr", **instr_pr), "base": rows("instr", **instr_base)},
+        "measure": {
+            "pr": rows("alloc_bytes", **alloc_pr),
+            "base": rows("alloc_bytes", **alloc_base),
+        },
+    }
+
+
+def by_name(findings):
+    return {(f["name"], f["metric"]): f["status"] for f in findings}
+
+
+def test_cov_gate_flags_3996_at_1_30x():
+    """#3996's row as callgrind counted it in run 45332918572 (main@4c1088949,
+    which 6.2.1 matches, against 6.2.0): a regression with no floor."""
+    xs = {"cross product filter": 313_644.0}
+    findings, errors = cov_gate.judge(cov_sources(xs, {"cross product filter": 240_361.0}))
+    assert errors == []
+    assert by_name(findings) == {("cross product filter [reads]", "instructions"): "regression"}
+    assert round(findings[0]["ratio"], 3) == 1.305
+
+
+@pytest.mark.parametrize(
+    "pr, base, status",
+    [
+        (1100.0, 1000.0, None),  # exactly 1.10x: the bound is strict
+        (1111.0, 1000.0, "regression"),  # 1.111x on a tiny row: no floor on instructions
+        (910.0, 1000.0, None),  # 0.91x: base over PR is 1.099x, within the bound
+        (900.0, 1000.0, "improvement"),  # base over PR is 1.11x
+    ],
+)
+def test_cov_gate_instructions_cross_at_10_percent_with_no_floor(pr, base, status):
+    findings, _ = cov_gate.judge(cov_sources({"arithmetic": pr}, {"arithmetic": base}))
+    assert by_name(findings).get(("arithmetic [reads]", "instructions")) == status
+
+
+@pytest.mark.parametrize(
+    "pr, base, status",
+    [
+        (170_000.0, 100_000.0, "regression"),  # 1.7x and +70,000 B (> 64 KiB)
+        (118_000.0, 100_000.0, None),  # 1.18x but +18,000 B: under the floor
+        (9_500.0, 1_000.0, "regression"),  # 9.5x and +8,500 B: the steep tier
+        (3_800.0, 400.0, None),  # 9.5x but +3,400 B: under the steep floor
+        (40_000.0, 400_000.0, "improvement"),
+    ],
+)
+def test_cov_gate_allocations_use_micro_hws_rule(pr, base, status):
+    sources = cov_sources(
+        {"RETURN 1": 1.0}, {"RETURN 1": 1.0}, {"SET property": pr}, {"SET property": base}
+    )
+    findings, _ = cov_gate.judge(sources)
+    assert by_name(findings).get(("SET property [writes]", "alloc_bytes")) == status
+
+
+def test_cov_gate_says_error_when_a_side_or_a_row_is_missing():
+    _, errors = cov_gate.judge(cov_sources({}, {"RETURN 1": 1.0}))
+    assert errors == ["no callgrind rows for pr"]
+    _, errors = cov_gate.judge(
+        cov_sources({"RETURN 1": 1.0}, {"RETURN 1": 1.0, "arithmetic": 5.0, "reduce": 5.0})
+    )
+    assert errors == ["2 callgrind row(s) measured on base, not on pr: arithmetic, reduce"]
+
+
+def write_csv(path, column, values):
+    path.write_text("query," + column + "\n" + "".join(f"{q},{v}\n" for q, v in values.items()))
+
+
+def test_cov_gate_end_to_end_is_refused_then_waived(tmp_path, capsys):
+    """The workflow's two steps on CSVs in benchmark-cov's format: cov-gate writes a
+    result the contract accepts, and conclude refuses it until a waiver names it."""
+    art = tmp_path / "art"
+    art.mkdir()
+    write_csv(art / "cg-pr-1.csv", "instr", {"cross product filter": 313644, "RETURN 1": 63797})
+    write_csv(art / "cg-base-1.csv", "instr", {"cross product filter": 240361, "RETURN 1": 63797})
+    write_csv(art / "full-pr.csv", "alloc_bytes", {"RETURN 1": 1258})
+    write_csv(art / "full-base.csv", "alloc_bytes", {"RETURN 1": 1258})
+    argv = ["--mode", "queue", "--out", str(tmp_path / "out")]
+    argv += ["--candidate", CAND, "--candidate-label", "rc-pr-3995-valkey"]
+    argv += ["--baseline", BASE, "--baseline-label", "6.2@d8c329b"]
+    argv += ["--measure-pr", str(art / "full-pr.csv"), "--measure-base", str(art / "full-base.csv")]
+    argv += [
+        "--callgrind-pr",
+        str(art / "cg-pr-*.csv"),
+        "--callgrind-base",
+        str(art / "cg-base-*.csv"),
+    ]
+    assert cov_gate.main(argv) == 0
+    path = tmp_path / "out" / "result.json"
+    doc = json.loads(path.read_text())
+    assert contract.validate_result(doc) == []
+    assert (doc["check"], doc["verdict"], doc["machine"]["runner"]) == (
+        "benchmark-cov",
+        "regression",
+        "hosted",
+    )
+    none = write(tmp_path, "none.json", None)
+    assert merge.main(["conclude", "--gate", "--result", str(path), "--waivers", none]) == 1
+    waived = write(
+        tmp_path,
+        "w.json",
+        [waiver(check="benchmark-cov", pattern=r"cross product filter \[reads\]")],
+    )
+    assert merge.main(["conclude", "--gate", "--result", str(path), "--waivers", waived]) == 0
+
+
+def test_benchmark_cov_gate_caller_passes_only_declared_inputs():
+    job = workflow("rust-pr.yml")["jobs"]["perf-cov"]
+    assert job["uses"] == "./.github/workflows/benchmark-cov.yml"
+    declared = workflow("benchmark-cov.yml")["on"]["workflow_call"]["inputs"]
+    assert set(job["with"]) <= set(declared)
+    assert {key for key, spec in declared.items() if spec.get("required")} <= set(job["with"])
+    assert job["permissions"] == {
+        "contents": "read",
+        "pull-requests": "write",
+        "packages": "write",
+    }
+    assert job["if"] == workflow("rust-pr.yml")["jobs"]["perf"]["if"]
+
+
+def test_benchmark_cov_runs_its_own_commit_and_keeps_the_label_run():
+    """A call measures with main's bench code; the label's run is what it was:
+    main-only, three sides, coverage, no gate step."""
+    jobs = workflow("benchmark-cov.yml")["jobs"]
+    checkouts = [
+        step
+        for job in jobs.values()
+        for step in job.get("steps", [])
+        if step.get("uses", "").startswith("actions/checkout@")
+    ]
+    assert len(checkouts) == 5
+    for step in checkouts:
+        assert step["with"]["repository"] == "${{ job.workflow_repository }}"
+        assert step["with"]["ref"] == "${{ job.workflow_sha }}"
+    label = "github.event.label.name == 'benchmark-cov'"
+    main_only = "contains(fromJSON('[\"main\"]'), github.event.pull_request.base.ref)"
+    assert label in jobs["preflight"]["if"] and main_only in jobs["preflight"]["if"]
+    side = jobs["measure"]["strategy"]["matrix"]["side"]
+    assert side == (
+        "${{ fromJSON(inputs.candidate_image != '' && "
+        '\'["pr","base"]\' || \'["pr","base","c"]\') }}'
+    )
+    assert jobs["coverage"]["if"] == "inputs.candidate_image == ''"
+    gate_steps = [
+        s for s in jobs["report"]["steps"] if "inputs.candidate_image != ''" in str(s.get("if"))
+    ]
+    assert [s.get("name") for s in gate_steps] == [
+        "Judge the reading (release gate)",
+        None,
+        "Fail the gate unless every regression is waived",
+    ]
+    assert "--gate --result out/result.json --waivers waivers.json" in gate_steps[-1]["run"]
+
+
+def test_a_benchmark_cov_call_from_the_queue_has_no_pull_request_to_read():
+    """Under merge_group the PR number is empty: nothing a call runs may need it."""
+    jobs = workflow("benchmark-cov.yml")["jobs"]
+    pre = {s.get("name"): s for s in jobs["preflight"]["steps"]}
+    assert pre["Acknowledge the request"]["if"] == "inputs.candidate_image == ''"
+    assert (
+        pre["Wait for the PR image to be built from this commit"]["if"]
+        == "inputs.candidate_image == ''"
+    )
+    images = pre["Resolve the three images"]["env"]
+    assert images["PR_IMAGE"] == "${{ steps.gate.outputs.pr_image || env.PR_IMAGE }}"
+    assert images["HEAD_SHA"].startswith("${{ inputs.candidate_image == '' &&")
+    post = next(
+        s for s in jobs["report"]["steps"] if s.get("name") == "Post or update the PR comment"
+    )
+    assert post["if"] == "github.event.pull_request.number != ''"
+
+
+def test_a_benchmark_cov_call_has_a_concurrency_group_of_its_own_run():
+    """A label added to a version-branch PR starts that branch's own copy of
+    benchmark-cov.yml in group benchmark-cov-<N>, which would cancel the gate."""
+    group = workflow("benchmark-cov.yml")["concurrency"]["group"]
+    assert group == (
+        "${{ inputs.candidate_image && format('benchmark-cov-gate-{0}', github.run_id)"
+        " || format('benchmark-cov-{0}', github.event.pull_request.number) }}"
+    )
+
+
+def test_a_partial_reading_is_never_waived(tmp_path):
+    """The contract drops `error` under a regression, so a PR that lost a row
+    (a callgrind query that timed out) beside a waived one would pass: cov-gate's
+    unfinished.json refuses it."""
+    art = tmp_path / "art"
+    art.mkdir()
+    write_csv(art / "cg-pr-1.csv", "instr", {"cross product filter": 313644, "RETURN 1": 63797})
+    base = {"cross product filter": 240361, "RETURN 1": 63797, "arithmetic": 900000}
+    write_csv(art / "cg-base-1.csv", "instr", base)
+    write_csv(art / "full-pr.csv", "alloc_bytes", {"RETURN 1": 1258})
+    write_csv(art / "full-base.csv", "alloc_bytes", {"RETURN 1": 1258})
+    argv = ["--mode", "queue", "--out", str(tmp_path / "out"), "--candidate", CAND]
+    argv += ["--baseline", BASE, "--unfinished-out", str(tmp_path / "unfinished.json")]
+    argv += ["--measure-pr", str(art / "full-pr.csv"), "--measure-base", str(art / "full-base.csv")]
+    argv += ["--callgrind-pr", str(art / "cg-pr-*.csv")]
+    argv += ["--callgrind-base", str(art / "cg-base-*.csv")]
+    assert cov_gate.main(argv) == 0
+    doc = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert (doc["verdict"], doc["error"]) == ("regression", None)
+    unfinished = json.loads((tmp_path / "unfinished.json").read_text())
+    assert unfinished == {
+        "benchmark-cov": "1 callgrind row(s) measured on base, not on pr: arithmetic"
+    }
+    waived = write(tmp_path, "w.json", [waiver(check="benchmark-cov", pattern="cross .*")])
+    argv = ["conclude", "--gate", "--result", str(tmp_path / "out" / "result.json")]
+    argv += ["--waivers", waived]
+    assert doc["incomplete"]  # the result says it itself, so a waiver cannot cover it
+    assert merge.main(argv) == 1
+    assert merge.main([*argv, "--unfinished", str(tmp_path / "unfinished.json")]) == 1
+
+
+def test_more_regressions_than_a_result_lists_are_never_waived():
+    many = [kit_finding(f"q{i}") for i in range(contract.MAX_FINDINGS + 1)]
+    assert cov_gate.incomplete(many, []) == "51 regressions, more than the 50 result.json lists"
+    assert cov_gate.incomplete(many[:50], []) == ""
+
+
+def kit_finding(name):
+    return {**finding(name), "status": "regression"}
+
+
+def test_one_result_is_always_validated(tmp_path, capsys):
+    """`--result` takes its status from a verdict nothing else checked: a file
+    with no verdict must not read as green."""
+    doc = result("benchmark-cov", "pass")
+    del doc["verdict"]
+    path = write(tmp_path, "result.json", doc)
+    assert merge.main(["conclude", "--gate", "--result", path]) == 1
+    assert "the result is not valid" in capsys.readouterr().out
+
+
+BENCH_COV_RELEASES = [
+    {"tag_name": t, "draft": False, "prerelease": False} for t in ("v6.2.0", "v6.2.1", "v6.0.4")
+]
+
+
+@pytest.mark.parametrize(
+    "baseline, base_sha, inspect, code, base_label",
+    [
+        ("", "b" * 40, "found", 0, "6.2@bbbbbbb"),  # the base tip's queue image
+        ("", "b" * 40, "missing", 0, "6.2.1"),  # swept or never queued: the newest release
+        ("", "", "missing", 0, "6.2.1"),  # no base sha (a push caller): the release
+        ("", "b" * 40, "broken", 1, None),  # a registry error is not "no image"
+        ("falkordb/falkordb-server:6.2.0@sha256:" + "c" * 64, "b" * 40, "found", 0, "6.2.0"),
+    ],
+)
+def test_benchmark_cov_pins_the_gates_base(tmp_path, baseline, base_sha, inspect, code, base_label):
+    """benchmark-cov's "Pin the gate's images" step, with fake docker, gh and uv."""
+    import shutil
+
+    if shutil.which("jq") is None:
+        pytest.skip("jq is not installed")
+    steps = workflow("benchmark-cov.yml")["jobs"]["preflight"]["steps"]
+    script = next(step for step in steps if step.get("id") == "gate")["run"]
+    bin_dir, temp = tmp_path / "bin", tmp_path / "temp"
+    bin_dir.mkdir()
+    temp.mkdir()
+    fake_uv(bin_dir)
+    rc_mg = {
+        "found": f'echo \'{{"digest": "sha256:{"e" * 64}"}}\'',
+        "missing": 'echo "ERROR: $4: not found" >&2; exit 1',
+        "broken": 'echo "ERROR: 500 Internal Server Error" >&2; exit 1',
+    }[inspect]
+    fake_tool(
+        bin_dir,
+        "docker",
+        f"""case "$4" in
+  *rc-mg-*) {rc_mg} ;;
+  *) echo \'{{"digest": "sha256:{"a" * 64}"}}\' ;;
+esac
+""",
+    )
+    (temp / "releases.json").write_text(json.dumps(BENCH_COV_RELEASES))
+    fake_tool(
+        bin_dir,
+        "gh",
+        f"""jqexpr=""
+while [[ $# -gt 0 ]]; do [[ $1 == --jq ]] && jqexpr=$2; shift; done
+jq -r "$jqexpr" {temp / "releases.json"}
+""",
+    )
+    out = temp / "output"
+    run = run_step(
+        script,
+        tmp_path,
+        {
+            "BIN": str(bin_dir),
+            "RUNNER_TEMP": str(temp),
+            "GITHUB_OUTPUT": str(out),
+            "GITHUB_REPOSITORY": "o/r",
+            "CANDIDATE": "ghcr.io/falkordb/falkordb-server:rc-pr-7-valkey",
+            "BASELINE": baseline,
+            "BASELINE_BELOW": "6.3.0",
+            "BASE_SHA": base_sha,
+            "BASE_REF": "6.2",
+        },
+    )
+    assert run.returncode == code, run.stdout + run.stderr
+    if code:
+        return
+    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    assert outputs["pr_image"] == "ghcr.io/falkordb/falkordb-server@sha256:" + "a" * 64
+    assert outputs["pr_label"] == "rc-pr-7-valkey"
+    assert outputs["base_label"] == base_label
+    want = {
+        "6.2@bbbbbbb": "ghcr.io/falkordb/falkordb-server@sha256:" + "e" * 64,
+        "6.2.1": "docker.io/falkordb/falkordb-server@sha256:" + "a" * 64,
+        "6.2.0": "falkordb/falkordb-server@sha256:" + "a" * 64,
+    }[base_label]
+    assert outputs["base_image"] == want
+
+
+# --- benchmark-cov: queries a side does not answer (Pokec's rule) ------------------
+
+
+def failed_sources():
+    """`geo` is new on main and neither 6.2 side answers it; `MATCH all` broke on
+    the PR; `reduce` failed on the base only."""
+    instr = {"RETURN 1": 60000.0, "reduce": 5000.0}
+    measure_pr = {"RETURN 1": 1000.0, "reduce": 1000.0}
+    measure_base = {"RETURN 1": 1000.0, "MATCH all": 1000.0}
+    sources = cov_sources(
+        instr, {"RETURN 1": 60000.0, "MATCH all": 7000.0}, measure_pr, measure_base
+    )
+    failed = {
+        "pr": {"geo": "unknown function", "MATCH all": "crashed"},
+        "base": {"geo": "unknown function", "reduce": "timed out"},
+    }
+    return sources, failed
+
+
+def test_a_query_no_side_answers_is_info_and_one_the_pr_broke_is_a_regression():
+    sources, failed = failed_sources()
+    findings, errors = cov_gate.judge(sources, failed)
+    got = {(f["name"], f["metric"]): (f["candidate"], f["baseline"], f["status"]) for f in findings}
+    assert got == {
+        ("geo", "completed"): (0, 0, "info"),  # not supported on this branch
+        ("MATCH all", "completed"): (0, 1, "regression"),  # answers on the base, not on the PR
+        ("reduce [reads]", "completed"): (1, None, "info"),  # not measured on the base
+    }
+    # The rows those three explain are not "unmeasured" errors in either source.
+    assert errors == []
+
+
+def test_without_the_failed_records_the_same_rows_are_unmeasured():
+    sources, _ = failed_sources()
+    _, errors = cov_gate.judge(sources)
+    assert errors == [
+        "1 callgrind row(s) measured on base, not on pr: MATCH all",
+        "1 measure row(s) measured on base, not on pr: MATCH all",
+    ]
+
+
+def test_a_query_failed_on_one_side_and_unmeasured_on_the_other_stays_unmeasured():
+    findings, explained = cov_gate.answered({"pr": {}, "base": {}}, {"pr": {"x": "e"}})
+    assert (findings, explained) == ([], {})
+
+
+def test_cov_gate_end_to_end_with_failed_queries(tmp_path):
+    art = tmp_path / "art"
+    art.mkdir()
+    write_csv(art / "cg-pr-1.csv", "instr", {"RETURN 1": 63797})
+    write_csv(art / "cg-base-1.csv", "instr", {"RETURN 1": 63797})
+    write_csv(art / "full-pr.csv", "alloc_bytes", {"RETURN 1": 1258})
+    write_csv(art / "full-base.csv", "alloc_bytes", {"RETURN 1": 1258, "MATCH all": 900})
+    (art / "failed-pr.json").write_text(json.dumps({"geo": "e", "MATCH all": "crashed"}))
+    (art / "failed-base.json").write_text(json.dumps({"geo": "e"}))
+    argv = ["--mode", "queue", "--out", str(tmp_path / "out"), "--candidate", CAND]
+    argv += ["--baseline", BASE, "--unfinished-out", str(tmp_path / "unfinished.json")]
+    argv += ["--measure-pr", str(art / "full-pr.csv"), "--measure-base", str(art / "full-base.csv")]
+    argv += ["--callgrind-pr", str(art / "cg-pr-*.csv")]
+    argv += ["--callgrind-base", str(art / "cg-base-*.csv")]
+    argv += [
+        "--failed-pr",
+        str(art / "failed-pr.json"),
+        "--failed-base",
+        str(art / "failed-base.json"),
+    ]
+    assert cov_gate.main(argv) == 0
+    doc = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert contract.validate_result(doc) == []
+    assert doc["verdict"] == "regression"
+    assert doc["summary"].startswith("1 regression(s), worst MATCH all completed;")
+    assert json.loads((tmp_path / "unfinished.json").read_text()) == {}
+    # Only `geo` failing on both sides: a pass, with the info row.
+    (art / "failed-pr.json").write_text(json.dumps({"geo": "e"}))
+    write_csv(art / "full-base.csv", "alloc_bytes", {"RETURN 1": 1258})
+    assert cov_gate.main(argv) == 0
+    doc = json.loads((tmp_path / "out" / "result.json").read_text())
+    assert (doc["verdict"], [f["status"] for f in doc["findings"]]) == ("pass", ["info"])
+
+
+def test_bench_measure_records_the_queries_that_did_not_answer(tmp_path):
+    from falkorbench import measure as measure_mod
+
+    path = tmp_path / "failed.json"
+    measure_mod.write_failures(path, [("geo", "unknown function"), ("MATCH all", "crashed")])
+    assert json.loads(path.read_text()) == {"MATCH all": "crashed", "geo": "unknown function"}
+
+
+def test_only_a_call_records_failures_instead_of_failing():
+    """The label's run still fails on a query that does not answer."""
+    measure = workflow("benchmark-cov.yml")["jobs"]["measure"]
+    step = next(s for s in measure["steps"] if s.get("name") == "Measure")
+    assert step["env"]["GATE"] == "${{ inputs.candidate_image != '' }}"
+    assert (
+        'if [ "$GATE" = true ]; then flags+=(--failed-out "/w/failed-$SIDE.json"); fi'
+        in step["run"]
+    )
+    judge_step = next(
+        s
+        for s in workflow("benchmark-cov.yml")["jobs"]["report"]["steps"]
+        if s.get("name") == "Judge the reading (release gate)"
+    )
+    assert "--failed-pr art/failed-pr.json --failed-base art/failed-base.json" in judge_step["run"]
+
+
+def test_cov_gate_compares_a_pair_both_sides_read_even_when_the_query_is_explained():
+    sources = cov_sources(
+        {"arithmetic": 2000.0}, {"arithmetic": 1000.0}, {"arithmetic": 1000.0}, {"RETURN 1": 1000.0}
+    )
+    findings, _ = cov_gate.judge(sources, {"base": {"arithmetic": "timed out"}})
+    assert by_name(findings)[("arithmetic [reads]", "instructions")] == "regression"
+
+
+def test_cov_gate_errors_when_a_baseline_counter_is_missing():
+    sources = cov_sources({}, {}, {"RETURN 1": 1000.0}, {"RETURN 1": None})
+    _, errors = cov_gate.judge(sources)
+    assert any("no baseline alloc_bytes: RETURN 1" in e for e in errors)
+
+
+def test_cov_gate_does_not_call_a_failed_measured_run_unsupported():
+    sources = cov_sources({}, {})
+    failed = {
+        "pr": {"reduce": "measured run: timeout"},
+        "base": {"reduce": "measured run: timeout"},
+    }
+    findings, errors = cov_gate.judge(sources, failed)
+    assert findings == []
+    assert any("failed their measured run: reduce" in e for e in errors)
+
+
+@pytest.mark.parametrize(
+    "ratio, waived",
+    [(0.7, True), (0.5, False), (0.1, False), (0.0, False), (0.67, True)],
+)
+def test_a_max_ratio_bounds_a_lower_is_worse_row_in_the_worse_direction(ratio, waived):
+    row = {**finding("cross product filter [reads]", metric="throughput"), "ratio": ratio}
+    row["direction"] = "lower_is_worse"
+    night = red_night({"check": "micro-hw", "verdict": "regression", "findings": [row]})
+    assert decide(night, {**waiver(), "max_ratio": 1.5})[0] == (0 if waived else 1)
+
+
+def test_a_failure_on_one_side_does_not_excuse_a_missing_reading_on_the_other():
+    # `x` failed on the base only; the PR's callgrind run dropped it. The base
+    # has an instruction row, so the PR's missing one must not pass quietly.
+    sources = cov_sources({"y": 1.0}, {"x": 5000.0, "y": 1.0}, {"x": 1.0}, {})
+    _, errors = cov_gate.judge(sources, {"base": {"x": "timed out"}})
+    assert any("measured on base, not on pr" in e and "x" in e for e in errors)

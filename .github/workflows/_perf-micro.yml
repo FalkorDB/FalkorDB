@@ -4,8 +4,9 @@
 # `bench micro-hw` on a GCE C4 through _perf-vm.yml (`pmu: true`), which uploads
 # artifact `perf-result-micro-hw`. What it measures and its gates: bench/README.md.
 #
-# _perf-vm.yml runs the check's command from the CALLING commit, so a caller on
-# a branch without `bench micro-hw` gets an error result until this is on main.
+# _perf-vm.yml runs the check's command from code_ref, or else the CALLING
+# commit: a caller on a branch without `bench micro-hw` and no code_ref gets an error
+# result.
 name: Perf micro check
 
 on:
@@ -38,6 +39,14 @@ on:
       baseline_commit:
         type: string
         required: false
+        default: ""
+      code_ref:
+        description: >-
+          Commit to run the check's code from. Empty means the calling commit
+          (a check's own branch, under development). perf-nightly.yml passes
+          its own commit, so a release gate called from a version branch, which
+          has no perf code, runs main's.
+        type: string
         default: ""
 
 permissions:
@@ -100,7 +109,8 @@ jobs:
           echo "image=${image%:*}@$digest" | tee -a "$GITHUB_OUTPUT"
 
   # `./` is this file's commit, so the VM scripts and the measurement image
-  # (preflight) come from one commit.
+  # (preflight) come from one commit, and code_ref says where the check's code
+  # does.
   hardware:
     needs: preflight
     permissions:
@@ -121,4 +131,5 @@ jobs:
       baseline_label: ${{ inputs.baseline_label }}
       candidate_commit: ${{ inputs.candidate_commit }}
       baseline_commit: ${{ inputs.baseline_commit }}
+      code_ref: ${{ inputs.code_ref }}
     secrets: inherit

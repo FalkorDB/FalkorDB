@@ -4,7 +4,8 @@ header of .github/workflows/perf-nightly.yml; each step calls one subcommand:
   plan      checks.yaml (as JSON) + the `checks` input -> plan.json, job matrices
   context   pinned images + earlier nightlies -> context.json (skip, previous green)
   results   context + plan + each planned perf-result-<check> -> nightly.json
-  conclude  nightly.json -> the run's exit status (0 green or skipped, 1 otherwise)
+  conclude  nightly.json + bench/waivers.yaml -> the run's exit status (see conclude())
+  release   release tags -> the release gate's baseline (see release_below())
 
 Standard library only (with contract and kit, which are too): `bench nightly merge`.
 """
@@ -15,6 +16,7 @@ import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NamedTuple
 
 from falkorbench import contract
 from falkorbench import kit
@@ -449,15 +451,186 @@ def build_nightly(context, plan, results_dir):
     return nightly
 
 
-# How a night ends its workflow run: only a green or skipped night succeeds. A
-# red night, and an error night (one that could not measure is not green),
-# fail the run, so the list of runs reads as a timeline and a failed scheduled
-# run sends GitHub's email.
-RUN_SUCCEEDS = ("green", "skipped")
+def unfinished(plan, results_dir, nightly):
+    """{check: why} for each regression whose check did not end cleanly (killed,
+    timed out, cancelled, crashed after writing result.json). The regression
+    stands in nightly.json, but the gate does not waive it: rows after the one
+    that regressed may never have been measured."""
+    out = {}
+    by_check = {c.get("check"): c for c in nightly["checks"] if isinstance(c, dict)}
+    for row in plan:
+        entry = by_check.get(row["check"], {})
+        if row.get("error") or entry.get("verdict") != "regression":
+            continue
+        clean, why = how_it_ended(Path(results_dir) / f"perf-result-{row['check']}")
+        if clean is not True:
+            out[row["check"]] = why
+    return out
 
 
-def run_exit_status(status):
-    return 0 if status in RUN_SUCCEEDS else 1
+# How a night ends its workflow run: a green or skipped night succeeds, and a
+# red one whose every regression is waived. Any other red night, and an error
+# night (one that could not measure is not green), fails the run, so the list of
+# runs reads as a timeline, a failed scheduled run sends GitHub's email, and a
+# release gate (a call of the workflow) says no. A gate also fails a skipped
+# night: it measured nothing.
+WAIVER_KEYS = ("check", "finding", "issue", "reason")
+WAIVER_OPTIONAL = ("metric", "max_ratio")
+
+
+class Waiver(NamedTuple):
+    check: str
+    pattern: re.Pattern
+    issue: int
+    metric: str | None
+    max_ratio: float | None
+
+    def covers(self, check, finding):
+        name, ratio = finding.get("name"), finding.get("ratio")
+        if check != self.check or not isinstance(name, str) or not self.pattern.fullmatch(name):
+            return False
+        if self.metric is not None and finding.get("metric") != self.metric:
+            return False
+        if self.max_ratio is None:
+            return True
+        # A bound needs a ratio under it: a finding with none is not covered. It
+        # bounds how much worse the row is, so a lower-is-worse ratio (throughput,
+        # candidate / baseline) is inverted: 0.7x is 1.43x worse, and 0x is unbounded.
+        if not _is_number(ratio):
+            return False
+        if finding.get("direction") == "lower_is_worse":
+            return ratio > 0 and 1 / ratio <= self.max_ratio
+        return ratio <= self.max_ratio
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def read_waivers(doc):
+    """bench/waivers.yaml (as JSON) -> [Waiver], or PlanError. Every entry is
+    checked: a waiver that cannot be read must not quietly stop matching, nor
+    match more than it says."""
+    if doc is None:  # a file holding only comments
+        return []
+    if not isinstance(doc, list):
+        raise PlanError(f"bench/waivers.yaml: a {type(doc).__name__}, not a list")
+    waivers = []
+    for index, entry in enumerate(doc):
+        where = f"bench/waivers.yaml entry {index}"
+        if not isinstance(entry, dict) or not (
+            set(WAIVER_KEYS) <= set(entry) <= set(WAIVER_KEYS + WAIVER_OPTIONAL)
+        ):
+            raise PlanError(
+                f"{where}: needs the keys {', '.join(WAIVER_KEYS)}"
+                f" and may have {', '.join(WAIVER_OPTIONAL)}"
+            )
+        check, finding, issue, reason = (entry[key] for key in WAIVER_KEYS)
+        metric, max_ratio = entry.get("metric"), entry.get("max_ratio")
+        if not (is_check_name(check) and check != REGISTRY):
+            raise PlanError(f"{where}: check {check!r} is not a check name")
+        if isinstance(issue, bool) or not isinstance(issue, int) or issue < 1:
+            raise PlanError(f"{where}: issue {issue!r} is not an issue number")
+        if not isinstance(reason, str) or not reason.strip() or "\n" in reason.strip():
+            raise PlanError(f"{where}: reason must be one non-empty line")
+        if "metric" in entry and metric not in contract.METRICS:
+            raise PlanError(f"{where}: metric {metric!r} is not a contract metric")
+        if "max_ratio" in entry and not (_is_number(max_ratio) and max_ratio > 0):
+            raise PlanError(f"{where}: max_ratio {max_ratio!r} is not a positive number")
+        try:
+            pattern = re.compile(finding) if isinstance(finding, str) and finding else None
+        except re.error as err:
+            raise PlanError(f"{where}: finding {finding!r} is not a regex: {err}") from err
+        if pattern is None:
+            raise PlanError(f"{where}: finding must be a non-empty regex")
+        waivers.append(Waiver(check, pattern, issue, metric, max_ratio))
+    return waivers
+
+
+def conclude(nightly, waivers, gate=False, unfinished=None):
+    """(exit status, lines saying why). A regression finding is waived when a
+    waiver names its check, its pattern matches the WHOLE finding name, and its
+    metric and max_ratio (when given) hold; it is still reported. An error is
+    never waived, nor a regression verdict with no regression finding to name,
+    nor one from a run that did not finish (`unfinished`: {check: why}), nor one
+    from a result whose `incomplete` is not null (it left parts unmeasured or
+    cut its findings)."""
+    unfinished = unfinished or {}
+    status = nightly.get("status") if isinstance(nightly, dict) else None
+    if status == "green" or (status == "skipped" and not gate):
+        return 0, [f"the night is {status}: the run succeeds"]
+    if status == "skipped":
+        return 1, ["the night is skipped: a gate that measured nothing does not pass"]
+    checks = nightly.get("checks") if status in ("red", "error") else None
+    if not isinstance(checks, list):
+        return 1, [f"the night is {status}: the run fails"]
+    blocking, waived = [], []
+    for entry in checks:
+        entry = entry if isinstance(entry, dict) else {}
+        check, verdict = entry.get("check"), entry.get("verdict")
+        if verdict == "pass":
+            continue
+        if verdict != "regression":
+            blocking.append(f"{check}: {verdict}: {one_line(entry.get('error') or '')}")
+            continue
+        if check in unfinished:
+            blocking.append(
+                f"{check}: regression from a run that did not finish ({unfinished[check]})"
+            )
+            continue
+        if entry.get("incomplete") is not None:
+            blocking.append(
+                f"{check}: regression from a result that did not measure everything"
+                f" ({one_line(str(entry['incomplete']))})"
+            )
+            continue
+        found = [
+            f
+            for f in entry.get("findings") or []
+            if isinstance(f, dict) and f.get("status") == "regression"
+        ]
+        if not found:
+            blocking.append(f"{check}: regression with no finding to waive")
+        for finding in found:
+            said = (
+                f"{check}: {finding.get('name')} ({finding.get('metric')} {finding.get('ratio')}x)"
+            )
+            issue = next((w.issue for w in waivers if w.covers(check, finding)), None)
+            if issue is None:
+                blocking.append(said)
+            else:
+                waived.append(f"{said} waived by #{issue}")
+    # A red or error night with nothing to block on and nothing waived names no
+    # reason to be what it is: it does not pass either.
+    code = 1 if blocking or not waived else 0
+    verb = "fails" if code else "succeeds"
+    lines = [f"the night is {status}: the run {verb}"]
+    lines += [f"waived (reported, not gated): {line}" for line in waived]
+    lines += [f"not waived: {line}" for line in blocking]
+    return code, lines
+
+
+# The release gate's baseline: the highest stable release strictly below a
+# version. A pull request into X.Y names X.Y+1.0 (the newest X.Y.z, or the line
+# before when X.Y has none), a tag vX.Y.Z names X.Y.Z (never itself).
+VERSION = re.compile(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?")
+
+
+def release_below(tags, below):
+    """The tag in `tags` (stable vX.Y.Z, v5 and up) highest below `below`, or None."""
+    bound = VERSION.fullmatch(below or "")
+    if not bound:
+        raise PlanError(f"{below!r} is not X.Y.Z[-prerelease]")
+    # A prerelease bound X.Y.Z-pre sits below X.Y.Z, so X.Y.Z itself is excluded too.
+    limit = tuple(int(part) for part in bound.groups()[:3])
+    found = []
+    for tag in tags:
+        match = VERSION.fullmatch(tag)
+        if match and tag.startswith("v") and not match.group(4) and int(match.group(1)) >= 5:
+            version = tuple(int(part) for part in match.groups()[:3])
+            if version < limit:
+                found.append((version, tag))
+    return max(found)[1] if found else None
 
 
 def write_json(path, obj):
@@ -534,6 +707,8 @@ def cmd_merge(args):
     plan = strict_load(args.plan) if not context["skip_reason"] else []
     nightly = build_nightly(context, plan, args.results)
     write_json(args.out, nightly)
+    if args.unfinished_out:
+        write_json(args.unfinished_out, unfinished(plan, args.results, nightly))
     # The file as written, read back the way the reporter will read it.
     _, problems = contract.validate_file(args.out, kind="nightly")
     if problems:
@@ -549,21 +724,63 @@ def cmd_merge(args):
     return 0
 
 
+def read_optional_json(path):
+    """A JSON file yq or merge wrote, or None for no path; nothing in the file
+    (yq on a file holding only comments) is None too."""
+    text = Path(path).read_text(encoding="utf-8") if path else ""
+    return contract.load_json(text) if text.strip() else None
+
+
 def cmd_conclude(args):
     try:
-        nightly = strict_load(args.nightly)
+        if args.result:
+            # One check's result.json (benchmark-cov's gate): judged as a night of one.
+            result = strict_load(args.result)
+            nightly = {"status": status_of([result]), "checks": [result]}
+            problems = contract.validate_result(result)
+        else:
+            nightly = strict_load(args.nightly)
+            problems = None
     except (OSError, ValueError) as err:
-        print(f"::error::cannot read {args.nightly}: {err}", file=sys.stderr)
+        print(f"::error::cannot read {args.result or args.nightly}: {err}", file=sys.stderr)
         return 1
-    status = nightly.get("status") if isinstance(nightly, dict) else None
-    code = run_exit_status(status)
+    try:
+        waivers = read_waivers(read_optional_json(args.waivers))
+        unfinished = read_optional_json(args.unfinished) or {}
+    except (OSError, ValueError, RecursionError) as err:
+        print(f"::error::cannot read the waivers or unfinished file: {err}", file=sys.stderr)
+        return 1
+    if not isinstance(unfinished, dict):
+        print(f"::error::{args.unfinished}: not a mapping of check to reason", file=sys.stderr)
+        return 1
+    code, lines = conclude(nightly, waivers, gate=args.gate, unfinished=unfinished)
+    # A red night that passes rests on waived findings: only from a document the
+    # contract accepts. One result is always checked: its status comes from a
+    # verdict nothing else has validated.
+    if not code and (args.result or nightly.get("status") not in ("green", "skipped")):
+        if problems is None:
+            problems = contract.validate_nightly(nightly)
+        if problems:
+            code = 1
+            lines.append(f"not waived: the result is not valid ({problems[0]})")
+    first, *rest = lines
     if code:
-        print(
-            f"::error::the night is {status}: failing the run (the report and nightly.json are already out)"
-        )
+        print(f"::error::{first} (the report and nightly.json are already out)")
     else:
-        print(f"the night is {status}: the run succeeds")
+        print(first)
+    for line in rest:
+        level = "warning" if line.startswith("waived") else "error"
+        print(f"::{level}::{line}")
     return code
+
+
+def cmd_release(args):
+    tag = release_below(sys.stdin.read().split(), args.below)
+    if tag is None:
+        print(f"::error::no stable release below {args.below}", file=sys.stderr)
+        return 1
+    print(tag)
+    return 0
 
 
 def main(argv=None):
@@ -599,11 +816,23 @@ def main(argv=None):
     p.add_argument("--plan", required=True)
     p.add_argument("--results", required=True, help="holds perf-result-<check>/ directories")
     p.add_argument("--out", required=True)
+    p.add_argument(
+        "--unfinished-out", default="", help="{check: why} for regressions that did not finish"
+    )
     p.set_defaults(func=cmd_merge)
 
-    p = sub.add_parser("conclude", help="nightly.json -> this run's exit status")
-    p.add_argument("--nightly", required=True)
+    p = sub.add_parser("conclude", help="nightly.json (+ waivers) -> this run's exit status")
+    judged = p.add_mutually_exclusive_group(required=True)
+    judged.add_argument("--nightly")
+    judged.add_argument("--result", help="one check's result.json, judged as a night of one")
+    p.add_argument("--waivers", default="", help="bench/waivers.yaml converted to JSON")
+    p.add_argument("--unfinished", default="", help="what `results --unfinished-out` wrote")
+    p.add_argument("--gate", action="store_true", help="a release gate: a skipped night fails")
     p.set_defaults(func=cmd_conclude)
+
+    p = sub.add_parser("release", help="release tags on stdin -> the highest below --below")
+    p.add_argument("--below", required=True, help="X.Y.Z[-prerelease]")
+    p.set_defaults(func=cmd_release)
 
     args = parser.parse_args(argv)
     try:

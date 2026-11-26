@@ -23,7 +23,7 @@ jobs:
       machine_type: ''                           # n4-standard-16, or c4-standard-16 with pmu
       pmu: false                                 # true: hardware counters (below)
       # optional: candidate_label, baseline_label, candidate_commit,
-      # baseline_commit, fallback_machine_type, zones
+      # baseline_commit, fallback_machine_type, zones, code_ref
     secrets: inherit                             # GH_SA_TOKEN, GCP_PROJECT_ID, GCP_SA_KEY
 ```
 
@@ -33,7 +33,7 @@ Re-run a failed run with **Re-run all jobs**. "Re-run failed jobs" does not
 re-run the create job, so no VM carries the new attempt's label: the run job is
 skipped and the cleanup job fails, saying so.
 
-The VM job runs, in a checkout of the calling commit:
+The VM job runs, in a checkout of the calling commit (or of `code_ref`):
 
 ```
 <command> --candidate <image> --baseline <image> --out out --mode <mode>
@@ -45,7 +45,9 @@ split on spaces and run directly, so it cannot hold quotes, pipes or `VAR=x`.
 The one word it may contain is `$PERF_VM_TOOLS` (or `${PERF_VM_TOOLS}`), which
 is replaced with the path of this workflow's own `tests/perf/vm` (below).
 
-Two checkouts: the check's code is the **calling commit**, while this
+Two checkouts: the check's code is the **calling commit**, or `code_ref` when
+given (perf-nightly.yml passes its own commit, so the release gate, called from
+a version branch, runs main's checks), while this
 workflow's scripts (`tests/perf/vm`) come from the commit the workflow file was
 read from (`job.workflow_repository` at `job.workflow_sha`), in
 `.perf-vm-tools/`. A caller on another branch, or one older than these

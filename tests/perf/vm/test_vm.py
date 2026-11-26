@@ -554,10 +554,12 @@ class WorkflowScriptsTest(unittest.TestCase):
             self.assertIn('[[ -z $WANT_SHA || $got != "$WANT_SHA" ]]', body, name)
             # PERF_VM_TOOLS is exported before the comparison can fail the step.
             self.assertLess(body.index("PERF_VM_TOOLS=$GITHUB_WORKSPACE"), body.index("[[ -z $WANT_SHA"), name)
-        # The calling commit is checked out first: checkout empties a workspace
-        # that is not its repository, which would remove .perf-vm-tools.
+        # The check's code (the calling commit, or code_ref) is checked out
+        # first: checkout empties a workspace that is not its repository, which
+        # would remove .perf-vm-tools.
         run = jobs["run"]
-        self.assertLess(run.index("- name: Check out the calling commit"), run.index("path: .perf-vm-tools"))
+        self.assertLess(run.index("- name: Check out the check's code"), run.index("path: .perf-vm-tools"))
+        self.assertIn("ref: ${{ inputs.code_ref }}", run.split("path: .perf-vm-tools")[0])
         # Every cleanup step survives a cancel.
         steps = re.split(r"^      - ", jobs["cleanup"].split("    steps:\n", 1)[1], flags=re.M)[1:]
         self.assertGreaterEqual(len(steps), 5)

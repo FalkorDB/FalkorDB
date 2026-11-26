@@ -408,6 +408,63 @@ red night by hand:
 uv run --project bench bench nightly report --nightly bench/tests/fixtures/valid/nightly-red.json
 ```
 
+## Release gate (#4004)
+
+A release is one pull request into a version branch X.Y that cherry-picks
+commits from main; that pull request is the release candidate. The gate runs
+only in the merge queue of X.Y: not on pull requests, not on main's queue, not
+at tagging. It calls main's code (`@main`, because the perf code lives only
+there) with the queue's image `rc-mg-<sha>-valkey`, in two jobs of `rust-pr.yml`
+that start after its CI suites pass:
+
+| job | runs | judges |
+| --- | --- | --- |
+| `perf` -> `perf-nightly.yml`, `nightly` mode | the nightly flow: every registered check, gated, with the re-runs a night has | the image against the newest stable release below X.Y+1.0 |
+| `perf-cov` -> `benchmark-cov.yml` | callgrind instructions and allocated bytes (`bench cov-gate`) | the same two images |
+
+`ci-gate` requires both in the queue of a version branch and accepts `skipped`
+everywhere else. The queue's required-check timeout must cover the CI and the
+nightly together, about 180 minutes; an admin sets it in the branch's ruleset.
+
+**`bench cov-gate`** turns benchmark-cov's PR-vs-base CSVs into a `result.json`
+(check `benchmark-cov`, findings named `<row> [<reads|writes>]`). Instructions
+cross at > 1.10x with no floor: callgrind repeats to about 0.2%, so this is the
+instrument for #3996's class (1.30x on a query of about 240k instructions, under
+micro-hw's 250k hardware floor). Allocated bytes use micro-hw's Rust rule (> 1.10x
+and > 64 KiB per query, or > 8x and > 4 KiB). Both counters are deterministic for
+an image, so there is no re-run. A side with no rows, or a row measured on the
+base but not on the PR, is an error. On a run of an unchanged engine (benchmark-cov
+run 45338149817, 111 callgrind rows, 373 allocation rows), instructions moved
+0.995x–1.008x and allocations at most 3.08x at +9 KB: nothing crossed. A call
+measures no C side and runs no coverage; the label's run on main is unchanged.
+
+**The decision** is `bench nightly merge conclude --gate --waivers <bench/waivers.yaml
+as JSON>` (on `nightly.json`, or `--result` on benchmark-cov's single result). It
+passes a green night and a red night whose every regression finding is waived,
+and fails everything else: an unwaived regression, any check that said `error`,
+a regression verdict with no finding to name, a regression from a check that did
+not finish cleanly (merge's `unfinished.json`: it may have measured nothing after
+the row it flagged), and a skipped night. A waiver names a check, a regex that
+must match the whole finding name, an issue and a reason, and may narrow itself
+to one `metric` and a `max_ratio`; a waived finding is still reported, as a
+warning on the run page. The nightly's own run applies the same waivers. An
+infrastructure error fails the gate like a regression: "Re-run all jobs" clears
+it (see tests/perf/vm/README.md for why "Re-run failed jobs" does not).
+
+A query a side does not answer is judged by Pokec's rule, from each side's
+`bench measure --failed-out`: if neither side answers it (a query main added
+that the line's engine lacks), it is info, "not supported on this branch". If
+the base answers and the PR does not, it is a regression. If only the base
+fails, it is info, "not measured on the base". A row missing with no such
+record is unmeasured, an error. `bench cov-gate` also writes `unfinished.json`
+when its reading is partial (a row the PR did not measure, or more regressions
+than result.json lists), so a waiver never passes it.
+
+A waiver never turns a night green when the result it would waive has a
+non-null `incomplete` (a regression that also left parts unmeasured, or whose
+findings the cap cut): that night fails, naming the check and the reason. A
+result without the field (an older one) is judged as before.
+
 ## Nightly micro check (`micro-hw`)
 
 `.github/workflows/_perf-micro.yml` takes a candidate and a baseline

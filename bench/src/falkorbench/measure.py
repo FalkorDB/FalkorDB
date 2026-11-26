@@ -12,6 +12,7 @@ distribution; it is a coarse outlier net, never the gate. See bench/README.md.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -269,6 +270,11 @@ def run_once(
 
     echo(f"once-mode done, {fails} failures")
     return fails
+
+
+def write_failures(path: Path, failures: Sequence[tuple[str, str]]) -> None:
+    """{query: why} for the queries that did not answer (`bench measure --failed-out`)."""
+    path.write_text(json.dumps(dict(failures), indent=2, sort_keys=True) + "\n")
 
 
 def merge_into_csv(out: Path, rows: dict[str, Row]) -> None:

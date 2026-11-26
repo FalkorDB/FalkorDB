@@ -19,6 +19,7 @@ from falkorbench import callgrind as cg
 from falkorbench import client as client_mod
 from falkorbench import compare as compare_mod
 from falkorbench import contract
+from falkorbench import cov_gate
 from falkorbench import coverage as coverage_mod
 from falkorbench import flow as flow_mod
 from falkorbench import hw as hw_mod
@@ -97,8 +98,27 @@ def cli() -> None:
 @click.option("--setup/--no-setup", default=None, help="build the graph (implied unless --reuse)")
 @click.option("--c-compat", is_flag=True, help="measuring the C engine: skip what it cannot do")
 @click.option("--module-args", multiple=True, help="extra --loadmodule args, e.g. THREAD_COUNT 4")
+@click.option(
+    "--failed-out",
+    default=None,
+    type=click.Path(),
+    help="write {query: why} for the queries that did not answer, and exit 0 for them",
+)
 @click.argument("names", nargs=-1)
-def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, module_args, names):
+def measure(
+    module,
+    port,
+    out,
+    reps,
+    once,
+    keep_server,
+    reuse,
+    setup,
+    c_compat,
+    module_args,
+    failed_out,
+    names,
+):
     """Measure queries and write a CSV.
 
     Named queries are merged into an existing CSV, so a subset re-run patches
@@ -167,6 +187,12 @@ def measure(module, port, out, reps, once, keep_server, reuse, setup, c_compat, 
         )
         measure_mod.merge_into_csv(out_path, rows)
         click.echo(f"wrote {out_path}")
+        if failed_out:
+            # The release gate judges them (bench cov-gate): a query neither side
+            # answers is not this pull request's doing.
+            measure_mod.write_failures(Path(failed_out), failures)
+            click.echo(f"wrote {failed_out} ({len(failures)} query(ies) did not answer)")
+            failures = []
         if failures:
             # A query in the set that does not answer is a real problem, and the
             # CSV is now missing that row rather than carrying a wrong one.
@@ -627,6 +653,20 @@ def missed_run_command(night, workflow, branch, event, artifact):
 def nightly_merge_command(args):
     """The night's bookkeeping: plan | context | results | conclude (each takes --help)."""
     raise SystemExit(nightly_merge.main(list(args)))
+
+
+@cli.command(
+    "cov-gate",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def cov_gate_command(args):
+    """benchmark-cov's PR-vs-base CSVs -> the release gate's result.json (--help: the flags)."""
+    raise SystemExit(cov_gate.main(list(args)))
 
 
 # --- ldbc --------------------------------------------------------------------
