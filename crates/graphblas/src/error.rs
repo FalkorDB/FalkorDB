@@ -163,6 +163,21 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+/// Panic unless `info` is `GrB_SUCCESS`: for queries on a live handle that
+/// the API returns by value (`nrows`, `nvals`, `GxB_Monoid_operator`, ...).
+/// They fail only on a corrupt handle or when finishing pending work runs
+/// out of memory, neither of which the caller can act on.
+pub fn expect_success(
+    info: GrB_Info,
+    what: &str,
+) {
+    assert!(
+        info == GrB_Info::GrB_SUCCESS,
+        "GraphBLAS {what} failed on a live handle: {}",
+        ErrorKind::from_code(info as i32)
+    );
+}
+
 /// `Ok` on `GrB_SUCCESS`, else an [`Error`] with no message.
 pub fn check(info: GrB_Info) -> Result<()> {
     if info == GrB_Info::GrB_SUCCESS {
