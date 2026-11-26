@@ -284,6 +284,40 @@ def test_timeouts_in_one_run_ask_for_a_re_run_then_stay_info():
     assert (f"{pokec.hop_label(THREE_HOP)} [5% writes]", "completed") in statuses(analysis, "info")
 
 
+def test_one_candidate_timeout_run_asks_for_a_re_run_even_when_the_baseline_is_broken():
+    """#4065: the repeat decides red or green whatever the baseline did; until it has, a
+    baseline that errs does not make the candidate's row a fix."""
+    broken = {"errors": {THREE_HOP: {"timeouts": 0, "failures": 5}}}
+    runs = pass_runs(1, 3, baseline=broken)
+    cand = [r for r in runs if r.side == "candidate"]
+    cand[0].errors = {THREE_HOP: {"timeouts": 1, "failures": 0}}
+    label = f"{pokec.hop_label(THREE_HOP)} [5% writes]"
+    analysis = analyse(runs)
+    assert analysis.rerun == {("medium", "write5")}
+    assert (label, "completed") not in statuses(analysis, "improvement")
+    again = [r for r in pass_runs(2, 2, baseline=broken)]
+    for r in again:
+        if r.side == "candidate":
+            r.errors = {THREE_HOP: {"timeouts": 1, "failures": 0}}
+    analysis = analyse(runs + again, rerun_done={("medium", "write5")})
+    assert (label, "completed") in statuses(analysis, "regression")  # it repeated
+
+
+def test_a_baseline_that_never_loaded_did_not_complete_a_query():
+    """#4000 review (T20): every baseline load failed, so no baseline query ran. The
+    candidate's timeouts in 2 runs are a regression on their own (#4065); the baseline's value
+    is unknown (null), not 1, so the report does not say the baseline completed it."""
+    hung = {"errors": {THREE_HOP: {"timeouts": 40, "failures": 0}}}
+    runs = pass_runs(1, 3, candidate=hung, baseline={"finished": False})
+    analysis = analyse(runs)
+    label = f"{pokec.hop_label(THREE_HOP)} [5% writes]"
+    (row,) = [f for f in analysis.findings if (f["name"], f["metric"]) == (label, "completed")]
+    assert (row["status"], row["candidate"], row["baseline"]) == ("regression", 0, None)
+    assert analysis.unmeasured  # the baseline's runs did not finish: still said
+    quiet = [f for f in analysis.findings if f["metric"] == "completed" and f["name"] != label]
+    assert all(f["baseline"] is None for f in quiet if "benchmark run" not in f["name"]), quiet
+
+
 def test_an_error_reply_is_a_regression_at_once():
     runs = pass_runs(1, 3)
     runs[1].errors = {"single_edge_write": {"timeouts": 0, "failures": 1}}
@@ -291,11 +325,12 @@ def test_an_error_reply_is_a_regression_at_once():
     assert ("single_edge_write [5% writes]", "completed") in statuses(analysis, "regression")
 
 
-def test_errors_on_both_sides_are_info():
+def test_errors_on_both_sides_are_a_regression():
+    """#4065: an error reply on the candidate is a regression whether or not the baseline
+    errs too; the result's `broken` tells the release gate the baseline shares it."""
     broken = {"errors": {"single_edge_write": {"timeouts": 0, "failures": 50}}}
     analysis = analyse(pass_runs(1, 3, candidate=broken, baseline=broken))
-    assert ("single_edge_write [5% writes]", "completed") in statuses(analysis, "info")
-    assert not statuses(analysis, "regression")
+    assert statuses(analysis, "regression") == [("single_edge_write [5% writes]", "completed")]
 
 
 def test_a_run_that_does_not_finish_is_a_regression_at_once():
@@ -306,10 +341,9 @@ def test_a_run_that_does_not_finish_is_a_regression_at_once():
     assert analysis.unmeasured  # no latency comparison without a finished candidate run
 
 
-def test_broken_on_both_sides_is_info_and_unmeasured():
+def test_a_run_that_finished_on_neither_side_is_a_regression_and_unmeasured():
     analysis = analyse(pass_runs(1, 3, candidate={"finished": False}, baseline={"finished": False}))
-    assert ("benchmark run finished [5% writes]", "completed") in statuses(analysis, "info")
-    assert not statuses(analysis, "regression")
+    assert ("benchmark run finished [5% writes]", "completed") in statuses(analysis, "regression")
     assert analysis.unmeasured
 
 
@@ -584,8 +618,19 @@ def test_the_summary_names_queries_broken_on_both_sides(tmp_path):
         1, 3, candidate={"workload": "read"}, baseline={"workload": "read"}
     )
     result = check.build()
-    assert result["verdict"] == "pass"
-    assert "failed on both sides (not new): single_edge_write [5% writes]" in result["summary"]
+    assert result["verdict"] == "regression"
+    assert (
+        "single_edge_write [5% writes] did not complete on the candidate (baseline too)"
+        in result["summary"]
+    )
+    assert result["broken"] == [
+        {
+            "name": "single_edge_write [5% writes]",
+            "baseline_too": True,
+            "issue": None,
+            "introduced": False,
+        }
+    ]
     assert validate(result) == []
 
 

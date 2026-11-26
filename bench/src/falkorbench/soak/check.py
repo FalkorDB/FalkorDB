@@ -70,9 +70,45 @@ TIMING_RE = re.compile(
 )
 
 # Contract v1.9: check name -> open issue. Entry rule and evidence: README "Known flaky checks".
+# A listed check broken on the candidate is still a regression (#4065); only the release gate
+# leaves it out, unless the candidate broke it every time.
 KNOWN_FLAKY = {
     "s10 Live (under writes) index == scan during build/after": "#3095",
     "s10 Live: index-path count == scan-path count (same query)": "#3095",
+    "s10 during build person_age: result == ground truth": "#3512",
+    "s10 during build person_city: result == ground truth": "#3512",
+}
+
+# Known flaky checks the scenario records only when they fail: every record is a failure, so a
+# "k of n" with k == n says nothing about how often it held, and a total breakage cannot be told
+# from a random one. The release gate never counts these (README "Known flaky checks").
+FAILURE_ONLY = frozenset(
+    {
+        "s10 during build person_age: result == ground truth",
+        "s10 during build person_city: result == ground truth",
+    }
+)
+
+# A known flaky check the candidate broke every time it was checked, at least this many times
+# in every run, is a total breakage: the release gate counts it (README "Known flaky checks").
+ALWAYS_BROKEN_MIN_CHECKS = 10
+
+# The open issue of a pass/fail check that breaks today, for the report only: it never changes a
+# verdict. README "Known breaks" is the same map with its evidence (a test keeps the two equal);
+# a check not listed has no issue known.
+ISSUES = {
+    **{name: int(issue.lstrip("#")) for name, issue in KNOWN_FLAKY.items()},
+    "s03 range index finds chunks by cid (0, 1, mid, last)": 3512,
+    "s03 range index finds every initial chunk": 3512,
+    "s03 in-load: updated_ann_miss_top10 == 0": 3886,
+    "s05 used_memory returns to baseline after deleting all (residual <50MB)": 4050,
+    "s10 after build person_age: indexed result == ground truth": 3512,
+    "s10 after build person_city: indexed result == ground truth": 3512,
+    "s10 during build person_age: result == ground truth": 3512,
+    "s10 during build person_city: result == ground truth": 3512,
+    "s10 before restart: Person.age indexed results == ground truth": 3512,
+    "s11 CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)": 4051,
+    "s11 deeply nested expressions are answered within 60 s": 2400,
 }
 
 # Server-log lines that mean the server process crashed (not just a failed query).
@@ -222,8 +258,9 @@ def read_run(
 @dataclass
 class Row:
     """One comparison. `kind` says why a row is info: unconfirmed (a perf/timing signal not
-    confirmed by its re-run), incomplete (its re-run did not finish), tail (p99 shift), known
-    (KNOWN_FLAKY). ok rows stay in raw/rows.csv only."""
+    confirmed by its re-run), incomplete (its re-run did not finish), tail (p99 shift); known
+    marks a KNOWN_FLAKY check. `introduced`, on a pass/fail row, is the release gate's answer
+    when it differs from kit.introduced(). ok rows stay in raw/rows.csv only."""
 
     name: str
     metric: str
@@ -236,9 +273,10 @@ class Row:
     crossed: bool = False  # crossed in the first pass (asks for a re-run)
     kind: str = ""
     note: str = ""
+    introduced: bool | None = None
 
     def finding(self) -> dict:
-        return kit.finding(
+        f = kit.finding(
             self.name,
             self.metric,
             self.candidate,
@@ -248,6 +286,9 @@ class Row:
             threshold=self.threshold,
             ratio=self.ratio,
         )
+        if self.introduced is not None and self.status == "regression":
+            f[kit.INTRODUCED] = self.introduced
+        return f
 
 
 def _ratio(c, b):
@@ -268,7 +309,7 @@ _K_OF_N = re.compile(r"^(\d+) of (\d+) runs failed")
 
 
 def _always_broken(runs: list[Run], name: str) -> bool:
-    """Every run broke it every time it was checked (k == n >= 10); no "k of n" counts as
+    """Every run broke it every time it was checked (k == n >= ALWAYS_BROKEN_MIN_CHECKS); no "k of n" counts as
     always broken, so a total breakage is gated rather than hidden."""
     if not runs or not all(name in r.checks for r in runs):
         return False
@@ -276,31 +317,33 @@ def _always_broken(runs: list[Run], name: str) -> bool:
         if r.checks[name]:
             return False
         m = _K_OF_N.match(r.details.get(name, ""))
-        if m and not (int(m.group(1)) == int(m.group(2)) >= 10):
+        if m and not (int(m.group(1)) == int(m.group(2)) >= ALWAYS_BROKEN_MIN_CHECKS):
             return False
     return True
 
 
 def _timing_row(tag: str, name: str, cand: list[Run], base: list[Run], perf_gate: bool) -> Row:
-    """Broken on the candidate only when every pair (at least two) has it broken on the
-    candidate and held on the baseline; broken on both in every pair is info; a side counts as
-    broken only if every run (at least two) broke it."""
+    """Broken on the candidate only when every pair (at least two: the first run asks for a
+    re-run) has it broken there, whatever the baseline did; the baseline broke it too when it
+    did in any pair. The release gate counts it only when every pair has it held on the
+    baseline. Otherwise a side counts as broken only if every run (at least two) broke it."""
     pairs = [
         (c.checks.get(name), b.checks.get(name)) for c, b in zip(cand, base, strict=False)
     ]  # re-runs come in pairs
     c_seen = [cv for cv, _ in pairs if cv is not None]
     b_seen = [bv for _, bv in pairs if bv is not None]
     c_broke = sum(1 for v in c_seen if v is False)
-    regress = [cv is False and bv is True for cv, bv in pairs]
-    if perf_gate and len(pairs) >= 2 and all(regress):
-        cv, bv = 0, 1
-    elif pairs and all(cv is False and bv is False for cv, bv in pairs):
-        cv, bv = 0, 0
+    confirmed = perf_gate and len(pairs) >= 2 and all(cv is False for cv, _ in pairs)
+    if confirmed:
+        cv = 0
+        bv = 0 if any(bv is False for _, bv in pairs) else (1 if b_seen else None)
     else:
         cv = 1 if c_seen else None
         bv = None if not b_seen else int(not (len(b_seen) >= 2 and all(v is False for v in b_seen)))
     row = _zero_one(f"{tag} {name}", "invariant", cv, bv)
-    row.crossed = bool(pairs) and regress[0]
+    row.crossed = bool(pairs) and pairs[0][0] is False
+    if confirmed:
+        row.introduced = all(bv is True for _, bv in pairs)
     if cv == 1 and c_broke:
         row.status, row.kind = "info", "unconfirmed"
         row.note = f"broke in {c_broke} of {len(c_seen)} candidate runs"
@@ -326,8 +369,8 @@ def scenario_rows(scn: str, cand: list[Run], base: list[Run], perf_gate: bool) -
         row = _zero_one(
             f"{tag} {n}", "invariant", _correctness_value(cand, n), _correctness_value(base, n)
         )
-        if row.name in KNOWN_FLAKY and not _always_broken(cand, n):
-            row.status, row.kind = "known", "known"
+        if row.name in KNOWN_FLAKY:
+            row.kind = "known"
             row.note = "broke on " + (
                 " and ".join(
                     side
@@ -336,6 +379,12 @@ def scenario_rows(scn: str, cand: list[Run], base: list[Run], perf_gate: bool) -
                 )
                 or "neither side"
             )
+            if row.status == "regression":  # the gate counts it only when it always broke
+                row.introduced = (
+                    row.baseline != 0 and row.name not in FAILURE_ONLY and _always_broken(cand, n)
+                )
+            elif row.status == "improvement":  # a flake the baseline hit: not a fix
+                row.status = "info"
         rows.append(row)
     return rows + _perf_rows(tag, cand, base, perf_gate)
 
@@ -460,13 +509,12 @@ def move_size(r: Row) -> float:
 def worst_first(rows: list[Row]) -> list[dict]:
     """The findings result.json can carry, in the order kit.select() keeps within a status:
     regressions and improvements by the size of the move, info rows unconfirmed first, then
-    broken on both sides, then p99 shifts. ok and known rows stay in raw/rows.csv."""
+    the rest, then p99 shifts. ok rows stay in raw/rows.csv."""
     size = move_size
     rank = {"unconfirmed": 0, "incomplete": 0, "tail": 2}
 
     def info_rank(r: Row):
-        both = (r.candidate, r.baseline) == (0, 0)
-        return (rank.get(r.kind, 1 if both else 3), -size(r))
+        return (rank.get(r.kind, 1), -size(r))
 
     reg = sorted((r for r in rows if r.status == "regression"), key=size, reverse=True)
     imp = sorted((r for r in rows if r.status == "improvement"), key=size, reverse=True)
@@ -478,6 +526,23 @@ def _short(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+PASS_FAIL = kit.PASS_FAIL_METRICS
+
+
+def broken_note(r: Row) -> str:
+    """How the report names a broken pass/fail check: baseline too, its issue, known flaky."""
+    issue = ISSUES.get(r.name)
+    return ", ".join(
+        part
+        for part in (
+            f"baseline too: {'yes' if r.baseline == 0 else 'no'}",
+            f"#{issue}" if issue else "",
+            "known flaky" if r.kind == "known" else "",
+        )
+        if part
+    )
+
+
 def summary_line(
     rows: list[Row],
     scenarios: list[str],
@@ -487,11 +552,15 @@ def summary_line(
     error: str | None,
     unconfirmed: list[str] = (),
 ) -> str:
-    reg = [r for r in rows if r.status == "regression"]
-    both = [r for r in rows if r.status == "info" and r.candidate == 0 and r.baseline == 0]
-    unconf = [r for r in rows if r.kind in ("unconfirmed", "incomplete")]
+    reg = [r for r in rows if r.status == "regression" and r.metric not in PASS_FAIL]
+    broken = [r for r in rows if r.status == "regression" and r.metric in PASS_FAIL]
+    fixed = [r for r in rows if r.status == "improvement" and r.metric in PASS_FAIL]
+    unconf = [
+        r for r in rows if r.kind in ("unconfirmed", "incomplete") and r.metric not in PASS_FAIL
+    ]
+    timing = [r for r in rows if r.kind == "unconfirmed" and r.metric in PASS_FAIL]
     tails = [r for r in rows if r.kind == "tail"]
-    known = [r for r in rows if r.kind == "known" and 0 in (r.candidate, r.baseline)]
+    known = [r for r in rows if r.kind == "known" and r.status == "info" and r.baseline == 0]
     missing = {n.split(" ")[0] for n in not_run}
     parts = [
         f"{len([s for s in scenarios if s not in missing])} of {len(scenarios)} scenarios "
@@ -501,29 +570,40 @@ def summary_line(
     # verdict it is the only place that says it (result.json's error is null then).
     if error:
         parts.append(error)
-    if reg:
-        names = [
-            _short(r.name, 80)
-            + (f" {r.ratio:.2f}x" if r.metric not in ("invariant", "completed") and r.ratio else "")
-            for r in reg[:4]
-        ]
+    if broken:
+        names = [f"{_short(r.name, 80)} ({broken_note(r)})" for r in broken[:4]]
         parts.append(
-            f"{len(reg)} regression(s): " + ", ".join(names) + (" …" if len(reg) > 4 else "")
+            f"{len(broken)} pass/fail check(s) broken on the candidate: "
+            + ", ".join(names)
+            + (" …" if len(broken) > 4 else "")
         )
-    else:
+    if reg:
+        names = [f"{_short(r.name, 80)}" + (f" {r.ratio:.2f}x" if r.ratio else "") for r in reg[:4]]
+        parts.append(
+            f"{len(reg)} perf regression(s): " + ", ".join(names) + (" …" if len(reg) > 4 else "")
+        )
+    if not broken and not reg:
         parts.append("no regression")
     if not_run:
         parts.append("not measured: " + ", ".join(not_run))
     if unconfirmed:
         parts.append("unconfirmed: " + ", ".join(unconfirmed))
-    if both:
-        parts.append(f"{len(both)} broken on both sides (not new)")
+    if timing:
+        parts.append(
+            "broken on the candidate, not confirmed by a re-run: "
+            + ", ".join(_short(r.name, 100) for r in timing)
+        )
+    if fixed:
+        parts.append(
+            "fixed on the candidate (the baseline breaks it): "
+            + ", ".join(_short(r.name, 80) for r in fixed)
+        )
     if unconf:
         parts.append(f"{len(unconf)} perf signal(s) not confirmed")
     if known:
         parts.append(
-            "known flaky, not gated: "
-            + ", ".join(f"{r.name} ({KNOWN_FLAKY[r.name]}) {r.note}" for r in known)
+            "known flaky, broke on the baseline only: "
+            + ", ".join(f"{r.name} ({KNOWN_FLAKY[r.name]})" for r in known)
         )
     if tails:
         top = max(tails, key=lambda r: abs(math.log(r.ratio)) if r.ratio and r.ratio > 0 else 0)
@@ -1034,6 +1114,7 @@ def finish(
         summary=summary,
         errors=errors,
         artifacts=artifacts,
+        issues=ISSUES,
     )
 
 

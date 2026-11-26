@@ -498,9 +498,11 @@ def unfinished(plan, results_dir, nightly):
 # How a night ends its workflow run: a green or skipped night succeeds, and a
 # red one whose every regression is waived. Any other red night, and an error
 # night (one that could not measure is not green), fails the run, so the list of
-# runs reads as a timeline, a failed scheduled run sends GitHub's email, and a
-# release gate (a call of the workflow) says no. A gate also fails a skipped
-# night: it measured nothing.
+# runs reads as a timeline, a failed scheduled run sends GitHub's email, and the
+# release gate says no. The gate also fails a skipped night (it measured
+# nothing), and keeps the rule older than #4065: a pass/fail break the
+# candidate did not introduce (result.json's `broken` says introduced: false:
+# the baseline breaks it too, or a known flaky check) is reported, not blocking.
 WAIVER_KEYS = ("check", "finding", "issue", "reason")
 WAIVER_OPTIONAL = ("metric", "max_ratio")
 
@@ -581,7 +583,8 @@ def conclude(nightly, waivers, gate=False, unfinished=None):
     never waived, nor a regression verdict with no regression finding to name,
     nor one from a run that did not finish (`unfinished`: {check: why}), nor one
     from a result whose `incomplete` is not null (it left parts unmeasured or
-    cut its findings)."""
+    cut its findings). The release gate (`gate`) does not block on a finding its
+    result's `broken` marks introduced: false; it says why instead."""
     unfinished = unfinished or {}
     status = nightly.get("status") if isinstance(nightly, dict) else None
     if status == "green" or (status == "skipped" and not gate):
@@ -591,7 +594,7 @@ def conclude(nightly, waivers, gate=False, unfinished=None):
     checks = nightly.get("checks") if status in ("red", "error") else None
     if not isinstance(checks, list):
         return 1, [f"the night is {status}: the run fails"]
-    blocking, waived = [], []
+    blocking, waived, shared = [], [], []
     for entry in checks:
         entry = entry if isinstance(entry, dict) else {}
         check, verdict = entry.get("check"), entry.get("verdict")
@@ -618,10 +621,19 @@ def conclude(nightly, waivers, gate=False, unfinished=None):
         ]
         if not found:
             blocking.append(f"{check}: regression with no finding to waive")
+        marks = gate_marks(entry) if gate else {}
         for finding in found:
-            said = (
-                f"{check}: {finding.get('name')} ({finding.get('metric')} {finding.get('ratio')}x)"
-            )
+            said = f"{check}: {finding.get('name')} ({finding.get('metric')} {said_value(finding)})"
+            mark = marks.get(id(finding))
+            if mark is not None and mark.get("introduced") is False:
+                why = (
+                    "the baseline breaks it too"
+                    if mark.get("baseline_too")
+                    else "not new by its check's rule"
+                )
+                tracked = f", #{mark['issue']}" if mark.get("issue") else ""
+                shared.append(f"{said}: {why}{tracked}")
+                continue
             issue = next((w.issue for w in waivers if w.covers(check, finding)), None)
             if issue is None:
                 blocking.append(said)
@@ -629,12 +641,44 @@ def conclude(nightly, waivers, gate=False, unfinished=None):
                 waived.append(f"{said} waived by #{issue}")
     # A red or error night with nothing to block on and nothing waived names no
     # reason to be what it is: it does not pass either.
-    code = 1 if blocking or not waived else 0
+    code = 1 if blocking or not (waived or shared) else 0
     verb = "fails" if code else "succeeds"
     lines = [f"the night is {status}: the run {verb}"]
     lines += [f"waived (reported, not gated): {line}" for line in waived]
+    lines += [f"not introduced (reported, the gate does not block): {line}" for line in shared]
     lines += [f"not waived: {line}" for line in blocking]
     return code, lines
+
+
+def gate_marks(entry):
+    """{id(finding): its `broken` entry} for a result's completed/invariant regression
+    findings. The contract pairs them in order, one entry each; names may repeat, so they
+    are paired by position, and a list that does not pair up marks nothing (every
+    regression then blocks, as for an older result without `broken`)."""
+    entries = entry.get("broken")
+    findings = [
+        f
+        for f in entry.get("findings") or []
+        if isinstance(f, dict)
+        and f.get("status") == "regression"
+        and f.get("metric") in contract.PASS_FAIL_METRICS
+    ]
+    if not isinstance(entries, list) or len(entries) != len(findings):
+        return {}
+    if any(
+        not isinstance(b, dict) or b.get("name") != f.get("name")
+        for b, f in zip(entries, findings, strict=True)
+    ):
+        return {}
+    return {id(f): b for f, b in zip(findings, entries, strict=True)}
+
+
+def said_value(finding):
+    """A finding's move in a few words: its ratio, or both sides' 0/1 values."""
+    ratio = finding.get("ratio")
+    if _is_number(ratio):
+        return f"{ratio}x"
+    return f"{finding.get('candidate')} vs {finding.get('baseline')}"
 
 
 # The release gate's baseline: the highest stable release strictly below a
@@ -796,7 +840,7 @@ def cmd_conclude(args):
     else:
         print(first)
     for line in rest:
-        level = "warning" if line.startswith("waived") else "error"
+        level = "warning" if line.startswith(("waived", "not introduced")) else "error"
         print(f"::{level}::{line}")
     return code
 
@@ -854,7 +898,11 @@ def main(argv=None):
     judged.add_argument("--result", help="one check's result.json, judged as a night of one")
     p.add_argument("--waivers", default="", help="bench/waivers.yaml converted to JSON")
     p.add_argument("--unfinished", default="", help="what `results --unfinished-out` wrote")
-    p.add_argument("--gate", action="store_true", help="a release gate: a skipped night fails")
+    p.add_argument(
+        "--gate",
+        action="store_true",
+        help="the release gate: a skipped night fails; a break not introduced does not (#4065)",
+    )
     p.set_defaults(func=cmd_conclude)
 
     p = sub.add_parser("release", help="release tags on stdin -> the highest below --below")

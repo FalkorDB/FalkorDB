@@ -193,15 +193,17 @@ matches its rows.
 
 | finding | metric | when it is a regression |
 | --- | --- | --- |
-| `benchmark run finished [w]` | `completed` (1 if every run of the side finished) | candidate 0, baseline 1: at once |
+| `benchmark run finished [w]` | `completed` (1 if every run of the side finished) | candidate 0: at once |
 | `server started [dataset]` | `completed` | the candidate image does not answer PING within 120 s: at once |
-| `<query> [w]` | `completed` (1 if every request of that query returned) | candidate 0, baseline 1. An error reply counts at once (a correctness failure). A timeout counts once it happens in 2 separate runs of the side. In 1 run only, the workload is re-run, and if it does not happen again the row is `info` |
+| `<query> [w]` | `completed` (1 if every request of that query returned) | candidate 0, whatever the baseline did. An error reply counts at once (a correctness failure). A timeout counts once it happens in 2 separate runs of the side. In 1 run of the candidate only, the workload is re-run (also when the baseline is broken), and if it does not happen again the row is `info` |
 | `all queries [w]`, `<query> [w]` | `p50_ms` `p95_ms` `p99_ms` (median over the side's finished runs) | past 1.3x **and** past an absolute floor (p50 1 ms, p95 5 ms, p99 15 ms), in the first pass **and** in the re-run. Under 5% writes only `all queries` and a read query's p50 (below) |
 | `throughput [w]` | `throughput` (10,000 / the query phase's seconds; lower is worse) | below 1/1.3 in both passes |
 | `PING max [w]` | `ping_max_ms`: the slowest PING reached in at least 2 of the side's runs, finished or not (the second-highest run maximum) | the candidate froze (a PING over 1 s) in at least 2 runs and its value is above 1.3x the baseline's. One freeze re-runs the workload; freezes as long on the baseline are `info` |
 
-Both sides 0 on a `completed` row is `info` (contract v1.4), and the summary says
-so.
+A `completed` row at 0 on the candidate is a regression whether or not the
+baseline is 0 too (contract v1.14, #4065); the summary then says "baseline too",
+and the result's `broken` tells the release gate, which blocks only what the
+candidate introduced.
 
 ### Thresholds measured
 
@@ -254,7 +256,7 @@ worst first, at most 50. Every comparison is in `raw/rows.csv`, every run in
   crossed in the first pass and the re-run gave no value to repeat it with (no
   finished re-run, or none of that query's requests returned), a finished run
   had no PING answered, or no run was made at all;
-* else `pass`. Queries that failed on both sides are named in the summary.
+* else `pass`.
 
 `artifacts` lists only the files this run wrote (an `--out` reused by hand may
 hold an earlier run's; `_perf-vm.yml` starts from an empty one).
@@ -276,7 +278,8 @@ side's server name, version, executable and module.
 
 `falkordb/falkordb-server:v4.22.x` (Redis, module at
 `/var/lib/falkordb/bin/falkordb.so`) runs the same way. A query a side does not
-support ends in error replies, which on both sides is an `info` row, not an
+support ends in error replies: on both sides that is a `completed` regression with
+the baseline too (#4065), which the release gate does not block on, and never an
 error for the whole check.
 
 ## Artifacts

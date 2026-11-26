@@ -89,7 +89,9 @@ def answered(
         ):
             continue  # the warmup answered: a broken measurement, not an unsupported query
         if query in pr_failed and query in base_failed:
-            candidate, baseline = 0, 0  # not supported on this branch: info
+            # not supported on this branch: a gap, not a break, so the candidate is not
+            # judged (null) and it stays info under #4065's rule
+            candidate, baseline = None, 0
         elif query in pr_failed and query in rows.get("base", {}):
             candidate, baseline = 0, 1  # the PR broke it: a regression
         elif query in base_failed and query in rows.get("pr", {}):

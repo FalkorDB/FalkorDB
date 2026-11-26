@@ -296,7 +296,7 @@ def test_finding_ratio_comes_from_the_unrounded_measurements():
     [
         (0, 1, "regression"),
         (0, None, "regression"),  # the validator: 0 against anything but 0
-        (0, 0, "info"),  # broken on both sides: not new
+        (0, 0, "regression"),  # broken on both sides: still the candidate's break (#4065)
         (1, 0, "improvement"),
         (1, 1, "ok"),
         (1, None, "info"),  # baseline not measured: info, never ok

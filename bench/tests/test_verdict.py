@@ -288,13 +288,14 @@ class TestVerdict:
         assert [f["metric"] for f in regs[:2]] == ["completed", "instructions"]
         assert "worst write b [errors on candidate only] completed" in res["summary"]
 
-    def test_query_erroring_on_both_sides_is_information(self, tmp_path):
+    def test_query_erroring_on_both_sides_is_a_regression_the_gate_leaves_out(self, tmp_path):
         write_side(tmp_path, "candidate", without(ROWS, "write b"))
         write_side(tmp_path, "baseline", without(ROWS, "write b"))
         res = run(tmp_path)
-        assert res["verdict"] == "pass"
-        (f,) = [f for f in by_status(res, "info") if "both sides" in f["name"]]
-        assert (f["candidate"], f["baseline"]) == (0, 0), "v1.4: 0 and 0 is info"
+        assert res["verdict"] == "regression"
+        (f,) = [f for f in by_status(res, "regression") if "both sides" in f["name"]]
+        assert (f["candidate"], f["baseline"]) == (0, 0), "v1.14: 0 on the candidate regresses"
+        assert [(b["baseline_too"], b["introduced"]) for b in res["broken"]] == [(True, False)]
         assert "1 queries error on both images" in res["summary"]
 
     def test_improvements_that_do_not_fit_drop_the_smallest_gains(self):
@@ -447,8 +448,9 @@ class TestVerdict:
         write_side(tmp_path, "candidate", without(ROWS, "write b"))
         write_side(tmp_path, "baseline", [ROWS, without(ROWS, "write b")])
         res = run(tmp_path)
-        assert res["verdict"] == "pass"
-        assert any("error on both sides" in f["name"] for f in by_status(res, "info"))
+        assert res["verdict"] == "regression"  # #4065: the candidate errors; the gate leaves it
+        assert any("errors on both sides" in f["name"] for f in by_status(res, "regression"))
+        assert [b["introduced"] for b in res["broken"]] == [False]
 
     def test_a_row_whose_prerequisite_errored_on_one_side_is_not_compared(self, tmp_path):
         """`dep` runs on the graph `write b` builds; with `write b` failing on
@@ -489,7 +491,10 @@ class TestVerdict:
             write_side(tmp_path, "candidate", scaled(rows, "dep", "instr", 3.0), confirm=confirm)
             write_side(tmp_path, "baseline", rows, confirm=confirm)
         res = run(tmp_path, queries=qs)
-        assert [f["name"] for f in by_status(res, "regression")] == ["dep [reads]"]
+        assert [f["name"] for f in by_status(res, "regression")] == [
+            "write b [errors on both sides]",  # #4065: still the candidate's break, named
+            "dep [reads]",
+        ]
 
     def test_a_pass_csv_is_read_by_its_literal_path(self, tmp_path):
         """`--out 'out[ab]'` is a glob for `outa`; an earlier run's CSVs there
@@ -547,7 +552,8 @@ class TestVerdict:
         names = [f["name"] for f in by_status(res, "info")]
         for i in range(5):
             assert any(n.startswith(f"q{i} [") for n in names), f"q{i} crossed once"
-        assert any("both sides" in n for n in names)
+        # #4065: q7 erroring on both sides is a regression now, so it cannot be crowded out
+        assert any("both sides" in f["name"] for f in by_status(res, "regression"))
         assert sum(f["status"] in ("ok", "info") for f in res["findings"]) == 10
 
     def test_improvement_does_not_fail_the_run(self, tmp_path):

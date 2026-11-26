@@ -34,7 +34,7 @@ def _stub(check: str, error: str) -> dict:
 
 def _nightlies() -> dict:
     passed, error = _file("result-micro-pass.json"), _file("result-pokec-error.json")
-    soak = _file("result-soak-both-broken.json")  # pass, one invariant broken on both sides
+    soak = _file("result-soak-fixed.json")  # pass, one invariant fixed (the baseline breaks it)
     return {
         "nightly-green.json": nightly("green", [passed, soak]),
         "nightly-error.json": nightly("error", [passed, error, soak]),
@@ -43,6 +43,8 @@ def _nightlies() -> dict:
             _stub("micro-hw", "no C4 VM with performance-monitoring-unit=standard came up; no counterless fallback"),
         ]),
         "nightly-skipped.json": nightly("skipped", [], "main has not moved since the last run (main@4c1088949)"),
+        # v1.14: a break the baseline shares makes the night red too
+        "nightly-red-both-broken.json": nightly("red", [passed, _file("result-soak-both-broken.json")]),
     }
 
 
