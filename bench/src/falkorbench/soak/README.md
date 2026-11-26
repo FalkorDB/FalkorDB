@@ -186,7 +186,10 @@ needs entries with longer timeouts: the nightly ones leave its 1200 s sides no r
 
 Trends start fresh under these names. Nights before them ran soak as two checks,
 `soak-a` (s01–s06) and `soak-b` (s07–s12); the dashboard keeps those nights under the
-old names and does not carry their rows over to the new checks. Outside the VM
+old names and does not carry their rows over to the new checks. Its runs index shows
+every soak check, old and new, in one `soak` column: the worst verdict, with each
+check's verdict in the cell's title. A run's page and the trends keep one entry per
+check. Outside the VM
 the check runs unpinned; nothing waits for a quiet machine, so read local numbers with
 that in mind. Unit tests (no server or Docker needed):
 `uv run --project bench --group dev --group soak python -I -B -m pytest bench/tests/test_soak.py`.
