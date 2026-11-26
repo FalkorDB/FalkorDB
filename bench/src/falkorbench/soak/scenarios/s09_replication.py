@@ -143,23 +143,60 @@ def checksum(port):
     return res
 
 
-def compare(tag, id_keys_major=True):
-    """Both sides checksummed concurrently. Returns (ok, ok_ids, details)."""
-    box = {}
-    ths = [threading.Thread(target=lambda p=p: box.__setitem__(p, checksum(p))) for p in (a.port, PORT_R)]
-    [t.start() for t in ths]
-    [t.join() for t in ths]
-    p, q = box[a.port], box[PORT_R]
-    diff = [k for k in CS_QUERIES if p[k] != q[k]]
-    idd = [k for k in diff if k.startswith("ids:")]
-    other = [k for k in diff if not k.startswith("ids:")]
-    det = "; ".join(f"{k}: primary={str(p[k])[:100]} replica={str(q[k])[:100]}" for k in diff[:6])
-    errs = [k for k in CS_QUERIES if str(p[k]).startswith("ERR") or str(q[k]).startswith("ERR")]
+def compare(tag, id_keys_major=True, retry=None):
+    """Both sides checksummed concurrently. Returns (ok, primary checksums).
+
+    retry: called before a second attempt when the content differs (a laggy apply). Only the
+    last attempt is recorded, under tag: checks.json ANDs a name's records, so a first
+    attempt recorded beside a passing retry would still fail the check."""
+    first = ""
+    for attempt in (1, 2):
+        box = {}
+        ths = [threading.Thread(target=lambda p=p: box.__setitem__(p, checksum(p))) for p in (a.port, PORT_R)]
+        [t.start() for t in ths]
+        [t.join() for t in ths]
+        p, q = box[a.port], box[PORT_R]
+        diff = [k for k in CS_QUERIES if p[k] != q[k]]
+        idd = [k for k in diff if k.startswith("ids:")]
+        other = [k for k in diff if not k.startswith("ids:")]
+        det = "; ".join(f"{k}: primary={str(p[k])[:100]} replica={str(q[k])[:100]}" for k in diff[:6])
+        errs = [k for k in CS_QUERIES if str(p[k]).startswith("ERR") or str(q[k]).startswith("ERR")]
+        if not other or retry is None or attempt == 2:
+            break
+        first = f"first attempt differed ({det[:300]}), retried; "
+        log(f"compare {tag}: replica differs, retrying")
+        retry()
+    det = first + det
     checks.add(f"{tag}: replica content == primary (counts/props/structure/indexes)", not other, det, "critical")
     checks.add(f"{tag}: internal ids (sum id(n)/id(e)) identical", not idd, det, "major")
     checks.add(f"{tag}: checksum queries ran without error", not errs,
                f"{errs}: {[str(p[k])[:100] for k in errs[:2]]}", "major")
     return not other, p
+
+
+def load_thread(*args, **kwargs):
+    """sk.run_load in a daemon thread that keeps what it raised, for join_load."""
+    box = {}
+
+    def body():
+        try:
+            sk.run_load(*args, **kwargs)
+        except (Exception, SystemExit) as e:  # a dead worker: RuntimeError or SystemExit
+            box["error"] = e
+
+    t = threading.Thread(target=body, daemon=True)
+    t.box = box
+    return t
+
+
+def join_load(t, timeout):
+    """Join a load_thread and fail the scenario as a load run in the main thread would: a load
+    that raised, or did not finish, is not a completed run."""
+    t.join(timeout)
+    if t.is_alive():
+        raise RuntimeError(f"load did not finish within {timeout:.0f}s")
+    if "error" in t.box:
+        raise t.box["error"]
 
 
 def quiesce_compare(tag):
@@ -170,10 +207,7 @@ def quiesce_compare(tag):
     ok = cv is not None
     checks.add(f"{tag}: replica caught up (offsets equal) after writes paused", ok,
                f"no convergence in 120s", "critical")
-    ok1, base = compare(tag)
-    if not ok1:  # allow for a laggy apply: retry once after 5 s
-        time.sleep(5)
-        ok2, _ = compare(tag + " (retry)")
+    compare(tag, retry=lambda: time.sleep(5))  # allow for a laggy apply: retry once after 5 s
     paused = time.time() - t + 1.5
     log(f"quiesce {tag}: converge={cv} paused={paused:.1f}s")
     PAUSE.clear()
@@ -443,7 +477,7 @@ specs = [
 ]
 mon.mark("soak")
 rmon.mark("soak")
-lt = threading.Thread(target=sk.run_load, args=(srv, out, specs, D), daemon=True)
+lt = load_thread(srv, out, specs, D)
 t_soak = time.time()
 T_SOAK.value = t_soak
 lt.start()
@@ -489,7 +523,7 @@ if rep and lt.is_alive():
 sleep_until(0.62)
 cv, pz = quiesce_compare("mid-soak Q2 (after resync)")
 cvs.append(cv)
-lt.join(D * 2 + 600)
+join_load(lt, D * 2 + 600)
 mon.mark("verify")
 rmon.mark("verify")
 time.sleep(1.0)
@@ -499,11 +533,7 @@ PAUSE.set()
 cv = converge(300)
 checks.add("final: replica caught up", cv is not None, "", "critical")
 cvs.append(cv)
-ok_final, final_base = compare("final")
-if not ok_final:
-    time.sleep(5)
-    converge(60)
-    ok_final, final_base = compare("final (retry)")
+ok_final, final_base = compare("final", retry=lambda: (time.sleep(5), converge(60)))
 PAUSE.clear()
 
 ledger_ok_ids = {}
@@ -516,15 +546,14 @@ mon.mark("failover")
 rmon.mark("failover")
 drill = {}
 DD = 14.0
-dt_ = threading.Thread(target=sk.run_load, args=(srv, out, [sk.WorkerSpec(w_drill, rate=150, count=2, name="drill")], DD),
-                       kwargs={"tag": "drill_"}, daemon=True)
+dt_ = load_thread(srv, out, [sk.WorkerSpec(w_drill, rate=150, count=2, name="drill")], DD, tag="drill_")
 dt_.start()
 time.sleep(DD * 0.5)
 rc = sk.connect(PORT_R)
 t = time.time()
 drill_resp = rc.execute_command("REPLICAOF", "NO", "ONE")
 drill["promote_s"] = time.time() - t
-dt_.join(DD + 600)
+join_load(dt_, DD + 600)
 role = rc.info("replication").get("role")
 checks.add("failover: replica promoted (role:master)", role == "master", role, "critical")
 bad = []

@@ -1,3 +1,4 @@
+use arcstr::ArcStr;
 use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Encode, EncodeState, PayloadEntry, Writer};
 use valkey_module::raw::RedisModuleIO;
@@ -71,7 +72,7 @@ fn encode_graph(
     graph_name: &str,
     payloads: &[PayloadEntry],
     key_count: u64,
-    global_attrs: &[std::sync::Arc<String>],
+    global_attrs: &[ArcStr],
 ) {
     Header::from_graph(graph, graph_name, key_count).encode(w);
     Schema::from_graph(graph, global_attrs.to_vec()).encode(w);

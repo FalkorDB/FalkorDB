@@ -52,6 +52,7 @@
 //!   configurable `maxDepth`, direction, type/label filters, and timeout
 //!   enforcement via the UDF deadline.
 
+use arcstr::ArcStr;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -268,7 +269,7 @@ pub fn create_js_node<'js>(
 fn set_node_labels<'js>(
     ctx: &Ctx<'js>,
     obj: &Object<'js>,
-    labels: impl Iterator<Item = Arc<String>>,
+    labels: impl Iterator<Item = ArcStr>,
 ) -> Result<(), String> {
     let labels_arr = Array::new(ctx.clone()).map_err(|e| format!("JS array error: {e}"))?;
     for (i, label_name) in labels.enumerate() {
@@ -285,7 +286,7 @@ fn set_node_labels<'js>(
 fn set_node_attrs<'js>(
     ctx: &Ctx<'js>,
     obj: &Object<'js>,
-    attrs: impl Iterator<Item = (Arc<String>, Value)>,
+    attrs: impl Iterator<Item = (ArcStr, Value)>,
     graph: &Graph,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<(), String> {
@@ -340,12 +341,9 @@ pub fn create_js_edge<'js>(
         || {
             graph
                 .get_type(graph.get_relationship_type_id(rid))
-                .unwrap_or_else(|| Arc::new(String::new()))
+                .unwrap_or_default()
         },
-        |rt| {
-            rt.get_relationship_type(rid)
-                .unwrap_or_else(|| Arc::new(String::new()))
-        },
+        |rt| rt.get_relationship_type(rid).unwrap_or_else(ArcStr::new),
     );
     obj.set("type", type_name.as_str())
         .map_err(|e| format!("JS set error: {e}"))?;
@@ -739,7 +737,7 @@ fn js_iterate_edges_impl<'js>(
                 },
                 |t| {
                     graph
-                        .get_relationship_matrix(&Arc::new(t.clone()))
+                        .get_relationship_matrix(&ArcStr::from(t.clone()))
                         .map_or_default(|tensor| tensor.iter(0, u64::MAX, false).collect())
                 },
             )

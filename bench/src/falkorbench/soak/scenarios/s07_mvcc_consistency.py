@@ -212,8 +212,9 @@ def fail_op(ctx):
 def heavy_op(ctx):
     res = sk.query(ctx.r, G, Q_HEAVY, ro=True)
     v = ints(res)
-    if v is None:
-        return "read_invariants"
+    if v is None:  # Sink and Counter are never deleted: a snapshot always has the row
+        violation(ctx, "snapshot invariant", Q_HEAVY, res, "no row (Sink or Counter missing)")
+        return "read_invariants_VIOLATION"
     tot_bal, n, na, cacc, ne, nf, ctr, amt, camt, tot = [int(x) if x is not None else 0 for x in v]
     bad = []
     if tot_bal != T_TOTAL:

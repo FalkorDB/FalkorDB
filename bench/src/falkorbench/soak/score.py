@@ -1,6 +1,8 @@
 """Score soak results. usage: python score.py <results-root> [--layout full|smoke]
 
-full layout:  <root>/<scenario>-rust/summary.json and <root>/<scenario>-c/summary.json
+full layout:  <root>/<scenario>-rust/summary.json and <root>/<scenario>-c/summary.json, each once the
+              runner marked it finished (.done); a finished archive <scenario>-rust@<label> stands in
+              while the Rust run repeats, and a C run that did not exit 0 is no baseline (see main)
 smoke layout: <root>/work/<scenario>/<run>/summary.json — the agent's largest Rust run and its C run
               are picked by meta.engine / module path heuristics (see pick_smoke).
 Writes <root>/scores.json.
@@ -15,7 +17,8 @@ Rubric per scenario (100):
   performance 20  10 for p99 vs C, geometric mean over shared ops (<= 1.0 full, >= 3.0 zero)
                   5 for throughput vs C on shared ops (>= 0.95 full, <= 0.5 zero)
                   5 for latency drift (worst late/early p99 ratio <= 1.5 full, >= 4 zero)
-Release score = mean of scenario scores; release is BLOCKED if any critical check fails on Rust.
+Release score = mean of scenario scores; release is BLOCKED if any critical check fails on Rust,
+or a Rust run did not exit 0 (failed_runs; scored if it left a summary).
 """
 import json
 import math
@@ -151,38 +154,98 @@ def score(rust, c, rdir=None, cdir=None):
 OVERRIDES = []
 
 
+def finished(d):
+    """The runner marked the run finished (run_*.sh write .rc, then .done, whatever the exit)."""
+    return (d / ".done").exists()
+
+
+def exit_status(d):
+    """The finished run's exit status (.rc), or None when it has none to read."""
+    try:
+        return int((d / ".rc").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def succeeded(d):
+    return finished(d) and exit_status(d) == 0
+
+
+def read_summary(p):
+    """summary.json's content, or None when there is none or it does not parse (a run killed
+    while it wrote the file)."""
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def rust_runs(root):
+    """The Rust run to score per scenario, and the scenarios with none finished yet.
+
+    The current <scenario>-rust counts once it finished (a run in progress has written
+    summary.json only part way). While it runs again, or after run_rust_main.sh discarded
+    all its contended attempts, the newest finished archive <scenario>-rust@<label> (any
+    label, by .done time) stands in for it."""
+    runs, running = {}, set()
+    for d in sorted(root.glob("*-rust")):
+        name = d.name[:-len("-rust")]
+        if finished(d):
+            runs[name] = d
+        else:
+            running.add(name)
+    archives = sorted((d for d in root.glob("*-rust@*") if finished(d)),
+                      key=lambda d: (d / ".done").stat().st_mtime, reverse=True)
+    for d in archives:
+        runs.setdefault(d.name.split("-rust@")[0], d)
+    return runs, sorted(running - set(runs))
+
+
 def main():
     global OVERRIDES
     root = Path(sys.argv[1])
     if (root / "overrides.json").exists():
         OVERRIDES = json.loads((root / "overrides.json").read_text())
     res = {}
-    runs = {}
-    for rs in sorted(root.glob("*-rust/summary.json")):
-        runs[rs.parent.name[:-5]] = rs
-    for rs in sorted(root.glob("*-rust@d070f1f9b/summary.json")):  # re-run in progress: keep the previous run
-        runs.setdefault(rs.parent.name[:-len("-rust@d070f1f9b")], rs)
-    for name, rs in sorted(runs.items()):
-        cdir = root / f"{name}-c"
-        if not (cdir / ".done").exists() and (root / f"{name}-c@jul-master" / ".done").exists():
-            cdir = root / f"{name}-c@jul-master"  # C re-run in progress: keep the old baseline meanwhile
-        if not (cdir / ".done").exists():
-            continue  # score only once the C baseline has finished
-        sw = root / f"{name}-c-samewindow"
-        if not (sw / ".done").exists() and (root / f"{name}-c-samewindow@jul-master" / ".done").exists():
-            sw = root / f"{name}-c-samewindow@jul-master"
-        if (sw / ".done").exists():
-            cdir = sw  # same-size C rerun replaces the short baseline
-        elif any(o.get("no_c_compare") and o["scenario"] == name
-                 and (o.get("build") != "jul-master" or not (cdir / ".commit").exists()) for o in OVERRIDES):
+    failed = {}  # scenario -> why its Rust run failed: a blocker, scored or not
+    runs, pending = rust_runs(root)
+    for name, rdir in sorted(runs.items()):
+        rc = exit_status(rdir)
+        if rc != 0:
+            failed[name] = f"{rdir.name} exited {rc if rc is not None else 'with no status'}"
+        rust = read_summary(rdir / "summary.json")
+        if rust is None:  # nothing to score: a blocker whatever its exit status said
+            failed.setdefault(name, f"{rdir.name} left no readable summary.json")
+            continue
+        base = [root / f"{name}-c", root / f"{name}-c@jul-master"]  # C re-run in progress: the old one meanwhile
+        same = [root / f"{name}-c-samewindow", root / f"{name}-c-samewindow@jul-master"]
+        # a C run that timed out or crashed is no baseline: the first that exited 0, the
+        # same-size C rerun before the short baseline
+        cdir = next((d for d in same + base if succeeded(d)), None)
+        if cdir is None and any(d.exists() and not finished(d) for d in base + same) \
+                or not any(finished(d) for d in base + same):
+            pending.append(name)  # no C baseline yet, and one may still come: wait for it
+            continue
+        notes = []
+        if cdir is None:  # every C run finished, and none exited 0
+            notes.append("no C baseline exited 0: scored without C ratios")
+        elif cdir in base and any(o.get("no_c_compare") and o["scenario"] == name
+                                  and (o.get("build") != "jul-master" or not (cdir / ".commit").exists())
+                                  for o in OVERRIDES):
             cdir = None  # C baseline not comparable: score without C ratios
-        cs = cdir / "summary.json" if cdir else None
-        res[name] = score(json.loads(rs.read_text()), json.loads(cs.read_text()) if cs and cs.exists() else None,
-                          rs.parent, cdir)
+        c = read_summary(cdir / "summary.json") if cdir else None
+        if cdir and c is None:  # no C ratios at all: not even RSS from its monitor.csv
+            notes.append(f"{cdir.name} left no readable summary.json: scored without C ratios")
+            cdir = None
+        res[name] = score(rust, c, rdir, cdir)
+        if name in failed:
+            notes.append(f"run failed: {failed[name]}")
+        res[name]["notes"] += notes
+        res[name]["run"], res[name]["c_run"] = rdir.name, cdir.name if cdir else None  # what was scored
     tot = [v["total"] for v in res.values()]
-    blocked = [k for k, v in res.items() if v["critical_failures"] or v["crashed"]]
+    blocked = sorted({k for k, v in res.items() if v["critical_failures"] or v["crashed"]} | set(failed))
     summary = {"scenarios": res, "release_score": round(sum(tot) / len(tot), 1) if tot else None,
-               "blocked_by": blocked}
+               "blocked_by": blocked, "failed_runs": failed, "pending": sorted(pending)}
     (root / "scores.json").write_text(json.dumps(summary, indent=1, default=str))
     for k, v in res.items():
         print(f"{k:28} total {v['total']:5.1f}  C{v['correctness']:4} S{v['stability']:5} "

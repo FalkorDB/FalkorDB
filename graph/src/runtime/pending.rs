@@ -24,7 +24,8 @@
 //!
 //! On error or ROLLBACK, the Pending is simply dropped without applying.
 
-use std::{cell::RefCell, sync::Arc};
+use arcstr::ArcStr;
+use std::cell::RefCell;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -172,7 +173,7 @@ fn is_value_valid_for_index_lookup(value: &Value) -> bool {
 #[cfg(not(feature = "index-falkordb"))]
 fn redisearch_unique_query(
     indexed: bool,
-    properties: &[Arc<String>],
+    properties: &[ArcStr],
     values: Vec<Value>,
 ) -> Option<IndexQuery<Value>> {
     if !indexed || !values.iter().all(is_value_valid_for_index_lookup) {
@@ -214,10 +215,10 @@ fn redisearch_unique_query(
 /// live member of the label or type.
 #[allow(clippy::too_many_arguments)]
 fn unique_violated<Id, Q, L, S>(
-    properties: &[Arc<String>],
+    properties: &[ArcStr],
     members: impl Iterator<Item = Id>,
     affected: &RoaringTreemap,
-    attr: impl Fn(Id, &Arc<String>) -> Option<Value>,
+    attr: impl Fn(Id, &ArcStr) -> Option<Value>,
     is_candidate: impl Fn(Id) -> bool,
     query_for: impl Fn(Vec<Value>) -> Option<Q>,
     lookup: impl Fn(Q) -> L,
@@ -287,7 +288,7 @@ where
 #[derive(Debug, Clone)]
 pub(crate) struct CancelledRelationship {
     pub(crate) id: u64,
-    pub(crate) type_name: Arc<String>,
+    pub(crate) type_name: ArcStr,
     pub(crate) src: u64,
     pub(crate) dst: u64,
 }
@@ -313,9 +314,9 @@ pub struct Pending {
     /// them again would count one id twice and leave a gap the batch never
     /// fills.
     pub(crate) created_nodes: RoaringTreemap,
-    pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
+    pub(crate) created_rels_by_type: FxHashMap<ArcStr, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
-    pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
+    pub(crate) created_rel_types: FxHashMap<RelationshipId, ArcStr>,
     /// The relationship ids this batch has reserved and not yet cancelled — the
     /// mirror of `created_nodes`.
     ///
@@ -668,7 +669,7 @@ impl Pending {
     pub fn update_node_attrs(
         &self,
         id: NodeId,
-        attrs: &mut OrderMap<Arc<String>, Value>,
+        attrs: &mut OrderMap<ArcStr, Value>,
         g: &Graph,
     ) {
         let added = self
@@ -883,7 +884,7 @@ impl Pending {
                 RelationshipId,
                 NodeId,
                 NodeId,
-                Arc<String>,
+                ArcStr,
                 Option<Vec<(u16, Value)>>,
             )>,
         ),
@@ -932,7 +933,7 @@ impl Pending {
             RelationshipId,
             NodeId,
             NodeId,
-            Arc<String>,
+            ArcStr,
             Option<Vec<(u16, Value)>>,
         )>,
         NodeOpError,
@@ -993,7 +994,7 @@ impl Pending {
         id: RelationshipId,
         from: NodeId,
         to: NodeId,
-        type_name: Arc<String>,
+        type_name: ArcStr,
     ) {
         self.created_rels_by_type
             .entry(type_name.clone())
@@ -1073,7 +1074,7 @@ impl Pending {
     pub fn update_relationship_attrs(
         &self,
         id: RelationshipId,
-        attrs: &mut OrderMap<Arc<String>, Value>,
+        attrs: &mut OrderMap<ArcStr, Value>,
         g: &Graph,
     ) {
         let added = self
@@ -1114,7 +1115,7 @@ impl Pending {
     pub fn get_relationship_type(
         &self,
         id: RelationshipId,
-    ) -> Option<Arc<String>> {
+    ) -> Option<ArcStr> {
         self.created_rel_types.get(&id).cloned()
     }
 
@@ -1260,7 +1261,7 @@ impl Pending {
     pub fn pending_indegree(
         &self,
         node_id: NodeId,
-        types: &[Arc<String>],
+        types: &[ArcStr],
     ) -> usize {
         if types.is_empty() {
             self.created_rels_by_type
@@ -1286,7 +1287,7 @@ impl Pending {
     pub fn pending_outdegree(
         &self,
         node_id: NodeId,
-        types: &[Arc<String>],
+        types: &[ArcStr],
     ) -> usize {
         if types.is_empty() {
             self.created_rels_by_type
@@ -1313,7 +1314,7 @@ impl Pending {
     pub fn pending_deleted_indegree(
         &self,
         node_id: NodeId,
-        types: &[Arc<String>],
+        types: &[ArcStr],
         g: &Graph,
     ) -> usize {
         self.deleted_relationships
@@ -1343,7 +1344,7 @@ impl Pending {
     pub fn pending_deleted_outdegree(
         &self,
         node_id: NodeId,
-        types: &[Arc<String>],
+        types: &[ArcStr],
         g: &Graph,
     ) -> usize {
         self.deleted_relationships
@@ -1395,7 +1396,7 @@ impl Pending {
         // the replica. Register it, as C does when the edge is created.
         // Once per type: a bulk cascade cancels many edges of the same few
         // types, and each lookup scans the schema.
-        let mut cancelled_types: FxHashSet<&Arc<String>> = FxHashSet::default();
+        let mut cancelled_types: FxHashSet<&ArcStr> = FxHashSet::default();
         for r in &self.cancelled_relationships {
             if cancelled_types.insert(&r.type_name) {
                 g.get_type_id_mut(&r.type_name);
@@ -2271,8 +2272,8 @@ mod native_unique_tests {
     use crate::index::falkordb::unique::fewest_candidates;
     use crate::index::index_docs::IndexDocs;
 
-    fn arc(s: &str) -> Arc<String> {
-        Arc::new(s.to_string())
+    fn arc(s: &str) -> ArcStr {
+        ArcStr::from(s)
     }
 
     fn string(s: &str) -> Value {
@@ -2340,7 +2341,7 @@ mod native_unique_tests {
         props: &[&str],
         values: &[Value],
     ) -> bool {
-        let props: Vec<Arc<String>> = props.iter().map(|p| arc(p)).collect();
+        let props: Vec<ArcStr> = props.iter().map(|p| arc(p)).collect();
         native_unique_query(&g.falkordb_index, entity, &arc(label), &props, values).is_some()
     }
 
@@ -2478,7 +2479,7 @@ mod native_unique_tests {
             &rows.iter().map(<[_; 2]>::as_slice).collect::<Vec<_>>(),
         );
         let read = |props: &[&str], values: &[Value]| -> usize {
-            let props: Vec<Arc<String>> = props.iter().map(|p| arc(p)).collect();
+            let props: Vec<ArcStr> = props.iter().map(|p| arc(p)).collect();
             let lookups = native_unique_query(
                 &g.falkordb_index,
                 EntityType::Node,

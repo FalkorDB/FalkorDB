@@ -10,6 +10,7 @@ import io
 import json
 import math
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1977,6 +1978,269 @@ def test_the_perf_gate_runs_the_nightly_flow_on_the_queues_image():
     assert "GATE_CHECKS" not in (WORKFLOWS / "perf-nightly.yml").read_text()
 
 
+GITHUB_EXPRESSION_TOKEN = re.compile(
+    r"'(?:[^']|'')*'|&&|\|\||==|!=|!|\(|\)|[A-Za-z_][\w.-]*\(\)|[A-Za-z_][\w.-]*"
+)
+
+
+def github_expression(expr, context):
+    """A GitHub Actions expression of the shapes these workflows use (&&, ||, ==, !=, !,
+    string literals, context paths, cancelled()), evaluated against `context` (nested
+    dicts; a missing path is ''). Python's `and`/`or` return an operand, as `&&`/`||` do."""
+    expr = expr.strip()
+    if expr.startswith("${{") and expr.endswith("}}"):
+        expr = expr[3:-2]
+    assert not GITHUB_EXPRESSION_TOKEN.sub("", expr).strip(), f"unsupported syntax: {expr}"
+    python = []
+    for token in GITHUB_EXPRESSION_TOKEN.findall(expr):
+        if token.startswith("'"):
+            python.append(repr(token[1:-1].replace("''", "'")))
+        elif token in ("==", "!=", "(", ")"):
+            python.append(token)
+        else:
+            python.append(
+                {"&&": " and ", "||": " or ", "!": " not ", "cancelled()": "False"}.get(
+                    token, f"_get({token!r})"
+                )
+            )
+
+    def _get(path):
+        value = context
+        for part in path.split("."):
+            value = value.get(part, "") if isinstance(value, dict) else ""
+        return value
+
+    return eval("".join(python), {"_get": _get, "__builtins__": {}})
+
+
+def in_env(value):
+    """An expression's value as `env` receives it: a boolean is 'true' or 'false'."""
+    return ("true" if value else "false") if isinstance(value, bool) else value
+
+
+@pytest.mark.parametrize(
+    "perf_below, same_repo, gate_runs",
+    [
+        ("6.3.0", "true", True),  # a version branch's queue, a pull request from this repository
+        ("6.3.0", "false", False),  # ... from a fork: no gate, and ci-gate does not require it
+        ("", "true", False),  # a pull request, or main's queue
+    ],
+)
+def test_the_release_gate_runs_only_for_a_pull_request_from_this_repository(
+    tmp_path, perf_below, same_repo, gate_runs
+):
+    import shutil
+
+    if shutil.which("jq") is None:
+        pytest.skip("jq is not installed")
+    jobs = workflow("rust-pr.yml")["jobs"]
+    assert jobs["check-files"]["outputs"]["same_repo"] == "${{ steps.fork.outputs.same_repo }}"
+    outputs = {"perf_below": perf_below, "same_repo": same_repo}
+    context = {"needs": {"check-files": {"outputs": outputs}, "ci-pipeline": {"result": "success"}}}
+    for name in ("perf", "perf-cov"):
+        assert bool(github_expression(jobs[name]["if"], context)) is gate_runs, name
+    gate = jobs["ci-gate"]
+    step = gate["steps"][0]
+    required = in_env(github_expression(step["env"]["PERF_REQUIRED"], context))
+    assert required == ("true" if gate_runs else "false")
+    (tmp_path / "bin").mkdir()
+
+    def ci_gate(perf_result):
+        results = {name: {"result": "success", "outputs": {}} for name in gate["needs"]}
+        results["perf"]["result"] = results["perf-cov"]["result"] = perf_result
+        env = {
+            "BIN": str(tmp_path / "bin"),
+            "RESULTS": json.dumps(results),
+            "EVENT": "merge_group",
+            "PERF_REQUIRED": required,
+        }
+        return run_step(step["run"], tmp_path, env).returncode == 0
+
+    if gate_runs:
+        assert ci_gate("success") and not ci_gate("skipped")
+    else:
+        assert ci_gate("skipped")  # a fork's queued pull request merges without the gate
+
+
+def _fork_step(tmp_path, cwd, event, head_repos, perf_below="", head_repo=""):
+    """check-files' fork step, run in `cwd` with a fake gh that knows the head repository
+    of each pull request in `head_repos` (any other lookup fails); its same_repo and stdout."""
+    steps = workflow("rust-pr.yml")["jobs"]["check-files"]["steps"]
+    step = next(s for s in steps if s.get("id") == "fork")
+    changed = tmp_path / "changed-files.txt"
+    changed.write_text("graph/src/lib.rs\n")  # no infrastructure path
+    script = step["run"].replace("/tmp/changed-files.txt", str(changed))
+    if subprocess.run(["sed", "--version"], capture_output=True, check=False).returncode:
+        script = script.replace("\\+", "\\{1,\\}")  # BSD sed (macOS): the POSIX spelling of \+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    known = "".join(
+        f"  /repos/FalkorDB/FalkorDB/pulls/{n}) echo {repo} ;;\n" for n, repo in head_repos.items()
+    )
+    fake_tool(bin_dir, "gh", f'case "$2" in\n{known}  *) echo "HTTP 404" >&2; exit 1 ;;\nesac\n')
+    out = tmp_path / "output"
+    env = {
+        "BIN": str(bin_dir),
+        "GITHUB_OUTPUT": str(out),
+        "GITHUB_REPOSITORY": "FalkorDB/FalkorDB",
+        "EVENT": event,
+        "PR_HEAD_REPO": head_repo,
+        "REF": "refs/heads/gh-readonly-queue/6.2/pr-7-" + "a" * 40,
+        "QUEUE_BASE_REF": "refs/heads/6.2",
+        "PATTERN": "^build/",
+        "PERF_BELOW": perf_below,
+    }
+    run = run_step(script, cwd, env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    return outputs["same_repo"], run.stdout
+
+
+@pytest.mark.parametrize(
+    "event, head_repo, same_repo",
+    [
+        ("merge_group", "FalkorDB/FalkorDB", "true"),  # main's queue: no gate, the PR alone
+        ("merge_group", "someone/FalkorDB", "false"),
+        ("pull_request", "FalkorDB/FalkorDB", "true"),
+        ("pull_request", "someone/FalkorDB", "false"),
+    ],
+)
+def test_check_files_says_whether_the_pull_request_is_from_this_repository(
+    tmp_path, event, head_repo, same_repo
+):
+    queued = {7: head_repo} if event == "merge_group" else {}
+    pull_head = head_repo if event == "pull_request" else ""
+    got, stdout = _fork_step(tmp_path, tmp_path, event, queued, head_repo=pull_head)
+    assert got == same_repo
+    assert "::warning::" not in stdout  # no gate where perf_below is empty, so none skipped
+
+
+def _git(work, *args):
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c",
+         "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args],
+        cwd=work, check=True, capture_output=True, text=True,
+    ).stdout.strip()  # fmt: skip
+
+
+def _queue(tmp_path, subjects):
+    """A checkout of a merge group in version branch 6.2's queue: origin has 6.2, and HEAD
+    is 6.2 plus one squash commit per subject, the entries queued ahead first."""
+    work, origin = tmp_path / "work", tmp_path / "origin.git"
+    work.mkdir()
+    _git(work, "init", "-q", "-b", "6.2")
+    _git(work, "commit", "-q", "--allow-empty", "-m", "Bump version to 6.2.1")
+    _git(tmp_path, "init", "-q", "--bare", str(origin))
+    _git(work, "remote", "add", "origin", str(origin))
+    _git(work, "push", "-q", "origin", "6.2")
+    _git(work, "checkout", "-q", "--detach")
+    for subject in subjects:
+        _git(work, "commit", "-q", "--allow-empty", "-m", subject)
+    return work
+
+
+def _queue_merge(tmp_path, subject, own):
+    """_queue with one merge-commit entry (how 6.2's queue merges): `own` are the merged
+    branch's own commits, `subject` the merge commit's."""
+    work = _queue(tmp_path, [])
+    base = _git(work, "rev-parse", "HEAD")
+    for message in own:
+        _git(work, "commit", "-q", "--allow-empty", "-m", message)
+    branch = _git(work, "rev-parse", "HEAD")
+    _git(work, "checkout", "-q", "--detach", base)
+    _git(work, "merge", "-q", "--no-ff", "-m", subject, branch)
+    return work
+
+
+GATE_SKIPPED = "::warning::The release gate (perf, perf-cov) does not run"
+
+
+@pytest.mark.parametrize(
+    "subjects, head_repos, same_repo, named",
+    [
+        # a fork's pull request queued ahead rides in this group: no gate
+        (["fix: a (#5)", "fix: b (#7)"], {5: "someone/FalkorDB", 7: "FalkorDB/FalkorDB"}, "false", "#5"),
+        # every pull request from this repository: the gate runs
+        (["fix: a (#6)", "fix: b (#7)"], {6: "FalkorDB/FalkorDB", 7: "FalkorDB/FalkorDB"}, "true", None),
+        # #5 cannot be looked up: counted as a fork, never run on a guess
+        (["fix: a (#5)", "fix: b (#7)"], {7: "FalkorDB/FalkorDB"}, "false", "#5"),
+        # a commit that names no pull request
+        (["wip", "fix: b (#7)"], {7: "FalkorDB/FalkorDB"}, "false", "a commit naming no pull request: wip"),
+        # the queued fork itself
+        (["fix: b (#7)"], {7: "someone/FalkorDB"}, "false", "#7"),
+        # a fork's squashed title spoofs the merge form, naming this repository's #6
+        (["Merge pull request #6 from FalkorDB/x (#5)", "fix: b (#7)"], {5: "someone/FalkorDB", 6: "FalkorDB/FalkorDB", 7: "FalkorDB/FalkorDB"}, "false", "#5"),
+        # a fork's merged branch, named x(#6), spoofs the squash form
+        (["Merge pull request #5 from someone/x(#6)", "fix: b (#7)"], {5: "someone/FalkorDB", 6: "FalkorDB/FalkorDB", 7: "FalkorDB/FalkorDB"}, "false", "#5"),
+    ],
+)  # fmt: skip
+def test_the_release_gate_skips_a_merge_group_holding_any_fork(
+    tmp_path, subjects, head_repos, same_repo, named
+):
+    work = _queue(tmp_path, subjects)
+    got, stdout = _fork_step(tmp_path, work, "merge_group", head_repos, perf_below="6.3.0")
+    assert got == same_repo
+    if named is None:
+        assert GATE_SKIPPED not in stdout
+    else:
+        assert GATE_SKIPPED in stdout and named in stdout
+
+
+def test_the_release_gate_reads_only_the_groups_own_merges(tmp_path):
+    """6.2's queue merges: a merged branch's own commits are cherry-picks that name other
+    pull requests (here a fork's, #99, merged into main long ago); only first parents count."""
+    work = _queue_merge(
+        tmp_path, "Merge pull request #7 from FalkorDB/backport/6.2", ["fix: x (#99)", "Bump"]
+    )
+    head_repos = {7: "FalkorDB/FalkorDB", 99: "someone/FalkorDB"}
+    got, stdout = _fork_step(tmp_path, work, "merge_group", head_repos, perf_below="6.3.0")
+    assert (got, GATE_SKIPPED in stdout) == ("true", False)
+
+
+def test_the_release_gate_skips_when_the_groups_commits_cannot_be_listed(tmp_path):
+    work = _queue(tmp_path, ["fix: b (#7)"])
+    _git(work, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+    got, stdout = _fork_step(
+        tmp_path, work, "merge_group", {7: "FalkorDB/FalkorDB"}, perf_below="6.3.0"
+    )
+    assert got == "false" and "the group's commits could not be listed" in stdout
+
+
+def test_every_perf_result_and_gate_upload_replaces_an_earlier_attempts_artifact():
+    """As in perf-nightly.yml: a re-run uploads each name again, which upload-artifact
+    refuses without `overwrite`, and the merge would keep the first attempt's result."""
+    for name in ("_perf-vm.yml", "benchmark-cov.yml"):
+        uploads = [
+            step
+            for spec in workflow(name)["jobs"].values()
+            for step in spec.get("steps", [])
+            if step.get("uses", "").startswith("actions/upload-artifact@")
+        ]
+        assert uploads, name
+        for step in uploads:
+            assert step["with"].get("overwrite") is True, (name, step["with"]["name"])
+
+
+@pytest.mark.parametrize(
+    "event, base_sha, base_ref",
+    [
+        (
+            {"merge_group": {"base_sha": "b" * 40, "base_ref": "refs/heads/6.2"}},
+            "b" * 40,
+            "refs/heads/6.2",
+        ),
+        ({"pull_request": {"base": {"sha": "c" * 40, "ref": "6.2"}}}, "c" * 40, "6.2"),
+    ],
+)
+def test_benchmark_cov_reads_the_base_of_a_merge_group_too(event, base_sha, base_ref):
+    """The gate's caller runs only in the merge queue, where there is no pull_request."""
+    steps = workflow("benchmark-cov.yml")["jobs"]["preflight"]["steps"]
+    env = next(step for step in steps if step.get("id") == "gate")["env"]
+    context = {"github": {"event": event}}
+    assert github_expression(env["BASE_SHA"], context) == base_sha
+    assert github_expression(env["BASE_REF"], context) == base_ref
+
+
 # --- benchmark-cov as the release gate (#4004) -----------------------------------
 
 from falkorbench import cov_gate  # noqa: E402
@@ -2229,16 +2493,26 @@ BENCH_COV_RELEASES = [
 
 
 @pytest.mark.parametrize(
-    "baseline, base_sha, inspect, code, base_label",
+    "baseline, base_sha, inspect, code, base_label, base_ref",
     [
-        ("", "b" * 40, "found", 0, "6.2@bbbbbbb"),  # the base tip's queue image
-        ("", "b" * 40, "missing", 0, "6.2.1"),  # swept or never queued: the newest release
-        ("", "", "missing", 0, "6.2.1"),  # no base sha (a push caller): the release
-        ("", "b" * 40, "broken", 1, None),  # a registry error is not "no image"
-        ("falkordb/falkordb-server:6.2.0@sha256:" + "c" * 64, "b" * 40, "found", 0, "6.2.0"),
+        ("", "b" * 40, "found", 0, "6.2@bbbbbbb", "6.2"),  # the base tip's queue image
+        ("", "b" * 40, "found", 0, "6.2@bbbbbbb", "refs/heads/6.2"),  # the merge group's spelling
+        ("", "b" * 40, "missing", 0, "6.2.1", "6.2"),  # swept or never queued: the newest release
+        ("", "", "missing", 0, "6.2.1", "6.2"),  # no base sha (a push caller): the release
+        ("", "b" * 40, "broken", 1, None, "6.2"),  # a registry error is not "no image"
+        (
+            "falkordb/falkordb-server:6.2.0@sha256:" + "c" * 64,
+            "b" * 40,
+            "found",
+            0,
+            "6.2.0",
+            "6.2",
+        ),
     ],
 )
-def test_benchmark_cov_pins_the_gates_base(tmp_path, baseline, base_sha, inspect, code, base_label):
+def test_benchmark_cov_pins_the_gates_base(
+    tmp_path, baseline, base_sha, inspect, code, base_label, base_ref
+):
     """benchmark-cov's "Pin the gate's images" step, with fake docker, gh and uv."""
     import shutil
 
@@ -2286,7 +2560,7 @@ jq -r "$jqexpr" {temp / "releases.json"}
             "BASELINE": baseline,
             "BASELINE_BELOW": "6.3.0",
             "BASE_SHA": base_sha,
-            "BASE_REF": "6.2",
+            "BASE_REF": base_ref,
         },
     )
     assert run.returncode == code, run.stdout + run.stderr

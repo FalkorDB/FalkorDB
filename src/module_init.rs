@@ -36,6 +36,7 @@ use crate::graph_core::RedisBuildHost;
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
+use arcstr::ArcStr;
 use graph::graph::constraint::ConstraintStatus;
 #[cfg(feature = "index-falkordb")]
 use graph::index::falkordb::online_build;
@@ -49,7 +50,9 @@ use graph::{
     threadpool::{self, init_thread_pool},
     udf,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc};
+#[cfg(feature = "index-falkordb")]
+use std::sync::Arc;
+use std::{os::raw::c_int, os::raw::c_void, panic};
 use valkey_module::{
     Context, ContextFlags, InfoContext, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
     RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
@@ -601,7 +604,7 @@ fn enforce_pending_constraints_after_promotion() {
                     .map(|c| Settling {
                         ct: c.ct,
                         entity_type: c.entity_type,
-                        label: Arc::clone(&c.label),
+                        label: ArcStr::clone(&c.label),
                         properties: c.properties.clone(),
                     })
                     .collect()

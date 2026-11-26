@@ -24,6 +24,7 @@
 
 #![allow(clippy::cast_precision_loss)]
 
+use arcstr::ArcStr;
 use json_escape::escape_str;
 use std::{
     cell::RefCell,
@@ -93,14 +94,14 @@ pub trait DisplayJson {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeletedNode {
     pub labels: HashSet<LabelId>,
-    pub attrs: OrderMap<Arc<String>, Value>,
+    pub attrs: OrderMap<ArcStr, Value>,
 }
 
 impl DeletedNode {
     #[must_use]
     pub const fn new(
         labels: HashSet<LabelId>,
-        attrs: OrderMap<Arc<String>, Value>,
+        attrs: OrderMap<ArcStr, Value>,
     ) -> Self {
         Self { labels, attrs }
     }
@@ -110,8 +111,8 @@ impl DeletedNode {
 pub struct DeletedRelationship {
     pub src: NodeId,
     pub dst: NodeId,
-    pub type_name: Arc<String>,
-    pub attrs: OrderMap<Arc<String>, Value>,
+    pub type_name: ArcStr,
+    pub attrs: OrderMap<ArcStr, Value>,
 }
 
 impl DeletedRelationship {
@@ -119,8 +120,8 @@ impl DeletedRelationship {
     pub const fn new(
         src: NodeId,
         dst: NodeId,
-        type_name: Arc<String>,
-        attrs: OrderMap<Arc<String>, Value>,
+        type_name: ArcStr,
+        attrs: OrderMap<ArcStr, Value>,
     ) -> Self {
         Self {
             src,
@@ -192,11 +193,11 @@ pub enum Value {
     /// 64-bit floating point
     Float(f64),
     /// Unicode string (shared via Arc for efficiency)
-    String(Arc<String>),
+    String(ArcStr),
     /// Ordered list of values (Arc-wrapped for O(1) clone)
     List(Arc<ThinVec<Self>>),
     /// Key-value map with string keys (Arc-wrapped for O(1) clone)
-    Map(Arc<OrderMap<Arc<String>, Self>>),
+    Map(Arc<OrderMap<ArcStr, Self>>),
     /// Reference to a graph node (by ID)
     Node(NodeId),
     /// Reference to a relationship (by edge ID); endpoints are resolved on
@@ -218,6 +219,48 @@ pub enum Value {
     Duration(i64),
 }
 
+/// Heap bytes of an [`ArcStr`]'s single allocation: a 16-byte header of
+/// length and refcount, then the bytes. A static string owns no heap.
+fn arcstr_alloc_size(s: &ArcStr) -> usize {
+    const ARCSTR_HDR: usize = 2 * std::mem::size_of::<usize>();
+    if ArcStr::is_static(s) {
+        0
+    } else {
+        ARCSTR_HDR + s.len()
+    }
+}
+
+/// Heap bytes one share of an [`ArcStr`] accounts for: its allocation divided
+/// by the shares holding it.
+fn arcstr_heap_size(s: &ArcStr) -> usize {
+    ArcStr::strong_count(s).map_or(0, |n| arcstr_alloc_size(s) / n)
+}
+
+/// `a + b` in one allocation, sized exactly.
+fn concat_str(
+    a: &str,
+    b: &str,
+) -> ArcStr {
+    // `init_with_unchecked` requires a non-zero length (arcstr debug-asserts
+    // it); the empty string is a static and needs no allocation anyway.
+    if a.is_empty() && b.is_empty() {
+        return ArcStr::new();
+    }
+    // SAFETY: the initializer writes every one of the `a.len() + b.len()`
+    // bytes, and the concatenation of two `str`s is valid UTF-8.
+    unsafe {
+        ArcStr::init_with_unchecked(a.len() + b.len(), |buf| {
+            let (head, tail) = buf.split_at_mut(a.len());
+            for (d, s) in head.iter_mut().zip(a.as_bytes()) {
+                d.write(*s);
+            }
+            for (d, s) in tail.iter_mut().zip(b.as_bytes()) {
+                d.write(*s);
+            }
+        })
+    }
+}
+
 // Manual impl so clone stays inlineable in hot evaluation loops: every arm
 // is a plain copy or an Arc refcount bump.
 impl Clone for Value {
@@ -228,7 +271,7 @@ impl Clone for Value {
             Self::Bool(b) => Self::Bool(*b),
             Self::Int(i) => Self::Int(*i),
             Self::Float(f) => Self::Float(*f),
-            Self::String(s) => Self::String(Arc::clone(s)),
+            Self::String(s) => Self::String(ArcStr::clone(s)),
             Self::List(l) => Self::List(Arc::clone(l)),
             Self::Map(m) => Self::Map(Arc::clone(m)),
             Self::Node(n) => Self::Node(*n),
@@ -356,7 +399,7 @@ impl Value {
             | Self::Time(_)
             | Self::Duration(_)
             | Self::Node(_) => 0,
-            Self::String(s) => std::mem::size_of::<String>() + s.len(),
+            Self::String(s) => arcstr_alloc_size(s),
             Self::List(l) | Self::Path(l) => {
                 let header = l.len() * std::mem::size_of::<Self>();
                 header + l.iter().map(Self::heap_size).sum::<usize>()
@@ -364,9 +407,8 @@ impl Value {
             Self::Map(m) => m
                 .iter()
                 .map(|(k, v)| {
-                    std::mem::size_of::<Arc<String>>()
-                        + std::mem::size_of::<String>()
-                        + k.len()
+                    std::mem::size_of::<ArcStr>()
+                        + arcstr_alloc_size(k)
                         + std::mem::size_of::<Self>()
                         + v.heap_size()
                 })
@@ -406,9 +448,7 @@ impl Value {
             | Self::Duration(_)
             | Self::Node(_) => 0,
             Self::Relationship(_) => std::mem::size_of::<(RelationshipId, NodeId, NodeId)>(),
-            Self::String(s) => {
-                (ARC_HDR + std::mem::size_of::<String>() + s.capacity()) / Arc::strong_count(s)
-            }
+            Self::String(s) => arcstr_heap_size(s),
             Self::List(l) | Self::Path(l) => {
                 // Elements live inside the shared allocation, so their own
                 // shares are part of what this allocation costs.
@@ -421,9 +461,8 @@ impl Value {
                 let owned = ARC_HDR
                     + m.iter()
                         .map(|(k, v)| {
-                            std::mem::size_of::<Arc<String>>()
-                                + (ARC_HDR + std::mem::size_of::<String>() + k.capacity())
-                                    / Arc::strong_count(k)
+                            std::mem::size_of::<ArcStr>()
+                                + arcstr_heap_size(k)
                                 + std::mem::size_of::<Self>()
                                 + v.amortized_heap_size()
                         })
@@ -1008,40 +1047,18 @@ impl Value {
                 }
                 Ok(Self::Map(Arc::new(map)))
             }
-            (Self::String(a), Self::String(b)) => match Arc::try_unwrap(a) {
-                Ok(mut s) => {
-                    s.push_str(&b);
-                    Ok(Self::String(Arc::new(s)))
-                }
-                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{b}")))),
-            },
-            (Self::String(s), Self::Int(i)) => match Arc::try_unwrap(s) {
-                Ok(mut buf) => {
-                    use std::fmt::Write;
-                    let _ = write!(buf, "{i}");
-                    Ok(Self::String(Arc::new(buf)))
-                }
-                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{i}")))),
-            },
-            (Self::String(s), Self::Float(f)) => match Arc::try_unwrap(s) {
-                Ok(mut buf) => {
-                    use std::fmt::Write;
-                    let _ = write!(buf, "{f:.6}");
-                    Ok(Self::String(Arc::new(buf)))
-                }
-                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{f:.6}")))),
-            },
-            (Self::String(s), Self::Bool(b)) => match Arc::try_unwrap(s) {
-                Ok(mut buf) => {
-                    buf.push_str(if b { "true" } else { "false" });
-                    Ok(Self::String(Arc::new(buf)))
-                }
-                Err(arc) => Ok(Self::String(Arc::new(format!("{arc}{b}")))),
-            },
+            (Self::String(a), Self::String(b)) => Ok(Self::String(concat_str(&a, &b))),
+            (Self::String(s), Self::Int(i)) => Ok(Self::String(ArcStr::from(format!("{s}{i}")))),
+            (Self::String(s), Self::Float(f)) => {
+                Ok(Self::String(ArcStr::from(format!("{s}{f:.6}"))))
+            }
+            (Self::String(s), Self::Bool(b)) => Ok(Self::String(ArcStr::from(format!("{s}{b}")))),
 
-            (Self::Int(i), Self::String(s)) => Ok(Self::String(Arc::new(format!("{i}{s}")))),
-            (Self::Float(f), Self::String(s)) => Ok(Self::String(Arc::new(format!("{f:.6}{s}")))),
-            (Self::Bool(b), Self::String(s)) => Ok(Self::String(Arc::new(format!("{b}{s}")))),
+            (Self::Int(i), Self::String(s)) => Ok(Self::String(ArcStr::from(format!("{i}{s}")))),
+            (Self::Float(f), Self::String(s)) => {
+                Ok(Self::String(ArcStr::from(format!("{f:.6}{s}"))))
+            }
+            (Self::Bool(b), Self::String(s)) => Ok(Self::String(ArcStr::from(format!("{b}{s}")))),
 
             (Self::Map(_), _) | (_, Self::Map(_)) => {
                 Err("Cannot merge a map with a non-map value".to_string())
@@ -1517,8 +1534,8 @@ impl Value {
     }
 
     fn compare_map(
-        a: &OrderMap<Arc<String>, Self>,
-        b: &OrderMap<Arc<String>, Self>,
+        a: &OrderMap<ArcStr, Self>,
+        b: &OrderMap<ArcStr, Self>,
     ) -> (Ordering, DisjointOrNull) {
         let a_key_count = a.len();
         let b_key_count = b.len();
@@ -1527,9 +1544,9 @@ impl Value {
         }
 
         // sort keys
-        let mut a_keys: Vec<&Arc<String>> = a.keys().collect();
+        let mut a_keys: Vec<&ArcStr> = a.keys().collect();
         a_keys.sort();
-        let mut b_keys: Vec<&Arc<String>> = b.keys().collect();
+        let mut b_keys: Vec<&ArcStr> = b.keys().collect();
         b_keys.sort();
 
         // iterate over keys count
@@ -1608,13 +1625,13 @@ impl Value {
     }
 
     fn sort_cmp_map(
-        a: &OrderMap<Arc<String>, Self>,
-        b: &OrderMap<Arc<String>, Self>,
+        a: &OrderMap<ArcStr, Self>,
+        b: &OrderMap<ArcStr, Self>,
     ) -> Ordering {
         a.len().cmp(&b.len()).then_with(|| {
-            let mut a_keys: Vec<&Arc<String>> = a.keys().collect();
+            let mut a_keys: Vec<&ArcStr> = a.keys().collect();
             a_keys.sort();
-            let mut b_keys: Vec<&Arc<String>> = b.keys().collect();
+            let mut b_keys: Vec<&ArcStr> = b.keys().collect();
             b_keys.sort();
             a_keys.cmp(&b_keys).then_with(|| {
                 a_keys
@@ -1740,9 +1757,7 @@ impl DisplayJson for Value {
             Self::Relationship(rel) => {
                 let rel_id_u64 = u64::from(*rel);
                 let properties = runtime.get_relationship_attrs(*rel);
-                let type_name = runtime
-                    .get_relationship_type(*rel)
-                    .unwrap_or_else(|| Arc::new(String::new()));
+                let type_name = runtime.get_relationship_type(*rel).unwrap_or_default();
 
                 write!(
                     f,
@@ -2209,10 +2224,10 @@ fn decode_value(
             };
             if t == (si_type::T_INTERN | si_type::T_STRING) {
                 Ok(Value::String(
-                    crate::runtime::string_pool::global().intern(Arc::new(s)),
+                    crate::runtime::string_pool::global().intern(ArcStr::from(s)),
                 ))
             } else {
-                Ok(Value::String(Arc::new(s)))
+                Ok(Value::String(ArcStr::from(s)))
             }
         }
         si_type::T_ARRAY => {
@@ -2374,6 +2389,7 @@ mod vecf32_compare_tests {
 #[cfg(test)]
 mod is_never_equal_tests {
     use super::{CompareValue, DisjointOrNull, OrderMap, Ordering, Value};
+    use arcstr::ArcStr;
     use std::sync::Arc;
 
     fn list(items: Vec<Value>) -> Value {
@@ -2384,7 +2400,7 @@ mod is_never_equal_tests {
         Value::Map(Arc::new(OrderMap::from_vec(
             entries
                 .into_iter()
-                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .map(|(k, v)| (ArcStr::from(k), v))
                 .collect(),
         )))
     }
@@ -2464,7 +2480,7 @@ mod is_never_equal_tests {
         assert!(!Value::Float(1.5).is_never_equal());
         assert!(!Value::Float(f64::INFINITY).is_never_equal());
         assert!(!Value::Bool(true).is_never_equal());
-        assert!(!Value::String(Arc::new("x".to_string())).is_never_equal());
+        assert!(!Value::String(ArcStr::from("x")).is_never_equal());
         assert!(!Value::Datetime(0).is_never_equal());
         assert!(!list(vec![]).is_never_equal());
         assert!(!list(vec![Value::Int(1), Value::Int(2)]).is_never_equal());
@@ -2487,7 +2503,7 @@ mod is_never_equal_tests {
             Value::Float(1.5),
             Value::Float(f64::NAN),
             Value::Float(f64::INFINITY),
-            Value::String(Arc::new("x".to_string())),
+            Value::String(ArcStr::from("x")),
             Value::Datetime(0),
             Value::Date(0),
             Value::Time(0),
@@ -2533,6 +2549,7 @@ mod is_never_equal_tests {
 #[cfg(test)]
 mod sort_cmp_tests {
     use super::{OrderMap, Ordering, Point, Value, sort_cmp_f64};
+    use arcstr::ArcStr;
     use std::hash::{Hash, Hasher};
     use std::sync::Arc;
 
@@ -2546,13 +2563,13 @@ mod sort_cmp_tests {
         Value::Map(Arc::new(OrderMap::from_vec(
             entries
                 .into_iter()
-                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .map(|(k, v)| (ArcStr::from(k), v))
                 .collect(),
         )))
     }
 
     fn string(s: &str) -> Value {
-        Value::String(Arc::new(s.to_string()))
+        Value::String(ArcStr::from(s))
     }
 
     /// Values on which `compare_value(..).0` is not a total order (#2891),
@@ -2997,5 +3014,69 @@ mod value_of_type_tests {
         let sig = Type::union([Type::List(Box::new(Type::Any)), Type::String, Type::Null]);
         let big = Value::List(Arc::new(thin_vec![Value::Int(0); 1000]));
         assert!(big.value_of_type(&sig).is_none());
+    }
+}
+
+#[cfg(test)]
+mod arcstr_tests {
+    use super::{Value, arcstr_heap_size, concat_str};
+    use arcstr::ArcStr;
+    use std::sync::Arc;
+
+    #[test]
+    fn heap_size_never_exceeds_the_amortized_share_of_an_unshared_string() {
+        // `heap_size` is the unshared cost, so for a string held once it must
+        // equal the amortized one: one ArcStr allocation, no `String` header.
+        for v in [
+            Value::String(ArcStr::from("abc")),
+            Value::String(ArcStr::new()),
+            Value::Map(Arc::new(
+                std::iter::once((ArcStr::from("k"), Value::String(ArcStr::from("v")))).collect(),
+            )),
+        ] {
+            assert!(
+                v.heap_size() <= v.amortized_heap_size(),
+                "{v:?}: {} > {}",
+                v.heap_size(),
+                v.amortized_heap_size()
+            );
+        }
+        assert_eq!(Value::String(ArcStr::from("abc")).heap_size(), 16 + 3);
+    }
+
+    #[test]
+    fn concat_str_joins_every_byte_including_multibyte_and_empty() {
+        assert_eq!(concat_str("ab", "cd"), "abcd");
+        assert_eq!(concat_str("", "x"), "x");
+        assert_eq!(concat_str("x", ""), "x");
+        assert_eq!(concat_str("", ""), "");
+        assert_eq!(
+            concat_str("\u{05e9}\u{05dc}", "\u{1f426}"),
+            "\u{05e9}\u{05dc}\u{1f426}"
+        );
+    }
+
+    #[test]
+    fn string_plus_string_is_concatenation() {
+        let a = Value::String(ArcStr::from("foo"));
+        let b = Value::String(ArcStr::from("bar"));
+        assert!(matches!(a + b, Ok(Value::String(s)) if s == "foobar"));
+    }
+
+    #[test]
+    fn heap_size_is_one_allocation_split_across_shares_and_zero_for_literals() {
+        let s = ArcStr::from("woman");
+        assert_eq!(arcstr_heap_size(&s), 16 + 5);
+        let shared = s.clone();
+        // Two shares of one 21-byte allocation: 10 bytes each (integer division).
+        assert_eq!(arcstr_heap_size(&s), 10);
+        assert_eq!(arcstr_heap_size(&shared), 10);
+        assert_eq!(arcstr_heap_size(&arcstr::literal!("static")), 0);
+    }
+
+    #[test]
+    fn value_stays_two_words() {
+        assert_eq!(std::mem::size_of::<ArcStr>(), 8);
+        assert_eq!(std::mem::size_of::<Value>(), 16);
     }
 }

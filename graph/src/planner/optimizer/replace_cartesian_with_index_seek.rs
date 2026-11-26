@@ -35,6 +35,7 @@
 //! into a `NodeByIdSeek` (or a `NodeByLabelAndIdScan`): a direct lookup that
 //! needs no index.
 
+use arcstr::ArcStr;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -123,7 +124,7 @@ fn scan_chain(
 ) -> Option<(
     Vec<QueryExpr<Variable>>,
     IR,
-    Arc<QueryNode<Arc<String>, Variable>>,
+    Arc<QueryNode<ArcStr, Variable>>,
 )> {
     let mut filters = Vec::new();
     let mut cur: DynTree<IR> = branch.clone_as_tree();
@@ -218,7 +219,7 @@ fn try_seek_rewrite(
         let (moved, rest): (Vec<_>, Vec<_>) = if by_id {
             moved.into_iter().partition(|c| safe_id_key(c).is_some())
         } else {
-            let mut seek_label: Option<Arc<String>> = None;
+            let mut seek_label: Option<ArcStr> = None;
             moved.into_iter().partition(|c| {
                 if !safe_key(c) || reads_node_bare(c, p) {
                     return false;
@@ -374,7 +375,7 @@ fn unwound_len(expr: &DynTree<ExprIR<Variable>>) -> Option<usize> {
 /// an equality the index serves. A range lookup can return the whole label,
 /// so it does not count.
 fn is_point_lookup(
-    node: &Arc<QueryNode<Arc<String>, Variable>>,
+    node: &Arc<QueryNode<ArcStr, Variable>>,
     filter: &QueryExpr<Variable>,
     graph: &Graph,
 ) -> bool {

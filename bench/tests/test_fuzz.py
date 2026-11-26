@@ -14,6 +14,7 @@ import ast
 import asyncio
 import collections
 import io
+import itertools
 import json
 import os
 import random
@@ -23,6 +24,7 @@ import socket
 import subprocess
 import threading
 import time
+import types
 from argparse import Namespace
 from pathlib import Path
 
@@ -258,6 +260,12 @@ ANALYSE_CASES = [  # (id, check, pass, records, pings, window_s, quiet, ledger p
      [("duplicate", "g0 L11: 1 duplicated keys")], {}),
     ("no count, no word on timed-out writes", "timed_out_writes_leave_nothing", None, {}, None, None, False,
      [("harness", "end-of-epoch checks failed: ConnectionError")], {}),
+    ("a wrong count found before the queries failed", "writes_add_up", False, {}, None, None, False,
+     [("count", "g0 L0: 0 nodes, expected 5"), ("harness", "end-of-epoch checks failed: ConnectionError")],
+     {}),
+    ("a lost edge found before the queries failed", "upsert_edges_complete", False, {}, None, None,
+     False, [("missing", "g0 R0: 1 of 1 acknowledged new pairs have no edge"),
+             ("harness", "end-of-epoch checks failed: ConnectionError")], {}),
 ]
 # fmt: on
 
@@ -1715,3 +1723,126 @@ def test_a_repeat_that_measured_zero_is_not_unmeasured():
     runs += [_build("baseline", 4, 1.0, True), _build("candidate", 5, 0.0, True)]
     notes = verdict.build_findings(runs)[1]
     assert not any("no repeat ran" in n for n in notes) and check.unconfirmed_builds(notes) == []
+
+
+# --- fuzz harness: what an epoch found stays found ------------------------------------------------
+
+
+class _EndOfEpochConn:
+    """A server at the end of an epoch: g0 holds an index whose lookups disagree with scans,
+    g1 holds none to probe; the count queries answer `count` until `fail_after` of them ran."""
+
+    def __init__(self, count=0, fail_after=None):
+        self.count, self.fail_after, self.counted = count, fail_after, 0
+
+    def execute_command(self, *a):
+        if a[0] == "GRAPH.CONFIG":
+            return "OK"
+        graph, q = a[1], a[2]
+        if "CALL db.indexes()" in q:
+            index = [b"L9", [b"k"], {}, {}, {}, {}, b"NODE", b"OPERATIONAL"]
+            return [[], [index] if graph == harness.gname(0) else []]
+        if "CALL db." in q or "DROP" in q:
+            return [[], []]
+        if "+ 0 =" in q:  # the comparison's scan
+            return [[], [[2]]]
+        if "RETURN count(n)" in q:  # the comparison's index lookup
+            return [[], [[1]]]
+        self.counted += 1
+        if self.fail_after is not None and self.counted > self.fail_after:
+            raise ConnectionError("the server went away")
+        return [[], [[self.count]]]
+
+    def info(self, section):
+        return {"used_memory": 1, "used_memory_rss": 2}
+
+
+def test_index_mismatches_found_before_the_comparison_failed_still_fail_it():
+    n = model.label_sizes(0.01)
+    ep = {**model.control_params((0.01,))[1], "indexes": True}
+    out = harness.end_of_epoch(
+        _EndOfEpochConn(), ep, 2, [n, n], checks.Ledger([n, n]), [], time.monotonic()
+    )
+    assert out["ivs"] and all(p.endswith(": index 1, scan 2") for p in out["ivs"])
+    assert "g1 has no operational index to probe" in " ".join(out["notes"])
+    assert harness.index_check(ep, out["ivs"])["pass"] is False
+
+
+def test_ledger_problems_found_before_a_failed_query_stay():
+    n = model.label_sizes(0.01)
+    ep = {**model.control_params((0.01,))[1], "indexes": False, "constraints": False}
+    conn = _EndOfEpochConn(count=0, fail_after=1)  # the first label's count is wrong, then it fails
+    out = harness.end_of_epoch(conn, ep, 1, [n], checks.Ledger([n]), [], time.monotonic())
+    assert [kind for kind, _ in out["ledger_problems"]] == ["count", "harness"]
+    assert "the server went away" in out["ledger_problems"][1][1]
+
+
+def test_a_failure_found_after_a_lost_driver_file_stands():
+    found = {
+        "writes_add_up": {"pass": False, "problems": ["g0 L0: 1 duplicated keys"]},
+        "upsert_edges_complete": {"pass": True, "problems": []},
+        "timed_out_writes_leave_nothing": {"pass": None, "problems": []},
+    }
+    harness.counts_unknown(found)
+    assert found["writes_add_up"] == {"pass": False, "problems": ["g0 L0: 1 duplicated keys"]}
+    for k in ("upsert_edges_complete", "timed_out_writes_leave_nothing"):
+        assert found[k]["pass"] is None and "result file was lost" in found[k]["skipped"]
+
+
+def _bgsave_events(info, stop, monkeypatch, clock=None):
+    class Conn:
+        def execute_command(self, *a):
+            return "Background saving started"
+
+        def info(self, section):
+            return info
+
+    if clock is not None:
+        monkeypatch.setattr(harness, "now", lambda: next(clock))
+    events = []
+    harness.bgsave(Conn(), stop, lambda kind, **kw: events.append((kind, kw.get("why"))))
+    return events
+
+
+def test_a_background_save_still_running_when_the_wait_ends_is_unfinished(monkeypatch):
+    saving = {"rdb_bgsave_in_progress": 1, "rdb_last_bgsave_status": "ok"}  # the previous save's
+    stopped = threading.Event()
+    stopped.set()
+    assert _bgsave_events(saving, stopped, monkeypatch) == [
+        ("bgsave_unfinished", "the epoch ended")
+    ]
+    clock = itertools.chain([0.0, 0.0], itertools.repeat(301.0))  # one poll, then past 300 s
+    assert _bgsave_events(saving, _NeverSet(), monkeypatch, clock) == [
+        ("bgsave_stuck", "still saving after 300 s")
+    ]
+    # the epoch ends just after the 300 s limit did: the limit ended the wait, so stuck
+    late_stop = types.SimpleNamespace(wait=lambda timeout: False, is_set=lambda: True)
+    clock = itertools.chain([0.0, 0.0], itertools.repeat(301.0))
+    assert _bgsave_events(saving, late_stop, monkeypatch, clock) == [
+        ("bgsave_stuck", "still saving after 300 s")
+    ]
+    done = {"rdb_bgsave_in_progress": 0, "rdb_last_bgsave_status": "ok"}
+    assert _bgsave_events(done, threading.Event(), monkeypatch) == [("bgsave_done", None)]
+
+
+class _NeverSet:
+    """A stop event the epoch never sets, whose wait returns at once."""
+
+    def wait(self, timeout):
+        return False
+
+    def is_set(self):
+        return False
+
+
+@pytest.mark.parametrize("event, fails", [("bgsave_stuck", True), ("bgsave_unfinished", False)])
+def test_a_stuck_background_save_is_an_unexpected_error(event, fails):
+    """Still saving after 300 s fails no_unexpected_errors; a save the epoch's end cut short
+    is the harness's doing, not the server's."""
+    hp, ep = model.control_params((1.0,))
+    cal = [{"lookup": 1.0, "filter-sort": 3.0, "distinct": 3.0, "scan-lookup": 200.0}] * hp[
+        "graphs"
+    ]
+    events = [{"t": 1.0, "event": event, "seconds": 300.0}]
+    got = checks.analyse(ep, hp, cal, _epoch_data(), _pings(1000), [], events, {}, [])
+    assert got["checks"]["no_unexpected_errors"]["pass"] is not fails

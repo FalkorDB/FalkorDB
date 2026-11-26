@@ -62,6 +62,7 @@ use crate::{
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
 };
+use arcstr::ArcStr;
 use chrono::{DateTime, Utc};
 use once_cell::unsync::Lazy;
 use orx_tree::{Dyn, DynNode, DynTree, MemoryPolicy, NodeIdx, NodeRef};
@@ -210,15 +211,15 @@ pub struct Runtime<'a> {
     /// do its own match-or-create.
     pub merge_pattern_cache: RefCell<HashMap<(NodeIdx<Dyn<IR>>, u64), Vec<(u32, Value)>>>,
     /// Pointer-identity memo of resolved node attribute ids. Plan
-    /// expressions hold the same `Arc<String>` across all rows, so after
+    /// expressions hold the same `ArcStr` across all rows, so after
     /// the first resolution a lookup is a short pointer scan instead of a
     /// string hash + equality probe. Entries hold the `Arc` so a memoized
     /// address can never be freed and recycled by a different name
     /// mid-query. Capped so per-row computed keys can't grow it unboundedly.
-    node_attr_id_memo: RefCell<Vec<(Arc<String>, u16)>>,
+    node_attr_id_memo: RefCell<Vec<(ArcStr, u16)>>,
     /// Relationship-space counterpart of `node_attr_id_memo` (the two id
     /// spaces are independent).
-    rel_attr_id_memo: RefCell<Vec<(Arc<String>, u16)>>,
+    rel_attr_id_memo: RefCell<Vec<(ArcStr, u16)>>,
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
     /// Effects buffer built before commit, for replication.
@@ -1546,7 +1547,7 @@ impl<'a> Runtime<'a> {
     pub(crate) fn set_pending_node_attr(
         &self,
         id: NodeId,
-        key: &Arc<String>,
+        key: &ArcStr,
         value: Value,
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
@@ -1565,7 +1566,7 @@ impl<'a> Runtime<'a> {
     pub(crate) fn set_pending_relationship_attr(
         &self,
         id: RelationshipId,
-        key: &Arc<String>,
+        key: &ArcStr,
         value: Value,
     ) -> Result<(), String> {
         validate_identifier_len(key, "Property name")?;
@@ -1580,18 +1581,18 @@ impl<'a> Runtime<'a> {
     }
 
     fn memo_lookup(
-        memo: &RefCell<Vec<(Arc<String>, u16)>>,
-        attr: &Arc<String>,
+        memo: &RefCell<Vec<(ArcStr, u16)>>,
+        attr: &ArcStr,
     ) -> Option<u16> {
         memo.borrow()
             .iter()
-            .find(|(name, _)| Arc::ptr_eq(name, attr))
+            .find(|(name, _)| ArcStr::ptr_eq(name, attr))
             .map(|&(_, id)| id)
     }
 
     fn memo_insert(
-        memo: &RefCell<Vec<(Arc<String>, u16)>>,
-        attr: &Arc<String>,
+        memo: &RefCell<Vec<(ArcStr, u16)>>,
+        attr: &ArcStr,
         id: u16,
     ) {
         let mut memo = memo.borrow_mut();
@@ -1607,7 +1608,7 @@ impl<'a> Runtime<'a> {
     fn node_attr_id(
         &self,
         g: &Graph,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<u16> {
         if let Some(id) = Self::memo_lookup(&self.node_attr_id_memo, attr) {
             return Some(id);
@@ -1621,7 +1622,7 @@ impl<'a> Runtime<'a> {
     fn rel_attr_id(
         &self,
         g: &Graph,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<u16> {
         if let Some(id) = Self::memo_lookup(&self.rel_attr_id_memo, attr) {
             return Some(id);
@@ -1634,7 +1635,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attribute(
         &self,
         id: NodeId,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<Value> {
         let deleted = self.deleted_nodes.borrow();
         if !deleted.is_empty()
@@ -1654,7 +1655,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attribute_no_delete_check(
         &self,
         id: NodeId,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<Value> {
         let g = self.graph();
         let attr_id = self.node_attr_id(&g, attr)?;
@@ -1668,7 +1669,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_attribute_no_delete_check(
         &self,
         id: RelationshipId,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<Value> {
         let g = self.graph();
         let attr_id = self.rel_attr_id(&g, attr)?;
@@ -1685,7 +1686,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_attribute(
         &self,
         id: RelationshipId,
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Option<Value> {
         let deleted = self.deleted_relationships.borrow();
         if !deleted.is_empty()
@@ -1717,7 +1718,7 @@ impl<'a> Runtime<'a> {
     pub fn materialize_node_property(
         &self,
         node_ids: &[NodeId],
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> (Column, NullBitmap) {
         classify_column(self.materialize_node_property_values(node_ids, attr))
     }
@@ -1731,7 +1732,7 @@ impl<'a> Runtime<'a> {
     pub fn materialize_node_property_values(
         &self,
         node_ids: &[NodeId],
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Vec<Value> {
         let g = self.graph();
         let attr_idx = self.node_attr_id(&g, attr);
@@ -1779,7 +1780,7 @@ impl<'a> Runtime<'a> {
     pub fn materialize_relationship_property(
         &self,
         rel_ids: &[RelationshipId],
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> (Column, NullBitmap) {
         classify_column(self.materialize_relationship_property_values(rel_ids, attr))
     }
@@ -1791,7 +1792,7 @@ impl<'a> Runtime<'a> {
     pub fn materialize_relationship_property_values(
         &self,
         rel_ids: &[RelationshipId],
-        attr: &Arc<String>,
+        attr: &ArcStr,
     ) -> Vec<Value> {
         let g = self.graph();
         let attr_idx = self.rel_attr_id(&g, attr);
@@ -1850,7 +1851,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_labels(
         &self,
         id: NodeId,
-    ) -> OrderSet<Arc<String>> {
+    ) -> OrderSet<ArcStr> {
         let g = self.graph();
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             return dn.labels.iter().map(|l| g.get_label_by_id(*l)).collect();
@@ -1871,7 +1872,7 @@ impl<'a> Runtime<'a> {
     /// the committed label matrix.
     ///
     /// `n:Person` reaches the runtime as a `hasLabels` call, and answering it
-    /// through `get_node_labels` costs two `OrderSet`s and an `Arc<String>`
+    /// through `get_node_labels` costs two `OrderSet`s and an `ArcStr`
     /// clone per stored label, then compares label *names*, for every row. On
     /// the benchmark graph `MATCH (n) WHERE n:Person RETURN count(n)` spent
     /// 48.9M instructions over 15k nodes — 3.3k a row — against 22.4M on the C
@@ -1929,7 +1930,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_attrs(
         &self,
         id: NodeId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> OrderMap<ArcStr, Value> {
         if let Some(dn) = self.deleted_nodes.borrow().get(&id) {
             let attrs = dn
                 .attrs
@@ -1947,7 +1948,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_attrs(
         &self,
         id: RelationshipId,
-    ) -> OrderMap<Arc<String>, Value> {
+    ) -> OrderMap<ArcStr, Value> {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
             let attrs = dr
                 .attrs
@@ -1980,7 +1981,7 @@ impl<'a> Runtime<'a> {
     pub fn get_relationship_type(
         &self,
         id: RelationshipId,
-    ) -> Option<Arc<String>> {
+    ) -> Option<ArcStr> {
         if let Some(dr) = self.deleted_relationships.borrow().get(&id) {
             return Some(dr.type_name.clone());
         }
@@ -2011,7 +2012,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_indegree_by_type(
         &self,
         id: NodeId,
-        types: &[Arc<String>],
+        types: &[ArcStr],
     ) -> usize {
         if self.deleted_nodes.borrow().contains_key(&id)
             || self.pending.borrow().is_node_deleted(id)
@@ -2046,7 +2047,7 @@ impl<'a> Runtime<'a> {
     pub fn get_node_outdegree_by_type(
         &self,
         id: NodeId,
-        types: &[Arc<String>],
+        types: &[ArcStr],
     ) -> usize {
         if self.deleted_nodes.borrow().contains_key(&id)
             || self.pending.borrow().is_node_deleted(id)
@@ -2070,7 +2071,7 @@ impl<'a> Runtime<'a> {
 /// approximation.
 pub fn map_to_index_options(
     index_type: &IndexType,
-    kv_map: &OrderMap<Arc<String>, Value>,
+    kv_map: &OrderMap<ArcStr, Value>,
 ) -> Result<Option<IndexOptions>, String> {
     let get = |key: &str| -> Option<&Value> {
         kv_map

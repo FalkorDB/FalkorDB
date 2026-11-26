@@ -5,6 +5,7 @@
 //! are placed at the end. This produces deterministic display output that
 //! reflects schema order rather than user-input or alphabetical order.
 
+use arcstr::ArcStr;
 use std::sync::Arc;
 
 use orx_tree::{Bfs, DynTree, NodeIdx, NodeRef};
@@ -20,7 +21,7 @@ pub fn reorder_labels(
     let indices: Vec<NodeIdx<_>> = plan.root().indices::<Bfs>().collect();
     for idx in indices {
         if let IR::NodeByLabelScan { node } = plan.node(idx).data() {
-            let mut labeled: Vec<(Arc<String>, usize)> = node
+            let mut labeled: Vec<(ArcStr, usize)> = node
                 .labels
                 .iter()
                 .map(|l| {
@@ -30,7 +31,7 @@ pub fn reorder_labels(
                 .collect();
             // Stable sort by id; ties keep input order.
             labeled.sort_by_key(|(_, id)| *id);
-            let sorted: Vec<Arc<String>> = labeled.into_iter().map(|(l, _)| l).collect();
+            let sorted: Vec<ArcStr> = labeled.into_iter().map(|(l, _)| l).collect();
             let same = sorted.iter().zip(node.labels.iter()).all(|(a, b)| a == b)
                 && sorted.len() == node.labels.len();
             if same {

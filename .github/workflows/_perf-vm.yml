@@ -398,6 +398,8 @@ jobs:
           name: perf-result-${{ inputs.check }}
           path: out/
           if-no-files-found: warn
+          # "Re-run all jobs" uploads the name again: replace the earlier attempt's
+          overwrite: true
 
   cleanup:
     name: Delete VM
@@ -525,3 +527,5 @@ jobs:
           name: perf-result-${{ inputs.check }}
           path: out/
           if-no-files-found: warn
+          # "Re-run all jobs" uploads the name again: replace the earlier attempt's
+          overwrite: true

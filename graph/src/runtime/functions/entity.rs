@@ -30,6 +30,7 @@ use super::{FnType, Functions, Type};
 use crate::graph::graph::NodeId;
 use crate::runtime::value::ValueGetType;
 use crate::runtime::{runtime::Runtime, value::Value};
+use arcstr::ArcStr;
 use std::sync::Arc;
 use thin_vec::ThinVec;
 
@@ -55,7 +56,7 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::String,
         fn type_of(_runtime, args) {
             let type_name = args.first().map_or_else(|| unreachable!(), Value::name);
-            Ok(Value::String(Arc::new(String::from(type_name))))
+            Ok(Value::String(ArcStr::from(type_name)))
         }
     );
 
@@ -293,7 +294,7 @@ pub fn register(funcs: &mut Functions) {
 fn parse_degree_args(
     fn_name: &str,
     args: &[Value],
-) -> Result<(Option<NodeId>, Vec<Arc<String>>), String> {
+) -> Result<(Option<NodeId>, Vec<ArcStr>), String> {
     if args.is_empty() {
         return Err(format!(
             "Received 0 arguments to function '{fn_name}', expected at least 1"
@@ -370,6 +371,7 @@ fn parse_degree_args(
 mod tests {
     use super::parse_degree_args;
     use crate::runtime::value::Value;
+    use arcstr::ArcStr;
     use std::sync::Arc;
     use thin_vec::ThinVec;
 
@@ -382,7 +384,7 @@ mod tests {
     }
 
     fn s(v: &str) -> Value {
-        Value::String(Arc::new(v.to_string()))
+        Value::String(ArcStr::from(v))
     }
 
     // `indegree`/`outdegree` are var-len, so `validate_args_type` is a no-op
@@ -433,7 +435,7 @@ mod tests {
         );
         assert_eq!(
             parse_degree_args("outdegree", &[Value::Null, list(vec![s("R")])]).unwrap(),
-            (None, vec![Arc::new("R".to_string())])
+            (None, vec![ArcStr::from("R")])
         );
     }
 }

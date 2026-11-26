@@ -30,7 +30,7 @@
 //!
 //! ```text
 //!  Token
-//!   |-- Literals:          Integer(i64), Float(f64), String(Arc<String>)
+//!   |-- Literals:          Integer(i64), Float(f64), String(ArcStr)
 //!   |-- Identifiers:       IdentifierOrKeyword { ident, keyword }
 //!   |-- Parameters:        Parameter(String)          -- $param or $`param`
 //!   |-- Delimiters:        LParen, RParen, LBrace, RBrace, LBracket, RBracket
@@ -58,8 +58,8 @@
 //! [`crate::parser::string_escape::cypher_unescape`].
 
 use crate::parser::string_escape::cypher_unescape;
+use arcstr::ArcStr;
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::{num::IntErrorKind, str::Chars};
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -128,13 +128,13 @@ pub enum Keyword {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     IdentifierOrKeyword {
-        ident: Arc<String>,
+        ident: ArcStr,
         keyword: Option<Keyword>,
     },
     Parameter(String),
     Integer(i64),
     Float(f64),
-    String(Arc<String>),
+    String(ArcStr),
     LBrace,
     RBrace,
     LBracket,
@@ -450,7 +450,7 @@ impl<'a> Lexer<'a> {
                         None
                     };
                     let token = Token::IdentifierOrKeyword {
-                        ident: Arc::new(String::from(ident)),
+                        ident: ArcStr::from(ident),
                         keyword,
                     };
                     Ok((token, len))
@@ -471,7 +471,7 @@ impl<'a> Lexer<'a> {
                     let id = &str[pos + 1..pos + len];
                     Ok((
                         Token::IdentifierOrKeyword {
-                            ident: Arc::new(String::from(id)),
+                            ident: ArcStr::from(id),
                             keyword: None,
                         },
                         len + 1,
@@ -515,7 +515,7 @@ impl<'a> Lexer<'a> {
             return Err((format!("Unterminated string starting at pos: {pos}"), len));
         }
         match cypher_unescape(&str[pos + 1..pos + len]) {
-            Ok(unescaped) => Ok((Token::String(Arc::new(unescaped)), len + 1)),
+            Ok(unescaped) => Ok((Token::String(ArcStr::from(unescaped)), len + 1)),
             Err(e) => Err((format!("{e} at pos: {pos}"), len + 1)),
         }
     }
@@ -937,7 +937,7 @@ mod tests {
                 Token::Slash,
                 Token::Star,
                 Token::IdentifierOrKeyword {
-                    ident: Arc::new(String::from("never")),
+                    ident: ArcStr::from("never"),
                     keyword: None,
                 },
             ]
@@ -986,7 +986,7 @@ mod tests {
             lex_all("RETURN $`é`").unwrap(),
             vec![
                 Token::IdentifierOrKeyword {
-                    ident: Arc::new(String::from("RETURN")),
+                    ident: ArcStr::from("RETURN"),
                     keyword: Some(Keyword::Return),
                 },
                 Token::Parameter(String::from("é")),

@@ -53,6 +53,10 @@ jobs:
       # X.Y+1.0 in the merge queue of version branch X.Y, else empty: the release
       # gate runs only when it is set (the `perf` and `perf-cov` jobs).
       perf_below: ${{ steps.key.outputs.perf_below }}
+      # 'true' when the pull request (the queued one, under merge_group) comes
+      # from this repository: the release gate runs only for those, since its
+      # VM gets compute write access.
+      same_repo: ${{ steps.fork.outputs.same_repo }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,7 +147,15 @@ jobs:
       # absent under merge_group, so the queued pull request is resolved from
       # the ref — gh-readonly-queue/<base>/pr-<N>-<sha> — and its head repo
       # checked. Anything unresolvable fails closed.
+      #
+      # It also says whether the code under test comes only from this
+      # repository's pull requests (same_repo): the release gate runs it on a GCE
+      # VM with compute write access, so it runs only then. In a version branch's
+      # queue that means every pull request in the merge group, since a group
+      # holds the entries queued ahead of this one too; a pull request that
+      # cannot be looked up counts as a fork.
       - name: Refuse fork changes to build or CI infrastructure
+        id: fork
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -151,8 +163,11 @@ jobs:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REF: ${{ github.ref }}
           PATTERN: ${{ steps.check.outputs.pattern }}
+          PERF_BELOW: ${{ steps.key.outputs.perf_below }}
+          QUEUE_BASE_REF: ${{ github.event.merge_group.base_ref }}
         run: |
           set -euo pipefail
+          not_ours=""
           if [ "$EVENT" = "merge_group" ]; then
             N=$(printf '%s' "$REF" | sed -n 's|.*/pr-\([0-9]\+\)-[0-9a-f]*$|\1|p')
             if [ -z "$N" ]; then
@@ -163,6 +178,48 @@ jobs:
             if [ -z "$PR_HEAD_REPO" ]; then
               echo "::error::could not resolve the head repository of queued PR #${N}"
               exit 1
+            fi
+            if [ -n "$PERF_BELOW" ]; then
+              # The group's pull requests: one first-parent commit each between the
+              # base branch's tip and HEAD ("Merge pull request #N from ..." or a
+              # squash "... (#N)"). merge_group.base_sha will not do: it is the
+              # previous entry's head, so the range would hold this entry alone.
+              # Only first parents: a merged branch's own commits (cherry-picks)
+              # name other pull requests. A subject can match both forms (a squashed
+              # title that starts "Merge pull request #M", or a merged branch named
+              # "x(#M)"), and either number may be the one a fork wrote: every
+              # number it names is checked, so a spoof can only skip the gate.
+              base=${QUEUE_BASE_REF#refs/heads/}
+              merged='^Merge pull request #([0-9]+) '
+              squashed='\(#([0-9]+)\)$'
+              prs=""
+              if git fetch --no-tags --quiet origin "$base" \
+                && subjects=$(git log --first-parent --format=%s "origin/$base..HEAD"); then
+                while IFS= read -r subject; do
+                  named=""
+                  if [[ $subject =~ $merged ]]; then named="${BASH_REMATCH[1]}"; fi
+                  if [[ $subject =~ $squashed ]]; then named="$named ${BASH_REMATCH[1]}"; fi
+                  if [ -n "$named" ]; then
+                    prs="$prs $named"
+                  else
+                    not_ours="$not_ours (a commit naming no pull request: ${subject:0:60})"
+                  fi
+                done <<< "$subjects"
+              else
+                not_ours=" (the group's commits could not be listed)"
+              fi
+              for pr in $prs; do
+                repo=$(gh api "/repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '.head.repo.full_name // empty') || repo=""
+                [ "$repo" = "$GITHUB_REPOSITORY" ] || not_ours="$not_ours #$pr"
+              done
+            fi
+          fi
+          if [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ] && [ -z "$not_ours" ]; then
+            echo "same_repo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "same_repo=false" >> "$GITHUB_OUTPUT"
+            if [ -n "$PERF_BELOW" ]; then
+              echo "::warning::The release gate (perf, perf-cov) does not run: not every pull request in this merge group is known to come from this repository:${not_ours:- #${N:-?}}. A maintainer takes a fork's branch over to have the gate run."
             fi
           fi
           if [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
@@ -499,9 +556,13 @@ jobs:
   # (@main) and carries only these jobs and ci-gate's rule. An infrastructure
   # error fails the gate too; "Re-run all jobs" clears it
   # (tests/perf/vm/README.md says why not "failed").
+  #
+  # Only for a pull request from this repository: the gate runs the queued
+  # engine code on a GCE VM whose service account has compute write access. A
+  # fork's queued pull request skips both jobs, and ci-gate does not require them.
   perf-cov:
     needs: [check-files, ci-pipeline]
-    if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.ci-pipeline.result == 'success' }}
+    if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.check-files.outputs.same_repo == 'true' && needs.ci-pipeline.result == 'success' }}
     permissions:
       contents: read
       # benchmark-cov's comment on the pull request
@@ -515,7 +576,7 @@ jobs:
 
   perf:
     needs: [check-files, ci-pipeline]
-    if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.ci-pipeline.result == 'success' }}
+    if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.check-files.outputs.same_repo == 'true' && needs.ci-pipeline.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -569,7 +630,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           EVENT: ${{ github.event_name }}
-          PERF_REQUIRED: ${{ needs.check-files.outputs.perf_below != '' }}
+          PERF_REQUIRED: ${{ needs.check-files.outputs.perf_below != '' && needs.check-files.outputs.same_repo == 'true' }}
         run: |
           set -euo pipefail
           echo "$RESULTS" | jq .
@@ -580,7 +641,8 @@ jobs:
           # runs on a pull request only when labelled. In the merge queue
           # `macos` must succeed: the release publishes the file it uploads.
           # `perf` and `perf-cov` (the release gate) must succeed in the merge
-          # queue of a version branch, and are skipped everywhere else.
+          # queue of a version branch for a pull request from this repository,
+          # and are skipped everywhere else (a fork's queued pull request too).
           echo "$RESULTS" | jq -e --arg event "$EVENT" --arg perf "$PERF_REQUIRED" '
             (.docker.result | . == "success" or . == "skipped")
             and (.macos.result | . == "success" or (. == "skipped" and $event != "merge_group"))

@@ -112,6 +112,7 @@
 //! (`Resident ⇄ Cold` is cache state over identical bytes, and must be mutable
 //! from outside the versioned tree) — not for versioned state.
 
+use arcstr::ArcStr;
 use std::cmp::Ordering;
 use std::sync::Arc;
 
@@ -142,7 +143,7 @@ impl AttrNameMap {
     #[must_use]
     pub fn get_index_of(
         &self,
-        name: &Arc<String>,
+        name: &ArcStr,
     ) -> Option<usize> {
         self.id_of(name)
     }
@@ -154,7 +155,7 @@ impl AttrNameMap {
     /// `get_or_create` and compare against [`ATTRIBUTE_ID_NONE`].
     pub fn insert(
         &mut self,
-        name: &Arc<String>,
+        name: &ArcStr,
     ) {
         self.get_or_insert(name);
     }
@@ -181,7 +182,7 @@ impl AttrNameMap {
     /// list's capacity, which [`NameMap::get_or_insert`] enforces.
     pub fn get_or_create(
         &mut self,
-        name: &Arc<String>,
+        name: &ArcStr,
     ) -> u16 {
         self.get_or_insert(name)
             .and_then(|id| u16::try_from(id).ok())
@@ -1498,8 +1499,8 @@ mod tests {
     use super::*;
     use crate::graph::schema::NameList;
 
-    fn name(s: &str) -> Arc<String> {
-        Arc::new(s.to_string())
+    fn name(s: &str) -> ArcStr {
+        ArcStr::from(s)
     }
 
     /// A store paired with the attribute dictionary that now lives on `Graph`.
@@ -1533,14 +1534,14 @@ mod tests {
 
         fn get_or_create_attr_id(
             &mut self,
-            attr: &Arc<String>,
+            attr: &ArcStr,
         ) -> u16 {
             self.names.get_or_create(attr)
         }
 
         fn get_attr_id(
             &self,
-            attr: &Arc<String>,
+            attr: &ArcStr,
         ) -> Option<usize> {
             self.names.get_index_of(attr)
         }
@@ -1548,7 +1549,7 @@ mod tests {
         fn get_attr(
             &self,
             key: u64,
-            attr: &Arc<String>,
+            attr: &ArcStr,
         ) -> Option<Value> {
             let idx = self.names.get_index_of(attr)? as u16;
             self.store.get_attr_by_idx(key, idx)
@@ -1557,7 +1558,7 @@ mod tests {
         fn get_all_attrs(
             &self,
             key: u64,
-        ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
+        ) -> impl Iterator<Item = (ArcStr, Value)> + '_ {
             self.store
                 .get_all_attrs_by_id(key)
                 .filter_map(|(id, value)| self.names.get(id as usize).map(|n| (n.clone(), value)))
@@ -1621,9 +1622,9 @@ mod tests {
             Value::Date(19_723),
             Value::Time(-1),
             Value::Duration(i64::MAX),
-            Value::String(Arc::new("hello".to_string())),
+            Value::String(ArcStr::from("hello")),
             Value::List(Arc::new(
-                [Value::Int(1), Value::String(Arc::new("x".to_string()))]
+                [Value::Int(1), Value::String(ArcStr::from("x"))]
                     .into_iter()
                     .collect(),
             )),
@@ -1682,8 +1683,8 @@ mod tests {
 
     #[test]
     fn mixed_scalar_and_heap_interleaved() {
-        let s1 = Value::String(Arc::new("first".to_string()));
-        let s2 = Value::String(Arc::new("second".to_string()));
+        let s1 = Value::String(ArcStr::from("first"));
+        let s2 = Value::String(ArcStr::from("second"));
         let store = store_with(&[(
             1,
             &[
@@ -1702,15 +1703,15 @@ mod tests {
 
     #[test]
     fn heap_free_list_reuse_on_overwrite() {
-        let mut store = store_with(&[(1, &[("s", Value::String(Arc::new("old".to_string())))])]);
+        let mut store = store_with(&[(1, &[("s", Value::String(ArcStr::from("old")))])]);
         let s = store.get_or_create_attr_id(&name("s"));
         let mut attrs = FxHashMap::default();
-        attrs.insert(1u64, vec![(s, Value::String(Arc::new("new".to_string())))]);
+        attrs.insert(1u64, vec![(s, Value::String(ArcStr::from("new")))]);
         store.insert_attrs(&attrs).unwrap();
 
         assert_eq!(
             store.get_attr(1, &name("s")),
-            Some(Value::String(Arc::new("new".to_string())))
+            Some(Value::String(ArcStr::from("new")))
         );
         // The old string's heap slot must be recycled, not leaked.
         let block = store.data.block(0).unwrap();
@@ -1809,21 +1810,21 @@ mod tests {
 
     #[test]
     fn snapshot_isolation_heap_values() {
-        let v1 = store_with(&[(1, &[("s", Value::String(Arc::new("v1".to_string())))])]);
+        let v1 = store_with(&[(1, &[("s", Value::String(ArcStr::from("v1")))])]);
         let mut v2 = v1.new_version();
 
         let s = v2.get_or_create_attr_id(&name("s"));
         let mut attrs = FxHashMap::default();
-        attrs.insert(1u64, vec![(s, Value::String(Arc::new("v2".to_string())))]);
+        attrs.insert(1u64, vec![(s, Value::String(ArcStr::from("v2")))]);
         v2.insert_attrs(&attrs).unwrap();
 
         assert_eq!(
             v1.get_attr(1, &name("s")),
-            Some(Value::String(Arc::new("v1".to_string())))
+            Some(Value::String(ArcStr::from("v1")))
         );
         assert_eq!(
             v2.get_attr(1, &name("s")),
-            Some(Value::String(Arc::new("v2".to_string())))
+            Some(Value::String(ArcStr::from("v2")))
         );
     }
 
@@ -2081,7 +2082,7 @@ mod tests {
         );
 
         let mut dict = AttrNameMap::PropertyKeys(NameList::default());
-        dict.insert(&Arc::new("a".to_string()));
+        dict.insert(&ArcStr::from("a"));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
@@ -2135,12 +2136,12 @@ mod tests {
         // Fill the dictionary to capacity, then ask for one more name.
         let mut dict = AttrNameMap::PropertyKeys(NameList::default());
         for i in 0..MAX_ATTRIBUTES {
-            dict.insert(&Arc::new(format!("a{i}")));
+            dict.insert(&ArcStr::from(format!("a{i}")));
         }
         assert_eq!(dict.len(), MAX_ATTRIBUTES);
 
         let first = dict.get(0).cloned().expect("attribute 0 exists");
-        let overflow = Arc::new("one_too_many".to_string());
+        let overflow = ArcStr::from("one_too_many");
 
         assert_eq!(
             dict.get_or_create(&overflow),
@@ -2180,7 +2181,7 @@ mod tests {
 
         // A dictionary holding a single name: id 0 is real, id 5 resolves to nothing.
         let mut dict = AttrNameMap::PropertyKeys(NameList::default());
-        dict.insert(&Arc::new("a".to_string()));
+        dict.insert(&ArcStr::from("a"));
         store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
@@ -2190,7 +2191,7 @@ mod tests {
         );
         assert_eq!(
             dict.get(0).cloned(),
-            Some(Arc::new("a".to_string())),
+            Some(ArcStr::from("a")),
             "and that id must be the one the dictionary resolves to a name"
         );
         assert_eq!(

@@ -919,28 +919,46 @@ def epoch_events(port, epoch_s, ep, ng, stop, events: list, t_start: float, cons
                                 ev("violation_odd_error", graph=g, msg=str(e)[:200])
             elif kind == "bgsave":
                 try:
-                    r.execute_command("BGSAVE")
-                    t0 = now()
-                    info = {}
-                    while now() - t0 < 300:
-                        info = r.info("persistence")
-                        if not info.get("rdb_bgsave_in_progress") or stop.wait(0.5):
-                            break
-                    status = info.get("rdb_last_bgsave_status")
-                    if status == "ok":
-                        ev("bgsave_done", seconds=round(now() - t0, 1), status=status)
-                    else:  # a failed save is a persistence failure, not a completion
-                        ev(
-                            "bgsave_error",
-                            msg=f"rdb_last_bgsave_status={status}"[:200],
-                            seconds=round(now() - t0, 1),
-                        )
+                    bgsave(r, stop, ev)
                 except Exception as e:
                     ev("bgsave_error", msg=str(e)[:200])
     except Exception as e:
         ev("events_died", msg=f"{type(e).__name__}: {e}"[:300])
     finally:
         r.close()
+
+
+def bgsave(r, stop, ev):
+    """BGSAVE, then wait for it to end (at most 300 s, or until the epoch stops). A save still
+    running when the wait ends has no status of its own (rdb_last_bgsave_status is still the
+    previous save's): one the epoch's end cut short is bgsave_unfinished, which the harness
+    caused; one still saving after 300 s is bgsave_stuck, a failed event."""
+    r.execute_command("BGSAVE")
+    t0 = now()
+    info = {}
+    stopped = False  # the epoch's end, not the 300 s limit, ended the wait
+    while now() - t0 < 300:
+        info = r.info("persistence")
+        if not info.get("rdb_bgsave_in_progress"):
+            break
+        if stop.wait(0.5):
+            stopped = True
+            break
+    if info.get("rdb_bgsave_in_progress"):
+        if stopped:
+            ev("bgsave_unfinished", seconds=round(now() - t0, 1), why="the epoch ended")
+        else:
+            ev("bgsave_stuck", seconds=round(now() - t0, 1), why="still saving after 300 s")
+        return
+    status = info.get("rdb_last_bgsave_status")
+    if status == "ok":
+        ev("bgsave_done", seconds=round(now() - t0, 1), status=status)
+    else:  # a failed save is a persistence failure, not a completion
+        ev(
+            "bgsave_error",
+            msg=f"rdb_last_bgsave_status={status}"[:200],
+            seconds=round(now() - t0, 1),
+        )
 
 
 def end_of_epoch_cleanup(r, ep, ng, notes):
@@ -978,11 +996,12 @@ def probed_indexes(r, g) -> list[tuple[str, str]]:
     return out
 
 
-def index_vs_scan(r, ng, sizes, seed) -> list[str]:
+def index_vs_scan(r, ng, sizes, seed, problems=None) -> list[str]:
     """Index lookups against scans on the indexes each graph holds. A graph with none to probe
-    raises: a scan agreeing with a scan is no evidence, so the comparison is unmeasured."""
+    raises: a scan agreeing with a scan is no evidence, so the comparison is unmeasured. The
+    mismatches go to `problems` (the caller's list keeps those found before a raise)."""
     rng = random.Random(f"{seed}-ivs")
-    problems = []
+    problems = [] if problems is None else problems
     for g in range(ng):
         probes = probed_indexes(r, g)
         if not probes:
@@ -1220,11 +1239,7 @@ def run_epoch(
             "hang": hung,
         }
         if ledger.incomplete:
-            for k in ("writes_add_up", "upsert_edges_complete", "timed_out_writes_leave_nothing"):
-                an["checks"][k] = {
-                    "pass": None,
-                    "skipped": "a driver result file was lost earlier on this server",
-                }
+            counts_unknown(an["checks"])
         an["checks"]["index_matches_scan"] = index_check(ep, ivs)
         result.update(an)
         result["notes"] = notes
@@ -1261,6 +1276,18 @@ def schema_left(r, ng) -> dict:
     return left
 
 
+def counts_unknown(checks_: dict) -> None:
+    """After a driver result file was lost the ledger cannot predict the counts: its checks
+    are not measured, except one that failed anyway (a duplicated key is wrong whatever was
+    lost), which stands."""
+    for k in ("writes_add_up", "upsert_edges_complete", "timed_out_writes_leave_nothing"):
+        if checks_[k].get("pass") is not False:
+            checks_[k] = {
+                "pass": None,
+                "skipped": "a driver result file was lost earlier on this server",
+            }
+
+
 def index_check(ep, ivs) -> dict:
     """index_matches_scan from index_vs_scan's problems; None (the comparison failed) is unmeasured."""
     return {
@@ -1279,17 +1306,21 @@ def end_of_epoch(r, ep, ng, sizes, ledger, events, t_start) -> dict:
     try:
         r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", "0")
         r.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_MAX", "0")
-        out["ledger_problems"] = ledger.check(r)
+        ledger.check(r, out["ledger_problems"])
     except Exception as e:
-        out["ledger_problems"] = [
+        # the problems counted before the failure stay: analyse ranks them above it
+        out["ledger_problems"].append(
             ("harness", f"end-of-epoch checks failed: {type(e).__name__}: {e}")
-        ]
+        )
         out["notes"].append(traceback.format_exc()[-500:])
     if ep["indexes"] or ep["constraints"]:
+        mismatches = []
         try:
-            out["ivs"] = index_vs_scan(r, ng, sizes, ep["seed"])
-        except Exception as e:  # not compared: index_matches_scan is not measured (None)
-            out["ivs"] = None
+            out["ivs"] = index_vs_scan(r, ng, sizes, ep["seed"], mismatches)
+        except Exception as e:
+            # a mismatch found before the failure fails index_matches_scan; with none, the
+            # comparison was not made and the check is not measured (None)
+            out["ivs"] = mismatches or None
             out["notes"].append(f"index comparison failed: {type(e).__name__}: {e}"[:300])
     try:
         end_of_epoch_cleanup(r, ep, ng, out["notes"])
