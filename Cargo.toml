@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/graphblas-sys",
+    "crates/graphblas",
     "graph",
     "fuzz",
     "runtime-fuzz-target",
