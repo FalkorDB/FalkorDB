@@ -73,7 +73,7 @@ on:
         description: "Comma list of checks to run (micro-hw, or names in bench/checks.yaml); empty = all"
         type: string
         default: ""
-  # The release gate (header). `mode` is a call's alone: it is how every job
+  # The release gate and `/perf` (header). `mode` is a call's alone: it is how every job
   # tells a call from a night.
   workflow_call:
     inputs:
@@ -120,7 +120,7 @@ permissions: {}
 # queued scheduled run must not be displaced by dispatches queueing behind it
 # (only one run per group waits; a newer one cancels it). Every leg runs on its
 # own runner or VM, so a dispatch beside a nightly measures nothing differently.
-# A call (the gate) takes the caller's event, so it gets a group of its own run:
+# A call (the gate, `/perf`) takes the caller's event, so it gets a group of its own run:
 # one queue entry must not queue behind, or displace, another.
 concurrency:
   group: ${{ inputs.mode && format('perf-gate-{0}', github.run_id) || format('perf-nightly-{0}', github.event_name) }}
@@ -353,7 +353,7 @@ jobs:
           # are the caller's.
           if [[ -n $GATE_MODE ]]; then
             : > "$HISTORY/runs.txt"
-            echo "a call (the release gate): no earlier nightlies"
+            echo "a call (the release gate or /perf): no earlier nightlies"
             exit 0
           fi
           # By this run's workflow id, which exists on any branch (a lookup by
@@ -381,7 +381,7 @@ jobs:
         run: |
           set -euo pipefail
           # The commit every check runs its code from: this workflow's, which
-          # for a call (the gate) is not the caller's. An empty one would fall
+          # for a call (the gate, `/perf`) is not the caller's. An empty one would fall
           # back to the caller's commit, so it is checked here.
           if ! [[ $CODE_SHA =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::job.workflow_sha '$CODE_SHA' is not a commit"
@@ -692,7 +692,7 @@ jobs:
       # The list of runs then reads as a timeline, and a failed scheduled run
       # sends GitHub's email. Green and skipped nights succeed, and so does a red
       # one whose every regression bench/waivers.yaml waives (each still shown
-      # as a warning). A call (the gate) also fails a skipped night. It runs even
+      # as a warning). A call (the gate, `/perf`) also fails a skipped night. It runs even
       # when the report step failed, so a red or error night fails the run
       # whatever the reporter did.
       - name: Fail the run unless the night passes
