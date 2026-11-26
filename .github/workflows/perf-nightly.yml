@@ -373,6 +373,16 @@ jobs:
             --out "$RUNNER_TEMP/plan/context.json" --github-output "$out" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # Whether a dispatch named its own images, for perf-dashboard.yml: only a run that
+      # measures the default pair belongs on the dashboard.
+      - name: Record the image overrides
+        env:
+          CANDIDATE_INPUT: ${{ inputs.candidate_image }}
+          BASELINE_INPUT: ${{ inputs.baseline_image }}
+        run: |
+          jq -n --arg c "$CANDIDATE_INPUT" --arg b "$BASELINE_INPUT" \
+            '{image_overrides: ($c != "" or $b != "")}' > "$RUNNER_TEMP/plan/dispatch.json"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: perf-plan

@@ -31,6 +31,7 @@ from falkorbench import report as report_mod
 from falkorbench.counters import select_backend
 from falkorbench.fuzz import check as fuzz_check
 from falkorbench.ldbc import check as ldbc_check
+from falkorbench.nightly import dashboard as nightly_dashboard
 from falkorbench.nightly import merge as nightly_merge
 from falkorbench.nightly import missed_run
 from falkorbench.nightly import report as nightly_report
@@ -667,6 +668,21 @@ def nightly_merge_command(args):
 def cov_gate_command(args):
     """benchmark-cov's PR-vs-base CSVs -> the release gate's result.json (--help: the flags)."""
     raise SystemExit(cov_gate.main(list(args)))
+
+
+@nightly.command("dashboard")
+@click.option(
+    "--data",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="the stored runs: one <date>-<run id>/ folder each",
+)
+@click.option(
+    "--out", required=True, type=click.Path(file_okay=False, path_type=Path), help="the site"
+)
+def nightly_dashboard_command(data, out):
+    """Build the perf dashboard, a static site, from every stored run."""
+    click.echo(f"{nightly_dashboard.build(data, out)} run(s) -> {out}")
 
 
 # --- ldbc --------------------------------------------------------------------

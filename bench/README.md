@@ -408,6 +408,20 @@ red night by hand:
 uv run --project bench bench nightly report --nightly bench/tests/fixtures/valid/nightly-red.json
 ```
 
+## Dashboard (#4005)
+
+`perf-dashboard.yml` runs when a `Perf nightly` run completes (`workflow_run`, from
+the default branch, with its own permissions: `perf-nightly.yml` is also the release
+gate's callee and holds no write grant). For a scheduled night, or a dispatch that
+named no image of its own, it downloads the run's artifacts, stores them at
+`data/<date>-<run id>/` on the `gh-pages` branch (the archive), rebuilds the site
+with `bench nightly dashboard` and deploys it with `actions/deploy-pages`. A push
+with `GITHUB_TOKEN` does not start a Pages build, hence the explicit deploy. It
+never touches a night's verdict: the night has finished.
+
+One-time admin step: **Settings → Pages → Source: GitHub Actions** (not "deploy from
+a branch"), and let the `github-pages` environment accept the default branch.
+
 ## Release gate (#4004)
 
 A release is one pull request into a version branch X.Y that cherry-picks
