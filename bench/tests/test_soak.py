@@ -204,10 +204,13 @@ def test_a_same_image_pair_allows_only_the_known_breaks(tmp_path):
         assert sc.unknown_breaks({**res, "broken": broken}) == [f"s10 {known}"]
 
     def regressed(name, metric):
-        return {"findings": [{"name": name, "metric": metric, "status": "regression"}]}
+        finding = {"name": name, "metric": metric, "status": "regression"}
+        return {"verdict": "regression", "findings": [finding]}
 
     assert sc.unknown_breaks(regressed("s12 ingest_batch", "p50_ms")) == ["s12 ingest_batch"]
     assert sc.unknown_breaks(regressed("s10 completed", "completed")) == ["s10 completed"]
+    # An error has no regression finding, yet it measured nothing: it fails the pair too.
+    assert sc.unknown_breaks({**res, "verdict": "error", "findings": []}) == ["verdict error"]
 
 
 @pytest.mark.parametrize("check", ["soak-s10", "soak"])

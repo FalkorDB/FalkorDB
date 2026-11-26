@@ -39,8 +39,10 @@
 #                     `broken` list names with that issue; a performance row,
 #                     a crash or any other break fails the pair. The verdict
 #                     may be regression (contract v1.14: a break on the
-#                     candidate is red). falkorbench.soak.check.unknown_breaks
-#                     lists the findings that fail it. Soak's A/A pairs only.
+#                     candidate is red) but never error: an error measured
+#                     nothing to judge, so it fails the pair.
+#                     falkorbench.soak.check.unknown_breaks lists what fails
+#                     it. Soak's A/A pairs only.
 # judge               what a person checks by hand in the findings and
 #                     artifacts, beyond the fields above
 

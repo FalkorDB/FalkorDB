@@ -124,10 +124,13 @@ def is_timing_check(name: str) -> bool:
 
 
 def unknown_breaks(result: dict) -> list[str]:
-    """bench/acceptance.yaml's `regressions_only_known_breaks` for a soak result: the regression
-    findings it does not allow. Allowed is only a correctness row (invariant) that ISSUES names
-    (KNOWN_FLAKY's rows among them) and that the result's `broken` list names with that issue;
-    any performance row, crash or other correctness break is not."""
+    """bench/acceptance.yaml's `regressions_only_known_breaks` for a soak result: what fails it.
+    An `error` verdict measured nothing to judge, so it fails as "verdict error". Otherwise the
+    regression findings it does not allow: allowed is only a correctness row (invariant) that
+    ISSUES names (KNOWN_FLAKY's rows among them) and that the result's `broken` list names with
+    that issue; any performance row, crash or other correctness break is not."""
+    if result.get("verdict") not in ("pass", "regression"):
+        return [f"verdict {result.get('verdict')}"]
     broken = {b.get("name"): b.get("issue") for b in result.get("broken") or []}
     return [
         f.get("name")
