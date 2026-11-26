@@ -27,23 +27,23 @@ def judge_repeat(first_c, first_b, rep_c, rep_b) -> tuple[int | None, int | None
     repeats. Values are 1 held, 0 broke, None not measured; rep_* are the repeat's (None when no
     repeat ran). Returns (candidate, baseline, status).
 
-    Only a candidate break the baseline did not show needs the repeat (first 0 vs 1):
-      the baseline breaks on the repeat     -> (0, 0)       broken on both sides: info
-      the repeat did not run or measure     -> (None, 1)    not judged: info
-      the candidate breaks again            -> (0, 1)       regression
-      the candidate holds on the repeat     -> (1, 1)       info (it broke once)
-    A candidate break against an unmeasured baseline is not judged: (None, None)."""
-    if first_c == 0 and first_b is None:
-        return None, None, "info"
-    if not (first_c == 0 and first_b == 1):
+    A candidate break (first 0) needs the repeat, whatever the baseline did (#4065):
+      the repeat did not run or measure     -> (None, b)    not judged: info
+      the candidate breaks again            -> (0, b)       regression
+      the candidate holds on the repeat     -> (1, b)       info (it broke once)
+    b is 0 when the baseline broke in the first runs or on the repeat, so the release gate's older
+    rule (kit.introduced on these values) counts the break only when the baseline did not break
+    it either time, and an unmeasured baseline blocks it, as the older "not judged" error did.
+    Without a candidate break the first runs decide (kit.correctness_status)."""
+    if first_c != 0:
         return first_c, first_b, kit.correctness_status(first_c, first_b)
-    if rep_b == 0:
-        return 0, 0, "info"
-    if rep_c is None or rep_b is None:
-        return None, 1, "info"
+    base = 0 if 0 in (first_b, rep_b) else first_b
+    if rep_c is None:
+        return None, base, "info"
     if rep_c == 0:
-        return 0, 1, "regression"
-    return 1, 1, "info"
+        return 0, base, "regression"
+    return 1, base, "info"
+
 
 
 def side_value(values: list) -> int | None:
@@ -98,13 +98,8 @@ def by_side(runs: list[dict], check: str, first_only: bool = False) -> dict[str,
 
 
 def needs_confirmation(runs: list[dict]) -> list[str]:
-    """Timing checks the candidate broke while the baseline held in every one of its runs."""
-    out = []
-    for c in TIMING_CHECKS:
-        v = by_side(runs, c)
-        if side_value(v["candidate"]) == 0 and side_value(v["baseline"]) == 1:
-            out.append(c)
-    return out
+    """Timing checks the candidate broke, whatever the baseline did (#4065)."""
+    return [c for c in TIMING_CHECKS if side_value(by_side(runs, c)["candidate"]) == 0]
 
 
 def control_findings(runs: list[dict], confirmed_pair: bool) -> tuple[list[dict], list[str]]:
@@ -127,10 +122,9 @@ def control_findings(runs: list[dict], confirmed_pair: bool) -> tuple[list[dict]
             continue
         first_c, first_b = side_value(firstv["candidate"]), side_value(firstv["baseline"])
         ext = by_side(extra, c) if confirmed_pair else {"candidate": [], "baseline": []}
-        cand, base, status = judge_repeat(
-            first_c, first_b, side_value(ext["candidate"]), side_value(ext["baseline"])
-        )
-        if first_c == 0 and first_b == 1:
+        rep_c, rep_b = side_value(ext["candidate"]), side_value(ext["baseline"])
+        cand, base, status = judge_repeat(first_c, first_b, rep_c, rep_b)
+        if first_c == 0:
             broke = sum(1 for v in allv["candidate"] if v is False)
             notes.append(
                 f"{name}: broke in {broke} of {len(allv['candidate'])} candidate runs, "
@@ -153,6 +147,7 @@ def control_findings(runs: list[dict], confirmed_pair: bool) -> tuple[list[dict]
 
 def _invariant(name, metric, cand, base, status) -> dict:
     return kit.finding(name, metric, cand, base, status, direction="lower_is_worse")
+
 
 
 # --- graph-build timing ----------------------------------------------------------------------------

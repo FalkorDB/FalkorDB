@@ -1044,26 +1044,70 @@ def test_writer_starvation_needs_every_client_to_get_replies(monkeypatch):
 
 
 # fmt: off
-JUDGE_REPEAT_CASES = [
-    (0, 1, 0, 1, (0, 1, "regression")),    # broke again, the baseline held again
-    (0, 1, 1, 1, (1, 1, "info")),          # held on the repeat
-    (0, 1, 0, 0, (0, 0, "info")),          # the baseline broke on the repeat: broken on both sides
-    (0, 1, 1, 0, (0, 0, "info")),
-    (0, 1, None, None, (None, 1, "info")),  # no repeat ran
-    (0, 1, 0, None, (None, 1, "info")),    # the baseline's repeat did not measure it
-    (0, 1, None, 1, (None, 1, "info")),
-    (0, None, 0, 1, (None, None, "info")),  # a break against an unmeasured baseline is not judged
-    (1, 1, None, None, (1, 1, "ok")),
-    (1, 0, None, None, (1, 0, "improvement")),
-    (0, 0, None, None, (0, 0, "info")),
-    (1, None, None, None, (1, None, "info")),  # baseline unmeasured: info, never ok
+JUDGE_REPEAT_CASES = [  # #4065: a candidate break counts once it repeats, whatever the baseline did;
+    # the last value is the release gate's (kit.introduced on the result): a repeated break the
+    # baseline did not show either time, or did not measure, as the older rule blocked it
+    (0, 1, 0, 1, (0, 1, "regression"), True),     # broke again, the baseline held again
+    (0, 1, 1, 1, (1, 1, "info"), False),          # held on the repeat
+    (0, 1, 0, 0, (0, 0, "regression"), False),    # the baseline broke on the repeat too
+    (0, 1, 1, 0, (1, 0, "info"), False),
+    (0, 1, None, None, (None, 1, "info"), False),  # no repeat ran
+    (0, 1, 0, None, (0, 1, "regression"), True),  # the baseline's repeat did not measure it
+    (0, 1, None, 1, (None, 1, "info"), False),
+    (0, None, 0, 1, (0, None, "regression"), True),  # the baseline's first runs did not measure it
+    (1, 1, None, None, (1, 1, "ok"), False),
+    (1, 0, None, None, (1, 0, "improvement"), False),  # fixed
+    (0, 0, None, None, (None, 0, "info"), False),  # broken on both sides: asks for the repeat
+    (0, 0, 0, 0, (0, 0, "regression"), False),    # broken on both sides, repeated
+    (0, 0, 1, 1, (1, 0, "info"), False),          # broken on both sides, held on the repeat
+    (1, None, None, None, (1, None, "info"), False),  # baseline unmeasured: info, never ok
 ]
 # fmt: on
 
 
-@pytest.mark.parametrize("first_c, first_b, rep_c, rep_b, want", JUDGE_REPEAT_CASES)
-def test_judge_repeat(first_c, first_b, rep_c, rep_b, want):
+@pytest.mark.parametrize("first_c, first_b, rep_c, rep_b, want, introduced", JUDGE_REPEAT_CASES)
+def test_judge_repeat(first_c, first_b, rep_c, rep_b, want, introduced):
     assert verdict.judge_repeat(first_c, first_b, rep_c, rep_b) == want
+    cand, base, status = want
+    assert (status == "regression" and kit.introduced(cand, base)) is introduced
+
+
+def test_a_timing_break_on_both_sides_asks_for_the_repeat_pair():
+    both = _first(cand={"writers_dont_starve": False}, base={"writers_dont_starve": False})
+    assert verdict.needs_confirmation(both) == ["writers_dont_starve"]
+    assert verdict.needs_confirmation(_first(base={"writers_dont_starve": False})) == []
+
+
+@pytest.mark.parametrize(
+    "base_first, base_rep, baseline_too, introduced",
+    [
+        ({}, {}, False, True),
+        ({"no_freeze": False}, {"no_freeze": False}, True, False),
+        # the baseline's repeat measured nothing: the candidate's break stands, and the gate
+        # blocks it, as the older rule's "not judged" error did
+        ({}, {"no_freeze": None}, False, True),
+    ],
+)
+def test_a_repeated_timing_break_tells_the_gate_whether_it_is_new(
+    base_first, base_rep, baseline_too, introduced
+):
+    runs = [
+        *_first(cand={"no_freeze": False}, base=base_first),
+        _run("baseline", 4, base_rep, True),
+        _run("candidate", 5, {"no_freeze": False}, True),
+    ]
+    findings, _notes = verdict.control_findings(runs, True)
+    doc = check.build_result(_args(), "2026-11-24T00:00:00Z", findings, [], [], None, MACHINE)
+    assert doc["verdict"] == "regression"
+    assert doc["broken"] == [
+        {
+            "name": "control no_freeze",
+            "baseline_too": baseline_too,
+            "issue": None,
+            "introduced": introduced,
+        }
+    ]
+    assert all(not k.startswith("_") for f in doc["findings"] for k in f)
 
 
 def _repeat(cand_first, cand_rep, base_rep=None):
@@ -1081,15 +1125,23 @@ CONTROL_CASES = [  # (id, runs, repeat pair ran, check, (candidate, baseline, st
     ("repeated", _repeat({"no_freeze": False}, {"no_freeze": False}), True, "no_freeze", (0, 1, "regression")),
     ("held on the repeat", _repeat({"no_freeze": False}, {}), True, "no_freeze", (1, 1, "info")),
     ("baseline broke on the repeat", _repeat({"no_freeze": False}, {"no_freeze": False}, {"no_freeze": False}), True,
-     "no_freeze", (0, 0, "info")),
+     "no_freeze", (0, 0, "regression")),
     ("no repeat ran", _first(cand={"no_freeze": False}), False, "no_freeze", (None, 1, "info")),
     ("baseline repeat unmeasured", _repeat({"no_freeze": False}, {"no_freeze": False}, {"no_freeze": None}), True,
-     "no_freeze", (None, 1, "info")),
+     "no_freeze", (0, 1, "regression")),
     ("a break seen only in the repeat", _repeat({"no_freeze": False}, {"no_freeze": False, "requests_drain": False}),
      True, "requests_drain", (1, 1, "info")),
     ("data break counts at once", _first(cand={"writes_add_up": False}), False, "writes_add_up", (0, 1, "regression")),
-    ("broken on both sides", _first(cand={"writers_dont_starve": False}, base={"writers_dont_starve": False}), False,
-     "writers_dont_starve", (0, 0, "info")),
+    ("broken on both sides, no repeat ran", _first(cand={"writers_dont_starve": False},
+                                                   base={"writers_dont_starve": False}), False,
+     "writers_dont_starve", (None, 0, "info")),
+    ("broken on both sides, repeated",
+     [*_first(cand={"writers_dont_starve": False}, base={"writers_dont_starve": False}),
+      _run("baseline", 4, {"writers_dont_starve": False}, True),
+      _run("candidate", 5, {"writers_dont_starve": False}, True)], True,
+     "writers_dont_starve", (0, 0, "regression")),
+    ("data break on both sides counts at once", _first(cand={"writes_add_up": False}, base={"writes_add_up": False}),
+     False, "writes_add_up", (0, 0, "regression")),
     ("baseline never started", [_run("candidate", 0, {"no_freeze": False}), _run("baseline", 1, {}, started=False),
                                 _run("baseline", 2, {}, started=False), _run("candidate", 3, {})], False,
      "no_freeze", (None, None, "info")),
@@ -1280,7 +1332,7 @@ LONG_CASES = [  # (id, hours, check, (candidate, baseline, status), something un
                                       _hour("baseline", {"x-h1-e1": {}}),
                                       _rep("baseline", {"x-h1-e1": {"no_freeze": False}}),
                                       _rep("candidate", {"x-h1-e1": {"no_freeze": False}})],
-     "no_freeze", (0, 0, "info"), False),
+     "no_freeze", (0, 0, "regression"), False),
     ("not replayed", [_hour("candidate", {"x-h1-e1": {"no_freeze": False}}), _hour("baseline", {"x-h1-e1": {}})],
      "no_freeze", (None, 1, "info"), True),
     ("a confirmed seed wins over one broken on both sides",
@@ -1288,9 +1340,19 @@ LONG_CASES = [  # (id, hours, check, (candidate, baseline, status), something un
       _hour("baseline", {"x-h1-e1": {}, "x-h1-e2": {"writers_dont_starve": False}}),
       _rep("baseline", {"x-h1-e1": {}}), _rep("candidate", {"x-h1-e1": {"writers_dont_starve": False}})],
      "writers_dont_starve", (0, 1, "regression"), False),
-    ("broken on both sides", [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}}),
-                              _hour("baseline", {"x-h1-e1": {"writers_dont_starve": False}})],
-     "writers_dont_starve", (0, 0, "info"), False),
+    ("broken on both sides, not replayed", [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}}),
+                                            _hour("baseline", {"x-h1-e1": {"writers_dont_starve": False}})],
+     "writers_dont_starve", (None, 0, "info"), True),
+    ("broken on both sides, replay repeats", [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}}),
+                                              _hour("baseline", {"x-h1-e1": {"writers_dont_starve": False}}),
+                                              _rep("baseline", {"x-h1-e1": {"writers_dont_starve": False}}),
+                                              _rep("candidate", {"x-h1-e1": {"writers_dont_starve": False}})],
+     "writers_dont_starve", (0, 0, "regression"), False),
+    ("broken once on the candidate, both sides: not fixed",
+     [_hour("candidate", {"x-h1-e1": {"writers_dont_starve": False}, "x-h1-e2": {}}),
+      _hour("baseline", {"x-h1-e1": {"writers_dont_starve": False}, "x-h1-e2": {"writers_dont_starve": False}}),
+      _rep("baseline", {"x-h1-e1": {}}), _rep("candidate", {"x-h1-e1": {}})],
+     "writers_dont_starve", (1, 0, "info"), False),
     ("a crash counts at once", [_hour("candidate", {"x-h1-e1": {"server_stays_up": False}}),
                                 _hour("baseline", {"x-h1-e1": {}})], "server_stays_up", (0, 1, "regression"), False),
     ("a data break counts at once", [_hour("candidate", {"x-h1-e1": {"writes_add_up": False}}),
@@ -1354,14 +1416,15 @@ REPRO_CASES = [
     ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", True, True),
       _repro("candidate", True, True)], (1, 1, "info")),
     ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", False, True),
-      _repro("candidate", False, True)], (0, 0, "info")),
+      _repro("candidate", False, True)], (0, 0, "regression")),
+    ([_repro("candidate", False), _repro("baseline", False)], (None, 0, "info")),  # asks for the repeat
     ([_repro("candidate", False, crashed=True), _repro("baseline", True)], (0, 1, "regression")),
     ([_repro("candidate", False), _repro("baseline", True)], (None, 1, "info")),
     # a crash counts at once against the baseline's crashes, in the repeat too
     ([_repro("candidate", False), _repro("baseline", True), _repro("baseline", None, True),
       _repro("candidate", False, True, crashed=True)], (0, 1, "regression")),
     ([_repro("candidate", False, crashed=True), _repro("baseline", False)], (0, 1, "regression")),
-    ([_repro("candidate", False, crashed=True), _repro("baseline", False, crashed=True)], (0, 0, "info")),
+    ([_repro("candidate", False, crashed=True), _repro("baseline", False, crashed=True)], (0, 0, "regression")),
 ]
 # fmt: on
 

@@ -27,6 +27,8 @@ METRICS = (
     "completed", "invariant",
 )
 FINDING_STATUSES = ("regression", "improvement", "ok", "info")
+# The pass/fail metrics (1 held, 0 broken): judged on the candidate alone (v1.14).
+PASS_FAIL_METRICS = ("completed", "invariant")
 DIRECTIONS = ("higher_is_worse", "lower_is_worse", "mismatch")
 NIGHTLY_STATUSES = ("green", "red", "error", "skipped")
 MAX_FINDINGS = 50
@@ -36,6 +38,7 @@ RESULT_FIELDS = ("schema", "check", "verdict", "confirmed", "summary", "candidat
 SIDE_FIELDS = ("image", "commit", "label")
 MACHINE_FIELDS = ("runner", "type", "cpu", "cores")
 FINDING_FIELDS = ("name", "metric", "candidate", "baseline", "ratio", "threshold", "direction", "status")
+BROKEN_FIELDS = ("name", "baseline_too", "issue", "introduced")
 NIGHTLY_FIELDS = ("schema", "date", "run_url", "candidate", "baseline", "previous_green_commit",
                   "status", "skip_reason", "checks")
 STUB_FIELDS = ("check", "verdict", "error")
@@ -83,7 +86,10 @@ CODES = {
     "error-on-non-error": "error text on a verdict that is not error",
     "correctness-not-regression": "a run that did not finish, a broken invariant or a row mismatch "
     "that is not marked regression",
-    "both-broken-not-info": "completed/invariant 0 on both sides that is not marked info",
+    "both-broken-not-info": "completed/invariant 0 on both sides that is not marked info, in a "
+    "result without broken (written under the rule before v1.14)",
+    "broken-mismatch": "broken does not list exactly the completed/invariant regressions, in order",
+    "broken-inconsistent": "a broken entry that contradicts its finding",
     "stub-not-error": "a check without a result that does not say error",
     "duplicate-check": "two entries for one check",
     "empty-checks": "no checks on a night that was not skipped",
@@ -243,7 +249,7 @@ class _Checker:
             "cores": lambda v, p: self.type_ok(v, p, "integer", _is_int(v)),
         })
 
-    def finding(self, value: Any, path: str) -> None:
+    def finding(self, value: Any, path: str, before_v114: bool = False) -> None:
         is_object = self.fields(value, path, FINDING_FIELDS, {
             "name": self.text,
             "metric": self.enum("unknown-metric", METRICS),
@@ -257,28 +263,64 @@ class _Checker:
         metric, status = value.get("metric"), value["status"]
         candidate, baseline = value.get("candidate"), value.get("baseline")
         where = _child(path, "status")
-        # A run that did not finish or a broken invariant (1 held, 0 not) is a
-        # regression at once, unless the baseline broke too: then it is info.
-        if metric in ("completed", "invariant") and _is_number(candidate) and candidate == 0:
-            if _is_number(baseline) and baseline == 0:
+        # A run that did not finish or a broken invariant (1 held, 0 not) on the
+        # candidate is a regression at once, whether or not the baseline broke it too
+        # (v1.14). A result without `broken` was written before: broken on both sides
+        # was info then, and it is judged by that rule, so a stored night stays valid.
+        if metric in PASS_FAIL_METRICS and _is_number(candidate) and candidate == 0:
+            if before_v114 and _is_number(baseline) and baseline == 0:
                 if status != "info":
                     self.add("both-broken-not-info", where, f"{metric} is 0 on both sides: info, not {status}")
             elif status != "regression":
                 self.add("correctness-not-regression", where,
-                         f"{metric} 0 on the candidate only is a regression, not {status}")
+                         f"{metric} 0 on the candidate is a regression, not {status}")
         # A row count that differs (one side null counts as different) is a regression.
         if (metric == "rows" and value.get("direction") == "mismatch" and status != "regression"
                 and all(v is None or _is_number(v) for v in (candidate, baseline)) and candidate != baseline):
             self.add("correctness-not-regression", where,
                      f"{candidate} vs {baseline} rows is a regression, not {status}")
 
-    def findings(self, value: Any, path: str) -> None:
+    def findings(self, value: Any, path: str, before_v114: bool = False) -> None:
         if not self.type_ok(value, path, "array", isinstance(value, list)):
             return
         if len(value) > MAX_FINDINGS:
             self.add("too-many-findings", path, f"{len(value)} findings; at most {MAX_FINDINGS}")
         for index, item in enumerate(value):
-            self.finding(item, _child(path, index))
+            self.finding(item, _child(path, index), before_v114)
+
+    def broken(self, value: Any, path: str, findings: list) -> None:
+        """One entry per completed/invariant regression finding, in the findings' order:
+        baseline_too says whether that finding's baseline is 0, and a break the baseline
+        shares is never introduced (the release gate's rule)."""
+        if not self.type_ok(value, path, "array", isinstance(value, list)):
+            return
+        def flag(v: Any, p: str) -> None:
+            self.type_ok(v, p, "boolean", isinstance(v, bool))
+
+        def issue(v: Any, p: str) -> None:
+            self.type_ok(v, p, "positive integer or null", v is None or (_is_int(v) and v >= 1))
+
+        entries = [e for e in value if isinstance(e, dict)]
+        for index, entry in enumerate(value):
+            self.fields(entry, _child(path, index), BROKEN_FIELDS,
+                        {"name": self.text, "baseline_too": flag, "issue": issue, "introduced": flag})
+        pass_fail = [f for f in findings if isinstance(f, dict) and f.get("status") == "regression"
+                     and f.get("metric") in PASS_FAIL_METRICS]
+        names, expected = [e.get("name") for e in entries], [f.get("name") for f in pass_fail]
+        if len(entries) != len(value) or names != expected:
+            self.add("broken-mismatch", path, f"lists {json.dumps(names)}, but the completed/invariant "
+                     f"regressions are {json.dumps(expected)}")
+            return
+        for index, (entry, finding) in enumerate(zip(entries, pass_fail, strict=True)):
+            where = _child(path, index)
+            both = _is_number(finding.get("baseline")) and finding["baseline"] == 0
+            if isinstance(entry.get("baseline_too"), bool) and entry["baseline_too"] != both:
+                self.add("broken-inconsistent", _child(where, "baseline_too"),
+                         f"baseline_too is {json.dumps(entry['baseline_too'])} but the finding's baseline "
+                         f"is {json.dumps(finding.get('baseline'))}")
+            elif entry.get("baseline_too") is True and entry.get("introduced") is True:
+                self.add("broken-inconsistent", _child(where, "introduced"),
+                         "a break the baseline shares is not introduced by the candidate")
 
     def artifacts(self, value: Any, path: str) -> None:
         if self.type_ok(value, path, "array", isinstance(value, list)):
@@ -293,7 +335,8 @@ class _Checker:
             "confirmed": lambda v, p: self.type_ok(v, p, "boolean", isinstance(v, bool)),
             "summary": self.text, "candidate": self.side, "baseline": self.side,
             "machine": self.machine, "started": timestamp, "finished": timestamp,
-            "findings": self.findings, "error": self.string_or_null, "artifacts": self.artifacts,
+            "findings": lambda v, p: self.findings(v, p, before_v114="broken" not in value),
+            "error": self.string_or_null, "artifacts": self.artifacts,
         }):
             return
         verdict = value.get("verdict")
@@ -304,6 +347,8 @@ class _Checker:
         error = value.get("error")
         if "incomplete" in value:  # optional: only its type is checked
             self.string_or_null(value["incomplete"], _child(path, "incomplete"))
+        if "broken" in value:  # optional (v1.14): absent in older results
+            self.broken(value["broken"], _child(path, "broken"), findings)
         if verdict == "regression":
             if "confirmed" in value and value["confirmed"] is not True:
                 self.add("regression-unconfirmed", _child(path, "confirmed"),

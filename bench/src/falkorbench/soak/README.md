@@ -97,13 +97,13 @@ Findings, named `sNN ...`:
 
 | finding | metric | rule |
 | --- | --- | --- |
-| `sNN completed` | completed | 0 when the scenario raised, outlived its cap or a server log shows a crash; candidate-only is a regression at once |
-| `sNN <check>` | invariant | each check the scenario records (1 held, 0 broken). A correctness check broken on the candidate only is a regression at once; broken on both sides it is info (not new). A latency or resource check (`TIMING_RE`: p99, SLO, schedule kept, RSS/used_memory plateaus, drift, replication lag...) counts as broken only when every pair of runs, first pass and re-run, has it broken on the candidate and held on the baseline. Generous hang bounds (recovery < 180 s, replica sync ≤ 900 s, an index reaching OPERATIONAL) are correctness: missing one is a run that did not finish |
+| `sNN completed` | completed | 0 when the scenario raised, outlived its cap or a server log shows a crash; 0 on the candidate is a regression at once, whether or not the baseline failed too |
+| `sNN <check>` | invariant | each check the scenario records (1 held, 0 broken). A correctness check broken on the candidate is a regression at once, whether or not the baseline broke it too and whether or not an issue tracks it (#4065). A latency or resource check (`TIMING_RE`: p99, SLO, schedule kept, RSS/used_memory plateaus, drift, CPU idle, replication lag...) broken on the candidate asks for the scenario's re-run, and counts as broken only when every pair of runs, first pass and re-run, has it broken on the candidate. Held on the candidate where the baseline broke it (a timing check: in every pair) is an improvement, "fixed". Generous hang bounds (recovery < 180 s, replica sync ≤ 900 s, an index reaching OPERATIONAL) are correctness: missing one is a run that did not finish |
 | `sNN <op>` | p50_ms, throughput | each worker op with at least 200 successful samples on the baseline (an op the candidate nearly stopped doing still compares, at its throughput); crosses at p50 > 2.0x and > 2 ms slower (worst A/A swing 1.81x), or throughput < 0.7x (worst A/A 0.82x) |
 | `sNN <op> (p99 shift, not gated)` | p99_ms | info only: a p99 shift of > 2x and > 10 ms on an op with ≥ 1,000 baseline samples is reported, never gated (worst A/A swing 56x) |
 | `sNN setup wall time` | p50_ms | the scenario's ingest phase; crosses at > 1.5x and > 5 s slower (worst A/A 1.03x) |
 
-A perf crossing (and a timing check broken on the candidate only) is a regression only
+A perf crossing (and a timing check broken on the candidate) is a regression only
 when a re-run of that scenario, both sides with the order swapped, crosses again; the
 re-runs go worst first while the mode's deadline allows. One that was not repeated is
 reported as info and named so; one left without a re-run for lack of time makes the
@@ -130,33 +130,49 @@ check's (`no_freeze`, `no_timeouts_while_waiting`) and Pokec's PING-freeze check
 The p50 gate sits only 1.1x above its worst A/A swing, so it is re-derived from each
 A/A evidence set (the PR's acceptance runs); a wider swing there moves the gate first.
 
+**Which breaks the release gate counts.** A night, a manual run and `/perf` judge every
+pass/fail check on the candidate alone (above). The release gate (the merge queue of a
+version branch) keeps the older rule and blocks only what the candidate introduced:
+`result.json`'s `broken` list (contract v1.14) says, for each pass/fail check broken on the
+candidate, whether the baseline broke it too, its issue, and `introduced`, which is false
+when the baseline broke it too (a timing check: in any pair) or when it is a known flaky
+check below.
+
 **Known flaky checks** (`KNOWN_FLAKY` in `check.py`, contract v1.9). These are
 correctness checks that an open bug breaks intermittently. An entry needs two things: an
 open issue, and same-image evidence that the break is intermittent. It is removed when the
-issue closes, and a unit test fails if an entry names no issue. A listed check is not gated
-for that break:
-
-- the summary names it, its issue and the side(s) that broke it;
-- `raw/rows.csv` keeps it with status `known`.
-
-It is still a regression when the candidate breaks it every time it is checked (the
-scenario's "k of n runs failed" with k = n ≥ 10) in every run of the pass, so a known
-flake cannot hide a total breakage.
+issue closes, and a unit test fails if an entry names no issue. A listed check broken on the
+candidate is a regression like any other; only the release gate leaves it out (`introduced`
+false), unless the candidate breaks it every time it is checked (the scenario's "k of n runs
+failed" with k = n ≥ 10) in every run of the pass, so a known flake cannot hide a total
+breakage. Broken on the baseline only, it is info (a flake, not a fix). `raw/rows.csv`
+marks it with kind `known`.
 
 | check | issue | evidence |
 | --- | --- | --- |
 | `s10 Live (under writes) index == scan during build/after` | #3095 | One index entry missing during or after a build under writes (`idx=1242 scan=1243`). main against itself: broke on both sides in a nightly run, on neither in a queue run. 6.2.0 vs 6.2.1 (run 45401220445): broke on 6.2.0 only. |
 | `s10 Live: index-path count == scan-path count (same query)` | #3095 | The same loss within one query (`idx=4056 scan=4057`). 6.2.1: broke in run 45477499408, held in run 45401220445. |
 
-**Known breaks on both sides** (reported as `info`; neither image introduced them):
+**Known breaks and their issues** (reporting only). This is not an exemption list: each
+check here is a regression whenever the candidate breaks it. The report names the issue next
+to the broken check (`ISSUES` in `check.py`; a unit test keeps that map equal to this
+table). A check not listed has no issue known.
 
-| check(s) | issue | what breaks |
+| finding | issue | what breaks |
 | --- | --- | --- |
-| s10 `after build person_age` / `person_city: indexed result == ground truth`, `during build person_age` / `person_city: result == ground truth`, `before restart: Person.age indexed results == ground truth` | #3512 (root cause) | A range-index lookup of value 0 returns no rows (`eq 0: got 0 want 1945`) once a fulltext index on the same label has been dropped (a range index existed first). The cause is RediSearch's union-aliasing skip of a numeric `+0.0`; the fix, FalkorDB/RediSearch#31, is not in the submodule yet. #3512 describes only the reload trigger. |
-| s03 `range index finds chunks by cid (0, 1, mid, last)`, `range index finds every initial chunk` | #3512 (root cause) | `cid` 0 is not found through the range index on `:Chunk`, a label that also has fulltext and vector indexes. |
-| s03 `in-load: updated_ann_miss_top10 == 0` | #3886 | A chunk updated under load is missing from its own top-10 vector neighbours (HNSW leaves nodes unreachable, Rust and C). |
-| s05 `steady state: used_memory plateau`, `used_memory returns to baseline after deleting all` | #3078 | On Rust, about 15–18 KB of `used_memory` stays behind for every GRAPH.COPY, even after the copies are deleted. s05 makes about 3,200 copies at scale 0.25, leaving +52.5 MB; C leaves none. |
-| s11 `deeply nested expressions are answered within 60 s` (C images) | #650, #2400 | C spins on a query with thousands of nested parentheses (#650, fixed in Rust only) and recurses without bound on deep expressions (#2400). The probe gives up after 60 s instead of holding the scenario. |
+| `s10 after build person_age: indexed result == ground truth` | #3512 | A range-index lookup of value 0 returns no rows (`eq 0: got 0 want 1945`) once a fulltext index on the same label has been dropped (a range index existed first). The cause is RediSearch's union-aliasing skip of a numeric `+0.0` (#3512 is the root cause; it describes only the reload trigger); the fix, FalkorDB/RediSearch#31, is not in the submodule yet. |
+| `s10 after build person_city: indexed result == ground truth` | #3512 | The same. |
+| `s10 during build person_age: result == ground truth` | #3512 | The same. |
+| `s10 during build person_city: result == ground truth` | #3512 | The same. |
+| `s10 before restart: Person.age indexed results == ground truth` | #3512 | The same. |
+| `s10 Live (under writes) index == scan during build/after` | #3095 | Known flaky, below. |
+| `s10 Live: index-path count == scan-path count (same query)` | #3095 | Known flaky, below. |
+| `s03 range index finds chunks by cid (0, 1, mid, last)` | #3512 | `cid` 0 is not found through the range index on `:Chunk`, a label that also has fulltext and vector indexes (findings.json F3). |
+| `s03 range index finds every initial chunk` | #3512 | The same. |
+| `s03 in-load: updated_ann_miss_top10 == 0` | #3886 | A chunk updated under load is missing from its own top-10 vector neighbours (HNSW leaves nodes unreachable, Rust and C; F10). |
+| `s05 used_memory returns to baseline after deleting all (residual <50MB)` | #4050 | On Rust, `used_memory` stays well above the baseline after every graph is deleted (F7); C returns to it. #3078 (about 15–18 KB left behind per GRAPH.COPY) may contribute. |
+| `s11 CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)` | #4051 | A killed client's query keeps running until its TIMEOUT, on Rust and C (M1). |
+| `s11 deeply nested expressions are answered within 60 s` | #2400 | C images: C recurses without bound on deep expressions (#2400; #650, fixed in Rust only, was the parentheses case). The probe gives up after 60 s instead of holding the scenario. |
 
 A side that runs longer than its hang cap did not finish (a `completed` regression on
 the candidate, even when the deadline then leaves no time for the baseline). The cap is

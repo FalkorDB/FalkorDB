@@ -106,7 +106,7 @@ def args(**kw):
     [
         (0, 1, "regression"),
         (0, None, "regression"),
-        (0, 0, "info"),
+        (0, 0, "regression"),  # #4065: broken on the candidate, whatever the baseline did
         (1, 0, "improvement"),
         (1, 1, "ok"),
         (1, None, "info"),
@@ -119,7 +119,7 @@ def test_zero_one_status(c, b, status):
     assert sc._zero_one("x", "invariant", c, b).status == status
 
 
-def test_known_flaky_check_is_never_gated_but_named(tmp_path):
+def test_known_flaky_check_is_a_regression_the_release_gate_leaves_out(tmp_path):
     name = "Live (under writes) index == scan during build/after"
     assert f"s10 {name}" in sc.KNOWN_FLAKY
     c = run("candidate", checks={name: False, "y": True}, scenario="s10_schema_under_load")
@@ -139,9 +139,23 @@ def test_known_flaky_check_is_never_gated_but_named(tmp_path):
     res = finish(
         args(), tmp_path, STARTED, ["s10_schema_under_load"], sched, None, [], sc.MODES["nightly"]
     )
-    assert res["verdict"] == "pass" and res["findings"] == []
-    assert f"known flaky, not gated: s10 {name} (#3095) broke on candidate" in res["summary"]
+    assert res["verdict"] == "regression"
+    assert [(f["name"], f["status"]) for f in res["findings"]] == [(f"s10 {name}", "regression")]
+    assert res["broken"] == [
+        {"name": f"s10 {name}", "baseline_too": False, "issue": 3095, "introduced": False}
+    ]
+    assert f"s10 {name} (baseline too: no, #3095, known flaky)" in res["summary"]
     assert ",known," in (tmp_path / "raw" / "rows.csv").read_text()
+
+
+def test_known_flaky_broken_on_the_baseline_only_is_not_a_fix():
+    name = "Live (under writes) index == scan during build/after"
+    b = run("baseline", checks={name: False}, scenario="s10_schema_under_load")
+    rows = sc.scenario_rows(
+        "s10_schema_under_load", [run("candidate", checks={name: True})], [b], True
+    )
+    row = by_name(rows)[f"s10 {name}"]
+    assert (row.status, row.kind, row.note) == ("info", "known", "broke on baseline")
 
 
 def test_every_known_flaky_entry_names_an_issue():
@@ -150,7 +164,21 @@ def test_every_known_flaky_entry_names_an_issue():
         assert re.fullmatch(r"s\d\d .+", name), name
 
 
-def test_known_flaky_broken_every_time_on_every_run_is_still_a_regression():
+def test_the_issue_map_is_the_readme_table():
+    """ISSUES (reporting only) and README "Known breaks and their issues" are one map."""
+    text = (Path(sc.__file__).parent / "README.md").read_text()
+    after = text.split("**Known breaks and their issues**", 1)[1].split("\n\n")
+    table = next(block for block in after if block.startswith("| finding | issue |"))
+    rows = re.findall(r"^\| `([^`]+)` \| #(\d+) \|", table, re.M)
+    assert len(rows) == len(table.splitlines()) - 2  # every row parsed
+    assert dict((name, int(issue)) for name, issue in rows) == sc.ISSUES
+    for name, issue in sc.KNOWN_FLAKY.items():
+        assert sc.ISSUES[name] == int(issue.lstrip("#"))
+
+
+def test_known_flaky_broken_every_time_on_every_run_is_introduced_for_the_gate():
+    """Every candidate break of a known flaky check is a regression (#4065); the release gate
+    counts it only when the candidate broke it every time it was checked, in every run."""
     name = "Live (under writes) index == scan during build/after"
 
     def cand(rep, k, n):
@@ -159,43 +187,25 @@ def test_known_flaky_broken_every_time_on_every_run_is_still_a_regression():
         return r
 
     base = [run("baseline", checks={name: True}), run("baseline", 2, checks={name: True})]
-    rows = {
-        r.name: r
-        for r in sc.scenario_rows(
-            "s10_schema_under_load", [cand(1, 26, 26), cand(2, 30, 30)], base, True
-        )
-    }
-    assert rows[f"s10 {name}"].status == "regression"
+    def row(cands, bases):
+        rows = sc.scenario_rows("s10_schema_under_load", cands, bases, True)
+        r = by_name(rows)[f"s10 {name}"]
+        assert (r.status, r.kind) == ("regression", "known")
+        return r
+
+    assert row([cand(1, 26, 26), cand(2, 30, 30)], base).introduced is True
     # the old failure-only recording ("3 of 3") is under the 10-check floor: the known flake
-    rows = {
-        r.name: r
-        for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 3, 3)], base[:1], True)
-    }
-    assert rows[f"s10 {name}"].status == "known"
+    assert row([cand(1, 3, 3)], base[:1]).introduced is False
     # broke every time in one run, only sometimes in the other: the known flake
-    rows = {
-        r.name: r
-        for r in sc.scenario_rows(
-            "s10_schema_under_load", [cand(1, 26, 26), cand(2, 3, 30)], base, True
-        )
-    }
-    assert rows[f"s10 {name}"].status == "known"
-    # one run, a few misses of many: the known flake; every time: a regression
-    assert {
-        r.name: r
-        for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 1, 40)], base[:1], True)
-    }[f"s10 {name}"].status == "known"
-    assert {
-        r.name: r
-        for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 40, 40)], base[:1], True)
-    }[f"s10 {name}"].status == "regression"
-    # broke on both sides: still known, and the summary says both
+    assert row([cand(1, 26, 26), cand(2, 3, 30)], base).introduced is False
+    # one run, a few misses of many: the known flake; every time: introduced
+    assert row([cand(1, 1, 40)], base[:1]).introduced is False
+    assert row([cand(1, 40, 40)], base[:1]).introduced is True
+    # broke on both sides: never introduced, and the note says both
     b = run("baseline", checks={name: False})
-    b.details = {name: "2 of 40 runs failed"}
-    row = {
-        r.name: r for r in sc.scenario_rows("s10_schema_under_load", [cand(1, 1, 40)], [b], True)
-    }[f"s10 {name}"]
-    assert row.status == "known" and row.note.endswith("broke on candidate and baseline")
+    b.details = {name: "40 of 40 runs failed"}
+    both = row([cand(1, 40, 40)], [b])
+    assert both.introduced is False and both.note.endswith("broke on candidate and baseline")
 
 
 def test_correctness_breaks_in_the_rerun_count_too():
@@ -239,8 +249,8 @@ def test_timing_check_in_queue_mode_never_fails_and_stays_valid():
 
 
 def test_timing_confirmation_pairs_the_runs():
-    """Broken on the candidate twice, but the baseline also broke in the re-run: noise that hit
-    both sides, not a confirmed regression."""
+    """Broken on the candidate twice: a regression (#4065). The baseline also broke in the
+    re-run, so the release gate does not count it: it may be noise that hit both sides."""
     name = "p99 does not drift up: ingest_batch"
     cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
     base = [run("baseline", checks={name: True}), run("baseline", 2, checks={name: False})]
@@ -249,7 +259,26 @@ def test_timing_confirmation_pairs_the_runs():
         for r in sc.scenario_rows("s12_iot_retention", cand, base, True)
         if r.metric == "invariant"
     )
-    assert row.status == "info" and row.candidate == 1
+    assert (row.status, row.candidate, row.baseline, row.introduced) == ("regression", 0, 1, False)
+
+
+def test_timing_check_broken_on_both_sides_in_one_pair_asks_for_a_rerun():
+    """Before #4065 a break on both sides was info and never re-run. Now the candidate's break
+    alone asks for the re-run that confirms it; without one it is not a regression."""
+    name = "CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)"
+    assert sc.is_timing_check(name)
+    row = next(
+        r
+        for r in sc.scenario_rows(
+            "s11_client_chaos",
+            [run("candidate", checks={name: False})],
+            [run("baseline", checks={name: False})],
+            True,
+        )
+        if r.metric == "invariant"
+    )
+    assert (row.status, row.kind, row.crossed, row.candidate) == ("info", "unconfirmed", True, 1)
+    assert row.name == f"s11 {name} (broke in 1 of 1 candidate runs)"
 
 
 def test_timing_check_broken_once_on_the_baseline_is_not_an_improvement():
@@ -267,7 +296,7 @@ def test_timing_check_broken_once_on_the_baseline_is_not_an_improvement():
     assert (row.status, row.candidate, row.baseline) == ("ok", 1, 1)
 
 
-def test_timing_check_broken_on_both_sides_every_run_is_info():
+def test_timing_check_broken_on_both_sides_every_run_is_a_regression_the_gate_leaves_out():
     name = "steady state: RSS plateau (2nd half growth <10%+50MB)"
     cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
     base = [run("baseline", checks={name: False}), run("baseline", 2, checks={name: False})]
@@ -276,7 +305,19 @@ def test_timing_check_broken_on_both_sides_every_run_is_info():
         for r in sc.scenario_rows("s05_multitenant_churn", cand, base, True)
         if r.metric == "invariant"
     )
-    assert (row.status, row.candidate, row.baseline) == ("info", 0, 0)
+    assert (row.status, row.candidate, row.baseline, row.introduced) == ("regression", 0, 0, False)
+
+
+def test_timing_check_held_on_the_candidate_and_broken_on_every_baseline_run_is_fixed():
+    name = "steady state: RSS plateau (2nd half growth <10%+50MB)"
+    cand = [run("candidate", checks={name: True}), run("candidate", 2, checks={name: True})]
+    base = [run("baseline", checks={name: False}), run("baseline", 2, checks={name: False})]
+    row = next(
+        r
+        for r in sc.scenario_rows("s05_multitenant_churn", cand, base, True)
+        if r.metric == "invariant"
+    )
+    assert (row.status, row.candidate, row.baseline) == ("improvement", 1, 0)
 
 
 @pytest.mark.parametrize(
@@ -325,7 +366,7 @@ def test_crash_on_the_candidate_is_a_completed_regression():
     assert not [r for r in rows.values() if r.metric in ("p99_ms", "throughput")]
 
 
-def test_crash_on_both_sides_is_info():
+def test_crash_on_both_sides_is_a_regression():
     rows = by_name(
         sc.scenario_rows(
             "s12_iot_retention",
@@ -334,7 +375,8 @@ def test_crash_on_both_sides_is_info():
             True,
         )
     )
-    assert rows["s12 completed"].status == "info"
+    assert rows["s12 completed"].status == "regression"
+    assert rows["s12 completed"].introduced is None  # kit.introduced(0, 0): False
 
 
 # ------------------------------------------------------------------ perf
@@ -634,6 +676,38 @@ class Clock:
 IMGS = {"candidate": "c", "baseline": "b"}
 
 
+class BothBrokenSoak(FakeSoak):
+    """Every run breaks the timing check TIMING on both sides; no perf crossing."""
+
+    def run_one(self, scn, side, image, rep, hang_cap_s, stop_at):
+        r = super().run_one(scn, side, image, rep, hang_cap_s, stop_at)
+        r.checks, r.ops = {TIMING: False, "x": True}, {"w": op(9.0)}
+        return r
+
+
+TIMING = "used_memory returns to baseline after deleting all (residual <50MB)"
+
+
+def test_a_timing_break_on_both_sides_is_re_run_and_then_counts(tmp_path):
+    """#4065: the candidate's break alone asks for the confirming re-run (order swapped)."""
+    assert sc.is_timing_check(TIMING)
+    clock = Clock()
+    p = dict(sc.MODES["nightly"])
+    soak = BothBrokenSoak(clock, {"s05_multitenant_churn": 400.0})
+    sched = sc.run_all(soak, ["s05_multitenant_churn"], IMGS, p, deadline=1e6, clock=clock)
+    assert [(c[1], c[2]) for c in soak.calls] == [
+        ("candidate", 1),
+        ("baseline", 1),
+        ("baseline", 2),
+        ("candidate", 2),
+    ]
+    res = finish(args(), tmp_path, STARTED, ["s05_multitenant_churn"], sched, None, [], p)
+    assert res["verdict"] == "regression"
+    assert res["broken"] == [
+        {"name": f"s05 {TIMING}", "baseline_too": True, "issue": 4050, "introduced": False}
+    ]
+
+
 def test_a_side_the_deadline_would_cut_is_not_started():
     clock = Clock()
     p = dict(sc.MODES["nightly"])
@@ -771,14 +845,14 @@ def test_a_rerun_whose_baseline_crashed_is_unconfirmed(tmp_path):
     assert any(f["name"] == "s12 w (re-run incomplete)" for f in res["findings"])
 
 
-def test_timing_pair_with_a_missing_baseline_value_is_not_confirmed():
+def test_timing_pair_with_a_missing_baseline_value_is_a_regression_the_gate_leaves_out():
     name = "victim open-loop schedule kept (few late/missed sends)"
     cand = [run("candidate", checks={name: False}), run("candidate", 2, checks={name: False})]
     base = [run("baseline", checks={name: True}), run("baseline", 2, checks={})]
     row = next(
         r for r in sc.scenario_rows("s11_client_chaos", cand, base, True) if r.metric == "invariant"
     )
-    assert row.status == "info" and row.candidate == 1
+    assert (row.status, row.candidate, row.baseline, row.introduced) == ("regression", 0, 1, False)
 
 
 def test_both_sides_killed_outside_the_engine_is_not_measured(tmp_path):
@@ -994,7 +1068,7 @@ def test_finish_writes_a_valid_regression(tmp_path):
     assert (tmp_path / "raw" / "rows.csv").exists()
 
 
-def test_finish_pass_and_both_broken(tmp_path):
+def test_finish_both_broken_is_a_regression_named_with_baseline_too(tmp_path):
     cand = [run("candidate", checks={"x": False, "y": True}, ops={"w": op(3.0)})]
     base = [run("baseline", checks={"x": False, "y": True}, ops={"w": op(3.1)})]
     res = finish(
@@ -1007,9 +1081,30 @@ def test_finish_pass_and_both_broken(tmp_path):
         [],
         sc.MODES["nightly"],
     )
-    assert res["verdict"] == "pass" and not res["confirmed"]
-    assert [f["name"] for f in res["findings"]] == ["s12 x"]
-    assert "1 broken on both sides" in res["summary"]
+    assert res["verdict"] == "regression" and res["confirmed"]
+    assert [(f["name"], f["status"]) for f in res["findings"]] == [("s12 x", "regression")]
+    assert res["broken"] == [
+        {"name": "s12 x", "baseline_too": True, "issue": None, "introduced": False}
+    ]
+    assert "1 pass/fail check(s) broken on the candidate: s12 x (baseline too: yes)" in res["summary"]
+
+
+def test_finish_baseline_only_break_is_a_pass_reported_as_fixed(tmp_path):
+    cand = [run("candidate", checks={"x": True, "y": True}, ops={"w": op(3.0)})]
+    base = [run("baseline", checks={"x": False, "y": True}, ops={"w": op(3.1)})]
+    res = finish(
+        args(),
+        tmp_path,
+        STARTED,
+        ["s12_iot_retention"],
+        sc.Schedule(runs={"s12_iot_retention": {"candidate": cand, "baseline": base}}),
+        None,
+        [],
+        sc.MODES["nightly"],
+    )
+    assert res["verdict"] == "pass" and res["broken"] == []
+    assert [(f["name"], f["status"]) for f in res["findings"]] == [("s12 x", "improvement")]
+    assert "fixed on the candidate (the baseline breaks it): s12 x" in res["summary"]
 
 
 def test_finish_scenarios_not_run_is_an_error(tmp_path):

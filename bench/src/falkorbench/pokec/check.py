@@ -1115,12 +1115,14 @@ def analyse(
                 for side, (f, t, tr, n) in counts.items()
             )
             sort = 9.0
-            # Timeouts in one candidate run: re-run to see whether they repeat. Also when the
-            # baseline timed out once too: only a repeat decides which side is broken.
+            # Timeouts in one candidate run: re-run to see whether they repeat, whatever the
+            # baseline did (#4065). Until a repeat decides, the row is not a fix either.
             _, t, tr, n = counts["candidate"]
-            if status == "ok" and tr == 1:
+            if cand_ok == 1 and tr == 1:
                 if (dataset, wl_key) not in rerun_done:
                     want_rerun((dataset, wl_key), f"{label}: timeouts in 1 candidate run")
+                    if status == "improvement":
+                        status = "info"
                 else:
                     status, sort = "info", 1.0
                     notes.append(f"{label}: {t} timeouts in 1 of {n} candidate runs, not repeated")
@@ -1355,9 +1357,10 @@ def rank(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def describe(finding: dict[str, Any]) -> str:
     metric, cand, base = finding["metric"], finding["candidate"], finding["baseline"]
     if metric == "completed":
-        return (
-            f"{finding['name']} did not complete on the {'candidate' if cand == 0 else 'baseline'}"
-        )
+        if cand == 0:
+            both = " (baseline too)" if base == 0 else ""
+            return f"{finding['name']} did not complete on the candidate{both}"
+        return f"{finding['name']} did not complete on the baseline"
     unit = " ms" if metric.endswith("_ms") else " q/s" if metric == "throughput" else ""
     r = finding.get("ratio")
     return f"{finding['name']} {metric} {cand}{unit} vs {base}{unit}" + (f" ({r}x)" if r else "")
@@ -1380,20 +1383,10 @@ def summary_of(
     if verdict == "error":
         return " ".join(f"Could not measure: {error}".split())[:500]
     improvements = sum(1 for f in selected if f["status"] == "improvement")
-    both = [
-        f["name"]
-        for f in findings
-        if f["metric"] == "completed" and f["candidate"] == 0 and f["baseline"] == 0
-    ]
     text = (
         f"Pass ({mode_name}): {counts['runs']} runs, {counts['rows']} rows compared; no row regressed past "
         f"{RATIO_THRESHOLD}x after a re-run, every run finished, no new PING freeze"
         + (f"; {improvements} improvements" if improvements else "")
-        + (
-            f"; {len(both)} queries failed on both sides (not new): {', '.join(both[:3])}"
-            if both
-            else ""
-        )
         + "."
     )
     return " ".join(text.split())

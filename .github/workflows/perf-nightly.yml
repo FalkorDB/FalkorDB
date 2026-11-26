@@ -42,10 +42,14 @@
 #
 # The release gate (#4004) is this workflow, called. The merge queue of a
 # version branch (rust-pr.yml) calls it at @main with the queue's image, a
-# version the baseline release must be below, and `nightly` as the mode. A call
-# runs every registered check as a night does, never skips, posts nothing to
-# Chat, and fails unless every regression is waived in bench/waivers.yaml and no
-# check said error. Every job runs this workflow's own commit (main's), not
+# version the baseline release must be below, `nightly` as the mode and
+# `gate: true`. A call runs every registered check as a night does, never
+# skips, and posts nothing to Chat. Every run judges a pass/fail check on the
+# candidate alone (#4065: broken there is red, whatever the baseline did); only
+# a call with `gate: true` keeps the older rule when it decides, and fails
+# unless every regression the candidate introduced is waived in
+# bench/waivers.yaml and no check said error. A break the baseline shares, or a
+# known flaky one, is reported and does not fail it (result.json's `broken`). Every job runs this workflow's own commit (main's), not
 # the caller's, which has no perf code: the checkouts below name
 # job.workflow_sha, and _perf-micro.yml / _perf-vm.yml get it as code_ref.
 
@@ -69,7 +73,8 @@ on:
         type: string
         default: ""
   # The release gate (header). `mode` is a call's alone: it is how every job
-  # tells a call from a night.
+  # tells a call from a night. `gate` is the release gate's alone: another
+  # caller (/perf) leaves it false and is judged as a night is.
   workflow_call:
     inputs:
       candidate_image:
@@ -88,6 +93,10 @@ on:
         description: "nightly (the gate runs the nightly flow); queue and long are the checks' other modes"
         type: string
         required: true
+      gate:
+        description: "true only for the release gate: it blocks only what the candidate introduced"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -640,17 +649,18 @@ jobs:
       # The list of runs then reads as a timeline, and a failed scheduled run
       # sends GitHub's email. Green and skipped nights succeed, and so does a red
       # one whose every regression bench/waivers.yaml waives (each still shown
-      # as a warning). A call (the gate) also fails a skipped night. It runs even
-      # when the report step failed, so a red or error night fails the run
-      # whatever the reporter did.
+      # as a warning). The release gate (`gate: true`) also fails a skipped
+      # night, and does not fail on a break the candidate did not introduce
+      # (#4065). It runs even when the report step failed, so a red or error
+      # night fails the run whatever the reporter did.
       - name: Fail the run unless the night passes
         if: ${{ !cancelled() }}
         env:
-          GATE_MODE: ${{ inputs.mode }}
+          GATE: ${{ inputs.gate }}
         run: |
           set -euo pipefail
           yq -o=json '.' bench/waivers.yaml > "$RUNNER_TEMP/waivers.json"
-          gate=()
-          if [[ -n $GATE_MODE ]]; then gate=(--gate); fi
+          gate=""
+          if [[ $GATE == true ]]; then gate=--gate; fi
           uv run --project bench --frozen bench nightly merge conclude --nightly "$RUNNER_TEMP/nightly/nightly.json" \
-            --waivers "$RUNNER_TEMP/waivers.json" --unfinished "$RUNNER_TEMP/nightly/unfinished.json" "${gate[@]}"
+            --waivers "$RUNNER_TEMP/waivers.json" --unfinished "$RUNNER_TEMP/nightly/unfinished.json" ${gate:+"$gate"}

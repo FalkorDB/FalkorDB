@@ -180,8 +180,19 @@ The rules the contract adds to "every field present and well formed"
   `error` carry none (a regression outranks an error); `error` has a reason and
   any other verdict has `error: null`;
 * a run that did not finish (`completed` 0) or a broken invariant (`invariant`
-  0) is a regression, unless the baseline broke too (then `info`); a `rows`
-  finding with direction `mismatch` whose sides differ is a regression;
+  0) on the candidate is a regression, whether or not the baseline broke it too
+  (v1.14, #4065: a night is green only when every pass/fail check holds on the
+  candidate); a `rows` finding with direction `mismatch` whose sides differ is a
+  regression;
+* a result without `broken` was written before v1.14 and is checked by the rule
+  then (0 on both sides is `info`), so a stored night stays valid;
+* `broken` is optional (v1.14; older results lack it): one entry per `completed`
+  or `invariant` regression finding, in the findings' order, with exactly `name`,
+  `baseline_too` (the finding's baseline is 0), `issue` (the open issue that tracks
+  it, a positive integer or null; reporting only, it never changes a verdict) and
+  `introduced` (the release gate's rule: false when the baseline broke it too, or
+  when the check's own rule says the candidate did not introduce it, such as a
+  known flaky check). A break the baseline shares is never `introduced`;
 * `incomplete` is optional: null, or a non-empty one-line string saying what was not
   measured or was cut (a regression outranks an error, so this is where a regressed
   result says its run was partial); validate checks only that it is a string or null;
@@ -237,7 +248,10 @@ namespace from `add_args`, or `types.SimpleNamespace(**kwargs)` in a click comma
   `$PERF_MACHINE_JSON`, else this host as `local`); `utc_now()`.
 * Findings: `finding(name, metric, candidate, baseline, status, *, direction,
   threshold, ratio)` (it computes the ratio and turns NaN into null);
-  `correctness_status(candidate, baseline)` (the 0/1 rule);
+  `correctness_status(candidate, baseline)` (the 0/1 rule: 0 on the candidate is a
+  regression, whatever the baseline did); `introduced(candidate, baseline)` (the
+  release gate's default: the candidate broke what the baseline did not), which a
+  check overrides per finding with the key `kit.INTRODUCED` (never written out);
   `crossed(candidate, baseline, threshold, floor, direction) -> +1 | -1 | 0`.
   A row crosses when worse/better > threshold *and* the difference > floor, both
   strict. `floor` is required: with a zero baseline the ratio is infinite, so the
@@ -246,7 +260,8 @@ namespace from `add_args`, or `types.SimpleNamespace(**kwargs)` in a click comma
   info rows, 50 in all, in the order given. `ok` rows stay in `raw/rows.csv`; a
   status the contract does not know raises. `verdict(findings, errors)` is
   regression > error > pass. `result(check, args, *, started, findings, summary,
-  errors, artifacts, machine_info)` also reports `input_errors`. Then
+  errors, artifacts, machine_info, issues)` also reports `input_errors`, and writes
+  `broken` from the kept findings (`issues`: finding name to issue number). Then
   `error_result(check, args, started, error)` and `write_result(out, result)`
   (temp file + rename).
 * Always a result: `run_check(check, args, work, build, cleanup=None)`.
@@ -433,10 +448,12 @@ that start after its CI suites pass:
 
 | job | runs | judges |
 | --- | --- | --- |
-| `perf` -> `perf-nightly.yml`, `nightly` mode | the nightly flow: every registered check, gated, with the re-runs a night has | the image against the newest stable release below X.Y+1.0 |
+| `perf` -> `perf-nightly.yml`, `nightly` mode, `gate: true` | the nightly flow: every registered check, gated, with the re-runs a night has | the image against the newest stable release below X.Y+1.0 |
 | `perf-cov` -> `benchmark-cov.yml` | callgrind instructions and allocated bytes (`bench cov-gate`) | the same two images |
 
-`ci-gate` requires both in the queue of a version branch and accepts `skipped`
+`gate: true` is what makes a call the release gate: another caller of
+`perf-nightly.yml` (`/perf`) passes a `mode` too, but no `gate`, and is judged as a
+night is. `ci-gate` requires both in the queue of a version branch and accepts `skipped`
 everywhere else. The queue's required-check timeout must cover the CI and the
 nightly together, about 180 minutes; an admin sets it in the branch's ruleset.
 
@@ -454,8 +471,10 @@ measures no C side and runs no coverage; the label's run on main is unchanged.
 
 **The decision** is `bench nightly merge conclude --gate --waivers <bench/waivers.yaml
 as JSON>` (on `nightly.json`, or `--result` on benchmark-cov's single result). It
-passes a green night and a red night whose every regression finding is waived,
-and fails everything else: an unwaived regression, any check that said `error`,
+passes a green night and a red night whose every regression finding is waived or,
+for a pass/fail check, was not introduced by the candidate (result.json's `broken`
+says `introduced: false`: the baseline breaks it too, or the check's own rule, such
+as a known flaky check; #4065), and fails everything else: an unwaived regression, any check that said `error`,
 a regression verdict with no finding to name, a regression from a check that did
 not finish cleanly (merge's `unfinished.json`: it may have measured nothing after
 the row it flagged), and a skipped night. A waiver names a check, a regex that
@@ -526,10 +545,12 @@ needs every counter to read above 0; a host that cannot count one gives
   too; one that crossed once is `info`. A single query run alone would not
   rebuild the graph state the full set measured against. Improvements are
   reported as measured, not re-run, and never fail the run.
-- **A query that errors on the candidate in every pass and answers on the
-  baseline in every pass** is a regression at once (metric `completed`). One
-  that errors in some passes only, in either run, is `info`, and so is one the
-  baseline also fails sometimes. A pass in which every query errored still
+- **A query that errors on the candidate in every pass** is a regression at
+  once (metric `completed`), named `<query> [errors on candidate only]`, or
+  `<query> [errors on both sides]` when the baseline errs too, always or in some
+  passes (#4065: the release gate does not block on that one). One that errors
+  on the candidate in some passes only, in either run, is `info`, and so is one
+  only the baseline fails sometimes. A pass in which every query errored still
   counts as a pass. A row whose prerequisite (`needs`) errored on one side only,
   or in some passes, is not compared: the two sides measured different graphs.
 - **A gap is never a pass.** A missing pass, a row missing a reading in a pass
@@ -825,9 +846,9 @@ re-sends (redis-py's retries are off), with the query's server-side `TIMEOUT`.
 |---|---|---|
 | `IC3 p50`, `IC3 p95` | `p50_ms`, `p95_ms` | the ratio candidate/baseline over the requests both sides finished (the same parameter row in the same round) is more than 2x **and** the difference is more than 0.5 ms (p50) / 2 ms (p95). A crossing is measured again (two more swapped rounds); it is a `regression` only when the re-run crosses too; otherwise it is no finding, and `raw/rows.csv` keeps the re-run as "not repeated". A re-run that returns no rows, or does not time every row the main rounds timed, settles nothing and makes the result an `error`. Wall clock, hence the wide band. |
 | `IC9 rows` | `rows` (`mismatch`) | the two sides return a different number of rows for the same request (parameter row and round, re-runs included). A regression at once, and the query gets no latency finding: the two sides did different work (6.0.4's IC9 "ran" 93x faster by returning nothing, #2557). |
-| `IC3 completed` | `completed` | judged per request (parameter row and round): the candidate timing out, erroring or losing its server on a request the baseline finished is a regression at once; failures on both sides with no such request are `info`. A parameter row that timed out is skipped on both sides from then on, and a side stops a query after two timeouts. |
+| `IC3 completed` | `completed` | judged per request (parameter row and round): the candidate timing out, erroring or losing its server on a request is a regression at once, whether or not the baseline failed it too (#4065; baseline 0 then). The release gate counts it only on a request the baseline finished. A parameter row that timed out is skipped on both sides from then on, and a side stops a query after two timeouts. A query the baseline cannot run at all (a dialect gap) is left out: `info`, the candidate not judged (null). |
 | `server up` | `completed` | a server that went down at any point, also after its last reply (its container exited): the candidate's is a regression, the baseline's makes the result an `error`. |
-| `IC6 returns rows` | `invariant` | zero rows on every parameter row, on both sides: it measured nothing (`info`), and its latency is not compared. |
+| `IC6 returns rows` | `rows` (0 vs 0, `mismatch`) | zero rows on every parameter row, on both sides: it measured nothing (`info`), and its latency is not compared. |
 | `load` | `throughput` | entities loaded per second, per side: one sample each, so `info` only. |
 
 Row contents are not compared, only row counts. A digest of each request's

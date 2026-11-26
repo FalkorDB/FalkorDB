@@ -494,9 +494,9 @@ def correctness_findings(
     baseline_sometimes: set[str] = frozenset(),
 ) -> list[dict]:
     """Queries that errored, as `completed` findings with kit.correctness_status:
-    each candidate-only error is a regression at once; errors on the baseline
-    only, on both sides, or on the candidate in some passes only are one
-    finding each.
+    each query that errors on the candidate in every pass is a regression at
+    once, named, whether or not the baseline errs too (#4065); errors on the
+    baseline only, or on the candidate in some passes only, are one finding each.
 
     `flaky` are queries that errored on the candidate in some passes only, while
     the baseline answered in every pass. Reported, not failed on: an error that
@@ -529,10 +529,7 @@ def correctness_findings(
     if base_only:
         name = f"{len(base_only)} queries error on the baseline only (e.g. {sorted(base_only)[0]})"
         out.append(completed(name, 1, 0))
-    if both:
-        out.append(
-            completed(f"{len(both)} queries error on both sides (e.g. {sorted(both)[0]})", 0, 0)
-        )
+    out += [completed(f"{name} [errors on both sides]", 0, 0) for name in sorted(both)]
     if baseline_sometimes:
         name = (
             f"{len(baseline_sometimes)} queries error on the baseline in some passes "
