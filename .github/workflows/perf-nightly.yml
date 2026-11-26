@@ -58,11 +58,6 @@ name: Perf nightly
 on:
   schedule:
     - cron: '0 0 * * *'
-  # TEMPORARY (#4076 acceptance run; removed before merge): the 12 soak checks in nightly mode,
-  # main's newest image vs the latest release, when the request file below changes on this branch.
-  push:
-    branches: [ci/perf-soak-per-scenario]
-    paths: [.github/perf-soak-shards-acceptance.txt]
   workflow_dispatch:
     inputs:
       candidate_image:
@@ -153,32 +148,6 @@ jobs:
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.9.29"
-
-      # TEMPORARY (#4076 acceptance run; removed before merge): print the GCE quotas the VM
-      # legs draw on, read with the service account that creates them. Read only.
-      - name: TEMPORARY read the GCE quotas (read only)
-        if: github.event_name == 'push'
-        continue-on-error: true
-        env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          REGION: us-central1
-        run: |
-          set -uo pipefail
-          set +e  # one failed read must not hide the others
-          export CLOUDSDK_CORE_DISABLE_PROMPTS=1
-          # Quiet: gcloud names the account on stderr, and an error can name the project number.
-          printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null 2>&1 \
-            || echo "could not activate the service account"
-          gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null 2>&1
-          echo "== compute quotas, region $REGION (metric, limit, usage)"
-          gcloud compute regions describe "$REGION" --flatten=quotas \
-            --format='csv[no-heading](quotas.metric,quotas.limit,quotas.usage)' 2>/dev/null \
-            | grep -E 'CPUS|ADDRESSES|DISK|SSD|INSTANCES' || echo "(read failed or nothing matched)"
-          echo "== compute quotas, project-wide"
-          gcloud compute project-info describe --flatten=quotas \
-            --format='csv[no-heading](quotas.metric,quotas.limit,quotas.usage)' 2>/dev/null \
-            | grep -E 'CPUS' || echo "(read failed or nothing matched)"
 
       - name: Pin the candidate and baseline images
         id: images
@@ -364,8 +333,7 @@ jobs:
       - name: Plan the checks
         id: plan
         env:
-          # TEMPORARY (#4076 acceptance run): a push runs the 12 soak checks only.
-          CHECKS: ${{ inputs.checks || (github.event_name == 'push' && 'soak-s01,soak-s02,soak-s03,soak-s04,soak-s05,soak-s06,soak-s07,soak-s08,soak-s09,soak-s10,soak-s11,soak-s12' || '') }}
+          CHECKS: ${{ inputs.checks }}
           CODE_SHA: ${{ job.workflow_sha }}
         run: |
           set -euo pipefail

@@ -1,4 +1,0 @@
-TEMPORARY (#4076): pushing a change to this file runs perf-nightly.yml's 12 soak checks
-(soak-s01 ... soak-s12) in nightly mode, main's newest image vs the latest release, and
-prints the GCE quotas the VM legs draw on. Removed with the trigger before merge.
-request 1
