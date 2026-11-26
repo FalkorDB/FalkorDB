@@ -5,7 +5,11 @@ uv run --project bench --group dev --group soak python -I -B -m pytest bench/tes
 
 import argparse
 import json
+import os
 import re
+import signal
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -1367,3 +1371,85 @@ def test_run_load_fails_when_a_grouped_worker_dies(tmp_path, fake_connect, monke
     specs = [soakkit.WorkerSpec(_ok_op, rate=50), soakkit.WorkerSpec(_ok_op, init=_boom_init, name="bad")]
     with pytest.raises(RuntimeError, match="worker failure"):
         soakkit.run_load(_FakeServer(), tmp_path, specs, 0.3)
+
+
+# ---------------------------------------------------------------- release-soak run scripts
+
+SOAK_DIR = Path(soakkit.__file__).parent
+# A stand-in for a scenario: it starts a "server" titled like a soak redis-server, the way
+# soakkit.Server starts one (a child process), writes its pid to $1, runs for $2 seconds,
+# and exits 3 leaving the server behind.
+FAKE_SCENARIO = """
+bash -c 'exec -a "redis-server *:19000" sleep 300' &
+echo $! > "$1"
+sleep "${2:-0}"
+exit 3
+"""
+
+
+def _gone(pid, timeout=10.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _in_bash(tmp_path, body):
+    """argv of a bash that sources process_group.sh, as the run scripts do, then runs body;
+    the fake scenario is at tmp_path/scenario.sh."""
+    (tmp_path / "scenario.sh").write_text(FAKE_SCENARIO)
+    return ["bash", "-c", f'source "{SOAK_DIR / "process_group.sh"}"\n{body}']
+
+
+@pytest.fixture
+def unrelated_soak_server():
+    """A server this run did not start, titled the way a soak server on 19xxx is."""
+    proc = subprocess.Popen(["bash", "-c", 'exec -a "redis-server *:19001" sleep 300'])
+    yield proc
+    proc.kill()
+    proc.wait()
+
+
+def test_a_release_soak_run_kills_the_servers_its_scenario_left_and_no_other(
+    tmp_path, unrelated_soak_server
+):
+    pidfile = tmp_path / "server.pid"
+    argv = _in_bash(
+        tmp_path, f'run_in_group bash "{tmp_path / "scenario.sh"}" "{pidfile}"; echo "rc=$?"'
+    )
+    out = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    assert "rc=3" in out.stdout, out
+    assert _gone(int(pidfile.read_text()))
+    assert unrelated_soak_server.poll() is None
+
+
+def test_a_release_soak_script_stopped_midway_kills_its_running_scenario(
+    tmp_path, unrelated_soak_server
+):
+    pidfile = tmp_path / "server.pid"
+    argv = _in_bash(tmp_path, f'run_in_group bash "{tmp_path / "scenario.sh"}" "{pidfile}" 300')
+    script = subprocess.Popen(argv)
+    try:
+        deadline = time.time() + 30
+        while not (pidfile.exists() and pidfile.read_text().strip()) and time.time() < deadline:
+            time.sleep(0.05)
+        server = int(pidfile.read_text())
+        script.send_signal(signal.SIGTERM)
+        assert script.wait(30) == 143
+        assert _gone(server)
+        assert unrelated_soak_server.poll() is None
+    finally:
+        script.kill()
+        script.wait()
+
+
+@pytest.mark.parametrize("name", ["run_rust_main.sh", "run_c_rerun.sh"])
+def test_a_release_soak_script_runs_each_scenario_in_a_group_of_its_own(name):
+    text = (SOAK_DIR / name).read_text()
+    assert "pkill" not in text
+    assert 'source "$S/process_group.sh"' in text
+    assert re.search(r'run_in_group timeout .+ "\$\{PY\[@\]\}" -I "\$f"', text)

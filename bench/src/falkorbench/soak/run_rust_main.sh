@@ -7,6 +7,9 @@
 # moved to full/<scn>-rust-<label>-contended-<n> and repeated (up to 3 attempts).
 S=$(cd "$(dirname "$0")" && pwd); mkdir -p "$S/full"
 MOD=$1; LABEL=$2
+# each scenario runs in a process group of its own, which is killed after it (servers it
+# left behind included) and nothing else
+source "$S/process_group.sh"
 # the scenarios run in bench's environment, with its soak dependency group
 PY=(uv run --project "$S/../../.." --frozen --group soak python)
 log() { echo "$(date +%T) $*" >> "$S/full/progress.log"; }
@@ -33,15 +36,13 @@ for f in "$S"/scenarios/s[0-9][0-9]_*.py; do [ "$(basename "$f")" = s00_pilot.py
     free_kb=$(df -k / | tail -1 | awk '{print $4}')
     if [ "$free_kb" -lt 3000000 ]; then log "RUST RERUN PAUSED: only $((free_kb/1024)) MB free disk before $n"; exit 1; fi
     mkdir -p "$o"; echo "$LABEL" > "$o/.commit"
-    pkill -9 -f 'redis-server \*:19' 2>/dev/null; sleep 1
     log "START $n rust dur=1200 ($LABEL)"
     start=$(date +%s)
     ( while true; do echo "$(date +%s) $(load1)" >> "$o/load.log"; sleep 30; done ) &
     sampler=$!
-    timeout 6000 "${PY[@]}" -I "$f" --module "$MOD" --port 19000 --out "$o" --duration 1200 --scale 1.0 > "$o/stdout.log" 2>&1
+    run_in_group timeout 6000 "${PY[@]}" -I "$f" --module "$MOD" --port 19000 --out "$o" --duration 1200 --scale 1.0 > "$o/stdout.log" 2>&1
     rc=$?
     kill $sampler 2>/dev/null
-    pkill -9 -f 'redis-server \*:19' 2>/dev/null
     find "$o" -type f \( -name '*.rdb' -o -name '*.aof' -o -path '*/aof/*' -o -name 'appendonly*' \) -delete 2>/dev/null
     maxl=$(awk 'BEGIN{m=0} {if ($2>m) m=$2} END{print int(m)}' "$o/load.log")
     if [ "$maxl" -gt 20 ]; then
