@@ -585,8 +585,7 @@ def answer(
         lines += report.regression_lines(check)
     if status == "red" and measured == "success":
         lines += [
-            "The run passed: bench/waivers.yaml waives every regression above (the run page "
-            "names the waivers).",
+            "The run passed: bench/waivers.yaml waives every regression above (the run page names the waivers).",
             "",
         ]
     if status == "green" and measured not in ("", "success"):

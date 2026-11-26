@@ -576,9 +576,8 @@ def test_an_unreadable_nightly_is_an_error(tmp_path):
     assert "### Perf: ERROR" in pc.answer(path, "/perf pokec baseline main", run=RUN)
     night = examples.example("nightly-green.json")
     night["status"] = "purple"
-    assert "### Perf: ERROR" in pc.answer(
-        write(tmp_path, night), "/perf pokec baseline main", run=RUN
-    )
+    path = write(tmp_path, night)
+    assert "### Perf: ERROR" in pc.answer(path, "/perf pokec baseline main", run=RUN)
 
 
 def test_a_green_night_from_a_job_that_failed_says_so(tmp_path):
@@ -595,11 +594,14 @@ def test_text_from_the_night_cannot_inject_markdown(tmp_path):
     night = examples.example("nightly-green.json")
     night["checks"][0]["summary"] = "<img src=x> | [click](https://evil) `code`"
     night["candidate"]["label"] = "<b>pr</b>"
-    text = pc.answer(write(tmp_path, night), "/perf all baseline main", run=RUN)
+    path = write(tmp_path, night)
+    text = pc.answer(path, "/perf all baseline main", run=RUN)
     assert "<img" not in text and "<b>" not in text
     # Escaped, so it reads as the text it is, not a link.
     assert "\\[click\\](https://evil)" in text and "\\`code\\`" in text
-    assert pc.answer(write(tmp_path, night), "`/perf` <x>", run=RUN).count("<x>") == 0
+    # A request that is not the normalised form is not quoted back.
+    hostile = pc.answer(path, "`/perf` <x>", run=RUN)
+    assert "<x>" not in hostile
 
 
 def test_answer_dry_run_writes_the_summary(tmp_path):
