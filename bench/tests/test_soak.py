@@ -1967,6 +1967,16 @@ def test_soak_scoring_blocks_on_an_unreadable_summary_and_waits_for_c(tmp_path, 
     assert list(scores["scenarios"]) == ["s03_bad_c"]
 
 
+def test_soak_scoring_waits_for_a_c_run_in_progress_rather_than_score_without_c(
+    tmp_path, monkeypatch
+):
+    _soak_run(tmp_path, "s05_churn-rust", {})
+    _soak_run(tmp_path, "s05_churn-c", {}, rc=None)  # the C rerun is still going
+    _soak_run(tmp_path, "s05_churn-c@jul-master", {}, rc=124)  # the old one failed
+    scores = _score(tmp_path, monkeypatch)
+    assert scores["pending"] == ["s05_churn"] and scores["scenarios"] == {}
+
+
 def test_soak_scoring_takes_a_same_window_baseline_while_the_short_one_reruns(
     tmp_path, monkeypatch
 ):

@@ -219,20 +219,20 @@ def main():
             continue
         base = [root / f"{name}-c", root / f"{name}-c@jul-master"]  # C re-run in progress: the old one meanwhile
         same = [root / f"{name}-c-samewindow", root / f"{name}-c-samewindow@jul-master"]
-        if not any(finished(d) for d in base + same):
-            pending.append(name)  # score only once a C baseline has finished
-            continue
         # a C run that timed out or crashed is no baseline: the first that exited 0, the
         # same-size C rerun before the short baseline
-        cdir = next((d for d in same if succeeded(d)), None)
+        cdir = next((d for d in same + base if succeeded(d)), None)
+        if cdir is None and any(d.exists() and not finished(d) for d in base + same) \
+                or not any(finished(d) for d in base + same):
+            pending.append(name)  # no C baseline yet, and one may still come: wait for it
+            continue
         notes = []
-        if cdir is None:
-            cdir = next((d for d in base if succeeded(d)), None)
-            if cdir is None:
-                notes.append("no C baseline exited 0: scored without C ratios")
-            elif any(o.get("no_c_compare") and o["scenario"] == name
-                     and (o.get("build") != "jul-master" or not (cdir / ".commit").exists()) for o in OVERRIDES):
-                cdir = None  # C baseline not comparable: score without C ratios
+        if cdir is None:  # every C run finished, and none exited 0
+            notes.append("no C baseline exited 0: scored without C ratios")
+        elif cdir in base and any(o.get("no_c_compare") and o["scenario"] == name
+                                  and (o.get("build") != "jul-master" or not (cdir / ".commit").exists())
+                                  for o in OVERRIDES):
+            cdir = None  # C baseline not comparable: score without C ratios
         c = read_summary(cdir / "summary.json") if cdir else None
         if cdir and c is None:  # no C ratios at all: not even RSS from its monitor.csv
             notes.append(f"{cdir.name} left no readable summary.json: scored without C ratios")
