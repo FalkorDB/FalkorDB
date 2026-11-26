@@ -53,13 +53,15 @@ structure Ops (V : Type) where
 /-- `GraphFn` (functions/mod.rs) as a `FuncInvocation(Arc<GraphFn>)` node holds it, with
 the fields `eval_node` and `VectorEval::eval` read: `call` is `func.func.call(rt, args)` with
 the runtime fixed, `validate` is `validate_args_type` (mod.rs), `structFn`/`structSlots`
-the positional struct-constructor form. Aggregations are not `func` nodes (see `E`). -/
+the positional struct-constructor form, `structMasked` (#3607) whether the rewrite appends
+a presence-mask child. Aggregations are not `func` nodes (see `E`). -/
 structure Fn (V : Type) where
   name : String
   write : Bool
   nonDeterministic : Bool
   structFn : Option (List V → Except String V)
   structSlots : Nat
+  structMasked : Bool := false
   validate : List V → Except String Unit
   call : List V → Except String V
 

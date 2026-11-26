@@ -95,7 +95,7 @@ The header also records conversion divergences found live: `toString(1.0)` is `"
 
 Constructor validation, Rust stricter or looser than C: `duration('P5')` and `duration('P-')` give `PT0S` (C null); `duration('PT1.5S')` gives `PT1S` (C null); `duration({years:200000000})` errors (C `P200000000Y`); `date('2020-01-01') + duration({years:178956970, months:7})` prints "8990-08-01" (year mod 10000; C "178958988-08-01"). C also accepts 2021-02-29 (normalises to 03-01; Rust errors, as the spec says), and C's `date('2021-01-03').dayOfQuarter` is 4 (Rust 3, correct).
 
-Suspected, not confirmed: `ya + yb` in `Duration + Duration` and `shift_months` (`y + years` in i32, `-years` at `i32::MIN`, `days * 86400` in i64) are unchecked and overflow in debug only for year-wrapping durations; `hour: 4294967297` is truncated by `as u32` in `time_from_components` (C does the same).
+Suspected, not confirmed: `ya + yb` in `Duration + Duration` and `shift_months` (`y + years` in i32, `-years` at `i32::MIN`, `days * 86400` in i64) are unchecked and overflow in debug only for year-wrapping durations.
 
 This project has no CONDITIONAL rows.
 
