@@ -10,11 +10,10 @@ Everything else is an atom (`atom`, a parameter). A row passes a `Filter` iff
 the value is `true` (filter.rs). `tv [] e` is the meaning of the user's WHERE.
 
 Results: `collect_value` / `collect_passes` (the rebuild is exact, also in
-three-valued logic); `toPlan_correct` (the decomposition is exact when atoms
-are two-valued); `planFilter_scalar_correct` (no inline patterns: exact in
-three-valued logic); `toPlan_not_null_bug` (counterexample: `NOT (x OR p)`
-with `x` null keeps the row — CONFIRMED on Rust vs C); `not3_or3`/`not3_and3`
-(De Morgan holds in Kleene logic, the basis of the suggested fix).
+three-valued logic); `toPlan_correct3` (the decomposition is exact, also in
+three-valued logic); `planFilter_scalar_correct` (no inline patterns: exact in
+three-valued logic); `not3_or3`/`not3_and3` (De Morgan holds in Kleene logic,
+the basis of `push_not_down`).
 -/
 namespace PlannerBuild.E
 
