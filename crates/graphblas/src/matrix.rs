@@ -1,10 +1,24 @@
-//! [`Matrix<T>`]: an owned `GrB_Matrix` with a checked element type, and
-//! [`transpose`], the first operation, which exercises the mask and
-//! descriptor plumbing every other operation will share.
+//! [`Matrix<T>`] and every operation whose output is a matrix, as free
+//! functions in the C API's argument order: `(C, Mask, accum, op, A, B,
+//! desc)`.
 //!
-//! Operations are free functions in the C API's argument order: `(C, Mask,
-//! accum, op, A, B, desc)`. Inputs are [`Operand`]s: `&Matrix<T>`, or
-//! [`Output`](crate::Output) for the output itself.
+//! The type parameters say what GraphBLAS would otherwise typecast silently:
+//!
+//! * `X: Accepts<A::Elem>`: the operator's input domain is the operand's
+//!   element type, or [`Pattern`](crate::Pattern).
+//! * The output's element type is the operator's output type.
+//! * `accum` is `BinaryOp<C, C, C>` on the output type.
+//! * Operations that copy entries through unchanged ([`ewise_add`],
+//!   [`transpose`], [`select`], [`assign`], [`extract`]) require the input
+//!   and output element types to be the same.
+//!
+//! Inputs are [`Operand`]s: `&Matrix<T>`, or [`Output`](crate::Output) for the output
+//! itself. `C += A*B` runs in place in SuiteSparse (dot4 / saxpy5) when `C`
+//! is full, the accumulator is `semiring.add_op()` and `C` is **not** aliased
+//! with the mask or an input; `C<M> += T` lands in place through
+//! `GB_subassign` under the same condition. `apply` with `Output`, no mask
+//! and no accumulator rewrites the values in place. Every other aliased form
+//! is computed into a temporary and transplanted by GraphBLAS.
 
 use std::{
     fmt,
@@ -14,16 +28,18 @@ use std::{
 };
 
 use crate::{
-    Result,
+    Result, Scalar,
     error::{check, expect_success},
     handle::{self, run},
+    index::Indices,
     init::{self, WaitMode},
-    mask::{Desc, Mask},
+    mask::{Desc, Mask, MaskMode, descriptor},
     operand::Operand,
-    ops::{BinaryOp, accum_raw},
+    ops::{BinaryOp, IndexUnaryOp, Monoid, Semiring, UnaryOp, accum_raw},
     sealed::Token,
-    sys::{self, GrB_Index, GrB_Info, GrB_Matrix},
-    types::GrbType,
+    settings::{IntegerWidth, Orientation, Sparsity},
+    sys::{self, GrB_Index, GrB_Info, GrB_Matrix, GxB_Option_Field},
+    types::{Accepts, BuiltinType, GrbType},
 };
 
 /// `GrB_Matrix_nrows` on a raw handle.
@@ -121,6 +137,11 @@ impl<T: GrbType> Matrix<T> {
     }
 
     /// Number of stored entries. Finishes pending work first.
+    ///
+    /// # Panics
+    ///
+    /// When finishing the pending work runs out of memory, the one way it
+    /// can fail; the matrix is unusable afterwards.
     #[must_use]
     pub fn nvals(&self) -> GrB_Index {
         let mut n = 0;
@@ -291,6 +312,38 @@ impl<T: GrbType> Matrix<T> {
         })
     }
 
+    /// Bulk-load the pattern `(rows[k], cols[k])` with every entry equal to
+    /// `value`, as an iso matrix (one shared value, no values array).
+    /// Duplicates are allowed.
+    ///
+    /// # Panics
+    ///
+    /// If the two slices differ in length.
+    ///
+    /// # Errors
+    ///
+    /// The matrix is not empty, an index is out of range, out of memory.
+    pub fn build_iso(
+        &mut self,
+        rows: &[GrB_Index],
+        cols: &[GrB_Index],
+        value: T,
+    ) -> Result<()> {
+        assert_eq!(rows.len(), cols.len(), "rows and cols differ in length");
+        let scalar = Scalar::from_value(value)?;
+        // SAFETY: a live matrix of `T`'s type, a live scalar of the same
+        // type, two slices of the stated length that outlive the call.
+        self.check(unsafe {
+            sys::GxB_Matrix_build_Scalar(
+                self.raw,
+                rows.as_ptr(),
+                cols.as_ptr(),
+                scalar.as_raw(),
+                rows.len() as GrB_Index,
+            )
+        })
+    }
+
     /// Every stored entry as `(rows, cols, values)`, in storage order.
     /// Finishes pending work first.
     ///
@@ -341,12 +394,106 @@ impl<T: GrbType> Matrix<T> {
         handle::is_iso(self.raw)
     }
 
+    /// The current storage format (`GxB_SPARSITY_STATUS`).
+    #[must_use]
+    pub fn sparsity(&self) -> Sparsity {
+        handle::sparsity(self.raw)
+    }
+
+    /// Pin or free the storage format (`GxB_SPARSITY_CONTROL`).
+    ///
+    /// # Errors
+    ///
+    /// Never in practice.
+    pub fn set_sparsity(
+        &mut self,
+        control: Sparsity,
+    ) -> Result<()> {
+        handle::set_sparsity(self.raw, control)
+    }
+
+    /// `GxB_FORMAT`.
+    #[must_use]
+    pub fn orientation(&self) -> Orientation {
+        Orientation::from_raw(self.get_i32(GxB_Option_Field::GxB_FORMAT))
+    }
+
+    /// Set `GxB_FORMAT`; converts the storage if it changes.
+    ///
+    /// # Errors
+    ///
+    /// Out of memory.
+    pub fn set_orientation(
+        &mut self,
+        orientation: Orientation,
+    ) -> Result<()> {
+        self.set_i32(GxB_Option_Field::GxB_FORMAT, orientation.raw())
+    }
+
+    /// The width GraphBLAS actually uses for row indices
+    /// (`GxB_ROWINDEX_INTEGER_BITS`).
+    #[must_use]
+    pub fn row_index_width(&self) -> IntegerWidth {
+        IntegerWidth::from_bits(self.get_i32(GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS))
+    }
+
+    /// The width GraphBLAS actually uses for column indices.
+    #[must_use]
+    pub fn col_index_width(&self) -> IntegerWidth {
+        IntegerWidth::from_bits(self.get_i32(GxB_Option_Field::GxB_COLINDEX_INTEGER_BITS))
+    }
+
+    /// The width GraphBLAS actually uses for offsets.
+    #[must_use]
+    pub fn offset_width(&self) -> IntegerWidth {
+        IntegerWidth::from_bits(self.get_i32(GxB_Option_Field::GxB_OFFSET_INTEGER_BITS))
+    }
+
+    /// Hint the index widths (`GxB_*_INTEGER_HINT`). A hint: GraphBLAS keeps
+    /// 64 bits where 32 cannot hold the dimension, so read the getters back
+    /// before relying on it.
+    ///
+    /// # Errors
+    ///
+    /// Never in practice.
+    pub fn set_index_width_hint(
+        &mut self,
+        rows: IntegerWidth,
+        cols: IntegerWidth,
+        offsets: IntegerWidth,
+    ) -> Result<()> {
+        self.set_i32(GxB_Option_Field::GxB_ROWINDEX_INTEGER_HINT, rows.raw())?;
+        self.set_i32(GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT, cols.raw())?;
+        self.set_i32(GxB_Option_Field::GxB_OFFSET_INTEGER_HINT, offsets.raw())
+    }
+
     /// `Ok` on success, else the error with this matrix's message.
     pub(crate) fn check(
         &self,
         info: GrB_Info,
     ) -> Result<()> {
         handle::check(info, self.raw)
+    }
+
+    /// `GrB_Matrix_get_INT32` for a field that cannot fail on a live handle.
+    fn get_i32(
+        &self,
+        field: GxB_Option_Field,
+    ) -> i32 {
+        handle::get_i32(self.raw, field)
+    }
+
+    /// `GrB_Matrix_set_INT32`.
+    #[allow(
+        clippy::needless_pass_by_ref_mut,
+        reason = "it writes the matrix, through the handle"
+    )]
+    fn set_i32(
+        &mut self,
+        field: GxB_Option_Field,
+        value: i32,
+    ) -> Result<()> {
+        handle::set_i32(self.raw, field, value)
     }
 }
 
@@ -375,6 +522,220 @@ impl<T: GrbType> fmt::Debug for Matrix<T> {
 
 // ───────────────────────────── operations ─────────────────────────────
 
+/// `C<Mask> = accum(C, A * B)` over `semiring`.
+///
+/// `A`, `B` and `C` are independent element types. Each must equal the
+/// semiring's domain for its slot (`X` for `A`, `Y` for `B`, `C` for the
+/// output), except that a `Pattern` domain takes any type. GraphBLAS would
+/// cast a mismatched built-in instead; this layer refuses (the casting rule
+/// in the crate docs), so a semiring over `f64` does not run on an `i64`
+/// matrix without a [`cast`] first. The same holds for every operation
+/// below that takes an operator.
+///
+/// # Errors
+///
+/// Dimension mismatch, out of memory.
+pub fn mxm<'a, A, B, C, X, Y>(
+    c: &mut Matrix<C>,
+    mask: Mask<'a, GrB_Matrix>,
+    accum: Option<&BinaryOp<C, C, C>>,
+    semiring: &Semiring<X, Y, C>,
+    a: A,
+    b: B,
+    desc: Desc,
+) -> Result<()>
+where
+    C: GrbType,
+    A: Operand<'a, C, GrB_Matrix>,
+    B: Operand<'a, C, GrB_Matrix>,
+    X: Accepts<A::Elem>,
+    Y: Accepts<B::Elem>,
+{
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: live handles whose types match the semiring's domains;
+        // GraphBLAS allows any aliasing among them.
+        unsafe {
+            sys::GrB_mxm(
+                c,
+                m,
+                accum_raw(accum),
+                semiring.as_raw(),
+                a.raw(c, Token),
+                b.raw(c, Token),
+                d,
+            )
+        }
+    })
+}
+
+/// `C<Mask> = accum(C, A ⊕ B)`: set union. `op` combines entries present in
+/// both; entries present in one side are copied through, which is why the
+/// inputs and the output share one element type.
+///
+/// For a pattern union of a *valued* matrix into a `bool` one use [`apply`]
+/// with `ONE_BOOL` and `accum = Some(&ANY_BOOL)`: an `ewise_add` would have
+/// to cast the values, and a `u64` id of `0` would land as `false`.
+///
+/// # Errors
+///
+/// Dimension mismatch, out of memory.
+pub fn ewise_add<'a, T, X, Y, A, B>(
+    c: &mut Matrix<T>,
+    mask: Mask<'a, GrB_Matrix>,
+    accum: Option<&BinaryOp<T, T, T>>,
+    op: &BinaryOp<X, Y, T>,
+    a: A,
+    b: B,
+    desc: Desc,
+) -> Result<()>
+where
+    T: GrbType,
+    A: Operand<'a, T, GrB_Matrix, Elem = T>,
+    B: Operand<'a, T, GrB_Matrix, Elem = T>,
+    X: Accepts<T>,
+    Y: Accepts<T>,
+{
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: live handles of one element type; aliasing allowed.
+        unsafe {
+            sys::GrB_Matrix_eWiseAdd_BinaryOp(
+                c,
+                m,
+                accum_raw(accum),
+                op.as_raw(),
+                a.raw(c, Token),
+                b.raw(c, Token),
+                d,
+            )
+        }
+    })
+}
+
+/// `C<Mask> = accum(C, A ⊗ B)`: set intersection.
+///
+/// Only positions present in both inputs get an entry, always `op`'s
+/// result, so the output type is `op`'s output type. For a monoid or
+/// semiring operator pass [`Monoid::op`] or [`Semiring::multiply`].
+///
+/// # Errors
+///
+/// Dimension mismatch, out of memory.
+pub fn ewise_mult<'a, A, B, C, X, Y>(
+    c: &mut Matrix<C>,
+    mask: Mask<'a, GrB_Matrix>,
+    accum: Option<&BinaryOp<C, C, C>>,
+    op: &BinaryOp<X, Y, C>,
+    a: A,
+    b: B,
+    desc: Desc,
+) -> Result<()>
+where
+    C: GrbType,
+    A: Operand<'a, C, GrB_Matrix>,
+    B: Operand<'a, C, GrB_Matrix>,
+    X: Accepts<A::Elem>,
+    Y: Accepts<B::Elem>,
+{
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: live handles whose types match the operator's domains;
+        // aliasing allowed.
+        unsafe {
+            sys::GrB_Matrix_eWiseMult_BinaryOp(
+                c,
+                m,
+                accum_raw(accum),
+                op.as_raw(),
+                a.raw(c, Token),
+                b.raw(c, Token),
+                d,
+            )
+        }
+    })
+}
+
+/// `C<Mask> = accum(C, op(A))`.
+///
+/// With `a = Output`, no mask and no accumulator, GraphBLAS rewrites the
+/// values in place.
+///
+/// # Errors
+///
+/// Dimension mismatch, out of memory.
+pub fn apply<'a, A, C, X>(
+    c: &mut Matrix<C>,
+    mask: Mask<'a, GrB_Matrix>,
+    accum: Option<&BinaryOp<C, C, C>>,
+    op: &UnaryOp<X, C>,
+    a: A,
+    desc: Desc,
+) -> Result<()>
+where
+    C: GrbType,
+    A: Operand<'a, C, GrB_Matrix>,
+    X: Accepts<A::Elem>,
+{
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: live handles whose types match the operator's domains;
+        // aliasing allowed.
+        unsafe { sys::GrB_Matrix_apply(c, m, accum_raw(accum), op.as_raw(), a.raw(c, Token), d) }
+    })
+}
+
+/// `C<Mask> = accum(C, op(A, i, j, y))`: an index-unary operator applied to
+/// every entry with its position and the scalar `y`.
+///
+/// # Errors
+///
+/// Dimension mismatch, out of memory.
+pub fn apply_index<'a, A, C, X, Y>(
+    c: &mut Matrix<C>,
+    mask: Mask<'a, GrB_Matrix>,
+    accum: Option<&BinaryOp<C, C, C>>,
+    op: &IndexUnaryOp<X, Y, C>,
+    a: A,
+    y: Y,
+    desc: Desc,
+) -> Result<()>
+where
+    C: GrbType,
+    A: Operand<'a, C, GrB_Matrix>,
+    X: Accepts<A::Elem>,
+    Y: GrbType,
+{
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: live handles whose types match the operator's domains, `y`
+        // passed through the entry point of its own type; aliasing allowed.
+        unsafe { Y::matrix_apply_index(c, m, accum_raw(accum), op.as_raw(), a.raw(c, Token), y, d) }
+    })
+}
+
+/// `C<Mask> = accum(C, A[op(A, i, j, y)])`: keep the entries of `A` the
+/// predicate accepts, values unchanged.
+///
+/// # Errors
+///
+/// Dimension mismatch, out of memory.
+pub fn select<'a, T, A, X, Y>(
+    c: &mut Matrix<T>,
+    mask: Mask<'a, GrB_Matrix>,
+    accum: Option<&BinaryOp<T, T, T>>,
+    op: &IndexUnaryOp<X, Y, bool>,
+    a: A,
+    y: Y,
+    desc: Desc,
+) -> Result<()>
+where
+    T: GrbType,
+    A: Operand<'a, T, GrB_Matrix, Elem = T>,
+    X: Accepts<T>,
+    Y: GrbType,
+{
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: as in `apply_index`.
+        unsafe { Y::matrix_select(c, m, accum_raw(accum), op.as_raw(), a.raw(c, Token), y, d) }
+    })
+}
+
 /// `C<Mask> = accum(C, Aᵀ)`.
 ///
 /// With `desc.transpose_first` the input is transposed first, so the call is a
@@ -398,5 +759,143 @@ where
     run(c.raw, &mask, desc, |c, m, d| {
         // SAFETY: live handles of one element type; aliasing allowed.
         unsafe { sys::GrB_transpose(c, m, accum_raw(accum), a.raw(c, Token), d) }
+    })
+}
+
+/// `C<Mask>(rows, cols) = accum(C(rows, cols), x)`: one value over a
+/// sub-grid of positions.
+///
+/// # Errors
+///
+/// Index out of range, out of memory.
+pub fn assign_scalar<T: GrbType>(
+    c: &mut Matrix<T>,
+    mask: Mask<'_, GrB_Matrix>,
+    accum: Option<&BinaryOp<T, T, T>>,
+    x: T,
+    rows: Indices<'_>,
+    cols: Indices<'_>,
+    desc: Desc,
+) -> Result<()> {
+    let (ri, rn) = rows.raw(|| c.nrows());
+    let (ci, cn) = cols.raw(|| c.ncols());
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: a live matrix of `T`'s type; index lists that outlive the
+        // call.
+        unsafe { T::matrix_assign_scalar(c, m, accum_raw(accum), x, ri, rn, ci, cn, d) }
+    })
+}
+
+/// `C<Mask>(rows, cols) = accum(C(rows, cols), A)`: write a matrix into a
+/// sub-grid of positions (`GrB_Matrix_assign`). The mask is over all of `C`.
+///
+/// # Errors
+///
+/// Dimension mismatch, index out of range, out of memory.
+pub fn assign<'a, T, A>(
+    c: &mut Matrix<T>,
+    mask: Mask<'a, GrB_Matrix>,
+    accum: Option<&BinaryOp<T, T, T>>,
+    a: A,
+    rows: Indices<'_>,
+    cols: Indices<'_>,
+    desc: Desc,
+) -> Result<()>
+where
+    T: GrbType,
+    A: Operand<'a, T, GrB_Matrix, Elem = T>,
+{
+    let (ri, rn) = rows.raw(|| c.nrows());
+    let (ci, cn) = cols.raw(|| c.ncols());
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: live handles of one element type; index lists that
+        // outlive the call; aliasing allowed.
+        unsafe {
+            sys::GrB_Matrix_assign(c, m, accum_raw(accum), a.raw(c, Token), ri, rn, ci, cn, d)
+        }
+    })
+}
+
+/// `C<Mask> = accum(C, A(rows, cols))`: a sub-matrix (`GrB_Matrix_extract`).
+///
+/// # Errors
+///
+/// Dimension mismatch, index out of range, out of memory.
+pub fn extract<'a, T, A>(
+    c: &mut Matrix<T>,
+    mask: Mask<'a, GrB_Matrix>,
+    accum: Option<&BinaryOp<T, T, T>>,
+    a: A,
+    rows: Indices<'_>,
+    cols: Indices<'_>,
+    desc: Desc,
+) -> Result<()>
+where
+    T: GrbType,
+    A: Operand<'a, T, GrB_Matrix, Elem = T>,
+{
+    // `All` spans the input's dimensions, after the transpose if any.
+    let a_raw = a.raw(c.raw, Token);
+    let (a_rows, a_cols) = if desc.transpose_first {
+        (raw_ncols(a_raw), raw_nrows(a_raw))
+    } else {
+        (raw_nrows(a_raw), raw_ncols(a_raw))
+    };
+    let (ri, rn) = rows.raw(|| a_rows);
+    let (ci, cn) = cols.raw(|| a_cols);
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: live handles of one element type; index lists that
+        // outlive the call; aliasing allowed.
+        unsafe { sys::GrB_Matrix_extract(c, m, accum_raw(accum), a_raw, ri, rn, ci, cn, d) }
+    })
+}
+
+/// `c = accum(c, ⊕ A)`: fold every entry of `A` with `monoid` into the
+/// scalar `c`. With no accumulator `c` is overwritten; an empty `A` gives
+/// the monoid's identity.
+///
+/// # Errors
+///
+/// Out of memory.
+pub fn reduce<T: GrbType>(
+    c: &mut T,
+    accum: Option<&BinaryOp<T, T, T>>,
+    monoid: &Monoid<T>,
+    a: &Matrix<T>,
+    desc: Desc,
+) -> Result<()> {
+    let d = descriptor(MaskMode::NONE, desc);
+    // SAFETY: `c` is a valid `T`; live handles whose types are `T`.
+    check(unsafe { T::matrix_reduce(c, accum_raw(accum), monoid.as_raw(), a.raw, d) })
+}
+
+/// `C<Mask> = accum(C, (C's type) A)`: copy `A` into `C`, converting the
+/// element type with GraphBLAS's own rules. The one place in this crate
+/// where values change type.
+///
+/// Implemented as `GrB_assign` over `GrB_ALL`, LAGraph's idiom for a
+/// typecast copy, which SuiteSparse routes to its whole-matrix `C = A`
+/// method. Built-in types only: GraphBLAS cannot cast user-defined ones.
+///
+/// # Errors
+///
+/// Dimension mismatch, out of memory.
+pub fn cast<A, C>(
+    c: &mut Matrix<C>,
+    mask: Mask<'_, GrB_Matrix>,
+    accum: Option<&BinaryOp<C, C, C>>,
+    a: &Matrix<A>,
+    desc: Desc,
+) -> Result<()>
+where
+    A: BuiltinType,
+    C: BuiltinType,
+{
+    let (ri, rn) = Indices::All.raw(|| c.nrows());
+    let (ci, cn) = Indices::All.raw(|| c.ncols());
+    run(c.raw, &mask, desc, |c, m, d| {
+        // SAFETY: live handles of built-in types, which GraphBLAS casts
+        // between; `GrB_ALL` with the output's dimensions.
+        unsafe { sys::GrB_Matrix_assign(c, m, accum_raw(accum), a.raw, ri, rn, ci, cn, d) }
     })
 }

@@ -23,8 +23,9 @@
 //!   they are applied to through [`Accepts`].
 //! * **No implicit casts.** GraphBLAS casts among built-in types silently;
 //!   this layer refuses, exactly as GraphBLAS itself refuses for user-defined
-//!   types. The one exception so far is explicit: operators that never read a
-//!   value are typed with [`Pattern`] and accept any input type.
+//!   types. The two exceptions are explicit: operators that never read a value
+//!   are typed with [`Pattern`] and accept any input type, and
+//!   [`matrix::cast`] changes an element type on purpose.
 //! * **Aliasing is spelled.** `&mut c` with `&a` cannot alias; the marker
 //!   [`Output`] in an input or mask slot says "the output matrix here".
 //! * **Built-ins need no `unsafe`.** Each is a [`Lazy`] static that reads
@@ -36,7 +37,22 @@
 //!   [`user_type!`], operators with [`user_ops!`]; each is created on first
 //!   use and lives as long as the process.
 //!
+//! # Layout
+//!
+//! * [`matrix`] holds [`Matrix<T>`] and every operation whose output is a matrix.
+//! * [`scalar`] holds [`Scalar<T>`].
+//! * Operators, masks, built-ins and initialisation are at the root.
+//!
 //! # What does not compile
+//!
+//! An operator over one type on a matrix of another (GraphBLAS would cast):
+//!
+//! ```compile_fail,E0277
+//! use graphblas::*;
+//! let a = Matrix::<i64>::new(2, 2).unwrap();
+//! let mut c = Matrix::<f64>::new(2, 2).unwrap();
+//! mxm(&mut c, Mask::NONE, None, &PLUS_TIMES_SEMIRING_FP64, &a, &a, Desc::NONE).unwrap();
+//! ```
 //!
 //! A valued mask of a non-`bool` matrix (spell the cast: `Mask::valued(AsBool(&m))`):
 //!
@@ -57,6 +73,25 @@
 //!         output
 //!     }
 //! }
+//! ```
+//!
+//! An accumulator of the wrong type for the output:
+//!
+//! ```compile_fail,E0308
+//! use graphblas::*;
+//! let a = Matrix::<f64>::new(2, 2).unwrap();
+//! let mut c = Matrix::<f64>::new(2, 2).unwrap();
+//! matrix::apply(&mut c, Mask::NONE, Some(&PLUS_UINT64), &IDENTITY_FP64, &a, Desc::NONE).unwrap();
+//! ```
+//!
+//! A union of two element types (`ewise_add` copies entries through):
+//!
+//! ```compile_fail,E0271
+//! use graphblas::*;
+//! let a = Matrix::<u64>::new(2, 2).unwrap();
+//! let b = Matrix::<f64>::new(2, 2).unwrap();
+//! let mut c = Matrix::<u64>::new(2, 2).unwrap();
+//! matrix::ewise_add(&mut c, Mask::NONE, None, &PLUS_UINT64, &a, &b, Desc::NONE).unwrap();
 //! ```
 //!
 //! # Thread safety
@@ -87,11 +122,14 @@ pub use types::user_defined::UserTypeCell as __UserTypeCell;
 mod builtin;
 mod error;
 mod handle;
+mod index;
 mod init;
 mod lazy;
 mod mask;
 mod operand;
 mod ops;
+pub mod scalar;
+mod settings;
 mod types;
 
 /// The supertrait that keeps [`GrbType`], [`Operand`] and [`AsMask`] closed to this crate: every
@@ -120,12 +158,15 @@ pub mod matrix;
 mod tests;
 
 pub use error::{Error, ErrorKind, Result};
+pub use index::Indices;
 pub use init::{
     Allocators, JitControl, WaitMode, init, is_initialized, set_burble, set_jit, set_nthreads,
 };
 pub use lazy::Lazy;
 pub use mask::{AsBool, AsMask, Desc, Mask, MaskRef, ValuedMask};
-pub use matrix::Matrix;
+pub use matrix::{Matrix, mxm};
 pub use operand::{Operand, Output};
 pub use ops::*;
+pub use scalar::Scalar;
+pub use settings::{IntegerWidth, Orientation, Sparsity};
 pub use types::{Accepts, BuiltinPattern, BuiltinType, GrbType, Pattern};
