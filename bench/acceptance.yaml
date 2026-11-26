@@ -184,8 +184,10 @@ checks:
       mode: nightly
       expect: {verdict: pass, no_regression_findings: true}
       judge: >-
-        s10 index == scan under writes is KNOWN_FLAKY (#3095, contract v1.9):
-        expect no s10 finding for it unless the candidate broke it on every run.
+        s10's known flaky checks (#3095, #3512) can break on main against itself.
+        Under contract v1.14 such a break is a regression on the candidate, named
+        with its issue and `introduced: false` (the release gate leaves it out):
+        it says the flake fired, not that the pair failed.
   soak-s11:
     - {id: soak-s11-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
        expect: {verdict: pass, no_regression_findings: true}}
