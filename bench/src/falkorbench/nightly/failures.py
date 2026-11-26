@@ -542,17 +542,18 @@ def compare(data: Path, folder: str, nights: int = 7) -> Compared:
     ][:nights]
     since: dict[tuple, str] = {}
     for failure in run.failures:
-        if not history:
+        # Only the nights that measured this check say anything about it: one added since, or one
+        # that could not measure that night, is no earlier result.
+        measured = [n for n in history if failure.check in n.measured or failure.kind == "error"]
+        if not measured:
             since[failure.key] = "no earlier night"
             continue
         streak = 0
-        for night in history:
-            if failure.check not in night.measured and failure.kind != "error":
-                break
+        for night in measured:
             if failure.key not in {f.key for f in night.failures}:
                 break
             streak += 1
-        since[failure.key] = "new" if streak == 0 else f"since {history[streak - 1].folder[:10]}"
+        since[failure.key] = "new" if streak == 0 else f"since {measured[streak - 1].folder[:10]}"
     fixed = []
     if history:
         now = {f.key for f in run.failures}

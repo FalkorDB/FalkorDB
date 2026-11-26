@@ -1467,3 +1467,37 @@ def test_a_run_github_does_not_know_is_missing_not_tried_again(tmp_path, no_wait
 
     assert nightly_store.download("o/r", "1", "perf-nightly", tmp_path / "x", run) == "missing"
     assert len(calls) == 1
+
+
+def test_a_check_no_earlier_night_measured_has_no_earlier_night(tmp_path):
+    """A check added since the last stored night (or one that could not measure then) has no
+    earlier result: not "new"."""
+    data = tmp_path / "data"
+    a_night(data, "2026-11-23-1", "nightly", {"micro-hw": ("pass", [], None)})
+    a_night(
+        data,
+        "2026-11-24-2",
+        "nightly",
+        {
+            "micro-hw": ("pass", [], None),
+            "soak-b": ("error", [], None),
+        },
+    )
+    a_night(
+        data,
+        "2026-11-25-3",
+        "manual",
+        {
+            "micro-hw": (
+                "regression",
+                [finding("SKIP [reads]", "instructions", "regression", 2, 1, 1.9)],
+                None,
+            ),
+            "soak-b": ("pass", [], SOAK_HEADER + BROKE.format(n="s03 broken")),
+        },
+    )
+    result = nightly_failures.compare(data, "2026-11-25-3")
+    assert {f.check: result.since[f.key] for f in result.run.failures} == {
+        "micro-hw": "new",
+        "soak-b": "no earlier night",
+    }

@@ -51,6 +51,11 @@ comment, but `gh run view` may show another pull request (the one of the branch 
 file came from), which is not the one measured. Only scheduled nights count as nights below;
 every other trigger is a one-off comparison of the images it names.
 
+A manual run may name its own images, and that changes how every row reads: its `perf-plan`
+artifact says whether it did (`gh run download "$RUN" -R "$REPO" -n perf-plan -D "$W/plan"`, then
+`dispatch.json`'s `image_overrides`), and nightly.json's labels say which (`main@<sha>`, `6.2.1`,
+`v4.22.5`).
+
 "Last night" may be a skipped night (main had not moved: its nightly.json has `status:
 skipped` and no checks). Say so, then read the newest scheduled night before it that measured.
 
@@ -137,9 +142,21 @@ the previous night's failures that are gone ("fixed"), for the checks this run m
 baseline differs from the previous night's (a `/perf` run, a manual run, a gate run) it says so:
 a failure can be new because the pair changed, not the candidate.
 
-**When the candidate and the baseline are different lines** (a `/perf` run against `main`, a
-gate run, a manual run naming its images), check how far the candidate is behind the baseline
-before blaming the candidate:
+**When the baseline is the C engine** (a `v4.Y.Z` label, `:edge-c`), every row compares two
+engines: a regression is a gap between Rust and C, not a change on main (say so, and check the
+candidate's own number against the previous night's to see whether main moved). Commit
+compares mean nothing across engines: skip the next paragraph. Expect some rows that are
+artifacts of the pair rather than failures of either engine, and say which: micro-hw runs both
+sides in C-compat mode, so Rust-only queries (the `bench.*` UDFs) error on both sides; a soak op
+that only one engine reaches (a C-only error path counted as throughput, such as s05
+`graph_copy_fork_fail`) reads as a regression of the other. The known breaks listed for a Rust
+baseline (step 4) show as the candidate's only when C has the fix.
+
+**When the candidate and the baseline are different lines of one engine** (a `/perf` run
+against `main`, a gate run, a manual run naming a Rust release), check how far the candidate is
+behind the baseline before blaming the candidate. nightly.json records no commit for an image
+given by its tag: a release's commit is its tag's (`gh api "repos/$REPO/commits/v<version>" --jq
+.sha`).
 
 ```bash
 gh api "repos/$REPO/compare/<candidate commit>...<baseline commit>" \
@@ -172,7 +189,7 @@ The run page (`$W/site/run/$FOLDER.html`) links each check's files.
 ## 4. Match each failure to an issue
 
 Start with what the checks already map: `bench/src/falkorbench/soak/README.md` ("Known breaks
-on both sides"), the known flaky checks (`bench nightly failures` names their issue), and the
+on both sides", measured against a Rust baseline), the known flaky checks (`bench nightly failures` names their issue), and the
 notes on queries a side cannot run in `bench/README.md` (LDBC) and each check's README under
 `bench/src/falkorbench/<check>/`. Then list every issue once, open and closed, and search the titles for the **mechanism**, not only
 the symptom: the operator, function, index type, procedure or invariant that broke (`index ==
@@ -225,7 +242,7 @@ Run page: <$W/site/run/<folder>.html>
 | check | verdict | regressions | broken on the candidate | error |
 (one row per check; a `pass` with broken rows reads "pass, N broken", never "green")
 
-Failures:
+Failures (one line each; many rows with one mechanism may share a line that names every row):
 - <check> · <kind> · <what> · <every qualifier that applies: both sides | candidate only, known flaky #n, timing, k of n runs> · <new | since date | no earlier night> · <#issue | fixed on the baseline (#n) | not filed, by decision | no issue>
 Fixed since <previous night>: <list or none>
 Compared with: <the earlier scheduled nights, or "no earlier scheduled night">
