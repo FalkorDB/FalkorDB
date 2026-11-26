@@ -1859,19 +1859,9 @@ def test_the_release_gate_runs_only_for_a_pull_request_from_this_repository(
         assert ci_gate("skipped")  # a fork's queued pull request merges without the gate
 
 
-@pytest.mark.parametrize(
-    "event, head_repo, same_repo, perf_below",
-    [
-        ("merge_group", "FalkorDB/FalkorDB", "true", "6.3.0"),
-        ("merge_group", "someone/FalkorDB", "false", "6.3.0"),
-        ("merge_group", "someone/FalkorDB", "false", ""),  # main's queue: no gate to skip
-        ("pull_request", "FalkorDB/FalkorDB", "true", ""),
-        ("pull_request", "someone/FalkorDB", "false", ""),
-    ],
-)
-def test_check_files_says_whether_the_pull_request_is_from_this_repository(
-    tmp_path, event, head_repo, same_repo, perf_below
-):
+def _fork_step(tmp_path, cwd, event, head_repos, perf_below="", head_repo=""):
+    """check-files' fork step, run in `cwd` with a fake gh that knows the head repository
+    of each pull request in `head_repos` (any other lookup fails); its same_repo and stdout."""
     steps = workflow("rust-pr.yml")["jobs"]["check-files"]["steps"]
     step = next(s for s in steps if s.get("id") == "fork")
     changed = tmp_path / "changed-files.txt"
@@ -1880,30 +1870,133 @@ def test_check_files_says_whether_the_pull_request_is_from_this_repository(
     if subprocess.run(["sed", "--version"], capture_output=True, check=False).returncode:
         script = script.replace("\\+", "\\{1,\\}")  # BSD sed (macOS): the POSIX spelling of \+
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    # under merge_group the queued pull request's head repository comes from the API
-    fake_tool(
-        bin_dir, "gh", f'[[ $2 == /repos/FalkorDB/FalkorDB/pulls/7 ]] && echo "{head_repo}"\n'
+    bin_dir.mkdir(exist_ok=True)
+    known = "".join(
+        f"  /repos/FalkorDB/FalkorDB/pulls/{n}) echo {repo} ;;\n" for n, repo in head_repos.items()
     )
+    fake_tool(bin_dir, "gh", f'case "$2" in\n{known}  *) echo "HTTP 404" >&2; exit 1 ;;\nesac\n')
     out = tmp_path / "output"
     env = {
         "BIN": str(bin_dir),
         "GITHUB_OUTPUT": str(out),
         "GITHUB_REPOSITORY": "FalkorDB/FalkorDB",
         "EVENT": event,
-        "PR_HEAD_REPO": head_repo if event == "pull_request" else "",
+        "PR_HEAD_REPO": head_repo,
         "REF": "refs/heads/gh-readonly-queue/6.2/pr-7-" + "a" * 40,
+        "QUEUE_BASE_REF": "refs/heads/6.2",
         "PATTERN": "^build/",
         "PERF_BELOW": perf_below,
     }
-    run = run_step(script, tmp_path, env)
+    run = run_step(script, cwd, env)
     assert run.returncode == 0, run.stdout + run.stderr
-    assert dict(line.split("=", 1) for line in out.read_text().splitlines()) == {
-        "same_repo": same_repo
-    }
-    # a fork's queued pull request skips the release gate, and the run says so
-    skipped = same_repo == "false" and perf_below != ""
-    assert ("::warning::The release gate (perf, perf-cov) does not run" in run.stdout) is skipped
+    outputs = dict(line.split("=", 1) for line in out.read_text().splitlines())
+    return outputs["same_repo"], run.stdout
+
+
+@pytest.mark.parametrize(
+    "event, head_repo, same_repo",
+    [
+        ("merge_group", "FalkorDB/FalkorDB", "true"),  # main's queue: no gate, the PR alone
+        ("merge_group", "someone/FalkorDB", "false"),
+        ("pull_request", "FalkorDB/FalkorDB", "true"),
+        ("pull_request", "someone/FalkorDB", "false"),
+    ],
+)
+def test_check_files_says_whether_the_pull_request_is_from_this_repository(
+    tmp_path, event, head_repo, same_repo
+):
+    queued = {7: head_repo} if event == "merge_group" else {}
+    pull_head = head_repo if event == "pull_request" else ""
+    got, stdout = _fork_step(tmp_path, tmp_path, event, queued, head_repo=pull_head)
+    assert got == same_repo
+    assert "::warning::" not in stdout  # no gate where perf_below is empty, so none skipped
+
+
+def _git(work, *args):
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-c",
+         "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *args],
+        cwd=work, check=True, capture_output=True, text=True,
+    ).stdout.strip()  # fmt: skip
+
+
+def _queue(tmp_path, subjects):
+    """A checkout of a merge group in version branch 6.2's queue: origin has 6.2, and HEAD
+    is 6.2 plus one squash commit per subject, the entries queued ahead first."""
+    work, origin = tmp_path / "work", tmp_path / "origin.git"
+    work.mkdir()
+    _git(work, "init", "-q", "-b", "6.2")
+    _git(work, "commit", "-q", "--allow-empty", "-m", "Bump version to 6.2.1")
+    _git(tmp_path, "init", "-q", "--bare", str(origin))
+    _git(work, "remote", "add", "origin", str(origin))
+    _git(work, "push", "-q", "origin", "6.2")
+    _git(work, "checkout", "-q", "--detach")
+    for subject in subjects:
+        _git(work, "commit", "-q", "--allow-empty", "-m", subject)
+    return work
+
+
+def _queue_merge(tmp_path, subject, own):
+    """_queue with one merge-commit entry (how 6.2's queue merges): `own` are the merged
+    branch's own commits, `subject` the merge commit's."""
+    work = _queue(tmp_path, [])
+    base = _git(work, "rev-parse", "HEAD")
+    for message in own:
+        _git(work, "commit", "-q", "--allow-empty", "-m", message)
+    branch = _git(work, "rev-parse", "HEAD")
+    _git(work, "checkout", "-q", "--detach", base)
+    _git(work, "merge", "-q", "--no-ff", "-m", subject, branch)
+    return work
+
+
+GATE_SKIPPED = "::warning::The release gate (perf, perf-cov) does not run"
+
+
+@pytest.mark.parametrize(
+    "subjects, head_repos, same_repo, named",
+    [
+        # a fork's pull request queued ahead rides in this group: no gate
+        (["fix: a (#5)", "fix: b (#7)"], {5: "someone/FalkorDB", 7: "FalkorDB/FalkorDB"}, "false", "#5"),
+        # every pull request from this repository: the gate runs
+        (["fix: a (#6)", "fix: b (#7)"], {6: "FalkorDB/FalkorDB", 7: "FalkorDB/FalkorDB"}, "true", None),
+        # #5 cannot be looked up: counted as a fork, never run on a guess
+        (["fix: a (#5)", "fix: b (#7)"], {7: "FalkorDB/FalkorDB"}, "false", "#5"),
+        # a commit that names no pull request
+        (["wip", "fix: b (#7)"], {7: "FalkorDB/FalkorDB"}, "false", "a commit naming no pull request: wip"),
+        # the queued fork itself
+        (["fix: b (#7)"], {7: "someone/FalkorDB"}, "false", "#7"),
+    ],
+)  # fmt: skip
+def test_the_release_gate_skips_a_merge_group_holding_any_fork(
+    tmp_path, subjects, head_repos, same_repo, named
+):
+    work = _queue(tmp_path, subjects)
+    got, stdout = _fork_step(tmp_path, work, "merge_group", head_repos, perf_below="6.3.0")
+    assert got == same_repo
+    if named is None:
+        assert GATE_SKIPPED not in stdout
+    else:
+        assert GATE_SKIPPED in stdout and named in stdout
+
+
+def test_the_release_gate_reads_only_the_groups_own_merges(tmp_path):
+    """6.2's queue merges: a merged branch's own commits are cherry-picks that name other
+    pull requests (here a fork's, #99, merged into main long ago); only first parents count."""
+    work = _queue_merge(
+        tmp_path, "Merge pull request #7 from FalkorDB/backport/6.2", ["fix: x (#99)", "Bump"]
+    )
+    head_repos = {7: "FalkorDB/FalkorDB", 99: "someone/FalkorDB"}
+    got, stdout = _fork_step(tmp_path, work, "merge_group", head_repos, perf_below="6.3.0")
+    assert (got, GATE_SKIPPED in stdout) == ("true", False)
+
+
+def test_the_release_gate_skips_when_the_groups_commits_cannot_be_listed(tmp_path):
+    work = _queue(tmp_path, ["fix: b (#7)"])
+    _git(work, "remote", "set-url", "origin", str(tmp_path / "gone.git"))
+    got, stdout = _fork_step(
+        tmp_path, work, "merge_group", {7: "FalkorDB/FalkorDB"}, perf_below="6.3.0"
+    )
+    assert got == "false" and "the group's commits could not be listed" in stdout
 
 
 def test_every_perf_result_and_gate_upload_replaces_an_earlier_attempts_artifact():

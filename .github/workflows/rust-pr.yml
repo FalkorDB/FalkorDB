@@ -147,6 +147,13 @@ jobs:
       # absent under merge_group, so the queued pull request is resolved from
       # the ref — gh-readonly-queue/<base>/pr-<N>-<sha> — and its head repo
       # checked. Anything unresolvable fails closed.
+      #
+      # It also says whether the code under test comes only from this
+      # repository's pull requests (same_repo): the release gate runs it on a GCE
+      # VM with compute write access, so it runs only then. In a version branch's
+      # queue that means every pull request in the merge group, since a group
+      # holds the entries queued ahead of this one too; a pull request that
+      # cannot be looked up counts as a fork.
       - name: Refuse fork changes to build or CI infrastructure
         id: fork
         if: ${{ !cancelled() }}
@@ -157,8 +164,10 @@ jobs:
           REF: ${{ github.ref }}
           PATTERN: ${{ steps.check.outputs.pattern }}
           PERF_BELOW: ${{ steps.key.outputs.perf_below }}
+          QUEUE_BASE_REF: ${{ github.event.merge_group.base_ref }}
         run: |
           set -euo pipefail
+          not_ours=""
           if [ "$EVENT" = "merge_group" ]; then
             N=$(printf '%s' "$REF" | sed -n 's|.*/pr-\([0-9]\+\)-[0-9a-f]*$|\1|p')
             if [ -z "$N" ]; then
@@ -170,15 +179,46 @@ jobs:
               echo "::error::could not resolve the head repository of queued PR #${N}"
               exit 1
             fi
+            if [ -n "$PERF_BELOW" ]; then
+              # The group's pull requests: one first-parent commit each between the
+              # base branch's tip and HEAD ("Merge pull request #N from ..." or a
+              # squash "... (#N)"). merge_group.base_sha will not do: it is the
+              # previous entry's head, so the range would hold this entry alone.
+              # Only first parents: a merged branch's own commits (cherry-picks)
+              # name other pull requests.
+              base=${QUEUE_BASE_REF#refs/heads/}
+              merged='^Merge pull request #([0-9]+) '
+              squashed='\(#([0-9]+)\)$'
+              prs=""
+              if git fetch --no-tags --quiet origin "$base" \
+                && subjects=$(git log --first-parent --format=%s "origin/$base..HEAD"); then
+                while IFS= read -r subject; do
+                  if [[ $subject =~ $merged || $subject =~ $squashed ]]; then
+                    prs="$prs ${BASH_REMATCH[1]}"
+                  else
+                    not_ours="$not_ours (a commit naming no pull request: ${subject:0:60})"
+                  fi
+                done <<< "$subjects"
+              else
+                not_ours=" (the group's commits could not be listed)"
+              fi
+              for pr in $prs; do
+                repo=$(gh api "/repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '.head.repo.full_name // empty') || repo=""
+                [ "$repo" = "$GITHUB_REPOSITORY" ] || not_ours="$not_ours #$pr"
+              done
+            fi
+          fi
+          if [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ] && [ -z "$not_ours" ]; then
+            echo "same_repo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "same_repo=false" >> "$GITHUB_OUTPUT"
+            if [ -n "$PERF_BELOW" ]; then
+              echo "::warning::The release gate (perf, perf-cov) does not run: not every pull request in this merge group is known to come from this repository:${not_ours:- #${N:-?}}. A maintainer takes a fork's branch over to have the gate run."
+            fi
           fi
           if [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
-            echo "same_repo=true" >> "$GITHUB_OUTPUT"
             echo "same-repository change; infrastructure paths are allowed"
             exit 0
-          fi
-          echo "same_repo=false" >> "$GITHUB_OUTPUT"
-          if [ -n "$PERF_BELOW" ]; then
-            echo "::warning::The release gate (perf, perf-cov) does not run for a pull request from a fork; a maintainer takes the branch over to have it run."
           fi
           # Same set the toolchain trigger watches, plus .github/ — anything
           # narrower leaves a path that sets file_changed=true, starts the
