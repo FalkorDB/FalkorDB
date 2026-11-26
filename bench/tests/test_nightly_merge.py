@@ -1774,6 +1774,21 @@ def test_the_perf_gate_runs_the_nightly_flow_on_the_queues_image():
     assert "GATE_CHECKS" not in (WORKFLOWS / "perf-nightly.yml").read_text()
 
 
+def test_every_perf_result_and_gate_upload_replaces_an_earlier_attempts_artifact():
+    """As in perf-nightly.yml: a re-run uploads each name again, which upload-artifact
+    refuses without `overwrite`, and the merge would keep the first attempt's result."""
+    for name in ("_perf-vm.yml", "benchmark-cov.yml"):
+        uploads = [
+            step
+            for spec in workflow(name)["jobs"].values()
+            for step in spec.get("steps", [])
+            if step.get("uses", "").startswith("actions/upload-artifact@")
+        ]
+        assert uploads, name
+        for step in uploads:
+            assert step["with"].get("overwrite") is True, (name, step["with"]["name"])
+
+
 # --- benchmark-cov as the release gate (#4004) -----------------------------------
 
 from falkorbench import cov_gate  # noqa: E402

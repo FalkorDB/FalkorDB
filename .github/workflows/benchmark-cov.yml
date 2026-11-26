@@ -401,6 +401,8 @@ jobs:
           name: provenance
           path: provenance.json
           retention-days: 7
+          # "Re-run all jobs" uploads each name again: replace the earlier attempt's
+          overwrite: true
 
   # Full query set, one runner per side, all three at once.
   measure:
@@ -472,6 +474,7 @@ jobs:
             measure-${{ matrix.side }}.log
             failed-${{ matrix.side }}.json
           retention-days: 7
+          overwrite: true
 
   # Deterministic instruction counts, PR vs base.
   #
@@ -569,6 +572,7 @@ jobs:
           name: callgrind-${{ matrix.side }}-${{ matrix.shard }}
           path: cg-${{ matrix.side }}-${{ matrix.shard }}.csv
           retention-days: 7
+          overwrite: true
 
   # The one job that must build from source: coverage needs an instrumented
   # module, which no published image carries. Runs alongside the measurement jobs,
@@ -636,6 +640,7 @@ jobs:
           name: coverage
           path: coverage.txt
           retention-days: 7
+          overwrite: true
 
   # Fan-in. `!cancelled()` rather than `success()`: a side that failed should cost
   # its own column and nothing else, and the report is built from whatever CSVs
