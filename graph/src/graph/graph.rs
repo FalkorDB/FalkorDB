@@ -4361,6 +4361,13 @@ impl Graph {
         label: &ArcStr,
         query: &str,
     ) -> Result<impl Iterator<Item = (NodeId, f64)> + use<>, String> {
+        // Like C, refuse to answer from a half-built index (#3931), as vector
+        // queries already do (#3382).
+        if !self.node_indexer.is_operational(label) {
+            return Err(format!(
+                "The fulltext index on '{label}' is under construction"
+            ));
+        }
         self.node_indexer
             .fulltext_query(label, query)
             .map(|r| r.map(|(id, score)| (NodeId(id), score)))
@@ -4376,6 +4383,13 @@ impl Graph {
         label: &ArcStr,
         query: &str,
     ) -> Result<impl Iterator<Item = (NodeId, NodeId, RelationshipId, f64)> + use<>, String> {
+        // Like C, refuse to answer from a half-built index (#3931), as vector
+        // queries already do (#3382).
+        if !self.edge_indexer.is_operational(label) {
+            return Err(format!(
+                "The fulltext index on '{label}' is under construction"
+            ));
+        }
         self.edge_indexer
             .fulltext_query_edges(label, query)
             .map(|r| {
