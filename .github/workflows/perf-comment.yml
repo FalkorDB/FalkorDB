@@ -37,20 +37,13 @@ name: Perf PR comment
 # "/perf on #<N>" for every request, so resolve finds an earlier run on the same pull
 # request by its title. Other comments get a title of their own, so they never count.
 run-name: >-
-  ${{ github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/perf')
+  ${{ startsWith(github.event.comment.body, '/perf')
   && format('/perf on #{0}', github.event.issue.number)
-  || github.event_name == 'issue_comment' && 'Comment, not /perf'
-  || 'TEMPORARY /perf acceptance' }}
+  || 'Comment, not /perf' }}
 
 on:
   issue_comment:
     types: [created]
-  # TEMPORARY (#4037 acceptance, removed with .github/perf-comment-proof.txt once judged):
-  # a push to this branch that changes that file runs the same path, as a dry run, on the
-  # request the file holds.
-  push:
-    branches: [ci/perf-comment]
-    paths: [.github/perf-comment-proof.txt]
 
 permissions: {}
 
@@ -59,9 +52,9 @@ jobs:
     # The cheap filter, so other comments cost nothing: a person's comment on a pull
     # request that starts with the command.
     if: >-
-      github.event_name == 'push' || (github.event.issue.pull_request
+      github.event.issue.pull_request
       && github.event.comment.user.type != 'Bot'
-      && startsWith(github.event.comment.body, '/perf'))
+      && startsWith(github.event.comment.body, '/perf')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -81,7 +74,6 @@ jobs:
       baseline_image: ${{ steps.resolve.outputs.baseline_image }}
       baseline_label: ${{ steps.resolve.outputs.baseline_label }}
       baseline_commit: ${{ steps.resolve.outputs.baseline_commit }}
-      dry_run: ${{ steps.request.outputs.dry_run }}
     steps:
       # The default branch's bench code (issue_comment); nothing of the pull request.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,46 +84,20 @@ jobs:
         with:
           version: "0.9.29"
 
-      - name: Read the request
-        id: request
-        env:
-          EVENT: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          if [[ $EVENT != push ]]; then
-            echo "dry_run=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # TEMPORARY (#4037 acceptance): the request comes from the file, answered as a
-          # dry run.
-          file=.github/perf-comment-proof.txt
-          pr=$(sed -n 's/^pr: *//p' "$file")
-          comment=$(sed -n 's/^comment: *//p' "$file")
-          [[ $pr =~ ^[0-9]+$ ]] || { echo "::error::$file: pr '$pr' is not a number"; exit 1; }
-          [[ $comment == /perf* ]] || { echo "::error::$file: comment '$comment' is not a /perf request"; exit 1; }
-          {
-            echo "dry_run=true"
-            echo "pr=$pr"
-            echo "comment=${comment//[$'\r\n']/ }"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Check the request and pin the images
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          COMMENT_BODY: ${{ github.event.comment.body || steps.request.outputs.comment }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_ID: ${{ github.event.comment.id }}
-          PR: ${{ github.event.issue.number || steps.request.outputs.pr }}
-          ACTOR: ${{ github.event.comment.user.login || github.actor }}
-          ACTOR_TYPE: ${{ github.event.comment.user.type || 'User' }}
-          DRY_RUN: ${{ steps.request.outputs.dry_run }}
+          PR: ${{ github.event.issue.number }}
+          ACTOR: ${{ github.event.comment.user.login }}
+          ACTOR_TYPE: ${{ github.event.comment.user.type }}
         run: |
           set -euo pipefail
           yq -o=json '.' bench/checks.yaml > "$RUNNER_TEMP/checks.json"
-          dry=()
-          if [[ $DRY_RUN == true ]]; then dry=(--dry-run); fi
           uv run --project bench --frozen bench nightly pr-comment resolve \
-            --registry "$RUNNER_TEMP/checks.json" --github-output "$GITHUB_OUTPUT" "${dry[@]}"
+            --registry "$RUNNER_TEMP/checks.json" --github-output "$GITHUB_OUTPUT"
 
   measure:
     needs: resolve
@@ -173,7 +139,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PR: ${{ needs.resolve.outputs.pr }}
-      DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -226,7 +191,5 @@ jobs:
           set -euo pipefail
           night=$RUNNER_TEMP/nightly/nightly.json
           [[ -f $night ]] || night=""
-          dry=()
-          if [[ $DRY_RUN == true ]]; then dry=(--dry-run); fi
           uv run --project bench --frozen bench nightly pr-comment answer --nightly "$night" \
-            --request "$REQUEST" --pr "$PR" --dashboard-url "$DASHBOARD_URL" --measured "$MEASURED" "${dry[@]}"
+            --request "$REQUEST" --pr "$PR" --dashboard-url "$DASHBOARD_URL" --measured "$MEASURED"
