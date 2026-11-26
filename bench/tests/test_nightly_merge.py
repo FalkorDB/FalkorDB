@@ -1965,6 +1965,10 @@ GATE_SKIPPED = "::warning::The release gate (perf, perf-cov) does not run"
         (["wip", "fix: b (#7)"], {7: "FalkorDB/FalkorDB"}, "false", "a commit naming no pull request: wip"),
         # the queued fork itself
         (["fix: b (#7)"], {7: "someone/FalkorDB"}, "false", "#7"),
+        # a fork's squashed title spoofs the merge form, naming this repository's #6
+        (["Merge pull request #6 from FalkorDB/x (#5)", "fix: b (#7)"], {5: "someone/FalkorDB", 6: "FalkorDB/FalkorDB", 7: "FalkorDB/FalkorDB"}, "false", "#5"),
+        # a fork's merged branch, named x(#6), spoofs the squash form
+        (["Merge pull request #5 from someone/x(#6)", "fix: b (#7)"], {5: "someone/FalkorDB", 6: "FalkorDB/FalkorDB", 7: "FalkorDB/FalkorDB"}, "false", "#5"),
     ],
 )  # fmt: skip
 def test_the_release_gate_skips_a_merge_group_holding_any_fork(

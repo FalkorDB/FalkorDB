@@ -185,7 +185,10 @@ jobs:
               # squash "... (#N)"). merge_group.base_sha will not do: it is the
               # previous entry's head, so the range would hold this entry alone.
               # Only first parents: a merged branch's own commits (cherry-picks)
-              # name other pull requests.
+              # name other pull requests. A subject can match both forms (a squashed
+              # title that starts "Merge pull request #M", or a merged branch named
+              # "x(#M)"), and either number may be the one a fork wrote: every
+              # number it names is checked, so a spoof can only skip the gate.
               base=${QUEUE_BASE_REF#refs/heads/}
               merged='^Merge pull request #([0-9]+) '
               squashed='\(#([0-9]+)\)$'
@@ -193,8 +196,11 @@ jobs:
               if git fetch --no-tags --quiet origin "$base" \
                 && subjects=$(git log --first-parent --format=%s "origin/$base..HEAD"); then
                 while IFS= read -r subject; do
-                  if [[ $subject =~ $merged || $subject =~ $squashed ]]; then
-                    prs="$prs ${BASH_REMATCH[1]}"
+                  named=""
+                  if [[ $subject =~ $merged ]]; then named="${BASH_REMATCH[1]}"; fi
+                  if [[ $subject =~ $squashed ]]; then named="$named ${BASH_REMATCH[1]}"; fi
+                  if [ -n "$named" ]; then
+                    prs="$prs $named"
                   else
                     not_ours="$not_ours (a commit naming no pull request: ${subject:0:60})"
                   fi
