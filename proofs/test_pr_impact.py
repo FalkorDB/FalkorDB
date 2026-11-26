@@ -106,7 +106,7 @@ class Spans(unittest.TestCase):
         fns = fns_in(lines)
         ends = pr_impact.ends_of(fns, lines)
         self.assertEqual(pr_impact.owner(fns, ends, 4), 1)  # #[cfg]: changes which b compiles
-        self.assertEqual(pr_impact.owner(fns, ends, 5), 1)  # below the #[cfg], so inside b's span
+        self.assertIsNone(pr_impact.owner(fns, ends, 5))  # a lint attribute, even below the #[cfg]
         self.assertIsNone(pr_impact.owner(fns, ends, 3))
 
     def test_attribute_with_a_trailing_comment_belongs_to_neither(self):
@@ -143,8 +143,53 @@ class Spans(unittest.TestCase):
         lines = ['trait T {', '    fn a(&self);', '    /// doc', '    fn b(', '        &self,', '    ) -> u8;', '}']
         fns = fns_in(lines)
         ends = pr_impact.ends_of(fns, lines)
-        self.assertEqual([e[1:] for e in ends], [(2, 2), (4, 6)])
+        self.assertEqual([e[1:3] for e in ends], [(2, 2), (4, 6)])
         self.assertIsNone(pr_impact.owner(fns, ends, 3))
+
+    def spans(self, lines):
+        fns = fns_in(lines)
+        return fns, pr_impact.ends_of(fns, lines)
+
+    def test_raw_string_in_a_lint_attribute_does_not_hide_a_cfg(self):
+        # review #4038: the raw string's `[` and `"` must not be read as code
+        lines = ['fn z() {}', '#[cfg(feature = "x")]', '#[doc = r#"The "[" character"#]', 'fn a() {}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 2), 1)
+        self.assertIsNone(pr_impact.owner(fns, ends, 3))
+
+    def test_line_comment_inside_a_multiline_attribute(self):
+        lines = ['fn z() {}', '#[cfg( // selected feature', '    feature = "x"', ')]', 'fn a() {}']
+        fns, ends = self.spans(lines)
+        for line in (2, 3, 4):
+            self.assertEqual(pr_impact.owner(fns, ends, line), 1, f'line {line}')
+
+    def test_behavioural_attribute_with_a_trailing_block_comment(self):
+        lines = ['fn z() {}', '#[cfg(feature = "x")] /* reason */', 'fn a() {}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 2), 1)
+
+    def test_brace_inside_a_multiline_string_does_not_end_the_fn(self):
+        lines = ['fn a() -> u8 {', '    let _s = "', '}', '";', '    1', '}']
+        fns, ends = self.spans(lines)
+        for line in (3, 4, 5, 6):
+            self.assertEqual(pr_impact.owner(fns, ends, line), 0, f'line {line}')
+
+    def test_brace_inside_a_multiline_raw_string_does_not_end_the_fn(self):
+        lines = ['fn a() -> u8 {', '    let _s = r##"', '}"#', '"##;', '    1', '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(pr_impact.owner(fns, ends, 5), 0)
+
+    def test_fn_inside_a_string_owns_nothing(self):
+        lines = ['fn a() -> u8 {', '    let _s = "', 'fn fake() {', '";', '    1', '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual([f[1] for f in fns], ['a', 'fake'])
+        for line in (3, 4, 5):
+            self.assertEqual(pr_impact.owner(fns, ends, line), 0, f'line {line}')
+
+    def test_lifetimes_and_char_literals(self):
+        lines = ["fn a<'x>(s: &'x str) -> char {", "    let _ = ('{', '\\'', '\\u{7d}');", "    '}'", '}']
+        fns, ends = self.spans(lines)
+        self.assertEqual(ends[0][1:3], (1, 4))
 
     def test_standalone_block_comments_belong_to_neither(self):
         lines = ['fn a() {}', '/* one */ /* two */', '/* a', '   b */', 'fn b() {}']

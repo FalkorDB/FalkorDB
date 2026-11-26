@@ -89,45 +89,74 @@ COSMETIC_ATTRS = frozenset(('allow', 'warn', 'expect', 'deny', 'forbid', 'doc',
 ATTR_PATH = re.compile(r'#!?\[\s*([A-Za-z_][A-Za-z0-9_]*(?:\s*::\s*[A-Za-z_][A-Za-z0-9_]*)*)')
 
 
-def scan(text):
-    """(code, depth_ok) for one line or joined lines: `text` with string and char
-    literals blanked and a trailing `//` or `/* */` comment cut off, so brackets
-    and line endings can be read without being fooled by `"[x"` or a comment."""
-    out, i, n = [], 0, len(text)
-    while i < n:
-        ch = text[i]
-        if ch == '"':
-            j = i + 1
-            while j < n and text[j] != '"':
-                j += 2 if text[j] == '\\' else 1
-            out.append('""')
-            i = j + 1
-        elif ch == "'" and i + 2 < n and (text[i + 2] == "'" or text[i + 1] == '\\'):
-            j = text.find("'", i + 2 if text[i + 1] != '\\' else i + 3)
-            out.append("''")
-            i = (j if j >= 0 else n) + 1
-        elif text.startswith('//', i):
-            break
-        elif text.startswith('/*', i):
-            j = text.find('*/', i + 2)
-            if j < 0:
+RAW_OPEN = re.compile(r'(?<![A-Za-z0-9_])[bc]?r(#*)"')
+
+
+def lex(lines):
+    """(code, cont) for a Rust file: `code[i]` is line i+1 with comments removed
+    and string and char literals blanked to `""` / `''`, and `cont[i]` is True
+    when line i+1 starts inside a string or block comment. The state carries
+    across lines, so a raw string, a multi-line string or a `/* */` comment can
+    never pass its `[`, `}` or `"` off as code."""
+    code, cont = [], []
+    mode, hashes, depth = None, 0, 0             # mode: None, 'str', 'raw', 'block'
+    for line in lines:
+        cont.append(mode is not None)
+        out, i, n = [], 0, len(line)
+        while i < n:
+            if mode == 'block':
+                if line.startswith('/*', i):
+                    depth, i = depth + 1, i + 2
+                elif line.startswith('*/', i):
+                    depth, i = depth - 1, i + 2
+                    if not depth:
+                        mode = None
+                        out.append(' ')
+                else:
+                    i += 1
+            elif mode == 'str':
+                if line[i] == '\\':
+                    i += 2
+                else:
+                    mode = None if line[i] == '"' else mode
+                    i += 1
+            elif mode == 'raw':
+                if line.startswith('"' + '#' * hashes, i):
+                    mode, i = None, i + 1 + hashes
+                else:
+                    i += 1
+            elif line.startswith('//', i):
                 break
-            out.append(' ')
-            i = j + 2
-        else:
-            out.append(ch)
-            i += 1
-    return ''.join(out).rstrip()
+            elif line.startswith('/*', i):
+                mode, depth, i = 'block', 1, i + 2
+            elif m := RAW_OPEN.match(line, i):
+                out.append('""')
+                mode, hashes, i = 'raw', len(m[1]), m.end()
+            elif line[i] == '"':
+                out.append('""')
+                mode, i = 'str', i + 1
+            elif line[i] == "'" and i + 1 < n and line[i + 1] == '\\':
+                j = line.find("'", i + 3)                 # '\n', '\'', '\u{7d}'
+                out.append("''")
+                i = (j if j >= 0 else n) + 1
+            elif line[i] == "'" and i + 2 < n and line[i + 2] == "'":
+                out.append("''")                          # 'x'; otherwise a lifetime
+                i += 3
+            else:
+                out.append(line[i])
+                i += 1
+        code.append(''.join(out).rstrip())
+    return code, cont
 
 
-def attr_start(lines, j):
+def attr_start(lines, code, j):
     """1-based line of the `#[` that opens an attribute ending on line `j`
-    (possibly multi-line, possibly followed by a comment), or None when line `j`
-    does not close an attribute that fills its lines."""
+    (possibly multi-line), or None when line `j` does not close an attribute
+    that fills its lines. `code` is lex(lines)[0]."""
     for k in range(j, 0, -1):
-        s = lines[k - 1].strip()
+        s = code[k - 1].strip()
         if s.startswith(('#[', '#![')):
-            text = scan(' '.join(lines[i - 1].strip() for i in range(k, j + 1)))
+            text = '\n'.join(code[i - 1].strip() for i in range(k, j + 1))
             depth = 0
             for n, ch in enumerate(text):
                 depth += (ch == '[') - (ch == ']')
@@ -135,70 +164,36 @@ def attr_start(lines, j):
                     # the attribute's own `]` must be the last character
                     return k if n == len(text) - 1 else None
             return None
-        if not s or scan(s).endswith((';', '{', '}')):
+        if not lines[k - 1].strip() or s.endswith((';', '{', '}')):
             return None
     return None
 
 
-def is_cosmetic(lines, k):
+def is_cosmetic(code, k):
     """True when the attribute opening on line `k` is one of COSMETIC_ATTRS."""
-    m = ATTR_PATH.match(lines[k - 1].strip())
+    m = ATTR_PATH.match(code[k - 1].strip())
     return bool(m) and re.sub(r'\s+', '', m[1]) in COSMETIC_ATTRS
 
 
-def only_comments(text):
-    """True when `text` is nothing but whitespace and complete (possibly
-    nested) `/* */` block comments: `/* a */ let x = 1; /* b */` is not."""
-    depth, i = 0, 0
-    while i < len(text):
-        pair = text[i:i + 2]
-        if pair == '/*':
-            depth, i = depth + 1, i + 2
-        elif pair == '*/' and depth:
-            depth, i = depth - 1, i + 2
-        else:
-            if not depth and not text[i].isspace():
-                return False
-            i += 1
-    return depth == 0
-
-
-def lead_of(lines, start):
-    """(first, code) for the attributes, comments and blank lines directly above
-    the item on line `start`: `first` is the lead's first line, `code` the first
-    line of its topmost non-cosmetic attribute (`start` when there is none).
-    Lines in [first, code) belong to no fn; [code, start) to the item below."""
-    j, code = start - 1, start
+def lead_of(lines, code, start):
+    """(first, behavioural) for the attributes, comments and blank lines directly
+    above the item on line `start`: `first` is the lead's first line, and
+    `behavioural` the lines of its attributes outside COSMETIC_ATTRS, which
+    belong to the item below; the rest of the lead belongs to no fn. A line
+    holding code beside a comment or attribute (`/* a */ let x = 1;`) ends the
+    lead."""
+    j, behavioural = start - 1, set()
     while j >= 1:
-        s = lines[j - 1].strip()
-        if not s or s.startswith('//'):
-            j -= 1
-        elif s.endswith('*/'):
-            # a block comment, possibly multi-line: back to the line it opens on
-            k = j
-            while k >= 1 and not lines[k - 1].strip().startswith('/*'):
-                if k < j and '*/' in lines[k - 1]:
-                    k = 0                         # another comment's end: not one block
-                    break
-                k -= 1
-            if k < 1 or not only_comments('\n'.join(lines[k - 1:j])):
-                break                             # code shares a line with the comment
-            j = k - 1
-        elif s.startswith(('#[', '#![')) or scan(s).endswith(']'):
-            k = attr_start(lines, j)
-            if k is None:
-                break
-            if not is_cosmetic(lines, k):
-                code = k
+        s = code[j - 1].strip()
+        if not s:
+            j -= 1                                # blank, or only comments
+        elif s.endswith(']') and (k := attr_start(lines, code, j)) is not None:
+            if not is_cosmetic(code, k):
+                behavioural.update(range(k, j + 1))
             j = k - 1
         else:
             break
-    return j + 1, code
-
-
-def lead_start(lines, start):
-    """First line of the attributes, comments and blank lines above line `start`."""
-    return lead_of(lines, start)[0]
+    return j + 1, frozenset(behavioural)
 
 
 def indent(line):
@@ -209,21 +204,22 @@ ITEM = re.compile(r'(pub(\([^)]*\))?\s+)?(unsafe\s+)?'
                   r'(mod|impl|struct|enum|union|trait|const|static|type|use|extern|macro_rules!)\b')
 
 
-def close_of(lines, start):
+def close_of(lines, code, cont, start):
     """Line of the `}` closing the fn on line `start`, read from rustfmt's layout:
     the first later line at the fn's own indent that starts with `}` once the
-    body has opened. None when the layout is not that (the caller then ends the
-    span at the next item), so an odd shape over-reports instead of hiding code."""
+    body has opened. Lines that start inside a string or comment are skipped.
+    None when the layout is not that (the caller then ends the span at the next
+    item), so an odd shape over-reports instead of hiding code."""
     base = indent(lines[start - 1])
-    head = scan(lines[start - 1].strip())
+    head = code[start - 1].strip()
     opened = '{' in head
     if opened and head.count('{') == head.count('}'):
         return start                              # `fn b() {}` on one line
     if not opened and head.endswith(';'):
         return start                              # a bodyless trait fn
     for k in range(start + 1, len(lines) + 1):
-        s = scan(lines[k - 1].strip())
-        if not s:
+        s = code[k - 1].strip()
+        if not s or cont[k - 1]:
             continue
         ind = indent(lines[k - 1])
         if ind < base:
@@ -243,43 +239,55 @@ def close_of(lines, start):
     return None
 
 
+FN_WORD = re.compile(r'\bfn\b')
+
+
 def ends_of(fns, lines):
-    """(lead, first, last) for each fn: its span is [first, last], and
-    [lead, first) is the comments and cosmetic attributes above it. `last` is the fn's closing brace, or
-    when its layout is not rustfmt's, the line before the leading attributes and
-    comments of the next item at the fn's indent or shallower (the end of the
-    file for the last one). `first` is the fn line, or the topmost attribute
-    above it that can change behaviour (`#[cfg]`, `#[target_feature]`, ...). Comments, blank
-    lines and lint attributes between two fns therefore belong to neither."""
+    """(lead, first, last, behavioural) for each fn: its body is [first, last]
+    and [lead, first) is the lead above it, of which only the `behavioural`
+    lines (attributes that can change behaviour: `#[cfg]`, `#[target_feature]`,
+    ...) belong to the fn. `first` is the fn line and `last` is
+    the fn's closing brace, or when its layout is not rustfmt's, the line
+    before the lead of the next item at the fn's indent or shallower (the end
+    of the file for the last one). Comments, blank lines and lint attributes between
+    two fns therefore belong to neither. A `fn` inside a string or comment owns
+    nothing."""
+    code, cont = lex(lines)
     spans = []
     for i, (start, _, _) in enumerate(fns):
-        lead, first = lead_of(lines, start)
-        last = close_of(lines, start)
+        if cont[start - 1] or not FN_WORD.search(code[start - 1]):
+            spans.append((start, start, start - 1, frozenset()))   # not a real fn: owns nothing
+            continue
+        lead, behavioural = lead_of(lines, code, start)
+        last = close_of(lines, code, cont, start)
         if last is None:
             base = indent(lines[start - 1])
             last = len(lines)
             for k in range(start + 1, len(lines) + 1):
-                l = lines[k - 1]
-                if not l.strip() or indent(l) > base:
+                s = code[k - 1].strip()
+                if not s or cont[k - 1] or indent(lines[k - 1]) > base:
                     continue
-                s = l.strip()
-                if any(f[0] == k for f in fns[i + 1:]) or ITEM.match(s) or s.startswith('}'):
-                    last = (lead_start(lines, k) - 1) if not s.startswith('}') else k
+                if s.startswith('}'):
+                    last = k
                     break
-        spans.append((lead, first, max(start, last)))
+                if any(f[0] == k for f in fns[i + 1:]) or ITEM.match(s):
+                    last = lead_of(lines, code, k)[0] - 1
+                    break
+        spans.append((lead, start, max(start, last), behavioural))
     return spans
 
 
 def owner(fns, ends, line):
     """Index of the innermost fn whose span holds `line`, or None when none
     does (between fns, or in the comments and lint attributes above any fn,
-    nested ones included).
-    Innermost, so code after a nested fn still belongs to the outer fn."""
+    nested ones included). Innermost, so code after a nested fn still belongs
+    to the outer fn."""
     best = None
     for i, (start, _, _) in enumerate(fns):
-        lead, first, last = ends[i]
+        lead, first, last, behavioural = ends[i]
         if lead <= line < first:
-            return None                           # a doc comment or lint attribute, even on a nested fn
+            # a doc comment or lint attribute belongs to no fn, even on a nested fn
+            return i if line in behavioural else None
         if first <= line <= last and (best is None or start > fns[best][0]):
             best = i
     return best
