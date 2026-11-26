@@ -1506,3 +1506,23 @@ fn only_the_frozen_form_is_sync() {
     shareable::<Frozen<Matrix<u64>>>();
     shareable::<Frozen<Vector<Edge>>>();
 }
+
+#[test]
+fn try_from_raw_adopts_only_a_handle_of_its_own_element_type() {
+    setup();
+    let raw = matrix::<u64>(2, 2, &[(0, 1, 7)]).into_raw();
+    // SAFETY: a live matrix nothing else owns.
+    let raw = unsafe { Matrix::<f64>::try_from_raw(raw) }.expect_err("holds u64, not f64");
+    // SAFETY: handed back untouched, so still live and unowned.
+    let raw = unsafe { Matrix::<Edge>::try_from_raw(raw) }.expect_err("not the user type");
+    // SAFETY: as above.
+    let m = unsafe { Matrix::<u64>::try_from_raw(raw) }.expect("its own type");
+    assert_eq!(entries(&m), [(0, 1, 7)]);
+
+    let raw = vector::<Edge>(3, &[]).into_raw();
+    // SAFETY: a live vector nothing else owns.
+    let raw = unsafe { Vector::<bool>::try_from_raw(raw) }.expect_err("holds Edge");
+    // SAFETY: handed back untouched.
+    let v = unsafe { Vector::<Edge>::try_from_raw(raw) }.expect("its own type");
+    assert_eq!(v.size(), 3);
+}

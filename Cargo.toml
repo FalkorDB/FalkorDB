@@ -3,6 +3,7 @@ members = [
     "crates/graphblas-sys",
     "crates/graphblas",
     "crates/lagraph-sys",
+    "crates/lagraph",
     "graph",
     "fuzz",
     "runtime-fuzz-target",
