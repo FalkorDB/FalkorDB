@@ -10,6 +10,7 @@ import io
 import json
 import math
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -1807,6 +1808,97 @@ def github_expression(expr, context):
         return value
 
     return eval("".join(python), {"_get": _get, "__builtins__": {}})
+
+
+def in_env(value):
+    """An expression's value as `env` receives it: a boolean is 'true' or 'false'."""
+    return ("true" if value else "false") if isinstance(value, bool) else value
+
+
+@pytest.mark.parametrize(
+    "perf_below, same_repo, gate_runs",
+    [
+        ("6.3.0", "true", True),  # a version branch's queue, a pull request from this repository
+        ("6.3.0", "false", False),  # ... from a fork: no gate, and ci-gate does not require it
+        ("", "true", False),  # a pull request, or main's queue
+    ],
+)
+def test_the_release_gate_runs_only_for_a_pull_request_from_this_repository(
+    tmp_path, perf_below, same_repo, gate_runs
+):
+    import shutil
+
+    if shutil.which("jq") is None:
+        pytest.skip("jq is not installed")
+    jobs = workflow("rust-pr.yml")["jobs"]
+    assert jobs["check-files"]["outputs"]["same_repo"] == "${{ steps.fork.outputs.same_repo }}"
+    outputs = {"perf_below": perf_below, "same_repo": same_repo}
+    context = {"needs": {"check-files": {"outputs": outputs}, "ci-pipeline": {"result": "success"}}}
+    for name in ("perf", "perf-cov"):
+        assert bool(github_expression(jobs[name]["if"], context)) is gate_runs, name
+    gate = jobs["ci-gate"]
+    step = gate["steps"][0]
+    required = in_env(github_expression(step["env"]["PERF_REQUIRED"], context))
+    assert required == ("true" if gate_runs else "false")
+    (tmp_path / "bin").mkdir()
+
+    def ci_gate(perf_result):
+        results = {name: {"result": "success", "outputs": {}} for name in gate["needs"]}
+        results["perf"]["result"] = results["perf-cov"]["result"] = perf_result
+        env = {
+            "BIN": str(tmp_path / "bin"),
+            "RESULTS": json.dumps(results),
+            "EVENT": "merge_group",
+            "PERF_REQUIRED": required,
+        }
+        return run_step(step["run"], tmp_path, env).returncode == 0
+
+    if gate_runs:
+        assert ci_gate("success") and not ci_gate("skipped")
+    else:
+        assert ci_gate("skipped")  # a fork's queued pull request merges without the gate
+
+
+@pytest.mark.parametrize(
+    "event, head_repo, same_repo",
+    [
+        ("merge_group", "FalkorDB/FalkorDB", "true"),
+        ("merge_group", "someone/FalkorDB", "false"),
+        ("pull_request", "FalkorDB/FalkorDB", "true"),
+        ("pull_request", "someone/FalkorDB", "false"),
+    ],
+)
+def test_check_files_says_whether_the_pull_request_is_from_this_repository(
+    tmp_path, event, head_repo, same_repo
+):
+    steps = workflow("rust-pr.yml")["jobs"]["check-files"]["steps"]
+    step = next(s for s in steps if s.get("id") == "fork")
+    changed = tmp_path / "changed-files.txt"
+    changed.write_text("graph/src/lib.rs\n")  # no infrastructure path
+    script = step["run"].replace("/tmp/changed-files.txt", str(changed))
+    if subprocess.run(["sed", "--version"], capture_output=True, check=False).returncode:
+        script = script.replace("\\+", "\\{1,\\}")  # BSD sed (macOS): the POSIX spelling of \+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # under merge_group the queued pull request's head repository comes from the API
+    fake_tool(
+        bin_dir, "gh", f'[[ $2 == /repos/FalkorDB/FalkorDB/pulls/7 ]] && echo "{head_repo}"\n'
+    )
+    out = tmp_path / "output"
+    env = {
+        "BIN": str(bin_dir),
+        "GITHUB_OUTPUT": str(out),
+        "GITHUB_REPOSITORY": "FalkorDB/FalkorDB",
+        "EVENT": event,
+        "PR_HEAD_REPO": head_repo if event == "pull_request" else "",
+        "REF": "refs/heads/gh-readonly-queue/6.2/pr-7-" + "a" * 40,
+        "PATTERN": "^build/",
+    }
+    run = run_step(script, tmp_path, env)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert dict(line.split("=", 1) for line in out.read_text().splitlines()) == {
+        "same_repo": same_repo
+    }
 
 
 def test_every_perf_result_and_gate_upload_replaces_an_earlier_attempts_artifact():

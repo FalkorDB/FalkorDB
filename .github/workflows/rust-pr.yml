@@ -53,6 +53,10 @@ jobs:
       # X.Y+1.0 in the merge queue of version branch X.Y, else empty: the release
       # gate runs only when it is set (the `perf` and `perf-cov` jobs).
       perf_below: ${{ steps.key.outputs.perf_below }}
+      # 'true' when the pull request (the queued one, under merge_group) comes
+      # from this repository: the release gate runs only for those, since its
+      # VM gets compute write access.
+      same_repo: ${{ steps.fork.outputs.same_repo }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -144,6 +148,7 @@ jobs:
       # the ref — gh-readonly-queue/<base>/pr-<N>-<sha> — and its head repo
       # checked. Anything unresolvable fails closed.
       - name: Refuse fork changes to build or CI infrastructure
+        id: fork
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -166,9 +171,11 @@ jobs:
             fi
           fi
           if [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            echo "same_repo=true" >> "$GITHUB_OUTPUT"
             echo "same-repository change; infrastructure paths are allowed"
             exit 0
           fi
+          echo "same_repo=false" >> "$GITHUB_OUTPUT"
           # Same set the toolchain trigger watches, plus .github/ — anything
           # narrower leaves a path that sets file_changed=true, starts the
           # privileged `docker` job, and fails on the denied push instead of
@@ -499,9 +506,13 @@ jobs:
   # (@main) and carries only these jobs and ci-gate's rule. An infrastructure
   # error fails the gate too; "Re-run all jobs" clears it
   # (tests/perf/vm/README.md says why not "failed").
+  #
+  # Only for a pull request from this repository: the gate runs the queued
+  # engine code on a GCE VM whose service account has compute write access. A
+  # fork's queued pull request skips both jobs, and ci-gate does not require them.
   perf-cov:
     needs: [check-files, ci-pipeline]
-    if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.ci-pipeline.result == 'success' }}
+    if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.check-files.outputs.same_repo == 'true' && needs.ci-pipeline.result == 'success' }}
     permissions:
       contents: read
       # benchmark-cov's comment on the pull request
@@ -515,7 +526,7 @@ jobs:
 
   perf:
     needs: [check-files, ci-pipeline]
-    if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.ci-pipeline.result == 'success' }}
+    if: ${{ !cancelled() && needs.check-files.outputs.perf_below != '' && needs.check-files.outputs.same_repo == 'true' && needs.ci-pipeline.result == 'success' }}
     permissions:
       contents: read
       actions: read
@@ -567,7 +578,7 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
           EVENT: ${{ github.event_name }}
-          PERF_REQUIRED: ${{ needs.check-files.outputs.perf_below != '' }}
+          PERF_REQUIRED: ${{ needs.check-files.outputs.perf_below != '' && needs.check-files.outputs.same_repo == 'true' }}
         run: |
           set -euo pipefail
           echo "$RESULTS" | jq .
@@ -578,7 +589,8 @@ jobs:
           # runs on a pull request only when labelled. In the merge queue
           # `macos` must succeed: the release publishes the file it uploads.
           # `perf` and `perf-cov` (the release gate) must succeed in the merge
-          # queue of a version branch, and are skipped everywhere else.
+          # queue of a version branch for a pull request from this repository,
+          # and are skipped everywhere else (a fork's queued pull request too).
           echo "$RESULTS" | jq -e --arg event "$EVENT" --arg perf "$PERF_REQUIRED" '
             (.docker.result | . == "success" or . == "skipped")
             and (.macos.result | . == "success" or (. == "skipped" and $event != "merge_group"))
