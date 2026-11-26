@@ -62,6 +62,21 @@ structure P where
   remL : FMap (List Nat)
   /-- `staged_labels_removed` (#3459): removals that only cancelled a staged add. -/
   stagedRem : Nat
+  /-- `cancelled_properties` (#3030): the non-null attributes the cancelled nodes and
+  relationships were staged with (`count_set` of each unwound list). -/
+  cancelledP : Nat
+
+/-- `count_set` (pending.rs): how many staged attributes set a value (are not `Null`). -/
+def countSet (attrs : List Entry) : Nat := (attrs.filter (fun e => !e.2.isNull)).length
+
+/-- **`countSet_eq_import`**: `count_set` is exactly the `properties_set` count `import_attrs`
+reports for a created entity's staged list (`Props.commitNew_count`), so a cancelled entity's
+properties are counted as they would have been had it been committed. -/
+theorem countSet_eq_import (attrs : List Entry) :
+    countSet attrs = (commitNew attrs).length ∧ countSet attrs = refSet attrs := ⟨rfl, rfl⟩
+
+/-- `count_set` skips `Null` entries: `{v: 1, w: null}` counts 1. -/
+theorem countSet_example : countSet [(0, .inl 1), (1, .null), (2, .heap "x")] = 2 := rfl
 
 /-! ## Sets -/
 

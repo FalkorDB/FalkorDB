@@ -1,20 +1,15 @@
 /-
 # `Nodes created` / `Nodes deleted` statistics vs. C
 
-`Pending::commit` (pending.rs, counters at :1344, :1415) reports
-`nodes_created += created_nodes.len()` and `nodes_deleted += deleted_nodes.len()`.
-A node created and deleted in the same segment is unwound out of
-`created_nodes` by `delete_pending_node` (pending.rs, cancel at :886) into
-`cancelled_nodes`, which no statistic reads, so it is reported as neither
-created nor deleted. The C engine counts every create and every delete.
+A node created and deleted in the same segment is unwound out of `created_nodes` by
+`delete_pending_node` (pending.rs) into `cancelled_nodes`; since #3030 `Pending::commit` adds
+`cancelled_nodes.len()` to both `nodes_created` and `nodes_deleted` (and likewise
+`cancelled_relationships.len()` to the relationship counters, `cancelled_properties` to
+`properties_set`: `PC.commit_spec`, `PC.commit_cancelled_props`), on top of
+`created_nodes.len()` / `deleted_nodes.len()`. The C engine counts every create and every delete.
 
-`c_eq_rust_plus_cancelled` proves the discrepancy is *exactly* the cancelled
-set, for every well-formed segment: adding `cancelled_nodes.len()` to both
-counters is the whole fix. `cancel_example` is the Lean witness of
-`CREATE (a) DELETE a` (Rust: nothing; C: `Nodes created: 1, Nodes deleted: 1`).
-The same holds for relationships cascaded away with a cancelled node
-(`cancelled_relationships`), and for the properties/labels those entities
-carried — confirmed live, not modelled separately.
+`rust_eq_c` proves the two agree for every well-formed segment; `cancel_counted` is
+`CREATE (a) DELETE a` (Rust and C: `Nodes created: 1, Nodes deleted: 1`).
 -/
 namespace PendingCommit.Stats
 
@@ -81,19 +76,23 @@ theorem run_inv : ∀ (ops : List Op) (p : P), Inv p → RunWF p ops → Inv (ru
   | [], _, hp, _ => hp
   | op :: ops, p, hp, hw => run_inv ops (step p op) (step_inv p op hp hw.1) hw.2
 
-/-- **`c_eq_rust_plus_cancelled`**: over any well-formed segment, C's
-`Nodes created` is Rust's plus the cancelled count, and likewise for
-`Nodes deleted`. -/
-theorem c_eq_rust_plus_cancelled (ops : List Op) (h : RunWF ⟨[], [], [], 0, 0⟩ ops) :
-    let r := run ⟨[], [], [], 0, 0⟩ ops
-    r.cCreated = r.created.length + r.cancelled.length ∧
-    r.cDeleted = r.deleted.length + r.cancelled.length := by
-  exact run_inv ops _ ⟨rfl, rfl⟩ h
+/-- The counters `Pending::commit` reports for the segment (`PC.commit_spec`): the cancelled
+nodes once as created and once as deleted, plus `created_nodes` / `deleted_nodes`. -/
+def rustCreated (p : P) : Nat := p.cancelled.length + p.created.length
+def rustDeleted (p : P) : Nat := p.cancelled.length + p.deleted.length
 
-/-- `CREATE (a) DELETE a`: Rust reports 0/0, C reports 1/1. -/
-theorem cancel_example :
+/-- **`rust_eq_c`** (#3030): over any well-formed segment, Rust's `Nodes created` and
+`Nodes deleted` are C's. -/
+theorem rust_eq_c (ops : List Op) (h : RunWF ⟨[], [], [], 0, 0⟩ ops) :
+    let r := run ⟨[], [], [], 0, 0⟩ ops
+    rustCreated r = r.cCreated ∧ rustDeleted r = r.cDeleted := by
+  obtain ⟨h1, h2⟩ := run_inv ops _ ⟨rfl, rfl⟩ h
+  exact ⟨by simp only [rustCreated]; omega, by simp only [rustDeleted]; omega⟩
+
+/-- `CREATE (a) DELETE a`: Rust and C both report 1/1. -/
+theorem cancel_counted :
     let r := run ⟨[], [], [], 0, 0⟩ [.create 0, .delete 0]
-    (r.created.length, r.deleted.length) = (0, 0) ∧ (r.cCreated, r.cDeleted) = (1, 1) := by
+    (rustCreated r, rustDeleted r) = (1, 1) ∧ (r.cCreated, r.cDeleted) = (1, 1) := by
   decide
 
 end PendingCommit.Stats

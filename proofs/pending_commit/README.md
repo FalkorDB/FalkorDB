@@ -53,10 +53,10 @@ A `UNIQUE` check looks each affected member's key up through the constraint's in
 | `insertAttrs_spec`, `importResolved_spec` | The store's batch writes give each entity exactly its own write | `StoreApi.lean` |
 | `encode_decode_roundtrip` | RDB encode then decode restores every span | `StoreCodec.lean` |
 | `structural_partition` | Memory accounting: structural plus per-entity bytes equal the whole allocation, no underflow | `StoreMem.lean` |
-| `commit_spec` | A successful `Pending::commit` grows each counter (nodes and relationships created, labels removed, nodes deleted, relationships deleted including the implicit ones) by exactly the staged changes, and the constraints hold afterwards | `PendingCommitOp.lean` |
+| `commit_spec` | A successful `Pending::commit` grows each counter (nodes and relationships created, labels removed, nodes deleted, relationships deleted including the implicit ones) by exactly the staged changes, cancelled entities counted as both created and deleted (#3030), and the constraints hold afterwards | `PendingCommitOp.lean` |
 | `uniqueViolated_spec`, `uniqueViolated_agrees` | The index-lookup UNIQUE check is right, and agrees with the old label scan | `UniqueIndex.lean` |
 | `sound_under_Good`, `createRust_preserves_Good` | Snapshot reads are right while no snapshotted id is live; the allocator keeps that | `Snapshot.lean` |
-| `c_eq_rust_plus_cancelled` | C's created/deleted counts = Rust's + the entities created and deleted in the same segment | `Stats.lean` |
+| `rust_eq_c`, `commit_cancelled_props`, `deletePendingNode_cancelledP` | Since #3030 Rust's created/deleted counts equal C's, entities created and deleted in the same segment included, and their properties count as set (`count_set` = `import_attrs`' count: `countSet_eq_import`). `commit_cancelled_props` holds only when the four staged attribute maps are empty (`newN`, `existN`, `newR`, `existR`); with other attribute writes in the same commit the additive `properties_set` is not proven, so the `commit` row (`pending.rs`, line 1384) is CONDITIONAL on that premise | `Stats.lean`, `PendingCommitOp.lean`, `PendingCancel.lean` |
 | `nthLive_spec`, `prEncode_eq_main`, `encRoarPR_eq` | `SAVE` finds its first live id by rank/select (`nth_live_id`) and seeks the roaring bitmap instead of skipping; the output equals the earlier windowed encoding for every `count > 0` (`count = 0` is unreachable: `encoder_counts_pos`). The roaring crate is trusted at the `RSet` level (`SaveRoaring.lean`), checked by a randomized scratch test | `SaveNthLive.lean`, `SaveSlice.lean`, `SaveLayout.lean` |
 | `enforce_spec`, `enforce_skips_failed` | `enforce_constraints` skips only FAILED constraints, as C's `Schema_EnforceConstraints`; an UNDER CONSTRUCTION one binds writes | `PendingCommitOp.lean` |
 
@@ -74,14 +74,13 @@ The Rust repros are in `graph/tests/lean_pending_commit.rs` (run locally, not co
 
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
-| W2-pending-2 | `cancel_example`, `c_eq_rust_plus_cancelled` | Entities created and deleted in the same segment vanish from the statistics: `CREATE (a:L {v:1, w:2}) DELETE a` reports only `Labels added`; C reports `Nodes created: 1, Properties set: 2, Nodes deleted: 1` | **Open** |
 | W2-pending-3 | (no Lean theorem; found while modelling) | Writes to a deleted relationship are applied and counted: `REMOVE r.v` after `DELETE r`, and `SET r.v` after a `DETACH DELETE` cascade | **Open** |
 | setSpan u16 | `setSpan_u16_wrap` | `set_span` stores `n as u16`, so 65,536+ attributes on one entity wrap and the span reads empty. Only a malformed RDB can reach it; `setSpan_cast_exact` shows sorted unique ids always fit | **Open**, not reproduced |
 | #3447 | `bug3447_cascade_drops_type_key` (property `CancelledTypeRegistered`) | A pending edge of a new type cascaded by `DETACH DELETE` empties its `created_rels_by_type` group, which is dropped, so commit never registers the type; the replica then sees an id gap (effects_emit_apply) | **Open** (#3447) |
 
 Also confirmed live: property counters are net at commit in Rust and per clause in C (`CREATE (n {v:1}) SET n.v = 2`: Rust set 1, C set 2 / removed 1). That is a policy question, not a bug, and is recorded in `FINDINGS.md`. W4-fn-1 (labels staged before a `DELETE` are missing from the deleted snapshot) is also in that area; it was confirmed by another project and its repro tests are in the same test file.
 
-**CONDITIONAL rows.** `check_node_constraint` and `check_edge_constraint` rest on the index contract the Rust documents (hypotheses `hIdx`/`hScan` in `UniqueIndex.lean`): the supporting index returns every live label member not written by this commit whose key values can be matched exactly, and the label matrix (or tensor) lists every live member. The RediSearch side is FFI, so this is not proven here.
+**CONDITIONAL rows.** `check_node_constraint` and `check_edge_constraint` rest on the index contract the Rust documents (hypotheses `hIdx`/`hScan` in `UniqueIndex.lean`): the supporting index returns every live label member not written by this commit whose key values can be matched exactly, and the label matrix (or tensor) lists every live member. The RediSearch side is FFI, so this is not proven here. The `commit` row (`pending.rs`, line 1384) is CONDITIONAL on the four staged attribute maps being empty (`commit_cancelled_props`).
 
 ## Files
 
@@ -98,7 +97,7 @@ Also confirmed live: property counters are net at commit in Rust and per clause 
 | `Labels.lean` | Staged labels: `overlay_eq_ref`, `commit_eq_ref`, `removeOp_no_dup_push` |
 | `Props.lean` | Staged properties: `stage_sorted_lastWrite`, `read_your_writes_*`, `replace_reads_src` |
 | `Snapshot.lean` | Deleted-entity snapshots and id reuse: `sound_under_Good`, `createRust_preserves_Good` |
-| `Stats.lean` | Write statistics: `c_eq_rust_plus_cancelled`, `cancel_example` |
+| `Stats.lean` | Write statistics: `rust_eq_c`, `cancel_counted` |
 | `PendingAttrs.lean`, `PendingState.lean`, `PendingRels.lean`, `PendingDeg.lean`, `PendingDocs.lean` | All of `pending.rs`: validation, staging, reads, created relationships, degrees (`fixed2769_created_deleted`, `deletedDeg_skips_created`, `pendingDeg_skips_deleted`), `IndexDocs`, `clear`, `effects_count` |
 | `PendingCommitOp.lean` | `Pending::commit` and constraint enforcement: `commit_spec`, `check_spec`, `enforce_spec` |
 | `UniqueIndex.lean` | The index-lookup UNIQUE check: `uniqueViolated_spec`, `uniqueViolated_agrees`, `checkUnique_spec` |
@@ -116,11 +115,11 @@ Path dependencies (`lakefile.toml`): [`../runtime_core`](../runtime_core), for t
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 144 |
+| PROVEN | 143 |
 | MODELLED | 12 |
 | NOT COVERED | 27 |
 | AXIOMATISED | 3 |
-| CONDITIONAL | 2 |
+| CONDITIONAL | 3 |
 
 - **All of `attribute_store.rs` is PROVEN**, and 70 of 72 `pending.rs` functions; the other two are the CONDITIONAL constraint checks.
 - **AXIOMATISED:** `set_node_labels_product`, `set_nodes_labels_bulk`, `remove_nodes_labels`. They call GraphBLAS on the label matrices, which is assumed to behave as set insert and delete, so commit is `(C ∪ set) \ remove`.
@@ -153,4 +152,4 @@ bash proofs/coverage.sh                  # repo-wide coverage report
 2. Update its Lean model to match.
 3. Re-run the build.
 
-If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for W2-pending-2 should turn the matching counterexample into a `pre<PR>_` history theorem and add the proof of the fixed behaviour.
+If a theorem stops holding, either the change introduced a bug or the theorem needs a new hypothesis. Either way, say which in the PR. A fix for an open bug replaces its counterexample with the correctness theorem (git history keeps the old one).

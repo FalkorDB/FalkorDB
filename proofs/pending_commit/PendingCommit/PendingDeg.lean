@@ -145,7 +145,7 @@ theorem deletedDeg_skips_created (p : P) (ep : Nat → Option (Nat × Nat)) (ty 
     intro r hr; simp [h r hr]
   rw [this]; rfl
 
-def P0 : P := ⟨[], [], [], [], [], [], [], [], [], [], [], [], [], [], 0⟩
+def P0 : P := ⟨[], [], [], [], [], [], [], [], [], [], [], [], [], [], 0, 0⟩
 
 /-- **`fixed2769_created_deleted`** (#2769, fixed by #3520): create edge 0 between nodes 0 and 1 in this
 batch, delete it, ask for `indegree(1)`: no panic (the committed graph is not asked about edge 0), the
