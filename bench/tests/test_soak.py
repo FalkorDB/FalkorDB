@@ -10,6 +10,7 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -1437,17 +1438,24 @@ def test_a_release_soak_run_kills_the_servers_its_scenario_left_and_no_other(
 def test_a_release_soak_script_stopped_midway_kills_its_running_scenario(
     tmp_path, unrelated_soak_server
 ):
-    pidfile = tmp_path / "server.pid"
-    argv = _in_bash(tmp_path, f'run_in_group bash "{tmp_path / "scenario.sh"}" "{pidfile}" 300')
+    pidfile, group_file = tmp_path / "server.pid", tmp_path / ".scenario-group"
+    argv = _in_bash(
+        tmp_path,
+        f'SOAK_GROUP_FILE="{group_file}"\n'
+        f'run_in_group bash "{tmp_path / "scenario.sh"}" "{pidfile}" 300',
+    )
     script = subprocess.Popen(argv)
     try:
         deadline = time.time() + 30
         while not (pidfile.exists() and pidfile.read_text().strip()) and time.time() < deadline:
             time.sleep(0.05)
         server = int(pidfile.read_text())
+        # what a SIGKILLed script leaves to stop by hand: the group its scenario runs in
+        assert int(group_file.read_text()) == os.getpgid(server)
         script.send_signal(signal.SIGTERM)
         assert script.wait(30) == 143
         assert _gone(server)
+        assert not group_file.exists()
         assert unrelated_soak_server.poll() is None
     finally:
         script.kill()
@@ -1460,6 +1468,39 @@ def test_a_release_soak_script_runs_each_scenario_in_a_group_of_its_own(name):
     assert "pkill" not in text
     assert 'source "$S/process_group.sh"' in text
     assert re.search(r'run_in_group timeout .+ "\$\{PY\[@\]\}" -I "\$f"', text)
+    # s09 uses --port and --port+1, and reserves --port+2
+    assert text.index("refuse_busy_ports 19000 19001 19002 ||") < text.index("run_in_group ")
+    # a run directory kept from an earlier run starts without that run's markers
+    assert re.search(
+        r'mkdir -p "\$o"; rm -f "\$o/\.done" "\$o/\.rc"; echo "\$LABEL" > "\$o/\.commit"', text
+    )
+
+
+def test_a_release_soak_run_refuses_to_start_on_a_port_that_answers(tmp_path):
+    group_file = tmp_path / ".scenario-group"
+    group_file.write_text("4242\n")  # left by an earlier run that was SIGKILLed
+    with socket.socket() as gone:
+        gone.bind(("127.0.0.1", 0))
+        free = gone.getsockname()[1]
+    with socket.socket() as listening:
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        busy = listening.getsockname()[1]
+
+        def refuse(*ports):
+            body = f'SOAK_GROUP_FILE="{group_file}"\nrefuse_busy_ports {" ".join(map(str, ports))}'
+            return subprocess.run(
+                _in_bash(tmp_path, body + '; echo "rc=$?"'),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+        out = refuse(free, busy)
+        assert "rc=1" in out.stdout
+        assert f"a server already answers on port(s) {busy}; stop it first" in out.stderr
+        assert "an earlier run's scenario may still run: kill -9 -- -4242" in out.stderr
+        assert "rc=0" in refuse(free).stdout
 
 
 def _soak_run(root, name, summary=None, rc=0, done_at=None):

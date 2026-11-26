@@ -6,8 +6,13 @@
 # on the same ports: soakkit refuses to start on a port that already answers.
 #
 # usage: run_in_group <command> [args...]    returns the command's exit status
+#        refuse_busy_ports <port>...            at start: 1 (and why) if one already answers
+#
+# SOAK_GROUP_FILE, when the script sets it, holds the running scenario's group id, so a
+# script that was itself SIGKILLed (no trap runs) leaves a way to stop what it started.
 
 SOAK_GROUP=
+SOAK_GROUP_FILE=${SOAK_GROUP_FILE:-}
 
 reap_group() {
   [ -n "$SOAK_GROUP" ] || return 0
@@ -20,6 +25,24 @@ reap_group() {
     waited=$((waited + 1))
   done
   SOAK_GROUP=
+  [ -z "$SOAK_GROUP_FILE" ] || rm -f "$SOAK_GROUP_FILE"
+}
+
+# A server already answering on a scenario's port is another soak's, a developer's, or
+# one an earlier run left when it was SIGKILLed. None is this run's to stop, and every
+# scenario would fail on it (soakkit refuses a port that answers) and be marked done:
+# refuse to start instead.
+refuse_busy_ports() {
+  local port busy=
+  for port in "$@"; do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then busy="$busy $port"; fi
+  done
+  [ -z "$busy" ] && return 0
+  echo "a server already answers on port(s)$busy; stop it first" >&2
+  if [ -n "$SOAK_GROUP_FILE" ] && [ -s "$SOAK_GROUP_FILE" ]; then
+    echo "an earlier run's scenario may still run: kill -9 -- -$(cat "$SOAK_GROUP_FILE")" >&2
+  fi
+  return 1
 }
 
 # The scenario's group does not get the terminal's Ctrl-C, so the script reaps it on the
@@ -35,6 +58,7 @@ run_in_group() {
   "$@" &
   SOAK_GROUP=$!
   set +m
+  [ -z "$SOAK_GROUP_FILE" ] || echo "$SOAK_GROUP" > "$SOAK_GROUP_FILE"
   wait "$SOAK_GROUP"
   local rc=$?
   reap_group
