@@ -157,6 +157,12 @@ def _type_name(value: Any) -> str:
     return type(value).__name__
 
 
+def _show(value: Any) -> str:
+    """A value in a message as JSON; NaN, Infinity or an overflowing number as written (scan()
+    reports those), never an exception: a check reports problems, it does not raise."""
+    return json.dumps(value, default=lambda v: v.text if isinstance(v, _NonFinite) else repr(v))
+
+
 def _blank(text: str) -> bool:
     return not NON_BLANK_RE.search(text)
 
@@ -308,16 +314,19 @@ class _Checker:
                      and f.get("metric") in PASS_FAIL_METRICS]
         names, expected = [e.get("name") for e in entries], [f.get("name") for f in pass_fail]
         if len(entries) != len(value) or names != expected:
-            self.add("broken-mismatch", path, f"lists {json.dumps(names)}, but the completed/invariant "
-                     f"regressions are {json.dumps(expected)}")
+            self.add("broken-mismatch", path, f"lists {_show(names)}, but the completed/invariant "
+                     f"regressions are {_show(expected)}")
             return
         for index, (entry, finding) in enumerate(zip(entries, pass_fail, strict=True)):
             where = _child(path, index)
-            both = _is_number(finding.get("baseline")) and finding["baseline"] == 0
+            baseline = finding.get("baseline")
+            if not (baseline is None or _is_number(baseline)):
+                continue  # a malformed baseline is reported where it is; nothing to compare
+            both = _is_number(baseline) and baseline == 0
             if isinstance(entry.get("baseline_too"), bool) and entry["baseline_too"] != both:
                 self.add("broken-inconsistent", _child(where, "baseline_too"),
-                         f"baseline_too is {json.dumps(entry['baseline_too'])} but the finding's baseline "
-                         f"is {json.dumps(finding.get('baseline'))}")
+                         f"baseline_too is {_show(entry['baseline_too'])} but the finding's baseline "
+                         f"is {_show(baseline)}")
             elif entry.get("baseline_too") is True and entry.get("introduced") is True:
                 self.add("broken-inconsistent", _child(where, "introduced"),
                          "a break the baseline shares is not introduced by the candidate")

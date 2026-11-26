@@ -131,6 +131,24 @@ CHANGES = [(c.name, c.start, c.path, c.value, [(c.code, c.at)]) for c in example
 ]
 
 
+@pytest.mark.parametrize(
+    "baseline, name, expected",
+    [
+        # reported once, where it is: the broken entry is not also called inconsistent
+        ("1e400", '"s7 MERGE re-run creates no duplicate :Device"',
+         [("non-finite-number", "$.findings[0].baseline")]),
+        ("0", "1e400", [("non-finite-number", "$.findings[0].name"), ("broken-mismatch", "$.broken")]),
+    ],
+)  # fmt: skip
+def test_a_malformed_number_beside_broken_is_reported_not_raised(baseline, name, expected):
+    """An overflowing baseline or a numeric name reaches the `broken` checks' messages."""
+    text = json.dumps(example(BOTH_BROKEN))
+    text = text.replace('"baseline": 0,', f'"baseline": {baseline},', 1)
+    text = text.replace('"name": "s7 MERGE re-run creates no duplicate :Device"', f'"name": {name}', 1)
+    _, problems = contract.validate_text(text)
+    assert [(p.code, p.path) for p in problems] == expected
+
+
 def test_a_night_stored_before_v1_14_stays_valid():
     """origin/main's soak example before #4065: a pass with 0 and 0 as info and no `broken`.
     The dashboard re-validates stored nights; they must not turn into errors."""
