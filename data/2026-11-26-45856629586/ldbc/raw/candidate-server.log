@@ -1,0 +1,89 @@
+1:M 26 Nov 2026 16:16:29.242 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:16:29.242 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:16:29.242 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:16:29.242 * Configuration loaded
+1:M 26 Nov 2026 16:16:29.242 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+1:M 26 Nov 2026 16:16:29.272 * monotonic clock: X86 TSC @ 2099.78 ticks/us
+1:M 26 Nov 2026 16:16:29.272 * Running mode=standalone, port=6379.
+1:M 26 Nov 2026 16:16:29.275 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:16:29.275 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:16:29.275 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:16:29.275 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:16:29.275 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:16:29.275 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:16:29.275 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:16:29.279 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:16:29.279 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:16:29.280 * Server initialized
+1:M 26 Nov 2026 16:16:29.280 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:16:29.787 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:29.788 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:29.821 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:29.822 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:29.823 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:29.823 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:29.851 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:16:29.853 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:16:29.854 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:16:29.856 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:16:29.858 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:29.858 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:29.859 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:16:29.860 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:16:29.862 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:16:29.918 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:29.919 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:29.920 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:16:29.923 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:16:29.925 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:16:29.930 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:16:29.937 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:16:29.972 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:29.973 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:30.010 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:30.010 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:30.011 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:16:30.012 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:16:30.014 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:16:30.016 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:16:30.019 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:16:30.746 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:30.746 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:30.747 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:16:30.749 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:16:30.751 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:16:30.755 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:16:30.759 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:16:30.765 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:16:30.777 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:16:30.796 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:16:30.823 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:16:30.866 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:16:30.932 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:16:30.942 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:30.943 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:30.944 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:16:30.945 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:16:30.947 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:16:30.950 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:16:30.955 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:16:30.961 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:16:30.973 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:16:30.990 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:16:31.017 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:16:31.058 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:16:31.118 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:16:32.008 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:16:32.008 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:16:32.009 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:16:32.010 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:16:32.012 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:16:32.014 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:16:32.017 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:16:32.023 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:16:32.031 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:16:32.044 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:16:32.066 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:16:32.098 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:16:32.144 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:16:32.251 * <graph> DocTable capacity increase from 194917 to 292376

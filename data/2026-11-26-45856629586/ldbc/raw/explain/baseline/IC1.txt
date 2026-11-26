@@ -1,0 +1,28 @@
+Limit
+    Sort
+        Project
+            Aggregate
+                Apply
+                    Aggregate
+                        Apply
+                            Conditional Traverse | (friendCity)<-(friend)
+                                Limit
+                                    Sort
+                                        Aggregate
+                                            Filter
+                                                Project
+                                                    Project
+                                                        Filter
+                                                            Cartesian Product
+                                                                Filter
+                                                                    Node By Index Scan | (p:Person)
+                                                                Filter
+                                                                    Node By Index Scan | (friend:Person)
+                            Optional
+                                Conditional Traverse | (uni)->(uniCity:City)
+                                    Conditional Traverse | (friend)-[studyAt:STUDY_AT]->(uni:University)
+                                        Argument
+                    Optional
+                        Conditional Traverse | (company)->(companyCountry:Country)
+                            Conditional Traverse | (friend)-[workAt:WORK_AT]->(company:Company)
+                                Argument

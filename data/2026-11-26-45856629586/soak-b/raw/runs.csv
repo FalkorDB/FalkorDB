@@ -1,0 +1,13 @@
+scenario,side,rep,attempt,image,rc,timed_out,wall_s,setup_s,completed,reason
+s07_mvcc_consistency,candidate,1,1,ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818,0,False,381.9,78.4,True,
+s07_mvcc_consistency,baseline,1,1,falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de,0,False,381.7,78.4,True,
+s08_durability_recovery,baseline,1,1,falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de,0,False,442.1,135.5,True,
+s08_durability_recovery,candidate,1,1,ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818,0,False,451.6,143.2,True,
+s09_replication,candidate,1,1,ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818,0,False,377.2,54.3,True,
+s09_replication,baseline,1,1,falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de,0,False,376.9,54.2,True,
+s10_schema_under_load,baseline,1,1,falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de,0,False,376.8,62.1,True,
+s10_schema_under_load,candidate,1,1,ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818,0,False,373.5,59.2,True,
+s11_client_chaos,candidate,1,1,ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818,0,False,504.9,34.6,True,
+s11_client_chaos,baseline,1,1,falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de,0,False,508.9,34.0,True,
+s12_iot_retention,baseline,1,1,falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de,0,False,305.6,3.9,True,
+s12_iot_retention,candidate,1,1,ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818,0,False,305.6,3.8,True,

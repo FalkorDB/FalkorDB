@@ -1,0 +1,556 @@
+{
+ "ops": {
+  "entity_lookup_related": {
+   "count": 35737,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 119.12333333333333,
+   "p50_ms": 0.5168377068328772,
+   "p95_ms": 1.28517447660205,
+   "p99_ms": 6.391105764954149,
+   "p999_ms": 8.432928329345698,
+   "max_ms": 48.171872074100456,
+   "drift": {
+    "p99_early_ms": 6.142931338864042,
+    "p99_late_ms": 6.917938417947773,
+    "ratio": 1.1261624192640003
+   }
+  },
+  "entity_fulltext": {
+   "count": 15233,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 50.776666666666664,
+   "p50_ms": 0.43246667279395906,
+   "p95_ms": 0.97400163805502,
+   "p99_ms": 6.142931338864042,
+   "p999_ms": 7.946536710376945,
+   "max_ms": 28.786512863042514,
+   "drift": {
+    "p99_early_ms": 5.788621400200563,
+    "p99_late_ms": 6.518927880253233,
+    "ratio": 1.1261624192640005
+   }
+  },
+  "entity_2hop_count": {
+   "count": 9027,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 30.09,
+   "p50_ms": 0.5484723091927041,
+   "p95_ms": 1.3638374359659087,
+   "p99_ms": 6.649306437858297,
+   "p999_ms": 8.773618633851266,
+   "max_ms": 47.22732556284358,
+   "drift": {
+    "p99_early_ms": 6.265789965641322,
+    "p99_late_ms": 6.917938417947773,
+    "ratio": 1.1040808032000002
+   }
+  },
+  "hybrid_fulltext_graph": {
+   "count": 15000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 50.0,
+   "p50_ms": 2.237519872921078,
+   "p95_ms": 4.474792617729492,
+   "p99_ms": 9.686783908232993,
+   "p999_ms": 13.037135762278467,
+   "max_ms": 50.118015705894116,
+   "drift": {
+    "p99_early_ms": 8.949091006528292,
+    "p99_late_ms": 10.078129978125608,
+    "ratio": 1.1261624192640003
+   }
+  },
+  "ingest_doc_8chunks": {
+   "count": 1878,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 6.26,
+   "p50_ms": 13.297878477524037,
+   "p95_ms": 15.892195746931526,
+   "p99_ms": 19.372497936973954,
+   "p999_ms": 38.74285623312924,
+   "max_ms": 40.30806762494767,
+   "drift": {
+    "p99_early_ms": 16.53424045510756,
+    "p99_late_ms": 18.99264503624897,
+    "ratio": 1.1486856676492805
+   }
+  },
+  "retire_doc": {
+   "count": 372,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 1.2525252525252526,
+   "p50_ms": 6.649306437858297,
+   "p95_ms": 8.773618633851266,
+   "p99_ms": 11.80813553183103,
+   "p999_ms": 19.75994789571343,
+   "max_ms": 19.75994789571343,
+   "drift": {
+    "p99_early_ms": 8.949091006528292,
+    "p99_late_ms": 9.128072826658858,
+    "ratio": 1.02
+   }
+  },
+  "delete_chunk": {
+   "count": 4425,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 14.75,
+   "p50_ms": 3.744306286573248,
+   "p95_ms": 11.127069841002921,
+   "p99_ms": 13.037135762278467,
+   "p999_ms": 18.255137481977094,
+   "max_ms": 26.594288239775235,
+   "drift": {
+    "p99_early_ms": 12.044298242467653,
+    "p99_late_ms": 13.83511276801601,
+    "ratio": 1.1486856676492805
+   }
+  },
+  "update_chunk_embedding": {
+   "count": 4486,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 14.953333333333333,
+   "p50_ms": 4.301030966675789,
+   "p95_ms": 11.80813553183103,
+   "p99_ms": 13.563836047074519,
+   "p999_ms": 35.09059855115615,
+   "max_ms": 3021.5474768631107,
+   "drift": {
+    "p99_early_ms": 12.530887891463346,
+    "p99_late_ms": 14.394051323843858,
+    "ratio": 1.1486856676492805
+   }
+  },
+  "_missed_schedule": {
+   "count": 89,
+   "errors": 89,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "_late_start": {
+   "count": 1,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 1.0,
+   "p50_ms": 3021.5474768631107,
+   "p95_ms": 3021.5474768631107,
+   "p99_ms": 3021.5474768631107,
+   "p999_ms": 3021.5474768631107,
+   "max_ms": 3021.5474768631107,
+   "drift": null
+  },
+  "retrieve_2hop_context": {
+   "count": 15068,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 50.22666666666667,
+   "p50_ms": 3.011407153335508,
+   "p95_ms": 4.387051586009306,
+   "p99_ms": 7.790722265075436,
+   "p999_ms": 13.297878477524037,
+   "max_ms": 52.142783540412246,
+   "drift": {
+    "p99_early_ms": 8.601586895932613,
+    "p99_late_ms": 6.265789965641322,
+    "ratio": 0.7284458137142338
+   }
+  },
+  "retrieve_1hop": {
+   "count": 14932,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 49.77333333333333,
+   "p50_ms": 2.727524239718171,
+   "p95_ms": 4.134016692306603,
+   "p99_ms": 8.432928329345698,
+   "p999_ms": 13.563836047074519,
+   "max_ms": 52.142783540412246,
+   "drift": {
+    "p99_early_ms": 5.563842176278896,
+    "p99_late_ms": 6.022481704768667,
+    "ratio": 1.0824321600000002
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 60.19799331103679,
+  "cpu_max_pct": 151.8,
+  "rss_start_mb": 413.4,
+  "rss_end_mb": 465.1,
+  "rss_max_mb": 467.9,
+  "used_mem_end_mb": 392.6,
+  "rss_slope_mb_per_h": 633.8117974929113,
+  "used_mem_slope_mb_per_h": 497.74803158577157,
+  "samples": 361,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "indexes become operational after load",
+   "ok": true,
+   "detail": "53s",
+   "severity": "major"
+  },
+  {
+   "name": "ingest chunk count",
+   "ok": true,
+   "detail": "62500 != 62500",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest entity count",
+   "ok": true,
+   "detail": "25000 != 25000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest RELATED edge count",
+   "ok": true,
+   "detail": "100000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest MENTIONS edge count",
+   "ok": true,
+   "detail": "250000",
+   "severity": "critical"
+  },
+  {
+   "name": "recall@10 early >= 0.90",
+   "ok": true,
+   "detail": "0.9713",
+   "severity": "major"
+  },
+  {
+   "name": "vector KNN returns k results early",
+   "ok": true,
+   "detail": "1500",
+   "severity": "major"
+  },
+  {
+   "name": "vector KNN scores ascending early",
+   "ok": true,
+   "detail": "0 unsorted",
+   "severity": "major"
+  },
+  {
+   "name": "exact self-query finds the chunk in top-10 (ANN: >=97%)",
+   "ok": true,
+   "detail": "1/100",
+   "severity": "critical"
+  },
+  {
+   "name": "stored embedding/text round-trip",
+   "ok": true,
+   "detail": "0/100",
+   "severity": "critical"
+  },
+  {
+   "name": "range index finds chunks by cid (0, 1, mid, last)",
+   "ok": false,
+   "detail": "not found: [0]",
+   "severity": "critical"
+  },
+  {
+   "name": "range index finds every initial chunk",
+   "ok": false,
+   "detail": "62499 of 62500",
+   "severity": "critical"
+  },
+  {
+   "name": "fulltext returns all matches (no silent default limit)",
+   "ok": true,
+   "detail": "returned 128 expected 128",
+   "severity": "minor"
+  },
+  {
+   "name": "in-load: deleted_in_fulltext == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: deleted_in_vector == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: doc_mismatch == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: entity_2hop_mismatch == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: entity_fulltext_mismatch == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: entity_related_mismatch == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: hybrid_irrelevant == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: hybrid_missing == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "major"
+  },
+  {
+   "name": "in-load: ingested_ann_miss_top10 == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "minor"
+  },
+  {
+   "name": "in-load: ingested_not_in_fulltext == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: ingested_not_in_vector == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: knn_count == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "major"
+  },
+  {
+   "name": "in-load: knn_unsorted == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "major"
+  },
+  {
+   "name": "in-load: mentions_mismatch == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: related_mismatch == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: score_wrong == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "major"
+  },
+  {
+   "name": "in-load: update_stale_vector == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: updated_ann_miss_top10 == 0",
+   "ok": false,
+   "detail": "1 e.g. [{'kind': 'updated_ann_miss_top10', 'cid': 51651}]",
+   "severity": "minor"
+  },
+  {
+   "name": "in-load: updated_not_in_fulltext == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: updated_not_in_vector == 0",
+   "ok": true,
+   "detail": "0 e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "live chunk set == initial + acked inserts - acked deletes",
+   "ok": true,
+   "detail": "missing=0 extra=0 (mutation errors=0) e.g. [] []",
+   "severity": "critical"
+  },
+  {
+   "name": "deleted chunks absent from fulltext",
+   "ok": true,
+   "detail": "0/300",
+   "severity": "critical"
+  },
+  {
+   "name": "deleted chunks absent from vector search",
+   "ok": true,
+   "detail": "0/300",
+   "severity": "critical"
+  },
+  {
+   "name": "delete workload actually deleted chunks",
+   "ok": true,
+   "detail": "7401",
+   "severity": "minor"
+  },
+  {
+   "name": "ingested chunks searchable via fulltext",
+   "ok": true,
+   "detail": "0/200",
+   "severity": "critical"
+  },
+  {
+   "name": "ingested chunks searchable via vector (top-10, ANN: <=2%)",
+   "ok": true,
+   "detail": "2/200",
+   "severity": "critical"
+  },
+  {
+   "name": "recall@10 late >= 0.90",
+   "ok": true,
+   "detail": "0.9620",
+   "severity": "major"
+  },
+  {
+   "name": "recall late within 0.05 of early",
+   "ok": true,
+   "detail": "early=0.9713 late=0.9620",
+   "severity": "major"
+  },
+  {
+   "name": "vector KNN returns k results late",
+   "ok": true,
+   "detail": "1500",
+   "severity": "major"
+  },
+  {
+   "name": "vector KNN scores ascending late",
+   "ok": true,
+   "detail": "0 unsorted",
+   "severity": "major"
+  },
+  {
+   "name": "updated chunks hold last-written embedding/text",
+   "ok": true,
+   "detail": "0/100",
+   "severity": "critical"
+  },
+  {
+   "name": "restart: indexes operational",
+   "ok": true,
+   "detail": "restart 30.4s",
+   "severity": "major"
+  },
+  {
+   "name": "restart: recall preserved",
+   "ok": true,
+   "detail": "0.9647 vs 0.9620",
+   "severity": "major"
+  },
+  {
+   "name": "restart: chunk count preserved",
+   "ok": true,
+   "detail": "70123 vs 70123",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  }
+ ],
+ "checks_failed": [
+  {
+   "name": "range index finds chunks by cid (0, 1, mid, last)",
+   "ok": false,
+   "detail": "not found: [0]",
+   "severity": "critical"
+  },
+  {
+   "name": "range index finds every initial chunk",
+   "ok": false,
+   "detail": "62499 of 62500",
+   "severity": "critical"
+  },
+  {
+   "name": "in-load: updated_ann_miss_top10 == 0",
+   "ok": false,
+   "detail": "1 e.g. [{'kind': 'updated_ann_miss_top10', 'cid': 51651}]",
+   "severity": "minor"
+  }
+ ],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s03_graphrag_vector",
+  "scale": 0.25,
+  "chunks": 62500,
+  "entities": 25000,
+  "clusters": 50,
+  "dim": 384,
+  "docs": 7813,
+  "ingest_s": 52.85704326629639,
+  "load_s": 52.856279134750366,
+  "duration": 300.0,
+  "recall_early": 0.9713333333333333,
+  "recall_late": 0.9620000000000001,
+  "lag": {
+   "ingest_ft": {
+    "n": 1878,
+    "p50_s": 0.00039458274841308594,
+    "max_s": 0.012618303298950195,
+    "pct_visible_immediately": 1.0
+   },
+   "ingest_vec": {
+    "n": 1878,
+    "p50_s": 0.0011823177337646484,
+    "max_s": 0.002499103546142578,
+    "pct_visible_immediately": 1.0
+   },
+   "update_vec": {
+    "n": 2301,
+    "p50_s": 0.001074075698852539,
+    "max_s": 3.0415608882904053,
+    "pct_visible_immediately": 0.9995654063450674
+   },
+   "update_ft": {
+    "n": 2301,
+    "p50_s": 0.00038933753967285156,
+    "max_s": 0.01685643196105957,
+    "pct_visible_immediately": 1.0
+   }
+  },
+  "restart_s": 30.426525354385376,
+  "live_chunks_end": 70123,
+  "fulltext_default_limit_hit": null,
+  "module": "falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818"
+ }
+}

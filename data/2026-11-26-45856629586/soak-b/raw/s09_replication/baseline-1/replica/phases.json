@@ -1,0 +1,1 @@
+[{"t": 0.0, "phase": "initial-sync"}, {"t": 2.2, "phase": "soak"}, {"t": 122.2, "phase": "replica-resync"}, {"t": 125.3, "phase": "soak"}, {"t": 302.2, "phase": "verify"}, {"t": 304.1, "phase": "failover"}]

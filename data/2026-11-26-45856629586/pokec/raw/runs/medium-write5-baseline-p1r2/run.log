@@ -1,0 +1,181 @@
+  2026-11-26T16:26:39.520132Z  INFO benchmark::prometheus_endpoint: Listening on http://0.0.0.0:8080
+    at src/prometheus_endpoint.rs:36
+
+  2026-11-26T16:26:39.520152Z  INFO benchmark::falkor::falkor_driver: using external falkor endpoint: falkor://127.0.0.1:32777
+    at src/falkor/falkor_driver.rs:103
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:39.541808Z  INFO benchmark: Reading 10000 queries took 21.616643ms
+    at src/main.rs:3398
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:39.545985Z  INFO benchmark: Using external endpoint, skipping dump restore operations
+    at src/main.rs:1560
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:39.546003Z  INFO benchmark::falkor::falkor_driver: using external falkor endpoint, skipping process management
+    at src/falkor/falkor_driver.rs:117
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:39.588899Z  INFO benchmark::falkor::falkor_driver: Initialized Falkor async client with pooled strategy (size=8)
+    at src/falkor/falkor_driver.rs:377
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:39.598920Z  INFO benchmark::falkor::falkor_driver: Initialized Falkor async client with pooled strategy (size=8)
+    at src/falkor/falkor_driver.rs:377
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:39.599687Z  INFO benchmark::falkor::falkor_driver: FalkorDB Pokec indexes (:User.id, :User.age) are ready after 1 attempt(s)
+    at src/falkor/falkor_driver.rs:275
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:39.603615Z  INFO benchmark::falkor::falkor_driver: Initialized Falkor async client with pooled strategy (size=8)
+    at src/falkor/falkor_driver.rs:377
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.011558Z  INFO benchmark::falkor::falkor_driver: Falkor bench_capacity readiness: total Friend edges=1768515, missing before=0
+    at src/falkor/falkor_driver.rs:622
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.416032Z  INFO benchmark::falkor::falkor_driver: Falkor bench_capacity readiness complete: backfilled=0, missing after=0
+    at src/falkor/falkor_driver.rs:643
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.416088Z  INFO benchmark: graph has 100,000 nodes and 1,768,515 relations
+    at src/main.rs:1601
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.416107Z  INFO benchmark: running 10,000 queries
+    at src/main.rs:1614
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.416110Z  INFO benchmark: worker query spread batch set to 1000 (total queries: 10,000)
+    at src/main.rs:1618
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420441Z  INFO benchmark::falkor::falkor_driver: Initialized Falkor async client with pooled strategy (size=8)
+    at src/falkor/falkor_driver.rs:377
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420471Z  INFO benchmark: spawning worker
+    at src/main.rs:1957
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420500Z  INFO benchmark: spawning worker
+    at src/main.rs:1957
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420508Z  INFO benchmark: spawning worker
+    at src/main.rs:1957
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420515Z  INFO benchmark: spawning worker
+    at src/main.rs:1957
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420534Z  INFO benchmark: spawning worker
+    at src/main.rs:1957
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420542Z  INFO benchmark: spawning worker
+    at src/main.rs:1957
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420551Z  INFO benchmark: spawning worker
+    at src/main.rs:1957
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:26:40.420564Z  INFO benchmark: spawning worker
+    at src/main.rs:1957
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:27:41.334551Z  INFO benchmark: worker 3 processed 1000 queries
+    at src/main.rs:2001
+
+  2026-11-26T16:27:44.939373Z  INFO benchmark: worker 0 processed 1000 queries
+    at src/main.rs:2001
+
+  2026-11-26T16:27:52.413731Z  INFO benchmark: worker 1 processed 1000 queries
+    at src/main.rs:2001
+
+  2026-11-26T16:27:58.750789Z  INFO benchmark: worker 2 processed 1000 queries
+    at src/main.rs:2001
+
+  2026-11-26T16:27:59.287276Z  INFO benchmark: worker 5 processed 1000 queries
+    at src/main.rs:2001
+
+  2026-11-26T16:28:00.139816Z  INFO benchmark: worker 6 processed 1000 queries
+    at src/main.rs:2001
+
+  2026-11-26T16:28:01.101262Z  INFO benchmark: worker 4 processed 1000 queries
+    at src/main.rs:2001
+
+  2026-11-26T16:28:03.589399Z  INFO benchmark: worker 7 processed 1000 queries
+    at src/main.rs:2001
+
+  2026-11-26T16:28:08.931908Z  INFO benchmark::scheduler: All messages sent
+    at src/scheduler.rs:79
+
+  2026-11-26T16:28:09.386413Z  INFO benchmark: worker 6 received None, exiting
+    at src/main.rs:2027
+
+  2026-11-26T16:28:09.386448Z  INFO benchmark: worker 6 finished
+    at src/main.rs:2032
+
+  2026-11-26T16:28:09.386682Z  INFO benchmark: worker 7 received None, exiting
+    at src/main.rs:2027
+
+  2026-11-26T16:28:09.386685Z  INFO benchmark: worker 7 finished
+    at src/main.rs:2032
+
+  2026-11-26T16:28:09.399982Z  INFO benchmark: worker 3 received None, exiting
+    at src/main.rs:2027
+
+  2026-11-26T16:28:09.400008Z  INFO benchmark: worker 3 finished
+    at src/main.rs:2032
+
+  2026-11-26T16:28:09.400146Z  INFO benchmark: worker 2 received None, exiting
+    at src/main.rs:2027
+
+  2026-11-26T16:28:09.400172Z  INFO benchmark: worker 2 finished
+    at src/main.rs:2032
+
+  2026-11-26T16:28:09.793266Z  INFO benchmark: worker 5 received None, exiting
+    at src/main.rs:2027
+
+  2026-11-26T16:28:09.793302Z  INFO benchmark: worker 5 finished
+    at src/main.rs:2032
+
+  2026-11-26T16:28:09.793366Z  INFO benchmark: worker 0 received None, exiting
+    at src/main.rs:2027
+
+  2026-11-26T16:28:09.793369Z  INFO benchmark: worker 0 finished
+    at src/main.rs:2032
+
+  2026-11-26T16:28:09.793594Z  INFO benchmark: worker 4 received None, exiting
+    at src/main.rs:2027
+
+  2026-11-26T16:28:09.793599Z  INFO benchmark: worker 4 finished
+    at src/main.rs:2032
+
+  2026-11-26T16:28:09.793716Z  INFO benchmark: worker 1 received None, exiting
+    at src/main.rs:2027
+
+  2026-11-26T16:28:09.793749Z  INFO benchmark: worker 1 finished
+    at src/main.rs:2032
+
+  2026-11-26T16:28:09.793898Z  INFO benchmark: running 10,000 queries took 89.376445209s
+    at src/main.rs:1662
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:28:09.799015Z  INFO benchmark: Wrote run results to /actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench/falkor
+    at src/main.rs:2227
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:28:09.799327Z  INFO benchmark::falkor::falkor_process: Dropping FalkorProcess started
+    at src/falkor/falkor_process.rs:129
+    in benchmark::run_falkor with parallel: 8, file_name: "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl", mps: 2000, simulate: None, endpoint: Some("falkor://127.0.0.1:32777"), results_dir: Some("/actions-runner/_work/FalkorDB/FalkorDB/out/raw/runs/medium-write5-baseline-p1r2/bench")
+
+  2026-11-26T16:28:09.799408Z  INFO benchmark::prometheus_endpoint: Prometheus endpoint shutdown
+    at src/prometheus_endpoint.rs:54
+

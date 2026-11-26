@@ -1,0 +1,1065 @@
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=17 inserted_ok=17", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=17 dups=17", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=10 missing=10", "sev": "major"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_age: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_age disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=21 inserted_ok=21", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 dups=21", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=22 missing=22", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=20 inserted_ok=20", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 dups=20", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=22 missing=22", "sev": "major"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=20 inserted_ok=20", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 dups=20", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=20 inserted_ok=20", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 dups=20", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 missing=20", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=19 inserted_ok=19", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=19 dups=19", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": false, "detail": "[17,117] idx=1316 scan=1317", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": false, "detail": "[30,130] idx=1310 scan=1311", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=20 inserted_ok=20", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 dups=20", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=23 inserted_ok=23", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=23 dups=23", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": false, "detail": "[61,161] idx=1315 scan=1316", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=25 missing=25", "sev": "major"}
+{"name": "index knows_since reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=19 inserted_ok=19", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=19 dups=19", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "index knows_since reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=19 inserted_ok=19", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=19 dups=19", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=18 missing=18", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=16 inserted_ok=16", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=16 dups=16", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "index product_cat reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=20 inserted_ok=20", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 dups=20", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": false, "detail": "[851,951] idx=1284 scan=1285", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=22 missing=22", "sev": "major"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=20 inserted_ok=20", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 dups=20", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "after build knows_since: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_age: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_age disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=24 inserted_ok=24", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=24 dups=24", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "index knows_since reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "index person_city reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "before index person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "after build person_age: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_age disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=18 inserted_ok=18", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=18 dups=18", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "index person_city reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=15 inserted_ok=15", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=15 dups=15", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=23 missing=23", "sev": "major"}
+{"name": "after build knows_since: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=4 inserted_ok=4", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=4 dups=4", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=22 missing=22", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=16 inserted_ok=16", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=16 dups=16", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 missing=20", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=19 inserted_ok=19", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=19 dups=19", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 missing=20", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=19 inserted_ok=19", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=19 dups=19", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": false, "detail": "[895,995] idx=1333 scan=1334", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=16 inserted_ok=16", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=16 dups=16", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=19 missing=19", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "index person_city reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=20 inserted_ok=20", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 dups=20", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 missing=21", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=20 inserted_ok=20", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 dups=20", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=24 missing=24", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=21 inserted_ok=21", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=21 dups=21", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": false, "detail": "[436,536] idx=1388 scan=1389", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": false, "detail": "[375,475] idx=1462 scan=1463", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "before index product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=23 missing=23", "sev": "major"}
+{"name": "index knows_since reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=18 inserted_ok=18", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=18 dups=18", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=14 missing=14", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=23 inserted_ok=23", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=23 dups=23", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "index product_cat reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 missing=20", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=22 inserted_ok=22", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=22 dups=22", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=20 missing=20", "sev": "major"}
+{"name": "edge mandatory rejects missing property", "ok": true, "detail": "mandatory constraint violation: edge with relationship-type LINK missing property lid", "sev": "critical"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)", "ok": true, "detail": "status=FAILED dup_values=18 inserted_ok=18", "sev": "critical"}
+{"name": "unique: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "unique: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=18 dups=18", "sev": "major"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "Live (under writes) index == scan during build/after", "ok": true, "detail": "", "sev": "critical"}
+{"name": "fulltext index reaches OPERATIONAL", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: constraint settles in OPERATIONAL or FAILED", "ok": true, "detail": "FAILED", "sev": "major"}
+{"name": "mandatory: FAILED only if a violation was actually inserted", "ok": true, "detail": "FAILED with inserted_ok=25 missing=25", "sev": "major"}

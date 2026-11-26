@@ -1,0 +1,261 @@
+{"name": "before index person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w497: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t0: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w497 t0: got 27 want 27", "sev": "critical"}
+{"name": "before index product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w16: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t2: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w16 t2: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "after build knows_since: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w381: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t12: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w381 t12: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w440: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t9: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w440 t9: got 27 want 27", "sev": "critical"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w478: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t8: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w478 t8: got 27 want 27", "sev": "critical"}
+{"name": "before index product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w2: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t8: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w2 t8: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w357: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t10: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w357 t10: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "unique OPERATIONAL rejects duplicate insert", "ok": true, "detail": "unique constraint violation on node of type Acct", "sev": "critical"}
+{"name": "unique OPERATIONAL accepts fresh value", "ok": true, "detail": "", "sev": "major"}
+{"name": "unique dropped: duplicates allowed again", "ok": true, "detail": "", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w152: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t7: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w152 t7: got 27 want 27", "sev": "critical"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "before index person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_age: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_age disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w115: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t0: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w115 t0: got 27 want 27", "sev": "critical"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w277: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t12: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w277 t12: got 27 want 27", "sev": "critical"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w145: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t4: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w145 t4: got 27 want 27", "sev": "critical"}
+{"name": "index product_cat reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w336: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t7: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w336 t7: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w306: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t3: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w306 t3: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w25: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t5: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w25 t5: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w195: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t0: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w195 t0: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w216: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t8: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w216 t8: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w199: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t5: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w199 t5: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w494: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t1: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w494 t1: got 27 want 27", "sev": "critical"}
+{"name": "before index product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w25: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t2: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w25 t2: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w137: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t10: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w137 t10: got 27 want 27", "sev": "critical"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "before index person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_age: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_age disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w142: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t8: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w142 t8: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w299: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t12: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w299 t12: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "index knows_since reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w229: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t1: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w229 t1: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w26: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t6: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w26 t6: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w216: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t1: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w216 t1: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w130: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t3: got 13462 want 13462", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w130 t3: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w331: got 350 want 350", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "t8: got 13461 want 13461", "sev": "critical"}
+{"name": "fulltext operational: result == ground truth", "ok": true, "detail": "w331 t8: got 27 want 27", "sev": "critical"}
+{"name": "mandatory: inserter saw no non-constraint errors", "ok": true, "detail": "other=0", "sev": "major"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "exact-match index for unique constraint builds", "ok": true, "detail": "timeout", "sev": "major"}

@@ -1,0 +1,752 @@
+{
+  "schema": 1,
+  "date": "2026-11-26",
+  "run_url": "https://github.com/FalkorDB/FalkorDB/actions/runs/45856629586",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+    "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+    "label": "main@2720220"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "previous_green_commit": "98a19c3b932b824dc9b7730e139dd6bf4204ad56",
+  "status": "green",
+  "skip_reason": null,
+  "checks": [
+    {
+      "schema": 1,
+      "check": "micro-hw",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "no confirmed regression past its threshold; 5 improvement(s); 373 rows on instructions, cycles, branch_misses, l2_misses, alloc_bytes",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+        "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+        "label": "main@2720220"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+        "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+        "label": "6.2.1"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "c4-standard-8",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.30GHz",
+        "cores": 8
+      },
+      "started": "2026-11-26T16:15:45Z",
+      "finished": "2026-11-26T16:31:20Z",
+      "findings": [
+        {
+          "name": "WITH order limit [reads]",
+          "metric": "instructions",
+          "candidate": 16440871.2,
+          "baseline": 18734489.5,
+          "ratio": 0.877572,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "labelPropagation all types [reads]",
+          "metric": "branch_misses",
+          "candidate": 162034.978353,
+          "baseline": 210624.96645,
+          "ratio": 0.769306,
+          "threshold": 1.25,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "ORDER BY + LIMIT [reads]",
+          "metric": "instructions",
+          "candidate": 19611693.7,
+          "baseline": 27909680.0,
+          "ratio": 0.702684,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "SKIP + LIMIT [reads]",
+          "metric": "cycles",
+          "candidate": 2137062.0,
+          "baseline": 4037247.2,
+          "ratio": 0.529336,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "SKIP + LIMIT [reads]",
+          "metric": "instructions",
+          "candidate": 6403781.5,
+          "baseline": 12149668.2,
+          "ratio": 0.527075,
+          "threshold": 1.1,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "reads: median per-row ratio over 305 rows (157 up, 148 down, 0 unchanged)",
+          "metric": "cycles",
+          "candidate": null,
+          "baseline": null,
+          "ratio": 1.000354,
+          "threshold": null,
+          "direction": "higher_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "writes: median per-row ratio over 68 rows (33 up, 35 down, 0 unchanged)",
+          "metric": "alloc_bytes",
+          "candidate": null,
+          "baseline": null,
+          "ratio": 0.999428,
+          "threshold": null,
+          "direction": "higher_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "writes: median per-row ratio over 68 rows (21 up, 47 down, 0 unchanged)",
+          "metric": "instructions",
+          "candidate": null,
+          "baseline": null,
+          "ratio": 0.999008,
+          "threshold": null,
+          "direction": "higher_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "reads: median per-row ratio over 305 rows (73 up, 232 down, 0 unchanged)",
+          "metric": "instructions",
+          "candidate": null,
+          "baseline": null,
+          "ratio": 0.998637,
+          "threshold": null,
+          "direction": "higher_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "reads: median per-row ratio over 305 rows (130 up, 175 down, 0 unchanged)",
+          "metric": "alloc_bytes",
+          "candidate": null,
+          "baseline": null,
+          "ratio": 0.998494,
+          "threshold": null,
+          "direction": "higher_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "writes: median per-row ratio over 68 rows (31 up, 37 down, 0 unchanged)",
+          "metric": "cycles",
+          "candidate": null,
+          "baseline": null,
+          "ratio": 0.995295,
+          "threshold": null,
+          "direction": "higher_is_worse",
+          "status": "info"
+        }
+      ],
+      "error": null,
+      "incomplete": null,
+      "artifacts": [
+        "raw/hw.json",
+        "raw/measure-baseline-r1.csv",
+        "raw/measure-baseline-r1.log",
+        "raw/measure-baseline-r2.csv",
+        "raw/measure-baseline-r2.log",
+        "raw/measure-candidate-r1.csv",
+        "raw/measure-candidate-r1.log",
+        "raw/measure-candidate-r2.csv",
+        "raw/measure-candidate-r2.log",
+        "raw/perf-probe.txt",
+        "raw/rows.csv"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "pokec",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "Pass (nightly): 12 runs, 404 rows compared; no row regressed past 1.3x after a re-run, every run finished, no new PING freeze; 15 improvements.",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+        "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+        "label": "main@2720220"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+        "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+        "label": "6.2.1"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "n4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-26T16:15:05Z",
+      "finished": "2026-11-26T16:32:07Z",
+      "findings": [
+        {
+          "name": "all_shortest_paths_len [5% writes]",
+          "metric": "p50_ms",
+          "candidate": 29.695,
+          "baseline": 39.167,
+          "ratio": 0.758164,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "throughput [5% writes]",
+          "metric": "throughput",
+          "candidate": 150.734,
+          "baseline": 111.587,
+          "ratio": 1.35082,
+          "threshold": 1.3,
+          "direction": "lower_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "all queries [5% writes]",
+          "metric": "p50_ms",
+          "candidate": 3.343,
+          "baseline": 5.407,
+          "ratio": 0.618273,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "throughput [read-only]",
+          "metric": "throughput",
+          "candidate": 618.276,
+          "baseline": 374.77,
+          "ratio": 1.649748,
+          "threshold": 1.3,
+          "direction": "lower_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "all queries [read-only]",
+          "metric": "p99_ms",
+          "candidate": 109.567,
+          "baseline": 288.767,
+          "ratio": 0.37943,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "all queries [5% writes]",
+          "metric": "p95_ms",
+          "candidate": 95.231,
+          "baseline": 251.903,
+          "ratio": 0.378046,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "all queries [read-only]",
+          "metric": "p95_ms",
+          "candidate": 30.463,
+          "baseline": 91.135,
+          "ratio": 0.334262,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "shortest_path_with_filter [read-only]",
+          "metric": "p99_ms",
+          "candidate": 11.775,
+          "baseline": 303.103,
+          "ratio": 0.038848,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "shortest_path [read-only]",
+          "metric": "p99_ms",
+          "candidate": 11.135,
+          "baseline": 313.343,
+          "ratio": 0.035536,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "shortest_path_with_filter [read-only]",
+          "metric": "p95_ms",
+          "candidate": 8.831,
+          "baseline": 292.863,
+          "ratio": 0.030154,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "shortest_path [read-only]",
+          "metric": "p95_ms",
+          "candidate": 7.711,
+          "baseline": 303.103,
+          "ratio": 0.02544,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "shortest_path [5% writes]",
+          "metric": "p50_ms",
+          "candidate": 2.527,
+          "baseline": 199.679,
+          "ratio": 0.012655,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "shortest_path_with_filter [5% writes]",
+          "metric": "p50_ms",
+          "candidate": 2.223,
+          "baseline": 198.655,
+          "ratio": 0.01119,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "shortest_path_with_filter [read-only]",
+          "metric": "p50_ms",
+          "candidate": 1.919,
+          "baseline": 198.655,
+          "ratio": 0.00966,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        },
+        {
+          "name": "shortest_path [read-only]",
+          "metric": "p50_ms",
+          "candidate": 1.751,
+          "baseline": 206.847,
+          "ratio": 0.008465,
+          "threshold": 1.3,
+          "direction": "higher_is_worse",
+          "status": "improvement"
+        }
+      ],
+      "error": null,
+      "incomplete": null,
+      "artifacts": [
+        "raw/check.log",
+        "raw/notes.txt",
+        "raw/queries-medium-read.jsonl",
+        "raw/queries-medium-write5.jsonl",
+        "raw/rows.csv",
+        "raw/runs",
+        "raw/runs.csv",
+        "raw/servers.json",
+        "raw/setup.log"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "ldbc",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "13 of 14 LDBC complex reads compared at SF0.1 (nightly); broken on both sides (not new): IC3, IC14; no regression",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+        "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+        "label": "main@2720220"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+        "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+        "label": "6.2.1"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "n4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-26T16:15:10Z",
+      "finished": "2026-11-26T16:28:28Z",
+      "findings": [
+        {
+          "name": "load",
+          "metric": "throughput",
+          "candidate": 25703.9,
+          "baseline": 25633.0,
+          "ratio": 1.002766,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "IC3 completed",
+          "metric": "completed",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "IC14 completed",
+          "metric": "completed",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        }
+      ],
+      "error": null,
+      "incomplete": null,
+      "artifacts": [
+        "raw/baseline-server.log",
+        "raw/candidate-server.log",
+        "raw/explain/baseline/IC1.txt",
+        "raw/explain/baseline/IC10.txt",
+        "raw/explain/baseline/IC11.txt",
+        "raw/explain/baseline/IC12.txt",
+        "raw/explain/baseline/IC13.txt",
+        "raw/explain/baseline/IC14.txt",
+        "raw/explain/baseline/IC2.txt",
+        "raw/explain/baseline/IC3.txt",
+        "raw/explain/baseline/IC4.txt",
+        "raw/explain/baseline/IC5.txt",
+        "raw/explain/baseline/IC6.txt",
+        "raw/explain/baseline/IC7.txt",
+        "raw/explain/baseline/IC8.txt",
+        "raw/explain/baseline/IC9.txt",
+        "raw/explain/candidate/IC1.txt",
+        "raw/explain/candidate/IC10.txt",
+        "raw/explain/candidate/IC11.txt",
+        "raw/explain/candidate/IC12.txt",
+        "raw/explain/candidate/IC13.txt",
+        "raw/explain/candidate/IC14.txt",
+        "raw/explain/candidate/IC2.txt",
+        "raw/explain/candidate/IC3.txt",
+        "raw/explain/candidate/IC4.txt",
+        "raw/explain/candidate/IC5.txt",
+        "raw/explain/candidate/IC6.txt",
+        "raw/explain/candidate/IC7.txt",
+        "raw/explain/candidate/IC8.txt",
+        "raw/explain/candidate/IC9.txt",
+        "raw/load.json",
+        "raw/params.json",
+        "raw/rows.csv",
+        "raw/run.json",
+        "raw/samples.csv",
+        "raw/summary.csv"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "soak-a",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "6 of 6 scenarios measured, nightly (300 s per side); no regression; 5 broken on both sides (not new); 1 p99 shift(s) reported, not gated (largest s06 lookup_paper 2.69x)",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+        "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+        "label": "main@2720220"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+        "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+        "label": "6.2.1"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "n4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-26T16:15:02Z",
+      "finished": "2026-11-26T17:31:02Z",
+      "findings": [
+        {
+          "name": "s03 in-load: updated_ann_miss_top10 == 0",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s03 range index finds chunks by cid (0, 1, mid, last)",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s03 range index finds every initial chunk",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s05 steady state: used_memory plateau (2nd half growth <10%+20MB)",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s05 used_memory returns to baseline after deleting all (residual <50MB)",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s06 lookup_paper (p99 shift, not gated)",
+          "metric": "p99_ms",
+          "candidate": 2962.301448,
+          "baseline": 1100.577583,
+          "ratio": 2.691588,
+          "threshold": null,
+          "direction": "higher_is_worse",
+          "status": "info"
+        }
+      ],
+      "error": null,
+      "incomplete": null,
+      "artifacts": [
+        "raw/rows.csv",
+        "raw/runs.csv",
+        "raw/s01_social_feed",
+        "raw/s02_fraud_realtime",
+        "raw/s03_graphrag_vector",
+        "raw/s04_recommendation",
+        "raw/s05_multitenant_churn",
+        "raw/s06_large_analytics",
+        "raw/servers.json"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "soak-b",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "6 of 6 scenarios measured, nightly (300 s per side); no regression; 6 broken on both sides (not new); known flaky, not gated: s10 Live (under writes) index == scan during build/after (#3095) broke on candidate and baseline, s10 Live: index-path count == scan-path count (same query) (#3095) broke on candidate and baseline",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+        "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+        "label": "main@2720220"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+        "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+        "label": "6.2.1"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "n4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-26T16:15:08Z",
+      "finished": "2026-11-26T17:35:09Z",
+      "findings": [
+        {
+          "name": "s10 after build person_age: indexed result == ground truth",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s10 after build person_city: indexed result == ground truth",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s10 before restart: Person.age indexed results == ground truth",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s10 during build person_age: result == ground truth",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s10 during build person_city: result == ground truth",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s11 CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s10 unique OPERATIONAL accepts fresh value",
+          "metric": "invariant",
+          "candidate": null,
+          "baseline": 1,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s10 unique OPERATIONAL rejects duplicate insert",
+          "metric": "invariant",
+          "candidate": null,
+          "baseline": 1,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s10 unique OPERATIONAL rejects duplicate via SET",
+          "metric": "invariant",
+          "candidate": null,
+          "baseline": 1,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "s10 unique dropped: duplicates allowed again",
+          "metric": "invariant",
+          "candidate": null,
+          "baseline": 1,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        }
+      ],
+      "error": null,
+      "incomplete": null,
+      "artifacts": [
+        "raw/rows.csv",
+        "raw/runs.csv",
+        "raw/s07_mvcc_consistency",
+        "raw/s08_durability_recovery",
+        "raw/s09_replication",
+        "raw/s10_schema_under_load",
+        "raw/s11_client_chaos",
+        "raw/s12_iot_retention",
+        "raw/servers.json"
+      ]
+    },
+    {
+      "schema": 1,
+      "check": "fuzz",
+      "verdict": "pass",
+      "confirmed": false,
+      "summary": "no check broke on the candidate where it held on the baseline; 2 broken on both sides (not new): writers_dont_starve, quiet_graphs_stay_fast",
+      "candidate": {
+        "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+        "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+        "label": "main@2720220"
+      },
+      "baseline": {
+        "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+        "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+        "label": "6.2.1"
+      },
+      "machine": {
+        "runner": "gce",
+        "type": "n4-standard-16",
+        "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+        "cores": 16
+      },
+      "started": "2026-11-26T16:15:00Z",
+      "finished": "2026-11-26T16:36:41Z",
+      "findings": [
+        {
+          "name": "control writers_dont_starve",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        },
+        {
+          "name": "control quiet_graphs_stay_fast",
+          "metric": "invariant",
+          "candidate": 0,
+          "baseline": 0,
+          "ratio": null,
+          "threshold": null,
+          "direction": "lower_is_worse",
+          "status": "info"
+        }
+      ],
+      "error": null,
+      "incomplete": null,
+      "artifacts": [
+        "raw/rows.csv",
+        "raw/runs.json"
+      ]
+    }
+  ]
+}

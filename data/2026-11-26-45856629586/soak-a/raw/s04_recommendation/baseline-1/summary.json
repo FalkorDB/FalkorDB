@@ -1,0 +1,359 @@
+{
+ "ops": {
+  "user_profile": {
+   "count": 7151,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 23.836666666666666,
+   "p50_ms": 0.6426227262856066,
+   "p95_ms": 0.8998269582594633,
+   "p99_ms": 2.727524239718171,
+   "p999_ms": 4.94053262753621,
+   "max_ms": 11.576603462579442,
+   "drift": {
+    "p99_early_ms": 3.1957293623768686,
+    "p99_late_ms": 2.470402738470666,
+    "ratio": 0.7730325250800554
+   }
+  },
+  "user_feed": {
+   "count": 7291,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 24.303333333333335,
+   "p50_ms": 2.952359954250498,
+   "p95_ms": 3.895576260550808,
+   "p99_ms": 6.265789965641322,
+   "p999_ms": 7.790722265075436,
+   "max_ms": 18.620240231616638,
+   "drift": {
+    "p99_early_ms": 6.022481704768667,
+    "p99_late_ms": 6.782292566615463,
+    "ratio": 1.1261624192640003
+   }
+  },
+  "collab_filter": {
+   "count": 3762,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 12.54,
+   "p50_ms": 1.9097016668846611,
+   "p95_ms": 3.9734877857618245,
+   "p99_ms": 7.4881990244861925,
+   "p999_ms": 10.485286429241883,
+   "max_ms": 25.06039177972201,
+   "drift": {
+    "p99_early_ms": 7.3413715926335215,
+    "p99_late_ms": 5.563842176278896,
+    "ratio": 0.7578750245882889
+   }
+  },
+  "also_bought": {
+   "count": 7186,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 23.953333333333333,
+   "p50_ms": 1.391114184685227,
+   "p95_ms": 3.2596439496244063,
+   "p99_ms": 8.601586895932613,
+   "p999_ms": 21.38880308224455,
+   "max_ms": 24.569011548747064,
+   "drift": {
+    "p99_early_ms": 7.790722265075436,
+    "p99_late_ms": 5.675119019804474,
+    "ratio": 0.7284458137142338
+   }
+  },
+  "product_rating": {
+   "count": 2426,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 8.086666666666666,
+   "p50_ms": 1.0542906969234338,
+   "p95_ms": 1.4473151977465102,
+   "p99_ms": 3.324836828616894,
+   "p999_ms": 6.518927880253233,
+   "max_ms": 18.255137481977094,
+   "drift": {
+    "p99_early_ms": 3.324836828616894,
+    "p99_late_ms": 3.0716352964022184,
+    "ratio": 0.923845426026514
+   }
+  },
+  "category_top_sellers": {
+   "count": 2900,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 9.666666666666666,
+   "p50_ms": 6.265789965641322,
+   "p95_ms": 7.946536710376945,
+   "p99_ms": 9.310634283192034,
+   "p999_ms": 11.34961123782298,
+   "max_ms": 12.781505649292614,
+   "drift": {
+    "p99_early_ms": 9.128072826658858,
+    "p99_late_ms": 8.949091006528292,
+    "ratio": 0.9803921568627451
+   }
+  },
+  "category_ratings": {
+   "count": 2907,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 9.69,
+   "p50_ms": 5.039343280086934,
+   "p95_ms": 6.391105764954149,
+   "p99_ms": 8.105467444584484,
+   "p999_ms": 11.34961123782298,
+   "max_ms": 21.81657914388944,
+   "drift": {
+    "p99_early_ms": 8.267576793476174,
+    "p99_late_ms": 8.773618633851266,
+    "ratio": 1.0612080000000004
+   }
+  },
+  "price_range": {
+   "count": 7239,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 24.13,
+   "p50_ms": 0.695595505678418,
+   "p95_ms": 1.013351304232443,
+   "p99_ms": 2.952359954250498,
+   "p999_ms": 4.94053262753621,
+   "max_ms": 8.773618633851266,
+   "drift": {
+    "p99_early_ms": 2.2822702703794993,
+    "p99_late_ms": 3.819192412304713,
+    "ratio": 1.6734181143540252
+   }
+  },
+  "batch_products": {
+   "count": 4785,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 15.95,
+   "p50_ms": 4.387051586009306,
+   "p95_ms": 5.3477914035744964,
+   "p99_ms": 7.4881990244861925,
+   "p999_ms": 12.044298242467653,
+   "max_ms": 30.548477742363627,
+   "drift": {
+    "p99_early_ms": 7.056297186306729,
+    "p99_late_ms": 8.267576793476174,
+    "ratio": 1.171659381002266
+   }
+  },
+  "batch_user_counts": {
+   "count": 2353,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 7.843333333333334,
+   "p50_ms": 5.3477914035744964,
+   "p95_ms": 6.391105764954149,
+   "p99_ms": 8.773618633851266,
+   "p999_ms": 11.576603462579442,
+   "max_ms": 16.21003966187016,
+   "drift": {
+    "p99_early_ms": 10.078129978125608,
+    "p99_late_ms": 8.773618633851266,
+    "ratio": 0.8705601786139135
+   }
+  },
+  "write_view": {
+   "count": 4612,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 15.373333333333333,
+   "p50_ms": 0.8821832924112385,
+   "p95_ms": 4.474792617729492,
+   "p99_ms": 5.788621400200563,
+   "p999_ms": 16.53424045510756,
+   "max_ms": 22.697968941302577,
+   "drift": {
+    "p99_early_ms": 5.904393828204576,
+    "p99_late_ms": 5.904393828204576,
+    "ratio": 1.0
+   }
+  },
+  "write_purchase": {
+   "count": 2078,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 6.926666666666667,
+   "p50_ms": 0.8821832924112385,
+   "p95_ms": 4.474792617729492,
+   "p99_ms": 6.265789965641322,
+   "p999_ms": 13.83511276801601,
+   "max_ms": 22.25291072676723,
+   "drift": {
+    "p99_early_ms": 7.056297186306729,
+    "p99_late_ms": 7.3413715926335215,
+    "ratio": 1.0404000000000002
+   }
+  },
+  "write_rating": {
+   "count": 1298,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 4.326666666666667,
+   "p50_ms": 1.3638374359659087,
+   "p95_ms": 4.387051586009306,
+   "p99_ms": 6.022481704768667,
+   "p999_ms": 13.83511276801601,
+   "max_ms": 17.897193609781464,
+   "drift": {
+    "p99_early_ms": 4.74868572427548,
+    "p99_late_ms": 6.265789965641322,
+    "ratio": 1.3194787630628706
+   }
+  },
+  "write_price": {
+   "count": 412,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 1.3918918918918919,
+   "p50_ms": 0.7381715153899827,
+   "p95_ms": 3.9734877857618245,
+   "p99_ms": 5.3477914035744964,
+   "p999_ms": 13.563836047074519,
+   "max_ms": 13.563836047074519,
+   "drift": {
+    "p99_early_ms": 8.949091006528292,
+    "p99_late_ms": 4.564288470084082,
+    "ratio": 0.5100281656264831
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 36.31166666666667,
+  "cpu_max_pct": 53.9,
+  "rss_start_mb": 284.6,
+  "rss_end_mb": 231.8,
+  "rss_max_mb": 284.6,
+  "used_mem_end_mb": 161.8,
+  "rss_slope_mb_per_h": 106.71909441947143,
+  "used_mem_slope_mb_per_h": 2.960137911365767,
+  "samples": 369,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "ingest users",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest products",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest PURCHASED",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest VIEWED",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest RATED",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest IN_CATEGORY",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "start: co-purchase top-10 exact (14 products x 2 forms)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "start: avg rating + count per product",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "start: price range counts + spot prices",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "start: edge counts per type",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive after soak",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "end: co-purchase top-10 exact (14 products x 2 forms)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "end: avg rating + count per product",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "end: price range counts + spot prices",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "end: edge counts per type",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  }
+ ],
+ "checks_failed": [],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s04_recommendation",
+  "scale": 0.25,
+  "users": 125000,
+  "products": 25000,
+  "categories": 100,
+  "brands": 500,
+  "purchased": 499843,
+  "viewed": 812120,
+  "rated": 312444,
+  "interaction_edges": 1624407,
+  "ingest_s": 64.88983798027039,
+  "edge_load_s": 63.51081347465515,
+  "edges_per_s": 25576.857091402893,
+  "verify_start_s": 1.8253319263458252,
+  "verify_end_s": 2.481499671936035,
+  "duration": 300.0,
+  "soak_s": 300.00423288345337,
+  "acked_views": 4612,
+  "acked_purchases": 2078,
+  "read_workers": 4,
+  "read_rate_per_worker": 40.0,
+  "write_rate": 28.0
+ }
+}

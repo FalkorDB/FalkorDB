@@ -1,0 +1,866 @@
+[
+ {
+  "name": "ingest node count",
+  "ok": true,
+  "detail": "487500 != 487500",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest edge count",
+  "ok": true,
+  "detail": "1350000 != 1350000",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline person_age: scan result == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline person_age: index built",
+  "ok": true,
+  "detail": "timeout 900s",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_age: EXPLAIN scan before index",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_age: EXPLAIN uses index when operational",
+  "ok": true,
+  "detail": "Aggregate\n    Node By Index Scan | (n:Person)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_age: indexed result == ground truth (all values)",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline person_age: index disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "timeout",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_age: EXPLAIN no index after drop",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_city: scan result == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline person_city: index built",
+  "ok": true,
+  "detail": "timeout 900s",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_city: EXPLAIN scan before index",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_city: EXPLAIN uses index when operational",
+  "ok": true,
+  "detail": "Aggregate\n    Node By Index Scan | (n:Person)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_city: indexed result == ground truth (all values)",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline person_city: index disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "timeout",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person_city: EXPLAIN no index after drop",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline product_cat: scan result == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline product_cat: index built",
+  "ok": true,
+  "detail": "timeout 900s",
+  "severity": "major"
+ },
+ {
+  "name": "baseline product_cat: EXPLAIN scan before index",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline product_cat: EXPLAIN uses index when operational",
+  "ok": true,
+  "detail": "Aggregate\n    Node By Index Scan | (n:Product)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline product_cat: indexed result == ground truth (all values)",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline product_cat: index disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "timeout",
+  "severity": "major"
+ },
+ {
+  "name": "baseline product_cat: EXPLAIN no index after drop",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline order_status: scan result == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline order_status: index built",
+  "ok": true,
+  "detail": "timeout 900s",
+  "severity": "major"
+ },
+ {
+  "name": "baseline order_status: EXPLAIN scan before index",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline order_status: EXPLAIN uses index when operational",
+  "ok": true,
+  "detail": "Aggregate\n    Node By Index Scan | (n:Order)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline order_status: indexed result == ground truth (all values)",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline order_status: index disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "timeout",
+  "severity": "major"
+ },
+ {
+  "name": "baseline order_status: EXPLAIN no index after drop",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline bought_qty: scan result == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline bought_qty: index built",
+  "ok": true,
+  "detail": "timeout 900s",
+  "severity": "major"
+ },
+ {
+  "name": "baseline bought_qty: EXPLAIN scan before index",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline bought_qty: EXPLAIN uses index when operational",
+  "ok": true,
+  "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline bought_qty: indexed result == ground truth (all values)",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline bought_qty: index disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "timeout",
+  "severity": "major"
+ },
+ {
+  "name": "baseline bought_qty: EXPLAIN no index after drop",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline knows_since: scan result == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline knows_since: index built",
+  "ok": true,
+  "detail": "timeout 900s",
+  "severity": "major"
+ },
+ {
+  "name": "baseline knows_since: EXPLAIN scan before index",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline knows_since: EXPLAIN uses index when operational",
+  "ok": true,
+  "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline knows_since: indexed result == ground truth (all values)",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline knows_since: index disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "timeout",
+  "severity": "major"
+ },
+ {
+  "name": "baseline knows_since: EXPLAIN no index after drop",
+  "ok": true,
+  "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)",
+  "severity": "major"
+ },
+ {
+  "name": "baseline person.email string index lookups",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline unique constraint on Person.email OPERATIONAL",
+  "ok": true,
+  "detail": "OPERATIONAL",
+  "severity": "major"
+ },
+ {
+  "name": "baseline unique constraint rejects duplicate",
+  "ok": true,
+  "detail": "unique constraint violation on node of type Person",
+  "severity": "critical"
+ },
+ {
+  "name": "baseline fulltext Person.name results == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "EXPLAIN no index after Person.email dropped",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN no index after bought_qty dropped",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN no index after knows_since dropped",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN no index after order_status dropped",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN no index after person_age dropped",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN no index after person_city dropped",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN no index after product_cat dropped",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN uses index when Live.k operational",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN uses index when Person.email operational",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN uses index when bought_qty operational",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN uses index when knows_since operational",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN uses index when order_status operational",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN uses index when person_age operational",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN uses index when person_city operational",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "EXPLAIN uses index when product_cat operational",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "Live (under writes) index == scan during build/after",
+  "ok": false,
+  "detail": "7 of 761 runs failed; first: [17,117] idx=1316 scan=1317",
+  "severity": "critical"
+ },
+ {
+  "name": "Live: index-path count == scan-path count (same query)",
+  "ok": false,
+  "detail": "1 of 1500 runs failed; first: [441,491] idx=735 scan=736",
+  "severity": "critical"
+ },
+ {
+  "name": "after build bought_qty: indexed result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after build knows_since: indexed result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after build order_status: indexed result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after build person_age: indexed result == ground truth",
+  "ok": false,
+  "detail": "28 of 28 runs failed; first: ['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']",
+  "severity": "critical"
+ },
+ {
+  "name": "after build person_city: indexed result == ground truth",
+  "ok": false,
+  "detail": "27 of 27 runs failed; first: ['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']",
+  "severity": "critical"
+ },
+ {
+  "name": "after build product_cat: indexed result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after drop bought_qty: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after drop knows_since: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after drop order_status: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after drop person_age: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after drop person_city: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "after drop product_cat: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "before index bought_qty: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "before index knows_since: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "before index order_status: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "before index person_age: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "before index person_city: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "before index product_cat: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "during build person_age: result == ground truth",
+  "ok": false,
+  "detail": "2 of 2 runs failed; first: ['range [0,11]: got 21395 want 23340']",
+  "severity": "critical"
+ },
+ {
+  "name": "during build person_city: result == ground truth",
+  "ok": false,
+  "detail": "2 of 2 runs failed; first: ['eq 0: got 0 want 175']",
+  "severity": "critical"
+ },
+ {
+  "name": "edge mandatory constraint OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "edge mandatory rejects missing property",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "edge unique constraint on unique data OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "edge unique on violating data ends FAILED",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "edge unique rejects duplicate",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "exact-match index for unique constraint builds",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "fulltext index reaches OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "fulltext operational: result == ground truth",
+  "ok": true,
+  "detail": "0 of 84 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "immediately after drop bought_qty: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "immediately after drop knows_since: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "immediately after drop order_status: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "immediately after drop person_age: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "immediately after drop person_city: result == ground truth",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "immediately after drop product_cat: result == ground truth",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "index Live.k reaches OPERATIONAL under writes",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index Person.email reaches OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index bought_qty disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index bought_qty reaches OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index knows_since disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index knows_since reaches OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index order_status disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index order_status reaches OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index person_age disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index person_age reaches OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index person_city disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index person_city reaches OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 27 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index product_cat disappears from db.indexes after DROP",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "index product_cat reaches OPERATIONAL",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "mandatory Live.k OPERATIONAL under writes",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "mandatory Live.k rejects node without k",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "mandatory on violating data ends FAILED",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "mandatory: FAILED only if a violation was actually inserted",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "mandatory: OPERATIONAL implies no node lacks the property (no slip-through)",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "mandatory: constraint settles in OPERATIONAL or FAILED",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "mandatory: inserter saw no non-constraint errors",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "unique Live.id OPERATIONAL under writes",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "unique on violating data ends FAILED",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "unique: FAILED only if a violation was actually inserted",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "critical"
+ },
+ {
+  "name": "unique: constraint settles in OPERATIONAL or FAILED",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "unique: inserter saw no non-constraint errors",
+  "ok": true,
+  "detail": "0 of 28 runs failed; first: ",
+  "severity": "major"
+ },
+ {
+  "name": "churn completed at least one pass over index and constraint kinds",
+  "ok": true,
+  "detail": "{'range-node': 110, 'drop-latency': 165, 'unique-constraint': 28, 'range-edge': 55, 'range-node-live': 28, 'live-constraints': 28, 'live-cmp-count': 28, 'fulltext-node': 28, 'fulltext-after-drop': 28, 'unique-constraint-fail': 28, 'mandatory-constraint': 28, 'range-node-str': 28, 'mandatory-constraint-fail': 28, 'unique-constraint-edge': 27}",
+  "severity": "major"
+ },
+ {
+  "name": "Live node count == initial + inserted - deleted",
+  "ok": true,
+  "detail": "14240 vs 12500+3438-1698",
+  "severity": "critical"
+ },
+ {
+  "name": "Live acknowledged increments == sum(cnt)",
+  "ok": true,
+  "detail": "12065 vs 12065",
+  "severity": "critical"
+ },
+ {
+  "name": "no index stuck UNDER CONSTRUCTION after load",
+  "ok": true,
+  "detail": "[('Acct', ['id'], 'NODE', 'OPERATIONAL'), ('Live', ['id'], 'NODE', 'OPERATIONAL'), ('Order', ['id'], 'NODE', 'OPERATIONAL'), ('Person', ['id'], 'NODE', 'OPERATIONAL'), ('Product', ['id'], 'NODE', 'OPERATIONAL')]",
+  "severity": "major"
+ },
+ {
+  "name": "Static label counts intact after churn",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "quiescent Live.k: index count == scan count for every sampled k",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "before restart: Person.age indexed results == ground truth",
+  "ok": false,
+  "detail": "['eq 0: got 0 want 1945']",
+  "severity": "critical"
+ },
+ {
+  "name": "before restart: BOUGHT.qty indexed results == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "indexes survive SAVE/restart (same set, OPERATIONAL)",
+  "ok": true,
+  "detail": "[\"('Acct', ['id', 'email'], 'NODE', 'OPERATIONAL')\", \"('BOUGHT', ['qty'], 'RELATIONSHIP', 'OPERATIONAL')\", \"('Live', ['id', 'k'], 'NODE', 'OPERATIONAL')\", \"('Order', ['id'], 'NODE', 'OPERATIONAL')\", \"('Person', ['id', 'age', 'name'], 'NODE', 'OPERATIONAL')\", \"('Product', ['id'], 'NODE', 'OPERATIONAL')\"] != [\"('Acct', ['id', 'email'], 'NODE', 'OPERATIONAL')\", \"('BOUGHT', ['qty'], 'RELATIONSHIP', 'OPERATIONAL')\", \"('Live', ['id', 'k'], 'NODE', 'OPERATIONAL')\", \"('Order', ['id'], 'NODE', 'OPERATIONAL')\", \"('Person', ['id', 'age', 'name'], 'NODE', 'OPERATIONAL')\", \"('Product', ['id'], 'NODE', 'OPERATIONAL')\"]",
+  "severity": "critical"
+ },
+ {
+  "name": "constraints survive SAVE/restart",
+  "ok": true,
+  "detail": "[\"('MANDATORY', 'Acct', ('id',), 'NODE', 'OPERATIONAL')\", \"('UNIQUE', 'Acct', ('email',), 'NODE', 'OPERATIONAL')\"] != [\"('MANDATORY', 'Acct', ('id',), 'NODE', 'OPERATIONAL')\", \"('UNIQUE', 'Acct', ('email',), 'NODE', 'OPERATIONAL')\"]",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: Person.age indexed results == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: BOUGHT.qty indexed results == ground truth",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: EXPLAIN uses index",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "after restart: unique constraint still enforced",
+  "ok": true,
+  "detail": "unique constraint violation on node of type Acct",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: mandatory constraint still enforced",
+  "ok": true,
+  "detail": "mandatory constraint violation: node with label Acct missing property id",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: fulltext results == ground truth",
+  "ok": true,
+  "detail": "350 vs 350",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "no server crash markers",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ }
+]

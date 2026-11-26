@@ -1,0 +1,14 @@
+{
+  "baseline": {
+    "nodes": 327588,
+    "edges": 1477965,
+    "seconds": 70.439,
+    "entities_per_s": 25633.0
+  },
+  "candidate": {
+    "nodes": 327588,
+    "edges": 1477965,
+    "seconds": 70.244,
+    "entities_per_s": 25703.9
+  }
+}

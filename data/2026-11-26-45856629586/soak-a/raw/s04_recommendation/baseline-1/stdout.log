@@ -1,0 +1,36 @@
+ingest 64.9s edges=1624407 (25577 edges/s)
+PASS ingest users
+PASS ingest products
+PASS ingest PURCHASED
+PASS ingest VIEWED
+PASS ingest RATED
+PASS ingest IN_CATEGORY
+PASS start: co-purchase top-10 exact (14 products x 2 forms)
+PASS start: avg rating + count per product
+PASS start: price range counts + spot prices
+PASS start: edge counts per type
+PASS server alive after soak
+PASS end: co-purchase top-10 exact (14 products x 2 forms)
+PASS end: avg rating + count per product
+PASS end: price range counts + spot prices
+PASS end: edge counts per type
+acked writes: views=4612 purchases=2078
+op                                     count    err     ops/s      p50      p99     p999  drift
+also_bought                             7186      0      24.0     1.39     8.60    21.39   0.73
+batch_products                          4785      0      15.9     4.39     7.49    12.04   1.17
+batch_user_counts                       2353      0       7.8     5.35     8.77    11.58   0.87
+category_ratings                        2907      0       9.7     5.04     8.11    11.35   1.06
+category_top_sellers                    2900      0       9.7     6.27     9.31    11.35   0.98
+collab_filter                           3762      0      12.5     1.91     7.49    10.49   0.76
+price_range                             7239      0      24.1     0.70     2.95     4.94   1.67
+product_rating                          2426      0       8.1     1.05     3.32     6.52   0.92
+user_feed                               7291      0      24.3     2.95     6.27     7.79   1.13
+user_profile                            7151      0      23.8     0.64     2.73     4.94   0.77
+write_price                              412      0       1.4     0.74     5.35    13.56   0.51
+write_purchase                          2078      0       6.9     0.88     6.27    13.84   1.04
+write_rating                            1298      0       4.3     1.36     6.02    13.84   1.32
+write_view                              4612      0      15.4     0.88     5.79    16.53   1.00
+monitor: {"cpu_avg_pct": 36.31166666666667, "cpu_max_pct": 53.9, "rss_start_mb": 284.6, "rss_end_mb": 231.8, "rss_max_mb": 284.6, "used_mem_end_mb": 161.8, "rss_slope_mb_per_h": 106.71909441947143, "used_mem_slope_mb_per_h": 2.960137911365767, "samples": 369, "dead_samples": 0}
+failed checks: []
+top errors: []
+crash markers: []

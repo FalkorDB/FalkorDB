@@ -1,0 +1,100 @@
+{
+  "schema": 1,
+  "check": "soak-a",
+  "verdict": "pass",
+  "confirmed": false,
+  "summary": "6 of 6 scenarios measured, nightly (300 s per side); no regression; 5 broken on both sides (not new); 1 p99 shift(s) reported, not gated (largest s06 lookup_paper 2.69x)",
+  "candidate": {
+    "image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818",
+    "commit": "2720220a48fde12d35e377e54aefcd6549680121",
+    "label": "main@2720220"
+  },
+  "baseline": {
+    "image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de",
+    "commit": "617955cf660770f33e69fb9765e8b75df03636c1",
+    "label": "6.2.1"
+  },
+  "machine": {
+    "runner": "gce",
+    "type": "n4-standard-16",
+    "cpu": "INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz",
+    "cores": 16
+  },
+  "started": "2026-11-26T16:15:02Z",
+  "finished": "2026-11-26T17:31:02Z",
+  "findings": [
+    {
+      "name": "s03 in-load: updated_ann_miss_top10 == 0",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s03 range index finds chunks by cid (0, 1, mid, last)",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s03 range index finds every initial chunk",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s05 steady state: used_memory plateau (2nd half growth <10%+20MB)",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s05 used_memory returns to baseline after deleting all (residual <50MB)",
+      "metric": "invariant",
+      "candidate": 0,
+      "baseline": 0,
+      "ratio": null,
+      "threshold": null,
+      "direction": "lower_is_worse",
+      "status": "info"
+    },
+    {
+      "name": "s06 lookup_paper (p99 shift, not gated)",
+      "metric": "p99_ms",
+      "candidate": 2962.301448,
+      "baseline": 1100.577583,
+      "ratio": 2.691588,
+      "threshold": null,
+      "direction": "higher_is_worse",
+      "status": "info"
+    }
+  ],
+  "error": null,
+  "incomplete": null,
+  "artifacts": [
+    "raw/rows.csv",
+    "raw/runs.csv",
+    "raw/s01_social_feed",
+    "raw/s02_fraud_realtime",
+    "raw/s03_graphrag_vector",
+    "raw/s04_recommendation",
+    "raw/s05_multitenant_churn",
+    "raw/s06_large_analytics",
+    "raw/servers.json"
+  ]
+}

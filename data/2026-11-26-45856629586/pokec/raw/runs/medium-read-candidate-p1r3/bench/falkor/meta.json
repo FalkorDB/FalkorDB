@@ -1,0 +1,14 @@
+{
+  "vendor": "falkor",
+  "dataset": "medium",
+  "queries_file": "/actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-read.jsonl",
+  "queries_count": 10000,
+  "parallel": 8,
+  "mps": 2000,
+  "simulate_ms": null,
+  "endpoint": "falkor://127.0.0.1:32779",
+  "started_at_epoch_secs": 1795710535,
+  "finished_at_epoch_secs": 1795710552,
+  "elapsed_ms": 16087,
+  "engine_version": "FalkorDB (Redis 7.2.4)"
+}

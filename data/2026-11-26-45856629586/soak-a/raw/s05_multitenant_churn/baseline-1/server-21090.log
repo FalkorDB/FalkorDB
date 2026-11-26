@@ -1,0 +1,21 @@
+1:M 26 Nov 2026 17:13:40.827 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 17:13:40.827 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 17:13:40.827 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 17:13:40.827 * Configuration loaded
+1:M 26 Nov 2026 17:13:40.858 * monotonic clock: X86 TSC @ 2100.04 ticks/us
+1:M 26 Nov 2026 17:13:40.858 * Running mode=standalone, port=21090.
+1:M 26 Nov 2026 17:13:40.860 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 17:13:40.861 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 17:13:40.861 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 17:13:40.861 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 17:13:40.861 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 17:13:40.861 * <graph> Enabled role change notification
+1:M 26 Nov 2026 17:13:40.861 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 17:13:40.890 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 60201)
+1:M 26 Nov 2026 17:13:40.891 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 17:13:40.891 * Server initialized
+1:M 26 Nov 2026 17:13:40.891 * Ready to accept connections tcp
+1:M 26 Nov 2026 17:19:50.610 * User requested shutdown... (user request from 'id=56829 addr=127.0.0.1:40284 laddr=127.0.0.1:21090 fd=10 name=*redacted* user=*redacted* lib-name=redis-py lib-ver=8.1.0')
+1:M 26 Nov 2026 17:19:50.610 * Module lua unloaded
+1:M 26 Nov 2026 17:19:50.610 # Failed to unload module graph: the module exports one or more module-side data types, can't unload
+1:M 26 Nov 2026 17:19:50.610 # Valkey is now ready to exit, bye bye...

@@ -1,0 +1,91 @@
+ingest 9.8s (bulk 7.7s) nodes=851727 edges=8200439 rss=786MB B/edge rss=96.2 used_memory=80.3
+PASS ingest node count
+PASS ingest edge count
+PASS ingest CITES count
+PASS ingest WROTE count
+PASS ingest PUBLISHED_IN count
+PASS ingest ROAD count
+PASS ingest LINK count
+PASS BFS depth-3 node count on lattice is analytic (9, +1 if source included)
+PASS verify an_sp_grid
+PASS verify an_allsp_grid
+PASS verify an_sp_weighted
+PASS verify an_grid_varlen
+PASS verify an_grid_varlen_undirected
+PASS verify an_bfs
+PASS verify an_paper_varlen
+PASS verify an_paper_varlen_agg
+PASS verify an_hub_incoming
+PASS verify an_label_counts
+PASS verify an_degree_dist
+PASS verify an_sum_weights
+PASS verify an_order_limit
+PASS verify an_order_full
+PASS verify an_pagerank_grid
+PASS verify an_wcc_islands
+PASS verify an_wcc
+PASS verify an_pagerank_full
+PASS verify op_paper_lookup x200
+PASS verify op_paper_cites x200
+PASS verify op_paper_citedby x200
+PASS verify op_author x200
+PASS verify op_junction x200
+probe times: {'an_sp_grid': 0.003, 'an_allsp_grid': 0.001, 'an_sp_weighted': 0.025, 'an_grid_varlen': 0.001, 'an_grid_varlen_undirected': 0.001, 'an_bfs': 0.001, 'an_paper_varlen': 0.063, 'an_paper_varlen_agg': 0.002, 'an_hub_incoming': 0.118, 'an_label_counts': 0.463, 'an_degree_dist': 3.159, 'an_sum_weights': 0.925, 'an_order_limit': 0.157, 'an_order_full': 0.186, 'an_pagerank_grid': 0.046, 'an_wcc_islands': 0.001, 'an_wcc': 0.402, 'an_pagerank_full': 0.408}
+PASS var-length *1..4 distinct reach == iterated 1-hop expansion
+PASS runaway query with TIMEOUT 1000 ms times out
+PASS timeout 1000 ms fires promptly (<= limit + 5s)
+PASS runaway query with TIMEOUT 3000 ms times out
+PASS timeout 3000 ms fires promptly (<= limit + 5s)
+PASS server healthy after timeouts (lookup works)
+PASS GRAPH.QUERY (non-RO) runaway also times out
+PASS varlen-then-hop query anchored on index lookup stays fast (<2s)
+PASS QUERY_MEM_CAPACITY=256MB aborts a memory-hog query
+PASS server healthy after memory-limit abort
+guards: {'timeout_1000ms': {'result': 'timeout', 'elapsed_s': 1.0}, 'timeout_3000ms': {'result': 'timeout', 'elapsed_s': 3.0}, 'post_timeout_lookup_ms': 0.67, 'timeout_graph_query_1000ms': {'result': 'timeout', 'elapsed_s': 1.0}, 'timeout_above_max': 'rejected: The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value', 'planner_varlen_then_hop': {'result': 'completed', 'elapsed_s': 0.001}, 'mem_capacity_default': "[b'QUERY_MEM_CAPACITY', 0]", 'mem_capacity_256MB_collect': {'result': 'mem', 'elapsed_s': 1.59, 'rss_peak_over_before_mb': -6.2}}
+PASS no wrong analytic / lookup results during soak
+PASS no unexpected query errors during soak
+PASS acknowledged draft writes all visible (created - deleted)
+PASS REFS edges == 3 x drafts
+PASS acknowledged SET views all visible
+PASS post-soak an_degree_dist exact
+PASS post-soak an_sum_weights exact
+PASS post-soak an_wcc exact
+PASS post-soak an_label_counts exact
+PASS post-soak an_order_full exact
+PASS no server crash markers
+PASS server alive at end
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                            14044      0      47.0   328.86  3683.25  6042.76   1.13
+_missed_schedule                      162423 162423       0.0      nan      nan      nan    nan
+an_BFS                                   151      0       0.5    11.35  3540.22  3540.22   1.22
+an_SPpaths_weighted                      157      0       0.5    66.13  3336.03  3336.03   4.69
+an_WCC                                    26      0       0.1   498.44  3540.22  3540.22    nan
+an_WCC_islands                            37      0       0.1     6.27  3206.49  3206.49   4.50
+an_allShortestPaths                      127      0       0.4     6.02  3143.62  3143.62   1.08
+an_degree_dist                            59      0       0.2  3336.03  6671.70  6671.70   1.00
+an_grid_varlen                           159      0       0.5     5.56  3470.81  3540.22   1.06
+an_grid_varlen_undirected                108      0       0.4    58.72  3470.81  3470.81   0.14
+an_hub_incoming                           45      0       0.2   204.46  3756.91  3756.91  16.64
+an_label_counts                           64      0       0.2   670.84  3756.91  3756.91   4.88
+an_order_full                             42      0       0.1   292.02  3611.03  3611.03   1.06
+an_order_limit                            75      0       0.3   192.67  3683.25  3683.25   1.00
+an_pageRank_full                          17      0       0.1   561.33  3986.87  3986.87    nan
+an_pageRank_lattice                       48      0       0.2    79.03  3336.03  3336.03   0.32
+an_paper_varlen                          164      0       0.6   104.28  3336.03  3470.81   0.94
+an_paper_varlen_agg                      147      0       0.5    11.35  3402.75  3470.81   4.24
+an_shortestPath                          223      0       0.8    37.24  3143.62  3336.03   1.04
+an_sum_weights                            47      0       0.2   977.28  4147.94  4147.94   1.00
+lookup_author                           3507      0      11.7     2.37  1993.54  3470.81   1.02
+lookup_cited_by                         4797      0      15.8     0.49  1993.54  3470.81   1.04
+lookup_cites_out                        6012      0      20.1     0.48   996.83  3470.81   1.02
+lookup_junction                         2393      0       7.9     0.50  2962.30  3540.22   3.41
+lookup_paper                            7198      0      23.8     0.43  1100.58  3470.81   3.84
+runaway_timeout                            7      0       0.0  2791.44  4147.94  4147.94    nan
+write_create_draft                       422      0       1.4     2.95  5365.80  6805.13   1.96
+write_delete_draft                       175      0       0.6     3.39  6286.89  6412.63   1.22
+write_set_views                          622      0       2.1     2.62  5157.44  6805.13   0.82
+monitor: {"cpu_avg_pct": 151.3704318936877, "cpu_max_pct": 535.2, "rss_start_mb": 726.9, "rss_end_mb": 801.7, "rss_max_mb": 975.8, "used_mem_end_mb": 696.3, "rss_slope_mb_per_h": 10.102071995274052, "used_mem_slope_mb_per_h": 168.34055126150957, "samples": 334, "dead_samples": 0}
+failed checks: []
+top errors: []
+crash markers: []
+META {"scenario": "s06_large_analytics", "scale": 0.25, "engine": "rust", "duration": 300.0, "sizes": {"NP": 500000, "NA": 250000, "NV": 500, "G": 316, "K": 250, "A0": 500000, "V0": 750000, "J0": 750500, "I0": 850356, "NI": 1371, "NN": 851727}, "bulk_s": 7.733837604522705, "ingest_s": 9.826777458190918, "indexes_ready": true, "nodes": 851727, "edges": 8200439, "rss_load_mb": 752.41796875, "used_memory_load_mb": 628.3739318847656, "bytes_per_edge_rss": 96.21038873650545, "bytes_per_edge_used_memory": 80.34909155473262, "bfs3_observed": 9, "probe_times_s": {"an_sp_grid": 0.003, "an_allsp_grid": 0.001, "an_sp_weighted": 0.025, "an_grid_varlen": 0.001, "an_grid_varlen_undirected": 0.001, "an_bfs": 0.001, "an_paper_varlen": 0.063, "an_paper_varlen_agg": 0.002, "an_hub_incoming": 0.118, "an_label_counts": 0.463, "an_degree_dist": 3.159, "an_sum_weights": 0.925, "an_order_limit": 0.157, "an_order_full": 0.186, "an_pagerank_grid": 0.046, "an_wcc_islands": 0.001, "an_wcc": 0.402, "an_pagerank_full": 0.408}, "guards": {"timeout_1000ms": {"result": "timeout", "elapsed_s": 1.0}, "timeout_3000ms": {"result": "timeout", "elapsed_s": 3.0}, "post_timeout_lookup_ms": 0.67, "timeout_graph_query_1000ms": {"result": "timeout", "elapsed_s": 1.0}, "timeout_above_max": "rejected: The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value", "planner_varlen_then_hop": {"result": "completed", "elapsed_s": 0.001}, "mem_capacity_default": "[b'QUERY_MEM_CAPACITY', 0]", "mem_capacity_256MB_collect": {"result": "mem", "elapsed_s": 1.59, "rss_peak_over_before_mb": -6.2}}, "quiet_lookup_p50_ms": 0.4088878631591797, "quiet_lookup_p99_ms": 0.6873607635498047, "lookup_median_ops_per_s": 21, "lookup_stalled_seconds_(<50%_of_median)": 41, "lookup_seconds_total": 174, "missed_schedule_total": 162423, "lookup_p99_ms_worst_op": 2962.3014479050103, "lookup_p50_ms_worst_op": 2.3744739893028313}

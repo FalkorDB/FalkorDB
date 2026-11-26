@@ -1,0 +1,224 @@
+[
+ {
+  "name": "ingest count person",
+  "ok": true,
+  "detail": "250000 != 250000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest count post",
+  "ok": true,
+  "detail": "375000 != 375000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest count comment",
+  "ok": true,
+  "detail": "125000 != 125000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest count knows",
+  "ok": true,
+  "detail": "750000 != 750000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest count likes",
+  "ok": true,
+  "detail": "375000 != 375000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest count has_creator",
+  "ok": true,
+  "detail": "500000 != 500000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest count reply_of",
+  "ok": true,
+  "detail": "125000 != 125000",
+  "severity": "critical"
+ },
+ {
+  "name": "Person.id lookup uses an index",
+  "ok": true,
+  "detail": "project     node by index scan | (p:person)",
+  "severity": "minor"
+ },
+ {
+  "name": "pre-soak: friend/post/like counts for 185 sampled persons",
+  "ok": true,
+  "detail": " (0 bad)",
+  "severity": "critical"
+ },
+ {
+  "name": "pre-soak: mutual-friend counts for 11 fixed pairs",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "pre-soak: home feed top-20 for 25 persons",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "pre-soak: friend-of-friend top-10 for 14 persons",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "pre-soak: bounded shortest path for 11 pairs",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive after soak",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "no wrong results observed live (profile/friend_count/feed/fof/sp invariants)",
+  "ok": true,
+  "detail": "0 wrong; []",
+  "severity": "critical"
+ },
+ {
+  "name": "no read errors during soak",
+  "ok": true,
+  "detail": "0 read errors; []",
+  "severity": "major"
+ },
+ {
+  "name": "no write errors during soak",
+  "ok": true,
+  "detail": "0 write errors; []",
+  "severity": "major"
+ },
+ {
+  "name": "open-loop schedule kept (no dropped ops)",
+  "ok": true,
+  "detail": "0 ops dropped by client lag",
+  "severity": "major"
+ },
+ {
+  "name": "post-soak global count person",
+  "ok": true,
+  "detail": "db=250000 truth=250000",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak global count post",
+  "ok": true,
+  "detail": "db=379414 truth=379414",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak global count comment",
+  "ok": true,
+  "detail": "db=125000 truth=125000",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak global count knows",
+  "ok": true,
+  "detail": "db=751844 truth=751844",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak global count likes",
+  "ok": true,
+  "detail": "db=377521 truth=377521",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak global count has_creator",
+  "ok": true,
+  "detail": "db=504414 truth=504414",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak global count reply_of",
+  "ok": true,
+  "detail": "db=125000 truth=125000",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak: friend/post/like counts for 185 sampled persons",
+  "ok": true,
+  "detail": " (0 bad)",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak: mutual-friend counts for 11 fixed pairs",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak: home feed top-20 for 25 persons",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak: friend-of-friend top-10 for 14 persons",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak: bounded shortest path for 11 pairs",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "RDB round-trip preserves all counts",
+  "ok": true,
+  "detail": "{'person': 250000, 'post': 379414, 'comment': 125000, 'knows': 751844, 'likes': 377521, 'has_creator': 504414, 'reply_of': 125000} vs {'person': 250000, 'post': 379414, 'comment': 125000, 'knows': 751844, 'likes': 377521, 'has_creator': 504414, 'reply_of': 125000}",
+  "severity": "critical"
+ },
+ {
+  "name": "post-restart: friend/post/like counts for 185 sampled persons",
+  "ok": true,
+  "detail": " (0 bad)",
+  "severity": "critical"
+ },
+ {
+  "name": "post-restart: mutual-friend counts for 11 fixed pairs",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "post-restart: home feed top-20 for 25 persons",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "post-restart: friend-of-friend top-10 for 14 persons",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "post-restart: bounded shortest path for 11 pairs",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ }
+]

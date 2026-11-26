@@ -1,0 +1,7 @@
+Project
+    Project
+        Cartesian Product
+            Filter
+                Node By Index Scan | (person1:Person)
+            Filter
+                Node By Index Scan | (person2:Person)

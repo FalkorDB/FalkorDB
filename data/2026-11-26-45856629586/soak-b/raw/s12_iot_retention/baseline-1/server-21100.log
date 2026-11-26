@@ -1,0 +1,40 @@
+1:M 26 Nov 2026 17:24:58.921 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 17:24:58.922 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 17:24:58.922 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 17:24:58.922 * Configuration loaded
+1:M 26 Nov 2026 17:24:58.952 * monotonic clock: X86 TSC @ 2100.30 ticks/us
+1:M 26 Nov 2026 17:24:58.952 * Running mode=standalone, port=21100.
+1:M 26 Nov 2026 17:24:58.955 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 17:24:58.955 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 17:24:58.955 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 17:24:58.955 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 17:24:58.955 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 17:24:58.955 * <graph> Enabled role change notification
+1:M 26 Nov 2026 17:24:58.955 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 17:24:58.985 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 60201)
+1:M 26 Nov 2026 17:24:58.985 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 17:24:58.985 * Server initialized
+1:M 26 Nov 2026 17:24:58.985 * Ready to accept connections tcp
+1:M 26 Nov 2026 17:24:59.433 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 17:24:59.464 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 17:24:59.489 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 17:24:59.515 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 17:24:59.541 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 17:24:59.591 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 17:24:59.645 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 17:24:59.757 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 17:24:59.917 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 17:25:00.136 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 17:25:00.514 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 17:25:01.083 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 17:25:02.072 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 17:25:13.649 * <graph> DocTable capacity increase from 129944 to 194917
+67:C 26 Nov 2026 17:25:39.460 * Fork CoW for Module fork: current 6 MB, peak 6 MB, average 5 MB
+1:M 26 Nov 2026 17:26:18.694 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 17:27:56.128 * <graph> DocTable capacity increase from 292376 to 438565
+88:C 26 Nov 2026 17:28:43.607 * Fork CoW for Module fork: current 14 MB, peak 14 MB, average 13 MB
+89:C 26 Nov 2026 17:29:37.636 * Fork CoW for Module fork: current 6 MB, peak 6 MB, average 5 MB
+1:M 26 Nov 2026 17:30:03.983 * User requested shutdown... (user request from 'id=46570 addr=127.0.0.1:37528 laddr=127.0.0.1:21100 fd=11 name=*redacted* user=*redacted* lib-name=redis-py lib-ver=8.1.0')
+1:M 26 Nov 2026 17:30:03.983 * Module lua unloaded
+1:M 26 Nov 2026 17:30:03.983 # Failed to unload module graph: the module exports one or more module-side data types, can't unload
+1:M 26 Nov 2026 17:30:03.983 # Valkey is now ready to exit, bye bye...

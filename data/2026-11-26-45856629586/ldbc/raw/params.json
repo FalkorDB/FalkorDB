@@ -1,0 +1,1509 @@
+{
+  "source": "seed=1, n=25",
+  "sampled_on": "baseline",
+  "rows": {
+    "IC1": [
+      {
+        "personId": 19791209301132,
+        "firstName": "Lin"
+      },
+      {
+        "personId": 26388279067551,
+        "firstName": "Yang"
+      },
+      {
+        "personId": 24189255811254,
+        "firstName": "Jie"
+      },
+      {
+        "personId": 19791209301252,
+        "firstName": "Carlos"
+      },
+      {
+        "personId": 4398046512376,
+        "firstName": "Abhishek"
+      },
+      {
+        "personId": 4398046511667,
+        "firstName": "Carlos"
+      },
+      {
+        "personId": 1161,
+        "firstName": "Arjun"
+      },
+      {
+        "personId": 17592186045382,
+        "firstName": "Arjun"
+      },
+      {
+        "personId": 30786325578585,
+        "firstName": "A."
+      },
+      {
+        "personId": 17592186045238,
+        "firstName": "Yang"
+      },
+      {
+        "personId": 2199023256668,
+        "firstName": "Jose"
+      },
+      {
+        "personId": 15393162790400,
+        "firstName": "Carlos"
+      },
+      {
+        "personId": 32985348834375,
+        "firstName": "Alexander"
+      },
+      {
+        "personId": 987,
+        "firstName": "Yang"
+      },
+      {
+        "personId": 4398046512356,
+        "firstName": "Yang"
+      },
+      {
+        "personId": 4398046511257,
+        "firstName": "A."
+      },
+      {
+        "personId": 21990232556410,
+        "firstName": "Lin"
+      },
+      {
+        "personId": 17592186045382,
+        "firstName": "Carlos"
+      },
+      {
+        "personId": 459,
+        "firstName": "Paul"
+      },
+      {
+        "personId": 10995116279390,
+        "firstName": "David"
+      },
+      {
+        "personId": 24189255812226,
+        "firstName": "Shweta"
+      },
+      {
+        "personId": 26388279066885,
+        "firstName": "Shweta"
+      },
+      {
+        "personId": 4398046511257,
+        "firstName": "Abhishek"
+      },
+      {
+        "personId": 1274,
+        "firstName": "Wei"
+      },
+      {
+        "personId": 8796093023851,
+        "firstName": "A."
+      }
+    ],
+    "IC2": [
+      {
+        "personId": 17592186045813,
+        "maxDate": 1327250119604
+      },
+      {
+        "personId": 6597069767851,
+        "maxDate": 1329465883751
+      },
+      {
+        "personId": 17592186045238,
+        "maxDate": 1330013214415
+      },
+      {
+        "personId": 2199023256437,
+        "maxDate": 1346075944468
+      },
+      {
+        "personId": 15393162789093,
+        "maxDate": 1339474320193
+      },
+      {
+        "personId": 21990232555834,
+        "maxDate": 1326650965933
+      },
+      {
+        "personId": 6597069768129,
+        "maxDate": 1340616259498
+      },
+      {
+        "personId": 17592186045865,
+        "maxDate": 1345360752074
+      },
+      {
+        "personId": 2199023256437,
+        "maxDate": 1339912768023
+      },
+      {
+        "personId": 19791209301132,
+        "maxDate": 1342093538258
+      },
+      {
+        "personId": 1564,
+        "maxDate": 1329464219836
+      },
+      {
+        "personId": 13194139534548,
+        "maxDate": 1339547635794
+      },
+      {
+        "personId": 19791209300631,
+        "maxDate": 1326410854424
+      },
+      {
+        "personId": 26388279068177,
+        "maxDate": 1327711663373
+      },
+      {
+        "personId": 2199023256437,
+        "maxDate": 1331498963652
+      },
+      {
+        "personId": 17592186045408,
+        "maxDate": 1327293930938
+      },
+      {
+        "personId": 13194139534982,
+        "maxDate": 1334873433433
+      },
+      {
+        "personId": 32985348833579,
+        "maxDate": 1336000437217
+      },
+      {
+        "personId": 8796093023851,
+        "maxDate": 1333192599945
+      },
+      {
+        "personId": 19791209301132,
+        "maxDate": 1342183697497
+      },
+      {
+        "personId": 6597069768129,
+        "maxDate": 1345524447604
+      },
+      {
+        "personId": 4398046512356,
+        "maxDate": 1343703082227
+      },
+      {
+        "personId": 13194139534548,
+        "maxDate": 1330253767332
+      },
+      {
+        "personId": 2199023256437,
+        "maxDate": 1342168999221
+      },
+      {
+        "personId": 24189255811254,
+        "maxDate": 1345133386145
+      }
+    ],
+    "IC3": [
+      {
+        "personId": 6597069767708,
+        "countryXName": "Japan",
+        "countryYName": "Brazil",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 143,
+        "countryXName": "India",
+        "countryYName": "Romania",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 4398046512267,
+        "countryXName": "Netherlands",
+        "countryYName": "Colombia",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 10995116278353,
+        "countryXName": "Algeria",
+        "countryYName": "India",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 19791209301454,
+        "countryXName": "Pakistan",
+        "countryYName": "Greece",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 2199023256816,
+        "countryXName": "Germany",
+        "countryYName": "Madagascar",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 19791209301252,
+        "countryXName": "Sweden",
+        "countryYName": "Afghanistan",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 2199023257063,
+        "countryXName": "China",
+        "countryYName": "Algeria",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 28587302323035,
+        "countryXName": "China",
+        "countryYName": "Indonesia",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 1161,
+        "countryXName": "Ukraine",
+        "countryYName": "Czech_Republic",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 4398046512194,
+        "countryXName": "Colombia",
+        "countryYName": "Egypt",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 13194139533618,
+        "countryXName": "Egypt",
+        "countryYName": "Brazil",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 13194139534548,
+        "countryXName": "China",
+        "countryYName": "Indonesia",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 24189255811566,
+        "countryXName": "Colombia",
+        "countryYName": "Mexico",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 19791209301454,
+        "countryXName": "Japan",
+        "countryYName": "Vietnam",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 17592186045408,
+        "countryXName": "Chile",
+        "countryYName": "Netherlands",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 13194139533535,
+        "countryXName": "Ukraine",
+        "countryYName": "Vietnam",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 4398046512376,
+        "countryXName": "Czech_Republic",
+        "countryYName": "Madagascar",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 8796093023851,
+        "countryXName": "China",
+        "countryYName": "Afghanistan",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 2199023257063,
+        "countryXName": "Algeria",
+        "countryYName": "United_States",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 4398046512194,
+        "countryXName": "Indonesia",
+        "countryYName": "Madagascar",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 13194139533574,
+        "countryXName": "Russia",
+        "countryYName": "Romania",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 1490,
+        "countryXName": "Brazil",
+        "countryYName": "Czech_Republic",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 21990232555524,
+        "countryXName": "Pakistan",
+        "countryYName": "Madagascar",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      },
+      {
+        "personId": 2199023256437,
+        "countryXName": "Algeria",
+        "countryYName": "Sweden",
+        "startDate": 1283988549457,
+        "endDate": 1347528281121
+      }
+    ],
+    "IC4": [
+      {
+        "personId": 24189255811566,
+        "startDate": 1344105329788,
+        "endDate": 1346697329788
+      },
+      {
+        "personId": 2199023257063,
+        "startDate": 1326444243306,
+        "endDate": 1329036243306
+      },
+      {
+        "personId": 17592186045408,
+        "startDate": 1333522278353,
+        "endDate": 1336114278353
+      },
+      {
+        "personId": 19791209300507,
+        "startDate": 1342840836869,
+        "endDate": 1345432836869
+      },
+      {
+        "personId": 28587302323035,
+        "startDate": 1339257792968,
+        "endDate": 1341849792968
+      },
+      {
+        "personId": 17592186045813,
+        "startDate": 1344289356322,
+        "endDate": 1346881356322
+      },
+      {
+        "personId": 2199023256277,
+        "startDate": 1334731964857,
+        "endDate": 1337323964857
+      },
+      {
+        "personId": 32985348834585,
+        "startDate": 1327316344604,
+        "endDate": 1329908344604
+      },
+      {
+        "personId": 4398046511667,
+        "startDate": 1338105634159,
+        "endDate": 1340697634159
+      },
+      {
+        "personId": 24189255811254,
+        "startDate": 1327838427387,
+        "endDate": 1330430427387
+      },
+      {
+        "personId": 8796093023851,
+        "startDate": 1337290343156,
+        "endDate": 1339882343156
+      },
+      {
+        "personId": 8796093023000,
+        "startDate": 1332742687066,
+        "endDate": 1335334687066
+      },
+      {
+        "personId": 2199023256277,
+        "startDate": 1339724256390,
+        "endDate": 1342316256390
+      },
+      {
+        "personId": 32985348834375,
+        "startDate": 1344791061418,
+        "endDate": 1347383061418
+      },
+      {
+        "personId": 4398046512194,
+        "startDate": 1342189025163,
+        "endDate": 1344781025163
+      },
+      {
+        "personId": 13194139534154,
+        "startDate": 1335994214843,
+        "endDate": 1338586214843
+      },
+      {
+        "personId": 2199023256437,
+        "startDate": 1338352733277,
+        "endDate": 1340944733277
+      },
+      {
+        "personId": 1564,
+        "startDate": 1333605126625,
+        "endDate": 1336197126625
+      },
+      {
+        "personId": 8796093023907,
+        "startDate": 1343238928339,
+        "endDate": 1345830928339
+      },
+      {
+        "personId": 32985348833579,
+        "startDate": 1343186512986,
+        "endDate": 1345778512986
+      },
+      {
+        "personId": 2199023257206,
+        "startDate": 1335813809473,
+        "endDate": 1338405809473
+      },
+      {
+        "personId": 4398046511667,
+        "startDate": 1342160878744,
+        "endDate": 1344752878744
+      },
+      {
+        "personId": 1161,
+        "startDate": 1344070823282,
+        "endDate": 1346662823282
+      },
+      {
+        "personId": 4398046512356,
+        "startDate": 1331761733564,
+        "endDate": 1334353733564
+      },
+      {
+        "personId": 15393162790347,
+        "startDate": 1337280295372,
+        "endDate": 1339872295372
+      }
+    ],
+    "IC5": [
+      {
+        "personId": 6597069768236,
+        "minDate": 1344105329788
+      },
+      {
+        "personId": 30786325577877,
+        "minDate": 1326444243306
+      },
+      {
+        "personId": 10995116279272,
+        "minDate": 1333522278353
+      },
+      {
+        "personId": 21990232555524,
+        "minDate": 1342840836869
+      },
+      {
+        "personId": 13194139534142,
+        "minDate": 1339257792968
+      },
+      {
+        "personId": 32985348834375,
+        "minDate": 1344289356322
+      },
+      {
+        "personId": 24189255811566,
+        "minDate": 1334731964857
+      },
+      {
+        "personId": 30786325577859,
+        "minDate": 1327316344604
+      },
+      {
+        "personId": 8796093023000,
+        "minDate": 1338105634159
+      },
+      {
+        "personId": 19791209301132,
+        "minDate": 1327838427387
+      },
+      {
+        "personId": 21990232555524,
+        "minDate": 1337290343156
+      },
+      {
+        "personId": 24189255811940,
+        "minDate": 1332742687066
+      },
+      {
+        "personId": 30786325578932,
+        "minDate": 1339724256390
+      },
+      {
+        "personId": 1161,
+        "minDate": 1344791061418
+      },
+      {
+        "personId": 30786325578383,
+        "minDate": 1342189025163
+      },
+      {
+        "personId": 30786325578585,
+        "minDate": 1335994214843
+      },
+      {
+        "personId": 28587302322548,
+        "minDate": 1338352733277
+      },
+      {
+        "personId": 26388279067551,
+        "minDate": 1333605126625
+      },
+      {
+        "personId": 30786325578383,
+        "minDate": 1343238928339
+      },
+      {
+        "personId": 13194139534548,
+        "minDate": 1343186512986
+      },
+      {
+        "personId": 6597069768211,
+        "minDate": 1335813809473
+      },
+      {
+        "personId": 32985348834585,
+        "minDate": 1342160878744
+      },
+      {
+        "personId": 30786325578383,
+        "minDate": 1344070823282
+      },
+      {
+        "personId": 459,
+        "minDate": 1331761733564
+      },
+      {
+        "personId": 24189255811254,
+        "minDate": 1337280295372
+      }
+    ],
+    "IC6": [
+      {
+        "personId": 15393162790347,
+        "tagName": "Wolfgang_Amadeus_Mozart"
+      },
+      {
+        "personId": 17592186045693,
+        "tagName": "William_Shakespeare"
+      },
+      {
+        "personId": 13194139534154,
+        "tagName": "Arnold_Schwarzenegger"
+      },
+      {
+        "personId": 21990232555524,
+        "tagName": "Paradorn_Srichaphan"
+      },
+      {
+        "personId": 1274,
+        "tagName": "Paradorn_Srichaphan"
+      },
+      {
+        "personId": 15393162789604,
+        "tagName": "Paul_the_Apostle"
+      },
+      {
+        "personId": 2199023256437,
+        "tagName": "Haile_Selassie_I"
+      },
+      {
+        "personId": 32985348834483,
+        "tagName": "Imelda_Marcos"
+      },
+      {
+        "personId": 32985348834375,
+        "tagName": "Elizabeth_II"
+      },
+      {
+        "personId": 2199023256816,
+        "tagName": "Charles_V,_Holy_Roman_Emperor"
+      },
+      {
+        "personId": 21990232555524,
+        "tagName": "Elizabeth_II"
+      },
+      {
+        "personId": 2199023256277,
+        "tagName": "Wolfgang_Amadeus_Mozart"
+      },
+      {
+        "personId": 32985348833438,
+        "tagName": "Ivan_Ljubi\u010di\u0107"
+      },
+      {
+        "personId": 13194139533433,
+        "tagName": "Wolfgang_Amadeus_Mozart"
+      },
+      {
+        "personId": 13194139533574,
+        "tagName": "Paul_the_Apostle"
+      },
+      {
+        "personId": 17592186044994,
+        "tagName": "Elizabeth_II"
+      },
+      {
+        "personId": 17592186045865,
+        "tagName": "Paradorn_Srichaphan"
+      },
+      {
+        "personId": 17592186045813,
+        "tagName": "Arnold_Schwarzenegger"
+      },
+      {
+        "personId": 10995116278353,
+        "tagName": "Jorge_Luis_Borges"
+      },
+      {
+        "personId": 24189255811940,
+        "tagName": "Elizabeth_II"
+      },
+      {
+        "personId": 26388279066885,
+        "tagName": "Jorge_Luis_Borges"
+      },
+      {
+        "personId": 987,
+        "tagName": "Mariano_Rivera"
+      },
+      {
+        "personId": 17592186045408,
+        "tagName": "Haile_Selassie_I"
+      },
+      {
+        "personId": 6597069767708,
+        "tagName": "Arnold_Schwarzenegger"
+      },
+      {
+        "personId": 21990232555834,
+        "tagName": "Napoleon"
+      }
+    ],
+    "IC7": [
+      {
+        "personId": 30786325577877
+      },
+      {
+        "personId": 13194139534142
+      },
+      {
+        "personId": 19791209300631
+      },
+      {
+        "personId": 8796093023493
+      },
+      {
+        "personId": 13194139534548
+      },
+      {
+        "personId": 30786325578383
+      },
+      {
+        "personId": 24189255811940
+      },
+      {
+        "personId": 2199023257063
+      },
+      {
+        "personId": 6597069767242
+      },
+      {
+        "personId": 19791209301592
+      },
+      {
+        "personId": 19791209300852
+      },
+      {
+        "personId": 17592186045238
+      },
+      {
+        "personId": 17592186045238
+      },
+      {
+        "personId": 13194139533535
+      },
+      {
+        "personId": 17592186045813
+      },
+      {
+        "personId": 30786325578585
+      },
+      {
+        "personId": 6597069768211
+      },
+      {
+        "personId": 13194139534142
+      },
+      {
+        "personId": 13194139534154
+      },
+      {
+        "personId": 19791209301592
+      },
+      {
+        "personId": 2199023256031
+      },
+      {
+        "personId": 2199023256077
+      },
+      {
+        "personId": 10995116279272
+      },
+      {
+        "personId": 2199023257206
+      },
+      {
+        "personId": 30786325577877
+      }
+    ],
+    "IC8": [
+      {
+        "personId": 4398046512201
+      },
+      {
+        "personId": 8796093023493
+      },
+      {
+        "personId": 21990232556410
+      },
+      {
+        "personId": 32985348834375
+      },
+      {
+        "personId": 6597069767708
+      },
+      {
+        "personId": 17592186045408
+      },
+      {
+        "personId": 21990232556528
+      },
+      {
+        "personId": 143
+      },
+      {
+        "personId": 17592186045238
+      },
+      {
+        "personId": 13194139534154
+      },
+      {
+        "personId": 17592186044994
+      },
+      {
+        "personId": 2199023256031
+      },
+      {
+        "personId": 21990232556528
+      },
+      {
+        "personId": 17592186045813
+      },
+      {
+        "personId": 13194139533574
+      },
+      {
+        "personId": 26388279067734
+      },
+      {
+        "personId": 1161
+      },
+      {
+        "personId": 4398046511667
+      },
+      {
+        "personId": 21990232556410
+      },
+      {
+        "personId": 26388279067734
+      },
+      {
+        "personId": 21990232556410
+      },
+      {
+        "personId": 4398046512194
+      },
+      {
+        "personId": 26388279068275
+      },
+      {
+        "personId": 4398046512201
+      },
+      {
+        "personId": 143
+      }
+    ],
+    "IC9": [
+      {
+        "personId": 26388279067534,
+        "maxDate": 1342221851871
+      },
+      {
+        "personId": 15393162788906,
+        "maxDate": 1339325570044
+      },
+      {
+        "personId": 19791209301454,
+        "maxDate": 1327957707798
+      },
+      {
+        "personId": 4398046512201,
+        "maxDate": 1344385156024
+      },
+      {
+        "personId": 459,
+        "maxDate": 1336718244918
+      },
+      {
+        "personId": 17592186044994,
+        "maxDate": 1333326842390
+      },
+      {
+        "personId": 32985348833438,
+        "maxDate": 1327458279592
+      },
+      {
+        "personId": 26388279068177,
+        "maxDate": 1339365129131
+      },
+      {
+        "personId": 19791209300852,
+        "maxDate": 1341682608867
+      },
+      {
+        "personId": 32985348833548,
+        "maxDate": 1330721046635
+      },
+      {
+        "personId": 30786325577877,
+        "maxDate": 1344955171684
+      },
+      {
+        "personId": 30786325578585,
+        "maxDate": 1345979727725
+      },
+      {
+        "personId": 17592186045382,
+        "maxDate": 1339729591074
+      },
+      {
+        "personId": 10995116278353,
+        "maxDate": 1340578803519
+      },
+      {
+        "personId": 26388279068177,
+        "maxDate": 1340210060688
+      },
+      {
+        "personId": 30786325578585,
+        "maxDate": 1334980898189
+      },
+      {
+        "personId": 8796093023000,
+        "maxDate": 1334482002684
+      },
+      {
+        "personId": 4398046512356,
+        "maxDate": 1341544222162
+      },
+      {
+        "personId": 19791209301592,
+        "maxDate": 1331026651797
+      },
+      {
+        "personId": 26388279068177,
+        "maxDate": 1333419669895
+      },
+      {
+        "personId": 13194139534982,
+        "maxDate": 1340309571533
+      },
+      {
+        "personId": 8796093023851,
+        "maxDate": 1339585495363
+      },
+      {
+        "personId": 26388279067534,
+        "maxDate": 1334765665211
+      },
+      {
+        "personId": 15393162789093,
+        "maxDate": 1332289411514
+      },
+      {
+        "personId": 15393162790400,
+        "maxDate": 1326351998612
+      }
+    ],
+    "IC10": [
+      {
+        "personId": 17592186044994,
+        "month": 12
+      },
+      {
+        "personId": 26388279068275,
+        "month": 11
+      },
+      {
+        "personId": 17592186045693,
+        "month": 11
+      },
+      {
+        "personId": 13194139534142,
+        "month": 4
+      },
+      {
+        "personId": 26388279067534,
+        "month": 9
+      },
+      {
+        "personId": 15393162788906,
+        "month": 5
+      },
+      {
+        "personId": 4398046511667,
+        "month": 12
+      },
+      {
+        "personId": 21990232555834,
+        "month": 10
+      },
+      {
+        "personId": 21990232555524,
+        "month": 12
+      },
+      {
+        "personId": 1274,
+        "month": 6
+      },
+      {
+        "personId": 24189255811254,
+        "month": 5
+      },
+      {
+        "personId": 2199023257063,
+        "month": 10
+      },
+      {
+        "personId": 21990232555524,
+        "month": 11
+      },
+      {
+        "personId": 1564,
+        "month": 2
+      },
+      {
+        "personId": 2199023256437,
+        "month": 1
+      },
+      {
+        "personId": 15393162789604,
+        "month": 6
+      },
+      {
+        "personId": 13194139533618,
+        "month": 9
+      },
+      {
+        "personId": 32985348834375,
+        "month": 7
+      },
+      {
+        "personId": 6597069767708,
+        "month": 1
+      },
+      {
+        "personId": 24189255811663,
+        "month": 2
+      },
+      {
+        "personId": 19791209300852,
+        "month": 10
+      },
+      {
+        "personId": 10995116279390,
+        "month": 7
+      },
+      {
+        "personId": 143,
+        "month": 8
+      },
+      {
+        "personId": 32985348833548,
+        "month": 2
+      },
+      {
+        "personId": 17592186045693,
+        "month": 12
+      }
+    ],
+    "IC11": [
+      {
+        "personId": 8796093023493,
+        "countryName": "Netherlands",
+        "workFromYear": 2001
+      },
+      {
+        "personId": 987,
+        "countryName": "Vietnam",
+        "workFromYear": 2010
+      },
+      {
+        "personId": 26388279066885,
+        "countryName": "Brazil",
+        "workFromYear": 2012
+      },
+      {
+        "personId": 13194139534154,
+        "countryName": "Greece",
+        "workFromYear": 2005
+      },
+      {
+        "personId": 4398046512356,
+        "countryName": "Chile",
+        "workFromYear": 2012
+      },
+      {
+        "personId": 1564,
+        "countryName": "Vietnam",
+        "workFromYear": 2002
+      },
+      {
+        "personId": 26388279066885,
+        "countryName": "Philippines",
+        "workFromYear": 2009
+      },
+      {
+        "personId": 15393162790400,
+        "countryName": "Ukraine",
+        "workFromYear": 2010
+      },
+      {
+        "personId": 32985348834053,
+        "countryName": "Greece",
+        "workFromYear": 2000
+      },
+      {
+        "personId": 28587302323035,
+        "countryName": "Pakistan",
+        "workFromYear": 2005
+      },
+      {
+        "personId": 24189255812226,
+        "countryName": "Mexico",
+        "workFromYear": 2005
+      },
+      {
+        "personId": 4398046512194,
+        "countryName": "Japan",
+        "workFromYear": 2005
+      },
+      {
+        "personId": 10995116279390,
+        "countryName": "Vietnam",
+        "workFromYear": 2011
+      },
+      {
+        "personId": 13194139533535,
+        "countryName": "Chile",
+        "workFromYear": 2007
+      },
+      {
+        "personId": 15393162790400,
+        "countryName": "Vietnam",
+        "workFromYear": 2005
+      },
+      {
+        "personId": 19791209301132,
+        "countryName": "Colombia",
+        "workFromYear": 2013
+      },
+      {
+        "personId": 13194139533433,
+        "countryName": "China",
+        "workFromYear": 2012
+      },
+      {
+        "personId": 24189255811940,
+        "countryName": "Vietnam",
+        "workFromYear": 2004
+      },
+      {
+        "personId": 21990232556410,
+        "countryName": "Greece",
+        "workFromYear": 2005
+      },
+      {
+        "personId": 30786325577877,
+        "countryName": "Greece",
+        "workFromYear": 2010
+      },
+      {
+        "personId": 13194139533433,
+        "countryName": "Egypt",
+        "workFromYear": 2012
+      },
+      {
+        "personId": 15393162790347,
+        "countryName": "Romania",
+        "workFromYear": 2002
+      },
+      {
+        "personId": 32985348834937,
+        "countryName": "India",
+        "workFromYear": 2000
+      },
+      {
+        "personId": 24189255811566,
+        "countryName": "Brazil",
+        "workFromYear": 2009
+      },
+      {
+        "personId": 17592186045813,
+        "countryName": "Russia",
+        "workFromYear": 2004
+      }
+    ],
+    "IC12": [
+      {
+        "personId": 13194139533535,
+        "tagClassName": "Country"
+      },
+      {
+        "personId": 13194139533433,
+        "tagClassName": "Philosopher"
+      },
+      {
+        "personId": 17592186045382,
+        "tagClassName": "Artist"
+      },
+      {
+        "personId": 26388279067625,
+        "tagClassName": "President"
+      },
+      {
+        "personId": 19791209301592,
+        "tagClassName": "Saint"
+      },
+      {
+        "personId": 4398046511667,
+        "tagClassName": "Artist"
+      },
+      {
+        "personId": 15393162790347,
+        "tagClassName": "Country"
+      },
+      {
+        "personId": 6597069767851,
+        "tagClassName": "Person"
+      },
+      {
+        "personId": 2199023256031,
+        "tagClassName": "Writer"
+      },
+      {
+        "personId": 6597069767851,
+        "tagClassName": "Writer"
+      },
+      {
+        "personId": 2199023256277,
+        "tagClassName": "Philosopher"
+      },
+      {
+        "personId": 1161,
+        "tagClassName": "BaseballPlayer"
+      },
+      {
+        "personId": 28587302322548,
+        "tagClassName": "Monarch"
+      },
+      {
+        "personId": 2199023256277,
+        "tagClassName": "TennisPlayer"
+      },
+      {
+        "personId": 32985348834937,
+        "tagClassName": "Philosopher"
+      },
+      {
+        "personId": 13194139534982,
+        "tagClassName": "MusicalArtist"
+      },
+      {
+        "personId": 13194139533535,
+        "tagClassName": "MilitaryPerson"
+      },
+      {
+        "personId": 6597069767708,
+        "tagClassName": "Country"
+      },
+      {
+        "personId": 24189255811254,
+        "tagClassName": "Comedian"
+      },
+      {
+        "personId": 24189255812226,
+        "tagClassName": "OfficeHolder"
+      },
+      {
+        "personId": 24189255811663,
+        "tagClassName": "Thing"
+      },
+      {
+        "personId": 15393162790400,
+        "tagClassName": "Scientist"
+      },
+      {
+        "personId": 32985348834585,
+        "tagClassName": "MilitaryPerson"
+      },
+      {
+        "personId": 10995116279272,
+        "tagClassName": "Country"
+      },
+      {
+        "personId": 4398046512356,
+        "tagClassName": "Song"
+      }
+    ],
+    "IC13": [
+      {
+        "person1Id": 30786325577877,
+        "person2Id": 1564
+      },
+      {
+        "person1Id": 26388279068177,
+        "person2Id": 4398046512356
+      },
+      {
+        "person1Id": 6597069766733,
+        "person2Id": 32985348833548
+      },
+      {
+        "person1Id": 24189255812226,
+        "person2Id": 6597069767708
+      },
+      {
+        "person1Id": 2199023256077,
+        "person2Id": 26388279066885
+      },
+      {
+        "person1Id": 32985348834937,
+        "person2Id": 21990232556811
+      },
+      {
+        "person1Id": 1490,
+        "person2Id": 17592186044994
+      },
+      {
+        "person1Id": 10995116278353,
+        "person2Id": 13194139533618
+      },
+      {
+        "person1Id": 8796093023000,
+        "person2Id": 19791209300852
+      },
+      {
+        "person1Id": 15393162789093,
+        "person2Id": 26388279067625
+      },
+      {
+        "person1Id": 26388279067551,
+        "person2Id": 2199023256668
+      },
+      {
+        "person1Id": 32985348834937,
+        "person2Id": 13194139534142
+      },
+      {
+        "person1Id": 30786325578383,
+        "person2Id": 28587302322548
+      },
+      {
+        "person1Id": 4398046511667,
+        "person2Id": 32985348833579
+      },
+      {
+        "person1Id": 1490,
+        "person2Id": 459
+      },
+      {
+        "person1Id": 987,
+        "person2Id": 4398046512356
+      },
+      {
+        "person1Id": 30786325578585,
+        "person2Id": 26388279066885
+      },
+      {
+        "person1Id": 21990232556410,
+        "person2Id": 6597069766733
+      },
+      {
+        "person1Id": 26388279067625,
+        "person2Id": 2199023256816
+      },
+      {
+        "person1Id": 26388279067551,
+        "person2Id": 17592186044425
+      },
+      {
+        "person1Id": 6597069766733,
+        "person2Id": 30786325577859
+      },
+      {
+        "person1Id": 32985348833579,
+        "person2Id": 17592186044425
+      },
+      {
+        "person1Id": 6597069767708,
+        "person2Id": 19791209300852
+      },
+      {
+        "person1Id": 21990232556410,
+        "person2Id": 32985348833548
+      },
+      {
+        "person1Id": 21990232555834,
+        "person2Id": 30786325577877
+      }
+    ],
+    "IC14": [
+      {
+        "person1Id": 30786325577877,
+        "person2Id": 1564
+      },
+      {
+        "person1Id": 26388279068177,
+        "person2Id": 4398046512356
+      },
+      {
+        "person1Id": 6597069766733,
+        "person2Id": 32985348833548
+      },
+      {
+        "person1Id": 24189255812226,
+        "person2Id": 6597069767708
+      },
+      {
+        "person1Id": 2199023256077,
+        "person2Id": 26388279066885
+      },
+      {
+        "person1Id": 32985348834937,
+        "person2Id": 21990232556811
+      },
+      {
+        "person1Id": 1490,
+        "person2Id": 17592186044994
+      },
+      {
+        "person1Id": 10995116278353,
+        "person2Id": 13194139533618
+      },
+      {
+        "person1Id": 8796093023000,
+        "person2Id": 19791209300852
+      },
+      {
+        "person1Id": 15393162789093,
+        "person2Id": 26388279067625
+      },
+      {
+        "person1Id": 26388279067551,
+        "person2Id": 2199023256668
+      },
+      {
+        "person1Id": 32985348834937,
+        "person2Id": 13194139534142
+      },
+      {
+        "person1Id": 30786325578383,
+        "person2Id": 28587302322548
+      },
+      {
+        "person1Id": 4398046511667,
+        "person2Id": 32985348833579
+      },
+      {
+        "person1Id": 1490,
+        "person2Id": 459
+      },
+      {
+        "person1Id": 987,
+        "person2Id": 4398046512356
+      },
+      {
+        "person1Id": 30786325578585,
+        "person2Id": 26388279066885
+      },
+      {
+        "person1Id": 21990232556410,
+        "person2Id": 6597069766733
+      },
+      {
+        "person1Id": 26388279067625,
+        "person2Id": 2199023256816
+      },
+      {
+        "person1Id": 26388279067551,
+        "person2Id": 17592186044425
+      },
+      {
+        "person1Id": 6597069766733,
+        "person2Id": 30786325577859
+      },
+      {
+        "person1Id": 32985348833579,
+        "person2Id": 17592186044425
+      },
+      {
+        "person1Id": 6597069767708,
+        "person2Id": 19791209300852
+      },
+      {
+        "person1Id": 21990232556410,
+        "person2Id": 32985348833548
+      },
+      {
+        "person1Id": 21990232555834,
+        "person2Id": 30786325577877
+      }
+    ]
+  }
+}

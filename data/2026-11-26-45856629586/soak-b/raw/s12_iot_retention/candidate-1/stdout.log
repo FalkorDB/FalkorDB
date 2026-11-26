@@ -1,0 +1,44 @@
+PASS ingest reading count
+PASS ingest NEXT count
+PASS ingest topology
+ingest 3.8s sensors=1000 readings=120000 window=120s
+PASS checkpoint1 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)
+checkpoint 1: live=114717 problems=0 pause=0s
+PASS checkpoint2 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)
+checkpoint 2: live=119798 problems=0 pause=0s
+PASS checkpoint3 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)
+checkpoint 3: live=119845 problems=0 pause=0s
+PASS checkpoint4 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)
+checkpoint 4: live=119757 problems=0 pause=1s
+PASS inline read checks (lattice values, ordering, window bounds, anomaly rows, chain guard)
+PASS all 4 checkpoints ran
+PASS deleted ids are reused (max(id) stays bounded)
+PASS graph empty of readings after final delete
+PASS server alive at end
+PASS RSS plateaus in second half (slope projected over run length <= 10% of mean RSS)
+PASS p99 does not drift up: ingest_batch
+PASS p99 does not drift up: ingest_single
+PASS p99 does not drift up: retention_delete
+PASS p99 does not drift up: q_recent_by_sensor
+PASS p99 does not drift up: q_latest_reading
+PASS p99 does not drift up: q_agg_device_2m
+PASS p99 does not drift up: q_agg_site_2m
+PASS p99 does not drift up: q_anomaly_join_30s
+PASS no operation errors
+op                                     count    err     ops/s      p50      p99     p999  drift
+_idle                                   7269      0      24.1    20.16    20.16    52.14   1.00
+_late_start                              377      0       1.3   146.02   488.67   498.44    nan
+_paused                                   20      0       0.1   400.88   498.44   498.44    nan
+ingest_batch                            7100      0      23.7     7.34    23.15    32.42   1.13
+ingest_single                          14373      0      47.9     1.54    13.04    21.39   1.00
+q_agg_device_2m                         2400      0       8.0     1.80     2.47     6.92   1.15
+q_agg_site_2m                            450      0       1.5    17.20    20.56    23.15   1.04
+q_anomaly_join_30s                       600      0       2.0     5.90    11.81    17.90   1.04
+q_latest_reading                       15000      0      50.0     0.59     2.11     6.52   0.61
+q_recent_by_sensor                     15000      0      50.0     0.92     4.30     8.60   0.91
+retention_delete                        1177      0       3.9    11.81    26.59    39.52   0.98
+monitor: {"cpu_avg_pct": 33.55466666666666, "cpu_max_pct": 71.9, "rss_start_mb": 204.1, "rss_end_mb": 163.2, "rss_max_mb": 204.1, "used_mem_end_mb": 53.5, "rss_slope_mb_per_h": 112.38212736393739, "used_mem_slope_mb_per_h": 65.6037176584742, "samples": 305, "dead_samples": 0}
+failed checks: []
+top errors: []
+crash markers: []
+{"scenario": "s12_iot_retention", "sites": 2, "devices": 50, "sensors": 1000, "window_s": 120.0, "live_readings_target": 120000, "ingest_s": 3.784254789352417, "duration": 300.0, "scale": 0.25, "rss_slope_mb_per_h_2nd_half": 48.36588869900449, "used_mem_slope_mb_per_h_2nd_half": 42.817877001914354, "mean_rss_2nd_half_mb": 159.71, "max_id_end": 121299, "peak_live": 120136, "max_id_over_live": 1.009680695212093, "checkpoints": [{"idx": 0, "t": 90.6, "live": 114717, "deleted_final": 287, "retention_converged": true, "max_id": 121051, "problems": [], "pause_s": 0.5, "verify_s": 0.3}, {"idx": 1, "t": 166.1, "live": 119798, "deleted_final": 330, "retention_converged": true, "max_id": 121299, "problems": [], "pause_s": 0.5, "verify_s": 0.3}, {"idx": 2, "t": 240.6, "live": 119845, "deleted_final": 285, "retention_converged": true, "max_id": 121299, "problems": [], "pause_s": 0.4, "verify_s": 0.3}, {"idx": 3, "t": 280.1, "live": 119757, "deleted_final": 324, "retention_converged": true, "max_id": 121299, "problems": [], "pause_s": 0.5, "verify_s": 0.3}], "used_mem_before_final_delete_mb": 49.712738037109375, "used_mem_after_final_delete_mb": 17.472694396972656, "rss_after_final_delete_mb": 209.16796875, "final_delete_nodes": 120127, "viol_lines": 0}

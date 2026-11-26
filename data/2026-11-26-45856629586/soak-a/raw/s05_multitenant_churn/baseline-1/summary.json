@@ -1,0 +1,546 @@
+{
+ "ops": {
+  "config_get": {
+   "count": 2183,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 43.66,
+   "p50_ms": 0.4156734648154161,
+   "p95_ms": 19.372497936973954,
+   "p99_ms": 31.1594472972109,
+   "p999_ms": 45.393430952367915,
+   "max_ms": 56.441025816060886,
+   "drift": {
+    "p99_early_ms": 36.508258732622856,
+    "p99_late_ms": 32.418288968018224,
+    "ratio": 0.8879713821861919
+   }
+  },
+  "profile": {
+   "count": 3226,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 64.52,
+   "p50_ms": 0.7236975641078262,
+   "p95_ms": 22.25291072676723,
+   "p99_ms": 39.51771335779183,
+   "p999_ms": 63.56176217875703,
+   "max_ms": 98.26519216704966,
+   "drift": {
+    "p99_early_ms": 35.09059855115615,
+    "p99_late_ms": 57.569846332382106,
+    "ratio": 1.6406059944647289
+   }
+  },
+  "tenant_read_1hop": {
+   "count": 37922,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 743.5686274509804,
+   "p50_ms": 0.7095074157919864,
+   "p95_ms": 22.25291072676723,
+   "p99_ms": 41.11422897744662,
+   "p999_ms": 68.80129552855828,
+   "max_ms": 110.66256654028656,
+   "drift": {
+    "p99_early_ms": 40.30806762494767,
+    "p99_late_ms": 45.393430952367915,
+    "ratio": 1.1261624192639983
+   }
+  },
+  "rename": {
+   "count": 4305,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 86.1,
+   "p50_ms": 2.674043372272717,
+   "p95_ms": 31.78263624315512,
+   "p99_ms": 57.569846332382106,
+   "p999_ms": 94.44943499331954,
+   "max_ms": 106.36540421019468,
+   "drift": {
+    "p99_early_ms": 53.18563921122049,
+    "p99_late_ms": 56.441025816060886,
+    "ratio": 1.0612080000000002
+   }
+  },
+  "verify_checksum": {
+   "count": 4273,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 83.7843137254902,
+   "p50_ms": 1.5359024663701788,
+   "p95_ms": 27.66869748466216,
+   "p99_ms": 51.120376020012,
+   "p999_ms": 75.96218962837122,
+   "max_ms": 100.23049601039068,
+   "drift": {
+    "p99_early_ms": 47.22732556284358,
+    "p99_late_ms": 62.31545311642846,
+    "ratio": 1.319478763062873
+   }
+  },
+  "memory_usage": {
+   "count": 3160,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 63.2,
+   "p50_ms": 0.477478151455586,
+   "p95_ms": 20.969414786514264,
+   "p99_ms": 35.09059855115615,
+   "p999_ms": 55.33433903535381,
+   "max_ms": 67.4522505181944,
+   "drift": {
+    "p99_early_ms": 40.30806762494767,
+    "p99_late_ms": 41.93651355699556,
+    "ratio": 1.0404000000000002
+   }
+  },
+  "churn_create_delete": {
+   "count": 6493,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 127.31372549019608,
+   "p50_ms": 6.265789965641322,
+   "p95_ms": 79.03106208935743,
+   "p99_ms": 129.658834212714,
+   "p999_ms": 192.66620706397174,
+   "max_ms": 212.71906064468746,
+   "drift": {
+    "p99_early_ms": 122.18041534997285,
+    "p99_late_ms": 161.21446331649022,
+    "ratio": 1.319478763062873
+   }
+  },
+  "tenant_read_2hop": {
+   "count": 16156,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 316.7843137254902,
+   "p50_ms": 0.6554751808113186,
+   "p95_ms": 21.81657914388944,
+   "p99_ms": 40.30806762494767,
+   "p999_ms": 67.4522505181944,
+   "max_ms": 98.26519216704966,
+   "drift": {
+    "p99_early_ms": 34.402547599172685,
+    "p99_late_ms": 42.775243828135395,
+    "ratio": 1.243374308394651
+   }
+  },
+  "tenant_write_create": {
+   "count": 4253,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 85.06,
+   "p50_ms": 0.668584684427545,
+   "p95_ms": 21.81657914388944,
+   "p99_ms": 39.51771335779183,
+   "p999_ms": 59.89566812421035,
+   "max_ms": 77.48143342093866,
+   "drift": {
+    "p99_early_ms": 25.561599615316453,
+    "p99_late_ms": 37.98319238542082,
+    "ratio": 1.4859473959783558
+   }
+  },
+  "tenant_write_set": {
+   "count": 12908,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 253.09803921568627,
+   "p50_ms": 0.7236975641078262,
+   "p95_ms": 22.697968941302577,
+   "p99_ms": 41.93651355699556,
+   "p999_ms": 68.80129552855828,
+   "max_ms": 102.2351059305985,
+   "drift": {
+    "p99_early_ms": 41.93651355699556,
+    "p99_late_ms": 51.120376020012,
+    "ratio": 1.2189944199947556
+   }
+  },
+  "keyspace_info": {
+   "count": 4441,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 88.82,
+   "p50_ms": 0.5594417553765582,
+   "p95_ms": 20.969414786514264,
+   "p99_ms": 40.30806762494767,
+   "p999_ms": 74.4727349297757,
+   "max_ms": 100.23049601039068,
+   "drift": {
+    "p99_early_ms": 35.09059855115615,
+    "p99_late_ms": 40.30806762494767,
+    "ratio": 1.1486856676492805
+   }
+  },
+  "graph_copy": {
+   "count": 3229,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 63.31372549019608,
+   "p50_ms": 29.949487982709435,
+   "p95_ms": 82.22391699776747,
+   "p99_ms": 117.43600091308423,
+   "p999_ms": 161.21446331649022,
+   "max_ms": 208.5480986712622,
+   "drift": {
+    "p99_early_ms": 119.78472093134592,
+    "p99_late_ms": 143.15382981954897,
+    "ratio": 1.1950925686223115
+   }
+  },
+  "graph_list": {
+   "count": 1092,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 21.84,
+   "p50_ms": 1.5057867317354694,
+   "p95_ms": 20.55824979070026,
+   "p99_ms": 31.78263624315512,
+   "p999_ms": 50.118015705894116,
+   "max_ms": 52.142783540412246,
+   "drift": {
+    "p99_early_ms": 50.118015705894116,
+    "p99_late_ms": 35.09059855115615,
+    "ratio": 0.7001593749656239
+   }
+  },
+  "explain": {
+   "count": 4351,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 87.02,
+   "p50_ms": 0.4967682687743917,
+   "p95_ms": 20.55824979070026,
+   "p99_ms": 35.79241052217927,
+   "p999_ms": 64.83299742233217,
+   "max_ms": 74.4727349297757,
+   "drift": {
+    "p99_early_ms": 31.1594472972109,
+    "p99_late_ms": 29.949487982709435,
+    "ratio": 0.9611687812379852
+   }
+  },
+  "_late_start": {
+   "count": 2982,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 59.64,
+   "p50_ms": 71.58086786791205,
+   "p95_ms": 137.59499213720582,
+   "p99_ms": 185.184743429423,
+   "p999_ms": 259.3033479524005,
+   "max_ms": 286.2918486797355,
+   "drift": {
+    "p99_early_ms": 167.72752763447644,
+    "p99_late_ms": 212.71906064468746,
+    "ratio": 1.2682417945625462
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 60.07625418060201,
+  "cpu_max_pct": 105.7,
+  "rss_start_mb": 505.0,
+  "rss_end_mb": 667.3,
+  "rss_max_mb": 685.5,
+  "used_mem_end_mb": 508.2,
+  "rss_slope_mb_per_h": 824.3280063652483,
+  "used_mem_slope_mb_per_h": 736.3982971249798,
+  "samples": 368,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "GRAPH.COPY copies contents",
+   "ok": true,
+   "detail": "None",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest: GRAPH.LIST == live set",
+   "ok": true,
+   "detail": "750 expected",
+   "severity": "critical"
+  },
+  {
+   "name": "GRAPH.LIST == Python live set",
+   "ok": true,
+   "detail": "extra=[] missing=[]",
+   "severity": "critical"
+  },
+  {
+   "name": "deleted/renamed-away graphs are gone",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "deleted names absent from GRAPH.LIST",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "DBSIZE == live graphs + registry keys",
+   "ok": true,
+   "detail": "1516 vs 750+766",
+   "severity": "major"
+  },
+  {
+   "name": "no in-flight correctness errors",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "final checksum on every live tenant",
+   "ok": true,
+   "detail": "750/750 tenants; ",
+   "severity": "critical"
+  },
+  {
+   "name": "steady state: used_memory plateau (2nd half growth <10%+20MB)",
+   "ok": false,
+   "detail": "+75.0 MB over 2nd half from 427",
+   "severity": "major"
+  },
+  {
+   "name": "steady state: RSS plateau (2nd half growth <10%+50MB)",
+   "ok": true,
+   "detail": "+74.2 MB over 2nd half from 545",
+   "severity": "major"
+  },
+  {
+   "name": "live graph count constant through soak",
+   "ok": true,
+   "detail": "[750, 750, 750, 750, 750, 750]",
+   "severity": "major"
+  },
+  {
+   "name": "GRAPH.LIST empty after deleting all",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "used_memory returns to baseline after deleting all (residual <50MB)",
+   "ok": false,
+   "detail": "residual used_memory +52.5 MB (base 3.1)",
+   "severity": "major"
+  },
+  {
+   "name": "RSS returns near baseline after deleting all (residual <10% of peak+100MB)",
+   "ok": true,
+   "detail": "residual RSS +87.4 MB (base 33.8, peak 619.4)",
+   "severity": "minor"
+  },
+  {
+   "name": "refill after delete-all: RSS not above 1.15x previous peak (memory reused, no leak)",
+   "ok": true,
+   "detail": "refill RSS 551.9 vs old peak 619.4; baseline 33.8",
+   "severity": "major"
+  },
+  {
+   "name": "refilled tenants verify (200 sampled)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  }
+ ],
+ "checks_failed": [
+  {
+   "name": "steady state: used_memory plateau (2nd half growth <10%+20MB)",
+   "ok": false,
+   "detail": "+75.0 MB over 2nd half from 427",
+   "severity": "major"
+  },
+  {
+   "name": "used_memory returns to baseline after deleting all (residual <50MB)",
+   "ok": false,
+   "detail": "residual used_memory +52.5 MB (base 3.1)",
+   "severity": "major"
+  }
+ ],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s05_multitenant_churn",
+  "tenants": 750,
+  "total_nodes": 1184285,
+  "total_edges": 3552855,
+  "size_p50": 185,
+  "size_max": 18596,
+  "ingest_s": 2.6566219329833984,
+  "copy_supported": true,
+  "duration": 300.0,
+  "scale": 0.25,
+  "mem_baseline": {
+   "label": "fresh-baseline",
+   "rss_mb": 33.8,
+   "used_mb": 3.1,
+   "live": 0,
+   "creates": 0,
+   "deletes": 0
+  },
+  "mem_after_ingest": {
+   "label": "after-ingest",
+   "rss_mb": 485.7,
+   "used_mb": 390.6,
+   "live": 750,
+   "creates": 750,
+   "deletes": 0
+  },
+  "mem_cycles": [
+   {
+    "label": "cycle-0",
+    "rss_mb": 489.6,
+    "used_mb": 389.0,
+    "live": 750,
+    "creates": 2344,
+    "deletes": 1594
+   },
+   {
+    "label": "cycle-1",
+    "rss_mb": 604.0,
+    "used_mb": 507.1,
+    "live": 750,
+    "creates": 3977,
+    "deletes": 3227
+   },
+   {
+    "label": "cycle-2",
+    "rss_mb": 560.4,
+    "used_mb": 443.9,
+    "live": 750,
+    "creates": 5580,
+    "deletes": 4830
+   },
+   {
+    "label": "cycle-3",
+    "rss_mb": 545.2,
+    "used_mb": 426.7,
+    "live": 750,
+    "creates": 7191,
+    "deletes": 6441
+   },
+   {
+    "label": "cycle-4",
+    "rss_mb": 559.4,
+    "used_mb": 446.4,
+    "live": 750,
+    "creates": 8825,
+    "deletes": 8075
+   },
+   {
+    "label": "cycle-5",
+    "rss_mb": 619.4,
+    "used_mb": 501.7,
+    "live": 750,
+    "creates": 10472,
+    "deletes": 9722
+   }
+  ],
+  "mem_before_delete": {
+   "label": "before-delete",
+   "rss_mb": 593.5,
+   "used_mb": 504.0,
+   "live": 750,
+   "creates": 10472,
+   "deletes": 9722
+  },
+  "mem_residual": [
+   {
+    "label": "residual-0",
+    "rss_mb": 499.3,
+    "used_mb": 55.6,
+    "live": 750,
+    "creates": 10472,
+    "deletes": 9722
+   },
+   {
+    "label": "residual-1",
+    "rss_mb": 256.5,
+    "used_mb": 55.6,
+    "live": 750,
+    "creates": 10472,
+    "deletes": 9722
+   },
+   {
+    "label": "residual-2",
+    "rss_mb": 176.7,
+    "used_mb": 55.6,
+    "live": 750,
+    "creates": 10472,
+    "deletes": 9722
+   },
+   {
+    "label": "residual-3",
+    "rss_mb": 131.0,
+    "used_mb": 55.6,
+    "live": 750,
+    "creates": 10472,
+    "deletes": 9722
+   },
+   {
+    "label": "residual-4",
+    "rss_mb": 122.1,
+    "used_mb": 55.6,
+    "live": 750,
+    "creates": 10472,
+    "deletes": 9722
+   },
+   {
+    "label": "residual-5",
+    "rss_mb": 121.2,
+    "used_mb": 55.6,
+    "live": 750,
+    "creates": 10472,
+    "deletes": 9722
+   }
+  ],
+  "mem_refill": {
+   "label": "after-refill",
+   "rss_mb": 551.9,
+   "used_mb": 449.1,
+   "live": 750,
+   "creates": 11222,
+   "deletes": 9722
+  },
+  "mem_residual2": [
+   {
+    "label": "residual2-0",
+    "rss_mb": 458.0,
+    "used_mb": 55.2,
+    "live": 750,
+    "creates": 11222,
+    "deletes": 9722
+   },
+   {
+    "label": "residual2-1",
+    "rss_mb": 275.1,
+    "used_mb": 55.2,
+    "live": 750,
+    "creates": 11222,
+    "deletes": 9722
+   }
+  ],
+  "refill_s": 2.930199384689331,
+  "delete_all_s": 0.13890433311462402,
+  "total_creates": 10472,
+  "total_deletes": 9722,
+  "used_growth_mb_per_1000_cycles": 13.865649606299211,
+  "rss_growth_mb_per_1000_cycles": 15.969488188976372,
+  "residual_used_mb": 52.5,
+  "residual_rss_mb": 87.4
+ }
+}

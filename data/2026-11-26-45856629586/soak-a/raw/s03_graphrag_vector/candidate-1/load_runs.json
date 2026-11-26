@@ -1,0 +1,1 @@
+[{"tag": "", "start": 1795711376.7062218, "duration": 300.0, "workers": [{"name": "retrieve", "count": 2, "rate": 50.0}, {"name": "hybrid", "count": 1, "rate": 50.0}, {"name": "entity", "count": 1, "rate": 200.0}, {"name": "ingest", "count": 1, "rate": 7.5}, {"name": "mutate", "count": 1, "rate": 30.0}]}]

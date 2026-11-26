@@ -1,0 +1,474 @@
+{
+ "ops": {
+  "fof_recommend": {
+   "count": 37633,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 125.0265780730897,
+   "p50_ms": 0.7381715153899827,
+   "p95_ms": 3.895576260550808,
+   "p99_ms": 14.975570997327152,
+   "p999_ms": 117.43600091308423,
+   "max_ms": 158.05339540832375,
+   "drift": {
+    "p99_early_ms": 14.681932350320736,
+    "p99_late_ms": 14.975570997327152,
+    "ratio": 1.02
+   }
+  },
+  "friend_count_hub": {
+   "count": 2772,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 9.24,
+   "p50_ms": 0.7679936446117381,
+   "p95_ms": 2.150634249251324,
+   "p99_ms": 4.474792617729492,
+   "p999_ms": 122.18041534997285,
+   "max_ms": 148.93724454425876,
+   "drift": {
+    "p99_early_ms": 3.3913335651892327,
+    "p99_late_ms": 6.022481704768667,
+    "ratio": 1.7758446902974052
+   }
+  },
+  "shortest_path": {
+   "count": 43304,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 144.34666666666666,
+   "p50_ms": 0.5706305904840888,
+   "p95_ms": 1.0968840410791407,
+   "p99_ms": 4.301030966675789,
+   "p999_ms": 115.13333422851414,
+   "max_ms": 151.91598943514393,
+   "drift": {
+    "p99_early_ms": 3.0716352964022184,
+    "p99_late_ms": 4.216697026152735,
+    "ratio": 1.3727857050906134
+   }
+  },
+  "profile": {
+   "count": 81335,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 270.2159468438538,
+   "p50_ms": 0.45893709290233176,
+   "p95_ms": 0.6819563781160961,
+   "p99_ms": 3.6708885162482825,
+   "p999_ms": 124.62402365697231,
+   "max_ms": 158.05339540832375,
+   "drift": {
+    "p99_early_ms": 2.3744739893028313,
+    "p99_late_ms": 3.5283434412228782,
+    "ratio": 1.4859473959783547
+   }
+  },
+  "home_feed": {
+   "count": 47047,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 156.82333333333332,
+   "p50_ms": 1.4473151977465102,
+   "p95_ms": 1.8722565361614325,
+   "p99_ms": 6.917938417947773,
+   "p999_ms": 119.78472093134592,
+   "max_ms": 158.05339540832375,
+   "drift": {
+    "p99_early_ms": 5.904393828204576,
+    "p99_late_ms": 6.265789965641322,
+    "ratio": 1.0612080000000002
+   }
+  },
+  "fof_recommend_hub": {
+   "count": 390,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 1.3,
+   "p50_ms": 21.81657914388944,
+   "p95_ms": 167.72752763447644,
+   "p99_ms": 185.184743429423,
+   "p999_ms": 196.51953120525118,
+   "max_ms": 196.51953120525118,
+   "drift": {
+    "p99_early_ms": 171.082078187166,
+    "p99_late_ms": 167.72752763447644,
+    "ratio": 0.9803921568627451
+   }
+  },
+  "friend_count": {
+   "count": 26073,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 86.91,
+   "p50_ms": 0.4870277144846977,
+   "p95_ms": 0.7236975641078262,
+   "p99_ms": 4.134016692306603,
+   "p999_ms": 122.18041534997285,
+   "max_ms": 154.95430922384682,
+   "drift": {
+    "p99_early_ms": 2.674043372272717,
+    "p99_late_ms": 3.598910310047336,
+    "ratio": 1.3458683383241306
+   }
+  },
+  "home_feed_hub": {
+   "count": 1432,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 4.773333333333333,
+   "p50_ms": 2.7820747245125346,
+   "p95_ms": 16.21003966187016,
+   "p99_ms": 18.99264503624897,
+   "p999_ms": 51.120376020012,
+   "max_ms": 137.59499213720582,
+   "drift": {
+    "p99_early_ms": 16.21003966187016,
+    "p99_late_ms": 17.20222376949391,
+    "ratio": 1.0612080000000002
+   }
+  },
+  "_late_start": {
+   "count": 3659,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 12.361486486486486,
+   "p50_ms": 90.78184832114528,
+   "p95_ms": 137.59499213720582,
+   "p99_ms": 154.95430922384682,
+   "p999_ms": 177.99379414592752,
+   "max_ms": 188.8884382980115,
+   "drift": {
+    "p99_early_ms": 164.43875258282006,
+    "p99_late_ms": 158.05339540832375,
+    "ratio": 0.9611687812379853
+   }
+  },
+  "w_new_like": {
+   "count": 4447,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 14.823333333333334,
+   "p50_ms": 0.9361799673731458,
+   "p95_ms": 9.496846968855877,
+   "p99_ms": 50.118015705894116,
+   "p999_ms": 158.05339540832375,
+   "max_ms": 164.43875258282006,
+   "drift": {
+    "p99_early_ms": 18.255137481977094,
+    "p99_late_ms": 127.11650413011176,
+    "ratio": 6.96332767998111
+   }
+  },
+  "w_new_friendship": {
+   "count": 1844,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 6.1262458471760795,
+   "p50_ms": 0.8479270399954233,
+   "p95_ms": 8.105467444584484,
+   "p99_ms": 29.362243120303365,
+   "p999_ms": 143.15382981954897,
+   "max_ms": 164.43875258282006,
+   "drift": {
+    "p99_early_ms": 25.06039177972201,
+    "p99_late_ms": 13.563836047074519,
+    "ratio": 0.5412459695881491
+   }
+  },
+  "w_new_post": {
+   "count": 4414,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 14.713333333333333,
+   "p50_ms": 0.8479270399954233,
+   "p95_ms": 11.34961123782298,
+   "p99_ms": 62.31545311642846,
+   "p999_ms": 154.95430922384682,
+   "max_ms": 164.43875258282006,
+   "drift": {
+    "p99_early_ms": 143.15382981954897,
+    "p99_late_ms": 124.62402365697231,
+    "ratio": 0.8705601786139134
+   }
+  },
+  "w_delete_like": {
+   "count": 1926,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 6.42,
+   "p50_ms": 1.5979529260115328,
+   "p95_ms": 10.485286429241883,
+   "p99_ms": 41.11422897744662,
+   "p999_ms": 164.43875258282006,
+   "max_ms": 164.43875258282006,
+   "drift": {
+    "p99_early_ms": 17.20222376949391,
+    "p99_late_ms": 55.33433903535381,
+    "ratio": 3.216696851338642
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 55.37133333333334,
+  "cpu_max_pct": 89.9,
+  "rss_start_mb": 520.3,
+  "rss_end_mb": 494.0,
+  "rss_max_mb": 527.8,
+  "used_mem_end_mb": 350.9,
+  "rss_slope_mb_per_h": 61.13972909203416,
+  "used_mem_slope_mb_per_h": 12.492435933596159,
+  "samples": 423,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "ingest count person",
+   "ok": true,
+   "detail": "250000 != 250000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest count post",
+   "ok": true,
+   "detail": "375000 != 375000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest count comment",
+   "ok": true,
+   "detail": "125000 != 125000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest count knows",
+   "ok": true,
+   "detail": "750000 != 750000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest count likes",
+   "ok": true,
+   "detail": "375000 != 375000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest count has_creator",
+   "ok": true,
+   "detail": "500000 != 500000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest count reply_of",
+   "ok": true,
+   "detail": "125000 != 125000",
+   "severity": "critical"
+  },
+  {
+   "name": "Person.id lookup uses an index",
+   "ok": true,
+   "detail": "project     node by index scan | (p:person)",
+   "severity": "minor"
+  },
+  {
+   "name": "pre-soak: friend/post/like counts for 185 sampled persons",
+   "ok": true,
+   "detail": " (0 bad)",
+   "severity": "critical"
+  },
+  {
+   "name": "pre-soak: mutual-friend counts for 11 fixed pairs",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "pre-soak: home feed top-20 for 25 persons",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "pre-soak: friend-of-friend top-10 for 14 persons",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "pre-soak: bounded shortest path for 11 pairs",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive after soak",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "no wrong results observed live (profile/friend_count/feed/fof/sp invariants)",
+   "ok": true,
+   "detail": "0 wrong; []",
+   "severity": "critical"
+  },
+  {
+   "name": "no read errors during soak",
+   "ok": true,
+   "detail": "0 read errors; []",
+   "severity": "major"
+  },
+  {
+   "name": "no write errors during soak",
+   "ok": true,
+   "detail": "0 write errors; []",
+   "severity": "major"
+  },
+  {
+   "name": "open-loop schedule kept (no dropped ops)",
+   "ok": true,
+   "detail": "0 ops dropped by client lag",
+   "severity": "major"
+  },
+  {
+   "name": "post-soak global count person",
+   "ok": true,
+   "detail": "db=250000 truth=250000",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak global count post",
+   "ok": true,
+   "detail": "db=379414 truth=379414",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak global count comment",
+   "ok": true,
+   "detail": "db=125000 truth=125000",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak global count knows",
+   "ok": true,
+   "detail": "db=751844 truth=751844",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak global count likes",
+   "ok": true,
+   "detail": "db=377521 truth=377521",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak global count has_creator",
+   "ok": true,
+   "detail": "db=504414 truth=504414",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak global count reply_of",
+   "ok": true,
+   "detail": "db=125000 truth=125000",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak: friend/post/like counts for 185 sampled persons",
+   "ok": true,
+   "detail": " (0 bad)",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak: mutual-friend counts for 11 fixed pairs",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak: home feed top-20 for 25 persons",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak: friend-of-friend top-10 for 14 persons",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "post-soak: bounded shortest path for 11 pairs",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "RDB round-trip preserves all counts",
+   "ok": true,
+   "detail": "{'person': 250000, 'post': 379414, 'comment': 125000, 'knows': 751844, 'likes': 377521, 'has_creator': 504414, 'reply_of': 125000} vs {'person': 250000, 'post': 379414, 'comment': 125000, 'knows': 751844, 'likes': 377521, 'has_creator': 504414, 'reply_of': 125000}",
+   "severity": "critical"
+  },
+  {
+   "name": "post-restart: friend/post/like counts for 185 sampled persons",
+   "ok": true,
+   "detail": " (0 bad)",
+   "severity": "critical"
+  },
+  {
+   "name": "post-restart: mutual-friend counts for 11 fixed pairs",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "post-restart: home feed top-20 for 25 persons",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "post-restart: friend-of-friend top-10 for 14 persons",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "post-restart: bounded shortest path for 11 pairs",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  }
+ ],
+ "checks_failed": [],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s01_social_feed",
+  "scale": 0.25,
+  "persons": 250000,
+  "posts": 379414,
+  "comments": 125000,
+  "knows": 751844,
+  "likes": 377521,
+  "edges_total": 1758779,
+  "max_friend_degree": 7588,
+  "ingest_s": 118.9985420703888,
+  "ground_truth_gen_s": 2.9856677055358887,
+  "restart_s": 2.651366710662842,
+  "duration": 300.0,
+  "read_rate": 800.0,
+  "write_rate": 42.10526315789474,
+  "acked_writes": {
+   "like": 4447,
+   "friend": 1844,
+   "post": 4414,
+   "unlike": 1926
+  }
+ }
+}

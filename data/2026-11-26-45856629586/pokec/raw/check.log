@@ -1,0 +1,46 @@
+[16:15:05] pokec check, mode nightly: candidate ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818, baseline falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+[16:15:05] tools in /root/.cache/falkordb-perf/pokec
+[16:15:05] $ git init -q /root/.cache/falkordb-perf/pokec/benchmark
+[16:15:05] $ git -C /root/.cache/falkordb-perf/pokec/benchmark fetch -q --depth 1 https://github.com/FalkorDB/benchmark.git c366437bf462070d9da96b75634c975d57b01707
+[16:15:06] $ git -C /root/.cache/falkordb-perf/pokec/benchmark checkout -q FETCH_HEAD
+[16:15:06] $ apt-get -q -o DPkg::Lock::Timeout=300 update
+[16:15:07] $ apt-get -q -o DPkg::Lock::Timeout=300 install -y --no-install-recommends build-essential pkg-config protobuf-compiler cmake
+[16:15:17] $ sh /root/.cache/falkordb-perf/pokec/rustup-init.sh -y --profile minimal --default-toolchain none --no-modify-path
+[16:15:17] $ /root/.cargo/bin/rustup toolchain install 1.100.0 --profile minimal
+[16:15:27] $ /root/.cargo/bin/rustup run 1.100.0 cargo build --release --locked
+[16:19:50] built benchmark c366437 with Rust 1.100.0 in 263 s
+[16:19:50] $ git init -q /root/.cache/falkordb-perf/pokec/falkordb-bulk-loader
+[16:19:50] $ git -C /root/.cache/falkordb-perf/pokec/falkordb-bulk-loader fetch -q --depth 1 https://github.com/FalkorDB/falkordb-bulk-loader.git d4e6718ebdc26b5dec4169d7dbb5a66f211e2701
+[16:19:50] $ git -C /root/.cache/falkordb-perf/pokec/falkordb-bulk-loader checkout -q FETCH_HEAD
+[16:19:50] $ /actions-runner/_work/_tool/uv/0.9.29/x86_64/uv sync --frozen --no-dev --project /root/.cache/falkordb-perf/pokec/falkordb-bulk-loader
+[16:19:51] downloading https://s3.eu-west-1.amazonaws.com/deps.memgraph.io/dataset/pokec/benchmark/pokec_medium_import.cypher
+[16:19:59] dataset medium: 100000 users, 1768515 Friend edges
+[16:20:09] baseline: {"image": "falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de", "falkordb_args": "MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000 THREAD_COUNT 10", "server": {"server_name": "valkey", "redis_version": "7.2.4", "valkey_version": "9.2.0", "executable": "/var/lib/falkordb/valkey-server", "os": "Linux 6.1.0-56-cloud-amd64 x86_64", "arch_bits": "64"}, "modules": [{"name": "graph", "ver": 60201, "path": "/var/lib/falkordb/bin/falkordb.so", "args": ["MAX_QUEUED_QUERIES", "25", "TIMEOUT", "1000", "RESULTSET_SIZE", "10000", "THREAD_COUNT", "10"]}, {"name": "lua", "ver": 1, "path": "lua", "args": []}], "THREAD_COUNT": 10, "TIMEOUT": 1000, "MAX_QUEUED_QUERIES": 25, "RESULTSET_SIZE": 10000, "procedures": ["algo.betweenness", "algo.bfs", "algo.harmoniccentrality", "algo.labelpropagation", "algo.maxflow", "algo.msf", "algo.pagerank", "algo.sppaths", "algo.sspaths", "algo.wcc", "db.constraints", "db.idx.fulltext.createnodeindex", "db.idx.fulltext.drop", "db.idx.fulltext.querynodes", "db.idx.fulltext.queryrelationships", "db.idx.vector.querynodes", "db.idx.vector.queryrelationships", "db.indexes", "db.labels", "db.meta.stats", "db.propertykeys", "db.relationshiptypes", "dbms.functions", "dbms.procedures"], "timeout_test": {"elapsed_s": 2.501, "reply": "Query timed out", "requested_ms": 2500, "timed_out": true}}
+[16:20:13] candidate: {"image": "ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818", "falkordb_args": "MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000 THREAD_COUNT 10", "server": {"server_name": "valkey", "redis_version": "7.2.4", "valkey_version": "9.2.0", "executable": "/var/lib/falkordb/valkey-server", "os": "Linux 6.1.0-56-cloud-amd64 x86_64", "arch_bits": "64"}, "modules": [{"name": "graph", "ver": 999999, "path": "/var/lib/falkordb/bin/falkordb.so", "args": ["MAX_QUEUED_QUERIES", "25", "TIMEOUT", "1000", "RESULTSET_SIZE", "10000", "THREAD_COUNT", "10"]}, {"name": "lua", "ver": 1, "path": "lua", "args": []}], "THREAD_COUNT": 10, "TIMEOUT": 1000, "MAX_QUEUED_QUERIES": 25, "RESULTSET_SIZE": 10000, "procedures": ["algo.betweenness", "algo.bfs", "algo.harmoniccentrality", "algo.labelpropagation", "algo.maxflow", "algo.msf", "algo.pagerank", "algo.sppaths", "algo.sspaths", "algo.wcc", "db.constraints", "db.idx.fulltext.createnodeindex", "db.idx.fulltext.drop", "db.idx.fulltext.querynodes", "db.idx.fulltext.queryrelationships", "db.idx.vector.querynodes", "db.idx.vector.queryrelationships", "db.indexes", "db.labels", "db.meta.stats", "db.propertykeys", "db.relationshiptypes", "dbms.functions", "dbms.procedures"], "timeout_test": {"elapsed_s": 2.501, "reply": "Query timed out", "requested_ms": 2500, "timed_out": true}}
+[16:20:13] $ /root/.cache/falkordb-perf/pokec/benchmark-target-1.100.0/release/benchmark generate-queries --vendor falkor --size 10000 --dataset medium --name /actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-read.jsonl --write-ratio 0.0 --enable-algo-pagerank false --enable-algo-max-flow false --enable-algo-msf false --enable-algo-harmonic false
+[16:20:13] $ /root/.cache/falkordb-perf/pokec/benchmark-target-1.100.0/release/benchmark generate-queries --vendor falkor --size 10000 --dataset medium --name /actions-runner/_work/FalkorDB/FalkorDB/out/raw/queries-medium-write5.jsonl --write-ratio 0.05 --enable-algo-pagerank false --enable-algo-max-flow false --enable-algo-msf false --enable-algo-harmonic false
+[16:20:13] == medium-read-baseline-p1r1: falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+[16:20:50]    finished | wall 27.54 s, query phase 26.637 s | PING max 6.035 ms | errors 0, timeouts 0
+[16:20:50] == medium-read-candidate-p1r1: ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818
+[16:21:15]    finished | wall 17.11 s, query phase 16.174 s | PING max 3.723 ms | errors 0, timeouts 0
+[16:21:15] == medium-write5-baseline-p1r1: falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+[16:22:56]    finished | wall 91.81 s, query phase 90.863 s | PING max 5.772 ms | errors 0, timeouts 0
+[16:22:56] == medium-write5-candidate-p1r1: ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818
+[16:24:11]    finished | wall 66.49 s, query phase 65.561 s | PING max 5.626 ms | errors 0, timeouts 0
+[16:24:11] == medium-read-candidate-p1r2: ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818
+[16:24:37]    finished | wall 17.16 s, query phase 16.23 s | PING max 12.862 ms | errors 0, timeouts 0
+[16:24:37] == medium-read-baseline-p1r2: falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+[16:25:14]    finished | wall 28.09 s, query phase 27.163 s | PING max 10.112 ms | errors 0, timeouts 0
+[16:25:14] == medium-write5-candidate-p1r2: ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818
+[16:26:31]    finished | wall 67.85 s, query phase 66.945 s | PING max 5.861 ms | errors 0, timeouts 0
+[16:26:31] == medium-write5-baseline-p1r2: falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+[16:28:10]    finished | wall 90.31 s, query phase 89.376 s | PING max 5.738 ms | errors 0, timeouts 0
+[16:28:10] == medium-read-baseline-p1r3: falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+[16:28:46]    finished | wall 27.58 s, query phase 26.683 s | PING max 9.417 ms | errors 0, timeouts 0
+[16:28:46] == medium-read-candidate-p1r3: ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818
+[16:29:12]    finished | wall 17.06 s, query phase 16.087 s | PING max 6.79 ms | errors 0, timeouts 0
+[16:29:12] == medium-write5-baseline-p1r3: falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+[16:30:51]    finished | wall 90.56 s, query phase 89.616 s | PING max 5.868 ms | errors 0, timeouts 0
+[16:30:51] == medium-write5-candidate-p1r3: ghcr.io/falkordb/falkordb-server@sha256:25c44265da3f9838838fcf98dd98a72b0bcf9d3f487330d9ef0a68591d7fa818
+[16:32:07]    finished | wall 67.3 s, query phase 66.342 s | PING max 5.738 ms | errors 0, timeouts 0
+[16:32:07] verdict pass: Pass (nightly): 12 runs, 404 rows compared; no row regressed past 1.3x after a re-run, every run finished, no new PING freeze; 15 improvements.

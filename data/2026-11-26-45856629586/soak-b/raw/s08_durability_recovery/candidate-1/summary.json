@@ -1,0 +1,1543 @@
+{
+ "ops": {
+  "bump_cnt": {
+   "count": 14292,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 476.4,
+   "p50_ms": 1.5979529260115328,
+   "p95_ms": 4.0529575414770616,
+   "p99_ms": 5.454747231645986,
+   "p999_ms": 7.6379630049759175,
+   "max_ms": 37.98319238542082,
+   "drift": {
+    "p99_early_ms": 5.3477914035744964,
+    "p99_late_ms": 5.454747231645986,
+    "ratio": 1.02
+   }
+  },
+  "e1_bump": {
+   "count": 4,
+   "errors": 4,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "_late_start": {
+   "count": 60,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 60.0,
+   "p50_ms": 167.72752763447644,
+   "p95_ms": 196.51953120525118,
+   "p99_ms": 200.4499218293562,
+   "p999_ms": 200.4499218293562,
+   "max_ms": 200.4499218293562,
+   "drift": null
+  },
+  "create_node": {
+   "count": 6285,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 209.5,
+   "p50_ms": 3.3913335651892327,
+   "p95_ms": 6.142931338864042,
+   "p99_ms": 7.4881990244861925,
+   "p999_ms": 9.496846968855877,
+   "max_ms": 10.27969257768812,
+   "drift": {
+    "p99_early_ms": 8.773618633851266,
+    "p99_late_ms": 7.197423130032864,
+    "ratio": 0.8203482998751548
+   }
+  },
+  "update_node": {
+   "count": 7801,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 260.03333333333336,
+   "p50_ms": 0.8821832924112385,
+   "p95_ms": 5.140130145688673,
+   "p99_ms": 6.391105764954149,
+   "p999_ms": 8.432928329345698,
+   "max_ms": 10.485286429241883,
+   "drift": {
+    "p99_early_ms": 6.518927880253233,
+    "p99_late_ms": 6.265789965641322,
+    "ratio": 0.9611687812379852
+   }
+  },
+  "delete_node": {
+   "count": 1803,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 60.1,
+   "p50_ms": 0.8998269582594633,
+   "p95_ms": 5.039343280086934,
+   "p99_ms": 6.022481704768667,
+   "p999_ms": 8.267576793476174,
+   "max_ms": 9.496846968855877,
+   "drift": {
+    "p99_early_ms": 7.3413715926335215,
+    "p99_late_ms": 6.142931338864042,
+    "ratio": 0.836755265872658
+   }
+  },
+  "create_edge": {
+   "count": 3491,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 116.36666666666666,
+   "p50_ms": 0.8821832924112385,
+   "p95_ms": 5.140130145688673,
+   "p99_ms": 6.142931338864042,
+   "p999_ms": 7.4881990244861925,
+   "max_ms": 9.128072826658858,
+   "drift": {
+    "p99_early_ms": 5.675119019804474,
+    "p99_late_ms": 6.142931338864042,
+    "ratio": 1.0824321600000002
+   }
+  },
+  "update_edge": {
+   "count": 1314,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 43.8,
+   "p50_ms": 0.8998269582594633,
+   "p95_ms": 5.454747231645986,
+   "p99_ms": 6.917938417947773,
+   "p999_ms": 8.949091006528292,
+   "max_ms": 12.044298242467653,
+   "drift": {
+    "p99_early_ms": 7.056297186306729,
+    "p99_late_ms": 6.022481704768667,
+    "ratio": 0.8534903711901113
+   }
+  },
+  "delete_edge": {
+   "count": 3093,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 103.1,
+   "p50_ms": 1.1188217219007235,
+   "p95_ms": 5.454747231645986,
+   "p99_ms": 6.518927880253233,
+   "p999_ms": 9.128072826658858,
+   "max_ms": 13.83511276801601,
+   "drift": {
+    "p99_early_ms": 7.4881990244861925,
+    "p99_late_ms": 6.391105764954149,
+    "ratio": 0.8534903711901112
+   }
+  },
+  "e1_ledw": {
+   "count": 8,
+   "errors": 8,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "probe_lookup": {
+   "count": 4765,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 158.83333333333334,
+   "p50_ms": 0.4870277144846977,
+   "p95_ms": 0.8998269582594633,
+   "p99_ms": 2.150634249251324,
+   "p999_ms": 4.301030966675789,
+   "max_ms": 30.548477742363627,
+   "drift": {
+    "p99_early_ms": 1.9478957002223545,
+    "p99_late_ms": 2.067122500241565,
+    "ratio": 1.0612080000000004
+   }
+  },
+  "e1_probe": {
+   "count": 2,
+   "errors": 2,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "read_1hop": {
+   "count": 21387,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 712.9,
+   "p50_ms": 0.5377179501889254,
+   "p95_ms": 2.6216111492869767,
+   "p99_ms": 3.5283434412228782,
+   "p999_ms": 4.74868572427548,
+   "max_ms": 35.09059855115615,
+   "drift": {
+    "p99_early_ms": 3.5283434412228782,
+    "p99_late_ms": 3.5283434412228782,
+    "ratio": 1.0
+   }
+  },
+  "read_led": {
+   "count": 8643,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 288.1,
+   "p50_ms": 0.4681158347603784,
+   "p95_ms": 2.32791567578709,
+   "p99_ms": 3.4591602364930174,
+   "p999_ms": 4.564288470084082,
+   "max_ms": 29.362243120303365,
+   "drift": {
+    "p99_early_ms": 3.3913335651892327,
+    "p99_late_ms": 3.2596439496244063,
+    "ratio": 0.9611687812379852
+   }
+  },
+  "read_lookup": {
+   "count": 12824,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 427.46666666666664,
+   "p50_ms": 0.4967682687743917,
+   "p95_ms": 2.470402738470666,
+   "p99_ms": 3.4591602364930174,
+   "p999_ms": 4.843659438760989,
+   "max_ms": 33.727987842326165,
+   "drift": {
+    "p99_early_ms": 3.1957293623768686,
+    "p99_late_ms": 3.4591602364930174,
+    "ratio": 1.0824321600000002
+   }
+  },
+  "e1_rdr": {
+   "count": 6,
+   "errors": 6,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e2_bump": {
+   "count": 4,
+   "errors": 4,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e2_ledw": {
+   "count": 8,
+   "errors": 8,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e2_probe": {
+   "count": 2,
+   "errors": 2,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e2_rdr": {
+   "count": 6,
+   "errors": 6,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e3_bump": {
+   "count": 2,
+   "errors": 2,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e3_ledw": {
+   "count": 4,
+   "errors": 4,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e3_probe": {
+   "count": 1,
+   "errors": 1,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e3_rdr": {
+   "count": 3,
+   "errors": 3,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e4_bump": {
+   "count": 4,
+   "errors": 4,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e4_ledw": {
+   "count": 8,
+   "errors": 8,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e4_probe": {
+   "count": 2,
+   "errors": 2,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e4_rdr": {
+   "count": 6,
+   "errors": 6,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e5_bump": {
+   "count": 4,
+   "errors": 4,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e5_ledw": {
+   "count": 8,
+   "errors": 8,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e5_probe": {
+   "count": 2,
+   "errors": 2,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e5_rdr": {
+   "count": 6,
+   "errors": 6,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e6_bump": {
+   "count": 4,
+   "errors": 4,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e6_ledw": {
+   "count": 8,
+   "errors": 8,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e6_probe": {
+   "count": 2,
+   "errors": 2,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e6_rdr": {
+   "count": 6,
+   "errors": 6,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e8_bump": {
+   "count": 4,
+   "errors": 4,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e8_ledw": {
+   "count": 8,
+   "errors": 8,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e8_probe": {
+   "count": 2,
+   "errors": 2,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "e8_rdr": {
+   "count": 6,
+   "errors": 6,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 12.484710743801653,
+  "cpu_max_pct": 125.5,
+  "rss_start_mb": 359.9,
+  "rss_end_mb": 360.6,
+  "rss_max_mb": 371.1,
+  "used_mem_end_mb": 251.7,
+  "rss_slope_mb_per_h": -109.62365126802472,
+  "used_mem_slope_mb_per_h": 14.736782054080736,
+  "samples": 440,
+  "dead_samples": 4
+ },
+ "checks": [
+  {
+   "name": "ingest: big graph matches python ground truth",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest: static graphs non-empty",
+   "ok": true,
+   "detail": "{\"multi0\": {\"n\": 5000, \"e\": 5000, \"sha\": \"a647ce7da2c2e3b055b88c056212c2c5df5677df\"}, \"multi1\": {\"n\": 5000, \"e\": 5000, \"sha\": \"ebff3d859d504e6f869d3a8bedcca8483ef52a65\"}, \"multi2\": {\"n\": 5000, \"e\": 5000, \"sha\": \"3ce1b433f93e8f017035ce134633187e4c0db4fc\"}, \"special\": {\"n\": 2, \"e\": 1, \"sha\": \"a9951a70",
+   "severity": "critical"
+  },
+  {
+   "name": "initial AOF rewrite (RDB preamble) succeeded",
+   "ok": true,
+   "detail": "ok",
+   "severity": "critical"
+  },
+  {
+   "name": "A1-strict-kill9: led graph == ledger",
+   "ok": true,
+   "detail": "nodes=2210 edges=28 tolerated-in-window=0; ",
+   "severity": "critical"
+  },
+  {
+   "name": "A1-strict-kill9: big graph aggregates/samples == ground truth",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "A1-strict-kill9: cnt counter in [acked-window_loss, acked+inflight]",
+   "ok": true,
+   "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=0",
+   "severity": "critical"
+  },
+  {
+   "name": "A1-strict-kill9: static graphs digest unchanged",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "A1-strict-kill9: GRAPH.LIST unchanged",
+   "ok": true,
+   "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+   "severity": "critical"
+  },
+  {
+   "name": "A1-strict-kill9: indexes OPERATIONAL and used",
+   "ok": true,
+   "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+   "severity": "major"
+  },
+  {
+   "name": "A1-strict-kill9: recovery (kill->first query) < 180s",
+   "ok": true,
+   "detail": "3.09s",
+   "severity": "major"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: p99 during background save/rewrite not >10x and >250ms worse",
+   "ok": true,
+   "detail": "worst create_node 9.5 vs 8.1 ms, cmd stall 7 ms, total 0.6s; ('create_node', 9.496846968855877, 8.105467444584484, 1.1716593810022662)",
+   "severity": "major"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: background save/rewrite finished ok",
+   "ok": true,
+   "detail": "('ok', 'ok')",
+   "severity": "critical"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: led graph == ledger",
+   "ok": true,
+   "detail": "nodes=3333 edges=36 tolerated-in-window=0; ",
+   "severity": "critical"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: big graph aggregates/samples == ground truth",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: cnt counter in [acked-window_loss, acked+inflight]",
+   "ok": true,
+   "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=0",
+   "severity": "critical"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: static graphs digest unchanged",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: GRAPH.LIST unchanged",
+   "ok": true,
+   "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+   "severity": "critical"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: indexes OPERATIONAL and used",
+   "ok": true,
+   "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+   "severity": "major"
+  },
+  {
+   "name": "A2-strict-kill9+bgsave: recovery (kill->first query) < 180s",
+   "ok": true,
+   "detail": "2.995s",
+   "severity": "major"
+  },
+  {
+   "name": "A3-strict-sigterm: led graph == ledger",
+   "ok": true,
+   "detail": "nodes=3890 edges=121 tolerated-in-window=0; ",
+   "severity": "critical"
+  },
+  {
+   "name": "A3-strict-sigterm: big graph aggregates/samples == ground truth",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "A3-strict-sigterm: cnt counter in [acked-window_loss, acked+inflight]",
+   "ok": true,
+   "detail": "delta=1788.0 acked=1788 pend=2 lost_allow=0",
+   "severity": "critical"
+  },
+  {
+   "name": "A3-strict-sigterm: static graphs digest unchanged",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "A3-strict-sigterm: GRAPH.LIST unchanged",
+   "ok": true,
+   "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+   "severity": "critical"
+  },
+  {
+   "name": "A3-strict-sigterm: indexes OPERATIONAL and used",
+   "ok": true,
+   "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+   "severity": "major"
+  },
+  {
+   "name": "A3-strict-sigterm: recovery (kill->first query) < 180s",
+   "ok": true,
+   "detail": "2.805s",
+   "severity": "major"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: p99 during background save/rewrite not >10x and >250ms worse",
+   "ok": true,
+   "detail": "worst delete_edge 13.8 vs 7.5 ms, cmd stall 10 ms, total 0.5s; ('delete_edge', 13.83511276801601, 7.4881990244861925, 1.8475888157854239)",
+   "severity": "major"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: background save/rewrite finished ok",
+   "ok": true,
+   "detail": "('ok', 'ok')",
+   "severity": "critical"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: led graph == ledger",
+   "ok": true,
+   "detail": "nodes=4233 edges=146 tolerated-in-window=0; ",
+   "severity": "critical"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: big graph aggregates/samples == ground truth",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: cnt counter in [acked-window_loss, acked+inflight]",
+   "ok": true,
+   "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=0",
+   "severity": "critical"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: static graphs digest unchanged",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: GRAPH.LIST unchanged",
+   "ok": true,
+   "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+   "severity": "critical"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: indexes OPERATIONAL and used",
+   "ok": true,
+   "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+   "severity": "major"
+  },
+  {
+   "name": "A4-strict-kill9+bgrewriteaof: recovery (kill->first query) < 180s",
+   "ok": true,
+   "detail": "3.018s",
+   "severity": "major"
+  },
+  {
+   "name": "B1-everysec-kill9: led graph == ledger",
+   "ok": true,
+   "detail": "nodes=4388 edges=185 tolerated-in-window=0; ",
+   "severity": "critical"
+  },
+  {
+   "name": "B1-everysec-kill9: big graph aggregates/samples == ground truth",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "B1-everysec-kill9: cnt counter in [acked-window_loss, acked+inflight]",
+   "ok": true,
+   "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=212",
+   "severity": "critical"
+  },
+  {
+   "name": "B1-everysec-kill9: static graphs digest unchanged",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "B1-everysec-kill9: GRAPH.LIST unchanged",
+   "ok": true,
+   "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+   "severity": "critical"
+  },
+  {
+   "name": "B1-everysec-kill9: indexes OPERATIONAL and used",
+   "ok": true,
+   "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+   "severity": "major"
+  },
+  {
+   "name": "B1-everysec-kill9: recovery (kill->first query) < 180s",
+   "ok": true,
+   "detail": "2.911s",
+   "severity": "major"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: p99 during background save/rewrite not >10x and >250ms worse",
+   "ok": true,
+   "detail": "worst create_node 2.1 vs 1.6 ms, cmd stall 7 ms, total 0.4s; ('create_node', 2.067122500241565, 1.5666205156975812, 1.3194787630628733)",
+   "severity": "major"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: background save/rewrite finished ok",
+   "ok": true,
+   "detail": "('ok', 'ok')",
+   "severity": "critical"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: led graph == ledger",
+   "ok": true,
+   "detail": "nodes=4435 edges=226 tolerated-in-window=0; ",
+   "severity": "critical"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: big graph aggregates/samples == ground truth",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: cnt counter in [acked-window_loss, acked+inflight]",
+   "ok": true,
+   "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=212",
+   "severity": "critical"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: static graphs digest unchanged",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: GRAPH.LIST unchanged",
+   "ok": true,
+   "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+   "severity": "critical"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: indexes OPERATIONAL and used",
+   "ok": true,
+   "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+   "severity": "major"
+  },
+  {
+   "name": "B2-everysec-kill9+bgsave: recovery (kill->first query) < 180s",
+   "ok": true,
+   "detail": "3.001s",
+   "severity": "major"
+  },
+  {
+   "name": "RDB-only restart after SAVE: led graph identical",
+   "ok": true,
+   "detail": "4435 vs 4435 nodes",
+   "severity": "critical"
+  },
+  {
+   "name": "RDB-only restart after SAVE: big graph == ground truth and cnt identical",
+   "ok": true,
+   "detail": " cnt 10708.0 vs 10708.0",
+   "severity": "critical"
+  },
+  {
+   "name": "RDB-only restart after SAVE: static digest identical",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "R1-rdb-bgsave-under-load: p99 during background save/rewrite not >10x and >250ms worse",
+   "ok": true,
+   "detail": "worst create_node 2.5 vs 1.5 ms, cmd stall 7 ms, total 0.5s; ('create_node', 2.51981079324008, 1.5359024663701788, 1.6406059944647309)",
+   "severity": "major"
+  },
+  {
+   "name": "R1-rdb-bgsave-under-load: background save/rewrite finished ok",
+   "ok": true,
+   "detail": "('ok', 'ok')",
+   "severity": "critical"
+  },
+  {
+   "name": "R1-rdb-bgsave-under-load: live led graph == ledger after load",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "R1-rdb-bgsave-under-load: restored graph == state at last SAVE",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "R1-rdb-bgsave-under-load: kill->first query < 180s",
+   "ok": true,
+   "detail": "2.206s",
+   "severity": "major"
+  },
+  {
+   "name": "R2-rdb-save-then-writes-lost: restored graph == state at last SAVE (post-SAVE writes gone)",
+   "ok": true,
+   "detail": "nodes 4474 vs 4474, cnt 12508.0 vs 12508.0",
+   "severity": "critical"
+  },
+  {
+   "name": "R2-rdb-save-then-writes-lost: kill->first query < 180s",
+   "ok": true,
+   "detail": "2.593s",
+   "severity": "major"
+  },
+  {
+   "name": "DEBUG RELOAD: graph state identical",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "SHUTDOWN SAVE + restart: graph state identical",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "no crash/panic markers in server log",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "readers saw no wrong results (degree/props of big graph)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  }
+ ],
+ "checks_failed": [],
+ "top_errors": [
+  [
+   "ConnectionError: Error 111 connecting to localhost:21030. Connection refused.",
+   104
+  ],
+  [
+   "ConnectionError: Error while reading from localhost:21030 : (104, 'Connection reset by peer')",
+   22
+  ],
+  [
+   "ConnectionError: Connection closed by server.",
+   4
+  ]
+ ],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s08_durability_recovery",
+  "scale": 0.25,
+  "duration": 300.0,
+  "big_nodes": 375000,
+  "big_edges": 1875000,
+  "led_ids": 5000,
+  "static_m": 5000,
+  "vkey_max": 10000,
+  "seg_s": 30.0,
+  "recoveries": [
+   {
+    "label": "A1-strict-kill9",
+    "mode": "strict",
+    "kind": "kill9",
+    "tkill": 1795711104.2675276,
+    "ping_s": 2.617,
+    "first_query_s": 2.619,
+    "kill_to_query_s": 3.09,
+    "verify_s": 1.8,
+    "lost_in_window": 0,
+    "disk_mb": 64
+   },
+   {
+    "label": "A2-strict-kill9+bgsave",
+    "mode": "strict",
+    "kind": "kill9",
+    "tkill": 1795711138.9064798,
+    "ping_s": 2.51,
+    "first_query_s": 2.513,
+    "kill_to_query_s": 2.995,
+    "verify_s": 2.1,
+    "lost_in_window": 0,
+    "disk_mb": 125
+   },
+   {
+    "label": "A3-strict-sigterm",
+    "mode": "strict",
+    "kind": "term",
+    "tkill": 1795711173.7316878,
+    "ping_s": 2.475,
+    "first_query_s": 2.477,
+    "kill_to_query_s": 2.805,
+    "verify_s": 2.1,
+    "lost_in_window": 0,
+    "disk_mb": 129
+   },
+   {
+    "label": "A4-strict-kill9+bgrewriteaof",
+    "mode": "strict",
+    "kind": "kill9",
+    "tkill": 1795711208.335017,
+    "ping_s": 2.532,
+    "first_query_s": 2.535,
+    "kill_to_query_s": 3.018,
+    "verify_s": 2.2,
+    "lost_in_window": 0,
+    "disk_mb": 127
+   },
+   {
+    "label": "B1-everysec-kill9",
+    "mode": "everysec",
+    "kind": "kill9",
+    "tkill": 1795711243.264605,
+    "ping_s": 2.433,
+    "first_query_s": 2.435,
+    "kill_to_query_s": 2.911,
+    "verify_s": 2.2,
+    "lost_in_window": 0,
+    "disk_mb": 129
+   },
+   {
+    "label": "B2-everysec-kill9+bgsave",
+    "mode": "everysec",
+    "kind": "kill9",
+    "tkill": 1795711278.119694,
+    "ping_s": 2.517,
+    "first_query_s": 2.519,
+    "kill_to_query_s": 3.001,
+    "verify_s": 2.4,
+    "lost_in_window": 0,
+    "disk_mb": 130
+   },
+   {
+    "label": "R1-rdb-bgsave-under-load",
+    "mode": "rdb",
+    "kind": "none",
+    "tkill": 1795711323.8576415,
+    "ping_s": 2.099,
+    "first_query_s": 2.101,
+    "kill_to_query_s": 2.206
+   },
+   {
+    "label": "R2-rdb-save-then-writes-lost",
+    "mode": "rdb",
+    "kind": "kill9",
+    "tkill": 1795711360.9450715,
+    "ping_s": 2.113,
+    "first_query_s": 2.115,
+    "kill_to_query_s": 2.593
+   }
+  ],
+  "windows": [
+   {
+    "label": "A2-strict-kill9+bgsave",
+    "window_s": 0.61,
+    "ops": {
+     "read_lookup": {
+      "in_n": 153,
+      "in_err": 0,
+      "in_p99_ms": 3.895576260550808,
+      "in_max_ms": 3.9734877857618245,
+      "out_p99_ms": 3.9734877857618245
+     },
+     "read_1hop": {
+      "in_n": 281,
+      "in_err": 0,
+      "in_p99_ms": 3.9734877857618245,
+      "in_max_ms": 7.197423130032864,
+      "out_p99_ms": 3.744306286573248
+     },
+     "create_node": {
+      "in_n": 140,
+      "in_err": 0,
+      "in_p99_ms": 9.496846968855877,
+      "in_max_ms": 9.686783908232993,
+      "out_p99_ms": 8.105467444584484
+     },
+     "e2_bump": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "update_edge": {
+      "in_n": 7,
+      "in_err": 0,
+      "in_p99_ms": 7.056297186306729,
+      "in_max_ms": 7.056297186306729,
+      "out_p99_ms": 7.4881990244861925
+     },
+     "probe_lookup": {
+      "in_n": 60,
+      "in_err": 0,
+      "in_p99_ms": 0.6426227262856066,
+      "in_max_ms": 0.6426227262856066,
+      "out_p99_ms": 0.7529349456977824
+     },
+     "update_node": {
+      "in_n": 73,
+      "in_err": 0,
+      "in_p99_ms": 7.3413715926335215,
+      "in_max_ms": 7.3413715926335215,
+      "out_p99_ms": 7.4881990244861925
+     },
+     "e2_probe": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "e2_rdr": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "read_led": {
+      "in_n": 106,
+      "in_err": 0,
+      "in_p99_ms": 3.9734877857618245,
+      "in_max_ms": 4.134016692306603,
+      "out_p99_ms": 3.895576260550808
+     },
+     "bump_cnt": {
+      "in_n": 180,
+      "in_err": 0,
+      "in_p99_ms": 6.518927880253233,
+      "in_max_ms": 7.056297186306729,
+      "out_p99_ms": 6.022481704768667
+     },
+     "create_edge": {
+      "in_n": 31,
+      "in_err": 0,
+      "in_p99_ms": 7.4881990244861925,
+      "in_max_ms": 7.4881990244861925,
+      "out_p99_ms": 7.197423130032864
+     },
+     "delete_edge": {
+      "in_n": 31,
+      "in_err": 0,
+      "in_p99_ms": 8.105467444584484,
+      "in_max_ms": 8.105467444584484,
+      "out_p99_ms": 7.3413715926335215
+     },
+     "e2_ledw": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "delete_node": {
+      "in_n": 18,
+      "in_err": 0,
+      "in_p99_ms": 9.496846968855877,
+      "in_max_ms": 9.496846968855877,
+      "out_p99_ms": 6.265789965641322
+     }
+    },
+    "bg": {
+     "cmd_s": 0.007,
+     "total_s": 0.615,
+     "status_ok": true,
+     "cow_mb": 32.352,
+     "status": [
+      "ok",
+      "ok"
+     ]
+    }
+   },
+   {
+    "label": "A4-strict-kill9+bgrewriteaof",
+    "window_s": 0.52,
+    "ops": {
+     "read_lookup": {
+      "in_n": 163,
+      "in_err": 0,
+      "in_p99_ms": 4.655574239485764,
+      "in_max_ms": 9.880519586397655,
+      "out_p99_ms": 3.5283434412228782
+     },
+     "read_1hop": {
+      "in_n": 275,
+      "in_err": 0,
+      "in_p99_ms": 5.904393828204576,
+      "in_max_ms": 7.946536710376945,
+      "out_p99_ms": 3.4591602364930174
+     },
+     "create_node": {
+      "in_n": 72,
+      "in_err": 0,
+      "in_p99_ms": 9.128072826658858,
+      "in_max_ms": 9.128072826658858,
+      "out_p99_ms": 7.946536710376945
+     },
+     "update_edge": {
+      "in_n": 21,
+      "in_err": 0,
+      "in_p99_ms": 12.044298242467653,
+      "in_max_ms": 12.044298242467653,
+      "out_p99_ms": 7.946536710376945
+     },
+     "probe_lookup": {
+      "in_n": 60,
+      "in_err": 0,
+      "in_p99_ms": 2.570207009104881,
+      "in_max_ms": 2.570207009104881,
+      "out_p99_ms": 2.570207009104881
+     },
+     "e4_probe": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "e4_ledw": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "update_node": {
+      "in_n": 98,
+      "in_err": 0,
+      "in_p99_ms": 10.485286429241883,
+      "in_max_ms": 10.485286429241883,
+      "out_p99_ms": 7.6379630049759175
+     },
+     "e4_bump": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "read_led": {
+      "in_n": 102,
+      "in_err": 0,
+      "in_p99_ms": 2.6216111492869767,
+      "in_max_ms": 3.324836828616894,
+      "out_p99_ms": 3.3913335651892327
+     },
+     "bump_cnt": {
+      "in_n": 180,
+      "in_err": 0,
+      "in_p99_ms": 5.454747231645986,
+      "in_max_ms": 7.3413715926335215,
+      "out_p99_ms": 5.788621400200563
+     },
+     "e4_rdr": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "create_edge": {
+      "in_n": 42,
+      "in_err": 0,
+      "in_p99_ms": 4.843659438760989,
+      "in_max_ms": 4.843659438760989,
+      "out_p99_ms": 7.3413715926335215
+     },
+     "delete_edge": {
+      "in_n": 45,
+      "in_err": 0,
+      "in_p99_ms": 13.83511276801601,
+      "in_max_ms": 13.83511276801601,
+      "out_p99_ms": 7.4881990244861925
+     },
+     "delete_node": {
+      "in_n": 22,
+      "in_err": 0,
+      "in_p99_ms": 7.3413715926335215,
+      "in_max_ms": 7.3413715926335215,
+      "out_p99_ms": 5.904393828204576
+     }
+    },
+    "bg": {
+     "cmd_s": 0.01,
+     "total_s": 0.522,
+     "status_ok": true,
+     "cow_mb": 32.848,
+     "status": [
+      "ok",
+      "ok"
+     ]
+    }
+   },
+   {
+    "label": "B2-everysec-kill9+bgsave",
+    "window_s": 0.41,
+    "ops": {
+     "read_lookup": {
+      "in_n": 120,
+      "in_err": 0,
+      "in_p99_ms": 1.6299119845317636,
+      "in_max_ms": 1.7642691500266037,
+      "out_p99_ms": 0.6554751808113186
+     },
+     "read_1hop": {
+      "in_n": 164,
+      "in_err": 0,
+      "in_p99_ms": 0.668584684427545,
+      "in_max_ms": 0.8479270399954233,
+      "out_p99_ms": 0.7381715153899827
+     },
+     "create_node": {
+      "in_n": 28,
+      "in_err": 0,
+      "in_p99_ms": 2.067122500241565,
+      "in_max_ms": 2.067122500241565,
+      "out_p99_ms": 1.5666205156975812
+     },
+     "update_edge": {
+      "in_n": 14,
+      "in_err": 0,
+      "in_p99_ms": 1.4762615017014404,
+      "in_max_ms": 1.4762615017014404,
+      "out_p99_ms": 1.3370955254567731
+     },
+     "probe_lookup": {
+      "in_n": 40,
+      "in_err": 0,
+      "in_p99_ms": 0.6426227262856066,
+      "in_max_ms": 0.6426227262856066,
+      "out_p99_ms": 0.6426227262856066
+     },
+     "e6_rdr": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "e6_probe": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "update_node": {
+      "in_n": 77,
+      "in_err": 0,
+      "in_p99_ms": 1.391114184685227,
+      "in_max_ms": 1.391114184685227,
+      "out_p99_ms": 1.4762615017014404
+     },
+     "e6_ledw": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     },
+     "read_led": {
+      "in_n": 76,
+      "in_err": 0,
+      "in_p99_ms": 0.6819563781160961,
+      "in_max_ms": 0.6819563781160961,
+      "out_p99_ms": 0.668584684427545
+     },
+     "bump_cnt": {
+      "in_n": 120,
+      "in_err": 0,
+      "in_p99_ms": 0.9549035667206079,
+      "in_max_ms": 1.1640221194655127,
+      "out_p99_ms": 0.7990205878540524
+     },
+     "create_edge": {
+      "in_n": 38,
+      "in_err": 0,
+      "in_p99_ms": 1.28517447660205,
+      "in_max_ms": 1.28517447660205,
+      "out_p99_ms": 1.28517447660205
+     },
+     "delete_edge": {
+      "in_n": 27,
+      "in_err": 0,
+      "in_p99_ms": 1.1873025618548232,
+      "in_max_ms": 1.1873025618548232,
+      "out_p99_ms": 1.5359024663701788
+     },
+     "delete_node": {
+      "in_n": 16,
+      "in_err": 0,
+      "in_p99_ms": 1.3108779661340912,
+      "in_max_ms": 1.3108779661340912,
+      "out_p99_ms": 1.2110486130919198
+     },
+     "e6_bump": {
+      "in_n": 0,
+      "in_err": 0,
+      "in_p99_ms": null,
+      "in_max_ms": null,
+      "out_p99_ms": null
+     }
+    },
+    "bg": {
+     "cmd_s": 0.007,
+     "total_s": 0.411,
+     "status_ok": true,
+     "cow_mb": 32.543,
+     "status": [
+      "ok",
+      "ok"
+     ]
+    }
+   },
+   {
+    "label": "R1-rdb-bgsave-under-load",
+    "window_s": 0.51,
+    "ops": {
+     "read_lookup": {
+      "in_n": 111,
+      "in_err": 0,
+      "in_p99_ms": 0.7833535175039729,
+      "in_max_ms": 3.6708885162482825,
+      "out_p99_ms": 0.7529349456977824
+     },
+     "read_1hop": {
+      "in_n": 172,
+      "in_err": 0,
+      "in_p99_ms": 1.1640221194655127,
+      "in_max_ms": 6.518927880253233,
+      "out_p99_ms": 0.7679936446117381
+     },
+     "create_node": {
+      "in_n": 23,
+      "in_err": 0,
+      "in_p99_ms": 2.51981079324008,
+      "in_max_ms": 2.51981079324008,
+      "out_p99_ms": 1.5359024663701788
+     },
+     "update_edge": {
+      "in_n": 15,
+      "in_err": 0,
+      "in_p99_ms": 1.4762615017014404,
+      "in_max_ms": 1.4762615017014404,
+      "out_p99_ms": 1.6625102242223988
+     },
+     "probe_lookup": {
+      "in_n": 40,
+      "in_err": 0,
+      "in_p99_ms": 0.6176689026197678,
+      "in_max_ms": 0.6176689026197678,
+      "out_p99_ms": 0.695595505678418
+     },
+     "update_node": {
+      "in_n": 73,
+      "in_err": 0,
+      "in_p99_ms": 1.4762615017014404,
+      "in_max_ms": 1.4762615017014404,
+      "out_p99_ms": 1.3108779661340912
+     },
+     "read_led": {
+      "in_n": 77,
+      "in_err": 0,
+      "in_p99_ms": 0.6426227262856066,
+      "in_max_ms": 0.6426227262856066,
+      "out_p99_ms": 0.6819563781160961
+     },
+     "bump_cnt": {
+      "in_n": 120,
+      "in_err": 0,
+      "in_p99_ms": 1.013351304232443,
+      "in_max_ms": 1.0542906969234338,
+      "out_p99_ms": 0.8821832924112385
+     },
+     "create_edge": {
+      "in_n": 38,
+      "in_err": 0,
+      "in_p99_ms": 1.7642691500266037,
+      "in_max_ms": 1.7642691500266037,
+      "out_p99_ms": 1.3638374359659087
+     },
+     "delete_edge": {
+      "in_n": 25,
+      "in_err": 0,
+      "in_p99_ms": 1.6625102242223988,
+      "in_max_ms": 1.6625102242223988,
+      "out_p99_ms": 1.5666205156975812
+     },
+     "delete_node": {
+      "in_n": 26,
+      "in_err": 0,
+      "in_p99_ms": 1.2110486130919198,
+      "in_max_ms": 1.2110486130919198,
+      "out_p99_ms": 1.3370955254567731
+     }
+    },
+    "bg": {
+     "cmd_s": 0.007,
+     "total_s": 0.511,
+     "status_ok": true,
+     "cow_mb": 33.117,
+     "status": [
+      "ok",
+      "ok"
+     ]
+    }
+   }
+  ],
+  "notes": [
+   "A1-strict-kill9 verify breakdown s: led=0.2 big=0.4 static=1.1",
+   "A2-strict-kill9+bgsave verify breakdown s: led=0.3 big=0.4 static=1.2",
+   "A3-strict-sigterm verify breakdown s: led=0.3 big=0.4 static=1.1",
+   "A4-strict-kill9+bgrewriteaof verify breakdown s: led=0.4 big=0.4 static=1.1",
+   "B1-everysec-kill9 verify breakdown s: led=0.4 big=0.4 static=1.1",
+   "B2-everysec-kill9+bgsave verify breakdown s: led=0.5 big=0.4 static=1.2"
+  ],
+  "ingest_s": 143.2,
+  "graph_list": [
+   "big",
+   "emptyg",
+   "led",
+   "multi0",
+   "multi1",
+   "multi2",
+   "special"
+  ],
+  "initial_aof_rewrite_s": 0.63,
+  "disk_mb_after_aof_base": 58,
+  "save_s_full_graph": 0.38,
+  "rdb_mb": 57.9,
+  "rdb_only_restart_s": 2.1,
+  "debug_reload_s": 2.13,
+  "shutdown_save_s": 0.51,
+  "restart_after_shutdown_save_s": 2.02,
+  "disk_mb_end": 136,
+  "rdb_mb_end": 57.9
+ }
+}

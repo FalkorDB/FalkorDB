@@ -1,0 +1,18 @@
+Limit
+    Sort
+        Project
+            Aggregate
+                Filter
+                    Conditional Traverse | (post)->(tag:Tag)
+                        Filter
+                            Conditional Traverse | (post)->(t:Tag)
+                                Conditional Traverse | (f)<-(post:Post)
+                                    Unwind
+                                        Aggregate
+                                            Filter
+                                                Conditional Variable Length Traverse | (person)-[@anon_0:KNOWS*1..2]->(friend)
+                                                    Filter
+                                                        Node By Index Scan | (person:Person)
+                                                            Project
+                                                                Filter
+                                                                    Node By Index Scan | (knownTag:Tag)

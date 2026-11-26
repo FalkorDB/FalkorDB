@@ -1,0 +1,320 @@
+[
+ {
+  "name": "ingest node count",
+  "ok": true,
+  "detail": "851727 != 851727",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest edge count",
+  "ok": true,
+  "detail": "8200439 != 8200439",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest CITES count",
+  "ok": true,
+  "detail": "5999988 != 5999988",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest WROTE count",
+  "ok": true,
+  "detail": "1500000 != 1500000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest PUBLISHED_IN count",
+  "ok": true,
+  "detail": "500000 != 500000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest ROAD count",
+  "ok": true,
+  "detail": "199080 != 199080",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest LINK count",
+  "ok": true,
+  "detail": "1371 != 1371",
+  "severity": "critical"
+ },
+ {
+  "name": "BFS depth-3 node count on lattice is analytic (9, +1 if source included)",
+  "ok": true,
+  "detail": "9",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_sp_grid",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_allsp_grid",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_sp_weighted",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_grid_varlen",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_grid_varlen_undirected",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_bfs",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_paper_varlen",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_paper_varlen_agg",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_hub_incoming",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_label_counts",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_degree_dist",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_sum_weights",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_order_limit",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_order_full",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_pagerank_grid",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_wcc_islands",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_wcc",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify an_pagerank_full",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify op_paper_lookup x200",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify op_paper_cites x200",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify op_paper_citedby x200",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify op_author x200",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "verify op_junction x200",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "var-length *1..4 distinct reach == iterated 1-hop expansion",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "runaway query with TIMEOUT 1000 ms times out",
+  "ok": true,
+  "detail": "timeout after 1.0s",
+  "severity": "major"
+ },
+ {
+  "name": "timeout 1000 ms fires promptly (<= limit + 5s)",
+  "ok": true,
+  "detail": "1.0s",
+  "severity": "major"
+ },
+ {
+  "name": "runaway query with TIMEOUT 3000 ms times out",
+  "ok": true,
+  "detail": "timeout after 3.0s",
+  "severity": "major"
+ },
+ {
+  "name": "timeout 3000 ms fires promptly (<= limit + 5s)",
+  "ok": true,
+  "detail": "3.0s",
+  "severity": "major"
+ },
+ {
+  "name": "server healthy after timeouts (lookup works)",
+  "ok": true,
+  "detail": "1",
+  "severity": "critical"
+ },
+ {
+  "name": "GRAPH.QUERY (non-RO) runaway also times out",
+  "ok": true,
+  "detail": "timeout",
+  "severity": "major"
+ },
+ {
+  "name": "varlen-then-hop query anchored on index lookup stays fast (<2s)",
+  "ok": true,
+  "detail": "completed in 0.0s (plan scans all nodes first if slow)",
+  "severity": "major"
+ },
+ {
+  "name": "QUERY_MEM_CAPACITY=256MB aborts a memory-hog query",
+  "ok": true,
+  "detail": "mem ({'result': 'mem', 'elapsed_s': 1.59, 'rss_peak_over_before_mb': -6.2})",
+  "severity": "major"
+ },
+ {
+  "name": "server healthy after memory-limit abort",
+  "ok": true,
+  "detail": "7",
+  "severity": "critical"
+ },
+ {
+  "name": "no wrong analytic / lookup results during soak",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "no unexpected query errors during soak",
+  "ok": true,
+  "detail": "[]",
+  "severity": "major"
+ },
+ {
+  "name": "acknowledged draft writes all visible (created - deleted)",
+  "ok": true,
+  "detail": "drafts=247 created=422 deleted=175",
+  "severity": "critical"
+ },
+ {
+  "name": "REFS edges == 3 x drafts",
+  "ok": true,
+  "detail": "refs=741 drafts=247",
+  "severity": "critical"
+ },
+ {
+  "name": "acknowledged SET views all visible",
+  "ok": true,
+  "detail": "views=622 acked=622",
+  "severity": "critical"
+ },
+ {
+  "name": "post-soak an_degree_dist exact",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "post-soak an_sum_weights exact",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "post-soak an_wcc exact",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "post-soak an_label_counts exact",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "post-soak an_order_full exact",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "no server crash markers",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ }
+]

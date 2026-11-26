@@ -1,0 +1,1073 @@
+Get:1 file:/etc/apt/mirrors/debian.list Mirrorlist [30 B]
+Get:2 file:/etc/apt/mirrors/debian-security.list Mirrorlist [39 B]
+Hit:7 https://download.docker.com/linux/debian bookworm InRelease
+Hit:3 https://deb.debian.org/debian bookworm InRelease
+Hit:8 https://packages.cloud.google.com/apt google-compute-engine-bookworm-stable InRelease
+Hit:4 https://deb.debian.org/debian bookworm-updates InRelease
+Hit:5 https://deb.debian.org/debian bookworm-backports InRelease
+Hit:6 https://deb.debian.org/debian-security bookworm-security InRelease
+Hit:9 https://packages.cloud.google.com/apt cloud-sdk-bookworm InRelease
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  binutils binutils-common binutils-x86-64-linux-gnu bzip2 cmake-data cpp
+  cpp-12 dpkg-dev g++ g++-12 gcc gcc-12 libarchive13 libasan8 libatomic1
+  libbinutils libc-dev-bin libc6-dev libcc1-0 libcrypt-dev libctf-nobfd0
+  libctf0 libdpkg-perl libgcc-12-dev libgomp1 libgprofng0 libisl23 libitm1
+  libjsoncpp25 liblsan0 libmpc3 libmpfr6 libnsl-dev libpkgconf3 libprotobuf32
+  libprotoc32 libquadmath0 librhash0 libstdc++-12-dev libtirpc-dev libtsan2
+  libubsan1 linux-libc-dev make pkgconf pkgconf-bin rpcsvc-proto
+Suggested packages:
+  binutils-doc bzip2-doc cmake-doc cmake-format elpa-cmake-mode ninja-build
+  cpp-doc gcc-12-locales cpp-12-doc debian-keyring g++-multilib
+  g++-12-multilib gcc-12-doc gcc-multilib manpages-dev autoconf automake
+  libtool flex bison gdb gcc-doc gcc-12-multilib lrzip glibc-doc bzr
+  libstdc++-12-doc make-doc protobuf-mode-el
+Recommended packages:
+  fakeroot libalgorithm-merge-perl manpages-dev libc-devtools
+  libfile-fcntllock-perl liblocale-gettext-perl libprotobuf-dev
+The following NEW packages will be installed:
+  binutils binutils-common binutils-x86-64-linux-gnu build-essential bzip2
+  cmake cmake-data cpp cpp-12 dpkg-dev g++ g++-12 gcc gcc-12 libarchive13
+  libasan8 libatomic1 libbinutils libc-dev-bin libc6-dev libcc1-0 libcrypt-dev
+  libctf-nobfd0 libctf0 libdpkg-perl libgcc-12-dev libgomp1 libgprofng0
+  libisl23 libitm1 libjsoncpp25 liblsan0 libmpc3 libmpfr6 libnsl-dev
+  libpkgconf3 libprotobuf32 libprotoc32 libquadmath0 librhash0
+  libstdc++-12-dev libtirpc-dev libtsan2 libubsan1 linux-libc-dev make
+  pkg-config pkgconf pkgconf-bin protobuf-compiler rpcsvc-proto
+0 upgraded, 51 newly installed, 0 to remove and 6 not upgraded.
+Need to get 79.2 MB of archives.
+After this operation, 313 MB of additional disk space will be used.
+Get:1 file:/etc/apt/mirrors/debian.list Mirrorlist [30 B]
+Get:2 file:/etc/apt/mirrors/debian-security.list Mirrorlist [39 B]
+Get:3 https://deb.debian.org/debian bookworm/main amd64 bzip2 amd64 1.0.8-5+b1 [49.8 kB]
+Get:4 https://deb.debian.org/debian bookworm/main amd64 binutils-common amd64 2.40-2 [2487 kB]
+Get:5 https://deb.debian.org/debian bookworm/main amd64 libbinutils amd64 2.40-2 [572 kB]
+Get:6 https://deb.debian.org/debian bookworm/main amd64 libctf-nobfd0 amd64 2.40-2 [153 kB]
+Get:7 https://deb.debian.org/debian bookworm/main amd64 libctf0 amd64 2.40-2 [89.8 kB]
+Get:8 https://deb.debian.org/debian bookworm/main amd64 libgprofng0 amd64 2.40-2 [812 kB]
+Get:9 https://deb.debian.org/debian bookworm/main amd64 binutils-x86-64-linux-gnu amd64 2.40-2 [2246 kB]
+Get:10 https://deb.debian.org/debian bookworm/main amd64 binutils amd64 2.40-2 [65.0 kB]
+Get:11 https://deb.debian.org/debian bookworm/main amd64 libc-dev-bin amd64 2.36-9+deb12u14 [48.1 kB]
+Get:12 https://deb.debian.org/debian-security bookworm-security/main amd64 linux-libc-dev amd64 6.1.192-2 [2458 kB]
+Get:13 https://deb.debian.org/debian bookworm/main amd64 libcrypt-dev amd64 1:4.4.33-2 [118 kB]
+Get:14 https://deb.debian.org/debian bookworm/main amd64 libtirpc-dev amd64 1.3.3+ds-1 [191 kB]
+Get:15 https://deb.debian.org/debian bookworm/main amd64 libnsl-dev amd64 1.3.0-2 [66.4 kB]
+Get:16 https://deb.debian.org/debian bookworm/main amd64 rpcsvc-proto amd64 1.4.3-1 [63.3 kB]
+Get:17 https://deb.debian.org/debian bookworm/main amd64 libc6-dev amd64 2.36-9+deb12u14 [1904 kB]
+Get:18 https://deb.debian.org/debian bookworm/main amd64 libisl23 amd64 0.25-1.1 [683 kB]
+Get:19 https://deb.debian.org/debian bookworm/main amd64 libmpfr6 amd64 4.2.0-1 [701 kB]
+Get:20 https://deb.debian.org/debian bookworm/main amd64 libmpc3 amd64 1.3.1-1 [51.5 kB]
+Get:21 https://deb.debian.org/debian bookworm/main amd64 cpp-12 amd64 12.2.0-14+deb12u1 [9768 kB]
+Get:22 https://deb.debian.org/debian bookworm/main amd64 cpp amd64 4:12.2.0-3 [6836 B]
+Get:23 https://deb.debian.org/debian bookworm/main amd64 libcc1-0 amd64 12.2.0-14+deb12u1 [41.7 kB]
+Get:24 https://deb.debian.org/debian bookworm/main amd64 libgomp1 amd64 12.2.0-14+deb12u1 [116 kB]
+Get:25 https://deb.debian.org/debian bookworm/main amd64 libitm1 amd64 12.2.0-14+deb12u1 [26.1 kB]
+Get:26 https://deb.debian.org/debian bookworm/main amd64 libatomic1 amd64 12.2.0-14+deb12u1 [9376 B]
+Get:27 https://deb.debian.org/debian bookworm/main amd64 libasan8 amd64 12.2.0-14+deb12u1 [2193 kB]
+Get:28 https://deb.debian.org/debian bookworm/main amd64 liblsan0 amd64 12.2.0-14+deb12u1 [969 kB]
+Get:29 https://deb.debian.org/debian bookworm/main amd64 libtsan2 amd64 12.2.0-14+deb12u1 [2197 kB]
+Get:30 https://deb.debian.org/debian bookworm/main amd64 libubsan1 amd64 12.2.0-14+deb12u1 [883 kB]
+Get:31 https://deb.debian.org/debian bookworm/main amd64 libquadmath0 amd64 12.2.0-14+deb12u1 [145 kB]
+Get:32 https://deb.debian.org/debian bookworm/main amd64 libgcc-12-dev amd64 12.2.0-14+deb12u1 [2437 kB]
+Get:33 https://deb.debian.org/debian bookworm/main amd64 gcc-12 amd64 12.2.0-14+deb12u1 [19.3 MB]
+Get:34 https://deb.debian.org/debian bookworm/main amd64 gcc amd64 4:12.2.0-3 [5216 B]
+Get:35 https://deb.debian.org/debian bookworm/main amd64 libstdc++-12-dev amd64 12.2.0-14+deb12u1 [2047 kB]
+Get:36 https://deb.debian.org/debian bookworm/main amd64 g++-12 amd64 12.2.0-14+deb12u1 [10.7 MB]
+Get:37 https://deb.debian.org/debian bookworm/main amd64 g++ amd64 4:12.2.0-3 [1356 B]
+Get:38 https://deb.debian.org/debian bookworm/main amd64 make amd64 4.3-4.1 [396 kB]
+Get:39 https://deb.debian.org/debian bookworm/main amd64 libdpkg-perl all 1.21.23 [604 kB]
+Get:40 https://deb.debian.org/debian bookworm/main amd64 dpkg-dev all 1.21.23 [1354 kB]
+Get:41 https://deb.debian.org/debian bookworm/main amd64 build-essential amd64 12.9 [7704 B]
+Get:42 https://deb.debian.org/debian-security bookworm-security/main amd64 libarchive13 amd64 3.6.2-1+deb12u5 [345 kB]
+Get:43 https://deb.debian.org/debian bookworm/main amd64 libjsoncpp25 amd64 1.9.5-4 [78.6 kB]
+Get:44 https://deb.debian.org/debian bookworm/main amd64 librhash0 amd64 1.4.3-3 [134 kB]
+Get:45 https://deb.debian.org/debian bookworm/main amd64 cmake-data all 3.25.1-1 [2026 kB]
+Get:46 https://deb.debian.org/debian bookworm/main amd64 cmake amd64 3.25.1-1 [8692 kB]
+Get:47 https://deb.debian.org/debian bookworm/main amd64 libpkgconf3 amd64 1.8.1-1 [36.1 kB]
+Get:48 https://deb.debian.org/debian bookworm/main amd64 libprotobuf32 amd64 3.21.12-3+deb12u1 [932 kB]
+Get:49 https://deb.debian.org/debian bookworm/main amd64 libprotoc32 amd64 3.21.12-3+deb12u1 [830 kB]
+Get:50 https://deb.debian.org/debian bookworm/main amd64 pkgconf-bin amd64 1.8.1-1 [29.5 kB]
+Get:51 https://deb.debian.org/debian bookworm/main amd64 pkgconf amd64 1.8.1-1 [25.9 kB]
+Get:52 https://deb.debian.org/debian bookworm/main amd64 pkg-config amd64 1.8.1-1 [13.7 kB]
+Get:53 https://deb.debian.org/debian bookworm/main amd64 protobuf-compiler amd64 3.21.12-3+deb12u1 [84.2 kB]
+Fetched 79.2 MB in 0s (164 MB/s)
+Selecting previously unselected package bzip2.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 66147 files and directories currently installed.)
+Preparing to unpack .../00-bzip2_1.0.8-5+b1_amd64.deb ...
+Unpacking bzip2 (1.0.8-5+b1) ...
+Selecting previously unselected package binutils-common:amd64.
+Preparing to unpack .../01-binutils-common_2.40-2_amd64.deb ...
+Unpacking binutils-common:amd64 (2.40-2) ...
+Selecting previously unselected package libbinutils:amd64.
+Preparing to unpack .../02-libbinutils_2.40-2_amd64.deb ...
+Unpacking libbinutils:amd64 (2.40-2) ...
+Selecting previously unselected package libctf-nobfd0:amd64.
+Preparing to unpack .../03-libctf-nobfd0_2.40-2_amd64.deb ...
+Unpacking libctf-nobfd0:amd64 (2.40-2) ...
+Selecting previously unselected package libctf0:amd64.
+Preparing to unpack .../04-libctf0_2.40-2_amd64.deb ...
+Unpacking libctf0:amd64 (2.40-2) ...
+Selecting previously unselected package libgprofng0:amd64.
+Preparing to unpack .../05-libgprofng0_2.40-2_amd64.deb ...
+Unpacking libgprofng0:amd64 (2.40-2) ...
+Selecting previously unselected package binutils-x86-64-linux-gnu.
+Preparing to unpack .../06-binutils-x86-64-linux-gnu_2.40-2_amd64.deb ...
+Unpacking binutils-x86-64-linux-gnu (2.40-2) ...
+Selecting previously unselected package binutils.
+Preparing to unpack .../07-binutils_2.40-2_amd64.deb ...
+Unpacking binutils (2.40-2) ...
+Selecting previously unselected package libc-dev-bin.
+Preparing to unpack .../08-libc-dev-bin_2.36-9+deb12u14_amd64.deb ...
+Unpacking libc-dev-bin (2.36-9+deb12u14) ...
+Selecting previously unselected package linux-libc-dev:amd64.
+Preparing to unpack .../09-linux-libc-dev_6.1.192-2_amd64.deb ...
+Unpacking linux-libc-dev:amd64 (6.1.192-2) ...
+Selecting previously unselected package libcrypt-dev:amd64.
+Preparing to unpack .../10-libcrypt-dev_1%3a4.4.33-2_amd64.deb ...
+Unpacking libcrypt-dev:amd64 (1:4.4.33-2) ...
+Selecting previously unselected package libtirpc-dev:amd64.
+Preparing to unpack .../11-libtirpc-dev_1.3.3+ds-1_amd64.deb ...
+Unpacking libtirpc-dev:amd64 (1.3.3+ds-1) ...
+Selecting previously unselected package libnsl-dev:amd64.
+Preparing to unpack .../12-libnsl-dev_1.3.0-2_amd64.deb ...
+Unpacking libnsl-dev:amd64 (1.3.0-2) ...
+Selecting previously unselected package rpcsvc-proto.
+Preparing to unpack .../13-rpcsvc-proto_1.4.3-1_amd64.deb ...
+Unpacking rpcsvc-proto (1.4.3-1) ...
+Selecting previously unselected package libc6-dev:amd64.
+Preparing to unpack .../14-libc6-dev_2.36-9+deb12u14_amd64.deb ...
+Unpacking libc6-dev:amd64 (2.36-9+deb12u14) ...
+Selecting previously unselected package libisl23:amd64.
+Preparing to unpack .../15-libisl23_0.25-1.1_amd64.deb ...
+Unpacking libisl23:amd64 (0.25-1.1) ...
+Selecting previously unselected package libmpfr6:amd64.
+Preparing to unpack .../16-libmpfr6_4.2.0-1_amd64.deb ...
+Unpacking libmpfr6:amd64 (4.2.0-1) ...
+Selecting previously unselected package libmpc3:amd64.
+Preparing to unpack .../17-libmpc3_1.3.1-1_amd64.deb ...
+Unpacking libmpc3:amd64 (1.3.1-1) ...
+Selecting previously unselected package cpp-12.
+Preparing to unpack .../18-cpp-12_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking cpp-12 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package cpp.
+Preparing to unpack .../19-cpp_4%3a12.2.0-3_amd64.deb ...
+Unpacking cpp (4:12.2.0-3) ...
+Selecting previously unselected package libcc1-0:amd64.
+Preparing to unpack .../20-libcc1-0_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libcc1-0:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package libgomp1:amd64.
+Preparing to unpack .../21-libgomp1_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libgomp1:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package libitm1:amd64.
+Preparing to unpack .../22-libitm1_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libitm1:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package libatomic1:amd64.
+Preparing to unpack .../23-libatomic1_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libatomic1:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package libasan8:amd64.
+Preparing to unpack .../24-libasan8_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libasan8:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package liblsan0:amd64.
+Preparing to unpack .../25-liblsan0_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking liblsan0:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package libtsan2:amd64.
+Preparing to unpack .../26-libtsan2_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libtsan2:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package libubsan1:amd64.
+Preparing to unpack .../27-libubsan1_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libubsan1:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package libquadmath0:amd64.
+Preparing to unpack .../28-libquadmath0_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libquadmath0:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package libgcc-12-dev:amd64.
+Preparing to unpack .../29-libgcc-12-dev_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libgcc-12-dev:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package gcc-12.
+Preparing to unpack .../30-gcc-12_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking gcc-12 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package gcc.
+Preparing to unpack .../31-gcc_4%3a12.2.0-3_amd64.deb ...
+Unpacking gcc (4:12.2.0-3) ...
+Selecting previously unselected package libstdc++-12-dev:amd64.
+Preparing to unpack .../32-libstdc++-12-dev_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking libstdc++-12-dev:amd64 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package g++-12.
+Preparing to unpack .../33-g++-12_12.2.0-14+deb12u1_amd64.deb ...
+Unpacking g++-12 (12.2.0-14+deb12u1) ...
+Selecting previously unselected package g++.
+Preparing to unpack .../34-g++_4%3a12.2.0-3_amd64.deb ...
+Unpacking g++ (4:12.2.0-3) ...
+Selecting previously unselected package make.
+Preparing to unpack .../35-make_4.3-4.1_amd64.deb ...
+Unpacking make (4.3-4.1) ...
+Selecting previously unselected package libdpkg-perl.
+Preparing to unpack .../36-libdpkg-perl_1.21.23_all.deb ...
+Unpacking libdpkg-perl (1.21.23) ...
+Selecting previously unselected package dpkg-dev.
+Preparing to unpack .../37-dpkg-dev_1.21.23_all.deb ...
+Unpacking dpkg-dev (1.21.23) ...
+Selecting previously unselected package build-essential.
+Preparing to unpack .../38-build-essential_12.9_amd64.deb ...
+Unpacking build-essential (12.9) ...
+Selecting previously unselected package libarchive13:amd64.
+Preparing to unpack .../39-libarchive13_3.6.2-1+deb12u5_amd64.deb ...
+Unpacking libarchive13:amd64 (3.6.2-1+deb12u5) ...
+Selecting previously unselected package libjsoncpp25:amd64.
+Preparing to unpack .../40-libjsoncpp25_1.9.5-4_amd64.deb ...
+Unpacking libjsoncpp25:amd64 (1.9.5-4) ...
+Selecting previously unselected package librhash0:amd64.
+Preparing to unpack .../41-librhash0_1.4.3-3_amd64.deb ...
+Unpacking librhash0:amd64 (1.4.3-3) ...
+Selecting previously unselected package cmake-data.
+Preparing to unpack .../42-cmake-data_3.25.1-1_all.deb ...
+Unpacking cmake-data (3.25.1-1) ...
+Selecting previously unselected package cmake.
+Preparing to unpack .../43-cmake_3.25.1-1_amd64.deb ...
+Unpacking cmake (3.25.1-1) ...
+Selecting previously unselected package libpkgconf3:amd64.
+Preparing to unpack .../44-libpkgconf3_1.8.1-1_amd64.deb ...
+Unpacking libpkgconf3:amd64 (1.8.1-1) ...
+Selecting previously unselected package libprotobuf32:amd64.
+Preparing to unpack .../45-libprotobuf32_3.21.12-3+deb12u1_amd64.deb ...
+Unpacking libprotobuf32:amd64 (3.21.12-3+deb12u1) ...
+Selecting previously unselected package libprotoc32:amd64.
+Preparing to unpack .../46-libprotoc32_3.21.12-3+deb12u1_amd64.deb ...
+Unpacking libprotoc32:amd64 (3.21.12-3+deb12u1) ...
+Selecting previously unselected package pkgconf-bin.
+Preparing to unpack .../47-pkgconf-bin_1.8.1-1_amd64.deb ...
+Unpacking pkgconf-bin (1.8.1-1) ...
+Selecting previously unselected package pkgconf:amd64.
+Preparing to unpack .../48-pkgconf_1.8.1-1_amd64.deb ...
+Unpacking pkgconf:amd64 (1.8.1-1) ...
+Selecting previously unselected package pkg-config:amd64.
+Preparing to unpack .../49-pkg-config_1.8.1-1_amd64.deb ...
+Unpacking pkg-config:amd64 (1.8.1-1) ...
+Selecting previously unselected package protobuf-compiler.
+Preparing to unpack .../50-protobuf-compiler_3.21.12-3+deb12u1_amd64.deb ...
+Unpacking protobuf-compiler (3.21.12-3+deb12u1) ...
+Setting up libarchive13:amd64 (3.6.2-1+deb12u5) ...
+Setting up binutils-common:amd64 (2.40-2) ...
+Setting up linux-libc-dev:amd64 (6.1.192-2) ...
+Setting up libctf-nobfd0:amd64 (2.40-2) ...
+Setting up libgomp1:amd64 (12.2.0-14+deb12u1) ...
+Setting up bzip2 (1.0.8-5+b1) ...
+Setting up libtirpc-dev:amd64 (1.3.3+ds-1) ...
+Setting up libpkgconf3:amd64 (1.8.1-1) ...
+Setting up rpcsvc-proto (1.4.3-1) ...
+Setting up make (4.3-4.1) ...
+Setting up libmpfr6:amd64 (4.2.0-1) ...
+Setting up libquadmath0:amd64 (12.2.0-14+deb12u1) ...
+Setting up libmpc3:amd64 (1.3.1-1) ...
+Setting up libatomic1:amd64 (12.2.0-14+deb12u1) ...
+Setting up libjsoncpp25:amd64 (1.9.5-4) ...
+Setting up pkgconf-bin (1.8.1-1) ...
+Setting up libdpkg-perl (1.21.23) ...
+Setting up libubsan1:amd64 (12.2.0-14+deb12u1) ...
+Setting up libprotobuf32:amd64 (3.21.12-3+deb12u1) ...
+Setting up libnsl-dev:amd64 (1.3.0-2) ...
+Setting up librhash0:amd64 (1.4.3-3) ...
+Setting up libcrypt-dev:amd64 (1:4.4.33-2) ...
+Setting up libasan8:amd64 (12.2.0-14+deb12u1) ...
+Setting up cmake-data (3.25.1-1) ...
+Setting up libtsan2:amd64 (12.2.0-14+deb12u1) ...
+Setting up libbinutils:amd64 (2.40-2) ...
+Setting up libisl23:amd64 (0.25-1.1) ...
+Setting up libc-dev-bin (2.36-9+deb12u14) ...
+Setting up libcc1-0:amd64 (12.2.0-14+deb12u1) ...
+Setting up liblsan0:amd64 (12.2.0-14+deb12u1) ...
+Setting up libitm1:amd64 (12.2.0-14+deb12u1) ...
+Setting up libprotoc32:amd64 (3.21.12-3+deb12u1) ...
+Setting up libctf0:amd64 (2.40-2) ...
+Setting up cpp-12 (12.2.0-14+deb12u1) ...
+Setting up protobuf-compiler (3.21.12-3+deb12u1) ...
+Setting up pkgconf:amd64 (1.8.1-1) ...
+Setting up libgprofng0:amd64 (2.40-2) ...
+Setting up libgcc-12-dev:amd64 (12.2.0-14+deb12u1) ...
+Setting up pkg-config:amd64 (1.8.1-1) ...
+Setting up cpp (4:12.2.0-3) ...
+Setting up cmake (3.25.1-1) ...
+Setting up libc6-dev:amd64 (2.36-9+deb12u14) ...
+Setting up binutils-x86-64-linux-gnu (2.40-2) ...
+Setting up libstdc++-12-dev:amd64 (12.2.0-14+deb12u1) ...
+Setting up binutils (2.40-2) ...
+Setting up dpkg-dev (1.21.23) ...
+Setting up gcc-12 (12.2.0-14+deb12u1) ...
+Setting up g++-12 (12.2.0-14+deb12u1) ...
+Setting up gcc (4:12.2.0-3) ...
+Setting up g++ (4:12.2.0-3) ...
+update-alternatives: using /usr/bin/g++ to provide /usr/bin/c++ (c++) in auto mode
+Setting up build-essential (12.9) ...
+Processing triggers for man-db (2.11.2-2) ...
+Processing triggers for libc-bin (2.36-9+deb12u14) ...
+info: downloading installer
+info: profile set to minimal
+info: default host tuple is x86_64-unknown-linux-gnu
+info: skipping toolchain installation
+
+
+Rust is installed now. Great!
+
+To get started you need Cargo's bin directory ($HOME/.cargo/bin) in your PATH
+environment variable. This has not been done automatically.
+
+To configure your current shell, you need to source
+the corresponding env file under $HOME/.cargo.
+
+Consider running the right command for your shell (note the leading DOT):
+. "$HOME/.cargo/env" # For sh/ash/dash/pdksh/bash
+cargo:rerun-if-env-changed=CC_x86_64-unknown-linux-gnu
+CC_x86_64-unknown-linux-gnu = None
+cargo:rerun-if-env-changed=CC_x86_64_unknown_linux_gnu
+CC_x86_64_unknown_linux_gnu = None
+cargo:rerun-if-env-changed=HOST_CC
+HOST_CC = None
+cargo:rerun-if-env-changed=CC
+CC = None
+cargo:rerun-if-env-changed=CC_ENABLE_DEBUG_OUTPUT
+cargo:rerun-if-env-changed=CPATH
+cargo:rerun-if-env-changed=C_INCLUDE_PATH
+cargo:rerun-if-env-changed=CPLUS_INCLUDE_PATH
+cargo:rerun-if-env-changed=OBJC_INCLUDE_PATH
+cargo:rerun-if-env-changed=OBJCPLUS_INCLUDE_PATH
+cargo:rerun-if-env-changed=COMPILER_PATH
+cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH
+cargo:rerun-if-env-changed=GCC_EXEC_PREFIX
+cargo:rerun-if-env-changed=CRATE_CC_NO_DEFAULTS
+CRATE_CC_NO_DEFAULTS = None
+cargo:rerun-if-env-changed=CFLAGS
+CFLAGS = None
+cargo:rerun-if-env-changed=HOST_CFLAGS
+HOST_CFLAGS = None
+cargo:rerun-if-env-changed=CFLAGS_x86_64_unknown_linux_gnu
+CFLAGS_x86_64_unknown_linux_gnu = None
+cargo:rerun-if-env-changed=CFLAGS_x86_64-unknown-linux-gnu
+CFLAGS_x86_64-unknown-linux-gnu = None
+info: syncing channel updates for 1.100.0-x86_64-unknown-linux-gnu
+info: latest update on 2026-11-12 for version 1.100.0 (0ef1bc386 2026-11-09)
+info: downloading 3 components
+
+  1.100.0-x86_64-unknown-linux-gnu installed - rustc 1.100.0 (0ef1bc386 2026-11-09)
+
+info: default toolchain set to 1.100.0-x86_64-unknown-linux-gnu
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded linked-hash-map v0.5.6
+  Downloaded jobserver v0.1.35
+  Downloaded adler2 v2.0.1
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded instant v0.1.13
+  Downloaded itoa v1.0.18
+  Downloaded lazy_static v1.5.1
+  Downloaded ipnet v2.12.1
+  Downloaded rustc_version v0.2.3
+  Downloaded matchers v0.2.0
+  Downloaded num_cpus v1.17.0
+  Downloaded phf_shared v0.11.3
+  Downloaded matches v0.1.10
+  Downloaded mime v0.3.17
+  Downloaded rand_pcg v0.10.2
+  Downloaded phf v0.11.3
+  Downloaded lock_api v0.4.14
+  Downloaded lru-slab v0.1.2
+  Downloaded md-5 v0.10.6
+  Downloaded pbkdf2 v0.11.0
+  Downloaded percent-encoding v2.3.2
+  Downloaded phf_shared v0.13.1
+  Downloaded potential_utf v0.1.6
+  Downloaded num-integer v0.1.47
+  Downloaded paste v1.0.15
+  Downloaded protobuf-support v3.7.2
+  Downloaded resolv-conf v0.7.6
+  Downloaded neo4rs-macros v0.3.0
+  Downloaded md-5 v0.11.0
+  Downloaded phf_generator v0.11.3
+  Downloaded openssl-probe v0.2.1
+  Downloaded parking v2.2.1
+  Downloaded powerfmt v0.2.0
+  Downloaded rustc_version_runtime v0.2.1
+  Downloaded block-buffer v0.10.4
+  Downloaded rand_core v0.10.1
+  Downloaded num-conv v0.2.2
+  Downloaded lru-cache v0.1.2
+  Downloaded nonzero v0.2.0
+  Downloaded openssl-probe v0.1.6
+  Downloaded rand_chacha v0.3.1
+  Downloaded retain_mut v0.1.9
+  Downloaded rustc_version v0.4.1
+  Downloaded radium v0.7.0
+  Downloaded atomic-waker v1.1.2
+  Downloaded nu-ansi-term v0.50.3
+  Downloaded phf_codegen v0.11.3
+  Downloaded rustls-native-certs v0.7.3
+  Downloaded utf8_iter v1.0.4
+  Downloaded zmij v1.0.23
+  Downloaded litemap v0.8.3
+  Downloaded postgres-protocol v0.6.12
+  Downloaded quinn-udp v0.5.15
+  Downloaded rand_core v0.9.5
+  Downloaded rustc-hash v2.1.3
+  Downloaded rustls-native-certs v0.8.4
+  Downloaded rustls-pemfile v1.0.4
+  Downloaded parking_lot_core v0.9.12
+  Downloaded postgres-types v0.2.14
+  Downloaded ppv-lite86 v0.2.21
+  Downloaded rand_core v0.6.4
+  Downloaded rustls-pemfile v2.2.0
+  Downloaded want v0.3.1
+  Downloaded zerovec-derive v0.11.6
+  Downloaded pin-project-lite v0.2.17
+  Downloaded once_cell v1.21.4
+  Downloaded phf v0.13.1
+  Downloaded quote v1.0.47
+  Downloaded num-bigint v0.5.1
+  Downloaded parking_lot v0.12.5
+  Downloaded rustls-pki-types v1.15.1
+  Downloaded num-traits v0.2.19
+  Downloaded proc-macro2 v1.0.107
+  Downloaded rand_chacha v0.9.0
+  Downloaded log v0.4.34
+  Downloaded miniz_oxide v0.9.1
+  Downloaded pkg-config v0.3.34
+  Downloaded protobuf-parse v3.7.2
+  Downloaded rustls-platform-verifier v0.7.0
+  Downloaded unicode-bidi v0.3.18
+  Downloaded which v4.4.2
+  Downloaded ahash v0.8.12
+  Downloaded anstyle-query v1.1.5
+  Downloaded cfg-if v1.0.4
+  Downloaded darling_macro v0.13.4
+  Downloaded futures-macro v0.3.34
+  Downloaded http-body v1.1.0
+  Downloaded memchr v2.8.3
+  Downloaded mio v1.2.2
+  Downloaded neo4rs v0.8.0
+  Downloaded parse-zoneinfo v0.3.1
+  Downloaded prometheus v0.14.0
+  Downloaded protobuf-codegen v3.7.2
+  Downloaded quinn v0.11.11
+  Downloaded rand v0.8.8
+  Downloaded rand v0.9.5
+  Downloaded rustls-webpki v0.103.15
+  Downloaded tower v0.5.3
+  Downloaded typenum v1.20.1
+  Downloaded whoami v2.1.3
+  Downloaded writeable v0.6.4
+  Downloaded getrandom v0.2.17
+  Downloaded rand v0.10.4
+  Downloaded convert_case v0.4.0
+  Downloaded deadpool-runtime v0.1.4
+  Downloaded futures-sink v0.3.34
+  Downloaded backon v1.6.0
+  Downloaded cfg_aliases v0.2.2
+  Downloaded clap_derive v4.6.7
+  Downloaded compression-core v0.4.32
+  Downloaded delegate v0.10.0
+  Downloaded getrandom v0.4.3
+  Downloaded getrandom v0.3.4
+  Downloaded semver-parser v0.7.0
+  Downloaded reqwest v0.13.5
+  Downloaded serde_bytes v0.11.19
+  Downloaded strum v0.26.3
+  Downloaded tower-http v0.6.11
+  Downloaded regex v1.13.1
+  Downloaded rustversion v1.0.23
+  Downloaded thiserror v1.0.69
+  Downloaded anstream v1.0.0
+  Downloaded arcstr v1.2.0
+  Downloaded autocfg v1.5.1
+  Downloaded cmake v0.1.58
+  Downloaded crypto-common v0.1.7
+  Downloaded crypto-common v0.2.2
+  Downloaded hybrid-array v0.4.14
+  Downloaded socket2 v0.5.10
+  Downloaded synstructure v0.13.2
+  Downloaded block-buffer v0.12.1
+  Downloaded chrono-tz-build v0.2.1
+  Downloaded clap_lex v1.1.0
+  Downloaded colorchoice v1.0.5
+  Downloaded cpufeatures v0.2.17
+  Downloaded dunce v1.0.5
+  Downloaded enum-as-inner v0.4.0
+  Downloaded fnv v1.0.7
+  Downloaded form_urlencoded v1.2.2
+  Downloaded http v0.2.12
+  Downloaded icu_normalizer_data v2.3.0
+  Downloaded icu_properties v2.3.0
+  Downloaded protobuf v3.7.2
+  Downloaded quinn-proto v0.11.17
+  Downloaded rustix v0.38.44
+  Downloaded serde v1.0.229
+  Downloaded serde_core v1.0.229
+  Downloaded sharded-slab v0.1.7
+  Downloaded socket2 v0.6.5
+  Downloaded tokio-rustls v0.26.4
+  Downloaded async-lock v3.4.2
+  Downloaded hyper-util v0.1.20
+  Downloaded bitflags v1.3.2
+  Downloaded byteorder v1.5.0
+  Downloaded cmov v0.5.4
+  Downloaded either v1.18.0
+  Downloaded anstyle-parse v1.0.0
+  Downloaded event-listener-strategy v0.5.4
+  Downloaded cpufeatures v0.3.1
+  Downloaded funty v2.0.0
+  Downloaded futures-io v0.3.34
+  Downloaded futures-task v0.3.34
+  Downloaded tower-layer v0.3.3
+  Downloaded zerotrie v0.2.5
+  Downloaded bitflags v2.13.1
+  Downloaded darling v0.13.4
+  Downloaded deranged v0.5.8
+  Downloaded errno v0.3.14
+  Downloaded indexmap v2.14.1
+  Downloaded async-trait v0.1.92
+  Downloaded data-encoding v2.11.1
+  Downloaded tinystr v0.8.4
+  Downloaded tower-service v0.3.3
+  Downloaded digest v0.10.7
+  Downloaded displaydoc v0.2.7
+  Downloaded equivalent v1.0.2
+  Downloaded foldhash v0.2.0
+  Downloaded futures-core v0.3.34
+  Downloaded nix v0.32.0
+  Downloaded trust-dns-proto v0.21.2
+  Downloaded wyz v0.5.1
+  Downloaded zerocopy v0.8.56
+  Downloaded ctutils v0.4.2
+  Downloaded regex-syntax v0.8.11
+  Downloaded rustls v0.21.12
+  Downloaded digest v0.11.3
+  Downloaded backoff v0.4.0
+  Downloaded zerofrom v0.1.8
+  Downloaded futures-executor v0.3.34
+  Downloaded ident_case v1.0.1
+  Downloaded thiserror-impl v2.0.21
+  Downloaded find-msvc-tools v0.1.11
+  Downloaded chacha20 v0.10.2
+  Downloaded deadpool v0.9.5
+  Downloaded event-listener v5.4.2
+  Downloaded fallible-iterator v0.2.0
+  Downloaded anyhow v1.0.104
+  Downloaded compression-codecs v0.4.38
+  Downloaded clap v4.6.7
+  Downloaded base64 v0.22.1
+  Downloaded clap_complete v4.6.11
+  Downloaded fastrand v2.5.0
+  Downloaded anstyle v1.0.14
+  Downloaded base64 v0.13.1
+  Downloaded crc32fast v1.5.1
+  Downloaded futures-channel v0.3.34
+  Downloaded generic-array v0.14.7
+  Downloaded fs_extra v1.3.0
+  Downloaded tokio-macros v2.7.2
+  Downloaded darling_core v0.13.4
+  Downloaded futures v0.3.34
+  Downloaded webpki-roots v0.26.11
+  Downloaded arc-swap v1.9.2
+  Downloaded bytes v1.12.1
+  Downloaded derivative v2.2.0
+  Downloaded derive_more v0.99.20
+  Downloaded http-body-util v0.1.5
+  Downloaded aho-corasick v1.1.5
+  Downloaded const-oid v0.10.2
+  Downloaded rustls v0.23.43
+  Downloaded tokio-stream v0.1.19
+  Downloaded xxhash-rust v0.8.18
+  Downloaded zerovec v0.11.8
+  Downloaded async-compression v0.4.43
+  Downloaded base64 v0.21.7
+  Downloaded flate2 v1.1.10
+  Downloaded heck v0.4.1
+  Downloaded semver v1.0.28
+  Downloaded tokio-util v0.7.19
+  Downloaded ryu v1.0.23
+  Downloaded syn v1.0.109
+  Downloaded typed-builder v0.10.0
+  Downloaded rustix v1.1.4
+  Downloaded hmac v0.12.1
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded semver v0.9.0
+  Downloaded try-lock v0.2.5
+  Downloaded hashbrown v0.17.1
+  Downloaded histogram v1.6.4
+  Downloaded icu_collections v2.3.0
+  Downloaded scopeguard v1.2.0
+  Downloaded h2 v0.4.19
+  Downloaded redis v1.8.2
+  Downloaded strsim v0.11.1
+  Downloaded icu_properties_data v2.3.0
+  Downloaded sha-1 v0.10.1
+  Downloaded serde_yaml v0.9.34+deprecated
+  Downloaded iana-time-zone v0.1.65
+  Downloaded icu_locale_core v2.3.0
+  Downloaded icu_provider v2.3.1
+  Downloaded base64 v0.23.1
+  Downloaded cc v1.4.4
+  Downloaded clap_builder v4.6.7
+  Downloaded combine v4.6.8
+  Downloaded regex-automata v0.4.18
+  Downloaded rustls-webpki v0.101.7
+  Downloaded subtle v2.6.1
+  Downloaded sync_wrapper v1.0.2
+  Downloaded take_mut v0.2.2
+  Downloaded tap v1.0.1
+  Downloaded zlib-rs v0.6.7
+  Downloaded bson v2.15.0
+  Downloaded sha2 v0.11.0
+  Downloaded bitvec v1.1.1
+  Downloaded chrono v0.4.45
+  Downloaded aws-lc-rs v1.18.0
+  Downloaded hex v0.4.3
+  Downloaded idna v1.1.0
+  Downloaded libc v0.2.189
+  Downloaded sct v0.7.1
+  Downloaded serde_with v1.14.0
+  Downloaded sha2 v0.10.9
+  Downloaded shlex v2.0.1
+  Downloaded strum_macros v0.26.4
+  Downloaded sysinfo v0.39.6
+  Downloaded time-macros v0.2.32
+  Downloaded tokio-rustls v0.24.1
+  Downloaded webpki-roots v1.0.9
+  Downloaded idna_adapter v1.2.2
+  Downloaded thiserror-impl v1.0.69
+  Downloaded unicode-ident v1.0.24
+  Downloaded httparse v1.10.1
+  Downloaded strsim v0.10.0
+  Downloaded tempfile v3.27.0
+  Downloaded tinyvec_macros v0.1.1
+  Downloaded tracing v0.1.44
+  Downloaded tracing-core v0.1.36
+  Downloaded trust-dns-resolver v0.21.2
+  Downloaded zeroize v1.9.0
+  Downloaded chrono-tz v0.8.6
+  Downloaded heck v0.5.0
+  Downloaded httpdate v1.0.3
+  Downloaded serde_derive v1.0.229
+  Downloaded time-core v0.1.9
+  Downloaded tinyvec v1.12.0
+  Downloaded tokio-postgres v0.7.18
+  Downloaded untrusted v0.9.0
+  Downloaded yoke-derive v0.8.2
+  Downloaded hyper-rustls v0.27.9
+  Downloaded stringprep v0.1.5
+  Downloaded tracing-attributes v0.1.31
+  Downloaded simd-adler32 v0.3.10
+  Downloaded siphasher v1.0.3
+  Downloaded utf8parse v0.2.2
+  Downloaded http-body v0.4.6
+  Downloaded home v0.5.12
+  Downloaded serde_with_macros v1.5.2
+  Downloaded strum v0.28.0
+  Downloaded tracing-log v0.2.0
+  Downloaded version_check v0.9.5
+  Downloaded hmac v0.13.0
+  Downloaded syn v3.0.4
+  Downloaded strum_macros v0.28.0
+  Downloaded slab v0.4.12
+  Downloaded socket2 v0.4.10
+  Downloaded thiserror v2.0.21
+  Downloaded http v1.5.0
+  Downloaded unicode-properties v0.1.4
+  Downloaded smallvec v1.15.2
+  Downloaded yoke v0.8.3
+  Downloaded sha1_smol v1.0.1
+  Downloaded serde_json v1.0.154
+  Downloaded unsafe-libyaml v0.2.11
+  Downloaded thread_local v1.1.10
+  Downloaded futures-util v0.3.34
+  Downloaded hyper v0.14.32
+  Downloaded idna v0.2.3
+  Downloaded signal-hook-registry v1.4.8
+  Downloaded url v2.5.8
+  Downloaded icu_normalizer v2.3.0
+  Downloaded uuid v1.26.0
+  Downloaded tracing-subscriber v0.3.23
+  Downloaded encoding_rs v0.8.35
+  Downloaded unicode-normalization v0.1.25
+  Downloaded hyper v1.11.1
+  Downloaded syn v2.0.119
+  Downloaded time v0.3.55
+  Downloaded zerofrom-derive v0.1.7
+  Downloaded tokio v1.53.1
+  Downloaded webpki-roots v0.25.4
+  Downloaded ring v0.17.14
+  Downloaded mongodb v2.8.2
+  Downloaded linux-raw-sys v0.12.1
+  Downloaded linux-raw-sys v0.4.15
+  Downloaded aws-lc-sys v0.44.0
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling cfg-if v1.0.4
+   Compiling libc v0.2.189
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling pin-project-lite v0.2.17
+   Compiling smallvec v1.15.2
+   Compiling memchr v2.8.3
+   Compiling parking_lot_core v0.9.12
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling futures-core v0.3.34
+   Compiling find-msvc-tools v0.1.11
+   Compiling shlex v2.0.1
+   Compiling stable_deref_trait v1.2.1
+   Compiling futures-sink v0.3.34
+   Compiling futures-io v0.3.34
+   Compiling typenum v1.20.1
+   Compiling once_cell v1.21.4
+   Compiling slab v0.4.12
+   Compiling itoa v1.0.18
+   Compiling futures-channel v0.3.34
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling thiserror v1.0.69
+   Compiling version_check v0.9.5
+   Compiling futures-task v0.3.34
+   Compiling jobserver v0.1.35
+   Compiling syn v1.0.109
+   Compiling litemap v0.8.3
+   Compiling writeable v0.6.4
+   Compiling cc v1.4.4
+   Compiling autocfg v1.5.1
+   Compiling icu_normalizer_data v2.3.0
+   Compiling zeroize v1.9.0
+   Compiling zerocopy v0.8.56
+   Compiling errno v0.3.14
+   Compiling signal-hook-registry v1.4.8
+   Compiling socket2 v0.6.5
+   Compiling parking_lot v0.12.5
+   Compiling mio v1.2.2
+   Compiling getrandom v0.2.17
+   Compiling utf8_iter v1.0.4
+   Compiling icu_properties_data v2.3.0
+   Compiling cmake v0.1.58
+   Compiling fs_extra v1.3.0
+   Compiling untrusted v0.9.0
+   Compiling dunce v1.0.5
+   Compiling percent-encoding v2.3.2
+   Compiling subtle v2.6.1
+   Compiling pkg-config v0.3.34
+   Compiling log v0.4.34
+   Compiling aho-corasick v1.1.5
+   Compiling ring v0.17.14
+   Compiling rustls-pki-types v1.15.1
+   Compiling aws-lc-sys v0.44.0
+   Compiling regex-syntax v0.8.11
+   Compiling synstructure v0.13.2
+   Compiling generic-array v0.14.7
+   Compiling rand_core v0.10.1
+   Compiling getrandom v0.4.3
+   Compiling num-traits v0.2.19
+   Compiling regex-automata v0.4.18
+   Compiling serde_derive v1.0.229
+   Compiling tokio-macros v2.7.2
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.6
+   Compiling zerofrom v0.1.8
+   Compiling displaydoc v0.2.7
+   Compiling futures-macro v0.3.34
+   Compiling yoke v0.8.3
+   Compiling thiserror-impl v1.0.69
+   Compiling zerotrie v0.2.5
+   Compiling futures-util v0.3.34
+   Compiling zerovec v0.11.8
+   Compiling regex v1.13.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling tinyvec_macros v0.1.1
+   Compiling tinystr v0.8.4
+   Compiling potential_utf v0.1.6
+   Compiling icu_collections v2.3.0
+   Compiling aws-lc-rs v1.18.0
+   Compiling icu_locale_core v2.3.0
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.17.1
+   Compiling tinyvec v1.12.0
+   Compiling bytes v1.12.1
+   Compiling indexmap v2.14.1
+   Compiling form_urlencoded v1.2.2
+   Compiling hybrid-array v0.4.14
+   Compiling tracing-core v0.1.36
+   Compiling tokio v1.53.1
+   Compiling icu_provider v2.3.1
+   Compiling icu_normalizer v2.3.0
+   Compiling icu_properties v2.3.0
+   Compiling fnv v1.0.7
+   Compiling siphasher v1.0.3
+   Compiling protobuf v3.7.2
+   Compiling bitflags v2.13.1
+   Compiling phf_shared v0.11.3
+   Compiling http v1.5.0
+   Compiling unicode-normalization v0.1.25
+   Compiling tracing-attributes v0.1.31
+   Compiling heck v0.5.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling base64 v0.22.1
+   Compiling rand_core v0.6.4
+   Compiling cmov v0.5.4
+   Compiling url v2.5.8
+   Compiling unicode-bidi v0.3.18
+   Compiling rustix v0.38.44
+   Compiling rustix v1.1.4
+   Compiling cpufeatures v0.3.1
+   Compiling getrandom v0.3.4
+   Compiling tracing v0.1.44
+   Compiling ctutils v0.4.2
+   Compiling rand v0.8.8
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling rustversion v1.0.23
+   Compiling anyhow v1.0.104
+   Compiling linux-raw-sys v0.4.15
+   Compiling crc32fast v1.5.1
+   Compiling rustls v0.23.43
+   Compiling linux-raw-sys v0.12.1
+   Compiling const-oid v0.10.2
+   Compiling httparse v1.10.1
+   Compiling digest v0.11.3
+   Compiling phf_generator v0.11.3
+   Compiling rand_chacha v0.3.1
+   Compiling digest v0.10.7
+   Compiling protobuf-support v3.7.2
+   Compiling chacha20 v0.10.2
+   Compiling http-body v1.1.0
+   Compiling async-trait v0.1.92
+   Compiling try-lock v0.2.5
+   Compiling home v0.5.12
+   Compiling ident_case v1.0.1
+   Compiling fastrand v2.5.0
+   Compiling ipnet v2.12.1
+   Compiling either v1.18.0
+   Compiling strsim v0.10.0
+   Compiling tokio-util v0.7.19
+   Compiling adler2 v2.0.1
+   Compiling simd-adler32 v0.3.10
+   Compiling zmij v1.0.23
+   Compiling tower-service v0.3.3
+   Compiling semver-parser v0.7.0
+   Compiling lazy_static v1.5.1
+   Compiling miniz_oxide v0.9.1
+   Compiling tempfile v3.27.0
+   Compiling semver v0.9.0
+   Compiling which v4.4.2
+   Compiling darling_core v0.13.4
+   Compiling rand v0.10.4
+   Compiling want v0.3.1
+   Compiling phf_codegen v0.11.3
+   Compiling phf v0.11.3
+   Compiling parse-zoneinfo v0.3.1
+   Compiling unicode-properties v0.1.4
+   Compiling thiserror v2.0.21
+   Compiling parking v2.2.1
+   Compiling serde_json v1.0.154
+   Compiling atomic-waker v1.1.2
+   Compiling radium v0.7.0
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling h2 v0.4.19
+   Compiling event-listener v5.4.2
+   Compiling darling_macro v0.13.4
+   Compiling chrono-tz-build v0.2.1
+   Compiling stringprep v0.1.5
+   Compiling flate2 v1.1.10
+   Compiling rustc_version v0.2.3
+   Compiling rand_core v0.9.5
+   Compiling thiserror-impl v2.0.21
+   Compiling protobuf-parse v3.7.2
+   Compiling ahash v0.8.12
+   Compiling anstyle-query v1.1.5
+   Compiling num-conv v0.2.2
+   Compiling matches v0.1.10
+   Compiling tap v1.0.1
+   Compiling rustls v0.21.12
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling heck v0.4.1
+   Compiling compression-core v0.4.32
+   Compiling iana-time-zone v0.1.65
+   Compiling foldhash v0.2.0
+   Compiling colorchoice v1.0.5
+   Compiling time-core v0.1.9
+   Compiling anstyle v1.0.14
+   Compiling anstream v1.0.0
+   Compiling time-macros v0.2.32
+   Compiling hyper v1.11.1
+   Compiling chrono v0.4.45
+   Compiling protobuf-codegen v3.7.2
+   Compiling compression-codecs v0.4.38
+   Compiling enum-as-inner v0.4.0
+   Compiling wyz v0.5.1
+   Compiling idna v0.2.3
+   Compiling rand_chacha v0.9.0
+   Compiling rustc_version_runtime v0.2.1
+   Compiling chrono-tz v0.8.6
+   Compiling darling v0.13.4
+   Compiling event-listener-strategy v0.5.4
+   Compiling rustls-webpki v0.101.7
+   Compiling sct v0.7.1
+   Compiling sha2 v0.11.0
+   Compiling md-5 v0.11.0
+   Compiling hmac v0.13.0
+   Compiling num-integer v0.1.47
+   Compiling futures-executor v0.3.34
+   Compiling sync_wrapper v1.0.2
+   Compiling funty v2.0.0
+   Compiling strsim v0.11.1
+   Compiling openssl-probe v0.2.1
+   Compiling fallible-iterator v0.2.0
+   Compiling ryu v1.0.23
+   Compiling cfg_aliases v0.2.2
+   Compiling powerfmt v0.2.0
+   Compiling linked-hash-map v0.5.6
+   Compiling paste v1.0.15
+   Compiling data-encoding v2.11.1
+   Compiling cpufeatures v0.2.17
+   Compiling tower-layer v0.3.3
+   Compiling deranged v0.5.8
+   Compiling byteorder v1.5.0
+   Compiling clap_lex v1.1.0
+   Compiling postgres-protocol v0.6.12
+   Compiling tower v0.5.3
+   Compiling trust-dns-proto v0.21.2
+   Compiling backon v1.6.0
+   Compiling clap_builder v4.6.7
+   Compiling lru-cache v0.1.2
+   Compiling nix v0.32.0
+   Compiling time v0.3.55
+   Compiling bitvec v1.1.1
+   Compiling rustls-native-certs v0.8.4
+   Compiling num-bigint v0.5.1
+   Compiling prometheus v0.14.0
+   Compiling async-lock v3.4.2
+   Compiling serde_with_macros v1.5.2
+   Compiling rand v0.9.5
+   Compiling async-compression v0.4.43
+   Compiling hyper-util v0.1.20
+   Compiling arc-swap v1.9.2
+   Compiling combine v4.6.8
+   Compiling http-body-util v0.1.5
+   Compiling phf_shared v0.13.1
+   Compiling clap_derive v4.6.7
+   Compiling strum_macros v0.28.0
+   Compiling http v0.2.12
+   Compiling uuid v1.26.0
+   Compiling webpki-roots v1.0.9
+   Compiling rustls-pemfile v2.2.0
+   Compiling serde_bytes v0.11.19
+   Compiling num_cpus v1.17.0
+   Compiling instant v0.1.13
+   Compiling base64 v0.21.7
+   Compiling xxhash-rust v0.8.18
+   Compiling sha1_smol v1.0.1
+   Compiling hex v0.4.3
+   Compiling convert_case v0.4.0
+   Compiling resolv-conf v0.7.6
+   Compiling retain_mut v0.1.9
+   Compiling arcstr v1.2.0
+   Compiling deadpool-runtime v0.1.4
+   Compiling openssl-probe v0.1.6
+   Compiling derive_more v0.99.20
+   Compiling deadpool v0.9.5
+   Compiling rustls-native-certs v0.7.3
+   Compiling trust-dns-resolver v0.21.2
+   Compiling bson v2.15.0
+   Compiling rustls-pemfile v1.0.4
+   Compiling strum v0.28.0
+   Compiling backoff v0.4.0
+   Compiling webpki-roots v0.26.11
+   Compiling clap v4.6.7
+   Compiling http-body v0.4.6
+   Compiling phf v0.13.1
+   Compiling tower-http v0.6.11
+   Compiling serde_with v1.14.0
+   Compiling redis v1.8.2
+   Compiling tokio-rustls v0.24.1
+   Compiling postgres-types v0.2.14
+   Compiling sha-1 v0.10.1
+   Compiling sha2 v0.10.9
+   Compiling futures v0.3.34
+   Compiling matchers v0.2.0
+   Compiling strum_macros v0.26.4
+   Compiling sharded-slab v0.1.7
+   Compiling pbkdf2 v0.11.0
+   Compiling md-5 v0.10.6
+   Compiling hmac v0.12.1
+   Compiling tracing-log v0.2.0
+   Compiling delegate v0.10.0
+   Compiling typed-builder v0.10.0
+   Compiling derivative v2.2.0
+   Compiling neo4rs-macros v0.3.0
+   Compiling socket2 v0.4.10
+   Compiling socket2 v0.5.10
+   Compiling whoami v2.1.3
+   Compiling thread_local v1.1.10
+   Compiling encoding_rs v0.8.35
+   Compiling webpki-roots v0.25.4
+   Compiling base64 v0.23.1
+   Compiling unsafe-libyaml v0.2.11
+   Compiling httpdate v1.0.3
+   Compiling take_mut v0.2.2
+   Compiling nu-ansi-term v0.50.3
+   Compiling bitflags v1.3.2
+   Compiling mime v0.3.17
+   Compiling base64 v0.13.1
+   Compiling tracing-subscriber v0.3.23
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling mongodb v2.8.2
+   Compiling hyper v0.14.32
+   Compiling tokio-postgres v0.7.18
+   Compiling strum v0.26.3
+   Compiling falkordb v0.9.0 (/root/.cache/falkordb-perf/pokec/benchmark/vendor/falkordb-rs)
+   Compiling nonzero v0.2.0
+   Compiling clap_complete v4.6.11
+   Compiling histogram v1.6.4
+   Compiling tokio-stream v0.1.19
+   Compiling sysinfo v0.39.6
+   Compiling rustls-webpki v0.103.15
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling hyper-rustls v0.27.9
+   Compiling neo4rs v0.8.0
+   Compiling reqwest v0.13.5
+   Compiling benchmark v0.1.0 (/root/.cache/falkordb-perf/pokec/benchmark)
+warning: unused dependency `strum`
+  --> Cargo.toml:29:1
+   |
+29 | strum = { version = "0.26.3", features = ["derive"] }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `cargo::unused_dependencies` is set to `warn` by default
+help: consider removing the dependency on `strum`
+warning: `benchmark` (manifest) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 4m 23s
+warning: `VIRTUAL_ENV=bench/.venv` does not match the project environment path `/root/.cache/falkordb-perf/pokec/falkordb-bulk-loader/.venv` and will be ignored; use `--active` to target the active environment instead
+Using CPython 3.12.12
+Creating virtual environment at: /root/.cache/falkordb-perf/pokec/falkordb-bulk-loader/.venv
+   Building falkordb-bulk-loader @ file:///root/.cache/falkordb-perf/pokec/falkordb-bulk-loader
+      Built falkordb-bulk-loader @ file:///root/.cache/falkordb-perf/pokec/falkordb-bulk-loader
+Prepared 8 packages in 313ms
+Installed 11 packages in 3ms
+ + click==8.5.0
+ + dill==0.4.1
+ + falkordb==1.7.1
+ + falkordb-bulk-loader==1.2.0 (from file:///root/.cache/falkordb-perf/pokec/falkordb-bulk-loader)
+ + multiprocess==0.70.19
+ + pathos==0.3.5
+ + pox==0.3.7
+ + ppft==1.7.8
+ + python-dateutil==2.9.0.post0
+ + redis==8.1.0
+ + six==1.17.0
+  [2m2026-11-26T16:20:13.428062Z[0m [32m INFO[0m [1;32mbenchmark[0m[32m: [32mTime taken to prepare queries: 14.829871ms[0m
+    [2;3mat[0m src/main.rs:3372
+
+  [2m2026-11-26T16:20:13.507375Z[0m [32m INFO[0m [1;32mbenchmark[0m[32m: [32mTime taken to prepare queries: 15.503742ms[0m
+    [2;3mat[0m src/main.rs:3372
+

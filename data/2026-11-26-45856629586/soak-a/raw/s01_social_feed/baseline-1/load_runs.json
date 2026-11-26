@@ -1,0 +1,1 @@
+[{"tag": "", "start": 1795710264.1726584, "duration": 300.0, "workers": [{"name": "reader", "count": 8, "rate": 100.0}, {"name": "writer", "count": 2, "rate": 21.05263157894737}]}]

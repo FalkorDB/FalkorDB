@@ -1,0 +1,206 @@
+[
+ {
+  "name": "ingest victim node count",
+  "ok": true,
+  "detail": "125000 != 125000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest victim edge count",
+  "ok": true,
+  "detail": "250000 != 250000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest chaos node count",
+  "ok": true,
+  "detail": "200000 != 200000",
+  "severity": "critical"
+ },
+ {
+  "name": "chaos string ground truth",
+  "ok": true,
+  "detail": "'000007770000077700000777000007770000077700000777000007770000077700000777000007770000077700000777'",
+  "severity": "critical"
+ },
+ {
+  "name": "reduce() string concat result length exact (20000)",
+  "ok": true,
+  "detail": "got 20000",
+  "severity": "minor"
+ },
+ {
+  "name": "GRAPH.CONFIG SET QUERY_MEM_CAPACITY takes effect",
+  "ok": true,
+  "detail": "got 268435456",
+  "severity": "major"
+ },
+ {
+  "name": "GRAPH.CONFIG SET TIMEOUT takes effect",
+  "ok": true,
+  "detail": "got 5000",
+  "severity": "major"
+ },
+ {
+  "name": "server alive after chaos",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "victim/chaos results always exactly right",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "victim queries never error",
+  "ok": true,
+  "detail": "0 errors; top=[]",
+  "severity": "major"
+ },
+ {
+  "name": "chaos workers saw no unexpected failures",
+  "ok": true,
+  "detail": "{}; top=[]",
+  "severity": "major"
+ },
+ {
+  "name": "victim point p99 under chaos within SLO",
+  "ok": true,
+  "detail": "p99 3.6 ms vs baseline 0.6 ms (limit 100 ms)",
+  "severity": "major"
+ },
+ {
+  "name": "victim hop p99 under chaos within SLO",
+  "ok": true,
+  "detail": "p99 2.8 ms vs baseline 0.6 ms (limit 100 ms)",
+  "severity": "major"
+ },
+ {
+  "name": "victim range50 p99 under chaos within SLO",
+  "ok": true,
+  "detail": "p99 3.3 ms vs baseline 0.6 ms (limit 100 ms)",
+  "severity": "major"
+ },
+ {
+  "name": "victim open-loop schedule kept (few late/missed sends)",
+  "ok": true,
+  "detail": "late=10610 missed=661 victim_ops=120000",
+  "severity": "major"
+ },
+ {
+  "name": "connection churn volume >= 1000 connects",
+  "ok": true,
+  "detail": "36000",
+  "severity": "minor"
+ },
+ {
+  "name": "500+ concurrent connections were reached",
+  "ok": true,
+  "detail": "max 620.0",
+  "severity": "minor"
+ },
+ {
+  "name": "post-chaos victim data intact (6000 spot checks)",
+  "ok": true,
+  "detail": "0 mismatches",
+  "severity": "critical"
+ },
+ {
+  "name": "post-chaos victim counts intact",
+  "ok": true,
+  "detail": "125000 250000",
+  "severity": "critical"
+ },
+ {
+  "name": "post-chaos chaos-graph :C count intact (RO ops never wrote)",
+  "ok": true,
+  "detail": "200000 != 200000",
+  "severity": "critical"
+ },
+ {
+  "name": "no :Z nodes (RO_QUERY writes never applied)",
+  "ok": true,
+  "detail": "0 :Z nodes",
+  "severity": "critical"
+ },
+ {
+  "name": "CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)",
+  "ok": false,
+  "detail": "idle after 16.004709005355835 (query timeout was 15s)",
+  "severity": "minor"
+ },
+ {
+  "name": "used_memory returns near baseline after quiet period",
+  "ok": true,
+  "detail": "111 MB vs baseline 111 MB (peak RSS 2222)",
+  "severity": "major"
+ },
+ {
+  "name": "RSS back within 1.5x+300MB of baseline after quiet (allocator retention tolerated?)",
+  "ok": true,
+  "detail": "192 MB vs baseline 164 MB (peak RSS 2222)",
+  "severity": "minor"
+ },
+ {
+  "name": "no leaked client connections after chaos",
+  "ok": true,
+  "detail": "4 connected",
+  "severity": "major"
+ },
+ {
+  "name": "victim query correct after quiet",
+  "ok": true,
+  "detail": "[[94703, 284116]]",
+  "severity": "critical"
+ },
+ {
+  "name": "no memory growth between chaos rounds (RSS)",
+  "ok": true,
+  "detail": "after round 1: 192 MB, after round 2: 193 MB",
+  "severity": "major"
+ },
+ {
+  "name": "no memory growth between chaos rounds (used_memory)",
+  "ok": true,
+  "detail": "111 -> 111 MB",
+  "severity": "major"
+ },
+ {
+  "name": "no leaked client connections after round 2",
+  "ok": true,
+  "detail": "2",
+  "severity": "major"
+ },
+ {
+  "name": "victim data intact after round 2",
+  "ok": true,
+  "detail": "0 mismatches",
+  "severity": "critical"
+ },
+ {
+  "name": "no crash/panic markers in server log",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "deeply nested expressions never crash the server",
+  "ok": true,
+  "detail": "{'parens5000': 'ok', 'lists5000': 'error-reply: Query nesting exceeds the maximum depth of 256, errCtx: ...]', 'plus20000': 'ok', 'and20000': 'ok', 'maps2000': 'error-reply: Query nesting exceeds the maximum depth of 100, errCtx: ...a'}",
+  "severity": "critical"
+ },
+ {
+  "name": "deeply nested expressions are answered within 60 s",
+  "ok": true,
+  "detail": "{'parens5000': 'ok', 'lists5000': 'error-reply: Query nesting exceeds the maximum depth of 256, errCtx: ...]', 'plus20000': 'ok', 'and20000': 'ok', 'maps2000': 'error-reply: Query nesting exceeds the maximum depth of 100, errCtx: ...a'}",
+  "severity": "critical"
+ }
+]

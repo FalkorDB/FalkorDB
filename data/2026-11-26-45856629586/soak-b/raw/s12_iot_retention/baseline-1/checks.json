@@ -1,0 +1,134 @@
+[
+ {
+  "name": "ingest reading count",
+  "ok": true,
+  "detail": "120000 != 120000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest NEXT count",
+  "ok": true,
+  "detail": "119000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest topology",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "checkpoint1 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "checkpoint2 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "checkpoint3 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "checkpoint4 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "inline read checks (lattice values, ordering, window bounds, anomaly rows, chain guard)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "all 4 checkpoints ran",
+  "ok": true,
+  "detail": "4",
+  "severity": "major"
+ },
+ {
+  "name": "deleted ids are reused (max(id) stays bounded)",
+  "ok": true,
+  "detail": "max_id_end=121300 peak_live=120136 ratio=1.0096890191116734",
+  "severity": "major"
+ },
+ {
+  "name": "graph empty of readings after final delete",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "server alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "RSS plateaus in second half (slope projected over run length <= 10% of mean RSS)",
+  "ok": true,
+  "detail": "rss_slope=238 MB/h used_mem_slope=69 MB/h mean_rss=159",
+  "severity": "minor"
+ },
+ {
+  "name": "p99 does not drift up: ingest_batch",
+  "ok": true,
+  "detail": "early=24.09ms late=24.09ms",
+  "severity": "minor"
+ },
+ {
+  "name": "p99 does not drift up: ingest_single",
+  "ok": true,
+  "detail": "early=11.58ms late=10.28ms",
+  "severity": "minor"
+ },
+ {
+  "name": "p99 does not drift up: retention_delete",
+  "ok": true,
+  "detail": "early=25.06ms late=25.56ms",
+  "severity": "minor"
+ },
+ {
+  "name": "p99 does not drift up: q_recent_by_sensor",
+  "ok": true,
+  "detail": "early=1.26ms late=1.21ms",
+  "severity": "minor"
+ },
+ {
+  "name": "p99 does not drift up: q_latest_reading",
+  "ok": true,
+  "detail": "early=1.01ms late=0.90ms",
+  "severity": "minor"
+ },
+ {
+  "name": "p99 does not drift up: q_agg_device_2m",
+  "ok": true,
+  "detail": "early=2.07ms late=2.37ms",
+  "severity": "minor"
+ },
+ {
+  "name": "p99 does not drift up: q_agg_site_2m",
+  "ok": true,
+  "detail": "early=19.76ms late=19.76ms",
+  "severity": "minor"
+ },
+ {
+  "name": "p99 does not drift up: q_anomaly_join_30s",
+  "ok": true,
+  "detail": "early=12.78ms late=8.95ms",
+  "severity": "minor"
+ },
+ {
+  "name": "no operation errors",
+  "ok": true,
+  "detail": "{}",
+  "severity": "major"
+ }
+]

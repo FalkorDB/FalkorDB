@@ -1,0 +1,8 @@
+Limit
+    Sort
+        Project
+            Filter
+                Conditional Traverse | (friend)<-(message:Message)
+                    Conditional Traverse | (@anon_0)-(friend:Person)
+                        Filter
+                            Node By Index Scan | (@anon_0:Person)

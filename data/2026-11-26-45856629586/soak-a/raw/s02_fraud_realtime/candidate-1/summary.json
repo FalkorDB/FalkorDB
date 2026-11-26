@@ -1,0 +1,377 @@
+{
+ "ops": {
+  "ingest_tx": {
+   "count": 96000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 318.936877076412,
+   "p50_ms": 3.3913335651892327,
+   "p95_ms": 8.601586895932613,
+   "p99_ms": 17.546268244883787,
+   "p999_ms": 31.1594472972109,
+   "max_ms": 112.8758178710923,
+   "drift": {
+    "p99_early_ms": 12.530887891463346,
+    "p99_late_ms": 26.594288239775235,
+    "ratio": 2.122298792401819
+   }
+  },
+  "_late_start": {
+   "count": 58,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 2.0,
+   "p50_ms": 63.56176217875703,
+   "p95_ms": 92.59748528756818,
+   "p99_ms": 100.23049601039068,
+   "p999_ms": 100.23049601039068,
+   "max_ms": 100.23049601039068,
+   "drift": null
+  },
+  "detect_after_write_ring": {
+   "count": 25,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.08650519031141868,
+   "p50_ms": 1.0336183303170918,
+   "p95_ms": 1.28517447660205,
+   "p99_ms": 1.3638374359659087,
+   "p999_ms": 1.3638374359659087,
+   "max_ms": 1.3638374359659087,
+   "drift": null
+  },
+  "inject_ring": {
+   "count": 25,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.08650519031141868,
+   "p50_ms": 7.3413715926335215,
+   "p95_ms": 14.975570997327152,
+   "p99_ms": 21.81657914388944,
+   "p999_ms": 21.81657914388944,
+   "max_ms": 21.81657914388944,
+   "drift": null
+  },
+  "detect_after_write_cycle": {
+   "count": 99,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.34256055363321797,
+   "p50_ms": 0.3916983897741217,
+   "p95_ms": 0.7095074157919864,
+   "p99_ms": 0.9934816708161205,
+   "p999_ms": 0.9934816708161205,
+   "max_ms": 0.9934816708161205,
+   "drift": null
+  },
+  "inject_cycle": {
+   "count": 25,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.08650519031141868,
+   "p50_ms": 5.904393828204576,
+   "p95_ms": 10.27969257768812,
+   "p99_ms": 10.908892000983256,
+   "p999_ms": 10.908892000983256,
+   "max_ms": 10.908892000983256,
+   "drift": null
+  },
+  "detect_after_write_fanin": {
+   "count": 25,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.08650519031141868,
+   "p50_ms": 0.5820432022937706,
+   "p95_ms": 0.6819563781160961,
+   "p99_ms": 0.8998269582594633,
+   "p999_ms": 0.8998269582594633,
+   "max_ms": 0.8998269582594633,
+   "drift": null
+  },
+  "inject_mule": {
+   "count": 25,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.08650519031141868,
+   "p50_ms": 12.285184207317007,
+   "p95_ms": 19.75994789571343,
+   "p99_ms": 36.508258732622856,
+   "p999_ms": 36.508258732622856,
+   "max_ms": 36.508258732622856,
+   "drift": null
+  },
+  "cycle": {
+   "count": 7500,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 25.0,
+   "p50_ms": 0.5484723091927041,
+   "p95_ms": 0.7990205878540524,
+   "p99_ms": 1.6299119845317636,
+   "p999_ms": 12.781505649292614,
+   "max_ms": 30.548477742363627,
+   "drift": {
+    "p99_early_ms": 0.8821832924112385,
+    "p99_late_ms": 11.80813553183103,
+    "ratio": 13.38512714240631
+   }
+  },
+  "fanin": {
+   "count": 3000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 10.0,
+   "p50_ms": 1.3108779661340912,
+   "p95_ms": 16.21003966187016,
+   "p99_ms": 30.548477742363627,
+   "p999_ms": 36.508258732622856,
+   "max_ms": 47.22732556284358,
+   "drift": {
+    "p99_early_ms": 9.128072826658858,
+    "p99_late_ms": 37.23842390727531,
+    "ratio": 4.079549387305411
+   }
+  },
+  "ring_3hop": {
+   "count": 3000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 10.0,
+   "p50_ms": 1.9478957002223545,
+   "p95_ms": 2.237519872921078,
+   "p99_ms": 2.952359954250498,
+   "p999_ms": 6.917938417947773,
+   "max_ms": 11.127069841002921,
+   "drift": {
+    "p99_early_ms": 2.150634249251324,
+    "p99_late_ms": 3.3913335651892327,
+    "ratio": 1.576899264191398
+   }
+  },
+  "shared_device": {
+   "count": 15000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 50.0,
+   "p50_ms": 1.1188217219007235,
+   "p95_ms": 1.4189364683789316,
+   "p99_ms": 2.470402738470666,
+   "p999_ms": 14.681932350320736,
+   "max_ms": 38.74285623312924,
+   "drift": {
+    "p99_early_ms": 1.4473151977465102,
+    "p99_late_ms": 12.044298242467653,
+    "ratio": 8.321821163227465
+   }
+  },
+  "velocity": {
+   "count": 24000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 80.0,
+   "p50_ms": 0.605557747666439,
+   "p95_ms": 0.8821832924112385,
+   "p99_ms": 1.7642691500266037,
+   "p999_ms": 11.576603462579442,
+   "max_ms": 30.548477742363627,
+   "drift": {
+    "p99_early_ms": 0.9549035667206079,
+    "p99_late_ms": 10.908892000983256,
+    "ratio": 11.424077133199203
+   }
+  },
+  "ingest_xfer": {
+   "count": 4500,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 15.0,
+   "p50_ms": 1.4189364683789316,
+   "p95_ms": 5.242932748602446,
+   "p99_ms": 10.27969257768812,
+   "p999_ms": 37.98319238542082,
+   "max_ms": 89.00181207955418,
+   "drift": {
+    "p99_early_ms": 7.056297186306729,
+    "p99_late_ms": 12.781505649292614,
+    "ratio": 1.8113615841033566
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 90.24147157190636,
+  "cpu_max_pct": 108.9,
+  "rss_start_mb": 265.8,
+  "rss_end_mb": 359.9,
+  "rss_max_mb": 414.8,
+  "used_mem_end_mb": 232.0,
+  "rss_slope_mb_per_h": 1500.280868142701,
+  "used_mem_slope_mb_per_h": 1375.1782582545513,
+  "samples": 370,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "base node counts",
+   "ok": true,
+   "detail": "{'Account': 125277, 'Device': 100020, 'IP': 62520, 'Merchant': 1250} != {'Account': 125277, 'Device': 100020, 'IP': 62520, 'Merchant': 1250}",
+   "severity": "critical"
+  },
+  {
+   "name": "base PAID count",
+   "ok": true,
+   "detail": "250000 != 250000",
+   "severity": "critical"
+  },
+  {
+   "name": "cycle query works on planted base cycle",
+   "ok": true,
+   "detail": "neither variant returned 1; last=1",
+   "severity": "major"
+  },
+  {
+   "name": "server alive after load",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "SLO velocity p99<=100ms",
+   "ok": true,
+   "detail": "p99=1.8ms",
+   "severity": "major"
+  },
+  {
+   "name": "SLO shared_device p99<=100ms",
+   "ok": true,
+   "detail": "p99=2.5ms",
+   "severity": "major"
+  },
+  {
+   "name": "SLO cycle p99<=100ms",
+   "ok": true,
+   "detail": "p99=1.6ms",
+   "severity": "major"
+  },
+  {
+   "name": "SLO fanin p99<=100ms",
+   "ok": true,
+   "detail": "p99=30.5ms",
+   "severity": "major"
+  },
+  {
+   "name": "open-loop kept schedule (late starts <1% of writes)",
+   "ok": true,
+   "detail": "late_start=58",
+   "severity": "major"
+  },
+  {
+   "name": "injected rings/cycles/mules detected immediately after write",
+   "ok": true,
+   "detail": "0 failures of 75 events: []",
+   "severity": "critical"
+  },
+  {
+   "name": "total PAID count/sum == Python",
+   "ok": true,
+   "detail": "[1211769, 303242650.0] != [1211769, 303242650]",
+   "severity": "critical"
+  },
+  {
+   "name": "total XFER count/sum == Python",
+   "ok": true,
+   "detail": "[64325, 64865798.0] != [64325, 64865798]",
+   "severity": "critical"
+  },
+  {
+   "name": "MERGE created no duplicate Account/Device/IP/Merchant nodes",
+   "ok": true,
+   "detail": "duplicate keys per label: {'Account': 0, 'Device': 0, 'IP': 0, 'Merchant': 0}",
+   "severity": "critical"
+  },
+  {
+   "name": "node counts == Python distinct keys",
+   "ok": true,
+   "detail": "{'Account': 238396, 'Device': 100045, 'IP': 62545, 'Merchant': 1275} != {'Account': 238396, 'Device': 100045, 'IP': 62545, 'Merchant': 1275}",
+   "severity": "critical"
+  },
+  {
+   "name": "per-account PAID count/sum == Python",
+   "ok": true,
+   "detail": "236667 accounts, 0 mismatches, e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "per-account XFER count/sum == Python",
+   "ok": true,
+   "detail": "57485 accounts, 0 mismatches, e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "velocity window count/sum == Python",
+   "ok": true,
+   "detail": "300 accounts, 0 mismatches, e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "shared-device neighbours == Python",
+   "ok": true,
+   "detail": "886 accounts, 0 mismatches, e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "3-hop device->IP ring size == Python",
+   "ok": true,
+   "detail": "300 accounts, 0 mismatches, e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "global ring scan == Python set and contains every planted ring",
+   "ok": true,
+   "detail": "got=47 want=47 planted=45 missing=[] extra=[]",
+   "severity": "critical"
+  },
+  {
+   "name": "global fan-in scan == Python set and contains every mule merchant",
+   "ok": true,
+   "detail": "got=1275 want=1275 missing=[]",
+   "severity": "critical"
+  },
+  {
+   "name": "cycle detection: planted members find 1 cycle, 300 normal find 0",
+   "ok": true,
+   "detail": "159 planted; planted bad=[] normal bad=[]",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  }
+ ],
+ "checks_failed": [],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s02_fraud_realtime",
+  "scale": 0.25,
+  "duration": 300.0,
+  "accounts_base": 125000,
+  "devices_base": 100000,
+  "ips_base": 62500,
+  "merchants": 1250,
+  "base_paid_edges": 250000,
+  "base_xfer_edges": 41666,
+  "planted_rings": 20,
+  "planted_cycles": 15,
+  "ingest_s": 50.295857191085815,
+  "verify_s": 21.10019826889038,
+  "stream_tx": 961769,
+  "stream_xfer": 22500,
+  "injected_events": 75,
+  "global_ring_scan_s": 0.2055654525756836,
+  "global_fanin_scan_s": 0.6889925003051758,
+  "cycle_query": "closed-pattern",
+  "ing_rate_per_worker": 80.0
+ }
+}

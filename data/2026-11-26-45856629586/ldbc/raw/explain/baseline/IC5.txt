@@ -1,0 +1,19 @@
+Limit
+    Sort
+        Project
+            Aggregate
+                Apply
+                    Aggregate
+                        Filter
+                            Conditional Traverse | (forum)-[membership:HAS_MEMBER]->(friend)
+                                Distinct
+                                    Project
+                                        Filter
+                                            Conditional Variable Length Traverse | (person)-[@anon_0:KNOWS*1..2]->(friend)
+                                                Filter
+                                                    Node By Index Scan | (person:Person)
+                    Optional
+                        Filter
+                            Conditional Traverse | (post)->(friend)
+                                Conditional Traverse | (forum)->(post)
+                                    Argument

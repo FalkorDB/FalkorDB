@@ -1,0 +1,222 @@
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index person_city reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index bought_qty reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "index product_cat reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after build knows_since: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "before index person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_age: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_age disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after build knows_since: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index person_city reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "index product_cat reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "after build knows_since: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "after build person_age: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_age disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "during build person_city: result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175']", "sev": "critical"}
+{"name": "index person_city reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "after build person_city: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_city disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN uses index when order_status operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Order)", "sev": "major"}
+{"name": "EXPLAIN uses index when person_age operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "index product_cat reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index person_city reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index person_city reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "index person_age reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "before index bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build bought_qty: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "before index knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after knows_since dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop knows_since: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "before index person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when person_city operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "after build person_age: indexed result == ground truth", "ok": false, "detail": "['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']", "sev": "critical"}
+{"name": "index person_age disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after bought_qty dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)", "sev": "major"}
+{"name": "after drop bought_qty: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when product_cat operational", "ok": true, "detail": "Aggregate\n    Node By Index Scan | (n:Product)", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "index order_status reaches OPERATIONAL", "ok": true, "detail": "timeout/absent", "sev": "major"}
+{"name": "EXPLAIN no index after product_cat dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)", "sev": "major"}
+{"name": "after drop product_cat: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "EXPLAIN uses index when knows_since operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)", "sev": "major"}
+{"name": "index knows_since disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN no index after person_city dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_city: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "before index order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after order_status dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)", "sev": "major"}
+{"name": "after drop order_status: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN no index after person_age dropped", "ok": true, "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "after drop person_age: result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "EXPLAIN uses index when bought_qty operational", "ok": true, "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)", "sev": "major"}
+{"name": "index bought_qty disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "after build product_cat: indexed result == ground truth", "ok": true, "detail": "[]", "sev": "critical"}
+{"name": "index product_cat disappears from db.indexes after DROP", "ok": true, "detail": "timeout", "sev": "major"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}
+{"name": "edge unique on violating data ends FAILED", "ok": true, "detail": "status=FAILED", "sev": "critical"}
+{"name": "EXPLAIN no index after Person.email dropped", "ok": true, "detail": "Project\n    Filter\n        Node By Label Scan | (n:Person)", "sev": "major"}

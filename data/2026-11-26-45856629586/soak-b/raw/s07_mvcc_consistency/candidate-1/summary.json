@@ -1,0 +1,362 @@
+{
+ "ops": {
+  "transfer_peak": {
+   "count": 286320,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 3146.3736263736264,
+   "p50_ms": 1.3108779661340912,
+   "p95_ms": 1.9478957002223545,
+   "p99_ms": 3.744306286573248,
+   "p999_ms": 254.2189685807848,
+   "max_ms": 377.75601437091996,
+   "drift": {
+    "p99_early_ms": 3.819192412304713,
+    "p99_late_ms": 3.895576260550808,
+    "ratio": 1.02
+   }
+  },
+  "read_invariants": {
+   "count": 600,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 2.857142857142857,
+   "p50_ms": 110.66256654028656,
+   "p95_ms": 335.4365302100927,
+   "p99_ms": 370.3490336969803,
+   "p999_ms": 370.3490336969803,
+   "max_ms": 370.3490336969803,
+   "drift": {
+    "p99_early_ms": 269.7792032096775,
+    "p99_late_ms": 143.15382981954897,
+    "ratio": 0.5306333035177923
+   }
+  },
+  "read_point": {
+   "count": 59996,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 285.6952380952381,
+   "p50_ms": 0.4681158347603784,
+   "p95_ms": 0.6176689026197678,
+   "p99_ms": 61.09358148669456,
+   "p999_ms": 297.85803936639684,
+   "max_ms": 363.087287938216,
+   "drift": {
+    "p99_early_ms": 4.387051586009306,
+    "p99_late_ms": 1.4762615017014404,
+    "ratio": 0.3365042495532463
+   }
+  },
+  "_late_start": {
+   "count": 8789,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 41.852380952380955,
+   "p50_ms": 94.44943499331954,
+   "p95_ms": 275.17478727387106,
+   "p99_ms": 322.41112092473344,
+   "p999_ms": 348.98816603058054,
+   "max_ms": 348.98816603058054,
+   "drift": {
+    "p99_early_ms": 234.85903133253612,
+    "p99_late_ms": 117.43600091308423,
+    "ratio": 0.5000276133592964
+   }
+  },
+  "account_create": {
+   "count": 2301,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 10.957142857142857,
+   "p50_ms": 0.7236975641078262,
+   "p95_ms": 47.22732556284358,
+   "p99_ms": 204.45892026594333,
+   "p999_ms": 316.08933423993534,
+   "max_ms": 328.85934334322815,
+   "drift": {
+    "p99_early_ms": 196.51953120525118,
+    "p99_late_ms": 85.54576324447729,
+    "ratio": 0.4353041283979586
+   }
+  },
+  "account_delete_own": {
+   "count": 2199,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 10.471428571428572,
+   "p50_ms": 0.9178234974246527,
+   "p95_ms": 43.63074870469811,
+   "p99_ms": 212.71906064468746,
+   "p999_ms": 309.8915041567993,
+   "max_ms": 335.4365302100927,
+   "drift": {
+    "p99_early_ms": 204.45892026594333,
+    "p99_late_ms": 71.58086786791205,
+    "ratio": 0.3500990212351975
+   }
+  },
+  "account_delete": {
+   "count": 900,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 4.285714285714286,
+   "p50_ms": 1.28517447660205,
+   "p95_ms": 2.894470543382841,
+   "p99_ms": 24.08726622426183,
+   "p999_ms": 47.22732556284358,
+   "max_ms": 47.22732556284358,
+   "drift": {
+    "p99_early_ms": 2.894470543382841,
+    "p99_late_ms": 1.4473151977465102,
+    "ratio": 0.5000276133592972
+   }
+  },
+  "edge_delete": {
+   "count": 6000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 28.571428571428573,
+   "p50_ms": 1.1411981563387381,
+   "p95_ms": 8.267576793476174,
+   "p99_ms": 204.45892026594333,
+   "p999_ms": 355.96792935119214,
+   "max_ms": 377.75601437091996,
+   "drift": {
+    "p99_early_ms": 249.23428292233802,
+    "p99_late_ms": 92.59748528756818,
+    "ratio": 0.37152788212696153
+   }
+  },
+  "fail_expected_division": {
+   "count": 3919,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 18.66190476190476,
+   "p50_ms": 1.0968840410791407,
+   "p95_ms": 38.74285623312924,
+   "p99_ms": 230.25395228680011,
+   "p999_ms": 370.3490336969803,
+   "max_ms": 377.75601437091996,
+   "drift": {
+    "p99_early_ms": 249.23428292233802,
+    "p99_late_ms": 100.23049601039068,
+    "ratio": 0.4021537279509125
+   }
+  },
+  "fail_expected_constraint": {
+   "count": 2024,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 9.638095238095238,
+   "p50_ms": 0.668584684427545,
+   "p95_ms": 5.242932748602446,
+   "p99_ms": 181.55367002884606,
+   "p999_ms": 328.85934334322815,
+   "max_ms": 348.98816603058054,
+   "drift": {
+    "p99_early_ms": 249.23428292233802,
+    "p99_late_ms": 80.61168333114458,
+    "ratio": 0.32343737942449663
+   }
+  },
+  "fail_noop": {
+   "count": 57,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.2780487804878049,
+   "p50_ms": 1.4762615017014404,
+   "p95_ms": 151.91598943514393,
+   "p99_ms": 348.98816603058054,
+   "p999_ms": 348.98816603058054,
+   "max_ms": 348.98816603058054,
+   "drift": {
+    "p99_early_ms": 3.011407153335508,
+    "p99_late_ms": 1.5666205156975812,
+    "ratio": 0.5202287289390124
+   }
+  },
+  "transfer": {
+   "count": 46500,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 221.42857142857142,
+   "p50_ms": 0.695595505678418,
+   "p95_ms": 2.2822702703794993,
+   "p99_ms": 98.26519216704966,
+   "p999_ms": 244.34733619837058,
+   "max_ms": 363.087287938216,
+   "drift": {
+    "p99_early_ms": 87.25667850936685,
+    "p99_late_ms": 115.13333422851414,
+    "ratio": 1.319478763062873
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 73.47533333333334,
+  "cpu_max_pct": 167.9,
+  "rss_start_mb": 85.2,
+  "rss_end_mb": 126.0,
+  "rss_max_mb": 128.7,
+  "used_mem_end_mb": 41.1,
+  "rss_slope_mb_per_h": 562.4481850454754,
+  "used_mem_slope_mb_per_h": 278.18805579837954,
+  "samples": 381,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "ingest invariants hold",
+   "ok": true,
+   "detail": "[50000000.0, 50000, 50000.0, 50000, 50000, 50000, 50000, 500000.0, 500000, 50003]",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive after load",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "no reader ever saw an invariant violation (snapshot isolation)",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "failing queries are fully rolled back (never committed)",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "no write with unknown outcome (connection lost)",
+   "ok": true,
+   "detail": "0",
+   "severity": "critical"
+  },
+  {
+   "name": "own-created accounts were all deletable",
+   "ok": true,
+   "detail": "0",
+   "severity": "critical"
+  },
+  {
+   "name": "final: surviving account id set equals ledger",
+   "ok": true,
+   "detail": "missing=[] extra=[] n=49212 expected=49212",
+   "severity": "critical"
+  },
+  {
+   "name": "final: every surviving balance == initial + acknowledged transfers",
+   "ok": true,
+   "detail": "0 wrong, e.g. []",
+   "severity": "critical"
+  },
+  {
+   "name": "final: sink balance == moved balances of deleted accounts - endowments",
+   "ok": true,
+   "detail": "sink=877933 expected=877933",
+   "severity": "critical"
+  },
+  {
+   "name": "final: edge count == initial + acked transfers - deletions",
+   "ok": true,
+   "detail": "edges=364177 expected=364177",
+   "severity": "critical"
+  },
+  {
+   "name": "final: sum(edge.amt) matches ledger",
+   "ok": true,
+   "detail": "8600782.0 vs 8600782.0",
+   "severity": "critical"
+  },
+  {
+   "name": "final: counter node matches ledger",
+   "ok": true,
+   "detail": "[49212, 364177, 8600782.0]",
+   "severity": "critical"
+  },
+  {
+   "name": "final: total balance conserved",
+   "ok": true,
+   "detail": "50000000 != 50000000",
+   "severity": "critical"
+  },
+  {
+   "name": "final: counter == edge count == observed",
+   "ok": true,
+   "detail": "[49212, 364177, 8600782.0] edges=364177",
+   "severity": "critical"
+  },
+  {
+   "name": "final: guard node unique, node count consistent",
+   "ok": true,
+   "detail": "guards=1 nodes=49215 accounts=49212",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: surviving account id set equals ledger",
+   "ok": true,
+   "detail": "missing=[] extra=[] n=49212 expected=49212",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: total balance conserved",
+   "ok": true,
+   "detail": "50000000 != 50000000",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: counter == edge count == observed",
+   "ok": true,
+   "detail": "[49212, 364177, 8600782.0] edges=364177",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: guard node unique, node count consistent",
+   "ok": true,
+   "detail": "guards=1 nodes=49215 accounts=49212",
+   "severity": "critical"
+  },
+  {
+   "name": "RDB round-trip preserves graph",
+   "ok": true,
+   "detail": "state differs after restart",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "invariant readers actually ran",
+   "ok": true,
+   "detail": "heavy=600 light=59996",
+   "severity": "major"
+  }
+ ],
+ "checks_failed": [],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s07_mvcc_consistency",
+  "accounts": 50000,
+  "initial_edges": 50000,
+  "scale": 0.25,
+  "ingest_s": 78.36100578308105,
+  "duration": 300.0,
+  "restart_s": 0.7117319107055664,
+  "acked_transfers": 324041,
+  "edge_deletes": 5807,
+  "accounts_created": 2301,
+  "accounts_deleted": 3089,
+  "violations_by_kind": {},
+  "heavy_reads": 600,
+  "point_reads": 59996,
+  "constraints": true
+ }
+}

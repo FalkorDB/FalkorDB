@@ -1,0 +1,4 @@
+640195,,instructions,289376,100.00,0.85,insn per cycle
+755853,,cycles,289376,100.00,,
+5974,,branch-misses,289376,100.00,,
+5908,,l2_rqsts.all_demand_miss,276105,100.00,,

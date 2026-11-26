@@ -1,0 +1,14 @@
+Limit
+    Sort
+        Aggregate
+            Filter
+                Conditional Traverse | (@anon_5)->(tag:Tag)
+                    Conditional Traverse | (comment)->(@anon_5:Post)
+                        Conditional Traverse | (friend)<-(comment:Comment)
+                            Conditional Traverse | (@anon_1)-(friend:Person)
+                                Filter
+                                    Node By Index Scan | (@anon_1:Person)
+                                        Aggregate
+                                            Filter
+                                                Conditional Variable Length Traverse | (tag)-[@anon_0:IS_SUBCLASS_OF|HAS_TYPE*0..INF]->(baseTagClass)
+                                                    Node By Label Scan | (tag:Tag)

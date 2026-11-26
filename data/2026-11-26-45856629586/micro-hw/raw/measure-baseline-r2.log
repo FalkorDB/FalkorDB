@@ -1,0 +1,376 @@
+server up on :6399, building graph...
+pid 7, idle rate 5.5M instr/s (perf backend)
+RETURN 1                   102,528 instr      100,546 cyc    0.077 ms        1,411 B alloc
+arithmetic                 546,298 instr      255,401 cyc    0.124 ms        1,801 B alloc
+float math               5,475,900 instr    2,121,788 cyc    0.690 ms        1,776 B alloc
+split+trim+replace         153,950 instr      121,542 cyc    0.082 ms        1,748 B alloc
+list comprehension       7,766,025 instr    3,480,867 cyc    1.138 ms      288,418 B alloc
+reduce                   4,962,749 instr    1,869,347 cyc    0.616 ms      165,411 B alloc
+list ops                 1,004,732 instr      395,837 cyc    0.165 ms        1,876 B alloc
+type conversion          3,529,511 instr    1,063,485 cyc    0.368 ms       34,055 B alloc
+temporal                   109,332 instr      102,566 cyc    0.078 ms        1,426 B alloc
+spatial                    124,695 instr      120,612 cyc    0.085 ms        1,374 B alloc
+string extras              117,862 instr      111,096 cyc    0.081 ms        1,466 B alloc
+label scan + count         106,419 instr      103,431 cyc    0.077 ms        1,364 B alloc
+index lookup               200,476 instr      152,492 cyc    0.094 ms        1,502 B alloc
+id seek                    140,824 instr      127,375 cyc    0.086 ms       22,326 B alloc
+label + id scan            180,085 instr      143,690 cyc    0.092 ms        1,582 B alloc
+filter scan              5,783,069 instr    1,858,919 cyc    0.612 ms        2,155 B alloc
+string predicates        9,619,070 instr    4,478,368 cyc    1.414 ms        2,161 B alloc
+string funcs            10,771,008 instr    3,633,747 cyc    1.154 ms       21,773 B alloc
+IN list                    738,325 instr      358,689 cyc    0.157 ms        1,616 B alloc
+CASE                     9,594,139 instr    2,951,860 cyc    0.947 ms       38,573 B alloc
+coalesce                 9,005,551 instr    2,815,746 cyc    0.905 ms        1,576 B alloc
+entity funcs               157,628 instr      142,873 cyc    0.094 ms        1,653 B alloc
+RETURN DISTINCT          5,647,387 instr    1,997,118 cyc    0.696 ms        1,837 B alloc
+ORDER BY + LIMIT        27,910,106 instr   11,290,903 cyc    3.525 ms        1,841 B alloc
+SKIP + LIMIT            12,149,233 instr    4,034,635 cyc    1.296 ms      871,151 B alloc
+scan limit 10              135,647 instr      120,188 cyc    0.085 ms        1,373 B alloc
+scan limit 2k            2,003,991 instr      722,977 cyc    0.549 ms       22,418 B alloc
+traversal + count       14,507,578 instr    3,920,110 cyc    1.237 ms        4,493 B alloc
+two-hop                 17,263,512 instr    4,506,738 cyc    1.425 ms       11,563 B alloc
+edge + type()           45,312,876 instr   12,564,636 cyc    3.877 ms       44,383 B alloc
+var-length 1..3            185,936 instr      170,634 cyc    0.103 ms        1,637 B alloc
+var-length 1..50           372,086 instr      242,266 cyc    0.125 ms        1,585 B alloc
+path + length              199,457 instr      177,188 cyc    0.106 ms        1,664 B alloc
+path funcs                 200,383 instr      175,922 cyc    0.103 ms        1,666 B alloc
+OPTIONAL MATCH             217,898 instr      176,905 cyc    0.105 ms        1,582 B alloc
+expand into                204,193 instr      168,319 cyc    0.103 ms        1,639 B alloc
+agg count                5,222,343 instr    1,590,527 cyc    0.536 ms        1,692 B alloc
+agg sum                  6,837,957 instr    2,039,165 cyc    0.671 ms        1,525 B alloc
+agg min                  5,757,119 instr    1,749,446 cyc    0.581 ms        1,527 B alloc
+agg max                  6,027,837 instr    1,914,775 cyc    0.633 ms        1,558 B alloc
+agg avg                  7,218,755 instr    2,103,656 cyc    0.687 ms        1,503 B alloc
+percentileDisc          16,790,265 instr    4,479,238 cyc    1.413 ms      943,805 B alloc
+percentileCont          16,788,888 instr    4,460,516 cyc    1.409 ms      943,821 B alloc
+stDev                    7,273,324 instr    2,365,362 cyc    0.771 ms      615,896 B alloc
+stDevP                   7,278,686 instr    2,371,373 cyc    0.772 ms      615,881 B alloc
+collect                  2,829,925 instr      994,961 cyc    0.349 ms        1,695 B alloc
+count distinct           8,695,860 instr    2,488,969 cyc    0.806 ms        1,901 B alloc
+MERGE existing             407,031 instr      301,981 cyc    0.137 ms        1,724 B alloc
+SET property               341,675 instr      262,525 cyc    0.133 ms        1,548 B alloc
+REMOVE                     290,587 instr      256,147 cyc    0.129 ms        1,530 B alloc
+create node                247,325 instr      243,492 cyc    0.125 ms        2,115 B alloc
+delete node                528,777 instr      337,126 cyc    0.152 ms        3,609 B alloc
+create edge                390,274 instr      361,410 cyc    0.159 ms        3,220 B alloc
+delete edge              1,035,758 instr      615,401 cyc    0.240 ms        3,268 B alloc
+aggregates              15,779,986 instr    4,610,478 cyc    1.452 ms        2,041 B alloc
+WITH pipeline           15,312,552 instr    4,417,445 cyc    1.391 ms        2,179 B alloc
+UNION                      200,916 instr      147,446 cyc    0.090 ms        1,715 B alloc
+EXISTS pattern             488,494 instr      276,137 cyc    0.133 ms        1,721 B alloc
+pattern OR filter       20,534,558 instr    5,659,171 cyc    1.775 ms       63,778 B alloc
+hash join               29,151,818 instr   11,125,881 cyc    3.451 ms    1,275,395 B alloc
+cartesian 1 branch     279,412,689 instr   91,560,083 cyc   28.372 ms       29,681 B alloc
+cartesian 2 branches   361,060,637 instr  130,805,635 cyc   40.365 ms       33,256 B alloc
+cartesian 3 branches   898,414,290 instr  331,657,947 cyc  101.385 ms       29,192 B alloc
+shortestPath               192,116 instr      146,169 cyc    0.091 ms        1,626 B alloc
+allShortestPaths           253,230 instr      179,447 cyc    0.102 ms        1,931 B alloc
+CALL procedure             135,016 instr      118,129 cyc    0.085 ms        1,383 B alloc
+CREATE + DELETE            394,643 instr      323,527 cyc    0.144 ms        2,592 B alloc
+FOREACH                    328,375 instr      295,102 cyc    0.135 ms        1,625 B alloc
+algo.pageRank           20,070,996 instr    6,773,291 cyc    2.109 ms    2,639,137 B alloc
+algo.BFS                   366,984 instr      269,636 cyc    0.132 ms      206,580 B alloc
+algo.BFS unbounded     378,842,992 instr  122,708,420 cyc   37.588 ms    1,044,298 B alloc
+algo.WCC                69,072,130 instr   15,873,793 cyc    4.866 ms    4,981,133 B alloc
+BFS fan 2 hops             331,825 instr      240,955 cyc    0.124 ms       50,977 B alloc
+BFS fan 4 hops           1,651,865 instr    1,000,517 cyc    0.355 ms      444,496 B alloc
+BFS fan unbounded        3,011,580 instr    1,572,306 cyc    0.531 ms      968,654 B alloc
+BFS fan with edges       1,015,979 instr      453,157 cyc    0.185 ms       51,012 B alloc
+BFS fan untyped            525,271 instr      324,839 cyc    0.147 ms      263,678 B alloc
+BFS + filter comprehension     4,797,967 instr    2,316,738 cyc    0.761 ms    1,009,936 B alloc
+comprehension node filter    12,806,825 instr    4,905,386 cyc    1.557 ms    1,066,650 B alloc
+comprehension node project    11,204,473 instr    4,355,589 cyc    1.383 ms    1,394,315 B alloc
+comprehension outer var    24,180,208 instr    8,293,534 cyc    2.592 ms    1,066,825 B alloc
+any over node list      15,063,219 instr    6,194,557 cyc    1.937 ms      616,038 B alloc
+all over node list      12,101,316 instr    4,766,031 cyc    1.499 ms      616,043 B alloc
+comprehension to string    12,922,987 instr    4,697,098 cyc    1.480 ms      304,317 B alloc
+comprehension kept list     6,447,032 instr    2,870,328 cyc    0.920 ms        1,440 B alloc
+nested comprehension long     9,200,487 instr    3,663,298 cyc    1.166 ms        1,795 B alloc
+concurrent prop reads     5,672,907 instr    2,289,602 cyc    0.318 ms       10,080 B alloc
+concurrent BFS filter     4,802,971 instr    2,971,761 cyc    0.375 ms    1,017,046 B alloc
+DUMP graph              79,989,670 instr   19,161,865 cyc    6.874 ms   11,589,583 B alloc
+fulltext query             168,471 instr      151,449 cyc    0.098 ms        1,669 B alloc
+vector query               164,893 instr      152,640 cyc    0.099 ms        1,740 B alloc
+vec distance               130,984 instr      123,361 cyc    0.090 ms        1,502 B alloc
+edge index scan            191,494 instr      164,433 cyc    0.102 ms        1,740 B alloc
+LOAD CSV                   798,245 instr      319,131 cyc    0.148 ms        1,697 B alloc
+LOAD CSV headers           930,702 instr      391,154 cyc    0.169 ms        1,712 B alloc
+UDF call                   125,576 instr      110,251 cyc    0.081 ms        1,357 B alloc
+db.indexes                 456,034 instr      226,487 cyc    0.114 ms        1,719 B alloc
+db.propertyKeys            138,759 instr      112,899 cyc    0.080 ms        1,435 B alloc
+db.relationshipTypes       129,644 instr      106,375 cyc    0.077 ms        1,423 B alloc
+db.meta.stats              167,553 instr      120,687 cyc    0.083 ms        1,491 B alloc
+db.constraints             148,970 instr      128,265 cyc    0.088 ms        1,507 B alloc
+dbms.procedures            169,258 instr      131,956 cyc    0.087 ms        1,504 B alloc
+dbms.functions             249,966 instr      197,490 cyc    0.111 ms        1,656 B alloc
+algo.betweenness         9,173,081 instr    2,999,018 cyc    1.038 ms        7,061 B alloc
+algo.labelPropagation     5,721,161 instr    3,176,108 cyc    0.774 ms        5,398 B alloc
+algo.MSF                 1,432,105 instr      653,112 cyc    0.313 ms        6,564 B alloc
+algo.HarmonicCentrality   222,927,193 instr   94,391,146 cyc   28.983 ms      235,082 B alloc
+algo.SPpaths               243,032 instr      189,140 cyc    0.106 ms        1,749 B alloc
+algo.SSpaths               173,472 instr      148,957 cyc    0.091 ms        1,732 B alloc
+algo.maxFlow             1,344,619 instr      690,298 cyc    0.323 ms        6,922 B alloc
+temporal constructors       116,080 instr      106,973 cyc    0.078 ms        1,360 B alloc
+temporal components        132,626 instr      125,359 cyc    0.089 ms        1,471 B alloc
+temporal arithmetic        113,202 instr      110,381 cyc    0.081 ms        1,522 B alloc
+temporal compare           110,278 instr      116,440 cyc    0.086 ms        1,446 B alloc
+NOT pattern                311,160 instr      223,318 cyc    0.118 ms        1,783 B alloc
+map ops                    126,814 instr      116,779 cyc    0.082 ms        1,504 B alloc
+list slicing               138,019 instr      118,378 cyc    0.084 ms        1,393 B alloc
+null handling              118,689 instr      117,740 cyc    0.086 ms        1,506 B alloc
+boolean ops                314,348 instr      208,770 cyc    0.116 ms        1,884 B alloc
+order by mixed types       139,963 instr      133,257 cyc    0.093 ms        1,646 B alloc
+SET += map                 354,102 instr      273,145 cyc    0.137 ms        1,877 B alloc
+SET = map                  393,613 instr      312,356 cyc    0.148 ms        1,749 B alloc
+SET/REMOVE label           367,210 instr      270,721 cyc    0.129 ms        1,503 B alloc
+MERGE on create/match       410,077 instr      321,862 cyc    0.149 ms        1,706 B alloc
+DETACH DELETE              888,973 instr      537,113 cyc    0.236 ms        3,007 B alloc
+trig                       839,335 instr      389,603 cyc    0.167 ms        1,503 B alloc
+inverse trig               124,162 instr      114,733 cyc    0.084 ms        1,463 B alloc
+math extras              1,187,431 instr      494,526 cyc    0.197 ms        1,642 B alloc
+power + float mod          244,278 instr      184,672 cyc    0.106 ms        1,591 B alloc
+conversion extras          146,167 instr      137,596 cyc    0.092 ms        1,585 B alloc
+toJSON + isEmpty           122,015 instr      112,646 cyc    0.081 ms        1,351 B alloc
+regex                   20,122,387 instr    6,533,956 cyc    2.037 ms        1,900 B alloc
+string namespace           124,024 instr      115,475 cyc    0.081 ms        1,600 B alloc
+list namespace             139,000 instr      125,500 cyc    0.088 ms        1,433 B alloc
+list concat + compare       121,240 instr      125,525 cyc    0.090 ms        1,451 B alloc
+quantifiers                120,189 instr      122,302 cyc    0.088 ms        1,434 B alloc
+CASE value form          9,309,430 instr    2,783,583 cyc    0.897 ms        2,221 B alloc
+pattern comprehension       259,151 instr      198,780 cyc    0.113 ms        1,581 B alloc
+point accessors            125,817 instr      111,516 cyc    0.080 ms        1,504 B alloc
+txn temporals              116,183 instr      116,687 cyc    0.087 ms        1,515 B alloc
+duration accessors         145,374 instr      131,039 cyc    0.091 ms        1,587 B alloc
+week/ordinal dates         107,978 instr      100,502 cyc    0.078 ms        1,501 B alloc
+CALL subquery              485,976 instr      296,263 cyc    0.140 ms        1,920 B alloc
+UNION ALL                  187,645 instr      135,409 cyc    0.086 ms        1,695 B alloc
+undirected                 190,459 instr      172,762 cyc    0.101 ms        1,702 B alloc
+multi-type                 202,385 instr      186,346 cyc    0.107 ms        1,566 B alloc
+entity extras              240,123 instr      200,485 cyc    0.113 ms        1,567 B alloc
+expand into WITH           218,580 instr      180,121 cyc    0.108 ms        1,740 B alloc
+self-loop match            159,920 instr      144,424 cyc    0.097 ms        1,532 B alloc
+return entities            225,488 instr      168,439 cyc    0.101 ms       22,984 B alloc
+return path                197,355 instr      148,641 cyc    0.091 ms        1,572 B alloc
+UDF node API               247,373 instr      196,683 cyc    0.113 ms        1,615 B alloc
+vector edge query          165,327 instr      142,644 cyc    0.092 ms        1,651 B alloc
+SET edge prop              381,957 instr      284,751 cyc    0.135 ms        2,101 B alloc
+edge += map                384,758 instr      284,345 cyc    0.138 ms        1,576 B alloc
+REMOVE edge prop           398,089 instr      339,313 cyc    0.151 ms        1,571 B alloc
+MERGE edge                 432,164 instr      329,543 cyc    0.147 ms        1,720 B alloc
+multi-edge read            248,603 instr      199,590 cyc    0.111 ms        1,666 B alloc
+multi-edge agg          14,563,476 instr    4,344,074 cyc    1.375 ms        1,483 B alloc
+multi-edge undirected       195,413 instr      158,341 cyc    0.095 ms        1,598 B alloc
+rel entity return       17,764,467 instr    5,077,404 cyc    1.714 ms       61,961 B alloc
+multi-edge demote/promote     1,013,986 instr      754,195 cyc    0.294 ms        9,374 B alloc
+UDF echo scalars           570,559 instr      278,726 cyc    0.131 ms        1,690 B alloc
+UDF echo bigint            117,860 instr      125,835 cyc    0.091 ms        1,453 B alloc
+UDF echo list+map        4,383,683 instr    1,516,932 cyc    0.511 ms        1,882 B alloc
+UDF echo entities          350,419 instr      243,650 cyc    0.123 ms        1,880 B alloc
+UDF echo path              298,002 instr      221,567 cyc    0.114 ms        1,678 B alloc
+UDF echo point+date+vec       201,143 instr      158,804 cyc    0.097 ms        1,459 B alloc
+delete path              1,237,941 instr      753,992 cyc    0.298 ms        5,006 B alloc
+delete optional null       304,087 instr      229,784 cyc    0.116 ms        1,569 B alloc
+equality matrix            170,878 instr      133,008 cyc    0.088 ms        1,532 B alloc
+distinct mixed             134,704 instr      129,255 cyc    0.091 ms        1,790 B alloc
+edge index eq              188,294 instr      157,468 cyc    0.100 ms        1,701 B alloc
+edge index range           231,682 instr      186,581 cyc    0.109 ms        1,660 B alloc
+date week format           105,851 instr      102,709 cyc    0.078 ms        1,436 B alloc
+time from map              115,602 instr      120,422 cyc    0.089 ms        1,409 B alloc
+duration arithmetic        128,643 instr      122,775 cyc    0.091 ms        1,514 B alloc
+scalar arithmetic        1,024,203 instr      397,462 cyc    0.168 ms        1,863 B alloc
+map projection             139,574 instr      133,822 cyc    0.090 ms        1,565 B alloc
+delete pending node        414,727 instr      350,265 cyc    0.170 ms       20,061 B alloc
+delete pending edge        962,757 instr      597,743 cyc    0.248 ms        2,815 B alloc
+CASE forms                 239,756 instr      155,357 cyc    0.095 ms        1,594 B alloc
+UDF traverse               689,264 instr      386,042 cyc    0.166 ms        1,690 B alloc
+UDF edge inspect           247,670 instr      203,825 cyc    0.108 ms        1,745 B alloc
+delete returning         1,103,615 instr      654,046 cyc    0.265 ms        6,122 B alloc
+time components            126,849 instr      120,995 cyc    0.089 ms        1,341 B alloc
+range step                 127,697 instr      114,394 cyc    0.080 ms        1,608 B alloc
+CASE batch               7,104,915 instr    2,595,036 cyc    0.845 ms        2,106 B alloc
+map projection star        142,223 instr      121,501 cyc    0.084 ms        1,561 B alloc
+shortestPath row ctx       226,138 instr      169,379 cyc    0.102 ms        1,836 B alloc
+lexer variety              129,366 instr      110,410 cyc    0.083 ms        1,461 B alloc
+degree by type             141,303 instr      127,520 cyc    0.088 ms        1,600 B alloc
+pending degree           1,059,817 instr      659,694 cyc    0.275 ms       26,114 B alloc
+MERGE constrained SET       372,665 instr      307,853 cyc    0.146 ms        1,551 B alloc
+quarter date               105,476 instr      100,350 cyc    0.078 ms        1,273 B alloc
+collect DISTINCT        32,512,632 instr    8,853,531 cyc    2.752 ms        6,316 B alloc
+distinct temporal+point       133,158 instr      118,469 cyc    0.083 ms        1,820 B alloc
+negation                   312,221 instr      179,496 cyc    0.102 ms        1,668 B alloc
+comments                   107,797 instr      103,802 cyc    0.078 ms        1,563 B alloc
+unicode escapes            105,920 instr       97,014 cyc    0.074 ms        1,286 B alloc
+CYPHER directive           112,666 instr      112,565 cyc    0.085 ms        1,382 B alloc
+pattern predicate props    14,873,281 instr    4,141,847 cyc    1.313 ms       39,278 B alloc
+OR mixed filter          7,339,904 instr    2,627,296 cyc    0.849 ms        1,544 B alloc
+all-node scan              106,498 instr      101,002 cyc    0.077 ms        1,406 B alloc
+untyped edge scan          107,198 instr      111,594 cyc    0.085 ms        1,283 B alloc
+untyped var-length         236,592 instr      190,654 cyc    0.110 ms        1,745 B alloc
+multi-label write          621,991 instr      482,579 cyc    0.216 ms       12,416 B alloc
+WITH star                  141,525 instr      129,090 cyc    0.087 ms        1,434 B alloc
+WITH order limit        18,734,138 instr    7,411,625 cyc    2.310 ms        1,862 B alloc
+MERGE bound pattern        610,747 instr      471,440 cyc    0.195 ms        1,960 B alloc
+betweenness sampled      9,382,861 instr    3,091,119 cyc    1.053 ms        6,109 B alloc
+labelPropagation iters     3,098,401 instr    1,787,211 cyc    0.411 ms        5,135 B alloc
+MSF maximize             1,430,377 instr      640,447 cyc    0.314 ms        6,439 B alloc
+SPpaths cost               247,532 instr      199,338 cyc    0.113 ms        1,752 B alloc
+composite index eq         180,354 instr      155,514 cyc    0.099 ms        1,465 B alloc
+composite index range       203,729 instr      164,335 cyc    0.099 ms        1,634 B alloc
+LOAD CSV set             1,047,395 instr      543,352 cyc    0.216 ms        4,936 B alloc
+fulltext score             178,597 instr      139,793 cyc    0.089 ms        1,584 B alloc
+toJSON node                143,339 instr      127,409 cyc    0.085 ms        1,536 B alloc
+toJSON rel path            253,811 instr      189,238 cyc    0.105 ms        1,760 B alloc
+toJSON scalars             125,578 instr      126,407 cyc    0.088 ms        1,591 B alloc
+chained arithmetic         456,399 instr      276,639 cyc    0.134 ms        1,764 B alloc
+multi-type traverse     25,700,624 instr    6,553,054 cyc    2.054 ms       33,755 B alloc
+multi-label endpoints       208,609 instr      176,834 cyc    0.102 ms      206,365 B alloc
+MSF multi-edge             647,094 instr      387,122 cyc    0.235 ms        5,187 B alloc
+typed index read           136,563 instr      137,842 cyc    0.092 ms        1,614 B alloc
+correlated fulltext        432,330 instr      268,267 cyc    0.131 ms        1,751 B alloc
+correlated vector          405,741 instr      263,463 cyc    0.133 ms        1,841 B alloc
+correlated edge vector       406,684 instr      262,308 cyc    0.131 ms        1,619 B alloc
+correlated load csv        896,786 instr      378,337 cyc    0.168 ms        1,819 B alloc
+correlated hash join       630,253 instr      337,161 cyc    0.154 ms        1,946 B alloc
+optional allShortest       268,916 instr      206,972 cyc    0.113 ms        1,823 B alloc
+optional varlen            200,340 instr      172,589 cyc    0.105 ms        1,599 B alloc
+optional path build        216,914 instr      182,247 cyc    0.104 ms        1,649 B alloc
+id eq join                 248,938 instr      186,987 cyc    0.108 ms        1,564 B alloc
+temporal now fns           121,507 instr      116,893 cyc    0.085 ms        1,576 B alloc
+temporal maps 2            120,981 instr      121,911 cyc    0.089 ms        1,419 B alloc
+temporal parse 2           123,417 instr      120,389 cyc    0.089 ms        1,499 B alloc
+shortestPath in CALL       246,951 instr      180,599 cyc    0.101 ms        1,725 B alloc
+map projection row         186,214 instr      144,367 cyc    0.091 ms        1,620 B alloc
+list comp row              195,124 instr      154,486 cyc    0.096 ms        1,680 B alloc
+agg in CALL             12,386,963 instr    4,907,610 cyc    1.543 ms       63,702 B alloc
+CASE projection            285,803 instr      183,347 cyc    0.109 ms        1,656 B alloc
+chained eq                 202,070 instr      156,119 cyc    0.100 ms        1,702 B alloc
+query params               175,071 instr      162,905 cyc    0.102 ms        1,705 B alloc
+IN mod filter           25,239,678 instr    8,556,252 cyc    2.657 ms        2,051 B alloc
+edge IN index              245,861 instr      177,036 cyc    0.100 ms        1,611 B alloc
+IN on list prop            145,939 instr      137,282 cyc    0.090 ms        1,577 B alloc
+ORDER BY agg            14,928,366 instr    4,219,158 cyc    1.333 ms        2,037 B alloc
+AND pattern filter         287,075 instr      209,578 cyc    0.110 ms        1,658 B alloc
+cross product filter       345,906 instr      223,836 cyc    0.120 ms        1,654 B alloc
+vlt edge prop filter       175,104 instr      156,425 cyc    0.099 ms        1,674 B alloc
+correlated edge dyn idx       421,201 instr      258,684 cyc    0.131 ms        1,641 B alloc
+delete return entities     1,083,576 instr      694,271 cyc    0.280 ms       11,852 B alloc
+create delete indexed       448,932 instr      394,862 cyc    0.184 ms       14,192 B alloc
+delete indexed edge        837,905 instr      646,597 cyc    0.263 ms       38,914 B alloc
+MERGE edge on create/match       468,931 instr      378,758 cyc    0.162 ms       46,897 B alloc
+fulltext edge query        143,764 instr      136,067 cyc    0.090 ms        1,718 B alloc
+fulltext stopwords         141,261 instr      136,979 cyc    0.091 ms        1,587 B alloc
+string index range         149,603 instr      134,502 cyc    0.088 ms        1,589 B alloc
+string index between       227,451 instr      178,155 cyc    0.106 ms        1,676 B alloc
+distance index scan        291,333 instr      202,646 cyc    0.115 ms        1,773 B alloc
+multi-label index seek       135,694 instr      138,685 cyc    0.094 ms        1,456 B alloc
+SPpaths pathCount        1,140,484 instr      505,198 cyc    0.203 ms        1,908 B alloc
+SSpaths pathCount          181,816 instr      154,971 cyc    0.094 ms        1,546 B alloc
+SPpaths weighted           671,017 instr      330,891 cyc    0.148 ms        1,883 B alloc
+betweenness default    887,060,972 instr  280,487,805 cyc   85.807 ms   12,354,358 B alloc
+labelPropagation default   323,105,563 instr  134,787,196 cyc   13.850 ms    5,005,200 B alloc
+WCC typed               52,882,950 instr   11,964,900 cyc    3.761 ms    4,320,693 B alloc
+MSF nodes yield        130,158,316 instr   45,430,887 cyc   17.226 ms   16,553,333 B alloc
+maxFlow KNOWS          294,904,797 instr   91,986,074 cyc   28.203 ms    6,934,713 B alloc
+map proj in comprehension       144,020 instr      141,402 cyc    0.094 ms        1,569 B alloc
+shortestPath in comprehension       199,280 instr      153,407 cyc    0.092 ms        1,814 B alloc
+nested comprehension       148,837 instr      141,286 cyc    0.093 ms        1,611 B alloc
+func in comprehension       143,882 instr      130,758 cyc    0.085 ms        1,703 B alloc
+rel prop in comprehension       185,858 instr      157,730 cyc    0.094 ms        1,733 B alloc
+param in comprehension       115,258 instr      118,107 cyc    0.088 ms        1,458 B alloc
+chained cmp in comprehension       105,546 instr      116,516 cyc    0.087 ms        1,264 B alloc
+chained cmp null           115,082 instr      120,662 cyc    0.088 ms        1,366 B alloc
+rel subscript              194,115 instr      173,368 cyc    0.103 ms        1,678 B alloc
+list null subscript        104,922 instr      113,141 cyc    0.088 ms        1,387 B alloc
+null iterable              113,694 instr      111,510 cyc    0.124 ms        1,355 B alloc
+single multi true          105,229 instr      103,632 cyc    0.078 ms        1,457 B alloc
+unary minus null           132,072 instr      132,084 cyc    0.090 ms        1,578 B alloc
+untyped shortestPath       259,932 instr      194,619 cyc    0.110 ms        1,829 B alloc
+zero hop shortestPath       133,027 instr      138,747 cyc    0.094 ms        1,579 B alloc
+date components            118,483 instr      119,818 cyc    0.088 ms        1,764 B alloc
+temporal props read        135,804 instr      133,892 cyc    0.092 ms        1,461 B alloc
+point order by             141,063 instr      124,398 cyc    0.085 ms        1,751 B alloc
+mixed type order by        261,278 instr      211,113 cyc    0.123 ms       23,460 B alloc
+call union                 232,388 instr      147,829 cyc    0.092 ms        1,609 B alloc
+call union import          277,918 instr      199,475 cyc    0.113 ms        1,746 B alloc
+label predicate         15,471,965 instr    4,006,174 cyc    1.273 ms        1,868 B alloc
+match pending edge         985,534 instr      764,740 cyc    0.306 ms       45,706 B alloc
+delete pending connected       948,202 instr      661,317 cyc    0.269 ms       42,389 B alloc
+rereferenced node labels       299,595 instr      235,000 cyc    0.124 ms        1,659 B alloc
+rereferenced node attrs       340,763 instr      250,335 cyc    0.130 ms        1,672 B alloc
+betweenness labeled    803,422,481 instr  252,474,236 cyc   78.100 ms    7,397,767 B alloc
+WCC labeled             39,113,202 instr   11,278,917 cyc    3.566 ms    3,688,455 B alloc
+all edges scan             106,719 instr      112,539 cyc    0.083 ms        1,363 B alloc
+sci notation               119,281 instr      103,040 cyc    0.078 ms        1,379 B alloc
+string escapes             107,108 instr      108,577 cyc    0.082 ms        1,400 B alloc
+backtick var               131,395 instr      131,009 cyc    0.116 ms        1,630 B alloc
+distinct aggs              622,909 instr      305,685 cyc    0.145 ms        2,429 B alloc
+chained eq in comprehension       111,428 instr      112,287 cyc    0.083 ms        1,499 B alloc
+compact date strings       108,866 instr      112,014 cyc    0.085 ms        1,334 B alloc
+compact time strings       114,016 instr      115,989 cyc    0.087 ms        1,447 B alloc
+duration map full          108,972 instr      112,740 cyc    0.086 ms        1,409 B alloc
+datetime accessors         116,354 instr       97,268 cyc    0.076 ms        1,658 B alloc
+time accessors             111,413 instr      109,215 cyc    0.081 ms        1,562 B alloc
+set copy entity            347,148 instr      362,960 cyc    0.180 ms       37,921 B alloc
+set merge entity           325,945 instr      279,820 cyc    0.153 ms       39,429 B alloc
+create delete no with       289,744 instr      323,117 cyc    0.167 ms       40,676 B alloc
+create delete rel no with       331,307 instr      341,007 cyc    0.171 ms       33,193 B alloc
+urel create delete         643,323 instr      445,832 cyc    0.199 ms       44,988 B alloc
+rel mixed order by         230,173 instr      176,581 cyc    0.107 ms       22,554 B alloc
+labelPropagation all types   226,092,009 instr   93,353,583 cyc   10.235 ms    4,859,786 B alloc
+WCC all types           59,183,295 instr   13,451,828 cyc    4.174 ms    4,722,246 B alloc
+reversed 2hop chain        249,316 instr      198,111 cyc    0.107 ms        1,733 B alloc
+seek beats late range filter       460,266 instr      303,741 cyc    0.139 ms        2,310 B alloc
+reversed chain mid filter       292,398 instr      218,851 cyc    0.114 ms        1,756 B alloc
+bidir anon 2hop dedup       230,480 instr      178,138 cyc    0.101 ms        1,714 B alloc
+traverse inline rel attrs    27,977,560 instr    7,585,060 cyc    2.353 ms       30,255 B alloc
+expand-into inline rel attrs    27,537,955 instr    7,578,965 cyc    2.357 ms       62,653 B alloc
+cartesian split filter       770,594 instr      380,995 cyc    0.166 ms        1,902 B alloc
+index le range             199,012 instr      145,531 cyc    0.091 ms        1,521 B alloc
+edge index lt range        210,022 instr      154,661 cyc    0.093 ms        1,736 B alloc
+UNWIND index MATCH edge 1 row     1,097,416 instr      751,838 cyc    0.277 ms       35,352 B alloc
+UNWIND index MATCH edge 100 rows    11,988,646 instr    4,760,507 cyc    1.496 ms    1,342,636 B alloc
+UNWIND id MATCH edge 1 row     1,028,000 instr      692,834 cyc    0.260 ms       35,029 B alloc
+UNWIND id MATCH edge 100 rows     3,885,904 instr    1,677,470 cyc    0.563 ms       37,334 B alloc
+rel attr match none     28,311,470 instr    7,649,871 cyc    2.390 ms       29,726 B alloc
+rel attr match 10pct    28,525,085 instr    7,816,571 cyc    2.427 ms       29,745 B alloc
+rel attr match all      30,376,244 instr    8,390,703 cyc    2.609 ms       34,098 B alloc
+allShortestPaths edge attr       254,382 instr      192,570 cyc    0.108 ms        1,928 B alloc
+index same-bound and    17,175,236 instr    4,413,885 cyc    1.427 ms        1,735 B alloc
+runtime-bound index range       985,039 instr      461,326 cyc    0.186 ms        1,627 B alloc
+distance index scan geo       200,212 instr      169,887 cyc    0.099 ms        1,687 B alloc
+expr prop cmp            5,380,846 instr    1,764,932 cyc    0.584 ms        1,873 B alloc
+expr mod filter          5,169,803 instr    1,662,104 cyc    0.552 ms        1,828 B alloc
+expr arith filter        5,461,555 instr    1,798,275 cyc    0.593 ms        1,615 B alloc
+expr or filter           6,697,189 instr    2,130,700 cyc    0.703 ms        1,841 B alloc
+expr not filter          6,822,159 instr    2,157,880 cyc    0.709 ms        1,579 B alloc
+expr starts with         8,666,770 instr    4,060,724 cyc    1.283 ms        1,827 B alloc
+expr func filter        14,546,703 instr    4,860,137 cyc    1.533 ms      240,923 B alloc
+expr sum computed        6,508,568 instr    2,077,483 cyc    0.684 ms        1,601 B alloc
+expr case filter         7,538,695 instr    2,444,856 cyc    0.798 ms        1,953 B alloc
+expr project computed     6,863,704 instr    2,351,291 cyc    0.764 ms        1,651 B alloc
+WIdx lookup only           200,508 instr      147,600 cyc    0.092 ms        1,464 B alloc
+SET indexed prop           567,696 instr      471,530 cyc    0.193 ms       34,960 B alloc
+SET unindexed prop         673,054 instr      471,022 cyc    0.196 ms       32,247 B alloc
+SET += indexed map         737,859 instr      533,232 cyc    0.213 ms       35,748 B alloc
+SET += unindexed map       846,008 instr      545,144 cyc    0.218 ms       34,134 B alloc
+create indexed node        328,766 instr      396,889 cyc    0.173 ms       44,657 B alloc
+delete indexed node        624,172 instr      499,309 cyc    0.201 ms       49,609 B alloc
+mass delete indexed      4,323,250 instr    1,663,617 cyc    0.872 ms      207,436 B alloc
+label churn indexed        900,904 instr      685,611 cyc    0.259 ms       58,339 B alloc
+label churn unindexed       892,740 instr      617,444 cyc    0.239 ms       60,981 B alloc
+SET indexed edge prop    10,123,017 instr    3,025,065 cyc    0.968 ms       59,075 B alloc
+SET unindexed edge prop    10,103,092 instr    3,078,404 cyc    0.985 ms       57,839 B alloc
+write 1                    488,478 instr      412,922 cyc    0.205 ms       59,879 B alloc
+write 10                   656,497 instr      423,373 cyc    0.177 ms       60,292 B alloc
+write 100                2,334,450 instr    1,019,436 cyc    0.377 ms       66,068 B alloc
+create 100               1,124,618 instr      563,039 cyc    0.234 ms      144,221 B alloc
+delete 100               9,774,692 instr    2,627,899 cyc    0.871 ms      762,701 B alloc
+write 1k                19,976,056 instr    6,270,596 cyc    2.034 ms      321,942 B alloc
+write 10k              201,013,762 instr   63,530,897 cyc   18.823 ms    5,704,977 B alloc
+create 10k              90,918,188 instr   33,318,445 cyc    8.794 ms    9,255,545 B alloc
+delete 10k             248,905,152 instr   71,830,130 cyc   17.808 ms   13,364,353 B alloc
+write 100k           2,053,944,124 instr  684,447,797 cyc  201.564 ms   55,471,630 B alloc
+write 1m             21,703,156,856 instr 9,846,829,045 cyc 2736.380 ms  722,601,624 B alloc
+bulk edges 200k      4,432,721,092 instr 2,165,569,770 cyc  453.333 ms  339,443,800 B alloc
+edge create at 200k        826,072 instr      566,435 cyc    0.369 ms       13,596 B alloc
+wrote /data/measure-baseline-r2.csv

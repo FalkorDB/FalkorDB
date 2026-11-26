@@ -1,0 +1,13 @@
+dataset,workload,side,pass_no,rep,finished,stop_reason,wall_s,elapsed_s,load_s,deadline_s,used_memory_loaded,ping_max_ms,ping_samples,ping_over_100ms,ping_over_1s,ping_timeouts,ping_errors,p50_ms,p95_ms,p99_ms,throughput,errors,timeouts,dir
+medium,read,baseline,1,1,True,,27.54,26.637,7.7,900.0,143067024,6.035,138,0,0,0,0,1.567,92.671,286.719,375.418,0,0,raw/runs/medium-read-baseline-p1r1
+medium,read,candidate,1,1,True,,17.11,16.174,7.4,180,143068432,3.723,86,0,0,0,0,1.511,30.463,109.567,618.276,0,0,raw/runs/medium-read-candidate-p1r1
+medium,write5,baseline,1,1,True,,91.81,90.863,7.3,900.0,143067488,5.772,459,0,0,0,0,5.599,251.903,1220.607,110.056,0,0,raw/runs/medium-write5-baseline-p1r1
+medium,write5,candidate,1,1,True,,66.49,65.561,7.3,275.4,143068896,5.626,333,0,0,0,0,3.375,93.183,1220.607,152.53,0,0,raw/runs/medium-write5-candidate-p1r1
+medium,read,candidate,1,2,True,,17.16,16.23,7.6,180,143068304,12.862,86,0,0,0,0,1.583,30.207,112.639,616.143,0,0,raw/runs/medium-read-candidate-p1r2
+medium,read,baseline,1,2,True,,28.09,27.163,7.4,180,143067040,10.112,141,0,0,0,0,1.639,90.623,299.007,368.148,0,0,raw/runs/medium-read-baseline-p1r2
+medium,write5,candidate,1,2,True,,67.85,66.945,7.4,275.4,143068112,5.861,340,0,0,0,0,3.343,99.839,1220.607,149.376,0,0,raw/runs/medium-write5-candidate-p1r2
+medium,write5,baseline,1,2,True,,90.31,89.376,7.4,203.5,143067344,5.738,452,0,0,0,0,5.407,252.927,1220.607,111.887,0,0,raw/runs/medium-write5-baseline-p1r2
+medium,read,baseline,1,3,True,,27.58,26.683,7.5,180,143067344,9.417,138,0,0,0,0,1.527,91.135,288.767,374.77,0,0,raw/runs/medium-read-baseline-p1r3
+medium,read,candidate,1,3,True,,17.06,16.087,7.4,180,143068368,6.79,86,0,0,0,0,1.471,30.719,108.031,621.62,0,0,raw/runs/medium-read-candidate-p1r3
+medium,write5,baseline,1,3,True,,90.56,89.616,7.4,203.5,143067680,5.868,453,0,0,0,0,5.407,248.831,1212.415,111.587,0,0,raw/runs/medium-write5-baseline-p1r3
+medium,write5,candidate,1,3,True,,67.3,66.342,7.4,275.4,143068880,5.738,337,0,0,0,0,3.311,95.231,1220.607,150.734,0,0,raw/runs/medium-write5-candidate-p1r3

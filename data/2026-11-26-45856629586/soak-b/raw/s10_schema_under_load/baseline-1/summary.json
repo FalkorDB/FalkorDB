@@ -1,0 +1,1848 @@
+{
+ "ops": {
+  "churn_range_person_age": {
+   "count": 28,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.09395973154362416,
+   "p50_ms": 632.1437572544775,
+   "p95_ms": 867.7979135212174,
+   "p99_ms": 867.7979135212174,
+   "p999_ms": 867.7979135212174,
+   "max_ms": 867.7979135212174,
+   "drift": null
+  },
+  "churn_unique_ok": {
+   "count": 28,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.09427609427609428,
+   "p50_ms": 400.8777044985353,
+   "p95_ms": 498.4410385817024,
+   "p99_ms": 508.40985935333646,
+   "p999_ms": 508.40985935333646,
+   "max_ms": 508.40985935333646,
+   "drift": null
+  },
+  "churn_range_bought_qty": {
+   "count": 28,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.09427609427609428,
+   "p50_ms": 3021.5474768631107,
+   "p95_ms": 3402.753216465196,
+   "p99_ms": 3611.028935338599,
+   "p999_ms": 3611.028935338599,
+   "max_ms": 3611.028935338599,
+   "drift": null
+  },
+  "churn_live_schema": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 1239.4291136411966,
+   "p95_ms": 1481.2325230467327,
+   "p99_ms": 1481.2325230467327,
+   "p999_ms": 1481.2325230467327,
+   "max_ms": 1481.2325230467327,
+   "drift": null
+  },
+  "churn_fulltext": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 508.40985935333646,
+   "p95_ms": 619.7487816220367,
+   "p99_ms": 632.1437572544775,
+   "p999_ms": 632.1437572544775,
+   "max_ms": 632.1437572544775,
+   "drift": null
+  },
+  "churn_unique_fail": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 385.3111346583384,
+   "p95_ms": 479.0859655725705,
+   "p99_ms": 508.40985935333646,
+   "p999_ms": 508.40985935333646,
+   "max_ms": 508.40985935333646,
+   "drift": null
+  },
+  "churn_range_product_cat": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 550.3191822251283,
+   "p95_ms": 684.25273259548,
+   "p99_ms": 785.9913069822834,
+   "p999_ms": 785.9913069822834,
+   "max_ms": 785.9913069822834,
+   "drift": null
+  },
+  "churn_mandatory": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 83.86839533772283,
+   "p95_ms": 204.45892026594333,
+   "p99_ms": 254.2189685807848,
+   "p999_ms": 254.2189685807848,
+   "max_ms": 254.2189685807848,
+   "drift": null
+  },
+  "churn_range_person_email": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.09407665505226481,
+   "p50_ms": 561.3255658696309,
+   "p95_ms": 726.1344738521841,
+   "p99_ms": 834.1002629000551,
+   "p999_ms": 834.1002629000551,
+   "max_ms": 834.1002629000551,
+   "drift": null
+  },
+  "churn_mandatory_fail": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 119.78472093134592,
+   "p95_ms": 221.31291069473286,
+   "p99_ms": 234.85903133253612,
+   "p999_ms": 234.85903133253612,
+   "max_ms": 234.85903133253612,
+   "drift": null
+  },
+  "churn_range_knows_since": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.09407665505226481,
+   "p50_ms": 1770.2099806948268,
+   "p95_ms": 1954.4548573182014,
+   "p99_ms": 1954.4548573182014,
+   "p999_ms": 1954.4548573182014,
+   "max_ms": 1954.4548573182014,
+   "drift": null
+  },
+  "churn_edge_constraint": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 254.2189685807848,
+   "p95_ms": 393.0173573515052,
+   "p99_ms": 393.0173573515052,
+   "p999_ms": 393.0173573515052,
+   "max_ms": 393.0173573515052,
+   "drift": null
+  },
+  "churn_range_person_city": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 619.7487816220367,
+   "p95_ms": 770.5797127277287,
+   "p99_ms": 885.1538717916403,
+   "p999_ms": 885.1538717916403,
+   "max_ms": 885.1538717916403,
+   "drift": null
+  },
+  "churn_range_order_status": {
+   "count": 27,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0944055944055944,
+   "p50_ms": 595.6831811053794,
+   "p95_ms": 684.25273259548,
+   "p99_ms": 817.7453557843677,
+   "p999_ms": 817.7453557843677,
+   "max_ms": 817.7453557843677,
+   "drift": null
+  },
+  "live_cmp": {
+   "count": 1500,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 5.0,
+   "p50_ms": 19.372497936973954,
+   "p95_ms": 119.78472093134592,
+   "p99_ms": 148.93724454425876,
+   "p999_ms": 174.50371975090934,
+   "max_ms": 192.66620706397174,
+   "drift": {
+    "p99_early_ms": 140.34689197994996,
+    "p99_late_ms": 140.34689197994996,
+    "ratio": 1.0
+   }
+  },
+  "point_2hop": {
+   "count": 5375,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 17.916666666666668,
+   "p50_ms": 5.563842176278896,
+   "p95_ms": 110.66256654028656,
+   "p99_ms": 158.05339540832375,
+   "p999_ms": 181.55367002884606,
+   "max_ms": 200.4499218293562,
+   "drift": {
+    "p99_early_ms": 171.082078187166,
+    "p99_late_ms": 154.95430922384682,
+    "ratio": 0.9057308098299158
+   }
+  },
+  "point_1hop": {
+   "count": 25077,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 83.31229235880399,
+   "p50_ms": 5.454747231645986,
+   "p95_ms": 119.78472093134592,
+   "p99_ms": 154.95430922384682,
+   "p999_ms": 181.55367002884606,
+   "max_ms": 204.45892026594333,
+   "drift": {
+    "p99_early_ms": 158.05339540832375,
+    "p99_late_ms": 154.95430922384682,
+    "ratio": 0.9803921568627451
+   }
+  },
+  "order_path": {
+   "count": 5324,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 17.687707641196013,
+   "p50_ms": 6.782292566615463,
+   "p95_ms": 122.18041534997285,
+   "p99_ms": 154.95430922384682,
+   "p999_ms": 174.50371975090934,
+   "max_ms": 196.51953120525118,
+   "drift": {
+    "p99_early_ms": 164.43875258282006,
+    "p99_late_ms": 148.93724454425876,
+    "ratio": 0.9057308098299157
+   }
+  },
+  "_late_start": {
+   "count": 27928,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 93.09333333333333,
+   "p50_ms": 208.5480986712622,
+   "p95_ms": 755.4703065958124,
+   "p99_ms": 958.1190173757884,
+   "p999_ms": 1215.1265820011731,
+   "max_ms": 1315.2920908289473,
+   "drift": {
+    "p99_early_ms": 920.9140882120225,
+    "p99_late_ms": 939.3323699762632,
+    "ratio": 1.0200000000000002
+   }
+  },
+  "_missed_schedule": {
+   "count": 6914,
+   "errors": 6914,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": {
+    "p99_early_ms": NaN,
+    "p99_late_ms": NaN,
+    "ratio": null
+   }
+  },
+  "verify_order_status": {
+   "count": 193,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.6454849498327759,
+   "p50_ms": 23.15192832012863,
+   "p95_ms": 124.62402365697231,
+   "p99_ms": 158.05339540832375,
+   "p999_ms": 158.05339540832375,
+   "max_ms": 158.05339540832375,
+   "drift": {
+    "p99_early_ms": 158.05339540832375,
+    "p99_late_ms": 151.91598943514393,
+    "ratio": 0.9611687812379852
+   }
+  },
+  "verify_knows_since": {
+   "count": 217,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.7233333333333334,
+   "p50_ms": 119.78472093134592,
+   "p95_ms": 230.25395228680011,
+   "p99_ms": 249.23428292233802,
+   "p999_ms": 254.2189685807848,
+   "max_ms": 254.2189685807848,
+   "drift": {
+    "p99_early_ms": 212.71906064468746,
+    "p99_late_ms": 249.23428292233802,
+    "ratio": 1.1716593810022662
+   }
+  },
+  "verify_person_age": {
+   "count": 203,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.6812080536912751,
+   "p50_ms": 25.561599615316453,
+   "p95_ms": 119.78472093134592,
+   "p99_ms": 164.43875258282006,
+   "p999_ms": 171.082078187166,
+   "max_ms": 171.082078187166,
+   "drift": {
+    "p99_early_ms": 75.96218962837122,
+    "p99_late_ms": 102.2351059305985,
+    "ratio": 1.3458683383241308
+   }
+  },
+  "verify_bought_qty": {
+   "count": 173,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.5785953177257525,
+   "p50_ms": 161.21446331649022,
+   "p95_ms": 264.48941491144853,
+   "p99_ms": 309.8915041567993,
+   "p999_ms": 342.1452608142946,
+   "max_ms": 342.1452608142946,
+   "drift": {
+    "p99_early_ms": 309.8915041567993,
+    "p99_late_ms": 280.6782830193485,
+    "ratio": 0.9057308098299157
+   }
+  },
+  "verify_product_cat": {
+   "count": 196,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.6599326599326599,
+   "p50_ms": 21.38880308224455,
+   "p95_ms": 117.43600091308423,
+   "p99_ms": 143.15382981954897,
+   "p999_ms": 151.91598943514393,
+   "max_ms": 151.91598943514393,
+   "drift": {
+    "p99_early_ms": 124.62402365697231,
+    "p99_late_ms": 94.44943499331954,
+    "ratio": 0.7578750245882903
+   }
+  },
+  "verify_person_city": {
+   "count": 218,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.7290969899665551,
+   "p50_ms": 24.569011548747064,
+   "p95_ms": 117.43600091308423,
+   "p99_ms": 137.59499213720582,
+   "p999_ms": 143.15382981954897,
+   "max_ms": 143.15382981954897,
+   "drift": {
+    "p99_early_ms": 90.78184832114528,
+    "p99_late_ms": 87.25667850936685,
+    "ratio": 0.9611687812379853
+   }
+  },
+  "verify_email": {
+   "count": 3000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 9.966777408637874,
+   "p50_ms": 25.06039177972201,
+   "p95_ms": 140.34689197994996,
+   "p99_ms": 167.72752763447644,
+   "p999_ms": 192.66620706397174,
+   "max_ms": 196.51953120525118,
+   "drift": {
+    "p99_early_ms": 174.50371975090934,
+    "p99_late_ms": 161.21446331649022,
+    "ratio": 0.923845426026514
+   }
+  },
+  "live_insert": {
+   "count": 3429,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 11.43,
+   "p50_ms": 4.655574239485764,
+   "p95_ms": 154.95430922384682,
+   "p99_ms": 280.6782830193485,
+   "p999_ms": 322.41112092473344,
+   "max_ms": 363.087287938216,
+   "drift": {
+    "p99_early_ms": 297.85803936639684,
+    "p99_late_ms": 275.17478727387106,
+    "ratio": 0.923845426026514
+   }
+  },
+  "live_update": {
+   "count": 12061,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 40.06976744186046,
+   "p50_ms": 5.039343280086934,
+   "p95_ms": 151.91598943514393,
+   "p99_ms": 286.2918486797355,
+   "p999_ms": 335.4365302100927,
+   "max_ms": 385.3111346583384,
+   "drift": {
+    "p99_early_ms": 303.8152001537248,
+    "p99_late_ms": 286.2918486797355,
+    "ratio": 0.9423223345470443
+   }
+  },
+  "live_delete": {
+   "count": 1699,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 5.663333333333333,
+   "p50_ms": 7.4881990244861925,
+   "p95_ms": 151.91598943514393,
+   "p99_ms": 292.01768565333026,
+   "p999_ms": 322.41112092473344,
+   "max_ms": 328.85934334322815,
+   "drift": {
+    "p99_early_ms": 286.2918486797355,
+    "p99_late_ms": 297.85803936639684,
+    "ratio": 1.0404
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 169.36856187290968,
+  "cpu_max_pct": 243.8,
+  "rss_start_mb": 509.9,
+  "rss_end_mb": 487.8,
+  "rss_max_mb": 592.2,
+  "used_mem_end_mb": 233.0,
+  "rss_slope_mb_per_h": 171.77630082847585,
+  "used_mem_slope_mb_per_h": 33.36635085933263,
+  "samples": 373,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "ingest node count",
+   "ok": true,
+   "detail": "487500 != 487500",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest edge count",
+   "ok": true,
+   "detail": "1350000 != 1350000",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline person_age: scan result == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline person_age: index built",
+   "ok": true,
+   "detail": "timeout 900s",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_age: EXPLAIN scan before index",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_age: EXPLAIN uses index when operational",
+   "ok": true,
+   "detail": "Aggregate\n    Node By Index Scan | (n:Person)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_age: indexed result == ground truth (all values)",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline person_age: index disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "timeout",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_age: EXPLAIN no index after drop",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_city: scan result == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline person_city: index built",
+   "ok": true,
+   "detail": "timeout 900s",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_city: EXPLAIN scan before index",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_city: EXPLAIN uses index when operational",
+   "ok": true,
+   "detail": "Aggregate\n    Node By Index Scan | (n:Person)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_city: indexed result == ground truth (all values)",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline person_city: index disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "timeout",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person_city: EXPLAIN no index after drop",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Person)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline product_cat: scan result == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline product_cat: index built",
+   "ok": true,
+   "detail": "timeout 900s",
+   "severity": "major"
+  },
+  {
+   "name": "baseline product_cat: EXPLAIN scan before index",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline product_cat: EXPLAIN uses index when operational",
+   "ok": true,
+   "detail": "Aggregate\n    Node By Index Scan | (n:Product)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline product_cat: indexed result == ground truth (all values)",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline product_cat: index disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "timeout",
+   "severity": "major"
+  },
+  {
+   "name": "baseline product_cat: EXPLAIN no index after drop",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Product)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline order_status: scan result == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline order_status: index built",
+   "ok": true,
+   "detail": "timeout 900s",
+   "severity": "major"
+  },
+  {
+   "name": "baseline order_status: EXPLAIN scan before index",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline order_status: EXPLAIN uses index when operational",
+   "ok": true,
+   "detail": "Aggregate\n    Node By Index Scan | (n:Order)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline order_status: indexed result == ground truth (all values)",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline order_status: index disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "timeout",
+   "severity": "major"
+  },
+  {
+   "name": "baseline order_status: EXPLAIN no index after drop",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Node By Label Scan | (n:Order)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline bought_qty: scan result == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline bought_qty: index built",
+   "ok": true,
+   "detail": "timeout 900s",
+   "severity": "major"
+  },
+  {
+   "name": "baseline bought_qty: EXPLAIN scan before index",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline bought_qty: EXPLAIN uses index when operational",
+   "ok": true,
+   "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:BOUGHT]->(@anon_1)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline bought_qty: indexed result == ground truth (all values)",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline bought_qty: index disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "timeout",
+   "severity": "major"
+  },
+  {
+   "name": "baseline bought_qty: EXPLAIN no index after drop",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:BOUGHT]->(@anon_1)\n            All Node Scan | (@anon_0)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline knows_since: scan result == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline knows_since: index built",
+   "ok": true,
+   "detail": "timeout 900s",
+   "severity": "major"
+  },
+  {
+   "name": "baseline knows_since: EXPLAIN scan before index",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline knows_since: EXPLAIN uses index when operational",
+   "ok": true,
+   "detail": "Aggregate\n    Edge By Index Scan | (@anon_0)-[r:KNOWS]->(@anon_1)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline knows_since: indexed result == ground truth (all values)",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline knows_since: index disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "timeout",
+   "severity": "major"
+  },
+  {
+   "name": "baseline knows_since: EXPLAIN no index after drop",
+   "ok": true,
+   "detail": "Aggregate\n    Filter\n        Conditional Traverse | (@anon_0)-[r:KNOWS]->(@anon_1)\n            All Node Scan | (@anon_0)",
+   "severity": "major"
+  },
+  {
+   "name": "baseline person.email string index lookups",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline unique constraint on Person.email OPERATIONAL",
+   "ok": true,
+   "detail": "OPERATIONAL",
+   "severity": "major"
+  },
+  {
+   "name": "baseline unique constraint rejects duplicate",
+   "ok": true,
+   "detail": "unique constraint violation on node of type Person",
+   "severity": "critical"
+  },
+  {
+   "name": "baseline fulltext Person.name results == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "EXPLAIN no index after Person.email dropped",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN no index after bought_qty dropped",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN no index after knows_since dropped",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN no index after order_status dropped",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN no index after person_age dropped",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN no index after person_city dropped",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN no index after product_cat dropped",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN uses index when Live.k operational",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN uses index when Person.email operational",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN uses index when bought_qty operational",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN uses index when knows_since operational",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN uses index when order_status operational",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN uses index when person_age operational",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN uses index when person_city operational",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "EXPLAIN uses index when product_cat operational",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "Live (under writes) index == scan during build/after",
+   "ok": false,
+   "detail": "1 of 733 runs failed; first: [753,853] idx=1364 scan=1365",
+   "severity": "critical"
+  },
+  {
+   "name": "Live: index-path count == scan-path count (same query)",
+   "ok": false,
+   "detail": "1 of 1500 runs failed; first: [511,811] idx=4136 scan=4137",
+   "severity": "critical"
+  },
+  {
+   "name": "after build bought_qty: indexed result == ground truth",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after build knows_since: indexed result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after build order_status: indexed result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after build person_age: indexed result == ground truth",
+   "ok": false,
+   "detail": "28 of 28 runs failed; first: ['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']",
+   "severity": "critical"
+  },
+  {
+   "name": "after build person_city: indexed result == ground truth",
+   "ok": false,
+   "detail": "27 of 27 runs failed; first: ['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']",
+   "severity": "critical"
+  },
+  {
+   "name": "after build product_cat: indexed result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after drop bought_qty: result == ground truth",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after drop knows_since: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after drop order_status: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after drop person_age: result == ground truth",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after drop person_city: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "after drop product_cat: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "before index bought_qty: result == ground truth",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "before index knows_since: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "before index order_status: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "before index person_age: result == ground truth",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "before index person_city: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "before index product_cat: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "during build person_age: result == ground truth",
+   "ok": false,
+   "detail": "1 of 1 runs failed; first: ['eq 0: got 0 want 1945']",
+   "severity": "critical"
+  },
+  {
+   "name": "during build person_city: result == ground truth",
+   "ok": false,
+   "detail": "2 of 2 runs failed; first: ['eq 0: got 0 want 175']",
+   "severity": "critical"
+  },
+  {
+   "name": "edge mandatory constraint OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "edge mandatory rejects missing property",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "edge unique constraint on unique data OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "edge unique on violating data ends FAILED",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "edge unique rejects duplicate",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "exact-match index for unique constraint builds",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "fulltext index reaches OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "fulltext operational: result == ground truth",
+   "ok": true,
+   "detail": "0 of 81 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "immediately after drop bought_qty: result == ground truth",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "immediately after drop knows_since: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "immediately after drop order_status: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "immediately after drop person_age: result == ground truth",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "immediately after drop person_city: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "immediately after drop product_cat: result == ground truth",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "index Live.k reaches OPERATIONAL under writes",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index Person.email reaches OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index bought_qty disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index bought_qty reaches OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index knows_since disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index knows_since reaches OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index order_status disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index order_status reaches OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index person_age disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index person_age reaches OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index person_city disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index person_city reaches OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index product_cat disappears from db.indexes after DROP",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "index product_cat reaches OPERATIONAL",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "mandatory Live.k OPERATIONAL under writes",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "mandatory Live.k rejects node without k",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "mandatory on violating data ends FAILED",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "mandatory: FAILED only if a violation was actually inserted",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "mandatory: OPERATIONAL implies no node lacks the property (no slip-through)",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "mandatory: constraint settles in OPERATIONAL or FAILED",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "mandatory: inserter saw no non-constraint errors",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "unique Live.id OPERATIONAL under writes",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "unique OPERATIONAL accepts fresh value",
+   "ok": true,
+   "detail": "0 of 1 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "unique OPERATIONAL rejects duplicate insert",
+   "ok": true,
+   "detail": "0 of 1 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "unique OPERATIONAL rejects duplicate via SET",
+   "ok": true,
+   "detail": "0 of 1 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "unique dropped: duplicates allowed again",
+   "ok": true,
+   "detail": "0 of 1 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "unique on violating data ends FAILED",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "unique: FAILED only if a violation was actually inserted",
+   "ok": true,
+   "detail": "0 of 27 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "unique: OPERATIONAL implies no duplicates exist (no slip-through)",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "critical"
+  },
+  {
+   "name": "unique: constraint settles in OPERATIONAL or FAILED",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "unique: inserter saw no non-constraint errors",
+   "ok": true,
+   "detail": "0 of 28 runs failed; first: ",
+   "severity": "major"
+  },
+  {
+   "name": "churn completed at least one pass over index and constraint kinds",
+   "ok": true,
+   "detail": "{'range-node': 109, 'drop-latency': 164, 'unique-constraint': 28, 'range-edge': 55, 'range-node-live': 27, 'live-constraints': 27, 'live-cmp-count': 27, 'fulltext-node': 27, 'fulltext-after-drop': 27, 'unique-constraint-fail': 27, 'mandatory-constraint': 27, 'range-node-str': 27, 'mandatory-constraint-fail': 27, 'unique-constraint-edge': 27}",
+   "severity": "major"
+  },
+  {
+   "name": "Live node count == initial + inserted - deleted",
+   "ok": true,
+   "detail": "14230 vs 12500+3429-1699",
+   "severity": "critical"
+  },
+  {
+   "name": "Live acknowledged increments == sum(cnt)",
+   "ok": true,
+   "detail": "12061 vs 12061",
+   "severity": "critical"
+  },
+  {
+   "name": "no index stuck UNDER CONSTRUCTION after load",
+   "ok": true,
+   "detail": "[('Acct', ['id'], 'NODE', 'OPERATIONAL'), ('Live', ['id'], 'NODE', 'OPERATIONAL'), ('Order', ['id'], 'NODE', 'OPERATIONAL'), ('Person', ['id'], 'NODE', 'OPERATIONAL'), ('Product', ['id'], 'NODE', 'OPERATIONAL')]",
+   "severity": "major"
+  },
+  {
+   "name": "Static label counts intact after churn",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "quiescent Live.k: index count == scan count for every sampled k",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "before restart: Person.age indexed results == ground truth",
+   "ok": false,
+   "detail": "['eq 0: got 0 want 1945']",
+   "severity": "critical"
+  },
+  {
+   "name": "before restart: BOUGHT.qty indexed results == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "indexes survive SAVE/restart (same set, OPERATIONAL)",
+   "ok": true,
+   "detail": "[\"('Acct', ['id', 'email'], 'NODE', 'OPERATIONAL')\", \"('BOUGHT', ['qty'], 'RELATIONSHIP', 'OPERATIONAL')\", \"('Live', ['id', 'k'], 'NODE', 'OPERATIONAL')\", \"('Order', ['id'], 'NODE', 'OPERATIONAL')\", \"('Person', ['id', 'age', 'name'], 'NODE', 'OPERATIONAL')\", \"('Product', ['id'], 'NODE', 'OPERATIONAL')\"] != [\"('Acct', ['id', 'email'], 'NODE', 'OPERATIONAL')\", \"('BOUGHT', ['qty'], 'RELATIONSHIP', 'OPERATIONAL')\", \"('Live', ['id', 'k'], 'NODE', 'OPERATIONAL')\", \"('Order', ['id'], 'NODE', 'OPERATIONAL')\", \"('Person', ['id', 'age', 'name'], 'NODE', 'OPERATIONAL')\", \"('Product', ['id'], 'NODE', 'OPERATIONAL')\"]",
+   "severity": "critical"
+  },
+  {
+   "name": "constraints survive SAVE/restart",
+   "ok": true,
+   "detail": "[\"('MANDATORY', 'Acct', ('id',), 'NODE', 'OPERATIONAL')\", \"('UNIQUE', 'Acct', ('email',), 'NODE', 'OPERATIONAL')\"] != [\"('MANDATORY', 'Acct', ('id',), 'NODE', 'OPERATIONAL')\", \"('UNIQUE', 'Acct', ('email',), 'NODE', 'OPERATIONAL')\"]",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: Person.age indexed results == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: BOUGHT.qty indexed results == ground truth",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: EXPLAIN uses index",
+   "ok": true,
+   "detail": "",
+   "severity": "major"
+  },
+  {
+   "name": "after restart: unique constraint still enforced",
+   "ok": true,
+   "detail": "unique constraint violation on node of type Acct",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: mandatory constraint still enforced",
+   "ok": true,
+   "detail": "mandatory constraint violation: node with label Acct missing property id",
+   "severity": "critical"
+  },
+  {
+   "name": "after restart: fulltext results == ground truth",
+   "ok": true,
+   "detail": "350 vs 350",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "no server crash markers",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  }
+ ],
+ "checks_failed": [
+  {
+   "name": "Live (under writes) index == scan during build/after",
+   "ok": false,
+   "detail": "1 of 733 runs failed; first: [753,853] idx=1364 scan=1365",
+   "severity": "critical"
+  },
+  {
+   "name": "Live: index-path count == scan-path count (same query)",
+   "ok": false,
+   "detail": "1 of 1500 runs failed; first: [511,811] idx=4136 scan=4137",
+   "severity": "critical"
+  },
+  {
+   "name": "after build person_age: indexed result == ground truth",
+   "ok": false,
+   "detail": "28 of 28 runs failed; first: ['eq 0: got 0 want 1945', '{\"retry_param\": [[0, 1945], [0, 1945]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']",
+   "severity": "critical"
+  },
+  {
+   "name": "after build person_city: indexed result == ground truth",
+   "ok": false,
+   "detail": "27 of 27 runs failed; first: ['eq 0: got 0 want 175', '{\"retry_param\": [[0, 175], [0, 175]], \"literal\": 0, \"literal_rw\": 0, \"status\": \"OPERATIONAL\", \"explain\": \"Aggregate\\\\n    Node By Index Scan | (n:Person)\"}']",
+   "severity": "critical"
+  },
+  {
+   "name": "during build person_age: result == ground truth",
+   "ok": false,
+   "detail": "1 of 1 runs failed; first: ['eq 0: got 0 want 1945']",
+   "severity": "critical"
+  },
+  {
+   "name": "during build person_city: result == ground truth",
+   "ok": false,
+   "detail": "2 of 2 runs failed; first: ['eq 0: got 0 want 175']",
+   "severity": "critical"
+  },
+  {
+   "name": "before restart: Person.age indexed results == ground truth",
+   "ok": false,
+   "detail": "['eq 0: got 0 want 1945']",
+   "severity": "critical"
+  }
+ ],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s10_schema_under_load",
+  "nodes": 487500,
+  "edges": 1350000,
+  "ingest_s": 62.05261564254761,
+  "nodes_load_s": 0.914292573928833,
+  "duration": 300.0,
+  "scale": 0.25,
+  "restart_s": 3.0994253158569336,
+  "labels": {
+   "Person": 175000,
+   "Product": 125000,
+   "Order": 125000,
+   "Acct": 50000,
+   "Live": 12500
+  },
+  "quiescent_build_log": [
+   {
+    "kind": "range-node",
+    "what": "Person.id",
+    "entities": 175000,
+    "seconds": 0.248
+   },
+   {
+    "kind": "range-node",
+    "what": "Product.id",
+    "entities": 125000,
+    "seconds": 0.186
+   },
+   {
+    "kind": "range-node",
+    "what": "Order.id",
+    "entities": 125000,
+    "seconds": 0.21
+   },
+   {
+    "kind": "range-node",
+    "what": "Acct.id",
+    "entities": 50000,
+    "seconds": 0.083
+   },
+   {
+    "kind": "range-node",
+    "what": "Live.id",
+    "entities": 12500,
+    "seconds": 0.022
+   },
+   {
+    "kind": "range-node",
+    "what": "Probe.id",
+    "entities": 1,
+    "seconds": 0.001
+   },
+   {
+    "kind": "range-node",
+    "what": "Person.age",
+    "entities": 175000,
+    "seconds": 0.331
+   },
+   {
+    "kind": "range-node",
+    "what": "Person.city",
+    "entities": 175000,
+    "seconds": 0.361
+   },
+   {
+    "kind": "range-node",
+    "what": "Product.cat",
+    "entities": 125000,
+    "seconds": 0.437
+   },
+   {
+    "kind": "range-node",
+    "what": "Order.status",
+    "entities": 125000,
+    "seconds": 0.387
+   },
+   {
+    "kind": "range-edge",
+    "what": "BOUGHT.qty",
+    "entities": 700000,
+    "seconds": 0.993
+   },
+   {
+    "kind": "range-edge",
+    "what": "KNOWS.since",
+    "entities": 350000,
+    "seconds": 0.519
+   },
+   {
+    "kind": "range-node",
+    "what": "Person.email",
+    "entities": 175000,
+    "seconds": 0.394
+   },
+   {
+    "kind": "unique-constraint-node",
+    "what": "Person.email",
+    "entities": 175000,
+    "seconds": 0.084
+   },
+   {
+    "kind": "fulltext-node",
+    "what": "Person.name",
+    "entities": 175000,
+    "seconds": 0.499
+   }
+  ],
+  "builds_under_load": {
+   "range-node:Person.age": {
+    "n": 28,
+    "min": 0.24,
+    "median": 0.33,
+    "max": 0.53
+   },
+   "unique-constraint:Acct.email": {
+    "n": 28,
+    "min": 0.02,
+    "median": 0.02,
+    "max": 0.13
+   },
+   "range-edge:BOUGHT.qty": {
+    "n": 28,
+    "min": 0.49,
+    "median": 0.87,
+    "max": 1.18
+   },
+   "range-node-live:Live.k": {
+    "n": 27,
+    "min": 0.02,
+    "median": 0.03,
+    "max": 0.04
+   },
+   "live-constraints:Live": {
+    "n": 27,
+    "min": 0.02,
+    "median": 0.02,
+    "max": 0.04
+   },
+   "fulltext-node:Person.name": {
+    "n": 27,
+    "min": 0.44,
+    "median": 0.48,
+    "max": 0.58
+   },
+   "unique-constraint-fail:Acct.ph": {
+    "n": 27,
+    "min": 0.0,
+    "median": 0.02,
+    "max": 0.13
+   },
+   "range-node:Product.cat": {
+    "n": 27,
+    "min": 0.06,
+    "median": 0.16,
+    "max": 0.29
+   },
+   "mandatory-constraint:Acct.email": {
+    "n": 27,
+    "min": 0.01,
+    "median": 0.01,
+    "max": 0.19
+   },
+   "range-node-str:Person.email": {
+    "n": 27,
+    "min": 0.39,
+    "median": 0.44,
+    "max": 0.6
+   },
+   "mandatory-constraint-fail:Acct.opt": {
+    "n": 27,
+    "min": 0.0,
+    "median": 0.02,
+    "max": 0.05
+   },
+   "range-edge:KNOWS.since": {
+    "n": 27,
+    "min": 0.25,
+    "median": 0.29,
+    "max": 0.55
+   },
+   "unique-constraint-edge:LINK.lid": {
+    "n": 27,
+    "min": 0.02,
+    "median": 0.02,
+    "max": 0.14
+   },
+   "range-node:Person.city": {
+    "n": 27,
+    "min": 0.19,
+    "median": 0.31,
+    "max": 0.51
+   },
+   "range-node:Order.status": {
+    "n": 27,
+    "min": 0.14,
+    "median": 0.2,
+    "max": 0.28
+   }
+  },
+  "churn_event_counts": {
+   "range-node": 109,
+   "drop-latency": 164,
+   "unique-constraint": 28,
+   "range-edge": 55,
+   "range-node-live": 27,
+   "live-constraints": 27,
+   "live-cmp-count": 27,
+   "fulltext-node": 27,
+   "fulltext-after-drop": 27,
+   "unique-constraint-fail": 27,
+   "mandatory-constraint": 27,
+   "range-node-str": 27,
+   "mandatory-constraint-fail": 27,
+   "unique-constraint-edge": 27
+  },
+  "checks_during_construction": 907,
+  "drop_latency_s": {
+   "max": 0.13390302658081055
+  },
+  "quirk_index_scan_on_any_index": false,
+  "fulltext_after_drop": [
+   "returned 0 (truth 350)"
+  ],
+  "live_ledger": {
+   "inc": 12061,
+   "ins": 3429,
+   "del": 1699
+  },
+  "constraint_outcomes": [
+   [
+    "unique-constraint",
+    "Acct.email",
+    "FAILED",
+    17
+   ],
+   [
+    "live-constraints",
+    "Live",
+    "OPERATIONAL/OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint-fail",
+    "Acct.ph",
+    "FAILED",
+    null
+   ],
+   [
+    "mandatory-constraint",
+    "Acct.email",
+    "FAILED",
+    23
+   ],
+   [
+    "mandatory-constraint-fail",
+    "Acct.opt",
+    "FAILED",
+    null
+   ],
+   [
+    "unique-constraint-edge",
+    "LINK.lid",
+    "OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint",
+    "Acct.email",
+    "FAILED",
+    20
+   ],
+   [
+    "live-constraints",
+    "Live",
+    "OPERATIONAL/OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint-fail",
+    "Acct.ph",
+    "FAILED",
+    null
+   ],
+   [
+    "mandatory-constraint",
+    "Acct.email",
+    "FAILED",
+    18
+   ],
+   [
+    "mandatory-constraint-fail",
+    "Acct.opt",
+    "FAILED",
+    null
+   ],
+   [
+    "unique-constraint-edge",
+    "LINK.lid",
+    "OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint",
+    "Acct.email",
+    "FAILED",
+    20
+   ],
+   [
+    "live-constraints",
+    "Live",
+    "OPERATIONAL/OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint-fail",
+    "Acct.ph",
+    "FAILED",
+    null
+   ],
+   [
+    "mandatory-constraint",
+    "Acct.email",
+    "FAILED",
+    25
+   ],
+   [
+    "mandatory-constraint-fail",
+    "Acct.opt",
+    "FAILED",
+    null
+   ],
+   [
+    "unique-constraint-edge",
+    "LINK.lid",
+    "OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint",
+    "Acct.email",
+    "FAILED",
+    15
+   ],
+   [
+    "live-constraints",
+    "Live",
+    "OPERATIONAL/OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint-fail",
+    "Acct.ph",
+    "FAILED",
+    null
+   ],
+   [
+    "mandatory-constraint",
+    "Acct.email",
+    "FAILED",
+    21
+   ],
+   [
+    "mandatory-constraint-fail",
+    "Acct.opt",
+    "FAILED",
+    null
+   ],
+   [
+    "unique-constraint-edge",
+    "LINK.lid",
+    "OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint",
+    "Acct.email",
+    "FAILED",
+    20
+   ],
+   [
+    "live-constraints",
+    "Live",
+    "OPERATIONAL/OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint-fail",
+    "Acct.ph",
+    "FAILED",
+    null
+   ],
+   [
+    "mandatory-constraint",
+    "Acct.email",
+    "FAILED",
+    22
+   ],
+   [
+    "mandatory-constraint-fail",
+    "Acct.opt",
+    "FAILED",
+    null
+   ],
+   [
+    "unique-constraint-edge",
+    "LINK.lid",
+    "OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint",
+    "Acct.email",
+    "FAILED",
+    16
+   ],
+   [
+    "live-constraints",
+    "Live",
+    "OPERATIONAL/OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint-fail",
+    "Acct.ph",
+    "FAILED",
+    null
+   ],
+   [
+    "mandatory-constraint",
+    "Acct.email",
+    "FAILED",
+    22
+   ],
+   [
+    "mandatory-constraint-fail",
+    "Acct.opt",
+    "FAILED",
+    null
+   ],
+   [
+    "unique-constraint-edge",
+    "LINK.lid",
+    "OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint",
+    "Acct.email",
+    "FAILED",
+    19
+   ],
+   [
+    "live-constraints",
+    "Live",
+    "OPERATIONAL/OPERATIONAL",
+    null
+   ],
+   [
+    "unique-constraint-fail",
+    "Acct.ph",
+    "FAILED",
+    null
+   ],
+   [
+    "mandatory-constraint",
+    "Acct.email",
+    "FAILED",
+    21
+   ]
+  ]
+ }
+}

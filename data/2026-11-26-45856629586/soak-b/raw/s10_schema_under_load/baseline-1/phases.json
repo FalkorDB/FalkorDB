@@ -1,0 +1,1 @@
+[{"t": 0.0, "phase": "ingest"}, {"t": 62.1, "phase": "baseline"}, {"t": 68.2, "phase": "soak"}, {"t": 368.9, "phase": "verify"}, {"t": 371.4, "phase": "restart"}]

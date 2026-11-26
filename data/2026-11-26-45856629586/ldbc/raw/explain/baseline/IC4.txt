@@ -1,0 +1,13 @@
+Limit
+    Sort
+        Project
+            Filter
+                Aggregate
+                    Project
+                        Distinct
+                            Project
+                                Conditional Traverse | (post)->(tag)
+                                    Conditional Traverse | (friend)<-(post:Post)
+                                        Conditional Traverse | (person)-(friend:Person)
+                                            Filter
+                                                Node By Index Scan | (person:Person)

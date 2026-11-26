@@ -1,0 +1,650 @@
+{
+ "ops": {
+  "w_ledger": {
+   "count": 7284,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 24.28,
+   "p50_ms": 0.477478151455586,
+   "p95_ms": 1.2352695853537583,
+   "p99_ms": 2.51981079324008,
+   "p999_ms": 89.00181207955418,
+   "max_ms": 264.48941491144853,
+   "drift": {
+    "p99_early_ms": 1.7642691500266037,
+    "p99_late_ms": 2.150634249251324,
+    "ratio": 1.2189944199947578
+   }
+  },
+  "w_ledger_wait": {
+   "count": 3641,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 12.136666666666667,
+   "p50_ms": 0.7990205878540524,
+   "p95_ms": 2.674043372272717,
+   "p99_ms": 6.142931338864042,
+   "p999_ms": 1993.5439544645656,
+   "max_ms": 2033.4148335538569,
+   "drift": {
+    "p99_early_ms": 3.0716352964022184,
+    "p99_late_ms": 4.564288470084082,
+    "ratio": 1.485947395978356
+   }
+  },
+  "_missed_schedule": {
+   "count": 3398,
+   "errors": 3398,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": null
+  },
+  "_late_start": {
+   "count": 4920,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 17.508896797153024,
+   "p50_ms": 221.31291069473286,
+   "p95_ms": 632.1437572544775,
+   "p99_ms": 939.3323699762632,
+   "p999_ms": 1993.5439544645656,
+   "max_ms": 2033.4148335538569,
+   "drift": null
+  },
+  "rep_author_fans": {
+   "count": 17939,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 59.79666666666667,
+   "p50_ms": 0.7236975641078262,
+   "p95_ms": 1.2110486130919198,
+   "p99_ms": 2.3744739893028313,
+   "p999_ms": 8.773618633851266,
+   "max_ms": 94.44943499331954,
+   "drift": {
+    "p99_early_ms": 1.9478957002223545,
+    "p99_late_ms": 3.895576260550808,
+    "ratio": 1.9998895526624572
+   }
+  },
+  "rep_2hop": {
+   "count": 44582,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 148.60666666666665,
+   "p50_ms": 0.4870277144846977,
+   "p95_ms": 0.8998269582594633,
+   "p99_ms": 2.067122500241565,
+   "p999_ms": 10.078129978125608,
+   "max_ms": 94.44943499331954,
+   "drift": {
+    "p99_early_ms": 1.729675637280984,
+    "p99_late_ms": 2.026590686511338,
+    "ratio": 1.171659381002266
+   }
+  },
+  "rep_post_likes": {
+   "count": 35593,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 118.64333333333333,
+   "p50_ms": 0.6819563781160961,
+   "p95_ms": 1.1873025618548232,
+   "p99_ms": 2.894470543382841,
+   "p999_ms": 13.563836047074519,
+   "max_ms": 43.63074870469811,
+   "drift": {
+    "p99_early_ms": 2.1936469342363507,
+    "p99_late_ms": 1.5359024663701788,
+    "ratio": 0.7001593749656232
+   }
+  },
+  "rep_1hop": {
+   "count": 80426,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 267.19601328903656,
+   "p50_ms": 0.5271744609695347,
+   "p95_ms": 0.9549035667206079,
+   "p99_ms": 1.9868536142268016,
+   "p999_ms": 8.949091006528292,
+   "max_ms": 96.33842369318594,
+   "drift": {
+    "p99_early_ms": 1.4473151977465102,
+    "p99_late_ms": 3.133068002330263,
+    "ratio": 2.1647447682498555
+   }
+  },
+  "_gap": {
+   "count": 144,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 1.1162790697674418,
+   "p50_ms": 110.66256654028656,
+   "p95_ms": 200.4499218293562,
+   "p99_ms": 200.4499218293562,
+   "p999_ms": 200.4499218293562,
+   "max_ms": 200.4499218293562,
+   "drift": null
+  },
+  "w_create_evt": {
+   "count": 71071,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 236.90333333333334,
+   "p50_ms": 0.695595505678418,
+   "p95_ms": 1.391114184685227,
+   "p99_ms": 2.2822702703794993,
+   "p999_ms": 12.530887891463346,
+   "max_ms": 264.48941491144853,
+   "drift": {
+    "p99_early_ms": 1.9868536142268016,
+    "p99_late_ms": 2.067122500241565,
+    "ratio": 1.0404000000000002
+   }
+  },
+  "_paused": {
+   "count": 3825,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 29.651162790697676,
+   "p50_ms": 10.078129978125608,
+   "p95_ms": 10.078129978125608,
+   "p99_ms": 10.078129978125608,
+   "p999_ms": 10.078129978125608,
+   "max_ms": 10.078129978125608,
+   "drift": null
+  },
+  "_idle": {
+   "count": 332,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 83.0,
+   "p50_ms": 20.155146853627702,
+   "p95_ms": 20.155146853627702,
+   "p99_ms": 20.155146853627702,
+   "p999_ms": 20.155146853627702,
+   "max_ms": 20.155146853627702,
+   "drift": null
+  },
+  "w_delete_evt": {
+   "count": 43816,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 147.52861952861952,
+   "p50_ms": 0.6300222806721633,
+   "p95_ms": 2.1084649502463964,
+   "p99_ms": 2.952359954250498,
+   "p999_ms": 18.99264503624897,
+   "max_ms": 221.31291069473286,
+   "drift": {
+    "p99_early_ms": 2.570207009104881,
+    "p99_late_ms": 2.674043372272717,
+    "ratio": 1.0403999999999993
+   }
+  },
+  "w_unfollow": {
+   "count": 10618,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 35.39333333333333,
+   "p50_ms": 1.2599749770608335,
+   "p95_ms": 1.7995545330271359,
+   "p99_ms": 3.011407153335508,
+   "p999_ms": 12.285184207317007,
+   "max_ms": 177.99379414592752,
+   "drift": {
+    "p99_early_ms": 2.51981079324008,
+    "p99_late_ms": 3.324836828616894,
+    "ratio": 1.3194787630628717
+   }
+  },
+  "w_follow": {
+   "count": 15960,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 53.2,
+   "p50_ms": 0.695595505678418,
+   "p95_ms": 1.28517447660205,
+   "p99_ms": 2.32791567578709,
+   "p999_ms": 36.508258732622856,
+   "max_ms": 216.97344185758124,
+   "drift": {
+    "p99_early_ms": 2.026590686511338,
+    "p99_late_ms": 1.4473151977465102,
+    "ratio": 0.7141625624649357
+   }
+  },
+  "w_like": {
+   "count": 26577,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 88.59,
+   "p50_ms": 0.7833535175039729,
+   "p95_ms": 1.6625102242223988,
+   "p99_ms": 2.7820747245125346,
+   "p999_ms": 13.297878477524037,
+   "max_ms": 244.34733619837058,
+   "drift": {
+    "p99_early_ms": 2.237519872921078,
+    "p99_late_ms": 2.674043372272717,
+    "ratio": 1.1950925686223104
+   }
+  },
+  "marker_write": {
+   "count": 2920,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 9.733333333333333,
+   "p50_ms": 0.5936840663396461,
+   "p95_ms": 0.8821832924112385,
+   "p99_ms": 46.30129957141527,
+   "p999_ms": 225.73916890862753,
+   "max_ms": 225.73916890862753,
+   "drift": {
+    "p99_early_ms": 1.9868536142268016,
+    "p99_late_ms": 1.1873025618548232,
+    "ratio": 0.5975792848316459
+   }
+  },
+  "repl_lag": {
+   "count": 2920,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 9.733333333333333,
+   "p50_ms": 0.3478169605678325,
+   "p95_ms": 0.605557747666439,
+   "p99_ms": 3.324836828616894,
+   "p999_ms": 29.362243120303365,
+   "max_ms": 56.441025816060886,
+   "drift": {
+    "p99_early_ms": 0.7381715153899827,
+    "p99_late_ms": 4.301030966675789,
+    "ratio": 5.826601104221037
+   }
+  },
+  "marker_cycle": {
+   "count": 2920,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 9.733333333333333,
+   "p50_ms": 0.9934816708161205,
+   "p95_ms": 1.3638374359659087,
+   "p99_ms": 53.18563921122049,
+   "p999_ms": 225.73916890862753,
+   "max_ms": 225.73916890862753,
+   "drift": {
+    "p99_early_ms": 2.51981079324008,
+    "p99_late_ms": 55.33433903535381,
+    "ratio": 21.959719826504337
+   }
+  },
+  "w_merge": {
+   "count": 17719,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 59.06333333333333,
+   "p50_ms": 0.5936840663396461,
+   "p95_ms": 1.5057867317354694,
+   "p99_ms": 2.570207009104881,
+   "p999_ms": 41.93651355699556,
+   "max_ms": 254.2189685807848,
+   "drift": {
+    "p99_early_ms": 1.7995545330271359,
+    "p99_late_ms": 2.1936469342363507,
+    "ratio": 1.2189944199947578
+   }
+  },
+  "w_schema": {
+   "count": 14,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.0498220640569395,
+   "p50_ms": 0.5271744609695347,
+   "p95_ms": 58.721243259029755,
+   "p99_ms": 58.721243259029755,
+   "p999_ms": 58.721243259029755,
+   "max_ms": 58.721243259029755,
+   "drift": null
+  },
+  "w_update_rand": {
+   "count": 71070,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 236.9,
+   "p50_ms": 0.5271744609695347,
+   "p95_ms": 1.3638374359659087,
+   "p99_ms": 2.32791567578709,
+   "p999_ms": 10.27969257768812,
+   "max_ms": 259.3033479524005,
+   "drift": {
+    "p99_early_ms": 2.1084649502463964,
+    "p99_late_ms": 2.026590686511338,
+    "ratio": 0.9611687812379852
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 43.02881355932203,
+  "cpu_max_pct": 87.9,
+  "rss_start_mb": 266.5,
+  "rss_end_mb": 302.1,
+  "rss_max_mb": 325.4,
+  "used_mem_end_mb": 180.3,
+  "rss_slope_mb_per_h": 964.7890794128285,
+  "used_mem_slope_mb_per_h": 382.82714679944195,
+  "samples": 375,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "ingest node count",
+   "ok": true,
+   "detail": "250000 != 250000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest edge count",
+   "ok": true,
+   "detail": "1200000 != 1200000",
+   "severity": "critical"
+  },
+  {
+   "name": "replica initial full sync completes (<=900s)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "GRAPH.RO_QUERY works on replica",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "after initial sync: replica content == primary (counts/props/structure/indexes)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "after initial sync: internal ids (sum id(n)/id(e)) identical",
+   "ok": true,
+   "detail": "",
+   "severity": "major"
+  },
+  {
+   "name": "after initial sync: checksum queries ran without error",
+   "ok": true,
+   "detail": "[]: []",
+   "severity": "major"
+  },
+  {
+   "name": "mid-soak Q1: replica caught up (offsets equal) after writes paused",
+   "ok": true,
+   "detail": "no convergence in 120s",
+   "severity": "critical"
+  },
+  {
+   "name": "mid-soak Q1: replica content == primary (counts/props/structure/indexes)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "mid-soak Q1: internal ids (sum id(n)/id(e)) identical",
+   "ok": true,
+   "detail": "",
+   "severity": "major"
+  },
+  {
+   "name": "mid-soak Q1: checksum queries ran without error",
+   "ok": true,
+   "detail": "[]: []",
+   "severity": "major"
+  },
+  {
+   "name": "replica full resync after restart completes (<=900s)",
+   "ok": true,
+   "detail": "{'restart_to_link_up_s': 1.6741917133331299, 'restart_total_s': 2.3724935054779053, 'sync_full_delta': 1, 'sync_partial_ok_delta': 0}",
+   "severity": "critical"
+  },
+  {
+   "name": "replica restart triggered a FULL resync",
+   "ok": true,
+   "detail": "{'restart_to_link_up_s': 1.6741917133331299, 'restart_total_s': 2.3724935054779053, 'sync_full_delta': 1, 'sync_partial_ok_delta': 0}",
+   "severity": "minor"
+  },
+  {
+   "name": "mid-soak Q2 (after resync): replica caught up (offsets equal) after writes paused",
+   "ok": true,
+   "detail": "no convergence in 120s",
+   "severity": "critical"
+  },
+  {
+   "name": "mid-soak Q2 (after resync): replica content == primary (counts/props/structure/indexes)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "mid-soak Q2 (after resync): internal ids (sum id(n)/id(e)) identical",
+   "ok": true,
+   "detail": "",
+   "severity": "major"
+  },
+  {
+   "name": "mid-soak Q2 (after resync): checksum queries ran without error",
+   "ok": true,
+   "detail": "[]: []",
+   "severity": "major"
+  },
+  {
+   "name": "final: replica caught up",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "final: replica content == primary (counts/props/structure/indexes)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "final: internal ids (sum id(n)/id(e)) identical",
+   "ok": true,
+   "detail": "",
+   "severity": "major"
+  },
+  {
+   "name": "final: checksum queries ran without error",
+   "ok": true,
+   "detail": "[]: []",
+   "severity": "major"
+  },
+  {
+   "name": "failover: replica promoted (role:master)",
+   "ok": true,
+   "detail": "master",
+   "severity": "critical"
+  },
+  {
+   "name": "failover: promoted replica has every WAIT-confirmed write",
+   "ok": true,
+   "detail": "confirmed=2100 []",
+   "severity": "critical"
+  },
+  {
+   "name": "failover: promoted replica still holds the pre-drill graph",
+   "ok": true,
+   "detail": "[]",
+   "severity": "critical"
+  },
+  {
+   "name": "failover: promoted replica accepts writes",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "primary alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "replica alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "primary log has no crash/panic markers",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "replica log has no crash/panic markers",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "replica log has no divergence/apply-failure lines",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "replication lag p99 < 1 s",
+   "ok": true,
+   "detail": "p99=3.3ms",
+   "severity": "major"
+  },
+  {
+   "name": "no marker timeouts",
+   "ok": true,
+   "detail": "[]",
+   "severity": "major"
+  },
+  {
+   "name": "rep_1hop errors == 0",
+   "ok": true,
+   "detail": "0/80426",
+   "severity": "major"
+  },
+  {
+   "name": "rep_2hop errors == 0",
+   "ok": true,
+   "detail": "0/44582",
+   "severity": "major"
+  },
+  {
+   "name": "rep_post_likes errors == 0",
+   "ok": true,
+   "detail": "0/35593",
+   "severity": "major"
+  },
+  {
+   "name": "rep_author_fans errors == 0",
+   "ok": true,
+   "detail": "0/17939",
+   "severity": "major"
+  },
+  {
+   "name": "w_create_evt errors == 0",
+   "ok": true,
+   "detail": "0/71071",
+   "severity": "major"
+  },
+  {
+   "name": "w_delete_evt errors == 0",
+   "ok": true,
+   "detail": "0/43816",
+   "severity": "major"
+  },
+  {
+   "name": "w_update_rand errors == 0",
+   "ok": true,
+   "detail": "0/71070",
+   "severity": "major"
+  },
+  {
+   "name": "w_merge errors == 0",
+   "ok": true,
+   "detail": "0/17719",
+   "severity": "major"
+  },
+  {
+   "name": "w_follow errors == 0",
+   "ok": true,
+   "detail": "0/15960",
+   "severity": "major"
+  },
+  {
+   "name": "w_like errors == 0",
+   "ok": true,
+   "detail": "0/26577",
+   "severity": "major"
+  },
+  {
+   "name": "w_ledger errors == 0",
+   "ok": true,
+   "detail": "0/7284",
+   "severity": "major"
+  }
+ ],
+ "checks_failed": [],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s09_replication",
+  "users": 50000,
+  "posts": 200000,
+  "nodes": 250000,
+  "edges": 1200000,
+  "ingest_s": 54.20816254615784,
+  "initial_sync_s": 1.5610284805297852,
+  "resync": {
+   "restart_to_link_up_s": 1.6741917133331299,
+   "restart_total_s": 2.3724935054779053,
+   "sync_full_delta": 1,
+   "sync_partial_ok_delta": 0
+  },
+  "drill": {
+   "promote_s": 0.0009393692016601562,
+   "confirmed_writes": 2100,
+   "drill_nodes_primary": 2124,
+   "drill_nodes_promoted": 2100
+  },
+  "repl_lag_p50_ms": 0.3478169605678325,
+  "repl_lag_p95_ms": 0.605557747666439,
+  "repl_lag_p99_ms": 3.324836828616894,
+  "repl_lag_max_ms": 56.441025816060886,
+  "repl_lag_samples": 2920,
+  "converge_s": [
+   0.002844572067260742,
+   0.002161741256713867,
+   0.002259492874145508
+  ],
+  "replica_rss_max_mb": 289.8,
+  "replica_rss_end_mb": 254.1,
+  "replica_cpu_avg_pct": 40.820945945945944,
+  "replica_used_mem_end_mb": 177.5,
+  "duration": 300.0,
+  "scale": 0.25,
+  "ledger": {
+   "ledger-Ack-10.txt": [
+    2932,
+    100008798
+   ]
+  }
+ }
+}

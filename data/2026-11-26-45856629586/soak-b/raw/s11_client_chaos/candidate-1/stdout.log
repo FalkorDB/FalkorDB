@@ -1,0 +1,68 @@
+PASS ingest victim node count
+PASS ingest victim edge count
+PASS ingest chaos node count
+PASS chaos string ground truth
+PASS reduce() string concat result length exact (20000)
+PASS GRAPH.CONFIG SET QUERY_MEM_CAPACITY takes effect
+PASS GRAPH.CONFIG SET TIMEOUT takes effect
+PASS server alive after chaos
+PASS victim/chaos results always exactly right
+PASS victim queries never error
+PASS chaos workers saw no unexpected failures
+PASS victim point p99 under chaos within SLO
+PASS victim hop p99 under chaos within SLO
+PASS victim range50 p99 under chaos within SLO
+PASS victim open-loop schedule kept (few late/missed sends)
+PASS connection churn volume >= 1000 connects
+PASS 500+ concurrent connections were reached
+PASS post-chaos victim data intact (6000 spot checks)
+PASS post-chaos victim counts intact
+PASS post-chaos chaos-graph :C count intact (RO ops never wrote)
+PASS no :Z nodes (RO_QUERY writes never applied)
+FAIL CLIENT KILLed query is cancelled (CPU idle within 5s of the kill) — idle after 16.004709005355835 (query timeout was 15s)
+PASS used_memory returns near baseline after quiet period
+PASS RSS back within 1.5x+300MB of baseline after quiet (allocator retention tolerated?)
+PASS no leaked client connections after chaos
+PASS victim query correct after quiet
+PASS no memory growth between chaos rounds (RSS)
+PASS no memory growth between chaos rounds (used_memory)
+PASS no leaked client connections after round 2
+PASS victim data intact after round 2
+PASS no crash/panic markers in server log
+PASS server alive at end
+PASS deeply nested expressions never crash the server
+PASS deeply nested expressions are answered within 60 s
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                            12904      0      43.0    79.03  3470.81  6941.23   0.92
+_missed_schedule                         792    792       0.0      nan      nan      nan    nan
+base_victim_hop                         5342      0     118.7     0.48     0.64     0.83   0.96
+base_victim_point                      10011      0     222.5     0.40     0.58     0.71   1.02
+base_victim_range50                     2647      0      58.8     0.45     0.63     0.75   0.98
+chaos_big_150k_lists                      36      0       0.1  6412.63  6671.70  6671.70   1.00
+chaos_big_200k_rows                       44      0       0.2  1016.76  1395.80  1395.80   0.94
+chaos_big_20KB_strings                    26      0       0.1     4.47     8.77     8.77    nan
+chaos_big_collect_20MB                    26      0       0.1   442.60   469.69   469.69    nan
+chaos_churn                            43200      0     144.0     1.48     6.78    48.17   0.57
+chaos_err_garbage_arity                10801      0      36.0     1.05     2.03    17.55   0.45
+chaos_err_mutated                      15981      0      53.3     0.25     0.68    12.53   1.08
+chaos_err_query                        59452      0     198.2     0.24    98.27   119.78   0.98
+chaos_flood_conn_query                 14370      0      47.9     1.70    12.53    71.58   0.27
+chaos_kill_midquery                      360      0       1.2   208.55   539.53   770.58   0.92
+chaos_memhog_stopped                     108      0       0.4  1100.58  3021.55  3021.55   1.00
+chaos_params                            5400      0      18.0     1.80    46.30    87.26   0.94
+chaos_pipeline300                       1440      0       4.8    33.07   132.25   171.08   0.59
+chaos_ro_write_rejected                21755      0      72.5     0.25     0.64    10.08   0.87
+chaos_slowreader_never                    85      0       0.3  1735.50  2962.30  2962.30   1.00
+chaos_slowreader_partial                  94      0       0.3   834.10  1571.90  1571.90   0.89
+chaos_slowreader_slow                    172      0       0.6  2478.72  3986.87  3986.87   1.00
+chaos_timeout_arg_read                   102      0       0.3    50.12   100.23   102.24   1.00
+chaos_timeout_cfg_read                    66      0       0.2  4957.17  5056.31  5056.31   0.98
+chaos_udf_cycle                          164      0       0.5     4.75 30050.34 30050.34   0.00
+victim_hop                             43202      0     144.0     0.40     2.89    33.07   0.36
+victim_point                           79337      0     264.5     0.33     3.67    35.79   0.19
+victim_range50                         21461      0      71.5     0.38     3.32    41.11   0.55
+monitor: {"cpu_avg_pct": 413.28273972602744, "cpu_max_pct": 679.4, "rss_start_mb": 420.2, "rss_end_mb": 301.1, "rss_max_mb": 2221.8, "used_mem_end_mb": 111.1, "rss_slope_mb_per_h": -1380.2522764485118, "used_mem_slope_mb_per_h": -1259.647254077285, "samples": 499, "dead_samples": 0}
+failed checks: ['CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)']
+top errors: []
+crash markers: []
+META {"scenario": "s11_client_chaos", "scale": 0.25, "victim_nodes": 125000, "victim_edges": 250000, "chaos_nodes": 200000, "duration": 300.0, "ingest_s": 34.58573007583618, "reduce_string_len": 20000, "udf_supported": true, "udf_loop_tested": true, "rss_baseline_mb": 163.93359375, "used_mem_baseline_mb": 110.56658172607422, "victim_point_p99_base_ms": 0.5820432022937706, "victim_point_p99_chaos_ms": 3.598910310047336, "victim_point_p50_base_ms": 0.39953235756960415, "victim_point_p50_chaos_ms": 0.32132910811503673, "victim_hop_p99_base_ms": 0.6426227262856066, "victim_hop_p99_chaos_ms": 2.7820747245125346, "victim_hop_p50_base_ms": 0.477478151455586, "victim_hop_p50_chaos_ms": 0.39953235756960415, "victim_range50_p99_base_ms": 0.6300222806721633, "victim_range50_p99_chaos_ms": 3.324836828616894, "victim_range50_p50_base_ms": 0.449938326374835, "victim_range50_p50_chaos_ms": 0.3764882639120738, "late_start_ops": 10610, "missed_schedule_ops": 661, "chaos_op_counts": {"chaos_big_20KB_strings": 19, "chaos_big_150k_lists": 30, "chaos_big_200k_rows": 39, "chaos_big_collect_20MB": 22, "chaos_churn": 36000, "chaos_err_query": 49520, "chaos_err_garbage_arity": 8987, "chaos_ro_write_rejected": 18195, "chaos_err_mutated": 13293, "chaos_flood_conn_query": 11984, "chaos_kill_midquery": 300, "chaos_memhog_stopped": 90, "chaos_params": 4500, "chaos_pipeline300": 1200, "chaos_slowreader_slow": 147, "chaos_slowreader_partial": 77, "chaos_slowreader_never": 69, "chaos_timeout_arg_read": 92, "chaos_timeout_cfg_read": 54, "chaos_udf_cycle": 132}, "max_clients_seen": 620.0, "tmp_nodes_after_timed_out_writes": 0, "write_behind_slow_read": {"read_after_pending_write_s": 0.01, "write_s": 5.2, "slow_read_s": 5.7}, "orphaned_query_busy_s_after_client_kill": 16.004709005355835, "rss_after_quiet_mb": 192.0546875, "used_mem_after_quiet_mb": 111.00106048583984, "connected_clients_after_quiet": 4, "quiet_s": 15.0, "rss_peak_mb": 2221.8, "rss_after_quiet2_mb": 192.90234375, "used_mem_after_quiet2_mb": 110.98138427734375, "round2_s": 60.0, "depth_probe": {"parens5000": "ok", "lists5000": "error-reply: Query nesting exceeds the maximum depth of 256, errCtx: ...]", "plus20000": "ok", "and20000": "ok", "maps2000": "error-reply: Query nesting exceeds the maximum depth of 100, errCtx: ...a"}}

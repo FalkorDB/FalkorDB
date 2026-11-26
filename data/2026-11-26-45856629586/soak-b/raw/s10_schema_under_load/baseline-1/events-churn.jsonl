@@ -1,0 +1,626 @@
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.5194931030273438, "checks_while_building": 4, "t": 1795712204.5768301}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.019858360290527344, "t": 1795712204.6668615}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021721363067626953, "status": "FAILED", "slipped": 17, "t": 1795712205.1481493}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 1.0591802597045898, "checks_while_building": 2, "t": 1795712207.1940227}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.004002809524536133, "t": 1795712207.8921897}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.03309297561645508, "checks_while_building": 2, "t": 1795712208.5294178}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02192854881286621, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712209.079368}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 28, "t": 1795712209.7285478}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4692690372467041, "checks_while_building": 15, "t": 1795712210.197922}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712210.2357159}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.03498482704162598, "status": "FAILED", "t": 1795712210.5753374}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.16934871673583984, "checks_while_building": 2, "t": 1795712210.9423614}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.0034003257751464844, "t": 1795712211.0275254}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.019445419311523438, "status": "FAILED", "slipped": 23, "t": 1795712211.2290924}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.4446146488189697, "checks_while_building": 7, "t": 1795712211.6772282}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.030239343643188477, "status": "FAILED", "t": 1795712211.9052885}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.29230618476867676, "checks_while_building": 1, "t": 1795712212.9721065}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.004147529602050781, "t": 1795712213.331623}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.015735626220703125, "status": "OPERATIONAL", "t": 1795712213.8424199}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.31913065910339355, "checks_while_building": 4, "t": 1795712214.4022222}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.00537872314453125, "t": 1795712214.585873}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.1595473289489746, "checks_while_building": 2, "t": 1795712215.0434973}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.015862703323364258, "t": 1795712215.168247}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.41451048851013184, "checks_while_building": 2, "t": 1795712215.8209984}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.00393223762512207, "t": 1795712215.916841}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.02810215950012207, "status": "FAILED", "slipped": 20, "t": 1795712216.3938298}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.9425861835479736, "checks_while_building": 2, "t": 1795712218.4382188}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.004145622253417969, "t": 1795712219.117566}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.022290468215942383, "checks_while_building": 1, "t": 1795712219.7443767}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02527022361755371, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712220.3422034}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712220.8901703}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.5075056552886963, "checks_while_building": 15, "t": 1795712221.3977726}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712221.5187054}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.022321701049804688, "status": "FAILED", "t": 1795712221.883815}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.15526032447814941, "checks_while_building": 2, "t": 1795712222.3351867}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.00046825408935546875, "t": 1795712222.3845117}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.012444019317626953, "status": "FAILED", "slipped": 18, "t": 1795712222.6578972}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.430800199508667, "checks_while_building": 5, "t": 1795712223.092298}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.016475200653076172, "status": "FAILED", "t": 1795712223.3202877}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.34548211097717285, "checks_while_building": 1, "t": 1795712224.3221426}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0049419403076171875, "t": 1795712224.7644584}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.02587723731994629, "status": "OPERATIONAL", "t": 1795712225.2813785}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.308657169342041, "checks_while_building": 4, "t": 1795712225.8056889}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.014311552047729492, "t": 1795712225.8800678}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.16520929336547852, "checks_while_building": 2, "t": 1795712226.3774164}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.005346775054931641, "t": 1795712226.6555216}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.34594035148620605, "checks_while_building": 4, "t": 1795712227.2376697}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.005558490753173828, "t": 1795712227.3136506}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021616458892822266, "status": "FAILED", "slipped": 20, "t": 1795712227.7814882}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.7903327941894531, "checks_while_building": 2, "t": 1795712229.4907155}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005425930023193359, "t": 1795712230.1546657}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.02812814712524414, "checks_while_building": 1, "t": 1795712230.7984807}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021876096725463867, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712231.3828688}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712232.0828388}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.5035502910614014, "checks_while_building": 14, "t": 1795712232.5864968}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712232.5910456}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.022812604904174805, "status": "FAILED", "t": 1795712232.8937652}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.15695452690124512, "checks_while_building": 1, "t": 1795712233.3444717}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.0003960132598876953, "t": 1795712233.5888543}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.015974760055541992, "status": "FAILED", "slipped": 25, "t": 1795712233.7035449}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.42270326614379883, "checks_while_building": 5, "t": 1795712234.13206}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.005539894104003906, "status": "FAILED", "t": 1795712234.333581}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.2499687671661377, "checks_while_building": 1, "t": 1795712235.2666996}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005431175231933594, "t": 1795712235.6722026}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.016010761260986328, "status": "OPERATIONAL", "t": 1795712236.2470257}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.33748960494995117, "checks_while_building": 4, "t": 1795712236.8299284}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.01478266716003418, "t": 1795712236.886087}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.2442467212677002, "checks_while_building": 2, "t": 1795712237.3873224}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.007867574691772461, "t": 1795712237.4890006}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.38085126876831055, "checks_while_building": 4, "t": 1795712238.1534433}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.015042543411254883, "t": 1795712238.2670193}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021828174591064453, "status": "FAILED", "slipped": 15, "t": 1795712238.7516608}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.950901985168457, "checks_while_building": 2, "t": 1795712240.6565104}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0004734992980957031, "t": 1795712241.4327161}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.03512907028198242, "checks_while_building": 2, "t": 1795712242.226233}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.022039413452148438, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712242.7731915}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 28, "t": 1795712243.443857}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4961986541748047, "checks_while_building": 15, "t": 1795712243.9401531}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712243.9442806}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.01600360870361328, "status": "FAILED", "t": 1795712244.2477865}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.16318702697753906, "checks_while_building": 1, "t": 1795712244.6927598}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.014860153198242188, "t": 1795712244.7954516}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.0114288330078125, "status": "FAILED", "slipped": 21, "t": 1795712244.9890406}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.5979313850402832, "checks_while_building": 6, "t": 1795712245.590754}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.04780316352844238, "status": "FAILED", "t": 1795712245.8295224}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.27466368675231934, "checks_while_building": 1, "t": 1795712246.7787762}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0009708404541015625, "t": 1795712247.1682003}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.015955448150634766, "status": "OPERATIONAL", "t": 1795712247.7403271}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.30127835273742676, "checks_while_building": 3, "t": 1795712248.4447727}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.015285015106201172, "t": 1795712248.5322905}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.21584272384643555, "checks_while_building": 2, "t": 1795712249.019289}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.026999950408935547, "t": 1795712249.1443803}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.30318307876586914, "checks_while_building": 3, "t": 1795712249.6730893}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.005451202392578125, "t": 1795712249.7350419}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021817684173583984, "status": "FAILED", "slipped": 20, "t": 1795712250.2400694}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 1.0402939319610596, "checks_while_building": 2, "t": 1795712252.2360542}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005440950393676758, "t": 1795712252.967275}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.029229402542114258, "checks_while_building": 1, "t": 1795712253.6089752}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021726608276367188, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712254.1576853}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712254.7684898}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.49946022033691406, "checks_while_building": 14, "t": 1795712255.268041}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712255.297879}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.02150893211364746, "status": "FAILED", "t": 1795712255.654657}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.2370166778564453, "checks_while_building": 1, "t": 1795712256.0891578}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.015200138092041016, "t": 1795712256.200088}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011211395263671875, "status": "FAILED", "slipped": 22, "t": 1795712256.3879461}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.44362974166870117, "checks_while_building": 6, "t": 1795712256.8352854}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.028737306594848633, "status": "FAILED", "t": 1795712257.0393338}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.27820920944213867, "checks_while_building": 1, "t": 1795712258.045373}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005380392074584961, "t": 1795712258.4477425}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.015933752059936523, "status": "OPERATIONAL", "t": 1795712258.9648955}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.3286933898925781, "checks_while_building": 4, "t": 1795712259.5015283}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.005356311798095703, "t": 1795712259.5842006}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.18038463592529297, "checks_while_building": 1, "t": 1795712260.057184}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.013974189758300781, "t": 1795712260.1344523}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3665006160736084, "checks_while_building": 2, "t": 1795712260.721761}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.012798070907592773, "t": 1795712260.8181844}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.026548385620117188, "status": "FAILED", "slipped": 16, "t": 1795712261.3073227}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.79081130027771, "checks_while_building": 2, "t": 1795712263.036867}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005314350128173828, "t": 1795712263.710144}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.028065204620361328, "checks_while_building": 1, "t": 1795712264.3370173}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021764516830444336, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712264.882576}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712265.6155305}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.44827723503112793, "checks_while_building": 11, "t": 1795712266.0638902}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712266.0761425}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.021117687225341797, "status": "FAILED", "t": 1795712266.5581403}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.1739661693572998, "checks_while_building": 2, "t": 1795712266.9272587}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.013986349105834961, "t": 1795712267.0405977}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.01125478744506836, "status": "FAILED", "slipped": 22, "t": 1795712267.2193532}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.4442892074584961, "checks_while_building": 4, "t": 1795712267.6686225}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.01430368423461914, "status": "FAILED", "t": 1795712267.8938427}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.2598233222961426, "checks_while_building": 1, "t": 1795712268.8439918}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0041391849517822266, "t": 1795712269.220202}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.01600050926208496, "status": "OPERATIONAL", "t": 1795712269.7481802}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.34918642044067383, "checks_while_building": 3, "t": 1795712270.3675146}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.07952046394348145, "t": 1795712270.5193596}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.25229883193969727, "checks_while_building": 2, "t": 1795712270.994646}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.0073394775390625, "t": 1795712271.1321774}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.330458402633667, "checks_while_building": 2, "t": 1795712271.6761267}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.00831913948059082, "t": 1795712271.749431}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.030896663665771484, "status": "FAILED", "slipped": 19, "t": 1795712272.2217155}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.9975085258483887, "checks_while_building": 2, "t": 1795712274.1405108}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005422115325927734, "t": 1795712274.8943863}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.03435206413269043, "checks_while_building": 1, "t": 1795712275.5264444}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021684646606445312, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712276.0742548}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712276.7293315}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.5442280769348145, "checks_while_building": 12, "t": 1795712277.2736452}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712277.2860804}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.028743267059326172, "status": "FAILED", "t": 1795712277.6748385}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.16765236854553223, "checks_while_building": 1, "t": 1795712278.0365016}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.015499591827392578, "t": 1795712278.1199992}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.012589216232299805, "status": "FAILED", "slipped": 21, "t": 1795712278.316798}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.506058931350708, "checks_while_building": 5, "t": 1795712278.8265254}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.0007824897766113281, "status": "FAILED", "t": 1795712279.2278068}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.4312744140625, "checks_while_building": 1, "t": 1795712280.356579}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005430459976196289, "t": 1795712280.7431202}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.01596212387084961, "status": "OPERATIONAL", "t": 1795712281.2453403}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.5089569091796875, "checks_while_building": 4, "t": 1795712282.0005293}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.008701086044311523, "t": 1795712282.1895406}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.2300581932067871, "checks_while_building": 2, "t": 1795712282.6948316}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.014674663543701172, "t": 1795712282.7800937}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3905620574951172, "checks_while_building": 4, "t": 1795712283.5104506}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.01488494873046875, "t": 1795712283.612067}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.13190031051635742, "status": "OPERATIONAL", "slipped": 0, "t": 1795712284.15513}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.8523690700531006, "checks_while_building": 2, "t": 1795712285.9307117}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0044248104095458984, "t": 1795712286.618427}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.0329747200012207, "checks_while_building": 1, "t": 1795712287.2539635}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021903038024902344, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712287.8804562}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712288.4274309}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.5742778778076172, "checks_while_building": 14, "t": 1795712289.001794}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712289.0510864}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.003354310989379883, "status": "FAILED", "t": 1795712289.4232183}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.16149520874023438, "checks_while_building": 2, "t": 1795712289.779021}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.0004088878631591797, "t": 1795712289.8283312}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.03033161163330078, "status": "FAILED", "slipped": 24, "t": 1795712290.1408803}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.440502405166626, "checks_while_building": 5, "t": 1795712290.5849485}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.0433194637298584, "status": "FAILED", "t": 1795712290.8302083}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.4468710422515869, "checks_while_building": 1, "t": 1795712291.9434898}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.004373311996459961, "t": 1795712292.3260808}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.12124276161193848, "status": "OPERATIONAL", "t": 1795712293.0114741}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.2727668285369873, "checks_while_building": 3, "t": 1795712293.6057594}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.0054357051849365234, "t": 1795712293.6608593}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.27622294425964355, "checks_while_building": 1, "t": 1795712294.2004876}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.01836705207824707, "t": 1795712294.3373888}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.27936220169067383, "checks_while_building": 3, "t": 1795712294.9895809}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.0073947906494140625, "t": 1795712295.0867808}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.022141695022583008, "status": "FAILED", "slipped": 20, "t": 1795712295.549101}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 1.1811387538909912, "checks_while_building": 2, "t": 1795712297.7146182}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0058841705322265625, "t": 1795712298.4641182}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.02750539779663086, "checks_while_building": 1, "t": 1795712299.2147837}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02199578285217285, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712299.7592704}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712300.442281}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4644193649291992, "checks_while_building": 14, "t": 1795712300.9068017}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712300.9364235}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.03414607048034668, "status": "FAILED", "t": 1795712301.3256614}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.28311944007873535, "checks_while_building": 1, "t": 1795712301.795123}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.01615738868713379, "t": 1795712301.9140246}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.013228893280029297, "status": "FAILED", "slipped": 23, "t": 1795712302.0932071}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.44837474822998047, "checks_while_building": 5, "t": 1795712302.5453737}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.04972362518310547, "status": "FAILED", "t": 1795712302.8095903}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.2598304748535156, "checks_while_building": 1, "t": 1795712303.7681885}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005064249038696289, "t": 1795712304.14183}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.03662300109863281, "status": "OPERATIONAL", "t": 1795712304.730159}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.28879666328430176, "checks_while_building": 3, "t": 1795712305.2667227}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.005266666412353516, "t": 1795712305.3560894}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.16299724578857422, "checks_while_building": 2, "t": 1795712305.9401708}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.005408525466918945, "t": 1795712306.0561807}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.36571335792541504, "checks_while_building": 3, "t": 1795712306.63916}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.015261411666870117, "t": 1795712306.7090266}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021762371063232422, "status": "FAILED", "slipped": 20, "t": 1795712307.212459}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 1.004626750946045, "checks_while_building": 2, "t": 1795712309.1394143}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0054264068603515625, "t": 1795712309.8296049}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.030460834503173828, "checks_while_building": 1, "t": 1795712310.5573115}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021825790405273438, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712311.2222369}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712311.900596}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4987642765045166, "checks_while_building": 15, "t": 1795712312.3994458}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712312.4336102}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.017235755920410156, "status": "FAILED", "t": 1795712312.7398334}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.1913309097290039, "checks_while_building": 2, "t": 1795712313.1397016}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.015358209609985352, "t": 1795712313.240386}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.1859908103942871, "status": "FAILED", "slipped": 21, "t": 1795712313.5942047}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.48082923889160156, "checks_while_building": 6, "t": 1795712314.0787175}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.005357503890991211, "status": "FAILED", "t": 1795712314.2529297}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.463397741317749, "checks_while_building": 1, "t": 1795712315.40913}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.004879474639892578, "t": 1795712315.785391}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.015764236450195312, "status": "OPERATIONAL", "t": 1795712316.27923}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.29691290855407715, "checks_while_building": 4, "t": 1795712316.7919905}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.0028297901153564453, "t": 1795712316.8610103}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.25770020484924316, "checks_while_building": 2, "t": 1795712317.4710157}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.014021635055541992, "t": 1795712317.5496273}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.318814754486084, "checks_while_building": 3, "t": 1795712318.0850914}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.007398843765258789, "t": 1795712318.161685}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021602153778076172, "status": "FAILED", "slipped": 19, "t": 1795712318.6190724}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.8583543300628662, "checks_while_building": 2, "t": 1795712320.3894916}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.00500178337097168, "t": 1795712321.1579082}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.03451824188232422, "checks_while_building": 1, "t": 1795712321.7784333}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02167487144470215, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712322.388362}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712322.9272652}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4867227077484131, "checks_while_building": 15, "t": 1795712323.4140606}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712323.442595}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.023623228073120117, "status": "FAILED", "t": 1795712323.7900674}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.08635759353637695, "checks_while_building": 1, "t": 1795712324.1366477}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.01464700698852539, "t": 1795712324.2098525}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.01696324348449707, "status": "FAILED", "slipped": 20, "t": 1795712324.422447}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.38613319396972656, "checks_while_building": 5, "t": 1795712324.8123693}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.008022546768188477, "status": "FAILED", "t": 1795712325.0826151}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.259052038192749, "checks_while_building": 1, "t": 1795712325.9777575}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.003962993621826172, "t": 1795712326.3565085}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.016334056854248047, "status": "OPERATIONAL", "t": 1795712326.935424}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.3434295654296875, "checks_while_building": 3, "t": 1795712327.4991908}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.005463123321533203, "t": 1795712327.5869734}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.18781638145446777, "checks_while_building": 2, "t": 1795712328.05352}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.014339923858642578, "t": 1795712328.1482596}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.28015637397766113, "checks_while_building": 3, "t": 1795712328.6961515}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.0053746700286865234, "t": 1795712328.7947807}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.03021860122680664, "status": "FAILED", "slipped": 23, "t": 1795712329.2696295}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.48541951179504395, "checks_while_building": 1, "t": 1795712330.7238498}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0041959285736083984, "t": 1795712331.3751948}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.03180193901062012, "checks_while_building": 1, "t": 1795712331.9942002}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02175116539001465, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712332.6617181}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712333.3205564}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4497654438018799, "checks_while_building": 15, "t": 1795712333.7704096}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712333.7759593}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.03400874137878418, "status": "FAILED", "t": 1795712334.0464432}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.1401515007019043, "checks_while_building": 1, "t": 1795712334.4493952}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.015359878540039062, "t": 1795712334.563105}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011226177215576172, "status": "FAILED", "slipped": 21, "t": 1795712334.715661}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.42818760871887207, "checks_while_building": 6, "t": 1795712335.14755}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.031107187271118164, "status": "FAILED", "t": 1795712335.3359566}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.2907264232635498, "checks_while_building": 1, "t": 1795712336.2992089}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.00536346435546875, "t": 1795712336.667602}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.022751569747924805, "status": "OPERATIONAL", "t": 1795712337.1694512}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.3041386604309082, "checks_while_building": 2, "t": 1795712337.7082164}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.012316703796386719, "t": 1795712337.7809124}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.19425225257873535, "checks_while_building": 2, "t": 1795712338.2632363}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.014396190643310547, "t": 1795712338.3321562}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3342869281768799, "checks_while_building": 4, "t": 1795712338.8726273}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.11864542961120605, "t": 1795712339.0390997}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.018816232681274414, "status": "FAILED", "slipped": 14, "t": 1795712339.401248}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.7884566783905029, "checks_while_building": 2, "t": 1795712341.1249175}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0052831172943115234, "t": 1795712341.795039}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.02684330940246582, "checks_while_building": 1, "t": 1795712342.3972986}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02477431297302246, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712342.954123}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712343.6336396}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4586026668548584, "checks_while_building": 12, "t": 1795712344.0923219}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712344.1383326}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.02118706703186035, "status": "FAILED", "t": 1795712344.5369554}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.13473963737487793, "checks_while_building": 1, "t": 1795712344.8639917}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.003823995590209961, "t": 1795712345.0366428}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.01125955581665039, "status": "FAILED", "slipped": 17, "t": 1795712345.1593194}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.4708583354949951, "checks_while_building": 7, "t": 1795712345.6339436}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.017028331756591797, "status": "FAILED", "t": 1795712345.8457825}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.27857208251953125, "checks_while_building": 1, "t": 1795712346.7794461}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005347251892089844, "t": 1795712347.1479356}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.015918970108032227, "status": "OPERATIONAL", "t": 1795712347.6227639}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.31165504455566406, "checks_while_building": 3, "t": 1795712348.1323493}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.005354881286621094, "t": 1795712348.210178}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.19856834411621094, "checks_while_building": 2, "t": 1795712348.6592188}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.012863397598266602, "t": 1795712348.7559683}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.5348484516143799, "checks_while_building": 4, "t": 1795712349.5371132}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.005486488342285156, "t": 1795712349.6420717}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.04155564308166504, "status": "FAILED", "slipped": 22, "t": 1795712350.0818386}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.8085522651672363, "checks_while_building": 2, "t": 1795712351.7846522}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005815982818603516, "t": 1795712352.427372}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.027878522872924805, "checks_while_building": 1, "t": 1795712353.1592581}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.036712646484375, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712353.8379152}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712354.5839083}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4834122657775879, "checks_while_building": 17, "t": 1795712355.0673957}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712355.088976}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.1282651424407959, "status": "FAILED", "t": 1795712355.4989605}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.16343283653259277, "checks_while_building": 2, "t": 1795712355.8526223}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.014473915100097656, "t": 1795712355.9051704}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011095046997070312, "status": "FAILED", "slipped": 17, "t": 1795712356.1470916}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.6002650260925293, "checks_while_building": 6, "t": 1795712356.7507}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.003229856491088867, "status": "FAILED", "t": 1795712357.0986779}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.5384578704833984, "checks_while_building": 2, "t": 1795712358.2926095}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005547046661376953, "t": 1795712358.6595397}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.01586604118347168, "status": "OPERATIONAL", "t": 1795712359.1656458}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.19484543800354004, "checks_while_building": 3, "t": 1795712359.733227}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.015367269515991211, "t": 1795712359.8041694}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.16682100296020508, "checks_while_building": 2, "t": 1795712360.2967417}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.013787269592285156, "t": 1795712360.3935385}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.24412131309509277, "checks_while_building": 3, "t": 1795712360.892257}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.015471220016479492, "t": 1795712360.9874065}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.02233147621154785, "status": "FAILED", "slipped": 19, "t": 1795712361.4570532}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.866610050201416, "checks_while_building": 2, "t": 1795712363.2127607}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005736589431762695, "t": 1795712363.910269}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.02890467643737793, "checks_while_building": 1, "t": 1795712364.6011972}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.027530908584594727, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712365.2282207}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712365.8329895}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4870901107788086, "checks_while_building": 16, "t": 1795712366.3201542}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712366.363211}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.010815858840942383, "status": "FAILED", "t": 1795712366.74584}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.17805051803588867, "checks_while_building": 2, "t": 1795712367.0745347}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.00041365623474121094, "t": 1795712367.1094897}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.015921592712402344, "status": "FAILED", "slipped": 19, "t": 1795712367.3401246}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.39093708992004395, "checks_while_building": 5, "t": 1795712367.7343302}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.0004100799560546875, "status": "FAILED", "t": 1795712368.072379}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.3376026153564453, "checks_while_building": 1, "t": 1795712369.0748005}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005602359771728516, "t": 1795712369.4329312}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.016170024871826172, "status": "OPERATIONAL", "t": 1795712369.9313436}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.42159461975097656, "checks_while_building": 4, "t": 1795712370.5639808}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.004222393035888672, "t": 1795712370.6195903}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.20277929306030273, "checks_while_building": 2, "t": 1795712371.0904274}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.013992547988891602, "t": 1795712371.1842508}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3256051540374756, "checks_while_building": 3, "t": 1795712371.6994958}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.008730173110961914, "t": 1795712371.7556286}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021761178970336914, "status": "FAILED", "slipped": 15, "t": 1795712372.29773}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.834395170211792, "checks_while_building": 2, "t": 1795712374.1084242}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0040225982666015625, "t": 1795712374.7614315}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.026508092880249023, "checks_while_building": 1, "t": 1795712375.3649518}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02259039878845215, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712375.909439}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712376.5433588}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4948995113372803, "checks_while_building": 13, "t": 1795712377.0383346}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712377.0602903}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.0046994686126708984, "status": "FAILED", "t": 1795712377.3807003}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.16284632682800293, "checks_while_building": 2, "t": 1795712377.7232742}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.013124227523803711, "t": 1795712377.7770872}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011279582977294922, "status": "FAILED", "slipped": 20, "t": 1795712377.971176}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.5247275829315186, "checks_while_building": 6, "t": 1795712378.4993188}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.005304098129272461, "status": "FAILED", "t": 1795712378.6755989}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.3762965202331543, "checks_while_building": 1, "t": 1795712379.7375338}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005348920822143555, "t": 1795712380.09196}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.015835046768188477, "status": "OPERATIONAL", "t": 1795712380.728404}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.3001437187194824, "checks_while_building": 4, "t": 1795712381.2630873}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.007810831069946289, "t": 1795712381.3574305}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.15182161331176758, "checks_while_building": 2, "t": 1795712381.8571851}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.014611244201660156, "t": 1795712381.9361}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3959312438964844, "checks_while_building": 3, "t": 1795712382.5492308}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.012070417404174805, "t": 1795712382.6524346}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.02239990234375, "status": "FAILED", "slipped": 19, "t": 1795712383.0711567}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.827063798904419, "checks_while_building": 2, "t": 1795712384.7778502}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0004355907440185547, "t": 1795712385.4243236}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.02970409393310547, "checks_while_building": 1, "t": 1795712386.186536}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021747827529907227, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712386.7754195}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712387.4270535}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4563331604003906, "checks_while_building": 10, "t": 1795712387.8834667}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712387.898088}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.015888214111328125, "status": "FAILED", "t": 1795712388.2333422}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.08895349502563477, "checks_while_building": 1, "t": 1795712388.6197777}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.0201418399810791, "t": 1795712388.7232404}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011302947998046875, "status": "FAILED", "slipped": 23, "t": 1795712388.8912022}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.43470168113708496, "checks_while_building": 6, "t": 1795712389.3294466}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.01399540901184082, "status": "FAILED", "t": 1795712389.5523894}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.37996840476989746, "checks_while_building": 1, "t": 1795712390.5737243}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005444049835205078, "t": 1795712390.9633355}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.021178007125854492, "status": "OPERATIONAL", "t": 1795712391.4821625}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.35462427139282227, "checks_while_building": 3, "t": 1795712392.0802684}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.005792856216430664, "t": 1795712392.1287756}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.22161102294921875, "checks_while_building": 1, "t": 1795712392.633902}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.01605057716369629, "t": 1795712392.7314785}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3385653495788574, "checks_while_building": 4, "t": 1795712393.3681452}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.0004029273986816406, "t": 1795712393.4137428}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.02199077606201172, "status": "FAILED", "slipped": 17, "t": 1795712393.896053}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.8437843322753906, "checks_while_building": 2, "t": 1795712395.800038}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005402088165283203, "t": 1795712396.5569663}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.028630971908569336, "checks_while_building": 1, "t": 1795712397.1674986}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02158808708190918, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712397.7116015}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712398.318889}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4824252128601074, "checks_while_building": 17, "t": 1795712398.801406}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712398.834964}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.011023998260498047, "status": "FAILED", "t": 1795712399.1829932}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.2897176742553711, "checks_while_building": 1, "t": 1795712399.598282}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.013840675354003906, "t": 1795712399.715381}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011255025863647461, "status": "FAILED", "slipped": 22, "t": 1795712399.8877203}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.4100465774536133, "checks_while_building": 5, "t": 1795712400.3013005}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.011299610137939453, "status": "FAILED", "t": 1795712400.5977693}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.3040754795074463, "checks_while_building": 1, "t": 1795712401.5164661}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0037131309509277344, "t": 1795712401.8720129}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.016859769821166992, "status": "OPERATIONAL", "t": 1795712402.3707592}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.38605570793151855, "checks_while_building": 3, "t": 1795712403.040738}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.0008747577667236328, "t": 1795712403.1150281}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.20472121238708496, "checks_while_building": 1, "t": 1795712403.58957}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.02866220474243164, "t": 1795712403.7293968}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3433067798614502, "checks_while_building": 4, "t": 1795712404.2536292}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.01471710205078125, "t": 1795712404.3449512}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.02283620834350586, "status": "FAILED", "slipped": 18, "t": 1795712404.7958338}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.7587125301361084, "checks_while_building": 2, "t": 1795712406.5161366}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.004019021987915039, "t": 1795712407.2325969}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.028029680252075195, "checks_while_building": 1, "t": 1795712407.8497593}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021728038787841797, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712408.4033296}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712408.9457617}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.49285268783569336, "checks_while_building": 14, "t": 1795712409.4387035}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712409.4606802}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.023566007614135742, "status": "FAILED", "t": 1795712409.7916782}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.2899336814880371, "checks_while_building": 1, "t": 1795712410.314154}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.0053730010986328125, "t": 1795712410.4099565}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011213541030883789, "status": "FAILED", "slipped": 23, "t": 1795712410.7027194}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.442227840423584, "checks_while_building": 7, "t": 1795712411.158121}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.037601470947265625, "status": "FAILED", "t": 1795712411.3845007}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.26929450035095215, "checks_while_building": 1, "t": 1795712412.278148}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.00498199462890625, "t": 1795712412.6456163}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.027080059051513672, "status": "OPERATIONAL", "t": 1795712413.1919494}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.3332691192626953, "checks_while_building": 3, "t": 1795712413.765076}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.014267921447753906, "t": 1795712413.834934}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.20534586906433105, "checks_while_building": 2, "t": 1795712414.3006096}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.014377117156982422, "t": 1795712414.3832176}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.304476261138916, "checks_while_building": 3, "t": 1795712414.9224958}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.013834714889526367, "t": 1795712415.011648}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021728992462158203, "status": "FAILED", "slipped": 14, "t": 1795712415.4461648}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 1.0262272357940674, "checks_while_building": 2, "t": 1795712417.5178704}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005337953567504883, "t": 1795712418.2160633}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.027319908142089844, "checks_while_building": 1, "t": 1795712418.8306024}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021868228912353516, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712419.3822918}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712420.0305426}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4760630130767822, "checks_while_building": 14, "t": 1795712420.5066848}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712420.5355058}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.03769087791442871, "status": "FAILED", "t": 1795712420.8599627}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.14325642585754395, "checks_while_building": 1, "t": 1795712421.2692065}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.015228986740112305, "t": 1795712421.360275}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011319875717163086, "status": "FAILED", "slipped": 22, "t": 1795712421.590946}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.43686962127685547, "checks_while_building": 5, "t": 1795712422.0314314}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.014171361923217773, "status": "FAILED", "t": 1795712422.2477865}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.4229562282562256, "checks_while_building": 1, "t": 1795712423.3062046}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0006515979766845703, "t": 1795712423.6828823}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.02664351463317871, "status": "OPERATIONAL", "t": 1795712424.2533493}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.2918565273284912, "checks_while_building": 3, "t": 1795712424.762336}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.005351066589355469, "t": 1795712424.8365445}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.2231125831604004, "checks_while_building": 2, "t": 1795712425.3094378}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.014978885650634766, "t": 1795712425.433799}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.2623772621154785, "checks_while_building": 3, "t": 1795712425.9207213}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.015529632568359375, "t": 1795712426.0183284}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.0314326286315918, "status": "FAILED", "slipped": 20, "t": 1795712426.4446366}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.984255313873291, "checks_while_building": 2, "t": 1795712428.2975633}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0058515071868896484, "t": 1795712429.0094275}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.03519082069396973, "checks_while_building": 1, "t": 1795712429.6161923}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021658658981323242, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712430.1617608}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712430.6952307}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.5798358917236328, "checks_while_building": 13, "t": 1795712431.2751455}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712431.3107135}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.010745048522949219, "status": "FAILED", "t": 1795712431.6452484}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.13645386695861816, "checks_while_building": 1, "t": 1795712431.9668353}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.014858245849609375, "t": 1795712432.0656092}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.018708467483520508, "status": "FAILED", "slipped": 20, "t": 1795712432.2405646}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.4449319839477539, "checks_while_building": 6, "t": 1795712432.6890728}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.0027403831481933594, "status": "FAILED", "t": 1795712432.8785927}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.40699315071105957, "checks_while_building": 1, "t": 1795712433.9662716}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005966663360595703, "t": 1795712434.3633082}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.14025521278381348, "status": "OPERATIONAL", "t": 1795712435.0348394}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.3109731674194336, "checks_while_building": 4, "t": 1795712435.6095614}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.0053403377532958984, "t": 1795712435.6923258}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.21275877952575684, "checks_while_building": 2, "t": 1795712436.1643488}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.014934539794921875, "t": 1795712436.295692}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.30287790298461914, "checks_while_building": 3, "t": 1795712436.824707}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.0054357051849365234, "t": 1795712436.8792193}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.03092050552368164, "status": "FAILED", "slipped": 22, "t": 1795712437.4755125}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.6630301475524902, "checks_while_building": 1, "t": 1795712439.0626576}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005430936813354492, "t": 1795712439.751224}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.03240251541137695, "checks_while_building": 1, "t": 1795712440.3789864}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.026516437530517578, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712441.016164}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712441.6220613}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.44908905029296875, "checks_while_building": 12, "t": 1795712442.0712342}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712442.1081564}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.0015704631805419922, "status": "FAILED", "t": 1795712442.5594447}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.15067458152770996, "checks_while_building": 1, "t": 1795712442.893932}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.004953145980834961, "t": 1795712443.128465}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.012765645980834961, "status": "FAILED", "slipped": 20, "t": 1795712443.3242068}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.43637728691101074, "checks_while_building": 6, "t": 1795712443.764104}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.05199790000915527, "status": "FAILED", "t": 1795712443.9532242}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.2634456157684326, "checks_while_building": 1, "t": 1795712444.8797874}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0054056644439697266, "t": 1795712445.2526665}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.026762723922729492, "status": "OPERATIONAL", "t": 1795712445.7525113}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.37502503395080566, "checks_while_building": 3, "t": 1795712446.3428495}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.0003502368927001953, "t": 1795712446.4255788}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.18271756172180176, "checks_while_building": 2, "t": 1795712446.8795283}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.022131681442260742, "t": 1795712447.0820994}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.2967813014984131, "checks_while_building": 3, "t": 1795712447.5931852}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.014198541641235352, "t": 1795712447.6591835}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021641969680786133, "status": "FAILED", "slipped": 20, "t": 1795712448.2452264}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.9320807456970215, "checks_while_building": 2, "t": 1795712450.0601068}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005486249923706055, "t": 1795712450.7388265}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.04295611381530762, "checks_while_building": 2, "t": 1795712451.3479395}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021780967712402344, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712451.9006271}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 28, "t": 1795712452.442343}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4714019298553467, "checks_while_building": 17, "t": 1795712452.9138258}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712452.9406471}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.03047037124633789, "status": "FAILED", "t": 1795712453.2823796}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.06135725975036621, "checks_while_building": 1, "t": 1795712453.6338072}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.014042854309082031, "t": 1795712453.7414813}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011217832565307617, "status": "FAILED", "slipped": 23, "t": 1795712453.8962882}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.4167189598083496, "checks_while_building": 6, "t": 1795712454.3165436}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.03277254104614258, "status": "FAILED", "t": 1795712454.508193}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.5512523651123047, "checks_while_building": 2, "t": 1795712455.7694788}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0053522586822509766, "t": 1795712456.1140537}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.030164003372192383, "status": "OPERATIONAL", "t": 1795712456.7159462}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.3120718002319336, "checks_while_building": 3, "t": 1795712457.2430634}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.0032532215118408203, "t": 1795712457.3277373}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.14397907257080078, "checks_while_building": 2, "t": 1795712457.8319259}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.013720273971557617, "t": 1795712457.9013958}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3083040714263916, "checks_while_building": 3, "t": 1795712458.4959674}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.005418539047241211, "t": 1795712458.611454}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.11260294914245605, "status": "FAILED", "slipped": 6, "t": 1795712459.1231554}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.8644680976867676, "checks_while_building": 2, "t": 1795712460.877986}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0055811405181884766, "t": 1795712461.5182025}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.029432058334350586, "checks_while_building": 1, "t": 1795712462.1454687}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02195262908935547, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712462.6962874}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712463.2518837}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4445195198059082, "checks_while_building": 14, "t": 1795712463.6964772}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712463.700753}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.0007171630859375, "status": "FAILED", "t": 1795712464.0791664}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.15387773513793945, "checks_while_building": 2, "t": 1795712464.4924028}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.014395952224731445, "t": 1795712464.5628257}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011131525039672852, "status": "FAILED", "slipped": 20, "t": 1795712464.7625277}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.4148223400115967, "checks_while_building": 5, "t": 1795712465.181128}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.04461669921875, "status": "FAILED", "t": 1795712465.4042435}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.2500886917114258, "checks_while_building": 1, "t": 1795712466.3066285}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0053174495697021484, "t": 1795712466.661883}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.015851974487304688, "status": "OPERATIONAL", "t": 1795712467.1645906}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.2805206775665283, "checks_while_building": 3, "t": 1795712467.6624906}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.0022644996643066406, "t": 1795712467.7479687}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.15976905822753906, "checks_while_building": 1, "t": 1795712468.1563463}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.010431766510009766, "t": 1795712468.2259772}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.3808877468109131, "checks_while_building": 4, "t": 1795712468.8605425}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.13390302658081055, "t": 1795712469.063659}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.02649092674255371, "status": "FAILED", "slipped": 22, "t": 1795712469.4034736}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.8824470043182373, "checks_while_building": 2, "t": 1795712471.1989286}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005456686019897461, "t": 1795712471.8787107}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.029868364334106445, "checks_while_building": 1, "t": 1795712472.4883087}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.021569490432739258, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712473.1157923}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712473.6501968}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.47361207008361816, "checks_while_building": 13, "t": 1795712474.1238945}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712474.1284676}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.04413485527038574, "status": "FAILED", "t": 1795712474.482448}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.15922069549560547, "checks_while_building": 2, "t": 1795712474.8480124}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.01631307601928711, "t": 1795712474.9091742}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011304378509521484, "status": "FAILED", "slipped": 22, "t": 1795712475.1258886}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.43979620933532715, "checks_while_building": 6, "t": 1795712475.569026}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.031153440475463867, "status": "FAILED", "t": 1795712475.8158412}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.2629837989807129, "checks_while_building": 1, "t": 1795712476.736546}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.0005433559417724609, "t": 1795712477.096761}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.01584458351135254, "status": "OPERATIONAL", "t": 1795712477.7454531}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.20435070991516113, "checks_while_building": 2, "t": 1795712478.2328198}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.014133691787719727, "t": 1795712478.3060055}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.16097402572631836, "checks_while_building": 2, "t": 1795712478.8236163}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.005577802658081055, "t": 1795712478.9062822}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.2785065174102783, "checks_while_building": 3, "t": 1795712479.4941816}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.013927459716796875, "t": 1795712479.5607774}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.021639585494995117, "status": "FAILED", "slipped": 14, "t": 1795712480.0417166}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.8610413074493408, "checks_while_building": 2, "t": 1795712481.7846901}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.005338907241821289, "t": 1795712482.5006251}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.027462005615234375, "checks_while_building": 1, "t": 1795712483.090529}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02138209342956543, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712483.6437194}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 27, "t": 1795712484.269563}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4662013053894043, "checks_while_building": 13, "t": 1795712484.7358372}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712484.7584765}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.009099245071411133, "status": "FAILED", "t": 1795712485.0786345}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.13966941833496094, "checks_while_building": 1, "t": 1795712485.431205}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.013293027877807617, "t": 1795712485.5050933}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.010924339294433594, "status": "FAILED", "slipped": 22, "t": 1795712485.697417}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.41185879707336426, "checks_while_building": 5, "t": 1795712486.1127164}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.032639503479003906, "status": "FAILED", "t": 1795712486.3162646}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.2566990852355957, "checks_while_building": 1, "t": 1795712487.2294242}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.005364418029785156, "t": 1795712487.59164}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.016057491302490234, "status": "OPERATIONAL", "t": 1795712488.091784}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.3397483825683594, "checks_while_building": 3, "t": 1795712488.6276753}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.005491018295288086, "t": 1795712488.6884634}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.2272493839263916, "checks_while_building": 2, "t": 1795712489.1856637}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.013767004013061523, "t": 1795712489.2803185}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.31539201736450195, "checks_while_building": 3, "t": 1795712489.9465744}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.008444070816040039, "t": 1795712490.0289927}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.028505325317382812, "status": "FAILED", "slipped": 19, "t": 1795712490.495291}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 0.9386322498321533, "checks_while_building": 2, "t": 1795712492.3793814}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0004181861877441406, "t": 1795712492.971939}
+{"who": "churn", "kind": "range-node-live", "what": "Live.k", "build_s": 0.040470123291015625, "checks_while_building": 2, "t": 1795712493.7442555}
+{"who": "churn", "kind": "live-constraints", "what": "Live", "build_s": 0.02169513702392578, "status": "OPERATIONAL/OPERATIONAL", "t": 1795712494.3395517}
+{"who": "churn", "kind": "live-cmp-count", "what": "Live", "n": 28, "t": 1795712494.8790474}
+{"who": "churn", "kind": "fulltext-node", "what": "Person.name", "build_s": 0.4745614528656006, "checks_while_building": 12, "t": 1795712495.35369}
+{"who": "churn", "kind": "fulltext-after-drop", "what": "returned 0 (truth 350)", "t": 1795712495.3572094}
+{"who": "churn", "kind": "unique-constraint-fail", "what": "Acct.ph", "build_s": 0.010365724563598633, "status": "FAILED", "t": 1795712495.6769028}
+{"who": "churn", "kind": "range-node", "what": "Product.cat", "build_s": 0.20577645301818848, "checks_while_building": 2, "t": 1795712496.1355588}
+{"who": "churn", "kind": "drop-latency", "what": "product_cat", "build_s": null, "drop_s": 0.013405084609985352, "t": 1795712496.2102385}
+{"who": "churn", "kind": "mandatory-constraint", "what": "Acct.email", "build_s": 0.011228799819946289, "status": "FAILED", "slipped": 22, "t": 1795712496.4023829}
+{"who": "churn", "kind": "range-node-str", "what": "Person.email", "build_s": 0.43525266647338867, "checks_while_building": 6, "t": 1795712496.9696312}
+{"who": "churn", "kind": "mandatory-constraint-fail", "what": "Acct.opt", "build_s": 0.014067649841308594, "status": "FAILED", "t": 1795712497.1523855}
+{"who": "churn", "kind": "range-edge", "what": "KNOWS.since", "build_s": 0.34331393241882324, "checks_while_building": 1, "t": 1795712498.145025}
+{"who": "churn", "kind": "drop-latency", "what": "knows_since", "build_s": null, "drop_s": 0.06012773513793945, "t": 1795712498.5817935}
+{"who": "churn", "kind": "unique-constraint-edge", "what": "LINK.lid", "build_s": 0.016641855239868164, "status": "OPERATIONAL", "t": 1795712499.0690196}
+{"who": "churn", "kind": "range-node", "what": "Person.city", "build_s": 0.32822132110595703, "checks_while_building": 3, "t": 1795712499.6273036}
+{"who": "churn", "kind": "drop-latency", "what": "person_city", "build_s": null, "drop_s": 0.013422012329101562, "t": 1795712499.6793866}
+{"who": "churn", "kind": "range-node", "what": "Order.status", "build_s": 0.2107558250427246, "checks_while_building": 2, "t": 1795712500.158902}
+{"who": "churn", "kind": "drop-latency", "what": "order_status", "build_s": null, "drop_s": 0.0004417896270751953, "t": 1795712500.2099943}
+{"who": "churn", "kind": "range-node", "what": "Person.age", "build_s": 0.2904510498046875, "checks_while_building": 3, "t": 1795712500.7530687}
+{"who": "churn", "kind": "drop-latency", "what": "person_age", "build_s": null, "drop_s": 0.005339145660400391, "t": 1795712500.8122475}
+{"who": "churn", "kind": "unique-constraint", "what": "Acct.email", "build_s": 0.022074460983276367, "status": "FAILED", "slipped": 19, "t": 1795712501.353405}
+{"who": "churn", "kind": "range-edge", "what": "BOUGHT.qty", "build_s": 1.0030186176300049, "checks_while_building": 2, "t": 1795712503.2890651}
+{"who": "churn", "kind": "drop-latency", "what": "bought_qty", "build_s": null, "drop_s": 0.0038652420043945312, "t": 1795712504.0119426}

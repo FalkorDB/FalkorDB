@@ -1,0 +1,260 @@
+[
+ {
+  "name": "ingest node count",
+  "ok": true,
+  "detail": "250000 != 250000",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest edge count",
+  "ok": true,
+  "detail": "1200000 != 1200000",
+  "severity": "critical"
+ },
+ {
+  "name": "replica initial full sync completes (<=900s)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "GRAPH.RO_QUERY works on replica",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "after initial sync: replica content == primary (counts/props/structure/indexes)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "after initial sync: internal ids (sum id(n)/id(e)) identical",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "after initial sync: checksum queries ran without error",
+  "ok": true,
+  "detail": "[]: []",
+  "severity": "major"
+ },
+ {
+  "name": "mid-soak Q1: replica caught up (offsets equal) after writes paused",
+  "ok": true,
+  "detail": "no convergence in 120s",
+  "severity": "critical"
+ },
+ {
+  "name": "mid-soak Q1: replica content == primary (counts/props/structure/indexes)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "mid-soak Q1: internal ids (sum id(n)/id(e)) identical",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "mid-soak Q1: checksum queries ran without error",
+  "ok": true,
+  "detail": "[]: []",
+  "severity": "major"
+ },
+ {
+  "name": "replica full resync after restart completes (<=900s)",
+  "ok": true,
+  "detail": "{'restart_to_link_up_s': 1.6450743675231934, 'restart_total_s': 2.3639135360717773, 'sync_full_delta': 1, 'sync_partial_ok_delta': 0}",
+  "severity": "critical"
+ },
+ {
+  "name": "replica restart triggered a FULL resync",
+  "ok": true,
+  "detail": "{'restart_to_link_up_s': 1.6450743675231934, 'restart_total_s': 2.3639135360717773, 'sync_full_delta': 1, 'sync_partial_ok_delta': 0}",
+  "severity": "minor"
+ },
+ {
+  "name": "mid-soak Q2 (after resync): replica caught up (offsets equal) after writes paused",
+  "ok": true,
+  "detail": "no convergence in 120s",
+  "severity": "critical"
+ },
+ {
+  "name": "mid-soak Q2 (after resync): replica content == primary (counts/props/structure/indexes)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "mid-soak Q2 (after resync): internal ids (sum id(n)/id(e)) identical",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "mid-soak Q2 (after resync): checksum queries ran without error",
+  "ok": true,
+  "detail": "[]: []",
+  "severity": "major"
+ },
+ {
+  "name": "final: replica caught up",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "final: replica content == primary (counts/props/structure/indexes)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "final: internal ids (sum id(n)/id(e)) identical",
+  "ok": true,
+  "detail": "",
+  "severity": "major"
+ },
+ {
+  "name": "final: checksum queries ran without error",
+  "ok": true,
+  "detail": "[]: []",
+  "severity": "major"
+ },
+ {
+  "name": "failover: replica promoted (role:master)",
+  "ok": true,
+  "detail": "master",
+  "severity": "critical"
+ },
+ {
+  "name": "failover: promoted replica has every WAIT-confirmed write",
+  "ok": true,
+  "detail": "confirmed=2100 []",
+  "severity": "critical"
+ },
+ {
+  "name": "failover: promoted replica still holds the pre-drill graph",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "failover: promoted replica accepts writes",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "primary alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "replica alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "primary log has no crash/panic markers",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "replica log has no crash/panic markers",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "replica log has no divergence/apply-failure lines",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "replication lag p99 < 1 s",
+  "ok": true,
+  "detail": "p99=3.4ms",
+  "severity": "major"
+ },
+ {
+  "name": "no marker timeouts",
+  "ok": true,
+  "detail": "[]",
+  "severity": "major"
+ },
+ {
+  "name": "rep_1hop errors == 0",
+  "ok": true,
+  "detail": "0/80428",
+  "severity": "major"
+ },
+ {
+  "name": "rep_2hop errors == 0",
+  "ok": true,
+  "detail": "0/44584",
+  "severity": "major"
+ },
+ {
+  "name": "rep_post_likes errors == 0",
+  "ok": true,
+  "detail": "0/35593",
+  "severity": "major"
+ },
+ {
+  "name": "rep_author_fans errors == 0",
+  "ok": true,
+  "detail": "0/17939",
+  "severity": "major"
+ },
+ {
+  "name": "w_create_evt errors == 0",
+  "ok": true,
+  "detail": "0/71061",
+  "severity": "major"
+ },
+ {
+  "name": "w_delete_evt errors == 0",
+  "ok": true,
+  "detail": "0/43808",
+  "severity": "major"
+ },
+ {
+  "name": "w_update_rand errors == 0",
+  "ok": true,
+  "detail": "0/71060",
+  "severity": "major"
+ },
+ {
+  "name": "w_merge errors == 0",
+  "ok": true,
+  "detail": "0/17716",
+  "severity": "major"
+ },
+ {
+  "name": "w_follow errors == 0",
+  "ok": true,
+  "detail": "0/15957",
+  "severity": "major"
+ },
+ {
+  "name": "w_like errors == 0",
+  "ok": true,
+  "detail": "0/26572",
+  "severity": "major"
+ },
+ {
+  "name": "w_ledger errors == 0",
+  "ok": true,
+  "detail": "0/7283",
+  "severity": "major"
+ }
+]

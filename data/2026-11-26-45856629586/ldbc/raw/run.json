@@ -1,0 +1,37 @@
+{
+  "mode": {
+    "name": "nightly",
+    "sf": "0.1",
+    "params": 25,
+    "rounds": 2,
+    "rerun_rounds": 2,
+    "timeout_ms": 60000,
+    "query_budget_s": 300.0,
+    "deadline_s": 2100.0,
+    "load_request_s": 600.0
+  },
+  "ratio": 2.0,
+  "floor_ms": {
+    "p50_ms": 0.5,
+    "p95_ms": 2.0
+  },
+  "seed": 1,
+  "servers": {
+    "baseline": {
+      "down": null
+    },
+    "candidate": {
+      "down": null
+    }
+  },
+  "left_out": {},
+  "notes": [],
+  "problems": [],
+  "rewrites": {
+    "IC1": "shortestPath() moved from MATCH into WITH (unsupported in MATCH)",
+    "IC7": "not(<traversal pattern>) replaced by size(<pattern>) = 0 (a pattern is not a boolean-valued expression in a projection)",
+    "IC10": "datetime({epochMillis: ...}).month/.day replaced by loader-derived birthdayMonth/birthdayDay properties (no temporal type)",
+    "IC13": "shortestPath() moved from MATCH into WITH (unsupported in MATCH)",
+    "IC14": "allShortestPaths() endpoints pre-bound in a preceding MATCH, and the per-relationship weights hoisted out of the pattern comprehensions (a pattern comprehension's WHERE cannot see an outer list-comprehension variable)"
+  }
+}

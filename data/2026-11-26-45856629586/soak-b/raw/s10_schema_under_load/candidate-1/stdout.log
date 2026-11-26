@@ -1,0 +1,655 @@
+PASS ingest node count
+PASS ingest edge count
+ingest 59.2s nodes=487500 edges=1350000
+quirk index-scan-on-any-index: False
+PASS baseline person_age: scan result == ground truth
+PASS baseline person_age: index built
+PASS baseline person_age: EXPLAIN scan before index
+PASS baseline person_age: EXPLAIN uses index when operational
+PASS baseline person_age: indexed result == ground truth (all values)
+PASS baseline person_age: index disappears from db.indexes after DROP
+PASS baseline person_age: EXPLAIN no index after drop
+PASS baseline person_city: scan result == ground truth
+PASS baseline person_city: index built
+PASS baseline person_city: EXPLAIN scan before index
+PASS baseline person_city: EXPLAIN uses index when operational
+PASS baseline person_city: indexed result == ground truth (all values)
+PASS baseline person_city: index disappears from db.indexes after DROP
+PASS baseline person_city: EXPLAIN no index after drop
+PASS baseline product_cat: scan result == ground truth
+PASS baseline product_cat: index built
+PASS baseline product_cat: EXPLAIN scan before index
+PASS baseline product_cat: EXPLAIN uses index when operational
+PASS baseline product_cat: indexed result == ground truth (all values)
+PASS baseline product_cat: index disappears from db.indexes after DROP
+PASS baseline product_cat: EXPLAIN no index after drop
+PASS baseline order_status: scan result == ground truth
+PASS baseline order_status: index built
+PASS baseline order_status: EXPLAIN scan before index
+PASS baseline order_status: EXPLAIN uses index when operational
+PASS baseline order_status: indexed result == ground truth (all values)
+PASS baseline order_status: index disappears from db.indexes after DROP
+PASS baseline order_status: EXPLAIN no index after drop
+PASS baseline bought_qty: scan result == ground truth
+PASS baseline bought_qty: index built
+PASS baseline bought_qty: EXPLAIN scan before index
+PASS baseline bought_qty: EXPLAIN uses index when operational
+PASS baseline bought_qty: indexed result == ground truth (all values)
+PASS baseline bought_qty: index disappears from db.indexes after DROP
+PASS baseline bought_qty: EXPLAIN no index after drop
+PASS baseline knows_since: scan result == ground truth
+PASS baseline knows_since: index built
+PASS baseline knows_since: EXPLAIN scan before index
+PASS baseline knows_since: EXPLAIN uses index when operational
+PASS baseline knows_since: indexed result == ground truth (all values)
+PASS baseline knows_since: index disappears from db.indexes after DROP
+PASS baseline knows_since: EXPLAIN no index after drop
+PASS baseline person.email string index lookups
+PASS baseline unique constraint on Person.email OPERATIONAL
+PASS baseline unique constraint rejects duplicate
+PASS baseline fulltext Person.name results == ground truth
+baseline builds: [{"kind": "range-node", "what": "Person.id", "entities": 175000, "seconds": 0.268}, {"kind": "range-node", "what": "Product.id", "entities": 125000, "seconds": 0.185}, {"kind": "range-node", "what": "Order.id", "entities": 125000, "seconds": 0.188}, {"kind": "range-node", "what": "Acct.id", "entities": 50000, "seconds": 0.083}, {"kind": "range-node", "what": "Live.id", "entities": 12500, "seconds": 0.022}, {"kind": "range-node", "what": "Probe.id", "entities": 1, "seconds": 0.001}, {"kind": "range-node", "what": "Person.age", "entities": 175000, "seconds": 0.31}, {"kind": "range-node", "what": "Person.city", "entities": 175000, "seconds": 0.332}, {"kind": "range-node", "what": "Product.cat", "entities": 125000, "seconds": 0.447}, {"kind": "range-node", "what": "Order.status", "entities": 125000, "seconds": 0.363}, {"kind": "range-edge", "what": "BOUGHT.qty", "entities": 700000, "seconds": 0.97}, {"kind": "range-edge", "what": "KNOWS.since", "entities": 350000, "seconds": 0.517}, {"kind": "range-node", "what": "Person.email", "entities": 175000, "seconds": 0.371}, {"kind": "unique-constraint-node", "what": "Person.email", "entities": 175000, "seconds": 0.084}, {"kind": "fulltext-node", "what": "Person.name", "entities": 175000, "seconds": 0.476}]
+PASS EXPLAIN no index after Person.email dropped
+PASS EXPLAIN no index after bought_qty dropped
+PASS EXPLAIN no index after knows_since dropped
+PASS EXPLAIN no index after order_status dropped
+PASS EXPLAIN no index after person_age dropped
+PASS EXPLAIN no index after person_city dropped
+PASS EXPLAIN no index after product_cat dropped
+PASS EXPLAIN uses index when Live.k operational
+PASS EXPLAIN uses index when Person.email operational
+PASS EXPLAIN uses index when bought_qty operational
+PASS EXPLAIN uses index when knows_since operational
+PASS EXPLAIN uses index when order_status operational
+PASS EXPLAIN uses index when person_age operational
+PASS EXPLAIN uses index when person_city operational
+PASS EXPLAIN uses index when product_cat operational
+FAIL Live (under writes) index == scan during build/after — 7 of 761 runs failed; first: [17,117] idx=1316 scan=1317
+FAIL Live: index-path count == scan-path count (same query) — 1 of 1500 runs failed; first: [441,491] idx=735 scan=736
+PASS after build bought_qty: indexed result == ground truth
+PASS after build knows_since: indexed result == ground truth
+PASS after build order_status: indexed result == ground truth
+FAIL after build person_age: indexed result == ground truth — 28 of 28 runs failed; first: ['eq 0: got 0 want 1945', '{"retry_param": [[0, 1945], [0, 1945]], "literal": 0, "literal_rw": 0, "status": "OPERATIONAL", "explain": "Aggregate\\n    Node By Index Scan | (n:Person)"}']
+FAIL after build person_city: indexed result == ground truth — 27 of 27 runs failed; first: ['eq 0: got 0 want 175', '{"retry_param": [[0, 175], [0, 175]], "literal": 0, "literal_rw": 0, "status": "OPERATIONAL", "explain": "Aggregate\\n    Node By Index Scan | (n:Person)"}']
+PASS after build product_cat: indexed result == ground truth
+PASS after drop bought_qty: result == ground truth
+PASS after drop knows_since: result == ground truth
+PASS after drop order_status: result == ground truth
+PASS after drop person_age: result == ground truth
+PASS after drop person_city: result == ground truth
+PASS after drop product_cat: result == ground truth
+PASS before index bought_qty: result == ground truth
+PASS before index knows_since: result == ground truth
+PASS before index order_status: result == ground truth
+PASS before index person_age: result == ground truth
+PASS before index person_city: result == ground truth
+PASS before index product_cat: result == ground truth
+FAIL during build person_age: result == ground truth — 2 of 2 runs failed; first: ['range [0,11]: got 21395 want 23340']
+FAIL during build person_city: result == ground truth — 2 of 2 runs failed; first: ['eq 0: got 0 want 175']
+PASS edge mandatory constraint OPERATIONAL
+PASS edge mandatory rejects missing property
+PASS edge unique constraint on unique data OPERATIONAL
+PASS edge unique on violating data ends FAILED
+PASS edge unique rejects duplicate
+PASS exact-match index for unique constraint builds
+PASS fulltext index reaches OPERATIONAL
+PASS fulltext operational: result == ground truth
+PASS immediately after drop bought_qty: result == ground truth
+PASS immediately after drop knows_since: result == ground truth
+PASS immediately after drop order_status: result == ground truth
+PASS immediately after drop person_age: result == ground truth
+PASS immediately after drop person_city: result == ground truth
+PASS immediately after drop product_cat: result == ground truth
+PASS index Live.k reaches OPERATIONAL under writes
+PASS index Person.email reaches OPERATIONAL
+PASS index bought_qty disappears from db.indexes after DROP
+PASS index bought_qty reaches OPERATIONAL
+PASS index knows_since disappears from db.indexes after DROP
+PASS index knows_since reaches OPERATIONAL
+PASS index order_status disappears from db.indexes after DROP
+PASS index order_status reaches OPERATIONAL
+PASS index person_age disappears from db.indexes after DROP
+PASS index person_age reaches OPERATIONAL
+PASS index person_city disappears from db.indexes after DROP
+PASS index person_city reaches OPERATIONAL
+PASS index product_cat disappears from db.indexes after DROP
+PASS index product_cat reaches OPERATIONAL
+PASS mandatory Live.k OPERATIONAL under writes
+PASS mandatory Live.k rejects node without k
+PASS mandatory on violating data ends FAILED
+PASS mandatory: FAILED only if a violation was actually inserted
+PASS mandatory: OPERATIONAL implies no node lacks the property (no slip-through)
+PASS mandatory: constraint settles in OPERATIONAL or FAILED
+PASS mandatory: inserter saw no non-constraint errors
+PASS unique Live.id OPERATIONAL under writes
+PASS unique on violating data ends FAILED
+PASS unique: FAILED only if a violation was actually inserted
+PASS unique: OPERATIONAL implies no duplicates exist (no slip-through)
+PASS unique: constraint settles in OPERATIONAL or FAILED
+PASS unique: inserter saw no non-constraint errors
+PASS churn completed at least one pass over index and constraint kinds
+PASS Live node count == initial + inserted - deleted
+PASS Live acknowledged increments == sum(cnt)
+PASS no index stuck UNDER CONSTRUCTION after load
+leftover indexes: [('Acct', ['id']), ('Live', ['id']), ('Order', ['id']), ('Person', ['id']), ('Product', ['id'])] constraints: []
+PASS Static label counts intact after churn
+PASS quiescent Live.k: index count == scan count for every sampled k
+FAIL before restart: Person.age indexed results == ground truth — ['eq 0: got 0 want 1945']
+PASS before restart: BOUGHT.qty indexed results == ground truth
+PASS indexes survive SAVE/restart (same set, OPERATIONAL)
+PASS constraints survive SAVE/restart
+PASS after restart: Person.age indexed results == ground truth
+PASS after restart: BOUGHT.qty indexed results == ground truth
+PASS after restart: EXPLAIN uses index
+PASS after restart: unique constraint still enforced
+PASS after restart: mandatory constraint still enforced
+PASS after restart: fulltext results == ground truth
+PASS server alive at end
+PASS no server crash markers
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                            27608      0      92.0   200.45   958.12  1215.13   0.92
+_missed_schedule                        7041   7041       0.0      nan      nan      nan    nan
+churn_edge_constraint                     27      0       0.1   254.22   433.92   433.92    nan
+churn_fulltext                            28      0       0.1   488.67   657.68   657.68    nan
+churn_live_schema                         28      0       0.1  1239.43  1452.19  1452.19    nan
+churn_mandatory                           28      0       0.1    82.22   161.21   161.21    nan
+churn_mandatory_fail                      28      0       0.1   112.88   259.30   259.30    nan
+churn_range_bought_qty                    28      0       0.1  3021.55  3270.62  3270.62    nan
+churn_range_knows_since                   27      0       0.1  1735.50  1993.54  1993.54    nan
+churn_range_order_status                  27      0       0.1   584.00   817.75   817.75    nan
+churn_range_person_age                    28      0       0.1   632.14   977.28   977.28    nan
+churn_range_person_city                   27      0       0.1   595.68   817.75   817.75    nan
+churn_range_person_email                  28      0       0.1   539.53   817.75   817.75    nan
+churn_range_product_cat                   28      0       0.1   572.55   697.94   697.94    nan
+churn_unique_fail                         28      0       0.1   370.35   528.95   528.95    nan
+churn_unique_ok                           28      0       0.1   408.90   550.32   550.32    nan
+live_cmp                                1500      0       5.0    19.76   151.92   181.55   0.96
+live_delete                             1698      0       5.7     6.92   292.02   348.99   1.00
+live_insert                             3438      0      11.4     4.39   275.17   322.41   0.91
+live_update                            12065      0      40.1     5.56   286.29   328.86   0.94
+order_path                              5323      0      17.7     6.27   154.95   174.50   1.00
+point_1hop                             25060      0      83.3     5.45   151.92   177.99   0.94
+point_2hop                              5371      0      17.9     5.56   154.95   185.18   0.98
+verify_bought_qty                        173      0       0.6   167.73   303.82   316.09   0.92
+verify_email                            3000      0      10.0    24.09   167.73   185.18   0.96
+verify_knows_since                       217      0       0.7   115.13   244.35   292.02   0.91
+verify_order_status                      193      0       0.6    22.70   148.94   151.92   1.04
+verify_person_age                        203      0       0.7    26.59   143.15   164.44   1.55
+verify_person_city                       218      0       0.7    25.06   164.44   181.55   1.61
+verify_product_cat                       196      0       0.7    22.25   158.05   164.44   1.04
+monitor: {"cpu_avg_pct": 166.52885906040268, "cpu_max_pct": 234.8, "rss_start_mb": 540.1, "rss_end_mb": 434.9, "rss_max_mb": 644.6, "used_mem_end_mb": 235.8, "rss_slope_mb_per_h": 240.93690044053687, "used_mem_slope_mb_per_h": -19.13792390973589, "samples": 369, "dead_samples": 0}
+failed checks: ['Live (under writes) index == scan during build/after', 'Live: index-path count == scan-path count (same query)', 'after build person_age: indexed result == ground truth', 'after build person_city: indexed result == ground truth', 'during build person_age: result == ground truth', 'during build person_city: result == ground truth', 'before restart: Person.age indexed results == ground truth']
+top errors: []
+crash markers: []
+{
+ "scenario": "s10_schema_under_load",
+ "nodes": 487500,
+ "edges": 1350000,
+ "ingest_s": 59.19418668746948,
+ "nodes_load_s": 0.8585479259490967,
+ "duration": 300.0,
+ "scale": 0.25,
+ "restart_s": 3.0791714191436768,
+ "labels": {
+  "Person": 175000,
+  "Product": 125000,
+  "Order": 125000,
+  "Acct": 50000,
+  "Live": 12500
+ },
+ "quiescent_build_log": [
+  {
+   "kind": "range-node",
+   "what": "Person.id",
+   "entities": 175000,
+   "seconds": 0.268
+  },
+  {
+   "kind": "range-node",
+   "what": "Product.id",
+   "entities": 125000,
+   "seconds": 0.185
+  },
+  {
+   "kind": "range-node",
+   "what": "Order.id",
+   "entities": 125000,
+   "seconds": 0.188
+  },
+  {
+   "kind": "range-node",
+   "what": "Acct.id",
+   "entities": 50000,
+   "seconds": 0.083
+  },
+  {
+   "kind": "range-node",
+   "what": "Live.id",
+   "entities": 12500,
+   "seconds": 0.022
+  },
+  {
+   "kind": "range-node",
+   "what": "Probe.id",
+   "entities": 1,
+   "seconds": 0.001
+  },
+  {
+   "kind": "range-node",
+   "what": "Person.age",
+   "entities": 175000,
+   "seconds": 0.31
+  },
+  {
+   "kind": "range-node",
+   "what": "Person.city",
+   "entities": 175000,
+   "seconds": 0.332
+  },
+  {
+   "kind": "range-node",
+   "what": "Product.cat",
+   "entities": 125000,
+   "seconds": 0.447
+  },
+  {
+   "kind": "range-node",
+   "what": "Order.status",
+   "entities": 125000,
+   "seconds": 0.363
+  },
+  {
+   "kind": "range-edge",
+   "what": "BOUGHT.qty",
+   "entities": 700000,
+   "seconds": 0.97
+  },
+  {
+   "kind": "range-edge",
+   "what": "KNOWS.since",
+   "entities": 350000,
+   "seconds": 0.517
+  },
+  {
+   "kind": "range-node",
+   "what": "Person.email",
+   "entities": 175000,
+   "seconds": 0.371
+  },
+  {
+   "kind": "unique-constraint-node",
+   "what": "Person.email",
+   "entities": 175000,
+   "seconds": 0.084
+  },
+  {
+   "kind": "fulltext-node",
+   "what": "Person.name",
+   "entities": 175000,
+   "seconds": 0.476
+  }
+ ],
+ "builds_under_load": {
+  "range-node:Person.age": {
+   "n": 28,
+   "min": 0.25,
+   "median": 0.31,
+   "max": 0.49
+  },
+  "unique-constraint:Acct.email": {
+   "n": 28,
+   "min": 0.02,
+   "median": 0.02,
+   "max": 0.08
+  },
+  "range-edge:BOUGHT.qty": {
+   "n": 28,
+   "min": 0.61,
+   "median": 0.86,
+   "max": 1.18
+  },
+  "range-node-live:Live.k": {
+   "n": 28,
+   "min": 0.02,
+   "median": 0.03,
+   "max": 0.18
+  },
+  "live-constraints:Live": {
+   "n": 28,
+   "min": 0.01,
+   "median": 0.02,
+   "max": 0.03
+  },
+  "fulltext-node:Person.name": {
+   "n": 28,
+   "min": 0.44,
+   "median": 0.48,
+   "max": 0.63
+  },
+  "unique-constraint-fail:Acct.ph": {
+   "n": 28,
+   "min": 0.0,
+   "median": 0.02,
+   "max": 0.14
+  },
+  "range-node:Product.cat": {
+   "n": 28,
+   "min": 0.13,
+   "median": 0.15,
+   "max": 0.31
+  },
+  "mandatory-constraint:Acct.email": {
+   "n": 28,
+   "min": 0.01,
+   "median": 0.01,
+   "max": 0.02
+  },
+  "range-node-str:Person.email": {
+   "n": 28,
+   "min": 0.4,
+   "median": 0.44,
+   "max": 0.7
+  },
+  "mandatory-constraint-fail:Acct.opt": {
+   "n": 28,
+   "min": 0.0,
+   "median": 0.03,
+   "max": 0.16
+  },
+  "range-edge:KNOWS.since": {
+   "n": 27,
+   "min": 0.24,
+   "median": 0.31,
+   "max": 0.39
+  },
+  "unique-constraint-edge:LINK.lid": {
+   "n": 27,
+   "min": 0.02,
+   "median": 0.02,
+   "max": 0.03
+  },
+  "range-node:Person.city": {
+   "n": 27,
+   "min": 0.27,
+   "median": 0.33,
+   "max": 0.52
+  },
+  "range-node:Order.status": {
+   "n": 27,
+   "min": 0.07,
+   "median": 0.21,
+   "max": 0.32
+  }
+ },
+ "churn_event_counts": {
+  "range-node": 110,
+  "drop-latency": 165,
+  "unique-constraint": 28,
+  "range-edge": 55,
+  "range-node-live": 28,
+  "live-constraints": 28,
+  "live-cmp-count": 28,
+  "fulltext-node": 28,
+  "fulltext-after-drop": 28,
+  "unique-constraint-fail": 28,
+  "mandatory-constraint": 28,
+  "range-node-str": 28,
+  "mandatory-constraint-fail": 28,
+  "unique-constraint-edge": 27
+ },
+ "checks_during_construction": 908,
+ "drop_latency_s": {
+  "max": 0.11605525016784668
+ },
+ "quirk_index_scan_on_any_index": false,
+ "fulltext_after_drop": [
+  "returned 0 (truth 350)"
+ ],
+ "live_ledger": {
+  "inc": 12065,
+  "ins": 3438,
+  "del": 1698
+ },
+ "constraint_outcomes": [
+  [
+   "unique-constraint",
+   "Acct.email",
+   "FAILED",
+   17
+  ],
+  [
+   "live-constraints",
+   "Live",
+   "OPERATIONAL/OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint-fail",
+   "Acct.ph",
+   "FAILED",
+   null
+  ],
+  [
+   "mandatory-constraint",
+   "Acct.email",
+   "FAILED",
+   10
+  ],
+  [
+   "mandatory-constraint-fail",
+   "Acct.opt",
+   "FAILED",
+   null
+  ],
+  [
+   "unique-constraint-edge",
+   "LINK.lid",
+   "OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint",
+   "Acct.email",
+   "FAILED",
+   21
+  ],
+  [
+   "live-constraints",
+   "Live",
+   "OPERATIONAL/OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint-fail",
+   "Acct.ph",
+   "FAILED",
+   null
+  ],
+  [
+   "mandatory-constraint",
+   "Acct.email",
+   "FAILED",
+   22
+  ],
+  [
+   "mandatory-constraint-fail",
+   "Acct.opt",
+   "FAILED",
+   null
+  ],
+  [
+   "unique-constraint-edge",
+   "LINK.lid",
+   "OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint",
+   "Acct.email",
+   "FAILED",
+   20
+  ],
+  [
+   "live-constraints",
+   "Live",
+   "OPERATIONAL/OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint-fail",
+   "Acct.ph",
+   "FAILED",
+   null
+  ],
+  [
+   "mandatory-constraint",
+   "Acct.email",
+   "FAILED",
+   22
+  ],
+  [
+   "mandatory-constraint-fail",
+   "Acct.opt",
+   "FAILED",
+   null
+  ],
+  [
+   "unique-constraint-edge",
+   "LINK.lid",
+   "OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint",
+   "Acct.email",
+   "FAILED",
+   20
+  ],
+  [
+   "live-constraints",
+   "Live",
+   "OPERATIONAL/OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint-fail",
+   "Acct.ph",
+   "FAILED",
+   null
+  ],
+  [
+   "mandatory-constraint",
+   "Acct.email",
+   "FAILED",
+   21
+  ],
+  [
+   "mandatory-constraint-fail",
+   "Acct.opt",
+   "FAILED",
+   null
+  ],
+  [
+   "unique-constraint-edge",
+   "LINK.lid",
+   "OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint",
+   "Acct.email",
+   "FAILED",
+   20
+  ],
+  [
+   "live-constraints",
+   "Live",
+   "OPERATIONAL/OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint-fail",
+   "Acct.ph",
+   "FAILED",
+   null
+  ],
+  [
+   "mandatory-constraint",
+   "Acct.email",
+   "FAILED",
+   20
+  ],
+  [
+   "mandatory-constraint-fail",
+   "Acct.opt",
+   "FAILED",
+   null
+  ],
+  [
+   "unique-constraint-edge",
+   "LINK.lid",
+   "OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint",
+   "Acct.email",
+   "FAILED",
+   19
+  ],
+  [
+   "live-constraints",
+   "Live",
+   "OPERATIONAL/OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint-fail",
+   "Acct.ph",
+   "FAILED",
+   null
+  ],
+  [
+   "mandatory-constraint",
+   "Acct.email",
+   "FAILED",
+   21
+  ],
+  [
+   "mandatory-constraint-fail",
+   "Acct.opt",
+   "FAILED",
+   null
+  ],
+  [
+   "unique-constraint-edge",
+   "LINK.lid",
+   "OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint",
+   "Acct.email",
+   "FAILED",
+   20
+  ],
+  [
+   "live-constraints",
+   "Live",
+   "OPERATIONAL/OPERATIONAL",
+   null
+  ],
+  [
+   "unique-constraint-fail",
+   "Acct.ph",
+   "FAILED",
+   null
+  ],
+  [
+   "mandatory-constraint",
+   "Acct.email",
+   "FAILED",
+   21
+  ]
+ ]
+}

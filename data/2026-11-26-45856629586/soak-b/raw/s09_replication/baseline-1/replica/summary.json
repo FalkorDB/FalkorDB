@@ -1,0 +1,19 @@
+{
+ "ops": {},
+ "monitor": {
+  "cpu_avg_pct": 40.820945945945944,
+  "cpu_max_pct": 111.8,
+  "rss_start_mb": 230.6,
+  "rss_end_mb": 254.1,
+  "rss_max_mb": 289.8,
+  "used_mem_end_mb": 177.5,
+  "rss_slope_mb_per_h": 685.5774221941218,
+  "used_mem_slope_mb_per_h": 357.57951681683835,
+  "samples": 319,
+  "dead_samples": 0
+ },
+ "checks": [],
+ "checks_failed": [],
+ "top_errors": [],
+ "server_log_crash_markers": []
+}

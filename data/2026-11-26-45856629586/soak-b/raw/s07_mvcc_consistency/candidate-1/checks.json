@@ -1,0 +1,134 @@
+[
+ {
+  "name": "ingest invariants hold",
+  "ok": true,
+  "detail": "[50000000.0, 50000, 50000.0, 50000, 50000, 50000, 50000, 500000.0, 500000, 50003]",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive after load",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "no reader ever saw an invariant violation (snapshot isolation)",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "failing queries are fully rolled back (never committed)",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "no write with unknown outcome (connection lost)",
+  "ok": true,
+  "detail": "0",
+  "severity": "critical"
+ },
+ {
+  "name": "own-created accounts were all deletable",
+  "ok": true,
+  "detail": "0",
+  "severity": "critical"
+ },
+ {
+  "name": "final: surviving account id set equals ledger",
+  "ok": true,
+  "detail": "missing=[] extra=[] n=49212 expected=49212",
+  "severity": "critical"
+ },
+ {
+  "name": "final: every surviving balance == initial + acknowledged transfers",
+  "ok": true,
+  "detail": "0 wrong, e.g. []",
+  "severity": "critical"
+ },
+ {
+  "name": "final: sink balance == moved balances of deleted accounts - endowments",
+  "ok": true,
+  "detail": "sink=877933 expected=877933",
+  "severity": "critical"
+ },
+ {
+  "name": "final: edge count == initial + acked transfers - deletions",
+  "ok": true,
+  "detail": "edges=364177 expected=364177",
+  "severity": "critical"
+ },
+ {
+  "name": "final: sum(edge.amt) matches ledger",
+  "ok": true,
+  "detail": "8600782.0 vs 8600782.0",
+  "severity": "critical"
+ },
+ {
+  "name": "final: counter node matches ledger",
+  "ok": true,
+  "detail": "[49212, 364177, 8600782.0]",
+  "severity": "critical"
+ },
+ {
+  "name": "final: total balance conserved",
+  "ok": true,
+  "detail": "50000000 != 50000000",
+  "severity": "critical"
+ },
+ {
+  "name": "final: counter == edge count == observed",
+  "ok": true,
+  "detail": "[49212, 364177, 8600782.0] edges=364177",
+  "severity": "critical"
+ },
+ {
+  "name": "final: guard node unique, node count consistent",
+  "ok": true,
+  "detail": "guards=1 nodes=49215 accounts=49212",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: surviving account id set equals ledger",
+  "ok": true,
+  "detail": "missing=[] extra=[] n=49212 expected=49212",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: total balance conserved",
+  "ok": true,
+  "detail": "50000000 != 50000000",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: counter == edge count == observed",
+  "ok": true,
+  "detail": "[49212, 364177, 8600782.0] edges=364177",
+  "severity": "critical"
+ },
+ {
+  "name": "after restart: guard node unique, node count consistent",
+  "ok": true,
+  "detail": "guards=1 nodes=49215 accounts=49212",
+  "severity": "critical"
+ },
+ {
+  "name": "RDB round-trip preserves graph",
+  "ok": true,
+  "detail": "state differs after restart",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "invariant readers actually ran",
+  "ok": true,
+  "detail": "heavy=600 light=59996",
+  "severity": "major"
+ }
+]

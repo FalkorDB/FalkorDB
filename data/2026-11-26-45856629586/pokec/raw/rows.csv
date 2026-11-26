@@ -1,0 +1,405 @@
+dataset,workload,name,metric,candidate,baseline,ratio,direction,status,use,first_pass,re_run,detail
+medium,read-only,benchmark run finished [read-only],completed,1,1,,lower_is_worse,ok,,,,
+medium,read-only,aggregate_age [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,aggregate_age_distinct [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,aggregate_age_filtered [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,aggregate_age_min_max_avg [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,aggregate_count_users [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,1-hop expansion (aggregate_expansion_1) [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,"1-hop expansion, age >= 18 (aggregate_expansion_1_with_filter) [read-only]",completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,2-hop expansion (aggregate_expansion_2) [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,"2-hop expansion, age >= 18 (aggregate_expansion_2_with_filter) [read-only]",completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,3-hop expansion (aggregate_expansion_3) [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,"3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter) [read-only]",completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,4-hop expansion (aggregate_expansion_4) [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,"4-hop expansion, age >= 18 (aggregate_expansion_4_with_filter) [read-only]",completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,all_shortest_paths_len [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,call_subquery [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,count_friend_edges_plain [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,count_users_plain [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,entity_path_introspection [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,id_range_scan [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,id_seek [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,indexed_in_list_predicate [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,indexed_or_predicate [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,neighbours_2 [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,neighbours_2_with_data [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,neighbours_2_with_data_and_filter [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,neighbours_2_with_filter [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,optional_friend [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,order_by_age [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,pattern_cycle [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,pattern_long [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,pattern_short [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,shortest_path [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,shortest_path_with_filter [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,single_vertex_read [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,union_all_ids [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,union_distinct_ids [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,unwind_rows [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,value_join [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,value_join_cnt [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,var_len_friends [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,var_len_with_edge_where_filter [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,vertex_on_label_property [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,vertex_on_label_property_index [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,vertex_on_property [read-only],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,read-only,all queries [read-only],p50_ms,1.511,1.567,0.964263,higher_is_worse,ok,gate,0,,
+medium,read-only,all queries [read-only],p95_ms,30.463,91.135,0.334262,higher_is_worse,improvement,gate,-1,,
+medium,read-only,all queries [read-only],p99_ms,109.567,288.767,0.37943,higher_is_worse,improvement,gate,-1,,
+medium,read-only,throughput [read-only],throughput,618.276,374.77,1.649748,lower_is_worse,improvement,gate,-1,,
+medium,read-only,aggregate_age [read-only],p50_ms,8.511,7.807,1.090175,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age [read-only],p95_ms,16.511,15.103,1.093227,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age [read-only],p99_ms,19.071,18.431,1.034724,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_distinct [read-only],p50_ms,10.047,9.663,1.039739,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_distinct [read-only],p95_ms,17.535,16.063,1.091639,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_distinct [read-only],p99_ms,19.967,21.759,0.917643,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_filtered [read-only],p50_ms,11.583,10.879,1.064712,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_filtered [read-only],p95_ms,18.687,15.679,1.191849,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_filtered [read-only],p99_ms,22.271,22.399,0.994285,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_min_max_avg [read-only],p50_ms,16.639,15.615,1.065578,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_min_max_avg [read-only],p95_ms,25.215,24.959,1.010257,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_age_min_max_avg [read-only],p99_ms,35.071,33.023,1.062017,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_count_users [read-only],p50_ms,0.339,0.355,0.95493,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_count_users [read-only],p95_ms,3.039,2.879,1.055575,higher_is_worse,ok,gate,0,,
+medium,read-only,aggregate_count_users [read-only],p99_ms,7.455,8.063,0.924594,higher_is_worse,ok,gate,0,,
+medium,read-only,1-hop expansion (aggregate_expansion_1) [read-only],p50_ms,0.547,0.555,0.985586,higher_is_worse,ok,gate,0,,
+medium,read-only,1-hop expansion (aggregate_expansion_1) [read-only],p95_ms,2.879,3.167,0.909062,higher_is_worse,ok,gate,0,,
+medium,read-only,1-hop expansion (aggregate_expansion_1) [read-only],p99_ms,7.519,6.271,1.199011,higher_is_worse,ok,gate,0,,
+medium,read-only,"1-hop expansion, age >= 18 (aggregate_expansion_1_with_filter) [read-only]",p50_ms,0.547,0.575,0.951304,higher_is_worse,ok,gate,0,,
+medium,read-only,"1-hop expansion, age >= 18 (aggregate_expansion_1_with_filter) [read-only]",p95_ms,3.247,2.655,1.222976,higher_is_worse,ok,gate,0,,
+medium,read-only,"1-hop expansion, age >= 18 (aggregate_expansion_1_with_filter) [read-only]",p99_ms,8.767,7.263,1.207077,higher_is_worse,ok,gate,0,,
+medium,read-only,2-hop expansion (aggregate_expansion_2) [read-only],p50_ms,1.135,1.231,0.922015,higher_is_worse,ok,gate,0,,
+medium,read-only,2-hop expansion (aggregate_expansion_2) [read-only],p95_ms,6.975,7.135,0.977575,higher_is_worse,ok,gate,0,,
+medium,read-only,2-hop expansion (aggregate_expansion_2) [read-only],p99_ms,11.775,12.607,0.934005,higher_is_worse,ok,gate,0,,
+medium,read-only,"2-hop expansion, age >= 18 (aggregate_expansion_2_with_filter) [read-only]",p50_ms,1.127,1.095,1.029224,higher_is_worse,ok,gate,0,,
+medium,read-only,"2-hop expansion, age >= 18 (aggregate_expansion_2_with_filter) [read-only]",p95_ms,5.727,5.343,1.07187,higher_is_worse,ok,gate,0,,
+medium,read-only,"2-hop expansion, age >= 18 (aggregate_expansion_2_with_filter) [read-only]",p99_ms,8.703,11.903,0.73116,higher_is_worse,ok,gate,0,,
+medium,read-only,3-hop expansion (aggregate_expansion_3) [read-only],p50_ms,9.087,8.831,1.028989,higher_is_worse,ok,gate,0,,
+medium,read-only,3-hop expansion (aggregate_expansion_3) [read-only],p95_ms,17.535,17.023,1.030077,higher_is_worse,ok,gate,0,,
+medium,read-only,3-hop expansion (aggregate_expansion_3) [read-only],p99_ms,28.415,22.527,1.261375,higher_is_worse,ok,gate,0,,
+medium,read-only,"3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter) [read-only]",p50_ms,6.591,6.335,1.04041,higher_is_worse,ok,gate,0,,
+medium,read-only,"3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter) [read-only]",p95_ms,17.663,18.175,0.971829,higher_is_worse,ok,gate,0,,
+medium,read-only,"3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter) [read-only]",p99_ms,22.783,23.039,0.988888,higher_is_worse,ok,gate,0,,
+medium,read-only,4-hop expansion (aggregate_expansion_4) [read-only],p50_ms,16.895,16.191,1.043481,higher_is_worse,ok,gate,0,,
+medium,read-only,4-hop expansion (aggregate_expansion_4) [read-only],p95_ms,25.471,25.087,1.015307,higher_is_worse,ok,gate,0,,
+medium,read-only,4-hop expansion (aggregate_expansion_4) [read-only],p99_ms,33.023,31.615,1.044536,higher_is_worse,ok,gate,0,,
+medium,read-only,"4-hop expansion, age >= 18 (aggregate_expansion_4_with_filter) [read-only]",p50_ms,16.895,16.255,1.039373,higher_is_worse,ok,gate,0,,
+medium,read-only,"4-hop expansion, age >= 18 (aggregate_expansion_4_with_filter) [read-only]",p95_ms,27.263,26.111,1.044119,higher_is_worse,ok,gate,0,,
+medium,read-only,"4-hop expansion, age >= 18 (aggregate_expansion_4_with_filter) [read-only]",p99_ms,35.839,35.327,1.014493,higher_is_worse,ok,gate,0,,
+medium,read-only,all_shortest_paths_len [read-only],p50_ms,52.991,54.271,0.976415,higher_is_worse,ok,gate,0,,
+medium,read-only,all_shortest_paths_len [read-only],p95_ms,1138.687,1212.415,0.939189,higher_is_worse,ok,gate,0,,
+medium,read-only,all_shortest_paths_len [read-only],p99_ms,3129.343,3129.343,1.0,higher_is_worse,ok,gate,0,,
+medium,read-only,call_subquery [read-only],p50_ms,0.591,0.583,1.013722,higher_is_worse,ok,gate,0,,
+medium,read-only,call_subquery [read-only],p95_ms,2.959,2.831,1.045214,higher_is_worse,ok,gate,0,,
+medium,read-only,call_subquery [read-only],p99_ms,7.295,8.767,0.832098,higher_is_worse,ok,gate,0,,
+medium,read-only,count_friend_edges_plain [read-only],p50_ms,0.339,0.349,0.971347,higher_is_worse,ok,gate,0,,
+medium,read-only,count_friend_edges_plain [read-only],p95_ms,3.087,2.495,1.237275,higher_is_worse,ok,gate,0,,
+medium,read-only,count_friend_edges_plain [read-only],p99_ms,7.839,8.447,0.928022,higher_is_worse,ok,gate,0,,
+medium,read-only,count_users_plain [read-only],p50_ms,0.337,0.339,0.9941,higher_is_worse,ok,gate,0,,
+medium,read-only,count_users_plain [read-only],p95_ms,2.943,2.415,1.218634,higher_is_worse,ok,gate,0,,
+medium,read-only,count_users_plain [read-only],p99_ms,8.127,7.231,1.123911,higher_is_worse,ok,gate,0,,
+medium,read-only,entity_path_introspection [read-only],p50_ms,0.675,0.647,1.043277,higher_is_worse,ok,gate,0,,
+medium,read-only,entity_path_introspection [read-only],p95_ms,3.119,3.551,0.878344,higher_is_worse,ok,gate,0,,
+medium,read-only,entity_path_introspection [read-only],p99_ms,9.215,8.191,1.125015,higher_is_worse,ok,gate,0,,
+medium,read-only,id_range_scan [read-only],p50_ms,0.531,0.515,1.031068,higher_is_worse,ok,gate,0,,
+medium,read-only,id_range_scan [read-only],p95_ms,2.511,2.975,0.844034,higher_is_worse,ok,gate,0,,
+medium,read-only,id_range_scan [read-only],p99_ms,6.879,9.855,0.698021,higher_is_worse,ok,gate,0,,
+medium,read-only,id_seek [read-only],p50_ms,0.373,0.361,1.033241,higher_is_worse,ok,gate,0,,
+medium,read-only,id_seek [read-only],p95_ms,2.671,2.735,0.9766,higher_is_worse,ok,gate,0,,
+medium,read-only,id_seek [read-only],p99_ms,9.279,9.343,0.99315,higher_is_worse,ok,gate,0,,
+medium,read-only,indexed_in_list_predicate [read-only],p50_ms,0.651,0.631,1.031696,higher_is_worse,ok,gate,0,,
+medium,read-only,indexed_in_list_predicate [read-only],p95_ms,3.839,3.983,0.963846,higher_is_worse,ok,gate,0,,
+medium,read-only,indexed_in_list_predicate [read-only],p99_ms,10.751,6.527,1.647158,higher_is_worse,ok,gate,0,,
+medium,read-only,indexed_or_predicate [read-only],p50_ms,0.515,0.499,1.032064,higher_is_worse,ok,gate,0,,
+medium,read-only,indexed_or_predicate [read-only],p95_ms,2.751,2.783,0.988502,higher_is_worse,ok,gate,0,,
+medium,read-only,indexed_or_predicate [read-only],p99_ms,10.111,7.487,1.350474,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2 [read-only],p50_ms,1.039,1.039,1.0,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2 [read-only],p95_ms,6.559,6.591,0.995145,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2 [read-only],p99_ms,10.943,9.727,1.125013,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_data [read-only],p50_ms,3.855,3.439,1.120965,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_data [read-only],p95_ms,23.807,24.703,0.963729,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_data [read-only],p99_ms,50.431,50.431,1.0,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_data_and_filter [read-only],p50_ms,2.559,2.255,1.134812,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_data_and_filter [read-only],p95_ms,12.991,12.287,1.057296,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_data_and_filter [read-only],p99_ms,27.263,26.623,1.024039,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_filter [read-only],p50_ms,1.151,1.047,1.099331,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_filter [read-only],p95_ms,6.591,5.087,1.295656,higher_is_worse,ok,gate,0,,
+medium,read-only,neighbours_2_with_filter [read-only],p99_ms,14.015,11.135,1.258644,higher_is_worse,ok,gate,0,,
+medium,read-only,optional_friend [read-only],p50_ms,0.571,0.567,1.007055,higher_is_worse,ok,gate,0,,
+medium,read-only,optional_friend [read-only],p95_ms,3.007,2.847,1.0562,higher_is_worse,ok,gate,0,,
+medium,read-only,optional_friend [read-only],p99_ms,10.367,8.767,1.182503,higher_is_worse,ok,gate,0,,
+medium,read-only,order_by_age [read-only],p50_ms,63.487,74.239,0.85517,higher_is_worse,ok,gate,0,,
+medium,read-only,order_by_age [read-only],p95_ms,73.727,88.063,0.837207,higher_is_worse,ok,gate,0,,
+medium,read-only,order_by_age [read-only],p99_ms,79.871,95.231,0.838708,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_cycle [read-only],p50_ms,0.991,0.967,1.024819,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_cycle [read-only],p95_ms,5.631,5.791,0.972371,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_cycle [read-only],p99_ms,9.791,11.967,0.818167,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_long [read-only],p50_ms,22.271,21.631,1.029587,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_long [read-only],p95_ms,32.383,32.511,0.996063,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_long [read-only],p99_ms,37.887,43.007,0.88095,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_short [read-only],p50_ms,1.487,1.311,1.134249,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_short [read-only],p95_ms,8.191,8.319,0.984614,higher_is_worse,ok,gate,0,,
+medium,read-only,pattern_short [read-only],p99_ms,12.799,11.903,1.075275,higher_is_worse,ok,gate,0,,
+medium,read-only,shortest_path [read-only],p50_ms,1.751,206.847,0.008465,higher_is_worse,improvement,gate,-1,,
+medium,read-only,shortest_path [read-only],p95_ms,7.711,303.103,0.02544,higher_is_worse,improvement,gate,-1,,
+medium,read-only,shortest_path [read-only],p99_ms,11.135,313.343,0.035536,higher_is_worse,improvement,gate,-1,,
+medium,read-only,shortest_path_with_filter [read-only],p50_ms,1.919,198.655,0.00966,higher_is_worse,improvement,gate,-1,,
+medium,read-only,shortest_path_with_filter [read-only],p95_ms,8.831,292.863,0.030154,higher_is_worse,improvement,gate,-1,,
+medium,read-only,shortest_path_with_filter [read-only],p99_ms,11.775,303.103,0.038848,higher_is_worse,improvement,gate,-1,,
+medium,read-only,single_vertex_read [read-only],p50_ms,0.443,0.437,1.01373,higher_is_worse,ok,gate,0,,
+medium,read-only,single_vertex_read [read-only],p95_ms,3.199,2.687,1.190547,higher_is_worse,ok,gate,0,,
+medium,read-only,single_vertex_read [read-only],p99_ms,7.807,8.703,0.897047,higher_is_worse,ok,gate,0,,
+medium,read-only,union_all_ids [read-only],p50_ms,0.543,0.559,0.971377,higher_is_worse,ok,gate,0,,
+medium,read-only,union_all_ids [read-only],p95_ms,3.471,2.815,1.233037,higher_is_worse,ok,gate,0,,
+medium,read-only,union_all_ids [read-only],p99_ms,8.127,8.319,0.97692,higher_is_worse,ok,gate,0,,
+medium,read-only,union_distinct_ids [read-only],p50_ms,0.527,0.551,0.956443,higher_is_worse,ok,gate,0,,
+medium,read-only,union_distinct_ids [read-only],p95_ms,2.895,3.439,0.841814,higher_is_worse,ok,gate,0,,
+medium,read-only,union_distinct_ids [read-only],p99_ms,9.983,7.359,1.35657,higher_is_worse,ok,gate,0,,
+medium,read-only,unwind_rows [read-only],p50_ms,0.473,0.475,0.995789,higher_is_worse,ok,gate,0,,
+medium,read-only,unwind_rows [read-only],p95_ms,2.575,2.687,0.958318,higher_is_worse,ok,gate,0,,
+medium,read-only,unwind_rows [read-only],p99_ms,6.719,7.903,0.850183,higher_is_worse,ok,gate,0,,
+medium,read-only,value_join [read-only],p50_ms,9.983,9.919,1.006452,higher_is_worse,ok,gate,0,,
+medium,read-only,value_join [read-only],p95_ms,17.535,16.383,1.070317,higher_is_worse,ok,gate,0,,
+medium,read-only,value_join [read-only],p99_ms,21.503,23.295,0.923074,higher_is_worse,ok,gate,0,,
+medium,read-only,value_join_cnt [read-only],p50_ms,3.935,3.855,1.020752,higher_is_worse,ok,gate,0,,
+medium,read-only,value_join_cnt [read-only],p95_ms,11.007,9.919,1.109688,higher_is_worse,ok,gate,0,,
+medium,read-only,value_join_cnt [read-only],p99_ms,13.503,15.359,0.879159,higher_is_worse,ok,gate,0,,
+medium,read-only,var_len_friends [read-only],p50_ms,1.375,1.199,1.146789,higher_is_worse,ok,gate,0,,
+medium,read-only,var_len_friends [read-only],p95_ms,9.535,7.551,1.262747,higher_is_worse,ok,gate,0,,
+medium,read-only,var_len_friends [read-only],p99_ms,16.319,12.351,1.32127,higher_is_worse,ok,gate,0,,
+medium,read-only,var_len_with_edge_where_filter [read-only],p50_ms,14.975,15.679,0.955099,higher_is_worse,ok,gate,0,,
+medium,read-only,var_len_with_edge_where_filter [read-only],p95_ms,130.559,137.215,0.951492,higher_is_worse,ok,gate,0,,
+medium,read-only,var_len_with_edge_where_filter [read-only],p99_ms,207.871,209.919,0.990244,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_label_property [read-only],p50_ms,0.437,0.447,0.977629,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_label_property [read-only],p95_ms,3.039,2.255,1.347672,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_label_property [read-only],p99_ms,8.031,6.943,1.156705,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_label_property_index [read-only],p50_ms,0.443,0.417,1.06235,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_label_property_index [read-only],p95_ms,2.767,2.991,0.925109,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_label_property_index [read-only],p99_ms,8.159,8.447,0.965905,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_property [read-only],p50_ms,3.855,3.679,1.047839,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_property [read-only],p95_ms,9.663,8.831,1.094214,higher_is_worse,ok,gate,0,,
+medium,read-only,vertex_on_property [read-only],p99_ms,15.103,13.759,1.097682,higher_is_worse,ok,gate,0,,
+medium,5% writes,benchmark run finished [5% writes],completed,1,1,,lower_is_worse,ok,,,,
+medium,5% writes,aggregate_age [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,aggregate_age_distinct [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,aggregate_age_filtered [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,aggregate_age_min_max_avg [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,aggregate_count_users [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,1-hop expansion (aggregate_expansion_1) [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,"1-hop expansion, age >= 18 (aggregate_expansion_1_with_filter) [5% writes]",completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,2-hop expansion (aggregate_expansion_2) [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,"2-hop expansion, age >= 18 (aggregate_expansion_2_with_filter) [5% writes]",completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,3-hop expansion (aggregate_expansion_3) [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,"3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter) [5% writes]",completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,4-hop expansion (aggregate_expansion_4) [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,"4-hop expansion, age >= 18 (aggregate_expansion_4_with_filter) [5% writes]",completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,all_shortest_paths_len [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,call_subquery [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,count_friend_edges_plain [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,count_users_plain [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,detach_delete_user [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,entity_path_introspection [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,foreach_loop_mutation [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,id_range_scan [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,id_seek [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,indexed_in_list_predicate [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,indexed_or_predicate [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,merge_friend_edge_upsert [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,merge_user_insert_path [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,merge_user_upsert_existing [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,neighbours_2 [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,neighbours_2_with_data [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,neighbours_2_with_data_and_filter [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,neighbours_2_with_filter [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,optional_friend [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,order_by_age [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,pattern_cycle [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,pattern_long [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,pattern_short [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,remove_user_property_and_label [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,shortest_path [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,shortest_path_with_filter [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,single_edge_update [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,single_edge_write [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,single_vertex_read [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,single_vertex_update [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,single_vertex_write [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,union_all_ids [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,union_distinct_ids [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,unwind_rows [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,value_join [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,value_join_cnt [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,var_len_friends [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,var_len_with_edge_where_filter [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,vertex_on_label_property [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,vertex_on_label_property_index [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,vertex_on_property [5% writes],completed,1,1,,lower_is_worse,ok,,,,"candidate: 0 errors, 0 timeouts in 0 of 3 runs; baseline: 0 errors, 0 timeouts in 0 of 3 runs"
+medium,5% writes,all queries [5% writes],p50_ms,3.343,5.407,0.618273,higher_is_worse,improvement,gate,-1,,
+medium,5% writes,all queries [5% writes],p95_ms,95.231,251.903,0.378046,higher_is_worse,improvement,gate,-1,,
+medium,5% writes,all queries [5% writes],p99_ms,1220.607,1220.607,1.0,higher_is_worse,ok,gate,0,,
+medium,5% writes,throughput [5% writes],throughput,150.734,111.587,1.35082,lower_is_worse,improvement,gate,-1,,
+medium,5% writes,aggregate_age [5% writes],p50_ms,8.191,8.095,1.011859,higher_is_worse,ok,gate,0,,
+medium,5% writes,aggregate_age [5% writes],p95_ms,31.743,168.959,0.187874,higher_is_worse,ok,row,-1,,
+medium,5% writes,aggregate_age [5% writes],p99_ms,319.487,233.471,1.368423,higher_is_worse,ok,row,1,,
+medium,5% writes,aggregate_age_distinct [5% writes],p50_ms,9.727,10.559,0.921205,higher_is_worse,ok,gate,0,,
+medium,5% writes,aggregate_age_distinct [5% writes],p95_ms,27.647,133.119,0.207686,higher_is_worse,ok,row,-1,,
+medium,5% writes,aggregate_age_distinct [5% writes],p99_ms,70.655,223.231,0.316511,higher_is_worse,ok,row,-1,,
+medium,5% writes,aggregate_age_filtered [5% writes],p50_ms,11.839,11.583,1.022101,higher_is_worse,ok,gate,0,,
+medium,5% writes,aggregate_age_filtered [5% writes],p95_ms,41.727,219.135,0.190417,higher_is_worse,ok,row,-1,,
+medium,5% writes,aggregate_age_filtered [5% writes],p99_ms,235.519,260.095,0.905511,higher_is_worse,ok,row,0,,
+medium,5% writes,aggregate_age_min_max_avg [5% writes],p50_ms,15.039,14.783,1.017317,higher_is_worse,ok,gate,0,,
+medium,5% writes,aggregate_age_min_max_avg [5% writes],p95_ms,26.111,54.783,0.476626,higher_is_worse,ok,row,-1,,
+medium,5% writes,aggregate_age_min_max_avg [5% writes],p99_ms,95.231,233.471,0.407892,higher_is_worse,ok,row,-1,,
+medium,5% writes,aggregate_count_users [5% writes],p50_ms,0.443,0.459,0.965142,higher_is_worse,ok,gate,0,,
+medium,5% writes,aggregate_count_users [5% writes],p95_ms,22.399,144.383,0.155136,higher_is_worse,ok,row,-1,,
+medium,5% writes,aggregate_count_users [5% writes],p99_ms,62.719,227.327,0.275898,higher_is_worse,ok,row,-1,,
+medium,5% writes,1-hop expansion (aggregate_expansion_1) [5% writes],p50_ms,0.627,0.651,0.963134,higher_is_worse,ok,gate,0,,
+medium,5% writes,1-hop expansion (aggregate_expansion_1) [5% writes],p95_ms,33.535,167.935,0.19969,higher_is_worse,ok,row,-1,,
+medium,5% writes,1-hop expansion (aggregate_expansion_1) [5% writes],p99_ms,138.239,233.471,0.592104,higher_is_worse,ok,row,-1,,
+medium,5% writes,"1-hop expansion, age >= 18 (aggregate_expansion_1_with_filter) [5% writes]",p50_ms,0.631,0.675,0.934815,higher_is_worse,ok,gate,0,,
+medium,5% writes,"1-hop expansion, age >= 18 (aggregate_expansion_1_with_filter) [5% writes]",p95_ms,25.855,110.079,0.234877,higher_is_worse,ok,row,-1,,
+medium,5% writes,"1-hop expansion, age >= 18 (aggregate_expansion_1_with_filter) [5% writes]",p99_ms,105.471,248.831,0.423866,higher_is_worse,ok,row,-1,,
+medium,5% writes,2-hop expansion (aggregate_expansion_2) [5% writes],p50_ms,1.511,1.575,0.959365,higher_is_worse,ok,gate,0,,
+medium,5% writes,2-hop expansion (aggregate_expansion_2) [5% writes],p95_ms,37.375,97.279,0.384204,higher_is_worse,ok,row,-1,,
+medium,5% writes,2-hop expansion (aggregate_expansion_2) [5% writes],p99_ms,209.919,274.431,0.764925,higher_is_worse,ok,row,-1,,
+medium,5% writes,"2-hop expansion, age >= 18 (aggregate_expansion_2_with_filter) [5% writes]",p50_ms,1.479,1.423,1.039353,higher_is_worse,ok,gate,0,,
+medium,5% writes,"2-hop expansion, age >= 18 (aggregate_expansion_2_with_filter) [5% writes]",p95_ms,16.191,125.951,0.12855,higher_is_worse,ok,row,-1,,
+medium,5% writes,"2-hop expansion, age >= 18 (aggregate_expansion_2_with_filter) [5% writes]",p99_ms,405.503,407.551,0.994975,higher_is_worse,ok,row,0,,
+medium,5% writes,3-hop expansion (aggregate_expansion_3) [5% writes],p50_ms,11.455,11.839,0.967565,higher_is_worse,ok,gate,0,,
+medium,5% writes,3-hop expansion (aggregate_expansion_3) [5% writes],p95_ms,26.879,64.767,0.415011,higher_is_worse,ok,row,-1,,
+medium,5% writes,3-hop expansion (aggregate_expansion_3) [5% writes],p99_ms,104.959,227.327,0.461709,higher_is_worse,ok,row,-1,,
+medium,5% writes,"3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter) [5% writes]",p50_ms,9.151,10.175,0.899361,higher_is_worse,ok,gate,0,,
+medium,5% writes,"3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter) [5% writes]",p95_ms,36.863,139.263,0.264701,higher_is_worse,ok,row,-1,,
+medium,5% writes,"3-hop expansion, age >= 18 (aggregate_expansion_3_with_filter) [5% writes]",p99_ms,272.383,229.375,1.187501,higher_is_worse,ok,row,0,,
+medium,5% writes,4-hop expansion (aggregate_expansion_4) [5% writes],p50_ms,19.071,19.967,0.955126,higher_is_worse,ok,gate,0,,
+medium,5% writes,4-hop expansion (aggregate_expansion_4) [5% writes],p95_ms,45.567,194.559,0.234207,higher_is_worse,ok,row,-1,,
+medium,5% writes,4-hop expansion (aggregate_expansion_4) [5% writes],p99_ms,95.743,242.687,0.394512,higher_is_worse,ok,row,-1,,
+medium,5% writes,"4-hop expansion, age >= 18 (aggregate_expansion_4_with_filter) [5% writes]",p50_ms,19.455,19.711,0.987012,higher_is_worse,ok,gate,0,,
+medium,5% writes,"4-hop expansion, age >= 18 (aggregate_expansion_4_with_filter) [5% writes]",p95_ms,47.359,187.391,0.252728,higher_is_worse,ok,row,-1,,
+medium,5% writes,"4-hop expansion, age >= 18 (aggregate_expansion_4_with_filter) [5% writes]",p99_ms,150.527,247.807,0.607436,higher_is_worse,ok,row,-1,,
+medium,5% writes,all_shortest_paths_len [5% writes],p50_ms,29.695,39.167,0.758164,higher_is_worse,improvement,gate,-1,,
+medium,5% writes,all_shortest_paths_len [5% writes],p95_ms,1081.343,1130.495,0.956522,higher_is_worse,ok,row,0,,
+medium,5% writes,all_shortest_paths_len [5% writes],p99_ms,3358.719,3489.791,0.962441,higher_is_worse,ok,row,0,,
+medium,5% writes,call_subquery [5% writes],p50_ms,0.639,0.655,0.975573,higher_is_worse,ok,gate,0,,
+medium,5% writes,call_subquery [5% writes],p95_ms,22.527,176.127,0.127902,higher_is_worse,ok,row,-1,,
+medium,5% writes,call_subquery [5% writes],p99_ms,790.527,802.815,0.984694,higher_is_worse,ok,row,0,,
+medium,5% writes,count_friend_edges_plain [5% writes],p50_ms,0.447,0.483,0.925466,higher_is_worse,ok,gate,0,,
+medium,5% writes,count_friend_edges_plain [5% writes],p95_ms,10.239,107.007,0.095685,higher_is_worse,ok,row,-1,,
+medium,5% writes,count_friend_edges_plain [5% writes],p99_ms,45.055,221.183,0.2037,higher_is_worse,ok,row,-1,,
+medium,5% writes,count_users_plain [5% writes],p50_ms,0.395,0.383,1.031332,higher_is_worse,ok,gate,0,,
+medium,5% writes,count_users_plain [5% writes],p95_ms,28.031,202.751,0.138253,higher_is_worse,ok,row,-1,,
+medium,5% writes,count_users_plain [5% writes],p99_ms,98.303,301.055,0.326528,higher_is_worse,ok,row,-1,,
+medium,5% writes,detach_delete_user [5% writes],p50_ms,147.455,294.911,0.499998,higher_is_worse,ok,row,-1,,
+medium,5% writes,detach_delete_user [5% writes],p95_ms,3932.159,1187.839,3.310347,higher_is_worse,ok,row,1,,
+medium,5% writes,detach_delete_user [5% writes],p99_ms,4177.919,4325.375,0.965909,higher_is_worse,ok,row,0,,
+medium,5% writes,entity_path_introspection [5% writes],p50_ms,0.775,0.759,1.02108,higher_is_worse,ok,gate,0,,
+medium,5% writes,entity_path_introspection [5% writes],p95_ms,31.615,137.215,0.230405,higher_is_worse,ok,row,-1,,
+medium,5% writes,entity_path_introspection [5% writes],p99_ms,236.543,333.823,0.708588,higher_is_worse,ok,row,-1,,
+medium,5% writes,foreach_loop_mutation [5% writes],p50_ms,88.575,227.327,0.389637,higher_is_worse,ok,row,-1,,
+medium,5% writes,foreach_loop_mutation [5% writes],p95_ms,1613.823,1417.215,1.138728,higher_is_worse,ok,row,0,,
+medium,5% writes,foreach_loop_mutation [5% writes],p99_ms,3342.335,3358.719,0.995122,higher_is_worse,ok,row,0,,
+medium,5% writes,id_range_scan [5% writes],p50_ms,0.587,0.567,1.035273,higher_is_worse,ok,gate,0,,
+medium,5% writes,id_range_scan [5% writes],p95_ms,24.575,88.575,0.277448,higher_is_worse,ok,row,-1,,
+medium,5% writes,id_range_scan [5% writes],p99_ms,1884.159,215.039,8.761941,higher_is_worse,ok,row,1,,
+medium,5% writes,id_seek [5% writes],p50_ms,0.429,0.427,1.004684,higher_is_worse,ok,gate,0,,
+medium,5% writes,id_seek [5% writes],p95_ms,25.727,158.719,0.162091,higher_is_worse,ok,row,-1,,
+medium,5% writes,id_seek [5% writes],p99_ms,307.199,246.783,1.244814,higher_is_worse,ok,row,0,,
+medium,5% writes,indexed_in_list_predicate [5% writes],p50_ms,0.723,0.731,0.989056,higher_is_worse,ok,gate,0,,
+medium,5% writes,indexed_in_list_predicate [5% writes],p95_ms,28.159,175.103,0.160814,higher_is_worse,ok,row,-1,,
+medium,5% writes,indexed_in_list_predicate [5% writes],p99_ms,339.967,307.199,1.106667,higher_is_worse,ok,row,0,,
+medium,5% writes,indexed_or_predicate [5% writes],p50_ms,0.571,0.587,0.972743,higher_is_worse,ok,gate,0,,
+medium,5% writes,indexed_or_predicate [5% writes],p95_ms,11.519,147.455,0.078119,higher_is_worse,ok,row,-1,,
+medium,5% writes,indexed_or_predicate [5% writes],p99_ms,39.423,233.471,0.168856,higher_is_worse,ok,row,-1,,
+medium,5% writes,merge_friend_edge_upsert [5% writes],p50_ms,107.519,235.519,0.456519,higher_is_worse,ok,row,-1,,
+medium,5% writes,merge_friend_edge_upsert [5% writes],p95_ms,3244.031,3506.175,0.925234,higher_is_worse,ok,row,0,,
+medium,5% writes,merge_friend_edge_upsert [5% writes],p99_ms,3522.559,3817.471,0.922747,higher_is_worse,ok,row,0,,
+medium,5% writes,merge_user_insert_path [5% writes],p50_ms,98.303,246.783,0.398338,higher_is_worse,ok,row,-1,,
+medium,5% writes,merge_user_insert_path [5% writes],p95_ms,1966.079,1859.583,1.057269,higher_is_worse,ok,row,0,,
+medium,5% writes,merge_user_insert_path [5% writes],p99_ms,4063.231,3964.927,1.024793,higher_is_worse,ok,row,0,,
+medium,5% writes,merge_user_upsert_existing [5% writes],p50_ms,140.287,266.239,0.526921,higher_is_worse,ok,row,-1,,
+medium,5% writes,merge_user_upsert_existing [5% writes],p95_ms,1163.263,1294.335,0.898734,higher_is_worse,ok,row,0,,
+medium,5% writes,merge_user_upsert_existing [5% writes],p99_ms,4816.895,5144.575,0.936306,higher_is_worse,ok,row,0,,
+medium,5% writes,neighbours_2 [5% writes],p50_ms,1.511,1.623,0.930992,higher_is_worse,ok,gate,0,,
+medium,5% writes,neighbours_2 [5% writes],p95_ms,21.631,143.359,0.150887,higher_is_worse,ok,row,-1,,
+medium,5% writes,neighbours_2 [5% writes],p99_ms,138.239,339.967,0.406625,higher_is_worse,ok,row,-1,,
+medium,5% writes,neighbours_2_with_data [5% writes],p50_ms,5.343,5.151,1.037274,higher_is_worse,ok,gate,0,,
+medium,5% writes,neighbours_2_with_data [5% writes],p95_ms,40.959,109.055,0.375581,higher_is_worse,ok,row,-1,,
+medium,5% writes,neighbours_2_with_data [5% writes],p99_ms,107.519,238.591,0.450641,higher_is_worse,ok,row,-1,,
+medium,5% writes,neighbours_2_with_data_and_filter [5% writes],p50_ms,3.711,4.223,0.878759,higher_is_worse,ok,gate,0,,
+medium,5% writes,neighbours_2_with_data_and_filter [5% writes],p95_ms,29.439,161.791,0.181957,higher_is_worse,ok,row,-1,,
+medium,5% writes,neighbours_2_with_data_and_filter [5% writes],p99_ms,75.263,242.687,0.310124,higher_is_worse,ok,row,-1,,
+medium,5% writes,neighbours_2_with_filter [5% writes],p50_ms,1.343,1.487,0.903161,higher_is_worse,ok,gate,0,,
+medium,5% writes,neighbours_2_with_filter [5% writes],p95_ms,17.919,196.607,0.091141,higher_is_worse,ok,row,-1,,
+medium,5% writes,neighbours_2_with_filter [5% writes],p99_ms,138.239,250.879,0.551019,higher_is_worse,ok,row,-1,,
+medium,5% writes,optional_friend [5% writes],p50_ms,0.639,0.651,0.981567,higher_is_worse,ok,gate,0,,
+medium,5% writes,optional_friend [5% writes],p95_ms,15.167,47.871,0.316831,higher_is_worse,ok,row,-1,,
+medium,5% writes,optional_friend [5% writes],p99_ms,113.663,138.239,0.822221,higher_is_worse,ok,row,0,,
+medium,5% writes,order_by_age [5% writes],p50_ms,56.575,69.631,0.812497,higher_is_worse,ok,gate,0,,
+medium,5% writes,order_by_age [5% writes],p95_ms,78.847,226.303,0.348413,higher_is_worse,ok,row,-1,,
+medium,5% writes,order_by_age [5% writes],p99_ms,127.487,294.911,0.43229,higher_is_worse,ok,row,-1,,
+medium,5% writes,pattern_cycle [5% writes],p50_ms,1.223,1.551,0.788524,higher_is_worse,ok,gate,0,,
+medium,5% writes,pattern_cycle [5% writes],p95_ms,14.271,163.839,0.087104,higher_is_worse,ok,row,-1,,
+medium,5% writes,pattern_cycle [5% writes],p99_ms,107.007,236.543,0.452379,higher_is_worse,ok,row,-1,,
+medium,5% writes,pattern_long [5% writes],p50_ms,24.959,24.703,1.010363,higher_is_worse,ok,gate,0,,
+medium,5% writes,pattern_long [5% writes],p95_ms,44.287,147.455,0.300342,higher_is_worse,ok,row,-1,,
+medium,5% writes,pattern_long [5% writes],p99_ms,110.079,255.999,0.429998,higher_is_worse,ok,row,-1,,
+medium,5% writes,pattern_short [5% writes],p50_ms,1.511,1.799,0.839911,higher_is_worse,ok,gate,0,,
+medium,5% writes,pattern_short [5% writes],p95_ms,16.383,149.503,0.109583,higher_is_worse,ok,row,-1,,
+medium,5% writes,pattern_short [5% writes],p99_ms,258.047,254.975,1.012048,higher_is_worse,ok,row,0,,
+medium,5% writes,remove_user_property_and_label [5% writes],p50_ms,59.647,218.111,0.273471,higher_is_worse,ok,row,-1,,
+medium,5% writes,remove_user_property_and_label [5% writes],p95_ms,1351.679,1875.967,0.720524,higher_is_worse,ok,row,-1,,
+medium,5% writes,remove_user_property_and_label [5% writes],p99_ms,3031.039,2932.735,1.03352,higher_is_worse,ok,row,0,,
+medium,5% writes,shortest_path [5% writes],p50_ms,2.527,199.679,0.012655,higher_is_worse,improvement,gate,-1,,
+medium,5% writes,shortest_path [5% writes],p95_ms,32.127,327.679,0.098044,higher_is_worse,ok,row,-1,,
+medium,5% writes,shortest_path [5% writes],p99_ms,239.615,458.751,0.52232,higher_is_worse,ok,row,-1,,
+medium,5% writes,shortest_path_with_filter [5% writes],p50_ms,2.223,198.655,0.01119,higher_is_worse,improvement,gate,-1,,
+medium,5% writes,shortest_path_with_filter [5% writes],p95_ms,29.951,323.583,0.09256,higher_is_worse,ok,row,-1,,
+medium,5% writes,shortest_path_with_filter [5% writes],p99_ms,73.727,409.599,0.179998,higher_is_worse,ok,row,-1,,
+medium,5% writes,single_edge_update [5% writes],p50_ms,1187.839,1179.647,1.006944,higher_is_worse,ok,row,0,,
+medium,5% writes,single_edge_update [5% writes],p95_ms,4095.999,4325.375,0.94697,higher_is_worse,ok,row,0,,
+medium,5% writes,single_edge_update [5% writes],p99_ms,4849.663,5177.343,0.936709,higher_is_worse,ok,row,0,,
+medium,5% writes,single_edge_write [5% writes],p50_ms,561.151,544.767,1.030075,higher_is_worse,ok,row,0,,
+medium,5% writes,single_edge_write [5% writes],p95_ms,3358.719,3407.871,0.985577,higher_is_worse,ok,row,0,,
+medium,5% writes,single_edge_write [5% writes],p99_ms,4292.607,4718.591,0.909722,higher_is_worse,ok,row,0,,
+medium,5% writes,single_vertex_read [5% writes],p50_ms,0.527,0.555,0.94955,higher_is_worse,ok,gate,0,,
+medium,5% writes,single_vertex_read [5% writes],p95_ms,20.607,146.431,0.140728,higher_is_worse,ok,row,-1,,
+medium,5% writes,single_vertex_read [5% writes],p99_ms,103.935,228.351,0.455155,higher_is_worse,ok,row,-1,,
+medium,5% writes,single_vertex_update [5% writes],p50_ms,73.727,234.495,0.314408,higher_is_worse,ok,row,-1,,
+medium,5% writes,single_vertex_update [5% writes],p95_ms,3522.559,3817.471,0.922747,higher_is_worse,ok,row,0,,
+medium,5% writes,single_vertex_update [5% writes],p99_ms,4816.895,4653.055,1.035211,higher_is_worse,ok,row,0,,
+medium,5% writes,single_vertex_write [5% writes],p50_ms,399.359,382.975,1.042781,higher_is_worse,ok,row,0,,
+medium,5% writes,single_vertex_write [5% writes],p95_ms,3309.567,3358.719,0.985366,higher_is_worse,ok,row,0,,
+medium,5% writes,single_vertex_write [5% writes],p99_ms,4128.767,4161.535,0.992126,higher_is_worse,ok,row,0,,
+medium,5% writes,union_all_ids [5% writes],p50_ms,0.619,0.643,0.962675,higher_is_worse,ok,gate,0,,
+medium,5% writes,union_all_ids [5% writes],p95_ms,31.999,162.815,0.196536,higher_is_worse,ok,row,-1,,
+medium,5% writes,union_all_ids [5% writes],p99_ms,117.247,237.567,0.493532,higher_is_worse,ok,row,-1,,
+medium,5% writes,union_distinct_ids [5% writes],p50_ms,0.607,0.591,1.027073,higher_is_worse,ok,gate,0,,
+medium,5% writes,union_distinct_ids [5% writes],p95_ms,20.351,159.743,0.127398,higher_is_worse,ok,row,-1,,
+medium,5% writes,union_distinct_ids [5% writes],p99_ms,225.279,243.711,0.924369,higher_is_worse,ok,row,0,,
+medium,5% writes,unwind_rows [5% writes],p50_ms,0.515,0.515,1.0,higher_is_worse,ok,gate,0,,
+medium,5% writes,unwind_rows [5% writes],p95_ms,23.167,195.583,0.118451,higher_is_worse,ok,row,-1,,
+medium,5% writes,unwind_rows [5% writes],p99_ms,110.591,321.535,0.343947,higher_is_worse,ok,row,-1,,
+medium,5% writes,value_join [5% writes],p50_ms,10.751,10.687,1.005989,higher_is_worse,ok,gate,0,,
+medium,5% writes,value_join [5% writes],p95_ms,34.815,198.655,0.175254,higher_is_worse,ok,row,-1,,
+medium,5% writes,value_join [5% writes],p99_ms,125.951,244.735,0.514642,higher_is_worse,ok,row,-1,,
+medium,5% writes,value_join_cnt [5% writes],p50_ms,5.407,5.727,0.944124,higher_is_worse,ok,gate,0,,
+medium,5% writes,value_join_cnt [5% writes],p95_ms,19.455,133.119,0.146147,higher_is_worse,ok,row,-1,,
+medium,5% writes,value_join_cnt [5% writes],p99_ms,1122.303,274.431,4.089563,higher_is_worse,ok,row,1,,
+medium,5% writes,var_len_friends [5% writes],p50_ms,1.815,1.895,0.957784,higher_is_worse,ok,gate,0,,
+medium,5% writes,var_len_friends [5% writes],p95_ms,27.775,184.319,0.15069,higher_is_worse,ok,row,-1,,
+medium,5% writes,var_len_friends [5% writes],p99_ms,136.191,270.335,0.503786,higher_is_worse,ok,row,-1,,
+medium,5% writes,var_len_with_edge_where_filter [5% writes],p50_ms,12.031,12.479,0.9641,higher_is_worse,ok,gate,0,,
+medium,5% writes,var_len_with_edge_where_filter [5% writes],p95_ms,120.319,174.079,0.691175,higher_is_worse,ok,row,-1,,
+medium,5% writes,var_len_with_edge_where_filter [5% writes],p99_ms,266.239,248.831,1.069959,higher_is_worse,ok,row,0,,
+medium,5% writes,vertex_on_label_property [5% writes],p50_ms,0.505,0.467,1.08137,higher_is_worse,ok,gate,0,,
+medium,5% writes,vertex_on_label_property [5% writes],p95_ms,28.031,126.975,0.22076,higher_is_worse,ok,row,-1,,
+medium,5% writes,vertex_on_label_property [5% writes],p99_ms,230.399,230.399,1.0,higher_is_worse,ok,row,0,,
+medium,5% writes,vertex_on_label_property_index [5% writes],p50_ms,0.505,0.491,1.028513,higher_is_worse,ok,gate,0,,
+medium,5% writes,vertex_on_label_property_index [5% writes],p95_ms,27.007,172.031,0.156989,higher_is_worse,ok,row,-1,,
+medium,5% writes,vertex_on_label_property_index [5% writes],p99_ms,207.871,237.567,0.874999,higher_is_worse,ok,row,0,,
+medium,5% writes,vertex_on_property [5% writes],p50_ms,4.735,5.119,0.924985,higher_is_worse,ok,gate,0,,
+medium,5% writes,vertex_on_property [5% writes],p95_ms,18.431,159.743,0.115379,higher_is_worse,ok,row,-1,,
+medium,5% writes,vertex_on_property [5% writes],p99_ms,84.991,230.399,0.368886,higher_is_worse,ok,row,-1,,
+medium,read-only,PING max [read-only],ping_max_ms,6.79,9.417,0.721036,higher_is_worse,ok,,,,"candidate froze (>1 s) in 0 of 3 runs, baseline in 0 of 3"
+medium,5% writes,PING max [5% writes],ping_max_ms,5.738,5.772,0.994109,higher_is_worse,ok,,,,"candidate froze (>1 s) in 0 of 3 runs, baseline in 0 of 3"

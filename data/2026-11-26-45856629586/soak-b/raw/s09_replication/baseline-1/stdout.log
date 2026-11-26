@@ -1,0 +1,77 @@
+PASS ingest node count
+PASS ingest edge count
+16:50:12 ingest 54s nodes=250000 edges=1200000
+PASS replica initial full sync completes (<=900s)
+16:50:14 initial sync 1.5610284805297852
+PASS GRAPH.RO_QUERY works on replica
+PASS after initial sync: replica content == primary (counts/props/structure/indexes)
+PASS after initial sync: internal ids (sum id(n)/id(e)) identical
+PASS after initial sync: checksum queries ran without error
+PASS mid-soak Q1: replica caught up (offsets equal) after writes paused
+PASS mid-soak Q1: replica content == primary (counts/props/structure/indexes)
+PASS mid-soak Q1: internal ids (sum id(n)/id(e)) identical
+PASS mid-soak Q1: checksum queries ran without error
+16:51:17 quiesce mid-soak Q1: converge=0.002844572067260742 paused=2.3s
+16:52:15 replica restart
+16:52:18 resync {'restart_to_link_up_s': 1.6741917133331299, 'restart_total_s': 2.3724935054779053, 'sync_full_delta': 1, 'sync_partial_ok_delta': 0}
+PASS replica full resync after restart completes (<=900s)
+PASS replica restart triggered a FULL resync
+PASS mid-soak Q2 (after resync): replica caught up (offsets equal) after writes paused
+PASS mid-soak Q2 (after resync): replica content == primary (counts/props/structure/indexes)
+PASS mid-soak Q2 (after resync): internal ids (sum id(n)/id(e)) identical
+PASS mid-soak Q2 (after resync): checksum queries ran without error
+16:53:24 quiesce mid-soak Q2 (after resync): converge=0.002161741256713867 paused=2.4s
+PASS final: replica caught up
+PASS final: replica content == primary (counts/props/structure/indexes)
+PASS final: internal ids (sum id(n)/id(e)) identical
+PASS final: checksum queries ran without error
+PASS failover: replica promoted (role:master)
+PASS failover: promoted replica has every WAIT-confirmed write
+PASS failover: promoted replica still holds the pre-drill graph
+PASS failover: promoted replica accepts writes
+PASS primary alive at end
+PASS replica alive at end
+PASS primary log has no crash/panic markers
+PASS replica log has no crash/panic markers
+PASS replica log has no divergence/apply-failure lines
+PASS replication lag p99 < 1 s
+PASS no marker timeouts
+PASS rep_1hop errors == 0
+PASS rep_2hop errors == 0
+PASS rep_post_likes errors == 0
+PASS rep_author_fans errors == 0
+PASS w_create_evt errors == 0
+PASS w_delete_evt errors == 0
+PASS w_update_rand errors == 0
+PASS w_merge errors == 0
+PASS w_follow errors == 0
+PASS w_like errors == 0
+PASS w_ledger errors == 0
+op                                     count    err     ops/s      p50      p99     p999  drift
+_gap                                     144      0       1.1   110.66   200.45   200.45    nan
+_idle                                    332      0      83.0    20.16    20.16    20.16    nan
+_late_start                             4920      0      17.5   221.31   939.33  1993.54    nan
+_missed_schedule                        3398   3398       0.0      nan      nan      nan    nan
+_paused                                 3825      0      29.7    10.08    10.08    10.08    nan
+marker_cycle                            2920      0       9.7     0.99    53.19   225.74  21.96
+marker_write                            2920      0       9.7     0.59    46.30   225.74   0.60
+rep_1hop                               80426      0     267.2     0.53     1.99     8.95   2.16
+rep_2hop                               44582      0     148.6     0.49     2.07    10.08   1.17
+rep_author_fans                        17939      0      59.8     0.72     2.37     8.77   2.00
+rep_post_likes                         35593      0     118.6     0.68     2.89    13.56   0.70
+repl_lag                                2920      0       9.7     0.35     3.32    29.36   5.83
+w_create_evt                           71071      0     236.9     0.70     2.28    12.53   1.04
+w_delete_evt                           43816      0     147.5     0.63     2.95    18.99   1.04
+w_follow                               15960      0      53.2     0.70     2.33    36.51   0.71
+w_ledger                                7284      0      24.3     0.48     2.52    89.00   1.22
+w_ledger_wait                           3641      0      12.1     0.80     6.14  1993.54   1.49
+w_like                                 26577      0      88.6     0.78     2.78    13.30   1.20
+w_merge                                17719      0      59.1     0.59     2.57    41.94   1.22
+w_schema                                  14      0       0.0     0.53    58.72    58.72    nan
+w_unfollow                             10618      0      35.4     1.26     3.01    12.29   1.32
+w_update_rand                          71070      0     236.9     0.53     2.33    10.28   0.96
+monitor: {"cpu_avg_pct": 43.02881355932203, "cpu_max_pct": 87.9, "rss_start_mb": 266.5, "rss_end_mb": 302.1, "rss_max_mb": 325.4, "used_mem_end_mb": 180.3, "rss_slope_mb_per_h": 964.7890794128285, "used_mem_slope_mb_per_h": 382.82714679944195, "samples": 375, "dead_samples": 0}
+failed checks: []
+top errors: []
+crash markers: []
+meta: {"scenario": "s09_replication", "users": 50000, "posts": 200000, "nodes": 250000, "edges": 1200000, "ingest_s": 54.20816254615784, "initial_sync_s": 1.5610284805297852, "resync": {"restart_to_link_up_s": 1.6741917133331299, "restart_total_s": 2.3724935054779053, "sync_full_delta": 1, "sync_partial_ok_delta": 0}, "drill": {"promote_s": 0.0009393692016601562, "confirmed_writes": 2100, "drill_nodes_primary": 2124, "drill_nodes_promoted": 2100}, "repl_lag_p50_ms": 0.3478169605678325, "repl_lag_p95_ms": 0.605557747666439, "repl_lag_p99_ms": 3.324836828616894, "repl_lag_max_ms": 56.441025816060886, "repl_lag_samples": 2920, "converge_s": [0.002844572067260742, 0.002161741256713867, 0.002259492874145508], "replica_rss_max_mb": 289.8, "replica_rss_end_mb": 254.1, "replica_cpu_avg_pct": 40.820945945945944, "replica_used_mem_end_mb": 177.5, "duration": 300.0, "scale": 0.25, "ledger": {"ledger-Ack-10.txt": [2932, 100008798]}}

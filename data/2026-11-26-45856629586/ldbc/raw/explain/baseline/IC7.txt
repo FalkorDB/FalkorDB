@@ -1,0 +1,15 @@
+Limit
+    Sort
+        Project
+            Apply
+                Aggregate
+                    Sort
+                        Project
+                            Conditional Traverse | (liker)-[like:LIKES]->(message:Message)
+                                Conditional Traverse | (person)<-(message:Message)
+                                    Filter
+                                        Node By Index Scan | (person:Person)
+                Aggregate
+                    PathBuilder
+                        Expand Into | (liker)-(person)
+                            Argument

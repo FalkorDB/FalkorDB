@@ -1,0 +1,7 @@
+User
+2026-11-26 16:21:17,932 - falkordb_bulk_loader.label - INFO - 100000 nodes created with label 'User'
+Friend
+2026-11-26 16:21:22,325 - falkordb_bulk_loader.relation_type - INFO - 1768515 relations created for type 'Friend'
+2026-11-26 16:21:23,559 - falkordb_bulk_loader.query_buffer - INFO - Construction of graph 'falkor' complete: 100000 nodes created, 1768515 relations created in 6.586880 seconds
+2026-11-26 16:21:23,559 - __main__ - INFO - Creating Index on Label: User, Property: id
+2026-11-26 16:21:23,561 - __main__ - INFO - Creating Index on Label: User, Property: age

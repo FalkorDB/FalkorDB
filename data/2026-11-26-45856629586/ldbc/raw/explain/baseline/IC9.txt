@@ -1,0 +1,11 @@
+Limit
+    Sort
+        Project
+            Filter
+                Conditional Traverse | (message)->(friend)
+                    Unwind
+                        Aggregate
+                            Filter
+                                Conditional Variable Length Traverse | (root)-[@anon_0:KNOWS*1..2]->(friend)
+                                    Filter
+                                        Node By Index Scan | (root:Person)

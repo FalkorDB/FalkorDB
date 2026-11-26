@@ -1,0 +1,745 @@
+{
+ "ops": {
+  "chaos_big_20KB_strings": {
+   "count": 26,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.09523809523809523,
+   "p50_ms": 4.474792617729492,
+   "p95_ms": 6.142931338864042,
+   "p99_ms": 8.949091006528292,
+   "p999_ms": 8.949091006528292,
+   "max_ms": 8.949091006528292,
+   "drift": null
+  },
+  "chaos_big_150k_lists": {
+   "count": 37,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.12457912457912458,
+   "p50_ms": 6412.626561331354,
+   "p95_ms": 6671.6966744091405,
+   "p99_ms": 6805.130607897312,
+   "p999_ms": 6805.130607897312,
+   "max_ms": 6805.130607897312,
+   "drift": {
+    "p99_early_ms": 6805.130607897312,
+    "p99_late_ms": 6412.626561331354,
+    "ratio": 0.9423223345470461
+   }
+  },
+  "_missed_schedule": {
+   "count": 794,
+   "errors": 794,
+   "err_rate": 1.0,
+   "throughput_ops_s": 0.0,
+   "p50_ms": NaN,
+   "p95_ms": NaN,
+   "p99_ms": NaN,
+   "p999_ms": NaN,
+   "max_ms": null,
+   "drift": {
+    "p99_early_ms": NaN,
+    "p99_late_ms": NaN,
+    "ratio": null
+   }
+  },
+  "_late_start": {
+   "count": 12873,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 42.91,
+   "p50_ms": 79.03106208935743,
+   "p95_ms": 196.51953120525118,
+   "p99_ms": 3470.8082807945,
+   "p999_ms": 6941.233220055259,
+   "max_ms": 28883.445804620857,
+   "drift": {
+    "p99_early_ms": 4489.86060506971,
+    "p99_late_ms": 4401.824122617363,
+    "ratio": 0.9803921568627452
+   }
+  },
+  "chaos_big_200k_rows": {
+   "count": 44,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.15714285714285714,
+   "p50_ms": 1037.0988375151524,
+   "p95_ms": 1078.9976305507648,
+   "p99_ms": 1122.5891348250157,
+   "p999_ms": 1122.5891348250157,
+   "max_ms": 1122.5891348250157,
+   "drift": {
+    "p99_early_ms": 1057.8408142654555,
+    "p99_late_ms": 1057.8408142654555,
+    "ratio": 1.0
+   }
+  },
+  "chaos_big_collect_20MB": {
+   "count": 26,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.09420289855072464,
+   "p50_ms": 442.6013779677152,
+   "p95_ms": 460.48247363761095,
+   "p99_ms": 469.6921231103632,
+   "p999_ms": 469.6921231103632,
+   "max_ms": 469.6921231103632,
+   "drift": null
+  },
+  "chaos_churn": {
+   "count": 43200,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 144.0,
+   "p50_ms": 1.5057867317354694,
+   "p95_ms": 2.067122500241565,
+   "p99_ms": 6.649306437858297,
+   "p999_ms": 47.22732556284358,
+   "max_ms": 112.8758178710923,
+   "drift": {
+    "p99_early_ms": 4.564288470084082,
+    "p99_late_ms": 2.727524239718171,
+    "ratio": 0.5975792848316455
+   }
+  },
+  "chaos_err_query": {
+   "count": 59452,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 198.17333333333335,
+   "p50_ms": 0.24839785182788876,
+   "p95_ms": 0.5067036341498796,
+   "p99_ms": 98.26519216704966,
+   "p999_ms": 115.13333422851414,
+   "max_ms": 234.85903133253612,
+   "drift": {
+    "p99_early_ms": 96.33842369318594,
+    "p99_late_ms": 94.44943499331954,
+    "ratio": 0.980392156862745
+   }
+  },
+  "chaos_err_garbage_arity": {
+   "count": 10801,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 36.00333333333333,
+   "p50_ms": 1.0753765108619024,
+   "p95_ms": 1.4762615017014404,
+   "p99_ms": 2.4219634690888885,
+   "p999_ms": 19.372497936973954,
+   "max_ms": 98.26519216704966,
+   "drift": {
+    "p99_early_ms": 2.4219634690888885,
+    "p99_late_ms": 1.6625102242223988,
+    "ratio": 0.6864307597702182
+   }
+  },
+  "chaos_ro_write_rejected": {
+   "count": 21755,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 72.51666666666667,
+   "p50_ms": 0.24839785182788876,
+   "p95_ms": 0.3764882639120738,
+   "p99_ms": 0.6819563781160961,
+   "p999_ms": 11.34961123782298,
+   "max_ms": 61.09358148669456,
+   "drift": {
+    "p99_early_ms": 0.6176689026197678,
+    "p99_late_ms": 0.6300222806721633,
+    "ratio": 1.0200000000000002
+   }
+  },
+  "chaos_err_mutated": {
+   "count": 15982,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 53.27333333333333,
+   "p50_ms": 0.24839785182788876,
+   "p95_ms": 0.3916983897741217,
+   "p99_ms": 0.7236975641078262,
+   "p999_ms": 13.83511276801601,
+   "max_ms": 71.58086786791205,
+   "drift": {
+    "p99_early_ms": 0.8648855807953318,
+    "p99_late_ms": 0.695595505678418,
+    "ratio": 0.8042630390932891
+   }
+  },
+  "chaos_flood_conn_query": {
+   "count": 14368,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 47.89333333333333,
+   "p50_ms": 1.7642691500266037,
+   "p95_ms": 2.570207009104881,
+   "p99_ms": 13.037135762278467,
+   "p999_ms": 67.4522505181944,
+   "max_ms": 96.33842369318594,
+   "drift": {
+    "p99_early_ms": 14.681932350320736,
+    "p99_late_ms": 3.895576260550808,
+    "ratio": 0.2653313043269612
+   }
+  },
+  "chaos_kill_midquery": {
+   "count": 360,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 1.2,
+   "p50_ms": 208.5480986712622,
+   "p95_ms": 451.45340552706955,
+   "p99_ms": 518.5780565404032,
+   "p999_ms": 726.1344738521841,
+   "max_ms": 726.1344738521841,
+   "drift": {
+    "p99_early_ms": 518.5780565404032,
+    "p99_late_ms": 460.48247363761095,
+    "ratio": 0.8879713821861918
+   }
+  },
+  "chaos_memhog_stopped": {
+   "count": 108,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.36610169491525424,
+   "p50_ms": 1100.57758316178,
+   "p95_ms": 3021.5474768631107,
+   "p99_ms": 3021.5474768631107,
+   "p999_ms": 3021.5474768631107,
+   "max_ms": 3021.5474768631107,
+   "drift": {
+    "p99_early_ms": 3021.5474768631107,
+    "p99_late_ms": 3021.5474768631107,
+    "ratio": 1.0
+   }
+  },
+  "chaos_params": {
+   "count": 5400,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 18.0,
+   "p50_ms": 1.7995545330271359,
+   "p95_ms": 39.51771335779183,
+   "p99_ms": 47.22732556284358,
+   "p999_ms": 80.61168333114458,
+   "max_ms": 134.89705111490767,
+   "drift": {
+    "p99_early_ms": 45.393430952367915,
+    "p99_late_ms": 45.393430952367915,
+    "ratio": 1.0
+   }
+  },
+  "chaos_pipeline300": {
+   "count": 1440,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 4.8,
+   "p50_ms": 32.418288968018224,
+   "p95_ms": 71.58086786791205,
+   "p99_ms": 129.658834212714,
+   "p999_ms": 200.4499218293562,
+   "max_ms": 200.4499218293562,
+   "drift": {
+    "p99_early_ms": 137.59499213720582,
+    "p99_late_ms": 66.12965737077882,
+    "ratio": 0.48061093171789426
+   }
+  },
+  "chaos_slowreader_slow": {
+   "count": 172,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.5771812080536913,
+   "p50_ms": 2478.7213356367165,
+   "p95_ms": 3908.69385030106,
+   "p99_ms": 3986.8677273070816,
+   "p999_ms": 4066.6050818532235,
+   "max_ms": 4066.6050818532235,
+   "drift": {
+    "p99_early_ms": 3986.8677273070816,
+    "p99_late_ms": 3908.69385030106,
+    "ratio": 0.9803921568627451
+   }
+  },
+  "chaos_slowreader_never": {
+   "count": 85,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.28619528619528617,
+   "p50_ms": 1735.4999810733595,
+   "p95_ms": 2847.2716723423778,
+   "p99_ms": 2962.3014479050103,
+   "p999_ms": 2962.3014479050103,
+   "max_ms": 2962.3014479050103,
+   "drift": {
+    "p99_early_ms": 2528.2957623494503,
+    "p99_late_ms": 2528.2957623494503,
+    "ratio": 1.0
+   }
+  },
+  "chaos_slowreader_partial": {
+   "count": 94,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.3219178082191781,
+   "p50_ms": 834.1002629000551,
+   "p95_ms": 1510.8571735076673,
+   "p99_ms": 1541.074316977821,
+   "p999_ms": 1541.074316977821,
+   "max_ms": 1541.074316977821,
+   "drift": {
+    "p99_early_ms": 1264.2176959140209,
+    "p99_late_ms": 1395.7984891244057,
+    "ratio": 1.1040808032000002
+   }
+  },
+  "chaos_timeout_arg_read": {
+   "count": 102,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.3434343434343434,
+   "p50_ms": 50.118015705894116,
+   "p95_ms": 100.23049601039068,
+   "p99_ms": 100.23049601039068,
+   "p999_ms": 102.2351059305985,
+   "max_ms": 102.2351059305985,
+   "drift": {
+    "p99_early_ms": 100.23049601039068,
+    "p99_late_ms": 100.23049601039068,
+    "ratio": 1.0
+   }
+  },
+  "chaos_timeout_cfg_read": {
+   "count": 66,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.2222222222222222,
+   "p50_ms": 4957.168903101405,
+   "p95_ms": 4957.168903101405,
+   "p99_ms": 4957.168903101405,
+   "p999_ms": 4957.168903101405,
+   "max_ms": 4957.168903101405,
+   "drift": {
+    "p99_early_ms": 4957.168903101405,
+    "p99_late_ms": 4957.168903101405,
+    "ratio": 1.0
+   }
+  },
+  "chaos_udf_cycle": {
+   "count": 164,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.5466666666666666,
+   "p50_ms": 4.74868572427548,
+   "p95_ms": 15.580584065619144,
+   "p99_ms": 30050.337015127545,
+   "p999_ms": 30050.337015127545,
+   "max_ms": 30050.337015127545,
+   "drift": {
+    "p99_early_ms": 30050.337015127545,
+    "p99_late_ms": 5.675119019804474,
+    "ratio": 0.000188853756180757
+   }
+  },
+  "victim_hop": {
+   "count": 43202,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 144.00666666666666,
+   "p50_ms": 0.4075230047209962,
+   "p95_ms": 0.5594417553765582,
+   "p99_ms": 3.819192412304713,
+   "p999_ms": 36.508258732622856,
+   "max_ms": 98.26519216704966,
+   "drift": {
+    "p99_early_ms": 1.8722565361614325,
+    "p99_late_ms": 0.8313010196033561,
+    "ratio": 0.4440102109659178
+   }
+  },
+  "victim_point": {
+   "count": 79337,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 264.45666666666665,
+   "p50_ms": 0.3277556902773375,
+   "p95_ms": 0.45893709290233176,
+   "p99_ms": 3.3913335651892327,
+   "p999_ms": 35.79241052217927,
+   "max_ms": 122.18041534997285,
+   "drift": {
+    "p99_early_ms": 1.5057867317354694,
+    "p99_late_ms": 0.6426227262856066,
+    "ratio": 0.4267687533313316
+   }
+  },
+  "victim_range50": {
+   "count": 21461,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 71.53666666666666,
+   "p50_ms": 0.38401802919031536,
+   "p95_ms": 0.5168377068328772,
+   "p99_ms": 3.4591602364930174,
+   "p999_ms": 41.11422897744662,
+   "max_ms": 122.18041534997285,
+   "drift": {
+    "p99_early_ms": 1.729675637280984,
+    "p99_late_ms": 0.7833535175039729,
+    "ratio": 0.45289041518523615
+   }
+  },
+  "base_victim_hop": {
+   "count": 5342,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 118.71111111111111,
+   "p50_ms": 0.477478151455586,
+   "p95_ms": 0.5820432022937706,
+   "p99_ms": 0.668584684427545,
+   "p999_ms": 0.8479270399954233,
+   "max_ms": 2.837716219002785,
+   "drift": {
+    "p99_early_ms": 0.7095074157919864,
+    "p99_late_ms": 0.6300222806721633,
+    "ratio": 0.8879713821861918
+   }
+  },
+  "base_victim_point": {
+   "count": 10011,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 222.46666666666667,
+   "p50_ms": 0.4075230047209962,
+   "p95_ms": 0.5067036341498796,
+   "p99_ms": 0.5936840663396461,
+   "p999_ms": 0.7236975641078262,
+   "max_ms": 1.9097016668846611,
+   "drift": {
+    "p99_early_ms": 0.5936840663396461,
+    "p99_late_ms": 0.5706305904840888,
+    "ratio": 0.9611687812379852
+   }
+  },
+  "base_victim_range50": {
+   "count": 2647,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 58.82222222222222,
+   "p50_ms": 0.449938326374835,
+   "p95_ms": 0.5484723091927041,
+   "p99_ms": 0.6176689026197678,
+   "p999_ms": 0.8313010196033561,
+   "max_ms": 0.9178234974246527,
+   "drift": {
+    "p99_early_ms": 0.5936840663396461,
+    "p99_late_ms": 0.6300222806721633,
+    "ratio": 1.0612080000000002
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 408.8943243243243,
+  "cpu_max_pct": 698.4,
+  "rss_start_mb": 261.5,
+  "rss_end_mb": 261.4,
+  "rss_max_mb": 2186.9,
+  "used_mem_end_mb": 111.0,
+  "rss_slope_mb_per_h": -1025.1961304869926,
+  "used_mem_slope_mb_per_h": -1131.8298208535264,
+  "samples": 503,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "ingest victim node count",
+   "ok": true,
+   "detail": "125000 != 125000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest victim edge count",
+   "ok": true,
+   "detail": "250000 != 250000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest chaos node count",
+   "ok": true,
+   "detail": "200000 != 200000",
+   "severity": "critical"
+  },
+  {
+   "name": "chaos string ground truth",
+   "ok": true,
+   "detail": "'000007770000077700000777000007770000077700000777000007770000077700000777000007770000077700000777'",
+   "severity": "critical"
+  },
+  {
+   "name": "reduce() string concat result length exact (20000)",
+   "ok": true,
+   "detail": "got 20000",
+   "severity": "minor"
+  },
+  {
+   "name": "GRAPH.CONFIG SET QUERY_MEM_CAPACITY takes effect",
+   "ok": true,
+   "detail": "got 268435456",
+   "severity": "major"
+  },
+  {
+   "name": "GRAPH.CONFIG SET TIMEOUT takes effect",
+   "ok": true,
+   "detail": "got 5000",
+   "severity": "major"
+  },
+  {
+   "name": "server alive after chaos",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "victim/chaos results always exactly right",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "victim queries never error",
+   "ok": true,
+   "detail": "0 errors; top=[]",
+   "severity": "major"
+  },
+  {
+   "name": "chaos workers saw no unexpected failures",
+   "ok": true,
+   "detail": "{}; top=[]",
+   "severity": "major"
+  },
+  {
+   "name": "victim point p99 under chaos within SLO",
+   "ok": true,
+   "detail": "p99 3.4 ms vs baseline 0.6 ms (limit 100 ms)",
+   "severity": "major"
+  },
+  {
+   "name": "victim hop p99 under chaos within SLO",
+   "ok": true,
+   "detail": "p99 3.7 ms vs baseline 0.7 ms (limit 100 ms)",
+   "severity": "major"
+  },
+  {
+   "name": "victim range50 p99 under chaos within SLO",
+   "ok": true,
+   "detail": "p99 3.4 ms vs baseline 0.6 ms (limit 100 ms)",
+   "severity": "major"
+  },
+  {
+   "name": "victim open-loop schedule kept (few late/missed sends)",
+   "ok": true,
+   "detail": "late=10634 missed=662 victim_ops=120000",
+   "severity": "major"
+  },
+  {
+   "name": "connection churn volume >= 1000 connects",
+   "ok": true,
+   "detail": "36000",
+   "severity": "minor"
+  },
+  {
+   "name": "500+ concurrent connections were reached",
+   "ok": true,
+   "detail": "max 621.0",
+   "severity": "minor"
+  },
+  {
+   "name": "post-chaos victim data intact (6000 spot checks)",
+   "ok": true,
+   "detail": "0 mismatches",
+   "severity": "critical"
+  },
+  {
+   "name": "post-chaos victim counts intact",
+   "ok": true,
+   "detail": "125000 250000",
+   "severity": "critical"
+  },
+  {
+   "name": "post-chaos chaos-graph :C count intact (RO ops never wrote)",
+   "ok": true,
+   "detail": "200000 != 200000",
+   "severity": "critical"
+  },
+  {
+   "name": "no :Z nodes (RO_QUERY writes never applied)",
+   "ok": true,
+   "detail": "0 :Z nodes",
+   "severity": "critical"
+  },
+  {
+   "name": "CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)",
+   "ok": false,
+   "detail": "idle after 16.00411891937256 (query timeout was 15s)",
+   "severity": "minor"
+  },
+  {
+   "name": "used_memory returns near baseline after quiet period",
+   "ok": true,
+   "detail": "111 MB vs baseline 111 MB (peak RSS 2187)",
+   "severity": "major"
+  },
+  {
+   "name": "RSS back within 1.5x+300MB of baseline after quiet (allocator retention tolerated?)",
+   "ok": true,
+   "detail": "192 MB vs baseline 164 MB (peak RSS 2187)",
+   "severity": "minor"
+  },
+  {
+   "name": "no leaked client connections after chaos",
+   "ok": true,
+   "detail": "4 connected",
+   "severity": "major"
+  },
+  {
+   "name": "victim query correct after quiet",
+   "ok": true,
+   "detail": "[[94703, 284116]]",
+   "severity": "critical"
+  },
+  {
+   "name": "no memory growth between chaos rounds (RSS)",
+   "ok": true,
+   "detail": "after round 1: 192 MB, after round 2: 193 MB",
+   "severity": "major"
+  },
+  {
+   "name": "no memory growth between chaos rounds (used_memory)",
+   "ok": true,
+   "detail": "111 -> 111 MB",
+   "severity": "major"
+  },
+  {
+   "name": "no leaked client connections after round 2",
+   "ok": true,
+   "detail": "2",
+   "severity": "major"
+  },
+  {
+   "name": "victim data intact after round 2",
+   "ok": true,
+   "detail": "0 mismatches",
+   "severity": "critical"
+  },
+  {
+   "name": "no crash/panic markers in server log",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "deeply nested expressions never crash the server",
+   "ok": true,
+   "detail": "{'parens5000': 'ok', 'lists5000': 'error-reply: Query nesting exceeds the maximum depth of 256, errCtx: ...]', 'plus20000': 'ok', 'and20000': 'ok', 'maps2000': 'error-reply: Query nesting exceeds the maximum depth of 100, errCtx: ...a'}",
+   "severity": "critical"
+  },
+  {
+   "name": "deeply nested expressions are answered within 60 s",
+   "ok": true,
+   "detail": "{'parens5000': 'ok', 'lists5000': 'error-reply: Query nesting exceeds the maximum depth of 256, errCtx: ...]', 'plus20000': 'ok', 'and20000': 'ok', 'maps2000': 'error-reply: Query nesting exceeds the maximum depth of 100, errCtx: ...a'}",
+   "severity": "critical"
+  }
+ ],
+ "checks_failed": [
+  {
+   "name": "CLIENT KILLed query is cancelled (CPU idle within 5s of the kill)",
+   "ok": false,
+   "detail": "idle after 16.00411891937256 (query timeout was 15s)",
+   "severity": "minor"
+  }
+ ],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s11_client_chaos",
+  "scale": 0.25,
+  "victim_nodes": 125000,
+  "victim_edges": 250000,
+  "chaos_nodes": 200000,
+  "duration": 300.0,
+  "ingest_s": 33.96425199508667,
+  "reduce_string_len": 20000,
+  "udf_supported": true,
+  "udf_loop_tested": true,
+  "rss_baseline_mb": 164.2890625,
+  "used_mem_baseline_mb": 110.56550598144531,
+  "victim_point_p99_base_ms": 0.5936840663396461,
+  "victim_point_p99_chaos_ms": 3.3913335651892327,
+  "victim_point_p50_base_ms": 0.4075230047209962,
+  "victim_point_p50_chaos_ms": 0.3277556902773375,
+  "victim_hop_p99_base_ms": 0.668584684427545,
+  "victim_hop_p99_chaos_ms": 3.6708885162482825,
+  "victim_hop_p50_base_ms": 0.477478151455586,
+  "victim_hop_p50_chaos_ms": 0.4075230047209962,
+  "victim_range50_p99_base_ms": 0.6176689026197678,
+  "victim_range50_p99_chaos_ms": 3.3913335651892327,
+  "victim_range50_p50_base_ms": 0.449938326374835,
+  "victim_range50_p50_chaos_ms": 0.38401802919031536,
+  "late_start_ops": 10634,
+  "missed_schedule_ops": 662,
+  "chaos_op_counts": {
+   "chaos_big_20KB_strings": 19,
+   "chaos_big_150k_lists": 31,
+   "chaos_big_200k_rows": 39,
+   "chaos_big_collect_20MB": 22,
+   "chaos_churn": 36000,
+   "chaos_err_query": 49520,
+   "chaos_err_garbage_arity": 8987,
+   "chaos_ro_write_rejected": 18195,
+   "chaos_err_mutated": 13294,
+   "chaos_flood_conn_query": 11982,
+   "chaos_kill_midquery": 300,
+   "chaos_memhog_stopped": 90,
+   "chaos_params": 4500,
+   "chaos_pipeline300": 1200,
+   "chaos_slowreader_slow": 147,
+   "chaos_slowreader_partial": 77,
+   "chaos_slowreader_never": 69,
+   "chaos_timeout_arg_read": 92,
+   "chaos_timeout_cfg_read": 54,
+   "chaos_udf_cycle": 132
+  },
+  "max_clients_seen": 621.0,
+  "tmp_nodes_after_timed_out_writes": 0,
+  "write_behind_slow_read": {
+   "read_after_pending_write_s": 0.01,
+   "write_s": 4.85,
+   "slow_read_s": 5.35
+  },
+  "orphaned_query_busy_s_after_client_kill": 16.00411891937256,
+  "rss_after_quiet_mb": 191.9296875,
+  "used_mem_after_quiet_mb": 110.99036407470703,
+  "connected_clients_after_quiet": 4,
+  "quiet_s": 15.0,
+  "rss_peak_mb": 2186.9,
+  "rss_after_quiet2_mb": 192.953125,
+  "used_mem_after_quiet2_mb": 110.97958374023438,
+  "round2_s": 60.0,
+  "depth_probe": {
+   "parens5000": "ok",
+   "lists5000": "error-reply: Query nesting exceeds the maximum depth of 256, errCtx: ...]",
+   "plus20000": "ok",
+   "and20000": "ok",
+   "maps2000": "error-reply: Query nesting exceeds the maximum depth of 100, errCtx: ...a"
+  }
+ }
+}

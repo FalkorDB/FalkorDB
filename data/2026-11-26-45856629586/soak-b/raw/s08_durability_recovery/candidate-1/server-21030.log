@@ -1,0 +1,727 @@
+1:M 26 Nov 2026 16:35:28.473 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:35:28.473 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:35:28.473 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:35:28.473 * Configuration loaded
+1:M 26 Nov 2026 16:35:28.503 * monotonic clock: X86 TSC @ 2100.04 ticks/us
+1:M 26 Nov 2026 16:35:28.504 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:35:28.506 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:35:28.506 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:35:28.506 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:35:28.506 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:35:28.506 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:35:28.506 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:35:28.506 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:35:28.536 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:35:28.537 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:35:28.537 * Server initialized
+1:M 26 Nov 2026 16:35:28.537 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:35:29.020 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:35:29.020 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:35:29.021 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:35:29.022 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:35:29.024 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:35:29.027 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:35:29.031 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:35:29.038 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:35:29.096 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:35:29.111 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:35:29.185 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:35:29.318 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:35:29.465 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:35:29.699 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:35:30.039 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:37:51.212 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:37:51.212 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:37:51.213 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:37:51.214 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:37:51.526 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:37:51.526 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:37:51.527 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:37:51.528 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:37:51.836 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:37:51.836 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:37:51.837 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:37:51.838 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:37:53.938 * Creating AOF incr file temp-appendonly.aof.incr on background rewrite
+1:M 26 Nov 2026 16:37:53.960 * Background append only file rewriting started by pid 159
+159:C 26 Nov 2026 16:37:54.458 * Successfully created the temporary AOF base file temp-rewriteaof-bg-159.aof
+159:C 26 Nov 2026 16:37:54.464 * Fork CoW for AOF rewrite: current 50 MB, peak 50 MB, average 26 MB
+1:M 26 Nov 2026 16:37:54.489 * Background AOF rewrite terminated with success
+1:M 26 Nov 2026 16:37:54.489 * Successfully renamed the temporary AOF base file temp-rewriteaof-bg-159.aof into appendonly.aof.1.base.rdb
+1:M 26 Nov 2026 16:37:54.489 * Successfully renamed the temporary AOF incr file temp-appendonly.aof.incr into appendonly.aof.1.incr.aof
+1:M 26 Nov 2026 16:37:54.492 * Background AOF rewrite finished successfully
+1:M 26 Nov 2026 16:38:05.376 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:38:11.897 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:38:23.615 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:38:24.938 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:38:24.938 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:38:24.939 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:38:24.939 * Configuration loaded
+1:M 26 Nov 2026 16:38:24.969 * monotonic clock: X86 TSC @ 2100.30 ticks/us
+1:M 26 Nov 2026 16:38:24.969 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:38:24.972 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:38:24.972 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:38:24.972 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:38:24.972 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:38:24.972 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:38:24.972 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:38:24.972 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:38:25.001 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:38:25.002 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:38:25.002 * Server initialized
+1:M 26 Nov 2026 16:38:25.002 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:38:25.003 * Reading RDB base file on AOF loading...
+1:M 26 Nov 2026 16:38:25.003 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:38:25.003 * RDB age 32 seconds
+1:M 26 Nov 2026 16:38:25.003 * RDB memory usage when created 241.99 Mb
+1:M 26 Nov 2026 16:38:25.003 * RDB is base AOF
+1:M 26 Nov 2026 16:38:25.019 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:38:25.019 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:38:25.020 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:38:25.021 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:38:25.037 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:38:25.037 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:38:25.038 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:38:25.039 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:38:26.406 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:38:26.406 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:38:26.407 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:38:26.408 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:38:26.410 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:38:26.412 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:38:26.416 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:38:26.422 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:38:26.432 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:38:26.446 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:38:26.468 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:38:26.500 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:38:26.549 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:38:26.626 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:38:26.739 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:38:26.849 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:38:26.849 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:38:26.850 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:38:26.851 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:38:26.853 * Done loading RDB, keys loaded: 7, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:38:26.853 * DB loaded from base file appendonly.aof.1.base.rdb: 1.851 seconds
+1:M 26 Nov 2026 16:38:26.916 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:38:26.936 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:38:26.974 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:38:26.976 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.123 seconds
+1:M 26 Nov 2026 16:38:26.977 * DB loaded from append only file: 1.975 seconds
+1:M 26 Nov 2026 16:38:26.977 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+1:M 26 Nov 2026 16:38:26.977 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:38:33.714 * Background saving started by pid 33
+33:C 26 Nov 2026 16:38:34.148 * DB saved on disk
+33:C 26 Nov 2026 16:38:34.153 * Fork CoW for RDB: current 32 MB, peak 32 MB, average 17 MB
+1:M 26 Nov 2026 16:38:34.242 * Background saving terminated with success
+1:M 26 Nov 2026 16:38:52.609 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:38:59.589 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:38:59.590 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:38:59.590 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:38:59.590 * Configuration loaded
+1:M 26 Nov 2026 16:38:59.620 * monotonic clock: X86 TSC @ 2100.30 ticks/us
+1:M 26 Nov 2026 16:38:59.620 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:38:59.623 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:38:59.623 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:38:59.623 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:38:59.623 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:38:59.623 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:38:59.623 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:38:59.623 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:38:59.652 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:38:59.652 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:38:59.653 * Server initialized
+1:M 26 Nov 2026 16:38:59.653 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:38:59.653 * Reading RDB base file on AOF loading...
+1:M 26 Nov 2026 16:38:59.653 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:38:59.653 * RDB age 66 seconds
+1:M 26 Nov 2026 16:38:59.653 * RDB memory usage when created 241.99 Mb
+1:M 26 Nov 2026 16:38:59.653 * RDB is base AOF
+1:M 26 Nov 2026 16:38:59.668 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:38:59.668 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:38:59.669 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:38:59.670 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:38:59.685 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:38:59.685 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:38:59.686 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:38:59.687 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:00.957 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:39:00.957 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:39:00.958 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:39:00.959 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:00.961 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:39:00.964 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:39:00.968 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:39:00.974 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:39:00.984 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:39:00.998 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:39:01.020 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:39:01.052 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:39:01.101 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:39:01.176 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:39:01.285 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:39:01.393 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:39:01.394 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:39:01.394 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:39:01.395 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:01.397 * Done loading RDB, keys loaded: 7, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:39:01.398 * DB loaded from base file appendonly.aof.1.base.rdb: 1.745 seconds
+1:M 26 Nov 2026 16:39:01.459 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:39:01.479 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:39:01.517 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:39:01.608 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:01.632 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.234 seconds
+1:M 26 Nov 2026 16:39:01.632 * DB loaded from append only file: 1.979 seconds
+1:M 26 Nov 2026 16:39:01.632 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+1:M 26 Nov 2026 16:39:01.632 * Ready to accept connections tcp
+1:signal-handler (1795711173) Received SIGTERM scheduling shutdown...
+1:M 26 Nov 2026 16:39:33.831 * User requested shutdown...
+1:M 26 Nov 2026 16:39:33.831 * Calling fsync() on the AOF file.
+1:M 26 Nov 2026 16:39:33.831 * Module lua unloaded
+1:M 26 Nov 2026 16:39:33.831 # Failed to unload module graph: the module exports one or more module-side data types, can't unload
+1:M 26 Nov 2026 16:39:33.831 # Valkey is now ready to exit, bye bye...
+1:M 26 Nov 2026 16:39:34.265 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:39:34.265 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:39:34.265 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:39:34.265 * Configuration loaded
+1:M 26 Nov 2026 16:39:34.296 * monotonic clock: X86 TSC @ 2100.04 ticks/us
+1:M 26 Nov 2026 16:39:34.296 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:39:34.298 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:39:34.298 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:39:34.298 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:39:34.298 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:39:34.298 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:39:34.298 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:39:34.298 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:39:34.326 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:39:34.327 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:39:34.327 * Server initialized
+1:M 26 Nov 2026 16:39:34.327 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:39:34.327 * Reading RDB base file on AOF loading...
+1:M 26 Nov 2026 16:39:34.327 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:39:34.327 * RDB age 101 seconds
+1:M 26 Nov 2026 16:39:34.327 * RDB memory usage when created 241.99 Mb
+1:M 26 Nov 2026 16:39:34.327 * RDB is base AOF
+1:M 26 Nov 2026 16:39:34.342 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:39:34.343 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:39:34.343 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:39:34.345 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:34.358 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:39:34.359 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:39:34.360 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:39:34.361 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:35.593 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:39:35.593 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:39:35.594 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:39:35.595 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:35.597 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:39:35.599 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:39:35.604 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:39:35.610 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:39:35.619 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:39:35.633 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:39:35.655 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:39:35.686 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:39:35.734 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:39:35.809 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:39:35.919 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:39:36.028 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:39:36.029 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:39:36.029 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:39:36.031 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:36.032 * Done loading RDB, keys loaded: 7, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:39:36.033 * DB loaded from base file appendonly.aof.1.base.rdb: 1.706 seconds
+1:M 26 Nov 2026 16:39:36.094 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:39:36.113 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:39:36.152 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:39:36.240 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:39:36.381 * DB loaded from incr file appendonly.aof.1.incr.aof: 0.348 seconds
+1:M 26 Nov 2026 16:39:36.381 * DB loaded from append only file: 2.054 seconds
+1:M 26 Nov 2026 16:39:36.381 * Opening AOF incr file appendonly.aof.1.incr.aof on server start
+1:M 26 Nov 2026 16:39:36.381 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:39:43.139 * Creating AOF incr file appendonly.aof.2.incr.aof on background rewrite
+1:M 26 Nov 2026 16:39:43.144 * Background append only file rewriting started by pid 33
+33:C 26 Nov 2026 16:39:43.559 * Successfully created the temporary AOF base file temp-rewriteaof-bg-33.aof
+33:C 26 Nov 2026 16:39:43.563 * Fork CoW for AOF rewrite: current 32 MB, peak 32 MB, average 20 MB
+1:M 26 Nov 2026 16:39:43.651 * Background AOF rewrite terminated with success
+1:M 26 Nov 2026 16:39:43.651 * Successfully renamed the temporary AOF base file temp-rewriteaof-bg-33.aof into appendonly.aof.2.base.rdb
+1:M 26 Nov 2026 16:39:43.654 * Removing the history file appendonly.aof.1.incr.aof in the background
+1:M 26 Nov 2026 16:39:43.654 * Removing the history file appendonly.aof.1.base.rdb in the background
+1:M 26 Nov 2026 16:39:43.657 * Background AOF rewrite finished successfully
+1:M 26 Nov 2026 16:40:09.017 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:40:09.017 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:40:09.017 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:40:09.018 * Configuration loaded
+1:M 26 Nov 2026 16:40:09.048 * monotonic clock: X86 TSC @ 2100.04 ticks/us
+1:M 26 Nov 2026 16:40:09.048 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:40:09.051 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:40:09.051 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:40:09.051 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:40:09.051 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:40:09.051 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:40:09.051 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:40:09.051 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:40:09.080 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:40:09.080 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:40:09.080 * Server initialized
+1:M 26 Nov 2026 16:40:09.080 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:40:09.081 * Reading RDB base file on AOF loading...
+1:M 26 Nov 2026 16:40:09.081 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:40:09.081 * RDB age 26 seconds
+1:M 26 Nov 2026 16:40:09.081 * RDB memory usage when created 246.39 Mb
+1:M 26 Nov 2026 16:40:09.081 * RDB is base AOF
+1:M 26 Nov 2026 16:40:09.098 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:09.098 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:09.099 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:09.100 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:09.116 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:09.116 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:09.117 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:09.118 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:09.133 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:09.133 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:09.134 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:09.135 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:09.155 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:09.156 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:09.156 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:09.157 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:10.431 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:10.432 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:10.432 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:10.434 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:10.435 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:40:10.438 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:40:10.442 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:40:10.448 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:40:10.457 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:40:10.471 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:40:10.492 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:40:10.523 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:40:10.571 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:40:10.645 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:40:10.753 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:40:10.848 * Done loading RDB, keys loaded: 7, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:40:10.849 * DB loaded from base file appendonly.aof.2.base.rdb: 1.768 seconds
+1:M 26 Nov 2026 16:40:11.001 * DB loaded from incr file appendonly.aof.2.incr.aof: 0.152 seconds
+1:M 26 Nov 2026 16:40:11.001 * DB loaded from append only file: 1.920 seconds
+1:M 26 Nov 2026 16:40:11.001 * Opening AOF incr file appendonly.aof.2.incr.aof on server start
+1:M 26 Nov 2026 16:40:11.001 * Ready to accept connections tcp
+34:C 26 Nov 2026 16:40:43.178 * Fork CoW for Module fork: current 4 MB, peak 4 MB, average 4 MB
+1:M 26 Nov 2026 16:40:43.946 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:40:43.946 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:40:43.946 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:40:43.946 * Configuration loaded
+1:M 26 Nov 2026 16:40:43.977 * monotonic clock: X86 TSC @ 2100.04 ticks/us
+1:M 26 Nov 2026 16:40:43.977 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:40:43.980 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:40:43.980 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:40:43.980 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:40:43.980 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:40:43.980 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:40:43.980 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:40:43.980 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:40:44.008 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:40:44.009 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:40:44.009 * Server initialized
+1:M 26 Nov 2026 16:40:44.009 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:40:44.009 * Reading RDB base file on AOF loading...
+1:M 26 Nov 2026 16:40:44.009 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:40:44.009 * RDB age 61 seconds
+1:M 26 Nov 2026 16:40:44.009 * RDB memory usage when created 246.39 Mb
+1:M 26 Nov 2026 16:40:44.009 * RDB is base AOF
+1:M 26 Nov 2026 16:40:44.024 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:44.024 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:44.025 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:44.026 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:44.041 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:44.042 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:44.042 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:44.044 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:44.058 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:44.059 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:44.059 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:44.061 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:44.079 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:44.079 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:44.080 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:44.081 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:45.258 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:40:45.259 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:40:45.259 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:40:45.261 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:40:45.262 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:40:45.265 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:40:45.269 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:40:45.275 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:40:45.285 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:40:45.299 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:40:45.320 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:40:45.351 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:40:45.397 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:40:45.471 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:40:45.579 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:40:45.671 * Done loading RDB, keys loaded: 7, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:40:45.672 * DB loaded from base file appendonly.aof.2.base.rdb: 1.663 seconds
+1:M 26 Nov 2026 16:40:45.968 * DB loaded from incr file appendonly.aof.2.incr.aof: 0.296 seconds
+1:M 26 Nov 2026 16:40:45.968 * DB loaded from append only file: 1.959 seconds
+1:M 26 Nov 2026 16:40:45.968 * Opening AOF incr file appendonly.aof.2.incr.aof on server start
+1:M 26 Nov 2026 16:40:45.968 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:40:52.927 * Background saving started by pid 33
+33:C 26 Nov 2026 16:40:53.321 * DB saved on disk
+33:C 26 Nov 2026 16:40:53.325 * Fork CoW for RDB: current 32 MB, peak 32 MB, average 19 MB
+1:M 26 Nov 2026 16:40:53.331 * Background saving terminated with success
+1:M 26 Nov 2026 16:41:10.891 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:41:18.820 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:41:18.820 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:41:18.820 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:41:18.820 * Configuration loaded
+1:M 26 Nov 2026 16:41:18.851 * monotonic clock: X86 TSC @ 2100.30 ticks/us
+1:M 26 Nov 2026 16:41:18.851 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:41:18.853 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:41:18.854 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:41:18.854 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:41:18.854 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:41:18.854 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:41:18.854 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:41:18.854 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:41:18.883 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:41:18.884 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:41:18.884 * Server initialized
+1:M 26 Nov 2026 16:41:18.884 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:41:18.884 * Reading RDB base file on AOF loading...
+1:M 26 Nov 2026 16:41:18.884 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:41:18.884 * RDB age 95 seconds
+1:M 26 Nov 2026 16:41:18.884 * RDB memory usage when created 246.39 Mb
+1:M 26 Nov 2026 16:41:18.884 * RDB is base AOF
+1:M 26 Nov 2026 16:41:18.900 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:18.900 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:18.901 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:18.902 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:18.917 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:18.918 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:18.919 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:18.920 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:18.935 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:18.936 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:18.936 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:18.938 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:18.956 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:18.957 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:18.958 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:18.958 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:20.184 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:20.185 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:20.185 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:20.187 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:20.188 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:41:20.191 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:41:20.195 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:41:20.201 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:41:20.211 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:41:20.226 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:41:20.248 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:41:20.281 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:41:20.330 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:41:20.406 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:41:20.519 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:41:20.617 * Done loading RDB, keys loaded: 7, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:41:20.618 * DB loaded from base file appendonly.aof.2.base.rdb: 1.734 seconds
+1:M 26 Nov 2026 16:41:21.046 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:41:21.086 * DB loaded from incr file appendonly.aof.2.incr.aof: 0.468 seconds
+1:M 26 Nov 2026 16:41:21.087 * DB loaded from append only file: 2.202 seconds
+1:M 26 Nov 2026 16:41:21.087 * Opening AOF incr file appendonly.aof.2.incr.aof on server start
+1:M 26 Nov 2026 16:41:21.087 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:41:25.537 * <module> Created 224 virtual keys for graph big
+1:M 26 Nov 2026 16:41:25.920 * DB saved on disk
+1:M 26 Nov 2026 16:41:25.920 * <module> Deleted 224 virtual keys for graph big
+1:M 26 Nov 2026 16:41:25.922 * User requested shutdown... (user request from 'id=65 addr=127.0.0.1:36544 laddr=127.0.0.1:21030 fd=13 name=*redacted* user=*redacted* lib-name=redis-py lib-ver=8.1.0')
+1:M 26 Nov 2026 16:41:25.922 * Calling fsync() on the AOF file.
+1:M 26 Nov 2026 16:41:25.923 * Module lua unloaded
+1:M 26 Nov 2026 16:41:25.923 # Failed to unload module graph: the module exports one or more module-side data types, can't unload
+1:M 26 Nov 2026 16:41:25.923 # Valkey is now ready to exit, bye bye...
+1:M 26 Nov 2026 16:41:26.271 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:41:26.271 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:41:26.271 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:41:26.271 * Configuration loaded
+1:M 26 Nov 2026 16:41:26.302 * monotonic clock: X86 TSC @ 2100.30 ticks/us
+1:M 26 Nov 2026 16:41:26.302 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:41:26.304 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:41:26.305 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:41:26.305 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:41:26.305 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:41:26.305 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:41:26.305 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:41:26.305 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:41:26.334 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:41:26.335 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:41:26.335 * Server initialized
+1:M 26 Nov 2026 16:41:26.335 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:41:26.336 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:41:26.336 * RDB age 1 seconds
+1:M 26 Nov 2026 16:41:26.336 * RDB memory usage when created 247.14 Mb
+1:M 26 Nov 2026 16:41:26.435 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:26.436 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:26.437 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:26.438 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:26.550 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:26.550 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:26.551 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:26.552 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:26.930 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:26.931 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:26.932 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:26.933 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:27.194 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:27.194 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:27.195 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:27.196 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:27.720 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:41:27.721 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:41:27.722 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:41:27.723 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:41:27.725 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:41:27.727 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:41:27.732 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:41:27.738 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:41:27.748 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:41:27.762 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:41:27.785 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:41:27.818 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:41:27.867 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:41:27.943 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:41:28.054 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:41:28.152 * Done loading RDB, keys loaded: 231, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:41:28.152 * <module> Deleted 224 virtual keys left by the RDB load
+1:M 26 Nov 2026 16:41:28.153 * DB loaded from disk: 1.818 seconds
+1:M 26 Nov 2026 16:41:28.153 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:41:42.417 * Background saving started by pid 40
+40:C 26 Nov 2026 16:41:42.859 * DB saved on disk
+40:C 26 Nov 2026 16:41:42.864 * Fork CoW for RDB: current 33 MB, peak 33 MB, average 17 MB
+1:M 26 Nov 2026 16:41:42.886 * Background saving terminated with success
+1:M 26 Nov 2026 16:42:01.297 * <module> Created 224 virtual keys for graph big
+1:M 26 Nov 2026 16:42:01.698 * DB saved on disk
+1:M 26 Nov 2026 16:42:01.698 * <module> Deleted 224 virtual keys for graph big
+1:M 26 Nov 2026 16:42:04.181 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:42:04.182 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:42:04.182 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:42:04.182 * Configuration loaded
+1:M 26 Nov 2026 16:42:04.212 * monotonic clock: X86 TSC @ 2100.04 ticks/us
+1:M 26 Nov 2026 16:42:04.212 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:42:04.215 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:42:04.215 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:42:04.215 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:42:04.215 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:42:04.215 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:42:04.215 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:42:04.215 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:42:04.245 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:42:04.246 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:42:04.246 * Server initialized
+1:M 26 Nov 2026 16:42:04.246 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:42:04.247 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:42:04.247 * RDB age 3 seconds
+1:M 26 Nov 2026 16:42:04.247 * RDB memory usage when created 251.30 Mb
+1:M 26 Nov 2026 16:42:04.346 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:04.346 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:04.347 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:04.348 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:04.685 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:04.685 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:04.686 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:04.687 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:04.839 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:04.839 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:04.840 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:04.841 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:04.948 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:04.949 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:04.949 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:04.951 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:05.639 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:05.639 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:05.640 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:05.641 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:05.643 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:42:05.646 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:42:05.650 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:42:05.656 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:42:05.665 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:42:05.679 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:42:05.701 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:42:05.732 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:42:05.779 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:42:05.850 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:42:05.960 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:42:06.060 * Done loading RDB, keys loaded: 231, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:42:06.060 * <module> Deleted 224 virtual keys left by the RDB load
+1:M 26 Nov 2026 16:42:06.060 * DB loaded from disk: 1.814 seconds
+1:M 26 Nov 2026 16:42:06.060 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:42:08.670 * <module> Created 224 virtual keys for graph big
+1:M 26 Nov 2026 16:42:09.053 * DB saved on disk
+1:M 26 Nov 2026 16:42:09.053 * <module> Deleted 224 virtual keys for graph big
+1:M 26 Nov 2026 16:42:41.640 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:42:41.640 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:42:41.640 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:42:41.640 * Configuration loaded
+1:M 26 Nov 2026 16:42:41.671 * monotonic clock: X86 TSC @ 2100.04 ticks/us
+1:M 26 Nov 2026 16:42:41.671 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:42:41.673 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:42:41.673 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:42:41.673 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:42:41.674 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:42:41.674 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:42:41.674 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:42:41.674 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:42:41.703 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:42:41.704 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:42:41.704 * Server initialized
+1:M 26 Nov 2026 16:42:41.704 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:42:41.705 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:42:41.705 * RDB age 33 seconds
+1:M 26 Nov 2026 16:42:41.705 * RDB memory usage when created 251.80 Mb
+1:M 26 Nov 2026 16:42:41.775 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:41.776 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:41.777 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:41.778 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:42.231 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:42.232 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:42.232 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:42.233 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:42.353 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:42.353 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:42.354 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:42.355 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:42.400 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:42.400 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:42.401 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:42.402 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:43.097 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:43.098 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:43.098 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:43.100 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:43.101 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:42:43.104 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:42:43.109 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:42:43.115 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:42:43.125 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:42:43.139 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:42:43.162 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:42:43.196 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:42:43.246 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:42:43.324 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:42:43.435 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:42:43.534 * Done loading RDB, keys loaded: 231, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:42:43.534 * <module> Deleted 224 virtual keys left by the RDB load
+1:M 26 Nov 2026 16:42:43.534 * DB loaded from disk: 1.830 seconds
+1:M 26 Nov 2026 16:42:43.534 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:42:48.540 * <module> Created 224 virtual keys for graph big
+1:M 26 Nov 2026 16:42:48.946 * DB saved on disk
+1:M 26 Nov 2026 16:42:48.946 * <module> Deleted 224 virtual keys for graph big
+1:M 26 Nov 2026 16:42:48.946 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:42:48.947 * RDB signature and version check passed. Flushing old data
+1:M 26 Nov 2026 16:42:48.947 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:42:48.947 * RDB age 0 seconds
+1:M 26 Nov 2026 16:42:48.947 * RDB memory usage when created 251.80 Mb
+1:M 26 Nov 2026 16:42:49.462 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:49.463 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:49.463 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:49.465 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:49.510 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:49.511 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:49.511 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:49.512 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:49.712 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:49.712 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:49.713 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:49.714 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:49.787 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:49.787 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:49.788 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:49.789 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:50.251 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:50.252 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:50.252 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:50.254 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:50.255 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:42:50.258 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:42:50.262 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:42:50.268 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:42:50.278 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:42:50.291 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:42:50.313 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:42:50.345 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:42:50.392 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:42:50.467 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:42:50.576 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:42:50.672 * Done loading RDB, keys loaded: 231, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:42:50.672 * <module> Deleted 224 virtual keys left by the RDB load
+1:M 26 Nov 2026 16:42:50.672 * DB reloaded by DEBUG RELOAD
+1:M 26 Nov 2026 16:42:53.167 * User requested shutdown... (user request from 'id=57 addr=127.0.0.1:48500 laddr=127.0.0.1:21030 fd=10 name=*redacted* user=*redacted* lib-name=redis-py lib-ver=8.1.0')
+1:M 26 Nov 2026 16:42:53.167 * Saving the final RDB snapshot before exiting.
+1:M 26 Nov 2026 16:42:53.168 * <module> Created 224 virtual keys for graph big
+1:M 26 Nov 2026 16:42:53.545 * DB saved on disk
+1:M 26 Nov 2026 16:42:53.546 * <module> Deleted 224 virtual keys for graph big
+1:M 26 Nov 2026 16:42:53.546 * Module lua unloaded
+1:M 26 Nov 2026 16:42:53.546 # Failed to unload module graph: the module exports one or more module-side data types, can't unload
+1:M 26 Nov 2026 16:42:53.546 # Valkey is now ready to exit, bye bye...
+1:M 26 Nov 2026 16:42:53.875 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+1:M 26 Nov 2026 16:42:53.875 * oO0OoO0OoO0Oo Valkey is starting oO0OoO0OoO0Oo
+1:M 26 Nov 2026 16:42:53.875 * Valkey version=9.2.0, bits=64, commit=d23684e3, modified=1, pid=1, just started
+1:M 26 Nov 2026 16:42:53.875 * Configuration loaded
+1:M 26 Nov 2026 16:42:53.906 * monotonic clock: X86 TSC @ 2100.04 ticks/us
+1:M 26 Nov 2026 16:42:53.906 * Running mode=standalone, port=21030.
+1:M 26 Nov 2026 16:42:53.909 * Legacy Redis Module /var/lib/falkordb/bin/falkordb.so found
+1:M 26 Nov 2026 16:42:53.909 * <graph> Created new data type 'graphdata'
+1:M 26 Nov 2026 16:42:53.909 * <graph> Created new data type 'graphmeta'
+1:M 26 Nov 2026 16:42:53.909 * <graph> Disabled workers threadpool of size 0
+1:M 26 Nov 2026 16:42:53.909 * <graph> Subscribe to config changes
+1:M 26 Nov 2026 16:42:53.909 * <graph> Enabled role change notification
+1:M 26 Nov 2026 16:42:53.909 * <graph> RediSearch initialized successfully.
+1:M 26 Nov 2026 16:42:53.939 * Module 'graph' loaded from /var/lib/falkordb/bin/falkordb.so (version 999999)
+1:M 26 Nov 2026 16:42:53.940 * Static Module 'lua' successfully loaded (version 1)
+1:M 26 Nov 2026 16:42:53.940 * Server initialized
+1:M 26 Nov 2026 16:42:53.940 * Cleaning slot migration log in anticipation of a load operation.
+1:M 26 Nov 2026 16:42:53.940 * Loading RDB produced by Valkey version 9.2.0
+1:M 26 Nov 2026 16:42:53.940 * RDB age 0 seconds
+1:M 26 Nov 2026 16:42:53.940 * RDB memory usage when created 251.92 Mb
+1:M 26 Nov 2026 16:42:54.429 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:54.429 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:54.430 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:54.431 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:54.491 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:54.492 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:54.492 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:54.493 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:54.690 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:54.690 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:54.691 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:54.692 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:54.779 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:54.780 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:54.780 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:54.782 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:55.267 * <graph> DocTable capacity increase from 1000 to 1501
+1:M 26 Nov 2026 16:42:55.267 * <graph> DocTable capacity increase from 1501 to 2252
+1:M 26 Nov 2026 16:42:55.268 * <graph> DocTable capacity increase from 2252 to 3379
+1:M 26 Nov 2026 16:42:55.269 * <graph> DocTable capacity increase from 3379 to 5069
+1:M 26 Nov 2026 16:42:55.271 * <graph> DocTable capacity increase from 5069 to 7604
+1:M 26 Nov 2026 16:42:55.274 * <graph> DocTable capacity increase from 7604 to 11407
+1:M 26 Nov 2026 16:42:55.278 * <graph> DocTable capacity increase from 11407 to 17111
+1:M 26 Nov 2026 16:42:55.284 * <graph> DocTable capacity increase from 17111 to 25667
+1:M 26 Nov 2026 16:42:55.294 * <graph> DocTable capacity increase from 25667 to 38501
+1:M 26 Nov 2026 16:42:55.308 * <graph> DocTable capacity increase from 38501 to 57752
+1:M 26 Nov 2026 16:42:55.330 * <graph> DocTable capacity increase from 57752 to 86629
+1:M 26 Nov 2026 16:42:55.363 * <graph> DocTable capacity increase from 86629 to 129944
+1:M 26 Nov 2026 16:42:55.412 * <graph> DocTable capacity increase from 129944 to 194917
+1:M 26 Nov 2026 16:42:55.488 * <graph> DocTable capacity increase from 194917 to 292376
+1:M 26 Nov 2026 16:42:55.601 * <graph> DocTable capacity increase from 292376 to 438565
+1:M 26 Nov 2026 16:42:55.698 * Done loading RDB, keys loaded: 231, keys expired: 0, all fields expired hashes: 0.
+1:M 26 Nov 2026 16:42:55.698 * <module> Deleted 224 virtual keys left by the RDB load
+1:M 26 Nov 2026 16:42:55.698 * DB loaded from disk: 1.758 seconds
+1:M 26 Nov 2026 16:42:55.698 * Ready to accept connections tcp
+1:M 26 Nov 2026 16:42:58.348 * User requested shutdown... (user request from 'id=35 addr=127.0.0.1:45454 laddr=127.0.0.1:21030 fd=10 name=*redacted* user=*redacted* lib-name=redis-py lib-ver=8.1.0')
+1:M 26 Nov 2026 16:42:58.348 * Module lua unloaded
+1:M 26 Nov 2026 16:42:58.348 # Failed to unload module graph: the module exports one or more module-side data types, can't unload
+1:M 26 Nov 2026 16:42:58.348 # Valkey is now ready to exit, bye bye...

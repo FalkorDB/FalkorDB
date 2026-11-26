@@ -1,0 +1,48 @@
+  nodes 0.3s
+  indexes+usesfrom 38.9s
+  paid 48.4s
+  xfer 50.2s
+base load 50.3s
+PASS base node counts
+PASS base PAID count
+PASS cycle query works on planted base cycle
+PASS server alive after load
+PASS SLO velocity p99<=100ms
+PASS SLO shared_device p99<=100ms
+PASS SLO cycle p99<=100ms
+PASS SLO fanin p99<=100ms
+PASS open-loop kept schedule (late starts <1% of writes)
+replay 12.5s: 96000 tx batches, 4500 xfer batches, 75 events
+PASS injected rings/cycles/mules detected immediately after write
+PASS total PAID count/sum == Python
+PASS total XFER count/sum == Python
+PASS MERGE created no duplicate Account/Device/IP/Merchant nodes
+PASS node counts == Python distinct keys
+PASS per-account PAID count/sum == Python
+PASS per-account XFER count/sum == Python
+PASS velocity window count/sum == Python
+PASS shared-device neighbours == Python
+PASS 3-hop device->IP ring size == Python
+PASS global ring scan == Python set and contains every planted ring
+PASS global fan-in scan == Python set and contains every mule merchant
+PASS cycle detection: planted members find 1 cycle, 300 normal find 0
+PASS server alive at end
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                               58      0       2.0    63.56   100.23   100.23    nan
+cycle                                   7500      0      25.0     0.55     1.63    12.78  13.39
+detect_after_write_cycle                  99      0       0.3     0.39     0.99     0.99    nan
+detect_after_write_fanin                  25      0       0.1     0.58     0.90     0.90    nan
+detect_after_write_ring                   25      0       0.1     1.03     1.36     1.36    nan
+fanin                                   3000      0      10.0     1.31    30.55    36.51   4.08
+ingest_tx                              96000      0     318.9     3.39    17.55    31.16   2.12
+ingest_xfer                             4500      0      15.0     1.42    10.28    37.98   1.81
+inject_cycle                              25      0       0.1     5.90    10.91    10.91    nan
+inject_mule                               25      0       0.1    12.29    36.51    36.51    nan
+inject_ring                               25      0       0.1     7.34    21.82    21.82    nan
+ring_3hop                               3000      0      10.0     1.95     2.95     6.92   1.58
+shared_device                          15000      0      50.0     1.12     2.47    14.68   8.32
+velocity                               24000      0      80.0     0.61     1.76    11.58  11.42
+monitor: {"cpu_avg_pct": 90.24147157190636, "cpu_max_pct": 108.9, "rss_start_mb": 265.8, "rss_end_mb": 359.9, "rss_max_mb": 414.8, "used_mem_end_mb": 232.0, "rss_slope_mb_per_h": 1500.280868142701, "used_mem_slope_mb_per_h": 1375.1782582545513, "samples": 370, "dead_samples": 0}
+failed checks: []
+top errors: []
+crash markers: []

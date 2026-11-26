@@ -1,0 +1,491 @@
+{
+ "ops": {
+  "q_agg_device_2m": {
+   "count": 2400,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 8.0,
+   "p50_ms": 1.7995545330271359,
+   "p95_ms": 2.237519872921078,
+   "p99_ms": 2.51981079324008,
+   "p999_ms": 7.056297186306729,
+   "max_ms": 7.4881990244861925,
+   "drift": {
+    "p99_early_ms": 2.067122500241565,
+    "p99_late_ms": 2.3744739893028313,
+    "ratio": 1.1486856676492803
+   }
+  },
+  "q_agg_site_2m": {
+   "count": 450,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 1.5,
+   "p50_ms": 16.864925264209713,
+   "p95_ms": 18.99264503624897,
+   "p99_ms": 19.75994789571343,
+   "p999_ms": 20.55824979070026,
+   "max_ms": 20.55824979070026,
+   "drift": {
+    "p99_early_ms": 19.75994789571343,
+    "p99_late_ms": 19.75994789571343,
+    "ratio": 1.0
+   }
+  },
+  "q_anomaly_join_30s": {
+   "count": 600,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 2.0,
+   "p50_ms": 6.022481704768667,
+   "p95_ms": 9.686783908232993,
+   "p99_ms": 11.80813553183103,
+   "p999_ms": 12.781505649292614,
+   "max_ms": 12.781505649292614,
+   "drift": {
+    "p99_early_ms": 12.781505649292614,
+    "p99_late_ms": 8.949091006528292,
+    "ratio": 0.7001593749656226
+   }
+  },
+  "q_latest_reading": {
+   "count": 15000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 50.0,
+   "p50_ms": 0.6300222806721633,
+   "p95_ms": 0.7679936446117381,
+   "p99_ms": 0.9549035667206079,
+   "p999_ms": 6.649306437858297,
+   "max_ms": 8.601586895932613,
+   "drift": {
+    "p99_early_ms": 1.013351304232443,
+    "p99_late_ms": 0.8998269582594633,
+    "ratio": 0.8879713821861926
+   }
+  },
+  "q_recent_by_sensor": {
+   "count": 15000,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 50.0,
+   "p50_ms": 0.9178234974246527,
+   "p95_ms": 1.0968840410791407,
+   "p99_ms": 1.28517447660205,
+   "p999_ms": 8.105467444584484,
+   "max_ms": 10.694992157826722,
+   "drift": {
+    "p99_early_ms": 1.2599749770608335,
+    "p99_late_ms": 1.2110486130919198,
+    "ratio": 0.9611687812379853
+   }
+  },
+  "retention_delete": {
+   "count": 1177,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 3.9233333333333333,
+   "p50_ms": 11.80813553183103,
+   "p95_ms": 23.15192832012863,
+   "p99_ms": 28.222071434355406,
+   "p999_ms": 41.93651355699556,
+   "max_ms": 44.50336367879207,
+   "drift": {
+    "p99_early_ms": 25.06039177972201,
+    "p99_late_ms": 25.561599615316453,
+    "ratio": 1.02
+   }
+  },
+  "_paused": {
+   "count": 20,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 0.10471204188481675,
+   "p50_ms": 400.8777044985353,
+   "p95_ms": 498.4410385817024,
+   "p99_ms": 498.4410385817024,
+   "p999_ms": 498.4410385817024,
+   "max_ms": 498.4410385817024,
+   "drift": null
+  },
+  "_late_start": {
+   "count": 362,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 1.2882562277580072,
+   "p50_ms": 151.91598943514393,
+   "p95_ms": 442.6013779677152,
+   "p99_ms": 498.4410385817024,
+   "p999_ms": 518.5780565404032,
+   "max_ms": 518.5780565404032,
+   "drift": null
+  },
+  "_idle": {
+   "count": 7261,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 24.122923588039868,
+   "p50_ms": 20.155146853627702,
+   "p95_ms": 20.155146853627702,
+   "p99_ms": 20.155146853627702,
+   "p999_ms": 53.18563921122049,
+   "max_ms": 74.4727349297757,
+   "drift": {
+    "p99_early_ms": 20.155146853627702,
+    "p99_late_ms": 20.155146853627702,
+    "ratio": 1.0
+   }
+  },
+  "ingest_batch": {
+   "count": 7103,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 23.676666666666666,
+   "p50_ms": 8.949091006528292,
+   "p95_ms": 16.864925264209713,
+   "p99_ms": 24.569011548747064,
+   "p999_ms": 37.98319238542082,
+   "max_ms": 56.441025816060886,
+   "drift": {
+    "p99_early_ms": 24.08726622426183,
+    "p99_late_ms": 24.08726622426183,
+    "ratio": 1.0
+   }
+  },
+  "ingest_single": {
+   "count": 14379,
+   "errors": 0,
+   "err_rate": 0.0,
+   "throughput_ops_s": 47.93,
+   "p50_ms": 1.5359024663701788,
+   "p95_ms": 7.4881990244861925,
+   "p99_ms": 12.530887891463346,
+   "p999_ms": 17.897193609781464,
+   "max_ms": 53.18563921122049,
+   "drift": {
+    "p99_early_ms": 11.576603462579442,
+    "p99_late_ms": 10.27969257768812,
+    "ratio": 0.8879713821861918
+   }
+  }
+ },
+ "monitor": {
+  "cpu_avg_pct": 35.719,
+  "cpu_max_pct": 79.9,
+  "rss_start_mb": 209.9,
+  "rss_end_mb": 166.5,
+  "rss_max_mb": 209.9,
+  "used_mem_end_mb": 49.5,
+  "rss_slope_mb_per_h": 67.39601420717058,
+  "used_mem_slope_mb_per_h": 49.718573491904785,
+  "samples": 305,
+  "dead_samples": 0
+ },
+ "checks": [
+  {
+   "name": "ingest reading count",
+   "ok": true,
+   "detail": "120000 != 120000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest NEXT count",
+   "ok": true,
+   "detail": "119000",
+   "severity": "critical"
+  },
+  {
+   "name": "ingest topology",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "checkpoint1 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "checkpoint2 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "checkpoint3 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "checkpoint4 ground truth (counts/sums/min/max, window, NEXT chain, aggregations)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "inline read checks (lattice values, ordering, window bounds, anomaly rows, chain guard)",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "all 4 checkpoints ran",
+   "ok": true,
+   "detail": "4",
+   "severity": "major"
+  },
+  {
+   "name": "deleted ids are reused (max(id) stays bounded)",
+   "ok": true,
+   "detail": "max_id_end=121300 peak_live=120136 ratio=1.0096890191116734",
+   "severity": "major"
+  },
+  {
+   "name": "graph empty of readings after final delete",
+   "ok": true,
+   "detail": "",
+   "severity": "major"
+  },
+  {
+   "name": "server alive at end",
+   "ok": true,
+   "detail": "",
+   "severity": "critical"
+  },
+  {
+   "name": "RSS plateaus in second half (slope projected over run length <= 10% of mean RSS)",
+   "ok": true,
+   "detail": "rss_slope=238 MB/h used_mem_slope=69 MB/h mean_rss=159",
+   "severity": "minor"
+  },
+  {
+   "name": "p99 does not drift up: ingest_batch",
+   "ok": true,
+   "detail": "early=24.09ms late=24.09ms",
+   "severity": "minor"
+  },
+  {
+   "name": "p99 does not drift up: ingest_single",
+   "ok": true,
+   "detail": "early=11.58ms late=10.28ms",
+   "severity": "minor"
+  },
+  {
+   "name": "p99 does not drift up: retention_delete",
+   "ok": true,
+   "detail": "early=25.06ms late=25.56ms",
+   "severity": "minor"
+  },
+  {
+   "name": "p99 does not drift up: q_recent_by_sensor",
+   "ok": true,
+   "detail": "early=1.26ms late=1.21ms",
+   "severity": "minor"
+  },
+  {
+   "name": "p99 does not drift up: q_latest_reading",
+   "ok": true,
+   "detail": "early=1.01ms late=0.90ms",
+   "severity": "minor"
+  },
+  {
+   "name": "p99 does not drift up: q_agg_device_2m",
+   "ok": true,
+   "detail": "early=2.07ms late=2.37ms",
+   "severity": "minor"
+  },
+  {
+   "name": "p99 does not drift up: q_agg_site_2m",
+   "ok": true,
+   "detail": "early=19.76ms late=19.76ms",
+   "severity": "minor"
+  },
+  {
+   "name": "p99 does not drift up: q_anomaly_join_30s",
+   "ok": true,
+   "detail": "early=12.78ms late=8.95ms",
+   "severity": "minor"
+  },
+  {
+   "name": "no operation errors",
+   "ok": true,
+   "detail": "{}",
+   "severity": "major"
+  }
+ ],
+ "checks_failed": [],
+ "top_errors": [],
+ "server_log_crash_markers": [],
+ "meta": {
+  "scenario": "s12_iot_retention",
+  "sites": 2,
+  "devices": 50,
+  "sensors": 1000,
+  "window_s": 120.0,
+  "live_readings_target": 120000,
+  "ingest_s": 3.8676867485046387,
+  "duration": 300.0,
+  "scale": 0.25,
+  "rss_slope_mb_per_h_2nd_half": 238.2913860994051,
+  "used_mem_slope_mb_per_h_2nd_half": 69.20426563175619,
+  "mean_rss_2nd_half_mb": 159.01,
+  "max_id_end": 121300,
+  "peak_live": 120136,
+  "max_id_over_live": 1.0096890191116734,
+  "id_samples": [
+   [
+    0.0,
+    120000,
+    121051
+   ],
+   [
+    15.0,
+    114998,
+    121051
+   ],
+   [
+    30.0,
+    115248,
+    121051
+   ],
+   [
+    45.1,
+    115001,
+    121051
+   ],
+   [
+    60.1,
+    115002,
+    121051
+   ],
+   [
+    75.1,
+    115003,
+    121051
+   ],
+   [
+    90.6,
+    114715,
+    121051
+   ],
+   [
+    105.6,
+    115001,
+    121051
+   ],
+   [
+    120.6,
+    120003,
+    121054
+   ],
+   [
+    135.6,
+    120004,
+    121299
+   ],
+   [
+    150.6,
+    120005,
+    121299
+   ],
+   [
+    166.1,
+    119791,
+    121299
+   ],
+   [
+    181.1,
+    120049,
+    121299
+   ],
+   [
+    196.2,
+    120134,
+    121299
+   ],
+   [
+    211.2,
+    120135,
+    121299
+   ],
+   [
+    226.2,
+    120136,
+    121299
+   ],
+   [
+    241.6,
+    120011,
+    121300
+   ],
+   [
+    256.6,
+    120012,
+    121300
+   ],
+   [
+    271.6,
+    120014,
+    121300
+   ],
+   [
+    287.1,
+    120021,
+    121300
+   ]
+  ],
+  "checkpoints": [
+   {
+    "idx": 0,
+    "t": 90.6,
+    "live": 114715,
+    "deleted_final": 288,
+    "retention_converged": true,
+    "max_id": 121051,
+    "problems": [],
+    "pause_s": 0.5,
+    "verify_s": 0.3
+   },
+   {
+    "idx": 1,
+    "t": 166.1,
+    "live": 119791,
+    "deleted_final": 336,
+    "retention_converged": true,
+    "max_id": 121299,
+    "problems": [],
+    "pause_s": 0.5,
+    "verify_s": 0.3
+   },
+   {
+    "idx": 2,
+    "t": 240.6,
+    "live": 119834,
+    "deleted_final": 296,
+    "retention_converged": true,
+    "max_id": 121300,
+    "problems": [],
+    "pause_s": 0.4,
+    "verify_s": 0.3
+   },
+   {
+    "idx": 3,
+    "t": 280.1,
+    "live": 119751,
+    "deleted_final": 331,
+    "retention_converged": true,
+    "max_id": 121300,
+    "problems": [],
+    "pause_s": 0.5,
+    "verify_s": 0.3
+   }
+  ],
+  "used_mem_before_final_delete_mb": 49.368682861328125,
+  "used_mem_after_final_delete_mb": 17.317543029785156,
+  "rss_after_final_delete_mb": 216.453125,
+  "final_delete_nodes": 120128,
+  "viol_lines": 0
+ }
+}

@@ -1,0 +1,82 @@
+N=62500 E=25000 C=50 dim=384 module=falkordb/falkordb-server@sha256:a8fb264e6b90db5c1e6e3a42af5128efcc13590ce2ca8e65d870b456806f24de
+entities+indexes done 9.2s
+  loaded 7816/62500 15s
+  loaded 15632/62500 21s
+  loaded 23448/62500 26s
+  loaded 31264/62500 32s
+  loaded 39080/62500 38s
+  loaded 46896/62500 44s
+  loaded 54712/62500 51s
+ingest 58s, indexes operational after 58s ok=True
+PASS indexes become operational after load
+PASS ingest chunk count
+PASS ingest entity count
+PASS ingest RELATED edge count
+PASS ingest MENTIONS edge count
+truth matrix 2.0s
+recall@10 early: 0.9713 (min 0.10) in 0.6s
+PASS recall@10 early >= 0.90
+PASS vector KNN returns k results early
+PASS vector KNN scores ascending early
+PASS exact self-query finds the chunk in top-10 (ANN: >=97%)
+PASS stored embedding/text round-trip
+FAIL range index finds chunks by cid (0, 1, mid, last) — not found: [0]
+FAIL range index finds every initial chunk — 62499 of 62500
+fulltext probe: entity 3255 returned 128, expected 128
+PASS fulltext returns all matches (no silent default limit)
+load done 300s alive=True
+PASS in-load: deleted_in_fulltext == 0
+PASS in-load: deleted_in_vector == 0
+PASS in-load: doc_mismatch == 0
+PASS in-load: entity_2hop_mismatch == 0
+PASS in-load: entity_fulltext_mismatch == 0
+PASS in-load: entity_related_mismatch == 0
+PASS in-load: hybrid_irrelevant == 0
+PASS in-load: hybrid_missing == 0
+PASS in-load: ingested_ann_miss_top10 == 0
+PASS in-load: ingested_not_in_fulltext == 0
+PASS in-load: ingested_not_in_vector == 0
+PASS in-load: knn_count == 0
+PASS in-load: knn_unsorted == 0
+PASS in-load: mentions_mismatch == 0
+PASS in-load: related_mismatch == 0
+PASS in-load: score_wrong == 0
+PASS in-load: update_stale_vector == 0
+FAIL in-load: updated_ann_miss_top10 == 0 — 1 e.g. [{'kind': 'updated_ann_miss_top10', 'cid': 51651}]
+PASS in-load: updated_not_in_fulltext == 0
+PASS in-load: updated_not_in_vector == 0
+search-lag: {"ingest_ft": {"n": 1878, "p50_s": 0.00042700767517089844, "max_s": 0.002574443817138672, "pct_visible_immediately": 1.0}, "ingest_vec": {"n": 1878, "p50_s": 0.0012407302856445312, "max_s": 0.012497663497924805, "pct_visible_immediately": 1.0}, "update_vec": {"n": 2301, "p50_s": 0.0011501312255859375, "max_s": 3.0325872898101807, "pct_visible_immediately": 0.9995654063450674}, "update_ft": {"n": 2301, "p50_s": 0.0004436969757080078, "max_s": 0.008870840072631836, "pct_visible_immediately": 1.0}}
+PASS live chunk set == initial + acked inserts - acked deletes
+PASS deleted chunks absent from fulltext
+PASS deleted chunks absent from vector search
+PASS delete workload actually deleted chunks
+PASS ingested chunks searchable via fulltext
+PASS ingested chunks searchable via vector (top-10, ANN: <=2%)
+recall@10 late: 0.9600 (min 0.20) in 0.4s
+PASS recall@10 late >= 0.90
+PASS recall late within 0.05 of early
+PASS vector KNN returns k results late
+PASS vector KNN scores ascending late
+PASS updated chunks hold last-written embedding/text
+recall@10 after-restart: 0.9647 (min 0.20) in 0.4s
+PASS restart: indexes operational
+PASS restart: recall preserved
+PASS restart: chunk count preserved
+PASS server alive at end
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                                1      0       1.0  3021.55  3021.55  3021.55    nan
+_missed_schedule                          89     89       0.0      nan      nan      nan    nan
+delete_chunk                            4425      0      14.8     3.90    13.30    22.70   0.91
+entity_2hop_count                       9027      0      30.1     0.59     6.78     8.43   0.85
+entity_fulltext                        15233      0      50.8     0.47     6.02     7.95   0.87
+entity_lookup_related                  35737      0     119.1     0.56     6.52     8.60   0.85
+hybrid_fulltext_graph                  15000      0      50.0     2.37     9.88    12.29   0.89
+ingest_doc_8chunks                      1878      0       6.3    13.56    20.56    46.30   0.80
+retire_doc                               372      0       1.3     6.92    13.30    21.39   1.74
+retrieve_1hop                          14932      0      49.8     2.84     6.78    12.78   0.91
+retrieve_2hop_context                  15068      0      50.2     3.13     6.78    11.58   0.89
+update_chunk_embedding                  4486      0      15.0     4.47    13.84    18.99   0.89
+monitor: {"cpu_avg_pct": 62.355, "cpu_max_pct": 151.8, "rss_start_mb": 428.5, "rss_end_mb": 462.1, "rss_max_mb": 468.2, "used_mem_end_mb": 393.1, "rss_slope_mb_per_h": 672.5156090165333, "used_mem_slope_mb_per_h": 497.9575388987473, "samples": 364, "dead_samples": 0}
+failed checks: ['range index finds chunks by cid (0, 1, mid, last)', 'range index finds every initial chunk', 'in-load: updated_ann_miss_top10 == 0']
+top errors: []
+crash markers: []

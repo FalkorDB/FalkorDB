@@ -1,0 +1,40 @@
+PASS ingest invariants hold
+PASS server alive after load
+PASS no reader ever saw an invariant violation (snapshot isolation)
+PASS failing queries are fully rolled back (never committed)
+PASS no write with unknown outcome (connection lost)
+PASS own-created accounts were all deletable
+PASS final: surviving account id set equals ledger
+PASS final: every surviving balance == initial + acknowledged transfers
+PASS final: sink balance == moved balances of deleted accounts - endowments
+PASS final: edge count == initial + acked transfers - deletions
+PASS final: sum(edge.amt) matches ledger
+PASS final: counter node matches ledger
+PASS final: total balance conserved
+PASS final: counter == edge count == observed
+PASS final: guard node unique, node count consistent
+PASS after restart: surviving account id set equals ledger
+PASS after restart: total balance conserved
+PASS after restart: counter == edge count == observed
+PASS after restart: guard node unique, node count consistent
+PASS RDB round-trip preserves graph
+PASS server alive at end
+PASS invariant readers actually ran
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                             7959      0      37.9   102.24   328.86   348.99   0.41
+account_create                          2301      0      11.0     0.64   192.67   303.82   0.30
+account_delete                           900      0       4.3     1.31   286.29   377.76   0.01
+account_delete_own                      2199      0      10.5     0.86   216.97   309.89   0.27
+edge_delete                             6000      0      28.6     1.16   221.31   370.35   0.29
+fail_expected_constraint                2024      0       9.6     0.68   192.67   322.41   0.27
+fail_expected_division                  3919      0      18.7     1.08   225.74   370.35   0.28
+fail_noop                                 57      0       0.3     1.45   328.86   328.86   0.92
+read_invariants                          600      0       2.9   110.66   370.35   385.31   0.46
+read_point                             59996      0     285.7     0.45    57.57   292.02   0.27
+transfer                               46500      0     221.4     0.71    90.78   249.23   1.35
+transfer_peak                         294124      0    3232.1     1.26     3.60   254.22   1.10
+monitor: {"cpu_avg_pct": 73.60266666666666, "cpu_max_pct": 172.8, "rss_start_mb": 84.6, "rss_end_mb": 104.3, "rss_max_mb": 126.2, "used_mem_end_mb": 41.5, "rss_slope_mb_per_h": 487.0924670723518, "used_mem_slope_mb_per_h": 285.08074550973714, "samples": 381, "dead_samples": 0}
+failed checks: []
+top errors: []
+crash markers: []
+meta: {"scenario": "s07_mvcc_consistency", "accounts": 50000, "initial_edges": 50000, "scale": 0.25, "ingest_s": 78.34806108474731, "duration": 300.0, "restart_s": 0.7002320289611816, "acked_transfers": 331649, "edge_deletes": 5807, "accounts_created": 2301, "accounts_deleted": 3089, "violations_by_kind": {}, "heavy_reads": 600, "point_reads": 59996, "constraints": true}

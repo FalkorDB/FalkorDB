@@ -1,0 +1,302 @@
+PASS ingest: big graph matches python ground truth
+PASS ingest: static graphs non-empty
+PASS initial AOF rewrite (RDB preamble) succeeded
+PASS A1-strict-kill9: led graph == ledger
+PASS A1-strict-kill9: big graph aggregates/samples == ground truth
+PASS A1-strict-kill9: cnt counter in [acked-window_loss, acked+inflight]
+PASS A1-strict-kill9: static graphs digest unchanged
+PASS A1-strict-kill9: GRAPH.LIST unchanged
+PASS A1-strict-kill9: indexes OPERATIONAL and used
+PASS A1-strict-kill9: recovery (kill->first query) < 180s
+PASS A2-strict-kill9+bgsave: p99 during background save/rewrite not >10x and >250ms worse
+PASS A2-strict-kill9+bgsave: background save/rewrite finished ok
+PASS A2-strict-kill9+bgsave: led graph == ledger
+PASS A2-strict-kill9+bgsave: big graph aggregates/samples == ground truth
+PASS A2-strict-kill9+bgsave: cnt counter in [acked-window_loss, acked+inflight]
+PASS A2-strict-kill9+bgsave: static graphs digest unchanged
+PASS A2-strict-kill9+bgsave: GRAPH.LIST unchanged
+PASS A2-strict-kill9+bgsave: indexes OPERATIONAL and used
+PASS A2-strict-kill9+bgsave: recovery (kill->first query) < 180s
+PASS A3-strict-sigterm: led graph == ledger
+PASS A3-strict-sigterm: big graph aggregates/samples == ground truth
+PASS A3-strict-sigterm: cnt counter in [acked-window_loss, acked+inflight]
+PASS A3-strict-sigterm: static graphs digest unchanged
+PASS A3-strict-sigterm: GRAPH.LIST unchanged
+PASS A3-strict-sigterm: indexes OPERATIONAL and used
+PASS A3-strict-sigterm: recovery (kill->first query) < 180s
+PASS A4-strict-kill9+bgrewriteaof: p99 during background save/rewrite not >10x and >250ms worse
+PASS A4-strict-kill9+bgrewriteaof: background save/rewrite finished ok
+PASS A4-strict-kill9+bgrewriteaof: led graph == ledger
+PASS A4-strict-kill9+bgrewriteaof: big graph aggregates/samples == ground truth
+PASS A4-strict-kill9+bgrewriteaof: cnt counter in [acked-window_loss, acked+inflight]
+PASS A4-strict-kill9+bgrewriteaof: static graphs digest unchanged
+PASS A4-strict-kill9+bgrewriteaof: GRAPH.LIST unchanged
+PASS A4-strict-kill9+bgrewriteaof: indexes OPERATIONAL and used
+PASS A4-strict-kill9+bgrewriteaof: recovery (kill->first query) < 180s
+PASS B1-everysec-kill9: led graph == ledger
+PASS B1-everysec-kill9: big graph aggregates/samples == ground truth
+PASS B1-everysec-kill9: cnt counter in [acked-window_loss, acked+inflight]
+PASS B1-everysec-kill9: static graphs digest unchanged
+PASS B1-everysec-kill9: GRAPH.LIST unchanged
+PASS B1-everysec-kill9: indexes OPERATIONAL and used
+PASS B1-everysec-kill9: recovery (kill->first query) < 180s
+PASS B2-everysec-kill9+bgsave: p99 during background save/rewrite not >10x and >250ms worse
+PASS B2-everysec-kill9+bgsave: background save/rewrite finished ok
+PASS B2-everysec-kill9+bgsave: led graph == ledger
+PASS B2-everysec-kill9+bgsave: big graph aggregates/samples == ground truth
+PASS B2-everysec-kill9+bgsave: cnt counter in [acked-window_loss, acked+inflight]
+PASS B2-everysec-kill9+bgsave: static graphs digest unchanged
+PASS B2-everysec-kill9+bgsave: GRAPH.LIST unchanged
+PASS B2-everysec-kill9+bgsave: indexes OPERATIONAL and used
+PASS B2-everysec-kill9+bgsave: recovery (kill->first query) < 180s
+PASS RDB-only restart after SAVE: led graph identical
+PASS RDB-only restart after SAVE: big graph == ground truth and cnt identical
+PASS RDB-only restart after SAVE: static digest identical
+PASS R1-rdb-bgsave-under-load: p99 during background save/rewrite not >10x and >250ms worse
+PASS R1-rdb-bgsave-under-load: background save/rewrite finished ok
+PASS R1-rdb-bgsave-under-load: live led graph == ledger after load
+PASS R1-rdb-bgsave-under-load: restored graph == state at last SAVE
+PASS R1-rdb-bgsave-under-load: kill->first query < 180s
+PASS R2-rdb-save-then-writes-lost: restored graph == state at last SAVE (post-SAVE writes gone)
+PASS R2-rdb-save-then-writes-lost: kill->first query < 180s
+PASS DEBUG RELOAD: graph state identical
+PASS SHUTDOWN SAVE + restart: graph state identical
+PASS server alive at end
+PASS no crash/panic markers in server log
+PASS readers saw no wrong results (degree/props of big graph)
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                               69      0      69.0   171.08   196.52   196.52    nan
+bump_cnt                               14290      0     476.3     1.63     5.68     7.64   1.06
+create_edge                             3493      0     116.4     0.83     6.52     7.95   1.02
+create_node                             6256      0     208.5     3.53     7.49     9.31   0.98
+delete_edge                             3101      0     103.4     1.08     6.52     7.79   1.08
+delete_node                             1759      0      58.6     0.83     6.52     9.31   1.29
+e1_bump                                    4      4       0.0      nan      nan      nan    nan
+e1_ledw                                    8      8       0.0      nan      nan      nan    nan
+e1_probe                                   2      2       0.0      nan      nan      nan    nan
+e1_rdr                                     6      6       0.0      nan      nan      nan    nan
+e2_bump                                    4      4       0.0      nan      nan      nan    nan
+e2_ledw                                    8      8       0.0      nan      nan      nan    nan
+e2_probe                                   2      2       0.0      nan      nan      nan    nan
+e2_rdr                                     6      6       0.0      nan      nan      nan    nan
+e3_bump                                    4      4       0.0      nan      nan      nan    nan
+e3_ledw                                    8      8       0.0      nan      nan      nan    nan
+e3_probe                                   1      1       0.0      nan      nan      nan    nan
+e3_rdr                                     6      6       0.0      nan      nan      nan    nan
+e4_bump                                    4      4       0.0      nan      nan      nan    nan
+e4_ledw                                    8      8       0.0      nan      nan      nan    nan
+e4_probe                                   2      2       0.0      nan      nan      nan    nan
+e4_rdr                                     6      6       0.0      nan      nan      nan    nan
+e5_bump                                    4      4       0.0      nan      nan      nan    nan
+e5_ledw                                    8      8       0.0      nan      nan      nan    nan
+e5_probe                                   2      2       0.0      nan      nan      nan    nan
+e5_rdr                                     6      6       0.0      nan      nan      nan    nan
+e6_bump                                    4      4       0.0      nan      nan      nan    nan
+e6_ledw                                    8      8       0.0      nan      nan      nan    nan
+e6_probe                                   2      2       0.0      nan      nan      nan    nan
+e6_rdr                                     6      6       0.0      nan      nan      nan    nan
+e8_bump                                    4      4       0.0      nan      nan      nan    nan
+e8_ledw                                    8      8       0.0      nan      nan      nan    nan
+e8_probe                                   2      2       0.0      nan      nan      nan    nan
+e8_rdr                                     6      6       0.0      nan      nan      nan    nan
+probe_lookup                            4765      0     158.8     0.46     3.67     5.04   1.06
+read_1hop                              21384      0     712.8     0.51     3.53     4.66   0.98
+read_led                                8643      0     288.1     0.44     3.53     4.47   1.10
+read_lookup                            12823      0     427.4     0.47     3.53     4.47   1.08
+update_edge                             1299      0      43.3     0.85     6.52     7.95   0.87
+update_node                             7870      0     262.3     0.83     6.39     9.13   1.13
+monitor: {"cpu_avg_pct": 12.096694214876033, "cpu_max_pct": 119.7, "rss_start_mb": 360.2, "rss_end_mb": 374.2, "rss_max_mb": 374.2, "used_mem_end_mb": 251.7, "rss_slope_mb_per_h": -120.75521347915635, "used_mem_slope_mb_per_h": 16.886338227373813, "samples": 431, "dead_samples": 3}
+failed checks: []
+top errors: [('ConnectionError: Error 111 connecting to localhost:21020. Connection refused.', 105), ("ConnectionError: Error while reading from localhost:21020 : (104, 'Connection reset by peer')", 32), ('ConnectionError: Connection closed by server.', 2)]
+crash markers: []
+meta: {
+ "scenario": "s08_durability_recovery",
+ "scale": 0.25,
+ "duration": 300.0,
+ "big_nodes": 375000,
+ "big_edges": 1875000,
+ "led_ids": 5000,
+ "static_m": 5000,
+ "vkey_max": 10000,
+ "seg_s": 30.0,
+ "recoveries": [
+  {
+   "label": "A1-strict-kill9",
+   "mode": "strict",
+   "kind": "kill9",
+   "tkill": 1795710653.5849266,
+   "ping_s": 2.594,
+   "first_query_s": 2.597,
+   "kill_to_query_s": 3.065,
+   "verify_s": 1.7,
+   "lost_in_window": 0,
+   "disk_mb": 64
+  },
+  {
+   "label": "A2-strict-kill9+bgsave",
+   "mode": "strict",
+   "kind": "kill9",
+   "tkill": 1795710688.040505,
+   "ping_s": 2.405,
+   "first_query_s": 2.408,
+   "kill_to_query_s": 2.889,
+   "verify_s": 2.0,
+   "lost_in_window": 0,
+   "disk_mb": 125
+  },
+  {
+   "label": "A3-strict-sigterm",
+   "mode": "strict",
+   "kind": "term",
+   "tkill": 1795710722.5832922,
+   "ping_s": 2.457,
+   "first_query_s": 2.459,
+   "kill_to_query_s": 2.957,
+   "verify_s": 2.1,
+   "lost_in_window": 0,
+   "disk_mb": 129
+  },
+  {
+   "label": "A4-strict-kill9+bgrewriteaof",
+   "mode": "strict",
+   "kind": "kill9",
+   "tkill": 1795710757.3226352,
+   "ping_s": 2.501,
+   "first_query_s": 2.503,
+   "kill_to_query_s": 2.985,
+   "verify_s": 2.1,
+   "lost_in_window": 0,
+   "disk_mb": 127
+  },
+  {
+   "label": "B1-everysec-kill9",
+   "mode": "everysec",
+   "kind": "kill9",
+   "tkill": 1795710792.1020358,
+   "ping_s": 2.517,
+   "first_query_s": 2.52,
+   "kill_to_query_s": 2.994,
+   "verify_s": 2.4,
+   "lost_in_window": 0,
+   "disk_mb": 129
+  },
+  {
+   "label": "B2-everysec-kill9+bgsave",
+   "mode": "everysec",
+   "kind": "kill9",
+   "tkill": 1795710827.1949086,
+   "ping_s": 2.515,
+   "first_query_s": 2.517,
+   "kill_to_query_s": 3.001,
+   "verify_s": 2.4,
+   "lost_in_window": 0,
+   "disk_mb": 131
+  },
+  {
+   "label": "R1-rdb-bgsave-under-load",
+   "mode": "rdb",
+   "kind": "none",
+   "tkill": 1795710872.6749284,
+   "ping_s": 2.101,
+   "first_query_s": 2.104,
+   "kill_to_query_s": 2.229
+  },
+  {
+   "label": "R2-rdb-save-then-writes-lost",
+   "mode": "rdb",
+   "kind": "kill9",
+   "tkill": 1795710909.4493804,
+   "ping_s": 2.133,
+   "first_query_s": 2.136,
+   "kill_to_query_s": 2.595
+  }
+ ],
+ "notes": [
+  "A1-strict-kill9 verify breakdown s: led=0.2 big=0.4 static=1.0",
+  "A2-strict-kill9+bgsave verify breakdown s: led=0.3 big=0.4 static=1.1",
+  "A3-strict-sigterm verify breakdown s: led=0.3 big=0.4 static=1.1",
+  "A4-strict-kill9+bgrewriteaof verify breakdown s: led=0.4 big=0.4 static=1.1",
+  "B1-everysec-kill9 verify breakdown s: led=0.5 big=0.4 static=1.2",
+  "B2-everysec-kill9+bgsave verify breakdown s: led=0.4 big=0.4 static=1.2"
+ ],
+ "ingest_s": 135.5,
+ "graph_list": [
+  "big",
+  "emptyg",
+  "led",
+  "multi0",
+  "multi1",
+  "multi2",
+  "special"
+ ],
+ "initial_aof_rewrite_s": 0.63,
+ "disk_mb_after_aof_base": 58,
+ "save_s_full_graph": 0.4,
+ "rdb_mb": 57.9,
+ "rdb_only_restart_s": 2.05,
+ "debug_reload_s": 2.13,
+ "shutdown_save_s": 0.51,
+ "restart_after_shutdown_save_s": 2.03,
+ "disk_mb_end": 137,
+ "rdb_mb_end": 57.9
+}
+window A2-strict-kill9+bgsave 0.51 s {'cmd_s': 0.006, 'total_s': 0.51, 'status_ok': True, 'cow_mb': 27.812, 'status': ('ok', 'ok')}
+    update_node {'in_n': 73, 'in_err': 0, 'in_p99_ms': 5.904393828204576, 'in_max_ms': 5.904393828204576, 'out_p99_ms': 7.946536710376945}
+    create_edge {'in_n': 31, 'in_err': 0, 'in_p99_ms': 6.649306437858297, 'in_max_ms': 6.649306437858297, 'out_p99_ms': 7.197423130032864}
+    update_edge {'in_n': 7, 'in_err': 0, 'in_p99_ms': 7.946536710376945, 'in_max_ms': 7.946536710376945, 'out_p99_ms': 7.4881990244861925}
+    read_led {'in_n': 106, 'in_err': 0, 'in_p99_ms': 3.744306286573248, 'in_max_ms': 4.0529575414770616, 'out_p99_ms': 4.134016692306603}
+    bump_cnt {'in_n': 180, 'in_err': 0, 'in_p99_ms': 6.265789965641322, 'in_max_ms': 6.649306437858297, 'out_p99_ms': 6.142931338864042}
+    e2_bump {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    create_node {'in_n': 140, 'in_err': 0, 'in_p99_ms': 7.790722265075436, 'in_max_ms': 9.128072826658858, 'out_p99_ms': 8.105467444584484}
+    read_1hop {'in_n': 281, 'in_err': 0, 'in_p99_ms': 4.0529575414770616, 'in_max_ms': 4.301030966675789, 'out_p99_ms': 4.0529575414770616}
+    delete_edge {'in_n': 31, 'in_err': 0, 'in_p99_ms': 6.782292566615463, 'in_max_ms': 6.782292566615463, 'out_p99_ms': 7.4881990244861925}
+    delete_node {'in_n': 18, 'in_err': 0, 'in_p99_ms': 5.454747231645986, 'in_max_ms': 5.454747231645986, 'out_p99_ms': 8.601586895932613}
+    probe_lookup {'in_n': 60, 'in_err': 0, 'in_p99_ms': 0.668584684427545, 'in_max_ms': 0.668584684427545, 'out_p99_ms': 0.6819563781160961}
+    read_lookup {'in_n': 153, 'in_err': 0, 'in_p99_ms': 3.9734877857618245, 'in_max_ms': 3.9734877857618245, 'out_p99_ms': 3.9734877857618245}
+    e2_ledw {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    e2_probe {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    e2_rdr {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+window A4-strict-kill9+bgrewriteaof 0.52 s {'cmd_s': 0.011, 'total_s': 0.523, 'status_ok': True, 'cow_mb': 33.898, 'status': ('ok', 'ok')}
+    update_node {'in_n': 89, 'in_err': 0, 'in_p99_ms': 10.485286429241883, 'in_max_ms': 10.485286429241883, 'out_p99_ms': 7.197423130032864}
+    e4_ledw {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    create_edge {'in_n': 56, 'in_err': 0, 'in_p99_ms': 10.485286429241883, 'in_max_ms': 10.485286429241883, 'out_p99_ms': 7.4881990244861925}
+    update_edge {'in_n': 22, 'in_err': 0, 'in_p99_ms': 7.197423130032864, 'in_max_ms': 7.197423130032864, 'out_p99_ms': 7.197423130032864}
+    read_led {'in_n': 102, 'in_err': 0, 'in_p99_ms': 2.674043372272717, 'in_max_ms': 3.2596439496244063, 'out_p99_ms': 3.4591602364930174}
+    bump_cnt {'in_n': 180, 'in_err': 0, 'in_p99_ms': 4.94053262753621, 'in_max_ms': 4.94053262753621, 'out_p99_ms': 5.242932748602446}
+    e4_rdr {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    create_node {'in_n': 66, 'in_err': 0, 'in_p99_ms': 8.267576793476174, 'in_max_ms': 8.267576793476174, 'out_p99_ms': 7.4881990244861925}
+    read_1hop {'in_n': 275, 'in_err': 0, 'in_p99_ms': 4.94053262753621, 'in_max_ms': 7.790722265075436, 'out_p99_ms': 3.324836828616894}
+    delete_node {'in_n': 21, 'in_err': 0, 'in_p99_ms': 11.80813553183103, 'in_max_ms': 11.80813553183103, 'out_p99_ms': 7.6379630049759175}
+    delete_edge {'in_n': 46, 'in_err': 0, 'in_p99_ms': 14.394051323843858, 'in_max_ms': 14.394051323843858, 'out_p99_ms': 7.4881990244861925}
+    probe_lookup {'in_n': 60, 'in_err': 0, 'in_p99_ms': 4.74868572427548, 'in_max_ms': 4.74868572427548, 'out_p99_ms': 3.6708885162482825}
+    read_lookup {'in_n': 163, 'in_err': 0, 'in_p99_ms': 2.894470543382841, 'in_max_ms': 4.564288470084082, 'out_p99_ms': 3.3913335651892327}
+    e4_bump {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    e4_probe {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+window B2-everysec-kill9+bgsave 0.51 s {'cmd_s': 0.007, 'total_s': 0.512, 'status_ok': True, 'cow_mb': 33.066, 'status': ('ok', 'ok')}
+    update_node {'in_n': 120, 'in_err': 0, 'in_p99_ms': 1.0336183303170918, 'in_max_ms': 1.391114184685227, 'out_p99_ms': 1.2110486130919198}
+    e6_probe {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    e6_bump {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    create_edge {'in_n': 63, 'in_err': 0, 'in_p99_ms': 2.1936469342363507, 'in_max_ms': 2.1936469342363507, 'out_p99_ms': 1.28517447660205}
+    update_edge {'in_n': 22, 'in_err': 0, 'in_p99_ms': 1.4189364683789316, 'in_max_ms': 1.4189364683789316, 'out_p99_ms': 1.2352695853537583}
+    read_led {'in_n': 113, 'in_err': 0, 'in_p99_ms': 0.6426227262856066, 'in_max_ms': 0.6426227262856066, 'out_p99_ms': 0.6426227262856066}
+    bump_cnt {'in_n': 180, 'in_err': 0, 'in_p99_ms': 1.2599749770608335, 'in_max_ms': 1.7642691500266037, 'out_p99_ms': 0.8648855807953318}
+    e6_rdr {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    e6_ledw {'in_n': 0, 'in_err': 0, 'in_p99_ms': None, 'in_max_ms': None, 'out_p99_ms': None}
+    create_node {'in_n': 34, 'in_err': 0, 'in_p99_ms': 1.2599749770608335, 'in_max_ms': 1.2599749770608335, 'out_p99_ms': 1.695760428706847}
+    read_1hop {'in_n': 261, 'in_err': 0, 'in_p99_ms': 0.7381715153899827, 'in_max_ms': 0.7679936446117381, 'out_p99_ms': 0.7095074157919864}
+    delete_node {'in_n': 23, 'in_err': 0, 'in_p99_ms': 1.4473151977465102, 'in_max_ms': 1.4473151977465102, 'out_p99_ms': 1.1873025618548232}
+    delete_edge {'in_n': 38, 'in_err': 0, 'in_p99_ms': 1.5057867317354694, 'in_max_ms': 1.5057867317354694, 'out_p99_ms': 1.28517447660205}
+    probe_lookup {'in_n': 60, 'in_err': 0, 'in_p99_ms': 0.8313010196033561, 'in_max_ms': 0.8313010196033561, 'out_p99_ms': 0.7833535175039729}
+    read_lookup {'in_n': 166, 'in_err': 0, 'in_p99_ms': 5.242932748602446, 'in_max_ms': 7.3413715926335215, 'out_p99_ms': 0.6819563781160961}
+window R1-rdb-bgsave-under-load 0.51 s {'cmd_s': 0.007, 'total_s': 0.511, 'status_ok': True, 'cow_mb': 33.23, 'status': ('ok', 'ok')}
+    update_node {'in_n': 72, 'in_err': 0, 'in_p99_ms': 1.5359024663701788, 'in_max_ms': 1.5359024663701788, 'out_p99_ms': 1.3108779661340912}
+    create_edge {'in_n': 43, 'in_err': 0, 'in_p99_ms': 2.1084649502463964, 'in_max_ms': 2.1084649502463964, 'out_p99_ms': 1.2599749770608335}
+    update_edge {'in_n': 16, 'in_err': 0, 'in_p99_ms': 2.51981079324008, 'in_max_ms': 2.51981079324008, 'out_p99_ms': 1.5057867317354694}
+    read_led {'in_n': 77, 'in_err': 0, 'in_p99_ms': 0.7679936446117381, 'in_max_ms': 0.7679936446117381, 'out_p99_ms': 0.6554751808113186}
+    bump_cnt {'in_n': 120, 'in_err': 0, 'in_p99_ms': 1.0336183303170918, 'in_max_ms': 1.3638374359659087, 'out_p99_ms': 0.8648855807953318}
+    create_node {'in_n': 19, 'in_err': 0, 'in_p99_ms': 1.5979529260115328, 'in_max_ms': 1.5979529260115328, 'out_p99_ms': 1.5057867317354694}
+    read_1hop {'in_n': 172, 'in_err': 0, 'in_p99_ms': 0.8313010196033561, 'in_max_ms': 5.788621400200563, 'out_p99_ms': 0.7381715153899827}
+    delete_edge {'in_n': 34, 'in_err': 0, 'in_p99_ms': 1.5359024663701788, 'in_max_ms': 1.5359024663701788, 'out_p99_ms': 1.4762615017014404}
+    delete_node {'in_n': 17, 'in_err': 0, 'in_p99_ms': 1.3370955254567731, 'in_max_ms': 1.3370955254567731, 'out_p99_ms': 1.1873025618548232}
+    probe_lookup {'in_n': 40, 'in_err': 0, 'in_p99_ms': 0.7236975641078262, 'in_max_ms': 0.7236975641078262, 'out_p99_ms': 0.7381715153899827}
+    read_lookup {'in_n': 111, 'in_err': 0, 'in_p99_ms': 0.7381715153899827, 'in_max_ms': 1.9868536142268016, 'out_p99_ms': 0.695595505678418}

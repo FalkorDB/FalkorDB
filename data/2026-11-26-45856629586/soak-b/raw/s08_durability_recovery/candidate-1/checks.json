@@ -1,0 +1,398 @@
+[
+ {
+  "name": "ingest: big graph matches python ground truth",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest: static graphs non-empty",
+  "ok": true,
+  "detail": "{\"multi0\": {\"n\": 5000, \"e\": 5000, \"sha\": \"a647ce7da2c2e3b055b88c056212c2c5df5677df\"}, \"multi1\": {\"n\": 5000, \"e\": 5000, \"sha\": \"ebff3d859d504e6f869d3a8bedcca8483ef52a65\"}, \"multi2\": {\"n\": 5000, \"e\": 5000, \"sha\": \"3ce1b433f93e8f017035ce134633187e4c0db4fc\"}, \"special\": {\"n\": 2, \"e\": 1, \"sha\": \"a9951a70",
+  "severity": "critical"
+ },
+ {
+  "name": "initial AOF rewrite (RDB preamble) succeeded",
+  "ok": true,
+  "detail": "ok",
+  "severity": "critical"
+ },
+ {
+  "name": "A1-strict-kill9: led graph == ledger",
+  "ok": true,
+  "detail": "nodes=2210 edges=28 tolerated-in-window=0; ",
+  "severity": "critical"
+ },
+ {
+  "name": "A1-strict-kill9: big graph aggregates/samples == ground truth",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "A1-strict-kill9: cnt counter in [acked-window_loss, acked+inflight]",
+  "ok": true,
+  "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=0",
+  "severity": "critical"
+ },
+ {
+  "name": "A1-strict-kill9: static graphs digest unchanged",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "A1-strict-kill9: GRAPH.LIST unchanged",
+  "ok": true,
+  "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+  "severity": "critical"
+ },
+ {
+  "name": "A1-strict-kill9: indexes OPERATIONAL and used",
+  "ok": true,
+  "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+  "severity": "major"
+ },
+ {
+  "name": "A1-strict-kill9: recovery (kill->first query) < 180s",
+  "ok": true,
+  "detail": "3.09s",
+  "severity": "major"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: p99 during background save/rewrite not >10x and >250ms worse",
+  "ok": true,
+  "detail": "worst create_node 9.5 vs 8.1 ms, cmd stall 7 ms, total 0.6s; ('create_node', 9.496846968855877, 8.105467444584484, 1.1716593810022662)",
+  "severity": "major"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: background save/rewrite finished ok",
+  "ok": true,
+  "detail": "('ok', 'ok')",
+  "severity": "critical"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: led graph == ledger",
+  "ok": true,
+  "detail": "nodes=3333 edges=36 tolerated-in-window=0; ",
+  "severity": "critical"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: big graph aggregates/samples == ground truth",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: cnt counter in [acked-window_loss, acked+inflight]",
+  "ok": true,
+  "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=0",
+  "severity": "critical"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: static graphs digest unchanged",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: GRAPH.LIST unchanged",
+  "ok": true,
+  "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+  "severity": "critical"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: indexes OPERATIONAL and used",
+  "ok": true,
+  "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+  "severity": "major"
+ },
+ {
+  "name": "A2-strict-kill9+bgsave: recovery (kill->first query) < 180s",
+  "ok": true,
+  "detail": "2.995s",
+  "severity": "major"
+ },
+ {
+  "name": "A3-strict-sigterm: led graph == ledger",
+  "ok": true,
+  "detail": "nodes=3890 edges=121 tolerated-in-window=0; ",
+  "severity": "critical"
+ },
+ {
+  "name": "A3-strict-sigterm: big graph aggregates/samples == ground truth",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "A3-strict-sigterm: cnt counter in [acked-window_loss, acked+inflight]",
+  "ok": true,
+  "detail": "delta=1788.0 acked=1788 pend=2 lost_allow=0",
+  "severity": "critical"
+ },
+ {
+  "name": "A3-strict-sigterm: static graphs digest unchanged",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "A3-strict-sigterm: GRAPH.LIST unchanged",
+  "ok": true,
+  "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+  "severity": "critical"
+ },
+ {
+  "name": "A3-strict-sigterm: indexes OPERATIONAL and used",
+  "ok": true,
+  "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+  "severity": "major"
+ },
+ {
+  "name": "A3-strict-sigterm: recovery (kill->first query) < 180s",
+  "ok": true,
+  "detail": "2.805s",
+  "severity": "major"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: p99 during background save/rewrite not >10x and >250ms worse",
+  "ok": true,
+  "detail": "worst delete_edge 13.8 vs 7.5 ms, cmd stall 10 ms, total 0.5s; ('delete_edge', 13.83511276801601, 7.4881990244861925, 1.8475888157854239)",
+  "severity": "major"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: background save/rewrite finished ok",
+  "ok": true,
+  "detail": "('ok', 'ok')",
+  "severity": "critical"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: led graph == ledger",
+  "ok": true,
+  "detail": "nodes=4233 edges=146 tolerated-in-window=0; ",
+  "severity": "critical"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: big graph aggregates/samples == ground truth",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: cnt counter in [acked-window_loss, acked+inflight]",
+  "ok": true,
+  "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=0",
+  "severity": "critical"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: static graphs digest unchanged",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: GRAPH.LIST unchanged",
+  "ok": true,
+  "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+  "severity": "critical"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: indexes OPERATIONAL and used",
+  "ok": true,
+  "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+  "severity": "major"
+ },
+ {
+  "name": "A4-strict-kill9+bgrewriteaof: recovery (kill->first query) < 180s",
+  "ok": true,
+  "detail": "3.018s",
+  "severity": "major"
+ },
+ {
+  "name": "B1-everysec-kill9: led graph == ledger",
+  "ok": true,
+  "detail": "nodes=4388 edges=185 tolerated-in-window=0; ",
+  "severity": "critical"
+ },
+ {
+  "name": "B1-everysec-kill9: big graph aggregates/samples == ground truth",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "B1-everysec-kill9: cnt counter in [acked-window_loss, acked+inflight]",
+  "ok": true,
+  "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=212",
+  "severity": "critical"
+ },
+ {
+  "name": "B1-everysec-kill9: static graphs digest unchanged",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "B1-everysec-kill9: GRAPH.LIST unchanged",
+  "ok": true,
+  "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+  "severity": "critical"
+ },
+ {
+  "name": "B1-everysec-kill9: indexes OPERATIONAL and used",
+  "ok": true,
+  "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+  "severity": "major"
+ },
+ {
+  "name": "B1-everysec-kill9: recovery (kill->first query) < 180s",
+  "ok": true,
+  "detail": "2.911s",
+  "severity": "major"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: p99 during background save/rewrite not >10x and >250ms worse",
+  "ok": true,
+  "detail": "worst create_node 2.1 vs 1.6 ms, cmd stall 7 ms, total 0.4s; ('create_node', 2.067122500241565, 1.5666205156975812, 1.3194787630628733)",
+  "severity": "major"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: background save/rewrite finished ok",
+  "ok": true,
+  "detail": "('ok', 'ok')",
+  "severity": "critical"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: led graph == ledger",
+  "ok": true,
+  "detail": "nodes=4435 edges=226 tolerated-in-window=0; ",
+  "severity": "critical"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: big graph aggregates/samples == ground truth",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: cnt counter in [acked-window_loss, acked+inflight]",
+  "ok": true,
+  "detail": "delta=1784.0 acked=1784 pend=4 lost_allow=212",
+  "severity": "critical"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: static graphs digest unchanged",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: GRAPH.LIST unchanged",
+  "ok": true,
+  "detail": "['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special'] != ['big', 'emptyg', 'led', 'multi0', 'multi1', 'multi2', 'special']",
+  "severity": "critical"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: indexes OPERATIONAL and used",
+  "ok": true,
+  "detail": "ix=True plan=b'Project' b'    Node By Index Scan | (n:N)'",
+  "severity": "major"
+ },
+ {
+  "name": "B2-everysec-kill9+bgsave: recovery (kill->first query) < 180s",
+  "ok": true,
+  "detail": "3.001s",
+  "severity": "major"
+ },
+ {
+  "name": "RDB-only restart after SAVE: led graph identical",
+  "ok": true,
+  "detail": "4435 vs 4435 nodes",
+  "severity": "critical"
+ },
+ {
+  "name": "RDB-only restart after SAVE: big graph == ground truth and cnt identical",
+  "ok": true,
+  "detail": " cnt 10708.0 vs 10708.0",
+  "severity": "critical"
+ },
+ {
+  "name": "RDB-only restart after SAVE: static digest identical",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "R1-rdb-bgsave-under-load: p99 during background save/rewrite not >10x and >250ms worse",
+  "ok": true,
+  "detail": "worst create_node 2.5 vs 1.5 ms, cmd stall 7 ms, total 0.5s; ('create_node', 2.51981079324008, 1.5359024663701788, 1.6406059944647309)",
+  "severity": "major"
+ },
+ {
+  "name": "R1-rdb-bgsave-under-load: background save/rewrite finished ok",
+  "ok": true,
+  "detail": "('ok', 'ok')",
+  "severity": "critical"
+ },
+ {
+  "name": "R1-rdb-bgsave-under-load: live led graph == ledger after load",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "R1-rdb-bgsave-under-load: restored graph == state at last SAVE",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "R1-rdb-bgsave-under-load: kill->first query < 180s",
+  "ok": true,
+  "detail": "2.206s",
+  "severity": "major"
+ },
+ {
+  "name": "R2-rdb-save-then-writes-lost: restored graph == state at last SAVE (post-SAVE writes gone)",
+  "ok": true,
+  "detail": "nodes 4474 vs 4474, cnt 12508.0 vs 12508.0",
+  "severity": "critical"
+ },
+ {
+  "name": "R2-rdb-save-then-writes-lost: kill->first query < 180s",
+  "ok": true,
+  "detail": "2.593s",
+  "severity": "major"
+ },
+ {
+  "name": "DEBUG RELOAD: graph state identical",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "SHUTDOWN SAVE + restart: graph state identical",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "no crash/panic markers in server log",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "readers saw no wrong results (degree/props of big graph)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ }
+]

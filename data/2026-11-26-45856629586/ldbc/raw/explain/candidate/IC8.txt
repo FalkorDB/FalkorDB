@@ -1,0 +1,8 @@
+Limit
+    Sort
+        Project
+            Conditional Traverse | (comment)->(person:Person)
+                Conditional Traverse | (comment)->(@anon_1:Message)
+                    Conditional Traverse | (start)<-(@anon_1:Message)
+                        Filter
+                            Node By Index Scan | (start:Person)

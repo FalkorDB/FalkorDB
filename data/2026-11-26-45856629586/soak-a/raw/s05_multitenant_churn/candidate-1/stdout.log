@@ -1,0 +1,213 @@
+PASS GRAPH.COPY copies contents
+PASS ingest: GRAPH.LIST == live set
+cycle {'label': 'cycle-0', 'rss_mb': 484.6, 'used_mb': 389.0, 'live': 750, 'creates': 2344, 'deletes': 1594}
+cycle {'label': 'cycle-1', 'rss_mb': 593.3, 'used_mb': 507.1, 'live': 750, 'creates': 3977, 'deletes': 3227}
+cycle {'label': 'cycle-2', 'rss_mb': 547.7, 'used_mb': 443.9, 'live': 750, 'creates': 5580, 'deletes': 4830}
+cycle {'label': 'cycle-3', 'rss_mb': 530.0, 'used_mb': 426.7, 'live': 750, 'creates': 7191, 'deletes': 6441}
+cycle {'label': 'cycle-4', 'rss_mb': 559.4, 'used_mb': 446.4, 'live': 750, 'creates': 8825, 'deletes': 8075}
+cycle {'label': 'cycle-5', 'rss_mb': 613.3, 'used_mb': 501.7, 'live': 750, 'creates': 10472, 'deletes': 9722}
+PASS GRAPH.LIST == Python live set
+PASS deleted/renamed-away graphs are gone
+PASS deleted names absent from GRAPH.LIST
+PASS DBSIZE == live graphs + registry keys
+PASS no in-flight correctness errors
+PASS final checksum on every live tenant
+FAIL steady state: used_memory plateau (2nd half growth <10%+20MB) — +75.0 MB over 2nd half from 427
+PASS steady state: RSS plateau (2nd half growth <10%+50MB)
+PASS live graph count constant through soak
+PASS GRAPH.LIST empty after deleting all
+FAIL used_memory returns to baseline after deleting all (residual <50MB) — residual used_memory +52.5 MB (base 3.1)
+PASS RSS returns near baseline after deleting all (residual <10% of peak+100MB)
+PASS refill after delete-all: RSS not above 1.15x previous peak (memory reused, no leak)
+PASS refilled tenants verify (200 sampled)
+PASS server alive at end
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                             3697      0      73.9    73.01   212.72   370.35   2.08
+churn_create_delete                     6493      0     127.3     6.78   134.90   204.46   1.35
+config_get                              2183      0      43.7     0.46    33.07    47.23   0.94
+explain                                 4351      0      87.0     0.55    38.74    71.58   1.29
+graph_copy                              3229      0      63.3    32.42   119.78   154.95   1.32
+graph_list                              1092      0      21.8     1.57    35.79    55.33   0.71
+keyspace_info                           4441      0      88.8     0.68    42.78    77.48   1.20
+memory_usage                            3160      0      63.2     0.54    38.74    61.09   0.80
+profile                                 3226      0      64.5     0.78    42.78    73.01   1.20
+rename                                  4305      0      84.4     3.13    62.32   108.49   1.15
+tenant_read_1hop                       37922      0     743.6     0.77    42.78    71.58   1.13
+tenant_read_2hop                       16156      0     316.8     0.72    43.63    71.58   1.20
+tenant_write_create                     4253      0      85.1     0.74    39.52    64.83   1.17
+tenant_write_set                       12908      0     253.1     0.80    46.30    73.01   1.08
+verify_checksum                         4273      0      83.8     1.66    52.14    79.03   1.49
+monitor: {"cpu_avg_pct": 62.91107382550336, "cpu_max_pct": 109.9, "rss_start_mb": 509.2, "rss_end_mb": 647.9, "rss_max_mb": 683.4, "used_mem_end_mb": 490.0, "rss_slope_mb_per_h": 829.3632718423421, "used_mem_slope_mb_per_h": 721.6420110532428, "samples": 367, "dead_samples": 0}
+failed checks: ['steady state: used_memory plateau (2nd half growth <10%+20MB)', 'used_memory returns to baseline after deleting all (residual <50MB)']
+top errors: []
+crash markers: []
+{
+ "scenario": "s05_multitenant_churn",
+ "tenants": 750,
+ "total_nodes": 1184285,
+ "total_edges": 3552855,
+ "size_p50": 185,
+ "size_max": 18596,
+ "ingest_s": 2.6256296634674072,
+ "copy_supported": true,
+ "duration": 300.0,
+ "scale": 0.25,
+ "mem_baseline": {
+  "label": "fresh-baseline",
+  "rss_mb": 33.7,
+  "used_mb": 3.1,
+  "live": 0,
+  "creates": 0,
+  "deletes": 0
+ },
+ "mem_after_ingest": {
+  "label": "after-ingest",
+  "rss_mb": 492.0,
+  "used_mb": 390.6,
+  "live": 750,
+  "creates": 750,
+  "deletes": 0
+ },
+ "mem_cycles": [
+  {
+   "label": "cycle-0",
+   "rss_mb": 484.6,
+   "used_mb": 389.0,
+   "live": 750,
+   "creates": 2344,
+   "deletes": 1594
+  },
+  {
+   "label": "cycle-1",
+   "rss_mb": 593.3,
+   "used_mb": 507.1,
+   "live": 750,
+   "creates": 3977,
+   "deletes": 3227
+  },
+  {
+   "label": "cycle-2",
+   "rss_mb": 547.7,
+   "used_mb": 443.9,
+   "live": 750,
+   "creates": 5580,
+   "deletes": 4830
+  },
+  {
+   "label": "cycle-3",
+   "rss_mb": 530.0,
+   "used_mb": 426.7,
+   "live": 750,
+   "creates": 7191,
+   "deletes": 6441
+  },
+  {
+   "label": "cycle-4",
+   "rss_mb": 559.4,
+   "used_mb": 446.4,
+   "live": 750,
+   "creates": 8825,
+   "deletes": 8075
+  },
+  {
+   "label": "cycle-5",
+   "rss_mb": 613.3,
+   "used_mb": 501.7,
+   "live": 750,
+   "creates": 10472,
+   "deletes": 9722
+  }
+ ],
+ "mem_before_delete": {
+  "label": "before-delete",
+  "rss_mb": 586.2,
+  "used_mb": 504.0,
+  "live": 750,
+  "creates": 10472,
+  "deletes": 9722
+ },
+ "mem_residual": [
+  {
+   "label": "residual-0",
+   "rss_mb": 481.8,
+   "used_mb": 55.6,
+   "live": 750,
+   "creates": 10472,
+   "deletes": 9722
+  },
+  {
+   "label": "residual-1",
+   "rss_mb": 261.4,
+   "used_mb": 55.6,
+   "live": 750,
+   "creates": 10472,
+   "deletes": 9722
+  },
+  {
+   "label": "residual-2",
+   "rss_mb": 128.9,
+   "used_mb": 55.6,
+   "live": 750,
+   "creates": 10472,
+   "deletes": 9722
+  },
+  {
+   "label": "residual-3",
+   "rss_mb": 128.9,
+   "used_mb": 55.6,
+   "live": 750,
+   "creates": 10472,
+   "deletes": 9722
+  },
+  {
+   "label": "residual-4",
+   "rss_mb": 121.7,
+   "used_mb": 55.6,
+   "live": 750,
+   "creates": 10472,
+   "deletes": 9722
+  },
+  {
+   "label": "residual-5",
+   "rss_mb": 121.7,
+   "used_mb": 55.6,
+   "live": 750,
+   "creates": 10472,
+   "deletes": 9722
+  }
+ ],
+ "mem_refill": {
+  "label": "after-refill",
+  "rss_mb": 553.6,
+  "used_mb": 449.1,
+  "live": 750,
+  "creates": 11222,
+  "deletes": 9722
+ },
+ "mem_residual2": [
+  {
+   "label": "residual2-0",
+   "rss_mb": 459.2,
+   "used_mb": 55.2,
+   "live": 750,
+   "creates": 11222,
+   "deletes": 9722
+  },
+  {
+   "label": "residual2-1",
+   "rss_mb": 267.8,
+   "used_mb": 55.2,
+   "live": 750,
+   "creates": 11222,
+   "deletes": 9722
+  }
+ ],
+ "refill_s": 2.959872007369995,
+ "delete_all_s": 0.13280868530273438,
+ "total_creates": 10472,
+ "total_deletes": 9722,
+ "used_growth_mb_per_1000_cycles": 13.865649606299211,
+ "rss_growth_mb_per_1000_cycles": 15.834153543307076,
+ "residual_used_mb": 52.5,
+ "residual_rss_mb": 88.0
+}

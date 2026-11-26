@@ -1,0 +1,104 @@
+[
+ {
+  "name": "GRAPH.COPY copies contents",
+  "ok": true,
+  "detail": "None",
+  "severity": "critical"
+ },
+ {
+  "name": "ingest: GRAPH.LIST == live set",
+  "ok": true,
+  "detail": "750 expected",
+  "severity": "critical"
+ },
+ {
+  "name": "GRAPH.LIST == Python live set",
+  "ok": true,
+  "detail": "extra=[] missing=[]",
+  "severity": "critical"
+ },
+ {
+  "name": "deleted/renamed-away graphs are gone",
+  "ok": true,
+  "detail": "[]",
+  "severity": "critical"
+ },
+ {
+  "name": "deleted names absent from GRAPH.LIST",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "DBSIZE == live graphs + registry keys",
+  "ok": true,
+  "detail": "1516 vs 750+766",
+  "severity": "major"
+ },
+ {
+  "name": "no in-flight correctness errors",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "final checksum on every live tenant",
+  "ok": true,
+  "detail": "750/750 tenants; ",
+  "severity": "critical"
+ },
+ {
+  "name": "steady state: used_memory plateau (2nd half growth <10%+20MB)",
+  "ok": false,
+  "detail": "+75.0 MB over 2nd half from 427",
+  "severity": "major"
+ },
+ {
+  "name": "steady state: RSS plateau (2nd half growth <10%+50MB)",
+  "ok": true,
+  "detail": "+83.3 MB over 2nd half from 530",
+  "severity": "major"
+ },
+ {
+  "name": "live graph count constant through soak",
+  "ok": true,
+  "detail": "[750, 750, 750, 750, 750, 750]",
+  "severity": "major"
+ },
+ {
+  "name": "GRAPH.LIST empty after deleting all",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "used_memory returns to baseline after deleting all (residual <50MB)",
+  "ok": false,
+  "detail": "residual used_memory +52.5 MB (base 3.1)",
+  "severity": "major"
+ },
+ {
+  "name": "RSS returns near baseline after deleting all (residual <10% of peak+100MB)",
+  "ok": true,
+  "detail": "residual RSS +88.0 MB (base 33.7, peak 613.3)",
+  "severity": "minor"
+ },
+ {
+  "name": "refill after delete-all: RSS not above 1.15x previous peak (memory reused, no leak)",
+  "ok": true,
+  "detail": "refill RSS 553.6 vs old peak 613.3; baseline 33.7",
+  "severity": "major"
+ },
+ {
+  "name": "refilled tenants verify (200 sampled)",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ },
+ {
+  "name": "server alive at end",
+  "ok": true,
+  "detail": "",
+  "severity": "critical"
+ }
+]

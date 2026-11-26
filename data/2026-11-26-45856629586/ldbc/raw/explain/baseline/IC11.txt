@@ -1,0 +1,13 @@
+Limit
+    Sort
+        Project
+            Filter
+                Conditional Traverse | (company)->(@anon_2:Country)
+                    Filter
+                        Conditional Traverse | (friend)-[workAt:WORK_AT]->(company:Company)
+                            Distinct
+                                Project
+                                    Filter
+                                        Conditional Variable Length Traverse | (person)-[@anon_0:KNOWS*1..2]->(friend)
+                                            Filter
+                                                Node By Index Scan | (person:Person)

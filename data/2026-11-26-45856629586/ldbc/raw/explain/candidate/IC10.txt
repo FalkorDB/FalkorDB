@@ -1,0 +1,27 @@
+Nested Plans
+    Limit
+        Sort
+            Project
+                Project
+                    Aggregate
+                        Apply
+                            Distinct
+                                Project
+                                    Filter
+                                        Project
+                                            Anti Semi Apply
+                                                Conditional Traverse | (friend)->(city:City)
+                                                    Filter
+                                                        Conditional Variable Length Traverse | (person)-[@anon_0:KNOWS*2..2]->(friend)
+                                                            Filter
+                                                                Node By Index Scan | (person:Person)
+                                                Expand Into | (friend)-(person:Person)
+                                                    Argument
+                            Optional
+                                Conditional Traverse | (friend)<-(post:Post)
+                                    Argument
+    Aggregate
+        PathBuilder
+            Expand Into | (person)->(@anon_5)
+                Conditional Traverse | (p)->(@anon_5)
+                    Argument

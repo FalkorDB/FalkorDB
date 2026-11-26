@@ -1,0 +1,30 @@
+Limit
+    Sort
+        Project
+            Filter
+                Aggregate
+                    Project
+                        Filter
+                            Conditional Traverse | (message)->(country)
+                                Filter
+                                    Conditional Traverse | (friend)<-(message)
+                                        Distinct
+                                            Project
+                                                Conditional Variable Length Traverse (Expand Into) | (person)-[@anon_1:KNOWS*1..2]->(friend)
+                                                    Filter
+                                                        Conditional Traverse | (friend)->(city)
+                                                            Filter
+                                                                All Node Scan | (friend)
+                                                                    Aggregate
+                                                                        Conditional Traverse | (country)<-(city:City)
+                                                                            Filter
+                                                                                Node By Label Scan | (country:Country)
+                                                                                    Limit
+                                                                                        Project
+                                                                                            Cartesian Product
+                                                                                                Filter
+                                                                                                    Node By Index Scan | (countryX:Country)
+                                                                                                Filter
+                                                                                                    Node By Index Scan | (countryY:Country)
+                                                                                                Filter
+                                                                                                    Node By Index Scan | (person:Person)

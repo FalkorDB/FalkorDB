@@ -1,0 +1,1 @@
+[{"tag": "", "start": 1795713618.4985268, "duration": 300.0, "workers": [{"name": "analyst", "count": 4, "rate": 3.0}, {"name": "oltp", "count": 4, "rate": 150}, {"name": "writer", "count": 2, "rate": 12}, {"name": "runaway", "count": 1, "rate": 0.022222222222222223}]}]

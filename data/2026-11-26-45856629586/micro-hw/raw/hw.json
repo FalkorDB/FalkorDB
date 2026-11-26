@@ -1,0 +1,13 @@
+{
+  "c_engine": [],
+  "c_compat": false,
+  "server_cpus": "0-1,4-5",
+  "l2_event": "l2_rqsts.all_demand_miss",
+  "probe": {
+    "instructions": 640195.0,
+    "cycles": 755853.0,
+    "branch-misses": 5974.0,
+    "l2_rqsts.all_demand_miss": 5908.0
+  },
+  "crossed": []
+}

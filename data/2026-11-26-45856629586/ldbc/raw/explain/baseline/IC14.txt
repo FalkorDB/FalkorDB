@@ -1,0 +1,31 @@
+Sort
+    Project
+        Aggregate
+            Project
+                Apply
+                    Apply
+                        Project
+                            Unwind
+                                Project
+                                    PathBuilder
+                                        All Shortest Paths | (person1)-[@anon_0:KNOWS]-(person2)
+                                            Project
+                                                Cartesian Product
+                                                    Filter
+                                                        Node By Index Scan | (person1:Person)
+                                                    Filter
+                                                        Node By Index Scan | (person2:Person)
+                        Aggregate
+                            Filter
+                                Conditional Traverse | (@anon_9)->(b:Person)
+                                    Conditional Traverse | (@anon_7)->(@anon_9:Comment)
+                                        Conditional Traverse | (a)<-(@anon_7:Comment)
+                                            Node By Label Scan | (a:Person)
+                                                Argument
+                    Aggregate
+                        Filter
+                            Conditional Traverse | (@anon_4)->(b:Person)
+                                Conditional Traverse | (@anon_2)->(@anon_4:Post)
+                                    Conditional Traverse | (a)<-(@anon_2:Comment)
+                                        Node By Label Scan | (a:Person)
+                                            Argument

@@ -1,0 +1,58 @@
+ground truth generated in 3.0s: N=250000 knows=750000 maxdeg=7588 hub[200] mindeg=83
+ingest 119.0s (persons 2.2s, +knows 58.2s, rest 58.6s)
+PASS ingest count person
+PASS ingest count post
+PASS ingest count comment
+PASS ingest count knows
+PASS ingest count likes
+PASS ingest count has_creator
+PASS ingest count reply_of
+PASS Person.id lookup uses an index
+PASS pre-soak: friend/post/like counts for 185 sampled persons
+PASS pre-soak: mutual-friend counts for 11 fixed pairs
+PASS pre-soak: home feed top-20 for 25 persons
+PASS pre-soak: friend-of-friend top-10 for 14 persons
+PASS pre-soak: bounded shortest path for 11 pairs
+PASS server alive after soak
+PASS no wrong results observed live (profile/friend_count/feed/fof/sp invariants)
+PASS no read errors during soak
+PASS no write errors during soak
+PASS open-loop schedule kept (no dropped ops)
+acked writes: {'like': 4447, 'friend': 1844, 'post': 4414, 'unlike': 1926}
+PASS post-soak global count person
+PASS post-soak global count post
+PASS post-soak global count comment
+PASS post-soak global count knows
+PASS post-soak global count likes
+PASS post-soak global count has_creator
+PASS post-soak global count reply_of
+PASS post-soak: friend/post/like counts for 185 sampled persons
+PASS post-soak: mutual-friend counts for 11 fixed pairs
+PASS post-soak: home feed top-20 for 25 persons
+PASS post-soak: friend-of-friend top-10 for 14 persons
+PASS post-soak: bounded shortest path for 11 pairs
+PASS RDB round-trip preserves all counts
+PASS post-restart: friend/post/like counts for 185 sampled persons
+PASS post-restart: mutual-friend counts for 11 fixed pairs
+PASS post-restart: home feed top-20 for 25 persons
+PASS post-restart: friend-of-friend top-10 for 14 persons
+PASS post-restart: bounded shortest path for 11 pairs
+PASS server alive at end
+op                                     count    err     ops/s      p50      p99     p999  drift
+_late_start                             3659      0      12.4    90.78   154.95   177.99   0.96
+fof_recommend                          37633      0     125.0     0.74    14.98   117.44   1.02
+fof_recommend_hub                        390      0       1.3    21.82   185.18   196.52   0.98
+friend_count                           26073      0      86.9     0.49     4.13   122.18   1.35
+friend_count_hub                        2772      0       9.2     0.77     4.47   122.18   1.78
+home_feed                              47047      0     156.8     1.45     6.92   119.78   1.06
+home_feed_hub                           1432      0       4.8     2.78    18.99    51.12   1.06
+profile                                81335      0     270.2     0.46     3.67   124.62   1.49
+shortest_path                          43304      0     144.3     0.57     4.30   115.13   1.37
+w_delete_like                           1926      0       6.4     1.60    41.11   164.44   3.22
+w_new_friendship                        1844      0       6.1     0.85    29.36   143.15   0.54
+w_new_like                              4447      0      14.8     0.94    50.12   158.05   6.96
+w_new_post                              4414      0      14.7     0.85    62.32   154.95   0.87
+monitor: {"cpu_avg_pct": 55.37133333333334, "cpu_max_pct": 89.9, "rss_start_mb": 520.3, "rss_end_mb": 494.0, "rss_max_mb": 527.8, "used_mem_end_mb": 350.9, "rss_slope_mb_per_h": 61.13972909203416, "used_mem_slope_mb_per_h": 12.492435933596159, "samples": 423, "dead_samples": 0}
+failed checks: []
+top errors: []
+crash markers: []
