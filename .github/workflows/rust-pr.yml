@@ -156,6 +156,7 @@ jobs:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REF: ${{ github.ref }}
           PATTERN: ${{ steps.check.outputs.pattern }}
+          PERF_BELOW: ${{ steps.key.outputs.perf_below }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = "merge_group" ]; then
@@ -176,6 +177,9 @@ jobs:
             exit 0
           fi
           echo "same_repo=false" >> "$GITHUB_OUTPUT"
+          if [ -n "$PERF_BELOW" ]; then
+            echo "::warning::The release gate (perf, perf-cov) does not run for a pull request from a fork; a maintainer takes the branch over to have it run."
+          fi
           # Same set the toolchain trigger watches, plus .github/ — anything
           # narrower leaves a path that sets file_changed=true, starts the
           # privileged `docker` job, and fails on the denied push instead of

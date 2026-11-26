@@ -1860,16 +1860,17 @@ def test_the_release_gate_runs_only_for_a_pull_request_from_this_repository(
 
 
 @pytest.mark.parametrize(
-    "event, head_repo, same_repo",
+    "event, head_repo, same_repo, perf_below",
     [
-        ("merge_group", "FalkorDB/FalkorDB", "true"),
-        ("merge_group", "someone/FalkorDB", "false"),
-        ("pull_request", "FalkorDB/FalkorDB", "true"),
-        ("pull_request", "someone/FalkorDB", "false"),
+        ("merge_group", "FalkorDB/FalkorDB", "true", "6.3.0"),
+        ("merge_group", "someone/FalkorDB", "false", "6.3.0"),
+        ("merge_group", "someone/FalkorDB", "false", ""),  # main's queue: no gate to skip
+        ("pull_request", "FalkorDB/FalkorDB", "true", ""),
+        ("pull_request", "someone/FalkorDB", "false", ""),
     ],
 )
 def test_check_files_says_whether_the_pull_request_is_from_this_repository(
-    tmp_path, event, head_repo, same_repo
+    tmp_path, event, head_repo, same_repo, perf_below
 ):
     steps = workflow("rust-pr.yml")["jobs"]["check-files"]["steps"]
     step = next(s for s in steps if s.get("id") == "fork")
@@ -1893,12 +1894,16 @@ def test_check_files_says_whether_the_pull_request_is_from_this_repository(
         "PR_HEAD_REPO": head_repo if event == "pull_request" else "",
         "REF": "refs/heads/gh-readonly-queue/6.2/pr-7-" + "a" * 40,
         "PATTERN": "^build/",
+        "PERF_BELOW": perf_below,
     }
     run = run_step(script, tmp_path, env)
     assert run.returncode == 0, run.stdout + run.stderr
     assert dict(line.split("=", 1) for line in out.read_text().splitlines()) == {
         "same_repo": same_repo
     }
+    # a fork's queued pull request skips the release gate, and the run says so
+    skipped = same_repo == "false" and perf_below != ""
+    assert ("::warning::The release gate (perf, perf-cov) does not run" in run.stdout) is skipped
 
 
 def test_every_perf_result_and_gate_upload_replaces_an_earlier_attempts_artifact():
