@@ -42,10 +42,12 @@ soak = [
     "psutil>=7.1.3",
     "numpy>=2.3.5",
 ]
-# `uv run --project bench --group fuzz bench fuzz`: the full scan returns ~100k
-# rows, and the pure-Python reply parser would add seconds to each
+# `uv run --project bench --group fuzz bench fuzz`: the soak's kit (soakkit), and
+# hiredis, because the full scan returns ~100k rows and the pure-Python reply
+# parser would add seconds to each (redis-py 8.1 ignores a hiredis before 3.2)
 fuzz = [
-    "hiredis>=3.1.0",
+    { include-group = "soak" },
+    "hiredis>=3.2.0",
 ]
 
 [build-system]

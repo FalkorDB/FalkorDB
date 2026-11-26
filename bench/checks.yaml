@@ -43,3 +43,12 @@
   command: uv run --project bench --frozen --group soak bench soak --check soak-b --scenarios s07,s08,s09,s10,s11,s12
   timeout_minutes: 120
   machine_type: n4-standard-16
+
+# The seeded soak of long reads, writes and cheap reads: the control epoch, then graph-build
+# timing, about 35 min on this machine, 50 with repeats (no run starts that would end after
+# 85 min): bench/src/falkorbench/fuzz/README.md
+- name: fuzz
+  runner: vm
+  command: uv run --project bench --frozen --group fuzz bench fuzz
+  timeout_minutes: 90
+  machine_type: n4-standard-16

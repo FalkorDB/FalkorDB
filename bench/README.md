@@ -26,13 +26,14 @@ uv sync --project bench          # once: the harness and the dev group (pytest, 
 
 uv runs it on the Python `bench/.python-version` pins (3.12), on a laptop, a VM,
 the CI image and the runners alike. The soak and fuzz checks need one more
-dependency group each: `uv run --project bench --group soak …`, `--group fuzz`.
+dependency group each: `uv run --project bench --group soak …`, `--group fuzz`
+(which includes the soak's, as fuzz uses its kit).
 
 Every command below can be run as `uv run --project bench bench …`. From inside
 `bench/` it is just `uv run bench …`. The tests:
 
 ```bash
-uv run --project bench --group dev --group soak python -I -B -m pytest bench/tests
+uv run --project bench --group dev --group soak --group fuzz python -I -B -m pytest bench/tests
 ```
 
 ## The loop

@@ -28,6 +28,7 @@ from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
 from falkorbench.counters import select_backend
+from falkorbench.fuzz import check as fuzz_check
 from falkorbench.ldbc import check as ldbc_check
 from falkorbench.nightly import merge as nightly_merge
 from falkorbench.nightly import missed_run
@@ -676,6 +677,25 @@ def soak_command(args):
     whenever result.json was written, whatever its verdict.
     """
     raise SystemExit(soak_check.main(list(args)))
+
+
+@cli.command(
+    "fuzz",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def fuzz_command(args):
+    """Compare a candidate image with a baseline image on the seeded soak (--help: the flags).
+
+    The nightly perf check (needs `--group fuzz`): long reads, writes and cheap reads, open loop,
+    against each image's server in docker, beside a plain server from the same image. Exits 0
+    whenever OUT/result.json was written, whatever its verdict.
+    """
+    raise SystemExit(fuzz_check.main(list(args)))
 
 
 def main() -> int:
