@@ -38,8 +38,9 @@ use crate::{
     ops::{BinaryOp, IndexUnaryOp, Monoid, Semiring, UnaryOp, accum_raw},
     sealed::Token,
     settings::{IntegerWidth, Orientation, Sparsity},
-    sys::{self, GrB_Index, GrB_Info, GrB_Matrix, GxB_Option_Field},
+    sys::{self, GrB_Index, GrB_Info, GrB_Matrix, GrB_Vector, GxB_Option_Field},
     types::{Accepts, BuiltinType, GrbType},
+    vector::Vector,
 };
 
 /// `GrB_Matrix_nrows` on a raw handle.
@@ -867,6 +868,28 @@ pub fn reduce<T: GrbType>(
     let d = descriptor(MaskMode::NONE, desc);
     // SAFETY: `c` is a valid `T`; live handles whose types are `T`.
     check(unsafe { T::matrix_reduce(c, accum_raw(accum), monoid.as_raw(), a.raw, d) })
+}
+
+/// `w<mask> = accum(w, ⊕ A(i, :))`: fold each row of `A` into `w(i)`; with
+/// `desc.transpose_first`, each column (`GrB_Matrix_reduce_Monoid`).
+///
+/// # Errors
+///
+/// Dimension mismatch, out of memory.
+pub fn reduce_rows<T: GrbType>(
+    w: &mut Vector<T>,
+    mask: Mask<'_, GrB_Vector>,
+    accum: Option<&BinaryOp<T, T, T>>,
+    monoid: &Monoid<T>,
+    a: &Matrix<T>,
+    desc: Desc,
+) -> Result<()> {
+    let m = mask.raw(w.as_raw());
+    let d = descriptor(mask.mode(), desc);
+    // SAFETY: live handles whose types are `T`.
+    w.check(unsafe {
+        sys::GrB_Matrix_reduce_Monoid(w.as_raw(), m, accum_raw(accum), monoid.as_raw(), a.raw, d)
+    })
 }
 
 /// `C<Mask> = accum(C, (C's type) A)`: copy `A` into `C`, converting the

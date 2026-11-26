@@ -15,8 +15,9 @@
 //!   `Mask::valued(m)` or `Mask::valued_complement(m)`; the descriptor's mask
 //!   bits are derived from it. Valued masks are `bool` only (see the casting
 //!   rule), or [`AsBool`] of a built-in type.
-//! * **The descriptor is data.** [`Desc`] holds `replace`, `transpose_a`,
-//!   `transpose_b`; the built-in `GrB_DESC_*` handle is looked up inside.
+//! * **The descriptor is data.** [`Desc`] holds `replace`,
+//!   `transpose_first`, `transpose_second`; the built-in `GrB_DESC_*` handle
+//!   is looked up inside.
 //! * **Operators carry their domains.** [`UnaryOp<X, Z>`],
 //!   [`BinaryOp<X, Y, Z>`], [`IndexUnaryOp<X, Y, Z>`], [`Monoid<T>`] and
 //!   [`Semiring<X, Y, Z>`] are typed handles, checked against the matrices
@@ -25,7 +26,7 @@
 //!   this layer refuses, exactly as GraphBLAS itself refuses for user-defined
 //!   types. The two exceptions are explicit: operators that never read a value
 //!   are typed with [`Pattern`] and accept any input type, and
-//!   [`matrix::cast`] changes an element type on purpose.
+//!   [`matrix::cast`] / [`vector::cast`] change an element type on purpose.
 //! * **Aliasing is spelled.** `&mut c` with `&a` cannot alias; the marker
 //!   [`Output`] in an input or mask slot says "the output matrix here".
 //! * **Built-ins need no `unsafe`.** Each is a [`Lazy`] static that reads
@@ -40,6 +41,8 @@
 //! # Layout
 //!
 //! * [`matrix`] holds [`Matrix<T>`] and every operation whose output is a matrix.
+//! * [`vector`] holds [`Vector<T>`] and every operation whose output is a
+//!   vector (including `mxv` and `vxm`).
 //! * [`scalar`] holds [`Scalar<T>`].
 //! * Operators, masks, built-ins and initialisation are at the root.
 //!
@@ -132,8 +135,8 @@ pub mod scalar;
 mod settings;
 mod types;
 
-/// The supertrait that keeps [`GrbType`], [`Operand`] and [`AsMask`] closed to this crate: every
-/// implementation hands a raw pointer to C.
+/// The supertrait that keeps [`GrbType`], [`Operand`] and [`AsMask`] closed
+/// to this crate: every implementation hands a raw pointer to C.
 mod sealed {
     /// Closes the element-type and freezable traits. Re-exported, hidden,
     /// because `user_type!` implements it for the caller's type.
@@ -153,6 +156,7 @@ mod sealed {
 }
 
 pub mod matrix;
+pub mod vector;
 
 #[cfg(test)]
 mod tests;
@@ -170,3 +174,4 @@ pub use ops::*;
 pub use scalar::Scalar;
 pub use settings::{IntegerWidth, Orientation, Sparsity};
 pub use types::{Accepts, BuiltinPattern, BuiltinType, GrbType, Pattern};
+pub use vector::{Vector, mxv, vxm};
