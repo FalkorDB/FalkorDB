@@ -80,8 +80,8 @@ RULES = {
         "candidate failed (error, timeout, server down) that the baseline finished. Info, not "
         "gated: a crossing the re-run did not repeat, a query that fails on both sides."
     ),
-    "soak-a": SOAK_RULES,
-    "soak-b": SOAK_RULES,
+    # One check per soak scenario (bench/checks.yaml), all under the same rules.
+    **dict.fromkeys((f"soak-s{n:02d}" for n in range(1, 13)), SOAK_RULES),
     "fuzz": (
         "The control epoch (4 runs: candidate, baseline, baseline, candidate) checks invariants. "
         "A data invariant (writes add up, upsert edges complete) or a crash on the candidate "

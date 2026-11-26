@@ -140,7 +140,7 @@ locally against a real base build.
 
 ## Result contract (nightly perf checks)
 
-Each nightly perf check (micro-hw, pokec, soak-a, soak-b, fuzz, ldbc) compares a
+Each nightly perf check (micro-hw, pokec, soak-s01 … soak-s12, fuzz, ldbc) compares a
 candidate image with a baseline image and writes one `result.json`. The nightly
 merges them into one `nightly.json`, which the reporter posts.
 `src/falkorbench/contract.py` defines those two files and checks them: it

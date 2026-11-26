@@ -30,18 +30,81 @@
   timeout_minutes: 45
   machine_type: n4-standard-16
 
-# The release soak in two halves, each about 75-91 min on this machine (nightly
-# mode stops starting runs at 110 min, cuts a run at 115): bench/src/falkorbench/soak/README.md
-- name: soak-a
+# The release soak, one check per scenario, each on its own VM: both sides of one scenario, then a
+# swapped-order re-run when a gate crosses. A timeout is 2.75x the slowest pair (candidate +
+# baseline, first pass) seen on this machine type, plus 0.5 min to pull and 10 min of margin,
+# rounded up to 5 min: the first pass plus the re-run's 1.2x fit test, with 25% to spare. The
+# check stops starting runs 10 min before it: bench/src/falkorbench/soak/README.md
+- name: soak-s01
   runner: vm
-  command: uv run --project bench --frozen --group soak bench soak --check soak-a --scenarios s01,s02,s03,s04,s05,s06
-  timeout_minutes: 120
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s01 --scenarios s01
+  timeout_minutes: 50
   machine_type: n4-standard-16
 
-- name: soak-b
+- name: soak-s02
   runner: vm
-  command: uv run --project bench --frozen --group soak bench soak --check soak-b --scenarios s07,s08,s09,s10,s11,s12
-  timeout_minutes: 120
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s02 --scenarios s02
+  timeout_minutes: 80
+  machine_type: n4-standard-16
+
+- name: soak-s03
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s03 --scenarios s03
+  timeout_minutes: 50
+  machine_type: n4-standard-16
+
+- name: soak-s04
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s04 --scenarios s04
+  timeout_minutes: 50
+  machine_type: n4-standard-16
+
+- name: soak-s05
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s05 --scenarios s05
+  timeout_minutes: 45
+  machine_type: n4-standard-16
+
+- name: soak-s06
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s06 --scenarios s06
+  timeout_minutes: 45
+  machine_type: n4-standard-16
+
+- name: soak-s07
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s07 --scenarios s07
+  timeout_minutes: 50
+  machine_type: n4-standard-16
+
+- name: soak-s08
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s08 --scenarios s08
+  timeout_minutes: 55
+  machine_type: n4-standard-16
+
+- name: soak-s09
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s09 --scenarios s09
+  timeout_minutes: 50
+  machine_type: n4-standard-16
+
+- name: soak-s10
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s10 --scenarios s10
+  timeout_minutes: 50
+  machine_type: n4-standard-16
+
+- name: soak-s11
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s11 --scenarios s11
+  timeout_minutes: 75
+  machine_type: n4-standard-16
+
+- name: soak-s12
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-s12 --scenarios s12
+  timeout_minutes: 40
   machine_type: n4-standard-16
 
 # The seeded soak of long reads, writes and cheap reads: the control epoch, then graph-build

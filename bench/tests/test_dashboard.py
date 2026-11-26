@@ -355,8 +355,7 @@ PHRASES = {
     "micro-hw": _micro_hw,
     "pokec": _pokec,
     "ldbc": _ldbc,
-    "soak-a": _soak,
-    "soak-b": _soak,
+    **dict.fromkeys((f"soak-s{n:02d}" for n in range(1, 13)), _soak),
     "fuzz": _fuzz,
 }
 

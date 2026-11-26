@@ -78,8 +78,8 @@ results schema 1). From the repository root:
 
 ```bash
 uv run --project bench --group soak bench soak --candidate <image@sha256:...> \
-  --baseline <image@sha256:...> --out out --mode nightly --check soak-b \
-  --scenarios s07,s08,s09,s10,s11,s12
+  --baseline <image@sha256:...> --out out --mode nightly --check soak-s07 \
+  --scenarios s07
 ```
 
 The flags, the input checks, result.json and the stop signals are bench's shared check
@@ -105,7 +105,7 @@ Findings, named `sNN ...`:
 
 A perf crossing (and a timing check broken on the candidate only) is a regression only
 when a re-run of that scenario, both sides with the order swapped, crosses again; the
-re-runs go worst first while the mode's deadline allows. One that was not repeated is
+re-runs go worst first while the deadline allows. One that was not repeated is
 reported as info and named so; one left without a re-run for lack of time makes the
 verdict `error` (it was not measured to the end). Improvements are reported too.
 
@@ -130,7 +130,8 @@ check's (`no_freeze`, `no_timeouts_while_waiting`) and Pokec's PING-freeze check
 The p50 gate sits only 1.1x above its worst A/A swing, so it is re-derived from each
 A/A evidence set (the PR's acceptance runs); a wider swing there moves the gate first.
 
-**Known flaky checks** (`KNOWN_FLAKY` in `check.py`, contract v1.9). These are
+**Known flaky checks** (`KNOWN_FLAKY` in `check.py`, contract v1.9, keyed by the finding's
+name, so an entry holds whichever check runs its scenario). These are
 correctness checks that an open bug breaks intermittently. An entry needs two things: an
 open issue, and same-image evidence that the break is intermittent. It is removed when the
 issue closes, and a unit test fails if an entry names no issue. A listed check is not gated
@@ -168,12 +169,24 @@ the candidate, even when the deadline then leaves no time for the baseline). The
 | mode | seconds per scenario and side | scale | perf | runs |
 | --- | --- | --- | --- | --- |
 | queue | 60 | 0.05 | info only, no re-runs | correctness checks |
-| nightly | 300 | 0.25 | gated, re-runs | 2 shards (`soak-a`, `soak-b`) |
-| long | 1200 | 1.0 | gated, re-runs | must be sharded further (about 8 h for all 12) |
+| nightly | 300 | 0.25 | gated, re-runs | one check per scenario, `soak-s01` … `soak-s12` |
+| long | 1200 | 1.0 | gated, re-runs | one check per scenario, with timeouts of its own (unmeasured) |
 
-The nightly registers two entries in `bench/checks.yaml`, `soak-a` (s01–s06) and
-`soak-b` (s07–s12), each on its own n4-standard-16 VM with a 120 min timeout (the
-nightly deadline stops starting runs at 110 min and cuts a run at 115). Outside the VM
+The nightly registers one entry per scenario in `bench/checks.yaml`, `soak-s01` …
+`soak-s12`, each on its own n4-standard-16 VM, so soak takes as long as its slowest
+scenario instead of six in a row. An entry's `timeout_minutes` is 2.75x the slowest pair
+(both sides of the first pass) seen on that machine type, plus 0.5 min to pull and 10 min
+of margin, rounded up to 5 min: 40 to 80 min. The slowest pairs and the runs they come
+from are `SLOWEST_PAIR` in `bench/tests/test_soak.py`, where a test fails when a timeout
+no longer fits a pair 25% slower plus its swapped re-run. In the workflows the deadline
+follows that timeout (`PERF_TIMEOUT_SECONDS`, set by `tests/perf/vm/run-check.sh`): the
+check stops starting runs 10 min before it and cuts a run 5 min before it. Run by hand,
+the deadline is the mode's (`MODES` in `check.py`) or `--deadline-minutes`. The long mode
+needs entries with longer timeouts: the nightly ones leave its 1200 s sides no room.
+
+Trends start fresh under these names. Nights before them ran soak as two checks,
+`soak-a` (s01–s06) and `soak-b` (s07–s12); the dashboard keeps those nights under the
+old names and does not carry their rows over to the new checks. Outside the VM
 the check runs unpinned; nothing waits for a quiet machine, so read local numbers with
 that in mind. Unit tests (no server or Docker needed):
 `uv run --project bench --group dev --group soak python -I -B -m pytest bench/tests/test_soak.py`.

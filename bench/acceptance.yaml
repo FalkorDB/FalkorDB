@@ -149,27 +149,49 @@ checks:
         completed, candidate 0) or the server stops answering PING (seconds,
         not milliseconds) under 5% writes; confirmed: true.
 
-  # soak runs as two checks (DECISIONS): soak-a = scenarios s01-s06,
-  # soak-b = s07-s12.
-  soak-a:
-    - id: soak-a-a-a
+  # soak runs one check per scenario, soak-s01 ... soak-s12 (bench/checks.yaml).
+  soak-s01:
+    - {id: soak-s01-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s02:
+    - {id: soak-s02-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s03:
+    - {id: soak-s03-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s04:
+    - {id: soak-s04-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s05:
+    - {id: soak-s05-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s06:
+    - {id: soak-s06-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s07:
+    - {id: soak-s07-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s08:
+    - {id: soak-s08-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s09:
+    - {id: soak-s09-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s10:
+    - id: soak-s10-a-a
       candidate: *main-4c1088949
       baseline: *main-4c1088949
       mode: nightly
-      expect:
-        verdict: pass
-        no_regression_findings: true
-
-  soak-b:
-    - id: soak-b-a-a
-      candidate: *main-4c1088949
-      baseline: *main-4c1088949
-      mode: nightly
-      expect:
-        verdict: pass
-        no_regression_findings: true
+      expect: {verdict: pass, no_regression_findings: true}
       judge: >-
-        s10 index == scan under writes is KNOWN_FLAKY (#3095, contract v1.9): expect no s10 finding for it unless the candidate broke it on every run.
+        s10 index == scan under writes is KNOWN_FLAKY (#3095, contract v1.9):
+        expect no s10 finding for it unless the candidate broke it on every run.
+  soak-s11:
+    - {id: soak-s11-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
+  soak-s12:
+    - {id: soak-s12-a-a, candidate: *main-4c1088949, baseline: *main-4c1088949, mode: nightly,
+       expect: {verdict: pass, no_regression_findings: true}}
     - id: soak-s12-6.2.0-vs-6.0.4
       candidate: *v6-2-0
       baseline: *v6-0-4
@@ -186,7 +208,7 @@ checks:
         0.018-0.091x, retention_delete p50 0.028x, and the inline-read
         invariant held on 6.2.0 and broke on 6.0.4. Amended 2026-11-24 from
         "regression" (DECISIONS); the check was not changed to fit. p99 rows
-        are info. Any other finding is reported as measured. s10 index == scan under writes is KNOWN_FLAKY (#3095, contract v1.9): expect no s10 finding for it unless the candidate broke it on every run.
+        are info. Any other finding is reported as measured.
     - id: soak-s12-6.2.0-vs-6.2.1
       candidate: *v6-2-0
       baseline: *v6-2-1
@@ -201,7 +223,7 @@ checks:
         dev-VM data under the final gates: exactly one regression,
         s12 ingest_batch p50_ms 37.2 vs 7.8 ms (4.78x, +29.4 ms), crossing on
         the first pass and on the swapped re-run (a throughput row with the
-        same name is ok: match on status). p99 rows are info. s10 index == scan under writes is KNOWN_FLAKY (#3095, contract v1.9): expect no s10 finding for it unless the candidate broke it on every run.
+        same name is ok: match on status). p99 rows are info.
 
   fuzz:
     - id: fuzz-a-a

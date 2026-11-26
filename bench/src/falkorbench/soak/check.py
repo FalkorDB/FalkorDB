@@ -27,7 +27,8 @@ from falkorbench import kit
 HERE = Path(__file__).resolve().parent
 SCENARIOS_DIR = HERE / "scenarios"
 
-# --mode sets only the length; deadline_min stops starting runs inside checks.yaml's timeout.
+# --mode sets only the length. deadline_min stops starting runs when the check runs by hand; in
+# the workflows the deadline follows the check's own budget instead (budget_deadline_min).
 MODES = {
     "queue": {
         "duration": 60,
@@ -601,9 +602,32 @@ def compress_large(run_dir: Path, min_bytes: int = 1 << 20) -> None:
             f.unlink()
 
 
-def mode_params(a: argparse.Namespace) -> dict:
-    """The mode's settings with the development overrides (--duration, --scale, --deadline-minutes)."""
+# The check stops starting runs this long before its command's timeout, and run_all cuts a run 5
+# min before it, which leaves the rest to compare and write result.json.
+DEADLINE_MARGIN_MIN = 10
+
+
+def budget_deadline_min(environ=os.environ) -> float | None:
+    """The deadline inside the check's own budget: PERF_TIMEOUT_SECONDS, which
+    tests/perf/vm/run-check.sh sets from its checks.yaml entry's timeout_minutes, less the margin.
+    None outside the workflows (unset, or not a positive number of seconds)."""
+    try:
+        seconds = float(environ.get("PERF_TIMEOUT_SECONDS", ""))
+    except ValueError:
+        return None
+    if not (math.isfinite(seconds) and seconds > 0):
+        return None
+    return max(seconds / 60 - DEADLINE_MARGIN_MIN, 0.0)
+
+
+def mode_params(a: argparse.Namespace, environ=os.environ) -> dict:
+    """The mode's settings with the development overrides (--duration, --scale, --deadline-minutes).
+    The deadline is the budget's when the workflow gives one, so a one-scenario entry's re-run fits
+    its own timeout; --deadline-minutes still wins."""
     params = dict(MODES.get(a.mode, MODES["queue"]))
+    budget = budget_deadline_min(environ)
+    if budget is not None:
+        params["deadline_min"] = budget
     for key, value in (
         ("duration", a.duration),
         ("scale", a.scale),
