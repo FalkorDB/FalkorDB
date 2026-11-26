@@ -2141,6 +2141,29 @@ impl Binder {
                     return Ok(new_tree);
                 }
 
+                // Traversal patterns are not valid function arguments
+                // (e.g. `exists((p)-->())`) — matches FalkorDB C, which
+                // rejects patterns inside exists(). Bare pattern predicates
+                // (`WHERE (p)-->()`) and pattern comprehensions remain
+                // supported. Checked before the arguments are bound, so it
+                // is the error whatever the pattern's variables are.
+                if let ExprIR::FuncInvocation(func) = node_ref.data()
+                    && func.name == "exists"
+                    && node_ref.children().any(|mut c| {
+                        // `exists(((p)-->()))`: look through the parentheses.
+                        while matches!(c.data(), ExprIR::Paren)
+                            && let Some(inner) = c.children().next()
+                        {
+                            c = inner;
+                        }
+                        matches!(c.data(), ExprIR::Pattern(_))
+                    })
+                {
+                    return Err("Invalid input: traversal patterns are not allowed as \
+                         arguments to exists()"
+                        .to_string());
+                }
+
                 let mut children = node_ref
                     .children()
                     .map(|child| self.bind_expr_node(expr, &child, locals))
@@ -2207,20 +2230,6 @@ impl Binder {
                         ExprIR::Property(prop)
                     }
                     ExprIR::FuncInvocation(func) => {
-                        // Traversal patterns are not valid function arguments
-                        // (e.g. `exists((p)-->())`) — matches FalkorDB C,
-                        // which rejects patterns inside exists(). Bare
-                        // pattern predicates (`WHERE (p)-->()`) and pattern
-                        // comprehensions remain supported.
-                        if func.name == "exists"
-                            && children
-                                .iter()
-                                .any(|c| matches!(c.root().data(), ExprIR::Pattern(_)))
-                        {
-                            return Err("Invalid input: traversal patterns are not allowed as \
-                                 arguments to exists()"
-                                .to_string());
-                        }
                         // Compile-time type check: validate argument types
                         // against the function's declared parameter types.
                         // Skip hasLabels — it is generated internally by the parser
@@ -2269,6 +2278,23 @@ impl Binder {
                         unreachable!("produced only by the binder itself")
                     }
                     ExprIR::Pattern(pattern) => {
+                        // A pattern predicate only tests variables already in
+                        // scope; it cannot declare one (`WHERE () -- (n1)`
+                        // with no `n1` bound). Resolve each named alias as a
+                        // plain variable reference is, so an unknown one is
+                        // "not defined", and a parent-scope one is copied in
+                        // before the snapshot below and so is kept. An
+                        // unnamed entity has no name to resolve.
+                        for alias in pattern.variables() {
+                            if let Some(name) = alias.name() {
+                                // The ORDER BY placeholder is the one name
+                                // `resolve_name` always mints; a query can
+                                // spell it, so look it up without minting:
+                                // bound, it resolves; unbound, undefined.
+                                self.lookup_name(name, locals)?;
+                            }
+                        }
+
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
                         let outer_scope_names: HashSet<Arc<String>> =
@@ -2448,6 +2474,17 @@ impl Binder {
             return Ok(var);
         }
 
+        self.lookup_name(name, locals)
+    }
+
+    /// Resolves `name` through the local, current and parent scopes without
+    /// ever synthesizing a variable (unlike the ORDER BY placeholder case of
+    /// [`resolve_name`](Self::resolve_name)).
+    fn lookup_name(
+        &mut self,
+        name: &Arc<String>,
+        locals: &[HashMap<Arc<String>, Variable>],
+    ) -> Result<Variable, String> {
         for scope in locals.iter().rev() {
             if let Some(var) = scope.get(name) {
                 return Ok(var.clone());
