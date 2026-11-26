@@ -152,6 +152,14 @@ marks it with kind `known`.
 | --- | --- | --- |
 | `s10 Live (under writes) index == scan during build/after` | #3095 | One index entry missing during or after a build under writes (`idx=1242 scan=1243`). main against itself: broke on both sides in a nightly run, on neither in a queue run. 6.2.0 vs 6.2.1 (run 45401220445): broke on 6.2.0 only. |
 | `s10 Live: index-path count == scan-path count (same query)` | #3095 | The same loss within one query (`idx=4056 scan=4057`). 6.2.1: broke in run 45477499408, held in run 45401220445. |
+| `s10 during build person_age: result == ground truth` | #3512 | A range-index lookup of value 0 returns no rows while the index builds (`eq 0: got 0 want 1945`). main@4d72ac1 (`…192c10fefa57`): broke in run 45835452753, held in run 45809791507. |
+| `s10 during build person_city: result == ground truth` | #3512 | The same for `person_city` (`eq 0: got 0 want 175`). 6.2.1 (`…b456806f24de`): broke in run 45614251560, held in run 45835452753. |
+
+The two `during build` checks are recorded only when they fail (once per poll that saw a wrong
+result while the index built), so their "k of n runs failed" always has k = n and cannot show a
+total breakage: `FAILURE_ONLY` in `check.py` keeps the release gate from ever counting them.
+Their companions that run once and always (`after build …`, `before restart …`) are not flaky:
+they broke in every run of main and 6.2.1 above.
 
 **Known breaks and their issues** (reporting only). This is not an exemption list: each
 check here is a regression whenever the candidate breaks it. The report names the issue next
@@ -162,8 +170,8 @@ table). A check not listed has no issue known.
 | --- | --- | --- |
 | `s10 after build person_age: indexed result == ground truth` | #3512 | A range-index lookup of value 0 returns no rows (`eq 0: got 0 want 1945`) once a fulltext index on the same label has been dropped (a range index existed first). The cause is RediSearch's union-aliasing skip of a numeric `+0.0` (#3512 is the root cause; it describes only the reload trigger); the fix, FalkorDB/RediSearch#31, is not in the submodule yet. |
 | `s10 after build person_city: indexed result == ground truth` | #3512 | The same. |
-| `s10 during build person_age: result == ground truth` | #3512 | The same. |
-| `s10 during build person_city: result == ground truth` | #3512 | The same. |
+| `s10 during build person_age: result == ground truth` | #3512 | The same, while the index builds; known flaky, below. |
+| `s10 during build person_city: result == ground truth` | #3512 | The same, while the index builds; known flaky, below. |
 | `s10 before restart: Person.age indexed results == ground truth` | #3512 | The same. |
 | `s10 Live (under writes) index == scan during build/after` | #3095 | Known flaky, below. |
 | `s10 Live: index-path count == scan-path count (same query)` | #3095 | Known flaky, below. |

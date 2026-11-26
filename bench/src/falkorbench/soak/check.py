@@ -74,7 +74,19 @@ TIMING_RE = re.compile(
 KNOWN_FLAKY = {
     "s10 Live (under writes) index == scan during build/after": "#3095",
     "s10 Live: index-path count == scan-path count (same query)": "#3095",
+    "s10 during build person_age: result == ground truth": "#3512",
+    "s10 during build person_city: result == ground truth": "#3512",
 }
+
+# Known flaky checks the scenario records only when they fail: every record is a failure, so a
+# "k of n" with k == n says nothing about how often it held, and a total breakage cannot be told
+# from a random one. The release gate never counts these (README "Known flaky checks").
+FAILURE_ONLY = frozenset(
+    {
+        "s10 during build person_age: result == ground truth",
+        "s10 during build person_city: result == ground truth",
+    }
+)
 
 # A known flaky check the candidate broke every time it was checked, at least this many times
 # in every run, is a total breakage: the release gate counts it (README "Known flaky checks").
@@ -367,7 +379,9 @@ def scenario_rows(scn: str, cand: list[Run], base: list[Run], perf_gate: bool) -
                 or "neither side"
             )
             if row.status == "regression":  # the gate counts it only when it always broke
-                row.introduced = row.baseline != 0 and _always_broken(cand, n)
+                row.introduced = (
+                    row.baseline != 0 and row.name not in FAILURE_ONLY and _always_broken(cand, n)
+                )
             elif row.status == "improvement":  # a flake the baseline hit: not a fix
                 row.status = "info"
         rows.append(row)

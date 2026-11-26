@@ -148,6 +148,50 @@ def test_known_flaky_check_is_a_regression_the_release_gate_leaves_out(tmp_path)
     assert ",known," in (tmp_path / "raw" / "rows.csv").read_text()
 
 
+@pytest.mark.parametrize("records", [2, 12])  # 12: k == n >= 10, still not a total break
+def test_a_failure_only_flake_against_a_baseline_that_held_is_not_new_at_the_gate(
+    tmp_path, records
+):
+    """`during build person_city` broke on 6.2.1 on 25 Nov and held on 26 Nov (#3512): the
+    scenario records it only when it fails, so the baseline that held left no record (null).
+    A night is red on it (#4065); the release gate does not count it, however many records."""
+    from falkorbench.nightly import merge
+
+    name = "during build person_city: result == ground truth"
+    assert f"s10 {name}" in sc.KNOWN_FLAKY and f"s10 {name}" in sc.FAILURE_ONLY
+    c = run("candidate", checks={name: False, "y": True}, scenario="s10_schema_under_load")
+    c.details = {name: f"{records} of {records} runs failed; first: ['eq 0: got 0 want 175']"}
+    b = run("baseline", checks={"y": True}, scenario="s10_schema_under_load")
+    sched = sc.Schedule(runs={"s10_schema_under_load": {"candidate": [c], "baseline": [b]}})
+    res = finish(
+        args(), tmp_path, STARTED, ["s10_schema_under_load"], sched, None, [], sc.MODES["nightly"]
+    )
+    assert res["verdict"] == "regression"
+    assert [(f["name"], f["candidate"], f["baseline"]) for f in res["findings"]] == [
+        (f"s10 {name}", 0, None)
+    ]
+    assert res["broken"] == [
+        {"name": f"s10 {name}", "baseline_too": False, "issue": 3512, "introduced": False}
+    ]
+    night = {"status": merge.status_of([res]), "checks": [res]}
+    assert merge.conclude(night, [], gate=False)[0] == 1  # a night: red, the run fails
+    code, lines = merge.conclude(night, [], gate=True)
+    assert code == 0 and "not new by its check's rule, #3512" in lines[1]
+
+
+def test_a_counted_flake_broken_every_time_is_still_new_at_the_gate():
+    """FAILURE_ONLY is only for checks without a real count: s10 Live (#3095) keeps the total
+    breakage rule."""
+    name = "Live (under writes) index == scan during build/after"
+    assert f"s10 {name}" not in sc.FAILURE_ONLY
+    c = run("candidate", checks={name: False}, scenario="s10_schema_under_load")
+    c.details = {name: "40 of 40 runs failed"}
+    row = by_name(
+        sc.scenario_rows("s10_schema_under_load", [c], [run("baseline", checks={})], True)
+    )[f"s10 {name}"]
+    assert (row.status, row.introduced) == ("regression", True)
+
+
 def test_known_flaky_broken_on_the_baseline_only_is_not_a_fix():
     name = "Live (under writes) index == scan during build/after"
     b = run("baseline", checks={name: False}, scenario="s10_schema_under_load")
