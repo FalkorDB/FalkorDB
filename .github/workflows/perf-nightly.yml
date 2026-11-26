@@ -158,29 +158,18 @@ jobs:
           set -uo pipefail
           set +e  # one failed read must not hide the others
           export CLOUDSDK_CORE_DISABLE_PROMPTS=1
-          # Quiet: gcloud names the account on stderr.
+          # Quiet: gcloud names the account on stderr, and an error can name the project number.
           printf '%s' "$GCP_SA_KEY" | gcloud --quiet auth activate-service-account --key-file=- >/dev/null 2>&1 \
             || echo "could not activate the service account"
           gcloud --quiet config set project "$GCP_PROJECT_ID" >/dev/null 2>&1
           echo "== compute quotas, region $REGION (metric, limit, usage)"
           gcloud compute regions describe "$REGION" --flatten=quotas \
-            --format='csv[no-heading](quotas.metric,quotas.limit,quotas.usage)' \
+            --format='csv[no-heading](quotas.metric,quotas.limit,quotas.usage)' 2>/dev/null \
             | grep -E 'CPUS|ADDRESSES|DISK|SSD|INSTANCES' || echo "(read failed or nothing matched)"
           echo "== compute quotas, project-wide"
           gcloud compute project-info describe --flatten=quotas \
-            --format='csv[no-heading](quotas.metric,quotas.limit,quotas.usage)' \
+            --format='csv[no-heading](quotas.metric,quotas.limit,quotas.usage)' 2>/dev/null \
             | grep -E 'CPUS' || echo "(read failed or nothing matched)"
-          echo "== Cloud Quotas: limits for N4/C4/N2 CPUs, IP addresses, disks (region $REGION or global)"
-          if gcloud beta quotas info list --service=compute.googleapis.com --project="$GCP_PROJECT_ID" \
-              --format=json > "$RUNNER_TEMP/quotas.json" 2> "$RUNNER_TEMP/quotas.err"; then
-            jq -r --arg region "$REGION" '.[]
-              | select(.quotaId | test("CPUS|ADDRESS|DISK|SSD"; "i"))
-              | .quotaId as $id | (.dimensionsInfos // [])[]
-              | select((.dimensions.region // "global") == $region or (.dimensions.region // "global") == "global")
-              | "\($id),\(.dimensions.region // "global"),\(.details.value // "?")"' "$RUNNER_TEMP/quotas.json" | sort -u
-          else
-            echo "(Cloud Quotas read failed: $(head -c 300 "$RUNNER_TEMP/quotas.err" | tr '\n' ' '))"
-          fi
 
       - name: Pin the candidate and baseline images
         id: images
