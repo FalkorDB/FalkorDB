@@ -15,7 +15,7 @@
 //! ## Entry Point
 //!
 //! The main entry point is [`parse`], which takes a query string and returns
-//! a [`RawQueryIR`] (unbound AST with `Arc<String>` variable names).
+//! a [`RawQueryIR`] (unbound AST with `ArcStr` variable names).
 //!
 //! ```text
 //! "MATCH (n) RETURN n"
@@ -115,6 +115,7 @@ use crate::{
         value::Value,
     },
 };
+use arcstr::ArcStr;
 use itertools::Itertools;
 use orx_tree::{DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
@@ -332,7 +333,7 @@ impl<'a> Parser<'a> {
 
     /// Height of `tree`, walked iteratively so measuring a deep one cannot
     /// overflow the stack the measurement exists to protect.
-    fn tree_height(tree: &DynTree<ExprIR<Arc<String>>>) -> usize {
+    fn tree_height(tree: &DynTree<ExprIR<ArcStr>>) -> usize {
         let mut pending = vec![(tree.root(), 1)];
         let mut height = 0;
         while let Some((node, depth)) = pending.pop() {
@@ -974,7 +975,7 @@ impl<'a> Parser<'a> {
                 let delimiter = if optional_match_token!(self.lexer => Fieldterminator) {
                     Arc::new(self.parse_expr(false)?)
                 } else {
-                    Arc::new(tree!(ExprIR::Constant(Value::String(Arc::new(
+                    Arc::new(tree!(ExprIR::Constant(Value::String(ArcStr::from(
                         String::from(',')
                     )))))
                 };
@@ -1068,7 +1069,7 @@ impl<'a> Parser<'a> {
         func.validate(args.len())
             .map_err(|e| e.replace("function", "procedure"))?;
         let mut named_outputs = vec![];
-        let mut yield_aliases: Vec<Option<Arc<String>>> = vec![];
+        let mut yield_aliases: Vec<Option<ArcStr>> = vec![];
         let (filter, yielded) = if optional_match_token!(self.lexer => Yield) {
             let ident = self.parse_ident()?;
             if optional_match_token!(self.lexer => As) {
@@ -1093,7 +1094,7 @@ impl<'a> Parser<'a> {
             (self.parse_where()?, true)
         } else if let FnType::Procedure(defult_outputs) = &func.fn_type {
             for output in defult_outputs {
-                named_outputs.push(Arc::new(output.clone()));
+                named_outputs.push(ArcStr::from(output.clone()));
                 yield_aliases.push(None);
             }
             (None, false)
@@ -1122,14 +1123,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_dotted_ident(&mut self) -> Result<Arc<String>, String> {
+    fn parse_dotted_ident(&mut self) -> Result<ArcStr, String> {
         let mut idents = vec![self.parse_ident()?];
         while self.lexer.current()? == Token::Dot {
             self.lexer.next();
             idents.push(self.parse_ident()?);
         }
-        Ok(Arc::new(
-            idents.iter().map(|label| label.as_str()).join("."),
+        Ok(ArcStr::from(
+            idents.iter().map(arcstr::ArcStr::as_str).join("."),
         ))
     }
 
@@ -1221,7 +1222,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_where(&mut self) -> Result<Option<QueryExpr<Arc<String>>>, String> {
+    fn parse_where(&mut self) -> Result<Option<QueryExpr<ArcStr>>, String> {
         if let Token::IdentifierOrKeyword {
             keyword: Some(Keyword::Where),
             ..
@@ -1244,9 +1245,9 @@ impl<'a> Parser<'a> {
         &mut self
     ) -> Result<
         (
-            Vec<(QueryExpr<Arc<String>>, bool)>,
-            Option<QueryExpr<Arc<String>>>,
-            Option<QueryExpr<Arc<String>>>,
+            Vec<(QueryExpr<ArcStr>, bool)>,
+            Option<QueryExpr<ArcStr>>,
+            Option<QueryExpr<ArcStr>>,
         ),
         String,
     > {
@@ -1367,9 +1368,9 @@ impl<'a> Parser<'a> {
     /// MERGE keep the first occurrence — a repeated alias there refers back to
     /// the entity being created, it does not add predicates.
     fn add_pattern_node(
-        query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+        query_graph: &mut QueryGraph<ArcStr, ArcStr, ArcStr>,
         nodes_alias: &mut HashSet<Alias>,
-        node: &Arc<QueryNode<Arc<String>, Arc<String>>>,
+        node: &Arc<QueryNode<ArcStr, ArcStr>>,
         clause: &Keyword,
     ) {
         if nodes_alias.insert(node.alias.clone()) {
@@ -1386,8 +1387,8 @@ impl<'a> Parser<'a> {
     /// `allShortestPaths`, pattern comprehension) goes through here, so none
     /// can drop the repeat on the floor.
     fn add_pattern_relationship(
-        query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
-        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Arc<String>>>,
+        query_graph: &mut QueryGraph<ArcStr, ArcStr, ArcStr>,
+        relationship: Arc<QueryRelationship<ArcStr, ArcStr, ArcStr>>,
         clause: &Keyword,
     ) -> Result<(), String> {
         let alias = relationship.alias.clone();
@@ -1410,7 +1411,7 @@ impl<'a> Parser<'a> {
     fn parse_pattern(
         &mut self,
         clause: &Keyword,
-    ) -> Result<QueryGraph<Arc<String>, Arc<String>, Arc<String>>, String> {
+    ) -> Result<QueryGraph<ArcStr, ArcStr, ArcStr>, String> {
         let mut query_graph = QueryGraph::default();
         let mut nodes_alias = HashSet::new();
         loop {
@@ -1591,7 +1592,7 @@ impl<'a> Parser<'a> {
         Ok(query_graph)
     }
 
-    fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    fn parse_case_expression(&mut self) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         self.lexer.next();
         let mut children = vec![];
         let has_subject = !matches!(
@@ -1626,7 +1627,7 @@ impl<'a> Parser<'a> {
     fn parse_quantifier_expr(
         &mut self,
         allow_pattern_predicate: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    ) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         let quantifier_type = match self.lexer.current()? {
             Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::All),
@@ -1685,7 +1686,7 @@ impl<'a> Parser<'a> {
     fn parse_reduce_expr(
         &mut self,
         allow_pattern_predicate: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    ) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         // accumulator name
         let Ok(acc_var) = self.parse_ident() else {
             return Err(self.lexer.format_error("Unknown function 'reduce'"));
@@ -1760,7 +1761,7 @@ impl<'a> Parser<'a> {
 
     /// Parses `shortestPath((src)-[rel:TYPE*min..max]->(dst))` after the
     /// opening `(`.
-    fn parse_shortest_path_expr(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    fn parse_shortest_path_expr(&mut self) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         let fn_name = "shortestPath";
 
         // Verify pattern starts with `(` — otherwise it's not a valid shortestPath call
@@ -1923,7 +1924,7 @@ impl<'a> Parser<'a> {
     fn parse_primary_expr(
         &mut self,
         allow_pattern_predicate: bool,
-    ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+    ) -> Result<(DynTree<ExprIR<ArcStr>>, bool), String> {
         match self.lexer.current()? {
             Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::Case),
@@ -2024,9 +2025,9 @@ impl<'a> Parser<'a> {
                                 args = vec![tree!(ExprIR::Distinct; args)];
                             }
 
-                            args.push(tree!(ExprIR::Variable(Arc::new(String::from(
+                            args.push(tree!(ExprIR::Variable(ArcStr::from(
                                 "__agg_order_by_placeholder__"
-                            )))));
+                            ))));
 
                             match_token!(self.lexer, RParen);
                             return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
@@ -2050,9 +2051,9 @@ impl<'a> Parser<'a> {
                         if distinct {
                             args = vec![tree!(ExprIR::Distinct; args)];
                         }
-                        args.push(tree!(ExprIR::Variable(Arc::new(String::from(
+                        args.push(tree!(ExprIR::Variable(ArcStr::from(
                             "__agg_order_by_placeholder__"
-                        )))));
+                        ))));
                         return Ok((tree!(ExprIR::FuncInvocation(func); args), false));
                     }
 
@@ -2116,8 +2117,8 @@ impl<'a> Parser<'a> {
     // match one of those kind [..4], [4..], [4..5], [6]
     fn parse_list_operator_expression(
         &mut self,
-        lhs: DynTree<ExprIR<Arc<String>>>,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        lhs: DynTree<ExprIR<ArcStr>>,
+    ) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         // A bound is left out only when `..` or `]` comes where it would
         // start; one that is there but fails to parse is an error.
         let from = if self.lexer.current()? == Token::DotDot {
@@ -2147,8 +2148,8 @@ impl<'a> Parser<'a> {
 
     fn parse_property_lookup(
         &mut self,
-        expr: DynTree<ExprIR<Arc<String>>>,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        expr: DynTree<ExprIR<ArcStr>>,
+    ) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         let ident = self.parse_ident()?;
         Ok(tree!(ExprIR::Property(ident), expr))
     }
@@ -2165,7 +2166,7 @@ impl<'a> Parser<'a> {
     fn parse_expr(
         &mut self,
         allow_pattern_predicate: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    ) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         let res = self.nested(|s| s.parse_expr_inner(allow_pattern_predicate))?;
         self.max_child_height = self.max_child_height.max(self.expr_height);
         Ok(res)
@@ -2176,11 +2177,11 @@ impl<'a> Parser<'a> {
     fn parse_expr_inner(
         &mut self,
         allow_pattern_predicate: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    ) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         // Each frame carries the height of the tree it has built so far, so
         // nesting that builds on this stack rather than the call stack is
         // still bounded, by `check_depth`, as the tree grows.
-        let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>, 0usize)];
+        let mut stack = vec![(0, None::<DynTree<ExprIR<ArcStr>>>, 0usize)];
         while let Some((current, res, height)) = stack.pop() {
             let Some(res) = res else {
                 if current < 3 || (current > 3 && current < 9) || current == 10 {
@@ -2329,7 +2330,7 @@ impl<'a> Parser<'a> {
                             } else {
                                 res.root()
                             };
-                            let middle_clone: DynTree<ExprIR<Arc<String>>> =
+                            let middle_clone: DynTree<ExprIR<ArcStr>> =
                                 last_cmp_node.children().last().unwrap().clone_as_tree();
                             // The clone already costs a walk of that operand,
                             // so measuring it costs nothing extra.
@@ -2682,7 +2683,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_ident(&mut self) -> Result<Arc<String>, String> {
+    fn parse_ident(&mut self) -> Result<ArcStr, String> {
         match self.lexer.current() {
             Ok(Token::IdentifierOrKeyword { ident: id, .. }) => {
                 validate_identifier_len(id.as_str(), "Identifier")?;
@@ -2701,7 +2702,7 @@ impl<'a> Parser<'a> {
     /// Formatting a message nobody reads is pure cost, and the alternatives a
     /// parser probes for are the common case, not the exception: `[` alone
     /// asks this twice before settling on a plain list literal.
-    fn try_parse_ident(&mut self) -> Option<Arc<String>> {
+    fn try_parse_ident(&mut self) -> Option<ArcStr> {
         match self.lexer.current() {
             Ok(Token::IdentifierOrKeyword { ident: id, .. })
                 if validate_identifier_len(id.as_str(), "Identifier").is_ok() =>
@@ -2713,7 +2714,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_property_name(&mut self) -> Result<Arc<String>, String> {
+    fn parse_property_name(&mut self) -> Result<ArcStr, String> {
         match self.lexer.current() {
             Ok(Token::IdentifierOrKeyword { ident: id, .. }) => {
                 validate_identifier_len(id.as_str(), "Property name")?;
@@ -2730,7 +2731,7 @@ impl<'a> Parser<'a> {
     fn parse_named_exprs(
         &mut self,
         must_alias: bool,
-    ) -> Result<Vec<(Arc<String>, QueryExpr<Arc<String>>)>, String> {
+    ) -> Result<Vec<(ArcStr, QueryExpr<ArcStr>)>, String> {
         let mut named_exprs = Vec::new();
         loop {
             let pos = self.lexer.pos(false);
@@ -2752,7 +2753,7 @@ impl<'a> Parser<'a> {
                         .format_error("WITH clause projections must be aliased"));
                 }
                 named_exprs.push((
-                    Arc::new(String::from(&self.lexer.str[pos..self.lexer.pos(true)])),
+                    ArcStr::from(&self.lexer.str[pos..self.lexer.pos(true)]),
                     expr,
                 ));
             }
@@ -2767,7 +2768,7 @@ impl<'a> Parser<'a> {
         &mut self,
         expression_list_type: ExpressionListType,
         allow_pattern_predicate: bool,
-    ) -> Result<Vec<DynTree<ExprIR<Arc<String>>>>, String> {
+    ) -> Result<Vec<DynTree<ExprIR<ArcStr>>>, String> {
         let mut exprs = Vec::new();
         // Only an empty list may end at once: after a `,` an expression must
         // follow, so `f(1,)` is an error.
@@ -2821,7 +2822,7 @@ impl<'a> Parser<'a> {
     fn parse_list_literal_or_comprehension(
         &mut self,
         allow_pattern_predicate: bool,
-    ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+    ) -> Result<(DynTree<ExprIR<ArcStr>>, bool), String> {
         let saved = self.save_state();
 
         // 1) Try list comprehension: [var IN ...]
@@ -2920,9 +2921,9 @@ impl<'a> Parser<'a> {
 
     fn parse_list_comprehension(
         &mut self,
-        var: Arc<String>,
+        var: ArcStr,
         allow_pattern_predicate: bool,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    ) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         // var and 'IN' already parsed
         let list_expr = self.parse_expr(allow_pattern_predicate)?;
 
@@ -2963,9 +2964,9 @@ impl<'a> Parser<'a> {
     /// for execution by the runtime.
     fn parse_pattern_comprehension(
         &mut self,
-        path_var: Option<Arc<String>>,
+        path_var: Option<ArcStr>,
         allow_pattern_predicate: bool,
-    ) -> Result<(DynTree<ExprIR<Arc<String>>>, Option<String>), String> {
+    ) -> Result<(DynTree<ExprIR<ArcStr>>, Option<String>), String> {
         let first_node = self.parse_node_pattern()?;
 
         // Must have at least one relationship
@@ -3018,7 +3019,7 @@ impl<'a> Parser<'a> {
 
     /// Parses an inline property map, preserving "Unknown function" errors
     /// while replacing other parse errors with a generic inlined-properties message.
-    fn parse_inline_properties(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    fn parse_inline_properties(&mut self) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         // parse_map already refuses pattern predicates in its values; pattern
         // comprehensions are refused too, as FalkorDB C does.
         self.without_pattern_comprehensions(
@@ -3047,7 +3048,7 @@ impl<'a> Parser<'a> {
             .map_or_else(|| self.next_unnamed(), Alias::Named)
     }
 
-    fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
+    fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<ArcStr, ArcStr>>, String> {
         match_token!(self.lexer, LParen);
         let alias = self.parse_alias_or_unnamed();
         let labels = self.parse_labels()?;
@@ -3066,7 +3067,7 @@ impl<'a> Parser<'a> {
     /// The type alternatives after a relationship's `:`: `A|B`, with the
     /// legacy `A|:B` spelling. `A:B` is not one of them: an edge has exactly
     /// one type, so a second `:` is left for the caller to reject.
-    fn parse_relationship_types(&mut self) -> Result<Vec<Arc<String>>, String> {
+    fn parse_relationship_types(&mut self) -> Result<Vec<ArcStr>, String> {
         let mut types = vec![self.parse_ident()?];
         while optional_match_token!(self.lexer, Pipe) {
             optional_match_token!(self.lexer, Colon);
@@ -3078,12 +3079,12 @@ impl<'a> Parser<'a> {
     #[allow(clippy::too_many_lines)]
     fn parse_relationship_pattern(
         &mut self,
-        src: Arc<QueryNode<Arc<String>, Arc<String>>>,
+        src: Arc<QueryNode<ArcStr, ArcStr>>,
         clause: &Keyword,
     ) -> Result<
         (
-            Arc<QueryRelationship<Arc<String>, Arc<String>, Arc<String>>>,
-            Arc<QueryNode<Arc<String>, Arc<String>>>,
+            Arc<QueryRelationship<ArcStr, ArcStr, ArcStr>>,
+            Arc<QueryNode<ArcStr, ArcStr>>,
         ),
         String,
     > {
@@ -3208,7 +3209,7 @@ impl<'a> Parser<'a> {
         Ok((Arc::new(relationship), dst))
     }
 
-    fn parse_labels(&mut self) -> Result<OrderSet<Arc<String>>, String> {
+    fn parse_labels(&mut self) -> Result<OrderSet<ArcStr>, String> {
         let mut labels = OrderSet::default();
         while self.lexer.current()? == Token::Colon {
             self.lexer.next();
@@ -3217,7 +3218,7 @@ impl<'a> Parser<'a> {
         Ok(labels)
     }
 
-    fn parse_map(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+    fn parse_map(&mut self) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         let mut attrs = Vec::new();
         if self.lexer.current()? == Token::LBracket {
             self.lexer.next();
@@ -3251,8 +3252,8 @@ impl<'a> Parser<'a> {
 
     fn parse_map_projection(
         &mut self,
-        base: DynTree<ExprIR<Arc<String>>>,
-    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        base: DynTree<ExprIR<ArcStr>>,
+    ) -> Result<DynTree<ExprIR<ArcStr>>, String> {
         let mut items = vec![base];
 
         // Empty projection: expr {}
@@ -3307,7 +3308,7 @@ impl<'a> Parser<'a> {
         Ok(tree!(ExprIR::MapProjection ; items))
     }
 
-    fn parse_orderby(&mut self) -> Result<Vec<(QueryExpr<Arc<String>>, bool)>, String> {
+    fn parse_orderby(&mut self) -> Result<Vec<(QueryExpr<ArcStr>, bool)>, String> {
         match_token!(self.lexer => By);
         let mut orderby = vec![];
         loop {
@@ -3325,7 +3326,7 @@ impl<'a> Parser<'a> {
         Ok(orderby)
     }
 
-    fn parse_set_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
+    fn parse_set_clause(&mut self) -> Result<QueryIR<ArcStr>, String> {
         let mut set_items = vec![];
         self.parse_set_items(&mut set_items)?;
 
@@ -3339,7 +3340,7 @@ impl<'a> Parser<'a> {
 
     fn parse_set_items(
         &mut self,
-        set_items: &mut Vec<SetItem<Arc<String>, Arc<String>>>,
+        set_items: &mut Vec<SetItem<ArcStr, ArcStr>>,
     ) -> Result<(), String> {
         loop {
             let (expr, has_properties) = self.parse_update_target()?;
@@ -3391,7 +3392,7 @@ impl<'a> Parser<'a> {
     /// [`Self::MAX_TREE_DEPTH`] step by step, as the postfix chain in
     /// [`Self::parse_expr_inner`] is: otherwise `n.a.a.a...` builds a tree
     /// the binder overflows its stack walking, quadratically slowly.
-    fn parse_update_target(&mut self) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+    fn parse_update_target(&mut self) -> Result<(DynTree<ExprIR<ArcStr>>, bool), String> {
         let ((mut expr, recurse), child_height) =
             self.with_child_height(|s| s.parse_primary_expr(false))?;
         let mut height = child_height + Self::PRIMARY_LEVELS;
@@ -3419,7 +3420,7 @@ impl<'a> Parser<'a> {
     /// first element read as the target, so `SET [n).x = 5` set `n.x`.
     fn reject_unparenthesized_target(
         &self,
-        expr: &DynTree<ExprIR<Arc<String>>>,
+        expr: &DynTree<ExprIR<ArcStr>>,
     ) -> Result<(), String> {
         if matches!(expr.root().data(), ExprIR::Paren) {
             Ok(())
@@ -3442,7 +3443,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
+    fn parse_remove_clause(&mut self) -> Result<QueryIR<ArcStr>, String> {
         let mut remove_items = vec![];
         self.parse_remove_items(&mut remove_items)?;
 
@@ -3456,7 +3457,7 @@ impl<'a> Parser<'a> {
 
     fn parse_remove_items(
         &mut self,
-        remove_items: &mut Vec<QueryExpr<Arc<String>>>,
+        remove_items: &mut Vec<QueryExpr<ArcStr>>,
     ) -> Result<(), String> {
         loop {
             let (mut expr, has_properties) = self.parse_update_target()?;
@@ -3567,7 +3568,7 @@ impl<'a> Parser<'a> {
     /// retry the input as a list literal, masking it with a syntax error.
     fn reject_aggregate(
         &self,
-        tree: &DynTree<ExprIR<Arc<String>>>,
+        tree: &DynTree<ExprIR<ArcStr>>,
     ) -> Result<(), String> {
         if let Some(func) = Self::find_aggregate_name(tree) {
             return Err(self
@@ -3577,7 +3578,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn find_aggregate_name(tree: &DynTree<ExprIR<Arc<String>>>) -> Option<&str> {
+    fn find_aggregate_name(tree: &DynTree<ExprIR<ArcStr>>) -> Option<&str> {
         use orx_tree::Dfs;
         for idx in tree.root().indices::<Dfs>() {
             if let ExprIR::FuncInvocation(func) = tree.node(idx).data()

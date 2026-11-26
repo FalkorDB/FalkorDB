@@ -4,7 +4,8 @@
 //! The check itself, comparing those candidates' keys with the members', is `unique_violated` in
 //! `runtime::pending`; this only says where to look.
 
-use std::{cell::RefCell, sync::Arc};
+use arcstr::ArcStr;
+use std::cell::RefCell;
 
 use itertools::Either;
 use rustc_hash::FxHashSet;
@@ -23,8 +24,8 @@ use super::falkordb_index::{EqualCandidates, FalkorDbIndex};
 pub(crate) fn native_unique_query<'g>(
     index: &'g FalkorDbIndex,
     entity: EntityType,
-    label: &Arc<String>,
-    properties: &[Arc<String>],
+    label: &ArcStr,
+    properties: &[ArcStr],
     values: &[Value],
 ) -> Option<Vec<EqualCandidates<'g>>> {
     let lookups: Vec<_> = properties

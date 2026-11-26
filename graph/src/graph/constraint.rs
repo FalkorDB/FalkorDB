@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use arcstr::ArcStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::entity_type::EntityType;
@@ -51,8 +51,8 @@ pub struct Constraint {
     pub id: u64,
     pub ct: ConstraintType,
     pub entity_type: EntityType,
-    pub label: Arc<String>,
-    pub properties: Vec<Arc<String>>,
+    pub label: ArcStr,
+    pub properties: Vec<ArcStr>,
     pub status: ConstraintStatus,
 }
 
@@ -60,8 +60,8 @@ impl Constraint {
     pub fn new(
         ct: ConstraintType,
         entity_type: EntityType,
-        label: Arc<String>,
-        properties: Vec<Arc<String>>,
+        label: ArcStr,
+        properties: Vec<ArcStr>,
     ) -> Self {
         static NEXT_CONSTRAINT_ID: AtomicU64 = AtomicU64::new(1);
         Self {
@@ -81,7 +81,7 @@ impl Constraint {
         ct: &ConstraintType,
         entity_type: &EntityType,
         label: &str,
-        properties: &[Arc<String>],
+        properties: &[ArcStr],
     ) -> bool {
         self.ct == *ct
             && self.entity_type == *entity_type

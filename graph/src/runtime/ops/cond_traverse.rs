@@ -28,6 +28,7 @@
 //!   (replicating the parent columns once per result via `gather` instead of
 //!   cloning the parent env per result).
 
+use arcstr::ArcStr;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -157,7 +158,7 @@ struct CtState {
 pub struct CondTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+    relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
     /// Holds the parent batch being expanded and the per-row edge results, and
     /// performs the shared pack-and-gather emit for the per-row fallback path.
     /// Each pushed result is a `(from, to, edge)` triple already mapped onto the
@@ -187,7 +188,7 @@ pub struct CondTraverseOp<'a> {
     /// to chain after this CT in the F·A path. Empty for single-hop. Each
     /// hop's `from` is the previous hop's `to` (anonymous & unreferenced);
     /// only the final hop's `to` alias is bound on the output env.
-    chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
+    chain: &'a [Arc<QueryRelationship<ArcStr, ArcStr, Variable>>],
     /// OPTIONAL MATCH semantics (fused from an `Optional` wrapper): input rows
     /// producing no expansion are emitted once with the edge and destination
     /// aliases bound to NULL instead of being dropped.
@@ -291,7 +292,7 @@ struct PairIters<I> {
 /// clones: shared handles, no data copied.
 fn relationship_tensors(
     g: &crate::graph::graph::Graph,
-    types: &[Arc<String>],
+    types: &[ArcStr],
 ) -> Option<Vec<Tensor>> {
     let tensors: Vec<Tensor> = types
         .iter()
@@ -305,7 +306,7 @@ fn relationship_tensors(
 /// pattern; `None` when the type does not exist.
 fn build_unrestricted_iter(
     g: &crate::graph::graph::Graph,
-    types: &[Arc<String>],
+    types: &[ArcStr],
 ) -> Option<Iter> {
     debug_assert!(types.len() <= 1, "several types stream through UnionIter");
     types.first().map_or_else(
@@ -321,7 +322,7 @@ fn build_unrestricted_iter(
 /// it; `None` when none of the types exist.
 fn build_union_iter(
     g: &crate::graph::graph::Graph,
-    types: &[Arc<String>],
+    types: &[ArcStr],
 ) -> Option<UnionIter> {
     let iters = relationship_tensors(g, types)?
         .iter()
@@ -341,7 +342,7 @@ fn empty_edge_iter() -> Iter {
 /// operator, unlike the per-row full scan this replaces.
 fn build_transposed_iter(
     g: &crate::graph::graph::Graph,
-    types: &[Arc<String>],
+    types: &[ArcStr],
 ) -> Option<Iter> {
     debug_assert!(types.len() <= 1, "several types stream through UnionIter");
     types.first().map_or_else(
@@ -357,7 +358,7 @@ fn build_transposed_iter(
 /// incrementally maintained transpose, merged the same way.
 fn build_transposed_union_iter(
     g: &crate::graph::graph::Graph,
-    types: &[Arc<String>],
+    types: &[ArcStr],
 ) -> Option<UnionIter> {
     let iters = relationship_tensors(g, types)?
         .iter()
@@ -375,11 +376,11 @@ impl<'a> CondTraverseOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        relationship_pattern: &'a QueryRelationship<ArcStr, ArcStr, Variable>,
         emit_relationship: bool,
         sibling_edges: &'a [u32],
         transposed: bool,
-        chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
+        chain: &'a [Arc<QueryRelationship<ArcStr, ArcStr, Variable>>],
         optional: bool,
         bind_relationship: bool,
         idx: NodeIdx<Dyn<IR>>,
@@ -484,7 +485,7 @@ impl<'a> CondTraverseOp<'a> {
     /// the subtree has executed.
     fn build_state(
         runtime: &Runtime,
-        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        rp: &QueryRelationship<ArcStr, ArcStr, Variable>,
         transposed: bool,
     ) -> CtState {
         let g = runtime.graph();
@@ -904,7 +905,7 @@ impl<'a> CondTraverseOp<'a> {
     #[allow(clippy::too_many_arguments)]
     fn expand_row(
         runtime: &Runtime,
-        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        rp: &QueryRelationship<ArcStr, ArcStr, Variable>,
         emit_relationship: bool,
         sibling_edges: &[u32],
         transposed: bool,
@@ -1124,7 +1125,7 @@ impl<'a> CondTraverseOp<'a> {
     fn expand_union_row(
         state: &mut CtState,
         g: &crate::graph::graph::Graph,
-        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        rp: &QueryRelationship<ArcStr, ArcStr, Variable>,
         transposed: bool,
         (from_id, to_id): (Option<NodeId>, Option<NodeId>),
         (fwd_src_id, fwd_dst_id): (Option<NodeId>, Option<NodeId>),
@@ -1241,7 +1242,7 @@ impl<'a> CondTraverseOp<'a> {
         from_id: Option<crate::graph::graph::NodeId>,
         to_id: Option<crate::graph::graph::NodeId>,
         g: &crate::graph::graph::Graph,
-        rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+        rp: &QueryRelationship<ArcStr, ArcStr, Variable>,
         batch: &Batch<'a>,
         row_idx: usize,
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,

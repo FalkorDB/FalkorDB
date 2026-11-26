@@ -40,7 +40,7 @@
 //! AND 1 / p.zero = 1` would raise a division error on rows the per-row path
 //! never evaluates. `CASE` narrows the same way, one branch at a time.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use crate::parser::ast::{ExprIR, Variable};
 use crate::runtime::batch::{Batch, BatchRow, Column, NullBitmap, classify_exact_column};
@@ -329,7 +329,7 @@ impl<'a> VectorEval<'a> {
     /// back to per-row evaluation.
     fn eval_property(
         &self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
         child: &ExprNode<'_>,
         batch: &Batch<'_>,
         rows: &[usize],
@@ -352,7 +352,7 @@ impl<'a> VectorEval<'a> {
     /// falls back to per-row evaluation.
     fn property_values(
         &self,
-        attr: &Arc<String>,
+        attr: &ArcStr,
         child: &ExprNode<'_>,
         batch: &Batch<'_>,
         rows: &[usize],

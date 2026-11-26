@@ -74,6 +74,7 @@ The divergences that remain are listed under [Bugs found](#bugs-found).
 | `chunked_eq_firstDiff` | The 16-lane vector comparison finds the same first difference as an element-by-element scan | `SelfCompare.lean` |
 | `decode_reach`, `decodeValue_agrees`, `stored_roundtrip` | Decoding is depth-bounded, unchanged below the cap, and every accepted property round-trips | `Nesting.lean` |
 | `heap_le_amortized` | For unshared values, the amortized memory figure is at least the plain heap size | `Misc.lean` |
+| `arcstrShare_le`, `concatStr_eq` | An `ArcStr`'s holders are charged at most its one allocation (a static string nothing); `concat_str` is concatenation | `Misc.lean` |
 | `registerAll_ok` | Registering the built-ins never panics when the lowered names are distinct | `Registry.lean` |
 | `unary_rust_eq_c` | Every unary trig function equals C's | `Trig.lean` |
 | `mergePicks_eq` | `dbms.functions()`'s built-in/UDF merge is a sorted merge | `Procedures.lean` |

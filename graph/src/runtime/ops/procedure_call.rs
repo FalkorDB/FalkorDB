@@ -80,7 +80,11 @@ impl<'a> ProcedureCallOp<'a> {
             output_var_ids.push(output.id);
             let source_pos = output
                 .name()
-                .and_then(|name| schema_outputs.iter().position(|s| s == name.as_ref()))
+                .and_then(|name| {
+                    schema_outputs
+                        .iter()
+                        .position(|s| s.as_str() == name.as_str())
+                })
                 .unwrap_or(yield_pos);
             output_source_positions.push(source_pos);
         }

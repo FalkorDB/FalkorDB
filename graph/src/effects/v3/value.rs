@@ -1,5 +1,6 @@
 //! The `SIValue` codec: a 4-byte type bitmask, then the payload.
 
+use arcstr::ArcStr;
 use std::sync::Arc;
 
 use thin_vec::ThinVec;
@@ -228,9 +229,9 @@ fn read_one(
         t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
             let s = r.string()?;
             if t == (si_type::T_INTERN | si_type::T_STRING) {
-                Value::String(crate::runtime::string_pool::global().intern(Arc::new(s)))
+                Value::String(crate::runtime::string_pool::global().intern(ArcStr::from(s)))
             } else {
-                Value::String(Arc::new(s))
+                Value::String(ArcStr::from(s))
             }
         }
         si_type::T_ARRAY => {
@@ -321,9 +322,7 @@ mod tests {
     #[test]
     fn value_string_carries_its_nul() {
         let mut buf = Vec::new();
-        Value::String(Arc::new("ab".into()))
-            .encode(&mut buf)
-            .unwrap();
+        Value::String(ArcStr::from("ab")).encode(&mut buf).unwrap();
         // type tag, then len = 3 (including NUL), then "ab\0"
         assert_eq!(
             format!("{buf:02x?}"),
@@ -339,14 +338,13 @@ mod tests {
             Value::Bool(false),
             Value::Int(-9_007_199_254_740_993),
             Value::Float(0.1),
-            Value::String(Arc::new("hello".into())),
+            Value::String(ArcStr::from("hello")),
             // A length that includes the terminator makes the empty string
             // "length 1, no bytes", and a multi-byte string a length in
             // *bytes* rather than characters.
-            Value::String(Arc::new(String::new())),
-            Value::String(Arc::new(
-                "\u{05e9}\u{05dc}\u{05d5}\u{05dd} \u{4e16}\u{754c} \u{1f426}\u{200d}\u{1f525}"
-                    .into(),
+            Value::String(ArcStr::new()),
+            Value::String(ArcStr::from(
+                "\u{05e9}\u{05dc}\u{05d5}\u{05dd} \u{4e16}\u{754c} \u{1f426}\u{200d}\u{1f525}",
             )),
             Value::List(Arc::new([Value::Int(1), Value::Null].into_iter().collect())),
             Value::Point(Point {

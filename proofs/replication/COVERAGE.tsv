@@ -4,33 +4,33 @@ graph/src/effects/v3/emit.rs	emit_schema_additions	60	PROVEN	schemaRecs: emit_ap
 graph/src/effects/v3/emit.rs	build_constraint_buffer	110	PROVEN	faithful: proofs/effects_emit_apply buildConstraintRec_verifies, encodeAll_ok; bytes: proofs/effects_codec readRecord_encRecord
 graph/src/effects/v3/emit.rs	encode_all	186	PROVEN	faithful: proofs/effects_emit_apply encodeAll_ok/encodeAll_failed; bytes: proofs/effects_codec readRecord_encRecord
 graph/src/effects/v3/emit.rs	index_field_flags	204	PROVEN	faithful: proofs/effects_emit_apply indexFieldFlags_spec
-graph/src/effects/v3/emit.rs	digest_deleted_edges	631	PROVEN	faithful: proofs/effects_emit_apply digestDeletedEdges_perm
-graph/src/effects/v3/emit.rs	digest_updates	682	PROVEN	faithful: proofs/effects_emit_apply digestUpdates_perm, digestUpdates_shape
-graph/src/effects/v3/emit.rs	gather_rows	917	PROVEN	gatherRows: specsOf_group, chunk_flatMap, lookup_row; faithful merge: proofs/effects_emit_apply mergeRow_eq_lookup, gatherRows_length
-graph/src/effects/v3/emit.rs	wire_index_options	2082	PROVEN	faithful: proofs/effects_emit_apply wireIndexOptions_spec
+graph/src/effects/v3/emit.rs	digest_deleted_edges	634	PROVEN	faithful: proofs/effects_emit_apply digestDeletedEdges_perm
+graph/src/effects/v3/emit.rs	digest_updates	685	PROVEN	faithful: proofs/effects_emit_apply digestUpdates_perm, digestUpdates_shape
+graph/src/effects/v3/emit.rs	gather_rows	920	PROVEN	gatherRows: specsOf_group, chunk_flatMap, lookup_row; faithful merge: proofs/effects_emit_apply mergeRow_eq_lookup, gatherRows_length
+graph/src/effects/v3/emit.rs	wire_index_options	2086	PROVEN	faithful: proofs/effects_emit_apply wireIndexOptions_spec
 graph/src/effects/v3/apply.rs	ApplyError::from	48	PROVEN	faithful: proofs/effects_emit_apply ofString_spec
 graph/src/effects/v3/apply.rs	ApplyError::from	107	PROVEN	From<NodeOpError> (replaces node_op, #2846): okCreate/okDelete refusals surface as ApplyError; faithful: proofs/effects_emit_apply fromNodeOp_spec, idSpaceErrorMap_internal
-graph/src/effects/v3/apply.rs	apply_add_schema	560	PROVEN	applyRec_addLabel_refines (labels and types; FalkorFaithful.applyAddSchemaF, verifyIdF; no capacity). The attribute path is inline in apply_record (apply.rs:171), not here: its cap and refusal are modelled (internCap, applyRec_addAttribute_refines/_full_refused/_room, internCap_refines)
-graph/src/effects/v3/apply.rs	verify_id	586	PROVEN	applyRec_addLabel_refines (FalkorFaithful.verifyIdF)
-graph/src/effects/v3/apply.rs	verify_schema	609	PROVEN	okCreate label bound; faithful: proofs/effects_emit_apply verifySchema_ok
-graph/src/effects/v3/apply.rs	verify_attribute	633	PROVEN	okCreate attr bound; faithful: proofs/effects_emit_apply verifyAttribute_ok
-graph/src/effects/v3/apply.rs	resolved	645	PROVEN	faithful: proofs/effects_emit_apply resolved_ok
-graph/src/effects/v3/apply.rs	resolve_type	667	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
-graph/src/effects/v3/apply.rs	checked_type_id	712	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
-graph/src/effects/v3/apply.rs	checked_label_ids	728	PROVEN	okCreate labels.all (< len); faithful: proofs/effects_emit_apply checkedLabelIds_ok
-graph/src/effects/v3/apply.rs	check_attr_shape	758	PROVEN	okCreate rows = ids*attrs; faithful: proofs/effects_emit_apply checkAttrShape_ok
-graph/src/effects/v3/apply.rs	attr_map	802	PROVEN	faithful: proofs/effects_emit_apply attrMap_row
-graph/src/effects/v3/apply.rs	index_options	845	PROVEN	faithful: proofs/effects_emit_apply indexOptions_spec
-graph/src/effects/v3/apply.rs	single_index_label	876	PROVEN	faithful: proofs/effects_emit_apply singleIndexLabel_ok
+graph/src/effects/v3/apply.rs	apply_add_schema	558	PROVEN	applyRec_addLabel_refines (labels and types; FalkorFaithful.applyAddSchemaF, verifyIdF; no capacity). The attribute path is inline in apply_record (apply.rs:171), not here: its cap and refusal are modelled (internCap, applyRec_addAttribute_refines/_full_refused/_room, internCap_refines)
+graph/src/effects/v3/apply.rs	verify_id	584	PROVEN	applyRec_addLabel_refines (FalkorFaithful.verifyIdF)
+graph/src/effects/v3/apply.rs	verify_schema	607	PROVEN	okCreate label bound; faithful: proofs/effects_emit_apply verifySchema_ok
+graph/src/effects/v3/apply.rs	verify_attribute	631	PROVEN	okCreate attr bound; faithful: proofs/effects_emit_apply verifyAttribute_ok
+graph/src/effects/v3/apply.rs	resolved	643	PROVEN	faithful: proofs/effects_emit_apply resolved_ok
+graph/src/effects/v3/apply.rs	resolve_type	665	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_type_id	710	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_label_ids	726	PROVEN	okCreate labels.all (< len); faithful: proofs/effects_emit_apply checkedLabelIds_ok
+graph/src/effects/v3/apply.rs	check_attr_shape	756	PROVEN	okCreate rows = ids*attrs; faithful: proofs/effects_emit_apply checkAttrShape_ok
+graph/src/effects/v3/apply.rs	attr_map	800	PROVEN	faithful: proofs/effects_emit_apply attrMap_row
+graph/src/effects/v3/apply.rs	index_options	843	PROVEN	faithful: proofs/effects_emit_apply indexOptions_spec
+graph/src/effects/v3/apply.rs	single_index_label	874	PROVEN	faithful: proofs/effects_emit_apply singleIndexLabel_ok
 graph/src/effects/v3/format.rs	EffectsPayload::is_empty	25	PROVEN	faithful: proofs/effects_codec fmtIsEmpty_iff
 graph/src/effects/v3/format.rs	EffectsPayload::replicate	30	PROVEN	faithful: proofs/effects_codec fmtReplicate_transparent (sealed payload opens to the records)
 graph/src/effects/v3/format.rs	EffectsPayload::apply	106	PROVEN	applyPayload; faithful: proofs/effects_codec fmtApply_eq, proofs/effects_emit_apply applyEffects_ok
 graph/src/effects/v3/format.rs	EffectsPayload::build_index	142	PROVEN	faithful: proofs/effects_codec fmtBuildIndex_eq, proofs/effects_emit_apply buildIndexRec_verifies
 graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	152	PROVEN	faithful: proofs/effects_codec fmtBuildConstraint_eq, proofs/effects_emit_apply buildConstraintRec_verifies
-graph/src/graph/graph.rs	Graph::get_label_id_mut	1259	PROVEN	intern = faithful get-or-create: intern_refines, intern_fresh, intern_id_lt
-graph/src/graph/graph.rs	Graph::node_id_bound	1709	PROVEN	GState.bound = IdSpace::bound = live + recycled.len(): absIds, createOne_refines, deleteOne_refines (Faithful.Ids.bound)
-graph/src/graph/graph.rs	Graph::create_nodes	1748	PROVEN	createOne (id-space half) = IdSpace::create on one id: createOne_refines (Faithful.Ids.create1); refusals = okCreate; matrix sizing (grow_for_nodes) outside the abstract state
-graph/src/graph/graph.rs	Graph::delete_nodes	2310	PROVEN	deleteOne (id-space half) = IdSpace::release({id},{id}): deleteOne_refines (Faithful.Ids.release1); refusals = okDelete; label/attr/index removal = deleteOne fields
+graph/src/graph/graph.rs	Graph::get_label_id_mut	1258	PROVEN	intern = faithful get-or-create: intern_refines, intern_fresh, intern_id_lt
+graph/src/graph/graph.rs	Graph::node_id_bound	1708	PROVEN	GState.bound = IdSpace::bound = live + recycled.len(): absIds, createOne_refines, deleteOne_refines (Faithful.Ids.bound)
+graph/src/graph/graph.rs	Graph::create_nodes	1747	PROVEN	createOne (id-space half) = IdSpace::create on one id: createOne_refines (Faithful.Ids.create1); refusals = okCreate; matrix sizing (grow_for_nodes) outside the abstract state
+graph/src/graph/graph.rs	Graph::delete_nodes	2309	PROVEN	deleteOne (id-space half) = IdSpace::release({id},{id}): deleteOne_refines (Faithful.Ids.release1); refusals = okDelete; label/attr/index removal = deleteOne fields
 graph/src/graph/id_space.rs	IdSpace::refuse_recycled	590	PROVEN	okDelete (!free); faithful: proofs/id_space refuseRecycled_ok, release_spec
 graph/src/graph/id_space.rs	IdSpace::create	621	PROVEN	okCreate (free or (>= entry and not taken); every id < ID_LIMIT, #2911) + createOne_refines, emit_apply (PendingWF.inLimit); faithful: proofs/id_space create_spec, create_out_of_range, create_succeeds
 graph/src/graph/id_space.rs	IdSpace::release	739	PROVEN	okDelete + deleteOne_refines; the Nat-vs-u64 `live - 1` premise is discharged from proofs/id_space (Lake path dependency): IdLink.live_pos_of_release (via id_space release_no_underflow; its freed ⊆ requested premise holds at all three call sites, release_call_sites/hsub_resolved) and IdLink.deleteOne_refines_idspace (any live id: below the entry boundary or taken by the batch); also Ids.live_pos, deleteOne_refines_live; faithful: proofs/id_space release_spec, release_succeeds, release_no_underflow

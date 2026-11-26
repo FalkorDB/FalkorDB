@@ -9,8 +9,8 @@
 //! back at the graph for background population; that cycle is exactly what this
 //! avoids. The write path mutates a version's own copy instead.
 
+use arcstr::ArcStr;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashSet;
@@ -33,7 +33,7 @@ use super::versioned::{BuildState, IndexEntry, VersionedIndex};
 ///
 /// Keyed by name for now; interned numeric ids would be more compact once the write and read
 /// paths both resolve names to ids.
-pub type IndexKey = (Arc<String>, Arc<String>);
+pub type IndexKey = (ArcStr, ArcStr);
 
 /// One index column, of a specific kind.
 ///
@@ -447,7 +447,7 @@ impl VersionedIndex for IndexColumn {
 /// selects: one for a query on one attribute, one per attribute for a conjunction or a union
 /// across several.
 #[derive(Clone, Debug)]
-pub enum ScanFilter<A = Arc<String>> {
+pub enum ScanFilter<A = ArcStr> {
     /// A conjunction: an entity matches when it matches every condition.
     All(Vec<(A, Selection)>),
     /// A union across attributes: an entity matches when it matches any one condition.
@@ -457,7 +457,7 @@ pub enum ScanFilter<A = Arc<String>> {
 impl ScanFilter {
     /// The scan filter of a query on one attribute.
     fn one(
-        attribute: Arc<String>,
+        attribute: ArcStr,
         selection: Selection,
     ) -> Self {
         Self::All(vec![(attribute, selection)])
@@ -691,8 +691,8 @@ impl FalkorDbIndex {
     fn entry(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> Option<&IndexEntry<IndexColumn>> {
         self.columns(entity).get(&(label.clone(), attr.clone()))
     }
@@ -704,8 +704,8 @@ impl FalkorDbIndex {
     pub fn create_column(
         &mut self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) {
         self.insert_column(
             entity,
@@ -723,8 +723,8 @@ impl FalkorDbIndex {
     pub fn create_building(
         &mut self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) {
         self.insert_column(
             entity,
@@ -739,8 +739,8 @@ impl FalkorDbIndex {
     fn insert_column(
         &mut self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         column: IndexColumn,
         state: BuildState<BuildCursor>,
     ) {
@@ -756,8 +756,8 @@ impl FalkorDbIndex {
     pub fn drop_column(
         &mut self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) {
         self.columns_mut(entity)
             .remove(&(label.clone(), attr.clone()));
@@ -770,8 +770,8 @@ impl FalkorDbIndex {
         &mut self,
         index_type: &IndexType,
         entity: EntityType,
-        label: &Arc<String>,
-        attrs: &[Arc<String>],
+        label: &ArcStr,
+        attrs: &[ArcStr],
     ) {
         if *index_type == IndexType::Range {
             for attr in attrs {
@@ -786,8 +786,8 @@ impl FalkorDbIndex {
         &mut self,
         index_type: &IndexType,
         entity: EntityType,
-        label: &Arc<String>,
-        attrs: &[Arc<String>],
+        label: &ArcStr,
+        attrs: &[ArcStr],
     ) {
         if *index_type == IndexType::Range {
             for attr in attrs {
@@ -802,8 +802,8 @@ impl FalkorDbIndex {
     pub fn column(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> Option<&RangeIndex> {
         match self.columns(entity).get(&(label.clone(), attr.clone())) {
             Some(IndexEntry {
@@ -818,8 +818,8 @@ impl FalkorDbIndex {
     pub fn column_mut(
         &mut self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> Option<&mut RangeIndex> {
         match self
             .columns_mut(entity)
@@ -838,8 +838,8 @@ impl FalkorDbIndex {
     pub fn has_column(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> bool {
         self.columns(entity)
             .contains_key(&(label.clone(), attr.clone()))
@@ -851,8 +851,8 @@ impl FalkorDbIndex {
     pub fn is_ready(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> bool {
         self.entry(entity, label, attr)
             .is_some_and(|entry| !entry.is_building())
@@ -863,8 +863,8 @@ impl FalkorDbIndex {
     pub(crate) fn building_read(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> Option<u64> {
         match self.entry(entity, label, attr)?.state {
             BuildState::Building { read, .. } => Some(read),
@@ -919,8 +919,8 @@ impl FalkorDbIndex {
     pub fn for_each_stored_key(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         value: &Value,
         emit: impl FnMut(KeyKind, u64),
     ) {
@@ -998,7 +998,7 @@ impl FalkorDbIndex {
     pub fn query_column(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
+        label: &ArcStr,
         query: &IndexQuery<Value>,
     ) -> Option<Result<DocIter, ScanFilter>> {
         let mut keys = Vec::new();
@@ -1051,7 +1051,7 @@ impl FalkorDbIndex {
     fn combine_columns(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
+        label: &ArcStr,
         query: &IndexQuery<Value>,
     ) -> Option<Result<DocIter, ScanFilter>> {
         // Regroup the members per attribute, flattening the nesting a combinator of the same kind
@@ -1060,7 +1060,7 @@ impl FalkorDbIndex {
         fn group<'a>(
             children: &'a [IndexQuery<Value>],
             any: bool,
-            out: &mut Vec<(&'a Arc<String>, Vec<&'a IndexQuery<Value>>)>,
+            out: &mut Vec<(&'a ArcStr, Vec<&'a IndexQuery<Value>>)>,
         ) -> Option<()> {
             for child in children {
                 match child {
@@ -1094,7 +1094,7 @@ impl FalkorDbIndex {
             IndexQuery::Or(children) => (children, true),
             _ => unreachable!("only a conjunction or a union is combined"),
         };
-        let mut per_attr: Vec<(&Arc<String>, Vec<&IndexQuery<Value>>)> = Vec::new();
+        let mut per_attr: Vec<(&ArcStr, Vec<&IndexQuery<Value>>)> = Vec::new();
         group(children, any, &mut per_attr)?;
 
         // Every column is checked, and every attribute's share translated, before any is read: a
@@ -1159,8 +1159,8 @@ impl FalkorDbIndex {
     pub fn equal_candidates(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         value: &Value,
     ) -> Option<EqualCandidates<'_>> {
         let entry = self.entry(entity, label, attr)?;
@@ -1208,8 +1208,8 @@ impl FalkorDbIndex {
     pub(crate) fn column_state(
         &self,
         entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
     ) -> Option<BuildState<BuildCursor>> {
         self.entry(entity, label, attr)
             .map(|entry| entry.state.clone())
@@ -1264,17 +1264,18 @@ mod tests {
     use super::super::versioned::IndexerBatch;
     use super::*;
     use crate::entity_type::EntityType::{Node, Relationship};
+    use std::sync::Arc;
 
-    fn arc(s: &str) -> Arc<String> {
-        Arc::new(s.to_string())
+    fn arc(s: &str) -> ArcStr {
+        ArcStr::from(s)
     }
 
     /// One unit of work on node column `(label, attr)`: record each `(value, id, add)` in order,
     /// then apply them together.
     fn write(
         idx: &mut FalkorDbIndex,
-        label: &Arc<String>,
-        attr: &Arc<String>,
+        label: &ArcStr,
+        attr: &ArcStr,
         changes: &[(i64, u64, bool)],
     ) {
         let mut staged = IndexChanges::new(Node);
@@ -1748,7 +1749,7 @@ mod tests {
         // A string on the same Range index has no kind to serve it yet.
         let str_eq = IndexQuery::Equal {
             key: key.clone(),
-            value: Value::String(Arc::new("x".to_string())),
+            value: Value::String(ArcStr::from("x")),
         };
         assert!(idx.query_column(Node, &label, &str_eq).is_none());
         // A conjunction on ONE attribute is served — it folds to a single window.
@@ -1807,14 +1808,14 @@ mod tests {
         column.add(&Value::Int(40), 2);
         column.add(&Value::Int(50), 3);
 
-        let in_list = |key: &Arc<String>, values: Vec<Value>| IndexQuery::InList {
+        let in_list = |key: &ArcStr, values: Vec<Value>| IndexQuery::InList {
             key: key.clone(),
             list: Value::List(Arc::new(values.into_iter().collect())),
         };
-        let ints = |key: &Arc<String>, values: &[i64]| {
+        let ints = |key: &ArcStr, values: &[i64]| {
             in_list(key, values.iter().copied().map(Value::Int).collect())
         };
-        let eq = |key: &Arc<String>, v: i64| IndexQuery::Equal {
+        let eq = |key: &ArcStr, v: i64| IndexQuery::Equal {
             key: key.clone(),
             value: Value::Int(v),
         };
@@ -1855,7 +1856,7 @@ mod tests {
                 Node,
                 &in_list(
                     &attr,
-                    vec![Value::Int(30), Value::String(Arc::new("x".to_string()))]
+                    vec![Value::Int(30), Value::String(ArcStr::from("x"))]
                 )
             ),
             None,
@@ -2026,8 +2027,8 @@ mod tests {
             panic!("a building column makes the union a scan");
         };
         let entity = |n: Option<Value>, a: Option<Value>| {
-            move |attr: &Arc<String>| {
-                if **attr == "rank" {
+            move |attr: &ArcStr| {
+                if attr.as_str() == "rank" {
                     n.clone()
                 } else {
                     a.clone()
@@ -2040,7 +2041,8 @@ mod tests {
 
         // A scan resolves the names first. A union keeps a member whose attribute resolves, and
         // only one with none resolvable matches nothing; a conjunction needs every attribute.
-        let only = |name: &'static str| move |attr: &Arc<String>| (**attr == name).then_some(0u16);
+        let only =
+            |name: &'static str| move |attr: &ArcStr| (attr.as_str() == name).then_some(0u16);
         let kept = filter
             .clone()
             .resolve(only("rank"))
@@ -2086,11 +2088,11 @@ mod tests {
                 .unwrap()
                 .add(&Value::Int(id as i64), id);
         }
-        let eq = |k: &Arc<String>, v: i64| IndexQuery::Equal {
+        let eq = |k: &ArcStr, v: i64| IndexQuery::Equal {
             key: k.clone(),
             value: Value::Int(v),
         };
-        let gt = |k: &Arc<String>, v: i64| IndexQuery::Range {
+        let gt = |k: &ArcStr, v: i64| IndexQuery::Range {
             key: k.clone(),
             min: Some(Value::Int(v)),
             max: None,

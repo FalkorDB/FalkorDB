@@ -41,6 +41,7 @@ use crate::runtime::{
     vector_expr::VectorEval,
 };
 use ahash::RandomState;
+use arcstr::ArcStr;
 use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
@@ -132,7 +133,7 @@ enum KeyExprKind {
     /// Simple variable passthrough: `GROUP BY n`
     Variable(Variable),
     /// Property access: `GROUP BY n.age`
-    Property { var: Variable, attr: Arc<String> },
+    Property { var: Variable, attr: ArcStr },
     /// Any other key expression, `GROUP BY n.id % 5` included.
     ///
     /// The same treatment `AggInputKind::Computed` gives an aggregate's input,

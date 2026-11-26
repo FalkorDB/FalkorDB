@@ -91,6 +91,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arcstr"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03918c3dbd7701a85c6b9887732e2921175f26c350b4563841d0958c21d57e6d"
+
+[[package]]
 name = "atomic_refcell"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -399,6 +405,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 name = "falkordb-rs"
 version = "99.99.99"
 dependencies = [
+ "arcstr",
  "crossfire",
  "graph",
  "lazy_static",
@@ -548,6 +555,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "arc-swap",
+ "arcstr",
  "atomic_refcell",
  "chrono",
  "crc32fast",

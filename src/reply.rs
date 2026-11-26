@@ -35,7 +35,6 @@ use graph::{
 };
 use std::fmt::Write;
 use std::os::raw::c_char;
-use std::sync::Arc;
 use valkey_module::{Context, raw};
 
 /// C's `%f`: Rust's `{:.6}` agrees on every finite value and on `inf` / `-inf`,
@@ -489,9 +488,7 @@ pub fn reply_verbose_value(
             // Deleted, pending (a `GRAPH.RECORD` trace rendered after an
             // error before `Commit`) or committed: the runtime's view knows
             // all three, the committed graph only the last.
-            let type_name = runtime
-                .get_relationship_type(*rel)
-                .unwrap_or_else(|| Arc::new(String::new()));
+            let type_name = runtime.get_relationship_type(*rel).unwrap_or_default();
             let bg = runtime.graph();
             let dr = runtime.deleted_relationships.borrow();
             let deleted = dr.get(rel);

@@ -547,6 +547,7 @@ mod tests {
     use super::super::range::RangeIndex;
     use super::*;
     use crate::index::IndexQuery;
+    use arcstr::ArcStr;
 
     /// A union across columns reads its streams one after another and yields each doc once,
     /// holding only what it has yielded: `LIMIT 1` reads one row of the first stream.
@@ -572,8 +573,8 @@ mod tests {
         it.collect()
     }
 
-    fn attr() -> Arc<String> {
-        Arc::new("v".to_string())
+    fn attr() -> ArcStr {
+        ArcStr::from("v")
     }
 
     fn eq(value: Value) -> IndexQuery<Value> {
@@ -725,7 +726,7 @@ mod tests {
     #[test]
     fn non_numeric_and_nan_are_not_indexed() {
         let mut idx = RangeIndex::new();
-        idx.add(&Value::String(Arc::new("hi".to_string())), 1); // skipped
+        idx.add(&Value::String(ArcStr::from("hi")), 1); // skipped
         idx.add(&Value::Float(f64::NAN), 2); // skipped
         idx.add(&Value::Int(7), 3);
         assert!(!idx.is_empty());
@@ -734,7 +735,7 @@ mod tests {
         // A bound of a type no kind holds is declined, not answered "no rows".
         assert!(
             idx.query(&range(
-                Some(Value::String(Arc::new("a".to_string()))),
+                Some(Value::String(ArcStr::from("a"))),
                 None,
                 true,
                 true
@@ -766,7 +767,7 @@ mod tests {
     #[test]
     fn query_dispatches_leaf_predicates() {
         let idx = sample();
-        let key = Arc::new("x".to_string());
+        let key = ArcStr::from("x");
         let eq = IndexQuery::Equal {
             key: key.clone(),
             value: Value::Int(20),
@@ -786,11 +787,11 @@ mod tests {
         assert!(
             idx.query(&IndexQuery::And(vec![
                 IndexQuery::Equal {
-                    key: Arc::new("a".to_string()),
+                    key: ArcStr::from("a"),
                     value: Value::Int(1),
                 },
                 IndexQuery::Equal {
-                    key: Arc::new("b".to_string()),
+                    key: ArcStr::from("b"),
                     value: Value::Int(2),
                 },
             ]))
@@ -807,7 +808,7 @@ mod tests {
             (Value::Int(20), 3),
             (Value::Float(15.5), 4),
             (Value::Int(10), 5),
-            (Value::String(Arc::new("skip".to_string())), 6), // non-numeric → dropped
+            (Value::String(ArcStr::from("skip")), 6), // non-numeric → dropped
         ];
 
         // add_batch == repeated add
@@ -834,7 +835,7 @@ mod tests {
 
     /// `n.a IN [...]` as the scan op hands it over: one attribute and a list of values.
     fn in_list(
-        attr: &Arc<String>,
+        attr: &ArcStr,
         values: impl IntoIterator<Item = Value>,
     ) -> IndexQuery<Value> {
         IndexQuery::InList {
@@ -864,7 +865,7 @@ mod tests {
     /// members it cannot index (`IN [date(..)]`), so "no rows" would be a wrong answer.
     #[test]
     fn in_list_serves_all_numeric_and_declines_mixed_or_empty() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let idx = ten_twenty_thirty();
 
         assert_eq!(
@@ -889,7 +890,7 @@ mod tests {
         assert!(
             idx.query(&in_list(
                 &attr,
-                [Value::Int(10), Value::String(Arc::new("a".to_string()))]
+                [Value::Int(10), Value::String(ArcStr::from("a"))]
             ))
             .is_none(),
             "a mixed list must fall back rather than drop the non-numeric value"
@@ -905,7 +906,7 @@ mod tests {
     /// whole `OR`: a range, an empty list, a list holding a non-numeric value.
     #[test]
     fn or_serves_equalities_and_lists_on_one_attribute() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let eq = |v: i64| IndexQuery::Equal {
             key: attr.clone(),
             value: Value::Int(v),
@@ -937,10 +938,7 @@ mod tests {
         assert!(
             idx.query(&IndexQuery::Or(vec![
                 eq(10),
-                in_list(
-                    &attr,
-                    [Value::Int(20), Value::String(Arc::new("a".to_string()))]
-                ),
+                in_list(&attr, [Value::Int(20), Value::String(ArcStr::from("a"))]),
             ]))
             .is_none(),
             "a non-numeric value in any member declines the whole OR"
@@ -976,8 +974,8 @@ mod tests {
     #[test]
     fn or_declines_members_targeting_different_attributes() {
         let idx = column(&[(Value::Int(1), 10u64), (Value::Int(2), 20)]);
-        let (a, b) = (Arc::new("a".to_string()), Arc::new("b".to_string()));
-        let eq = |attr: &Arc<String>, v: i64| IndexQuery::Equal {
+        let (a, b) = (ArcStr::from("a"), ArcStr::from("b"));
+        let eq = |attr: &ArcStr, v: i64| IndexQuery::Equal {
             key: attr.clone(),
             value: Value::Int(v),
         };
@@ -1009,7 +1007,7 @@ mod tests {
     /// snapshots — before the first row, which a `LIMIT` then throws away.
     #[test]
     fn union_builds_no_cursor_before_the_first_row() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let values: Vec<(Value, u64)> = (0..100u64).map(|i| (Value::Int(i as i64), i)).collect();
         let idx = column(&values);
 
@@ -1033,7 +1031,7 @@ mod tests {
     /// half-visible: invisible to members already started, visible to the rest.
     #[test]
     fn union_pins_one_snapshot_across_lazily_built_cursors() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let mut idx = RangeIndex::new();
         idx.add(&Value::Int(1), 1);
         idx.add(&Value::Int(2), 2);
@@ -1063,7 +1061,7 @@ mod tests {
     }
 
     fn contains(
-        attr: &Arc<String>,
+        attr: &ArcStr,
         v: i64,
     ) -> IndexQuery<Value> {
         IndexQuery::ArrayContains {
@@ -1081,7 +1079,7 @@ mod tests {
     /// row would reach the caller.
     #[test]
     fn a_scalar_and_a_list_element_do_not_share_a_tree() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let mut idx = RangeIndex::new();
         idx.add(&Value::Int(1), 10); // scalar 1
         idx.add(&ints(&[1, 2]), 20); // list [1, 2]
@@ -1124,7 +1122,7 @@ mod tests {
     /// value happened to list the same number.
     #[test]
     fn every_element_is_indexed_once() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let mut idx = RangeIndex::new();
         idx.add(&ints(&[1, 1, 2]), 7);
         assert_eq!(
@@ -1158,10 +1156,10 @@ mod tests {
     /// scalar.
     #[test]
     fn a_list_indexes_only_its_numeric_elements() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let mixed = list([
             Value::Int(4),
-            Value::String(Arc::new("x".to_string())),
+            Value::String(ArcStr::from("x")),
             Value::Date(0),
             Value::Float(f64::NAN),
             ints(&[5]),
@@ -1189,7 +1187,7 @@ mod tests {
     /// would build a column that answers `IN` with nothing.
     #[test]
     fn an_encoded_batch_fills_both_trees() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let eq = |v: i64| IndexQuery::Equal {
             key: attr.clone(),
             value: Value::Int(v),
@@ -1233,7 +1231,7 @@ mod tests {
     /// nothing re-checks the index's answer, so the stale tuple becomes a wrong row.
     #[test]
     fn a_value_changing_kind_moves_between_trees() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let eq = |v: i64| IndexQuery::Equal {
             key: attr.clone(),
             value: Value::Int(v),
@@ -1297,7 +1295,7 @@ mod tests {
     /// expressions it cannot compare. Here they are concrete.
     #[test]
     fn same_key_conjunctions_fold_to_one_window() {
-        let attr = Arc::new("v".to_string());
+        let attr = ArcStr::from("v");
         let idx = column(&[
             (Value::Int(1), 1u64),
             (Value::Int(5), 5),
@@ -1409,7 +1407,7 @@ mod tests {
     fn unservable_conjunctions_are_declined() {
         let idx = column(&[(Value::Int(1), 1u64)]);
         let eq = |attr: &str, v: i64| IndexQuery::Equal {
-            key: Arc::new(attr.to_string()),
+            key: ArcStr::from(attr),
             value: Value::Int(v),
         };
         assert!(
@@ -1421,8 +1419,8 @@ mod tests {
             idx.query(&IndexQuery::And(vec![
                 eq("a", 1),
                 IndexQuery::Equal {
-                    key: Arc::new("a".to_string()),
-                    value: Value::String(Arc::new("x".to_string())),
+                    key: ArcStr::from("a"),
+                    value: Value::String(ArcStr::from("x")),
                 },
             ]))
             .is_none(),

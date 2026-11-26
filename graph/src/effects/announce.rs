@@ -11,7 +11,7 @@
 //! They were under `v3::emit`, which meant a caller describing a constraint had
 //! to name a wire version to do it.
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use crate::{
     entity_type::EntityType,
@@ -58,7 +58,7 @@ pub struct AnnouncedConstraint<'a> {
     /// status field at all.
     pub status: Option<ConstraintStatus>,
     pub label: &'a str,
-    pub properties: &'a [Arc<String>],
+    pub properties: &'a [ArcStr],
 }
 
 /// One index DDL statement, as the runtime evaluated it.
@@ -71,6 +71,6 @@ pub struct AnnouncedIndex<'a> {
     pub entity_type: EntityType,
     pub index_type: &'a IndexType,
     pub label: &'a str,
-    pub fields: &'a [Arc<String>],
+    pub fields: &'a [ArcStr],
     pub options: Option<&'a Value>,
 }

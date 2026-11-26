@@ -21,6 +21,7 @@
 //!             output rows (one per CSV record)
 //! ```
 
+use arcstr::ArcStr;
 use std::cell::RefCell;
 use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::Path;
@@ -248,7 +249,7 @@ struct CsvRecordIter {
     /// "last wins" replace semantics of building the map per record) — so
     /// every record builds its map with `OrderMap::from_unique_keys`, no
     /// per-record dedup hashing.
-    headers: Option<Vec<(Arc<String>, usize)>>,
+    headers: Option<Vec<(ArcStr, usize)>>,
     /// Shared error slot, also checked on entry so an already-failed load stops
     /// yielding immediately.
     error: Rc<RefCell<Option<String>>>,
@@ -271,7 +272,7 @@ impl Iterator for CsvRecordIter {
                                 if field.is_empty() {
                                     Value::Null
                                 } else {
-                                    Value::String(Arc::new(String::from(field)))
+                                    Value::String(ArcStr::from(field))
                                 }
                             })
                             .collect(),
@@ -287,10 +288,7 @@ impl Iterator for CsvRecordIter {
                     Value::Map(Arc::new(OrderMap::from_unique_keys(
                         columns.iter().filter_map(|(name, i)| {
                             record.get(*i).filter(|f| !f.is_empty()).map(|field| {
-                                (
-                                    Arc::clone(name),
-                                    Value::String(Arc::new(String::from(field))),
-                                )
+                                (ArcStr::clone(name), Value::String(ArcStr::from(field)))
                             })
                         }),
                     )))
@@ -357,7 +355,7 @@ impl<'a> LoadCsvOp<'a> {
     fn open_csv_records(
         headers: bool,
         path: &str,
-        delimiter: &Arc<String>,
+        delimiter: &ArcStr,
         error: Rc<RefCell<Option<String>>>,
     ) -> Result<CsvRecordIter, String> {
         // Configurable upper bound for network- and file-sourced CSVs.
@@ -431,12 +429,12 @@ impl<'a> LoadCsvOp<'a> {
             let header_row = reader
                 .headers()
                 .map_err(|e| format!("Failed to read CSV headers: {e}"))?;
-            let mut columns: Vec<(Arc<String>, usize)> = Vec::with_capacity(header_row.len());
+            let mut columns: Vec<(ArcStr, usize)> = Vec::with_capacity(header_row.len());
             for (i, name) in header_row.iter().enumerate() {
                 if let Some(slot) = columns.iter_mut().find(|(n, _)| n.as_str() == name) {
                     slot.1 = i;
                 } else {
-                    columns.push((Arc::new(String::from(name)), i));
+                    columns.push((ArcStr::from(name), i));
                 }
             }
             Some(columns)

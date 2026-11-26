@@ -22,7 +22,7 @@
 //!                    yield Batch ──► parent
 //! ```
 
-use std::sync::Arc;
+use arcstr::ArcStr;
 
 use crate::graph::graph::NodeId;
 use crate::parser::ast::{QueryNode, Variable};
@@ -41,7 +41,7 @@ pub struct NodeByLabelScanOp<'a> {
     /// Holds the parent batch being expanded and the per-row node iterators, and
     /// performs the shared pack-and-gather emit.
     emitter: BatchedResultEmitter<'a, NodeId>,
-    node_pattern: &'a QueryNode<Arc<String>, Variable>,
+    node_pattern: &'a QueryNode<ArcStr, Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -56,7 +56,7 @@ impl<'a> NodeByLabelScanOp<'a> {
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        node_pattern: &'a QueryNode<Arc<String>, Variable>,
+        node_pattern: &'a QueryNode<ArcStr, Variable>,
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {

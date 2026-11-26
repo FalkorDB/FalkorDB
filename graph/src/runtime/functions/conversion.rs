@@ -35,6 +35,7 @@
 
 use super::{FnType, Functions, Type};
 use crate::runtime::{runtime::Runtime, value::Value};
+use arcstr::ArcStr;
 use std::sync::Arc;
 use thin_vec::ThinVec;
 
@@ -125,20 +126,20 @@ pub fn register(funcs: &mut Functions) {
         ret: Type::union([Type::String, Type::Null]),
         fn value_to_string(_runtime, args) {
             match args.first() {
-                Some(Value::String(s)) => Ok(Value::String(Arc::clone(s))),
-                Some(Value::Int(i)) => Ok(Value::String(Arc::new(i.to_string()))),
+                Some(Value::String(s)) => Ok(Value::String(ArcStr::clone(s))),
+                Some(Value::Int(i)) => Ok(Value::String(ArcStr::from(i.to_string()))),
                 Some(&Value::Float(f)) => {
-                    Ok(Value::String(Arc::new(float_to_string(f))))
+                    Ok(Value::String(ArcStr::from(float_to_string(f))))
                 }
-                Some(Value::Bool(b)) => Ok(Value::String(Arc::new(b.to_string()))),
-                Some(Value::Point(p)) => Ok(Value::String(Arc::new(format!(
+                Some(Value::Bool(b)) => Ok(Value::String(ArcStr::from(b.to_string()))),
+                Some(Value::Point(p)) => Ok(Value::String(ArcStr::from(format!(
                     "point({{latitude: {:.6}, longitude: {:.6}}})",
                     p.latitude, p.longitude
                 )))),
-                Some(&Value::Datetime(ts)) => Ok(Value::String(Arc::new(Value::format_datetime(ts)))),
-                Some(&Value::Date(ts)) => Ok(Value::String(Arc::new(Value::format_date(ts)))),
-                Some(&Value::Time(ts)) => Ok(Value::String(Arc::new(Value::format_time(ts)))),
-                Some(&Value::Duration(dur)) => Ok(Value::String(Arc::new(Value::format_duration(dur)))),
+                Some(&Value::Datetime(ts)) => Ok(Value::String(ArcStr::from(Value::format_datetime(ts)))),
+                Some(&Value::Date(ts)) => Ok(Value::String(ArcStr::from(Value::format_date(ts)))),
+                Some(&Value::Time(ts)) => Ok(Value::String(ArcStr::from(Value::format_time(ts)))),
+                Some(&Value::Duration(dur)) => Ok(Value::String(ArcStr::from(Value::format_duration(dur)))),
                 Some(_) => Ok(Value::Null),
                 None => unreachable!(),
             }
@@ -162,7 +163,7 @@ pub fn register(funcs: &mut Functions) {
                 || unreachable!(),
                 |v| {
                     let json_string = v.to_json_string(runtime);
-                    Ok(Value::String(Arc::new(json_string)))
+                    Ok(Value::String(ArcStr::from(json_string)))
                 },
             )
         }

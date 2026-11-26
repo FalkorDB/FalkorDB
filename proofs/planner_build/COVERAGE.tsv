@@ -82,4 +82,4 @@ graph/src/planner/optimizer/mod.rs	collect_single_variable_conjuncts	127	PROVEN	
 graph/src/planner/optimizer/mod.rs	walk	130	PROVEN	E.singleVarConjL (Anchor.lean, the inner walk of collect_single_variable_conjuncts): singleVarConjL_sound
 graph/src/planner/optimizer/mod.rs	endpoint_scan_score	167	PROVEN	E.endpointScanScore (Anchor.lean): endpointScanScore_spec
 graph/src/planner/optimizer/mod.rs	walk_scans_to_endpoint	178	PROVEN	E.walkScansTo (Anchor.lean): walkScansTo_spec, walkScansTo_tie
-graph/src/planner/mod.rs	Planner::argument_vars	1221	PROVEN	E.argumentVars_spec (payload = visited), buildPatternSubPlanV_payload (taps carry the outer bound vars, read after visited is restored / before plan_match; runtime ignores the payload, so addArgs row semantics unchanged)
+graph/src/planner/mod.rs	Planner::argument_vars	1220	PROVEN	E.argumentVars_spec (payload = visited), buildPatternSubPlanV_payload (taps carry the outer bound vars, read after visited is restored / before plan_match; runtime ignores the payload, so addArgs row semantics unchanged)

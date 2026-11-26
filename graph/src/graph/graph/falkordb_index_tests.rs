@@ -24,6 +24,7 @@ use crate::runtime::functions::init_functions;
 use crate::runtime::orderset::OrderSet;
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
+use arcstr::ArcStr;
 use orx_tree::{Dfs, NodeRef};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
@@ -76,7 +77,7 @@ fn build_to_end(
 
 /// `attr = v`, as the read path asks it.
 fn eq(
-    attr: &Arc<String>,
+    attr: &ArcStr,
     v: i64,
 ) -> IndexQuery<Value> {
     IndexQuery::Equal {
@@ -104,8 +105,8 @@ fn ensure_graphblas() {
 #[test]
 fn new_version_isolates_the_falkordb_index() {
     ensure_graphblas();
-    let label = Arc::new("Person".to_string());
-    let attr = Arc::new("age".to_string());
+    let label = ArcStr::from("Person");
+    let attr = ArcStr::from("age");
 
     let mut committed = Graph::new(64, 64, 10, 1, "t");
     committed
@@ -146,8 +147,8 @@ fn new_version_isolates_the_falkordb_index() {
 fn create_index_leaves_the_node_column_to_its_batches() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let label = Arc::new("Person".to_string());
-    let attr = Arc::new("age".to_string());
+    let label = ArcStr::from("Person");
+    let attr = ArcStr::from("age");
 
     // Register the label and activate three nodes (ids 0,1,2 on a fresh graph).
     let lid = g.get_label_id_mut("Person");
@@ -238,7 +239,7 @@ fn create_index_leaves_the_node_column_to_its_batches() {
 #[test]
 fn rdb_load_populate_builds_each_column() {
     let (mut g, label, v, ty, w) = scan_fixture();
-    let range = |attr: &Arc<String>| -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    let range = |attr: &ArcStr| -> HashMap<ArcStr, Vec<Arc<Field>>> {
         let field = Field::new(CString::new(attr.as_str()).unwrap(), IndexType::Range, None);
         HashMap::from([(attr.clone(), vec![Arc::new(field)])])
     };
@@ -278,8 +279,8 @@ fn rdb_load_populate_builds_each_column() {
 fn create_index_leaves_the_edge_column_to_its_batches() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let ty = Arc::new("R".to_string());
-    let attr = Arc::new("w".to_string());
+    let ty = ArcStr::from("R");
+    let attr = ArcStr::from("w");
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 3);
     g.create_nodes(&nodes.iter().copied().collect())
@@ -347,11 +348,11 @@ fn create_index_leaves_the_edge_column_to_its_batches() {
 
 /// A graph with a index on `(:Person, v)` and `n` labeled Person nodes
 /// (ids `0..n`), no attrs yet.
-fn graph_with_index(n: usize) -> (Graph, Arc<String>, Arc<String>, Vec<u64>) {
+fn graph_with_index(n: usize) -> (Graph, ArcStr, ArcStr, Vec<u64>) {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let label = Arc::new("Person".to_string());
-    let attr = Arc::new("v".to_string());
+    let label = ArcStr::from("Person");
+    let attr = ArcStr::from("v");
     g.falkordb_index
         .create_column(EntityType::Node, &label, &attr);
     let lid = g.get_label_id_mut("Person");
@@ -371,7 +372,7 @@ fn graph_with_index(n: usize) -> (Graph, Arc<String>, Arc<String>, Vec<u64>) {
 fn set_attr(
     g: &mut Graph,
     id: u64,
-    attr: &Arc<String>,
+    attr: &ArcStr,
     value: Value,
 ) {
     let aid = g.get_or_create_node_attr_id(attr);
@@ -384,8 +385,8 @@ fn set_attr(
 
 fn range_scan(
     g: &Graph,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
     lo: i64,
     hi: i64,
 ) -> Vec<u64> {
@@ -463,11 +464,11 @@ fn delete_then_reuse_id_and_value_stays_correct() {
 }
 
 /// A graph with the `(:Person, v)` index and one node that is NOT labeled `:Person`.
-fn unlabeled_graph_with_index() -> (Graph, Arc<String>, Arc<String>, u64) {
+fn unlabeled_graph_with_index() -> (Graph, ArcStr, ArcStr, u64) {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let label = Arc::new("Person".to_string());
-    let attr = Arc::new("v".to_string());
+    let label = ArcStr::from("Person");
+    let attr = ArcStr::from("v");
     g.falkordb_index
         .create_column(EntityType::Node, &label, &attr);
     let _lid = g.get_label_id_mut("Person"); // register the label matrix
@@ -554,8 +555,8 @@ fn remove_label_drops_tuple_and_no_resurrect_on_reuse() {
 fn edge_writes_maintain_the_index() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let ty = Arc::new("R".to_string());
-    let attr = Arc::new("w".to_string());
+    let ty = ArcStr::from("R");
+    let attr = ArcStr::from("w");
     g.falkordb_index
         .create_column(EntityType::Relationship, &ty, &attr);
     let aid = g.get_or_create_rel_attr_id(&attr);
@@ -619,12 +620,12 @@ fn edge_writes_maintain_the_index() {
 /// `:Person` nodes carrying `attr` with `values`, set before any index exists, so indexer batches are
 /// their only way into the column.
 fn people_with(
-    attr: &Arc<String>,
+    attr: &ArcStr,
     values: &[i64],
-) -> (Graph, Arc<String>, Vec<u64>) {
+) -> (Graph, ArcStr, Vec<u64>) {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let label = Arc::new("Person".to_string());
+    let label = ArcStr::from("Person");
     let lid = g.get_label_id_mut("Person");
     let ids = reserve_nodes(&mut g, values.len());
     g.create_nodes(&ids.iter().copied().collect())
@@ -644,7 +645,7 @@ fn people_with(
 /// One more `:Person` node with `attr = value`, created through the write path.
 fn add_person(
     g: &mut Graph,
-    attr: &Arc<String>,
+    attr: &ArcStr,
     value: i64,
 ) -> u64 {
     let lid = g.get_label_id_mut("Person");
@@ -665,8 +666,8 @@ fn add_person(
 /// before its indexer batches.
 fn create_index_on(
     g: &mut Graph,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
 ) {
     g.falkordb_index
         .create_building(EntityType::Node, label, attr);
@@ -676,8 +677,8 @@ fn create_index_on(
 /// once RediSearch has confirmed the drop.
 fn drop_index_on(
     g: &mut Graph,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
 ) {
     g.falkordb_index.drop_index(
         &IndexType::Range,
@@ -691,8 +692,8 @@ fn drop_index_on(
 fn cursor(
     g: &Graph,
     entity: EntityType,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
 ) -> Option<BuildCursor> {
     g.falkordb_index
         .column_state(entity, label, attr)
@@ -711,8 +712,8 @@ type Contents = (Vec<(i64, Vec<u64>)>, Vec<u64>, Vec<(i64, Vec<u64>)>);
 fn contents(
     g: &Graph,
     entity: EntityType,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
     values: &[i64],
 ) -> Contents {
     let idx = g
@@ -750,8 +751,8 @@ fn contents(
 fn one_pass(
     g: &Graph,
     entity: EntityType,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
     values: &[i64],
 ) -> Contents {
     let mut tuples: Vec<(u64, u64)> = Vec::new();
@@ -815,7 +816,7 @@ fn one_pass(
 /// reaches the node, which reads its value then.
 #[test]
 fn batched_build_matches_a_one_pass_build_under_concurrent_node_writes() {
-    let attr = Arc::new("v".to_string());
+    let attr = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&attr, &[10, 20, 30, 40, 50, 60]);
     create_index_on(&mut g, &label, &attr);
 
@@ -869,8 +870,8 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_node_writes() {
 fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let ty = Arc::new("R".to_string());
-    let attr = Arc::new("w".to_string());
+    let ty = ArcStr::from("R");
+    let attr = ArcStr::from("w");
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 4);
     g.create_nodes(&nodes.iter().copied().collect())
@@ -955,8 +956,8 @@ fn batched_build_matches_a_one_pass_build_under_concurrent_edge_writes() {
 fn an_edge_write_is_placed_by_its_source_then_its_destination() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let ty = Arc::new("R".to_string());
-    let attr = Arc::new("w".to_string());
+    let ty = ArcStr::from("R");
+    let attr = ArcStr::from("w");
     let aid = g.get_or_create_rel_attr_id(&attr);
     let nodes = reserve_nodes(&mut g, 4);
     g.create_nodes(&nodes.iter().copied().collect())
@@ -1028,8 +1029,8 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
     for new_w in [9, 1] {
         ensure_graphblas();
         let mut g = Graph::new(64, 64, 10, 1, "t");
-        let ty = Arc::new("R".to_string());
-        let attr = Arc::new("w".to_string());
+        let ty = ArcStr::from("R");
+        let attr = ArcStr::from("w");
         let aid = g.get_or_create_rel_attr_id(&attr);
         let nodes = reserve_nodes(&mut g, 4);
         g.create_nodes(&nodes.iter().copied().collect())
@@ -1096,11 +1097,11 @@ fn an_edge_id_reused_ahead_of_the_cursor_leaves_no_tuple_behind() {
 /// `Person` nodes 0..10 with `v = 10 * id`, node 4 deleted (a gap in the rows), and `R` edges with
 /// several per source node and one multi-edge pair, so batches stop inside and between rows and
 /// inside the pair. Both columns are created, and `Building`.
-fn scan_fixture() -> (Graph, Arc<String>, Arc<String>, Arc<String>, Arc<String>) {
-    let v = Arc::new("v".to_string());
+fn scan_fixture() -> (Graph, ArcStr, ArcStr, ArcStr, ArcStr) {
+    let v = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&v, &(0..10).map(|i| i * 10).collect::<Vec<_>>());
-    let ty = Arc::new("R".to_string());
-    let w = Arc::new("w".to_string());
+    let ty = ArcStr::from("R");
+    let w = ArcStr::from("w");
     let aid = g.get_or_create_rel_attr_id(&w);
     // Five edges out of node 1 (three of them 1->2), two out of node 7, one out of node 8.
     let (srcs, dsts) = ([1u64, 1, 1, 1, 1, 7, 7, 8], [2u64, 2, 2, 3, 9, 8, 9, 9]);
@@ -1165,24 +1166,23 @@ fn any_batch_size_builds_the_one_pass_column() {
 fn a_building_columns_scan_keeps_what_the_built_column_answers() {
     let (mut g, label, v, ty, w) = scan_fixture();
     let int = Value::Int;
-    let range = |key: &Arc<String>, min: Option<i64>, max: Option<i64>, inclusive: bool| {
-        IndexQuery::Range {
+    let range =
+        |key: &ArcStr, min: Option<i64>, max: Option<i64>, inclusive: bool| IndexQuery::Range {
             key: key.clone(),
             min: min.map(int),
             max: max.map(int),
             include_min: inclusive,
             include_max: inclusive,
-        }
-    };
-    let in_list = |key: &Arc<String>, values: &[Value]| IndexQuery::InList {
+        };
+    let in_list = |key: &ArcStr, values: &[Value]| IndexQuery::InList {
         key: key.clone(),
         list: Value::List(Arc::new(values.iter().cloned().collect())),
     };
-    let equal = |key: &Arc<String>, value: Value| IndexQuery::Equal {
+    let equal = |key: &ArcStr, value: Value| IndexQuery::Equal {
         key: key.clone(),
         value,
     };
-    let bounds = |key: &Arc<String>, min: Value, max: Value| IndexQuery::Range {
+    let bounds = |key: &ArcStr, min: Value, max: Value| IndexQuery::Range {
         key: key.clone(),
         min: Some(min),
         max: Some(max),
@@ -1218,7 +1218,7 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
         IndexQuery::Or(vec![eq(&w, 1), eq(&w, 7)]),
         IndexQuery::Or(vec![eq(&w, 1), equal(&w, Value::Null)]),
     ];
-    let labels: OrderSet<Arc<String>> = std::iter::once(label.clone()).collect();
+    let labels: OrderSet<ArcStr> = std::iter::once(label.clone()).collect();
     let sorted = |mut ids: Vec<u64>| {
         ids.sort_unstable();
         ids
@@ -1304,7 +1304,7 @@ fn a_building_columns_scan_keeps_what_the_built_column_answers() {
 /// would leave nodes at or above the cursor in the column.
 #[test]
 fn a_node_batch_reads_at_most_its_size() {
-    let attr = Arc::new("v".to_string());
+    let attr = ArcStr::from("v");
     for (batch, batches) in [(1usize, 9usize), (2, 5), (4, 3), (9, 1), (10, 1)] {
         let (mut g, label, ids) = people_with(&attr, &(1..=9).collect::<Vec<_>>());
         create_index_on(&mut g, &label, &attr);
@@ -1373,7 +1373,7 @@ fn a_batch_of_size_zero_reads_nothing() {
 /// one they have not reached: neither the old value nor the SET's value may survive the DELETE.
 #[test]
 fn set_then_delete_in_one_batch_during_a_build() {
-    let attr = Arc::new("v".to_string());
+    let attr = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&attr, &[1, 2, 3]);
     create_index_on(&mut g, &label, &attr);
     assert!(graph_writes::run_indexer_batch(&mut g, 1));
@@ -1407,7 +1407,7 @@ fn set_then_delete_in_one_batch_during_a_build() {
 /// Writes after the drop stage nothing.
 #[test]
 fn dropping_a_building_column_leaves_nothing_behind() {
-    let attr = Arc::new("v".to_string());
+    let attr = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&attr, &[10, 20]);
     create_index_on(&mut g, &label, &attr);
     assert!(graph_writes::run_indexer_batch(&mut g, 1));
@@ -1443,7 +1443,7 @@ fn dropping_a_building_column_leaves_nothing_behind() {
 /// so a value that changed while no index existed is indexed as it is now, and the old one is gone.
 #[test]
 fn recreating_a_building_column_restarts_its_build() {
-    let attr = Arc::new("v".to_string());
+    let attr = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&attr, &[10, 20]);
     create_index_on(&mut g, &label, &attr);
     assert!(graph_writes::run_indexer_batch(&mut g, 1));
@@ -1468,8 +1468,8 @@ fn recreating_a_building_column_restarts_its_build() {
 /// column ends up with its own values.
 #[test]
 fn indexing_a_second_attribute_leaves_the_first_build_alone() {
-    let v = Arc::new("v".to_string());
-    let w = Arc::new("w".to_string());
+    let v = ArcStr::from("v");
+    let w = ArcStr::from("w");
     let (mut g, label, ids) = people_with(&v, &[10, 20]);
     for (&id, value) in ids.iter().zip([1, 2]) {
         set_attr(&mut g, id, &w, Value::Int(value));
@@ -1507,8 +1507,8 @@ fn indexing_a_second_attribute_leaves_the_first_build_alone() {
 fn replica_node_rows_maintain_the_index() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let label = Arc::new("Person".to_string());
-    let attr = Arc::new("v".to_string());
+    let label = ArcStr::from("Person");
+    let attr = ArcStr::from("v");
     g.falkordb_index
         .create_column(EntityType::Node, &label, &attr);
     let lid = g.get_label_id_mut("Person").0 as u64;
@@ -1570,8 +1570,8 @@ fn replica_set_labels_indexes_existing_attrs() {
 fn replica_edge_update_of_type_maintains_the_index() {
     ensure_graphblas();
     let mut g = Graph::new(64, 64, 10, 1, "t");
-    let ty = Arc::new("R".to_string());
-    let attr = Arc::new("w".to_string());
+    let ty = ArcStr::from("R");
+    let attr = ArcStr::from("w");
     g.falkordb_index
         .create_column(EntityType::Relationship, &ty, &attr);
     let aid = g.get_or_create_rel_attr_id(&attr);
@@ -1656,8 +1656,8 @@ fn set_then_delete_in_one_batch_leaves_no_entry() {
 
 /// An MVCC graph of `:Person` nodes with `v` = each of `values`, and a `Building` column on
 /// `(:Person, v)`.
-fn mvcc_building(values: &[i64]) -> (Arc<MvccGraph>, Arc<String>, Arc<String>, Vec<u64>) {
-    let attr = Arc::new("v".to_string());
+fn mvcc_building(values: &[i64]) -> (Arc<MvccGraph>, ArcStr, ArcStr, Vec<u64>) {
+    let attr = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&attr, values);
     create_index_on(&mut g, &label, &attr);
     (MvccGraph::from_graph(g), label, attr, ids)
@@ -1956,14 +1956,14 @@ fn a_batch_refreshes_writers_changes_only_when_that_costs_less_than_inserting_it
 #[test]
 fn what_a_build_has_read_moves_with_its_cursor() {
     let (mvcc, label, v, ids) = mvcc_building(&(0..30).collect::<Vec<_>>());
-    let w = Arc::new("w".to_string());
+    let w = ArcStr::from("w");
     commit_write(&mvcc, |g| {
         for &id in &ids {
             set_attr(g, id, &w, Value::Int(id as i64));
         }
         create_index_on(g, &label, &w);
     });
-    let on = |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let on = |attr: &ArcStr| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let (vid, wid) = (on(&v), on(&w));
     let read = |id: &IndexId| mvcc.read().index_build_read(id);
     assert_eq!((read(&vid), read(&wid)), (Some(0), Some(0)));
@@ -2084,8 +2084,8 @@ fn a_batch_publishes_nothing_rather_than_catch_up_past_its_limit() {
 #[test]
 fn an_insert_catch_up_counts_the_written_entities_it_reads_again() {
     let n = 20;
-    let w = Arc::new("w".to_string());
-    let v = Arc::new("v".to_string());
+    let w = ArcStr::from("w");
+    let v = ArcStr::from("v");
     for limit in [n as u64 - 1, n as u64] {
         let (mut g, label, ids) = people_with(&w, &(0..n as i64).collect::<Vec<_>>());
         create_index_on(&mut g, &label, &v);
@@ -2192,8 +2192,8 @@ fn an_edge_id_reused_across_a_batchs_cursor_is_right_in_either_commit_order() {
         ] {
             ensure_graphblas();
             let mut g = Graph::new(64, 64, 10, 1, "t");
-            let ty = Arc::new("R".to_string());
-            let attr = Arc::new("w".to_string());
+            let ty = ArcStr::from("R");
+            let attr = ArcStr::from("w");
             let aid = g.get_or_create_rel_attr_id(&attr);
             let nodes = reserve_nodes(&mut g, 4 + extra);
             g.create_nodes(&nodes.iter().copied().collect())
@@ -2340,9 +2340,9 @@ fn an_edge_id_reused_by_another_type_stays_out_of_the_column_in_either_commit_or
     ] {
         ensure_graphblas();
         let mut g = Graph::new(64, 64, 10, 1, "t");
-        let ty = Arc::new("R".to_string());
-        let other = Arc::new("S".to_string());
-        let attr = Arc::new("w".to_string());
+        let ty = ArcStr::from("R");
+        let other = ArcStr::from("S");
+        let attr = ArcStr::from("w");
         let aid = g.get_or_create_rel_attr_id(&attr);
         let nodes = reserve_nodes(&mut g, 4 + extra);
         g.create_nodes(&nodes.iter().copied().collect())
@@ -2594,8 +2594,8 @@ fn relabel_to_other(
     ));
 }
 
-fn attr_named(name: &str) -> Arc<String> {
-    Arc::new(name.to_string())
+fn attr_named(name: &str) -> ArcStr {
+    ArcStr::from(name)
 }
 
 /// Every order in which `actors` actors each do two things, the first before the second: each
@@ -2650,8 +2650,8 @@ fn model_of(g: &Graph) -> Model {
 /// else.
 fn check_rules(
     g: &Graph,
-    label: &Arc<String>,
-    attrs: [&Arc<String>; 2],
+    label: &ArcStr,
+    attrs: [&ArcStr; 2],
     what: &str,
 ) {
     let model = model_of(g);
@@ -2687,8 +2687,8 @@ fn check_rules(
 /// `None` if there is no such column.
 fn build_progress(
     g: &Graph,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
 ) -> Option<u64> {
     match g
         .falkordb_index
@@ -2992,8 +2992,8 @@ fn delete_node_with_edges(
 /// `first + 1`, and so on. Returns their ids.
 fn add_edges(
     g: &mut Graph,
-    ty: &Arc<String>,
-    attr: &Arc<String>,
+    ty: &ArcStr,
+    attr: &ArcStr,
     srcs: &[u64],
     dsts: &[u64],
     first: i64,
@@ -3019,7 +3019,7 @@ fn add_edges(
 fn set_edge_attr(
     g: &mut Graph,
     eid: u64,
-    attr: &Arc<String>,
+    attr: &ArcStr,
     value: Value,
 ) {
     g.open_id_batches().expect("a consistent space");
@@ -3159,9 +3159,9 @@ fn writers_and_indexer_batches_on_threads_keep_every_column_right() {
     }
     add_edges(&mut g, &ty, &x, &ids[..ids.len() - 1], &ids[1..], 0);
     let columns: Vec<(EntityType, IndexKey)> = vec![
-        (EntityType::Node, (Arc::clone(&label), Arc::clone(&v))),
-        (EntityType::Node, (Arc::clone(&label), Arc::clone(&w))),
-        (EntityType::Relationship, (Arc::clone(&ty), Arc::clone(&x))),
+        (EntityType::Node, (label.clone(), v.clone())),
+        (EntityType::Node, (label.clone(), w.clone())),
+        (EntityType::Relationship, (ty.clone(), x.clone())),
     ];
     for (entity, (l, a)) in &columns {
         g.falkordb_index.create_building(*entity, l, a);
@@ -3573,9 +3573,9 @@ fn job_on(
 #[test]
 fn a_commit_hands_the_builder_each_index_it_brings_in_building() {
     let (mvcc, label, v, _) = mvcc_building(&[10, 20]);
-    let w = Arc::new("w".to_string());
-    let u = Arc::new("u".to_string());
-    let id = |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let w = ArcStr::from("w");
+    let u = ArcStr::from("u");
+    let id = |attr: &ArcStr| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let before = mvcc.read();
     let v_was = building_generation(&before, &id(&v)).expect("v is Building");
     let mut after = before.new_version();
@@ -4068,15 +4068,14 @@ fn the_builder_finishes_its_builds_under_sustained_writes() {
     let nodes = online_build::SIZING.floor * 3 / 2;
     let values: Vec<i64> = (0..nodes as i64).collect();
     let (mvcc, label, v, ids) = mvcc_building(&values);
-    let w = Arc::new("w".to_string());
+    let w = ArcStr::from("w");
     let host = TestHost::new(mvcc);
     host.write(|g| {
         for &id in &ids {
             set_attr(g, id, &w, Value::Int(id as i64));
         }
     });
-    let index =
-        |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let index = |attr: &ArcStr| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let builder = builder_on(&host, online_build::SIZING);
 
     let built = || {
@@ -4226,7 +4225,7 @@ fn plans_index_scan(plan: &Plan) -> bool {
 #[test]
 fn the_planner_uses_a_column_only_once_this_version_built_it() {
     let _ = init_functions();
-    let v = Arc::new("v".to_string());
+    let v = ArcStr::from("v");
     let (mut g, label, _) = people_with(&v, &[10, 20, 30]);
     let query = "MATCH (n:Person) WHERE n.v = 20 RETURN n.v";
     let planned = |g: &Graph| plans_index_scan(&g.get_plan(query).expect("plans"));
@@ -4316,8 +4315,8 @@ fn a_plan_made_on_a_ready_column_reads_right_while_it_builds_again() {
 fn native_build_progress(
     g: &Graph,
     entity: EntityType,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
 ) -> Option<(u64, u64)> {
     let read = g.falkordb_index.building_read(entity, label, attr)?;
     let total = g.native_build_total(entity, label);
@@ -4365,7 +4364,7 @@ fn a_building_columns_progress_counts_what_its_batches_have_read() {
 /// Counting the nodes below the cursor would give 2 of 4, then 1 of 2.
 #[test]
 fn a_building_columns_progress_stays_with_what_it_read_up_to_the_labels_entities() {
-    let attr = Arc::new("v".to_string());
+    let attr = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&attr, &(0..6).collect::<Vec<_>>());
     create_index_on(&mut g, &label, &attr);
     assert!(graph_writes::run_indexer_batch(&mut g, 4));
@@ -4387,16 +4386,15 @@ fn a_building_columns_progress_stays_with_what_it_read_up_to_the_labels_entities
 /// One more batch on each: `v` is `Ready` and `w` has read four, so 4 of 6, one pending.
 #[test]
 fn a_labels_progress_is_its_slowest_building_column_out_of_its_nodes() {
-    let v = Arc::new("v".to_string());
-    let w = Arc::new("w".to_string());
+    let v = ArcStr::from("v");
+    let w = ArcStr::from("w");
     let (mut g, label, ids) = people_with(&v, &(0..6).collect::<Vec<_>>());
     for &id in &ids {
         set_attr(&mut g, id, &w, Value::Int(id as i64));
     }
-    let column =
-        |attr: &Arc<String>| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
+    let column = |attr: &ArcStr| IndexId::Column(EntityType::Node, (label.clone(), attr.clone()));
     let info = |g: &Graph| {
-        let range = |attr: &Arc<String>| {
+        let range = |attr: &ArcStr| {
             let field = Field::new(CString::new(attr.as_str()).unwrap(), IndexType::Range, None);
             (attr.clone(), vec![Arc::new(field)])
         };
@@ -4430,7 +4428,7 @@ fn a_labels_progress_is_its_slowest_building_column_out_of_its_nodes() {
 /// pending, what it last reported no longer counts.
 #[test]
 fn a_labels_progress_is_the_slower_of_its_column_and_redisearch() {
-    let v = Arc::new("v".to_string());
+    let v = ArcStr::from("v");
     let (mut g, label, _) = people_with(&v, &(0..6).collect::<Vec<_>>());
     let column = IndexId::Column(EntityType::Node, (label.clone(), v.clone()));
     // What `db.indexes()` shows for the label, given what RediSearch reports for it.
@@ -4474,8 +4472,8 @@ fn ints(xs: &[i64]) -> Value {
 /// `v IN n.attr`, answered from the column's array tree.
 fn contains(
     g: &Graph,
-    label: &Arc<String>,
-    attr: &Arc<String>,
+    label: &ArcStr,
+    attr: &ArcStr,
     v: i64,
 ) -> Vec<u64> {
     g.falkordb_index
@@ -4556,7 +4554,7 @@ fn a_kind_change_and_a_delete_in_one_batch_leave_nothing() {
 /// collapsed without its kind, leaves a tuple in the wrong tree or none at all.
 #[test]
 fn batched_build_carries_list_values_under_concurrent_writes() {
-    let attr = Arc::new("v".to_string());
+    let attr = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&attr, &[1, 0, 0, 0, 4, 0]);
     // Before the index exists, so the batches are their only way in.
     set_attr(&mut g, ids[1], &attr, ints(&[1, 2]));
@@ -4637,10 +4635,10 @@ fn batched_build_carries_list_values_under_concurrent_writes() {
 /// nothing else checks the scan's rows.
 fn building_scans_and_built_answers(
     g: &mut Graph,
-    label: &Arc<String>,
+    label: &ArcStr,
     queries: &[IndexQuery<Value>],
 ) -> (Vec<(usize, Vec<u64>)>, Vec<Vec<u64>>) {
-    let labels: OrderSet<Arc<String>> = std::iter::once(label.clone()).collect();
+    let labels: OrderSet<ArcStr> = std::iter::once(label.clone()).collect();
     let mut kept = Vec::new();
     loop {
         for (i, q) in queries.iter().enumerate() {
@@ -4683,7 +4681,7 @@ fn building_scans_and_built_answers(
 /// list value as one number would keep no list at all, answering `1 IN n.v` with nothing.
 #[test]
 fn a_building_columns_scan_keeps_what_the_array_tree_answers() {
-    let attr = Arc::new("v".to_string());
+    let attr = ArcStr::from("v");
     let (mut g, label, ids) = people_with(&attr, &[1, 0, 0, 3, 0, 0, 5]);
     set_attr(&mut g, ids[1], &attr, ints(&[1, 2]));
     set_attr(&mut g, ids[2], &attr, ints(&[2, 3]));
@@ -4695,7 +4693,7 @@ fn a_building_columns_scan_keeps_what_the_array_tree_answers() {
         Value::List(Arc::new(
             [
                 Value::Int(5),
-                Value::String(Arc::new("x".to_string())),
+                Value::String(ArcStr::from("x")),
                 Value::Int(1),
             ]
             .into_iter()
@@ -4762,7 +4760,7 @@ fn array_contains_is_routed_to_the_array_tree() {
     assert_eq!(rows(&probe(Value::Int(5))), Some(vec![ids[1]]));
     assert_eq!(rows(&eq(&attr, 5)), Some(vec![ids[0]]));
     assert_eq!(
-        rows(&probe(Value::String(Arc::new("x".to_string())))),
+        rows(&probe(Value::String(ArcStr::from("x")))),
         None,
         "a non-numeric probe is not this column's to answer"
     );
@@ -4777,25 +4775,25 @@ fn array_contains_is_routed_to_the_array_tree() {
 /// cross-attribute conjunction would keep rows the other excludes.
 #[test]
 fn a_building_columns_scan_keeps_what_a_conjunction_answers() {
-    let (a, b) = (Arc::new("a".to_string()), Arc::new("b".to_string()));
+    let (a, b) = (ArcStr::from("a"), ArcStr::from("b"));
     let (mut g, label, ids) = people_with(&a, &[1, 1, 2, 2, 1, 3, 1]);
     for (i, &id) in ids.iter().enumerate() {
         set_attr(&mut g, id, &b, Value::Int(10 * (i as i64 + 1)));
     }
     create_index_on(&mut g, &label, &a);
     create_index_on(&mut g, &label, &b);
-    let range = |key: &Arc<String>, min: Option<i64>, max: Option<i64>| IndexQuery::Range {
+    let range = |key: &ArcStr, min: Option<i64>, max: Option<i64>| IndexQuery::Range {
         key: key.clone(),
         min: min.map(Value::Int),
         max: max.map(Value::Int),
         include_min: true,
         include_max: true,
     };
-    let null = |key: &Arc<String>| IndexQuery::Equal {
+    let null = |key: &ArcStr| IndexQuery::Equal {
         key: key.clone(),
         value: Value::Null,
     };
-    let null_bound = |key: &Arc<String>| IndexQuery::Range {
+    let null_bound = |key: &ArcStr| IndexQuery::Range {
         key: key.clone(),
         min: Some(Value::Null),
         max: Some(Value::Int(50)),
