@@ -1,6 +1,6 @@
 # graph_queries: the graph's own bookkeeping (ids, labels, types, deletes, constraints)
 
-This project proves what `Graph` in `graph/src/graph/graph.rs` and `constraint.rs` promises about its own state, and shows with concrete counterexamples where it breaks. The graph keeps many structures that must agree with each other: the id spaces, the adjacency matrix, the per-type relationship tensors, the relationship-type matrix, the node×label matrix and the per-label diagonals. Several user-facing behaviours depend on that agreement:
+This project proves what `Graph` in `graph/src/graph/graph.rs` and `constraint.rs` promises about its own state, and shows with concrete counterexamples where it breaks. The graph keeps many structures that must agree with each other: the id spaces, the adjacency matrix, the per-type relationship tensors, each edge's type (kept in the endpoint index's type column since #3967), the node×label matrix and the per-label diagonals. Several user-facing behaviours depend on that agreement:
 
 - `DELETE` and `DETACH DELETE` (the entity disappears from every structure, its id is recycled);
 - `CREATE` reusing a deleted id (nothing of the old entity shows through);
@@ -15,9 +15,10 @@ The Lean↔Rust map is [`COVERAGE.tsv`](COVERAGE.tsv), and every file starts wit
 
 **1. Does deleting a relationship erase everything about it?**
 
-`deleteRels_clears` proves that it does, as long as the relationship-type matrix is as wide as the type table: every deleted edge loses its type entry, its endpoints and its tensor entry, and its id goes into the recycle bin.
+`deleteRels_clears` proves that it does: every deleted edge loses its type entry, its endpoints and its tensor entry, and its id goes into the recycle bin. `deleteRels_no_type` and `deleteImplicit_no_type` prove the type reads as absent afterwards.
 
-- `getTypeIdMut_width` proves registration keeps the width right, and `type_cleared_after_registration` proves a delete after a type registration still clears the type.
+- `type_cleared_after_registration` proves a delete after a type registration still clears the type (`getTypeIdMut_keeps_relTypes`: registration leaves every edge's type alone).
+- Since #3967 a graph holds at most 65,535 relationship types with relationships (`maxTypeId` = 65534, `u16::MAX` marks an empty slot). `createRelsBulk_type_refused` proves a create whose type has no slot is refused before any id is taken, and `createRelsBulk_types` that every created edge reads back its type.
 
 **2. Do the id spaces and the graph agree at commit?**
 
@@ -55,7 +56,8 @@ No. `cmatches_iff` proves constraint matching is plain equality of the property 
 |---|---|---|
 | `deleteRels_clears` | A deleted relationship loses its type entry, endpoints and tensor entry, and its id is recycled | `Delete.lean` |
 | `type_cleared_after_registration` | Registering a type (constraint creation, a replica's schema record) does not stop a later delete from clearing the type | `Delete.lean` |
-| `getTypeIdMut_width`, `registerRelType_width` | Registering a type resizes the type matrix to the new width | `Schema.lean` |
+| `getTypeIdMut_keeps_relTypes`, `registerRelType_keeps_relTypes` | Registering a type changes no edge's type | `Schema.lean` |
+| `createRelsBulk_types`, `createRelsBulk_type_refused`, `relTypesFit_full` | Each created edge reads back its type; a type past the 65,535-type limit is refused before anything changes (#3967) | `Delete.lean`, `Schema.lean` |
 | `validate_ok_iff`, `verifyCreatedRels_spec` | Commit validation accepts exactly two verified batches whose created relationships end at live nodes; an error names a real offender | `Ids.lean` |
 | `markNodesLive_spec`, `rollIdBatches_spec`, `newVersion_spec` | Creating nodes, rolling batches and opening a version move the ids exactly as intended | `Ids.lean` |
 | `rustIdOps_contract` | The Rust `IdSpace` mutators satisfy the contract the theorems above assume | `IdRust.lean` |
@@ -72,11 +74,9 @@ No. `cmatches_iff` proves constraint matching is plain equality of the property 
 
 1. **Model the type.** `G` (`Basic.lean`) is `struct Graph` with every GraphBLAS object replaced by its mathematical content. A matrix `Mat` is its dimensions plus a list of stored coordinates. A tensor `Ten` is a list of `(src, dst, edge_id)` triples. `proofs/versioned_matrix` proves this abstraction is sound (its `run_repr`).
 2. **Model the failure mode.** `Mat.removeMask` removes the masked coordinates only when the mask and the matrix have the same dimensions; otherwise it changes nothing. That is what the release build does, because the `GrB_DIMENSION_MISMATCH` is only `debug_assert`ed.
-3. **Model the function.** `deleteRels` follows `delete_relationships`. Phase 1 (`resolveRels`) finds each edge's type and endpoints without mutating. Phase 2 releases the ids through the id space `O`, filters the tensors, and removes the mask from the type matrix and the adjacency matrix.
+3. **Model the function.** `deleteRels` follows `delete_relationships`. Phase 1 (`resolveRels`) finds each edge's type and endpoints without mutating. Phase 2 releases the ids through the id space `O`, filters the tensors, clears each edge's type (`relTypes`, the endpoint index's type column) and removes the mask from the adjacency matrix.
 4. **Case structure.** There are three cases: an empty input, a refused release (`deleteRels_refused`: nothing changes), and success. In the success case each of the four facts follows from the definitions.
-5. **Hypotheses.** There are two:
-   - `hC : IdSpaceContract O` is discharged by `rustIdOps_contract`, so `deleteRels_clears_rust` holds with no assumption.
-   - `hw` says the type matrix is as wide as the type table. `deleteRels_stale` shows that without it the removal is a no-op.
+5. **Hypothesis.** `hC : IdSpaceContract O` is discharged by `rustIdOps_contract`, so `deleteRels_clears_rust` holds with no assumption. (Before #3967 a second hypothesis said the type matrix was as wide as the type table; the matrix is gone.)
 
 ## Bugs found
 

@@ -98,16 +98,27 @@ theorem idSpaceErrorMap_divergence_not_graph (k : Kind) (e : IdSpaceErr) (he : e
   cases e <;> simp_all [idSpaceErrorMap, IdSpaceErr.divergence]
 
 /-- `NodeOpError` (`graph.rs`, #2846: the id-space arm carries its `kind`;
-#3022: `DanglingRelationship`) and `impl From<NodeOpError> for ApplyError`. -/
+#3022: `DanglingRelationship`; #3967: `TooManyRelationshipTypes`) and
+`impl From<NodeOpError> for ApplyError`. -/
 inductive NodeOpErr | graph (s : String) | idSpace (k : Kind) (e : IdSpaceErr)
-  | danglingRelationship (id : Nat)
+  | danglingRelationship (id : Nat) | tooManyRelationshipTypes (name : String) (max : Nat)
+/-- `TooManyRelationshipTypes`'s `Display` (`#[error(..)]`, graph.rs). -/
+def tooManyRelTypesMsg (name : String) (max : Nat) : String :=
+  "cannot create a relationship of type '" ++ name ++ "': a graph supports at most " ++
+    toString max ++ " relationship types with relationships"
 def fromNodeOp : NodeOpErr → AErr
   | .graph s => .graph s
   | .idSpace k e => idSpaceErrorMap k e
   | .danglingRelationship id => .danglingRelationship id
+  | .tooManyRelationshipTypes n m => .graph (tooManyRelTypesMsg n m)
 theorem fromNodeOp_spec (k : Kind) (s : String) (e : IdSpaceErr) (id : Nat) :
     fromNodeOp (.graph s) = .graph s ∧ fromNodeOp (.idSpace k e) = idSpaceErrorMap k e ∧
     fromNodeOp (.danglingRelationship id) = .danglingRelationship id := ⟨rfl, rfl, rfl⟩
+
+/-- #3967: a type-limit refusal surfaces as `ApplyError::Graph` with the graph's own words
+(`e.to_string()`), never as an id-space divergence. -/
+theorem fromNodeOp_tooMany (n : String) (m : Nat) :
+    fromNodeOp (.tooManyRelationshipTypes n m) = .graph (tooManyRelTypesMsg n m) := rfl
 
 /-- `Graph::validate` (`graph.rs`) = `verify_id_batches()?` (the node space,
 then the relationship space, each refusal wrapped with its kind), then — since

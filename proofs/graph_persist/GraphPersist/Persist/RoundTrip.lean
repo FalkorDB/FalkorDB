@@ -96,7 +96,7 @@ theorem payload_rt (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) (hw : WF C g
       (RT_bind (decIdx_rt C.Mx g.labelMats hw.lm.1 hw.lm.2) (f := fun ms => Dec.pure (PR.lm (Tn := Tn) ms)) (RT_pure _))
     simpa [decPayload, encPayload, prOf] using this
   · -- relation tensors
-    have := RT_bind (decIdx_rt C.Tx g.tensors hw.tn.1 hw.tn.2) (f := fun ts => Dec.pure (PR.rt (M := M) ts)) (RT_pure _)
+    have := RT_bind (decTns_rt0 C.Tx C.ec g.tensors hw.tn.1 hw.tn.2 hw.tfit) (f := fun ts => Dec.pure (PR.rt (M := M) ts)) (RT_pure _)
     simpa [decPayload, encPayload, prOf] using this
   · have := RT_bind (C.Mx.rt _ hw.mx.1) (f := fun m => Dec.pure (PR.adj (Tn := Tn) m)) (RT_pure _)
     simpa [decPayload, encPayload, prOf] using this

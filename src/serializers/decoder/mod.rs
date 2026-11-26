@@ -1,7 +1,8 @@
 use arcstr::ArcStr;
 
 use graph::entity_type::EntityType;
-use graph::graph::graph::Graph;
+use graph::graph::endpoint_index::MAX_TYPE_ID;
+use graph::graph::graph::{Graph, edge_type_slot};
 use graph::graph::graphblas::serialization::{Decode, Reader};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
@@ -48,6 +49,34 @@ pub enum LoadedKey {
 ///
 /// # Errors
 /// A truncated stream, an unknown state, `Init`, `Final`, or a CCH index payload.
+/// Appends the next relationship type's tensor, refusing one that holds edges
+/// past [`MAX_TYPE_ID`]. Such a graph could be saved before edge types moved
+/// into the endpoint index; loading it now fails with this error instead of
+/// reaching the restore step, which assumes every edge's type fits.
+fn push_tensor(
+    tensors: &mut Vec<Tensor>,
+    tensor: Tensor,
+) -> Result<(), String> {
+    check_type_fits(tensors.len(), tensor.edge_count())?;
+    tensors.push(tensor);
+    Ok(())
+}
+
+/// Refuses relationship type `type_idx` when it holds edges and its id does not
+/// fit the endpoint index's type column.
+fn check_type_fits(
+    type_idx: usize,
+    edge_count: u64,
+) -> Result<(), String> {
+    if edge_count > 0 && edge_type_slot(type_idx).is_none() {
+        return Err(format!(
+            "relationship type #{type_idx} has edges, but at most {} relationship types can have edges",
+            MAX_TYPE_ID + 1
+        ));
+    }
+    Ok(())
+}
+
 fn decode_payload_directory(r: &mut dyn Reader) -> Result<Vec<(EncodeState, u64)>, String> {
     let payload_count = r.read_unsigned()?;
     // No capacity from `payload_count`: it is read from the stream, unchecked.
@@ -279,7 +308,7 @@ pub fn rdb_load_graph(
             EncodeState::RelationMatrices => {
                 for _ in 0..hdr.relationship_count {
                     let _relation_id = r.read_unsigned()?;
-                    relationship_tensors.push(Tensor::decode(&mut r)?);
+                    push_tensor(&mut relationship_tensors, Tensor::decode(&mut r)?)?;
                 }
             }
             EncodeState::AdjMatrix => {
@@ -301,7 +330,6 @@ pub fn rdb_load_graph(
         deleted_rels,
         adj_matrix,
         lbls_matrix,
-        VersionedMatrix::<bool>::new(0, 0),
         label_matrices,
         relationship_tensors,
         schema.node_labels,
@@ -356,7 +384,7 @@ fn decode_payloads_into_pending(
             EncodeState::RelationMatrices => {
                 for _ in 0..hdr.relationship_count {
                     let _relation_id = r.read_unsigned()?;
-                    pg.relationship_tensors.push(Tensor::decode(r)?);
+                    push_tensor(&mut pg.relationship_tensors, Tensor::decode(r)?)?;
                 }
             }
             EncodeState::AdjMatrix => {
@@ -386,7 +414,6 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
         pg.deleted_rels,
         pg.adj_matrix,
         pg.lbls_matrix,
-        VersionedMatrix::<bool>::new(0, 0),
         pg.label_matrices,
         pg.relationship_tensors,
         pg.schema.node_labels,
@@ -551,7 +578,7 @@ fn load_graph_from_reader(
             EncodeState::RelationMatrices => {
                 for _ in 0..hdr.relationship_count {
                     let _relation_id = r.read_unsigned()?;
-                    relationship_tensors.push(Tensor::decode(r)?);
+                    push_tensor(&mut relationship_tensors, Tensor::decode(r)?)?;
                 }
             }
             EncodeState::AdjMatrix => {
@@ -573,7 +600,6 @@ fn load_graph_from_reader(
         deleted_rels,
         adj_matrix,
         lbls_matrix,
-        VersionedMatrix::<bool>::new(0, 0),
         label_matrices,
         relationship_tensors,
         schema.node_labels,
@@ -597,6 +623,22 @@ fn load_graph_from_reader(
 mod tests {
     use super::*;
     use crate::serializers::buffered_io::VecWriter;
+
+    #[test]
+    fn a_snapshot_type_with_edges_past_the_limit_is_refused_not_restored() {
+        // A snapshot saved before edge types moved into the endpoint index can
+        // hold edges of any type id. One past the limit fails the load with an
+        // error rather than reaching `Graph::restore`, which assumes it fits.
+        assert_eq!(check_type_fits(0, 5), Ok(()));
+        assert_eq!(check_type_fits(MAX_TYPE_ID, 5), Ok(()));
+        let err = check_type_fits(MAX_TYPE_ID + 1, 1).expect_err("past the limit");
+        assert!(
+            err.contains("#65535") && err.contains("65535 relationship types"),
+            "{err}"
+        );
+        // A registered type with no edges needs no slot.
+        assert_eq!(check_type_fits(MAX_TYPE_ID + 1, 0), Ok(()));
+    }
     use graph::graph::graphblas::serialization::{Encode, Writer};
 
     fn directory(entries: &[(u64, u64)]) -> Vec<u8> {

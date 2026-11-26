@@ -2021,6 +2021,7 @@ mod cascade {
     use super::*;
     use crate::effects::v3::staging::StagePending;
     use crate::effects::v3::test_aux::{digest, graph_cell};
+    use crate::graph::endpoint_index::MAX_TYPE_ID;
     use crate::graph::graph::{NodeId, RelationshipId};
     use crate::runtime::pending::Pending;
 
@@ -2056,6 +2057,136 @@ mod cascade {
             "{:?}",
             p.created_rels_by_type.keys().collect::<Vec<_>>()
         );
+    }
+
+    /// `CREATE (a)-[:T]->(b) DETACH DELETE a` with `existing` relationship
+    /// types already registered and `T` a new one: the cascade's result.
+    fn cascade_new_type_after(
+        existing: usize
+    ) -> (Result<(), crate::graph::graph::NodeOpError>, Pending, usize) {
+        let g = graph_cell();
+        {
+            let mut graph = g.borrow_mut();
+            for i in 0..existing {
+                graph.get_type_id_mut(&format!("R{i}"));
+            }
+        }
+        let mut p = Pending::default();
+        p.stage_created_node(0, &[], &[]);
+        p.stage_created_node(1, &[], &[]);
+        p.created_relationship(
+            RelationshipId::from(0_u64),
+            NodeId::from(0_u64),
+            NodeId::from(1_u64),
+            ArcStr::from("T"),
+        );
+        let res = p
+            .remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .map(drop);
+        let types = g.borrow().get_types().len();
+        (res, p, types)
+    }
+
+    #[test]
+    fn a_cancelled_edge_whose_type_does_not_fit_is_refused_before_anything_changes() {
+        // A cancelled edge registers its type and replicates as a create/delete
+        // pair, which the replica applies through `create_relationships_bulk`.
+        // Letting the primary register a type past the limit here would ship a
+        // pair the replica refuses, so the cascade refuses it first.
+        let (res, p, types) = cascade_new_type_after(MAX_TYPE_ID + 1);
+        assert!(
+            matches!(
+                res,
+                Err(crate::graph::graph::NodeOpError::TooManyRelationshipTypes { ref name, .. })
+                    if name == "T"
+            ),
+            "{res:?}"
+        );
+        assert_eq!(types, MAX_TYPE_ID + 1, "T was not registered");
+        assert!(p.cancelled_relationships.is_empty(), "nothing was undone");
+        assert_eq!(p.created_rels_by_type.len(), 1, "the edge is still staged");
+    }
+
+    #[test]
+    fn two_new_types_cannot_share_the_last_slot() {
+        // `CREATE (a)-[:X]->(b), (a)-[:Y]->(b) DETACH DELETE a` with one slot
+        // free: each type alone fits, but registering both would put Y past
+        // the limit.
+        let g = graph_cell();
+        {
+            let mut graph = g.borrow_mut();
+            for i in 0..MAX_TYPE_ID {
+                graph.get_type_id_mut(&format!("R{i}"));
+            }
+        }
+        let mut p = Pending::default();
+        p.stage_created_node(0, &[], &[]);
+        p.stage_created_node(1, &[], &[]);
+        for (id, ty) in [(0_u64, "X"), (1, "Y")] {
+            p.created_relationship(
+                RelationshipId::from(id),
+                NodeId::from(0_u64),
+                NodeId::from(1_u64),
+                ArcStr::from(ty),
+            );
+        }
+        let res = p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut());
+        assert!(
+            matches!(
+                res,
+                Err(crate::graph::graph::NodeOpError::TooManyRelationshipTypes { .. })
+            ),
+            "{res:?}"
+        );
+        assert_eq!(
+            g.borrow().get_types().len(),
+            MAX_TYPE_ID,
+            "nothing registered"
+        );
+        assert!(p.cancelled_relationships.is_empty(), "nothing was undone");
+    }
+
+    #[test]
+    fn a_registered_type_past_the_limit_is_refused_too() {
+        // Types without edges can be registered past the limit (index,
+        // constraint, replica schema). One of them on a cancelled edge must be
+        // refused like a new one, since the replica refuses its create.
+        let g = graph_cell();
+        {
+            let mut graph = g.borrow_mut();
+            for i in 0..=MAX_TYPE_ID {
+                graph.get_type_id_mut(&format!("R{i}"));
+            }
+        }
+        let past = format!("R{}", MAX_TYPE_ID + 1);
+        g.borrow_mut().get_type_id_mut(&past);
+        let mut p = Pending::default();
+        p.stage_created_node(0, &[], &[]);
+        p.stage_created_node(1, &[], &[]);
+        p.created_relationship(
+            RelationshipId::from(0_u64),
+            NodeId::from(0_u64),
+            NodeId::from(1_u64),
+            ArcStr::from(past.as_str()),
+        );
+        let res = p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut());
+        assert!(
+            matches!(
+                res,
+                Err(crate::graph::graph::NodeOpError::TooManyRelationshipTypes { ref name, .. })
+                    if *name == past
+            ),
+            "{res:?}"
+        );
+        assert!(p.cancelled_relationships.is_empty(), "nothing was undone");
+    }
+
+    #[test]
+    fn a_cancelled_edge_of_the_last_type_that_fits_is_cancelled() {
+        let (res, p, types) = cascade_new_type_after(MAX_TYPE_ID);
+        assert!(res.is_ok(), "{res:?}");
+        assert_eq!(types, MAX_TYPE_ID + 1, "T took the last slot");
+        assert_eq!(p.cancelled_relationships.len(), 1);
     }
 
     #[test]

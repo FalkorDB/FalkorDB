@@ -14,6 +14,8 @@ What each function does to stores other projects prove is stated as what it pass
 | `Scan`, `scanStep`            | the first pass of `Graph::restore` (`graph.rs`): `max_edge_id` and `starts` over `tensor.iter_edges()` |
 | `restoreLen`, `restoreStarts` | `len`, the monotone clamp loop |
 | `restoreIndex`                | `EndpointIndex::default()` then `prepare_tiers` then `set` per edge |
+| `restoreT`                    | the same with the type column (#3967): tensor `idx` writes type `edge_type_slot(idx)`, a tensor with no edges skipped |
+| `clearImplicitT`              | `delete_implicit_edges` clearing endpoints and type slot of each removed edge (#3967) |
 | `capOf`, `boundOf`, `Restored` | `node_cap`/`relationship_cap` `next_multiple_of(chunk).max(64)` and `IdSpace::bound` (release `u64` wrap modelled), `schema_version`, `version: 0`, empty indexers/constraints, |
 | `deletedEdges`, `DE`          | the per-type collection and `all_implicit` of `Graph::delete_implicit_edges` |
 | `stagedDocs`                  | `index_remove_edge_docs.entry(type_id).or_default().insert(edge_id, (src, dst))` for an indexed type |
@@ -246,6 +248,149 @@ theorem restoredFields_zero_chunk (nc nd rc rd labels types : Nat) :
   simp [restoredFields, capOf, nextMultipleOf]
 
 
+/-! ## `Graph::restore` with the type column (#3967)
+
+The second pass skips a tensor with no edges, takes `edge_type_slot(type_idx).expect(..)` for
+the others (panics past `MAX_TYPE_ID`; the decoder's `check_type_fits` refuses such a
+snapshot first) and `set`s every edge with its tensor's index as the type. `T` are the
+tensors in type order; the edges, in order, are `T.flatten`. -/
+
+/-- The `(edge_id, src, dst, type)` the second pass writes, in order. -/
+def restoreList (T : List (List Edge)) : List (Nat × Nat × Nat × Nat) :=
+  T.zipIdx.flatMap fun p => p.1.map fun x => (x.1, x.2.1, x.2.2, p.2)
+
+def mkSet (x : Nat × Nat × Nat × Nat) : TOp := TOp.set x.1 x.2.1 x.2.2.1 x.2.2.2
+
+/-- Every tensor with edges has a type index `edge_type_slot` accepts. -/
+def restoreFits (T : List (List Edge)) : Bool :=
+  T.zipIdx.all fun p => p.1.isEmpty || decide (p.2 ≤ MAX_TYPE_ID)
+
+/-- The restored `EndpointIndex` (`none` = the `expect` panics). -/
+def restoreT (T : List (List Edge)) : Option TIx :=
+  let st := restoreStarts T.flatten
+  if restoreFits T then
+    some (trun (({} : TIx).prepareTiers st.1 st.2.1 st.2.2 (restoreLen T.flatten)) ((restoreList T).map mkSet))
+  else none
+
+theorem zipIdx_map_fst {α} (T : List α) : T.zipIdx.map Prod.fst = T := by
+  simp [List.zipIdx_eq_zip_range', List.map_fst_zip]
+
+theorem restoreList_mem (T : List (List Edge)) (i s d t : Nat) :
+    (i, s, d, t) ∈ restoreList T ↔ ∃ E, T[t]? = some E ∧ (i, s, d) ∈ E := by
+  simp only [restoreList, List.mem_flatMap, List.mem_map, Prod.mk.injEq]
+  constructor
+  · rintro ⟨⟨E, t'⟩, hm, x, hx, rfl, rfl, rfl, rfl⟩
+    exact ⟨E, List.mem_zipIdx_iff_getElem?.1 hm, hx⟩
+  · rintro ⟨E, hE, hx⟩
+    exact ⟨⟨E, t⟩, List.mem_zipIdx_iff_getElem?.2 hE, (i, s, d), hx, rfl, rfl, rfl, rfl⟩
+
+theorem restoreList_edges (T : List (List Edge)) :
+    (restoreList T).map (fun x => (x.1, x.2.1, x.2.2.1)) = T.flatten := by
+  unfold restoreList
+  rw [List.map_flatMap]
+  simp only [List.map_map, Function.comp_def]
+  have : (fun a : List Edge × Nat => List.map (fun x => (x.fst, x.snd.fst, x.snd.snd)) a.fst) =
+      (fun a => id a.1) := by funext a; simp
+  rw [this, ← List.flatMap_map (f := Prod.fst) (g := id), zipIdx_map_fst, List.flatMap_id]
+
+theorem trefRun_sets_notin (L : List (Nat × Nat × Nat × Nat)) : ∀ (g : Nat → Option Nat) (i : Nat),
+    i ∉ L.map Prod.fst → trefRun g (L.map mkSet) i = g i := by
+  induction L with
+  | nil => intro g i _; rfl
+  | cons x xs ih =>
+    intro g i hi
+    simp only [List.map_cons, List.mem_cons, not_or] at hi
+    simp only [List.map_cons, trefRun, List.foldl_cons] at ih ⊢
+    rw [ih _ _ hi.2]
+    simp only [mkSet, TOp.tref]; rw [ite_eq_right (fun h => absurd h hi.1)]
+
+theorem trefRun_sets_mem (L : List (Nat × Nat × Nat × Nat)) : ∀ (g : Nat → Option Nat) (i s d t : Nat),
+    (L.map Prod.fst).Nodup → (i, s, d, t) ∈ L → trefRun g (L.map mkSet) i = some t := by
+  induction L with
+  | nil => intro _ _ _ _ _ _ h; simp at h
+  | cons x xs ih =>
+    intro g i s d t hn hm
+    simp only [List.map_cons, List.nodup_cons] at hn
+    simp only [List.map_cons, trefRun, List.foldl_cons] at ih ⊢
+    rcases List.mem_cons.1 hm with rfl | hm
+    · have := trefRun_sets_notin xs (TOp.tref g (mkSet (i, s, d, t))) i hn.1
+      simp only [trefRun] at this; rw [this]; simp [mkSet, TOp.tref]
+    · exact ih _ _ _ _ _ hn.2 hm
+
+/-- **The endpoint half of the restored index is the old one** (`restoreIndex` over the edges of
+every tensor): the type column changes nothing `get` answers. -/
+theorem restoreT_ix (T : List (List Edge)) (x : TIx) (h : restoreT T = some x) :
+    x.ix = restoreIndex T.flatten := by
+  unfold restoreT at h
+  split at h
+  · cases h
+    rw [trun_ix]
+    unfold restoreIndex
+    congr 1
+    conv => rhs; rw [← restoreList_edges T]
+    simp [List.map_map, Function.comp_def, mkSet, TOp.ep]
+  · cases h
+
+/-- **The restored type column**: an edge reads its tensor's index as its type (edge ids are
+unique across the tensors, as in a snapshot), and an id no tensor holds reads absent. This is
+what `rebuild_derived_matrices` rebuilt into `relationship_type_matrix` before #3967. -/
+theorem restoreT_getType (T : List (List Edge)) (x : TIx) (h : restoreT T = some x)
+    (hval : ∀ e ∈ T.flatten, Valid e.2.1 e.2.2) (hn : (T.flatten.map Prod.fst).Nodup) (i : Nat) :
+    (∀ t E s d, T[t]? = some E → (i, s, d) ∈ E → x.getType i = some t) ∧
+    (i ∉ T.flatten.map Prod.fst → x.getType i = none) := by
+  unfold restoreT at h
+  split at h
+  · rename_i hfit
+    cases h
+    have hv : ∀ op ∈ (restoreList T).map mkSet, op.valid := by
+      intro op hop
+      obtain ⟨⟨e, s, d, t⟩, hm, rfl⟩ := List.mem_map.1 hop
+      obtain ⟨E, hE, hx⟩ := (restoreList_mem T e s d t).1 hm
+      have := List.all_eq_true.1 hfit (E, t) (List.mem_zipIdx_iff_getElem?.2 hE)
+      have hne : E.isEmpty = false := by
+        cases E with
+        | nil => simp at hx
+        | cons _ _ => rfl
+      simp only [hne, Bool.false_or, decide_eq_true_eq] at this
+      exact ⟨hval (e, s, d) (List.mem_flatten.2 ⟨E, List.mem_of_getElem? hE, hx⟩), this⟩
+    have ht := trun_types ((restoreList T).map mkSet)
+      (({} : TIx).prepareTiers (restoreStarts T.flatten).1 (restoreStarts T.flatten).2.1
+        (restoreStarts T.flatten).2.2 (restoreLen T.flatten)) (fun _ => none)
+      (fun j => by rw [getType_prepareTiers]; exact empty_getType j) hv i
+    have hids : (restoreList T).map Prod.fst = T.flatten.map Prod.fst := by
+      rw [← restoreList_edges T, List.map_map]; rfl
+    refine ⟨fun t E s d hE hx => ?_, fun hi => ?_⟩
+    · rw [ht]; exact trefRun_sets_mem _ _ i s d t (hids ▸ hn) ((restoreList_mem T i s d t).2 ⟨E, hE, hx⟩)
+    · rw [ht]; exact trefRun_sets_notin _ _ i (hids ▸ hi)
+  · cases h
+
+/-- **A snapshot with edges past the type limit panics** (the `expect`); the decoder refuses it
+before `restore` is reached. -/
+theorem restoreT_none (T : List (List Edge)) (t : Nat) (E : List Edge) (hE : T[t]? = some E)
+    (hne : E ≠ []) (ht : MAX_TYPE_ID < t) : restoreT T = none := by
+  unfold restoreT
+  have : restoreFits T = false := by
+    unfold restoreFits
+    rw [List.all_eq_false]
+    refine ⟨(E, t), List.mem_zipIdx_iff_getElem?.2 hE, ?_⟩
+    cases E with
+    | nil => exact absurd rfl hne
+    | cons _ _ => simp; omega
+  simp [this]
+
+theorem restoreT_some (T : List (List Edge)) (h : ∀ t E, T[t]? = some E → E ≠ [] → t ≤ MAX_TYPE_ID) :
+    (restoreT T).isSome := by
+  unfold restoreT
+  have : restoreFits T = true := by
+    unfold restoreFits
+    rw [List.all_eq_true]
+    rintro ⟨E, t⟩ hm
+    have hE := List.mem_zipIdx_iff_getElem?.1 hm
+    cases E with
+    | nil => rfl
+    | cons a b => simp only [List.isEmpty_cons, Bool.false_or, decide_eq_true_eq]; exact h t _ hE (by simp)
+  simp [this]
+
 /-! ## `Graph::delete_implicit_edges` -/
 
 /-- One implicitly deleted edge (`DeletedEdge`): id, endpoints, relationship type. -/
@@ -391,11 +536,44 @@ theorem clearImplicit_get (ix : Ix) (hwf : WF ix) (N X : List Nat) (T : List (Li
       ((deletedEdges N X T).map DE.id).map Op.clear := by simp [List.map_map, Function.comp_def]
   rw [hm, refRun_clears]
 
+/-- The whole `EndpointIndex` after the clear loop (#3967): `clear_edge_endpoint` vacates the
+endpoints and the type of each collected id (the type-matrix mask is gone). -/
+def clearImplicitT (x : TIx) (N X : List Nat) (T : List (List Edge)) : TIx :=
+  trun x ((deletedEdges N X T).map fun d => TOp.clear d.id)
+
+theorem trefRun_clears (ids : List Nat) : ∀ (g : Nat → Option Nat) (i : Nat),
+    trefRun g (ids.map TOp.clear) i = if i ∈ ids then none else g i := by
+  induction ids with
+  | nil => intro g i; simp [trefRun]
+  | cons x xs ih =>
+    intro g i
+    simp only [List.map_cons, trefRun, List.foldl_cons] at ih ⊢
+    rw [ih]
+    simp only [TOp.tref, List.mem_cons]
+    by_cases h1 : i = x <;> by_cases h2 : i ∈ xs <;> simp [h1, h2]
+
+/-- **The type column after `delete_implicit_edges`**: every collected id reads no type, every
+other id its type as before; the endpoint half is `clearImplicit`. -/
+theorem clearImplicitT_spec (x : TIx) (hwf : WF x.ix) (N X : List Nat) (T : List (List Edge)) (i : Nat) :
+    (clearImplicitT x N X T).ix = clearImplicit x.ix N X T ∧
+    (clearImplicitT x N X T).getType i =
+      if i ∈ (deletedEdges N X T).map DE.id then none else x.getType i := by
+  have hm : (deletedEdges N X T).map (fun d => TOp.clear d.id) =
+      ((deletedEdges N X T).map DE.id).map TOp.clear := by simp [List.map_map, Function.comp_def]
+  refine ⟨?_, ?_⟩
+  · unfold clearImplicitT clearImplicit
+    rw [trun_ix, List.map_map]; rfl
+  · unfold clearImplicitT
+    rw [trun_types _ x x.getType (fun _ => rfl) (by intro op hop; obtain ⟨_, _, rfl⟩ := List.mem_map.1 hop; trivial) i,
+      hm, trefRun_clears]
+
 #print axioms restoreIndex_get
 #print axioms restoreStarts_ordered
 #print axioms restoredFields_spec
 #print axioms deletedEdges_mem
 #print axioms clearedAdj_mem
 #print axioms clearImplicit_get
+#print axioms clearImplicitT_spec
+#print axioms restoreT_getType
 
 end Falkor.EndpointIndex

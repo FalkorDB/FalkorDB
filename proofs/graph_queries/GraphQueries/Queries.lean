@@ -16,7 +16,6 @@ import GraphQueries.Ids
 | `getRelationships`| `get_relationships`  |
 | `relTypeId`       | `get_relationship_type_id`  (`expect` = `none`) |
 | `relEndpoints`    | `endpoints_for_edge`  / `get_relationship_endpoints`  |
-| `relTypeIter`     | `relationship_type_matrix_iter`  |
 | `allEdges`        | `get_all_edges`  |
 | `adjMatrix`/`symAdj` | `build_adjacency_matrix`  / `build_symmetric_adjacency_matrix`  |
 -/
@@ -299,21 +298,20 @@ theorem getRelationships_all (g : G V) (types srcL dstL : List String) :
     getRelationships g types srcL dstL none none = relMatrix g types srcL dstL := by
   simp [getRelationships]
 
-def relTypeId (g : G V) (e : Nat) : Option Nat := ((g.relType.row e).map (·.2)).head?
+/-- `get_relationship_type_id`: the type column's entry, `expect`ed (#3967). -/
+def relTypeId (g : G V) (e : Nat) : Option Nat := g.relTypes e
 
-/-- With one type per edge (`relationship_type_matrix` row has a single
-entry), `get_relationship_type_id` returns it. -/
-theorem relTypeId_unique (g : G V) (e t : Nat) (h : g.relType.row e = [(e, t)]) :
+/-- An edge whose type-column entry is `t` (one type per edge: the column is a function
+of the edge id), `get_relationship_type_id` returns it. -/
+theorem relTypeId_unique (g : G V) (e t : Nat) (h : g.relTypes e = some t) :
     relTypeId g e = some t := by simp [relTypeId, h]
+
+/-- An edge with no type (deleted, never created) is the `expect` panic. -/
+theorem relTypeId_none (g : G V) (e : Nat) (h : g.relTypes e = none) :
+    relTypeId g e = none := by simp [relTypeId, h]
 
 def relEndpoints (g : G V) (e : Nat) : Option (Nat × Nat) := g.endpoints e
 theorem relEndpoints_eq (g : G V) (e : Nat) : relEndpoints g e = g.endpoints e := rfl
-
-def relTypeIter (g : G V) (lo hi : Nat) : List (Nat × Nat) :=
-  g.relType.ents.filter (fun p => lo ≤ p.1 && p.1 ≤ hi)
-theorem relTypeIter_mem (g : G V) (lo hi e t : Nat) :
-    (e, t) ∈ relTypeIter g lo hi ↔ (e, t) ∈ g.relType.ents ∧ lo ≤ e ∧ e ≤ hi := by
-  simp [relTypeIter]
 
 def allEdges (g : G V) (s : String) : Ten := (getRelMat g s).getD []
 theorem allEdges_unknown (g : G V) (s : String) (h : s ∉ g.types) : allEdges g s = [] := by

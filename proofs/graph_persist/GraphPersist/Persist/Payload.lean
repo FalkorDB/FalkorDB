@@ -143,6 +143,68 @@ theorem decIdx_rt {β : Type} (C : Codec β) (xs : List β) (hn : xs.length < 2 
   rw [hsnd] at this
   simpa [decIdx, encIdx] using this
 
+/-! ## Relation tensors: the type-slot check (#3967) -/
+
+/-- `MAX_TYPE_ID` (endpoint_index.rs): the largest type id the endpoint index's `u16` type
+column stores (`u16::MAX` is its empty marker). -/
+def maxTypeId : Nat := 65534
+
+/-- `check_type_fits(type_idx, edge_count)` (decoder/mod.rs): refuse a type that holds edges
+and whose id does not fit the type column (`edge_type_slot(type_idx).is_none()`). -/
+def checkTypeFits (idx ec : Nat) : Bool := decide (ec = 0 ∨ idx ≤ maxTypeId)
+
+theorem checkTypeFits_false (idx ec : Nat) : checkTypeFits idx ec = false ↔ 0 < ec ∧ maxTypeId < idx := by
+  simp only [checkTypeFits, decide_eq_false_iff_not, not_or]; omega
+
+/-- One iteration of the `RelationMatrices` arm since #3967:
+`let _relation_id = read_unsigned()?; push_tensor(&mut tensors, Tensor::decode(r)?)?` —
+`push_tensor` checks `check_type_fits(tensors.len(), tensor.edge_count())` before the push.
+`i` is `tensors.len()`: the tensor's position, all tensors being written in the one
+`RelationMatrices` payload `build_payloads` lists. -/
+def decTn (D : Dec Tn) (ec : Tn → Nat) (i : Nat) : Dec Tn :=
+  readU.bind fun _ => D.bind fun t => if checkTypeFits i (ec t) then Dec.pure t else Dec.fail
+
+def decTns (D : Dec Tn) (ec : Tn → Nat) : Nat → Nat → Dec (List Tn)
+  | _, 0 => Dec.pure []
+  | i, n + 1 => (decTn D ec i).bind fun t => (decTns D ec (i + 1) n).bind fun ts => Dec.pure (t :: ts)
+
+theorem decTns_rt (C : Codec Tn) (ec : Tn → Nat) : ∀ (xs : List Tn) (k : Nat),
+    k + xs.length ≤ 2 ^ 64 → (∀ i x, xs[i]? = some x → C.good x ∧ checkTypeFits (k + i) (ec x) = true) →
+    RT (decTns C.dec ec k xs.length) (((List.range' k xs.length).zip xs).flatMap fun (i, x) => encU i ++ C.enc x) xs
+  | [], _, _, _ => RT_pure []
+  | x :: xs, k, hk, hg => by
+    obtain ⟨hgx, hfx⟩ := hg 0 x rfl
+    have h1 : RT (decTn C.dec ec k) (encU k ++ (C.enc x ++ [])) x := by
+      have hfx' : checkTypeFits k (ec x) = true := by simpa using hfx
+      exact RT_bind (readU_rt k (by simp at hk; omega))
+        (f := fun _ => C.dec.bind fun t => if checkTypeFits k (ec t) then Dec.pure t else Dec.fail)
+        (RT_bind (C.rt x hgx) (f := fun t => if checkTypeFits k (ec t) then Dec.pure t else Dec.fail)
+          (by simp only [hfx', ite_true]; exact RT_pure x))
+    have h2 := decTns_rt C ec xs (k + 1) (by simp at hk; omega)
+      (fun i y hy => by have := hg (i + 1) y (by simpa using hy); rwa [Nat.add_assoc, Nat.add_comm 1 i])
+    have := RT_bind h1 (f := fun t => (decTns C.dec ec (k + 1) xs.length).bind fun ts => Dec.pure (t :: ts))
+      (RT_bind h2 (f := fun ts => Dec.pure (x :: ts)) (RT_pure _))
+    simpa [decTns, List.range'_succ, List.append_assoc] using this
+
+/-- **The relation tensors of a graph whose every edge-holding type fits read back**: the
+`RelationMatrices` payload decodes to the tensors (`decIdx_rt` plus the check). -/
+theorem decTns_rt0 (C : Codec Tn) (ec : Tn → Nat) (xs : List Tn) (hn : xs.length < 2 ^ 64)
+    (hg : ∀ x ∈ xs, C.good x) (hf : ∀ i x, xs[i]? = some x → checkTypeFits i (ec x) = true) :
+    RT (decTns C.dec ec 0 xs.length) (encIdx C.enc xs) xs := by
+  have := decTns_rt C ec xs 0 (by omega)
+    (fun i x hx => ⟨hg x (List.mem_of_getElem? hx), by simpa using hf i x hx⟩)
+  simpa [encIdx, List.range_eq_range'] using this
+
+/-- **#3967: a snapshot type with edges past the limit is refused, not restored**: when the
+`RelationMatrices` payload reaches a tensor at position `k > MAX_TYPE_ID` that holds edges,
+the load fails with an error right there (before any later payload or `Graph::restore`). -/
+theorem decTn_refuses (C : Codec Tn) (ec : Tn → Nat) (k j : Nat) (hj : j < 2 ^ 64) (t : Tn) (ht : C.good t)
+    (he : 0 < ec t) (hk : maxTypeId < k) (r : Stream) :
+    decTn C.dec ec k (encU j ++ C.enc t ++ r) = .err := by
+  have hf : checkTypeFits k (ec t) = false := (checkTypeFits_false _ _).2 ⟨he, hk⟩
+  simp only [decTn, Dec.bind, List.append_assoc, (readU_rt j hj).1, (C.rt t ht).1, hf]
+  rfl
+
 /-! ## The graph -/
 
 /-- `Header` (serializers/mod.rs). -/
@@ -172,6 +234,8 @@ structure Codecs (M Tn Nm Ix Cn : Type) where
   S : Codec (Sch Nm Ix Cn)
   Mx : Codec M
   Tx : Codec Tn
+  /-- `Tensor::edge_count` (#3967's `push_tensor` reads it). -/
+  ec : Tn → Nat
   m0 : M
 
 /-- What a `Graph` contributes to its payload. -/
@@ -258,7 +322,7 @@ def decPayload (C : Codecs M Tn Nm Ix Cn) (relCount : Nat) : St × Nat → Dec (
   | (.edges, c) => (rep decEnt c).bind fun es => Dec.pure (.edges es)
   | (.delEdges, c) => (decRoar c).bind fun l => Dec.pure (.delE l)
   | (.labelsM, _) => readU.bind fun n => (decIdx C.Mx.dec n).bind fun ms => Dec.pure (.lm ms)
-  | (.relM, _) => (decIdx C.Tx.dec relCount).bind fun ts => Dec.pure (.rt ts)
+  | (.relM, _) => (decTns C.Tx.dec C.ec 0 relCount).bind fun ts => Dec.pure (.rt ts)
   | (.adj, _) => C.Mx.dec.bind fun m => Dec.pure (.adj m)
   | (.lblsM, _) => C.Mx.dec.bind fun m => Dec.pure (.lbls m)
   | _ => Dec.pure .skip
@@ -365,6 +429,9 @@ structure WF (C : Codecs M Tn Nm Ix Cn) (g : G M Tn Nm Ix Cn) : Prop where
   ek : KindWF g.sch.attrs.length g.edgeCount g.delEdges g.edges
   lm : g.labelMats.length < 2 ^ 64 ∧ ∀ m ∈ g.labelMats, C.Mx.good m
   tn : g.tensors.length < 2 ^ 64 ∧ ∀ t ∈ g.tensors, C.Tx.good t
+  /-- #3967: every type that holds edges has an id the endpoint index's type column stores —
+  true of any graph this code built (`relationship_type_slot` refuses the edge otherwise). -/
+  tfit : ∀ i t, g.tensors[i]? = some t → checkTypeFits i (C.ec t) = true
   mx : C.Mx.good g.adj ∧ C.Mx.good g.lbls
 
 end GraphPersist.Persist

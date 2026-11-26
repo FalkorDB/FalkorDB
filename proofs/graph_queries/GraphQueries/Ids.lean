@@ -24,7 +24,7 @@ kind (`NodeOpError::node`/`relationship`, graph.rs) as `Except String`.
 | `newG` | `Graph::new`  |
 | `restoreCaps`, `clampTiers`, `fromNamesIdx` | `Graph::restore`  (id spaces :966-967, caps :973-974, tier clamp :951-955, `NameMap::from_names` , #3757) |
 | `newVersion` | `new_version`  |
-| `rebuildRelType` | `rebuild_derived_matrices`  (type-matrix half; `rebuild_backward` is a GraphBLAS transpose) |
+| `rebuildNodeMs` | `rebuild_derived_matrices`  (node half; `rebuild_backward` is a GraphBLAS transpose; #3967: no type-matrix half, `restore` records the types) |
 -/
 namespace GQ
 variable {V : Type}
@@ -338,7 +338,7 @@ theorem resize_nodeCap_ge (chunk : Nat) (hc : 0 < chunk) (g : G V) :
     g.nodeCap ≤ (resize chunk hc g).nodeCap ∧ (resize chunk hc g).nodeCount = g.nodeCount ∧
     (resize chunk hc g).delNodes = g.delNodes := by
   have := growCap_ge_cap chunk g.nodeCap g.nodeCount hc
-  simp only [resize]; (repeat' split) <;> simp [resizeNodeMs, resizeRelMs] <;> omega
+  simp only [resize]; (repeat' split) <;> simp [resizeNodeMs] <;> omega
 
 theorem mnl2_spec (chunk : Nat) (hc : 0 < chunk) (g : G V) (nodes : List Nat)
     (hlim : ∀ n ∈ nodes, n < grbMax) :
@@ -418,7 +418,7 @@ theorem createNodes_ok (O : IdSpaceOps) (chunk : Nat) (hc : 0 < chunk) (g : G V)
 def newG (n e version : Nat) (name : String) : G V :=
   { name, nodeCap := n, relCap := e, nodeCount := 0, relCount := 0, delNodes := [], delRels := [],
     zero := Mat.empty 0 0, adj := Mat.empty n n, nodeLabels := Mat.empty 0 0,
-    relType := Mat.empty 0 0, labelMs := [], relMs := [], endpoints := fun _ => none, attrs := [],
+    relTypes := fun _ => none, labelMs := [], relMs := [], endpoints := fun _ => none, attrs := [],
     nodeAttrs := fun _ => [], relAttrs := fun _ => [], labels := [], labelsIndex := fun _ => none,
     types := [], constraints := [], version, schemaVersion := 0 }
 
@@ -551,27 +551,6 @@ theorem newVersion_spec (g : G V) :
   simp [newVersion, setNodeIds, setRelIds, nodeIds, relIds, IdS.newVersion, IdS.restored,
     nodeBound, relBound, IdS.bound]
 
-/-- Type-matrix half of `rebuild_derived_matrices` (:1040): resize to
-`relationship_cap × |types|`, then `(edge, type_idx)` for every tensor edge. -/
-def rebuildRelType (g : G V) : G V :=
-  let m := g.relType.resize g.relCap g.types.length
-  let es := (List.range g.relMs.length).flatMap (fun t => ((g.relMs[t]?.getD []).map (·.2.2)).map (·, t))
-  { g with relType := { m with ents := m.ents ++ es.filter (fun p => p.1 < g.relCap ∧ p.2 < g.types.length ∧ p ∉ m.ents) } }
-
-theorem rebuildRelType_complete (g : G V) (h : TInv g) (t e s d : Nat) (ht : t < g.types.length)
-    (he : e < g.relCap) (hm : (s, d, e) ∈ g.relMs[t]?.getD []) :
-    (rebuildRelType g).relType.get e t = true := by
-  have hmem : (e, t) ∈ (List.range g.relMs.length).flatMap
-      (fun t => ((g.relMs[t]?.getD []).map (·.2.2)).map (·, t)) := by
-    simp only [List.mem_flatMap, List.mem_range, List.mem_map]
-    exact ⟨t, by unfold TInv at h; omega, e, ⟨(s, d, e), hm, rfl⟩, rfl⟩
-  simp only [rebuildRelType, Mat.get, Mat.resize]
-  by_cases hin : (e, t) ∈ g.relType.ents
-  · simp [hin, he, ht]
-  · simp only [List.mem_append, List.mem_filter]
-    simp [hin, he, ht]
-    exact ⟨t, by unfold TInv at h; omega, s, d, e, hm, rfl, rfl⟩
-
 /-! ### Node half of `rebuild_derived_matrices` `node_cap.max(saved)`
 
 Decoded matrices keep the saving server's `node_cap` (up to 25% past the highest id
@@ -615,6 +594,14 @@ theorem rebuild_never_shrinks (g : G V) :
   simp only [List.mem_map] at hm
   obtain ⟨m', _, rfl⟩ := hm
   rfl
+
+/-- **#3967: `rebuild_derived_matrices` has no type half.** Every edge's type is recorded by
+`restore` with its endpoints (`EndpointGraph.restoreT_getType` in `endpoint_index`), and the
+rebuild leaves the type column and the endpoints as they were. -/
+theorem rebuild_keeps_relTypes (g : G V) :
+    (rebuildNodeMs g).relTypes = g.relTypes ∧ (rebuildNodeMs g).endpoints = g.endpoints ∧
+    (rebuildNodeMs g).relMs = g.relMs ∧ (rebuildNodeMs g).types = g.types := by
+  simp [rebuildNodeMs, resizeNodeMs]
 
 /-- …and keeps every decoded entry that lies inside the dimensions the load resizes to: for
 `adj` its own `nr × nc`; for `node_labels` its own rows and the label count as columns; for a label

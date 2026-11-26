@@ -1,6 +1,6 @@
 # endpoint_index: the edge id → (source, destination) lookup
 
-This project proves that `EndpointIndex` (`graph/src/graph/endpoint_index.rs`) answers exactly what the edge set says. `EndpointIndex` is the graph-wide reverse index from a relationship id to its `(src, dst)`. It does not record the type, which lives in `relationship_type_matrix`, or node → incident edges, which live in the per-type tensors.
+This project proves that `EndpointIndex` (`graph/src/graph/endpoint_index.rs`) answers exactly what the edge set says. `EndpointIndex` is the graph-wide reverse index from a relationship id to its `(src, dst)`. Since #3967 it also records each edge's relationship type in a `u16` type column (`NO_TYPE` = `u16::MAX` marks an empty slot; `TIx`, `getType_set`, `getType_clear`, `restoreT_getType`). It does not record node → incident edges, which live in the per-type tensors.
 
 Every time the engine materialises a relationship, it reads this index. That happens on `RETURN r`, `startNode(r)` / `endNode(r)`, path construction, and any traversal that hands back an edge. So these behaviours depend on it:
 
