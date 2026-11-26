@@ -181,7 +181,7 @@ def load_thread(*args, **kwargs):
     def body():
         try:
             sk.run_load(*args, **kwargs)
-        except BaseException as e:  # run_load raises RuntimeError or SystemExit for a dead worker
+        except (Exception, SystemExit) as e:  # a dead worker: RuntimeError or SystemExit
             box["error"] = e
 
     t = threading.Thread(target=body, daemon=True)

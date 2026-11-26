@@ -37,12 +37,11 @@ for f in "$S"/scenarios/s[0-9][0-9]_*.py; do [ "$(basename "$f")" = s00_pilot.py
     [ -d "$o" ] && [ "$(cat "$o/.commit" 2>/dev/null)" = "$LABEL" ] && mv "$o" "$o-$LABEL-partial-$attempt-$$"
     free_kb=$(df -k / | tail -1 | awk '{print $4}')
     if [ "$free_kb" -lt 3000000 ]; then log "RUST RERUN PAUSED: only $((free_kb/1024)) MB free disk before $n"; exit 1; fi
-    # a directory kept from an earlier run (its archive name was taken) must not keep that
-    # run's .done and .rc: the scorer would take this run as finished
-    mkdir -p "$o"; rm -f "$o/.done" "$o/.rc"; echo "$LABEL" > "$o/.commit"
+    fresh_run_dir "$o"; echo "$LABEL" > "$o/.commit"
     log "START $n rust dur=1200 ($LABEL)"
     start=$(date +%s)
-    ( while true; do echo "$(date +%s) $(load1)" >> "$o/load.log"; sleep 30; done ) &
+    # samples only while this script lives, so a script that is stopped leaves no sampler
+    ( while kill -0 $$ 2>/dev/null; do echo "$(date +%s) $(load1)" >> "$o/load.log"; sleep 30; done ) &
     sampler=$!
     run_in_group timeout 6000 "${PY[@]}" -I "$f" --module "$MOD" --port 19000 --out "$o" --duration 1200 --scale 1.0 > "$o/stdout.log" 2>&1
     rc=$?

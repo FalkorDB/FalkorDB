@@ -7,6 +7,7 @@
 #
 # usage: run_in_group <command> [args...]    returns the command's exit status
 #        refuse_busy_ports <port>...            at start: 1 (and why) if one already answers
+#        fresh_run_dir <dir>                    an empty run directory to start an attempt in
 #
 # SOAK_GROUP_FILE, when the script sets it, holds the running scenario's group id, so a
 # script that was itself SIGKILLed (no trap runs) leaves a way to stop what it started.
@@ -50,6 +51,15 @@ refuse_busy_ports() {
 trap reap_group EXIT
 trap 'reap_group; exit 130' INT
 trap 'reap_group; exit 143' TERM
+
+# A run directory still there after the scripts archived what they keep (its archive name
+# was taken, or it holds an unfinished run) is moved aside, never reused: a run that fails
+# before it writes its own summary.json would be scored on the old one. The name has no
+# "@", so the scorer never takes it for an archive.
+fresh_run_dir() {
+  [ ! -e "$1" ] || mv "$1" "$1-superseded-$(date +%Y%m%dT%H%M%S)-$$"
+  mkdir -p "$1"
+}
 
 run_in_group() {
   # with job control on, a background job leads a process group of its own (pgid = pid);
