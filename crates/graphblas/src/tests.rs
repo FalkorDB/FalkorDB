@@ -16,10 +16,11 @@ use std::{
 };
 
 use crate::{
-    AsBool, Desc, Error, ErrorKind, JitControl, Lazy, Mask, Matrix,
+    AsBool, Desc, Error, ErrorKind, Indices, JitControl, Lazy, Mask, Matrix, Output, Scalar,
+    Sparsity,
     init::{init, is_initialized, set_jit},
     mask::{MaskMode, descriptor},
-    matrix,
+    matrix, mxm,
     ops::*,
     sys::{self, GrB_Index, GrB_Info},
     types::{GrbType, Pattern},
@@ -156,6 +157,15 @@ fn build_duplicates_need_a_dup_operator() {
 }
 
 #[test]
+fn build_iso_shares_one_value() {
+    setup();
+    let mut m = Matrix::<bool>::new(3, 3).unwrap();
+    m.build_iso(&[0, 1, 1], &[0, 1, 1], true).unwrap();
+    assert!(m.is_iso());
+    assert_eq!(entries(&m), vec![(0, 0, true), (1, 1, true)]);
+}
+
+#[test]
 fn dup_clear_resize() {
     setup();
     let a = matrix(3, 3, &[(0, 0, 1u64), (2, 2, 2)]);
@@ -182,6 +192,38 @@ fn wait_finishes_pending_work() {
 }
 
 #[test]
+fn storage_settings_round_trip() {
+    setup();
+    let mut m = Matrix::<f64>::new(4, 4).unwrap();
+    assert_eq!(m.orientation(), crate::Orientation::ByRow);
+    m.set_orientation(crate::Orientation::ByCol).unwrap();
+    assert_eq!(m.orientation(), crate::Orientation::ByCol);
+
+    matrix::assign_scalar(
+        &mut m,
+        Mask::NONE,
+        None,
+        1.0,
+        Indices::All,
+        Indices::All,
+        Desc::NONE,
+    )
+    .unwrap();
+    m.set_sparsity(Sparsity::Full).unwrap();
+    m.wait(crate::WaitMode::Materialize).unwrap();
+    assert_eq!(m.sparsity(), Sparsity::Full);
+    m.set_sparsity(Sparsity::Auto).unwrap();
+
+    m.set_index_width_hint(
+        crate::IntegerWidth::Bits32,
+        crate::IntegerWidth::Bits32,
+        crate::IntegerWidth::Bits32,
+    )
+    .unwrap();
+    let _ = (m.row_index_width(), m.col_index_width(), m.offset_width());
+}
+
+#[test]
 fn into_raw_and_from_raw_hand_the_handle_over() {
     setup();
     let m = matrix(2, 2, &[(1, 1, 7u64)]);
@@ -189,6 +231,18 @@ fn into_raw_and_from_raw_hand_the_handle_over() {
     // SAFETY: `raw` came from a `Matrix<u64>` that gave up ownership.
     let m = unsafe { Matrix::<u64>::from_raw(raw) };
     assert_eq!(m.extract_element(1, 1).unwrap(), Some(7));
+}
+
+#[test]
+fn scalar_round_trip() {
+    setup();
+    let mut s = Scalar::<u64>::new().unwrap();
+    assert_eq!(s.get().unwrap(), None);
+    s.set(9).unwrap();
+    assert_eq!(s.get().unwrap(), Some(9));
+    s.clear().unwrap();
+    assert_eq!(s.get().unwrap(), None);
+    assert_eq!(Scalar::from_value(3i64).unwrap().get().unwrap(), Some(3));
 }
 
 // ───────────────────────────── masks and descriptors ─────────────────────────────
@@ -311,6 +365,25 @@ fn replace_clears_outside_the_mask() {
 }
 
 #[test]
+fn output_as_a_structural_mask() {
+    setup();
+    // C<C> = A*B: keep only the positions C already has.
+    let a = matrix(2, 2, &[(0, 0, true), (0, 1, true), (1, 1, true)]);
+    let mut c = matrix(2, 2, &[(0, 0, false)]);
+    mxm(
+        &mut c,
+        Mask::structural(Output),
+        None,
+        &ANY_PAIR_BOOL,
+        &a,
+        &a,
+        Desc::REPLACE,
+    )
+    .unwrap();
+    assert_eq!(entries(&c), vec![(0, 0, true)]);
+}
+
+#[test]
 fn descriptor_table_covers_all_32_combinations() {
     setup();
     let modes = [
@@ -388,6 +461,325 @@ fn handle_name(d: sys::GrB_Descriptor) -> String {
         .into_owned()
 }
 
+// ───────────────────────────── operations ─────────────────────────────
+
+#[test]
+fn accumulator_is_spelled_at_the_call() {
+    setup();
+    let a = matrix(1, 1, &[(0, 0, 2u64)]);
+    let mut c = matrix(1, 1, &[(0, 0, 1u64)]);
+    matrix::apply(&mut c, Mask::NONE, None, &IDENTITY_UINT64, &a, Desc::NONE).unwrap();
+    assert_eq!(
+        c.extract_element(0, 0).unwrap(),
+        Some(2),
+        "no accum: overwritten"
+    );
+
+    let mut c = matrix(1, 1, &[(0, 0, 1u64)]);
+    matrix::apply(
+        &mut c,
+        Mask::NONE,
+        Some(&PLUS_UINT64),
+        &IDENTITY_UINT64,
+        &a,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(c.extract_element(0, 0).unwrap(), Some(3), "accum: added");
+}
+
+#[test]
+fn pattern_semiring_accepts_any_input_type_and_reads_no_value() {
+    setup();
+    // Ids of 0 would become `false` under GraphBLAS's cast to bool; a
+    // `Pattern` semiring never looks.
+    let a = matrix(2, 2, &[(0, 0, 0u64), (0, 1, 0)]);
+    let b = matrix(2, 2, &[(0, 0, 0.0f64), (1, 0, 0.0)]);
+    let mut c = Matrix::<bool>::new(2, 2).unwrap();
+    mxm(&mut c, Mask::NONE, None, &ANY_PAIR_BOOL, &a, &b, Desc::NONE).unwrap();
+    assert_eq!(entries(&c), vec![(0, 0, true)]);
+
+    let mut n = Matrix::<u64>::new(2, 2).unwrap();
+    mxm(
+        &mut n,
+        Mask::NONE,
+        None,
+        &PLUS_PAIR_UINT64,
+        &a,
+        &b,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(
+        entries(&n),
+        vec![(0, 0, 2)],
+        "two paths 0->0->0 and 0->1->0"
+    );
+}
+
+#[test]
+fn mxm_over_f64_with_transposes() {
+    setup();
+    let a = matrix(2, 3, &[(0, 0, 1.0f64), (0, 2, 2.0), (1, 1, 3.0)]);
+    let b = matrix(2, 3, &[(0, 2, 4.0f64), (1, 1, 5.0)]);
+    // C = A * Bᵀ : 2x2
+    let mut c = Matrix::<f64>::new(2, 2).unwrap();
+    mxm(
+        &mut c,
+        Mask::NONE,
+        None,
+        &PLUS_TIMES_SEMIRING_FP64,
+        &a,
+        &b,
+        Desc::T1,
+    )
+    .unwrap();
+    assert_eq!(entries(&c), vec![(0, 0, 8.0), (1, 1, 15.0)]);
+    // C = Aᵀ * B : 3x3
+    let mut c = Matrix::<f64>::new(3, 3).unwrap();
+    mxm(
+        &mut c,
+        Mask::NONE,
+        None,
+        &PLUS_TIMES_SEMIRING_FP64,
+        &a,
+        &b,
+        Desc::T0,
+    )
+    .unwrap();
+    assert_eq!(entries(&c), vec![(0, 2, 4.0), (1, 1, 15.0), (2, 2, 8.0)]);
+}
+
+#[test]
+fn accumulate_a_product_with_the_semirings_add_op() {
+    setup();
+    let a = matrix(2, 2, &[(0, 0, 1.0f64), (1, 1, 2.0)]);
+    let mut c = Matrix::<f64>::new(2, 2).unwrap();
+    matrix::assign_scalar(
+        &mut c,
+        Mask::NONE,
+        None,
+        10.0,
+        Indices::All,
+        Indices::All,
+        Desc::NONE,
+    )
+    .unwrap();
+    let s = &PLUS_TIMES_SEMIRING_FP64;
+    assert_eq!(
+        s.add_op().as_raw(),
+        PLUS_FP64.as_raw(),
+        "add_op is the monoid's op"
+    );
+    mxm(&mut c, Mask::NONE, Some(&s.add_op()), s, &a, &a, Desc::NONE).unwrap();
+    assert_eq!(
+        entries(&c),
+        vec![(0, 0, 11.0), (0, 1, 10.0), (1, 0, 10.0), (1, 1, 14.0)]
+    );
+}
+
+#[test]
+fn apply_in_place_through_output() {
+    setup();
+    let mut c = matrix(2, 2, &[(0, 0, 1.0f64), (1, 1, 2.0)]);
+    let before = c.as_raw();
+    matrix::apply(&mut c, Mask::NONE, None, &AINV_FP64, Output, Desc::NONE).unwrap();
+    assert_eq!(c.as_raw(), before, "the handle is the same object");
+    assert_eq!(entries(&c), vec![(0, 0, -1.0), (1, 1, -2.0)]);
+}
+
+#[test]
+fn mxm_with_output_as_an_input() {
+    setup();
+    let mut c = matrix(2, 2, &[(0, 1, true), (1, 0, true)]);
+    mxm(
+        &mut c,
+        Mask::NONE,
+        None,
+        &ANY_PAIR_BOOL,
+        Output,
+        Output,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&c), vec![(0, 0, true), (1, 1, true)], "C = C*C");
+}
+
+#[test]
+fn ewise_add_is_union_and_ewise_mult_is_intersection() {
+    setup();
+    let a = matrix(2, 2, &[(0, 0, 1u64), (0, 1, 2)]);
+    let b = matrix(2, 2, &[(0, 1, 10u64), (1, 1, 20)]);
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::ewise_add(&mut c, Mask::NONE, None, &PLUS_UINT64, &a, &b, Desc::NONE).unwrap();
+    assert_eq!(entries(&c), vec![(0, 0, 1), (0, 1, 12), (1, 1, 20)]);
+
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::ewise_mult(&mut c, Mask::NONE, None, &PLUS_UINT64, &a, &b, Desc::NONE).unwrap();
+    assert_eq!(entries(&c), vec![(0, 1, 12)]);
+
+    // A monoid's operator is passed as such.
+    let mut c = Matrix::<u64>::new(2, 2).unwrap();
+    matrix::ewise_add(
+        &mut c,
+        Mask::NONE,
+        None,
+        &PLUS_MONOID_UINT64.op(),
+        &a,
+        &b,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(c.nvals(), 3);
+
+    // The output type of ewise_mult is the operator's.
+    let mut gt = Matrix::<bool>::new(2, 2).unwrap();
+    matrix::ewise_mult(&mut gt, Mask::NONE, None, &GT_UINT64, &a, &b, Desc::NONE).unwrap();
+    assert_eq!(entries(&gt), vec![(0, 1, false)]);
+}
+
+#[test]
+fn select_keeps_values_and_apply_index_sees_positions() {
+    setup();
+    let a = matrix(3, 3, &[(0, 0, 1.0f64), (1, 2, 2.0), (2, 2, 3.0)]);
+    let mut c = Matrix::<f64>::new(3, 3).unwrap();
+    matrix::select(&mut c, Mask::NONE, None, &VALUEGT_FP64, &a, 1.5, Desc::NONE).unwrap();
+    assert_eq!(entries(&c), vec![(1, 2, 2.0), (2, 2, 3.0)]);
+
+    let mut d = Matrix::<f64>::new(3, 3).unwrap();
+    matrix::select(&mut d, Mask::NONE, None, &DIAG, &a, 0, Desc::NONE).unwrap();
+    assert_eq!(entries(&d), vec![(0, 0, 1.0), (2, 2, 3.0)]);
+
+    let mut off = Matrix::<f64>::new(3, 3).unwrap();
+    matrix::select(&mut off, Mask::NONE, None, &OFFDIAG, Output, 0, Desc::NONE).unwrap();
+    assert_eq!(off.nvals(), 0, "select on an empty Output");
+
+    let mut rows = Matrix::<i64>::new(3, 3).unwrap();
+    matrix::apply_index(
+        &mut rows,
+        Mask::NONE,
+        None,
+        &ROWINDEX_INT64,
+        &a,
+        0,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&rows), vec![(0, 0, 0), (1, 2, 1), (2, 2, 2)]);
+}
+
+#[test]
+fn assign_and_extract_sub_grids() {
+    setup();
+    let mut c = Matrix::<bool>::new(3, 3).unwrap();
+    matrix::assign_scalar(
+        &mut c,
+        Mask::NONE,
+        None,
+        true,
+        Indices::List(&[0, 2]),
+        Indices::All,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(c.nvals(), 6);
+    assert!(c.contains(2, 1).unwrap() && !c.contains(1, 1).unwrap());
+
+    let a = matrix(2, 2, &[(0, 0, false), (1, 1, false)]);
+    matrix::assign(
+        &mut c,
+        Mask::NONE,
+        None,
+        &a,
+        Indices::List(&[1, 2]),
+        Indices::List(&[0, 1]),
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(c.extract_element(1, 0).unwrap(), Some(false));
+    assert_eq!(c.extract_element(2, 1).unwrap(), Some(false));
+    assert!(
+        !c.contains(2, 0).unwrap(),
+        "C(I,J) = A deletes what A lacks"
+    );
+
+    let mut sub = Matrix::<bool>::new(1, 3).unwrap();
+    matrix::extract(
+        &mut sub,
+        Mask::NONE,
+        None,
+        &c,
+        Indices::List(&[2]),
+        Indices::All,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(entries(&sub), vec![(0, 1, false), (0, 2, true)]);
+}
+
+#[test]
+fn reduce_to_scalar_and_to_vector() {
+    setup();
+    let a = matrix(2, 3, &[(0, 0, 1u64), (0, 2, 2), (1, 1, 3)]);
+    let mut total = 100u64;
+    matrix::reduce(&mut total, None, &PLUS_MONOID_UINT64, &a, Desc::NONE).unwrap();
+    assert_eq!(total, 6, "no accum overwrites");
+    matrix::reduce(
+        &mut total,
+        Some(&PLUS_UINT64),
+        &PLUS_MONOID_UINT64,
+        &a,
+        Desc::NONE,
+    )
+    .unwrap();
+    assert_eq!(total, 12);
+
+    let empty = Matrix::<u64>::new(2, 2).unwrap();
+    let mut x = 7u64;
+    matrix::reduce(&mut x, None, &PLUS_MONOID_UINT64, &empty, Desc::NONE).unwrap();
+    assert_eq!(x, 0, "an empty matrix reduces to the identity");
+    assert_eq!(PLUS_MONOID_UINT64.identity(), 0);
+}
+
+#[test]
+fn cast_changes_the_element_type_on_purpose() {
+    setup();
+    let a = matrix(2, 2, &[(0, 0, 0u64), (1, 1, 5)]);
+    let mut b = Matrix::<bool>::new(2, 2).unwrap();
+    matrix::cast(&mut b, Mask::NONE, None, &a, Desc::NONE).unwrap();
+    assert_eq!(
+        entries(&b),
+        vec![(0, 0, false), (1, 1, true)],
+        "GraphBLAS's cast: 0 is false"
+    );
+    let mut f = Matrix::<f64>::new(2, 2).unwrap();
+    matrix::cast(&mut f, Mask::NONE, None, &a, Desc::NONE).unwrap();
+    assert_eq!(entries(&f), vec![(0, 0, 0.0), (1, 1, 5.0)]);
+}
+
+#[test]
+fn errors_carry_the_code_and_graphblas_message() {
+    setup();
+    let a = Matrix::<f64>::new(2, 3).unwrap();
+    let mut c = Matrix::<f64>::new(2, 2).unwrap();
+    let err = mxm(
+        &mut c,
+        Mask::NONE,
+        None,
+        &PLUS_TIMES_SEMIRING_FP64,
+        &a,
+        &a,
+        Desc::NONE,
+    )
+    .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::DimensionMismatch);
+    assert!(err.message.contains("Dimensions not compatible"), "{err}");
+    assert!(
+        err.to_string()
+            .starts_with("GraphBLAS: GrB_DIMENSION_MISMATCH")
+    );
+}
+
 // ───────────────────────────── user-defined objects ─────────────────────────────
 
 #[repr(C)]
@@ -415,6 +807,14 @@ unsafe extern "C" fn heavier(
     unsafe { *z = if (*x).weight >= (*y).weight { *x } else { *y } };
 }
 
+unsafe extern "C" fn double_u64(
+    z: *mut u64,
+    x: *const u64,
+) {
+    // SAFETY: as above.
+    unsafe { *z = *x * 2 };
+}
+
 unsafe extern "C" fn id_above(
     z: *mut bool,
     x: *const Edge,
@@ -440,6 +840,10 @@ fn user_defined_type_round_trips_by_value() {
     assert_eq!(m.extract_element(1, 1).unwrap(), None);
     let (_, _, vals) = m.extract_tuples().unwrap();
     assert_eq!(vals, vec![e]);
+
+    let mut s = Scalar::<Edge>::new().unwrap();
+    s.set(e).unwrap();
+    assert_eq!(s.get().unwrap(), Some(e));
 }
 
 crate::user_ops! {
@@ -468,7 +872,7 @@ fn user_defined_operators_are_typed_and_static() {
     let heavier_op = &HEAVIER;
     let edge_max = &EDGE_MAX;
     let heaviest_path = &HEAVIEST_PATH;
-    assert!(!ID_ABOVE.as_raw().is_null());
+    let above = &ID_ABOVE;
     assert_eq!(edge_max.op().as_raw(), heavier_op.as_raw());
     assert_eq!(edge_max.identity().id, 0);
     assert_eq!(heaviest_path.add().as_raw(), edge_max.as_raw());
@@ -478,6 +882,38 @@ fn user_defined_operators_are_typed_and_static() {
         weight.as_raw(),
         "a static is created once"
     );
+
+    let a = matrix(
+        2,
+        2,
+        &[
+            (0, 0, Edge { weight: 1.0, id: 1 }),
+            (0, 1, Edge { weight: 3.0, id: 2 }),
+        ],
+    );
+    let mut w = Matrix::<f64>::new(2, 2).unwrap();
+    matrix::apply(&mut w, Mask::NONE, None, weight, &a, Desc::NONE).unwrap();
+    assert_eq!(entries(&w), vec![(0, 0, 1.0), (0, 1, 3.0)]);
+
+    let mut c = Matrix::<Edge>::new(2, 2).unwrap();
+    mxm(&mut c, Mask::NONE, None, heaviest_path, &a, &a, Desc::NONE).unwrap();
+    assert_eq!(c.extract_element(0, 0).unwrap().map(|e| e.id), Some(1));
+    assert_eq!(c.extract_element(0, 1).unwrap().map(|e| e.id), Some(2));
+
+    let mut heaviest = Edge { weight: 0.0, id: 0 };
+    matrix::reduce(&mut heaviest, None, edge_max, &a, Desc::NONE).unwrap();
+    assert_eq!(heaviest.id, 2);
+
+    let mut sel = Matrix::<Edge>::new(2, 2).unwrap();
+    matrix::select(&mut sel, Mask::NONE, None, above, &a, 1, Desc::NONE).unwrap();
+    assert_eq!(sel.nvals(), 1);
+
+    // An operator built ad hoc is registered too; it just has no static.
+    // SAFETY: `double_u64` reads `x` before it writes `z`.
+    let twice = unsafe { UnaryOp::<u64, u64>::new(double_u64) }.unwrap();
+    let mut n = matrix(1, 1, &[(0, 0, 21u64)]);
+    matrix::apply(&mut n, Mask::NONE, None, &twice, Output, Desc::NONE).unwrap();
+    assert_eq!(n.extract_element(0, 0).unwrap(), Some(42));
 }
 
 // ───────────────────────────── built-ins ─────────────────────────────
