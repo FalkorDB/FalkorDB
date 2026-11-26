@@ -608,10 +608,24 @@ VICT = dict(rate=100, count=4)
 mon.mark("baseline")
 sk.run_load(srv, out, [sk.WorkerSpec(functools.partial(victim_op, prefix="base_"), name="vbase", **VICT)],
             base_s, tag="")
+
+
+def purged_rss_mb():
+    """RSS after MEMORY PURGE: what the server holds once the allocator returns its free pages.
+
+    The query pool's threads each get their own jemalloc arena. jemalloc on Linux hands an idle
+    arena's dirty pages back from its background thread; on macOS it has none, so the pages stay
+    in RSS until that arena is used again (#4062). Purging first makes the RSS checks measure
+    memory still in use, the same on both platforms and for both engines.
+    """
+    r.execute_command("MEMORY", "PURGE")
+    return psutil.Process(srv.pid).memory_info().rss / 2**20
+
+
 rss_base = srv_rss = None
 try:
     import psutil
-    rss_base = psutil.Process(srv.pid).memory_info().rss / 2**20
+    rss_base = purged_rss_mb()
 except Exception:  # noqa: BLE001
     pass
 um_base = r.info().get("used_memory", 0) / 2**20
@@ -778,29 +792,33 @@ if alive:
         time.sleep(quiet)
         pr = psutil.Process(srv.pid)
         inf = r.info()
-        return pr.memory_info().rss / 2**20, inf.get("used_memory", 0) / 2**20, inf.get("connected_clients", 0)
+        raw = pr.memory_info().rss / 2**20
+        return raw, purged_rss_mb(), inf.get("used_memory", 0) / 2**20, inf.get("connected_clients", 0)
 
     quiet = min(60.0, max(10.0, 0.05 * a.duration))
-    rss1, um1, clients = measure("quiet", quiet)
+    raw1, rss1, um1, clients = measure("quiet", quiet)
     rss_max = max((float(l.split(",")[2]) for l in (out / "monitor.csv").read_text().splitlines()[1:]
                    if l.split(",")[2] != "nan"), default=0)
-    meta.update({"rss_after_quiet_mb": rss1, "used_mem_after_quiet_mb": um1,
+    meta.update({"rss_after_quiet_mb": raw1, "rss_after_quiet_purged_mb": rss1, "used_mem_after_quiet_mb": um1,
                  "connected_clients_after_quiet": clients, "quiet_s": quiet, "rss_peak_mb": rss_max})
     checks.add("used_memory returns near baseline after quiet period", um1 <= um_base * 1.3 + 100,
                f"{um1:.0f} MB vs baseline {um_base:.0f} MB (peak RSS {rss_max:.0f})", "major")
     checks.add("RSS back within 1.5x+300MB of baseline after quiet (allocator retention tolerated?)",
                rss1 <= rss_base * 1.5 + 300,
-               f"{rss1:.0f} MB vs baseline {rss_base:.0f} MB (peak RSS {rss_max:.0f})", "minor")
+               f"{rss1:.0f} MB ({raw1:.0f} before purge) vs baseline {rss_base:.0f} MB (peak RSS {rss_max:.0f})",
+               "minor")
     checks.add("no leaked client connections after chaos", clients <= 5, f"{clients} connected", "major")
     k, ok, got = victim_check_point(r, rng)
     checks.add("victim query correct after quiet", ok, str(got), "critical")
     r2_s = 3.0 if os.environ.get("S11_ONLY") else max(15.0, 0.2 * a.duration)
     mon.mark("soak2")
     sk.run_load(srv, out, workers, r2_s, seed=3, tag="r2_")
-    rss2, um2, clients2 = measure("quiet2", quiet)
-    meta.update({"rss_after_quiet2_mb": rss2, "used_mem_after_quiet2_mb": um2, "round2_s": r2_s})
+    raw2, rss2, um2, clients2 = measure("quiet2", quiet)
+    meta.update({"rss_after_quiet2_mb": raw2, "rss_after_quiet2_purged_mb": rss2,
+                 "used_mem_after_quiet2_mb": um2, "round2_s": r2_s})
     checks.add("no memory growth between chaos rounds (RSS)", rss2 <= rss1 * 1.15 + 150,
-               f"after round 1: {rss1:.0f} MB, after round 2: {rss2:.0f} MB", "major")
+               f"after round 1: {rss1:.0f} MB ({raw1:.0f} before purge), "
+               f"after round 2: {rss2:.0f} MB ({raw2:.0f} before purge)", "major")
     checks.add("no memory growth between chaos rounds (used_memory)", um2 <= um1 * 1.15 + 50,
                f"{um1:.0f} -> {um2:.0f} MB", "major")
     checks.add("no leaked client connections after round 2", clients2 <= 5, f"{clients2}", "major")
