@@ -382,6 +382,15 @@ impl<X, Y, Z> Semiring<X, Y, Z> {
     }
 }
 
+/// `Option<&BinaryOp>` as the C `accum` argument: null when absent.
+#[allow(
+    clippy::redundant_pub_crate,
+    reason = "`ops` is re-exported whole, and this is not part of the API"
+)]
+pub(crate) fn accum_raw<C>(accum: Option<&BinaryOp<C, C, C>>) -> GrB_BinaryOp {
+    accum.map_or(null_mut(), BinaryOp::as_raw)
+}
+
 // The built-ins the engine uses. The type on the left is the one place each
 // symbol's domains are written down; an operator that never reads an input
 // is declared with `Pattern` there. A test checks every line against what
