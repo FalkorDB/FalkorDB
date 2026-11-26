@@ -1,0 +1,21 @@
+[package]
+name = "graphblas-sys"
+version = "0.1.0"
+edition = "2024"
+description = "Raw bindings to SuiteSparse:GraphBLAS, as built by native-deps"
+license = "SSPL-1.0"
+repository = "https://github.com/FalkorDB/FalkorDB"
+publish = false
+# Exactly one crate may link libgraphblas; cargo enforces it through this key.
+links = "graphblas"
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+
+[build-dependencies]
+native-deps = { path = "../../native-deps" }
