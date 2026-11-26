@@ -2183,3 +2183,57 @@ def test_a_store_that_fails_half_way_leaves_the_previous_run(tmp_path, monkeypat
         nightly_store.store(night, "7", data, "nightly", "main", download)
     assert (old / "result.json").read_text() == "old"
     assert sorted(p.name for p in data.iterdir()) == ["2026-11-20-7"]  # no staging left behind
+
+
+def previous_site(tmp_path):
+    """The last deployed site: a page for /perf run 501 (in the window), for 502 (31 days), and
+    for 505, another run of the same pull request that is no candidate now."""
+    prev = tmp_path / "previous"
+    for rel in ("pr/3967/2026-11-20-501", "pr/3900/2026-10-26-502", "pr/3967/2026-11-21-505"):
+        (prev / rel / "data").mkdir(parents=True)
+        (prev / rel / "index.html").write_text(f"old page {rel}")
+    return prev
+
+
+def test_a_run_not_rebuilt_keeps_the_page_the_last_deploy_had(tmp_path, actions, no_wait):
+    """Its download failed this time: the page the last deploy published stays up (a link in a
+    /perf answer keeps working for its 30 days), and nothing older than the window comes back."""
+    prev = previous_site(tmp_path)
+
+    def failing(argv, **kwargs):
+        if "/runs/501/artifacts?name=perf-result" in argv[2]:
+            return subprocess.CompletedProcess(argv, 1, "", "HTTP 502")
+        return actions(argv, **kwargs)
+
+    site = tmp_path / "site"
+    made = nightly_unlisted.build(site, "o/r", 30, NOW, failing, previous=prev)
+    assert sorted(p.relative_to(site).as_posix() for p in made) == [
+        "manual/2026-11-25-601/index.html",
+        "pr/3967/2026-11-20-501/index.html",
+    ]
+    assert (
+        site / "pr/3967/2026-11-20-501/index.html"
+    ).read_text() == "old page pr/3967/2026-11-20-501"
+    assert not (site / "pr" / "3900").exists()
+
+
+def test_out_of_time_every_run_keeps_its_last_page(tmp_path, actions, no_wait):
+    prev = previous_site(tmp_path)
+    site = tmp_path / "site"
+    made = nightly_unlisted.build(site, "o/r", 30, NOW, actions, budget=-1, previous=prev)
+    # 501 is carried (its own page, not another of the pull request's); 601 had no page
+    # before, so it waits for the next deploy.
+    assert [p.relative_to(site).as_posix() for p in made] == ["pr/3967/2026-11-20-501/index.html"]
+    assert (
+        site / "pr/3967/2026-11-20-501/index.html"
+    ).read_text() == "old page pr/3967/2026-11-20-501"
+    assert not (site / "pr" / "3900").exists() and not (site / "pr/3967/2026-11-21-505").exists()
+
+
+def test_the_deploy_hands_the_last_site_to_the_unlisted_build():
+    build = publish_step("Build the site")
+    assert "-n github-pages" in build and "artifact.tar" in build
+    assert 'bench nightly unlisted --out "$pages" --days 30 --previous "$previous"' in build
+    steps = load_workflow("perf-dashboard.yml")["jobs"]["deploy"]["steps"]
+    [upload] = [s for s in steps if s.get("uses", "").startswith("actions/upload-pages-artifact@")]
+    assert upload["with"]["retention-days"] == 35  # past the pages' 30 days

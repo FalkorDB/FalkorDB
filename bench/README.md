@@ -441,7 +441,9 @@ runs page. Every deploy also builds, with `bench nightly unlisted --out <site> -
 one page for each such run created in the last 30 days, at `manual/<date>-<run id>/` and
 `pr/<N>/<date>-<run id>/`. Each page is the run's page itself, with `noindex`, over the run
 stored as above. No listed page links to them, and they are never stored on `gh-pages`: a
-page is gone at the first deploy after its run is 30 days old. `bench nightly unlisted url`
+page is gone at the first deploy after its run is 30 days old. A run a deploy cannot rebuild
+(a download that failed, or past the build's 20-minute budget) keeps the page the last deployed
+site had for it (that deploy's Pages artifact, kept 35 days), so a link lives its 30 days. `bench nightly unlisted url`
 prints a run's page address (`$PERF_PAGES_URL`, a repository variable for a custom domain,
 else `https://<owner>.github.io/<repo>/`). The `/perf` answer and a manual run's summary link it.
 

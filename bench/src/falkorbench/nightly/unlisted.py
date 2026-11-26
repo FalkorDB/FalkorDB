@@ -217,6 +217,16 @@ def build_one(
     return where / "index.html"
 
 
+def carried(candidate: Candidate, previous: Path | None) -> Path | None:
+    """The page the last deployed site had for this run (the folder under manual/ or pr/<N>/
+    that ends in -<run id>), or None."""
+    if previous is None:
+        return None
+    area = previous / ("pr" / Path(str(candidate.pr)) if candidate.kind == "pr" else Path("manual"))
+    found = sorted(p for p in area.glob(f"*-{candidate.run_id}") if (p / "index.html").is_file())
+    return found[-1] if found else None
+
+
 def build(
     out: Path,
     repo: str,
@@ -224,31 +234,41 @@ def build(
     now: datetime,
     run: store.Runner = subprocess.run,
     budget: float = BUDGET_SECONDS,
+    previous: Path | None = None,
 ) -> list[Path]:
     """Every unlisted page of the last `days` days, under <out>/manual and <out>/pr (both
-    replaced). A run that cannot be read is left out with a warning, never a failure. After
-    `budget` seconds no further run is started, so a slow download never keeps the deploy (and
-    the listed pages) from going out: the runs left over get their page at the next deploy."""
+    replaced). After `budget` seconds no further run is built, so a slow download never keeps the
+    deploy (and the listed pages) from going out. A run this deploy cannot rebuild (out of time,
+    a download that failed) keeps the page the last deployed site had for it, read from
+    `previous` (that site's files): a page lives its 30 days, not until one deploy goes badly.
+    A run with no such page is left out with a warning, never a failure."""
     deadline = time.monotonic() + budget
     found = candidates(repo, now, days, run)  # raises ListingError before anything is removed
     for area in ("manual", "pr"):
         shutil.rmtree(out / area, ignore_errors=True)
     pages = []
-    for index, candidate in enumerate(found):
+    for candidate in found:
+        made = None
         if time.monotonic() > deadline:
-            left = ", ".join(c.run_id for c in found[index:])
-            store.warn(f"out of time after {budget:.0f} s: no page this deploy for runs {left}")
-            break
-        try:
-            if candidate.kind == "manual" and not named_images(repo, candidate.run_id, run):
+            store.warn(f"run {candidate.run_id}: out of time after {budget:.0f} s: not rebuilt")
+        else:
+            try:
+                if candidate.kind == "manual" and not named_images(repo, candidate.run_id, run):
+                    continue
+                made = build_one(candidate, repo, out, run, deadline)
+            except Exception as err:  # one run's page must never fail every deploy for 30 days
+                store.warn(f"run {candidate.run_id}: {type(err).__name__}: {err}: not rebuilt")
+        if made is None:
+            old = carried(candidate, previous)
+            if old is None:
+                store.warn(f"run {candidate.run_id}: no page (none deployed before either)")
                 continue
-            made = build_one(candidate, repo, out, run, deadline)
-        except Exception as err:  # one run's page must never fail every deploy for 30 days
-            store.warn(f"run {candidate.run_id}: {type(err).__name__}: {err}: no page")
-            continue
-        if made is not None:
-            pages.append(made)
-            print(f"unlisted: {made.parent.relative_to(out).as_posix()}/")
+            where = out / old.relative_to(previous)
+            shutil.copytree(old, where, symlinks=False)
+            made = where / "index.html"
+            store.warn(f"run {candidate.run_id}: kept the page the last deploy had")
+        pages.append(made)
+        print(f"unlisted: {made.parent.relative_to(out).as_posix()}/")
     return pages
 
 
@@ -272,6 +292,11 @@ def main(
     url.add_argument("--pr", type=int)
     parser.add_argument("--out", type=Path, help="the site to add the pages to")
     parser.add_argument("--days", type=int, default=DAYS, help="keep the runs of this many days")
+    parser.add_argument(
+        "--previous",
+        type=Path,
+        help="the last deployed site: its pages stand in for runs not rebuilt",
+    )
     args = parser.parse_args(argv)
     if args.command == "url":
         try:
@@ -291,7 +316,8 @@ def main(
         parser.error("--out is required")
     store.ZIP_TIMEOUT = min(store.ZIP_TIMEOUT, ZIP_TIMEOUT)
     try:
-        build(args.out, args.repo, args.days, datetime.now(UTC), run)
+        previous = args.previous if args.previous and args.previous.is_dir() else None
+        build(args.out, args.repo, args.days, datetime.now(UTC), run, previous=previous)
     except ListingError as err:
         print(
             f"::error::perf dashboard: {err}: not deploying a site without its unlisted pages",

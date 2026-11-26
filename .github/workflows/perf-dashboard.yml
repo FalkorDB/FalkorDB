@@ -240,14 +240,30 @@ jobs:
           # before the store kept only that are kept in full there).
           uv run --project bench --frozen bench nightly trim --from "$site/data" --to "$pages/data"
           uv run --project bench --frozen bench nightly dashboard --data "$pages/data" --out "$pages"
+          # The last deployed site, whose unlisted pages stand in for a run this deploy cannot
+          # rebuild (out of time, a download that failed). Best effort: none is no failure.
+          previous=$RUNNER_TEMP/previous
+          mkdir -p "$previous"
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/perf-dashboard.yml/runs?status=success&per_page=20" \
+              --jq '.workflow_runs[].id' 2>/dev/null || true); do
+            rm -rf "$RUNNER_TEMP/previous-zip"
+            if gh run download "$id" -R "$GITHUB_REPOSITORY" -n github-pages -D "$RUNNER_TEMP/previous-zip" 2>/dev/null \
+                && tar -xf "$RUNNER_TEMP/previous-zip/artifact.tar" -C "$previous" 2>/dev/null; then
+              echo "the last deployed site: run $id"
+              break
+            fi
+            rm -rf "$previous" && mkdir -p "$previous"
+          done
           # The last 30 days' manual and /perf runs, under manual/ and pr/: rebuilt every time,
           # since the deploy replaces the whole site.
-          uv run --project bench --frozen bench nightly unlisted --out "$pages" --days 30
+          uv run --project bench --frozen bench nightly unlisted --out "$pages" --days 30 --previous "$previous"
           du -sh "$pages"
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ${{ runner.temp }}/pages
+          # The next deploy reads this one's unlisted pages (above): kept past their 30 days.
+          retention-days: 35
 
       - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
         id: deployment
