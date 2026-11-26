@@ -173,8 +173,10 @@ the candidate, even when the deadline then leaves no time for the baseline). The
 | long | 1200 | 1.0 | gated, re-runs | one check per scenario, with timeouts of its own (unmeasured) |
 
 The nightly registers one entry per scenario in `bench/checks.yaml`, `soak-s01` …
-`soak-s12`, each on its own n4-standard-16 VM, so soak takes as long as its slowest
-scenario instead of six in a row. An entry's `timeout_minutes` is 2.75x the slowest pair
+`soak-s12`, each on its own n4-standard-16 VM. With room for every leg at once
+(`vars.PERF_VM_MAX_PARALLEL`, `tests/perf/vm/README.md`), soak takes as long as its
+slowest scenario instead of six in a row; under a smaller cap the later legs wait for a
+free slot. An entry's `timeout_minutes` is 2.75x the slowest pair
 (both sides of the first pass) seen on that machine type, plus 0.5 min to pull and 10 min
 of margin, rounded up to 5 min: 40 to 80 min. The slowest pairs and the runs they come
 from are `SLOWEST_PAIR` in `bench/tests/test_soak.py`, where a test fails when a timeout

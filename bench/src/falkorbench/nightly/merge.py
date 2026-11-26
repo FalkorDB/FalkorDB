@@ -162,9 +162,9 @@ def build_plan(registry, select, registry_error=None):
 
 def matrix(plan, runner):
     """One runner's job matrix. perf-nightly.yml caps how many VM legs run at
-    once, and GitHub starts capped legs in matrix order, so the VM legs go
-    longest budget first (ties in plan order): a long leg queued last would
-    stretch the run by its whole length."""
+    once, and GitHub queues the legs in matrix order, so the VM legs go
+    longest budget first (ties in plan order): a long leg left to the end
+    would stretch the run by its whole length."""
     rows = [
         {key: row[key] for key in ("check", "command", "timeout_minutes", "machine_type")}
         for row in plan

@@ -143,7 +143,7 @@ comparison holds. Only its numbers are not comparable with another night's.
 
 `perf-nightly.yml` (also the release gate, which calls it) runs at most
 `vars.PERF_VM_MAX_PARALLEL` VM legs at once, 8 when the repository variable is
-unset. Capped legs start in matrix order, which `bench nightly merge plan` sorts
+unset. GitHub queues the legs in matrix order, which `bench nightly merge plan` sorts
 longest `timeout_minutes` first. Each leg holds, in the region of
 `vars.GCP_ZONES` (us-central1):
 

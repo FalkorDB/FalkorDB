@@ -477,7 +477,7 @@ def test_perf_vm_json_explains_a_missing_result(tmp_path, vm, reason):
     ],
 )
 def test_a_leg_on_the_fallback_machine_type_says_so_in_its_summary(tmp_path, facts, summary):
-    """The run summary, the chat line and the dashboard's run page show a result's summary:
+    """The run summary, the new-issue link and the dashboard's run page show a result's summary:
     a leg whose VM fell back (n4 -> n2) says so there, since its numbers are another machine's."""
     results = tmp_path / "results"
     put(results, "pokec", result("pokec", summary="steady"))

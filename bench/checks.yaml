@@ -2,9 +2,9 @@
 # besides micro-hw, which it runs through _perf-micro.yml.
 #
 # The list starts empty: this file holds only comments, which parses as no
-# checks. Each check's PR appends exactly one entry at the end and touches
-# nothing else here (an explicit `[]` would turn the first append into invalid
-# YAML):
+# checks. Each check's PR appends its entry at the end and touches nothing
+# else here (an explicit `[]` would turn the first append into invalid YAML);
+# soak's twelve, one per scenario, replaced its two halves in place:
 #
 #   - name: pokec                      # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$, no "--"
 #     runner: vm                       # vm (_perf-vm.yml on a GCE VM) | hosted (ubuntu-latest)
