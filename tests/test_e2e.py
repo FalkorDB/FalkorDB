@@ -1609,6 +1609,21 @@ def test_aggregation_item_implicit_key_under_and_or_and_comprehension_is_lazy():
     ]
 
 
+def test_aggregation_item_guarded_volatile_key_reports_its_grouped_value():
+    # A guarded key keeps the value it grouped by, as an unguarded one does:
+    # re-drawing rand() at finalize could give two groups the same key.
+    for _ in range(5):
+        res = query(
+            "UNWIND range(1, 1000) AS x RETURN "
+            "[CASE WHEN count(*) > 0 THEN toInteger(rand() * 2) + 0 * x ELSE 0 END, "
+            "count(*)] AS r",
+            compare_results=False,
+        )
+        rows = [r[0] for r in res.result_set]
+        assert sorted(row[0] for row in rows) == [0, 1]
+        assert sum(row[1] for row in rows) == 1000
+
+
 def test_aggregation_slot_does_not_reuse_a_comprehension_variable():
     # A key's slot must not take the id a comprehension variable binds while
     # the item is evaluated, even when the body never reads that variable.

@@ -190,28 +190,30 @@ struct ImplicitKey {
     item: usize,
     /// The subtree's root in that item's tree.
     idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-    /// `Some(slot)`: the value evaluated when the row is grouped is kept in
+    /// The value evaluated when the group's first row is grouped is kept in
     /// the group under `slot`, and the item reads it from there, so a volatile
     /// subtree (`rand()`) reports the value it grouped by, not a fresh draw.
-    ///
-    /// `None` for a subtree under a `CASE`: its branch may never be taken, so
-    /// it must not be able to fail the query at grouping. It groups by its
-    /// value with an error read as `null`, and the item evaluates the subtree
-    /// from the group's first row (see [`ImplicitKeys::lazy_vars`]), where
-    /// `CASE` takes or skips the branch as it does anywhere else.
-    slot: Option<Variable>,
+    slot: Variable,
+    /// `Some(ok)` for a guarded subtree, one a `CASE`, `AND`, `OR`, map
+    /// projection or loop body may skip: it must not be able to fail the
+    /// query at grouping. An error groups as `null` and leaves `slot` unset,
+    /// and `ok` records whether the value was evaluated. The item reads
+    /// `CASE WHEN ok THEN slot ELSE <subtree> END`, so when the branch is
+    /// taken after an error the subtree runs again from the group's first row
+    /// (see [`ImplicitKeys::lazy_vars`]) and raises it.
+    ok: Option<Variable>,
 }
 
 /// The implicit grouping keys of an aggregation and what finalizing them needs.
 #[derive(Default)]
 struct ImplicitKeys {
     keys: Vec<ImplicitKey>,
-    /// The variables the keys without a slot read. Each group keeps their
-    /// values from its first row, under their (old-scope) ids, so those
-    /// subtrees can be evaluated when the group is finalized.
+    /// The variables the guarded keys read. Each group keeps their values
+    /// from its first row, under their (old-scope) ids, so a guarded key that
+    /// failed at grouping can be evaluated again when the group is finalized.
     lazy_vars: Vec<Variable>,
-    /// The aggregation items with each slotted key replaced by a read of its
-    /// slot; `None` when no key has a slot.
+    /// The aggregation items with each key replaced by a read of its slot;
+    /// `None` when there are no keys.
     items: Option<Vec<(Variable, QueryExpr<Variable>)>>,
 }
 
@@ -254,33 +256,55 @@ fn free_variables(node: &DynNode<'_, ExprIR<Variable>>) -> Vec<Variable> {
     read
 }
 
-/// A copy of `tree` with each subtree listed in `slots` replaced by a read of
-/// its slot variable. The subtrees are disjoint (each is a maximal
-/// aggregate-free one).
+/// A copy of `tree` with each key's subtree replaced by a read of its slot
+/// (see [`ImplicitKey::ok`] for a guarded key's).
+///
+/// Built in one pre-order pass that only pushes nodes: each node goes under
+/// its parent's copy, a key's node is replaced by its read, and the nodes
+/// inside a key have no parent copy, so they are left out.
 fn replace_with_slots(
     tree: &DynTree<ExprIR<Variable>>,
-    slots: &[(NodeIdx<Dyn<ExprIR<Variable>>>, Variable)],
+    keys: &[&ImplicitKey],
 ) -> DynTree<ExprIR<Variable>> {
-    let mut copy = tree.clone();
-    // A copy has its own node indices; both trees list them in the same
-    // depth-first order.
-    let targets: Vec<_> = tree
-        .root()
-        .indices::<Dfs>()
-        .zip(copy.root().indices::<Dfs>())
-        .filter_map(|(original, copied)| {
-            slots
-                .iter()
-                .find(|(idx, _)| *idx == original)
-                .map(|(_, slot)| (copied, slot))
-        })
-        .collect();
-    for (idx, slot) in targets {
-        let mut node = copy.node_mut(idx);
-        *node.data_mut() = ExprIR::Variable(slot.clone());
-        node.remove_children();
+    // The root holds an aggregate, so it is never a key.
+    let mut copy = DynTree::new(tree.root().data().clone());
+    let mut copied = HashMap::from([(tree.root().idx(), copy.root().idx())]);
+    for idx in tree.root().indices::<Dfs>().skip(1) {
+        let node = tree.node(idx);
+        let Some(&parent) = node.parent().and_then(|parent| copied.get(&parent.idx())) else {
+            continue; // inside a key that was replaced
+        };
+        let mut parent = copy.node_mut(parent);
+        match keys.iter().find(|key| key.idx == idx) {
+            Some(key) => {
+                parent.push_child_tree(slot_read(key, &node));
+            }
+            None => {
+                copied.insert(idx, parent.push_child(node.data().clone()));
+            }
+        }
     }
     copy
+}
+
+/// What an item reads in place of `key`'s subtree `node`: its slot, or for a
+/// guarded key `CASE WHEN ok THEN slot ELSE <subtree> END`.
+fn slot_read(
+    key: &ImplicitKey,
+    node: &DynNode<'_, ExprIR<Variable>>,
+) -> DynTree<ExprIR<Variable>> {
+    let read = ExprIR::Variable(key.slot.clone());
+    let Some(ok) = &key.ok else {
+        return DynTree::new(read);
+    };
+    let mut arms = DynTree::new(ExprIR::List);
+    arms.root_mut().push_child(ExprIR::Variable(ok.clone()));
+    arms.root_mut().push_child(read);
+    let mut case = DynTree::new(ExprIR::Case { has_subject: false });
+    case.root_mut().push_child_tree(arms);
+    case.root_mut()
+        .push_child_tree(node.clone_as_tree::<Dyn<ExprIR<Variable>>>());
+    case
 }
 
 /// Implicit grouping keys of the aggregation items.
@@ -351,19 +375,29 @@ fn implicit_keys(
                         | ExprIR::ListComprehension(_)
                         | ExprIR::Reduce(_)
                 );
+            // Nodes that only give the expression its shape are walked
+            // through, so their parts, not they, can be keys: a map entry is a
+            // key constant whose one child is the value, and a CASE's arms are
+            // a list of its WHEN and THEN terms.
             let is_map = matches!(node.data(), ExprIR::Map | ExprIR::MapProjection);
-            for child in (0..node.num_children()).rev().map(|i| node.child(i)) {
-                // A map entry is a key constant whose one child is the value;
-                // the value, not the key node, is what groups.
-                if is_map
+            let arms = match node.data() {
+                ExprIR::Case { has_subject } => Some(usize::from(*has_subject)),
+                _ => None,
+            };
+            let mut parts = Vec::new();
+            for (i, child) in node.children().enumerate() {
+                if Some(i) == arms {
+                    parts.extend(child.children());
+                } else if is_map
                     && matches!(child.data(), ExprIR::Constant(Value::String(_)))
                     && child.num_children() == 1
                 {
-                    stack.push((child.child(0), guarded));
+                    parts.push(child.child(0));
                 } else {
-                    stack.push((child, guarded));
+                    parts.push(child);
                 }
             }
+            stack.extend(parts.into_iter().rev().map(|part| (part, guarded)));
         }
     }
     // Slots take ids above every id the aggregation reads, so a slot can never
@@ -374,33 +408,34 @@ fn implicit_keys(
         .map(|(_, tree)| max_variable_id(&tree.root()))
         .max()
         .map_or(0, |id| id + 1);
-    let mut slotted: Vec<Vec<(NodeIdx<Dyn<ExprIR<Variable>>>, Variable)>> =
-        vec![Vec::new(); agg.len()];
+    let mut fresh = || {
+        let var = Variable {
+            alias: None,
+            id: next_id,
+            scope_id: 0,
+            ty: Type::Any,
+        };
+        next_id += 1;
+        var
+    };
     let keys = found
         .into_iter()
-        .map(|(item, idx, guarded)| {
-            let slot = (!guarded).then(|| {
-                let slot = Variable {
-                    alias: None,
-                    id: next_id,
-                    scope_id: 0,
-                    ty: Type::Any,
-                };
-                next_id += 1;
-                slotted[item].push((idx, slot.clone()));
-                slot
-            });
-            ImplicitKey { item, idx, slot }
+        .map(|(item, idx, guarded)| ImplicitKey {
+            item,
+            idx,
+            slot: fresh(),
+            ok: guarded.then(&mut fresh),
         })
         .collect::<Vec<_>>();
-    let items = keys.iter().any(|key| key.slot.is_some()).then(|| {
+    let items = (!keys.is_empty()).then(|| {
         agg.iter()
-            .zip(&slotted)
-            .map(|((name, tree), slots)| {
-                if slots.is_empty() {
+            .enumerate()
+            .map(|(item, (name, tree))| {
+                let own: Vec<&ImplicitKey> = keys.iter().filter(|key| key.item == item).collect();
+                if own.is_empty() {
                     (name.clone(), tree.clone())
                 } else {
-                    (name.clone(), Arc::new(replace_with_slots(tree, slots)))
+                    (name.clone(), Arc::new(replace_with_slots(tree, &own)))
                 }
             })
             .collect()
@@ -1175,8 +1210,10 @@ impl<'a> AggregateOp<'a> {
     ) {
         for row in batch.active_indices() {
             let vars = BatchRow::new(batch, row).to_owned_row();
-            let (key_values, key_env) = match (|| {
+            let (key_values, key_env, evaluated) = match (|| {
                 let mut key_values = GroupKeyVec::with_capacity(keys.len());
+                // Per implicit key: whether its value was evaluated.
+                let mut evaluated = SmallVec::<[bool; 4]>::new();
                 let mut key_env = Row::new();
                 for (name, tree) in keys {
                     let value = ExprEval::from_runtime(runtime).eval(
@@ -1193,12 +1230,13 @@ impl<'a> AggregateOp<'a> {
                     let tree = &agg[key.item].1;
                     let value =
                         ExprEval::from_runtime(runtime).eval(tree, key.idx, Some(&vars), None);
-                    key_values.push(if key.slot.is_some() {
-                        value?
-                    } else {
-                        // Under a CASE: an error is the item's to raise, if
+                    evaluated.push(value.is_ok());
+                    key_values.push(match value {
+                        Ok(value) => value,
+                        // A guarded key's error is the item's to raise, if
                         // the branch is taken.
-                        value.unwrap_or(Value::Null)
+                        Err(_) if key.ok.is_some() => Value::Null,
+                        Err(e) => return Err(e),
                     });
                 }
                 // Capture copy_from_parent values from the input row.
@@ -1207,7 +1245,7 @@ impl<'a> AggregateOp<'a> {
                         key_env.insert(new_var, val.clone());
                     }
                 }
-                Ok::<(GroupKeyVec, Row), String>((key_values, key_env))
+                Ok::<_, String>((key_values, key_env, evaluated))
             })() {
                 Ok(kv) => kv,
                 Err(e) => {
@@ -1223,17 +1261,21 @@ impl<'a> AggregateOp<'a> {
                 Entry::Occupied(group) => group.into_mut(),
                 Entry::Vacant(group) => {
                     let mut acc = default_acc.clone();
-                    // A slotted key keeps the value this row grouped by. The
-                    // slots sit above every old-scope id, so they never collide
-                    // with the accumulators.
-                    for (key, value) in implicit.keys.iter().zip(&group.key().0[keys.len()..]) {
-                        if let Some(slot) = &key.slot {
-                            acc.insert(slot, value.clone());
+                    // Each key keeps the value this row grouped by. The slots
+                    // sit above every old-scope id, so they never collide with
+                    // the accumulators.
+                    let values = &group.key().0[keys.len()..];
+                    for ((key, value), &ok) in implicit.keys.iter().zip(values).zip(&evaluated) {
+                        if ok {
+                            acc.insert(&key.slot, value.clone());
+                        }
+                        if let Some(flag) = &key.ok {
+                            acc.insert(flag, Value::Bool(ok));
                         }
                     }
-                    // The rest are evaluated when the group is finalized, from
-                    // the first row's values of the variables they read; the
-                    // group's rows agree on the key, so any row would do.
+                    // A guarded key that failed is evaluated again when the
+                    // group is finalized, from the first row's values of the
+                    // variables it reads.
                     for var in &implicit.lazy_vars {
                         if let Some(value) = vars.get(var) {
                             acc.insert(var, value.clone());
