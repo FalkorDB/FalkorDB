@@ -331,6 +331,15 @@ theorem accessors_spec (b : Batch F) (i r : Nat) (o : List Nat) :
   · unfold extractNodeIds; cases b.column i <;> simp
   · unfold extractRelIds; cases b.column i <;> simp
 
+/-- `Batch::is_value_only` (batch.rs, #4015): the `value_only` bit itself. -/
+def isValueOnly (b : Batch F) (i : Nat) : Bool := b.vo i
+
+/-- A slot is bound iff its column is not `Unbound` and it is not value-only
+(`is_bound_at` read through `is_value_only`). -/
+theorem isValueOnly_spec (b : Batch F) (i : Nat) :
+    b.isValueOnly i = b.vo i ∧ b.isBound i = (!(b.column i).isUnbound && !b.isValueOnly i) :=
+  ⟨rfl, rfl⟩
+
 /-- `origin_row`: `0` without a sidecar. -/
 theorem originRow_spec (b : Batch F) (r : Nat) :
     b.originRow r = (match b.origins with | none => 0 | some o => o[r]?.getD 0) := rfl

@@ -25,6 +25,7 @@ WIRE_FORMAT = (
     "branches",
     "br_miss",
     "l1d_miss",
+    "l2_miss",
     "alloc_bytes",
     "dealloc_bytes",
     "ms",
@@ -43,8 +44,8 @@ def test_a_full_row_round_trips_byte_for_byte(tmp_path):
     the empty cells a host with no PMU or a libc-malloc redis produces.
     """
     src = (
-        "query,instr,cycles,branches,br_miss,l1d_miss,alloc_bytes,dealloc_bytes,ms\n"
-        "RETURN 1,341338.41717068205,0.0,,,,65536.0,32768.0,0.34755706787109375\n"
+        "query,instr,cycles,branches,br_miss,l1d_miss,l2_miss,alloc_bytes,dealloc_bytes,ms\n"
+        "RETURN 1,341338.41717068205,0.0,,,,,65536.0,32768.0,0.34755706787109375\n"
     )
     path = tmp_path / "measure.csv"
     path.write_text(src)

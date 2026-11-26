@@ -67,11 +67,41 @@
 # with `kernel.perf_event_paranoid <= 0` would restore them, which would also let
 # `perf` replace callgrind and retire 12 of these 18 jobs. The one job that would
 # genuinely benefit from more cores is `coverage`, the only one that compiles.
+#
+# ## As the release gate (#4004)
+#
+# The merge queue of a version branch calls this workflow (rust-pr.yml `perf-cov`,
+# after its CI suites pass) with the queue's image; that run has no pull request.
+# A call differs from the label in four ways, and the label's run is unchanged:
+#
+#   - its base is the base branch's own image: the merge queue's
+#     rc-mg-<base tip>-valkey, else the newest release on that line;
+#   - no C side and no coverage: the vs-C column means nothing against an older
+#     release line, and coverage builds the version branch's tree;
+#   - every job runs this workflow's own commit (main's), not the caller's;
+#   - it judges: `bench cov-gate` turns the PR-vs-base reading into a
+#     result.json (instructions > 1.10x with no floor, allocated bytes as
+#     micro-hw), and `bench nightly merge conclude --gate` fails the run unless
+#     bench/waivers.yaml waives every regression. Errors fail it too.
 name: Benchmark + coverage
 
 on:
   pull_request:
     types: [labeled]
+  workflow_call:
+    inputs:
+      candidate_image:
+        description: "The PR's image (tag or digest), e.g. ghcr.io/falkordb/falkordb-server:rc-pr-<N>-valkey"
+        type: string
+        required: true
+      baseline_image:
+        description: "Base image (tag or digest); empty = the base branch tip's rc-mg image, else the newest release below baseline_below"
+        type: string
+        default: ""
+      baseline_below:
+        description: "X.Y.Z: the release fallback is the newest stable release below it"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -80,7 +110,10 @@ permissions:
   packages: write
 
 concurrency:
-  group: benchmark-cov-${{ github.event.pull_request.number }}
+  # A call (the gate) takes the caller's event, so a group by PR number would let
+  # a label added to a version-branch PR start that branch's own copy of this
+  # workflow and cancel the gate: a call gets a group of its own run.
+  group: ${{ inputs.candidate_image && format('benchmark-cov-gate-{0}', github.run_id) || format('benchmark-cov-{0}', github.event.pull_request.number) }}
   cancel-in-progress: true
 
 env:
@@ -103,22 +136,33 @@ jobs:
   # image is not published yet (rust-pr.yml still running, or it never ran for
   # this PR) they would each fail several minutes in with a bare docker error.
   preflight:
+    # A call (the gate) always runs; the label, as before.
     if: >-
+      inputs.candidate_image != '' || (
       github.event.label.name == 'benchmark-cov' &&
       contains(fromJSON('["main"]'), github.event.pull_request.base.ref) &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       bench_image: ${{ steps.bake.outputs.bench_image }}
       shards: ${{ steps.shards.outputs.list }}
       shard_count: ${{ steps.shards.outputs.count }}
+      pr_image: ${{ steps.images.outputs.pr_image }}
+      base_image: ${{ steps.images.outputs.base_image }}
+      pr_label: ${{ steps.gate.outputs.pr_label }}
+      base_label: ${{ steps.gate.outputs.base_label }}
     steps:
+      # This workflow's own commit: for a call from a version branch, main's
+      # bench code and extract-module action, not the caller's.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       - name: Acknowledge the request
+        if: inputs.candidate_image == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -147,6 +191,8 @@ jobs:
       # code to this PR. The tag carries no digest or commit label, so freshness
       # has to come from the Actions API.
       - name: Wait for the PR image to be built from this commit
+        # A call comes after the caller's CI built the image.
+        if: inputs.candidate_image == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -192,12 +238,86 @@ jobs:
             sleep 30
           done
 
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: inputs.candidate_image != ''
+        with:
+          version: "0.9.29"
+
+      # The gate's two images, pinned by digest before anything measures them.
+      # The base is the base branch's tip as its merge queue built it; a tip with
+      # no such image (merged outside the queue, or swept after 30 days by
+      # cleanup-rc-images.yml) falls back to the newest release on that line.
+      - name: Pin the gate's images
+        id: gate
+        if: inputs.candidate_image != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ inputs.candidate_image }}
+          BASELINE: ${{ inputs.baseline_image }}
+          BASELINE_BELOW: ${{ inputs.baseline_below }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          # pin REF prints name@digest; exit 3 when the registry says REF does not
+          # exist, 1 for any other failure (which must not read as "no image").
+          pin() {
+            local ref=$1 name=${1%@*} out digest
+            if [[ ${name##*/} == *:* ]]; then name=${name%:*}; fi
+            if out=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' 2>"$RUNNER_TEMP/inspect.err"); then
+              digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$out") || return 1
+              echo "$name@$digest"
+              return
+            fi
+            if grep -qiE 'not found|manifest unknown' "$RUNNER_TEMP/inspect.err"; then return 3; fi
+            cat "$RUNNER_TEMP/inspect.err" >&2
+            return 1
+          }
+          tag_of() { local name=${1%@*}; [[ ${name##*/} == *:* ]] && echo "${name##*:}" || echo "${1##*/}"; }
+          pr=$(pin "$CANDIDATE") || { echo "::error::$CANDIDATE does not resolve"; exit 1; }
+          pr_label=$(tag_of "$CANDIDATE")
+          if [[ -n $BASELINE ]]; then
+            base=$(pin "$BASELINE") || { echo "::error::$BASELINE does not resolve"; exit 1; }
+            base_label=$(tag_of "$BASELINE")
+          else
+            rc=3
+            if [[ -n $BASE_SHA ]]; then
+              base=$(pin "ghcr.io/falkordb/falkordb-server:rc-mg-$BASE_SHA-valkey") && rc=0 || rc=$?
+            fi
+            if [[ $rc == 0 ]]; then
+              base_label="$BASE_REF@${BASE_SHA:0:7}"
+            elif [[ $rc == 3 ]]; then
+              releases=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+                --jq '.[] | select((.draft or .prerelease) | not) | .tag_name | select(test("^v([5-9]|[1-9][0-9])[.][0-9]+[.][0-9]+$"))')
+              tag=$(uv run --project bench --frozen bench nightly merge release --below "$BASELINE_BELOW" <<<"$releases")
+              base=$(pin "docker.io/falkordb/falkordb-server:${tag#v}") || { echo "::error::falkordb-server:${tag#v} does not resolve"; exit 1; }
+              base_label=${tag#v}
+              echo "::notice::base: ${BASE_REF:-the base} tip ${BASE_SHA:-?} has no rc-mg image; using release ${tag#v}"
+            else
+              echo "::error::could not look up the base tip's image"
+              exit 1
+            fi
+          fi
+          {
+            echo "pr_image=$pr"
+            echo "base_image=$base"
+            echo "pr_label=$pr_label"
+            echo "base_label=$base_label"
+          } | tee -a "$GITHUB_OUTPUT"
+
       - name: Resolve the three images
         id: images
         env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # A call skipped the wait that confirms the PR head built the image.
+          HEAD_SHA: ${{ inputs.candidate_image == '' && github.event.pull_request.head.sha || '' }}
+          GATE: ${{ inputs.candidate_image != '' }}
+          # A call measures its pinned pair; the label, the tags above.
+          PR_IMAGE: ${{ steps.gate.outputs.pr_image || env.PR_IMAGE }}
+          BASE_IMAGE: ${{ steps.gate.outputs.base_image || env.BASE_IMAGE }}
         run: |
           set -euo pipefail
+          echo "pr_image=$PR_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "base_image=$BASE_IMAGE" >> "$GITHUB_OUTPUT"
           python3 - <<'PY' > provenance.json
           import json, os, subprocess
 
@@ -219,6 +339,8 @@ jobs:
               d = d[0] if isinstance(d, list) else d
               out[side] = {"image": image, "digest": d.get("Descriptor", {}).get("digest")}
           out["_head_sha"] = os.environ.get("HEAD_SHA", "")
+          if os.environ.get("GATE") == "true":
+              out["_gate"] = True
           print(json.dumps(out, indent=2))
           PY
           cat provenance.json
@@ -249,7 +371,7 @@ jobs:
         run: |
           set -euo pipefail
           key=$( { printf '%s' "$C_DIGEST"; \
-                   cat bench/pyproject.toml bench/uv.lock bench/Dockerfile; } \
+                   cat bench/.python-version bench/pyproject.toml bench/uv.lock bench/Dockerfile; } \
                  | sha256sum | cut -c1-16 )
           image="ghcr.io/falkordb/falkordb-bench:$key"
           echo "bench_image=$image" >> "$GITHUB_OUTPUT"
@@ -288,10 +410,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        side: [pr, base, c]
+        # A call (the gate) has no C side.
+        side: ${{ fromJSON(inputs.candidate_image != '' && '["pr","base"]' || '["pr","base","c"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -302,6 +427,9 @@ jobs:
 
       - name: Resolve this side's image
         id: side
+        env:
+          PR_IMAGE: ${{ needs.preflight.outputs.pr_image }}
+          BASE_IMAGE: ${{ needs.preflight.outputs.base_image }}
         run: |
           set -euo pipefail
           case "${{ matrix.side }}" in
@@ -319,14 +447,18 @@ jobs:
         env:
           BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
           SIDE: ${{ matrix.side }}
+          GATE: ${{ inputs.candidate_image != '' }}
         run: |
           set -euo pipefail
           # --c-compat for the C side: it skips the setup commands and queries the
           # C engine does not implement (UDFs are Rust-only) instead of aborting.
-          COMPAT=""
-          if [ "$SIDE" = c ]; then COMPAT="--c-compat"; fi
+          flags=()
+          if [ "$SIDE" = c ]; then flags+=(--c-compat); fi
+          # A call (the gate) records the queries that did not answer instead of
+          # failing on them: `bench cov-gate` judges them on both sides.
+          if [ "$GATE" = true ]; then flags+=(--failed-out "/w/failed-$SIDE.json"); fi
           docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
-            bench measure $COMPAT --module /w/module.so --out "/w/full-$SIDE.csv" \
+            bench measure "${flags[@]}" --module /w/module.so --out "/w/full-$SIDE.csv" \
             2>&1 | tee "measure-$SIDE.log" | tail -30
           grep -c SKIPPED "measure-$SIDE.log" \
             | sed 's/^/queries the engine skipped: /' || true
@@ -338,6 +470,7 @@ jobs:
           path: |
             full-${{ matrix.side }}.csv
             measure-${{ matrix.side }}.log
+            failed-${{ matrix.side }}.json
           retention-days: 7
 
   # Deterministic instruction counts, PR vs base.
@@ -375,6 +508,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -385,6 +520,9 @@ jobs:
 
       - name: Resolve this side's image
         id: side
+        env:
+          PR_IMAGE: ${{ needs.preflight.outputs.pr_image }}
+          BASE_IMAGE: ${{ needs.preflight.outputs.base_image }}
         run: |
           set -euo pipefail
           case "${{ matrix.side }}" in
@@ -437,6 +575,8 @@ jobs:
   # so it costs no extra wall-clock.
   coverage:
     needs: preflight
+    # Not for a call (the gate): it builds the caller's tree, and is no perf gate.
+    if: inputs.candidate_image == ''
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -446,6 +586,8 @@ jobs:
       # Without them it panics "deps/GraphBLAS is empty" before any query runs.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
           submodules: recursive
 
@@ -513,6 +655,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
 
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -525,6 +669,8 @@ jobs:
         with:
           path: art
           merge-multiple: true
+          # A call shares the caller's run, which holds rust-pr.yml's artifacts too.
+          pattern: ${{ inputs.candidate_image != '' && '{provenance,measure-*,callgrind-*}' || '' }}
 
       - name: Build the comment
         id: build
@@ -559,6 +705,8 @@ jobs:
       # PR in near-identical comments. Paginated: a PR with more than one page of
       # comments would miss the marker and post a duplicate every run.
       - name: Post or update the PR comment
+        # A call from a push (an acceptance run) has no pull request.
+        if: github.event.pull_request.number != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -579,9 +727,51 @@ jobs:
       # reading means the comment above has no gate in it. A missing C column is
       # deliberately NOT a failure. Neither of these gates on a delta — deciding
       # whether a ratio is acceptable belongs to whoever reads the comment.
+      # The release gate (a call): the PR-vs-base reading as a result.json, and
+      # the decision on it. Errors are never waived: a side that did not arrive
+      # fails it, and a re-run clears an infrastructure failure.
+      - name: Judge the reading (release gate)
+        if: inputs.candidate_image != ''
+        env:
+          BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
+          PR_IMAGE: ${{ needs.preflight.outputs.pr_image }}
+          BASE_IMAGE: ${{ needs.preflight.outputs.base_image }}
+          PR_LABEL: ${{ needs.preflight.outputs.pr_label }}
+          BASE_LABEL: ${{ needs.preflight.outputs.base_label }}
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
+            bench cov-gate --mode queue --out out \
+              --candidate "$PR_IMAGE" --candidate-label "$PR_LABEL" \
+              --baseline "$BASE_IMAGE" --baseline-label "$BASE_LABEL" \
+              --measure-pr art/full-pr.csv --measure-base art/full-base.csv \
+              --callgrind-pr 'art/cg-pr-*.csv' --callgrind-base 'art/cg-base-*.csv' \
+              --failed-pr art/failed-pr.json --failed-base art/failed-base.json \
+              --unfinished-out out/unfinished.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && inputs.candidate_image != '' }}
+        with:
+          name: perf-result-benchmark-cov
+          path: out/
+          overwrite: true
+
+      - name: Fail the gate unless every regression is waived
+        if: inputs.candidate_image != ''
+        env:
+          BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
+        run: |
+          set -euo pipefail
+          yq -o=json '.' bench/waivers.yaml > waivers.json
+          docker run --rm -v "$PWD:/w" -w /w "$BENCH_IMAGE" \
+            bench nightly merge conclude --gate --result out/result.json --waivers waivers.json \
+              --unfinished out/unfinished.json
+
       - name: Fail if the reading or coverage did not come through
         env:
           BENCH_IMAGE: ${{ needs.preflight.outputs.bench_image }}
+          # A call runs no coverage.
+          COVERAGE: ${{ inputs.candidate_image != '' && 'success' || needs.coverage.result }}
         run: |
           set -euo pipefail
           # Distinguish "the render itself blew up" from "a required side was
@@ -603,7 +793,7 @@ jobs:
             echo "::error::a side required for the PR-vs-base reading is missing — see the comment and the measure/callgrind job logs."
             exit 1
           fi
-          if [ "${{ needs.coverage.result }}" != "success" ]; then
-            echo "::error::coverage=${{ needs.coverage.result }} — the query set no longer runs clean."
+          if [ "$COVERAGE" != "success" ]; then
+            echo "::error::coverage=$COVERAGE — the query set no longer runs clean."
             exit 1
           fi

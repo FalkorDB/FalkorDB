@@ -39,6 +39,7 @@
 #![allow(clippy::too_many_lines)]
 
 mod allocator;
+mod banner;
 mod commands;
 mod config;
 mod dispatch;

@@ -51,8 +51,7 @@ That criterion ignores writes. Since 2026-10-20, `PushPlan.lean` also gives the 
 
 **4. Is the id seek exact?**
 
-- **For integer bounds in `[0, 2⁶³)`, yes.** `idFilter_correct` proves a node is in the seek range iff it satisfies every comparison, and `step_no_wrap` that the `+1`/`-1` adjustments never overflow.
-- **Outside that range, no.** `id(n) > -1` returns 0 rows (C: all of them) because the bound is cast `as u64` (`id_gt_neg_empty`). `id(n) = null` raises "Node ID must be an integer" where C returns 0 rows (`id_eq_null_errors`).
+- **Yes, for every bound** (since #3017). `idFilter_correct` proves a node is in the seek range iff it satisfies every comparison, for any integer bound (negative ones included: `id(n) > -1` keeps every node, `id_gt_neg_all`; `id(n) <= -1` none, `id_le_neg_none`, where C returns every node, #2266), and `step_no_wrap` that the `+1`/`-1` adjustments never saturate and the range only narrows. A non-integer bound matches nothing (`idFilter_nonint`, `id_eq_null_empty`). Float bounds are proved in [`../optimizer_scan`](../optimizer_scan) (`IdSeek.seek_sound`).
 
 **5. Does the hash join return the same rows as the filter it replaces?**
 
@@ -87,7 +86,7 @@ Several passes collapse an edge, a bound edge or a variable-length path when nob
 | `flat_passes` | Rebuilding a filter with `and_of` gives the same verdict, errors included | `AndOf.lean` |
 | `refsNew_complete`, `refsNew_sound` | The "is this variable read?" oracle is exact per operator | `References.lean` |
 | `fuse_unread_sound` | Fusion's whole-plan check sees every reader | `References2.lean` |
-| `idFilter_correct`, `step_no_wrap` | The id seek is exact for integer bounds in `[0, 2⁶³)` | `Passes.lean` |
+| `idFilter_correct`, `step_no_wrap`, `idFilter_nonint` | The id seek is exact for every integer bound; a non-integer one matches nothing | `Passes.lean` |
 | `vhj_correct` | The hash join equals Filter(=) over CP when key equality is `=` | `Passes.lean` |
 | `fuse_same_support`, `fuse_optional_correct` | Traversal fusion keeps the rows | `Passes.lean` |
 | `reorder_preserves`, `reduce_count_correct` | `reorder_labels` and `reduce_count` are exact | `Passes.lean` |
@@ -111,8 +110,6 @@ Each bug has a Rust repro (`cargo test -p graph --test lean_optimizer_rewrites`,
 | # | Theorem (counterexample) | What it means | Status |
 |---|---|---|---|
 | 1 | `limit_skip_not_excluded`, `limit_not_transparent`, `skip_not_transparent` | A filter is pushed below LIMIT/SKIP: `… ORDER BY n.v LIMIT 2 MATCH (m:N) WHERE n.v > 1 RETURN count(*)` → 10 (openCypher 5) | **Open**, shared with C |
-| 3 (W2-rewrites-2) | `id_gt_neg_empty`, `id_le_neg_all` | `id(n) > -1` → 0 rows (C: 5); `id(n) <= -1` returns every node on both (#2266) | **Open** |
-| 4 (W2-rewrites-2) | `id_eq_null_errors` | `id(n) = null`, `= 1.0`, `> 1.5` → "Node ID must be an integer" (C: 0 rows) | **Open** |
 | 5 (W2-rewrites-3) | `hash_join_drops_row` | The hash join drops Int/Float pairs near 2⁵³: 2 rows where C gives 4 | **Open** |
 | 7 | `main_misses_call_sibling`, `refsNew_misses_sibling_edges` | An edge read outside the traverse's ancestors is collapsed (#2896, W2-traverse-1) | **Open** (PR #2918 not merged) |
 | #2556 | `bug2556_filter_below_binding`, `bug2556_t_seeded`, `bug2556_plan` (property `KeepsFiltersBound`) | `… WITH collect(x) AS fs UNWIND fs AS f MATCH (f)<-[:HAS_CREATOR]-(post:Post), (post)-[:HAS_TAG]->(t:Tag {id:100}), (post)-[:HAS_TAG]->(tag:Tag) RETURN count(post)`: `select_scan_node` picks `t` as the best endpoint, seeds it into `initial_bound` although the outer `Unwind` child is kept and no scan for `t` is built, and places `t.id = 100` after the first hop, before `t` is bound. Rust 0, C 3 (the issue's query: a type error). Not `push_filters_down` (`bug2556_push_not_cause`); `bug2556_fixed` gives the C plan | **Open** |
@@ -136,21 +133,22 @@ Shared with C, not Rust regressions: `reduce_count` bakes the count at plan time
 | `Sequence.lean` | `optimize` sequencing, the tree rebuilds (`rebuild_with_hash_joins`), edge-filter absorption |
 | `CallBoundary.lean` | Push-down across the `CALL {}` entry projection (namespace `Pr2845`): the Case-2 walk stops at a two-child `Optional` (#3281) |
 | `PushPlan.lean` | Gap closed 2026-10-20: push-down on a plan tree with graph writes (only creating a bare node, which bumps the node count; labels, relationships and attributes are not written) and main's id-only routing; `EffectSound` (rows and node count kept), `RowSound`. Also `select_scan_node`'s chain rebuild and `KeepsFiltersBound` (#2556) |
+| `IndexSeek.lean` | `replace_cartesian_with_index_seek` (#3889): the `UNWIND range(..)` row estimate `unwound_len` (`rangeEst_exact`, `rangeEst_upper`) |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
 The project has no Lake dependencies.
 
 ## Coverage
 
-`COVERAGE.tsv` has 80 function rows:
+`COVERAGE.tsv` has 91 function rows:
 
 | Bucket | Rows |
 |---|---|
-| PROVEN | 38 |
-| NOT COVERED | 42 |
+| PROVEN | 40 |
+| NOT COVERED | 51 |
 
 - **PROVEN:** every production function in the optimizer files this project owns. The five planner helpers in `optimizer/mod.rs` added by the var-length anchor change (#2558: `collect_expr_scoped_variables`, `collect_single_variable_conjuncts`, `walk`, `endpoint_scan_score`, `walk_scans_to_endpoint`) are proven in `planner_build` (`Anchor.lean`), next to the `plan_match` model that uses them.
-- **NOT COVERED:** all test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them.
+- **NOT COVERED:** the plan rewrite of `replace_cartesian_with_index_seek.rs` (#3889: `try_seek_rewrite` and its helpers; only `unwound_len` is proven, `IndexSeek.lean`), and test or benchmark code. 16 rows are `#[cfg(test)]` plan-shape unit tests in `reduce_bound_edge.rs` and `reduce_var_len_path.rs`. 26 rows are the GraphBLAS `*_bench.rs` harnesses, listed here only so `bash proofs/coverage.sh` can exclude them.
 
 ## Open PRs touching these files
 

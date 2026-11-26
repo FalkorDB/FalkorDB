@@ -1084,3 +1084,74 @@ class testAllShortestPaths():
         self.env.assertEqual(sp("weightProp: 'weight', costProp: 'cost', pathCount: 0"), [[2, 3]])
         # without a costProp the cost stays 0
         self.env.assertEqual(sp("weightProp: 'weight'"), [[2, 0]])
+
+    def test25_unit_weight_sp_matches_shortest_path(self):
+        # Without weightProp every edge weighs 1, and SPpaths takes a BFS route.
+        # On every pair of the random graph, its single path must be as short
+        # as shortestPath()'s, and be a real walk in the requested direction.
+        patterns = {'outgoing': "-[:E*]->", 'incoming': "<-[:E*]-", 'both': "-[:E*]-"}
+        for direction, pattern in patterns.items():
+            for x in range(1, NODES + 1):
+                for y in range(1, NODES + 1):
+                    if x == y:
+                        continue
+                    sp = self.graph.query(f"""
+                        MATCH (a:L {{v: {x}}}), (b:L {{v: {y}}})
+                        CALL algo.SPpaths({{sourceNode: a, targetNode: b, relTypes: ['E'],
+                                           relDirection: '{direction}'}})
+                        YIELD path, pathWeight, pathCost
+                        RETURN length(path), pathWeight, pathCost,
+                               [n IN nodes(path) | n.v],
+                               [r IN relationships(path) | [startNode(r).v, endNode(r).v]]""").result_set
+                    expected = self.graph.query(f"""
+                        MATCH (a:L {{v: {x}}}), (b:L {{v: {y}}})
+                        WITH shortestPath((a){pattern}(b)) AS p
+                        WHERE p IS NOT NULL
+                        RETURN length(p)""").result_set
+                    if not expected:
+                        self.env.assertEqual(sp, [])
+                        continue
+                    self.env.assertEqual(len(sp), 1)
+                    length, weight, cost, nodes, rels = sp[0]
+                    self.env.assertEqual(length, expected[0][0])
+                    self.env.assertEqual(weight, length)
+                    self.env.assertEqual(cost, 0)
+                    self.env.assertEqual(nodes[0], x)
+                    self.env.assertEqual(nodes[-1], y)
+                    for (u, v), (s, d) in zip(zip(nodes, nodes[1:]), rels):
+                        if direction == 'outgoing':
+                            self.env.assertEqual((s, d), (u, v))
+                        elif direction == 'incoming':
+                            self.env.assertEqual((s, d), (v, u))
+                        else:
+                            self.env.assertIn((s, d), [(u, v), (v, u)])
+
+    def test26_unit_weight_sp_past_a_hub(self):
+        # The unit-weight search grows the side with less to inspect. Here the
+        # target is a hub with thousands of unrelated in-edges (more than the
+        # degree probe counts), so the search has to go around it from the
+        # source; either way the answer is the 3-hop path, and a dead end and
+        # the hub's leaves are not on it.
+        g = self.db.select_graph("sp_hub")
+        g.query("""CREATE (s:N {id: 0})-[:E]->(:N {id: 1})-[:E]->(:N {id: 2})-[:E]->(t:N {id: 3}),
+                          (s)-[:E]->(:N {id: 4})""")
+        g.query("MATCH (t:N {id: 3}) UNWIND range(1, 3000) AS i CREATE (:Leaf)-[:E]->(t)")
+
+        for direction, (src, dst), expected in (
+                ('outgoing', (0, 3), [0, 1, 2, 3]),
+                ('incoming', (3, 0), [3, 2, 1, 0]),
+                ('both', (0, 3), [0, 1, 2, 3])):
+            result = g.query(f"""
+                MATCH (a:N {{id: {src}}}), (b:N {{id: {dst}}})
+                CALL algo.SPpaths({{sourceNode: a, targetNode: b, relTypes: ['E'],
+                                   relDirection: '{direction}'}})
+                YIELD path, pathWeight
+                RETURN [n IN nodes(path) | n.id], pathWeight""").result_set
+            self.env.assertEqual(result, [[expected, 3]])
+
+        # a leaf reaches the hub in one hop, never the source
+        result = g.query("""
+            MATCH (l:Leaf) WITH l LIMIT 1 MATCH (s:N {id: 0})
+            CALL algo.SPpaths({sourceNode: l, targetNode: s, relTypes: ['E']})
+            YIELD path RETURN length(path)""").result_set
+        self.env.assertEqual(result, [])

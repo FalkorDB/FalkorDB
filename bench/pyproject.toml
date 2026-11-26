@@ -11,15 +11,19 @@
 name = "falkorbench"
 version = "0.1.0"
 description = "Per-query performance harness for FalkorDB"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 
 dependencies = [
     # The FalkorDB client, not raw redis-py: `Graph.query` raises on an error
     # reply, which is what replaces the old `"execution time" not in out`
-    # substring check on redis-cli's stdout. redis-py still arrives as a
-    # transitive dependency and `db.connection` exposes it for the raw
-    # commands (INFO, MEMORY MALLOC-STATS, DEBUG RELOAD, GRAPH.CONSTRAINT).
-    "falkordb>=1.0.9",
+    # substring check on redis-cli's stdout. `db.connection` exposes its
+    # redis-py for the raw commands (INFO, MEMORY MALLOC-STATS, DEBUG RELOAD,
+    # GRAPH.CONSTRAINT).
+    "falkordb>=1.8.2",
+    # The one redis-py of the perf toolset (falkordb's), bounded like
+    # tests/requirements.txt (see the note there). redis-py 8 changed the retry
+    # defaults: a client that must never retry says so explicitly.
+    "redis>=8.0,<8.2",
     "click>=8.1",
 ]
 
@@ -30,6 +34,20 @@ bench = "falkorbench.cli:cli"
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    # acceptance.yaml, read by the contract tests
+    "pyyaml>=6.0.4",
+]
+# `uv run --project bench --group soak bench soak`
+soak = [
+    "psutil>=7.1.3",
+    "numpy>=2.3.5",
+]
+# `uv run --project bench --group fuzz bench fuzz`: the soak's kit (soakkit), and
+# hiredis, because the full scan returns ~100k rows and the pure-Python reply
+# parser would add seconds to each (redis-py 8.1 ignores a hiredis before 3.2)
+fuzz = [
+    { include-group = "soak" },
+    "hiredis>=3.2.0",
 ]
 
 [build-system]
@@ -42,12 +60,29 @@ packages = ["src/falkorbench"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+# The release soak's scenarios, kit and report tools came with their author's
+# history and style; lint and format leave them as written. soak/check.py and
+# its tests are checked like the rest.
+extend-exclude = [
+    "src/falkorbench/soak/scenarios",
+    "src/falkorbench/soak/soakkit.py",
+    "src/falkorbench/soak/gen_final.py",
+    "src/falkorbench/soak/gen_live.py",
+    "src/falkorbench/soak/score.py",
+]
 
 [tool.ruff.format]
 # queries.py is a data table whose columns are hand-aligned so a reader can scan
 # name/write/cypher down the page. The formatter would explode each multi-value
 # literal onto its own line and destroy that. The linter still checks it.
-exclude = ["src/falkorbench/queries.py"]
+# The contract's files came from tests/perf/ with their history; their case
+# tables are one case per line, and formatting would rewrite most lines.
+exclude = [
+    "src/falkorbench/queries.py",
+    "src/falkorbench/contract.py",
+    "tests/fixtures/examples.py",
+    "tests/test_contract.py",
+]
 
 [tool.ruff.lint]
 select = [

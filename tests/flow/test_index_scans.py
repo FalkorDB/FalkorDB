@@ -1456,6 +1456,144 @@ class testIndexScanFlow():
 
         g.delete()
 
+    def test_45_unwind_then_match_on_indexed_property_seeks_per_row(self):
+        # `UNWIND .. MATCH (s ..) MATCH (p:L {k: e.x})`: the second MATCH is
+        # joined to the first one by an inline property only. It used to become
+        # a Value Hash Join over a scan of the whole label (#3887), whose cost
+        # grows with the label however few rows the UNWIND produces. With an
+        # index on `k` and a small outer side each row seeks the index; a bulk
+        # batch keeps the hash join, which reads the label once.
+        g = self.db.select_graph('unwind_match_seek')
+        g.create_node_range_index('Sensor', 'id')
+        g.create_node_range_index('Reading', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 9) AS i CREATE (:Sensor {id: i})")
+        g.query("UNWIND range(0, 1999) AS i CREATE (:Reading {ts: i, nts: i})")
+        # a duplicate key, so a seek has to return every match
+        g.query("CREATE (:Reading {ts: 5, nts: 5})")
+
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}, {sid: 3, pts: 99999}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {ts: e.pts}) "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        plan = str(g.explain(q))
+        self.env.assertEqual(plan.count('Node By Index Scan'), 2)
+        self.env.assertNotContains('Value Hash Join', plan)
+        self.env.assertNotContains('Label Scan', plan)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5], [2, 7]])
+
+        # a WHERE conjunct that reads the outer row too
+        q = ("UNWIND [{sid: 1, pts: 5, k: 5}, {sid: 2, pts: 7, k: 8}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {ts: e.pts}) WHERE p.nts = e.k "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertNotContains('Value Hash Join', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5]])
+
+        # many outer rows against a small label: one scan beats a lookup per row
+        q = ("UNWIND range(0, 999) AS i MATCH (s:Sensor {id: i % 10}) "
+             "MATCH (p:Reading {ts: i}) RETURN count(*)")
+        self.env.assertContains('Value Hash Join', str(g.explain(q)))
+        self.env.assertEqual(g.query(q).result_set, [[1001]])
+
+        # no index on the joined property: only the hash join reads the label once
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading {nts: e.pts}) "
+             "RETURN s.id, p.nts ORDER BY s.id")
+        plan = str(g.explain(q))
+        self.env.assertContains('Value Hash Join', plan)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [1, 5], [2, 7]])
+
+        # the later MATCH is a separate isomorphism scope (#2923): `p` may be `s`'s twin
+        q = ("UNWIND [5] AS x MATCH (a:Reading {ts: x}) MATCH (b:Reading {ts: x}) "
+             "RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[4]])
+
+        g.delete()
+
+    def test_45a_unwind_then_match_seek_keeps_guards_and_unsafe_keys_out(self):
+        # The per-row seek of `test_45` only takes what an index can serve
+        # from the outer row. Everything else about the join stays where the
+        # hash-join plan evaluated it.
+        g = self.db.select_graph('unwind_match_seek_guards')
+        g.create_node_range_index('Sensor', 'id')
+        g.create_node_range_index('Reading', 'ts')
+        g.create_node_range_index('A', 'a')
+        g.create_node_range_index('B', 'b')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 9) AS i CREATE (:Sensor {id: i})")
+        g.query("UNWIND range(0, 1999) AS i CREATE (:Reading {ts: i, nts: i})")
+        g.query("CREATE (:A:B {a: 1, b: 2}), (:A {a: 1}), (:B {b: 2})")
+
+        # A guard on the scanned node runs before a conjunct that would fail
+        # without it: node ts=0 has nts=0, and `10 / 0` is an error.
+        q = ("UNWIND [{sid: 1, pts: 0, q: 10}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts AND p.nts <> 0 AND e.q / p.nts > 0 RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+
+        # A key that reads the scanned node cannot be evaluated before the scan.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts + id(p) * 0 RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # A key that is not deterministic would be evaluated twice.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts + toInteger(rand() * 0) RETURN s.id, p.ts ORDER BY s.id")
+        # only `s` is read from an index
+        self.env.assertEqual(str(g.explain(q)).count('Node By Index Scan'), 1)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # A filter on the scanned branch that is not deterministic runs per
+        # outer row after the rewrite, so the branch is left alone.
+        q = ("UNWIND [{sid: 1, pts: 5}, {sid: 2, pts: 7}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:Reading) "
+             "WHERE p.ts = e.pts AND p.nts + toInteger(rand() * 0) >= 0 "
+             "RETURN s.id, p.ts ORDER BY s.id")
+        self.env.assertEqual(str(g.explain(q)).count('Node By Index Scan'), 1)
+        self.env.assertEqual(g.query(q).result_set, [[1, 5], [2, 7]])
+
+        # Two conjuncts served by indexes of different labels: one lookup can
+        # use only one of them, and the other must still be checked.
+        q = ("UNWIND [{sid: 1, a: 1, b: 2}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:A:B) "
+             "WHERE p.a = e.a AND p.b = e.b RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+
+        # A disjunction whose branches need different labels' indexes.
+        q = ("UNWIND [{sid: 1, a: 9, b: 2}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:A:B) "
+             "WHERE p.a = e.a OR p.b = e.b RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[1]])
+
+        # A range key that can fail stays behind the scanned branch's guard:
+        # every `G` node is rejected by `p.nts <> 0`, so `e.q / e.d` never runs.
+        g.create_node_range_index('G', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 599) AS i CREATE (:G {ts: i, nts: 0})")
+        q = ("UNWIND [{sid: 1, q: 5, d: 0}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:G) "
+             "WHERE p.nts <> 0 AND p.ts > e.q / e.d RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+        # Arithmetic can fail too: `'x' * 1` is a type error.
+        q = ("UNWIND [{sid: 1, w: 'x'}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:G) "
+             "WHERE p.nts <> 0 AND p.ts > e.w * 1 RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[0]])
+
+        # A disjunction is evaluated whole by the index query, so a failing
+        # disjunct is not moved: every `H` node matches the first disjunct,
+        # which short-circuits the division.
+        g.create_node_range_index('H', 'ts')
+        wait_for_indices_to_sync(g)
+        g.query("UNWIND range(0, 599) AS i CREATE (:H {ts: 1})")
+        q = ("UNWIND [{sid: 1, pts: 1, q: 5, d: 0}] AS e "
+             "MATCH (s:Sensor {id: e.sid}) MATCH (p:H) "
+             "WHERE p.ts = e.pts OR p.ts > e.q / e.d RETURN count(*)")
+        self.env.assertEqual(g.query(q).result_set, [[600]])
+
+        g.delete()
+
     def test_36_scalar_array_scalar_round_trip(self):
         # A property changing kind — scalar -> array -> scalar — must re-index
         # cleanly each time.

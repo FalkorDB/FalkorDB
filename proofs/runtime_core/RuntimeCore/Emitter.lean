@@ -4,7 +4,7 @@
 | here | there |
 | --- | --- |
 | `RowIter`, `RowIter.next` | `RowIter::{One,Spread,Many}`, `Iterator for RowIter`, `ops/batched_result_emitter.rs` |
-| `St`                      | `BatchedResultEmitter { batch, pending, cursor, pack_ceiling }`; `rows` = the batch's active rows from `cursor` on |
+| `St`                      | `BatchedResultEmitter { batch, pending, cursor, pack_ceiling }`; `rows` = the batch's active rows from `cursor` on; `seeded` = `batch.is_some()` |
 | `initCeiling`             | `with_binding` |
 | `refill`                  | `refill_from_cursor` |
 | `drain`                   | `drain_pending_entry` |
@@ -17,6 +17,13 @@ Abstractions. Output batches are the list of `(parent_row, item)` pairs that
 item `i`); the typed-lane `GatherItem` impls are not modelled. The per-row closure `f` is
 pure (its `Err` short-circuit is not modelled). `emit_lazy`'s `while` loop is given fuel
 `2·|rows| + 2`, which `loop_progress` shows is always enough.
+
+`emit_lazy` returns `None` early, without growing the ceiling, when no batch is
+installed (`batch.is_none()`). Every reachable unseeded emitter has nothing queued
+(`Wf`: `with_binding` and `reset` clear `pending`, and `rows` is the absent batch's
+empty row list), so `emit` tests `unprimed` = no batch ∧ nothing queued, which equals
+`batch.is_none()` on every `Wf` state (`unprimed_iff`, `wf_init`, `wf_emit`,
+`wf_seed`, `wf_reset`).
 -/
 namespace RuntimeCore.Emitter
 
@@ -59,6 +66,7 @@ structure St (β : Type) where
   rows : List Nat
   pending : Option (Nat × RowIter β)
   ceiling : Nat
+  seeded : Bool
 
 /-- `with_binding`: `record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE))`.
 The clamp form computes exactly what a guarded arm would
@@ -108,8 +116,13 @@ def loop (f : Nat → Option (RowIter β)) (ceil : Nat) :
           { s with pending := d.2.map (fun it => (r, it)) }
     else (acc, s)
 
-/-- `emit_lazy`: pack, double the ceiling, `None` when nothing was packed. -/
+/-- No batch installed (and so, on `Wf` states, nothing queued). -/
+def unprimed (s : St β) : Bool := !s.seeded && s.rows.isEmpty && s.pending.isNone
+
+/-- `emit_lazy`: `None` with the ceiling untouched when no batch is installed (the
+operator's priming call); else pack, double the ceiling, `None` when nothing was packed. -/
 def emit (f : Nat → Option (RowIter β)) (s : St β) : Option (List (Nat × β)) × St β :=
+  if unprimed s then (none, s) else
   let r := loop f s.ceiling (2 * s.rows.length + 2) 0 [] s
   let s' := { r.2 with ceiling := min (s.ceiling * 2) BATCH_SIZE }
   (if r.1 = [] then none else some r.1, s')
@@ -117,10 +130,20 @@ def emit (f : Nat → Option (RowIter β)) (s : St β) : Option (List (Nat × β
 /-- `seed` installs a new parent batch and resets the cursor; `pending` is
 left alone (the Rust `debug_assert!`s it is empty — `emit_none_pending` shows the
 remaining work there is empty whenever `seed` is called). -/
-def seed (s : St β) (rows : List Nat) : St β := { s with rows := rows }
+def seed (s : St β) (rows : List Nat) : St β := { s with rows := rows, seeded := true }
 
 /-- `reset`. -/
-def reset (s : St β) : St β := { s with rows := [], pending := none }
+def reset (s : St β) : St β := { s with rows := [], pending := none, seeded := false }
+
+/-- A freshly constructed emitter (`with_binding`): no batch, nothing pending. -/
+def init (cap : Option Nat) : St β := ⟨[], none, initCeiling cap, false⟩
+
+/-- Reachable states: no batch installed ⇒ nothing queued. -/
+def Wf (s : St β) : Prop := s.seeded = false → s.rows = [] ∧ s.pending = none
+
+theorem unprimed_iff (s : St β) (h : Wf s) : unprimed s = true ↔ s.seeded = false := by
+  unfold unprimed Wf at *
+  cases hs : s.seeded <;> simp_all
 
 /-! ### What is left to emit -/
 
@@ -339,14 +362,32 @@ theorem loop_progress (f : Nat → Option (RowIter β)) (ceil : Nat) :
 
 /-! ### One `emit_lazy` call -/
 
+theorem emit_primed (f : Nat → Option (RowIter β)) (s : St β) (hu : ¬unprimed s = true) :
+    emit f s =
+      ((if (loop f s.ceiling (2 * s.rows.length + 2) 0 [] s).1 = [] then none
+        else some (loop f s.ceiling (2 * s.rows.length + 2) 0 [] s).1),
+       { (loop f s.ceiling (2 * s.rows.length + 2) 0 [] s).2 with
+         ceiling := min (s.ceiling * 2) BATCH_SIZE }) := by
+  unfold emit
+  split
+  · contradiction
+  · rfl
+
 theorem emit_inv (f : Nat → Option (RowIter β)) (s : St β) :
     ((emit f s).1.getD []) ++ remaining f (emit f s).2 = remaining f s := by
+  by_cases hu : unprimed s = true
+  · simp [emit, hu]
   have h := loop_inv f s.ceiling (2 * s.rows.length + 2) 0 [] s
   simp only [List.nil_append] at h
-  simp only [emit]
+  rw [emit_primed f s hu]
   split
   · next he => rw [he] at h; simpa [remaining] using h
   · simpa [remaining] using h
+
+theorem unprimed_remaining (f : Nat → Option (RowIter β)) (s : St β) (hu : unprimed s = true) :
+    remaining f s = [] := by
+  unfold unprimed at hu
+  cases hp : s.pending <;> cases hr : s.rows <;> simp_all [remaining, pendOut, flatRows]
 
 /-- **PROVEN**: `emit_lazy` returns `None` only when nothing is left to emit (given a
 ceiling ≥ 1, which `with_binding` guarantees — `initCeiling_pos`). -/
@@ -355,22 +396,28 @@ theorem emit_none_remaining (f : Nat → Option (RowIter β)) (s : St β) (hc : 
   have hinv := emit_inv f s
   simp only [h, Option.getD_none, List.nil_append] at hinv
   have hs : remaining f s = [] := by
+    by_cases hu : unprimed s = true
+    · exact unprimed_remaining f s hu
     apply Classical.byContradiction; intro hne
     obtain ⟨y, ys, hy⟩ := loop_progress f s.ceiling (2 * s.rows.length + 2) 0 [] s hc hne
       (by simp [fuelNeed]; split <;> omega)
-    simp only [emit] at h
-    rw [hy] at h
+    rw [emit_primed f s hu] at h
+    simp only [hy] at h
     simp at h
   exact ⟨hs, by rw [hinv]; exact hs⟩
 
 theorem emit_some_ne (f : Nat → Option (RowIter β)) (s : St β) (out : List (Nat × β))
     (h : (emit f s).1 = some out) : out ≠ [] := by
-  simp only [emit] at h; split at h <;> simp_all
+  by_cases hu : unprimed s = true
+  · simp [emit, hu] at h
+  rw [emit_primed f s hu] at h; split at h <;> simp_all
 
 /-- **PROVEN**: every packed batch holds at most the current ceiling (≤ `BATCH_SIZE`). -/
 theorem emit_len (f : Nat → Option (RowIter β)) (s : St β) (out : List (Nat × β))
     (h : (emit f s).1 = some out) : out.length ≤ s.ceiling := by
-  simp only [emit] at h; split at h
+  by_cases hu : unprimed s = true
+  · simp [emit, hu] at h
+  rw [emit_primed f s hu] at h; split at h
   · simp at h
   · simp at h; subst h
     exact loop_len f s.ceiling _ 0 [] s rfl (Nat.zero_le _)
@@ -380,13 +427,60 @@ theorem initCeiling_pos (c : Option Nat) : 1 ≤ initCeiling c ∧ initCeiling c
   | none => simp [initCeiling, BATCH_SIZE]
   | some c => simp only [initCeiling, BATCH_SIZE]; omega
 
-/-- **PROVEN** (ceiling schedule): the ceiling stays in `[1, BATCH_SIZE]` and doubles. -/
-theorem emit_ceiling (f : Nat → Option (RowIter β)) (s : St β) :
-    (emit f s).2.ceiling = min (s.ceiling * 2) BATCH_SIZE := rfl
+/-- **PROVEN** (ceiling schedule): once a batch is installed, the ceiling doubles. -/
+theorem emit_ceiling (f : Nat → Option (RowIter β)) (s : St β) (hs : s.seeded = true) :
+    (emit f s).2.ceiling = min (s.ceiling * 2) BATCH_SIZE := by
+  simp [emit, unprimed, hs]
+
+/-- **PROVEN** (PR #4014): the priming `emit_lazy`, before any batch is installed,
+returns `None` and leaves the state (so the ceiling) untouched. -/
+theorem emit_unseeded (f : Nat → Option (RowIter β)) (s : St β) (hw : Wf s)
+    (hs : s.seeded = false) : emit f s = (none, s) := by
+  simp [emit, (unprimed_iff s hw).2 hs]
 
 theorem ceiling_bounds (c : Nat) (h1 : 1 ≤ c) (h2 : c ≤ BATCH_SIZE) :
     1 ≤ min (c * 2) BATCH_SIZE ∧ min (c * 2) BATCH_SIZE ≤ BATCH_SIZE := by
   simp [BATCH_SIZE] at *; omega
+
+theorem loop_seeded (f : Nat → Option (RowIter β)) (ceil : Nat) :
+    ∀ (fuel count : Nat) (acc : List (Nat × β)) (s : St β),
+      (loop f ceil fuel count acc s).2.seeded = s.seeded
+  | 0, _, _, _ => rfl
+  | fuel + 1, count, acc, s => by
+    simp only [loop]
+    split
+    · split
+      · split
+        · rfl
+        · rw [loop_seeded]
+      · rw [loop_seeded]
+    · rfl
+
+/-- The ceiling stays in `[1, BATCH_SIZE]` across any `emit_lazy`. -/
+theorem emit_ceiling_bounds (f : Nat → Option (RowIter β)) (s : St β)
+    (h1 : 1 ≤ s.ceiling) (h2 : s.ceiling ≤ BATCH_SIZE) :
+    1 ≤ (emit f s).2.ceiling ∧ (emit f s).2.ceiling ≤ BATCH_SIZE := by
+  by_cases hu : unprimed s = true
+  · simp [emit, hu]; exact ⟨h1, h2⟩
+  · rw [emit_primed f s hu]; exact ceiling_bounds s.ceiling h1 h2
+
+theorem wf_init (cap : Option Nat) : Wf (init cap : St β) := by simp [Wf, init]
+
+theorem wf_seed (s : St β) (b : List Nat) : Wf (seed s b) := by simp [Wf, seed]
+
+theorem wf_reset (s : St β) : Wf (reset s) := by simp [Wf, reset]
+
+theorem wf_emit (f : Nat → Option (RowIter β)) (s : St β) (h : Wf s) : Wf (emit f s).2 := by
+  by_cases hu : unprimed s = true
+  · simp [emit, hu]; exact h
+  · have hs : s.seeded = true := by
+      cases hs : s.seeded
+      · exact absurd ((unprimed_iff s h).2 hs) hu
+      · rfl
+    rw [emit_primed f s hu]
+    simp only [Wf]
+    intro h'
+    simp [loop_seeded, hs] at h'
 
 /-! ### The operator's pull loop over all child batches -/
 
@@ -421,15 +515,15 @@ theorem drive_flatten (f : Nat → Option (RowIter β)) :
   | 0, _, _, _, _, h => by omega
   | fuel + 1, s, bs, h1, h2, hf => by
     have hinv := emit_inv f s
-    obtain ⟨c1, c2⟩ := ceiling_bounds s.ceiling h1 h2
+    obtain ⟨c1, c2⟩ := emit_ceiling_bounds f s h1 h2
     simp only [drive]
     split
     · next out s' he =>
       have hne := emit_some_ne f s out (by rw [he])
       rw [he] at hinv
       simp only [Option.getD_some] at hinv
-      have hc : s'.ceiling = min (s.ceiling * 2) BATCH_SIZE := by
-        have := emit_ceiling f s; rw [he] at this; exact this
+      have hc1 : 1 ≤ s'.ceiling := by rw [he] at c1; exact c1
+      have hc2 : s'.ceiling ≤ BATCH_SIZE := by rw [he] at c2; exact c2
       have hl : (remaining f s').length < (remaining f s).length := by
         rw [← hinv, List.length_append]
         have : out.length ≠ 0 := by simpa using hne
@@ -439,8 +533,8 @@ theorem drive_flatten (f : Nat → Option (RowIter β)) :
     · next s' he =>
       have hn := emit_none_remaining f s h1 (by rw [he])
       rw [he] at hn
-      have hc : s'.ceiling = min (s.ceiling * 2) BATCH_SIZE := by
-        have := emit_ceiling f s; rw [he] at this; exact this
+      have hc1 : 1 ≤ s'.ceiling := by rw [he] at c1; exact c1
+      have hc2 : s'.ceiling ≤ BATCH_SIZE := by rw [he] at c2; exact c2
       split
       · simp [hn.1, flatAll]
       · next b bs' =>
@@ -452,10 +546,19 @@ theorem drive_flatten (f : Nat → Option (RowIter β)) :
 /-- Corollary for a freshly constructed emitter fed batches `bs`. -/
 theorem fresh_drive (f : Nat → Option (RowIter β)) (cap : Option Nat) (bs : List (List Nat))
     (fuel : Nat) (hf : (flatAll f bs).length + bs.length + 1 ≤ fuel) :
-    (drive f fuel ⟨[], none, initCeiling cap⟩ bs).flatten = flatAll f bs := by
-  have := drive_flatten f fuel ⟨[], none, initCeiling cap⟩ bs (initCeiling_pos cap).1
-    (initCeiling_pos cap).2 (by simp [remaining, pendOut, flatRows]; omega)
-  simpa [remaining, pendOut, flatRows] using this
+    (drive f fuel (init cap) bs).flatten = flatAll f bs := by
+  have := drive_flatten f fuel (init cap) bs (initCeiling_pos cap).1
+    (initCeiling_pos cap).2 (by simp [remaining, pendOut, flatRows, init]; omega)
+  simpa [remaining, pendOut, flatRows, init] using this
+
+/-- **PROVEN** (PR #4014, `LIMIT` sizing): after the operator's priming `emit_lazy`, the
+first real batch a fresh emitter packs holds at most `initCeiling cap` rows — the
+`record_cap` hint, not twice it. -/
+theorem primed_first_batch (f : Nat → Option (RowIter β)) (cap : Option Nat) (b : List Nat)
+    (out : List (Nat × β)) (h : (emit f (seed (emit f (init cap)).2 b)).1 = some out) :
+    out.length ≤ initCeiling cap := by
+  rw [emit_unseeded f (init cap) (wf_init cap) rfl] at h
+  exact emit_len f _ out h
 
 /-- `reset` drops all queued work (`Apply` re-seeding cannot replay stale rows). -/
 theorem reset_remaining (f : Nat → Option (RowIter β)) (s : St β) :

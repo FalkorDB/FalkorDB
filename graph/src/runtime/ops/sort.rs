@@ -421,18 +421,29 @@ impl<'a> SortOp<'a> {
         let mut seq: u64 = 0;
         for batch_result in child {
             let batch = batch_result?;
-            for row in batch.active_indices() {
+            // A `var.attr` key over a node column is fetched for the whole
+            // batch in one bulk property read, instead of one interpreter call
+            // and one attribute lookup per row. Any other key shape stays on
+            // per-row eval below: `eval_batch` would only run that same per-row
+            // eval and then add a classify pass and a second `Value` rebuild.
+            let active: Vec<usize> = batch.active_indices().collect();
+            let eval = ExprEval::from_runtime(runtime);
+            let mut key_columns: SmallVec<[Option<(Column, NullBitmap)>; 2]> =
+                SmallVec::with_capacity(num_keys);
+            for (tree, _desc) in trees {
+                key_columns.push(eval.try_eval_batch_property(tree, &batch, &active)?);
+            }
+            for (pos, &row) in active.iter().enumerate() {
                 let view = BatchRow::new(&batch, row);
                 // Evaluate the keys first; the row is only materialised if it
                 // actually survives the limit (the common case rejects it).
                 let mut keys: SmallVec<[OrderedKey; 2]> = SmallVec::with_capacity(num_keys);
-                for (tree, desc) in trees {
-                    let value = ExprEval::from_runtime(runtime).eval(
-                        tree,
-                        tree.root().idx(),
-                        Some(&view),
-                        None,
-                    )?;
+                for ((tree, desc), column) in trees.iter().zip(&key_columns) {
+                    let value = match column {
+                        Some((_, nulls)) if nulls.is_null(pos) => Value::Null,
+                        Some((col, _)) => col.get(pos),
+                        None => eval.eval(tree, tree.root().idx(), Some(&view), None)?,
+                    };
                     keys.push(OrderedKey { value, desc: *desc });
                 }
                 let cur_seq = seq;

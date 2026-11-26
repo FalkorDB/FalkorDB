@@ -18,3 +18,10 @@ path = "../versioned_matrix"
 [[require]]
 name = "falkor-ops-aggregate"
 path = "../ops_aggregate"
+
+# `BfsGraph` instantiates `bfs_single_path`'s two relationship lists with graph_queries'
+# `GQ.nodeRelsByType` (`get_node_relationships_by_type`), so the backward side's correspondence to the
+# forward one is proved, not assumed (graph_queries requires nothing: no cycle).
+[[require]]
+name = "falkor-graph-queries"
+path = "../graph_queries"

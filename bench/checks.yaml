@@ -1,0 +1,54 @@
+# The perf checks the nightly run (.github/workflows/perf-nightly.yml) measures,
+# besides micro-hw, which it runs through _perf-micro.yml.
+#
+# The list starts empty: this file holds only comments, which parses as no
+# checks. Each check's PR appends exactly one entry at the end and touches
+# nothing else here (an explicit `[]` would turn the first append into invalid
+# YAML):
+#
+#   - name: pokec                      # = result.json "check"; ^[a-z][a-z0-9-]{0,42}$, no "--"
+#     runner: vm                       # vm (_perf-vm.yml on a GCE VM) | hosted (ubuntu-latest)
+#     command: uv run --project bench --frozen bench pokec   # a group goes before `bench`: --group <name>
+#     timeout_minutes: 75              # vm 1-300, hosted 1-330
+#     machine_type: n4-standard-16     # vm only; optional
+#
+# Both runners run the command through tests/perf/vm/run-check.sh from the
+# repository root: it is split on spaces (no shell syntax), and --candidate,
+# --baseline (both image@sha256), the optional --candidate-/--baseline-label and
+# -commit flags, --out and --mode are appended. `bench nightly merge plan` reads
+# this file, and bench/tests/test_nightly_merge.py fails on an entry it cannot
+# use. At night, such an entry (or a file that does not parse) is reported as an
+# error rather than skipped.
+- name: pokec
+  runner: vm
+  command: uv run --project bench --frozen bench pokec
+  timeout_minutes: 75
+
+- name: ldbc
+  runner: vm
+  command: uv run --project bench --frozen bench ldbc check
+  timeout_minutes: 45
+  machine_type: n4-standard-16
+
+# The release soak in two halves, each about 75-91 min on this machine (nightly
+# mode stops starting runs at 110 min, cuts a run at 115): bench/src/falkorbench/soak/README.md
+- name: soak-a
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-a --scenarios s01,s02,s03,s04,s05,s06
+  timeout_minutes: 120
+  machine_type: n4-standard-16
+
+- name: soak-b
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-b --scenarios s07,s08,s09,s10,s11,s12
+  timeout_minutes: 120
+  machine_type: n4-standard-16
+
+# The seeded soak of long reads, writes and cheap reads: the control epoch, then graph-build
+# timing, about 35 min on this machine, 50 with repeats (no run starts that would end after
+# 85 min): bench/src/falkorbench/fuzz/README.md
+- name: fuzz
+  runner: vm
+  command: uv run --project bench --frozen --group fuzz bench fuzz
+  timeout_minutes: 90
+  machine_type: n4-standard-16

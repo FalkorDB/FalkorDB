@@ -148,6 +148,7 @@ C-side bugs seen along the way: C crashes on some malformed bulk tokens, and cou
 | `SlowLog.lean` | `slow_log.rs` (`MinCache`, `SlowestKept`, `add`) |
 | `RelLookup.lean` | #3447 (open): the relationship lookups behind the reply encoders (endpoints, type id/name over graph, snapshots and pending), the cascade commit and `GRAPH.RECORD` |
 | `Allocator.lean` | `allocator.rs`: per-thread allocation counters |
+| `Banner.lean` | `banner/mod.rs`: the startup banner's style choice from the environment, its rendering, and the bounded line-at-a-time write |
 | `repro_live.py` | Live Rust-vs-C repros for the divergences above |
 | `COVERAGE.tsv` | One row per Rust function: bucket and the theorem that covers it |
 
@@ -164,7 +165,7 @@ All `.lean` files except the root are under `RedisLayer/`. The project has no La
 | AXIOMATISED | 34 |
 | NOT COVERED | 9 |
 
-- **AXIOMATISED:** wrappers around the Redis module API (`RedisModule_*`), libc (`pipe`, `fork`, `_exit`, `waitpid`, `pthread_atfork`), the OS clock and file-descriptor I/O. Most are in `graph_core.rs` (15).
+- **AXIOMATISED:** wrappers around the Redis module API (`RedisModule_*`), libc (`pipe`, `fork`, `_exit`, `waitpid`, `pthread_atfork`), the OS clock and file-descriptor I/O (including the banner's terminal I/O in `banner/mod.rs`). Most are in `graph_core.rs` (15).
 - **CONDITIONAL:** `QuerySession::check_fork`; its reason column names the hypothesis.
 - **NOT COVERED:** `sync_deepbind_environ` (`src/module_init.rs`, Linux-only, bound to ld.so and libc); `RedisBuildHost::publish` and `RedisBuildHost::warn` (`src/graph_core.rs`, the online index build, not modelled yet); and the six functions of `src/divergence_guard.rs`. Those six rows' reason column says "covered by proofs/replication narrative", but `replication` now models them line by line in `Guard.lean` and lists them as PROVEN; `bash proofs/coverage.sh` counts each function once, in its best bucket.
 
