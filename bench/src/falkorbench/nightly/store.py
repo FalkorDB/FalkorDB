@@ -272,6 +272,17 @@ def store(
     data.mkdir(parents=True, exist_ok=True)
     replaced = sorted(p for p in data.glob(f"*-{run_id}") if p.is_dir())
     stored = {child.name for old in replaced for child in old.iterdir()}
+    # A re-run that lists fewer checks (its registry did not load, say) must not delete the
+    # stored folders of the checks it dropped.
+    dropped = sorted(
+        child.name
+        for old in replaced
+        for child in old.iterdir()
+        if child.is_dir() and dashboard.CHECK_RE.fullmatch(child.name) and child.name not in checks
+    )
+    if dropped:
+        names = ", ".join(p.name for p in replaced)
+        raise StoreError(f"not replacing {names}: this run does not list {', '.join(dropped)}")
 
     with tempfile.TemporaryDirectory() as scratch:
         results = Path(scratch)

@@ -578,7 +578,12 @@ def publish_step(name):
 
 
 def run_download(
-    tmp_path, event, dispatch, workflow=".github/workflows/perf-nightly.yml", artifacts=()
+    tmp_path,
+    event,
+    dispatch,
+    workflow=".github/workflows/perf-nightly.yml",
+    artifacts=(),
+    branch="main",
 ):
     """Run the decide step; return (stored?, published?)."""
     bin_dir = tmp_path / "bin"
@@ -604,6 +609,8 @@ def run_download(
         "RUNNER_TEMP": str(temp),
         "FAKE_RUN": str(fake_run),
         "WORKFLOW": workflow,
+        "RUN_BRANCH": branch,
+        "DEFAULT_BRANCH": "main",
         "FAKE_ARTIFACTS": str(fake_artifacts(tmp_path, list(artifacts))),
     }
     subprocess.run(
@@ -1995,3 +2002,30 @@ def test_the_answer_goes_out_without_a_page_address_it_could_not_make():
     steps = load_workflow("perf-comment.yml")["jobs"]["answer"]["steps"]
     [step] = [s for s in steps if s.get("name") == "Answer on the pull request"]
     assert '--pr "$PR") || page=""' in step["run"]
+
+
+@pytest.mark.parametrize(
+    ("event", "dispatch"), [("workflow_dispatch", '{"image_overrides": false}')]
+)
+def test_a_feature_branch_dispatch_is_no_night(tmp_path, event, dispatch):
+    """It runs that branch's checks: stored, it would read as one of main's nights."""
+    assert run_download(tmp_path, event, dispatch, branch="ci/try-something") == (False, False)
+    # One that named its images still gets its unlisted page, from whatever branch.
+    (tmp_path / "b").mkdir()
+    got = run_download(
+        tmp_path / "b", event, '{"image_overrides": true}', branch="ci/try-something"
+    )
+    assert got == (False, True)
+
+
+def test_a_rerun_that_lists_fewer_checks_never_drops_a_stored_one(tmp_path):
+    data = tmp_path / "data"
+    old = data / "2026-11-20-7"
+    for check in ("micro-hw", "pokec"):
+        (old / check).mkdir(parents=True)
+        (old / check / "result.json").write_text("old")
+    stub = tmp_path / "nightly.json"
+    stub.write_text(json.dumps(examples.nightly("error", [micro_hw(True)])))  # no pokec now
+    with pytest.raises(nightly_store.StoreError, match="does not list pokec"):
+        nightly_store.store(stub, "7", data, "nightly", "main", lambda name, dest: True)
+    assert (old / "pokec" / "result.json").read_text() == "old"
