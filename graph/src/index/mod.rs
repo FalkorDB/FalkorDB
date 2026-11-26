@@ -225,7 +225,7 @@ pub struct IndexInfo {
     pub entity_type: String,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum IndexQuery<T> {
     Equal {
         key: Arc<String>,

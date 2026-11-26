@@ -71,6 +71,7 @@ No. The `next` loops that pack expanded rows into output batches emit every row 
 | `labelIdScan_correct` | The label + id-range scan returns exactly labelled ∩ range | `Scans.lean` |
 | `canUse_inListV_eq_or`, `canUseE_inListV_eq_or` | An `IN` list reaches the index on the same terms as the `Or` of `Equal`s it replaced (non-empty, every member indexable), so `IN [NULL]` still falls back | `IndexScan.lean` |
 | `scanRow_spec`, `edgeRow_sound`, `orient_length` | Index scans are sound pre-filters, honour bound endpoints, and read undirected edges both ways | `IndexScan.lean` |
+| `edgeRowCached_eq`, `collectHits_sound`, `collectHits_some_iff` | The edge index scan's hit cache (#3592) returns exactly the rows a per-row index query would, in order; it keeps the oriented hits only within its budget | `IndexScan.lean` |
 | `dedupRows_keys_nodup`, `dedupRows_keys_complete` | The bidirectional dedup keeps unique keys and never loses a key (the bugs are in *which* key) | `BidirDedup.lean` |
 | `edgeVerdict_eq_filterEval` | A variable-length edge filter answers every evaluated value exactly as `FilterOp` does, by `StreamOps.filterEval` (non-boolean is a type error) | `VarLen.lean` |
 
