@@ -32,6 +32,7 @@ from falkorbench.ldbc import check as ldbc_check
 from falkorbench.nightly import merge as nightly_merge
 from falkorbench.nightly import missed_run
 from falkorbench.nightly import report as nightly_report
+from falkorbench.soak import check as soak_check
 
 # bench/ is the project root; the repo is its parent.
 BENCH_DIR = Path(__file__).resolve().parents[2]
@@ -656,6 +657,25 @@ def ldbc_check_command(args):
     result.json was written, whatever its verdict.
     """
     raise SystemExit(ldbc_check.main(list(args)))
+
+
+@cli.command(
+    "soak",
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+        "help_option_names": [],
+    },
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def soak_command(args):
+    """Compare a candidate image with a baseline image on the release soak (--help: the flags).
+
+    The nightly perf check (needs `--group soak`): each scenario runs once per image, each
+    image as its own server in docker, and OUT/result.json plus raw/ are written. Exits 0
+    whenever result.json was written, whatever its verdict.
+    """
+    raise SystemExit(soak_check.main(list(args)))
 
 
 def main() -> int:

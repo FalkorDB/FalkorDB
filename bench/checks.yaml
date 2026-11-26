@@ -29,3 +29,17 @@
   command: uv run --project bench --frozen bench ldbc check
   timeout_minutes: 45
   machine_type: n4-standard-16
+
+# The release soak in two halves, each about 75-91 min on this machine (nightly
+# mode stops starting runs at 110 min, cuts a run at 115): bench/src/falkorbench/soak/README.md
+- name: soak-a
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-a --scenarios s01,s02,s03,s04,s05,s06
+  timeout_minutes: 120
+  machine_type: n4-standard-16
+
+- name: soak-b
+  runner: vm
+  command: uv run --project bench --frozen --group soak bench soak --check soak-b --scenarios s07,s08,s09,s10,s11,s12
+  timeout_minutes: 120
+  machine_type: n4-standard-16

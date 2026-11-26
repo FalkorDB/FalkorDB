@@ -1,8 +1,8 @@
 # Tests for the nightly perf runs and their checks: bench/tests/ (the bench
-# toolset, incl. the result contract, its example files and acceptance.yaml),
-# plus whatever has not moved into bench/ yet: tests/perf/ (the VM scripts) and
-# tests/soak/ (the soak and fuzz checks). Nothing here builds or runs the engine
-# or a server; it takes about a minute.
+# toolset, incl. the result contract, its example files, acceptance.yaml and the
+# soak check), plus whatever has not moved into bench/ yet: tests/perf/ (the VM
+# scripts). Nothing here builds or runs the engine or a server; it takes about a
+# minute.
 
 name: perf-contract
 
@@ -13,7 +13,6 @@ on:
     paths:
       - "bench/**"
       - "tests/perf/**"
-      - "tests/soak/**"
       - ".github/workflows/perf-*.yml"
       - ".github/workflows/_perf-*.yml"
   merge_group:
@@ -52,9 +51,10 @@ jobs:
       # Separate runs per suite: test files with the same basename in two
       # suites would collide in one run (pytest's default prepend import mode),
       # and a failure names its suite.
+      # --group soak: test_soak imports the soak's kit (psutil).
       - name: pytest bench/tests
         run: >-
-          .bin/uv run --project bench --frozen --group dev
+          .bin/uv run --project bench --frozen --group dev --group soak
           python -I -B -m pytest bench/tests -v -p no:cacheprovider
 
       # tests/perf/ keeps the VM scripts' tests, which arrive with the VM PR.
@@ -67,15 +67,3 @@ jobs:
           fi
           .bin/uv run --project bench --frozen --group dev \
             python -I -B -m pytest tests/perf -v -p no:cacheprovider
-
-      # tests/soak/ arrives with the soak and fuzz checks' PRs, until they move
-      # into bench/.
-      - name: pytest tests/soak
-        run: |
-          set -euo pipefail
-          if [ ! -d tests/soak ]; then
-            echo "::notice::tests/soak does not exist on this branch; nothing to run"
-            exit 0
-          fi
-          .bin/uv run --project bench --frozen --group dev --group soak --group fuzz \
-            python -I -B -m pytest tests/soak -v -p no:cacheprovider
