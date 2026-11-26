@@ -355,8 +355,8 @@ accumulator and iterator; any other node: none). -/
 inductive VT where
   | node (own : List Nat) (cs : List VT)
 
-/-- The node's own id, as in the Rust `match`: the largest of its listed ids, `0` if none
-(`reduce.accumulator.id.max(reduce.iterator.id)`). -/
+/-- The node's own id: the largest of the ids it reads or binds (`ExprIR::loop_vars`), `0` if
+none (the Rust takes the max over the whole DFS walk, `unwrap_or(0)`). -/
 def ownId (own : List Nat) : Nat := own.foldl max 0
 
 mutual
@@ -418,5 +418,120 @@ theorem slot_fresh (ts : List VT) (n : Nat) (t : VT) (ht : t ∈ ts) (x : Nat) (
   have h1 := maxVarId_ge t x hx
   have h2 := (le_foldl_max (ts.map maxVarId) 0).2 (maxVarId t) (List.mem_map_of_mem ht)
   omega
+
+/-! ## `free_variables` (aggregate.rs, #3579) -/
+
+/-- An expression tree for `free_variables`: each node carries the id it reads (`Variable`)
+and the loop variables it binds (`ExprIR::loop_vars`: a quantifier's or comprehension's
+variable, `reduce`'s accumulator and iterator). A `Variable` is identified by its id. -/
+inductive FT where
+  | node (read : Option Nat) (binds : List Nat) (cs : List FT)
+
+mutual
+/-- The ids read, in `walk::<Dfs>()` (pre-)order. -/
+def readsOf : FT → List Nat
+  | .node r _ cs => r.toList ++ readsOfL cs
+def readsOfL : List FT → List Nat
+  | [] => []
+  | c :: cs => readsOf c ++ readsOfL cs
+end
+
+mutual
+/-- Every loop variable bound anywhere in the tree (`bound` in the Rust). -/
+def boundOf : FT → List Nat
+  | .node _ b cs => b ++ boundOfL cs
+def boundOfL : List FT → List Nat
+  | [] => []
+  | c :: cs => boundOf c ++ boundOfL cs
+end
+
+/-- One step of the Rust loop: push `x` unless it is bound or already pushed. -/
+def fvStep (bound : List Nat) (acc : List Nat) (x : Nat) : List Nat :=
+  if bound.contains x || acc.contains x then acc else acc ++ [x]
+
+/-- `free_variables`: the reads, in order, without the bound ids and without repeats. -/
+def freeVars (t : FT) : List Nat := (readsOf t).foldl (fvStep (boundOf t)) []
+
+theorem fvStep_foldl_mem (bound : List Nat) (x : Nat) :
+    ∀ (l acc : List Nat), x ∈ l.foldl (fvStep bound) acc ↔ x ∈ acc ∨ (x ∈ l ∧ x ∉ bound)
+  | [], acc => by simp
+  | y :: ys, acc => by
+    rw [List.foldl_cons, fvStep_foldl_mem bound x ys]
+    unfold fvStep
+    by_cases hs : y ∈ bound ∨ y ∈ acc
+    · have hc : (bound.contains y || acc.contains y) = true := by
+        rcases hs with h | h <;> simp [h]
+      simp only [hc, ite_true]
+      constructor
+      · rintro (h | ⟨h1, h2⟩)
+        · exact .inl h
+        · exact .inr ⟨List.mem_cons_of_mem _ h1, h2⟩
+      · rintro (h | ⟨h1, h2⟩)
+        · exact .inl h
+        · rcases List.mem_cons.mp h1 with rfl | h1
+          · rcases hs with h | h
+            · exact absurd h h2
+            · exact .inl h
+          · exact .inr ⟨h1, h2⟩
+    · have hb : y ∉ bound := fun h => hs (.inl h)
+      have ha : y ∉ acc := fun h => hs (.inr h)
+      have hc : (bound.contains y || acc.contains y) = false := by simp [hb, ha]
+      simp only [hc, Bool.false_eq_true, ite_false]
+      constructor
+      · rintro (h | ⟨h1, h2⟩)
+        · rcases List.mem_append.mp h with h | h
+          · exact .inl h
+          · have hxy : x = y := by simpa using h
+            subst hxy
+            exact .inr ⟨by simp, hb⟩
+        · exact .inr ⟨List.mem_cons_of_mem _ h1, h2⟩
+      · rintro (h | ⟨h1, h2⟩)
+        · exact .inl (List.mem_append_left _ h)
+        · rcases List.mem_cons.mp h1 with rfl | h1
+          · exact .inl (List.mem_append_right _ (by simp))
+          · exact .inr ⟨h1, h2⟩
+
+theorem fvStep_foldl_nodup (bound : List Nat) :
+    ∀ (l acc : List Nat), acc.Nodup → (l.foldl (fvStep bound) acc).Nodup
+  | [], _, h => h
+  | y :: ys, acc, h => by
+    rw [List.foldl_cons]
+    apply fvStep_foldl_nodup bound ys
+    unfold fvStep
+    split
+    · exact h
+    · rename_i hc
+      have ha : y ∉ acc := fun hm => hc (by simp [hm])
+      rw [List.nodup_append]
+      refine ⟨h, by simp, ?_⟩
+      intro a ha' b hb'
+      have : b = y := by simpa using hb'
+      subst this
+      intro hab; subst hab; exact ha ha'
+
+/-- **`free_variables` is exact**: an id is listed iff the tree reads it and no node of the
+tree binds it (the binder gives each loop variable a fresh id, read only under its binder). -/
+theorem freeVars_mem (t : FT) (x : Nat) :
+    x ∈ freeVars t ↔ x ∈ readsOf t ∧ x ∉ boundOf t := by
+  unfold freeVars; rw [fvStep_foldl_mem]; simp
+
+/-- Each variable is listed once. -/
+theorem freeVars_nodup (t : FT) : (freeVars t).Nodup :=
+  fvStep_foldl_nodup _ _ _ List.nodup_nil
+
+/-- A tree that reads nothing free is a constant for grouping: `free_variables` is empty
+(`implicit_keys` skips it). -/
+theorem freeVars_nil_iff (t : FT) :
+    freeVars t = [] ↔ ∀ x ∈ readsOf t, x ∈ boundOf t := by
+  constructor
+  · intro h x hx
+    apply Classical.byContradiction
+    intro hb
+    have := (freeVars_mem t x).2 ⟨hx, hb⟩
+    simp [h] at this
+  · intro h
+    apply List.eq_nil_iff_forall_not_mem.mpr
+    intro x hx
+    exact ((freeVars_mem t x).1 hx).2 (h x ((freeVars_mem t x).1 hx).1)
 
 end FalkorAggOps.AggPlan

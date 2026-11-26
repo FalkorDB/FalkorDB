@@ -84,22 +84,22 @@ graph/src/parser/ast.rs	write_anon	125	PROVEN	C.Core Alias.fmt_spec (`@anon_<n>`
 graph/src/parser/ast.rs	Variable::fmt	173	PROVEN	C.Graph Var.fmt (alias: `@anon_<n>` via write_anon, else `?<id>`), Var.fmt_named, Var.fmt_unnamed, Var.fmt_temp (#3890: Variable.alias)
 graph/src/parser/ast.rs	Variable::hash	196	PROVEN	C.Graph Var.hash_eq (equal variables hash alike)
 graph/src/parser/ast.rs	Variable::name	224	PROVEN	C.Graph Var.name, Var.name_spec (alias.and_then(Alias::name))
-graph/src/parser/ast.rs	is_aggregation(DynTree<Variable>)	603	PROVEN	C.IR isAggregation_spec
-graph/src/parser/ast.rs	is_aggregation(DynTree<Arc<String>>)	614	PROVEN	C.IR isAggregation_spec
-graph/src/parser/ast.rs	QueryNode::new	652	PROVEN	C.Graph QNode.new_spec
-graph/src/parser/ast.rs	QueryRelationship::fmt	700	PROVEN	C.Fmt fmtRel_untyped_undirected
-graph/src/parser/ast.rs	QueryRelationship::new	728	PROVEN	C.Graph QRel.new_spec (all_shortest_paths = No)
-graph/src/parser/ast.rs	QueryPath::new	765	PROVEN	C.Graph QPath.new_spec
-graph/src/parser/ast.rs	QueryGraph::add_node	842	PROVEN	C.Graph QG.addNode_spec, QG.addNode_distinct
-graph/src/parser/ast.rs	QueryGraph::replace_node	880	PROVEN	C.Graph QG.replaceNode_spec
-graph/src/parser/ast.rs	QueryGraph::add_relationship	890	PROVEN	C.Graph QG.addRel_spec, QG.addRel_distinct
-graph/src/parser/ast.rs	QueryGraph::add_path	906	PROVEN	C.Graph QG.addPath_spec
-graph/src/parser/ast.rs	QueryGraph::nodes	927	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::nodes_mut	931	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::relationships	936	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::relationships_mut	940	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::paths	945	PROVEN	C.Graph QG.accessors
-graph/src/parser/ast.rs	QueryGraph::filter_visited	952	PROVEN	C.Components filterVisited_nodes; #3890 `HashSet<VarKey>`: C.Graph Var.key, Var.key_scope (the key keeps the scope, `==` does not)
-graph/src/parser/ast.rs	QueryGraph::connected_components	980	PROVEN	C.Components connectedComponents_spec (disjoint, from the graph, covering up to shared ids)
-graph/src/parser/ast.rs	QueryIR::inner_validate	1316	PROVEN	C.IR vClause/vNext/vAll/vUnion; with_last_rejected (#3291); vCall_np, match_last_rejected, call_validates_rest, call_transparent, match_last_after_call_rejected (#3297 fixes W4-plan-4)
-graph/src/parser/ast.rs	validate_inlined_properties	1513	PROVEN	C.IR vInlined (used in vClause_simple)
+graph/src/parser/ast.rs	is_aggregation(DynTree<Variable>)	617	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	is_aggregation(DynTree<Arc<String>>)	628	PROVEN	C.IR isAggregation_spec
+graph/src/parser/ast.rs	QueryNode::new	666	PROVEN	C.Graph QNode.new_spec
+graph/src/parser/ast.rs	QueryRelationship::fmt	714	PROVEN	C.Fmt fmtRel_untyped_undirected
+graph/src/parser/ast.rs	QueryRelationship::new	742	PROVEN	C.Graph QRel.new_spec (all_shortest_paths = No)
+graph/src/parser/ast.rs	QueryPath::new	779	PROVEN	C.Graph QPath.new_spec
+graph/src/parser/ast.rs	QueryGraph::add_node	856	PROVEN	C.Graph QG.addNode_spec, QG.addNode_distinct
+graph/src/parser/ast.rs	QueryGraph::replace_node	894	PROVEN	C.Graph QG.replaceNode_spec
+graph/src/parser/ast.rs	QueryGraph::add_relationship	904	PROVEN	C.Graph QG.addRel_spec, QG.addRel_distinct
+graph/src/parser/ast.rs	QueryGraph::add_path	920	PROVEN	C.Graph QG.addPath_spec
+graph/src/parser/ast.rs	QueryGraph::nodes	941	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::nodes_mut	945	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::relationships	950	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::relationships_mut	954	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::paths	959	PROVEN	C.Graph QG.accessors
+graph/src/parser/ast.rs	QueryGraph::filter_visited	966	PROVEN	C.Components filterVisited_nodes; #3890 `HashSet<VarKey>`: C.Graph Var.key, Var.key_scope (the key keeps the scope, `==` does not)
+graph/src/parser/ast.rs	QueryGraph::connected_components	994	PROVEN	C.Components connectedComponents_spec (disjoint, from the graph, covering up to shared ids)
+graph/src/parser/ast.rs	QueryIR::inner_validate	1330	PROVEN	C.IR vClause/vNext/vAll/vUnion; with_last_rejected (#3291); vCall_np, match_last_rejected, call_validates_rest, call_transparent, match_last_after_call_rejected (#3297 fixes W4-plan-4)
+graph/src/parser/ast.rs	validate_inlined_properties	1527	PROVEN	C.IR vInlined (used in vClause_simple)

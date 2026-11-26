@@ -74,6 +74,7 @@ DNS resolution and path canonicalisation are parameters of the model, not proven
 | `finishGroup_outputs` | Output bindings of a finished group take precedence | `AggNext.lean` |
 | `aggRowSpec_main`, `aggRowSpec_layout` | `next`'s emitted row satisfies `OutputsOwnAcc`, `KeysBound` and `EmitsOnlyScope` for any ids the binder assigns (#3375, #3333, #3368, #3369 fixed by #3579; `fixed3579_*` re-check each issue's query) | `SlotReuse.lean` |
 | `slot_fresh` | An implicit key's slot id is above every id the aggregation trees read or bind | `AggPlan.lean` |
+| `freeVars_mem`, `freeVars_nodup` | `free_variables` lists, once each, exactly the ids a subtree reads that none of its loop variables bind | `AggPlan.lean` |
 | `pctCmp_total` | The percentile sort comparator is a total preorder, so it cannot panic on NaN | `Ops.lean` |
 | `pct_first_wins`, `pct_stable` | A per-row percentile argument is taken from the first non-null row and never overwritten, as in C | `Agg.lean` |
 | `validateRemote_spec`, `erRun_le`, `resolvePath_spec` | LOAD CSV: public addresses only, byte cap, path containment | `LoadCsv.lean` |
@@ -124,7 +125,7 @@ On main, `Discharge.lean` proves both hypotheses from `value_order` (`hc_main` f
 | `Ops.lean` | Limit, Skip, the full sort and top-k heap, Project, Unwind, grouping, DISTINCT and its counterexamples, the stack-machine `return`, percentile index bounds and comparator |
 | `SortCmp.lean` | `OrderedKey` and `HeapEntry` comparators, `compare_row_content`, `tiebreak`, over an abstract value comparison `cv` |
 | `SortKey.lean` | `classify_sort_key`: the typed key column reads back the evaluated key |
-| `AggPlan.lean` | Aggregate operator setup: `subtree_has_aggregate`, `analyze` (and its implicit-key guard `analyzeOp`), `analyze_agg_tree`, `max_variable_id` |
+| `AggPlan.lean` | Aggregate operator setup: `subtree_has_aggregate`, `analyze` (and its implicit-key guard `analyzeOp`), `analyze_agg_tree`, `max_variable_id`, `free_variables` |
 | `AggState.lean` | Accumulator zeroing, `GroupKey` equality and hash, `args_for`, `new` |
 | `AggNext.lean` | Column extraction and the aggregate's `next`: groups finished and emitted in batches |
 | `SlotReuse.lean` | Binder ids for one projection (`projLayout`), what the emitted row stores and what a reader sees (`finishVals`, `cell`), the properties `OutputsOwnAcc`, `KeysBound`, `EmitsOnlyScope`, proved on main, and the #3375/#3333/#3369/#3368 queries re-checked |
@@ -148,7 +149,7 @@ This project depends on [`../value_order`](../value_order) (a Lake path dependen
 | MODELLED | 13 |
 | NOT COVERED | 56 |
 
-All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.rs`, `project.rs`, `unwind.rs`, `load_csv.rs`, `filter.rs`, `include_pending.rs`, `procedure_call.rs`, `commit.rs`) are fully PROVEN, except the implicit-grouping-key helpers #3579 added to `aggregate.rs` (`implicit_keys` and its nested `binds`, `variables`, `walk`, and `replace_with_slots`), which are NOT COVERED: they walk the full `ExprIR` (CASE, AND/OR, quantifiers, `reduce`, maps) and identify subtrees by `orx_tree` node index, none of which the `Ex` model has. `max_variable_id` is PROVEN (`slot_fresh`). The rest:
+All operator files (`aggregate.rs`, `sort.rs`, `limit.rs`, `skip.rs`, `distinct.rs`, `project.rs`, `unwind.rs`, `load_csv.rs`, `filter.rs`, `include_pending.rs`, `procedure_call.rs`, `commit.rs`) are fully PROVEN, except the implicit-grouping-key helpers #3579 added to `aggregate.rs` (`implicit_keys` and `replace_with_slots`), which are NOT COVERED: they walk the full `ExprIR` (CASE, AND/OR, map projections, quantifiers, `reduce`, maps) and identify subtrees by `orx_tree` node index, none of which the `Ex` model has. `max_variable_id` is PROVEN (`slot_fresh`), and `free_variables` (`freeVars_mem`, `freeVars_nodup`). The rest:
 
 - **NOT COVERED, `batch.rs` (47 rows):** the model treats a batch as its list of active rows, so the typed columns, builders, `concat` and `gather` are abstracted away. `compare_at` and `compare_rows_at` are proven in `value_order` and `columnar` instead.
 - **MODELLED, `batch.rs` (11 rows):** accessors such as `active_indices`, `value_at` and the row iterators are what "a batch is its active rows" stands for; the `agrees_*` Rust tests exercise them.
