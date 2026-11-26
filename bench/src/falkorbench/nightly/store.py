@@ -316,19 +316,30 @@ def store(
             if check in stored:
                 names = ", ".join(p.name for p in replaced)
                 raise StoreError(f"not replacing {names} without perf-result-{check}")
-        for old in replaced:
-            shutil.rmtree(old)
-        dest = data / folder
-        dest.mkdir(parents=True)
-        shutil.copyfile(night_path, dest / "nightly.json")
-        meta = {"trigger": trigger, "scope": scope}
-        (dest / "run.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
-        for check, src in fetched.items():
-            (dest / check).mkdir()
-            if full:
-                copy_check(src, dest / check)
-            else:
-                copy_page_files(src, dest / check)
+        # The replacement is built beside the stored run (same filesystem) and swapped in only
+        # once complete: a store that fails half-way leaves the previous run as it was.
+        staged = Path(tempfile.mkdtemp(prefix=f".staging-{run_id}-", dir=data))
+        try:
+            shutil.copyfile(night_path, staged / "nightly.json")
+            meta = {"trigger": trigger, "scope": scope}
+            (staged / "run.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+            for check, src in fetched.items():
+                (staged / check).mkdir()
+                if full:
+                    copy_check(src, staged / check)
+                else:
+                    copy_page_files(src, staged / check)
+            moved = [old.rename(old.with_name(f".old-{old.name}")) for old in replaced]
+            try:
+                staged.rename(data / folder)
+            except OSError:
+                for old in moved:  # put the previous run back
+                    old.rename(old.with_name(old.name.removeprefix(".old-")))
+                raise
+            for old in moved:
+                shutil.rmtree(old)
+        finally:
+            shutil.rmtree(staged, ignore_errors=True)
     return folder
 
 

@@ -475,7 +475,7 @@ def test_the_dashboard_is_published_by_its_own_workflow_after_each_perf_run():
         "workflow_run": {"workflows": [nightly["name"], comment["name"]], "types": ["completed"]}
     }
     jobs = flow["jobs"]
-    assert jobs["decide"]["permissions"] == {"actions": "read"}
+    assert jobs["decide"]["permissions"] == {"actions": "read", "contents": "read"}
     assert jobs["store"]["permissions"] == {"contents": "write", "actions": "read"}
     assert jobs["deploy"]["permissions"] == {
         "contents": "read",
@@ -552,6 +552,10 @@ if [[ $url == */zip ]]; then
 fi
 jqexpr=.
 while [[ $# -gt 0 ]]; do [[ $1 == --jq ]] && jqexpr=$2; shift; done
+if [[ $url == */compare/* ]]; then
+  echo "{\"status\": \"${FAKE_COMPARE:-identical}\"}" | jq -r "$jqexpr"
+  exit 0
+fi
 name=${url#*name=}; name=${name%%&*}
 jq --arg n "$name" ".artifacts |= map(select(.name == \$n))" "$FAKE_ARTIFACTS" | jq -r "$jqexpr"
 """
@@ -584,6 +588,7 @@ def run_download(
     workflow=".github/workflows/perf-nightly.yml",
     artifacts=(),
     branch="main",
+    compare="identical",
 ):
     """Run the decide step; return (stored?, published?)."""
     bin_dir = tmp_path / "bin"
@@ -610,6 +615,8 @@ def run_download(
         "FAKE_RUN": str(fake_run),
         "WORKFLOW": workflow,
         "RUN_BRANCH": branch,
+        "RUN_SHA": "a" * 40,
+        "FAKE_COMPARE": compare,
         "DEFAULT_BRANCH": "main",
         "FAKE_ARTIFACTS": str(fake_artifacts(tmp_path, list(artifacts))),
     }
@@ -1904,6 +1911,8 @@ def test_a_run_whose_page_cannot_be_built_is_left_out_and_the_others_still_are(
     monkeypatch.setattr(dashboard, "build_unlisted", flaky)
     made = nightly_unlisted.build(tmp_path, "o/r", 30, NOW, actions)
     assert [p.parent.name for p in made] == ["2026-11-20-501"]
+    # Nothing of the run whose page failed is left in the site.
+    assert not (tmp_path / "manual").exists() or not any((tmp_path / "manual").iterdir())
 
 
 def test_trim_copies_each_run_with_only_what_its_pages_need(tmp_path, monkeypatch):
@@ -2135,3 +2144,42 @@ def test_an_error_compares_only_with_nights_that_planned_the_check(tmp_path):
     result = nightly_failures.compare(data, "2026-11-25-4")
     [failure] = result.run.failures
     assert result.since[failure.key] == "since 2026-11-22"
+
+
+@pytest.mark.parametrize(
+    ("compare", "stored"),
+    [("identical", True), ("behind", True), ("ahead", False), ("diverged", False)],
+)
+def test_a_night_is_a_commit_on_the_default_branch_not_only_its_name(tmp_path, compare, stored):
+    """A dispatch on a tag named like the default branch carries the branch's name but not its
+    history: the compare API says where its commit is."""
+    got = run_download(tmp_path, "workflow_dispatch", '{"image_overrides": false}', compare=compare)
+    assert got == (stored, stored)
+
+
+def test_the_unlisted_build_stops_starting_runs_when_out_of_time(
+    tmp_path, actions, no_wait, capsys
+):
+    made = nightly_unlisted.build(tmp_path, "o/r", 30, NOW, actions, budget=-1)
+    assert made == []
+    assert "out of time" in capsys.readouterr().err
+
+
+def test_a_store_that_fails_half_way_leaves_the_previous_run(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    old = data / "2026-11-20-7" / "micro-hw"
+    old.mkdir(parents=True)
+    (old / "result.json").write_text("old")
+    night = tmp_path / "nightly.json"
+    night.write_text(json.dumps(examples.nightly("green", [micro_hw(True)])))
+    art = check_artifact(tmp_path / "art", micro_hw(True), {})
+    download, _ = downloads(tmp_path, {"perf-result-micro-hw": art})
+
+    def broken(src, dest):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(nightly_store, "copy_page_files", broken)
+    with pytest.raises(OSError, match="disk full"):
+        nightly_store.store(night, "7", data, "nightly", "main", download)
+    assert (old / "result.json").read_text() == "old"
+    assert sorted(p.name for p in data.iterdir()) == ["2026-11-20-7"]  # no staging left behind

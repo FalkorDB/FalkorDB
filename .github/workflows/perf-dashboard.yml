@@ -50,6 +50,8 @@ jobs:
     permissions:
       # The triggering run's artifacts.
       actions: read
+      # Whether its commit is on the default branch (the compare API).
+      contents: read
     outputs:
       store: ${{ steps.download.outputs.store }}
       publish: ${{ steps.download.outputs.publish }}
@@ -57,6 +59,7 @@ jobs:
       RUN_ID: ${{ github.event.workflow_run.id }}
       RUN_EVENT: ${{ github.event.workflow_run.event }}
       RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      RUN_SHA: ${{ github.event.workflow_run.head_sha }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       WORKFLOW: ${{ github.event.workflow_run.path }}
       GH_TOKEN: ${{ github.token }}
@@ -98,9 +101,11 @@ jobs:
             exit 0
           fi
           # Only the default branch's runs are nights: a dispatch from a feature branch runs
-          # that branch's checks, and would be stored (and labelled) as main's.
-          if [[ $RUN_BRANCH != "$DEFAULT_BRANCH" ]]; then
-            echo "run $RUN_ID ran from $RUN_BRANCH, not $DEFAULT_BRANCH: not a night, not stored"
+          # that branch's checks, and would be stored (and labelled) as main's. The name alone
+          # is not enough (a tag can share it): the commit must be on the branch too.
+          on_branch=$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$RUN_SHA" --jq .status 2>/dev/null || echo unknown)
+          if [[ $RUN_BRANCH != "$DEFAULT_BRANCH" || ( $on_branch != identical && $on_branch != behind ) ]]; then
+            echo "run $RUN_ID ran from $RUN_BRANCH at $RUN_SHA ($on_branch against $DEFAULT_BRANCH): not a night, not stored"
             echo "store=false" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -180,7 +185,9 @@ jobs:
       ${{ !cancelled() && needs.decide.outputs.publish == 'true'
       && (needs.store.result == 'success' || needs.store.result == 'skipped') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The unlisted pages stop starting runs after 20 minutes (bench nightly unlisted), and an
+    # in-flight download is bounded by its retries: the listed pages always go out.
+    timeout-minutes: 60
     # One deploy at a time. A newer waiting deploy replacing an older one loses nothing: each
     # rebuilds the whole site from gh-pages and the last 30 days' runs.
     concurrency:

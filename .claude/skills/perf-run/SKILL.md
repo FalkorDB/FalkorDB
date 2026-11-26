@@ -116,6 +116,10 @@ uv run --project bench --frozen bench nightly dashboard --data "$W/data" --out "
 echo "run page: $W/site/run/$FOLDER.html"
 ```
 
+When `FOLDER` is the gh-pages copy (the store refused, or the run's artifacts are gone), it
+holds only what the run's page needs, not the raw files step 3's table points to: say so in
+the report, and mark each failure's detail "raw files unavailable" rather than guess at it.
+
 Read what the store prints. `no perf-result-<check>` means that check's files are not here:
 step 3 reports the check as an error, never a pass. If the store fails but the run is already on
 gh-pages (its artifacts expired), the second line takes the stored copy. Otherwise its error says

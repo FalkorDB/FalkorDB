@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC
@@ -38,6 +39,10 @@ from falkorbench.nightly import dashboard
 from falkorbench.nightly import store
 
 DAYS = 30
+# The unlisted build's share of the deploy job's time (its timeout-minutes is 60), and each of
+# its downloads' (a page needs a few hundred KB of a run's artifacts; a stall is retried).
+BUDGET_SECONDS = 20 * 60
+ZIP_TIMEOUT = 300.0
 PR_TITLE = re.compile(r"/perf on #([1-9][0-9]{0,6})")
 PAGES = 50
 NIGHTLY = "perf-nightly.yml"
@@ -159,9 +164,23 @@ def named_images(repo: str, run_id: str, run: store.Runner) -> bool:
     return isinstance(record, dict) and record.get("image_overrides") is True
 
 
-def build_one(candidate: Candidate, repo: str, out: Path, run: store.Runner) -> Path | None:
+def build_one(
+    candidate: Candidate,
+    repo: str,
+    out: Path,
+    run: store.Runner,
+    deadline: float = float("inf"),
+) -> Path | None:
     """Store one run (the page's files only) and write its page under <out>; None when it could
-    not be read."""
+    not be read. The page is rendered in scratch and moved into <out> only once it rendered, so
+    a failure leaves nothing behind. A download that would start after `deadline` (a monotonic
+    time) is not started: the run gets no page this time."""
+
+    def fetch(name: str, dest: Path) -> str:
+        if time.monotonic() > deadline:
+            return "failed"
+        return store.fetch(repo, candidate.run_id, name, dest, run)
+
     trigger, scope = (
         ("pr-comment", f"pr-{candidate.pr}")
         if candidate.kind == "pr"
@@ -180,34 +199,50 @@ def build_one(candidate: Candidate, repo: str, out: Path, run: store.Runner) -> 
                 scratch / "data",
                 trigger,
                 scope,
-                lambda name, dest: store.fetch(repo, candidate.run_id, name, dest, run),
+                fetch,
             )
         except store.StoreError as err:
             store.warn(f"run {candidate.run_id}: {err}: no page")
             return None
-        where = out / page_path(candidate.kind, folder, candidate.pr)
+        path = page_path(candidate.kind, folder, candidate.pr)
+        staged = scratch / "page"
+        (staged / "data").mkdir(parents=True)
+        shutil.move(scratch / "data" / folder, staged / "data" / folder)
+        dashboard.build_unlisted(staged / "data", folder, staged, "../" * path.count("/"))
+        where = out / path
         if where.exists():
             shutil.rmtree(where)
-        (where / "data").mkdir(parents=True)
-        shutil.move(scratch / "data" / folder, where / "data" / folder)
-    root = "../" * page_path(candidate.kind, folder, candidate.pr).count("/")
-    return dashboard.build_unlisted(where / "data", folder, where, root)
+        where.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(staged, where)
+    return where / "index.html"
 
 
 def build(
-    out: Path, repo: str, days: int, now: datetime, run: store.Runner = subprocess.run
+    out: Path,
+    repo: str,
+    days: int,
+    now: datetime,
+    run: store.Runner = subprocess.run,
+    budget: float = BUDGET_SECONDS,
 ) -> list[Path]:
     """Every unlisted page of the last `days` days, under <out>/manual and <out>/pr (both
-    replaced). A run that cannot be read is left out with a warning, never a failure."""
+    replaced). A run that cannot be read is left out with a warning, never a failure. After
+    `budget` seconds no further run is started, so a slow download never keeps the deploy (and
+    the listed pages) from going out: the runs left over get their page at the next deploy."""
+    deadline = time.monotonic() + budget
     found = candidates(repo, now, days, run)  # raises ListingError before anything is removed
     for area in ("manual", "pr"):
         shutil.rmtree(out / area, ignore_errors=True)
     pages = []
-    for candidate in found:
+    for index, candidate in enumerate(found):
+        if time.monotonic() > deadline:
+            left = ", ".join(c.run_id for c in found[index:])
+            store.warn(f"out of time after {budget:.0f} s: no page this deploy for runs {left}")
+            break
         try:
             if candidate.kind == "manual" and not named_images(repo, candidate.run_id, run):
                 continue
-            made = build_one(candidate, repo, out, run)
+            made = build_one(candidate, repo, out, run, deadline)
         except Exception as err:  # one run's page must never fail every deploy for 30 days
             store.warn(f"run {candidate.run_id}: {type(err).__name__}: {err}: no page")
             continue
@@ -254,6 +289,7 @@ def main(
         return 0
     if args.out is None:
         parser.error("--out is required")
+    store.ZIP_TIMEOUT = min(store.ZIP_TIMEOUT, ZIP_TIMEOUT)
     try:
         build(args.out, args.repo, args.days, datetime.now(UTC), run)
     except ListingError as err:
